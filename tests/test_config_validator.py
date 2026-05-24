@@ -10,6 +10,15 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-01-21    | M. Cornelison | Initial implementation
+# 2026-05-15    | Plan (T7)     | Add bootProgress defaults + non-positive
+#                                 poweroffTimeoutSeconds rejection tests.
+# 2026-05-18    | Plan (SS-T2)  | Add smoothingSec/smoothingPollSec defaults +
+#                                 non-positive smoothingSec rejection test;
+#                                 assert confirm* deprecated alias still
+#                                 resolves (additive, no broken intermediate).
+# 2026-05-19    | Plan (SS-T5)  | T2 alias DEATH: assertion flipped to assert
+#                                 confirm* are GONE from cfg (the stated
+#                                 death date arrived; rename completed).
 # ================================================================================
 ################################################################################
 
@@ -770,4 +779,86 @@ class TestHomeNetworkConfig:
             validator.validate(config)
 
         assert 'pi.homeNetwork.serverPingPath' in excInfo.value.missingFields
+
+
+def _baseCfg():
+    return {"protocolVersion": "1", "schemaVersion": "1", "deviceId": "d",
+            "pi": {}, "server": {}}
+
+
+def test_bootProgress_defaultsApplied():
+    cfg = ConfigValidator().validate(_baseCfg())
+    bp = cfg["pi"]["bootProgress"]
+    assert bp["filePath"] == "data/boot_progress"
+    assert bp["nasArchiveEnabled"] is True
+    assert bp["maxTrailBytes"] == 65536
+    assert cfg["pi"]["shutdown"]["poweroffTimeoutSeconds"] == 30
+
+
+def test_bootProgress_rejectsNonPositiveTimeout():
+    cfg = _baseCfg()
+    cfg["pi"] = {"shutdown": {"poweroffTimeoutSeconds": 0}}
+    with pytest.raises(ConfigValidationError):
+        ConfigValidator().validate(cfg)
+
+
+def test_powerWatch_defaults_applied():
+    cfg = ConfigValidator().validate(_baseCfg())
+    pw = cfg["pi"]["powerWatch"]
+    assert pw["perTaskTimeoutSec"] == 20
+    assert pw["totalWindowCapSec"] == 45
+    assert pw["vcellFloorVolts"] == 3.50
+    assert pw["poweroffTimeoutSec"] == 30
+
+
+def test_powerWatch_rejectsNonPositiveTimeout():
+    cfg = _baseCfg()
+    cfg["pi"] = {"powerWatch": {"perTaskTimeoutSec": 0}}
+    with pytest.raises(ConfigValidationError):
+        ConfigValidator().validate(cfg)
+
+
+def test_powerWatch_rejectsVcellFloorOutOfRange():
+    cfg = _baseCfg()
+    cfg["pi"] = {"powerWatch": {"vcellFloorVolts": 2.5}}
+    with pytest.raises(ConfigValidationError):
+        ConfigValidator().validate(cfg)
+
+
+def test_validate_powerWatch_appliesSmoothingDefaults_andRejectsNonPositive():
+    """SS-T2/T5: canonical smoothingSec=5 / smoothingPollSec=1 are the live
+    config (smoothingSec is the in-V1 safety property, spec sec 3 -- a
+    power-LOST reading must hold continuously this long before the shutdown
+    window opens). The T2 confirm* deprecated alias DIED at SS-T5 (its
+    stated death date) now that __main__.py / controller consume the
+    canonical names; the keys are GONE from DEFAULTS + validation.
+    Non-positive smoothingSec is rejected like the other powerWatch time
+    bounds."""
+    cfg = ConfigValidator().validate(_baseCfg())
+    pw = cfg["pi"]["powerWatch"]
+    assert pw["smoothingSec"] == 5
+    assert pw["smoothingPollSec"] == 1
+    # T2 alias is DEAD as of SS-T5 -- confirm* must NOT resolve anymore
+    # (the rename completed; one name per fact, SSOT after the migration).
+    assert "confirmWindowSec" not in pw
+    assert "confirmPollSec" not in pw
+
+    bad = _baseCfg()
+    bad["pi"] = {"powerWatch": {"smoothingSec": 0}}
+    with pytest.raises(ConfigValidationError):
+        ConfigValidator().validate(bad)
+
+
+def test_validate_powerWatch_uiPollSec_defaultAndRejectsNonPositive():
+    """SS-T4 B1: the UI power-source poll cadence (the PowerSourceProvider ->
+    PowerMonitor bridge thread in lifecycle) is a validated config param, never
+    a literal -- zero magic numbers. Default 2s; non-positive rejected like the
+    other powerWatch time bounds."""
+    cfg = ConfigValidator().validate(_baseCfg())
+    assert cfg["pi"]["powerWatch"]["uiPollSec"] == 2
+
+    bad = _baseCfg()
+    bad["pi"] = {"powerWatch": {"uiPollSec": 0}}
+    with pytest.raises(ConfigValidationError):
+        ConfigValidator().validate(bad)
 

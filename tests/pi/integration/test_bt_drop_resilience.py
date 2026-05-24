@@ -174,17 +174,18 @@ def test_adapterUnreachable_completeFlap_resumesWithoutExiting(freshDb):
     assert conn.disconnectCalls == 1
     assert conn.reconnectCalls == 1
 
-    # Flap timeline in connection_log -- bt_disconnect first, then
-    # (adapter_wait -> reconnect_attempt) x 3, then reconnect_success.
+    # Flap timeline in connection_log.  US-340b (CIO 2026-05-13):
+    # mobile-pattern dedup -- the (adapter_wait -> reconnect_attempt)
+    # iteration pair logs ONCE per outage instead of once per iteration.
+    # State-change events (bt_disconnect, reconnect_success) always log.
+    # The retryCount on reconnect_success still reflects the iteration
+    # number where the probe succeeded (3 here), so the outage's loop
+    # duration stays observable from the final success row.
     events = _readConnectionLogEvents(freshDb)
     assert events == [
         (EVENT_BT_DISCONNECT, 0),
         (EVENT_ADAPTER_WAIT, 1),
         (EVENT_RECONNECT_ATTEMPT, 1),
-        (EVENT_ADAPTER_WAIT, 2),
-        (EVENT_RECONNECT_ATTEMPT, 2),
-        (EVENT_ADAPTER_WAIT, 3),
-        (EVENT_RECONNECT_ATTEMPT, 3),
         (EVENT_RECONNECT_SUCCESS, 3),
     ]
 

@@ -1,8 +1,8 @@
 {
   "$schema": "Eclipse OBD-II PMO Backlog v1.0",
   "project": "Eclipse OBD-II Performance Monitoring System",
-  "lastUpdated": "2026-05-05",
-  "updatedBy": "Marcus (PM, Sprint 25 close hygiene -- Bucket A audit)",
+  "lastUpdated": "2026-05-11",
+  "updatedBy": "Marcus (PM, Sprint 32 / V0.27.6 deploy session)",
   "description": "Hierarchical backlog: Epic > Feature (B-item) > Story (US-item). Single source of truth for all project work.",
   "epics": [
     {

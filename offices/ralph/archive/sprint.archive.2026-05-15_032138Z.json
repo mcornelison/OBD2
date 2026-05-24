@@ -1,0 +1,270 @@
+{
+  "$schema": "Sprint Contract v1.0 -- see docs/superpowers/specs/2026-04-14-sprint-contract-design.md",
+  "sprint": "Sprint 36 -- V0.27.10 Bug Fixes (I-033 + I-034 + I-035 from Drive 12 pharmacy-run + CIO mid-sprint connection_log dedup add)",
+  "spec": "offices/pm/issues/I-033-bt-no-reconnect-after-engine-cycle.md + offices/pm/issues/I-034-sqlite-disk-io-lockup-on-long-uptime.md + offices/pm/issues/I-035-wifi-soft-off-after-server-disconnect.md",
+  "backlogItem": "Bug-fix sprint #9 in the V0.27 chain. Drive 12 pharmacy-run 2026-05-13 surfaced 3 P1 bugs (BT-no-reconnect / SQLite disk-I/O / WiFi soft-off). CIO added US-340b mid-sprint (connection_log state-change-dedup, ~99% row-volume reduction). Branched from sprint/sprint35-bugfixes-V0.27.9 per chain-end-merge rule.",
+  "createdBy": "Marcus (PM) -- retroactive contract generation 2026-05-14 Session 34 closeout; Ralph implemented from 3 inbox notes directly. See feedback_pm_skip_ralph_handoff_notes.md.",
+  "createdAt": "2026-05-13",
+  "testBaseline": {
+    "fastSuite": 4247,
+    "fullSuite": 4247,
+    "ruffErrors": 0,
+    "note": "Post-V0.27.9 baseline. Ralph reports 285 tests pass cumulative no-regression run for Sprint 36; lint clean; red-green-revert-green TDD verified per fix per Ralph's `2026-05-14-from-ralph-v028-backlog-research-findings.md` PM inbox note."
+  },
+  "sprintNotes": [
+    "GOAL: Fix 3 P1 bugs surfaced by Drive 12 pharmacy-run 2026-05-13 plus one CIO mid-sprint dedup add.",
+    "CONTRACT GENERATION: This sprint.json was generated RETROACTIVELY 2026-05-14 from 3 inbox notes (offices/ralph/inbox/2026-05-13-from-marcus-us338/339/340-*.md) and Ralph's 2026-05-14 V0.27.10-ready handoff note. Original sprint ran in 'interactive mode' without a sprint.json on disk (Session 33 'one-off' decision; reverted by CIO Session 34).",
+    "RALPH SHIPPED 4 STORIES @ commit 6184a7f on sprint/sprint36-bugfixes-V0.27.10: US-338 (I-033 BT-reconnect fix direction B), US-339 (I-034 fd-leak fix via contextlib.closing), US-340 (I-035 HTTP-retry waste via hasRouteToServer() gate), US-340b (CIO mid-sprint add -- connection_log state-change-dedup).",
+    "IRL VALIDATION pending CIO drills post-deploy (4 gates per Ralph's PM note + Drive 12 retest + Drain 18+; see validation.bigDefinitionOfDone below).",
+    "OUTCOME branches per CIO 2026-05-14 directive: all green -> /sprint-validated + /chain-validated V0.27 chain to main + cut V0.28.0; any red -> V0.27.11 bug-fix sprint."
+  ],
+  "stories": [
+    {
+      "id": "US-338",
+      "title": "I-033 BT no-reconnect after engine cycle -- heartbeat-fail spawns retry",
+      "size": "M",
+      "intent": "Drive 12 pharmacy-run 2026-05-13 leg-2 lost because Pi software did not initiate a fresh connect_attempt on the second engine-on. Per Spool tech note (offices/ralph/inbox/2026-05-13-from-spool-bt-no-reconnect-after-engine-cycle.md), implement fix direction B: heartbeat-fail handler kicks a fresh _performConnect cycle on adapter-present-but-session-stale. Mode-agnostic (works in both car-fuse-box and wall-power-debug). connection_log records a reconnect_attempt event per cycle for auditability.",
+      "priority": "high",
+      "status": "passed",
+      "dependencies": [],
+      "scope": {
+        "filesToTouch": [
+          "src/pi/obdii/orchestrator/connection_recovery.py (UPDATE -- _handleReconnectionFailure spawns daemon runReconnectHeartbeat with exponential backoff up to 15-min ceiling)",
+          "src/pi/obdii/obd_connection.py (UPDATE -- supporting hooks)",
+          "tests/test_orchestrator_connection_recovery_failure.py (UPDATE -- new TestUS338PostFailureHeartbeat class; all 8 tests green)"
+        ],
+        "filesToRead": [
+          "offices/pm/issues/I-033-bt-no-reconnect-after-engine-cycle.md",
+          "offices/ralph/inbox/2026-05-13-from-marcus-us338-i033-bt-no-reconnect-after-engine-cycle.md",
+          "offices/ralph/inbox/2026-05-13-from-spool-bt-no-reconnect-after-engine-cycle.md",
+          "src/pi/obdii/reconnect_loop.py",
+          "src/pi/obdii/orchestrator/core.py"
+        ],
+        "doNotTouch": [
+          "src/pi/obdii/obd_connection.py V0.27.1 thread-safety + isConnectInFlight (unchanged)",
+          "AC-blip-trigger paths (false-fires in wall-power-debug; explicitly DEPRECATED fix direction A per Spool)"
+        ]
+      },
+      "groundingRefs": [
+        {
+          "value": "Drive 12 leg-2 lost (connection_log silent for 30+ min post drive_end despite power_log AC-blips at engine-on)",
+          "unit": "production journal",
+          "source": "Spool 2026-05-13 PM note + Drive 12 forensic chat",
+          "owner": "Marcus + Spool"
+        }
+      ],
+      "acceptance": [
+        "Pre-flight: rg _performConnect|_handleConnection|reconnect|heartbeat src/pi/obdii/ -- map current reconnect lifecycle",
+        "Fix: heartbeat-fail handler kicks fresh _performConnect cycle on stale-session detection; reconnect respects existing US-325 exponential backoff (V0.27.6)",
+        "DriveDetector re-arm: on successful reconnect, DriveDetector mints fresh drive_id on next engine-on",
+        "Observability: every connect_attempt writes a row to connection_log",
+        "Synthetic regression: paired BT + drive_start -> cut adapter power -> wait > 5s -> restore -> assert connect_attempt row in connection_log within 60s AND second drive_start within 90s. Test FAILS pre-fix."
+      ],
+      "verification": [
+        "pytest tests/pi/obdii/test_reconnect_after_engine_cycle.py -v",
+        "pytest tests/pi/obdii/ tests/pi/integration/ -m 'not slow' -q",
+        "ruff check src/pi/obdii/reconnect_loop.py src/pi/obdii/orchestrator/lifecycle.py tests/pi/obdii/test_reconnect_after_engine_cycle.py",
+        "python offices/pm/scripts/sprint_lint.py"
+      ],
+      "invariants": [
+        "Synthetic regression FAILS pre-fix (no reconnect attempt logged for 60s post drive_end)",
+        "V0.27.1 thread-safety guarantees unchanged",
+        "I-025 / US-325 exponential backoff behavior preserved when adapter genuinely absent"
+      ],
+      "feedback": {
+        "filesActuallyTouched": "See git diff at commit 6184a7f -- src/pi/obdii/reconnect_loop.py + src/pi/obdii/orchestrator/lifecycle.py + tests/pi/obdii/test_*.py",
+        "grounding": "Spool tech note + Drive 12 forensic timeline + Ralph's 285-test cumulative no-regression run"
+      },
+      "passes": true
+    },
+    {
+      "id": "US-339",
+      "title": "I-034 SQLite disk-I/O on long uptime -- fd-leak fix in pushDelta",
+      "size": "M",
+      "intent": "After ~38 min uptime, long-lived eclipse-obd process threw sqlite3.OperationalError: disk I/O error on every sync_log read + realtime_data write. Database on disk fine (PRAGMA integrity_check ok). Root cause = file-descriptor leak from per-sweep sqlite3.connect() calls without explicit close. Fix: wrap with contextlib.closing in pushDelta + pushDriveCounter.",
+      "priority": "high",
+      "status": "passed",
+      "dependencies": [],
+      "scope": {
+        "filesToTouch": [
+          "src/pi/sync/client.py (UPDATE -- contextlib.closing wraps sqlite3.connect() in pushDelta + pushDriveCounter; the with-as gotcha that commits but does NOT close)",
+          "tests/pi/sync/test_sync_client.py (NEW -- synthetic harness asserts fd count stays flat across N sweeps)"
+        ],
+        "filesToRead": [
+          "offices/pm/issues/I-034-sqlite-disk-io-lockup-on-long-uptime.md",
+          "offices/ralph/inbox/2026-05-13-from-marcus-us339-i034-sqlite-disk-io-lockup.md",
+          "src/pi/sync/client.py",
+          "src/pi/data/sync_log.py"
+        ],
+        "doNotTouch": [
+          "WAL mode configuration (orthogonal)",
+          "Server-side schema (out of scope)"
+        ]
+      },
+      "groundingRefs": [
+        {
+          "value": "Drive 12 session: disk I/O error flood at 19:38 UTC (38 min after PID 1181 boot); error continued every heartbeat tick (5-10s) until service restart",
+          "unit": "production journal",
+          "source": "Drive 12 PM analysis + journalctl walk",
+          "owner": "Marcus"
+        }
+      ],
+      "acceptance": [
+        "Pre-flight: rg 'sqlite3.connect|isolation_level|wal_checkpoint|OperationalError' src/pi/ -- map all DB connection lifecycles",
+        "Fix: contextlib.closing eliminates the ~13-fd-per-sweep leak in pushDelta + pushDriveCounter",
+        "Synthetic regression: N-sweep harness asserts fd count stays flat ~5-10 (not climbing); FAILS pre-fix",
+        "Production-validated test: harness runs equivalent of 6h+ idle soak in simulated time"
+      ],
+      "verification": [
+        "pytest tests/pi/sync/test_fd_leak.py -v",
+        "pytest tests/pi/sync/ -m 'not slow' -q",
+        "ruff check src/pi/sync/client.py tests/pi/sync/test_fd_leak.py",
+        "python offices/pm/scripts/sprint_lint.py"
+      ],
+      "invariants": [
+        "Synthetic harness FAILS pre-fix (fd count climbs monotonically)",
+        "Sync correctness unchanged (no behavior change beyond resource cleanup)"
+      ],
+      "feedback": {
+        "filesActuallyTouched": "See git diff at commit 6184a7f -- src/pi/sync/client.py + tests/pi/sync/test_*.py",
+        "grounding": "Drive 12 journal flood + Ralph's 285-test cumulative no-regression run"
+      },
+      "passes": true
+    },
+    {
+      "id": "US-340",
+      "title": "I-035 drive-time HTTP retry waste -- hasRouteToServer gate",
+      "size": "M",
+      "intent": "Drive 12 session: ~84s of doomed TCP SYNs per ACTIVE-mode cadence tick when server unreachable. Plus CIO observed manual WiFi re-enable required post-drive (WiFi soft-off after server disconnect). Fix: SyncClient.hasRouteToServer() probe + orchestrator gate skips pushAllDeltas when no route. Reduces drive-time HTTP retry storms that may also trigger NetworkManager auto-disable behavior.",
+      "priority": "high",
+      "status": "passed",
+      "dependencies": [],
+      "scope": {
+        "filesToTouch": [
+          "src/pi/sync/client.py (UPDATE -- hasRouteToServer() method via socket probe)",
+          "src/pi/obdii/orchestrator/core.py (UPDATE -- _maybeTriggerIntervalSync gates on hasRouteToServer())",
+          "tests/pi/orchestrator/test_sync_wiring.py (NEW -- synthetic regression for the no-route gate)"
+        ],
+        "filesToRead": [
+          "offices/pm/issues/I-035-wifi-soft-off-after-server-disconnect.md",
+          "offices/ralph/inbox/2026-05-13-from-marcus-us340-i035-wifi-soft-off-after-disconnect.md",
+          "src/pi/sync/client.py",
+          "src/pi/obdii/orchestrator/core.py"
+        ],
+        "doNotTouch": [
+          "NetworkManager system config (out of scope)",
+          "Server-side endpoints"
+        ]
+      },
+      "groundingRefs": [
+        {
+          "value": "Drive 12 session: ~84s of doomed TCP SYNs per ACTIVE-mode cadence tick during 8 min server-unreachable window",
+          "unit": "production journal",
+          "source": "Drive 12 PM analysis",
+          "owner": "Marcus"
+        }
+      ],
+      "acceptance": [
+        "Pre-flight: review Ralph commit 6184a7f for US-340 actually-touched files vs scope.filesToTouch above",
+        "hasRouteToServer() returns False when server unreachable (timeout < 1s); True when reachable",
+        "_maybeTriggerIntervalSync skips pushAllDeltas when hasRouteToServer() is False",
+        "Synthetic regression: mocked unreachable server -> assert pushAllDeltas not called",
+        "Production-equivalent test: 10-min drive simulation with server unreachable shows near-zero connection_log + sync_history rows"
+      ],
+      "verification": [
+        "pytest tests/pi/sync/test_has_route_to_server.py -v",
+        "pytest tests/pi/sync/ tests/pi/obdii/ -m 'not slow' -q",
+        "ruff check src/pi/sync/client.py src/pi/obdii/orchestrator/core.py tests/pi/sync/test_has_route_to_server.py",
+        "python offices/pm/scripts/sprint_lint.py"
+      ],
+      "invariants": [
+        "Synthetic regression FAILS pre-fix (pushAllDeltas called despite no route)",
+        "Recovery: once route restored, sync resumes within next heartbeat cycle"
+      ],
+      "feedback": {
+        "filesActuallyTouched": "See git diff at commit 6184a7f -- src/pi/sync/client.py + src/pi/obdii/orchestrator/core.py + tests/pi/sync/test_*.py",
+        "grounding": "Drive 12 journal flood + Ralph's 285-test cumulative no-regression run"
+      },
+      "passes": true
+    },
+    {
+      "id": "US-340-b",
+      "title": "connection_log state-change-only dedup (CIO mid-sprint add)",
+      "size": "S",
+      "intent": "CIO mid-sprint add 2026-05-14. connection_log was writing ~2000 rows/day during sustained adapter outages (one row per heartbeat retry). Dedup: only write a connection_log row when the connection STATE changes (not every retry tick). Drops sustained-outage volume to ~5-10 rows total.",
+      "priority": "medium",
+      "status": "passed",
+      "dependencies": [
+        "US-338"
+      ],
+      "scope": {
+        "filesToTouch": [
+          "src/pi/data/connection_logger.py (NEW -- dedup connection_log writes by tracking last-state-emitted)",
+          "tests/pi/data/test_connection_log_event_types.py (NEW -- synthetic regression covers state-change dedup contract)",
+          "tests/pi/integration/test_bt_drop_resilience.py (UPDATE -- pre-existing US-211 assertion updated to match the dedup contract; called out inline per Ralph PM note)"
+        ],
+        "filesToRead": [
+          "offices/ralph/inbox/2026-05-14-from-ralph-v028-backlog-research-findings.md (mid-sprint add framing)",
+          "src/pi/obdii/reconnect_loop.py",
+          "src/pi/data/connection_log.py"
+        ],
+        "doNotTouch": [
+          "connection_log schema (no migration needed; just write fewer rows)"
+        ]
+      },
+      "groundingRefs": [
+        {
+          "value": "~2000 connection_log rows/day during sustained adapter outage pre-fix; ~5-10 rows total post-fix",
+          "unit": "row count",
+          "source": "Ralph PM note 2026-05-14",
+          "owner": "Ralph + CIO"
+        }
+      ],
+      "acceptance": [
+        "Pre-flight: review Ralph commit 6184a7f for US-340b actually-touched files vs scope.filesToTouch above",
+        "Dedup: connection_log row written only on state change (connect_attempt -> connect_failure -> connect_success) -- not per retry tick",
+        "Synthetic regression: 100 retry ticks during sustained outage emit < 10 connection_log rows total",
+        "US-211 integration test updated to match new dedup contract (called out inline per Ralph's PM note)"
+      ],
+      "verification": [
+        "pytest tests/pi/obdii/test_connection_log_dedup.py -v",
+        "pytest tests/pi/obdii/ tests/pi/integration/test_us_211_*.py -m 'not slow' -q",
+        "ruff check src/pi/obdii/reconnect_loop.py tests/pi/obdii/test_connection_log_dedup.py",
+        "python offices/pm/scripts/sprint_lint.py"
+      ],
+      "invariants": [
+        "Pre-existing US-211 contract preserved EXCEPT for the dedup-related assertion (which is the intended change)",
+        "State transitions still always emit a row (never lose a state transition)"
+      ],
+      "feedback": {
+        "filesActuallyTouched": "See git diff at commit 6184a7f -- src/pi/obdii/reconnect_loop.py + tests/pi/obdii/test_*.py + tests/pi/integration/test_us_211_*.py",
+        "grounding": "Ralph PM note 2026-05-14 + CIO mid-sprint add directive"
+      },
+      "passes": true
+    }
+  ],
+  "validation": {
+    "bigDefinitionOfDone": [
+      "US-338 IRL: 2-leg pharmacy pattern post-deploy -> drives 13+14 both materialize with > 100 rows + correct drive_id",
+      "US-339 IRL: 6h+ bench soak post-deploy -> zero disk-I/O-error lines in journal; fd count for eclipse-obd PID stays flat ~5-10",
+      "US-340 IRL: 10-min drive post-deploy with server unreachable mid-drive -> server-side connection_log + sync_history row counts during drive near-zero",
+      "US-340b IRL: post-deploy bench soak with sustained adapter outage -> connection_log row volume ~5-10 total (not 2000)",
+      "Drive 12 retest (V0.27 chain gate): server drive_summary analytics fields populated within 30s of drive_end; Approach-1 drive_statistics rows for canonical PIDs",
+      "Drain 18+ (V0.27 chain gate): clean startup_log with prior_boot_clean=1 after V0.27.7 race-guard + V0.27.8 TZ + IO-class stress"
+    ],
+    "validationMethod": "CIO real-hardware drills post-deploy on chi-eclipse-01 + chi-srv-01; PM cross-checks via mysql + ssh queries; Spool runs Drain 18+ when battery rests >= 3.9V VCELL",
+    "validatesFeatures": [
+      "F-001",
+      "F-002",
+      "F-004",
+      "F-005",
+      "F-007",
+      "F-008",
+      "F-011",
+      "F-012"
+    ],
+    "currentVersion": "V0.27.10",
+    "validatedAt": null,
+    "validatedBy": null
+  }
+}

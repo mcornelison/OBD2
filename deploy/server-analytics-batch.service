@@ -1,0 +1,74 @@
+# ==============================================================================
+# File:    server-analytics-batch.service
+# Purpose: Nightly server-side drive_summary (+ drive_statistics when US-351
+#          lands) recompute from raw realtime_data.  B-104 Step 1a.
+# Author:  Rex (Ralph Agent)
+# Created: 2026-05-21 -- US-350 / Sprint 41 V0.27.17
+#
+# Why
+# ---
+# B-104 architectural shift: Pi = telemetry emitter; server = analytics
+# authority.  This unit replaces the V0.27.7-V0.27.16 sync-receipt trigger
+# seam (which shipped three cycles of false-pass behavior under US-326 /
+# US-348 because the Pi-side drive-end signal does not fire on sequencer-
+# driven termination).  The compute path reads raw realtime_data MIN/MAX/
+# COUNT directly and is structurally invariant to Pi-side trigger gaps.
+#
+# Pairing
+# -------
+# Driven by server-analytics-batch.timer (nightly at 03:30 chi-srv-01 local).
+# Type=oneshot: each fire spins up a fresh Python interpreter, runs the
+# recompute CLI in --all-stale mode (every drive_summary row whose
+# start_time or row_count is NULL), and exits.  Idempotent: re-running over
+# already-computed drives produces identical analytics output.
+#
+# Installation: auto-wired into deploy/deploy-server.sh
+# step_install_analytics_batch_unit() (sync-if-changed install of .service +
+# .timer + daemon-reload-on-change + enable --now).
+#
+# Verify:
+#   systemctl --user list-timers server-analytics-batch.timer
+#   journalctl -u server-analytics-batch.service -n 50
+# ==============================================================================
+
+[Unit]
+Description=OBD2v2 server-side drive analytics recompute (US-350 / B-104 Step 1a)
+Documentation=file:///mnt/projects/O/OBD2v2/src/server/cli/recompute_drive_analytics.py
+After=network.target mariadb.service obd-server.service
+Wants=mariadb.service
+
+# Flap protection -- the batch is daily; if it fails it can wait for the
+# next fire rather than hammering the DB.
+StartLimitIntervalSec=86400
+StartLimitBurst=3
+
+[Service]
+Type=oneshot
+
+User=mcornelison
+
+WorkingDirectory=/mnt/projects/O/OBD2v2
+
+# Environment from the .env (DATABASE_URL).  Same EnvironmentFile the
+# main obd-server.service reads from; keeps secret rotation in one place.
+EnvironmentFile=/mnt/projects/O/OBD2v2/.env
+
+Environment=PYTHONPATH=/mnt/projects/O/OBD2v2
+Environment=PYTHONUNBUFFERED=1
+
+ExecStart=/home/mcornelison/obd2-server-venv/bin/python -m src.server.cli.recompute_drive_analytics --all-stale
+
+# A failed batch MUST NOT page the operator; the next fire retries.  The
+# timer continues to drive subsequent fires regardless of any single result.
+SuccessExitStatus=0
+
+# Resource caps so a runaway batch cannot starve the live /sync route.
+MemoryMax=1G
+CPUQuota=50%
+
+# Lower I/O + CPU priority -- batch yields to interactive workloads.
+IOSchedulingClass=idle
+Nice=10
+
+[Install]
+WantedBy=multi-user.target

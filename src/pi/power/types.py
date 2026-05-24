@@ -21,6 +21,9 @@
 #                               for the PowerDownOrchestrator -> power_log
 #                               write path (forensic data trail companion
 #                               to battery_health_log).
+# 2026-05-18    | Plan (P2-T9) | Relocated PowerLogWriter type alias here from
+#                               the deleted power/orchestrator.py so the kept
+#                               power_log writer path keeps its type surface.
 # ================================================================================
 ################################################################################
 """
@@ -35,6 +38,7 @@ This module contains all type definitions for power monitoring:
 All types have zero project dependencies (stdlib only) to avoid circular imports.
 """
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
@@ -71,6 +75,18 @@ POWER_LOG_EVENT_POWER_SAVING_DISABLED = "power_saving_disabled"
 POWER_LOG_EVENT_STAGE_WARNING = "stage_warning"
 POWER_LOG_EVENT_STAGE_IMMINENT = "stage_imminent"
 POWER_LOG_EVENT_STAGE_TRIGGER = "stage_trigger"
+
+
+# ================================================================================
+# Type Aliases
+# ================================================================================
+
+# (eventType, vcell) -> None.  obdii/orchestrator/lifecycle._createPowerLogWriter
+# builds a closure over the power_log writer and hands it to HardwareManager so
+# each power event leaves a forensic row in ``power_log``.  Relocated here from
+# the deleted power/orchestrator.py (P2-T9) -- this is data-collection plumbing,
+# independent of the (now removed) in-app shutdown ladder.
+PowerLogWriter = Callable[[str, float], None]
 
 
 # ================================================================================

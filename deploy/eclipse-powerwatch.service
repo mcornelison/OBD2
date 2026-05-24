@@ -1,0 +1,51 @@
+# ==============================================================================
+# File:    eclipse-powerwatch.service
+# Purpose: Phase-2 power-watch -- a minimal, ISOLATED long-running service
+#          (separate process from eclipse-obd) that, on sustained-on-battery,
+#          runs a hard-bounded best-effort pre-shutdown pipeline (today:
+#          server-sync) then unconditional graceful `systemctl poweroff`.
+#          Power-return during the window aborts + resumes. Phase-1's proven
+#          EEPROM/X1209 path auto-boots the Pi when power returns.
+# Author:  (implementation plan 2026-05-17)
+# Created: 2026-05-17 -- Sprint 38 Phase-2 T6 (bounded pre-shutdown pipeline)
+#
+# Why a separate service
+# ----------------------
+# Spec sec 6.1: shutdown DECIDE+EXECUTE must not share the data app's failure
+# domain. This is tens of lines doing nothing else, so the OBD app's I/O storm
+# cannot wedge it. The actual poweroff is the OS's job.
+#
+# Import-path guard (MANDATORY -- this was the V0.27.12-DOA root cause,
+# 2026-05-17). PYTHONPATH MUST contain BOTH:
+#   - the repo root  (so `python -m src.pi.power.power_watch` resolves)
+#   - <repo>/src     (so the project-wide bare `from pi.X` / `from common.X`
+#                      convention resolves transitively -- 48 such imports
+#                      across src/). This mirrors src/pi/main.py:46-57 and
+#                      tests/conftest exactly. With repo-root ONLY, the import
+#                      chain raises `ModuleNotFoundError: No module named 'pi'`.
+#   Do NOT "simplify" PYTHONPATH to repo-root.
+#
+# Restart=always: a power-watch that dies must come back -- losing the watcher
+# silently re-creates the original "no graceful shutdown" failure.
+#
+# Installation (manual parity reference for hand drills):
+#   sudo cp deploy/eclipse-powerwatch.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now eclipse-powerwatch.service
+# ==============================================================================
+
+[Unit]
+Description=Eclipse OBD Phase-2 power-watch (bounded pre-shutdown pipeline)
+After=local-fs.target
+
+[Service]
+Type=simple
+User=mcornelison
+WorkingDirectory=/home/mcornelison/Projects/Eclipse-01
+Environment=PYTHONPATH=/home/mcornelison/Projects/Eclipse-01:/home/mcornelison/Projects/Eclipse-01/src
+ExecStart=/home/mcornelison/obd2-venv/bin/python -m src.pi.power.power_watch
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

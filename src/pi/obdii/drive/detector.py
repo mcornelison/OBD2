@@ -41,6 +41,42 @@
 #                               _armDriveSummaryDeferInsert; _maybeBackfill
 #                               DriveSummary renamed and rewritten as
 #                               _maybeProgressDriveSummary (two-phase loop).
+# 2026-05-21    | Rex (US-349) | Sprint 40 / V0.27.16, I-040 / US-328-redo:
+#                               wire the new DriveStatisticsRecorder into
+#                               _endDrive.  V0.27.7 US-328 shipped the
+#                               drive_statistics schema with no writer
+#                               (Option C "table only", explicit in
+#                               database_schema.py:642); drives 11-18 incl.
+#                               fresh real drives 17+18 (2026-05-20) hold
+#                               zero drive_statistics rows.  New constructor
+#                               kwarg + setDriveStatisticsRecorder() setter
+#                               mirror the US-206 SummaryRecorder shape.
+#                               New _recordDriveStatistics() helper runs
+#                               between _triggerAnalysis (uses live drive_id)
+#                               and _closeDriveId (clears it).  Wrapped in
+#                               try/except so writer fault never blocks
+#                               drive_end -- detector is SSOT for drive_state,
+#                               not analytics.  Wiring lives in lifecycle
+#                               mixin's _initializeDriveStatisticsRecorder.
+# 2026-05-21    | Rex (US-351) | Sprint 41 / V0.27.17, B-104 Step 1b: REMOVE
+#                               the US-349 driveStatisticsRecorder kwarg +
+#                               setter + _recordDriveStatistics helper +
+#                               _endDrive call site.  Pi-side
+#                               drive_statistics table retired entirely
+#                               (CIO 2026-05-21); server is now sole writer
+#                               of drive_statistics rows (compute path:
+#                               src/server/analytics/drive_statistics_compute).
+#                               Drive boundary EVENTS (drive_start /
+#                               drive_end connection_log + drive_summary
+#                               event-log fields) are preserved for Pi
+#                               diagnostics per CIO ratification -- this
+#                               story removes the analytics writer wiring
+#                               only.  Argus's RCA on the V0.27.16 redo
+#                               (DriveDetector drive-end signal does not
+#                               fire on sequencer-driven termination) is
+#                               structurally moot: server reads raw
+#                               realtime_data MIN/MAX/COUNT directly,
+#                               needs no marker.
 # ================================================================================
 ################################################################################
 """
@@ -156,6 +192,16 @@ class DriveDetector:
                 detector pulls the cached snapshot here so the
                 summary recorder never triggers new ECU polls
                 (US-206 Invariant #1).
+
+        Note (US-351 / B-104 Step 1b retirement): the V0.27.16 US-349
+        ``driveStatisticsRecorder`` kwarg + setter + ``_recordDriveStatistics``
+        helper + ``_endDrive`` call site are GONE.  Server is the sole writer
+        of ``drive_statistics`` rows now (compute path at
+        :mod:`src.server.analytics.drive_statistics_compute`).  Drive boundary
+        EVENTS (drive_start / drive_end connection_log rows + drive_summary
+        event-log fields like ``drive_start_timestamp``,
+        ``ambient_temp_at_start_c``, ``starting_battery_v``,
+        ``data_source``) are preserved per CIO 2026-05-21 ratification.
         """
         self._statisticsEngine = statisticsEngine
         self._database = database
@@ -548,6 +594,16 @@ class DriveDetector:
         # Check if RPM is at or below end threshold
         rpmAtOrBelowEnd = rpm <= self._config.driveEndRpmThreshold
 
+        # US-319 (B-071): forensic instrumentation -- emit one INFO line
+        # per RPM tick with state + threshold-check context.  Stable
+        # journalctl-grep token "FORENSIC drive_check".
+        logger.info(
+            "FORENSIC drive_check | RPM=%s | SPEED=%s | state=%s | "
+            "above_start=%s | at_or_below_end=%s | drive_id=%s",
+            rpm, self._lastSpeedValue, self._driveState.value,
+            rpmAboveStart, rpmAtOrBelowEnd, getCurrentDriveId(),
+        )
+
         # Update peak RPM if driving
         if self._currentSession and rpm > self._currentSession.peakRpm:
             self._currentSession.peakRpm = rpm
@@ -618,6 +674,13 @@ class DriveDetector:
 
         self._driveState = newState
         logger.debug(f"Drive state: {oldState.value} -> {newState.value}")
+        # US-319 (B-071): forensic INFO line at every state transition.
+        # Stable journalctl-grep token "FORENSIC drive_state_transition".
+        # Discriminates I-019 / US-311 warm-restart hypothesis on Drive 11+.
+        logger.info(
+            "FORENSIC drive_state_transition | from=%s | to=%s | drive_id=%s",
+            oldState.value, newState.value, getCurrentDriveId(),
+        )
 
         # Trigger callback
         if self._onStateChange:
@@ -739,6 +802,13 @@ class DriveDetector:
             self._currentSession.analysisTriggered = True
             self._stats.analysesTriggered += 1
 
+        # US-351 / B-104 Step 1b: the V0.27.16 US-349 _recordDriveStatistics
+        # call site is GONE.  Server is sole writer of drive_statistics now
+        # via src/server/analytics/drive_statistics_compute (nightly batch
+        # + on-demand CLI).  Detector's responsibility ends at drive_end
+        # event logging + post-drive analysis trigger; analytics derivation
+        # is no longer the Pi's concern.
+
         # Add to history
         self._sessionHistory.append(self._currentSession)
 
@@ -779,19 +849,34 @@ class DriveDetector:
         self._transitionState(DriveState.STOPPED)
 
     def _triggerAnalysis(self) -> None:
-        """Trigger post-drive statistical analysis."""
+        """Trigger post-drive statistical analysis.
+
+        US-306: snapshot ``getCurrentDriveId()`` synchronously HERE,
+        before ``scheduleAnalysis`` spawns the background thread.
+        ``_endDrive`` calls ``_closeDriveId`` (clearing the singleton
+        to ``None``) immediately after this method returns, so a
+        thread that reads the singleton at write time would observe
+        ``None`` and stamp ``drive_id=NULL`` into the resulting
+        ``statistics`` rows -- exactly the production failure observed
+        on Drives 6+7 (chi-eclipse-01, 2026-05-08, 84 NULL rows).
+        """
         if not self._statisticsEngine:
             logger.debug("No statistics engine configured, skipping analysis")
             return
 
         try:
-            logger.info("Triggering post-drive statistical analysis")
+            currentDriveId = getCurrentDriveId()
+            logger.info(
+                f"Triggering post-drive statistical analysis "
+                f"(drive_id={currentDriveId})"
+            )
 
             # Schedule analysis to run immediately (0 delay)
             # This runs in a background thread to not block the detector
             self._statisticsEngine.scheduleAnalysis(
                 profileId=self._config.profileId,
-                delaySeconds=0
+                delaySeconds=0,
+                driveId=currentDriveId,
             )
 
         except Exception as e:

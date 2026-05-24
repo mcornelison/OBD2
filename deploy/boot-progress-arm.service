@@ -1,0 +1,56 @@
+# ==============================================================================
+# File:    boot-progress-arm.service
+# Purpose: Honest-instrument arm/reader.  Runs once at boot BEFORE the app:
+#          reads the prior breadcrumb trail -> derives the clean/crash verdict
+#          -> writes startup_log -> re-arms a fresh trail for this boot.
+# Author:  (implementation plan 2026-05-17)
+# Created: 2026-05-17 -- Sprint 38 T11 (honest boot-progress instrument)
+# Modified: 2026-05-17 -- V0.27.12-DOA hotfix: PYTHONPATH must also contain
+#           <repo>/src (project-wide bare `from pi.X` convention; mirrors
+#           src/pi/main.py:47-57). --nas-enabled removed (/mnt/projects/O is
+#           Chi-srv-01-only, unreachable from the Pi).
+#
+# Why
+# ---
+# This unit is the SOLE startup_log writer (the legacy journal-scan canary was
+# deleted in the T10 cutover).  It must run after the filesystem is available
+# (After=local-fs.target) and strictly Before=eclipse-obd.service so the
+# verdict for the prior boot is recorded and the trail re-armed before the app
+# starts emitting this boot's milestones.
+#
+# Import-path guard (MANDATORY -- this was the V0.27.12-DOA root cause,
+# 2026-05-17). PYTHONPATH MUST contain BOTH:
+#   - the repo root  (so `python -m src.pi.diagnostics.boot_progress` resolves)
+#   - <repo>/src     (so the project-wide bare `from pi.X` convention resolves;
+#                      the transitive obdii/display/alert/analysis import graph
+#                      uses it -- 48 such imports across src/).
+# This mirrors src/pi/main.py:47-57 and tests/conftest exactly. With the repo
+# root ONLY, the --arm import chain raises `ModuleNotFoundError: No module
+# named 'pi'` (caught fail-safe -> the verdict AND the startup_log schema
+# migration silently never run). Do NOT "simplify" PYTHONPATH to repo-root.
+#
+# NAS archival intentionally NOT enabled on the Pi: /mnt/projects/O/... is a
+# Chi-srv-01-only mount, unreachable from chi-eclipse-01 (CIO 2026-05-17).
+# --nas-enabled removed from ExecStart; the trail stays SD-local.
+#
+# Installation (manual parity reference for hand drills):
+#   sudo cp deploy/boot-progress-arm.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable boot-progress-arm.service
+# ==============================================================================
+
+[Unit]
+Description=Eclipse OBD boot-progress arm/reader (honest instrument)
+After=local-fs.target
+Before=eclipse-obd.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+User=mcornelison
+WorkingDirectory=/home/mcornelison/Projects/Eclipse-01
+Environment=PYTHONPATH=/home/mcornelison/Projects/Eclipse-01:/home/mcornelison/Projects/Eclipse-01/src
+ExecStart=/home/mcornelison/obd2-venv/bin/python -m src.pi.diagnostics.boot_progress --arm --file /home/mcornelison/Projects/Eclipse-01/data/boot_progress --db /home/mcornelison/Projects/Eclipse-01/data/obd.db
+
+[Install]
+WantedBy=multi-user.target

@@ -4,7 +4,21 @@
 
 This document describes the system architecture, technology decisions, and design patterns for the Eclipse OBD-II Performance Monitoring System.
 
-**Last Updated**: 2026-02-01
+**Last Updated**: 2026-05-21 (Sprint 41 / V0.27.17 — §10.7 amendment per
+PM Rule 10 design-gate DoD: documents the B-104 Step 1 data-pipeline
+architectural shift -- Pi = telemetry emitter; server = sole authority
+for derived analytics (drive_summary analytics columns + drive_statistics
+computed from raw realtime_data); Pi-side drive_statistics table retired
+entirely; trigger seam shifts from Pi-side drive-end signal to nightly
+batch + on-demand CLI. Atlas-gated; V0.27.17 IRL acceptance pending.)
+Prior: 2026-05-20 (Sprint 40 / V0.27.16 — §10.6 amendment per
+PM Rule 10 design-gate DoD: documents F-7 boot-grace latch defect + the
+level-based post-grace fix (US-344), and the F-8 boot-progress-finalize
+systemd-transaction-membership fix that restores the CLEAN_COMPLETE
+shutdown-classification instrument (US-345). Atlas-gated.)
+Prior: 2026-05-19 (SS-T9 — design-gate reconciliation:
+§2 power-source SSOT, §10.6 ShutdownSequencer supersedes PowerDownOrchestrator,
+§11 Wake-on-Power Pi 5 + X1209-HAT topology; resolves findings F-1/F-2/F-6.)
 **Author**: Michael Cornelison
 
 ---
@@ -94,41 +108,24 @@ This document describes the system architecture, technology decisions, and desig
 | Power | Geekworm X1209 UPS HAT | 18650 battery backup |
 | Monitoring | I2C | Battery voltage/SOC/charge-rate via MAX17048 fuel gauge at 0x36 |
 
-**Power-source detection (AC vs battery).** The MAX17048 fuel gauge has
-no AC-vs-battery sense register, and the Pi 5 PMIC `EXT5V_V` rail cannot
-be used either — the Geekworm X1209 regulates that rail to ~5 V in both
-wall-power and UPS-boost modes, so it looks identical whether the adapter
-is plugged in or the LiPo is carrying the load.
-`UpsMonitor.getPowerSource()` consumes two VCELL-only rules over a rolling
-60 s history buffer:
+**Power-source detection (SSOT).** The power-source fact ("is external/USB-C
+power present?") has exactly one authoritative provider: `PowerSourceProvider`
+(`src/pi/power/power_source_provider.py`), which wraps the X1209 PLD line on
+**BCM GPIO 6, digital, HIGH = power present** (vendor-confirmed: Geekworm
+X1209 wiki "AC power loss … detection via GPIO" + Suptronics official
+`pld.py`; no I2C in this path). The UI and the ShutdownSequencer both consume
+this one provider and differ only by policy (UI = instantaneous; sequencer =
+5 s smoothed).
 
-1. **Sustained-threshold rule (primary, US-235).** If VCELL has stayed
-   continuously below `vcellBatteryThresholdVolts` (default **3.95 V**)
-   for at least `vcellBatteryThresholdSustainedSeconds` (default
-   **30 s**), declare BATTERY. The threshold sits comfortably above the
-   LiPo discharge knee (~3.7 V) and below a healthy AC-fed float
-   (~4.10 V); 30 s of continuous sub-threshold data suppresses false
-   positives from voltage noise.
-2. **Slope rule (tuned secondary, US-235).** If the VCELL slope across
-   the rolling window is strictly below `vcellSlopeThresholdVoltsPerMinute`
-   (default **-0.005 V/min**, tuned from -0.02 V/min after Sprint 18
-   drain tests showed real drift was slower than the old threshold),
-   declare BATTERY.
-
-Either rule firing returns BATTERY. If neither fires AND there is
-decisive non-BATTERY evidence (most recent VCELL above threshold OR
-slope is computable and ≥ threshold), return EXTERNAL. Otherwise return
-the cached last source (EXTERNAL on first boot).
-
-Earlier designs used the MAX17048 CRATE register's polarity as the
-primary rule, but Spool's 4 drain tests across April 2026 confirmed
-CRATE returns 0xFFFF (disabled) on this chip variant — the rule never
-fired, leaving no way to detect wall-power loss. CRATE is still readable
-via `getChargeRatePercentPerHour()` for telemetry, but does not feed
-power-source detection. `EXT5V_V` via `vcgencmd pmic_read_adc EXT5V_V`
-is retained as diagnostic telemetry ("is the HAT delivering power?")
-but is not on the decision path. See `src/pi/hardware/ups_monitor.py`
-and I-015 for background.
+`UpsMonitor` / the MAX17048 fuel gauge provides **battery charge/health only**
+(VCELL volts, SOC). It is a *different fact* and is **not** a power-source
+signal. The former `UpsMonitor.getPowerSource()` VCELL-trend heuristic is
+**retired from the power-source path** — inferring power source from a charge
+*trend* caused the 2026-05-18 self-bricking loop (false BATTERY on the boot
+VCELL sag while external power was physically connected). Do not reintroduce
+any second power-source acquisition path (SSOT invariant; Atlas design gate).
+The retired method is retained in the codebase as a `NotImplementedError`
+tripwire so any future reintroduction fails loudly at the call site.
 
 ---
 
@@ -1651,210 +1648,507 @@ mechanics.
 
 ---
 
-## 10.6 Power-Down Orchestrator (US-216 + US-234)
+## 10.6 Shutdown Sequencer (SS-T5, supersedes Power-Down Orchestrator)
 
-Per CIO directive 2 (Spool Session 6), the Pi runs a staged-shutdown
-ladder instead of the legacy binary 10% low-battery trigger. The
-orchestrator owns the shutdown path whenever
-`pi.power.shutdownThresholds.enabled=true`; the legacy
-`ShutdownHandler` 30s-after-BATTERY timer + 10% trigger become no-ops
-to prevent the race (TD-D in the Spool audit of 2026-04-21).
+The legacy `PowerDownOrchestrator` staged VCELL ladder
+(NORMAL→WARNING→IMMINENT→TRIGGER) was **deleted** (commit `9adb0fb`,
+Phase-2 T9). The sole shutdown decider is `ShutdownSequencer`
+(`src/pi/power/power_watch/controller.py`), an isolated systemd service
+(`eclipse-powerwatch`, separate failure domain from `eclipse-obd`).
 
-### Trigger source (US-234, Sprint 19): VCELL volts, not SOC%
+**Flow.** `PowerSourceProvider` reports power LOST → **5 s smoothing**
+(`pi.powerWatch.smoothingSec`, configurable; a single power-present read
+within the interval cancels — pure blip rejection; this is the safety
+property, shipped in V1) and **boot-grace** → arm-self-check (refuse to arm
+if GPIO6 does not read power-present at start) → a bounded pre-shutdown
+**window** of ordered `ShutdownTask`s (V1: exactly one, `SyncWithServerTask`;
+pluggable seam via `__main__.buildV1Tasks`) → window exits on
+**all-tasks-terminal OR `windowCapSec`** → graceful `systemctl poweroff`.
+**Emergency:** a *successful* VCELL read ≤ `vcellFloorVolts` short-circuits
+straight to poweroff; a *failed* VCELL read never powers off
+(uncertainty ≠ power loss).
 
-US-216 originally compared MAX17048 SOC% against a 30/25/20 ladder.
-Across 4 drain tests over 9 days (Drains 1-4) the ladder NEVER fired:
-the Pi hard-crashed at VCELL 3.36-3.45V every test while MAX17048
-SOC% reported 57-63%. Spool's analysis identified a 40-pt SOC%
-calibration error on this MAX17048 unit (gauge reads 60% when VCELL
-indicates near-empty). The ladder shape (NORMAL → WARNING → IMMINENT
-→ TRIGGER + AC-restore + hysteresis + callback isolation) is correct;
-SOC% as the trigger source was wrong on this hardware.
+### Superseded design history (retained for the lesson, not as current behavior)
 
-US-234 switched the trigger source to **VCELL volts** read directly
-from the cell. The chip-level SOC%-vs-VCELL calibration error is no
-longer in the path. Threshold values come from Spool's 4-drain
-analysis (Drain 1-4 hard-crash range 3.36-3.45V; TRIGGER at 3.45V
-gives ~90s headroom above the buck-converter dropout).
+The text below documents the deleted `PowerDownOrchestrator` design and the
+40-pt MAX17048 SOC% calibration finding that drove the US-234
+SOC%→VCELL-volts switch. **The calibration lesson stands.** The ladder as a
+shutdown mechanism does NOT — Phase-2 T9 deleted it in favor of the
+ShutdownSequencer above (deterministic GPIO6 trigger + bounded task window,
+no VCELL-based decision tree). Treat everything that follows as historical
+context for the SOC% calibration discovery, not as current production
+behavior. None of the `PowerDownOrchestrator`, its state machine, the VCELL
+ladder thresholds, its callbacks, `suppressLegacyTriggers`, the
+`_powerDownTickLoop`, the stage-behavior wiring, or the `stage_*` event
+types in `power_log` are live anymore. The `battery_health_log` schema
+(US-217) is unchanged and still in use; only the orchestrator that wrote to
+it from a VCELL ladder is gone.
 
-### State Machine
+**The calibration lesson worth keeping.** US-216 originally compared
+MAX17048 SOC% against a 30/25/20 ladder. Across 4 drain tests over 9 days
+(Drains 1-4) the ladder NEVER fired: the Pi hard-crashed at VCELL
+3.36-3.45V every test while MAX17048 SOC% reported 57-63%. Spool's
+analysis identified a **40-pt SOC% calibration error on this MAX17048
+unit** — the gauge reads ~60% when VCELL indicates near-empty. US-234
+switched the trigger source to VCELL volts read directly from the cell,
+removing the chip-level SOC%-vs-VCELL calibration error from the path.
+The calibration lesson stands: **on this hardware, MAX17048 SOC% is
+unreliable for safety-critical thresholds; VCELL volts are the source of
+truth.** This lesson carries over into ShutdownSequencer's `vcellFloorVolts`
+emergency backstop, which uses VCELL volts directly (the calibration
+error never enters the safety path).
 
-```
-                        VCELL drops <= 3.70V
-           NORMAL ----------------------> WARNING (open drain_event row)
-              ^                              |
-              |  VCELL >= 3.75 (warning+hyst)| VCELL drops <= 3.55V
-              |  or AC restore               v
-              +---------------------------- IMMINENT (stop poll, close BT)
-              |                              |
-              |  AC restore                  | VCELL drops <= 3.45V
-              |                              v
-              +---------------------------- TRIGGER (poweroff, one-way)
-```
+**Why the ladder itself was deleted.** Beyond the calibration finding, the
+ladder *as a shutdown mechanism* was the wrong architecture: it inferred
+power-source events from a battery-health trend (the same anti-pattern
+that bricked the Pi 2026-05-18 in a different form). Phase-2 T9 deleted
+the entire `PowerDownOrchestrator` subsystem (commit `9adb0fb`: −1230 LOC
+`orchestrator.py` + ~10,829 deletions across `hardware_manager.py`,
+`lifecycle.py`, and 25 test files) and replaced it with the
+ShutdownSequencer above — a deterministic GPIO6-triggered, smoothing-
+debounced, bounded task window. The old VCELL ladder, state machine
+diagram, hysteresis tuning, `suppressLegacyTriggers` race fix
+(US-216/TD-D), `_powerDownTickLoop` decoupling (US-252), stage-behavior
+wiring (US-225/TD-034), `stage_*` event types in `power_log`, and per-stage
+callbacks (`onWarning` / `onImminent` / etc.) are **not live**. The
+`battery_health_log` schema (US-217) is unchanged and still in use — it is
+written by the SyncWithServerTask path, not by a stage-based ladder.
 
-### VCELL Ladder (config-driven)
+For the full historical record of the deleted design, see the git history
+prior to `9adb0fb` (`git log --reverse -p -- src/pi/power/orchestrator.py`)
+or this architecture file at any tag ≤ V0.27.13.
 
-| Stage | Default VCELL | Config key | Stage Behaviors |
-|-------|---------------|------------|-----------------|
-| WARNING | ≤ 3.70V | `pi.power.shutdownThresholds.warningVcell` | Open `battery_health_log` row (US-217); fire `onWarning` callback (DB `no_new_drives` flag, SyncClient force push). |
-| IMMINENT | ≤ 3.55V | `...imminentVcell` | Fire `onImminent` callback (stop OBD poll tier, close BT via US-211 clean-close, `DriveDetector.forceKeyOff(reason='power_imminent')`). |
-| TRIGGER | ≤ 3.45V | `...triggerVcell` | Close `battery_health_log` row; call `ShutdownHandler._executeShutdown` → `systemctl poweroff`. One-way; state machine terminal. |
-| AC-restore | any | n/a | Cancel pending stages, close drain row with `notes='recovered'`, return to NORMAL. |
+*Detailed ladder design — state machine diagram, VCELL thresholds + hysteresis,
+the legacy-timer-suppression race fix (US-216/TD-D), the
+`_powerDownTickLoop` display-decoupling (US-252), the
+stage-behavior wiring (US-225/TD-034), and the `stage_*` `power_log` event
+types — is all retired and not reproduced here. See the linked git history
+above if reconstructing the deleted design is ever necessary.*
 
-### Hysteresis
+### Boot-grace latch defect + level-based post-grace fix (US-344, Sprint 40 / V0.27.16, F-7)
 
-`hysteresisVcell` (default 0.05V) prevents flap on noisy VCELL reads
-around a threshold. Once a stage fires, VCELL must recover to
-`stageVcell + hysteresisVcell` (e.g. 3.75V for WARNING) to de-escalate
-on battery. In practice VCELL is monotonically decreasing during real
-drains, so hysteresis mainly matters for boundary oscillation
-(3.69/3.71V) and momentary on-load sags followed by load reduction.
+V0.27.15 shipped the ShutdownSequencer above with a **boot-grace latch
+defect** in the GPIO6 PLD watch loop (`src/pi/power/power_watch/__main__.py`
+post-fix at `_runPldWatchLoop`; pre-fix at the inline closure on lines
+301-322 of the V0.27.15 tip). The loop used **edge-only** loss detection
+(`lost AND not prevLost`) for the post-boot-grace trigger. When a PLD loss
+event fired *inside* the 120 s boot-grace window AND the X1209-HAT
+subsequently latched GPIO6 LOW after the transient resolved, `prevLost`
+advanced to `True` and the loop's level-stuck-LOW state went silently
+unhandled — the sequencer was blind to a perfectly live power-loss signal
+for the remainder of the service lifetime, unless GPIO6 toggled HIGH again
+(which only happens if the HAT recovers external-power-detection, e.g.
+under alternator load).
 
-### battery_health_log column reuse (US-234 schema note)
+**Bug bound (conjunction; all three required to reproduce):**
 
-US-234 reuses the existing `start_soc` and `end_soc` columns in
-`battery_health_log` (US-217 schema unchanged per US-234 doNotTouch
-list). Post-US-234 those columns hold **VCELL volts** (typical 3.45 -
-4.20) rather than SOC % (typical 20 - 100). Rows written before
-US-234 ship are SOC %; rows written after are volts. A column rename
-or `unit` discriminator column is a Sprint 20+ candidate; not in
-scope here. Analytics consumers must filter rows by drain-event start
-time post-US-234-deploy when querying.
+1. Service is inside the 120 s boot-grace window, AND
+2. A PLD power-loss event occurs during that window (engine crank transient
+   is the canonical in-car trigger; bench-time HAT switchovers, USB-C
+   unplug/replug, or relay bounces also produce it), AND
+3. The HAT latches LOW after the transient and does not recover to HIGH
+   before key-off.
 
-### Legacy Timer Suppression
+Reproduced live in-car 2026-05-20 (Atlas + CIO Test 2): brief engine crank
+inside boot-grace → journal `"PLD power-loss 42s into boot-grace (120s) --
+ignoring"` → sequencer silent for 5.5 minutes while GPIO6 stayed `lo` for
+638 consecutive samples and VCELL drained 3.810V → 3.734V. The morning's
+3-of-3 Cycle-A drills + Bench Check A + Bench Check B all happened to dodge
+the failure conjunction (no in-grace transients during those drills) — the
+externally-observable V0.27.15 IRL ACCEPTANCE PASS verdict stands on its own
+facts, but the bench gate's coverage of the in-grace-transient case was a
+known-incomplete artifact.
 
-Before US-216, `ShutdownHandler` had two automatic trigger paths:
+**The fix (US-344, level-based post-grace check):** the watch loop now
+treats `lost AND not firedAlready` as the post-boot-grace trigger condition,
+not `lost AND not prevLost`. A loss event ignored during boot-grace
+therefore re-fires correctly the first post-grace tick if the line is still
+LOW; `firedAlready` is a same-cycle re-entry guard (the sequencer's own
+state-tracking is the authoritative re-entry surface). Inside boot-grace
+the trigger stays edge-based so the *"ignoring"* log fires once per fresh
+in-grace transient, not repeatedly per tick. The smoothing path inside
+`ShutdownSequencer.handleOnBattery` is preserved unchanged and remains the
+abort surface for transient glitches that resolve mid-window — the watch
+loop only owns trigger detection, not blip rejection.
 
-1. **30s timer** after any AC → BATTERY transition (`_scheduleShutdown`).
-2. **10% low-battery trigger** (`onLowBattery`).
+To make this unit-testable, the closure body was extracted into a
+module-level `_runPldWatchLoop` with injected `isPowerLostFn` / `stop` /
+`monotonicFn`; the closure in `main()` reduces to a thin delegation call
+with no behavior change in production wiring. The "already handling --
+ignoring" log line from the V0.27.15 code is gone — it was unreachable in
+practice (single-threaded loop; `handleLock` always acquires on first try)
+and `firedAlready` now provides cleaner re-entry semantics.
 
-Both are live in hardware today. Spool's 2026-04-21 audit identified
-TD-D: if the new ladder did NOT suppress these paths, the legacy 10%
-trigger (or 30s timer) could fire after the new ladder's TRIGGER@20%,
-causing `systemctl poweroff` to run twice (harmless on most cases,
-but the 30s timer specifically races into the IMMINENT window before
-the ladder can even finish its stages).
+**Architectural invariants preserved by the fix:**
 
-The fix is a `suppressLegacyTriggers` boolean on `ShutdownHandler`.
-When True (set automatically by `hardware_manager` when
-`pi.power.shutdownThresholds.enabled=true`), both
-`onPowerSourceChange` and `onLowBattery` short-circuit without
-scheduling or executing shutdown. The terminal
-`_executeShutdown()` method remains callable by
-`PowerDownOrchestrator` at TRIGGER. The regression test
-`tests/pi/power/test_ladder_vs_legacy_race.py` walks both rails
-(VCELL 4.20→3.30V and SOC 100→0%) in parallel and asserts
-`systemctl poweroff` fires exactly once, at the VCELL TRIGGER
-crossing (post-US-234), never at the legacy 10% SOC trigger.
+- The SSOT `PowerSourceProvider` remains the only power-acquisition site
+  (criterion #3); the watch loop reads through it, the sequencer's smoothing
+  window reads through it. F-7 was downstream of the SSOT in the consumer's
+  trigger logic, not in the source of truth.
+- Boot-grace duration is unchanged. The timer was correct; the post-grace
+  re-entry logic was the defect.
+- GPIO6 acquisition + polarity (`pldPowerPresentHigh=true`) are unchanged
+  (validated by Bench Check A + Test 1 control + Test 2 phase 2 recovery).
+- EEPROM `POWER_OFF_ON_HALT=1` (Sprint 39 SS-T8) preserved.
+- ShutdownSequencer pipeline / window cap / smoothing semantics preserved.
 
-### battery_health_log integration (US-217 + US-234)
+**Lesson worth keeping (carries beyond power_watch):** *boot-grace was
+intended as time-bounded silence, not as permanent silence after an
+in-grace event.* Edge-only state-transition logic in a polling consumer
+that can ignore events during a startup grace window must re-evaluate the
+**level** on grace expiry, or it latches the consumer blind. The same
+class of bug can recur in any consumer that pairs an ignore-during-grace
+window with edge-only post-grace triggering — the SSOT design pattern
+([[ssot-design-pattern]]) is about acquisition; consumer-side state
+machines need their own design discipline.
 
-One row per drain event. Opened on WARNING entry with the highest
-observed on-battery VCELL (captures true drain start, not the WARNING
-threshold crossing). Closed on TRIGGER (with `end_soc` column carrying
-VCELL volts at the 3.45V crossing post-US-234) or on AC-restore (with
-`end_soc` at current VCELL). The `runtime_seconds` column is derived
-from the start/end timestamps at close — queryable for drain-rate
-trending across the May-Sept monthly drill cadence (CIO directive 3).
+### Boot-progress instrument + ExecStop transaction-membership fix (US-345, Sprint 40 / V0.27.16, F-8)
 
-Pre-US-234 rows have `start_soc` / `end_soc` in SOC %; post-US-234
-rows have them in VCELL volts. See US-234 schema-reuse note above.
+The Sprint 38 T11 honest-instrument layer (`deploy/boot-progress-arm.service`
++ `deploy/boot-progress-finalize.service` + `src/pi/diagnostics/boot_progress.py`)
+classifies prior-boot outcomes by writing a ladder of breadcrumb rungs at
+shutdown — only the final `CLEAN_COMPLETE` rung, written by
+`boot-progress-finalize.service`'s ExecStop, distinguishes a clean
+sequencer-driven shutdown from a hard power-yank. The next boot's
+arm-unit reads the ladder file and writes `startup_log.prior_boot_clean` +
+`prior_boot_last_stage` + `prior_boot_reason` accordingly. Design intent:
+*absence of CLEAN_COMPLETE means crash, presence means clean.*
 
-### Drill Protocol
+**The empirical defect (F-8):** V0.27.13 → V0.27.15
+`boot-progress-finalize.service`'s ExecStop **never fired during a real
+shutdown.** The unit declared `DefaultDependencies=no` + `Before=shutdown.target`
+but no directive that pulled it into the shutdown transaction. systemd
+brought it up at boot (via `WantedBy=multi-user.target`) but never included
+it in the shutdown transaction, so its ExecStop was silently skipped, the
+`CLEAN_COMPLETE` rung never written, and every clean shutdown — including
+direct CIO-observed sequencer poweroffs — got classified
+`crashed_during_operation` on the next boot.
 
-See `docs/testing.md` UPS Drain Test section for the monthly CIO
-real-drain drill + regression test details.
+Empirically proven 2026-05-20: Test 1 + Test 2 of the in-car drill (both
+direct-observed gentle 5s smoothing → systemd poweroff → all dark) both
+produced `prior_boot_clean=0, last_stage=RUNNING, reason=crashed_during_operation`
+on the following boot. The instrument was lying. This finding was also the
+mechanical inflation behind Spool's Finding C "12 boots crashed today"
+headline — many of those 12 were almost certainly clean sequencer
+shutdowns mis-labeled by the broken finalizer.
 
-### Tick Driver Decoupled From Display (US-252, Sprint 21)
+**The fix (US-345, one-line systemd directive):** add
+`Conflicts=shutdown.target` to the `[Unit]` section of
+`deploy/boot-progress-finalize.service`. This pulls the unit into the
+shutdown transaction (its stop-job becomes a member of the transaction
+that activates `shutdown.target`), preserving the existing `Before=` ordering
+within that transaction. `DefaultDependencies=no` had stripped the
+auto-synthesized `Conflicts=` that systemd would otherwise have provided —
+the user-added `Before=shutdown.target` re-established the *ordering*
+intent but not the *activation* intent, and `Before=` alone is an ordering
+directive (*"if both are being acted on, do me first"*), not an activation
+directive (*"include me in the transaction"*). The bug was a systemd
+semantics subtlety, not a design defect in the boot_progress ladder
+itself — the ladder, the arm/finalize split, and the
+"only CLEAN_COMPLETE means clean" invariant are all sound.
 
-**The bug class.**  Across 5 drain tests over 3 weeks (Sprint 17 / 18 /
-20 + post-deploy drains 1-5) the staged-shutdown ladder NEVER FIRED.
-The Pi hard-crashed at the LiPo discharge knee every time even though
-the orchestrator's state machine was correct (US-216 + US-234 already
-proved threshold logic), `PowerMonitor` was writing transition rows to
-`power_log` (US-243), and US-211/US-225/US-232 had wired every stage
-behavior.  The post-mortem: the orchestrator's `tick()` was called from
-`HardwareManager._displayUpdateLoop`, which only spawned when
-`StatusDisplay` initialized successfully.  Any pygame fault, missing
-HDMI cable, or `pi.hardware.statusDisplay.enabled=false` silently
-disabled the safety ladder by killing the only thread that drove it.
+**Architectural invariants preserved by the fix:**
 
-**The fix.**  US-252 introduces a dedicated
-`HardwareManager._powerDownTickLoop` running on its own daemon thread
-spawned whenever `_upsMonitor` AND `_powerDownOrchestrator` are wired
--- regardless of `_statusDisplay` state.  Loop body polls
-`UpsMonitor.getTelemetry()` at the configured `pollInterval` and feeds
-`(currentVcell, currentSource)` pairs to `orchestrator.tick`.  The
-display loop continues to exist for UI updates only; the legacy
-low-battery `ShutdownHandler.onLowBattery` check moved into the new
-loop alongside the orchestrator tick.
+- ExecStart / ExecStop command bodies unchanged (only the systemd
+  dependency graph is fixed).
+- `boot_progress` writer code path (`src/pi/diagnostics/boot_progress.py`)
+  unchanged — `CLEAN_COMPLETE` emission logic is correct; it now actually
+  runs.
+- `startup_log` schema (`prior_boot_clean` / `last_stage` / `prior_boot_reason`
+  columns) preserved unchanged.
+- Sprint 38 T11 ordering frame (`DefaultDependencies=no` + `After=eclipse-obd.service
+  drain-forensics.service` + `Before=shutdown.target`) preserved unchanged.
+- V0.27.12-DOA `PYTHONPATH=repo:repo/src` invariant in the
+  finalize unit preserved unchanged.
+- Other systemd units untouched (only `boot-progress-finalize.service` had
+  this defect class; pre-flight scan of `deploy/*.service` confirms it is
+  the only unit with the `DefaultDependencies=no + Before=shutdown.target +
+  no Conflicts=` pattern).
 
-```
-   _startComponents (start order):
-     UPS poll start
-     GPIO button start
-     StatusDisplay start  (optional)  ──► _displayUpdateLoop  (UI only)
-     PowerDownOrchestrator tick thread (independent) ──► _powerDownTickLoop ──► tick()
-     TelemetryLogger start (optional)
-```
+**Sequencing relationship to F-7:** F-7 + F-8 are independent root causes
+shipped in the same V0.27.16 bug-fix release. F-7 (chain-blocking) closes
+the actual operational failure — sequencer silence post in-grace transient.
+F-8 (parallel, not chain-blocking) closes the classifier-honesty defect
+that was independently inflating Spool's Finding C "12 boots crashed today"
+number. Until F-8 ships, `startup_log.prior_boot_reason` is **advisory
+only** as an acceptance signal — direct journal-shutdown-sequence
+observation (CIO eyewitness + `journalctl` `shutdown.target`/`poweroff.target`
+lines) is the authoritative source of truth for "was this a clean
+shutdown." Post-F-8, the column becomes reliable again and counting future
+`crashed_during_operation` rows becomes meaningful evidence for regression
+gates.
 
-The decoupling is a **safety invariant**: the ladder thread is gated
-on the safety-critical wiring (UPS + orchestrator), not on a UI
-component.  A failure in display init, HDMI rendering, or pygame
-software-renderer never reaches the staged-shutdown path.
+**Lesson worth keeping (carries beyond boot-progress):** a service-unit
+`Before=shutdown.target` line with `DefaultDependencies=no` is *not*
+sufficient to wire the unit into the shutdown transaction. Activation
+(`Conflicts=` / `RequiredBy=` / `WantedBy=`) and ordering (`Before=` / `After=`)
+are independent axes in systemd's dependency model — a unit can be ordered
+relative to a target it is never asked to stop, and the stop-job simply
+never runs. Any future shutdown-time instrument that opts out of
+`DefaultDependencies` must explicitly re-declare its shutdown-transaction
+membership.
 
-### power_log Forensic Trail (US-252)
+### Gate ratification (Atlas / Rule 10)
 
-US-252 also adds a `vcell REAL` column to `power_log` (idempotent
-`ensurePowerLogVcellColumn` migration, mirrors the
-`ensureDataSourceColumn` pattern) and three new event types:
+The F-7 + F-8 amendments above are the Sprint 40 / V0.27.16 PM Rule 10
+design-gate DoD deliverable for §10.6 (power/shutdown subsystem — the
+load-bearing subsystem touched by US-344 + US-345). Atlas-gated per the
+2026-05-18 design-gate governance rule (architect owns the gate; spec
+update lands in-sprint with the load-bearing code change, not as
+follow-up). See
+`offices/architect/findings/2026-05-20-shutdown-sequencer-boot-grace-latch-bug.md`
++ `offices/architect/findings/2026-05-20-startup-log-marker-broken-empirical.md`
+for the full finding-of-record bodies; the §10.6 text above is the
+canonical architecture-spec digest.
 
-| event_type | When | vcell column |
-|------------|------|---------------|
-| `stage_warning` | WARNING entered | LiPo cell volts at threshold crossing |
-| `stage_imminent` | IMMINENT entered | LiPo cell volts at threshold crossing |
-| `stage_trigger` | TRIGGER entered (BEFORE poweroff) | LiPo cell volts at threshold crossing |
+---
 
-Persisted via a `(eventType, vcell) -> None` callable injected into
-`PowerDownOrchestrator` via the new `powerLogWriter` constructor
-parameter.  `ApplicationOrchestrator._createPowerLogWriter` builds the
-closure over the live `ObdDatabase` (same DB-isolation pattern as
-`_createBatteryHealthRecorder`).  Forensic value: a post-mortem can
-reconstruct the full drain trajectory from `power_log` alone --
-power-source transitions (US-243), stage-transition crossings with
-their VCELL (this), and `battery_health_log` (US-217) start/end.
+## 10.7 Data Pipeline Architecture (B-104 Step 1, Sprint 41 / V0.27.17)
 
-### Stage-Behavior Wiring (US-225, TD-034 close)
+**Architectural principle (CIO 2026-05-21).** Pi = telemetry emitter +
+event-log writer. Server = sole authority for derived/persisted analytics.
+The Pi captures raw OBD events plus drive boundary event-log fields and
+syncs both to the server; the server computes every derived analytics
+table (`drive_summary` analytics columns, `drive_statistics`, future GEM
+family, future Mahalanobis baselines, ...) from the raw event stream.
+Pi *may* compute in-drive aggregates locally for HDMI dashboard / alert
+consumers — engine running = AC power, no battery cost — but those
+aggregates are **not transmitted**. Default rule: *if the server can redo
+it from raw data, the Pi does not transmit it.*
 
-US-216 shipped with the four WARNING + IMMINENT + AC-restore stage
-behaviors as log-only callbacks.  US-225 replaces the stubs with
-concrete wiring.  Each behavior is individually no-op-safe so a
-missing database, disabled companion service, or torn-down data
-logger does not block the ladder from escalating to TRIGGER.
+### Compute path
 
-| Stage | Behavior | Implementation |
-|-------|----------|----------------|
-| WARNING | Set `pi_state.no_new_drives=true` | New singleton table `pi_state` (`src/pi/obdii/pi_state.py`). `DriveDetector._openDriveId` consults the flag at every cranking transition; when set, returns `None` and the drive proceeds id-less (engine-state machine still transitions). `drive_counter` is NOT incremented. |
-| WARNING | SyncClient force-push | `SyncClient.forcePush()` wraps `pushAllDeltas` with explicit-intent logging + a `PushSummary` aggregate. All normal-sync invariants apply (AUTH header, retry schedule, failed-push HWM preserve, snapshot-table skip). A disabled companion service returns `disabled=True` without HTTP calls. |
-| IMMINENT | Stop poll-tier dispatch | `ApplicationOrchestrator.pausePolling(reason)` / `resumePolling(reason)` delegate to `RealtimeDataLogger.stop`/`start`. The connection object stays attached; the stop handshake waits for the in-flight poll cycle to finish (no dropped queries). A separate flag `_pollingPausedForPowerDown` prevents a concurrent BT-reconnect resume from stealing the AC-restore resume. |
-| IMMINENT | Force drive-end | `DriveDetector.forceKeyOff(reason)` closes any active drive (RUNNING or STOPPING), writes a real `connection_log` drive_end row with the reason in `error_message`, clears the process drive_id context, transitions to STOPPED.  Bypasses the RPM/speed debounce.  Safe no-op when no drive is active. |
-| AC-restore | Clear gate + resume polling | `clearNoNewDrives` + `resumePolling`.  A failed resume does NOT reset the flag so a follow-up AC bounce can retry.  The gate clear path swallows DB hiccups -- the collector must stay live even when persistence is degraded. |
+The server compute path lives in
+`src/server/analytics/drive_summary_compute.py` (US-350; analytics columns
+on `drive_summary`) and `src/server/analytics/drive_statistics_compute.py`
+(US-351; per-`parameter_name` aggregate rows on `drive_statistics`). Both
+are keyed on the Pi-local `drive_id` (matches `realtime_data.drive_id` and
+`drive_summary.source_id`) and persist on the server-side
+`drive_summary.id` PK.
 
-**BT close on IMMINENT** is NOT wired directly from the callback.
-The TRIGGER -> `systemctl poweroff` cascade closes Bluetooth via
-the existing `BtResilienceMixin` teardown + systemd service-stop
-path; US-211's reconnect classifier owns the reattach side.  The
-US-216 invariant "TRIGGER -> poweroff path stays unchanged" takes
-priority over a redundant explicit close.  Revisit only if a
-real-drain drill observes BT handle leakage beyond process exit.
+- `drive_summary` analytics columns (`start_time`, `end_time`,
+  `duration_seconds`, `row_count`, `is_real`) are derived from
+  `MIN(realtime_data.timestamp_utc)` / `MAX(...)` /
+  `COUNT(*)` for the drive. `is_real` is derived from the Pi event-log
+  `data_source` per Atlas Q2: `'real' → 1`, `'simulator' → 0`, NULL →
+  NULL (never silently 0; NULL distinguishes *tested-not-real* from
+  *untested*). The Pi event-log fields on `drive_summary`
+  (`drive_start_timestamp`, `ambient_temp_at_start_c`,
+  `starting_battery_v`, `barometric_kpa_at_start`, `data_source`) are
+  preserved unchanged — the server compute path enriches from those
+  columns but never overwrites them.
+- `drive_statistics` is computed via `compute_drive_statistics(session,
+  driveId)`: read raw rows grouped by `parameter_name`, run
+  `src/server/analytics/helpers.computeBasicStats` (Spool FLAG-1 SSOT
+  pin — the 2-sigma outlier helper is the single source of truth for
+  outlier math; cannot drift to IQR / 3-σ silently), DELETE-then-INSERT
+  the per-PID rows for clean idempotent replay. The server-side schema
+  (Atlas Q4 DDL, `src/server/db/models.py:DriveStatistic`) uses a
+  composite PK `(drive_id, parameter_name)` with
+  `FK drive_summary.id ON DELETE CASCADE`, a `data_quality` enum
+  (`full` / `sparse` / `below_threshold`) classified per Atlas Refinement
+  B (`<10 → below_threshold`, `10-99 → sparse`, `≥100 → full`), and
+  `computed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE
+  CURRENT_TIMESTAMP` for observable idempotency on re-run.
+- Atlas Refinement A generic invariants (`min ≤ avg ≤ max`,
+  `std_dev ≥ 0`, no NaN/inf, `sample_count ≥ 1`) are enforced by the
+  compute path and raise `InvariantViolation` on violation pre-flush so
+  the caller's rollback is safe. Per-PID envelopes (RPM ≤ 8000, etc.)
+  are deferred to V0.28+.
 
-**Invariant: callback failures don't block escalation.**
-`_invokeCallback` broad-exception isolation means a raising
-`onWarning` (e.g. sync transport error) does not prevent IMMINENT
-from firing, and a raising `onImminent` (e.g. stale data logger)
-does not prevent TRIGGER from running `systemctl poweroff`.  The
-regression test `tests/pi/power/test_orchestrator_stage_behavior_wiring.py`
-pins this for every stage.
+### Pi-side retirement scope
+
+- The Pi-side `drive_summary` *computed-field* writer is retired. The Pi
+  still writes the *event-log* fields above for in-drive diagnostics
+  (`drive_start_timestamp`, `ambient_temp_at_start_c`,
+  `starting_battery_v`, `data_source`) — those are event records the
+  server cannot recompute and the file `src/pi/obdii/drive_summary.py`
+  is untouched by US-350/US-351.
+- The Pi-side `drive_statistics` table is **retired entirely** (US-351).
+  `src/pi/obdii/drive_statistics.py` is deleted; the
+  `SCHEMA_DRIVE_STATISTICS` constant + `ALL_SCHEMAS` registration are
+  removed from `src/pi/obdii/database_schema.py`; the new
+  `ensureDriveStatisticsRetired()` helper performs an idempotent
+  `DROP TABLE IF EXISTS` invoked by `ObdDatabase.initialize()` (INFO
+  row-count log on first boot with the legacy table present; DEBUG
+  absence log on subsequent boots). Detector + lifecycle wiring
+  (`src/pi/obdii/drive/detector.py`,
+  `src/pi/obdii/orchestrator/lifecycle.py`) is reverted to the
+  pre-US-349 shape. Any future `from pi.obdii.drive_statistics import …`
+  raises `ImportError` by design.
+- Pi-side raw `realtime_data` table + sync transport
+  (`src/pi/obdii/realtime_data.py`, `src/pi/obdii/sync/`) are
+  unchanged — the canonical raw event stream still flows to the
+  server in the V0.27.16 shape; only the derived-analytics writer
+  surface moves tiers.
+
+### Trigger seam shift
+
+The V0.27.7 (US-326 / US-328) and V0.27.16 (US-348 / US-349) writer
+architectures both depended on a Pi-side drive-end signal to fire the
+writer / sync trigger. Argus's 2026-05-21 RCA established that this
+signal does not fire when a drive is terminated by sequencer-driven
+poweroff — there is no engine-off OBD signal before the stack tears
+down, and `DriveDetector` is wired for future drive-end events but
+never catches *this* drive's actual end. The third cycle of this
+false-pass class was the trigger for the B-104 Step 1 advance.
+
+Post-Sprint-41 trigger seams are both server-side and both
+independent of any Pi-side end-of-drive marker:
+
+1. **Nightly batch** — `deploy/server-analytics-batch.service` +
+   `deploy/server-analytics-batch.timer` (`OnCalendar=*-*-* 03:30:00`
+   chi-srv-01 local; `Persistent=true` so missed fires catch up on
+   next boot). The unit runs the on-demand CLI in `--all-stale` mode
+   and refreshes every drive with NULL `drive_summary` analytics
+   columns or missing `drive_statistics` rows.
+2. **On-demand CLI** — `python -m src.server.cli.recompute_drive_analytics`
+   with `--drive-id N` / `--drive-id-range A-B` / `--all-stale` /
+   `--dry-run`. The per-drive loop invokes
+   `compute_drive_summary` and `compute_drive_statistics`
+   atomically so a single CLI tick refreshes both analytics tables
+   (Atlas Q1 single-timer-fires-both-paths).
+
+The sync receipt path is **decoupled from compute**:
+`_tryAutoAnalysisTrigger` in `src/server/api/sync.py` is deleted;
+`enqueueAutoAnalysisForSync` in `src/server/services/analysis.py` is
+converted to a `NotImplementedError` tripwire so an accidental
+re-introduction of the trigger seam trips at runtime rather than
+silently shipping a fourth cycle of the same bug class.
+
+### Idempotent recompute principle
+
+Recompute is idempotent: same raw `realtime_data` + same logic = same
+output. Re-running the CLI over an already-computed drive yields
+identical analytics-column values (`drive_summary`) and identical
+data values across `(drive_id, parameter_name)` rows
+(`drive_statistics`); `computed_at` advances on `drive_statistics` via
+`onupdate=func.now()` as the observable replay signal. The deploy-layer
+backfill in `deploy/deploy-server.sh` Step 4.9 (US-352) is
+marker-file-guarded
+(`${PROJECT}/.backfill-V0.27.17-drives-11-20-complete`) for deploy
+ergonomics, but the underlying compute is correct under repeated
+invocation either way — the marker prevents redundant work, not
+divergence.
+
+### What's retired (cross-links for archival traceability)
+
+The following trigger-seam writer architectures and their wiring are
+retired in V0.27.17:
+
+| Surface | Sprint / Version | Anchor commit | Disposition |
+|---|---|---|---|
+| US-326 server `_writeDriveAnalytics` keyed on `connection_log` sync receipt | Sprint 33 / V0.27.7 | `76aa773` (V0.27.7 ship); `0599d24` (grooming) | **Superseded** by `compute_drive_summary` reading raw `realtime_data` directly. |
+| US-328 Pi-side `drive_statistics` Option C (schema-only, no writer) | Sprint 33 / V0.27.7 | `76aa773`; `1c01ec0` (BL-015 Option C unblock) | **Retired** — Pi-side table dropped by `ensureDriveStatisticsRetired()`. |
+| US-348 V0.27.16 server writer redo (dual-seam: sync receipt + drive_summary payload trigger) | Sprint 40 / V0.27.16 | `c04d36e` (V0.27.16 ship); `b26344e` (integration); `5fb7cdc` (scope expansion) | **Superseded** — false-pass recurred; trigger seam deleted from `sync.py`. |
+| US-349 V0.27.16 Pi-side `drive_statistics` writer + `DriveDetector._endDrive` wiring | Sprint 40 / V0.27.16 | `c04d36e`; `b26344e`; `5fb7cdc` | **Retired entirely** — Pi-side module + table + wiring removed in US-351. |
+
+Sprint 41 / V0.27.17 anchor: `e6c49e6` (sprint spin); US-350 / US-351 /
+US-352 / US-356 land on the `sprint/sprint41-bugfixes-V0.27.17` branch
+prior to chain-end merge per the Mike 2026-05-08 / 2026-05-10
+chain-end-merge rule.
+
+### Empirical status (honest, V0.27.17 IRL pending)
+
+The compute path is **synthetically validated** at the time this
+section lands:
+
+- US-350 unit tests (`tests/server/analytics/test_drive_summary_compute.py`)
+  10/10 GREEN — fixture-based compute against real ORM + real INSERTs
+  on in-memory SQLite (no seam mocks per I-040 discipline).
+- US-351 unit tests
+  (`tests/server/analytics/test_drive_statistics_compute.py`) 14/14
+  GREEN; Pi-side retirement regression suite
+  (`tests/pi/obdii/test_drive_statistics_pi_table_migration.py`) 7/7
+  GREEN.
+- US-352 deploy-script suite
+  (`tests/deploy/test_deploy_server_backfill_drives_11_20.py`) 13/13
+  GREEN.
+- Full server suite (`pytest tests/server/ -m "not slow"`) 777
+  passed / 12 skipped (no regressions). Pi suite
+  (`pytest tests/pi/ -m "not slow"`) 1513 passed / 16 skipped.
+
+The compute path is **IRL-pending** until V0.27.17 deploys to
+chi-srv-01 + the Pi and an actual drive's raw rows are computed
+through the new path. The empirical-gate to clear:
+
+1. Deploy Step 4.9 backfill of drives 11-20 produces 10
+   `drive_summary` rows with NON-NULL analytics columns + 10 drives'
+   worth of positive-`sample_count` `drive_statistics` rows
+   (`data_quality=full` for drives with ≥100 `realtime_data` rows
+   per PID). Drive 11 inclusion (Spool FLAG-2 / Argus DB-check
+   outcome (a) 2026-05-21) preserves the 93-octane knock-retard
+   reference baseline.
+2. Idempotent re-run produces zero diff in either table's data
+   values; `drive_statistics.computed_at` advances; no PK violations.
+3. Post-deploy real drive (engine on through key-off via sequencer
+   poweroff) produces a `realtime_data` block that the nightly timer
+   (or on-demand `--drive-id N`) computes through to NON-NULL
+   analytics columns — the V0.27.16 reproducer scenario that the
+   V0.27.7 + V0.27.16 trigger seams failed.
+
+Until that drill clears, this section describes the **deployed
+architecture intent**, not the validated production state. The
+distinction is the load-bearing one: prior cycles shipped through
+exactly because synthetic-seam-mock passes were misread as production
+proof. The empirical falsifier for "Pi-side drive-end signal no
+longer load-bearing" is the on-demand backfill of drive 20 producing
+`drive_summary.row_count=3808` (per Argus's V0.27.16 drill evidence)
+from the existing raw `realtime_data` on the server.
+
+### Architectural invariants preserved by the shift
+
+- Pi-side drive boundary event log (`drive_start` / `drive_end`
+  timestamps + Pi event-log fields on `drive_summary`) preserved for
+  diagnostics (CIO 2026-05-21 ratified).
+- Pi-side raw `realtime_data` table + sync client untouched; the
+  canonical raw event stream still flows in the V0.27.16 shape.
+- `drive_summary` server table schema preserved (the writer
+  architecture is what shifts; the schema is fine).
+- SSOT pattern (`[[ssot-design-pattern]]`): the server compute path
+  is the SSOT for derived analytics; consumers (CLI, nightly timer,
+  future dashboards) apply policy not their own acquisition. B-104
+  Step 1 is the **second production application** of the SSOT
+  pattern (first was the Shutdown Sequencer
+  / §10.6 / Sprint 39 V0.27.15) — see Atlas's 2026-05-21
+  SSOT-pattern-load-bearing observation note.
+- B-104 Step 2+ scope (GEM family B-086..B-094, Mahalanobis B-083,
+  per-tuning-spec recompute) is deferred to V0.28+ and lands
+  server-side from day one under this same architecture.
+
+### Lesson worth keeping (carries beyond drive analytics)
+
+*The V0.27.7 → V0.27.16 → (would-have-been) V0.27.17 redo cycle shipped
+three times because the test fixtures used in Ralph's TDD did not
+reproduce deploy-time runtime conditions — specifically the
+sequencer-driven drive termination that prevents the drive-end signal
+from firing.* The structural close is two-part: (a) move the writer
+to a tier where the bug class is impossible (this section), and (b)
+build a deploy-context test surface that exercises the integrated
+orchestrator + DriveDetector + recorder + sync + server compute path
+against a real database (US-355, I-040 structural close, V0.27.17
+seed harness). Synthetic-seam-mock passes are not proof of production
+behavior; a real-data round-trip + DB read-back is the gate. The
+discipline lesson is: when a writer is tier-coupled to a signal that
+may not fire under the real termination path, the architectural fix
+is to read the canonical data on the other tier, not to harden the
+signal.
+
+### Gate ratification (Atlas / Rule 10)
+
+This §10.7 amendment is the Sprint 41 / V0.27.17 PM Rule 10
+design-gate DoD deliverable for the data-pipeline subsystem (the
+load-bearing subsystem touched by US-350 + US-351 + US-352).
+Atlas-gated per the 2026-05-18 design-gate governance rule
+(architect owns the gate; spec update lands in-sprint with the
+load-bearing code change, not as follow-up). The architectural
+verdict on B-104 Step 1 advance (sound; per-task gates pre-registered
+for US-350..US-356) is recorded in
+`offices/pm/inbox/2026-05-21-from-atlas-sprint41-per-task-gates-preregistered.md`;
+the SSOT-pattern-load-bearing observation is recorded in
+`offices/pm/inbox/2026-05-21-from-atlas-ssot-pattern-load-bearing-observation.md`.
+The §10.7 text above is the canonical architecture-spec digest;
+V0.27.17 IRL acceptance + Atlas Rule-10 sign-off close the gate.
 
 ---
 
@@ -2122,39 +2416,47 @@ in isolation (`tests/pi/update/test_update_checker.py`,
 `test_update_applier.py`); the e2e drill catches gaps at the marker-
 handoff seam that unit tests cannot reach.
 
-### Wake-on-Power EEPROM Contract (US-253, Sprint 21)
+### Wake-on-Power — Pi 5 + X1209-HAT topology (SS-T9, F-6 closed)
 
-Pairs with US-216's staged shutdown (Sprint 16, fired Sprint 21 US-252) to
-close the post-B-043 in-vehicle drill: key-OFF cuts wall power → UPS sustains
-the Pi → US-216 fires `systemctl poweroff` at the VCELL TRIGGER threshold →
-Pi sits halted on UPS battery → key-ON returns wall power → **Pi must
-auto-boot without operator action** (there is no operator at the car).
+`POWER_OFF_ON_HALT=1` is the **locked setting** for this system (CIO
+decision 2026-05-18), enforced by
+`deploy/enforce-eeprom-power-off-on-halt.sh` (SS-T8 corrects the script to
+enforce `1`; the prior force-`0` was a defect that reverted the correct
+setting every deploy).
 
-The load-bearing setting is `POWER_OFF_ON_HALT` in the Pi 5 bootloader EEPROM:
+**Rationale (topology-specific).** With the X1209 UPS HAT holding the Pi's
+5 V rail up off its battery, `=0` leaves the PMIC active after `poweroff`
+and the PMIC **never sees a power-cycle edge** when external power returns
+→ no unattended auto-boot (this is Finding B, observed empirically). `=1`
+powers the PMIC fully off so a USB-C power-return is a real boot event.
 
-| Value | Behavior on `systemctl poweroff` | Wake-on-power |
-|-------|----------------------------------|----------------|
-| `0` (or absent — default) | SoC halts; PMIC stays awake watching power rails | **Auto-boots when wall power returns** ✅ |
-| Non-zero (e.g. `1`) | Deep sleep; PMIC also stops | **Requires button press or full power-cycle** ❌ |
+**The previously documented "`=0` ⇒ auto-boots ✅ / `=1` ⇒ needs button ❌"
+table was FALSE for this topology** (it described a bare Pi 5 with no HAT)
+and was the documentation root of the V0.27.x chain blocker (finding F-6).
+It has been removed, not patched.
 
-`chi-eclipse-01` is on default behavior today (line absent → default 0). The
-risk is **out-of-band drift**: any operator running `sudo rpi-eeprom-config
---edit` for an unrelated reason can flip the setting silently, and the
-breakage only surfaces the next time wall power is cut and restored — i.e.
-during a real drill, not during deploy.
+**Empirically gated (stated honestly, do not assert beyond evidence).** The
+exact wake mechanism at `=1` — whether the X1209 presents a true Pi 5 V rail
+power-cycle on external-power-return — is confirmed by the **Atlas-gated
+Bench Check B (2026-05-18)** at **1 cycle**, and the full **IRL acceptance
+gate** is 5 consecutive clean unattended shutdown→restore cycles. Until that
+gate passes, treat unattended in-car recovery as *designed-for and pending
+empirical confirmation*, never as "solved." The empirical bench/IRL result
+is the sole arbiter; no spec text or vendor doc overrides it.
 
-**Enforcement: every deploy verifies and re-asserts**. `deploy-pi.sh` runs
-`step_enforce_eeprom_power_off_on_halt` on every routine deploy and `--init`,
-which SSH-invokes `deploy/enforce-eeprom-power-off-on-halt.sh` on the Pi:
+**Enforcement: every deploy verifies and re-asserts.** `deploy-pi.sh` runs
+`step_enforce_eeprom_power_off_on_halt` on every routine deploy and
+`--init`, which SSH-invokes `deploy/enforce-eeprom-power-off-on-halt.sh` on
+the Pi:
 
 ```
 deploy-pi.sh
   └── step_enforce_eeprom_power_off_on_halt
         └── ssh Pi: sudo bash deploy/enforce-eeprom-power-off-on-halt.sh
               ├── reads `rpi-eeprom-config` output
-              ├── line absent      → no-op (defaults to 0)
-              ├── value = 0        → no-op (already correct)
-              ├── value ≠ 0        → rewrite via `rpi-eeprom-config --apply`
+              ├── line absent      → rewrite to explicit =1 (default 0 wrong on HAT)
+              ├── value = 1        → no-op (already correct)
+              ├── value ≠ 1        → rewrite via `rpi-eeprom-config --apply`
               └── tool missing/fails → exit non-zero, halt deploy
 ```
 
@@ -2162,19 +2464,22 @@ The enforcement script is idempotent — back-to-back runs converge with no
 EEPROM writes after the first. The deploy script accepts the standard
 `--dry-run` flag (prints what would be done without touching the Pi).
 
-**Test fidelity**: `tests/deploy/test_eeprom_power_off_on_halt.sh` PATH-mocks
-`rpi-eeprom-config` across 7 scenarios (absent / =0 / =1 / =2 / tool missing
-/ apply fails / two-run idempotency drill). The mock seam is the
-`RPI_EEPROM_CONFIG` env var the production script reads first
-(falls back to a plain `rpi-eeprom-config` PATH lookup). The pytest wrapper
-`tests/deploy/test_deploy_pi_eeprom_config.py` runs the bash test in the
-fast suite so a regression in either the production script or the mock
-harness shows up alongside other deploy regressions.
+**Test fidelity.** `tests/deploy/test_eeprom_power_off_on_halt.sh` PATH-mocks
+`rpi-eeprom-config` across 7 scenarios (absent / `=0` / `=1` / `=2` / tool
+missing / apply fails / two-run idempotency drill — all converging on `=1`
+post-SS-T8). The mock seam is the `RPI_EEPROM_CONFIG` env var the production
+script reads first (falls back to a plain `rpi-eeprom-config` PATH lookup).
+The pytest wrapper `tests/deploy/test_deploy_pi_eeprom_config.py` runs the
+bash test in the fast suite so a regression in either the production script
+or the mock harness shows up alongside other deploy regressions.
 
-**What is NOT in scope**: actual end-to-end drill (graceful poweroff →
-unplug → wait → replug → boot) is a post-sprint mechanical action item per
-the no-human-tasks rule. Code-side this story makes that drill _possible_
-to ship by guaranteeing the EEPROM setting is correct on every deploy.
+**What is still pending (IRL, out of code scope).** The 5-cycle IRL
+acceptance drill — graceful `systemctl poweroff` → external power off →
+wait → external power on → unattended Pi boot, **five times in a row** — is
+the load-bearing acceptance gate Atlas + the CIO ratify before chain merge.
+Code-side this section guarantees the EEPROM setting lands correctly on
+every deploy; whether the wake actually fires in the car is the IRL drill's
+question, not this document's.
 
 ---
 
@@ -3086,6 +3391,8 @@ CREATE TABLE IF NOT EXISTS sync_status (
 
 | Date | Author | Description |
 |------|--------|-------------|
+| 2026-05-21 | Rex (US-356, Ralph; Atlas-gated per Rule 10) | New Section 10.7 "Data Pipeline Architecture (B-104 Step 1, Sprint 41 / V0.27.17)" appended after §10.6, before §11. Documents the B-104 Step 1 architectural shift landed by US-350 + US-351 + US-352 on `sprint/sprint41-bugfixes-V0.27.17` (anchor commit `e6c49e6`): (a) **Architectural principle** -- Pi = telemetry emitter + event-log writer; server = sole authority for derived/persisted analytics; default = "if the server can redo it from raw data, the Pi does not transmit it." (b) **Compute path** -- `src/server/analytics/drive_summary_compute.py` (US-350) derives analytics columns from `MIN/MAX/COUNT` over `realtime_data` + enriches from Pi event-log fields with `is_real` per Atlas Q2 NULL-preservation invariant; `src/server/analytics/drive_statistics_compute.py` (US-351) groups by `parameter_name` and uses `helpers.computeBasicStats` (Spool FLAG-1 SSOT pin), classifies `data_quality` per Atlas Refinement B thresholds, enforces Atlas Refinement A generic invariants, DELETE-then-INSERT for clean idempotency. (c) **Pi-side retirement scope** -- Pi-side `drive_summary` computed-field writer retired (event-log fields preserved); Pi-side `drive_statistics` table + module retired entirely via `ensureDriveStatisticsRetired()` idempotent DROP TABLE invoked by `ObdDatabase.initialize()`; detector + lifecycle wiring reverted to pre-US-349. (d) **Trigger seam shift** -- `_tryAutoAnalysisTrigger` deleted from `src/server/api/sync.py`; `enqueueAutoAnalysisForSync` converted to `NotImplementedError` tripwire; new trigger seams are `deploy/server-analytics-batch.service` + `.timer` (nightly batch, `OnCalendar=*-*-* 03:30:00`, `Persistent=true`) + on-demand CLI `python -m src.server.cli.recompute_drive_analytics` (Atlas Q1 single-timer-fires-both-paths). (e) **Idempotent recompute principle** -- same raw + same logic = same output; `computed_at` advances on `drive_statistics` via `onupdate=func.now()` as the observable replay signal; deploy-layer marker-file guard on Step 4.9 backfill is for deploy ergonomics, not correctness. (f) **What's retired** -- four-row table cross-links US-326 `76aa773` / `0599d24`, US-328 `76aa773` / `1c01ec0`, US-348 `c04d36e` / `b26344e` / `5fb7cdc`, US-349 `c04d36e` / `b26344e` / `5fb7cdc` to the SUPERSEDED / RETIRED disposition of each surface. Empirical status section is honest-empirical-gated per Sprint 39 T9 precedent: synthetic gates listed (US-350 10/10, US-351 14/14 + 7/7 Pi retirement, US-352 13/13, full suites 777 server / 1513 Pi GREEN no regressions); IRL acceptance flagged **pending** until V0.27.17 deploys + the drives-11-20 backfill clears the empirical falsifier (drive 20 `row_count=3808` from raw). Architectural-invariants list preserves Pi-side raw `realtime_data` + sync, the `drive_summary` schema, and explicitly anchors B-104 Step 1 as the **second production application** of the SSOT design pattern (first was §10.6 Shutdown Sequencer / Sprint 39). Lessons-worth-keeping section frames the 3-cycle false-pass class structural close as two-part (writer tier shift + US-355 deploy-context harness) and crystallizes the discipline rule: synthetic-seam-mock passes are not proof of production behavior. Gate-ratification subsection cites the 2026-05-18 design-gate governance rule + Atlas's 2026-05-21 per-task gate pre-registration + SSOT-pattern-load-bearing observation notes. Scope-locked to §10.7 per Sprint 41 doNotTouch list -- §10.6 + other sections untouched. "Last Updated" header at top of file updated to 2026-05-21 with Atlas-gated tag; prior 2026-05-20 entry preserved. |
+| 2026-05-20 | Rex (US-346, Ralph; Atlas-gated per Rule 10) | Section 10.6 Shutdown Sequencer: appended two subsections + a gate-ratification note documenting Sprint 40 / V0.27.16 bug-fix landings -- (a) "Boot-grace latch defect + level-based post-grace fix (US-344, F-7)" details the V0.27.15 state-machine bug (edge-only `lost AND not prevLost` post-grace check latched the watch loop blind when an in-grace transient left the HAT at GPIO6=LOW), the bug bound (cold-start + in-grace transient + no alternator recovery before key-off), the 2026-05-20 in-car live-drill reproduction (Test 2: 5.5 min silence; VCELL 3.810V->3.734V drain), the level-based `lost AND not firedAlready` fix, the `_runPldWatchLoop` extraction-for-testability, and the architectural invariants preserved (SSOT, boot-grace duration, GPIO6 polarity, EEPROM POWER_OFF_ON_HALT=1, sequencer pipeline/window/smoothing); (b) "Boot-progress instrument + ExecStop transaction-membership fix (US-345, F-8)" details the empirically proven defect (`boot-progress-finalize.service` ExecStop never fired because the unit had `DefaultDependencies=no` + `Before=shutdown.target` but no shutdown-transaction-membership directive, so every clean shutdown was mis-classified `crashed_during_operation`), the systemd activation-vs-ordering distinction, the one-line `Conflicts=shutdown.target` fix, the de-fanging of Spool's Finding C "12 boots crashed today" inflation, and the post-fix restoration of `startup_log.prior_boot_reason` as a reliable acceptance signal. Gate-ratification note cites the 2026-05-18 design-gate governance rule + the two Atlas findings of record. Scope-locked to §10.6 per Sprint 40 doNotTouch list; "Last Updated" header at top of file updated to 2026-05-20 with Atlas-gated tag. |
 | 2026-05-01 | Rex (US-258, Ralph) | Section 11 Deployment Architecture: added "Pi Self-Update Lifecycle (B-047 US-A through US-E, Sprints 19-21)" subsection between Release Versioning and Wake-on-Power. Documents the two-process pipeline (`UpdateChecker` US-247 + `UpdateApplier` US-248) glued by the marker file, the safety-gate ordering rationale (drive-state → power-source → recent-OBD → applyEnabled, with the disabled-flag deliberately placed AFTER safety gates), the priorRef-and-rollback contract, the marker-cleared-on-every-terminal-outcome poisoned-target invariant, and the deferred-apply-marker-survives-the-drive convention. Documented the new e2e drill in `tests/pi/integration/test_self_update_e2e.py` (7 tests across 5 classes) as the integration-readiness gate before flipping `pi.update.applyEnabled=true`: real classes used end-to-end with mocks ONLY at the HTTP and subprocess seams; covers happy path / dry-run failure / full deploy failure → rollback / drive-state safety net / up-to-date / wire-shape audit. Mod history: 8th US-258-class story; story scope referenced "self-update lifecycle diagram" and Section 11 was the natural home (Release Versioning subsection). |
 | 2026-05-01 | Rex (US-257, Ralph) | Section 10 Display Architecture: added "Full-Canvas Status Overlay Redesign (US-257, B-052, Sprint 21)" subsection. Documents the new pure-geometry layout module `pi.hardware.dashboard_layout` (4-quadrant: engine NW / power NE / drive SW / alerts SE + footer band), proportional font scaling against a 1080-tall reference with a clamped minimum, the staged-shutdown stage banner wiring (`updateShutdownStage` setter on `StatusDisplay`, NE quadrant background tints with stage color so an operator several feet from the screen can read the stage), and the additive `pi.display.displayCanvas.{width,height,mode}` config surface (defaults 1920x1080 + mode='auto'; legacy 480x320 still works for dev/test). Test surface: 27 tests in `tests/pi/hardware/test_dashboard_layout.py` (parameterized over 1920x1080 / 1280x720 / 480x320) + 13 new canvas-size + shutdown-stage tests in `tests/pi/hardware/test_status_display.py`. |
 | 2026-05-01 | Rex (US-253, Ralph) | Section 11 Deployment Architecture: added "Wake-on-Power EEPROM Contract (US-253, Sprint 21)" subsection.  Documents the `POWER_OFF_ON_HALT` Pi 5 bootloader setting (0 = SoC halts but PMIC stays awake to detect wall-power return → auto-boot; non-zero = deep sleep → requires button press) and the enforcement chain (`deploy-pi.sh` → `step_enforce_eeprom_power_off_on_halt` → SSH-invokes `deploy/enforce-eeprom-power-off-on-halt.sh` which reads via `rpi-eeprom-config`, idempotent rewrite via `--apply` only when the value is non-zero).  Pairs with US-216 + US-252 (staged shutdown) to close the post-B-043 in-vehicle drill: key-OFF → graceful poweroff → key-ON → auto-boot.  Test fidelity: PATH-mocked `rpi-eeprom-config` covers 7 scenarios (absent / =0 / =1 / =2 / tool missing / apply fails / two-run idempotency).  Real end-to-end drill (unplug/replug) remains a post-sprint mechanical action item. |

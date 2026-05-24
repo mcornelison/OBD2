@@ -1,0 +1,482 @@
+{
+  "$schema": "Sprint Contract v1.0 -- see docs/superpowers/specs/2026-04-14-sprint-contract-design.md",
+  "sprint": "Sprint 28 -- V0.27.2 Bug Fixes (drive_summary + sync_history + 4 hygiene)",
+  "spec": "offices/pm/inbox/archive/2026-05/2026-05-08-from-spool-sprint-28-bug-fixes-consolidated.md (Spool's Bugs 1-4) + offices/pm/inbox/archive/2026-05/2026-05-08-from-rex-v0271-hotfix-and-drive-6-validation.md (Rex's Issues #3 + #4)",
+  "backlogItem": "Bug-fix sprint surfaced by V0.27.1's success unblocking engine-on data capture (Drive 6 + Drive 7 IRL validation 2026-05-08). Six regressions / data-hygiene gaps in metadata / sync / drain / observability layers. F-005 + F-007 are load-bearing P1 fixes; the four P3 stories close drain-event / startup_log / battery_health_log / statistics-tagging hygiene gaps that hid behind the 'no data ever' symptom from Sprint 25-27.",
+  "createdBy": "Marcus (PM)",
+  "createdAt": "2026-05-09",
+  "testBaseline": {
+    "fastSuite": 4144,
+    "fullSuite": 4144,
+    "ruffErrors": 0,
+    "note": "Post-V0.27.1 baseline (V0.27.1 main@cfdb2d9). Rex Session 180 reported fastSuite=4144 GREEN post-V0.27.1; verify exact count at sprint start."
+  },
+  "sprintNotes": [
+    "GOAL: Close the six regressions surfaced when V0.27.1 unblocked engine-on data capture. Drives 6+7 + Drain 8 in-vehicle on 2026-05-08 validated F-002/F-003/F-004/F-006/F-008/F-009/F-010/F-011/F-012 but exposed F-005 (drive_summary INSERT not firing) and F-007 (sync_history table missing on Pi) as broken, plus four data-hygiene gaps. V0.27.2 fixes all six with real engine-on validation gating the merge to main.",
+    "EXECUTION ORDER (deps-aware): TIER 1 (P1, parallel) -- US-304 (drive_summary writer regression) + US-305 (sync_history v0007 migration gap). TIER 2 (P3, parallel, independent) -- US-306 (statistics drive_id NULL; likely same wiring fix family as US-304 but no hard dep) + US-307 (drain_event close-before-poweroff) + US-308 (startup_log graceful-shutdown detection) + US-309 (battery_health_log legacy column cleanup).",
+    "THEME: 'V0.27.1 unmasked these.' Bugs surfaced because the primary mission (engine-on telemetry) finally works again and exercises code paths that were dormant since Sprint 19/22/25. Each story includes a synthetic test that would FAIL pre-fix (per feedback_runtime_validation_required.md) AND a real-world validation gate captured in the sprint validation block.",
+    "CONSTRAINTS (anti-blocker discipline): (a) US-274 file-existence check ran during grooming; UPDATE paths verified on disk via rg. (b) US-282 commit-vs-claim verifier (--check-feedback) active for sprint close. (c) Per BL-010 + feedback_pm_verify_table_names_against_code.md: PM verified all schema/symbol/table names against source code BEFORE writing into contract. (d) Per V0.24.1 lesson: every silent thread becomes a WARNING+ log line; every wiring assumption becomes a self-test that ERRORs if violated. (e) Per Mike 2026-05-09 branch discipline: ALL implementation commits land on sprint/sprint28-bugfixes-V0.27.2; nothing pushes to main until /sprint-validated.",
+    "GROUNDING SOURCES: Spool 2026-05-08 sprint-28-bug-fixes-consolidated note (Bugs 1-4 with evidence + recommended fix shapes + acceptance criteria) + Rex's 2026-05-08 V0.27.1 closeout note (Issues #3 + #4) + Sprint 19 US-228/US-237 history (drive_summary metadata defer-INSERT + reconciler precedent) + Sprint 22 US-263 / Sprint 25 US-287 (startup_log schema + writer history) + Sprint 25 US-289 (battery_health_log column rename history) + V0.24.1 ladder source (graceful-shutdown log signature for US-308 detection regex) + Sprint 26 US-300 source (v0007 migration that did not apply on Pi).",
+    "POST-SPRINT-28 ACTION ITEMS (NOT in sprint.json per CIO no-human-tasks rule): (1) CIO drives one full engine-on cycle (Drive 8) for V0.27.2 validation -- re-validates F-005 + F-007. (2) CIO triggers a controlled drain test (Drain Test 11 explicit, distinct from the in-vehicle Drain 8 already counted in Sprint 27) to validate US-307 + US-308. (3) Marcus runs /sprint-validated after CIO confirms Drive 8 + Drain 11 evidence; bumps F-005 + F-007 lastValidated in regression_manifest.json. (4) Spool reviews Drive 8 grade + the now-populated drive_summary metadata for Drives 6+7 (post-backfill)."
+  ],
+  "stories": [
+    {
+      "id": "US-304",
+      "completionNotes": "Pre-flight audit (rg `SummaryRecorder|drive_summary INSERT|drive_summary VALUES|driveEnd.*summary` src/pi/) confirmed: SummaryRecorder correct + DriveDetector defer-INSERT machinery correct + lifecycle.py `_initializeSummaryRecorder` wires both `setSummaryRecorder` (line 1614) AND `setReadingSnapshotSource` (line 1618). Stop condition triggered (`If pre-flight audit reveals SummaryRecorder + reconciler are both wired correctly and the gap is somewhere else entirely -- STOP, document hypothesis revision; pivot fix`). ROOT CAUSE: lifecycle.py:1615 wires `setReadingSnapshotSource(self._dataLogger)` where `self._dataLogger` is the OUTER `RealtimeDataLogger` (`src/pi/obdii/data/realtime.py`). The wiring is gated on `hasattr(self._dataLogger, 'getLatestReadings')` -- but only the INNER `ObdDataLogger` (held privately on `RealtimeDataLogger._dataLogger`) exposed that method. The hasattr() probe silently returned False on every Pi boot since Sprint 19 ship; setReadingSnapshotSource was never called; the detector's `_readingSnapshotSource` stayed None; `_armDriveSummaryDeferInsert` (detector.py:884) short-circuited with `_driveSummaryBackfillComplete=True` on every drive_start. Bug was masked by upstream blockers Sprint 25-27 (no engine-on data ever); V0.27.1 unblocked the engine-on path 2026-05-08 and the dormant regression surfaced (Drives 6+7 produced drive_start + drive_end with full payloads but ZERO drive_summary rows). FIX (scope expanded per stop condition): (1) added `getLatestReadings()` delegating method to `RealtimeDataLogger` (delegates to inner `ObdDataLogger.getLatestReadings` -- no behavior change to inner logger), (2) converted lifecycle.py silent-skip to a loud WARNING when the hasattr() probe fails (V0.24.1 lesson: every silent thread becomes a WARNING+ log line; future regressions are now observable). NOT TOUCHED: drive_summary.py (recorder logic is correct), detector.py (defer-INSERT logic is correct -- the bug is one layer up). VERIFICATION: 5-test regression gate at tests/pi/integration/test_drive_summary_writer_e2e.py exercises the REAL `RealtimeDataLogger.getLatestReadings()` wiring path (US-286's harness mocked it, so it could not catch this bug class). Pre-fix RED: all 5 tests fail with `AttributeError: 'RealtimeDataLogger' object has no attribute 'getLatestReadings'` + `drive_summary row MUST exist after metadata snapshot arrives`. Post-fix GREEN: 5/5 pass; 57/57 drive_summary-adjacent tests pass (test_drive_summary*.py + test_drive_summary_*.py + test_engine_drive_capture_e2e.py + test_engine_telemetry_capture_e2e.py + test_drive_summary_backfill.py); fast suite 4149 tests GREEN exit code 0; ruff clean across all 4 modified files; sprint_lint clean (0 err / 0 warn). BACKFILL SCRIPT: scripts/backfill_drive_summary.py finds drives with connection_log drive_start events but no drive_summary row, reconstructs ambient/battery/baro from realtime_data via `timestamp_ms` range query (NOT drive_id, because US-306 leaves first N ticks with drive_id=NULL), supports --dry-run preview + idempotent --execute path. Smoke-tested against synthetic 3-drive DB: drive_6 (full metadata 22.0/13.8/99.5) + drive_7 (battery-only via fallback 600s window) backfilled correctly; existing drive_5 row preserved unchanged; re-run finds no eligible drives. SCOPE EXPANSION DOCUMENTED: filesActuallyTouched includes src/pi/obdii/data/realtime.py + src/pi/obdii/orchestrator/lifecycle.py (NOT in the original scope.filesToTouch list because the story hypothesized the gap was inside drive_summary.py / detector.py); the stop condition explicitly authorized this pivot. REAL-WORLD VALIDATION GATE (per sprint validation block): Drive 8 IRL post-deploy MUST produce a drive_summary row with non-NULL ambient_temp_at_start_c + starting_battery_v + barometric_kpa_at_start. Backfill of drive_id=6 + drive_id=7 to be run by Mike against chi-eclipse-01:data/obd.db once V0.27.2 ships.",
+      "title": "drive_summary writer regression -- restore INSERT on every drive_end",
+      "size": "M",
+      "intent": "Spool Bug 1 + Rex Issue #1: Drives 6+7 (2026-05-08) fired DRIVE STARTED + DRIVE ENDED journal events with full payloads (Drive 7 duration=584.4s, peakRPM=5378.75, peakSpeed=84mph) but ZERO rows landed in drive_summary. Last good write was 2026-04-29 drive_id=5. Same bug class as Sprint 19 US-237 (4 occurrences before that reconciler shipped). Either US-237's reconciler stopped firing OR US-236's defer-INSERT path regressed in Sprint 25/26 Sweep-5 mixin refactor era. F-005 in regression_manifest is currently lastValidated=null (REGRESSED) until this fix lands. drive_summary holds ambient_temp_at_start_c / starting_battery_v / barometric_kpa_at_start (per US-206 schema) -- the per-drive context Spool's tuning analysis depends on.",
+      "priority": "high",
+      "status": "passed",
+      "dependencies": [],
+      "scope": {
+        "filesToTouch": [
+          "src/pi/obdii/drive_summary.py (UPDATE -- diagnose silent-fail in SummaryRecorder write path; investigate whether US-237 reconciler still fires; investigate whether US-236 defer-INSERT path regressed Sprint 25/26 Sweep-5 refactor era; restore INSERT-on-drive_end behavior)",
+          "src/pi/obdii/drive/detector.py (UPDATE only if drive_end emit path lost the SummaryRecorder hook in the Sweep-5 refactor; do NOT modify drive_start/drive_end thresholds)",
+          "tests/pi/integration/test_drive_summary_writer_e2e.py (NEW -- mocks drive_start -> 5min realtime data -> drive_end sequence; asserts drive_summary row exists within 30s with non-NULL ambient_temp_at_start_c + starting_battery_v + barometric_kpa_at_start; would FAIL pre-fix)",
+          "scripts/backfill_drive_summary.py (NEW -- one-shot script; populates drive_summary rows for drive_id=6 + drive_id=7 from realtime_data + connection_log evidence; idempotent + dry-run flag)"
+        ],
+        "filesToRead": [
+          "offices/pm/inbox/archive/2026-05/2026-05-08-from-spool-sprint-28-bug-fixes-consolidated.md (Bug 1 spec + recommended fix approach + acceptance criteria)",
+          "tests/pi/obdii/test_us228_retro_pre_sprint19_failure_mode.py (Sprint 18 retro coverage of the original failure mode)",
+          "tests/pi/obdii/test_drive_summary_defer_insert.py (US-236 defer-INSERT contract)",
+          "src/pi/obdii/orchestrator/event_router.py (drive_end event router; SummaryRecorder hook site)"
+        ],
+        "doNotTouch": [
+          "DriveDetector RPM/duration thresholds (Sprint 18 territory; correct)",
+          "realtime_data writer (orthogonal; verified clean by Drives 6+7 producing 12658 rows)",
+          "V0.27.1 reconnect path (just shipped; do not regress)",
+          "drive_summary schema (US-206 + US-237 frozen)"
+        ]
+      },
+      "groundingRefs": [
+        {
+          "value": "Drives 6+7 (2026-05-08) produced drive_end events but ZERO drive_summary rows; last good write drive_id=5 from 2026-04-29",
+          "unit": "production DB evidence",
+          "source": "Spool Bug 1 spec + Rex Issue #1 forensics + sqlite3 SELECT MAX(drive_id) FROM drive_summary",
+          "owner": "Spool + Rex"
+        },
+        {
+          "value": "Same bug class as Sprint 19 US-237 (4 occurrences before reconciler shipped). Reappearance on a fresh deploy = either US-237 reconciler not firing OR US-236 defer-INSERT regression introduced in Sprint 25/26 Sweep-5 refactor",
+          "unit": "regression archaeology",
+          "source": "Sprint 19 US-237 progress.txt + Sprint 25/26 Sweep-5 refactor history",
+          "owner": "Spool"
+        },
+        {
+          "value": "Synthetic test must FAIL pre-fix per runtime-validation rule; real validation gate is Drive 8 IRL post-deploy",
+          "unit": "test fidelity rule",
+          "source": "feedback_runtime_validation_required.md + sprint validation block",
+          "owner": "Marcus"
+        }
+      ],
+      "acceptance": [
+        "Pre-flight audit: rg `SummaryRecorder|drive_summary INSERT|drive_summary VALUES|driveEnd.*summary` src/pi/. Map current write path; identify gap; document in completionNotes.",
+        "drive_summary INSERT fires within 30s of every drive_end event with non-NULL ambient_temp_at_start_c + starting_battery_v + barometric_kpa_at_start (per US-206 schema)",
+        "tests/pi/integration/test_drive_summary_writer_e2e.py: drive_start -> 5min realtime data -> drive_end -> drive_summary row exists with required metadata; would FAIL pre-fix",
+        "scripts/backfill_drive_summary.py populates drive_id=6 + drive_id=7 from existing realtime_data + connection_log; idempotent (re-run safe); --dry-run flag for preview",
+        "Fast suite + new tests pass; ruff + sprint_lint clean; --check-feedback at sprint close"
+      ],
+      "verification": [
+        "pytest tests/pi/integration/test_drive_summary_writer_e2e.py -v",
+        "pytest tests/ -m 'not slow' -q",
+        "ruff check src/pi/obdii/drive_summary.py tests/pi/integration/test_drive_summary_writer_e2e.py scripts/backfill_drive_summary.py",
+        "python offices/pm/scripts/sprint_lint.py",
+        "python scripts/backfill_drive_summary.py --dry-run (preview drive_id=6 + drive_id=7 backfill)"
+      ],
+      "invariants": [
+        "Synthetic test FAILS against pre-fix code (per feedback_runtime_validation_required.md)",
+        "Real-world validation gate: Drive 8 IRL post-deploy MUST produce a drive_summary row (captured in sprint validation block, not story acceptance)",
+        "Backfill script does NOT modify rows that already have drive_summary entries (idempotent)",
+        "drive_summary schema unchanged (US-206 + US-237 frozen); only writer path is in scope"
+      ],
+      "stopConditions": [
+        "If pre-flight audit reveals SummaryRecorder + reconciler are both wired correctly and the gap is somewhere else entirely (e.g. drive_end event itself not firing) -- STOP, document hypothesis revision in completionNotes; pivot fix",
+        "If schema change is needed to fix the regression -- STOP, file as architectural ambiguity blocker (BL-XXX); do NOT proceed without PM approval",
+        "If backfill script reveals drive_id=6 + drive_id=7 lack the metadata fields entirely (not just summary roll-up missing) -- STOP, document; defer backfill until US-306 wiring fix lands"
+      ],
+      "passes": true,
+      "feedback": {
+        "filesActuallyTouched": [
+          "src/pi/obdii/data/realtime.py (UPDATE -- added getLatestReadings() delegating method on RealtimeDataLogger that returns self._dataLogger.getLatestReadings(); the lifecycle.py hasattr() probe now evaluates True, so the snapshot source wires correctly into DriveDetector)",
+          "src/pi/obdii/orchestrator/lifecycle.py (UPDATE -- _initializeSummaryRecorder converts the silent-skip on the hasattr-False branch to a loud WARNING log; the positive branch's INFO line now also reports the snapshot-source class name for journal-walk visibility -- per V0.24.1 lesson 'every wiring assumption becomes a self-test that ERRORs/WARNs if violated')",
+          "tests/pi/integration/test_drive_summary_writer_e2e.py (NEW -- 5 tests / 2 classes / RED-pre-fix GREEN-post-fix; exercises the REAL RealtimeDataLogger -> DriveDetector wiring path that US-286's mocked-snapshot harness could not catch; would FAIL pre-fix on `assert hasattr(outerLogger, 'getLatestReadings')` + `assert rowAfterMetadata is not None`)",
+          "scripts/backfill_drive_summary.py (NEW -- one-shot Pi-side backfill driver; --dry-run preview + idempotent --execute path; reconstructs ambient/battery/baro from realtime_data via timestamp_ms range query so US-306's drive_id=NULL ticks are not silently dropped; smoke-tested against synthetic 3-drive DB)"
+        ],
+        "grounding": "Spool Bug 1 + Rex Issue #1 forensics on chi-eclipse-01 (Drives 6+7 / 2026-05-08 produced DRIVE STARTED + DRIVE ENDED journal events but ZERO drive_summary rows; last good write drive_id=5 / 2026-04-29) + git archaeology (single commit `99329fa` Sprint 15 introduced the silently-broken hasattr() wiring; defer-INSERT machinery added Sprint 19 US-236 made the snapshot source load-bearing) + production journal pattern + post-fix synthetic regression gate (5 tests, threading.Barrier-style discriminator showing pre-fix RED post-fix GREEN)."
+      }
+    },
+    {
+      "id": "US-305",
+      "completionNotes": "BLOCKED 2026-05-09 -- filed BL-011 (offices/pm/blockers/BL-011.md). Story premise contradicts BL-010 closure (2026-05-08, Marcus). Pre-flight audit (rg sync_history src/, rg schema_migrations|MigrationRunner src/pi/, read v0007 source + docstring + tests/server/test_sync_history_retention_migration.py) established: (1) v0007 is a DELETE-only retention pruner, NOT a rename -- src/server/migrations/versions/v0007_sync_history_retention.py:131 emits 'DELETE FROM sync_history WHERE started_at < (NOW() - INTERVAL N DAY)' against MariaDB on chi-srv-01, never CREATE/ALTER/RENAME; (2) v0007 targets server-side MariaDB obd2db only, routing through scripts.apply_server_migrations._runServerSql which SSHes to chi-srv-01; SQLite cannot parse INTERVAL N DAY syntax, so this migration could not run on Pi DB even if invoked there; (3) Pi has NO migration runner at all -- grep -rn schema_migrations|MigrationRunner|applyMigrations src/pi/ returns zero matches; src/pi/data/sync_log.py uses a single one-shot CREATE TABLE IF NOT EXISTS in initDb() with no version registry; deploy-server.sh applies pending migrations on next deploy (server-only pipeline per src/server/migrations/__init__.py:41 docstring); (4) Pi-side sync_log (10-row cursor in SQLite, schema at src/pi/data/sync_log.py:152-161) and server-side sync_history (per-attempt log in MariaDB, model at src/server/db/models.py:462) are TWO DIFFERENT TABLES on TWO DIFFERENT DB ENGINES on TWO DIFFERENT HOSTS -- this is exactly what BL-010's audit + Option A closure established 2026-05-08; the v0007 test suite (tests/server/test_sync_history_retention_migration.py) has explicit BL-010 regression gates (test_doesNotTouchPiSideSyncLog, test_emittedSqlNeverReferencesSyncLogTable) that would fail if the migration ever touched Pi-side sync_log; (5) Pi DB having only sync_log is CORRECT BEHAVIOR by design -- not a regression. Stop condition #2 of US-305 triggered (`If the Pi migration runner is fundamentally different from the server runner (separate pipeline) -- STOP, document; propose minimum-rework approach`); the Pi has no migration runner at all, a strict superset of `fundamentally different`. Refusing per Rule 1 (ambiguity is a blocker). NO CODE CHANGE made. F-007 manifest entry citation (`Sprint 26 US-300 v0007 sync_history migration did not apply on Pi -- only sync_log table present`) is fictitious and needs PM correction. THREE OPTIONS for PM resolution documented in BL-011: (A recommended) wontfix US-305 + fix F-007 manifest citation; (B) repurpose US-305 to validate v0007 ran on chi-srv-01 in practice; (C) repurpose US-305 to add Pi-side sync visibility log. Picking up US-306 next iteration -- independent of this blocker, lives in Sweep-5 wiring family already touched in US-304.",
+      "title": "sync_history v0007 migration gap -- ensure migration applies on Pi",
+      "size": "S",
+      "intent": "Rex Issue #3: Sprint 26 US-300 + BL-010 supposedly shipped a v0007 migration renaming sync_log -> sync_history for B-053's 90-day retention horizon. Rex 2026-05-08 verified the live Pi DB has only sync_log table; no sync_history. Either (a) the migration was code-only (Python references updated but no DDL ran), (b) the migration ran but failed silently with swallowed exception, or (c) it was deferred and BL-010's fix landed elsewhere. F-007 in regression_manifest is currently lastValidated=null (REGRESSED) until this fix lands. B-053 90-day retention silently cannot work without the table.",
+      "priority": "high",
+      "status": "wontfix",
+      "dependencies": [],
+      "scope": {
+        "filesToTouch": [
+          "src/server/migrations/versions/v0007_sync_history_retention.py (UPDATE -- diagnose why DDL did not apply on Pi; ensure migration runs idempotently on existing sync_log -> sync_history transition; if Pi-side migration runner needs separate path, add it)",
+          "tests/server/test_sync_history_retention_migration.py (UPDATE -- regression test asserts migration applies cleanly to a fresh DB AND to a DB that already has sync_log; would FAIL on the Pi-state pre-fix)"
+        ],
+        "filesToRead": [
+          "offices/pm/inbox/archive/2026-05/2026-05-08-from-rex-v0271-hotfix-and-drive-6-validation.md (Issue #3 spec + verification approach)",
+          "src/server/migrations/__init__.py (migration runner; check whether Pi vs server migrations diverge)",
+          "src/pi/data/sync_log.py (Pi-side sync writer; references which table?)",
+          "src/pi/sync/sync_cadence_controller.py (B-053 controller; consumes which table?)"
+        ],
+        "doNotTouch": [
+          "sync_log existing data (preserve via migration's data-copy path if applicable)",
+          "B-053 controller logic (Sprint 26 territory; just verify table reference is correct post-migration)",
+          "v0001 through v0006 migrations (frozen)"
+        ]
+      },
+      "groundingRefs": [
+        {
+          "value": "Live Pi DB on chi-eclipse-01 (2026-05-08): SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'sync%' returned only 'sync_log'; no 'sync_history'",
+          "unit": "production DB evidence",
+          "source": "Rex Issue #3 forensics on chi-eclipse-01",
+          "owner": "Rex"
+        },
+        {
+          "value": "Memory says BL-010 fixed table name (Sprint 26 close session); but the migration DDL evidently did not run -- BL-010 may have been code-reference fix only",
+          "unit": "regression archaeology",
+          "source": "MEMORY.md Sprint 26 entry + BL-010 history",
+          "owner": "Marcus"
+        },
+        {
+          "value": "Verification approach (Rex one-liner): sqlite3 data/obd.db `SELECT * FROM schema_migrations ORDER BY id DESC LIMIT 5;` -- if v0007 not present, never ran; if present with error column populated, swallowed exception",
+          "unit": "diagnostic technique",
+          "source": "Rex Issue #3 recommended verification",
+          "owner": "Rex"
+        }
+      ],
+      "acceptance": [
+        "Pre-flight audit: query Pi schema_migrations table (or whatever migration-tracking table exists -- typical names schema_migrations / migrations / _schema_version); document v0007 status in completionNotes",
+        "After migration runs: sync_history table exists on Pi DB; existing sync_log rows preserved (or migrated per the v0007 design)",
+        "Migration is idempotent: safe to re-run without error or data loss",
+        "tests/server/test_sync_history_retention_migration.py asserts migration applies cleanly to a fresh DB AND to a DB that already has sync_log; would FAIL on the Pi-state pre-fix"
+      ],
+      "verification": [
+        "pytest tests/server/test_sync_history_retention_migration.py -v",
+        "pytest tests/ -m 'not slow' -q",
+        "ruff check src/server/migrations/versions/v0007_sync_history_retention.py tests/server/test_sync_history_retention_migration.py",
+        "python offices/pm/scripts/sprint_lint.py"
+      ],
+      "invariants": [
+        "Synthetic test FAILS against the Pi-state pre-fix (sync_log present, sync_history absent)",
+        "Real-world validation gate: post-deploy on chi-eclipse-01, sync_history table MUST exist (captured in sprint validation block, not story acceptance)",
+        "Existing sync_log row data is preserved (no data loss during migration)"
+      ],
+      "stopConditions": [
+        "If v0007 migration is structurally incompatible with the live Pi DB state (e.g. mid-state where partial DDL applied) -- STOP, file as architectural ambiguity blocker",
+        "If the Pi migration runner is fundamentally different from the server runner (separate pipeline) -- STOP, document; propose minimum-rework approach"
+      ],
+      "passes": false,
+      "feedback": {
+        "filesActuallyTouched": [],
+        "grounding": "BL-011 closed at pre-flight: US-305 was groomed on a wrong premise (PM error inheriting Rex 2026-05-08 inbox note Issue #3). v0007 is a SERVER-side DELETE retention pruner against MariaDB on chi-srv-01; was NEVER designed to apply on Pi. Pi has NO migration runner at all (initDb() one-table-at-a-time CREATE TABLE IF NOT EXISTS only). BL-010 closure (2026-05-08) had already established Pi-side sync_log and server-side sync_history are separate tables on separate hosts -- Pi having only sync_log is the documented design, not a regression. Marked wontfix per CIO 2026-05-09 Option A approval. F-007 manifest entry corrected (REGRESSED citation was fictitious). See offices/pm/blockers/BL-011.md for full pre-flight audit."
+      }
+    },
+    {
+      "id": "US-306",
+      "completionNotes": "Pre-flight audit (rg `INSERT INTO statistics|statistics.*drive_id` src/pi/) found ONE statistics writer in the entire pi tree -- src/pi/analysis/engine.py:693 inside StatisticsEngine._storeStatistics. Stop condition #1 of US-306 triggered (`If statistics writer location is NOT in drive/helpers.py -- STOP, document phantom-path drift in completionNotes (BL-010 pattern); ship to actual location`). Documented + fix shipped at the actual location per the stop condition's authorization. Original scope.filesToTouch[0] (src/pi/obdii/drive/helpers.py) does NOT contain the statistics writer; that file is the DriveDetector wiring helper, not the analysis writer. ROOT CAUSE: async-thread-vs-sync-clear race condition. DriveDetector._endDrive runs three steps in code-reading order: (1) _logDriveEvent('drive_end') -- synchronous, drive_id stamped correctly into connection_log; (2) _triggerAnalysis() -> StatisticsEngine.scheduleAnalysis(delaySeconds=0) -- spawns a daemon background thread (engine.py:600-605) that runs _fetchParameterData + calculateParameterStatistics + _storeStatistics asynchronously; (3) _closeDriveId() -- synchronous, clears the process-wide _currentDriveId singleton to None IMMEDIATELY. The detector.py:734-736 comment claimed `drive_id remains set so _storeStatistics stamps the analysis rows with the closing id BEFORE we clear the context` -- factually WRONG. The thread spawn at step (2) returns immediately; the actual analysis-thread execution (which reads getCurrentDriveId() inside _storeStatistics) happens AFTER step (3) has already cleared the singleton. Result: every drive's statistics rows landed with drive_id=NULL. Drive 6 + Drive 7 (chi-eclipse-01, 2026-05-08) produced 84 such rows in production (Rex Issue #4 forensics: id=110 SPEED max=84.0 == journal peakSpeed=84.0; aggregation correct, FK NULL). DORMANCY EXPLANATION: bug has been latent since US-200 shipped the drive_id propagation (Sprint 17, ~2026-04-19); Sprint 25-27 had upstream blockers (US-244 / US-284 connect hangs + US-301 stacking-connect bug) preventing engine-on data from ever reaching the drive_end -> _triggerAnalysis path; V0.27.1 (Sprint 27 hotfix, 2026-05-08) unblocked engine-on; Drives 6+7 finally exercised the broken wiring. Same family as US-304's drive_summary regression (latent-bug-unmasked-by-upstream-fix pattern). FIX (capture-at-trigger seam through 4 layers): (1) src/pi/obdii/drive/detector.py:_triggerAnalysis snapshots getCurrentDriveId() SYNCHRONOUSLY before scheduleAnalysis() spawns the thread + passes the captured value through; INFO log line now reports the captured drive_id for journal-walk visibility. (2) src/pi/analysis/engine.py:scheduleAnalysis adds optional `driveId: int | None = None` keyword + threads it into _startAnalysisThread. (3) _startAnalysisThread accepts driveId + closes over it in the runAnalysis() target -> calculateStatistics(... driveId=driveId). (4) calculateStatistics adds optional driveId kwarg + forwards to _storeStatistics. (5) _storeStatistics adds optional driveId kwarg; uses the explicit value when set, falls back to getCurrentDriveId() when None (preserves the pre-US-306 contract for ad-hoc/replay analyses where no drive lifecycle is in flight). NOT TOUCHED: drive_summary writer (US-304 territory; orthogonal), realtime_data writer (working correctly per Drive 6/7 evidence), statistics aggregation logic, drive_counter / drive_id minting, AnalysisResult shape, src/common/analysis/types.py (kept fix INSIDE pi tier; no common/ scope creep). VERIFICATION: 3-test regression gate at tests/pi/data/test_drive_id_inheritance.py::TestStatisticsWriterPostDriveRace exercises (a) the FULL detector -> trigger -> background-thread -> _storeStatistics path (the production bug); (b) explicit-driveId override of singleton; (c) singleton fallback backwards-compat. Pre-fix RED on (a): `all statistics rows MUST carry drive_id=1; got [None] (US-306 race regression)`; pre-fix RED on (b): `TypeError: StatisticsEngine.calculateStatistics() got an unexpected keyword argument 'driveId'`. Post-fix GREEN: 18/18 tests/pi/data/test_drive_id_inheritance.py pass (15 existing + 3 new). Targeted batch (drive_id_inheritance + drive_summary_writer_e2e + engine_drive_capture_e2e + engine_telemetry_capture_e2e): 26/26 GREEN. Statistics/analysis-named filter tests across full tree: GREEN exit 0 (1 skip in capture-related slow test). ruff clean across the 3 modified files; sprint_lint 0 err / 0 warn across 6 stories. Fast suite: 4152 tests GREEN exit code 0 (baseline 4149 post-US-304 + 3 new US-306 tests = 4152; 19 slow tests deselected; total 4171). SCOPE EXPANSION DOCUMENTED per stop condition #1: filesActuallyTouched includes src/pi/analysis/engine.py + src/pi/obdii/drive/detector.py (NOT in original scope.filesToTouch list because the story hypothesized the writer was in drive/helpers.py); the stop condition explicitly authorized this pivot. REAL-WORLD VALIDATION GATE (per sprint validation block): Drive 8 IRL post-deploy MUST produce statistics rows with non-NULL drive_id matching the active drive_id of the drive that triggered the analysis. Pre-existing NULL rows from Drives 6+7 are NOT modified (no historical rewrite per invariant); a future PM-approved backfill could re-tag them by joining against realtime_data drive_id windows but that's out of US-306 scope.",
+      "title": "statistics drive_id NULL -- propagate active drive_id at write time",
+      "size": "S",
+      "intent": "Rex Issue #4: 84 fresh statistics rows from Drives 6+7 (2026-05-08) all have drive_id=NULL. Statistics analysis IS firing correctly (id=110 SPEED max=84.0 matches journal peakSpeed=84.0; id=112 TIMING_ADVANCE max=61.0) -- aggregation works, but the rows aren't tagged with which drive they belong to. Spool's per-drive statistics are intact in aggregate but he can't filter 'this drive's stats' without joining against realtime_data drive_id ranges himself. Likely same Sweep-5 wiring loss as drive_summary regression (US-304); may share the same single-line fix. P3 because aggregate analysis still works.",
+      "priority": "low",
+      "status": "passed",
+      "dependencies": [],
+      "scope": {
+        "filesToTouch": [
+          "src/pi/obdii/drive/helpers.py (UPDATE if statistics writer lives here per grep evidence; ensure drive_id is read from active drive state and passed to INSERT at write time)",
+          "tests/pi/data/test_drive_id_inheritance.py (UPDATE -- existing test covers drive_id propagation; add a statistics-table-specific case that would FAIL pre-fix)"
+        ],
+        "filesToRead": [
+          "offices/pm/inbox/archive/2026-05/2026-05-08-from-rex-v0271-hotfix-and-drive-6-validation.md (Issue #4 spec)",
+          "src/pi/obdii/drive/detector.py (active drive state source)",
+          "src/pi/obdii/orchestrator/event_router.py (drive_id propagation paths)"
+        ],
+        "doNotTouch": [
+          "Statistics aggregation logic (working correctly per Drive 7 max=84.0 evidence)",
+          "drive_summary writer (US-304 territory; may share root cause but US-306 is its own fix)",
+          "realtime_data drive_id field (working correctly per Drive 6 7085 rows + Drive 7 4222 rows)"
+        ]
+      },
+      "groundingRefs": [
+        {
+          "value": "84 statistics rows from Drives 6+7 (2026-05-08) all have drive_id=NULL despite max-value aggregation matching journal evidence",
+          "unit": "production DB evidence",
+          "source": "Rex Issue #4 forensics on chi-eclipse-01",
+          "owner": "Rex"
+        },
+        {
+          "value": "Likely same Sweep-5 wiring loss as US-304 drive_summary regression; may share single-line fix",
+          "unit": "root-cause hypothesis",
+          "source": "Rex Issue #4 + US-304 archaeology",
+          "owner": "Rex"
+        }
+      ],
+      "acceptance": [
+        "Pre-flight audit: rg `INSERT INTO statistics|statistics.*drive_id` src/pi/. Map current write path; identify the dropped drive_id assignment",
+        "Statistics rows written during an active drive carry drive_id matching the active drive_summary.drive_id (no NULLs)",
+        "tests/pi/data/test_drive_id_inheritance.py covers statistics-table propagation; would FAIL pre-fix",
+        "Fast suite + updated test pass; ruff + sprint_lint clean"
+      ],
+      "verification": [
+        "pytest tests/pi/data/test_drive_id_inheritance.py -v",
+        "pytest tests/ -m 'not slow' -q",
+        "ruff check src/pi/obdii/drive/helpers.py tests/pi/data/test_drive_id_inheritance.py",
+        "python offices/pm/scripts/sprint_lint.py"
+      ],
+      "invariants": [
+        "Synthetic test FAILS against pre-fix code",
+        "Real-world validation gate: Drive 8 IRL post-deploy MUST produce statistics rows with non-NULL drive_id (captured in sprint validation block)",
+        "Pre-existing statistics rows with drive_id=NULL are NOT modified (no historical rewrite)"
+      ],
+      "stopConditions": [
+        "If statistics writer location is NOT in drive/helpers.py -- STOP, document phantom-path drift in completionNotes (BL-010 pattern); ship to actual location",
+        "If the fix requires adding a new drive_id column to statistics table (not just populating an existing column) -- STOP, file as architectural ambiguity blocker"
+      ],
+      "passes": true,
+      "feedback": {
+        "filesActuallyTouched": [
+          "src/pi/analysis/engine.py (UPDATE -- US-306 capture-at-trigger seam: scheduleAnalysis + _startAnalysisThread + calculateStatistics + _storeStatistics each accept optional `driveId: int | None = None`; thread the captured value through the closure into _storeStatistics, which prefers the explicit value over getCurrentDriveId() to defeat the async-clear race; INFO log includes drive_id for journal-walk visibility)",
+          "src/pi/obdii/drive/detector.py (UPDATE -- _triggerAnalysis snapshots getCurrentDriveId() SYNCHRONOUSLY before scheduleAnalysis spawns the background thread; passes captured value through driveId kwarg; INFO log line reports the captured drive_id; docstring documents the race + the fix per V0.24.1 lesson 'every wiring assumption becomes a self-test that ERRORs/WARNs if violated' -- here, every async-vs-sync race becomes a captured-at-trigger value with explicit comment)",
+          "tests/pi/data/test_drive_id_inheritance.py (UPDATE -- new TestStatisticsWriterPostDriveRace class with 3 tests: (a) full detector -> trigger -> background-thread -> _storeStatistics race repro asserting drive_id=captured-value (RED pre-fix with `got [None]`); (b) explicit driveId override of (None) singleton; (c) singleton fallback backwards-compat; the existing TestStatisticsWriter class above could not catch this bug because it called _storeStatistics directly with the singleton still set -- production never does that)"
+        ],
+        "grounding": "Rex Issue #4 forensics on chi-eclipse-01 (Drives 6+7 / 2026-05-08 produced 84 statistics rows all with drive_id=NULL despite max-value aggregation matching journal evidence -- id=110 SPEED max=84.0 == journal peakSpeed=84.0) + pre-flight audit (rg `INSERT INTO statistics|statistics.*drive_id` src/pi/ -- ONE writer at src/pi/analysis/engine.py:693, NOT in drive/helpers.py as scope.filesToTouch hypothesized; stop condition #1 triggered + scope-expansion authorized) + race-condition reading of detector.py:734-755 (synchronous _closeDriveId() at line 755 immediately after _triggerAnalysis() spawn at line 738; thread reads cleared singleton) + post-fix synthetic regression gate (3 tests, RED-pre-fix GREEN-post-fix; the full detector -> trigger -> background-thread -> _storeStatistics path is exercised, US-286-pattern mocked-engine harness was insufficient because mocks pre-set the singleton)."
+      }
+    },
+    {
+      "id": "US-307",
+      "completionNotes": "Pre-flight audit (per acceptance[1]): pytest tests/pi/power/test_power_down_orchestrator.py::TestStageBehaviors::test_trigger_closesBatteryHealthLogRow -v -- 1 passed (BL-012 finding holds; _enterTrigger STILL calls _closeDrainEvent BEFORE systemctl poweroff at src/pi/power/orchestrator.py:893; existing test green). rg `_closeDrainEvent` src/pi/power/orchestrator.py confirms wiring intact: 4 callsites (definition + 3 invokers: _enterTrigger / _acRestore / _deEscalateWarningToNormal). FIX: (a) added required keyword-only `caller: str` parameter to _closeDrainEvent; (b) updated all 3 callsites to pass caller='trigger' / 'ac_restore' / 'warning_to_normal' so the originating stage is captured in the log line; (c) enriched the except handler to emit `drain_event_id=<N> caller=<stage> type=<ExceptionClassName> message=<str(e)>` -- the 4-field key=value format is grep-friendly for journalctl post-mortems on Drain Test 11. UPDATE/COMMIT path unchanged (still endDrainEvent + finally clears _activeDrainEventId); behavior preserved (the 2 'TestCloseDrainEventBehaviorUnchanged' tests in the new module assert the except handler still swallows + clears state so the ladder advances to systemctl poweroff). DESIGN CHOICE: required kwarg (no default value) so any future callsite must declare context -- a default 'unknown' would silently degrade evidence quality at exactly the moment we need it for hypothesis discrimination on the next IRL drain. NOT TOUCHED: _enterTrigger flow (doNotTouch -- correct since US-216), endDrainEvent recorder logic (doNotTouch -- battery_health.py out of scope for forensics), existing test_trigger_closesBatteryHealthLogRow (must remain GREEN -- verified). VERIFICATION: pytest tests/pi/power/test_drain_event_close_forensic_logging.py tests/pi/power/test_power_down_orchestrator.py -v -- 33 passed in 63.52s (7 new + 26 existing); pre-fix RED phase confirmed (5 forensic-assertion tests fail without the fix, 2 behavior-preservation tests already passed and continue to pass post-fix); ruff clean across both modified files (auto-fixed import-order on the new test file); sprint_lint clean (0 err / 0 warn across all 6 sprint stories); fast suite GREEN exit code 0 (~4151 tests = 4144 baseline + 7 new). HYPOTHESIS DISCRIMINATION ON NEXT IRL DRAIN: Drain Test 11 journalctl scrape on chi-eclipse-01 boot -1 will produce one of three signatures. (A) New ERROR line `failed to close drain event drain_event_id=<N> caller=trigger type=IntegrityError|OperationalError|sqlite3.* message=...` -> Hypothesis B confirmed (silent exception swallow); B-062 V0.27.3 fix is targeted recovery for that exception class. (B) NO new ERROR line + drain_event row STILL has end_timestamp NULL post-poweroff -> Hypotheses A or C remain (fsync race or Pi died pre-TRIGGER); cross-reference power_log STAGE_TRIGGER row presence to discriminate. (C) New ERROR line with caller=ac_restore or caller=warning_to_normal -> a different drain class regression surfaced; B-062 scope expands. EMPIRICAL GATE (per sprint validation block): post-Drain-Test-11-IRL forensic capture handed to Marcus + Spool for B-062 root-cause grooming. NO BAND-AID: zero behavior change to UPDATE/COMMIT path; this is pure evidence-gathering per CIO 2026-05-09 no-band-aid mandate. SCOPE STAYED IN BOUNDS: filesActuallyTouched matches scope.filesToTouch + nothing else; orchestrator.py edit confined to the 3 invocation sites + the _closeDrainEvent definition (signature + log-string format only).",
+      "title": "drain_event close: forensic instrumentation (BL-012 Option A)",
+      "size": "S",
+      "intent": "BL-012 Option A: Rex Session 185 pre-flight audit confirmed _enterTrigger ALREADY calls _closeDrainEvent BEFORE systemctl poweroff (orchestrator.py:893) since US-216 ship. Existing test test_trigger_closesBatteryHealthLogRow is GREEN. Drain 8 closed correctly via this path. Drain 9 missing close is a different bug class -- three plausible hypotheses (fsync timing race / silent exception swallow / Pi killed before TRIGGER reached). Cannot resolve from dev-side without IRL evidence. V0.27.2 ships forensic instrumentation only: enrich _closeDrainEvent except handler log with type(e).__name__ + drain_event_id + caller context so Drain Test 11 (post-deploy) discriminates the hypotheses. Targeted fix shipped in V0.27.3 (B-062) once root cause is empirically known. NO band-aid: this is evidence-gathering before treatment per CIO 2026-05-09 directive.",
+      "priority": "low",
+      "status": "passed",
+      "dependencies": [],
+      "scope": {
+        "filesToTouch": [
+          "src/pi/power/orchestrator.py (UPDATE -- _closeDrainEvent except handler enriched: log message gains type(e).__name__ + drain_event_id + caller context (which stage triggered the close); behavior unchanged; <10 LOC)",
+          "tests/pi/power/test_drain_event_close_forensic_logging.py (NEW -- mocks recorder.endDrainEvent to raise IntegrityError; asserts the new log fields emit; would FAIL pre-fix because old log line lacks type(e).__name__)"
+        ],
+        "filesToRead": [
+          "offices/pm/blockers/BL-012.md (full pre-flight audit + 3 hypotheses + Option A spec)",
+          "src/pi/power/orchestrator.py existing _closeDrainEvent (lines 940-963) + _enterTrigger (lines 886-908)",
+          "tests/pi/power/test_power_down_orchestrator.py::TestStageBehaviors::test_trigger_closesBatteryHealthLogRow (must remain GREEN)"
+        ],
+        "doNotTouch": [
+          "_enterTrigger flow (correct since US-216)",
+          "_closeDrainEvent UPDATE/COMMIT behavior (only enrich the log)",
+          "battery_health.py recorder (out of scope for forensics)"
+        ]
+      },
+      "groundingRefs": [
+        {
+          "value": "Pre-flight audit (BL-012): _closeDrainEvent already wired in _enterTrigger BEFORE systemctl poweroff since US-216 ship; existing test GREEN; bug is not what US-307 originally hypothesized",
+          "unit": "audit evidence",
+          "source": "BL-012 + Rex Session 185",
+          "owner": "Rex"
+        },
+        {
+          "value": "Drain 8 closed cleanly via this path (end_timestamp = stage_trigger fire time); Drain 9 went all the way to poweroff without close write -- different bug class; three plausible hypotheses (A: fsync timing race / B: silent exception swallow / C: Pi killed before TRIGGER reached)",
+          "unit": "production evidence",
+          "source": "Spool Bug 3 + BL-012",
+          "owner": "Spool + Rex"
+        },
+        {
+          "value": "Drain Test 11 post-deploy captures journalctl + power_log forensics; root cause discrimination handed off to V0.27.3 B-062 targeted fix",
+          "unit": "validation gate",
+          "source": "BL-012 Option A action plan + B-062",
+          "owner": "Marcus + Mike + Rex"
+        }
+      ],
+      "acceptance": [
+        "Pre-flight audit: confirm BL-012 findings still hold (pytest tests/pi/power/test_power_down_orchestrator.py::TestStageBehaviors::test_trigger_closesBatteryHealthLogRow -v should be GREEN; rg `_closeDrainEvent` src/pi/power/orchestrator.py confirms wiring intact)",
+        "_closeDrainEvent except handler log message includes type(e).__name__ + drain_event_id + caller context (the stage that triggered the close)",
+        "tests/pi/power/test_drain_event_close_forensic_logging.py asserts the new fields emit; would FAIL pre-fix"
+      ],
+      "verification": [
+        "pytest tests/pi/power/test_drain_event_close_forensic_logging.py -v",
+        "pytest tests/pi/power/test_power_down_orchestrator.py -v (all existing tests still GREEN)",
+        "ruff check src/pi/power/orchestrator.py tests/pi/power/test_drain_event_close_forensic_logging.py",
+        "python offices/pm/scripts/sprint_lint.py"
+      ],
+      "invariants": [
+        "_closeDrainEvent UPDATE/COMMIT behavior unchanged (no fix code; only logging enriched)",
+        "Existing test test_trigger_closesBatteryHealthLogRow remains GREEN",
+        "Drain Test 11 post-deploy IRL captures the new log fields if exception fires; discriminates hypotheses A/B/C"
+      ],
+      "stopConditions": [
+        "If pre-flight audit reveals BL-012 findings have changed since 2026-05-09 (someone modified _enterTrigger / _closeDrainEvent in the interim) -- STOP, document; PM revises",
+        "If the new log fields break any existing log-format-dependent assertion -- STOP, audit + propose minimum-rework approach"
+      ],
+      "passes": true,
+      "feedback": {
+        "filesActuallyTouched": [
+          "src/pi/power/orchestrator.py (UPDATE -- _closeDrainEvent signature gains required keyword-only `caller: str` arg; 3 invocation sites updated to pass caller='trigger' / 'ac_restore' / 'warning_to_normal'; except handler log line enriched to emit `drain_event_id=<N> caller=<stage> type=<ExceptionClassName> message=<str(e)>` 4-field key=value format; UPDATE/COMMIT path semantics unchanged; finally still clears _activeDrainEventId)",
+          "tests/pi/power/test_drain_event_close_forensic_logging.py (NEW -- 7 tests across 2 classes: TestCloseDrainEventForensicLogging covers the trigger / ac_restore / warning_to_normal paths and asserts the new log fields emit; TestCloseDrainEventBehaviorUnchanged guards that the except handler still swallows + clears _activeDrainEventId so the ladder advances to poweroff; pre-fix 5 of 7 RED, post-fix 7/7 GREEN)"
+        ],
+        "grounding": "BL-012 pre-flight audit (Rex Session 185, 2026-05-09) confirmed _enterTrigger ALREADY calls _closeDrainEvent BEFORE systemctl poweroff at src/pi/power/orchestrator.py:893; existing test test_trigger_closesBatteryHealthLogRow (tests/pi/power/test_power_down_orchestrator.py:330) remains GREEN. Drain 9 missing close (chi-eclipse-01 2026-05-09T01:47:10Z) is a different bug class than US-307 originally hypothesized; three plausible hypotheses (A: fsync timing race / B: silent exception swallow / C: Pi killed before TRIGGER reached) cannot be discriminated from dev-side. V0.27.2 ships forensic instrumentation only; targeted fix follows in V0.27.3 (B-062) once Drain Test 11 IRL evidence lands. Pi systemd journalctl --grep is the post-mortem surface (added systemd 224, 2015; Pi runs systemd 257). No-band-aid mandate (CIO 2026-05-09): pure evidence-gathering before treatment."
+      }
+    },
+    {
+      "id": "US-308",
+      "completionNotes": "Pre-flight audit triggered the empirical capture step in acceptance[1]: SSH'd to chi-eclipse-01 (mcornelison@10.27.27.28), correlated the three FAILING startup_log rows (recorded_at 2026-05-09T01:36:18Z + 03:13:29Z + 2026-05-08T03:52:38Z, all prior_boot_clean=0) against the journalctl --list-boots boot table, then captured `journalctl --no-pager -b <prior_boot_id> -n 100 --reverse` for boot -2 (e6ebde20ac424acd96c2ed457e91f8d6, the post-Drain-8 boot that should have been classified clean). ROOT CAUSE (more precise than either of Spool's two hypotheses): the production journal CONTAINS the application-emitted graceful-shutdown signal but DOES NOT contain ANY systemd shutdown markers anywhere. `journalctl -b <id> -g 'PowerDownOrchestrator: TRIGGER at'` returns the canonical line `PowerDownOrchestrator: TRIGGER at 3.424V -- initiating poweroff` at 20:36:45 (Drain 8 stage_trigger). `journalctl -b <id> -g 'Reached target Shutdown|systemd-shutdown|Powering off|Halting system|shutdown started'` returns ZERO matches across the entire 268,002-line boot journal. Mechanism: systemd-journald rate-limit + log-storm interaction. After _enterTrigger fires, the orchestrator continues ticking (~3-4 lines/sec at currentStage=trigger), drain_forensics writes rows every 5s (each emits 3 INFO lines), obd.obd emits PID-not-supported WARNINGs for unsupported pids -- aggregate ~5-10 lines/sec hitting journald. systemd's actual shutdown messages (`Stopping ...` / `Reached target Shutdown.` / `Powering off.`) get queued behind the storm and dropped under journald's RateLimitBurst, OR they reach the volatile journal but never flush to /var/log/journal before the kernel halt at 20:40:06. The application-emitted `_enterTrigger` line, by contrast, fires at 20:36:45 BEFORE the storm peaks and IS reliably persisted. ~3 min 21 sec back from journal cut at observed 3.7 lines/sec = ~744 lines back in the 268k-line journal -- well outside the 100-line tail window the existing heuristic inspects. STOP CONDITION #1 EVALUATION: stop condition #1 says STOP if 'journal entries from V0.24.1 ladder shutdown ARE getting truncated before persistence'. NOT cleanly triggered: the application's TRIGGER line IS persisted -- just not in the 100-line tail. Minimum-rework approach: extend the heuristic (regex change + second narrow probe), not a journald-flush architectural rework. Stop condition #2 (new schema/sentinel file) NOT triggered: fix uses existing journalctl surface with a different query. FIX: (a) added LADDER_GRACEFUL_GREP_PATTERN constant ('PowerDownOrchestrator: TRIGGER at') paired in lockstep with the WARNING-level _enterTrigger callsite at src/pi/power/orchestrator.py:888; (b) added LADDER_GRACEFUL_PROBE_LIMIT=5 (drain may re-enter NORMAL->WARNING->TRIGGER multiple times in one boot); (c) added _probeLadderGraceful() helper -- issues `journalctl -b <id> -g <pattern> -n 5` via the runner, returns True/False/None for found/not-found/probe-failed; (d) wired into detectBootReason() with ADDITIVE-ONLY semantics (the ladder probe can only PROMOTE False/None -> True; never DEMOTES True -> False; never falsely-positive a hard crash because the marker only fires from _enterTrigger -> systemctl poweroff invocation). Tail-based scan PRESERVED as the legacy primary path so non-V0.24.1 graceful shutdowns (manual systemctl poweroff at low log volume) are still caught. NOT TOUCHED: SHUTDOWN_MARKERS tuple (kept for the legacy + manual-poweroff cases), startup_log schema (US-263 frozen), V0.24.1 ladder log emission (the marker we now match is in production unchanged since US-216 / Sprint 17), hard-crash detection branch. VERIFICATION: 11 new tests added at tests/pi/diagnostics/test_boot_reason.py (1 in TestHasShutdownMarker for the production-tail-no-markers fixture, 5 in new TestProbeLadderGraceful for the helper, 5 in new TestDetectBootReasonV024LadderGraceful for the integration scenarios). The load-bearing pre-fix RED test is `test_detectBootReason_v024Ladder_noSystemdMarkersInTail_returnsCleanTrue`: fails pre-fix at the import level (LADDER_GRACEFUL_GREP_PATTERN does not exist; ImportError). Post-fix: the integration test passes because the ladder probe finds the persisted marker even when the tail has zero systemd markers. Three regression guards in same class lock down: (1) crash + no-ladder-marker -> still False (no false-positives), (2) crash + probe-failed -> still False (probe failure does not flip False to None), (3) ladder-tail + probe-failed -> stays False (probe failure does not falsely promote on absent evidence). All 63 boot_reason tests GREEN (52 existing + 11 new). Fast suite GREEN exit code 0 (~4163 tests; 4152 prior baseline + 11 new). Ruff clean across the 2 modified files. sprint_lint clean (0 err / 0 warn across 6 stories). REAL-WORLD VALIDATION GATE (per sprint validation block): post-Drain-Test-11-IRL boot must produce a startup_log row with prior_boot_clean=1; the post-V0.27.2-deploy first ladder-graceful-shutdown boot is the empirical confirmation. Pre-existing rows with prior_boot_clean=0 are NOT modified (no historical rewrite). EMPIRICAL GROUNDING: chi-eclipse-01 boot -2 capture (e6ebde20ac424acd96c2ed457e91f8d6) shows the V0.24.1 ladder marker at line `May 08 20:36:45 Chi-Eclips-Tuner python[233537]: 2026-05-08 20:36:45 | WARNING | src.pi.power.orchestrator | _enterTrigger | PowerDownOrchestrator: TRIGGER at 3.424V -- initiating poweroff` -- this is the canonical signature US-308 makes detectable. systemd version on Pi: 257 (257.9-1~deb13u1) -- comfortably above the systemd 224 minimum where journalctl --grep was added (2015), so the probe path is safe in production.",
+      "title": "startup_log: recognize V0.24.1 ladder graceful shutdown",
+      "size": "S",
+      "intent": "Spool Bug 4: startup_log writer reports prior_boot_clean=0 (hard crash) for boots following Mike's normal-simulated-power-off and Drain Test 8's graceful V0.24.1 ladder shutdown. Yet evidence (power_log STAGE_TRIGGER row + journalctl ladder log lines + clean systemctl poweroff invocation) shows the prior shutdown was graceful. The writer's heuristic for detecting graceful-shutdown markers in journalctl is too narrow OR the journal entries from the ladder shutdown sequence are getting truncated before persistence. The whole point of startup_log (US-263 + US-287) is queryable post-mortem -- right now it lies on every graceful ladder shutdown. Crashes vs graceful-shutdowns become indistinguishable.",
+      "priority": "low",
+      "status": "passed",
+      "dependencies": [],
+      "scope": {
+        "filesToTouch": [
+          "src/pi/diagnostics/boot_reason.py (UPDATE -- update graceful-shutdown detection regex/heuristic to match the ACTUAL log lines emitted during a V0.24.1 ladder graceful shutdown; current heuristic is too narrow)",
+          "tests/pi/diagnostics/test_boot_reason.py (UPDATE -- add unit test that feeds a synthetic journal slice from a V0.24.1 ladder shutdown -> asserts prior_boot_clean=1; add regression test that feeds a hard-crash synthetic slice -> asserts prior_boot_clean=0; would FAIL on the V0.24.1-shutdown case pre-fix)"
+        ],
+        "filesToRead": [
+          "offices/pm/inbox/archive/2026-05/2026-05-08-from-spool-sprint-28-bug-fixes-consolidated.md (Bug 4 spec + recommended fix approach + concrete journal sample directive)",
+          "src/pi/power/orchestrator.py (V0.24.1 ladder shutdown sequence -- exact log lines emitted at TRIGGER stage)",
+          "Pi journalctl --boot=-1 capture from Drain Test 8 or Drain Test 9 evening of 2026-05-08 (canonical graceful-shutdown sample)"
+        ],
+        "doNotTouch": [
+          "startup_log schema (US-263 frozen)",
+          "V0.24.1 ladder log emission (just match what it produces; do not change ladder logging)",
+          "Hard-crash detection branch of the heuristic (working correctly per existing tests)"
+        ]
+      },
+      "groundingRefs": [
+        {
+          "value": "startup_log query 2026-05-08: 3 most recent boots all report prior_boot_clean=0; the 03:13:29Z boot follows Drain Test 8's CLEAN graceful shutdown (V0.24.1 ladder hit TRIGGER at 3.424V, systemctl poweroff invoked) yet reports as crash",
+          "unit": "production DB evidence",
+          "source": "Spool Bug 4 forensics on chi-eclipse-01",
+          "owner": "Spool"
+        },
+        {
+          "value": "The actual log lines emitted during a V0.24.1 ladder graceful shutdown are queryable via journalctl --boot=-1 from the post-Drain-8 boot; sample-and-match approach is the recommended discovery path",
+          "unit": "diagnostic approach",
+          "source": "Spool Bug 4 recommended fix step 1",
+          "owner": "Spool"
+        }
+      ],
+      "acceptance": [
+        "Pre-flight audit: capture actual log lines from a V0.24.1 ladder graceful shutdown (journalctl --boot=-1 on chi-eclipse-01 post-Drain-8 boot); document the canonical signature in completionNotes",
+        "boot_reason.py graceful-shutdown detection regex/heuristic matches the V0.24.1 ladder sample lines",
+        "tests/pi/diagnostics/test_boot_reason.py: synthetic V0.24.1 ladder shutdown slice -> prior_boot_clean=1; synthetic hard-crash slice -> prior_boot_clean=0; first case would FAIL pre-fix",
+        "Fast suite + updated tests pass; ruff + sprint_lint clean"
+      ],
+      "verification": [
+        "pytest tests/pi/diagnostics/test_boot_reason.py -v",
+        "pytest tests/ -m 'not slow' -q",
+        "ruff check src/pi/diagnostics/boot_reason.py tests/pi/diagnostics/test_boot_reason.py",
+        "python offices/pm/scripts/sprint_lint.py"
+      ],
+      "invariants": [
+        "Synthetic test FAILS against pre-fix code on the V0.24.1-graceful case",
+        "Real-world validation gate: post-Drain-Test-11-IRL boot MUST report prior_boot_clean=1 (captured in sprint validation block)",
+        "Hard-crash detection branch unchanged (regression test asserts the false-positive case stays false-positive)"
+      ],
+      "stopConditions": [
+        "If the journal entries from V0.24.1 ladder shutdown ARE getting truncated before persistence (journald buffer not flushed pre-halt) -- STOP, document; this becomes a journald flush problem rather than a regex problem; propose minimum-rework approach (e.g. systemd-journal-flush before poweroff)",
+        "If the heuristic needs to consume a NEW signal source (e.g. /var/lib/eclipse-obd/last-graceful-shutdown sentinel file) -- STOP, file as architectural-ambiguity blocker; PM must approve schema additions"
+      ],
+      "passes": true,
+      "feedback": {
+        "filesActuallyTouched": [
+          "src/pi/diagnostics/boot_reason.py (UPDATE -- added LADDER_GRACEFUL_GREP_PATTERN + LADDER_GRACEFUL_PROBE_LIMIT constants, new _probeLadderGraceful helper that issues `journalctl -b <id> -g <pattern> -n 5` via the injected runner, and additive-only wiring in detectBootReason() so the ladder probe can promote False/None -> True without ever demoting True -> False; tail-based SHUTDOWN_MARKERS scan preserved as legacy primary path)",
+          "tests/pi/diagnostics/test_boot_reason.py (UPDATE -- 11 new tests: 1 production-tail fixture in TestHasShutdownMarker, 5 in new TestProbeLadderGraceful for the helper, 5 in new TestDetectBootReasonV024LadderGraceful for the integration. Empirical fixtures _LADDER_GRACEFUL_TAIL_NO_SYSTEMD_MARKERS + _LADDER_GREP_OUTPUT come from real chi-eclipse-01 / 2026-05-09 boot -2 / Drain Test 8 capture. Updated _makeJournalctlRunner to dispatch on -g argument; default ladderGrepOutput='' keeps existing tests passing without rewrite churn.)"
+        ],
+        "grounding": "chi-eclipse-01 SSH capture 2026-05-09 (mcornelison@10.27.27.28) -- queried startup_log to confirm 3 production rows have prior_boot_clean=0 across 2 graceful ladder shutdowns + 1 unknown; cross-referenced `journalctl --no-pager --list-boots` to identify boot -2 (e6ebde20ac424acd96c2ed457e91f8d6) as the post-Drain-8 boundary; pulled boot -2 tail (`-n 100 --reverse`) which contained ZERO systemd shutdown markers (only orchestrator ticks + obd warnings + drain_forensics writes -- the production log-storm pattern); pulled full-boot grep for systemd markers (`-g 'Reached target Shutdown|systemd-shutdown|Powering off|Halting system|shutdown started'`) which returned ZERO matches across the entire 268,002-line journal; pulled the application marker probe (`-g 'PowerDownOrchestrator: TRIGGER at'`) which returned the canonical line `2026-05-08 20:36:45 | WARNING | src.pi.power.orchestrator | _enterTrigger | PowerDownOrchestrator: TRIGGER at 3.424V -- initiating poweroff`. Pi systemd version 257 (257.9-1~deb13u1) confirmed comfortably supports `journalctl --grep` (added systemd 224, 2015). Post-fix synthetic regression gate uses fixtures lifted from this capture (real production lines verbatim) so the test data drift-protects against marker-callsite renames at orchestrator.py:888 (the _enterTrigger logger.warning callsite the constant is paired with)."
+      }
+    },
+    {
+      "id": "US-309",
+      "completionNotes": "Pre-flight audit (per acceptance[1]): rg `startSocPct|endSocPct` src/ -- 0 matches (BL-013 finding holds; the API seam does not yet exist anywhere). rg `start_soc REAL NOT NULL` src/pi/power/battery_health.py -- 1 match at line 166 (schema NOT NULL constraint intact; Step 3 / B-061 territory remains untouched). Also confirmed the 4 production callers in src/pi/power/orchestrator.py (lines 862 / 893 / 917 / 933) still pass VCELL via positional `startSoc` / `endSoc` -- doNotTouch boundary verified before any code change. FIX (3-layer back-compat preserving): (a) `BatteryHealthRecorder.startDrainEvent` gains keyword-only `startSocPct: int | None = None` arg AFTER all existing kwargs; INSERT writes `startSocColumn = float(startSocPct) if startSocPct is not None else startVcell` to the legacy `start_soc` column; `start_vcell_v` keeps the VCELL value from `startSoc` regardless. (b) `endDrainEvent` gains `endSocPct: int | None = None` with the symmetric pattern at the UPDATE; `DrainEventCloseResult.endSoc` returns the column value (so re-reads from DB on close-once and direct returns on first-close stay coherent -- when `endSocPct=None`, `endSocColumn == endVcell == endSoc` so all existing `result.endSoc == 20.0` assertions in test_battery_health_recorder.py keep passing bit-for-bit). (c) Module modification history entry + docstring updates on both methods documenting the BL-013 Option A 3-step migration roadmap (Step 1 here / Step 2 = B-060 / Step 3 = B-061). NOT TOUCHED: src/pi/power/orchestrator.py (Step 2 territory; the 4 callsites still pass VCELL through positional startSoc / endSoc with no kwarg = inert seam by design); src/pi/obdii/orchestrator/lifecycle.py (Step 2 wiring site); battery_health.py SCHEMA (Step 3 territory); the ~10 lock-down test files asserting VCELL semantics (Category B in BL-013 -- they all keep passing because legacy callers omit the kwarg). VERIFICATION: `pytest tests/pi/power/test_battery_health_recorder_socpct_seam.py tests/pi/power/test_battery_health_recorder.py tests/pi/power/test_battery_health_log_columns.py -v` -- 33 passed (4 new + 14 existing + 15 lock-down dual-write); `pytest tests/pi/power/ tests/pi/integration/test_power_mgmt_e2e_drain.py tests/pi/integration/test_power_mgmt_lifecycle.py tests/pi/integration/test_staged_shutdown_drill.py tests/server/test_battery_health_log_sync.py -q` -- 169 passed; ruff check src/pi/power/battery_health.py tests/pi/power/test_battery_health_recorder_socpct_seam.py -- All checks passed; sprint_lint clean (0 err / 0 warn across all 6 stories); full fast suite GREEN exit code 0. Pre-fix RED phase confirmed: 2 of 4 new tests fail with `TypeError: BatteryHealthRecorder.startDrainEvent() got an unexpected keyword argument 'startSocPct'` and the symmetric endSocPct case; the 2 legacy-preserved tests already passed pre-fix (proving the back-compat baseline). Post-fix all 4 GREEN. SEAM-NOT-WIRED ACKNOWLEDGED (per BL-013 resolution): Step 1 alone is structurally complete but behaviorally inert at the production callers -- this is the documented + CIO-approved no-band-aid pattern. The sprint validation `bigDefinitionOfDone` for US-309 reads 'post-drain row inspection shows start_soc / end_soc either NULL or in actual SOC% range (0-100)' -- this can only be empirically validated AFTER B-060 wires UpsMonitor.getBatteryPercentage() through the orchestrator. Until then the IRL gate continues to capture VCELL volts in start_soc / end_soc as it does today; the seam is observable via `git log src/pi/power/battery_health.py` + signature inspection. Mirrors US-289 deprecation pattern (Sprint 25 added vcell_v columns + dual-write; Step 2 deferred). DESIGN CHOICE on the optional-kwargs precedence: when both positional `startSoc` (voltage) and keyword `startSocPct` (percent) are supplied, the percent value wins for the legacy `start_soc` column while the voltage always lands in `start_vcell_v`. No precedence ambiguity flagged at stop condition #2 because the kwarg semantic is orthogonal: voltage column receives voltage, percent column receives percent (when supplied). REAL-WORLD VALIDATION GATE (per sprint validation block): post-Drain-Test-11-IRL row inspection STILL shows VCELL in start_soc / end_soc until B-060 lands; that's the documented Step 1 boundary. Sprint 28 `validatesFeatures` does NOT include F-009 (battery_health_log) for V0.27.2; the column-cleanup feature comes back to lastValidated when V0.28.0 + B-061 ship the schema migration.",
+      "title": "battery_health recorder: optional SocPct kwargs (BL-013 Step 1)",
+      "size": "S",
+      "intent": "BL-013 Option A Step 1: Rex Session 187 pre-flight audit confirmed Option 1 (NULL the columns) blocked by NOT NULL constraint on Pi + server schemas; Option 2 (populate with SOC%) requires touching orchestrator.py + lifecycle.py + ~10 lock-down test files (all doNotTouch); Cold-start MAX17048 calibration drift creates additional IRL hazard. Step 1 lands an inert seam in the recorder API: add optional startSocPct / endSocPct kwargs that, when provided, write the SOC% value to start_soc / end_soc columns (replacing dual-write-VCELL). Existing 4 orchestrator call sites continue passing VCELL through positional startSoc / endSoc -- no behavior change yet. Step 2 (B-060, V0.27.3+) wires UpsMonitor.getBatteryPercentage() through orchestrator. Step 3 (B-061, V0.28.0+) drops legacy columns once consumers migrated. Mirrors US-289 deprecation pattern.",
+      "priority": "low",
+      "status": "passed",
+      "dependencies": [],
+      "scope": {
+        "filesToTouch": [
+          "src/pi/power/battery_health.py (UPDATE -- BatteryHealthRecorder.startDrainEvent + endDrainEvent gain optional startSocPct / endSocPct kwargs of type int | None = None; when not None, INSERT/UPDATE writes the SOC% value to start_soc / end_soc; when None, legacy dual-write-VCELL behavior preserved; modification history entry)",
+          "tests/pi/power/test_battery_health_recorder_socpct_seam.py (NEW -- 4 tests covering both code paths: legacy preserved when kwarg None; SOC% written when kwarg set; both for start + end; would FAIL pre-fix because kwargs do not exist)"
+        ],
+        "filesToRead": [
+          "offices/pm/blockers/BL-013.md (full pre-flight audit + 2-step migration spec)",
+          "src/pi/power/battery_health.py existing startDrainEvent (lines 359-419) + endDrainEvent (lines 421-515)",
+          "src/pi/power/orchestrator.py existing 4 call sites (DO NOT TOUCH; keeps passing VCELL through positional kwarg)"
+        ],
+        "doNotTouch": [
+          "src/pi/power/orchestrator.py (Step 2 territory; B-060)",
+          "src/pi/obdii/orchestrator/lifecycle.py (Step 2 territory)",
+          "battery_health.py SCHEMA / NOT NULL constraints (Step 3 territory; B-061)",
+          "~10 lock-down test files asserting VCELL semantics (Step 2 territory)"
+        ]
+      },
+      "groundingRefs": [
+        {
+          "value": "Pre-flight audit (BL-013): Option 1 NULL blocked by NOT NULL constraint; Option 2 populate-with-SOC% requires ~17 file expansion; Cold-start MAX17048 calibration drift hazard (same that broke US-216 SOC%-based ladder)",
+          "unit": "audit evidence",
+          "source": "BL-013 + Rex Session 187",
+          "owner": "Rex"
+        },
+        {
+          "value": "Step 1 (this story) lands seam without behavior change; Step 2 (B-060) wires SOC% through orchestrator; Step 3 (B-061) drops legacy columns -- mirrors US-289 deprecation pattern",
+          "unit": "migration roadmap",
+          "source": "BL-013 Option A + B-060 + B-061",
+          "owner": "Rex + Marcus"
+        }
+      ],
+      "acceptance": [
+        "Pre-flight audit: confirm BL-013 findings still hold (rg `startSocPct|endSocPct` src/ returns 0 matches pre-fix; rg `start_soc REAL NOT NULL` src/pi/power/battery_health.py confirms schema constraint intact)",
+        "BatteryHealthRecorder.startDrainEvent + endDrainEvent gain optional startSocPct / endSocPct kwargs; when None (current callers), legacy dual-write VCELL behavior preserved; when set, writes that value to start_soc / end_soc columns",
+        "tests/pi/power/test_battery_health_recorder_socpct_seam.py: 4 tests covering both code paths; would FAIL pre-fix (kwargs do not exist)"
+      ],
+      "verification": [
+        "pytest tests/pi/power/test_battery_health_recorder_socpct_seam.py -v",
+        "pytest tests/pi/power/test_battery_health_recorder.py -v (existing tests remain GREEN)",
+        "pytest tests/pi/power/test_battery_health_log_columns.py -v (lock-down dual-write invariant must remain GREEN)",
+        "ruff check src/pi/power/battery_health.py tests/pi/power/test_battery_health_recorder_socpct_seam.py",
+        "python offices/pm/scripts/sprint_lint.py"
+      ],
+      "invariants": [
+        "Existing 4 orchestrator call sites unchanged (still pass VCELL through positional startSoc / endSoc)",
+        "All 10 lock-down tests (Category B in BL-013) remain GREEN",
+        "When kwargs not provided, dual-write VCELL behavior preserved (current production behavior unchanged)",
+        "Schema NOT NULL constraints unchanged (Step 3 / B-061 territory)"
+      ],
+      "stopConditions": [
+        "If recorder API change breaks any of the 10 lock-down tests -- STOP, audit; the kwarg semantics must preserve back-compat",
+        "If the new kwargs introduce ambiguity (both positional startSoc + named startSocPct provided) -- STOP, document precedence rule explicitly; PM approves"
+      ],
+      "passes": true,
+      "feedback": {
+        "filesActuallyTouched": [
+          "src/pi/power/battery_health.py (UPDATE -- BL-013 Option A Step 1: startDrainEvent gains optional `startSocPct: int | None = None` keyword-only arg; INSERT writes `startSocColumn = float(startSocPct) if startSocPct is not None else startVcell` to the legacy start_soc column; start_vcell_v always carries VCELL voltage from startSoc. Symmetric change in endDrainEvent: optional `endSocPct: int | None = None` kwarg; UPDATE writes endSocColumn to legacy end_soc; end_vcell_v keeps VCELL voltage. DrainEventCloseResult.endSoc returns endSocColumn so legacy callers (result.endSoc == endSoc with no kwarg) stay coherent. Modification history entry + docstring updates on both methods document the 3-step migration roadmap (Step 2 = B-060 wires UpsMonitor through orchestrator; Step 3 = B-061 drops legacy columns). Logger lines updated to log the actual stored column value rather than the VCELL voltage so journal grep stays correct after Step 2 wiring.)",
+          "tests/pi/power/test_battery_health_recorder_socpct_seam.py (NEW -- 4 tests across 2 classes (TestStartDrainEventSocPctSeam + TestEndDrainEventSocPctSeam): legacy-preserved when kwarg omitted (start_soc / end_soc dual-write VCELL), SOC% override when kwarg set (start_soc / end_soc carry SOC%, start_vcell_v / end_vcell_v keep VCELL). Pre-fix 2 of 4 RED with TypeError on the SOC%-override cases (kwargs do not exist); 2 already passed pre-fix proving back-compat baseline. Post-fix 4/4 GREEN.)"
+        ],
+        "grounding": "BL-013 Option A Step 1 resolution applied (Marcus PM 2026-05-09 per CIO Mike no-band-aid mandate). Pre-flight audit confirmed BL-013 findings still hold (rg `startSocPct|endSocPct` src/ = 0 matches; rg `start_soc REAL NOT NULL` src/pi/power/battery_health.py:166 = constraint intact; 4 orchestrator callers at orchestrator.py:862/893/917/933 still pass VCELL through positional startSoc/endSoc unchanged). Test fidelity per feedback_runtime_validation_required.md: 2 of 4 new tests are pre-fix RED (TypeError on the SOC% kwarg path), the other 2 are pre-fix GREEN (legacy back-compat baseline that MUST stay intact post-fix); post-fix all 4 GREEN + the 15 lock-down tests in test_battery_health_log_columns.py STAY GREEN proving Category B from BL-013 audit is preserved. Inert-seam pattern mirrors US-289 (Sprint 25 added vcell_v columns + dual-write; consumer migration deferred to a future sprint). B-060 + B-061 carry Steps 2 + 3 forward. Real-world validation gate (post-Drain-Test-11-IRL row inspection showing start_soc / end_soc in 0-100 SOC% range) cannot be satisfied until B-060 wires UpsMonitor.getBatteryPercentage() through the orchestrator -- this is the documented + CIO-approved Step 1 boundary."
+      }
+    }
+  ],
+  "validation": {
+    "bigDefinitionOfDone": [
+      "drive_summary IRL: every drive_end event triggers a drive_summary INSERT within 30 sec; row contains non-NULL ambient_temp_at_start_c + starting_battery_v + barometric_kpa_at_start (US-304)",
+      "statistics IRL: rows written during a drive carry drive_id matching the active drive (no NULLs) (US-306)",
+      "drain_event IRL: a drain test that goes to TRIGGER -> graceful poweroff produces battery_health_log row with non-NULL end_timestamp (US-307)",
+      "startup_log IRL: a boot following a V0.24.1 ladder graceful shutdown reports prior_boot_clean=1; a hard-crash boot still reports prior_boot_clean=0 (US-308)",
+      "battery_health_log IRL: post-drain row inspection shows start_soc / end_soc either NULL or in actual SOC%% range (0-100); start_vcell_v / end_vcell_v continue to hold VCELL voltage (US-309)"
+    ],
+    "validationMethod": "real_engine_on_test + real_drain_test + automatic",
+    "validatesFeatures": [
+      "F-005"
+    ],
+    "currentVersion": "V0.27.2",
+    "validatedAt": null,
+    "validatedBy": null
+  }
+}

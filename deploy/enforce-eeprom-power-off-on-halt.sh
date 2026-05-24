@@ -1,30 +1,46 @@
 #!/usr/bin/env bash
 ################################################################################
-# enforce-eeprom-power-off-on-halt.sh — Pi 5 wake-on-power EEPROM enforcement
+# enforce-eeprom-power-off-on-halt.sh — Pi 5 + X1209-HAT wake-on-power EEPROM
 #
-# Idempotently enforces POWER_OFF_ON_HALT=0 in the Pi 5 bootloader EEPROM. With
-# this setting (which is the bootloader default), `systemctl poweroff` halts
-# the SoC but leaves the PMIC awake watching the power rails. When wall power
-# returns the PMIC kicks the SoC back on -- no operator button press required.
-# A non-zero value puts the board in deep sleep on poweroff, requiring a
-# physical button or full power-cycle to boot.
+# Idempotently enforces POWER_OFF_ON_HALT=1 in the Pi 5 bootloader EEPROM. On
+# this hardware topology (Pi 5 + Geekworm X1209 UPS HAT), =1 is the load-bearing
+# setting for unattended wake on external-power-return.
 #
-# Background (US-253, paired with US-216 staged shutdown / US-252 firing fix):
-# In the post-B-043 in-car wiring scenario, key-OFF cuts wall power, the UPS
-# sustains the Pi long enough for US-216's staged ladder to fire a graceful
-# `systemctl poweroff`, and key-ON returns wall power. The Pi MUST auto-wake at
-# that point -- there's no operator at the car. POWER_OFF_ON_HALT=0 is the
-# load-bearing setting that makes that loop work.
+# **Topology-specific rationale (the F-6 fix).** With the X1209 holding the Pi
+# 5 V rail up off its battery, `=0` leaves the PMIC active after `poweroff`
+# and the PMIC NEVER sees a power-cycle edge when external power returns
+# → no unattended auto-boot. This is Finding B, observed empirically on the
+# Pi 2026-05-17. `=1` powers the PMIC fully off so a USB-C power-return is a
+# real boot event → clean unattended restore.
+#
+# Provenance (do not weaken without re-validating both):
+#   - CIO decision 2026-05-18: `POWER_OFF_ON_HALT=1` locked for this topology.
+#   - Bench Check B (Atlas-gated 2026-05-18): empirically confirmed `=1` →
+#     unattended auto-boot on this physical Pi 5 + X1209-HAT, 1 cycle. Spec
+#     definitive corrections: offices/architect/findings/2026-05-18-
+#     architecture-md-corrections-definitive.md §11.
+#   - The previously documented "`=0` ⇒ auto-boots / `=1` ⇒ needs button"
+#     table was FALSE for this topology (it described a bare Pi 5 with no HAT)
+#     and was the documentation root of the V0.27.x chain blocker (finding
+#     F-6). The empirical bench drill is the sole arbiter.
+#
+# History note: prior to SS-T8 (2026-05-19) this script enforced =0 and was
+# the defect that reverted the correct setting on every deploy. SS-T8
+# inverts the target value.  Full IRL confirmation (5 consecutive clean
+# unattended cycles) is still pending — `=1` is designed-for and
+# empirically supported at 1 cycle, never asserted beyond evidence.
 #
 # Usage (run directly on the Pi):
 #   sudo bash deploy/enforce-eeprom-power-off-on-halt.sh
 #
 # Behavior:
 #   - Reads current EEPROM config via `rpi-eeprom-config`
-#   - If POWER_OFF_ON_HALT line is absent: no-op (defaults to 0; correct)
-#   - If POWER_OFF_ON_HALT=0: no-op (already correct)
-#   - If POWER_OFF_ON_HALT=<non-zero>: rewrite the config block in-place to set
-#     POWER_OFF_ON_HALT=0, apply via `rpi-eeprom-config --apply <tmpfile>`
+#   - If POWER_OFF_ON_HALT=1: no-op (already correct)
+#   - If POWER_OFF_ON_HALT line is absent: rewrite the config block to add an
+#     explicit POWER_OFF_ON_HALT=1 (the bootloader default 0 is WRONG on this
+#     HAT topology; do not rely on it)
+#   - If POWER_OFF_ON_HALT=<anything-other-than-1>: rewrite to set
+#     POWER_OFF_ON_HALT=1 via `rpi-eeprom-config --apply <tmpfile>`
 #   - If `rpi-eeprom-config` is missing or fails: exit non-zero with a clear error
 #
 # Test override:
@@ -45,7 +61,7 @@ set -o pipefail
 TOOL="${RPI_EEPROM_CONFIG:-rpi-eeprom-config}"
 
 if ! command -v "$TOOL" >/dev/null 2>&1; then
-    echo "ERROR: '$TOOL' not found on PATH. POWER_OFF_ON_HALT=0 cannot be enforced." >&2
+    echo "ERROR: '$TOOL' not found on PATH. POWER_OFF_ON_HALT=1 cannot be enforced." >&2
     echo "       This script targets Pi 5 bootloaders. Verify rpi-eeprom is installed." >&2
     exit 1
 fi
@@ -64,17 +80,30 @@ current=$("$TOOL" 2>/dev/null) || {
 existing=$(echo "$current" | grep -E '^[[:space:]]*POWER_OFF_ON_HALT[[:space:]]*=' || true)
 
 if [ -z "$existing" ]; then
-    echo "POWER_OFF_ON_HALT not present in EEPROM config (defaults to 0; wake-on-power OK)."
+    # The bootloader default (0) is wrong for the Pi 5 + X1209-HAT topology.
+    # Rewrite to add an explicit =1 line; relying on the default would silently
+    # ship Finding B (no unattended wake) on any future bootloader rev.
+    echo "POWER_OFF_ON_HALT not present in EEPROM config -- rewriting to 1 (Pi 5 + X1209-HAT requires =1; default 0 is WRONG on this topology)."
+    tmp=$(mktemp)
+    trap 'rm -f "$tmp"' EXIT
+    # Append the missing line at the end of the current config.
+    printf '%s\nPOWER_OFF_ON_HALT=1\n' "$current" > "$tmp"
+    if ! "$TOOL" --apply "$tmp" >/dev/null 2>&1; then
+        echo "ERROR: '$TOOL --apply' failed; EEPROM config unchanged." >&2
+        echo "       Inspect with: sudo $TOOL" >&2
+        exit 2
+    fi
+    echo "POWER_OFF_ON_HALT=1 applied. Effect persists across reboots."
     exit 0
 fi
 
 value=$(echo "$existing" | head -1 | cut -d= -f2 | tr -d '[:space:]')
-if [ "$value" = "0" ]; then
-    echo "POWER_OFF_ON_HALT=0 already set (wake-on-power OK)."
+if [ "$value" = "1" ]; then
+    echo "POWER_OFF_ON_HALT=1 already set (wake-on-power OK)."
     exit 0
 fi
 
-echo "POWER_OFF_ON_HALT=${value} -- rewriting to 0 to enable wake-on-power (US-253)."
+echo "POWER_OFF_ON_HALT=${value} -- rewriting to 1 (Pi 5 + X1209-HAT wake-on-power requires =1; SS-T8 / CIO decision 2026-05-18)."
 
 # Rewrite the line in a tempfile copy of the current config, then apply
 # atomically. `rpi-eeprom-config --apply <file>` validates and replaces the
@@ -82,7 +111,7 @@ echo "POWER_OFF_ON_HALT=${value} -- rewriting to 0 to enable wake-on-power (US-2
 tmp=$(mktemp)
 trap 'rm -f "$tmp"' EXIT
 
-echo "$current" | sed -E 's/^[[:space:]]*POWER_OFF_ON_HALT[[:space:]]*=.*/POWER_OFF_ON_HALT=0/' > "$tmp"
+echo "$current" | sed -E 's/^[[:space:]]*POWER_OFF_ON_HALT[[:space:]]*=.*/POWER_OFF_ON_HALT=1/' > "$tmp"
 
 if ! "$TOOL" --apply "$tmp" >/dev/null 2>&1; then
     echo "ERROR: '$TOOL --apply' failed; EEPROM config unchanged." >&2
@@ -90,4 +119,4 @@ if ! "$TOOL" --apply "$tmp" >/dev/null 2>&1; then
     exit 2
 fi
 
-echo "POWER_OFF_ON_HALT=0 applied. Effect persists across reboots."
+echo "POWER_OFF_ON_HALT=1 applied. Effect persists across reboots."

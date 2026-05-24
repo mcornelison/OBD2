@@ -11,6 +11,23 @@
 # ================================================================================
 # 2026-04-14    | Ralph Agent  | Sweep 5 Task 2: extracted from orchestrator.py
 #               |              | (exponential backoff preserved byte-for-byte)
+# 2026-05-13    | Rex (US-338) | I-033: _handleReconnectionFailure was a silent
+#               |              | dead-end after the bounded [1,2,4,8,16]s x 5-
+#               |              | attempt budget exhausted -- nothing tried
+#               |              | connect() again until process restart, so the
+#               |              | post-pharmacy-stop engine-on of drive 12
+#               |              | (2026-05-13 19:10:24Z drive_end) never minted
+#               |              | drive 13.  Failure handler now spawns a daemon
+#               |              | thread running runReconnectHeartbeat (the
+#               |              | US-301 / V0.27.1 / US-325 heartbeat) which
+#               |              | retries forever with exponential backoff up to
+#               |              | 15-min ceiling.  When the adapter returns, the
+#               |              | heartbeat connect() succeeds and the main
+#               |              | runLoop's _checkConnectionStatus() detects the
+#               |              | False->True transition naturally, firing
+#               |              | _handleConnectionRestored() + the US-302 data
+#               |              | logger restart.  Idempotent: re-firing the
+#               |              | handler while a heartbeat is alive is a no-op.
 # ================================================================================
 ################################################################################
 
@@ -29,6 +46,7 @@ from collections.abc import Callable
 from datetime import datetime
 from typing import Any
 
+from ..reconnect_loop import runReconnectHeartbeat
 from .types import HealthCheckStats, ShutdownState
 
 # Unified logger name matches the original monolith module so existing tests
@@ -70,6 +88,11 @@ class ConnectionRecoveryMixin:
     _healthCheckStats: HealthCheckStats
     _onConnectionRestored: Callable[[], None] | None
     _lastConnectionCheckTime: datetime | None
+    # US-338 / I-033: post-failure long-lived heartbeat (lazy-initialized
+    # on the first failure; tracked here so the spawn is idempotent and
+    # subsequent failure-handler invocations skip re-spawning while the
+    # thread is still alive).
+    _postFailureReconnectHeartbeatThread: threading.Thread | None
 
     def _checkConnectionStatus(self) -> bool:
         """
@@ -243,6 +266,13 @@ class ConnectionRecoveryMixin:
 
         Logs the error but allows the system to continue running.
         Data logging remains paused since connection is unavailable.
+
+        US-338 / I-033 (2026-05-13): after the synchronous failure
+        bookkeeping, spawn a long-lived daemon thread running
+        :func:`runReconnectHeartbeat` so a returning adapter (engine-on
+        for the next leg of a multi-leg trip) is eventually caught.
+        Pre-fix, this method was a silent dead-end -- nothing in the
+        process re-attempted ``connect()`` until restart.
         """
         logger.error(
             f"Connection recovery failed after {self._maxReconnectAttempts} attempts. "
@@ -264,9 +294,98 @@ class ConnectionRecoveryMixin:
             except Exception as e:
                 logger.debug(f"Display update failed: {e}")
 
-        # Note: Data logging remains paused since connection is unavailable
-        # The system continues running so user can monitor other aspects
-        # or manually intervene
+        # US-338 / I-033: spawn post-failure heartbeat so a returning
+        # adapter is eventually re-connected without process restart.
+        # Idempotent -- spawn is skipped when an earlier thread is alive.
+        self._spawnPostFailureReconnectHeartbeat()
+
+        # Note: Data logging remains paused since connection is unavailable.
+        # When the post-failure heartbeat eventually re-connects the
+        # adapter, the main runLoop's _checkConnectionStatus() picks up
+        # the False->True transition and fires _handleConnectionRestored,
+        # which in turn (via US-302) re-starts the data logger.
+
+    def _spawnPostFailureReconnectHeartbeat(self) -> None:
+        """Spawn a daemon thread that runs :func:`runReconnectHeartbeat`.
+
+        US-338 / I-033.  Bridges the gap between the bounded
+        :meth:`_reconnectionLoop` (5 attempts then give up) and the main
+        :meth:`runLoop`'s state-transition detector.  The heartbeat keeps
+        invoking the connection's ``connect()`` with exponential backoff
+        up to :data:`reconnect_loop.MAX_BACKOFF_SEC` (15 min); when an
+        attempt succeeds, the heartbeat exits and the main loop's next
+        :meth:`_checkConnectionStatus` pass returns True, firing
+        :meth:`_handleConnectionRestored` (which re-starts the data
+        logger per US-302).
+
+        Idempotent: if a heartbeat thread spawned by a previous failure
+        is still alive, this is a no-op so the failure handler can be
+        re-entered without thread churn or competing connect attempts.
+
+        Requires the composing class to have a non-None ``self._connection``
+        with at least ``connect()`` and ``isConnected()`` methods.  Optional
+        seams: ``isConnectInFlight()`` (wired as ``inFlightProbeFn`` so the
+        heartbeat skips when another thread holds the V0.27.1 connect lock)
+        and ``self._shutdownEvent`` (a :class:`threading.Event` that aborts
+        the heartbeat at SIGTERM).
+        """
+        # Idempotency guard -- never let the failure handler fire two
+        # heartbeats at once.  A second heartbeat would race the first
+        # against the connection's _connectLock and produce
+        # already_in_flight skip-storms in the journal.
+        existing = getattr(self, '_postFailureReconnectHeartbeatThread', None)
+        if existing is not None and existing.is_alive():
+            logger.debug(
+                "US-338 post-failure reconnect heartbeat already alive; "
+                "skipping spawn"
+            )
+            return
+
+        if self._connection is None:
+            logger.debug(
+                "US-338 post-failure reconnect heartbeat: no _connection; "
+                "skipping spawn"
+            )
+            return
+
+        connectFn = getattr(self._connection, 'connect', None)
+        isConnectedFn = getattr(self._connection, 'isConnected', None)
+        if connectFn is None or isConnectedFn is None:
+            logger.debug(
+                "US-338 post-failure reconnect heartbeat: _connection "
+                "lacks connect/isConnected; skipping spawn"
+            )
+            return
+
+        inFlightProbeFn = getattr(self._connection, 'isConnectInFlight', None)
+        shutdownEvent = getattr(self, '_shutdownEvent', None)
+
+        def _runHeartbeat() -> None:
+            try:
+                runReconnectHeartbeat(
+                    connectFn=connectFn,
+                    isConnectedFn=isConnectedFn,
+                    inFlightProbeFn=inFlightProbeFn,
+                    shutdownEvent=shutdownEvent,
+                )
+            except Exception:  # noqa: BLE001 -- daemon must not crash silently
+                logger.exception(
+                    "US-338 post-failure reconnect heartbeat crashed; "
+                    "adapter will not be retried until process restart"
+                )
+
+        thread = threading.Thread(
+            target=_runHeartbeat,
+            daemon=True,
+            name="us338-post-failure-reconnect-heartbeat",
+        )
+        thread.start()
+        self._postFailureReconnectHeartbeatThread = thread
+        logger.warning(
+            "US-338: spawned post-failure reconnect heartbeat (adapter "
+            "will be retried with exponential backoff up to 15 min "
+            "ceiling until reachable)"
+        )
 
     def _pauseDataLogging(self) -> None:
         """

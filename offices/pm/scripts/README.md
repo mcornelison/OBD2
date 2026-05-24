@@ -99,6 +99,69 @@ Caps:
 
 Exit 0 on all checks pass; 1 on cap violation (caller fixes file before deploy); 2 on file/parse error.
 
+## chain_validate_aggregate.py
+
+`/chain-validated` Phase 1+2 support (B-067 / Sprint 31 US-318). Enumerates
+sprint.json files belonging to a V0.X minor-version chain (e.g. V0.27 =
+V0.27.2 + V0.27.3 + V0.27.4 + V0.27.5 stacked sprint branches awaiting
+chain-end merge to main), aggregates each sprint's validation block, and
+reports whether the chain is READY (all sprints validated) or INCOMPLETE.
+
+Per CIO 2026-05-10 chain-end-merge rule: main = "fully functional working
+system"; sprint branches stay deployed-but-pre-merge until the WHOLE chain
+validates IRL. This script powers the chain-wide pre-flight gate
+`/chain-validated` runs before touching git history.
+
+```bash
+# Auto-discover (globs archive + current sprint.json):
+python offices/pm/scripts/chain_validate_aggregate.py --chain V0.27
+
+# Machine-readable for downstream piping:
+python offices/pm/scripts/chain_validate_aggregate.py --chain V0.27 --json
+
+# CI gate -- exit 1 if any sprint in chain lacks validatedAt:
+python offices/pm/scripts/chain_validate_aggregate.py --chain V0.27 --strict
+
+# Explicit paths (test harness + ad-hoc inspection):
+python offices/pm/scripts/chain_validate_aggregate.py \
+    --chain V0.27 --paths sprint.json archive/sprint.archive.X.json
+```
+
+Output fields (`--json`): `chainPrefix`, `sprintsInChain` (per-sprint
+records ordered by `currentVersion`), `aggregateValidatesFeatures` (sorted
+unique union), `aggregateBigDoD` (chain-wide clauses), `unvalidatedSprints`,
+`chainStatus` ('READY' / 'INCOMPLETE').
+
+Exit codes: 0 if chain READY (or report mode), 1 if `--strict` +
+INCOMPLETE, 2 on file/parse error.
+
+## chain_validate_manifest_bump.py
+
+`/chain-validated` Phase 3 support (B-067 / Sprint 31 US-318). For each
+supplied feature ID (typically the `aggregateValidatesFeatures` union from
+chain_validate_aggregate.py), bumps `lastValidated` to the chain merge date
+and stamps `validatedBy` with the chain-merge label.
+
+```bash
+# Bump 2 features for V0.27 chain merge:
+python offices/pm/scripts/chain_validate_manifest_bump.py \
+    --features F-005 F-007 \
+    --label "by chain merge V0.27.5" \
+    --date 2026-05-15
+
+# Preview without writing:
+python offices/pm/scripts/chain_validate_manifest_bump.py \
+    --features F-005 F-007 --label "..." --date 2026-05-15 --dry-run
+
+# Manifest path override (test harness):
+python offices/pm/scripts/chain_validate_manifest_bump.py \
+    --path /tmp/manifest.json --features F-001 --label "..." --date 2026-06-01
+```
+
+Unknown feature IDs are skipped (not added to the bumped list); reported on
+stderr. Exit codes: 0 on success (>= 1 feature bumped), 1 if no IDs
+matched, 2 on file/parse error.
+
 ## pm_regression_status.py
 
 Reports user-facing-feature validation status against the regression manifest. Per Mike 2026-05-08 directive: main = "fully validated stable"; sprint branches stay deployed-but-pre-merge until real-hardware drill validates affected features.
@@ -172,6 +235,10 @@ Per `feedback_pm_python_for_deterministic_work.md` (CIO 2026-05-05): repeatable 
 | `/sprint-validated` | 1 evidence | manual confirmation OR journalctl/DB queries |
 | `/sprint-validated` | 3 manifest update | inline python (extract candidate -- bumps `lastValidated` for sprint's `validatesFeatures`) |
 | `/sprint-validated` | 6 merge to main | `git checkout main && git merge --no-ff <sprint> && git push` |
+| `/chain-validated` | 1+2 chain aggregate + status gate | `chain_validate_aggregate.py --chain V0.X [--strict]` |
+| `/chain-validated` | 3 manifest bump chain-wide | `chain_validate_manifest_bump.py --features ... --label "by chain merge V0.X.N" --date YYYY-MM-DD` |
+| `/chain-validated` | 4 merge chain to main | `git checkout main && git merge --no-ff <chain-tip> && git push` |
+| `/chain-validated` | 5 tag stable | `git tag -a V0.X.N && git push origin V0.X.N` |
 | (any session) | Ralph harness repair | `repair_ralph_agents.py` -- detect + repair ralph_agents.json corruption from Rex's bloated-note bug pattern |
 | (any session) | Regression status | `pm_regression_status.py` -- which features are STALE/NEVER-validated |
 

@@ -2,7 +2,7 @@
 
 | Field      | Value                              |
 |------------|------------------------------------|
-| Status     | US-A/B/C/D shipped (Sprint 19/20/21) — code on disk + deployed; **never run end-to-end in production** (synthetic test only via US-258 Sprint 21). Sprint 26 validation pending. |
+| Status     | Shipped Sprint 19/20/21; IRL validation pending via B-066 |
 | Priority   | Medium                             |
 | Filed By   | Marcus (PM), 2026-04-30 from CIO directive |
 | Filed Date | 2026-04-30                         |

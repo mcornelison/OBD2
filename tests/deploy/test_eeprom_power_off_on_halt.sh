@@ -1,10 +1,18 @@
 #!/usr/bin/env bash
 ################################################################################
-# tests/deploy/test_eeprom_power_off_on_halt.sh — US-253 enforcement-script test
+# tests/deploy/test_eeprom_power_off_on_halt.sh — enforcement-script test
 #
 # Verifies deploy/enforce-eeprom-power-off-on-halt.sh against PATH-mocked
 # `rpi-eeprom-config` covering all real-world states. Runs entirely on the
 # dev workstation -- no Pi required, no actual EEPROM modified.
+#
+# **SS-T8 (Atlas 2026-05-19) inverts the target value**: per the CIO-locked
+# Pi 5 + X1209-HAT decision (2026-05-18) and the Check-B empirical
+# confirmation (Finding B cleared at `=1`, 1 cycle), the correct setting is
+# `POWER_OFF_ON_HALT=1`, NOT `=0`. The prior force-`=0` was a defect that
+# reverted the correct setting on every deploy (the documentation root of
+# the V0.27.x chain blocker, finding F-6). This test catalog is now the
+# regression net for the corrected target.
 #
 # Mock strategy: each scenario writes a tiny stub script named
 # `rpi-eeprom-config` into a temp dir, points $RPI_EEPROM_CONFIG at it (the
@@ -96,7 +104,7 @@ make_mock() {
     local mockPath="$1" cannedConfig="$2" applySentinel="$3"
     cat > "$mockPath" <<EOF
 #!/usr/bin/env bash
-# Test mock for rpi-eeprom-config -- US-253 test only
+# Test mock for rpi-eeprom-config
 if [ "\$#" -eq 0 ]; then
     cat <<CONFIG
 ${cannedConfig}
@@ -142,7 +150,7 @@ run_with_mock() {
 
 # ---- preconditions ----
 
-echo "=== test_eeprom_power_off_on_halt.sh ==="
+echo "=== test_eeprom_power_off_on_halt.sh (SS-T8: enforces =1) ==="
 echo "Script under test: $SCRIPT"
 
 if [ ! -f "$SCRIPT" ]; then
@@ -154,10 +162,15 @@ fi
 TMP=$(mktemp -d 2>/dev/null || mktemp -d -t eeprom)
 trap 'rm -rf "$TMP"' EXIT
 
-# ---- scenario 1: setting absent -> no-op (defaults to 0) ----
+# ---- scenario 1: setting absent -> rewrite to explicit =1 ----
+#
+# Pre-SS-T8 this scenario expected a no-op ("default is 0, OK").  On a Pi 5 +
+# X1209-HAT that default is WRONG (Finding B); the script must rewrite to an
+# explicit =1 so the deployed state is unambiguous and persists across
+# bootloader updates.
 
 echo ""
-echo "scenario 1: POWER_OFF_ON_HALT line absent (defaults to 0)"
+echo "scenario 1: POWER_OFF_ON_HALT line absent (default 0 is WRONG on HAT)"
 S1_DIR="$TMP/s1"
 mkdir -p "$S1_DIR"
 S1_MOCK="$S1_DIR/rpi-eeprom-config"
@@ -168,14 +181,17 @@ PSU_MAX_CURRENT=5000" "$S1_APPLIED"
 
 S1_OUT=$(run_with_mock "$S1_MOCK")
 S1_RC=$?
-assert_exit       "exits 0 when setting absent"        "0"               "$S1_RC"
-assert_contains   "logs 'not present ... defaults to 0'" "not present"   "$S1_OUT"
-assert_file_missing "no --apply was invoked (idempotency)" "$S1_APPLIED"
+assert_exit       "exits 0 on rewrite when setting absent" "0"                "$S1_RC"
+assert_contains   "logs 'not present ... rewriting to 1'"  "rewriting to 1"   "$S1_OUT"
+assert_file_exists "--apply WAS invoked"                   "$S1_APPLIED"
+S1_APPLIED_CONTENT=$(cat "$S1_APPLIED")
+assert_contains   "applied config has POWER_OFF_ON_HALT=1" "POWER_OFF_ON_HALT=1" "$S1_APPLIED_CONTENT"
+assert_contains   "applied config preserves BOOT_UART=0"   "BOOT_UART=0"      "$S1_APPLIED_CONTENT"
 
-# ---- scenario 2: setting already 0 -> no-op ----
+# ---- scenario 2: setting already 0 -> rewrite to =1 ----
 
 echo ""
-echo "scenario 2: POWER_OFF_ON_HALT=0 (already correct)"
+echo "scenario 2: POWER_OFF_ON_HALT=0 (WRONG on HAT, MUST rewrite to =1)"
 S2_DIR="$TMP/s2"
 mkdir -p "$S2_DIR"
 S2_MOCK="$S2_DIR/rpi-eeprom-config"
@@ -186,14 +202,20 @@ WAKE_ON_GPIO=1" "$S2_APPLIED"
 
 S2_OUT=$(run_with_mock "$S2_MOCK")
 S2_RC=$?
-assert_exit       "exits 0 when already =0"          "0"                 "$S2_RC"
-assert_contains   "logs 'already set'"               "already set"       "$S2_OUT"
-assert_file_missing "no --apply was invoked (idempotency)" "$S2_APPLIED"
+assert_exit       "exits 0 on successful rewrite"            "0"                  "$S2_RC"
+assert_contains   "logs 'rewriting to 1'"                    "rewriting to 1"     "$S2_OUT"
+assert_contains   "logs success message"                     "applied"            "$S2_OUT"
+assert_file_exists "--apply WAS invoked"                     "$S2_APPLIED"
+APPLIED_CONTENT=$(cat "$S2_APPLIED")
+assert_contains   "applied config has POWER_OFF_ON_HALT=1"   "POWER_OFF_ON_HALT=1" "$APPLIED_CONTENT"
+assert_not_contains "applied config has NO POWER_OFF_ON_HALT=0" "POWER_OFF_ON_HALT=0" "$APPLIED_CONTENT"
+assert_contains   "applied config preserves BOOT_UART"       "BOOT_UART=0"        "$APPLIED_CONTENT"
+assert_contains   "applied config preserves WAKE_ON_GPIO"    "WAKE_ON_GPIO=1"     "$APPLIED_CONTENT"
 
-# ---- scenario 3: setting =1 -> rewrite to 0 via --apply ----
+# ---- scenario 3: setting =1 -> no-op (already correct on HAT) ----
 
 echo ""
-echo "scenario 3: POWER_OFF_ON_HALT=1 (deep sleep, MUST rewrite to 0)"
+echo "scenario 3: POWER_OFF_ON_HALT=1 (already correct on HAT, no-op)"
 S3_DIR="$TMP/s3"
 mkdir -p "$S3_DIR"
 S3_MOCK="$S3_DIR/rpi-eeprom-config"
@@ -204,20 +226,14 @@ WAKE_ON_GPIO=1" "$S3_APPLIED"
 
 S3_OUT=$(run_with_mock "$S3_MOCK")
 S3_RC=$?
-assert_exit       "exits 0 on successful rewrite"        "0"                  "$S3_RC"
-assert_contains   "logs 'rewriting to 0'"                "rewriting to 0"     "$S3_OUT"
-assert_contains   "logs success message"                 "applied"            "$S3_OUT"
-assert_file_exists "--apply WAS invoked"                 "$S3_APPLIED"
-APPLIED_CONTENT=$(cat "$S3_APPLIED")
-assert_contains   "applied config has POWER_OFF_ON_HALT=0" "POWER_OFF_ON_HALT=0" "$APPLIED_CONTENT"
-assert_not_contains "applied config has NO POWER_OFF_ON_HALT=1" "POWER_OFF_ON_HALT=1" "$APPLIED_CONTENT"
-assert_contains   "applied config preserves other keys (BOOT_UART)" "BOOT_UART=0" "$APPLIED_CONTENT"
-assert_contains   "applied config preserves other keys (WAKE_ON_GPIO)" "WAKE_ON_GPIO=1" "$APPLIED_CONTENT"
+assert_exit       "exits 0 when already =1"                "0"                  "$S3_RC"
+assert_contains   "logs 'already set'"                     "already set"        "$S3_OUT"
+assert_file_missing "no --apply was invoked (idempotency)" "$S3_APPLIED"
 
-# ---- scenario 4: setting =2 -> rewrite to 0 ----
+# ---- scenario 4: setting =2 -> rewrite to =1 ----
 
 echo ""
-echo "scenario 4: POWER_OFF_ON_HALT=2 (other non-zero value, also rewrite)"
+echo "scenario 4: POWER_OFF_ON_HALT=2 (other non-=1 value, must rewrite)"
 S4_DIR="$TMP/s4"
 mkdir -p "$S4_DIR"
 S4_MOCK="$S4_DIR/rpi-eeprom-config"
@@ -226,10 +242,10 @@ make_mock "$S4_MOCK" "POWER_OFF_ON_HALT=2" "$S4_APPLIED"
 
 S4_OUT=$(run_with_mock "$S4_MOCK")
 S4_RC=$?
-assert_exit       "exits 0 on successful rewrite"     "0"                  "$S4_RC"
-assert_file_exists "--apply WAS invoked"              "$S4_APPLIED"
+assert_exit       "exits 0 on successful rewrite"          "0"                  "$S4_RC"
+assert_file_exists "--apply WAS invoked"                   "$S4_APPLIED"
 APPLIED_CONTENT4=$(cat "$S4_APPLIED")
-assert_contains   "applied config has POWER_OFF_ON_HALT=0" "POWER_OFF_ON_HALT=0" "$APPLIED_CONTENT4"
+assert_contains   "applied config has POWER_OFF_ON_HALT=1" "POWER_OFF_ON_HALT=1" "$APPLIED_CONTENT4"
 
 # ---- scenario 5: tool missing -> exit 1 with clear error ----
 
@@ -237,8 +253,8 @@ echo ""
 echo "scenario 5: rpi-eeprom-config missing"
 S5_OUT=$(RPI_EEPROM_CONFIG="/nonexistent/rpi-eeprom-config" bash "$SCRIPT" 2>&1)
 S5_RC=$?
-assert_exit       "exits 1 when tool missing"        "1"                   "$S5_RC"
-assert_contains   "error mentions missing tool"      "not found"           "$S5_OUT"
+assert_exit       "exits 1 when tool missing"           "1"                  "$S5_RC"
+assert_contains   "error mentions missing tool"         "not found"          "$S5_OUT"
 
 # ---- scenario 6: apply fails -> exit 2 ----
 
@@ -247,37 +263,38 @@ echo "scenario 6: rpi-eeprom-config --apply fails (transient error)"
 S6_DIR="$TMP/s6"
 mkdir -p "$S6_DIR"
 S6_MOCK="$S6_DIR/rpi-eeprom-config"
-make_mock_apply_fails "$S6_MOCK" "POWER_OFF_ON_HALT=1"
+# Use =0 so the script tries to rewrite (and the mock then fails the --apply).
+make_mock_apply_fails "$S6_MOCK" "POWER_OFF_ON_HALT=0"
 
 S6_OUT=$(run_with_mock "$S6_MOCK")
 S6_RC=$?
-assert_exit       "exits 2 when apply fails"         "2"                  "$S6_RC"
-assert_contains   "error mentions apply failure"     "--apply"            "$S6_OUT"
+assert_exit       "exits 2 when apply fails"            "2"                  "$S6_RC"
+assert_contains   "error mentions apply failure"        "--apply"            "$S6_OUT"
 
 # ---- scenario 7: idempotency drill -- run twice, second run is no-op ----
 
 echo ""
-echo "scenario 7: idempotency -- two consecutive runs converge"
-# Run 1: =1 -> apply (rewrite to 0). Then swap mock to one that reports =0.
+echo "scenario 7: idempotency -- two consecutive runs converge on =1"
+# Run 1: =0 -> apply (rewrite to =1). Then swap mock to one that reports =1.
 # Run 2: should be no-op.
 S7_DIR="$TMP/s7"
 mkdir -p "$S7_DIR"
 S7_MOCK="$S7_DIR/rpi-eeprom-config"
 S7_APPLIED="$S7_DIR/applied.conf"
-make_mock "$S7_MOCK" "POWER_OFF_ON_HALT=1" "$S7_APPLIED"
+make_mock "$S7_MOCK" "POWER_OFF_ON_HALT=0" "$S7_APPLIED"
 S7_RUN1_OUT=$(run_with_mock "$S7_MOCK")
 S7_RUN1_RC=$?
-assert_exit       "first run exits 0"                "0"                  "$S7_RUN1_RC"
-assert_file_exists "first run applied"                "$S7_APPLIED"
+assert_exit        "first run exits 0"              "0"                  "$S7_RUN1_RC"
+assert_file_exists "first run applied"              "$S7_APPLIED"
 
-# Now mock returns =0 (post-rewrite state). Wipe sentinel; second run must NOT re-apply.
+# Now mock returns =1 (post-rewrite state). Wipe sentinel; second run must NOT re-apply.
 rm -f "$S7_APPLIED"
-make_mock "$S7_MOCK" "POWER_OFF_ON_HALT=0" "$S7_APPLIED"
+make_mock "$S7_MOCK" "POWER_OFF_ON_HALT=1" "$S7_APPLIED"
 S7_RUN2_OUT=$(run_with_mock "$S7_MOCK")
 S7_RUN2_RC=$?
-assert_exit       "second run exits 0"               "0"                  "$S7_RUN2_RC"
-assert_contains   "second run logs 'already set'"    "already set"        "$S7_RUN2_OUT"
-assert_file_missing "second run did NOT re-apply"     "$S7_APPLIED"
+assert_exit        "second run exits 0"             "0"                  "$S7_RUN2_RC"
+assert_contains    "second run logs 'already set'"  "already set"        "$S7_RUN2_OUT"
+assert_file_missing "second run did NOT re-apply"   "$S7_APPLIED"
 
 # ---- summary ----
 

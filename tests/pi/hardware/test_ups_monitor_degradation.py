@@ -63,7 +63,6 @@ from pi.hardware.i2c_client import (
 from pi.hardware.ups_monitor import (
     CRATE_DISABLED_RAW,
     EXT5V_EXTERNAL_THRESHOLD_V,
-    PowerSource,
     UpsMonitor,
     UpsMonitorError,
     UpsNotAvailableError,
@@ -453,63 +452,12 @@ def test_startPolling_recoveryAfterTransient_resetsErrorCounter(
     ), "expected 'UPS device recovered' log line after transient errors"
 
 
-def test_powerSourceChange_callbackInvokedOnVcellDropUnderLoad() -> None:
-    """
-    Given: VCELL reads start at ~4.19V for three ticks then drop to
-           ~3.2V for the rest of the run (simulating a physical unplug
-           that puts the LiPo into discharge). CRATE reads as disabled
-           (0xFFFF) so the decision falls to the VCELL-slope branch.
-    When:  the polling loop processes the samples
-    Then:  onPowerSourceChange fires with (EXTERNAL, BATTERY) once the
-           slope crosses the (test-tightened) threshold. Proves the
-           callback plumbing still runs off the new VCELL-trend
-           decision path — the physical-drill evidence then just has
-           to show that a real unplug produces a similar VCELL drop
-           inside historyWindowSeconds.
-    """
-    # Tick index shared between the three register paths.
-    tickCount = {'vcellReads': 0}
-
-    # Raw little-endian bytes returned by SMBus.  Byte-swap to get BE:
-    #   0x90D1 -> 0xD190 = 4.192V (high baseline)
-    #   0x00A0 -> 0xA000 = 3.200V (clearly-lower sample, 1V drop)
-    vcellHighLe = 0x90D1
-    vcellLowLe = 0x00A0
-
-    def fakeReadWord(addr: int, reg: int) -> int:
-        if reg == 0x02:  # VCELL
-            idx = tickCount['vcellReads']
-            tickCount['vcellReads'] += 1
-            return vcellHighLe if idx < 3 else vcellLowLe
-        if reg == 0x04:  # SOC — high byte is integer percent
-            return 0x5000  # 80%
-        if reg == 0x16:  # CRATE — force VCELL-slope branch
-            return CRATE_DISABLED_RAW
-        raise AssertionError(f"unexpected register 0x{reg:02x}")
-
-    mockClient = MagicMock()
-    mockClient.readWord.side_effect = fakeReadWord
-
-    # Short polling interval + short window so a handful of real-time
-    # ticks produce a meaningful slope; threshold tightened to -1.0 V/min
-    # so we don't accidentally trip on single-tick noise.
-    monitor = UpsMonitor(
-        i2cClient=mockClient,
-        pollInterval=0.02,
-        historyWindowSeconds=0.5,
-        vcellSlopeThresholdVoltsPerMinute=-1.0,
-    )
-
-    callbackCalls: list[tuple[PowerSource, PowerSource]] = []
-    monitor.onPowerSourceChange = lambda old, new: callbackCalls.append((old, new))
-
-    monitor.startPolling()
-    threading.Event().wait(0.4)
-    monitor.stopPolling()
-
-    assert (PowerSource.EXTERNAL, PowerSource.BATTERY) in callbackCalls, (
-        f"expected (EXTERNAL, BATTERY) transition — got {callbackCalls}"
-    )
+# SS-T4 A1 (Atlas 2026-05-19): test_powerSourceChange_callbackInvokedOnVcellDropUnderLoad
+# REMOVED. It exercised the retired VCELL-trend source decision + the polling-loop
+# transition detection + onPowerSourceChange firing -- all stripped from
+# ups_monitor.py. UpsMonitor is now battery-health only; the UI power-source
+# transition path is owned by the lifecycle _PowerSourceUiBridge over the
+# PowerSourceProvider SSOT (covered by tests/pi/orchestrator/test_lifecycle_power_source_ssot.py).
 
 
 # ================================================================================
@@ -546,16 +494,16 @@ def test_getTelemetry_returnsAllExpectedKeys() -> None:
 
     telemetry = monitor.getTelemetry()
 
+    # SS-T4: 'powerSource' was removed from getTelemetry() (source is the
+    # PowerSourceProvider SSOT, not UpsMonitor); the surviving keys are
+    # battery-health + diagnostic-rail telemetry.
     assert set(telemetry.keys()) == {
         "voltage",
         "percentage",
         "chargeRatePctPerHr",
-        "powerSource",
         "ext5vVoltage",
     }
     assert 4.19 <= telemetry["voltage"] <= 4.20
     assert telemetry["percentage"] == 86
     assert telemetry["chargeRatePctPerHr"] is not None
-    # No history -> insufficient evidence -> cached initial source EXTERNAL.
-    assert telemetry["powerSource"] == PowerSource.EXTERNAL
     assert telemetry["ext5vVoltage"] == 5.22

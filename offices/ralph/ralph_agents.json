@@ -1,5 +1,5 @@
 {
-  "max_agent": 4,
+  "max_agent": 2,
   "agents": [
     {
       "id": 1,
@@ -7,8 +7,8 @@
       "type": "windows-dev",
       "status": "unassigned",
       "taskid": "",
-      "lastCheck": "2026-05-09",
-      "note": "Session 181 (V0.27.1 hotfix + Drive 6 IRL validation closeout, 2026-05-08 evening). V0.27.1 SHIPPED + DEPLOYED + EMPIRICALLY VALIDATED on the road. Sprint 27 engine-on test #2 stacking-connect bug RCA: ObdConnection.connect() had no thread safety; Sprint 25 leaked _runInitialConnectWithTimeout daemon collided with Sprint 27 US-301 heartbeat-spawned daemons on /dev/rfcomm0 = pyserial 'multiple access on port?' = 0 realtime_data rows. Fix: (1) self._connectLock + _performConnect refactor, (2) isConnectInFlight() observability, (3) runReconnectHeartbeat inFlightProbeFn keyword + outcome=already_in_flight skip, (4) HEARTBEAT_ATTEMPT_TIMEOUT_SEC 5.0->30.0 (K-line cold-detect envelope). 6-test regression gate at tests/pi/obdii/test_connect_thread_safety.py with threading.Barrier(8).wait() forcing simultaneous entry; pre-fix RED maxConcurrent=8 violations=7 vs post-fix maxConcurrent=1 violations=0. Fast suite 4144 tests GREEN, ruff clean. Deployed via deploy-pi.sh; chi-eclipse-01 now on V0.27.1, gitHash still 6eaf855 (PM to commit + tag on sprint/sprint27-engine-on-fixes per new 2026-05-08 workflow rule). DRIVE 6 IRL VALIDATION: Mike drove ~2h with 2 engine-off stops; 12,658 rows captured across drive_id=6 (7,085 rows cold-start city) + drive_id=7 (4,222 rows highway + WOT, peak 5379 RPM @ 84 mph -- Spool grades engine HEALTHY through full envelope, FIRST under-load capture in project history). Bonus: 20:36 mid-drive reboot was V0.24.1 staged-shutdown ladder firing exactly as designed (warning 3.69V -> imminent 3.54V -> trigger 3.42V -> graceful poweroff -> wake-on-power EEPROM auto-reboot when engine returned). FIRST in-vehicle validation of B-043 PowerLossOrchestrator end-to-end + Sprint 21 wake-on-power chain -- 8-drain-saga genuinely retired. 4 LATENT BUGS unmasked by V0.27.1's success: (1) P1 drive_summary writer regression (drives 6+7 logged DRIVE STARTED/ENDED but no summary rows; last good write 2026-04-29 drive_id=5; likely Sweep-5 mixin refactor era), (2) RESOLVED 20:36 reboot (forensically confirmed = ladder), (3) P2 sync_history v0007 migration didn't apply (sync_log still on disk, no sync_history -- B-053 90-day retention silently doesn't work), (4) P3 statistics writes with drive_id=NULL. Spool independently filed 'Sprint 28 bug-fixes consolidated' inbox note covering same drive_summary bug + 2 more (battery_health_log legacy column dual-name during deprecation; drain_event open-row not closed pre-poweroff; startup_log prior_boot_clean=0 false-negative on graceful shutdown). PM has comprehensive inbox note with file scope + suggested commit message + tag instructions: offices/pm/inbox/2026-05-08-from-rex-v0271-hotfix-and-drive-6-validation.md. Specs updated: anti-patterns.md (new 'Concurrent Invocation of Unprotected Shared Resource' entry + Modification History), grounded-knowledge.md (new 'K-Line Cold Protocol-Detection Time' subsection: ~6-10s envelope on 1998 4G63 + operational rule that any cold-connect cap must be >=10s), methodology.md (new Exemplar 5 + 'Synthetic-concurrency idiom' under Integration Tests for Runtime-Verifiable Bugs + Modification History). Memory: feedback_call_me_mike consolidated into existing user_mike_collaborative_advisor.md (third independent reminder in 2 days). Test baseline: 4144 fast-suite tests, ruff 0, 6 new V0.27.1 regression tests included. Top 3 next actions: (1) PM commits V0.27.1 on sprint branch + tags (8 unstaged production files in working tree), (2) PM grooms Sprint 28 from Spool's consolidated 4-bug list + my note's 3-issue list (overlap on drive_summary; Spool's frame is more complete with battery/drain/startup additions), (3) Mike runs /sprint-validated when comfortable to merge sprint branch to main + bump regression_manifest.json lastValidated for F-002 through F-012 + the B-043 power-mgmt features now empirically validated."
+      "lastCheck": "2026-05-22",
+      "note": "Note truncated by PM Session 42 sprint-deploy Phase 0 (unescaped quote in Rex's Session 198-202 bloated note broke json.load -- standard repair pattern). Session 198 = US-357 V0.27.18 hotfix landed (8/8 passes:true). Sessions 199-202 = 4 verification reconfirmations on a complete sprint. Detail canonical in offices/ralph/progress.txt; sprint outcomes in offices/ralph/sprint.json."
     },
     {
       "id": 2,
@@ -16,25 +16,7 @@
       "type": "windows-dev",
       "status": "unassigned",
       "taskid": "",
-      "lastCheck": "2026-05-06",
-      "note": "Sprint 25 / Session 158 -- US-286 SHIPPED passes:true. tests/pi/integration/test_engine_drive_capture_e2e.py (1 class / 1 test / 7 phases): real ApplicationOrchestrator + DriveDetector + SummaryRecorder + ObdDataLogger; mock surface = connection.obd.query (BT edge) only; 0.16s call duration vs 30-sec budget. Mirrors US-260 cold-start pattern. Discriminator: would FAIL against May-4-5 production regression class (DriveDetector never operational) + against any silent realtime_data write regression. Two gotchas surfaced for future tests: (1) e2e fixtures must seed profiles('daily') because realtime_data has FK + bare orchestrator doesn't run ProfileManager; (2) production order query->logReading->_handleReading means first N ticks land with drive_id NULL -- query realtime_data without drive_id filter. Standing by post-US-286."
-    },
-    {
-      "id": 3,
-      "name": "Agent3",
-      "type": "windows-dev",
-      "status": "unassigned",
-      "taskid": "",
-      "lastCheck": "2026-04-20",
-      "note": ""
-    },
-    {
-      "id": 4,
-      "name": "Torque",
-      "type": "pi5-dev",
-      "status": "unassigned",
-      "taskid": "",
-      "lastCheck": "2026-01-31",
+      "lastCheck": "2026-05-13",
       "note": ""
     }
   ]

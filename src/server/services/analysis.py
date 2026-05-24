@@ -13,6 +13,66 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-04-16    | Ralph Agent  | Initial implementation for US-CMP-005
+# 2026-05-10    | Rex (US-317) | Decouple _ensureDriveSummary from pingOllama in
+#               |              | enqueueAutoAnalysisForSync per I-021 -- writer
+#               |              | now runs unconditionally; only AI analysis task
+#               |              | scheduling is gated on Ollama health.
+# 2026-05-11    | Rex (US-324) | Add _ensureDriveStatistics() per I-024 -- the
+#               |              | production drive_statistics writer.  Runs after
+#               |              | _ensureDriveSummary in enqueueAutoAnalysisForSync
+#               |              | (via _writeDriveAnalytics), decoupled from the
+#               |              | Ollama gate exactly like US-317 did for the
+#               |              | drive_summary writer.
+# 2026-05-12    | Rex (US-326) | I-026 fix: _ensureDriveSummary matches the
+#               |              | existing Pi-sync row on source_id (the real
+#               |              | natural key) OR drive_id, and heals the drive_id
+#               |              | mirror column on UPDATE.  Pre-fix it looked up by
+#               |              | drive_id alone -- a column Pi-sync rows never
+#               |              | populate -- so it INSERTed a duplicate and the
+#               |              | UNIQUE(source_device, source_id) violation rolled
+#               |              | the analytics transaction back (Drive 11 row 15
+#               |              | analytics fields all NULL).
+# 2026-05-21    | Rex (US-348) | I-040 false-pass redo: add secondary trigger
+#               |              | seam for the drive_summary writer via the
+#               |              | drive_summary sync payload.  Empirical from
+#               |              | I-040 across drives 11-18: the existing
+#               |              | extractDriveBoundaries(connection_log) seam
+#               |              | returns [] on real Pi syncs (Pi's connection_log
+#               |              | events don't carry paired drive_start/drive_end
+#               |              | inside the same batch), so the writer never
+#               |              | fired and analytics fields 3-8 stayed NULL.
+#               |              | New helper extractDriveIdsFromDriveSummaryPayload
+#               |              | + enqueueAutoAnalysisForSync now accepts
+#               |              | driveSummaryRows kwarg and synthesises
+#               |              | placeholder boundaries (post-US-200 path's
+#               |              | start/end are unused -- analytics derives MIN/
+#               |              | MAX from realtime_data) for each drive_id not
+#               |              | already covered by a connection_log pair.
+# 2026-05-21    | Rex (US-350) | B-104 Step 1a (V0.27.17) -- retire the
+#               |              | connection_log + drive_summary-payload trigger
+#               |              | seam from US-348.  enqueueAutoAnalysisForSync
+#               |              | now raises NotImplementedError as a tripwire if
+#               |              | called -- the V0.27.7+V0.27.16 trigger-seam
+#               |              | architecture is structurally incapable of
+#               |              | catching drives terminated by sequencer poweroff
+#               |              | (no Pi-side drive-end signal -> writer never
+#               |              | fires).  Third-cycle Argus drill 2026-05-21
+#               |              | confirmed.  Server-side compute path that reads
+#               |              | raw realtime_data MIN/MAX/COUNT is now the sole
+#               |              | writer of drive_summary analytics: see
+#               |              | src.server.analytics.drive_summary_compute.
+#               |              | Trigger: nightly systemd timer
+#               |              | (deploy/server-analytics-batch.timer) +
+#               |              | on-demand CLI
+#               |              | (src.server.cli.recompute_drive_analytics).
+#               |              | extractDriveBoundaries,
+#               |              | extractDriveIdsFromDriveSummaryPayload,
+#               |              | _writeDriveAnalytics, _ensureDriveSummary,
+#               |              | _computeDriveAnalytics remain in-file as
+#               |              | currently-unreferenced helpers; US-351 (B-104
+#               |              | Step 1b) retires the parallel drive_statistics
+#               |              | trigger + writer + Pi table; B-076 (V0.28+ schema
+#               |              | normalization) cleans up residual helpers.
 # ================================================================================
 ################################################################################
 
@@ -755,6 +815,163 @@ def extractDriveBoundaries(
     return drives
 
 
+def extractDriveIdsFromDriveSummaryPayload(
+    rows: list[dict[str, Any]] | None,
+) -> set[int]:
+    """Return the set of Pi drive_ids carried in a drive_summary sync payload.
+
+    US-348 / I-040: secondary trigger seam alongside
+    :func:`extractDriveBoundaries`.  The Pi writes a ``drive_summary`` row
+    at drive-end, so every row in this payload is a completed drive that
+    needs server-side analytics fan-out.  Empirically the connection_log
+    drive_start/drive_end events are unreliable (different batches, or
+    absent), but the drive_summary payload is authoritative.
+
+    The Pi PK ``drive_id`` is renamed to ``id`` on the wire by the Pi's
+    sync client (see ``src.pi.data.sync_log.SYNC_UPDATE_TABLES_PK`` +
+    ``src.pi.sync.client._renamePkToId``).  The server then renames ``id``
+    -> ``source_id`` on insert.  In the raw payload here we read ``id``
+    directly.
+
+    Non-integer ids (None / strings / missing) are skipped defensively --
+    the Pi contract is ``id`` is the Pi-local ``drive_counter.drive_id``
+    which is always int.
+
+    Args:
+        rows: A list of raw Pi-sync drive_summary row dicts, or None.
+
+    Returns:
+        Set of Pi-local drive_ids extracted from the payload.
+    """
+    ids: set[int] = set()
+    for row in rows or []:
+        candidate = row.get("id")
+        if isinstance(candidate, int) and not isinstance(candidate, bool):
+            ids.add(candidate)
+    return ids
+
+
+# ---- Spec 3 12-field contract thresholds (US-310 / B-059) -------------------
+
+# Spec 3 insufficient-data threshold.  Below this, is_real is left NULL
+# ("skipped") rather than FALSE ("tested and failed") so Spool's grading
+# queries can distinguish the two.
+SPEC3_MIN_ROWS_FOR_IS_REAL = 100
+
+# Spec 3 real-fraction threshold for is_real=TRUE.  Above this share of
+# rows tagged data_source='real', the drive is considered real.  Pre-fix
+# code hardcoded TRUE regardless.
+SPEC3_REAL_FRACTION_THRESHOLD = 0.95
+
+
+@dataclass(frozen=True, slots=True)
+class _DriveAnalytics:
+    """Computed fields 3-8 for a drive per Spec 3 (US-310).
+
+    Returned by :func:`_computeDriveAnalytics`.  ``startTime`` / ``endTime``
+    / ``dataSource`` are ``None`` when no realtime_data rows exist for the
+    drive (stub-row case).  ``isReal`` follows the spec ladder:
+    None for insufficient data, False for stub or low-real-fraction, True
+    for confirmed real drives.
+    """
+
+    rowCount: int
+    startTime: datetime | None
+    endTime: datetime | None
+    durationSeconds: int | None
+    dataSource: str | None
+    isReal: bool | None
+    profileId: str | None
+
+
+def _computeDriveAnalytics(
+    session: Session,
+    deviceId: str,
+    *,
+    driveId: int | None,
+    fallbackStartTime: datetime,
+    fallbackEndTime: datetime,
+) -> _DriveAnalytics:
+    """Derive Spec 3 fields 3-8 from realtime_data for a drive.
+
+    When ``driveId`` is set (post-US-200), filter realtime_data by
+    ``(source_device, drive_id)`` -- the canonical join.  When ``driveId``
+    is None (legacy / pre-US-200 path), fall back to a
+    ``(source_device, timestamp range)`` filter using the supplied
+    boundaries so historical replays still produce sensible analytics.
+
+    Insufficient-data + stub-row semantics are applied here per Spec 3 so
+    callers see a single shape regardless of the underlying row count.
+    """
+    realtimeFilter = [RealtimeData.source_device == deviceId]
+    if driveId is not None:
+        realtimeFilter.append(RealtimeData.drive_id == driveId)
+    else:
+        realtimeFilter.append(RealtimeData.timestamp >= fallbackStartTime)
+        realtimeFilter.append(RealtimeData.timestamp <= fallbackEndTime)
+
+    rowCount = int(session.execute(
+        select(func.count()).select_from(RealtimeData).where(*realtimeFilter),
+    ).scalar_one())
+
+    if rowCount == 0:
+        return _DriveAnalytics(
+            rowCount=0,
+            startTime=None,
+            endTime=None,
+            durationSeconds=None,
+            dataSource=None,
+            isReal=False,
+            profileId=None,
+        )
+
+    startTime, endTime = session.execute(
+        select(
+            func.min(RealtimeData.timestamp),
+            func.max(RealtimeData.timestamp),
+        ).where(*realtimeFilter),
+    ).one()
+    durationSeconds = (
+        int((endTime - startTime).total_seconds())
+        if startTime is not None and endTime is not None
+        else None
+    )
+
+    profileId = session.execute(
+        select(RealtimeData.profile_id).where(*realtimeFilter).limit(1),
+    ).scalar_one_or_none()
+
+    realCount = int(session.execute(
+        select(func.count())
+        .select_from(RealtimeData)
+        .where(*realtimeFilter)
+        .where(RealtimeData.data_source == "real"),
+    ).scalar_one())
+
+    dataSource = session.execute(
+        select(RealtimeData.data_source)
+        .where(*realtimeFilter)
+        .group_by(RealtimeData.data_source)
+        .order_by(func.count().desc())
+        .limit(1),
+    ).scalar_one_or_none()
+
+    if rowCount < SPEC3_MIN_ROWS_FOR_IS_REAL:
+        isReal: bool | None = None
+    else:
+        isReal = (realCount / rowCount) > SPEC3_REAL_FRACTION_THRESHOLD
+
+    return _DriveAnalytics(
+        rowCount=rowCount,
+        startTime=startTime,
+        endTime=endTime,
+        durationSeconds=durationSeconds,
+        dataSource=dataSource,
+        isReal=isReal,
+        profileId=profileId,
+    )
+
+
 def _ensureDriveSummary(
     session: Session,
     deviceId: str,
@@ -762,69 +979,110 @@ def _ensureDriveSummary(
     endTime: datetime,
     driveId: int | None = None,
 ) -> int:
-    """Return the drive_summary id for this drive, reconciling the dual-writer.
+    """Return the drive_summary id for this drive, populating Spec 3 fields 3-8.
 
     US-214 find-or-create contract (Option 1 from the US-206 reconciliation
-    note):
+    note) + US-310 / B-059 Spec 3 12-field writer contract:
 
     * When ``driveId`` is provided (post-US-200 payloads), look up by
-      ``(source_device, drive_id)``. If a Pi-sync row already exists, UPDATE
-      its analytics fields in place (device_id, start_time, end_time,
-      duration_seconds, row_count, profile_id, is_real=True) -- no second
-      row is created. If no Pi-sync row exists yet, INSERT a row with BOTH
-      halves populated so a later Pi-sync upsert lands on the same row via
-      the UNIQUE(source_device, source_id) constraint.
+      ``(source_device, drive_id)``.  If a Pi-sync row already exists,
+      UPDATE its analytics fields (3-8) in place.  Pi-sync columns (9-12)
+      are preserved unchanged.  If no Pi-sync row exists yet, INSERT a
+      row with key columns (1-2) + analytics columns (3-8); Pi-sync
+      columns (9-12) are left NULL so a later Pi-sync upsert lands on the
+      same row via UNIQUE(source_device, source_id) and only overwrites
+      its own NULLs.
     * When ``driveId`` is None (pre-US-200 or legacy data), fall back to
-      the legacy ``(device_id, start_time)`` find-or-create path. Unchanged
-      behaviour for pre-US-200 replay / historical data.
+      the legacy ``(device_id, start_time)`` find-or-create path.  The
+      ``startTime`` argument is the natural-key seed for legacy rows;
+      analytics fields 3-8 still derive from realtime_data via the
+      time-range filter so legacy data also gets populated cleanly.
 
-    row_count and profile_id are derived from realtime_data in the drive's
-    time window -- matches the idempotent semantics of
-    scripts/load_data.py:_createDriveSummaries. ``is_real`` is set to True
-    at analytics-run time per the reconciliation invariant (Pi-sync rows
-    pre-analytics have is_real NULL).
+    Spec 3 semantics for fields 3-8 (per :func:`_computeDriveAnalytics`):
+
+    * ``start_time`` / ``end_time`` / ``duration_seconds`` -- MIN/MAX of
+      ``realtime_data.timestamp`` for the drive (NULL when no rows).
+    * ``row_count`` -- COUNT(*) of realtime_data rows for the drive.
+    * ``is_real`` -- TRUE when row_count>=100 AND >95% of rows have
+      data_source='real'; FALSE when row_count=0 (stub) or low real
+      fraction; NULL when 0<row_count<100 ("skipped, ungradable").
+    * ``data_source`` -- mode of realtime_data.data_source values, NULL
+      when no rows.
     """
-    duration = int((endTime - startTime).total_seconds())
-    rowCount = session.execute(
-        select(func.count())
-        .select_from(RealtimeData)
-        .where(RealtimeData.source_device == deviceId)
-        .where(RealtimeData.timestamp >= startTime)
-        .where(RealtimeData.timestamp <= endTime),
-    ).scalar_one()
-    profileId = session.execute(
-        select(RealtimeData.profile_id)
-        .where(RealtimeData.source_device == deviceId)
-        .where(RealtimeData.timestamp >= startTime)
-        .where(RealtimeData.timestamp <= endTime)
-        .limit(1),
-    ).scalar_one_or_none()
+    # US-319 (B-071): forensic INFO at function entry so the server
+    # journalctl trail confirms the writer ran for each drive_id post-
+    # V0.27.4 decoupling from pingOllama (US-317 / I-021).  Stable
+    # journalctl-grep token "FORENSIC ensureDriveSummary_entry".
+    logger.info(
+        "FORENSIC ensureDriveSummary_entry | drive_id=%s | device=%s | "
+        "start=%s | end=%s",
+        driveId, deviceId, startTime, endTime,
+    )
+    analytics = _computeDriveAnalytics(
+        session,
+        deviceId,
+        driveId=driveId,
+        fallbackStartTime=startTime,
+        fallbackEndTime=endTime,
+    )
 
     if driveId is not None:
+        # US-326 / I-026: find the existing row by its real natural key.
+        # The Pi-sync path keys ``drive_summary`` on
+        # ``(source_device, source_id)`` -- ``source_id`` is the Pi
+        # ``drive_counter`` id, i.e. the same value as ``driveId`` here --
+        # and leaves the ``drive_id`` mirror column NULL (the wire protocol
+        # renames the Pi PK ``drive_id`` -> ``id`` -> ``source_id``; see
+        # ``src.pi.data.sync_log.SYNC_UPDATE_TABLES_PK`` +
+        # ``src.pi.sync.client._renamePkToId`` + ``src.server.api.sync``).
+        # Matching on ``drive_id`` alone (the pre-fix behaviour) therefore
+        # never found a Pi-sync row -- the writer fell into the INSERT
+        # branch and tripped UNIQUE(source_device, source_id), rolling the
+        # whole auto-analysis transaction back so analytics fields 3-8 stayed
+        # NULL.  Match on ``source_id`` (the canonical key) OR ``drive_id``
+        # so analytics-first INSERTed rows (which set both) are also found;
+        # ``.first()`` over an ``id``-ordered query keeps the (pathological)
+        # double-match case deterministic without raising.
         existing = session.execute(
             select(DriveSummary)
             .where(DriveSummary.source_device == deviceId)
-            .where(DriveSummary.drive_id == driveId),
-        ).scalar_one_or_none()
+            .where(
+                (DriveSummary.source_id == driveId)
+                | (DriveSummary.drive_id == driveId)
+            )
+            .order_by(DriveSummary.id.asc()),
+        ).scalars().first()
         if existing is not None:
+            # UPDATE fields 3-8 only.  Fields 9-12 (Pi-sync) are
+            # preserved per Spec 3 race-handling rule.  ``drive_id`` is
+            # healed here too: Pi-sync rows arrive with it NULL, but the
+            # per-drive analytics joins (drive_statistics, calibration)
+            # key on it and a populated value lets the next sync find this
+            # row via the cheaper drive_id index path.
             existing.device_id = deviceId
-            existing.start_time = startTime
-            existing.end_time = endTime
-            existing.duration_seconds = duration
-            existing.row_count = int(rowCount)
-            existing.profile_id = profileId
-            existing.is_real = True
+            existing.drive_id = driveId
+            existing.start_time = analytics.startTime
+            existing.end_time = analytics.endTime
+            existing.duration_seconds = analytics.durationSeconds
+            existing.row_count = analytics.rowCount
+            existing.profile_id = analytics.profileId
+            existing.is_real = analytics.isReal
+            existing.data_source = analytics.dataSource
             session.flush()
             return existing.id
 
+        # Analytics-first INSERT: 1+2 set so a later Pi-sync upsert
+        # finds this row; 9-12 left NULL so Pi-sync only overwrites
+        # its own columns.
         drive = DriveSummary(
             device_id=deviceId,
-            start_time=startTime,
-            end_time=endTime,
-            duration_seconds=duration,
-            row_count=int(rowCount),
-            profile_id=profileId,
-            is_real=True,
+            start_time=analytics.startTime,
+            end_time=analytics.endTime,
+            duration_seconds=analytics.durationSeconds,
+            row_count=analytics.rowCount,
+            profile_id=analytics.profileId,
+            is_real=analytics.isReal,
+            data_source=analytics.dataSource,
             source_device=deviceId,
             source_id=driveId,
             drive_id=driveId,
@@ -834,6 +1092,13 @@ def _ensureDriveSummary(
         return drive.id
 
     # Legacy path: pre-US-200 data with no drive_id in connection_log.
+    # The natural key is (device_id, connection_log start_time); always
+    # use the function-arg boundaries for start_time / end_time / duration
+    # so historical replay idempotency holds and the auto-analysis sync
+    # path keeps its boundary-based semantics.  Spec 3 stub-row semantics
+    # apply only to the post-US-200 path where drive_id is the canonical
+    # join.  Data-quality fields (row_count / is_real / data_source) still
+    # derive from realtime_data via the time-range filter.
     existingId = session.execute(
         select(DriveSummary.id)
         .where(DriveSummary.device_id == deviceId)
@@ -842,17 +1107,111 @@ def _ensureDriveSummary(
     if existingId is not None:
         return existingId
 
+    duration = int((endTime - startTime).total_seconds())
     drive = DriveSummary(
         device_id=deviceId,
         start_time=startTime,
         end_time=endTime,
         duration_seconds=duration,
-        row_count=int(rowCount),
-        profile_id=profileId,
+        row_count=analytics.rowCount,
+        profile_id=analytics.profileId,
+        is_real=analytics.isReal,
+        data_source=analytics.dataSource,
     )
     session.add(drive)
     session.flush()
     return drive.id
+
+
+def _ensureDriveStatistics(session: Session, driveSummaryId: int) -> int:
+    """Compute + persist per-parameter ``drive_statistics`` rows for a drive.
+
+    US-324 / I-024: ``drive_statistics`` is the missing link between
+    ``drive_summary`` and calibration -- :func:`proposeCalibration` joins
+    through it for per-parameter baselines, so an empty ``drive_statistics``
+    means calibration permanently returns "Need 5 more real drives".  Before
+    this story the only path that wrote those rows was
+    ``runAnalysis -> _buildAnalyticsContext -> computeDriveStatistics``,
+    which only fired when ``pingOllama`` succeeded -- the same coupling bug
+    US-317 / I-021 fixed for ``_ensureDriveSummary``.  This function is the
+    pure data-write step, decoupled from the AI trigger: it runs
+    unconditionally whenever a drive's boundaries are known (see
+    :func:`_writeDriveAnalytics`).
+
+    Delegates to :func:`src.server.analytics.basic.computeDriveStatistics`
+    so the writer and the AI-analysis path share one source of truth for
+    the aggregate math (min / max / avg / std / outlier bounds / sample
+    count, one row per distinct ``parameter_name``).  ``computeDriveStatistics``
+    is idempotent -- it DELETEs any prior ``drive_statistics`` rows for the
+    drive before re-inserting -- so re-running on the same drive converges
+    to the same state.
+
+    Args:
+        session: Open sync SQLAlchemy session (invoked inside ``run_sync``).
+        driveSummaryId: The *server-side* ``drive_summary.id`` -- the value
+            ``drive_statistics.drive_id`` is keyed on (NOT the Pi-local
+            ``drive_id``; ``proposeCalibration`` joins
+            ``DriveSummary.id == DriveStatistic.drive_id``).
+
+    Returns:
+        Number of ``drive_statistics`` rows written (one per distinct
+        ``parameter_name`` with at least one realtime reading; 0 for a
+        drive with no ``realtime_data`` in its window).
+    """
+    # Forensic INFO at function entry mirrors _ensureDriveSummary's
+    # "FORENSIC ensureDriveSummary_entry" -- lets the server journalctl
+    # trail confirm the drive_statistics writer fired for each drive_id
+    # post-V0.27.6 (the I-024 real-world validation gate).  Stable
+    # journalctl-grep token "FORENSIC ensureDriveStatistics_entry".
+    logger.info(
+        "FORENSIC ensureDriveStatistics_entry | drive_summary_id=%s",
+        driveSummaryId,
+    )
+    drive = session.get(DriveSummary, driveSummaryId)
+    if drive is None or drive.start_time is None:
+        # No realtime_data window for this drive (a Pi-sync-only stub row,
+        # or a drive_start/drive_end pair with zero readings) -- nothing to
+        # aggregate.  computeDriveStatistics' time-window filter does
+        # ``timestamp >= drive.start_time``, which SQLAlchemy refuses when
+        # start_time is None, so short-circuit here.
+        logger.info(
+            "FORENSIC ensureDriveStatistics_written | drive_summary_id=%s | "
+            "rows=0 (no realtime window)",
+            driveSummaryId,
+        )
+        return 0
+    stats = computeDriveStatistics(session, driveSummaryId)
+    logger.info(
+        "FORENSIC ensureDriveStatistics_written | drive_summary_id=%s | rows=%d",
+        driveSummaryId, len(stats),
+    )
+    return len(stats)
+
+
+def _writeDriveAnalytics(
+    session: Session,
+    deviceId: str,
+    boundaries: list[tuple[datetime, datetime, int | None]],
+) -> list[int]:
+    """Write ``drive_summary`` + ``drive_statistics`` for each completed drive.
+
+    Both writers are pure data-write steps independent of AI-service health
+    (US-317 / I-021 for drive_summary; US-324 / I-024 for drive_statistics).
+    Only the AI analysis task scheduling downstream is gated on
+    :func:`pingOllama`.
+
+    Returns the list of server-side ``drive_summary.id`` values, one per
+    boundary in input order -- the caller uses them to schedule the AI
+    analysis tasks.
+    """
+    driveSummaryIds: list[int] = []
+    for start, end, piDriveId in boundaries:
+        summaryId = _ensureDriveSummary(
+            session, deviceId, start, end, driveId=piDriveId,
+        )
+        _ensureDriveStatistics(session, summaryId)
+        driveSummaryIds.append(summaryId)
+    return driveSummaryIds
 
 
 async def _safeRunAnalysis(
@@ -889,61 +1248,42 @@ async def enqueueAutoAnalysisForSync(
     deviceId: str,
     connectionLogRows: list[dict[str, Any]],
     *,
+    driveSummaryRows: list[dict[str, Any]] | None = None,
     ollamaBaseUrl: str,
     ollamaModel: str,
     ollamaTimeoutSeconds: int = 120,
 ) -> bool:
-    """Kick off non-blocking AI analysis for every completed drive in ``rows``.
+    """RETIRED -- US-350 / B-104 Step 1a tripwire.
 
-    Returns True iff at least one :func:`asyncio.create_task` was scheduled.
-    False means: no drive_end in the payload, or the Ollama preflight ping
-    failed — either way ``/sync`` is unaffected and returns 200.
+    The V0.27.7-V0.27.16 sync-receipt trigger seam is retired entirely
+    in V0.27.17.  Drive analytics now run server-side via
+    :mod:`src.server.analytics.drive_summary_compute`, invoked by the
+    nightly systemd timer (``deploy/server-analytics-batch.timer``) and
+    the on-demand CLI (:mod:`src.server.cli.recompute_drive_analytics`).
+    Both read raw ``realtime_data`` MIN/MAX/COUNT directly and do not
+    depend on any Pi-side drive-end signal.
 
-    Args:
-        engine: AsyncEngine bound to the server database.
-        deviceId: Source device id used to scope drive_summary rows.
-        connectionLogRows: Raw connection_log dicts from the sync payload.
-        ollamaBaseUrl: Ollama base URL (used for both the ping and the
-            subsequent /api/chat call inside runAnalysis).
-        ollamaModel: Model name passed through to runAnalysis.
-        ollamaTimeoutSeconds: Per-analysis timeout passed through.
+    Raises:
+        NotImplementedError: Always.  If a caller hits this tripwire the
+            sync-receipt trigger seam has been resurrected -- that is an
+            architectural regression (B-104 Step 1a).  Re-route the
+            caller to ``compute_drive_summary`` on a deliberate
+            server-side seam.
     """
-    boundaries = extractDriveBoundaries(connectionLogRows)
-    if not boundaries:
-        return False
-
-    if not await pingOllama(ollamaBaseUrl):
-        logger.warning(
-            "Auto-analysis skipped: Ollama unreachable at %s "
-            "(device=%s, drives_pending=%d)",
-            ollamaBaseUrl, deviceId, len(boundaries),
-        )
-        return False
-
-    factory = getAsyncSession(engine)
-    async with factory() as session:
-        driveIds = await session.run_sync(
-            lambda s: [
-                _ensureDriveSummary(s, deviceId, start, end, driveId=piDriveId)
-                for start, end, piDriveId in boundaries
-            ],
-        )
-        await session.commit()
-
-    for driveId in driveIds:
-        task = asyncio.create_task(
-            _safeRunAnalysis(
-                engine=engine,
-                driveId=driveId,
-                ollamaBaseUrl=ollamaBaseUrl,
-                ollamaModel=ollamaModel,
-                ollamaTimeoutSeconds=ollamaTimeoutSeconds,
-            ),
-        )
-        _pendingAutoAnalysisTasks.add(task)
-        task.add_done_callback(_pendingAutoAnalysisTasks.discard)
-
-    return True
+    del engine, deviceId, connectionLogRows, driveSummaryRows
+    del ollamaBaseUrl, ollamaModel, ollamaTimeoutSeconds
+    raise NotImplementedError(
+        "enqueueAutoAnalysisForSync was retired in US-350 / B-104 Step 1a "
+        "(V0.27.17).  The sync-receipt trigger architecture shipped three "
+        "cycles of false-pass behavior (US-326 V0.27.7, US-348 V0.27.16) "
+        "because the writer's trigger condition never materialized in real "
+        "Pi deployments.  Drive analytics is now computed server-side from "
+        "raw realtime_data via src.server.analytics.drive_summary_compute, "
+        "invoked on a nightly systemd timer + on-demand CLI -- no "
+        "dependency on a Pi-side drive-end signal.  If you need to recompute "
+        "drive analytics call compute_drive_summary directly; do not "
+        "resurrect this trigger.",
+    )
 
 
 # ---- Public API --------------------------------------------------------------
@@ -960,6 +1300,7 @@ __all__ = [
     "Recommendation",
     "enqueueAutoAnalysisForSync",
     "extractDriveBoundaries",
+    "extractDriveIdsFromDriveSummaryPayload",
     "pingOllama",
     "runAnalysis",
 ]

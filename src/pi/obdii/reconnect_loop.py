@@ -38,6 +38,28 @@
 #               |              | daemon.  Closes the "multiple access on port?"
 #               |              | pyserial collision pattern that produced 0
 #               |              | realtime_data rows in production today.
+# 2026-05-11    | Rex (US-325) | I-025: exponential backoff in
+#               |              | runReconnectHeartbeat.  Production journal
+#               |              | showed _performConnect retrying at a fixed
+#               |              | ~30-60s cadence FOREVER while the OBDLink was
+#               |              | out of range -- thousands of /dev/rfcomm0
+#               |              | touches a day -> on a Pi 5 the WiFi+BT combo
+#               |              | chip starved WiFi (assoc dropped twice in 3h
+#               |              | on 2026-05-11).  The inter-attempt sleep now
+#               |              | grows: min(BASE * 2 ** min(consecutive_
+#               |              | failures, BACKOFF_EXP_CAP), MAX_BACKOFF_SEC),
+#               |              | BASE == the tickIntervalSec arg (10s in prod),
+#               |              | BACKOFF_EXP_CAP == 5, MAX_BACKOFF_SEC == 900.
+#               |              | The FIRST gap stays at BASE (V0.27.1 short-
+#               |              | outage back-compat); the INFO heartbeat line
+#               |              | gains consecutive_failures=N + next_attempt_
+#               |              | in_seconds=X.  Counter resets implicitly: a
+#               |              | successful connect ends the loop and the
+#               |              | daemon is re-spawned fresh on the next
+#               |              | dropout.  Fix #2 of the WiFi-drop debug --
+#               |              | Fix #1 is the OS-side wifi.powersave=2
+#               |              | NetworkManager drop-in (deploy/nm-disable-
+#               |              | wifi-powersave.conf, installed by deploy-pi.sh).
 # ================================================================================
 ################################################################################
 
@@ -87,10 +109,12 @@ from typing import Any
 
 __all__ = [
     'BACKOFF_CAP_SECONDS',
+    'BACKOFF_EXP_CAP',
     'DEFAULT_BACKOFF_SCHEDULE',
     'HEARTBEAT_ATTEMPT_TIMEOUT_SEC',
     'HEARTBEAT_LOG_PREFIX',
     'HEARTBEAT_TICK_INTERVAL_SEC',
+    'MAX_BACKOFF_SEC',
     'ReconnectLoop',
     'runReconnectHeartbeat',
 ]
@@ -131,6 +155,20 @@ HEARTBEAT_ATTEMPT_TIMEOUT_SEC: float = 30.0
 #: US-301 INFO log prefix.  Pinned as a constant so call sites + sprint_lint
 #: + grep ("RECONNECT HEARTBEAT") all agree on the one canonical token.
 HEARTBEAT_LOG_PREFIX: str = "RECONNECT HEARTBEAT"
+
+#: US-325 / I-025: hard ceiling on the exponentially-backed-off inter-attempt
+#: interval -- 900s == 15 minutes.  Once the heartbeat has been failing long
+#: enough for ``BASE * 2 ** exponent`` to exceed this, it stops growing.
+MAX_BACKOFF_SEC: float = 900.0
+
+#: US-325 / I-025: clamp on the exponent in
+#: ``min(BASE * 2 ** min(consecutive_failures, BACKOFF_EXP_CAP), MAX_BACKOFF_SEC)``.
+#: With the production BASE (:data:`HEARTBEAT_TICK_INTERVAL_SEC` = 10s) this
+#: caps the inter-attempt interval at ``10 * 2 ** 5 = 320s`` (~5.3 min) after
+#: >= 5 consecutive failures -- a ~30x reduction in /dev/rfcomm0 churn versus
+#: the pre-US-325 fixed cadence, without ever silently giving up.  Callers that
+#: pass a larger BASE reach the :data:`MAX_BACKOFF_SEC` ceiling instead.
+BACKOFF_EXP_CAP: int = 5
 
 
 # ================================================================================
@@ -459,6 +497,31 @@ def _attemptConnectWithCap(
     return ('failure', None)
 
 
+def _nextAttemptInterval(consecutiveFailures: int, baseSec: float) -> float:
+    """Exponential-backoff sleep before the next heartbeat connect attempt.
+
+    US-325 / I-025 formula::
+
+        min(baseSec * 2 ** min(consecutive_failures, BACKOFF_EXP_CAP), MAX_BACKOFF_SEC)
+
+    ``consecutiveFailures`` is the count of consecutive failed attempts *so
+    far* -- 0 for the first attempt of an outage, so the first inter-attempt
+    gap equals ``baseSec`` and the V0.27.1 US-301 fixed cadence is preserved
+    for short dropouts.
+
+    Args:
+        consecutiveFailures: Non-negative count of consecutive failed attempts.
+            Values are clamped to ``[0, BACKOFF_EXP_CAP]`` for the exponent.
+        baseSec: Base interval -- the ``tickIntervalSec`` argument of
+            :func:`runReconnectHeartbeat` (10s in production).
+
+    Returns:
+        Sleep duration in seconds, never exceeding :data:`MAX_BACKOFF_SEC`.
+    """
+    exponent = min(max(consecutiveFailures, 0), BACKOFF_EXP_CAP)
+    return min(baseSec * float(2 ** exponent), MAX_BACKOFF_SEC)
+
+
 def runReconnectHeartbeat(
     connectFn: Callable[[], bool],
     isConnectedFn: Callable[[], bool],
@@ -486,13 +549,29 @@ def runReconnectHeartbeat(
 
     Each tick logs the canonical heartbeat at INFO::
 
-        RECONNECT HEARTBEAT | ticks=N | last_attempt_seconds_ago=X | last_attempt_outcome=Y
+        RECONNECT HEARTBEAT | ticks=N | last_attempt_seconds_ago=X | last_attempt_outcome=Y | consecutive_failures=K | next_attempt_in_seconds=Z
 
     Then dispatches a single ``connectFn()`` call bounded by
-    ``attemptTimeoutSec`` (default 5s -- see :data:`HEARTBEAT_ATTEMPT_TIMEOUT_SEC`)
+    ``attemptTimeoutSec`` (default 30s -- see :data:`HEARTBEAT_ATTEMPT_TIMEOUT_SEC`)
     on a daemon thread.  Loud-bail on every non-success outcome (WARNING level)
     per the V0.24.1 anti-pattern lesson: silent threads + no heartbeat + no
     canary = 9-drain saga.
+
+    US-325 / I-025 -- exponential backoff: the sleep between ticks is
+    ``min(tickIntervalSec * 2 ** min(consecutive_failures, BACKOFF_EXP_CAP),
+    MAX_BACKOFF_SEC)`` (see :func:`_nextAttemptInterval`).  The FIRST failed
+    tick still sleeps ``tickIntervalSec`` (short-outage back-compat); each
+    subsequent consecutive failure doubles the interval, up to ``2 ** 5`` x
+    base then flat (production: 10 -> 20 -> 40 -> 80 -> 160 -> 320s; never the
+    900s ceiling at the 10s base, but a caller passing a larger base reaches
+    it).  An ``already_in_flight`` skip is NOT counted as a failure -- the
+    counter holds and the cadence stays at the current level.  The counter has
+    no explicit reset: a successful connect ends the loop, and the lifecycle
+    daemon is re-spawned fresh on the next dropout, so the next outage starts
+    at the base interval again (no permanent slowdown).  Motivation: the
+    production journal showed ``_performConnect`` retrying at a fixed ~30-60s
+    cadence indefinitely while the OBDLink was out of range, and on a Pi 5 the
+    continuous BT activity starved the shared WiFi+BT radio.
 
     Loop exit conditions (any one terminates):
 
@@ -521,9 +600,11 @@ def runReconnectHeartbeat(
             test of 2026-05-08).  When the probe returns True, the tick
             logs ``last_attempt_outcome=already_in_flight`` and skips the
             connect spawn -- ``ticks`` increments and ``sleepFn`` is invoked
-            for cadence preservation, but ``connectFn`` is not called.  When
-            ``None`` (the legacy / pre-V0.27.1 callsites), the loop behaves
-            identically to its original US-301 form.
+            for cadence preservation (at the current backoff level), but
+            ``connectFn`` is not called and the consecutive-failure counter is
+            left unchanged.  When ``None`` (the legacy / pre-V0.27.1 callsites),
+            the loop behaves identically to its original US-301 form aside from
+            the US-325 backoff.
         sleepFn: Injectable sleep used between ticks.  Defaults to
             :func:`time.sleep`.  Tests pass a :class:`FakeClock`-style fn
             that advances simulated time.
@@ -531,10 +612,12 @@ def runReconnectHeartbeat(
             field.  Defaults to :func:`time.monotonic`.
         shutdownEvent: Optional :class:`threading.Event`; when set, loop exits
             at the next tick boundary.  Wires into orchestrator SIGTERM.
-        tickIntervalSec: Cadence between ticks.  Defaults to
+        tickIntervalSec: BASE interval for the US-325 exponential backoff (the
+            first failed-tick sleep, and the unit doubled on each subsequent
+            consecutive failure).  Defaults to
             :data:`HEARTBEAT_TICK_INTERVAL_SEC` (10s).
         attemptTimeoutSec: Wall-clock cap on each connect attempt.  Defaults
-            to :data:`HEARTBEAT_ATTEMPT_TIMEOUT_SEC` (5s).
+            to :data:`HEARTBEAT_ATTEMPT_TIMEOUT_SEC` (30s).
         maxTicks: Test-only safety net.  Production passes None (run forever).
 
     Returns:
@@ -547,6 +630,12 @@ def runReconnectHeartbeat(
     ticks = 0
     lastAttemptAt: float | None = None
     lastAttemptOutcome: str = "never"
+    # US-325 / I-025: count of consecutive failed connect attempts.  Drives
+    # the exponential backoff via _nextAttemptInterval(); incremented on a
+    # failed attempt, NOT on an already_in_flight skip.  A successful connect
+    # ends the loop (so no explicit reset is needed -- a re-spawned heartbeat
+    # starts a fresh counter on the next dropout).
+    consecutiveFailures = 0
 
     while True:
         if shutdownEvent is not None and shutdownEvent.is_set():
@@ -569,32 +658,45 @@ def runReconnectHeartbeat(
         else:
             secondsAgoStr = f"{monoImpl() - lastAttemptAt:.1f}"
 
+        # The sleep that will follow this tick on any non-success outcome,
+        # computed from the failure count BEFORE this tick -- so the first
+        # failed tick sleeps the base interval (V0.27.1 short-outage
+        # back-compat) and the heartbeat line below advertises the same value
+        # in next_attempt_in_seconds.
+        backoffSec = _nextAttemptInterval(consecutiveFailures, tickIntervalSec)
+
         # V0.27.1: skip the spawn when another thread is currently inside
         # connect().  The Sprint 25 leaked initial-obd-connect daemon owns
         # the connect() call after an _initializeConnection timeout; the
         # heartbeat must observe + log + skip rather than spawn a competing
         # daemon that collides on /dev/rfcomm0.  ticks increments so
-        # cadence + journal continuity are preserved; lastAttemptAt is left
-        # unchanged so the seconds-ago field on subsequent ticks continues
-        # to count from the previous *real* attempt.
+        # cadence + journal continuity are preserved; lastAttemptAt and
+        # consecutiveFailures are left unchanged (an in-flight skip is not a
+        # failure -- the backoff level holds, it does not advance).
         if inFlightProbeFn is not None and inFlightProbeFn():
             lastAttemptOutcome = "already_in_flight"
             logger.info(
-                "%s | ticks=%d | last_attempt_seconds_ago=%s | last_attempt_outcome=already_in_flight",
+                "%s | ticks=%d | last_attempt_seconds_ago=%s | last_attempt_outcome=already_in_flight "
+                "| consecutive_failures=%d | next_attempt_in_seconds=%.1f",
                 HEARTBEAT_LOG_PREFIX,
                 ticks + 1,
                 secondsAgoStr,
+                consecutiveFailures,
+                backoffSec,
             )
             ticks += 1
-            sleepImpl(tickIntervalSec)
+            sleepImpl(backoffSec)
             continue
 
         logger.info(
-            "%s | ticks=%d | last_attempt_seconds_ago=%s | last_attempt_outcome=%s",
+            "%s | ticks=%d | last_attempt_seconds_ago=%s | last_attempt_outcome=%s "
+            "| consecutive_failures=%d | next_attempt_in_seconds=%.1f",
             HEARTBEAT_LOG_PREFIX,
             ticks + 1,
             secondsAgoStr,
             lastAttemptOutcome,
+            consecutiveFailures,
+            backoffSec,
         )
 
         outcome, error = _attemptConnectWithCap(connectFn, attemptTimeoutSec)
@@ -609,23 +711,26 @@ def runReconnectHeartbeat(
             return ticks
 
         # Loud-bail per V0.24.1 lesson -- every non-success path is WARNING.
+        # "next attempt in" reflects the US-325 exponential backoff, not a
+        # fixed cadence.
         if outcome == 'failure':
             logger.warning(
                 "Reconnect heartbeat tick %d: connectFn returned False "
                 "(adapter not yet ready); next attempt in %.1fs",
-                ticks, tickIntervalSec,
+                ticks, backoffSec,
             )
         elif outcome == 'error':
             logger.warning(
                 "Reconnect heartbeat tick %d: connectFn raised %r; "
                 "next attempt in %.1fs",
-                ticks, error, tickIntervalSec,
+                ticks, error, backoffSec,
             )
         elif outcome == 'timeout':
             logger.warning(
                 "Reconnect heartbeat tick %d: connectFn exceeded %.1fs "
                 "wall-clock cap; next attempt in %.1fs",
-                ticks, attemptTimeoutSec, tickIntervalSec,
+                ticks, attemptTimeoutSec, backoffSec,
             )
 
-        sleepImpl(tickIntervalSec)
+        consecutiveFailures += 1
+        sleepImpl(backoffSec)

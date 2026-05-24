@@ -46,8 +46,8 @@ from collections import defaultdict
 from sqlalchemy import and_, delete, or_, select
 from sqlalchemy.orm import Session
 
+from src.server.analytics.analytics_types import DriveStatistics, ParameterComparison
 from src.server.analytics.helpers import classifyDeviation, computeBasicStats
-from src.server.analytics.types import DriveStatistics, ParameterComparison
 from src.server.db.models import DriveStatistic, DriveSummary, RealtimeData
 
 # ---- Per-drive statistics ----------------------------------------------------

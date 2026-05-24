@@ -631,3 +631,276 @@ class TestConstruction:
                 os.remove(otherPath)
             except OSError:
                 pass
+
+
+# =============================================================================
+# US-339 / I-034 -- SQLite connection lifecycle (file-descriptor leak)
+# =============================================================================
+#
+# Bug: pushDelta and pushDriveCounter use `with sqlite3.connect(...) as conn:`.
+# The Python sqlite3 Connection's __exit__ commits/rollsback the transaction
+# but does NOT close the connection -- the conn object lives on until GC.
+# Each pushAllAndDriveCounter sweep leaks ~13 connections (one per IN_SCOPE
+# table + one per drive_counter push), and on a long-uptime Pi the orchestrator
+# eventually trips SQLITE_IOERR on the stale WAL handles ("disk I/O error"
+# even though the SD card is healthy and PRAGMA integrity_check returns ok).
+#
+# 2026-05-13 evidence: chi-eclipse-01 PID 3443 (uptime 30 min, bench mode,
+# no OBD adapter present) had 134 open file descriptors, ~110 of which
+# pointed to /home/mcornelison/.../obd.db, obd.db-wal, or obd.db-shm.  Boot -1
+# of the same day flooded ~560 "disk I/O error" lines in 12 min before the Pi
+# hard-rebooted under the pressure.  Disk integrity_check ok; dmesg clean.
+# =============================================================================
+
+
+class TestUS339SqliteFdLeak:
+    """Regression tests for the US-339 / I-034 file-descriptor leak."""
+
+    def test_pushDelta_closesEverySqliteConnectionItOpens(
+        self,
+        tempDbPath: str,
+        stubApiKey: str,  # noqa: ARG002 -- present for the env var side effect
+        noSleep: Callable[[float], None],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """
+        Given: a SyncClient pushing real rows over a stubbed HTTP success
+        When: pushDelta is called once
+        Then: every sqlite3.Connection it opened has had close() called on it
+              (pre-fix: zero closes -- the `with sqlite3.connect(...)` gotcha
+              leaked the connection until GC).
+        """
+        # Arrange: wrap sqlite3.connect to track open + close counts on
+        # the very sqlite3 module that pi.sync.client imports.  Each
+        # returned conn has its .close monkey-patched so we observe BOTH
+        # explicit close() and __del__-on-GC if it ever falls through.
+        from pi.sync import client as sync_client_module
+
+        # sqlite3.Connection.close is C-level read-only in CPython, so we
+        # observe close() via a Connection subclass injected through the
+        # factory= kwarg.  Each open is recorded in `opened`; each
+        # subclass-level close() appends to `closed` before delegating to
+        # the C-level implementation.
+        opened: list[sqlite3.Connection] = []
+        closed: list[sqlite3.Connection] = []
+
+        class _TrackingConn(sqlite3.Connection):
+            def close(self) -> None:
+                closed.append(self)
+                super().close()
+
+        real_connect = sync_client_module.sqlite3.connect
+
+        def tracking_connect(*args: Any, **kwargs: Any) -> sqlite3.Connection:
+            kwargs.setdefault("factory", _TrackingConn)
+            conn = real_connect(*args, **kwargs)
+            opened.append(conn)
+            return conn
+
+        monkeypatch.setattr(
+            sync_client_module.sqlite3, "connect", tracking_connect
+        )
+
+        client = SyncClient(
+            _baseConfig(tempDbPath),
+            httpOpener=_successOpener(),
+            sleep=noSleep,
+        )
+
+        # Act
+        result = client.pushDelta("realtime_data")
+        assert result.rowsPushed == 5, "test precondition (fixture seeds 5 rows)"
+
+        # Assert: every connection that pushDelta opened was explicitly
+        # closed before the call returned.  Pre-fix, opened == 1 + and
+        # closed == 0 (the `with` block committed but did not close).
+        assert len(opened) >= 1, (
+            "test precondition: pushDelta should open at least one "
+            "sqlite3 connection"
+        )
+        assert len(closed) == len(opened), (
+            f"US-339 regression: pushDelta opened {len(opened)} sqlite3 "
+            f"connections but only {len(closed)} were explicitly closed. "
+            f"Leaked: {len(opened) - len(closed)}.  Pre-fix the "
+            f"`with sqlite3.connect(...) as conn:` pattern committed the "
+            f"transaction without closing the connection -- on a long-"
+            f"uptime Pi this drives fd-table pressure and SQLite "
+            f"eventually raises 'disk I/O error' on stale WAL handles."
+        )
+
+    def test_pushDriveCounter_closesEverySqliteConnectionItOpens(
+        self,
+        tempDbPath: str,
+        stubApiKey: str,  # noqa: ARG002
+        noSleep: Callable[[float], None],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """
+        Given: a SyncClient with a populated drive_counter row
+        When: pushDriveCounter is called once
+        Then: every sqlite3.Connection it opened has been explicitly closed
+              (pre-fix: zero closes, same root cause as pushDelta).
+        """
+        # Arrange: seed drive_counter so the push path reads a non-empty row
+        # (otherwise pushDriveCounter short-circuits before any HTTP work).
+        seed = sqlite3.connect(tempDbPath)
+        try:
+            seed.execute(
+                "CREATE TABLE IF NOT EXISTS drive_counter "
+                "(id INTEGER PRIMARY KEY, last_drive_id INTEGER NOT NULL)"
+            )
+            seed.execute(
+                "INSERT OR REPLACE INTO drive_counter (id, last_drive_id) "
+                "VALUES (1, 42)"
+            )
+            seed.commit()
+        finally:
+            seed.close()
+
+        from pi.sync import client as sync_client_module
+
+        opened: list[sqlite3.Connection] = []
+        closed: list[sqlite3.Connection] = []
+
+        class _TrackingConn(sqlite3.Connection):
+            def close(self) -> None:
+                closed.append(self)
+                super().close()
+
+        real_connect = sync_client_module.sqlite3.connect
+
+        def tracking_connect(*args: Any, **kwargs: Any) -> sqlite3.Connection:
+            kwargs.setdefault("factory", _TrackingConn)
+            conn = real_connect(*args, **kwargs)
+            opened.append(conn)
+            return conn
+
+        monkeypatch.setattr(
+            sync_client_module.sqlite3, "connect", tracking_connect
+        )
+
+        client = SyncClient(
+            _baseConfig(tempDbPath),
+            httpOpener=_successOpener(),
+            sleep=noSleep,
+        )
+
+        # Act
+        client.pushDriveCounter()
+
+        # Assert
+        assert len(opened) >= 1, "pushDriveCounter must open at least one conn"
+        assert len(closed) == len(opened), (
+            f"US-339 regression: pushDriveCounter leaked "
+            f"{len(opened) - len(closed)} of {len(opened)} sqlite3 "
+            f"connections."
+        )
+
+
+# =============================================================================
+# US-340 / I-035 -- offline-sync-skip gate (drive-time HTTP retry waste)
+# =============================================================================
+#
+# 2026-05-13 (drive 12) evidence + CIO observation:
+#   * Pi spends ~84s per "5s" ACTIVE-mode sync cycle pumping doomed TCP SYNs
+#     when the wlan0 interface has no IPv4 address (driving away from home).
+#     12 tables x 3 retries x [1,2,4,8,16]s backoff is mostly sleeping, but
+#     the sleeps STILL fire and the brcmfmac SDIO bus stays warm with retry
+#     activity that contends with concurrent BT HCI traffic on the BCM4345
+#     combo chip.  One WiFi-soft-off mechanism on the bench Pi today.
+#   * Server-side `connection_log` mirror has thousands of synced rows from
+#     this and similar chatter (filed B-077/B-078 for the broader fix).
+#
+# US-340 (V0.27.10) lands the smallest valuable piece of that fix: a cheap
+# offline probe on SyncClient + a gate in _maybeTriggerIntervalSync that
+# skips pushAllDeltas when no route to the companion service exists.
+# Microsecond-fast UDP-socket route check.  No packets sent.  The existing
+# "sync fires independently of drive_end" invariant is respected -- every
+# interval still TRIES -- but bails in microseconds instead of 84s when
+# offline, so brcmfmac stays cool and BT/WiFi combo-chip contention stops.
+# =============================================================================
+
+
+class TestUS340OfflineSyncGate:
+    """Regression tests for the US-340 offline-sync-skip gate."""
+
+    def test_hasRouteToServer_returnsFalse_whenSocketConnectRaisesOSError(
+        self,
+        tempDbPath: str,
+        stubApiKey: str,  # noqa: ARG002
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """
+        Given: a SyncClient configured with baseUrl=http://10.27.27.10:8000
+        When: the kernel route resolution raises OSError (Pi offline)
+        Then: hasRouteToServer() returns False
+        """
+        from pi.sync import client as sync_client_module
+
+        client = SyncClient(
+            _baseConfig(tempDbPath),
+            httpOpener=_successOpener(),
+            sleep=lambda _s: None,
+        )
+
+        class _OfflineSocket:
+            def __init__(self, *_a: Any, **_kw: Any) -> None:
+                pass
+
+            def __enter__(self) -> _OfflineSocket:
+                return self
+
+            def __exit__(self, *_exc: Any) -> None:
+                return None
+
+            def settimeout(self, _t: float) -> None:
+                pass
+
+            def connect(self, _addr: tuple[str, int]) -> None:
+                raise OSError("network unreachable (test)")
+
+        monkeypatch.setattr(
+            sync_client_module.socket, "socket",
+            lambda *a, **kw: _OfflineSocket(*a, **kw),
+        )
+
+        assert client.hasRouteToServer() is False
+
+    def test_hasRouteToServer_returnsTrue_whenSocketConnectSucceeds(
+        self,
+        tempDbPath: str,
+        stubApiKey: str,  # noqa: ARG002
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """
+        Given: a SyncClient configured with a reachable baseUrl
+        When: the UDP socket connect resolves a route (no OSError)
+        Then: hasRouteToServer() returns True
+        """
+        from pi.sync import client as sync_client_module
+
+        client = SyncClient(
+            _baseConfig(tempDbPath),
+            httpOpener=_successOpener(),
+            sleep=lambda _s: None,
+        )
+
+        class _OnlineSocket:
+            def __enter__(self) -> _OnlineSocket:
+                return self
+
+            def __exit__(self, *_exc: Any) -> None:
+                return None
+
+            def settimeout(self, _t: float) -> None:
+                pass
+
+            def connect(self, _addr: tuple[str, int]) -> None:
+                return None  # route resolved cleanly
+
+        monkeypatch.setattr(
+            sync_client_module.socket, "socket",
+            lambda *a, **kw: _OnlineSocket(),
+        )
+
+        assert client.hasRouteToServer() is True

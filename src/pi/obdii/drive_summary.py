@@ -512,6 +512,18 @@ class SummaryRecorder:
                 "getCurrentDriveId() None)"
             )
 
+        # US-319 (B-071): forensic INFO at writer entry, before the
+        # cold-start-rule + INSERT/UPSERT/defer decision.  Stable
+        # journalctl-grep token "FORENSIC drive_summary_writer_entry".
+        logger.info(
+            "FORENSIC drive_summary_writer_entry | drive_id=%s | "
+            "from_state=%s | snapshot_keys=%s | force_insert=%s",
+            effectiveDriveId,
+            fromState.value if isinstance(fromState, EngineState) else fromState,
+            sorted((snapshot or {}).keys()),
+            forceInsert,
+        )
+
         summary = buildSummaryFromSnapshot(
             driveId=effectiveDriveId,
             snapshot=snapshot,

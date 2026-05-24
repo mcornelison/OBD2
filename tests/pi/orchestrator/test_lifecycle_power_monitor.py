@@ -37,7 +37,6 @@ from __future__ import annotations
 from typing import Any
 from unittest.mock import MagicMock
 
-from pi.hardware.ups_monitor import PowerSource as HwPowerSource
 from pi.obdii.orchestrator.core import ApplicationOrchestrator
 
 # ================================================================================
@@ -142,153 +141,115 @@ class TestInitializePowerMonitor:
 
 
 # ================================================================================
-# 2. _subscribePowerMonitorToUpsMonitor wiring
+# 2. _subscribePowerMonitorToPowerSourceProvider wiring (SS-T4 / Atlas 2026-05-19)
 # ================================================================================
 
 
-class TestSubscribePowerMonitorToUpsMonitor:
-    """The fan-out wraps any existing onPowerSourceChange callback.
-
-    HardwareManager._wireComponents calls
-    ShutdownHandler.registerWithUpsMonitor which sets
-    upsMonitor.onPowerSourceChange = handler.onPowerSourceChange.
-    The PowerMonitor subscription must preserve that path.
+class TestSubscribePowerMonitorToPowerSourceProvider:
+    """SS-T4: the UI power-source path now flows from PowerSourceProvider
+    (GPIO6 SSOT) via the dedicated B1 ``_PowerSourceUiBridge`` thread --
+    NOT from the retired ``UpsMonitor.getPowerSource`` event subscription.
+    The deep transition behaviour (present->lost->present feeds
+    checkPowerStatus) is covered by
+    ``tests/pi/orchestrator/test_lifecycle_power_source_ssot.py`` against
+    the injectable bridge class directly. This class covers only the
+    orchestrator-level wiring (the method's existence, idempotency, and
+    no-PowerMonitor skip).
     """
 
-    def test_subscribe_setsOnPowerSourceChange(self) -> None:
+    def test_subscribe_constructsProviderAndStartsBridge(
+        self, monkeypatch
+    ) -> None:
         """
-        Given: PowerMonitor + a HardwareManager whose UpsMonitor exists
-        When:  _subscribePowerMonitorToUpsMonitor is called
-        Then:  UpsMonitor.onPowerSourceChange is no longer the bare prior
-               callback -- it's the fan-out wrapper.
+        Given: PowerMonitor + a powerWatch config block
+        When:  _subscribePowerMonitorToPowerSourceProvider is called
+        Then:  a ``_powerSourceProvider`` is attached AND a started
+               ``_powerSourceUiBridge`` is attached (the SSOT wiring is live).
         """
-        orch = _makeOrch(_baseConfig(powerMonitorEnabled=True))
+        # Mock the imports the method does internally so the test does not
+        # require real GPIO.
+
+        class _FakePld:
+            def __init__(self, *, pin, powerPresentHigh):
+                self.isAvailable = False  # safe direction
+            def isExternalPowerPresent(self): return True
+            def isPowerLost(self): return False
+            def startupPolarityOk(self): return False
+
+        # Patch the deferred imports done inside the method.
+        import pi.hardware.pld_sensor as pldMod
+        import pi.power.power_source_provider as pspMod
+        monkeypatch.setattr(pldMod, "PldSensor", _FakePld)
+        # Real PowerSourceProvider is fine (it's a thin wrapper).
+        _ = pspMod  # silence unused
+
+        cfg = _baseConfig(powerMonitorEnabled=True)
+        cfg["pi"]["powerWatch"] = {
+            "pldGpioPin": 6, "pldPowerPresentHigh": True, "uiPollSec": 0.01,
+        }
+        orch = _makeOrch(cfg)
         orch._database = MagicMock()
         orch._initializePowerMonitor()
+        orch._subscribePowerMonitorToPowerSourceProvider()
 
-        priorCallback = MagicMock()
-        fakeUps = MagicMock()
-        fakeUps.onPowerSourceChange = priorCallback
-        orch._hardwareManager = MagicMock()
-        orch._hardwareManager.upsMonitor = fakeUps
+        try:
+            assert getattr(orch, "_powerSourceProvider", None) is not None
+            bridge = getattr(orch, "_powerSourceUiBridge", None)
+            assert bridge is not None
+            # Duck-typed check (not isinstance): lifecycle.py is reachable via
+            # two sys.modules entries (with/without the `src.` prefix), each
+            # carrying its own class object -- isinstance across paths fails
+            # (cross-module identity gotcha). The shape is what we care about.
+            assert hasattr(bridge, "start") and hasattr(bridge, "stop")
+            assert hasattr(bridge, "pollOnce")
+        finally:
+            # Always stop the bridge so the test doesn't leak a thread.
+            if getattr(orch, "_powerSourceUiBridge", None) is not None:
+                orch._shutdownPowerSourceUiBridge()
 
-        orch._subscribePowerMonitorToUpsMonitor()
+    def test_subscribe_isIdempotent(self, monkeypatch) -> None:
+        """A second call must NOT replace the running bridge (no thread leak)."""
+        from pi.obdii.orchestrator import lifecycle as lifecycleMod
 
-        # The UpsMonitor's callback was replaced (not the bare prior).
-        assert fakeUps.onPowerSourceChange is not priorCallback
-        assert fakeUps.onPowerSourceChange is not None
+        class _FakePld:
+            def __init__(self, *, pin, powerPresentHigh):
+                self.isAvailable = False
+            def isExternalPowerPresent(self): return True
+            def isPowerLost(self): return False
+            def startupPolarityOk(self): return False
 
-    def test_fanOut_preservesPriorCallback(self) -> None:
-        """
-        Given: A prior ShutdownHandler callback was registered
-        When:  Fan-out fires on a UpsMonitor transition
-        Then:  Prior callback is invoked with the original args.
-        """
-        orch = _makeOrch(_baseConfig(powerMonitorEnabled=True))
+        import pi.hardware.pld_sensor as pldMod
+        monkeypatch.setattr(pldMod, "PldSensor", _FakePld)
+
+        cfg = _baseConfig(powerMonitorEnabled=True)
+        cfg["pi"]["powerWatch"] = {
+            "pldGpioPin": 6, "pldPowerPresentHigh": True, "uiPollSec": 0.01,
+        }
+        orch = _makeOrch(cfg)
         orch._database = MagicMock()
         orch._initializePowerMonitor()
-
-        priorCallback = MagicMock()
-        fakeUps = MagicMock()
-        fakeUps.onPowerSourceChange = priorCallback
-        orch._hardwareManager = MagicMock()
-        orch._hardwareManager.upsMonitor = fakeUps
-
-        orch._subscribePowerMonitorToUpsMonitor()
-
-        # Trigger via the freshly wired fan-out.
-        fakeUps.onPowerSourceChange(
-            HwPowerSource.EXTERNAL, HwPowerSource.BATTERY,
-        )
-
-        priorCallback.assert_called_once_with(
-            HwPowerSource.EXTERNAL, HwPowerSource.BATTERY,
-        )
-
-    def test_fanOut_invokesPowerMonitorCheckPowerStatus(self) -> None:
-        """
-        Given: The fan-out is wired
-        When:  UpsMonitor fires EXTERNAL -> BATTERY
-        Then:  PowerMonitor.checkPowerStatus is called with onAcPower=False.
-        """
-        orch = _makeOrch(_baseConfig(powerMonitorEnabled=True))
-        orch._database = MagicMock()
-        orch._initializePowerMonitor()
-
-        # Spy on the PowerMonitor's checkPowerStatus directly.
-        orch._powerMonitor.checkPowerStatus = MagicMock()
-
-        fakeUps = MagicMock()
-        fakeUps.onPowerSourceChange = None
-        orch._hardwareManager = MagicMock()
-        orch._hardwareManager.upsMonitor = fakeUps
-
-        orch._subscribePowerMonitorToUpsMonitor()
-        fakeUps.onPowerSourceChange(
-            HwPowerSource.EXTERNAL, HwPowerSource.BATTERY,
-        )
-
-        orch._powerMonitor.checkPowerStatus.assert_called_once_with(False)
-
-    def test_acRestore_callsCheckPowerStatusTrue(self) -> None:
-        """
-        Given: Fan-out wired
-        When:  BATTERY -> EXTERNAL transition fires
-        Then:  PowerMonitor.checkPowerStatus(True) is called.
-        """
-        orch = _makeOrch(_baseConfig(powerMonitorEnabled=True))
-        orch._database = MagicMock()
-        orch._initializePowerMonitor()
-        orch._powerMonitor.checkPowerStatus = MagicMock()
-
-        fakeUps = MagicMock()
-        fakeUps.onPowerSourceChange = None
-        orch._hardwareManager = MagicMock()
-        orch._hardwareManager.upsMonitor = fakeUps
-
-        orch._subscribePowerMonitorToUpsMonitor()
-        fakeUps.onPowerSourceChange(
-            HwPowerSource.BATTERY, HwPowerSource.EXTERNAL,
-        )
-
-        orch._powerMonitor.checkPowerStatus.assert_called_once_with(True)
+        orch._subscribePowerMonitorToPowerSourceProvider()
+        try:
+            firstBridge = orch._powerSourceUiBridge
+            orch._subscribePowerMonitorToPowerSourceProvider()
+            assert orch._powerSourceUiBridge is firstBridge
+        finally:
+            if getattr(orch, "_powerSourceUiBridge", None) is not None:
+                orch._shutdownPowerSourceUiBridge()
+        _ = lifecycleMod  # silence unused
 
     def test_subscribe_skippedWhenPowerMonitorNone(self) -> None:
         """
-        Given: PowerMonitor was disabled -> None
-        When:  _subscribePowerMonitorToUpsMonitor is called
-        Then:  No-op; UpsMonitor's prior callback is left intact.
+        Given: PowerMonitor disabled -> None
+        When:  _subscribePowerMonitorToPowerSourceProvider is called
+        Then:  No-op; no bridge is started.
         """
         orch = _makeOrch(_baseConfig(powerMonitorEnabled=False))
         orch._database = MagicMock()
         orch._initializePowerMonitor()
         assert orch.powerMonitor is None
-
-        priorCallback = MagicMock()
-        fakeUps = MagicMock()
-        fakeUps.onPowerSourceChange = priorCallback
-        orch._hardwareManager = MagicMock()
-        orch._hardwareManager.upsMonitor = fakeUps
-
-        orch._subscribePowerMonitorToUpsMonitor()
-
-        assert fakeUps.onPowerSourceChange is priorCallback
-
-    def test_subscribe_skippedWhenUpsMonitorNone(self) -> None:
-        """
-        Given: HardwareManager has no UpsMonitor (non-Pi or init failure)
-        When:  _subscribePowerMonitorToUpsMonitor is called
-        Then:  No exception; nothing is wired.
-        """
-        orch = _makeOrch(_baseConfig(powerMonitorEnabled=True))
-        orch._database = MagicMock()
-        orch._initializePowerMonitor()
-
-        orch._hardwareManager = MagicMock()
-        orch._hardwareManager.upsMonitor = None
-
-        # Should not raise.
-        orch._subscribePowerMonitorToUpsMonitor()
+        orch._subscribePowerMonitorToPowerSourceProvider()
+        assert getattr(orch, "_powerSourceUiBridge", None) is None
 
 
 # ================================================================================

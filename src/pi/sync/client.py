@@ -22,6 +22,29 @@
 #                               API + PushSummary aggregate for the US-216
 #                               WARNING stage behavior (flush pending
 #                               deltas before TRIGGER / poweroff).
+# 2026-05-10    | Rex (US-315) | B-065 close: combined-cursor pushDelta for
+#                               opt-in tables (battery_health_log,
+#                               drive_summary, dtc_log).  Reads BOTH
+#                               last_synced_id and last_synced_modified_at,
+#                               passes them to getDeltaRows, advances both
+#                               cursors after a successful push.  INSERT-only
+#                               path for non-opt-in tables is unchanged.
+# 2026-05-13    | Rex (US-340) | I-035: hasRouteToServer() cheap UDP-socket
+#                               offline probe.  Orchestrator gates
+#                               pushAllDeltas on this to avoid ~84s of doomed
+#                               TCP SYN retries per ACTIVE-mode cadence tick
+#                               when the Pi has no route (drive-time WiFi-off
+#                               cause: brcmfmac + BT contention on BCM4345).
+# 2026-05-13    | Rex (US-339) | I-034: pushDelta + pushDriveCounter wrapped
+#                               sqlite3.connect() in contextlib.closing.
+#                               `with sqlite3.connect(...) as conn:` is a
+#                               Python gotcha -- Connection.__exit__ commits
+#                               but does NOT close, leaking ~13 fds per sync
+#                               sweep until the long-uptime Pi tripped
+#                               SQLITE_IOERR on stale WAL handles.  The
+#                               inner `with conn:` retains the existing
+#                               commit-on-clean-exit / rollback-on-exception
+#                               transaction semantics.
 # ================================================================================
 ################################################################################
 
@@ -83,7 +106,9 @@ import socket
 import sqlite3
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
+from contextlib import closing
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -92,6 +117,7 @@ from typing import Any
 from src.common.config.secrets_loader import getSecret
 from src.common.errors.handler import ConfigurationError
 from src.pi.data import sync_log
+from src.pi.obdii.drive_id import DRIVE_COUNTER_TABLE
 
 __all__ = ["PushResult", "PushStatus", "PushSummary", "SyncClient"]
 
@@ -236,6 +262,30 @@ _RETRYABLE_NETWORK_EXCEPTIONS: tuple[type[BaseException], ...] = (
 )
 
 
+def _readLocalDriveCounter(conn: sqlite3.Connection) -> int | None:
+    """Return the local ``drive_counter.last_drive_id`` or None (US-314).
+
+    Returns None when the table does not exist (pre-US-200 schema) so
+    the caller can short-circuit cleanly without surfacing the bare
+    sqlite3 error.  An empty singleton row is treated the same way --
+    indistinguishable from "no drives yet" for sync purposes.
+    """
+    row = conn.execute(
+        "SELECT name FROM sqlite_master "
+        "WHERE type='table' AND name = ?",
+        (DRIVE_COUNTER_TABLE,),
+    ).fetchone()
+    if row is None:
+        return None
+    cursor = conn.execute(
+        f"SELECT last_drive_id FROM {DRIVE_COUNTER_TABLE} WHERE id = 1"
+    )
+    record = cursor.fetchone()
+    if record is None:
+        return None
+    return int(record[0])
+
+
 # ================================================================================
 # SyncClient
 # ================================================================================
@@ -330,6 +380,47 @@ class SyncClient:
             )
         return value
 
+    def hasRouteToServer(self) -> bool:
+        """Cheap offline probe: do we have an IPv4 route to the sync server?
+
+        US-340 / I-035: skip ``pushAllDeltas`` from the orchestrator
+        when this returns False so a Pi mid-drive (away from home WiFi,
+        no route to 10.27.27.10) doesn't pump ~84s of doomed TCP SYN
+        retries through brcmfmac per "5s" ACTIVE-mode cadence tick.
+        Sustained retry activity on the BCM4345 combo chip contends
+        with concurrent BT HCI traffic and is one of the WiFi-soft-off
+        mechanisms observed on 2026-05-13.
+
+        Implementation: a UDP-socket ``connect()`` to the parsed
+        ``baseUrl`` host on port 1.  UDP ``connect()`` is a kernel-side
+        route-resolution + interface-binding step that sends ZERO
+        packets; if no route exists the kernel raises ``OSError``
+        (typically ``Network unreachable`` / ``EHOSTUNREACH``) in
+        microseconds.  100ms timeout is a generous upper bound; the
+        normal path returns much faster.
+
+        Returns:
+            True if a route to the companion-service host exists, False
+            otherwise (including when ``baseUrl`` is unparseable or
+            empty).
+        """
+        try:
+            host = urllib.parse.urlparse(self.baseUrl).hostname
+        except (TypeError, ValueError):
+            return False
+        if not host:
+            return False
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
+                probe.settimeout(0.1)
+                # UDP connect resolves the route; no packets sent.  Port
+                # number is arbitrary because UDP connect doesn't send
+                # SYN -- the kernel just binds the local interface.
+                probe.connect((host, 1))
+                return True
+        except OSError:
+            return False
+
     def _readTimeoutSeconds(self) -> float:
         return float(self._companion.get("syncTimeoutSeconds", 30))
 
@@ -401,13 +492,56 @@ class SyncClient:
 
         # Canonical PK column for this delta-syncable table (US-194).
         pkColumn = sync_log.PK_COLUMN[tableName]
+        supportsUpdateSync = tableName in sync_log.SYNC_UPDATE_TABLES_PK
 
-        with sqlite3.connect(self._dbPath) as conn:
+        # US-319 (B-071): forensic INFO at push entry per table.  Stable
+        # journalctl-grep token "FORENSIC sync_push_table_entry".
+        # Discriminates US-315 / B-065 modified_at-cursor opt-in tables
+        # (battery_health_log / drive_summary / dtc_log) from INSERT-
+        # only tables on Drive 11+ sync sweeps.
+        logger.info(
+            "FORENSIC sync_push_table_entry | table=%s | pk_column=%s | "
+            "supports_update_sync=%s",
+            tableName, pkColumn, supportsUpdateSync,
+        )
+
+        # US-339 / I-034 (2026-05-13): `with sqlite3.connect(...) as conn:`
+        # ONLY commits the transaction on __exit__; it does NOT close the
+        # connection.  On a long-uptime Pi, every pushDelta call leaked one
+        # connection until GC, and at ~13 leaks per sync sweep the fd table
+        # eventually pressured SQLite into "disk I/O error" on stale WAL
+        # handles (drive 12 boot, 2026-05-13: ~560 errors in 12 min,
+        # hard-rebooted the Pi).  contextlib.closing wraps the connect so
+        # close() fires deterministically when the outer `with` exits;
+        # the inner `with conn:` keeps the transaction-context semantics
+        # the original implementation relied on (commit on clean exit,
+        # rollback on exception).
+        with closing(sqlite3.connect(self._dbPath)) as conn, conn:
             sync_log.initDb(conn)  # idempotent; makes the client robust to
             #                         a fresh DB being handed in by tests.
+            # US-315: lazy idempotent migration -- ensures the modified_at
+            # column + AFTER UPDATE trigger exist on opt-in tables before
+            # the cursor query references them.  Pre-flight on a stale Pi
+            # DB picks up the schema on first push.  No-op if already done.
+            if supportsUpdateSync:
+                sync_log.ensureSyncModifiedAtSchema(conn)
             lastId, _, _, _ = sync_log.getHighWaterMark(conn, tableName)
+            lastModifiedAt: str | None = (
+                sync_log.getModifiedHighWaterMark(conn, tableName)
+                if supportsUpdateSync else None
+            )
+            # Pull the modified_at column on opt-in tables BEFORE
+            # getDeltaRows strips it from the wire payload, so we can
+            # compute the new high-water mark below.  For non-opt-in
+            # tables this is None and the strip is a no-op.
+            modifiedAtByPk: dict[int, str] = {}
+            if supportsUpdateSync:
+                modifiedAtByPk = self._collectModifiedAt(
+                    conn, tableName, pkColumn, lastId, lastModifiedAt,
+                )
             rows = sync_log.getDeltaRows(
                 conn, tableName, lastId, self._readBatchSize(),
+                lastModifiedAt=lastModifiedAt,
             )
 
             if not rows:
@@ -451,8 +585,32 @@ class SyncClient:
             # New high-water mark comes from the source rows (pre-rename),
             # which still carry the authoritative PK under its real name.
             newHighWater = max(int(row[pkColumn]) for row in rows)
+            # US-315: also advance the modified_at cursor for opt-in tables
+            # so the next sync doesn't re-push the same row.  The advance
+            # uses MAX(_sync_modified_at) of pushed rows; rows with NULL
+            # _sync_modified_at (newly-INSERTed since US-315) don't move
+            # the cursor.  Empty advance keeps the previous cursor (cursor
+            # never rewinds).
+            newModifiedAt: str | None = None
+            if supportsUpdateSync and modifiedAtByPk:
+                newModifiedAt = max(modifiedAtByPk.values())
+                if lastModifiedAt is not None and newModifiedAt < lastModifiedAt:
+                    newModifiedAt = lastModifiedAt
             sync_log.updateHighWaterMark(
                 conn, tableName, newHighWater, batchId, status="ok",
+                lastModifiedAt=newModifiedAt,
+            )
+            # US-319 (B-071): forensic INFO at cursor advance.  Stable
+            # journalctl-grep token "FORENSIC sync_push_table_advance".
+            # Confirms US-315 dual-cursor (id + modified_at) progression
+            # so Drive 11+ sync sweeps can be reconciled against the
+            # server-side UPSERT trail.
+            logger.info(
+                "FORENSIC sync_push_table_advance | table=%s | "
+                "old_id=%s | new_id=%s | "
+                "old_modified_at=%s | new_modified_at=%s | rows=%d",
+                tableName, lastId, newHighWater,
+                lastModifiedAt, newModifiedAt, len(rows),
             )
             return PushResult(
                 tableName=tableName,
@@ -461,6 +619,38 @@ class SyncClient:
                 elapsed=time.monotonic() - start,
                 status=PushStatus.OK,
             )
+
+    @staticmethod
+    def _collectModifiedAt(
+        conn: sqlite3.Connection,
+        tableName: str,
+        pkColumn: str,
+        lastId: int,
+        lastModifiedAt: str | None,
+    ) -> dict[int, str]:
+        """Return ``{pk -> _sync_modified_at}`` for rows the next push
+        will fetch (US-315).
+
+        Mirrors the WHERE clause in :func:`sync_log.getDeltaRows` but
+        selects only the PK + modified_at columns -- cheap secondary
+        query that lets :meth:`pushDelta` advance the modified_at cursor
+        without re-scanning the full row payload.  Rows with NULL
+        ``_sync_modified_at`` are omitted (their PK still moves the id
+        cursor; they don't move the modified_at cursor).
+        """
+        modifiedFloor = lastModifiedAt or ''
+        cursor = conn.execute(
+            f"SELECT {pkColumn}, "  # noqa: S608 -- whitelisted identifiers
+            f"       {sync_log.SYNC_MODIFIED_AT_COLUMN} "
+            f"FROM {tableName} "
+            f"WHERE ({pkColumn} > ? "
+            f"       OR ({sync_log.SYNC_MODIFIED_AT_COLUMN} IS NOT NULL "
+            f"           AND {sync_log.SYNC_MODIFIED_AT_COLUMN} > ?)) "
+            f"  AND {sync_log.SYNC_MODIFIED_AT_COLUMN} IS NOT NULL "
+            f"ORDER BY {pkColumn} ASC",
+            (int(lastId), modifiedFloor),
+        )
+        return {int(pk): str(modAt) for pk, modAt in cursor.fetchall()}
 
     def pushAllDeltas(self) -> list[PushResult]:
         """Push every in-scope table in deterministic order.
@@ -496,6 +686,12 @@ class SyncClient:
         point.  The US-216 WARNING stage callback uses this to
         flush pending deltas before ``systemctl poweroff`` fires.
 
+        US-314: also calls :meth:`pushDriveCounter` after the table
+        sweep so the server-side singleton stays in lockstep with the
+        Pi.  The counter result is appended to ``results`` so operator
+        output shows the full picture; an EMPTY/FAILED/DISABLED counter
+        push does not abort the table sweep (and vice versa).
+
         Returns:
             :class:`PushSummary` with per-table results and
             aggregate counts.  A companion service disabled by
@@ -508,6 +704,7 @@ class SyncClient:
             "forcePush: flushing pending deltas (explicit manual trigger)"
         )
         results = self.pushAllDeltas()
+        results.append(self.pushDriveCounter())
 
         rowsPushed = 0
         tablesOk = 0
@@ -544,6 +741,82 @@ class SyncClient:
             tablesSkipped=tablesSkipped,
             disabled=disabled,
             elapsed=elapsed,
+        )
+
+    def pushDriveCounter(self) -> PushResult:
+        """Push the local ``drive_counter`` singleton to the server (US-314).
+
+        ``drive_counter`` is a single-row state mirror, not a delta-by-PK
+        capture table, so it rides on the sync request as a top-level
+        ``driveCounter: {lastDriveId: N}`` field rather than being part
+        of ``tables``.  The server's ``runDriveCounterUpsert`` writes
+        it via a monotonic upsert (forward-only -- never rewinds).
+
+        Status semantics mirror :meth:`pushDelta`:
+
+        * :data:`PushStatus.DISABLED` -- companion service off in config.
+        * :data:`PushStatus.EMPTY` -- counter table missing OR
+          ``last_drive_id`` is 0 (no drives minted yet); no POST sent.
+        * :data:`PushStatus.FAILED` -- transport error, retries
+          exhausted; the singleton stays where it was on the server.
+        * :data:`PushStatus.OK` -- value successfully delivered.
+
+        Returns:
+            :class:`PushResult` with ``tableName='drive_counter'``.
+            ``rowsPushed`` is 1 on success, 0 otherwise.
+        """
+        start = time.monotonic()
+
+        if not self.isEnabled:
+            return PushResult(
+                tableName=DRIVE_COUNTER_TABLE,
+                rowsPushed=0,
+                batchId="",
+                elapsed=time.monotonic() - start,
+                status=PushStatus.DISABLED,
+            )
+
+        # US-339 / I-034: see pushDelta for the contextlib.closing rationale.
+        with closing(sqlite3.connect(self._dbPath)) as conn, conn:
+            lastDriveId = _readLocalDriveCounter(conn)
+
+        if lastDriveId is None or lastDriveId <= 0:
+            return PushResult(
+                tableName=DRIVE_COUNTER_TABLE,
+                rowsPushed=0,
+                batchId="",
+                elapsed=time.monotonic() - start,
+                status=PushStatus.EMPTY,
+            )
+
+        # US-319 (B-071): forensic INFO before drive_counter push.
+        # Stable journalctl-grep token "FORENSIC sync_push_drive_counter".
+        # Resolves V0.27.3 US-314 watch-item: drive_counter advance +
+        # server UPSERT pairing visible in one journalctl trail on Drive 11+.
+        logger.info(
+            "FORENSIC sync_push_drive_counter | last_drive_id=%s",
+            lastDriveId,
+        )
+
+        batchId = _makeBatchId(self._deviceId)
+        try:
+            self._postDriveCounterWithRetry(batchId, lastDriveId)
+        except _PushFailure as failure:
+            return PushResult(
+                tableName=DRIVE_COUNTER_TABLE,
+                rowsPushed=0,
+                batchId=batchId,
+                elapsed=time.monotonic() - start,
+                status=PushStatus.FAILED,
+                reason=str(failure),
+            )
+
+        return PushResult(
+            tableName=DRIVE_COUNTER_TABLE,
+            rowsPushed=1,
+            batchId=batchId,
+            elapsed=time.monotonic() - start,
+            status=PushStatus.OK,
         )
 
     # ---- internals ---------------------------------------------------------
@@ -607,6 +880,67 @@ class SyncClient:
                 logger.warning(
                     "sync push for %s -> %s attempt %d/%d network error: %s",
                     tableName, url, attempt + 1, totalAttempts, lastReason,
+                )
+
+        raise _PushFailure(lastReason)
+
+
+    def _postDriveCounterWithRetry(
+        self,
+        batchId: str,
+        lastDriveId: int,
+    ) -> None:
+        """POST the drive_counter snapshot; retry policy mirrors _postBatch.
+
+        US-314: payload shape is the standard sync request with an empty
+        ``tables`` map plus the new top-level ``driveCounter`` field.
+        Reuses the same retry classifier so transient server-side
+        errors don't lose the singleton update.
+        """
+        payload = {
+            "deviceId": self._deviceId,
+            "batchId": batchId,
+            "tables": {},
+            "driveCounter": {"lastDriveId": lastDriveId},
+        }
+        body = json.dumps(payload, default=str).encode("utf-8")
+        url = f"{self.baseUrl}/api/v1/sync"
+        headers = {
+            "Content-Type": "application/json",
+            "X-API-Key": self._apiKey or "",
+        }
+        timeout = self._readTimeoutSeconds()
+        delays = self._readBackoffDelays()
+        totalAttempts = 1 + len(delays)
+        lastReason = "no attempts executed"
+
+        for attempt in range(totalAttempts):
+            if attempt > 0:
+                self._sleep(delays[attempt - 1])
+
+            req = urllib.request.Request(url, data=body, headers=headers, method="POST")
+            try:
+                with self._httpOpener(req, timeout=timeout) as response:
+                    _ = response.read()
+                return
+            except urllib.error.HTTPError as exc:
+                code = getattr(exc, "code", 0) or 0
+                lastReason = f"HTTP {code} {exc.reason}"
+                if not _isRetryableHttpStatus(code):
+                    logger.warning(
+                        "drive_counter sync -> %s rejected: %s (no retry)",
+                        url, lastReason,
+                    )
+                    raise _PushFailure(lastReason) from exc
+                logger.warning(
+                    "drive_counter sync -> %s attempt %d/%d failed: %s",
+                    url, attempt + 1, totalAttempts, lastReason,
+                )
+            except _RETRYABLE_NETWORK_EXCEPTIONS as exc:
+                lastReason = f"{type(exc).__name__}: {exc}"
+                logger.warning(
+                    "drive_counter sync -> %s attempt %d/%d network error: %s",
+                    url, attempt + 1, totalAttempts, lastReason,
                 )
 
         raise _PushFailure(lastReason)

@@ -6,6 +6,57 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Python 3.11+ development template with TDD methodology, comprehensive specs, and Ralph autonomous agent system.
 
+## A2AL/0.4.1 — Agent-to-Agent Communication
+
+This project uses [A2AL/0.4.1](https://github.com/mcornelison/A2AL) for peer-to-peer agent messages. The team-adopted authoritative reference is `offices/handbook.md` §9 (synced upstream). v0.4.1 supersedes v0.4.0 team-wide as of 2026-05-22.
+
+### Identity for A2AL routing headers
+
+When sending A2AL messages, sign as `<Name>/<role>` or `<Name>(<role>)` in the routing header. Current team:
+
+| Agent | Role | Office |
+|---|---|---|
+| Marcus | PM | `offices/pm/` |
+| Atlas | Architect | `offices/architect/` |
+| Argus | QA / Tester | `offices/tester/` |
+| Spool | Tuning SME | `offices/tuner/` |
+| Ralph (Rex) | Dev | `offices/ralph/` |
+| Iris | UI/UX | `offices/uidevloper/` |
+
+### When to use A2AL (audience rule, normative — v0.4.1 §2.1)
+
+- **Agent → agent, no human review expected → A2AL MUST.**
+- **Human in the audience → Markdown.**
+- **Inbound said `audience=agent` or sender ID'd as an AI agent → reply MUST be A2AL** (reactive rule).
+- **Default → Markdown** when audience is ambiguous or mixed.
+- **RCAs / ADRs / design specs / long-form deliberation → Markdown** (humans return to these).
+
+### Routing header (mandatory on every A2AL message — v0.4.1 §3)
+
+```text
+from=<Name>(<Role>); to=<Name>(<Role>); date=<ISO>; topic=<short label>
+```
+
+Fields separated by `; `. One line, ends at first newline. Optional fields: `audience=agent|mixed`, `urgency=low|medium|high|urgent`, `refs=<id>,<id>`, `in-reply-to=<id>`. Multiple recipients comma-separated: `to=Atlas(Architect), Marcus(PM)`.
+
+### v0.4.1 changes vs v0.4.0
+
+1. **Audience rule** (§2.1) is now MUST, not SHOULD. No hybrid mode; no duplication.
+2. **Routing header** (§3) is mandatory. Every message starts with the one-line header.
+3. **`cc: CIO` is retired.** CIO retains filesystem visibility into any inbox at any time; the explicit cc line was redundant. (Old v0.4.0 archive headers stay readable; no migration of historical files needed.)
+
+### Inboxes
+
+- Each agent's inbox: `offices/<role>/inbox/`
+- Filename: `YYYY-MM-DD-from-<sender>-<short-slug>.md`
+- Threading: reference prior message in body — `re: <id>` or `in-reply-to: <id>`
+
+### Reference
+
+- Team-adopted spec: `offices/handbook.md` §9
+- Upstream spec + library: https://github.com/mcornelison/A2AL
+- Each agent's local skill: `offices/<role>/.claude/skills/a2al/SKILL.md` + `offices/<role>/.claude/commands/a2al.md`
+
 ## Development Commands
 
 ### Testing

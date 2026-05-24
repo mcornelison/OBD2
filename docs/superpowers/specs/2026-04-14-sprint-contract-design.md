@@ -13,6 +13,7 @@
 |------|--------|-------------|
 | 2026-04-14 | Ralph + CIO | Initial draft (over-scoped — included pipeline, validator tables, directory layout) |
 | 2026-04-15 | Ralph + CIO | Rewritten to narrow scope: story schema + content quality rules + reviewer discipline |
+| 2026-05-18 | Marcus (PM) | Added Sprint-Level DoD Addendum (design-gate rule) + Atlas reviewer lane, per CIO role-boundary directive 2026-05-18 |
 
 ---
 
@@ -153,7 +154,7 @@ No XL. Stories larger than L split into dependency-chained sub-stories.
 
 ## Reviewer Contribution Rules
 
-Reviewers are: **Marcus** (PM — always), **Spool** (Tuner SME — auto-flagged when any Spool-owned value is touched), **Tester** (Marcus's call based on regression risk), **Ralph** (rare — invited by Marcus for dev-heavy stories). Reviewer set is selected per sprint based on complexity.
+Reviewers are: **Marcus** (PM — always), **Atlas** (Senior Solutions Architect — auto-flagged when any load-bearing subsystem is touched; owns the design gate), **Spool** (Tuner SME — auto-flagged when any Spool-owned value is touched), **Tester** (Marcus's call based on regression risk), **Ralph** (rare — invited by Marcus for dev-heavy stories). Reviewer set is selected per sprint based on complexity.
 
 ### Two paths, no third option
 
@@ -180,6 +181,7 @@ If nothing needs an in-lane edit AND nothing needs PM-level attention, the revie
 | Role | In-lane edits (during PRD/story review) | Goes to PM inbox instead |
 |---|---|---|
 | **Marcus (PM)** | Any story field — PM owns sprint shape | — (their lane) |
+| **Atlas (Architect)** | Architecture-related `acceptance`/`invariants`, the `specs/architecture.md`-update DoD clause for load-bearing stories; may raise a design-gate **BLOCK** | Non-architectural refactor ideas, broader roadmap suggestions |
 | **Spool (Tuner SME)** | `groundingRefs` values, tuning-related `acceptance`, tuning-related `invariants`, tuning-related `stopConditions` | Code-structure ideas, test-pattern ideas, non-tuning observations |
 | **Tester** | `verification` commands, regression-related `acceptance` entries | Code-refactor ideas, broader test-strategy suggestions |
 | **Ralph (pre-exec review)** | `scope.filesToTouch`, `scope.filesToRead`, implementation-detail `acceptance` | Tuning concerns, PRD scope concerns |
@@ -247,6 +249,18 @@ Append-only list. Reviewers may propose additions via Marcus's inbox.
 See the annotated example in the Story Schema section above. Every field is explicit; every value is grounded; every criterion is executable; the file manifest is complete; the invariants are declared; the stop conditions give Ralph an obvious refusal path.
 
 **Ralph reads this story once and knows exactly what to do.** No exploration. No guessing. No fabrication. If anything in the story is wrong, Ralph files a blocker rather than improvising — because the story gives him explicit permission to refuse.
+
+---
+
+## Sprint-Level DoD Addendum — Design Gate (added 2026-05-18, CIO directive)
+
+This spec governs story-level quality. One sprint-level Definition-of-Done rule is added here because it is administered through the sprint contract:
+
+**Design-gate DoD rule.** Any sprint that touches a *load-bearing subsystem* — power/shutdown, sync, the data-capture pipeline, `src/common/` contracts, tier boundaries, or any subsystem with a `specs/architecture.md` section — MUST update that subsystem's `specs/architecture.md` section **within the same sprint**. The architecture-spec update is part of the sprint's Definition of Done (carry it in `validation.bigDefinitionOfDone` and in the relevant story's `acceptance`), never a deferred follow-up.
+
+- **Who owns the gate:** Atlas (Senior Solutions Architect). Atlas may raise a formal design-gate **BLOCK** on any load-bearing change shipped without its spec update; PM/CIO clears the block explicitly.
+- **Who administers it:** Marcus (PM) bakes the clause into the sprint contract and the `bigDefinitionOfDone`, routes the architectural call to Atlas, and lands Atlas's corrected-architecture decision into the sprint or a TD.
+- **Why:** `specs/architecture.md` went ~17 sprints stale on power/shutdown, producing a false EEPROM-wake guarantee (Atlas finding F-6) that became the documentation root of the V0.27 chain blocker. The gate exists so a confident-but-stale spec can never again mask a real subsystem failure.
 
 ---
 

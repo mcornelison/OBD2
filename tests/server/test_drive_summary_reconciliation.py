@@ -42,7 +42,7 @@ live alongside here so the semantics stay unified.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import pytest
 
@@ -190,6 +190,21 @@ class TestEnsureDriveSummaryPiFirst:
 
     def test_piRowExists_analyticsUpdatesInPlace(self, session):
         preexistingId = _insertPiSyncRow(session)
+        # Spec 3 (US-310 / B-059): analytics fields 3-8 derive from
+        # realtime_data.  Seed >=100 'real' rows so the happy-path
+        # is_real=TRUE is exercised; the older zero-row variant is now
+        # covered by the stub-row test in
+        # ``test_drive_summary_12field_contract.py``.
+        for i in range(120):
+            session.add(RealtimeData(
+                source_id=i + 1,
+                source_device=DEVICE,
+                timestamp=START + timedelta(seconds=i),
+                parameter_name="RPM",
+                value=2200.0 + i,
+                data_source="real",
+                drive_id=DRIVE_ID,
+            ))
         session.commit()
 
         returnedId = _ensureDriveSummary(
@@ -201,13 +216,15 @@ class TestEnsureDriveSummaryPiFirst:
         rows = session.execute(select(DriveSummary)).scalars().all()
         assert len(rows) == 1
         merged = rows[0]
-        # Analytics fields now populated
+        # Analytics fields populated from realtime_data per Spec 3.
         assert merged.device_id == DEVICE
         assert merged.start_time == START
-        assert merged.end_time == END
-        assert merged.duration_seconds == 900
+        assert merged.end_time == START + timedelta(seconds=119)
+        assert merged.duration_seconds == 119
+        assert merged.row_count == 120
         assert merged.is_real is True
-        # Pi-sync metadata still intact
+        assert merged.data_source == "real"
+        # Pi-sync metadata still intact (Spec 3 race-handling rule).
         assert merged.ambient_temp_at_start_c == 18.5
         assert merged.starting_battery_v == 12.6
         assert merged.barometric_kpa_at_start == 98.2
@@ -243,6 +260,21 @@ class TestEnsureDriveSummaryAnalyticsFirst:
     """No Pi-sync row yet (e.g. pre-US-200 or sync delay) -- must INSERT."""
 
     def test_noPreexistingRow_insertsBothHalves(self, session):
+        # Spec 3: seed >=100 'real' rows so the analytics-first INSERT
+        # exercises the happy-path is_real=TRUE.  Stub-row variant lives
+        # in test_drive_summary_12field_contract.py.
+        for i in range(110):
+            session.add(RealtimeData(
+                source_id=i + 1,
+                source_device=DEVICE,
+                timestamp=START + timedelta(seconds=i),
+                parameter_name="RPM",
+                value=2200.0 + i,
+                data_source="real",
+                drive_id=DRIVE_ID,
+            ))
+        session.commit()
+
         returnedId = _ensureDriveSummary(
             session, DEVICE, START, END, driveId=DRIVE_ID,
         )
@@ -252,7 +284,7 @@ class TestEnsureDriveSummaryAnalyticsFirst:
         assert row is not None
         assert row.device_id == DEVICE
         assert row.start_time == START
-        assert row.end_time == END
+        assert row.end_time == START + timedelta(seconds=109)
         # Pi-side columns populated on analytics-first insert so later
         # Pi-sync of the same (source_device, source_id) upserts in place
         # rather than creating a second row.
@@ -262,7 +294,12 @@ class TestEnsureDriveSummaryAnalyticsFirst:
         assert row.is_real is True
 
     def test_driveIdNone_legacyPathNoSourceDevicePopulation(self, session):
-        """Pre-US-200 flow (no drive_id in connection_log) -- legacy behavior."""
+        """Pre-US-200 flow (no drive_id in connection_log) -- legacy behavior.
+
+        The legacy path uses connection_log boundaries as the natural-key
+        seed (see _ensureDriveSummary docstring) so historical replay
+        idempotency holds even when realtime_data is absent.
+        """
         returnedId = _ensureDriveSummary(
             session, DEVICE, START, END, driveId=None,
         )
@@ -301,6 +338,9 @@ class TestEnsureDriveSummaryRowCount:
 
     def test_realtimeDataInWindow_rowCountPopulated(self, session):
         preexistingId = _insertPiSyncRow(session)
+        # Spec 3 (US-310): row_count derives from realtime_data filtered
+        # by drive_id (post-US-200 path).  Set drive_id on each seeded
+        # row so the new analytics writer counts them.
         for i in range(5):
             session.add(
                 RealtimeData(
@@ -309,6 +349,7 @@ class TestEnsureDriveSummaryRowCount:
                     timestamp=datetime(2026, 4, 21, 10, 5, i),
                     parameter_name="RPM",
                     value=2200.0 + i,
+                    drive_id=DRIVE_ID,
                 )
             )
         session.commit()

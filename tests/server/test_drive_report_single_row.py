@@ -25,7 +25,7 @@ so the table shows one row per drive with analytics + metadata populated.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import pytest
 
@@ -34,9 +34,30 @@ pytest.importorskip("sqlalchemy")
 from sqlalchemy import create_engine  # noqa: E402
 from sqlalchemy.orm import Session  # noqa: E402
 
-from src.server.db.models import Base, DriveSummary  # noqa: E402
+from src.server.db.models import Base, DriveSummary, RealtimeData  # noqa: E402
 from src.server.reports.drive_report import buildAllDrivesReport  # noqa: E402
 from src.server.services.analysis import _ensureDriveSummary  # noqa: E402
+
+
+def _seedRealtimeForDrive(
+    session: Session,
+    *,
+    driveId: int,
+    baseTs: datetime,
+    count: int = 110,
+    sourceIdOffset: int = 0,
+) -> None:
+    """Spec 3 (US-310): seed >=100 'real' realtime_data rows for a drive."""
+    for i in range(count):
+        session.add(RealtimeData(
+            source_id=sourceIdOffset + i + 1,
+            source_device="chi-eclipse-01",
+            timestamp=baseTs + timedelta(seconds=i),
+            parameter_name="RPM",
+            value=2200.0 + i,
+            data_source="real",
+            drive_id=driveId,
+        ))
 
 
 @pytest.fixture
@@ -77,6 +98,13 @@ class TestReportSingleRowPerDrive:
 
         _insertPiSyncRow(session, driveId=1, driveStartTs=driveOneStart)
         _insertPiSyncRow(session, driveId=2, driveStartTs=driveTwoStart)
+        # Spec 3 (US-310): analytics fields derive from realtime_data;
+        # seed enough rows for both drives so they show up as gradable
+        # in the report.
+        _seedRealtimeForDrive(session, driveId=1, baseTs=driveOneStart)
+        _seedRealtimeForDrive(
+            session, driveId=2, baseTs=driveTwoStart, sourceIdOffset=200,
+        )
         session.commit()
 
         _ensureDriveSummary(
@@ -100,6 +128,9 @@ class TestReportSingleRowPerDrive:
         driveEnd = datetime(2026, 4, 21, 10, 15, 0)
 
         piRowId = _insertPiSyncRow(session, driveId=1, driveStartTs=driveStart)
+        # Spec 3 (US-310): seed >=100 realtime rows so analytics produces
+        # a populated start_time / end_time / row_count rather than a stub.
+        _seedRealtimeForDrive(session, driveId=1, baseTs=driveStart)
         session.commit()
 
         analyticsRowId = _ensureDriveSummary(
@@ -111,6 +142,7 @@ class TestReportSingleRowPerDrive:
         assert analyticsRowId == piRowId
         row = session.get(DriveSummary, piRowId)
         assert row.device_id == "chi-eclipse-01"
+        # Spec 3: start_time = MIN(realtime.timestamp); end_time = MAX.
         assert row.start_time == driveStart
-        assert row.end_time == driveEnd
+        assert row.end_time == driveStart + timedelta(seconds=109)
         assert row.ambient_temp_at_start_c == 20.0

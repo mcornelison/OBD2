@@ -418,6 +418,10 @@
       "vacuumAfterCleanup": true,
       "cleanupTimeHour": 3
     },
+    "powerWatch": {
+ 	  "smoothingSec": 7,
+	  "smoothingPollSec": 1
+    },
     "powerMonitoring": {
       "enabled": false,
       "pollingIntervalSeconds": 5,
@@ -520,13 +524,6 @@
       }
     },
     "power": {
-      "shutdownThresholds": {
-        "enabled": true,
-        "warningVcell": 3.70,
-        "imminentVcell": 3.55,
-        "triggerVcell": 3.45,
-        "hysteresisVcell": 0.05
-      },
       "power_monitor": {
         "enabled": true
       }

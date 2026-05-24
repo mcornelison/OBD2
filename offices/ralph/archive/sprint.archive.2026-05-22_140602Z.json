@@ -1,0 +1,981 @@
+{
+  "$schema": "Sprint Contract v1.0 -- see docs/superpowers/specs/2026-04-14-sprint-contract-design.md",
+  "sprint": "Sprint 41 -- V0.27.17 B-104 Step 1 server-side analytics authority (US-348/US-349 redo via architecture shift) + side fixes",
+  "spec": "offices/pm/inbox/2026-05-21-from-tester-v0.27.16-drill-results-chain-merge-held.md + offices/pm/issues/2026-05-21-from-tester-v0.27.16-us-348-us-349-false-pass-recurrence.md + offices/pm/issues/2026-05-21-from-tester-v0.27.16-deploy-did-not-restart-powerwatch-or-daemon-reload.md + offices/pm/backlog/B-104-server-side-analytics-authority.md + offices/pm/inbox/2026-05-21-from-marcus-sprint41-architecture-brief.md (Atlas brief on this sprint)",
+  "backlogItem": "Bug-fix sprint #12 in the V0.27 chain. THIRD cycle of the V0.27.7 US-326/US-328 false-pass class -- shipped through to V0.27.16 despite Marcus's I-040 discipline (synthetic-seam-mock passes do NOT count; real-drive round-trip + DB read-back is the gate). Argus's 2026-05-21 drill of V0.27.16 (drive 20 = 3,808 realtime rows x 16 params, ~9 min real engine running, sequencer poweroff, auto-boot, 8-poll bench observation) confirmed: US-348 server drive_summary computed fields STILL NULL (same NULL pattern as drives 12-19 pre-fix); US-349 Pi drive_statistics STILL zero rows ever. Argus's root cause hypothesis: DriveDetector's drive-end signal does not fire when drive is terminated by sequencer poweroff (no engine-off OBD signal before stack tears down); recorder is wired for FUTURE drive-end events but never catches THIS drive's actual end; subsequent boots don't retroactively process unfinished prior-boot drives. Argus: 'cannot recommend a third redo of the same form.' CIO directive 2026-05-21: advance B-104 (just filed 30 min prior) Step 1 architectural shift INSTEAD of writer redo. Pi = telemetry emitter; server = analytics authority. Server computes drive_summary + drive_statistics from raw realtime_data (3,808 rows for drive 20 already on disk); no Pi-side writer trigger required; bug class structurally impossible. Pi keeps drive boundary EVENT logging (drive_start / drive_end timestamps, etc.) for Pi-health/diagnostics -- these are event records, not derived analytics. Pi-side drive_statistics table RETIRED entirely (CIO ratification 2026-05-21). Plus 3 side fixes bundled per CIO ratification: US-345 maxTrailBytes guard fix; deploy-pi.sh daemon-reload + service restart gap (Argus's morning find); I-040 structural close (deploy-context drive simulator). Branched from sprint/sprint40-bugfixes-V0.27.16 tip @ 78c7c2d per chain-end-merge rule. PM Rule 10 design-gate DoD applies: server analytics writer is load-bearing for data pipeline -> specs/architecture.md update required in-sprint.",
+  "createdBy": "Marcus (PM) Session 41 2026-05-21 per CIO ratification of B-104 Step 1 advance as Sprint 41 fix path. AskUserQuestion answers 2026-05-21: scope=hybrid (option 3) with Pi keeping event-log records for diagnostics + server as authority for derived analytics; Pi-side drive_statistics table retire entirely; backfill drives 12-20 in Sprint 41; Atlas briefed before scope-lock; all 3 side fixes bundled. Per-story acceptance + verification + gate criteria pre-registered by Atlas at Ralph dispatch (mirrors Sprint 39/40 cadence).",
+  "createdAt": "2026-05-21",
+  "testBaseline": {
+    "fastSuite": 4247,
+    "fullSuite": 4247,
+    "ruffErrors": 0,
+    "note": "Inherited from V0.27.11 / Sprint 37 baseline (commit 6184a7f). Carried through V0.27.12-15 + V0.27.16. Re-snapshot after Sprint 41 lands -- B-104 Step 1 will touch server-side analytics surface meaningfully."
+  },
+  "sprintNotes": [
+    "THIRD CYCLE of the V0.27.7 US-326/US-328 false-pass class. Marcus + Atlas + Argus aligned: a third naive writer redo is not the answer. CIO directive: advance B-104 Step 1 architectural shift as the structural fix.",
+    "B-104 architectural principle: Pi = telemetry emitter, server = analytics authority. Pi may compute in-drive aggregates locally (engine on = AC power, no battery cost) but does NOT transmit derived analytics. Pi DOES log drive boundary events (drive_start / drive_end timestamps) for Pi-health/diagnostics -- these are event records, not derived analytics. Server is sole writer of persisted analytics tables.",
+    "Pi-side drive_statistics table RETIRED entirely (CIO 2026-05-21). No more Pi-side stats writer wiring. drive_summary Pi-side computed-field writer retired; Pi keeps event-log fields (drive_start_timestamp, ambient_temp_at_start_c, starting_battery_v, data_source) for diagnostics.",
+    "Server recompute trigger: overnight batch + on-demand recompute. Idempotent: same raw data + same logic = same output. Backfill of drives 11-20 (NULL drive_summary fields + missing drive_statistics rows; Drive 11 added per Spool FLAG-2 + Argus DB-state check 2026-05-21) runs the new server compute path as the empirical validation of the architecture.",
+    "B-100 (drive_summary writer broken / empty shells), US-326 (V0.27.7 server analytics NULL fix that false-passed), US-348 (V0.27.16 redo that false-passed), US-328 (V0.27.7 Pi-side writer schema-only Option C), US-349 (V0.27.16 redo that false-passed) all SUPERSEDED on Sprint 41 land.",
+    "I-040 structural close (US-355): deploy-context drive simulator. The 3rd-cycle bug class shipped because unit-test fixtures don't reproduce deploy-time runtime conditions. The structural fix is a test surface that drives the integrated orchestrator + DriveDetector + recorder + sync + server compute path against a real database, NOT a mock of any seam. Marcus + Atlas + Argus + Ralph design at PRD-grooming time.",
+    "Side fix US-353: US-345 maxTrailBytes guard fix. Per Argus's drill: first post-deploy reboot tripped maxTrailBytes=65536 because trail accumulated unbounded while F-8 was broken. F-8 design SOUND post-fix; guard interaction non-chain-blocking but worth fixing alongside the deploy-hygiene + B-104 work.",
+    "Side fix US-354: deploy-pi.sh daemon-reload + service restart gap. Argus's morning find: V0.27.16 deploy wrote files to disk + bumped .deploy-version but did NOT restart eclipse-powerwatch.service + did NOT run systemctl daemon-reload. Pi was running V0.27.15 code in memory despite .deploy-version reporting V0.27.16/5837239. Argus worked around with daemon-reload + reboot on bench before drill. Would have produced false-negative F-7/F-8 validation if not caught.",
+    "Per-task acceptance/gate criteria pre-registered by Atlas at Ralph dispatch time. PM writes the sprint contract (intent + scope + groundingRefs + invariants); Atlas writes the acceptance + verification + per-task gates. Sprint 39/40 cadence preserved.",
+    "Tester /sprint-validated for Sprint 40 NOT RUNNING per Argus 2026-05-21: US-348 + US-349 fail acceptance; chain merge HELD per Mike 2026-05-08/10 chain-end-merge rule. regression_manifest F-008/F-011/F-012 stays HELD. Sprint 41 IRL re-validation is the unblock trigger.",
+    "US-346 Atlas T3 §10.6 design-gate sign-off STILL PENDING from Sprint 40. Argus's drill report noted: 'haven't seen Atlas T3-PASS sign-off; need confirmation before /sprint-validated.' Independent of Sprint 41 work but blocks /sprint-validated decision.",
+    "Argus's 2026-05-21 sprint.json standards audit (PASS w/ 4 flags) landed mid-spin. Flags 1+2 (validatesFeatures correction F-008/F-011/F-012 -> F-005+F-007; PM Rule 10 architecture.md gap closed via new US-356) + flags 3+4 (US-354 eclipse-obd verification + US-355 empirical anchor tightening to require RED on V0.27.7/V0.27.16 false-pass conditions) landed PM-side. 3 atlas-at-gate refinements routed to Atlas brief: US-351 'sensible values' quantitative spec; US-352 sparse-drive handling; US-353 multi-reboot scope. Argus audit file: offices/pm/inbox/2026-05-21-from-argus-sprint41-sprint-json-standards-audit.md.",
+    "Spool's 2026-05-21 SME-parallel audit (PASS w/ 5 non-blocking flags) landed mid-spin. No safety blocks, no engine-risk, no [EXACT:] tuning-threshold drift. Spool concurs on B-104 architectural shift merits + 8 PASS items (architectural soundness, schema fit, methodology continuity, event-log preservation, idempotency, zero-threshold-drift, design-gate discipline, F-8 preservation). FLAG-1 (US-351 outlier methodology pin to existing src/server/analytics/helpers.computeBasicStats 2-sigma helper -- prevent IQR/3-sigma drift) routed to Atlas as 4th atlas-at-gate refinement. FLAG-2 (Drive 11 backfill scope-widen ask -- Drive 11 is knock-retard reference baseline) routed to Argus for DB-state check per CIO 2026-05-21 ratification. FLAG-3 (process record -- B-104 Open Question #6 in-drive aggregate audit required Spool engagement at PRD-grooming time; Sprint 41 advanced ahead of grooming because Step 1 IS the bug fix; Spool concurs on merits; forward-ask for V0.28+ touches of future in-drive aggregate consumers HDMI dashboard + GEM family). FLAG-4 (Spool homework post-Sprint-41: re-validate Drive 11/15/18 against new drive_statistics rows + update knowledge.md). FLAG-5 (supportive: Spool offers Drive 11/15/18 engine-grade-A reference signatures for US-355 harness assertion). Spool audit file: offices/pm/inbox/2026-05-21-from-spool-sprint41-sprint-json-standards-audit.md.",
+    "Atlas's 2026-05-21 accuracy review (ACCURATE on load-bearing factual claims; 19/19 filesToTouch+filesToRead UPDATE paths verified EXIST; 5/5 NEW paths verified ABSENT) landed mid-spin. Finding 1 (substantive imprecision) -- US-354 filesToTouch wording: deploy-pi.sh ALREADY HAS daemon-reload+restart logic at step_install_power_watch_unit:936-991 + step_install_boot_progress_units; the actual bug is the $changed gate (TRUE only on unit-file diff; silently skips restart when only Python source changes). Atlas's tightening LANDED in US-354 intent + filesToTouch + invariants (decouple-restart-from-unit-file-diff; audit all $changed-gated restarts; pattern class = condition-gating defect, same tokenization as F-7 edge-only polling). Finding 2 (trivial 4-vs-5-flags cross-doc inconsistency) -- NON-ISSUE: c51065c is Spool's commit landing 5-flag Spool audit; sprint.json sprintNotes describing Argus's 4-flag audit is correct. Atlas misread which audit was referenced; clarified in Atlas ack. Atlas standing-by to pre-register per-task gates + verdict 7 design questions + 4 atlas-at-gate refinements (3 Argus + 1 Spool FLAG-1) + Sprint-40 US-346 sign-off (parallel work) on CIO greenlight. Atlas review file: offices/pm/inbox/2026-05-21-from-atlas-sprint41-sprint-json-accuracy-review.md.",
+    "Argus's 2026-05-21 Drive 11 DB-state check (per Spool FLAG-2 + CIO ratification): outcome (a) CONFIRMED. chi-srv-01 obd2db query results -- drive_summary row 15 (source_id=11) has start_time/end_time/duration_seconds NULL + row_count=0 + is_real=0 (identical NULL pattern to drives 12-19 pre-fix); drive_statistics has zero rows for drive_id=11 (identical zero pattern). US-352 scope WIDENED drives 12-20 -> drives 11-20 (10 drives total); bigDoD #3 row-count updated 9 -> 10 drives. Drive 11 (2026-05-09, 93 octane) is Spool's authoritative pre-mod knock-retard reference baseline anchored in knowledge.md; including it puts Spool's tuning baseline in one regime post-Sprint-41 (vs legacy + new). Argus's side observation -- Drive 11 row_count=0 reading is its own tiny smell (Pi reported 0 rows when Drive 11 actually has 10,839 realtime rows on Pi per Argus's 2026-05-12 validation; same NULL/zero shape as 12-19); server compute path will recompute row_count from realtime_data COUNT(*), so pre-fix row_count=0 is structurally moot post-US-350-fix. Argus DB-check file: offices/pm/inbox/2026-05-21-from-argus-ack-drive-11-db-state-confirmed-null-zero-widen-us-352.md.",
+    "Atlas's 2026-05-21 16:36 per-task gate pre-registration (offices/pm/inbox/2026-05-21-from-atlas-sprint41-per-task-gates-preregistered.md) -- ARCHITECTURAL VERDICT SOUND. Acceptance + verification arrays for all 7 stories US-350..US-356 transcribed into sprint.json. 7 brief design questions VERDICTED: Q1 overnight batch + on-demand BOTH land in V0.27.17 (one systemd timer fires both compute paths); Q2 boundary from realtime_data MIN/MAX as primary, Pi event-log as enrichment, is_real derived from data_source ('real'->1, 'simulator'->0, NULL->NULL not silent 0); Q3 idempotent DROP TABLE IF EXISTS + first-boot row-count logging + subsequent-boot absent-confirmation; Q4 server drive_statistics DDL specified (drive_id FK CASCADE, data_quality ENUM full/sparse/below_threshold, computed_at observable idempotency); Q5 minimum viable harness ships V0.27.17 w/ ONE scenario seeded (V0.27.16 false-pass reproducer), retroactive RED proof = load-bearing acceptance; Q6 NEW section 'Data Pipeline Architecture' in specs/architecture.md w/ honest empirical-gated language; Q7 V0.27.17 patch-bump within V0.27 chain confirmed. 3 Argus refinements DISPOSED: A generic invariants only V0.27.17 + per-PID envelopes deferred V0.28+; B graceful sparse-drive via data_quality column; C 3-reboot minimum + forced-large-trail conditional on <30min build cost. Atlas-recommended Ralph dispatch sequence: US-346 (Sprint 40 carry-forward) -> US-353 + US-354 (parallel small) -> US-350 + US-351 (parallel M+L) -> US-352 -> US-355 -> US-356.",
+    "Spool FLAG-1 (outlier methodology pin to src/server/analytics/helpers.computeBasicStats 2-sigma) not explicitly addressed in Atlas's gate pre-registration -- routed back to Atlas for disposition before Ralph dispatch. US-351 Atlas Q4 schema specifies outlier_min/outlier_max DOUBLE columns but does not pin the methodology; Refinement A covers generic invariants but not the specific 2-sigma reuse Spool flagged. Disposition options for Atlas: (a) pin to computeBasicStats via US-351 acceptance criterion; (b) defer methodology pin to a follow-up; (c) acknowledge non-issue if compute path naturally reuses the helper. Flagged in PM ack note 2026-05-21 offices/architect/inbox/2026-05-21-from-marcus-ack-atlas-gates-+-spool-flag-1-gap.md.",
+    "Atlas's 2026-05-21 16:40 SSOT-pattern-load-bearing observation note (offices/pm/inbox/2026-05-21-from-atlas-ssot-pattern-load-bearing-observation.md) -- not a Sprint 41 requirement; project-pattern observation. B-104 Step 1 advance lands as second production application of SSOT pattern (Shutdown Sequencer Sprint 39 / V0.27.15 was first). Atlas recommends updating specs/ssot-design-pattern.md to cite B-104 Step 1 as second production application once Sprint 41 lands (V0.28+ grooming hook). V0.28+ implications: B-076 schema normalization + B-104 Step 2+ (GEM family + Mahalanobis) + B-083 Mahalanobis all apply SSOT pattern at PRD time.",
+    "Atlas's 2026-05-21 17:02 US-346 T3 §10.6 amendment GATE PASS / Rule-10 sign-off GRANTED (offices/pm/inbox/2026-05-21-from-atlas-us346-T3-GATE-PASS-rule10-signoff-granted.md; companion to offices/ralph/inbox/2026-05-21-from-atlas-us346-T3-GATE-PASS.md). All 6 Atlas gate criteria PASS: F-7+F-8 digested faithfully, V0.27.15 SS-T9 content preserved without contradiction, V0.27.15 IRL ACCEPTANCE PASS honestly framed (verdict-stands-on-its-own-facts + bench-gate-coverage-known-incomplete), lessons-worth-keeping correctly bounded, US-344+US-345 post-fix code state matches digest, §20 modification history entry scope-locked. UNBLOCKS Argus /sprint-validated for Sprint 40 on the design-gate axis (other Sprint 40 axes -- US-348/US-349 false-pass + chain merge HOLD -- remain Sprint 41 work). Pre-existing drift Ralph flagged honestly + Atlas dispositioned: specs/architecture.md §20 missing SS-T9 row (pre-dates US-346; out of scope-fence; cosmetic tracking-table gap not content gap) -- filed as B-105 low-priority doc-hygiene backlog item. Sprint 40 DoD now met on Atlas's lane; remaining Sprint 40 sign-off chain is Argus /sprint-validated which is held pending Sprint 41 IRL acceptance per Mike chain-end-merge rule.",
+    "Atlas's 2026-05-21 17:13 Spool FLAG-1 disposition + 5 bundled acks (offices/pm/inbox/2026-05-21-from-atlas-spool-flag1-disposition-+-bundled-acks.md) -- UNBLOCKS Ralph dispatch on Atlas's lane. Spool FLAG-1: option (a) PIN via US-351 acceptance (LANDED) -- outlier methodology pinned to src/server/analytics/helpers.computeBasicStats (2-sigma; avg +/- 2.0*std); Atlas owning the miss in his original gate pre-registration; pattern note 'Spool is the SSOT for analytics methodology, server is the SSOT for derived values, raw realtime_data is the SSOT for canonical data' worth incorporating into US-356 architecture amendment. Bundled acks: (1) US-352 9->10 widen ACCEPT; (2) Drive 11 empirical-falsifier framing ACCEPT -> added to US-356 acceptance verbatim; (3) Finding 2 4-vs-5 flags NON-ISSUE clarified-closed; (4) B-105 SS-T9 hygiene ACCEPT; (5) pre-flight-first-acceptance pattern PARTIAL adoption -- ADD to US-350 + US-351 + US-354 (LANDED); SKIP for US-352 + US-353 + US-355 + US-356 (no retirement surface inventory needed). Atlas has nothing else owed pre-dispatch."
+  ],
+  "stories": [
+    {
+      "id": "US-350",
+      "title": "B-104 Step 1a: server-side drive_summary compute from raw (US-326+US-348 redo)",
+      "size": "M",
+      "intent": "B-104 architectural shift Step 1a. Server reads raw realtime_data + Pi-synced event logs (drive_start_timestamp + ambient_temp_at_start_c + starting_battery_v + data_source) + computes drive_summary fields (start_time, end_time, duration_seconds, row_count, is_real, analytics) on a server-side trigger that does NOT depend on a Pi-side drive-end signal. Pi-side drive_summary computed-field writer retired; Pi keeps event-log fields for diagnostics per Spool data v2 contract. Argus's root cause (DriveDetector drive-end signal does not fire on sequencer-driven termination) becomes structurally moot -- server reads timestamps from realtime_data MIN/MAX, doesn't depend on a marker event. Trigger options for Atlas at dispatch: (a) on every sync batch receipt for any drive_id touched, (b) on detection of a drive's last realtime_data row being older than N minutes (soak window), (c) overnight batch + on-demand. CIO ratified overnight batch + on-demand. Diagnostic-first: pre-flight rg sweep of existing US-326/US-348 server writer surface; document what is being retired vs. preserved.",
+      "priority": "high",
+      "status": "passed",
+      "dependencies": [],
+      "scope": {
+        "filesToTouch": [
+          "src/server/services/analysis.py (UPDATE -- retire the connection_log + drive_summary-payload trigger seam from US-348; new server-side compute path: read raw realtime_data + Pi event-log fields, compute analytics fields, persist; modification history updated with US-350 / B-104 reference)",
+          "src/server/api/sync.py (UPDATE -- _tryAutoAnalysisTrigger retired or reframed; server compute no longer fires from sync receipt seam in the V0.27.7-V0.27.16 form; Atlas finalizes trigger architecture at dispatch)",
+          "src/server/analytics/drive_summary_compute.py (NEW -- server compute path module; Atlas finalizes module shape at dispatch; placeholder path -- final location is Atlas's call)"
+        ],
+        "filesToRead": [
+          "offices/pm/backlog/B-104-server-side-analytics-authority.md",
+          "offices/pm/issues/2026-05-21-from-tester-v0.27.16-us-348-us-349-false-pass-recurrence.md",
+          "offices/pm/inbox/2026-05-21-from-marcus-sprint41-architecture-brief.md (Atlas brief on the sprint; per-task gates land here)",
+          "src/server/services/analysis.py",
+          "src/server/api/sync.py",
+          "src/server/db/models.py",
+          "src/pi/obdii/drive_summary.py (read-only -- Pi-side surface being retired/reframed; do not modify in this story)"
+        ],
+        "doNotTouch": [
+          "Pi-side event log of drive_start / drive_end / drive boundary timestamps -- preserved per CIO 2026-05-21 (Pi diagnostics)",
+          "drive_summary server table schema (schema is fine; writer architecture is the shift)",
+          "drive_statistics work (US-351 owns)",
+          "regression_manifest.json (Tester's lane)",
+          "B-104 Step 2+ scope (GEM family, Mahalanobis, etc. -- V0.28+)"
+        ]
+      },
+      "groundingRefs": [
+        {
+          "value": "Argus drill 2026-05-21: drive 20 = 3,808 realtime_data rows x 16 parameter_names already on server post-sync; drive_summary row 27 has start_time / end_time / duration_seconds / row_count / is_real all NULL. Same NULL pattern across drives 12-19. Server-side compute path CAN compute the right values from realtime_data MIN/MAX + COUNT -- the raw data is canonical and present.",
+          "unit": "DB query evidence + architectural opportunity",
+          "source": "offices/pm/issues/2026-05-21-from-tester-v0.27.16-us-348-us-349-false-pass-recurrence.md",
+          "owner": "Argus + Marcus"
+        },
+        {
+          "value": "Argus root cause hypothesis: DriveDetector's drive-end signal does not fire when drive is terminated by sequencer poweroff (no engine-off OBD signal before stack tears down). Server compute path that reads raw realtime_data + timestamps does NOT depend on a Pi-side drive-end marker -- structural fix.",
+          "unit": "RCA hypothesis -> architectural rationale",
+          "source": "Argus drill report 2026-05-21",
+          "owner": "Argus"
+        },
+        {
+          "value": "B-104 architectural principle (CIO 2026-05-21): Pi = emitter, server = analytics authority. Pi keeps event-log records (drive_start / drive_end timestamps) for diagnostics; server computes derived analytics from raw event stream. Idempotent overnight batch + on-demand recompute.",
+          "unit": "architecture decision",
+          "source": "offices/pm/backlog/B-104-server-side-analytics-authority.md",
+          "owner": "CIO + Marcus"
+        }
+      ],
+      "acceptance": [
+        "Pre-flight: rg 'auto_analysis|_tryAutoAnalysisTrigger|connection_log.*drive' src/server/ produces an inventory of every live touchpoint of the retired seam; result documented in completionNotes (per Atlas 2026-05-21 17:13 pre-flight pattern adoption).",
+        "Server has callable compute path compute_drive_summary(drive_id) in src/server/analytics/drive_summary_compute.py. Reads realtime_data rows for drive_id; computes start_time = MIN(timestamp_utc), end_time = MAX(timestamp_utc), duration_seconds = end_time - start_time, row_count = COUNT(*); enriches with Pi event-log fields (ambient_temp_at_start_c, starting_battery_v, data_source) where available; derives is_real from data_source ('real' -> 1, 'simulator' -> 0, NULL -> NULL not silently 0); UPSERTs idempotently into drive_summary.",
+        "Trigger seam retired: _tryAutoAnalysisTrigger at src/server/api/sync.py:721 is DELETED (preferred) OR raises NotImplementedError tripwire if anyone tries to re-introduce the path. No path from sync receipt to compute.",
+        "Overnight batch lands: deploy/server-analytics-batch.service + deploy/server-analytics-batch.timer NEW; timer fires daily; service runs compute over all drive_ids with NULL drive_summary computed fields; deploy/deploy-server.sh installs them sync-if-changed + daemon-reload + enable-if-not-already.",
+        "On-demand CLI: python -m server.cli.recompute_drive_analytics --drive-id N invokes compute for a single drive; --drive-id-range 11-20 for range; --all-stale for all drives with NULL fields.",
+        "Idempotent: compute_drive_summary(N) invoked twice produces identical drive_summary row values (computed_at may update; data values identical).",
+        "Gap-detection tripwire: for each drive_id, realtime_data rows share contiguous timestamps; gaps >5 min logged at WARN-level (defensive, not failing the compute).",
+        "Pi-side src/pi/obdii/drive_summary.py event-log fields preserved (drive_start_timestamp, ambient_temp_at_start_c, starting_battery_v, data_source); computed-field writer code paths retired.",
+        "Raw realtime_data table + sync transport UNTOUCHED."
+      ],
+      "verification": [
+        "python -c \"from server.analytics.drive_summary_compute import compute_drive_summary\" -- module importable",
+        "pytest tests/server/analytics/test_drive_summary_compute.py -v -- unit test fixture-based compute against synthetic realtime_data",
+        "pytest tests/server/analytics/test_drive_summary_compute.py::test_idempotent -v -- re-run produces identical output",
+        "pytest tests/server/analytics/test_drive_summary_compute.py::test_is_real_derivation -v -- data_source='real' -> 1; 'simulator' -> 0; NULL -> NULL (not silently 0)",
+        "pytest tests/server/analytics/test_drive_summary_compute.py::test_gap_detection_warns -v -- synthetic realtime_data with >5-min gap produces WARN log, not failure",
+        "grep -n '_tryAutoAnalysisTrigger\\|auto_analysis' src/server/api/sync.py -- no live calls (only modification history references OR explicit NotImplementedError tripwire)",
+        "grep -n 'drive_summary' src/pi/obdii/drive_summary.py -- only event-log writer surface; no computed-field code paths",
+        "test -f deploy/server-analytics-batch.service && test -f deploy/server-analytics-batch.timer -- systemd timer files exist",
+        "python -m server.cli.recompute_drive_analytics --help -- CLI runnable",
+        "git diff sprint/sprint40-bugfixes-V0.27.16..HEAD -- src/pi/obdii/realtime_data.py src/pi/obdii/sync/ -- empty (or only modification-history comments)"
+      ],
+      "invariants": [
+        "Pi-side drive boundary event log (drive_start / drive_end timestamps) preserved for diagnostics (CIO 2026-05-21 ratified)",
+        "drive_summary server table schema unchanged (schema is fine; writer is the shift)",
+        "Pi-side sync client unchanged (raw data + event-log fields still flow; no new transmission)",
+        "Other server-side writers unchanged (US-351 owns drive_statistics)",
+        "B-104 Step 2+ scope deferred (GEM family, Mahalanobis -> V0.28+)"
+      ],
+      "feedback": {
+        "filesActuallyTouched": [
+          "src/server/analytics/drive_summary_compute.py (NEW -- compute_drive_summary reads realtime_data MIN/MAX/COUNT for drive_id, enriches from Pi event-log columns already on drive_summary, UPSERTs analytics fields; _logTimestampGaps walks ordered timestamps + WARNs on >5-min gaps without failing compute; _deriveIsReal preserves NULL data_source as NULL is_real per Atlas Q2)",
+          "src/server/cli/recompute_drive_analytics.py (NEW -- on-demand CLI with --drive-id / --drive-id-range / --all-stale / --dry-run; SYNC SQLAlchemy URL resolver strips +aiomysql / +aiosqlite suffixes; per-drive try/except so a single failure does not abort the run)",
+          "src/server/cli/__init__.py (NEW -- empty package marker)",
+          "tests/server/analytics/test_drive_summary_compute.py (NEW -- 10 tests across 4 classes: core compute, idempotency, is_real Q2 derivation incl. NULL-preservation invariant, gap-detection WARN-vs-silent; in-memory SQLite engine + real ORM + real INSERTs per I-040 discipline -- no seam mocks)",
+          "tests/server/analytics/__init__.py (NEW -- empty package marker)",
+          "src/server/api/sync.py (UPDATE -- enqueueAutoAnalysisForSync import retired; _tryAutoAnalysisTrigger function DELETED; sync handler step 7 now sets autoAnalysisTriggered=False unconditionally with B-104 reference comment; modification history updated)",
+          "src/server/services/analysis.py (UPDATE -- enqueueAutoAnalysisForSync converted to NotImplementedError tripwire with B-104 reference + comment block explaining structural retirement; downstream helpers extractDriveBoundaries / extractDriveIdsFromDriveSummaryPayload / _writeDriveAnalytics / _ensureDriveSummary / _computeDriveAnalytics remain in-file as currently-unreferenced helpers per scope-fence -- US-351 retires the drive_statistics sibling; B-076 V0.28+ cleans residual)",
+          "deploy/server-analytics-batch.service (NEW -- Type=oneshot systemd unit; ExecStart invokes the recompute CLI in --all-stale mode; MemoryMax=1G + CPUQuota=50% + IOSchedulingClass=idle to yield to live /sync route; EnvironmentFile=.env reuses production secret rotation)",
+          "deploy/server-analytics-batch.timer (NEW -- OnCalendar=*-*-* 03:30:00 chi-srv-01 local; Persistent=true so missed fires catch up on next boot)",
+          "deploy/deploy-server.sh (UPDATE -- new Step 4.8 installs server-analytics-batch.service + .timer with sync-if-changed-via-cmp -s pattern; daemon-reload + enable --now gated on any-file-changed; mirrors Step 4.7 idiom)",
+          "tests/server/test_drive_statistics_writer.py (UPDATE -- legacy V0.27.7 trigger-seam tests skipped/retired; serves as forward-compat marker until US-351 lands the Pi-side retirement)",
+          "tests/server/test_drive_summary_decouple_from_ollama.py (UPDATE -- US-317/I-021 decouple tests align with the writer's retirement; remaining tests cover server-compute behavior)",
+          "tests/server/test_drive_summary_writer_fires_on_pi_sync.py (UPDATE -- US-348 sync-receipt writer expectations replaced with retirement assertions; trigger seam being gone is the property under test)",
+          "tests/server/test_sync_auto_analysis.py (UPDATE -- /sync response autoAnalysisTriggered now always False; ping-Ollama gating no longer in the sync hot path)"
+        ],
+        "grounding": [
+          {
+            "claim": "compute_drive_summary writes analytics fields from realtime_data MIN/MAX/COUNT without a drive-end marker",
+            "evidence": "tests/server/analytics/test_drive_summary_compute.py::TestComputeDriveSummaryCore::test_compute_populatesAnalyticsFields_fromRealtimeData -- seeds 30 rows (3 PIDs x 10 samples), asserts start_time=MIN(timestamp), end_time=MIN+9s, duration_seconds=9, row_count=30, is_real=1 per Atlas Q2; compute returns the server-side summary_id"
+          },
+          {
+            "claim": "is_real NULL preservation per Atlas Q2",
+            "evidence": "tests/server/analytics/test_drive_summary_compute.py::TestIsRealDerivation::test_isRealDerivation_nullDataSource_returnsNull_notSilentZero -- seeds Pi-sync row with data_source=None, runs compute, asserts row.is_real is None (not silently 0); the load-bearing invariant that distinguishes 'tested+not-real' from 'untested'"
+          },
+          {
+            "claim": "Idempotent re-run produces identical analytics data values",
+            "evidence": "tests/server/analytics/test_drive_summary_compute.py::TestIdempotent::test_idempotent -- runs compute twice, snapshots all 5 analytics columns each run, asserts first == second"
+          },
+          {
+            "claim": "Gap-detection logs WARN; does not fail the compute",
+            "evidence": "tests/server/analytics/test_drive_summary_compute.py::TestGapDetection::test_gapDetectionWarns_largeGap_logsWarning -- seeds 3 timestamps with a 10-minute gap, captures WARNING-level caplog records, asserts a 'gap' record was emitted AND compute returned a non-None summary_id (compute proceeded)"
+          },
+          {
+            "claim": "_tryAutoAnalysisTrigger trigger seam is gone from sync.py",
+            "evidence": "grep -n '_tryAutoAnalysisTrigger|auto_analysis' src/server/api/sync.py shows only modification history + retirement-notice comments + the autoAnalysisTriggered=False set; zero live calls"
+          },
+          {
+            "claim": "Pi-side drive_summary writer surface untouched per CIO 2026-05-21 ratification",
+            "evidence": "src/pi/obdii/drive_summary.py unchanged in this story; doNotTouch scope honored; Pi continues to write drive_start_timestamp + ambient_temp_at_start_c + starting_battery_v + barometric_kpa_at_start + data_source as event-log fields for diagnostics"
+          },
+          {
+            "claim": "Pi-side raw realtime_data + sync transport untouched",
+            "evidence": "git diff sprint/sprint40-bugfixes-V0.27.16..HEAD -- src/pi/obdii/realtime_data.py src/pi/obdii/sync/ is empty"
+          },
+          {
+            "claim": "Full server suite green; ruff clean on touched files",
+            "evidence": "pytest tests/server/ -m 'not slow' -> 763 passed, 12 skipped, 0 failed in 157s; ruff check on all 9 touched files -> 'All checks passed!'"
+          }
+        ],
+        "completionNotes": "B-104 Step 1a LANDED. Server-side drive_summary compute path replaces the V0.27.7-V0.27.16 trigger-seam writer architecture (US-326 / US-348 / I-040) that shipped 3 cycles of false-pass behavior. Structural fix: server reads raw realtime_data MIN/MAX/COUNT directly + enriches from existing Pi event-log columns on drive_summary; no Pi-side drive-end marker dependency; Argus's RCA (sequencer poweroff terminates drive before the OBD drive-end signal fires) becomes architecturally moot. Trigger seams: nightly systemd timer (deploy/server-analytics-batch.timer @ 03:30 chi-srv-01 local, Persistent=true so missed fires catch up on boot, --all-stale) + on-demand CLI (python -m src.server.cli.recompute_drive_analytics with --drive-id N | --drive-id-range A-B | --all-stale | --dry-run). Atlas Q2 NULL-preservation is load-bearing: 'real'->1, 'simulator'->0, NULL->NULL never silent 0. Atlas Q1 single-timer-fires-both-paths honored (US-351 will extend the same CLI + timer to drive_statistics). _tryAutoAnalysisTrigger DELETED from sync.py; enqueueAutoAnalysisForSync converted to NotImplementedError tripwire in analysis.py (downstream helpers parked as unreferenced -- US-351 + B-076 finish removal). Verification gates: pytest tests/server/analytics/test_drive_summary_compute.py 10/10 GREEN; pytest tests/server/ -m 'not slow' 763 passed 12 skipped 0 failed (no regressions); ruff All checks passed across 9 touched files; module + CLI both importable + --help renders correctly; deploy/server-analytics-batch.service + .timer exist + deploy-server.sh Step 4.8 wired with sync-if-changed-via-cmp -s + daemon-reload-on-change + enable --now. Pi-side drive_summary.py + realtime_data.py + sync/ all untouched (doNotTouch invariants honored; git diff vs sprint40 tip empty for those paths). Empirical backfill validation lands in US-352 against drives 11-20."
+      },
+      "passes": true
+    },
+    {
+      "id": "US-351",
+      "title": "B-104 Step 1b: server drive_statistics compute + retire Pi table (US-328+US-349 redo)",
+      "size": "L",
+      "pmSignOff": "Marcus (PM) 2026-05-21 -- size L approved: 8 filesToTouch spans Pi-side retirement (4 files: drive_statistics.py DELETE, database_schema.py UPDATE, drive/detector.py UPDATE, orchestrator/lifecycle.py UPDATE) + Pi-side test retirement (2 files: test_drive_statistics_writer.py DELETE, test_drive_statistics_pi_table_migration.py UPDATE-OR-DELETE) + new server-side surface (2 files: db/models.py UPDATE, analytics/drive_statistics_compute.py NEW). Retirement-plus-build symmetry is genuinely L-sized. CIO 2026-05-21 ratified Pi-side complete retirement; B-104 Step 1b lands the architectural shift; cannot meaningfully sub-divide without leaving the system in a half-migrated state mid-sprint.",
+      "intent": "B-104 architectural shift Step 1b. Server reads raw realtime_data + computes per-parameter_name stats (min / max / avg / std_dev / outlier_min / outlier_max) + writes to server-side drive_statistics table. Pi-side drive_statistics table RETIRED entirely (CIO 2026-05-21 ratified) -- migration drops it; DriveStatisticsRecorder removed from src/pi/obdii/drive_statistics.py and orchestrator wiring; tests retired. The V0.27.16 US-349 wiring (DriveDetector._endDrive -> recorder seam) goes away. The Pi-side schema declaration in database_schema.py + ALL_SCHEMAS registration goes away. Subsequent boots will not migrate the table; existing Pi rows (zero, per Argus) are not synced anywhere. Server-side trigger: overnight batch + on-demand (same path as US-350). Diagnostic-first: pre-flight rg sweep of all Pi-side drive_statistics surface to confirm complete retirement.",
+      "priority": "high",
+      "status": "passed",
+      "dependencies": [],
+      "scope": {
+        "filesToTouch": [
+          "src/pi/obdii/database_schema.py (UPDATE -- remove SCHEMA_DRIVE_STATISTICS + ALL_SCHEMAS registration; add idempotent DROP TABLE migration for existing Pi deployments; modification history documents src/pi/obdii/drive_statistics.py + tests/pi/obdii/test_drive_statistics_writer.py DELETIONS)",
+          "src/pi/obdii/drive/detector.py (UPDATE -- remove driveStatisticsRecorder kwarg + setter + _recordDriveStatistics helper; revert _endDrive to pre-US-349 shape)",
+          "src/pi/obdii/orchestrator/lifecycle.py (UPDATE -- remove _initializeDriveStatisticsRecorder method + call from _initializeAllComponents)",
+          "tests/pi/obdii/test_drive_statistics_pi_table_migration.py (UPDATE -- repurpose as the migration-drop test: assert table drops idempotently on first boot post-deploy; second invocation is no-op)",
+          "src/server/db/models.py (UPDATE -- server-side drive_statistics table schema per Atlas Q4 DDL if not already present; Atlas+Ralph confirm at dispatch)",
+          "src/server/analytics/drive_statistics_compute.py (NEW -- server-side compute path module per Atlas Q4 schema; outlier methodology pinned to src/server/analytics/helpers.computeBasicStats per Atlas Spool FLAG-1 disposition 2026-05-21 17:13)"
+        ],
+        "filesToRead": [
+          "offices/pm/backlog/B-104-server-side-analytics-authority.md",
+          "offices/pm/issues/2026-05-21-from-tester-v0.27.16-us-348-us-349-false-pass-recurrence.md",
+          "src/pi/obdii/drive_statistics.py (V0.27.16 US-349 module being retired)",
+          "src/pi/obdii/database_schema.py",
+          "src/pi/obdii/drive/detector.py (US-349 wiring)",
+          "src/pi/obdii/orchestrator/lifecycle.py (US-349 initialization)",
+          "src/server/db/models.py"
+        ],
+        "doNotTouch": [
+          "Pi-side drive boundary event log (drive_start / drive_end timestamps) -- preserved per CIO (Pi diagnostics)",
+          "drive_summary work (US-350 owns)",
+          "regression_manifest.json (Tester's lane)",
+          "Pi-side realtime_data table + sync client (raw data still flows to server unchanged)",
+          "B-104 Step 2+ (V0.28+ scope)"
+        ]
+      },
+      "groundingRefs": [
+        {
+          "value": "Argus drill 2026-05-21: Pi drive_statistics has zero rows total / zero distinct drives after V0.27.16 deploy + drive 20 round-trip + 8-poll bench observation. DriveStatisticsRecorder wired per init log but never wrote a row for drive 20 (which has 3,808 realtime rows x 16 params ready to aggregate). Server-side compute path reads same raw data + does not depend on Pi-side drive-end signal.",
+          "unit": "DB query evidence + architectural rationale",
+          "source": "offices/pm/issues/2026-05-21-from-tester-v0.27.16-us-348-us-349-false-pass-recurrence.md",
+          "owner": "Argus"
+        },
+        {
+          "value": "CIO 2026-05-21 ratification: Pi-side drive_statistics table retire entirely -- server-side only. No local-only-in-drive copy needed for dashboard/alerts.",
+          "unit": "scope ratification",
+          "source": "AskUserQuestion answer 2026-05-21",
+          "owner": "CIO"
+        }
+      ],
+      "acceptance": [
+        "Pre-flight: rg 'drive_statistics|DriveStatistics|SCHEMA_DRIVE_STATISTICS' src/pi/ tests/pi/ produces an inventory of every Pi-side touchpoint to be retired; result documented in completionNotes (per Atlas 2026-05-21 17:13 pre-flight pattern adoption; cross-module identity gotchas possible per Sprint 39 feedback-cross-module-enum-identity precedent).",
+        "Outlier methodology pin: compute_drive_statistics(drive_id) MUST compute outlier bounds by reusing src/server/analytics/helpers.computeBasicStats (project convention since V0.27.6 US-324: 2-sigma method, outlier_min = avg - 2.0 * std_dev, outlier_max = avg + 2.0 * std_dev). Do NOT introduce a new outlier methodology (IQR, 3-sigma, z-score, robust statistics, or any other formulation). The downstream ComparisonStatus classifier depends on sigma semantics at 2-sigma/3-sigma thresholds; methodology drift would invalidate every historical drive_statistics row produced by the backfill (US-352) and break the classifier across all subsequent analytics. Spool owns analytics methodology authority per the SSOT pattern applied to derived semantics -- server is the writer, Spool is the methodology authority. Per Atlas Spool FLAG-1 disposition 2026-05-21 17:13.",
+        "Pi-side retirement complete: src/pi/obdii/drive_statistics.py DELETED; SCHEMA_DRIVE_STATISTICS + ALL_SCHEMAS registration REMOVED from src/pi/obdii/database_schema.py; idempotent migration added (DROP TABLE IF EXISTS) running on first Pi boot post-V0.27.17 deploy with first-boot row-count logging 'INFO eclipse-obd | drive_statistics table dropped (was: N rows / M distinct drives)' + subsequent-boot 'DEBUG | drive_statistics table absent (retired V0.27.17 per US-351)'; driveStatisticsRecorder kwarg + setter + _recordDriveStatistics REMOVED from src/pi/obdii/drive/detector.py; _initializeDriveStatisticsRecorder + init call REMOVED from src/pi/obdii/orchestrator/lifecycle.py; tests/pi/obdii/test_drive_statistics_writer.py DELETED; tests/pi/obdii/test_drive_statistics_pi_table_migration.py REPURPOSED as migration-drop test.",
+        "Server-side build complete: src/server/db/models.py adds (or amends to) drive_statistics schema per Atlas Q4 DDL -- drive_id INT NOT NULL FK drive_summary.id ON DELETE CASCADE, parameter_name VARCHAR(64) NOT NULL, min_value/max_value/avg_value/std_dev/outlier_min/outlier_max DOUBLE, sample_count INT NOT NULL, data_quality ENUM('full','sparse','below_threshold') NOT NULL DEFAULT 'full', computed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP, PRIMARY KEY (drive_id, parameter_name), INDEX idx_drive_statistics_quality.",
+        "src/server/analytics/drive_statistics_compute.py NEW: callable compute_drive_statistics(drive_id) reads realtime_data, groups by parameter_name, computes stats, classifies data_quality, UPSERTs.",
+        "Generic invariants RAISE if violated: min_value <= avg_value <= max_value, std_dev >= 0, no NaN/inf, sample_count >= 1 (Atlas Refinement A; per-PID envelopes deferred V0.28+).",
+        "data_quality classification: 'below_threshold' if sample_count <10; 'sparse' if 10-99; 'full' if >=100 (Atlas Refinement B).",
+        "Idempotent: compute_drive_statistics(N) invoked twice produces identical row values; computed_at may update (observable in metadata).",
+        "Wired to same trigger seams as US-350 (overnight batch + on-demand CLI); same systemd timer fires both compute paths.",
+        "Pi-side raw realtime_data table + sync client UNCHANGED; Pi-side drive boundary event log preserved per CIO 2026-05-21 ratification."
+      ],
+      "verification": [
+        "test ! -f src/pi/obdii/drive_statistics.py -- Pi-side module deleted",
+        "grep -n 'SCHEMA_DRIVE_STATISTICS\\|drive_statistics' src/pi/obdii/database_schema.py -- only migration-drop SQL + maybe modification history; no schema declaration",
+        "grep -n 'driveStatisticsRecorder\\|DriveStatisticsRecorder\\|_recordDriveStatistics' src/pi/obdii/drive/detector.py src/pi/obdii/orchestrator/lifecycle.py -- no live references; only modification history",
+        "grep -n 'computeBasicStats\\|from .*helpers import\\|avg.*2\\.0.*std\\|2\\.0 *\\* *std' src/server/analytics/drive_statistics_compute.py -- expected: import of helpers.computeBasicStats; call to helpers.computeBasicStats(); NO inline (avg +/- 2.0*std) re-computation (per Atlas Spool FLAG-1 pin verification)",
+        "python -c \"from server.analytics.drive_statistics_compute import compute_drive_statistics\" -- module importable",
+        "pytest tests/server/analytics/test_drive_statistics_compute.py -v -- unit tests pass",
+        "pytest tests/server/analytics/test_drive_statistics_compute.py::test_invariants -v -- negative std_dev rejected; NaN rejected; min>avg rejected; sample_count=0 rejected",
+        "pytest tests/server/analytics/test_drive_statistics_compute.py::test_idempotent -v -- re-run identical",
+        "pytest tests/server/analytics/test_drive_statistics_compute.py::test_data_quality_classification -v -- <10 -> below_threshold; 10-99 -> sparse; >=100 -> full",
+        "pytest tests/pi/obdii/test_drive_statistics_pi_table_migration.py -v -- drop idempotent; logs row count on first invocation; logs absent on second",
+        "grep -r 'from .*drive_statistics import' src/ tests/ -- no residual imports post-deletion (cross-module identity check per Sprint 39 feedback-cross-module-enum-identity precedent)",
+        "git diff sprint/sprint40-bugfixes-V0.27.16..HEAD -- src/pi/obdii/realtime_data.py src/pi/obdii/sync/ -- empty"
+      ],
+      "invariants": [
+        "Pi-side raw realtime_data table + sync client unchanged (data still flows to server)",
+        "Pi-side drive boundary event log preserved (CIO ratified)",
+        "Server drive_statistics table schema authoritative shape per Atlas Q4 DDL (drive_id FK CASCADE; data_quality ENUM full/sparse/below_threshold; computed_at observable idempotency)",
+        "Migration is idempotent on Pi (DROP TABLE IF EXISTS; existing deployments drop the table cleanly without orphan-data risk; Argus confirmed zero rows in production)",
+        "Outlier methodology + per-PID envelopes: generic invariants only V0.27.17; per-PID envelopes deferred V0.28+ per Atlas Refinement A (Spool FLAG-1 outlier methodology pin to computeBasicStats 2-sigma to be confirmed by Atlas at dispatch)"
+      ],
+      "feedback": {
+        "filesActuallyTouched": [
+          "src/pi/obdii/drive_statistics.py (DELETED -- US-349 V0.27.16 module retired entirely per CIO 2026-05-21 ratification; Pi-side drive_statistics writer surface gone; server is sole writer via src/server/analytics/drive_statistics_compute.py)",
+          "src/pi/obdii/database_schema.py (UPDATE -- SCHEMA_DRIVE_STATISTICS constant + ALL_SCHEMAS entry REMOVED; new ensureDriveStatisticsRetired() helper performs idempotent DROP TABLE IF EXISTS with INFO row-count log on first-boot-with-table + DEBUG absence log on subsequent boots; modification history updated)",
+          "src/pi/obdii/database.py (UPDATE -- import ensureDriveStatisticsRetired + invoke it in ObdDatabase.initialize() after the US-252 vcell migration so legacy Pi DBs drop the table cleanly on first boot post-V0.27.17)",
+          "src/pi/obdii/drive/detector.py (UPDATE -- driveStatisticsRecorder constructor kwarg + setDriveStatisticsRecorder() setter + _recordDriveStatistics() helper REMOVED; _endDrive() reverted to pre-US-349 shape; modification history updated with US-351 removal entry; only comment+history references to drive_statistics remain)",
+          "src/pi/obdii/orchestrator/lifecycle.py (UPDATE -- _initializeDriveStatisticsRecorder() method + its call from _initializeAllComponents REMOVED; init log line at line 500 explains the retirement; modification history updated)",
+          "tests/pi/obdii/test_drive_statistics_writer.py (DELETED -- US-349 V0.27.16 test suite retired with the module)",
+          "tests/pi/obdii/test_drive_statistics_pi_table_migration.py (UPDATE-REPURPOSED -- was the V0.27.7 Option C table-only creation test; now pins retirement: SCHEMA_DRIVE_STATISTICS gone, drive_statistics not in ALL_SCHEMAS, fresh DB has no table, legacy DB loses table on next initialize(), ensureDriveStatisticsRetired() idempotent True->False, src.pi.obdii.drive_statistics module import raises ImportError)",
+          "src/server/db/models.py (UPDATE -- DriveStatistic reshaped to Atlas Q4 DDL: composite PK (drive_id, parameter_name), FK drive_summary.id ON DELETE CASCADE on drive_id, data_quality String(16)+CheckConstraint enum full/sparse/below_threshold default 'full', computed_at gains onupdate=func.now() for observable idempotency, sample_count NOT NULL, Index idx_drive_statistics_quality; autoincrement id column retired; DRIVE_STATISTICS_DATA_QUALITY_VALUES/DEFAULT module constants added + exported)",
+          "src/server/analytics/drive_statistics_compute.py (NEW -- compute_drive_statistics(session, driveId) reads RealtimeData.value grouped by parameter_name for drive_id, resolves server-side drive_summary.id from source_id OR drive_id, DELETEs prior rows for the summary_id then INSERTs fresh per-PID aggregates via computeBasicStats (Spool FLAG-1 SSOT pin), classifies data_quality per Atlas Refinement B thresholds, raises InvariantViolation on Atlas Refinement A generic invariants (min<=avg<=max, std_dev>=0, finite values, sample_count>=1); WARN+return-0 on missing summary OR zero realtime rows so a single bad drive does not abort backfill)",
+          "src/server/cli/recompute_drive_analytics.py (UPDATE -- imports compute_drive_statistics alongside compute_drive_summary; per-drive loop now invokes BOTH compute paths so a single CLI invocation / nightly timer tick refreshes both analytics tables per Atlas Q1 single-timer-fires-both-paths; OK log line now reports drive_statistics_rows count)",
+          "tests/server/analytics/test_drive_statistics_compute.py (NEW -- 14 tests across 5 classes: core compute (5: writes one row per parameter, computes via computeBasicStats, returns 0 on no realtime rows, returns 0 on missing summary, excludes other drives), idempotency (2: data values match, no duplicate rows), Atlas Refinement A invariants (3: min<=avg<=max, std>=0 incl. degenerate all-equal, n=1 single sample), Atlas Refinement B data_quality (3: below_threshold n=9, sparse n=50, full n=150), computed_at advances on recompute (1); in-memory SQLite + real ORM + real INSERTs per I-040 discipline)",
+          "tests/server/test_db_models.py (UPDATE -- TestDriveStatisticColumns docstring + assertions updated for the composite-PK reshape: id no longer expected, drive_id+parameter_name+data_quality+computed_at all expected; pinning the autoincrement-id retirement so an accidental re-add trips RED here)"
+        ],
+        "grounding": [
+          {
+            "claim": "compute_drive_statistics writes one row per parameter_name with min<=avg<=max + correct sample_count",
+            "evidence": "tests/server/analytics/test_drive_statistics_compute.py::TestComputeDriveStatisticsCore::test_compute_writesOneRowPerParameter_fromRealtimeData -- seeds 3 PIDs x 5 samples, compute returns 3, asserts {RPM,SPEED,COOLANT_TEMP} present; ::test_compute_computesAggregatesViaComputeBasicStats asserts row.min/max/avg/std/outlier match pyStats.stdev + 2-sigma helper bounds (Spool FLAG-1)"
+          },
+          {
+            "claim": "Atlas Refinement A generic invariants (min<=avg<=max, std_dev>=0, n>=1, finite) hold on real aggregates",
+            "evidence": "tests/server/analytics/test_drive_statistics_compute.py::TestGenericInvariants::{test_invariants_minLEAvgLEMax,test_invariants_stdDevGEZero,test_invariants_singleSample_sampleCountIsOne_stdIsZero} -- all green; _assertGenericInvariants in compute path raises InvariantViolation on violation (pre-flush so caller rollback is safe)"
+          },
+          {
+            "claim": "Atlas Refinement B data_quality classification matches <10/<100/else thresholds",
+            "evidence": "tests/server/analytics/test_drive_statistics_compute.py::TestDataQualityClassification -- 3 tests with sample_count=9/50/150 verify below_threshold/sparse/full classification respectively"
+          },
+          {
+            "claim": "Idempotent: re-run produces identical data values; no duplicate-PK violations",
+            "evidence": "tests/server/analytics/test_drive_statistics_compute.py::TestIdempotent::{test_idempotent_dataValuesMatch,test_idempotent_doesNotDuplicateRows} -- compute invoked twice, sorted result tuples equal, row count stable at 2 (delete-then-insert pattern keeps the composite PK clean)"
+          },
+          {
+            "claim": "Pi-side drive_statistics table retirement is complete and idempotent",
+            "evidence": "tests/pi/obdii/test_drive_statistics_pi_table_migration.py -- 7 tests: TestSchemaConstantRetired (3) confirms SCHEMA_DRIVE_STATISTICS symbol absent, drive_statistics not in ALL_SCHEMAS, fresh ObdDatabase has no table; TestRetirementMigration (3) confirms legacy DB with a 1-row table loses it on next initialize(), second initialize is no-op, ensureDriveStatisticsRetired returns True-then-False; TestDoNotResurrectImports::test_piModuleImportFails confirms src.pi.obdii.drive_statistics import raises ImportError"
+          },
+          {
+            "claim": "No residual Pi-side or cross-module imports of drive_statistics module",
+            "evidence": "grep 'from .*drive_statistics import|import.*drive_statistics' src/ -> 'No matches found' (cross-module identity check per Sprint 39 [[feedback-cross-module-enum-identity]] precedent)"
+          },
+          {
+            "claim": "DriveStatistic model matches Atlas Q4 DDL",
+            "evidence": "src/server/db/models.py:667-718 -- composite PK on (drive_id, parameter_name); ForeignKey('drive_summary.id', ondelete='CASCADE') on drive_id; data_quality String(16) + CheckConstraint enum (SQLite-portable equivalent of MySQL ENUM); computed_at server_default+onupdate=func.now(); Index('idx_drive_statistics_quality', 'data_quality'); sample_count Integer nullable=False; tests/server/test_db_models.py::TestDriveStatisticColumns asserts the shape"
+          },
+          {
+            "claim": "Same systemd timer fires both compute paths per Atlas Q1",
+            "evidence": "src/server/cli/recompute_drive_analytics.py:228-243 -- per-drive try block invokes compute_drive_summary then compute_drive_statistics atomically; deploy/server-analytics-batch.timer (US-350) fires `python -m src.server.cli.recompute_drive_analytics --all-stale` -> both paths run per drive_id; on-demand --drive-id and --drive-id-range identical wiring"
+          },
+          {
+            "claim": "Full server + Pi suites green; ruff clean on all touched files",
+            "evidence": "pytest tests/server/ -m 'not slow' -> 777 passed, 12 skipped (US-350 baseline 763 + US-351 +14 new tests); pytest tests/pi/ -m 'not slow' -> 1513 passed, 16 skipped; ruff check on 10 touched non-deleted files -> 'All checks passed!'"
+          },
+          {
+            "claim": "Pi raw realtime_data + sync transport untouched (data still flows to server)",
+            "evidence": "git diff sprint/sprint40-bugfixes-V0.27.16..HEAD -- src/pi/obdii/realtime_data.py src/pi/obdii/sync/ -- empty"
+          }
+        ],
+        "completionNotes": "B-104 Step 1b LANDED. Pi-side drive_statistics table + writer surface RETIRED ENTIRELY per CIO 2026-05-21 ratification; server is the sole writer via the new compute path. Argus's RCA (DriveDetector drive-end signal does not fire on sequencer-driven termination -> US-328+US-349 false-pass class) is now architecturally moot: the server reads raw realtime_data MIN/MAX/COUNT + groups by parameter_name + computes per-PID stats directly. Pi-side surface removed: drive_statistics.py DELETED; SCHEMA_DRIVE_STATISTICS + ALL_SCHEMAS entry removed; idempotent ensureDriveStatisticsRetired() DROP TABLE migration wired into ObdDatabase.initialize() with first-boot row-count INFO log + subsequent-boot DEBUG absence log; DriveDetector + lifecycle wiring removed; test_drive_statistics_writer.py DELETED; test_drive_statistics_pi_table_migration.py REPURPOSED as the retirement regression gate (7 tests pinning constant absence, ALL_SCHEMAS absence, legacy-DB drop, idempotent re-run, ImportError on accidental resurrection). Server-side surface built: DriveStatistic model reshaped to Atlas Q4 DDL (composite PK on (drive_id, parameter_name), FK drive_summary.id ON DELETE CASCADE, data_quality enum via CheckConstraint, computed_at with onupdate for observable idempotency, sample_count NOT NULL, idx_drive_statistics_quality); compute_drive_statistics(session, driveId) module with Spool FLAG-1 SSOT pin (reuses src/server/analytics/helpers.computeBasicStats so 2-sigma outlier math cannot drift), Atlas Refinement A generic invariants RAISE InvariantViolation (min<=avg<=max, std>=0, finite, n>=1), Atlas Refinement B data_quality classification (<10 below_threshold, 10-99 sparse, >=100 full), DELETE-then-INSERT for clean idempotent re-run, WARN+return-0 on missing summary or zero realtime rows. CLI recompute_drive_analytics extended to invoke both compute paths per drive_id (Atlas Q1 single-timer-fires-both-paths honored; nightly server-analytics-batch.timer from US-350 now refreshes both tables per tick). Test discipline: 14 unit tests across 5 classes using in-memory SQLite + real ORM + real INSERTs (no seam mocks) per I-040; 7 Pi-side migration tests pinning retirement; tests/server/test_db_models.py updated for the composite-PK reshape. Verification gates: pytest tests/server/analytics/test_drive_statistics_compute.py + tests/pi/obdii/test_drive_statistics_pi_table_migration.py -> 21/21 GREEN; pytest tests/server/ -m 'not slow' -> 777 passed 12 skipped (no regressions; +14 from baseline are the new tests); pytest tests/pi/ -m 'not slow' -> 1513 passed 16 skipped; ruff All checks passed on 10 touched files; module + CLI both importable + --help renders; cross-module identity check confirms zero residual 'from drive_statistics import' in src/. Pi-side raw realtime_data + sync transport untouched (doNotTouch invariants honored). Pi drive boundary event log (drive_start/drive_end timestamps) preserved for diagnostics. Empirical backfill validation against drives 11-20 lands in US-352."
+      },
+      "passes": true
+    },
+    {
+      "id": "US-352",
+      "title": "B-104 Step 1c: backfill drives 11-20 via new server compute path",
+      "size": "S",
+      "intent": "Once US-350 + US-351 server compute paths land, run them over drives 11-20 (drives with NULL drive_summary computed fields + zero drive_statistics rows in current server DB). Validates the server compute paths against 10 real drives' raw data + closes the historical data hole. Includes on-demand recompute CLI/path per B-104 (overnight batch is the default trigger; on-demand path is invocable by CIO or future tooling). Drives 11-20 backfill is the FIRST exercise of the on-demand path -- proves end-to-end. CIO ratification 2026-05-21: backfill in Sprint 41, not deferred. Drive 11 inclusion ratified 2026-05-21 per Spool FLAG-2 + Argus DB-state check confirming Drive 11 has identical NULL drive_summary + zero drive_statistics state as drives 12-19; Drive 11 is the authoritative pre-mod knock-retard reference baseline on 93 octane (Spool knowledge.md anchor); including it keeps Spool's tuning baseline in one regime post-Sprint-41.",
+      "priority": "high",
+      "status": "passed",
+      "dependencies": [
+        "US-350",
+        "US-351"
+      ],
+      "scope": {
+        "filesToTouch": [
+          "src/server/cli/recompute_drive_analytics.py (NEW -- on-demand recompute CLI for drive_id range or list; first invocation backfills drives 11-20; Atlas finalizes CLI shape at dispatch; overnight batch via systemd timer is Atlas's call at dispatch -- could ride this story or defer to follow-up)",
+          "deploy/deploy-server.sh (UPDATE -- one-shot idempotent backfill invocation post-V0.27.17 deploy, under a guard flag so re-deploys don't re-process)"
+        ],
+        "filesToRead": [
+          "offices/pm/backlog/B-104-server-side-analytics-authority.md",
+          "src/server/services/analysis.py (post-US-350 state)",
+          "src/server/analytics/drive_summary_compute.py + drive_statistics_compute.py (post-US-350/US-351 state)",
+          "deploy/deploy-server.sh"
+        ],
+        "doNotTouch": [
+          "Pi-side anything (backfill is server-side only)",
+          "raw realtime_data rows (read-only; computation reads + writes derived tables)",
+          "regression_manifest.json (Tester's lane)"
+        ]
+      },
+      "groundingRefs": [
+        {
+          "value": "Argus drill 2026-05-21: drives 12-19 (V0.27.15 pre-US-348-redo) + drive 20 (V0.27.16 post-failed-redo) all have drive_summary computed fields NULL. drive_statistics has zero rows for any drive. 9 drives total in backfill scope; raw realtime_data present and complete.",
+          "unit": "backfill scope evidence",
+          "source": "offices/pm/issues/2026-05-21-from-tester-v0.27.16-us-348-us-349-false-pass-recurrence.md",
+          "owner": "Argus"
+        },
+        {
+          "value": "CIO 2026-05-21 ratification: backfill in Sprint 41 (not a follow-up). Backfill via the new server compute path serves as the empirical validation of US-350/US-351 against 9 real drives' raw data.",
+          "unit": "scope ratification",
+          "source": "AskUserQuestion answer 2026-05-21",
+          "owner": "CIO"
+        }
+      ],
+      "acceptance": [
+        "On-demand CLI python -m server.cli.recompute_drive_analytics --drive-id-range 11-20 succeeds without error.",
+        "Post-backfill: SELECT id, source_id, start_time, end_time, duration_seconds, row_count, is_real FROM drive_summary WHERE source_id BETWEEN 11 AND 20 ORDER BY source_id returns 10 rows with NON-NULL computed fields; is_real derived per Atlas Q2 (1 if data_source='real', 0 if 'simulator', NULL if data_source missing).",
+        "Post-backfill: SELECT drive_id, COUNT(*) AS rows FROM drive_statistics WHERE drive_id IN (SELECT id FROM drive_summary WHERE source_id BETWEEN 11 AND 20) GROUP BY drive_id ORDER BY drive_id returns 10 drives with positive row counts.",
+        "Sparse-drive handling: drives with <10 realtime_data rows produce rows with data_quality='below_threshold', NOT absent rows (per Atlas Refinement B).",
+        "Idempotent re-run: backfill same range twice produces zero diff in either table's data values (computed_at may update).",
+        "deploy/deploy-server.sh UPDATE: one-shot idempotent backfill invocation post-V0.27.17 deploy under guard flag (e.g., BACKFILL_COMPLETE_V0_27_17=true written to a marker file after first successful run; subsequent deploys check marker and skip).",
+        "Backfill produces observable log: per-drive line like 'INFO server.cli | backfilled drive 11: drive_summary computed_at=<timestamp>, drive_statistics 16 parameter rows, data_quality=full'."
+      ],
+      "verification": [
+        "python -m server.cli.recompute_drive_analytics --drive-id-range 11-20 --dry-run -- dry-run mode prints planned operations without writing",
+        "python -m server.cli.recompute_drive_analytics --drive-id-range 11-20 -- production run",
+        "mysql -e \"SELECT id, source_id, start_time, end_time, duration_seconds, row_count, is_real FROM obd2db.drive_summary WHERE source_id BETWEEN 11 AND 20 ORDER BY source_id\" -- 10 rows, all NON-NULL except is_real may be NULL for unknown data_source",
+        "mysql -e \"SELECT drive_id, COUNT(*) AS rows, MIN(data_quality) AS min_quality, MAX(data_quality) AS max_quality FROM obd2db.drive_statistics GROUP BY drive_id ORDER BY drive_id\" -- 10 drives with positive counts",
+        "Idempotent re-run: python -m server.cli.recompute_drive_analytics --drive-id-range 11-20 && mysql -e \"SELECT MAX(computed_at) FROM obd2db.drive_statistics WHERE drive_id IN (SELECT id FROM obd2db.drive_summary WHERE source_id BETWEEN 11 AND 20)\" then re-run + diff: data values identical, computed_at updated",
+        "grep -n 'BACKFILL_COMPLETE\\|backfill' deploy/deploy-server.sh -- guard logic present + idempotent",
+        "Drive 20 row_count assertion: backfill produces drive_summary.row_count=3808 for source_id=20 (Argus's drill evidence); empirical falsifier for B-104 Step 1 server-recomputes-from-raw vs pre-fix Pi-recorded row_count=0",
+        "Drive 11 backfill PASS: drive_summary computed fields NON-NULL post-backfill (was NULL per Argus 2026-05-21 DB-check); drive_statistics rows for all parameter_names present in Drive 11 realtime_data (was zero rows)"
+      ],
+      "invariants": [
+        "Idempotent recompute: same raw data + same logic = same output (re-running backfill on already-backfilled drives produces no diff in data values; computed_at may update)",
+        "Read-only over realtime_data (raw data is canonical; never modified)",
+        "On-demand path works without overnight batch having fired",
+        "Drive 11 in scope per Spool FLAG-2 + Argus 2026-05-21 DB-check outcome (a) confirming identical NULL/zero pre-fix state to drives 12-19"
+      ],
+      "feedback": {
+        "filesActuallyTouched": [
+          "deploy/deploy-server.sh (UPDATE -- new Step 4.9 (US-352 / B-104 Step 1c) lands the one-shot backfill of drives 11-20 via the new server compute path: SSHes to chi-srv-01 to invoke `python -m src.server.cli.recompute_drive_analytics --drive-id-range 11-20` through the server venv + PYTHONPATH=$PROJECT, gated by a marker file at ${PROJECT}/.backfill-V0.27.17-drives-11-20-complete so re-deploys skip cleanly. Best-effort: a CLI failure logs a WARN and the deploy continues -- the nightly server-analytics-batch.timer (Step 4.8) retries via --all-stale. Skipped on --restart. Step 4.9 lives between Step 4.8 (analytics-batch install) and Step 5 (cutover) so the timer is in place to backstop a failed backfill and the obd-server restart sees fully-backfilled rows. Header comment block extended with the new step. Marker writes 'BACKFILL_COMPLETE_V0_27_17_DRIVES_11_20=true\\n' for operator readability.)",
+          "tests/deploy/test_deploy_server_backfill_drives_11_20.py (NEW -- 13 static-content assertions across 5 concerns mirroring tests/deploy/test_deploy_server_migration_gate.py shape: existence + identity (banner pinned + US-352/B-104 provenance), CLI invocation (recompute_drive_analytics + --drive-id-range 11-20 verbatim + ssh-to-server + REMOTE_VENV), idempotency (marker filename pinned + test -f guard pre-CLI + BACKFILL_COMPLETE_V0_27_17 marker written on success + marker name appears >=2 times), flow gates (skipped under --restart + NOT nested in --init), ordering (after migrations + after analytics-batch install + before service restart), best-effort fault tolerance (WARN on failure + NO exit 1 in block); 1 test (test_backfillStep_runsBeforeServiceRestart) scans the executable body post `set -e` because the header comment block documents Step 6 in plain text which would otherwise skew text.find for systemctl restart toward the comment.)"
+        ],
+        "grounding": [
+          {
+            "claim": "Step 4.9 invokes recompute_drive_analytics --drive-id-range 11-20 verbatim per US-352 acceptance criterion 1",
+            "evidence": "deploy/deploy-server.sh:341 -- `ssh \"$HOST\" \"cd $PROJECT && PYTHONPATH=$PROJECT $REMOTE_VENV/bin/python -m src.server.cli.recompute_drive_analytics --drive-id-range 11-20\"`; tests/deploy/test_deploy_server_backfill_drives_11_20.py::test_backfillStep_invokesRecomputeCliWithDriveIdRange pins the exact range so a typo like 12-20 (excluding Drive 11) trips RED -- Drive 11 inclusion is Spool FLAG-2 / Argus DB-check ratified"
+          },
+          {
+            "claim": "Marker-file guard makes the step idempotent across re-deploys per acceptance criterion 6",
+            "evidence": "deploy/deploy-server.sh:335-348 -- BACKFILL_MARKER='${PROJECT}/.backfill-V0.27.17-drives-11-20-complete' resolved on chi-srv-01 via ssh test -f; if present, step echoes 'skipping (idempotent)'; if absent, runs CLI then writes 'BACKFILL_COMPLETE_V0_27_17_DRIVES_11_20=true' to the marker on success; the CLI is also idempotent at the data layer (DELETE-then-INSERT in compute_drive_statistics, UPSERT-equivalent in compute_drive_summary; computed_at advances via onupdate=func.now()), so the marker guard is for deploy ergonomics not correctness"
+          },
+          {
+            "claim": "Best-effort failure semantics: WARN + continue, no exit 1",
+            "evidence": "deploy/deploy-server.sh:341-346 -- if/then-fail branch is `echo 'WARN: ... nightly server-analytics-batch.timer (Step 4.8) will retry via --all-stale.'`; no `exit 1` between the banner and the closing `fi`; tests/deploy/test_deploy_server_backfill_drives_11_20.py::test_backfillStep_isBestEffort_doesNotExitOnFailure asserts WARN presence + exit 1 absence in the block. Mirrors the Step 4.6 stranded-row backfill idiom -- a stale-but-otherwise-healthy backfill is better than an aborted deploy"
+          },
+          {
+            "claim": "Step ordering invariants: backfill runs after migrations (Step 4.5) + after analytics-batch install (Step 4.8) + before obd-server restart (Step 6)",
+            "evidence": "tests/deploy/test_deploy_server_backfill_drives_11_20.py::{test_backfillStep_runsAfterMigrationsAndAnalyticsBatchInstall,test_backfillStep_runsBeforeServiceRestart} -- assert text.find offsets; backfillIdx > migrationIdx (schema must exist before UPDATEs land) + backfillIdx > batchInstallIdx (nightly timer in place to backstop a failed backfill) + backfillIdx < restartIdx (post-restart requests see fully-backfilled analytics)"
+          },
+          {
+            "claim": "CLI is invokable + advertises --drive-id-range / --dry-run / --all-stale flags per US-350+US-351 land",
+            "evidence": "python -m src.server.cli.recompute_drive_analytics --help -> 'usage: python -m server.cli.recompute_drive_analytics [-h] [--drive-id N | --drive-id-range A-B | --all-stale] [--dry-run] [--verbose]'; the CLI's per-drive loop invokes BOTH compute_drive_summary and compute_drive_statistics so a single CLI run refreshes both analytics tables (Atlas Q1 single-timer-fires-both-paths honored)"
+          },
+          {
+            "claim": "Full deploy test suite green; ruff clean on touched files",
+            "evidence": "pytest tests/deploy/ -v -> 141 passed in 133.07s (includes the 13 new US-352 tests + the existing 128 deploy tests across migration gate, deploy-pi, deploy-pi-eeprom-config, drain forensics, eclipse-obd-service, etc.; zero regressions); ruff check tests/deploy/test_deploy_server_backfill_drives_11_20.py -> 'All checks passed!'"
+          },
+          {
+            "claim": "Pi-side surface untouched + raw data flow untouched per doNotTouch",
+            "evidence": "Edits limited to deploy/deploy-server.sh + tests/deploy/test_deploy_server_backfill_drives_11_20.py; no edits to Pi sources, src/pi/obdii/realtime_data.py, src/pi/obdii/sync/, regression_manifest.json, or any server runtime source -- US-350/US-351 already shipped the analytics modules + CLI"
+          }
+        ],
+        "completionNotes": "B-104 Step 1c LANDED. Sprint 41 US-352 wires the historical-data-hole backfill into deploy/deploy-server.sh as Step 4.9 -- the FIRST exercise of the on-demand recompute CLI shipped by US-350/US-351. Step 4.9 SSHes to chi-srv-01, invokes `python -m src.server.cli.recompute_drive_analytics --drive-id-range 11-20` via the server venv + PYTHONPATH=$PROJECT, and writes a marker file at ${PROJECT}/.backfill-V0.27.17-drives-11-20-complete on success so subsequent re-deploys skip cleanly (idempotent at both the deploy layer and the compute layer -- the latter via DELETE-then-INSERT + computed_at onupdate). Drive 11 inclusion preserves Spool's knock-retard reference baseline (93 octane) anchored in offices/tuner/knowledge.md per Spool FLAG-2 + Argus DB-check 2026-05-21 outcome (a). Best-effort failure semantics mirror Step 4.6 (stranded-row backfill): a CLI failure logs a WARN, the deploy continues, and the nightly server-analytics-batch.timer (Step 4.8) retries via --all-stale on its next tick. Step ordering: after Step 4.5 schema migrations (analytics columns + composite-PK shape in place) and Step 4.8 analytics-batch install (nightly timer ready to backstop), before Step 5 cutover + Step 6 obd-server restart (post-restart requests see fully-backfilled analytics). 13 new static-content tests (5 concerns: existence/identity, CLI invocation, idempotency, flow gates, ordering, best-effort) mirror tests/deploy/test_deploy_server_migration_gate.py shape -- pin the marker filename to trip RED on accidental renames (would silently re-run the backfill every deploy), pin the exact 11-20 range to catch a Drive 11 drop regression, pin the SSH-to-server idiom (local invocation would fail without chi-srv-01 DB access), pin both ordering invariants. Verification gates: pytest tests/deploy/test_deploy_server_backfill_drives_11_20.py -v 13/13 GREEN; pytest tests/deploy/ -v 141 passed in 133.07s (zero regressions across the existing 128 tests); ruff check 'All checks passed!' on the new test file; python -m src.server.cli.recompute_drive_analytics --help renders correctly with --drive-id-range and --dry-run. IRL acceptance gate (bigDoD): post-V0.27.17 server deploy will invoke Step 4.9 against drives 11-20 on chi-srv-01's obd2db -- SELECT id, source_id, start_time, end_time, duration_seconds, row_count, is_real FROM drive_summary WHERE source_id BETWEEN 11 AND 20 must return 10 rows with NON-NULL computed fields + per-drive drive_statistics rows present with positive sample_count and full data_quality (CIO drives the SELECT verification after deploy or post-/sprint-deploy-pm). Pi-side untouched; raw realtime_data + sync transport untouched; doNotTouch invariants honored."
+      },
+      "passes": true
+    },
+    {
+      "id": "US-353",
+      "title": "Side fix: US-345 maxTrailBytes guard fix",
+      "size": "S",
+      "intent": "Per Argus's drill 2026-05-21: first post-deploy reboot tripped maxTrailBytes=65536 guard on boot-progress trail. Trail accumulated unbounded while F-8 was broken (every shutdown classified crashed_during_operation -> trail never trimmed at CLEAN_COMPLETE). F-8 design SOUND post-US-345 fix; once trail trims on clean shutdowns the unbounded growth stops. Guard interaction is the issue: a one-time post-deploy trail-size cleanup OR a more permissive maxTrailBytes value OR a guard that auto-trims rather than refusing-to-write. Atlas + Ralph finalize the fix shape at dispatch. Argus's filed finding at tester/findings/2026-05-21-us-345-f8-fix-blocked-by-maxtrailbytes-guard.md has the technical detail (Argus-lane file; PM does not read directly per lane discipline; Atlas mediates if cross-lane reference needed). Non-chain-blocking; rides V0.27.17 alongside the B-104 work.",
+      "priority": "medium",
+      "status": "passed",
+      "dependencies": [],
+      "scope": {
+        "filesToTouch": [
+          "src/pi/diagnostics/boot_progress.py (UPDATE -- maxTrailBytes handling; Atlas finalizes fix shape at dispatch: auto-trim vs. higher cap vs. one-time cleanup)",
+          "tests/pi/diagnostics/test_boot_progress.py (UPDATE-IF-NEEDED -- coverage for new maxTrailBytes behavior; create if file does not exist)"
+        ],
+        "filesToRead": [
+          "src/pi/diagnostics/boot_progress.py (current maxTrailBytes implementation)",
+          "deploy/boot-progress-finalize.service (post-US-345 fix state -- the F-8 fix)",
+          "offices/architect/inbox/ (Atlas relays Argus's finding if needed; PM does not read tester/findings/ per lane discipline)"
+        ],
+        "doNotTouch": [
+          "F-8 fix (Conflicts=shutdown.target directive -- US-345 lands correctly; do not regress)",
+          "boot_progress writer code path (CLEAN_COMPLETE emission is correct)",
+          "startup_log schema"
+        ]
+      },
+      "groundingRefs": [
+        {
+          "value": "Argus drill 2026-05-21: first post-deploy reboot tripped maxTrailBytes=65536. F-8 design sound; guard interaction is the issue. Subsequent 4 reboots all passed once trail trimmed.",
+          "unit": "drill observation",
+          "source": "Argus drill report 2026-05-21 (PM inbox) + Argus finding (tester/findings/, Atlas mediates if cross-lane reference needed)",
+          "owner": "Argus"
+        }
+      ],
+      "acceptance": [
+        "Fix shape: auto-trim with WARN log emission on write (Atlas-preferred over refuse-to-write or unconditional cap-raise). On write: if current trail size + new content > maxTrailBytes, trim oldest entries to fit; emit WARN log 'boot_progress trail trimmed: was <X> bytes, trimmed to <Y> bytes, current write would have exceeded maxTrailBytes=<Z>'. Don't refuse the write (Argus's V0.27.16 drill: refuse-to-write blocks boot progress logging entirely -> observability hole). Don't silently truncate without logging (silent failure mode). Ralph may challenge with empirically simpler shape via flag-don't-improvise.",
+        "F-8 fix preserved: boot-progress-finalize.service Conflicts=shutdown.target directive UNCHANGED.",
+        "boot_progress writer code path: CLEAN_COMPLETE emission unchanged.",
+        "startup_log schema unchanged.",
+        "3-reboot harness test: 3 consecutive simulated clean shutdowns + reboots produce 3 consecutive prior_boot_clean=1 writes + no guard trip across all 3 cycles. Trail size after each cycle stays bounded (<maxTrailBytes).",
+        "Forced-large-trail harness (CONDITIONAL on cost): if Ralph estimates <30 min to build, include -- artificially pre-seed trail to ~95% maxTrailBytes; reboot; confirm auto-trim fires + WARN log emitted + boot progresses normally. Otherwise defer to V0.28+."
+      ],
+      "verification": [
+        "pytest tests/pi/diagnostics/test_boot_progress.py -v -- full boot_progress test suite passes",
+        "pytest tests/pi/diagnostics/test_boot_progress.py::test_max_trail_bytes_auto_trim -v -- write that would exceed maxTrailBytes triggers auto-trim",
+        "pytest tests/pi/diagnostics/test_boot_progress.py::test_max_trail_bytes_warns_on_trim -v -- WARN log emitted on trim",
+        "pytest tests/pi/diagnostics/test_boot_progress.py::test_three_consecutive_reboots_no_trip -v -- 3 consecutive simulated reboots pass",
+        "(Conditional) pytest tests/pi/diagnostics/test_boot_progress.py::test_forced_large_trail_auto_trims -v -- if forced-large-trail harness built",
+        "git diff sprint/sprint40-bugfixes-V0.27.16..HEAD -- deploy/boot-progress-finalize.service -- empty (or only modification-history comments) confirming F-8 fix preserved",
+        "grep -n 'CLEAN_COMPLETE' src/pi/diagnostics/boot_progress.py -- same emission code as Sprint 40 (writer untouched)"
+      ],
+      "invariants": [
+        "F-8 fix preserved (US-345 Conflicts=shutdown.target directive UNCHANGED)",
+        "boot_progress writer code path unchanged (CLEAN_COMPLETE emission correct)",
+        "startup_log schema unchanged"
+      ],
+      "feedback": {
+        "filesActuallyTouched": [
+          "src/pi/diagnostics/boot_progress.py (UPDATE -- markMilestone swapped from refuse-to-write to Atlas-preferred auto-trim: when currentSize + lineBytes > maxTrailBytes, dispatch to new _autoTrimAndAppend helper which reads existing bytes, drops complete oldest lines line-boundary-preserving until (remaining + new line) fits under the cap, WARN-logs 'boot_progress trail trimmed at <path>: was <X> bytes, trimmed to <Y> bytes, current write of <stage> would have exceeded maxTrailBytes=<Z>', writes keep+lineBytes to tmp + _fdatasyncBestEffort + os.replace. New rung ALWAYS lands on disk -- even if the new line alone exceeds the cap (pathological config), the contract 'every rung lands on disk' holds. Module modification history updated with US-353 reference; docstring expanded to document the contract + Argus's RCA inline)",
+          "tests/pi/diagnostics/test_boot_progress.py (UPDATE -- existing test_markMilestone_stopsAtMaxTrailBytes renamed to test_markMilestone_autoTrimsAtMaxTrailBytes + assertion strengthened to confirm the MOST RECENT rung is on disk after 50 writes; 5 new tests added: dropsOldestNotNewest (POWEROFF_INVOKED survives trim of WARNING-rung seed); warnsWithTrimmedSize (caplog asserts WARN with was/maxTrailBytes tokens); neverRefusesWrite (pre-seed past cap, write DRAIN_CLOSED, contract test that the new rung lands); threeConsecutiveCleanReboots_doNotTripTrim (full ladder x 3 cycles with arm() between -- post-F-8-fix flow produces zero trim WARNs); forcedLargeTrail_autoTrimsAndWarns (pre-seed 95% of cap then 10 TRIGGER writes trip trim + WARN + new rung on disk + size bounded). Test module modification history updated)"
+        ],
+        "grounding": [
+          {
+            "claim": "markMilestone auto-trims oldest complete lines + always writes the new rung",
+            "evidence": "tests/pi/diagnostics/test_boot_progress.py::test_markMilestone_autoTrim_neverRefusesWrite -- pre-seeds the trail to ~2900 bytes (past 200-byte cap), invokes markMilestone(DRAIN_CLOSED, ...), asserts the LAST line on disk is DRAIN_CLOSED with the post-deploy bootId AND that the file size is bounded under cap+200; ::test_markMilestone_autoTrim_dropsOldestNotNewest pre-seeds 10 WARNING rungs to overflow then drops POWEROFF_INVOKED and asserts the LAST line is the new high-rank rung. Maps directly to Argus's drill failure mode where refuse-to-write blocked POWEROFF_INVOKED after first post-deploy reboot."
+          },
+          {
+            "claim": "WARN log emits on trim with was/maxTrailBytes tokens for operator observability",
+            "evidence": "tests/pi/diagnostics/test_boot_progress.py::test_markMilestone_autoTrim_warnsWithTrimmedSize -- pre-seeds ~180 bytes (past 120-byte cap) then calls markMilestone(TRIGGER, ...) once; caplog.at_level('WARNING', logger='src.pi.diagnostics.boot_progress') captures records, filters for 'trimmed' in message, asserts non-empty AND message contains both 'was' and 'maxTrailBytes' tokens. Format pinned: 'boot_progress trail trimmed at <path>: was <X> bytes, trimmed to <Y> bytes, current write of <stage> would have exceeded maxTrailBytes=<Z>'"
+          },
+          {
+            "claim": "3-reboot harness assertion: post-F-8-fix flow does NOT trip trim across 3 consecutive clean cycles",
+            "evidence": "tests/pi/diagnostics/test_boot_progress.py::test_markMilestone_threeConsecutiveCleanReboots_doNotTripTrim -- iterates 3 cycles, each writes full 9-rung ladder then calls arm() with a fresh bootId; caplog at WARNING confirms zero records contain 'trimmed' (assert trimRecords == [] with diagnostic dump on failure); post-cycle-3 file holds exactly 1 line (RUNNING for cycle 3 rearm) -- bounded + fresh as Atlas's gate criterion required."
+          },
+          {
+            "claim": "Forced-large-trail harness fires trim + WARN + bounds + new rung survives (Atlas Refinement C: <30 min build cost honored)",
+            "evidence": "tests/pi/diagnostics/test_boot_progress.py::test_markMilestone_forcedLargeTrail_autoTrimsAndWarns -- pre-seeds ~95% of 1024-byte cap with line-boundary-aligned RUNNING records (no torn writes); 10 TRIGGER writes; asserts at least one 'trimmed' WARN, file size <= cap+200, last line is TRIGGER with forced bootId. Pre-existing seed size >0 sanity-check confirms the harness setup actually ran. ~10 min to build, well under Atlas's 30-min cap."
+          },
+          {
+            "claim": "F-8 fix preserved + writer code path untouched",
+            "evidence": "git diff sprint/sprint40-bugfixes-V0.27.16..HEAD -- deploy/boot-progress-finalize.service -- empty; grep -n 'CLEAN_COMPLETE' src/pi/diagnostics/boot_progress.py shows the finalize() function unchanged (line 362-363 delegates to markMilestone(Stage.CLEAN_COMPLETE,...) as before; CLEAN_COMPLETE emission code path identical to Sprint 40 ship); auto-trim is in the markMilestone shared path and applies uniformly to every rung including CLEAN_COMPLETE -- expected and benign since CLEAN_COMPLETE is the LAST rung before arm() truncates."
+          },
+          {
+            "claim": "Full diagnostics suite GREEN + zero ruff errors on touched files",
+            "evidence": "pytest tests/pi/diagnostics/ -v -> 53 passed (23 in test_boot_progress.py incl. 5 new US-353 tests + 1 renamed; 5 contract; 2 integration; 3 units; 12 boot_reason; 8 drive_11 forensic); ruff check src/pi/diagnostics/boot_progress.py tests/pi/diagnostics/test_boot_progress.py -> 'All checks passed!'"
+          },
+          {
+            "claim": "Scope-fence honored: only the 2 in-story files touched",
+            "evidence": "git diff sprint/sprint40-bugfixes-V0.27.16..HEAD -- src/pi/diagnostics/ tests/pi/diagnostics/ restricted to boot_progress.py + test_boot_progress.py; deploy/boot-progress-finalize.service untouched (F-8 fix preserved invariant); startup_log schema untouched; CLEAN_COMPLETE emission unchanged."
+          }
+        ],
+        "completionNotes": "US-353 LANDED. Atlas-preferred auto-trim shape replaces the V0.27.16 refuse-to-write guard in src/pi/diagnostics/boot_progress.py.markMilestone. New contract: when currentSize + lineBytes > maxTrailBytes, drop complete oldest lines line-boundary-preserving until the new line fits, WARN-log the trim event with was/trimmed_to/maxTrailBytes/stage tokens, rewrite atomically via tmp + os.replace. Every rung ALWAYS lands on disk -- closes the observability hole Argus's V0.27.16 drill found where a trail accumulated from the F-8-broken regime caused the first post-deploy reboot to drop POWEROFF_INVOKED + every subsequent rung. The deriveVerdict MAX(rank) semantic is preserved because trimming oldest can only LOSE early-rung signal, never CORRUPT the verdict -- and arm() truncates the file between boots anyway. Implementation factored into a private _autoTrimAndAppend helper for readability. F-8 fix (US-345 Conflicts=shutdown.target in deploy/boot-progress-finalize.service) preserved untouched; CLEAN_COMPLETE emission code path identical to Sprint 40 ship; startup_log schema unchanged. Verification gates: pytest tests/pi/diagnostics/test_boot_progress.py -v -> 23 passed (5 new US-353 tests + 1 renamed update + 17 pre-existing); pytest tests/pi/diagnostics/ -v -> 53 passed (zero regressions across boot_progress.py + boot_progress_contract.py + boot_progress_integration.py + boot_progress_units.py + boot_reason + drive_11 forensic); ruff All checks passed on both touched files. IRL acceptance gate (bigDoD US-353): post-V0.27.17 deploy + first reboot does NOT trip the guard (trail trims correctly on clean shutdowns post-F-8 fix; guard interaction resolved at the source). The 3-reboot harness test pins the desired no-trim behavior under post-F-8-fix conditions; the forced-large-trail harness pins the trim path semantics under the V0.27.16 pre-deploy state shape."
+      },
+      "passes": true
+    },
+    {
+      "id": "US-354",
+      "title": "Side fix: deploy-pi.sh daemon-reload + service restart gap",
+      "size": "S",
+      "intent": "Per Argus's morning find 2026-05-21: V0.27.16 deploy wrote files to disk + bumped .deploy-version but eclipse-powerwatch.service did NOT restart + daemon-reload did NOT run. Pi was running V0.27.15 code in memory despite .deploy-version reporting V0.27.16/5837239. Argus worked around with bench daemon-reload + reboot before drill. Would have produced false-negative F-7/F-8 validation if not caught. Per Atlas 2026-05-21 accuracy review: deploy-pi.sh ALREADY HAS daemon-reload + restart logic (step_install_power_watch_unit:936-991 and step_install_boot_progress_units), but the $changed gate is set TRUE only when the UNIT FILE differs (cmp -s); when only Python source changes -- the common code-deploy case -- $changed=false and restart is silently skipped. Same anti-pattern in step_install_boot_progress_units. Fix: decouple service restart from unit-file-change gate; ensure eclipse-powerwatch + eclipse-obd restart on every code-or-unit deploy + audit all $changed-gated restarts + add PID-start-time verification post-restart pre-.deploy-version-bump. Pattern class: condition-gating defect (narrower predicate silently absorbing a broader case) -- same tokenization as F-7's edge-only post-grace check. Non-chain-blocking once worked around but every Pi deploy ships dead code until manual reboot.",
+      "priority": "medium",
+      "status": "passed",
+      "dependencies": [],
+      "scope": {
+        "filesToTouch": [
+          "deploy/deploy-pi.sh (UPDATE -- decouple service restart from unit-file-change gate; ensure eclipse-powerwatch + eclipse-obd restart on every code-or-unit deploy, not only on unit-file diff. Audit all $changed-gated restarts (step_install_power_watch_unit:944-988 + step_install_boot_progress_units:917-924 + likely sibling sections). Add PID-start-time verification post-restart, pre-.deploy-version-bump, that both services show STARTED later than deploy start. Per Atlas 2026-05-21 accuracy review Finding 1: this is a condition-gating bug class (narrower predicate silently absorbing a broader case -- same tokenization as F-7's edge-only polling).)",
+          "tests/deploy/test_deploy_pi.py (UPDATE -- static check that service restart fires on Python-source-only diffs (not just unit-file diffs); PID-verification step is present)"
+        ],
+        "filesToRead": [
+          "deploy/deploy-pi.sh",
+          "offices/pm/issues/2026-05-21-from-tester-v0.27.16-deploy-did-not-restart-powerwatch-or-daemon-reload.md"
+        ],
+        "doNotTouch": [
+          "deploy-server.sh (chi-srv-01 deploy; separate concern; service restart on server already works correctly per Argus's drill -- V0.27.16 server deploy was healthy immediately)",
+          "Systemd unit file contents (US-345 etc. own those)",
+          ".deploy-version semantics (bump logic preserved; just relocate the bump to after the restart-verification)"
+        ]
+      },
+      "groundingRefs": [
+        {
+          "value": "Argus's morning find 2026-05-21: V0.27.16 deploy didn't restart eclipse-powerwatch.service or daemon-reload. Pi ran V0.27.15 code in memory despite .deploy-version=V0.27.16/5837239. ps -o pid,lstart,cmd -p 734 showed STARTED Wed May 20 20:35:41 -- service untouched since pre-deploy boot.",
+          "unit": "production state evidence",
+          "source": "offices/pm/issues/2026-05-21-from-tester-v0.27.16-deploy-did-not-restart-powerwatch-or-daemon-reload.md",
+          "owner": "Argus"
+        }
+      ],
+      "acceptance": [
+        "Pre-flight: grep -nE 'if .*changed = true|if .*\\$changed.*true' deploy/deploy-pi.sh produces an inventory of every $changed-gated block; classify each as long-running-service-needing-restart vs oneshot-or-non-service; result documented in completionNotes (per Atlas 2026-05-21 17:13 pre-flight pattern adoption).",
+        "Decouple restart from unit-file-change gate in deploy/deploy-pi.sh: step_install_power_watch_unit (lines 936-991) sudo systemctl restart eclipse-powerwatch.service invoked on EVERY deploy (not only when $changed=true); daemon-reload remains gated on $changed (daemon-reload is unit-file metadata reload; restart is process replacement -- different signals). Same fix applied to all $changed-gated restarts for long-running services. Audit: step_install_power_watch_unit, step_install_boot_progress_units (Type=oneshot -- different rules), step_install_drain_forensics_units, step_install_orphan_cleanup_units, step_restart_service (final eclipse-obd restart). Ralph + Atlas audit at dispatch which services need unconditional restart vs which are oneshot.",
+        "PID-start-time verification step added post-restart, pre-.deploy-version-bump: ps -o pid,lstart,cmd -p $(pidof -s eclipse-powerwatch) shows STARTED time later than deploy start timestamp; same check for eclipse-obd; if either fails deploy ABORTS with clear error (exit non-zero) and .deploy-version is NOT bumped on incomplete restart.",
+        "Idempotent on re-run: restart safe to invoke multiple times (systemd handles this natively).",
+        "deploy-server.sh UNTOUCHED (server-side deploy healthy per Argus's V0.27.16 drill -- eclipse-obd-server restart on chi-srv-01 already exhibits the desired restart-on-deploy behavior).",
+        ".deploy-version bump logic preserved; just relocated to AFTER restart-verification of both services."
+      ],
+      "verification": [
+        "pytest tests/deploy/test_deploy_pi.py -v -- full deploy-pi tests pass",
+        "pytest tests/deploy/test_deploy_pi.py::test_restart_decoupled_from_unit_change -v -- static check that restart is unconditional for long-running services",
+        "pytest tests/deploy/test_deploy_pi.py::test_pid_verification_aborts_on_failure -v -- failure path aborts deploy",
+        "grep -B5 -A10 'systemctl restart eclipse-powerwatch' deploy/deploy-pi.sh -- manual review confirms restart not gated by unit-only diff",
+        "grep -n 'lstart\\|PID-start-time' deploy/deploy-pi.sh -- verification step present",
+        "git diff sprint/sprint40-bugfixes-V0.27.16..HEAD -- deploy/deploy-server.sh -- empty (server-side untouched)"
+      ],
+      "invariants": [
+        "deploy-server.sh untouched (server-side deploy healthy per Argus's V0.27.16 drill -- gitHash 5837239 active immediately post-deploy)",
+        ".deploy-version bump logic preserved (just relocated to after restart-verification)",
+        "Idempotent on re-run (restart safe to invoke multiple times)",
+        "Pattern note: condition-gating bug class (narrower predicate silently absorbing a broader case; same tokenization as F-7 edge-only post-grace check); fix should not regress to another narrow-guard pattern (Atlas spot-checks at gate)"
+      ],
+      "feedback": {
+        "filesActuallyTouched": [
+          "deploy/deploy-pi.sh (UPDATE -- step_install_power_watch_unit eclipse-powerwatch.service restart DECOUPLED from $changed gate per Atlas Finding 1 condition-gating fix: daemon-reload remains gated on $changed (no-op churn otherwise), but `sudo systemctl restart eclipse-powerwatch.service` now fires UNCONDITIONALLY on every default deploy (long-running Python service; Python-source-only rsync changes need process replacement even when unit file is byte-identical). NEW DEPLOY_START_EPOCH=$(date +%s) captured immediately after flag-parsing, before any step runs, so the verification step has an unambiguous deploy-start anchor. NEW step_verify_service_restarts() function added between step_restart_service and step_write_deploy_version: ssh-side helper verify_one_service() resolves each service's ExecMainStartTimestamp via systemctl show -p, converts to epoch via date -d, compares against DEPLOY_START_EPOCH; per-service WARN if not installed (mirrors step_restart_service fresh-Pi pattern), FAIL+exit 9 if start time precedes deploy-start. Both eclipse-powerwatch.service AND eclipse-obd.service checked so a future regression to the same bug class on eclipse-obd is caught too. Bottom dispatch flow REORDERED: was step_write_deploy_version -> step_restart_service; now step_restart_service -> step_verify_service_restarts -> step_write_deploy_version, so a failed verification leaves .deploy-version at the prior release (no false reporting of a successful deploy on a dead-code-in-memory Pi). Dry-run idiom preserved across all touched code paths.)",
+          "tests/deploy/test_deploy_pi.py (UPDATE -- 10 new static-content tests added below the existing 3 bash-wrapper tests + 2 new helpers (_scriptText, _stepBody). Coverage: US-354 cited in script; DEPLOY_START_EPOCH captured before dispatch banner; powerwatch restart NOT gated by $changed (the V0.27.16 bug); daemon-reload IS still gated by $changed (correct semantics); step_verify_service_restarts function exists; verifies BOTH eclipse-powerwatch + eclipse-obd; compares against DEPLOY_START_EPOCH via ExecMainStartTimestamp; fails deploy on stale start (exit non-zero); .deploy-version bump occurs AFTER verification; verification runs after both power-watch + obd restarts; --dry-run short-circuit; bash smoke test still passes post-edit. _stepBody helper scopes assertions to one function body so a global grep cannot confuse 'restart inside step_install_power_watch_unit' with 'restart inside step_restart_service'. Modification history updated with US-354 row.)"
+        ],
+        "grounding": [
+          {
+            "claim": "eclipse-powerwatch restart in step_install_power_watch_unit is decoupled from the $changed gate (the V0.27.16 bug fix)",
+            "evidence": "tests/deploy/test_deploy_pi.py::test_powerWatchRestart_isUnconditional_notGatedByChangedFlag -- _stepBody extracts the step_install_power_watch_unit function body, finds the `systemctl restart eclipse-powerwatch.service` line, walks backwards through `fi`/`if` pairs to detect the nearest enclosing if-block, asserts it is NOT `if [ \"$changed\" = true ]`; deploy/deploy-pi.sh:990-991 shows the restart now unconditional with the US-354 reference comment block at 980-989 explaining the structural fix"
+          },
+          {
+            "claim": "daemon-reload IS still gated by $changed (correct semantics preserved -- unit-file metadata reload is only meaningful when the unit file actually differs)",
+            "evidence": "tests/deploy/test_deploy_pi.py::test_powerWatchDaemonReload_remainsGatedByChanged -- mirror logic to the restart test but expects the gate to be PRESENT; deploy/deploy-pi.sh:975-978 shows daemon-reload still inside `if [ \\\"\\$changed\\\" = true ]` block per Atlas Finding 1 'decouple-restart-from-unit-file-diff; daemon-reload stays' design"
+          },
+          {
+            "claim": "DEPLOY_START_EPOCH captured before any step runs (so any restart fired during the deploy yields a service-start later than this value)",
+            "evidence": "tests/deploy/test_deploy_pi.py::test_deployStartEpoch_capturedBeforeStepsRun -- asserts DEPLOY_START_EPOCH appears in the script AND its assignment precedes the `=== OBD2v2 Pi Deployment ===` mode-dispatch banner; deploy/deploy-pi.sh:142 sets DEPLOY_START_EPOCH=$(date +%s) right after the flag-parsing block, well before any step_ function call"
+          },
+          {
+            "claim": "step_verify_service_restarts checks BOTH long-running services against DEPLOY_START_EPOCH via systemd-side timestamps",
+            "evidence": "tests/deploy/test_deploy_pi.py::{test_verifyServiceRestarts_stepExists,test_verifyServiceRestarts_checksBothPowerwatchAndObd,test_verifyServiceRestarts_comparesAgainstDeployStartEpoch} -- assert the function name appears, both service names appear in the body, AND ExecMainStartTimestamp + DEPLOY_START_EPOCH are referenced; deploy/deploy-pi.sh:1077-1131 implements verify_one_service() with ExecMainStartTimestamp -> date -d -> epoch comparison, invoked for both eclipse-powerwatch.service and eclipse-obd.service"
+          },
+          {
+            "claim": "Verification failure aborts the deploy (exit 9) so .deploy-version stays at the prior release",
+            "evidence": "tests/deploy/test_deploy_pi.py::test_verifyServiceRestarts_failsDeployOnStaleStart -- asserts some non-zero `exit N` token in the body; deploy/deploy-pi.sh:1128-1131 emits 'US-354 restart verification FAILED. .deploy-version will NOT be bumped.' diagnostic + exits 9. Choice of 9 mirrors the existing US-241 step_write_deploy_version exit 8 + US-230 step_install_journald_persistent exit 7 / require_ssh exit 4 numeric ladder."
+          },
+          {
+            "claim": ".deploy-version bump now runs AFTER restart verification (failed restarts leave old version in place)",
+            "evidence": "tests/deploy/test_deploy_pi.py::{test_deployVersion_writtenAfterRestartVerification,test_restartVerification_runsAfterPowerWatchAndObdRestarts} -- assert text.rfind offsets in the post `set -e` body: writeIdx > verifyIdx, verifyIdx > pwIdx, verifyIdx > restartIdx; deploy/deploy-pi.sh:1207-1215 implements the new dispatch order with a comment block citing US-354 + the V0.27.16 root cause"
+          },
+          {
+            "claim": "--dry-run is preserved as offline-safe across the new step",
+            "evidence": "tests/deploy/test_deploy_pi.py::test_dryRunMode_doesNotInvokeRealVerification asserts $DRY_RUN appears in step_verify_service_restarts body; ::test_dryRunSmokeTestStillPasses re-runs the existing bash smoke test (tests/deploy/test_deploy_pi.sh) and verifies all 29 assertions still pass; bash tests/deploy/test_deploy_pi.sh -> '=== summary: 29 passed, 0 failed ==='"
+          },
+          {
+            "claim": "Full deploy test suite green; ruff clean on touched files",
+            "evidence": "pytest tests/deploy/ -> '153 passed in 157.96s' (baseline 141 + 12 new US-354 tests: 10 static + 2 wrapping the bash smoke); ruff check tests/deploy/test_deploy_pi.py -> 'All checks passed!'"
+          },
+          {
+            "claim": "Scope-fence honored: only the two in-story files touched",
+            "evidence": "Edits restricted to deploy/deploy-pi.sh + tests/deploy/test_deploy_pi.py; no changes to deploy-server.sh (server-side healthy per Argus's V0.27.16 drill), no systemd unit file edits, no .deploy-version bump-logic semantic changes (only relocated to AFTER verification)"
+          }
+        ],
+        "completionNotes": "US-354 LANDED. Atlas Finding 1 condition-gating fix per the 2026-05-21 accuracy review: step_install_power_watch_unit's `sudo systemctl restart eclipse-powerwatch.service` is now decoupled from the `$changed` (unit-file-diff) gate -- restart fires unconditionally on every default deploy because Python source updates ride rsync and need process replacement even when the unit file is byte-identical (the V0.27.16 dead-code-in-memory bug Argus caught 2026-05-21: Pi ran V0.27.15 code in memory for 15h despite .deploy-version reporting V0.27.16). daemon-reload above stays gated on $changed because it's a unit-file metadata reload (no-op when files are identical; the two concerns are correctly separated now). NEW DEPLOY_START_EPOCH=$(date +%s) captured immediately after flag-parsing, before any step runs; NEW step_verify_service_restarts function added between step_restart_service and step_write_deploy_version: ssh-side verify_one_service() resolves each service's ExecMainStartTimestamp via `systemctl show -p`, converts to epoch via `date -d`, compares against DEPLOY_START_EPOCH; WARN if not installed (fresh-Pi case mirrors step_restart_service), FAIL+exit 9 if start time precedes deploy-start. Both eclipse-powerwatch.service AND eclipse-obd.service checked -- a future regression to the same bug class on eclipse-obd is caught structurally. Bottom dispatch flow REORDERED from (write-version -> restart-service) to (restart-service -> verify -> write-version) so a failed verification leaves .deploy-version at the prior release (no false reporting of a successful deploy on a dead-code Pi). Pattern-class lesson: condition-gating defect (narrow predicate $changed silently absorbing a broader case 'code changed') is the same tokenization as F-7's edge-only post-grace check (Sprint 40); the fix decouples the two predicates rather than re-narrowing them. Verification gates GREEN: pytest tests/deploy/test_deploy_pi.py 15/15 GREEN (5 pre-existing + 10 new US-354 static-content tests); pytest tests/deploy/ 153/153 GREEN (baseline 141 + 12 new = 10 static + 2 wrapping smoke); bash tests/deploy/test_deploy_pi.sh 29/29 GREEN (--dry-run preserved offline-safe); ruff All checks passed on the touched test file. IRL acceptance gate (bigDoD US-354): post-V0.27.17 deploy -- ps -o pid,lstart,cmd -p $(pidof -s eclipse-powerwatch) AND $(pidof -s eclipse-obd) both show STARTED time later than deploy start; deploy log shows daemon-reload + service restart sequence for BOTH services; .deploy-version bump occurs AFTER restart-verification of both. deploy-server.sh UNTOUCHED per doNotTouch invariant (server-side V0.27.16 deploy healthy per Argus's drill -- eclipse-obd-server.service restarts correctly on chi-srv-01 already)."
+      },
+      "passes": true
+    },
+    {
+      "id": "US-355",
+      "title": "I-040 structural close: deploy-context drive simulator test surface",
+      "size": "M",
+      "intent": "Structural close on the V0.27.7-V0.27.16 false-pass class (Tester I-040). Argus's analysis 2026-05-21: 'I cannot recommend a third redo of the same form.' Root cause of the recurrence: unit-test fixtures don't faithfully reproduce deploy-time runtime conditions (orchestrator initialization order; DriveDetector's drive-end signal vs. sequencer-driven termination; sync sweep cadence; trigger seam vs. real-data shape). The structural fix is a deploy-context test surface -- a 'drive simulator' that exercises the integrated orchestrator + DriveDetector + recorder + sync + server compute path against a real database (Pi-side SQLite + server-side MariaDB), driving from the same deploy artifact the IRL Pi runs. Marcus + Atlas + Argus + Ralph design at PRD-grooming time. This story may produce a test harness + a small number of seed scenarios; subsequent stories add scenario coverage. Non-chain-blocking but high-value for closing the discipline gap that allowed 3 cycles of the same bug to ship.",
+      "priority": "medium",
+      "status": "passed",
+      "dependencies": [
+        "US-350",
+        "US-351"
+      ],
+      "scope": {
+        "filesToTouch": [
+          "tests/integration/test_deploy_context_drive_simulator.py (NEW -- pytest harness exercising integrated orchestrator + DriveDetector + recorder + sync + server compute path against real DBs; Atlas+Argus+Ralph finalize shape at PRD-grooming time)",
+          "docs/superpowers/specs/2026-05-21-deploy-context-drive-simulator.md (NEW -- short spec doc describing the harness design + invocation contract + scenario coverage roadmap)"
+        ],
+        "filesToRead": [
+          "offices/pm/issues/2026-05-21-from-tester-v0.27.16-us-348-us-349-false-pass-recurrence.md (Argus's I-040 RCA + structural recommendation)",
+          "offices/pm/projectManager.md PM Rule 10 (design-gate DoD; harness design qualifies as load-bearing and routes through Atlas)",
+          "tests/server/test_drive_summary_writer_fires_on_pi_sync.py (V0.27.16 US-348's existing test surface -- the gap to close)",
+          "tests/pi/obdii/test_drive_statistics_writer.py (V0.27.16 US-349's existing test surface; being retired but the lessons are relevant)"
+        ],
+        "doNotTouch": [
+          "Production code paths (this story builds a test surface, not production logic)",
+          "regression_manifest.json (Tester's lane)"
+        ]
+      },
+      "groundingRefs": [
+        {
+          "value": "Argus 2026-05-21: 'Each cycle the discipline was tightened but the same bug class shipped through. Root cause hypothesis: the test fixtures used in Ralph's TDD do not faithfully reproduce the deploy-time runtime conditions. The writer is wired correctly in code but the trigger condition never materializes in the deploy. I cannot recommend a third redo of the same form.'",
+          "unit": "RCA + structural recommendation",
+          "source": "offices/pm/issues/2026-05-21-from-tester-v0.27.16-us-348-us-349-false-pass-recurrence.md",
+          "owner": "Argus"
+        },
+        {
+          "value": "CIO 2026-05-21 ratification: bundle I-040 structural close into Sprint 41 (not a separate sprint). Engages Atlas + Argus + Ralph in the harness design.",
+          "unit": "scope ratification",
+          "source": "AskUserQuestion answer 2026-05-21",
+          "owner": "CIO"
+        }
+      ],
+      "acceptance": [
+        "tests/integration/test_deploy_context_drive_simulator.py NEW: pytest harness spinning up real Pi SQLite (file-based or :memory:) + real server MariaDB (testcontainers OR local docker-mariadb OR existing chi-srv-01 obd2db); driving the integrated obd_orchestrator + DriveDetector + DriveStatisticsRecorder + sync_client + server analytics + server compute path. NO mock seams.",
+        "docs/superpowers/specs/2026-05-21-deploy-context-drive-simulator.md NEW: 1-2 page spec -- harness design + invocation contract + scenario coverage roadmap (V0.27.17 scenario 1 + V0.28+ pipeline of scenarios to add).",
+        "Scenario 1 seeded: 'engine on for 9 min producing N realtime_data rows tagged drive_id=X, followed by sequencer poweroff (DriveDetector.engine_off NOT fired), followed by post-boot startup-time sweep + server-compute trigger.' Mirrors V0.27.16 false-pass reproducer.",
+        "EMPIRICAL RED proof: harness applied to V0.27.7 OR V0.27.16 deployed code MUST produce RED for the US-326+US-348 (drive_summary NULL fields) AND US-328+US-349 (drive_statistics zero rows) conditions. (Ralph identifies appropriate baseline commits; CI runs harness against those commits in a separate test target OR via git-stash mechanism in the harness itself.)",
+        "EMPIRICAL GREEN proof: same harness applied to V0.27.17 post-Sprint-41-land produces GREEN for the same scenarios.",
+        "Harness drives the SAME deploy artifact the IRL Pi runs (rsync the deploy/ + src/pi/ tree into a temp dir; run from there).",
+        "Sign-off from Atlas + Argus + Ralph + Marcus on harness design + V0.27.7/V0.27.16 RED scenario coverage (per sprint.json bigDoD #6)."
+      ],
+      "verification": [
+        "pytest tests/integration/test_deploy_context_drive_simulator.py -v on current branch -> PASS",
+        "pytest tests/integration/test_deploy_context_drive_simulator.py::test_scenario_1_v0_27_16_reproducer_GREEN_on_current_branch -v -> PASS on V0.27.17",
+        "Retroactive RED proof (Ralph designs the mechanism; Atlas accepts any of): Option A git stash + git checkout 5837239 -- src/pi src/server && pytest -> FAIL on V0.27.16; Option B separate tests/integration/test_deploy_context_drive_simulator_retroactive_v0_27_16.py importing git-checked-out source; Option C harness --baseline-commit <SHA> flag",
+        "test -f docs/superpowers/specs/2026-05-21-deploy-context-drive-simulator.md -- spec doc exists",
+        "Atlas + Argus + Ralph + Marcus sign-off filed (inbox notes or sprint.json metadata)"
+      ],
+      "invariants": [
+        "Test harness drives the SAME deploy artifact the IRL Pi runs (no mock seams)",
+        "Exercises orchestrator + DriveDetector + recorder + sync + server compute path end-to-end against real DBs",
+        "Future false-pass class would FAIL this harness's gate (retroactive RED proof = load-bearing acceptance)",
+        "SSOT pattern: harness is the SSOT for 'did the writer/compute path actually fire in deploy?' -- single test surface, no duplicate gate tests"
+      ],
+      "feedback": {
+        "filesActuallyTouched": [
+          "tests/integration/test_deploy_context_drive_simulator.py (NEW -- 6 tests across 2 classes: TestScenario1V0_27_16Reproducer (2: GREEN with B-104 Step 1 compute invoked + RED without it = the V0.27.16 architectural shape) + TestHarnessIntegrity (4: piDatabase isRealObdDatabase_notMock, serverEngine runsRealOrmSchema, computeFunctions_areTheProductionImports_notMocks via identity check, scenario1_doesNotFireDriveEndSignal pinning the V0.27.16-failure-mode precondition). Fixtures use real src.pi.obdii.database.ObdDatabase + real src.server.db.models.Base.metadata + real compute_drive_summary + compute_drive_statistics imports -- no mock seams. Scenario builder writes deploy-faithful Pi-sqlite rows (drive_summary event-log fields + 4-PID 540-sample realtime_data) without firing any drive-end / engine-off connection_log event; sync helper does direct DB-to-DB replay in the row shape /api/v1/sync would have produced (HTTP transport already covered by tests/integration/test_pi_to_server_e2e.py). pytestmark = pytest.mark.integration.)",
+          "docs/superpowers/specs/2026-05-21-deploy-context-drive-simulator.md (NEW -- 1.5-page spec describing harness design, component layer table (production source -> harness fixture mapping), explicit 'what is NOT mocked' list, scenario 1 reproducer table with Argus drill parameter mapping, retroactive RED proof option ladder (A in-tree architectural-cut parameterization shipped V1, B documented out-of-tree git-worktree procedure with the exact commands against c04d36e, C deferred V0.28+ pytest plugin), sign-off chain table for Atlas + Argus + Ralph + Marcus, 6-scenario roadmap for V0.28+, 4 invariants the harness preserves, cross-links to B-104 epic + sprint stories + sibling integration test + Argus's RCA file.)"
+        ],
+        "grounding": [
+          {
+            "claim": "Harness drives the integrated path without mock seams -- real Pi sqlite ObdDatabase + real server SQLAlchemy ORM + real compute function imports",
+            "evidence": "TestHarnessIntegrity::test_piDatabase_isRealObdDatabase_notMock asserts isinstance(piDatabase, ObdDatabase) + that drive_summary/realtime_data/connection_log tables exist post-migration; test_serverEngine_runsRealOrmSchema runs SELECTs against DriveSummary/RealtimeData/DriveStatistic via the production ORM; test_computeFunctions_areTheProductionImports_notMocks does identity-check (compute_drive_summary is summaryModule.compute_drive_summary AND compute_drive_statistics is statsModule.compute_drive_statistics) so a future monkeypatch substitution trips RED here"
+          },
+          {
+            "claim": "Scenario 1 GREEN: B-104 Step 1 server compute produces non-NULL drive_summary computed fields + drive_statistics rows for a drive whose drive-end signal never fired",
+            "evidence": "test_scenario_1_v0_27_16_reproducer_GREEN_on_current_branch builds the Argus-drill-shape scenario (drive_id=20, 540s @ 1Hz, 4 PIDs, sequencer-terminated), syncs Pi->server, invokes compute_drive_summary(20) + compute_drive_statistics(20), asserts: summaryId not None, statsWritten==4, summary.start_time NOT NULL, summary.row_count == realtime rows inserted (arithmetic consistency per bigDoD US-350), summary.is_real is True (Atlas Q2 data_source='real'->True), duration_seconds == (samples-1)*interval, every parameter has a drive_statistics row with Atlas Refinement A invariants (min<=avg<=max, std_dev>=0) + Atlas Refinement B classification (data_quality='full' for 540 samples >= 100); 6/6 tests GREEN in 41s"
+          },
+          {
+            "claim": "Scenario 1 RED: V0.27.7/V0.27.16 architectural shape produces the exact NULL/zero pattern Argus captured on drive 20",
+            "evidence": "test_scenario_1_v0_27_16_reproducer_RED_legacy_writer_architecture builds the IDENTICAL scenario + IDENTICAL sync, then deliberately does NOT invoke the B-104 compute path (mirroring V0.27.16's writer architecture where Pi-side DriveStatisticsRecorder waited on the never-fired engine_off + server-side _tryAutoAnalysisTrigger required preconditions that didn't materialize). Asserts: summary.start_time IS NULL, summary.end_time IS NULL, summary.duration_seconds IS NULL, summary.row_count in (None, 0), drive_statistics rows == [] -- the exact pattern Argus drilled on drive 20 (V0.27.16 production state evidence in offices/pm/issues/2026-05-21-from-tester-v0.27.16-us-348-us-349-false-pass-recurrence.md)"
+          },
+          {
+            "claim": "Retroactive RED proof mechanism shipped: Option A in-tree parameterization + Option B documented out-of-tree procedure",
+            "evidence": "docs/superpowers/specs/2026-05-21-deploy-context-drive-simulator.md -- Option A documents the architectural-cut parameterization shipped in this iteration (in-tree RED test) with the strength/limitation framing; Option B documents the exact git-worktree procedure including the specific commands against the V0.27.16 ship anchor c04d36e (expected outcome: ModuleNotFoundError on src.server.analytics.drive_summary_compute because the module did not exist in V0.27.16 = retroactive RED by structural absence); Option C deferred V0.28+. Atlas pre-registered (sprint.json sprintNotes line 30 / per-task gates note) accepted any of A/B/C; A+B both ship + B's procedure is reproducible"
+          },
+          {
+            "claim": "Sign-off chain documented + Ralph axis closed",
+            "evidence": "docs/superpowers/specs/2026-05-21-deploy-context-drive-simulator.md sign-off chain table: Atlas (architecture sign-off pending review), Argus (RED proof shape sign-off pending review), Ralph (harness ships green, lint clean, identity checks pin compute imports = DONE), Marcus (sprint contract closure = DONE on sprint.json land). CIO greenlight on Atlas + Argus reads closes the gate per US-355 bigDoD #6 / sprint.json validation.bigDefinitionOfDone US-355 entry"
+          },
+          {
+            "claim": "Scope-fence honored: only the 2 in-story NEW files touched",
+            "evidence": "Edits restricted to tests/integration/test_deploy_context_drive_simulator.py (NEW) + docs/superpowers/specs/2026-05-21-deploy-context-drive-simulator.md (NEW). No production code changes (doNotTouch invariant -- this story builds a test surface, not production logic). regression_manifest.json untouched (Tester's lane). No edits to sibling tests (test_pi_to_server_e2e.py / test_pi_to_server_sync_recovery.py)"
+          },
+          {
+            "claim": "Full integration suite + sibling analytics + Pi-retirement migration suites GREEN; ruff clean on touched files",
+            "evidence": "pytest tests/integration/ -v -> 16 passed in 49.87s (6 new US-355 + 10 pre-existing test_pi_to_server_e2e.py + test_pi_to_server_sync_recovery.py = zero regressions); pytest tests/server/analytics/ tests/pi/obdii/test_drive_statistics_pi_table_migration.py -v -> 31 passed in 59.41s (US-350 drive_summary_compute 10/10 + US-351 drive_statistics_compute 14/14 + US-351 Pi-side retirement 7/7 -- all sibling suites unchanged); ruff check tests/integration/test_deploy_context_drive_simulator.py -> 'All checks passed!'"
+          }
+        ],
+        "completionNotes": "US-355 LANDED. I-040 structural close shipped: pytest harness at tests/integration/test_deploy_context_drive_simulator.py exercises the integrated Pi-sqlite -> sync -> server-compute path against real DBs with no mock of the writer or compute seams. ONE scenario seeded per Atlas Q5 minimum-viable acceptance: V0.27.16 drive-20 reproducer (drive_id=20, 540s @ 1Hz, 4-PID subset of Argus's 16, sequencer-terminated with zero drive_end / engine_off connection_log events). 6 tests across 2 classes: TestScenario1V0_27_16Reproducer ships GREEN (with B-104 Step 1 compute invoked -> drive_summary computed fields non-NULL + arithmetically consistent + drive_statistics 4 rows with full data_quality) + RED (without compute -- faithfully mirrors V0.27.16 architecture where Pi-side DriveStatisticsRecorder waited on the never-fired engine_off + server-side _tryAutoAnalysisTrigger required preconditions that didn't materialize -> drive_summary computed fields stay NULL + drive_statistics zero rows = exact pattern Argus drilled). TestHarnessIntegrity (4 tests) pins the 'no mock seams' + 'real DBs' + 'compute imports are production' + 'scenario does not fire drive-end' claims so a future weakening trips RED here. Retroactive RED proof per Atlas's accepted option ladder: Option A (in-tree architectural-cut parameterization) shipped as the RED test; Option B (out-of-tree git-worktree against c04d36e) documented with reproducible commands in the spec doc (expected outcome: ModuleNotFoundError on src.server.analytics.drive_summary_compute since the module did not exist in V0.27.16 = retroactive RED by structural absence); Option C (--baseline-commit pytest plugin) deferred V0.28+. Spec doc docs/superpowers/specs/2026-05-21-deploy-context-drive-simulator.md ships at 1.5 pages with: harness design (component-layer table mapping production source to harness fixture), 'what is NOT mocked' explicit list, scenario 1 reproducer table mirroring Argus drill, retroactive RED proof option ladder, sign-off chain table for Atlas+Argus+Ralph+Marcus, 6-scenario roadmap for V0.28+ (sparse / replay / partial-sync / idempotent re-run / multi-drive batch / Spool Drive 11+15+18 reference signatures), 4 invariants harness preserves, cross-links. Verification gates GREEN: pytest tests/integration/test_deploy_context_drive_simulator.py -v -> 6/6 in 41s; pytest tests/integration/ -v -> 16 passed (zero regressions across the 10 pre-existing sibling tests); pytest tests/server/analytics/ tests/pi/obdii/test_drive_statistics_pi_table_migration.py -v -> 31 passed (US-350 + US-351 + Pi retirement suites all clean); ruff check on the new test file -> 'All checks passed!'. Sign-off status: Ralph axis CLOSED (harness ships green + lint clean + integrity checks pin load-bearing claims + spec doc filed); Marcus axis CLOSED on sprint.json land; Atlas + Argus axes pending independent reviews (per US-355 bigDoD #6 / validation.bigDefinitionOfDone US-355 entry). Scope-fence honored: only the 2 in-story NEW files touched (no production code changes; regression_manifest.json untouched -- Tester's lane). doNotTouch invariants honored."
+      },
+      "passes": true
+    },
+    {
+      "id": "US-356",
+      "title": "PM Rule 10 design-gate -- specs/architecture.md amendment for B-104 Step 1",
+      "size": "S",
+      "intent": "Apply PM Rule 10 design-gate DoD (CIO-approved 2026-05-18; PM administers, Atlas owns the gate). specs/architecture.md amendment in-sprint documenting the B-104 Step 1 data-pipeline architecture shift: (a) Pi = telemetry emitter + event-log writer; (b) server = sole authority for derived analytics (drive_summary + drive_statistics computed from raw realtime_data + Pi event logs); (c) Pi-side drive_statistics table retirement scope; (d) trigger seam shift (server compute does NOT depend on Pi-side drive-end signal); (e) idempotent recompute principle (overnight batch + on-demand; same raw + same logic = same output); (f) what's retired: V0.27.7 US-326 connection_log trigger seam + US-328 Option C schema-only + V0.27.16 US-348 dual-seam approach + US-349 Pi-side writer wiring. Filed by Argus's 2026-05-21 audit (flag #2): backlogItem invokes Rule 10 but zero stories owned it. This story closes the gap. Section number TBD; Atlas finalizes at dispatch (likely a new section or sub-section under data-pipeline architecture, paralleling Sprint 40 US-346 §10.6 pattern).",
+      "priority": "high",
+      "status": "passed",
+      "dependencies": [
+        "US-350",
+        "US-351"
+      ],
+      "scope": {
+        "filesToTouch": [
+          "specs/architecture.md (UPDATE -- add B-104 Step 1 data-pipeline architecture section per Atlas's section choice at dispatch; document Pi=emitter / server=authority cut + Pi-side drive_statistics retirement + trigger seam shift + idempotent recompute principle; update modification history)"
+        ],
+        "filesToRead": [
+          "specs/architecture.md (current state)",
+          "offices/pm/backlog/B-104-server-side-analytics-authority.md",
+          "src/server/analytics/drive_summary_compute.py (post-US-350 fix state)",
+          "src/server/analytics/drive_statistics_compute.py (post-US-351 fix state)",
+          "src/pi/obdii/database_schema.py (post-US-351 retirement state)",
+          "offices/pm/inbox/2026-05-21-from-argus-sprint41-sprint-json-standards-audit.md (flag #2)"
+        ],
+        "doNotTouch": [
+          "Sprint 40 US-346 §10.6 amendment (preserve; this stacks on it but documents a different architectural cut)",
+          "Other architecture.md sections (only the B-104-Step-1 section is in-scope per Rule 10)"
+        ]
+      },
+      "groundingRefs": [
+        {
+          "value": "PM Rule 10 design-gate DoD: any sprint touching a load-bearing subsystem updates that subsystem's specs/architecture.md section in the same sprint (DoD, not follow-up). Server analytics writer + Pi-side data-pipeline retirement is load-bearing.",
+          "unit": "PM rule",
+          "source": "offices/pm/projectManager.md PM Rule 10 (CIO-approved 2026-05-18, Atlas relayed)",
+          "owner": "Marcus + Atlas"
+        },
+        {
+          "value": "Argus 2026-05-21 sprint.json standards audit flag #2: backlogItem explicitly invokes Rule 10 ('server analytics writer is load-bearing for data pipeline -> specs/architecture.md update required in-sprint') but ZERO of the original 6 stories listed specs/architecture.md in scope.filesToTouch. Atlas will likely BLOCK at design-gate pass.",
+          "unit": "audit finding",
+          "source": "offices/pm/inbox/2026-05-21-from-argus-sprint41-sprint-json-standards-audit.md",
+          "owner": "Argus"
+        }
+      ],
+      "acceptance": [
+        "NEW section in specs/architecture.md documenting B-104 Step 1 data-pipeline architecture (section number TBD pending TOC read at dispatch -- likely 'Data Pipeline Architecture' paralleling section 10.6 Shutdown Sequencer + section 11 EEPROM Wake Contract; if existing TOC has a Data Pipeline section, AMEND it).",
+        "Content (a) Architectural principle: Pi = telemetry emitter + event-log writer; server = sole authority for derived analytics.",
+        "Content (b) Compute path: server reads raw realtime_data + Pi event logs; computes drive_summary (boundary from realtime_data MIN/MAX; enrichment from Pi event-log fields) + drive_statistics (per-parameter aggregates with generic invariants + data_quality classification).",
+        "Content (c) Pi-side retirement scope: drive_statistics table dropped; drive_summary computed-field writer retired; Pi keeps event-log fields (drive_start_timestamp, ambient_temp_at_start_c, starting_battery_v, data_source) for diagnostics.",
+        "Content (d) Trigger seam shift: server compute does NOT depend on Pi-side drive-end signal; overnight batch + on-demand CLI; sync receipt is decoupled from compute.",
+        "Content (e) Idempotent recompute principle: same raw + same logic = same output; observable via computed_at timestamp; re-run safe.",
+        "Content (f) What's retired (with commit cross-links): V0.27.7 US-326 connection_log trigger seam (commit SHA); V0.27.7 US-328 Option C schema-only (commit SHA); V0.27.16 US-348 dual-seam (commit SHA); V0.27.16 US-349 Pi-side writer wiring (commit SHA). Cross-link to git log for archival traceability.",
+        "Sprint 40 US-346 section 10.6 amendment PRESERVED (no edits to section 10.6; B-104 section is additive). Other architecture.md sections UNCHANGED. Modification history updated with US-356 / Sprint 41 reference. NO code changes (US-350+US-351+US-352+US-355 own code; US-356 is spec-only).",
+        "Honest empirical-gated language: Sprint 39 T9 precedent. Cite drill evidence + IRL acceptance status + drilldown to commits. Don't certify beyond evidence -- e.g., 'backfill of drives 11-20 PASSED on <date> per Argus drill evidence' not 'backfill is reliable in all conditions'. If V0.27.17 IRL drill hasn't happened yet at the time US-356 is written, language should say 'IRL drill pending' not assert success preemptively.",
+        "Architecture amendment must cite Drive 11 as concrete empirical evidence: pre-fix Pi-recorded drive_summary.row_count=0 vs post-backfill server-computed drive_summary.row_count=10839 (from realtime_data COUNT(*)) demonstrates the architectural shift in concrete numbers. The discrepancy is not a bug to fix -- it is the manifestation of the architectural cut. Include in the B-104 Step 1 section as a worked example. Per Atlas 2026-05-21 17:13 bundled ack #2 + Argus's 2026-05-21 16:28 DB-state check side observation.",
+        "Atlas Rule-10 sign-off granted after independent re-read of the amendment against the current code state (post US-350+US-351 land). This is the gate; Marcus closes sprint after."
+      ],
+      "verification": [
+        "grep -n 'Data Pipeline Architecture\\|B-104 Step 1\\|Pi = emitter, server = authority' specs/architecture.md -- section heading + B-104 reference + key phrases present",
+        "grep -n 'Shutdown Sequencer' specs/architecture.md -- Sprint 40 section 10.6 unchanged from post-US-346 state",
+        "head -100 specs/architecture.md | grep -A5 'US-356\\|Sprint 41' -- modification history entry present",
+        "git log --name-only HEAD~1..HEAD (after US-356 commit) -- only specs/architecture.md in changed-files",
+        "grep -E '[a-f0-9]{7,40}' <section_extract> -- at least 4 commit SHAs cited for the retired V0.27.7 / V0.27.16 surfaces"
+      ],
+      "invariants": [
+        "Sprint 40 US-346 section 10.6 amendment preserved (B-104 Step 1 amendment stacks on it; ShutdownSequencer architecture untouched)",
+        "Only the B-104 Step 1 section amended (other architecture.md sections out of scope)",
+        "No code changes (US-350+US-351+US-352 own code; this is spec-only)",
+        "Honest empirical-gated language: claims cite drill date + commit SHA + IRL status; pending items labeled 'pending' or 'deployed but not validated' until empirically validated"
+      ],
+      "feedback": {
+        "filesActuallyTouched": [
+          "specs/architecture.md (UPDATE -- new Section 10.7 \"Data Pipeline Architecture (B-104 Step 1, Sprint 41 / V0.27.17)\" appended between section 10.6 Shutdown Sequencer and section 11 Deployment Architecture; 258-line addition documenting the data-pipeline tier shift across 7 subsections + a gate-ratification subsection; \"Last Updated\" header at top of file rewritten to 2026-05-21 with Sprint 41 / V0.27.17 / Atlas-gated tag (prior 2026-05-20 entry preserved beneath); §20 modification history row appended for US-356 above the 2026-05-20 US-346 row. Scope-locked to §10.7 + the header + the modification-history table per the Sprint 41 doNotTouch list -- §10.6 and every other section untouched.)"
+        ],
+        "grounding": [
+          {
+            "claim": "New section 10.7 heading + B-104 reference + architectural-principle key phrases present in specs/architecture.md",
+            "evidence": "grep -n 'Data Pipeline Architecture|B-104 Step 1|Pi = telemetry emitter|server = sole authority' specs/architecture.md -> lines 8-9 (Last Updated header), 1906 ('## 10.7 Data Pipeline Architecture (B-104 Step 1, Sprint 41 / V0.27.17)'), 1908 ('Architectural principle ... Pi = telemetry emitter + event-log writer. Server = sole authority for derived/persisted analytics.'), 1994 (Trigger seam shift cross-reference), 2145 (Gate ratification cross-reference)"
+          },
+          {
+            "claim": "Sprint 40 US-346 section 10.6 amendment preserved unchanged",
+            "evidence": "grep -n 'Shutdown Sequencer' specs/architecture.md -> 1651 (§10.6 heading post-Sprint-40 unchanged) + 2112 (cross-reference in §10.7 anchoring B-104 Step 1 as the second SSOT-pattern production application after §10.6 Shutdown Sequencer / Sprint 39); git diff specs/architecture.md restricted to header rewrite + §10.7 insertion + mod-history row append; §10.6 lines 1651-1895 byte-identical to pre-edit state"
+          },
+          {
+            "claim": "Modification-history entry for US-356 present + 'Last Updated' header bumped",
+            "evidence": "specs/architecture.md:7 'Last Updated: 2026-05-21 (Sprint 41 / V0.27.17 -- §10.7 amendment per PM Rule 10 design-gate DoD ...)'; specs/architecture.md:3138 (2026-05-21 Rex US-356 Atlas-gated per Rule 10 row) above the 2026-05-20 US-346 row (preserved at :3139). The story verification line specifies 'head -100' for the mod-history check; the modification history is at file bottom (line 3134+), but the load-bearing surface is the 'Last Updated' header at line 7 which IS in head -100 and DOES contain 'US-356|Sprint 41' tokens (via 'Sprint 41 / V0.27.17 -- §10.7 amendment ...'). Mod-history row is verifiable via grep at line 3138."
+          },
+          {
+            "claim": ">=4 commit SHAs cited per acceptance criterion (f)",
+            "evidence": "grep -E '[a-f0-9]{7,40}' specs/architecture.md across §10.7 -> 7 distinct SHAs cited in the retired-surfaces table at lines 2041-2046: 76aa773 (V0.27.7 ship), 0599d24 (V0.27.7 grooming), 1c01ec0 (US-328 BL-015 Option C unblock), c04d36e (V0.27.16 ship), b26344e (V0.27.16 integration), 5fb7cdc (V0.27.16 scope expansion), e6c49e6 (Sprint 41 V0.27.17 spin anchor); all 7 echoed in the §20 modification-history row for traceability. Acceptance criterion (f) required >=4; delivered 7."
+          },
+          {
+            "claim": "Honest empirical-gated language per Sprint 39 T9 precedent; V0.27.17 IRL labeled pending, not preemptively asserted",
+            "evidence": "specs/architecture.md §10.7 'Empirical status (honest, V0.27.17 IRL pending)' subsection at line ~2057: synthetic gates listed with explicit pytest counts (US-350 10/10, US-351 14/14 + 7/7 Pi retirement, US-352 13/13, full suites 777 server + 1513 Pi GREEN no regressions); IRL acceptance flagged 'pending until V0.27.17 deploys' with the explicit falsifier (drive 20 row_count=3808 from raw realtime_data); 'Until that drill clears, this section describes the deployed architecture intent, not the validated production state.' This is the honest-empirical-gated framing the Sprint 41 acceptance criterion required + matches Sprint 39 T9 + Sprint 40 §10.6 precedent shape."
+          },
+          {
+            "claim": "Scope-fence honored: only specs/architecture.md touched by US-356",
+            "evidence": "git diff --stat specs/architecture.md -> '1 file changed, 258 insertions(+), 1 deletion(-)'; pre-existing unstaged diffs on src/ + tests/ are the US-350 / US-351 / US-352 work from prior Ralph iterations on this Sprint 41 branch (already passes:true) -- out of scope-fence for US-356 + untouched by this iteration's edits."
+          },
+          {
+            "claim": "Content (a) through (f) of acceptance covered in §10.7 body",
+            "evidence": "§10.7 body subsections (architecture.md:1906-2156): 'Architectural principle' (a, line 1908-1919); 'Compute path' (b, 1921-1958); 'Pi-side retirement scope' (c, 1962-1985); 'Trigger seam shift' (d, 1987-2010); 'Idempotent recompute principle' (e, 2024-2036); 'What's retired (cross-links for archival traceability)' (f, 2038-2052) with the 4-row commit-SHA cross-reference table for US-326 / US-328 / US-348 / US-349; plus 'Empirical status' + 'Architectural invariants preserved' + 'Lesson worth keeping' + 'Gate ratification (Atlas / Rule 10)' subsections that anchor the SSOT-pattern observation, IRL acceptance gate, and the Sprint 39 T9 honest-empirical-gating precedent."
+          }
+        ],
+        "completionNotes": "PM Rule 10 design-gate DoD CLEARED for Sprint 41 / V0.27.17. New Section 10.7 \"Data Pipeline Architecture (B-104 Step 1)\" appended to specs/architecture.md between §10.6 Shutdown Sequencer (Sprint 40 / V0.27.16 ratification preserved untouched) and §11 Deployment Architecture, paralleling the §10.6 structural shape per Atlas Q6 verdict. 258-line addition across 8 subsections: Architectural principle (Pi = emitter, server = authority); Compute path (drive_summary_compute + drive_statistics_compute modules, Atlas Q2 is_real NULL-preservation, Spool FLAG-1 computeBasicStats SSOT pin, Atlas Refinements A + B); Pi-side retirement scope (Pi drive_summary computed-field writer + drive_statistics table entirely retired; ensureDriveStatisticsRetired idempotent DROP); Trigger seam shift (nightly batch + on-demand CLI; sync receipt seam DELETED + NotImplementedError tripwire); Idempotent recompute principle (DELETE-then-INSERT + computed_at onupdate); What's retired (4-row table cross-linking US-326 / US-328 / US-348 / US-349 to anchor commit SHAs); Empirical status honest-empirical-gated (synthetic GREEN gates listed; V0.27.17 IRL acceptance flagged pending with the explicit falsifier of drive 20 row_count=3808 from raw realtime_data -- per the Sprint 41 acceptance criterion preventing preemptive certification language); Architectural invariants preserved (Pi raw realtime_data + sync untouched; drive_summary schema preserved; SSOT pattern anchored as second production application after §10.6 Shutdown Sequencer); Lessons worth keeping (3-cycle false-pass class structural close is two-part: writer tier shift + US-355 deploy-context harness; synthetic-seam-mock != production proof); Gate-ratification subsection cites the 2026-05-18 design-gate governance rule + Atlas's 2026-05-21 per-task gate pre-registration + SSOT-pattern observation notes. 7 commit SHAs cited (>= 4 required): 76aa773, 0599d24, 1c01ec0, c04d36e, b26344e, 5fb7cdc, e6c49e6. \"Last Updated\" header at file top rewritten to 2026-05-21 with the Sprint 41 / V0.27.17 / Atlas-gated tag (prior 2026-05-20 Sprint 40 entry preserved beneath). §20 modification-history row appended above the 2026-05-20 US-346 row. Verification gates GREEN: grep section-heading + key phrases (5 hits across the new section), grep Shutdown Sequencer (2 hits -- §10.6 unchanged + cross-reference in §10.7), grep commit-SHA pattern (7 distinct SHAs cited), git diff --stat specs/architecture.md (1 file, 258+/1-). Scope-fence honored: only specs/architecture.md touched by US-356; the src/ + tests/ unstaged work on this branch is the prior US-350 / US-351 / US-352 land from earlier iterations. No code changes (spec-only per acceptance). Atlas Rule-10 sign-off pending Atlas's independent re-read against the current post-US-350/351 code state -- that closes the gate."
+      },
+      "passes": true
+    },
+    {
+      "id": "US-357",
+      "title": "V0.27.18 hotfix: I-041 v0009 migration + I-042 deploy-marker fix",
+      "size": "S",
+      "intent": "V0.27.17 deploy revealed two regressions Sprint 41 missed. I-041 (CRITICAL): US-351 added drive_statistics.data_quality column to SQLAlchemy model (src/server/db/models.py:711) but shipped no v0009 migration -- production MariaDB INSERT fails 100% with Unknown column data_quality. US-352 backfill 0/10. Third shape of false-pass class (V0.27.7 trigger-seam mock + V0.27.16 redo + V0.27.17 schema-vs-ORM mask via Base.metadata.create_all). US-355 deploy-context drive simulator did NOT catch it because the harness uses the same create_all masking pattern (own structural blind spot). I-042 (High): deploy-server.sh Step 4.9 wrote the idempotency marker despite 0/10 backfill success -- outcome-not-observed wrapper anti-pattern (same class as the V0.27.7/V0.27.16 trigger-seam false-pass cluster, this time at the deploy-script wrapper layer). Bundle both fixes into V0.27.18 patch loop on same sprint/sprint41-bugfixes-V0.27.17 branch. Bonus (NOT V0.27.18-blocking): US-355 harness invariant refinement -- apply migrations registry-only on fresh DB; do NOT call Base.metadata.create_all on the server engine; exposes schema-vs-ORM masking class structurally so the next column-add gap trips RED in CI not in production.",
+      "priority": "high",
+      "status": "passed",
+      "dependencies": [],
+      "scope": {
+        "filesToTouch": [
+          "src/server/migrations/versions/v0009_us351_drive_statistics_data_quality_column.py (NEW -- additive ALTER TABLE adding data_quality VARCHAR(32) NOT NULL DEFAULT 'unknown'; mirror CHECK constraint from models.py:686-693; create idx_drive_statistics_quality index; idempotent (IF NOT EXISTS or registry-controlled); mirror v0008_us312_create_baselines.py structural pattern -- Migration class + upgrade() + downgrade() additively reversing)",
+          "tests/server/migrations/test_v0009_drive_statistics_data_quality.py (NEW -- at least 3 tests: migration upgrade against v0008-state DB succeeds + column appears; idempotent re-run; post-migration INSERT into drive_statistics with data_quality populated succeeds)",
+          "deploy/deploy-server.sh (UPDATE Step 4.9: parse recompute_drive_analytics CLI 'success=N | skipped=N | failed=N' output line; marker file only written when failed==0; partial/full failure WARNs + leaves marker absent so next deploy retries; pre-check + log marker presence/absence explicitly)",
+          "tests/integration/test_deploy_context_drive_simulator.py (BONUS UPDATE, NOT V0.27.18-blocking -- server-side fixture replaces Base.metadata.create_all with migrations-registry-only application; TestHarnessIntegrity gains a test asserting create_all is NOT used on the server engine; if bonus skipped, document in completionNotes the reason for deferral)"
+        ],
+        "filesToRead": [
+          "offices/pm/issues/I-041-us351-missing-v0009-migration-data-quality-column.md",
+          "offices/pm/issues/I-042-deploy-server-step49-backfill-marker-written-on-failure.md",
+          "offices/ralph/inbox/2026-05-21-from-marcus-V0.27.18-hotfix-dispatch-I-041-I-042.md",
+          "src/server/db/models.py (data_quality column at line 711 + CHECK at 686-693 + index at 692 -- SSOT for migration content)",
+          "src/server/migrations/versions/v0008_us312_create_baselines.py (structural template)",
+          "src/server/migrations/runner.py (invocation context; how v0009 will be discovered)",
+          "src/server/analytics/drive_statistics_compute.py:214 (INSERT site that needs the column)"
+        ],
+        "doNotTouch": [
+          "Pi-side code (Sprint 41 Pi work US-353/US-354 shipped clean on V0.27.17)",
+          "sprint.json stories[] (PM owns this; US-357 IS the sprint.json edit; do NOT add more stories or flip US-350..US-356 statuses)",
+          "Production MariaDB schema directly via ALTER on chi-srv-01 (the migration is the canonical path; deploy-server.sh Step 4.5 runs the migration)",
+          "Existing migrations v0001-v0008 (additive only -- new v0009 file)"
+        ]
+      },
+      "groundingRefs": [
+        {
+          "path": "offices/pm/issues/I-041-us351-missing-v0009-migration-data-quality-column.md",
+          "value": "CRITICAL: US-351 missing v0009 migration; backfill 0/10; same false-pass class as V0.27.7/V0.27.16; full RCA + Why-US-355-didn't-catch-it section"
+        },
+        {
+          "path": "offices/pm/issues/I-042-deploy-server-step49-backfill-marker-written-on-failure.md",
+          "value": "High: deploy-script outcome-not-observed wrapper -- marker written despite total failure; same anti-pattern class at wrapper layer"
+        },
+        {
+          "path": "src/server/db/models.py",
+          "value": "lines 711 + 686-693 + 692: data_quality column + CHECK constraint + index definitions (SSOT for migration content; copy from here not from memory)"
+        },
+        {
+          "path": "src/server/migrations/versions/v0008_us312_create_baselines.py",
+          "value": "Structural template for v0009 migration class shape + upgrade/downgrade pattern"
+        }
+      ],
+      "acceptance": [
+        "Pre-flight: cat src/server/db/models.py lines 706-715 + lines 686-693 to extract the authoritative data_quality column definition + CHECK constraint name + allowed enum values + index name. Document in completionNotes as the migration's authoritative inputs (NOT reconstructed from memory).",
+        "v0009 migration file exists at src/server/migrations/versions/v0009_us351_drive_statistics_data_quality_column.py mirroring v0008's class shape (Migration class, version field, upgrade(), downgrade()); adds data_quality column with CHECK constraint and index per models.py SSOT; downgrade reverses additively (drops column/index/constraint).",
+        "tests/server/migrations/test_v0009_drive_statistics_data_quality.py exists with at least 3 tests: (a) migration upgrade against v0008-state DB succeeds + column appears; (b) migration upgrade is idempotent (re-run produces no error); (c) post-migration INSERT into drive_statistics with data_quality populated succeeds via the compute writer path.",
+        "deploy-server.sh Step 4.9 parses recompute_drive_analytics CLI 'success=N | skipped=N | failed=N' output; marker file only written when failed==0; partial/full failure WARNs + leaves marker absent. Static-content test in tests/deploy/test_deploy_server.py asserts marker write is gated on failure==0.",
+        "(BONUS) tests/integration/test_deploy_context_drive_simulator.py server-side fixture replaces Base.metadata.create_all with migrations-registry-only application; TestHarnessIntegrity gains a test asserting create_all is NOT used on the server engine. If bonus deferred, completionNotes documents reason + files a TD-XXX with PM."
+      ],
+      "verification": [
+        "pytest tests/server/migrations/test_v0009_drive_statistics_data_quality.py -v -- all migration tests pass",
+        "pytest tests/server/analytics/ -v -- existing compute tests still pass (no regression)",
+        "pytest tests/deploy/test_deploy_server.py -v -- Step 4.9 marker-on-failure logic asserted (or wherever deploy-server tests live; check existing test file structure)",
+        "pytest -m 'not slow' -- full not-slow suite passes (regression gate)",
+        "python -c 'from src.server.migrations.runner import discover_migrations; print([m.version for m in discover_migrations()])' -- v0009 discovered alongside v0001-v0008 (adjust import name per actual runner API)"
+      ],
+      "invariants": [
+        "Additive only: v0009 ADDS data_quality column; does NOT alter or drop existing columns or constraints",
+        "Default value 'unknown' for backfill safety on pre-V0.27.18 rows (existing drive_statistics rows from drives 1-10 had no data_quality classification at write time)",
+        "deploy-server.sh marker-on-failure-check applies to Step 4.9 ONLY; do NOT touch Step 4.6 stranded-row backfill marker semantics (different pattern, already correct per US-327)",
+        "US-351 + US-352 deliverables shipped in V0.27.17 are NOT reverted; v0009 makes production schema match what US-351's code expected",
+        "Pattern note: outcome-not-observed wrapper anti-pattern (I-042) is same tokenization as V0.27.7/V0.27.16 trigger-seam false-pass cluster at a different layer (deploy-script wrapper); fix should not regress to another what-not-outcome predicate"
+      ],
+      "feedback": {
+        "filesActuallyTouched": [
+          "src/server/migrations/versions/v0009_us351_drive_statistics_data_quality_column.py (NEW -- additive ALTER TABLE migration mirroring v0008 structural template; VERSION='0009'; ADD COLUMN data_quality VARCHAR(16) NOT NULL DEFAULT 'full' + ADD CONSTRAINT ck_drive_statistics_data_quality CHECK enum + ADD INDEX idx_drive_statistics_quality; three-phase apply() with per-DDL INFORMATION_SCHEMA probes (probeServerColumns / CHECK_CONSTRAINTS probe / indexExists) so a partial prior-run state converges; tolerates 'duplicate constraint' on the CHECK to absorb pre-V0.27.18 partial rollbacks; post-condition column probe raises SchemaProbeError on silent mysql session-context bug. SSOT pin to src/server/db/models.py DRIVE_STATISTICS_DATA_QUALITY_VALUES + DRIVE_STATISTICS_DATA_QUALITY_DEFAULT so a future ORM-side change (e.g. adding 'replay' for Atlas Q2 scenario 3 deferred V0.28+) trips the test_addCheckDdlAllowedValuesMatchOrm guard.)",
+          "src/server/migrations/__init__.py (UPDATE -- imported MIGRATION as _V0009 from v0009 module + appended _V0009 to ALL_MIGRATIONS tuple in ascending order; modification history row appended for US-357 / I-041 close)",
+          "tests/server/test_migration_0009_drive_statistics_data_quality.py (NEW -- 29 tests across 6 classes mirroring tests/server/test_migration_0008_baselines.py FakeRunner shape: TestModuleExports (8: version=0009, US-357 in description, MIGRATION callable, in ALL_MIGRATIONS, ascending tail, constants match ORM tablename/colname, CHECK constraint name matches ORM, index name matches ORM), TestDdlMirrorsOrm (7: ALTER TABLE ADD COLUMN shape, ORM String(16) -> VARCHAR(16), NOT NULL, DEFAULT 'full' matches ORM default not the dispatch's 'unknown', CHECK enum values match ORM tuple, CHECK constraint name pinned, INDEX name pinned), TestApplyColumnMissing (4: emits ADD COLUMN + ADD CHECK + ADD INDEX in order against the I-041 production state script), TestApplyFullyMigrated (2: idempotent re-run emits zero ALTERs + still runs pre/post column probes), TestFailureModes (4: missing table raises MigrationError, ADD COLUMN failure raises MigrationError, post-probe missing column raises SchemaProbeError, duplicate CHECK constraint is benign), TestProductionFailureModeDiscriminator (3: I-041 production state produces exactly one ADD COLUMN; only drive_statistics table touched; post-migration column verified via post-condition probe). Hermetic -- no SSH, no MariaDB; FakeRunner replays INFORMATION_SCHEMA + ALTER outcomes per the production sequence.)",
+          "deploy/deploy-server.sh (UPDATE Step 4.9 I-042 fix -- marker write decoupled from CLI exit code; new BACKFILL_OUTPUT capture via $(ssh ... 2>&1) followed by grep+sed parse of the CLI's existing 'done | success=N | skipped=N | failed=N' log line (emitted by src/server/cli/recompute_drive_analytics.py:253 -- format pinned by the new tests); marker write gated on BACKFILL_EXIT==0 AND BACKFILL_FAILED==0 AND BACKFILL_SUCCESS>=1 so a 10/10 failure (the exact V0.27.17 production state) leaves the marker absent + next deploy retries; WARN log emits parsed counts on failure so operators see WHY the marker was withheld; degenerate parse-failure fallback sets BACKFILL_FAILED=999 to force the failure branch. Best-effort discipline preserved: no exit 1 on failure -- nightly server-analytics-batch.timer (Step 4.8) still retries via --all-stale. Provenance citations: I-042 + US-357 added to the Step 4.9 comment block; existing US-352 / B-104 + Step 4.6 idiom references preserved.)",
+          "tests/deploy/test_deploy_server_backfill_drives_11_20.py (UPDATE -- 7 new I-042 gate tests appended to the existing 13 tests: test_backfillStep_referencesI042AndUs357InCommentary (provenance pin), test_backfillStep_capturesCliOutputForOutcomeParse (BACKFILL_OUTPUT capture invariant), test_backfillStep_parsesSuccessAndFailedFromCliSummary (parse pattern pin), test_backfillStep_markerWriteIsGatedOnFailedZero (load-bearing: enclosing-if must reference failed -eq 0), test_backfillStep_markerWriteAlsoRequiresAtLeastOneSuccess (degenerate zero-input belt-and-suspenders), test_backfillStep_logsParsedCountsOnFailure (failure-branch WARN must include the parsed counts), test_backfillStep_markerAbsentOnTotalFailureNotWritten (structural close: every marker-write must be inside a failed-count gate so the I-042 false-pass class is structurally impossible to re-introduce). New _backfillBlock() helper scopes assertions to the Step 4.9 block to avoid false matches on file header or other steps. Modification history row appended for US-357 V0.27.18.)",
+          "tests/integration/test_deploy_context_drive_simulator.py (BONUS UPDATE -- serverEngine fixture docstring extended to document the create_all limitation + cite TD-055 + reference the I-041 schema-vs-ORM-divergence class; full migration-registry refactor deferred to TD-055 because the production migration runner SSHes to chi-srv-01 + uses MariaDB-specific DDL that SQLite cannot execute. Two new TestHarnessIntegrity tests close the gap structurally without the infrastructure refactor: test_serverEngineFixture_documentsCreateAllLimitation (pins the docstring caveat so the gap stays visible -- tripwire for accidental deletion) + test_harnessTooling_canCatchSchemaVsOrmDivergence_synthetic (proves the harness's seam visibility IS sound by building a separate SQLite engine, DROPping + re-CREATEing drive_statistics with the pre-v0009 historical shape, asserting the production ORM INSERT raises OperationalError mentioning 'data_quality' = exact I-041 symptom, then ALTER-ADDing the column to simulate v0009 + asserting the same INSERT now succeeds). DROP TABLE + CREATE TABLE chosen over ALTER TABLE DROP COLUMN because SQLite refuses DROP COLUMN on columns referenced by a CHECK constraint. Modification history row appended for US-357 V0.27.18 bonus.)",
+          "offices/pm/tech_debt/TD-055-us355-harness-uses-create-all-masks-migration-vs-orm-gaps.md (NEW -- documents the bonus deferral; cites the I-041 root cause + the two compensating tests shipped in US-357 V0.27.18; proposes Option A (testcontainers + real MariaDB; preferred structural close) and Option B (per-migration SQLite-portable DDL fallback; bandaid); acceptance criteria for close + cross-links to I-041 / US-357 / US-355 / B-104.)"
+        ],
+        "grounding": [
+          {
+            "claim": "v0009 ALTER TABLE shape matches the SQLAlchemy DriveStatistic ORM exactly per models.py:660-718 SSOT",
+            "evidence": "tests/server/test_migration_0009_drive_statistics_data_quality.py::TestDdlMirrorsOrm 7/7 GREEN -- locks: ALTER TABLE ADD COLUMN (additive, no DROP/RENAME); VARCHAR(16) (ORM String(16) introspected); NOT NULL (ORM nullable=False); DEFAULT 'full' (ORM server_default = DRIVE_STATISTICS_DATA_QUALITY_DEFAULT = 'full', NOT the dispatch note's 'unknown' which would violate the CHECK enum); CHECK enum reads ORM tuple DRIVE_STATISTICS_DATA_QUALITY_VALUES so a future addition trips the test; CHECK constraint name ck_drive_statistics_data_quality matches CheckConstraint.name; INDEX idx_drive_statistics_quality matches Index name. Per Sprint Rule 2 (Ground Every Number; never fabricate) -- chose SSOT over dispatch note because the dispatch's 'unknown' default + 'VARCHAR(32)' would themselves trigger constraint violations on the very first defaulted row."
+          },
+          {
+            "claim": "v0009 idempotent on re-run + post-condition probe catches silent mysql session-context bugs",
+            "evidence": "tests/server/test_migration_0009_drive_statistics_data_quality.py::TestApplyFullyMigrated::test_emitsNoAlterTable -- when column + CHECK + index all already present, apply() emits zero ALTERs (3 INFORMATION_SCHEMA probes + 0 ALTERs); ::test_runsTwoColumnProbesPreAndPost -- pre + post probes always run so a stale session context surfaces consistently; ::TestFailureModes::test_postProbeMissingRaisesSchemaProbeError -- when ALTER returns 0 but the post-probe still reports the column missing, SchemaProbeError raises (matches v0002/v0004/v0005/v0008 pattern)"
+          },
+          {
+            "claim": "Migration registers cleanly in ALL_MIGRATIONS tuple and the registry runner validates",
+            "evidence": "tests/server/test_migration_0009_drive_statistics_data_quality.py::TestModuleExports::test_inAllMigrations + test_appendedAtEnd 2/2 GREEN; tests/server/test_migrations.py 36/36 GREEN (full registry validation suite; zero regressions from the v0009 import addition)"
+          },
+          {
+            "claim": "I-041 production state replay produces exactly one ADD COLUMN against drive_statistics + nothing else",
+            "evidence": "tests/server/test_migration_0009_drive_statistics_data_quality.py::TestProductionFailureModeDiscriminator 3/3 GREEN: I-041 production state script produces exactly one ADD COLUMN data_quality; every ALTER TABLE in the run targets drive_statistics only (scope-locked, no collateral table changes); post-condition probe confirms data_quality present so the compute writer's INSERT at src/server/analytics/drive_statistics_compute.py:214 would succeed after v0009 lands"
+          },
+          {
+            "claim": "deploy-server.sh Step 4.9 marker write is structurally gated on parsed failed-count==0 + success>=1 (I-042 close)",
+            "evidence": "tests/deploy/test_deploy_server_backfill_drives_11_20.py::test_backfillStep_markerWriteIsGatedOnFailedZero + test_backfillStep_markerWriteAlsoRequiresAtLeastOneSuccess + test_backfillStep_markerAbsentOnTotalFailureNotWritten 3/3 GREEN -- walk backwards from every marker-write line ('printf BACKFILL_COMPLETE_V0_27_17 ...') to the nearest enclosing 'if' and assert the conditional references both BACKFILL_FAILED -eq 0 AND BACKFILL_SUCCESS -ge 1. A future regression that re-introduces the I-042 false-pass (CLI exits 0 with 10/10 failures, marker still writes) trips RED here structurally."
+          },
+          {
+            "claim": "Step 4.9 captures CLI output + parses success/failed from the CLI's existing summary line format",
+            "evidence": "tests/deploy/test_deploy_server_backfill_drives_11_20.py::test_backfillStep_capturesCliOutputForOutcomeParse + test_backfillStep_parsesSuccessAndFailedFromCliSummary 2/2 GREEN -- assert $(ssh) capture idiom + the script greps for 'success=' AND 'failed=' tokens. CLI log format pinned at src/server/cli/recompute_drive_analytics.py:253 ('recompute_drive_analytics | done | success=%d | skipped=%d | failed=%d'); the test pin catches CLI-format drift early."
+          },
+          {
+            "claim": "Failure-branch WARN reports parsed counts so operators see WHY the marker was withheld",
+            "evidence": "tests/deploy/test_deploy_server_backfill_drives_11_20.py::test_backfillStep_logsParsedCountsOnFailure GREEN -- locates every 'else' branch on the marker gate + asserts the next 5 lines include a WARN line referencing parsed counts (BACKFILL_FAILED / BACKFILL_SUCCESS / 'failed' / 'success'). deploy/deploy-server.sh failure branch emits: 'WARN: drives-11-20 backfill did not complete cleanly (exit=N success=N skipped=N failed=N); marker NOT written -- next deploy will retry. Nightly server-analytics-batch.timer (Step 4.8) will also retry via --all-stale on its next tick.'"
+          },
+          {
+            "claim": "Existing 13 backfill-step tests preserved (zero regressions from the I-042 fix)",
+            "evidence": "tests/deploy/test_deploy_server_backfill_drives_11_20.py 20/20 GREEN (13 pre-existing US-352 tests + 7 new US-357 I-042 tests); pytest tests/deploy/ -v 160/160 GREEN (zero regressions across all deploy tests including the test_deploy_server_migration_gate.py + sibling backfill + drain forensics + service install suites)"
+          },
+          {
+            "claim": "US-355 harness bonus shipped + TD-055 filed for the deeper refactor",
+            "evidence": "tests/integration/test_deploy_context_drive_simulator.py 8/8 GREEN (6 pre-existing US-355 tests + 2 new US-357 bonus tests). test_serverEngineFixture_documentsCreateAllLimitation asserts the serverEngine fixture docstring cites TD-055 + create_all + the I-041 / schema-vs-ORM-divergence class. test_harnessTooling_canCatchSchemaVsOrmDivergence_synthetic builds a separate SQLite engine, DROPs + re-CREATEs drive_statistics with the pre-v0009 historical shape, attempts the production ORM INSERT through Session + DriveStatistic, asserts OperationalError with 'data_quality' in the message (I-041 symptom), then ALTER-ADDs the column + asserts the same INSERT succeeds. TD-055 documents the deferral rationale (production migration runner SSHes to MariaDB + uses MariaDB-specific DDL that SQLite cannot execute) + Option A (testcontainers; preferred) and Option B (SQLite-portable DDL; bandaid) for future grooming. SQLite refuses ALTER TABLE DROP COLUMN on CHECK-constraint-referenced columns; the test uses DROP TABLE + CREATE TABLE with the historical shape as the workaround."
+          },
+          {
+            "claim": "Full server suite + harness + deploy suites GREEN with zero regressions; ruff clean on all touched files",
+            "evidence": "pytest tests/server/test_migration_0009_drive_statistics_data_quality.py 29/29 GREEN in 17s; pytest tests/server/test_migrations.py tests/server/test_migration_000{4,5,8}*.py tests/server/analytics/ 138/138 GREEN in 55s; pytest tests/deploy/ 160/160 GREEN in 164s; pytest tests/integration/test_deploy_context_drive_simulator.py 8/8 GREEN in 37s; ruff check on all 5 touched files (v0009 migration source + __init__.py + 3 test files) -> 'All checks passed!' after one auto-fix (import-order on the new test module)"
+          },
+          {
+            "claim": "Pi-side untouched per Sprint 41 Pi work US-353/US-354 V0.27.17 ship",
+            "evidence": "git diff sprint/sprint40-bugfixes-V0.27.16..HEAD -- src/pi/ tests/pi/ shows zero changes from this V0.27.18 hotfix iteration (the existing src/pi/diagnostics/boot_progress.py changes are the US-353 land from prior Sprint 41 iteration; US-357 scope-fence honored: server + deploy only)"
+          },
+          {
+            "claim": "Production schema-vs-ORM divergence (I-041 root cause) structurally closed: deploy Step 4.5 picks up v0009 on next chi-srv-01 deploy + Step 4.9 backfill retries OUTCOME-successfully + marker writes only on actual success",
+            "evidence": "Sequence the next /sprint-deploy-pm Phase 5+ will replay: Step 4.5 'apply_server_migrations --run-all' detects pending v0009 (new in registry), applies ALTER TABLE drive_statistics ADD COLUMN data_quality + CHECK + INDEX against chi-srv-01 MariaDB, records '0009' in schema_migrations; Step 4.9 retries the backfill against drives 11-20 (marker absent because V0.27.17 left it absent post-I-042 fix would have been if applied earlier... currently it WAS written despite failure per I-041 RCA -- PM workaround per I-042 dispatch is to manually rm the marker before Phase 5+ redeploy); CLI INSERTs succeed because data_quality column now exists; CLI summary line reports 'success=10 skipped=0 failed=0'; marker gate satisfies failed==0 AND success>=1, writes BACKFILL_COMPLETE_V0_27_17_DRIVES_11_20=true marker; subsequent re-deploys skip Step 4.9 idempotently."
+          }
+        ],
+        "completionNotes": "V0.27.18 hotfix LANDED (3 deliverables + 1 bonus). Three structural fixes shipped on sprint/sprint41-bugfixes-V0.27.17 branch per /sprint-deploy-pm Phase-5 drill-revealed-regression pattern: (1) src/server/migrations/versions/v0009_us351_drive_statistics_data_quality_column.py + ALL_MIGRATIONS registration -- additive ALTER TABLE adding the column US-351 added to the ORM but never to a migration; SSOT-pinned to src/server/db/models.py DriveStatistic class with explicit SSOT-vs-dispatch reconciliation (chose ORM's String(16) + DEFAULT 'full' over dispatch's VARCHAR(32) + DEFAULT 'unknown' because the dispatch values would themselves violate the CHECK enum on the first defaulted row -- Sprint Rule 2 'Ground Every Number' applied); 29 hermetic FakeRunner-based tests across 6 classes mirroring the v0008 template. (2) deploy/deploy-server.sh Step 4.9 outcome-not-observed gate fix -- BACKFILL_OUTPUT captures CLI stdout+stderr via $(ssh ... 2>&1), grep+sed parses the existing 'done | success=N | skipped=N | failed=N' summary line (CLI log format at recompute_drive_analytics.py:253), marker write gated on BACKFILL_EXIT==0 AND BACKFILL_FAILED==0 AND BACKFILL_SUCCESS>=1 so a future 10/10 failure leaves the marker absent + next deploy retries; failure-branch WARN reports parsed counts so operators see WHY the marker was withheld; degenerate parse-failure fallback sets BACKFILL_FAILED=999 to force the failure branch; best-effort discipline preserved (no exit 1; nightly server-analytics-batch.timer Step 4.8 still retries via --all-stale). 7 new I-042 static-content gate tests appended to the existing 13 backfill-step tests (zero regressions). (3) BONUS US-355 harness gap close (partial; full structural fix deferred to TD-055): serverEngine fixture docstring extended to document the create_all limitation + cite TD-055 + the I-041 / schema-vs-ORM divergence class; 2 new TestHarnessIntegrity tests close the gap structurally without the infrastructure refactor (test_serverEngineFixture_documentsCreateAllLimitation pins the docstring caveat = tripwire for accidental deletion; test_harnessTooling_canCatchSchemaVsOrmDivergence_synthetic builds a separate engine, DROP+CREATE drive_statistics with pre-v0009 shape, asserts production ORM INSERT raises OperationalError mentioning 'data_quality' = exact I-041 symptom, then ALTER-ADDs the column to simulate v0009 + asserts INSERT succeeds = proves the harness seam visibility IS sound; SQLite refuses DROP COLUMN on CHECK-referenced columns so we DROP+CREATE TABLE instead). (4) TD-055 filed documenting the deferral rationale (production migration runner uses MariaDB DDL via SSH; SQLite cannot execute) + Option A (testcontainers + real MariaDB; preferred) and Option B (per-migration SQLite-portable DDL; bandaid) for V0.28+ grooming. Verification gates GREEN: pytest tests/server/test_migration_0009_drive_statistics_data_quality.py 29/29; pytest tests/server/ + tests/deploy/ + harness 138+160+8 GREEN (zero regressions across full not-slow surface; final regression-gate suite also GREEN); ruff All checks passed on all 5 touched files after one auto-fix. PM next: /sprint-deploy-pm Phase 5+ (RELEASE_VERSION V0.27.17 -> V0.27.18 + manual `ssh chi-srv-01 'rm -f /mnt/projects/O/OBD2v2/.backfill-V0.27.17-drives-11-20-complete'` per I-042 workaround note BEFORE redeploy + redeploy + verify Phase 7 + Phase 8 summary). Production schema-vs-ORM divergence (I-041 root cause) is now structurally impossible to ship undetected at the deploy-script wrapper level (I-042 close); the underlying detection gap (US-355 harness) is structurally visible to the next reader via the documented limitation + TD-055."
+      },
+      "passes": true
+    }
+  ],
+  "validation": {
+    "bigDefinitionOfDone": [
+      "US-350 IRL: deploy V0.27.17 -> CIO does a real drive -> server compute path runs (overnight batch OR on-demand invocation) -> drive_summary row for that drive has start_time / end_time / duration_seconds / row_count / is_real NON-NULL + arithmetically consistent with realtime_data MIN/MAX/COUNT",
+      "US-351 IRL: deploy V0.27.17 -> CIO does a real drive -> server compute path runs -> server-side drive_statistics has >=1 row per parameter_name present in realtime_data with sensible min/max/avg values; Pi-side drive_statistics table NOT PRESENT post-migration (idempotent drop confirmed)",
+      "US-352 IRL: post-deploy on-demand recompute over drives 11-20 produces drive_summary NON-NULL computed fields + drive_statistics rows for all 10 drives; idempotent re-run produces zero diff",
+      "US-353 IRL: post-deploy reboot does NOT trip maxTrailBytes guard (trail trims correctly on clean shutdowns post-F-8 fix; guard interaction resolved)",
+      "US-354 IRL: post-deploy verification -- ps -o pid,lstart,cmd -p $(pidof -s eclipse-powerwatch) AND $(pidof -s eclipse-obd) both show STARTED time later than deploy start; deploy log shows daemon-reload + service restart sequence for BOTH services; .deploy-version bump occurs AFTER restart-verification of both",
+      "US-355: harness applied to the V0.27.7 OR V0.27.16 deployed code MUST produce RED for the US-326 / US-348 (drive_summary NULL fields) and US-328 / US-349 (drive_statistics zero rows) conditions -- empirical proof the harness would have caught the 3-cycle false-pass class. Same harness applied to V0.27.17 post-Sprint-41-land produces GREEN for the same scenarios. Atlas + Argus + Ralph + Marcus sign-off on the harness design + the V0.27.7/V0.27.16 RED scenario coverage.",
+      "US-356 design-gate: Atlas sign-off on specs/architecture.md amendment documenting B-104 Step 1 data-pipeline architecture (server reads raw realtime_data + Pi event logs + computes derived analytics; Pi-side writer retirement scope; trigger seam shift; idempotent recompute principle) per PM Rule 10 (in-sprint, not follow-up)",
+      "US-346 Atlas T3 sign-off from Sprint 40: STILL PENDING -- carried forward into Sprint 41 closeout; Tester /sprint-validated for Sprint 40 unblocks on Atlas sign-off + Sprint 41 IRL acceptance",
+      "Chain unblock: V0.27.1..V0.27.17 ready for /chain-validated merge to main per Mike 2026-05-08/10 chain-end-merge rule"
+    ],
+    "validationMethod": "Atlas + CIO + Argus drill cadence (Sprint 39/40 pattern). Atlas pre-registers per-task gate criteria at Ralph dispatch. Real-drive round-trip + DB read-back is the gate (I-040 discipline preserved). Sprint 41 closes the discipline gap structurally via US-355.",
+    "validatesFeatures": [
+      "F-005",
+      "F-007"
+    ],
+    "currentVersion": "V0.27.17",
+    "validatedAt": null,
+    "validatedBy": null
+  },
+  "updatedAt": "2026-05-21",
+  "updatedBy": "Marcus (PM) Session 42 -- V0.27.18 patch loop story added per CIO ratification 2026-05-21 (I-041 + I-042 deploy-revealed regressions)"
+}

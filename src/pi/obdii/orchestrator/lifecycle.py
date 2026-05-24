@@ -9,6 +9,11 @@
 # ================================================================================
 # Date          | Author       | Description
 # ================================================================================
+# 2026-05-15    | Plan (T10)   | Cutover: removed in-process _recordStartupLog/
+#               |              | recordBootReason wiring (US-287). startup_log
+#               |              | is now written by boot-progress-arm.service
+#               |              | (honest instrument, spec 2026-05-15 §4.5). Old
+#               |              | journal-scan canary deleted.
 # 2026-04-14    | Ralph Agent  | Sweep 5 Task 2: extracted from orchestrator.py
 #               |              | (init and shutdown order preserved per TD-003)
 # 2026-04-20    | Ralph (Rex)  | US-207 TD-015: log hardware-import failures
@@ -212,6 +217,32 @@
 #               |              | _verifyOrchestratorCallbackWiring.
 #               |              | Closes the 11-hour silent-daemon window
 #               |              | observed during 2026-05-08 engine-on test.
+# 2026-05-21    | Rex (US-349) | Sprint 40 / V0.27.16, I-040 / US-328-redo:
+#               |              | new _initializeDriveStatisticsRecorder
+#               |              | mirrors the US-206 SummaryRecorder shape
+#               |              | (lazy import + DI + soft-failure init).
+#               |              | Called from _initializeAllComponents right
+#               |              | after _initializeSummaryRecorder so both
+#               |              | drive-metadata writers wire in the same
+#               |              | phase.  Opt-out via pi.driveStatistics.
+#               |              | enabled=false (defaults true).  V0.27.7
+#               |              | US-328 shipped only the schema (Option C
+#               |              | "table only, no writer"); this wiring +
+#               |              | the new src/pi/obdii/drive_statistics
+#               |              | module supply the missing writer that
+#               |              | drives 11-18 + fresh real drives 17+18
+#               |              | (2026-05-20) showed empirically dead.
+# 2026-05-21    | Rex (US-351) | Sprint 41 / V0.27.17, B-104 Step 1b:
+#               |              | REMOVE _initializeDriveStatisticsRecorder
+#               |              | + its call from _initializeAllComponents.
+#               |              | Pi-side drive_statistics table retired
+#               |              | entirely (CIO 2026-05-21 ratification);
+#               |              | server is sole writer now via
+#               |              | src/server/analytics/drive_statistics_compute.
+#               |              | Argus's V0.27.16 RCA (DriveDetector
+#               |              | drive-end signal doesn't fire on
+#               |              | sequencer-driven termination) is moot:
+#               |              | server reads raw realtime_data directly.
 # ================================================================================
 ################################################################################
 
@@ -234,8 +265,6 @@ import threading
 import time
 from collections.abc import Callable
 from typing import Any
-
-from pi.diagnostics.boot_reason import recordBootReason
 
 from ..reconnect_loop import runReconnectHeartbeat
 from .types import EXIT_CODE_FORCED, ComponentInitializationError, ShutdownState
@@ -294,6 +323,93 @@ COMPONENT_INIT_ORDER = [
 
 # Shutdown is the reverse of init — components depending on others come down first
 COMPONENT_SHUTDOWN_ORDER = list(reversed(COMPONENT_INIT_ORDER))
+
+
+class _PowerSourceUiBridge:
+    """SS-T4 B1: bridges the PowerSourceProvider SSOT to the PowerMonitor
+    UI / ``power_log`` status surface.
+
+    Atlas ruling 2026-05-19 (B1). The retired ``UpsMonitor.getPowerSource``
+    was event-driven (its own polling thread detected transitions);
+    ``PowerSourceProvider`` is a stateless instantaneous read. This adapter
+    supplies the missing driver: a dedicated daemon thread that polls the
+    provider at a *validated config* cadence (``pi.powerWatch.uiPollSec``)
+    and, on a present<->lost transition, calls the sink
+    (``PowerMonitor.checkPowerStatus(onAcPower)``). External power present
+    maps to ``onAcPower=True``; lost maps to ``False``.
+
+    It is a status surface, NOT the safety trigger (that is the T5
+    GPIO6+smoothing loop, a separate failure domain). Power source
+    originates ONLY from the injected provider -- never UpsMonitor (SSOT).
+    A provider/sink fault is swallowed: a status surface must never be able
+    to take anything down, and the next good read still transitions.
+    """
+
+    def __init__(
+        self,
+        *,
+        provider: Any,
+        sink: Callable[[bool], Any],
+        pollSec: float,
+    ) -> None:
+        """Args:
+            provider: PowerSourceProvider-shaped (``isExternalPowerPresent()``).
+            sink: Called ``sink(onAcPower: bool)`` on each transition
+                (typically ``PowerMonitor.checkPowerStatus``).
+            pollSec: Poll cadence (seconds) -- a validated config value,
+                never a literal.
+        """
+        self._provider = provider
+        self._sink = sink
+        self._pollSec = float(pollSec)
+        self._lastPresent: bool | None = None
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+
+    def pollOnce(self) -> bool:
+        """Read the provider once; on the first read or a present<->lost
+        transition, feed the sink. Returns True iff the sink fired this
+        call. Never raises out -- a provider or sink fault is logged and
+        swallowed so the bridge thread (a status surface) cannot die."""
+        try:
+            present = bool(self._provider.isExternalPowerPresent())
+        except Exception as e:  # noqa: BLE001 -- status surface must not die
+            logger.error("PowerSourceUiBridge provider read failed: %s", e)
+            return False
+        if self._lastPresent is not None and present == self._lastPresent:
+            return False
+        self._lastPresent = present
+        try:
+            self._sink(present)
+        except Exception as e:  # noqa: BLE001 -- ditto
+            logger.error("PowerSourceUiBridge sink failed: %s", e)
+            return False
+        return True
+
+    def _loop(self) -> None:
+        logger.info(
+            "PowerSourceUiBridge started (uiPollSec=%.1f)", self._pollSec
+        )
+        while not self._stop.is_set():
+            self.pollOnce()
+            self._stop.wait(self._pollSec)
+
+    def start(self) -> None:
+        """Start the dedicated daemon poll thread (idempotent)."""
+        if self._thread is not None:
+            return
+        self._stop.clear()
+        self._thread = threading.Thread(
+            target=self._loop, name="PowerSourceUiBridge", daemon=True
+        )
+        self._thread.start()
+
+    def stop(self) -> None:
+        """Stop the poll thread (safe to call if never started)."""
+        self._stop.set()
+        if self._thread is not None and self._thread.is_alive():
+            self._thread.join(timeout=5.0)
+        self._thread = None
 
 
 class LifecycleMixin:
@@ -361,11 +477,12 @@ class LifecycleMixin:
         12. backupManager - backup system (last, non-critical to core operation)
         """
         self._initializeDatabase()
-        # US-287: write the startup_log row right after database init so it
-        # lands regardless of the OBD-connect outcome (US-244 / US-284
-        # blocker territory).  Earliest call site with DB access; failures
-        # are swallowed so a journalctl glitch never crashes the boot path.
-        self._recordStartupLog()
+        # T10 cutover (2026-05-15): the in-process startup_log writer
+        # (_recordStartupLog -> recordBootReason) was REMOVED here.
+        # startup_log is now written by the boot-progress-arm.service
+        # systemd unit (honest instrument, spec 2026-05-15 §4.5); the
+        # old journal-scan canary is deleted.  Single authoritative
+        # writer -- no dual-writer race on the boot_id PK.
         self._initializeProfileManager()
         self._initializeConnection()
         self._initializeVinDecoder()
@@ -380,6 +497,10 @@ class LifecycleMixin:
         self._initializeProfileSwitcher()
         self._initializeDtcLogger()
         self._initializeSummaryRecorder()
+        # US-351 / B-104 Step 1b: DriveStatisticsRecorder wiring removed.
+        # Server is sole writer of drive_statistics now -- the Pi-side
+        # table is dropped on first boot post-V0.27.17 (see
+        # ensureDriveStatisticsRetired in database_schema.py).
         self._initializeSyncClient()
         self._initializePowerMonitor()
         self._initializeUpdateChecker()
@@ -400,31 +521,6 @@ class LifecycleMixin:
                 f"Database initialization failed: {e}",
                 component='database'
             ) from e
-
-    def _recordStartupLog(self) -> None:
-        """Write one ``startup_log`` row for the current Pi boot (US-287).
-
-        Best-effort wiring of the US-263 boot-reason detector + US-283
-        schema-pinned writer.  Called from
-        :meth:`_initializeAllComponents` immediately after
-        :meth:`_initializeDatabase` and before any OBD-connect path so
-        the row lands regardless of the US-244 / US-284 connect-blocker
-        territory.
-
-        Idempotent at the SQL layer: ``startup_log.boot_id`` is the PK
-        and the writer uses ``INSERT OR IGNORE``, so an orchestrator
-        restart on the same boot is a no-op.
-
-        Per the story invariants ("If journalctl is unavailable or
-        returns malformed output -- log error and skip; do NOT crash
-        boot path"), all exceptions are swallowed at WARNING level.
-        """
-        if self._database is None:
-            return
-        try:
-            recordBootReason(self._database)
-        except Exception as exc:
-            logger.warning("Startup-log write skipped: %s", exc)
 
     def _initializeProfileManager(self) -> None:
         """Initialize the profile manager component."""
@@ -866,7 +962,7 @@ class LifecycleMixin:
     def _verifyReconnectDaemonAlive(self) -> None:
         """V0.24.1-style boot canary: prove the heartbeat daemon was spawned.
 
-        Mirrors :meth:`_verifyOrchestratorCallbackWiring`.  Called synchronously
+        Called synchronously
         immediately after :meth:`_spawnReconnectHeartbeatDaemon` so the live
         thread state is observable.  ERROR-logs (does NOT raise) when the
         daemon is missing or already dead AND the orchestrator is in PENDING
@@ -1163,7 +1259,6 @@ class LifecycleMixin:
                 batteryHealthRecorder=batteryHealthRecorder,
                 powerLogWriter=powerLogWriter,
             )
-            self._wirePowerDownOrchestratorCallbacks()
             logger.info("HardwareManager initialized successfully")
         except Exception as e:
             logger.warning(f"Failed to initialize hardwareManager: {e}")
@@ -1222,155 +1317,6 @@ class LifecycleMixin:
             )
             return None
 
-    def _wirePowerDownOrchestratorCallbacks(self) -> None:
-        """US-216 / US-225: attach concrete stage-behavior callbacks.
-
-        The orchestrator is constructed inside hardware_manager with no
-        stage callbacks.  This method reaches in post-init and binds the
-        four stage behaviors the Spool Session-6 directive + TD-034
-        defined:
-
-        * **WARNING@30%** -- set ``pi_state.no_new_drives=true`` so
-          any cranking transition during the drain event proceeds
-          id-less; trigger :meth:`SyncClient.forcePush` to flush
-          pending deltas before poweroff may fire.
-        * **IMMINENT@25%** -- :meth:`ApplicationOrchestrator.pausePolling`
-          to stop new Mode 01 queries; :meth:`DriveDetector.forceKeyOff`
-          to close any active drive with a ``'power_imminent'`` reason
-          code so analytics see a first-class termination.
-        * **AC-restore** -- clear ``no_new_drives`` and
-          :meth:`ApplicationOrchestrator.resumePolling` so the
-          collector reattaches its polling thread.  BT reconnect is
-          owned by US-211's own path (adapter-reachable probe).
-
-        Each callback is wrapped with broad exception capture so a
-        raising stage behavior (missing DB, transport failure, dead
-        data logger) never blocks the orchestrator from escalating
-        to TRIGGER.  SyncClient is constructed lazily at WARNING
-        time so the companion-service config can be disabled without
-        breaking boot.
-        """
-        if self._hardwareManager is None:
-            return
-        orch = getattr(self._hardwareManager, 'powerDownOrchestrator', None)
-        if orch is None:
-            return
-
-        def onWarning() -> None:
-            logger.warning(
-                "PowerDownOrchestrator WARNING stage fired -- "
-                "setting no_new_drives gate + forcing sync flush"
-            )
-            self._setNoNewDrives(True)
-            self._forceSyncPush('power_warning')
-
-        def onImminent() -> None:
-            logger.warning(
-                "PowerDownOrchestrator IMMINENT stage fired -- "
-                "pausing polling + forcing drive-end before TRIGGER"
-            )
-            # Pause polling first so the in-flight cycle finishes
-            # before we close the active drive -- the drive-end row
-            # then reflects the final observed readings.
-            try:
-                if hasattr(self, 'pausePolling'):
-                    self.pausePolling(reason='power_imminent')
-            except Exception as e:  # noqa: BLE001
-                logger.error("IMMINENT pausePolling failed: %s", e)
-            try:
-                if self._driveDetector is not None:
-                    forceFn = getattr(self._driveDetector, 'forceKeyOff', None)
-                    if callable(forceFn):
-                        forceFn(reason='power_imminent')
-            except Exception as e:  # noqa: BLE001
-                logger.error("IMMINENT forceKeyOff failed: %s", e)
-
-        def onAcRestore() -> None:
-            logger.info(
-                "PowerDownOrchestrator AC restored -- clearing gate + "
-                "resuming polling"
-            )
-            self._setNoNewDrives(False)
-            try:
-                if hasattr(self, 'resumePolling'):
-                    self.resumePolling(reason='power_restored')
-            except Exception as e:  # noqa: BLE001
-                logger.error("AC-restore resumePolling failed: %s", e)
-
-        # Reach in and bind. The orchestrator exposes these as attributes
-        # on construction; updating them post-init is safe because tick()
-        # only reads them through _invokeCallback.
-        orch._onWarning = onWarning  # noqa: SLF001
-        orch._onImminent = onImminent  # noqa: SLF001
-        orch._onAcRestore = onAcRestore  # noqa: SLF001
-        logger.info("PowerDownOrchestrator stage-behavior callbacks wired")
-        # US-265 audit: confirm the orchestrator handed back by
-        # HardwareManager is non-None (the tick-thread spawn path inside
-        # _startComponents is gated on a non-None orchestrator + UPS).
-        # The matching "tick thread spawned tid=<id>" entry in journalctl
-        # lets a post-Drain-7 forensic walk prove the thread reached
-        # .start() with daemon=True.  If the spawn line is missing while
-        # this audit line is present, the bug is in HardwareManager's
-        # spawn block, not lifecycle's wiring.
-        logger.info(
-            "PowerDownOrchestrator audit OK: orchestrator instantiated "
-            "by HardwareManager; dedicated tick thread spawn delegated "
-            "to HardwareManager._startComponents (US-252 + US-265)"
-        )
-
-    def _setNoNewDrives(self, value: bool) -> None:
-        """Set the ``pi_state.no_new_drives`` gate (US-225).
-
-        Used by the WARNING (set) + AC-restore (clear) callbacks.
-        Swallows exceptions so a DB hiccup never blocks stage
-        escalation; the ladder's primary shutdown still fires even
-        when the gate cannot be persisted.
-        """
-        if self._database is None:
-            logger.warning(
-                "_setNoNewDrives(%s) skipped: database not initialized",
-                value,
-            )
-            return
-        try:
-            from ..pi_state import setNoNewDrives
-            with self._database.connect() as conn:
-                setNoNewDrives(conn, value)
-            logger.info(
-                "pi_state.no_new_drives set to %s", value,
-            )
-        except Exception as e:  # noqa: BLE001
-            logger.error(
-                "Failed to set pi_state.no_new_drives=%s: %s", value, e,
-            )
-
-    def _forceSyncPush(self, reasonCode: str) -> None:
-        """Invoke :meth:`SyncClient.forcePush` if a client can be built.
-
-        Constructs the client lazily so a boot without a companion
-        service keeps working; swallows exceptions so a transport
-        failure does not block the power-down ladder.
-        """
-        try:
-            from pi.sync.client import SyncClient
-            client = SyncClient(self._config)
-            if not client.isEnabled:
-                logger.info(
-                    "forceSyncPush(%s): companion service disabled, skipping",
-                    reasonCode,
-                )
-                return
-            summary = client.forcePush()
-            logger.warning(
-                "forceSyncPush(%s) complete: rows=%d ok=%d failed=%d",
-                reasonCode, summary.rowsPushed, summary.tablesOk,
-                summary.tablesFailed,
-            )
-        except Exception as e:  # noqa: BLE001
-            logger.error(
-                "forceSyncPush(%s) failed: %s", reasonCode, e,
-            )
-
     def _startHardwareManager(self) -> None:
         """
         Start the hardware manager.
@@ -1386,33 +1332,17 @@ class LifecycleMixin:
         except Exception as e:
             logger.warning(f"Failed to start hardwareManager: {e}")
 
-        # US-243 / B-050: subscribe PowerMonitor to UpsMonitor AFTER
-        # HardwareManager.start() because UpsMonitor + the prior
-        # ShutdownHandler.registerWithUpsMonitor wiring only exist post-start.
-        # Wrapped in broad except so a wiring failure never blocks runLoop
-        # entry (the audit-trail-loss is preferable to a boot crash).
+        # SS-T4 (Atlas 2026-05-19, was US-243 / B-050): subscribe PowerMonitor
+        # to the PowerSourceProvider SSOT (GPIO6) via the B1 transition-
+        # detecting bridge thread. Replaces the retired UpsMonitor-driven
+        # event subscription. Wrapped in broad except so a wiring failure
+        # never blocks runLoop entry (audit-trail-loss preferable to crash).
         try:
-            self._subscribePowerMonitorToUpsMonitor()
+            self._subscribePowerMonitorToPowerSourceProvider()
         except Exception as e:  # noqa: BLE001
             logger.error(
-                "PowerMonitor subscription failed (power_log writes "
+                "PowerMonitor SSOT subscription failed (power_log writes "
                 "may stay dead): %s",
-                e,
-            )
-
-        # US-279 LADDER FIX: subscribe PowerDownOrchestrator to
-        # UpsMonitor's source-change events.  Same post-start ordering
-        # as _subscribePowerMonitorToUpsMonitor -- both UpsMonitor and
-        # PowerDownOrchestrator are constructed inside HardwareManager.
-        # start().  Wrapped in broad except for the same boot-safety
-        # invariant: a wiring failure degrades the ladder to the legacy
-        # stale-arg path (back-compat fallback) but never blocks boot.
-        try:
-            self._subscribeOrchestratorToUpsMonitor()
-        except Exception as e:  # noqa: BLE001
-            logger.error(
-                "PowerDownOrchestrator source-change subscription failed "
-                "(ladder may revert to stale-arg fallback): %s",
                 e,
             )
 
@@ -1616,7 +1546,31 @@ class LifecycleMixin:
                 self._dataLogger, 'getLatestReadings'
             ):
                 self._driveDetector.setReadingSnapshotSource(self._dataLogger)
-            logger.info("SummaryRecorder wired to driveDetector (US-206)")
+                logger.info(
+                    "SummaryRecorder wired to driveDetector (US-206) | "
+                    "snapshot source=%s",
+                    type(self._dataLogger).__name__,
+                )
+            else:
+                # US-304 (Sprint 28): convert the silent-skip to a loud
+                # WARNING.  Pre-US-304 this branch fired silently every
+                # boot because RealtimeDataLogger lacked the
+                # getLatestReadings method; defer-INSERT machinery then
+                # short-circuited and drive_summary rows never landed
+                # (Drives 6+7 / 2026-05-08 regression).  V0.24.1 lesson:
+                # every wiring assumption becomes a self-test that
+                # ERRORs / WARNs if violated.
+                logger.warning(
+                    "SummaryRecorder snapshot source NOT wired -- "
+                    "drive_summary INSERT will not fire on drive_start "
+                    "(dataLogger=%s, hasGetLatestReadings=%s).  "
+                    "Drive summary metadata will be MISSING until this "
+                    "is repaired.",
+                    type(self._dataLogger).__name__
+                    if self._dataLogger is not None else None,
+                    hasattr(self._dataLogger, 'getLatestReadings')
+                    if self._dataLogger is not None else False,
+                )
         except Exception as e:  # noqa: BLE001 -- summary capture must not fail boot
             logger.warning(
                 "SummaryRecorder initialization skipped: %s (type=%s)",
@@ -1727,7 +1681,7 @@ class LifecycleMixin:
         Gated on ``pi.power.power_monitor.enabled`` (default true, set by
         validator DEFAULTS) AND a live database. The actual subscription
         to UpsMonitor.onPowerSourceChange happens in
-        :meth:`_subscribePowerMonitorToUpsMonitor`, called from
+        :meth:`_subscribePowerMonitorToPowerSourceProvider`, called from
         :meth:`_startHardwareManager` -- UpsMonitor is created inside
         ``HardwareManager.start()``, so subscription cannot happen here.
 
@@ -1928,17 +1882,20 @@ class LifecycleMixin:
                 return False
 
         def _getPowerSourceClosure() -> str:
-            hardwareManager = getattr(self, '_hardwareManager', None)
-            if hardwareManager is None:
-                return "external"
-            upsMonitor = getattr(hardwareManager, 'upsMonitor', None)
-            if upsMonitor is None:
+            # SS-T4 (Atlas Ruling C): UpdateApplier consumes the SSOT
+            # PowerSourceProvider (GPIO6), NOT the retired
+            # UpsMonitor.getPowerSource heuristic. ``_powerSourceProvider``
+            # is constructed by _subscribePowerMonitorToPowerSourceProvider
+            # at runLoop start; until then (or on non-Pi) the closure
+            # returns the open-by-default 'external' so apply is never
+            # gated by a missing power-source provider.
+            provider = getattr(self, '_powerSourceProvider', None)
+            if provider is None:
                 return "external"
             try:
-                source = upsMonitor.getPowerSource()
+                return "external" if provider.isExternalPowerPresent() else "battery"
             except Exception:  # noqa: BLE001 -- defensive
                 return "external"
-            return getattr(source, "value", str(source))
 
         def _getLastObdActivitySecondsAgoClosure() -> float | None:
             database = getattr(self, '_database', None)
@@ -1989,70 +1946,62 @@ class LifecycleMixin:
             )
             self._updateApplier = None
 
-    def _subscribePowerMonitorToUpsMonitor(self) -> None:
-        """Wire UpsMonitor.onPowerSourceChange -> PowerMonitor.checkPowerStatus.
+    def _subscribePowerMonitorToPowerSourceProvider(self) -> None:
+        """Wire the SSOT power source (PowerSourceProvider over X1209 GPIO6)
+        to ``PowerMonitor.checkPowerStatus`` via the dedicated B1 transition-
+        detecting bridge thread (SS-T4 / Atlas ruling 2026-05-19).
 
-        Called from :meth:`_startHardwareManager` AFTER
-        ``self._hardwareManager.start()`` returns, because UpsMonitor and
-        the ShutdownHandler.registerWithUpsMonitor wiring (which sets
-        ``upsMonitor.onPowerSourceChange = handler.onPowerSourceChange``)
-        only happen inside ``HardwareManager.start()``.
+        Replaces the retired event-driven ``UpsMonitor.onPowerSourceChange``
+        wiring. ``UpsMonitor`` is now battery-health only; ``getPowerSource``
+        is a loud tripwire. Power source originates ONLY from the provider.
 
-        The fan-out wrapper preserves any prior callback (typically the
-        ShutdownHandler legacy path, which is itself a no-op when
-        ``suppressLegacyTriggers=True`` per US-216) so this wiring never
-        clobbers existing behavior. Errors in the prior callback are
-        swallowed so a regression there cannot kill the new audit path.
+        Constructs (once, on first call) ``self._powerSourceProvider`` from
+        ``pi.powerWatch.pldGpioPin``/``pldPowerPresentHigh`` config and a
+        ``_PowerSourceUiBridge`` driven by a dedicated daemon thread at the
+        validated ``pi.powerWatch.uiPollSec`` cadence (no magic numbers).
+        Idempotent: a second call is a no-op (preserves the running bridge).
 
-        UpsMonitor's PowerSource enum (EXTERNAL / BATTERY / UNKNOWN) is
-        bridged to PowerMonitor's checkPowerStatus(onAcPower: bool) by
-        treating BATTERY as ``onAcPower=False`` and everything else
-        (EXTERNAL / UNKNOWN) as ``onAcPower=True``. UNKNOWN biased
-        toward AC matches PowerMonitor's own initial state assumption
-        (PowerSource.UNKNOWN -> ignored on first read; downstream
-        transitions still fire correctly).
+        Called from :meth:`_startHardwareManager` after ``HardwareManager.start()``
+        for parity with the old subscription point; ``UpsMonitor`` is no longer
+        a precondition for the source path, only PowerMonitor is.
         """
         if self._powerMonitor is None:
             logger.debug(
-                "_subscribePowerMonitorToUpsMonitor: PowerMonitor None, skipping"
+                "_subscribePowerMonitorToPowerSourceProvider: "
+                "PowerMonitor None, skipping"
             )
             return
-        if self._hardwareManager is None:
+        if getattr(self, '_powerSourceUiBridge', None) is not None:
             logger.debug(
-                "_subscribePowerMonitorToUpsMonitor: HardwareManager None, skipping"
-            )
-            return
-        upsMonitor = getattr(self._hardwareManager, 'upsMonitor', None)
-        if upsMonitor is None:
-            logger.debug(
-                "_subscribePowerMonitorToUpsMonitor: UpsMonitor None "
-                "(non-Pi or init failure), skipping"
+                "_subscribePowerMonitorToPowerSourceProvider: bridge already "
+                "running, skipping idempotent call"
             )
             return
 
-        priorCallback = getattr(upsMonitor, 'onPowerSourceChange', None)
+        pwCfg = self._config.get('pi', {}).get('powerWatch', {})
+        pldGpioPin = int(pwCfg.get('pldGpioPin', 6))
+        pldPowerPresentHigh = bool(pwCfg.get('pldPowerPresentHigh', True))
+        uiPollSec = float(pwCfg.get('uiPollSec', 2))
+
+        try:
+            from pi.hardware.pld_sensor import PldSensor
+            from pi.power.power_source_provider import PowerSourceProvider
+        except ImportError as e:
+            logger.warning(
+                "PowerSourceProvider wiring skipped (PldSensor import failed "
+                "on non-Pi or due to %s); UI power-source path stays inert.",
+                e,
+            )
+            return
+
+        pld = PldSensor(pin=pldGpioPin, powerPresentHigh=pldPowerPresentHigh)
+        self._powerSourceProvider = PowerSourceProvider(pld=pld)
+
         powerMonitor = self._powerMonitor
 
-        def fanOutPowerSourceChange(oldSource: Any, newSource: Any) -> None:
-            # Preserve the prior path (ShutdownHandler) -- swallow its
-            # exceptions so a regression there never poisons the new
-            # audit path.
-            if priorCallback is not None:
-                try:
-                    priorCallback(oldSource, newSource)
-                except Exception as e:  # noqa: BLE001
-                    logger.error(
-                        "Prior UpsMonitor.onPowerSourceChange callback raised: %s",
-                        e,
-                    )
-
-            # Bridge UpsMonitor PowerSource -> PowerMonitor onAcPower bool.
-            # Only BATTERY counts as off-AC; EXTERNAL and UNKNOWN are AC.
+        def _sink(onAcPower: bool) -> None:
+            # external power present == on AC; lost == on battery.
             try:
-                from pi.hardware.ups_monitor import (
-                    PowerSource as HwPowerSource,
-                )
-                onAcPower = newSource != HwPowerSource.BATTERY
                 powerMonitor.checkPowerStatus(onAcPower)
             except Exception as e:  # noqa: BLE001
                 logger.error(
@@ -2060,176 +2009,19 @@ class LifecycleMixin:
                     e, type(e).__name__,
                 )
 
-        upsMonitor.onPowerSourceChange = fanOutPowerSourceChange
+        bridge = _PowerSourceUiBridge(
+            provider=self._powerSourceProvider,
+            sink=_sink,
+            pollSec=uiPollSec,
+        )
+        bridge.start()
+        self._powerSourceUiBridge = bridge
         logger.info(
-            "PowerMonitor subscribed to UpsMonitor.onPowerSourceChange "
-            "(fan-out preserves prior callback)"
+            "PowerMonitor subscribed to PowerSourceProvider SSOT via "
+            "_PowerSourceUiBridge (uiPollSec=%.1f, pldGpioPin=%d, "
+            "pldPowerPresentHigh=%s)",
+            uiPollSec, pldGpioPin, pldPowerPresentHigh,
         )
-
-    def _subscribeOrchestratorToUpsMonitor(self) -> None:
-        """Wire UpsMonitor source-change events into PowerDownOrchestrator (US-279).
-
-        The 8-drain saga (Sprints 21-24) ended at Drain Test 8 with the
-        bug isolated: PowerDownOrchestrator.tick() was reading
-        ``power_source`` from a stale/decoupled view of state.  Every
-        one of 214 tick decisions during the 17.5-min battery window
-        emitted ``reason=power_source!=BATTERY`` while UpsMonitor's
-        polling loop correctly logged the BATTERY transition.
-
-        US-279 closes the gap: UpsMonitor exposes
-        :meth:`registerSourceChangeCallback` (new fan-out API), the
-        orchestrator exposes :meth:`_onPowerSourceChange` as a
-        single-arg callback that updates ``self._powerSource``
-        synchronously, and this method wires the registration.  After
-        wiring, every ``EXTERNAL <-> BATTERY`` transition the polling
-        thread observes is PUSHED into the orchestrator's live
-        attribute; the next tick reads it directly and the gating
-        guard passes when on BATTERY.
-
-        Idempotency: registering twice would fire the callback twice
-        per transition (the ladder's _onPowerSourceChange is idempotent
-        on re-application of the same value, but extra invocations are
-        log noise).  This method is called once from
-        :meth:`_startHardwareManager` per boot.
-
-        Failure mode: when UpsMonitor or PowerDownOrchestrator is None
-        (non-Pi or init failure) the wiring is skipped silently -- the
-        legacy back-compat stale-arg fallback in tick() preserves
-        whatever ladder behavior was available before US-279.
-        """
-        # V0.24.1 hotfix: every skip-path is now WARNING-level (was DEBUG).
-        # Production runs INFO; the prior DEBUG bails were invisible in
-        # journalctl, hiding the failure mode of a non-functioning safety
-        # ladder behind LOOK-OK logs.  US-281 anti-pattern doc applies:
-        # silent boot-safety fallbacks for required wiring are worse than
-        # a loud failure, because they give false confidence that the
-        # ladder is armed when it is not.
-        if self._hardwareManager is None:
-            logger.warning(
-                "_subscribeOrchestratorToUpsMonitor: HardwareManager None "
-                "-- ladder will not fire; graceful shutdown disarmed"
-            )
-            return
-        upsMonitor = getattr(self._hardwareManager, 'upsMonitor', None)
-        if upsMonitor is None:
-            logger.warning(
-                "_subscribeOrchestratorToUpsMonitor: UpsMonitor None "
-                "(non-Pi or init failure) -- ladder will not fire; "
-                "graceful shutdown disarmed"
-            )
-            return
-        orchestrator = getattr(
-            self._hardwareManager, 'powerDownOrchestrator', None,
-        )
-        if orchestrator is None:
-            logger.warning(
-                "_subscribeOrchestratorToUpsMonitor: "
-                "PowerDownOrchestrator None (config-disabled or unwired) "
-                "-- ladder will not fire; graceful shutdown disarmed"
-            )
-            return
-
-        registerFn = getattr(
-            upsMonitor, 'registerSourceChangeCallback', None,
-        )
-        if registerFn is None:
-            logger.error(
-                "_subscribeOrchestratorToUpsMonitor: UpsMonitor lacks "
-                "registerSourceChangeCallback method -- US-279 wiring "
-                "is incomplete; ladder reverts to stale-arg fallback"
-            )
-            return
-
-        registerFn(orchestrator._onPowerSourceChange)
-        logger.info(
-            "PowerDownOrchestrator subscribed to UpsMonitor source-change "
-            "events (US-279 -- closes the 8-drain saga stale-cached-read "
-            "bug class)"
-        )
-
-        # V0.24.1 boot-time canary -- prove the just-registered callback
-        # actually flips orchestrator._powerSource when invoked through
-        # UpsMonitor's fan-out.  If module-identity, signature drift, or
-        # any future refactor breaks the wiring chain, this self-test
-        # logs ERROR at boot rather than silently passing the buck to
-        # the next drain test.  Wrapped in broad-except so a self-test
-        # failure cannot block the runLoop -- but the ERROR log line is
-        # the canary operators must monitor.
-        try:
-            self._verifyOrchestratorCallbackWiring(upsMonitor, orchestrator)
-        except Exception as e:  # noqa: BLE001
-            logger.error(
-                "PowerDownOrchestrator wiring self-test raised "
-                "(ladder may be disarmed): %s",
-                e,
-            )
-
-    def _verifyOrchestratorCallbackWiring(
-        self, upsMonitor: Any, orchestrator: Any,
-    ) -> None:
-        """V0.24.1 boot-time canary: prove the callback path updates state.
-
-        After ``_subscribeOrchestratorToUpsMonitor`` registers
-        ``orchestrator._onPowerSourceChange``, fire a synthetic transition
-        through ``UpsMonitor._invokeSourceChangeCallbacks`` and verify
-        the orchestrator's ``_powerSource`` attribute compares equal to
-        ``UpsMonitor.PowerSource.BATTERY`` (the value the production
-        polling thread will deliver on the next real transition).  This
-        is the regression gate for the dual-import enum identity bug
-        that hid for 9 drain tests across 4 sprints: pre-V0.24.1 the
-        comparison silently failed across the module boundary, and the
-        ladder bailed every tick in production.
-
-        Self-test fires BATTERY then EXTERNAL so the orchestrator's
-        state is NOT left mid-drain after the canary -- AC is reality
-        during boot wiring.  Restores the prior ``_powerSource`` value
-        if it was set at all (production wiring runs once at boot, so
-        ``priorSource is None`` is the normal case).
-        """
-        from pi.hardware.ups_monitor import PowerSource
-
-        priorSource = getattr(orchestrator, '_powerSource', None)
-
-        upsMonitor._invokeSourceChangeCallbacks(PowerSource.BATTERY)
-        if orchestrator._powerSource != PowerSource.BATTERY:
-            logger.error(
-                "PowerDownOrchestrator wiring self-test FAILED: "
-                "after _invokeSourceChangeCallbacks(BATTERY), "
-                "orchestrator._powerSource=%r (expected BATTERY).  "
-                "Ladder is DISARMED -- the callback chain is not "
-                "propagating into the orchestrator's live attribute. "
-                "Likely cause: cross-module PowerSource enum identity "
-                "regression (V0.24.1 bug class) or signature drift in "
-                "_onPowerSourceChange.",
-                orchestrator._powerSource,
-            )
-            return
-
-        upsMonitor._invokeSourceChangeCallbacks(PowerSource.EXTERNAL)
-        if orchestrator._powerSource != PowerSource.EXTERNAL:
-            logger.error(
-                "PowerDownOrchestrator wiring self-test FAILED on AC "
-                "restore: after _invokeSourceChangeCallbacks(EXTERNAL), "
-                "orchestrator._powerSource=%r (expected EXTERNAL). "
-                "Ladder may stay armed even on AC -- spurious shutdown "
-                "risk on subsequent ticks.",
-                orchestrator._powerSource,
-            )
-            return
-
-        logger.info(
-            "PowerDownOrchestrator wiring self-test PASSED: "
-            "callback chain propagates BATTERY <-> EXTERNAL transitions "
-            "into orchestrator._powerSource (V0.24.1 enum identity "
-            "regression gate)"
-        )
-
-        # Restore prior _powerSource so the canary leaves no side effect.
-        # Normal case at boot: priorSource is None (callback never fired
-        # yet) and orchestrator._powerSource is now EXTERNAL from the
-        # canary's restore step -- which matches reality during boot.
-        if priorSource is not None:
-            orchestrator._powerSource = priorSource
 
     # ================================================================================
     # Component Shutdown
@@ -2318,6 +2110,8 @@ class LifecycleMixin:
         12. database
         """
         self._shutdownBackupManager()  # type: ignore[attr-defined]
+        # SS-T4: stop the source-side producer before tearing down the sink.
+        self._shutdownPowerSourceUiBridge()
         self._shutdownPowerMonitor()
         self._shutdownSyncClient()
         self._shutdownProfileSwitcher()
@@ -2405,17 +2199,31 @@ class LifecycleMixin:
         self._stopComponentWithTimeout(self._profileSwitcher, 'profileSwitcher')
         self._profileSwitcher = None
 
+    def _shutdownPowerSourceUiBridge(self) -> None:
+        """SS-T4: stop the B1 PowerSourceProvider->PowerMonitor bridge
+        thread. Idempotent (safe when the bridge was never started, e.g.
+        on non-Pi)."""
+        bridge = getattr(self, '_powerSourceUiBridge', None)
+        if bridge is None:
+            return
+        logger.info("Stopping PowerSourceUiBridge...")
+        try:
+            bridge.stop()
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Error stopping PowerSourceUiBridge: %s", e)
+        self._powerSourceUiBridge = None
+        # provider reference left in place; it is stateless and harmless
+        # post-stop, and tests/closures may still read it.
+
     def _shutdownPowerMonitor(self) -> None:
         """Shutdown the PowerMonitor (US-243 / B-050).
 
-        PowerMonitor was instantiated without a polling thread (the
-        write path is event-driven via UpsMonitor.onPowerSourceChange),
-        so shutdown is just dropping the reference. Idempotent: safe to
-        call when ``_powerMonitor`` was never assigned (init disabled or
-        skipped).
-
-        UpsMonitor itself is closed by HardwareManager's own shutdown
-        path; we don't need to unhook the fan-out callback here.
+        Post-SS-T4, the write path is driven by the lifecycle
+        _PowerSourceUiBridge thread which is stopped *before* this method
+        (see :meth:`_shutdownAllComponents`). PowerMonitor itself owns no
+        thread of its own; shutdown is just dropping the reference.
+        Idempotent: safe to call when ``_powerMonitor`` was never
+        assigned (init disabled or skipped).
         """
         if self._powerMonitor is not None:
             logger.info("Stopping powerMonitor...")

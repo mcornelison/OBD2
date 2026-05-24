@@ -42,6 +42,37 @@
 #                                aiAnalysis section was renamed to server.ai
 #                                during the tier split, see
 #                                src/pi/obdii/config/loader.py:124).
+# 2026-05-15    | Plan (T7)    | Add pi.bootProgress.* +
+#                                pi.shutdown.poweroffTimeoutSeconds DEFAULTS +
+#                                _validateBootProgress (honest boot-progress
+#                                instrument).
+# 2026-05-17    | Plan (P2-T7) | Add pi.powerWatch.* conservative-interim
+#                                DEFAULTS + _validatePowerWatch (Phase-2
+#                                bounded pre-shutdown pipeline).
+# 2026-05-18    | Plan (P2-T9) | Retired pi.power.shutdownThresholds.* DEFAULTS
+#                                (legacy ladder deleted).
+# 2026-05-18    | Plan (HOTFIX)| Add pi.powerWatch.bootGraceSec /
+#                                confirmWindowSec / confirmPollSec -- debounce
+#                                the BATTERY trigger (boot-VCELL-sag bricking
+#                                loop) + validate them positive.
+# 2026-05-18    | Plan (HOTFIX)| Add pi.powerWatch.pldGpioPin /
+#                                pldPowerPresentHigh / pldPollSec -- trigger is
+#                                now the X1209 GPIO6 deterministic PLD line,
+#                                not the VCELL heuristic.
+# 2026-05-18    | Plan (SS-T2) | Add canonical pi.powerWatch.smoothingSec=5
+#                                (in-V1 safety property, spec sec 3) /
+#                                smoothingPollSec=1. confirmWindowSec=20 /
+#                                confirmPollSec=5 RETAINED as a DEPRECATED
+#                                alias (removed at SS-T5 when consumers
+#                                rename) -- additive, no broken intermediate.
+# 2026-05-19    | Plan (SS-T4) | Add pi.powerWatch.uiPollSec=2 (B1: cadence of
+#                                the lifecycle PowerSourceProvider->PowerMonitor
+#                                UI bridge thread) + positive-bound validation.
+# 2026-05-19    | Plan (SS-T5) | T2 alias DEATH: deleted pi.powerWatch.
+#                                confirmWindowSec / confirmPollSec from DEFAULTS
+#                                + _validatePowerWatch (the stated alias death
+#                                date now that __main__/controller consume the
+#                                canonical smoothing* names).
 # ================================================================================
 ################################################################################
 
@@ -120,18 +151,6 @@ DEFAULTS: dict[str, Any] = {
     'pi.hardware.upsMonitor.vcellSlopeThresholdVoltsPerMinute': -0.005,
     'pi.hardware.upsMonitor.vcellBatteryThresholdVolts': 3.95,
     'pi.hardware.upsMonitor.vcellBatteryThresholdSustainedSeconds': 30,
-    # US-216/US-234 staged-shutdown ladder (PowerDownOrchestrator). When
-    # enabled, the new ladder owns the shutdown path
-    # (WARNING<=3.70V / IMMINENT<=3.55V / TRIGGER<=3.45V + 0.05V hysteresis
-    # band), and the legacy ShutdownHandler 30s-after-BATTERY timer + 10%
-    # low-battery trigger are suppressed. US-234 switched the trigger source
-    # from MAX17048 SOC% (40-pt calibration error rendered SOC%-based
-    # thresholds unfireable across 4 drain tests) to MAX17048 VCELL volts.
-    'pi.power.shutdownThresholds.enabled': True,
-    'pi.power.shutdownThresholds.warningVcell': 3.70,
-    'pi.power.shutdownThresholds.imminentVcell': 3.55,
-    'pi.power.shutdownThresholds.triggerVcell': 3.45,
-    'pi.power.shutdownThresholds.hysteresisVcell': 0.05,
     # US-243 / B-050: PowerMonitor activation. Spool's 2026-04-21 audit +
     # 2026-04-29 inverted-power drill found PowerMonitor (783 lines, the
     # writer for power_log) was never instantiated in production -- 5 drain
@@ -140,6 +159,54 @@ DEFAULTS: dict[str, Any] = {
     # the next deploy populates power_log; the gate is kept for tests +
     # any future legacy fallback.
     'pi.power.power_monitor.enabled': True,
+    # Honest boot-progress instrument (spec 2026-05-15). filePath is
+    # relative to the Pi project root (systemd WorkingDirectory);
+    # nasArchiveDir is the home-only NAS mount; maxTrailBytes bounds the
+    # file against a restart loop. poweroffTimeoutSeconds replaces the
+    # previously hardcoded subprocess.run(timeout=...) literal in
+    # src/pi/hardware/shutdown_handler.py (wired in a later task).
+    'pi.bootProgress.filePath': 'data/boot_progress',
+    'pi.bootProgress.nasArchiveDir': '/mnt/projects/O/OBD2v2/boot-progress',
+    'pi.bootProgress.nasArchiveEnabled': True,
+    'pi.bootProgress.maxTrailBytes': 65536,
+    'pi.shutdown.poweroffTimeoutSeconds': 30,
+    # Phase-2 power-watch (spec 2026-05-17). CONSERVATIVE INTERIM values --
+    # MUST be tuned from Spool real-battery-runtime data before Phase-2 IRL
+    # acceptance (see the Phase-2 plan Task 7 follow-up + spec sec 9). They
+    # are bounded + safe as shipped (worst case: we power off a little
+    # early), never optimistic.
+    'pi.powerWatch.perTaskTimeoutSec': 20,
+    'pi.powerWatch.totalWindowCapSec': 45,
+    'pi.powerWatch.vcellFloorVolts': 3.50,
+    'pi.powerWatch.poweroffTimeoutSec': 30,
+    # 2026-05-18 bricking-loop HOTFIX. UpsMonitor.getPowerSource() is a
+    # VCELL-trend heuristic; its slope rule reports BATTERY on the boot
+    # VCELL sag while external power is physically connected, so the old
+    # "act on first BATTERY signal" path powered the Pi off ~10-15s after
+    # every boot. bootGraceSec: ignore BATTERY this long after service
+    # start (settle voltage/charge + fill the history buffer).
+    'pi.powerWatch.bootGraceSec': 120,
+    # smoothingSec: a power-LOST reading must hold continuously this long
+    # before the shutdown window opens (blip rejection -- spec sec 3, the
+    # safety property that prevents the 2026-05-18 boot-sag bricking loop).
+    # smoothingPollSec: re-sample cadence during the smoothing interval.
+    'pi.powerWatch.smoothingSec': 5,
+    'pi.powerWatch.smoothingPollSec': 1,
+    # GPIO6 PLD = the X1209's DETERMINISTIC external-power-present line
+    # (HIGH=present, LOW=lost; Geekworm x120x reference pld.py). This is now
+    # the powerwatch TRIGGER, replacing the VCELL heuristic that bricked the
+    # Pi 2026-05-18. Pin/polarity are config + self-verified at arm time
+    # (the service refuses to arm if GPIO does not read power-present at
+    # boot). pldPollSec mirrors the reference 1s loop.
+    'pi.powerWatch.pldGpioPin': 6,
+    'pi.powerWatch.pldPowerPresentHigh': True,
+    'pi.powerWatch.pldPollSec': 1,
+    # SS-T4 B1: cadence of the dedicated lifecycle thread that polls the
+    # PowerSourceProvider (GPIO6 SSOT) and feeds PowerMonitor.checkPowerStatus
+    # on a present<->lost transition (the power_log/UI status surface -- NOT
+    # the safety trigger, which is the T5 GPIO6+smoothing loop). Low-rate by
+    # design (status surface, YAGNI). Config, never a literal.
+    'pi.powerWatch.uiPollSec': 2,
     # Pi-tier companion-service (Chi-Srv-01 reach) — US-151.
     # Consumed by src.pi.sync.SyncClient (US-149) to authenticate + reach
     # the server /api/v1/sync endpoint.  API key resolved from the env var
@@ -321,6 +388,8 @@ class ConfigValidator:
         self._validateCompanionService(config)
         self._validateHomeNetwork(config)
         self._validatePiSync(config)
+        self._validateBootProgress(config)
+        self._validatePowerWatch(config)
 
         logger.info("Configuration validated successfully")
         return config
@@ -513,6 +582,104 @@ class ConfigValidator:
                     "drive_end detection bugs)",
                     missingFields=['pi.sync.triggerOn'],
                 )
+
+    def _validateBootProgress(self, config: dict[str, Any]) -> None:
+        """Validate pi.bootProgress.maxTrailBytes and
+        pi.shutdown.poweroffTimeoutSeconds are positive numbers.
+
+        Called after defaults are applied. A zero/negative poweroff
+        timeout would silently break the shutdown path; a non-positive
+        maxTrailBytes would disable the restart-loop guard.
+
+        Args:
+            config: Validated configuration (post-default-application).
+
+        Raises:
+            ConfigValidationError: If either value is non-positive or the
+                wrong type.
+        """
+        mtb = self._getNestedValue(config, 'pi.bootProgress.maxTrailBytes')
+        if mtb is not None and (
+            isinstance(mtb, bool) or not isinstance(mtb, int) or mtb <= 0
+        ):
+            raise ConfigValidationError(
+                f"pi.bootProgress.maxTrailBytes must be a positive int "
+                f"(got {mtb!r})",
+                missingFields=['pi.bootProgress.maxTrailBytes'],
+            )
+        pto = self._getNestedValue(
+            config, 'pi.shutdown.poweroffTimeoutSeconds'
+        )
+        if pto is not None and (
+            isinstance(pto, bool)
+            or not isinstance(pto, (int, float))
+            or pto <= 0
+        ):
+            raise ConfigValidationError(
+                f"pi.shutdown.poweroffTimeoutSeconds must be a positive "
+                f"number (got {pto!r})",
+                missingFields=['pi.shutdown.poweroffTimeoutSeconds'],
+            )
+
+    def _validatePowerWatch(self, config: dict[str, Any]) -> None:
+        """Validate pi.powerWatch.* numeric bounds (Phase-2 spec sec 9).
+
+        Called after defaults are applied. The three time bounds must each
+        be a positive number; vcellFloorVolts must be a sane LiPo cell
+        voltage (a floor outside the physical 3.0-4.3V band would either
+        never fire the safety short-circuit or fire it constantly). These
+        ship as CONSERVATIVE INTERIM values pending Spool battery-runtime
+        tuning -- the validator only rejects values that are unsafe by
+        construction, it does not pin the interim numbers.
+
+        Args:
+            config: Validated configuration (post-default-application).
+
+        Raises:
+            ConfigValidationError: If any pi.powerWatch value is the wrong
+                type or outside its allowed range.
+        """
+        for key in (
+            'pi.powerWatch.perTaskTimeoutSec',
+            'pi.powerWatch.totalWindowCapSec',
+            'pi.powerWatch.poweroffTimeoutSec',
+            'pi.powerWatch.bootGraceSec',
+            'pi.powerWatch.smoothingSec',
+            'pi.powerWatch.smoothingPollSec',
+            'pi.powerWatch.pldGpioPin',
+            'pi.powerWatch.pldPollSec',
+            'pi.powerWatch.uiPollSec',
+        ):
+            val = self._getNestedValue(config, key)
+            if val is not None and (
+                isinstance(val, bool)
+                or not isinstance(val, (int, float))
+                or val <= 0
+            ):
+                raise ConfigValidationError(
+                    f"{key} must be a positive number (got {val!r})",
+                    missingFields=[key],
+                )
+
+        floor = self._getNestedValue(config, 'pi.powerWatch.vcellFloorVolts')
+        if floor is not None and (
+            isinstance(floor, bool)
+            or not isinstance(floor, (int, float))
+            or not (3.0 < floor < 4.3)
+        ):
+            raise ConfigValidationError(
+                f"pi.powerWatch.vcellFloorVolts must be a number in "
+                f"(3.0, 4.3) volts (got {floor!r})",
+                missingFields=['pi.powerWatch.vcellFloorVolts'],
+            )
+
+        php = self._getNestedValue(config, 'pi.powerWatch.pldPowerPresentHigh')
+        if php is not None and not isinstance(php, bool):
+            raise ConfigValidationError(
+                f"pi.powerWatch.pldPowerPresentHigh must be a bool "
+                f"(got {php!r})",
+                missingFields=['pi.powerWatch.pldPowerPresentHigh'],
+            )
 
     def _validateRequired(self, config: dict[str, Any]) -> list[str]:
         """

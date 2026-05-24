@@ -1,0 +1,4 @@
+https://github.com/brendan-w/python-OBD
+https://github.com/BITSREAMxLABs/LiveGauge-LITE/tree/main
+https://github.com/brian03079/piObdDashboard
+https://github.com/Bipra09/Anomaly-Detection-in-smart-cities

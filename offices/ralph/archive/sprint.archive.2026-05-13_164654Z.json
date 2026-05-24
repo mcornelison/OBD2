@@ -1,0 +1,124 @@
+{
+  "$schema": "Sprint Contract v1.0 -- see docs/superpowers/specs/2026-04-14-sprint-contract-design.md",
+  "sprint": "Sprint 35 -- V0.27.9 Bug Fixes (I-032: redo the I-031 fix that false-passed)",
+  "spec": "offices/pm/issues/I-032-us331-fix-does-not-actually-work.md",
+  "backlogItem": "Bug-fix sprint #8 in the V0.27 chain. V0.27.8 US-331 shipped synthetically-green but the real-world gate (deploy-server.sh Step 4.6 from Windows Git-Bash) reproduces the identical MSYS path-mangle from I-031. Branched from sprint/sprint34-bugfixes-V0.27.8 per chain-end-merge.",
+  "createdBy": "Marcus (PM)",
+  "createdAt": "2026-05-13",
+  "testBaseline": {
+    "fastSuite": 4247,
+    "fullSuite": 4247,
+    "ruffErrors": 0,
+    "note": "Post-V0.27.8 baseline (V0.27.7 4204 + ~43 tests across US-331/333/334/335/336). Verify at sprint start. PRE-EXISTING failure: tests/lint/test_ralph_promise_tag_contract.py::test_promptMdAndRalphShDocumentSamePromiseTags (in-flight uncommitted offices/ralph/ralph.sh edit; not a regression). PRE-EXISTING ruff drift in tests/pi/regression/test_powersource_module_identity.py (8 findings, V0.24.1 file)."
+  },
+  "sprintNotes": [
+    "GOAL: One story -- redo I-031's fix (US-331 false-passed) so deploy-server.sh Step 4.6 actually works from Windows Git-Bash.",
+    "WHY US-331 FALSE-PASSED: its tests/scripts/test_backfill_deploy_contexts.py exercised Python-level command-string construction but did NOT cover the actual shell-to-subprocess path-translation boundary that MSYS mangles. The regression test for US-337 MUST exercise that boundary.",
+    "CONSTRAINTS: (a) sprint_lint clean. (b) feedback_pm_verify_diagnostic_premises.md: PM reproduced I-032 twice this session -- V0.27.8 deploy 15:04Z (Pi off) and 15:11Z (Pi reachable); both produced the byte-identical mangle error. (c) feedback_pm_validate_cli_in_cio_shell.md: US-337's real-world gate MUST be `bash deploy/deploy-server.sh` from the CIO's Windows Git-Bash, not just synthetic tests. (d) chain-end-merge: V0.27.9 stays on sprint branch.",
+    "POST-SPRINT-35 (NOT in sprint.json): (1) CIO re-runs deploy-server.sh from Windows Git-Bash post-V0.27.9 -> Step 4.6 completes; rows 11-15 populated. (2) V0.27 chain merge gate still: Drive 12 + Drain 18 + the four other V0.27.8 IRL gates."
+  ],
+  "stories": [
+    {
+      "id": "US-337",
+      "title": "Fix US-331's MSYS path-mangle guard -- it doesn't trigger -- I-032",
+      "size": "M",
+      "intent": "V0.27.8 US-331's MSYS_NO_PATHCONV-style guard for deploy-server.sh Step 4.6's remote sqlite3 invocation false-passed synthetic tests. The V0.27.8 deploy reproduced the byte-identical 'C:/Program Files/Git/home/mcornelison/Projects/Eclipse-01/data/obd.db' mangle error. Fix the real shell-to-subprocess boundary; back it with a regression test that runs an actual subprocess (not just Python mocks).",
+      "priority": "high",
+      "status": "passed",
+      "dependencies": [],
+      "scope": {
+        "filesToTouch": [
+          "scripts/backfill_server_battery_health_log_stranded.py (UPDATE -- effective MSYS guard; mod-history US-337)",
+          "tests/scripts/test_backfill_deploy_contexts.py (UPDATE -- add a test that exercises a real subprocess.run with Git-Bash-like path translation; would FAIL pre-fix)"
+        ],
+        "filesToRead": [
+          "offices/pm/issues/I-032-us331-fix-does-not-actually-work.md",
+          "offices/pm/issues/I-031-us327-backfill-breaks-in-deploy-contexts.md",
+          "scripts/backfill_server_battery_health_log_stranded.py",
+          "tests/scripts/test_backfill_deploy_contexts.py"
+        ],
+        "doNotTouch": [
+          "deploy/deploy-server.sh Step 4.6 trigger logic",
+          "scripts/backfill_server_battery_health_log_stranded.py --count-stranded + idempotency guards",
+          "scripts/apply_server_migrations.py loadServerCreds localhost-detection (V0.27.8 US-331 Context-2 fix; out of scope unless pre-flight finds it also broken)",
+          "Pi-side battery_health_log table/writer"
+        ]
+      },
+      "groundingRefs": [
+        {
+          "value": "V0.27.8 deploy 2026-05-13 15:11Z (Pi reachable, V0.27.8 fix deployed): Step 4.6 produced byte-identical mangle 'Error: unable to open database C:/Program Files/Git/home/mcornelison/Projects/Eclipse-01/data/obd.db'",
+          "unit": "production output",
+          "source": "PM bash deploy/deploy-server.sh 2026-05-13",
+          "owner": "Marcus"
+        },
+        {
+          "value": "Real-world gate: post-V0.27.9 bash deploy/deploy-server.sh from CIO's Windows Git-Bash -> Step 4.6 completes; server battery_health_log rows 11-15 populated matching Pi-side; 2nd deploy is no-op",
+          "unit": "validation gate",
+          "source": "I-032",
+          "owner": "Marcus + Mike"
+        }
+      ],
+      "acceptance": [
+        "Pre-flight: verify the V0.27.8-deployed scripts/backfill_server_battery_health_log_stranded.py on chi-srv-01 matches the repo (rule out I-032 hypothesis c); trace the exact construction of the mangled `C:/Program Files/Git/...` argument",
+        "Fix: under Git-Bash on Windows, the remote sqlite3 path is no longer MSYS-mangled (e.g., single-quote the remote command so only the Pi's shell expands $HOME, OR set MSYS_NO_PATHCONV=1 on the subprocess env, OR build the argv so the leading `/` is not Windows-drive-prefixable)",
+        "Regression test exercises a real subprocess.run boundary (not Python mocks alone) and FAILS pre-fix",
+        "Existing tests/scripts/test_backfill_*.py + tests/server/test_backfill_stranded_idempotent.py stay GREEN"
+      ],
+      "verification": [
+        "pytest tests/scripts/test_backfill_deploy_contexts.py -v",
+        "pytest tests/scripts/ tests/server/ -m 'not slow' -q",
+        "pytest tests/ -m 'not slow' -q",
+        "ruff check scripts/backfill_server_battery_health_log_stranded.py tests/scripts/test_backfill_deploy_contexts.py",
+        "bash -n deploy/deploy-server.sh",
+        "python offices/pm/scripts/sprint_lint.py"
+      ],
+      "invariants": [
+        "Regression test FAILS pre-fix (real subprocess reproduces the mangle)",
+        "Real-world gate: bash deploy/deploy-server.sh from Windows Git-Bash populates rows 11-15; rerun no-op",
+        "V0.27.8 US-331 loadServerCreds localhost-detection (Context 2) unchanged",
+        "Step 4.6 stays best-effort -- Pi-unreachable is a WARN, not a `set -e` blocker"
+      ],
+      "stopConditions": [
+        "If pre-flight finds the deployed script does NOT match the repo (I-032 hypothesis c) -- STOP; the bug is in the deploy pipeline, not the script",
+        "If the fix needs the shared subprocess runners in apply_server_migrations.py and that risks Step 4.5 -- STOP; scope the fix narrowly to the backfill path"
+      ],
+      "passes": true,
+      "feedback": {
+        "filesActuallyTouched": [
+          "scripts/backfill_server_battery_health_log_stranded.py",
+          "tests/scripts/test_backfill_deploy_contexts.py"
+        ],
+        "grounding": [
+          {
+            "value": "Empirical RED-proof: with makeMsysSafePath() bypassed in scanPiRows (production line 560 swapped to passthrough), test_scanPiRows_pathSurvivesGitBashMsysMangleAtRealSubprocessBoundary raises BackfillError with the byte-identical 'C:/Program Files/Git/home/.../obd.db' error from the V0.27.8 deploy. With the fix restored, all 3 TestScanPiRowsSurvivesGitBashMsysMangle tests + the full 28-test test_backfill_deploy_contexts.py suite pass.",
+            "unit": "TDD invariant proof",
+            "source": "Rex (Ralph agent) 2026-05-13 -- run during US-337 crash-recovery iteration",
+            "owner": "Rex"
+          },
+          {
+            "value": "Pre-flight (acceptance #1) -- hypothesis (c) ruled out: I-031 paper trail confirms `deploy-server.sh` Step 1 ran `git pull` and reported 'Already up to date' on the V0.27.8 deploy, so the deployed `scripts/backfill_server_battery_health_log_stranded.py` matches the repo. The mangle construction trace: Git for Windows ssh.exe re-parses argv at the MSYS runtime layer, scanning for '/home/...' SUBSTRINGS within argv elements; the V0.27.8 env-only guard (MSYS_NO_PATHCONV=1 + MSYS2_ARG_CONV_EXCL='*' on the subprocess env) is not honoured by the ssh.exe MSYS fork.",
+            "unit": "root-cause analysis",
+            "source": "PM I-032 + I-031 issue files + V0.27.8 deploy output 2026-05-13 15:11Z",
+            "owner": "Marcus + Rex"
+          }
+        ]
+      },
+      "completionNotes": "US-337 / I-032 fix shipped at the argv FORM layer via new `makeMsysSafePath()` (doubles the leading '/' so MSYS's UNC-path heuristic '//host/share/...' leaves the token alone; POSIX collapses '//home/...' to '/home/...' on the remote so `sqlite3 -readonly` opens the same file). Applied at the wire boundary in `scanPiRows` ONLY (line 560) -- `PiCoordinates` stays tier-agnostic and the V0.27.8 env-only guard stays in place as belt-and-braces for tools that DO honour it. Regression coverage: real-subprocess `TestScanPiRowsSurvivesGitBashMsysMangle` class crosses an actual subprocess.run boundary against a Python shim simulating Git for Windows ssh.exe's MSYS argv re-parser. Pre-fix invariant verified empirically (this iteration is crash-recovery from a prior session that shipped the code but not the bookkeeping). All verification commands clean: pytest scripts+server suite green (1127 tests), ruff clean on scope files, bash -n clean on deploy-server.sh, sprint_lint 0 errors. Full suite has the documented PRE-EXISTING ralph.sh promise-tag failure called out in `testBaseline.note` (in-flight uncommitted edit; not a US-337 regression). Real-world gate (bash deploy/deploy-server.sh from CIO's Windows Git-Bash post-V0.27.9 deploy -> Step 4.6 completes; rows 11-15 populated) is the PM/CIO-side IRL validation, per the sprint's V0.27.9 chain-end-merge framing.",
+      "doNotTouch": [
+        "deploy/deploy-server.sh Step 4.6 trigger logic",
+        "scripts/backfill_server_battery_health_log_stranded.py --count-stranded + idempotency guards",
+        "Pi-side battery_health_log table/writer"
+      ]
+    }
+  ],
+  "validation": {
+    "bigDefinitionOfDone": [
+      "bash deploy/deploy-server.sh from the CIO's Windows Git-Bash shell post-V0.27.9 -> Step 4.6 completes; server battery_health_log rows 11-15 populated with end_timestamp/end_soc/runtime_seconds matching Pi-side; 2nd deploy is no-op (US-337 / I-032)"
+    ],
+    "validationMethod": "automatic + manual_attestation",
+    "validatesFeatures": [],
+    "currentVersion": "V0.27.9",
+    "validatedAt": null,
+    "validatedBy": null
+  }
+}

@@ -43,7 +43,7 @@ from sqlalchemy.orm import Session  # noqa: E402
 
 from scripts import report as report_cli  # noqa: E402
 from src.server.analytics import basic  # noqa: E402
-from src.server.analytics.types import (  # noqa: E402
+from src.server.analytics.analytics_types import (  # noqa: E402
     ComparisonStatus,
     CorrelationResult,
     DriveStatistics,

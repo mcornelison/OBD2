@@ -60,6 +60,47 @@
 #                               ``journalctl --list-boots`` inspection.
 #                               Idempotent: PK boot_id + INSERT OR IGNORE
 #                               in writer.
+# 2026-05-10    | Rex (US-315) | B-065 propagation cursor support: the
+#                               ``_sync_modified_at`` bookkeeping column
+#                               + AFTER UPDATE trigger lives on
+#                               battery_health_log + drive_summary +
+#                               dtc_log via the idempotent migration
+#                               :func:`src.pi.data.sync_log.ensureSyncModifiedAtSchema`.
+#                               No schema constants live in this file --
+#                               column / table list is owned by sync_log
+#                               (closer to the cursor logic that uses it).
+# 2026-05-12    | Rex (US-328) | I-028 / BL-015 Option C: added
+#                               SCHEMA_DRIVE_STATISTICS -- a thin idempotent
+#                               Pi-side ``drive_statistics`` table that
+#                               columns-match the server-side table
+#                               (src/server/db/models.py:DriveStatistic).  No
+#                               Pi-side writer is wired (the table ships
+#                               empty); this just stops the Pi diagnostic
+#                               query ``SELECT * FROM drive_statistics`` from
+#                               erroring "no such table" and leaves the table
+#                               ready for the V0.28 B-075 Pi-side
+#                               compute-at-drive-end work.  Idempotent via
+#                               CREATE TABLE IF NOT EXISTS in ALL_SCHEMAS.
+# 2026-05-15    | Plan (T4)    | Honest-instrument: added
+#                               prior_boot_last_stage / prior_boot_reason to
+#                               SCHEMA_STARTUP_LOG + idempotent
+#                               ensureStartupLogForensicColumns migrator
+#                               (PRAGMA-guarded ALTER, mirrors
+#                               drive_id.ensureDriveIdColumn).  Not yet wired
+#                               into arm/boot -- later tasks.
+# 2026-05-21    | Rex (US-351) | B-104 Step 1b: RETIRE Pi-side drive_statistics
+#                               table entirely (CIO 2026-05-21 ratification).
+#                               SCHEMA_DRIVE_STATISTICS constant + ALL_SCHEMAS
+#                               registration REMOVED.  New idempotent
+#                               ensureDriveStatisticsRetired() migration helper
+#                               drops the table on first boot post-V0.27.17 +
+#                               logs row count for forensic auditability; later
+#                               boots log a DEBUG absence-confirmation only.
+#                               US-328 / US-349 sibling writers + Pi-side
+#                               drive_statistics module are gone in this
+#                               story; server-side compute path
+#                               (src/server/analytics/drive_statistics_compute)
+#                               is the sole writer authority.
 # ================================================================================
 ################################################################################
 
@@ -86,6 +127,9 @@ seed scripts; the live-OBD writer auto-derives from
 ``connection.isSimulated`` so the shared writer path self-corrects.
 """
 
+from __future__ import annotations
+
+import sqlite3
 
 # ================================================================================
 # Schema Definitions
@@ -565,11 +609,117 @@ CREATE TABLE IF NOT EXISTS startup_log (
     -- First journal entry timestamp of the current boot.
     current_boot_first_entry_ts TEXT,
 
+    -- Honest-instrument forensic fields (spec 2026-05-15). Highest
+    -- boot_progress milestone reached + its decoded reason.
+    prior_boot_last_stage TEXT,
+    prior_boot_reason TEXT,
+
     -- When this row was written (canonical ISO-8601 UTC).
     recorded_at TEXT NOT NULL
         DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
 """
+
+
+def ensureStartupLogForensicColumns(conn: sqlite3.Connection) -> None:
+    """Idempotently add prior_boot_last_stage / prior_boot_reason to an
+    existing startup_log. Legacy Pi DBs predate these columns; fresh DBs
+    get them from SCHEMA_STARTUP_LOG. Mirrors drive_id.ensureDriveIdColumn:
+    PRAGMA-guarded ALTER so re-runs and fresh DBs are no-ops.
+
+    The internal ``conn.commit()`` below is deliberate for the current
+    standalone/unwired state and MUST be revisited when this is wired into
+    :meth:`src.pi.obdii.database.ObdDatabase.initialize` so it does not
+    split the shared boot-migration transaction -- the sibling migrators
+    :func:`src.pi.obdii.drive_id.ensureDriveIdColumn` /
+    ``ensurePowerLogVcellColumn`` leave the commit to the caller.
+
+    Args:
+        conn: An open sqlite3 Connection to the Pi-side obd database.
+    """
+    existing = {r[1] for r in conn.execute("PRAGMA table_info(startup_log)")}
+    for col in ("prior_boot_last_stage", "prior_boot_reason"):
+        if col not in existing:
+            conn.execute(f"ALTER TABLE startup_log ADD COLUMN {col} TEXT")
+    conn.commit()
+
+
+# Pi-side ``drive_statistics`` table -- RETIRED V0.27.17 (US-351 / B-104 Step 1b).
+#
+# Sprint 41 / 2026-05-21: CIO ratified full retirement of the Pi-side
+# ``drive_statistics`` table.  Server is now the sole writer of derived
+# analytics tables (Pi = telemetry emitter, server = analytics authority).
+# The V0.27.7 US-328 Option C ship + the V0.27.16 US-349 writer retrofit are
+# both retired; the new server-side compute path
+# (:mod:`src.server.analytics.drive_statistics_compute`) reads raw
+# ``realtime_data`` directly, computes per-parameter aggregates, and persists
+# them server-side.
+#
+# The idempotent DROP TABLE migration helper :func:`ensureDriveStatisticsRetired`
+# below drops any pre-existing Pi-side table on first boot post-V0.27.17 +
+# emits an INFO log with the dropped row count for forensic auditability.
+# Subsequent boots see the table is absent and emit a DEBUG-level
+# confirmation only.
+
+
+def ensureDriveStatisticsRetired(conn: sqlite3.Connection) -> bool:
+    """Idempotently drop the legacy Pi-side ``drive_statistics`` table.
+
+    US-351 / B-104 Step 1b retirement migration.  Mirrors the
+    :func:`ensureStartupLogForensicColumns` PRAGMA-guarded pattern so re-runs
+    and fresh DBs are safe no-ops.
+
+    On the FIRST invocation against a legacy DB (table present): logs an
+    INFO-level forensic record with the row count + distinct drive count
+    that are about to be dropped, then issues ``DROP TABLE``.  Argus
+    confirmed production has zero rows so no real data is lost, but the
+    log line lands the auditable proof for the per-Pi deploy record.
+
+    On every subsequent invocation (table absent): emits a DEBUG-level
+    absence-confirmation only -- the table is structurally gone and there
+    is nothing to drop.
+
+    Args:
+        conn: Open sqlite3 Connection to the Pi obd database.
+
+    Returns:
+        ``True`` iff the table existed and was dropped on this call,
+        ``False`` when the table was already absent.  Lets the caller in
+        :meth:`src.pi.obdii.database.ObdDatabase.initialize` emit a single
+        post-migration summary log line.
+    """
+    import logging
+    logger = logging.getLogger("eclipse-obd")
+
+    existing = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' "
+        "AND name='drive_statistics'"
+    ).fetchone()
+    if existing is None:
+        logger.debug(
+            "drive_statistics table absent (retired V0.27.17 per US-351)"
+        )
+        return False
+
+    try:
+        rowCount = conn.execute(
+            "SELECT COUNT(*) FROM drive_statistics"
+        ).fetchone()[0]
+        distinctDrives = conn.execute(
+            "SELECT COUNT(DISTINCT drive_id) FROM drive_statistics"
+        ).fetchone()[0]
+    except sqlite3.Error:
+        rowCount = -1
+        distinctDrives = -1
+
+    conn.execute("DROP TABLE IF EXISTS drive_statistics")
+    conn.commit()
+    logger.info(
+        "eclipse-obd | drive_statistics table dropped (was: %s rows / "
+        "%s distinct drives) -- US-351 / B-104 Step 1b retirement",
+        rowCount, distinctDrives,
+    )
+    return True
 
 
 # All schema statements in order of dependency
@@ -586,6 +736,9 @@ ALL_SCHEMAS = [
     ('power_log', SCHEMA_POWER_LOG),
     ('drive_counter', SCHEMA_DRIVE_COUNTER),
     ('startup_log', SCHEMA_STARTUP_LOG),
+    # ``drive_statistics`` retired V0.27.17 per US-351 / B-104 Step 1b
+    # (CIO 2026-05-21 ratification).  ensureDriveStatisticsRetired() drops
+    # the table on first boot; server-side compute is sole writer now.
 ]
 
 # All index statements

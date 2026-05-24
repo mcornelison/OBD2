@@ -229,6 +229,28 @@ class RealtimeDataLogger:
         """Check if logger is currently running."""
         return self._state == LoggingState.RUNNING
 
+    def getLatestReadings(self) -> dict[str, float]:
+        """Return a shallow copy of the most-recent reading per parameter.
+
+        US-304 (Sprint 28): pinned as a first-class delegating method on
+        the OUTER class because :meth:`lifecycle._initializeSummaryRecorder`
+        gates the snapshot wiring on
+        ``hasattr(self._dataLogger, 'getLatestReadings')`` where
+        ``self._dataLogger`` is the OUTER :class:`RealtimeDataLogger`
+        instance.  Pre-US-304 the gate evaluated False (only the
+        inner :class:`~src.pi.obdii.data.logger.ObdDataLogger` exposed
+        the method), the snapshot source was silently skipped, and the
+        defer-INSERT machinery short-circuited at every drive_start --
+        producing the Drives 6+7 missing-row regression
+        (2026-05-08 production evidence).
+
+        Returns:
+            ``{parameter_name: latest_numeric_value, ...}`` from the
+            inner logger's snapshot.  Empty dict before the first
+            successful query.
+        """
+        return self._dataLogger.getLatestReadings()
+
     @property
     def lastRowWrittenSecondsAgo(self) -> float | None:
         """Return seconds since the most recent successful row write.

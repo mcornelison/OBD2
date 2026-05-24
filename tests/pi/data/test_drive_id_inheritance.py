@@ -329,3 +329,153 @@ class TestDriveDetectorLifecycle:
         secondId = getCurrentDriveId()
         assert firstId == 1
         assert secondId == 2
+
+
+# ================================================================================
+# US-306: post-drive analysis async race regression gate
+# ================================================================================
+#
+# Drives 6+7 (chi-eclipse-01, 2026-05-08) produced 84 statistics rows
+# all with drive_id=NULL despite max-value aggregation matching journal
+# evidence (id=110 SPEED max=84.0 == journal peakSpeed=84.0).  Root
+# cause: scheduleAnalysis(delaySeconds=0) spawns a daemon thread that
+# reads getCurrentDriveId() inside _storeStatistics; by the time the
+# thread executes, _endDrive's _closeDriveId() has already cleared
+# the singleton.  TestStatisticsWriter above could not catch this
+# because it called _storeStatistics directly with the singleton still
+# set -- production never does that.
+
+class TestStatisticsWriterPostDriveRace:
+    """Exercises the FULL detector -> trigger -> background-thread
+    -> _storeStatistics path so a future regression of the async
+    race becomes visible at test time, not in production after the
+    next IRL drive."""
+
+    def test_endDriveTriggeredAnalysisStampsDriveIdDespiteRace(
+        self, db: ObdDatabase,
+    ) -> None:
+        """Statistics rows MUST carry the closing drive_id even though
+        _closeDriveId() runs synchronously immediately after the
+        background analysis thread is spawned."""
+        from src.pi.analysis.engine import StatisticsEngine
+        from src.pi.obdii.data.helpers import logReading
+        from src.pi.obdii.data.types import LoggedReading
+        from src.pi.obdii.drive.detector import DriveDetector
+
+        engine = StatisticsEngine(db, {'pi': {}})
+        detector = DriveDetector(
+            config={'pi': {'profiles': {'activeProfile': 'daily'}}},
+            statisticsEngine=engine,
+            database=db,
+        )
+
+        startTime = datetime(2026, 5, 8, 20, 30, 0)
+        detector._startDrive(startTime)
+        capturedDriveId = getCurrentDriveId()
+        assert capturedDriveId == 1, "drive_start should mint id=1 on a fresh DB"
+
+        # Seed enough samples to clear minSamples=2 default
+        for i in range(5):
+            logReading(db, LoggedReading(
+                parameterName='RPM', value=800.0 + (i * 10),
+                unit='rpm',
+                timestamp=startTime,
+                profileId='daily',
+            ))
+
+        detector._endDrive()
+
+        # _closeDriveId() runs synchronously inside _endDrive AFTER
+        # _triggerAnalysis spawns the background thread.
+        assert getCurrentDriveId() is None
+
+        # Wait for the daemon analysis thread to finish writing rows.
+        if engine._analysisThread is not None:
+            engine._analysisThread.join(timeout=5.0)
+            assert not engine._analysisThread.is_alive(), (
+                "Background analysis thread did not complete within 5s"
+            )
+
+        with db.connect() as conn:
+            rows = conn.execute(
+                "SELECT drive_id FROM statistics WHERE parameter_name='RPM'"
+            ).fetchall()
+        assert len(rows) >= 1, (
+            "Expected at least one statistics row from the seeded RPM samples"
+        )
+        assert all(r[0] == capturedDriveId for r in rows), (
+            f"all statistics rows MUST carry drive_id={capturedDriveId}; "
+            f"got {[r[0] for r in rows]} (US-306 race regression)"
+        )
+
+    def test_calculateStatisticsAcceptsExplicitDriveId(
+        self, db: ObdDatabase,
+    ) -> None:
+        """The capture-at-trigger seam: callers can pass an explicit
+        driveId that overrides whatever the singleton currently holds.
+        This is what _triggerAnalysis uses to defeat the race."""
+        from src.pi.analysis.engine import StatisticsEngine
+        from src.pi.obdii.data.helpers import logReading
+        from src.pi.obdii.data.types import LoggedReading
+
+        engine = StatisticsEngine(db, {'pi': {}})
+
+        # Seed samples WITHOUT setting the singleton.
+        for i in range(5):
+            logReading(db, LoggedReading(
+                parameterName='SPEED', value=20.0 + (i * 5),
+                unit='mph',
+                timestamp=datetime(2026, 5, 8, 20, 30, 0),
+                profileId='daily',
+            ))
+
+        # Caller passes driveId explicitly -- singleton stays None.
+        assert getCurrentDriveId() is None
+        engine.calculateStatistics(
+            profileId='daily',
+            storeResults=True,
+            driveId=42,
+        )
+
+        with db.connect() as conn:
+            rows = conn.execute(
+                "SELECT drive_id FROM statistics WHERE parameter_name='SPEED'"
+            ).fetchall()
+        assert len(rows) >= 1
+        assert all(r[0] == 42 for r in rows), (
+            f"explicit driveId=42 must override the (None) singleton; "
+            f"got {[r[0] for r in rows]}"
+        )
+
+    def test_storeStatisticsFallsBackToSingletonWhenNoExplicitId(
+        self, db: ObdDatabase,
+    ) -> None:
+        """Backwards compat: when no explicit driveId is passed and the
+        singleton is set, _storeStatistics still stamps from the
+        singleton (preserves the pre-US-306 contract for ad-hoc /
+        replay analyses)."""
+        from common.analysis.types import AnalysisResult, ParameterStatistics
+        from src.pi.analysis.engine import StatisticsEngine
+
+        engine = StatisticsEngine(db, {'pi': {}})
+        setCurrentDriveId(99)
+
+        tsAware = datetime(2026, 5, 8, 20, 30, 0, tzinfo=UTC)
+        ps = ParameterStatistics(
+            parameterName='RPM', profileId='daily', analysisDate=tsAware,
+            maxValue=3500.0, minValue=700.0, avgValue=1800.0,
+            modeValue=800.0, std1=200.0, std2=400.0,
+            outlierMin=1000.0, outlierMax=2600.0, sampleCount=120,
+        )
+        result = AnalysisResult(
+            analysisDate=tsAware, profileId='daily',
+            parameterStats={'RPM': ps},
+            totalParameters=1, totalSamples=120, success=True,
+        )
+        engine._storeStatistics(result)  # no explicit driveId
+
+        with db.connect() as conn:
+            row = conn.execute(
+                "SELECT drive_id FROM statistics WHERE parameter_name='RPM'"
+            ).fetchone()
+        assert row[0] == 99, "fallback path must still read singleton"

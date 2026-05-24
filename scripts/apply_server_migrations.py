@@ -29,6 +29,19 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-04-20    | Agent3       | Initial -- US-209 server schema catch-up.
+# 2026-05-13    | Agent2       | I-031 / US-331 -- deploy-context fixes for the
+#                 (US-331)       V0.27.7 US-327 stranded-row backfill that
+#                                inherits this script's loaders.  Two fixes:
+#                                (1) _buildSubprocessEnv() seeds MSYS_NO_PATHCONV
+#                                + MSYS2_ARG_CONV_EXCL on every subprocess so
+#                                Git-Bash ssh.exe stops mangling `/home/...`
+#                                argv paths to `C:/Program Files/Git/home/...`
+#                                (Context 1, observed during V0.27.7 deploy);
+#                                (2) loadServerCreds() short-circuits the
+#                                self-SSH when the server address resolves to
+#                                this host and reads DATABASE_URL from the local
+#                                .env directly (Context 2, observed when running
+#                                the backfill on chi-srv-01 itself).
 # ================================================================================
 ################################################################################
 
@@ -57,11 +70,13 @@ from __future__ import annotations
 
 import argparse
 import datetime as _dt
+import os
 import shlex
+import socket
 import subprocess
 import sys
 import time
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
@@ -93,6 +108,11 @@ __all__ = [
     'applyPlan',
     'runRegistry',
     'main',
+    # I-031 / US-331 deploy-context seams (exported for the sibling backfill
+    # script's tests + the regression suite).
+    '_buildSubprocessEnv',
+    '_isLocalServer',
+    '_readDatabaseUrlFromEnv',
 ]
 
 
@@ -186,13 +206,40 @@ class CommandRunner(Protocol):
     ) -> subprocess.CompletedProcess[str]: ...
 
 
+def _buildSubprocessEnv() -> dict[str, str]:
+    """Build the subprocess env with MSYS2 path-mangling suppressed (I-031 / US-331).
+
+    When this script runs under Git Bash on Windows, MSYS2-built ``ssh.exe``
+    rewrites argv items that look like Unix paths (e.g.
+    ``/home/mcornelison/Projects/Eclipse-01/data/obd.db``) to a Windows
+    drive path (``C:/Program Files/Git/home/...``) before invoking the
+    binary -- which breaks the remote ``sqlite3 -readonly <path>`` call
+    in :func:`backfill_server_battery_health_log_stranded.scanPiRows`.
+
+    Setting ``MSYS_NO_PATHCONV=1`` + ``MSYS2_ARG_CONV_EXCL='*'`` disables
+    the conversion for the spawned process.  Both vars are silently
+    ignored on non-Windows platforms, so the fix is safe everywhere.
+
+    Returned dict is a fresh copy of :data:`os.environ` -- this function
+    never mutates the parent process env.
+    """
+    env = os.environ.copy()
+    env.setdefault('MSYS_NO_PATHCONV', '1')
+    env.setdefault('MSYS2_ARG_CONV_EXCL', '*')
+    return env
+
+
 def _defaultRunner(
     argv: Sequence[str],
     *,
     input: str | None = None,  # noqa: A002
     timeout: float | None = None,
 ) -> subprocess.CompletedProcess[str]:
-    """Default subprocess-based runner used in production."""
+    """Default subprocess-based runner used in production.
+
+    Passes ``env=_buildSubprocessEnv()`` so Git-Bash + MSYS2 path-mangling
+    is suppressed for every SSH (I-031 / US-331 Context 1).
+    """
     return subprocess.run(  # noqa: S603 -- argv is explicit list
         list(argv),
         input=input,
@@ -200,6 +247,7 @@ def _defaultRunner(
         text=True,
         timeout=timeout,
         check=False,
+        env=_buildSubprocessEnv(),
     )
 
 
@@ -294,13 +342,125 @@ def loadAddresses(
     )
 
 
+def _isLocalServer(
+    serverHost: str,
+    *,
+    hostnameProbe: Callable[[], str] | None = None,
+    resolveProbe: Callable[[str], str | None] | None = None,
+    localIpsProbe: Callable[[str], set[str]] | None = None,
+) -> bool:
+    """Return True if ``serverHost`` resolves to this machine (I-031 / US-331 Context 2).
+
+    Detection layers, cheapest first:
+
+    1. Textual loopback markers (``localhost``, ``127.0.0.1``, ``::1``) --
+       no network, no probes.
+    2. Exact match against :func:`socket.gethostname` -- no network.
+    3. IP overlap: resolve ``serverHost`` to an IP and see if it appears in
+       the IP list for the local hostname (one ``socket.gethostbyname_ex``
+       call total).
+
+    All three probes are injectable seams so the regression tests run
+    deterministically without touching DNS.  Any probe failure (DNS down,
+    gaierror, OSError) folds to "not local" so the caller falls back to
+    the legacy SSH path -- the safest direction to fail.
+    """
+    if serverHost in ('localhost', '127.0.0.1', '::1'):
+        return True
+    _gethost = hostnameProbe or socket.gethostname
+    try:
+        localName = _gethost()
+    except OSError:
+        return False
+    if serverHost == localName:
+        return True
+    _resolve = resolveProbe or _resolveHostnameSafe
+    targetIp = _resolve(serverHost)
+    if targetIp is None:
+        return False
+    _localIps = localIpsProbe or _localIpsSafe
+    return targetIp in _localIps(localName)
+
+
+def _resolveHostnameSafe(name: str) -> str | None:
+    """``socket.gethostbyname`` that swallows resolution errors -> ``None``."""
+    try:
+        return socket.gethostbyname(name)
+    except (OSError, socket.gaierror):
+        return None
+
+
+def _localIpsSafe(name: str) -> set[str]:
+    """``socket.gethostbyname_ex`` that swallows resolution errors -> empty set."""
+    try:
+        _, _, ips = socket.gethostbyname_ex(name)
+    except (OSError, socket.gaierror):
+        return set()
+    return set(ips)
+
+
+def _readDatabaseUrlFromEnv(envText: str) -> str:
+    """Extract ``DATABASE_URL=...`` from the text of a ``.env`` file.
+
+    Mirrors the legacy remote pipeline (``grep '^DATABASE_URL=' ... |
+    head -1 | cut -d= -f2-``): returns the first matching line's value
+    (everything after the first ``=``), stripped of trailing whitespace.
+    Lines starting with ``#`` are ignored (comment); lines whose key
+    merely *contains* ``DATABASE_URL`` (e.g. ``NOT_DATABASE_URL=``) are
+    not matched.
+
+    Raises :class:`ValueError` if no ``DATABASE_URL=`` line is found.
+    """
+    for line in envText.splitlines():
+        stripped = line.lstrip()
+        if stripped.startswith('#'):
+            continue
+        if stripped.startswith('DATABASE_URL='):
+            return stripped.split('=', 1)[1].strip()
+    raise ValueError('no DATABASE_URL= line found in .env text')
+
+
 def loadServerCreds(
     addrs: HostAddresses,
     runner: CommandRunner | None = None,
+    *,
+    localEnvPath: Path | None = None,
+    localServerCheck: Callable[[str], bool] | None = None,
 ) -> ServerCreds:
-    """Fetch server ``.env`` DATABASE_URL via SSH and parse DSN pieces."""
+    """Fetch the server ``DATABASE_URL`` and parse it into ``ServerCreds``.
+
+    Resolution path (I-031 / US-331):
+
+    1. If ``localServerCheck(addrs.serverHost)`` returns True, the server
+       address resolves to *this* host -- a remote SSH would be a self-loop
+       that fails Host key verification.  Read ``DATABASE_URL`` directly
+       from ``localEnvPath`` (defaults to ``<project_root>/.env``).
+    2. Otherwise, SSH to the server and ``grep`` ``.env`` remotely
+       (legacy path; unchanged behaviour for the dev-box -> server case).
+
+    Both seams are injectable so the regression suite never touches the
+    network and never depends on the developer machine's hostname.
+    """
     if runner is None:
         runner = _defaultRunner
+    _check = localServerCheck or _isLocalServer
+    if _check(addrs.serverHost):
+        envPath = localEnvPath or (
+            Path(__file__).resolve().parents[1] / '.env'
+        )
+        if not envPath.exists():
+            raise MigrationError(
+                f'server address {addrs.serverHost!r} resolves to this host '
+                f'but local .env not found at {envPath}',
+            )
+        try:
+            dsn = _readDatabaseUrlFromEnv(envPath.read_text(encoding='utf-8'))
+        except ValueError as err:
+            raise MigrationError(
+                f'could not read DATABASE_URL from local {envPath}: {err}',
+            ) from err
+        return _parseDatabaseUrlDsn(dsn)
+
     remote = f'{addrs.serverUser}@{addrs.serverHost}'
     script = (
         "grep '^DATABASE_URL=' /mnt/projects/O/OBD2v2/.env | "
@@ -311,7 +471,11 @@ def loadServerCreds(
         raise MigrationError(
             f'could not read DATABASE_URL on {remote}: {result.stderr.strip()}',
         )
-    dsn = result.stdout.strip()
+    return _parseDatabaseUrlDsn(result.stdout.strip())
+
+
+def _parseDatabaseUrlDsn(dsn: str) -> ServerCreds:
+    """Parse a ``DATABASE_URL`` DSN string into :class:`ServerCreds`."""
     try:
         _, rest = dsn.split('://', 1)
         userpass, hostdb = rest.rsplit('@', 1)

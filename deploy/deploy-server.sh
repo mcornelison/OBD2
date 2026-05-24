@@ -22,7 +22,18 @@
 #   4.5 Applies pending schema migrations via apply_server_migrations.py --run-all
 #       (US-213 / TD-029: runs on --init AND default flow; idempotent; hard-fails
 #       deploy under `set -e` if any migration fails)
+#   4.6 Backfills stranded battery_health_log rows via
+#       backfill_server_battery_health_log_stranded.py (US-327 / I-027): cheap
+#       server-only --count-stranded pre-check, then --dry-run + --execute when
+#       >0; idempotent (later deploys no-op); best-effort -- a WARN, not a
+#       deploy blocker (Pi may be offline during a server deploy)
 #   4.7 Installs/updates obd-server.service systemd unit (US-231; sync-if-changed)
+#   4.8 Installs server-analytics-batch.service + .timer (US-350 / B-104; sync-if-changed)
+#   4.9 One-shot backfill of drives 11-20 via the on-demand recompute CLI
+#       (US-352 / B-104 Step 1c): runs once post-V0.27.17 deploy, guarded by
+#       .backfill-V0.27.17-drives-11-20-complete marker; best-effort (failure
+#       logs WARN, deploy continues, nightly server-analytics-batch.timer
+#       retries via --all-stale)
 #   5. Cutover: kills any orphan nohup uvicorn (one-time pre-systemd cleanup)
 #   5.5 Writes ${PROJECT}/.deploy-version (US-241; SemVer-shaped release record)
 #   6. Restarts via `sudo systemctl restart obd-server` (US-231; replaces nohup)
@@ -166,6 +177,48 @@ if [ "$RESTART_ONLY" = false ]; then
     echo ""
 fi
 
+# Step 4.6 (US-327 / I-027): idempotent backfill of the stranded server-side
+# battery_health_log rows.  V0.27.6 US-323 shipped
+# scripts/backfill_server_battery_health_log_stranded.py to populate the
+# pre-V0.27.4 rows (drain_event_ids 11-15) whose end_timestamp is still NULL
+# server-side -- but nothing auto-invoked it, so they stayed stranded.  Wire-in:
+#   1. `--count-stranded` -- cheap server-only pre-check (no Pi SSH, no
+#      mutation, no sentinel) prints how many of those rows are still NULL;
+#   2. if >0, `--dry-run` (writes the sentinel) then `--execute` (mysqldump
+#      backup first, then the UPDATE batch in one transaction);
+#   3. if 0, the whole step is a no-op (idempotent -- subsequent deploys skip
+#      straight past after the first successful backfill).
+# Runs LOCALLY (the backfill script SSHes to BOTH the server and the Pi itself,
+# same as Step 4.5).  Best-effort: a Pi-unreachable / preflight failure logs a
+# WARN and the deploy continues -- rows stay stranded and the next deploy
+# retries (the `AND end_timestamp IS NULL` guard keeps every retry safe).
+# Must run AFTER Step 4.5 (the end_timestamp/end_soc/runtime_seconds columns
+# come from those migrations).  The dry-run sentinel goes to a temp dir (not
+# the repo root) so an interrupted deploy never leaves a stray dotfile in the
+# working tree.  Skipped on --restart.
+if [ "$RESTART_ONLY" = false ]; then
+    echo "--- Step 4.6: Backfilling stranded battery_health_log rows (US-327) ---"
+    LOCAL_REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+    BACKFILL_PY="$LOCAL_REPO_ROOT/scripts/backfill_server_battery_health_log_stranded.py"
+    ADDRESSES_SH="$LOCAL_REPO_ROOT/deploy/addresses.sh"
+    BACKFILL_SENTINEL_DIR="${TMPDIR:-/tmp}"
+    STRANDED_COUNT=$(PYTHONPATH="$LOCAL_REPO_ROOT" python "$BACKFILL_PY" --count-stranded --addresses "$ADDRESSES_SH" || echo "ERR")
+    if [ "$STRANDED_COUNT" = "ERR" ]; then
+        echo "WARN: stranded-row preflight failed (server unreachable?); skipping backfill -- safe to retry next deploy."
+    elif [ "$STRANDED_COUNT" -gt 0 ] 2>/dev/null; then
+        echo "Found ${STRANDED_COUNT} stranded battery_health_log row(s); running backfill..."
+        if PYTHONPATH="$LOCAL_REPO_ROOT" python "$BACKFILL_PY" --dry-run --addresses "$ADDRESSES_SH" --sentinel-dir "$BACKFILL_SENTINEL_DIR" \
+           && PYTHONPATH="$LOCAL_REPO_ROOT" python "$BACKFILL_PY" --execute --addresses "$ADDRESSES_SH" --sentinel-dir "$BACKFILL_SENTINEL_DIR"; then
+            echo "Stranded-row backfill complete."
+        else
+            echo "WARN: backfill did not complete (Pi unreachable?); rows stay stranded -- safe to retry next deploy."
+        fi
+    else
+        echo "No stranded battery_health_log rows; backfill no-op (idempotent)."
+    fi
+    echo ""
+fi
+
 # Step 4.7 (US-231): Install/update obd-server.service systemd unit.
 # Mirror of deploy-pi.sh step_install_eclipse_obd_unit -- sync-if-changed via
 # cmp -s so re-deploys are no-ops when the unit content matches the installed
@@ -208,6 +261,126 @@ ssh -t $HOST "
     fi
 "
 echo ""
+
+# Step 4.8 (US-350 / B-104 Step 1a, V0.27.17): install server-analytics-batch
+# nightly recompute unit + timer.  Mirrors Step 4.7 sync-if-changed-via-cmp -s
+# pattern: skip install + daemon-reload + enable when both files already
+# match.  Daemon-reload is intentionally batched at the END (after both files
+# are in place) so systemd evaluates the pair as a coherent install.
+echo "--- Step 4.8: Installing server-analytics-batch.service + .timer (US-350 / B-104) ---"
+ssh -t $HOST "
+    set -e
+    SVC_SRC='${PROJECT}/deploy/server-analytics-batch.service'
+    SVC_DST='/etc/systemd/system/server-analytics-batch.service'
+    TIM_SRC='${PROJECT}/deploy/server-analytics-batch.timer'
+    TIM_DST='/etc/systemd/system/server-analytics-batch.timer'
+    if [ ! -f \"\$SVC_SRC\" ] || [ ! -f \"\$TIM_SRC\" ]; then
+        echo \"WARN: analytics-batch unit/timer not present on ${SERVER_HOSTNAME} -- skipping install.\"
+        exit 0
+    fi
+    CHANGED=0
+    if [ ! -f \"\$SVC_DST\" ] || ! cmp -s \"\$SVC_SRC\" \"\$SVC_DST\"; then
+        echo 'Installing new server-analytics-batch.service -> /etc/systemd/system/'
+        sudo /usr/bin/install -m 644 \"\$SVC_SRC\" \"\$SVC_DST\"
+        CHANGED=1
+    fi
+    if [ ! -f \"\$TIM_DST\" ] || ! cmp -s \"\$TIM_SRC\" \"\$TIM_DST\"; then
+        echo 'Installing new server-analytics-batch.timer -> /etc/systemd/system/'
+        sudo /usr/bin/install -m 644 \"\$TIM_SRC\" \"\$TIM_DST\"
+        CHANGED=1
+    fi
+    if [ \"\$CHANGED\" = '1' ]; then
+        sudo /usr/bin/systemctl daemon-reload
+        sudo /usr/bin/systemctl enable --now server-analytics-batch.timer
+        echo 'analytics-batch unit + timer installed + daemon-reload + enabled --now.'
+    else
+        echo 'analytics-batch unit + timer already up-to-date; no install needed.'
+    fi
+"
+echo ""
+
+# Step 4.9 (US-352 / B-104 Step 1c, V0.27.17 / US-357 I-042 fix V0.27.18):
+# one-shot backfill of drives 11-20 via the new server compute path.
+# Drives 11-20 shipped to production with NULL drive_summary computed fields
+# + zero drive_statistics rows under the V0.27.7-V0.27.16 trigger-seam
+# writer (US-326 / US-348 / US-328 / US-349 false-pass class).  US-350 +
+# US-351 land the server compute paths; this step is the FIRST exercise of
+# the on-demand recompute CLI -- the empirical validation of the new
+# architecture against 10 real drives' raw data + the close of the
+# historical data hole.  Drive 11 inclusion per Spool FLAG-2 + Argus
+# DB-state check 2026-05-21 outcome (a) confirming Drive 11 has the same
+# NULL/zero pre-fix state as drives 12-19 (knock-retard reference baseline
+# on 93 octane; Spool knowledge.md anchor).
+#
+# Idempotency comes from a marker file at
+# ${PROJECT}/.backfill-V0.27.17-drives-11-20-complete on chi-srv-01.  The
+# first OUTCOME-successful invocation (success>=1 AND failed==0) writes the
+# marker; subsequent deploys check the marker and skip.  The CLI itself is
+# also idempotent at the data layer (re-run produces identical data values;
+# computed_at advances via onupdate=func.now()), so even if the marker
+# check ever races, no harm done -- this guard is for deploy ergonomics
+# (skip the 10-drive recompute on every redeploy), not correctness.
+#
+# I-042 (Sprint 41 V0.27.18 hotfix): the original V0.27.17 ship treated CLI
+# "exit 0" as success and wrote the marker even when the CLI logged 10/10
+# failures.  Same false-pass class as US-326/US-328/US-348/US-349 at a
+# different layer (deploy-script wrapper observing INVOCATION not OUTCOME).
+# The fix parses the CLI's "done | success=N | skipped=N | failed=N" line
+# and gates the marker write on failed==0 AND success>=1 so a partial or
+# total failure leaves the marker absent and the next deploy retries.
+#
+# Best-effort: a failure logs a WARN and the deploy continues (mirrors the
+# Step 4.6 stranded-row backfill idiom).  The nightly server-analytics-batch
+# timer (Step 4.8) will catch any drives still NULL via --all-stale on its
+# next tick -- the backfill is a deploy-time convenience, not a load-bearing
+# gate.  Skipped on --restart (no data state changes; restarts shouldn't
+# trigger backfills).
+#
+# Runs ON the server via ssh + the server venv because the CLI imports
+# src.server.config.Settings which reads chi-srv-01's .env DATABASE_URL.
+# Mirrors Step 4 (DB table creation) which uses the same idiom.
+if [ "$RESTART_ONLY" = false ]; then
+    echo "--- Step 4.9: Backfilling drives 11-20 via server compute path (US-352 / B-104) ---"
+    BACKFILL_MARKER="${PROJECT}/.backfill-V0.27.17-drives-11-20-complete"
+    MARKER_PRESENT=$(ssh "$HOST" "test -f '${BACKFILL_MARKER}' && echo yes || echo no")
+    if [ "$MARKER_PRESENT" = "yes" ]; then
+        echo "Backfill already complete (marker at ${BACKFILL_MARKER}); skipping (idempotent)."
+    else
+        echo "Running one-shot backfill of drives 11-20 on ${SERVER_HOSTNAME}..."
+        # I-042 fix: capture CLI output so we can parse the outcome
+        # summary line.  The CLI logs to stderr by default; redirect
+        # stderr->stdout so the local pipe captures both.  We still
+        # echo the output back to the operator so deploy logs are
+        # unchanged in form.
+        BACKFILL_OUTPUT=$(ssh "$HOST" "cd $PROJECT && PYTHONPATH=$PROJECT $REMOTE_VENV/bin/python -m src.server.cli.recompute_drive_analytics --drive-id-range 11-20" 2>&1)
+        BACKFILL_EXIT=$?
+        echo "$BACKFILL_OUTPUT"
+        # Parse the CLI's "done | success=N | skipped=N | failed=N" line.
+        # If parsing fails (line missing, CLI crashed before logging),
+        # treat as failure so the marker stays absent and next deploy retries.
+        BACKFILL_SUMMARY=$(echo "$BACKFILL_OUTPUT" | grep -oE 'done \| success=[0-9]+ \| skipped=[0-9]+ \| failed=[0-9]+' | tail -n 1)
+        if [ -n "$BACKFILL_SUMMARY" ]; then
+            BACKFILL_SUCCESS=$(echo "$BACKFILL_SUMMARY" | sed -E 's/.*success=([0-9]+).*/\1/')
+            BACKFILL_FAILED=$(echo "$BACKFILL_SUMMARY" | sed -E 's/.*failed=([0-9]+).*/\1/')
+            BACKFILL_SKIPPED=$(echo "$BACKFILL_SUMMARY" | sed -E 's/.*skipped=([0-9]+).*/\1/')
+        else
+            BACKFILL_SUCCESS=0
+            BACKFILL_FAILED=999
+            BACKFILL_SKIPPED=0
+        fi
+        # I-042 marker gate: require failed==0 AND success>=1.  The success>=1
+        # clause rules out the degenerate empty-input case (no drives in
+        # range; should not happen here but guards against silent marker
+        # writes if the CLI ever logged success=0 failed=0).
+        if [ "$BACKFILL_EXIT" -eq 0 ] && [ "$BACKFILL_FAILED" -eq 0 ] && [ "$BACKFILL_SUCCESS" -ge 1 ]; then
+            ssh "$HOST" "printf 'BACKFILL_COMPLETE_V0_27_17_DRIVES_11_20=true\n' > '${BACKFILL_MARKER}'"
+            echo "Backfill OUTCOME-successful (success=${BACKFILL_SUCCESS} skipped=${BACKFILL_SKIPPED} failed=${BACKFILL_FAILED}); marker written to ${BACKFILL_MARKER}."
+        else
+            echo "WARN: drives-11-20 backfill did not complete cleanly (exit=${BACKFILL_EXIT} success=${BACKFILL_SUCCESS} skipped=${BACKFILL_SKIPPED} failed=${BACKFILL_FAILED}); marker NOT written -- next deploy will retry.  Nightly server-analytics-batch.timer (Step 4.8) will also retry via --all-stale on its next tick."
+        fi
+    fi
+    echo ""
+fi
 
 # Step 5 (US-231 cutover): kill orphan pre-systemd uvicorn ONLY when systemd
 # isn't managing it yet. The pre-US-231 deploy launched uvicorn via `ssh -f

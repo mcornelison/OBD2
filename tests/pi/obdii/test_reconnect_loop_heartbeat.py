@@ -14,6 +14,16 @@
 # ================================================================================
 # 2026-05-08    | Rex (US-301) | Initial -- Spool Story A; CIO 10-sec heartbeat
 #               |              | mandate; mirrors V0.24.1 canary discipline.
+# 2026-05-11    | Rex (US-325) | I-025: runReconnectHeartbeat gained exponential
+#               |              | backoff, so the fixed-10s-cadence assertion in
+#               |              | test_emitsThreeOrMoreHeartbeatsInThirtySeconds
+#               |              | was renamed/updated to pin the per-tick
+#               |              | heartbeat (US-301 invariant: no silent thread)
+#               |              | while the gaps now follow the US-325 ladder
+#               |              | (full ladder pinned in
+#               |              | test_reconnect_loop_backoff.py).  Every other
+#               |              | test here is unchanged -- the first inter-
+#               |              | attempt gap still equals the base interval.
 # ================================================================================
 ################################################################################
 
@@ -34,8 +44,7 @@ Story scope (Spool 2026-05-08 inbox note + CIO verbatim direction):
   - Loop exits when ``isConnectedFn()`` returns True (connection up) OR
     when ``shutdownEvent`` fires (SIGTERM).
   - Boot canary ``_verifyReconnectDaemonAlive`` ERROR-logs if the daemon
-    thread is missing or dead -- mirrors V0.24.1's
-    ``_verifyOrchestratorCallbackWiring`` discipline.
+    thread is missing or dead (V0.24.1 boot-canary discipline).
 
 * Pre-fix discriminator: ``runReconnectHeartbeat`` does not exist; the boot
   canary does not exist. Imports fail at collection time. Post-fix all four
@@ -88,12 +97,21 @@ class FakeClock:
 
 
 class TestRunReconnectHeartbeat:
-    """Pinning the 10s heartbeat contract."""
+    """Pinning the heartbeat contract (US-301 cadence + canary)."""
 
-    def test_emitsThreeOrMoreHeartbeatsInThirtySeconds_perCioMandate(
+    def test_emitsHeartbeatEveryTick_cadenceFollowsExponentialBackoff(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
-        """Acceptance criterion: >= 3 heartbeats in 30s mocked time."""
+        """A heartbeat fires every tick (US-301); the gaps back off (US-325).
+
+        US-301 acceptance criterion: while the adapter is unreachable the
+        heartbeat keeps emitting an INFO line every tick (no silent thread).
+        US-325 / I-025 narrowed the cadence from a fixed ``tickIntervalSec``
+        to ``min(BASE * 2 ** min(failures, 5), MAX_BACKOFF_SEC)`` so a Pi away
+        from the car stops hammering ``/dev/rfcomm0``; the first gap stays at
+        ``BASE`` for short-outage back-compat.  The full backoff ladder is
+        pinned in ``test_reconnect_loop_backoff.py``.
+        """
         clock = FakeClock()
 
         def connectFn() -> bool:
@@ -107,16 +125,16 @@ class TestRunReconnectHeartbeat:
                 monotonicFn=clock.monotonic,
                 tickIntervalSec=10.0,
                 attemptTimeoutSec=5.0,
-                maxTicks=4,  # 3 sleeps + 4 attempts == 30s simulated
+                maxTicks=4,
             )
 
-        # 4 ticks bound by maxTicks; 3 sleeps in between == 30s elapsed.
         assert ticks == 4
-        assert clock.sleeps == [10.0, 10.0, 10.0, 10.0] or clock.sleeps == [10.0, 10.0, 10.0]
-        # >=3 heartbeats per acceptance criterion.
+        # First gap == BASE (back-compat), then doubles per US-325.
+        assert clock.sleeps == [10.0, 20.0, 40.0, 80.0]
+        # A heartbeat line on every tick -- the US-301 no-silent-thread invariant.
         heartbeats = [r for r in caplog.records if HEARTBEAT_LOG_PREFIX in r.getMessage()]
-        assert len(heartbeats) >= 3, (
-            f"Expected >=3 heartbeats in 30s, got {len(heartbeats)}: "
+        assert len(heartbeats) == 4, (
+            f"Expected one heartbeat per tick, got {len(heartbeats)}: "
             f"{[r.getMessage() for r in heartbeats]}"
         )
 

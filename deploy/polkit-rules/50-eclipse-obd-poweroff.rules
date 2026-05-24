@@ -1,0 +1,32 @@
+// ============================================================================
+// 50-eclipse-obd-poweroff.rules
+//
+// PolicyKit rule granting user 'mcornelison' the
+// org.freedesktop.login1.power-off action without interactive auth.
+//
+// Why: eclipse-obd.service runs as User=mcornelison (unprivileged) and
+// the V0.24.1 graceful-shutdown ladder invokes
+// `systemctl poweroff` at TRIGGER. Without this rule, the call fails
+// with "Interactive authentication required." (I-036, Drain 22
+// 2026-05-15 forensic). Latent since V0.24.1 deploy 2026-05-04 --
+// every drain hard-crashed at buck-dropout floor.
+//
+// Scope: power-off only. Reboot/halt/suspend are NOT granted. If
+// future stories need reboot rights (e.g. update-applier), add a
+// SECOND rule file (51-...) rather than widening this one.
+//
+// Install: deploy-pi.sh copies this to
+//   /etc/polkit-1/rules.d/50-eclipse-obd-poweroff.rules
+// (root-owned, 0644). PolicyKit auto-reloads on file change; no
+// systemctl daemon-reload needed.
+//
+// Reference: I-036, US-341 (Sprint 37 V0.27.11), Spool 2026-05-15
+//   Drain 22 double-P0 inbox note.
+// ============================================================================
+
+polkit.addRule(function(action, subject) {
+    if (action.id == "org.freedesktop.login1.power-off" &&
+        subject.user == "mcornelison") {
+        return polkit.Result.YES;
+    }
+});

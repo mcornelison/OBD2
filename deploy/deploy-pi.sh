@@ -133,6 +133,13 @@ if $INIT && $RESTART_ONLY; then
     exit 2
 fi
 
+# US-354: capture deploy start as epoch BEFORE any step runs. The restart-
+# verification step compares each long-running service's
+# ExecMainStartTimestamp against this value; a service whose
+# ExecMainStartTimestamp is earlier was NOT restarted by this deploy (the
+# V0.27.16 dead-code-in-memory bug Argus caught 2026-05-21).
+DEPLOY_START_EPOCH="$(date +%s)"
+
 ################################################################################
 # Helpers
 ################################################################################
@@ -559,6 +566,87 @@ step_install_journald_persistent() {
     "
 }
 
+step_install_polkit_poweroff() {
+    # US-341 / I-036: install polkit rule granting mcornelison the
+    # org.freedesktop.login1.power-off action without interactive auth.
+    # Without this rule eclipse-obd.service (running as User=mcornelison)
+    # cannot invoke `systemctl poweroff`; the V0.24.1 graceful-shutdown
+    # ladder fires TRIGGER, the subprocess returns code=1 with
+    # "Interactive authentication required.", and the Pi hard-crashes
+    # at buck-dropout floor (~3.30V). Latent since V0.24.1 deploy
+    # 2026-05-04 -- every drain 10-22 hard-crashed (Drain 22 forensic,
+    # 2026-05-15).
+    #
+    # Idempotent sync-if-changed mirroring step_install_journald_persistent:
+    # cmp -s the rsynced source against the installed copy; install only
+    # when the content actually differs. PolicyKit auto-reloads on file
+    # change, so no daemon-reload is required.
+    echo "--- Step: Installing polkit rule for systemctl poweroff (US-341, I-036) ---"
+    local sourceFile="deploy/polkit-rules/50-eclipse-obd-poweroff.rules"
+    local targetPath="/etc/polkit-1/rules.d/50-eclipse-obd-poweroff.rules"
+
+    if $DRY_RUN; then
+        echo "DRY-RUN would install ${PI_PATH}/${sourceFile} -> ${targetPath}"
+        echo "DRY-RUN would: polkit auto-reloads on file change (no daemon-reload)"
+        return 0
+    fi
+
+    remote "
+        set -e
+        sudo mkdir -p /etc/polkit-1/rules.d
+        if sudo test -f '${targetPath}' && sudo cmp -s '${PI_PATH}/${sourceFile}' '${targetPath}'; then
+            echo 'polkit poweroff rule already current at ${targetPath} (no change).'
+        else
+            sudo install -m 644 '${PI_PATH}/${sourceFile}' '${targetPath}'
+            echo 'polkit poweroff rule installed: ${targetPath}'
+        fi
+    "
+}
+
+step_install_nm_wifi_powersave() {
+    # US-325 / I-025: install the NetworkManager drop-in that disables WiFi
+    # power-save on the Pi 5.  The BCM4345/6 WiFi+BT combo chip starves WiFi
+    # when Bluetooth is busy (the eclipse-obd reconnect heartbeat) and
+    # power_save is ON (the Pi 5 default) -- association breaks until a manual
+    # reconnect.  CIO observed two WiFi drops in three hours on 2026-05-11;
+    # this is Fix #1 (OS-side, Pi 5 best practice), and US-325's reconnect
+    # exponential backoff is Fix #2 (reduce BT activity at the source).
+    #
+    # Idempotent sync-if-changed, mirroring step_install_journald_persistent:
+    # cmp -s the rsynced source against the installed copy; install + restart
+    # NetworkManager ONLY when the content actually differs, so routine
+    # re-deploys don't bounce the network.  Runs under --init AND default flow
+    # so a Pi rebuilt from scratch ends up power-save-disabled automatically
+    # (CIO 2026-05-11 directive: document the Pi setup changes for a
+    # from-scratch rebuild).  Runs AFTER sync_tree so the source file exists
+    # on the Pi.
+    echo "--- Step: Installing NetworkManager wifi.powersave=2 drop-in (US-325, sync-if-changed) ---"
+    local sourceFile="deploy/nm-disable-wifi-powersave.conf"
+    local targetPath="/etc/NetworkManager/conf.d/disable-wifi-powersave.conf"
+
+    if $DRY_RUN; then
+        echo "DRY-RUN would install ${PI_PATH}/${sourceFile} -> ${targetPath}"
+        echo "DRY-RUN would: sudo systemctl restart NetworkManager (only if content changed)"
+        return 0
+    fi
+    remote "
+        set -e
+        if [ ! -f '${PI_PATH}/${sourceFile}' ]; then
+            echo 'WARN: ${sourceFile} not present on Pi -- skipping wifi.powersave drop-in install.' >&2
+            exit 0
+        fi
+        sudo mkdir -p /etc/NetworkManager/conf.d
+        if sudo test -f '${targetPath}' && sudo cmp -s '${PI_PATH}/${sourceFile}' '${targetPath}'; then
+            echo 'wifi.powersave drop-in already current at ${targetPath} (no change).'
+        else
+            sudo install -m 644 '${PI_PATH}/${sourceFile}' '${targetPath}'
+            echo 'wifi.powersave drop-in installed: ${targetPath}'
+            sudo systemctl restart NetworkManager
+            echo 'NetworkManager restarted (WiFi power-save now disabled).'
+        fi
+    "
+}
+
 step_enforce_eeprom_power_off_on_halt() {
     # US-253: enforce POWER_OFF_ON_HALT=0 in the Pi 5 bootloader EEPROM so that
     # `systemctl poweroff` halts the SoC but leaves the PMIC awake watching the
@@ -718,6 +806,203 @@ step_install_drain_forensics_unit() {
     "
 }
 
+step_install_orphan_cleanup_unit() {
+    # US-322 / B-072: idempotent sync-if-changed install of orphan-cleanup.service
+    # + orphan-cleanup.timer into /etc/systemd/system/.  Closes the V0.27.6 ship
+    # gap that would otherwise leave systemd install as a manual operator step.
+    # Mirrors step_install_drain_forensics_unit byte-for-byte: cmp -s on the
+    # rsynced source vs the installed copy, daemon-reload only when something
+    # actually changed, enable --now is idempotent and re-asserted on every
+    # deploy so the timer recovers from an out-of-band 'systemctl disable'.
+    #
+    # The cleanup script touches data/obd.db only -- no extra runtime dirs
+    # are required.  Spool's grooming chose Approach 1 (script + nightly
+    # timer) over Approach 2 (writer-side guard) for being simpler and
+    # reversible: a future deploy can `systemctl disable orphan-cleanup.timer`
+    # to revert with no code changes.
+    echo "--- Step: Installing orphan-cleanup systemd unit (US-322 / B-072, sync-if-changed) ---"
+    if $DRY_RUN; then
+        echo "DRY-RUN would: sudo cmp -s ${PI_PATH}/deploy/orphan-cleanup.service /etc/systemd/system/orphan-cleanup.service || (install + daemon-reload)"
+        echo "DRY-RUN would: sudo cmp -s ${PI_PATH}/deploy/orphan-cleanup.timer /etc/systemd/system/orphan-cleanup.timer || (install + daemon-reload)"
+        echo "DRY-RUN would: sudo systemctl enable --now orphan-cleanup.timer"
+        return 0
+    fi
+    remote "
+        set -e
+        SRC_SVC='${PI_PATH}/deploy/orphan-cleanup.service'
+        DST_SVC='/etc/systemd/system/orphan-cleanup.service'
+        SRC_TIM='${PI_PATH}/deploy/orphan-cleanup.timer'
+        DST_TIM='/etc/systemd/system/orphan-cleanup.timer'
+
+        if [ ! -f \"\$SRC_SVC\" ] || [ ! -f \"\$SRC_TIM\" ]; then
+            echo 'WARN: orphan-cleanup unit files not present in deploy/ on the Pi -- skipping install.' >&2
+            exit 0
+        fi
+
+        # Sync-if-changed install of the unit pair.  daemon-reload happens
+        # only when at least one file actually changed to avoid pointless
+        # systemd churn on routine no-op deploys.
+        changed=false
+        if sudo test -f \"\$DST_SVC\" && sudo cmp -s \"\$SRC_SVC\" \"\$DST_SVC\"; then
+            echo 'orphan-cleanup.service already up-to-date.'
+        else
+            sudo install -m 644 \"\$SRC_SVC\" \"\$DST_SVC\"
+            echo 'orphan-cleanup.service installed.'
+            changed=true
+        fi
+        if sudo test -f \"\$DST_TIM\" && sudo cmp -s \"\$SRC_TIM\" \"\$DST_TIM\"; then
+            echo 'orphan-cleanup.timer already up-to-date.'
+        else
+            sudo install -m 644 \"\$SRC_TIM\" \"\$DST_TIM\"
+            echo 'orphan-cleanup.timer installed.'
+            changed=true
+        fi
+
+        if [ \"\$changed\" = true ]; then
+            sudo systemctl daemon-reload
+            echo 'systemd daemon-reload complete.'
+        fi
+
+        # enable --now is idempotent: turns the timer on if disabled,
+        # leaves it alone otherwise.  Re-asserting on every deploy is the
+        # easiest way to recover from an out-of-band 'systemctl disable'.
+        sudo systemctl enable --now orphan-cleanup.timer
+        echo 'orphan-cleanup.timer enabled + active.'
+    "
+}
+
+step_install_boot_progress_units() {
+    # T11/T12: idempotent sync-if-changed install of boot-progress-finalize.service
+    # + boot-progress-arm.service into /etc/systemd/system/.  Closes the ship gap
+    # that would otherwise leave systemd install as a manual operator step.
+    # Mirrors step_install_drain_forensics_unit / step_install_orphan_cleanup_unit
+    # byte-for-byte: cmp -s on the rsynced source vs the installed copy,
+    # daemon-reload only when something actually changed, enable --now is
+    # idempotent and re-asserted on every deploy so the units recover from an
+    # out-of-band 'systemctl disable'.  BOTH units are enabled: the arm unit
+    # runs at boot, and the finalize unit must be "active" so its ExecStop
+    # fires at shutdown.
+    #
+    # No extra runtime dirs are required -- the boot-progress writer targets
+    # the existing data/ dir (already provisioned by the rsync of the repo
+    # tree), so unlike step_install_drain_forensics_unit there is no
+    # install -d step here.
+    echo "--- Step: Installing boot-progress systemd units (T11/T12, sync-if-changed) ---"
+    if $DRY_RUN; then
+        echo "DRY-RUN would: sudo cmp -s ${PI_PATH}/deploy/boot-progress-finalize.service /etc/systemd/system/boot-progress-finalize.service || (install + daemon-reload)"
+        echo "DRY-RUN would: sudo cmp -s ${PI_PATH}/deploy/boot-progress-arm.service /etc/systemd/system/boot-progress-arm.service || (install + daemon-reload)"
+        echo "DRY-RUN would: sudo systemctl enable --now boot-progress-finalize.service boot-progress-arm.service"
+        return 0
+    fi
+    remote "
+        set -e
+        SRC_FIN='${PI_PATH}/deploy/boot-progress-finalize.service'
+        DST_FIN='/etc/systemd/system/boot-progress-finalize.service'
+        SRC_ARM='${PI_PATH}/deploy/boot-progress-arm.service'
+        DST_ARM='/etc/systemd/system/boot-progress-arm.service'
+
+        if [ ! -f \"\$SRC_FIN\" ] || [ ! -f \"\$SRC_ARM\" ]; then
+            echo 'WARN: boot-progress unit files not present in deploy/ on the Pi -- skipping install.' >&2
+            exit 0
+        fi
+
+        # Sync-if-changed install of the unit pair.  daemon-reload happens
+        # only when at least one file actually changed to avoid pointless
+        # systemd churn on routine no-op deploys.
+        changed=false
+        if sudo test -f \"\$DST_FIN\" && sudo cmp -s \"\$SRC_FIN\" \"\$DST_FIN\"; then
+            echo 'boot-progress-finalize.service already up-to-date.'
+        else
+            sudo install -m 644 \"\$SRC_FIN\" \"\$DST_FIN\"
+            echo 'boot-progress-finalize.service installed.'
+            changed=true
+        fi
+        if sudo test -f \"\$DST_ARM\" && sudo cmp -s \"\$SRC_ARM\" \"\$DST_ARM\"; then
+            echo 'boot-progress-arm.service already up-to-date.'
+        else
+            sudo install -m 644 \"\$SRC_ARM\" \"\$DST_ARM\"
+            echo 'boot-progress-arm.service installed.'
+            changed=true
+        fi
+
+        if [ \"\$changed\" = true ]; then
+            sudo systemctl daemon-reload
+            echo 'systemd daemon-reload complete.'
+        fi
+
+        # enable --now is idempotent: turns the units on if disabled,
+        # leaves them alone otherwise.  Re-asserting on every deploy is the
+        # easiest way to recover from an out-of-band 'systemctl disable'.
+        # BOTH units enabled so the arm unit runs at boot and the finalize
+        # unit is 'active' so its ExecStop fires at shutdown.
+        sudo systemctl enable --now boot-progress-finalize.service boot-progress-arm.service
+        echo 'boot-progress units enabled + active.'
+    "
+}
+
+step_install_power_watch_unit() {
+    # Phase-2 T6: idempotent sync-if-changed install of eclipse-powerwatch.service
+    # into /etc/systemd/system/.  Mirrors step_install_boot_progress_units:
+    # cmp -s on the rsynced source vs the installed copy, daemon-reload only
+    # when it changed, enable --now idempotently re-asserted every deploy so
+    # the watcher recovers from an out-of-band 'systemctl disable'.
+    #
+    # Unlike the boot-progress units (oneshot/ExecStop), eclipse-powerwatch is
+    # a long-running Type=simple service: on a code/unit change we must also
+    # `systemctl restart` it -- daemon-reload + enable --now alone leave the
+    # OLD process (old code) running, silently shipping nothing.
+    #
+    # No extra runtime dirs needed -- the outcome record targets the existing
+    # data/ dir (already provisioned by the repo rsync).
+    echo "--- Step: Installing eclipse-powerwatch systemd unit (Phase-2 T6, sync-if-changed) ---"
+    if $DRY_RUN; then
+        echo "DRY-RUN would: sudo cmp -s ${PI_PATH}/deploy/eclipse-powerwatch.service /etc/systemd/system/eclipse-powerwatch.service || (install + daemon-reload + restart)"
+        echo "DRY-RUN would: sudo systemctl enable --now eclipse-powerwatch.service"
+        return 0
+    fi
+    remote "
+        set -e
+        SRC_PW='${PI_PATH}/deploy/eclipse-powerwatch.service'
+        DST_PW='/etc/systemd/system/eclipse-powerwatch.service'
+
+        if [ ! -f \"\$SRC_PW\" ]; then
+            echo 'WARN: eclipse-powerwatch.service not present in deploy/ on the Pi -- skipping install.' >&2
+            exit 0
+        fi
+
+        changed=false
+        if sudo test -f \"\$DST_PW\" && sudo cmp -s \"\$SRC_PW\" \"\$DST_PW\"; then
+            echo 'eclipse-powerwatch.service already up-to-date.'
+        else
+            sudo install -m 644 \"\$SRC_PW\" \"\$DST_PW\"
+            echo 'eclipse-powerwatch.service installed.'
+            changed=true
+        fi
+
+        # daemon-reload remains gated on \$changed -- it reloads systemd's
+        # in-memory unit metadata, which is only meaningful when the unit
+        # file actually differs (no-op churn otherwise).
+        if [ \"\$changed\" = true ]; then
+            sudo systemctl daemon-reload
+            echo 'systemd daemon-reload complete.'
+        fi
+
+        # enable --now is idempotent (recovers from out-of-band disable).
+        sudo systemctl enable --now eclipse-powerwatch.service
+
+        # US-354 fix: long-running service must restart on EVERY deploy, not
+        # just when the unit file changed. The Python source is rsynced
+        # under \$PI_PATH on every deploy; without an unconditional restart
+        # here, a Python-source-only change leaves the OLD interpreter
+        # still memory-mapped on the OLD code (V0.27.16 dead-code-in-memory
+        # bug -- Argus's 2026-05-21 finding). daemon-reload above stays
+        # gated on \$changed; only the process replacement is decoupled.
+        sudo systemctl restart eclipse-powerwatch.service
+        echo 'eclipse-powerwatch.service restarted onto current code (US-354).'
+        echo 'eclipse-powerwatch unit enabled + active.'
+    "
+}
+
 step_write_deploy_version() {
     # US-241: stamp ${PI_PATH}/.deploy-version with the {version, releasedAt,
     # gitHash, description} record describing this deploy. Composed locally
@@ -782,6 +1067,83 @@ step_restart_service() {
     "
 }
 
+step_verify_service_restarts() {
+    # US-354: assert eclipse-powerwatch + eclipse-obd PIDs both started AFTER
+    # this deploy began. Catches the V0.27.16 dead-code-in-memory bug where
+    # `.deploy-version` was bumped while the long-running services still ran
+    # the prior release's code in memory (restart was gated on unit-file diff;
+    # a Python-source-only deploy left $changed=false and skipped the restart).
+    #
+    # The verification compares each service's ExecMainStartTimestamp (parsed
+    # via `date -d`) against the local-side DEPLOY_START_EPOCH captured at
+    # script entry. Either service starting BEFORE the deploy began means the
+    # restart didn't actually replace the process -- abort the deploy with a
+    # clear error rather than silently bumping .deploy-version on top of a
+    # dead-code Pi.
+    #
+    # Services not installed yet (fresh Pi before first install) are WARN, not
+    # FAIL -- mirrors step_restart_service's pattern.
+    echo "--- Step: Verifying eclipse-powerwatch + eclipse-obd restarted (US-354) ---"
+    if $DRY_RUN; then
+        echo "DRY-RUN would verify ExecMainStartTimestamp of eclipse-powerwatch.service >= DEPLOY_START_EPOCH"
+        echo "DRY-RUN would verify ExecMainStartTimestamp of eclipse-obd.service >= DEPLOY_START_EPOCH"
+        return 0
+    fi
+
+    # Pass the local-side DEPLOY_START_EPOCH into the remote shell. Captured
+    # at script entry (before any step ran), so any restart fired during this
+    # deploy yields a service-start later than this value.
+    local deployStartEpoch="${DEPLOY_START_EPOCH:-0}"
+
+    remote "
+        set -e
+        DEPLOY_START_EPOCH='${deployStartEpoch}'
+        if [ -z \"\$DEPLOY_START_EPOCH\" ] || [ \"\$DEPLOY_START_EPOCH\" = 0 ]; then
+            echo 'ERROR: DEPLOY_START_EPOCH not set on remote -- cannot verify restart (US-354).' >&2
+            exit 9
+        fi
+
+        verify_one_service() {
+            local svc=\"\$1\"
+            if ! systemctl list-unit-files | grep -q \"\$svc\"; then
+                echo \"WARN: \$svc not installed -- skipping restart verification (fresh Pi).\"
+                return 0
+            fi
+            local ts
+            ts=\$(systemctl show -p ExecMainStartTimestamp --value \"\$svc\" 2>/dev/null || true)
+            if [ -z \"\$ts\" ]; then
+                echo \"ERROR: \$svc has no ExecMainStartTimestamp -- service not running? (US-354).\" >&2
+                systemctl status \"\$svc\" --no-pager 2>&1 | sed 's/^/  /' >&2 || true
+                return 1
+            fi
+            local epoch
+            epoch=\$(date -d \"\$ts\" +%s 2>/dev/null || echo 0)
+            if [ \"\$epoch\" -eq 0 ]; then
+                echo \"ERROR: failed to parse \$svc start timestamp: \$ts (US-354).\" >&2
+                return 1
+            fi
+            if [ \"\$epoch\" -lt \"\$DEPLOY_START_EPOCH\" ]; then
+                echo \"ERROR: \$svc start time (\$ts / epoch \$epoch) is BEFORE deploy start (epoch \$DEPLOY_START_EPOCH).\" >&2
+                echo \"       The service was NOT restarted by this deploy -- it is still running prior-release code in memory.\" >&2
+                echo \"       This is the V0.27.16 dead-code-in-memory bug (US-354).\" >&2
+                return 1
+            fi
+            echo \"OK: \$svc restarted at \$ts (epoch \$epoch >= deploy-start \$DEPLOY_START_EPOCH).\"
+            return 0
+        }
+
+        rc=0
+        verify_one_service 'eclipse-powerwatch.service' || rc=1
+        verify_one_service 'eclipse-obd.service' || rc=1
+        if [ \"\$rc\" -ne 0 ]; then
+            echo '' >&2
+            echo 'US-354 restart verification FAILED. .deploy-version will NOT be bumped.' >&2
+            echo 'Investigate the failing service(s) above before re-running the deploy.' >&2
+            exit 9
+        fi
+    "
+}
+
 ################################################################################
 # Mode dispatch
 ################################################################################
@@ -828,6 +1190,21 @@ sync_tree
 # exists on the Pi.
 step_install_journald_persistent
 
+# US-341 / I-036: polkit rule granting mcornelison the
+# org.freedesktop.login1.power-off action.  Without this rule
+# eclipse-obd.service (User=mcornelison) cannot invoke `systemctl poweroff`
+# at TRIGGER and the Pi hard-crashes at buck-dropout floor.  Same
+# idempotent canonical-source-of-truth pattern as the journald drop-in.
+# Runs AFTER sync_tree so deploy/polkit-rules/ exists on the Pi.
+step_install_polkit_poweroff
+
+# US-325 / I-025: NetworkManager wifi.powersave=2 drop-in. Same rationale as
+# the journald drop-in -- idempotent, canonical-source-of-truth OS config that
+# every deploy reasserts (so a Pi rebuilt from scratch via --init lands
+# power-save-disabled). Runs AFTER sync_tree so deploy/nm-disable-wifi-
+# powersave.conf exists on the Pi.
+step_install_nm_wifi_powersave
+
 # US-253: EEPROM POWER_OFF_ON_HALT=0 enforcement. Runs under --init AND default
 # flow because the setting could be modified out-of-band on the Pi (any
 # `sudo rpi-eeprom-config --edit` rewrites it) and a wrong value silently
@@ -861,8 +1238,39 @@ step_install_eclipse_obd_unit
 # and the unit files themselves change per-sprint as instrumentation
 # evolves.  Idempotent: no-op when files match + dirs already exist.
 step_install_drain_forensics_unit
-step_write_deploy_version
+
+# US-322 / B-072: nightly orphan-cleanup timer for NULL-drive_id realtime_data
+# rows.  Same install posture as drain-forensics -- the unit pair lives in the
+# repo, deploy syncs them sync-if-changed, daemon-reload only on real change,
+# enable --now is idempotent.  No extra runtime dirs needed (script touches
+# data/obd.db only).
+step_install_orphan_cleanup_unit
+
+# T11/T12: install boot-progress-finalize.service + boot-progress-arm.service
+# alongside the other systemd units.  Same install posture as drain-forensics /
+# orphan-cleanup -- the unit pair lives in the repo, deploy syncs them
+# sync-if-changed, daemon-reload only on real change, enable --now is
+# idempotent (BOTH units enabled: arm runs at boot, finalize active so its
+# ExecStop fires at shutdown).  No extra runtime dirs needed (the existing
+# data/ dir is the boot-progress target).
+step_install_boot_progress_units
+
+# Phase-2 T6: install eclipse-powerwatch.service (the bounded pre-shutdown
+# pipeline / graceful-poweroff watcher). Same sync-if-changed posture as the
+# other units; additionally restarts the long-running service on change so the
+# new code actually runs. No extra runtime dirs (outcome record -> data/).
+step_install_power_watch_unit
+
+# US-354 reordering: restart first, then verify both long-running services
+# came back with start times AFTER DEPLOY_START_EPOCH, THEN bump
+# .deploy-version. The prior order wrote .deploy-version before the
+# eclipse-obd restart -- a failed restart left the version bumped on a Pi
+# still running old code (the V0.27.16 dead-code-in-memory bug).
+# step_install_power_watch_unit above also restarts unconditionally now
+# (decoupled from the unit-file-change gate per US-354).
 step_restart_service
+step_verify_service_restarts
+step_write_deploy_version
 
 echo ""
 echo "Deploy OK: $(date -Iseconds) to ${PI_USER}@${PI_HOST}"

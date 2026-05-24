@@ -23,6 +23,57 @@
 #               |              | declare the column.
 # 2026-04-21    | Rex (US-217) | Register battery_health_log in _TABLE_REGISTRY
 #               |              | so Pi UPS drain events sync to MariaDB.
+# 2026-05-10    | Rex (US-315) | B-065 leverage note: the existing
+#               |              | _upsertBatch path (on_duplicate_key_update
+#               |              | for MariaDB / on_conflict_do_update for
+#               |              | SQLite, keyed on (source_device, source_id))
+#               |              | already supports UPDATE propagation for the
+#               |              | three opt-in tables (battery_health_log,
+#               |              | drive_summary, dtc_log).  No server-side
+#               |              | code change is needed -- the bug under
+#               |              | B-065 was purely Pi-side cursor mechanics.
+#               |              | _PRESERVE_ON_UPDATE keeps source-key columns
+#               |              | + synced_at; payload-only columns are upserted
+#               |              | (server-side analytics columns the Pi never
+#               |              | sends are untouched, satisfying Spool Spec 3
+#               |              | for drive_summary).
+# 2026-05-12    | Ralph(US-333)| B-079 / TD-027: _createSyncHistoryRow now sets
+#               |              | started_at explicitly from datetime.now(UTC)
+#               |              | instead of leaning on the model's
+#               |              | server_default=func.now() (MariaDB local time)
+#               |              | -- both started_at and completed_at now use the
+#               |              | same UTC clock so the sync-duration metric is
+#               |              | real (seconds) rather than a fixed ~18000s.
+# 2026-05-21    | Rex (US-348) | I-040 false-pass redo: _tryAutoAnalysisTrigger
+#               |              | now feeds both trigger seams to
+#               |              | enqueueAutoAnalysisForSync -- the existing
+#               |              | connection_log path AND a new drive_summary
+#               |              | payload path.  Empirical from I-040: real Pi
+#               |              | syncs deliver drive_summary rows via the table-
+#               |              | upsert path but the corresponding connection_log
+#               |              | drive_start/drive_end events are absent (or
+#               |              | arrive in a different sync batch), so the
+#               |              | original seam never fired and analytics fields
+#               |              | stayed NULL across drives 11-18.  The trigger
+#               |              | now early-returns only when BOTH seams have no
+#               |              | drive data.
+# 2026-05-21    | Rex (US-350) | B-104 Step 1a (V0.27.17) -- retire the
+#               |              | _tryAutoAnalysisTrigger seam entirely.  Drive
+#               |              | analytics is now computed server-side from raw
+#               |              | realtime_data via the dedicated compute path
+#               |              | src.server.analytics.drive_summary_compute -- no
+#               |              | path from sync receipt to compute.  US-326 +
+#               |              | US-348 were the V0.27.7 + V0.27.16 trigger-seam
+#               |              | rewrites; third-cycle false-pass (Argus 2026-
+#               |              | 05-21) confirmed the writer-redo class cannot
+#               |              | be made empirically reliable on a Pi-side
+#               |              | drive-end signal that does not fire on
+#               |              | sequencer-driven termination.  Removed:
+#               |              | _tryAutoAnalysisTrigger function + its call
+#               |              | site + the enqueueAutoAnalysisForSync import.
+#               |              | autoAnalysisTriggered stays in SyncResponse for
+#               |              | Pi-side wire-format compatibility but is always
+#               |              | False (server compute runs out-of-band).
 # ================================================================================
 ################################################################################
 
@@ -70,6 +121,7 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request, status
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+from sqlalchemy import func as sa_func
 from sqlalchemy import select, update
 from sqlalchemy.dialects.mysql import insert as mysql_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
@@ -82,6 +134,7 @@ from src.server.db.models import (
     BatteryHealthLog,
     CalibrationSession,
     ConnectionLog,
+    DriveCounter,
     DriveSummary,
     DtcLog,
     Profile,
@@ -90,7 +143,12 @@ from src.server.db.models import (
     SyncHistory,
     VehicleInfo,
 )
-from src.server.services.analysis import enqueueAutoAnalysisForSync
+
+# US-350 / B-104 Step 1a (V0.27.17): enqueueAutoAnalysisForSync import retired.
+# Drive analytics is now computed server-side from raw realtime_data via
+# src.server.analytics.drive_summary_compute, invoked on a server-side trigger
+# (overnight batch + on-demand CLI) that does NOT depend on a Pi-side drive-end
+# signal or any sync-receipt seam.
 
 logger = logging.getLogger(__name__)
 
@@ -153,6 +211,23 @@ class TableData(BaseModel):
     )
 
 
+class DriveCounterData(BaseModel):
+    """Top-level singleton field carrying the Pi's current ``drive_counter``.
+
+    US-314: drive_counter is a single-row state mirror, not an append-only
+    delta table.  It rides on the sync request as a sibling of ``tables``
+    so the natural-key contract on ``(source_device, source_id)`` does not
+    apply (a process-wide counter has no source_id).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    lastDriveId: int = Field(
+        ..., gt=0,
+        description="Pi-local high-water mark for drive_id; must be positive.",  # b044-exempt: pydantic Field description
+    )
+
+
 class SyncRequest(BaseModel):
     """Top-level sync request body."""
 
@@ -166,6 +241,10 @@ class SyncRequest(BaseModel):
     )
     tables: dict[str, TableData] = Field(
         ..., description="Per-table delta payload keyed by accepted table name.",
+    )
+    driveCounter: DriveCounterData | None = Field(
+        default=None,
+        description="Optional Pi drive_counter singleton snapshot (US-314).",  # b044-exempt: pydantic Field description
     )
 
     @field_validator("tables")
@@ -389,15 +468,94 @@ def _upsertBatch(
 
 
 # ==============================================================================
+# drive_counter singleton upsert (US-314 / B-064)
+# ==============================================================================
+
+
+def runDriveCounterUpsert(session: Session, lastDriveId: int) -> None:
+    """Upsert the singleton ``drive_counter`` row, never rewinding.
+
+    The server table is single-row (CHECK ``id=1``) and tracks the Pi's
+    most recent ``drive_id``.  This helper writes the value via a
+    monotonic upsert: if the existing row already holds a value greater
+    than ``lastDriveId`` (e.g., a stale sync arriving after a fresher
+    one), the existing value is preserved.  Forward-only is the
+    invariant -- analytics joins on ``drive_id`` corrupt silently if
+    the counter rewinds.
+
+    Args:
+        session: Caller-owned SQLAlchemy session; commit is the caller's
+            responsibility (matches :func:`runSyncUpsert`'s contract so
+            both writes share one transaction).
+        lastDriveId: Pi-local ``last_drive_id`` from the request payload.
+            Must be positive (Pydantic enforces ``gt=0`` upstream).
+
+    Raises:
+        ValueError: If ``lastDriveId`` is not a positive integer (defence
+            in depth -- callers route through Pydantic which already
+            rejects this case).
+    """
+    if not isinstance(lastDriveId, int) or lastDriveId <= 0:
+        raise ValueError(
+            f"lastDriveId must be a positive integer, got {lastDriveId!r}",
+        )
+
+    table = DriveCounter.__table__
+    dialectName = session.bind.dialect.name  # type: ignore[union-attr]
+
+    if dialectName in {"mysql", "mariadb"}:
+        stmt = mysql_insert(table).values(id=1, last_drive_id=lastDriveId)
+        # GREATEST(existing, incoming) keeps the row monotonic even if
+        # an out-of-order sync delivers a stale lastDriveId.
+        stmt = stmt.on_duplicate_key_update(
+            last_drive_id=sa_func.greatest(
+                table.c.last_drive_id, stmt.inserted.last_drive_id,
+            ),
+        )
+    elif dialectName == "sqlite":
+        stmt = sqlite_insert(table).values(id=1, last_drive_id=lastDriveId)
+        # SQLite has no GREATEST; CASE expresses the same semantics.
+        stmt = stmt.on_conflict_do_update(
+            index_elements=["id"],
+            set_={
+                "last_drive_id": sa_func.max(
+                    table.c.last_drive_id, stmt.excluded.last_drive_id,
+                ),
+            },
+        )
+    else:
+        raise ValueError(
+            f"Unsupported dialect for upsert: {dialectName!r}. "
+            "Expected mysql, mariadb, or sqlite.",
+        )
+
+    session.execute(stmt)
+
+
+# ==============================================================================
 # sync_history helpers (async)
 # ==============================================================================
 
 
 async def _createSyncHistoryRow(engine: Any, deviceId: str) -> int:
-    """Create a sync_history row with status=in_progress; return its id."""
+    """Create a sync_history row with status=in_progress; return its id.
+
+    ``started_at`` is set explicitly from the same UTC clock that stamps
+    ``completed_at`` (see :func:`_completeSyncHistoryRow`).  The model still
+    declares ``server_default=func.now()`` as a belt-and-braces fallback, but on
+    MariaDB ``NOW()`` returns the server's *local* time — pairing that with the
+    UTC ``completed_at`` made ``completed_at - started_at`` a fixed ~18000s
+    (the America/Chicago offset) instead of a real sync duration.  Writing both
+    columns from ``datetime.now(UTC)`` here is the TD-027 / B-079 fix.
+    """
     factory = getAsyncSession(engine)
     async with factory() as session:
-        row = SyncHistory(device_id=deviceId, status="in_progress", rows_synced=0)
+        row = SyncHistory(
+            device_id=deviceId,
+            status="in_progress",
+            rows_synced=0,
+            started_at=datetime.now(UTC).replace(tzinfo=None),
+        )
         session.add(row)
         await session.flush()
         rowId = row.id
@@ -523,18 +681,26 @@ async def postSync(request: Request) -> SyncResponse:
         name: {"rows": td.rows, "lastSyncedId": td.lastSyncedId}
         for name, td in syncRequest.tables.items()
     }
+    driveCounter = syncRequest.driveCounter
     try:
         factory = getAsyncSession(engine)
         async with factory() as session:
-            tablesProcessed = await session.run_sync(
-                lambda s: runSyncUpsert(
+            def _runAllUpserts(s: Session) -> dict[str, dict[str, int]]:
+                processed = runSyncUpsert(
                     s,
                     deviceId=syncRequest.deviceId,
                     batchId=syncRequest.batchId,
                     tables=tablesForCore,
                     syncHistoryId=historyId,
-                ),
-            )
+                )
+                # US-314: Pi drive_counter snapshot rides on the same
+                # transaction so a partial failure rolls back BOTH the
+                # table upserts and the counter advance.
+                if driveCounter is not None:
+                    runDriveCounterUpsert(s, driveCounter.lastDriveId)
+                return processed
+
+            tablesProcessed = await session.run_sync(_runAllUpserts)
             await session.commit()
     except Exception as exc:  # noqa: BLE001 — any DB error → 500
         logger.error("Sync upsert failed for batch %s: %s", syncRequest.batchId, exc)
@@ -548,18 +714,15 @@ async def postSync(request: Request) -> SyncResponse:
     syncedAt = datetime.now(UTC).replace(tzinfo=None)
     await _completeSyncHistoryRow(engine, historyId, tablesProcessed, syncedAt)
 
-    # 7) Auto-analysis trigger (US-CMP-006).
-    #    Runs after the sync transaction is already committed. The call itself
-    #    is awaited so we know whether a task was scheduled (for the response
-    #    flag), but individual analysis tasks run in the background — any
-    #    Ollama latency does not gate the /sync response.
+    # 7) US-350 / B-104 Step 1a (V0.27.17): the V0.27.7-V0.27.16
+    #    auto-analysis trigger is retired.  Server-side drive analytics now
+    #    run via the out-of-band compute path (overnight systemd timer +
+    #    on-demand CLI in src.server.cli.recompute_drive_analytics) which
+    #    reads raw realtime_data directly -- no dependency on a Pi-side
+    #    drive-end marker.  ``autoAnalysisTriggered`` stays in the response
+    #    shape for Pi-side wire-format compatibility but is always False.
     driveDataReceived = detectDriveDataReceived(tablesForCore)
-    autoAnalysisTriggered = await _tryAutoAnalysisTrigger(
-        request=request,
-        engine=engine,
-        deviceId=syncRequest.deviceId,
-        tablesForCore=tablesForCore,
-    )
+    autoAnalysisTriggered = False
 
     # 8) Build response.
     return SyncResponse(
@@ -574,44 +737,25 @@ async def postSync(request: Request) -> SyncResponse:
     )
 
 
-async def _tryAutoAnalysisTrigger(
-    *,
-    request: Request,
-    engine: Any,
-    deviceId: str,
-    tablesForCore: dict[str, Any],
-) -> bool:
-    """Enqueue AI analysis for drive_end rows in the payload (US-CMP-006).
-
-    Pulls Ollama settings off ``app.state.settings`` (falling back to module
-    defaults when unset so route-only tests don't need full Settings). Any
-    exception in the enqueue path is swallowed and logged — the sync response
-    must not be gated on analysis-layer faults.
-    """
-    connLog = tablesForCore.get("connection_log")
-    if connLog is None:
-        return False
-
-    settings = getattr(request.app.state, "settings", None)
-    baseUrl = getattr(settings, "OLLAMA_BASE_URL", None) or "http://localhost:11434"
-    model = getattr(settings, "OLLAMA_MODEL", None) or "llama3.1:8b"
-    timeout = int(getattr(settings, "ANALYSIS_TIMEOUT_SECONDS", None) or 120)
-
-    try:
-        return await enqueueAutoAnalysisForSync(
-            engine=engine,
-            deviceId=deviceId,
-            connectionLogRows=list(connLog["rows"]),
-            ollamaBaseUrl=baseUrl,
-            ollamaModel=model,
-            ollamaTimeoutSeconds=timeout,
-        )
-    except Exception as exc:  # noqa: BLE001 — never gate sync on analysis faults
-        logger.error(
-            "Auto-analysis enqueue failed for device=%s: %s",
-            deviceId, exc, exc_info=True,
-        )
-        return False
+# US-350 / B-104 Step 1a (V0.27.17): _tryAutoAnalysisTrigger DELETED.
+#
+# The V0.27.7-V0.27.16 sync-receipt trigger seam (paired-event extraction +
+# drive_summary-payload extraction -> enqueueAutoAnalysisForSync ->
+# _ensureDriveSummary writer) is retired entirely.  Drive analytics now run
+# server-side via src.server.analytics.drive_summary_compute, invoked by
+# the nightly systemd timer (deploy/server-analytics-batch.timer) and the
+# on-demand CLI (src.server.cli.recompute_drive_analytics).  Both read raw
+# realtime_data MIN/MAX/COUNT directly and do not depend on any Pi-side
+# drive-end signal.  Argus 2026-05-21 RCA: the writer-redo class shipped
+# three times (US-326 / US-348) because the Pi-side trigger (DriveDetector
+# drive-end signal) does not fire on sequencer-driven termination -- the
+# server compute path is structurally invariant to that defect.
+#
+# Re-introducing a sync-receipt trigger here is an architectural regression
+# (B-104 Step 1a).  If a future story needs to nudge the recompute path on
+# sync receipt, invoke the compute module directly (src.server.analytics.
+# drive_summary_compute.compute_drive_summary) on a deliberate seam --
+# never resurrect this private trigger helper.
 
 
 # ==============================================================================
@@ -620,11 +764,13 @@ async def _tryAutoAnalysisTrigger(
 
 __all__ = [
     "ACCEPTED_TABLES",
+    "DriveCounterData",
     "SyncRequest",
     "SyncResponse",
     "TableData",
     "TableResult",
     "detectDriveDataReceived",
     "router",
+    "runDriveCounterUpsert",
     "runSyncUpsert",
 ]

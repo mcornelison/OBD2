@@ -174,7 +174,8 @@ class StatisticsEngine:
         self,
         profileId: str | None = None,
         delaySeconds: float = 0,
-        analysisWindow: timedelta | None = None
+        analysisWindow: timedelta | None = None,
+        driveId: int | None = None,
     ) -> bool:
         """
         Schedule analysis to run after a delay.
@@ -183,6 +184,17 @@ class StatisticsEngine:
             profileId: Profile to analyze (default: active profile from config)
             delaySeconds: Delay before running analysis
             analysisWindow: Time window of data to analyze (default: all available)
+            driveId: US-306 capture-at-trigger seam.  When the caller knows
+                which drive_id the resulting statistics rows should carry
+                (e.g. ``DriveDetector._triggerAnalysis`` snapshotting the
+                active drive_id BEFORE ``_closeDriveId`` clears it), pass
+                it here.  The value is captured into the background
+                thread's closure so the asynchronous write path stamps
+                rows with the captured id even after the process-wide
+                singleton has been cleared.  ``None`` preserves the
+                pre-US-306 fallback to ``getCurrentDriveId()`` at write
+                time (correct for ad-hoc / replay analyses where no
+                drive lifecycle is in flight).
 
         Returns:
             True if scheduled successfully
@@ -204,17 +216,20 @@ class StatisticsEngine:
             self._state = AnalysisState.SCHEDULED
 
             logger.info(
-                f"Analysis scheduled | profile={profileId} | delay={delaySeconds}s"
+                f"Analysis scheduled | profile={profileId} | "
+                f"delay={delaySeconds}s | drive_id={driveId}"
             )
 
             if delaySeconds <= 0:
                 # Run immediately in background thread
-                self._startAnalysisThread(profileId, analysisWindow)
+                self._startAnalysisThread(profileId, analysisWindow, driveId)
             else:
                 # Schedule for later
                 self._scheduledTimer = threading.Timer(
                     delaySeconds,
-                    lambda: self._startAnalysisThread(profileId, analysisWindow)
+                    lambda: self._startAnalysisThread(
+                        profileId, analysisWindow, driveId,
+                    ),
                 )
                 self._scheduledTimer.daemon = True
                 self._scheduledTimer.start()
@@ -241,7 +256,8 @@ class StatisticsEngine:
         self,
         profileId: str | None = None,
         analysisWindow: timedelta | None = None,
-        storeResults: bool = True
+        storeResults: bool = True,
+        driveId: int | None = None,
     ) -> AnalysisResult:
         """
         Calculate statistics for all logged parameters.
@@ -322,7 +338,7 @@ class StatisticsEngine:
 
                 # Store results if requested
                 if storeResults and result.parameterStats:
-                    self._storeStatistics(result)
+                    self._storeStatistics(result, driveId=driveId)
 
             # Calculate duration
             endTime = time.perf_counter()
@@ -584,15 +600,24 @@ class StatisticsEngine:
     def _startAnalysisThread(
         self,
         profileId: str,
-        analysisWindow: timedelta | None
+        analysisWindow: timedelta | None,
+        driveId: int | None = None,
     ) -> None:
-        """Start analysis in a background thread."""
+        """Start analysis in a background thread.
+
+        ``driveId`` is captured into the closure so the asynchronous
+        write path stamps rows with the value the caller observed at
+        trigger time -- defeats the US-306 race where the process-wide
+        ``getCurrentDriveId()`` singleton is cleared synchronously
+        between thread spawn and thread execution.
+        """
         def runAnalysis():
             try:
                 self.calculateStatistics(
                     profileId=profileId,
                     analysisWindow=analysisWindow,
-                    storeResults=True
+                    storeResults=True,
+                    driveId=driveId,
                 )
             except Exception as e:
                 logger.error(f"Background analysis failed: {e}")
@@ -664,12 +689,22 @@ class StatisticsEngine:
 
         return parameterData
 
-    def _storeStatistics(self, result: AnalysisResult) -> None:
+    def _storeStatistics(
+        self,
+        result: AnalysisResult,
+        driveId: int | None = None,
+    ) -> None:
         """
         Store analysis results in the statistics table.
 
         Args:
             result: AnalysisResult to store
+            driveId: US-306 capture-at-trigger drive_id.  When the caller
+                threaded a value through ``scheduleAnalysis`` /
+                ``calculateStatistics`` (DriveDetector path), it is used
+                directly.  When ``None`` (ad-hoc / replay path) we fall
+                back to the process-wide singleton -- preserves the
+                pre-US-306 behavior for callers that never had the race.
         """
         try:
             with self.database.connect() as conn:
@@ -680,12 +715,15 @@ class StatisticsEngine:
                 # shares the same analysis_date (required by the
                 # getLatestAnalysisResult MAX-grouping query).
                 canonicalAnalysisDate = toCanonicalIso(result.analysisDate)
-                # US-200: stamp the drive_id active when the analysis was
-                # triggered.  Lazy import to dodge the pi.obdii package
-                # init cycle that trips when the analysis package is loaded
-                # during obdii/__init__.py evaluation.
-                from src.pi.obdii.drive_id import getCurrentDriveId
-                driveId = getCurrentDriveId()
+                # US-200 / US-306: stamp the drive_id captured at trigger
+                # time when the caller supplied it; otherwise fall back
+                # to the process-wide singleton.  Lazy import to dodge
+                # the pi.obdii package init cycle that trips when the
+                # analysis package is loaded during obdii/__init__.py
+                # evaluation.
+                if driveId is None:
+                    from src.pi.obdii.drive_id import getCurrentDriveId
+                    driveId = getCurrentDriveId()
 
                 for _paramName, stats in result.parameterStats.items():
                     cursor.execute(

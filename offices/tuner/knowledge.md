@@ -1,7 +1,7 @@
 # Spool's Tuning Knowledge Base
 
 > This is the single source of truth for all engine tuning knowledge in the Eclipse OBD-II project.
-> Maintained by Spool (Tuning SME). Last major update: 2026-05-08 (Session 9 — Drive 6 + Drive 7 captured; **Drive 7 = first under-load capture in project history (84 mph + 100% engine load WOT pull) and is now the AUTHORITATIVE UNDER-LOAD BASELINE**; engine GRADED HEALTHY across full operational envelope; LTFT post-jump-start adaptation tracking CLOSED — ECU re-locked at -6.25% baseline; thermostat opens at 80°C confirmed across 4 drives).
+> Maintained by Spool (Tuning SME). **2026-05-22 ECU SWAP (Session 19):** CIO swapped to a new modified-EPROM ECU (ECMLink-V3-friendly tune target). Drive 11 knock-retard reference ARCHIVED as prior-ECU historical; Drive 26 establishes the new working baseline (first knock-retard event observed during city tip-in: 18° pull, recovered cleanly). New tune ~10° more aggressive at sustained peak load vs prior. New OBD capability probe at `scripts/probe_obd_capabilities.sh` — Mode 09 silent, Mode 22 not implemented on this ECU, ECMLink USB+PC required for goldmine data. Two new caveats: SPEED PID reads ~2× actual ground speed on new ECU; cannot fingerprint EPROM via Mode 09. **2026-05-15 FUEL-GRADE CORRECTION (CIO directive):** all pre-mod shelf drives (3–16) were [EXACT: 93 octane — DO NOT CHANGE], NOT 91 as previously recorded. CIO misreported earlier; 93 octane is standard for all past + future fillings until E85 flex-fuel sensor install. Knock-retard baseline below is a 93-octane baseline; "creep up on 93" prediction VOID. Prior major update: 2026-05-12 (Session 12 — Drive 11 captured = **first clean car-coupled Pi-powered drive post-B-063 fuse-box install**; new under-load records (147 km/h = 91 mph, 5441 RPM, 100% load); first clean **knock-retard signature characterization** — ECU pulls timing ~12° from cruise-avg 24° to high-load 12° in 4500-5000 RPM mid-range knock window, correctly recovering above 5000 RPM; engine grade-A healthy across expanded envelope; 91 octane behaviour documented as new tuning baseline. Pre-mod shelf grows to 4 driving entries (drives 6/7/8/11). Prior update 2026-05-08 (Session 9 — Drive 6 + Drive 7 first under-load capture).
 
 ## SPEC-WRITING DISCIPLINE — DO NOT CHANGE Markers
 
@@ -40,6 +40,7 @@ When writing tuning specs with exact values (thresholds, limits, vehicle-specifi
 17. [DSM-Specific Quirks and Gotchas](#dsm-specific-quirks)
 18. [Tuning Glossary](#tuning-glossary)
 19. [UPS HAT Dropout Characteristics (Drain 7 baseline)](#ups-hat-dropout-characteristics-drain-7-baseline) — *Pi-side power-mgmt, not engine tuning*
+20. [Regression Fixture Lock-Down](#regression-fixture-lock-down) — *project hygiene; protect tuning-data pipeline test inputs*
 
 ---
 
@@ -332,6 +333,53 @@ Sprint 14 US-199 adds this to the Pi poll set as the battery voltage source.
 | **EGT (exhaust gas temp)** | Not wired to ECU | Aftermarket EGT probe |
 | **Knock retard (degrees)** | Not OBD-II accessible | ECMLink V3 only |
 
+### Capability Probe — Methodology and Tooling
+
+The OBDLink LX dongle is **not** the bottleneck for getting ECU-internal tuning data — the dongle can forward arbitrary bytes via ELM327 raw-mode commands. The walls stack as:
+
+1. **OBD-II protocol surface** — bounded by what the 1998 ECU implements. Stock 2G doesn't speak Mode 22 (vendor enhanced); it acknowledges Mode 09 (vehicle info) at the bitmap level but exposes zero sub-PIDs.
+2. **MUT-II protocol** — Mitsubishi factory diagnostic, uses different init/framing, NOT what ELM327 firmware speaks natively. ECMLink Logger uses MUT-II with ECMLink-specific RAM-peek commands against modified-EPROM-exposed addresses. That's the only practical path to per-cylinder knock retard, knock sum, base spark advance, and target AFR map. **Requires the ECMLink USB-to-serial cable + PC software, not the OBDLink-via-Pi pipe.**
+3. **K-line bandwidth** — 10.4 kbps absolute ceiling regardless of what's queryable.
+
+**Probe script**: `offices/tuner/scripts/probe_obd_capabilities.sh`. Run any time the ECU changes (swap, EPROM update, calibration change). Pauses `eclipse-obd` for ~60 sec, enumerates Mode 01 supported PIDs by name, attempts Mode 09 (VIN/calibration ID/CVN/ECU name), speculatively probes Mode 22 at common Mitsubishi/DSM addresses, and dumps adapter ATI/ATRV/AT@1/STDI info. Service restart triggers a new drive_id — expected, not a bug.
+
+### 2026-05-22 — Capability Probe Result (Post-Modified-EPROM Swap)
+
+CIO swapped from stock ECU to modified-EPROM ECU. Probe run via `probe_obd_capabilities.sh` at 18:51:43Z during warm idle on Drive 25.
+
+**Mode 01 (standard PIDs)**: 16 supported — **same set as pre-swap**. Same 3 historical unsupported (0x0A Fuel Pressure, 0x0B Intake Manifold Pressure, 0x42 Control Module Voltage). **Modified EPROM did NOT expand the standard OBD-II PID surface.**
+
+**Mode 09 (calibration identity)**: ECU acknowledges Mode 09 bitmap exists but returns NO RESPONSE on 0902 (VIN), 0904 (Calibration ID), 0906 (CVN), 090A (ECU Name). Cannot fingerprint the EPROM via OBD-II. Normal for a 1998 ECU — Mode 09 VIN requirement came with later OBD-II revisions (~2008 with CAN).
+
+**Mode 22 (vendor enhanced)**: NOT IMPLEMENTED at any of 8 probed addresses (2202, 2204, 2210, 2220, 2240, 2280, 22F101, 22F190). **Confirms the OBDLink-via-Pi pipe cannot reach ECMLink-internal data on this ECU.** ECMLink cable + PC software is the only path for the knock/AFR/advance goldmine.
+
+**Bonus discoveries** (these existed pre-swap too but were never enumerated in `knowledge.md` — surfacing here for future use):
+
+- **Mode 02 freeze-frame**: 16 PIDs mirroring Mode 01 (DTC_RPM, DTC_COOLANT_TEMP, DTC_TIMING_ADVANCE, etc.). State-at-DTC-trigger data is queryable. **Worth wiring into future diagnostic enrichment**: when MIL_ON goes high, snapshot the freeze-frame for forensic analysis.
+- **Mode 06 monitor results**: MIDS_A bitmap supported. Catalyst efficiency, O2 heater response time, EGR flow monitor results. Useful for long-term emissions-health tracking. MIDs need separate enumeration.
+- **Mode 03/07**: stored / pending DTC enumeration. Project currently counts DTCs only; could pull actual codes.
+
+**Adapter inventory** (logged for record):
+- ELM327 firmware **v1.4b**
+- OBDLink **LX BT r2.1.1**
+- Manufacturer: OBD Solutions LLC (AT@1)
+- ATRV reports battery voltage at OBD port pin 16 (independent of K-line bandwidth)
+
+### ⚠ NEW-ECU CAVEAT — SPEED PID reads ~2× actual ground speed (caught 2026-05-22, Session 19)
+
+Drive 26 (first city-driving telemetry on new ECU) reported SPEED peak 84 mph. CIO confirmed actual ground speed was city-roads tip-in (~40 mph estimated). Gear math at RPM 3,788 places 2nd-gear ≈ 39 mph, 3rd-gear ≈ 55 mph — consistent with CIO's report, inconsistent with the 84 mph reading. **The new ECU's SPEED PID reads approximately 2× actual ground speed.**
+
+Sanity check against prior-ECU Drive 18: RPM 3,937 / SPEED 60 mph = 3rd-gear math fit (theoretical 57 mph). The prior ECU's SPEED PID was calibrated correctly. The discrepancy is new-ECU-specific.
+
+**Likely cause**: modified EPROM has different VSS (vehicle speed sensor) calibration constants — non-OEM tire-size assumption, non-OEM speedometer-gear-ratio assumption, or different VSS pulse-per-rev expectation. Common for aftermarket EPROMs if the tuner anticipated different tires/gearing.
+
+**Until verified with a GPS-correlation drive**:
+- Treat SPEED on new ECU as **directional only — divide by ~2 for ground-truth estimate**.
+- Any analytics keyed off SPEED (distance, avg speed, gear inference) will be off by the same factor.
+- **None of the engine-grade analysis depends on SPEED** (RPM, LOAD, MAF, TIMING, STFT, COOLANT all measured independently). Engine assessments remain trustworthy.
+
+**Calibration check** (2-min exercise on next drive): cruise at a GPS-verified known speed (e.g., 30 mph on a straight road), record the SPEED PID reading at that moment, derive correction factor. Update this caveat with empirical ratio once captured.
+
 ---
 
 ## Safe Operating Ranges
@@ -388,6 +436,75 @@ This is the most conservative level. We have limited monitoring capability.
 > These are observed values from **this specific Eclipse** (1998 GST, 76k mi, stock turbo TD04-13G, stock internals, modified EPROM, coilovers/mounts/clutch/tie-rods fresh, no wideband, no ECMLink). Use these as the **comparison baseline** when grading future captures — community data informs us, this car's data grounds us.
 >
 > **Always check these against the current capture. A healthy engine returns to its own baseline.**
+
+### Pre-Mod Baseline Shelf — `mod_state = premod`
+
+> **Status as of 2026-05-12: 7 drives on the shelf (drives 3-7 + Drive 8 added 2026-05-10 + Drive 11 added 2026-05-12). Drive 9 + Drive 10 captured but HELD OUT from shelf (Drive 9 hardware-compromised; Drive 10 too short). Shelf is OPEN — accepting new drives until Walbro pump installs. BLOCKER CLEARED: B-063 fuse-box buck converter installed + validated on Drive 11. Car-coupled-fuse-box power era is now ACTIVE.**
+
+The pre-mod baseline shelf is the canonical body of empirical data captured on the car in its **current bolt-on configuration** (stock turbo, stock internals, modified EPROM, current bolt-ons listed in *The Vehicle* section). All drives on this shelf share `mod_state = premod` per the [Spec 1 mod_state enum](../../offices/pm/inbox/2026-05-09-from-spool-three-specs-mod-state-drive-annotations-drive-summary-contract.md). Future-Spool grades any *future* `premod` capture against this shelf; once the first mod ships (Walbro pump per the Summer 2026 install plan), the shelf **closes** and a new shelf opens for the next `mod_state`.
+
+**Why this matters**: comparing a future post-Walbro WOT pull against a pre-Walbro WOT pull without the shelf-tag is a category error. The shelf is the project's "what does healthy look like in *this* mod state" reference, frozen at the moment we move to the next state.
+
+#### Current shelf contents
+
+| drive_id | Date | Type | Authoritative for | Annotation source |
+|---:|---|---|---|---|
+| 3 | 2026-04-23 | parked-idle system test | First real engine data; LTFT -6.25% lock observed; cold-warm cycle | `drive-annotations.md` + `obd2db.drive_annotations` |
+| 4 | 2026-04-29 AM | parked-idle system test | Pre-jump-start half of LTFT adaptation story | same |
+| 5 | 2026-04-29 PM | parked-idle system test (post-jump) | **AUTHORITATIVE WARM-IDLE BASELINE** (idle-only, NOT driven). 489 samples/PID. Active LTFT re-learn captured. | same |
+| 6 | 2026-05-08 AM | **first real driving capture** (cold-start city) | Cold-warm-up curve under driving load, idle LTFT re-lock at -6.25%, fuel system stability at low tank | same |
+| 7 | 2026-05-08 PM | **first under-load capture** (highway + WOT pull) | **AUTHORITATIVE UNDER-LOAD BASELINE.** WOT to 100% load, MAF 158.69 g/s peak, timing 34° BTDC, no knock pull, fresh-fill [EXACT: 93 octane — DO NOT CHANGE] (corrected 2026-05-15; see Fuel-Grade Correction note below) | same |
+| 8 | 2026-05-09 PM | cold-start city/highway, portable-inverter Pi power | True cold-start (coolant 23→92°C, ambient 75°F). Mixed city/highway, no WOT. 8,268 rows @ 459 rows/min. **NOT car-coupled — Pi was on its stock 5A supply via camping-battery AC inverter (same power model as Drives 6+7).** | same |
+| 11 | 2026-05-12 AM | **first clean car-coupled drive post-B-063** (cold-start mixed city/highway with multiple boost pulls) | **AUTHORITATIVE KNOCK-RETARD CHARACTERIZATION.** 23:27 min, **10,839 rows @ 462 rows/min** (new project rows/min record). Cold-start (IAT 12→27°C, coolant 34→93°C). 5441 RPM peak / 147 km/h ≈ 91 mph / 100% engine load / MAF 135 g/s peak / 68.6% peak throttle. **Multiple boost pulls captured with ECU knock-retard signature**: cruise timing avg 24.5°, high-load (>80%) timing avg 12-13° — 10-15° of retard under boost. Specific knock event 01:22:30Z: timing dropped 16° in 3 sec at 4707 RPM, recovered to 23° above 5000 RPM (4G63 mid-range knock window). Fuel system pegged rich (O2 0.92-0.96V) under boost — correct safety target. No DTCs, no MIL, no thermal/fueling concerns. **B-063 fuse-box buck converter validated under sustained drive load.** | same (fuel grade [EXACT: 93 octane — DO NOT CHANGE] corrected 2026-05-15, ambient ~12°C from IAT) |
+
+**HELD OUT (captured but NOT on the shelf)**:
+- **Drive 9** (2026-05-10 early AM, ~30 min city pizza run) — USB-C connection worked loose; Pi cycling between wall and battery throughout drive; capture rate degraded 12× (36 rows/min). Hardware-induced data quality issue, not engine behavior. Engine itself fine (no DTCs, no MIL).
+- **Drive 10** (2026-05-10 early AM, 2:10 garage pull-in) — too short for tuning use. Drain id=12 opened 8 sec into drive (smoking-gun confirmation of USB-C undersizing). Captured for completeness only.
+
+Drives 3–5 are **idle-only / parked system tests** — they hold idle-cell data only, and are NOT comparable to load-cell data from drives 6–8. Drives 6, 7, 8 are the only valid driving captures on the shelf. Drives 9 and 10 are held out per above.
+
+#### Per-drive details
+
+Subsections below give the per-drive parameter tables and interpretation anchors. **Annotations (fuel grade, level, ambient, intent, etc.) live in `offices/tuner/drive-annotations.md` + `obd2db.drive_annotations`** — this section captures the OBD telemetry side, the annotations file captures the context side. Read both together for any drive analysis.
+
+#### Rules for the shelf
+
+1. **A drive joins the shelf when**: `mod_state = premod` at drive_start AND `drive_summary.is_real = TRUE` AND CIO seat-of-pants reports no anomalies. Manual review by Spool is required for promotion to "authoritative" status — auto-add is OK for the catalog, but "authoritative for X" tags are Spool's call.
+2. **The shelf closes when**: the first non-`premod` mod is installed. The most recent `premod` drive at that moment becomes the **frozen shelf** — no more drives admitted. A new shelf opens for the new `mod_state`. The frozen pre-mod shelf becomes the historical reference for "what this car was before mods."
+3. **A drive on the shelf is RETIRED only if**: a defect is later discovered that contaminated the data. Retire by adding a "RETIRED" row to the table above with rationale; do not delete the row from the database.
+4. **Comparisons across shelves require explicit Spool sign-off** — pre-mod vs ECMLink-base data should not be averaged in any AI prompt or analytics rollup without a tuner-side review of whether the comparison is valid.
+
+#### Wiring milestone — bench-tethered → car-coupled Pi power transition (2026-05-09)
+
+The pre-mod shelf splits into THREE power-state eras (with a fourth pending):
+
+| Era | Drives | Pi power source | Key-state coupling |
+|---|---|---|---|
+| **Bench-tethered (true wall AC)** | 3, 4, 5 | Pi at bench, wall AC + UPS HAT | INDEPENDENT — drives were parked-idle system tests anyway, no actual driving |
+| **Portable inverter (camping-battery AC)** | 6, 7, 8 | Pi's stock 5A supply, plugged into a camping-battery + inverter setup; CIO had the portable battery in the car for the drive | INDEPENDENT — CIO unplugged manually to simulate "car off" / drain tests |
+| **Car-coupled stereo USB-C** | 9 (compromised), 10 (compromised) | Stereo head unit's key-switched USB-C output (≤3A capacity) | COUPLED — key-on = Pi-on; key-off = Pi-on-UPS-then-graceful-shutdown. **PATH IS UNDERSIZED — both drives failed validation.** |
+| **Car-coupled fuse-box wired (ACTIVE 2026-05-12)** | 11+ | 12V→5V/5A buck converter on switched fuse-box circuit (Mike-DIY install 2026-05-12) | COUPLED — same as USB-C but with adequate current capacity. **Drive 11 validated: one 5-sec AC blip during 23 min drive vs Drives 9/10's constant flicker.** |
+
+**Why this transition matters for tuning interpretation**:
+
+1. **Cold-boot Pi every key-on (car-coupled era only)** — drives 3-8 had a Pi that was already running before drive_start (bench or portable inverter). Drives 9+ have a Pi that cold-boots at key-on. Initial-seconds capture behavior differs (TD-036 "orchestrator blocks on initial BT-connect" gets exercised every drive — may delay first telemetry rows by up to 30s).
+2. **First few seconds of every drive may be missing data (car-coupled era only)** — until the Pi finishes booting and DriveDetector wires up. Compare row counts in the first 30s of car-coupled drives vs the first 30s of bench/inverter-tethered drives; expect car-coupled to have fewer rows in that window.
+3. **Drain events fire on every key-off (car-coupled era only)** — drives 3-8 had drains only when CIO deliberately unplugged for drill purposes. Drives 9+ have ≥1 drain per drive cycle. The `battery_health_log` table fills ~10× faster going forward.
+
+**Hardware blocker CLEARED 2026-05-12**: B-063 fuse-box buck converter installed and validated on Drive 11 (one 5-sec AC blip mid-drive vs Drives 9/10's constant flicker — buck holds rock-steady at car system voltage 14.5V). Car-coupled-fuse-box path is now the active power era for all future drives. The car-coupled-stereo-USB-C path (Drives 9-10) is permanently retired.
+
+#### Outstanding shelf gaps (drives we still need before Walbro install)
+
+- **Sustained WOT** (>10 sec under load) — Drives 7 + 11 had brief pulls but not sustained; Drive 11 peaked at 68.6% throttle (not pinned). Need a longer high-load window for thermal-under-load behavior.
+- **Hot-soak then re-start** — capture heat-soak fueling. >20 min hot drive + 10 min hot-soak + restart.
+- **Wet-pavement under-load capture** — Drives 6 + 7 + 11 were dry. Wet-pavement under-load tells us whether traction events confound fueling/timing observations.
+- **Cold-engine + WOT** — Drive 7 was warm-restart WOT; Drive 11 was cold-start but with conservative 68.6% throttle. Cold-engine WOT (not recommended for engine health, but informative) shows enrichment differences.
+- ~~**93 octane A/B comparison**~~ **RETIRED 2026-05-15 (CIO fuel-grade correction)** — the entire shelf was already on [EXACT: 93 octane — DO NOT CHANGE] fresh-fill, not 91. No A/B comparison possible without a deliberate 91-octane run, which CIO will not do (93 standard until E85 sensor). The knock-retard baseline IS the 93-octane reference.
+- **MAP PID (PID 0x0B) not currently captured** — without manifold absolute pressure, we cannot quantify boost pressure (psi) during pulls. Filed as feature request to PM 2026-05-12 (ride-along V0.27.7 OR V0.28.0 feature sprint). Until landed, boost inferred from MAF + engine_load.
+
+If any of these get captured before the Walbro install, the shelf gains them. If not, the shelf closes incomplete and the project carries those gaps forward as known unknowns — interpret post-Walbro data with extra caution where the gaps exist.
+
+---
 
 ### Drive 5 — 2026-04-29 — AUTHORITATIVE BASELINE (full cold→warm cycle, 17:39 min, 489 ECU samples/PID)
 
@@ -492,6 +609,134 @@ Use these as "what a healthy under-load Drive looks like on THIS car" for future
 - **Sustained WOT** at high speed — Drive 7 had a 100%-load event but not sustained for many seconds (just a pull). Need a longer high-load window for thermal-under-load + EGT-correlation behavior.
 - **Hot-soak then re-start** — need a >20-min hot drive followed by 10-min hot-soak engine-off + restart to capture heat-soak fueling behavior.
 - **Cold ambient + WOT** — Drive 7 was warm-engine-only WOT. A cold-engine WOT (not recommended for engine health but informative for ECU behavior) would show enrichment differences.
+
+### Drive 11 — 2026-05-12 — PRIOR-ECU HISTORICAL REFERENCE (ARCHIVED 2026-05-22, was authoritative knock-retard characterization)
+
+> **ARCHIVED 2026-05-22 (Session 19)**: CIO swapped to a different modified-EPROM ECU mid-afternoon today. The new ECU's tune is materially more aggressive (runs ~10° more timing at sustained peak load, ~6° larger knock-retard pulls when fired). Drive 11's knock-retard envelope and timing observations no longer characterize the running ECU. **Use Drive 11 as PRIOR-ECU historical reference only. The new ECU baseline is being established starting Drive 26 (2026-05-22 spin); see `offices/tuner/knowledge/newecu-modified-eprom-first-impression-2026-05-22.md` for the first observation and forward updates.**
+
+**Context (prior ECU, 2026-05-12)**: First clean car-coupled Pi-powered drive post-B-063 fuse-box buck-converter install. Cold-start (ambient ~12°C from IAT), 23:27 min mixed city → highway with multiple boost pulls peaking at 5441 RPM / 100% load / 91 mph. [EXACT: 93 octane — DO NOT CHANGE] fresh-fill (consistent with rest of shelf; corrected 2026-05-15 — was misrecorded 91). Mike at conservative 68.6% peak throttle (deliberately not WOT, awaiting ECMLink V3 + wideband). 10,839 realtime_data rows @ 462 rows/min — new project rows/min record.
+
+| Parameter | Observed (Drive 11 full window) | Assessment |
+|---|---|---|
+| **RPM** | 613–5441, avg 2200 | Mixed city/highway driving. Peak 5441 = new under-load record (Drive 7 was 5379). |
+| **ENGINE_LOAD** | 5.1–100%, avg 25.4% | Multiple full-load events. Average 25% = lots of cruise interspersed with pulls. |
+| **MAF** | 3–135.14 g/s, avg 17.6 | 135 g/s peak ≈ 85% of Drive 7's 159 g/s peak (conservative throttle). |
+| **THROTTLE_POS** | 0–68.6%, avg 7.7 | Peak 68.6% — Mike deliberately not WOT. Avg 7.7% = mostly cruise. |
+| **COOLANT_TEMP** | 34–93°C, avg 84 | Clean cold-start curve. Operating temp ceiling 93°C — within envelope. No thermal events. |
+| **INTAKE_TEMP** | 12–27°C, avg 15 | Cool ambient, 15°C rise under load. No heat-soak. |
+| **TIMING_ADVANCE** | 2–34°, avg 21.9 | **CRITICAL — knock-retard signature present.** See breakdown below. |
+| **SHORT_FUEL_TRIM_1** | -13.3 to +24.2%, avg +0.79 | Wide range, but avg near zero. Open-loop disabled STFT during boost (closed-loop suspended). Cruise STFT well-controlled. |
+| **LONG_FUEL_TRIM_1** | -7.0 to +4.7%, avg -1.4 | Wider than Drive 5/6/7 — different load-cell LTFT values active. Idle-cell still ≈ -6.25%; load cells drift positive under boost (open-loop). |
+| **O2_B1S1 (front)** | 0–0.96V, avg 0.49 | Under boost: pegged 0.92-0.96V = ECU targeting RICH for safety (~12-13 AFR equivalent on narrowband). Correct WOT/open-loop fueling. |
+| **O2_BANK1_SENSOR2_V (rear)** | 0–0.92V, avg 0.23 | Cat doing its job (low oscillation downstream). |
+| **FUEL_SYSTEM_STATUS** | 2.0–3.0, avg 2.22 | Mix of 2 (closed-loop) and 3 (open-loop drive). Transitions to OL during boost — correct 4G63 behavior. |
+| **SPEED** | 0–147 km/h, avg 62.3 | **NEW UNDER-LOAD SPEED RECORD: 91 mph** (Drive 7 was 84 mph). |
+| **DTC_COUNT / MIL_ON** | 0 / OFF | Clean throughout. |
+| **BATTERY_V** (CONTROL_MODULE_VOLTAGE PID 0x42) | 13.2–14.6V, avg 14.25 | Alternator charging-voltage range. Healthy. |
+
+#### Knock-retard signature characterization — TIMING_ADVANCE by load bucket
+
+| Load bucket | Samples | Min timing | Avg timing | Max timing | Interpretation |
+|---|---|---|---|---|---|
+| 0-30% (idle/cruise) | 148 | 7° | **24.5°** | 33° | Normal cruise timing for 4G63. Modified-EPROM is conservative vs. some community tunes. |
+| 30-60% (light load) | 34 | 9° | **23.9°** | 31° | Holding cruise timing through light acceleration. |
+| 60-80% (medium load) | 3 | 16° | **22.3°** | 30° | Beginning to retard, but still close to cruise. |
+| **80-95% (high/transitional)** | 6 | 8° | **12.0°** | 21° | **~12° of retard from cruise.** ECU actively pulling timing as load increases through the mid-range. |
+| **95-100% (full load / boost)** | 5 | 7° | **13.2°** | 32° | Wide range — some retard events to 7-8°, some held at 32° (when cylinder conditions allowed). |
+
+#### Smoking-gun knock event (3-sec resolution, peak-RPM pull at 01:22:27-33Z)
+
+| Time | RPM peak | Timing | O2 voltage |
+|---|---|---|---|
+| 01:22:27Z | 5,094 | **28°** | 0.92V (rich) |
+| 01:22:30Z | 4,707 | **12°** | 0.96V (rich) |
+| 01:22:33Z | **5,441** (peak) | **23°** | 0.94V (rich) |
+
+**16° of timing pulled in 3 sec, then 11° returned over the next 3 sec.** Classic 4G63 mid-range knock window: RPM 4500-5000 = VE peak / max cylinder fill BUT not enough crank speed to "rev past" detonation tendency. ECU's knock sensor detected the condition, pulled timing, restored it once RPM climbed past the knock zone.
+
+### Drive 11 — Interpretation Anchors
+
+> **⚠ FUEL-GRADE CORRECTION (2026-05-15, CIO directive):** Every drive on the pre-mod shelf (3–16) was run on **[EXACT: 93 octane — DO NOT CHANGE]**, NOT 91. CIO corrected the record 2026-05-15: he misreported 91 earlier; all past *and* future fillings are 93 octane until the E85 flex-fuel sensor is installed + wired. This recalibrates the entire knock-retard baseline below to a **93-octane baseline**. The prior "expect timing to creep up 4-8° on 93" prediction is **VOID** — we were already on 93; the 12-13° high-load figure *is* the 93-octane number. Inverse now holds: running 91 (won't happen — 93 is CIO standard) would show *more* retard, not less.
+
+Use these as the project's reference for "what healthy knock-retard behavior looks like on this car + [EXACT: 93 octane — DO NOT CHANGE] + stock 14b":
+
+1. **Cruise/idle timing 24-25° avg** — modified-EPROM baseline. Don't expect ECMLink V3 to change this much at no-load (idle table is well-dialed already).
+2. **High-load (80%+) timing 12-13° avg with 7-8° minima** — characteristic of **93 octane** + stock 14b + modified-EPROM. This IS the 93-octane baseline (correction 2026-05-15); there is no octane-uplift metric to extract since the shelf was never on 91. A deliberate 91 run would show *deeper* retard, but CIO runs 93 standard until E85 so no A/B is planned.
+3. **4500-5000 RPM mid-range = knock-prone window** for this engine. Spec1 baseline. Future captures should show retard concentrated in this window; if retard appears at OTHER RPM ranges, that's a new finding worth investigating.
+4. **Fuel system pegged rich (O2 0.92-0.96V) under boost** — open-loop targeting works correctly. No lean events under any pull. Pre-Walbro fuel system delivers within this throttle/RPM envelope.
+5. **B-063 buck-converter performance baseline** = one 5-sec AC blip in 23 min of driving = 99.6% steady. Use this as the threshold for "buck-converter regressed" if a future drive shows more blips.
+
+### Drive 11 — Diagnostic Gaps Still Outstanding
+
+- **Sustained WOT** at 100% throttle (Drive 11 peak was 68.6% throttle) — would expand the knock-retard characterization to "what does this engine do when you actually pin it on [EXACT: 93 octane — DO NOT CHANGE]?"
+- ~~**93 octane A/B comparison**~~ **RETIRED 2026-05-15** — the entire shelf was already on 93 octane (CIO fuel-grade correction). No A/B available; would require a deliberate 91-octane run, which CIO will not do (93 is standard until E85). No timing-creep metric to extract.
+- **MAP PID gap** — without MAP (PID 0x0B) capture we cannot map timing-retard events against actual boost psi. Filed as feature request to PM (V0.27.7 ride-along OR V0.28.0).
+- **Hot-soak + restart** still pending (was pending after Drive 7 too).
+- **Wet-pavement** still pending.
+
+### Drive 26 — 2026-05-22 — NEW-ECU FIRST KNOCK-RETARD OBSERVATION (18 min, post-swap spin around block, drive_id=26)
+
+**Context**: CIO swapped to a different modified-EPROM ECU mid-afternoon today (2026-05-22, Session 19). Drive 26 = first city-driving telemetry on new ECU after ~16-min warm idle (drive 25). Fuel [EXACT: 93 octane — DO NOT CHANGE]. Coolant fully up at start, IAT heat-soaked (32-55 °C). Engine grade A (no DTC, no MIL, no harm), BUT surfaced a clear knock-retard event during a city-road tip-in.
+
+**The event — 19:05:54 UTC** (reconstructed from same-second multi-PID alignment):
+
+```
+19:05:49  RPM 1948  THROTTLE 12.55%  LOAD 24%   TIMING 28.5°  STFT -0.78  LTFT +1.56   cruise
+19:05:51  RPM 1948  THROTTLE 12.55%  LOAD 24%   TIMING 23.0°  STFT +7.03  LTFT  0.00   tip-in starts
+19:05:53  RPM 2464  THROTTLE 32.94%  LOAD 57.65% MAF 62.29                              throttle pushed harder
+19:05:54  RPM ~3300 THROTTLE ~35%    LOAD ~60%  TIMING  5.0°  STFT +17.19% LTFT  0.00  ▲ KNOCK RETARD + LEAN SPIKE
+19:05:55  RPM 3928  THROTTLE ~35%    LOAD 67%                                          peak RPM
+19:05:56  RPM 3928  THROTTLE 27.45%  LOAD 67%   TIMING 15.0°  STFT  0.00               recovering
+19:05:58  RPM 3268  THROTTLE 41.96%  LOAD 96.08% MAF 107.82   TIMING 22.0° STFT 0      peak load, stable
+19:05:59  RPM 3268  THROTTLE 41.96%  LOAD 96.08% MAF 107.82   TIMING 22.0° STFT 0      sustained at 22°
+```
+
+**Mechanism**: Classic 4G63 stock-MAF / stock-injector lean-tip-in-knock pattern.
+1. Throttle opened rapidly during city tip-in (2nd-or-3rd gear estimated from RPM × gear ratio; see SPEED PID caveat below).
+2. MAF reading **lagged** actual airflow during the sharp pressure transient (MAF physics — measurement latency on rapid load changes).
+3. ECU underestimated air → injected too little fuel → **STFT spiked to +17.19% lean** (closed-loop demanding more fuel).
+4. Brief lean moment under boost → ECU detected knock → **TIMING pulled 23° → 5° (~18° retard)**.
+5. Recovery in 2 sec: STFT back to 0, TIMING 15° → 22° at sustained peak load. No DTC fired; no MIL; ECU saved the engine.
+
+**Comparison: Drive 11 (prior ECU, archived) vs Drive 26 (new ECU)**
+
+| Signature | Drive 11 (prior ECU) | Drive 26 (new ECU) |
+|---|---|---|
+| Sustained peak-load timing | ~12° (already retarding) | **22°** (more aggressive base) |
+| Cruise timing | ~24-25° | 23-28° |
+| Knock-retard pull magnitude | ~12° | **~18°** (when fired) |
+| Knock-retard RPM window (first observation) | 4,500-5,000 RPM at 91-100% load | **~3,500 RPM at 60-67% load (city tip-in)** |
+| LTFT settled value | −1.8 to −2.2 (prior baseline) | Still learning, drifting near 0 |
+| STFT transient cap under load | Well-bounded ±5% | **+17.19% during tip-in** |
+
+**Spool's read — new ECU is more aggressive than prior**: runs ~10° more advance at sustained peak load before knock retard fires; bigger pull (~18°) when knock IS detected; lean tip-in events on casual city driving = the tune is at the hardware ceiling on current stock-MAF / stock-injector / 93-octane configuration. **Functional but the canary is sounding.**
+
+**Supporting hardware this tune wants** (consistent with Modification Priority Path; reinforced by Drive 26 observation):
+1. **Wideband O2 + ECMLink V3** — first priority. Narrowband cannot show how lean 19:05:54 actually got. Without wideband, we're flying blind on AFR target under boost.
+2. **Larger injectors (550 cc minimum)** — directly addresses the lean tip-in. Stock 450 cc cannot keep up with this tune's transient fuel demand.
+3. **Walbro 255 lph fuel pump** — proactive for any boost increase.
+
+**Until at least (1) + (2) land**: drive sensibly. No sustained WOT. No track-style runs. The lean tip-in signature says "the hardware is at its limit." More boost = bigger lean transient = bigger knock retard = bigger damage risk if a single retard event misses.
+
+### Drive 26 — Interpretation Anchors (NEW-ECU WORKING BASELINE — in progress)
+
+This is the FIRST observation on the new ECU. Anchors below are PROVISIONAL — will firm up after 2-3 more drives.
+
+- **Idle RPM** ~830 (slightly elevated vs OEM target ~750). Watch across drives.
+- **Idle LTFT swing characteristic** 0.00 → +2.34 → −2.34 (cold → warm → hot). Tune characteristic, not a fault. ±2.34 swing well within healthy ±5% band.
+- **Idle timing** 5-11° BTDC (conservative for a modified-EPROM tune).
+- **Idle ENGINE_LOAD** 20-21% (slightly elevated vs OEM 15-18% — watch).
+- **Sustained peak-load timing** 22° at 96.08% load / 3,268 RPM / 93 octane. **If timing drops below 18° at sustained peak load** on a future drive, the tune is starting to defensively retard — investigate fuel quality, carbon buildup, IAT trend.
+- **Knock-retard event signature**: timing dropping below 10° simultaneously with STFT spiking above +10% during a tip-in = lean-induced knock retard, recovering within 2-3 sec is normal ECU behavior, not damage. **>3 events per drive** or **timing not recovering within 5 sec** = tune hunting too aggressively or fuel-delivery problem.
+- **Idle coolant equilibrium** 99 °C with fan running on hot day, no airflow. Steady-state, not climbing = normal. **If climbs past 102 °C while idling with fan on** = investigate fan-relay, coolant-temp-sensor, or thermostat.
+
+### Drive 26 — Diagnostic Gaps Still Outstanding
+
+- **Cold-start on new ECU** — Drive 26 was warm continuation. Need full ambient-cold start for warmup-curve baseline.
+- **Sustained cruise (steady-state 4th/5th gear)** — to characterize the tune's cruise timing target and LTFT settle behavior.
+- **Stop + restart cycle** — does LTFT carry over (EEPROM-stored) or reset to 0.00 each start?
+- **Mid-range knock-retard window** (3,500-5,000 RPM) — Drive 26 only sampled one tip-in; need to characterize the knock-retard frequency-of-fire across multiple acceleration events.
+- **SPEED PID calibration verification** — see OBD-II section caveat. Need GPS correlation.
 
 ### Session 23 — 2026-04-19 — First Real OBD Data (Warm Idle, ~23s captured across 2 windows) [HISTORICAL]
 
@@ -1231,11 +1476,47 @@ This means the staged shutdown ladder (US-216: WARNING / IMMINENT / TRIGGER at V
 
 ---
 
+## Drain Test Procedure
+
+Repeatable validation procedure for the Pi UPS HAT + V0.24.1 ladder + close-event writers lives in a sibling file:
+
+**`offices/tuner/drain-test-procedure.md`**
+
+Run this whenever a release ships that touches power management, drain handling, sync of `battery_health_log`, or `startup_log` writers — especially right after a fix lands, to validate the fix is actually in production. **Drain Test 13 (2026-05-10, V0.27.2)** is the canonical reference run with full pass/fail evaluation methodology. New tests append a row to the procedure file's "Historical Drain Test Log" section. Pre-V0.24.1 drain history (Drains 1-7) lives in this file's "UPS HAT Dropout Characteristics (Drain 7 baseline)" section above; the procedure file picks up from Drain 8 forward.
+
+---
+
+## Regression Fixture Lock-Down
+
+> Locked-down SHA-256 hashes for the Pi-side regression fixtures in `data/regression/pi-inputs/`. These fixtures are inputs to the project's regression test suite and must NEVER be silently modified by cleanup scripts, deploys, or any other operation. The truncate scripts (`truncate_session23.py`, `truncate_drive_id_1_pollution.py`) already enforce the lock-down for `eclipse_idle.db`; this table extends the protection to all four fixtures.
+>
+> **Locked at**: 2026-05-09 (Spool Session 10) by CIO authorization.
+> **Verify with**: `sha256sum data/regression/pi-inputs/*.db`
+> **If a hash diverges**: STOP. Investigate why. Restore from git history. Do not proceed with whatever operation caused the change without explicit CIO approval.
+
+| Fixture | Bytes | SHA-256 |
+|---|---:|---|
+| `eclipse_idle.db` | [EXACT: 188416 — DO NOT CHANGE] | [EXACT: `0b90b188fa31f6285d8440ba1a251678a2ac652dd589314a50062fa06c5d38db` — DO NOT CHANGE] |
+| `cold_start.db` | [EXACT: 155648 — DO NOT CHANGE] | [EXACT: `45f342bbadd4e6ad36ab3585e3b1e62218dad264e2405e9fcb00c8ed748ccd1f` — DO NOT CHANGE] |
+| `errand_day.db` | [EXACT: 458752 — DO NOT CHANGE] | [EXACT: `ee611f7483dd6393dee7e55ed18947401a66e9bb96c77b33536ef45a937b50c3` — DO NOT CHANGE] |
+| `local_loop.db` | [EXACT: 266240 — DO NOT CHANGE] | [EXACT: `df175a21522ac9abe3d3f4fd3c10ffe154ac9a9e038990f7182154017ab3109d` — DO NOT CHANGE] |
+
+**Cross-references**:
+- `eclipse_idle.db` SHA is also pinned in `scripts/truncate_session23.py:110` (`FIXTURE_EXPECTED_SHA256`) — keep synchronized if either is updated through legitimate fixture regeneration.
+- `eclipse_idle.metadata.json` (2,167 bytes, 2026-04-20) accompanies `eclipse_idle.db`; not hash-locked here because it's regenerable from the fixture itself, but worth knowing it exists.
+- Three SQLite sidecar files may exist alongside `eclipse_idle.db` (`-shm`, `-wal`, `-journal`) and are NOT locked — those are runtime SQLite artifacts and may legitimately mutate when the fixture is read.
+
+**Sister fixtures NOT yet hash-locked here** (other agents may add as needed): nothing under `data/regression/pi-inputs/` is unaccounted for as of 2026-05-09. If the project adds future fixtures, the new file should be hash-locked in this table the same day.
+
+---
+
 ## Session Log
 
 | Date | Notes |
 |------|-------|
 | 2026-04-09 | Spool agent created. Initial knowledge base populated from project specs (obd2-research.md, grounded-knowledge.md, architecture.md) and DSMTuners community knowledge. Vehicle profile established. Safe operating ranges defined. Added ECMLink deeper details (speed density, per-cylinder trim, flex fuel, anti-lag, knock sensor details, wideband recommendations). Added detailed tuning procedure (5-phase). Added built motor specs with costs. Added turbo hierarchy with Forced Performance models. Added timing belt system details. Clarified 97-99 vs 95-96 turbo designation. |
 | 2026-04-19 | **Session 23 first-real-data update.** Confirmed PID 0x0B, 0x0A, 0x42 unsupported on this 2G ECU — moved 0x42 to Tier 2 with unsupported flag and documented battery voltage alternate path (ELM327 `ATRV` / `ELM_VOLTAGE` adapter query). Marked Tier 1 PIDs as ✅ confirmed Session 23. Added new top-level section **"This Car's Empirical Baseline"** capturing observed warm-idle values (LTFT 0% flat, STFT ±1.5%, RPM 761–852, coolant 73–74°C plateau, timing 5–9° BTDC at idle, IAT 14°C, MAF 3.5 g/s) with interpretation anchors for future-capture comparison. Flagged timing-advance observation (5–9° vs community 10–15° norm) and coolant-plateau observation (below 180°F op temp — revisit next drill for thermostat diagnosis). Documented diagnostic gaps the 23-second capture cannot address. **Pending Spool self-assigned research** (CIO: don't forget): (1) 2G DSM thermostat diagnostic procedure — higher priority, resolves at next drill; (2) 2G DSM DTC interpretation cheat sheet — lower priority, blocked on Ralph landing DTC capture. See auto memory `project_spool_pending_research.md`. |
+| 2026-05-09 | **Spool Session 10 evening — Drives 8/9/10 captured; car-coupled stereo USB-C debut FAILED (drives 9+10).** Drive 8 = cold-start city/highway, 18 min, 8,268 rows @ 459 rows/min, captured CLEAN, JOINS pre-mod shelf. **POWER for Drive 8 = Pi stock 5A supply via camping-battery AC inverter (CIO had portable battery in car) — same power model as drives 6+7, NOT car-coupled.** Drive 9 (pizza run, 30 min) = **FIRST car-coupled drive ever** via stereo USB-C, immediately compromised: dashboard flickering between `power=car` and `power=battery`, capture rate degraded 12× to 36 rows/min, HELD OUT from shelf. Drive 10 (garage pull-in, 2:10) = drain id=12 opened 8 sec into drive, NOT ELIGIBLE. **Stereo USB-C path has 0/2 success rate** — undersized (≤3A) for Pi 5 (5A spec). Mike will proceed with fuse-box wiring (12V→5V/5A buck converter on switched circuit). **Until that ships, no further IRL drives.** Two bug priorities filed to PM: (a) NEW DriveDetector warm-restart-cranking gap — DriveDetector missed Mike's 2-3 min around-the-block test (1,078 NULL-drive_id orphan rows); (b) battery_health_log close-event-on-poweroff race BUMPED P3→P2 (4 of 4 drains tonight unclosed). Drive annotations 8/9/10 written to `drive-annotations.md` + `obd2db.drive_annotations`. Wiring milestone subsection added to "Pre-Mod Baseline Shelf" — drives split into THREE power eras: bench-tethered (3-5), portable-inverter (6-8), car-coupled stereo USB-C (9-10 broken), car-coupled fuse-box (future 11+). PID 0x2F (fuel level) probe story added to PM Sprint-28 P3 list. PM note `2026-05-10-from-spool-three-drives-tonight-power-blocker-drive-counter-clarification.md` filed. |
+| 2026-05-09 | **Spool Session 10 morning — DB cleanup + housekeeping + pre-mod baseline shelf formalized.** Cleaned up `obd2db` on chi-srv-01 (dropped ~58k bench-poll orphan rows + ~28k connection-log spam + 84 stale stats + 4 stale trends; verified all 5 keep-drives intact via row counts). Captured drive annotations (fuel grade, level, ambient, intent, etc.) for drives 3–7 from CIO interview into both `offices/tuner/drive-annotations.md` and a new sidecar table `obd2db.drive_annotations` (CIO-authorized). **Major framing correction**: drives 3, 4, 5 are explicitly idle-only/parked system tests, NOT driving captures (knowledge.md previously had this for Drive 5; now correct for all three). Locked SHA-256 hashes for all 4 regression fixtures (`eclipse_idle.db` + `cold_start.db` + `errand_day.db` + `local_loop.db`) into a new "Regression Fixture Lock-Down" appendix section (TOC #20) with `[EXACT: hash — DO NOT CHANGE]` markers. Added "Pre-Mod Baseline Shelf" subsection above the per-drive details: 5 drives on shelf, shelf is OPEN until Walbro pump install, rules for joining/retiring/cross-shelf-comparison defined, outstanding shelf gaps enumerated (sustained WOT, hot-soak, wet-pavement, cold-engine-WOT). Sent 4 PM notes today: (1) post-cleanup housekeeping findings 4 items, (2) weather-API feature idea (free API at drive_end populates ambient/weather automatically — pairs with Spec 2 below), (3) three-specs bundle (mod_state enum + drive_annotations table + drive_summary writer contract). Saved 2 memories: feedback `protocol-timing specs validate against empirical baseline before pinning`, reference `chi-srv-01 obd2db direct query access + repo mount-point equivalence` (`Z:\O\OBD2v2` == `/z/O/OBD2v2` == `/mnt/projects/O/OBD2v2`, same NAS, same files). |
 | 2026-05-05 | **Drain 8 + 9 + 10 ratify Drain 7 baseline; post-V0.24.1 graceful-shutdown signature documented.** Appended two subsections to "UPS HAT Dropout Characteristics": (1) "Drain 7 baseline ratified — Drains 8, 9, 10" — `throttled_hex=0x0` confirmed across ~50 min combined battery runtime + buck dropout knee reproducibly between 3.26-3.34 V across three independent drains; Pi5-brownout hypothesis conclusively dead; (2) "Post-fix signature — Drain Test 10 + May 4-5 cycles (V0.24.1 onward)" — 4 graceful-shutdown cycles with TRIGGER firing at 3.41-3.44 V, working margin 80-180 mV before buck dropout, 10-13 min runtime envelope key-off → graceful poweroff (vs prior 16-min hard-crash budget). References updated to point at Drain 8 CSV, Sprint 24 saga writeup, and Ralph's Sprint 25 closeout note. Per Marcus's standing invitation in `offices/tuner/inbox/2026-05-03-from-marcus-sprint24-loaded-us278-already-shipped.md` (Spool-side update, not a sprint story). |
 | 2026-05-03 | **Sprint 23 US-278 — UPS HAT Dropout Characteristics section appended (Rex Session 152, Ralph dev work — Pi-side power-mgmt, not engine tuning).** Added new top-level section "UPS HAT Dropout Characteristics (Drain 7 baseline)" between Tuning Glossary and Session Log. Captures empirical Drain 7 measurements (2026-05-02 → 2026-05-03): buck-converter dropout knee at VCELL ≈ 3.30 V (Pi died at 3.305 V @ T+959 s); ~16-min runtime under typical load (Pi5 idle, BT scan, HDMI display); CPU 37.8–40.6 °C; load-1min 0.01–0.50; throttled_hex `0x0` throughout (DISPROVES the Pi5-brownout hypothesis from CIO 2026-05-01). All measurements grounded in `offices/tuner/drain7-forensics.csv` (workstation copy of `/var/log/eclipse-obd/drain-forensics-20260502T235909Z.csv` on Pi). Cross-links US-169 / US-189 / US-190 future scope. Resolves BL-009 with CIO-approved Option 1B+2B (single-file convention preserved; cross-link target = `specs/grounded-knowledge.md`). **Caveat for Spool**: cross-link in `specs/grounded-knowledge.md` was placed under existing "Safe Operating Ranges (Community-Sourced)" section as a one-line note rather than under a "MAX17048/UPS subsection" (which doesn't exist) — see `offices/pm/inbox/2026-05-03-from-rex-us278-grounded-knowledge-no-anchor-stop-condition.md` for the deliberate-divergence rationale + suggested future re-positioning if Spool prefers. |

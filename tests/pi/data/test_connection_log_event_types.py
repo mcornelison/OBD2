@@ -240,3 +240,171 @@ def test_existingWriters_useCanonicalLiterals():
             f"US-211 literal {literal!r} is not referenced in src/pi/. "
             f"Either the constant has no writer or the codebase drifted."
         )
+
+
+# ================================================================================
+# US-340b -- connection_log state-change-only logging (chatter reduction)
+# ================================================================================
+#
+# CIO 2026-05-13: connection_log exists to help debug other aspects of the
+# project; "minimal information is required."  Mobile telemetry hygiene says
+# log STATE CHANGES, not per-action.  Pre-V0.27.10 a sustained adapter outage
+# generated ~2000 rows/day (7 rows per heartbeat tick x ~12 ticks/hour
+# steady-state with US-325 backoff).  Server-side mirror filled up with
+# thousands of repetitive "still trying" rows.
+#
+# Fix: a tiny dedup at the writer.  When the SAME event_type fires for the
+# SAME mac_address as the most-recently-logged event, AND the event is one
+# of the spammy "still trying" types (connect_attempt / adapter_wait /
+# reconnect_attempt), the writer skips the row.  State-change events
+# (connect_success / connect_failure / disconnect / reconnect /
+# reconnect_success / bt_disconnect / ...) ALWAYS log -- the transition is
+# the load-bearing signal.  Per-mac state means two different adapters
+# don't dedup against each other.
+# ================================================================================
+
+
+class TestUs340bConnectionLogDedup:
+    """Regression tests for the US-340b state-change-only logging dedup."""
+
+    @pytest.fixture(autouse=True)
+    def _resetDedupState(self) -> Generator[None, None, None]:
+        """Each test starts with a clean dedup tracker so order-of-tests
+        cannot leak state between cases."""
+        from src.pi.data import connection_logger as cl
+        cl.resetDedupStateForTests()
+        yield
+        cl.resetDedupStateForTests()
+
+    def test_repeatedConnectAttempt_writesOnlyOneRow(self, freshDb) -> None:
+        """
+        Given: two `connect_attempt` events for the same mac_address in a row
+        When: each is passed to logConnectionEvent
+        Then: only ONE row lands in connection_log (the 2nd is deduped)
+        """
+        from src.pi.data.connection_logger import EVENT_CONNECT_ATTEMPT
+
+        mac = '00:04:3E:85:0D:FB'
+        for _ in range(5):
+            logConnectionEvent(
+                database=freshDb,
+                eventType=EVENT_CONNECT_ATTEMPT,
+                macAddress=mac,
+            )
+        with freshDb.connect() as conn:
+            cnt = conn.execute(
+                "SELECT COUNT(*) FROM connection_log "
+                "WHERE event_type = 'connect_attempt' AND mac_address = ?",
+                (mac,),
+            ).fetchone()[0]
+        assert cnt == 1, (
+            f"US-340b regression: 5 connect_attempt events for the same mac "
+            f"should produce 1 row (state-change-only logging); got {cnt}.  "
+            f"Pre-fix this produced 5 rows -- one of the row-volume sources "
+            f"that filled the server-side mirror to thousands of rows."
+        )
+
+    def test_stateChangeEvents_alwaysLog_evenAfterRepeats(self, freshDb) -> None:
+        """
+        Given: a sequence of attempts followed by a state-change
+        When: connect_attempt repeats AND THEN connect_failure fires
+        Then: 1 row for connect_attempt (deduped) + 1 row for connect_failure
+              (state change -- always logs)
+        """
+        from src.pi.data.connection_logger import (
+            EVENT_CONNECT_ATTEMPT,
+            EVENT_CONNECT_FAILURE,
+            EVENT_CONNECT_SUCCESS,
+        )
+
+        mac = '00:04:3E:85:0D:FB'
+        for _ in range(3):
+            logConnectionEvent(database=freshDb, eventType=EVENT_CONNECT_ATTEMPT,
+                               macAddress=mac)
+        logConnectionEvent(database=freshDb, eventType=EVENT_CONNECT_FAILURE,
+                           macAddress=mac, errorMessage='out of retries')
+        # After a state-change, a NEW outage's connect_attempt should log
+        # again (the last-logged is now connect_failure, so connect_attempt
+        # is a new transition).
+        for _ in range(3):
+            logConnectionEvent(database=freshDb, eventType=EVENT_CONNECT_ATTEMPT,
+                               macAddress=mac)
+        logConnectionEvent(database=freshDb, eventType=EVENT_CONNECT_SUCCESS,
+                           macAddress=mac, success=True)
+
+        with freshDb.connect() as conn:
+            rows = conn.execute(
+                "SELECT event_type FROM connection_log "
+                "WHERE mac_address = ? ORDER BY id",
+                (mac,),
+            ).fetchall()
+        observed = [r[0] for r in rows]
+        # The full outage timeline is still legible -- attempt, failure,
+        # attempt (new try), success.  Just without per-retry repeats.
+        assert observed == [
+            'connect_attempt',
+            'connect_failure',
+            'connect_attempt',
+            'connect_success',
+        ], (
+            f"US-340b: full outage transition timeline must be preserved; "
+            f"got {observed}"
+        )
+
+    def test_dedupIsPerMac_differentAdaptersIndependent(self, freshDb) -> None:
+        """
+        Given: connect_attempt for two different mac_addresses
+        When: both fire repeatedly interleaved
+        Then: each mac gets its own dedup state (one row per mac, no
+              cross-contamination)
+        """
+        from src.pi.data.connection_logger import EVENT_CONNECT_ATTEMPT
+
+        macA = '00:04:3E:85:0D:FB'
+        macB = '11:22:33:44:55:66'
+        for _ in range(3):
+            logConnectionEvent(database=freshDb,
+                               eventType=EVENT_CONNECT_ATTEMPT, macAddress=macA)
+            logConnectionEvent(database=freshDb,
+                               eventType=EVENT_CONNECT_ATTEMPT, macAddress=macB)
+        with freshDb.connect() as conn:
+            rowsByMac = dict(conn.execute(
+                "SELECT mac_address, COUNT(*) FROM connection_log "
+                "GROUP BY mac_address"
+            ).fetchall())
+        assert rowsByMac[macA] == 1
+        assert rowsByMac[macB] == 1
+
+    def test_adapterWaitAndReconnectAttempt_alsoDeduped(self, freshDb) -> None:
+        """
+        Given: ReconnectLoop's adapter_wait and reconnect_attempt events
+        When: each fires repeatedly for the same mac
+        Then: only one row per event_type sequence (same dedup rule)
+        """
+        mac = '00:04:3E:85:0D:FB'
+        # Simulate ReconnectLoop's per-iteration pattern: adapter_wait + probe
+        for _ in range(4):
+            logConnectionEvent(database=freshDb,
+                               eventType=EVENT_ADAPTER_WAIT, macAddress=mac)
+            logConnectionEvent(database=freshDb,
+                               eventType=EVENT_RECONNECT_ATTEMPT, macAddress=mac)
+        # Eventually probe succeeds -- state change
+        logConnectionEvent(database=freshDb,
+                           eventType=EVENT_RECONNECT_SUCCESS, macAddress=mac,
+                           success=True)
+        with freshDb.connect() as conn:
+            rows = conn.execute(
+                "SELECT event_type FROM connection_log "
+                "WHERE mac_address = ? ORDER BY id",
+                (mac,),
+            ).fetchall()
+        observed = [r[0] for r in rows]
+        # Expect: adapter_wait (first), reconnect_attempt (first),
+        # reconnect_success (transition).  Subsequent adapter_wait /
+        # reconnect_attempt repeats interleaved are deduped against their
+        # own last-seen state.
+        assert observed == [
+            'adapter_wait',
+            'reconnect_attempt',
+            'reconnect_success',
+        ], f"US-340b dedup must cover adapter_wait + reconnect_attempt too; got {observed}"

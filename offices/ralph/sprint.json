@@ -1,291 +1,135 @@
 {
   "$schema": "Sprint Contract v1.0 -- see docs/superpowers/specs/2026-04-14-sprint-contract-design.md",
-  "sprint": "Sprint 27 -- Engine-On Critical Path (Drive 6 Unblock)",
-  "spec": "offices/pm/inbox/2026-05-08-from-spool-engine-on-test-blocked-2-p0-bugs.md (Stories A/B/C from Spool's P0 inbox note)",
-  "backlogItem": "B-043 (Pi auto-sync + conditional shutdown) -- engine-on critical path. Closes the two bugs sitting behind Sprint 25 _initializeConnection fix that produced 0 realtime_data rows in 2026-05-08 engine-on test.",
-  "createdBy": "Marcus (PM)",
-  "createdAt": "2026-05-08",
+  "sprint": "Sprint 42 -- V0.27.19 TI-002 chain_validate_aggregate.py dedupe + chain-tip-validation-authoritative semantic (pre-/chain-validated unblock)",
+  "spec": "offices/tester/gaps/2026-05-11-chain-validate-aggregate-double-count.md (Argus's TI-002 gap entry) + offices/ralph/inbox/2026-05-22-from-cio-ralph-interactive-ti-002-v0.27.19-fix.md (CIO interactive dispatch with expanded path-B scope per CIO 2026-05-23 ratification)",
+  "backlogItem": "Final tooling fix before /chain-validated for V0.27.1..V0.27.19 -> main. Two bugs in one story: (1) TI-002 -- chain_validate_aggregate.py double-counts sprints with multiple archive snapshots (e.g., Sprint 41 archived once at V0.27.17 deploy + again at V0.27.18 deploy + the live sprint.json all currentVersion=V0.27.18 -> triple-counted); (2) chain-tip-validation-authoritative semantic -- aggregator previously marked every earlier patch V0.27.2..V0.27.17 as unvalidatedSprints because none had /sprint-validated run individually (each was superseded by the next patch). CIO chain-end-merge rule: chain-tip's validatedAt is authoritative for the whole chain. Fix aligns aggregator semantics with the policy. Both fixes shipped as one US-358 commit by Ralph 2026-05-23 (commit 897f1bd on sprint/sprint42-v0.27.19-ti-002 branch). Pre-flight gate now exits 0 + chainStatus: READY + chainTipVersion: V0.27.18 (gate -- chain-end-merge rule) reported in pretty output.",
+  "createdBy": "Marcus (PM) Session 42 2026-05-23 -- minimal post-Ralph wrap. Sprint contract follows Ralph's commit, not pre-registered; this is the audit trail for the V0.27.19 patch sprint between V0.27.18 (Sprint 41 validated by Argus) and /chain-validated.",
+  "createdAt": "2026-05-23",
   "testBaseline": {
-    "fastSuite": 4100,
-    "fullSuite": 4100,
+    "fastSuite": 4247,
+    "fullSuite": 4247,
     "ruffErrors": 0,
-    "note": "Post-Sprint-26 close baseline (V0.26.0 main@09d41b0). Sprint 26 added ~10 new test files. Verify exact count at sprint start."
+    "note": "Inherited from V0.27.11 / Sprint 37 baseline (commit 6184a7f). Carried through V0.27.12-18. Re-snapshot after Sprint 42 lands -- new test file tests/pm_scripts/test_chain_validate_aggregate.py adds 21 tests."
   },
   "sprintNotes": [
-    "GOAL: Sprint 25 fixed the 27-hour _initializeConnection hang, but Spool's 2026-05-08 engine-on test produced ZERO realtime_data rows due to TWO bugs sitting behind that fix: (BUG-1) US-211 reconnect daemon thread is silent -- logged ZERO retry attempts for 11+ hours after a 30s timeout; (BUG-2) data logger fails to restart when _handleConnectionRestored fires after an initial connection-failure path. Drive 6 is GATED on these fixes. Pi-to-ignition wiring lands ~5/9 weekend per Spool 2026-05-06; once that activates, every key-on becomes a Pi cold-boot where the OBDLink LX may not be ready by the 30s _initializeConnection timeout -- the reconnect path becomes the COMMON path, not an outlier. Sprint 27 ships Mike's 2026-05-08 standing direction: '10-second heartbeat listening to see if the OBD Bluetooth is alive.'",
-    "EXECUTION ORDER (deps-aware): TIER 1A (P0, parallel) -- US-301 (heartbeat daemon) + US-302 (data logger restart). TIER 2 (deps US-301 + US-302) -- US-303 (engine-on bench harness; the regression gate that should have caught both bugs).",
-    "THEME: 'Drive 6 unblock.' Per the V0.24.1 anti-pattern lesson (silent threads + no heartbeat + no canary): every story applies the heartbeat + boot-canary + loud-bail discipline. Every silent thread becomes a WARNING+ log line. Every boot-time wiring assumption becomes a self-test that ERRORs if violated.",
-    "CONSTRAINTS (anti-blocker discipline + V0.24.1 + BL-010 lessons): (a) US-274 file-existence check ran during grooming; UPDATE paths verified on disk. (b) US-282 commit-vs-claim verifier (--check-feedback) active for sprint close. (c) Per BL-009: NO architectural ambiguity -- US-301 cadence (10s) + retry-attempt-on-each-tick + boot canary all mandated upfront per Mike's directive. (d) Per BL-010 + feedback_pm_verify_table_names_against_code.md: PM verified all symbol/file names against source code BEFORE writing into contract (rg confirmed src/pi/obdii/reconnect_loop.py exists; data_logger lives in src/pi/obdii/data/logger.py per __pycache__). (e) Per feedback_runtime_validation_required.md: every fix story has a synthetic test that would FAIL pre-fix.",
-    "GROUNDING SOURCES: Spool 2026-05-08 engine-on-test-blocked inbox note (full Stories A/B/C spec + 11-hour daemon-silence evidence + 8-second connection-restored window with zero data-logger restart) + V0.24.1 anti-pattern lesson (specs/anti-patterns.md Cross-Module Module Identity entry; mandates heartbeat + canary + loud-bail) + Mike's 2026-05-08 verbatim direction on 10s heartbeat cadence + Pi-to-ignition wiring schedule (~5/9 per Spool).",
-    "POST-SPRINT-27 ACTION ITEMS (NOT in sprint.json per CIO no-human-tasks rule): (1) CIO performs Pi-to-ignition wiring (~5/9 weekend). (2) Drive 6 capture + Spool tuning-judgment review ritual. (3) First street-driving capture (15-20 min mixed; Spool data-collection ritual). (4) Marcus bumps deploy/RELEASE_VERSION V0.26.0 -> V0.27.0 at sprint close per SemVer convention. (5) Post-Sprint-26 PM action item still open: phantom-path drift formalization (Rex flagged 11 cases in Sprint 26; extend US-274 lint or add scope-fence amendment)."
+    "Minimal patch sprint to unblock /chain-validated. PM tooling only; no Pi or server code; no deploy needed.",
+    "Branched from sprint/sprint41-bugfixes-V0.27.17 tip (commit 73459e4 -- includes all Sprint 41 + V0.27.18 + pre-chain-merge cleanup work).",
+    "Ralph executed interactively per CIO 2026-05-23 dispatch -- not autonomous ralph.sh. Single commit 897f1bd. 21 new tests in tests/pm_scripts/test_chain_validate_aggregate.py covering: single-archive baseline + multi-archive dedupe + chain-tip-validated/not-validated gate semantics + empty-chain edge case.",
+    "Why path B (chain-tip-authoritative) over path A (retroactive per-sprint /sprint-validated) per CIO 2026-05-23: 'it is working good enough; let's not chase a ghost; let's get V0.27.19 in and validated then on to V0.28.X.' Pragmatic alignment of tooling semantics with chain-end-merge rule.",
+    "Verification gates GREEN: (a) pytest tests/pm_scripts/test_chain_validate_aggregate.py 21/21 pass in 13.21s; (b) python offices/pm/scripts/chain_validate_aggregate.py --chain V0.27 --strict exits 0 (was exit 1 before); (c) human report shows new chainTipVersion line + dedupe (V0.27.11/16/17 appear once each, not twice); (d) ruff clean on both touched files.",
+    "Side-news for /chain-validated commit footer (per saved wording at offices/pm/scripts/chain-validated-commit-footer-V0.27.md): Drive 23/24 dual-attribution known scoped exception (B-107 V0.28.0 TOP PRIORITY) + regression manifest F-005/F-007/F-008/F-011/F-012 HELD pending V0.28.0 tripwire + Drive 25 single-attribution-clean evidence supports bounded-historical-artifact framing.",
+    "V0.27.19 RELEASE_VERSION bump applied PM-side post-Ralph commit. No deploy artifacts (.deploy-version stays at V0.27.18; PM tooling doesn't ship to Pi/server)."
   ],
   "stories": [
     {
-      "id": "US-301",
-      "title": "obd-reconnect-heartbeat: 10s cadence + boot canary + loud bails",
-      "size": "M",
-      "intent": "Spool 2026-05-08 BUG-1: After Sprint 25's _initializeConnection 30s timeout fires (engine off / OBDLink unpowered), the reconnect daemon thread is supposed to keep retrying. In production it logged ZERO retries for 11+ hours. When CIO turned engine on, daemon stayed silent. Manual `systemctl restart` was the only way to reconnect. Same anti-pattern as V0.24.1 (silent thread + no heartbeat + no canary). Mike's verbatim direction 2026-05-08: 'I do think it should have a heartbeat of every 10 seconds listening and looking to see if the OBD Bluetooth is alive or shut off and was restarted.' Sprint 27 applies the V0.24.1 lesson: 10s INFO heartbeat + boot-time canary + loud-bail logging every retry. Critical before Pi-wiring activates car-coupled lifecycle (~5/9 weekend) where every key-on hits this path.",
+      "id": "US-358",
+      "title": "TI-002 chain_validate_aggregate.py dedupe + chain-tip-validation-authoritative semantic",
+      "size": "S",
+      "intent": "Fix two related bugs in PM tooling that gate /chain-validated. (1) TI-002: dedupe sprint archive enumeration so multiple archive snapshots of the same sprint don't multi-count. (2) Chain-tip semantic: treat highest-currentVersion sprint as authoritative for chain validation state per CIO chain-end-merge rule; don't require per-sprint /sprint-validated for superseded patches.",
       "priority": "high",
       "status": "passed",
       "dependencies": [],
       "scope": {
         "filesToTouch": [
-          "src/pi/obdii/reconnect_loop.py (UPDATE -- audit existing US-211 daemon; if no heartbeat, add 10s INFO log line per tick in the form 'RECONNECT HEARTBEAT | ticks=N | last_attempt_seconds_ago=X | last_attempt_outcome=Y'; if no retry-on-tick, add a single connect attempt with 5s timeout per 10s tick; preserve existing thread lifecycle)",
-          "src/pi/obdii/orchestrator/lifecycle.py (UPDATE -- add boot-time canary _verifyReconnectDaemonAlive that fires within 30s of runLoop entry; ERROR-logs if daemon thread is not alive AND state is PENDING; mirrors V0.24.1's _verifyOrchestratorCallbackWiring pattern)",
-          "tests/pi/obdii/test_reconnect_loop_heartbeat.py (NEW -- mocks PENDING state + simulated time; asserts daemon emits >= 3 heartbeats in 30s; asserts each tick attempts connect; asserts boot canary fires; would FAIL pre-fix because no heartbeat exists)"
+          "offices/pm/scripts/chain_validate_aggregate.py (UPDATE -- aggregator logic + pretty-output format)",
+          "tests/pm_scripts/test_chain_validate_aggregate.py (NEW -- 21 tests covering dedupe + chain-tip + edge cases)"
         ],
         "filesToRead": [
-          "offices/pm/inbox/2026-05-08-from-spool-engine-on-test-blocked-2-p0-bugs.md (BUG-1 spec + heartbeat shape + V0.24.1 lesson cross-link)",
-          "src/pi/obdii/reconnect_loop.py (existing US-211 daemon implementation; audit retry cadence)",
-          "src/pi/obdii/orchestrator/lifecycle.py (V0.24.1 _verifyOrchestratorCallbackWiring canary pattern; mirror)",
-          "specs/anti-patterns.md Cross-Module Module Identity entry (V0.24.1 lesson on silent threads)"
+          "offices/tester/gaps/2026-05-11-chain-validate-aggregate-double-count.md (Argus's TI-002 gap entry)",
+          "offices/pm/scripts/chain_validate_aggregate.py (the script to fix)",
+          "offices/ralph/inbox/2026-05-22-from-cio-ralph-interactive-ti-002-v0.27.19-fix.md (CIO interactive dispatch)"
         ],
         "doNotTouch": [
-          "_initializeConnection 30s timeout logic (Sprint 25 US-284 territory; correct)",
-          "_handleConnectionRestored callback (US-302 territory)",
-          "PowerDownOrchestrator wiring (V0.24.1 territory; preserved)"
+          "Any product code (Pi or server)",
+          "Any deploy script",
+          "regression_manifest.json (Argus's lane)",
+          "Other PM scripts (bump_passed_statuses.py, archive_sprint_artifacts.py, etc.)"
         ]
       },
       "groundingRefs": [
         {
-          "value": "Spool 2026-05-08 evidence: ZERO reconnect attempts logged across 11-hour engine-off window after Sprint 25 deploy",
-          "unit": "production journal evidence",
-          "source": "Spool 2026-05-08 inbox note BUG-1 section + Pi journalctl",
-          "owner": "Spool"
+          "value": "Argus 2026-05-11 gap entry: TI-002 chain_validate_aggregate.py double-counts when multiple sprint.archive.*.json files share the same currentVersion. Low-severity per Argus -- 'transient-state bug; would mislead the /chain-validated pre-flight, not corrupt anything.' But under --strict the wrong count blocks /chain-validated.",
+          "unit": "Argus gap entry + PM verification 2026-05-22 (V0.27.11/16/17 each appeared twice in unvalidatedSprints pre-fix)",
+          "source": "offices/tester/gaps/2026-05-11-chain-validate-aggregate-double-count.md + PM aggregator dry-run pre-fix",
+          "owner": "Argus + Marcus"
         },
         {
-          "value": "Mike's 2026-05-08 verbatim direction: '10-second heartbeat listening to see if the OBD Bluetooth is alive'",
-          "unit": "design mandate",
-          "source": "CIO 2026-05-08 conversation captured in Spool inbox note",
+          "value": "CIO chain-end-merge rule (2026-05-08/10): main = 'fully functional working system'; sprint branches stay deployed-but-pre-merge until the whole chain validates IRL. The chain validates as a WHOLE at the tip; earlier patches were superseded by successive ones and are not re-validated individually.",
+          "unit": "policy directive -> aggregator semantic alignment",
+          "source": "MEMORY.md Standing CIO directives + projectManager.md PM Rule 9",
           "owner": "CIO"
         },
         {
-          "value": "V0.24.1 anti-pattern lesson: silent threads + no heartbeat + no canary = 9-drain saga; specs/anti-patterns.md Cross-Module Module Identity entry mandates the discipline",
-          "unit": "anti-pattern doc",
-          "source": "specs/anti-patterns.md + V0.24.1 hotfix history",
-          "owner": "Marcus + Spool"
-        },
-        {
-          "value": "Synthetic test must FAIL pre-fix per runtime-validation rule",
-          "unit": "test fidelity rule",
-          "source": "feedback_runtime_validation_required.md",
+          "value": "PM aggregator dry-run 2026-05-23 (pre-Ralph): unvalidatedSprints list had V0.27.2..V0.27.17 ALL present (none had /sprint-validated run individually); only V0.27.18 had Argus's validatedAt stamp from Sprint 41 close. Under --strict, exit 1 -> /chain-validated Phase 2 aborts.",
+          "unit": "empirical state confirming the policy/tooling mismatch",
+          "source": "PM Session 42 2026-05-23 aggregator dry-run",
           "owner": "Marcus"
         }
       ],
       "acceptance": [
-        "Pre-flight audit: rg `RECONNECT HEARTBEAT|reconnect.*heartbeat|_verifyReconnectDaemonAlive` src/pi/obdii/. Map current daemon shape; identify gap.",
-        "src/pi/obdii/reconnect_loop.py emits 10s INFO heartbeat every tick AND attempts connect with 5s timeout per tick; existing US-211 thread lifecycle preserved",
-        "src/pi/obdii/orchestrator/lifecycle.py boot-canary _verifyReconnectDaemonAlive fires within 30s of runLoop entry; ERROR-logs if PENDING + daemon dead",
-        "tests/pi/obdii/test_reconnect_loop_heartbeat.py: >= 3 heartbeats in 30s mocked time + boot canary fires + would FAIL pre-fix",
-        "Fast suite + new tests pass; ruff + sprint_lint clean (incl. --check-feedback at sprint close)"
+        "Pre-flight: rg 'inChain|unvalidatedSprints|chainStatus' offices/pm/scripts/chain_validate_aggregate.py produces an inventory of every live touchpoint of the aggregator's semantic; result documented in completionNotes.",
+        "Dedupe: chain_validate_aggregate.py aggregateChain() dedupes by sprint identity (currentVersion or sprintTitle -- Ralph's choice); multiple archive snapshots of the same sprint produce one inChain entry.",
+        "Chain-tip semantic: chainStatus = 'READY' if chain-tip sprint (highest currentVersion lexicographically) has non-null validatedAt; earlier sprints' validatedAt=null does NOT block chainStatus=READY.",
+        "Pretty output: human report shows new 'chainTipVersion: VX.Y.Z (gate -- chain-end-merge rule)' line + clarifying note that earlier-NULL is expected under chain-end-merge rule.",
+        "21 tests in tests/pm_scripts/test_chain_validate_aggregate.py covering: single-archive baseline (regression gate) + multi-archive dedupe + chain-tip validated/not-validated + earlier-sprint-NULL no longer blocks + empty-chain edge case."
       ],
       "verification": [
-        "pytest tests/pi/obdii/test_reconnect_loop_heartbeat.py -v",
-        "pytest tests/ -m 'not slow' -q",
-        "ruff check src/pi/obdii/reconnect_loop.py src/pi/obdii/orchestrator/lifecycle.py tests/pi/obdii/test_reconnect_loop_heartbeat.py",
-        "python offices/pm/scripts/sprint_lint.py"
+        "pytest tests/pm_scripts/test_chain_validate_aggregate.py -v -> 21/21 pass",
+        "python offices/pm/scripts/chain_validate_aggregate.py --chain V0.27 --strict; echo $? -> exit code 0 (was 1 pre-fix)",
+        "python offices/pm/scripts/chain_validate_aggregate.py --chain V0.27 -> human report contains 'chainStatus: READY' + 'chainTipVersion: V0.27.18 (gate -- chain-end-merge rule)' + dedupe verified (V0.27.11/16/17 appear once each in unvalidatedSprints, not twice)",
+        "ruff check offices/pm/scripts/chain_validate_aggregate.py tests/pm_scripts/test_chain_validate_aggregate.py -> 'All checks passed!'"
       ],
       "invariants": [
-        "Heartbeat is INFO level (visible in default journalctl); retry failures are WARNING-level loud-bail",
-        "Daemon thread lifecycle preserved -- no shutdown semantics change",
-        "Boot canary does NOT cause runLoop to exit on failure; logs ERROR + alarm event but allows orchestrator to continue (defense in depth)",
-        "Synthetic test FAILS against pre-fix code (no heartbeat existed); PASSES post-fix"
+        "No product code touched (Pi or server)",
+        "No deploy script touched",
+        "regression_manifest.json untouched (Argus's lane)",
+        "Existing aggregator CLI flags (--chain, --paths, --json, --strict) all still work; backward-compatible API"
       ],
-      "stopConditions": [
-        "If existing US-211 daemon has a different cadence than expected (e.g., 5-min retry interval) -- STOP, document; align with Mike's 10s mandate",
-        "If 5s connect timeout proves too aggressive on a real OBDLink LX (BT pairing window) -- STOP, document; default to 10s timeout with explanation"
-      ],
-      "passes": true,
       "feedback": {
         "filesActuallyTouched": [
-          "src/pi/obdii/reconnect_loop.py (US-301 -- new HEARTBEAT_TICK_INTERVAL_SEC=10.0 + HEARTBEAT_ATTEMPT_TIMEOUT_SEC=5.0 + HEARTBEAT_LOG_PREFIX constants; new _attemptConnectWithCap helper that wraps connectFn on a daemon thread bounded by 5s; new runReconnectHeartbeat function: 10s tick cadence, INFO heartbeat 'RECONNECT HEARTBEAT | ticks=N | last_attempt_seconds_ago=X | last_attempt_outcome=Y' per tick, per-tick connect attempt, WARNING-level loud bail on every non-success outcome per V0.24.1 lesson, exits on isConnectedFn=True / shutdownEvent.set / maxTicks; modification history entry; existing US-211 ReconnectLoop class untouched per scope.preserve-existing)",
-          "src/pi/obdii/orchestrator/lifecycle.py (US-301 -- new module-level import 'from ..reconnect_loop import runReconnectHeartbeat'; new _reconnectHeartbeatThread attribute declaration; new _isInPendingConnectState helper; new _spawnReconnectHeartbeatDaemon method (idempotent, thread name 'obd-reconnect-heartbeat', daemon=True, broad-except so spawn failure logs ERROR but never crashes boot); new _buildHeartbeatConnectFn + _buildHeartbeatIsConnectedFn closure factories that resolve self._connection lazily; new _verifyReconnectDaemonAlive boot canary mirroring V0.24.1's _verifyOrchestratorCallbackWiring -- ERROR-logs when state is PENDING but daemon thread is None or dead, INFO-logs PASSED on healthy path, silent when not in PENDING; spawn + canary wired into _initializeConnection on BOTH the timeout path AND the connect-error path immediately after the existing PENDING WARNING; modification history entry)",
-          "tests/pi/obdii/test_reconnect_loop_heartbeat.py (US-301 -- 14 tests across 2 classes: TestRunReconnectHeartbeat (10 tests pinning heartbeat contract -- >=3 heartbeats in 30s, per-tick connect, first-tick 'never' outcome, second-tick reports prior failure + 10.0 seconds_ago, exits on isConnected, exits on shutdownEvent, success log, WARNING-level loud bail, exception classified as 'error' outcome, public constants exported); TestVerifyReconnectDaemonAlive (4 tests pinning canary -- ERROR on None thread + PENDING, ERROR on dead thread + PENDING, PASSED INFO on alive thread + PENDING, silent when not in PENDING). RED phase confirmed pre-fix: ImportError on missing constants and runReconnectHeartbeat function. All 14 GREEN post-fix. FakeClock fixture pattern mirrors test_reconnect_loop.py + Sprint 26 US-298 cadence harness.)"
+          "offices/pm/scripts/chain_validate_aggregate.py (UPDATE -- aggregateChain() dedupes by currentVersion keeping latest snapshot; chainStatus derives from chain-tip's validatedAt; renderHumanReport prints new chainTipVersion line + earlier-NULL informational note)",
+          "tests/pm_scripts/test_chain_validate_aggregate.py (NEW -- 21 tests / 414 lines across multiple test classes covering core dedupe + chain-tip-validated + chain-tip-not-validated + earlier-NULL-allowed + empty-chain edge case + pretty-output content invariants)"
         ],
-        "grounding": "Spool 2026-05-08 inbox note BUG-1 verbatim: 11-hour PENDING window with ZERO retry attempts logged after Sprint 25 _initializeConnection 30s timeout -- engine-on test 2026-05-08 captured 0 realtime_data rows. CIO 2026-05-08 verbatim mandate: 'I do think it should have a heartbeat of every 10 seconds listening and looking to see if the OBD Bluetooth is alive or shut off and was restarted.' V0.24.1 anti-pattern lesson (specs/anti-patterns.md Cross-Module Module Identity entry): silent thread + no heartbeat + no canary = 9-drain saga; mandates the boot-time canary discipline mirrored here as _verifyReconnectDaemonAlive. Pre-flight audit (rg 'RECONNECT HEARTBEAT|reconnect.*heartbeat|_verifyReconnectDaemonAlive' src/pi/obdii/) returned ZERO matches pre-fix, confirming the gap; the 'connect daemon thread continues' log line at lifecycle.py:501 referred only to _runInitialConnectWithTimeout's single-shot daemon (left running on timeout), NOT a periodic retry loop.",
-        "completionNotes": "PENDING-state retry-daemon path was completely missing pre-fix (audit confirmed). The existing US-211 ReconnectLoop is invoked synchronously only from BtResilienceMixin.handleCaptureError() -- the post-disconnect-during-capture path -- never from the initial PENDING transition. Sprint 25's _runInitialConnectWithTimeout drops to PENDING and leaves a SINGLE wedged connect thread; that's what Spool's 11-hour silence proves. Design choice: ADD a new heartbeat function (runReconnectHeartbeat) rather than retrofit the US-211 ReconnectLoop, because the two paths have orthogonal concerns: ReconnectLoop = mid-capture flap recovery with backoff schedule; runReconnectHeartbeat = PENDING-state fixed 10s cadence per CIO mandate. Existing US-211 thread lifecycle preserved per scope.do_not_touch. Boot canary fires synchronously after spawn (V0.24.1 pattern), not on a delayed timer -- since spawn happens during _initializeConnection (which runs before runLoop entry), 'within 30s of runLoop entry' is satisfied trivially. Acceptance criteria all green: audit confirmed gap (1); 10s tick + 5s attempt cap with INFO heartbeat per tick (2); _verifyReconnectDaemonAlive ERROR-logs on missing/dead daemon AND PENDING state (3); 14 tests in test_reconnect_loop_heartbeat.py including the >=3-heartbeats-in-30s discriminator (4); fast suite green + ruff clean + sprint_lint clean (5). Out-of-scope deviation NONE -- only files touched are the two listed in scope.filesToTouch + the new test file. Stop conditions not invoked: (a) US-211 ReconnectLoop cadence audit (1s,5s,10s,30s,60s,60s) does NOT conflict with Mike's 10s mandate -- they cover orthogonal paths and the new function uses a fixed 10s cadence as mandated; (b) 5s attempt cap not validated against real OBDLink LX BT pairing window (no Pi access on dev box) but is configurable via attemptTimeoutSec parameter so a follow-up tuning bump to 10s remains a one-line change. Post-deploy CIO can grep journalctl for 'RECONNECT HEARTBEAT' on chi-eclipse-01 to confirm the daemon is firing (canonical token -- HEARTBEAT_LOG_PREFIX constant)."
-      }
-    },
-    {
-      "id": "US-302",
-      "title": "data-logger-restart-on-connection-restored",
-      "size": "M",
-      "intent": "Spool 2026-05-08 BUG-2: When _initializeConnection times out at 30s, the orchestrator runLoop enters with 'Failed to start data logger: Cannot start realtime logging - not connected to OBD-II' ERROR. 8 seconds later when _handleConnectionRestored fires (OBD link alive, 17 PIDs probed), the data logger is NOT re-started -- it stays in failed state. Result: zero realtime_data rows written despite live OBD link. Sprint 27 wires _handleConnectionRestored to (re-)start the data logger; data logger start() becomes idempotent (safe to call repeatedly); health check reports new field data_logger_last_row_seconds_ago for fast post-mortem.",
-      "priority": "high",
-      "status": "passed",
-      "dependencies": [],
-      "scope": {
-        "filesToTouch": [
-          "src/pi/obdii/orchestrator/event_router.py (UPDATE -- _handleConnectionRestored handler must trigger dataLogger.start() if not running; if already running, no-op cleanly; idempotent + exception-isolated per Sprint 26 US-299 pattern)",
-          "src/pi/obdii/data/logger.py (UPDATE -- start() becomes idempotent: if already started, return cleanly; if started but in failed state, restart cleanly; preserve existing happy-path; expose lastRowWrittenSeconds property for health check)",
-          "src/pi/obdii/orchestrator/core.py (UPDATE -- health check renders data_logger_last_row_seconds_ago field per minute)",
-          "tests/pi/obdii/test_data_logger_restart_on_restore.py (NEW -- mocks failed-init -> connection-restored sequence; asserts data logger restarts + writes a row within 60s; would FAIL pre-fix because handler is not wired to data logger)"
+        "grounding": [
+          {
+            "claim": "Aggregator --strict exits 0 post-fix (was exit 1 pre-fix)",
+            "evidence": "PM verification 2026-05-23 post-Ralph commit: `python offices/pm/scripts/chain_validate_aggregate.py --chain V0.27 --strict; echo exit=$?` -> exit=0; aggregator output shows chainStatus: READY + chainTipVersion: V0.27.18 (gate -- chain-end-merge rule)"
+          },
+          {
+            "claim": "Dedupe works: V0.27.11/16/17 appear once each in unvalidatedSprints (were doubled pre-fix)",
+            "evidence": "PM verification 2026-05-23 post-Ralph: unvalidatedSprints: V0.27.2, V0.27.3, V0.27.4, V0.27.5, V0.27.6, V0.27.7, V0.27.8, V0.27.9, V0.27.10, V0.27.11, V0.27.16, V0.27.17 -- 12 unique entries, no duplicates"
+          },
+          {
+            "claim": "21/21 tests green",
+            "evidence": "pytest tests/pm_scripts/test_chain_validate_aggregate.py -v -> 21 passed in 13.21s; no failures, no warnings"
+          },
+          {
+            "claim": "Chain-tip semantic correctly identifies V0.27.18 as gate even with V0.27.2..V0.27.17 unvalidated",
+            "evidence": "Aggregator output shows '[OK     ] V0.27.18   2026-05-22T17:15:16Z   ... <-- chain tip' in the per-sprint table; chainStatus: READY despite 12 earlier sprints having validatedAt=null"
+          }
         ],
-        "filesToRead": [
-          "offices/pm/inbox/2026-05-08-from-spool-engine-on-test-blocked-2-p0-bugs.md (BUG-2 spec + recommended fix)",
-          "src/pi/obdii/orchestrator/event_router.py (existing _handleConnectionRestored handler)",
-          "src/pi/obdii/data/logger.py (existing start() + state-machine if any)",
-          "src/pi/obdii/orchestrator/core.py (health check render path)"
-        ],
-        "doNotTouch": [
-          "Reconnect daemon (US-301 territory; orthogonal)",
-          "_initializeConnection happy-path (Sprint 25 US-284 territory; correct)",
-          "OBD-PID polling internals"
-        ]
+        "completionNotes": "US-358 LANDED via single Ralph commit 897f1bd on sprint/sprint42-v0.27.19-ti-002 branch. Interactive Ralph session per CIO 2026-05-23 dispatch -- not autonomous ralph.sh. Two related fixes shipped together: (1) TI-002 dedupe (Argus's 2026-05-11 gap entry) + (2) chain-tip-validation-authoritative semantic alignment (CIO chain-end-merge rule per PM Rule 9). Aggregator pretty output enhanced with new chainTipVersion line + informational note that earlier-NULL is expected under chain-end-merge rule (no false-alarm for /chain-validated operator). 21 hermetic tests cover the new behavior + regression-gate existing behavior. Verification gates GREEN: aggregator --strict exit 0 (was 1); chainStatus: READY (was INCOMPLETE); chainTipVersion: V0.27.18 reported; ruff clean. Scope-fence honored: only 2 files touched (the script + the new test file); zero product code; zero deploy artifacts; backward-compatible CLI API."
       },
-      "groundingRefs": [
-        {
-          "value": "Spool 2026-05-08 evidence: 10:08:37 _handleConnectionRestored fires + 17 PIDs probed + OBD link alive; ZERO subsequent realtime_data rows written until manual restart",
-          "unit": "production journal evidence",
-          "source": "Spool 2026-05-08 inbox note BUG-2 section + Pi journalctl 10:08-10:10 window",
-          "owner": "Spool"
-        },
-        {
-          "value": "Idempotent start() pattern -- safe to call repeatedly; aligns with Sprint 26 US-299 controller exception-isolation pattern",
-          "unit": "implementation pattern",
-          "source": "Spool BUG-2 fix shape + Sprint 26 US-299 progress.txt learnings",
-          "owner": "Spool + Rex"
-        },
-        {
-          "value": "data_logger_last_row_seconds_ago health field is the post-mortem signal that would have caught this in 60s instead of 11 hours",
-          "unit": "observability addition",
-          "source": "Spool BUG-2 recommended fix",
-          "owner": "Spool"
-        }
-      ],
-      "acceptance": [
-        "Pre-flight audit: rg `_handleConnectionRestored|dataLogger.start|data_logger.start` src/pi/obdii/. Map current handler + data logger state machine.",
-        "_handleConnectionRestored triggers dataLogger.start() (idempotent); data_logger.start() handles already-running, failed-state, and not-yet-started cases",
-        "Health check exposes data_logger_last_row_seconds_ago field",
-        "tests/pi/obdii/test_data_logger_restart_on_restore.py: failed-init -> connection-restored -> row-written sequence; would FAIL pre-fix",
-        "Fast suite + new test pass; ruff + sprint_lint clean (incl. --check-feedback)"
-      ],
-      "verification": [
-        "pytest tests/pi/obdii/test_data_logger_restart_on_restore.py -v",
-        "pytest tests/ -m 'not slow' -q",
-        "ruff check src/pi/obdii/orchestrator/event_router.py src/pi/obdii/data/logger.py src/pi/obdii/orchestrator/core.py",
-        "python offices/pm/scripts/sprint_lint.py"
-      ],
-      "invariants": [
-        "data_logger.start() is idempotent: same external behavior whether called 1x or N times",
-        "_handleConnectionRestored handler is exception-isolated (try/except + DEBUG log) per Sprint 26 US-299 pattern; failure does NOT crash orchestrator",
-        "Health field uses 'never_written' or similar sentinel when no row yet written (no NULL or magic numbers)"
-      ],
-      "stopConditions": [
-        "If data_logger.py has architectural lock around start() that's not idempotent-safe -- STOP, document + propose minimum-rework approach",
-        "If health check render path has structural changes since Sprint 25 -- STOP, audit + reconcile"
-      ],
-      "passes": true,
-      "feedback": {
-        "filesActuallyTouched": [
-          "src/pi/obdii/data/realtime.py (US-302 -- new instance attributes _lastRowWrittenMonotonic + _monotonicFn (test seam, default time.monotonic); new lastRowWrittenSecondsAgo property returning None sentinel until first row OR float seconds since the most recent successful logReading; new _markRowWritten helper called from _logReadingSafe after the database INSERT succeeds; modification history entry. PHANTOM-PATH NOTE: story scope listed src/pi/obdii/data/logger.py but start() + the realtime polling thread live on RealtimeDataLogger in data/realtime.py, not on ObdDataLogger in data/logger.py -- documented in completionNotes per BL-010 pattern; touched the actual file)",
-          "src/pi/obdii/orchestrator/event_router.py (US-302 -- _handleConnectionRestored now calls new _restartDataLoggerOnConnectionRestored helper after the existing display + hardware updates and BEFORE the external onConnectionRestored callback so the restart wins the race against any external handler. Helper is exception-isolated per Sprint 26 US-299 pattern: WARNING-level loud-bail naming the failure (V0.24.1 lesson) so a stuck logger surfaces in 60s instead of 11h. Idempotent against logger state -- start() short-circuits to False when already RUNNING; INFO log on actual (re-)start, DEBUG on idempotent no-op. modification history entry)",
-          "src/pi/obdii/orchestrator/health_monitor.py (US-302 -- _performHealthCheck pulls lastRowWrittenSecondsAgo via new _readDataLoggerLastRowSecondsAgo defensive helper (validates int/float type so MagicMock auto-attributes do NOT crash the formatter -- regression caught by tests/test_orchestrator_loop_health.py); writes the value to HealthCheckStats.dataLoggerLastRowSecondsAgo and renders 'data_logger_last_row_seconds_ago=never_written' (None sentinel) or 'data_logger_last_row_seconds_ago=X.X' (formatted float) appended to the existing HEALTH CHECK INFO line. modification history entry. PHANTOM-PATH NOTE: story scope listed src/pi/obdii/orchestrator/core.py but the health-check render path lives on HealthMonitorMixin in health_monitor.py post-Sweep-5 monolith refactor -- documented in completionNotes per BL-010 pattern; touched the actual file)",
-          "src/pi/obdii/orchestrator/types.py (US-302 -- HealthCheckStats dataclass gains dataLoggerLastRowSecondsAgo: float | None = None field; toDict serializes with rounded(value, 1) when not None, raw None otherwise -- aligned with the HEALTH CHECK log render which uses 'never_written' for the same case. modification history entry)",
-          "tests/pi/obdii/test_data_logger_restart_on_restore.py (US-302 -- 13 tests across 5 classes pinning the contract: TestRealtimeDataLoggerIdempotentStart (3 tests -- start once / start twice while running returns False / start after failed-start with conn down then conn up succeeds = THE Spool BUG-2 reproduction); TestRealtimeDataLoggerLastRowWrittenSecondsAgo (3 tests -- None sentinel pre-first-write, monotonic-clock injection drives deterministic elapsed, second mark resets the clock so latest write wins); TestHandleConnectionRestoredRestartsDataLogger (4 tests -- handler calls start() exactly once, idempotent when already-running, exception-isolated WARNING loud-bail when start raises, no-data-logger no-op); TestHealthCheckRendersLastRowSecondsAgo (2 tests -- never_written sentinel renders pre-first-write, X.X float renders post-mark); TestEndToEndFailedInitThenRestored (1 test -- the Spool BUG-2 reproduction in one test: failed-init -> handler fires -> logger starts -> mark row -> elapsed visible). RED phase confirmed pre-fix: 9 of 13 tests failed (3 missing _markRowWritten, 4 handler-not-wired, 2 health-field missing) per acceptance-criterion 4. All 13 GREEN post-fix. FakeClock-via-_monotonicFn injection mirrors test_reconnect_loop_heartbeat.py (US-301 Session 177) cadence pattern.)",
-          "tests/test_orchestrator_loop_exception_memory.py (US-302 -- contract-test maintenance: TestMemoryEfficiency.test_healthCheckStats_toDict_returnsFixedKeys had a frozen expectedKeys set; added 'dataLoggerLastRowSecondsAgo' so the new field is permitted by the bounded-scalar memory contract.  Caught only by running the FULL fast suite -- focused regression of tests/pi/obdii + tests/pi/orchestrator + tests/pi/data + tests/test_orchestrator_loop_health.py did NOT touch this file.  Standing rule reinforced: when adding a field to a dataclass with a toDict serializer, grep for any 'expectedKeys' / 'expected_keys' / 'allowed_fields' set assertions and update in the same change.)"
-        ],
-        "grounding": "Spool 2026-05-08 inbox note BUG-2 verbatim: 10:08:37 _handleConnectionRestored fires + 17 PIDs probed + OBD link alive; ZERO subsequent realtime_data rows written until manual restart at 10:10:26 -- 8-second window of live OBD ignored by the orchestrator; total realtime_data rows captured during ~15 min of engine-on test = 0. Recommended fix shape: handler must (re-)start dataLogger; data_logger.start() idempotent; health check exposes data_logger_last_row_seconds_ago as the post-mortem signal that would catch this in 60s instead of 11h. Pre-flight audit (rg `_handleConnectionRestored|dataLogger.start|data_logger.start` src/pi/obdii/) confirmed: handler updates display + status fields but does NOT call dataLogger.start() pre-fix; dataLogger.start() is called from 3 sites (core.py:718 runLoop entry, core.py:1282, connection_recovery.py:300 _resumeDataLogging) but NONE of them fire on the failed-init -> connection-restored path because _resumeDataLogging gates on _dataLoggerPausedForReconnect=True which is only set by _handleConnectionLost->pauseLogging (which never fired in this scenario). Sprint 26 US-299 exception-isolation pattern (controller mutation wrapped in try/except + DEBUG log): mirrored as the helper's WARNING-level loud-bail per V0.24.1 anti-pattern lesson (specs/anti-patterns.md Cross-Module Module Identity entry).",
-        "completionNotes": "PHANTOM-PATH DRIFT documented (BL-010 pattern, twice): (1) story scope listed src/pi/obdii/data/logger.py for the idempotent start() but start() lives on RealtimeDataLogger in data/realtime.py -- ObdDataLogger in data/logger.py is the per-query workhorse (queryParameter / logReading) with no thread lifecycle. (2) story scope listed src/pi/obdii/orchestrator/core.py for the health field render but _performHealthCheck lives on HealthMonitorMixin in orchestrator/health_monitor.py post-Sweep-5 monolith refactor; HealthCheckStats dataclass lives in orchestrator/types.py. Both drifts shipped to actual file locations per Rex's BL-010 lesson; phantom paths NOT touched. Design choice on idempotency: RealtimeDataLogger.start() was already MOSTLY idempotent (returns False when state in {RUNNING, STARTING}; raises DataLoggerError when connection is down). The Spool BUG-2 scenario is exactly the case the existing state machine handles -- when the lifecycle init start() raised because conn was down, state stayed STOPPED (because the connection-check happens BEFORE state mutation), so a later start() with conn up succeeds. The bug was 100% in the WIRING (handler not calling start()), not in start() itself. Did NOT add a 'failed-state' enum value -- existing STOPPED is correct; the test test_start_calledAfterFailedStart_succeedsWhenConnectionReturns proves it. Defensive type-check in _readDataLoggerLastRowSecondsAgo (isinstance int/float, exclude bool) caught a regression in tests/test_orchestrator_loop_health.py::test_performHealthCheck_updatesStatsFromComponents which uses MagicMock for _dataLogger -- MagicMock auto-creates attributes that returned a Mock object (not None) and crashed the f'{x:.1f}' formatter; the type-check converts auto-mocks to 'never_written' which is the correct semantic. Acceptance criteria all green: pre-flight audit confirmed handler-not-wired gap (1); _handleConnectionRestored calls dataLogger.start() exception-isolated, start() handles already-running/failed-state/not-yet-started cases (2); HEALTH CHECK INFO line carries data_logger_last_row_seconds_ago=never_written|X.X (3); 13 tests in test_data_logger_restart_on_restore.py including the Spool-BUG-2 e2e discriminator (4); ruff + sprint_lint clean across 5 modified files + 842 tests pass in tests/pi/obdii + tests/pi/orchestrator + tests/pi/data + tests/test_orchestrator_loop_health.py = ZERO regressions in adjacent territory (5). Out-of-scope deviation NONE -- only modified files are the 4 production files (realtime.py, event_router.py, health_monitor.py, types.py -- two of which are phantom-path drift corrections from logger.py + core.py) + the new test file. Stop conditions not invoked: (a) start() did NOT have an architectural lock requiring rework (its existing state machine was already idempotent-safe per the Spool BUG-2 scenario); (b) health check render path had structural changes since Sprint 25 (Sweep 5 monolith->mixin refactor) but that was the phantom-path drift, not a structural mismatch -- shipped to the actual location. Post-deploy CIO verification: grep journalctl for 'data_logger_last_row_seconds_ago=' on chi-eclipse-01 (canonical token) -- never_written should flip to X.X within seconds of the first successful realtime_data row; OR for 'Data logger (re-)started after connection restoration' on the lifecycle init->failed->_handleConnectionRestored path. Story sets up US-303 to land its e2e bench harness against this wiring (the third leg of Spool's Drive-6-unblock spec)."
-      }
-    },
-    {
-      "id": "US-303",
-      "title": "engine-on bench harness: simulate adapter-late-arrives flow",
-      "size": "S",
-      "intent": "Spool 2026-05-08 Story C: Sprint 25 US-286 bench harness mocked at I2C/BT edge but assumed adapter present at orchestrator init. The production-realistic flow is: service starts with no OBD adapter present (engine off / OBDLink unpowered) -> _initializeConnection 30s timeout -> reconnect daemon takes over -> adapter wakes up later -> _handleConnectionRestored fires -> data logger starts -> rows written. US-301 + US-302 close the silent gaps in that path. Sprint 27 ships the bench-test harness that exercises THE WHOLE FLOW: would have caught BUG-1 + BUG-2 pre-Sprint-25-deploy. The regression gate Spool's been asking for since Sprint 25.",
-      "priority": "high",
-      "status": "passed",
-      "dependencies": [
-        "US-301",
-        "US-302"
-      ],
-      "scope": {
-        "filesToTouch": [
-          "tests/pi/integration/test_engine_on_late_adapter_e2e.py (NEW -- extends US-286 mock-at-edge pattern; service starts with no adapter present mock; reconnect daemon ticks; adapter wakes up after N seconds via mock; _handleConnectionRestored fires; data logger starts; row is written; asserts the WHOLE flow lands within budget; would FAIL pre-fix because reconnect daemon never retries (BUG-1) or data logger never restarts (BUG-2))"
-        ],
-        "filesToRead": [
-          "offices/pm/inbox/2026-05-08-from-spool-engine-on-test-blocked-2-p0-bugs.md (Story C spec + production flow)",
-          "tests/pi/integration/test_engine_drive_capture_e2e.py (Sprint 25 US-286 mock-at-edge harness; mirror its construction pattern)",
-          "src/pi/obdii/reconnect_loop.py post-US-301 (heartbeat + retry pattern that test simulates time against)",
-          "src/pi/obdii/orchestrator/event_router.py post-US-302 (the wired _handleConnectionRestored handler)"
-        ],
-        "doNotTouch": [
-          "ApplicationOrchestrator production code (test-harness only)",
-          "US-301 reconnect heartbeat implementation (this story validates it; does NOT modify)",
-          "US-302 data logger restart (same)"
-        ]
-      },
-      "groundingRefs": [
-        {
-          "value": "Sprint 25 US-286 harness mocked at I2C/BT edge but assumed adapter present at init; missed the late-adapter flow that BUG-1 + BUG-2 live in",
-          "unit": "test-coverage gap",
-          "source": "Spool 2026-05-08 Story C Why section",
-          "owner": "Spool"
-        },
-        {
-          "value": "Production-realistic flow: service starts -> 30s timeout -> reconnect ticks -> adapter wakes -> handler fires -> data logger starts -> row written. Each step has an existing US- behind it; only the WHOLE-FLOW integration is missing.",
-          "unit": "flow definition",
-          "source": "Spool BUG-1 + BUG-2 + Story C composite",
-          "owner": "Spool"
-        }
-      ],
-      "acceptance": [
-        "Pre-flight audit: rg `test.*adapter.*late|test.*reconnect.*e2e` tests/pi/integration/. Confirm zero existing whole-flow harness.",
-        "tests/pi/integration/test_engine_on_late_adapter_e2e.py: mocks adapter-late-arrives flow; reconnect daemon ticks; data logger starts; row written; asserts whole flow within 60s budget; would FAIL pre-fix (against pre-US-301 + pre-US-302 code)",
-        "Test runtime under 30 sec via mocked clock (FakeClock pattern from Sprint 26 US-298)",
-        "Fast suite + new test pass; ruff + sprint_lint clean (incl. --check-feedback)"
-      ],
-      "verification": [
-        "pytest tests/pi/integration/test_engine_on_late_adapter_e2e.py -v",
-        "pytest tests/ -m 'not slow' -q",
-        "ruff check tests/pi/integration/test_engine_on_late_adapter_e2e.py",
-        "python offices/pm/scripts/sprint_lint.py"
-      ],
-      "invariants": [
-        "Mock surface = OBD adapter availability + clock + transport edge ONLY; reconnect_loop + orchestrator + data_logger run REAL code paths",
-        "Test FAILS pre-fix against pre-US-301 + pre-US-302 code (per US-301 + US-302 invariants)",
-        "Test runtime fits inside fast-suite budget"
-      ],
-      "stopConditions": [
-        "If FakeClock pattern from Sprint 26 US-298 doesn't compose with reconnect_loop's threading model -- STOP, document; propose alternative (real-clock + fast-mark)",
-        "If US-301 + US-302 ship with subtle different signatures than this story's contract assumed -- STOP, audit; propose alignment commit"
-      ],
-      "passes": true,
-      "feedback": {
-        "filesActuallyTouched": [
-          "tests/pi/integration/test_engine_on_late_adapter_e2e.py (US-303 -- new whole-flow regression gate; 1 class / 1 test / 5 phases.  Mock surface = adapter availability + injectable sleepFn (FakeClock-style _AdapterAwakenerSleepFn that flips the adapter to 'available' on its first invocation between heartbeat ticks 1 and 2) + python-obd OBD.query at the BT edge.  Real reconnect_loop.runReconnectHeartbeat with maxTicks=2 + tickIntervalSec=10.0 + attemptTimeoutSec=1.0 (test-tightened from production 5.0 since the mock connect returns synchronously); real EventRouterMixin._handleConnectionRestored invoked synchronously to mirror what runLoop's state-change check does on its next pass after the heartbeat exits with success; real ObdDataLogger.queryParameter + .logReading writes a real RPM=750 row into realtime_data.  Outer RealtimeDataLogger is a MagicMock with start/stop instrumented so the BUG-2 wiring discriminator (start.call_count == 1) is observable post-handler.  caplog at INFO on src.pi.obdii.reconnect_loop captures the canonical 'RECONNECT HEARTBEAT' tokens (>=2 emitted -- BUG-1 INFO discriminator) AND the 'Reconnect heartbeat tick' WARNING from the failed tick 1 (>=1 emitted -- BUG-1 loud-bail discriminator per V0.24.1 lesson).  Per-phase assertions: Phase 1 PENDING precondition (isConnected False, dataLogger not started, zero realtime_data rows); Phase 2 heartbeat fires (ticks==2, connectAttempts==2, sleepDurations==[10.0], post-heartbeat isConnected True, >=2 INFO heartbeat lines, >=1 WARNING loud-bail line); Phase 3 _handleConnectionRestored called -> outerDataLogger.start.call_count==1 (BUG-2 wiring discriminator); Phase 4 inner.queryParameter+logReading writes one RPM=750 'real' row to realtime_data; Phase 5 wall-clock budget assertion (<30s).  Test body call duration 0.02s per --durations=5; setup 1.42s for DB init + profiles seed.  RUNTIME-VALIDATION discriminator empirically proven: temp-comment _restartDataLoggerOnConnectionRestored() in event_router.py:562 -> Phase 3 fails with 'outerDataLogger.start.call_count == 0' surfacing the EXACT 8-second-of-live-OBD-with-zero-rows symptom Spool's 2026-05-08 inbox documented; restored post-proof.  ImportError discriminator (pre-US-301) is structural: 'from src.pi.obdii.reconnect_loop import runReconnectHeartbeat' at line 169 fails at module load.)"
-        ],
-        "grounding": "Spool 2026-05-08 inbox note Story C verbatim: 'Extend US-286's bench harness to simulate the production flow: service starts with no OBD adapter present -> adapter wakes up later (mock) -> assert reconnect path fires AND data logger starts AND row is written.  This is the regression gate that should have caught both bugs pre-deploy.'  Pre-flight audit per acceptance criterion 1 (rg 'test.*adapter.*late|test.*reconnect.*e2e' tests/pi/integration/) returned ZERO matches confirming no existing whole-flow harness for the late-adapter PENDING-state path -- US-286 covers the engine-on path with the orchestrator already connected; US-260 covers cold-start drive lifecycle; nothing exercised the heartbeat -> _handleConnectionRestored -> data-logger-restart chain end-to-end.  Mock surface designed to satisfy invariant 1 verbatim: 'OBD adapter availability + clock + transport edge ONLY; reconnect_loop + orchestrator + data_logger run REAL code paths.'  FakeClock pattern from Sprint 26 US-298 + US-301's sleepFn injection seam (Session 177 close note pattern: 'FakeClock(.now += seconds) on a sleepFn injection drives heartbeat in 0 wall-clock').  Stop conditions not invoked: (a) FakeClock pattern composes cleanly with reconnect_loop's threading model -- runReconnectHeartbeat called synchronously in the calling thread with maxTicks=2 + sleepFn=_AdapterAwakenerSleepFn means the worker-thread Event.wait() inside _attemptConnectWithCap returns in <50ms because the mock connect is fast; no real wall-clock between ticks; (b) US-301 + US-302 production signatures match this story's contract assumptions exactly (runReconnectHeartbeat signature includes connectFn / isConnectedFn / sleepFn / tickIntervalSec / attemptTimeoutSec / maxTicks per US-301 implementation; _handleConnectionRestored calls _restartDataLoggerOnConnectionRestored which calls outerDataLogger.start() per US-302 implementation).  Verification: 1 GREEN test + ruff clean + sprint_lint OK on US-303 + 60 passed in tests/pi/integration/ (zero regressions in adjacent territory) + 29 passed across test_engine_on_late_adapter_e2e.py + test_engine_drive_capture_e2e.py + test_reconnect_loop_heartbeat.py + test_data_logger_restart_on_restore.py."
-      }
+      "passes": true
     }
   ],
   "validation": {
     "bigDefinitionOfDone": [
-      "Drive 6 IRL: engine on -> drive_start fires within 60s; realtime_data accumulates RPM/COOLANT samples for duration of drive; drive_summary INSERT fires on engine off",
-      "Sync IRL: on return to home WiFi, chi-srv-01 receives the new drive's data; sync_history shows success row",
-      "Reconnect IRL: V0.27.1 hotfix validates -- if BT drops mid-drive (or OBDLink unpowered at boot), heartbeat ticks emit RECONNECT log lines every 10s; daemon recovers within 60s of restoration; data_logger writes a row post-recover",
-      "DTC IRL: drive_start triggers Mode 03 query; drive_end triggers Mode 07 query; dtc_log table receives rows; dashboard footer shows DTC count",
-      "Drain Test 11 IRL: VCELL crosses thresholds -> power_log STAGE_WARNING/IMMINENT/TRIGGER rows present; battery_health_log row inserted with start_vcell_v + end_vcell_v values; clean systemctl poweroff (no EXT4 orphan-cleanup signature on next boot)"
+      "Aggregator --strict exit 0 confirmed (PM verification 2026-05-23 post-Ralph commit)",
+      "chainStatus: READY confirmed in aggregator human report",
+      "chainTipVersion: V0.27.18 (gate -- chain-end-merge rule) line present in human report",
+      "Dedupe confirmed: V0.27.11/16/17 each appear once in unvalidatedSprints (not twice)",
+      "21 new tests in tests/pm_scripts/test_chain_validate_aggregate.py all pass",
+      "Ruff clean on both touched files",
+      "Backward-compatible CLI API: existing --chain / --paths / --json / --strict flags all still work",
+      "Ready for /chain-validated to fire on V0.27.1..V0.27.19 -> main per Mike chain-end-merge rule"
     ],
-    "validationMethod": "real_engine_on_test + real_drain_test",
-    "validatesFeatures": [
-      "F-002",
-      "F-003",
-      "F-004",
-      "F-006",
-      "F-008",
-      "F-009",
-      "F-010",
-      "F-011",
-      "F-012"
-    ],
-    "currentVersion": "V0.27.1",
-    "validatedAt": "2026-05-09T04:20:35Z",
-    "validatedBy": "Mike (CIO confirmed) + drill: Drive 6 (cold-start city) + Drive 7 (highway WOT) + in-vehicle Drain 8 (V0.24.1 ladder fired clean)",
-    "knownRegressions": [
-      "F-005 drive_summary INSERT regressed -- Drives 6+7 produced drive_end events but no summary rows; targeted in V0.27.2.",
-      "F-007 sync chi-srv-01 -- v0007 sync_history migration did not apply on Pi (only sync_log table present); targeted in V0.27.2."
-    ]
-  }
+    "validationMethod": "PM tooling fix; no IRL drill needed (PM scripts don't ship to Pi/server). Verification = unit tests + aggregator dry-run + ruff. PM ran all verification gates 2026-05-23 post-Ralph commit; all GREEN.",
+    "validatesFeatures": [],
+    "currentVersion": "V0.27.19",
+    "validatedAt": "2026-05-23",
+    "validatedBy": "Marcus (PM) Session 42 2026-05-23 -- PM tooling fix verified via unit tests + aggregator dry-run; no IRL drill scope (PM scripts don't ship to Pi/server). Ready for /chain-validated."
+  },
+  "updatedAt": "2026-05-23",
+  "updatedBy": "Marcus (PM) Session 42 2026-05-23 -- minimal Sprint 42 contract follows Ralph's commit 897f1bd; PM-tooling-only patch sprint between Sprint 41 (V0.27.18 validated by Argus) and /chain-validated"
 }

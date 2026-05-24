@@ -1,0 +1,27 @@
+{
+  "last_run": "2026-05-20",
+  "mode": "live",
+  "files": {
+    "CLAUDE.md": 150,
+    "sessions.md": 879,
+    "knowledge.md": 1409,
+    "drive-annotations.md": 283,
+    "drain-test-procedure.md": 344,
+    "drive-review-checklist.md": 240,
+    "sessions-archive-2026-04.md": 597
+  },
+  "knowledge_folder_count": 12,
+  "inbox_unread_count": 45,
+  "inbox_archived_count": 0,
+  "notes": [
+    "First-run baseline. Phase 6 calibration findings:",
+    "  - drive-review-checklist.md target ~80 was wrong; file is a 7-section judgment framework, ~240 is appropriate. Treat target as directional only; flag growth >20% from this baseline.",
+    "  - drain-test-procedure.md target ~280 was conservative; 344 is content-appropriate (authoritative procedure incl. Drain 15 reference run). Flag growth >20% from baseline.",
+    "  - sessions.md 879 vs ~700 target: file is over target but within the 3-week sliding window (Session 8 starts 2026-05-01, 19 days old). No archive yet. Next optimize will archive Session 8 if today+ ~5 days pushes it past 3 weeks.",
+    "  - inbox/ 45 unread > 30 trigger: 9 files dated 2026-04-12 to 2026-04-20 are candidates for archive. Surfaced to operator, NOT auto-moved per Phase 4 rule.",
+    "Refactor actions taken this run:",
+    "  - CLAUDE.md: added 93-octane fuel-grade line (Vehicle section); expanded Folder Structure to reflect knowledge/ + drive-annotations + drain-test-procedure + drive-review-checklist + drills + scripts + archive + .claude/commands; added knowledge/ folder reference to Knowledge Base section.",
+    "  - drive-review-checklist.md: sunset the 2026-05-08-era Pre-Capture: Pipeline Health Pre-Flight section per its own documented sunset criterion (Sprint 26 Stories A+B shipped + Drives 6-16 all clean). Replaced with a one-line sunset note pointing to git log for the original section.",
+    "Zero safety advisories or tuning thresholds touched. Engine knowledge sacred."
+  ]
+}

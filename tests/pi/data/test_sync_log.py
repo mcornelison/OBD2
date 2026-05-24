@@ -100,12 +100,15 @@ class TestInitDbCreatesSchema:
         c = sqlite3.connect(':memory:')
         sync_log.initDb(c)
         info = {row[1]: row for row in c.execute("PRAGMA table_info(sync_log)")}
+        # US-315 added last_synced_modified_at (NULL by default; carries
+        # the parallel modified_at cursor for SYNC_UPDATE_TABLES_PK).
         assert set(info.keys()) == {
             'table_name',
             'last_synced_id',
             'last_synced_at',
             'last_batch_id',
             'status',
+            'last_synced_modified_at',
         }
         # table_name is PRIMARY KEY
         assert info['table_name'][5] == 1  # pk column from PRAGMA

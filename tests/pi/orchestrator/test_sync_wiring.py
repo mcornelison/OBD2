@@ -323,3 +323,70 @@ class TestLoggingAggregation:
             "rowsPushed=42" in rec.getMessage()
             for rec in caplog.records
         )
+
+
+# ================================================================================
+# US-340 / I-035: offline-sync-skip gate (drive-time HTTP retry waste)
+# ================================================================================
+#
+# Pre-V0.27.10, _maybeTriggerIntervalSync called pushAllDeltas unconditionally
+# whenever shouldSyncNow() returned True.  On a drive (Pi away from home WiFi,
+# no IPv4 route to 10.27.27.10), each cycle pumped ~84s of doomed retries
+# (12 tables x 3 attempts x [1,2,4,8,16]s backoff = mostly sleeping) through
+# brcmfmac.  Combined with concurrent BT HCI traffic on the BCM4345 combo
+# chip, the SDIO arbitration lost and the kernel parked the WiFi radio.
+# Fix: skip pushAllDeltas when SyncClient.hasRouteToServer() returns False.
+# Cheap UDP-socket route check; no packets sent; microsecond-fast.
+# ================================================================================
+
+
+class TestUS340OfflineGate:
+    """Regression tests for the US-340 offline-sync-skip gate."""
+
+    def test_offlineGate_skipsPushAllDeltas_whenRouteUnavailable(
+        self, stubApiKey: None  # noqa: ARG002
+    ) -> None:
+        """
+        Given: A SyncClient whose hasRouteToServer() returns False (Pi
+               offline, away from home WiFi)
+        When: _maybeTriggerIntervalSync fires (cadence is otherwise due)
+        Then: pushAllDeltas is NOT called -- the gate short-circuits the
+              cycle before any HTTP retry storm hits brcmfmac.
+
+        Regression for US-340 / I-035 -- pre-fix, the orchestrator pumped
+        ~84s of doomed TCP SYN retries per "5s" ACTIVE-mode tick when on
+        a drive, contributing to BCM4345 combo-chip BT/WiFi contention
+        and the WiFi-soft-off symptom.
+        """
+        orch = _makeOrch(_baseConfig(intervalSeconds=60))
+        orch._syncClient = MagicMock()
+        orch._syncClient.hasRouteToServer.return_value = False
+        orch._syncClient.pushAllDeltas.return_value = []
+
+        fired = orch._maybeTriggerIntervalSync()
+
+        assert fired is False, (
+            "US-340 regression: offline gate must short-circuit "
+            "_maybeTriggerIntervalSync when hasRouteToServer returns False"
+        )
+        orch._syncClient.pushAllDeltas.assert_not_called()
+
+    def test_offlineGate_invokesPushAllDeltas_whenRouteAvailable(
+        self, stubApiKey: None  # noqa: ARG002
+    ) -> None:
+        """
+        Given: A SyncClient whose hasRouteToServer() returns True (Pi
+               on home WiFi, server reachable)
+        When: _maybeTriggerIntervalSync fires
+        Then: pushAllDeltas IS called -- the gate must NOT regress the
+              normal online-sync path.
+        """
+        orch = _makeOrch(_baseConfig(intervalSeconds=60))
+        orch._syncClient = MagicMock()
+        orch._syncClient.hasRouteToServer.return_value = True
+        orch._syncClient.pushAllDeltas.return_value = []
+
+        fired = orch._maybeTriggerIntervalSync()
+
+        assert fired is True
+        assert orch._syncClient.pushAllDeltas.call_count == 1
