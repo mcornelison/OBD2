@@ -24,20 +24,20 @@ Purpose: Schema types + validator for backlog.json v2.0.0.
 """
 from typing import Any
 
-VALID_STORY_TYPES = {"normal", "issue", "blocker", "tech-debt",
-                     "research", "housekeeping", "security"}
-VALID_STORY_SIZES = {"XS", "S", "M", "L"}
-VALID_EPIC_STATUSES = {"pending", "active", "complete"}
-VALID_FEATURE_STATUSES = {"pending", "groomed", "in-sprint", "active", "complete"}
-VALID_STORY_STATUSES = {"pending", "groomed", "in-prd", "sprint-ready",
-                        "in-progress", "blocked", "passed", "complete"}
-VALID_TASK_STATUSES = {"open", "done"}
+VALID_STORY_TYPES = frozenset({"normal", "issue", "blocker", "tech-debt",
+                              "research", "housekeeping", "security"})
+VALID_STORY_SIZES = frozenset({"XS", "S", "M", "L"})
+VALID_EPIC_STATUSES = frozenset({"pending", "active", "complete"})
+VALID_FEATURE_STATUSES = frozenset({"pending", "groomed", "in-sprint", "active", "complete"})
+VALID_STORY_STATUSES = frozenset({"pending", "groomed", "in-prd", "sprint-ready",
+                                  "in-progress", "blocked", "passed", "complete"})
+VALID_TASK_STATUSES = frozenset({"open", "done"})
 
-REQUIRED_STORY_FIELDS = {
+REQUIRED_STORY_FIELDS = frozenset({
     "id", "parent", "title", "type", "size", "status",
     "goal", "definitionOfDone", "conditionalOutcomes", "validationCriteria",
     "createdAt", "updatedAt",
-}
+})
 
 
 class BacklogValidationError(ValueError):
@@ -87,7 +87,7 @@ def validateBacklog(data: dict[str, Any]) -> dict[str, Any]:
         missing = REQUIRED_STORY_FIELDS - set(story.keys())
         if missing:
             raise BacklogValidationError(
-                f"Story {story.get('id')}: missing required fields {missing}"
+                f"Story {story.get('id')}: missing required fields {sorted(missing)}"
             )
         if story["parent"] not in featureIds:
             raise BacklogValidationError(

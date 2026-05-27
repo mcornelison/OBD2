@@ -62,3 +62,17 @@ def test_validateBacklog_validationCriteriaShape_actionOutcomePairs():
     data["stories"][0]["validationCriteria"] = [{"foo": "bar"}]
     with pytest.raises(BacklogValidationError, match="validationCriteria"):
         validateBacklog(data)
+
+
+def test_validateBacklog_orphanStory_raises():
+    data = json.loads((FIXTURES / "v2_backlog_sample.json").read_text())
+    data["stories"][0]["parent"] = "F-999"
+    with pytest.raises(BacklogValidationError, match="orphan"):
+        validateBacklog(data)
+
+
+def test_validateBacklog_invalidStoryStatus_raises():
+    data = json.loads((FIXTURES / "v2_backlog_sample.json").read_text())
+    data["stories"][0]["status"] = "bogus-status"
+    with pytest.raises(BacklogValidationError, match="status"):
+        validateBacklog(data)
