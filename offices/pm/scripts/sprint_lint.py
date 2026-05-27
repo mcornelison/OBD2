@@ -3,6 +3,8 @@
 sprint_lint.py -- Audit offices/ralph/sprint.json against the Sprint Contract
 v1.0 spec at docs/superpowers/specs/2026-04-14-sprint-contract-design.md.
 
+Also validates offices/pm/backlog.json v2.0.0 via --backlog mode.
+
 Catches things I (Marcus) routinely get wrong when grooming:
   - Missing or wrong-typed required fields (feedback scaffold, passes: false-not-null)
   - Sizing-cap violations (S/M/L caps on filesToTouch + acceptance count)
@@ -15,6 +17,11 @@ Catches things I (Marcus) routinely get wrong when grooming:
     OPT-IN via --check-feedback; catches the 2026-Sprints-22-23-24 rescue
     pattern where Ralph's per-story commits log work that never staged)
 
+Backlog (--backlog mode):
+  - Schema validation via backlog_schema.validateBacklog (errors)
+  - Rollup-cache staleness check: compares stored Epic/Feature status against
+    what computeRollups would compute fresh (warnings)
+
 Exit code: 0 = clean, non-zero = violations found.
 
 Usage:
@@ -22,6 +29,7 @@ Usage:
   python offices/pm/scripts/sprint_lint.py --strict    # fail on warnings too
   python offices/pm/scripts/sprint_lint.py --story US-195   # audit one story
   python offices/pm/scripts/sprint_lint.py --check-feedback # commit-vs-claim verifier
+  python offices/pm/scripts/sprint_lint.py --backlog   # lint backlog.json v2.0.0
 """
 from __future__ import annotations
 
@@ -30,9 +38,16 @@ import json
 import re
 import subprocess
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
+
+# Ensure repo root is on sys.path so `offices.*` imports work when this
+# module is run directly as a script (python offices/pm/scripts/sprint_lint.py).
+# When imported via pytest or package import, REPO_ROOT is already on sys.path.
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 SPRINT_PATH = REPO_ROOT / "offices" / "ralph" / "sprint.json"
 
 # Per Sprint Contract v1.0
@@ -372,6 +387,71 @@ def lintSprintValidation(sprintData: dict, repoRoot: Path) -> list[str]:
     return errs
 
 
+# ---------------------------------------------------------------------------
+# Backlog v2.0.0 lint types + function
+# ---------------------------------------------------------------------------
+
+@dataclass
+class LintError:
+    """A schema-validation failure from lintBacklog."""
+    message: str
+
+
+@dataclass
+class LintWarning:
+    """A rollup-cache staleness warning from lintBacklog."""
+    message: str
+
+
+def lintBacklog(path: Path) -> tuple[list[LintError], list[LintWarning]]:
+    """
+    Lint a backlog.json v2.0.0 file. Returns (errors, warnings).
+
+    Errors are schema-validation failures (from validateBacklog).
+    Warnings are rollup-cache mismatches (Epic/Feature status stored differs
+    from what computeRollups would compute fresh).
+
+    Args:
+        path: Path to backlog.json (any Path-like object with .read_text()).
+
+    Returns:
+        Tuple of (errors, warnings) lists of LintError / LintWarning.
+    """
+    from offices.pm.scripts.backlog_schema import validateBacklog, BacklogValidationError
+    from offices.pm.scripts.pm_status import computeRollups
+
+    data = json.loads(path.read_text(encoding="utf-8"))
+    errors: list[LintError] = []
+    warnings: list[LintWarning] = []
+
+    try:
+        validateBacklog(data)
+    except BacklogValidationError as e:
+        errors.append(LintError(message=str(e)))
+        return errors, warnings  # short-circuit on validation failure
+
+    # Rollup-cache check: deep-copy data, recompute, diff with stored.
+    storedEpic = {e["id"]: e["status"] for e in data["epics"]}
+    storedFeature = {f["id"]: f["status"] for f in data["features"]}
+
+    fresh = json.loads(json.dumps(data))  # deep copy -- computeRollups mutates in-place
+    computeRollups(fresh)
+    for e in fresh["epics"]:
+        if e["status"] != storedEpic[e["id"]]:
+            warnings.append(LintWarning(
+                message=f"Epic {e['id']} rollup cache stale: "
+                        f"stored={storedEpic[e['id']]!r} computed={e['status']!r}"
+            ))
+    for f in fresh["features"]:
+        if f["status"] != storedFeature[f["id"]]:
+            warnings.append(LintWarning(
+                message=f"Feature {f['id']} rollup cache stale: "
+                        f"stored={storedFeature[f['id']]!r} computed={f['status']!r}"
+            ))
+
+    return errors, warnings
+
+
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--story", help="Lint only one story by ID")
@@ -397,7 +477,28 @@ def main(argv: list[str]) -> int:
             "branched from a non-main base."
         ),
     )
+    parser.add_argument(
+        "--backlog",
+        action="store_true",
+        help=(
+            "Lint offices/pm/backlog.json v2.0.0: schema validation (errors) "
+            "and rollup-cache staleness check (warnings).  Exits 1 if errors."
+        ),
+    )
     args = parser.parse_args(argv)
+
+    # --backlog mode: delegates entirely to lintBacklog(), then exits.
+    if args.backlog:
+        backlogPath = REPO_ROOT / "offices" / "pm" / "backlog.json"
+        if not backlogPath.exists():
+            print(f"ERROR: {backlogPath} not found", file=sys.stderr)
+            return 2
+        errors, warnings = lintBacklog(backlogPath)
+        for e in errors:
+            print(f"ERROR: {e.message}", file=sys.stderr)
+        for w in warnings:
+            print(f"WARNING: {w.message}")
+        return 1 if errors or (args.strict and warnings) else 0
 
     p = Path(args.path)
     if not p.exists():

@@ -144,3 +144,8 @@ offices/ralph/.last-iteration.log
 data/boot_progress
 data/boot_progress.tmp
 data/spool/
+
+# V0.28 backlog-v2 migration safety nets (local only)
+offices/pm/backlog.v1-backup.json
+offices/pm/backlog.v1-backup/
+offices/pm/story_counter.v1-backup.json

@@ -3,9 +3,13 @@
 bump_passed_statuses.py -- Sprint-close Phase 1 hygiene.
 
 Walks offices/ralph/sprint.json and bumps status fields to 'passed' for any
-story where passes:true but status is still pending/complete/completed
-(Ralph's standing hygiene gap; same pattern observed every sprint close
-since Sprint 14).
+story where passes:true but status is still in a pre-passed state.
+
+v1 states (legacy back-compat): pending, complete, completed
+v2 states (backlog-hierarchy-v2): in-progress (Ralph code-complete)
+
+Note: sprint-ready -> in-progress is a start-of-work transition (passes:false),
+not handled here. 'complete' is set by graduate_story.py, not here.
 
 Usage:
   python offices/pm/scripts/bump_passed_statuses.py             # default sprint.json path
@@ -27,11 +31,15 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_SPRINT_PATH = REPO_ROOT / "offices" / "ralph" / "sprint.json"
 
-TERMINAL_NON_PASSED = ("pending", "complete", "completed")
+# v1 legacy states + v2 in-progress: all bump to 'passed' when passes:true
+TERMINAL_NON_PASSED = ("pending", "complete", "completed", "in-progress")
 
 
 def bumpStatuses(path: Path, dryRun: bool) -> int:
-    """Bump pending/complete/completed -> passed for stories with passes:true.
+    """Bump pre-passed statuses -> 'passed' for stories with passes:true.
+
+    v1 (back-compat): pending, complete, completed -> passed
+    v2 (backlog-hierarchy-v2): in-progress -> passed
 
     Returns the number of stories bumped.
     """
