@@ -4,8 +4,12 @@ pm_status.py -- PM session-start snapshot.
 
 Prints a compact one-screen status summary:
   - current sprint: name, story count, per-story (id/size/priority/status/deps)
-  - backlog: B- features grouped by status
+  - backlog: B- features grouped by status (v1) or Epic/Feature/Story tree (v2)
   - story counter: nextId + last reservation note
+
+Detects backlog schemaVersion:
+  - "2.0.0" → v2 path: computeRollups() + renderTree() + active PRDs + sprint
+  - anything else → v1 legacy path (existing behaviour unchanged)
 
 Used at session start by Marcus (PM) to orient before any planning work.
 Stdlib-only; runs on Windows git-bash or Linux.
@@ -30,10 +34,143 @@ COUNTER_PATH = REPO_ROOT / "offices" / "pm" / "story_counter.json"
 
 
 def printSprintSummary() -> None:
+    """Print sprint.json summary (v1 legacy entry point)."""
     if not SPRINT_PATH.exists():
         print(f"[sprint] {SPRINT_PATH} does not exist")
         return
-    d = json.loads(SPRINT_PATH.read_text(encoding="utf-8"))
+    _renderSprintFromJson(SPRINT_PATH)
+
+
+
+def printCounterSummary() -> None:
+    if not COUNTER_PATH.exists():
+        print(f"[counter] {COUNTER_PATH} does not exist")
+        return
+    d = json.loads(COUNTER_PATH.read_text(encoding="utf-8"))
+    print("=== STORY COUNTER ===")
+    print(f"  nextId:       US-{d.get('nextId', '?')}")
+    print(f"  lastUpdated:  {d.get('lastUpdated', '?')}")
+    notes = d.get("notes", "")
+    if notes:
+        noteLines = notes.split(". ")
+        print("  last note:")
+        for line in noteLines:
+            if line.strip():
+                print(f"    {line.strip()}")
+
+
+# ---------------------------------------------------------------------------
+# v2.0.0 helpers — Epic/Feature/Story tree view + status rollup
+# ---------------------------------------------------------------------------
+
+def computeRollups(data: dict) -> dict:
+    """Recompute Epic + Feature statuses from their children.
+
+    Writes the cached value into the data dict in-place and returns it.
+    Caller is responsible for persisting if desired.
+
+    Args:
+        data: Parsed backlog.json dict (schemaVersion 2.0.0).
+
+    Returns:
+        The same dict with updated status fields on all epics and features.
+    """
+    storiesByFeature: dict[str, list[dict]] = {}
+    for s in data.get("stories", []):
+        storiesByFeature.setdefault(s["parent"], []).append(s)
+
+    featuresByEpic: dict[str, list[dict]] = {}
+    for f in data.get("features", []):
+        children = storiesByFeature.get(f["id"], [])
+        f["status"] = _rollupFeatureStatus(children)
+        featuresByEpic.setdefault(f["parent"], []).append(f)
+
+    for e in data.get("epics", []):
+        children = featuresByEpic.get(e["id"], [])
+        e["status"] = _rollupEpicStatus(children)
+
+    return data
+
+
+def _rollupFeatureStatus(stories: list[dict]) -> str:
+    """Compute Feature status from its child stories (spec §5).
+
+    Args:
+        stories: List of story dicts belonging to this feature.
+
+    Returns:
+        Rolled-up status string.
+    """
+    if not stories:
+        return "pending"
+    statuses = {s["status"] for s in stories}
+    if statuses == {"complete"}:
+        return "complete"
+    if "in-progress" in statuses or "sprint-ready" in statuses or "in-prd" in statuses:
+        return "active"
+    if "groomed" in statuses or "passed" in statuses:
+        return "groomed"
+    return "pending"
+
+
+def _rollupEpicStatus(features: list[dict]) -> str:
+    """Compute Epic status from its child features (spec §5).
+
+    Args:
+        features: List of feature dicts (after their statuses have been rolled up).
+
+    Returns:
+        Rolled-up status string.
+    """
+    if not features:
+        return "pending"
+    statuses = {f["status"] for f in features}
+    if statuses == {"complete"}:
+        return "complete"
+    if statuses == {"pending"}:
+        return "pending"
+    return "active"
+
+
+def renderTree(data: dict) -> str:
+    """Render Epic → Feature → Story tree as plain text.
+
+    Pure function — no I/O side effects.
+
+    Args:
+        data: Parsed backlog.json dict (schemaVersion 2.0.0).
+
+    Returns:
+        Multi-line string with indented hierarchy.
+    """
+    storiesByFeature: dict[str, list[dict]] = {}
+    for s in data.get("stories", []):
+        storiesByFeature.setdefault(s["parent"], []).append(s)
+
+    featuresByEpic: dict[str, list[dict]] = {}
+    for f in data.get("features", []):
+        featuresByEpic.setdefault(f["parent"], []).append(f)
+
+    lines = []
+    for e in data.get("epics", []):
+        lines.append(f"{e['id']:<8} [{e['status']:<8}] {e['title']}")
+        for f in featuresByEpic.get(e["id"], []):
+            lines.append(f"  {f['id']:<8} [{f['status']:<8}] {f['title']}")
+            for s in storiesByFeature.get(f["id"], []):
+                lines.append(
+                    f"    {s['id']:<8} [{s['status']:<12}] "
+                    f"({s['type']}, {s['size']}) {s['title']}"
+                )
+    return "\n".join(lines)
+
+
+def _renderSprintFromJson(sprintPath: Path) -> None:
+    """Print sprint.json summary (shared by v1 and v2 paths).
+
+    Args:
+        sprintPath: Path to sprint.json.
+    """
+    d = json.loads(sprintPath.read_text(encoding="utf-8"))
     print(f"=== SPRINT: {d.get('sprint', '?')} ===")
     print("  branch hint:   sprint-branch per Rule 8 (see PM projectManager.md)")
     print(f"  createdBy:     {d.get('createdBy', '?')}")
@@ -67,15 +204,31 @@ def printSprintSummary() -> None:
         )
 
 
-def printBacklogSummary() -> None:
-    if not BACKLOG_PATH.exists():
-        print(f"[backlog] {BACKLOG_PATH} does not exist")
-        return
-    d = json.loads(BACKLOG_PATH.read_text(encoding="utf-8"))
+def _renderPrdsAndSprint() -> None:
+    """Render active PRDs + current sprint.json (v2 view). Minimal MVP."""
+    prdsDir = REPO_ROOT / "offices" / "pm" / "prds"
+    activePrds = [p for p in prdsDir.glob("prd-V*.md")] if prdsDir.exists() else []
+    if activePrds:
+        print("=== ACTIVE PRDs ===")
+        for p in sorted(activePrds):
+            print(f"  {p.name}")
+    else:
+        print("=== No active PRDs ===")
+    print()
+    if SPRINT_PATH.exists():
+        _renderSprintFromJson(SPRINT_PATH)
+
+
+def _renderV1Legacy(data: dict) -> None:
+    """Print legacy v1 backlog summary (schemaVersion != 2.0.0).
+
+    Args:
+        data: Parsed backlog.json dict (v1 shape).
+    """
     print("=== BACKLOG ===")
-    print(f"  lastUpdated: {d.get('lastUpdated', '?')}  updatedBy: {d.get('updatedBy', '?')}")
+    print(f"  lastUpdated: {data.get('lastUpdated', '?')}  updatedBy: {data.get('updatedBy', '?')}")
     buckets: dict[str, list[tuple[str, str]]] = {}
-    for epic in d.get("epics", []):
+    for epic in data.get("epics", []):
         for feature in epic.get("features", []):
             fid = feature.get("id", "")
             if not fid.startswith("B-"):
@@ -100,23 +253,6 @@ def printBacklogSummary() -> None:
             print(f"    {fid:<6}  {title}")
 
 
-def printCounterSummary() -> None:
-    if not COUNTER_PATH.exists():
-        print(f"[counter] {COUNTER_PATH} does not exist")
-        return
-    d = json.loads(COUNTER_PATH.read_text(encoding="utf-8"))
-    print("=== STORY COUNTER ===")
-    print(f"  nextId:       US-{d.get('nextId', '?')}")
-    print(f"  lastUpdated:  {d.get('lastUpdated', '?')}")
-    notes = d.get("notes", "")
-    if notes:
-        noteLines = notes.split(". ")
-        print("  last note:")
-        for line in noteLines:
-            if line.strip():
-                print(f"    {line.strip()}")
-
-
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--sprint", action="store_true", help="Show sprint only")
@@ -125,14 +261,38 @@ def main(argv: list[str]) -> int:
     args = parser.parse_args(argv)
 
     anyFlag = args.sprint or args.backlog or args.counter
-    if not anyFlag or args.sprint:
-        printSprintSummary()
-        print()
-    if not anyFlag or args.backlog:
-        printBacklogSummary()
-        print()
-    if not anyFlag or args.counter:
-        printCounterSummary()
+
+    if not BACKLOG_PATH.exists():
+        print(f"[backlog] {BACKLOG_PATH} does not exist")
+        return 1
+
+    data = json.loads(BACKLOG_PATH.read_text(encoding="utf-8"))
+
+    if data.get("schemaVersion") == "2.0.0":
+        # v2 path: compute + cache rollups, then render tree
+        if not anyFlag or args.backlog:
+            data = computeRollups(data)
+            # persist rolled-up statuses back to disk (cache writeback)
+            BACKLOG_PATH.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+            print("=== BACKLOG v2.0.0 ===")
+            print(renderTree(data))
+            print()
+        if not anyFlag or args.sprint:
+            _renderPrdsAndSprint()
+            print()
+        if not anyFlag or args.counter:
+            printCounterSummary()
+    else:
+        # v1 legacy path: unchanged behaviour
+        if not anyFlag or args.sprint:
+            printSprintSummary()
+            print()
+        if not anyFlag or args.backlog:
+            _renderV1Legacy(data)
+            print()
+        if not anyFlag or args.counter:
+            printCounterSummary()
+
     return 0
 
 
