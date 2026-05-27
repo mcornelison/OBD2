@@ -1,0 +1,47 @@
+{
+  "schemaVersion": "2.0.0",
+  "lastUpdated": "2026-05-27",
+  "updatedBy": "test fixture",
+  "counters": {"epic": 2, "feature": 110, "story": 360},
+  "epics": [
+    {
+      "id": "E-001",
+      "title": "Test Epic",
+      "description": "Fixture epic for tests.",
+      "status": "active",
+      "createdAt": "2026-05-27",
+      "updatedAt": "2026-05-27"
+    }
+  ],
+  "features": [
+    {
+      "id": "F-103",
+      "parent": "E-001",
+      "title": "Test Feature",
+      "description": "Fixture feature.",
+      "status": "groomed",
+      "renamedFrom": "B-103",
+      "createdAt": "2026-05-26",
+      "updatedAt": "2026-05-27"
+    }
+  ],
+  "stories": [
+    {
+      "id": "US-359",
+      "parent": "F-103",
+      "title": "Test Story",
+      "type": "normal",
+      "size": "M",
+      "status": "groomed",
+      "goal": "As tester, I want a fixture so tests can run.",
+      "definitionOfDone": ["fixture parses", "validator passes"],
+      "conditionalOutcomes": ["if validator fails → test fails"],
+      "validationCriteria": [{"action": "load fixture", "outcome": "validator returns OK"}],
+      "deps": [],
+      "sourceRefs": [],
+      "tasks": [],
+      "createdAt": "2026-05-27",
+      "updatedAt": "2026-05-27"
+    }
+  ]
+}
