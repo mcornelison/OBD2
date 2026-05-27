@@ -498,7 +498,7 @@ def main(argv: list[str]) -> int:
             print(f"ERROR: {e.message}", file=sys.stderr)
         for w in warnings:
             print(f"WARNING: {w.message}")
-        return 1 if errors else 0
+        return 1 if errors or (args.strict and warnings) else 0
 
     p = Path(args.path)
     if not p.exists():

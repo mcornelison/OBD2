@@ -16,17 +16,18 @@
 
 """Tests for sprint_lint v2 backlog rules."""
 import json
-import tempfile
-from pathlib import Path
+import pytest
 from offices.pm.scripts.sprint_lint import lintBacklog, LintError, LintWarning
 
 
-def _withTempBacklog(data: dict):
-    """Return a Path with the JSON written; caller cleans up."""
-    fp = tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False)
-    json.dump(data, fp)
-    fp.close()
-    return Path(fp.name)
+@pytest.fixture
+def withTempBacklog(tmp_path):
+    """Factory fixture: writes JSON to tmp_path/backlog.json and returns the path."""
+    def _make(data):
+        p = tmp_path / "backlog.json"
+        p.write_text(json.dumps(data), encoding="utf-8")
+        return p
+    return _make
 
 
 VALID_FIXTURE = {
@@ -48,39 +49,39 @@ VALID_FIXTURE = {
 }
 
 
-def test_lintBacklog_valid_returnsNoErrors():
-    path = _withTempBacklog(VALID_FIXTURE)
+def test_lintBacklog_valid_returnsNoErrors(withTempBacklog):
+    path = withTempBacklog(VALID_FIXTURE)
     errors, warnings = lintBacklog(path)
     assert errors == []
 
 
-def test_lintBacklog_invalidStoryType_returnsError():
+def test_lintBacklog_invalidStoryType_returnsError(withTempBacklog):
     bad = json.loads(json.dumps(VALID_FIXTURE))
     bad["stories"][0]["type"] = "bogus"
-    path = _withTempBacklog(bad)
+    path = withTempBacklog(bad)
     errors, _ = lintBacklog(path)
     assert any("type" in e.message for e in errors)
 
 
-def test_lintBacklog_storyMissingValidationCriteria_returnsError():
+def test_lintBacklog_storyMissingValidationCriteria_returnsError(withTempBacklog):
     bad = json.loads(json.dumps(VALID_FIXTURE))
     del bad["stories"][0]["validationCriteria"]
-    path = _withTempBacklog(bad)
+    path = withTempBacklog(bad)
     errors, _ = lintBacklog(path)
     assert any("validationCriteria" in e.message for e in errors)
 
 
-def test_lintBacklog_orphanStory_returnsError():
+def test_lintBacklog_orphanStory_returnsError(withTempBacklog):
     bad = json.loads(json.dumps(VALID_FIXTURE))
     bad["stories"][0]["parent"] = "F-999"
-    path = _withTempBacklog(bad)
+    path = withTempBacklog(bad)
     errors, _ = lintBacklog(path)
     assert any("orphan" in e.message.lower() for e in errors)
 
 
-def test_lintBacklog_unknownEpicStatusHandEdit_returnsWarning():
+def test_lintBacklog_unknownEpicStatusHandEdit_returnsWarning(withTempBacklog):
     bad = json.loads(json.dumps(VALID_FIXTURE))
     bad["epics"][0]["status"] = "complete"  # cache mismatch -- only 1 groomed feature
-    path = _withTempBacklog(bad)
+    path = withTempBacklog(bad)
     _, warnings = lintBacklog(path)
     assert any("rollup" in w.message.lower() or "cache" in w.message.lower() for w in warnings)
