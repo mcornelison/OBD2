@@ -61,3 +61,39 @@ def test_migrate_keywordMatchAssignsSchemaToE002(tmp_path):
     v2 = json.loads(outPath.read_text())
     f076 = next(f for f in v2["features"] if f["id"] == "F-076")
     assert f076["parent"] == "E-002"  # 'schema' keyword matches Data Pipeline epic
+
+
+def test_migrate_preservesDeclinedStatus(tmp_path):
+    """A v1 'declined' item must NOT become 'pending' -- silent re-grooming."""
+    v1 = {
+        "$schema": "Eclipse OBD-II PMO Backlog v1.0",
+        "lastUpdated": "2026-05-27",
+        "epics": [{
+            "id": "E-99", "name": "T", "phase": 1, "status": "complete", "description": "t",
+            "features": [{
+                "id": "B-006",
+                "title": "Migrate from camelCase to snake_case",
+                "priority": "low",
+                "status": "declined",
+                "size": "L",
+                "category": "refactor",
+                "dependencies": [],
+                "stories": []
+            }]
+        }]
+    }
+    v1Path = tmp_path / "v1.json"
+    v1Path.write_text(json.dumps(v1), encoding="utf-8")
+    outPath = tmp_path / "v2.json"
+    migrate(v1Path, outPath)
+    v2 = json.loads(outPath.read_text())
+    f006 = next(f for f in v2["features"] if f["id"] == "F-006")
+    assert f006["status"] == "declined", "declined status must round-trip to v2"
+
+
+def test_suggestEpicParent_doesNotFalseMatchUiInRequirements():
+    """'ui' as substring of 'requirements' must NOT pull item to E-001 UI/UX."""
+    from offices.pm.scripts.migrate_backlog_v1_to_v2 import _suggestEpicParent
+    # title with only non-Epic-matching words but containing the substring 'ui'
+    result = _suggestEpicParent("OBD2 Patterns and Requirements Reference", "b-011")
+    assert result == "E-OPS", "word-boundary match must not catch 'ui' inside 'requirements'"

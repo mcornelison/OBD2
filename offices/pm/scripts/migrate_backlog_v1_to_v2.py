@@ -9,6 +9,7 @@ Purpose: One-time helper to convert v1 backlog.json (deeply-nested
          parents per item.
 """
 import json
+import re
 import sys
 from datetime import date
 from pathlib import Path
@@ -56,7 +57,7 @@ EPICS_INITIAL = [
 
 
 def _suggestEpicParent(itemTitle: str, itemSlug: str) -> str:
-    """Return best-guess E-XXX id by keyword match against Epic taxonomy.
+    """Return best-guess E-XXX id by word-boundary keyword match against Epic taxonomy.
 
     Args:
         itemTitle: Human-readable title of the backlog item.
@@ -68,7 +69,10 @@ def _suggestEpicParent(itemTitle: str, itemSlug: str) -> str:
     text = (itemTitle + " " + itemSlug).lower()
     best, bestHits = "E-OPS", 0
     for epic in EPICS_INITIAL:
-        hits = sum(1 for kw in epic["keywords"] if kw in text)
+        hits = sum(
+            1 for kw in epic["keywords"]
+            if re.search(r'\b' + re.escape(kw) + r'\b', text)
+        )
         if hits > bestHits:
             best, bestHits = epic["id"], hits
     return best
@@ -124,8 +128,9 @@ def _mapStatusToV2Feature(v1Status: str) -> str:
         "in_progress": "active",
         "in-progress": "active",
         "in_sprint": "in-sprint",
-        "blocked": "groomed",
+        "blocked": "blocked",       # CHANGED from "groomed" -- v2 supports blocked
         "complete": "complete",
+        "declined": "declined",     # NEW -- preserve CIO-rejected items
     }
     return mapping.get(v1Status, "pending")
 
