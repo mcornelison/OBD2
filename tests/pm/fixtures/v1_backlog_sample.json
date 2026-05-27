@@ -1,0 +1,38 @@
+{
+  "$schema": "Eclipse OBD-II PMO Backlog v1.0",
+  "project": "test",
+  "lastUpdated": "2026-05-27",
+  "updatedBy": "test fixture",
+  "description": "v1 fixture for migration tests",
+  "epics": [
+    {
+      "id": "E-99",
+      "name": "Test v1 Epic",
+      "phase": 99,
+      "status": "in_progress",
+      "description": "test",
+      "features": [
+        {
+          "id": "B-103",
+          "title": "Pi splash animation kit",
+          "priority": "medium",
+          "status": "pending",
+          "size": "M",
+          "category": "ui",
+          "dependencies": [],
+          "stories": []
+        },
+        {
+          "id": "B-076",
+          "title": "Server schema normalization epic",
+          "priority": "high",
+          "status": "pending",
+          "size": "L",
+          "category": "analytics",
+          "dependencies": [],
+          "stories": []
+        }
+      ]
+    }
+  ]
+}
