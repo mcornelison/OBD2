@@ -86,3 +86,48 @@ def test_renderTree_outputContainsEpicFeatureStory():
     assert "E-001" in out
     assert "F-103" in out
     assert "US-359" in out
+
+
+def test_computeRollups_featureWithBlockedStory_status_active():
+    """A blocked story is in-flight; feature should roll up to active."""
+    data = {
+        "schemaVersion": "2.0.0",
+        "epics": [{"id": "E-001", "title": "T", "description": "d",
+                   "status": "active", "createdAt": "2026-05-27", "updatedAt": "2026-05-27"}],
+        "features": [{"id": "F-1", "parent": "E-001", "title": "T", "description": "d",
+                      "status": "groomed", "createdAt": "2026-05-27", "updatedAt": "2026-05-27"}],
+        "stories": [
+            {"id": "US-1", "parent": "F-1", "title": "T", "type": "normal", "size": "S",
+             "status": "blocked", "goal": "g", "definitionOfDone": ["d"],
+             "conditionalOutcomes": ["c"], "validationCriteria": [{"action": "a", "outcome": "o"}],
+             "deps": [], "sourceRefs": [], "tasks": [],
+             "createdAt": "2026-05-27", "updatedAt": "2026-05-27"},
+        ],
+    }
+    rolled = computeRollups(data)
+    assert rolled["features"][0]["status"] == "active"
+
+
+def test_computeRollups_featureWithMixedCompleteAndPending_status_active():
+    """Partial completion (some done, some pending) is active, not pending."""
+    data = {
+        "schemaVersion": "2.0.0",
+        "epics": [{"id": "E-001", "title": "T", "description": "d",
+                   "status": "active", "createdAt": "2026-05-27", "updatedAt": "2026-05-27"}],
+        "features": [{"id": "F-1", "parent": "E-001", "title": "T", "description": "d",
+                      "status": "groomed", "createdAt": "2026-05-27", "updatedAt": "2026-05-27"}],
+        "stories": [
+            {"id": "US-1", "parent": "F-1", "title": "T1", "type": "normal", "size": "S",
+             "status": "complete", "goal": "g", "definitionOfDone": ["d"],
+             "conditionalOutcomes": ["c"], "validationCriteria": [{"action": "a", "outcome": "o"}],
+             "deps": [], "sourceRefs": [], "tasks": [],
+             "createdAt": "2026-05-27", "updatedAt": "2026-05-27"},
+            {"id": "US-2", "parent": "F-1", "title": "T2", "type": "normal", "size": "S",
+             "status": "pending", "goal": "g", "definitionOfDone": ["d"],
+             "conditionalOutcomes": ["c"], "validationCriteria": [{"action": "a", "outcome": "o"}],
+             "deps": [], "sourceRefs": [], "tasks": [],
+             "createdAt": "2026-05-27", "updatedAt": "2026-05-27"},
+        ],
+    }
+    rolled = computeRollups(data)
+    assert rolled["features"][0]["status"] == "active"

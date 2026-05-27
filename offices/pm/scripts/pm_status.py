@@ -93,20 +93,27 @@ def computeRollups(data: dict) -> dict:
 
 
 def _rollupFeatureStatus(stories: list[dict]) -> str:
-    """Compute Feature status from its child stories (spec §5).
+    """
+    Roll up Feature status from its stories per spec §5.
 
-    Args:
-        stories: List of story dicts belonging to this feature.
-
-    Returns:
-        Rolled-up status string.
+    Rules (in priority order):
+    - no stories               -> pending
+    - all stories complete     -> complete
+    - any in-flight story
+      (in-progress, sprint-ready, in-prd, blocked) -> active
+    - some-but-not-all complete (partial progress)  -> active
+    - any groomed or passed    -> groomed
+    - else                     -> pending
     """
     if not stories:
         return "pending"
     statuses = {s["status"] for s in stories}
     if statuses == {"complete"}:
         return "complete"
-    if "in-progress" in statuses or "sprint-ready" in statuses or "in-prd" in statuses:
+    if any(st in statuses for st in ("in-progress", "sprint-ready", "in-prd", "blocked")):
+        return "active"
+    if "complete" in statuses:
+        # partial completion -- some done, some not yet
         return "active"
     if "groomed" in statuses or "passed" in statuses:
         return "groomed"
@@ -262,9 +269,32 @@ def main(argv: list[str]) -> int:
 
     anyFlag = args.sprint or args.backlog or args.counter
 
+    # Determine whether backlog is needed for this invocation.
+    # v2 path always requires backlog.json (rollup is its job).
+    # v1 path: backlog.json is only required when --backlog is explicitly requested
+    # or no flags are given (full snapshot).  --sprint-only can proceed without it.
+    backlogNeeded = not anyFlag or args.backlog
+
     if not BACKLOG_PATH.exists():
-        print(f"[backlog] {BACKLOG_PATH} does not exist")
-        return 1
+        if backlogNeeded:
+            print(f"[backlog] {BACKLOG_PATH} does not exist", file=sys.stderr)
+            if args.sprint:
+                # --backlog was also implied by no-flag default but --sprint was given:
+                # fall through to v1 sprint-only rendering below.
+                pass
+            else:
+                return 1
+        else:
+            # --sprint (or --counter) only; backlog not needed -- print warning and continue
+            print(f"[backlog] {BACKLOG_PATH} does not exist -- skipping backlog section", file=sys.stderr)
+
+        # v1 sprint/counter only (backlog missing)
+        if not anyFlag or args.sprint:
+            printSprintSummary()
+            print()
+        if not anyFlag or args.counter:
+            printCounterSummary()
+        return 0
 
     data = json.loads(BACKLOG_PATH.read_text(encoding="utf-8"))
 
