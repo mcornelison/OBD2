@@ -41,9 +41,10 @@ def convertPrdToSprint(prdPath: Path, outPath: Path, repoRoot: Path) -> None:
                   offices/pm/backlog/US-*.md files.
 
     Raises:
-        ValueError: If a selectedStory referenced in the PRD is not in backlog.json.
-        KeyError: If required frontmatter fields (sprint, version, selectedStories)
-                  are missing from the PRD.
+        ValueError: If a selectedStory referenced in the PRD is not in backlog.json,
+                    or if required frontmatter fields (sprint, version, selectedStories)
+                    are missing from the PRD, or if a story's parent feature or epic
+                    cannot be resolved in backlog.json.
     """
     prd = frontmatter.load(prdPath)
     meta = prd.metadata
@@ -77,8 +78,16 @@ def convertPrdToSprint(prdPath: Path, outPath: Path, repoRoot: Path) -> None:
             raise ValueError(
                 f"PRD {prdPath.name}: selectedStory {storyId} not in backlog.json"
             )
-        feature = featuresById[story["parent"]]
-        epic = epicsById[feature["parent"]]
+        feature = featuresById.get(story["parent"])
+        if not feature:
+            raise ValueError(
+                f"PRD {prdPath.name}: story {storyId} parent {story['parent']!r} not in backlog.json features"
+            )
+        epic = epicsById.get(feature["parent"])
+        if not epic:
+            raise ValueError(
+                f"PRD {prdPath.name}: feature {feature['id']} parent {feature['parent']!r} not in backlog.json epics"
+            )
 
         sprintStories.append({
             "id": story["id"],

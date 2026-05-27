@@ -17,6 +17,7 @@
 import json
 import shutil
 from pathlib import Path
+
 from offices.pm.scripts.prd_to_sprint import convertPrdToSprint
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -73,11 +74,22 @@ def test_convertPrdToSprint_basicConversion(tmp_path):
     assert sprint["sprint"] == 43
     assert len(sprint["stories"]) == 1
     s = sprint["stories"][0]
+    # sprint-level frozen-contract assertions
+    assert sprint["schemaVersion"] == "2.0.0"
+    assert sprint["createdFromPRD"].endswith("prd-V0.28.0-sprint-43.md")
+    assert "/" in sprint["createdFromPRD"] and "\\" not in sprint["createdFromPRD"]
+    # story-level
     assert s["id"] == "US-359"
     assert s["parent"] == "F-103"
     assert s["epicId"] == "E-001"
     assert s["type"] == "normal"
-    assert "validationCriteria" in s
-    assert "validation" in sprint
-    assert "bigDefinitionOfDone" in sprint["validation"]
-    assert len(sprint["validation"]["bigDefinitionOfDone"]) > 0
+    assert s["size"] == "M"
+    assert s["status"] == "sprint-ready"
+    assert s["passes"] is False
+    assert s["acceptance"] == ["fixture parses", "validator passes"]
+    assert s["validationCriteria"] == [{"action": "load fixture", "outcome": "validator returns OK"}]
+    # sprint-level bigDoD aggregation
+    assert len(sprint["validation"]["bigDefinitionOfDone"]) == 1
+    bigDoD = sprint["validation"]["bigDefinitionOfDone"][0]
+    assert "→" in bigDoD
+    assert "[from US-359]" in bigDoD
