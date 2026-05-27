@@ -27,6 +27,11 @@ import json
 import sys
 from pathlib import Path
 
+# Migrated v1 backlog titles may contain Unicode (e.g. '→'). Reconfigure stdout
+# to UTF-8 so the tree view doesn't crash on Windows cp1252 consoles.
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SPRINT_PATH = REPO_ROOT / "offices" / "ralph" / "sprint.json"
 BACKLOG_PATH = REPO_ROOT / "offices" / "pm" / "backlog.json"

@@ -1,10 +1,10 @@
 {
   "schemaVersion": "2.0.0",
   "lastUpdated": "2026-05-27",
-  "updatedBy": "Marcus (PM) Session 43 -- post hand-review (10 Epic-parent corrections)",
+  "updatedBy": "Marcus (PM) Session 43 -- Task 11 final corrections (6 V0.28+ epic-parent fixes)",
   "counters": {
     "epic": 6,
-    "feature": 46,
+    "feature": 110,
     "story": 359
   },
   "epics": [
@@ -20,7 +20,7 @@
       "id": "E-002",
       "title": "Data Pipeline & Analytics",
       "description": "Server analytics, schema normalization, drive detection.",
-      "status": "complete",
+      "status": "active",
       "createdAt": "2026-05-27",
       "updatedAt": "2026-05-27"
     },
@@ -515,6 +515,576 @@
       "description": "",
       "status": "complete",
       "renamedFrom": "B-045",
+      "createdAt": "2026-05-27",
+      "updatedAt": "2026-05-27"
+    },
+    {
+      "id": "F-047",
+      "parent": "E-004",
+      "title": "Pi self-update from server release registry (with deploy versioning prerequisite)",
+      "description": "Pi self-update from server release registry (with deploy versioning prerequisite)",
+      "status": "pending",
+      "renamedFrom": "B-047",
+      "createdAt": "2026-05-27",
+      "updatedAt": "2026-05-27"
+    },
+    {
+      "id": "F-048",
+      "parent": "E-OPS",
+      "title": "MAX17048 SOC% calibration learning run protocol + scripts",
+      "description": "MAX17048 SOC% calibration learning run protocol + scripts",
+      "status": "pending",
+      "renamedFrom": "B-048",
+      "createdAt": "2026-05-27",
+      "updatedAt": "2026-05-27"
+    },
+    {
+      "id": "F-049",
+      "parent": "E-OPS",
+      "title": "drive_detect idle-poll gap \u2014 engine-on never detected in idle-poll",
+      "description": "drive_detect idle-poll gap \u2014 engine-on never detected in idle-poll",
+      "status": "pending",
+      "renamedFrom": "B-049",
+      "createdAt": "2026-05-27",
+      "updatedAt": "2026-05-27"
+    },
+    {
+      "id": "F-050",
+      "parent": "E-OPS",
+      "title": "PowerMonitor DB-write path activation \u2014 UpsMonitor \u2192 power_log \u2192 US-216",
+      "description": "PowerMonitor DB-write path activation \u2014 UpsMonitor \u2192 power_log \u2192 US-216",
+      "status": "pending",
+      "renamedFrom": "B-050",
+      "createdAt": "2026-05-27",
+      "updatedAt": "2026-05-27"
+    },
+    {
+      "id": "F-051",
+      "parent": "E-OPS",
+      "title": "UpsMonitor slow-drain detection + flap-debounce (Sprint 19 US-235 RESCOPE)",
+      "description": "UpsMonitor slow-drain detection + flap-debounce (Sprint 19 US-235 RESCOPE)",
+      "status": "pending",
+      "renamedFrom": "B-051",
+      "createdAt": "2026-05-27",
+      "updatedAt": "2026-05-27"
+    },
+    {
+      "id": "F-052",
+      "parent": "E-001",
+      "title": "HDMI dashboard full-canvas redesign",
+      "description": "HDMI dashboard full-canvas redesign",
+      "status": "pending",
+      "renamedFrom": "B-052",
+      "createdAt": "2026-05-27",
+      "updatedAt": "2026-05-27"
+    },
+    {
+      "id": "F-054",
+      "parent": "E-OPS",
+      "title": "Automated battery test on boot",
+      "description": "Automated battery test on boot",
+      "status": "pending",
+      "renamedFrom": "B-054",
+      "createdAt": "2026-05-27",
+      "updatedAt": "2026-05-27"
+    },
+    {
+      "id": "F-055",
+      "parent": "E-002",
+      "title": "Weather API for drive context (auto-populate ambient + conditions)",
+      "description": "Weather API for drive context (auto-populate ambient + conditions)",
+      "status": "pending",
+      "renamedFrom": "B-055",
+      "createdAt": "2026-05-27",
+      "updatedAt": "2026-05-27"
+    },
+    {
+      "id": "F-056",
+      "parent": "E-002",
+      "title": "mod_state enum for drive tagging (cross-mod-comparison safety)",
+      "description": "mod_state enum for drive tagging (cross-mod-comparison safety)",
+      "status": "pending",
+      "renamedFrom": "B-056",
+      "createdAt": "2026-05-27",
+      "updatedAt": "2026-05-27"
+    },
+    {
+      "id": "F-057",
+      "parent": "E-003",
+      "title": "drive_annotations table for tuning context (fuel + weather + intent + Spool notes)",
+      "description": "drive_annotations table for tuning context (fuel + weather + intent + Spool notes)",
+      "status": "pending",
+      "renamedFrom": "B-057",
+      "createdAt": "2026-05-27",
+      "updatedAt": "2026-05-27"
+    },
+    {
+      "id": "F-058",
+      "parent": "E-OPS",
+      "title": "connection_log noise re-profile (post-V0.27.2 quiet-day audit)",
+      "description": "connection_log noise re-profile (post-V0.27.2 quiet-day audit)",
+      "status": "pending",
+      "renamedFrom": "B-058",
+      "createdAt": "2026-05-27",
+      "updatedAt": "2026-05-27"
+    },
+    {
+      "id": "F-060",
+      "parent": "E-OPS",
+      "title": "Wire UpsMonitor SOC% through orchestrator to recorder (BL-013 Step 2)",
+      "description": "Wire UpsMonitor SOC% through orchestrator to recorder (BL-013 Step 2)",
+      "status": "pending",
+      "renamedFrom": "B-060",
+      "createdAt": "2026-05-27",
+      "updatedAt": "2026-05-27"
+    },
+    {
+      "id": "F-061",
+      "parent": "E-OPS",
+      "title": "Drop battery_health_log start_soc / end_soc legacy columns (BL-013 Step 3)",
+      "description": "Drop battery_health_log start_soc / end_soc legacy columns (BL-013 Step 3)",
+      "status": "pending",
+      "renamedFrom": "B-061",
+      "createdAt": "2026-05-27",
+      "updatedAt": "2026-05-27"
+    },
+    {
+      "id": "F-062",
+      "parent": "E-OPS",
+      "title": "drain_event close-on-poweroff targeted fix (post-Drain-Test-11 evidence)",
+      "description": "drain_event close-on-poweroff targeted fix (post-Drain-Test-11 evidence)",
+      "status": "pending",
+      "renamedFrom": "B-062",
+      "createdAt": "2026-05-27",
+      "updatedAt": "2026-05-27"
+    },
+    {
+      "id": "F-063",
+      "parent": "E-004",
+      "title": "Pi 5 power -- fuse-box buck converter (replaces stereo USB-C tap)",
+      "description": "Pi 5 power -- fuse-box buck converter (replaces stereo USB-C tap)",
+      "status": "pending",
+      "renamedFrom": "B-063",
+      "createdAt": "2026-05-27",
+      "updatedAt": "2026-05-27"
+    },
+    {
+      "id": "F-064",
+      "parent": "E-002",
+      "title": "drive_counter server-side sync gap (Pi at 10, server still says 3)",
+      "description": "drive_counter server-side sync gap (Pi at 10, server still says 3)",
+      "status": "pending",
+      "renamedFrom": "B-064",
+      "createdAt": "2026-05-27",
+      "updatedAt": "2026-05-27"
+    },
+    {
+      "id": "F-066",
+      "parent": "E-OPS",
+      "title": "B-047 self-update IRL drill (validate F-013 + F-014 with V0.27.X test payload)",
+      "description": "B-047 self-update IRL drill (validate F-013 + F-014 with V0.27.X test payload)",
+      "status": "pending",
+      "renamedFrom": "B-066",
+      "createdAt": "2026-05-27",
+      "updatedAt": "2026-05-27"
+    },
+    {
+      "id": "F-068",
+      "parent": "E-002",
+      "title": "Sustained WOT capture drive plan (operator drill, not code)",
+      "description": "Sustained WOT capture drive plan (operator drill, not code)",
+      "status": "pending",
+      "renamedFrom": "B-068",
+      "createdAt": "2026-05-27",
+      "updatedAt": "2026-05-27"
+    },
+    {
+      "id": "F-069",
+      "parent": "E-002",
+      "title": "Cross-drive comparison tool (Spool ergonomics)",
+      "description": "Cross-drive comparison tool (Spool ergonomics)",
+      "status": "pending",
+      "renamedFrom": "B-069",
+      "createdAt": "2026-05-27",
+      "updatedAt": "2026-05-27"
+    },
+    {
+      "id": "F-070",
+      "parent": "E-003",
+      "title": "PID 0x2F fuel-level probe (auto-populate drive_annotations.fuel_level_at_start)",
+      "description": "PID 0x2F fuel-level probe (auto-populate drive_annotations.fuel_level_at_start)",
+      "status": "pending",
+      "renamedFrom": "B-070",
+      "createdAt": "2026-05-27",
+      "updatedAt": "2026-05-27"
+    },
+    {
+      "id": "F-071",
+      "parent": "E-002",
+      "title": "Drive 11+ end-to-end forensic instrumentation (capture full V0.27 chain IRL validation in one drive)",
+      "description": "Drive 11+ end-to-end forensic instrumentation (capture full V0.27 chain IRL validation in one drive)",
+      "status": "pending",
+      "renamedFrom": "B-071",
+      "createdAt": "2026-05-27",
+      "updatedAt": "2026-05-27"
+    },
+    {
+      "id": "F-074",
+      "parent": "E-003",
+      "title": "Add MAP (PID 0x0B) to default OBD-II poll list (Spool tuning gap)",
+      "description": "Add MAP (PID 0x0B) to default OBD-II poll list (Spool tuning gap)",
+      "status": "pending",
+      "renamedFrom": "B-074",
+      "createdAt": "2026-05-27",
+      "updatedAt": "2026-05-27"
+    },
+    {
+      "id": "F-075",
+      "parent": "E-004",
+      "title": "drive_statistics Pi-side writer + sync (Spool's Approach 2 -- V0.28+ feature)",
+      "description": "drive_statistics Pi-side writer + sync (Spool's Approach 2 -- V0.28+ feature)",
+      "status": "pending",
+      "renamedFrom": "B-075",
+      "createdAt": "2026-05-27",
+      "updatedAt": "2026-05-27"
+    },
+    {
+      "id": "F-076",
+      "parent": "E-002",
+      "title": "Server schema normalization epic (V0.28+ -- the CIO 2026-05-12 obd2db review)",
+      "description": "Server schema normalization epic (V0.28+ -- the CIO 2026-05-12 obd2db review)",
+      "status": "pending",
+      "renamedFrom": "B-076",
+      "createdAt": "2026-05-27",
+      "updatedAt": "2026-05-27"
+    },
+    {
+      "id": "F-077",
+      "parent": "E-OPS",
+      "title": "OBD reconnect loop too chatty at idle -- connection_log grows ~6 rows/min 24/7",
+      "description": "OBD reconnect loop too chatty at idle -- connection_log grows ~6 rows/min 24/7",
+      "status": "pending",
+      "renamedFrom": "B-077",
+      "createdAt": "2026-05-27",
+      "updatedAt": "2026-05-27"
+    },
+    {
+      "id": "F-078",
+      "parent": "E-002",
+      "title": "sync runs every ~26-40s at idle -- sync_history grows ~1.5 rows/min; engine-off poll loop drives the chatter (V0.28+ design story)",
+      "description": "sync runs every ~26-40s at idle -- sync_history grows ~1.5 rows/min; engine-off poll loop drives the chatter (V0.28+ design story)",
+      "status": "pending",
+      "renamedFrom": "B-078",
+      "createdAt": "2026-05-27",
+      "updatedAt": "2026-05-27"
+    },
+    {
+      "id": "F-079",
+      "parent": "E-OPS",
+      "title": "sync_history.started_at and completed_at written in different timezones (5h CDT/UTC offset) in the same row",
+      "description": "sync_history.started_at and completed_at written in different timezones (5h CDT/UTC offset) in the same row",
+      "status": "pending",
+      "renamedFrom": "B-079",
+      "createdAt": "2026-05-27",
+      "updatedAt": "2026-05-27"
+    },
+    {
+      "id": "F-080",
+      "parent": "E-004",
+      "title": "Pi clock jumps ~23h forward post-reboot (RTC drift / timesyncd) -- Spool's Bug 5",
+      "description": "Pi clock jumps ~23h forward post-reboot (RTC drift / timesyncd) -- Spool's Bug 5",
+      "status": "pending",
+      "renamedFrom": "B-080",
+      "createdAt": "2026-05-27",
+      "updatedAt": "2026-05-27"
+    },
+    {
+      "id": "F-081",
+      "parent": "E-OPS",
+      "title": "ELM ATRV alternator-voltage proxy for engine-on/off detection",
+      "description": "ELM ATRV alternator-voltage proxy for engine-on/off detection",
+      "status": "pending",
+      "renamedFrom": "B-081",
+      "createdAt": "2026-05-27",
+      "updatedAt": "2026-05-27"
+    },
+    {
+      "id": "F-082",
+      "parent": "E-002",
+      "title": "Tester's V0.28+ data-profile findings \u2014 rollup (8 bugs + 8 design smells)",
+      "description": "Tester's V0.28+ data-profile findings \u2014 rollup (8 bugs + 8 design smells)",
+      "status": "pending",
+      "renamedFrom": "B-082",
+      "createdAt": "2026-05-27",
+      "updatedAt": "2026-05-27"
+    },
+    {
+      "id": "F-083",
+      "parent": "E-002",
+      "title": "Mahalanobis-distance + per-metric Z-score baseline scoring for Spool drive grading",
+      "description": "Mahalanobis-distance + per-metric Z-score baseline scoring for Spool drive grading",
+      "status": "pending",
+      "renamedFrom": "B-083",
+      "createdAt": "2026-05-27",
+      "updatedAt": "2026-05-27"
+    },
+    {
+      "id": "F-084",
+      "parent": "E-OPS",
+      "title": "Pre-flight PID probe session + opt-in additional PIDs (OIL_TEMP, FUEL_RATE, FUEL_RAIL_PRESSURE, ETHANOL_PERCENT, AMBIENT_AIR_TEMP, ABSOLUTE_LOAD)",
+      "description": "Pre-flight PID probe session + opt-in additional PIDs (OIL_TEMP, FUEL_RATE, FUEL_RAIL_PRESSURE, ETHANOL_PERCENT, AMBIENT_AIR_TEMP, ABSOLUTE_LOAD)",
+      "status": "pending",
+      "renamedFrom": "B-084",
+      "createdAt": "2026-05-27",
+      "updatedAt": "2026-05-27"
+    },
+    {
+      "id": "F-085",
+      "parent": "E-OPS",
+      "title": "BNO055 9-DOF IMU sensor for G-force / acceleration / vehicle attitude",
+      "description": "BNO055 9-DOF IMU sensor for G-force / acceleration / vehicle attitude",
+      "status": "pending",
+      "renamedFrom": "B-085",
+      "createdAt": "2026-05-27",
+      "updatedAt": "2026-05-27"
+    },
+    {
+      "id": "F-086",
+      "parent": "E-001",
+      "title": "GEM-1 \u2014 Warnings-first quiet UI on the 3.5\" display",
+      "description": "GEM-1 \u2014 Warnings-first quiet UI on the 3.5\" display",
+      "status": "pending",
+      "renamedFrom": "B-086",
+      "createdAt": "2026-05-27",
+      "updatedAt": "2026-05-27"
+    },
+    {
+      "id": "F-087",
+      "parent": "E-003",
+      "title": "GEM-2 \u2014 Deterministic anomaly + Ollama explanation pattern (mature US-326 + US-317 + ingest the brainstorm prompt pack)",
+      "description": "GEM-2 \u2014 Deterministic anomaly + Ollama explanation pattern (mature US-326 + US-317 + ingest the brainstorm prompt pack)",
+      "status": "pending",
+      "renamedFrom": "B-087",
+      "createdAt": "2026-05-27",
+      "updatedAt": "2026-05-27"
+    },
+    {
+      "id": "F-088",
+      "parent": "E-003",
+      "title": "GEM-3 \u2014 Knock-retard real-time alert with chime ladder",
+      "description": "GEM-3 \u2014 Knock-retard real-time alert with chime ladder",
+      "status": "pending",
+      "renamedFrom": "B-088",
+      "createdAt": "2026-05-27",
+      "updatedAt": "2026-05-27"
+    },
+    {
+      "id": "F-089",
+      "parent": "E-003",
+      "title": "GEM-4 \u2014 Spool engine grade per drive (A/B/C/D + 1-line reason)",
+      "description": "GEM-4 \u2014 Spool engine grade per drive (A/B/C/D + 1-line reason)",
+      "status": "pending",
+      "renamedFrom": "B-089",
+      "createdAt": "2026-05-27",
+      "updatedAt": "2026-05-27"
+    },
+    {
+      "id": "F-090",
+      "parent": "E-003",
+      "title": "GEM-5 \u2014 MARK EVENT button (bookmark plus/minus 60s window for later analysis)",
+      "description": "GEM-5 \u2014 MARK EVENT button (bookmark plus/minus 60s window for later analysis)",
+      "status": "pending",
+      "renamedFrom": "B-090",
+      "createdAt": "2026-05-27",
+      "updatedAt": "2026-05-27"
+    },
+    {
+      "id": "F-091",
+      "parent": "E-005",
+      "title": "GEM-6 \u2014 Audio drive reports via Android Auto",
+      "description": "GEM-6 \u2014 Audio drive reports via Android Auto",
+      "status": "pending",
+      "renamedFrom": "B-091",
+      "createdAt": "2026-05-27",
+      "updatedAt": "2026-05-27"
+    },
+    {
+      "id": "F-092",
+      "parent": "E-001",
+      "title": "GEM-7 \u2014 System status tile (BT link, last sync, Pi power mode, ladder stage)",
+      "description": "GEM-7 \u2014 System status tile (BT link, last sync, Pi power mode, ladder stage)",
+      "status": "pending",
+      "renamedFrom": "B-092",
+      "createdAt": "2026-05-27",
+      "updatedAt": "2026-05-27"
+    },
+    {
+      "id": "F-093",
+      "parent": "E-003",
+      "title": "GEM-8 \u2014 Baseline-relative anomaly detection (vs pre-mod shelf, not generic thresholds)",
+      "description": "GEM-8 \u2014 Baseline-relative anomaly detection (vs pre-mod shelf, not generic thresholds)",
+      "status": "pending",
+      "renamedFrom": "B-093",
+      "createdAt": "2026-05-27",
+      "updatedAt": "2026-05-27"
+    },
+    {
+      "id": "F-094",
+      "parent": "E-003",
+      "title": "GEM-9 \u2014 MrSpool digital twin: RAG over Spool knowledge + DSM references + mod/maintenance log",
+      "description": "GEM-9 \u2014 MrSpool digital twin: RAG over Spool knowledge + DSM references + mod/maintenance log",
+      "status": "pending",
+      "renamedFrom": "B-094",
+      "createdAt": "2026-05-27",
+      "updatedAt": "2026-05-27"
+    },
+    {
+      "id": "F-095",
+      "parent": "E-003",
+      "title": "S-1 \u2014 Heat soak recovery time PID (IAT-minus-ambient delta after cruise; intercooler degradation signal)",
+      "description": "S-1 \u2014 Heat soak recovery time PID (IAT-minus-ambient delta after cruise; intercooler degradation signal)",
+      "status": "pending",
+      "renamedFrom": "B-095",
+      "createdAt": "2026-05-27",
+      "updatedAt": "2026-05-27"
+    },
+    {
+      "id": "F-096",
+      "parent": "E-001",
+      "title": "S-2 \u2014 LTFT trend display (multi-drive, healthy migration toward 0)",
+      "description": "S-2 \u2014 LTFT trend display (multi-drive, healthy migration toward 0)",
+      "status": "pending",
+      "renamedFrom": "B-096",
+      "createdAt": "2026-05-27",
+      "updatedAt": "2026-05-27"
+    },
+    {
+      "id": "F-097",
+      "parent": "E-001",
+      "title": "S-3 \u2014 Drain ladder state UI (when Pi on UPS battery show stage + VCELL + estimated runtime remaining)",
+      "description": "S-3 \u2014 Drain ladder state UI (when Pi on UPS battery show stage + VCELL + estimated runtime remaining)",
+      "status": "pending",
+      "renamedFrom": "B-097",
+      "createdAt": "2026-05-27",
+      "updatedAt": "2026-05-27"
+    },
+    {
+      "id": "F-098",
+      "parent": "E-OPS",
+      "title": "S-4 \u2014 Mode badge: in-car vs wall-power debug (small corner indicator)",
+      "description": "S-4 \u2014 Mode badge: in-car vs wall-power debug (small corner indicator)",
+      "status": "pending",
+      "renamedFrom": "B-098",
+      "createdAt": "2026-05-27",
+      "updatedAt": "2026-05-27"
+    },
+    {
+      "id": "F-099",
+      "parent": "E-OPS",
+      "title": "Telegram bot \u2014 bidirectional driver-context channel (CIO \u2194 system; LLM-mediated text\u2192DB ingestion)",
+      "description": "Telegram bot \u2014 bidirectional driver-context channel (CIO \u2194 system; LLM-mediated text\u2192DB ingestion)",
+      "status": "pending",
+      "renamedFrom": "B-099",
+      "createdAt": "2026-05-27",
+      "updatedAt": "2026-05-27"
+    },
+    {
+      "id": "F-100",
+      "parent": "E-002",
+      "title": "`drive_summary` writer broken \u2014 every server row is an empty shell + drives 6-10 missing entirely",
+      "description": "`drive_summary` writer broken \u2014 every server row is an empty shell + drives 6-10 missing entirely",
+      "status": "pending",
+      "renamedFrom": "B-100",
+      "createdAt": "2026-05-27",
+      "updatedAt": "2026-05-27"
+    },
+    {
+      "id": "F-101",
+      "parent": "E-002",
+      "title": "Sync `power_log` + `startup_log` from Pi to server",
+      "description": "Sync `power_log` + `startup_log` from Pi to server",
+      "status": "pending",
+      "renamedFrom": "B-101",
+      "createdAt": "2026-05-27",
+      "updatedAt": "2026-05-27"
+    },
+    {
+      "id": "F-102",
+      "parent": "E-004",
+      "title": "Pi + server hostname resolution cleanup (`chi-eclipse-01` / `chi-srv-01` LAN-wide)",
+      "description": "Pi + server hostname resolution cleanup (`chi-eclipse-01` / `chi-srv-01` LAN-wide)",
+      "status": "pending",
+      "renamedFrom": "B-102",
+      "createdAt": "2026-05-27",
+      "updatedAt": "2026-05-27"
+    },
+    {
+      "id": "F-103",
+      "parent": "E-001",
+      "title": "Pi Splash Animation -- Boot + Shutdown",
+      "description": "Pi Splash Animation -- Boot + Shutdown",
+      "status": "pending",
+      "renamedFrom": "B-103",
+      "createdAt": "2026-05-27",
+      "updatedAt": "2026-05-27"
+    },
+    {
+      "id": "F-104",
+      "parent": "E-002",
+      "title": "Server-Side Analytics Authority -- Pi as Emitter, Server as Analyzer (Architecture Epic)",
+      "description": "Server-Side Analytics Authority -- Pi as Emitter, Server as Analyzer (Architecture Epic)",
+      "status": "pending",
+      "renamedFrom": "B-104",
+      "createdAt": "2026-05-27",
+      "updatedAt": "2026-05-27"
+    },
+    {
+      "id": "F-105",
+      "parent": "E-OPS",
+      "title": "architecture.md \u00a720 modification-history SS-T9 row backfill",
+      "description": "architecture.md \u00a720 modification-history SS-T9 row backfill",
+      "status": "pending",
+      "renamedFrom": "B-105",
+      "createdAt": "2026-05-27",
+      "updatedAt": "2026-05-27"
+    },
+    {
+      "id": "F-106",
+      "parent": "E-002",
+      "title": "Derived Signals From Speed + Time \u2014 Acceleration + Estimated Odometer (with CIO Factual Recalibration)",
+      "description": "Derived Signals From Speed + Time \u2014 Acceleration + Estimated Odometer (with CIO Factual Recalibration)",
+      "status": "pending",
+      "renamedFrom": "B-106",
+      "createdAt": "2026-05-27",
+      "updatedAt": "2026-05-27"
+    },
+    {
+      "id": "F-107",
+      "parent": "E-002",
+      "title": "DriveDetector Dual-Attribution + Pi-Side Drive Lifecycle Hardening (V0.28.0 TOP PRIORITY)",
+      "description": "DriveDetector Dual-Attribution + Pi-Side Drive Lifecycle Hardening (V0.28.0 TOP PRIORITY)",
+      "status": "pending",
+      "renamedFrom": "B-107",
+      "createdAt": "2026-05-27",
+      "updatedAt": "2026-05-27"
+    },
+    {
+      "id": "F-108",
+      "parent": "E-OPS",
+      "title": "vehicle_info ECU + Calibration Signature Manual-Tracking Field",
+      "description": "vehicle_info ECU + Calibration Signature Manual-Tracking Field",
+      "status": "pending",
+      "renamedFrom": "B-108",
+      "createdAt": "2026-05-27",
+      "updatedAt": "2026-05-27"
+    },
+    {
+      "id": "F-109",
+      "parent": "E-OPS",
+      "title": "Mode 02 Freeze-Frame Capture for Forensic DTC Enrichment",
+      "description": "Mode 02 Freeze-Frame Capture for Forensic DTC Enrichment",
+      "status": "pending",
+      "renamedFrom": "B-109",
       "createdAt": "2026-05-27",
       "updatedAt": "2026-05-27"
     }
