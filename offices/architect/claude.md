@@ -934,6 +934,131 @@ get scoped going forward. The 13-sprint discipline pattern is now
 extending into V0.28: declare surface up-front, choose tier-appropriate
 implementation, route load-bearing changes through Rule-10 gates.
 
+### 2026-05-26 (evening) — B-103 splash design v1 → Rule-10 gate PASS-w/-amendments → spec v1.1 ready for sprint scoping
+
+Tasked by CIO this evening: Iris filed her B-103 splash animation design v1
+(spec @ `docs/superpowers/specs/2026-05-26-b103-splash-animation-design.md`,
+committed `37a71f5`) with a Rule-10 design-gate request — 10 architectural
+items A-1..A-10 + 3 verified-defect callouts D-1..D-3 + advisory routes to
+Spool + Argus. First UI/UX-lane Rule-10 gate I've run (Iris onboarded
+2026-05-22; this is the first load-bearing-adjacent spec from her axis).
+
+**Ground-truth pass before issuing verdict** (per the discipline lesson:
+verify before asserting; the V0.27.15 saga's whole pattern was code-
+written-but-not-orchestrated specs that read plausibly until you grepped):
+
+- D-1: `shutdown.html:27` confirmed `data="splash.svg"` (wrong); Iris's
+  diagnosis correct, fix description concrete.
+- D-2: `splash-shutdown.service:5+25` confirmed `Conflicts=` + `WantedBy=`
+  same shutdown targets = self-cancel; Iris's diagnosis correct.
+- D-3: confirmed `Before=graphical.target` + `DISPLAY=:0` in a Wayland
+  Bookworm system; diagnosis correct.
+- A-1: read `deploy/boot-progress-finalize.service` end-to-end — it's a
+  SHUTDOWN finalizer (`ExecStart=/bin/true`, `ExecStop=python -m boot_progress
+  --finalize`). Iris's "extension?" question is rule-outable: lifecycle
+  mismatch (ExecStop-only vs continuously-emit). NEW dedicated unit required.
+- A-3: grepped `/run/eclipse` + `/var/run/eclipse-obd` across `src/` + `deploy/`
+  — found 6 existing usages of `/var/run/eclipse-obd/` (command_types.py:40,
+  deploy-pi.sh:737-775, drain-forensics.service:30-34); ZERO matches for
+  `/run/eclipse/`. Iris invented a new convention; project already has one.
+  Rule: use the existing.
+- A-6: grepped `smoothingSec` — `config.json:422` = 7 in production. Memory
+  said "5s smoothing in V1" (stale; that was the design number, deployed
+  config is 7s). Math: 7s smoothing + ~3-5s pipeline = ~10-12s total
+  time-to-poweroff, comfortably exceeds Iris's 7.5s splash animation budget.
+  No grace-floor contract change needed; just a docstring invariant on the
+  sequencer. Saved myself from over-engineering a config key.
+
+**Verdict: 4 PASS / 6 CHANGES REQUESTED / 0 BLOCK.**
+- PASS: A-5 (250ms poll), A-7 (PathExists=), A-10 (SSOT alignment),
+  D-1/D-2/D-3 (defect descriptions concrete enough).
+- CHANGES REQUESTED: A-1 (boot-state emitter ownership — NEW unit, not
+  extension), A-2 (phase semantics — pin grace/cancelled/flushing/powering_off
+  to sequencer code-path transitions), A-3 (path convention — match existing
+  `/var/run/eclipse-obd/states/`), A-4 (IPC mechanism — pick localhost HTTP +
+  pin constraints), A-6 (timing-contract invariant — docstring on sequencer,
+  not new config key), A-8/A-9 (pick Type=simple + WARN-not-BLOCK + explicit
+  log line — Iris had flagged these for me; pick + pin).
+
+**CIO directive applied (mid-task):** "create an updated spec with your
+updates and notify the PM of the new specs." Override of my standard
+"never edit another agent's files" lane rule — Iris's spec is the shared
+`docs/superpowers/specs/` artifact, and CIO authorized in-place amendment
+to land the v1.1 version-of-record without a Iris→Atlas→Iris bounce-back
+loop. Did the amendment in-place rather than as a v2 sibling file:
+single contract for Marcus to scope from; v1 preserved in git at `37a71f5`.
+
+**v1.1 amendments applied:**
+- New §0 "Atlas Gate Amendments" table at top with 10-row verdict.
+- Status flipped to `Atlas-gated v1.1 — READY FOR SPRINT SCOPING (Marcus)`.
+- §3 boot data-flow diagram: emitter renamed to NEW `eclipse-boot-state.service`
+  with explicit lifecycle-mismatch rationale below.
+- §3 shutdown data-flow: phase-emit hook flagged as Rule-10 trigger with
+  same-sprint architecture.md §10.6 update requirement + non-blocking
+  emission constraints.
+- §6 shutdown-state schema: pinned `phase` enum table mapping each value
+  to sequencer-state + write-trigger + splash-response. Removed the
+  ambiguous "grace = smoothing-begun OR smoothing-confirmed?" gap.
+- §6 NEW "Phase-timing contract" subsection: documented the 7.5s ≤ ~10-12s
+  math + the docstring invariant Ralph must add to the sequencer module
+  in the same sprint as A-2. Ownership of timing-coupling lives at the
+  emitter side, splash trusts.
+- §8 chromium IPC: picked localhost HTTP. New unit `eclipse-states-http.service`,
+  127.0.0.1:9899, stdlib only, read-only, listen-fail=non-zero-exit (no silent
+  green-when-broken). Alternatives 2+3 dropped from the spec.
+- §8 unit inventory: added the two NEW emitter+IPC units to the table,
+  Type=simple for all NEW units (oneshot rejected per D-2 lesson).
+- §8 deploy: WARN-not-BLOCK with explicit log line `WARN: splash deploy
+  failed, system functional — see journalctl -u <failing-unit> for details`.
+- §10 open design questions: pinned Wayland-fallback (socket check + fail
+  loudly, no default-to-X11 which would re-create D-3), simultaneous-state
+  priority (shutdown wins), version.txt malformed (chip = `V?.?.?`, no
+  kiosk crash, warn-logged once).
+- §10 Marcus M-1a row added: Rule-10 same-sprint architecture.md §10.6
+  update is part of US-B DoD; Atlas BLOCK if hook ships without spec
+  update. Standard same-sprint DoD pattern per CIO 2026-05-18 + Sprint 39
+  T9 precedent.
+- §10 Atlas section: 10-row verdict table replaces the old "items to
+  ratify" question list. Items now show CHANGED / PINNED / PICKED / PASS.
+
+**Discipline catch:** the search/replace on the A-3 path (`/run/eclipse/`
+→ `/var/run/eclipse-obd/states/`) also hit the §0 amendment table's "v1
+status" column, leaving a self-contradictory cell ("`/var/run/eclipse-obd/
+states/` proposed → CHANGED to `/var/run/eclipse-obd/states/`"). Caught
+on the post-edit head-read + fixed. Pattern lesson worth saving: when
+running global replacements on a doc that *describes its own history*,
+do a final pass on the change-log section before declaring done. Same
+class of catch as the V0.27.18 82-row orphan-tail one I missed (drilling
+into the part that doesn't fit > moving on).
+
+**Filed in lane order:**
+- Iris (A2AL v0.4.1, audience=agent reactive-rule, in-reply-to=her gate
+  request): `../uidevloper/inbox/2026-05-26-from-atlas-b103-gate-PASS-
+  with-amendments.md`. Per-item verdicts; pointer to v1.1; explicit
+  "open to pushback on any of the 6 changes-requested rulings" line
+  (gate-precedent: Task-2 redo this Spring proved well-grounded
+  push-back is heard on merits).
+- Marcus (Markdown, PM standard): `../pm/inbox/2026-05-26-from-atlas-
+  b103-spec-v1.1-gated-ready-for-sprint-scoping.md`. v1 vs v1.1 delta
+  table + Rule-10 DoD on US-B called out + recommended sprint-sequencing
+  (US-A first to prove the IPC + emitter pattern in non-load-bearing
+  context, THEN US-B which touches the just-stabilized sequencer).
+
+**Atlas posture from here: on-demand again.** Iris may push back on any
+of the 6 changes-requested rulings (open to it on merits — particularly
+A-6 timing contract if she has UX reasons the docstring-only approach is
+brittle); otherwise spec v1.1 is the contract Marcus scopes from. US-B
+is the load-bearing one I'll per-task-gate when Marcus spins the sprint
+(same shape that closed Sprint 39 + Sprint 41); US-A + US-C light-touch
+unless they grow scope.
+
+**Note on what's NOT in the Watch List:** this gate doesn't open a new
+architectural-coherence finding. The pre-gate spec had ambiguities, not
+incoherences. Watch List captures drift/coherence defects in
+the production system; design ambiguities pinned pre-sprint are routine
+gate-work, not architectural debt. A-1..A-10 are CLOSED via v1.1, not
+parked as Watch items.
+
 ## 10. Folder Structure
 
 ```

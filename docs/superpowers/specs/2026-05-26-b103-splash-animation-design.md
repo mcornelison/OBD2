@@ -1,18 +1,41 @@
-# B-103 Splash Animation — Design Spec v1
+# B-103 Splash Animation — Design Spec v1.1
 
 | Field | Value |
 |---|---|
 | Backlog item | `offices/pm/backlog/B-103-pi-splash-animation-boot-shutdown.md` |
-| Author | Iris (UI/UX Designer) |
-| Date | 2026-05-26 |
-| Status | Draft — pending Atlas design-gate review (Rule 10), then PM sprint scoping |
+| Author | Iris (UI/UX Designer) — v1; Atlas (Architect) — v1.1 gate amendments |
+| Date | 2026-05-26 (v1); 2026-05-26 (v1.1 same day, post-gate) |
+| Status | **Atlas-gated v1.1 — READY FOR SPRINT SCOPING (Marcus)** |
 | Supersedes | Existing kit at `specs/UI/dist/splash-pi/` (replaced, not extended) |
 | Target sprint | V0.28+ (post-V0.27 chain merge — done 2026-05-23) |
-| Design-gate | Atlas (Rule 10 — touches load-bearing ShutdownSequencer + boot-progress-instrument) |
+| Design-gate | Atlas Rule-10 PASS w/ amendments (`offices/architect/inbox/2026-05-26-from-iris-b103-splash-design-gate-request.md` + Atlas reply same date) |
+
+## 0. Atlas Gate Amendments (v1.1, applied 2026-05-26)
+
+Iris's v1 design shapes are correct; gate verdict was **4 PASS / 6 CHANGES REQUESTED / 0 BLOCK**. Amendments pin the ambiguities so Ralph executes without improvising. Every change has an `[ATLAS v1.1]` inline marker at the affected location. Summary:
+
+| # | Item | v1 status | v1.1 ruling |
+|---|---|---|---|
+| A-1 | Boot-state emitter ownership | "boot-progress-finalize or extension?" | NEW dedicated unit `eclipse-boot-state.service` (Type=simple, polls `systemctl is-active`). `boot-progress-finalize` is a SHUTDOWN finalizer (ExecStop-only); lifecycle mismatch rules out extension. |
+| A-2 | Shutdown-state phase semantics | `phase: grace` ambiguous (smoothing-begun vs smoothing-confirmed?) | Pinned: `grace` = smoothing-begun (T=0, transient possible); `flushing` = smoothing-confirmed, pipeline tasks executing; `powering_off` = pre-`systemctl poweroff`; `cancelled` = smoothing failed. Same-sprint `specs/architecture.md` §10.6 update required (Rule 10). |
+| A-3 | Path convention | `/run/eclipse/` proposed in v1 | CHANGED to `/var/run/eclipse-obd/states/` — matches existing project convention (verified at `src/pi/obdii/shutdown/command_types.py:40`, `deploy/deploy-pi.sh:737-775`, `deploy/drain-forensics.service:30-34`). Two conventions = future confusion. |
+| A-4 | Chromium → state-file IPC | 3 options proposed | PICKED: **localhost HTTP server** (Iris's preference). Pinned constraints: bind 127.0.0.1 only, Python stdlib only (`http.server`), serves ONLY `/var/run/eclipse-obd/states/*` read-only, runs as same user as the emitters. Options 2+3 dropped from spec. |
+| A-5 | 250 ms poll rate | proposed | PASS — 4Hz tmpfs read negligible on Pi 5 at boot. |
+| A-6 | Sequencer grace floor | "7.5s minimum floor" — not pinned | Pinned via *invariant in module docstring*, not new config: splash 7.5s budget fits inside sequencer's 7s smoothing + ~3-5s pipeline = ~10-12s total time-to-poweroff at default `smoothingSec=7`. If `smoothingSec < 4`, splash animation may be killed mid-frame (acceptable failure mode: degraded UX, no data loss). Ownership of timing-coupling lives at sequencer docstring. |
+| A-7 | `.path` activation | `PathExists=` | PASS. |
+| A-8 | Splash service Type= | "simple or oneshot?" | **`Type=simple`** for both splash units. `oneshot` was D-2's contributor (old `splash-shutdown.service`). |
+| A-9 | Deploy block-vs-warn | "WARN proposed, Atlas to confirm" | **WARN-not-BLOCK** confirmed. Deploy log MUST print `WARN: splash deploy failed, system functional` (no silent failure). |
+| A-10 | SSOT alignment | requires audit | PASS. The two NEW SSOTs (boot-state, shutdown-state) are non-duplicative of existing emitters (verified by `grep` across `src/` + `deploy/`). Splash-as-consumer is clean SSOT pattern (see `specs/ssot-design-pattern.md`). |
+
+**Defects D-1 (wrong SVG ref), D-2 (Conflicts= self-cancel), D-3 (X11/Wayland confusion):** All three verified against real code (`shutdown.html:27`; `splash-shutdown.service:5+25`; `splash-boot.service`'s Before=/DISPLAY=). v1 fix descriptions are correct + concrete enough for Ralph. PASS as written.
+
+**§10 open design questions also pinned in v1.1:** (a) Wayland fallback if SSH-install: check `/run/user/<UID>/wayland-0` socket exists; if neither active session NOR socket, fail loudly. (b) boot-degraded + shutdown-state simultaneous: shutdown wins (priority over boot-state). (c) `version.txt` malformed: chip reads `V?.?.?`, no kiosk crash.
+
+**Rule-10 same-sprint requirement:** the story implementing A-2 (shutdown-state emitter) MUST also update `specs/architecture.md` §10.6 (ShutdownSequencer section) in the same sprint — part of Definition of Done, not a follow-up. Marcus administers as sprint-contract DoD.
 
 ## 1. Executive Summary
 
-A status-aware boot/shutdown splash for the OSOYOO 3.5" Pi display, replacing the existing static kit at `specs/UI/dist/splash-pi/`. The brand spine — a Mitsubishi-inspired 3-rhombus animation — is preserved. An honest-instrument layer consumes two SSOTs (`/run/eclipse/boot-state` from boot-progress-finalize, `/run/eclipse/shutdown-state` from ShutdownSequencer) to escalate to a 2-state degraded surface when critical services fail. Boot timing is dynamic: minimum 2.5s, yield on healthy, hard cap 12s. Shutdown fires when ShutdownSequencer enters grace period: 1s pre-roll + 6.5s reverse animation + BLACK_TAIL until poweroff or 60s safety cap. The splash carries a top wordmark `ECLIPSE OBD-II` and a bottom version chip `V<x> · <sha>` read from `.deploy-version`. Three correctness defects in the existing kit are fixed in scope. Deploy folds into `deploy/deploy-pi.sh` so the version chip is perpetually accurate.
+A status-aware boot/shutdown splash for the OSOYOO 3.5" Pi display, replacing the existing static kit at `specs/UI/dist/splash-pi/`. The brand spine — a Mitsubishi-inspired 3-rhombus animation — is preserved. An honest-instrument layer consumes two SSOTs (`/var/run/eclipse-obd/states/boot-state` from a new `eclipse-boot-state.service` emitter, `/var/run/eclipse-obd/states/shutdown-state` from a new ShutdownSequencer emit hook) to escalate to a 2-state degraded surface when critical services fail. Boot timing is dynamic: minimum 2.5s, yield on healthy, hard cap 12s. Shutdown fires when ShutdownSequencer enters smoothing-begun phase (`phase=grace`): 1s pre-roll + 6.5s reverse animation + BLACK_TAIL until poweroff or 60s safety cap. The splash carries a top wordmark `ECLIPSE OBD-II` and a bottom version chip `V<x> · <sha>` read from `.deploy-version`. Three correctness defects in the existing kit are fixed in scope. Deploy folds into `deploy/deploy-pi.sh` so the version chip is perpetually accurate. **[ATLAS v1.1: path + emitter names pinned; see §0.]**
 
 ## 2. Context & Motivation
 
@@ -64,12 +87,14 @@ The splash is a **consumer** of two existing SSOTs. It never owns state and neve
 systemd boot
     │
     ▼
-┌────────────────────────┐         ┌──────────────────────────┐
-│ boot-progress instrument│ writes │ /run/eclipse/boot-state  │
-│  (existing, F-8 fixed)  ├────────►   {progress, services,   │
-│                         │        │    healthy, degraded}    │
-└────────────────────────┘         └────────────┬─────────────┘
-                                                │ poll @ 250ms
+┌──────────────────────────┐       ┌──────────────────────────┐
+│ eclipse-boot-state.service│ writes │ /var/run/eclipse-obd/    │
+│  [NEW emitter, Type=simple│──────►│  states/boot-state       │
+│   polls `systemctl is-    │       │   {progress, services,   │
+│   active` for crit set]   │       │    healthy, degraded}    │
+└──────────────────────────┘       └────────────┬─────────────┘
+                                                │ poll @ 250ms via
+                                                │ localhost HTTP (A-4)
                                                 ▼
                                     ┌──────────────────────────┐
                                     │  splash-boot.service     │
@@ -78,6 +103,8 @@ systemd boot
                                     └──────────────────────────┘
 ```
 
+**[ATLAS v1.1 / A-1]** Emitter ownership pinned: a NEW dedicated unit `eclipse-boot-state.service` (Type=simple) owns this SSOT. The existing `boot-progress-finalize.service` is a SHUTDOWN finalizer (ExecStart=/bin/true, ExecStop=python -m boot_progress --finalize) — its lifecycle is "run once at shutdown to write CLEAN_COMPLETE rung," not "continuously emit live boot status." Extending it would mash two unrelated honest-instrument capabilities into one unit. Clean separation: each unit owns one job.
+
 ### Shutdown splash data flow
 
 ```
@@ -85,16 +112,19 @@ key-off detected
     │
     ▼
 ┌────────────────────────┐         ┌──────────────────────────┐
-│ ShutdownSequencer       │ writes │ /run/eclipse/shutdown-   │
-│  (existing, F-7 fixed)  ├────────►   state {phase, t_grace, │
-│                         │        │    t_remaining}          │
+│ ShutdownSequencer       │ writes │ /var/run/eclipse-obd/    │
+│  (existing, F-7 fixed)  ├────────►│  states/shutdown-state   │
+│  + NEW phase-emit hook  │         │   {phase, t_grace,       │
+│                         │         │    t_remaining}          │
 └────────────────────────┘         └────────────┬─────────────┘
-           │                                    │ trigger on grace-entry
-           │ writes inotify trigger             ▼
-           └──────────────────────► splash-grace.service
+           │                                    │ .path inotify trigger
+           │                                    ▼
+           └──────────────────────►   splash-grace.service
                                     (chromium kiosk +
                                      splash-shutdown.svg)
 ```
+
+**[ATLAS v1.1 / A-2]** Phase emit hook is a NEW capability on ShutdownSequencer. Rule-10 trigger: same-sprint update to `specs/architecture.md` §10.6 is part of the story's DoD. Constraints on the emit hook: (a) non-blocking write (best-effort, never blocks the state machine); (b) emission happens AFTER state transitions are decided, not before; (c) write failures logged but never block shutdown progress. The sequencer is the SSOT; splash is consumer.
 
 ### Key contracts
 
@@ -340,7 +370,7 @@ Final endpoint depends on Atlas's choice for chromium → state-file access (ite
 ```ini
 # splash-grace.path
 [Path]
-PathExists=/run/eclipse/shutdown-state
+PathExists=/var/run/eclipse-obd/states/shutdown-state
 Unit=splash-grace.service
 
 [Install]
@@ -349,23 +379,56 @@ WantedBy=multi-user.target
 
 The `.path` unit is always armed; the moment the file appears, the service activates. ShutdownSequencer never directly references the splash unit name — clean decoupling.
 
-### Proposed `shutdown-state` schema (Atlas + Sequencer to ratify)
+### `shutdown-state` schema [ATLAS v1.1 / A-2: pinned]
 
 ```json
 {
   "phase": "grace",
   "tGraceStartedAt": "2026-05-26T19:50:00Z",
-  "tGraceTotalS": 30,
-  "tRemainingS": 24,
+  "tGraceTotalS": 7,
+  "tRemainingS": 5,
   "reason": "ignition_off",
-  "ts": "2026-05-26T19:50:06Z"
+  "ts": "2026-05-26T19:50:02Z"
 }
 ```
 
-`phase` values: `grace`, `cancelled`, `flushing`, `powering_off`.
-`reason` values: `ignition_off`, `battery_critical`, `scheduled`.
+**Phase enum (pinned to sequencer code-path transitions):**
 
-Splash reads `phase`. Only `"grace"` means render; anything else means abort. `tRemainingS` could feed a countdown UI in v2 but **v1 does not surface it** (animation IS the countdown).
+| `phase` | Sequencer state | When written | Splash response |
+|---|---|---|---|
+| `grace` | smoothing-begun (T=0 of smoothing window; sustained-loss not yet confirmed) | First `isOnBattery()=True` after boot-grace clears, *before* `smoothingSec` window elapses | TRIGGER splash; play PRE_ROLL+ANIMATING |
+| `cancelled` | smoothing window failed (GPIO6 returned HIGH before `smoothingSec` elapsed) | On sustained-loss check failure | ABORT splash (kill chromium, no fadeout) |
+| `flushing` | smoothing-confirmed; pipeline tasks executing (drain forensics, sync, etc.) | After `_isSustainedLost()` returns True, before pipeline invocation | CONTINUE splash (no state change) |
+| `powering_off` | immediately before invoking `systemctl poweroff` | After pipeline tasks return | CONTINUE splash (enters BLACK_TAIL naturally) |
+
+`reason` values: `ignition_off`, `battery_critical`, `scheduled`. v1 treats all reasons identically; splash never branches on `reason`.
+
+Splash reads `phase`. Only `"grace"` triggers initial render; `"cancelled"` means abort. `tRemainingS` could feed a countdown UI in v2 but **v1 does not surface it** (animation IS the countdown).
+
+### Phase-timing contract [ATLAS v1.1 / A-6: pinned]
+
+The splash's 7.5s animation budget (1s PRE_ROLL + 6.5s ANIMATING) fits inside the sequencer's actual time-from-grace-entry-to-poweroff. With default `config.json` `pi.powerWatch.smoothingSec=7`, the timeline is:
+
+- T=0.0: `phase=grace` written (smoothing begins, splash triggers)
+- T=0.0 to T=7.0: smoothing window (7s default)
+- T=7.0: `phase=flushing` written; pipeline tasks execute (drain forensics, sync — empirically ~3-5s in Sprint 39 Cycle-2/3 IRL drills)
+- T=~10-12: `phase=powering_off` written; `systemctl poweroff` invoked
+
+Splash's 7.5s ≤ ~10-12s sequencer total = comfortable fit at default config.
+
+**Invariant for ShutdownSequencer module docstring (Ralph adds this in same sprint as A-2 emit hook):**
+
+> ```
+> Phase-emit timing contract with splash subsystem (B-103):
+>   Splash plays a 7.5s animation budget triggered on phase=grace.
+>   If config `smoothingSec` < 4, splash animation may be killed
+>   mid-frame when poweroff fires before animation completes.
+>   Acceptable failure mode: degraded UX, no data loss.
+>   Default smoothingSec=7 provides ~10-12s total time-to-poweroff,
+>   comfortably exceeding splash's 7.5s budget.
+> ```
+
+Ownership of the time-coupling lives at the sequencer's docstring; splash holds the invariant by trusting it. No new config key, no runtime coordination — clean unidirectional dependency (splash depends on sequencer's timing contract; sequencer does not know splash exists).
 
 ### Cancellation behavior
 
@@ -462,18 +525,20 @@ This means the deliverable ships **two unit templates** (`splash-boot.service.wa
 
 ## 8. Integration Details
 
-### Unit inventory
+### Unit inventory [ATLAS v1.1 / A-8: Type= pinned]
 
-| Unit | Status | Trigger | Purpose |
-|---|---|---|---|
-| `splash-boot.service.wayland` | NEW | `WantedBy=graphical.target` | Boot splash, Bookworm/Wayland |
-| `splash-boot.service.x11` | NEW | `WantedBy=graphical.target` | Boot splash, X11 fallback |
-| `splash-grace.service` | NEW | activated by `.path` unit | Grace-period shutdown splash |
-| `splash-grace.path` | NEW | `PathExists=/run/eclipse/shutdown-state` | Inotify watcher → fires grace service |
-| `splash-boot.service` (original) | **RETIRED** | — | Replaced by Wayland/X11 variants |
-| `splash-shutdown.service` (original) | **RETIRED** | — | Replaced by `splash-grace` pair |
+| Unit | Status | Type= | Trigger | Purpose |
+|---|---|---|---|---|
+| `eclipse-boot-state.service` | NEW | `simple` | `WantedBy=multi-user.target` | Emits boot-state JSON @ 500ms by polling `systemctl is-active` for critical-services set [A-1] |
+| `eclipse-states-http.service` | NEW | `simple` | `WantedBy=multi-user.target` | Localhost HTTP @ 127.0.0.1:9899 serving `/var/run/eclipse-obd/states/*` read-only [A-4] |
+| `splash-boot.service.wayland` | NEW | `simple` | `WantedBy=graphical.target` | Boot splash, Bookworm/Wayland |
+| `splash-boot.service.x11` | NEW | `simple` | `WantedBy=graphical.target` | Boot splash, X11 fallback |
+| `splash-grace.service` | NEW | `simple` | activated by `.path` unit | Grace-period shutdown splash |
+| `splash-grace.path` | NEW | n/a (`.path` unit) | `PathExists=/var/run/eclipse-obd/states/shutdown-state` | Inotify watcher → fires grace service |
+| `splash-boot.service` (original) | **RETIRED** | — | — | Replaced by Wayland/X11 variants |
+| `splash-shutdown.service` (original) | **RETIRED** | — | — | Replaced by `splash-grace` pair |
 
-Installer picks **one** of the boot variants based on detected session type.
+Installer picks **one** of the boot variants based on detected session type. **All splash + state-emit units are `Type=simple`** — `oneshot` was D-2's root contributor and is rejected for this subsystem.
 
 ### File layout on Pi
 
@@ -493,18 +558,28 @@ Installer picks **one** of the boot variants based on detected session type.
 ├── splash-grace.service
 └── splash-grace.path
 
-/run/eclipse/               ← tmpfs, ephemeral, populated at runtime
+/var/run/eclipse-obd/states/               ← tmpfs, ephemeral, populated at runtime
 ├── boot-state              ← written by boot-progress-finalize.service (or extension)
 └── shutdown-state          ← written by ShutdownSequencer (NEW capability)
 ```
 
-### Chromium → state-file access mechanism
+### Chromium → state-file access mechanism [ATLAS v1.1 / A-4: pinned]
 
-Chromium kiosk cannot `fetch('file:///run/...')` cleanly (browser file-access policy). Three viable options; Atlas to pick (item A-4):
+Chromium kiosk cannot `fetch('file:///var/run/...')` cleanly (browser file-access policy). **Picked: tiny localhost HTTP server.**
 
-1. **Tiny localhost HTTP server** — ~50 lines (Python `http.server` or similar) on `127.0.0.1:<port>` serving `/run/eclipse/*`. Splash uses `fetch('http://127.0.0.1:<port>/boot-state')`. **Iris's preference**: cleanest, no chromium flag gymnastics, but adds a service.
-2. **Symlink mount** — bind-mount `/run/eclipse/` into `/opt/splash/state/` read-only; chromium loaded via `file:///opt/splash/index.html` fetches `./state/boot-state`. May require `--allow-file-access-from-files` (deprecated).
-3. **systemd-tmpfiles** writing to a path Chromium can reach via `--user-data-dir` whitelist. Brittle.
+New unit: `eclipse-states-http.service`, Type=simple, ExecStart runs a small Python script. Constraints (Ralph implements to these):
+
+- **Bind 127.0.0.1 only.** Never 0.0.0.0. Localhost-only attack surface.
+- **Python stdlib only** (`http.server.HTTPServer` + a small custom handler). No `flask`, no `aiohttp`, no new deps.
+- **Serves ONLY `/var/run/eclipse-obd/states/*` read-only.** Any path traversal (`..`) or non-states/* path returns 404. Hard-coded base directory; not configurable at runtime.
+- **Runs as the same user that owns `/var/run/eclipse-obd/`** (currently `mcornelison` per `deploy-pi.sh:775`). No privilege escalation.
+- **Cache-control: `no-store`** on every response so chromium's 250ms polls always see fresh data.
+- **Port: `127.0.0.1:9899`** (fixed; document in unit file + spec; not user-configurable to avoid drift).
+- **Listen-failure semantics:** if port bind fails (already in use), service exits non-zero — chromium's fetch() then returns network error, splash's polling loop falls through to DEGRADED ("boot-progress instrument not reporting"). No silent green-when-broken.
+
+Splash uses `fetch('http://127.0.0.1:9899/boot-state', {cache: 'no-store'})` and same pattern for `/shutdown-state`.
+
+Alternatives considered + rejected: bind-mount with `--allow-file-access-from-files` (deprecated chromium flag; security smell), `--user-data-dir` whitelist (brittle, breaks across Chromium versions).
 
 ### Install flow (new `install.sh` responsibilities)
 
@@ -532,7 +607,7 @@ rm -rf /opt/splash
 systemctl daemon-reload
 ```
 
-### Deploy-pi.sh integration (per CIO decision: fold-in)
+### Deploy-pi.sh integration (per CIO decision: fold-in) [ATLAS v1.1 / A-9: pinned]
 
 `deploy/deploy-pi.sh` gains a new phase that reconciles `/opt/splash/` on every deploy:
 
@@ -540,10 +615,10 @@ systemctl daemon-reload
 - Re-substitute user + session type (in case Pi changed)
 - Write current `.deploy-version` value to `/opt/splash/version.txt`
 - `systemctl daemon-reload` if unit files changed
-- `systemctl restart splash-boot.service || true` (no-op while running; ensures next boot uses new unit — V0.27.16 lesson per Argus)
-- Failures here WARN but do not BLOCK deploy
+- `systemctl restart splash-boot.service eclipse-boot-state.service eclipse-states-http.service || true` (no-op while running; ensures next boot uses new unit — V0.27.16 lesson per Argus)
+- **Failures WARN but do not BLOCK deploy.** Required log line on splash-phase failure: `WARN: splash deploy failed, system functional — see journalctl -u <failing-unit> for details`. Silent failure is rejected; the deploy log must be honest about partial success.
 
-Rationale: version chip becomes a deploy-health indicator. A stale chip on next boot → broken deploy script.
+Rationale: version chip becomes a deploy-health indicator. A stale chip on next boot → broken deploy script. Splash is cosmetic, never safety-critical — so WARN is correct, but observability discipline (explicit log line) keeps the regression net intact (V0.27.16 lesson: stale `.deploy-version` semantics are how silent-deploy bugs hide).
 
 ## 9. Acceptance Criteria
 
@@ -574,7 +649,7 @@ Argus pattern: single-boolean pass/fail, evidence-survival, failure-mode enumera
 | # | Criterion | Evidence |
 |---|---|---|
 | I-6 | `sudo systemctl mask eclipse-obd.service` → reboot → splash escalates to DEGRADED within 12s | screenshot of amber ring + frozen mark |
-| I-7 | Degraded message text matches `boot-state.degradedReason` field exactly | screenshot + `cat /run/eclipse/boot-state` artifact |
+| I-7 | Degraded message text matches `boot-state.degradedReason` field exactly | screenshot + `cat /var/run/eclipse-obd/states/boot-state` artifact |
 | I-8 | Center mark FREEZES on degraded (no spin, no throb) | screen recording or 2-frame comparison |
 | I-9 | Amber outer ring rendered with correct color (`#FFC400`) on production panel | screenshot |
 | I-10 | Unmask + reboot → next boot returns to healthy path, no leftover amber | screenshot |
@@ -610,20 +685,20 @@ Argus pattern: single-boolean pass/fail, evidence-survival, failure-mode enumera
 
 ## 10. Routing Surface
 
-### Atlas (design-gate, Rule 10) — pre-sprint blocker
+### Atlas (design-gate, Rule 10) — **CLEARED 2026-05-26 [v1.1 amendments applied; see §0]**
 
-| # | Item | Spec ref |
-|---|---|---|
-| A-1 | `/run/eclipse/boot-state` schema — does boot-progress-finalize emit it, or does a new emitter wrap it? | §3, §5 |
-| A-2 | `/run/eclipse/shutdown-state` schema — ShutdownSequencer extension to emit this (NEW capability) | §3, §6 |
-| A-3 | `/run/eclipse/` path convention — tmpfs OK? naming conflict with existing project paths? | §3 |
-| A-4 | Chromium → state-file access mechanism — localhost HTTP server vs file-access flag vs symlink mount | §5, §8 |
-| A-5 | Polling rate 250ms — acceptable Pi 5 CPU cost during boot vs eclipse-powerwatch + eclipse-obd contention? | §5 |
-| A-6 | Sequencer grace period contract — implicit 7.5s minimum floor introduced by splash; configurable per reason? | §6 |
-| A-7 | `splash-grace.path` activation pattern — `PathExists=` vs `PathExistsGlob=` vs `PathModified=`; failure semantics if file appears+disappears rapidly | §6, §8 |
-| A-8 | systemd `Type=` for `splash-grace.service` — `simple` (kit's boot choice) or `oneshot` (kit's shutdown choice) | §8 |
-| A-9 | Deploy-pi.sh integration point — which phase of deploy reconciles `/opt/splash/`? Failure semantics (block vs warn)? | §8 |
-| A-10 | SSOT-pattern alignment check — splash as consumer of two existing SSOTs; verify no second-source-of-truth introduced | §3 |
+| # | Item | Spec ref | Verdict |
+|---|---|---|---|
+| A-1 | Boot-state emitter ownership | §3, §5 | CHANGED → NEW `eclipse-boot-state.service` (Type=simple) |
+| A-2 | Shutdown-state phase semantics | §3, §6 | PINNED → enum table; same-sprint `specs/architecture.md` §10.6 update required (Rule 10 DoD) |
+| A-3 | tmpfs path convention | §3 | CHANGED → `/var/run/eclipse-obd/states/` (existing project convention) |
+| A-4 | Chromium IPC | §5, §8 | PICKED → localhost HTTP @ 127.0.0.1:9899 via `eclipse-states-http.service` |
+| A-5 | 250ms poll rate | §5 | PASS |
+| A-6 | Sequencer timing contract | §6 | PINNED → docstring invariant on sequencer (default smoothingSec=7 → 7.5s fits); no new config key |
+| A-7 | `.path` activation | §6, §8 | PASS — `PathExists=` |
+| A-8 | Splash `Type=` | §8 | PICKED → `simple` for all NEW units |
+| A-9 | Deploy block-vs-warn | §8 | PICKED → WARN-not-BLOCK + explicit log line |
+| A-10 | SSOT alignment | §3 | PASS — splash is pure consumer; both NEW SSOTs verified non-duplicative |
 
 ### Spool (advisory)
 
@@ -640,19 +715,20 @@ Argus pattern: single-boolean pass/fail, evidence-survival, failure-mode enumera
 | Q-2 | IRL drill methodology for degraded path — how to safely induce "OBD failed" in-vehicle |
 | Q-3 | Evidence-capture for visual criteria — screen recording rig, photo timestamp protocol |
 
-### Marcus / PM (post-Atlas-signoff)
+### Marcus / PM (Atlas-gated 2026-05-26 — READY FOR SPRINT SCOPING)
 
 | # | Item |
 |---|---|
-| M-1 | Sprint scoping — proposed split: US-A boot splash · US-B shutdown splash · US-C deploy integration · US-D defects (US-D may fold into A+B) |
+| M-1 | Sprint scoping — proposed split (Iris's original, ratified by Atlas with one addition): **US-A** boot splash (incl. NEW `eclipse-boot-state.service` emitter [A-1] + NEW `eclipse-states-http.service` IPC [A-4]) · **US-B** shutdown splash (incl. NEW ShutdownSequencer phase-emit hook [A-2] + **Rule-10 same-sprint update to `specs/architecture.md` §10.6** as part of US-B DoD + sequencer module-docstring timing-contract invariant [A-6]) · **US-C** deploy integration (deploy-pi.sh fold-in + version.txt + WARN-not-BLOCK semantics [A-9]) · **US-D** defects (D-1, D-2, D-3, V-1, V-2) — may fold into US-A+US-B at PM discretion |
+| M-1a | **Rule-10 DoD on US-B:** the story implementing the ShutdownSequencer phase-emit hook MUST also land the matching `specs/architecture.md` §10.6 update in the same sprint (not a follow-up). Atlas BLOCK if the sprint ships the hook without the spec update. Standard same-sprint DoD pattern per CIO 2026-05-18 + the Sprint 39 T9 precedent. |
 | M-2 | Dependency check — B-076 server schema may overlap on tooling but no hard deps |
-| M-3 | Atlas-bound items above are PRE-sprint blockers — PM tracks until cleared |
+| M-3 | Atlas-bound items CLEARED — see §0 amendment summary; spec is at v1.1 |
 
-### Open design questions still flagged
+### Open design questions [ATLAS v1.1: all pinned]
 
-- **Wayland session detection in install.sh** — `loginctl show-session $XDG_SESSION_ID` requires an active session at install time. If install is run via SSH (non-interactive), session lookup may fail. Fallback heuristic: check for `wayland-0` socket in `/run/user/<UID>/`.
-- **Edge case: both boot-state shows healthy AND shutdown-state appears simultaneously** — degraded boot followed by immediate shutdown. Splash should prioritize shutdown; v1 path is one-at-a-time. Confirm with Atlas.
-- **`version.txt` malformed handling** — splash should fail gracefully (chip reads "V?.?.?" or empty), not crash the kiosk JS.
+- **Wayland session detection in install.sh** — `loginctl show-session $XDG_SESSION_ID` requires an active session at install time. If install is run via SSH (non-interactive), session lookup may fail. **Pinned fallback:** check for `wayland-0` socket in `/run/user/<UID>/`; if neither an active session NOR the socket exists, `install.sh` exits non-zero with message `ERROR: cannot determine session type (no active loginctl session, no wayland-0 socket); aborting splash install`. Fail loudly, don't pick X11 by default — guessing wrong gives the D-3 class of bug.
+- **boot-state healthy AND shutdown-state appearing simultaneously** — **Pinned:** shutdown wins. If `shutdown-state` file appears at any time, splash transitions to shutdown rendering (kill any in-flight boot splash chromium PID, start splash-grace render). Boot splash never resumes once shutdown has begun. Rationale: shutdown is the more recent + more user-relevant event; boot state is stale once shutdown begins.
+- **`version.txt` malformed handling** — **Pinned:** chip renders the literal string `V?.?.?` (no SHA, no extras) and continues to render the rest of the splash normally. JS does not throw; no kiosk crash. Logged once to journal as `WARN: version.txt malformed or unreadable: <reason>` so a stale/broken deploy is visible without blocking boot.
 
 ## 11. Routing Plan (post-spec-commit)
 
