@@ -82,22 +82,28 @@ def computeRollups(data: dict) -> dict:
     featuresByEpic: dict[str, list[dict]] = {}
     for f in data.get("features", []):
         children = storiesByFeature.get(f["id"], [])
-        f["status"] = _rollupFeatureStatus(children)
+        newStatus = _rollupFeatureStatus(children)
+        # Preserve manually-set status when Feature has no Stories (migration
+        # case + brand-new Feature case). Only overwrite when children dictate.
+        if newStatus is not None:
+            f["status"] = newStatus
         featuresByEpic.setdefault(f["parent"], []).append(f)
 
     for e in data.get("epics", []):
         children = featuresByEpic.get(e["id"], [])
-        e["status"] = _rollupEpicStatus(children)
+        newStatus = _rollupEpicStatus(children)
+        if newStatus is not None:
+            e["status"] = newStatus
 
     return data
 
 
-def _rollupFeatureStatus(stories: list[dict]) -> str:
+def _rollupFeatureStatus(stories: list[dict]) -> str | None:
     """
     Roll up Feature status from its stories per spec §5.
 
     Rules (in priority order):
-    - no stories               -> pending
+    - no stories               -> None (preserve manually-set status)
     - all stories complete     -> complete
     - any in-flight story
       (in-progress, sprint-ready, in-prd, blocked) -> active
@@ -106,7 +112,7 @@ def _rollupFeatureStatus(stories: list[dict]) -> str:
     - else                     -> pending
     """
     if not stories:
-        return "pending"
+        return None
     statuses = {s["status"] for s in stories}
     if statuses == {"complete"}:
         return "complete"
@@ -120,17 +126,17 @@ def _rollupFeatureStatus(stories: list[dict]) -> str:
     return "pending"
 
 
-def _rollupEpicStatus(features: list[dict]) -> str:
+def _rollupEpicStatus(features: list[dict]) -> str | None:
     """Compute Epic status from its child features (spec §5).
 
     Args:
         features: List of feature dicts (after their statuses have been rolled up).
 
     Returns:
-        Rolled-up status string.
+        Rolled-up status string, or None to preserve manually-set status when no features.
     """
     if not features:
-        return "pending"
+        return None
     statuses = {f["status"] for f in features}
     if statuses == {"complete"}:
         return "complete"

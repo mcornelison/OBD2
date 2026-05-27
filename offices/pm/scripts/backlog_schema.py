@@ -28,7 +28,7 @@ VALID_STORY_TYPES = frozenset({"normal", "issue", "blocker", "tech-debt",
                               "research", "housekeeping", "security"})
 VALID_STORY_SIZES = frozenset({"XS", "S", "M", "L"})
 VALID_EPIC_STATUSES = frozenset({"pending", "active", "complete"})
-VALID_FEATURE_STATUSES = frozenset({"pending", "groomed", "in-sprint", "active", "complete", "declined"})
+VALID_FEATURE_STATUSES = frozenset({"pending", "groomed", "in-sprint", "active", "blocked", "complete", "declined"})
 VALID_STORY_STATUSES = frozenset({"pending", "groomed", "in-prd", "sprint-ready",
                                   "in-progress", "blocked", "passed", "complete"})
 VALID_TASK_STATUSES = frozenset({"open", "done"})
