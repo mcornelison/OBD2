@@ -166,10 +166,12 @@ Open UI/UX/enclosure items I am tracking. Seeded at onboarding 2026-05-22.
 
 | # | Item | Status | Note |
 |---|------|--------|------|
-| W-1 | OSOYOO 3.5″ 480×320 display — no current UI / splash beyond `specs/UI/dist/splash-pi/` assets | Open | B-103 splash kit is V0.28+ polish; full UI design has not started. |
+| W-1 | OSOYOO 3.5″ 480×320 display — B-103 boot/shutdown splash design | **Spec drafted 2026-05-26** | Full spec at `docs/superpowers/specs/2026-05-26-b103-splash-animation-design.md` (commit 37a71f5). Replaces existing kit at `specs/UI/dist/splash-pi/`. Status-aware hybrid: 2-state UX (healthy/degraded), boot dynamic-timing, shutdown sequencer-grace-trigger, top wordmark + bottom version chip, deploy fold-in. 3 defects in original kit folded into scope. Atlas A2AL filed (commit 6e37992) for Rule-10 design-gate review on A-1..A-10. Spool + Argus advisory + Marcus pre-notice filed (commit 44c6b3b). Pending peer responses. Full post-boot dashboard UI is separate — see W-5. |
 | W-2 | 3D-printed enclosure for OSOYOO 3.5″ display (DISPLAY ONLY — Pi removed from scope per CIO 2026-05-22) | **v1 STL shipped 2026-05-22** | Full spec at `enclosures/display-case-spec.md`; source at `enclosures/display-case.scad`; STLs at `enclosures/stl/*.stl`; preview at `enclosures/renders/assembly.png`. PETG, 3 perimeters, cantilever snaps, magnet-disc mount, micro-HDMI + USB-C 90° cables. Awaiting CIO print + fit-check; v1 caveats noted in spec §11A. |
-| W-3 | Visual + interaction language SSOT | Open | No `specs/UI/` token system exists yet. To be authored before producing screen designs. |
-| W-4 | README still describes the wrong display (Adafruit 1.3 240×240) per Atlas A-5 | Tracked by Atlas | Iris will offer a correction when authoring the UI spec. |
+| W-3 | Visual + interaction language SSOT (`specs/UI/` tokens) | **In-progress 2026-05-26** | First color + type tokens proposed inline in B-103 spec §4 (`--text-secondary` `#888`, `--text-tertiary` `#666`, `--amber-warn` `#FFC400`, `--amber-soft` `#FFC40033`, plus existing reds `--red` `#E60012` / `--red-light` `#F61D2D` / `--red-dark` `#BF000F`). Font family: `ui-monospace, Menlo, Consolas, monospace`. NOT yet extracted into freestanding `specs/UI/tokens.css` or equivalent. Atlas confirmed 2026-05-22 that `specs/UI/` tokens are the correct SSOT-pattern precedent. Token-extraction work to follow when B-103 lands or in parallel. |
+| W-4 | README still describes the wrong display (Adafruit 1.3 240×240) per Atlas A-5 | **Open — not closed in B-103 spec authoring as Atlas suggested** | Atlas's 2026-05-22 FYI flagged this closeable in the UI spec authoring pass. B-103 spec (2026-05-26) focused on splash; did NOT include README correction (out of scope — splash design ≠ documentation cleanup). Follow-up: file separate small commit fixing README's display-spec section per Rule-10 routing through Atlas. ~30 min of work; opportunistic next session. |
+| W-5 | V0.28+ on-Pi post-boot dashboard layout — cover-most-of-screen + top-menu reserve + minimize capability | Open | CIO directed 2026-05-26 (during B-103 Q2 conversation) — for future display the dashboard canvas should be enlarged to cover the majority of screen, except for a top menu (reserved for system UI access) OR with the ability to minimize so system menu is accessible. Distinct surface from splash (splash is boot/shutdown-only; dashboard is runtime). To be designed when V0.28+ grooming opens dashboard work. |
+| W-6 | B-086 GEM-1 warnings-first quiet UI carousel (V0.28+ candidate) | Open — pending V0.28 grooming | Marcus flagged 2026-05-22 — relevant when grooming opens. Spool's Topic A/B specs (parked-mode anomaly + maintenance tiles) slot into the carousel. CIO + Spool brainstormed 2026-05-14. Lane split: Iris designs the visual carousel + interactions; Spool owns tile content semantics. Will surface during V0.28+ grooming. |
 
 ## 9. Session Log
 
@@ -386,6 +388,97 @@ Open UI/UX/enclosure items I am tracking. Seeded at onboarding 2026-05-22.
 - Identified the AskUserQuestion-minimization side of "minimize y/n":
   default to deciding + proceeding, not asking. Only ask on
   load-bearing irreversible choices.
+
+### 2026-05-26 — B-103 splash design v1 spec drafted + 4 peer A2ALs filed
+
+- CIO directed dive into B-103 (Pi boot/shutdown splash) while the 3D
+  enclosure prints. Goal: polish CIO's existing kit at
+  `specs/UI/dist/splash-pi/`, apply Iris UI/UX layer, route to Atlas for
+  Rule-10 design-gate BEFORE PM hand-off.
+- **Three defects found in existing kit** (surfaced FIRST per shared
+  grounding discipline — see `knowledge/pattern-defects-first-existing-artifact-review.md`):
+  D-1 `shutdown.html:27` loads wrong SVG (`splash.svg` not
+  `splash-shutdown.svg`); D-2 `splash-shutdown.service` self-cancels via
+  `Conflicts=` directive on shutdown.target; D-3 `splash-boot.service`
+  X11/Wayland contradiction (`Before=graphical.target` + `DISPLAY=:0`).
+  All folded into spec as P0 fixes; original `splash-shutdown.service`
+  RETIRED in favor of `splash-grace.{service,path}` pair triggered by
+  ShutdownSequencer.
+- **Brainstorming → spec** ran 6 AskUserQuestions with options +
+  recommendations + trade-offs. Key decisions:
+  - Q1 hybrid status-aware brand (NOT passive, NOT full status
+    instrument) — 2-state UX healthy/degraded
+  - Q2 OSOYOO 480×320 native (no canvas redesign — B-052 HDMI was
+    stale reference in B-103 backlog)
+  - Q3 shutdown timing = sequencer grace-period trigger (driver still
+    in seat) NOT systemd shutdown.target; CIO revised: 1s pre-roll +
+    6.5s reverse anim + black-tail; min 7.5s
+  - Q4 phase + degraded-flag escalation (amber outer ring + center
+    mark FREEZE + one-line failure message; three reinforcing channels)
+  - Q5 boot timing asymmetric — dynamic (min 2.5s; yield-on-healthy;
+    hard cap 12s) vs shutdown's symmetric 7.5s minimum
+  - Q6 chrome = top `ECLIPSE OBD-II` wordmark + bottom version chip
+    `V<x> · <sha>`
+  - Deploy fold-in to `deploy-pi.sh` (version chip perpetually
+    accurate; Argus V0.27.16 "deploy must reconcile, not just write"
+    lesson applied)
+- **Spec written**: `docs/superpowers/specs/2026-05-26-b103-splash-animation-design.md`
+  — 688 lines, 11 sections, commit `37a71f5`. Self-review pass fixed 4
+  issues: "dashboard" → "post-boot UI" rephrasing throughout (the Pi
+  doesn't have a dashboard yet — spec was violating its own
+  honest-instrument principle); `User=%i` (systemd template specifier,
+  wrong for non-template unit) → `__PI_USER__` placeholder with
+  install-time substitution; rendering mechanism HTML-overlay above
+  SVG (not `<text>` nodes inside SVG — data binding cleaner); "critical
+  services" definition made explicit (eclipse-powerwatch, eclipse-obd,
+  boot-progress-finalize).
+- **Lane discipline observation**: Mike said "looks right but keep the
+  arch and path specs to Atlas" during Section 1 review. I had drafted
+  full schemas + path conventions; pulled back to "proposed shape;
+  Atlas ratifies" pattern. Captured at
+  `knowledge/feedback-cio-architectural-paths-belong-to-atlas.md`.
+- **A2ALs filed (all A2AL/0.4.1 mandatory routing header)**:
+  - Atlas (`architect/inbox/2026-05-26-from-iris-b103-splash-design-gate-request.md`)
+    commit `6e37992` — Rule-10 design-gate review request; A-1..A-10
+    architectural items needing his call; asks `ack + signoff or block?`
+  - Spool (`tuner/inbox/...`) commit `44c6b3b` — advisory S-1
+    OBD-degraded semantics + S-2 amber `#FFC400` palette alignment
+  - Argus (`tester/inbox/...`) commit `44c6b3b` — advisory Q-1 §9
+    acceptance criteria signoff + Q-2 IRL drill methodology for
+    degraded path + Q-3 evidence-capture protocol
+  - Marcus (`pm/inbox/...`) commit `44c6b3b` — pre-notice roadmap
+    heads-up; no action required; will file formal sprint-routing A2AL
+    post-Atlas-signoff
+- **Inbox sweep**: 4 messages dated 2026-05-22. Marcus's A2AL-v0.4.1
+  ack + Atlas's hello-ack were already logged in 2026-05-22 closeout
+  ("Late-session updates"). Atlas's V0.27.18 chain-merge-clear FYI +
+  Argus's welcome-with-conditions were NOT explicitly logged in prior
+  closeouts; absorbed this session. Atlas's FYI flagged A-5 (README
+  display correction) as closeable in the UI spec authoring pass — I
+  did NOT close A-5 in B-103 (out of scope; splash design ≠
+  documentation cleanup). Watch list W-4 updated to track as
+  opportunistic follow-up.
+- **Knowledge captured (3 new files in `knowledge/`)**:
+  - `pattern-defects-first-existing-artifact-review.md` — when
+    polishing existing artifact, surface defects FIRST in shared
+    grounding before discussing redesign. CIO response "the picture is
+    clear now" confirmed pattern.
+  - `pattern-ui-as-ssot-consumer.md` — UI surfaces consume existing
+    SSOTs; never invent state. Atlas's SSOT-design-pattern extends to
+    pixels. Argus's data-layer false-pass-class lessons (V0.27.7/16/17)
+    apply at the pixel layer too.
+  - `feedback-cio-architectural-paths-belong-to-atlas.md` — propose
+    architectural shapes (schema, IPC) but DEFER concrete naming +
+    ownership to Atlas under Rule-10. Don't prescribe.
+- **Open for next session**:
+  - Atlas reply on A-1..A-10 (blocking next forward motion)
+  - Spool reply (advisory; rev spec to v1.1 if substantive)
+  - Argus reply (advisory; rev spec to v1.1 if substantive)
+  - W-4 A-5 README correction follow-up (Rule-10 routing through Atlas;
+    ~30 min of work, opportunistic)
+  - 9 uncommitted office files from prior sessions still pending CIO
+    direction (3D enclosure exports + 3 MK3S+ printing knowledge files
+    — see closeout commit message for inventory)
 
 ## 10. Folder Structure
 
