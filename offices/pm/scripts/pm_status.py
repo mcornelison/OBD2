@@ -63,6 +63,35 @@ def formatBranchTips(
     return "\n".join(lines)
 
 
+def getBranchTip(branchName: str) -> tuple[str | None, str | None]:
+    """Query git for a branch's short hash + its RELEASE_VERSION 'version' field.
+
+    Returns (hash, version) on success. Returns (None, None) if the branch
+    does not exist (e.g., dev pre-bootstrap). Returns (hash, "unknown") if
+    the branch exists but deploy/RELEASE_VERSION is unreadable/malformed.
+    """
+    revParse = subprocess.run(
+        ["git", "rev-parse", "--short", branchName],
+        capture_output=True, text=True,
+    )
+    if revParse.returncode != 0:
+        return (None, None)
+    hashStr = revParse.stdout.strip()
+
+    show = subprocess.run(
+        ["git", "show", f"{branchName}:deploy/RELEASE_VERSION"],
+        capture_output=True, text=True,
+    )
+    if show.returncode != 0:
+        return (hashStr, "unknown")
+    try:
+        data = json.loads(show.stdout)
+        version = data.get("version", "unknown")
+    except json.JSONDecodeError:
+        version = "unknown"
+    return (hashStr, version)
+
+
 def printSprintSummary() -> None:
     """Print sprint.json summary (v1 legacy entry point)."""
     if not SPRINT_PATH.exists():

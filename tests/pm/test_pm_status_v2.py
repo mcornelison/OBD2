@@ -173,6 +173,52 @@ def test_formatBranchTips_devAtMain_marksConverged():
 
 
 # ---------------------------------------------------------------------------
+# dev/main branching workflow -- getBranchTip git helper (spec 2026-05-28)
+# ---------------------------------------------------------------------------
+
+def test_getBranchTip_existingBranch_returnsHashAndVersion():
+    """
+    Given: branch exists and deploy/RELEASE_VERSION is readable
+    When: getBranchTip is called
+    Then: returns (short-hash, version) tuple
+    """
+    # Arrange
+    from offices.pm.scripts.pm_status import getBranchTip
+    with patch("offices.pm.scripts.pm_status.subprocess.run") as mockRun:
+        mockRun.side_effect = [
+            subprocess.CompletedProcess(args=[], returncode=0, stdout="abc1234\n"),
+            subprocess.CompletedProcess(
+                args=[], returncode=0,
+                stdout='{"version": "V0.27.19", "theme": "x"}\n',
+            ),
+        ]
+        # Act
+        hashStr, version = getBranchTip("main")
+    # Assert
+    assert hashStr == "abc1234"
+    assert version == "V0.27.19"
+
+
+def test_getBranchTip_missingBranch_returnsNoneTuple():
+    """
+    Given: branch does not exist (git rev-parse returns 128)
+    When: getBranchTip is called
+    Then: returns (None, None)
+    """
+    # Arrange
+    from offices.pm.scripts.pm_status import getBranchTip
+    with patch("offices.pm.scripts.pm_status.subprocess.run") as mockRun:
+        mockRun.return_value = subprocess.CompletedProcess(
+            args=[], returncode=128, stdout="", stderr="unknown revision\n",
+        )
+        # Act
+        hashStr, version = getBranchTip("dev")
+    # Assert
+    assert hashStr is None
+    assert version is None
+
+
+# ---------------------------------------------------------------------------
 # Existing v2 tests continue below
 # ---------------------------------------------------------------------------
 
