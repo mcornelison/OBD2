@@ -144,3 +144,15 @@ def test_validateBacklog_validationCriteriaEmptyStrings_raises():
     data["stories"][0]["validationCriteria"] = [{"action": "", "outcome": "x"}]
     with pytest.raises(BacklogValidationError, match="non-empty"):
         validateBacklog(data)
+
+
+def test_validateBacklog_validationCriteriaWhitespaceOnly_raises():
+    """
+    Given: a Story with validationCriteria action containing only whitespace
+    When: validateBacklog is called
+    Then: BacklogValidationError raised mentioning the Story id + 'non-empty'
+    """
+    data = _minimalValidBacklog()
+    data["stories"][0]["validationCriteria"] = [{"action": "   ", "outcome": "x"}]
+    with pytest.raises(BacklogValidationError, match="non-empty"):
+        validateBacklog(data)

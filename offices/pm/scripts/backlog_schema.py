@@ -143,11 +143,13 @@ def _validateValidationCriteria(story: dict[str, Any]) -> None:
                 f"Story {story['id']}: validationCriteria[{i}] must have keys {{action, outcome}}, "
                 f"got {item!r}"
             )
-        if not item["action"] or not item["outcome"]:
-            raise BacklogValidationError(
-                f"Story {story['id']}: validationCriteria[{i}] action and outcome "
-                f"must both be non-empty strings"
-            )
+        for key in ("action", "outcome"):
+            value = item[key]
+            if not isinstance(value, str) or not value.strip():
+                raise BacklogValidationError(
+                    f"Story {story['id']}: validationCriteria[{i}] {key} "
+                    f"must be a non-empty string, got {value!r}"
+                )
 
 
 def _validateDefinitionOfDone(story: dict[str, Any]) -> None:
