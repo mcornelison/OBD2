@@ -1,17 +1,17 @@
 ---
 name: sprint-validated
-description: "Sprint-validated ritual for Marcus (PM) -- runs AFTER real-hardware drill passes the sprint's bigDefinitionOfDone. Merges sprint branch to main + bumps regression_manifest.json features that were re-validated. Per Mike 2026-05-08 directive: main = fully validated stable. Run when CIO confirms drill green."
+description: "Sprint-validated ritual for Marcus (PM) -- stamps per-sprint validation on dev + bumps regression_manifest. Does NOT merge to main -- /chain-validated does that at chain end per spec 2026-05-28. Per CIO 2026-05-23 directive #1: main = fully validated stable; dev = integration branch. Run when CIO confirms the per-sprint drill is green."
 ---
 
-# Sprint Validated (PM-driven, post-Mike-2026-05-08-workflow)
+# Sprint Validated (PM-driven, dev/main workflow per spec 2026-05-28)
 
-End-of-validation ritual for Marcus (PM). Companion to `/sprint-deploy-pm`. Per Mike 2026-05-08 standing rule: sprint branches deployed-but-pre-merge until real-hardware drill passes; this command performs the merge.
+Per-sprint validation ritual for Marcus (PM). Companion to `/sprint-deploy-pm` (Phase 3.5 merged sprint → dev; deploy ran from dev). Per spec `docs/superpowers/specs/2026-05-28-dev-main-branching-workflow-design.md`: validation drills target `dev`; this command stamps the per-sprint validation block + bumps `regression_manifest` for the sprint's `validatesFeatures`. **It does NOT merge to main.** `/chain-validated` does that at chain end (after every sprint in the V0.X chain has its own `/sprint-validated` stamp AND CIO confirms whole-chain green).
 
-**WHEN to run**: after a real-hardware drill (Drive N, Drain Test N, etc.) successfully exercises the sprint's `validation.bigDefinitionOfDone` clauses AND CIO confirms green light.
+**WHEN to run**: after a real-hardware drill successfully exercises the sprint's `validation.bigDefinitionOfDone` clauses AND CIO confirms green light.
 
-**WHEN NOT to run**: drill failed (fix on sprint branch + bump V0.X.(Y+1) + re-deploy + re-attempt validation); drill not yet attempted; sprint not in DEPLOYED-AWAITING-VALIDATION state.
+**WHEN NOT to run**: drill failed (a new patch sprint forks from `dev` → fix → re-run `/sprint-deploy-pm` with V0.X.(Y+1) patch bump → retry validation); drill not yet attempted; sprint not in DEPLOYED-AWAITING-VALIDATION state.
 
-**Output of this command**: main branch carries sprint work + new `chore(release):` commit reflecting validated state. Regression manifest bumps `lastValidated` for features the sprint validated. Sprint N+1 grooming can begin.
+**Output of this command**: `dev`'s sprint.json carries `validation.validatedAt` stamp. `regression_manifest.json` bumps `lastValidated` for features the sprint validated. PM artifacts (backlog.json status, MEMORY.md, projectManager.md) reflect the per-sprint stamp. Sprint N+1 grooming can begin (PM judgement -- see spec §8.1).
 
 ---
 
@@ -19,8 +19,9 @@ End-of-validation ritual for Marcus (PM). Companion to `/sprint-deploy-pm`. Per 
 
 ```bash
 git status --short                           # working tree clean
-git branch --show-current                    # SHOULD be the sprint branch (currently deployed-awaiting-validation)
-                                             # If on main: abort -- sprint-validated runs FROM sprint branch
+git branch --show-current                    # MUST be `dev` (sprint already merged + closed by /sprint-deploy-pm Phase 3.5)
+                                             # If on sprint branch: `git checkout dev` first
+                                             # If on main: abort -- sprint-validated runs from dev
 python -c "
 import json
 d = json.load(open('offices/ralph/sprint.json', encoding='utf-8'))
@@ -36,7 +37,7 @@ print(f'validatesFeatures: {v.get(\"validatesFeatures\", [])}')
 ```
 
 **Stop conditions**:
-- On `main` branch (run from sprint branch)
+- On `main` branch or any `sprint/*` branch (run from `dev`)
 - sprint.json `validation` block missing (sprint pre-2026-05-08-workflow; needs migration)
 - sprint.json `validation.validatedAt` already set (double-run detection)
 - Working tree dirty (commit / stash drift first)
@@ -138,38 +139,25 @@ Last Updated header + Current Phase: "Sprint X validated by <drill>; merged to m
 
 ---
 
-## Phase 5 -- Commit validation marker on sprint branch
+## Phase 5 -- Commit validation marker on dev
 
 ```bash
 git add offices/ralph/sprint.json offices/pm/regression_manifest.json offices/pm/backlog.json offices/pm/projectManager.md
-git commit -m "chore(validate): Sprint N validated by <drill> -- ready to merge"
-git push origin sprint/sprintN-<phase-name>
+git commit -m "chore(validate): Sprint N validated by <drill> -- ready for chain merge"
+git push origin dev
 ```
 
 ---
 
-## Phase 6 -- Merge sprint branch to main
+## Phase 6 -- (RETIRED under dev/main workflow)
 
-```bash
-git checkout main
-git pull origin main          # confirm main at expected base
-git merge --no-ff sprint/sprintN-<phase-name> -m "Merge sprint/sprintN-<phase-name>: Sprint N VALIDATED V0.X.Y -- merged to main as fully validated stable"
-git push origin main
-git log --oneline -3 main     # confirm merge landed
-```
-
-**Stop condition**: if `git pull` fast-forwards beyond expected base, the world has moved (CIO landed a hotfix on main). Investigate before merge.
+Per spec 2026-05-28, the merge to `main` no longer happens at per-sprint validation. The chain merge runs once at chain end via `/chain-validated` after every sprint in the V0.X chain has its own `/sprint-validated` stamp AND CIO confirms whole-chain green. Sprint validation now only stamps the per-sprint records on `dev`.
 
 ---
 
-## Phase 7 -- Optional: tag git history
+## Phase 7 -- (RETIRED -- tagging moves to /chain-validated)
 
-```bash
-git tag -a v0.X.Y -m "Sprint N validated stable -- <drill summary>"
-git push origin v0.X.Y
-```
-
-Useful for rollback reference + release-notes generation.
+Tags are cut on `main` at chain merge (`/chain-validated` Phase 5), not per-sprint. The chain tag (V0.X.N) names the last validated patch version in the chain.
 
 ---
 
@@ -179,12 +167,11 @@ Print to CIO:
 
 | Step | Result |
 |---|---|
-| Sprint X SHIPPED + VALIDATED | N/N stories validated by <drill> |
-| validatesFeatures bumped in manifest | F-XXX, F-YYY, ... (N features re-validated) |
-| Merge to main | `<merge-hash>` |
-| RELEASE_VERSION on main | V0.X.Y |
-| Tag pushed | v0.X.Y (optional) |
-| **Status** | **VALIDATED + MERGED to main = stable** |
+| Sprint X SHIPPED + VALIDATED on dev | N/N stories validated by <drill> |
+| validatesFeatures bumped in manifest | F-XXX, F-YYY, ... (N features re-validated on dev) |
+| Commit on dev | `<chore-validate-hash>` |
+| dev tip | V0.X.Y |
+| **Status** | **VALIDATED on dev -- awaiting chain close** |
 
 Plus regression manifest status:
 
@@ -194,24 +181,25 @@ python offices/pm/scripts/pm_regression_status.py --stale
 
 Show what's still STALE / NEVER-validated -> next sprint candidates.
 
+**Next step**: when the full V0.X.Y chain is whole-green per CIO confirmation, run `/chain-validated` to merge `dev` → `main` + cut V0.X.N tag.
+
 ---
 
 ## Stop-condition flowchart
 
 | Phase | Stop condition | Action |
 |---|---|---|
-| 0 | On main branch | Abort; run from sprint branch |
+| 0 | On main or any `sprint/*` branch | Abort; run from `dev` |
 | 0 | sprint.json missing validation block | Migrate (Sprint 28+ requires it) |
 | 0 | validatedAt already set | Double-run detection; abort |
 | 0 | Working tree dirty | Commit/stash first |
-| 1 | CIO has not confirmed drill green | Don't run; wait for Mike's go |
-| 6 | git pull fast-forwards beyond base | CIO landed hotfix; investigate |
+| 1 | CIO has not confirmed drill green | Don't run; wait for CIO's go |
 
 ---
 
 ## Why this exists
 
-Per Mike 2026-05-08: main = "fully validated stable." Sprint deployment + sprint validation are now decoupled. `/sprint-deploy-pm` ships code to deploy targets; `/sprint-validated` certifies the code works in real life and merges. The two-step gate prevents the Sprint 22 hidden-bug-pattern, the Sprint 25 sibling-bug pattern, and the never-validated-in-real-life class of features (F-009 through F-014 currently).
+Per Mike 2026-05-08: main = "fully validated stable." Sprint deployment + sprint validation are decoupled. Per CIO 2026-05-23 directive #1 + spec 2026-05-28: under dev/main two-tier workflow, this command no longer performs the merge to main. Instead it stamps the per-sprint validation on `dev` (which carries the active V0.X chain). The chain merge to main happens via `/chain-validated` once every sprint in the chain has its own stamp AND CIO confirms whole-chain green. The three-step gate (deploy → per-sprint validate → chain merge) prevents the Sprint 22 hidden-bug-pattern, the Sprint 25 sibling-bug pattern, and the never-validated-in-real-life class of features.
 
 ## Related
 

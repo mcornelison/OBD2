@@ -1,9 +1,9 @@
 ---
 name: chain-validated
-description: "Chain-validated ritual for Marcus (PM) -- runs AFTER the full V0.X chain (stacked sprint branches) has been validated IRL. Aggregates every sprint's validation block, bumps regression manifest for the chain-wide validatesFeatures union, merges the chain-tip sprint branch to main as the new fully validated stable, and tags. Per CIO 2026-05-10 chain-end-merge rule: main = fully functional working system. Companion to /sprint-deploy-pm + /sprint-validated. Run when CIO confirms the WHOLE chain (V0.X.2 + V0.X.3 + ...) is validated green."
+description: "Chain-validated ritual for Marcus (PM) -- merges dev -> main once the V0.X chain is whole-green IRL. Aggregates per-sprint validation evidence, merges dev to main as new fully validated stable, tags V0.X.N, fast-forwards dev to match main for the next chain. Per spec 2026-05-28 (dev/main workflow): main = fully validated stable; dev = integration branch carrying the active V0.X.Y chain. Companion to /sprint-deploy-pm + /sprint-validated. Run when CIO confirms the WHOLE chain is validated green."
 ---
 
-# Chain Validated (PM-driven, post-CIO-2026-05-10-chain-end-merge-rule)
+# Chain Validated (PM-driven, dev/main workflow per spec 2026-05-28)
 
 End-of-chain ritual for Marcus (PM). The third workflow command in the
 deploy/validate/merge family:
@@ -15,18 +15,21 @@ deploy/validate/merge family:
 | `/chain-validated` | Merges the WHOLE chain (V0.X.2 + V0.X.3 + ... stacked sprint branches) to main + bumps manifest chain-wide + tags new stable | After every sprint in the chain has `/sprint-validated` run + CIO confirms whole chain green |
 
 **WHEN to run**: every sprint in a V0.X chain has `validation.validatedAt`
-populated (each had its own `/sprint-validated`) AND CIO explicitly confirms the
-chain is "fully functional working" + ready to merge to main as the new stable.
+populated on `dev` (each had its own `/sprint-validated`) AND CIO explicitly
+confirms the chain is "fully functional working" + ready to merge to main.
 
 **WHEN NOT to run**:
 - Any sprint in the chain still has `validatedAt: null` (chain INCOMPLETE)
-- Single-sprint epoch (use `/sprint-validated` instead; no chain to merge)
 - Hardware blocker pending (e.g. B-063 fuse-box gating Drive 11+)
-- Working tree dirty / branches not pushed to origin
+- Working tree dirty / `dev` not pushed to origin
+- Not on `dev` branch (this command runs from `dev`)
 
-**Output**: main carries the chain-tip work + new `chore(release):` commit
-reflecting validated state; new V0.X.Y tag pushed; regression manifest bumped
-chain-wide; intermediate sprint branches preserved (or archived per CIO call).
+**Output**: `main` receives the dev → main merge (`--no-ff`); new V0.X.N tag
+pushed; `dev` fast-forwards to match `main` so the next V0.(X+1).0 chain starts
+from a clean dev = main state. Regression manifest already carries per-sprint
+bumps (done by `/sprint-validated` runs on dev); chain-wide bump runs as a
+safety net for any HELD bumps released at chain time. Intermediate sprint
+branches preserved on origin (or archived per CIO call).
 
 ---
 
@@ -36,18 +39,17 @@ chain-wide; intermediate sprint branches preserved (or archived per CIO call).
 # Working tree clean (chain merge touches git history; no surprises)
 git status --short
 
-# Currently on the chain-tip branch (e.g. sprint/sprint31-...)
+# MUST be on dev
 git branch --show-current
 
-# All chain branches pushed to origin (no local-only commits)
+# dev pushed to origin (no local-only commits)
 git log --oneline @{u}..HEAD
 ```
 
 **Stop conditions**:
-- Not on the chain-tip sprint branch (e.g. on main)
+- Not on `dev`
 - Working tree dirty
-- Unpushed commits on chain branches (chain merge against origin only)
-- Any chain branch missing from origin (run `git push origin <branch>` first)
+- Unpushed commits on `dev` (chain merge against origin only -- `git push origin dev` first)
 
 ```bash
 # Confirm the chain-end-merge rule is the right ritual for this state
@@ -128,7 +130,7 @@ python offices/pm/scripts/pm_regression_status.py
 
 ---
 
-## Phase 4 -- Merge chain to main
+## Phase 4 -- Merge dev to main
 
 ```bash
 # Pull main; confirm base hasn't moved unexpectedly
@@ -136,26 +138,28 @@ git checkout main
 git pull origin main
 git log --oneline -5 main
 
-# Merge chain tip to main (--no-ff preserves the chain-merge commit shape)
-git merge --no-ff <chain-tip-branch> \
-    -m "Merge V0.27 chain to main: V0.27.X -- new fully validated stable"
+# Merge dev to main (--no-ff preserves the chain-merge commit shape)
+git merge --no-ff dev \
+    -m "Merge V0.X chain to main: V0.X.N -- new fully validated stable"
 git push origin main
 git log --oneline -3 main
 ```
 
-**Stop condition**: `git pull` brings unexpected commits onto main -> CIO landed
-a hotfix; investigate before completing the merge.
+**Stop condition**: `git pull` brings unexpected commits onto main -> CIO ran a
+SEV-1 hotfix on main (per spec §8.2); investigate before completing the merge
+(dev may also need to absorb the hotfix before this merge).
 
 ---
 
 ## Phase 5 -- Tag the new stable
 
 ```bash
-git tag -a V0.27.X -m "V0.27 chain validated stable -- bug fixes complete"
-git push origin V0.27.X
+git tag -a V0.X.N -m "V0.X chain validated stable -- whole chain green"
+git push origin V0.X.N
 ```
 
-The tag is a rollback anchor + release-notes reference.
+The tag is a rollback anchor + release-notes reference. V0.X.N = the chain-tip
+patch version (last patch sprint validated on dev).
 
 ---
 
@@ -172,8 +176,9 @@ Last Updated header + Current Phase + Session entry noting the chain merge.
 
 ### 6c -- (Optional) Archive intermediate sprint branches
 
-If CIO directs: delete origin sprint branches whose work landed on main via the
-merge.  Default: preserve them as rollback references.
+If CIO directs: delete origin sprint branches whose work landed on dev (and
+therefore via the chain merge, on main).  Default: preserve them as rollback
+references.
 
 ```bash
 # Only if CIO directs
@@ -186,8 +191,32 @@ Stage + commit + push the PM artifacts on main:
 
 ```bash
 git add MEMORY.md offices/pm/projectManager.md offices/pm/regression_manifest.json
-git commit -m "chore(chain-validated): V0.27 chain merged to main -- new stable V0.27.X"
+git commit -m "chore(chain-validated): V0.X chain merged to main -- new stable V0.X.N"
 git push origin main
+```
+
+---
+
+## Phase 6.5 -- Fast-forward dev to match main (NEW per spec 2026-05-28)
+
+After main carries the chain-merge + tag, sync `dev` to match `main` so the next
+V0.(X+1).0 sprint starts from a clean dev = main state.
+
+```bash
+git checkout dev
+git merge --ff-only main
+git push origin dev
+```
+
+**Stop condition**: `--ff-only` fails (dev has commits main doesn't have).
+Should NEVER happen at this phase -- if it does, a sprint branched and merged
+to dev *after* the chain merge started; investigate before continuing.
+
+Verify dev = main:
+
+```bash
+git rev-parse dev
+git rev-parse main      # MUST match
 ```
 
 ---
@@ -219,28 +248,31 @@ Show what's still STALE / NEVER-validated for the next chain.
 
 | Phase | Stop condition | Action |
 |---|---|---|
-| 0 | Not on chain-tip branch | Switch to chain-tip; re-run |
+| 0 | Not on `dev` | `git checkout dev`; re-run |
 | 0 | Working tree dirty | Commit/stash; re-run |
-| 0 | Unpushed commits on chain branches | `git push`; re-run |
+| 0 | Unpushed commits on `dev` | `git push origin dev`; re-run |
 | 1 | `chain_validate_aggregate.py` reports 0 sprints in chain | Wrong `--chain` prefix; abort |
 | 2 | `--strict` exits 1 (INCOMPLETE) | Run `/sprint-validated` on missing sprint(s); re-run |
-| 4 | `git pull` brings unexpected commits to main | Hotfix race; investigate |
+| 4 | `git pull` brings unexpected commits to main | SEV-1 hotfix on main; investigate (dev may need to absorb hotfix first) |
+| 6.5 | `git merge --ff-only main` fails | Sprint branched + merged to dev after chain merge started; investigate before continuing |
 
 ---
 
 ## Why this exists (workflow rationale)
 
-Per CIO 2026-05-10 chain-end-merge rule: main = "fully functional working
-system".  When a feature sprint plus its bug-fix follow-ups (V0.X.0, V0.X.1,
-V0.X.2, ...) stack on consecutive sprint branches, each branch tip is
-DEPLOYED-AWAITING-VALIDATION; merge-to-main is gated on the WHOLE chain
-proving green via real-hardware drill.
+Per CIO 2026-05-10 chain-end-merge rule + CIO 2026-05-23 directive #1 + spec
+2026-05-28: main = "fully functional working system" -- structurally untouched
+between chain merges. `dev` is the integration branch carrying the active V0.X
+chain (V0.X.0 minor sprint + V0.X.1..V0.X.N patch sprints stacked).
 
-The previous workflow (`/sprint-validated` does the merge) was per-sprint; the
-chain-end-merge rule moved merge to the chain boundary so main never carries a
-partially validated chain.  `/sprint-validated` still bumps the per-sprint
-manifest entries + marks each sprint validated; `/chain-validated` consummates
-the chain merge once every sprint in the chain has its sprint-validated stamp.
+The chain pattern (stacked patch sprints) is preserved; only the merge target
+moves -- from "chain-tip sprint branch" (prior workflow) to `dev` (this
+workflow). `/sprint-validated` stamps each sprint's validation on dev + bumps
+the regression manifest. `/chain-validated` consummates the chain merge once
+every sprint in the chain has its stamp AND CIO confirms whole-chain green.
+
+After this command runs, Phase 6.5 fast-forwards `dev` to `main` so the next
+V0.(X+1).0 chain branches from a clean dev = main base.
 
 ---
 
