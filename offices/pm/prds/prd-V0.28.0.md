@@ -180,14 +180,15 @@ E-OPS: US-373                          (depends on all schema-touching Stories a
 
 ## Conversion record
 
-- `convertedAt`: 2026-05-28T17:22:20Z (PRD -> sprint.json conversion timestamp)
+- `convertedAt`: 2026-05-28T19:26:59Z (re-freeze after Atlas Q4-caveat ACK + Spool deltas applied)
 - `sprintJsonPath`: offices/ralph/sprint.json
-- `frozenAt`: 2026-05-28T17:22:20Z
-- `bigDoDHash`: `ddf5e87afd53c59ae6f379eab3cbb167eaad38bb56f0dd9dd530c3d46b838c96`
-- bigDoD clauses: 81 (aggregated from 15 stories' validationCriteria + sprint-level IRL clauses)
+- `frozenAt`: 2026-05-28T19:26:59Z
+- `bigDoDHash`: `251bad9423a5b627f6cd7d9c2b51f2db004c6f830153d77365205607012c5dcf`
+- bigDoD clauses: 103 (aggregated from 15 stories' validationCriteria + sprint-level IRL clauses; up from 81 first-freeze count — 22 new pairs from Atlas+Spool deltas on US-365/366/368/370)
 - validationMethod: Drive 27+ IRL end-to-end + server recompute across drives 1-26 + F-108 ECU lineage smoke + F-109 freeze-frame Pi smoke (synthetic DTC) + Atlas Rule 10 architecture.md sign-off + Argus regression-test design verdict
 - validatesFeatures: ['F-005', 'F-007', 'F-010', 'F-013']
 - currentVersion: V0.28.0
+- prior frozenAt (superseded by Atlas Q4-caveat ACK): 2026-05-28T17:22:20Z, hash ddf5e87afd53c59a... — 81 clauses
 
 ## Audit trail
 
