@@ -31,7 +31,7 @@ from typing import Any
 
 import frontmatter
 
-from offices.pm.scripts.sprint_lint import _canonicalizeBigDoD
+from offices.pm.scripts._freeze import canonicalizeBigDoD
 
 
 def convertPrdToSprint(prdPath: Path, outPath: Path, repoRoot: Path) -> None:
@@ -115,10 +115,10 @@ def convertPrdToSprint(prdPath: Path, outPath: Path, repoRoot: Path) -> None:
             )
 
     # Freeze the contract per spec 2026-05-28 (CIO directive #2).
-    # Canonicalization recipe lives in sprint_lint._canonicalizeBigDoD so
-    # the freeze write (here) and the freeze-drift read (sprint_lint) share
-    # a single source of truth.
-    canonicalBigDoD = _canonicalizeBigDoD(bigDoD)
+    # Canonicalization recipe lives in offices.pm.scripts._freeze so the
+    # freeze write (here) and the freeze-drift read (sprint_lint) share a
+    # single source of truth without a producer→consumer import inversion.
+    canonicalBigDoD = canonicalizeBigDoD(bigDoD)
     bigDoDHash = hashlib.sha256(canonicalBigDoD.encode("utf-8")).hexdigest()
     frozenAt = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 

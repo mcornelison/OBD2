@@ -49,6 +49,9 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 # When imported via pytest or package import, REPO_ROOT is already on sys.path.
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
+
+from offices.pm.scripts._freeze import canonicalizeBigDoD  # noqa: E402
+
 SPRINT_PATH = REPO_ROOT / "offices" / "ralph" / "sprint.json"
 
 # Per Sprint Contract v1.0
@@ -79,19 +82,6 @@ BANNED_PHRASES = [
 
 TITLE_CAP = 70
 ID_PATTERN = re.compile(r"^US-\d+(-[a-z])?$")
-
-
-def _canonicalizeBigDoD(lines: list[str]) -> str:
-    """Canonicalize a bigDefinitionOfDone list for stable SHA-256 hashing.
-
-    Recipe (per spec 2026-05-28 CIO directive #2): strip each line, sort,
-    join with ``\\n``.  Stable across line reordering and trailing-
-    whitespace edits so a re-serialization of identical content always
-    produces the same hash.  Single source of truth shared by
-    :func:`prd_to_sprint.convertPrdToSprint` (freeze write) and
-    :func:`lintSprintValidation` (freeze-drift read).
-    """
-    return "\n".join(sorted(line.strip() for line in lines))
 
 
 def parseFilesToTouchEntry(entry: str) -> tuple[str, str | None]:
@@ -410,7 +400,7 @@ def lintSprintValidation(sprintData: dict, repoRoot: Path) -> list[str]:
                 "contract corrupt"
             )
         elif isinstance(bdod, list):
-            canonical = _canonicalizeBigDoD(bdod)
+            canonical = canonicalizeBigDoD(bdod)
             computed = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
             if computed != stored:
                 errs.append(
@@ -431,11 +421,13 @@ def lintSprintValidation(sprintData: dict, repoRoot: Path) -> list[str]:
                 f"-- every story must have at least 1 (action, outcome) pair "
                 f"per directive 2026-05-23 #2"
             )
-        dod = story.get("acceptance", []) or story.get("definitionOfDone", [])
-        if not dod:
+        # sprint.json carries the Story's definitionOfDone under key 'acceptance'
+        # (set by prd_to_sprint.py); check that field directly, no fallback.
+        if not story.get("acceptance", []):
             errs.append(
                 f"Story {story.get('id', '?')}: definitionOfDone empty in sprint.json "
-                f"-- every story must have a non-empty DoD so Ralph knows when complete"
+                f"(field 'acceptance') -- every story must have a non-empty DoD "
+                f"so Ralph knows when complete"
             )
 
     return errs

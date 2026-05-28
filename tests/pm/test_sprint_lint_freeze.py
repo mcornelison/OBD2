@@ -1,8 +1,5 @@
 """Tests for sprint_lint freeze-drift + per-story empty-list checks (spec 2026-05-28)."""
 import hashlib
-from pathlib import Path
-
-import pytest
 
 from offices.pm.scripts.sprint_lint import lintSprintValidation
 
@@ -76,5 +73,18 @@ def test_lintSprintValidation_storyAcceptanceEmpty_errors(tmp_path):
     """Given a sprint story with empty acceptance/DoD, ERROR."""
     d = _minimalSprintDict(["clause A"])
     d["stories"][0]["acceptance"] = []
+    errs = lintSprintValidation(d, tmp_path)
+    assert any("definitionOfDone empty" in e for e in errs)
+
+
+def test_lintSprintValidation_storyAcceptanceEmptyWithDoDFallback_errors(tmp_path):
+    """
+    Regression: even if a story has definitionOfDone populated, an empty
+    acceptance field (the sprint.json contract) must ERROR. The fallback
+    behavior of the prior implementation masked broken stories.
+    """
+    d = _minimalSprintDict(["clause A"])
+    d["stories"][0]["acceptance"] = []
+    d["stories"][0]["definitionOfDone"] = ["this would have masked the bug"]
     errs = lintSprintValidation(d, tmp_path)
     assert any("definitionOfDone empty" in e for e in errs)
