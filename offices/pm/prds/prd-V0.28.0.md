@@ -174,12 +174,14 @@ E-OPS: US-373                          (depends on all schema-touching Stories a
 
 ## Conversion record
 
-*(Populated when `prd_to_sprint.py` runs.)*
-
-- `convertedAt`: null
-- `sprintJsonPath`: null
-- `frozenAt`: null (set in sprint.json by prd_to_sprint)
-- `bigDoDHash`: null (set in sprint.json by prd_to_sprint)
+- `convertedAt`: 2026-05-28T17:22:20Z (PRD -> sprint.json conversion timestamp)
+- `sprintJsonPath`: offices/ralph/sprint.json
+- `frozenAt`: 2026-05-28T17:22:20Z
+- `bigDoDHash`: `ddf5e87afd53c59ae6f379eab3cbb167eaad38bb56f0dd9dd530c3d46b838c96`
+- bigDoD clauses: 81 (aggregated from 15 stories' validationCriteria + sprint-level IRL clauses)
+- validationMethod: Drive 27+ IRL end-to-end + server recompute across drives 1-26 + F-108 ECU lineage smoke + F-109 freeze-frame Pi smoke (synthetic DTC) + Atlas Rule 10 architecture.md sign-off + Argus regression-test design verdict
+- validatesFeatures: ['F-005', 'F-007', 'F-010', 'F-013']
+- currentVersion: V0.28.0
 
 ## Audit trail
 
