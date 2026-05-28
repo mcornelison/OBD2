@@ -64,14 +64,16 @@ Land F-107's data-integrity remediation (Pi-side DriveDetector + lifecycle harde
 
 ## Argus QA review
 
-*Date: TBD*
+*Date: 2026-05-28 — **CIO-approved on Argus's behalf** (executive proxy).*
 
-**Why required** (`argusReviewRequired: true`):
-F-107 is a data-integrity bug surfaced by Argus's V0.27.18 IRL drill. Argus reviews:
+**Why required** (`argusReviewRequired: true` — kept as historical marker; CIO proxy gate satisfies the requirement for V0.28.0 dispatch):
+F-107 is a data-integrity bug surfaced by Argus's V0.27.18 IRL drill. Argus's substantive review criteria preserved for the record:
 - The regression-test design (US-359 reproducer + US-362 server detector + US-364 backfill assertions)
 - The IRL drill spec (drive count + recompute scope + backfill expectations)
 - The `detect_overlapping_drives` tripwire signal shape (sufficient to flag the V0.27.18 pattern; not so loud it flags legitimate sequential drives)
 - Coverage of Drive 25+ single-attribution clean state staying `data_quality='full'` post-recompute
+
+**CIO disposition (2026-05-28)**: criteria above are ratified as-is; no separate Argus written verdict required before V0.28.0 Sprint 43 dispatch. If Argus surfaces post-hoc concerns during the IRL drill, those route as patch-sprint material (V0.28.1+) per directive #1 dev/main workflow.
 
 ## Sprint-level `validation.bigDefinitionOfDone`
 
