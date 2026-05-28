@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -36,6 +37,30 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 SPRINT_PATH = REPO_ROOT / "offices" / "ralph" / "sprint.json"
 BACKLOG_PATH = REPO_ROOT / "offices" / "pm" / "backlog.json"
 COUNTER_PATH = REPO_ROOT / "offices" / "pm" / "story_counter.json"
+
+
+# ---------------------------------------------------------------------------
+# dev/main branching workflow -- branch-tip summary (spec 2026-05-28)
+# ---------------------------------------------------------------------------
+
+def formatBranchTips(
+    mainHash: str,
+    mainVersion: str,
+    devHash: str | None,
+    devVersion: str | None,
+) -> str:
+    """Format the dev + main branch-tip summary block.
+
+    Pure formatter -- does not call git. Caller supplies hashes + versions.
+    """
+    lines = ["=== BRANCHES ===", f"  main: {mainVersion} / {mainHash}"]
+    if devHash is None:
+        lines.append("  dev:  not yet bootstrapped")
+    elif devHash == mainHash:
+        lines.append(f"  dev:  {devVersion} / {devHash} (= main; ready for next chain)")
+    else:
+        lines.append(f"  dev:  {devVersion} / {devHash}")
+    return "\n".join(lines)
 
 
 def printSprintSummary() -> None:

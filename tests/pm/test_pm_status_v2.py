@@ -2,7 +2,10 @@
 # Tests for pm_status v2 -- 4-tier tree rendering + status rollup.
 """Tests for pm_status v2 -- 4-tier tree rendering + status rollup."""
 import json
+import subprocess
 from pathlib import Path
+from unittest.mock import patch
+
 from offices.pm.scripts.pm_status import renderTree, computeRollups
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -106,6 +109,72 @@ def test_computeRollups_featureWithBlockedStory_status_active():
     }
     rolled = computeRollups(data)
     assert rolled["features"][0]["status"] == "active"
+
+
+# ---------------------------------------------------------------------------
+# dev/main branching workflow -- formatBranchTips pure formatter (spec 2026-05-28)
+# ---------------------------------------------------------------------------
+
+def test_formatBranchTips_bothBranches_returnsTwoLineBlock():
+    """
+    Given: main and dev both exist with distinct hashes
+    When: formatBranchTips is called with their hashes + versions
+    Then: output is a "=== BRANCHES ===" block listing both
+    """
+    # Arrange + Act
+    from offices.pm.scripts.pm_status import formatBranchTips
+    result = formatBranchTips(
+        mainHash="abc1234",
+        mainVersion="V0.27.19",
+        devHash="def5678",
+        devVersion="V0.28.0",
+    )
+    # Assert
+    assert "=== BRANCHES ===" in result
+    assert "main: V0.27.19 / abc1234" in result
+    assert "dev:  V0.28.0 / def5678" in result
+
+
+def test_formatBranchTips_devMissing_returnsNotBootstrappedMarker():
+    """
+    Given: dev does not exist (pre-bootstrap state)
+    When: formatBranchTips is called with devHash=None, devVersion=None
+    Then: output shows main details + "dev: not yet bootstrapped"
+    """
+    # Arrange + Act
+    from offices.pm.scripts.pm_status import formatBranchTips
+    result = formatBranchTips(
+        mainHash="abc1234",
+        mainVersion="V0.27.19",
+        devHash=None,
+        devVersion=None,
+    )
+    # Assert
+    assert "main: V0.27.19 / abc1234" in result
+    assert "dev:  not yet bootstrapped" in result
+
+
+def test_formatBranchTips_devAtMain_marksConverged():
+    """
+    Given: dev hash matches main hash (post-chain-merge ff state)
+    When: formatBranchTips is called
+    Then: dev line is annotated "(= main; ready for next chain)"
+    """
+    # Arrange + Act
+    from offices.pm.scripts.pm_status import formatBranchTips
+    result = formatBranchTips(
+        mainHash="abc1234",
+        mainVersion="V0.27.19",
+        devHash="abc1234",
+        devVersion="V0.27.19",
+    )
+    # Assert
+    assert "dev:  V0.27.19 / abc1234 (= main; ready for next chain)" in result
+
+
+# ---------------------------------------------------------------------------
+# Existing v2 tests continue below
+# ---------------------------------------------------------------------------
 
 
 def test_computeRollups_featureWithMixedCompleteAndPending_status_active():
