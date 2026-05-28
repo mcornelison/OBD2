@@ -22,8 +22,10 @@ Purpose: Convert a PRD MD file (YAML frontmatter + markdown body) into
          at conversion time (sprint.json is frozen; later Story.md edits
          do not propagate).
 """
+import hashlib
 import json
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -110,6 +112,12 @@ def convertPrdToSprint(prdPath: Path, outPath: Path, repoRoot: Path) -> None:
                 f"({vc.get('action', '')}) → ({vc.get('outcome', '')})  [from {storyId}]"
             )
 
+    # Freeze the contract per spec 2026-05-28 (CIO directive #2).
+    # Canonicalize: sort lines + strip whitespace + join with \n.
+    canonicalBigDoD = "\n".join(sorted(line.strip() for line in bigDoD))
+    bigDoDHash = hashlib.sha256(canonicalBigDoD.encode("utf-8")).hexdigest()
+    frozenAt = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
     sprintJson: dict[str, Any] = {
         "schemaVersion": "2.0.0",
         "sprint": meta["sprint"],
@@ -118,6 +126,8 @@ def convertPrdToSprint(prdPath: Path, outPath: Path, repoRoot: Path) -> None:
         "stories": sprintStories,
         "validation": {
             "bigDefinitionOfDone": bigDoD,
+            "frozenAt": frozenAt,
+            "bigDoDHash": bigDoDHash,
         },
     }
 

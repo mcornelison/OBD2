@@ -15,6 +15,7 @@
 
 """Tests for prd_to_sprint -- PRD MD -> sprint.json conversion."""
 import json
+import re
 import shutil
 from pathlib import Path
 
@@ -93,3 +94,38 @@ def test_convertPrdToSprint_basicConversion(tmp_path):
     bigDoD = sprint["validation"]["bigDefinitionOfDone"][0]
     assert "→" in bigDoD
     assert "[from US-359]" in bigDoD
+
+
+def test_convertPrdToSprint_writesFreezeFields(tmp_path):
+    """
+    Given: the sample PRD fixture is converted
+    When: convertPrdToSprint runs
+    Then: sprint.json validation block carries frozenAt (ISO format) + bigDoDHash (64 char hex)
+    """
+    _setupFakeRepo(tmp_path)
+    prdPath = tmp_path / "offices/pm/prds/prd-V0.28.0-sprint-43.md"
+    outPath = tmp_path / "offices/ralph/sprint.json"
+    convertPrdToSprint(prdPath, outPath, repoRoot=tmp_path)
+    data = json.loads(outPath.read_text(encoding="utf-8"))
+    v = data["validation"]
+    # ISO 8601 'Z' suffix
+    assert re.match(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", v["frozenAt"])
+    # SHA-256 hex
+    assert re.match(r"^[0-9a-f]{64}$", v["bigDoDHash"])
+
+
+def test_convertPrdToSprint_freezeHash_deterministic(tmp_path):
+    """
+    Given: the same PRD converted twice
+    When: convertPrdToSprint runs both times
+    Then: bigDoDHash is identical (deterministic over canonical bigDoD content)
+    """
+    _setupFakeRepo(tmp_path)
+    prdPath = tmp_path / "offices/pm/prds/prd-V0.28.0-sprint-43.md"
+    outA = tmp_path / "a.json"
+    outB = tmp_path / "b.json"
+    convertPrdToSprint(prdPath, outA, repoRoot=tmp_path)
+    convertPrdToSprint(prdPath, outB, repoRoot=tmp_path)
+    dataA = json.loads(outA.read_text(encoding="utf-8"))
+    dataB = json.loads(outB.read_text(encoding="utf-8"))
+    assert dataA["validation"]["bigDoDHash"] == dataB["validation"]["bigDoDHash"]
