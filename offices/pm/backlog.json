@@ -1424,16 +1424,22 @@
       "status": "sprint-ready",
       "goal": "As a server-side analytics consumer needing per-ECU calibration awareness, I want vehicle_info to carry ecu_signature, cal_signature, ecu_install_timestamp_utc, ecu_removal_timestamp_utc columns with a constraint enforcing exactly one currently-active row so that downstream analytics can join per-drive data to the ECU active at the drive's time window.",
       "definitionOfDone": [
-        "Alembic v0010 substep adds vehicle_info columns: ecu_signature TEXT NOT NULL, cal_signature TEXT NULL, ecu_install_timestamp_utc TIMESTAMP NOT NULL, ecu_removal_timestamp_utc TIMESTAMP NULL",
+        "Alembic v0010 substep adds server-side vehicle_info columns: ecu_signature TEXT NOT NULL, cal_signature TEXT NULL, ecu_install_timestamp_utc TIMESTAMP NOT NULL, ecu_removal_timestamp_utc TIMESTAMP NULL, notes TEXT NULL",
         "Constraint enforces exactly one row with NULL ecu_removal_timestamp_utc (partial unique index or equivalent MariaDB-supported shape)",
         "Migration path for pre-existing vehicle_info rows: backfill with prior-ECU signature (per US-367 data; PM choice over NULL+pre-tracking-semantic per Atlas Refinements row 7)",
         "ORM model (src/server/models/vehicle_info.py or equivalent) updated to reflect new shape",
-        "Atlas Rule 10 sign-off recorded (load-bearing schema change)"
+        "Atlas Rule 10 sign-off recorded (load-bearing schema change)",
+        "Server-side migration v0010 substep documented (5 new columns + table comment + writer-path enforcement)",
+        "Pi schema unchanged + verified -- no Pi migration runs for vehicle_info; Pi-side schema retains only VIN-decoded columns",
+        "_PRESERVE_ON_UPDATE reasoning documented in sync.py vicinity or commit message (matches drive_summary §10.7 pattern)",
+        "test_vehicle_info_identity_immutability_enforced regression test exists and passes (exercises CLI path + asserts identity-column-UPDATE refusal)"
       ],
       "conditionalOutcomes": [
         "if any pre-existing vehicle_info row predates 2026-05-22 swap, backfill writes prior-ECU signature with ecu_removal_timestamp_utc = 2026-05-22 swap timestamp (not NULL)",
         "if Alembic detects > 1 row with NULL ecu_removal_timestamp_utc post-backfill, migration FAILS LOUDLY (invariant violated; do not silently choose a winner)",
-        "if MariaDB version doesn't support partial unique indexes, implement via CHECK + app-layer enforcement; document choice in migration docstring"
+        "if MariaDB version doesn't support partial unique indexes, implement via CHECK + app-layer enforcement; document choice in migration docstring",
+        "if Pi sync payload includes ECU columns explicitly (regression), server upsert must reject or preserve (current behavior: silent clobber if not in _PRESERVE_ON_UPDATE) -- fix path via _PRESERVE_ON_UPDATE extension",
+        "if add_ecu_note --bare-overwrite is requested by future ergonomics work, it must require a --force-overwrite-history flag with audit log"
       ],
       "validationCriteria": [
         {
@@ -1459,13 +1465,39 @@
         {
           "action": "ORM smoke-test: load + serialize a vehicle_info row",
           "outcome": "New columns present in serialized output; round-trip clean"
+        },
+        {
+          "action": "UPDATE identity column via stamp_ecu_swap CLI",
+          "outcome": "raises with documented error message; identity row unchanged"
+        },
+        {
+          "action": "UPDATE notes via add_ecu_note CLI",
+          "outcome": "succeeds + appends timestamped line; prior content preserved"
+        },
+        {
+          "action": "subsequent add_ecu_note call on same row",
+          "outcome": "appends additional line; doesn't overwrite prior lines"
+        },
+        {
+          "action": "Pi vehicle_info schema after v0010 migration",
+          "outcome": "UNCHANGED -- no Pi migration runs for vehicle_info; Pi-side schema has only VIN-decoded columns"
+        },
+        {
+          "action": "Pi sync round-trip after server stamp_ecu_swap (server-edited ECU + notes columns)",
+          "outcome": "server row's ECU columns + notes intact post-sync; sync upsert does NOT clobber server-only columns (matches drive_summary §10.7 _PRESERVE_ON_UPDATE pattern)"
+        },
+        {
+          "action": "pytest test_vehicle_info_identity_immutability_enforced regression",
+          "outcome": "exercises CLI path + asserts identity-column-UPDATE refusal"
         }
       ],
       "deps": [],
       "sourceRefs": [
         "F-108",
         "prd-V0.28.0",
-        "atlas-refinement-row-7"
+        "atlas-refinement-row-7",
+        "atlas-q4-caveat-ack-2026-05-28",
+        "spool-q4-notes-column-2026-05-28"
       ],
       "tasks": [],
       "createdAt": "2026-05-28",
@@ -1485,12 +1517,15 @@
         "Idempotency: re-running stamp_ecu_swap with same signature + as-of is no-op (PM choice per Atlas Refinements row 8; cleaner UX than fail-loudly)",
         "Atomicity: close + open executed in single DB transaction; partial-failure rollback preserves invariant",
         "Unit tests cover: clean swap; idempotent re-run; pre-migration graceful error; bootstrap (no currently-active row) graceful error",
-        "Documentation for CIO + Spool usage"
+        "Documentation for CIO + Spool usage",
+        "add_ecu_note CLI subcommand wired with tests; stamp_ecu_swap identity-immutability CLI raise wired; both CLIs documented in module docstrings"
       ],
       "conditionalOutcomes": [
         "if stamp_ecu_swap re-runs with same --signature + --as-of, exit 0 with INFO 'no-op' (idempotent)",
         "if stamp_ecu_swap runs with same --signature but DIFFERENT --as-of, exit non-zero with ERROR (prevents silent timestamp rewrite)",
-        "if show_ecu_lineage runs against empty vehicle_info, exit 0 with 'no ECU lineage recorded yet'"
+        "if show_ecu_lineage runs against empty vehicle_info, exit 0 with 'no ECU lineage recorded yet'",
+        "if Spool needs prefix-namespace on notes (e.g., [KNOCK], [CAL_DRIFT]), that ergonomics lands as separate Story; out of scope here",
+        "if stamp_ecu_swap is run via direct Alembic-style ad-hoc SQL (CLI bypass), no enforcement; documented in table comment as anti-pattern"
       ],
       "validationCriteria": [
         {
@@ -1516,6 +1551,30 @@
         {
           "action": "Run show_ecu_lineage against empty vehicle_info fixture",
           "outcome": "Exit 0; 'no ECU lineage recorded yet' message"
+        },
+        {
+          "action": "stamp_ecu_swap --signature 'X' --as-of '2026-05-22' (new ECU)",
+          "outcome": "closes prior row (sets ecu_removal_timestamp_utc) + inserts new row (ecu_removal_timestamp_utc=NULL)"
+        },
+        {
+          "action": "stamp_ecu_swap --update-existing-signature flag (if attempted)",
+          "outcome": "CLI raises with documented error: identity columns are append-only; use close+open semantics instead"
+        },
+        {
+          "action": "stamp_ecu_swap same signature + same install timestamp (idempotent re-run)",
+          "outcome": "no-op + log message 'already stamped; no change'; no duplicate row"
+        },
+        {
+          "action": "add_ecu_note --vehicle-info-id <id> --text 'Mode 22 silent 2026-05-22'",
+          "outcome": "appends timestamped line to vehicle_info.notes; prior content preserved"
+        },
+        {
+          "action": "add_ecu_note --vehicle-info-id <bogus-id>",
+          "outcome": "raises with 'vehicle_info id not found'; no partial state"
+        },
+        {
+          "action": "show_ecu_lineage",
+          "outcome": "lists all rows with install/removal timestamps + signature + currently-active flag where ecu_removal_timestamp_utc IS NULL"
         }
       ],
       "deps": [
@@ -1524,7 +1583,9 @@
       "sourceRefs": [
         "F-108",
         "prd-V0.28.0",
-        "atlas-refinement-row-8"
+        "atlas-refinement-row-8",
+        "atlas-q4-caveat-ack-2026-05-28",
+        "spool-q4-notes-column-2026-05-28"
       ],
       "tasks": [],
       "createdAt": "2026-05-28",
@@ -1604,12 +1665,14 @@
         "Regression test: writer-path discipline asserted (grep test for no UPDATE on vehicle_info OR runtime assertion)",
         "Pi-side: MIL_ON event triggers Mode 02 enumeration of 16 PIDs; writes single row keyed by (dtc_log_id, captured_at) with vehicle_info_id resolved to currently-active row at capture time",
         "Pi-side unit test: synthetic MIL_ON triggers Mode 02 capture path; row written with 16-PID JSON + correct FK",
-        "Atlas Rule 10 sign-off recorded"
+        "Atlas Rule 10 sign-off recorded",
+        "insertDtcFreezeFrame() writer-path function exists in src/server/api/dtc_freeze_frame.py (or chosen module); 5 temporal-invariant tests passing; pseudocode referenced in Atlas inbox note converted to actual code per the Atlas-pinned shape"
       ],
       "conditionalOutcomes": [
         "if Spool later vetoes append-only invariant (Q4 veto path), pivot to FK + denormalized ecu_signature_at_capture TEXT; separate Story for V0.28.1",
         "if OBD simulator under simulate mode doesn't return Mode 02 responses, add Mode 02 PID enumeration to simulator (in-scope)",
-        "if DTC trips but Mode 02 PIDs unavailable, write row with pid_responses_json={} + notes field explaining gap (graceful degradation)"
+        "if DTC trips but Mode 02 PIDs unavailable, write row with pid_responses_json={} + notes field explaining gap (graceful degradation)",
+        "if vehicle_info[fk] row is later closed (UPDATE removal_timestamp_utc) AFTER a dtc_freeze_frame was inserted in what was an open window, the historical row stays valid (no retroactive invalidation; temporal invariant is INSERT-time only)"
       ],
       "validationCriteria": [
         {
@@ -1635,6 +1698,26 @@
         {
           "action": "Trigger MIL_ON with Mode 02 PIDs unavailable (simulator drops them)",
           "outcome": "Row still written with pid_responses_json={} + notes; no crash"
+        },
+        {
+          "action": "INSERT dtc_freeze_frame with captured_at predating FK vehicle_info row's ecu_install_timestamp_utc",
+          "outcome": "writer-path raises ValueError citing the predates-install mismatch; row not inserted"
+        },
+        {
+          "action": "INSERT dtc_freeze_frame with captured_at postdating FK vehicle_info row's ecu_removal_timestamp_utc (closed window)",
+          "outcome": "writer-path raises ValueError citing the postdates-removal mismatch; row not inserted"
+        },
+        {
+          "action": "INSERT dtc_freeze_frame with captured_at within FK row's open window (ecu_removal_timestamp_utc IS NULL)",
+          "outcome": "writer-path succeeds; row inserted with FK intact"
+        },
+        {
+          "action": "INSERT dtc_freeze_frame with captured_at within FK row's closed window (install <= capture <= removal)",
+          "outcome": "writer-path succeeds; row inserted with FK intact"
+        },
+        {
+          "action": "INSERT dtc_freeze_frame with bogus vehicle_info_id (FK violation)",
+          "outcome": "writer-path raises ValueError 'vehicle_info id not found' BEFORE any partial insert"
         }
       ],
       "deps": [
@@ -1644,7 +1727,9 @@
         "F-109",
         "prd-V0.28.0",
         "atlas-refinement-row-10",
-        "atlas-q4-resolution"
+        "atlas-q4-resolution",
+        "atlas-q4-caveat-ack-2026-05-28",
+        "spool-q4-temporal-invariant-2026-05-28"
       ],
       "tasks": [],
       "createdAt": "2026-05-28",
@@ -1713,16 +1798,18 @@
       "status": "sprint-ready",
       "goal": "As a server-side analytics consumer aggregating SPEED PID for distance / gear-inference, I want a speed_pid_calibration table keyed by ecu_signature (FK to vehicle_info) carrying a multiplicative correction_factor so that the new modified-EPROM ECU's ~2x SPEED-reading drift gets corrected per-drive. NOTE: new-ECU seed correction_factor=0.5 is INITIAL ESTIMATE; Spool empirical refinement Q2 PENDING.",
       "definitionOfDone": [
-        "Alembic v0010 substep creates speed_pid_calibration table per F-076 V0.28 \u00a71 schema: id PK; ecu_signature FK -> vehicle_info; correction_factor DOUBLE; capture_method ENUM; captured_at_timestamp_utc; captured_by; notes",
-        "Seed 2 rows: prior ECU correction_factor=1.0 (Drive 18 gear math fit); new ECU correction_factor=0.5 (INITIAL ESTIMATE per Drive 26; pending Q2)",
+        "Alembic v0010 substep creates speed_pid_calibration table per F-076 V0.28 \u00a71 schema: id PK; ecu_signature FK -> vehicle_info; correction_factor DOUBLE; capture_method ENUM; captured_at_timestamp_utc; captured_by; provenance TEXT NOT NULL; notes",
+        "Seed 2 rows: prior ECU correction_factor=1.0, provenance='gear-math-drive-18-3rd-gear-fit' (Drive 18 gear math fit); new ECU correction_factor=0.5, provenance='rough-seed-drive-26-gear-math' (Drive 26 rough estimate)",
         "notes field documents initial estimate flag for new-ECU seed",
         "Ordering: US-365 substep runs BEFORE US-370 substep in v0010 (US-370 FKs to US-365's column); documented in migration docstring per Atlas Refinements row 16",
-        "Atlas Rule 10 sign-off recorded"
+        "Atlas Rule 10 sign-off recorded",
+        "speed_pid_calibration table includes provenance column; 2 seed rows present with documented provenance values; NOT NULL enforcement verified; analytics-prefix-gate tested"
       ],
       "conditionalOutcomes": [
         "if Spool answers Q2 with different new-ECU correction_factor before sprint freeze, seed value updated in this Story (not new Story)",
         "if Spool answers Q2 deferring to GPS-correlation drive, new-ECU row seeds correction_factor=0.5 + capture_method='default' + notes='INITIAL ESTIMATE pending GPS-correlation drive Story TBD'",
-        "if SPEED-PID consumer query is touched in this sprint, it MUST JOIN through vehicle_info.ecu_signature -> speed_pid_calibration -> apply correction_factor before integrating; consumer changes optional in this Story"
+        "if SPEED-PID consumer query is touched in this sprint, it MUST JOIN through vehicle_info.ecu_signature -> speed_pid_calibration -> apply correction_factor before integrating; consumer changes optional in this Story",
+        "if Spool's post-sprint GPS-correlation drive refines new-ECU factor to a different value, update via close+open (preferred) OR direct UPDATE (acceptable; speed_pid_calibration is not identity-immutable like vehicle_info -- calibrations legitimately change as empirical data improves)"
       ],
       "validationCriteria": [
         {
@@ -1744,6 +1831,26 @@
         {
           "action": "Inspect notes on new-ECU seed row",
           "outcome": "Contains 'INITIAL ESTIMATE' + Q2 cross-reference"
+        },
+        {
+          "action": "SELECT correction_factor, provenance FROM speed_pid_calibration WHERE ecu_signature = '<prior-ECU-signature>'",
+          "outcome": "returns 1.0, 'gear-math-drive-18-3rd-gear-fit' (matches verified Drive 18 RPM/SPEED gear-math)"
+        },
+        {
+          "action": "SELECT correction_factor, provenance FROM speed_pid_calibration WHERE ecu_signature = '<new-ECU-signature>'",
+          "outcome": "returns 0.5, 'rough-seed-drive-26-gear-math' (Drive 26 telemetry rough estimate)"
+        },
+        {
+          "action": "INSERT speed_pid_calibration row without provenance column",
+          "outcome": "raises NOT NULL constraint violation"
+        },
+        {
+          "action": "INSERT speed_pid_calibration row with provenance=''",
+          "outcome": "raises (empty string is forbidden by writer-path discipline matching identity-immutability pattern)"
+        },
+        {
+          "action": "analytics query filters by provenance prefix (e.g., WHERE provenance LIKE 'empirical-%')",
+          "outcome": "returns only empirically-derived calibration rows; rough-seed rows excluded by prefix gate"
         }
       ],
       "deps": [
@@ -1752,7 +1859,9 @@
       "sourceRefs": [
         "F-076",
         "prd-V0.28.0",
-        "atlas-q2-pending-spool"
+        "atlas-q2-pending-spool",
+        "atlas-q4-caveat-ack-2026-05-28",
+        "spool-q2-provenance-column-2026-05-28"
       ],
       "tasks": [],
       "createdAt": "2026-05-28",
