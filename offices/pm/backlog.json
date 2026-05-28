@@ -1,11 +1,11 @@
 {
   "schemaVersion": "2.0.0",
-  "lastUpdated": "2026-05-27",
-  "updatedBy": "Marcus (PM) Session 43 -- Task 11 final corrections (6 V0.28+ epic-parent fixes)",
+  "lastUpdated": "2026-05-28",
+  "updatedBy": "Marcus (PM) Session 44 -- 15 sprint-ready Stories US-359..US-373 filed for V0.28.0 Sprint 1 per Atlas Rule 13 pre-pass + 17-row refinements table",
   "counters": {
     "epic": 6,
     "feature": 110,
-    "story": 359
+    "story": 373
   },
   "epics": [
     {
@@ -753,7 +753,7 @@
       "parent": "E-002",
       "title": "Server schema normalization epic (V0.28+ -- the CIO 2026-05-12 obd2db review)",
       "description": "Server schema normalization epic (V0.28+ -- the CIO 2026-05-12 obd2db review)",
-      "status": "pending",
+      "status": "active",
       "renamedFrom": "B-076",
       "createdAt": "2026-05-27",
       "updatedAt": "2026-05-27"
@@ -1043,7 +1043,7 @@
       "parent": "E-OPS",
       "title": "architecture.md \u00a720 modification-history SS-T9 row backfill",
       "description": "architecture.md \u00a720 modification-history SS-T9 row backfill",
-      "status": "pending",
+      "status": "active",
       "renamedFrom": "B-105",
       "createdAt": "2026-05-27",
       "updatedAt": "2026-05-27"
@@ -1063,7 +1063,7 @@
       "parent": "E-002",
       "title": "DriveDetector Dual-Attribution + Pi-Side Drive Lifecycle Hardening (V0.28.0 TOP PRIORITY)",
       "description": "DriveDetector Dual-Attribution + Pi-Side Drive Lifecycle Hardening (V0.28.0 TOP PRIORITY)",
-      "status": "pending",
+      "status": "active",
       "renamedFrom": "B-107",
       "createdAt": "2026-05-27",
       "updatedAt": "2026-05-27"
@@ -1073,7 +1073,7 @@
       "parent": "E-OPS",
       "title": "vehicle_info ECU + Calibration Signature Manual-Tracking Field",
       "description": "vehicle_info ECU + Calibration Signature Manual-Tracking Field",
-      "status": "pending",
+      "status": "active",
       "renamedFrom": "B-108",
       "createdAt": "2026-05-27",
       "updatedAt": "2026-05-27"
@@ -1083,11 +1083,855 @@
       "parent": "E-OPS",
       "title": "Mode 02 Freeze-Frame Capture for Forensic DTC Enrichment",
       "description": "Mode 02 Freeze-Frame Capture for Forensic DTC Enrichment",
-      "status": "pending",
+      "status": "active",
       "renamedFrom": "B-109",
       "createdAt": "2026-05-27",
       "updatedAt": "2026-05-27"
     }
   ],
-  "stories": []
+  "stories": [
+    {
+      "id": "US-359",
+      "parent": "F-107",
+      "title": "Pi-side dual-attribution reproducer harness",
+      "type": "normal",
+      "size": "S",
+      "status": "sprint-ready",
+      "goal": "As a developer hardening the Pi-side drive lifecycle, I want a deterministic unit-test harness that replays the Drive 23/24 timing and signal sequence so that the dual-emission defect is reproduced in CI before the fix lands and is locked-in as a regression net after the fix lands.",
+      "definitionOfDone": [
+        "New test fixture under tests/pi/obdii/drive/ replays Drive 23/24 timing against DriveDetector + lifecycle integration seam",
+        "Fixture is deterministic (no wall-clock dependency; injected clock or recorded-sample fixture)",
+        "Pre-fix run asserts the defect: DriveDetector emits 2 distinct drive_ids on same physical leg",
+        "Post-fix run (re-executed by US-361) of same fixture asserts: DriveDetector emits exactly 1 drive_id",
+        "Fixture wired into pytest -m \"not slow\" default sweep",
+        "Atlas reviewer sign-off recorded in PR description (no PM Rule 10 trigger -- test-only)"
+      ],
+      "conditionalOutcomes": [
+        "if unit-test harness alone cannot surface the defect, escalate to in-car drill with thread-id + emission-seam instrumentation per F-107 Step 1",
+        "if Drive 23/24 raw telemetry no longer accessible on chi-srv-01, derive synthetic per-second RPM/timestamp sequence from F-107 description constants"
+      ],
+      "validationCriteria": [
+        {
+          "action": "Run pytest tests/pi/obdii/drive/test_dual_attribution_reproducer.py -v against pre-US-361 code",
+          "outcome": "Test FAILS with assertion: DriveDetector emitted 2 drive_ids on the replayed timing"
+        },
+        {
+          "action": "Run the same test post-US-361 fix",
+          "outcome": "Test PASSES: DriveDetector emitted exactly 1 drive_id"
+        },
+        {
+          "action": "Run full Pi unit-test sweep pytest tests/pi/ -m \"not slow\" post-US-361 fix",
+          "outcome": "All pre-existing single-drive tests stay GREEN"
+        },
+        {
+          "action": "Inspect fixture source",
+          "outcome": "Fixture is deterministic (clock-injected); no time.sleep or wall-clock dependency"
+        }
+      ],
+      "deps": [],
+      "sourceRefs": [
+        "F-107",
+        "prd-V0.28.0",
+        "atlas-refinement-row-1"
+      ],
+      "tasks": [],
+      "createdAt": "2026-05-28",
+      "updatedAt": "2026-05-28"
+    },
+    {
+      "id": "US-360",
+      "parent": "F-107",
+      "title": "RCA -- git diff US-351 revert vs pre-US-349 + timing analysis",
+      "type": "research",
+      "size": "S",
+      "status": "sprint-ready",
+      "goal": "As a developer about to fix the DriveDetector dual-emission defect, I want a written RCA that names the file + line numbers in detector.py and lifecycle.py driving the second emission so that US-361 has a concrete fix target and Atlas has a load-bearing-subsystem RCA to gate against.",
+      "definitionOfDone": [
+        "RCA document filed at offices/architect/findings/2026-05-28-drive-detector-dual-attribution-rca.md (or Ralph equivalent path) cross-linked into Atlas 2026-05-22 finding doc",
+        "RCA includes git diff sprint/sprint41-bugfixes-V0.27.17:src/pi/obdii/drive/detector.py <commit-prior-to-US-348>:src/pi/obdii/drive/detector.py output + interpretation",
+        "RCA names specific file:line locations in detector.py and/or lifecycle.py driving the second emission (per Atlas Refinements row 2)",
+        "RCA categorizes the defect: byte-identical revert + residual race | non-byte-identical revert with delta described | upstream V0.27.16 timing shift",
+        "RCA cross-referenced in US-361 fix commit message footer"
+      ],
+      "conditionalOutcomes": [
+        "if git diff shows US-351 revert was byte-identical to pre-US-349, RCA explains why pre-US-349 was emission-safe but V0.27.18 iteration isn't",
+        "if git diff shows revert was NOT byte-identical, RCA enumerates deltas line-by-line + identifies the race-opening delta",
+        "if RCA points to detector.py only, US-361 fix scope bounds to detector.py",
+        "if RCA points to lifecycle.py only or both modules, US-361 fix scope spans both modules"
+      ],
+      "validationCriteria": [
+        {
+          "action": "Open RCA doc and search for detector.py: or lifecycle.py: followed by a line number",
+          "outcome": "At least one file:line reference appears in the RCA body"
+        },
+        {
+          "action": "Open RCA doc and search for the git diff invocation per F-107 Step 2",
+          "outcome": "The diff command + relevant output appears in the RCA body or is referenced as an artifact"
+        },
+        {
+          "action": "Open RCA doc and look for revert classification",
+          "outcome": "One of {byte-identical-residual-race, non-byte-identical-delta-described, upstream-timing-shift} explicitly named with supporting evidence"
+        },
+        {
+          "action": "Open US-361 commit message after fix lands",
+          "outcome": "Footer references the RCA doc path"
+        }
+      ],
+      "deps": [
+        "US-359"
+      ],
+      "sourceRefs": [
+        "F-107",
+        "prd-V0.28.0",
+        "atlas-refinement-row-2"
+      ],
+      "tasks": [],
+      "createdAt": "2026-05-28",
+      "updatedAt": "2026-05-28"
+    },
+    {
+      "id": "US-361",
+      "parent": "F-107",
+      "title": "Root-cause fix: DriveDetector + lifecycle dual-emission prevention",
+      "type": "normal",
+      "size": "M",
+      "status": "sprint-ready",
+      "goal": "As a developer closing the F-107 data-integrity defect, I want a root-cause fix to the Pi-side DriveDetector + drive lifecycle (both src/pi/obdii/drive/detector.py AND src/pi/obdii/orchestrator/lifecycle.py in scope per Q3 ruling) that prevents dual-emission of the same physical leg, validated behaviorally via the US-359 reproducer-fixture-passes-with-1-emission criterion.",
+      "definitionOfDone": [
+        "Fix lands in detector.py and/or lifecycle.py per US-360 RCA disposition",
+        "US-359 reproducer fixture asserts exactly 1 drive_id emitted (FAIL pre-fix; PASS post-fix)",
+        "All pre-existing single-drive Pi unit tests stay GREEN (pytest tests/pi/ -m \"not slow\" clean)",
+        "No regression in B-104 Step 1 server-side compute path (server tests stay GREEN)",
+        "Pi-side drive_statistics table stays retired per US-351 (no resurrection)",
+        "Atlas Rule 10 sign-off recorded (load-bearing Pi subsystem touched)",
+        "Fix commit message footer references US-360 RCA doc"
+      ],
+      "conditionalOutcomes": [
+        "if US-360 RCA points to detector.py only, fix touches detector.py only (behavioral criterion still applies)",
+        "if US-360 RCA points to lifecycle.py only, fix touches lifecycle.py only",
+        "if US-360 RCA points to both modules, fix touches both",
+        "if a one-side fix satisfies V-1 but defense-in-depth in both modules would prevent future regression, prefer defense-in-depth + document rationale"
+      ],
+      "validationCriteria": [
+        {
+          "action": "Run pytest tests/pi/obdii/drive/test_dual_attribution_reproducer.py -v post-fix",
+          "outcome": "PASSES: DriveDetector emits exactly 1 drive_id on Drive 23/24 timing replay"
+        },
+        {
+          "action": "Run full Pi unit-test sweep pytest tests/pi/ -m \"not slow\" post-fix",
+          "outcome": "All pre-existing single-drive tests stay GREEN; no regressions"
+        },
+        {
+          "action": "Run pytest tests/server/ -m \"not slow\" post-fix",
+          "outcome": "B-104 Step 1 compute path tests stay GREEN"
+        },
+        {
+          "action": "Grep for Pi-side drive_statistics import or table-creation references in src/pi/",
+          "outcome": "Zero references; table stays retired per US-351"
+        },
+        {
+          "action": "Atlas review of specs/architecture.md \u00a710.7 amendment from US-373",
+          "outcome": "Atlas Rule 10 PASS recorded in \u00a720 changelog table"
+        }
+      ],
+      "deps": [
+        "US-359",
+        "US-360"
+      ],
+      "sourceRefs": [
+        "F-107",
+        "prd-V0.28.0",
+        "atlas-refinement-row-3",
+        "atlas-q3-resolution"
+      ],
+      "tasks": [],
+      "createdAt": "2026-05-28",
+      "updatedAt": "2026-05-28"
+    },
+    {
+      "id": "US-362",
+      "parent": "F-107",
+      "title": "detect_overlapping_drives(session, drive_id) server compute helper",
+      "type": "normal",
+      "size": "S",
+      "status": "sprint-ready",
+      "goal": "As a server-side analytics consumer of raw realtime_data, I want a detect_overlapping_drives(session, drive_id) -> list[int] helper that returns the set of other drive_ids overlapping the given drive_id by any second of time-range intersection so that downstream compute paths (US-363 + US-364) have a SSOT overlap detector.",
+      "definitionOfDone": [
+        "Function detect_overlapping_drives(session, drive_id: int) -> list[int] exists in server compute path",
+        "Overlap threshold = strict time-range intersection per second (any second of overlap = match; \u03b5 allowance only with empirical justification documented in docstring)",
+        "Function operates against realtime_data (raw signal authority per B-104 Step 1), not drive_summary derived rows",
+        "Unit tests cover pairwise (drives 23+24), no-overlap (drive 25), transitive (3-way pairwise)",
+        "Function is idempotent (no DB writes; pure query helper)",
+        "Function documented with Google-style docstring per specs/standards.md"
+      ],
+      "conditionalOutcomes": [
+        "if production realtime_data for drives 23+24 is no longer accessible, unit tests must seed a fixture replicating overlap window from F-107 description constants",
+        "if 3-way transitive overlap surfaces in production, detect_overlapping_drives(30) returns [31,32] AND (31) returns [30,32] AND (32) returns [30,31]",
+        "if empirical \u03b5 > 0 second allowance is later needed (e.g., clock-jitter), the change is a separate Story with empirical justification"
+      ],
+      "validationCriteria": [
+        {
+          "action": "Call detect_overlapping_drives(session, 23) against fixture seeded with drive 23+24 overlap",
+          "outcome": "Returns [24]"
+        },
+        {
+          "action": "Call detect_overlapping_drives(session, 25) against fixture with drive 25 + neighbors (no overlap)",
+          "outcome": "Returns []"
+        },
+        {
+          "action": "Call detect_overlapping_drives(session, 30) against 3-way overlap fixture (drives 30/31/32)",
+          "outcome": "Returns [31, 32] (order-insensitive; sorted preferred)"
+        },
+        {
+          "action": "Inspect docstring",
+          "outcome": "Overlap threshold = strict time-range intersection per second explicitly stated; \u03b5=0 default call-out present"
+        },
+        {
+          "action": "Run helper against production realtime_data snapshot on chi-srv-01",
+          "outcome": "Drives 23+24 reported as overlapping each other; drives 25+ reported as not overlapping any neighbor"
+        }
+      ],
+      "deps": [],
+      "sourceRefs": [
+        "F-107",
+        "prd-V0.28.0",
+        "atlas-refinement-row-4"
+      ],
+      "tasks": [],
+      "createdAt": "2026-05-28",
+      "updatedAt": "2026-05-28"
+    },
+    {
+      "id": "US-363",
+      "parent": "F-107",
+      "title": "Server tripwire: data_quality='attribution_anomaly' integration",
+      "type": "normal",
+      "size": "S",
+      "status": "sprint-ready",
+      "goal": "As a server-side compute path producing drive_summary + drive_statistics rows, I want to invoke detect_overlapping_drives and stamp data_quality='attribution_anomaly' on rows whose drive_id has any overlap so that the V0.27.18 dual-attribution pattern is observable downstream as a per-row flag. The tripwire is observability not refusal: anomaly rows remain readable; consumers degrade gracefully.",
+      "definitionOfDone": [
+        "Alembic v0010 substep extends data_quality enum / CHECK constraint to allow 'attribution_anomaly' on both drive_summary + drive_statistics",
+        "compute_drive_summary(drive_id) invokes detect_overlapping_drives; non-empty result -> writes 'attribution_anomaly'; empty -> 'full'",
+        "Same wiring on compute_drive_statistics(drive_id)",
+        "Downstream consumers verified: surface the flag visibly; never 500 / drop the row / refuse to render the rest",
+        "Unit tests: drive_id with overlap -> anomaly row; without overlap -> full row; downstream CLI consumer renders anomaly row gracefully",
+        "Idempotent: re-running compute on same drive_id produces identical row (per US-350 pattern)",
+        "Atlas Rule 10 sign-off recorded"
+      ],
+      "conditionalOutcomes": [
+        "if any downstream consumer hard-fails on the new enum value, patch the consumer before claiming completion (graceful degradation = DoD per Atlas Refinements row 5)",
+        "if a consumer chooses to FILTER anomaly rows by default, it MUST log a one-line WARNING per anomaly row (not silent suppression)"
+      ],
+      "validationCriteria": [
+        {
+          "action": "Run compute_drive_summary(23) against fixture seeded with overlap",
+          "outcome": "drive_summary row written with data_quality='attribution_anomaly'"
+        },
+        {
+          "action": "Run compute_drive_summary(25) against fixture without overlap",
+          "outcome": "drive_summary row written with data_quality='full'"
+        },
+        {
+          "action": "Re-run compute_drive_summary(23) against same fixture",
+          "outcome": "Row content identical (idempotency check; zero-diff re-run)"
+        },
+        {
+          "action": "Run a representative downstream CLI consumer against drive 23",
+          "outcome": "Exit 0; output shows drive 23 row + [attribution_anomaly] marker; does not 500 / drop"
+        },
+        {
+          "action": "Inspect Alembic v0010 migration code",
+          "outcome": "Enum/CHECK extension for 'attribution_anomaly' applied to both drive_summary + drive_statistics"
+        }
+      ],
+      "deps": [
+        "US-362"
+      ],
+      "sourceRefs": [
+        "F-107",
+        "prd-V0.28.0",
+        "atlas-refinement-row-5"
+      ],
+      "tasks": [],
+      "createdAt": "2026-05-28",
+      "updatedAt": "2026-05-28"
+    },
+    {
+      "id": "US-364",
+      "parent": "F-107",
+      "title": "Backfill drives 23+24 via recompute_drive_analytics --drive-id",
+      "type": "normal",
+      "size": "S",
+      "status": "sprint-ready",
+      "goal": "As an operator closing historical data-integrity remediation on V0.27.18 IRL drill drives 23+24, I want a server-side recompute invocation that retroactively stamps data_quality='attribution_anomaly' on the affected drive_summary + drive_statistics rows, releasing regression_manifest HOLD on F-005 + F-007.",
+      "definitionOfDone": [
+        "python -m server.cli.recompute_drive_analytics --drive-id 23 produces drive_summary + drive_statistics rows with data_quality='attribution_anomaly'",
+        "Same for --drive-id 24",
+        "Same for --drive-id 25 produces data_quality='full' (boundary check)",
+        "Idempotent re-run: zero diff on second invocation",
+        "regression_manifest HOLD on F-005 RELEASED on post-backfill verification",
+        "regression_manifest HOLD on F-007 RELEASED on post-backfill verification",
+        "Backfill outcome documented in offices/pm/knowledge/ or sprint deploy notes"
+      ],
+      "conditionalOutcomes": [
+        "if recompute is run before US-363 lands (out-of-order), anomaly stamping never fires; Ralph must verify sprint ordering",
+        "if more than one transitive-overlap cluster surfaces in historical data beyond drives 23+24, backfill SCOPE EXPANDS to include all overlap-cluster members"
+      ],
+      "validationCriteria": [
+        {
+          "action": "Run python -m server.cli.recompute_drive_analytics --drive-id 23 against chi-srv-01 obd2db",
+          "outcome": "drive_summary + drive_statistics rows for drive 23 have data_quality='attribution_anomaly'"
+        },
+        {
+          "action": "Run python -m server.cli.recompute_drive_analytics --drive-id 24 against chi-srv-01",
+          "outcome": "Same anomaly stamping applied"
+        },
+        {
+          "action": "Run python -m server.cli.recompute_drive_analytics --drive-id 25 against chi-srv-01",
+          "outcome": "data_quality='full' (control)"
+        },
+        {
+          "action": "Re-run drive 23 + drive 24 invocations",
+          "outcome": "Zero row-diff; idempotency confirmed"
+        },
+        {
+          "action": "Inspect offices/pm/regression_manifest.json",
+          "outcome": "F-005 + F-007 moved from HELD to GREEN/released"
+        },
+        {
+          "action": "SELECT drive_id, data_quality FROM drive_summary WHERE drive_id IN (23, 24)",
+          "outcome": "Returns 2 rows, both with data_quality='attribution_anomaly'"
+        }
+      ],
+      "deps": [
+        "US-363"
+      ],
+      "sourceRefs": [
+        "F-107",
+        "prd-V0.28.0",
+        "atlas-refinement-row-6"
+      ],
+      "tasks": [],
+      "createdAt": "2026-05-28",
+      "updatedAt": "2026-05-28"
+    },
+    {
+      "id": "US-365",
+      "parent": "F-108",
+      "title": "vehicle_info ECU + cal_signature columns + currently-active constraint",
+      "type": "normal",
+      "size": "S",
+      "status": "sprint-ready",
+      "goal": "As a server-side analytics consumer needing per-ECU calibration awareness, I want vehicle_info to carry ecu_signature, cal_signature, ecu_install_timestamp_utc, ecu_removal_timestamp_utc columns with a constraint enforcing exactly one currently-active row so that downstream analytics can join per-drive data to the ECU active at the drive's time window.",
+      "definitionOfDone": [
+        "Alembic v0010 substep adds vehicle_info columns: ecu_signature TEXT NOT NULL, cal_signature TEXT NULL, ecu_install_timestamp_utc TIMESTAMP NOT NULL, ecu_removal_timestamp_utc TIMESTAMP NULL",
+        "Constraint enforces exactly one row with NULL ecu_removal_timestamp_utc (partial unique index or equivalent MariaDB-supported shape)",
+        "Migration path for pre-existing vehicle_info rows: backfill with prior-ECU signature (per US-367 data; PM choice over NULL+pre-tracking-semantic per Atlas Refinements row 7)",
+        "ORM model (src/server/models/vehicle_info.py or equivalent) updated to reflect new shape",
+        "Atlas Rule 10 sign-off recorded (load-bearing schema change)"
+      ],
+      "conditionalOutcomes": [
+        "if any pre-existing vehicle_info row predates 2026-05-22 swap, backfill writes prior-ECU signature with ecu_removal_timestamp_utc = 2026-05-22 swap timestamp (not NULL)",
+        "if Alembic detects > 1 row with NULL ecu_removal_timestamp_utc post-backfill, migration FAILS LOUDLY (invariant violated; do not silently choose a winner)",
+        "if MariaDB version doesn't support partial unique indexes, implement via CHECK + app-layer enforcement; document choice in migration docstring"
+      ],
+      "validationCriteria": [
+        {
+          "action": "DESCRIBE vehicle_info on chi-srv-01 post-migration",
+          "outcome": "Shows ecu_signature, cal_signature, ecu_install_timestamp_utc, ecu_removal_timestamp_utc with correct types + NULL semantics"
+        },
+        {
+          "action": "INSERT vehicle_info with valid ecu_signature + NULL removal_timestamp when zero rows are currently-active",
+          "outcome": "Insert succeeds"
+        },
+        {
+          "action": "INSERT vehicle_info with valid ecu_signature + NULL removal_timestamp when one row already has NULL removal_timestamp",
+          "outcome": "Insert FAILS with constraint violation"
+        },
+        {
+          "action": "SELECT COUNT(*) FROM vehicle_info WHERE ecu_removal_timestamp_utc IS NULL post-backfill",
+          "outcome": "Returns exactly 1"
+        },
+        {
+          "action": "Inspect pre-existing vehicle_info rows post-migration",
+          "outcome": "ecu_signature populated (prior-ECU backfill) + ecu_removal_timestamp_utc set to 2026-05-22 swap timestamp"
+        },
+        {
+          "action": "ORM smoke-test: load + serialize a vehicle_info row",
+          "outcome": "New columns present in serialized output; round-trip clean"
+        }
+      ],
+      "deps": [],
+      "sourceRefs": [
+        "F-108",
+        "prd-V0.28.0",
+        "atlas-refinement-row-7"
+      ],
+      "tasks": [],
+      "createdAt": "2026-05-28",
+      "updatedAt": "2026-05-28"
+    },
+    {
+      "id": "US-366",
+      "parent": "F-108",
+      "title": "stamp_ecu_swap + show_ecu_lineage server CLIs",
+      "type": "normal",
+      "size": "S",
+      "status": "sprint-ready",
+      "goal": "As CIO recording a future ECU swap, I want a stamp_ecu_swap CLI that atomically closes the currently-active vehicle_info row + opens a new row, and a show_ecu_lineage CLI that lists all historical stamps so that the swap-history audit trail stays maintainable from the command line.",
+      "definitionOfDone": [
+        "CLI python -m server.cli.stamp_ecu_swap --signature <id> --cal-signature <id-or-null> --as-of <ts> records a swap event (close prior row + insert new row)",
+        "CLI python -m server.cli.show_ecu_lineage lists all historical ECU stamps (text table, sortable by install timestamp; current row highlighted)",
+        "Idempotency: re-running stamp_ecu_swap with same signature + as-of is no-op (PM choice per Atlas Refinements row 8; cleaner UX than fail-loudly)",
+        "Atomicity: close + open executed in single DB transaction; partial-failure rollback preserves invariant",
+        "Unit tests cover: clean swap; idempotent re-run; pre-migration graceful error; bootstrap (no currently-active row) graceful error",
+        "Documentation for CIO + Spool usage"
+      ],
+      "conditionalOutcomes": [
+        "if stamp_ecu_swap re-runs with same --signature + --as-of, exit 0 with INFO 'no-op' (idempotent)",
+        "if stamp_ecu_swap runs with same --signature but DIFFERENT --as-of, exit non-zero with ERROR (prevents silent timestamp rewrite)",
+        "if show_ecu_lineage runs against empty vehicle_info, exit 0 with 'no ECU lineage recorded yet'"
+      ],
+      "validationCriteria": [
+        {
+          "action": "Run stamp_ecu_swap --signature 'new-test-ECU' --cal-signature 'tune-v1' --as-of '2026-06-01T12:00:00Z' against fixture with one currently-active row",
+          "outcome": "Currently-active row's ecu_removal_timestamp_utc set to 2026-06-01T12:00:00Z; new row inserted with signature='new-test-ECU' + NULL removal timestamp"
+        },
+        {
+          "action": "Re-run V-1 with identical args",
+          "outcome": "Exit 0; INFO 'no-op'; database state unchanged"
+        },
+        {
+          "action": "Run stamp_ecu_swap with same signature but different --as-of timestamp",
+          "outcome": "Exit non-zero; ERROR; database state unchanged"
+        },
+        {
+          "action": "Run show_ecu_lineage",
+          "outcome": "Output lists both rows (closed + currently-active) with timestamps + signatures in install-timestamp order"
+        },
+        {
+          "action": "Inspect stamp_ecu_swap source code",
+          "outcome": "Close + open execute in a single DB transaction"
+        },
+        {
+          "action": "Run show_ecu_lineage against empty vehicle_info fixture",
+          "outcome": "Exit 0; 'no ECU lineage recorded yet' message"
+        }
+      ],
+      "deps": [
+        "US-365"
+      ],
+      "sourceRefs": [
+        "F-108",
+        "prd-V0.28.0",
+        "atlas-refinement-row-8"
+      ],
+      "tasks": [],
+      "createdAt": "2026-05-28",
+      "updatedAt": "2026-05-28"
+    },
+    {
+      "id": "US-367",
+      "parent": "F-108",
+      "title": "Backfill 2 ECU rows (prior + 2026-05-22 swap) + join verification",
+      "type": "normal",
+      "size": "S",
+      "status": "sprint-ready",
+      "goal": "As a server-side analytics consumer wanting per-drive ECU attribution, I want the historical ECU lineage backfilled into vehicle_info (prior ECU active before 2026-05-22 + new modified-EPROM ECU active from 2026-05-22 onward) so that any drive's start_time_utc can join to the active ECU at that time.",
+      "definitionOfDone": [
+        "Backfill seeds exactly 2 rows: prior ECU (signature per Spool sign-off; install ts from CIO records; removal ts = 2026-05-22 swap) + new ECU (signature per F-108; install ts = 2026-05-22; removal ts = NULL)",
+        "Data sources documented in commit body: prior-ECU install timestamp source (Eclipse 1998 Projects.gsheet or earliest realtime_data.captured_at -- approximate but documented); 2026-05-22 swap timestamp precise per chain-merge history",
+        "Spool sign-off on signature naming convention recorded BEFORE backfill (per F-108 last bullet)",
+        "Backfill executed via stamp_ecu_swap CLI OR one-shot backfill script for first-row bootstrap",
+        "Join verification: SELECT drive_summary.drive_id, vehicle_info.ecu_signature FROM drive_summary JOIN vehicle_info ON drive_summary.start_time_utc BETWEEN install AND COALESCE(removal, NOW()) correctly partitions drives 1-24 (prior) + drives 25+ (new)"
+      ],
+      "conditionalOutcomes": [
+        "if Spool has not signed off on signature naming convention, BLOCK the backfill + route A2AL note to Spool",
+        "if stamp_ecu_swap cannot stamp the first row (bootstrap edge case), a one-shot backfill script handles the first row",
+        "if join verification shows any drive 1-24 partitioning to new ECU (or any drive 25+ partitioning to prior ECU), revise + re-backfill"
+      ],
+      "validationCriteria": [
+        {
+          "action": "SELECT COUNT(*) FROM vehicle_info post-backfill",
+          "outcome": "Returns 2"
+        },
+        {
+          "action": "SELECT COUNT(*) FROM vehicle_info WHERE ecu_removal_timestamp_utc IS NULL post-backfill",
+          "outcome": "Returns 1 (currently-active new ECU)"
+        },
+        {
+          "action": "Run join verification SELECT against drive_summary for drives 1-24",
+          "outcome": "All rows JOIN to the prior-ECU row"
+        },
+        {
+          "action": "Run join verification SELECT against drive_summary for drives 25+",
+          "outcome": "All rows JOIN to the new-ECU row"
+        },
+        {
+          "action": "Inspect commit body",
+          "outcome": "Both data sources documented: prior-ECU install timestamp source named (gsheet or realtime_data); 2026-05-22 swap timestamp precise + cross-referenced"
+        },
+        {
+          "action": "Inspect Spool's inbox or offices/pm/inbox/",
+          "outcome": "Spool sign-off note on naming convention exists with date before backfill commit"
+        }
+      ],
+      "deps": [
+        "US-365",
+        "US-366"
+      ],
+      "sourceRefs": [
+        "F-108",
+        "prd-V0.28.0",
+        "atlas-refinement-row-9"
+      ],
+      "tasks": [],
+      "createdAt": "2026-05-28",
+      "updatedAt": "2026-05-28"
+    },
+    {
+      "id": "US-368",
+      "parent": "F-109",
+      "title": "dtc_freeze_frame table + Pi-side Mode 02 capture on MIL_ON",
+      "type": "normal",
+      "size": "M",
+      "status": "sprint-ready",
+      "goal": "As a tuner doing post-mortem on a DTC trigger, I want Mode 02 freeze-frame (16 PIDs mirroring Mode 01) captured + stored alongside the DTC log entry so that forensic analysis has 'what was the engine doing when this error tripped' context. Per Q4: dtc_freeze_frame carries FK to vehicle_info.id (specific row); immutability via vehicle_info append-only invariant.",
+      "definitionOfDone": [
+        "Alembic v0010 substep creates dtc_freeze_frame table: id PK; dtc_log_id FK -> dtc_log.id; captured_at_timestamp_utc; pid_responses_json JSON; vehicle_info_id FK -> vehicle_info.id",
+        "vehicle_info table comment documents append-only invariant: corrections via close-prior-row + open-new-row; never UPDATE a row a freeze-frame points to",
+        "Append-only invariant enforced via writer-path discipline (no UPDATE statements on vehicle_info in src/server/; corrections through stamp_ecu_swap)",
+        "Regression test: writer-path discipline asserted (grep test for no UPDATE on vehicle_info OR runtime assertion)",
+        "Pi-side: MIL_ON event triggers Mode 02 enumeration of 16 PIDs; writes single row keyed by (dtc_log_id, captured_at) with vehicle_info_id resolved to currently-active row at capture time",
+        "Pi-side unit test: synthetic MIL_ON triggers Mode 02 capture path; row written with 16-PID JSON + correct FK",
+        "Atlas Rule 10 sign-off recorded"
+      ],
+      "conditionalOutcomes": [
+        "if Spool later vetoes append-only invariant (Q4 veto path), pivot to FK + denormalized ecu_signature_at_capture TEXT; separate Story for V0.28.1",
+        "if OBD simulator under simulate mode doesn't return Mode 02 responses, add Mode 02 PID enumeration to simulator (in-scope)",
+        "if DTC trips but Mode 02 PIDs unavailable, write row with pid_responses_json={} + notes field explaining gap (graceful degradation)"
+      ],
+      "validationCriteria": [
+        {
+          "action": "DESCRIBE dtc_freeze_frame on chi-srv-01 post-migration",
+          "outcome": "Shows columns: id, dtc_log_id (FK), captured_at_timestamp_utc, pid_responses_json, vehicle_info_id (FK)"
+        },
+        {
+          "action": "Trigger synthetic MIL_ON in Pi unit-test fixture",
+          "outcome": "dtc_freeze_frame row written with 16-PID JSON; vehicle_info_id resolved to currently-active row at capture time"
+        },
+        {
+          "action": "Attempt UPDATE vehicle_info SET ecu_signature='new' WHERE id = <id-pointed-to-by-freeze-frame> from a code path",
+          "outcome": "FAILS (writer-path discipline: grep test or runtime assertion)"
+        },
+        {
+          "action": "Inspect vehicle_info table comment / model docstring",
+          "outcome": "Append-only invariant explicitly documented"
+        },
+        {
+          "action": "Run pytest tests/pi/obdii/dtc/test_freeze_frame_capture.py",
+          "outcome": "Tests pass; MIL_ON -> Mode 02 -> row write path covered"
+        },
+        {
+          "action": "Trigger MIL_ON with Mode 02 PIDs unavailable (simulator drops them)",
+          "outcome": "Row still written with pid_responses_json={} + notes; no crash"
+        }
+      ],
+      "deps": [
+        "US-365"
+      ],
+      "sourceRefs": [
+        "F-109",
+        "prd-V0.28.0",
+        "atlas-refinement-row-10",
+        "atlas-q4-resolution"
+      ],
+      "tasks": [],
+      "createdAt": "2026-05-28",
+      "updatedAt": "2026-05-28"
+    },
+    {
+      "id": "US-369",
+      "parent": "F-109",
+      "title": "Server sync + show_dtc_freeze_frame CLI",
+      "type": "normal",
+      "size": "S",
+      "status": "sprint-ready",
+      "goal": "As an operator wanting to inspect a freeze-frame after a DTC trigger, I want Pi-to-server sync to deliver dtc_freeze_frame rows + a show_dtc_freeze_frame --dtc-log-id N CLI that prints the 16-PID dictionary + joins through to the correct vehicle_info row by FK (Q4 round-trip) so that forensic context is available without raw-SQL.",
+      "definitionOfDone": [
+        "Pi-to-server sync maps Pi-side dtc_freeze_frame rows to server-side rows; round-trip preserves all 16 PIDs + FKs",
+        "python -m server.cli.show_dtc_freeze_frame --dtc-log-id N prints: dtc_log row (DTC code + ts) + dtc_freeze_frame row (captured_at + 16 PIDs) + vehicle_info row joined via FK (ecu_signature, cal_signature, install/removal timestamps)",
+        "Q4 round-trip: CLI correctly joins through to vehicle_info row active at capture time, even after stamp_ecu_swap has added new rows",
+        "Sync delivery test: synthetic Pi row syncs to server; CLI returns synced row with 16 PIDs intact",
+        "CLI handles missing freeze-frame gracefully: exit 0 with 'no freeze-frame recorded for this DTC'"
+      ],
+      "conditionalOutcomes": [
+        "if sync delivers dtc_freeze_frame row whose vehicle_info_id FK doesn't exist server-side, sync FAILS LOUDLY (cross-tier-ID issue logged; no silent re-resolve)",
+        "if pid_responses_json is empty (graceful degradation from US-368 V-6), CLI displays 'freeze-frame captured but Mode 02 PIDs unavailable' + notes field",
+        "if multiple freeze-frame rows exist for one dtc_log_id (defensive), CLI displays most recent by captured_at + WARN"
+      ],
+      "validationCriteria": [
+        {
+          "action": "Synthesize Pi-side dtc_freeze_frame row + run sync to chi-srv-01",
+          "outcome": "Server-side row exists with all 16 PIDs + FKs preserved"
+        },
+        {
+          "action": "Run show_dtc_freeze_frame --dtc-log-id N against synced row",
+          "outcome": "Output includes DTC code, captured_at, 16-PID dictionary, vehicle_info ecu_signature"
+        },
+        {
+          "action": "After US-366 stamp_ecu_swap adds new vehicle_info row, run show_dtc_freeze_frame --dtc-log-id N on the pre-existing freeze-frame",
+          "outcome": "Output joins to ORIGINAL vehicle_info row (FK at capture time), NOT currently-active (Q4 round-trip)"
+        },
+        {
+          "action": "Run show_dtc_freeze_frame --dtc-log-id <id-of-dtc-with-no-freeze-frame>",
+          "outcome": "Exit 0; 'no freeze-frame recorded for this DTC'"
+        },
+        {
+          "action": "Inspect Pi-to-server sync code path",
+          "outcome": "dtc_freeze_frame is in sync-table list; round-trip mapping preserves JSON column"
+        }
+      ],
+      "deps": [
+        "US-368"
+      ],
+      "sourceRefs": [
+        "F-109",
+        "prd-V0.28.0",
+        "atlas-refinement-row-11"
+      ],
+      "tasks": [],
+      "createdAt": "2026-05-28",
+      "updatedAt": "2026-05-28"
+    },
+    {
+      "id": "US-370",
+      "parent": "F-076",
+      "title": "speed_pid_calibration table + 2-ECU seed; FK to vehicle_info.ecu_signature",
+      "type": "normal",
+      "size": "S",
+      "status": "sprint-ready",
+      "goal": "As a server-side analytics consumer aggregating SPEED PID for distance / gear-inference, I want a speed_pid_calibration table keyed by ecu_signature (FK to vehicle_info) carrying a multiplicative correction_factor so that the new modified-EPROM ECU's ~2x SPEED-reading drift gets corrected per-drive. NOTE: new-ECU seed correction_factor=0.5 is INITIAL ESTIMATE; Spool empirical refinement Q2 PENDING.",
+      "definitionOfDone": [
+        "Alembic v0010 substep creates speed_pid_calibration table per F-076 V0.28 \u00a71 schema: id PK; ecu_signature FK -> vehicle_info; correction_factor DOUBLE; capture_method ENUM; captured_at_timestamp_utc; captured_by; notes",
+        "Seed 2 rows: prior ECU correction_factor=1.0 (Drive 18 gear math fit); new ECU correction_factor=0.5 (INITIAL ESTIMATE per Drive 26; pending Q2)",
+        "notes field documents initial estimate flag for new-ECU seed",
+        "Ordering: US-365 substep runs BEFORE US-370 substep in v0010 (US-370 FKs to US-365's column); documented in migration docstring per Atlas Refinements row 16",
+        "Atlas Rule 10 sign-off recorded"
+      ],
+      "conditionalOutcomes": [
+        "if Spool answers Q2 with different new-ECU correction_factor before sprint freeze, seed value updated in this Story (not new Story)",
+        "if Spool answers Q2 deferring to GPS-correlation drive, new-ECU row seeds correction_factor=0.5 + capture_method='default' + notes='INITIAL ESTIMATE pending GPS-correlation drive Story TBD'",
+        "if SPEED-PID consumer query is touched in this sprint, it MUST JOIN through vehicle_info.ecu_signature -> speed_pid_calibration -> apply correction_factor before integrating; consumer changes optional in this Story"
+      ],
+      "validationCriteria": [
+        {
+          "action": "DESCRIBE speed_pid_calibration post-migration",
+          "outcome": "Shows columns per F-076 V0.28 \u00a71 schema with FK to vehicle_info"
+        },
+        {
+          "action": "SELECT correction_factor FROM speed_pid_calibration WHERE ecu_signature = '<prior-ECU-sig>'",
+          "outcome": "Returns 1.0"
+        },
+        {
+          "action": "SELECT correction_factor FROM speed_pid_calibration WHERE ecu_signature = '<new-ECU-sig>'",
+          "outcome": "Returns 0.5 (initial estimate; subject to Q2 refinement)"
+        },
+        {
+          "action": "Inspect migration docstring",
+          "outcome": "Documents US-365 BEFORE US-370 ordering dependency + Q2-pending placeholder note on new-ECU seed"
+        },
+        {
+          "action": "Inspect notes on new-ECU seed row",
+          "outcome": "Contains 'INITIAL ESTIMATE' + Q2 cross-reference"
+        }
+      ],
+      "deps": [
+        "US-365"
+      ],
+      "sourceRefs": [
+        "F-076",
+        "prd-V0.28.0",
+        "atlas-q2-pending-spool"
+      ],
+      "tasks": [],
+      "createdAt": "2026-05-28",
+      "updatedAt": "2026-05-28"
+    },
+    {
+      "id": "US-371",
+      "parent": "F-076",
+      "title": "Column rename: drive_statistics.drive_id -> summary_id + consumer updates",
+      "type": "tech-debt",
+      "size": "S",
+      "status": "sprint-ready",
+      "goal": "As a server-side analytics consumer reading drive_statistics, I want the misleading drive_id column renamed to summary_id (which is what the column actually holds: a drive_summary.id FK, NOT a Pi-assigned drive_id) so that future authors aren't lied to about the column's meaning. Rename is COMPLETE not additive: no deprecated alias.",
+      "definitionOfDone": [
+        "Alembic v0010 substep: ALTER TABLE drive_statistics RENAME COLUMN drive_id TO summary_id (server-side; Pi-side retired in US-351)",
+        "ORM model updated: src/server/models/drive_statistics.py references summary_id",
+        "All consumers grepped + updated: src/server/analytics/drive_statistics_compute.py; src/server/cli/recompute_drive_analytics.py; src/server/reports/*.py; src/server/services/analysis.py; tests/server/; Spool's ad-hoc SQL in offices/tuner/",
+        "Post-rename: SELECT summary_id FROM drive_statistics LIMIT 1 succeeds; SELECT drive_id FROM drive_statistics LIMIT 1 FAILS (no alias)",
+        "Existing analytics queries return same results post-rename (semantic-equivalent rewrites)",
+        "Atlas Rule 10 sign-off recorded"
+      ],
+      "conditionalOutcomes": [
+        "if grep surfaces a consumer referencing drive_statistics.drive_id outside src/server/ (e.g., offices/tuner/ or docs/), route A2AL note to owning agent + update reference",
+        "if MariaDB doesn't support RENAME COLUMN cleanly, fallback to ADD summary_id + UPDATE + DROP drive_id in same substep (still no alias)"
+      ],
+      "validationCriteria": [
+        {
+          "action": "DESCRIBE drive_statistics on chi-srv-01 post-migration",
+          "outcome": "Shows summary_id column; no drive_id column"
+        },
+        {
+          "action": "SELECT summary_id FROM drive_statistics LIMIT 1",
+          "outcome": "Returns successfully"
+        },
+        {
+          "action": "SELECT drive_id FROM drive_statistics LIMIT 1",
+          "outcome": "FAILS with column-not-found"
+        },
+        {
+          "action": "grep -r 'drive_statistics.drive_id' src/ tests/ offices/tuner/ post-Story",
+          "outcome": "Zero matches"
+        },
+        {
+          "action": "Run pytest tests/server/ -m 'not slow' post-migration",
+          "outcome": "All tests pass"
+        },
+        {
+          "action": "Run python -m server.cli.recompute_drive_analytics --drive-id 11 post-rename",
+          "outcome": "Returns identical row content to pre-rename baseline"
+        }
+      ],
+      "deps": [],
+      "sourceRefs": [
+        "F-076",
+        "prd-V0.28.0",
+        "atlas-refinement-row-12"
+      ],
+      "tasks": [],
+      "createdAt": "2026-05-28",
+      "updatedAt": "2026-05-28"
+    },
+    {
+      "id": "US-372",
+      "parent": "F-076",
+      "title": "drive_summary.drive_id NULL decision + implementation",
+      "type": "normal",
+      "size": "S",
+      "status": "sprint-ready",
+      "goal": "As a server-side analytics consumer reading drive_summary, I want the drive_id NULL smell resolved via Q1 option (a) Backfill + invariant so that drive_summary.drive_id is semantically meaningful going forward + future authors aren't bitten by NULL. Q1 ruling 2026-05-28: backfill from source_id + CHECK invariant; SSOT-purist drop deferred to V0.28+ broader normalization.",
+      "definitionOfDone": [
+        "Alembic v0010 substep in order: (i) UPDATE drive_summary SET drive_id = source_id WHERE drive_id IS NULL AND source_id IS NOT NULL; (ii) ALTER TABLE ADD CONSTRAINT chk_drive_id_source_id CHECK ((drive_id IS NULL AND source_id IS NULL) OR (drive_id = source_id))",
+        "Writer-path discipline: server-side src/server/analytics/drive_summary_compute.py AND Pi-side src/pi/.../drive_summary.py set BOTH drive_id AND source_id on INSERT/UPSERT (never one-without-the-other when known)",
+        "Regression test asserts invariant under both write paths: server compute INSERT -> both set + equal; Pi write INSERT -> both set + equal; direct INSERT violating CHECK FAILS",
+        "Substep ordering documented in v0010 migration docstring: UPDATE BEFORE ALTER (per Atlas Refinements row 16)",
+        "Atlas Rule 10 sign-off recorded"
+      ],
+      "conditionalOutcomes": [
+        "if any pre-existing row has drive_id IS NOT NULL AND source_id IS NULL (asymmetric), migration UPDATEs such rows to source_id=drive_id BEFORE adding CHECK; OR enumerate + manually disposition",
+        "if a writer-path code site only knows one column at write time (e.g., legacy payload with only source_id), write (drive_id=source_id, source_id=source_id) so the invariant holds"
+      ],
+      "validationCriteria": [
+        {
+          "action": "SELECT COUNT(*) FROM drive_summary WHERE source_id IS NOT NULL AND drive_id IS NULL post-migration",
+          "outcome": "Returns 0 (Q1 backfill invariant; Atlas Sprint-IRL clause #5)"
+        },
+        {
+          "action": "INSERT INTO drive_summary (drive_id, source_id, ...) VALUES (NULL, 99, ...)",
+          "outcome": "FAILS with constraint violation"
+        },
+        {
+          "action": "INSERT INTO drive_summary (drive_id, source_id, ...) VALUES (1, 2, ...) different values",
+          "outcome": "FAILS with constraint violation"
+        },
+        {
+          "action": "Server-side compute_drive_summary(drive_id=11) -> INSERT/UPSERT",
+          "outcome": "Resulting row has drive_id=11 AND source_id=11"
+        },
+        {
+          "action": "Pi-side drive_summary writer for a new drive",
+          "outcome": "Resulting row has drive_id=source_id (both columns set to same Pi-assigned id)"
+        },
+        {
+          "action": "Inspect v0010 migration docstring",
+          "outcome": "UPDATE-BEFORE-ALTER ordering documented"
+        }
+      ],
+      "deps": [],
+      "sourceRefs": [
+        "F-076",
+        "prd-V0.28.0",
+        "atlas-q1-resolution-option-a"
+      ],
+      "tasks": [],
+      "createdAt": "2026-05-28",
+      "updatedAt": "2026-05-28"
+    },
+    {
+      "id": "US-373",
+      "parent": "F-105",
+      "title": "PM Rule 10: specs/architecture.md update for V0.28 schema pass",
+      "type": "housekeeping",
+      "size": "S",
+      "status": "sprint-ready",
+      "goal": "As Atlas + the architecture-doc audience, I want specs/architecture.md updated in-sprint to reflect V0.28 schema-pass first slice (F-107 DriveDetector + lifecycle fix; F-076 schema additions; F-108 ECU lineage; F-109 freeze-frame) so PM Rule 10's design-gate DoD is satisfied within this sprint per \u00a710.6 + \u00a710.7 amendment pattern.",
+      "definitionOfDone": [
+        "(i) \u00a710.7 amendment appends F-107 disposition subsection (DriveDetector dual-emission fix from US-361 + server-side tripwire from US-362/363/364); same pattern as \u00a710.6 used for F-7/F-8 in Sprint 40; additive not rewrite",
+        "(ii) New \u00a75.X subsection: V0.28 schema-pass first slice documents 5 schema surfaces -- speed_pid_calibration (US-370), dtc_freeze_frame (US-368), vehicle_info ECU columns + constraint (US-365), drive_statistics.drive_id->summary_id rename (US-371), drive_summary.drive_id backfill + CHECK invariant (US-372)",
+        "(iii) Last Updated header bumped to V0.28.0 ship date with Atlas-gated tag",
+        "(iv) Atlas Rule 10 PASS recorded in \u00a720 changelog table (new row)",
+        "Atlas Rule 10 sign-off recorded BEFORE sprint can deploy via /sprint-deploy-pm (explicit PASS, not silence)"
+      ],
+      "conditionalOutcomes": [
+        "if US-361's fix ended up bounded to one of two modules (per RCA), \u00a710.7 amendment documents whichever module was edited; broad DriveDetector+lifecycle framing remains in prose to honor Q3 behavioral framing",
+        "if any of US-365/368/370/371/372 land with substeps differing from PRD plan, \u00a75.X documents FINAL landed state not PRD-planned state",
+        "if Atlas requests \u00a75.X split into multiple subsections per-Feature, comply (Atlas owns doc-structure call)"
+      ],
+      "validationCriteria": [
+        {
+          "action": "Grep specs/architecture.md \u00a710.7 for F-107 or DriveDetector dual-emission post-Story",
+          "outcome": "At least one mention in \u00a710.7 amendment subsection; same pattern as \u00a710.6 F-7/F-8"
+        },
+        {
+          "action": "Grep specs/architecture.md for new \u00a75.X subsection title (e.g., 'V0.28 schema-pass')",
+          "outcome": "New subsection exists documenting all 5 schema surfaces"
+        },
+        {
+          "action": "Grep specs/architecture.md body for speed_pid_calibration, dtc_freeze_frame, ecu_signature, summary_id, CHECK constraint on drive_summary",
+          "outcome": "All 5 schema surfaces named in \u00a75.X"
+        },
+        {
+          "action": "Grep specs/architecture.md header for 'Last Updated'",
+          "outcome": "Updated to V0.28.0 ship date"
+        },
+        {
+          "action": "Grep specs/architecture.md \u00a720 changelog table",
+          "outcome": "New row added with V0.28.0 + Atlas Rule 10 PASS + this Story reference"
+        },
+        {
+          "action": "Inspect Atlas inbox / commit footer",
+          "outcome": "Atlas Rule 10 PASS note recorded BEFORE sprint deploy"
+        }
+      ],
+      "deps": [
+        "US-361",
+        "US-365",
+        "US-368",
+        "US-370",
+        "US-371",
+        "US-372"
+      ],
+      "sourceRefs": [
+        "F-105",
+        "prd-V0.28.0",
+        "atlas-refinement-row-14",
+        "spec-2026-05-28-validation-criteria-upfront-contract"
+      ],
+      "tasks": [],
+      "createdAt": "2026-05-28",
+      "updatedAt": "2026-05-28"
+    }
+  ]
 }
