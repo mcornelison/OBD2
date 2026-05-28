@@ -54,7 +54,7 @@ Land F-107's data-integrity remediation (Pi-side DriveDetector + lifecycle harde
 
 ## Atlas architecture review
 
-*Date: TBD (pending Stories filed + PRD ready for Atlas brief)*
+*Date: 2026-05-28 — **PM Rule 13 formal sign-off PASS** (`offices/pm/inbox/2026-05-28-from-atlas-sprint-43-rule-13-PASS-formal-signoff.md`). PM Rule 10 design-gate carried in US-373 vc6 (Atlas PASS on `specs/architecture.md` updates recorded BEFORE deploy; gates deploy not just merge, closes Sprint 39 T2/T7 gap). Three non-blocking observations from Atlas verdict: Windows-encoding gotcha for ad-hoc Python audits; IRL clauses folded into per-Story criteria (Atlas ratifies as preferred pattern; V0.28+ spec amendment recommended); Argus lane preserved separately (CIO proxy-approved 2026-05-28).*
 
 **Triggers**:
 - **PM Rule 10** (load-bearing subsystem change): F-107 touches Pi DriveDetector + lifecycle (load-bearing); F-076/F-108/F-109 add 3 tables + rename columns (schema = load-bearing); US-373 is the in-sprint `specs/architecture.md` update artifact (PM Rule 10 DoD).
