@@ -106,6 +106,7 @@ def validateBacklog(data: dict[str, Any]) -> dict[str, Any]:
                 f"Story {story['id']}: invalid status {story['status']!r}"
             )
         _validateValidationCriteria(story)
+        _validateDefinitionOfDone(story)
         _validateTasks(story)
 
     return data
@@ -113,24 +114,70 @@ def validateBacklog(data: dict[str, Any]) -> dict[str, Any]:
 
 def _validateValidationCriteria(story: dict[str, Any]) -> None:
     """
-    Validate that validationCriteria is a list of {action, outcome} dicts.
+    Validate that validationCriteria is a non-empty list of {action, outcome} dicts.
+
+    Per spec 2026-05-28 (CIO directive #2): every Story must have at least one
+    testable (action, outcome) pair so Ralph has a completion signal and Atlas
+    has reviewable criteria.
 
     Args:
         story: Story dict to validate.
 
     Raises:
         BacklogValidationError: If validationCriteria is missing, not a list,
-            or contains items without exactly {action, outcome} keys.
+            empty, or contains items without exactly {action, outcome} non-empty strings.
     """
     vc = story.get("validationCriteria")
     if not isinstance(vc, list):
         raise BacklogValidationError(
             f"Story {story['id']}: validationCriteria must be a list"
         )
+    if len(vc) == 0:
+        raise BacklogValidationError(
+            f"Story {story['id']}: validationCriteria must be non-empty "
+            f"(at least 1 (action, outcome) pair) per directive 2026-05-23 #2"
+        )
     for i, item in enumerate(vc):
         if not isinstance(item, dict) or set(item.keys()) != {"action", "outcome"}:
             raise BacklogValidationError(
                 f"Story {story['id']}: validationCriteria[{i}] must have keys {{action, outcome}}, "
+                f"got {item!r}"
+            )
+        if not item["action"] or not item["outcome"]:
+            raise BacklogValidationError(
+                f"Story {story['id']}: validationCriteria[{i}] action and outcome "
+                f"must both be non-empty strings"
+            )
+
+
+def _validateDefinitionOfDone(story: dict[str, Any]) -> None:
+    """
+    Validate that definitionOfDone is a non-empty list of non-empty strings.
+
+    Per spec 2026-05-28 (CIO directive #2): every Story must have at least one
+    DoD criterion so Ralph knows when complete.
+
+    Args:
+        story: Story dict to validate.
+
+    Raises:
+        BacklogValidationError: If definitionOfDone is missing, not a list,
+            empty, or contains non-string / empty-string items.
+    """
+    dod = story.get("definitionOfDone")
+    if not isinstance(dod, list):
+        raise BacklogValidationError(
+            f"Story {story['id']}: definitionOfDone must be a list"
+        )
+    if len(dod) == 0:
+        raise BacklogValidationError(
+            f"Story {story['id']}: definitionOfDone must be non-empty "
+            f"(at least 1 criterion) per directive 2026-05-23 #2"
+        )
+    for i, item in enumerate(dod):
+        if not isinstance(item, str) or not item.strip():
+            raise BacklogValidationError(
+                f"Story {story['id']}: definitionOfDone[{i}] must be a non-empty string, "
                 f"got {item!r}"
             )
 
