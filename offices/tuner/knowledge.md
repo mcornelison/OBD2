@@ -1,7 +1,7 @@
 # Spool's Tuning Knowledge Base
 
 > This is the single source of truth for all engine tuning knowledge in the Eclipse OBD-II project.
-> Maintained by Spool (Tuning SME). **2026-05-22 ECU SWAP (Session 19):** CIO swapped to a new modified-EPROM ECU (ECMLink-V3-friendly tune target). Drive 11 knock-retard reference ARCHIVED as prior-ECU historical; Drive 26 establishes the new working baseline (first knock-retard event observed during city tip-in: 18° pull, recovered cleanly). New tune ~10° more aggressive at sustained peak load vs prior. New OBD capability probe at `scripts/probe_obd_capabilities.sh` — Mode 09 silent, Mode 22 not implemented on this ECU, ECMLink USB+PC required for goldmine data. Two new caveats: SPEED PID reads ~2× actual ground speed on new ECU; cannot fingerprint EPROM via Mode 09. **2026-05-15 FUEL-GRADE CORRECTION (CIO directive):** all pre-mod shelf drives (3–16) were [EXACT: 93 octane — DO NOT CHANGE], NOT 91 as previously recorded. CIO misreported earlier; 93 octane is standard for all past + future fillings until E85 flex-fuel sensor install. Knock-retard baseline below is a 93-octane baseline; "creep up on 93" prediction VOID. Prior major update: 2026-05-12 (Session 12 — Drive 11 captured = **first clean car-coupled Pi-powered drive post-B-063 fuse-box install**; new under-load records (147 km/h = 91 mph, 5441 RPM, 100% load); first clean **knock-retard signature characterization** — ECU pulls timing ~12° from cruise-avg 24° to high-load 12° in 4500-5000 RPM mid-range knock window, correctly recovering above 5000 RPM; engine grade-A healthy across expanded envelope; 91 octane behaviour documented as new tuning baseline. Pre-mod shelf grows to 4 driving entries (drives 6/7/8/11). Prior update 2026-05-08 (Session 9 — Drive 6 + Drive 7 first under-load capture).
+> Maintained by Spool (Tuning SME). **2026-05-27 ECU IDENTITY CLARIFIED + WIDEBAND PRE-WIRE PLAN LOGGED (Session 20):** CIO ECU confirmed P/N **MD335287** — 1997 DSM non-EPROM ECU with ECMLink V3 flash modification, plug-installed in 1998 chassis (per [ECMtuning Wiki](https://www.ecmtuning.com/wiki/use_ecmlink_in_98_99_dsm)). Prior "modified EPROM" framing throughout sessions/inboxes was loose terminology — the chip is flash-modified non-EPROM, not socketed EPROM. New `### ECU Identity` subsection added under The Vehicle. New `### Pre-Wire Plan for Wideband O2 (ECU-Side)` + `### Pre-Wire Plan for E85 Flex-Fuel Sensor — DO NOT pre-wire from ECU` subsections added in ECMLink V3 Reference: Pin 75 (Rear O2 signal) + Pin 92 (Sensor Ground reference) on Connector B-56 = the pre-wire plan; flex-fuel routes through MAF connector (not ECU) and requires Speed Density mode (now flagged as MANDATORY DEPENDENCY in Flex Fuel Support subsection). Prior major update: **2026-05-22 ECU SWAP (Session 19):** CIO swapped to a new modified-EPROM ECU (ECMLink-V3-friendly tune target). Drive 11 knock-retard reference ARCHIVED as prior-ECU historical; Drive 26 establishes the new working baseline (first knock-retard event observed during city tip-in: 18° pull, recovered cleanly). New tune ~10° more aggressive at sustained peak load vs prior. New OBD capability probe at `scripts/probe_obd_capabilities.sh` — Mode 09 silent, Mode 22 not implemented on this ECU, ECMLink USB+PC required for goldmine data. Two new caveats: SPEED PID reads ~2× actual ground speed on new ECU; cannot fingerprint EPROM via Mode 09. **2026-05-15 FUEL-GRADE CORRECTION (CIO directive):** all pre-mod shelf drives (3–16) were [EXACT: 93 octane — DO NOT CHANGE], NOT 91 as previously recorded. CIO misreported earlier; 93 octane is standard for all past + future fillings until E85 flex-fuel sensor install. Knock-retard baseline below is a 93-octane baseline; "creep up on 93" prediction VOID. Prior major update: 2026-05-12 (Session 12 — Drive 11 captured = **first clean car-coupled Pi-powered drive post-B-063 fuse-box install**; new under-load records (147 km/h = 91 mph, 5441 RPM, 100% load); first clean **knock-retard signature characterization** — ECU pulls timing ~12° from cruise-avg 24° to high-load 12° in 4500-5000 RPM mid-range knock window, correctly recovering above 5000 RPM; engine grade-A healthy across expanded envelope; 91 octane behaviour documented as new tuning baseline. Pre-mod shelf grows to 4 driving entries (drives 6/7/8/11). Prior update 2026-05-08 (Session 9 — Drive 6 + Drive 7 first under-load capture).
 
 ## SPEC-WRITING DISCIPLINE — DO NOT CHANGE Markers
 
@@ -89,12 +89,37 @@ When writing tuning specs with exact values (thresholds, limits, vehicle-specifi
 | **Engine** | 4G63 DOHC Turbo |
 | **Displacement** | 1,997 cc (2.0L) |
 | **Transmission** | Manual (assumed) |
-| **ECU** | Stock with modified EPROM |
+| **ECU** | 1997 DSM ECU (P/N **MD335287**), non-EPROM with ECMLink V3 flash modification — see [ECU Identity](#ecu-identity) below |
 | **OBD-II Protocol** | ISO 9141-2 (K-Line) |
 | **Generation** | 2G DSM (1995-1999) |
 | **Odometer** | ~76,000 miles (as of 2026) |
 | **Usage** | Summer only, garage stored winters. Low-stress duty cycle. |
 | **Crankshaft** | 7-bolt (1995.5+ production) |
+
+### ECU Identity
+
+The 1998/1999 DSM factory ECU has copy protection that blocks ECMLink V3 modification. The accepted workaround — and what CIO has installed — is to substitute a 1997 DSM ECU (which IS ECMLink-modifiable) and run it in the 98 chassis as a direct plug-in replacement.
+
+| Attribute | Value |
+|-----------|-------|
+| **Part number** | **MD335287** |
+| **Year base** | 1997 DSM |
+| **Memory type** | Non-EPROM (factory flash, NOT a socketed EPROM chip) |
+| **Modification** | ECMLink V3 flash-module modification (allows ECMLink reflash via diagnostic port) |
+| **Currently loaded** | Prior tuner's custom tune (specific signature unknown — Mode 09 silent on this ECU, ECMLink USB+PC required to read calibration ID) |
+| **Connector layout** | Identical to 1998/1999 OEM (B-53/B-54/B-55/B-56) — direct plug-in, no harness modification |
+| **Cam angle sensor** | Compatible with 98/99 cam angle sensor (no harness swap or ECMLink checkbox needed) |
+| **Sibling P/N** | MD326328 (equivalent, same ECMLink-supported workaround) |
+
+**Loose-terminology cleanup**: prior sessions and inboxes refer to this ECU as "modified EPROM" — that's the colloquial DSM phrase but technically incorrect. The chip is a flash-modified 97 non-EPROM. If searching for service or documentation, use "**ECMLink V3 flash mod**" or "**97 non-EPROM ECU conversion**" — NOT "EPROM swap" (which is the 95-96 socketed-chip path, not what we have).
+
+**Capability boundaries on this ECU surface** (established Drive 25, 2026-05-22):
+- Mode 09 (calibration identity): SILENT — cannot fingerprint the loaded EPROM via OBD-II
+- Mode 22 (vendor enhanced): NOT IMPLEMENTED — cannot reach ECMLink-internal data (knock retard, knock sum, per-cylinder fuel/timing, target AFR, base advance) via OBDLink-via-Pi pipe
+- **Project pipe is for monitoring; ECMLink V3 software + USB-to-serial cable is the only path to deep tuning data.**
+- SPEED PID calibration drift: this ECU reads ~2× actual ground speed (likely modified VSS calibration constants in the loaded tune); divide by ~2 for ground-truth estimate until a GPS-correlation calibration run lands.
+
+**Source**: [ECMtuning Wiki — Using ECMLink in 98/99 DSM](https://www.ecmtuning.com/wiki/use_ecmlink_in_98_99_dsm)
 
 ### Current Modifications (Installed)
 | Mod | Tuning Impact |
@@ -1139,6 +1164,14 @@ These are the parameters that make ECMLink transformative for tuning:
 - E85 requires ~30% more fuel volume — injector sizing must account for this
 - E85 is more knock-resistant (higher octane equivalent ~105) — allows more timing advance
 
+**⚠ MANDATORY DEPENDENCY — Speed Density mode required for 2G flex-fuel install**:
+- ECMLink V3 reads the ethanol sensor frequency on the **ECU's existing MAF input pin** (Pin 90 on Connector B-56). The MAF stops being the MAF and starts being the flex-fuel sensor input.
+- This means the MAF must be disabled in ECMLink config, and the ECU must run in Speed Density mode using a **GM 3-bar MAP sensor + tuned VE table** instead of measured MAF airflow.
+- **There is no MAF-mode flex-fuel path on the standard ECMLink 2G install.** Going E85 = going SD.
+- Required hardware: GM 3-bar MAP sensor (~$60-80) + vacuum line + Weatherpack pigtail (~$15). IAT sensor already present.
+- Required tuning labor: VE table calibration across full RPM × MAP range. Plan 5-15 datalogged driving sessions to dial in before E85 hardware activation. Without a properly tuned VE table the car drives WORSE than stock — rich at low load, lean at high load, possible misfires.
+- Decision trigger: SD mode is unnecessary on stock TD04-13G (MAF works fine at this power level). The ONE reason to go SD on our car is "I want E85 flex-fuel on ECMLink." If E85 is not on the near-term path, defer SD mode.
+
 **Anti-Lag Warning**:
 - Retards timing dramatically to combust fuel in the exhaust manifold
 - Keeps turbine spinning during throttle lift
@@ -1164,6 +1197,59 @@ These are the parameters that make ECMLink transformative for tuning:
 | **Zeitronix Zt-2** | Popular for standalone logging without ECMLink. |
 
 All use Bosch LSU 4.9 sensor. Mount bung in downpipe, 18-24" after turbo. Do NOT reuse stock narrowband location — weld a separate bung.
+
+### Pre-Wire Plan for Wideband O2 (ECU-Side)
+
+**Context**: CIO is doing a future-proof pre-wire of wideband leads while the new MD335287 ECU is accessible (2026-05-27 advisory). Goal: pull leads now, cap them, install AEM 30-0300 X-Series UEGO controller later without re-opening the ECU.
+
+**Authoritative source for pin numbers**: [ECMtuning 2G ECU Pinout PDF](https://www.ecmtuning.com/images/forums/2GECUPinout.pdf) — viewed looking INTO the ECU with male pins pointing out. **Confirm connector orientation before cutting** (looking at the harness side mirrors the pin numbers).
+
+**Two leads to pull, both on Connector B-56**:
+
+| Lead | ECU Pin | Stock Wire Color | What it is | Future AEM 30-0300 Connection |
+|---|---|---|---|---|
+| Signal | **Pin 75** | W (White) | Rear O2 Sensor signal input | AEM **white** wire (0-5V analog AFR) |
+| Signal-ground reference | **Pin 92** | B (Black) | Sensor Ground (analog ground reference) | AEM **brown** wire (signal ground) |
+
+**Why Pin 75 (Rear O2), not Pin 76 (Front O2)**: ECMLink V3 documents Pin 76 as usable "only when Open Loop is selected or narrowband O2 simulation is enabled" — more complex config path. Pin 75 is the community consensus: wire wideband white to it, then disable rear O2 monitor in ECMLink config (suppresses CEL). Rear O2's only stock job is emissions readiness — fine to lose for tuning. If Illinois biennial emissions test flags it, swap the wideband output back to stock rear O2 for that day.
+
+**Why Pin 92 (Sensor Ground) is non-negotiable**: Wideband signal grounded to chassis instead of the ECU's sensor-ground reference picks up alternator whine + ignition noise — AFR readings become garbage. Routing the AEM's brown wire back to Pin 92 makes the signal share the ECU's analog reference. Clean reading.
+
+**Alternative signal pin if pre-wiring Pin 75 is impractical**: **Pin 73 (MDP, Light Green/Black)** — the "most freely available" general-purpose analog input per the ECMLink wiki. Many 2G builds don't use the MDP sensor at all. Trade-off: less community documentation but a truly unused pin.
+
+**Wire spec**:
+- 20-22 AWG twisted-pair or 2-conductor shielded cable (shielded preferred for the long A-pillar run)
+- Length: **~8 feet** ECU to A-pillar gauge pod (5-7 ft actual + 50% safety margin for routing)
+- Label both ends: "WB-SIG" (Pin 75 tap) and "WB-GND" (Pin 92 tap)
+- Cap free ends with heat-shrink + electrical tape until install day
+
+**Routing rules** (skip these and the wideband signal will be noisy):
+- Route AWAY from ignition wires + alternator harness — induced noise ruins analog AFR
+- Pass firewall through OEM grommet (driver's side) if free capacity exists, else add dedicated grommet
+- A-pillar mounts use 52mm dual pod (standard DSM setup — boost gauge + wideband gauge together)
+
+**Do NOT power the AEM controller from an ECU pin**: AEM 30-0300 controller draws ~2A on the heater circuit during warm-up — too much for any ECU sensor pin. Run controller 12V from a dedicated fused switched-ignition circuit (under-dash or via a relay off the fuel-pump trigger). Only the white **signal** wire returns to the ECU at Pin 75. Chassis ground for the controller goes to chassis ground (NOT Pin 92 — Pin 92 is for the signal-reference brown wire only).
+
+**Sources**:
+- [ECMtuning Wiki — External Sensor Input](https://www.ecmtuning.com/wiki/externalsensorinput) (Pin 75 / Pin 73 / Pin 76 documentation)
+- [DSMtuners — AEM WB and ECMLink](https://www.dsmtuners.com/threads/aem-wb-and-ecmlink.382721/) (community consensus on routing)
+- [DSMtuners — ECMLink V3 WBO2 Captured Value](https://www.dsmtuners.com/threads/ecmlink-v3-wbo2-captured-value.434274/)
+
+### Pre-Wire Plan for E85 Flex-Fuel Sensor — DO NOT pre-wire from ECU
+
+**Standard ECMLink V3 flex-fuel routing for 2G DSM does NOT touch the ECU connectors.** The GM/Continental ethanol sensor wires to the **MAF connector** under the hood:
+
+| Sensor wire | MAF connector pin | Stock MAF wire color |
+|---|---|---|
+| Signal ("Out") | Pin 3 | Blue with yellow stripe |
+| 12V power ("Vcc") | Pin 4 | Thick red |
+| Ground | (chassis) | — |
+
+The ECU "sees" the ethanol frequency on its existing **MAF input (Pin 90 — Light Yellow on Connector B-56)** because ECMLink software reinterprets that pin as the flex-fuel input when AuxMaps/EthSensor mode is enabled. **No ECU-side pre-wire helps with flex-fuel** — all the wiring lives at the MAF plug in the engine bay, accessible without opening the ECU.
+
+**MAJOR PAIRED DEPENDENCY**: This standard ECMLink flex-fuel install **requires Speed Density mode** (MAF disabled, GM 3-bar MAP sensor installed and wired). See [Flex Fuel Support](#flex-fuel-support) below — same physical pin can't do both MAF airflow AND flex-fuel frequency. Going E85 on this ECU means committing to SD mode + VE table calibration work.
+
+**Source**: [ECMtuning Wiki — Ethanol Sensor Support](http://www.ecmtuning.com/wiki/ethanolsupport)
 
 ### ECMLink Tuning Order (When Installed)
 

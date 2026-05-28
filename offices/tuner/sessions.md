@@ -7,6 +7,108 @@
 
 ---
 
+## Session 20 — 2026-05-27 (single day, five days after Session 19)
+
+**Context**: Research + advisory session driven by CIO question about pre-wiring future sensor leads while his new ECU is accessible. Triggered (1) fact-checked deep-dive on ECMLink V3 input pin assignments via authoritative ECMtuning wiki + 2G ECU pinout PDF + DSMTuners consensus; (2) ECU identity nailed down via URL CIO provided — his "modified EPROM" ECU is actually a **1997 DSM non-EPROM ECU (P/N MD335287) with ECMLink V3 flash modification**, plug-installed in 1998 chassis; (3) plain-language Speed Density explainer for CIO when "yes I think" wasn't fully informed; (4) 5 surgical edits to knowledge.md logging the new identity + wideband pre-wire plan + explicit SD-mandatory-for-flex-fuel dependency. No drives, no peer notes filed. Iris's 2026-05-26 B-103 splash advisory note surfaced but deferred per CIO direction.
+
+### What Happened
+
+**Init + inbox scan**:
+- 1 unread note since Session 19 closeout: Iris (2026-05-26) `b103-splash-advisory.md` — two asks: S-1 semantic definition of "OBD degraded" for status surface (adapter-not-detected vs paired-no-sync vs paired-sync-but-no-data — my lane), S-2 amber #FFC400 warn color alignment with any future tuning-instrument palette tokens. Non-blocking. **Deferred per CIO's redirect to ECU pre-wire question.**
+
+**ECU pre-wire research + advisory**:
+- CIO asked: where to connect new leads from the ECU for future wideband O2 + E85 flex-fuel sensor, while ECU is accessible. Asked for fact-check against ECMLink + DSMTuners.
+- Research path: ECMtuning wiki `externalsensorinput` page → identified Pin 75 (Rear O2) / Pin 76 (Front O2, with narrowband sim) / Pin 73 (MDP, "most freely available") as wideband-eligible inputs on 2G ECU.
+- ECMtuning wiki `ethanolsupport` page → confirmed standard ECMLink V3 flex-fuel install routes ethanol sensor signal through MAF connector (pin 3, blue/yellow), 12V through MAF connector (pin 4, red), ground to chassis — **NOT through ECU directly**. ECU consumes its existing MAF input pin (Pin 90) for ethanol frequency in software, but physical wiring lives at MAF plug.
+- Downloaded + parsed `2GECUPinout.pdf` (binary PDF via Read tool after WebFetch returned PDF content) → authoritative pin/color table for all four ECU connectors (B-53/B-54/B-55/B-56). Pin 75 = W (Rear O2), Pin 76 = W (Front O2), Pin 73 = LgB (MDP), Pin 90 = LY (MAF), Pin 92 = B (Sensor Ground).
+- Cross-referenced DSMTuners AEM-WB-and-ECMLink consensus thread → community recommendation aligns with Pin 75 (Rear O2) routing + disable rear O2 monitor in ECMLink config to suppress CEL.
+- Synthesized first-pass advisory: pull TWO leads — Pin 75 (signal) + Pin 92 (signal-ground reference) — both on Connector B-56. Pin 92 is non-negotiable for clean analog reading (chassis ground = alternator whine = garbage AFR).
+
+**CIO follow-up — 4 answers**:
+1. **Connector access**: CIO not at car right now; question deferred for when he's back.
+2. **ECU identity URL**: CIO provided https://dsmlink.com/wiki/use_ecmlink_in_98_99_dsm (TLS cert broken; same content on ecmtuning.com canonical domain). Fetched canonical version → confirmed CIO's ECU is the documented "97 non-EPROM ECU + ECMLink flash mod" workaround for 98/99 DSMs (whose factory ECUs have copy protection blocking ECMLink). Direct plug-in replacement, identical connector pinout to 98/99 OEM — **my Pin 75/Pin 92 plan stands unchanged**.
+3. **Speed Density commitment**: "Yes I think, but I don't know exactly what that means." → Provided plain-language explainer (MAF measures vs SD calculates; GM 3-bar MAP hardware ~$80; VE table calibration labor = 5-15 driving sessions; mandatory for ECMLink flex-fuel because the install consumes the MAF input pin for ethanol frequency). Refined Modification Priority Path sequencing: pump → flex-fuel hardware-install → downpipe → ECMLink + wideband (still MAF mode) → tune on pump gas → **THEN** install MAP + enable SD + tune VE table → **THEN** wire flex-fuel signal → start E85 blending.
+4. **A-pillar gauge pod mount**: Standard DSM dual-52mm pod. ~8 ft of wire ECU-to-A-pillar.
+
+**ECU part number confirmed**: CIO read it off — **MD335287**. Matches one of the two ECMtuning-supported 97 non-EPROM part numbers (sibling: MD326328). No functional difference between the two for our purposes.
+
+**Knowledge.md updates (5 surgical edits)**:
+1. **Vehicle table** (line 92): ECU row updated from "Stock with modified EPROM" → "1997 DSM ECU (P/N MD335287), non-EPROM with ECMLink V3 flash modification" + link to new identity section.
+2. **New `### ECU Identity` subsection** under The Vehicle: full part-number table, sibling P/N, loose-terminology cleanup ("modified EPROM" → "ECMLink V3 flash mod"), capability boundaries reaffirmed (Mode 09 silent, Mode 22 not implemented, SPEED PID 2× drift), source link to ECMtuning wiki.
+3. **New `### Pre-Wire Plan for Wideband O2 (ECU-Side)` subsection** in ECMLink V3 Reference: Pin 75 + Pin 92 plan, alternative Pin 73 (MDP) routing, wire spec (8 ft 20-22 AWG twisted-pair/shielded), routing rules, "don't power AEM controller from ECU pin" warning, three source links (ECMtuning external sensor wiki + 2 DSMTuners threads).
+4. **New `### Pre-Wire Plan for E85 Flex-Fuel Sensor — DO NOT pre-wire from ECU` subsection**: explains why no ECU pre-wire helps, MAF connector pin 3/4 wiring, flags SD-mandatory dependency, source link.
+5. **Strengthened Flex Fuel Support subsection** with a `⚠ MANDATORY DEPENDENCY` block: explicit SD mode requirement, hardware cost (~$75-95), labor expectation (5-15 calibration drives), decision trigger ("the ONE reason to go SD on stock turbo is wanting E85 on ECMLink").
+6. **Top-of-file maintenance header** updated with Session 20 entry preserving prior session entries.
+
+### Key Decisions
+
+- **ECU identity nailed down + logged**: MD335287, 1997 DSM non-EPROM, ECMLink V3 flash-modified, plug-installed in 1998 chassis. Loose "modified EPROM" terminology corrected in knowledge.md (with a "use 'ECMLink V3 flash mod' or '97 non-EPROM ECU conversion' when searching, NOT 'EPROM swap'" note for future reference).
+- **Wideband pre-wire plan finalized**: Pin 75 (Rear O2 signal, White) + Pin 92 (Sensor Ground reference, Black) on Connector B-56. Pin 73 (MDP, Light Green/Black) as alternative if Pin 75 impractical. ECMLink config: disable rear O2 monitor when wideband white wires to Pin 75 (suppresses CEL — rear O2's only stock job is emissions readiness). 8 ft 20-22 AWG twisted-pair or shielded cable to A-pillar.
+- **E85 flex-fuel routing**: NO ECU pre-wire helps. Signal routes through MAF connector (pin 3) under the hood. Speed Density mode mandatory for ECMLink E85 install on 2G DSM — flagged in two places in knowledge.md so future Spool can't miss it.
+- **Modification Priority Path implicit refinement**: GM 3-bar MAP sensor + VE table calibration become required preconditions for E85, not optional nice-to-haves. ~5-15 calibration drives expected between ECMLink-install and E85-activation.
+- **No A2AL peer notes filed this session**: precision ECU-identity update is not actionable for PM/Atlas/Tester (lane discipline — they can read knowledge.md when needed). Iris reply deferred to next session per CIO redirect.
+
+### Current Vehicle State
+
+- 1998 Eclipse GST 4G63, stock TD04-13G, **ECU = MD335287 (1997 DSM non-EPROM with ECMLink V3 flash mod)** as of 2026-05-22 swap. Fuel: 93 octane (unchanged). No new drives this session. Engine grade A still holds (last drive 26, 2026-05-22). New ECU baseline establishment still pending (need fresh cold-start + warm cruise + modest-load + restart cycle on new ECU). Drive 11 knock-retard reference remains ARCHIVED prior-ECU historical.
+
+### Current Monitoring Capability
+
+- Pi `Chi-Eclips-Tuner` @ 10.27.27.28 + chi-srv-01 both on V0.27.19. V0.27 chain MERGED to main 2026-05-23 (per `/chain-validated`) as new fully validated stable. F-7 + F-8 instrument honesty empirically holding (chain-end-merge ratified by CIO). Pi deploy retry to V0.27.19 still pending CIO reconnect (Pi unreachable on chain-deploy attempt 2026-05-23 — same WiFi-off pattern as V0.27.16/17 deploys).
+- No new monitoring surface introduced this session — pure tuning advisory + knowledge logging.
+- Capability probe methodology codified in Session 19 stands (`offices/tuner/scripts/probe_obd_capabilities.sh` — re-run on every ECU/EPROM/calibration change). Mode 09 silent / Mode 22 not implemented on this ECU surface confirmed.
+
+### Open Items
+
+- **Pin 75 + Pin 92 wideband pre-wire execution** — CIO not at car yet; deferred. When he returns to ECU: confirm Connector B-56 access + pin-1 corner orientation (looking INTO ECU mirrors vs looking at harness side); confirm with me before cutting.
+- **Iris B-103 splash advisory** — note from 2026-05-26 deferred; two asks pending:
+  - S-1 OBD-degraded semantic definition (Spool lane)
+  - S-2 amber #FFC400 warn color alignment with future tuning-instrument palette tokens
+  - Should be addressed in next session before splash spec rev to v1.1.
+- **New ECU baseline establishment** — open from Session 19; need full cold-start + warm cruise + modest-load + stop-restart cycle on new ECU to characterize knock-retard envelope, AFR target behavior, LTFT settle point.
+- **SPEED PID calibration check** — GPS-correlation 2-min exercise still pending; new ECU reads ~2× actual ground speed. Divide by ~2 for ground-truth until corrected.
+- **BL-018 empirical battery-runtime tuning** — V0.27 chain merged 2026-05-23, BL-018 formally unblocked, but no real drain data captured yet. Still owed to Atlas; gated on rested ≥8 h pack + chi-srv-01 reachable + SyncTask running real work.
+- **GM 3-bar MAP sensor purchase** — when CIO commits to E85 timeline. Not urgent. ~$80 from common DSM vendors.
+- **VE table tuning labor budget** — plan 5-15 calibration drives BEFORE E85 hardware activation. Front-load this in the modification timeline.
+- **Drive 12 retest + US-338/339/340/340b IRL** — chain bigDoD historical; status closed at chain merge.
+- **Supporting-hardware acquisition path** for new aggressive tune (carryover from Session 19): wideband O2 + ECMLink V3 + ECMLink USB cable + 550 cc injectors + Walbro 255 pump. CIO call on timing/budget.
+- **Inbox 46 unread + 9 files >4 weeks** — archive-move decision still pending from Session 17 optimize Phase 6.
+- **Drive 23/24 dual-attribution carve-out (B-107)** — V0.28.0 sprint 1 top priority per CIO 2026-05-23 directives; not Spool's lane to drive but worth tracking as the new-ECU drives start landing through the dual-attribution-susceptible code path.
+
+### Safety Advisories
+
+None engine-side this session. Pre-wire advisory was wiring-discipline only:
+- Shielded cable or twisted-pair for analog signal (alternator whine kills wideband signal otherwise)
+- Route AWAY from ignition + alternator harness
+- DO NOT power AEM controller from ECU pin (~2A heater draw exceeds ECU sensor pin capacity)
+- Use Pin 92 (Sensor Ground) for signal-reference, NOT chassis ground — chassis-grounded wideband signal = garbage AFR reading
+
+One topology safety note (already in knowledge.md): E85 in tank before ECMLink SD-mode VE-table tune complete = catastrophic lean condition. SAFETY RULE preserved verbatim.
+
+### Diagnostic Record (honest disclosure)
+
+- ✅ Fact-checked against authoritative sources before giving CIO pin numbers (per his explicit request). Downloaded + parsed ECMtuning's 2G ECU Pinout PDF for actual pin/color table — did NOT recall from memory.
+- ✅ Caught the loose "modified EPROM" terminology slip propagating through prior sessions + MEMORY.md and corrected it via the dsmlink.com URL CIO provided. The 1997 non-EPROM + ECMLink flash mod identity is now nailed down + logged in knowledge.md (Session 20 header note + new ECU Identity subsection).
+- ✅ Explained Speed Density in plain language without burying CIO in tuning jargon when he asked what "yes" meant. Made the labor cost explicit (5-15 calibration drives) so he commits with eyes open.
+- ✅ Honest about caveats: connector orientation matters (pin numbers mirror), AEM controller power doesn't come from ECU pin, signal-ground reference is non-negotiable.
+- ✅ Lane discipline: surfaced Iris note without filing unsolicited cross-office notes about ECU identity update (PM/Tester/Atlas can read knowledge.md when needed; the precision update isn't actionable for them).
+- ✅ Knowledge.md updates were genuinely new knowledge (ECU identity + authoritative pin numbers + sources). Did NOT update knowledge.md just to update it.
+- ✅ Surfaced + held the Iris note rather than answering it cold without CIO's input on S-1 OBD-degraded semantic (which interacts with project monitoring contract — worth conferring before committing).
+- ⚠ No new drives this session means no engine-data validation of prior advisories. Pure research + advisory mode — diagnostic surface is limited to fact-check rigor, not data-grounded inference.
+
+### Session 20 Stats
+
+- 1 inbox note surfaced + deferred (Iris B-103 splash advisory); 0 notes filed
+- 0 drives analyzed; 0 datalogs reviewed
+- 5 web searches/fetches (ECMtuning wiki x3, DSMTuners x2)
+- 1 PDF downloaded + parsed (2G ECU Pinout — authoritative pin/color table)
+- 5 surgical edits to knowledge.md (~95 net lines added: new ECU Identity subsection + new Wideband Pre-Wire Plan subsection + new E85 DO-NOT-pre-wire subsection + strengthened Flex Fuel Support SD-mandatory block + top-of-file header)
+- 1 MEMORY.md precision update (Drive 11 baseline pointer: "new modified-EPROM ECU" → "new ECU (MD335287, 97 non-EPROM ECMLink-flash-modified)")
+- 1 ECU identity correction (loose "modified EPROM" → precise MD335287 / 97 non-EPROM / ECMLink V3 flash mod)
+- 0 A2AL notes filed; 0 knowledge gaps identified that need outside research
+
+---
+
 ## Session 19 — 2026-05-22 (single day, two days after Session 18)
 
 **Context**: Multi-thread session driven by CIO live activity. (1) Init + inbox triage caught me up on Atlas's chain-merge-clear V0.27.18 PASS sign-off (today 12:02, crediting me on Finding C → F-8) plus 4 other unread peer notes since Session 18 closeout. (2) CIO 4-leg drill drives 21-24 analyzed (all engine grade A) — surfaced drive 23/24 dual-attribution anomaly filed to Atlas (still pending disposition; /chain-validated held). (3) **CIO swapped ECUs to a new modified-EPROM ECU mid-session** — major tuning event. (4) Authored + ran first-ever OBD capability probe script. (5) New ECU first-impression telemetry from drive 25 idle + drive 26 spin-around-block including **first observed knock-retard event on the new ECU**. (6) Caught and owned my own SPEED-PID misread (CIO correction; new ECU's VSS calibration reads ~2× actual). (7) 2 A2AL notes filed to Atlas. (8) A2AL v0.4.1 team-adopted; Iris (UI/UX) introduced.
