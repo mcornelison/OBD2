@@ -92,6 +92,17 @@ def getBranchTip(branchName: str) -> tuple[str | None, str | None]:
     return (hashStr, version)
 
 
+def printBranchSummary() -> None:
+    """Print dev + main branch-tip summary (spec 2026-05-28)."""
+    mainHash, mainVersion = getBranchTip("main")
+    devHash, devVersion = getBranchTip("dev")
+    if mainHash is None:
+        # repo without main -- skip (extremely unusual; CI/clone edge case)
+        return
+    print(formatBranchTips(mainHash, mainVersion, devHash, devVersion))
+    print()
+
+
 def printSprintSummary() -> None:
     """Print sprint.json summary (v1 legacy entry point)."""
     if not SPRINT_PATH.exists():
@@ -369,6 +380,9 @@ def main(argv: list[str]) -> int:
             data = computeRollups(data)
             # persist rolled-up statuses back to disk (cache writeback)
             BACKLOG_PATH.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+            # Show dev + main branch tips at the top of v2 output (spec 2026-05-28)
+            if not anyFlag:
+                printBranchSummary()
             print("=== BACKLOG v2.0.0 ===")
             print(renderTree(data))
             print()
