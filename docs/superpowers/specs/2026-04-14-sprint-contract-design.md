@@ -264,4 +264,23 @@ This spec governs story-level quality. One sprint-level Definition-of-Done rule 
 
 ---
 
+## Validation-Criteria-Upfront Addendum (added 2026-05-28, CIO directive #2)
+
+Per spec `docs/superpowers/specs/2026-05-28-validation-criteria-upfront-contract-design.md`:
+
+Every sprint.json `validation` block includes:
+- `frozenAt`: ISO timestamp set by `prd_to_sprint.py` at PRD→sprint conversion
+- `bigDoDHash`: SHA-256 of canonicalized `bigDefinitionOfDone` content (canonicalization helper at `offices/pm/scripts/_freeze.py`)
+
+`sprint_lint.py` ERRORs on:
+- Hash drift (`bigDefinitionOfDone` modified after freeze)
+- Any story with empty `validationCriteria`
+- Any story with empty `acceptance` (the sprint.json field name for the Story's `definitionOfDone`)
+
+Atlas reviews the validation block before freeze per PM Rule 13. Late additions to `bigDoD` after freeze require a patch sprint (per dev/main workflow spec 2026-05-28). The natural unfreeze path is forking a new patch sprint from `dev`; no explicit unfreeze command exists.
+
+`backlog_schema.py` enforces non-empty `validationCriteria` + `definitionOfDone` on every Story at backlog grooming time. Stories cannot enter a PRD without populated content.
+
+---
+
 *End of spec.*

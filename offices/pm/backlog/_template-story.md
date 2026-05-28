@@ -15,14 +15,14 @@ sourceRefs: []
 <Connextra: As <role>, I want <goal> so that <benefit>.>
 <OR Gherkin: Given <precondition>, when <action>, then <outcome>.>
 
-## Definition of Done
+## Definition of Done (**at least 1 criterion required** so Ralph knows when complete)
 - <criterion>
 - <criterion>
 
 ## Conditional outcomes
 - if <condition> → <expected system response>
 
-## Validation criteria (testable action + expected outcome)
+## Validation criteria (testable action + expected outcome; **at least 1 row required** per spec 2026-05-28)
 | # | Testable action | Expected outcome |
 |---|---|---|
 | V-1 | <action> | <outcome> |
