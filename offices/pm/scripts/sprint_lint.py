@@ -34,6 +34,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 import subprocess
@@ -78,6 +79,19 @@ BANNED_PHRASES = [
 
 TITLE_CAP = 70
 ID_PATTERN = re.compile(r"^US-\d+(-[a-z])?$")
+
+
+def _canonicalizeBigDoD(lines: list[str]) -> str:
+    """Canonicalize a bigDefinitionOfDone list for stable SHA-256 hashing.
+
+    Recipe (per spec 2026-05-28 CIO directive #2): strip each line, sort,
+    join with ``\\n``.  Stable across line reordering and trailing-
+    whitespace edits so a re-serialization of identical content always
+    produces the same hash.  Single source of truth shared by
+    :func:`prd_to_sprint.convertPrdToSprint` (freeze write) and
+    :func:`lintSprintValidation` (freeze-drift read).
+    """
+    return "\n".join(sorted(line.strip() for line in lines))
 
 
 def parseFilesToTouchEntry(entry: str) -> tuple[str, str | None]:
@@ -383,6 +397,46 @@ def lintSprintValidation(sprintData: dict, repoRoot: Path) -> list[str]:
                     errs.append(f"validation.validatesFeatures references unknown feature {fid!r} (not in regression_manifest.json)")
         except (json.JSONDecodeError, OSError):
             pass  # cross-check is best-effort
+
+    # Freeze-drift check per spec 2026-05-28 (CIO directive #2).  Legacy
+    # sprints (V0.27 chain + earlier) lack ``frozenAt`` -- skip silently so
+    # archived contracts continue to lint cleanly.
+    frozenAt = v.get("frozenAt")
+    if frozenAt:
+        stored = v.get("bigDoDHash")
+        if not stored:
+            errs.append(
+                "validation.frozenAt set but validation.bigDoDHash missing -- "
+                "contract corrupt"
+            )
+        elif isinstance(bdod, list):
+            canonical = _canonicalizeBigDoD(bdod)
+            computed = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+            if computed != stored:
+                errs.append(
+                    f"validation.bigDefinitionOfDone modified after freeze at "
+                    f"{frozenAt}; computed={computed[:8]}, stored={stored[:8]}. "
+                    f"Late additions are forbidden per directive 2026-05-23 #2 -- "
+                    f"create a patch sprint instead."
+                )
+
+    # Per-story empty-list checks per spec 2026-05-28.  Every sprint story
+    # MUST carry at least one (action, outcome) validationCriteria pair and
+    # a non-empty DoD so Ralph has a complete-signal contract.
+    for story in sprintData.get("stories", []):
+        vc = story.get("validationCriteria", [])
+        if not vc:
+            errs.append(
+                f"Story {story.get('id', '?')}: validationCriteria empty in sprint.json "
+                f"-- every story must have at least 1 (action, outcome) pair "
+                f"per directive 2026-05-23 #2"
+            )
+        dod = story.get("acceptance", []) or story.get("definitionOfDone", [])
+        if not dod:
+            errs.append(
+                f"Story {story.get('id', '?')}: definitionOfDone empty in sprint.json "
+                f"-- every story must have a non-empty DoD so Ralph knows when complete"
+            )
 
     return errs
 

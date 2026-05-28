@@ -31,6 +31,8 @@ from typing import Any
 
 import frontmatter
 
+from offices.pm.scripts.sprint_lint import _canonicalizeBigDoD
+
 
 def convertPrdToSprint(prdPath: Path, outPath: Path, repoRoot: Path) -> None:
     """Read PRD MD at prdPath, write generated sprint.json to outPath.
@@ -113,8 +115,10 @@ def convertPrdToSprint(prdPath: Path, outPath: Path, repoRoot: Path) -> None:
             )
 
     # Freeze the contract per spec 2026-05-28 (CIO directive #2).
-    # Canonicalize: sort lines + strip whitespace + join with \n.
-    canonicalBigDoD = "\n".join(sorted(line.strip() for line in bigDoD))
+    # Canonicalization recipe lives in sprint_lint._canonicalizeBigDoD so
+    # the freeze write (here) and the freeze-drift read (sprint_lint) share
+    # a single source of truth.
+    canonicalBigDoD = _canonicalizeBigDoD(bigDoD)
     bigDoDHash = hashlib.sha256(canonicalBigDoD.encode("utf-8")).hexdigest()
     frozenAt = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
