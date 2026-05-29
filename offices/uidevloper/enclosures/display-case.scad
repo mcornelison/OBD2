@@ -55,7 +55,8 @@ active_x = 73.44; // active display area (reference only)
 active_y = 48.96;
 
 pcb_x = 85.00;    // PCB long axis (X)
-pcb_y = 49.00;    // PCB short axis (Y)  -- datasheet (corrects ruler 56)
+pcb_y = 56.00;    // PCB short axis (Y) -- datasheet "49mm" is the mount-hole
+                  // vertical c-c (3.5 + 49 + 3.5 = 56), NOT the edge; CIO's 56 was right
 
 // PCB registration behind the glass. Datasheet active area is centered on the
 // glass and the v1 window fit with the PCB centered, so default = centered.
@@ -70,18 +71,16 @@ mh_bot_left_x  = 23.6;   mh_bot_right_x  = 81.6;   // bottom row c-c 58
 mh_from_top    = 3.5;    // top row inset from +Y edge
 mh_from_bottom = 3.5;    // bottom row inset from Y=0 edge
 
-// ---- Standoff seats (CIO's own 10 mm M2.5 HEX metal standoffs) ----------
-// Each seat = a raised CUP with a HEX SOCKET the standoff drops into and rests
-// (anti-rotation, so it won't spin when the case-back screw is driven), a
-// through M2.5 screw clearance hole, and a flush countersink on the outside.
-// Datasheet specs only the thread (M2.5); standard M2.5 hex standoff is 5 mm
-// across-flats — bump `standoff_af` if yours measure different.
-standoff_h        = 10.0;   // CIO's standoffs
-standoff_af       = 5.0;    // hex ACROSS-FLATS (M2.5 std)
-seat_pocket_af    = standoff_af + 0.5;             // hex socket, slip-fit tol
-seat_pocket_depth = 3.0;    // how deep the standoff nests
-seat_cup_d        = seat_pocket_af/cos(30) + 3.0;  // outer cup (~9.4)
-seat_cup_h        = 4.5;    // raised cup height above the floor
+// ---- Standoff seats (CIO's own M2.5 x 11mm + 3mm HEX metal standoffs) ---
+// Standoff = 11 mm hex body + 3 mm male stud. Per CIO the seat pocket is a
+// plain ROUND cylinder, just big enough for the hex body to drop into and
+// rest, with a through M2.5 clearance hole + flush countersink on the outside.
+standoff_body_h   = 11.0;   // M2.5 x 11 hex body
+standoff_stud_h   = 3.0;    // + 3 mm male stud (up through the PCB hole)
+seat_pocket_d     = 7.5;    // ROUND pocket, generous fit for the hex body
+seat_pocket_depth = 3.5;    // how deep the hex body seats
+seat_cup_d        = seat_pocket_d + 3.0;  // outer cup (~10.5)
+seat_cup_h        = 5.0;    // raised cup height above the floor
 seat_screw_d      = 3.0;    // M2.5 screw clearance
 seat_cs_d         = 5.2;    // countersink head dia (outside back face)
 seat_cs_depth     = 1.6;    // countersink depth
@@ -94,7 +93,7 @@ button_from_top  = 3.0;          // "flush with top" — inset from +Y edge
 // ---- Depth stack --------------------------------------------------------
 pcb_thick   = 1.6;
 glass_thick = 3.0;
-pcb_back_z    = wall_t + seat_cup_h + (standoff_h - seat_pocket_depth);  // standoff rests in pocket
+pcb_back_z    = wall_t + seat_cup_h + (standoff_body_h - seat_pocket_depth);  // PCB on the hex body top
 glass_front_z = pcb_back_z + pcb_thick + glass_thick;
 back_shell_z  = glass_front_z;
 front_shell_z = 3.0;
@@ -145,9 +144,12 @@ vent_keepout_disc = disc_diameter/2 + 4.0;
 vent_keepout_seat = seat_cup_d/2 + 3.0;
 
 // ---- #5 cable exit (LEFT / X=0 wall, aligned with the Type-C port) -------
-cable_slot_len = 32.0;   // along Y (short edge)
-cable_slot_h   = 14.0;   // along Z (taller opening per CIO)
-cable_slot_cy  = pcb_origin_y + pcb_y/2;   // centered on the Type-C / left edge
+// CIO: Type-C is on the LEFT short edge, 6.4 mm from the TOP (+Y), 9 mm long.
+usbc_from_top  = 6.4;
+usbc_len       = 9.0;
+cable_slot_len = usbc_len + 9.0;   // 18mm — connector + 90° head clearance
+cable_slot_h   = 14.0;             // along Z (taller opening per CIO)
+cable_slot_cy  = (pcb_origin_y + pcb_y) - usbc_from_top - usbc_len/2;  // centered on the Type-C
 cable_slot_z0  = wall_t + 2.0;
 
 // =========================================================================
@@ -187,9 +189,9 @@ module back_shell() {
 }
 
 module seat_cut() {
-    // hex socket the standoff drops into (anti-rotation), open to the cavity/top
+    // round socket the hex standoff body drops into and rests, open to the cavity/top
     translate([0, 0, wall_t + seat_cup_h - seat_pocket_depth])
-        cylinder(h = seat_pocket_depth + 0.1, d = seat_pocket_af/cos(30), $fn = 6);
+        cylinder(h = seat_pocket_depth + 0.1, d = seat_pocket_d, $fn = 32);
     // M2.5 screw clearance through the pocket floor + case floor
     translate([0, 0, -0.1])
         cylinder(h = wall_t + seat_cup_h - seat_pocket_depth + 0.2, d = seat_screw_d, $fn = 24);

@@ -72,6 +72,19 @@ Both shells render manifold (`Simple: yes`): back 2437 facets, front 62.
 - Depth stack updated: PCB rides on the standoff resting in the pocket
   (`pcb_back_z = wall_t + seat_cup_h + (standoff_h - seat_pocket_depth)`).
 
+## v2.3 (2026-05-29, CIO review round 3)
+
+- **PCB short edge corrected to 56 mm** (was wrongly set to 49). The datasheet
+  "49 mm" is the **mount-hole vertical c-c**, not the edge: 3.5 + 49 + 3.5 = 56.
+  CIO's original "56 wide" was right; I had mis-corrected it. (`pcb_y = 56`;
+  `mh_from_top/bottom = 3.5` → vertical c-c 49.)
+- **Standoff pocket changed from hex socket to a plain ROUND cylinder** per CIO,
+  generously sized (`seat_pocket_d 7.5`) for the hex body to drop in and rest.
+- **Standoff spec = M2.5 × 11 mm body + 3 mm male stud** (`standoff_body_h 11`,
+  `standoff_stud_h 3`); PCB rides on the 11 mm body top.
+- **Cable exit aligned to the Type-C**: LEFT (X=0) wall, centered on the port
+  (CIO: 6.4 mm from top, 9 mm long) — `cable_slot_cy = (pcb top) − 6.4 − 9/2`.
+
 ## File inventory (this folder)
 
 - `display-case.scad` — v2.1 parametric source (single file, `part` selector)

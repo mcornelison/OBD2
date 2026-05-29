@@ -24,10 +24,12 @@ variant, not HDMI) — kept for reference only; **not** our display.
 
 | Fact | Value |
 |------|-------|
-| PCB outer (L × S) | **85.0 × 49.0 mm**  ← (earlier ruler read of "56 wide" was WRONG) |
+| PCB outer (L × S) | **85.0 × 56.0 mm**  (CIO's "56 wide" was correct; the datasheet "49 mm" is the mount-hole vertical c-c, NOT the edge) |
 | Thickness (est., not on sheet) | ~1.6 mm |
 | Mounting thread | **M2.5** |
 | Mount holes | **Ø3 mm**, 4×, **TRAPEZOID** pattern (below) |
+| Standoffs (CIO's) | **M2.5 × 11 mm body + 3 mm male stud** |
+| Type-C port | LEFT short edge: **6.4 mm from top, 9 mm long, 40.6 mm from bottom** (sums to 56 — confirms the 56 mm short edge) |
 
 ### Mount-hole pattern (TRAPEZOID — confirmed from the drawing's dimension chains)
 
@@ -41,10 +43,13 @@ y from the nearest long edge. Both dimension chains sum to 85 mm (validates scal
 | Bottom-left | **23.6 mm** | 3.5 mm from bottom long edge |
 | Bottom-right | **81.6 mm** (bottom row c-c = **58 mm**) | 3.4 mm from right |
 
-CIO's calipers ("58 × 50", "3 from top", "3 from right") were correct — the
-58 and 50 are the two **row** spacings (bottom vs top), not long×short. The
-50 mm "short axis" interpretation was impossible (short axis is only 49 mm);
-that's what flagged the trapezoid.
+**Vertical (short axis):** rows are **3.5 mm from the top edge and 3.5 mm from
+the bottom edge**, vertical **c-c = 49 mm**. So PCB short edge = 3.5 + 49 + 3.5
+= **56 mm** (the datasheet "49 mm" labels this c-c, not the edge — CIO confirmed).
+
+CIO's calipers ("58 × 50", "3 from top", "3 from right") were correct — 58 and
+50 are the two **horizontal row** spacings (bottom vs top), not long×short.
+Overhang: short = 60 − 56 = ~4 mm, long = 93.44 − 85 = ~8.4 mm.
 
 ## Connectors (from datasheet page 2 photo + page 1 drawing)
 
