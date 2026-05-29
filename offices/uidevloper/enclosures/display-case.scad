@@ -70,15 +70,21 @@ mh_bot_left_x  = 23.6;   mh_bot_right_x  = 81.6;   // bottom row c-c 58
 mh_from_top    = 3.5;    // top row inset from +Y edge
 mh_from_bottom = 3.5;    // bottom row inset from Y=0 edge
 
-// ---- Standoff seats (CIO's own 10 mm metal standoffs) -------------------
-standoff_h    = 10.0;
-mount_pad_h   = 2.0;
-seat_pad_d    = 8.5;
-seat_screw_d  = 3.0;   // M2.5 clearance
-seat_cs_d     = 5.2;   // flush countersink head dia (outside back face)
-seat_cs_depth = 1.6;
-seat_reg_d    = 6.6;   // locating recess for standoff base
-seat_reg_h    = 0.6;
+// ---- Standoff seats (CIO's own 10 mm M2.5 HEX metal standoffs) ----------
+// Each seat = a raised CUP with a HEX SOCKET the standoff drops into and rests
+// (anti-rotation, so it won't spin when the case-back screw is driven), a
+// through M2.5 screw clearance hole, and a flush countersink on the outside.
+// Datasheet specs only the thread (M2.5); standard M2.5 hex standoff is 5 mm
+// across-flats — bump `standoff_af` if yours measure different.
+standoff_h        = 10.0;   // CIO's standoffs
+standoff_af       = 5.0;    // hex ACROSS-FLATS (M2.5 std)
+seat_pocket_af    = standoff_af + 0.5;             // hex socket, slip-fit tol
+seat_pocket_depth = 3.0;    // how deep the standoff nests
+seat_cup_d        = seat_pocket_af/cos(30) + 3.0;  // outer cup (~9.4)
+seat_cup_h        = 4.5;    // raised cup height above the floor
+seat_screw_d      = 3.0;    // M2.5 screw clearance
+seat_cs_d         = 5.2;    // countersink head dia (outside back face)
+seat_cs_depth     = 1.6;    // countersink depth
 
 // ---- #4 buttons (back face, near top-left per CIO) ----------------------
 button_hole_dia  = 3.5;
@@ -88,8 +94,8 @@ button_from_top  = 3.0;          // "flush with top" — inset from +Y edge
 // ---- Depth stack --------------------------------------------------------
 pcb_thick   = 1.6;
 glass_thick = 3.0;
-pcb_back_z    = wall_t + mount_pad_h + standoff_h;       // 13.2
-glass_front_z = pcb_back_z + pcb_thick + glass_thick;     // 17.8
+pcb_back_z    = wall_t + seat_cup_h + (standoff_h - seat_pocket_depth);  // standoff rests in pocket
+glass_front_z = pcb_back_z + pcb_thick + glass_thick;
 back_shell_z  = glass_front_z;
 front_shell_z = 3.0;
 case_z        = back_shell_z + (front_shell_z - 1.8);
@@ -136,13 +142,13 @@ vent_hole_d       = 3.5;
 vent_pitch        = 7.0;
 vent_margin       = 6.0;
 vent_keepout_disc = disc_diameter/2 + 4.0;
-vent_keepout_seat = seat_pad_d/2 + 3.0;
+vent_keepout_seat = seat_cup_d/2 + 3.0;
 
-// ---- #5 cable exit (TOP / +Y wall, toward the connector cluster) --------
-cable_slot_w  = 32.0;   // along X
-cable_slot_h  = 14.0;   // along Z (taller opening per CIO)
-cable_slot_cx = pcb_origin_x + 30;   // biased toward left/connectors
-cable_slot_z0 = wall_t + 2.0;
+// ---- #5 cable exit (LEFT / X=0 wall, aligned with the Type-C port) -------
+cable_slot_len = 32.0;   // along Y (short edge)
+cable_slot_h   = 14.0;   // along Z (taller opening per CIO)
+cable_slot_cy  = pcb_origin_y + pcb_y/2;   // centered on the Type-C / left edge
+cable_slot_z0  = wall_t + 2.0;
 
 // =========================================================================
 // HELPERS
@@ -164,11 +170,11 @@ module back_shell() {
                                 back_shell_z - wall_t + 0.1, max(corner_r - wall_t, 0.5));
             }
             for (p = mount_pts)
-                translate([p[0], p[1], wall_t]) cylinder(h = mount_pad_h, d = seat_pad_d, $fn = 32);
+                translate([p[0], p[1], wall_t]) cylinder(h = seat_cup_h, d = seat_cup_d, $fn = 32);
         }
-        // #5 cable exit on the TOP (+Y) wall
-        translate([cable_slot_cx - cable_slot_w/2, case_y - wall_t - 0.1, cable_slot_z0])
-            cube([cable_slot_w, wall_t + 0.2, cable_slot_h]);
+        // #5 cable exit on the LEFT (X=0) wall, aligned with Type-C
+        translate([-0.1, cable_slot_cy - cable_slot_len/2, cable_slot_z0])
+            cube([wall_t + 0.2, cable_slot_len, cable_slot_h]);
         // standoff seat cuts
         for (p = mount_pts) translate([p[0], p[1], 0]) seat_cut();
         // #4 button holes (back face)
@@ -181,9 +187,15 @@ module back_shell() {
 }
 
 module seat_cut() {
-    translate([0, 0, -0.1]) cylinder(h = wall_t + mount_pad_h + 0.2, d = seat_screw_d, $fn = 24);
-    translate([0, 0, -0.01]) cylinder(h = seat_cs_depth, d1 = seat_cs_d, d2 = seat_screw_d, $fn = 24);
-    translate([0, 0, wall_t + mount_pad_h - seat_reg_h]) cylinder(h = seat_reg_h + 0.1, d = seat_reg_d, $fn = 32);
+    // hex socket the standoff drops into (anti-rotation), open to the cavity/top
+    translate([0, 0, wall_t + seat_cup_h - seat_pocket_depth])
+        cylinder(h = seat_pocket_depth + 0.1, d = seat_pocket_af/cos(30), $fn = 6);
+    // M2.5 screw clearance through the pocket floor + case floor
+    translate([0, 0, -0.1])
+        cylinder(h = wall_t + seat_cup_h - seat_pocket_depth + 0.2, d = seat_screw_d, $fn = 24);
+    // flush countersink on the OUTSIDE back face
+    translate([0, 0, -0.01])
+        cylinder(h = seat_cs_depth, d1 = seat_cs_d, d2 = seat_screw_d, $fn = 24);
 }
 
 module vents() {
@@ -248,10 +260,6 @@ module front_shell() {
 module assembly_view() {
     back_shell();
     color("cyan", 0.5) translate([0, 0, back_shell_z]) front_shell();
-    // cues (not printed): red = TOP/+Y (HDMI side), green = LEFT/X=0 (Type-C side)
-    color("red")   translate([case_x/2 - 6, case_y - 3, back_shell_z]) cube([12, 3, 4]);
-    color("green") translate([0, case_y/2 - 6, back_shell_z]) cube([3, 12, 4]);
-    for (p = mount_pts) color("yellow") translate([p[0], p[1], 0]) cylinder(h = wall_t + mount_pad_h, d = seat_pad_d, $fn = 32);
     for (b = button_pts) color("orange") translate([b[0], b[1], 0]) cylinder(h = wall_t, d = button_hole_dia, $fn = 24);
 }
 

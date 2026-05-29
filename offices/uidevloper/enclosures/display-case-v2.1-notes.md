@@ -54,6 +54,24 @@ Both shells render manifold (`Simple: yes`): back 2437 facets, front 62.
 4. **M2.5 screws** for the standoffs (datasheet confirms M2.5 thread).
 5. **Depth stack** — `pcb_thick`/`glass_thick` estimated; confirm the glass meets the bezel on a test print.
 
+## v2.2 (2026-05-29, CIO review round 2)
+
+- **Cable exit moved** from the top (+Y/HDMI) wall to the **LEFT (X=0) wall,
+  centered on the PCB short-edge midpoint** to align with the Type-C port.
+  (`cable_slot_cy = pcb_origin_y + pcb_y/2`; cut through the X=0 wall.)
+- **Standoff seats rebuilt as real HEX SOCKETS**: each seat is a raised cup
+  (`seat_cup_d ~9.4`, `seat_cup_h 4.5`) with a `seat_pocket_depth 3` **hex
+  pocket** (`seat_pocket_af = standoff_af + 0.5`) the hex standoff drops into
+  and rests — anti-rotation when driving the case-back screw — plus the M2.5
+  through clearance hole + flush countersink. v2.1's 0.6 mm skim recess is gone.
+  `standoff_af = 5.0` (M2.5 standard across-flats); **datasheet only specs the
+  M2.5 thread**, so this is the one number to confirm against the physical part.
+- **Orientation cue blocks removed** from the assembly view — the red marker on
+  the +Y rim read as a phantom 3rd clip. Real clip count is unchanged: **2 per
+  long edge, 1 per short edge** (6 total).
+- Depth stack updated: PCB rides on the standoff resting in the pocket
+  (`pcb_back_z = wall_t + seat_cup_h + (standoff_h - seat_pocket_depth)`).
+
 ## File inventory (this folder)
 
 - `display-case.scad` — v2.1 parametric source (single file, `part` selector)
