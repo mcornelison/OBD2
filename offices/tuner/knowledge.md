@@ -79,6 +79,8 @@ When writing tuning specs with exact values (thresholds, limits, vehicle-specifi
 
 ## The Vehicle
 
+> **THIS-car facts are migrating to atomic cards (SSOT) for the MrSpool RAG layer** — see [`vehicle.md`](vehicle.md) (index) + `cards/`. General 4G63 / DSM / tuning craft stays here in `knowledge.md`. ECU Identity is migrated; the rest follows during the RAG sprint (manifest in `vehicle.md`). See `rag-readiness-assessment.md` for the plan.
+
 ### 1998 Mitsubishi Eclipse GST (2G DSM)
 
 | Attribute | Value |
@@ -98,47 +100,12 @@ When writing tuning specs with exact values (thresholds, limits, vehicle-specifi
 
 ### ECU Identity
 
-The 1998/1999 DSM factory ECU has copy protection that blocks ECMLink V3 modification. The accepted workaround — and what CIO has installed — is to substitute a 1997 DSM ECU (which IS ECMLink-modifiable) and run it in the 98 chassis as a direct plug-in replacement.
-
-| Attribute | Value |
-|-----------|-------|
-| **Part number** | **MD335287** |
-| **Year base** | 1997 DSM |
-| **Memory type** | Non-EPROM (factory flash, NOT a socketed EPROM chip) |
-| **Modification** | ECMLink V3 flash-module modification (allows ECMLink reflash via diagnostic port) |
-| **Currently loaded** | Prior tuner's custom tune (specific signature unknown — Mode 09 silent on this ECU, ECMLink USB+PC required to read calibration ID) |
-| **Connector layout** | Identical to 1998/1999 OEM (B-53/B-54/B-55/B-56) — direct plug-in, no harness modification |
-| **Cam angle sensor** | Compatible with 98/99 cam angle sensor (no harness swap or ECMLink checkbox needed) |
-| **Sibling P/N** | MD326328 (equivalent, same ECMLink-supported workaround) |
-
-#### Prior ECU (drives ≤24) — PHOTO-IDENTIFIED 2026-05-29
-
-CIO supplied two photos of the ORIGINAL ECU pulled during the 2026-05-22 swap. It is now fully identified (was previously a `PRE_TRACKING_UNKNOWN` placeholder):
-
-| Attribute | Value |
-|-----------|-------|
-| **Service P/N** | **MD346675** (stamped on case-top barcode label) |
-| **ROM / cal code** | **6675** (large stamped number on connector-end label — last 4 of the service P/N, standard DSM convention) |
-| **Mfr P/N** | **E2T68273** (Mitsubishi Electric internal manufacturing P/N) |
-| **Other markings** | code **150**; "Mitsubishi Electric Corp., Japan" |
-| **Application** | 1998 model-year **2G DSM FWD turbo** (Eclipse GST / Talon TSi FWD), production window ~7/97–5/98. AWD sibling = MD346676. (Verified via DSM community sourcing, 2026-05-29.) |
-| **Year base** | **1998** — this is the CORRECT factory ECU for this 1998 GST chassis |
-| **Memory type** | **Flash hardware**, but **NOT ECMLink-flashable** — the 98/99 family carries copy protection that blocks ECMLink V3 ("not flash-enabled" for tuning). NOT a socketed EPROM either. |
-| **Tune status** | **100% STOCK — factory calibration, never flashed (CIO-confirmed 2026-05-29).** Every setting on this ECU was factory. The conservative idle timing (~5–7° BTDC) seen on drives ≤24 IS the stock 1998 GST calibration — NOT a "modified EPROM signature" as earlier lore guessed. |
-
-**Why this corroborates the swap rationale**: MD346675 is the 1998 flash-hardware ECU whose copy protection blocks ECMLink V3 — i.e. it is *not* ECMLink-flashable. That is the entire reason for the swap: CIO replaced it with the ECMLink-flashable 97 board (MD335287) per the ECMtuning workaround. The part numbers + CIO's confirmation that the original was bone-stock + not flash-enabled all agree.
-
-**CONSEQUENCE — baseline reclassification (CIO-confirmed 2026-05-29)**: all drives ≤24 ran the **STOCK factory tune** (MD346675). That means the **Drive 11 knock-retard reference and the idle baselines built from drives 3–12 are genuine STOCK FACTORY baselines** — a clean, honest reference to grade the new ECU's *modified* ECMLink tune (drives ≥25) against. Any phrasing elsewhere in this file attributing conservative timing on drives ≤24 to a "modified EPROM" is **SUPERSEDED** by this fact.
-
-**Loose-terminology cleanup**: only the NEW ECU (MD335287) carries a modified (ECMLink) tune. The prior ECU (MD346675) was STOCK — calling it "modified EPROM" was doubly wrong (not modified, not an EPROM). For the new ECU use "**ECMLink V3 flash mod**" or "**97 non-EPROM ECU conversion**" — NOT "EPROM swap" (the 95-96 socketed-chip path, not what we have).
-
-**Capability boundaries on this ECU surface** (established Drive 25, 2026-05-22):
-- Mode 09 (calibration identity): SILENT — cannot fingerprint the loaded EPROM via OBD-II
-- Mode 22 (vendor enhanced): NOT IMPLEMENTED — cannot reach ECMLink-internal data (knock retard, knock sum, per-cylinder fuel/timing, target AFR, base advance) via OBDLink-via-Pi pipe
-- **Project pipe is for monitoring; ECMLink V3 software + USB-to-serial cable is the only path to deep tuning data.**
-- SPEED PID calibration drift: this ECU reads ~2× actual ground speed (likely modified VSS calibration constants in the loaded tune); divide by ~2 for ground-truth estimate until a GPS-correlation calibration run lands.
-
-**Source**: [ECMtuning Wiki — Using ECMLink in 98/99 DSM](https://www.ecmtuning.com/wiki/use_ecmlink_in_98_99_dsm)
+> **MIGRATED TO ATOMIC CARDS (SSOT) — 2026-05-29.** Authoritative ECU facts now live as one-fact-per-card under `cards/`, indexed by [`vehicle.md`](vehicle.md). This section was collapsed to a pointer to keep a single version of the truth (no parallel copies).
+>
+> - **Prior ECU** (stock, drives ≤24): [`cards/ecu-prior-md346675.md`](cards/ecu-prior-md346675.md)
+> - **New ECU** (ECMLink, drives ≥25): [`cards/ecu-new-md335287.md`](cards/ecu-new-md335287.md)
+>
+> Nav summary: stock **MD346675** (1998 factory, never flashed) on drives ≤24 → swapped 2026-05-22 to ECMLink-flashable **MD335287** (1997 board) on drives ≥25 per the [ECMtuning workaround](https://www.ecmtuning.com/wiki/use_ecmlink_in_98_99_dsm). Full detail + capability boundaries in the cards.
 
 ### Current Modifications (Installed)
 | Mod | Tuning Impact |
