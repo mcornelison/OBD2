@@ -395,50 +395,13 @@ Sanity check against prior-ECU Drive 18: RPM 3,937 / SPEED 60 mph = 3rd-gear mat
 
 ## Safe Operating Ranges
 
-### By Modification Level
-
-These ranges are grounded in DSMTuners community consensus, manufacturer specifications, and decades of collective DSM ownership experience.
-
-#### Current Setup: Stock Turbo, Stock Internals, No Wideband, No ECMLink
-
-This is the most conservative level. We have limited monitoring capability.
-
-| Parameter | Normal | Caution | Danger | Action |
-|-----------|--------|---------|--------|--------|
-| **Coolant Temp** | 185-205F (85-96C) | 205-215F (96-102C) | >220F (>104C) | STOP. Head gasket risk. Pull over, let cool. |
-| **STFT (Bank 1)** | -5% to +5% | +/-5% to +/-10% | >+/-15% | Investigate immediately. Large positive = lean = danger. |
-| **LTFT (Bank 1)** | -5% to +5% | +/-5% to +/-8% | >+/-10% | Persistent drift. Vacuum leak, failing sensor, or fuel delivery issue. |
-| **RPM** | 700-800 idle, 0-6500 driving | 6501-7000 | >7000 (redline) | 97-99 2G factory redline is 7000 RPM. Valve float risk above on stock springs. |
-| **Engine Load** | 15-25% idle, 30-50% cruise | 70-85% | >90% sustained | High load + positive STFT = lean under boost. |
-| **Timing Advance** | 10-15 idle, 8-20 cruise | <8 under load | <5 or negative | ECU pulling timing = knock detection. Investigate fuel quality, carbon buildup. |
-| **Coolant Temp (alert)** | — | 210F (99C) | 220F (104C) | Two-tier alert: warn at 210, critical at 220 |
-| **IAT** | 20-40C (68-104F) | 40-55C (104-131F) | >60C (>140F) | Heat soak. Power loss. Intercooler upgrade needed at this point. |
-| **MAF (g/s)** | 2-4 idle, varies with RPM/load | — | >~150 g/s | MAF saturation territory. Stock MAF tops out around here. |
-| **Battery Voltage** | 13.5-14.5V running | 12.5-13.5V or >14.8V | <12.0V or >15.0V | Low = charging issue. High = regulator failure. |
-| **O2 B1S1** | Oscillates 0.1-0.9V at 1-3 Hz | Stuck lean (<0.3V) or rich (>0.7V) | Fixed voltage | Lazy or dead O2 sensor. ECU can't closed-loop fuel. |
-
-#### With ECMLink V3 + Wideband (Future)
-
-| Parameter | Normal | Caution | Danger |
-|-----------|--------|---------|--------|
-| **AFR WOT (wideband)** | 11.0-11.8:1 | 12.0-12.5:1 | >12.5:1 LEAN or <10.0:1 overly rich |
-| **AFR Cruise** | 14.5-15.0:1 | — | >16.0:1 misfire territory |
-| **AFR Idle** | 14.7:1 +/-0.3 | — | Erratic = vacuum leak |
-| **Knock Count** | 0 | 1-3 per WOT pull | >5 per pull |
-| **Knock Sum** | 0-1 | 2-3 | >4 |
-| **Injector Duty Cycle** | <80% | 80-85% | >85% — need bigger injectors |
-| **Boost (stock turbo)** | 10-12 psi | 13-14 psi | >15 psi |
-| **AirFlowPerRev** | ~0.27 idle | — | Significant deviation = metering issue |
-
-#### With Upgraded Turbo (16G/20G, Future)
-
-| Parameter | 16G Safe | 20G Safe | Notes |
-|-----------|----------|----------|-------|
-| **Boost** | 16-18 psi | 18-22 psi | With supporting fuel system and tune |
-| **AFR WOT** | 11.0-11.5:1 | 10.8-11.5:1 | Richer is safer on pump gas |
-| **EGT** | <1400F | <1500F | Monitor with aftermarket probe |
-| **Injectors needed** | 550cc minimum | 660cc+ | Stock 450cc won't keep up |
-| **Fuel pump** | Walbro 255lph | Walbro 450lph or AEM 340lph | Stock pump dies above ~300 HP |
+> **MIGRATED TO ATOMIC CARDS (SSOT) — 2026-05-29.** The threshold tables now live as one-card-per-parameter under `cards/`, indexed by [`vehicle.md`](vehicle.md):
+>
+> [`safe-range-coolant-temp`](cards/safe-range-coolant-temp.md) · [`safe-range-timing-knock`](cards/safe-range-timing-knock.md) · [`safe-range-fuel-trims`](cards/safe-range-fuel-trims.md) · [`safe-range-afr`](cards/safe-range-afr.md) · [`safe-range-boost`](cards/safe-range-boost.md) · [`safe-range-battery-voltage`](cards/safe-range-battery-voltage.md) · [`safe-range-engine-envelope`](cards/safe-range-engine-envelope.md)
+>
+> Collapsed to a pointer to keep one version of the truth (no parallel copies). Covers all three tiers: current stock-turbo (live), ECMLink+wideband (future), upgraded-turbo 16G/20G (future).
+>
+> **Reconciliation TODO (next migration pass)**: this-car threshold mentions still inline in the *Cooling System* and *Timing and Knock* sections below duplicate these cards — fold them to pointers when those sections migrate.
 
 ---
 

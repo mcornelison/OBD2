@@ -83,7 +83,9 @@ superseded_by: <id>            # optional
 ## 6. Phased plan
 
 - **Phase 0 (done)** — assessment + schema + decision (Option B). ✅
-- **Phase 1 (done, 2026-05-29)** — scaffolding + first vertical slice: `cards/README.md` (schema), `vehicle.md` (index + migration manifest), ECU cards (`ecu-prior-md346675`, `ecu-new-md335287`) authored as SSOT, `knowledge.md` ECU Identity collapsed to a pointer (no duplication). ✅
+- **Phase 1 (done, 2026-05-29)** — scaffolding + two vertical slices:
+  - **ECU slice**: `cards/README.md` (schema), `vehicle.md` (index + migration manifest), ECU cards (`ecu-prior-md346675`, `ecu-new-md335287`) as SSOT, `knowledge.md` ECU Identity collapsed to a pointer. ✅
+  - **Safe-ranges slice**: 7 `safe-range-*` cards as SSOT (coolant-temp, timing-knock, fuel-trims, afr, boost, battery-voltage, engine-envelope); `knowledge.md` Safe Operating Ranges section collapsed to a pointer. ✅ *(Reconciliation TODO: this-car threshold mentions still inline in the Cooling / Timing sections of knowledge.md — fold to these cards when those sections migrate.)*
 - **Phase 2 (next, the RAG sprint)** — work the `vehicle.md` migration manifest: extract each remaining THIS-car section of `knowledge.md` into a card with front-matter; collapse each migrated section to a pointer; tag `status` (`current`/`superseded`/`archived-historical`) as it goes. De-dup vs sessions / `specs/grounded-knowledge.md` / MEMORY (cards become SSOT; others link).
 - **Phase 3** — generate `vehicle.md` automatically from card front-matter (retire hand-seeding); optionally regenerate a readable bible from cards.
 - **Phase 4** — define the retrieval contract: cards (judgment/thresholds/persona) vs DB (raw telemetry); how MrSpool joins them. Persona overlay per `knowledge/mrspool-vision.md`.
