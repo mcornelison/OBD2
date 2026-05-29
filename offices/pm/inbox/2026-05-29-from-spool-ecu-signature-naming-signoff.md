@@ -41,7 +41,7 @@ These are the literal strings to backfill. Use them verbatim.
 
 | Row | `cal_signature` | Why |
 |---|---|---|
-| **Prior** | **`6675`** | ROM/cal code stamped on the connector-end label (photo) |
+| **Prior** | **`6675`** | Factory ROM/cal code (photo). CIO-confirmed STOCK — the unaltered factory calibration. |
 | **New** | **`UNKCAL`** | ECMLink tune loaded, CALID unreadable via OBD + no label photo yet; UPDATE to the real cal rev after an ECMLink USB read |
 
 Uniqueness comes from the `(ecu_signature, cal_signature)` pair. Reflash convention: append `-R2`, `-R3`… to cal_signature on each ECMLink reflash of the same box.
@@ -62,15 +62,18 @@ The honest gap between prior-removal and new-install = the physical swap window 
 ## Two corrections to project lore the backfill must NOT perpetuate
 
 1. **The prior ECU is the CORRECT 1998 factory ECU for this car**, not a mystery box. MD346675 = 1998 2G DSM **FWD turbo** (Eclipse GST / Talon TSi FWD), production ~7/97–5/98, AWD sibling MD346676 (DSM community sourcing, verified 2026-05-29). Year base = **1998**.
-2. **"Modified EPROM" is wrong for BOTH ECUs.** MD346675 is a **flash** ECU (the 98/99 flashable family) — not a socketed EPROM. This is *why* CIO swapped: MD346675 carries the copy protection that blocks ECMLink V3, exactly the ECU the ECMtuning workaround says to replace with a 97 board (MD335287). The part numbers corroborate the swap rationale.
+2. **"Modified EPROM" is wrong for the prior ECU.** MD346675 is flash-hardware but **NOT ECMLink-flashable** (copy-protected) — not a socketed EPROM, and (per CIO) never modified at all. That copy protection is *why* CIO swapped it for the ECMLink-flashable 97 board (MD335287). The part numbers + CIO's confirmation corroborate the swap rationale.
 
-## One UNCONFIRMED item (do not assert as fact)
+## Prior ECU tune status — CIO-CONFIRMED STOCK (2026-05-29)
 
-**Whether the prior ECU (MD346675) ran a modified tune or was bone-stock is UNCONFIRMED.** The conservative idle timing project lore attributed to a "modified EPROM" was always hedged (could be stock-98 behavior / adaptive learning / python-obd rounding). The backfill should NOT stamp "modified" as fact. The `6675` cal_signature reflects the factory ROM code; if the flash was altered we can't read it via OBD. Resolve via ECMLink read only if MD346675 is ever reinstalled.
+**The prior ECU (MD346675) was 100% STOCK — factory calibration, never flashed (CIO confirmed directly, 2026-05-29).** The swap happened *because* MD346675 is not ECMLink-flashable (copy-protected), not because it carried a custom tune. So:
+- `cal_signature = 6675` authoritatively means the **stock factory calibration** — no ambiguity, no "unconfirmed" caveat.
+- The backfill SHOULD record this ECU as stock/factory.
+- Bonus for the project: this makes drives ≤24 (incl. Drive 11 + the drives 3–12 idle baselines) genuine **stock factory baselines** to grade the new ECU's modified ECMLink tune against.
 
 ## Suggested `notes` column text (vehicle_info)
 
-- **MD346675 row**: `1998 2G DSM FWD-turbo factory ECU (Eclipse GST/Talon TSi). ROM 6675, mfr E2T68273. Flash type (98/99 family) — ECMLink-incompatible without workaround; this is why it was swapped. Tune-mod status unconfirmed. Photo-identified 2026-05-29. SPEED PID reads correct (factor 1.0).`
+- **MD346675 row**: `1998 2G DSM FWD-turbo factory ECU (Eclipse GST/Talon TSi). ROM 6675, mfr E2T68273. Flash-hardware but NOT ECMLink-flashable (copy-protected) — this is why it was swapped. 100% STOCK factory tune, never flashed (CIO-confirmed 2026-05-29). Photo-identified. SPEED PID reads correct (factor 1.0).`
 - **MD335287 row**: `1997 2G DSM ECU, ECMLink V3 flash-modifiable, plug-installed in 98 chassis 2026-05-22 per ECMtuning workaround. Sibling P/N MD326328. Running prior-tuner ECMLink tune (CALID unread). Mode 09 + Mode 22 silent. SPEED PID reads ~2× actual — divide by 2 until GPS-correlation drive (correction_factor 0.5 seed per US-370).`
 
 ## Q2 — no change
