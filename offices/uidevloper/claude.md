@@ -167,13 +167,49 @@ Open UI/UX/enclosure items I am tracking. Seeded at onboarding 2026-05-22.
 | # | Item | Status | Note |
 |---|------|--------|------|
 | W-1 | OSOYOO 3.5″ 480×320 display — B-103 boot/shutdown splash design | **Spec drafted 2026-05-26** | Full spec at `docs/superpowers/specs/2026-05-26-b103-splash-animation-design.md` (commit 37a71f5). Replaces existing kit at `specs/UI/dist/splash-pi/`. Status-aware hybrid: 2-state UX (healthy/degraded), boot dynamic-timing, shutdown sequencer-grace-trigger, top wordmark + bottom version chip, deploy fold-in. 3 defects in original kit folded into scope. Atlas A2AL filed (commit 6e37992) for Rule-10 design-gate review on A-1..A-10. Spool + Argus advisory + Marcus pre-notice filed (commit 44c6b3b). Pending peer responses. Full post-boot dashboard UI is separate — see W-5. |
-| W-2 | 3D-printed enclosure for OSOYOO 3.5″ display (DISPLAY ONLY — Pi removed from scope per CIO 2026-05-22) | **v1 STL shipped 2026-05-22** | Full spec at `enclosures/display-case-spec.md`; source at `enclosures/display-case.scad`; STLs at `enclosures/stl/*.stl`; preview at `enclosures/renders/assembly.png`. PETG, 3 perimeters, cantilever snaps, magnet-disc mount, micro-HDMI + USB-C 90° cables. Awaiting CIO print + fit-check; v1 caveats noted in spec §11A. |
+| W-2 | 3D-printed enclosure for OSOYOO 3.5″ display (DISPLAY ONLY — Pi removed from scope per CIO 2026-05-22) | **v2.1 datasheet rebuild 2026-05-29 — CIO reviewing** | v1 printed → CIO fit-check (2026-05-28) found 7 issues (tab misalign, mount posts off, drop button, add 2 button holes, exit too small, +6mm clearance, vents vs mounts). v2.1 rebuilt from the **official 2024009100 datasheet** (CIO-supplied 2026-05-29): PCB **85×49** (ruler "56" was wrong), **trapezoid** mount holes (top c-c 50 / bottom c-c 58, M2.5 countersunk seats for CIO's own 10mm metal standoffs), asymmetric +6mm on TOP(HDMI)+LEFT(Type-C), frozen v1 screen window, seat-aware vents. Both shells render manifold. Source `enclosures/display-case.scad`; changelog `enclosures/display-case-v2.1-notes.md`; facts `enclosures/datasheets/2024009100-extracted-facts.md`; renders `enclosures/renders/v21_*.png`. **5 assumptions pending CIO physical fit-check** (orientation, PCB-centered offset, exit wall, M2.5, depth stack) — see notes §OPEN. |
 | W-3 | Visual + interaction language SSOT (`specs/UI/` tokens) | **In-progress 2026-05-26** | First color + type tokens proposed inline in B-103 spec §4 (`--text-secondary` `#888`, `--text-tertiary` `#666`, `--amber-warn` `#FFC400`, `--amber-soft` `#FFC40033`, plus existing reds `--red` `#E60012` / `--red-light` `#F61D2D` / `--red-dark` `#BF000F`). Font family: `ui-monospace, Menlo, Consolas, monospace`. NOT yet extracted into freestanding `specs/UI/tokens.css` or equivalent. Atlas confirmed 2026-05-22 that `specs/UI/` tokens are the correct SSOT-pattern precedent. Token-extraction work to follow when B-103 lands or in parallel. |
 | W-4 | README still describes the wrong display (Adafruit 1.3 240×240) per Atlas A-5 | **Open — not closed in B-103 spec authoring as Atlas suggested** | Atlas's 2026-05-22 FYI flagged this closeable in the UI spec authoring pass. B-103 spec (2026-05-26) focused on splash; did NOT include README correction (out of scope — splash design ≠ documentation cleanup). Follow-up: file separate small commit fixing README's display-spec section per Rule-10 routing through Atlas. ~30 min of work; opportunistic next session. |
 | W-5 | V0.28+ on-Pi post-boot dashboard layout — cover-most-of-screen + top-menu reserve + minimize capability | Open | CIO directed 2026-05-26 (during B-103 Q2 conversation) — for future display the dashboard canvas should be enlarged to cover the majority of screen, except for a top menu (reserved for system UI access) OR with the ability to minimize so system menu is accessible. Distinct surface from splash (splash is boot/shutdown-only; dashboard is runtime). To be designed when V0.28+ grooming opens dashboard work. |
 | W-6 | B-086 GEM-1 warnings-first quiet UI carousel (V0.28+ candidate) | Open — pending V0.28 grooming | Marcus flagged 2026-05-22 — relevant when grooming opens. Spool's Topic A/B specs (parked-mode anomaly + maintenance tiles) slot into the carousel. CIO + Spool brainstormed 2026-05-14. Lane split: Iris designs the visual carousel + interactions; Spool owns tile content semantics. Will surface during V0.28+ grooming. |
 
 ## 9. Session Log
+
+### 2026-05-29 — Display case v2.1 (CIO fit-check → datasheet rebuild)
+
+- CIO printed v1 and ran a fit-check; gave 7 change requests live (tabs
+  misaligned, mount posts off, drop the button, add 2 button holes, cable
+  exit too small, +6mm clearance for 90° heads, vents undermining mounts) +
+  "10mm metal standoffs (my own)" + "screen hole fit perfectly — don't change
+  it." Worked through each via back-and-forth + a back-of-board photo.
+- **Recurring orientation friction**: the phone photo reached me rotated ~90°
+  from CIO's measuring frame; spent several rounds reconciling left/right/top.
+  Lesson: anchor on a shared, unambiguous frame (silkscreen logo + connector
+  edge) FIRST; numbers referenced to PCB edges are useless until the frame is
+  agreed. Captured in `knowledge/`.
+- **CIO supplied the official datasheet** (2024009100) mid-session — "use this
+  as your facts." It resolved everything: PCB is **85×49** (ruler "56 wide"
+  was the lone error breaking the short-axis math), glass 93.44×60, active
+  73.44×48.96, M2.5, and the mount holes are a **TRAPEZOID** (top c-c 50,
+  bottom c-c 58) — CIO's "58×50" was the two row spacings, not long×short.
+  Read the trapezoid reliably by rendering the PDF's PCB drawing at 6× with
+  pymupdf (`datasheets/crop_pcb.py` → `pcb_zoom.png`); the page-1 dims are
+  vectorized (no text layer) and the drawing's component symbols swamp circle
+  detection, so a high-res crop + visual read beat vector archaeology.
+- **v2.1 rebuilt** `display-case.scad` in the datasheet frame: trapezoid seats
+  (flush countersunk M2.5 clearance + locating recess for CIO's metal
+  standoffs, no printed posts), asymmetric +6mm on TOP(HDMI)+LEFT(Type-C),
+  frozen v1 window, filtered seat-aware vent grid, taller cable exit, depth
+  for 10mm standoffs. Both shells render manifold (back 2437 facets / front
+  62). Rendered back-flat + 3/4 assembly with orientation cues, sent to CIO.
+- **Saved for future reference** (CIO-directed): both datasheet PDFs +
+  `pcb_zoom.png` + extraction scripts + `2024009100-extracted-facts.md`
+  (authoritative dims) + `display-case-v2.1-notes.md` (changelog + the 5
+  open assumptions pending physical fit-check) under `enclosures/`.
+- **Open**: CIO reviewing the enclosure render now. 5 assumptions pending his
+  physical fit-check (orientation, PCB-centered offset, exit wall, M2.5,
+  depth stack) — see v2.1 notes §OPEN. STLs regenerated, ready to slice on
+  his thumbs-up. `stl/plunger.*` now obsolete (flagged).
 
 ### 2026-05-22 — Onboarding (Iris established)
 
