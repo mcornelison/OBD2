@@ -972,6 +972,27 @@ Filed **Rule 13 PASS** verdict to PM inbox (`2026-05-28-from-atlas-sprint-43-rul
 
 **Atlas posture from here: on-demand again.** Sprint 43 has 5 load-bearing Stories (US-361, US-365, US-368, US-372, US-373); CIO may want per-task gates spun (same shape that closed Sprints 39/41) or may run autonomous Ralph workflow + gate at sprint-end. Either works. F-103 splash deferred to V0.28.1+. A-9 closes on US-361 fix + IRL Drive-27+ post-deploy. A-10 (TD-055 third-leg harness) still open + recommended for V0.28.1 / next groom. A-11 (sprint-level IRL fold pattern) is spec-amendment material; non-urgent.
 
+### 2026-05-29 — US-373 Rule 10 PASS (partial, surface-5 held) + Mechanism B + FK-shape + doc-structure rulings
+
+Tasked by CIO ("read inbox, respond to PM"). Marcus's 2026-05-29 note (BL-023): Ralph made a clean Sprint-43 handoff (11/15 dev-doable stories `passes: true`, 4 human/cross-agent gated); US-373 is the keystone whose Rule 10 PASS clears the conditional gate US-361/363/365/371/372 each routed. Three calls for me: (1) Rule 10 PASS on staged `specs/architecture.md` edits (`offices/pm/drafts/us-373-architecture-md-edits.md`), (2) Mechanism B production-enable disposition, (3) US-370 `speed_pid_calibration` FK-target shape.
+
+**Verified against landed code + v0010 migration + ORM, not the transcription** (the point of Rule 10 at a transcription seam):
+- §10.7.1 Mechanism A LIVE (`detector.py` reattach + `MIN_INTER_DRIVE_SECONDS` + forceKeyOff/RPM-debounce exclusions); Mechanism C LIVE + wired into BOTH compute paths (`drive_statistics_compute.py:198`, `drive_summary_compute.py:183`); Mechanism B present, default-OFF (`core.py:374-376`, lifecycle `_initializeSingleInstanceGuard`).
+- §5 surfaces 1-4+6: every v0010 substep confirmed; `drive_summary` CHECK carries the load-bearing `IS NOT NULL` guards (`models.py:763-766`); MigrationRunner-not-Alembic confirmed. **Marcus's 2 drift corrections both verified correct** (drive_summary had NO data_quality column → v0010 ADDs it; "Alembic" → MigrationRunner). Rule 10 catching the PRD's drift before the load-bearing doc = the gate working.
+- Surface 5 (`speed_pid_calibration`) NOT landed, correctly PENDING.
+
+**Verdict: PASS §10.7.1 + §5 surfaces 1-4+6 NOW** (clears the 5 conditional gates) **+ HOLD surface 5** until US-370 lands in the ruled shape (re-PASS then). Took Marcus's offered split-PASS path.
+
+**Ruling — Mechanism B: KEEP DARK (default-OFF). CIO-ratified 2026-05-29 (AskUserQuestion).** As-built the guard reclaims only *dead* pids and *silently refuses* a live peer — under a US-354-class deploy-hygiene miss the stale process keeps the lock and the newly-deployed process refuses+exits = the silent-wrong-winner / running-old-code class we killed all V0.27 chain. Enabling as-built makes that worse + masks it. A+C already cover the V0.28.0 posture. Defect seen exactly once (drive 23/24; 25 clean) → observability is the honest posture. Enable-trigger (both): C tripwire flags a 2nd independent two-process overlap AND loud-deploy-visible-refuse + restart-ordering proof land (incremental US-361 work).
+
+**Ruling — US-370 FK shape: reject (a)+(b), use (c).** (a) UNIQUE-on-`vehicle_info.ecu_signature` breaks the append-only invariant US-365 just established (reinstalled ECU = new row, same signature → non-unique by design; confirmed `ecu_signature` is `Text NOT NULL`, not unique, `models.py:352`). (b) Spool-vetoed + wrong granularity. (c) `ecu_signature` as `speed_pid_calibration`'s own `VARCHAR(n)` UNIQUE natural key, NO cross-table FK — correction is a property of the signature itself; sharing the signature *value* is a natural key, not the payload-denormalization Spool vetoed. Eventual SSOT-purist shape = a normalized `ecu` identity table both tables FK — deferred B-076 (logged as upgrade path; ties A-4/A-10). Spool owns signature strings + VARCHAR length + seed values. **Surface-5 doc wording must be rewritten to (c) before re-PASS — the draft's "FK → vehicle_info" is superseded.**
+
+**Ruling — doc structure (conditionalOutcome #3):** §10.7.1 numeric form right (§10.7 uses §10.5/6/7). EDIT 2 NOT "§5.X" — §5 uses descriptive `###` headings; make it `### V0.28.0 Schema Pass — first slice` after `### Server Schema Migrations (US-213, TD-029 closure)` (~L980). Don't split per-Feature (6 surfaces share ONE migration v0010).
+
+**Filed:** `../pm/inbox/2026-05-29-from-atlas-us373-rule10-PASS-plus-2-rulings.md` (full verdict + 3 rulings + evidence + sequencing). Push-back welcome on merits (Task-2-redo precedent).
+
+**Discipline catch:** the append-only-vs-UNIQUE collision — a FK-target convenience (option a) would have silently re-broken an invariant landed the SAME sprint (US-365). Verify-before-asserting caught it at the schema seam, pre-build. PASS is partial-by-design; the surface-5 re-PASS must verify the landed shape matches (c), not re-rubber-stamp the draft. **Atlas posture: on-demand.** Re-PASS surface 5 when US-370 lands (c)-shaped.
+
 ### 2026-05-26 (evening) — B-103 splash design v1 → Rule-10 gate PASS-w/-amendments → spec v1.1 ready for sprint scoping
 
 Tasked by CIO this evening: Iris filed her B-103 splash animation design v1
