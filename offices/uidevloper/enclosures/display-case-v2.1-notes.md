@@ -85,6 +85,21 @@ Both shells render manifold (`Simple: yes`): back 2437 facets, front 62.
 - **Cable exit aligned to the Type-C**: LEFT (X=0) wall, centered on the port
   (CIO: 6.4 mm from top, 9 mm long) — `cable_slot_cy = (pcb top) − 6.4 − 9/2`.
 
+## v2.4 (2026-05-29, CIO review round 4)
+
+- **Mount pattern corrected from trapezoid to RECTANGLE** (verified from the
+  datasheet vector crops, `datasheets/left_holes.png` + `right_holes.png`): both
+  rows share the same x. Left column **23.6 mm**, right column **81.6 mm**
+  (horizontal c-c 58); rows 3.5 mm from top/bottom (vertical c-c 49). My earlier
+  trapezoid mis-read the "28.5/6.5/50" CONNECTOR dimension chain as the top hole row.
+- **Button holes** confirmed to be the 2 "extra holes" CIO saw — they're the
+  power/brightness buttons, kept on the back face near the **+Y (micro-HDMI) edge**,
+  upper-left (6 & 16 mm from the left). A **vent keepout** (`vent_keepout_button`)
+  now clears the grid around them so they read as deliberate holes, not stray vents.
+  (CIO's "on the bottom" impression came from the vertically-flipped back render.)
+- OPEN: button holes are in the BACK FACE (to reach the back-mounted H=4mm switch
+  actuators). If they're edge-actuated, they move to the +Y top wall — pending CIO.
+
 ## File inventory (this folder)
 
 - `display-case.scad` — v2.1 parametric source (single file, `part` selector)

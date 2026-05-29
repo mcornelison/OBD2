@@ -66,10 +66,12 @@ pcb_shift_y = 0.0;
 
 // ---- Mount holes (datasheet trapezoid; x from LEFT/X=0, y from BOTTOM/Y=0) -
 mount_hole_dia = 3.0;
-mh_top_left_x  = 28.5;   mh_top_right_x  = 78.5;   // top row c-c 50
-mh_bot_left_x  = 23.6;   mh_bot_right_x  = 81.6;   // bottom row c-c 58
+// RECTANGLE (verified from the datasheet: both rows share the same x; the
+// "28.5/6.5/50" top chain dimensions the connectors, not the holes).
+mh_left_x      = 23.6;   // left column (both rows)
+mh_right_x     = 81.6;   // right column (both rows) -> horizontal c-c 58
 mh_from_top    = 3.5;    // top row inset from +Y edge
-mh_from_bottom = 3.5;    // bottom row inset from Y=0 edge
+mh_from_bottom = 3.5;    // bottom row inset from Y=0 edge -> vertical c-c 49
 
 // ---- Standoff seats (CIO's own M2.5 x 11mm + 3mm HEX metal standoffs) ---
 // Standoff = 11 mm hex body + 3 mm male stud. Per CIO the seat pocket is a
@@ -118,8 +120,8 @@ pcb_origin_y = glass_cy + pcb_shift_y - pcb_y/2;
 mh_y_top = pcb_origin_y + pcb_y - mh_from_top;     // +Y row
 mh_y_bot = pcb_origin_y + mh_from_bottom;          // Y=0 row
 mount_pts = [
-    [pcb_origin_x + mh_top_left_x,  mh_y_top], [pcb_origin_x + mh_top_right_x, mh_y_top],
-    [pcb_origin_x + mh_bot_left_x,  mh_y_bot], [pcb_origin_x + mh_bot_right_x, mh_y_bot]
+    [pcb_origin_x + mh_left_x,  mh_y_top], [pcb_origin_x + mh_right_x, mh_y_top],
+    [pcb_origin_x + mh_left_x,  mh_y_bot], [pcb_origin_x + mh_right_x, mh_y_bot]
 ];
 
 button_y   = pcb_origin_y + pcb_y - button_from_top;   // near +Y edge (flush top)
@@ -141,7 +143,8 @@ vent_hole_d       = 3.5;
 vent_pitch        = 7.0;
 vent_margin       = 6.0;
 vent_keepout_disc = disc_diameter/2 + 4.0;
-vent_keepout_seat = seat_cup_d/2 + 3.0;
+vent_keepout_seat   = seat_cup_d/2 + 3.0;
+vent_keepout_button = button_hole_dia/2 + 3.5;   // keep vents off the button holes
 
 // ---- #5 cable exit (LEFT / X=0 wall, aligned with the Type-C port) -------
 // CIO: Type-C is on the LEFT short edge, 6.4 mm from the TOP (+Y), 9 mm long.
@@ -157,7 +160,8 @@ cable_slot_z0  = wall_t + 2.0;
 // =========================================================================
 module rounded_rect(x, y, r) { offset(r=r) offset(r=-r) square([x, y]); }
 module rounded_box(x, y, z, r) { linear_extrude(height = z) rounded_rect(x, y, r); }
-function dist_to_nearest_seat(x, y) = min([ for (p = mount_pts) norm([x-p[0], y-p[1]]) ]);
+function dist_to_nearest_seat(x, y)   = min([ for (p = mount_pts)  norm([x-p[0], y-p[1]]) ]);
+function dist_to_nearest_button(x, y) = min([ for (b = button_pts) norm([x-b[0], y-b[1]]) ]);
 
 // =========================================================================
 // BACK SHELL  (Z=0 = outer back; cavity opens +Z)
@@ -204,7 +208,8 @@ module vents() {
     for (vx = [vent_margin : vent_pitch : case_x - vent_margin])
         for (vy = [vent_margin : vent_pitch : case_y - vent_margin])
             if (norm([vx - disc_x, vy - disc_y]) > vent_keepout_disc
-                && dist_to_nearest_seat(vx, vy) > vent_keepout_seat)
+                && dist_to_nearest_seat(vx, vy) > vent_keepout_seat
+                && dist_to_nearest_button(vx, vy) > vent_keepout_button)
                 translate([vx, vy, -0.1]) cylinder(h = wall_t + 0.2, d = vent_hole_d, $fn = 16);
 }
 
