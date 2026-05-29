@@ -111,7 +111,24 @@ The 1998/1999 DSM factory ECU has copy protection that blocks ECMLink V3 modific
 | **Cam angle sensor** | Compatible with 98/99 cam angle sensor (no harness swap or ECMLink checkbox needed) |
 | **Sibling P/N** | MD326328 (equivalent, same ECMLink-supported workaround) |
 
-**Loose-terminology cleanup**: prior sessions and inboxes refer to this ECU as "modified EPROM" — that's the colloquial DSM phrase but technically incorrect. The chip is a flash-modified 97 non-EPROM. If searching for service or documentation, use "**ECMLink V3 flash mod**" or "**97 non-EPROM ECU conversion**" — NOT "EPROM swap" (which is the 95-96 socketed-chip path, not what we have).
+#### Prior ECU (drives ≤24) — PHOTO-IDENTIFIED 2026-05-29
+
+CIO supplied two photos of the ORIGINAL ECU pulled during the 2026-05-22 swap. It is now fully identified (was previously a `PRE_TRACKING_UNKNOWN` placeholder):
+
+| Attribute | Value |
+|-----------|-------|
+| **Service P/N** | **MD346675** (stamped on case-top barcode label) |
+| **ROM / cal code** | **6675** (large stamped number on connector-end label — last 4 of the service P/N, standard DSM convention) |
+| **Mfr P/N** | **E2T68273** (Mitsubishi Electric internal manufacturing P/N) |
+| **Other markings** | code **150**; "Mitsubishi Electric Corp., Japan" |
+| **Application** | 1998 model-year **2G DSM FWD turbo** (Eclipse GST / Talon TSi FWD), production window ~7/97–5/98. AWD sibling = MD346676. (Verified via DSM community sourcing, 2026-05-29.) |
+| **Year base** | **1998** — this is the CORRECT factory ECU for this 1998 GST chassis |
+| **Memory type** | **Flash** (the 98/99 flashable ECU family) — **NOT a socketed EPROM** |
+| **Tune-mod status** | **UNCONFIRMED.** Project lore called it "stock with modified EPROM," but the conservative idle timing (5–7° BTDC) attributed to a "modified EPROM" was always hedged (could be stock-98 behavior, adaptive learning, or python-obd rounding). No evidence it carried a non-stock calibration. Resolve via ECMLink read if ever reinstalled. |
+
+**Why this corroborates the swap rationale**: MD346675 is the 1998 flashable ECU with the copy protection that blocks ECMLink V3 — *exactly* the ECU the ECMtuning workaround says to replace with a 97 board (MD335287). The part numbers confirm the documented 98→97 swap was done for the right reason.
+
+**Loose-terminology cleanup**: prior sessions and inboxes refer to BOTH ECUs as "modified EPROM" — that's the colloquial DSM phrase but technically incorrect for either. The prior ECU (MD346675) is a 98 flash ECU; the new ECU (MD335287) is a flash-modified 97 non-EPROM. If searching for service or documentation, use "**ECMLink V3 flash mod**" or "**97 non-EPROM ECU conversion**" — NOT "EPROM swap" (which is the 95-96 socketed-chip path, not what we have).
 
 **Capability boundaries on this ECU surface** (established Drive 25, 2026-05-22):
 - Mode 09 (calibration identity): SILENT — cannot fingerprint the loaded EPROM via OBD-II
