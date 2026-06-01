@@ -1066,51 +1066,7 @@
       "status": "active",
       "renamedFrom": "B-107",
       "createdAt": "2026-05-27",
-      "updatedAt": "2026-05-27",
-      "stories": [
-        {
-          "id": "US-377",
-          "parent": "F-107",
-          "title": "data_quality column too narrow for 'attribution_anomaly' (VARCHAR(16)<19) -- chain-blocking",
-          "type": "issue",
-          "size": "S",
-          "status": "groomed",
-          "goal": "Widen drive_summary + drive_statistics data_quality columns so the tripwire can stamp 'attribution_anomaly' (unblocks US-364).",
-          "definitionOfDone": [
-            "ORM String(16)->String(20) both columns",
-            "v0012 migration MODIFY both columns to VARCHAR(20), idempotent",
-            "test asserting column width >= max CHECK-permitted value length",
-            "post-deploy recompute 23-25 stamps anomaly on 23+24"
-          ],
-          "conditionalOutcomes": [
-            "if other CHECK-enum columns have the same width mismatch, fold the audit in"
-          ],
-          "validationCriteria": [
-            {
-              "action": "SELECT column_type ... data_quality post-v0012",
-              "expected": "both varchar(20)"
-            },
-            {
-              "action": "recompute_drive_analytics --drive-id 23/24",
-              "expected": "attribution_anomaly written, no DataError"
-            },
-            {
-              "action": "recompute_drive_analytics --drive-id 25",
-              "expected": "full"
-            }
-          ],
-          "deps": [],
-          "sourceRefs": [
-            "F-107",
-            "US-363",
-            "US-357",
-            "V0.28.1-IRL-drill"
-          ],
-          "tasks": [],
-          "createdAt": "2026-06-01",
-          "updatedAt": "2026-06-01"
-        }
-      ]
+      "updatedAt": "2026-05-27"
     },
     {
       "id": "F-108",
@@ -2218,6 +2174,48 @@
         "prd-V0.28.1.md",
         "2026-06-01-from-atlas-v0.28.1-rule-13-PASS-formal-signoff.md",
         "us-370-option-c-preserved (tag)"
+      ],
+      "tasks": [],
+      "createdAt": "2026-06-01",
+      "updatedAt": "2026-06-01"
+    },
+    {
+      "id": "US-377",
+      "parent": "F-107",
+      "title": "data_quality column too narrow for 'attribution_anomaly' (VARCHAR(16)<19) -- chain-blocking",
+      "type": "issue",
+      "size": "S",
+      "status": "groomed",
+      "goal": "Widen drive_summary + drive_statistics data_quality columns so the tripwire can stamp 'attribution_anomaly' (unblocks US-364).",
+      "definitionOfDone": [
+        "ORM String(16)->String(20) both columns",
+        "v0012 migration MODIFY both columns to VARCHAR(20), idempotent",
+        "test asserting column width >= max CHECK-permitted value length",
+        "post-deploy recompute 23-25 stamps anomaly on 23+24"
+      ],
+      "conditionalOutcomes": [
+        "if other CHECK-enum columns have the same width mismatch, fold the audit in"
+      ],
+      "validationCriteria": [
+        {
+          "action": "SELECT column_type ... data_quality post-v0012",
+          "outcome": "both varchar(20)"
+        },
+        {
+          "action": "recompute_drive_analytics --drive-id 23/24",
+          "outcome": "attribution_anomaly written, no DataError"
+        },
+        {
+          "action": "recompute_drive_analytics --drive-id 25",
+          "outcome": "full"
+        }
+      ],
+      "deps": [],
+      "sourceRefs": [
+        "F-107",
+        "US-363",
+        "US-357",
+        "V0.28.1-IRL-drill"
       ],
       "tasks": [],
       "createdAt": "2026-06-01",
