@@ -40,3 +40,11 @@ The ECU in the car since the **2026-05-22 swap**, in service for **drives ≥25*
 - **SPEED PID drift**: this ECU reads **~2× actual ground speed** (likely modified VSS calibration constants in the loaded tune). Divide by ~2 for a ground-truth estimate until a GPS-correlation run lands. Seeded as `correction_factor = 0.5`, `provenance = 'seed'` per US-370; refine post-GPS-correlation. (Contrast: the stock prior ECU read SPEED correctly, factor 1.0.)
 
 This ECU's tune is **modified** (ECMLink) — the only modified tune in the project history. Use "ECMLink V3 flash mod" or "97 non-EPROM ECU conversion" — never "modified EPROM."
+
+## Identity keying (B-076 / V0.28.1, decided 2026-06-01)
+
+The normalized `ecu` table is keyed on the **`(ecu_signature, cal_signature)` pair, row-per-reflash** (Spool Q5 ruling). Rationale: SPEED `correction_factor` is a property of the *tune's* VSS-calibration constants, not the physical box — a reflash can change it with the P/N unchanged — so identity (and `speed_pid_calibration`) must key per-tune-state, not per-box.
+
+- **Reflash** = a new `ecu` row; `cal_signature` gets a `-R2`/`-R3` suffix.
+- **Reading the real CALID** (post ECMLink USB read) is **NOT** a reflash — the tune content never changed, we only learned its name. It is a **same-row UPDATE** of `UNKCAL` → the real CALID, preserving this row's `correction_factor = 0.5` seed and any drive FKs.
+- Discriminator: *"did the calibration CONTENT change?"* — yes → new row; no → same-row correction.
