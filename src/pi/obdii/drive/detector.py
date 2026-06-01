@@ -124,6 +124,7 @@ from .types import (
     DEFAULT_DRIVE_START_RPM_THRESHOLD,
     DEFAULT_DRIVE_SUMMARY_BACKFILL_SECONDS,
     DRIVE_DETECTION_PARAMETERS,
+    MIN_INTER_DRIVE_SECONDS,
     DetectorConfig,
     DetectorState,
     DetectorStats,
@@ -250,6 +251,20 @@ class DriveDetector:
         # None; seeded in _startDrive to avoid firing immediately on the
         # first post-start tick.
         self._lastEcuReadingTime: datetime | None = None
+
+        # F-107 (US-361): an ECU-silence drive_end is TENTATIVE -- the engine
+        # state is unknown when the OBD/Bluetooth link drops, so a
+        # silence-driven drive_end may close a leg that never actually ended
+        # (the Drive 23/24 mid-drive dropout that produced two drive_ids for
+        # one physical leg).  These remember the id + time of the most recent
+        # ECU-silence drive_end so that if the engine demonstrably resumes
+        # within MIN_INTER_DRIVE_SECONDS the next _startDrive RE-ATTACHES to
+        # the same drive_id (continuation) instead of minting a second one.
+        # ONLY the ECU-silence path sets these; an RPM-debounce or forced
+        # drive_end is a CONFIRMED engine-off and leaves them cleared, so a
+        # genuine next drive always mints a fresh id.
+        self._lastEcuSilenceEndTime: datetime | None = None
+        self._lastEcuSilenceDriveId: int | None = None
 
         # Threshold timing
         self._aboveThresholdSince: datetime | None = None
@@ -700,7 +715,25 @@ class DriveDetector:
         # it on the process-wide context so writers tag every subsequent
         # row with this drive's id.  The mint happens BEFORE _logDriveEvent
         # so that the drive_start connection_log row already carries the id.
-        self._openDriveId()
+        #
+        # F-107 (US-361): UNLESS this start is a continuation of a leg that an
+        # ECU-silence drive_end closed moments ago (a mid-drive OBD dropout,
+        # engine never actually off).  Re-attaching to the prior id keeps one
+        # physical leg on one drive_id -- the Drive 23/24 dual-attribution fix.
+        # A confirmed engine-off (RPM-debounce / forced) end never sets the
+        # marker, so genuine new drives still mint fresh.
+        if self._isEcuSilenceContinuation(startTime):
+            reattachId = self._lastEcuSilenceDriveId
+            setCurrentDriveId(reattachId)
+            logger.warning(
+                "drive continuation after ECU-silence end | re-attaching "
+                "drive_id=%s (no new mint) | engine resumed within "
+                "MIN_INTER_DRIVE_SECONDS=%ss of the tentative end",
+                reattachId, MIN_INTER_DRIVE_SECONDS,
+            )
+        else:
+            self._openDriveId()
+        self._clearEcuSilenceMarker()
 
         self._currentSession = DriveSession(
             startTime=startTime,
@@ -944,7 +977,51 @@ class DriveDetector:
             elapsed, self._config.driveEndDurationSeconds,
             getCurrentDriveId(), self._lastRpmValue,
         )
+        # F-107 (US-361): this end is TENTATIVE (inferred engine-off from a
+        # quiet OBD link, not a confirmed RPM=0).  Record the id + time BEFORE
+        # _endDrive clears the process-wide context so a quick engine resume
+        # re-attaches to the same leg instead of minting a second drive_id.
+        self._lastEcuSilenceDriveId = getCurrentDriveId()
+        self._lastEcuSilenceEndTime = now
         self._endDrive()
+
+    def _isEcuSilenceContinuation(self, startTime: datetime) -> bool:
+        """Whether a starting drive continues a leg closed by ECU silence.
+
+        F-107 (US-361): an ECU-silence ``drive_end``
+        (:meth:`_checkEcuSilenceDriveEnd`) is fired on *inferred* engine-off
+        when the OBD link goes quiet -- but a mid-drive Bluetooth dropout looks
+        identical to a real key-off.  When the engine demonstrably resumes (RPM
+        back above the start threshold) within ``MIN_INTER_DRIVE_SECONDS`` of
+        that tentative end, the leg never actually ended: the link merely
+        dropped.  The impending :meth:`_startDrive` is then a continuation of
+        the same physical leg and must re-attach to the prior ``drive_id``
+        rather than mint a second one (the Drive 23/24 dual-attribution
+        defect).
+
+        The inter-drive gap is measured from the tentative end to the moment
+        RPM first crossed the start threshold again (``_aboveThresholdSince``)
+        -- the real engine-off interval -- not to drive-start confirmation,
+        which lags by ``driveStartDurationSeconds``.
+
+        Returns:
+            ``True`` only when an ECU-silence marker is live AND the resume gap
+            is within ``[0, MIN_INTER_DRIVE_SECONDS]``.  RPM-debounce and forced
+            ends never set the marker, so confirmed-engine-off drives always
+            mint a fresh id.
+        """
+        if self._lastEcuSilenceDriveId is None:
+            return False
+        if self._lastEcuSilenceEndTime is None:
+            return False
+        resumeTime = self._aboveThresholdSince or startTime
+        gapSeconds = (resumeTime - self._lastEcuSilenceEndTime).total_seconds()
+        return 0.0 <= gapSeconds <= MIN_INTER_DRIVE_SECONDS
+
+    def _clearEcuSilenceMarker(self) -> None:
+        """Drop the tentative ECU-silence end marker (consumed at drive start)."""
+        self._lastEcuSilenceEndTime = None
+        self._lastEcuSilenceDriveId = None
 
     def _armDriveSummaryDeferInsert(self, startTime: datetime) -> None:
         """Arm the US-236 defer-INSERT window for the drive that just started.
@@ -1338,4 +1415,6 @@ class DriveDetector:
             self._lastRpmValue = 0.0
             self._lastSpeedValue = 0.0
             self._lastValueTime = None
+            self._lastEcuSilenceEndTime = None
+            self._lastEcuSilenceDriveId = None
             logger.debug("Drive detector reset")

@@ -428,7 +428,7 @@ def _readServerDriveStatistics(
         return list(
             session.execute(
                 select(DriveStatistic).where(
-                    DriveStatistic.drive_id == summaryId
+                    DriveStatistic.summary_id == summaryId
                 )
             ).scalars().all(),
         )
@@ -797,8 +797,8 @@ class TestHarnessIntegrity:
                     ")"
                 )
 
-            # Seed a drive_summary parent row so the FK on
-            # drive_statistics.drive_id resolves.
+            # Seed a drive_summary parent row so the FK on the
+            # reconstructed drive_statistics drive_id column resolves.
             with Session(engine) as session:
                 summary = DriveSummary(
                     source_device="harness", source_id=999,
@@ -814,7 +814,7 @@ class TestHarnessIntegrity:
             # default fixture just doesn't exercise it.
             with Session(engine) as session:
                 session.add(DriveStatistic(
-                    drive_id=summaryId,
+                    summary_id=summaryId,
                     parameter_name="RPM",
                     min_value=1000.0, max_value=2000.0, avg_value=1500.0,
                     std_dev=100.0, outlier_min=900.0, outlier_max=2100.0,
@@ -840,7 +840,7 @@ class TestHarnessIntegrity:
                 )
             with Session(engine) as session:
                 session.add(DriveStatistic(
-                    drive_id=summaryId,
+                    summary_id=summaryId,
                     parameter_name="RPM",
                     min_value=1000.0, max_value=2000.0, avg_value=1500.0,
                     std_dev=100.0, outlier_min=900.0, outlier_max=2100.0,
@@ -852,7 +852,7 @@ class TestHarnessIntegrity:
             with Session(engine) as session:
                 row = session.execute(
                     select(DriveStatistic).where(
-                        DriveStatistic.drive_id == summaryId
+                        DriveStatistic.summary_id == summaryId
                     )
                 ).scalars().first()
                 assert row is not None

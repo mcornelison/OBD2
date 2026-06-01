@@ -193,8 +193,8 @@ def _mergePair(
     # analytics row; otherwise they'd be orphaned.
     session.execute(
         update(DriveStatistic)
-        .where(DriveStatistic.drive_id == analytics.id)
-        .values(drive_id=piSync.id),
+        .where(DriveStatistic.summary_id == analytics.id)
+        .values(summary_id=piSync.id),
     )
     session.execute(
         update(AnomalyLog)

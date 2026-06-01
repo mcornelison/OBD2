@@ -158,6 +158,17 @@ def _createAllInScopeStubs(conn: sqlite3.Connection) -> None:
         "id INTEGER PRIMARY KEY AUTOINCREMENT, "
         "dtc_code TEXT NOT NULL, status TEXT NOT NULL)"
     )
+    # US-369 (F-109): dtc_freeze_frame -- append-only id INTEGER PK; carries
+    # the cross-tier vehicle_info_vin (Pi PK) the server resolves to an integer
+    # vehicle_info_id at sync time.
+    conn.execute(
+        "CREATE TABLE dtc_freeze_frame ("
+        "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+        "dtc_log_id INTEGER, captured_at_timestamp_utc TEXT, "
+        "pid_responses_json TEXT NOT NULL DEFAULT '{}', "
+        "vehicle_info_vin TEXT, notes TEXT, "
+        "data_source TEXT NOT NULL DEFAULT 'real')"
+    )
     # US-206: drive_summary -- drive_id is the PK (no auto-increment;
     # the Pi counter mints it).
     conn.execute(

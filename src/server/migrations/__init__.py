@@ -31,6 +31,12 @@
 # 2026-05-21    | Rex          | US-357 / I-041 close (Sprint 41 V0.27.18
 #               |              | hotfix) -- registered v0009 (drive_statistics
 #               |              | .data_quality ADD COLUMN per US-351 ORM).
+# 2026-05-28    | Rex (US-363) | Sprint 43 V0.28.0 schema pass -- registered
+#               |              | v0010 (F-107 attribution-anomaly tripwire:
+#               |              | drive_summary.data_quality ADD COLUMN +
+#               |              | drive_statistics CHECK enum extension).  v0010
+#               |              | is the shared sprint migration; later schema
+#               |              | stories append substeps to its apply().
 # ================================================================================
 ################################################################################
 
@@ -87,6 +93,9 @@ from src.server.migrations.versions.v0008_us312_create_baselines import (
 from src.server.migrations.versions.v0009_us351_drive_statistics_data_quality_column import (  # noqa: E501
     MIGRATION as _V0009,
 )
+from src.server.migrations.versions.v0010_us363_attribution_anomaly_data_quality import (  # noqa: E501
+    MIGRATION as _V0010,
+)
 
 # ================================================================================
 # Registry -- append new migrations to the end, in ascending version order
@@ -102,6 +111,7 @@ ALL_MIGRATIONS: tuple[Migration, ...] = (
     _V0007,
     _V0008,
     _V0009,
+    _V0010,
 )
 
 

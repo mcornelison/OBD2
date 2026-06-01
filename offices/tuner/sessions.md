@@ -7,6 +7,121 @@
 
 ---
 
+## Session 21 — 2026-05-28 (single day, one day after Session 20)
+
+**Context**: Pure inbox triage + advisory replies session. No drives, no datalog analysis. (1) Atlas filed today 12:31 CDT requesting Q4 ECU-signature FK concur for V0.28.0 PRD — replied CONCUR-with-caveat (notes column carve-out + writer-path temporal invariant) and dispositioned Q2 (US-370 SPEED-PID seed) in same note. (2) Looped Marcus in parallel for PM-side awareness of US-365 + US-370 schema deltas. (3) Cleared Iris's deferred 2026-05-26 B-103 splash advisory: S-1 (OBD-degraded tiered model — only T1+T2 flip degraded, T3 informational) + S-2 (amber #FFC400 CONCUR; future critical-red distinct from brand reds). (4) CIO hardware question: OSOYOO 3.5" display HDMI input type — initially answered wrong (full-size); CIO corrected to micro-HDMI. Saved as `reference-osoyoo-display.md` in shared memory + MEMORY.md index entry.
+
+### What Happened
+
+**Init + inbox triage**:
+- 2 unread notes since Session 20: Atlas 2026-05-28 (Q4 ECU-signature FK approach concur request, V0.28.0 PRD) + Iris 2026-05-26 (B-103 splash advisory, deferred from Session 20).
+- Background: per shared MEMORY, V0.28.0 Sprint 43 PRD draft is the next item on PM's plate; backlog v2 + dev/main branching + validation-criteria-upfront contract all landed 2026-05-27/28.
+
+**Atlas Q4 disposition (V0.28.0 US-368 `dtc_freeze_frame` ECU-signature capture)**:
+- Read PRD V0.28.0 row 4 (Q4): Atlas ruled FK to `vehicle_info.id` + append-only invariant; CONCUR pending from Spool.
+- My disposition: **CONCUR-with-caveat**. Agree FK-only + append-only on identity columns (ecu_signature, cal_signature, install/removal timestamps, hardware P/N). VETO hybrid (denormalized text) — SSOT wins; JOIN cost trivial.
+- **Caveat**: carve out mutable `notes` TEXT column on `vehicle_info`. Forensic workflow needs to attach observations to a running-ECU row WITHOUT close+open (e.g., "first knock-retard event Drive 26 ~18° pull", "Mode 22 silent", "SPEED PID 2× drift"). These aren't identity facts; allowing UPDATE on notes doesn't violate SSOT.
+- **Bonus refinement**: writer-path temporal invariant on US-368 — `dtc_freeze_frame.captured_at BETWEEN vehicle_info[fk].install AND COALESCE(removal, NOW())` catches FK-target drift bugs cheaply.
+- Filed A2AL v0.4.1 to Atlas inbox: `2026-05-28-from-spool-q4-concur-with-caveat-plus-q2-disposition.md`.
+
+**Atlas Q2 disposition (US-370 SPEED-PID seed)**:
+- PRD Q2: seed `correction_factor=0.5` for new ECU now OR defer to GPS-correlation drive?
+- My disposition: **seed 0.5 NOW** with `provenance` TEXT NOT NULL column added to `speed_pid_calibration` schema. Defer-to-GPS leaves NULL/identity-1.0 fallback = silent garbage; seeding directional-correct value is better. Provenance column makes "rough seed" vs "empirical" vs "gps-correlated" auditable at query time.
+- Seed rows requested:
+  - prior ECU: `correction_factor=1.0`, `provenance='empirical-Drive-18-gear-math-fit'`
+  - new ECU MD335287: `correction_factor=0.5`, `provenance='gear-math-sanity-check-Drive-26-CIO-corrected'`
+- Post-GPS-correlation drive (TBD): UPDATE new-ECU row to empirical + `provenance='gps-correlated-Drive-XX-YYYY-MM-DD'`.
+
+**Marcus parallel (PM-side awareness)**:
+- Filed A2AL v0.4.1 to PM inbox: `2026-05-28-from-spool-q4-q2-dispositioned-to-atlas-w-us365-us370-deltas.md`.
+- Two US-level schema refinements requested (both fit Alembic v0010 substep scope):
+  - US-365: add `notes` TEXT NULL on `vehicle_info` + table comment for identity-vs-annotation split
+  - US-370: add `provenance` TEXT NOT NULL on `speed_pid_calibration` + 2-ECU seed rows
+- Flagged: prd_to_sprint.py gate held until Atlas acks notes-column carve-out.
+
+**Iris B-103 splash advisory (S-1 + S-2)**:
+- Read full spec at `docs/superpowers/specs/2026-05-26-b103-splash-animation-design.md` (v1.1 Atlas-gated, 765 lines). Spec is well-architected: Pi splash as consumer of two SSOTs (`boot-state`, `shutdown-state`); 2-state UX (healthy/degraded); chromium kiosk on OSOYOO 3.5" display.
+
+- **S-1 disposition (OBD-degraded semantic)**: tiered model.
+  - T1 (adapter detected) + T2 (ELM327 sync) failures → DEGRADED, splash amber.
+  - T3 (first PID response) failure → **NOT degraded at splash time**. T3 fail is OFTEN legitimate (Pi cold-boot on UPS, key-not-yet-on, ECU asleep). Flagging it as splash-degraded teaches CIO to ignore amber → alarm-fatigue kills the alert's value.
+  - Granular `services["eclipse-obd"]` enum for post-boot UI: `adapter-missing` / `adapter-no-sync` / `synced-no-data` / `synced-with-data` / `starting`.
+  - Recommended retry-once on T2/T3 transient to cover ISO 9141-2 slow-init jitter.
+
+- **S-2 disposition (amber #FFC400 palette alignment)**: CONCUR.
+  - No tuning palette in flight currently. #FFC400 aligns with automotive convention (amber-for-warn). Will inherit as `--warn-amber` semantic token when tuning gauges land (V0.28+ B-076 downstream feature).
+  - **Critical-red flag**: future critical-state-red MUST be distinct from existing brand reds (`--red #E60012`, `--red-light`, `--red-dark` — these are Mitsubishi-inspired 3-rhombus animation identity). Same-color brand mark + critical alarm = user can't distinguish. Suggested optional stubs in spec §4 for forward declaration.
+  - Forward-declared tuning-state-token mapping (informational, not authoritative until validated):
+    - Normal/healthy: TBD cool gray-blue (e.g., `#7B9CAE`) — for coolant 75-95°C, knock retard 0-5°, AFR 13.5-14.7
+    - Warn (inherits Iris's `--warn-amber: #FFC400`): coolant 100-105°C, knock retard 5-12°, boost 10-12 psi, AFR 13.0-13.4
+    - Critical: TBD distinct-red — coolant >105°C, knock retard >12°, boost >15 psi, AFR >12.5 at load >70%
+  - Filed A2AL v0.4.1 to Iris inbox: `2026-05-28-from-spool-b103-splash-s1-s2-advisory.md`.
+
+**OSOYOO display hardware correction (CIO live)**:
+- CIO asked HDMI cable size for the OSOYOO 3.5" screen for the splash setup.
+- I answered: micro-HDMI to **full-size HDMI**, 3 ft / 1 m. **WRONG.** CIO corrected: OSOYOO takes micro-HDMI input. Correct cable = **micro-HDMI to micro-HDMI**, 3 ft / 1 m.
+- Saved correction as shared-memory reference: `C:\Users\mcorn\.claude\projects\Z--o-OBD2v2\memory\reference-osoyoo-display.md` + MEMORY.md index entry under Reference sub-files.
+- Honest self-check: this was a fact I invented from generic Pi-display assumption instead of grounding in the actual hardware spec. Lesson: when CIO asks a hardware-spec question I don't have grounded knowledge of, ASK or check before answering — don't extrapolate from "typical Pi 3.5" setup."
+
+### Key Decisions
+
+- **Q4 disposition**: CONCUR-with-caveat (notes column on vehicle_info + temporal invariant on dtc_freeze_frame writer-path). VETO hybrid denormalized text. Awaits Atlas ack on notes-column carve-out before PRD freeze.
+- **Q2 disposition**: seed `correction_factor=0.5` NOW with `provenance` TEXT NOT NULL column added to `speed_pid_calibration` schema; refine post-GPS-correlation drive.
+- **S-1 disposition**: eclipse-obd degraded tier model — T1 (adapter) + T2 (sync) flip degraded; T3 (data) is informational only.
+- **S-2 disposition**: amber #FFC400 inherits as project-wide `--warn-amber` token. Critical-red must be NEW value distinct from brand reds when tuning UI lands.
+- **Knowledge.md update declined**: forward-declared tuning palette thresholds are directional automotive convention, not yet validated against the new ECU's actual envelope. Per Spool Principle 4 (Conservative Until Proven) + the 2026-05-20 "spec invariant validated against real signal" lesson, don't preemptively codify thresholds that haven't been calibrated. Re-visit when tuning UI work actually begins.
+- **OSOYOO display HDMI**: micro-HDMI to micro-HDMI, 3 ft / 1 m. Logged in shared memory.
+
+### Current Vehicle State
+
+- Unchanged from Session 20. 1998 GST 4G63, stock TD04-13G, **ECU = MD335287** (1997 DSM non-EPROM + ECMLink V3 flash mod, swapped 2026-05-22). Fuel: 93 octane. Engine grade A through Drive 26 (last drive 2026-05-22). New ECU baseline establishment still pending. Drive 11 knock-retard reference remains ARCHIVED prior-ECU historical. No drives this session.
+
+### Current Monitoring Capability
+
+- Pi `Chi-Eclips-Tuner` @ 10.27.27.28 + chi-srv-01 both on V0.27.19. V0.27 chain merged to main 2026-05-23. F-7 + F-8 instrument honesty empirically holding. Pi deploy retry to V0.27.19 still pending CIO reconnect.
+- V0.28.0 Sprint 43 dispatch-ready (per PM Session 44 closeout): F-107 DriveDetector remediation + F-108 ECU lineage + F-109 Mode 02 freeze-frame + F-076 first slice (SPEED-PID per-ECU calibration table + smells) + US-373 architecture.md update. CIO drives `ralph.sh N` when ready.
+- No new monitoring surface introduced this session.
+
+### Open Items
+
+- **Atlas Q4-caveat ACK pending** — notes column carve-out + temporal invariant on US-368. Once acked, PRD Q4 row fully resolved + PM clears prd_to_sprint.py freeze gate (per shared memory, sprint.json may need re-freeze for the 3 deltas).
+- **Iris S-1/S-2 spec rev 1.1 → 1.2** — non-blocking; Iris's call whether to ship v1.1 as-is or fold S-1 retry semantic into US-A refinement.
+- **New ECU baseline establishment** — still open from Sessions 19/20. Cold-start + warm cruise + modest-load + restart cycle on MD335287 ECU still pending.
+- **SPEED PID calibration check** — 2-min GPS-correlation exercise still pending. Until then: divide SPEED by ~2 for ground-truth.
+- **BL-018 empirical battery-runtime tuning** — V0.27 chain merged, BL-018 formally unblocked, but no real drain data captured yet.
+- **GM 3-bar MAP sensor purchase** — when CIO commits to E85 timeline. Not urgent.
+- **VE table tuning labor budget** — plan 5-15 calibration drives BEFORE E85 hardware activation.
+- **Pin 75 + Pin 92 wideband pre-wire execution** — CIO not at car yet; deferred.
+- **Drive 23/24 dual-attribution carve-out (F-107)** — V0.28.0 Sprint 43 TOP PRIORITY per PM; tracking as new-ECU drives flow through.
+- **Inbox 47 unread + 9 files >4 weeks** — archive-move decision still pending from Session 17 optimize Phase 6.
+
+### Safety Advisories
+
+None engine-side. No new datalogs analyzed. All advisories were monitoring-platform / schema-architectural / UI-palette in scope.
+
+### Diagnostic Record (honest disclosure)
+
+- ✅ Q4 disposition held to two principles: SSOT-wins on identity columns (VETO hybrid denormalized text); pragmatic carve-out on annotation column (notes mutable, fits real forensic workflow). Specific examples grounded the caveat (knock-retard event, Mode 22 silence, SPEED PID drift) rather than handwave "I might want to update later".
+- ✅ Q2 disposition argued the case for NOT deferring: silent-garbage analysis trumps "wait for perfect data" — directional truth beats NULL/identity-1.0 fallback. Provenance column makes the lineage of the rough value auditable rather than pretending it's ground-truth.
+- ✅ S-1 disposition argued FROM CIO's actual workflow (cold-boot on UPS, key-off-engine-off scenarios) instead of defaulting to "anything failing = amber." Alarm-fatigue principle applied: amber must mean "actually broken" or it loses signal value.
+- ✅ S-2 disposition flagged the brand-red-vs-state-red collision proactively — future tuning UI critical-state must be NEW token, NOT reused brand color. Iris would not have known this constraint from her UX lane.
+- ❌ **OSOYOO display HDMI type — answered WRONG from generic-Pi-display assumption instead of grounded-knowledge**. CIO corrected. Lesson: when asked hardware-spec questions I don't have grounded knowledge of, ASK or look up — don't extrapolate. Saved correction to shared memory so it's not repeated. This is the same pattern as Session 19's SPEED-PID mischaracterization — single-source assumption without sanity check.
+- ✅ Lane discipline maintained: did NOT touch PRD or sprint.json directly; did NOT touch backlog.json directly; filed advisories via inbox only.
+- ✅ A2AL v0.4.1 shape executed correctly on all three peer notes (Atlas, Marcus, Iris) — line-1 routing headers, audience=agent, in-reply-to set where applicable, no cc:CIO.
+- ✅ Knowledge.md NOT updated despite forward-declared tuning palette thresholds — held discipline per "spec invariant validated against real signal" lesson.
+
+### Session 21 Stats
+
+- 2 inbox notes triaged (Atlas Q4 concur request + Iris B-103 splash advisory).
+- 3 A2AL v0.4.1 peer notes filed (Atlas Q4 disposition + Marcus parallel + Iris S-1/S-2 advisory).
+- 1 PRD read in full (`offices/pm/prds/prd-V0.28.0.md`) + 1 design spec read in full (`docs/superpowers/specs/2026-05-26-b103-splash-animation-design.md`, 765 lines).
+- 2 US-level schema refinements requested (US-365 notes column; US-370 provenance column).
+- 1 cross-agent shared-memory reference added (`reference-osoyoo-display.md`) + MEMORY.md index update.
+- 1 honest self-correction logged (OSOYOO HDMI type — assumed full-size, CIO corrected to micro-HDMI).
+- 0 drives analyzed; 0 datalogs reviewed; 0 knowledge.md changes; 0 safety advisories issued.
+
+---
+
 ## Session 20 — 2026-05-27 (single day, five days after Session 19)
 
 **Context**: Research + advisory session driven by CIO question about pre-wiring future sensor leads while his new ECU is accessible. Triggered (1) fact-checked deep-dive on ECMLink V3 input pin assignments via authoritative ECMtuning wiki + 2G ECU pinout PDF + DSMTuners consensus; (2) ECU identity nailed down via URL CIO provided — his "modified EPROM" ECU is actually a **1997 DSM non-EPROM ECU (P/N MD335287) with ECMLink V3 flash modification**, plug-installed in 1998 chassis; (3) plain-language Speed Density explainer for CIO when "yes I think" wasn't fully informed; (4) 5 surgical edits to knowledge.md logging the new identity + wideband pre-wire plan + explicit SD-mandatory-for-flex-fuel dependency. No drives, no peer notes filed. Iris's 2026-05-26 B-103 splash advisory note surfaced but deferred per CIO direction.

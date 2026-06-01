@@ -34,7 +34,7 @@ Concerns
    :func:`src.server.analytics.basic.computeDriveStatistics` so the
    writer and the AI-analysis path share one source of truth.  Keyed on
    the *server-side* ``drive_summary.id`` -- the value
-   ``proposeCalibration`` joins on (``DriveSummary.id == DriveStatistic.drive_id``).
+   ``proposeCalibration`` joins on (``DriveSummary.id == DriveStatistic.summary_id``).
 
 2. **Decouple** (``enqueueAutoAnalysisForSync``) -- the writer runs
    unconditionally whenever a drive's boundaries are known, exactly like
@@ -274,7 +274,7 @@ class TestEnsureDriveStatistics:
         written = _ensureDriveStatistics(syncSession, 1)
 
         rows = syncSession.execute(
-            select(DriveStatistic).where(DriveStatistic.drive_id == 1),
+            select(DriveStatistic).where(DriveStatistic.summary_id == 1),
         ).scalars().all()
         assert written == len(rows) == 3
         assert {r.parameter_name for r in rows} == set(CANONICAL_PIDS_SAMPLE)
@@ -290,7 +290,7 @@ class TestEnsureDriveStatistics:
         rows = {
             r.parameter_name: r
             for r in syncSession.execute(
-                select(DriveStatistic).where(DriveStatistic.drive_id == 1),
+                select(DriveStatistic).where(DriveStatistic.summary_id == 1),
             ).scalars().all()
         }
         rpm = rows["RPM"]
@@ -315,7 +315,7 @@ class TestEnsureDriveStatistics:
         secondCount = _ensureDriveStatistics(syncSession, 1)
 
         rows = syncSession.execute(
-            select(DriveStatistic).where(DriveStatistic.drive_id == 1),
+            select(DriveStatistic).where(DriveStatistic.summary_id == 1),
         ).scalars().all()
         assert secondCount == 3
         assert len(rows) == 3  # replaced, not duplicated
@@ -329,7 +329,7 @@ class TestEnsureDriveStatistics:
         written = _ensureDriveStatistics(syncSession, 7)
 
         rows = syncSession.execute(
-            select(DriveStatistic).where(DriveStatistic.drive_id == 7),
+            select(DriveStatistic).where(DriveStatistic.summary_id == 7),
         ).scalars().all()
         assert written == 0
         assert rows == []
@@ -424,9 +424,10 @@ class TestEnqueueAutoAnalysisWritesDriveStatistics:
 
         assert len(summaries) == 1
         assert {s.parameter_name for s in stats} == set(CANONICAL_PIDS_SAMPLE)
-        # drive_statistics.drive_id is the SERVER-side drive_summary.id,
+        # drive_statistics' summary_id is the SERVER-side drive_summary.id,
         # not the Pi-local drive_id (matches proposeCalibration's join).
-        assert all(s.drive_id == summaries[0].id for s in stats)
+        # US-371 (F-076): column renamed drive_id -> summary_id.
+        assert all(s.summary_id == summaries[0].id for s in stats)
 
     @pytest.mark.asyncio
     async def test_ollamaUp_driveStatisticsWrittenWithoutRunningAnalysis(
@@ -524,7 +525,7 @@ class TestBackfillDriveStatistics:
         assert stats.drivesWritten == 1
         assert stats.rowsWritten == 3
         rows = syncSession.execute(
-            select(DriveStatistic).where(DriveStatistic.drive_id == 3),
+            select(DriveStatistic).where(DriveStatistic.summary_id == 3),
         ).scalars().all()
         assert {r.parameter_name for r in rows} == set(CANONICAL_PIDS_SAMPLE)
 

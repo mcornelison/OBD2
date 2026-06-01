@@ -122,7 +122,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request, status
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import func as sa_func
-from sqlalchemy import select, update
+from sqlalchemy import or_, select, update
 from sqlalchemy.dialects.mysql import insert as mysql_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session
@@ -136,6 +136,7 @@ from src.server.db.models import (
     ConnectionLog,
     DriveCounter,
     DriveSummary,
+    DtcFreezeFrame,
     DtcLog,
     Profile,
     RealtimeData,
@@ -185,10 +186,36 @@ _TABLE_REGISTRY: dict[str, tuple[type, tuple[tuple[str, str], ...]]] = {
     "battery_health_log": (BatteryHealthLog, ()),
 }
 
-ACCEPTED_TABLES: frozenset[str] = frozenset(_TABLE_REGISTRY.keys())
+# US-369 (F-109): dtc_freeze_frame is a synced capture table but is NOT a
+# generic registry table -- its Pi rows carry a cross-tier shape (vehicle_info_vin
+# TEXT + Pi-local dtc_log_id + a JSON-string pid_responses_json) that the
+# column-copy upsert path cannot map.  It is accepted at the payload boundary
+# here and routed through the dedicated resolver _syncDtcFreezeFrameRows.
+DTC_FREEZE_FRAME_TABLE: str = "dtc_freeze_frame"
+
+ACCEPTED_TABLES: frozenset[str] = (
+    frozenset(_TABLE_REGISTRY.keys()) | {DTC_FREEZE_FRAME_TABLE}
+)
 
 # Columns never overwritten on upsert conflict.
-_PRESERVE_ON_UPDATE = frozenset({"id", "source_id", "source_device", "synced_at"})
+#
+# The first four are the server-owned sync bookkeeping columns.  The
+# vehicle_info ECU-lineage columns (US-365 / F-108) are SERVER-ONLY: the Pi's
+# vehicle_info schema carries only VIN-decoded columns and never sends these,
+# so under normal operation the payload-only ``on_duplicate_key_update`` already
+# leaves them intact.  They are listed here as a defensive belt-and-braces fix
+# (US-365 conditionalOutcome): if a future regression ever put an ECU column in
+# a Pi payload, this set still excludes it from the upsert SET clause, so the
+# server-authored append-only ECU lineage can never be clobbered -- the same
+# guarantee drive_summary's analytics columns rely on (architecture.md §10.7).
+# ``ecu_active_marker`` is a generated column (not directly writable) but is
+# listed for completeness so no code path attempts to set it.
+_PRESERVE_ON_UPDATE = frozenset({
+    "id", "source_id", "source_device", "synced_at",
+    # US-365 vehicle_info ECU lineage (server-only):
+    "ecu_signature", "cal_signature", "ecu_install_timestamp_utc",
+    "ecu_removal_timestamp_utc", "notes", "ecu_active_marker",
+})
 
 
 # ==============================================================================
@@ -354,6 +381,11 @@ def runSyncUpsert(
     result: dict[str, dict[str, int]] = {}
 
     for tableName, payload in tables.items():
+        # US-369: dtc_freeze_frame needs cross-tier FK resolution; it is
+        # processed AFTER the generic loop so any dtc_log / vehicle_info rows
+        # in this same batch are already upserted and resolvable.
+        if tableName == DTC_FREEZE_FRAME_TABLE:
+            continue
         model, renames = _TABLE_REGISTRY[tableName]
         rows = payload["rows"] if isinstance(payload, dict) else payload.rows
         if not rows:
@@ -384,6 +416,14 @@ def runSyncUpsert(
                 else:
                     serverRow[renamedKey] = value
             serverRow["source_device"] = deviceId
+            # US-372 (F-076): mirror the Pi drive id onto drive_id.  The Pi
+            # sends only ``id`` (-> source_id) for drive_summary; without this
+            # the drive_id mirror would insert NULL and violate the
+            # chk_drive_id_source_id invariant.  conditionalOutcome 1: a writer
+            # that knows one column writes (drive_id = source_id) so the
+            # invariant holds.
+            if tableName == "drive_summary" and serverRow.get("drive_id") is None:
+                serverRow["drive_id"] = serverRow.get("source_id")
             columnNames = {c.name for c in model.__table__.columns}
             if "sync_batch_id" in columnNames:
                 serverRow["sync_batch_id"] = syncHistoryId
@@ -415,6 +455,15 @@ def runSyncUpsert(
             "updated": updated,
             "errors": 0,
         }
+
+    # US-369 (F-109): dtc_freeze_frame last -- its FK resolution reads the
+    # dtc_log / vehicle_info rows just upserted above.
+    if DTC_FREEZE_FRAME_TABLE in tables:
+        payload = tables[DTC_FREEZE_FRAME_TABLE]
+        ffRows = payload["rows"] if isinstance(payload, dict) else payload.rows
+        result[DTC_FREEZE_FRAME_TABLE] = _syncDtcFreezeFrameRows(
+            session, deviceId, ffRows, syncHistoryId,
+        )
 
     return result
 
@@ -465,6 +514,178 @@ def _upsertBatch(
         )
 
     session.execute(stmt, rows)
+
+
+# ==============================================================================
+# dtc_freeze_frame cross-tier sync (US-369 / F-109)
+# ==============================================================================
+#
+# The Pi vehicle_info PK is ``vin`` (TEXT); the server PK is an integer ``id``
+# (US-368 cross-tier design).  A Pi freeze-frame row therefore references the
+# active vehicle by ``vehicle_info_vin``, a Pi-local ``dtc_log_id``, and a
+# JSON-string ``pid_responses_json``.  This resolver maps that shape onto the
+# server schema:
+#
+#   * ``vehicle_info_vin`` -> integer ``vehicle_info_id`` of the ECU era whose
+#     ``[ecu_install, ecu_removal]`` window contains ``captured_at`` (the Q4
+#     temporal join).  An unresolvable vin FAILS LOUDLY -- no silent re-resolve
+#     (US-369 conditionalOutcome 1): a freeze-frame must bind to a real ECU era.
+#   * Pi-local ``dtc_log_id`` -> server ``dtc_log.id`` via (source_device,
+#     source_id).  Left NULL with a WARNING if the parent DTC has not synced.
+#   * ``pid_responses_json`` JSON string -> dict for the JSON column.
+#
+# This binds the FK once, at sync time, by capture-time window; later
+# stamp_ecu_swap rows never re-point an existing freeze-frame (V-3).  The direct
+# (non-sync) insert SSOT remains ``insertDtcFreezeFrame``; sync uses the
+# idempotent (source_device, source_id) upsert so a cursor-reset re-sync does
+# not duplicate, and the whole batch stays in one transaction.
+
+
+def _coercePidResponses(value: Any) -> dict:
+    """Coerce a Pi ``pid_responses_json`` value into a dict for the JSON column.
+
+    The Pi stores it as a TEXT JSON string; ``{}`` (the graceful-degradation
+    case) and an already-decoded dict both pass through.  Anything unparseable
+    degrades to ``{}`` rather than failing the whole sync batch.
+    """
+    if value is None:
+        return {}
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        try:
+            decoded = json.loads(value)
+        except (json.JSONDecodeError, ValueError):
+            return {}
+        return decoded if isinstance(decoded, dict) else {}
+    return {}
+
+
+def _resolveVehicleInfoIdForCapture(
+    session: Session, vin: str | None, capturedAt: datetime,
+) -> int | None:
+    """Resolve a Pi ``vehicle_info_vin`` to the server ``vehicle_info.id``.
+
+    Returns the id of the ECU-lineage row whose ``[ecu_install, ecu_removal]``
+    window contains ``capturedAt`` (removal NULL = currently-active/open).
+
+    Args:
+        session: Open SQLAlchemy session.
+        vin: The Pi-side active-vehicle VIN (``None`` when VIN decode had not
+            landed at capture time -- the FK is then left NULL).
+        capturedAt: When the freeze-frame was captured (UTC).
+
+    Returns:
+        The matching ``vehicle_info.id``, or ``None`` when ``vin`` is ``None``.
+
+    Raises:
+        ValueError: If ``vin`` is given but no -- or more than one -- ECU era
+            window contains ``capturedAt`` (fail loudly; no silent re-resolve).
+    """
+    if vin is None:
+        return None
+    ids = session.execute(
+        select(VehicleInfo.id).where(
+            VehicleInfo.vin == vin,
+            VehicleInfo.ecu_install_timestamp_utc <= capturedAt,
+            or_(
+                VehicleInfo.ecu_removal_timestamp_utc.is_(None),
+                VehicleInfo.ecu_removal_timestamp_utc >= capturedAt,
+            ),
+        ),
+    ).scalars().all()
+    if len(ids) == 1:
+        return ids[0]
+    if not ids:
+        raise ValueError(
+            f"dtc_freeze_frame sync: no vehicle_info row for vin {vin!r} "
+            f"active at {capturedAt.isoformat()}; cross-tier FK resolution "
+            f"failed (no silent re-resolve)",
+        )
+    raise ValueError(
+        f"dtc_freeze_frame sync: {len(ids)} vehicle_info rows for vin {vin!r} "
+        f"active at {capturedAt.isoformat()}; ECU-lineage windows overlap "
+        f"(append-only single-active invariant violated)",
+    )
+
+
+def _resolveServerDtcLogId(
+    session: Session, deviceId: str, piDtcLogId: int | None,
+) -> int | None:
+    """Map a Pi-local ``dtc_log_id`` to the server ``dtc_log.id``.
+
+    Resolution is by the sync natural key (``source_device``, ``source_id``).
+    Returns ``None`` (with a WARNING) when the parent DTC has not synced yet --
+    the freeze-frame still lands; the FK fills in on a later resync.
+    """
+    if piDtcLogId is None:
+        return None
+    serverId = session.execute(
+        select(DtcLog.id).where(
+            DtcLog.source_device == deviceId,
+            DtcLog.source_id == piDtcLogId,
+        ),
+    ).scalar_one_or_none()
+    if serverId is None:
+        logger.warning(
+            "dtc_freeze_frame sync: Pi dtc_log_id %s (device %s) not yet "
+            "synced; freeze-frame dtc_log_id left NULL",
+            piDtcLogId, deviceId,
+        )
+    return serverId
+
+
+def _syncDtcFreezeFrameRows(
+    session: Session,
+    deviceId: str,
+    rows: list[dict[str, Any]],
+    syncHistoryId: int,
+) -> dict[str, int]:
+    """Upsert Pi freeze-frame rows onto the server schema with FK resolution.
+
+    See the section header above for the cross-tier mapping contract.
+    """
+    if not rows:
+        return {"inserted": 0, "updated": 0, "errors": 0}
+
+    prepared: list[dict[str, Any]] = []
+    sourceIds: list[int] = []
+    for piRow in rows:
+        sourceId = piRow["id"]
+        capturedAt = _parseDateTime(piRow.get("captured_at_timestamp_utc"))
+        vehicleInfoId = _resolveVehicleInfoIdForCapture(
+            session, piRow.get("vehicle_info_vin"), capturedAt,
+        )
+        dtcLogId = _resolveServerDtcLogId(
+            session, deviceId, piRow.get("dtc_log_id"),
+        )
+        prepared.append({
+            "source_id": sourceId,
+            "source_device": deviceId,
+            "sync_batch_id": syncHistoryId,
+            "synced_at": datetime.now(UTC).replace(tzinfo=None),
+            "dtc_log_id": dtcLogId,
+            "captured_at_timestamp_utc": capturedAt,
+            "pid_responses_json": _coercePidResponses(
+                piRow.get("pid_responses_json"),
+            ),
+            "vehicle_info_id": vehicleInfoId,
+            "notes": piRow.get("notes"),
+        })
+        sourceIds.append(sourceId)
+
+    existing = session.execute(
+        select(DtcFreezeFrame.source_id).where(
+            DtcFreezeFrame.source_device == deviceId,
+            DtcFreezeFrame.source_id.in_(sourceIds),
+        ),
+    ).scalars().all()
+    existingSet = set(existing)
+    inserted = sum(1 for sid in sourceIds if sid not in existingSet)
+    updated = len(sourceIds) - inserted
+
+    _upsertBatch(session, DtcFreezeFrame, prepared)
+    return {"inserted": inserted, "updated": updated, "errors": 0}
 
 
 # ==============================================================================

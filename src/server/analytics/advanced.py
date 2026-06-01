@@ -163,7 +163,7 @@ def _loadRecentAvgs(
     """
     stmt = (
         select(DriveStatistic)
-        .join(DriveSummary, DriveSummary.id == DriveStatistic.drive_id)
+        .join(DriveSummary, DriveSummary.id == DriveStatistic.summary_id)
         .where(DriveStatistic.parameter_name == parameterName)
         .order_by(DriveSummary.start_time.desc())
         .limit(windowSize)
@@ -266,7 +266,7 @@ def _alignedAvgsByDrive(
     missing either parameter are dropped.
     """
     stmt = select(
-        DriveStatistic.drive_id,
+        DriveStatistic.summary_id,
         DriveStatistic.parameter_name,
         DriveStatistic.avg_value,
     ).where(DriveStatistic.parameter_name.in_((paramA, paramB)))
@@ -318,7 +318,7 @@ def detectAnomalies(session: Session, driveId: int) -> list[AnomalyResult]:
     )
 
     currentStats = session.execute(
-        select(DriveStatistic).where(DriveStatistic.drive_id == driveId)
+        select(DriveStatistic).where(DriveStatistic.summary_id == driveId)
     ).scalars().all()
     if not currentStats:
         session.commit()
@@ -360,7 +360,7 @@ def _evaluateAnomaly(
             select(DriveStatistic).where(
                 and_(
                     DriveStatistic.parameter_name == current.parameter_name,
-                    DriveStatistic.drive_id != driveId,
+                    DriveStatistic.summary_id != driveId,
                 )
             )
         ).scalars().all()

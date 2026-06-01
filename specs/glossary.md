@@ -57,7 +57,7 @@ This document defines terms, acronyms, and domain-specific language used in this
 : Python package (`pip install ELM327-emulator`) that emulates an ELM327 OBD-II adapter. Creates a virtual serial port on the Pi for end-to-end testing without a car or physical adapter. Configurable PID responses via dictionary.
 
 **ECMLink V3**
-: Next-generation tuning and datalogging tool from [ECMTuning](https://www.ecmtuning.com/) for 1990-1999 DSM and EVO 1-3 vehicles. Provides direct access to fuel maps, timing maps, airflow tables, and boost control via a drop-in flash device that replaces the factory EPROM. Logs at 1000+ samples/sec. The project's ultimate goal is to feed OBD-II analysis data into ECMLink tuning decisions. Not yet installed in the vehicle.
+: Next-generation tuning and datalogging tool from [ECMTuning](https://www.ecmtuning.com/) for 1990-1999 DSM and EVO 1-3 vehicles. Provides direct access to fuel maps, timing maps, airflow tables, and boost control via a drop-in flash device that replaces the factory EPROM. Logs at 1000+ samples/sec. The project's ultimate goal is to feed OBD-II analysis data into ECMLink tuning decisions. The vehicle's ECU was made ECMLink-compatible via the 2026-05-22 swap to a flash-modifiable 97 board (MD335287); active ECMLink tuning/logging via the USB+PC cable is the next-phase goal.
 
 **ECU (Engine Control Unit)**
 : The vehicle's onboard computer that controls engine operation -- fuel injection, ignition timing, idle speed, boost control. The stock ECU can be replaced with a programmable ECU running ECMLink for custom tuning.

@@ -456,6 +456,9 @@ class LifecycleMixin:
     # or errors out (i.e., we drop into PENDING).  Stays None on the happy path.
     # Verified by _verifyReconnectDaemonAlive immediately after spawn.
     _reconnectHeartbeatThread: threading.Thread | None
+    # F-107 (US-361) Mechanism B: pidfile single-instance guard.  Stays None
+    # unless ``pi.runtime.singleInstanceGuard.enabled`` is True in config.
+    _singleInstanceGuard: Any | None
 
     def _initializeAllComponents(self) -> None:
         """
@@ -476,6 +479,11 @@ class LifecycleMixin:
         11. profileSwitcher - profile switching (after driveDetector for drive-aware switching)
         12. backupManager - backup system (last, non-critical to core operation)
         """
+        # F-107 (US-361) Mechanism B: refuse to start if another live
+        # orchestrator already holds the instance lock, BEFORE the database
+        # opens or any drive_id can be minted.  Default-OFF (see method
+        # docstring) so existing test + simulate paths are unaffected.
+        self._initializeSingleInstanceGuard()
         self._initializeDatabase()
         # T10 cutover (2026-05-15): the in-process startup_log writer
         # (_recordStartupLog -> recordBootReason) was REMOVED here.
@@ -506,6 +514,69 @@ class LifecycleMixin:
         self._initializeUpdateChecker()
         self._initializeUpdateApplier()
         self._initializeBackupManager()  # type: ignore[attr-defined]
+
+    def _initializeSingleInstanceGuard(self) -> None:
+        """Acquire the single-instance lock (F-107 Mechanism B prevention).
+
+        The Drive 23/24 production dual-attribution (US-360 RCA, Mechanism B)
+        was two concurrent ``eclipse-obd`` orchestrator processes, each with its
+        own :class:`DriveDetector` + process-global ``drive_id``, both minting
+        from the shared ``drive_counter`` and time-overlapping one physical leg.
+        A pidfile lock makes the *second* starter refuse, so one leg cannot be
+        split across two minting processes.
+
+        **Default-OFF.**  Enabled only when
+        ``pi.runtime.singleInstanceGuard.enabled`` is True.  This is a
+        load-bearing startup change touching the orchestrator boot path that
+        every integration test exercises, so it ships dark pending Atlas Rule 10
+        sign-off + CIO review of the deploy-hygiene-vs-pidfile trade-off (the
+        US-354 deploy class is the real-world trigger; the server-side
+        ``data_quality='attribution_anomaly'`` tripwire in US-362/363 is the
+        real-time backstop).  When disabled this is a no-op: ``_singleInstance
+        Guard`` stays None and no lockfile is touched.
+
+        Raises:
+            ComponentInitializationError: When the guard is enabled and another
+                live orchestrator already holds the lock (refuse to start).
+        """
+        runtimeConfig = self._config.get('pi', {}).get('runtime', {})
+        guardConfig = runtimeConfig.get('singleInstanceGuard', {})
+        if not guardConfig.get('enabled', False):
+            self._singleInstanceGuard = None
+            return
+
+        from .single_instance import (
+            SingleInstanceError,
+            SingleInstanceGuard,
+        )
+
+        lockPath = guardConfig.get(
+            'lockPath', '/run/eclipse-obd/orchestrator.lock'
+        )
+        logger.info("Acquiring single-instance lock | path=%s", lockPath)
+        guard = SingleInstanceGuard(lockPath)
+        try:
+            guard.acquire()
+        except SingleInstanceError as e:
+            # Do NOT hold a reference -- we never acquired, so shutdown must
+            # not try to release a lock owned by the live peer.
+            self._singleInstanceGuard = None
+            raise ComponentInitializationError(
+                f"Single-instance guard refused start: {e}",
+                component='singleInstanceGuard',
+            ) from e
+        self._singleInstanceGuard = guard
+
+    def _shutdownSingleInstanceGuard(self) -> None:
+        """Release the single-instance lock if this process acquired it."""
+        if self._singleInstanceGuard is None:
+            return
+        try:
+            self._singleInstanceGuard.release()
+        except Exception as e:  # pragma: no cover - defensive
+            logger.warning("Failed to release single-instance lock: %s", e)
+        finally:
+            self._singleInstanceGuard = None
 
     def _initializeDatabase(self) -> None:
         """Initialize the database component."""
@@ -1503,6 +1574,7 @@ class LifecycleMixin:
         try:
             from ..dtc_client import DtcClient
             from ..dtc_logger import DtcLogger
+            from ..freeze_frame import FreezeFrameCapture, Mode02Client
             from ..mil_edge import MilRisingEdgeDetector
 
             self._dtcLogger = DtcLogger(
@@ -1510,7 +1582,16 @@ class LifecycleMixin:
                 dtcClient=DtcClient(),
             )
             self._milEdgeDetector = MilRisingEdgeDetector()
-            logger.info("DtcLogger + MIL edge detector started successfully")
+            # US-368 / F-109: Mode 02 freeze-frame capture shares the MIL
+            # rising-edge trigger.  Same database; its own python-obd seam.
+            self._freezeFrameCapture = FreezeFrameCapture(
+                database=self._database,
+                mode02Client=Mode02Client(),
+            )
+            logger.info(
+                "DtcLogger + MIL edge detector + freeze-frame capture "
+                "started successfully"
+            )
         except Exception as e:  # noqa: BLE001 -- DTC capture must not fail boot
             logger.warning(
                 "DtcLogger initialization skipped: %s (type=%s)",
@@ -1518,6 +1599,7 @@ class LifecycleMixin:
             )
             self._dtcLogger = None
             self._milEdgeDetector = None
+            self._freezeFrameCapture = None
 
     def _initializeSummaryRecorder(self) -> None:
         """Initialize SummaryRecorder + wire into DriveDetector (US-206).
@@ -2125,6 +2207,9 @@ class LifecycleMixin:
         self._shutdownConnection()
         self._shutdownProfileManager()
         self._shutdownDatabase()
+        # F-107 (US-361): release the instance lock last so the pidfile
+        # outlives every component that could still mint a drive_id.
+        self._shutdownSingleInstanceGuard()
 
     def _shutdownDataLogger(self) -> None:
         """Shutdown the data logger component."""

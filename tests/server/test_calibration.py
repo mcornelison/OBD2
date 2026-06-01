@@ -104,7 +104,7 @@ def _seedDrive(
     for paramName, avgValue in stats.items():
         session.add(
             DriveStatistic(
-                drive_id=driveId,
+                summary_id=driveId,
                 parameter_name=paramName,
                 min_value=avgValue - 10,
                 max_value=avgValue + 10,

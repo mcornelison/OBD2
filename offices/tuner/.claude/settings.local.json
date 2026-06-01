@@ -117,7 +117,11 @@
       "Bash('/c/Program Files/MariaDB 12.2/bin/mysql.exe' -h 10.27.27.10 -uobd2 -pco3rQeb61zOKO5YvlszTpWJ0 obd2db -e ' *)",
       "Bash(break)",
       "WebFetch(domain:www.raspberrypi.com)",
-      "WebFetch(domain:raw.githubusercontent.com)"
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "WebSearch",
+      "WebFetch(domain:www.ecmtuning.com)",
+      "WebFetch(domain:www.dsmtuners.com)",
+      "WebFetch(domain:dsmlink.com)"
     ]
   }
 }
