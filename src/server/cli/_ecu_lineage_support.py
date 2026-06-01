@@ -31,7 +31,7 @@ from sqlalchemy import func, inspect, select
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
-from src.server.db.models import VehicleInfo
+from src.server.db.models import ECU_CAL_SIGNATURE_UNKNOWN, Ecu, VehicleInfo
 
 # Operator-facing message emitted when the vehicle_info table predates the
 # v0010 ECU-lineage migration (no ecu_signature column).  All three CLIs share
@@ -120,6 +120,43 @@ def nextSourceId(session: Session, sourceDevice: str) -> int:
         )
     ).scalar_one_or_none()
     return (current or 0) + 1
+
+
+def resolveOrCreateEcu(
+    session: Session, *, signature: str, calSignature: str | None,
+) -> Ecu:
+    """Return the ecu identity row for ``(signature, calSignature)``, creating it.
+
+    US-376 / B-076: ECU identity is normalized into the ``ecu`` dimension keyed
+    on the ``(ecu_signature, cal_signature)`` pair.  ``cal_signature`` is NOT
+    NULL on ``ecu``, so a missing / blank calibration maps to the
+    ``UNKCAL`` sentinel (the sanctioned write-once-when-known value).  An
+    existing matching pair is reused (identity is SSOT); a new pair is inserted
+    and flushed so its ``id`` is available to the caller.
+
+    Args:
+        session: An open SQLAlchemy session.
+        signature: The ECU signature.
+        calSignature: The calibration signature, or ``None`` / blank for UNKCAL.
+
+    Returns:
+        The resolved or newly-created :class:`Ecu` row (flushed, ``id`` set).
+    """
+    cal = calSignature.strip() if calSignature and calSignature.strip() else (
+        ECU_CAL_SIGNATURE_UNKNOWN
+    )
+    existing = session.execute(
+        select(Ecu).where(
+            Ecu.ecu_signature == signature,
+            Ecu.cal_signature == cal,
+        )
+    ).scalar_one_or_none()
+    if existing is not None:
+        return existing
+    ecu = Ecu(ecu_signature=signature, cal_signature=cal)
+    session.add(ecu)
+    session.flush()
+    return ecu
 
 
 def parseIsoTimestamp(value: str) -> datetime:

@@ -287,10 +287,14 @@ class TestModuleExports:
         versions = [m.version for m in ALL_MIGRATIONS]
         assert '0010' in versions
 
-    def test_registryStaysSortedWithV0010AtTail(self) -> None:
+    def test_registryStaysSortedWithV0010BeforeV0011(self) -> None:
+        # v0011 (US-376) was appended after v0010; the durable invariant is that
+        # the registry stays sorted ascending and v0010 sits immediately before
+        # v0011 (the new tail is asserted by the v0011 migration test).
         versions = [m.version for m in ALL_MIGRATIONS]
         assert versions == sorted(versions)
-        assert versions[-1] == '0010'
+        assert '0010' in versions
+        assert versions[versions.index('0010') + 1] == '0011'
 
     def test_constantsMatchOrm(self) -> None:
         assert m0010.DRIVE_SUMMARY_TABLE == DriveSummary.__tablename__

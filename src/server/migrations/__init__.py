@@ -37,6 +37,10 @@
 #               |              | drive_statistics CHECK enum extension).  v0010
 #               |              | is the shared sprint migration; later schema
 #               |              | stories append substeps to its apply().
+# 2026-06-01    | Rex (US-376) | Sprint 44 V0.28.1 B-076 first slice -- registered
+#               |              | v0011 (normalized ecu identity dimension +
+#               |              | vehicle_info.ecu_id FK).  Forward-only; v0010
+#               |              | untouched.
 # ================================================================================
 ################################################################################
 
@@ -96,6 +100,9 @@ from src.server.migrations.versions.v0009_us351_drive_statistics_data_quality_co
 from src.server.migrations.versions.v0010_us363_attribution_anomaly_data_quality import (  # noqa: E501
     MIGRATION as _V0010,
 )
+from src.server.migrations.versions.v0011_us376_ecu_identity import (
+    MIGRATION as _V0011,
+)
 
 # ================================================================================
 # Registry -- append new migrations to the end, in ascending version order
@@ -112,6 +119,7 @@ ALL_MIGRATIONS: tuple[Migration, ...] = (
     _V0008,
     _V0009,
     _V0010,
+    _V0011,
 )
 
 

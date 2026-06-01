@@ -72,6 +72,7 @@ def _vehicle(
         source_id=sourceId,
         source_device="chi-eclipse-01",
         vin="4A3AK34T0XE000000",
+        ecu_id=1,  # US-376: ecu_id is NOT NULL (FK not enforced on SQLite)
         ecu_signature=f"sig-{sourceId}",
         ecu_install_timestamp_utc=install,
         ecu_removal_timestamp_utc=removal,

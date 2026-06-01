@@ -95,7 +95,7 @@ from sqlalchemy import (
     func,
     text,
 )
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 # ---- Base --------------------------------------------------------------------
 
@@ -283,7 +283,10 @@ VEHICLE_INFO_APPEND_ONLY_COMMENT: str = (
     "row, never by UPDATEing identity columns in place.  dtc_freeze_frame (US-368) "
     "and per-drive joins reference a SPECIFIC row by FK + time window, so a mutated "
     "identity would silently rewrite history.  Sanctioned mutator: stamp_ecu_swap "
-    "(US-366) close+open."
+    "(US-366) close+open.  ecu_id (US-376 / B-076) is an immutable per-lineage-row "
+    "identity reference into the normalized ecu dimension; the transitional "
+    "ecu_signature/cal_signature TEXT columns are a derived snapshot kept coherent "
+    "with that row (deprecated-transitional, drop in a later B-076 slice)."
 )
 VEHICLE_INFO_SINGLE_ACTIVE_INDEX: str = "uq_vehicle_info_single_active"
 VEHICLE_INFO_ACTIVE_MARKER_COLUMN: str = "ecu_active_marker"
@@ -292,6 +295,88 @@ VEHICLE_INFO_ACTIVE_MARKER_COLUMN: str = "ecu_active_marker"
 VEHICLE_INFO_ACTIVE_MARKER_EXPR: str = (
     "CASE WHEN ecu_removal_timestamp_utc IS NULL THEN 1 ELSE NULL END"
 )
+
+
+# ---- US-376 / B-076 first slice: normalized ECU identity dimension ----------
+#
+# ``ecu`` is a pure, immutable identity dimension keyed on the
+# (ecu_signature, cal_signature) PAIR.  ``vehicle_info`` references a specific
+# identity row by FK (``ecu_id``) instead of duplicating free-text signatures,
+# so ECU identity is SSOT and a reflash is its OWN row (a new pair) rather than
+# an in-place rewrite of one identity.  No lineage / timestamp columns live here
+# -- the install/removal window stays on ``vehicle_info`` (the lineage table);
+# ``ecu`` answers only "which ECU + calibration is this".
+ECU_TABLE: str = "ecu"
+ECU_SIGNATURE_LENGTH: int = 32
+ECU_PAIR_UNIQUE: str = "uq_ecu_signature_cal_signature"
+# The signature value used when an ECU's real calibration id is not yet known.
+# Distinct from a reflash: a row may be resolved from this sentinel to the real
+# CALID in place ONCE (the sanctioned carve-out below); a reflash is a new row.
+ECU_CAL_SIGNATURE_UNKNOWN: str = "UNKCAL"
+# Immutability carve-out (Atlas Rule 13 refinement, Spool Q5 edge): ecu identity
+# columns are immutable EXCEPT the write-once UNKCAL -> real-CALID same-row
+# resolution -- NOT absolute immutability.  Surfaced as a SQL table comment so
+# the rule is visible to anyone touching the table directly.
+ECU_IMMUTABILITY_COMMENT: str = (
+    "ECU identity is immutable: an (ecu_signature, cal_signature) pair is a "
+    "stable identity and a reflash is a NEW row, never an in-place edit.  SOLE "
+    "sanctioned in-place mutation: resolving a write-once UNKCAL cal_signature "
+    "to the real CALID once known (Spool Q5) -- this is distinct from a reflash "
+    "(which is a new row).  vehicle_info.ecu_id references a SPECIFIC identity "
+    "row; per-lineage-row identity is otherwise immutable."
+)
+# The three grounded seed identity rows (Spool-signed signatures 2026-06-01):
+#   (MD346675, 6675)          -- prior STOCK factory ECU (drives <=24).
+#   (MD335287, UNKCAL)        -- new modified-EPROM ECU; CALID not yet read.
+#   (PRE_TRACKING_UNKNOWN, PRE_TRACKING_UNKNOWN) -- legacy pre-tracking sentinel
+#       (its cal == its sig so a legacy vehicle_info row whose cal_signature is
+#        NULL resolves cleanly via COALESCE(cal, sig) at v0011 backfill time).
+ECU_SEED_PAIRS: tuple[tuple[str, str], ...] = (
+    ("MD346675", "6675"),
+    ("MD335287", ECU_CAL_SIGNATURE_UNKNOWN),
+    (VEHICLE_INFO_ECU_SIGNATURE_UNKNOWN, VEHICLE_INFO_ECU_SIGNATURE_UNKNOWN),
+)
+# vehicle_info FK column name (SSOT shared with the v0011 migration).
+VEHICLE_INFO_ECU_FK_COLUMN: str = "ecu_id"
+VEHICLE_INFO_ECU_FK_NAME: str = "fk_vehicle_info_ecu"
+
+
+class Ecu(Base):
+    """Normalized, immutable ECU identity dimension (US-376 / B-076 first slice).
+
+    One row per distinct ``(ecu_signature, cal_signature)`` identity.  This is
+    a DIMENSION, not a lineage table: it carries no install/removal window
+    (that stays on :class:`VehicleInfo`).  ``vehicle_info`` references a row
+    here by FK so the identity is SSOT instead of duplicated free text, and a
+    reflash is its own identity row (a new pair) rather than an in-place rewrite.
+
+    Identity is immutable EXCEPT the sanctioned write-once UNKCAL -> real-CALID
+    resolution (see :data:`ECU_IMMUTABILITY_COMMENT`); nothing in this slice
+    builds that resolution path -- the carve-out is documentation honesty so the
+    table comment does not overclaim absolute immutability.
+    """
+
+    __tablename__ = ECU_TABLE
+    __table_args__ = (
+        # Pair UNIQUE: identity is the (signature, cal) pair, so a reflash
+        # (same ECU, new calibration) is a distinct, allowed row.
+        UniqueConstraint(
+            "ecu_signature", "cal_signature", name=ECU_PAIR_UNIQUE,
+        ),
+        {"comment": ECU_IMMUTABILITY_COMMENT},
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    ecu_signature: Mapped[str] = mapped_column(
+        String(ECU_SIGNATURE_LENGTH), nullable=False,
+    )
+    cal_signature: Mapped[str] = mapped_column(
+        String(ECU_SIGNATURE_LENGTH), nullable=False,
+    )
+
+    vehicle_infos: Mapped[list[VehicleInfo]] = relationship(
+        back_populates="ecu",
+    )
 
 
 class VehicleInfo(Base):
@@ -366,6 +451,19 @@ class VehicleInfo(Base):
         Integer,
         Computed(VEHICLE_INFO_ACTIVE_MARKER_EXPR, persisted=True),
     )
+    # ---- US-376 / B-076: FK to the normalized ecu identity dimension ---------
+    # NOT NULL: every lineage row references a specific immutable ecu identity
+    # row (SSOT).  The transitional ``ecu_signature`` / ``cal_signature`` TEXT
+    # columns above are KEPT this slice but must stay coherent with the joined
+    # ecu row (see :mod:`src.server.db.vehicle_info_coherence`); the writer
+    # (stamp_ecu_swap) DERIVES them from the ecu row.  They are deprecated-
+    # transitional and drop in a later B-076 slice.
+    ecu_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey(f"{ECU_TABLE}.id", name=VEHICLE_INFO_ECU_FK_NAME),
+        nullable=False,
+    )
+    ecu: Mapped[Ecu] = relationship(back_populates="vehicle_infos")
 
 
 class AiRecommendation(Base):
@@ -962,21 +1060,31 @@ class DriveStatistic(Base):
 
 # US-370 / F-076: per-ECU SPEED-PID multiplicative correction.  The new
 # modified-EPROM ECU reads ~2x actual ground speed (Spool 2026-05-22 OBD probe +
-# Drive 26 telemetry); each ECU signature may carry its own VSS calibration, so
+# Drive 26 telemetry); each ECU identity may carry its own VSS calibration, so
 # analytics that aggregate SPEED multiply the OBD reading by this ECU's factor.
 #
-# Atlas option-(c) ruling 2026-05-29: ``ecu_signature`` is this table's OWN
-# natural key -- VARCHAR(32) NOT NULL, UNIQUE, NO foreign key to vehicle_info.
-# The factor is a property of the signature itself and is stable across install
-# windows, so binding it to a single window (FK to vehicle_info.id) or to a
-# UNIQUE vehicle_info.ecu_signature (which legitimately recurs across install
-# windows -- breaks the US-365 append-only invariant) was rejected.  The two
-# tables share the signature *value* as a natural key, not copied payload.
+# US-374 re-key (2026-06-01, B-076 first slice): the v0010 build keyed this table
+# on its OWN ``ecu_signature`` natural key (Atlas option-(c) 2026-05-29, a
+# transitional shape).  Now that the normalized ``ecu`` identity dimension exists
+# (US-376), the calibration references the SSOT identity by ``ecu_id`` FK ->
+# ``ecu.id`` with UNIQUE(ecu_id) -- one calibration row per ecu identity.  Because
+# ``ecu`` is pair-keyed on (ecu_signature, cal_signature), a reflash is its OWN
+# ecu row and therefore gets its OWN calibration row (SPEED correction is
+# per-tune-state, Spool Q5 2026-06-01).  The v0011 migration backfills ecu_id by
+# matching each existing row's ecu_signature to its ecu row, then DROPs the
+# transitional ecu_signature column + its UNIQUE key.
 SPEED_PID_CALIBRATION_TABLE: str = "speed_pid_calibration"
+# Transitional -- the v0010 CREATE DDL (forward-only, untouched) still uses these
+# to build the option-(c) ecu_signature shape that v0011 re-keys away.  The ORM
+# no longer carries an ecu_signature column.
 SPEED_PID_CALIBRATION_ECU_SIGNATURE_LENGTH: int = 32
 SPEED_PID_CALIBRATION_ECU_SIGNATURE_UNIQUE: str = (
     "uq_speed_pid_calibration_ecu_signature"
 )
+# US-374 FK shape SSOT names (shared with the v0011 re-key migration).
+SPEED_PID_CALIBRATION_ECU_FK_COLUMN: str = "ecu_id"
+SPEED_PID_CALIBRATION_ECU_FK_NAME: str = "fk_speed_pid_calibration_ecu"
+SPEED_PID_CALIBRATION_ECU_ID_UNIQUE: str = "uq_speed_pid_calibration_ecu_id"
 SPEED_PID_CALIBRATION_CAPTURE_METHOD_CHECK_NAME: str = (
     "ck_speed_pid_calibration_capture_method"
 )
@@ -996,20 +1104,21 @@ SPEED_PID_CALIBRATION_EMPIRICAL_PROVENANCE_PREFIX: str = "empirical-"
 
 
 class SpeedPidCalibration(Base):
-    """Per-ECU multiplicative SPEED-PID correction factor (US-370 / F-076).
+    """Per-ECU multiplicative SPEED-PID correction factor (US-370 / US-374).
 
-    One row per ECU signature.  ``correction_factor`` is multiplicative:
+    One row per ``ecu`` identity.  ``correction_factor`` is multiplicative:
     ``OBD-reported SPEED x correction_factor = ground-truth speed``.  Analytics
-    that integrate SPEED (distance, average speed, gear inference) look up the
-    drive's ECU signature (via ``vehicle_info`` for the drive's time window) and
+    that integrate SPEED (distance, average speed, gear inference) resolve the
+    drive's ECU identity (via ``vehicle_info`` for the drive's time window) and
     apply this factor before integrating.
 
-    ``ecu_signature`` is this table's UNIQUE natural key (Atlas option-(c)
-    ruling 2026-05-29) -- it shares the signature *value* with
-    ``vehicle_info.ecu_signature`` but carries NO foreign key, because the
-    correction is window-invariant (a property of the ECU, not of one install
-    window).  See the constant block above for the full rejected-alternatives
-    rationale.
+    ``ecu_id`` is a NOT NULL FK -> :class:`Ecu` with ``UNIQUE(ecu_id)`` (US-374
+    re-key, B-076 first slice).  This replaces the transitional v0010 option-(c)
+    ``ecu_signature`` natural key: the calibration now references the SSOT ECU
+    identity dimension instead of duplicating a free-text signature.  Because
+    ``ecu`` is pair-keyed on (ecu_signature, cal_signature), a reflash is its own
+    identity row and therefore gets its own calibration row -- SPEED correction
+    is per-tune-state (Spool Q5 2026-06-01).
 
     ``provenance`` is NOT NULL and (via the
     :mod:`src.server.analytics.speed_pid_calibration` writer-path) non-empty:
@@ -1020,11 +1129,12 @@ class SpeedPidCalibration(Base):
 
     __tablename__ = SPEED_PID_CALIBRATION_TABLE
     __table_args__ = (
-        # option-(c): UNIQUE natural key on the signature value (no FK).  Name
-        # matches the v0010 migration's UNIQUE KEY so SHOW CREATE TABLE is
+        # US-374: one calibration row per ecu identity (UNIQUE FK).  Name matches
+        # the v0011 re-key migration's ADD CONSTRAINT so SHOW CREATE TABLE is
         # identical across environments.
         UniqueConstraint(
-            "ecu_signature", name=SPEED_PID_CALIBRATION_ECU_SIGNATURE_UNIQUE,
+            SPEED_PID_CALIBRATION_ECU_FK_COLUMN,
+            name=SPEED_PID_CALIBRATION_ECU_ID_UNIQUE,
         ),
         # capture_method enum enforced via CHECK (cross-DB; NULL allowed).
         CheckConstraint(
@@ -1035,8 +1145,10 @@ class SpeedPidCalibration(Base):
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    ecu_signature: Mapped[str] = mapped_column(
-        String(SPEED_PID_CALIBRATION_ECU_SIGNATURE_LENGTH), nullable=False,
+    ecu_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey(f"{ECU_TABLE}.id", name=SPEED_PID_CALIBRATION_ECU_FK_NAME),
+        nullable=False,
     )
     correction_factor: Mapped[float] = mapped_column(Float, nullable=False)
     capture_method: Mapped[str | None] = mapped_column(String(32))
@@ -1044,6 +1156,8 @@ class SpeedPidCalibration(Base):
     captured_by: Mapped[str | None] = mapped_column(String(128))
     provenance: Mapped[str] = mapped_column(Text, nullable=False)
     notes: Mapped[str | None] = mapped_column(Text)
+
+    ecu: Mapped[Ecu] = relationship()
 
 
 class TrendSnapshot(Base):
@@ -1151,6 +1265,15 @@ __all__ = [
     "Statistic",
     "Profile",
     "VehicleInfo",
+    "Ecu",
+    "ECU_TABLE",
+    "ECU_SIGNATURE_LENGTH",
+    "ECU_PAIR_UNIQUE",
+    "ECU_CAL_SIGNATURE_UNKNOWN",
+    "ECU_IMMUTABILITY_COMMENT",
+    "ECU_SEED_PAIRS",
+    "VEHICLE_INFO_ECU_FK_COLUMN",
+    "VEHICLE_INFO_ECU_FK_NAME",
     "AiRecommendation",
     "ConnectionLog",
     "AlertLog",

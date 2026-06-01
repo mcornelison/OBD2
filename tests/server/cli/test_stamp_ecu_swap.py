@@ -43,7 +43,15 @@ from sqlalchemy import create_engine, text  # noqa: E402
 from sqlalchemy.orm import Session  # noqa: E402
 
 from src.server.cli import stamp_ecu_swap as cli  # noqa: E402
-from src.server.db.models import Base, VehicleInfo  # noqa: E402
+from src.server.db.models import (  # noqa: E402
+    ECU_CAL_SIGNATURE_UNKNOWN,
+    Base,
+    Ecu,
+    VehicleInfo,
+)
+from src.server.db.vehicle_info_coherence import (  # noqa: E402
+    findEcuCoherenceViolations,
+)
 
 _PRIOR_INSTALL = datetime(2026, 5, 22, 14, 0, 0)
 
@@ -61,15 +69,25 @@ def dbPath():
 
 
 def _seedActive(dbPath: str, *, signature: str, install: datetime) -> None:
-    """Seed exactly one currently-active vehicle_info row."""
+    """Seed exactly one currently-active vehicle_info row + its ecu identity.
+
+    US-376: vehicle_info.ecu_id is NOT NULL, so the seed creates a coherent ecu
+    identity row (cal defaults to the UNKCAL sentinel) and derives the
+    transitional text columns from it.
+    """
     eng = create_engine(f"sqlite:///{dbPath}")
     with Session(eng) as session:
+        ecu = Ecu(ecu_signature=signature, cal_signature=ECU_CAL_SIGNATURE_UNKNOWN)
+        session.add(ecu)
+        session.flush()
         session.add(
             VehicleInfo(
                 source_id=1,
                 source_device="chi-eclipse-01",
                 vin="4A3AK34T0XE000000",
-                ecu_signature=signature,
+                ecu_id=ecu.id,
+                ecu_signature=ecu.ecu_signature,
+                cal_signature=ecu.cal_signature,
                 ecu_install_timestamp_utc=install,
                 ecu_removal_timestamp_utc=None,
             )
@@ -303,3 +321,81 @@ def test_unparseableAsOf_gracefulError(monkeypatch, dbPath, caplog):
 
     assert rc != 0
     assert len(_rows(dbPath)) == 1
+
+
+# =========================================================================
+# US-376: writer sets ecu_id authoritative + DERIVES text from the ecu row
+# =========================================================================
+
+
+def test_swap_setsEcuIdAndDerivesTextColumnsFromEcuRow(monkeypatch, dbPath):
+    """V (US-376): the new lineage row's ecu_id is set + its text columns equal
+    the joined ecu row's values, and the whole table stays coherence-clean."""
+    _seedActive(dbPath, signature="old-ECU", install=_PRIOR_INSTALL)
+
+    rc = _runCli(
+        monkeypatch, dbPath,
+        [
+            "--signature", "MD335287",
+            "--cal-signature", "UNKCAL",
+            "--as-of", "2026-06-01T12:00:00Z",
+        ],
+    )
+
+    assert rc == 0
+    eng = create_engine(f"sqlite:///{dbPath}")
+    with Session(eng) as session:
+        fresh = (
+            session.query(VehicleInfo)
+            .filter(VehicleInfo.ecu_removal_timestamp_utc.is_(None))
+            .one()
+        )
+        assert fresh.ecu_signature == "MD335287"
+        # ecu_id is set authoritatively + text columns derive from that ecu row.
+        assert fresh.ecu_id is not None
+        ecu = session.get(Ecu, fresh.ecu_id)
+        assert fresh.ecu_signature == ecu.ecu_signature
+        assert fresh.cal_signature == ecu.cal_signature == "UNKCAL"
+        # No drift anywhere in the table (prior + new rows).
+        assert findEcuCoherenceViolations(session) == []
+    eng.dispose()
+
+
+def test_swap_reusesExistingEcuIdentityRow(monkeypatch, dbPath):
+    """A swap to an already-known (signature, cal) pair reuses its ecu row
+    (identity is SSOT) rather than creating a duplicate."""
+    _seedActive(dbPath, signature="old-ECU", install=_PRIOR_INSTALL)
+    # Pre-create the target identity row.
+    eng = create_engine(f"sqlite:///{dbPath}")
+    with Session(eng) as session:
+        session.add(Ecu(ecu_signature="MD346675", cal_signature="6675"))
+        session.commit()
+        before = session.query(Ecu).count()
+    eng.dispose()
+
+    rc = _runCli(
+        monkeypatch, dbPath,
+        [
+            "--signature", "MD346675",
+            "--cal-signature", "6675",
+            "--as-of", "2026-06-01T12:00:00Z",
+        ],
+    )
+
+    assert rc == 0
+    eng = create_engine(f"sqlite:///{dbPath}")
+    with Session(eng) as session:
+        # No new ecu row for the already-known pair (count unchanged).
+        assert session.query(Ecu).count() == before
+        fresh = (
+            session.query(VehicleInfo)
+            .filter(VehicleInfo.ecu_removal_timestamp_utc.is_(None))
+            .one()
+        )
+        match = (
+            session.query(Ecu)
+            .filter_by(ecu_signature="MD346675", cal_signature="6675")
+            .one()
+        )
+        assert fresh.ecu_id == match.id
+    eng.dispose()
