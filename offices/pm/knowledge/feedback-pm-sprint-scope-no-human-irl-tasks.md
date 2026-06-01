@@ -38,6 +38,10 @@ If Atlas (or any reviewer) proposes a "task spine" that includes an IRL drill ta
 
 Sprint 40 / V0.27.16 was written with US-347 as a separate story for the in-car drill (mirroring Atlas's T4 naming). `/sprint-deploy-pm` Phase 0 halted because US-347 had `passes:false + status:pending` by design. CIO had to pick "remove US-347 from stories[]" mid-deploy to clear the halt. The bigDefinitionOfDone clauses already covered the drill content — US-347 as a story was strictly redundant. Lesson booked here so Sprint 41+ contracts don't repeat the mistake.
 
+## Re-affirmed 2026-06-01 (V0.28.1 grooming)
+
+CIO restated the rule while directing V0.28.1 grooming: *"do not include human tasks. human tasks can be part of the validation, like an IRL drive, or Mike needs to power cycle the Pi. But those are all post-sprint validations. Remember this going forward."* Direct consequence for V0.28.1: the Sprint-43 carry-forward items that are **pure IRL** (US-364 recompute drives 23/24/25 against chi-srv-01 + F-005/F-007 manifest release; US-367 ECU-row backfill *execution* against prod; the F-107 validation drive; Pi power-cycle/reconnect) do **NOT** become V0.28.1 stories — they are `validation.bigDefinitionOfDone` clauses. Only genuinely code-doable units (US-370 redux criteria correction; any backfill *helper script* Ralph writes; a normalization migration substep) go in `stories[]`.
+
 ## Related
 
 - [[feedback-sprint-scope-dev-only]] — Sprint 18+ rule: dev-only sprint scope; human actions go on separate action-items list. Same principle, prior framing.
