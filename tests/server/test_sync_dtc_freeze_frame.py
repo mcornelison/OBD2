@@ -78,6 +78,7 @@ def _seedActiveEcu(session: Session, *, source_id: int = 1,
         source_id=source_id,
         source_device=_DEVICE,
         vin=_VIN,
+        ecu_id=1,  # US-376: ecu_id is NOT NULL (FK not enforced on SQLite)
         ecu_signature="MD335287-ecmlink-v3",
         ecu_install_timestamp_utc=_INSTALL,
         ecu_removal_timestamp_utc=removal,
@@ -189,6 +190,7 @@ def test_sync_bindsToEcuActiveAtCaptureTime_notLaterEra(syncEngine):
         # Prior ECU: installed before, removed BEFORE the capture.
         prior = VehicleInfo(
             source_id=1, source_device=_DEVICE, vin=_VIN,
+            ecu_id=1,  # US-376: ecu_id is NOT NULL (FK not enforced on SQLite)
             ecu_signature="prior-ecu",
             ecu_install_timestamp_utc=datetime(2026, 1, 1, 0, 0, 0),
             ecu_removal_timestamp_utc=prior_removal,

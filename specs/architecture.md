@@ -1168,6 +1168,92 @@ shipping surfaces. Atlas Rule 10 PASS recorded 2026-05-29 (the deferred
 `speed_pid_calibration` surface re-enters the doc when US-370 re-lands in
 V0.28.1).*
 
+### V0.28.1 — B-076 first slice (normalized ECU identity) (Sprint 44, US-376 + US-374)
+
+The V0.28.1 patch sprint promotes ECU identity from the transitional snapshot
+columns added in V0.28.0 (§5, point 3) to a normalized SSOT dimension table,
+through a **forward-only** migration
+`src/server/migrations/versions/v0011_us376_ecu_identity.py` (registered in
+`ALL_MIGRATIONS` after v0010; **v0010 is left byte-for-byte untouched**). It
+runs two ordered substeps — `_applyEcuTable` (US-376) then
+`_applySpeedPidCalibrationRekey` (US-374, which depends on the `ecu` table
+existing first) — each `INFORMATION_SCHEMA`-probed and re-probed for
+idempotency across fresh-`create_all`, prior-success, and partial-recovery DBs.
+
+**1. New `ecu` dimension table (US-376).** A pure, immutable identity dimension
+keyed on the **`(ecu_signature, cal_signature)` PAIR** — both
+`VARCHAR(32) NOT NULL`, `UNIQUE(ecu_signature, cal_signature)`
+(`uq_ecu_signature_cal_signature`). It carries **no** lineage/timestamp
+columns: the install/removal window stays on `vehicle_info`. A reflash is its
+**own identity row** (a new pair + `-R2`/`-R3` cal), never an edit of an
+existing row (Spool Q5, 2026-06-01 — SPEED correction is per-tune-state).
+v0011 seeds 3 grounded rows: `(MD346675, 6675)` (prior 1998 factory FWD-turbo
+flash ECU, drives ≤24), `(MD335287, UNKCAL)` (1997 board + ECMLink V3 flash,
+drives ≥25), and `(PRE_TRACKING_UNKNOWN, PRE_TRACKING_UNKNOWN)` (the
+pre-tracking sentinel, whose cal equals its signature).
+
+**2. Immutability carve-out (Atlas Rule 13 refinement / Spool Q5 edge).** ECU
+identity columns are immutable EXCEPT a single sanctioned write-once
+`UNKCAL → real-CALID` same-row resolution (resolving a placeholder cal to the
+ECU's real CALID is NOT a reflash, so it stays the same row). This slice builds
+**no** resolution path — the carve-out is documentation honesty, surfaced in
+the `ecu` table SQL comment (visible in `SHOW CREATE TABLE`), so the doc never
+asserts absolute immutability the schema doesn't promise.
+
+**3. `vehicle_info.ecu_id` FK — identity becomes SSOT (US-376).**
+`fk_vehicle_info_ecu → ecu.id`, **NOT NULL**. The V0.28.0 transitional
+`ecu_signature` / `cal_signature` TEXT columns are **KEPT this slice as a
+derived snapshot** held coherent with the joined `ecu` row
+(deprecated-transitional; a later B-076 slice drops them). Coherence is
+enforced **read-side** by
+`src/server/db/vehicle_info_coherence.py::findEcuCoherenceViolations` (zero
+drift = text columns equal the joined `ecu` row). v0011 ADDs `ecu_id` nullable,
+backfills by matching `(ecu_signature, COALESCE(cal_signature, ecu_signature))`
+to the `ecu` row (the COALESCE maps v0010's legacy NULL-cal sentinel onto the
+`PRE_TRACKING_UNKNOWN` seed), DERIVEs the transitional `cal_signature`,
+**FAILs LOUDLY** on any unmatched row (never a NULL `ecu_id`), then MODIFY
+NOT NULL + ADD FK. The `ALTER TABLE vehicle_info COMMENT=...` also lands the
+full append-only + `ecu_id` table comment (v0010 never set it), so a migrated
+production table converges with `create_all`.
+
+**4. Writer discipline (US-376).** `stamp_ecu_swap` (US-366) now sets `ecu_id`
+authoritative and DERIVEs the text columns from the resolved `ecu` row
+(`resolveOrCreateEcu` in `_ecu_lineage_support.py`) — identity is written
+through the FK, the snapshot columns follow.
+
+**5. `speed_pid_calibration` re-key to `ecu_id` FK (US-374, F-076).** On dev,
+v0010 creates `speed_pid_calibration` in the transitional **option-(c)**
+`ecu_signature` natural-key shape (US-370 landed). v0011 substep (c) re-keys it
+**forward**: the ORM `SpeedPidCalibration` drops `ecu_signature` and adds
+`ecu_id` **NOT NULL FK → ecu.id** (`fk_speed_pid_calibration_ecu`) +
+`UNIQUE(ecu_id)` (`uq_speed_pid_calibration_ecu_id`) — **one calibration row
+per ECU identity**, so a reflash (its own `ecu` row) gets its own calibration
+row. The migration ADDs `ecu_id` nullable, backfills by JOINing each row's
+`ecu_signature` to its `ecu` row, **re-points the 2 seed provenance strings**
+(`MD346675 → empirical-Drive-18-gear-math-fit`,
+`MD335287 → gear-math-sanity-check-Drive-26-CIO-corrected`; correction factors
+1.0 / 0.5 unchanged), FAILs LOUDLY on any unmatched row, MODIFY NOT NULL, ADD
+UNIQUE + FK, then **DROPs** the old `uq_speed_pid_calibration_ecu_signature`
+index (before the column — MariaDB requires the unique index gone first) and
+the `ecu_signature` column. **Idempotency inverts** for a forward re-key — it
+gates on the **DROPPED** column's presence (terminal absence of `ecu_signature`
+= already re-keyed or fresh `create_all`). The writer
+`insert_speed_pid_calibration` now takes `ecu_id` (the empty-`ecu_signature`
+guard is gone — FK + NOT NULL cover it; the non-empty `provenance` guard is
+kept); `select_empirical_calibrations` (`provenance LIKE 'empirical-%'`)
+includes the prior-ECU empirical seed and excludes the new-ECU rough seed over
+the FK shape. (Supersedes the V0.28.0 subsection's deferral parenthetical: the
+option-(c) table did land in v0010 and is the re-key's starting point.)
+
+*Gate-ratification note: this NEW V0.28.1 subsection added per PM Rule 10
+(Marcus / PM, 2026-06-01) per US-376 AC#6 + US-374's joint Rule-10 clause;
+documents the FINAL landed state of both shipping surfaces (server suite
+`pytest tests/server -m "not slow"` = 1058 passed / 12 skipped / 0 failed;
+ruff clean on all touched files). **Atlas Rule 10 PASS: PENDING** — per CIO
+2026-06-01 deploy directive this gate rides `/sprint-validated` rather than
+blocking the V0.28.1 hardware deploy (Session-42 precedent: CIO is the
+gate-clearing authority; Atlas's formal PASS gates validation, not deploy).*
+
 ---
 
 ## 6. Configuration Architecture

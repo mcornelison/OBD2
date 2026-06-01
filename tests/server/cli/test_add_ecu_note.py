@@ -61,6 +61,7 @@ def _seedActive(dbPath: str, *, signature="new-ECU") -> int:
             source_id=1,
             source_device="chi-eclipse-01",
             vin="4A3AK34T0XE000000",
+            ecu_id=1,  # US-376: ecu_id is NOT NULL (FK not enforced on SQLite)
             ecu_signature=signature,
             ecu_install_timestamp_utc=datetime(2026, 5, 22, 14, 0, 0),
             ecu_removal_timestamp_utc=None,

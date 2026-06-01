@@ -67,6 +67,7 @@ from src.server.cli._ecu_lineage_support import (
     getActiveVehicleInfo,
     nextSourceId,
     parseIsoTimestamp,
+    resolveOrCreateEcu,
     resolveSyncDatabaseUrl,
 )
 from src.server.db.models import VehicleInfo
@@ -208,6 +209,13 @@ def _stampSwap(
     # any failure rolls BOTH back and the single-active invariant is preserved.
     active.ecu_removal_timestamp_utc = asOf
     session.flush()
+    # US-376 / B-076: resolve (or create) the normalized ecu identity row and
+    # reference it by FK.  The transitional ecu_signature / cal_signature TEXT
+    # columns are DERIVED from the ecu row (not the raw args) so vehicle_info
+    # stays coherent with the SSOT identity dimension.
+    ecu = resolveOrCreateEcu(
+        session, signature=signature, calSignature=calSignature,
+    )
     session.add(
         VehicleInfo(
             # Server-authored lineage row: same device namespace as the prior
@@ -216,8 +224,9 @@ def _stampSwap(
             source_id=nextSourceId(session, active.source_device),
             source_device=active.source_device,
             vin=active.vin,
-            ecu_signature=signature,
-            cal_signature=calSignature,
+            ecu_id=ecu.id,
+            ecu_signature=ecu.ecu_signature,
+            cal_signature=ecu.cal_signature,
             ecu_install_timestamp_utc=asOf,
             ecu_removal_timestamp_utc=None,
         )

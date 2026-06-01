@@ -59,6 +59,7 @@ def _seed(dbPath: str, *, signature, install, removal=None, cal=None):
                 source_id=existing + 1,
                 source_device="chi-eclipse-01",
                 vin="4A3AK34T0XE000000",
+                ecu_id=1,  # US-376: ecu_id is NOT NULL (FK not enforced on SQLite)
                 ecu_signature=signature,
                 cal_signature=cal,
                 ecu_install_timestamp_utc=install,

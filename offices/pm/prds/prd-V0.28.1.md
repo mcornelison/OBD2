@@ -1,13 +1,13 @@
 ---
 sprint: 44
 version: V0.28.1
-status: draft
+status: converted
 createdAt: 2026-06-01
 createdBy: Marcus (PM)
 selectedStories: [US-374, US-376]
 argusReviewRequired: false
-convertedAt: null
-sprintJsonPath: null
+convertedAt: 2026-06-01T17:24:09Z
+sprintJsonPath: offices/ralph/sprint.json
 forksFrom: dev @ bd1618c
 ---
 

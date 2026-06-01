@@ -1,15 +1,14 @@
 ################################################################################
 # File Name: test_speed_pid_calibration.py
-# Purpose/Description: Sprint 43 V0.28.0 (US-370 / F-076) -- tests for the
+# Purpose/Description: Sprint 44 V0.28.1 (US-374 / F-076) -- tests for the
 #                      speed_pid_calibration ORM surface + the writer-path guard
 #                      and analytics provenance-prefix gate in
-#                      src/server/analytics/speed_pid_calibration.py.  The table
-#                      is the SSOT for per-ECU multiplicative SPEED-PID correction
-#                      (new modified-EPROM ECU reads ~2x actual ground speed).
-#                      Per Atlas option-(c) ruling 2026-05-29: ecu_signature is a
-#                      UNIQUE natural key (no FK to vehicle_info -- the factor is
-#                      window-invariant).  Hermetic: real in-memory SQLite + real
-#                      ORM + real INSERTs (post-I-040 no-seam-mocks discipline).
+#                      src/server/analytics/speed_pid_calibration.py.  US-374
+#                      re-keys the table FORWARD from the v0010 option-(c)
+#                      ``ecu_signature`` natural key to an ``ecu_id`` FK -> ecu.id
+#                      (SSOT ecu identity; a reflash gets its own calibration row).
+#                      Hermetic: real in-memory SQLite + real ORM + real INSERTs
+#                      (post-I-040 no-seam-mocks discipline).
 #
 # Author: Rex (Ralph Agent)
 # Creation Date: 2026-05-29
@@ -23,10 +22,13 @@
 #               |              | UNIQUE natural key, provenance NOT NULL (VC#7),
 #               |              | writer-path empty-provenance guard (VC#8), and
 #               |              | analytics empirical-provenance-prefix gate (VC#9).
+# 2026-06-01    | Rex (US-374) | Re-key FORWARD: ecu_signature natural key ->
+#               |              | ecu_id FK -> ecu.id + UNIQUE(ecu_id) + relationship;
+#               |              | writer takes ecu_id; gate works over the FK shape.
 # ================================================================================
 ################################################################################
 
-"""US-370 / F-076 tests for the speed_pid_calibration surface."""
+"""US-374 / F-076 tests for the re-keyed speed_pid_calibration surface."""
 
 from __future__ import annotations
 
@@ -37,7 +39,7 @@ import pytest
 
 pytest.importorskip("sqlalchemy")
 
-from sqlalchemy import String, Text, create_engine, inspect  # noqa: E402
+from sqlalchemy import Integer, Text, create_engine, inspect  # noqa: E402
 from sqlalchemy.exc import IntegrityError  # noqa: E402
 from sqlalchemy.orm import Session  # noqa: E402
 
@@ -46,9 +48,11 @@ from src.server.analytics.speed_pid_calibration import (  # noqa: E402
     select_empirical_calibrations,
 )
 from src.server.db.models import (  # noqa: E402
-    SPEED_PID_CALIBRATION_ECU_SIGNATURE_LENGTH,
+    SPEED_PID_CALIBRATION_ECU_FK_NAME,
+    SPEED_PID_CALIBRATION_ECU_ID_UNIQUE,
     SPEED_PID_CALIBRATION_EMPIRICAL_PROVENANCE_PREFIX,
     Base,
+    Ecu,
     SpeedPidCalibration,
 )
 
@@ -75,8 +79,16 @@ def session(engine):
         yield sess
 
 
+def _seedEcu(session: Session, ecu_signature: str, cal_signature: str) -> Ecu:
+    """Insert + flush a single ecu identity row and return it (FK target)."""
+    row = Ecu(ecu_signature=ecu_signature, cal_signature=cal_signature)
+    session.add(row)
+    session.flush()
+    return row
+
+
 # =========================================================================
-# ORM shape
+# ORM shape (re-keyed to ecu_id FK)
 # =========================================================================
 
 
@@ -88,7 +100,7 @@ class TestSpeedPidCalibrationOrm:
         cols = {c.name for c in SpeedPidCalibration.__table__.columns}
         for expected in (
             "id",
-            "ecu_signature",
+            "ecu_id",
             "correction_factor",
             "capture_method",
             "captured_at_timestamp_utc",
@@ -98,11 +110,18 @@ class TestSpeedPidCalibrationOrm:
         ):
             assert expected in cols, f"missing column {expected!r}"
 
-    def test_ecuSignatureIsVarchar32NotNull(self) -> None:
-        col = SpeedPidCalibration.__table__.columns["ecu_signature"]
-        assert isinstance(col.type, String)
-        assert col.type.length == SPEED_PID_CALIBRATION_ECU_SIGNATURE_LENGTH == 32
+    def test_ecuSignatureColumnRemoved(self) -> None:
+        """Re-key: the transitional ecu_signature natural key is gone."""
+        cols = {c.name for c in SpeedPidCalibration.__table__.columns}
+        assert "ecu_signature" not in cols
+
+    def test_ecuIdIsIntegerFkNotNull(self) -> None:
+        col = SpeedPidCalibration.__table__.columns["ecu_id"]
+        assert isinstance(col.type, Integer)
         assert col.nullable is False
+        fk = next(iter(col.foreign_keys))
+        assert fk.column.table.name == "ecu"
+        assert fk.column.name == "id"
 
     def test_correctionFactorNotNull(self) -> None:
         col = SpeedPidCalibration.__table__.columns["correction_factor"]
@@ -119,27 +138,48 @@ class TestSpeedPidCalibrationOrm:
                      "captured_by", "notes"):
             assert table.columns[name].nullable is True, f"{name} should be nullable"
 
-    def test_ecuSignatureHasUniqueConstraint(self) -> None:
+    def test_ecuIdHasUniqueConstraint(self) -> None:
         uniques = inspect(SpeedPidCalibration).local_table.constraints
         unique_cols = {
             tuple(c.name for c in con.columns)
             for con in uniques
             if con.__class__.__name__ == "UniqueConstraint"
         }
-        assert ("ecu_signature",) in unique_cols
+        assert ("ecu_id",) in unique_cols
+        # ecu_signature is no longer a key on this table.
+        assert ("ecu_signature",) not in unique_cols
+
+    def test_uniqueConstraintNameMatchesSsot(self) -> None:
+        names = {
+            con.name
+            for con in inspect(SpeedPidCalibration).local_table.constraints
+            if con.__class__.__name__ == "UniqueConstraint"
+        }
+        assert SPEED_PID_CALIBRATION_ECU_ID_UNIQUE in names
+
+    def test_fkConstraintNameMatchesSsot(self) -> None:
+        col = SpeedPidCalibration.__table__.columns["ecu_id"]
+        fk = next(iter(col.foreign_keys))
+        assert fk.constraint.name == SPEED_PID_CALIBRATION_ECU_FK_NAME
+
+    def test_hasEcuRelationship(self) -> None:
+        rels = inspect(SpeedPidCalibration).relationships
+        assert "ecu" in rels
+        assert rels["ecu"].mapper.class_ is Ecu
 
 
 # =========================================================================
-# DB-level invariants (VC#7 NOT NULL + UNIQUE natural key)
+# DB-level invariants (VC#7 NOT NULL + UNIQUE ecu_id FK)
 # =========================================================================
 
 
 class TestSpeedPidCalibrationDbInvariants:
     def test_provenanceNotNullEnforced(self, session: Session) -> None:
         """VC#7: a row without provenance is rejected at the DB layer."""
+        ecu = _seedEcu(session, "MD000001", "CAL01")
         session.add(
             SpeedPidCalibration(
-                ecu_signature="MD000001",
+                ecu_id=ecu.id,
                 correction_factor=1.0,
                 provenance=None,
             )
@@ -147,11 +187,12 @@ class TestSpeedPidCalibrationDbInvariants:
         with pytest.raises(IntegrityError):
             session.flush()
 
-    def test_ecuSignatureUniqueEnforced(self, session: Session) -> None:
-        """option-(c): ecu_signature is a UNIQUE natural key (no duplicates)."""
+    def test_ecuIdUniqueEnforced(self, session: Session) -> None:
+        """Re-key: ecu_id is a UNIQUE FK -- one calibration row per ecu identity."""
+        ecu = _seedEcu(session, "MD000002", "CAL02")
         session.add(
             SpeedPidCalibration(
-                ecu_signature="MD000002",
+                ecu_id=ecu.id,
                 correction_factor=1.0,
                 provenance="empirical-test",
             )
@@ -159,7 +200,7 @@ class TestSpeedPidCalibrationDbInvariants:
         session.flush()
         session.add(
             SpeedPidCalibration(
-                ecu_signature="MD000002",
+                ecu_id=ecu.id,
                 correction_factor=0.5,
                 provenance="empirical-test-2",
             )
@@ -175,92 +216,89 @@ class TestSpeedPidCalibrationDbInvariants:
 
 class TestInsertWriterGuard:
     def test_validInsertPersistsRow(self, session: Session) -> None:
+        ecu = _seedEcu(session, "MD123456", "CAL56")
         insert_speed_pid_calibration(
             session,
-            ecu_signature="MD123456",
+            ecu_id=ecu.id,
             correction_factor=0.5,
             provenance="empirical-gps-2026-06-01",
             capture_method="gps_correlation",
             notes="GPS-correlated.",
         )
         session.flush()
-        row = session.query(SpeedPidCalibration).filter_by(
-            ecu_signature="MD123456",
-        ).one()
+        row = session.query(SpeedPidCalibration).filter_by(ecu_id=ecu.id).one()
         assert row.correction_factor == 0.5
         assert row.provenance == "empirical-gps-2026-06-01"
+        assert row.ecu.ecu_signature == "MD123456"
 
     def test_emptyProvenanceRaises(self, session: Session) -> None:
         """VC#8: provenance='' is forbidden by writer-path discipline."""
+        ecu = _seedEcu(session, "MD123457", "CAL57")
         with pytest.raises(ValueError, match="provenance"):
             insert_speed_pid_calibration(
                 session,
-                ecu_signature="MD123457",
+                ecu_id=ecu.id,
                 correction_factor=1.0,
                 provenance="",
             )
 
     def test_whitespaceProvenanceRaises(self, session: Session) -> None:
+        ecu = _seedEcu(session, "MD123458", "CAL58")
         with pytest.raises(ValueError, match="provenance"):
             insert_speed_pid_calibration(
                 session,
-                ecu_signature="MD123458",
+                ecu_id=ecu.id,
                 correction_factor=1.0,
                 provenance="   ",
             )
 
-    def test_emptyEcuSignatureRaises(self, session: Session) -> None:
-        with pytest.raises(ValueError, match="ecu_signature"):
-            insert_speed_pid_calibration(
-                session,
-                ecu_signature="  ",
-                correction_factor=1.0,
-                provenance="empirical-x",
-            )
-
 
 # =========================================================================
-# Analytics provenance-prefix gate (VC#9)
+# Analytics provenance-prefix gate (VC#6 -- works over the FK shape)
 # =========================================================================
 
 
 class TestEmpiricalProvenanceGate:
     def test_prefixGateExcludesRoughSeedRows(self, session: Session) -> None:
-        """VC#9: only 'empirical-' provenance rows are returned; rough seeds out."""
+        """VC#6: only 'empirical-' provenance rows are returned; rough seeds out."""
+        prior = _seedEcu(session, "MD346675", "6675")
+        new = _seedEcu(session, "MD335287", "UNKCAL")
+        gps = _seedEcu(session, "MD999999", "CAL99")
         insert_speed_pid_calibration(
             session,
-            ecu_signature="MD346675",
+            ecu_id=prior.id,
             correction_factor=1.0,
-            provenance="gear-math-drive-18-3rd-gear-fit",
+            provenance="empirical-Drive-18-gear-math-fit",
         )
         insert_speed_pid_calibration(
             session,
-            ecu_signature="MD335287",
+            ecu_id=new.id,
             correction_factor=0.5,
-            provenance="rough-seed-drive-26-gear-math",
+            provenance="gear-math-sanity-check-Drive-26-CIO-corrected",
         )
         insert_speed_pid_calibration(
             session,
-            ecu_signature="MD999999",
+            ecu_id=gps.id,
             correction_factor=0.97,
             provenance="empirical-gps-correlation-2026-06-15",
         )
         session.flush()
 
         rows = select_empirical_calibrations(session)
-        sigs = {r.ecu_signature for r in rows}
-        assert sigs == {"MD999999"}
+        sigs = {r.ecu.ecu_signature for r in rows}
+        assert sigs == {"MD346675", "MD999999"}
         for r in rows:
             assert r.provenance.startswith(
                 SPEED_PID_CALIBRATION_EMPIRICAL_PROVENANCE_PREFIX,
             )
 
     def test_prefixGateEmptyWhenNoEmpiricalRows(self, session: Session) -> None:
+        new = _seedEcu(session, "MD335287", "UNKCAL")
         insert_speed_pid_calibration(
             session,
-            ecu_signature="MD346675",
-            correction_factor=1.0,
-            provenance="gear-math-drive-18-3rd-gear-fit",
+            ecu_id=new.id,
+            correction_factor=0.5,
+            provenance="gear-math-sanity-check-Drive-26-CIO-corrected",
         )
         session.flush()
         assert select_empirical_calibrations(session) == []

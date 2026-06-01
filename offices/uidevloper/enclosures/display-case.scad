@@ -41,7 +41,8 @@ corner_r    = 2.0;
 print_tol   = 0.3;
 
 // ---- #6 asymmetric clearance --------------------------------------------
-clearance_top  = 6.0;   // +Y long edge  (micro-HDMI 90° head)
+clearance_top  = 8.2;   // +Y long edge -> ~14mm PCB-to-top-wall gap for the 90°
+                        // HDMI housing (CIO). gap = 5.8 + clearance_top.
 clearance_left = 6.0;   //  X=0 short edge (Type-C 90° head)
 
 // ---- Display geometry (datasheet) ---------------------------------------
@@ -87,10 +88,14 @@ seat_screw_d      = 3.0;    // M2.5 screw clearance
 seat_cs_d         = 5.2;    // countersink head dia (outside back face)
 seat_cs_depth     = 1.6;    // countersink depth
 
-// ---- #4 buttons (back face, near top-left per CIO) ----------------------
-button_hole_dia  = 3.5;
-button_from_left = [6.0, 16.0];  // centers from the LEFT (X=0) edge
-button_from_top  = 3.0;          // "flush with top" — inset from +Y edge
+// ---- #4 buttons (TOP / +Y wall — buttons face +Y, like the micro-HDMI) --
+// CIO: the power/brightness buttons are NOT on the back; they're on the top
+// wall, facing the same way the micro-HDMI output does. Holes go through the
+// +Y wall at the button X positions. With the 14mm top clearance the buttons
+// sit recessed ~14mm in, so these are poke-access holes (sized generous).
+button_hole_dia  = 5.0;
+button_from_left = [6.0, 16.0];  // X positions, from the LEFT (X=0) edge
+button_z_drop    = 2.0;          // hole center below the PCB-back plane (button-body level)
 
 // ---- Depth stack --------------------------------------------------------
 pcb_thick   = 1.6;
@@ -124,8 +129,8 @@ mount_pts = [
     [pcb_origin_x + mh_left_x,  mh_y_bot], [pcb_origin_x + mh_right_x, mh_y_bot]
 ];
 
-button_y   = pcb_origin_y + pcb_y - button_from_top;   // near +Y edge (flush top)
-button_pts = [ for (l = button_from_left) [pcb_origin_x + l, button_y] ];
+button_z     = pcb_back_z - button_z_drop;              // button-body Z level
+button_x_pts = [ for (l = button_from_left) pcb_origin_x + l ];
 
 // ---- Snap clips ---------------------------------------------------------
 clip_width = 6.0; clip_thickness = 1.5; clip_height = 3.0;
@@ -144,7 +149,6 @@ vent_pitch        = 7.0;
 vent_margin       = 6.0;
 vent_keepout_disc = disc_diameter/2 + 4.0;
 vent_keepout_seat   = seat_cup_d/2 + 3.0;
-vent_keepout_button = button_hole_dia/2 + 3.5;   // keep vents off the button holes
 
 // ---- #5 cable exit (LEFT / X=0 wall, aligned with the Type-C port) -------
 // CIO: Type-C is on the LEFT short edge, 6.4 mm from the TOP (+Y), 9 mm long.
@@ -161,7 +165,6 @@ cable_slot_z0  = wall_t + 2.0;
 module rounded_rect(x, y, r) { offset(r=r) offset(r=-r) square([x, y]); }
 module rounded_box(x, y, z, r) { linear_extrude(height = z) rounded_rect(x, y, r); }
 function dist_to_nearest_seat(x, y)   = min([ for (p = mount_pts)  norm([x-p[0], y-p[1]]) ]);
-function dist_to_nearest_button(x, y) = min([ for (b = button_pts) norm([x-b[0], y-b[1]]) ]);
 
 // =========================================================================
 // BACK SHELL  (Z=0 = outer back; cavity opens +Z)
@@ -183,9 +186,11 @@ module back_shell() {
             cube([wall_t + 0.2, cable_slot_len, cable_slot_h]);
         // standoff seat cuts
         for (p = mount_pts) translate([p[0], p[1], 0]) seat_cut();
-        // #4 button holes (back face)
-        for (b = button_pts)
-            translate([b[0], b[1], -0.1]) cylinder(h = wall_t + 0.2, d = button_hole_dia + print_tol, $fn = 24);
+        // #4 button holes through the TOP (+Y) wall — buttons face +Y like the HDMI
+        for (bx = button_x_pts)
+            translate([bx, case_y - wall_t - 0.1, button_z])
+                rotate([-90, 0, 0])
+                    cylinder(h = wall_t + 0.2, d = button_hole_dia + print_tol, $fn = 24);
         // #7 vents
         vents();
     }
@@ -208,8 +213,7 @@ module vents() {
     for (vx = [vent_margin : vent_pitch : case_x - vent_margin])
         for (vy = [vent_margin : vent_pitch : case_y - vent_margin])
             if (norm([vx - disc_x, vy - disc_y]) > vent_keepout_disc
-                && dist_to_nearest_seat(vx, vy) > vent_keepout_seat
-                && dist_to_nearest_button(vx, vy) > vent_keepout_button)
+                && dist_to_nearest_seat(vx, vy) > vent_keepout_seat)
                 translate([vx, vy, -0.1]) cylinder(h = wall_t + 0.2, d = vent_hole_d, $fn = 16);
 }
 
@@ -267,7 +271,7 @@ module front_shell() {
 module assembly_view() {
     back_shell();
     color("cyan", 0.5) translate([0, 0, back_shell_z]) front_shell();
-    for (b = button_pts) color("orange") translate([b[0], b[1], 0]) cylinder(h = wall_t, d = button_hole_dia, $fn = 24);
+    for (bx = button_x_pts) color("orange") translate([bx, case_y - wall_t, button_z]) rotate([-90,0,0]) cylinder(h = wall_t, d = button_hole_dia, $fn = 24);
 }
 
 // =========================================================================

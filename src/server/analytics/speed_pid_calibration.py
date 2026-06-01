@@ -1,11 +1,11 @@
 ################################################################################
 # File Name: speed_pid_calibration.py
 # Purpose/Description: Server-side writer-path + analytics gate for the
-#                      speed_pid_calibration table (US-370 / F-076).  Provides
-#                      insert_speed_pid_calibration() -- the writer-path guard
-#                      that enforces non-empty ecu_signature + provenance
-#                      (empty-string forbidden, matching the vehicle_info
-#                      identity-immutability discipline) -- and
+#                      speed_pid_calibration table (US-370 / US-374 / F-076).
+#                      Provides insert_speed_pid_calibration() -- the writer-path
+#                      guard that enforces non-empty provenance (empty-string
+#                      forbidden, matching the vehicle_info identity-immutability
+#                      discipline) over the ecu_id FK shape -- and
 #                      select_empirical_calibrations(), the analytics gate that
 #                      returns only empirically-derived calibration rows
 #                      (provenance prefixed 'empirical-'), excluding rough seeds.
@@ -20,6 +20,9 @@
 # 2026-05-29    | Rex (US-370) | Initial -- F-076 speed_pid_calibration writer-path
 #               |              | guard (non-empty provenance/ecu_signature) +
 #               |              | empirical-provenance-prefix analytics gate.
+# 2026-06-01    | Rex (US-374) | Re-key: writer takes ecu_id (FK) not ecu_signature;
+#               |              | dropped the ecu_signature string guard (FK + NOT
+#               |              | NULL cover it); provenance guard preserved.
 # ================================================================================
 ################################################################################
 
@@ -56,7 +59,7 @@ from src.server.db.models import (
 def insert_speed_pid_calibration(
     session: Session,
     *,
-    ecu_signature: str,
+    ecu_id: int,
     correction_factor: float,
     provenance: str,
     capture_method: str | None = None,
@@ -66,16 +69,17 @@ def insert_speed_pid_calibration(
 ) -> SpeedPidCalibration:
     """Insert a per-ECU SPEED-PID calibration row, enforcing non-empty grounding.
 
-    The DB layer enforces ``provenance NOT NULL`` and the ``ecu_signature``
-    UNIQUE natural key, but a NOT NULL column still accepts an empty string.
-    This writer path rejects an empty / whitespace-only ``provenance`` or
-    ``ecu_signature`` so every persisted calibration records both *which* ECU it
-    corrects and *how* the factor was derived -- the same discipline the
-    vehicle_info identity columns use (US-365).
+    The DB layer enforces ``provenance NOT NULL``, the ``ecu_id`` FK ->
+    ``ecu.id`` (US-374 re-key), and ``UNIQUE(ecu_id)``, but a NOT NULL text
+    column still accepts an empty string.  This writer path rejects an empty /
+    whitespace-only ``provenance`` so every persisted calibration records *how*
+    the factor was derived -- the same discipline the vehicle_info identity
+    columns use (US-365).  *Which* ECU it corrects is now the ``ecu_id`` FK
+    (a bad value is caught by the FK constraint, not a string guard).
 
     Args:
         session: An active SQLAlchemy session bound to the server schema.
-        ecu_signature: The ECU signature this factor corrects (natural key).
+        ecu_id: FK -> ``ecu.id`` -- the SSOT ECU identity this factor corrects.
         correction_factor: Multiplicative factor; ``OBD reading x factor =
             ground truth``.
         provenance: Non-empty grounding string (how the factor was derived,
@@ -90,14 +94,8 @@ def insert_speed_pid_calibration(
         The added :class:`SpeedPidCalibration` instance (not yet flushed).
 
     Raises:
-        ValueError: If ``ecu_signature`` or ``provenance`` is empty or only
-            whitespace.
+        ValueError: If ``provenance`` is empty or only whitespace.
     """
-    if not ecu_signature or not ecu_signature.strip():
-        raise ValueError(
-            "speed_pid_calibration ecu_signature must be a non-empty string; "
-            "every calibration must name the ECU it corrects.",
-        )
     if not provenance or not provenance.strip():
         raise ValueError(
             "speed_pid_calibration provenance must be a non-empty string; "
@@ -107,7 +105,7 @@ def insert_speed_pid_calibration(
         )
 
     row = SpeedPidCalibration(
-        ecu_signature=ecu_signature,
+        ecu_id=ecu_id,
         correction_factor=correction_factor,
         capture_method=capture_method,
         captured_at_timestamp_utc=captured_at,

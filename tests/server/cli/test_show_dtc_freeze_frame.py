@@ -73,6 +73,7 @@ def _seed(dbPath, *, pids=_PIDS, notes=None, removal=None, add_later_ecu=False):
     with Session(eng) as session:
         ecu = VehicleInfo(
             source_id=1, source_device=_DEVICE, vin=_VIN,
+            ecu_id=1,  # US-376: ecu_id is NOT NULL (FK not enforced on SQLite)
             ecu_signature="orig-ECU", cal_signature="pump-93-v1",
             ecu_install_timestamp_utc=_INSTALL,
             ecu_removal_timestamp_utc=removal,
@@ -96,6 +97,7 @@ def _seed(dbPath, *, pids=_PIDS, notes=None, removal=None, add_later_ecu=False):
             ecu.ecu_removal_timestamp_utc = datetime(2026, 6, 1, 0, 0, 0)
             session.add(VehicleInfo(
                 source_id=2, source_device=_DEVICE, vin=_VIN,
+                ecu_id=1,  # US-376: ecu_id is NOT NULL (FK not enforced on SQLite)
                 ecu_signature="new-ECU",
                 ecu_install_timestamp_utc=datetime(2026, 6, 1, 0, 0, 0),
             ))
