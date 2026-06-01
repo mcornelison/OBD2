@@ -109,9 +109,15 @@ Both shells render manifold (`Simple: yes`): back 2437 facets, front 62.
   poke-access. Removed the now-moot back-face cut + button vent keepout.
 - **Top clearance increased: `clearance_top` 6 → 8.2** → ~14 mm PCB-to-top-wall
   gap so the 90°-left micro-HDMI cable housing fits (CIO). (gap = 5.8 + clearance_top.)
-- NOTE: with the 14 mm gap the buttons sit ~14 mm in from the +Y wall, so the
-  wall holes are poke-through access — confirm that's acceptable vs. wanting
-  them closer/flush (would trade against the HDMI-housing clearance).
+- CONFIRMED (CIO): poke-through (tool/toothpick) button access is the design
+  intent — "set it and forget it" settings — so the recessed +Y-wall holes are
+  correct as-is. The 14 mm top clearance is required for the micro-HDMI 90°
+  housing.
+- CABLE ROUTING (CIO): the micro-HDMI does a **LEFT** 90° turn and exits the
+  **existing LEFT-wall opening** — i.e. BOTH the Type-C (on the left edge) and
+  the micro-HDMI (top edge → left-turn) share the one left exit. No +X/right
+  exit. (Watch on fit-check: confirm both cables pass the single ~18×14mm
+  opening; `cable_slot_len`/`cable_slot_h` are one-line bumps if tight.)
 
 ## File inventory (this folder)
 
