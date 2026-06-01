@@ -104,14 +104,21 @@ don't duplicate them here:
 | Coding standards / methodology / anti-patterns | `specs/standards.md`, `methodology.md`, `anti-patterns.md` |
 | Shared cross-agent memory index | `MEMORY.md` (loaded each session) |
 
-**One-line system state (re-verify every session):** V0.27 chain on stacked
-sprint branches, not yet merged to main; **Sprint 41 / V0.27.18 DEPLOYED +
-IRL-PASSED 2026-05-22**; both tiers on V0.27.18 / `6615cb2`; F-7+F-8 holding
-(5/5 boots today CLEAN_COMPLETE/graceful); 3-cycle false-pass class
-structurally CLOSED via B-104 Step 1 (SSOT pattern's second production
-application); **Atlas axis CLEAR for `/chain-validated`** pending Argus
-`/sprint-validated` + Marcus `/chain-validated` orchestration. Branch:
-`sprint/sprint41-bugfixes-V0.27.17`.
+**One-line system state (re-verify every session):** **V0.27 chain MERGED to
+main 2026-05-23** (`a4c68e7`, tags `V0.27.19`+`chain-V0.27`); main = fully
+validated stable. Now on the **V0.28 chain (dev/main workflow)**: Sprint 43 /
+V0.28.0 integrated to `dev` but NOT DEPLOYED (12/15; US-370 deferred→V0.28.1).
+**V0.28.1 / Sprint 44 FROZEN + DISPATCHABLE 2026-06-01** — branch
+`sprint/sprint44-V0.28.1` (forked from `dev` `3329901`), `sprint.json` frozen
+`bigDoDHash 21971bd1`; **2 dev stories:** US-376 (`ecu` identity table pair-keyed
+on `(ecu_signature,cal_signature)` + `vehicle_info.ecu_id` FK) then US-374
+(`speed_pid` re-key→`ecu_id` FK, rework-forward). Atlas Q1-Q5 + Rule 13 PASS;
+Spool Q5 = row-per-reflash. **A-12** (US-370 code live in `dev`, v0011 rework) +
+**A-9** (dual-attribution) close on the V0.28.1 deploy+IRL drive-27. chi-srv-01 on
+V0.27.19; Pi unreachable on recent deploys. Next Atlas: per-task gates on
+US-376/US-374 + US-376 §5 Rule 10 (+ recommended `ecu` UNKCAL→CALID immutability
+carve-out). Branch forked under me this session (sprint43→sprint44); charter
+commit `f6a339c` orphaned by the fork → recovered + re-committed.
 
 ## 5. Operating Model
 
@@ -202,8 +209,37 @@ before acting on any of these.
 | ↳ status | 2026-05-28: Sprint 43 / V0.28.0 scope does NOT explicitly include TD-055 third-leg harness (`applied-migrations` testcontainer). F-076 schema-pass first slice ships one Alembic v0010 covering 6 substeps — risk surface is per-substep rollback fidelity, NOT ORM-vs-migration divergence (the V0.27.17 class). Still OPEN + not yet filed as a Story. **Recommend flagging for V0.28.1 / next groom** so it doesn't drift; the V0.28 chain accumulates more migrations as B-076 expands. | — | — |
 | **A-11** | **Sprint-level IRL clauses + `prd_to_sprint.py` aggregation-recipe gap** — PRD `## Sprint-level validation.bigDefinitionOfDone` section names sprint-level IRL clauses "added at freeze time on top of per-Story aggregation." **`prd_to_sprint.py` does NOT parse the PRD's sprint-level IRL markdown table** — only per-Story aggregation (verified `offices/pm/scripts/prd_to_sprint.py:77-115`). Sprint 43: Marcus closed the gap by **folding all 6 sprint-level IRL clauses into per-Story `validationCriteria`** of whichever Story produces the artifact each clause validates. Verified at Rule 13 review — all 6 present in bigDoD; this is BETTER than the spec's literal text (clauses are in freeze hash + attributed to Stories). But the spec language is misleading. Future PMs (or future Atlas if grooming) may read the spec literally + maintain a separate sprint-level tier that isn't in the hash + drifts silently. | Low | `docs/superpowers/specs/2026-05-28-validation-criteria-upfront-contract-design.md` §4.1; `offices/pm/scripts/prd_to_sprint.py:77-115`; Atlas Rule 13 sign-off note 2026-05-28 |
 | ↳ status | 2026-05-28: Flagged in Atlas Rule 13 sign-off note (PM inbox) as "Follow-up for V0.28+ grooming." Two paths: (i) amend spec to say "fold IRL clauses into per-Story" as preferred pattern; (ii) extend `prd_to_sprint.py` to parse PRD's sprint-level IRL markdown table + append before hashing. PM call. Knowledge file documenting both at `offices/architect/knowledge/2026-05-28-rule-13-audit-discipline-patterns.md` §2. **2026-05-29 new sibling-lesson:** US-370 froze with an unrendered Atlas ruling (FK shape) baked into its criteria as a placeholder → post-freeze Rule 10 ruling (c) collided with the frozen text → forced a defer-to-patch-sprint (freeze has no in-sprint re-hash by design). Grooming rule to add: **don't freeze a Story whose load-bearing criterion depends on an unrendered Atlas ruling** (render pre-freeze, or freeze explicitly as "shape pending ruling, build blocked"). See §9 2026-05-29 addendum. | — | — |
+| **A-12** | **US-370 option-(c) removal-half never executed — code LIVE in `dev`, not pulled.** CIO option-2 (2026-05-29) directed the option-(c) `speed_pid_calibration` build OUT of Sprint-43 *shipping* artifacts (v0010 substep → reserved comment, ORM class, analytics, §5 doc), PRESERVED on a tag. The **preserve half happened; the removal half did not**: on `dev @ bd1618c` the v0010 substep `_applySpeedPidCalibrationTable` is live in `apply()` (L981), `class SpeedPidCalibration` present (`models.py:998`), `analytics/speed_pid_calibration.py` present; tag `us-370-option-c-preserved` = same commit `72172a2` as the integration. **Bounded:** nothing deployed (chi-srv-01 on V0.27.19; v0010 never ran on prod) → no uncontracted code on hardware. **Consequence:** v0010 WILL create `speed_pid_calibration` (option-c shape) on first V0.28.1 deploy → V0.28.1 is rework-forward (v0011 ALTER), not greenfield; the PRD's "preserved, not shipped" premise is inaccurate. CLOSES when V0.28.1 v0011 re-keys speed_pid to `ecu_id` FK + US-374 frozen criteria own the v0010-starting-point framing. | Med | `git show bd1618c:src/server/migrations/versions/v0010_us363_attribution_anomaly_data_quality.py` L981; `models.py:998`; charter §9 2026-05-29 resolution; PM note `2026-06-01-from-atlas-v0.28.1-ecu-normalization-rulings-Q1-Q5.md` |
 
 ## 9. Session Log
+
+### 2026-06-01 (cont.) — V0.28.1 PM Rule 13 sign-off: PASS (2nd Rule 13 executed) + settings.local.json restructured to access model
+
+Marcus folded all my Q1–Q5 rulings + Spool's Q5 confirm + decomposition feedback into a freeze-ready PRD and routed the Rule 13 validation-block ask. Spool confirmed Q5 fully (pair-identity, row-per-reflash, UNKCAL→same-row edge, 3 literals verbatim). **Verified against the artifact + landed `dev` code, not the summary:** US-376 + US-374 criteria all testable/complete; bigDoD all-IRL with no human-task stories (CIO 2026-06-01); no coverage holes; decomposition = my 2-story rec (US-375 dropped). Rework-forward premise now matches my A-12 finding. **Rule 13 PASS** filed `../pm/inbox/2026-06-01-from-atlas-v0.28.1-rule-13-PASS-formal-signoff.md`; cleared for `prd_to_sprint.py` + `sprint/sprint44-V0.28.1` fork.
+
+- **One recommended pre-freeze refinement (not a block):** pin the `ecu` immutability carve-out for Spool's UNKCAL→CALID edge — `ecu` is immutable EXCEPT the sanctioned same-row cal-resolution; otherwise a flat "immutable" comment becomes an A-6-class false guarantee that blocks the future legitimate CALID write. Documentation-honesty only (the correction is a future event; nothing builds it this slice). To fold now or enforce at US-376 Rule 10.
+- **One non-blocking doc note:** the `ecu` table lands in V0.28.1 → its architecture.md §5 entry must be an honest "V0.28.1 — B-076 first slice" `###` subsection, not folded into the US-373-PASSed V0.28.0-pass narrative. Gate the wording at US-376 Rule 10.
+- **A-12 closes** when v0011 re-keys speed_pid (US-374 AC#1 owns the rework-forward starting point).
+- **Settings:** restructured `offices/architect/.claude/.../settings.local.json` to the CIO access model — full project read; write allow-listed to non-offices tree + own office + the 5 sibling inboxes; blanket `Edit/Write(OBD2v2/**)` removed (it had silently over-granted into sibling offices). Sibling-office non-inbox writes now fall to a prompt (the guardrail) — can't hard-deny-with-inbox-carveout because deny>allow by precedence. JSON validated (173 allow entries).
+
+### 2026-06-01 — V0.28.1 (sprint44) `ecu`-normalization design review → Q1–Q5 rulings rendered pre-freeze + A-12 coherence finding
+
+CIO ("review sprint44-V0.28.1"). Marcus routed the V0.28.1 PRD (`prd-V0.28.1.md`) with 5 open questions Q1–Q5 owed to me BEFORE freeze — correctly applying the A-11 lesson I logged on US-370. Scope: close Sprint-43 carry-forward + **start B-076** (normalized `ecu` identity table that `vehicle_info` + `speed_pid_calibration` reference). V0.28.1 is also the FIRST hardware deploy of the whole V0.28 chain (Sprint 43 committed to dev, never deployed).
+
+**Verify-before-asserting at the schema seam — surfaced A-12 (Med).** Read the *landed* code on `dev @ bd1618c`, not the PRD narrative. Found the CIO's 2026-05-29 option-2 resolution was **half-executed**: option-(c) `speed_pid_calibration` code was PRESERVED on a tag but never REMOVED from Sprint-43 shipping artifacts — the v0010 substep is live in `apply()` (L981), the ORM class + analytics module are present, and the "preservation" tag points at the same integration commit. Bounded (nothing deployed; v0010 never ran on prod), but it makes V0.28.1 **rework-forward** (v0011 ALTER), not the greenfield-create the PRD premise implies. Flagged the premise correction to Marcus.
+
+**Scope decision routed to CIO (AskUserQuestion) — chose minimal first slice.** Q2 had two valid shapes; the broad one (drop the freshly-landed US-365 `ecu_signature`/`cal_signature` TEXT columns) piles avoidable risk on the first V0.28 deploy. CIO ratified **minimal**: create `ecu` + re-key `speed_pid` to FK + add `vehicle_info.ecu_id` FK, KEEP the text columns as a transitional FK-backed snapshot (drop deferred). Denormalization smell is transitional (FK = SSOT, stated death date) — same class as the Sprint-39 T2 config alias.
+
+**Rulings (full note: `../pm/inbox/2026-06-01-from-atlas-v0.28.1-ecu-normalization-rulings-Q1-Q5.md`):**
+- **Q1 `ecu` shape:** surrogate PK + `ecu_signature VARCHAR(32)` + `cal_signature VARCHAR(32) NOT NULL` (sentinel, never NULL — dup-NULL in MariaDB composite UNIQUE = silent collision) + **UNIQUE(signature, cal)** pair-identity. `ecu` = immutable identity dimension; **lineage stays on `vehicle_info`**. SPEED factor stays in `speed_pid_calibration` (measurement, not identity).
+- **Q3 re-key:** YES → FK `ecu_id → ecu.id`. This is the SSOT-pure destination I named in the option-(c) ruling as the deferred B-076 upgrade path; the natural-key scaffold collapses into the FK now that `ecu` exists. US-374 = rework the preserved build.
+- **Q2 `vehicle_info`:** add `ecu_id` FK + backfill; append-only lineage + single-active marker UNCHANGED (window mechanism, identity-text-independent); KEEP text columns w/ a **transitional-coherence guard** (regression test pins `vehicle_info.ecu_signature == ecu[ecu_id].ecu_signature`; writer-path derives text from `ecu`; comment marks deprecated-transitional).
+- **Q4 sequencing:** forward-only **v0011**, do NOT edit v0010 (immutability across already-migrated envs). Substep order: create `ecu` → backfill 3 rows → `vehicle_info.ecu_id` → `speed_pid` re-key. Create-then-alter wastefulness on fresh prod is the correct price of A-12.
+- **Q5 semantics:** deferred to Spool (already leaning pair-identity); shape composes. Routed Spool an A2AL confirm (row-per-reflash vs mutable-cal + the 3 backfill literals) — gates US-376 freeze.
+
+**Decomposition feedback (Marcus's lane):** fold `vehicle_info.ecu_id` into US-376; likely 2 stories not 3 (US-374 rework + US-376 ecu+wiring); US-375 absorbs or becomes the optional TEXT→VARCHAR(32) cleanup.
+
+**Filed:** PM ruling note + Spool A2AL Q5 confirm + Watch List A-12 + this entry. **Atlas posture: on-demand.** Next engagement = PM Rule 13 sign-off when Marcus routes the freeze-ready PRD (after decomposition + criteria + Spool Q5). The discipline-loop held again: read landed code not narrative → caught a half-executed resolution at the schema seam before it shaped frozen criteria.
 
 ### 2026-05-18 — Onboarding (Atlas established)
 
