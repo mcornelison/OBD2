@@ -1,7 +1,7 @@
 {
   "schemaVersion": "2.0.0",
-  "lastUpdated": "2026-05-28",
-  "updatedBy": "Marcus (PM) Session 44 -- 15 sprint-ready Stories US-359..US-373 filed for V0.28.0 Sprint 1 per Atlas Rule 13 pre-pass + 17-row refinements table",
+  "lastUpdated": "2026-06-01",
+  "updatedBy": "Marcus (PM)",
   "counters": {
     "epic": 6,
     "feature": 110,
@@ -481,7 +481,7 @@
     {
       "id": "F-042",
       "parent": "E-OPS",
-      "title": "Rename src/pi/obd/ \u00e2\u2020\u2019 src/pi/obdii/ (resolve I-014 name collision)",
+      "title": "Rename src/pi/obd/ â†’ src/pi/obdii/ (resolve I-014 name collision)",
       "description": "",
       "status": "complete",
       "renamedFrom": "B-042",
@@ -541,8 +541,8 @@
     {
       "id": "F-049",
       "parent": "E-OPS",
-      "title": "drive_detect idle-poll gap \u2014 engine-on never detected in idle-poll",
-      "description": "drive_detect idle-poll gap \u2014 engine-on never detected in idle-poll",
+      "title": "drive_detect idle-poll gap — engine-on never detected in idle-poll",
+      "description": "drive_detect idle-poll gap — engine-on never detected in idle-poll",
       "status": "pending",
       "renamedFrom": "B-049",
       "createdAt": "2026-05-27",
@@ -551,8 +551,8 @@
     {
       "id": "F-050",
       "parent": "E-OPS",
-      "title": "PowerMonitor DB-write path activation \u2014 UpsMonitor \u2192 power_log \u2192 US-216",
-      "description": "PowerMonitor DB-write path activation \u2014 UpsMonitor \u2192 power_log \u2192 US-216",
+      "title": "PowerMonitor DB-write path activation — UpsMonitor → power_log → US-216",
+      "description": "PowerMonitor DB-write path activation — UpsMonitor → power_log → US-216",
       "status": "pending",
       "renamedFrom": "B-050",
       "createdAt": "2026-05-27",
@@ -811,8 +811,8 @@
     {
       "id": "F-082",
       "parent": "E-002",
-      "title": "Tester's V0.28+ data-profile findings \u2014 rollup (8 bugs + 8 design smells)",
-      "description": "Tester's V0.28+ data-profile findings \u2014 rollup (8 bugs + 8 design smells)",
+      "title": "Tester's V0.28+ data-profile findings — rollup (8 bugs + 8 design smells)",
+      "description": "Tester's V0.28+ data-profile findings — rollup (8 bugs + 8 design smells)",
       "status": "pending",
       "renamedFrom": "B-082",
       "createdAt": "2026-05-27",
@@ -851,8 +851,8 @@
     {
       "id": "F-086",
       "parent": "E-001",
-      "title": "GEM-1 \u2014 Warnings-first quiet UI on the 3.5\" display",
-      "description": "GEM-1 \u2014 Warnings-first quiet UI on the 3.5\" display",
+      "title": "GEM-1 — Warnings-first quiet UI on the 3.5\" display",
+      "description": "GEM-1 — Warnings-first quiet UI on the 3.5\" display",
       "status": "pending",
       "renamedFrom": "B-086",
       "createdAt": "2026-05-27",
@@ -861,8 +861,8 @@
     {
       "id": "F-087",
       "parent": "E-003",
-      "title": "GEM-2 \u2014 Deterministic anomaly + Ollama explanation pattern (mature US-326 + US-317 + ingest the brainstorm prompt pack)",
-      "description": "GEM-2 \u2014 Deterministic anomaly + Ollama explanation pattern (mature US-326 + US-317 + ingest the brainstorm prompt pack)",
+      "title": "GEM-2 — Deterministic anomaly + Ollama explanation pattern (mature US-326 + US-317 + ingest the brainstorm prompt pack)",
+      "description": "GEM-2 — Deterministic anomaly + Ollama explanation pattern (mature US-326 + US-317 + ingest the brainstorm prompt pack)",
       "status": "pending",
       "renamedFrom": "B-087",
       "createdAt": "2026-05-27",
@@ -871,8 +871,8 @@
     {
       "id": "F-088",
       "parent": "E-003",
-      "title": "GEM-3 \u2014 Knock-retard real-time alert with chime ladder",
-      "description": "GEM-3 \u2014 Knock-retard real-time alert with chime ladder",
+      "title": "GEM-3 — Knock-retard real-time alert with chime ladder",
+      "description": "GEM-3 — Knock-retard real-time alert with chime ladder",
       "status": "pending",
       "renamedFrom": "B-088",
       "createdAt": "2026-05-27",
@@ -881,8 +881,8 @@
     {
       "id": "F-089",
       "parent": "E-003",
-      "title": "GEM-4 \u2014 Spool engine grade per drive (A/B/C/D + 1-line reason)",
-      "description": "GEM-4 \u2014 Spool engine grade per drive (A/B/C/D + 1-line reason)",
+      "title": "GEM-4 — Spool engine grade per drive (A/B/C/D + 1-line reason)",
+      "description": "GEM-4 — Spool engine grade per drive (A/B/C/D + 1-line reason)",
       "status": "pending",
       "renamedFrom": "B-089",
       "createdAt": "2026-05-27",
@@ -891,8 +891,8 @@
     {
       "id": "F-090",
       "parent": "E-003",
-      "title": "GEM-5 \u2014 MARK EVENT button (bookmark plus/minus 60s window for later analysis)",
-      "description": "GEM-5 \u2014 MARK EVENT button (bookmark plus/minus 60s window for later analysis)",
+      "title": "GEM-5 — MARK EVENT button (bookmark plus/minus 60s window for later analysis)",
+      "description": "GEM-5 — MARK EVENT button (bookmark plus/minus 60s window for later analysis)",
       "status": "pending",
       "renamedFrom": "B-090",
       "createdAt": "2026-05-27",
@@ -901,8 +901,8 @@
     {
       "id": "F-091",
       "parent": "E-005",
-      "title": "GEM-6 \u2014 Audio drive reports via Android Auto",
-      "description": "GEM-6 \u2014 Audio drive reports via Android Auto",
+      "title": "GEM-6 — Audio drive reports via Android Auto",
+      "description": "GEM-6 — Audio drive reports via Android Auto",
       "status": "pending",
       "renamedFrom": "B-091",
       "createdAt": "2026-05-27",
@@ -911,8 +911,8 @@
     {
       "id": "F-092",
       "parent": "E-001",
-      "title": "GEM-7 \u2014 System status tile (BT link, last sync, Pi power mode, ladder stage)",
-      "description": "GEM-7 \u2014 System status tile (BT link, last sync, Pi power mode, ladder stage)",
+      "title": "GEM-7 — System status tile (BT link, last sync, Pi power mode, ladder stage)",
+      "description": "GEM-7 — System status tile (BT link, last sync, Pi power mode, ladder stage)",
       "status": "pending",
       "renamedFrom": "B-092",
       "createdAt": "2026-05-27",
@@ -921,8 +921,8 @@
     {
       "id": "F-093",
       "parent": "E-003",
-      "title": "GEM-8 \u2014 Baseline-relative anomaly detection (vs pre-mod shelf, not generic thresholds)",
-      "description": "GEM-8 \u2014 Baseline-relative anomaly detection (vs pre-mod shelf, not generic thresholds)",
+      "title": "GEM-8 — Baseline-relative anomaly detection (vs pre-mod shelf, not generic thresholds)",
+      "description": "GEM-8 — Baseline-relative anomaly detection (vs pre-mod shelf, not generic thresholds)",
       "status": "pending",
       "renamedFrom": "B-093",
       "createdAt": "2026-05-27",
@@ -931,8 +931,8 @@
     {
       "id": "F-094",
       "parent": "E-003",
-      "title": "GEM-9 \u2014 MrSpool digital twin: RAG over Spool knowledge + DSM references + mod/maintenance log",
-      "description": "GEM-9 \u2014 MrSpool digital twin: RAG over Spool knowledge + DSM references + mod/maintenance log",
+      "title": "GEM-9 — MrSpool digital twin: RAG over Spool knowledge + DSM references + mod/maintenance log",
+      "description": "GEM-9 — MrSpool digital twin: RAG over Spool knowledge + DSM references + mod/maintenance log",
       "status": "pending",
       "renamedFrom": "B-094",
       "createdAt": "2026-05-27",
@@ -941,8 +941,8 @@
     {
       "id": "F-095",
       "parent": "E-003",
-      "title": "S-1 \u2014 Heat soak recovery time PID (IAT-minus-ambient delta after cruise; intercooler degradation signal)",
-      "description": "S-1 \u2014 Heat soak recovery time PID (IAT-minus-ambient delta after cruise; intercooler degradation signal)",
+      "title": "S-1 — Heat soak recovery time PID (IAT-minus-ambient delta after cruise; intercooler degradation signal)",
+      "description": "S-1 — Heat soak recovery time PID (IAT-minus-ambient delta after cruise; intercooler degradation signal)",
       "status": "pending",
       "renamedFrom": "B-095",
       "createdAt": "2026-05-27",
@@ -951,8 +951,8 @@
     {
       "id": "F-096",
       "parent": "E-001",
-      "title": "S-2 \u2014 LTFT trend display (multi-drive, healthy migration toward 0)",
-      "description": "S-2 \u2014 LTFT trend display (multi-drive, healthy migration toward 0)",
+      "title": "S-2 — LTFT trend display (multi-drive, healthy migration toward 0)",
+      "description": "S-2 — LTFT trend display (multi-drive, healthy migration toward 0)",
       "status": "pending",
       "renamedFrom": "B-096",
       "createdAt": "2026-05-27",
@@ -961,8 +961,8 @@
     {
       "id": "F-097",
       "parent": "E-001",
-      "title": "S-3 \u2014 Drain ladder state UI (when Pi on UPS battery show stage + VCELL + estimated runtime remaining)",
-      "description": "S-3 \u2014 Drain ladder state UI (when Pi on UPS battery show stage + VCELL + estimated runtime remaining)",
+      "title": "S-3 — Drain ladder state UI (when Pi on UPS battery show stage + VCELL + estimated runtime remaining)",
+      "description": "S-3 — Drain ladder state UI (when Pi on UPS battery show stage + VCELL + estimated runtime remaining)",
       "status": "pending",
       "renamedFrom": "B-097",
       "createdAt": "2026-05-27",
@@ -971,8 +971,8 @@
     {
       "id": "F-098",
       "parent": "E-OPS",
-      "title": "S-4 \u2014 Mode badge: in-car vs wall-power debug (small corner indicator)",
-      "description": "S-4 \u2014 Mode badge: in-car vs wall-power debug (small corner indicator)",
+      "title": "S-4 — Mode badge: in-car vs wall-power debug (small corner indicator)",
+      "description": "S-4 — Mode badge: in-car vs wall-power debug (small corner indicator)",
       "status": "pending",
       "renamedFrom": "B-098",
       "createdAt": "2026-05-27",
@@ -981,8 +981,8 @@
     {
       "id": "F-099",
       "parent": "E-OPS",
-      "title": "Telegram bot \u2014 bidirectional driver-context channel (CIO \u2194 system; LLM-mediated text\u2192DB ingestion)",
-      "description": "Telegram bot \u2014 bidirectional driver-context channel (CIO \u2194 system; LLM-mediated text\u2192DB ingestion)",
+      "title": "Telegram bot — bidirectional driver-context channel (CIO ↔ system; LLM-mediated text→DB ingestion)",
+      "description": "Telegram bot — bidirectional driver-context channel (CIO ↔ system; LLM-mediated text→DB ingestion)",
       "status": "pending",
       "renamedFrom": "B-099",
       "createdAt": "2026-05-27",
@@ -991,8 +991,8 @@
     {
       "id": "F-100",
       "parent": "E-002",
-      "title": "`drive_summary` writer broken \u2014 every server row is an empty shell + drives 6-10 missing entirely",
-      "description": "`drive_summary` writer broken \u2014 every server row is an empty shell + drives 6-10 missing entirely",
+      "title": "`drive_summary` writer broken — every server row is an empty shell + drives 6-10 missing entirely",
+      "description": "`drive_summary` writer broken — every server row is an empty shell + drives 6-10 missing entirely",
       "status": "pending",
       "renamedFrom": "B-100",
       "createdAt": "2026-05-27",
@@ -1041,8 +1041,8 @@
     {
       "id": "F-105",
       "parent": "E-OPS",
-      "title": "architecture.md \u00a720 modification-history SS-T9 row backfill",
-      "description": "architecture.md \u00a720 modification-history SS-T9 row backfill",
+      "title": "architecture.md §20 modification-history SS-T9 row backfill",
+      "description": "architecture.md §20 modification-history SS-T9 row backfill",
       "status": "active",
       "renamedFrom": "B-105",
       "createdAt": "2026-05-27",
@@ -1051,8 +1051,8 @@
     {
       "id": "F-106",
       "parent": "E-002",
-      "title": "Derived Signals From Speed + Time \u2014 Acceleration + Estimated Odometer (with CIO Factual Recalibration)",
-      "description": "Derived Signals From Speed + Time \u2014 Acceleration + Estimated Odometer (with CIO Factual Recalibration)",
+      "title": "Derived Signals From Speed + Time — Acceleration + Estimated Odometer (with CIO Factual Recalibration)",
+      "description": "Derived Signals From Speed + Time — Acceleration + Estimated Odometer (with CIO Factual Recalibration)",
       "status": "pending",
       "renamedFrom": "B-106",
       "createdAt": "2026-05-27",
@@ -1230,8 +1230,8 @@
           "outcome": "Zero references; table stays retired per US-351"
         },
         {
-          "action": "Atlas review of specs/architecture.md \u00a710.7 amendment from US-373",
-          "outcome": "Atlas Rule 10 PASS recorded in \u00a720 changelog table"
+          "action": "Atlas review of specs/architecture.md §10.7 amendment from US-373",
+          "outcome": "Atlas Rule 10 PASS recorded in §20 changelog table"
         }
       ],
       "deps": [
@@ -1258,7 +1258,7 @@
       "goal": "As a server-side analytics consumer of raw realtime_data, I want a detect_overlapping_drives(session, drive_id) -> list[int] helper that returns the set of other drive_ids overlapping the given drive_id by any second of time-range intersection so that downstream compute paths (US-363 + US-364) have a SSOT overlap detector.",
       "definitionOfDone": [
         "Function detect_overlapping_drives(session, drive_id: int) -> list[int] exists in server compute path",
-        "Overlap threshold = strict time-range intersection per second (any second of overlap = match; \u03b5 allowance only with empirical justification documented in docstring)",
+        "Overlap threshold = strict time-range intersection per second (any second of overlap = match; ε allowance only with empirical justification documented in docstring)",
         "Function operates against realtime_data (raw signal authority per B-104 Step 1), not drive_summary derived rows",
         "Unit tests cover pairwise (drives 23+24), no-overlap (drive 25), transitive (3-way pairwise)",
         "Function is idempotent (no DB writes; pure query helper)",
@@ -1267,7 +1267,7 @@
       "conditionalOutcomes": [
         "if production realtime_data for drives 23+24 is no longer accessible, unit tests must seed a fixture replicating overlap window from F-107 description constants",
         "if 3-way transitive overlap surfaces in production, detect_overlapping_drives(30) returns [31,32] AND (31) returns [30,32] AND (32) returns [30,31]",
-        "if empirical \u03b5 > 0 second allowance is later needed (e.g., clock-jitter), the change is a separate Story with empirical justification"
+        "if empirical ε > 0 second allowance is later needed (e.g., clock-jitter), the change is a separate Story with empirical justification"
       ],
       "validationCriteria": [
         {
@@ -1284,7 +1284,7 @@
         },
         {
           "action": "Inspect docstring",
-          "outcome": "Overlap threshold = strict time-range intersection per second explicitly stated; \u03b5=0 default call-out present"
+          "outcome": "Overlap threshold = strict time-range intersection per second explicitly stated; ε=0 default call-out present"
         },
         {
           "action": "Run helper against production realtime_data snapshot on chi-srv-01",
@@ -1798,7 +1798,7 @@
       "status": "sprint-ready",
       "goal": "As a server-side analytics consumer aggregating SPEED PID for distance / gear-inference, I want a speed_pid_calibration table keyed by ecu_signature (FK to vehicle_info) carrying a multiplicative correction_factor so that the new modified-EPROM ECU's ~2x SPEED-reading drift gets corrected per-drive. NOTE: new-ECU seed correction_factor=0.5 is INITIAL ESTIMATE; Spool empirical refinement Q2 PENDING.",
       "definitionOfDone": [
-        "Alembic v0010 substep creates speed_pid_calibration table per F-076 V0.28 \u00a71 schema: id PK; ecu_signature FK -> vehicle_info; correction_factor DOUBLE; capture_method ENUM; captured_at_timestamp_utc; captured_by; provenance TEXT NOT NULL; notes",
+        "Alembic v0010 substep creates speed_pid_calibration table per F-076 V0.28 §1 schema: id PK; ecu_signature FK -> vehicle_info; correction_factor DOUBLE; capture_method ENUM; captured_at_timestamp_utc; captured_by; provenance TEXT NOT NULL; notes",
         "Seed 2 rows: prior ECU correction_factor=1.0, provenance='gear-math-drive-18-3rd-gear-fit' (Drive 18 gear math fit); new ECU correction_factor=0.5, provenance='rough-seed-drive-26-gear-math' (Drive 26 rough estimate)",
         "notes field documents initial estimate flag for new-ECU seed",
         "Ordering: US-365 substep runs BEFORE US-370 substep in v0010 (US-370 FKs to US-365's column); documented in migration docstring per Atlas Refinements row 16",
@@ -1814,7 +1814,7 @@
       "validationCriteria": [
         {
           "action": "DESCRIBE speed_pid_calibration post-migration",
-          "outcome": "Shows columns per F-076 V0.28 \u00a71 schema with FK to vehicle_info"
+          "outcome": "Shows columns per F-076 V0.28 §1 schema with FK to vehicle_info"
         },
         {
           "action": "SELECT correction_factor FROM speed_pid_calibration WHERE ecu_signature = '<prior-ECU-sig>'",
@@ -1985,38 +1985,38 @@
       "type": "housekeeping",
       "size": "S",
       "status": "sprint-ready",
-      "goal": "As Atlas + the architecture-doc audience, I want specs/architecture.md updated in-sprint to reflect V0.28 schema-pass first slice (F-107 DriveDetector + lifecycle fix; F-076 schema additions; F-108 ECU lineage; F-109 freeze-frame) so PM Rule 10's design-gate DoD is satisfied within this sprint per \u00a710.6 + \u00a710.7 amendment pattern.",
+      "goal": "As Atlas + the architecture-doc audience, I want specs/architecture.md updated in-sprint to reflect V0.28 schema-pass first slice (F-107 DriveDetector + lifecycle fix; F-076 schema additions; F-108 ECU lineage; F-109 freeze-frame) so PM Rule 10's design-gate DoD is satisfied within this sprint per §10.6 + §10.7 amendment pattern.",
       "definitionOfDone": [
-        "(i) \u00a710.7 amendment appends F-107 disposition subsection (DriveDetector dual-emission fix from US-361 + server-side tripwire from US-362/363/364); same pattern as \u00a710.6 used for F-7/F-8 in Sprint 40; additive not rewrite",
-        "(ii) New \u00a75.X subsection: V0.28 schema-pass first slice documents 5 schema surfaces -- speed_pid_calibration (US-370), dtc_freeze_frame (US-368), vehicle_info ECU columns + constraint (US-365), drive_statistics.drive_id->summary_id rename (US-371), drive_summary.drive_id backfill + CHECK invariant (US-372)",
+        "(i) §10.7 amendment appends F-107 disposition subsection (DriveDetector dual-emission fix from US-361 + server-side tripwire from US-362/363/364); same pattern as §10.6 used for F-7/F-8 in Sprint 40; additive not rewrite",
+        "(ii) New §5.X subsection: V0.28 schema-pass first slice documents 5 schema surfaces -- speed_pid_calibration (US-370), dtc_freeze_frame (US-368), vehicle_info ECU columns + constraint (US-365), drive_statistics.drive_id->summary_id rename (US-371), drive_summary.drive_id backfill + CHECK invariant (US-372)",
         "(iii) Last Updated header bumped to V0.28.0 ship date with Atlas-gated tag",
-        "(iv) Atlas Rule 10 PASS recorded in \u00a720 changelog table (new row)",
+        "(iv) Atlas Rule 10 PASS recorded in §20 changelog table (new row)",
         "Atlas Rule 10 sign-off recorded BEFORE sprint can deploy via /sprint-deploy-pm (explicit PASS, not silence)"
       ],
       "conditionalOutcomes": [
-        "if US-361's fix ended up bounded to one of two modules (per RCA), \u00a710.7 amendment documents whichever module was edited; broad DriveDetector+lifecycle framing remains in prose to honor Q3 behavioral framing",
-        "if any of US-365/368/370/371/372 land with substeps differing from PRD plan, \u00a75.X documents FINAL landed state not PRD-planned state",
-        "if Atlas requests \u00a75.X split into multiple subsections per-Feature, comply (Atlas owns doc-structure call)"
+        "if US-361's fix ended up bounded to one of two modules (per RCA), §10.7 amendment documents whichever module was edited; broad DriveDetector+lifecycle framing remains in prose to honor Q3 behavioral framing",
+        "if any of US-365/368/370/371/372 land with substeps differing from PRD plan, §5.X documents FINAL landed state not PRD-planned state",
+        "if Atlas requests §5.X split into multiple subsections per-Feature, comply (Atlas owns doc-structure call)"
       ],
       "validationCriteria": [
         {
-          "action": "Grep specs/architecture.md \u00a710.7 for F-107 or DriveDetector dual-emission post-Story",
-          "outcome": "At least one mention in \u00a710.7 amendment subsection; same pattern as \u00a710.6 F-7/F-8"
+          "action": "Grep specs/architecture.md §10.7 for F-107 or DriveDetector dual-emission post-Story",
+          "outcome": "At least one mention in §10.7 amendment subsection; same pattern as §10.6 F-7/F-8"
         },
         {
-          "action": "Grep specs/architecture.md for new \u00a75.X subsection title (e.g., 'V0.28 schema-pass')",
+          "action": "Grep specs/architecture.md for new §5.X subsection title (e.g., 'V0.28 schema-pass')",
           "outcome": "New subsection exists documenting all 5 schema surfaces"
         },
         {
           "action": "Grep specs/architecture.md body for speed_pid_calibration, dtc_freeze_frame, ecu_signature, summary_id, CHECK constraint on drive_summary",
-          "outcome": "All 5 schema surfaces named in \u00a75.X"
+          "outcome": "All 5 schema surfaces named in §5.X"
         },
         {
           "action": "Grep specs/architecture.md header for 'Last Updated'",
           "outcome": "Updated to V0.28.0 ship date"
         },
         {
-          "action": "Grep specs/architecture.md \u00a720 changelog table",
+          "action": "Grep specs/architecture.md §20 changelog table",
           "outcome": "New row added with V0.28.0 + Atlas Rule 10 PASS + this Story reference"
         },
         {
@@ -2041,6 +2041,143 @@
       "tasks": [],
       "createdAt": "2026-05-28",
       "updatedAt": "2026-05-28"
+    },
+    {
+      "id": "US-376",
+      "parent": "F-076",
+      "title": "B-076: normalized ecu identity table (pair-keyed) + vehicle_info.ecu_id FK wiring + v0011",
+      "type": "normal",
+      "size": "M",
+      "status": "groomed",
+      "goal": "As the server schema (B-076 normalization), I want a normalized, immutable ecu identity dimension keyed on the (ecu_signature, cal_signature) pair that vehicle_info references by FK, so ECU identity is SSOT instead of duplicated free-text, and a reflash is its own identity row.",
+      "definitionOfDone": [
+        "v0011 (forward-only; v0010 untouched) CREATEs ecu(id INT PK AUTOINCREMENT, ecu_signature VARCHAR(32) NOT NULL, cal_signature VARCHAR(32) NOT NULL, UNIQUE(ecu_signature, cal_signature)) -- no lineage/timestamp columns; ORM Ecu model + SSOT name constants; create_all and migration converge (v0005 serverTableExists + post-probe pattern)",
+        "v0011 backfills exactly 3 seed ecu rows idempotently (INSERT-IGNORE on the pair UNIQUE; re-run no-op): (MD346675,6675), (MD335287,UNKCAL), (PRE_TRACKING_UNKNOWN,PRE_TRACKING_UNKNOWN)",
+        "v0011 adds vehicle_info.ecu_id INT FK->ecu.id; backfills ecu_id by matching each row's existing (ecu_signature, cal_signature) text to its ecu row; then MODIFY NOT NULL; a row matching no ecu row FAILS LOUDLY (MigrationError), never NULL ecu_id",
+        "vehicle_info ecu_signature/cal_signature TEXT columns KEPT (transitional); append-only lineage cols + ecu_active_marker + single-active UNIQUE index UNCHANGED; append-only table comment extended to state ecu_id is an immutable per-lineage-row identity reference",
+        "ecu-immutability carve-out (Atlas Rule 13 refinement): ecu table comment + architecture.md wording state ecu identity columns immutable EXCEPT the sanctioned UNKCAL->real-CALID same-row resolution (Spool Q5 edge -- write-once-when-known cal correction, distinct from a reflash which is a NEW row); NOT absolute immutability; resolution path is a future event (nothing builds it this slice) -- documentation honesty only",
+        "transitional-coherence guard: regression test asserts for every vehicle_info row ecu_signature==ecu[ecu_id].ecu_signature AND cal_signature==ecu[ecu_id].cal_signature; writer stamp_ecu_swap (US-366) sets ecu_id authoritative + DERIVES text columns from the ecu row; code+table comment mark text columns deprecated-transitional (drop in later B-076 slice)",
+        "(PM Rule 10; specs/ read-only for Ralph -- PM writes, Atlas signs) specs/architecture.md gets a NEW descriptive ### subsection 'V0.28.1 -- B-076 first slice' (NOT folded into the V0.28.0-pass narrative) documenting the ecu table (incl. immutability carve-out), vehicle_info.ecu_id FK + transitional-snapshot semantics, and jointly with US-374 the speed_pid_calibration re-key; Atlas Rule 10 PASS recorded BEFORE /sprint-deploy-pm",
+        "pytest tests/server/ -m 'not slow' green (+ ecu-model, migration-idempotency, coherence-guard, writer-derives tests); ruff clean; changes unstaged per PM protocol"
+      ],
+      "conditionalOutcomes": [
+        "if a vehicle_info row's (signature, cal) matches no ecu row at backfill -> FAIL LOUDLY (surface bad data), do not NULL ecu_id",
+        "if Atlas requests the TEXT-column drop this slice -> OUT of scope (CIO deferred to a later B-076 slice); leave columns + guard",
+        "if the optional TEXT->VARCHAR(32) cleanup is wanted -> fold into this story's v0011, not a new story"
+      ],
+      "validationCriteria": [
+        {
+          "action": "DESCRIBE ecu post-v0011",
+          "outcome": "id PK, ecu_signature/cal_signature VARCHAR(32) NOT NULL, UNIQUE(ecu_signature, cal_signature); no timestamp/lineage columns"
+        },
+        {
+          "action": "SELECT ecu_signature, cal_signature FROM ecu",
+          "outcome": "the 3 seed rows present exactly (MD346675/6675, MD335287/UNKCAL, PRE_TRACKING_UNKNOWN/PRE_TRACKING_UNKNOWN)"
+        },
+        {
+          "action": "INSERT a duplicate (MD335287, UNKCAL) into ecu",
+          "outcome": "UNIQUE violation"
+        },
+        {
+          "action": "INSERT an ecu row with cal_signature NULL",
+          "outcome": "NOT NULL violation"
+        },
+        {
+          "action": "DESCRIBE vehicle_info post-v0011",
+          "outcome": "ecu_id INT NOT NULL FK present; ecu_signature/cal_signature TEXT still present (transitional)"
+        },
+        {
+          "action": "coherence test over all vehicle_info rows",
+          "outcome": "text columns equal the joined ecu row's values (zero drift)"
+        },
+        {
+          "action": "re-run existing US-365 append-only + ecu_active_marker single-active tests",
+          "outcome": "still green (mechanism unchanged)"
+        },
+        {
+          "action": "stamp_ecu_swap an ECU then inspect the row",
+          "outcome": "ecu_id set authoritatively; text columns derived from the ecu row"
+        },
+        {
+          "action": "grep specs/architecture.md for the V0.28.1 B-076 subsection",
+          "outcome": "ecu table + vehicle_info.ecu_id documented incl immutability carve-out; Atlas Rule 10 PASS recorded"
+        }
+      ],
+      "deps": [
+        "F-076"
+      ],
+      "sourceRefs": [
+        "prd-V0.28.1.md",
+        "2026-06-01-from-atlas-v0.28.1-ecu-normalization-rulings-Q1-Q5.md",
+        "2026-06-01-from-atlas-v0.28.1-rule-13-PASS-formal-signoff.md",
+        "2026-06-01-from-spool-q5-disposition-row-per-reflash.md"
+      ],
+      "tasks": [],
+      "createdAt": "2026-06-01",
+      "updatedAt": "2026-06-01"
+    },
+    {
+      "id": "US-374",
+      "parent": "F-076",
+      "title": "speed_pid_calibration re-key forward: option-(c) natural key -> ecu_id FK (reworks dev-shipped v0010 build)",
+      "type": "tech-debt",
+      "size": "S",
+      "status": "groomed",
+      "goal": "As server analytics, I want speed_pid_calibration keyed by FK ecu_id->ecu.id (not the transitional option-(c) ecu_signature natural key) so per-ECU SPEED correction references the SSOT ecu identity and a reflash gets its own calibration row.",
+      "definitionOfDone": [
+        "Starting point (explicit, per Atlas coherence finding): v0010 already creates speed_pid_calibration in option-(c) shape (ecu_signature VARCHAR(32) + uq_speed_pid_calibration_ecu_signature) and that build is on dev; US-374's v0011 substep reworks it FORWARD -- it does not create the table",
+        "v0011 substep (after US-376 ecu substeps): ADD speed_pid_calibration.ecu_id INT FK->ecu.id + UNIQUE(ecu_id); backfill ecu_id by matching each existing row's ecu_signature to its ecu row; DROP uq_speed_pid_calibration_ecu_signature + the ecu_signature column; 2 v0010 seed rows PRESERVED re-pointed to ecu_id; a seed matching no ecu row FAILS LOUDLY",
+        "ORM SpeedPidCalibration: replace ecu_signature natural key with ecu_id FK + relationship; SSOT constants updated; create_all + migration converge",
+        "seeds per confirmed table: MD346675->1.0/empirical-Drive-18-gear-math-fit, MD335287->0.5/gear-math-sanity-check-Drive-26-CIO-corrected (provenance updated from v0010 strings per Spool 2026-06-01); provenance stays NOT NULL; empty/whitespace forbidden by writer (preserved from v0010)",
+        "select_empirical_calibrations() empirical-prefix gate works over the FK shape (provenance LIKE 'empirical-%')",
+        "pytest tests/server/ -m 'not slow' green (+ re-key migration test, ORM parity, gate test); ruff clean; changes unstaged; architecture.md §5 surface landed jointly via US-376 Rule-10 clause"
+      ],
+      "conditionalOutcomes": [
+        "depends on US-376's ecu table existing first; if US-376 deferred/incomplete, US-374 BLOCKS (do not partially re-key)",
+        "if a seed's ecu_signature matches no ecu row at backfill -> FAIL LOUDLY, do not NULL ecu_id"
+      ],
+      "validationCriteria": [
+        {
+          "action": "DESCRIBE speed_pid_calibration post-v0011",
+          "outcome": "ecu_id INT NOT NULL FK + UNIQUE(ecu_id); ecu_signature column ABSENT; old uq_speed_pid_calibration_ecu_signature gone"
+        },
+        {
+          "action": "SELECT correction_factor FROM speed_pid_calibration spc JOIN ecu e ON spc.ecu_id=e.id WHERE e.ecu_signature='MD346675'",
+          "outcome": "1.0"
+        },
+        {
+          "action": "SELECT correction_factor ... JOIN ecu ... WHERE e.ecu_signature='MD335287'",
+          "outcome": "0.5"
+        },
+        {
+          "action": "INSERT a speed_pid_calibration row with ecu_id not in ecu",
+          "outcome": "FK violation"
+        },
+        {
+          "action": "INSERT with empty provenance",
+          "outcome": "writer raises"
+        },
+        {
+          "action": "call select_empirical_calibrations()",
+          "outcome": "MD346675 row included (empirical- prefix), MD335287 excluded (rough seed)"
+        },
+        {
+          "action": "re-run v0011 over an already-migrated DB",
+          "outcome": "idempotent no-op (no duplicate FK/column ops)"
+        }
+      ],
+      "deps": [
+        "US-376",
+        "F-076"
+      ],
+      "sourceRefs": [
+        "prd-V0.28.1.md",
+        "2026-06-01-from-atlas-v0.28.1-rule-13-PASS-formal-signoff.md",
+        "us-370-option-c-preserved (tag)"
+      ],
+      "tasks": [],
+      "createdAt": "2026-06-01",
+      "updatedAt": "2026-06-01"
     }
   ]
 }
