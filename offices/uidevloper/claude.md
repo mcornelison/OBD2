@@ -167,13 +167,44 @@ Open UI/UX/enclosure items I am tracking. Seeded at onboarding 2026-05-22.
 | # | Item | Status | Note |
 |---|------|--------|------|
 | W-1 | OSOYOO 3.5″ 480×320 display — B-103 boot/shutdown splash design | **Atlas gate PASS w/ amendments 2026-05-26 — ACK + v1.1 review PENDING** | Spec drafted 2026-05-26 (`docs/superpowers/specs/2026-05-26-b103-splash-animation-design.md`, v1 at commit 37a71f5). **Atlas design-gate verdict = PASS with amendments** (inbox `2026-05-26-from-atlas-b103-gate-PASS-with-amendments.md`): 4 clean / 6 changes-requested / 0 block; Atlas amended the spec to **v1.1 in-place** (§0 amendments table + `[ATLAS v1.1]` markers). Key rulings: A-1 NEW `eclipse-boot-state.service`; A-3 path → `/var/run/eclipse-obd/states/`; A-4 localhost http :9899 read-only; A-8 all units Type=simple; Rule-10 same-sprint architecture.md §10.6 update required. **Atlas asks ack** — owe him ack OR push-back on the 6 changes (he's open to discuss). Spool S1/S2 advisories (inbox 05-27 + 05-28) + Marcus ack (05-26) received, non-blocking. NEXT SESSION: review v1.1 amendments, ack Atlas, then PM sprint-routing. Full post-boot dashboard UI separate — see W-5. |
-| W-2 | 3D-printed enclosure for OSOYOO 3.5″ display (DISPLAY ONLY — Pi removed from scope per CIO 2026-05-22) | **v2.4 datasheet-verified 2026-05-29 — CIO reviewing, STLs ready to slice** | v1 printed → CIO fit-check found 7 issues; rebuilt v2.1→v2.4 across 4 live review rounds against the official **specs/vendor/OSOYOO-datasheet.pdf** (2024009100). FINAL CORRECTED FACTS: PCB **85×56** (the datasheet "49" is the mount-hole vertical c-c, not the edge — CIO's "56 wide" was right); mount holes are a **RECTANGLE** (left col 23.6 / right col 81.6 from left = h c-c 58; 3.5 from top/bottom = v c-c 49) — my trapezoid was a misread of the connector dim-chain; standoffs **M2.5×11+3 hex**, round hollow socket cups (flush countersunk M2.5 + locating); asymmetric +6mm on TOP(HDMI)+LEFT(Type-C); frozen v1 screen window; cable exit on LEFT wall aligned to Type-C (6.4 from top); 2 back-face button holes upper-left (HDMI side) w/ vent keepout; seat-aware vents. Both shells render manifold. Source `enclosures/display-case.scad`; changelog `enclosures/display-case-v2.1-notes.md` (§v2.2–v2.4); facts `enclosures/datasheets/2024009100-extracted-facts.md`; renders `enclosures/renders/v24_*.png`. **OPEN (physical fit-check): PCB-centered offset (=0), depth stack (glass↔bezel), button back-face-vs-edge-wall.** |
+| W-2 | 3D-printed enclosure for OSOYOO 3.5″ display (DISPLAY ONLY — Pi removed from scope per CIO 2026-05-22) | **v2.5 design-COMPLETE 2026-05-29 — CIO printing for physical fit-check** | v1 printed → CIO fit-check; rebuilt v2.1→v2.5 across 5 live review rounds against the official **specs/vendor/OSOYOO-datasheet.pdf** (2024009100). CORRECTED FACTS: PCB **85×56** (the datasheet "49" is mount-hole vertical c-c, not the edge); mount holes = **RECTANGLE** (left col 23.6 / right col 81.6 from left = h c-c 58; 3.5 from top/bottom = v c-c 49); standoffs **M2.5×11+3 hex** → round hollow socket cups (flush countersunk M2.5 through-hole); asymmetric clearance (+6 left/Type-C, **+8.2 top → ~14mm PCB-to-top-wall gap** for the 90° HDMI housing); frozen v1 screen window; **2 button holes through the TOP (+Y) wall** (poke/toothpick access = intended "set & forget"; buttons face +Y like the HDMI); **both Type-C + left-turning micro-HDMI exit the single LEFT-wall opening**; seat-aware vents; 2 clips/long edge. Both shells render manifold. Source `enclosures/display-case.scad`; changelog `enclosures/display-case-v2.1-notes.md` (§v2.2–v2.5); facts `enclosures/datasheets/2024009100-extracted-facts.md`; renders `enclosures/renders/v25_*.png`. **OPEN — physical fit-check only:** PCB-centered offset (`pcb_shift=0`), depth stack (glass↔bezel), both cables clearing the single ~18×14mm left opening. → v2.6 folds in whatever the print shows. |
 | W-3 | Visual + interaction language SSOT (`specs/UI/` tokens) | **In-progress 2026-05-26** | First color + type tokens proposed inline in B-103 spec §4 (`--text-secondary` `#888`, `--text-tertiary` `#666`, `--amber-warn` `#FFC400`, `--amber-soft` `#FFC40033`, plus existing reds `--red` `#E60012` / `--red-light` `#F61D2D` / `--red-dark` `#BF000F`). Font family: `ui-monospace, Menlo, Consolas, monospace`. NOT yet extracted into freestanding `specs/UI/tokens.css` or equivalent. Atlas confirmed 2026-05-22 that `specs/UI/` tokens are the correct SSOT-pattern precedent. Token-extraction work to follow when B-103 lands or in parallel. |
 | W-4 | README still describes the wrong display (Adafruit 1.3 240×240) per Atlas A-5 | **Open — not closed in B-103 spec authoring as Atlas suggested** | Atlas's 2026-05-22 FYI flagged this closeable in the UI spec authoring pass. B-103 spec (2026-05-26) focused on splash; did NOT include README correction (out of scope — splash design ≠ documentation cleanup). Follow-up: file separate small commit fixing README's display-spec section per Rule-10 routing through Atlas. ~30 min of work; opportunistic next session. |
 | W-5 | V0.28+ on-Pi post-boot dashboard layout — cover-most-of-screen + top-menu reserve + minimize capability | Open | CIO directed 2026-05-26 (during B-103 Q2 conversation) — for future display the dashboard canvas should be enlarged to cover the majority of screen, except for a top menu (reserved for system UI access) OR with the ability to minimize so system menu is accessible. Distinct surface from splash (splash is boot/shutdown-only; dashboard is runtime). To be designed when V0.28+ grooming opens dashboard work. |
 | W-6 | B-086 GEM-1 warnings-first quiet UI carousel (V0.28+ candidate) | Open — pending V0.28 grooming | Marcus flagged 2026-05-22 — relevant when grooming opens. Spool's Topic A/B specs (parked-mode anomaly + maintenance tiles) slot into the carousel. CIO + Spool brainstormed 2026-05-14. Lane split: Iris designs the visual carousel + interactions; Spool owns tile content semantics. Will surface during V0.28+ grooming. |
 
 ## 9. Session Log
+
+### 2026-05-29 (cont. 2) — Display case v2.5 (buttons → top wall) + final closeout
+
+- Two more CIO review items after v2.4, both now resolved:
+  - **Buttons relocated from the back face to the TOP (+Y) WALL** — CIO: the
+    power/brightness buttons face +Y (same as the micro-HDMI output), not the
+    back. Holes now cut through the +Y wall at the button X-positions
+    (`button_x_pts`, `button_z = pcb_back_z - 2`), Ø5. Poke/toothpick access is
+    the **design intent** ("set & forget"), so recessed is correct. Removed the
+    stale back-face cut + button vent-keepout.
+  - **Top clearance raised `clearance_top` 6 → 8.2** → ~14 mm PCB-to-top-wall
+    gap for the 90° micro-HDMI cable housing.
+  - **Cable routing settled:** micro-HDMI does a LEFT 90° turn and exits the
+    EXISTING left-wall opening alongside the Type-C — one shared exit, no +X exit.
+- **Edit-rollback gotcha (important for future-me):** mid-session the v2.5
+  edits silently rolled back to v2.4 after an interruption; a render then showed
+  NO button holes because the back-shell cut looped over a renamed/undefined var
+  (`button_pts`) and cut nothing — yet OpenSCAD still reported `Simple: yes`
+  (manifold). Caught only by rendering the SPECIFIC wall face head-on.
+  Re-applied + committed (4334848, 22da761). Lesson captured in `knowledge/`.
+- **Network-drive stale reads:** the repo lives on `//chi-nas-01`; harness
+  "file modified / reverted to v2.4" reminders were STALE snapshots — `git show
+  HEAD:…` + live `grep` confirmed the working tree was the correct v2.5. Always
+  reconcile against git ground-truth, not the cached reminder, on this share.
+- **Enclosure is design-COMPLETE.** STLs (`enclosures/stl/{back,front}_shell.stl`)
+  committed + manifold. CIO is printing to physically fit-check screen + cables.
+  3 open items are physical-only (PCB offset, depth stack, both-cables-one-exit)
+  → v2.6 on his return. My enclosure commits ride under the V0.28.1 sprint merge
+  (93fb534) in branch history — preserved.
+- Inbox: no new items since the prior closeout (B-103 Atlas-gate ack still owed
+  next session, unchanged — see W-1).
 
 ### 2026-05-29 (cont.) — Display case v2.2→v2.4 (datasheet-verified) + closeout
 
