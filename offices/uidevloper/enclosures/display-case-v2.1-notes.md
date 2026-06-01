@@ -100,6 +100,19 @@ Both shells render manifold (`Simple: yes`): back 2437 facets, front 62.
 - OPEN: button holes are in the BACK FACE (to reach the back-mounted H=4mm switch
   actuators). If they're edge-actuated, they move to the +Y top wall — pending CIO.
 
+## v2.5 (2026-05-29, CIO review round 5)
+
+- **Button holes moved from the back face to the TOP (+Y) WALL** — CIO: the
+  power/brightness buttons face the same direction as the micro-HDMI output
+  (+Y), not the back. Holes now cut through the +Y wall at the button X
+  positions (`button_x_pts`), centered at `button_z = pcb_back_z - 2`, Ø5
+  poke-access. Removed the now-moot back-face cut + button vent keepout.
+- **Top clearance increased: `clearance_top` 6 → 8.2** → ~14 mm PCB-to-top-wall
+  gap so the 90°-left micro-HDMI cable housing fits (CIO). (gap = 5.8 + clearance_top.)
+- NOTE: with the 14 mm gap the buttons sit ~14 mm in from the +Y wall, so the
+  wall holes are poke-through access — confirm that's acceptable vs. wanting
+  them closer/flush (would trade against the HDMI-housing clearance).
+
 ## File inventory (this folder)
 
 - `display-case.scad` — v2.1 parametric source (single file, `part` selector)
