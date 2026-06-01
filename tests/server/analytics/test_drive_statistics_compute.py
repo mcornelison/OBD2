@@ -192,7 +192,7 @@ class TestComputeDriveStatisticsCore:
             assert written == 3
             rows = session.execute(
                 select(DriveStatistic)
-                .where(DriveStatistic.drive_id == summaryId)
+                .where(DriveStatistic.summary_id == summaryId)
                 .order_by(DriveStatistic.parameter_name)
             ).scalars().all()
             assert {r.parameter_name for r in rows} == {
@@ -217,7 +217,7 @@ class TestComputeDriveStatisticsCore:
 
             row = session.execute(
                 select(DriveStatistic).where(
-                    DriveStatistic.drive_id == summaryId,
+                    DriveStatistic.summary_id == summaryId,
                     DriveStatistic.parameter_name == "BATTERY_V",
                 )
             ).scalar_one()
@@ -285,7 +285,7 @@ class TestComputeDriveStatisticsCore:
             session.commit()
             row = session.execute(
                 select(DriveStatistic).where(
-                    DriveStatistic.drive_id == summaryAId,
+                    DriveStatistic.summary_id == summaryAId,
                 )
             ).scalar_one()
             assert row.avg_value == pytest.approx(1500.0)
@@ -325,7 +325,7 @@ class TestIdempotent:
                 )
                 for r in session.execute(
                     select(DriveStatistic).where(
-                        DriveStatistic.drive_id == summaryId,
+                        DriveStatistic.summary_id == summaryId,
                     )
                 ).scalars().all()
             )
@@ -341,7 +341,7 @@ class TestIdempotent:
                 )
                 for r in session.execute(
                     select(DriveStatistic).where(
-                        DriveStatistic.drive_id == summaryId,
+                        DriveStatistic.summary_id == summaryId,
                     )
                 ).scalars().all()
             )
@@ -368,7 +368,7 @@ class TestIdempotent:
 
             rows = session.execute(
                 select(DriveStatistic).where(
-                    DriveStatistic.drive_id == summaryId,
+                    DriveStatistic.summary_id == summaryId,
                 )
             ).scalars().all()
             assert len(rows) == 2
@@ -397,7 +397,7 @@ class TestGenericInvariants:
             session.commit()
             row = session.execute(
                 select(DriveStatistic).where(
-                    DriveStatistic.drive_id == summaryId,
+                    DriveStatistic.summary_id == summaryId,
                 )
             ).scalar_one()
             assert row.min_value <= row.avg_value <= row.max_value
@@ -417,7 +417,7 @@ class TestGenericInvariants:
             session.commit()
             row = session.execute(
                 select(DriveStatistic).where(
-                    DriveStatistic.drive_id == summaryId,
+                    DriveStatistic.summary_id == summaryId,
                 )
             ).scalar_one()
             assert row.std_dev is not None
@@ -443,7 +443,7 @@ class TestGenericInvariants:
             session.commit()
             row = session.execute(
                 select(DriveStatistic).where(
-                    DriveStatistic.drive_id == summaryId,
+                    DriveStatistic.summary_id == summaryId,
                 )
             ).scalar_one()
             assert row.sample_count == 1
@@ -474,7 +474,7 @@ class TestDataQualityClassification:
             session.commit()
             row = session.execute(
                 select(DriveStatistic).where(
-                    DriveStatistic.drive_id == summaryId,
+                    DriveStatistic.summary_id == summaryId,
                 )
             ).scalar_one()
             assert row.sample_count == 9
@@ -495,7 +495,7 @@ class TestDataQualityClassification:
             session.commit()
             row = session.execute(
                 select(DriveStatistic).where(
-                    DriveStatistic.drive_id == summaryId,
+                    DriveStatistic.summary_id == summaryId,
                 )
             ).scalar_one()
             assert row.sample_count == 50
@@ -516,7 +516,7 @@ class TestDataQualityClassification:
             session.commit()
             row = session.execute(
                 select(DriveStatistic).where(
-                    DriveStatistic.drive_id == summaryId,
+                    DriveStatistic.summary_id == summaryId,
                 )
             ).scalar_one()
             assert row.sample_count == 150
@@ -546,7 +546,107 @@ class TestComputedAtAdvances:
             session.commit()
             first = session.execute(
                 select(DriveStatistic.computed_at).where(
-                    DriveStatistic.drive_id == summaryId,
+                    DriveStatistic.summary_id == summaryId,
                 )
             ).scalar_one()
             assert first is not None
+
+
+# =========================================================================
+# US-363 -- data_quality='attribution_anomaly' tripwire integration
+# =========================================================================
+
+
+class TestComputeDriveStatisticsAttributionAnomaly:
+    """US-363 / F-107: when the drive's realtime_data window overlaps another
+    drive's window (the Drive 23/24 dual-emission pattern), every per-
+    parameter row for that drive is stamped data_quality='attribution_anomaly',
+    overriding the sample-count classification.  Otherwise the Atlas
+    Refinement B sample-count buckets stand.  detect_overlapping_drives()
+    (US-362) is the SSOT detector.
+    """
+
+    def test_overlap_overridesClassificationWithAnomaly(self, engine):
+        driveId = 23
+        startTime = datetime(2026, 5, 22, 14, 43, 0)
+        with Session(engine) as session:
+            summaryId = _seedPiSyncedDriveSummary(session, driveId=driveId)
+            # 120 samples -> would classify 'full' absent the overlap override.
+            _seedRealtimeRows(
+                session, driveId=driveId, startTime=startTime,
+                paramSeries={
+                    "RPM": [800.0 + i for i in range(120)],
+                    "SPEED": [float(i % 60) for i in range(120)],
+                },
+            )
+            # Overlapping drive 24 (window intersects drive 23).
+            _seedRealtimeRows(
+                session, driveId=24,
+                startTime=startTime + timedelta(seconds=30),
+                paramSeries={"RPM": [900.0 + i for i in range(120)]},
+            )
+            written = compute_drive_statistics(session, driveId)
+            session.commit()
+            assert written == 2
+            rows = session.execute(
+                select(DriveStatistic).where(
+                    DriveStatistic.summary_id == summaryId,
+                )
+            ).scalars().all()
+            assert {r.data_quality for r in rows} == {"attribution_anomaly"}
+
+    def test_noOverlap_keepsSampleCountClassification(self, engine):
+        driveId = 25
+        startTime = datetime(2026, 5, 22, 16, 0, 0)
+        with Session(engine) as session:
+            summaryId = _seedPiSyncedDriveSummary(session, driveId=driveId)
+            _seedRealtimeRows(
+                session, driveId=driveId, startTime=startTime,
+                paramSeries={"RPM": [800.0 + i for i in range(120)]},
+            )
+            # Non-overlapping neighbour (5 min later).
+            _seedRealtimeRows(
+                session, driveId=26,
+                startTime=startTime + timedelta(seconds=300),
+                paramSeries={"RPM": [800.0 + i for i in range(120)]},
+            )
+            compute_drive_statistics(session, driveId)
+            session.commit()
+            row = session.execute(
+                select(DriveStatistic).where(
+                    DriveStatistic.summary_id == summaryId,
+                    DriveStatistic.parameter_name == "RPM",
+                )
+            ).scalar_one()
+            # 120 samples -> 'full' (Atlas Refinement B), NOT anomaly.
+            assert row.data_quality == DATA_QUALITY_FULL
+
+    def test_anomalyIsIdempotent_acrossRecompute(self, engine):
+        driveId = 23
+        startTime = datetime(2026, 5, 22, 14, 43, 0)
+        with Session(engine) as session:
+            summaryId = _seedPiSyncedDriveSummary(session, driveId=driveId)
+            _seedRealtimeRows(
+                session, driveId=driveId, startTime=startTime,
+                paramSeries={"RPM": [800.0 + i for i in range(120)]},
+            )
+            _seedRealtimeRows(
+                session, driveId=24,
+                startTime=startTime + timedelta(seconds=30),
+                paramSeries={"RPM": [900.0 + i for i in range(120)]},
+            )
+            compute_drive_statistics(session, driveId)
+            session.commit()
+            first = session.execute(
+                select(DriveStatistic.data_quality).where(
+                    DriveStatistic.summary_id == summaryId,
+                )
+            ).scalars().all()
+            compute_drive_statistics(session, driveId)
+            session.commit()
+            second = session.execute(
+                select(DriveStatistic.data_quality).where(
+                    DriveStatistic.summary_id == summaryId,
+                )
+            ).scalars().all()
+            assert first == second == ["attribution_anomaly"]

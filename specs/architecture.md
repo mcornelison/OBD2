@@ -4,7 +4,15 @@
 
 This document describes the system architecture, technology decisions, and design patterns for the Eclipse OBD-II Performance Monitoring System.
 
-**Last Updated**: 2026-05-21 (Sprint 41 / V0.27.17 — §10.7 amendment per
+**Last Updated**: 2026-05-29 (Sprint 43 / V0.28.0 — §10.7.1 F-107
+DriveDetector dual-attribution remediation (Mechanisms A/B/C) + new §5
+"V0.28.0 Schema Pass" subsection documenting 5 landed schema surfaces
+(drive_summary/drive_statistics data_quality; drive_statistics→summary_id
+rename; vehicle_info ECU lineage; dtc_freeze_frame; drive_summary
+drive_id↔source_id invariant); speed_pid_calibration / US-370 built but
+deferred to V0.28.1. Per PM Rule 10 design-gate DoD; Atlas Rule 10 PASS
+2026-05-29; IRL acceptance pending.)
+Prior: 2026-05-21 (Sprint 41 / V0.27.17 — §10.7 amendment per
 PM Rule 10 design-gate DoD: documents the B-104 Step 1 data-pipeline
 architectural shift -- Pi = telemetry emitter; server = sole authority
 for derived analytics (drive_summary analytics columns + drive_statistics
@@ -1052,6 +1060,113 @@ emits a single `[run-all] 0 applied ... idempotent no-op` line.
 | `0003` | US-223 | `DROP TABLE IF EXISTS battery_log` (TD-031 close -- dead Pi-only `BatteryMonitor` artifact). |
 | `0004` | US-237 | `drive_summary` 3-way reconcile: ALTER 11 missing US-206/US-195/US-200 columns + add `IX_drive_summary_drive_id` + `uq_drive_summary_source` UNIQUE; cascade-delete the 9 Sprint-7-8 sim rows + their `drive_statistics` children (V-4 namespace cleanup, CIO 2026-04-29).  Closes Ralph's V-1 / V-4 from the post-Drive-4 health check. |
 | `0005` | US-238 | `CREATE TABLE dtc_log` -- mirrors the `DtcLog` ORM declared in Sprint 15 US-204 but never CREATEd on live MariaDB (US-204 predates the US-213 explicit registry).  Twelve columns (id + 4 sync + 7 Pi-native) + `uq_dtc_log_source` UNIQUE + `ix_dtc_log_drive_id`.  Closes Ralph's V-2 (silent-data-loss-on-next-DTC-drive risk) from the post-Drive-4 health check. |
+
+(Registry table above is Sprint-19-era; v0006-v0010 ship in the
+`ALL_MIGRATIONS` list — `src/server/migrations/__init__.py` is the
+authoritative ordered source. The V0.28.0 pass below documents v0010.)
+
+### V0.28.0 Schema Pass — first slice (Sprint 43, F-076/F-107/F-108/F-109)
+
+The V0.28.0 schema-normalization pass lands its schema surfaces through a
+**single shared migration**,
+`src/server/migrations/versions/v0010_us363_attribution_anomaly_data_quality.py`,
+registered in `ALL_MIGRATIONS` (the explicit `MigrationRunner` registry,
+TD-029 Path B — **not Alembic**; the "Alembic v0010" label in the PRD/sprint
+docs is a naming nuance only). It is structured as ordered `_applyUsNNN`
+substep functions sharing one `apply(ctx)`; each probes `INFORMATION_SCHEMA`
+before issuing DDL (idempotent across fresh-`create_all`, prior-success, and
+partial-recovery DBs) and re-probes after, raising `SchemaProbeError` on the
+silent-no-op class. Substep order honors FK-cross-story dependencies (Atlas
+Refinements row 16): rename → vehicle_info → dtc_freeze_frame → drive_summary
+invariant. (A sixth surface, `speed_pid_calibration` / US-370, was built but
+**deferred to V0.28.1** — see the §20 note; its substep insertion point stays
+a reserved comment in v0010, so nothing it would have created ships in
+Sprint 43.)
+
+**1. `drive_summary.data_quality` — attribution-anomaly tripwire (US-363,
+F-107).** `drive_summary` had **no** `data_quality` column; v0010 **ADDs**
+`data_quality VARCHAR(16) NOT NULL DEFAULT 'full'` + CHECK
+`ck_drive_summary_data_quality (data_quality IN ('full','attribution_anomaly'))`
++ index. The enum is only `{full, attribution_anomaly}` — a summary has no
+sample-count notion, so `sparse`/`below_threshold` (which `drive_statistics`
+carries) are excluded. `drive_statistics`'s existing v0009 CHECK enum
+(`full`/`sparse`/`below_threshold`) is **widened** to add
+`attribution_anomaly` via DROP + re-ADD (MariaDB cannot widen a CHECK in
+place). SSOT constants `DRIVE_SUMMARY_DATA_QUALITY_VALUES` /
+`DRIVE_STATISTICS_DATA_QUALITY_VALUES` in `models.py`. This is the schema
+behind Mechanism C in §10.7.1.
+
+**2. `drive_statistics.drive_id` → `summary_id` rename (US-371, F-076).** The
+column always held a `drive_summary.id` FK (server-minted PK), never a
+Pi-assigned `drive_id`, so the old name lied to readers. v0010 issues
+`ALTER TABLE drive_statistics RENAME COLUMN drive_id TO summary_id` (MariaDB
+10.5.2+; the CHANGE-COLUMN fallback of conditionalOutcome 2 is not emitted).
+**Complete rename, no alias.** Server-only (the Pi-side `drive_statistics`
+table was retired entirely in US-351, §10.7). The composite PK +
+`drive_summary.id` FK carry over automatically; `test_db_models.py` asserts
+`summary_id` present AND `drive_id` absent.
+
+**3. `vehicle_info` ECU-lineage columns + single-active marker (US-365,
+F-108).** Five SERVER-ONLY columns added (the Pi never sends them;
+`sync.py::_PRESERVE_ON_UPDATE` keeps them intact across re-syncs):
+`ecu_signature TEXT NOT NULL`, `cal_signature TEXT NULL`,
+`ecu_install_timestamp_utc DATETIME NOT NULL`,
+`ecu_removal_timestamp_utc DATETIME NULL`, `notes TEXT NULL` (`DATETIME` not
+`TIMESTAMP` to match the schema's other `*_utc` columns and dodge the epoch
+range). A **STORED generated marker**
+`ecu_active_marker INT AS (CASE WHEN ecu_removal_timestamp_utc IS NULL THEN 1
+ELSE NULL END) STORED` + UNIQUE index `uq_vehicle_info_single_active`
+enforces **exactly one active (un-removed) ECU** while permitting many closed
+rows (NULL marker is not unique-constrained). **Append-only identity
+invariant** (Spool Q4): identity columns are corrected by CLOSING the prior
+row (`ecu_removal_timestamp_utc`) and OPENING a new one — never by in-place
+UPDATE — because `dtc_freeze_frame` and per-drive joins reference a specific
+row by FK + time window, so a mutated identity would silently rewrite
+history. Surfaced as a SQL table comment (`VEHICLE_INFO_APPEND_ONLY_COMMENT`,
+visible in `SHOW CREATE TABLE`); the `notes` column is the sanctioned
+**mutable annotation lane** (Spool Q4 caveat). Sanctioned mutator
+`stamp_ecu_swap`; reader `show_ecu_lineage` (US-366). Legacy backfill (US-365
+/ AC#3): pre-tracking rows get the honest `PRE_TRACKING_UNKNOWN` sentinel +
+a zero-length window (`install == removal == created_at`), so they are never
+"currently active"; US-367's authoritative backfill overwrites these
+placeholders with the real signatures (`MD346675` prior / `MD335287` new,
+Spool-signed 2026-05-29).
+
+**4. `dtc_freeze_frame` capture table (US-368, F-109).** New synced-capture
+table (Mode 02 freeze-frame), CREATEd via the v0005 `CREATE TABLE IF NOT
+EXISTS` + post-probe pattern, after the vehicle_info substep (FK target).
+Columns: `id` PK, the standard synced-capture set (`source_id`,
+`source_device`, `synced_at`, `sync_batch_id`, `UNIQUE(source_device,
+source_id)`), `dtc_log_id` FK→`dtc_log(id)`, `captured_at_timestamp_utc`,
+`pid_responses_json JSON`, `vehicle_info_id` FK→`vehicle_info(id)`, `notes`.
+**Cross-tier VIN→id resolution (US-369):** Pi keys `vehicle_info` by
+`vin TEXT`; server keys by integer `id` with ECU lineage. The temporal
+invariant `ecu_install ≤ captured_at ≤ ecu_removal` lives server-side only
+and is enforced by `src/server/api/dtc_freeze_frame.py::insertDtcFreezeFrame`,
+which resolves `vehicle_info_id` from `(vin, captured_at)` and rejects a
+bogus id (`ValueError`) before any partial insert.
+
+**5. `drive_summary.drive_id ↔ source_id` invariant (US-372, F-076).** v0010
+backfills BOTH asymmetric directions (`drive_id ← source_id` per AC#1 step i
+— the real V0.27.x smell where a Pi-sync row's mirror was never populated;
+and `source_id ← drive_id` per conditionalOutcome 1) **before**
+`ADD CONSTRAINT chk_drive_id_source_id`, so the CHECK cannot fail on
+pre-migration rows. Clause: `(drive_id IS NULL AND source_id IS NULL) OR
+(drive_id IS NOT NULL AND source_id IS NOT NULL AND drive_id = source_id)`.
+**The `IS NOT NULL` guards are load-bearing**: under SQL three-valued logic a
+bare `drive_id = source_id` evaluates to NULL (which passes a CHECK) when
+exactly one side is NULL, so the asymmetric smell row would slip through
+without them. The invariant is **server-side**, established at the
+sync-ingest boundary (`runSyncUpsert` mirrors the Pi-origin id onto both
+columns) — the Pi-side `drive_summary` table has a single `drive_id` PK and
+**no `source_id` column**. Q1 ruling 2026-05-28: backfill + invariant now;
+the SSOT-purist column drop is deferred to later V0.28+ normalization.
+
+*Gate-ratification note: this subsection added per PM Rule 10 + Atlas's
+Sprint-43 PM Rule 13 PASS; documents the FINAL landed state of the five
+shipping surfaces. Atlas Rule 10 PASS recorded 2026-05-29 (the deferred
+`speed_pid_calibration` surface re-enters the doc when US-370 re-lands in
+V0.28.1).*
 
 ---
 
@@ -2149,6 +2264,81 @@ the SSOT-pattern-load-bearing observation is recorded in
 `offices/pm/inbox/2026-05-21-from-atlas-ssot-pattern-load-bearing-observation.md`.
 The §10.7 text above is the canonical architecture-spec digest;
 V0.27.17 IRL acceptance + Atlas Rule-10 sign-off close the gate.
+
+### 10.7.1 DriveDetector dual-attribution remediation (F-107, Sprint 43 / V0.28.0)
+
+**Defect of record.** The V0.27.18 IRL drill (2026-05-22) produced two
+`drive_id`s (drives 23 + 24) for one physical leg: time-overlapping
+`realtime_data` rows, ~2× polling cadence, RPM readings 1500-2000 apart
+within the same second. RCA:
+`offices/ralph/findings/2026-05-28-drive-detector-dual-attribution-rca.md`.
+This is a Pi-side defect upstream of the §10.7 B-104 Step 1 architecture
+(orthogonal to the Pi=emitter/server=authority shift) — carved out of the
+V0.27 chain merge as a known scoped exception. The remediation is
+**defense-in-depth across three tiers**, because the evidence has two
+distinct root causes (a single process minting a spurious second drive,
+and two concurrent processes each minting their own).
+
+**Mechanism A — ECU-silence continuation (Pi detector, LIVE; US-361).**
+`src/pi/obdii/drive/detector.py`: an ECU-silence-inferred `drive_end`
+(quiet OBD link ⇒ inferred engine-off) is now **tentative**, not terminal.
+When `_checkEcuSilenceDriveEnd` fires it records the closed `drive_id` +
+time; if the engine demonstrably resumes (RPM back above the start
+threshold) within `MIN_INTER_DRIVE_SECONDS` (5 s — the previously-defined-
+but-unused constant the RCA named), the next `_startDrive` **re-attaches to
+the prior `drive_id`** instead of minting a second. RPM-debounce and forced
+(`forceKeyOff`) ends never arm the marker, so confirmed-engine-off drives
+still mint fresh — US-229 silence behavior and the US-311 warm-restart e2e
+are untouched.
+
+**Mechanism B — single-instance guard (Pi orchestrator, ships DEFAULT-OFF;
+US-361).** The production drives-23/24 evidence is two **concurrent**
+`eclipse-obd` orchestrator processes; a single process cannot produce
+overlap because `drive_id` is a process-global singleton, so a detector fix
+alone cannot prevent it. New `src/pi/obdii/orchestrator/single_instance.py`
+(`SingleInstanceGuard`, pidfile + injectable liveness seam) makes a second
+concurrent process refuse to start — wired as step-0 of
+`_initializeAllComponents`, released last in `_shutdownAllComponents`.
+**Ships behind `pi.runtime.singleInstanceGuard.enabled` (default `False`)
+and stays dark for V0.28.0 (Atlas ruling 2026-05-29, CIO-ratified).** The
+guard's as-built failure mode is the silent-wrong-winner class the V0.27
+chain spent itself killing: a live peer holding the pidfile makes the
+*newly-deployed* process silently refuse and exit while the *stale* one
+keeps running (it reclaims only dead pids), which under a US-354
+deploy-hygiene miss actively enforces the V0.27.16 "running old code despite
+new `.deploy-version`" pathology. Mechanisms A + C already cover the observed
+defect, so for a defect seen exactly once, observability is the honest
+posture rather than a load-bearing boot-path refuse. Production-enable is
+gated on BOTH: (1) the Mechanism C tripwire flagging a second, independent
+two-concurrent-process overlap in production (the case demonstrably
+recurs); AND (2) the refuse path made loud + deploy-visible (WARN/ERROR +
+nonzero exit the deploy script checks) plus a deploy-hygiene check proving
+`systemctl restart` release-then-acquire ordering — incremental US-361
+follow-up, not this sprint.
+
+**Mechanism C — server-side `attribution_anomaly` tripwire (LIVE; US-362 +
+US-363).** `src/server/analytics/overlap.py::detect_overlapping_drives` is
+the SSOT detector over raw `realtime_data` (US-362). US-363 wires it into
+both server compute paths (`drive_statistics_compute.py`,
+`drive_summary_compute.py`) so an overlapping drive is stamped
+`data_quality='attribution_anomaly'`, surfacing the dual-emission pattern
+downstream as a per-row flag — **observability, not refusal** (analytics are
+still computed; the flag marks them for human disposition). The on-demand
+CLI `python -m src.server.cli.recompute_drive_analytics` surfaces an
+`[ATTRIBUTION_ANOMALY]` marker on affected drives. The schema surfaces this
+needs are in the §5 "V0.28.0 Schema Pass" subsection.
+
+**IRL execution deferred (US-364).** The production-DB backfill —
+`recompute_drive_analytics --drive-id 23/24/25` against chi-srv-01,
+idempotent re-run zero-diff, and release of the `regression_manifest`
+F-005 + F-007 HOLDs on the observed result — runs as part of the Sprint-43
+IRL validation drill, not a headless dev iteration (BL-022). It executes the
+already-built path; it does not change the architecture documented here.
+
+*Gate-ratification note: §10.7.1 added per the 2026-05-18 design-gate
+governance rule (PM Rule 10) + Atlas's Sprint-43 PM Rule 13 validation-block
+PASS. Mechanism B's keep-dark production-enable disposition is the Atlas
+Rule 10 ruling of 2026-05-29 (CIO-ratified), recorded here + in §20.*
 
 ---
 
@@ -3391,6 +3581,7 @@ CREATE TABLE IF NOT EXISTS sync_status (
 
 | Date | Author | Description |
 |------|--------|-------------|
+| 2026-05-29 | Marcus (US-373, PM; Atlas Rule 10 PASS 2026-05-29) | Sprint 43 / V0.28.0 PM Rule 10 design-gate DoD. (a) New **§10.7.1 "DriveDetector dual-attribution remediation (F-107)"** appended inside §10.7: Mechanism A ECU-silence continuation (US-361, Pi detector, LIVE — tentative ECU-silence end + `MIN_INTER_DRIVE_SECONDS` re-attach); Mechanism B single-instance guard (US-361, `single_instance.py`, ships default-OFF — **keep-dark production-enable disposition is the Atlas Rule 10 ruling 2026-05-29, CIO-ratified**; revisit only on a second independent two-process overlap + loud-refuse/restart-ordering safeguards); Mechanism C server-side `attribution_anomaly` tripwire (US-362 `detect_overlapping_drives` + US-363 wiring into both compute paths — observability not refusal); US-364 IRL backfill deferred to the Sprint-43 drill. (b) New **§5 "V0.28.0 Schema Pass — first slice"** subsection after Server Schema Migrations documenting the single shared `MigrationRunner` v0010 (NOT Alembic) + **5 landed surfaces**: `drive_summary.data_quality` ADD + `drive_statistics` CHECK widen (US-363); `drive_statistics.drive_id`→`summary_id` complete rename (US-371); `vehicle_info` ECU-lineage 5 cols + STORED single-active marker + append-only invariant + notes annotation lane (US-365); `dtc_freeze_frame` capture table + cross-tier VIN→id temporal invariant (US-368/369); `drive_summary.drive_id↔source_id` CHECK invariant (US-372). **`speed_pid_calibration` (US-370) was built (Atlas option-(c): VARCHAR(32) UNIQUE natural key, no FK) but DEFERRED to V0.28.1** (frozen criterion #1 said "FK → vehicle_info", which the no-FK build contradicts; per the validation-criteria-upfront spec §4.5 the remedy is the patch-sprint unfreeze, not a mid-sprint re-hash; CIO-ratified 2026-05-29, code preserved). Its surface re-enters the doc when US-370 re-lands in V0.28.1. Atlas Rule 10 PASS at 5 surfaces recorded BEFORE `/sprint-deploy-pm`. "Last Updated" header bumped to 2026-05-29 with Atlas-gated tag; prior 2026-05-21 entry preserved. Scope-locked to §10.7.1 + the new §5 subsection + header + this row. |
 | 2026-05-21 | Rex (US-356, Ralph; Atlas-gated per Rule 10) | New Section 10.7 "Data Pipeline Architecture (B-104 Step 1, Sprint 41 / V0.27.17)" appended after §10.6, before §11. Documents the B-104 Step 1 architectural shift landed by US-350 + US-351 + US-352 on `sprint/sprint41-bugfixes-V0.27.17` (anchor commit `e6c49e6`): (a) **Architectural principle** -- Pi = telemetry emitter + event-log writer; server = sole authority for derived/persisted analytics; default = "if the server can redo it from raw data, the Pi does not transmit it." (b) **Compute path** -- `src/server/analytics/drive_summary_compute.py` (US-350) derives analytics columns from `MIN/MAX/COUNT` over `realtime_data` + enriches from Pi event-log fields with `is_real` per Atlas Q2 NULL-preservation invariant; `src/server/analytics/drive_statistics_compute.py` (US-351) groups by `parameter_name` and uses `helpers.computeBasicStats` (Spool FLAG-1 SSOT pin), classifies `data_quality` per Atlas Refinement B thresholds, enforces Atlas Refinement A generic invariants, DELETE-then-INSERT for clean idempotency. (c) **Pi-side retirement scope** -- Pi-side `drive_summary` computed-field writer retired (event-log fields preserved); Pi-side `drive_statistics` table + module retired entirely via `ensureDriveStatisticsRetired()` idempotent DROP TABLE invoked by `ObdDatabase.initialize()`; detector + lifecycle wiring reverted to pre-US-349. (d) **Trigger seam shift** -- `_tryAutoAnalysisTrigger` deleted from `src/server/api/sync.py`; `enqueueAutoAnalysisForSync` converted to `NotImplementedError` tripwire; new trigger seams are `deploy/server-analytics-batch.service` + `.timer` (nightly batch, `OnCalendar=*-*-* 03:30:00`, `Persistent=true`) + on-demand CLI `python -m src.server.cli.recompute_drive_analytics` (Atlas Q1 single-timer-fires-both-paths). (e) **Idempotent recompute principle** -- same raw + same logic = same output; `computed_at` advances on `drive_statistics` via `onupdate=func.now()` as the observable replay signal; deploy-layer marker-file guard on Step 4.9 backfill is for deploy ergonomics, not correctness. (f) **What's retired** -- four-row table cross-links US-326 `76aa773` / `0599d24`, US-328 `76aa773` / `1c01ec0`, US-348 `c04d36e` / `b26344e` / `5fb7cdc`, US-349 `c04d36e` / `b26344e` / `5fb7cdc` to the SUPERSEDED / RETIRED disposition of each surface. Empirical status section is honest-empirical-gated per Sprint 39 T9 precedent: synthetic gates listed (US-350 10/10, US-351 14/14 + 7/7 Pi retirement, US-352 13/13, full suites 777 server / 1513 Pi GREEN no regressions); IRL acceptance flagged **pending** until V0.27.17 deploys + the drives-11-20 backfill clears the empirical falsifier (drive 20 `row_count=3808` from raw). Architectural-invariants list preserves Pi-side raw `realtime_data` + sync, the `drive_summary` schema, and explicitly anchors B-104 Step 1 as the **second production application** of the SSOT design pattern (first was §10.6 Shutdown Sequencer / Sprint 39). Lessons-worth-keeping section frames the 3-cycle false-pass class structural close as two-part (writer tier shift + US-355 deploy-context harness) and crystallizes the discipline rule: synthetic-seam-mock passes are not proof of production behavior. Gate-ratification subsection cites the 2026-05-18 design-gate governance rule + Atlas's 2026-05-21 per-task gate pre-registration + SSOT-pattern-load-bearing observation notes. Scope-locked to §10.7 per Sprint 41 doNotTouch list -- §10.6 + other sections untouched. "Last Updated" header at top of file updated to 2026-05-21 with Atlas-gated tag; prior 2026-05-20 entry preserved. |
 | 2026-05-20 | Rex (US-346, Ralph; Atlas-gated per Rule 10) | Section 10.6 Shutdown Sequencer: appended two subsections + a gate-ratification note documenting Sprint 40 / V0.27.16 bug-fix landings -- (a) "Boot-grace latch defect + level-based post-grace fix (US-344, F-7)" details the V0.27.15 state-machine bug (edge-only `lost AND not prevLost` post-grace check latched the watch loop blind when an in-grace transient left the HAT at GPIO6=LOW), the bug bound (cold-start + in-grace transient + no alternator recovery before key-off), the 2026-05-20 in-car live-drill reproduction (Test 2: 5.5 min silence; VCELL 3.810V->3.734V drain), the level-based `lost AND not firedAlready` fix, the `_runPldWatchLoop` extraction-for-testability, and the architectural invariants preserved (SSOT, boot-grace duration, GPIO6 polarity, EEPROM POWER_OFF_ON_HALT=1, sequencer pipeline/window/smoothing); (b) "Boot-progress instrument + ExecStop transaction-membership fix (US-345, F-8)" details the empirically proven defect (`boot-progress-finalize.service` ExecStop never fired because the unit had `DefaultDependencies=no` + `Before=shutdown.target` but no shutdown-transaction-membership directive, so every clean shutdown was mis-classified `crashed_during_operation`), the systemd activation-vs-ordering distinction, the one-line `Conflicts=shutdown.target` fix, the de-fanging of Spool's Finding C "12 boots crashed today" inflation, and the post-fix restoration of `startup_log.prior_boot_reason` as a reliable acceptance signal. Gate-ratification note cites the 2026-05-18 design-gate governance rule + the two Atlas findings of record. Scope-locked to §10.6 per Sprint 40 doNotTouch list; "Last Updated" header at top of file updated to 2026-05-20 with Atlas-gated tag. |
 | 2026-05-01 | Rex (US-258, Ralph) | Section 11 Deployment Architecture: added "Pi Self-Update Lifecycle (B-047 US-A through US-E, Sprints 19-21)" subsection between Release Versioning and Wake-on-Power. Documents the two-process pipeline (`UpdateChecker` US-247 + `UpdateApplier` US-248) glued by the marker file, the safety-gate ordering rationale (drive-state → power-source → recent-OBD → applyEnabled, with the disabled-flag deliberately placed AFTER safety gates), the priorRef-and-rollback contract, the marker-cleared-on-every-terminal-outcome poisoned-target invariant, and the deferred-apply-marker-survives-the-drive convention. Documented the new e2e drill in `tests/pi/integration/test_self_update_e2e.py` (7 tests across 5 classes) as the integration-readiness gate before flipping `pi.update.applyEnabled=true`: real classes used end-to-end with mocks ONLY at the HTTP and subprocess seams; covers happy path / dry-run failure / full deploy failure → rollback / drive-state safety net / up-to-date / wire-shape audit. Mod history: 8th US-258-class story; story scope referenced "self-update lifecycle diagram" and Section 11 was the natural home (Release Versioning subsection). |

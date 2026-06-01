@@ -84,6 +84,7 @@ class EventRouterMixin:
     _connection: Any | None
     _dtcLogger: Any | None
     _milEdgeDetector: Any | None
+    _freezeFrameCapture: Any | None
     _onDriveStart: Callable[[Any], None] | None
     _onDriveEnd: Callable[[Any], None] | None
     _onAlert: Callable[[Any], None] | None
@@ -433,6 +434,11 @@ class EventRouterMixin:
             try:
                 if self._milEdgeDetector.observe(value):
                     self._dispatchMilEventDtcs()
+                    # US-368 / F-109: same rising edge captures the Mode 02
+                    # freeze-frame (16-PID snapshot of what the engine was doing
+                    # when the DTC tripped).  Runs after the DTC re-fetch so the
+                    # latest dtc_log row is the one the freeze-frame binds to.
+                    self._dispatchFreezeFrameCapture()
             except Exception as e:  # noqa: BLE001 -- defensive (must not crash poll loop)
                 logger.debug(f"MIL edge dispatch failed: {e}")
 
@@ -666,6 +672,28 @@ class EventRouterMixin:
             )
         except Exception as e:  # noqa: BLE001 -- defensive
             logger.warning(f"DTC MIL-event dispatch failed: {e}")
+
+    def _dispatchFreezeFrameCapture(self) -> None:
+        """Fire FreezeFrameCapture.captureOnMilEvent on a MIL rising edge (US-368).
+
+        Best-effort: skips silently when no capture component or live
+        connection.  ``dtcLogId=None`` lets the capture bind to the most-recent
+        dtc_log row (the code the just-run MIL re-fetch logged).
+        """
+        capture = getattr(self, '_freezeFrameCapture', None)
+        if capture is None or self._connection is None:
+            return
+        try:
+            result = capture.captureOnMilEvent(
+                connection=self._connection, dtcLogId=None,
+            )
+            logger.info(
+                "Freeze-frame MIL-event | pids=%d | degraded=%s",
+                getattr(result, 'pidCount', 0),
+                getattr(result, 'degraded', False),
+            )
+        except Exception as e:  # noqa: BLE001 -- defensive (must not crash poll loop)
+            logger.warning(f"Freeze-frame capture dispatch failed: {e}")
 
     def _dispatchPeriodicDtcPoll(self) -> None:
         """Fire DtcLogger.maybePeriodicMode03 every reading-tick during a drive.

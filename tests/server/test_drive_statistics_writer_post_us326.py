@@ -186,13 +186,15 @@ class TestApproach1WriterProducesDriveStatistics:
             _seedPiSync(session)
             session.commit()
 
-        # Pre-condition: Pi-sync drive_summary row exists, drive_id mirror NULL,
-        # and no drive_statistics rows yet -- the observed Drive 11 state.
+        # Pre-condition: Pi-sync drive_summary row exists with no
+        # drive_statistics rows yet.  US-372: the sync path now mirrors
+        # source_id onto drive_id (the pre-US-372 Drive-11 state had the
+        # mirror NULL; that asymmetric state is now structurally impossible).
         with Session(engine) as session:
             summaries = list(session.execute(select(DriveSummary)).scalars().all())
             assert len(summaries) == 1
             assert summaries[0].source_id == _DRIVE_ID
-            assert summaries[0].drive_id is None
+            assert summaries[0].drive_id == _DRIVE_ID
             assert _driveStatisticRows(session) == []
 
         # Run the auto-analysis writer step (RED pre-US-326: IntegrityError in
@@ -210,9 +212,10 @@ class TestApproach1WriterProducesDriveStatistics:
             assert {s.parameter_name for s in stats} == set(_PARAMS)
             assert len(stats) == len(_PARAMS)
             for s in stats:
-                # drive_statistics.drive_id keys the SERVER drive_summary.id
-                # (matches proposeCalibration's join), NOT the Pi-local drive_id.
-                assert s.drive_id == serverDriveId
+                # drive_statistics.summary_id keys the SERVER drive_summary.id
+                # (matches proposeCalibration's join), NOT a Pi-local drive_id.
+                # Renamed from drive_id in US-371.
+                assert s.summary_id == serverDriveId
                 assert s.sample_count == _SAMPLES_PER_PARAM
                 assert s.min_value is not None
                 assert s.max_value is not None
@@ -252,7 +255,7 @@ class TestApproach1WriterProducesDriveStatistics:
             stats = _driveStatisticRows(session)
             assert {s.parameter_name for s in stats} == set(_PARAMS)
             assert len(stats) == len(_PARAMS)
-            assert all(s.drive_id == firstIds[0] for s in stats)
+            assert all(s.summary_id == firstIds[0] for s in stats)
             assert all(s.sample_count == _SAMPLES_PER_PARAM for s in stats)
 
 

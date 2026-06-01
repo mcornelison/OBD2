@@ -66,7 +66,13 @@ from datetime import datetime, timedelta
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from src.server.db.models import DriveSummary, RealtimeData
+from src.server.analytics.overlap import detect_overlapping_drives
+from src.server.db.models import (
+    DATA_QUALITY_ATTRIBUTION_ANOMALY,
+    DRIVE_SUMMARY_DATA_QUALITY_DEFAULT,
+    DriveSummary,
+    RealtimeData,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -169,16 +175,44 @@ def compute_drive_summary(session: Session, driveId: int) -> int | None:
     # is authoritative for the drive).
     isReal = _deriveIsReal(summary.data_source)
 
+    # US-363: dual-attribution tripwire.  Flag the drive when its raw
+    # realtime_data window overlaps another drive's window (the Drive 23/24
+    # dual-emission pattern); detect_overlapping_drives (US-362) is the SSOT
+    # detector over raw realtime_data.  Observability, not refusal: the row is
+    # still written and fully readable, only its data_quality is stamped.
+    overlappingDriveIds = detect_overlapping_drives(session, driveId)
+    dataQuality = (
+        DATA_QUALITY_ATTRIBUTION_ANOMALY if overlappingDriveIds
+        else DRIVE_SUMMARY_DATA_QUALITY_DEFAULT
+    )
+    if overlappingDriveIds:
+        logger.warning(
+            "compute_drive_summary | drive_id=%s | ATTRIBUTION ANOMALY -- "
+            "realtime_data window overlaps drive_id(s) %s; flagging row "
+            "data_quality=%s",
+            driveId, overlappingDriveIds, DATA_QUALITY_ATTRIBUTION_ANOMALY,
+        )
+
     summary.start_time = startTime
     summary.end_time = endTime
     summary.duration_seconds = durationSeconds
     summary.row_count = rowCount
     summary.is_real = isReal
+    summary.data_quality = dataQuality
+    # US-372 (F-076): writer-path discipline -- never leave drive_id / source_id
+    # divergent.  A legacy Pi-sync row arrives with source_id set and the
+    # drive_id mirror NULL; heal both to the Pi-local driveId (== source_id for
+    # any row this compute matched) so the chk_drive_id_source_id invariant holds.
+    if summary.drive_id is None:
+        summary.drive_id = driveId
+    if summary.source_id is None:
+        summary.source_id = driveId
     session.flush()
 
     logger.info(
         "compute_drive_summary | drive_id=%s | summary_id=%s | "
-        "start=%s | end=%s | duration_s=%s | row_count=%s | is_real=%s",
+        "start=%s | end=%s | duration_s=%s | row_count=%s | is_real=%s | "
+        "data_quality=%s",
         driveId,
         summary.id,
         startTime,
@@ -186,6 +220,7 @@ def compute_drive_summary(session: Session, driveId: int) -> int | None:
         durationSeconds,
         rowCount,
         isReal,
+        dataQuality,
     )
     return summary.id
 

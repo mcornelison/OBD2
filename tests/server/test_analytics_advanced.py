@@ -108,7 +108,7 @@ def _seedDrivesWithStats(
         )
         session.add(
             DriveStatistic(
-                drive_id=i,
+                summary_id=i,
                 parameter_name=parameter,
                 min_value=avg - 500.0,
                 max_value=avg + peakOffset,
@@ -151,7 +151,7 @@ def _seedDrivePairStats(
         )
         session.add(
             DriveStatistic(
-                drive_id=i,
+                summary_id=i,
                 parameter_name=paramA,
                 min_value=xVal,
                 max_value=xVal,
@@ -164,7 +164,7 @@ def _seedDrivePairStats(
         )
         session.add(
             DriveStatistic(
-                drive_id=i,
+                summary_id=i,
                 parameter_name=paramB,
                 min_value=yVal,
                 max_value=yVal,
@@ -557,7 +557,7 @@ class TestTwelveDriveEndToEnd:
             for i in range(1, 13):
                 session.add(
                     DriveStatistic(
-                        drive_id=i,
+                        summary_id=i,
                         parameter_name="RPM",
                         min_value=1000.0,
                         max_value=2000.0 + i * 25.0 + 1000.0,

@@ -23,6 +23,11 @@
 #               |              | a single CLI invocation / nightly timer tick
 #               |              | refreshes BOTH analytics tables (Atlas Q1
 #               |              | single-timer-fires-both-paths honored).
+# 2026-05-28    | Rex (US-363) | F-107: surface the data_quality tripwire flag
+#               |              | per drive (OK log + a WARNING line on
+#               |              | attribution_anomaly) and a run-level anomaly
+#               |              | tally.  Anomaly rows are rendered, never
+#               |              | dropped (downstream graceful-degradation DoD).
 # ================================================================================
 ################################################################################
 
@@ -60,7 +65,7 @@ from src.server.analytics.drive_statistics_compute import (
     compute_drive_statistics,
 )
 from src.server.analytics.drive_summary_compute import compute_drive_summary
-from src.server.db.models import DriveSummary
+from src.server.db.models import DATA_QUALITY_ATTRIBUTION_ANOMALY, DriveSummary
 
 logger = logging.getLogger(__name__)
 
@@ -215,6 +220,7 @@ def main(argv: list[str] | None = None) -> int:
             successes = 0
             failures = 0
             skipped = 0
+            anomalies = 0
             for driveId in driveIds:
                 if args.dry_run:
                     logger.info(
@@ -234,12 +240,31 @@ def main(argv: list[str] | None = None) -> int:
                         skipped += 1
                         continue
                     statsWritten = compute_drive_statistics(session, driveId)
+                    # US-363: surface the data_quality tripwire flag visibly.
+                    # The row is written and fully readable -- the CLI never
+                    # drops or refuses an anomaly row; it renders it with a
+                    # marker so an operator sees the dual-attribution signal.
+                    summaryRow = session.get(DriveSummary, summaryId)
+                    dataQuality = (
+                        summaryRow.data_quality if summaryRow is not None
+                        else "?"
+                    )
                     session.commit()
                     successes += 1
+                    if dataQuality == DATA_QUALITY_ATTRIBUTION_ANOMALY:
+                        anomalies += 1
+                        logger.warning(
+                            "recompute_drive_analytics | drive_id=%s | "
+                            "[ATTRIBUTION_ANOMALY] | summary_id=%s | "
+                            "data_quality=%s | row written + readable "
+                            "(rendered, not dropped)",
+                            driveId, summaryId, dataQuality,
+                        )
                     logger.info(
                         "recompute_drive_analytics | drive_id=%s | OK | "
-                        "summary_id=%s | drive_statistics_rows=%d",
-                        driveId, summaryId, statsWritten,
+                        "summary_id=%s | drive_statistics_rows=%d | "
+                        "data_quality=%s",
+                        driveId, summaryId, statsWritten, dataQuality,
                     )
                 except Exception as exc:  # noqa: BLE001 - CLI fault tolerance
                     session.rollback()
@@ -251,8 +276,8 @@ def main(argv: list[str] | None = None) -> int:
 
             logger.info(
                 "recompute_drive_analytics | done | success=%d | "
-                "skipped=%d | failed=%d",
-                successes, skipped, failures,
+                "skipped=%d | failed=%d | attribution_anomalies=%d",
+                successes, skipped, failures, anomalies,
             )
     finally:
         engine.dispose()

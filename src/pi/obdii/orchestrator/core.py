@@ -194,6 +194,9 @@ class ApplicationOrchestrator(  # type: ignore[misc]
         # by default; replay/simulator paths leave them off).
         self._dtcLogger: Any | None = None
         self._milEdgeDetector: Any | None = None
+        # US-368 / F-109: Mode 02 freeze-frame capture, fired on the same MIL
+        # rising edge as the DTC re-fetch.  None when DTC capture is disabled.
+        self._freezeFrameCapture: Any | None = None
         # US-206: SummaryRecorder for drive-start metadata (ambient
         # IAT, starting battery, barometric).  Opt-out via
         # ``pi.driveSummary.enabled=false``.
@@ -366,6 +369,11 @@ class ApplicationOrchestrator(  # type: ignore[misc]
         )
         self._consecutiveAlternatorActiveSamples: int = 0
         self._engineOnEscalated: bool = False
+
+        # F-107 (US-361) Mechanism B: single-instance guard.  Stays None
+        # unless pi.runtime.singleInstanceGuard.enabled is True (default-OFF);
+        # _initializeSingleInstanceGuard acquires the pidfile lock when armed.
+        self._singleInstanceGuard: Any | None = None
 
         logger.debug("ApplicationOrchestrator initialized")
 

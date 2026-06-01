@@ -562,13 +562,13 @@ def _loadBaselineEstablishedAt(
 def _loadDriveStats(session: Session, driveId: int) -> list[DriveStatistics]:
     rows = session.execute(
         select(DriveStatistic)
-        .where(DriveStatistic.drive_id == driveId)
+        .where(DriveStatistic.summary_id == driveId)
         .order_by(DriveStatistic.parameter_name.asc()),
     ).scalars().all()
 
     return [
         DriveStatistics(
-            drive_id=row.drive_id,
+            drive_id=row.summary_id,
             parameter_name=row.parameter_name,
             min_value=float(row.min_value or 0.0),
             max_value=float(row.max_value or 0.0),

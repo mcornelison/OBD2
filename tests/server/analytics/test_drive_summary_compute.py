@@ -516,3 +516,84 @@ class TestGapDetection:
                 if r.levelno >= logging.WARNING and "gap" in r.message.lower()
             ]
             assert gap_warnings == []
+
+
+# =========================================================================
+# US-363 -- data_quality='attribution_anomaly' tripwire integration
+# =========================================================================
+
+
+class TestComputeDriveSummaryAttributionAnomaly:
+    """US-363 / F-107: compute_drive_summary stamps the V0.27.18 dual-
+    attribution tripwire.
+
+    When the drive's raw realtime_data window overlaps another drive's
+    window (the Drive 23/24 dual-emission pattern), data_quality is
+    'attribution_anomaly'; otherwise 'full'.  The tripwire is observability
+    not refusal -- the row is still written, fully readable, only flagged.
+    detect_overlapping_drives() is the SSOT detector (US-362).
+    """
+
+    def test_overlappingDrive_setsAttributionAnomaly(self, engine):
+        """Drive 23 + Drive 24 share a window -> drive 23 flagged anomaly."""
+        start = datetime(2026, 5, 22, 14, 43, 0)
+        with Session(engine) as session:
+            sid = _seedPiSyncedDriveSummary(session, driveId=23)
+            _seedRealtimeRows(
+                session, driveId=23, startTime=start,
+                parameters=["RPM"], samplesPerParameter=120,
+            )
+            # Drive 24's window (start+30 .. start+149) intersects drive 23's
+            # (start .. start+119) -- one physical leg minted twice.
+            _seedRealtimeRows(
+                session, driveId=24,
+                startTime=start + timedelta(seconds=30),
+                parameters=["RPM"], samplesPerParameter=120,
+            )
+            assert compute_drive_summary(session, 23) == sid
+            session.commit()
+            assert (
+                session.get(DriveSummary, sid).data_quality
+                == "attribution_anomaly"
+            )
+
+    def test_nonOverlappingDrive_setsFull(self, engine):
+        """Drive 25 with a clear neighbour -> data_quality 'full' (control)."""
+        start = datetime(2026, 5, 22, 16, 0, 0)
+        with Session(engine) as session:
+            sid = _seedPiSyncedDriveSummary(session, driveId=25)
+            _seedRealtimeRows(
+                session, driveId=25, startTime=start,
+                parameters=["RPM"], samplesPerParameter=60,
+            )
+            # Drive 26 starts 5 min later -- no shared second.
+            _seedRealtimeRows(
+                session, driveId=26,
+                startTime=start + timedelta(seconds=300),
+                parameters=["RPM"], samplesPerParameter=60,
+            )
+            assert compute_drive_summary(session, 25) == sid
+            session.commit()
+            assert session.get(DriveSummary, sid).data_quality == "full"
+
+    def test_anomalyIsIdempotent_acrossRecompute(self, engine):
+        """Re-running compute on an overlapping drive yields the same flag."""
+        start = datetime(2026, 5, 22, 14, 43, 0)
+        with Session(engine) as session:
+            sid = _seedPiSyncedDriveSummary(session, driveId=23)
+            _seedRealtimeRows(
+                session, driveId=23, startTime=start,
+                parameters=["RPM"], samplesPerParameter=120,
+            )
+            _seedRealtimeRows(
+                session, driveId=24,
+                startTime=start + timedelta(seconds=30),
+                parameters=["RPM"], samplesPerParameter=120,
+            )
+            compute_drive_summary(session, 23)
+            session.commit()
+            first = session.get(DriveSummary, sid).data_quality
+            compute_drive_summary(session, 23)
+            session.commit()
+            second = session.get(DriveSummary, sid).data_quality
+            assert first == second == "attribution_anomaly"

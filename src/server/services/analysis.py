@@ -286,8 +286,8 @@ def _buildAnalyticsContext(
     # Count prior drives with any stats (signal to the model for baseline
     # maturity — see user_message.jinja "Baseline note" branch).
     priorDrivesCount = session.execute(
-        select(DriveStatistic.drive_id)
-        .where(DriveStatistic.drive_id != drive.id)
+        select(DriveStatistic.summary_id)
+        .where(DriveStatistic.summary_id != drive.id)
         .distinct()
     ).scalars().all()
 
@@ -1061,6 +1061,12 @@ def _ensureDriveSummary(
             # row via the cheaper drive_id index path.
             existing.device_id = deviceId
             existing.drive_id = driveId
+            # US-372 (F-076): heal a legacy NULL source_id so the
+            # chk_drive_id_source_id invariant holds (drive_id == source_id).
+            # Pi-sync rows already carry source_id == driveId; this only fires
+            # on an asymmetric historical row.
+            if existing.source_id is None:
+                existing.source_id = driveId
             existing.start_time = analytics.startTime
             existing.end_time = analytics.endTime
             existing.duration_seconds = analytics.durationSeconds
@@ -1149,9 +1155,9 @@ def _ensureDriveStatistics(session: Session, driveSummaryId: int) -> int:
     Args:
         session: Open sync SQLAlchemy session (invoked inside ``run_sync``).
         driveSummaryId: The *server-side* ``drive_summary.id`` -- the value
-            ``drive_statistics.drive_id`` is keyed on (NOT the Pi-local
+            ``drive_statistics.summary_id`` is keyed on (NOT a Pi-local
             ``drive_id``; ``proposeCalibration`` joins
-            ``DriveSummary.id == DriveStatistic.drive_id``).
+            ``DriveSummary.id == DriveStatistic.summary_id``).
 
     Returns:
         Number of ``drive_statistics`` rows written (one per distinct

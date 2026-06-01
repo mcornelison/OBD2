@@ -240,11 +240,15 @@ class TestModuleExports:
         versions = [m.version for m in ALL_MIGRATIONS]
         assert '0009' in versions
 
-    def test_appendedAtEnd(self) -> None:
-        # Registry invariant: ascending order; latest at tail.
+    def test_v0009InRegistryAndWellFormed(self) -> None:
+        # Registry invariant: ascending order; 4-digit version strings.
+        # (US-363 appended v0010 at the tail; '0009' is no longer last, so
+        # this no longer pins the tail to '0009' -- it pins that '0009' is
+        # present, well-formed, and that the registry stays sorted.)
         versions = [m.version for m in ALL_MIGRATIONS]
-        assert re.match(r'^\d{4}$', versions[-1]) is not None
-        assert versions[-1] == '0009'
+        assert '0009' in versions
+        assert all(re.match(r'^\d{4}$', v) for v in versions)
+        assert versions == sorted(versions)
 
     def test_constantsMatchOrm(self) -> None:
         # The migration's identifier constants must match the ORM's

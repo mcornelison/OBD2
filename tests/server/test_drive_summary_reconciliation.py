@@ -417,7 +417,7 @@ class TestReconcileDualRowsMigration:
         session.add(analyticsRow)
         session.flush()
         stat = DriveStatistic(
-            drive_id=analyticsRow.id,
+            summary_id=analyticsRow.id,
             parameter_name="RPM",
             avg_value=2500.0,
             sample_count=3,
@@ -433,7 +433,7 @@ class TestReconcileDualRowsMigration:
         # The drive_statistics row must now point at the surviving Pi-sync row.
         updated = session.execute(select(DriveStatistic)).scalars().all()
         assert len(updated) == 1
-        assert updated[0].drive_id == piRowId
+        assert updated[0].summary_id == piRowId
 
     def test_dryRun_makesNoChanges(self, session):
         from scripts.reconcile_drive_summary import reconcile

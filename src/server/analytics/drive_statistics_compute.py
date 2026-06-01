@@ -64,7 +64,9 @@ from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from src.server.analytics.helpers import computeBasicStats
+from src.server.analytics.overlap import detect_overlapping_drives
 from src.server.db.models import (
+    DATA_QUALITY_ATTRIBUTION_ANOMALY,
     DRIVE_STATISTICS_DATA_QUALITY_VALUES,
     DriveStatistic,
     DriveSummary,
@@ -89,11 +91,18 @@ DATA_QUALITY_BELOW_THRESHOLD = "below_threshold"
 DATA_QUALITY_SPARSE = "sparse"
 DATA_QUALITY_FULL = "full"
 
+# US-363 / F-107: not a sample-count bucket -- the dual-attribution tripwire
+# value, applied as an override when the drive's realtime_data window overlaps
+# another drive's (detect_overlapping_drives, US-362).  Aliased from the model
+# SSOT so the classifier-vs-enum guard below stays meaningful.
+DATA_QUALITY_ANOMALY = DATA_QUALITY_ATTRIBUTION_ANOMALY
+
 # Sanity-check at import time -- the model module owns the canonical enum.
 assert set(DRIVE_STATISTICS_DATA_QUALITY_VALUES) == {
     DATA_QUALITY_BELOW_THRESHOLD,
     DATA_QUALITY_SPARSE,
     DATA_QUALITY_FULL,
+    DATA_QUALITY_ANOMALY,
 }, (
     "data_quality classifiers diverged from the model enum -- update both "
     "together (src/server/db/models.py:DRIVE_STATISTICS_DATA_QUALITY_VALUES "
@@ -180,6 +189,23 @@ def compute_drive_statistics(session: Session, driveId: int) -> int:
         )
         return 0
 
+    # US-363: the V0.27.18 dual-attribution tripwire.  If this drive's raw
+    # realtime_data window overlaps another drive's (detect_overlapping_drives,
+    # US-362), every per-parameter row is flagged 'attribution_anomaly',
+    # overriding the sample-count classification -- the whole drive's
+    # attribution is suspect, not a single parameter.  Observability, not
+    # refusal: the rows are still written and fully readable downstream.
+    overlappingDriveIds = detect_overlapping_drives(session, driveId)
+    isAttributionAnomaly = bool(overlappingDriveIds)
+    if isAttributionAnomaly:
+        logger.warning(
+            "compute_drive_statistics | drive_id=%s | summary_id=%s | "
+            "ATTRIBUTION ANOMALY -- realtime_data window overlaps drive_id(s) "
+            "%s; flagging all rows data_quality=%s",
+            driveId, summaryId, overlappingDriveIds,
+            DATA_QUALITY_ANOMALY,
+        )
+
     valuesByParam: dict[str, list[float]] = {}
     for paramName, value in rows:
         valuesByParam.setdefault(paramName, []).append(float(value))
@@ -188,7 +214,7 @@ def compute_drive_statistics(session: Session, driveId: int) -> int:
     # leaving stale parameter_name rows from prior raw-data shapes (e.g.,
     # a PID was dropped from the poll list).
     session.execute(
-        delete(DriveStatistic).where(DriveStatistic.drive_id == summaryId)
+        delete(DriveStatistic).where(DriveStatistic.summary_id == summaryId)
     )
 
     written = 0
@@ -199,10 +225,13 @@ def compute_drive_statistics(session: Session, driveId: int) -> int:
             # would not appear in valuesByParam); defensive skip.
             continue
         _assertGenericInvariants(driveId, paramName, stats)
-        dataQuality = _classifyDataQuality(stats.sample_count)
+        dataQuality = (
+            DATA_QUALITY_ANOMALY if isAttributionAnomaly
+            else _classifyDataQuality(stats.sample_count)
+        )
         session.add(
             DriveStatistic(
-                drive_id=summaryId,
+                summary_id=summaryId,
                 parameter_name=paramName,
                 min_value=stats.min_value,
                 max_value=stats.max_value,
@@ -276,6 +305,7 @@ def _assertGenericInvariants(
 
 
 __all__ = [
+    "DATA_QUALITY_ANOMALY",
     "DATA_QUALITY_BELOW_THRESHOLD",
     "DATA_QUALITY_FULL",
     "DATA_QUALITY_SPARSE",

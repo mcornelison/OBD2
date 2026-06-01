@@ -172,7 +172,7 @@ def seededSqliteEngine(tmp_path: Path):
             session.flush()
             session.add(
                 DriveStatistic(
-                    drive_id=drive.id,
+                    summary_id=drive.id,
                     parameter_name=paramName,
                     min_value=80.0,
                     max_value=95.0,
@@ -200,7 +200,7 @@ def seededSqliteEngine(tmp_path: Path):
             session.flush()
             session.add(
                 DriveStatistic(
-                    drive_id=drive.id,
+                    summary_id=drive.id,
                     parameter_name=paramName,
                     min_value=70.0,
                     max_value=85.0,

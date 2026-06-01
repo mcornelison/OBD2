@@ -77,6 +77,7 @@ from .database_schema import (
 )
 from .drive_id import ensureAllDriveIdColumns, ensureDriveCounter
 from .drive_summary import ensureDriveSummaryTable
+from .dtc_freeze_frame_schema import ensureDtcFreezeFrameTable
 from .dtc_log_schema import ensureDtcLogTable
 from .pi_state import ensurePiStateTable
 
@@ -282,6 +283,13 @@ class ObdDatabase:
                 # the table here without disturbing the rest.
                 if ensureDtcLogTable(conn):
                     logger.info("Created dtc_log table (US-204)")
+
+                # US-368 idempotent migration: dtc_freeze_frame capture table
+                # for F-109 Mode 02 freeze-frame snapshots (one row per DTC
+                # freeze-frame; references dtc_log.id + the active vehicle_info
+                # VIN).  Created after dtc_log (its FK target).
+                if ensureDtcFreezeFrameTable(conn):
+                    logger.info("Created dtc_freeze_frame table (US-368)")
 
                 # US-206 idempotent migration: drive_summary capture
                 # table for Spool Data v2 Story 4 (drive-start metadata

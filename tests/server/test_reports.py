@@ -173,7 +173,7 @@ def _seedDriveWithStats(
     for name, (minV, maxV, avg, std) in stats.items():
         session.add(
             DriveStatistic(
-                drive_id=driveId,
+                summary_id=driveId,
                 parameter_name=name,
                 min_value=minV,
                 max_value=maxV,
@@ -672,7 +672,7 @@ class TestBuildTrendReport:
                 )
                 session.add(
                     DriveStatistic(
-                        drive_id=i,
+                        summary_id=i,
                         parameter_name="RPM",
                         min_value=avg - 500,
                         max_value=avg + 500,
