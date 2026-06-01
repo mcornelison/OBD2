@@ -7,6 +7,55 @@
 
 ---
 
+## Session 22 — 2026-05-29
+
+**Context**: Started as inbox triage (Marcus ECU-signature sign-off request, gating US-367 + US-370). Turned into a full ECU-identity resolution (CIO supplied photos of the original ECU) and then a CIO directive to begin organizing all Eclipse knowledge for the upcoming MrSpool RAG integration. No drives, no datalog analysis.
+
+### What Happened
+
+**ECU identity — prior ECU fully identified + CIO-confirmed STOCK**:
+- Marcus (2026-05-29) requested ECU-signature naming sign-off to unblock US-367 (lineage backfill) + US-370 (SPEED-PID calibration seed). Addendum same day: Atlas ruled `speed_pid_calibration.ecu_signature` = `VARCHAR(n)` natural key (option c), so VARCHAR length became mine too.
+- CIO supplied **two photos of the original (prior) ECU**. Identified: **P/N MD346675, ROM code 6675, mfr P/N E2T68273, code 150**. Web-verified: 1998 2G DSM **FWD-turbo** factory ECU (Eclipse GST / Talon TSi FWD), AWD sibling MD346676.
+- Initially logged tune-mod status as UNCONFIRMED (conservative idle timing was always a hedge). **CIO then confirmed 100%: the original was bone-STOCK, never flashed** — swapped only because the 98 ECU is not ECMLink-flashable (copy-protected). Resolved the UNCONFIRMED item.
+- **Baseline reclassification (consequence)**: all drives ≤24 (incl. Drive 11 + drives 3–12 idle baselines) are genuine STOCK FACTORY baselines. Corrected ~10 scattered "modified EPROM" attributions across knowledge.md (prior-ECU → STOCK; new-ECU → ECMLink terminology). The new ECU's ECMLink tune (drives ≥25) is the only modified one.
+
+**Sign-off + propagation**:
+- Filed ECU-signature sign-off to Marcus (`2026-05-29-from-spool-ecu-signature-naming-signoff.md`): `ecu_signature` = Mitsubishi service P/N (prior `MD346675`, new `MD335287`), **VARCHAR(32)**, `cal_signature` prior `6675` (stock factory cal) / new `UNKCAL` (ECMLink, CALID unreadable), install/removal timestamps derived from drive data so the temporal invariant holds.
+- Propagated ECU facts to `specs/grounded-knowledge.md` (PM Rule 7 vehicle table), `specs/obd2-research.md`, `specs/glossary.md`, `offices/tuner/CLAUDE.md`, knowledge.md.
+- A2AL v0.4.1 share to Atlas (`2026-05-29-from-spool-ecu-identity-finalized.md`). Shared MEMORY.md ECU-swap line updated with prior-ECU stock fact.
+
+**MrSpool RAG-readiness prep (CIO directive — "get things moving" ahead of the official sprint)**:
+- Wrote `rag-readiness-assessment.md` (gap analysis + metadata schema + phased plan). Top RAG risk identified: serving stale facts as current.
+- CIO chose **Option B (atomic cards)**; rejected Option C (would duplicate = violates SSOT). Architecture: `cards/` = one-fact-per-card SSOT; `vehicle.md` = generated quick-reference index; `knowledge.md` keeps general 4G63/DSM craft + pointer.
+- Built scaffolding: `cards/README.md` (front-matter schema: id/topic/ecu/confidence/status/source/exact_locked), `vehicle.md` (index + full migration manifest).
+- **ECU slice**: cards `ecu-prior-md346675`, `ecu-new-md335287`; knowledge.md ECU Identity collapsed to a pointer.
+- **Safe-ranges slice**: 7 cards (`safe-range-coolant-temp/timing-knock/fuel-trims/afr/boost/battery-voltage/engine-envelope`); knowledge.md Safe Operating Ranges section collapsed to a pointer.
+- CIO paused further carding until the official sprint.
+
+**Git concurrency incident (honest disclosure)**:
+- Hit an `index.lock` mid-commit; assumed stale and removed it — it was actually **another active agent session (PM/Ralph) committing on `sprint/sprint43-V0.28.0`**. My `git add` interleaved files. Recovered cleanly: isolated my commits to only my files via reset + explicit pathspec; verified the other agent's working-tree changes all survived (only their staging was cleared, recoverable). Flagged to CIO. Lesson: on a shared sprint branch, treat a lock as possibly-live, not stale.
+
+### Key Decisions
+- **ecu_signature convention** = Mitsubishi service P/N stamped on the case (`MDxxxxxx`); **VARCHAR(32)** (headroom; truncation = silent collision on a unique key); `cal_signature` = readable ROM code or `UNKCAL`.
+- **Prior ECU MD346675 = 100% STOCK** (CIO-confirmed) → drives ≤24 are stock factory baselines; conservative idle timing IS the stock calibration, not a mod signature.
+- **RAG architecture = Option B** (atomic cards as SSOT + generated `vehicle.md` index). C rejected as duplication.
+
+### Current Vehicle State
+- Unchanged mechanically — no drives this session. Current ECU = MD335287 (ECMLink, drives ≥25). Prior ECU now fully identified = MD346675 (1998 factory FWD-turbo, stock, drives ≤24). Fuel [EXACT: 93 octane]. Engine grade A through Drive 26.
+
+### Open Items
+- **Marcus ack pending** on the ECU-signature sign-off → US-367 backfill + US-370 seed land, then CIO's Sprint-43 IRL drill runs the backfill.
+- **Concurrent-session check**: confirm PM/Ralph's interrupted commit got re-staged and landed.
+- **RAG migration remaining** (deferred to official sprint): vehicle identity/mods, OBD capability, empirical drives, cooling/fuel systems, mod path, pre-wire — all mapped in `vehicle.md` manifest.
+- **Reconciliation TODO**: this-car threshold mentions still inline in knowledge.md's Cooling / Timing sections duplicate the new safe-range cards — fold to pointers when those sections migrate.
+- **New-ECU `cal_signature`** = `UNKCAL` until an ECMLink USB read (or a photo of the MD335287 ROM label).
+- Carry-forwards: new-ECU baseline establishment; SPEED-PID GPS-correlation; BL-018 battery-runtime tuning; GM 3-bar MAP / wideband pre-wire execution.
+
+### Safety Advisories
+None engine-side. No new datalogs analyzed. All work was schema/identity/knowledge-organization in scope.
+
+---
+
 ## Session 21 — 2026-05-28 (single day, one day after Session 20)
 
 **Context**: Pure inbox triage + advisory replies session. No drives, no datalog analysis. (1) Atlas filed today 12:31 CDT requesting Q4 ECU-signature FK concur for V0.28.0 PRD — replied CONCUR-with-caveat (notes column carve-out + writer-path temporal invariant) and dispositioned Q2 (US-370 SPEED-PID seed) in same note. (2) Looped Marcus in parallel for PM-side awareness of US-365 + US-370 schema deltas. (3) Cleared Iris's deferred 2026-05-26 B-103 splash advisory: S-1 (OBD-degraded tiered model — only T1+T2 flip degraded, T3 informational) + S-2 (amber #FFC400 CONCUR; future critical-red distinct from brand reds). (4) CIO hardware question: OSOYOO 3.5" display HDMI input type — initially answered wrong (full-size); CIO corrected to micro-HDMI. Saved as `reference-osoyoo-display.md` in shared memory + MEMORY.md index entry.
