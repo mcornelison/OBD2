@@ -3,7 +3,7 @@
 **Date**: 2026-02-05 (Session 10)
 **Author**: Marcus (PM), compiled from 4 parallel research tasks
 **Purpose**: Grounding document for all PRDs and user stories involving OBD-II data collection
-**Vehicle**: 1998 Mitsubishi Eclipse GST, 2G DSM, 4G63 turbo. ECU: MD335287 (1997 board, ECMLink V3 flash-mod) swapped in 2026-05-22 (drives ≥25); prior ECU MD346675 (1998 factory FWD-turbo flash "black box") on drives ≤24
+**Vehicle**: 1998 Mitsubishi Eclipse GST, 2G DSM, 4G63 turbo. ECU: MD326328 (mfr E2T61683; 1997 board, ECMLink V3 flash-mod; earlier mis-recorded as MD335287, corrected 2026-06-01) swapped in 2026-05-22 (drives ≥25); prior ECU MD346675 (1998 factory FWD-turbo flash "black box") on drives ≤24
 **Adapter**: OBDLink LX Bluetooth (FW 5.6.19, MAC 00:04:3E:85:0D:FB)
 
 ---

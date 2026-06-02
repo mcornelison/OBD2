@@ -171,7 +171,7 @@ class TestVehicleInfoEcuCoherence:
     def test_driftedCalSignatureIsAViolation(self) -> None:
         eng = self._engine()
         with Session(eng) as session:
-            ecu = Ecu(ecu_signature="MD335287", cal_signature="UNKCAL")
+            ecu = Ecu(ecu_signature="MD326328", cal_signature="UNKCAL")
             session.add(ecu)
             session.flush()
             session.add(
@@ -179,7 +179,7 @@ class TestVehicleInfoEcuCoherence:
                     source_id=1,
                     source_device="chi-eclipse-01",
                     ecu_id=ecu.id,
-                    ecu_signature="MD335287",
+                    ecu_signature="MD326328",
                     cal_signature="DRIFTED-CAL",
                     ecu_install_timestamp_utc=_INSTALL,
                     ecu_removal_timestamp_utc=None,

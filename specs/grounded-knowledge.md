@@ -55,11 +55,14 @@ Authoritative, fact-based sources for the Eclipse OBD-II Performance Monitoring 
 | OBD-II Protocol | ISO 9141-2 (K-Line, 10,400 bps) | OBD-II spec + DSMTuners |
 | Max polling rate | ~4-5 PIDs/sec via Bluetooth | Research (specs/obd2-research.md) |
 | Core PIDs (Phase 1) | STFT (0x06), Coolant (0x05), RPM (0x0C), Timing (0x0E), Load (0x04) | Research + CIO approval |
-| Current ECU | **MD335287** — 1997 2G DSM ECU, ECMLink V3 flash-modifiable, plug-installed in 98 chassis 2026-05-22 (drives ≥25). Running prior-tuner ECMLink tune; Mode 09 + Mode 22 silent over OBD. | CIO + Spool knowledge.md (ECU Identity) |
+| Current ECU | **MD326328** (mfr **E2T61683**) — 1997 2G DSM ECU, ECMLink V3 flash-modifiable, plug-installed in 98 chassis 2026-05-22 (drives ≥25). Running prior-tuner ECMLink tune; Mode 09 + Mode 22 silent over OBD. Earlier mis-recorded as MD335287; corrected 2026-06-01 from case label + mfr P/N (same physical box). | CIO + Spool knowledge.md (ECU Identity) |
 | Prior ECU | **MD346675** — 1998 factory FWD-turbo ECU (ROM 6675, mfr E2T68273), drives ≤24. **100% STOCK factory tune, never flashed (CIO-confirmed 2026-05-29).** Flash-hardware but NOT ECMLink-flashable (copy-protected) — which is why it was swapped. Photo-identified 2026-05-29. | CIO photos + CIO confirmation + DSM sourcing |
-| ECMLink V3 | Flash modification PRESENT on current ECU (MD335287). USB+PC cable required for deep tuning data (knock/AFR/per-cyl) — not reachable via the OBD pipe. Active ECMLink logging = next-phase goal. | CIO + Spool |
+| ECMLink V3 | Flash modification PRESENT on current ECU (MD326328). USB+PC cable required for deep tuning data (knock/AFR/per-cyl) — not reachable via the OBD pipe. Active ECMLink logging = next-phase goal. | CIO + Spool |
 | OBD Dongle | OBDLink LX BT, MAC `00:04:3E:85:0D:FB`, FW 5.6.19 | CIO hardware |
 | Installed bolt-on mods | Cold air intake, BOV, fuel pressure regulator, fuel lines, oil catch can, coilovers, engine/trans mounts | CIO (Eclipse 1998 Projects spreadsheet) |
+| Mounted tires | **Bridgestone Potenza 205/55R16 91H** (RE0_0 series), made in Japan — **STOCK SIZE**. Rolling circ ≈ **1.985 m** geometric (~1.96 m loaded), ~811 rev/mi. Stock size ⇒ the new-ECU 2× SPEED drift is a tune VSS constant, not tires. **Age note: DOT `1003` = made March 2003 (~23 yr). Full tread, <10k mi, garaged/never-salted; CIO inspected no rot → CIO retaining (2026-06-01). Cleared for low-speed calibration drive; Spool reservation stands for highway/spirited use.** | CIO sidewall photos + DOT + inspection 2026-06-01 + Spool (`cards/wheels-tires-potenza-205-55r16.md`) |
+| Wheels | Aftermarket gunmetal 16" twin-Y multi-spoke, 5-lug (5×114.3 DSM). Center-cap brand not confirmed. | CIO photos 2026-06-01 |
+| Transmission | **Stock F5M33 5-speed** (2G FWD turbo; driver-side mount — NOT the AWD W5MG1). Ratios: 1st **3.090** / 2nd **1.833** / 3rd **1.217** / 4th **0.888** / 5th **0.741**; **final drive 4.153**. ~24 mph/1000rpm in 5th. Cross-validated vs prior-ECU Drive 18 (57.6 mph computed in 3rd @ 3937 RPM ≈ recorded). | Road Race Engineering (factory Shop Manual CD) + Spool cross-check; CIO confirmed stock unmodified |
 
 ---
 

@@ -6,7 +6,7 @@
 #                      mirrors v0005/US-368's CREATE-TABLE-IF-NOT-EXISTS +
 #                      serverTableExists short-circuit + post-condition probe,
 #                      then idempotently seeds the prior (MD346675, 1.0) + new
-#                      (MD335287, 0.5 INITIAL ESTIMATE) ECU rows via INSERT IGNORE.
+#                      (MD326328, 0.5 INITIAL ESTIMATE) ECU rows via INSERT IGNORE.
 #                      Per Atlas option-(c) 2026-05-29: ecu_signature is a UNIQUE
 #                      natural key (no FK to vehicle_info).  Hermetic FakeRunner;
 #                      no SSH, no MariaDB.
@@ -183,7 +183,7 @@ class TestSeedDdls:
     def test_newEcuSeedValues(self) -> None:
         ddl = m0010.SEED_NEW_ECU_SPEED_PID_CALIBRATION_DDL
         assert ddl.startswith('INSERT IGNORE INTO speed_pid_calibration')
-        assert "'MD335287'" in ddl
+        assert "'MD326328'" in ddl
         assert '0.5' in ddl
         assert 'rough-seed-drive-26-gear-math' in ddl
 

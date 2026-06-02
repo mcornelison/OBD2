@@ -33,7 +33,7 @@ Usage::
 
     # Record a swap to a new ECU as of a precise instant:
     python -m server.cli.stamp_ecu_swap \\
-        --signature MD335287-ECMLinkV3 --cal-signature pump-93-v1 \\
+        --signature MD326328-ECMLinkV3 --cal-signature pump-93-v1 \\
         --as-of 2026-05-22T14:00:00Z
 
     # Re-running the SAME signature + as-of is a safe no-op (idempotent).

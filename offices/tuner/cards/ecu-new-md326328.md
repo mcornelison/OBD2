@@ -1,34 +1,37 @@
 ---
-id: ecu-new-md335287
-title: New ECU — MD335287 (ECMLink, drives ≥25)
+id: ecu-new-md326328
+title: New ECU — MD326328 (ECMLink, drives ≥25)
 topic: ecu
-summary: 1997 ECMLink-V3-flash-modifiable board, plug-installed in the 98 chassis 2026-05-22; running prior-tuner ECMLink tune; Mode 09/22 silent; SPEED reads ~2× actual.
+summary: 1997 ECMLink-V3-flash-modifiable board (mfr P/N E2T61683), plug-installed in the 98 chassis 2026-05-22; running prior-tuner ECMLink tune; Mode 09/22 silent; SPEED reads ~2× actual.
 ecu: new
 mod_state: premod
 fuel: n/a
 confidence: authoritative
 status: current
-source: CIO-2026-05-22-swap; probe-Drive-25-2026-05-22; ECMtuning-wiki
-date: 2026-05-29
+source: CIO-2026-05-22-swap; CIO-pn-correction-2026-06-01; probe-Drive-25-2026-05-22; ECMtuning-wiki
+date: 2026-06-01
 exact_locked: false
-supersedes: []
+supersedes: [ecu-new-md335287]
 superseded_by: null
 ---
 
-# New (current) ECU — MD335287
+# New (current) ECU — MD326328
 
 The ECU in the car since the **2026-05-22 swap**, in service for **drives ≥25**. Replaced the stock [[ecu-prior-md346675]].
 
+> **Identity correction (2026-06-01).** Earlier sessions (19/20) recorded this box as **MD335287** from a single read-off without the manufacturer P/N to cross-check. CIO re-identified it 2026-06-01 from the case label **plus** the Mitsubishi Electric internal P/N — the box is **MD326328 / E2T61683**, the other of the two ECMtuning-supported 97 non-EPROM service parts. MD335287 was a transcription mis-ID and is superseded. The physical box and its loaded tune never changed — only the recorded P/N. (Supersedes `ecu-new-md335287`.)
+
 | Attribute | Value |
 |-----------|-------|
-| Service P/N | **MD335287** |
+| Service P/N | **MD326328** (case-top label) |
+| Mfr P/N | **E2T61683** (Mitsubishi Electric internal manufacturing P/N) |
 | Year base | 1997 DSM |
 | Memory type | Non-EPROM (factory flash, NOT a socketed EPROM chip) |
 | Modification | **ECMLink V3 flash-module modification** — allows ECMLink reflash via diagnostic port |
 | Currently loaded | Prior tuner's custom ECMLink tune (specific calibration ID **unread** — Mode 09 silent; ECMLink USB+PC required to read it). `cal_signature = UNKCAL` until that read. |
 | Connector layout | Identical to 1998/1999 OEM (B-53/B-54/B-55/B-56) — direct plug-in, no harness mod |
 | Cam angle sensor | Compatible with 98/99 cam angle sensor (no harness swap or ECMLink checkbox) |
-| Sibling P/N | MD326328 (equivalent, same ECMLink-supported workaround) |
+| Sibling P/N | MD335287 (the equivalent 97 non-EPROM part; earlier mis-recorded as ours) |
 
 **Why it's here**: the stock [[ecu-prior-md346675]] (a 1998 board) is not ECMLink-flashable due to copy protection. This 1997 board IS, so it was plug-installed in the 98 chassis per the [ECMtuning workaround](https://www.ecmtuning.com/wiki/use_ecmlink_in_98_99_dsm).
 
@@ -47,4 +50,5 @@ The normalized `ecu` table is keyed on the **`(ecu_signature, cal_signature)` pa
 
 - **Reflash** = a new `ecu` row; `cal_signature` gets a `-R2`/`-R3` suffix.
 - **Reading the real CALID** (post ECMLink USB read) is **NOT** a reflash — the tune content never changed, we only learned its name. It is a **same-row UPDATE** of `UNKCAL` → the real CALID, preserving this row's `correction_factor = 0.5` seed and any drive FKs.
+- **Correcting the P/N** (MD335287 → MD326328, 2026-06-01) is likewise **NOT** a reflash — the box and tune never changed, we only learned the correct service number. By the same discriminator it is a **same-row UPDATE** of `ecu_signature`, preserving `correction_factor = 0.5` and all drive FKs. (See `ecu` seed-literal correction note routed to Atlas/Marcus 2026-06-01.)
 - Discriminator: *"did the calibration CONTENT change?"* — yes → new row; no → same-row correction.

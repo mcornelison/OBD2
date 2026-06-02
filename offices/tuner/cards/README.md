@@ -16,7 +16,7 @@ id: <stable-kebab-id>            # filename without .md; e.g. ecu-prior-md346675
 title: <human title>
 topic: ecu | timing-knock | fuel-trim | cooling | boost | fuel-system |
        obd2-capability | safe-ranges | failure-mode | mod-path |
-       empirical-drive | maintenance | methodology
+       empirical-drive | maintenance | methodology | wheels-tires | drivetrain
 summary: <one line — fed into the vehicle.md index>
 ecu: prior | new | both | n/a    # which ECU this fact applies to (prevents cross-ECU contamination)
 mod_state: premod | <future enums as mods land>

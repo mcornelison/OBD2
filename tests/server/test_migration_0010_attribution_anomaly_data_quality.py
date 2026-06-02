@@ -339,9 +339,14 @@ class TestDriveSummaryDdlMirrorsOrm:
         assert 'DROP' not in ddl.upper()
         assert 'RENAME' not in ddl.upper()
 
-    def test_addColumnDdlMatchesOrmType(self) -> None:
-        ormColumn = DriveSummary.__table__.columns['data_quality']
-        assert ormColumn.type.length == 16
+    def test_addColumnDdlUsesFrozenHistoricalWidth(self) -> None:
+        # v0010 historically created drive_summary.data_quality as
+        # VARCHAR(16) and is a SHIPPED, forward-only migration (never
+        # edited).  The ORM later widened to VARCHAR(20) (US-377 / v0012)
+        # so 'attribution_anomaly' (19 chars) fits; v0012 reconciles the
+        # live column.  Current-width ORM parity lives in
+        # test_migration_0012's width-invariant guard; pin v0010's FROZEN
+        # width here so the shipped DDL is never silently rewritten.
         assert 'VARCHAR(16)' in m0010.ADD_DRIVE_SUMMARY_COLUMN_DDL
 
     def test_addColumnDdlMarksNotNull(self) -> None:

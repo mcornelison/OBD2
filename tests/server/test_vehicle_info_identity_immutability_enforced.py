@@ -61,7 +61,7 @@ def test_vehicle_info_identity_immutability_enforced(monkeypatch, caplog):
                 source_device="chi-eclipse-01",
                 vin="4A3AK34T0XE000000",
                 ecu_id=1,  # US-376: ecu_id is NOT NULL (FK not enforced on SQLite)
-                ecu_signature="MD335287-ECMLinkV3",
+                ecu_signature="MD326328-ECMLinkV3",
                 ecu_install_timestamp_utc=datetime(2026, 5, 22, 14, 0, 0),
                 ecu_removal_timestamp_utc=None,
             )
@@ -92,7 +92,7 @@ def test_vehicle_info_identity_immutability_enforced(monkeypatch, caplog):
         with Session(eng) as session:
             rows = session.query(VehicleInfo).all()
             assert len(rows) == 1
-            assert rows[0].ecu_signature == "MD335287-ECMLinkV3"
+            assert rows[0].ecu_signature == "MD326328-ECMLinkV3"
             assert rows[0].ecu_removal_timestamp_utc is None
         eng.dispose()
     finally:

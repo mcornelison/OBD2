@@ -1,0 +1,72 @@
+{
+  "schemaVersion": "2.0.0",
+  "sprint": 45,
+  "version": "V0.28.2",
+  "createdFromPRD": "offices/pm/prds/prd-V0.28.2.md",
+  "stories": [
+    {
+      "id": "US-377",
+      "title": "data_quality column too narrow for 'attribution_anomaly' (VARCHAR(16)<19) -- chain-blocking",
+      "parent": "F-107",
+      "epicId": "E-002",
+      "type": "issue",
+      "size": "S",
+      "status": "passed",
+      "passes": true,
+      "acceptance": [
+        "ORM String(16)->String(20) both columns",
+        "v0012 migration MODIFY both columns to VARCHAR(20), idempotent",
+        "test asserting column width >= max CHECK-permitted value length",
+        "post-deploy recompute 23-25 stamps anomaly on 23+24"
+      ],
+      "validationCriteria": [
+        {
+          "action": "SELECT column_type ... data_quality post-v0012",
+          "outcome": "both varchar(20)"
+        },
+        {
+          "action": "recompute_drive_analytics --drive-id 23/24",
+          "outcome": "attribution_anomaly written, no DataError"
+        },
+        {
+          "action": "recompute_drive_analytics --drive-id 25",
+          "outcome": "full"
+        }
+      ],
+      "conditionalOutcomes": [
+        "if other CHECK-enum columns have the same width mismatch, fold the audit in"
+      ],
+      "goal": "Widen drive_summary + drive_statistics data_quality columns so the tripwire can stamp 'attribution_anomaly' (unblocks US-364).",
+      "tasks": [],
+      "feedback": {
+        "filesActuallyTouched": [
+          "src/server/db/models.py",
+          "src/server/migrations/versions/v0012_us377_data_quality_widen.py",
+          "src/server/migrations/__init__.py",
+          "tests/server/test_migration_0012_data_quality_widen.py",
+          "tests/server/test_migration_0009_drive_statistics_data_quality.py",
+          "tests/server/test_migration_0010_attribution_anomaly_data_quality.py",
+          "tests/server/test_migration_0011_ecu_identity.py"
+        ]
+      },
+      "completionNotes": "SERVER-ONLY. TDD RED->GREEN. (1) ORM: new SSOT constant DATA_QUALITY_COLUMN_LENGTH=20 (models.py); both data_quality columns String(16)->String(DATA_QUALITY_COLUMN_LENGTH) on DriveSummary + DriveStatistic; constant exported in __all__. (2) v0012 migration (FORWARD-ONLY; v0009/v0010 UNTOUCHED): MODIFY both data_quality columns to VARCHAR(20) NOT NULL DEFAULT 'full' (full def re-stated so the widen preserves NOT NULL + DEFAULT). Idempotent via a CHARACTER_MAXIMUM_LENGTH probe per table (width>=20 -> no-op; covers fresh create_all from the VARCHAR(20) ORM + re-run + already-wider); post-condition width re-probe raises SchemaProbeError on the silent-no-op class; table-missing + column-missing + MODIFY-failure all raise MigrationError. Registered _V0012 last in ALL_MIGRATIONS (+ registry docstring history line). (3) Width-INVARIANT guard test asserting every data_quality column >= longest CHECK-permitted value (the regression guard); PLUS a generic audit over EVERY CHECK 'col IN (...)' enum column across all ORM tables (conditionalOutcome: capture_method VARCHAR(32)>=15 confirmed fine -- only the two data_quality cols had the mismatch). Forward-only convention forced updating 3 coupled tests (NOT the shipped migrations): v0009 + v0010 DDL-parity tests now pin their FROZEN historical VARCHAR(16) (current-width ORM parity moved to the v0012 width-invariant guard); v0011 test_v0011RegisteredLast -> test_v0011RegisteredBeforeV0012 (durable sorted-tail form). GATES: pytest tests/server -m 'not slow' GREEN (0 failed); ruff clean on all 7 files. IRL-ONLY DEFERRED to the V0.28.2 deploy drill (validation.bigDefinitionOfDone; no MariaDB/prod on dev): SELECT column_type post-v0012 -> both varchar(20); recompute_drive_analytics --drive-id 23/24 -> attribution_anomaly no DataError; --drive-id 25 -> full; idempotent re-run; releases F-005+F-007 regression_manifest HOLD (closes US-364 + chain-merge pre-condition #4). Changes UNSTAGED (PM owns commits)."
+    }
+  ],
+  "validation": {
+    "bigDefinitionOfDone": [
+      "(SELECT column_type ... data_quality post-v0012) → (both varchar(20))  [from US-377]",
+      "(recompute_drive_analytics --drive-id 23/24) → (attribution_anomaly written, no DataError)  [from US-377]",
+      "(recompute_drive_analytics --drive-id 25) → (full)  [from US-377]"
+    ],
+    "frozenAt": "2026-06-01T22:48:07Z",
+    "bigDoDHash": "e613d2d20dced9944d83669faf7be7f9909fc7e48272c29873ac08e1dbcc09a9",
+    "validationMethod": "V0.28.2 patch (drill-revealed regression per PM Rule 9): widen drive_summary + drive_statistics data_quality VARCHAR(16)->VARCHAR(20) via v0012 so recompute_drive_analytics can stamp attribution_anomaly. On deploy: DESCRIBE shows varchar(20); recompute drives 23+24 -> attribution_anomaly, drive 25 -> full, idempotent re-run; releases F-005 + F-007 regression_manifest HOLD (closes US-364 + chain-merge pre-condition #4).",
+    "validatesFeatures": [
+      "F-005",
+      "F-007"
+    ],
+    "currentVersion": "V0.28.2",
+    "validatedAt": null,
+    "validatedBy": null
+  }
+}

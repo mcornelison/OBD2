@@ -79,7 +79,7 @@ def _seedActiveEcu(session: Session, *, source_id: int = 1,
         source_device=_DEVICE,
         vin=_VIN,
         ecu_id=1,  # US-376: ecu_id is NOT NULL (FK not enforced on SQLite)
-        ecu_signature="MD335287-ecmlink-v3",
+        ecu_signature="MD326328-ecmlink-v3",
         ecu_install_timestamp_utc=_INSTALL,
         ecu_removal_timestamp_utc=removal,
     )

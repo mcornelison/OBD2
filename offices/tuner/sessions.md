@@ -7,6 +7,53 @@
 
 ---
 
+## Session 24 — 2026-06-01
+
+**Context**: Init → CIO-driven knowledge session, no drives. Three things landed: (1) ECU part-number CORRECTION (donor ECU MD335287 → MD326328) — Session-19 mis-ID caught via the manufacturer P/N; (2) full tire identity + DOT-date safety episode from CIO sidewall photos; (3) internet-sourced + self-validated stock F5M33 gear ratios that complete the SPEED-PID calibration inputs. All in service of dialing in the new-ECU 2× SPEED drift.
+
+### What Happened
+
+**ECU-identity P/N correction (donor/current ECU)**:
+- CIO supplied corrected hardware identity: donor ECU = **MD326328 / mfr E2T61683** (1997 ECMLink board, drives ≥25), NOT `MD335287`. Session-19 had recorded MD335287 from a single read-off with no mfr P/N to cross-check; MD326328 was already in our notes as the *sibling* 97 non-EPROM ECMtuning part, and E2T61683 (same class as prior-ECU E2T68273) corroborates. **Same physical box, wrong number recorded → value correction, NOT a reflash, NOT a distinct unit.** `cal_signature` stays `UNKCAL`.
+- Renamed card `ecu-new-md335287` → **`ecu-new-md326328`** (supersede note + E2T61683); propagated across the corpus + wikilinks (`ecu-prior` card, `vehicle.md`, `safe-range-timing-knock`, `knowledge.md`, `CLAUDE.md`, `rag-readiness-assessment.md`) + shared specs (`grounded-knowledge.md`, `obd2-research.md`, `glossary.md`). Left `architecture.md` to Atlas (his §5).
+- Atlas had **independently caught the same correction** and routed the code/spec blast-radius to Marcus — a note was already in my inbox. **Ratified to Atlas (A2AL)** with the writer disposition: it's the P/N twin of my Q5 `UNKCAL→CALID` ruling → **same-row UPDATE of `ecu_signature`**, preserve `correction_factor=0.5` + drive FKs, **not** a new row. **Sent Marcus the SME-signed values + writer disposition** for the Ralph story. (Per shared MEMORY, PM/Atlas folded this into **US-378**; prod `ecu` id=2 already UPDATEd to MD326328 by Atlas; US-378 fixes the seed CODE. My values are signed.)
+
+**Tire identity + DOT-date safety episode** (CIO photos, three images):
+- Extracted: **Bridgestone Potenza (RE0_0 series) 205/55R16 91H**, made in Japan, on aftermarket gunmetal 16" 5-lug (5×114.3) wheels. **STOCK SIZE** (factory GST fitment) → rolling circ ≈ **1.985 m** geometric (~1.96 m loaded), ~811 rev/mi. Created card `wheels-tires-potenza-205-55r16.md`; extended card topic vocab with `wheels-tires`.
+- **Stock size ⇒ the new-ECU 2× SPEED drift is a tune VSS constant, not tires** (a 2× error is a scaling constant anyway, far beyond any tire delta). Recorded; corrected the knowledge.md "likely cause" to rule tires OUT.
+- **DOT `EL 8K DFA 1003` → manufactured week 10 of 2003 (~23 yr old).** Issued a safety advisory (past the 6–10-yr service-life ceiling; age failure = belt/carcass separation, invisible to tread). CIO pushed back (full tread, <10k mi, never salted, garaged) → I refined to a **risk-tiered** disposition (storage genuinely slows oxidation; tread ≠ age integrity). **CIO inspected, found no rot, and elected to RETAIN.** Recorded CIO's decision as authoritative: cleared for the low-speed drive-27 calibration loop; standing Spool reservation logged (once) for sustained-highway/spirited use. Softened the REPLACE flags in card + grounded-knowledge + vehicle.md to the retain decision.
+
+**Gear ratios sourced + self-validated** (CIO: stock unmodified 5-speed):
+- Internet search → **stock F5M33** (2G FWD turbo, driver-side mount): **3.090 / 1.833 / 1.217 / 0.888 / 0.741, final drive 4.153**. Corrected my earlier **W5MG1 error** (that's the AWD Getrag box). Source: Road Race Engineering (factory Shop Manual CD data).
+- **Cross-validated against our own data**: Drive 18 (prior STOCK ECU) RPM 3,937 ÷ (1.217 × 4.153) × 1.985 m = **57.6 mph computed** vs 60 recorded / theoretical-57 → reproduces (ratios + tire circ both confirmed). Drive 26 (new ECU) same math = ~37 mph in 2nd vs 84 PID → **cleanly ~2×**. Gear math independently corroborates the tune-constant conclusion. ~24 mph/1000rpm in 5th.
+- Created card `drivetrain-f5m33-gear-ratios.md` (+ `drivetrain` topic vocab); pinned to `grounded-knowledge.md`. A2AL to Atlas — his GPS data-ask #2 fulfilled, cross-check unblocked.
+
+### Key Decisions
+- **ECU id = MD326328 / E2T61683 signed**; `cal=UNKCAL`; correction is a **same-row UPDATE** (not a reflash/new row) — preserves factor 0.5 + drive FKs. mfr code lives in card/notes, not schema.
+- **Tires RETAINED — CIO call** (inspected no rot; full tread/low-mi/garaged). Risk-tiered: low-speed calibration drive cleared; revisit before highway/spirited. SME reservation recorded, not re-argued.
+- **F5M33 stock ratios are authoritative + cross-validated**; the 2× SPEED drift is now confirmed a tune VSS constant from three independent angles (stock-size tire, validated gear math, prior-ECU factor-1.0 anchor).
+
+### Current Vehicle State
+- Unchanged mechanically — no drives. Current ECU = **MD326328** (corrected P/N; ECMLink, drives ≥25); prior = MD346675 (stock, drives ≤24). Tires = Potenza 205/55R16, March 2003, **retained per CIO**. Transmission = stock **F5M33** 5-speed. Fuel [EXACT: 93 octane]. Engine grade A through Drive 26.
+
+### Open Items
+- **SPEED-PID calibration inputs now COMPLETE** (tire circ + stock ratios + prior-ECU validation). GPS-correlation run (drive-27) is now confirmatory only; expect a clean ~0.5 scalar. No blocker.
+- **US-378** (ECU seed code fix MD335287→MD326328) in PM/Ralph lane — my values signed; prod already corrected by Atlas.
+- Low priority: confirm DOT digits (`1003`); exact tire model suffix (RE050 vs RE050A).
+- Carry-forwards (unchanged): new-ECU baseline establishment; BL-018 battery-runtime tuning; GM 3-bar MAP / wideband (Pin 75 + Pin 92) + E85 pre-wire; RAG card migration remaining per `vehicle.md` manifest.
+- **Uncommitted changeset** — this session's edits (ECU-id correction, 2 new cards + README vocab, tire/drivetrain records, specs propagation, 3 A2AL notes to Atlas + 1 PM note) are uncommitted per no-git closeout; PM/CIO carries forward on `sprint/sprint45-V0.28.2`.
+
+### Safety Advisories
+- **Tire-age advisory issued** (23-yr-old tires, belt-separation risk independent of tread) → resolved to **CIO-retain** with a risk-tiered disposition (low-speed calibration OK post-inspection; highway/spirited = revisit). No engine-side advisories; no datalogs analyzed.
+
+### Post-Closeout Addendum (same session)
+- **Committed the session's work** (CIO directed "commit only the changed files"). Two office-scoped commits via explicit pathspec (race-safe on the shared sprint branch): `ad38669` (tire card + drivetrain card + README vocab + knowledge.md/vehicle.md/grounded-knowledge + 2 Atlas notes + sessions.md), then `8cb73a7` (§13 bootup adoption + PM ack).
+- **Concurrency reality confirmed** during the commit: git showed only *part* of my changeset because the team **integrator had already committed my ECU-correction slice** (`e742ce5`, "Spool-signed" — CLAUDE.md, renamed card, wikilinks, specs, my PM/Atlas ECU notes). Investigated before committing; **nothing lost**. This was the "floating uncommitted edits" failure mode, not a clobber.
+- **Inbox triage**: 1 new note — Marcus relaying CIO ask to adopt **handbook §13 shared-checkout discipline** into bootup. **Adopted**: new "Shared-Checkout Discipline" section in `offices/tuner/CLAUDE.md` under Core Principles (loads every session — commit-immediately office-scoped, PM-only branch switches, retry-on-lock, re-read on "modified since read", explicit-pathspec commits). Acked Marcus (A2AL).
+- **New standing discipline going forward**: commit my own `offices/tuner/**` in small scoped commits as I work; never switch/merge branches (PM integrates).
+
+---
+
 ## Session 23 — 2026-06-01
 
 **Context**: Init + inbox triage surfaced two same-day notes (Marcus + Atlas) both posing the V0.28.1 ECU-identity **Q5** — resolved as SME. Then a CIO ops task: optimized Spool's local Claude Code permissions file to minimize y/n prompts. Committed both deliverables at CIO direction. No drives, no datalog analysis. Closeout surfaced — and recovered — a concurrent-`git restore` loss of the Session 22 entry.

@@ -27,7 +27,7 @@ Per `knowledge/mrspool-vision.md`: MrSpool is a **digital extension of Spool**, 
 ## 3. RAG-readiness gaps (the chunk-hostile patterns)
 
 1. **Stale-as-current risk (HIGHEST).** Archived/superseded facts live inline next to current ones: Drive 11 ARCHIVED (still in baseline section), the corrected "modified EPROM" reads, the 91→93 fuel-grade correction, the run-on changelog header at `knowledge.md:4`. A retriever will serve these as authoritative.
-2. **No per-fact ECU attribution.** A chunk "idle timing 5–7° BTDC" doesn't carry *which ECU*. Post-2026-05-22 there are TWO tune regimes (stock MD346675 ≤24 vs ECMLink MD335287 ≥25). Without an `ecu:` tag, retrieval conflates them — a safety problem.
+2. **No per-fact ECU attribution.** A chunk "idle timing 5–7° BTDC" doesn't carry *which ECU*. Post-2026-05-22 there are TWO tune regimes (stock MD346675 ≤24 vs ECMLink MD326328 ≥25). Without an `ecu:` tag, retrieval conflates them — a safety problem.
 3. **Cross-references break under chunking** ("see ECU Identity", "use Drive 5 as baseline"). Retrieved fragments lose the pointer.
 4. **`[EXACT: …]` sacred values** must survive chunking with guards intact and rank as highest authority.
 5. **Duplication across files** (knowledge.md / sessions.md / `specs/grounded-knowledge.md` / shared MEMORY.md) → conflicting/redundant retrievals. No declared SSOT for a given fact.
@@ -84,7 +84,7 @@ superseded_by: <id>            # optional
 
 - **Phase 0 (done)** — assessment + schema + decision (Option B). ✅
 - **Phase 1 (done, 2026-05-29)** — scaffolding + two vertical slices:
-  - **ECU slice**: `cards/README.md` (schema), `vehicle.md` (index + migration manifest), ECU cards (`ecu-prior-md346675`, `ecu-new-md335287`) as SSOT, `knowledge.md` ECU Identity collapsed to a pointer. ✅
+  - **ECU slice**: `cards/README.md` (schema), `vehicle.md` (index + migration manifest), ECU cards (`ecu-prior-md346675`, `ecu-new-md326328`) as SSOT, `knowledge.md` ECU Identity collapsed to a pointer. ✅
   - **Safe-ranges slice**: 7 `safe-range-*` cards as SSOT (coolant-temp, timing-knock, fuel-trims, afr, boost, battery-voltage, engine-envelope); `knowledge.md` Safe Operating Ranges section collapsed to a pointer. ✅ *(Reconciliation TODO: this-car threshold mentions still inline in the Cooling / Timing sections of knowledge.md — fold to these cards when those sections migrate.)*
 - **Phase 2 (next, the RAG sprint)** — work the `vehicle.md` migration manifest: extract each remaining THIS-car section of `knowledge.md` into a card with front-matter; collapse each migrated section to a pointer; tag `status` (`current`/`superseded`/`archived-historical`) as it goes. De-dup vs sessions / `specs/grounded-knowledge.md` / MEMORY (cards become SSOT; others link).
 - **Phase 3** — generate `vehicle.md` automatically from card front-matter (retire hand-seeding); optionally regenerate a readable bible from cards.
