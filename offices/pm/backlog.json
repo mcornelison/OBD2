@@ -2227,7 +2227,7 @@
       "title": "Correct ECU seed MD335287 -> MD326328 across all code sites (A-13, all-sites-coherent)",
       "type": "issue",
       "size": "S",
-      "status": "groomed",
+      "status": "passed",
       "goal": "Correct the new-ECU signature mis-ID MD335287 -> MD326328 (mfr E2T61683) at every code seed/identity site so fresh rebuilds seed correctly and the v0010->v0011 JOIN converges. Same-row value correction, not a new unit/reflash.",
       "definitionOfDone": [
         "models.py ECU_SEED_PAIRS (MD335287,UNKCAL)->(MD326328,UNKCAL) + seed comment",

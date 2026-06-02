@@ -417,7 +417,7 @@ CREATE_SPEED_PID_CALIBRATION_DDL: str = (
 # re-run / partial-success / create_all-then-migrate all converge.  US-367's
 # authoritative backfill later overwrites these bootstrap seeds.
 #   prior ECU (drives <=24): MD346675, factor 1.0 (Drive 18 3rd-gear math fit).
-#   new ECU  (drives >=25):  MD335287, factor 0.5 (INITIAL ESTIMATE, Drive 26
+#   new ECU  (drives >=25):  MD326328, factor 0.5 (INITIAL ESTIMATE, Drive 26
 #                            rough gear-math; pending Spool Q2 GPS-correlation).
 SEED_PRIOR_ECU_SPEED_PID_CALIBRATION_DDL: str = (
     f'INSERT IGNORE INTO {SPEED_PID_CALIBRATION_TABLE} '
@@ -429,7 +429,7 @@ SEED_PRIOR_ECU_SPEED_PID_CALIBRATION_DDL: str = (
 SEED_NEW_ECU_SPEED_PID_CALIBRATION_DDL: str = (
     f'INSERT IGNORE INTO {SPEED_PID_CALIBRATION_TABLE} '
     '(ecu_signature, correction_factor, capture_method, provenance, notes) '
-    "VALUES ('MD335287', 0.5, 'gear_math', 'rough-seed-drive-26-gear-math', "
+    "VALUES ('MD326328', 0.5, 'gear_math', 'rough-seed-drive-26-gear-math', "
     "'INITIAL ESTIMATE pending Spool Q2 GPS-correlation refinement; new "
     "modified-EPROM ECU SPEED reads ~2x actual (Drive 26 rough gear-math).');"
 )

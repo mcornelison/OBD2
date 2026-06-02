@@ -261,7 +261,7 @@ REPOINT_PRIOR_ECU_PROVENANCE_DDL: str = (
 REPOINT_NEW_ECU_PROVENANCE_DDL: str = (
     f'UPDATE {SPEED_PID_CALIBRATION_TABLE} '
     f"SET provenance = '{SPEED_PID_NEW_ECU_PROVENANCE}' "
-    "WHERE ecu_signature = 'MD335287';"
+    "WHERE ecu_signature = 'MD326328';"
 )
 
 # FAIL-LOUDLY probe: any calibration row the backfill could not resolve.

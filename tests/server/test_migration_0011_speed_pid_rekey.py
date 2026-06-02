@@ -213,7 +213,7 @@ class TestProvenanceRepoint:
 
     def test_newEcuRepointIsNotEmpiricalPrefixed(self) -> None:
         ddl = m0011.REPOINT_NEW_ECU_PROVENANCE_DDL
-        assert "ecu_signature = 'MD335287'" in ddl
+        assert "ecu_signature = 'MD326328'" in ddl
         assert 'gear-math-sanity-check-Drive-26-CIO-corrected' in ddl
         # VC#6: the new-ECU rough seed must NOT be empirical-prefixed (excluded).
         assert not m0011.SPEED_PID_NEW_ECU_PROVENANCE.startswith(

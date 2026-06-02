@@ -327,13 +327,13 @@ ECU_IMMUTABILITY_COMMENT: str = (
 )
 # The three grounded seed identity rows (Spool-signed signatures 2026-06-01):
 #   (MD346675, 6675)          -- prior STOCK factory ECU (drives <=24).
-#   (MD335287, UNKCAL)        -- new modified-EPROM ECU; CALID not yet read.
+#   (MD326328, UNKCAL)        -- new modified-EPROM ECU; CALID not yet read.
 #   (PRE_TRACKING_UNKNOWN, PRE_TRACKING_UNKNOWN) -- legacy pre-tracking sentinel
 #       (its cal == its sig so a legacy vehicle_info row whose cal_signature is
 #        NULL resolves cleanly via COALESCE(cal, sig) at v0011 backfill time).
 ECU_SEED_PAIRS: tuple[tuple[str, str], ...] = (
     ("MD346675", "6675"),
-    ("MD335287", ECU_CAL_SIGNATURE_UNKNOWN),
+    ("MD326328", ECU_CAL_SIGNATURE_UNKNOWN),
     (VEHICLE_INFO_ECU_SIGNATURE_UNKNOWN, VEHICLE_INFO_ECU_SIGNATURE_UNKNOWN),
 )
 # vehicle_info FK column name (SSOT shared with the v0011 migration).

@@ -82,7 +82,7 @@ def _activeVehicle(session: Session) -> VehicleInfo:
         source_device="chi-eclipse-01",
         vin="4A3AK34T0XE000000",
         ecu_id=1,  # US-376: ecu_id is NOT NULL (FK not enforced on SQLite)
-        ecu_signature="MD335287-ecmlink-v3",
+        ecu_signature="MD326328-ecmlink-v3",
         ecu_install_timestamp_utc=_INSTALL,
     )
     session.add(row)

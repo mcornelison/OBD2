@@ -336,7 +336,7 @@ def test_swap_setsEcuIdAndDerivesTextColumnsFromEcuRow(monkeypatch, dbPath):
     rc = _runCli(
         monkeypatch, dbPath,
         [
-            "--signature", "MD335287",
+            "--signature", "MD326328",
             "--cal-signature", "UNKCAL",
             "--as-of", "2026-06-01T12:00:00Z",
         ],
@@ -350,7 +350,7 @@ def test_swap_setsEcuIdAndDerivesTextColumnsFromEcuRow(monkeypatch, dbPath):
             .filter(VehicleInfo.ecu_removal_timestamp_utc.is_(None))
             .one()
         )
-        assert fresh.ecu_signature == "MD335287"
+        assert fresh.ecu_signature == "MD326328"
         # ecu_id is set authoritatively + text columns derive from that ecu row.
         assert fresh.ecu_id is not None
         ecu = session.get(Ecu, fresh.ecu_id)

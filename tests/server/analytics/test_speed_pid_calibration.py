@@ -262,7 +262,7 @@ class TestEmpiricalProvenanceGate:
     def test_prefixGateExcludesRoughSeedRows(self, session: Session) -> None:
         """VC#6: only 'empirical-' provenance rows are returned; rough seeds out."""
         prior = _seedEcu(session, "MD346675", "6675")
-        new = _seedEcu(session, "MD335287", "UNKCAL")
+        new = _seedEcu(session, "MD326328", "UNKCAL")
         gps = _seedEcu(session, "MD999999", "CAL99")
         insert_speed_pid_calibration(
             session,
@@ -293,7 +293,7 @@ class TestEmpiricalProvenanceGate:
             )
 
     def test_prefixGateEmptyWhenNoEmpiricalRows(self, session: Session) -> None:
-        new = _seedEcu(session, "MD335287", "UNKCAL")
+        new = _seedEcu(session, "MD326328", "UNKCAL")
         insert_speed_pid_calibration(
             session,
             ecu_id=new.id,

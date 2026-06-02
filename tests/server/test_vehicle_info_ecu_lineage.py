@@ -148,7 +148,7 @@ class TestEcuColumnsRoundTrip:
             session.add(
                 _vehicle(
                     sourceId=1,
-                    signature="MD335287-ECMLinkV3",
+                    signature="MD326328-ECMLinkV3",
                     cal="pump-93-v1",
                 )
             )
@@ -156,7 +156,7 @@ class TestEcuColumnsRoundTrip:
 
         with Session(engine) as session:
             row = session.query(VehicleInfo).filter_by(source_id=1).one()
-            assert row.ecu_signature == "MD335287-ECMLinkV3"
+            assert row.ecu_signature == "MD326328-ECMLinkV3"
             assert row.cal_signature == "pump-93-v1"
             assert row.ecu_install_timestamp_utc == _INSTALL
             assert row.ecu_removal_timestamp_utc is None
