@@ -1092,7 +1092,9 @@ Sprint 43.)
 
 **1. `drive_summary.data_quality` — attribution-anomaly tripwire (US-363,
 F-107).** `drive_summary` had **no** `data_quality` column; v0010 **ADDs**
-`data_quality VARCHAR(16) NOT NULL DEFAULT 'full'` + CHECK
+`data_quality VARCHAR(16) NOT NULL DEFAULT 'full'` [**widened to VARCHAR(20) in
+v0012 / US-377, V0.28.2** — the CHECK value `'attribution_anomaly'` is 19 chars;
+see the V0.28.2 note below] + CHECK
 `ck_drive_summary_data_quality (data_quality IN ('full','attribution_anomaly'))`
 + index. The enum is only `{full, attribution_anomaly}` — a summary has no
 sample-count notion, so `sparse`/`below_threshold` (which `drive_statistics`
@@ -1270,6 +1272,36 @@ first V0.28-chain hardware deploy (deployed architecture intent, not yet
 production-validated state); per CIO 2026-06-01 the formal PASS gates
 `/sprint-validated`, not the deploy itself. Closes Watch List A-12 (the US-370
 option-(c) code is now re-keyed forward to the SSOT `ecu_id` FK).*
+
+### V0.28.2 — `data_quality` column-width hotfix (Sprint 45, US-377)
+
+The V0.28.1 IRL drill (2026-06-01) exposed a **width-vs-CHECK** defect on the
+attribution-anomaly tripwire: both `drive_summary.data_quality` and
+`drive_statistics.data_quality` were `VARCHAR(16)`, but their CHECK constraints
+permit `'attribution_anomaly'` (**19 chars**). `recompute_drive_analytics` on
+the dual-attribution drives 23+24 hit MariaDB `DataError 1406 ("Data too
+long")`; SQLite (no VARCHAR-length enforcement) silently accepted it, so every
+unit test passed — the **same SQLite-vs-MariaDB false-pass class** as the v0009
+column gap (I-041), now extended to column *width*. No data corruption (failed
+UPDATEs rolled back transactionally).
+
+**Fix (forward-only `v0012`):** MODIFY both columns to **`VARCHAR(20)`**,
+re-stating the full definition (`NOT NULL DEFAULT 'full'` — a bare `MODIFY …
+VARCHAR(20)` would silently drop both). Idempotent via a
+`CHARACTER_MAXIMUM_LENGTH` probe (widen only when narrower; fresh `create_all`
+from the VARCHAR(20) ORM + re-runs are no-ops) with a post-condition width
+re-probe (the v0002/v0009/v0010 silent-no-op guard). The width is now SSOT in
+`models.DATA_QUALITY_COLUMN_LENGTH = 20`, read by both ORM columns and the
+migration DDL; a **width-invariant test** scans ORM metadata and asserts every
+CHECK-enum column is at least as wide as its longest permitted literal, so this
+class cannot regress on any enum column.
+
+*Gate-ratification note: this V0.28.2 subsection added per PM Rule 10 (Marcus /
+PM, 2026-06-01) — corrects the V0.28.0 point-1 width and documents the v0012
+widen. Server suite `pytest tests/server -m "not slow"` = 1081 passed / 12
+skipped / 0 failed; ruff clean. **Atlas Rule 10 PASS: PENDING** — rides
+`/sprint-validated` per the CIO 2026-06-01 deploy directive (same precedent as
+the V0.28.1 subsection).*
 
 ---
 

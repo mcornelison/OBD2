@@ -117,8 +117,14 @@ def _creates(runner: FakeRunner) -> list[str]:
 
 
 class TestRegistration:
-    def test_v0011RegisteredLast(self) -> None:
-        assert ALL_MIGRATIONS[-1] is m0011.MIGRATION
+    def test_v0011RegisteredBeforeV0012(self) -> None:
+        # v0012 (US-377 data_quality widen) was appended after v0011; the
+        # durable invariant is that the registry stays sorted ascending and
+        # v0011 sits immediately before v0012 (the tail is asserted by the
+        # v0012 migration test).
+        versions = [m.version for m in ALL_MIGRATIONS]
+        assert versions == sorted(versions)
+        assert versions[versions.index('0011') + 1] == '0012'
 
     def test_versionIs0011(self) -> None:
         assert m0011.VERSION == '0011'

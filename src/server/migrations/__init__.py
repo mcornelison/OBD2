@@ -41,6 +41,10 @@
 #               |              | v0011 (normalized ecu identity dimension +
 #               |              | vehicle_info.ecu_id FK).  Forward-only; v0010
 #               |              | untouched.
+# 2026-06-01    | Rex (US-377) | Sprint 45 V0.28.2 hotfix -- registered v0012
+#               |              | (drive_summary + drive_statistics data_quality
+#               |              | VARCHAR(16)->VARCHAR(20); drill-revealed
+#               |              | DataError 1406 on 'attribution_anomaly').
 # ================================================================================
 ################################################################################
 
@@ -103,6 +107,9 @@ from src.server.migrations.versions.v0010_us363_attribution_anomaly_data_quality
 from src.server.migrations.versions.v0011_us376_ecu_identity import (
     MIGRATION as _V0011,
 )
+from src.server.migrations.versions.v0012_us377_data_quality_widen import (
+    MIGRATION as _V0012,
+)
 
 # ================================================================================
 # Registry -- append new migrations to the end, in ascending version order
@@ -120,6 +127,7 @@ ALL_MIGRATIONS: tuple[Migration, ...] = (
     _V0009,
     _V0010,
     _V0011,
+    _V0012,
 )
 
 

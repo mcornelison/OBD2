@@ -832,6 +832,17 @@ class Device(Base):
 DATA_QUALITY_ATTRIBUTION_ANOMALY: str = "attribution_anomaly"
 
 
+# US-377 / F-107: shared VARCHAR width for the data_quality columns on both
+# drive_summary and drive_statistics.  Must stay >= the longest CHECK-permitted
+# value ('attribution_anomaly', 19 chars).  The original VARCHAR(16) was too
+# narrow: the V0.28.1 IRL drill hit MariaDB DataError 1406 ("Data too long")
+# recomputing the dual-attribution drives 23+24 because SQLite never enforces
+# VARCHAR width so the fresh-DB tests passed while production failed.  20 gives
+# one char of headroom; the width-invariant guard
+# (test_migration_0012_data_quality_widen) enforces "width >= longest value".
+DATA_QUALITY_COLUMN_LENGTH: int = 20
+
+
 # drive_summary.data_quality enum: the server compute path writes only 'full'
 # (clean) or 'attribution_anomaly' (overlap detected).  drive_summary carries
 # no sample-count notion, so the sparse / below_threshold buckets that apply to
@@ -988,7 +999,7 @@ class DriveSummary(Base):
     # the payload-only sync upsert (sync.py, server-only columns untouched)
     # leaves an analytics-written value intact across re-syncs.
     data_quality: Mapped[str] = mapped_column(
-        String(16),
+        String(DATA_QUALITY_COLUMN_LENGTH),
         nullable=False,
         server_default=DRIVE_SUMMARY_DATA_QUALITY_DEFAULT,
     )
@@ -1049,7 +1060,7 @@ class DriveStatistic(Base):
     outlier_max: Mapped[float | None] = mapped_column(Float)
     sample_count: Mapped[int] = mapped_column(Integer, nullable=False)
     data_quality: Mapped[str] = mapped_column(
-        String(16),
+        String(DATA_QUALITY_COLUMN_LENGTH),
         nullable=False,
         server_default=DRIVE_STATISTICS_DATA_QUALITY_DEFAULT,
     )
@@ -1291,6 +1302,7 @@ __all__ = [
     "DriveStatistic",
     "DRIVE_STATISTICS_DATA_QUALITY_VALUES",
     "DRIVE_STATISTICS_DATA_QUALITY_DEFAULT",
+    "DATA_QUALITY_COLUMN_LENGTH",
     "TrendSnapshot",
     "AnomalyLog",
     "Baseline",

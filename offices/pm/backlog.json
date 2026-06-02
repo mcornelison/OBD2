@@ -2185,7 +2185,7 @@
       "title": "data_quality column too narrow for 'attribution_anomaly' (VARCHAR(16)<19) -- chain-blocking",
       "type": "issue",
       "size": "S",
-      "status": "groomed",
+      "status": "passed",
       "goal": "Widen drive_summary + drive_statistics data_quality columns so the tripwire can stamp 'attribution_anomaly' (unblocks US-364).",
       "definitionOfDone": [
         "ORM String(16)->String(20) both columns",
