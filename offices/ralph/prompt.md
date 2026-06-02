@@ -52,7 +52,7 @@ Full text + sizing caps + reviewer discipline: `offices/ralph/knowledge/sprint-c
 3. Read `scope.filesToRead` from the story (and only those).
 4. **TDD**: write failing test → minimal code to pass → refactor → run all tests.
 5. Run quality gates: `pytest tests/` and `make lint`.
-6. If green, leave changes unstaged in working tree (PM owns commits — see PM Protocol).
+6. If green, **commit your work to the current sprint branch** (`git add` your changed files + `git commit`, conventional format `feat: [US-XXX] …`). This preserves your work per handbook §13 (uncommitted work is lost on a branch switch). **Do NOT `git push`, `checkout`, `switch`, `merge`, or `branch`** — PM owns push/integration/deploy (see PM Protocol).
 7. Update `sprint.json`: set `passes: true`, populate `feedback.filesActuallyTouched`, add `completionNotes`.
 8. Update `ralph_agents.json`: set your `status` to `unassigned`, `taskid` to `""`, refresh `note` with a short close summary.
 9. Append a session entry to `progress.txt` (format below).
@@ -164,7 +164,7 @@ If you're uncertain whether you're in single-agent or multi-agent mode, check `r
 
 ## PM Communication Protocol
 
-Per CIO directive: Ralph does NOT run git commands. PM (Marcus) owns staging, commits, branching, merges. Leave changes unstaged.
+Per CIO directive (updated 2026-06-01): Ralph **commits his own work to the current sprint branch** (small, conventional-format commits) so it is never lost to a branch switch (handbook §13 shared-checkout discipline). Ralph does **NOT** `git push`, `checkout`/`switch`, `merge`, `branch`, `rebase`, or `reset` — **PM (Marcus) owns push, branching, merges, integration, and deploy.** `ralph.sh` enforces this: its allow-list permits `git add`/`commit`/`status`/`diff`/`log`/`show`/`rev-parse` only; push/checkout/merge/branch are not auto-approved.
 
 | Folder | Use When |
 |--------|----------|
@@ -207,6 +207,6 @@ Index of Ralph's knowledge files: `offices/ralph/knowledge/README.md`.
 
 - **ONE story per iteration, then EXIT.** Mandatory.
 - **ALWAYS** print Sprint Status Summary before exiting.
-- Use conventional commit format in PR descriptions / messages: `feat: [US-XXX] Description` (PM stages and commits).
+- Use conventional commit format for your commits: `feat: [US-XXX] Description` (Ralph commits to the sprint branch; PM pushes + integrates).
 - Keep tests passing.
 - When uncertain, ask via `offices/pm/blockers/` or `offices/pm/inbox/` — never guess.
