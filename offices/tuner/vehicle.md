@@ -13,7 +13,7 @@
 | Card | ECU | Status | Summary |
 |------|-----|--------|---------|
 | [[ecu-prior-md346675]] | prior | current | 1998 factory FWD-turbo ECU; 100% stock, never flashed; flash-hardware but not ECMLink-flashable; drives ≤24 = stock baselines. |
-| [[ecu-new-md335287]] | new | current | 1997 ECMLink-V3 board, installed 2026-05-22; running prior-tuner ECMLink tune; Mode 09/22 silent; SPEED reads ~2× actual. |
+| [[ecu-new-md326328]] | new | current | 1997 ECMLink-V3 board (mfr E2T61683), installed 2026-05-22; running prior-tuner ECMLink tune; Mode 09/22 silent; SPEED reads ~2× actual. |
 | [[safe-range-coolant-temp]] | both | current | Normal 185–205°F; danger >220°F. Two-tier alert 210/220°F. Head-gasket risk. |
 | [[safe-range-timing-knock]] | both | current | Timing danger <5°/negative; knock count >5/pull danger (ECMLink-only). 4500–5000 RPM knock window. |
 | [[safe-range-fuel-trims]] | both | current | STFT danger >±15%, LTFT >±10%; O2 oscillates 0.1–0.9V @1–3Hz. This-car LTFT ~−6.25% normal. |
@@ -26,7 +26,7 @@
 
 The full set to extract from `knowledge.md` during the MrSpool RAG sprint. Each becomes one atomic card with front-matter. **ECU group seeded ✅; rest PLANNED.**
 
-**ECU** — `ecu-prior-md346675` ✅ · `ecu-new-md335287` ✅ · `ecu-swap-2026-05-22` (event + install/removal timestamps + reason)
+**ECU** — `ecu-prior-md346675` ✅ · `ecu-new-md326328` ✅ · `ecu-swap-2026-05-22` (event + install/removal timestamps + reason)
 
 **Vehicle identity & mods** — `vehicle-identity` (VIN, 76k mi, 7-bolt, manual) · `mods-installed` · `parts-in-hand` · `parts-to-order` · `summer-2026-install-plan` · `illinois-emissions`
 

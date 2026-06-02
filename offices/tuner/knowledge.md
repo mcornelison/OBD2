@@ -91,7 +91,7 @@ When writing tuning specs with exact values (thresholds, limits, vehicle-specifi
 | **Engine** | 4G63 DOHC Turbo |
 | **Displacement** | 1,997 cc (2.0L) |
 | **Transmission** | Manual (assumed) |
-| **ECU** | 1997 DSM ECU (P/N **MD335287**), non-EPROM with ECMLink V3 flash modification — see [ECU Identity](#ecu-identity) below |
+| **ECU** | 1997 DSM ECU (P/N **MD326328**, mfr E2T61683), non-EPROM with ECMLink V3 flash modification — see [ECU Identity](#ecu-identity) below |
 | **OBD-II Protocol** | ISO 9141-2 (K-Line) |
 | **Generation** | 2G DSM (1995-1999) |
 | **Odometer** | ~76,000 miles (as of 2026) |
@@ -103,9 +103,9 @@ When writing tuning specs with exact values (thresholds, limits, vehicle-specifi
 > **MIGRATED TO ATOMIC CARDS (SSOT) — 2026-05-29.** Authoritative ECU facts now live as one-fact-per-card under `cards/`, indexed by [`vehicle.md`](vehicle.md). This section was collapsed to a pointer to keep a single version of the truth (no parallel copies).
 >
 > - **Prior ECU** (stock, drives ≤24): [`cards/ecu-prior-md346675.md`](cards/ecu-prior-md346675.md)
-> - **New ECU** (ECMLink, drives ≥25): [`cards/ecu-new-md335287.md`](cards/ecu-new-md335287.md)
+> - **New ECU** (ECMLink, drives ≥25): [`cards/ecu-new-md326328.md`](cards/ecu-new-md326328.md)
 >
-> Nav summary: stock **MD346675** (1998 factory, never flashed) on drives ≤24 → swapped 2026-05-22 to ECMLink-flashable **MD335287** (1997 board) on drives ≥25 per the [ECMtuning workaround](https://www.ecmtuning.com/wiki/use_ecmlink_in_98_99_dsm). Full detail + capability boundaries in the cards.
+> Nav summary: stock **MD346675** (1998 factory, never flashed) on drives ≤24 → swapped 2026-05-22 to ECMLink-flashable **MD326328** (1997 board, mfr E2T61683) on drives ≥25 per the [ECMtuning workaround](https://www.ecmtuning.com/wiki/use_ecmlink_in_98_99_dsm). Full detail + capability boundaries in the cards. (Earlier sessions mis-recorded this box as MD335287; corrected 2026-06-01 from the case label + mfr P/N.)
 
 ### Current Modifications (Installed)
 | Mod | Tuning Impact |
@@ -356,7 +356,7 @@ The OBDLink LX dongle is **not** the bottleneck for getting ECU-internal tuning 
 
 ### 2026-05-22 — Capability Probe Result (Post-Modified-EPROM Swap)
 
-CIO swapped from the stock ECU (MD346675) to the ECMLink-flash-modified ECU (MD335287). Probe run via `probe_obd_capabilities.sh` at 18:51:43Z during warm idle on Drive 25.
+CIO swapped from the stock ECU (MD346675) to the ECMLink-flash-modified ECU (MD326328, mfr E2T61683). Probe run via `probe_obd_capabilities.sh` at 18:51:43Z during warm idle on Drive 25.
 
 **Mode 01 (standard PIDs)**: 16 supported — **same set as pre-swap**. Same 3 historical unsupported (0x0A Fuel Pressure, 0x0B Intake Manifold Pressure, 0x42 Control Module Voltage). **Modified EPROM did NOT expand the standard OBD-II PID surface.**
 
@@ -650,7 +650,7 @@ Use these as the project's reference for "what healthy knock-retard behavior loo
 
 ### Drive 26 — 2026-05-22 — NEW-ECU FIRST KNOCK-RETARD OBSERVATION (18 min, post-swap spin around block, drive_id=26)
 
-**Context**: CIO swapped to a different ECU — the ECMLink-flash-modified MD335287 — mid-afternoon today (2026-05-22, Session 19). Drive 26 = first city-driving telemetry on new ECU after ~16-min warm idle (drive 25). Fuel [EXACT: 93 octane — DO NOT CHANGE]. Coolant fully up at start, IAT heat-soaked (32-55 °C). Engine grade A (no DTC, no MIL, no harm), BUT surfaced a clear knock-retard event during a city-road tip-in.
+**Context**: CIO swapped to a different ECU — the ECMLink-flash-modified MD326328 (mfr E2T61683; recorded as MD335287 until the 2026-06-01 P/N correction) — mid-afternoon today (2026-05-22, Session 19). Drive 26 = first city-driving telemetry on new ECU after ~16-min warm idle (drive 25). Fuel [EXACT: 93 octane — DO NOT CHANGE]. Coolant fully up at start, IAT heat-soaked (32-55 °C). Engine grade A (no DTC, no MIL, no harm), BUT surfaced a clear knock-retard event during a city-road tip-in.
 
 **The event — 19:05:54 UTC** (reconstructed from same-second multi-PID alignment):
 
@@ -1149,7 +1149,7 @@ All use Bosch LSU 4.9 sensor. Mount bung in downpipe, 18-24" after turbo. Do NOT
 
 ### Pre-Wire Plan for Wideband O2 (ECU-Side)
 
-**Context**: CIO is doing a future-proof pre-wire of wideband leads while the new MD335287 ECU is accessible (2026-05-27 advisory). Goal: pull leads now, cap them, install AEM 30-0300 X-Series UEGO controller later without re-opening the ECU.
+**Context**: CIO is doing a future-proof pre-wire of wideband leads while the new MD326328 ECU is accessible (2026-05-27 advisory). Goal: pull leads now, cap them, install AEM 30-0300 X-Series UEGO controller later without re-opening the ECU.
 
 **Authoritative source for pin numbers**: [ECMtuning 2G ECU Pinout PDF](https://www.ecmtuning.com/images/forums/2GECUPinout.pdf) — viewed looking INTO the ECU with male pins pointing out. **Confirm connector orientation before cutting** (looking at the harness side mirrors the pin numbers).
 

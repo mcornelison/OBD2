@@ -55,9 +55,9 @@ Authoritative, fact-based sources for the Eclipse OBD-II Performance Monitoring 
 | OBD-II Protocol | ISO 9141-2 (K-Line, 10,400 bps) | OBD-II spec + DSMTuners |
 | Max polling rate | ~4-5 PIDs/sec via Bluetooth | Research (specs/obd2-research.md) |
 | Core PIDs (Phase 1) | STFT (0x06), Coolant (0x05), RPM (0x0C), Timing (0x0E), Load (0x04) | Research + CIO approval |
-| Current ECU | **MD335287** — 1997 2G DSM ECU, ECMLink V3 flash-modifiable, plug-installed in 98 chassis 2026-05-22 (drives ≥25). Running prior-tuner ECMLink tune; Mode 09 + Mode 22 silent over OBD. | CIO + Spool knowledge.md (ECU Identity) |
+| Current ECU | **MD326328** (mfr **E2T61683**) — 1997 2G DSM ECU, ECMLink V3 flash-modifiable, plug-installed in 98 chassis 2026-05-22 (drives ≥25). Running prior-tuner ECMLink tune; Mode 09 + Mode 22 silent over OBD. Earlier mis-recorded as MD335287; corrected 2026-06-01 from case label + mfr P/N (same physical box). | CIO + Spool knowledge.md (ECU Identity) |
 | Prior ECU | **MD346675** — 1998 factory FWD-turbo ECU (ROM 6675, mfr E2T68273), drives ≤24. **100% STOCK factory tune, never flashed (CIO-confirmed 2026-05-29).** Flash-hardware but NOT ECMLink-flashable (copy-protected) — which is why it was swapped. Photo-identified 2026-05-29. | CIO photos + CIO confirmation + DSM sourcing |
-| ECMLink V3 | Flash modification PRESENT on current ECU (MD335287). USB+PC cable required for deep tuning data (knock/AFR/per-cyl) — not reachable via the OBD pipe. Active ECMLink logging = next-phase goal. | CIO + Spool |
+| ECMLink V3 | Flash modification PRESENT on current ECU (MD326328). USB+PC cable required for deep tuning data (knock/AFR/per-cyl) — not reachable via the OBD pipe. Active ECMLink logging = next-phase goal. | CIO + Spool |
 | OBD Dongle | OBDLink LX BT, MAC `00:04:3E:85:0D:FB`, FW 5.6.19 | CIO hardware |
 | Installed bolt-on mods | Cold air intake, BOV, fuel pressure regulator, fuel lines, oil catch can, coilovers, engine/trans mounts | CIO (Eclipse 1998 Projects spreadsheet) |
 

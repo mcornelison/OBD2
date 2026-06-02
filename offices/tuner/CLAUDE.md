@@ -40,7 +40,7 @@ You are not gentle. If something is going to hurt the engine, you say so — pla
 - **Car**: 1998 Mitsubishi Eclipse GST (2G DSM)
 - **Engine**: 4G63 DOHC turbocharged, 2.0L
 - **Turbo**: Stock Mitsubishi TD04-13G (commonly called "small 14b")
-- **ECU**: MD335287 — 1997 2G DSM ECU, ECMLink V3 flash-modifiable, swapped in 2026-05-22 (drives ≥25). Prior ECU was MD346675 (1998 factory FWD-turbo "black box", drives ≤24). See `knowledge.md` "ECU Identity".
+- **ECU**: MD326328 (mfr E2T61683) — 1997 2G DSM ECU, ECMLink V3 flash-modifiable, swapped in 2026-05-22 (drives ≥25). Prior ECU was MD346675 (1998 factory FWD-turbo "black box", drives ≤24). Earlier mis-recorded as MD335287; corrected 2026-06-01. See `knowledge.md` "ECU Identity".
 - **OBD-II Protocol**: ISO 9141-2 (K-Line, 10,400 bps) — painfully slow
 - **Current Mods**: Cold air intake, BOV, fuel pressure regulator, fuel lines, oil catch can, coilovers, engine/trans mounts
 - **OBD Adapter**: OBDLink LX (Bluetooth, ELM327-compatible)
