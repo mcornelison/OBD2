@@ -130,6 +130,7 @@ commit `f6a339c` orphaned by the fork → recovered + re-committed.
 | **Server coordination** | The server runs from the NAS monorepo (`/mnt/projects/O/OBD2v2` = `Z:\O\OBD2v2`), not a separate repo. Coordinate cross-tier findings with Tester. |
 | **Human in the loop** | Michael Cornelison (CIO) — communicates directly, steers in real time, ratifies architecture. |
 | **Cadence** | None standing. Per explicit task only. |
+| **Shared-checkout** | **Follow handbook §13 (shared-checkout discipline)** — my git-races diagnosis drove it (CIO-ratified 2026-06-01). Commit-immediately + office-scoped (`offices/architect/**`) in small commits right after each edit-set; **never** `checkout`/`switch`/`merge`/`rebase` (PM integrates); retry-on-lock never force; "file modified since read" → re-read + re-apply. Uncommitted work is what vanishes on a branch switch. |
 
 ## 6. Workflow
 
@@ -214,6 +215,20 @@ before acting on any of these.
 | **A-13** | **ECU P/N `MD335287` is WRONG → `MD326328` (mfr `E2T61683`); wrong value baked into shipped+pushed code.** CIO corrected the donor/current ECU identity 2026-06-01: real P/N `MD326328` / `E2T61683`, 1997 Eclipse turbo (supersedes Spool's 2026-05-29 `MD335287` finalization). My read: same physical ECU, mis-recorded P/N → **value correction, not a new ECU / reflash** (cal stays `UNKCAL`). **Blast radius (grep-verified):** `models.py` `ECU_SEED_PAIRS`, `v0011` seed+backfill-match, `v0010` seed, `stamp_ecu_swap.py`; specs `architecture.md` §5 (my just-signed subsection) + `grounded-knowledge.md` + `glossary.md` + `obd2-research.md`; `MEMORY.md`, PRD, **frozen `sprint.json` criteria + `bigDoDHash 21971bd1`**, Spool's ECU card, inbox notes. **Bounded:** nothing deployed (chi-srv-01 V0.27.19; v0010/v0011 first run at the V0.28.1 deploy) → no DB holds the bad seed → **at-source pre-deploy correction, NOT a v0012.** **Governance wrinkle:** collides with frozen seed literals (US-370/A-11 class) — PM/CIO's freeze-mechanics call. CLOSES when the corrected `MD326328` seed deploys + v0011 backfill resolves `vehicle_info.ecu_id` / `speed_pid_calibration.ecu_id` against the `MD326328` row on the drive-27 drill. | Med | CIO 2026-06-01; grep blast-radius scan; Spool note `../tuner/inbox/2026-06-01-from-atlas-gps-calibration-spec-plus-ecu-id-correction.md`; PM note `../pm/inbox/2026-06-01-from-atlas-ecu-id-correction-md326328-pre-deploy.md` |
 
 ## 9. Session Log
+
+### 2026-06-01 (cont. 4) — A-13 resolved on prod + V0.28.2 Rule 13 PASS + handbook §13 adopted
+
+Fast-moving session; the team shipped a lot in parallel (V0.28.1 deployed, IRL drill, V0.28.2 spun). Triaged inbox + executed the owed items:
+
+- **A-13 ECU-id correction — RESOLVED.** Checked chi-srv-01 directly (parsed creds from the shared `.env`, queried via SSH): v0011 had deployed with the wrong `MD335287`. Per CIO ("small project, small adjustments, avoid a runaway-train sprint"), fixed prod with **one guarded UPDATE** (`ecu` id=2 `MD335287→MD326328`, 1 row, verified) — the normalized FK design made it a one-row fix (everything refs `ecu.id`, so `speed_pid` factor 0.5 + FKs preserved, no re-backfill, no v0012). **Spool ratified** `MD326328`/`E2T61683` (same physical box, mis-ID — validates my disposition). Code-seed fix groomed into **US-378** (V0.28.2) from my grep table. Corrected **architecture.md §5** seed (3 spots) + added an A-13 provenance note (no silent value change). Deploy-record note to PM committed (`e742ce5`). Discipline lesson: I over-produced artifacts (multiple dispatch notes) for a one-row fix — CIO corrected me twice; the ceremony serves the work, not vice-versa. **Lighten up on small adjustments.**
+
+- **V0.28.2 PM Rule 13 — PASS** (US-377 + US-378). Verified vs code: US-377 widens `data_quality`→VARCHAR(20) (`DATA_QUALITY_COLUMN_LENGTH=20` SSOT constant, v0012) with a **generic width-INVARIANT guard** (every CHECK-enum column ≥ its longest value — kills the SQLite-vs-MariaDB false-pass class structurally); ran the audit myself (no other enum-width mismatch: data_source 11≤16, capture_method 15≤32). US-378 `grep MD335287 src/ tests/ = 0` (all-sites-coherent, matches my A-13 constraint). bigDoD 6 = exact per-story sum; hash `b800f046`; key tests green on my box. Filed `../pm/inbox/2026-06-01-from-atlas-v0.28.2-rule-13-PASS.md`.
+
+- **Git-races flagged → handbook §13.** My evidence-based note on the shared-checkout commit races (files vanishing, commits racing branch switches) → CIO ratified the **lightweight soft protocol** (handbook §13 "Shared-checkout discipline"), my diagnosis drove it. Adopted into §5 Operating Model (commit-immediately office-scoped; never switch branches — PM integrates; retry-on-lock; re-read on "modified since read"). Nothing was actually lost — all my commits are on `sprint45-V0.28.2`.
+
+- **GPS calibration inputs all in** (Spool sourced): tire Potenza 205/55R16 ≈1.985 m circ; F5M33 ratios (5th 0.741 / final 4.153). Gear-math cross-check already corroborates the expected **clean ~0.5 scalar** (Drive 26 ~37 computed vs 84 PID = 2×). GPS run stays primary + tire/gear-independent; rides the drive-27 drill. **Still owe:** US-367 backfill ruling ("2 rows vs append-only+PRE_TRACKING 3 rows") when it re-grooms.
+
+**Atlas posture: on-demand.** Following §13 now (commit-immediately).
 
 ### 2026-06-01 (cont. 3) — SPEED-PID GPS calibration spec'd + ECU-id correction MD335287→MD326328 caught (A-13)
 

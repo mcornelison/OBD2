@@ -1138,7 +1138,7 @@ visible in `SHOW CREATE TABLE`); the `notes` column is the sanctioned
 / AC#3): pre-tracking rows get the honest `PRE_TRACKING_UNKNOWN` sentinel +
 a zero-length window (`install == removal == created_at`), so they are never
 "currently active"; US-367's authoritative backfill overwrites these
-placeholders with the real signatures (`MD346675` prior / `MD335287` new,
+placeholders with the real signatures (`MD346675` prior / `MD326328` new,
 Spool-signed 2026-05-29).
 
 **4. `dtc_freeze_frame` capture table (US-368, F-109).** New synced-capture
@@ -1197,7 +1197,7 @@ columns: the install/removal window stays on `vehicle_info`. A reflash is its
 **own identity row** (a new pair + `-R2`/`-R3` cal), never an edit of an
 existing row (Spool Q5, 2026-06-01 — SPEED correction is per-tune-state).
 v0011 seeds 3 grounded rows: `(MD346675, 6675)` (prior 1998 factory FWD-turbo
-flash ECU, drives ≤24), `(MD335287, UNKCAL)` (1997 board + ECMLink V3 flash,
+flash ECU, drives ≤24), `(MD326328, UNKCAL)` (1997 board + ECMLink V3 flash,
 drives ≥25), and `(PRE_TRACKING_UNKNOWN, PRE_TRACKING_UNKNOWN)` (the
 pre-tracking sentinel, whose cal equals its signature).
 
@@ -1240,7 +1240,7 @@ per ECU identity**, so a reflash (its own `ecu` row) gets its own calibration
 row. The migration ADDs `ecu_id` nullable, backfills by JOINing each row's
 `ecu_signature` to its `ecu` row, **re-points the 2 seed provenance strings**
 (`MD346675 → empirical-Drive-18-gear-math-fit`,
-`MD335287 → gear-math-sanity-check-Drive-26-CIO-corrected`; correction factors
+`MD326328 → gear-math-sanity-check-Drive-26-CIO-corrected`; correction factors
 1.0 / 0.5 unchanged), FAILs LOUDLY on any unmatched row, MODIFY NOT NULL, ADD
 UNIQUE + FK, then **DROPs** the old `uq_speed_pid_calibration_ecu_signature`
 index (before the column — MariaDB requires the unique index gone first) and
@@ -1272,6 +1272,13 @@ first V0.28-chain hardware deploy (deployed architecture intent, not yet
 production-validated state); per CIO 2026-06-01 the formal PASS gates
 `/sprint-validated`, not the deploy itself. Closes Watch List A-12 (the US-370
 option-(c) code is now re-keyed forward to the SSOT `ecu_id` FK).*
+
+*Seed correction (A-13, 2026-06-01): the new-ECU P/N was mis-recorded as
+`MD335287`; the real value is **`MD326328`** (mfr `E2T61683`), Spool-signed
+2026-06-01. Same physical ECU, mis-ID — a same-row value correction (cal stays
+`UNKCAL`, `correction_factor` 0.5 + all FKs preserved), not a new identity/reflash.
+Prod `ecu` id=2 corrected by direct UPDATE; the code seed sites corrected
+all-coherently in US-378 (V0.28.2). The seed literals above now read `MD326328`.*
 
 ### V0.28.2 — `data_quality` column-width hotfix (Sprint 45, US-377)
 
