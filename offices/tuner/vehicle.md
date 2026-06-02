@@ -21,6 +21,8 @@
 | [[safe-range-boost]] | both | current | Stock TD04 boost 10–12 normal, >15 danger; injector duty >85% danger. Boost not OBD-readable (0x0B). |
 | [[safe-range-battery-voltage]] | both | current | Running 13.5–14.5V normal; <12.0/>15.0V danger. Read via ELM ATRV, not a PID. |
 | [[safe-range-engine-envelope]] | both | current | Redline 7000 RPM; load >90% danger; IAT >60°C heat-soak; MAF saturates ~150 g/s. |
+| [[wheels-tires-potenza-205-55r16]] | both | current | Bridgestone Potenza 205/55R16 91H on aftermarket 16" 5-lug wheels; STOCK size → rolling circ ≈1.985 m, ~811 rev/mi; confirms new-ECU 2× SPEED drift is a tune VSS constant, not tires. Aged (made March 2003, DOT 1003, ~23 yr) but full tread + garaged + CIO-inspected no rot → CIO retaining; cleared for low-speed calibration drive. |
+| [[drivetrain-f5m33-gear-ratios]] | both | current | Stock F5M33 5-speed (2G FWD turbo): 3.090/1.833/1.217/0.888/0.741, final 4.153. Cross-validated vs prior-ECU Drive 18. ~24 mph/1000rpm in 5th. |
 
 ## Planned cards (migration manifest)
 
@@ -28,7 +30,7 @@ The full set to extract from `knowledge.md` during the MrSpool RAG sprint. Each 
 
 **ECU** — `ecu-prior-md346675` ✅ · `ecu-new-md326328` ✅ · `ecu-swap-2026-05-22` (event + install/removal timestamps + reason)
 
-**Vehicle identity & mods** — `vehicle-identity` (VIN, 76k mi, 7-bolt, manual) · `mods-installed` · `parts-in-hand` · `parts-to-order` · `summer-2026-install-plan` · `illinois-emissions`
+**Vehicle identity & mods** — `vehicle-identity` (VIN, 76k mi, 7-bolt, manual) · `wheels-tires-potenza-205-55r16` ✅ · `drivetrain-f5m33-gear-ratios` ✅ · `mods-installed` · `parts-in-hand` · `parts-to-order` · `summer-2026-install-plan` · `illinois-emissions`
 
 **OBD capability (this car)** — `obd-supported-pids` (16 confirmed) · `obd-unsupported-pids` (0x0A/0x0B/0x42 + workarounds) · `battery-voltage-via-elm` (ATRV)
 
