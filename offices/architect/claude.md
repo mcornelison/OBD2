@@ -230,6 +230,8 @@ Fast-moving session; the team shipped a lot in parallel (V0.28.1 deployed, IRL d
 
 **Atlas posture: on-demand.** Following §13 now (commit-immediately).
 
+- **architecture.md optimized (CIO-directed, −27%).** It had grown to 3749 lines/237KB. Extracted 3 non-current bodies to `specs/arch/` (verbatim, pointers left): Phase-2 ECMLink+data-volume design → `phase2-data-architecture.md` (§17–18 stubs); full mod-history → `architecture-changelog.md` (**append new arch-change entries there, not §20**); per-version migration registry v0001–v0012 + V0.28.x schema-pass narratives + Rule-10 records → `schema-migration-history.md` (§5 keeps the migration-system contract + a compact current-schema summary). Now 2867 lines/173KB. No current-system content removed. Commits `5abae71` + `c7abae9`. Remaining big sections if a deeper pass is wanted: §5 schema overview, subsystem histories §10.6/§10.7/§11.
+
 ### 2026-06-01 (cont. 3) — SPEED-PID GPS calibration spec'd + ECU-id correction MD335287→MD326328 caught (A-13)
 
 CIO asked for a plan of attack to calibrate the new ECU's SPEED PID (reads ~2× high; rough `0.5` seed needs replacing with a measured `empirical-` factor). Grounded it in the real schema first (`speed_pid_calibration` = one multiplicative scalar per `ecu_id`; `capture_method` enum `{gps_correlation, gear_math, vendor_spec, default}`; `empirical-` provenance gate; OBD `SPEED` stored km/h, logged by default). Two iterations with CIO:
