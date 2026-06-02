@@ -46,6 +46,12 @@
 ### Safety Advisories
 - **Tire-age advisory issued** (23-yr-old tires, belt-separation risk independent of tread) → resolved to **CIO-retain** with a risk-tiered disposition (low-speed calibration OK post-inspection; highway/spirited = revisit). No engine-side advisories; no datalogs analyzed.
 
+### Post-Closeout Addendum (same session)
+- **Committed the session's work** (CIO directed "commit only the changed files"). Two office-scoped commits via explicit pathspec (race-safe on the shared sprint branch): `ad38669` (tire card + drivetrain card + README vocab + knowledge.md/vehicle.md/grounded-knowledge + 2 Atlas notes + sessions.md), then `8cb73a7` (§13 bootup adoption + PM ack).
+- **Concurrency reality confirmed** during the commit: git showed only *part* of my changeset because the team **integrator had already committed my ECU-correction slice** (`e742ce5`, "Spool-signed" — CLAUDE.md, renamed card, wikilinks, specs, my PM/Atlas ECU notes). Investigated before committing; **nothing lost**. This was the "floating uncommitted edits" failure mode, not a clobber.
+- **Inbox triage**: 1 new note — Marcus relaying CIO ask to adopt **handbook §13 shared-checkout discipline** into bootup. **Adopted**: new "Shared-Checkout Discipline" section in `offices/tuner/CLAUDE.md` under Core Principles (loads every session — commit-immediately office-scoped, PM-only branch switches, retry-on-lock, re-read on "modified since read", explicit-pathspec commits). Acked Marcus (A2AL).
+- **New standing discipline going forward**: commit my own `offices/tuner/**` in small scoped commits as I work; never switch/merge branches (PM integrates).
+
 ---
 
 ## Session 23 — 2026-06-01
