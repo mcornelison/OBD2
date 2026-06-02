@@ -4,7 +4,7 @@ version: V0.28.2
 status: converted
 createdAt: 2026-06-01
 createdBy: Marcus (PM)
-selectedStories: [US-377]
+selectedStories: [US-377, US-378]
 argusReviewRequired: false
 convertedAt: 2026-06-01T22:48:07Z
 sprintJsonPath: offices/ralph/sprint.json
@@ -25,6 +25,9 @@ Fix the chain-blocking schema defect surfaced by the **V0.28.1 IRL drill** (2026
 | Story | Title | Feature | Epic | Type | Size |
 |---|---|---|---|---|---|
 | US-377 | `data_quality` column too narrow for `'attribution_anomaly'` (VARCHAR(16)<19) — widen both columns + v0012 + width-enforcing test | F-107 | E-002 | issue | S |
+| US-378 | Correct ECU seed `MD335287 → MD326328` across all code sites (A-13, all-sites-coherent) | F-076 | E-002 | issue | S |
+
+**US-378 added 2026-06-01 (A-13).** The CIO corrected the donor ECU's P/N: real value is `MD326328` (mfr `E2T61683`), not `MD335287` (a Session-19 mis-ID of the same box). Atlas already corrected the **prod** `ecu` row directly (`UPDATE ecu …WHERE id=2`); US-378 makes the **code** coherent (the `ecu` seed + v0010 `speed_pid_calibration` seed + v0011 backfill references must move **together** or the migration JOIN FAILs LOUDLY). Same-row value correction — `cal` stays `UNKCAL`, factor `0.5` + all FKs preserved, `E2T61683` → notes/card not schema. **SPEED calibration value is unchanged** (0.5 stays as seed; the GPS empirical method is a future post-drive-27 procedure, no rush). Governance: `MD335287` is in the **frozen** US-376/US-374 `validationCriteria` (Sprint 44, shipped) — a US-370/A-11 freeze-conflict; the value is Spool-signed, handled as a fast-follow data-correctness fix, not a re-scope.
 
 ## Out of scope / fast-follow
 - **US-364 recompute execution + F-005/F-007 HOLD release** = IRL `validation.bigDefinitionOfDone`, NOT a story (runs against production on deploy; CIO-driven per `feedback-pm-sprint-scope-no-human-irl-tasks`).

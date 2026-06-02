@@ -37,30 +37,58 @@
         "if other CHECK-enum columns have the same width mismatch, fold the audit in"
       ],
       "goal": "Widen drive_summary + drive_statistics data_quality columns so the tripwire can stamp 'attribution_anomaly' (unblocks US-364).",
-      "tasks": [],
-      "feedback": {
-        "filesActuallyTouched": [
-          "src/server/db/models.py",
-          "src/server/migrations/versions/v0012_us377_data_quality_widen.py",
-          "src/server/migrations/__init__.py",
-          "tests/server/test_migration_0012_data_quality_widen.py",
-          "tests/server/test_migration_0009_drive_statistics_data_quality.py",
-          "tests/server/test_migration_0010_attribution_anomaly_data_quality.py",
-          "tests/server/test_migration_0011_ecu_identity.py"
-        ]
-      },
-      "completionNotes": "SERVER-ONLY. TDD RED->GREEN. (1) ORM: new SSOT constant DATA_QUALITY_COLUMN_LENGTH=20 (models.py); both data_quality columns String(16)->String(DATA_QUALITY_COLUMN_LENGTH) on DriveSummary + DriveStatistic; constant exported in __all__. (2) v0012 migration (FORWARD-ONLY; v0009/v0010 UNTOUCHED): MODIFY both data_quality columns to VARCHAR(20) NOT NULL DEFAULT 'full' (full def re-stated so the widen preserves NOT NULL + DEFAULT). Idempotent via a CHARACTER_MAXIMUM_LENGTH probe per table (width>=20 -> no-op; covers fresh create_all from the VARCHAR(20) ORM + re-run + already-wider); post-condition width re-probe raises SchemaProbeError on the silent-no-op class; table-missing + column-missing + MODIFY-failure all raise MigrationError. Registered _V0012 last in ALL_MIGRATIONS (+ registry docstring history line). (3) Width-INVARIANT guard test asserting every data_quality column >= longest CHECK-permitted value (the regression guard); PLUS a generic audit over EVERY CHECK 'col IN (...)' enum column across all ORM tables (conditionalOutcome: capture_method VARCHAR(32)>=15 confirmed fine -- only the two data_quality cols had the mismatch). Forward-only convention forced updating 3 coupled tests (NOT the shipped migrations): v0009 + v0010 DDL-parity tests now pin their FROZEN historical VARCHAR(16) (current-width ORM parity moved to the v0012 width-invariant guard); v0011 test_v0011RegisteredLast -> test_v0011RegisteredBeforeV0012 (durable sorted-tail form). GATES: pytest tests/server -m 'not slow' GREEN (0 failed); ruff clean on all 7 files. IRL-ONLY DEFERRED to the V0.28.2 deploy drill (validation.bigDefinitionOfDone; no MariaDB/prod on dev): SELECT column_type post-v0012 -> both varchar(20); recompute_drive_analytics --drive-id 23/24 -> attribution_anomaly no DataError; --drive-id 25 -> full; idempotent re-run; releases F-005+F-007 regression_manifest HOLD (closes US-364 + chain-merge pre-condition #4). Changes UNSTAGED (PM owns commits)."
+      "tasks": []
+    },
+    {
+      "id": "US-378",
+      "title": "Correct ECU seed MD335287 -> MD326328 across all code sites (A-13, all-sites-coherent)",
+      "parent": "F-076",
+      "epicId": "E-002",
+      "type": "issue",
+      "size": "S",
+      "status": "sprint-ready",
+      "passes": false,
+      "acceptance": [
+        "models.py ECU_SEED_PAIRS (MD335287,UNKCAL)->(MD326328,UNKCAL) + seed comment",
+        "v0010 speed_pid_calibration seed string + comment -> MD326328",
+        "v0011 provenance re-point WHERE ecu_signature=MD335287 -> MD326328",
+        "tests updated red->green (test_ecu_model, test_migration_0011_speed_pid_rekey, test_migration_0010_speed_pid_calibration, test_speed_pid_calibration, test_stamp_ecu_swap, test_vehicle_info_ecu_lineage, test_vehicle_info_identity_immutability_enforced, test_sync_dtc_freeze_frame, test_dtc_freeze_frame_model)",
+        "pytest tests/server -m not slow green; v0010->v0011 converges, no MigrationError"
+      ],
+      "validationCriteria": [
+        {
+          "action": "grep -rn MD335287 src/ tests/ after the change",
+          "outcome": "no matches (literal gone from code)"
+        },
+        {
+          "action": "pytest tests/server -m not slow",
+          "outcome": "green (0 failed)"
+        },
+        {
+          "action": "fresh create_all + v0010->v0011 on a clean DB",
+          "outcome": "converges; ecu seed (MD326328,UNKCAL); speed_pid JOIN matches; no MigrationError"
+        }
+      ],
+      "conditionalOutcomes": [
+        "if a seed site is missed, the migration FAILs LOUDLY on a fresh DB; idempotency+backfill tests must pin the new string",
+        "if MD335287 appears anywhere else in src/ or tests/, fold it in -- the literal must be gone from code"
+      ],
+      "goal": "Correct the new-ECU signature mis-ID MD335287 -> MD326328 (mfr E2T61683) at every code seed/identity site so fresh rebuilds seed correctly and the v0010->v0011 JOIN converges. Same-row value correction, not a new unit/reflash.",
+      "tasks": []
     }
   ],
   "validation": {
     "bigDefinitionOfDone": [
       "(SELECT column_type ... data_quality post-v0012) → (both varchar(20))  [from US-377]",
       "(recompute_drive_analytics --drive-id 23/24) → (attribution_anomaly written, no DataError)  [from US-377]",
-      "(recompute_drive_analytics --drive-id 25) → (full)  [from US-377]"
+      "(recompute_drive_analytics --drive-id 25) → (full)  [from US-377]",
+      "(grep -rn MD335287 src/ tests/ after the change) → (no matches (literal gone from code))  [from US-378]",
+      "(pytest tests/server -m not slow) → (green (0 failed))  [from US-378]",
+      "(fresh create_all + v0010->v0011 on a clean DB) → (converges; ecu seed (MD326328,UNKCAL); speed_pid JOIN matches; no MigrationError)  [from US-378]"
     ],
-    "frozenAt": "2026-06-01T22:48:07Z",
-    "bigDoDHash": "e613d2d20dced9944d83669faf7be7f9909fc7e48272c29873ac08e1dbcc09a9",
-    "validationMethod": "V0.28.2 patch (drill-revealed regression per PM Rule 9): widen drive_summary + drive_statistics data_quality VARCHAR(16)->VARCHAR(20) via v0012 so recompute_drive_analytics can stamp attribution_anomaly. On deploy: DESCRIBE shows varchar(20); recompute drives 23+24 -> attribution_anomaly, drive 25 -> full, idempotent re-run; releases F-005 + F-007 regression_manifest HOLD (closes US-364 + chain-merge pre-condition #4).",
+    "frozenAt": "2026-06-02T01:06:26Z",
+    "bigDoDHash": "b800f04654b25289659604bda61fa7a852a2b3f75944f058095eb7403e43e5a7",
+    "validationMethod": "V0.28.2 patch (drill-revealed regression + A-13 ECU-id correction): (US-377) widen data_quality VARCHAR(16)->VARCHAR(20) so recompute can stamp attribution_anomaly; (US-378) correct ECU seed MD335287->MD326328 all code sites (same-row, all-sites-coherent). On deploy: DESCRIBE varchar(20); recompute drives 23+24->attribution_anomaly, 25->full, idempotent; grep MD335287 src/ tests/ = none; v0010->v0011 converges on MD326328; releases F-005+F-007 HOLD (closes US-364 + chain pre-condition #4).",
     "validatesFeatures": [
       "F-005",
       "F-007"

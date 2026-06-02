@@ -2220,6 +2220,52 @@
       "tasks": [],
       "createdAt": "2026-06-01",
       "updatedAt": "2026-06-01"
+    },
+    {
+      "id": "US-378",
+      "parent": "F-076",
+      "title": "Correct ECU seed MD335287 -> MD326328 across all code sites (A-13, all-sites-coherent)",
+      "type": "issue",
+      "size": "S",
+      "status": "groomed",
+      "goal": "Correct the new-ECU signature mis-ID MD335287 -> MD326328 (mfr E2T61683) at every code seed/identity site so fresh rebuilds seed correctly and the v0010->v0011 JOIN converges. Same-row value correction, not a new unit/reflash.",
+      "definitionOfDone": [
+        "models.py ECU_SEED_PAIRS (MD335287,UNKCAL)->(MD326328,UNKCAL) + seed comment",
+        "v0010 speed_pid_calibration seed string + comment -> MD326328",
+        "v0011 provenance re-point WHERE ecu_signature=MD335287 -> MD326328",
+        "tests updated red->green (test_ecu_model, test_migration_0011_speed_pid_rekey, test_migration_0010_speed_pid_calibration, test_speed_pid_calibration, test_stamp_ecu_swap, test_vehicle_info_ecu_lineage, test_vehicle_info_identity_immutability_enforced, test_sync_dtc_freeze_frame, test_dtc_freeze_frame_model)",
+        "pytest tests/server -m not slow green; v0010->v0011 converges, no MigrationError"
+      ],
+      "conditionalOutcomes": [
+        "if a seed site is missed, the migration FAILs LOUDLY on a fresh DB; idempotency+backfill tests must pin the new string",
+        "if MD335287 appears anywhere else in src/ or tests/, fold it in -- the literal must be gone from code"
+      ],
+      "validationCriteria": [
+        {
+          "action": "grep -rn MD335287 src/ tests/ after the change",
+          "outcome": "no matches (literal gone from code)"
+        },
+        {
+          "action": "pytest tests/server -m not slow",
+          "outcome": "green (0 failed)"
+        },
+        {
+          "action": "fresh create_all + v0010->v0011 on a clean DB",
+          "outcome": "converges; ecu seed (MD326328,UNKCAL); speed_pid JOIN matches; no MigrationError"
+        }
+      ],
+      "deps": [],
+      "sourceRefs": [
+        "F-076",
+        "US-376",
+        "US-374",
+        "A-13",
+        "atlas-dispatch-2026-06-01",
+        "spool-signed-2026-06-01"
+      ],
+      "tasks": [],
+      "createdAt": "2026-06-01",
+      "updatedAt": "2026-06-01"
     }
   ]
 }
