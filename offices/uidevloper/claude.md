@@ -105,6 +105,7 @@ Pi @ 10.27.27.28 (`Chi-Eclips-Tuner`); server @ 10.27.27.10. UI work is
 | **Tooling** | Open to CIO direction. Default toolchain TBD (likely: Figma-style mockups as committed artwork files, OpenSCAD or FreeCAD for case parametrics, STL/3MF as ship artifacts). |
 | **Human in the loop** | CIO communicates directly + ratifies. |
 | **Cadence** | None standing. Per explicit task only. |
+| **Concurrency** | Follow `offices/handbook.md` §13 shared-checkout discipline — commit-immediately + office-scoped (`offices/uidevloper/**`); only the PM switches branches/merges/deploys; retry-on-lock never force; "file modified since read" = re-read + re-apply. (Marcus 2026-06-01; root CLAUDE.md core-bootup.) |
 
 ## 6. Workflow
 
@@ -167,13 +168,46 @@ Open UI/UX/enclosure items I am tracking. Seeded at onboarding 2026-05-22.
 | # | Item | Status | Note |
 |---|------|--------|------|
 | W-1 | OSOYOO 3.5″ 480×320 display — B-103 boot/shutdown splash design | **Atlas gate PASS w/ amendments 2026-05-26 — ACK + v1.1 review PENDING** | Spec drafted 2026-05-26 (`docs/superpowers/specs/2026-05-26-b103-splash-animation-design.md`, v1 at commit 37a71f5). **Atlas design-gate verdict = PASS with amendments** (inbox `2026-05-26-from-atlas-b103-gate-PASS-with-amendments.md`): 4 clean / 6 changes-requested / 0 block; Atlas amended the spec to **v1.1 in-place** (§0 amendments table + `[ATLAS v1.1]` markers). Key rulings: A-1 NEW `eclipse-boot-state.service`; A-3 path → `/var/run/eclipse-obd/states/`; A-4 localhost http :9899 read-only; A-8 all units Type=simple; Rule-10 same-sprint architecture.md §10.6 update required. **Atlas asks ack** — owe him ack OR push-back on the 6 changes (he's open to discuss). Spool S1/S2 advisories (inbox 05-27 + 05-28) + Marcus ack (05-26) received, non-blocking. NEXT SESSION: review v1.1 amendments, ack Atlas, then PM sprint-routing. Full post-boot dashboard UI separate — see W-5. |
-| W-2 | 3D-printed enclosure for OSOYOO 3.5″ display (DISPLAY ONLY — Pi removed from scope per CIO 2026-05-22) | **v2.5 design-COMPLETE 2026-05-29 — CIO printing for physical fit-check** | v1 printed → CIO fit-check; rebuilt v2.1→v2.5 across 5 live review rounds against the official **specs/vendor/OSOYOO-datasheet.pdf** (2024009100). CORRECTED FACTS: PCB **85×56** (the datasheet "49" is mount-hole vertical c-c, not the edge); mount holes = **RECTANGLE** (left col 23.6 / right col 81.6 from left = h c-c 58; 3.5 from top/bottom = v c-c 49); standoffs **M2.5×11+3 hex** → round hollow socket cups (flush countersunk M2.5 through-hole); asymmetric clearance (+6 left/Type-C, **+8.2 top → ~14mm PCB-to-top-wall gap** for the 90° HDMI housing); frozen v1 screen window; **2 button holes through the TOP (+Y) wall** (poke/toothpick access = intended "set & forget"; buttons face +Y like the HDMI); **both Type-C + left-turning micro-HDMI exit the single LEFT-wall opening**; seat-aware vents; 2 clips/long edge. Both shells render manifold. Source `enclosures/display-case.scad`; changelog `enclosures/display-case-v2.1-notes.md` (§v2.2–v2.5); facts `enclosures/datasheets/2024009100-extracted-facts.md`; renders `enclosures/renders/v25_*.png`. **OPEN — physical fit-check only:** PCB-centered offset (`pcb_shift=0`), depth stack (glass↔bezel), both cables clearing the single ~18×14mm left opening. → v2.6 folds in whatever the print shows. |
+| W-2 | 3D-printed enclosure for OSOYOO 3.5″ display (DISPLAY ONLY — Pi removed from scope per CIO 2026-05-22) | **v2.6 2026-06-03 — top (HDMI) clearance widened to 19mm per CIO ruler; STLs regenerated, CIO re-printing** | **v2.6 (2026-06-03):** CIO ruler-measured he needs **19mm from the GLASS surface edge to the inner +Y (top) wall** for the 90° micro-HDMI plug body + its left turn (shares the LEFT-wall exit with Type-C). `clearance_top` **8.2 → 15.5** (gap formula: glass-edge gap = 3.5 + clearance_top; PCB-edge gap = 5.8 + clearance_top → now 19mm from glass / 21.3mm from PCB). **Datum lesson:** CIO measures from the GLASS surface edge, NOT the PCB edge (2.3mm apart) — see `knowledge/feedback-cio-measures-from-glass-edge.md` + `knowledge/pattern-clearance-datum-mismatch.md`. `case_y` 78.2 → 85.5; both shells re-render manifold; STLs updated. Untracked CIO slicing artifacts (`*.3mf`, `gcode/*.gcode`) are now STALE (pre-v2.6) — left uncommitted. — Prior (v2.1→v2.5): rebuilt across 5 live review rounds against the official **specs/vendor/OSOYOO-datasheet.pdf** (2024009100). CORRECTED FACTS: PCB **85×56** (the datasheet "49" is mount-hole vertical c-c, not the edge); mount holes = **RECTANGLE** (left col 23.6 / right col 81.6 from left = h c-c 58; 3.5 from top/bottom = v c-c 49); standoffs **M2.5×11+3 hex** → round hollow socket cups (flush countersunk M2.5 through-hole); asymmetric clearance (+6 left/Type-C, **+8.2 top → ~14mm PCB-to-top-wall gap** for the 90° HDMI housing); frozen v1 screen window; **2 button holes through the TOP (+Y) wall** (poke/toothpick access = intended "set & forget"; buttons face +Y like the HDMI); **both Type-C + left-turning micro-HDMI exit the single LEFT-wall opening**; seat-aware vents; 2 clips/long edge. Both shells render manifold. Source `enclosures/display-case.scad`; changelog `enclosures/display-case-v2.1-notes.md` (§v2.2–v2.5); facts `enclosures/datasheets/2024009100-extracted-facts.md`; renders `enclosures/renders/v25_*.png`. **OPEN — physical fit-check only:** PCB-centered offset (`pcb_shift=0`), depth stack (glass↔bezel), both cables clearing the single ~18×14mm left opening. → v2.6 folds in whatever the print shows. |
 | W-3 | Visual + interaction language SSOT (`specs/UI/` tokens) | **In-progress 2026-05-26** | First color + type tokens proposed inline in B-103 spec §4 (`--text-secondary` `#888`, `--text-tertiary` `#666`, `--amber-warn` `#FFC400`, `--amber-soft` `#FFC40033`, plus existing reds `--red` `#E60012` / `--red-light` `#F61D2D` / `--red-dark` `#BF000F`). Font family: `ui-monospace, Menlo, Consolas, monospace`. NOT yet extracted into freestanding `specs/UI/tokens.css` or equivalent. Atlas confirmed 2026-05-22 that `specs/UI/` tokens are the correct SSOT-pattern precedent. Token-extraction work to follow when B-103 lands or in parallel. |
 | W-4 | README still describes the wrong display (Adafruit 1.3 240×240) per Atlas A-5 | **Open — not closed in B-103 spec authoring as Atlas suggested** | Atlas's 2026-05-22 FYI flagged this closeable in the UI spec authoring pass. B-103 spec (2026-05-26) focused on splash; did NOT include README correction (out of scope — splash design ≠ documentation cleanup). Follow-up: file separate small commit fixing README's display-spec section per Rule-10 routing through Atlas. ~30 min of work; opportunistic next session. |
 | W-5 | V0.28+ on-Pi post-boot dashboard layout — cover-most-of-screen + top-menu reserve + minimize capability | Open | CIO directed 2026-05-26 (during B-103 Q2 conversation) — for future display the dashboard canvas should be enlarged to cover the majority of screen, except for a top menu (reserved for system UI access) OR with the ability to minimize so system menu is accessible. Distinct surface from splash (splash is boot/shutdown-only; dashboard is runtime). To be designed when V0.28+ grooming opens dashboard work. |
 | W-6 | B-086 GEM-1 warnings-first quiet UI carousel (V0.28+ candidate) | Open — pending V0.28 grooming | Marcus flagged 2026-05-22 — relevant when grooming opens. Spool's Topic A/B specs (parked-mode anomaly + maintenance tiles) slot into the carousel. CIO + Spool brainstormed 2026-05-14. Lane split: Iris designs the visual carousel + interactions; Spool owns tile content semantics. Will surface during V0.28+ grooming. |
 
 ## 9. Session Log
+
+### 2026-06-03 — Display case v2.6 (top/HDMI clearance 14→19mm) + 2 inbox items
+
+- **CIO ruler check on the printed v2.5 → needs more top clearance.** The 90°
+  micro-HDMI plug body (which turns LEFT to share the Type-C left-wall exit)
+  needs **19mm from the GLASS surface edge to the inner +Y wall**. Was 14mm
+  (PCB-datum). Changed `clearance_top` **8.2 → 15.5** in `display-case.scad`.
+  Both shells re-rendered manifold (`Simple: yes`); `stl/{back,front}_shell.stl`
+  regenerated. `case_y` 78.2 → 85.5mm.
+- **The 5.8mm question (CIO worried I had the wrong measurement):** explained
+  it's not a chosen number — it's baked-in geometry from the FROZEN glass window:
+  2.3mm (glass cutout 60.6 overhangs the 56mm PCB, centered) + 3.5mm (`bezel_width`
+  lip). `gap = 5.8 + clearance_top` (PCB datum) or `3.5 + clearance_top` (glass datum).
+- **Datum-mismatch caught via AskUserQuestion** — CIO's ruler datum = the GLASS
+  surface edge, not the PCB edge (2.3mm apart). I'd first set clearance_top=13.2
+  (PCB datum), then corrected to 15.5 (glass datum) once confirmed. Erring long:
+  19.3mm from physical glass edge, 21.3mm from PCB edge — only MORE plug room.
+  **Two knowledge files captured** (datum lesson is the headline).
+- **Inbox: 2 new items from Marcus (2026-06-01), both processed:**
+  - *concurrency-protocol-adopt-bootup* → **actioned**: added handbook §13
+    shared-checkout-discipline pointer to §5 Operating Model (CIO ask = make it
+    load every session). Was already commit-immediately-scoped this session.
+  - *parallel-prep-assignment-splash-ui-specs* → **queued for next session**
+    (not actioned — this session was enclosure-only). Assignment: finalize
+    **F-103** Pi splash spec (was B-103; gated since V0.28.0) to groom-ready +
+    **F-092** (system status tile) + **F-097** (drain ladder state UI) to
+    groom-ready as bandwidth allows. Lane = `offices/uidevloper/` + `specs/UI/`
+    only. → see "Open for next session."
+- **Stale slicing artifacts**: untracked `enclosures/*.3mf` + `enclosures/gcode/*.gcode`
+  (CIO's PrusaSlicer 0.15mm outputs) are pre-v2.6 → left UNCOMMITTED (would
+  misrepresent the current design). CIO re-slices from the new STLs.
+- **Note**: the long-owed **B-103/F-103 Atlas-gate ack** (W-1) is STILL pending —
+  not touched this session; now folded into Marcus's F-103 groom-ready assignment.
 
 ### 2026-05-29 (cont. 2) — Display case v2.5 (buttons → top wall) + final closeout
 

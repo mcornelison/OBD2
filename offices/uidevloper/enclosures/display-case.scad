@@ -27,7 +27,7 @@
 // FRAME (datasheet landscape, viewed from the BACK):
 //   model +X = long axis toward the OSOYOO logo (RIGHT short edge)
 //   model  X = 0  -> LEFT short edge  (Type-C)         -> +6mm clearance here
-//   model +Y = TOP long edge (HDMI / buttons / power)  -> +6mm clearance here
+//   model +Y = TOP long edge (HDMI / buttons / power)  -> 19mm gap to top wall
 //   model  Y = 0  -> BOTTOM long edge
 //   model  Z = 0  -> outer BACK face (front/bezel = +Z)
 // =========================================================================
@@ -41,8 +41,11 @@ corner_r    = 2.0;
 print_tol   = 0.3;
 
 // ---- #6 asymmetric clearance --------------------------------------------
-clearance_top  = 8.2;   // +Y long edge -> ~14mm PCB-to-top-wall gap for the 90°
-                        // HDMI housing (CIO). gap = 5.8 + clearance_top.
+clearance_top  = 15.5;  // +Y long edge -> 19mm GLASS-edge-to-top-wall gap (CIO
+                        // ruler datum = glass surface edge, not PCB). Gives the
+                        // 90° micro-HDMI plug body + its left turn room to share
+                        // the LEFT-wall exit. PCB-edge-to-wall = 21.3mm.
+                        // glass-edge gap = 3.5 + clearance_top; PCB-edge gap = 5.8 + clearance_top.
 clearance_left = 6.0;   //  X=0 short edge (Type-C 90° head)
 
 // ---- Display geometry (datasheet) ---------------------------------------

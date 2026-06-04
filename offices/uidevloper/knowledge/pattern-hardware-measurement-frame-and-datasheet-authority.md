@@ -79,5 +79,33 @@ read, the conflict is usually MY interpretation, not his ruler.
   rows/columns share an axis (crop each column and compare), not by assuming the
   nearest dimension chain is the hole chain.
 
+## Lesson 6 — "The gap is wrong" is almost always a DATUM disagreement, not arithmetic (2026-06-03)
+
+Same class as Lesson 5, but for *clearances* rather than datasheet dims. v2.6: the
+CIO ruler-measured he needed **19 mm** of top clearance for the 90° HDMI plug. My
+geometry reported the gap as 14 mm and I'd written a 5.8 mm "base gap" into the
+model. He got worried I had the wrong measurement. **Neither number was wrong —
+they were measured from different reference edges.** My 5.8 mm started at the
+**PCB edge**; his ruler started at the **glass surface edge**, which sits 2.3 mm
+further out (the glass cutout 60.6 overhangs the 56 mm PCB, centered). A frozen
+window means a derived gap; that gap is real geometry (2.3 mm glass overhang +
+3.5 mm `bezel_width`), but it's only meaningful once you state WHICH edge it
+starts from.
+
+**How to apply:**
+- When a CIO-measured clearance conflicts with the model's, do NOT adjust the
+  number first — **confirm the datum** (which edge his ruler rested on). One
+  `AskUserQuestion` with a tiny per-option arithmetic preview resolved it in one
+  round and is far cheaper than a wrong print.
+- State the datum *in the model comment and in the answer*: e.g.
+  `gap = 3.5 + clearance_top` (glass datum) vs `5.8 + clearance_top` (PCB datum).
+  A bare "19 mm gap" is ambiguous; "19 mm from the glass edge" is not.
+- When rounding/anchoring is ambiguous, err so the *connector* gets MORE room,
+  never less — a plug that won't seat is a failed print; 1 mm of slack costs nothing.
+- The CIO can see + measure the physical part; trust his lived reading and make
+  the model agree with HIS datum (see also `feedback-cio-measures-clearance-from-glass-edge.md`).
+
 See also: `knowledge/pattern-openscad-cli-numeric-part-selector.md`,
-`knowledge/feedback-cio-architectural-paths-belong-to-atlas.md`.
+`knowledge/feedback-cio-architectural-paths-belong-to-atlas.md`,
+`knowledge/feedback-cio-measures-clearance-from-glass-edge.md`,
+`knowledge/project-display-case-design-decisions.md`.
