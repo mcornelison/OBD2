@@ -10,7 +10,52 @@ gear constants** (tuning values are sacred); CIO drives the IRL captures.
 > Depends on the ECU-identity correction landing first: the calibration row is
 > keyed by `ecu_id` → the **MD326328 / E2T61683** `ecu` row (supersedes the
 > mis-recorded `MD335287`; see the companion notes to Spool + Marcus, 2026-06-01).
-> Don't write the factor until the corrected `ecu` row exists.
+> Don't write the factor until the corrected `ecu` row exists. *(ECU correction
+> landed 2026-06-01; prod `ecu` id=2 = `MD326328`.)*
+
+---
+
+## ADDENDUM 2026-06-05 — Strava as the GPS source + FIT reading + decisions (CIO)
+
+CIO decisions this session (drive imminent):
+- **GPS source tool = [Strava](https://strava.com).** CIO drives, records, exports
+  **a single FIT file**, downloads it into the project. FIT (not GPX/TCX) by his call.
+- **SSOT for the scalar = the `speed_pid_calibration` table** (confirmed — §5 path stands).
+- **Two-tool split (CIO):** (1) a reader that extracts the GPS truth from the FIT
+  file; (2) an aligner that pairs it with the OBD2 drive data and emits the average
+  correction scale. **Build (2) only once real data is in hand** (CIO instruction).
+
+**Reading the FIT file (research, sources at bottom):**
+- FIT is Garmin/ANT binary. Python parsers: **`fitparse`** or **`fitdecode`**.
+- "record" messages carry, per point: `timestamp` (UTC), `position_lat`/`position_long`,
+  `speed` (+ often `enhanced_speed`, m/s), `distance` (cumulative m), `altitude`.
+- **Gotcha:** FIT lat/long are int32 **semicircles** → degrees = `value × 180 / 2³¹`.
+- **Method choice (architectural):** even though FIT *embeds* speed, embedded speed
+  is smoothed by the recording device/Strava. For a "source of truth" we **derive
+  ground speed ourselves from raw consecutive positions** (haversine ÷ Δt) so we
+  control the method; FIT's embedded `speed`/`distance` become an independent
+  cross-check, not the input we trust blindly.
+
+**Design refinement — elevate the distance-ratio to a CO-PRIMARY estimator.**
+The body below (§2/§3) treats cross-correlation time-alignment as the primary path
+and distance-consistency (§4) as only a cross-check. Invert that emphasis, because
+FIT hands us cumulative `distance` directly and the clock-skew gotcha (§2) is real:
+
+- **Estimator A — distance-ratio (primary, robust):**
+  `scale = Σ GPS_distance / Σ OBD_integrated_distance` over the same window.
+  **Immune to clock skew** — needs no time-alignment at all. Simplest, hardest to fool.
+- **Estimator B — speed-ratio (diagnostic + scalar-vs-curve gate):** the §2 cross-
+  correlation + §3 median-ratio. Its real job is the **scalar-vs-curve gate** (§3.1)
+  — confirm the ratio is flat across speed before trusting any single number.
+- **Agreement check:** A and B must agree (both ≈ **0.5**, per the gear-math
+  prediction). Disagreement = investigate before writing anything.
+
+Both estimators land in the same tool (2); it reports A, B, their spread, and the
+scalar-vs-curve verdict. Spool ratifies the final value before it's written (§5).
+
+**Sources:** [python-fitparse](https://github.com/dtcooper/python-fitparse) ·
+[fitdecode](https://pypi.org/project/fitdecode/) ·
+[Strava export (GPX has no stored speed; it's derived)](https://support.strava.com/hc/en-us/articles/216918437-Exporting-your-Data-and-Bulk-Export)
 
 ---
 
