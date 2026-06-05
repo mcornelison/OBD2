@@ -50,3 +50,8 @@ types-setuptools>=57.0.0      # Type stubs for setuptools
 # Logging and Monitoring (optional)
 # --------------------------------------------------------------------------------
 # structlog>=23.0.0           # Structured logging - use for JSON-formatted logs
+
+# --------------------------------------------------------------------------------
+# Offline Calibration Tooling (tools/speed_calibration -- NOT pi/server runtime)
+# --------------------------------------------------------------------------------
+fitparse>=1.2.0              # Parse Strava/Garmin FIT files (SPEED-PID GPS calibration)

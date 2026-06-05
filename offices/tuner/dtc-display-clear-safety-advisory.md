@@ -24,6 +24,11 @@
 
 **Description gap (mandates the static table):** `dtc_client._asCode` pulls descriptions from python-obd's built-in `DTC_MAP`, which returns an **empty string for Mitsubishi P1xxx codes** — by design (never fabricate). The ECMLink ECU (drives ≥25) is exactly the setup that throws P1xxx. Without a static table, a DSM-specific code renders on screen as a bare `P1xxx` with no text.
 
+### ⚠️ HARD REQUIREMENT — KOEO (key-on / engine-off) capture (CIO 2026-06-05)
+The natural use case for a DTC viewer is *"pull up, key on, why is my light on?"* — **key-on, engine NOT running, no drive.** But every current capture path (`logSessionStartDtcs`, `maybePeriodicMode03`, `logDriveEndDtcs`) is gated behind an **active drive** — `DriveDetector._startDrive` only fires on **RPM > `driveStartRpmThreshold` for a sustained duration** (`src/pi/obdii/drive/detector.py`). KOEO = RPM 0 = no drive = **nothing captured**. So the viewer would show nothing until the car was actually driven, which is backwards for a diagnostic screen.
+
+**Requirement:** the DTC viewer must have a **key-on capture path independent of DriveDetector** — a Mode 03 (+ Mode 02 freeze-frame) read that fires on connection/key-on with RPM 0, writing `dtc_log` rows with `drive_id = NULL` (the schema already permits NULL drive_id for exactly this "no drive context" case). This is a capture-architecture change for Atlas/Ralph, not just a display concern.
+
 ---
 
 ## 2. Static lookup DB — sizing verdict: NOT crazy big, go static
@@ -82,7 +87,14 @@ Never issue Mode 04 until §4b.2 + §4b.3 are satisfied. **Freeze frame is the c
 
 ---
 
-## 5. DSM caveats to verify live (dongle now plugged in)
+## 5. DSM caveats — live-probe results (2026-06-05 KOEO read, MD326328)
+
+**CONFIRMED via direct KOEO Mode 02/03/07 read 2026-06-05:**
+- **Mode 02 (FREEZE_DTC) is UNSUPPORTED on this ECU** (returned null). The "freeze-frame-before-clear" gate (§4c) therefore has **no freeze frame to capture** — it falls back to **code + full `realtime_data` snapshot + server-sync ack**. This is now a confirmed design constraint, not a maybe.
+- **Mode 07 (pending) returned empty** (not null) on this read — supported, just no pending codes.
+- First real code read: **P0443** (EVAP purge control valve circuit) — 🟢 MINOR, python-obd HAS the description (renders without the static table). Good first display test case.
+
+### Remaining caveats:
 - 2G DSM is pre-full-OBD2. Mode 07 (pending) can be silent — already probed/cached.
 - **Mode 02 freeze-frame support on this ECU is UNCONFIRMED.** Probe on the next session. If silent, the log-before-clear gate falls back to code + full `realtime_data` context instead of a true freeze frame.
 - The ECMLink ECU may throw P1xxx python-obd can't name → reinforces §2 static table.
