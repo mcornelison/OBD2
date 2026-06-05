@@ -130,4 +130,4 @@ unblock candidate; handed off to Tester + Marcus + Spool.**
 - Approved spec + plan: `docs/superpowers/specs/2026-05-18-pi-shutdown-sequencer-design.md`
   + `docs/superpowers/plans/2026-05-18-pi-shutdown-sequencer.md`
 - Definitive architecture corrections: `offices/architect/findings/2026-05-18-architecture-md-corrections-definitive.md`
-- Design-discipline pattern from this sprint: `offices/architect/knowledge/2026-05-20-hard-problem-design-discipline-pattern.md`
+- Design-discipline pattern from this sprint: `specs/design-discipline-hard-problems.md` (promoted to team specs 2026-06-05)
