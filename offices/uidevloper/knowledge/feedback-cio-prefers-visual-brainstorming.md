@@ -1,6 +1,6 @@
 ---
 name: feedback-cio-prefers-visual-brainstorming
-description: CIO is a strongly visual thinker — HTML mockups / the visual-companion mode resonate far more than text for design work. Default to showing, not telling.
+description: CIO is a strongly visual thinker — HTML mockups / the visual-companion mode resonate far more than text for design work. Default to showing, not telling. RATIFIED as standing default (CIO 2026-06-05 DTC session: "that is my preference going forward. 100% proceed with using a browser") — no need to re-offer the companion each session for UI work.
 metadata:
   type: feedback
 ---
