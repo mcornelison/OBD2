@@ -1,0 +1,95 @@
+# DTC Display + Clear-Code — Spool Safety Advisory
+
+**Author**: Spool (Tuning SME)
+**Date**: 2026-06-05
+**Status**: Authoritative (CIO-ratified design fork 2026-06-05)
+**Audience**: Iris (mockups), Atlas (architecture), Ralph (build), Marcus (PM tracking)
+**Triggered by**: CIO check-engine light ON both legs of the (aborted) drive-27 run; new use case for the Pi display.
+
+> SSOT for the engine-safety semantics of the on-screen DTC viewer + clear-code feature. Iris/Atlas/Ralph build against this; the severity tiers + clear-gate preconditions are mine and are non-negotiable on engine-protection grounds.
+
+---
+
+## 1. What we already have (don't rebuild)
+
+| Piece | Where | Status |
+|---|---|---|
+| Mode 03 (stored) + Mode 07 (pending) retrieval | `src/pi/obdii/dtc_client.py` | built |
+| MIL rising-edge → DTC re-fetch | `src/pi/obdii/mil_edge.py` | built |
+| 30s during-drive Mode 03 cadence + drive-end Mode 07 | `src/pi/obdii/dtc_logger.py` | built |
+| `dtc_log` capture table (code, description, status, drive_id, timestamps) | `src/pi/obdii/dtc_log_schema.py` | built |
+| **Pi→server `dtc_log` mirror (sync)** | US-238, `src/server/...` | built — "report to server" is HALF DONE |
+| `dtc_freeze_frame` server infra | US-368 | built (Pi-side Mode 02 capture support UNCONFIRMED on this ECU) |
+| **Clear-DTC (Mode 04) path** | — | **DOES NOT EXIST.** Net-new. `cleared` status enum reserved, never wired. |
+
+**Description gap (mandates the static table):** `dtc_client._asCode` pulls descriptions from python-obd's built-in `DTC_MAP`, which returns an **empty string for Mitsubishi P1xxx codes** — by design (never fabricate). The ECMLink ECU (drives ≥25) is exactly the setup that throws P1xxx. Without a static table, a DSM-specific code renders on screen as a bare `P1xxx` with no text.
+
+---
+
+## 2. Static lookup DB — sizing verdict: NOT crazy big, go static
+
+Bundle a static `code → short → long → severity → clear_eligible` table with the Pi image.
+
+| Set | Count | Source |
+|---|---|---|
+| Generic SAE (P0/P2/P34xx + generic B/C/U) | ~2,000–3,000 | sourceable wholesale (standardized) |
+| DSM-specific P1xxx (4G63-relevant) | ~30–50 | **Spool-curated from DSM sources (follow-up)** |
+
+Full table lands **< ~2 MB JSON** — trivial for a Pi 5 (GB storage, GB+ RAM), loads fully into memory, **needs no network at display time** (works key-on-engine-off, works WiFi-down). The `severity` + `clear_eligible` columns are SME-owned (§3). short/long generic descriptions are sourced.
+
+**Follow-up I own:** curate the DSM P1xxx subset with severity tags from authoritative DSM sources (factory service manual, ECMtuning wiki, DSMtuners consensus). I will NOT fabricate P1xxx meanings — empty until grounded.
+
+---
+
+## 3. Severity taxonomy — engine-protection first (turbo 4G63)
+
+Three tiers. This drives BOTH the display color/messaging AND the clear-gate.
+
+| Tier | Examples (generic; confident) | Display behavior | Clearable? |
+|---|---|---|---|
+| 🔴 **STOP** | Misfire **P0300–P0304**; knock/detonation-related; lean-at-load **P0171 under boost**; overheat-linked; oil-pressure; cam/crank correlation; **P0325 knock-sensor circuit** (loses the ECU's knock safety net) | "Reduce load / pull over." Prominent red. **No clear button at all.** | **Never** |
+| 🟡 **WATCH** | Moderate fuel-trim; single O2/HO2S circuit (P0130–P0167); **P0401 EGR flow**; **P0420 cat efficiency**; intermittent sensor | Log, report, "drive gently, get it diagnosed." Amber. | No |
+| 🟢 **MINOR** | Evap / gas cap (**P0440 / P0442 / P0455**); non-powertrain body/comfort | Log, report. "Likely <X>; safe to clear once logged." | **Yes — conditionally (§4)** |
+
+**Turbo rule of thumb behind the 🔴 list:** a misfire *under boost* is detonation, and detonation on a 4G63 cracks ringlands and melts the #4 piston. A misfire code on a turbo motor is never "just a misfire." That's why P030x is hard-STOP, no clear, pull-over messaging.
+
+---
+
+## 4. Clear-code design — the OBD-II reality + the safety gate
+
+### 4a. The correction everyone must internalize: Mode 04 is all-or-nothing
+**There is no per-code clear in OBD-II.** Mode 04 wipes *every* stored code, *every* pending code, the **freeze-frame data**, AND resets **all emissions readiness monitors** in one shot. A "clear this minor code" button is really a "wipe the entire DTC memory" button.
+
+**Consequence — clear is gated on the HIGHEST-severity stored code, not the one on screen.** If a 🟢 gas-cap and a 🔴 misfire are both set, clearing the gas cap also erases the misfire + its freeze frame. So:
+
+> **Clear button is enabled ONLY when EVERY currently-stored code is 🟢 MINOR.** Any 🟡/🔴 present → disabled.
+
+### 4b. CIO-ratified UX (2026-06-05): **Gated single-button**
+One clear button. Enabled iff (all true):
+1. Every stored code is 🟢 MINOR, **and**
+2. Code(s) **+ freeze frame** captured to `dtc_log` / `dtc_freeze_frame`, **and**
+3. **Server has ACKed the sync** (no ack → disabled).
+
+Disabled the instant anything 🟡/🔴 is present. (Rejected alternatives: always-on-with-warning; post-drive-only.)
+
+### 4c. Log-before-clear is a HARD precondition (CIO: "must log + report everything")
+Never issue Mode 04 until §4b.2 + §4b.3 are satisfied. **Freeze frame is the crown jewel** — the sensor snapshot at the exact instant the code set (RPM, load, coolant, trims, timing). Clearing destroys it forever. Capture it *first*. We have the server infra (US-368); add the Pi-side capture + a **sync-ack gate**.
+
+### 4d. Post-clear guards
+- **Re-read (Mode 03) immediately after clear** — confirm it cleared, and catch an instant re-set.
+- **Refuse a 2nd clear** of any code that re-set within the same session. A code that keeps coming back is a *hard fault*; repeatedly clearing it ("chasing the light") is how a real problem gets driven into a dead engine while the dash stays dark.
+- **Readiness-monitor consequence:** clearing resets emissions monitors, which then need a full drive-cycle to re-run. If CIO ever needs an emissions/inspection pass, clearing right before = "not ready" fail. Surface this in the confirm copy.
+
+---
+
+## 5. DSM caveats to verify live (dongle now plugged in)
+- 2G DSM is pre-full-OBD2. Mode 07 (pending) can be silent — already probed/cached.
+- **Mode 02 freeze-frame support on this ECU is UNCONFIRMED.** Probe on the next session. If silent, the log-before-clear gate falls back to code + full `realtime_data` context instead of a true freeze frame.
+- The ECMLink ECU may throw P1xxx python-obd can't name → reinforces §2 static table.
+
+---
+
+## 6. Open follow-ups (Spool)
+1. Curate the DSM P1xxx severity/description subset (grounded; no fabrication).
+2. Confirm Mode 02 freeze-frame support on MD326328 via live probe.
+3. Live-read the actual drive-27 check-engine code → classify stop/watch/minor + clear-eligibility (DO NOT clear before reading).
