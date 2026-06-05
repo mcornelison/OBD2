@@ -30,4 +30,21 @@ HTML mockups.
   don't stall) and [[feedback-cio-clarifying-questions-always-welcome]].
 - Enclosure/3D work: keep sending rendered images (same principle, different medium).
 
-See also: [[pattern-defects-first-existing-artifact-review]].
+## Tooling gotcha — companion server idle-times-out between turns
+
+On this Windows + shared-checkout setup, the superpowers visual-companion server
+(`start-server.sh --project-dir … ` run with `run_in_background:true`) **can't anchor
+to the parent process** ("owner-pid-invalid … dead at startup") and so falls back to a
+short idle timeout — it shuts itself down during the gap while the CIO is reading/deciding.
+Symptom: CIO reports "localhost:PORT not showing up." Each relaunch gets a **new port +
+new session dir**, so the URL changes.
+
+**How to apply:** when it dies, just relaunch and **re-push the current screen** into the
+NEW session's `content/` dir (the server only serves files in its own session dir), then
+give the CIO the new URL. Keep turns tight so the read happens before idle fires. Mockups
+persist under `offices/uidevloper/.superpowers/brainstorm/` (gitignored via a `*`
+`.gitignore` I dropped there). Stop the server cleanly at closeout (`stop-server.sh
+<session-dir>`); a SIGTERM "failed exit 143" notification on the background task is the
+expected stop, not an error.
+
+See also: [[pattern-defects-first-existing-artifact-review]], [[pattern-ground-in-existing-implementation]].
