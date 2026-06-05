@@ -89,7 +89,34 @@ Never issue Mode 04 until §4b.2 + §4b.3 are satisfied. **Freeze frame is the c
 
 ---
 
-## 6. Open follow-ups (Spool)
-1. Curate the DSM P1xxx severity/description subset (grounded; no fabrication).
+## 6. Suggested-fix field + internet enrichment (CIO ask 2026-06-05)
+
+Add a **`suggested_fix`** to the lookup table, plus provenance so we never display an unverified fix as gospel (Principle 2 — Data Over Opinion). Schema delta:
+
+| Column | Values | Notes |
+|---|---|---|
+| `suggested_fix` | TEXT | the fix text shown on screen |
+| `fix_provenance` | `spool-validated` / `sourced` / `auto-unverified` / `none` | drives the display trust badge |
+| `fix_source` | URL / citation | where it came from |
+| `fix_confidence` | high / med / low | |
+
+### 6a. Where the lookup happens — SERVER, post-drive. NOT in-car, NOT live.
+On a **miss** (code absent, or no fix yet), the **server (chi-srv-01)** does the enrichment after the drive: web lookup of authoritative DSM sources (DSMtuners / ECMtuning / repair DB) ± Ollama (`llama3.1:8b`) summarization → writes `suggested_fix` + `fix_provenance='auto-unverified'` + `fix_source` → **syncs back to the Pi** on next sync. The Pi displays it tagged "unverified."
+
+**Why not in-car/live:** ISO 9141-2 + the car has no reliable internet; the display must never block on a network call and must stay fully offline-capable. The server is the analytics authority (3-tier architecture) and already has Ollama + internet. Pi stays a consumer of synced facts.
+
+### 6b. Safety gate — severity OVERRIDES an auto-fetched fix
+An auto-fetched fix is **never** displayed as authoritative, and for dangerous codes it is **overridden, not shown raw**:
+- 🔴 **STOP** / 🟡 **WATCH**: the severity directive wins. A generic internet "replace spark plugs" for a turbo **P0301** is *actively dangerous* — on a boosted 4G63 that misfire is far more likely detonation / a cracked ringland than a tired plug. These codes show **"STOP / diagnose — do not just swap parts"** regardless of what the web says, until I validate a real fix.
+- 🟢 **MINOR** only: the auto-fetched fix may be the primary on-screen suggestion (still badged "unverified").
+
+### 6c. Trust badge + promotion path
+Display distinguishes `spool-validated` (✓ verified) from `auto-unverified` ("community suggestion, unverified"). Promotion: `auto-unverified` → Spool review → `spool-validated`. I own that review queue for any code above MINOR.
+
+---
+
+## 7. Open follow-ups (Spool)
+1. Curate the DSM P1xxx severity/description **+ suggested_fix** subset (grounded; no fabrication).
 2. Confirm Mode 02 freeze-frame support on MD326328 via live probe.
 3. Live-read the actual drive-27 check-engine code → classify stop/watch/minor + clear-eligibility (DO NOT clear before reading).
+4. Own the `auto-unverified → spool-validated` fix review queue for all 🔴/🟡 codes.
