@@ -1,11 +1,11 @@
-# Pi Touch-Carousel Dashboard — F-092 System Status + F-097 Battery Health — Design Spec v1
+# Pi Touch-Carousel Dashboard — F-092 System Status + F-097 Battery Health — Design Spec v1.1
 
 | Field | Value |
 |---|---|
 | Feature IDs | **F-092** (System Status tile) · **F-097** (Battery Health, *pivoted* from "drain ladder state UI") |
 | Backlog | `offices/pm/backlog/F-092-system-status-tile.md`, `offices/pm/backlog/F-097-drain-ladder-state-ui.md` |
 | Author | Iris (UI/UX Designer) |
-| Date | 2026-06-05 |
+| Date | 2026-06-05 (v1); 2026-06-05 (v1.1 — folded in the long-press System Setup menu, D-6/D-7) |
 | Status | **DRAFT — design brainstormed + CIO-approved; pending Atlas design-gate (Rule 10) + Spool semantics + Argus acceptance** |
 | Target sprint | V0.28+ |
 | Depends on | **F-103 splash** (shares the chromium kiosk + `eclipse-states-http` localhost state-server) — see `docs/superpowers/specs/2026-05-26-b103-splash-animation-design.md` |
@@ -22,10 +22,12 @@ Designed with the CIO via live HTML mockups. Decisions ratified this session:
 | D-3 | **Persistent thin top bar** (W-5 option) for system-menu access | Instrument honesty: BT/sync/power status must be glanceable on *every* card (directly serves the I-033 BT-reconnect visibility gap). Chosen over full-bleed + hidden swipe-down menu. |
 | D-4 | **F-092 layout = 2×2 status tiles + drive banner** | Bigger state words readable from the driver's seat at arm's length; color-coded. |
 | D-5 | **F-097 layout = two-state card** (NORMAL health view + FAILSAFE ladder escalation) | Health primary; ladder/runtime/thresholds render only when a real drain is underway. |
+| D-6 | **System Setup menu** reachable from a **5–6s long-press anywhere** AND the top-bar `⋮` (both open the same menu) | Long-press is a deliberate, accident-proof gesture for consequential actions; `⋮` keeps it discoverable. A filling ring gives hold-feedback; release early cancels. (CIO 2026-06-05.) |
+| D-7 | **Service handling: data services stoppable, `eclipse-powerwatch` restart-only** | Stopping the safe-shutdown guard could leave the Pi unprotected on key-off (drain/corruption). Stop + Exit-UI always confirm first. (CIO chose option A.) |
 
 ## 1. Executive Summary
 
-A **touch-driven carousel dashboard** for the OSOYOO 3.5″ 480×320 display, replacing the pygame `status_display.py` with an HTML/chromium surface that shares the F-103 splash's kiosk + localhost state-server. It is the **post-boot UI**: when the F-103 boot splash reaches `HEALTHY_YIELD`, it hands off to this dashboard. The driver swipes left/right between cards; a persistent ~42px top bar shows live BT/sync/power status + a system menu. This spec designs the **carousel shell** (minimal, extensible) plus its **first two cards**: **F-092 System Status** (BT link, last sync, power mode, drive state — the honest-instrument fix for the I-033 "did it capture my drive?" gap) and **F-097 Battery Health** (VCELL-authoritative health readout, with the drain ladder demoted to a failsafe that surfaces only during a genuine drain). The dashboard is a **pure consumer** of two new read-only state files served by the (extended) `eclipse-states-http` service; it never owns or decides system state. Cards 3–5 (Engine / Drive / Alerts) and the full W-5/W-6 dashboard vision are named but out of scope.
+A **touch-driven carousel dashboard** for the OSOYOO 3.5″ 480×320 display, replacing the pygame `status_display.py` with an HTML/chromium surface that shares the F-103 splash's kiosk + localhost state-server. It is the **post-boot UI**: when the F-103 boot splash reaches `HEALTHY_YIELD`, it hands off to this dashboard. The driver swipes left/right between cards; a persistent ~42px top bar shows live BT/sync/power status + a system menu. This spec designs the **carousel shell** (minimal, extensible) plus its **first two cards**: **F-092 System Status** (BT link, last sync, power mode, drive state — the honest-instrument fix for the I-033 "did it capture my drive?" gap) and **F-097 Battery Health** (VCELL-authoritative health readout, with the drain ladder demoted to a failsafe that surfaces only during a genuine drain). The dashboard is a **pure consumer** of two new read-only state files served by the (extended) `eclipse-states-http` service; it never owns or decides system state. A **System Setup menu** — reachable by a 5–6s long-press from any screen *or* the top-bar `⋮` — provides the maintenance basics: OBD-II service stop/start/restart (with `eclipse-powerwatch` restart-only for safety) and Exit/Close-UI, both behind confirms. Cards 3–5 (Engine / Drive / Alerts) and the full W-5/W-6 dashboard vision are named but out of scope.
 
 ## 2. Context & Motivation
 
@@ -107,7 +109,7 @@ F-103 boot splash  ──HEALTHY_YIELD──►  dashboard kiosk (this spec)
 ### Top bar (persistent, ~42px) [D-3]
 - Left: `ECLIPSE OBD-II` wordmark (mono, `#888`, 10–13px, 0.14em tracking).
 - Right: live status glyphs — **BT** (✦), **sync** (⟳ + age), **power** (⏻ CAR/WALL/BATT) — each colored by state (green ok / amber attention / red fault). These are the *at-a-glance* mirror of the System Status card's detail.
-- Far right: `⋮` system-menu button (opens a system overlay — power off, brightness, restart kiosk, version chip `V<x>·<sha>`). System-menu contents are minimal in v1; full menu = future.
+- Far right: `⋮` button — opens the **System Setup menu** (§4.6). Also reachable by long-press (D-6).
 
 ### Navigation
 - **Swipe left/right** moves between cards (CSS scroll-snap, or a minimal JS pager; momentum + snap). **Page dots** show position; current dot is an amber bar.
@@ -116,6 +118,33 @@ F-103 boot splash  ──HEALTHY_YIELD──►  dashboard kiosk (this spec)
 
 ### Motion
 Card transitions ≤ 250ms slide; no gratuitous animation (instrument feel). Respects the F-103 honest-instrument principle — motion never implies a state that isn't real.
+
+### 4.6 System Setup menu [D-6, D-7]
+
+A modal overlay over the dimmed dashboard, reachable two ways (both open the same menu):
+- **Long-press anywhere ~5s** — press-and-hold with no movement. A radial **progress ring fills** during the hold so the gesture is visibly registering; **releasing early cancels** (no action). At full, the menu opens. This is the deliberate, accident-proof path for consequential actions.
+- **Top-bar `⋮`** — a visible shortcut for discoverability.
+
+**Gesture disambiguation:** long-press = touch held > ~600ms with movement < ~10px; a swipe (movement past threshold) is never read as a long-press, and vice-versa. The full open requires the sustained 5–6s hold; the early portion (>600ms) is only what arms the ring.
+
+**Menu contents (v1 "basics"; extensible):**
+
+| Section | Item | Behavior |
+|---|---|---|
+| OBD-II Services | `eclipse-obd` (data capture) | status dot + **Restart** / **Stop** (Stop confirms) |
+| OBD-II Services | `eclipse-sync` (server upload) | status dot + **Restart** / **Stop** (Stop confirms) |
+| OBD-II Services | `eclipse-powerwatch` (🛡 safe-shutdown guard) | status dot + **Restart only** — **no Stop** [D-7] |
+| Display | **Exit / Close UI** | confirms, then closes the dashboard kiosk → drops to desktop. Confirm dialog states how it returns: next **reboot**, or `systemctl restart eclipse-dashboard` over SSH |
+| Footer | version chip `V<x>·<sha>` + uptime | read-only |
+| — | "+ more settings in future" | placeholder; future items (brightness, restart-UI, Wi-Fi, etc.) deferred |
+
+**Honest + safe rules:**
+- `eclipse-powerwatch` is **restart-only** — its Stop control is rendered disabled. Stopping the safe-shutdown guard could leave the Pi unprotected on key-off (drain/corruption). [D-7]
+- **Stop** (any service) and **Exit/Close UI** require a confirm step. No single tap performs a consequential action.
+- Service status dots reflect the real `systemctl is-active` state (read via the system-status emitter), not optimistic UI — a Stop that fails shows the service still running.
+- A clear **✕ / Back to dashboard** always returns; the menu never traps the user. Auto-dismiss after inactivity is a future nicety, not v1.
+
+**Privilege note (load-bearing → Atlas):** the kiosk runs as an unprivileged user; `systemctl stop/start/restart eclipse-*` and closing the kiosk need a privilege path (a **polkit rule** scoped to the specific units, or a small privileged helper). Precedent: the I-036 polkit poweroff rule. The kiosk must NOT run as root. Exact mechanism + the stoppable-unit allow-list are Atlas's call (A-7) — see §9.
 
 ## 5. F-092 — System Status Card
 
@@ -199,6 +228,9 @@ BATTERY HEALTH                 ⚠ ON UPS BATTERY · DRAINING
 | system-status emitter | NEW | writes `/var/run/eclipse-obd/states/system-status` |
 | battery-health emitter | NEW | writes `/var/run/eclipse-obd/states/battery-health` |
 | `src/pi/hardware/status_display.py` + `dashboard_layout.py` | **SUPERSEDE** | pygame dashboard retired once HTML surface reaches parity; data republished via emitters |
+| service-control privilege path (polkit rule **or** small privileged helper) | NEW | lets the unprivileged kiosk run `systemctl restart/stop/start` on a fixed allow-list of `eclipse-*` units + close the kiosk. Scoped to specific units; kiosk never runs as root. Mechanism = Atlas A-7. Precedent: I-036 polkit poweroff. |
+
+**System-menu action wiring:** the kiosk issues service actions + exit via the privilege path above (e.g. an authenticated localhost POST to a tiny privileged action endpoint, OR a polkit-authorized `systemctl` invocation). The allow-list is **fixed at install** (not runtime-configurable): `eclipse-obd`, `eclipse-sync` (restart/stop/start); `eclipse-powerwatch` (**restart only**); `eclipse-dashboard` (stop = "Exit UI"). Any unit not on the list is rejected. "Exit UI" stops the kiosk unit; it auto-starts again on next boot (its `WantedBy=graphical.target`).
 
 ### State file shapes (proposed; Atlas ratifies paths/schemas/ownership)
 ```json
@@ -230,6 +262,8 @@ OSOYOO capacitive touch over USB-C reaches chromium natively; no extra driver wo
 | S-2 | Carousel swipe advances card + updates page-dot; tap-target ≥40px | DOM/geometry test |
 | S-3 | Card renders emitter JSON verbatim; malformed JSON → card shows `unavailable`, no crash | fixture test |
 | S-4 | Battery card: `draining:false` → NO ladder DOM; `draining:true` → ladder present | fixture test (both) |
+| S-5 | System menu: `eclipse-powerwatch` row has **no enabled Stop control**; data-service rows do | DOM test |
+| S-6 | Service-control rejects any unit not on the install-fixed allow-list | unit test of the privilege path |
 
 ### IRL
 | # | Criterion | Evidence |
@@ -241,6 +275,11 @@ OSOYOO capacitive touch over USB-C reaches chromium natively; no extra driver wo
 | I-5 | Battery card NORMAL: VCELL matches MAX17048; SOC tagged `(uncalibrated)` | screenshot + reading |
 | I-6 | **Failsafe:** pull wall power while parked (no ignition) → card escalates to ladder + runtime within ≤2s; auto-shutdown fires at TRIGGER | recording + power log |
 | I-7 | Pygame `status_display` no longer launched (superseded) | `pgrep`/journal |
+| I-8 | Long-press ~5s opens System Setup (ring fills during hold); a release < 5s cancels with no menu | screen recording |
+| I-9 | Top-bar `⋮` opens the same System Setup menu | recording |
+| I-10 | `eclipse-powerwatch` shows Restart but **no working Stop**; tapping its (disabled) stop does nothing | recording |
+| I-11 | Stop `eclipse-obd` → confirm → service stops; its status dot reflects stopped within ≤2s; Restart brings it back | recording + `systemctl status` |
+| I-12 | Exit/Close UI → confirm → kiosk closes to desktop; returns on next reboot | recording + journal |
 
 ### Failure modes (must NOT happen)
 | F | Failure | Detection |
@@ -250,6 +289,10 @@ OSOYOO capacitive touch over USB-C reaches chromium natively; no extra driver wo
 | F-3 | Dashboard polls hardware directly instead of reading state files | code review |
 | F-4 | Both pygame + HTML dashboards run (double surface) | I-7 |
 | F-5 | Touch swipe unreliable / dead zones on the physical panel | I-2 |
+| F-6 | A single accidental tap performs a consequential action (must require long-press + confirm) | I-8, I-11, I-12 |
+| F-7 | `eclipse-powerwatch` can be stopped from the menu (safe-shutdown guard removed) | S-5, I-10 |
+| F-8 | User trapped in the menu with no way back to the dashboard | I-9 (✕/back present) |
+| F-9 | Service-control runs the kiosk as root, or accepts an arbitrary unit name | S-6, code review |
 
 ## 9. Routing Surface
 
@@ -262,6 +305,8 @@ OSOYOO capacitive touch over USB-C reaches chromium natively; no extra driver wo
 | A-4 | Superseding pygame `status_display.py` — sunset path + parity bar (coordinate w/ Ralph) | PENDING |
 | A-5 | Touch enablement in chromium kiosk | PENDING |
 | A-6 | `draining` boolean semantics vs ShutdownSequencer (no false failsafe) | PENDING (jointly w/ Spool) |
+| A-7 | **System-menu service control privilege path** — polkit rule vs privileged helper; the install-fixed stoppable-unit allow-list (`eclipse-obd`/`eclipse-sync` stop+restart, `eclipse-powerwatch` restart-only, `eclipse-dashboard` stop=Exit). Kiosk stays unprivileged. (I-036 polkit precedent.) | PENDING |
+| A-8 | **Exit/Close-UI lifecycle** — stopping the kiosk unit cleanly + auto-relaunch on reboot; confirm-and-return contract | PENDING |
 
 ### Spool (semantics)
 | # | Item |
@@ -280,7 +325,7 @@ OSOYOO capacitive touch over USB-C reaches chromium natively; no extra driver wo
 ### Marcus (PM — sprint scoping)
 | # | Item |
 |---|---|
-| M-1 | Proposed split: **US-A** carousel shell (kiosk + swipe + top bar + state-server extension) · **US-B** F-092 System Status card + system-status emitter · **US-C** F-097 Battery Health card + battery-health emitter (+ Spool semantics) · **US-D** pygame sunset |
+| M-1 | Proposed split: **US-A** carousel shell (kiosk + swipe + top bar + state-server extension) · **US-B** F-092 System Status card + system-status emitter · **US-C** F-097 Battery Health card + battery-health emitter (+ Spool semantics) · **US-D** pygame sunset · **US-E** System Setup menu (long-press + `⋮` + service control + Exit + privilege path [A-7/A-8]) |
 | M-2 | **Depends on F-103** (shared kiosk + `eclipse-states-http`) — sequence F-103 first or together |
 | M-3 | Rule-10 DoD: the state-server extension + emitters land matching `specs/architecture.md` updates in-sprint (per A-2/A-3) |
 
