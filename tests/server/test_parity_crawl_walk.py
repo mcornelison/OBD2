@@ -372,7 +372,7 @@ def _runAnalytics(serverDbPath: Path) -> dict:
                 drive = session.get(DriveSummary, driveId)
                 stats = session.execute(
                     select(DriveStatistic)
-                    .where(DriveStatistic.drive_id == driveId)
+                    .where(DriveStatistic.summary_id == driveId)
                     .order_by(DriveStatistic.parameter_name),
                 ).scalars().all()
                 anomalies = detectAnomalies(session, driveId)

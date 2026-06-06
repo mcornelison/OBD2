@@ -204,7 +204,7 @@ class TestComputeDriveStatistics:
 
             # Verify persistence
             rows = session.execute(
-                select(DriveStatistic).where(DriveStatistic.drive_id == 1)
+                select(DriveStatistic).where(DriveStatistic.summary_id == 1)
             ).scalars().all()
             assert len(rows) == 2
 
@@ -247,7 +247,7 @@ class TestComputeDriveStatistics:
             basic.computeDriveStatistics(session, 1)
             basic.computeDriveStatistics(session, 1)
             rows = session.execute(
-                select(DriveStatistic).where(DriveStatistic.drive_id == 1)
+                select(DriveStatistic).where(DriveStatistic.summary_id == 1)
             ).scalars().all()
             assert len(rows) == 1  # RPM only — no duplicates
 
@@ -350,7 +350,7 @@ def _insertDriveStat(
 ) -> None:
     session.add(
         DriveStatistic(
-            drive_id=driveId,
+            summary_id=driveId,
             parameter_name=param,
             min_value=0.0,
             max_value=peak,

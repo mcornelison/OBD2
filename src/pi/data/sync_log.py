@@ -130,6 +130,13 @@ PK_COLUMN: dict[str, str] = {
     # drain_event_id is the monotonic PK + sync cursor; renamed to 'id'
     # on the outbound payload for server-side source_id mapping.
     'battery_health_log':   'drain_event_id',
+    # US-369 (F-109): dtc_freeze_frame -- one row per Mode 02 freeze-frame
+    # captured on a MIL_ON rising edge.  Append-only with an integer 'id'
+    # PK, so it delta-syncs exactly like dtc_log.  US-368 created the table
+    # but left it out of this registry; US-369 wires it into the sync set
+    # (the cross-tier vehicle_info_vin -> server vehicle_info_id resolution
+    # happens server-side in src/server/api/sync.py).
+    'dtc_freeze_frame':     'id',
 }
 
 # Append-only (event-stream) tables eligible for delta-by-PK sync.

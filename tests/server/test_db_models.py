@@ -98,11 +98,12 @@ class TestModelImports:
         assert Device is not None
 
     def test_importAnalyticsModels(self):
-        """All 4 analytics models are importable."""
+        """All 5 analytics models are importable (US-370 adds SpeedPidCalibration)."""
         from src.server.db.models import (
             AnomalyLog,
             DriveStatistic,
             DriveSummary,
+            SpeedPidCalibration,
             TrendSnapshot,
         )
 
@@ -110,6 +111,7 @@ class TestModelImports:
         assert DriveStatistic is not None
         assert TrendSnapshot is not None
         assert AnomalyLog is not None
+        assert SpeedPidCalibration is not None
 
     def test_importBase(self):
         """DeclarativeBase is importable for engine.create_all()."""
@@ -350,8 +352,9 @@ class TestDriveStatisticColumns:
 
     US-351 / B-104 Step 1b reshape: composite PK (drive_id, parameter_name)
     replaces the autoincrement ``id`` column, FK to drive_summary.id ON DELETE
-    CASCADE added on drive_id, ``data_quality`` enum column added, and
-    sample_count is NOT NULL (no longer nullable).
+    CASCADE added on summary_id (renamed from drive_id in US-371),
+    ``data_quality`` enum column added, and sample_count is NOT NULL (no longer
+    nullable).
     """
 
     def test_hasExpectedColumns(self):
@@ -359,16 +362,22 @@ class TestDriveStatisticColumns:
 
         cols = _getColumnNames(DriveStatistic)
         for expected in [
-            "drive_id", "parameter_name",
+            "summary_id", "parameter_name",
             "min_value", "max_value", "avg_value", "std_dev",
             "outlier_min", "outlier_max", "sample_count",
             "data_quality", "computed_at",
         ]:
             assert expected in cols, f"Missing column: {expected}"
+        # US-371: the FK column was renamed drive_id -> summary_id (complete
+        # rename, no alias); the old name must be gone.
+        assert "drive_id" not in cols, (
+            "DriveStatistic.drive_id was renamed to summary_id in US-371 "
+            "(it always held a drive_summary.id FK, never a Pi drive_id)"
+        )
         # Autoincrement id retired in US-351 (composite PK now).
         assert "id" not in cols, (
             "DriveStatistic.id was retired in US-351 -- composite PK "
-            "(drive_id, parameter_name) is the new natural upsert key"
+            "(summary_id, parameter_name) is the new natural upsert key"
         )
 
     def test_tableName(self):
@@ -427,15 +436,17 @@ class TestTableCount:
         """
         Given: the models module
         When: counting all model classes with __tablename__
-        Then: there are exactly 20 tables (base 15 + baselines from US-162
+        Then: there are exactly 23 tables (base 15 + baselines from US-162
               + analysis_recommendations from US-CMP-005 + dtc_log from US-204
-              + battery_health_log from US-217 + drive_counter from US-314)
+              + battery_health_log from US-217 + drive_counter from US-314
+              + dtc_freeze_frame from US-368 + speed_pid_calibration from US-370
+              + ecu from US-376)
         """
         from src.server.db.models import Base
 
         tableNames = list(Base.metadata.tables.keys())
-        assert len(tableNames) == 20, (
-            f"Expected 20 tables, got {len(tableNames)}: {tableNames}"
+        assert len(tableNames) == 23, (
+            f"Expected 23 tables, got {len(tableNames)}: {tableNames}"
         )
 
 

@@ -322,7 +322,7 @@ def _collectStatsByParameter(
             DriveStatistic.max_value,
             DriveStatistic.std_dev,
         )
-        .join(DriveSummary, DriveSummary.id == DriveStatistic.drive_id)
+        .join(DriveSummary, DriveSummary.id == DriveStatistic.summary_id)
         .where(and_(*filters))
     )
 

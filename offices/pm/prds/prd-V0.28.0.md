@@ -44,15 +44,17 @@ Land F-107's data-integrity remediation (Pi-side DriveDetector + lifecycle harde
 | # | Question | Raised by | Resolution | Resolved by |
 |---|---|---|---|---|
 | 1 | **US-372 `drive_summary.drive_id` NULL** — option (a) backfill from `source_id` OR option (b) drop column server-side? | Spool 2026-05-22 (joint flag with Atlas) | **(a) Backfill + invariant.** `UPDATE drive_summary SET drive_id = source_id WHERE drive_id IS NULL AND source_id IS NOT NULL` + CHECK `(drive_id IS NULL AND source_id IS NULL) OR (drive_id = source_id)` + writer-path sets both. SSOT-purist (drop) deferred to V0.28+ B-076 where full query-surface impact can be enumerated. Smaller risk; fits one-Alembic-v0010 scope. | CIO + Atlas 2026-05-28 |
-| 2 | **US-370 SPEED-PID new-ECU seed** — initial `correction_factor=0.5` (rough estimate) OR defer to GPS-correlation drive? | PM 2026-05-28 (sprint grooming) | pending | Spool |
+| 2 | **US-370 SPEED-PID new-ECU seed** — initial `correction_factor=0.5` (rough estimate) OR defer to GPS-correlation drive? | PM 2026-05-28 (sprint grooming) | **Seed 0.5 NOW with `provenance` column.** Defer-to-GPS = NULL/identity-1.0 silent-garbage anti-pattern. Add `provenance TEXT NOT NULL` to `speed_pid_calibration` (values: `rough-seed-drive-26-gear-math`, `empirical-gps-correlation`, `identity-1.0-oem`, etc.) so seed-vs-empirical is auditable at query time. Refinement of the value itself = post-sprint Spool work; schema delta lands now in same Alembic v0010. | Spool 2026-05-28 |
 | 3 | **US-361 Pi-side fix scope** — bounded to `src/pi/obdii/drive/detector.py` OR also touches `src/pi/obdii/orchestrator/lifecycle.py`? Affects PM Rule 10 scope (US-373). | PM 2026-05-28 (sprint grooming) | **Both modules in scope; behavioral test, not file-path test.** Sprint pre-commits to "DriveDetector + lifecycle" as the load-bearing surface. US-361 validationCriteria assert the reproducer-fixture behavior (1 drive_id emitted post-fix), not which file the diff lands in. RCA from US-360 determines where the actual edit lives; the criterion is invariant to that. US-373 documents BOTH modules' final state regardless. Removes the contradiction "must resolve before freeze ↔ requires RCA which happens in-sprint." | Atlas 2026-05-28 |
-| 4 | **US-368 `ecu_signature` capture** — runtime FK to current `vehicle_info` row at capture time OR denormalized `ecu_signature_at_capture` text for historical immutability? | PM 2026-05-28 (sprint grooming) | **FK to `vehicle_info.id` (specific row, not "currently active").** Forensic immutability comes from vehicle_info's append-only semantics (corrections = close prior row + open new; never UPDATE). Document the append-only invariant in vehicle_info table comment. SSOT pattern preserved — vehicle_info is sole authority for ECU identity; dtc_freeze_frame consumes via FK, never duplicates. Spool concurrence still requested via Atlas → Spool note; CIO veto path open if append-only feels too restrictive. | Atlas 2026-05-28 (Spool concur pending) |
+| 4 | **US-368 `ecu_signature` capture** — runtime FK to current `vehicle_info` row at capture time OR denormalized `ecu_signature_at_capture` text for historical immutability? | PM 2026-05-28 (sprint grooming) | **FK to `vehicle_info.id` (specific row, not "currently active") + Spool CONCUR-with-caveat.** Forensic immutability comes from vehicle_info's append-only semantics on **identity columns** (corrections = close prior row + open new; never UPDATE on `ecu_signature`/`cal_signature`/timestamps). Spool VETO on hybrid (denormalized text). Spool CAVEAT: carve out mutable `notes TEXT NULL` column on `vehicle_info` for forensic annotation (knock-retard events, Mode 22 silence, calibration drift observations) so append-only invariant doesn't force noisy close+open on every running-ECU observation. Spool bonus: temporal invariant on US-368 — `dtc_freeze_frame.captured_at BETWEEN vehicle_info[fk].install_timestamp_utc AND COALESCE(removal_timestamp_utc, NOW())` as cheap FK-drift catch. **Pending Atlas ack on `notes` column carve-out before PM applies US-365 + US-368 + US-370 schema deltas + re-runs `prd_to_sprint.py` for clean re-freeze.** | Atlas + Spool 2026-05-28 (Atlas Q4-caveat ACK landed via `offices/pm/inbox/2026-05-28-from-atlas-q4-caveat-ack-plus-spool-refinements-ratified.md`) |
 
-**Q1, Q3, Q4 resolved per row above; Q2 defers to Spool.** PM Rule 13 (Atlas validation-block sign-off) lands as a separate note once Stories US-359..US-373 are filed with `validationCriteria` populated per the rulings + the refinements table below.
+> **Atlas structural pin (added in caveat ack)**: ECU columns + `notes` are SERVER-SIDE ONLY. Pi's `vehicle_info` schema is UNCHANGED in v0010. Reason: `src/server/api/sync.py` `_PRESERVE_ON_UPDATE = frozenset({"id", "source_id", "source_device", "synced_at"})` only preserves 4 columns on Pi-sync conflict; without server-side-only scope, Pi sync with NULL ECU/notes payload would clobber server-edited values. Same pattern as drive_summary §10.7 analytics columns. US-365 Story scope tightened accordingly.
+
+**Q1, Q2, Q3, Q4 all FULLY RESOLVED 2026-05-28.** All 3 Spool refinement deltas (US-365 +notes, US-368 +temporal invariant, US-370 +provenance) + Atlas's server-side-only structural pin APPLIED to Story.md files + backlog.json. PRD Refinements rows 18-21 updated to "Applied 2026-05-28". `prd_to_sprint.py` re-run for clean re-freeze landed at sprint.json with new bigDoDHash. PM Rule 13 formal sign-off package rerouted to Atlas (see corresponding A2AL note).
 
 ## Atlas architecture review
 
-*Date: TBD (pending Stories filed + PRD ready for Atlas brief)*
+*Date: 2026-05-28 — **PM Rule 13 formal sign-off PASS** (`offices/pm/inbox/2026-05-28-from-atlas-sprint-43-rule-13-PASS-formal-signoff.md`). PM Rule 10 design-gate carried in US-373 vc6 (Atlas PASS on `specs/architecture.md` updates recorded BEFORE deploy; gates deploy not just merge, closes Sprint 39 T2/T7 gap). Three non-blocking observations from Atlas verdict: Windows-encoding gotcha for ad-hoc Python audits; IRL clauses folded into per-Story criteria (Atlas ratifies as preferred pattern; V0.28+ spec amendment recommended); Argus lane preserved separately (CIO proxy-approved 2026-05-28).*
 
 **Triggers**:
 - **PM Rule 10** (load-bearing subsystem change): F-107 touches Pi DriveDetector + lifecycle (load-bearing); F-076/F-108/F-109 add 3 tables + rename columns (schema = load-bearing); US-373 is the in-sprint `specs/architecture.md` update artifact (PM Rule 10 DoD).
@@ -62,14 +64,16 @@ Land F-107's data-integrity remediation (Pi-side DriveDetector + lifecycle harde
 
 ## Argus QA review
 
-*Date: TBD*
+*Date: 2026-05-28 — **CIO-approved on Argus's behalf** (executive proxy).*
 
-**Why required** (`argusReviewRequired: true`):
-F-107 is a data-integrity bug surfaced by Argus's V0.27.18 IRL drill. Argus reviews:
+**Why required** (`argusReviewRequired: true` — kept as historical marker; CIO proxy gate satisfies the requirement for V0.28.0 dispatch):
+F-107 is a data-integrity bug surfaced by Argus's V0.27.18 IRL drill. Argus's substantive review criteria preserved for the record:
 - The regression-test design (US-359 reproducer + US-362 server detector + US-364 backfill assertions)
 - The IRL drill spec (drive count + recompute scope + backfill expectations)
 - The `detect_overlapping_drives` tripwire signal shape (sufficient to flag the V0.27.18 pattern; not so loud it flags legitimate sequential drives)
 - Coverage of Drive 25+ single-attribution clean state staying `data_quality='full'` post-recompute
+
+**CIO disposition (2026-05-28)**: criteria above are ratified as-is; no separate Argus written verdict required before V0.28.0 Sprint 43 dispatch. If Argus surfaces post-hoc concerns during the IRL drill, those route as patch-sprint material (V0.28.1+) per directive #1 dev/main workflow.
 
 ## Sprint-level `validation.bigDefinitionOfDone`
 
@@ -136,6 +140,10 @@ After freeze: any `bigDefinitionOfDone` modification → `sprint_lint.py` ERRORs
 | Sprint-level IRL | Add clause #5: post-Alembic v0010, `SELECT COUNT(*) FROM drive_summary WHERE source_id IS NOT NULL AND drive_id IS NULL == 0` (Q1 backfill invariant). Add clause #6: post-US-371 column rename, `SELECT summary_id FROM drive_statistics LIMIT 1` succeeds AND `SELECT drive_id FROM drive_statistics LIMIT 1` fails (rename is complete, not additive-with-alias). | Atlas | 2026-05-28 |
 | Migration risk | One Alembic v0010 covers 6 substeps with ordering dependencies (US-365 BEFORE US-370 because US-370 FKs to US-365's new column; US-372 UPDATE BEFORE ALTER for the CHECK constraint). Substep order documented in migration docstring + each substep independently testable + rollback path verified. Standard Alembic practice; flag for Ralph's awareness, not a blocker. | Atlas | 2026-05-28 |
 | Backlog hierarchy nit | Per MEMORY.md current-state pointer, F-108 + F-109 + SPEED-PID-per-ECU are sub-items of F-076's coherent-schema-pass framing, but the PRD treats them as sibling Features. Either: (i) the PRD's working definition supersedes the memory framing (PRD = authoritative scope record), or (ii) backlog.json should add `parent: F-076` to F-108 + F-109. PM's call; non-blocking. | Atlas | 2026-05-28 |
+| US-365 (Spool Q4 caveat) | + `notes TEXT NULL` column on `vehicle_info` (mutable; forensic annotation lane). Table comment documents identity-columns-append-only vs notes-mutable split. validationCriteria gets pair: "UPDATE on identity column raises (writer-path or trigger); UPDATE on notes succeeds". Fits Alembic v0010 substep delta. **APPLIED 2026-05-28 per Atlas Q4-caveat ACK.** | Spool | 2026-05-28 |
+| US-370 (Spool Q2 caveat) | + `provenance TEXT NOT NULL` column on `speed_pid_calibration` (values: `rough-seed-drive-26-gear-math`, `empirical-gps-correlation`, `identity-1.0-oem`, etc.). Seed rows with provenance values. validationCriteria gets pair: "SELECT provenance FROM speed_pid_calibration WHERE ecu_signature=X returns the expected provenance label". Fits Alembic v0010 substep delta. **APPLIED 2026-05-28 per Atlas Q4-caveat ACK.** | Spool | 2026-05-28 |
+| US-368 (Spool Q4 bonus) | + writer-path temporal invariant: `dtc_freeze_frame.captured_at BETWEEN vehicle_info[fk].install_timestamp_utc AND COALESCE(removal_timestamp_utc, NOW())` enforced via trigger or compute-path check. validationCriteria gets pair: "INSERT dtc_freeze_frame with capture_at outside FK row's install/removal window raises". Cheap FK-drift catch. **APPLIED 2026-05-28 per Atlas Q4-caveat ACK.** | Spool | 2026-05-28 |
+| US-365 (Atlas server-side-only pin) | ECU columns + `notes` are SERVER-SIDE ONLY. Pi's vehicle_info schema UNCHANGED in v0010. Reason: sync.py `_PRESERVE_ON_UPDATE = frozenset({"id", "source_id", "source_device", "synced_at"})` only preserves 4 cols; without server-side-only scope, Pi sync with NULL payload would clobber server-edited values. Same pattern as drive_summary §10.7. US-365 Story scope tightens to "server-side migration adds 5 columns + writer-path discipline + table comment; Pi-side zero". validationCriteria gets pair: "Pi vehicle_info schema UNCHANGED in v0010; sync round-trip preserves server-edited columns". | Atlas | 2026-05-28 |
 
 ## Dependencies & sequencing
 
@@ -174,14 +182,15 @@ E-OPS: US-373                          (depends on all schema-touching Stories a
 
 ## Conversion record
 
-- `convertedAt`: 2026-05-28T17:22:20Z (PRD -> sprint.json conversion timestamp)
+- `convertedAt`: 2026-05-28T19:26:59Z (re-freeze after Atlas Q4-caveat ACK + Spool deltas applied)
 - `sprintJsonPath`: offices/ralph/sprint.json
-- `frozenAt`: 2026-05-28T17:22:20Z
-- `bigDoDHash`: `ddf5e87afd53c59ae6f379eab3cbb167eaad38bb56f0dd9dd530c3d46b838c96`
-- bigDoD clauses: 81 (aggregated from 15 stories' validationCriteria + sprint-level IRL clauses)
+- `frozenAt`: 2026-05-28T19:26:59Z
+- `bigDoDHash`: `251bad9423a5b627f6cd7d9c2b51f2db004c6f830153d77365205607012c5dcf`
+- bigDoD clauses: 103 (aggregated from 15 stories' validationCriteria + sprint-level IRL clauses; up from 81 first-freeze count — 22 new pairs from Atlas+Spool deltas on US-365/366/368/370)
 - validationMethod: Drive 27+ IRL end-to-end + server recompute across drives 1-26 + F-108 ECU lineage smoke + F-109 freeze-frame Pi smoke (synthetic DTC) + Atlas Rule 10 architecture.md sign-off + Argus regression-test design verdict
 - validatesFeatures: ['F-005', 'F-007', 'F-010', 'F-013']
 - currentVersion: V0.28.0
+- prior frozenAt (superseded by Atlas Q4-caveat ACK): 2026-05-28T17:22:20Z, hash ddf5e87afd53c59a... — 81 clauses
 
 ## Audit trail
 

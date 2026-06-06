@@ -29,6 +29,24 @@
 #               |              | func.now() for observable idempotency, NOT NULL
 #               |              | tightened on sample_count + parameter_name,
 #               |              | INDEX idx_drive_statistics_quality added.
+# 2026-05-28    | Rex (US-363) | F-107 attribution-anomaly tripwire: add
+#               |              | data_quality column (+ CHECK + index) to
+#               |              | DriveSummary and extend the DriveStatistic
+#               |              | data_quality enum with 'attribution_anomaly'.
+#               |              | Shared constant DATA_QUALITY_ATTRIBUTION_ANOMALY
+#               |              | is the SSOT value both compute paths write when
+#               |              | detect_overlapping_drives (US-362) finds overlap.
+# 2026-05-28    | Rex (US-371) | F-076: rename DriveStatistic.drive_id ->
+#               |              | summary_id (the column has always held a
+#               |              | drive_summary.id FK, never a Pi drive_id).
+#               |              | Complete rename, no alias; consumers updated.
+# 2026-05-28    | Rex (US-365) | F-108: vehicle_info ECU lineage -- add
+#               |              | ecu_signature/cal_signature/ecu_install_
+#               |              | timestamp_utc/ecu_removal_timestamp_utc/notes
+#               |              | + STORED ecu_active_marker generated column with
+#               |              | UNIQUE index enforcing exactly-one-active-ECU
+#               |              | (MariaDB lacks partial unique indexes).  Append-
+#               |              | only invariant; server-only (Pi schema unchanged).
 # ================================================================================
 ################################################################################
 
@@ -61,9 +79,11 @@ from __future__ import annotations
 from datetime import datetime
 
 from sqlalchemy import (
+    JSON,
     BigInteger,
     Boolean,
     CheckConstraint,
+    Computed,
     DateTime,
     Float,
     ForeignKey,
@@ -75,7 +95,7 @@ from sqlalchemy import (
     func,
     text,
 )
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 # ---- Base --------------------------------------------------------------------
 
@@ -221,12 +241,168 @@ class Profile(Base):
     )
 
 
+# ==============================================================================
+# vehicle_info ECU lineage (US-365 / F-108)
+# ==============================================================================
+#
+# The server-side vehicle_info table carries an APPEND-ONLY ECU-lineage history
+# so per-drive analytics can join a drive to the ECU active at the drive's time
+# window (US-367 backfill; US-368 dtc_freeze_frame FK; US-370 speed calibration
+# FK).
+#
+# **Append-only invariant.**  A row's ECU-identity columns (``ecu_signature``,
+# ``ecu_install_timestamp_utc``) are immutable once written.  An ECU change is
+# recorded by CLOSING the currently-active row (set ``ecu_removal_timestamp_utc``)
+# and OPENING a new row -- never by UPDATEing identity columns in place, because
+# dtc_freeze_frame (US-368) and per-drive joins reference a SPECIFIC row by FK /
+# time-window and a mutated identity would silently rewrite history.  The
+# sanctioned mutator is the ``stamp_ecu_swap`` writer path (US-366); there are no
+# in-place identity UPDATEs anywhere in src/server/.
+#
+# **Exactly one currently-active ECU.**  At most one row may have
+# ``ecu_removal_timestamp_utc IS NULL``.  MariaDB has no partial unique index and
+# a plain UNIQUE on the timestamp would permit many NULLs, so the invariant is
+# enforced at the DB layer (both SQLite + MariaDB) by a STORED generated marker
+# column -- ``1`` when the row is active, ``NULL`` when closed -- carrying a
+# UNIQUE index: the value ``1`` must be unique (=> <=1 active row) while ``NULL``
+# repeats freely (closed rows are unconstrained).  Per US-365 conditionalOutcome
+# this is the chosen mechanism over an app-layer-only check.
+#
+# ``ecu_signature`` for a legacy (pre-tracking) row backfilled by the v0010
+# migration takes this honest sentinel rather than a fabricated ECU id; US-367's
+# authoritative backfill (Spool-signed naming) overwrites it.
+VEHICLE_INFO_ECU_SIGNATURE_UNKNOWN: str = "PRE_TRACKING_UNKNOWN"
+# US-368 AC#2: surfaced as a SQL table comment (DESCRIBE/SHOW CREATE TABLE) so the
+# append-only invariant is visible to anyone touching the table directly, not just
+# readers of this module's docstrings.  Ties the rule to the dtc_freeze_frame FK
+# that depends on it (a mutated identity column would silently rewrite the ECU era
+# a freeze-frame points to).
+VEHICLE_INFO_APPEND_ONLY_COMMENT: str = (
+    "ECU-lineage identity columns are append-only: correct an ECU/cal signature "
+    "by CLOSING the prior row (set ecu_removal_timestamp_utc) and OPENING a new "
+    "row, never by UPDATEing identity columns in place.  dtc_freeze_frame (US-368) "
+    "and per-drive joins reference a SPECIFIC row by FK + time window, so a mutated "
+    "identity would silently rewrite history.  Sanctioned mutator: stamp_ecu_swap "
+    "(US-366) close+open.  ecu_id (US-376 / B-076) is an immutable per-lineage-row "
+    "identity reference into the normalized ecu dimension; the transitional "
+    "ecu_signature/cal_signature TEXT columns are a derived snapshot kept coherent "
+    "with that row (deprecated-transitional, drop in a later B-076 slice)."
+)
+VEHICLE_INFO_SINGLE_ACTIVE_INDEX: str = "uq_vehicle_info_single_active"
+VEHICLE_INFO_ACTIVE_MARKER_COLUMN: str = "ecu_active_marker"
+# The marker's generated expression; shared as the SSOT between the ORM column
+# and the v0010 migration's ADD COLUMN DDL so both environments are identical.
+VEHICLE_INFO_ACTIVE_MARKER_EXPR: str = (
+    "CASE WHEN ecu_removal_timestamp_utc IS NULL THEN 1 ELSE NULL END"
+)
+
+
+# ---- US-376 / B-076 first slice: normalized ECU identity dimension ----------
+#
+# ``ecu`` is a pure, immutable identity dimension keyed on the
+# (ecu_signature, cal_signature) PAIR.  ``vehicle_info`` references a specific
+# identity row by FK (``ecu_id``) instead of duplicating free-text signatures,
+# so ECU identity is SSOT and a reflash is its OWN row (a new pair) rather than
+# an in-place rewrite of one identity.  No lineage / timestamp columns live here
+# -- the install/removal window stays on ``vehicle_info`` (the lineage table);
+# ``ecu`` answers only "which ECU + calibration is this".
+ECU_TABLE: str = "ecu"
+ECU_SIGNATURE_LENGTH: int = 32
+ECU_PAIR_UNIQUE: str = "uq_ecu_signature_cal_signature"
+# The signature value used when an ECU's real calibration id is not yet known.
+# Distinct from a reflash: a row may be resolved from this sentinel to the real
+# CALID in place ONCE (the sanctioned carve-out below); a reflash is a new row.
+ECU_CAL_SIGNATURE_UNKNOWN: str = "UNKCAL"
+# Immutability carve-out (Atlas Rule 13 refinement, Spool Q5 edge): ecu identity
+# columns are immutable EXCEPT the write-once UNKCAL -> real-CALID same-row
+# resolution -- NOT absolute immutability.  Surfaced as a SQL table comment so
+# the rule is visible to anyone touching the table directly.
+ECU_IMMUTABILITY_COMMENT: str = (
+    "ECU identity is immutable: an (ecu_signature, cal_signature) pair is a "
+    "stable identity and a reflash is a NEW row, never an in-place edit.  SOLE "
+    "sanctioned in-place mutation: resolving a write-once UNKCAL cal_signature "
+    "to the real CALID once known (Spool Q5) -- this is distinct from a reflash "
+    "(which is a new row).  vehicle_info.ecu_id references a SPECIFIC identity "
+    "row; per-lineage-row identity is otherwise immutable."
+)
+# The three grounded seed identity rows (Spool-signed signatures 2026-06-01):
+#   (MD346675, 6675)          -- prior STOCK factory ECU (drives <=24).
+#   (MD326328, UNKCAL)        -- new modified-EPROM ECU; CALID not yet read.
+#   (PRE_TRACKING_UNKNOWN, PRE_TRACKING_UNKNOWN) -- legacy pre-tracking sentinel
+#       (its cal == its sig so a legacy vehicle_info row whose cal_signature is
+#        NULL resolves cleanly via COALESCE(cal, sig) at v0011 backfill time).
+ECU_SEED_PAIRS: tuple[tuple[str, str], ...] = (
+    ("MD346675", "6675"),
+    ("MD326328", ECU_CAL_SIGNATURE_UNKNOWN),
+    (VEHICLE_INFO_ECU_SIGNATURE_UNKNOWN, VEHICLE_INFO_ECU_SIGNATURE_UNKNOWN),
+)
+# vehicle_info FK column name (SSOT shared with the v0011 migration).
+VEHICLE_INFO_ECU_FK_COLUMN: str = "ecu_id"
+VEHICLE_INFO_ECU_FK_NAME: str = "fk_vehicle_info_ecu"
+
+
+class Ecu(Base):
+    """Normalized, immutable ECU identity dimension (US-376 / B-076 first slice).
+
+    One row per distinct ``(ecu_signature, cal_signature)`` identity.  This is
+    a DIMENSION, not a lineage table: it carries no install/removal window
+    (that stays on :class:`VehicleInfo`).  ``vehicle_info`` references a row
+    here by FK so the identity is SSOT instead of duplicated free text, and a
+    reflash is its own identity row (a new pair) rather than an in-place rewrite.
+
+    Identity is immutable EXCEPT the sanctioned write-once UNKCAL -> real-CALID
+    resolution (see :data:`ECU_IMMUTABILITY_COMMENT`); nothing in this slice
+    builds that resolution path -- the carve-out is documentation honesty so the
+    table comment does not overclaim absolute immutability.
+    """
+
+    __tablename__ = ECU_TABLE
+    __table_args__ = (
+        # Pair UNIQUE: identity is the (signature, cal) pair, so a reflash
+        # (same ECU, new calibration) is a distinct, allowed row.
+        UniqueConstraint(
+            "ecu_signature", "cal_signature", name=ECU_PAIR_UNIQUE,
+        ),
+        {"comment": ECU_IMMUTABILITY_COMMENT},
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    ecu_signature: Mapped[str] = mapped_column(
+        String(ECU_SIGNATURE_LENGTH), nullable=False,
+    )
+    cal_signature: Mapped[str] = mapped_column(
+        String(ECU_SIGNATURE_LENGTH), nullable=False,
+    )
+
+    vehicle_infos: Mapped[list[VehicleInfo]] = relationship(
+        back_populates="ecu",
+    )
+
+
 class VehicleInfo(Base):
-    """Vehicle information decoded from VIN, mirrored from Pi."""
+    """Vehicle information decoded from VIN (mirrored from Pi) + ECU lineage.
+
+    The VIN-decoded columns are Pi-sync mirrored.  The ECU-lineage columns
+    (``ecu_signature``, ``cal_signature``, ``ecu_install_timestamp_utc``,
+    ``ecu_removal_timestamp_utc``, ``notes``) are SERVER-ONLY (the Pi never
+    sends them; ``sync.py::_PRESERVE_ON_UPDATE`` keeps them intact across
+    re-syncs) and follow the append-only ECU-lineage invariant documented above
+    this class.  See ``stamp_ecu_swap`` / ``show_ecu_lineage`` (US-366) for the
+    writer + reader CLIs.
+    """
 
     __tablename__ = "vehicle_info"
     __table_args__ = (
         UniqueConstraint("source_device", "source_id"),
+        # US-365: enforce "exactly one currently-active ECU" via the generated
+        # marker column (1 == active).  Name matches the v0010 migration's
+        # ADD UNIQUE INDEX so SHOW CREATE TABLE is identical across environments.
+        UniqueConstraint(
+            VEHICLE_INFO_ACTIVE_MARKER_COLUMN,
+            name=VEHICLE_INFO_SINGLE_ACTIVE_INDEX,
+        ),
+        # US-368 AC#2: append-only invariant surfaced as a SQL table comment.
+        {"comment": VEHICLE_INFO_APPEND_ONLY_COMMENT},
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -255,6 +431,39 @@ class VehicleInfo(Base):
     updated_at: Mapped[datetime | None] = mapped_column(
         DateTime, server_default=func.now(),
     )
+
+    # ---- US-365 / F-108: server-only ECU lineage -----------------------------
+    # Identity columns (immutable; corrections via close+open, never UPDATE):
+    ecu_signature: Mapped[str] = mapped_column(Text, nullable=False)
+    ecu_install_timestamp_utc: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False,
+    )
+    # Mutable / write-once / append-only columns:
+    cal_signature: Mapped[str | None] = mapped_column(Text)
+    # ecu_removal_timestamp_utc is write-once (NULL -> close timestamp).  NULL
+    # marks the currently-active ECU.  Must be declared BEFORE the generated
+    # marker that references it (SQLite generated-column ordering rule).
+    ecu_removal_timestamp_utc: Mapped[datetime | None] = mapped_column(DateTime)
+    notes: Mapped[str | None] = mapped_column(Text)
+    # Generated single-active marker (see class + section docstrings).  STORED so
+    # it can carry a UNIQUE index on both SQLite (3.31+) and MariaDB (10.2+).
+    ecu_active_marker: Mapped[int | None] = mapped_column(
+        Integer,
+        Computed(VEHICLE_INFO_ACTIVE_MARKER_EXPR, persisted=True),
+    )
+    # ---- US-376 / B-076: FK to the normalized ecu identity dimension ---------
+    # NOT NULL: every lineage row references a specific immutable ecu identity
+    # row (SSOT).  The transitional ``ecu_signature`` / ``cal_signature`` TEXT
+    # columns above are KEPT this slice but must stay coherent with the joined
+    # ecu row (see :mod:`src.server.db.vehicle_info_coherence`); the writer
+    # (stamp_ecu_swap) DERIVES them from the ecu row.  They are deprecated-
+    # transitional and drop in a later B-076 slice.
+    ecu_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey(f"{ECU_TABLE}.id", name=VEHICLE_INFO_ECU_FK_NAME),
+        nullable=False,
+    )
+    ecu: Mapped[Ecu] = relationship(back_populates="vehicle_infos")
 
 
 class AiRecommendation(Base):
@@ -389,6 +598,65 @@ class DtcLog(Base):
     data_source: Mapped[str | None] = mapped_column(
         String(DATA_SOURCE_LENGTH), server_default=DATA_SOURCE_DEFAULT,
     )
+
+
+class DtcFreezeFrame(Base):
+    """Mode 02 freeze-frame snapshot captured when a DTC trips (US-368 / F-109).
+
+    One row per freeze-frame: the 16-PID JSON snapshot of "what the engine was
+    doing" at capture time, an FK to the ``dtc_log`` row it belongs to, and an FK
+    to the ``vehicle_info`` row for the ECU active at capture time.  Pi captures
+    the snapshot on a MIL_ON rising edge (Mode 02 enumeration); the server
+    ``insertDtcFreezeFrame`` writer-path (``src/server/api/dtc_freeze_frame.py``)
+    enforces the temporal invariant ``ecu_install <= captured_at <= ecu_removal``
+    so the FK can only bind to the ECU era that was actually installed -- the Pi
+    cannot enforce this because its ``vehicle_info`` schema carries no ECU lineage
+    (server-only per US-365).
+
+    Synced capture table: carries the standard ``(source_device, source_id)``
+    upsert key so US-369 Pi->server sync mirrors rows like every other capture
+    table.  ``vehicle_info`` is append-only (see its table comment) so this FK
+    never points at a row whose identity was rewritten in place.
+
+    ``pid_responses_json`` defaults to ``{}`` for the graceful-degradation case
+    (DTC tripped but Mode 02 PIDs unavailable -- US-368 V-6).
+    """
+
+    __tablename__ = "dtc_freeze_frame"
+    __table_args__ = (
+        UniqueConstraint("source_device", "source_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    source_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    source_device: Mapped[str] = mapped_column(String(64), nullable=False)
+    synced_at: Mapped[datetime | None] = mapped_column(
+        DateTime, server_default=func.now(),
+    )
+    sync_batch_id: Mapped[int | None] = mapped_column(Integer)
+
+    # FK to the DTC this freeze-frame belongs to.  Nullable: cross-tier id
+    # resolution (Pi dtc_log id -> server dtc_log.id) is a US-369 sync concern;
+    # a freeze-frame may land before its parent DTC mapping is resolved.
+    dtc_log_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("dtc_log.id"), index=True,
+    )
+    captured_at_timestamp_utc: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False,
+    )
+    # 16-PID Mode 02 snapshot.  Generic JSON: MariaDB JSON column, SQLite TEXT.
+    pid_responses_json: Mapped[dict | None] = mapped_column(JSON, default=dict)
+    # FK to the ECU active at capture time; bound by the server writer-path's
+    # temporal invariant.  Nullable at the DB layer (sync may deliver before
+    # server-side resolution); the writer-path requires + validates it.
+    vehicle_info_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("vehicle_info.id"), index=True,
+    )
+    # US-369 (F-109): operator-facing context for degraded captures (Mode 02
+    # unavailable -> pid_responses_json={}).  Synced verbatim from the Pi row
+    # so a post-mortem keeps the gap explanation, and show_dtc_freeze_frame can
+    # surface it (conditionalOutcome 2).
+    notes: Mapped[str | None] = mapped_column(Text)
 
 
 class CalibrationSession(Base):
@@ -555,6 +823,58 @@ class Device(Base):
 # ==============================================================================
 
 
+# US-363 / F-107: shared value for the V0.27.18 dual-attribution tripwire.
+# A drive whose raw realtime_data window overlaps another drive's window
+# (detect_overlapping_drives, US-362) is stamped 'attribution_anomaly' on both
+# drive_summary and drive_statistics so the dual-emission pattern is observable
+# downstream as a per-row flag -- observability, never a hard refusal.  This is
+# the single source of truth for the literal; both compute paths import it.
+DATA_QUALITY_ATTRIBUTION_ANOMALY: str = "attribution_anomaly"
+
+
+# US-377 / F-107: shared VARCHAR width for the data_quality columns on both
+# drive_summary and drive_statistics.  Must stay >= the longest CHECK-permitted
+# value ('attribution_anomaly', 19 chars).  The original VARCHAR(16) was too
+# narrow: the V0.28.1 IRL drill hit MariaDB DataError 1406 ("Data too long")
+# recomputing the dual-attribution drives 23+24 because SQLite never enforces
+# VARCHAR width so the fresh-DB tests passed while production failed.  20 gives
+# one char of headroom; the width-invariant guard
+# (test_migration_0012_data_quality_widen) enforces "width >= longest value".
+DATA_QUALITY_COLUMN_LENGTH: int = 20
+
+
+# drive_summary.data_quality enum: the server compute path writes only 'full'
+# (clean) or 'attribution_anomaly' (overlap detected).  drive_summary carries
+# no sample-count notion, so the sparse / below_threshold buckets that apply to
+# drive_statistics are deliberately NOT allowed here.
+DRIVE_SUMMARY_DATA_QUALITY_DEFAULT: str = "full"
+DRIVE_SUMMARY_DATA_QUALITY_VALUES: tuple[str, ...] = (
+    DRIVE_SUMMARY_DATA_QUALITY_DEFAULT,
+    DATA_QUALITY_ATTRIBUTION_ANOMALY,
+)
+
+
+# US-372 / F-076: the drive_summary.drive_id <-> source_id invariant.  The
+# Pi-sync path maps the Pi drive_counter id onto ``source_id`` and the server
+# writers mirror it onto ``drive_id``; legacy analytics-only rows carry neither.
+# The CHECK forbids the silent-divergence smell (source_id set, drive_id NULL --
+# the V0.27.x state that bit per-drive joins): a row is either fully
+# un-attributed (both NULL) or the two columns agree.  Q1 ruling 2026-05-28:
+# backfill + invariant; the SSOT-purist column drop is deferred to a later
+# V0.28+ normalization.  The name matches the v0010 migration's ADD CONSTRAINT
+# so SHOW CREATE TABLE is identical across environments.
+DRIVE_SUMMARY_DRIVE_ID_CHECK_NAME: str = "chk_drive_id_source_id"
+# Both NULL, OR both NOT NULL and equal.  The NOT-NULL guards are load-bearing:
+# under SQL three-valued logic a bare ``drive_id = source_id`` evaluates to NULL
+# (not FALSE) when exactly one side is NULL, and a CHECK passes on NULL -- so the
+# asymmetric smell row (source_id set, drive_id NULL) would slip through without
+# them.
+DRIVE_SUMMARY_DRIVE_ID_CHECK_CLAUSE: str = (
+    "(drive_id IS NULL AND source_id IS NULL) OR "
+    "(drive_id IS NOT NULL AND source_id IS NOT NULL AND drive_id = source_id)"
+)
+
+
 class DriveSummary(Base):
     """One row per detected drive -- reconciled single-writer table (US-214).
 
@@ -604,6 +924,21 @@ class DriveSummary(Base):
     __tablename__ = "drive_summary"
     __table_args__ = (
         UniqueConstraint("source_device", "source_id"),
+        # US-363: enforce the data_quality enum at the DB layer (SQLite +
+        # MariaDB) so a bad value can never be persisted.  Name matches the
+        # v0010 migration's ADD CONSTRAINT so SHOW CREATE TABLE is identical
+        # across environments.
+        CheckConstraint(
+            f"data_quality IN "
+            f"({','.join(repr(v) for v in DRIVE_SUMMARY_DATA_QUALITY_VALUES)})",
+            name="ck_drive_summary_data_quality",
+        ),
+        Index("idx_drive_summary_data_quality", "data_quality"),
+        # US-372 / F-076: drive_id and source_id never silently diverge.
+        CheckConstraint(
+            DRIVE_SUMMARY_DRIVE_ID_CHECK_CLAUSE,
+            name=DRIVE_SUMMARY_DRIVE_ID_CHECK_NAME,
+        ),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -657,9 +992,21 @@ class DriveSummary(Base):
     # US-200 analytics queries filter on drive_id.
     drive_id: Mapped[int | None] = mapped_column(Integer, index=True)
 
+    # US-363 / F-107: data_quality tripwire flag.  The server compute path
+    # (compute_drive_summary) sets 'attribution_anomaly' when the drive's
+    # realtime_data window overlaps another drive's window (the Drive 23/24
+    # dual-emission pattern), else 'full'.  The Pi never sends this column, so
+    # the payload-only sync upsert (sync.py, server-only columns untouched)
+    # leaves an analytics-written value intact across re-syncs.
+    data_quality: Mapped[str] = mapped_column(
+        String(DATA_QUALITY_COLUMN_LENGTH),
+        nullable=False,
+        server_default=DRIVE_SUMMARY_DATA_QUALITY_DEFAULT,
+    )
+
 
 DRIVE_STATISTICS_DATA_QUALITY_VALUES: tuple[str, ...] = (
-    "full", "sparse", "below_threshold",
+    "full", "sparse", "below_threshold", DATA_QUALITY_ATTRIBUTION_ANOMALY,
 )
 DRIVE_STATISTICS_DATA_QUALITY_DEFAULT: str = "full"
 
@@ -668,9 +1015,13 @@ class DriveStatistic(Base):
     """Per-drive per-parameter statistics computed by the server analytics path.
 
     B-104 Step 1b (US-351): Atlas-specified DDL.  The natural upsert key is
-    ``(drive_id, parameter_name)``; ``drive_id`` references the server-side
+    ``(summary_id, parameter_name)``; ``summary_id`` references the server-side
     ``drive_summary.id`` (server-minted autoincrement PK), so cascading the
     DriveSummary delete tears down its DriveStatistic children automatically.
+
+    US-371 (F-076): the column was renamed ``drive_id`` -> ``summary_id``.  It
+    never held a Pi-assigned drive_id -- it has always been a ``drive_summary.id``
+    FK -- so the old name lied to readers.  The rename is COMPLETE (no alias).
 
     ``data_quality`` carries Atlas Refinement B's classification (computed by
     :func:`src.server.analytics.drive_statistics_compute.compute_drive_statistics`
@@ -692,7 +1043,7 @@ class DriveStatistic(Base):
         Index("idx_drive_statistics_quality", "data_quality"),
     )
 
-    drive_id: Mapped[int] = mapped_column(
+    summary_id: Mapped[int] = mapped_column(
         Integer,
         ForeignKey("drive_summary.id", ondelete="CASCADE"),
         primary_key=True,
@@ -709,13 +1060,115 @@ class DriveStatistic(Base):
     outlier_max: Mapped[float | None] = mapped_column(Float)
     sample_count: Mapped[int] = mapped_column(Integer, nullable=False)
     data_quality: Mapped[str] = mapped_column(
-        String(16),
+        String(DATA_QUALITY_COLUMN_LENGTH),
         nullable=False,
         server_default=DRIVE_STATISTICS_DATA_QUALITY_DEFAULT,
     )
     computed_at: Mapped[datetime | None] = mapped_column(
         DateTime, server_default=func.now(), onupdate=func.now(),
     )
+
+
+# US-370 / F-076: per-ECU SPEED-PID multiplicative correction.  The new
+# modified-EPROM ECU reads ~2x actual ground speed (Spool 2026-05-22 OBD probe +
+# Drive 26 telemetry); each ECU identity may carry its own VSS calibration, so
+# analytics that aggregate SPEED multiply the OBD reading by this ECU's factor.
+#
+# US-374 re-key (2026-06-01, B-076 first slice): the v0010 build keyed this table
+# on its OWN ``ecu_signature`` natural key (Atlas option-(c) 2026-05-29, a
+# transitional shape).  Now that the normalized ``ecu`` identity dimension exists
+# (US-376), the calibration references the SSOT identity by ``ecu_id`` FK ->
+# ``ecu.id`` with UNIQUE(ecu_id) -- one calibration row per ecu identity.  Because
+# ``ecu`` is pair-keyed on (ecu_signature, cal_signature), a reflash is its OWN
+# ecu row and therefore gets its OWN calibration row (SPEED correction is
+# per-tune-state, Spool Q5 2026-06-01).  The v0011 migration backfills ecu_id by
+# matching each existing row's ecu_signature to its ecu row, then DROPs the
+# transitional ecu_signature column + its UNIQUE key.
+SPEED_PID_CALIBRATION_TABLE: str = "speed_pid_calibration"
+# Transitional -- the v0010 CREATE DDL (forward-only, untouched) still uses these
+# to build the option-(c) ecu_signature shape that v0011 re-keys away.  The ORM
+# no longer carries an ecu_signature column.
+SPEED_PID_CALIBRATION_ECU_SIGNATURE_LENGTH: int = 32
+SPEED_PID_CALIBRATION_ECU_SIGNATURE_UNIQUE: str = (
+    "uq_speed_pid_calibration_ecu_signature"
+)
+# US-374 FK shape SSOT names (shared with the v0011 re-key migration).
+SPEED_PID_CALIBRATION_ECU_FK_COLUMN: str = "ecu_id"
+SPEED_PID_CALIBRATION_ECU_FK_NAME: str = "fk_speed_pid_calibration_ecu"
+SPEED_PID_CALIBRATION_ECU_ID_UNIQUE: str = "uq_speed_pid_calibration_ecu_id"
+SPEED_PID_CALIBRATION_CAPTURE_METHOD_CHECK_NAME: str = (
+    "ck_speed_pid_calibration_capture_method"
+)
+# F-076 §1 schema ENUM.  Realized as VARCHAR + CHECK (not a native MySQL ENUM)
+# for cross-DB parity with SQLite -- the same pattern the data_quality enums use.
+# Nullable: a CHECK ``IN (...)`` passes on NULL under SQL three-valued logic.
+SPEED_PID_CALIBRATION_CAPTURE_METHOD_VALUES: tuple[str, ...] = (
+    "gps_correlation", "gear_math", "vendor_spec", "default",
+)
+# Default factor = 1.0 (assume OEM calibration) until a per-ECU correction is
+# captured (F-076 §1 "Default").
+SPEED_PID_CALIBRATION_DEFAULT_FACTOR: float = 1.0
+# Analytics prefix-gate (US-370 VC#9): only provenance values beginning with
+# this prefix are treated as empirically-derived; rough-seed / gear-math seed
+# rows are excluded from queries that demand empirical calibration.
+SPEED_PID_CALIBRATION_EMPIRICAL_PROVENANCE_PREFIX: str = "empirical-"
+
+
+class SpeedPidCalibration(Base):
+    """Per-ECU multiplicative SPEED-PID correction factor (US-370 / US-374).
+
+    One row per ``ecu`` identity.  ``correction_factor`` is multiplicative:
+    ``OBD-reported SPEED x correction_factor = ground-truth speed``.  Analytics
+    that integrate SPEED (distance, average speed, gear inference) resolve the
+    drive's ECU identity (via ``vehicle_info`` for the drive's time window) and
+    apply this factor before integrating.
+
+    ``ecu_id`` is a NOT NULL FK -> :class:`Ecu` with ``UNIQUE(ecu_id)`` (US-374
+    re-key, B-076 first slice).  This replaces the transitional v0010 option-(c)
+    ``ecu_signature`` natural key: the calibration now references the SSOT ECU
+    identity dimension instead of duplicating a free-text signature.  Because
+    ``ecu`` is pair-keyed on (ecu_signature, cal_signature), a reflash is its own
+    identity row and therefore gets its own calibration row -- SPEED correction
+    is per-tune-state (Spool Q5 2026-06-01).
+
+    ``provenance`` is NOT NULL and (via the
+    :mod:`src.server.analytics.speed_pid_calibration` writer-path) non-empty:
+    every factor must record how it was derived.  The empirical-prefix gate
+    (``provenance LIKE 'empirical-%'``) separates measured calibrations from
+    rough bootstrap seeds.
+    """
+
+    __tablename__ = SPEED_PID_CALIBRATION_TABLE
+    __table_args__ = (
+        # US-374: one calibration row per ecu identity (UNIQUE FK).  Name matches
+        # the v0011 re-key migration's ADD CONSTRAINT so SHOW CREATE TABLE is
+        # identical across environments.
+        UniqueConstraint(
+            SPEED_PID_CALIBRATION_ECU_FK_COLUMN,
+            name=SPEED_PID_CALIBRATION_ECU_ID_UNIQUE,
+        ),
+        # capture_method enum enforced via CHECK (cross-DB; NULL allowed).
+        CheckConstraint(
+            f"capture_method IN ("
+            f"{','.join(repr(v) for v in SPEED_PID_CALIBRATION_CAPTURE_METHOD_VALUES)})",
+            name=SPEED_PID_CALIBRATION_CAPTURE_METHOD_CHECK_NAME,
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    ecu_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey(f"{ECU_TABLE}.id", name=SPEED_PID_CALIBRATION_ECU_FK_NAME),
+        nullable=False,
+    )
+    correction_factor: Mapped[float] = mapped_column(Float, nullable=False)
+    capture_method: Mapped[str | None] = mapped_column(String(32))
+    captured_at_timestamp_utc: Mapped[datetime | None] = mapped_column(DateTime)
+    captured_by: Mapped[str | None] = mapped_column(String(128))
+    provenance: Mapped[str] = mapped_column(Text, nullable=False)
+    notes: Mapped[str | None] = mapped_column(Text)
+
+    ecu: Mapped[Ecu] = relationship()
 
 
 class TrendSnapshot(Base):
@@ -823,11 +1276,22 @@ __all__ = [
     "Statistic",
     "Profile",
     "VehicleInfo",
+    "Ecu",
+    "ECU_TABLE",
+    "ECU_SIGNATURE_LENGTH",
+    "ECU_PAIR_UNIQUE",
+    "ECU_CAL_SIGNATURE_UNKNOWN",
+    "ECU_IMMUTABILITY_COMMENT",
+    "ECU_SEED_PAIRS",
+    "VEHICLE_INFO_ECU_FK_COLUMN",
+    "VEHICLE_INFO_ECU_FK_NAME",
     "AiRecommendation",
     "ConnectionLog",
     "AlertLog",
     "CalibrationSession",
     "DtcLog",
+    "DtcFreezeFrame",
+    "VEHICLE_INFO_APPEND_ONLY_COMMENT",
     # Server-only
     "SyncHistory",
     "AnalysisHistory",
@@ -838,6 +1302,7 @@ __all__ = [
     "DriveStatistic",
     "DRIVE_STATISTICS_DATA_QUALITY_VALUES",
     "DRIVE_STATISTICS_DATA_QUALITY_DEFAULT",
+    "DATA_QUALITY_COLUMN_LENGTH",
     "TrendSnapshot",
     "AnomalyLog",
     "Baseline",

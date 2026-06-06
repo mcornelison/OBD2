@@ -1,0 +1,193 @@
+{
+  "schemaVersion": "2.0.0",
+  "sprint": 44,
+  "version": "V0.28.1",
+  "createdFromPRD": "offices/pm/prds/prd-V0.28.1.md",
+  "stories": [
+    {
+      "id": "US-374",
+      "title": "speed_pid_calibration re-key forward: option-(c) natural key -> ecu_id FK (reworks dev-shipped v0010 build)",
+      "parent": "F-076",
+      "epicId": "E-002",
+      "type": "tech-debt",
+      "size": "S",
+      "status": "passed",
+      "passes": true,
+      "acceptance": [
+        "Starting point (explicit, per Atlas coherence finding): v0010 already creates speed_pid_calibration in option-(c) shape (ecu_signature VARCHAR(32) + uq_speed_pid_calibration_ecu_signature) and that build is on dev; US-374's v0011 substep reworks it FORWARD -- it does not create the table",
+        "v0011 substep (after US-376 ecu substeps): ADD speed_pid_calibration.ecu_id INT FK->ecu.id + UNIQUE(ecu_id); backfill ecu_id by matching each existing row's ecu_signature to its ecu row; DROP uq_speed_pid_calibration_ecu_signature + the ecu_signature column; 2 v0010 seed rows PRESERVED re-pointed to ecu_id; a seed matching no ecu row FAILS LOUDLY",
+        "ORM SpeedPidCalibration: replace ecu_signature natural key with ecu_id FK + relationship; SSOT constants updated; create_all + migration converge",
+        "seeds per confirmed table: MD346675->1.0/empirical-Drive-18-gear-math-fit, MD335287->0.5/gear-math-sanity-check-Drive-26-CIO-corrected (provenance updated from v0010 strings per Spool 2026-06-01); provenance stays NOT NULL; empty/whitespace forbidden by writer (preserved from v0010)",
+        "select_empirical_calibrations() empirical-prefix gate works over the FK shape (provenance LIKE 'empirical-%')",
+        "pytest tests/server/ -m 'not slow' green (+ re-key migration test, ORM parity, gate test); ruff clean; changes unstaged; architecture.md §5 surface landed jointly via US-376 Rule-10 clause"
+      ],
+      "validationCriteria": [
+        {
+          "action": "DESCRIBE speed_pid_calibration post-v0011",
+          "outcome": "ecu_id INT NOT NULL FK + UNIQUE(ecu_id); ecu_signature column ABSENT; old uq_speed_pid_calibration_ecu_signature gone"
+        },
+        {
+          "action": "SELECT correction_factor FROM speed_pid_calibration spc JOIN ecu e ON spc.ecu_id=e.id WHERE e.ecu_signature='MD346675'",
+          "outcome": "1.0"
+        },
+        {
+          "action": "SELECT correction_factor ... JOIN ecu ... WHERE e.ecu_signature='MD335287'",
+          "outcome": "0.5"
+        },
+        {
+          "action": "INSERT a speed_pid_calibration row with ecu_id not in ecu",
+          "outcome": "FK violation"
+        },
+        {
+          "action": "INSERT with empty provenance",
+          "outcome": "writer raises"
+        },
+        {
+          "action": "call select_empirical_calibrations()",
+          "outcome": "MD346675 row included (empirical- prefix), MD335287 excluded (rough seed)"
+        },
+        {
+          "action": "re-run v0011 over an already-migrated DB",
+          "outcome": "idempotent no-op (no duplicate FK/column ops)"
+        }
+      ],
+      "conditionalOutcomes": [
+        "depends on US-376's ecu table existing first; if US-376 deferred/incomplete, US-374 BLOCKS (do not partially re-key)",
+        "if a seed's ecu_signature matches no ecu row at backfill -> FAIL LOUDLY, do not NULL ecu_id"
+      ],
+      "goal": "As server analytics, I want speed_pid_calibration keyed by FK ecu_id->ecu.id (not the transitional option-(c) ecu_signature natural key) so per-ECU SPEED correction references the SSOT ecu identity and a reflash gets its own calibration row.",
+      "tasks": [],
+      "completionNotes": "DONE (dev-side, server-only). Re-keys speed_pid_calibration FORWARD from the v0010 option-(c) ecu_signature natural key to an ecu_id FK -> ecu.id. v0010 UNTOUCHED (forward-only); the v0011 substep (c) reworks the dev-shipped table. ORM SpeedPidCalibration (models.py): ecu_signature column REPLACED by ecu_id INT NOT NULL FK (fk_speed_pid_calibration_ecu -> ecu.id) + UNIQUE(ecu_id) (uq_speed_pid_calibration_ecu_id) + 'ecu' relationship; new SSOT constants SPEED_PID_CALIBRATION_ECU_FK_COLUMN/_FK_NAME/_ECU_ID_UNIQUE; the transitional ecu_signature LENGTH/UNIQUE constants KEPT (v0010 still imports them). v0011 substep _applySpeedPidCalibrationRekey (runs AFTER _applyEcuTable in apply()): require table exists -> probe columns -> gate on ecu_signature PRESENCE (terminal absence = already re-keyed: fresh create_all owns the ecu_id shape, prior run dropped the column -> no-op) -> ADD ecu_id NULL -> BACKFILL by JOIN ecu ON spc.ecu_signature=e.ecu_signature SET ecu_id (1:1 today; a reflash adds its own ecu row + own calibration row) -> RE-POINT the 2 seed provenance strings (MD346675->1.0/'empirical-Drive-18-gear-math-fit', MD335287->0.5/'gear-math-sanity-check-Drive-26-CIO-corrected' per Spool 2026-06-01; correction factors unchanged) -> COUNT unresolved, FAIL LOUDLY (MigrationError) if >0 never NULL ecu_id (CO#2) -> MODIFY NOT NULL -> ADD UNIQUE(ecu_id)+FK (swallow duplicate on replay) -> DROP INDEX uq_speed_pid_calibration_ecu_signature THEN DROP COLUMN ecu_signature (swallow already-gone on replay) -> post-probe converge (ecu_id present, ecu_signature absent). Analytics writer insert_speed_pid_calibration (speed_pid_calibration.py): takes ecu_id (not ecu_signature); dropped the ecu_signature string guard (FK + NOT NULL cover it); provenance non-empty guard PRESERVED. select_empirical_calibrations gate (provenance LIKE 'empirical-%') unchanged, works over the FK shape -- prior-ECU seed INCLUDED (empirical-prefixed), new-ECU rough seed EXCLUDED (VC#6). GATES: pytest tests/server -m 'not slow' = 1058 passed / 12 skipped / 0 failed (US-376 baseline 1040 -> +18: reworked analytics file + 15 new test_migration_0011_speed_pid_rekey.py). ruff clean on all touched files. RED->GREEN verified for both the reworked analytics shape (import-error RED) and the re-key migration substep (15 missing-attr RED). IRL-only deferred (ride V0.28.1 hardware-deploy drill, VC#1-#4): DESCRIBE post-v0011, SELECT correction_factor JOIN ecu WHERE ecu_signature=MD346675/MD335287 -> 1.0/0.5, FK-violation on bad ecu_id (SQLite doesn't enforce FK). CROSS-AGENT GATE (AC#6, not self-satisfiable): specs/architecture.md V0.28.1 B-076 §5 subsection now covers the speed_pid re-key jointly with US-376 + Atlas Rule 10 PASS = PM/Atlas lane (specs/ read-only for Ralph) -- appended an ADDENDUM to the existing US-376 inbox note (offices/pm/inbox/2026-06-01-from-rex-us376-architecture-md-b076-subsection.md) flagging US-374 LANDED + the final re-key shape. Changes UNSTAGED per PM protocol.",
+      "feedback": {
+        "filesActuallyTouched": [
+          "src/server/db/models.py",
+          "src/server/analytics/speed_pid_calibration.py",
+          "src/server/migrations/versions/v0011_us376_ecu_identity.py",
+          "tests/server/analytics/test_speed_pid_calibration.py",
+          "tests/server/test_migration_0011_speed_pid_rekey.py",
+          "offices/pm/inbox/2026-06-01-from-rex-us376-architecture-md-b076-subsection.md"
+        ]
+      }
+    },
+    {
+      "id": "US-376",
+      "title": "B-076: normalized ecu identity table (pair-keyed) + vehicle_info.ecu_id FK wiring + v0011",
+      "parent": "F-076",
+      "epicId": "E-002",
+      "type": "normal",
+      "size": "M",
+      "status": "passed",
+      "passes": true,
+      "acceptance": [
+        "v0011 (forward-only; v0010 untouched) CREATEs ecu(id INT PK AUTOINCREMENT, ecu_signature VARCHAR(32) NOT NULL, cal_signature VARCHAR(32) NOT NULL, UNIQUE(ecu_signature, cal_signature)) -- no lineage/timestamp columns; ORM Ecu model + SSOT name constants; create_all and migration converge (v0005 serverTableExists + post-probe pattern)",
+        "v0011 backfills exactly 3 seed ecu rows idempotently (INSERT-IGNORE on the pair UNIQUE; re-run no-op): (MD346675,6675), (MD335287,UNKCAL), (PRE_TRACKING_UNKNOWN,PRE_TRACKING_UNKNOWN)",
+        "v0011 adds vehicle_info.ecu_id INT FK->ecu.id; backfills ecu_id by matching each row's existing (ecu_signature, cal_signature) text to its ecu row; then MODIFY NOT NULL; a row matching no ecu row FAILS LOUDLY (MigrationError), never NULL ecu_id",
+        "vehicle_info ecu_signature/cal_signature TEXT columns KEPT (transitional); append-only lineage cols + ecu_active_marker + single-active UNIQUE index UNCHANGED; append-only table comment extended to state ecu_id is an immutable per-lineage-row identity reference",
+        "ecu-immutability carve-out (Atlas Rule 13 refinement): ecu table comment + architecture.md wording state ecu identity columns immutable EXCEPT the sanctioned UNKCAL->real-CALID same-row resolution (Spool Q5 edge -- write-once-when-known cal correction, distinct from a reflash which is a NEW row); NOT absolute immutability; resolution path is a future event (nothing builds it this slice) -- documentation honesty only",
+        "transitional-coherence guard: regression test asserts for every vehicle_info row ecu_signature==ecu[ecu_id].ecu_signature AND cal_signature==ecu[ecu_id].cal_signature; writer stamp_ecu_swap (US-366) sets ecu_id authoritative + DERIVES text columns from the ecu row; code+table comment mark text columns deprecated-transitional (drop in later B-076 slice)",
+        "(PM Rule 10; specs/ read-only for Ralph -- PM writes, Atlas signs) specs/architecture.md gets a NEW descriptive ### subsection 'V0.28.1 -- B-076 first slice' (NOT folded into the V0.28.0-pass narrative) documenting the ecu table (incl. immutability carve-out), vehicle_info.ecu_id FK + transitional-snapshot semantics, and jointly with US-374 the speed_pid_calibration re-key; Atlas Rule 10 PASS recorded BEFORE /sprint-deploy-pm",
+        "pytest tests/server/ -m 'not slow' green (+ ecu-model, migration-idempotency, coherence-guard, writer-derives tests); ruff clean; changes unstaged per PM protocol"
+      ],
+      "validationCriteria": [
+        {
+          "action": "DESCRIBE ecu post-v0011",
+          "outcome": "id PK, ecu_signature/cal_signature VARCHAR(32) NOT NULL, UNIQUE(ecu_signature, cal_signature); no timestamp/lineage columns"
+        },
+        {
+          "action": "SELECT ecu_signature, cal_signature FROM ecu",
+          "outcome": "the 3 seed rows present exactly (MD346675/6675, MD335287/UNKCAL, PRE_TRACKING_UNKNOWN/PRE_TRACKING_UNKNOWN)"
+        },
+        {
+          "action": "INSERT a duplicate (MD335287, UNKCAL) into ecu",
+          "outcome": "UNIQUE violation"
+        },
+        {
+          "action": "INSERT an ecu row with cal_signature NULL",
+          "outcome": "NOT NULL violation"
+        },
+        {
+          "action": "DESCRIBE vehicle_info post-v0011",
+          "outcome": "ecu_id INT NOT NULL FK present; ecu_signature/cal_signature TEXT still present (transitional)"
+        },
+        {
+          "action": "coherence test over all vehicle_info rows",
+          "outcome": "text columns equal the joined ecu row's values (zero drift)"
+        },
+        {
+          "action": "re-run existing US-365 append-only + ecu_active_marker single-active tests",
+          "outcome": "still green (mechanism unchanged)"
+        },
+        {
+          "action": "stamp_ecu_swap an ECU then inspect the row",
+          "outcome": "ecu_id set authoritatively; text columns derived from the ecu row"
+        },
+        {
+          "action": "grep specs/architecture.md for the V0.28.1 B-076 subsection",
+          "outcome": "ecu table + vehicle_info.ecu_id documented incl immutability carve-out; Atlas Rule 10 PASS recorded"
+        }
+      ],
+      "conditionalOutcomes": [
+        "if a vehicle_info row's (signature, cal) matches no ecu row at backfill -> FAIL LOUDLY (surface bad data), do not NULL ecu_id",
+        "if Atlas requests the TEXT-column drop this slice -> OUT of scope (CIO deferred to a later B-076 slice); leave columns + guard",
+        "if the optional TEXT->VARCHAR(32) cleanup is wanted -> fold into this story's v0011, not a new story"
+      ],
+      "goal": "As the server schema (B-076 normalization), I want a normalized, immutable ecu identity dimension keyed on the (ecu_signature, cal_signature) pair that vehicle_info references by FK, so ECU identity is SSOT instead of duplicated free-text, and a reflash is its own identity row.",
+      "tasks": [],
+      "completionNotes": "DONE (dev-side, server-only). New Ecu ORM model (id PK, ecu_signature/cal_signature VARCHAR(32) NOT NULL, UNIQUE pair uq_ecu_signature_cal_signature, immutability-carve-out table comment) + SSOT constants + 3 seed pairs ECU_SEED_PAIRS in models.py. vehicle_info.ecu_id INT NOT NULL FK (fk_vehicle_info_ecu -> ecu.id) + relationship; transitional ecu_signature/cal_signature TEXT KEPT (append-only comment extended to state ecu_id is an immutable per-lineage-row identity ref). v0011 migration (forward-only; v0010 untouched): CREATE ecu IF NOT EXISTS + COMMENT + 3 INSERT-IGNORE seeds; ADD vehicle_info.ecu_id, backfill by JOIN on (ecu_signature, COALESCE(cal_signature, ecu_signature)) -- the COALESCE maps the v0010 legacy NULL-cal PRE_TRACKING_UNKNOWN sentinel onto its seed (cal==sig) -- DERIVE cal_signature from the ecu row, FAIL LOUDLY (MigrationError) on any unmatched row (never NULL ecu_id), MODIFY NOT NULL, ADD FK, ALTER COMMENT; registered v0011 last in ALL_MIGRATIONS. Writer stamp_ecu_swap sets ecu_id authoritative + DERIVES text from the resolved ecu row (new resolveOrCreateEcu helper in _ecu_lineage_support.py; cal defaults to UNKCAL sentinel). New coherence checker src/server/db/vehicle_info_coherence.py::findEcuCoherenceViolations (read-side zero-drift guard). GATES: pytest tests/server -m 'not slow' = 1040 passed / 12 skipped / 0 failed (baseline 1004 -> +36 new: 11 ecu-model + 23 v0011-migration + 2 writer-derives). ruff clean on all touched files. RED->GREEN verified for ecu-model + v0011 migration + writer-derives. DESIGN NOTES: (1) ecu_id NOT NULL in the ORM is REQUIRED -- validation says DESCRIBE->NOT NULL and the IRL SHOW-CREATE-TABLE gate must match the ORM; this forced ecu_id onto 9 existing vehicle_info-constructing test fixtures (placeholder ecu_id=1 where coherence is irrelevant; FK not enforced on SQLite). (2) Per US-365 precedent (ecu_signature already NOT NULL with no default), a brand-new vehicle_info INSERT via Pi sync would need ecu_id -- pre-existing class, no NEW breakage in the suite (no fresh vehicle_info INSERT exercised), but flagged for the deploy runsheet. CROSS-AGENT GATE (AC#6, not self-satisfiable): specs/architecture.md V0.28.1 B-076 subsection + Atlas Rule 10 PASS = PM/Atlas lane (specs/ read-only for Ralph) -- filed offices/pm/inbox/2026-06-01-from-rex-us376-architecture-md-b076-subsection.md. Changes UNSTAGED per PM protocol.",
+      "feedback": {
+        "filesActuallyTouched": [
+          "src/server/db/models.py",
+          "src/server/db/vehicle_info_coherence.py",
+          "src/server/migrations/versions/v0011_us376_ecu_identity.py",
+          "src/server/migrations/__init__.py",
+          "src/server/cli/_ecu_lineage_support.py",
+          "src/server/cli/stamp_ecu_swap.py",
+          "tests/server/test_ecu_model.py",
+          "tests/server/test_migration_0011_ecu_identity.py",
+          "tests/server/cli/test_stamp_ecu_swap.py",
+          "tests/server/test_db_models.py",
+          "tests/server/test_migration_0010_attribution_anomaly_data_quality.py",
+          "tests/server/cli/test_show_ecu_lineage.py",
+          "tests/server/cli/test_show_dtc_freeze_frame.py",
+          "tests/server/cli/test_add_ecu_note.py",
+          "tests/server/api/test_dtc_freeze_frame_writer.py",
+          "tests/server/test_vehicle_info_identity_immutability_enforced.py",
+          "tests/server/test_vehicle_info_ecu_lineage.py",
+          "tests/server/test_sync_dtc_freeze_frame.py",
+          "tests/server/test_dtc_freeze_frame_model.py",
+          "offices/pm/inbox/2026-06-01-from-rex-us376-architecture-md-b076-subsection.md"
+        ]
+      }
+    }
+  ],
+  "validation": {
+    "bigDefinitionOfDone": [
+      "(DESCRIBE speed_pid_calibration post-v0011) → (ecu_id INT NOT NULL FK + UNIQUE(ecu_id); ecu_signature column ABSENT; old uq_speed_pid_calibration_ecu_signature gone)  [from US-374]",
+      "(SELECT correction_factor FROM speed_pid_calibration spc JOIN ecu e ON spc.ecu_id=e.id WHERE e.ecu_signature='MD346675') → (1.0)  [from US-374]",
+      "(SELECT correction_factor ... JOIN ecu ... WHERE e.ecu_signature='MD335287') → (0.5)  [from US-374]",
+      "(INSERT a speed_pid_calibration row with ecu_id not in ecu) → (FK violation)  [from US-374]",
+      "(INSERT with empty provenance) → (writer raises)  [from US-374]",
+      "(call select_empirical_calibrations()) → (MD346675 row included (empirical- prefix), MD335287 excluded (rough seed))  [from US-374]",
+      "(re-run v0011 over an already-migrated DB) → (idempotent no-op (no duplicate FK/column ops))  [from US-374]",
+      "(DESCRIBE ecu post-v0011) → (id PK, ecu_signature/cal_signature VARCHAR(32) NOT NULL, UNIQUE(ecu_signature, cal_signature); no timestamp/lineage columns)  [from US-376]",
+      "(SELECT ecu_signature, cal_signature FROM ecu) → (the 3 seed rows present exactly (MD346675/6675, MD335287/UNKCAL, PRE_TRACKING_UNKNOWN/PRE_TRACKING_UNKNOWN))  [from US-376]",
+      "(INSERT a duplicate (MD335287, UNKCAL) into ecu) → (UNIQUE violation)  [from US-376]",
+      "(INSERT an ecu row with cal_signature NULL) → (NOT NULL violation)  [from US-376]",
+      "(DESCRIBE vehicle_info post-v0011) → (ecu_id INT NOT NULL FK present; ecu_signature/cal_signature TEXT still present (transitional))  [from US-376]",
+      "(coherence test over all vehicle_info rows) → (text columns equal the joined ecu row's values (zero drift))  [from US-376]",
+      "(re-run existing US-365 append-only + ecu_active_marker single-active tests) → (still green (mechanism unchanged))  [from US-376]",
+      "(stamp_ecu_swap an ECU then inspect the row) → (ecu_id set authoritatively; text columns derived from the ecu row)  [from US-376]",
+      "(grep specs/architecture.md for the V0.28.1 B-076 subsection) → (ecu table + vehicle_info.ecu_id documented incl immutability carve-out; Atlas Rule 10 PASS recorded)  [from US-376]"
+    ],
+    "frozenAt": "2026-06-01T17:24:09Z",
+    "bigDoDHash": "21971bd1add32c11743d7a66594a5449ead5c786d1c26e47e98811e6cde8110e",
+    "validationMethod": "V0.28.1 = FIRST V0.28-chain hardware deploy; validates the accumulated Sprint 43+44 chain. IRL drill (post-/sprint-deploy-pm): (1) deploy dev->chi-srv-01 + Pi, v0010->v0011 migration sequence, Pi reconnect/power-cycle prerequisite; (2) F-107 drive 27+ single-attribution (exactly one drive_id per physical leg); (3) recompute_drive_analytics --drive-id 23/24/25 -> drives 23+24 attribution_anomaly, drive 25 clean, idempotent re-run zero-diff; (4) stamp_ecu_swap ECU backfill (MD346675/6675 close + MD335287/UNKCAL open, install/removal from realtime_data MIN/MAX) -> vehicle_info.ecu_id resolves + speed_pid_calibration joins; (5) release F-005 + F-007 regression_manifest HOLDs on the OBSERVED result; (6) SHOW CREATE TABLE on chi-srv-01 confirms all V0.28 surfaces + the new ecu table + ecu_id FKs match the ORM. Atlas Rule 10 sign-off on US-376 architecture.md §5 (V0.28.1 B-076 first-slice subsection) recorded BEFORE deploy. Human/IRL gates only -- no human-task stories (CIO 2026-06-01).",
+    "validatesFeatures": [
+      "F-005",
+      "F-007"
+    ],
+    "currentVersion": "V0.28.1",
+    "validatedAt": "2026-06-06T02:37:29Z",
+    "validatedBy": "Mike (CIO confirmed) + drive-27 single-attribution IRL drill (Atlas A-9 gate PASS, drive_id=27 full/is_real/anomalies=0) + Session-46 pre-drill schema verification (22 bigDoD clauses GREEN)"
+  }
+}

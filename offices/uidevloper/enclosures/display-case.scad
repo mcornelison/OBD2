@@ -2,347 +2,282 @@
 // OBD2 Display Case for OSOYOO 3.5" HDMI Capacitive Touch Screen v3.0
 // Model: 2024009100
 // Spec: offices/uidevloper/enclosures/display-case-spec.md
-// Iris (UI/UX Designer) — 2026-05-22 — v1 prototype
+// Iris (UI/UX Designer)
+//   v1 prototype  2026-05-22
+//   v2 rebuild    2026-05-28 (CIO fit-check)
+//   v2.1 rebuild  2026-05-29 — driven by the OFFICIAL 2024009100 datasheet
+//                 (datasheets/2024009100_hdmi_datasheet.pdf) per CIO.
 //
-// Render parts from command line:
-//   openscad -o stl/back_shell.stl   -D part=1 display-case.scad
-//   openscad -o stl/front_shell.stl  -D part=2 display-case.scad
-//   openscad -o stl/plunger.stl      -D part=3 display-case.scad
+// Render:
+//   openscad -o stl/back_shell.stl  -D part=1 display-case.scad
+//   openscad -o stl/front_shell.stl -D part=2 display-case.scad
 //
-// Or load in OpenSCAD GUI, change `part` variable, F6 to render, F7 to export.
+// =========================================================================
+// AUTHORITATIVE FACTS (OSOYOO 2024009100 datasheet — override all ruler reads)
+//   Glass / front panel : 93.44 x 60.00 x 7.00 mm
+//   Active display area  : 73.44 x 48.96 mm  (borders 10.0 long / 5.52 short)
+//   PCB                  : 85.0 x 49.0 mm        <-- was mis-measured as 56 wide
+//   Mounting thread      : M2.5,  holes Phi 3 mm
+//   Mount pattern (TRAPEZOID, from the drawing):
+//       top row    c-c 50 mm : 28.5 & 78.5 mm from left, 3.5 mm from top edge
+//       bottom row c-c 58 mm : 23.6 & 81.6 mm from left, 3.5 mm from bottom edge
+//   Connectors: micro-HDMI + brightness + power switch on the TOP long edge;
+//               Type-C (power+touch) on the LEFT short edge.
+//
+// FRAME (datasheet landscape, viewed from the BACK):
+//   model +X = long axis toward the OSOYOO logo (RIGHT short edge)
+//   model  X = 0  -> LEFT short edge  (Type-C)         -> +6mm clearance here
+//   model +Y = TOP long edge (HDMI / buttons / power)  -> 19mm gap to top wall
+//   model  Y = 0  -> BOTTOM long edge
+//   model  Z = 0  -> outer BACK face (front/bezel = +Z)
 // =========================================================================
 
-// ---- Render selector ---------------------------------------------------
-// 0 = assembly view (visualization only)
-// 1 = back shell (printable)
-// 2 = front shell (printable)
-// 3 = plunger     (printable, tiny)
-part = 0;
+part = 0;   // 0 = assembly (with cues), 1 = back shell, 2 = front shell
 
-// ---- Tuning knobs (the most likely things you'll adjust) ----------------
-wall_t          = 1.2;   // 3 perimeters at 0.4 mm nozzle
-bezel_width     = 3.5;   // visible bezel frame around glass (each side)
-cable_channel_z = 3.0;   // cavity depth behind PCB for cable routing
-corner_r        = 2.0;   // external corner fillet
-print_tol       = 0.3;   // global slop for snap-fit pieces
+// ---- Print / wall knobs -------------------------------------------------
+wall_t      = 1.2;
+bezel_width = 3.5;
+corner_r    = 2.0;
+print_tol   = 0.3;
 
-// ---- Display dimensions (from OSOYOO datasheet, 2024009100) -------------
-glass_x         = 93.44; // glass outer X (long axis, landscape)
-glass_y         = 60.00; // glass outer Y (short axis)
-glass_tol_band  = 0.3;   // datasheet ±0.3 mm
-glass_cutout_x  = glass_x + glass_tol_band*2; // 94.04
-glass_cutout_y  = glass_y + glass_tol_band*2; //  60.6
+// ---- #6 asymmetric clearance --------------------------------------------
+clearance_top  = 15.5;  // +Y long edge -> 19mm GLASS-edge-to-top-wall gap (CIO
+                        // ruler datum = glass surface edge, not PCB). Gives the
+                        // 90° micro-HDMI plug body + its left turn room to share
+                        // the LEFT-wall exit. PCB-edge-to-wall = 21.3mm.
+                        // glass-edge gap = 3.5 + clearance_top; PCB-edge gap = 5.8 + clearance_top.
+clearance_left = 6.0;   //  X=0 short edge (Type-C 90° head)
 
-pcb_x           = 85.00; // PCB outer X
-pcb_y           = 49.00; // PCB outer Y
-display_total_z = 7.00;  // glass-face to component-back, datasheet
+// ---- Display geometry (datasheet) ---------------------------------------
+glass_x = 93.44;  // long axis (X)
+glass_y = 60.00;  // short axis (Y)
+glass_tol = 0.30;
+glass_cutout_x = glass_x + 2*glass_tol;  // 94.04  FROZEN (v1 fit perfectly)
+glass_cutout_y = glass_y + 2*glass_tol;  // 60.60  FROZEN
 
-// Mounting hole positions on PCB
-// Datasheet shows Φ3 mm holes near each corner: 3.5 mm clear from short edge,
-// 3.4 mm clear from long edge to the OUTER edge of the hole.
-// Hole CENTERS ≈ 5 mm from short edge, 4.9 mm from long edge.
-mount_hole_dia   = 3.0;
-mount_inset_x    = 4.9;  // hole center from PCB long edge
-mount_inset_y    = 5.0;  // hole center from PCB short edge
+active_x = 73.44; // active display area (reference only)
+active_y = 48.96;
 
-// ---- Case dimensions (derived) ------------------------------------------
-case_x = glass_cutout_x + (bezel_width + wall_t) * 2; // ~104.04
-case_y = glass_cutout_y + (bezel_width + wall_t) * 2; //  ~70.6
+pcb_x = 85.00;    // PCB long axis (X)
+pcb_y = 56.00;    // PCB short axis (Y) -- datasheet "49mm" is the mount-hole
+                  // vertical c-c (3.5 + 49 + 3.5 = 56), NOT the edge; CIO's 56 was right
 
-front_shell_z = 3.0;  // bezel face (1.2) + interlock lip into back shell (1.8)
-back_shell_z  = wall_t + display_total_z + cable_channel_z + front_shell_z - wall_t;
-// back_shell_z = 1.2 + 7 + 3 + 1.8 = 13.0 (the front-shell lip nests into the back shell rim by 1.8)
+// PCB registration behind the glass. Datasheet active area is centered on the
+// glass and the v1 window fit with the PCB centered, so default = centered.
+// If a fit-check shows a real offset, bump these (CIO gaps hinted ~+? right).
+pcb_shift_x = 0.0;
+pcb_shift_y = 0.0;
 
-case_z = back_shell_z + (front_shell_z - 1.8); // total external Z = back_shell_z + front shell BEZEL part only
+// ---- Mount holes (datasheet trapezoid; x from LEFT/X=0, y from BOTTOM/Y=0) -
+mount_hole_dia = 3.0;
+// RECTANGLE (verified from the datasheet: both rows share the same x; the
+// "28.5/6.5/50" top chain dimensions the connectors, not the holes).
+mh_left_x      = 23.6;   // left column (both rows)
+mh_right_x     = 81.6;   // right column (both rows) -> horizontal c-c 58
+mh_from_top    = 3.5;    // top row inset from +Y edge
+mh_from_bottom = 3.5;    // bottom row inset from Y=0 edge -> vertical c-c 49
 
-// Display position inside cavity (centered)
-display_origin_x = (case_x - glass_x) / 2;
-display_origin_y = (case_y - glass_y) / 2;
+// ---- Standoff seats (CIO's own M2.5 x 11mm + 3mm HEX metal standoffs) ---
+// Standoff = 11 mm hex body + 3 mm male stud. Per CIO the seat pocket is a
+// plain ROUND cylinder, just big enough for the hex body to drop into and
+// rest, with a through M2.5 clearance hole + flush countersink on the outside.
+standoff_body_h   = 11.0;   // M2.5 x 11 hex body
+standoff_stud_h   = 3.0;    // + 3 mm male stud (up through the PCB hole)
+seat_pocket_d     = 7.5;    // ROUND pocket, generous fit for the hex body
+seat_pocket_depth = 3.5;    // how deep the hex body seats
+seat_cup_d        = seat_pocket_d + 3.0;  // outer cup (~10.5)
+seat_cup_h        = 5.0;    // raised cup height above the floor
+seat_screw_d      = 3.0;    // M2.5 screw clearance
+seat_cs_d         = 5.2;    // countersink head dia (outside back face)
+seat_cs_depth     = 1.6;    // countersink depth
 
-// PCB origin within case (centered)
-pcb_origin_x = (case_x - pcb_x) / 2;
-pcb_origin_y = (case_y - pcb_y) / 2;
+// ---- #4 buttons (TOP / +Y wall — buttons face +Y, like the micro-HDMI) --
+// CIO: the power/brightness buttons are NOT on the back; they're on the top
+// wall, facing the same way the micro-HDMI output does. Holes go through the
+// +Y wall at the button X positions. With the 14mm top clearance the buttons
+// sit recessed ~14mm in, so these are poke-access holes (sized generous).
+button_hole_dia  = 5.0;
+button_from_left = [6.0, 16.0];  // X positions, from the LEFT (X=0) edge
+button_z_drop    = 2.0;          // hole center below the PCB-back plane (button-body level)
 
-// Mount hole positions in case coords
-hole_x1 = pcb_origin_x + mount_inset_x;
-hole_x2 = pcb_origin_x + pcb_x - mount_inset_x;
-hole_y1 = pcb_origin_y + mount_inset_y;
-hole_y2 = pcb_origin_y + pcb_y - mount_inset_y;
+// ---- Depth stack --------------------------------------------------------
+pcb_thick   = 1.6;
+glass_thick = 3.0;
+pcb_back_z    = wall_t + seat_cup_h + (standoff_body_h - seat_pocket_depth);  // PCB on the hex body top
+glass_front_z = pcb_back_z + pcb_thick + glass_thick;
+back_shell_z  = glass_front_z;
+front_shell_z = 3.0;
+case_z        = back_shell_z + (front_shell_z - 1.8);
 
-// ---- PCB mount bosses ---------------------------------------------------
-// Heat-set insert for M2.5 brass insert: ~3.5 mm hole diameter, ~5 mm depth typical
-boss_outer_d  = 6.0;
-boss_inner_d  = 3.5;
-// Boss height must clear tallest back-of-PCB component (~4 mm HDMI port)
-// At corners there are no components, so the boss can be shorter than the
-// component clearance — but the PCB rests on the boss TOP, and components hang
-// in the cavity. boss_h = cable_channel_z keeps the PCB flat against the cavity floor offset.
-boss_h        = cable_channel_z;
+// ---- Case dimensions ----------------------------------------------------
+base_case_x = glass_cutout_x + 2*(bezel_width + wall_t);
+base_case_y = glass_cutout_y + 2*(bezel_width + wall_t);
+case_x = base_case_x + clearance_left;   // extra on X=0 side
+case_y = base_case_y + clearance_top;    // extra on +Y side
 
-// ---- Snap clips on back shell rim ---------------------------------------
-clip_width       = 6.0;
-clip_thickness   = 1.5;
-clip_height      = 3.0;        // length of cantilever finger above rim
-clip_hook_proud  = 0.6;        // how far the hook protrudes inward
-clip_hook_height = 1.0;        // hook vertical thickness
+// ---- Frozen window placement (extra clearance on X=0 and +Y) ------------
+window_origin_x = bezel_width + wall_t + clearance_left;  // push window +X
+window_origin_y = bezel_width + wall_t;                   // extra falls on +Y
+glass_cx = window_origin_x + glass_cutout_x/2;
+glass_cy = window_origin_y + glass_cutout_y/2;
 
-// Clip positions: 6 total. 2 per long edge, 1 per short edge.
-clip_positions_long  = [case_x * 0.30, case_x * 0.70];
-clip_positions_short = [case_y * 0.50];
+// ---- PCB + hole + button positions in case coords -----------------------
+pcb_origin_x = glass_cx + pcb_shift_x - pcb_x/2;
+pcb_origin_y = glass_cy + pcb_shift_y - pcb_y/2;
 
-// ---- Vents (back face) --------------------------------------------------
-vent_slot_w     = 2.0;
-vent_slot_l     = 50.0;
-vent_group_n    = 5;       // 5 slots per group
-vent_spacing    = 3.0;     // gap between slots
-disc_clearance  = 30.0;    // keep central 30 mm clear for the magnet disc
+mh_y_top = pcb_origin_y + pcb_y - mh_from_top;     // +Y row
+mh_y_bot = pcb_origin_y + mh_from_bottom;          // Y=0 row
+mount_pts = [
+    [pcb_origin_x + mh_left_x,  mh_y_top], [pcb_origin_x + mh_right_x, mh_y_top],
+    [pcb_origin_x + mh_left_x,  mh_y_bot], [pcb_origin_x + mh_right_x, mh_y_bot]
+];
 
-// ---- Cable exit slot (bottom edge of back shell) ------------------------
-cable_slot_x = 25.0;
-cable_slot_y = 4.0;
-cable_slot_z_from_bottom = wall_t + 4.0; // sit it just above the cavity floor
+button_z     = pcb_back_z - button_z_drop;              // button-body Z level
+button_x_pts = [ for (l = button_from_left) pcb_origin_x + l ];
 
-// ---- Brightness button plunger ------------------------------------------
-plunger_d            = 3.5;
-plunger_travel       = 1.5;
-plunger_outer_proud  = 1.5;
-// Plunger is on the TOP edge of the back shell, positioned above where the
-// brightness button sits on the PCB top edge. From datasheet: brightness
-// button is in the top-middle area, roughly X ≈ pcb_origin_x + 50 mm
-plunger_pos_x        = pcb_origin_x + 50;
-plunger_flexure_t    = 0.8;
-plunger_flexure_w    = 4.0;
-plunger_flexure_len  = 12.0;
+// ---- Snap clips ---------------------------------------------------------
+clip_width = 6.0; clip_thickness = 1.5; clip_height = 3.0;
+clip_hook_proud = 0.6; clip_hook_height = 1.0;
+clip_positions_long  = [case_x / 3, case_x * 2 / 3];   // pairs on long edges
+clip_positions_short = [case_y / 2];                   // singles on short edges
 
-// ---- Magnet disc zone (back face) ---------------------------------------
+// ---- Magnet disc (back face center) -------------------------------------
 disc_diameter = 25.0;
 disc_x = case_x / 2;
 disc_y = case_y / 2;
 
-// =========================================================================
-// HELPER MODULES
-// =========================================================================
+// ---- #7 vents (filtered grid; solid at seats + disc) --------------------
+vent_hole_d       = 3.5;
+vent_pitch        = 7.0;
+vent_margin       = 6.0;
+vent_keepout_disc = disc_diameter/2 + 4.0;
+vent_keepout_seat   = seat_cup_d/2 + 3.0;
 
-module rounded_rect(x, y, r) {
-    offset(r=r) offset(r=-r) square([x, y], center=false);
-}
-
-module rounded_box(x, y, z, r) {
-    linear_extrude(height = z) rounded_rect(x, y, r);
-}
+// ---- #5 cable exit (LEFT / X=0 wall, aligned with the Type-C port) -------
+// CIO: Type-C is on the LEFT short edge, 6.4 mm from the TOP (+Y), 9 mm long.
+usbc_from_top  = 6.4;
+usbc_len       = 9.0;
+cable_slot_len = usbc_len + 9.0;   // 18mm — connector + 90° head clearance
+cable_slot_h   = 14.0;             // along Z (taller opening per CIO)
+cable_slot_cy  = (pcb_origin_y + pcb_y) - usbc_from_top - usbc_len/2;  // centered on the Type-C
+cable_slot_z0  = wall_t + 2.0;
 
 // =========================================================================
-// BACK SHELL
+// HELPERS
 // =========================================================================
-// Z=0 is the OUTSIDE BACK face. Cavity opens upward (positive Z).
-// Top of back-shell rim (where front shell meets) is at Z = back_shell_z.
-//
+module rounded_rect(x, y, r) { offset(r=r) offset(r=-r) square([x, y]); }
+module rounded_box(x, y, z, r) { linear_extrude(height = z) rounded_rect(x, y, r); }
+function dist_to_nearest_seat(x, y)   = min([ for (p = mount_pts)  norm([x-p[0], y-p[1]]) ]);
+
+// =========================================================================
+// BACK SHELL  (Z=0 = outer back; cavity opens +Z)
+// =========================================================================
 module back_shell() {
     difference() {
-        // ---- Outer solid block ----
-        rounded_box(case_x, case_y, back_shell_z, corner_r);
-
-        // ---- Inner cavity ----
-        // Floor is at Z = wall_t. Cavity height = back_shell_z - wall_t.
-        translate([wall_t, wall_t, wall_t])
-            rounded_box(
-                case_x - 2*wall_t,
-                case_y - 2*wall_t,
-                back_shell_z - wall_t + 0.1,
-                max(corner_r - wall_t, 0.5)
-            );
-
-        // ---- Cable exit oval slot (bottom edge — Y=0 wall) ----
-        translate([(case_x - cable_slot_x)/2, -0.1, cable_slot_z_from_bottom])
-            cube([cable_slot_x, wall_t + 0.2, cable_slot_y]);
-
-        // ---- Vent slots on the back face (Z=0 wall) ----
-        // Two groups: above and below the central disc clearance zone.
-        // Upper group (centered above the disc zone)
-        for (i = [0:vent_group_n-1]) {
-            x_pos = (case_x - vent_slot_l) / 2;
-            y_pos = case_y/2 + disc_clearance/2
-                    + i * (vent_slot_w + vent_spacing);
-            translate([x_pos, y_pos, -0.1])
-                cube([vent_slot_l, vent_slot_w, wall_t + 0.2]);
+        union() {
+            difference() {
+                rounded_box(case_x, case_y, back_shell_z, corner_r);
+                translate([wall_t, wall_t, wall_t])
+                    rounded_box(case_x - 2*wall_t, case_y - 2*wall_t,
+                                back_shell_z - wall_t + 0.1, max(corner_r - wall_t, 0.5));
+            }
+            for (p = mount_pts)
+                translate([p[0], p[1], wall_t]) cylinder(h = seat_cup_h, d = seat_cup_d, $fn = 32);
         }
-        // Lower group
-        for (i = [0:vent_group_n-1]) {
-            x_pos = (case_x - vent_slot_l) / 2;
-            y_pos = case_y/2 - disc_clearance/2
-                    - vent_slot_w
-                    - i * (vent_slot_w + vent_spacing);
-            translate([x_pos, y_pos, -0.1])
-                cube([vent_slot_l, vent_slot_w, wall_t + 0.2]);
-        }
-
-        // ---- Plunger pass-through hole (top edge — Y=case_y wall) ----
-        translate([plunger_pos_x, case_y - wall_t - 0.1,
-                   back_shell_z - wall_t - plunger_d/2])
-            rotate([-90, 0, 0])
-                cylinder(h = wall_t + 0.2,
-                         d = plunger_d + print_tol,
-                         $fn=24);
+        // #5 cable exit on the LEFT (X=0) wall, aligned with Type-C
+        translate([-0.1, cable_slot_cy - cable_slot_len/2, cable_slot_z0])
+            cube([wall_t + 0.2, cable_slot_len, cable_slot_h]);
+        // standoff seat cuts
+        for (p = mount_pts) translate([p[0], p[1], 0]) seat_cut();
+        // #4 button holes through the TOP (+Y) wall — buttons face +Y like the HDMI
+        for (bx = button_x_pts)
+            translate([bx, case_y - wall_t - 0.1, button_z])
+                rotate([-90, 0, 0])
+                    cylinder(h = wall_t + 0.2, d = button_hole_dia + print_tol, $fn = 24);
+        // #7 vents
+        vents();
     }
+    clips();
+}
 
-    // ---- PCB mount bosses (with heat-set insert pre-hole) ----
-    for (x = [hole_x1, hole_x2], y = [hole_y1, hole_y2]) {
-        translate([x, y, wall_t])
-            boss();
-    }
+module seat_cut() {
+    // round socket the hex standoff body drops into and rests, open to the cavity/top
+    translate([0, 0, wall_t + seat_cup_h - seat_pocket_depth])
+        cylinder(h = seat_pocket_depth + 0.1, d = seat_pocket_d, $fn = 32);
+    // M2.5 screw clearance through the pocket floor + case floor
+    translate([0, 0, -0.1])
+        cylinder(h = wall_t + seat_cup_h - seat_pocket_depth + 0.2, d = seat_screw_d, $fn = 24);
+    // flush countersink on the OUTSIDE back face
+    translate([0, 0, -0.01])
+        cylinder(h = seat_cs_depth, d1 = seat_cs_d, d2 = seat_screw_d, $fn = 24);
+}
 
-    // ---- Snap clip cantilever fingers on top rim ----
-    // Long edges (top + bottom, Y=0 and Y=case_y)
+module vents() {
+    for (vx = [vent_margin : vent_pitch : case_x - vent_margin])
+        for (vy = [vent_margin : vent_pitch : case_y - vent_margin])
+            if (norm([vx - disc_x, vy - disc_y]) > vent_keepout_disc
+                && dist_to_nearest_seat(vx, vy) > vent_keepout_seat)
+                translate([vx, vy, -0.1]) cylinder(h = wall_t + 0.2, d = vent_hole_d, $fn = 16);
+}
+
+module clips() {
     for (x = clip_positions_long) {
-        // Bottom edge (Y=0) — shaft sits at the wall, hook projects inward (+Y)
-        translate([x - clip_width/2, 0, back_shell_z])
-            snap_clip_finger();
-        // Top edge (Y=case_y) — shaft at the wall, hook projects inward (-Y absolute)
-        translate([x + clip_width/2, case_y, back_shell_z])
-            rotate([0, 0, 180])
-                snap_clip_finger();
+        translate([x, 0, back_shell_z]) snap_clip_finger();
+        translate([x, case_y, back_shell_z]) rotate([0, 0, 180]) snap_clip_finger();
     }
-    // Short edges (X=0 and X=case_x)
     for (y = clip_positions_short) {
-        // Left edge (X=0) — rotate so shaft lies along Y axis, hook projects +X inward
-        translate([0, y - clip_width/2, back_shell_z])
-            rotate([0, 0, -90])
-                snap_clip_finger();
-        // Right edge (X=case_x)
-        translate([case_x, y + clip_width/2, back_shell_z])
-            rotate([0, 0, 90])
-                snap_clip_finger();
+        translate([0, y, back_shell_z]) rotate([0, 0, -90]) snap_clip_finger();
+        translate([case_x, y, back_shell_z]) rotate([0, 0, 90]) snap_clip_finger();
     }
 }
 
-module boss() {
-    difference() {
-        cylinder(h = boss_h, d = boss_outer_d, $fn=24);
-        translate([0, 0, -0.1])
-            cylinder(h = boss_h + 0.2, d = boss_inner_d, $fn=24);
-    }
-}
-
-// Snap clip cantilever finger.
-// Cantilever shaft sits at origin extending in +X, +Y, +Z.
-// Hook is at top of shaft, projecting in +Y (toward case interior).
-// Callers handle wall orientation via translate + rotate.
 module snap_clip_finger() {
-    // Cantilever shaft
-    cube([clip_width, clip_thickness, clip_height]);
-    // Hook at top of shaft, projecting +Y from the +Y face of the shaft
-    translate([0, clip_thickness, clip_height - clip_hook_height])
-        cube([clip_width, clip_hook_proud, clip_hook_height]);
+    translate([-clip_width/2, 0, 0]) {
+        cube([clip_width, clip_thickness, clip_height]);
+        translate([0, clip_thickness, clip_height - clip_hook_height])
+            cube([clip_width, clip_hook_proud, clip_hook_height]);
+    }
 }
 
 // =========================================================================
-// FRONT SHELL
+// FRONT SHELL  (window FROZEN)
 // =========================================================================
-// Front shell sits at Z = back_shell_z when assembled. Outermost surface
-// (the bezel face) is at Z = back_shell_z + 1.2 mm in assembly view.
-//
-// Front shell anatomy from Z=0 (interlock bottom) to Z=front_shell_z (bezel outer):
-//   Z=0   .. 1.8  : interlock lip (sits inside back-shell cavity rim)
-//   Z=1.8 .. 3.0  : bezel face (visible from outside)
-//
 module front_shell() {
-    // Pre-compute interlock inset to avoid assignments inside boolean blocks
     interlock_inset = wall_t + print_tol;
     difference() {
         union() {
-            // Outer bezel face (Z=1.8 .. 3.0)
-            translate([0, 0, 1.8])
-                rounded_box(case_x, case_y, 1.2, corner_r);
-            // Interlock lip (Z=0 .. 1.8) — slightly smaller than bezel to nest inside back-shell rim
+            translate([0, 0, 1.8]) rounded_box(case_x, case_y, 1.2, corner_r);
             translate([interlock_inset, interlock_inset, 0])
-                rounded_box(
-                    case_x - 2*interlock_inset,
-                    case_y - 2*interlock_inset,
-                    1.8,
-                    max(corner_r - interlock_inset, 0.5)
-                );
+                rounded_box(case_x - 2*interlock_inset, case_y - 2*interlock_inset,
+                            1.8, max(corner_r - interlock_inset, 0.5));
         }
-        // Glass window cutout (through both layers)
-        translate([
-            (case_x - glass_cutout_x)/2,
-            (case_y - glass_cutout_y)/2,
-            -0.1
-        ])
+        translate([window_origin_x, window_origin_y, -0.1])
             cube([glass_cutout_x, glass_cutout_y, front_shell_z + 0.2]);
-
-        // Snap clip catch slots in the interlock lip
-        // Long edges
         for (x = clip_positions_long) {
-            translate([x - clip_width/2 - print_tol/2, 0, 0])
-                cube([clip_width + print_tol,
-                      wall_t + print_tol + clip_hook_proud + 0.5,
-                      clip_height + 0.5]);
-            translate([x - clip_width/2 - print_tol/2,
-                       case_y - wall_t - print_tol - clip_hook_proud - 0.5, 0])
-                cube([clip_width + print_tol,
-                      wall_t + print_tol + clip_hook_proud + 0.5,
-                      clip_height + 0.5]);
+            translate([x - (clip_width+print_tol)/2, 0, 0])
+                cube([clip_width+print_tol, wall_t+print_tol+clip_hook_proud+0.5, clip_height+0.5]);
+            translate([x - (clip_width+print_tol)/2, case_y - (wall_t+print_tol+clip_hook_proud+0.5), 0])
+                cube([clip_width+print_tol, wall_t+print_tol+clip_hook_proud+0.5, clip_height+0.5]);
         }
         for (y = clip_positions_short) {
-            translate([0, y - clip_width/2 - print_tol/2, 0])
-                cube([wall_t + print_tol + clip_hook_proud + 0.5,
-                      clip_width + print_tol,
-                      clip_height + 0.5]);
-            translate([case_x - wall_t - print_tol - clip_hook_proud - 0.5,
-                       y - clip_width/2 - print_tol/2, 0])
-                cube([wall_t + print_tol + clip_hook_proud + 0.5,
-                      clip_width + print_tol,
-                      clip_height + 0.5]);
+            translate([0, y - (clip_width+print_tol)/2, 0])
+                cube([wall_t+print_tol+clip_hook_proud+0.5, clip_width+print_tol, clip_height+0.5]);
+            translate([case_x - (wall_t+print_tol+clip_hook_proud+0.5), y - (clip_width+print_tol)/2, 0])
+                cube([wall_t+print_tol+clip_hook_proud+0.5, clip_width+print_tol, clip_height+0.5]);
         }
     }
 }
 
 // =========================================================================
-// PLUNGER (separate small part)
-// =========================================================================
-// A printed cylinder with a thin cantilever flexure arm. After the plunger
-// shaft passes through the case top-wall hole, the flexure rests against
-// the interior side of the top wall (acting as a return spring).
-//
-module plunger() {
-    // Plunger shaft
-    total_h = wall_t + plunger_outer_proud + plunger_travel + 2;
-    cylinder(h = total_h, d = plunger_d, $fn=32);
-
-    // Cantilever flexure arm (perpendicular to plunger axis)
-    translate([0, 0, total_h - plunger_flexure_t])
-        cube([plunger_flexure_w, plunger_flexure_len, plunger_flexure_t],
-             center = false);
-
-    // Stop collar (prevents plunger from being pushed too far in)
-    translate([0, 0, wall_t + plunger_outer_proud])
-        cylinder(h = 1, d = plunger_d + 2, $fn=32);
-}
-
-// =========================================================================
-// ASSEMBLY VIEW (for visualization, not for printing)
+// ASSEMBLY VIEW (visualization + orientation cues)
 // =========================================================================
 module assembly_view() {
     back_shell();
-    color("cyan", 0.6)
-        translate([0, 0, back_shell_z])
-            front_shell();
-    color("orange", 0.8)
-        translate([plunger_pos_x, case_y - wall_t + 0.5,
-                   back_shell_z - wall_t - plunger_d/2])
-            rotate([90, 0, 0])
-                plunger();
+    color("cyan", 0.5) translate([0, 0, back_shell_z]) front_shell();
+    for (bx = button_x_pts) color("orange") translate([bx, case_y - wall_t, button_z]) rotate([-90,0,0]) cylinder(h = wall_t, d = button_hole_dia, $fn = 24);
 }
 
 // =========================================================================
-// RENDER
-// =========================================================================
-if (part == 1) {
-    back_shell();
-} else if (part == 2) {
-    front_shell();
-} else if (part == 3) {
-    plunger();
-} else {
-    assembly_view();
-}
+if (part == 1)      back_shell();
+else if (part == 2) front_shell();
+else                assembly_view();

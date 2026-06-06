@@ -57,6 +57,16 @@ Fields separated by `; `. One line, ends at first newline. Optional fields: `aud
 - Upstream spec + library: https://github.com/mcornelison/A2AL
 - Each agent's local skill: `offices/<role>/.claude/skills/a2al/SKILL.md` + `offices/<role>/.claude/commands/a2al.md`
 
+## Shared-Checkout Discipline (Multi-Agent Concurrency) — CORE BOOTUP
+
+All agents share ONE working checkout (`Z:\o\OBD2v2`) on the chi-nas-01 SMB share. Branch switches and concurrent commits **race** — edits, staging, and even committed work can be silently lost. Every agent follows this (ratified CIO 2026-06-01; full text `offices/handbook.md` §13):
+
+1. **Commit-immediately, office-scoped** — `add`+`commit` your own `offices/<role>/**` in small commits right after each edit-set. Never leave work uncommitted across turns (that's what disappears on a branch switch).
+2. **Only the PM (Marcus) switches branches / merges / deploys** — no other agent runs `git checkout`/`switch`/`merge`/`rebase`. Stay on the live branch and commit there; the PM integrates.
+3. **PM announces + waits for a quiet window before switching branches.**
+4. **Retry-on-lock, never force** — a stale `.git/index.lock` from the slow share clears in seconds; wait + retry; never delete it while a `git` process is running.
+5. **"file modified since read"** in Edit = another agent is writing it → re-read + re-apply; prefer editing only your own office.
+
 ## Development Commands
 
 ### Testing

@@ -116,7 +116,7 @@ def _existingStatsCount(session: Session, driveSummaryId: int) -> int:
         session.execute(
             select(func.count())
             .select_from(DriveStatistic)
-            .where(DriveStatistic.drive_id == driveSummaryId),
+            .where(DriveStatistic.summary_id == driveSummaryId),
         ).scalar_one(),
     )
 

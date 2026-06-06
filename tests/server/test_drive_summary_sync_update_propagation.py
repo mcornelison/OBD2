@@ -200,13 +200,15 @@ class TestEnsureDriveSummaryReconcilesPiSyncRow:
             _seedPiSync(session, includeDriveSummary=True)
             session.commit()
 
-        # Pre-condition: Pi-sync row exists with source_id set, drive_id NULL,
-        # analytics fields NULL -- the observed Drive 11 row-15 state.
+        # Pre-condition: Pi-sync row exists with source_id set + analytics
+        # fields NULL.  US-372: the sync path now mirrors source_id onto the
+        # drive_id column (the pre-US-372 Drive-11 smell was drive_id NULL
+        # here; that asymmetric state is now structurally impossible).
         with Session(engine) as session:
             rows = _driveSummaryRows(session)
             assert len(rows) == 1
             assert rows[0].source_id == _DRIVE_ID
-            assert rows[0].drive_id is None
+            assert rows[0].drive_id == _DRIVE_ID
             assert rows[0].start_time is None
             assert rows[0].row_count in (None, 0)
 

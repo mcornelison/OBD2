@@ -85,7 +85,7 @@ def computeDriveStatistics(
 
     # Clear previous stats so re-running replaces rather than duplicates.
     session.execute(
-        delete(DriveStatistic).where(DriveStatistic.drive_id == driveId)
+        delete(DriveStatistic).where(DriveStatistic.summary_id == driveId)
     )
 
     results: list[DriveStatistics] = []
@@ -95,7 +95,7 @@ def computeDriveStatistics(
             continue
 
         row = DriveStatistic(
-            drive_id=driveId,
+            summary_id=driveId,
             parameter_name=paramName,
             min_value=stats.min_value,
             max_value=stats.max_value,
@@ -236,7 +236,7 @@ def compareDriveToHistory(
         with ``status=NORMAL`` and ``deviation_sigma=0.0``.
     """
     currentStats = session.execute(
-        select(DriveStatistic).where(DriveStatistic.drive_id == driveId)
+        select(DriveStatistic).where(DriveStatistic.summary_id == driveId)
     ).scalars().all()
 
     if not currentStats:
@@ -250,7 +250,7 @@ def compareDriveToHistory(
                 select(DriveStatistic).where(
                     and_(
                         DriveStatistic.parameter_name == current.parameter_name,
-                        DriveStatistic.drive_id != driveId,
+                        DriveStatistic.summary_id != driveId,
                     )
                 )
             ).scalars().all()

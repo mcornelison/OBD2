@@ -105,6 +105,7 @@ Pi @ 10.27.27.28 (`Chi-Eclips-Tuner`); server @ 10.27.27.10. UI work is
 | **Tooling** | Open to CIO direction. Default toolchain TBD (likely: Figma-style mockups as committed artwork files, OpenSCAD or FreeCAD for case parametrics, STL/3MF as ship artifacts). |
 | **Human in the loop** | CIO communicates directly + ratifies. |
 | **Cadence** | None standing. Per explicit task only. |
+| **Concurrency** | Follow `offices/handbook.md` §13 shared-checkout discipline — commit-immediately + office-scoped (`offices/uidevloper/**`); only the PM switches branches/merges/deploys; retry-on-lock never force; "file modified since read" = re-read + re-apply. (Marcus 2026-06-01; root CLAUDE.md core-bootup.) |
 
 ## 6. Workflow
 
@@ -166,14 +167,182 @@ Open UI/UX/enclosure items I am tracking. Seeded at onboarding 2026-05-22.
 
 | # | Item | Status | Note |
 |---|------|--------|------|
-| W-1 | OSOYOO 3.5″ 480×320 display — B-103 boot/shutdown splash design | **Spec drafted 2026-05-26** | Full spec at `docs/superpowers/specs/2026-05-26-b103-splash-animation-design.md` (commit 37a71f5). Replaces existing kit at `specs/UI/dist/splash-pi/`. Status-aware hybrid: 2-state UX (healthy/degraded), boot dynamic-timing, shutdown sequencer-grace-trigger, top wordmark + bottom version chip, deploy fold-in. 3 defects in original kit folded into scope. Atlas A2AL filed (commit 6e37992) for Rule-10 design-gate review on A-1..A-10. Spool + Argus advisory + Marcus pre-notice filed (commit 44c6b3b). Pending peer responses. Full post-boot dashboard UI is separate — see W-5. |
-| W-2 | 3D-printed enclosure for OSOYOO 3.5″ display (DISPLAY ONLY — Pi removed from scope per CIO 2026-05-22) | **v1 STL shipped 2026-05-22** | Full spec at `enclosures/display-case-spec.md`; source at `enclosures/display-case.scad`; STLs at `enclosures/stl/*.stl`; preview at `enclosures/renders/assembly.png`. PETG, 3 perimeters, cantilever snaps, magnet-disc mount, micro-HDMI + USB-C 90° cables. Awaiting CIO print + fit-check; v1 caveats noted in spec §11A. |
+| W-1 | OSOYOO 3.5″ 480×320 display — F-103 (was B-103) boot/shutdown splash design | **v1.2 GROOM-READY 2026-06-03 — Atlas acked, Spool folded, Marcus notified; Argus advisory open (non-blocking)** | **2026-06-03 update:** acked Atlas's gate (no pushback), revised spec to **v1.2** — folded Spool S-1 (eclipse-obd 3-tier health: T1/T2=degraded, T3 engine-off=informational; retry-once; 5 granular strings) + S-2 (palette stubs); scrubbed boot-state authorship residual (= `eclipse-boot-state.service`, not finalize); B-103→F-103; status→GROOM-READY; added I-10b/F-7 alarm-fatigue guard. A2ALs: Atlas ack, Argus re-ping (Q-1/2/3 still open, non-blocking), Marcus groom-ready pointer (story split US-A/B/C/D). Commit ebac7fb. NEXT: await Atlas/Argus replies; Marcus files stories. — Prior history: Spec drafted 2026-05-26 (`docs/superpowers/specs/2026-05-26-b103-splash-animation-design.md`, v1 at commit 37a71f5). **Atlas design-gate verdict = PASS with amendments** (inbox `2026-05-26-from-atlas-b103-gate-PASS-with-amendments.md`): 4 clean / 6 changes-requested / 0 block; Atlas amended the spec to **v1.1 in-place** (§0 amendments table + `[ATLAS v1.1]` markers). Key rulings: A-1 NEW `eclipse-boot-state.service`; A-3 path → `/var/run/eclipse-obd/states/`; A-4 localhost http :9899 read-only; A-8 all units Type=simple; Rule-10 same-sprint architecture.md §10.6 update required. **Atlas asks ack** — owe him ack OR push-back on the 6 changes (he's open to discuss). Spool S1/S2 advisories (inbox 05-27 + 05-28) + Marcus ack (05-26) received, non-blocking. NEXT SESSION: review v1.1 amendments, ack Atlas, then PM sprint-routing. Full post-boot dashboard UI separate — see W-5. |
+| W-2 | 3D-printed enclosure for OSOYOO 3.5″ display (DISPLAY ONLY — Pi removed from scope per CIO 2026-05-22) | **v2.6 2026-06-03 — top (HDMI) clearance widened to 19mm per CIO ruler; STLs regenerated, CIO re-printing** | **v2.6 (2026-06-03):** CIO ruler-measured he needs **19mm from the GLASS surface edge to the inner +Y (top) wall** for the 90° micro-HDMI plug body + its left turn (shares the LEFT-wall exit with Type-C). `clearance_top` **8.2 → 15.5** (gap formula: glass-edge gap = 3.5 + clearance_top; PCB-edge gap = 5.8 + clearance_top → now 19mm from glass / 21.3mm from PCB). **Datum lesson:** CIO measures from the GLASS surface edge, NOT the PCB edge (2.3mm apart) — see `knowledge/feedback-cio-measures-from-glass-edge.md` + `knowledge/pattern-clearance-datum-mismatch.md`. `case_y` 78.2 → 85.5; both shells re-render manifold; STLs updated. Untracked CIO slicing artifacts (`*.3mf`, `gcode/*.gcode`) are now STALE (pre-v2.6) — left uncommitted. — Prior (v2.1→v2.5): rebuilt across 5 live review rounds against the official **specs/vendor/OSOYOO-datasheet.pdf** (2024009100). CORRECTED FACTS: PCB **85×56** (the datasheet "49" is mount-hole vertical c-c, not the edge); mount holes = **RECTANGLE** (left col 23.6 / right col 81.6 from left = h c-c 58; 3.5 from top/bottom = v c-c 49); standoffs **M2.5×11+3 hex** → round hollow socket cups (flush countersunk M2.5 through-hole); asymmetric clearance (+6 left/Type-C, **+8.2 top → ~14mm PCB-to-top-wall gap** for the 90° HDMI housing); frozen v1 screen window; **2 button holes through the TOP (+Y) wall** (poke/toothpick access = intended "set & forget"; buttons face +Y like the HDMI); **both Type-C + left-turning micro-HDMI exit the single LEFT-wall opening**; seat-aware vents; 2 clips/long edge. Both shells render manifold. Source `enclosures/display-case.scad`; changelog `enclosures/display-case-v2.1-notes.md` (§v2.2–v2.5); facts `enclosures/datasheets/2024009100-extracted-facts.md`; renders `enclosures/renders/v25_*.png`. **OPEN — physical fit-check only:** PCB-centered offset (`pcb_shift=0`), depth stack (glass↔bezel), both cables clearing the single ~18×14mm left opening. → v2.6 folds in whatever the print shows. |
 | W-3 | Visual + interaction language SSOT (`specs/UI/` tokens) | **In-progress 2026-05-26** | First color + type tokens proposed inline in B-103 spec §4 (`--text-secondary` `#888`, `--text-tertiary` `#666`, `--amber-warn` `#FFC400`, `--amber-soft` `#FFC40033`, plus existing reds `--red` `#E60012` / `--red-light` `#F61D2D` / `--red-dark` `#BF000F`). Font family: `ui-monospace, Menlo, Consolas, monospace`. NOT yet extracted into freestanding `specs/UI/tokens.css` or equivalent. Atlas confirmed 2026-05-22 that `specs/UI/` tokens are the correct SSOT-pattern precedent. Token-extraction work to follow when B-103 lands or in parallel. |
 | W-4 | README still describes the wrong display (Adafruit 1.3 240×240) per Atlas A-5 | **Open — not closed in B-103 spec authoring as Atlas suggested** | Atlas's 2026-05-22 FYI flagged this closeable in the UI spec authoring pass. B-103 spec (2026-05-26) focused on splash; did NOT include README correction (out of scope — splash design ≠ documentation cleanup). Follow-up: file separate small commit fixing README's display-spec section per Rule-10 routing through Atlas. ~30 min of work; opportunistic next session. |
-| W-5 | V0.28+ on-Pi post-boot dashboard layout — cover-most-of-screen + top-menu reserve + minimize capability | Open | CIO directed 2026-05-26 (during B-103 Q2 conversation) — for future display the dashboard canvas should be enlarged to cover the majority of screen, except for a top menu (reserved for system UI access) OR with the ability to minimize so system menu is accessible. Distinct surface from splash (splash is boot/shutdown-only; dashboard is runtime). To be designed when V0.28+ grooming opens dashboard work. |
-| W-6 | B-086 GEM-1 warnings-first quiet UI carousel (V0.28+ candidate) | Open — pending V0.28 grooming | Marcus flagged 2026-05-22 — relevant when grooming opens. Spool's Topic A/B specs (parked-mode anomaly + maintenance tiles) slot into the carousel. CIO + Spool brainstormed 2026-05-14. Lane split: Iris designs the visual carousel + interactions; Spool owns tile content semantics. Will surface during V0.28+ grooming. |
+| W-5 | V0.28+ on-Pi post-boot dashboard layout — cover-most-of-screen + top-menu reserve + minimize capability | **In-progress — design substrate specced 2026-06-05 (see W-7)** | CIO directed 2026-05-26: enlarged dashboard canvas + top menu for system-UI access OR minimize. **The W-7 touch-carousel dashboard spec (2026-06-05) IS this surface's first concrete realization** — persistent thin top bar (the "top menu reserve" decision = CIO option A), full-screen cards, system-menu access via long-press + `⋮`. Remaining W-5 scope (enlarged-canvas variants beyond the carousel, additional cards 3–5) stays future. |
+| W-6 | B-086 GEM-1 warnings-first quiet UI carousel (V0.28+ candidate) | Open — substrate now exists (W-7 carousel shell) | Marcus flagged 2026-05-22. Spool's Topic A/B specs (parked-mode anomaly + maintenance tiles) slot into the carousel. **The W-7 dashboard's carousel shell IS the substrate GEM-1 will use** — when grooming opens, GEM-1 becomes additional cards + the warnings-first ordering logic on the existing carousel. Lane split unchanged: Iris visual carousel + interactions; Spool tile content semantics. |
+| W-7 | F-092 System Status + F-097 Battery Health — HTML touch-carousel dashboard + System Setup menu | **DRAFT spec 2026-06-05 — pending Atlas design-gate (8 items); Spool/Argus advisory; Marcus pre-noticed** | CIO-brainstormed live via HTML visual companion 2026-06-05. Spec `docs/superpowers/specs/2026-06-05-pi-touch-carousel-dashboard-f092-f097-design.md` (v1.1, commits 11d9866 + a1eeef9). **Stack = HTML/chromium** (supersedes pygame `status_display.py`), shares F-103 kiosk + `eclipse-states-http`. **F-097 PIVOTED** drain-ladder → Battery Health (new key-off sequencer prevents draining; ladder demoted to failsafe). **F-092** = 2×2 tiles, the I-033 BT-reconnect visibility fix. **System Setup menu** (long-press 5–6s + `⋮`): OBD service stop/start/restart (powerwatch restart-only) + Exit-UI, behind confirms. Routed: Atlas gate A-1..A-8 (load-bearing: kiosk lifecycle, state-server extension, emitters, pygame sunset, touch, service-control privilege/polkit), Spool S-1..S-3 (ladder thresholds, runtime formula, semantics), Argus Q-1..Q-3, Marcus pre-notice (split US-A..US-E). DEPENDS ON F-103. NEXT: await Atlas gate → formal Marcus groom-ready. |
+| W-8 | DTC / Check-Engine viewer + gated Mode-04 clear-code (on-Pi) | **v1.1 spec 2026-06-05 — Spool CONFIRMED ("ship it") + live-validated; pending Atlas gate (A-1..A-3,A-5..A-8; A-4 resolved); Marcus pre-noticed** | CIO-brainstormed live via visual companion 2026-06-05 (his MIL came on drive-27). Spec `docs/superpowers/specs/2026-06-05-pi-dtc-check-engine-viewer-clear-design.md` (v1.1; commits 57f7683 v1 + closeout v1.1). **Card 5 (Alerts+DTC) of the W-7 carousel**; depends on W-7 shell + F-103. Surfaces: full-screen **takeover** (severity-styled 🔴/🟡/🟢 + frequency rules, CIO chose Option B), **ribbon**, **Alerts card** (hero+list), **detail** (freeze-frame/realtime fallback + severity-gated suggested-fix + 3-state trust badge), **gated clear flow** (3 button states + hard confirm + re-read + refuse-2nd-clear). Renders Spool's DTC safety advisory (severity tiers, clear-gate, suggested-fix severity-override). **Live results folded (v1.1):** Mode 02 freeze-frame CONFIRMED unsupported on MD326328 → realtime fallback is default; P0443 read→log→clear→re-read live-validated; +R-1 condition-dependent severity (`severityCaveat`), +R-2 ribbon red≠brand red. Routed: Atlas gate A-1..A-8 (heavy = A-1 Mode 04 path w/ server-side gate re-check) + v1.1 delta, Spool ack+confirm, Argus Q-1..Q-3, Marcus pre-notice (split US-A..US-E). NEW token `--green-ok #35C46A` proposed for `specs/UI/` (W-3, via Atlas A-8). NEXT: await Atlas gate → formal Marcus groom-ready. |
 
 ## 9. Session Log
+
+### 2026-06-05 (cont.) — DTC / Check-Engine viewer + gated clear-code design (visual brainstorm) → v1.1
+
+- **CIO assignment** (his MIL came on both legs of the aborted drive-27): mock the check-engine error screen(s) for the Pi display. **Spool filed the engine-safety SSOT** first (`offices/tuner/dtc-display-clear-safety-advisory.md`) — severity tiers (🔴 STOP / 🟡 WATCH / 🟢 MINOR), clear-gate preconditions, suggested-fix provenance + severity override — plus a mid-session **delta** (suggested_fix + trust badge) and, after I routed, a **confirm + live results**. I render his SSOT, I don't redefine it.
+- **CIO ratified visual brainstorming as the standing default** ("that is my preference going forward. 100% proceed with using a browser") — updated `knowledge/feedback-cio-prefers-visual-brainstorming.md`; no need to re-offer the companion each UI session.
+- **Designed live via the visual companion** (5 decision screens, real codes P0301/P0420/P0442/P1500). CIO decisions: **D-1 full-screen takeover** (chose Option B over my recommended hybrid — honored it but baked severity-styling in so it stays honest, not alarm-fatigue), **D-2** severity-styled takeover, **D-3** frequency rules (new-code-only, ribbon-after, escalation re-fires), **D-4 hero+list** Alerts card, **D-5** detail view (freeze-frame + severity-gated fix + 3-state trust badge), **D-6** gated single Clear button (3 states + hard confirm + re-read + refuse-2nd-clear).
+- **Spec written + self-reviewed + committed** `docs/superpowers/specs/2026-06-05-pi-dtc-check-engine-viewer-clear-design.md` (v1 commit 57f7683). Two of my calls Spool endorsed as improvements: action-path gate re-check (don't trust the UI's enabled state) + fix slot "replaced, not hidden" for dangerous codes.
+- **Routed (commit 585fe06):** Atlas design-gate A-1..A-8 (load-bearing — Mode 04 path), Spool ack+semantics, Argus Q-1..Q-3, Marcus pre-notice (US-A..US-E). DEPENDS ON W-7 carousel shell + F-103.
+- **v1.1 fold (this closeout):** Spool's confirm + **live results** processed → Mode 02 freeze-frame **confirmed unsupported on MD326328** (realtime fallback now the default; resolved Atlas A-4 + the open question), P0443 read→log→clear→re-read **live-validated** (`specs/examples/dtc_read_and_clear_koeo.py`), +R-1 condition-dependent severity (`severityCaveat`, e.g. P0171), +R-2 ribbon-red≠brand-red. Acked Spool + filed a v1.1/A-4-resolved delta to Atlas.
+- **NEXT:** Atlas gate verdict (A-1..A-3, A-5..A-8) → formal Marcus groom-ready. Spool still owes the DSM P1xxx severity + suggested_fix subset (UI renders code-only gracefully until then).
+
+### 2026-06-05 — F-092/F-097 touch-carousel dashboard design (visual brainstorm) + System Setup menu
+
+- **Marcus's parallel-prep assignment item 2** (F-092 + F-097 to groom-ready). Brainstormed the whole thing **live with the CIO via the superpowers HTML visual companion** — he loved it ("I am a very visual person… on target"). Captured `knowledge/feedback-cio-prefers-visual-brainstorming.md` (default to mockups for UI work).
+- **Grounding reframed the task.** A post-boot **pygame dashboard already exists** (`src/pi/hardware/status_display.py` + `dashboard_layout.py`, US-257/B-052, wired via `hardware_manager.py`) rendering most of F-092/F-097 already (incl. the VCELL-authoritative / SOC-uncalibrated honesty rule, US-264). So the work became "unify on HTML + fill the real gaps," not greenfield. Lesson captured.
+- **CIO design decisions (all via mockup A/B/C clicks):**
+  - **Stack = HTML/chromium touch carousel** (not pygame) — wants swipe-L/R nav + buttons + touch; unifies the surface with F-103.
+  - **F-097 PIVOTED** drain-ladder → **Battery Health** — the new key-off ShutdownSequencer prevents the Pi draining down the ladder, so a live drain-ladder readout would be a *dishonest instrument*. Ladder demoted to a failsafe (renders only when actually draining). CIO's correction; folded.
+  - **F-092** = 2×2 status tiles + drive banner — the I-033 BT-reconnect visibility fix (freshness on every field).
+  - **Persistent thin top bar** (W-5 system-menu access = option A).
+  - **System Setup menu** (added late): reachable by **5–6s long-press anywhere** (filling-ring feedback) **+ top-bar `⋮`** (option B). v1 basics = OBD service stop/start/restart + Exit-UI, behind confirms. **`eclipse-powerwatch` restart-only** (option A) — can't stop the safe-shutdown guard. Defense-in-depth for destructive controls (deliberate gesture + confirm + structural lock).
+- **Spec:** `docs/superpowers/specs/2026-06-05-pi-touch-carousel-dashboard-f092-f097-design.md` (v1.1; commits 11d9866 spec + 3c4e2bc routing + a1eeef9 menu fold). Self-reviewed; CIO-approved before routing.
+- **Routed (A2ALs):** Atlas design-gate **A-1..A-8** (load-bearing — kiosk lifecycle, state-server full-runtime extension, two emitters, pygame sunset, touch, **service-control privilege/polkit + Exit-UI lifecycle**) + menu delta; Spool S-1..S-3 (ladder thresholds, runtime formula, power-mode semantics — note the F-097 pivot is HIS domain, flagged); Argus Q-1..Q-3; Marcus pre-notice (split **US-A..US-E**, DEPENDS ON F-103, F-097-rename flag).
+- **Status:** DRAFT pending Atlas gate (more load-bearing than F-103). Formal Marcus groom-ready follows Atlas signoff. Both of Marcus's assigned specs now drafted.
+- **Knowledge captured:** visual-brainstorming feedback (+ a server idle-timeout gotcha), destructive-action defense-in-depth pattern, ground-in-existing-implementation pattern.
+- **Tooling note:** the visual-companion server idle-times-out between turns on this setup (can't anchor to my process) — relaunch + re-push the current screen when it dies. Mockups persist in `.superpowers/brainstorm/` (gitignored).
+
+### 2026-06-03 (cont.) — F-103 splash v1.2 groom-ready + settings optimization
+
+- **Finalized F-103 (was B-103) splash to groom-ready** per Marcus's assignment item 1. It already had an Atlas-gated v1.1 spec + unactioned peer advisories, so "start" = finish:
+  - **Acked Atlas's gate** (PASS w/ amendments) — accepted all 6 changes, no pushback. Closes the long-owed W-1 ack.
+  - **Spec → v1.2:** folded Spool S-1 (eclipse-obd 3-tier health) + S-2 (palette stubs); scrubbed the boot-state authorship residual (= `eclipse-boot-state.service`, not the shutdown-only finalize); added I-10b/F-7 **alarm-fatigue guard** (engine-off must NOT show amber); B-103→F-103; status→GROOM-READY; +§0.1 changelog.
+  - **Routed:** Atlas ack, Argus re-ping (Q-1/2/3 open, non-blocking), Marcus groom-ready pointer (split US-A/B/C/D). Commit ebac7fb.
+- **Settings optimized** (CIO-directed): `.claude/settings.local.json` 42→31 rules; collapsed ~20 single-use PowerShell one-offs into general globs to cut prompts. Encoded the access model structurally: Read whole project; Write/Edit = my office (full) + peer inboxes (`offices/*/inbox/**`) + `specs/**` + `docs/**`; peer office bodies omitted (prompt → enforces inbox-only). File is gitignored (CIO auto-normalizes).
+
+### 2026-06-03 — Display case v2.6 (top/HDMI clearance 14→19mm) + 2 inbox items
+
+- **CIO ruler check on the printed v2.5 → needs more top clearance.** The 90°
+  micro-HDMI plug body (which turns LEFT to share the Type-C left-wall exit)
+  needs **19mm from the GLASS surface edge to the inner +Y wall**. Was 14mm
+  (PCB-datum). Changed `clearance_top` **8.2 → 15.5** in `display-case.scad`.
+  Both shells re-rendered manifold (`Simple: yes`); `stl/{back,front}_shell.stl`
+  regenerated. `case_y` 78.2 → 85.5mm.
+- **The 5.8mm question (CIO worried I had the wrong measurement):** explained
+  it's not a chosen number — it's baked-in geometry from the FROZEN glass window:
+  2.3mm (glass cutout 60.6 overhangs the 56mm PCB, centered) + 3.5mm (`bezel_width`
+  lip). `gap = 5.8 + clearance_top` (PCB datum) or `3.5 + clearance_top` (glass datum).
+- **Datum-mismatch caught via AskUserQuestion** — CIO's ruler datum = the GLASS
+  surface edge, not the PCB edge (2.3mm apart). I'd first set clearance_top=13.2
+  (PCB datum), then corrected to 15.5 (glass datum) once confirmed. Erring long:
+  19.3mm from physical glass edge, 21.3mm from PCB edge — only MORE plug room.
+  **Two knowledge files captured** (datum lesson is the headline).
+- **Inbox: 2 new items from Marcus (2026-06-01), both processed:**
+  - *concurrency-protocol-adopt-bootup* → **actioned**: added handbook §13
+    shared-checkout-discipline pointer to §5 Operating Model (CIO ask = make it
+    load every session). Was already commit-immediately-scoped this session.
+  - *parallel-prep-assignment-splash-ui-specs* → **queued for next session**
+    (not actioned — this session was enclosure-only). Assignment: finalize
+    **F-103** Pi splash spec (was B-103; gated since V0.28.0) to groom-ready +
+    **F-092** (system status tile) + **F-097** (drain ladder state UI) to
+    groom-ready as bandwidth allows. Lane = `offices/uidevloper/` + `specs/UI/`
+    only. → see "Open for next session."
+- **Stale slicing artifacts**: untracked `enclosures/*.3mf` + `enclosures/gcode/*.gcode`
+  (CIO's PrusaSlicer 0.15mm outputs) are pre-v2.6 → left UNCOMMITTED (would
+  misrepresent the current design). CIO re-slices from the new STLs.
+- **Note**: the long-owed **B-103/F-103 Atlas-gate ack** (W-1) is STILL pending —
+  not touched this session; now folded into Marcus's F-103 groom-ready assignment.
+
+### 2026-05-29 (cont. 2) — Display case v2.5 (buttons → top wall) + final closeout
+
+- Two more CIO review items after v2.4, both now resolved:
+  - **Buttons relocated from the back face to the TOP (+Y) WALL** — CIO: the
+    power/brightness buttons face +Y (same as the micro-HDMI output), not the
+    back. Holes now cut through the +Y wall at the button X-positions
+    (`button_x_pts`, `button_z = pcb_back_z - 2`), Ø5. Poke/toothpick access is
+    the **design intent** ("set & forget"), so recessed is correct. Removed the
+    stale back-face cut + button vent-keepout.
+  - **Top clearance raised `clearance_top` 6 → 8.2** → ~14 mm PCB-to-top-wall
+    gap for the 90° micro-HDMI cable housing.
+  - **Cable routing settled:** micro-HDMI does a LEFT 90° turn and exits the
+    EXISTING left-wall opening alongside the Type-C — one shared exit, no +X exit.
+- **Edit-rollback gotcha (important for future-me):** mid-session the v2.5
+  edits silently rolled back to v2.4 after an interruption; a render then showed
+  NO button holes because the back-shell cut looped over a renamed/undefined var
+  (`button_pts`) and cut nothing — yet OpenSCAD still reported `Simple: yes`
+  (manifold). Caught only by rendering the SPECIFIC wall face head-on.
+  Re-applied + committed (4334848, 22da761). Lesson captured in `knowledge/`.
+- **Network-drive stale reads:** the repo lives on `//chi-nas-01`; harness
+  "file modified / reverted to v2.4" reminders were STALE snapshots — `git show
+  HEAD:…` + live `grep` confirmed the working tree was the correct v2.5. Always
+  reconcile against git ground-truth, not the cached reminder, on this share.
+- **Enclosure is design-COMPLETE.** STLs (`enclosures/stl/{back,front}_shell.stl`)
+  committed + manifold. CIO is printing to physically fit-check screen + cables.
+  3 open items are physical-only (PCB offset, depth stack, both-cables-one-exit)
+  → v2.6 on his return. My enclosure commits ride under the V0.28.1 sprint merge
+  (93fb534) in branch history — preserved.
+- Inbox: no new items since the prior closeout (B-103 Atlas-gate ack still owed
+  next session, unchanged — see W-1).
+
+### 2026-05-29 (cont.) — Display case v2.2→v2.4 (datasheet-verified) + closeout
+
+- Continuation of the same session. After the v2.1 datasheet rebuild, CIO ran
+  4 live review rounds; key outcomes (all in `display-case.scad`, changelog
+  `enclosures/display-case-v2.1-notes.md` §v2.2–v2.4):
+  - **v2.2**: cable exit → LEFT/Type-C wall; standoff seats → hex sockets;
+    removed assembly orientation-cue blocks (the red cue read as a phantom 3rd clip).
+  - **v2.3**: **PCB short edge corrected 49→56mm** — the datasheet "49mm" is the
+    mount-hole vertical c-c (3.5+49+3.5=56), NOT the edge; CIO's original "56 wide"
+    was right and I'd mis-corrected it. Standoff pocket → plain round cylinder
+    (CIO: M2.5×11+3 hex); exit centered on the Type-C (6.4 from top, 9 long).
+  - **v2.4**: **mount pattern corrected trapezoid→RECTANGLE** — verified from
+    datasheet vector crops (`datasheets/left_holes.png` + `right_holes.png`):
+    both rows share x (left 23.6 / right 81.6, h c-c 58; rows 3.5 off edges,
+    v c-c 49). My trapezoid had mis-read the "28.5/6.5/50" CONNECTOR dim-chain as
+    the top hole row. Buttons confirmed = the "2 extra holes" (kept, back-face,
+    +Y/HDMI side, vent keepout added so they don't merge with the grid).
+- **Two self-corrections this session** (PCB 49→56, trapezoid→rectangle) both
+  traced to mis-reading datasheet dimension SEMANTICS (edge vs c-c; connector
+  chain vs hole row). Lesson captured in `knowledge/` (updated).
+- Datasheets now also live at `specs/vendor/OSOYOO-datasheet.pdf` (CIO moved/added);
+  my office copies + extraction scripts + crops remain under `enclosures/datasheets/`.
+- Both shells render manifold every round; STLs regenerated + committed
+  (e282857, 12f7049, 152114c, e6f88d3, ab56cc4). Renders saved v21_/v22_/v23_/v24_.
+- **Inbox (closeout sweep)**: B-103 peer replies arrived since the 05-26 draft and
+  are still to be actioned (out of scope tonight): **Atlas gate = PASS with
+  amendments** (spec amended in-place to v1.1; owe Atlas an ack OR push-back on his
+  6 changes-requested); Spool S1/S2 advisories (non-blocking); Marcus ack. W-1
+  updated. NEXT SESSION: review v1.1, ack Atlas, then PM sprint-routing.
+- **Open for CIO (enclosure)**: PCB-centered offset (=0), depth stack (glass↔bezel),
+  button back-face-vs-edge-wall — all pending a physical test-fit.
+
+### 2026-05-29 — Display case v2.1 (CIO fit-check → datasheet rebuild)
+
+- CIO printed v1 and ran a fit-check; gave 7 change requests live (tabs
+  misaligned, mount posts off, drop the button, add 2 button holes, cable
+  exit too small, +6mm clearance for 90° heads, vents undermining mounts) +
+  "10mm metal standoffs (my own)" + "screen hole fit perfectly — don't change
+  it." Worked through each via back-and-forth + a back-of-board photo.
+- **Recurring orientation friction**: the phone photo reached me rotated ~90°
+  from CIO's measuring frame; spent several rounds reconciling left/right/top.
+  Lesson: anchor on a shared, unambiguous frame (silkscreen logo + connector
+  edge) FIRST; numbers referenced to PCB edges are useless until the frame is
+  agreed. Captured in `knowledge/`.
+- **CIO supplied the official datasheet** (2024009100) mid-session — "use this
+  as your facts." It resolved everything: PCB is **85×49** (ruler "56 wide"
+  was the lone error breaking the short-axis math), glass 93.44×60, active
+  73.44×48.96, M2.5, and the mount holes are a **TRAPEZOID** (top c-c 50,
+  bottom c-c 58) — CIO's "58×50" was the two row spacings, not long×short.
+  Read the trapezoid reliably by rendering the PDF's PCB drawing at 6× with
+  pymupdf (`datasheets/crop_pcb.py` → `pcb_zoom.png`); the page-1 dims are
+  vectorized (no text layer) and the drawing's component symbols swamp circle
+  detection, so a high-res crop + visual read beat vector archaeology.
+- **v2.1 rebuilt** `display-case.scad` in the datasheet frame: trapezoid seats
+  (flush countersunk M2.5 clearance + locating recess for CIO's metal
+  standoffs, no printed posts), asymmetric +6mm on TOP(HDMI)+LEFT(Type-C),
+  frozen v1 window, filtered seat-aware vent grid, taller cable exit, depth
+  for 10mm standoffs. Both shells render manifold (back 2437 facets / front
+  62). Rendered back-flat + 3/4 assembly with orientation cues, sent to CIO.
+- **Saved for future reference** (CIO-directed): both datasheet PDFs +
+  `pcb_zoom.png` + extraction scripts + `2024009100-extracted-facts.md`
+  (authoritative dims) + `display-case-v2.1-notes.md` (changelog + the 5
+  open assumptions pending physical fit-check) under `enclosures/`.
+- **Open**: CIO reviewing the enclosure render now. 5 assumptions pending his
+  physical fit-check (orientation, PCB-centered offset, exit wall, M2.5,
+  depth stack) — see v2.1 notes §OPEN. STLs regenerated, ready to slice on
+  his thumbs-up. `stl/plunger.*` now obsolete (flagged).
 
 ### 2026-05-22 — Onboarding (Iris established)
 

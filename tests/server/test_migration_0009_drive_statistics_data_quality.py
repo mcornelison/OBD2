@@ -240,11 +240,15 @@ class TestModuleExports:
         versions = [m.version for m in ALL_MIGRATIONS]
         assert '0009' in versions
 
-    def test_appendedAtEnd(self) -> None:
-        # Registry invariant: ascending order; latest at tail.
+    def test_v0009InRegistryAndWellFormed(self) -> None:
+        # Registry invariant: ascending order; 4-digit version strings.
+        # (US-363 appended v0010 at the tail; '0009' is no longer last, so
+        # this no longer pins the tail to '0009' -- it pins that '0009' is
+        # present, well-formed, and that the registry stays sorted.)
         versions = [m.version for m in ALL_MIGRATIONS]
-        assert re.match(r'^\d{4}$', versions[-1]) is not None
-        assert versions[-1] == '0009'
+        assert '0009' in versions
+        assert all(re.match(r'^\d{4}$', v) for v in versions)
+        assert versions == sorted(versions)
 
     def test_constantsMatchOrm(self) -> None:
         # The migration's identifier constants must match the ORM's
@@ -297,16 +301,15 @@ class TestDdlMirrorsOrm:
         assert 'DROP' not in ddl.upper()
         assert 'RENAME' not in ddl.upper()
 
-    def test_addColumnDdlMatchesOrmColumnType(self) -> None:
-        # ORM declares String(16) -> migration MUST emit VARCHAR(16).
-        # If the model widens to String(32) without updating the
-        # migration, this trips RED so the gap is caught in CI.
-        ormColumn = DriveStatistic.__table__.columns['data_quality']
-        ormLength = ormColumn.type.length
-        assert ormLength == 16, (
-            f'ORM data_quality declared as String({ormLength}); '
-            f'update this test + the v0009 DDL VARCHAR width.'
-        )
+    def test_addColumnDdlUsesFrozenHistoricalWidth(self) -> None:
+        # v0009 historically added data_quality as VARCHAR(16) and is a
+        # SHIPPED, forward-only migration -- it is never edited (see
+        # test_v0010NotModifiedForwardOnly).  The ORM later widened to
+        # VARCHAR(20) (US-377 / v0012) to fit 'attribution_anomaly' (19
+        # chars); v0012 reconciles the live column.  The current-width
+        # ORM parity is covered by test_migration_0012's width-invariant
+        # guard; here we pin v0009's FROZEN width so the shipped DDL is
+        # never silently rewritten.
         assert 'VARCHAR(16)' in m0009.ADD_DATA_QUALITY_COLUMN_DDL
 
     def test_addColumnDdlMarksNotNull(self) -> None:

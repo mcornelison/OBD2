@@ -4,7 +4,35 @@
 
 This document describes the system architecture, technology decisions, and design patterns for the Eclipse OBD-II Performance Monitoring System.
 
-**Last Updated**: 2026-05-21 (Sprint 41 / V0.27.17 — §10.7 amendment per
+> **Structure (reorganized 2026-06-01):** to keep this spec focused on the
+> implemented system, four non-current bodies of content were extracted to
+> `specs/arch/` reference files (preserved verbatim, pointers left in place):
+> **Phase-2 ECMLink + data-volume design** → `phase2-data-architecture.md`
+> (§17–§18 stubs); the full **modification history** → `architecture-changelog.md`
+> (append new change entries there); the **per-version migration history +
+> Rule-10 records** → `schema-migration-history.md` (§5 keeps the current schema
+> + migration-system contract); the **Shutdown-Sequencer + Data-Pipeline evolution
+> history** (superseded designs, F-7/F-8 fix narratives, retired-writer cross-links,
+> Rule-10 records) → `subsystem-evolution-history.md` (§10.6/§10.7 keep current
+> behavior + invariants). −35% file size; no current-system content removed. (§11
+> Deployment was reviewed — it's all current reference, nothing extracted.)
+
+**Last Updated**: 2026-06-01 (Sprint 44 / V0.28.1 — new §5 "V0.28.1 — B-076
+first slice" subsection documenting the normalized `ecu` identity dimension
+(pair-keyed on (ecu_signature, cal_signature); immutability carve-out),
+`vehicle_info.ecu_id` NOT NULL FK + transitional-snapshot coherence guard, and
+the `speed_pid_calibration` re-key to an `ecu_id` FK (US-376 + US-374, B-076
+first slice; v0011 forward-only). Subsection by Marcus (PM) per PM Rule 10;
+Atlas Rule 10 PASS recorded 2026-06-01 (verified against landed code; closes
+Watch List A-12); IRL acceptance pending the first V0.28-chain hardware
+deploy.)
+Prior: 2026-05-29 (Sprint 43 / V0.28.0 — §10.7.1 F-107 DriveDetector
+dual-attribution remediation (Mechanisms A/B/C) + new §5 "V0.28.0 Schema Pass"
+subsection (5 landed surfaces: drive_summary/drive_statistics data_quality;
+drive_statistics→summary_id rename; vehicle_info ECU lineage; dtc_freeze_frame;
+drive_summary drive_id↔source_id invariant); speed_pid_calibration / US-370
+built but deferred to V0.28.1. Atlas Rule 10 PASS 2026-05-29.)
+Prior: 2026-05-21 (Sprint 41 / V0.27.17 — §10.7 amendment per
 PM Rule 10 design-gate DoD: documents the B-104 Step 1 data-pipeline
 architectural shift -- Pi = telemetry emitter; server = sole authority
 for derived analytics (drive_summary analytics columns + drive_statistics
@@ -1043,17 +1071,23 @@ Should list every applied migration with its apply timestamp.  On an
 already-migrated server, re-running `apply_server_migrations.py --run-all`
 emits a single `[run-all] 0 applied ... idempotent no-op` line.
 
-**Registry (as of Sprint 19 close).**
+**Migration registry + history.** The per-version registry (v0001–v0012 — what
+each migration did) and the V0.28.0→V0.28.2 schema-normalization narratives + the
+Atlas Rule-10 design-gate records are in
+**`specs/arch/schema-migration-history.md`** (extracted 2026-06-01).
+`src/server/migrations/__init__.py::ALL_MIGRATIONS` is the authoritative ordered
+source.
 
-| Version | Story | Purpose |
-|---------|-------|---------|
-| `0001` | US-209 | Retroactive catch-up: `data_source` (US-195) + `drive_id` / `drive_counter` (US-200) for capture/drive-id tables.  v0001 deliberately excluded `drive_summary` from CAPTURE_TABLES / DRIVE_ID_TABLES because Sprint 14 grooming treated it as analytics-only. |
-| `0002` | US-217 | `CREATE TABLE battery_health_log` (Spool Session 6 Story 3 -- per-drain UPS health). |
-| `0003` | US-223 | `DROP TABLE IF EXISTS battery_log` (TD-031 close -- dead Pi-only `BatteryMonitor` artifact). |
-| `0004` | US-237 | `drive_summary` 3-way reconcile: ALTER 11 missing US-206/US-195/US-200 columns + add `IX_drive_summary_drive_id` + `uq_drive_summary_source` UNIQUE; cascade-delete the 9 Sprint-7-8 sim rows + their `drive_statistics` children (V-4 namespace cleanup, CIO 2026-04-29).  Closes Ralph's V-1 / V-4 from the post-Drive-4 health check. |
-| `0005` | US-238 | `CREATE TABLE dtc_log` -- mirrors the `DtcLog` ORM declared in Sprint 15 US-204 but never CREATEd on live MariaDB (US-204 predates the US-213 explicit registry).  Twelve columns (id + 4 sync + 7 Pi-native) + `uq_dtc_log_source` UNIQUE + `ix_dtc_log_drive_id`.  Closes Ralph's V-2 (silent-data-loss-on-next-DTC-drive risk) from the post-Drive-4 health check. |
-
----
+**Current server schema (post-V0.28.2 normalization).** A normalized `ecu`
+identity dimension keyed on the `(ecu_signature, cal_signature)` pair (both
+`VARCHAR(32) NOT NULL`) is referenced by `vehicle_info.ecu_id` (NOT NULL FK) and
+`speed_pid_calibration.ecu_id` (NOT NULL FK, `UNIQUE(ecu_id)`). `vehicle_info`
+carries append-only ECU lineage + a STORED single-active marker;
+`dtc_freeze_frame` is the Mode-02 capture table;
+`drive_summary`/`drive_statistics.data_quality` are `VARCHAR(20)` with the
+`attribution_anomaly` tripwire; `drive_statistics`'s former `drive_id` is
+`summary_id`; `drive_summary.drive_id ↔ source_id` is CHECK-invariant. See the
+migration-history file for how each landed.
 
 ## 6. Configuration Architecture
 
@@ -1668,240 +1702,11 @@ pluggable seam via `__main__.buildV1Tasks`) → window exits on
 straight to poweroff; a *failed* VCELL read never powers off
 (uncertainty ≠ power loss).
 
-### Superseded design history (retained for the lesson, not as current behavior)
-
-The text below documents the deleted `PowerDownOrchestrator` design and the
-40-pt MAX17048 SOC% calibration finding that drove the US-234
-SOC%→VCELL-volts switch. **The calibration lesson stands.** The ladder as a
-shutdown mechanism does NOT — Phase-2 T9 deleted it in favor of the
-ShutdownSequencer above (deterministic GPIO6 trigger + bounded task window,
-no VCELL-based decision tree). Treat everything that follows as historical
-context for the SOC% calibration discovery, not as current production
-behavior. None of the `PowerDownOrchestrator`, its state machine, the VCELL
-ladder thresholds, its callbacks, `suppressLegacyTriggers`, the
-`_powerDownTickLoop`, the stage-behavior wiring, or the `stage_*` event
-types in `power_log` are live anymore. The `battery_health_log` schema
-(US-217) is unchanged and still in use; only the orchestrator that wrote to
-it from a VCELL ladder is gone.
-
-**The calibration lesson worth keeping.** US-216 originally compared
-MAX17048 SOC% against a 30/25/20 ladder. Across 4 drain tests over 9 days
-(Drains 1-4) the ladder NEVER fired: the Pi hard-crashed at VCELL
-3.36-3.45V every test while MAX17048 SOC% reported 57-63%. Spool's
-analysis identified a **40-pt SOC% calibration error on this MAX17048
-unit** — the gauge reads ~60% when VCELL indicates near-empty. US-234
-switched the trigger source to VCELL volts read directly from the cell,
-removing the chip-level SOC%-vs-VCELL calibration error from the path.
-The calibration lesson stands: **on this hardware, MAX17048 SOC% is
-unreliable for safety-critical thresholds; VCELL volts are the source of
-truth.** This lesson carries over into ShutdownSequencer's `vcellFloorVolts`
-emergency backstop, which uses VCELL volts directly (the calibration
-error never enters the safety path).
-
-**Why the ladder itself was deleted.** Beyond the calibration finding, the
-ladder *as a shutdown mechanism* was the wrong architecture: it inferred
-power-source events from a battery-health trend (the same anti-pattern
-that bricked the Pi 2026-05-18 in a different form). Phase-2 T9 deleted
-the entire `PowerDownOrchestrator` subsystem (commit `9adb0fb`: −1230 LOC
-`orchestrator.py` + ~10,829 deletions across `hardware_manager.py`,
-`lifecycle.py`, and 25 test files) and replaced it with the
-ShutdownSequencer above — a deterministic GPIO6-triggered, smoothing-
-debounced, bounded task window. The old VCELL ladder, state machine
-diagram, hysteresis tuning, `suppressLegacyTriggers` race fix
-(US-216/TD-D), `_powerDownTickLoop` decoupling (US-252), stage-behavior
-wiring (US-225/TD-034), `stage_*` event types in `power_log`, and per-stage
-callbacks (`onWarning` / `onImminent` / etc.) are **not live**. The
-`battery_health_log` schema (US-217) is unchanged and still in use — it is
-written by the SyncWithServerTask path, not by a stage-based ladder.
-
-For the full historical record of the deleted design, see the git history
-prior to `9adb0fb` (`git log --reverse -p -- src/pi/power/orchestrator.py`)
-or this architecture file at any tag ≤ V0.27.13.
-
-*Detailed ladder design — state machine diagram, VCELL thresholds + hysteresis,
-the legacy-timer-suppression race fix (US-216/TD-D), the
-`_powerDownTickLoop` display-decoupling (US-252), the
-stage-behavior wiring (US-225/TD-034), and the `stage_*` `power_log` event
-types — is all retired and not reproduced here. See the linked git history
-above if reconstructing the deleted design is ever necessary.*
-
-### Boot-grace latch defect + level-based post-grace fix (US-344, Sprint 40 / V0.27.16, F-7)
-
-V0.27.15 shipped the ShutdownSequencer above with a **boot-grace latch
-defect** in the GPIO6 PLD watch loop (`src/pi/power/power_watch/__main__.py`
-post-fix at `_runPldWatchLoop`; pre-fix at the inline closure on lines
-301-322 of the V0.27.15 tip). The loop used **edge-only** loss detection
-(`lost AND not prevLost`) for the post-boot-grace trigger. When a PLD loss
-event fired *inside* the 120 s boot-grace window AND the X1209-HAT
-subsequently latched GPIO6 LOW after the transient resolved, `prevLost`
-advanced to `True` and the loop's level-stuck-LOW state went silently
-unhandled — the sequencer was blind to a perfectly live power-loss signal
-for the remainder of the service lifetime, unless GPIO6 toggled HIGH again
-(which only happens if the HAT recovers external-power-detection, e.g.
-under alternator load).
-
-**Bug bound (conjunction; all three required to reproduce):**
-
-1. Service is inside the 120 s boot-grace window, AND
-2. A PLD power-loss event occurs during that window (engine crank transient
-   is the canonical in-car trigger; bench-time HAT switchovers, USB-C
-   unplug/replug, or relay bounces also produce it), AND
-3. The HAT latches LOW after the transient and does not recover to HIGH
-   before key-off.
-
-Reproduced live in-car 2026-05-20 (Atlas + CIO Test 2): brief engine crank
-inside boot-grace → journal `"PLD power-loss 42s into boot-grace (120s) --
-ignoring"` → sequencer silent for 5.5 minutes while GPIO6 stayed `lo` for
-638 consecutive samples and VCELL drained 3.810V → 3.734V. The morning's
-3-of-3 Cycle-A drills + Bench Check A + Bench Check B all happened to dodge
-the failure conjunction (no in-grace transients during those drills) — the
-externally-observable V0.27.15 IRL ACCEPTANCE PASS verdict stands on its own
-facts, but the bench gate's coverage of the in-grace-transient case was a
-known-incomplete artifact.
-
-**The fix (US-344, level-based post-grace check):** the watch loop now
-treats `lost AND not firedAlready` as the post-boot-grace trigger condition,
-not `lost AND not prevLost`. A loss event ignored during boot-grace
-therefore re-fires correctly the first post-grace tick if the line is still
-LOW; `firedAlready` is a same-cycle re-entry guard (the sequencer's own
-state-tracking is the authoritative re-entry surface). Inside boot-grace
-the trigger stays edge-based so the *"ignoring"* log fires once per fresh
-in-grace transient, not repeatedly per tick. The smoothing path inside
-`ShutdownSequencer.handleOnBattery` is preserved unchanged and remains the
-abort surface for transient glitches that resolve mid-window — the watch
-loop only owns trigger detection, not blip rejection.
-
-To make this unit-testable, the closure body was extracted into a
-module-level `_runPldWatchLoop` with injected `isPowerLostFn` / `stop` /
-`monotonicFn`; the closure in `main()` reduces to a thin delegation call
-with no behavior change in production wiring. The "already handling --
-ignoring" log line from the V0.27.15 code is gone — it was unreachable in
-practice (single-threaded loop; `handleLock` always acquires on first try)
-and `firedAlready` now provides cleaner re-entry semantics.
-
-**Architectural invariants preserved by the fix:**
-
-- The SSOT `PowerSourceProvider` remains the only power-acquisition site
-  (criterion #3); the watch loop reads through it, the sequencer's smoothing
-  window reads through it. F-7 was downstream of the SSOT in the consumer's
-  trigger logic, not in the source of truth.
-- Boot-grace duration is unchanged. The timer was correct; the post-grace
-  re-entry logic was the defect.
-- GPIO6 acquisition + polarity (`pldPowerPresentHigh=true`) are unchanged
-  (validated by Bench Check A + Test 1 control + Test 2 phase 2 recovery).
-- EEPROM `POWER_OFF_ON_HALT=1` (Sprint 39 SS-T8) preserved.
-- ShutdownSequencer pipeline / window cap / smoothing semantics preserved.
-
-**Lesson worth keeping (carries beyond power_watch):** *boot-grace was
-intended as time-bounded silence, not as permanent silence after an
-in-grace event.* Edge-only state-transition logic in a polling consumer
-that can ignore events during a startup grace window must re-evaluate the
-**level** on grace expiry, or it latches the consumer blind. The same
-class of bug can recur in any consumer that pairs an ignore-during-grace
-window with edge-only post-grace triggering — the SSOT design pattern
-([[ssot-design-pattern]]) is about acquisition; consumer-side state
-machines need their own design discipline.
-
-### Boot-progress instrument + ExecStop transaction-membership fix (US-345, Sprint 40 / V0.27.16, F-8)
-
-The Sprint 38 T11 honest-instrument layer (`deploy/boot-progress-arm.service`
-+ `deploy/boot-progress-finalize.service` + `src/pi/diagnostics/boot_progress.py`)
-classifies prior-boot outcomes by writing a ladder of breadcrumb rungs at
-shutdown — only the final `CLEAN_COMPLETE` rung, written by
-`boot-progress-finalize.service`'s ExecStop, distinguishes a clean
-sequencer-driven shutdown from a hard power-yank. The next boot's
-arm-unit reads the ladder file and writes `startup_log.prior_boot_clean` +
-`prior_boot_last_stage` + `prior_boot_reason` accordingly. Design intent:
-*absence of CLEAN_COMPLETE means crash, presence means clean.*
-
-**The empirical defect (F-8):** V0.27.13 → V0.27.15
-`boot-progress-finalize.service`'s ExecStop **never fired during a real
-shutdown.** The unit declared `DefaultDependencies=no` + `Before=shutdown.target`
-but no directive that pulled it into the shutdown transaction. systemd
-brought it up at boot (via `WantedBy=multi-user.target`) but never included
-it in the shutdown transaction, so its ExecStop was silently skipped, the
-`CLEAN_COMPLETE` rung never written, and every clean shutdown — including
-direct CIO-observed sequencer poweroffs — got classified
-`crashed_during_operation` on the next boot.
-
-Empirically proven 2026-05-20: Test 1 + Test 2 of the in-car drill (both
-direct-observed gentle 5s smoothing → systemd poweroff → all dark) both
-produced `prior_boot_clean=0, last_stage=RUNNING, reason=crashed_during_operation`
-on the following boot. The instrument was lying. This finding was also the
-mechanical inflation behind Spool's Finding C "12 boots crashed today"
-headline — many of those 12 were almost certainly clean sequencer
-shutdowns mis-labeled by the broken finalizer.
-
-**The fix (US-345, one-line systemd directive):** add
-`Conflicts=shutdown.target` to the `[Unit]` section of
-`deploy/boot-progress-finalize.service`. This pulls the unit into the
-shutdown transaction (its stop-job becomes a member of the transaction
-that activates `shutdown.target`), preserving the existing `Before=` ordering
-within that transaction. `DefaultDependencies=no` had stripped the
-auto-synthesized `Conflicts=` that systemd would otherwise have provided —
-the user-added `Before=shutdown.target` re-established the *ordering*
-intent but not the *activation* intent, and `Before=` alone is an ordering
-directive (*"if both are being acted on, do me first"*), not an activation
-directive (*"include me in the transaction"*). The bug was a systemd
-semantics subtlety, not a design defect in the boot_progress ladder
-itself — the ladder, the arm/finalize split, and the
-"only CLEAN_COMPLETE means clean" invariant are all sound.
-
-**Architectural invariants preserved by the fix:**
-
-- ExecStart / ExecStop command bodies unchanged (only the systemd
-  dependency graph is fixed).
-- `boot_progress` writer code path (`src/pi/diagnostics/boot_progress.py`)
-  unchanged — `CLEAN_COMPLETE` emission logic is correct; it now actually
-  runs.
-- `startup_log` schema (`prior_boot_clean` / `last_stage` / `prior_boot_reason`
-  columns) preserved unchanged.
-- Sprint 38 T11 ordering frame (`DefaultDependencies=no` + `After=eclipse-obd.service
-  drain-forensics.service` + `Before=shutdown.target`) preserved unchanged.
-- V0.27.12-DOA `PYTHONPATH=repo:repo/src` invariant in the
-  finalize unit preserved unchanged.
-- Other systemd units untouched (only `boot-progress-finalize.service` had
-  this defect class; pre-flight scan of `deploy/*.service` confirms it is
-  the only unit with the `DefaultDependencies=no + Before=shutdown.target +
-  no Conflicts=` pattern).
-
-**Sequencing relationship to F-7:** F-7 + F-8 are independent root causes
-shipped in the same V0.27.16 bug-fix release. F-7 (chain-blocking) closes
-the actual operational failure — sequencer silence post in-grace transient.
-F-8 (parallel, not chain-blocking) closes the classifier-honesty defect
-that was independently inflating Spool's Finding C "12 boots crashed today"
-number. Until F-8 ships, `startup_log.prior_boot_reason` is **advisory
-only** as an acceptance signal — direct journal-shutdown-sequence
-observation (CIO eyewitness + `journalctl` `shutdown.target`/`poweroff.target`
-lines) is the authoritative source of truth for "was this a clean
-shutdown." Post-F-8, the column becomes reliable again and counting future
-`crashed_during_operation` rows becomes meaningful evidence for regression
-gates.
-
-**Lesson worth keeping (carries beyond boot-progress):** a service-unit
-`Before=shutdown.target` line with `DefaultDependencies=no` is *not*
-sufficient to wire the unit into the shutdown transaction. Activation
-(`Conflicts=` / `RequiredBy=` / `WantedBy=`) and ordering (`Before=` / `After=`)
-are independent axes in systemd's dependency model — a unit can be ordered
-relative to a target it is never asked to stop, and the stop-job simply
-never runs. Any future shutdown-time instrument that opts out of
-`DefaultDependencies` must explicitly re-declare its shutdown-transaction
-membership.
-
-### Gate ratification (Atlas / Rule 10)
-
-The F-7 + F-8 amendments above are the Sprint 40 / V0.27.16 PM Rule 10
-design-gate DoD deliverable for §10.6 (power/shutdown subsystem — the
-load-bearing subsystem touched by US-344 + US-345). Atlas-gated per the
-2026-05-18 design-gate governance rule (architect owns the gate; spec
-update lands in-sprint with the load-bearing code change, not as
-follow-up). See
-`offices/architect/findings/2026-05-20-shutdown-sequencer-boot-grace-latch-bug.md`
-+ `offices/architect/findings/2026-05-20-startup-log-marker-broken-empirical.md`
-for the full finding-of-record bodies; the §10.6 text above is the
-canonical architecture-spec digest.
-
----
+> **History extracted (2026-06-01):** the superseded `PowerDownOrchestrator`
+> ladder + the SOC%-calibration lesson + the Sprint-40 **F-7** (boot-grace latch)
+> and **F-8** (boot-progress instrument) bug-fix narratives + the Rule-10 gate
+> record → **`specs/arch/subsystem-evolution-history.md`**. Current behavior is
+> the Flow above.
 
 ## 10.7 Data Pipeline Architecture (B-104 Step 1, Sprint 41 / V0.27.17)
 
@@ -2031,70 +1836,9 @@ ergonomics, but the underlying compute is correct under repeated
 invocation either way — the marker prevents redundant work, not
 divergence.
 
-### What's retired (cross-links for archival traceability)
-
-The following trigger-seam writer architectures and their wiring are
-retired in V0.27.17:
-
-| Surface | Sprint / Version | Anchor commit | Disposition |
-|---|---|---|---|
-| US-326 server `_writeDriveAnalytics` keyed on `connection_log` sync receipt | Sprint 33 / V0.27.7 | `76aa773` (V0.27.7 ship); `0599d24` (grooming) | **Superseded** by `compute_drive_summary` reading raw `realtime_data` directly. |
-| US-328 Pi-side `drive_statistics` Option C (schema-only, no writer) | Sprint 33 / V0.27.7 | `76aa773`; `1c01ec0` (BL-015 Option C unblock) | **Retired** — Pi-side table dropped by `ensureDriveStatisticsRetired()`. |
-| US-348 V0.27.16 server writer redo (dual-seam: sync receipt + drive_summary payload trigger) | Sprint 40 / V0.27.16 | `c04d36e` (V0.27.16 ship); `b26344e` (integration); `5fb7cdc` (scope expansion) | **Superseded** — false-pass recurred; trigger seam deleted from `sync.py`. |
-| US-349 V0.27.16 Pi-side `drive_statistics` writer + `DriveDetector._endDrive` wiring | Sprint 40 / V0.27.16 | `c04d36e`; `b26344e`; `5fb7cdc` | **Retired entirely** — Pi-side module + table + wiring removed in US-351. |
-
-Sprint 41 / V0.27.17 anchor: `e6c49e6` (sprint spin); US-350 / US-351 /
-US-352 / US-356 land on the `sprint/sprint41-bugfixes-V0.27.17` branch
-prior to chain-end merge per the Mike 2026-05-08 / 2026-05-10
-chain-end-merge rule.
-
-### Empirical status (honest, V0.27.17 IRL pending)
-
-The compute path is **synthetically validated** at the time this
-section lands:
-
-- US-350 unit tests (`tests/server/analytics/test_drive_summary_compute.py`)
-  10/10 GREEN — fixture-based compute against real ORM + real INSERTs
-  on in-memory SQLite (no seam mocks per I-040 discipline).
-- US-351 unit tests
-  (`tests/server/analytics/test_drive_statistics_compute.py`) 14/14
-  GREEN; Pi-side retirement regression suite
-  (`tests/pi/obdii/test_drive_statistics_pi_table_migration.py`) 7/7
-  GREEN.
-- US-352 deploy-script suite
-  (`tests/deploy/test_deploy_server_backfill_drives_11_20.py`) 13/13
-  GREEN.
-- Full server suite (`pytest tests/server/ -m "not slow"`) 777
-  passed / 12 skipped (no regressions). Pi suite
-  (`pytest tests/pi/ -m "not slow"`) 1513 passed / 16 skipped.
-
-The compute path is **IRL-pending** until V0.27.17 deploys to
-chi-srv-01 + the Pi and an actual drive's raw rows are computed
-through the new path. The empirical-gate to clear:
-
-1. Deploy Step 4.9 backfill of drives 11-20 produces 10
-   `drive_summary` rows with NON-NULL analytics columns + 10 drives'
-   worth of positive-`sample_count` `drive_statistics` rows
-   (`data_quality=full` for drives with ≥100 `realtime_data` rows
-   per PID). Drive 11 inclusion (Spool FLAG-2 / Argus DB-check
-   outcome (a) 2026-05-21) preserves the 93-octane knock-retard
-   reference baseline.
-2. Idempotent re-run produces zero diff in either table's data
-   values; `drive_statistics.computed_at` advances; no PK violations.
-3. Post-deploy real drive (engine on through key-off via sequencer
-   poweroff) produces a `realtime_data` block that the nightly timer
-   (or on-demand `--drive-id N`) computes through to NON-NULL
-   analytics columns — the V0.27.16 reproducer scenario that the
-   V0.27.7 + V0.27.16 trigger seams failed.
-
-Until that drill clears, this section describes the **deployed
-architecture intent**, not the validated production state. The
-distinction is the load-bearing one: prior cycles shipped through
-exactly because synthetic-seam-mock passes were misread as production
-proof. The empirical falsifier for "Pi-side drive-end signal no
-longer load-bearing" is the on-demand backfill of drive 20 producing
-`drive_summary.row_count=3808` (per Argus's V0.27.16 drill evidence)
-from the existing raw `realtime_data` on the server.
+> **History extracted (2026-06-01):** the retired-writer cross-links
+> (US-326/328/348/349) + the V0.27.17 empirical-status snapshot →
+> **`specs/arch/subsystem-evolution-history.md`**.
 
 ### Architectural invariants preserved by the shift
 
@@ -2116,39 +1860,84 @@ from the existing raw `realtime_data` on the server.
   per-tuning-spec recompute) is deferred to V0.28+ and lands
   server-side from day one under this same architecture.
 
-### Lesson worth keeping (carries beyond drive analytics)
+> **History extracted (2026-06-01):** the B-104 3-cycle false-pass retrospective
+> lesson + the Rule-10 gate record →
+> **`specs/arch/subsystem-evolution-history.md`**.
 
-*The V0.27.7 → V0.27.16 → (would-have-been) V0.27.17 redo cycle shipped
-three times because the test fixtures used in Ralph's TDD did not
-reproduce deploy-time runtime conditions — specifically the
-sequencer-driven drive termination that prevents the drive-end signal
-from firing.* The structural close is two-part: (a) move the writer
-to a tier where the bug class is impossible (this section), and (b)
-build a deploy-context test surface that exercises the integrated
-orchestrator + DriveDetector + recorder + sync + server compute path
-against a real database (US-355, I-040 structural close, V0.27.17
-seed harness). Synthetic-seam-mock passes are not proof of production
-behavior; a real-data round-trip + DB read-back is the gate. The
-discipline lesson is: when a writer is tier-coupled to a signal that
-may not fire under the real termination path, the architectural fix
-is to read the canonical data on the other tier, not to harden the
-signal.
+### 10.7.1 DriveDetector dual-attribution remediation (F-107, Sprint 43 / V0.28.0)
 
-### Gate ratification (Atlas / Rule 10)
+**Defect of record.** The V0.27.18 IRL drill (2026-05-22) produced two
+`drive_id`s (drives 23 + 24) for one physical leg: time-overlapping
+`realtime_data` rows, ~2× polling cadence, RPM readings 1500-2000 apart
+within the same second. RCA:
+`offices/ralph/findings/2026-05-28-drive-detector-dual-attribution-rca.md`.
+This is a Pi-side defect upstream of the §10.7 B-104 Step 1 architecture
+(orthogonal to the Pi=emitter/server=authority shift) — carved out of the
+V0.27 chain merge as a known scoped exception. The remediation is
+**defense-in-depth across three tiers**, because the evidence has two
+distinct root causes (a single process minting a spurious second drive,
+and two concurrent processes each minting their own).
 
-This §10.7 amendment is the Sprint 41 / V0.27.17 PM Rule 10
-design-gate DoD deliverable for the data-pipeline subsystem (the
-load-bearing subsystem touched by US-350 + US-351 + US-352).
-Atlas-gated per the 2026-05-18 design-gate governance rule
-(architect owns the gate; spec update lands in-sprint with the
-load-bearing code change, not as follow-up). The architectural
-verdict on B-104 Step 1 advance (sound; per-task gates pre-registered
-for US-350..US-356) is recorded in
-`offices/pm/inbox/2026-05-21-from-atlas-sprint41-per-task-gates-preregistered.md`;
-the SSOT-pattern-load-bearing observation is recorded in
-`offices/pm/inbox/2026-05-21-from-atlas-ssot-pattern-load-bearing-observation.md`.
-The §10.7 text above is the canonical architecture-spec digest;
-V0.27.17 IRL acceptance + Atlas Rule-10 sign-off close the gate.
+**Mechanism A — ECU-silence continuation (Pi detector, LIVE; US-361).**
+`src/pi/obdii/drive/detector.py`: an ECU-silence-inferred `drive_end`
+(quiet OBD link ⇒ inferred engine-off) is now **tentative**, not terminal.
+When `_checkEcuSilenceDriveEnd` fires it records the closed `drive_id` +
+time; if the engine demonstrably resumes (RPM back above the start
+threshold) within `MIN_INTER_DRIVE_SECONDS` (5 s — the previously-defined-
+but-unused constant the RCA named), the next `_startDrive` **re-attaches to
+the prior `drive_id`** instead of minting a second. RPM-debounce and forced
+(`forceKeyOff`) ends never arm the marker, so confirmed-engine-off drives
+still mint fresh — US-229 silence behavior and the US-311 warm-restart e2e
+are untouched.
+
+**Mechanism B — single-instance guard (Pi orchestrator, ships DEFAULT-OFF;
+US-361).** The production drives-23/24 evidence is two **concurrent**
+`eclipse-obd` orchestrator processes; a single process cannot produce
+overlap because `drive_id` is a process-global singleton, so a detector fix
+alone cannot prevent it. New `src/pi/obdii/orchestrator/single_instance.py`
+(`SingleInstanceGuard`, pidfile + injectable liveness seam) makes a second
+concurrent process refuse to start — wired as step-0 of
+`_initializeAllComponents`, released last in `_shutdownAllComponents`.
+**Ships behind `pi.runtime.singleInstanceGuard.enabled` (default `False`)
+and stays dark for V0.28.0 (Atlas ruling 2026-05-29, CIO-ratified).** The
+guard's as-built failure mode is the silent-wrong-winner class the V0.27
+chain spent itself killing: a live peer holding the pidfile makes the
+*newly-deployed* process silently refuse and exit while the *stale* one
+keeps running (it reclaims only dead pids), which under a US-354
+deploy-hygiene miss actively enforces the V0.27.16 "running old code despite
+new `.deploy-version`" pathology. Mechanisms A + C already cover the observed
+defect, so for a defect seen exactly once, observability is the honest
+posture rather than a load-bearing boot-path refuse. Production-enable is
+gated on BOTH: (1) the Mechanism C tripwire flagging a second, independent
+two-concurrent-process overlap in production (the case demonstrably
+recurs); AND (2) the refuse path made loud + deploy-visible (WARN/ERROR +
+nonzero exit the deploy script checks) plus a deploy-hygiene check proving
+`systemctl restart` release-then-acquire ordering — incremental US-361
+follow-up, not this sprint.
+
+**Mechanism C — server-side `attribution_anomaly` tripwire (LIVE; US-362 +
+US-363).** `src/server/analytics/overlap.py::detect_overlapping_drives` is
+the SSOT detector over raw `realtime_data` (US-362). US-363 wires it into
+both server compute paths (`drive_statistics_compute.py`,
+`drive_summary_compute.py`) so an overlapping drive is stamped
+`data_quality='attribution_anomaly'`, surfacing the dual-emission pattern
+downstream as a per-row flag — **observability, not refusal** (analytics are
+still computed; the flag marks them for human disposition). The on-demand
+CLI `python -m src.server.cli.recompute_drive_analytics` surfaces an
+`[ATTRIBUTION_ANOMALY]` marker on affected drives. The schema surfaces this
+needs are in the §5 "V0.28.0 Schema Pass" subsection.
+
+**IRL execution deferred (US-364).** The production-DB backfill —
+`recompute_drive_analytics --drive-id 23/24/25` against chi-srv-01,
+idempotent re-run zero-diff, and release of the `regression_manifest`
+F-005 + F-007 HOLDs on the observed result — runs as part of the Sprint-43
+IRL validation drill, not a headless dev iteration (BL-022). It executes the
+already-built path; it does not change the architecture documented here.
+
+*Gate-ratification note: §10.7.1 added per the 2026-05-18 design-gate
+governance rule (PM Rule 10) + Atlas's Sprint-43 PM Rule 13 validation-block
+PASS. Mechanism B's keep-dark production-enable disposition is the Atlas
+Rule 10 ruling of 2026-05-29 (CIO-ratified), recorded here + in §20.*
 
 ---
 
@@ -2726,647 +2515,16 @@ All hardware modules check `isRaspberryPi()` and set `isAvailable = False` when 
 
 ## 17. ECMLink Data Architecture (Phase 2)
 
-### Overview
-
-Phase 2 replaces OBD-II as the primary data source with ECMLink V3, which communicates directly with the 4G63 ECU via Mitsubishi's proprietary MUT protocol at **15,625 baud**. This delivers ~10x the effective sample rate of OBD-II Bluetooth, unlocking parameters critical for tuning that are invisible to standard OBD-II (knock count, wideband AFR, injector duty cycle, true boost).
-
-**Status**: Design only — blocked on ECMLink V3 hardware installation (Summer 2026).
-
-OBD-II (Phase 1) continues running alongside ECMLink for emissions-relevant parameters and as a fallback data source.
-
-### 17.1 ECMLink Parameter Schema (15 Priority Parameters)
-
-| # | Parameter | Data Type | Unit | Sample Rate | Channel Name | Priority Tier |
-|---|-----------|-----------|------|-------------|--------------|---------------|
-| 1 | Wideband AFR | float | ratio | 20 Hz | `WIDEBAND_AFR` | ECM-1 (Safety) |
-| 2 | Knock Count | int | count | 20 Hz | `KNOCK_COUNT` | ECM-1 (Safety) |
-| 3 | Knock Sum | int | count | 20 Hz | `KNOCK_SUM` | ECM-1 (Safety) |
-| 4 | Boost/MAP | float | psi | 20 Hz | `BOOST_MAP` | ECM-1 (Safety) |
-| 5 | Timing Advance | float | degrees | 20 Hz | `TIMING_ADV` | ECM-1 (Safety) |
-| 6 | RPM | int | rpm | 20 Hz | `RPM` | ECM-1 (Safety) |
-| 7 | TPS | float | percent | 20 Hz | `TPS` | ECM-1 (Safety) |
-| 8 | Injector Duty Cycle | float | percent | 10 Hz | `INJECTOR_DC` | ECM-2 (Performance) |
-| 9 | Target AFR | float | ratio | 10 Hz | `TARGET_AFR` | ECM-2 (Performance) |
-| 10 | STFT | float | percent | 10 Hz | `STFT` | ECM-2 (Performance) |
-| 11 | Coolant Temp | float | fahrenheit | 5 Hz | `COOLANT_TEMP` | ECM-3 (Monitoring) |
-| 12 | IAT | float | fahrenheit | 5 Hz | `IAT` | ECM-3 (Monitoring) |
-| 13 | Ethanol Content | float | percent | 1 Hz | `ETHANOL_CONTENT` | ECM-4 (Background) |
-| 14 | LTFT | float | percent | 1 Hz | `LTFT` | ECM-4 (Background) |
-| 15 | Barometric Pressure | float | kPa | 0.5 Hz | `BARO_PRESSURE` | ECM-5 (Slow) |
-
-### 17.2 Sample Rate Tiers
-
-Mirrors the Phase 1 tiered polling concept but at ECMLink speeds:
-
-| Tier | Rate | Parameters | Samples/sec | Rationale |
-|------|------|------------|-------------|-----------|
-| ECM-1 (Safety) | 20 Hz | AFR, Knock Count, Knock Sum, Boost, Timing, RPM, TPS | 140 | Knock and detonation detection requires high-frequency data |
-| ECM-2 (Performance) | 10 Hz | Injector DC, Target AFR, STFT | 30 | Fueling health — important but slower-moving |
-| ECM-3 (Monitoring) | 5 Hz | Coolant Temp, IAT | 10 | Thermal parameters change slowly |
-| ECM-4 (Background) | 1 Hz | Ethanol Content, LTFT | 2 | Stable values that rarely change mid-drive |
-| ECM-5 (Slow) | 0.5 Hz | Barometric Pressure | 0.5 | Ambient — changes only with altitude |
-| **Total** | | **15 parameters** | **~182.5** | **~657K samples/hr** |
-
-### 17.3 Database Schema
-
-Three new tables, separate from Phase 1 OBD-II tables. The `ecmlink_data` table follows the same EAV (Entity-Attribute-Value) pattern as `realtime_data` for consistency, but is kept separate to avoid mixing data sources and to allow independent retention policies and indexing.
-
-#### Table: `ecmlink_sessions`
-
-Tracks ECMLink logging sessions (one per ignition-on-to-off cycle or manual start/stop).
-
-```sql
-CREATE TABLE IF NOT EXISTS ecmlink_sessions (
-    session_id TEXT PRIMARY KEY,
-    start_time DATETIME NOT NULL,
-    end_time DATETIME,
-    serial_port TEXT NOT NULL,
-    baud_rate INTEGER NOT NULL DEFAULT 15625,
-    parameters_logged TEXT,
-    total_samples INTEGER DEFAULT 0,
-    profile_id TEXT,
-    notes TEXT,
-    CONSTRAINT FK_ecmlink_sessions_profile FOREIGN KEY (profile_id)
-        REFERENCES profiles(id)
-        ON DELETE SET NULL
-);
-```
-
-| Column | Purpose |
-|--------|---------|
-| `session_id` | UUID or timestamp-based ID |
-| `serial_port` | e.g., `/dev/ttyUSB0` on Pi |
-| `baud_rate` | MUT protocol speed (15,625 default) |
-| `parameters_logged` | JSON array of channel names active this session |
-| `total_samples` | Running count, updated on session close |
-| `profile_id` | Links to active tuning profile |
-
-#### Table: `ecmlink_parameters`
-
-Parameter registry — metadata for each ECMLink channel. Populated once, referenced by ingestion pipeline.
-
-```sql
-CREATE TABLE IF NOT EXISTS ecmlink_parameters (
-    name TEXT PRIMARY KEY,
-    display_name TEXT NOT NULL,
-    data_type TEXT NOT NULL CHECK(data_type IN ('float', 'int')),
-    unit TEXT NOT NULL,
-    sample_rate_hz REAL NOT NULL,
-    tier TEXT NOT NULL,
-    description TEXT,
-    safe_range_min REAL,
-    safe_range_max REAL
-);
-```
-
-| Column | Purpose |
-|--------|---------|
-| `name` | Channel name (e.g., `KNOCK_COUNT`) — matches `ecmlink_data.parameter_name` |
-| `data_type` | `float` or `int` — guides display formatting |
-| `sample_rate_hz` | Target sample rate for this parameter |
-| `tier` | `ECM-1` through `ECM-5` — scheduling tier |
-| `safe_range_min/max` | Optional bounds for alert evaluation |
-
-#### Table: `ecmlink_data`
-
-Time-series storage for all ECMLink readings. EAV pattern consistent with `realtime_data`.
-
-```sql
-CREATE TABLE IF NOT EXISTS ecmlink_data (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    timestamp DATETIME NOT NULL,
-    parameter_name TEXT NOT NULL,
-    value REAL NOT NULL,
-    unit TEXT,
-    session_id TEXT,
-    profile_id TEXT,
-    CONSTRAINT FK_ecmlink_data_session FOREIGN KEY (session_id)
-        REFERENCES ecmlink_sessions(session_id)
-        ON DELETE SET NULL,
-    CONSTRAINT FK_ecmlink_data_profile FOREIGN KEY (profile_id)
-        REFERENCES profiles(id)
-        ON DELETE SET NULL
-);
-```
-
-#### Indexes
-
-```sql
-CREATE INDEX IX_ecmlink_data_timestamp ON ecmlink_data(timestamp);
-CREATE INDEX IX_ecmlink_data_session ON ecmlink_data(session_id);
-CREATE INDEX IX_ecmlink_data_param_timestamp ON ecmlink_data(parameter_name, timestamp);
-CREATE INDEX IX_ecmlink_sessions_start_time ON ecmlink_sessions(start_time);
-```
-
-The compound index `IX_ecmlink_data_param_timestamp` is critical for the most common query pattern: "give me all readings of parameter X between time A and time B."
-
-#### ER Diagram (Phase 2 additions)
-
-```
-┌─────────────────────────┐
-│   ecmlink_parameters    │
-├─────────────────────────┤
-│ name (PK)               │
-│ display_name            │
-│ data_type               │
-│ unit                    │
-│ sample_rate_hz          │
-│ tier                    │
-│ description             │
-│ safe_range_min          │
-│ safe_range_max          │
-└─────────────────────────┘
-
-┌─────────────────────────┐     ┌─────────────────────────┐
-│   ecmlink_sessions      │     │      profiles           │
-├─────────────────────────┤     ├─────────────────────────┤
-│ session_id (PK)         │     │ id (PK)                 │
-│ start_time              │──┐  │ name                    │
-│ end_time                │  │  │ ...                     │
-│ serial_port             │  │  └──────────┬──────────────┘
-│ baud_rate               │  │             │
-│ parameters_logged       │  │  ┌──────────▼──────────────┐
-│ total_samples           │  │  │     ecmlink_data        │
-│ profile_id (FK)─────────│──┤  ├─────────────────────────┤
-│ notes                   │  │  │ id (PK)                 │
-└─────────────────────────┘  │  │ timestamp               │
-                             └──│ session_id (FK)         │
-                                │ parameter_name          │
-                                │ value                   │
-                                │ unit                    │
-                                │ profile_id (FK)─────────│
-                                └─────────────────────────┘
-```
-
-### 17.4 Ingestion Interface
-
-ECMLink serial data enters the system through a dedicated ingestion pipeline, separate from the OBD-II Bluetooth path.
-
-#### Data Flow
-
-```
-ECMLink V3 (ECU)
-    │
-    │  MUT Protocol (15,625 baud, serial)
-    ▼
-USB-Serial Adapter (/dev/ttyUSB0)
-    │
-    ▼
-┌────────────────────────────────┐
-│  ECMLink Serial Reader         │
-│  (dedicated thread)            │
-│                                │
-│  1. Open serial port           │
-│  2. Parse MUT protocol frames  │
-│  3. Timestamp each sample      │
-│  4. Route to sample buffer     │
-└──────────┬─────────────────────┘
-           │
-           ▼
-┌────────────────────────────────┐
-│  Sample Buffer                 │
-│  (in-memory ring buffer)       │
-│                                │
-│  - Capacity: 1000 samples      │
-│  - Batch flush threshold: 100  │
-│  - Max flush interval: 500ms   │
-└──────────┬─────────────────────┘
-           │
-           ▼
-┌────────────────────────────────┐
-│  Batch Writer                  │
-│  (separate thread)             │
-│                                │
-│  1. Dequeue batch from buffer  │
-│  2. BEGIN TRANSACTION          │
-│  3. INSERT batch into          │
-│     ecmlink_data               │
-│  4. COMMIT                     │
-│  5. Update session counters    │
-└──────────┬─────────────────────┘
-           │
-           ▼
-      SQLite (WAL mode)
-```
-
-#### Design Decisions
-
-| Decision | Rationale |
-|----------|-----------|
-| **Separate table** (`ecmlink_data` not `realtime_data`) | Different data source, different sample rates (30x more volume), independent retention needs. Clean Phase 1/Phase 2 isolation. |
-| **EAV pattern** (not wide table) | Consistent with Phase 1. Adding new ECMLink parameters requires zero schema changes. Sparse sampling (mixed rates) doesn't waste space on NULLs. |
-| **Batch writes** (not per-sample) | At ~182 samples/sec, individual INSERTs would be ~182 transactions/sec. Batching 100 samples per transaction keeps SQLite happy and reduces I/O. |
-| **Ring buffer** (not unbounded queue) | Memory-bounded on Pi 5 (8GB). If writer falls behind, oldest unwritten samples are dropped — better to lose old data than OOM. |
-| **Session tracking** | ECMLink logging sessions map to ignition cycles. Session metadata enables "show me all data from drive #47" queries and cleanup. |
-| **Dedicated threads** (reader + writer) | Serial I/O blocks on frame arrival; database I/O blocks on disk. Separating them keeps both responsive. |
-
-#### Serial Protocol Notes
-
-- **Baud rate**: 15,625 (MUT protocol, fixed)
-- **Connection**: USB-to-serial adapter, typically `/dev/ttyUSB0` on Pi
-- **Frame format**: ECMLink-specific binary frames (documented at ecmlink.com)
-- **Handshake**: ECMLink software initiates MUT communication; our reader taps into the serial stream
-- **Error handling**: CRC/checksum validation per frame. Invalid frames are logged and discarded, not retried.
-
-#### Configuration (obd_config.json, future)
-
-```json
-{
-    "ecmlink": {
-        "enabled": false,
-        "serialPort": "${ECMLINK_SERIAL_PORT:/dev/ttyUSB0}",
-        "baudRate": 15625,
-        "batchSize": 100,
-        "maxFlushIntervalMs": 500,
-        "bufferCapacity": 1000,
-        "parameters": [
-            {"name": "WIDEBAND_AFR", "enabled": true, "tier": "ECM-1"},
-            {"name": "KNOCK_COUNT", "enabled": true, "tier": "ECM-1"},
-            {"name": "KNOCK_SUM", "enabled": true, "tier": "ECM-1"},
-            {"name": "BOOST_MAP", "enabled": true, "tier": "ECM-1"},
-            {"name": "TIMING_ADV", "enabled": true, "tier": "ECM-1"},
-            {"name": "RPM", "enabled": true, "tier": "ECM-1"},
-            {"name": "TPS", "enabled": true, "tier": "ECM-1"},
-            {"name": "INJECTOR_DC", "enabled": true, "tier": "ECM-2"},
-            {"name": "TARGET_AFR", "enabled": true, "tier": "ECM-2"},
-            {"name": "STFT", "enabled": true, "tier": "ECM-2"},
-            {"name": "COOLANT_TEMP", "enabled": true, "tier": "ECM-3"},
-            {"name": "IAT", "enabled": true, "tier": "ECM-3"},
-            {"name": "ETHANOL_CONTENT", "enabled": true, "tier": "ECM-4"},
-            {"name": "LTFT", "enabled": true, "tier": "ECM-4"},
-            {"name": "BARO_PRESSURE", "enabled": true, "tier": "ECM-5"}
-        ]
-    }
-}
-```
-
-### 17.5 Phase 1 / Phase 2 Coexistence
-
-Both data sources run simultaneously. OBD-II continues providing emissions-relevant data and acts as a fallback if the ECMLink serial connection drops.
-
-| Aspect | Phase 1 (OBD-II) | Phase 2 (ECMLink) |
-|--------|-------------------|-------------------|
-| Protocol | ELM327 over Bluetooth | MUT over USB serial |
-| Sample rate | ~1 Hz per parameter | 0.5–20 Hz per parameter |
-| Data table | `realtime_data` | `ecmlink_data` |
-| Parameters | 16 standard PIDs | 15 priority + expandable |
-| Alert thresholds | `tieredThresholds` in config | Shared alert system (future) |
-| Primary use | Emissions monitoring, baseline | Tuning, knock detection, AFR |
-
-Parameters that overlap (RPM, Coolant Temp, STFT, Timing Advance, IAT) will be sourced from ECMLink when available, with OBD-II as fallback. The alert system will be extended to accept either data source via a common `(parameter_name, value, timestamp)` tuple interface.
-
----
+> Moved to **`specs/arch/phase2-data-architecture.md`** (2026-06-01) — the
+> Phase-2 ECMLink design (15 priority parameters, sample-rate tiers, the
+> `ecmlink_*` tables, ingestion interface). Phase 2 is not yet implemented;
+> extracted to keep this spec focused on the live system.
 
 ## 18. Data Volume Architecture (Phase 2)
 
-### Overview
-
-Phase 2 (ECMLink) generates ~30x the data volume of Phase 1 (OBD-II). This section documents storage estimates, retention policies, and sync strategy to ensure the system handles ECMLink data volumes across both Pi 5 (edge) and Chi-Srv-01 (server) without running out of disk, degrading query performance, or creating unsustainable sync loads.
-
-**Status**: Design only — runtime implementation deferred until ECMLink hardware installation (Summer 2026).
-
-### 18.1 Data Volume Estimates
-
-#### Phase 1 (OBD-II via Bluetooth)
-
-| Metric | Value | Derivation |
-|--------|-------|------------|
-| Effective sample rate | ~5 reads/sec | 12 PIDs across 4 tiers; Bluetooth latency reduces theoretical ~6/sec |
-| Rows per hour | ~18,000 | 5 × 3,600 |
-| Rows per 2-hour drive | ~36,000 | |
-| Rows per season (~40 hrs driving) | ~720,000 | Summer-only car, weekend use |
-| Rows per year (365-day retention) | ~720,000 | Same — car only runs in season |
-
-#### Phase 2 (ECMLink via Serial)
-
-| Metric | Value | Derivation |
-|--------|-------|------------|
-| Theoretical sample rate | ~182.5 reads/sec | 15 parameters across 5 tiers (Section 17.2) |
-| Effective sample rate | ~150 reads/sec | Serial bandwidth constraint: 15,625 baud ÷ ~10 bits/byte = ~1,562 bytes/sec. MUT frame overhead (~3-4 bytes/param + framing) limits practical throughput |
-| Rows per hour | ~540,000 | 150 × 3,600 |
-| Rows per 2-hour drive | ~1,080,000 | |
-| Rows per season (~40 hrs) | ~21,600,000 | |
-| Phase 1 + Phase 2 combined/season | ~22,320,000 | Both run simultaneously (Section 17.5) |
-
-#### Serial Bandwidth Constraint Detail
-
-```
-MUT Protocol: 15,625 baud, 8N1
-Effective byte rate: ~1,562 bytes/sec
-Estimated bytes per parameter read: ~8-10 bytes (address + response + framing)
-Max parameters per second: ~1,562 / 9 ≈ 173 reads/sec
-Accounting for handshake/sync overhead: ~150 reads/sec practical
-```
-
-The ~150 reads/sec practical rate drives all Phase 2 storage and bandwidth estimates. The theoretical 182.5/sec from Section 17.2 assumes zero protocol overhead.
-
-### 18.2 Row Size Estimates
-
-Both `realtime_data` (Phase 1) and `ecmlink_data` (Phase 2) use the same EAV schema pattern.
-
-#### Per-Row Storage Breakdown
-
-| Component | Bytes | Notes |
-|-----------|-------|-------|
-| `id` (INTEGER PK) | 8 | AUTOINCREMENT 64-bit |
-| `timestamp` (DATETIME) | 8 | Stored as real/text (~19-23 chars) |
-| `parameter_name` (TEXT) | ~16 | Avg channel name length (e.g., `KNOCK_COUNT`) |
-| `value` (REAL) | 8 | 64-bit float |
-| `unit` (TEXT) | ~8 | e.g., `percent`, `psi`, `rpm` |
-| `session_id` (TEXT) | ~36 | UUID |
-| `profile_id` (TEXT) | ~36 | UUID |
-| SQLite row overhead | ~20 | Page headers, cell pointers, free space |
-| **Subtotal (data row)** | **~140** | |
-
-#### Index Overhead
-
-| Index | Bytes/entry | Notes |
-|-------|-------------|-------|
-| `IX_ecmlink_data_timestamp` | ~30 | timestamp + rowid |
-| `IX_ecmlink_data_session` | ~50 | session_id (TEXT) + rowid |
-| `IX_ecmlink_data_param_timestamp` | ~50 | parameter_name + timestamp + rowid |
-| **Subtotal (indexes)** | **~130** | |
-| **Total per row (data + indexes)** | **~270 bytes** | |
-
-#### Disk Usage Per Million Rows
-
-| Storage Component | Size |
-|-------------------|------|
-| Data rows (1M × 140 bytes) | ~140 MB |
-| Indexes (1M × 130 bytes) | ~130 MB |
-| SQLite overhead (page alignment, free lists) | ~10% |
-| **Total per 1M rows** | **~300 MB** |
-
-### 18.3 Pi 5 SQLite Storage Strategy
-
-#### Hardware Context
-
-| Spec | Value |
-|------|-------|
-| Storage | microSD (64-128 GB typical) or NVMe via HAT |
-| RAM | 8 GB |
-| SQLite mode | WAL (already configured) |
-
-#### Seasonal Storage Estimate (Pi)
-
-| Data Source | Rows/Season | Size (with indexes) | Notes |
-|-------------|-------------|---------------------|-------|
-| Phase 1 (`realtime_data`) | ~720K | ~216 MB | 365-day retention (current config) |
-| Phase 2 (`ecmlink_data`) | ~21.6M | ~6.5 GB | 90-day retention (new policy) |
-| Phase 2 sessions/params | ~200 | <1 MB | Metadata tables |
-| WAL file (peak) | — | ~200 MB | WAL grows during batch writes, checkpoints shrink it |
-| **Total (one season)** | **~22.3M** | **~7.0 GB** | |
-
-#### Can Pi Store a Full Season?
-
-**Yes.** On a 64 GB microSD card:
-
-| Allocation | Size |
-|------------|------|
-| OS + system | ~8 GB |
-| Application + venv | ~2 GB |
-| Logs | ~1 GB |
-| OBD-II data (Phase 1, 1 year) | ~0.2 GB |
-| ECMLink data (Phase 2, 90-day window) | ~6.5 GB |
-| WAL headroom | ~0.5 GB |
-| **Total used** | **~18.2 GB** |
-| **Remaining** | **~45.8 GB** |
-| **Utilization** | **~28%** |
-
-With NVMe (256+ GB), storage is effectively unlimited for this use case.
-
-#### Pi Retention Policy
-
-| Table | Retention | Rationale |
-|-------|-----------|-----------|
-| `realtime_data` | 365 days | Current config. Low volume (~720K rows/season). Keep for full-season comparison. |
-| `ecmlink_data` | 90 days | High volume. 90 days covers the active tuning season (May-September). Older data lives on Chi-Srv-01. |
-| `ecmlink_sessions` | 90 days | Tied to ecmlink_data lifecycle. Cascade cleanup. |
-| `statistics` | Forever | Aggregated — tiny footprint regardless of retention. |
-| `alert_log` | 365 days | Low volume, high diagnostic value. |
-
-**Cleanup Strategy**: Extend the existing `dataRetention` config with an `ecmlinkDataDays` field:
-
-```json
-{
-    "dataRetention": {
-        "realtimeDataDays": 365,
-        "ecmlinkDataDays": 90,
-        "statisticsRetentionDays": -1,
-        "vacuumAfterCleanup": true,
-        "cleanupTimeHour": 3
-    }
-}
-```
-
-Cleanup runs at 3 AM (existing `cleanupTimeHour`). For `ecmlink_data`, delete by timestamp:
-
-```sql
-DELETE FROM ecmlink_data
-WHERE timestamp < datetime('now', '-90 days');
-
-DELETE FROM ecmlink_sessions
-WHERE end_time IS NOT NULL
-  AND end_time < datetime('now', '-90 days');
-```
-
-Run `VACUUM` after cleanup to reclaim disk space (`vacuumAfterCleanup: true`).
-
-#### SQLite Performance at Scale
-
-At 21.6M rows, queries on `ecmlink_data` need index support:
-
-| Query Pattern | Index Used | Expected Performance |
-|---------------|-----------|---------------------|
-| Parameter X between time A and B | `IX_ecmlink_data_param_timestamp` | <50ms (B-tree seek) |
-| All data for session Y | `IX_ecmlink_data_session` | <100ms (session is bounded) |
-| Recent N readings | `IX_ecmlink_data_timestamp` | <10ms (index scan from tail) |
-| Full table scan | None | ~5-10 sec at 21.6M rows — **avoid** |
-
-WAL mode (already enabled) prevents batch writes from blocking reads during driving. The `PRAGMA journal_size_limit` should be set to cap WAL growth during heavy ECMLink ingestion:
-
-```sql
-PRAGMA journal_size_limit = 67108864;  -- 64 MB WAL cap
-```
-
-### 18.4 Chi-Srv-01 MariaDB Strategy
-
-#### Hardware Context
-
-| Spec | Value |
-|------|-------|
-| CPU | i7-5960X (8 cores) |
-| RAM | 128 GB |
-| Storage | RAID array (multi-TB) |
-| Database | MariaDB (`obd2db`) |
-| Network | Gigabit Ethernet, same LAN as Pi (10.27.27.0/24) |
-
-#### Retention Policy: Forever
-
-Chi-Srv-01 is the permanent archive. All data synced from Pi is retained indefinitely. This enables:
-- Multi-season trend analysis ("has knock behavior changed since injector upgrade?")
-- Tuning profile comparison across months/years
-- Full diagnostic history for engine health tracking
-
-#### Storage Estimate (Multi-Season)
-
-| Timeframe | ECMLink Rows | Size | Cumulative |
-|-----------|-------------|------|------------|
-| Season 1 (2026) | 21.6M | ~6.5 GB | 6.5 GB |
-| Season 2 (2027) | 21.6M | ~6.5 GB | 13.0 GB |
-| Season 3 (2028) | 21.6M | ~6.5 GB | 19.5 GB |
-| 5 seasons | 108M | ~32.5 GB | 32.5 GB |
-| 10 seasons | 216M | ~65 GB | 65 GB |
-
-With Phase 1 data: add ~0.2 GB/season. Negligible.
-
-At 128 GB RAM and multi-TB disk, Chi-Srv-01 handles 10+ seasons without concern. The InnoDB buffer pool can hold the hot working set entirely in memory.
-
-#### Partitioning Strategy
-
-Partition `ecmlink_data` by **month** using `RANGE` partitioning on `timestamp`. Monthly partitions enable:
-- Fast partition pruning on time-range queries (the primary access pattern)
-- Efficient bulk archival (detach old partitions to cold storage)
-- Manageable backup units (~2-3 GB per active month)
-
-```sql
-CREATE TABLE ecmlink_data (
-    id BIGINT AUTO_INCREMENT,
-    timestamp DATETIME(3) NOT NULL,
-    parameter_name VARCHAR(50) NOT NULL,
-    value DOUBLE NOT NULL,
-    unit VARCHAR(20),
-    session_id VARCHAR(36),
-    profile_id VARCHAR(36),
-    PRIMARY KEY (id, timestamp),
-    INDEX IX_ecmlink_data_param_timestamp (parameter_name, timestamp),
-    INDEX IX_ecmlink_data_session (session_id)
-) ENGINE=InnoDB
-PARTITION BY RANGE (TO_DAYS(timestamp)) (
-    PARTITION p2026_05 VALUES LESS THAN (TO_DAYS('2026-06-01')),
-    PARTITION p2026_06 VALUES LESS THAN (TO_DAYS('2026-07-01')),
-    PARTITION p2026_07 VALUES LESS THAN (TO_DAYS('2026-08-01')),
-    PARTITION p2026_08 VALUES LESS THAN (TO_DAYS('2026-09-01')),
-    PARTITION p2026_09 VALUES LESS THAN (TO_DAYS('2026-10-01')),
-    PARTITION p_future VALUES LESS THAN MAXVALUE
-);
-```
-
-**Partition maintenance**: At season start each year, `ALTER TABLE ... REORGANIZE PARTITION p_future` to add the new season's monthly partitions. Automate via cron or manual DBA task (low frequency — once per year).
-
-#### Indexing for 21M+ Rows
-
-| Index | Columns | Purpose |
-|-------|---------|---------|
-| PRIMARY KEY | `(id, timestamp)` | Required for RANGE partitioning — timestamp in PK enables partition pruning |
-| `IX_ecmlink_data_param_timestamp` | `(parameter_name, timestamp)` | Primary query pattern: "parameter X between time A and B" |
-| `IX_ecmlink_data_session` | `(session_id)` | Session-scoped queries: "all data from drive #47" |
-
-**Not indexed**: `profile_id`, `unit` — low-cardinality columns better served by full-partition scans than index maintenance overhead at this volume.
-
-InnoDB buffer pool recommendation: Allocate 64 GB to `innodb_buffer_pool_size` (50% of 128 GB RAM). At 6.5 GB/season, the entire active season's data + indexes fit in memory.
-
-### 18.5 Sync Strategy (Pi → Chi-Srv-01)
-
-#### Network Context
-
-| Spec | Value |
-|------|-------|
-| WiFi network | DeathStarWiFi (10.27.27.0/24) |
-| Pi 5 WiFi | 802.11ac (WiFi 5), ~100-200 Mbps practical |
-| Chi-Srv-01 | Gigabit Ethernet to same LAN |
-| Effective throughput | ~50-100 Mbps (WiFi bottleneck) |
-
-#### Sync Bandwidth Estimate: 2-Hour ECMLink Drive
-
-| Step | Value |
-|------|-------|
-| Rows generated | ~1,080,000 (540K/hr × 2) |
-| Raw data size | ~1,080,000 × 270 bytes = ~292 MB |
-| Compressed (gzip, ~3:1 on text/numeric data) | ~100 MB |
-| Transfer time at 50 Mbps | ~16 seconds |
-| Transfer time at 100 Mbps | ~8 seconds |
-| **Practical estimate (with protocol overhead)** | **~20-30 seconds** |
-
-A full season's sync (21.6M rows, ~6.5 GB raw, ~2.2 GB compressed) takes ~3-6 minutes. This is a one-time bulk transfer if the Pi was offline.
-
-#### Sync Mechanism (Design)
-
-Sync runs post-drive when Pi reconnects to WiFi (garage). The sync pipeline:
-
-```
-Pi (SQLite)                              Chi-Srv-01 (MariaDB)
-    │                                         │
-    │  1. Detect WiFi connection              │
-    │  2. Query unsynced rows:                │
-    │     SELECT * FROM ecmlink_data          │
-    │     WHERE id > last_synced_id           │
-    │  3. Batch export to compressed          │
-    │     JSON/CSV chunks (10K rows each)     │
-    │                                         │
-    │  ──── compressed chunks over HTTP ────► │
-    │                                         │
-    │                   4. Bulk INSERT         │
-    │                      (LOAD DATA INFILE  │
-    │                       or batch INSERT)  │
-    │                   5. Acknowledge receipt │
-    │                                         │
-    │  ◄──── ack (last_synced_id) ──────────  │
-    │                                         │
-    │  6. Update local sync watermark         │
-    │                                         │
-```
-
-**Sync watermark**: Track `last_synced_id` per table in a local `sync_status` table on Pi. This avoids re-sending data after a partial sync.
-
-```sql
--- Pi-side sync tracking
-CREATE TABLE IF NOT EXISTS sync_status (
-    table_name TEXT PRIMARY KEY,
-    last_synced_id INTEGER NOT NULL DEFAULT 0,
-    last_sync_time DATETIME,
-    target_server TEXT NOT NULL DEFAULT 'chi-srv-01'
-);
-```
-
-**Conflict resolution**: None needed — Pi is the sole writer, Chi-Srv-01 is append-only archive. No bidirectional sync.
-
-#### Sync Frequency
-
-| Trigger | Behavior |
-|---------|----------|
-| Post-drive (WiFi reconnect) | Auto-sync unsynced rows. Primary trigger. |
-| Nightly (3 AM, with cleanup) | Catch any missed syncs. |
-| Manual | `python src/main.py --sync` for on-demand sync. |
-
-### 18.6 Retention Policy Validation
-
-#### Can the 90-day Pi / forever-server policy handle Phase 2 volumes?
-
-| Validation Check | Result | Notes |
-|-----------------|--------|-------|
-| Pi disk at 90 days (ECMLink) | ~6.5 GB max | Well within 64 GB SD card |
-| Pi disk at 90 days (total) | ~7.0 GB max | Phase 1 + Phase 2 + overhead |
-| Pi cleanup runtime | <30 sec | DELETE with timestamp index, then VACUUM |
-| Chi-Srv-01 at 1 season | ~6.7 GB | Phase 1 + Phase 2, trivial for multi-TB RAID |
-| Chi-Srv-01 at 10 seasons | ~67 GB | Fits in RAM buffer pool, no performance concern |
-| Sync backlog after 90 days offline | ~6.5 GB / ~2.2 GB compressed | ~3-6 min sync, acceptable |
-| WAL size during ECMLink ingestion | ≤64 MB (capped) | Checkpoint keeps WAL bounded |
-
-**Conclusion**: The 90-day Pi retention / forever server retention policy is validated at Phase 2 volumes. No storage constraints on either platform. The main risk is WAL growth during heavy ingestion, mitigated by `PRAGMA journal_size_limit`.
-
-### 18.7 Summary
-
-| Metric | Phase 1 (OBD-II) | Phase 2 (ECMLink) | Combined |
-|--------|-------------------|-------------------|----------|
-| Sample rate | ~5/sec | ~150/sec | ~155/sec |
-| Rows per hour | ~18K | ~540K | ~558K |
-| Rows per season | ~720K | ~21.6M | ~22.3M |
-| Disk per season (with indexes) | ~216 MB | ~6.5 GB | ~6.7 GB |
-| Pi retention | 365 days | 90 days | — |
-| Server retention | Forever | Forever | — |
-| 2-hr drive sync time | <1 sec | ~20-30 sec | ~30 sec |
-| Pi storage headroom (64 GB) | 92% free | 72% free | 72% free |
+> Moved to **`specs/arch/phase2-data-architecture.md`** (2026-06-01) — the
+> Phase-1-vs-Phase-2 volume model, retention, MariaDB partitioning, and sync
+> estimates.
 
 ---
 
@@ -3389,27 +2547,7 @@ CREATE TABLE IF NOT EXISTS sync_status (
 
 ## 20. Modification History
 
-| Date | Author | Description |
-|------|--------|-------------|
-| 2026-05-21 | Rex (US-356, Ralph; Atlas-gated per Rule 10) | New Section 10.7 "Data Pipeline Architecture (B-104 Step 1, Sprint 41 / V0.27.17)" appended after §10.6, before §11. Documents the B-104 Step 1 architectural shift landed by US-350 + US-351 + US-352 on `sprint/sprint41-bugfixes-V0.27.17` (anchor commit `e6c49e6`): (a) **Architectural principle** -- Pi = telemetry emitter + event-log writer; server = sole authority for derived/persisted analytics; default = "if the server can redo it from raw data, the Pi does not transmit it." (b) **Compute path** -- `src/server/analytics/drive_summary_compute.py` (US-350) derives analytics columns from `MIN/MAX/COUNT` over `realtime_data` + enriches from Pi event-log fields with `is_real` per Atlas Q2 NULL-preservation invariant; `src/server/analytics/drive_statistics_compute.py` (US-351) groups by `parameter_name` and uses `helpers.computeBasicStats` (Spool FLAG-1 SSOT pin), classifies `data_quality` per Atlas Refinement B thresholds, enforces Atlas Refinement A generic invariants, DELETE-then-INSERT for clean idempotency. (c) **Pi-side retirement scope** -- Pi-side `drive_summary` computed-field writer retired (event-log fields preserved); Pi-side `drive_statistics` table + module retired entirely via `ensureDriveStatisticsRetired()` idempotent DROP TABLE invoked by `ObdDatabase.initialize()`; detector + lifecycle wiring reverted to pre-US-349. (d) **Trigger seam shift** -- `_tryAutoAnalysisTrigger` deleted from `src/server/api/sync.py`; `enqueueAutoAnalysisForSync` converted to `NotImplementedError` tripwire; new trigger seams are `deploy/server-analytics-batch.service` + `.timer` (nightly batch, `OnCalendar=*-*-* 03:30:00`, `Persistent=true`) + on-demand CLI `python -m src.server.cli.recompute_drive_analytics` (Atlas Q1 single-timer-fires-both-paths). (e) **Idempotent recompute principle** -- same raw + same logic = same output; `computed_at` advances on `drive_statistics` via `onupdate=func.now()` as the observable replay signal; deploy-layer marker-file guard on Step 4.9 backfill is for deploy ergonomics, not correctness. (f) **What's retired** -- four-row table cross-links US-326 `76aa773` / `0599d24`, US-328 `76aa773` / `1c01ec0`, US-348 `c04d36e` / `b26344e` / `5fb7cdc`, US-349 `c04d36e` / `b26344e` / `5fb7cdc` to the SUPERSEDED / RETIRED disposition of each surface. Empirical status section is honest-empirical-gated per Sprint 39 T9 precedent: synthetic gates listed (US-350 10/10, US-351 14/14 + 7/7 Pi retirement, US-352 13/13, full suites 777 server / 1513 Pi GREEN no regressions); IRL acceptance flagged **pending** until V0.27.17 deploys + the drives-11-20 backfill clears the empirical falsifier (drive 20 `row_count=3808` from raw). Architectural-invariants list preserves Pi-side raw `realtime_data` + sync, the `drive_summary` schema, and explicitly anchors B-104 Step 1 as the **second production application** of the SSOT design pattern (first was §10.6 Shutdown Sequencer / Sprint 39). Lessons-worth-keeping section frames the 3-cycle false-pass class structural close as two-part (writer tier shift + US-355 deploy-context harness) and crystallizes the discipline rule: synthetic-seam-mock passes are not proof of production behavior. Gate-ratification subsection cites the 2026-05-18 design-gate governance rule + Atlas's 2026-05-21 per-task gate pre-registration + SSOT-pattern-load-bearing observation notes. Scope-locked to §10.7 per Sprint 41 doNotTouch list -- §10.6 + other sections untouched. "Last Updated" header at top of file updated to 2026-05-21 with Atlas-gated tag; prior 2026-05-20 entry preserved. |
-| 2026-05-20 | Rex (US-346, Ralph; Atlas-gated per Rule 10) | Section 10.6 Shutdown Sequencer: appended two subsections + a gate-ratification note documenting Sprint 40 / V0.27.16 bug-fix landings -- (a) "Boot-grace latch defect + level-based post-grace fix (US-344, F-7)" details the V0.27.15 state-machine bug (edge-only `lost AND not prevLost` post-grace check latched the watch loop blind when an in-grace transient left the HAT at GPIO6=LOW), the bug bound (cold-start + in-grace transient + no alternator recovery before key-off), the 2026-05-20 in-car live-drill reproduction (Test 2: 5.5 min silence; VCELL 3.810V->3.734V drain), the level-based `lost AND not firedAlready` fix, the `_runPldWatchLoop` extraction-for-testability, and the architectural invariants preserved (SSOT, boot-grace duration, GPIO6 polarity, EEPROM POWER_OFF_ON_HALT=1, sequencer pipeline/window/smoothing); (b) "Boot-progress instrument + ExecStop transaction-membership fix (US-345, F-8)" details the empirically proven defect (`boot-progress-finalize.service` ExecStop never fired because the unit had `DefaultDependencies=no` + `Before=shutdown.target` but no shutdown-transaction-membership directive, so every clean shutdown was mis-classified `crashed_during_operation`), the systemd activation-vs-ordering distinction, the one-line `Conflicts=shutdown.target` fix, the de-fanging of Spool's Finding C "12 boots crashed today" inflation, and the post-fix restoration of `startup_log.prior_boot_reason` as a reliable acceptance signal. Gate-ratification note cites the 2026-05-18 design-gate governance rule + the two Atlas findings of record. Scope-locked to §10.6 per Sprint 40 doNotTouch list; "Last Updated" header at top of file updated to 2026-05-20 with Atlas-gated tag. |
-| 2026-05-01 | Rex (US-258, Ralph) | Section 11 Deployment Architecture: added "Pi Self-Update Lifecycle (B-047 US-A through US-E, Sprints 19-21)" subsection between Release Versioning and Wake-on-Power. Documents the two-process pipeline (`UpdateChecker` US-247 + `UpdateApplier` US-248) glued by the marker file, the safety-gate ordering rationale (drive-state → power-source → recent-OBD → applyEnabled, with the disabled-flag deliberately placed AFTER safety gates), the priorRef-and-rollback contract, the marker-cleared-on-every-terminal-outcome poisoned-target invariant, and the deferred-apply-marker-survives-the-drive convention. Documented the new e2e drill in `tests/pi/integration/test_self_update_e2e.py` (7 tests across 5 classes) as the integration-readiness gate before flipping `pi.update.applyEnabled=true`: real classes used end-to-end with mocks ONLY at the HTTP and subprocess seams; covers happy path / dry-run failure / full deploy failure → rollback / drive-state safety net / up-to-date / wire-shape audit. Mod history: 8th US-258-class story; story scope referenced "self-update lifecycle diagram" and Section 11 was the natural home (Release Versioning subsection). |
-| 2026-05-01 | Rex (US-257, Ralph) | Section 10 Display Architecture: added "Full-Canvas Status Overlay Redesign (US-257, B-052, Sprint 21)" subsection. Documents the new pure-geometry layout module `pi.hardware.dashboard_layout` (4-quadrant: engine NW / power NE / drive SW / alerts SE + footer band), proportional font scaling against a 1080-tall reference with a clamped minimum, the staged-shutdown stage banner wiring (`updateShutdownStage` setter on `StatusDisplay`, NE quadrant background tints with stage color so an operator several feet from the screen can read the stage), and the additive `pi.display.displayCanvas.{width,height,mode}` config surface (defaults 1920x1080 + mode='auto'; legacy 480x320 still works for dev/test). Test surface: 27 tests in `tests/pi/hardware/test_dashboard_layout.py` (parameterized over 1920x1080 / 1280x720 / 480x320) + 13 new canvas-size + shutdown-stage tests in `tests/pi/hardware/test_status_display.py`. |
-| 2026-05-01 | Rex (US-253, Ralph) | Section 11 Deployment Architecture: added "Wake-on-Power EEPROM Contract (US-253, Sprint 21)" subsection.  Documents the `POWER_OFF_ON_HALT` Pi 5 bootloader setting (0 = SoC halts but PMIC stays awake to detect wall-power return → auto-boot; non-zero = deep sleep → requires button press) and the enforcement chain (`deploy-pi.sh` → `step_enforce_eeprom_power_off_on_halt` → SSH-invokes `deploy/enforce-eeprom-power-off-on-halt.sh` which reads via `rpi-eeprom-config`, idempotent rewrite via `--apply` only when the value is non-zero).  Pairs with US-216 + US-252 (staged shutdown) to close the post-B-043 in-vehicle drill: key-OFF → graceful poweroff → key-ON → auto-boot.  Test fidelity: PATH-mocked `rpi-eeprom-config` covers 7 scenarios (absent / =0 / =1 / =2 / tool missing / apply fails / two-run idempotency).  Real end-to-end drill (unplug/replug) remains a post-sprint mechanical action item. |
-| 2026-05-01 | Rex (US-252, Ralph) | Section 10.6 Power-Down Orchestrator: added "Tick Driver Decoupled From Display (US-252, Sprint 21)" subsection documenting the architectural fix that closes the 5-drain-test silent-failure mode -- pre-US-252 `tick()` rode on `_displayUpdateLoop` so any display init failure or `displayEnabled=false` killed the safety ladder.  Post-US-252 `HardwareManager._powerDownTickLoop` runs on its own daemon thread spawned whenever upsMonitor + orchestrator are wired regardless of display state.  Added "power_log Forensic Trail (US-252)" subsection documenting the new `vcell` column + three new event types (`stage_warning`/`stage_imminent`/`stage_trigger`) + the `powerLogWriter` injection pattern (closure built in `_createPowerLogWriter`, mirrors `_createBatteryHealthRecorder`).  Story scope referenced "Section 11" but the actual home is 10.6 (Power-Down Orchestrator); 7th story-scope phantom-path drift in a row -- noted for Marcus's PRD-template generator follow-up. |
-| 2026-05-01 | Rex (US-251, Ralph) | Section 13 Hardware Module Architecture: added "TelemetryLogger Data Trail" subsection between Component Wiring and Non-Pi Fallback. Documents the LIVE activation chain (`core.runLoop` -> `_startHardwareManager` -> `HardwareManager.start` -> init/wire/start), file path + rotation policy (`/var/log/carpi/telemetry.log`, 100 MB / 7 backups, 10 s cadence), JSON record shape (8 fields), Pi-only activation gate (`isRaspberryPi() AND pi.hardware.enabled`), and the drain-event forensic value answering Spool's TD-033 question. Closes TD-033 LIVE outcome. Code unchanged; specs-only. |
-| 2026-04-29 | Rex (US-238, Ralph) | Section 5 Server Schema Migrations registry: added v0005 row -- `CREATE TABLE dtc_log` mirroring the Sprint 15 US-204 ORM that never reached live MariaDB.  Section 10.5 DTC Lifecycle "Server mirror" paragraph: appended v0005 deploy-time-migration context explaining why Sprint 15's ORM + sync-wiring shipped without a CREATE TABLE (US-204 predated the US-213 explicit registry), what V-2 caught (Drive 4 health check 2026-04-29: `Table 'obd2db.dtc_log' doesn't exist`), and how v0005 closes the silent-data-loss-on-next-DTC-drive risk via the same CREATE-TABLE-IF-NOT-EXISTS + post-condition probe pattern as v0002 (battery_health_log). |
-| 2026-04-29 | Rex (US-237, Ralph) | Section 5 drive_summary "Server mirror" paragraph: added the v0004 reconciliation note explaining why 148 Pi-sync attempts failed silently (Sprint 7-8 table never had US-206/US-195/US-200 columns ALTERed; v0001 catch-up scope excluded `drive_summary`), what v0004 ADDs (11 columns + `IX_drive_summary_drive_id` + `uq_drive_summary_source`), and the V-4 namespace cleanup (truncate 9 sim rows + cascade `drive_statistics` children, CIO 2026-04-29).  Section 5 Server Schema Migrations: added a registry table listing v0001-v0004 with story + purpose, anchoring the migration history for future deploys. |
-| 2026-04-29 | Rex (US-236, Ralph) | Section 5 Drive-Start Metadata subsection: rewrote the cold-start backfill paragraph for Sprint 19's defer-INSERT semantics.  Was "INSERT empty row at drive_start, UPDATE-backfill columns" (Sprint 18 US-228 -- empirically broken across drives 3/4/5).  Now "no row at drive_start; INSERT when first IAT/BATTERY_V/BAROMETRIC_KPA arrives, OR force-INSERT at 60s deadline tagged result.reason='no_readings_within_timeout'".  Added 5 invariants (no row at drive_start / warm-restart-payload-empty defers too / 60s hard upper bound / re-entry safety / backfillFromSnapshot semantics unchanged).  Updated capture-site narrative: `_armDriveSummaryDeferInsert` replaces `_captureDriveStartSummary` as the per-drive entry point; `_maybeProgressDriveSummary` runs the two-phase defer-then-backfill loop on each `processValue` tick.  Schema doNotTouch -- `reason` lives on `SummaryCaptureResult.reason` + logs only, not in the drive_summary row.  UPSERT semantics on existing rows preserved for US-206 idempotency tests. |
-| 2026-04-29 | Rex (US-234, Ralph) | Section 10.6 Power-Down Orchestrator: rewrote the trigger-source narrative + state-machine diagram + threshold table for the SOC% → VCELL switch (3.70/3.55/3.45V with 0.05V hysteresis). Added "Trigger source (US-234, Sprint 19)" subsection with the abandonment justification (4 drain tests; 40-pt MAX17048 SOC% calibration error documented in Spool's sprint19-consolidated note). Added schema-reuse note: `battery_health_log.start_soc` and `end_soc` columns now hold VCELL volts post-US-234 (column unrenamed per doNotTouch list). Updated Legacy Timer Suppression paragraph to describe the parallel-rail regression test. The state-machine shape (NORMAL → WARNING → IMMINENT → TRIGGER + AC-restore + hysteresis + callback isolation) is unchanged. |
-| 2026-04-27 | Rex (US-231, Ralph) | Section 11 Deployment Architecture: rewrote the systemd `Auto-Start` subsection. Was a single illustrative Pi-only ini block from project init; now documents both tiers (`eclipse-obd.service` US-210 / `obd-server.service` US-231) with shared invariants (Restart=always, RestartSec=5, flap protection in Unit section, User=mcornelison, no inlined secrets, journalctl as single source of truth) + tier-specific differences (After= deps, working dirs, venv paths, ExecStart). Added per-unit ini snippets and the cutover narrative (one-time pkill orphan + systemctl restart). Source of truth remains `deploy/*.service`; spec snippet is illustrative. |
-| 2026-04-27 | Rex (US-227, Ralph) | Section 5 Drive Lifecycle invariant #4: appended "Second operational truncate 2026-04-27 (US-227, Sprint 18)" paragraph documenting the drive_id=1 / data_source='real' DELETE script (`scripts/truncate_drive_id_1_pollution.py`). Differs from US-205 in scope: only drive_id=1 real rows; Drive 3 + Drive 2 sim + NULL drive_id orphans preserved by the WHERE clause. Sync gate refuses --execute unless `sync_log.realtime_data.last_synced_id ≥ 3,439,960` (Drive 3 max id). drive_counter advances to 3 idempotently. Sentinel `.us227-dry-run-ok` distinct from US-205. Pollution-window orphan scan on `ai_recommendations` + `calibration_sessions`. Same fixture-hash + Pi-service-stop envelope as US-205. |
-| 2026-04-21 | Rex (US-219, Ralph) | Section 5: added "Post-drive review ritual (US-219, Sprint 16)" paragraph after the US-208 validator entry. Describes `scripts/post_drive_review.sh` as the CIO-facing wrapper that orchestrates `scripts/report.py`, `scripts/spool_prompt_invoke.py` (new CLI reusing `src/server/services/analysis.py`'s prompt-loading + Jinja-render + response-parse helpers), the `offices/tuner/drive-review-checklist.md` display, and the "where to record findings" pointer. All "no data" outcomes (empty drive, missing tables, Ollama unreachable / HTTP error, empty JSON response) exit 0 so the checklist + pointer always emit. Procedural walkthrough in `docs/testing.md` → Post-Drive Review Ritual. |
-| 2026-04-12 | Ralph (US-138) | Added Section 18: Data Volume Architecture (Phase 2) — Phase 1 vs Phase 2 volume estimates (~5 vs ~150 reads/sec), row size analysis (~270 bytes/row with indexes), Pi 5 SQLite strategy (90-day ECMLink retention, ~7 GB/season, 28% of 64GB SD), Chi-Srv-01 MariaDB strategy (forever retention, monthly RANGE partitioning, 64GB InnoDB buffer pool), sync estimates (2-hr drive syncs in ~20-30 sec over WiFi), retention validation. Design doc only. |
-| 2026-04-12 | Ralph (US-137) | Added Section 17: ECMLink Data Architecture (Phase 2) — 15 priority parameters, 5 sample rate tiers, 3 new database tables (ecmlink_sessions, ecmlink_parameters, ecmlink_data), ingestion interface design, Phase 1/2 coexistence strategy. Design doc only, no runtime implementation. |
-| 2026-02-01 | Marcus (PM) | Major update per I-010: Database schema 7→12 tables with 16 indexes, PRAGMAs, added VIN Decoder (S14), Component Init Order (S15), Hardware Graceful Degradation (S16). Updated Ollama to remote Chi-Srv-01. |
-| 2026-01-29 | Marcus (PM) | Fixed 5 drift items per I-002: Adafruit→OSOYOO display, 240x240→480x320, added backup config section, added src/backup/ and src/hardware/ to component table |
-| 2026-01-26 | Knowledge Update | Added Hardware Module Architecture section (Section 13) with components, initialization order, wiring, and fallback behavior |
-| 2026-01-22 | Knowledge Update | Updated Core Services section with domain subpackage structure and implemented modules |
-| 2026-01-22 | Knowledge Update | Added simulator subsystem architecture (Section 12) |
-| 2026-01-21 | M. Cornelison | Initial architecture document for Eclipse OBD-II project |
+> The full per-change history moved to
+> **`specs/arch/architecture-changelog.md`** (2026-06-01) — it grew large and is
+> rarely needed inline. **Append new architecture-change entries there** (newest
+> first); keep this section as a pointer.

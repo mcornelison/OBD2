@@ -31,6 +31,20 @@
 # 2026-05-21    | Rex          | US-357 / I-041 close (Sprint 41 V0.27.18
 #               |              | hotfix) -- registered v0009 (drive_statistics
 #               |              | .data_quality ADD COLUMN per US-351 ORM).
+# 2026-05-28    | Rex (US-363) | Sprint 43 V0.28.0 schema pass -- registered
+#               |              | v0010 (F-107 attribution-anomaly tripwire:
+#               |              | drive_summary.data_quality ADD COLUMN +
+#               |              | drive_statistics CHECK enum extension).  v0010
+#               |              | is the shared sprint migration; later schema
+#               |              | stories append substeps to its apply().
+# 2026-06-01    | Rex (US-376) | Sprint 44 V0.28.1 B-076 first slice -- registered
+#               |              | v0011 (normalized ecu identity dimension +
+#               |              | vehicle_info.ecu_id FK).  Forward-only; v0010
+#               |              | untouched.
+# 2026-06-01    | Rex (US-377) | Sprint 45 V0.28.2 hotfix -- registered v0012
+#               |              | (drive_summary + drive_statistics data_quality
+#               |              | VARCHAR(16)->VARCHAR(20); drill-revealed
+#               |              | DataError 1406 on 'attribution_anomaly').
 # ================================================================================
 ################################################################################
 
@@ -87,6 +101,15 @@ from src.server.migrations.versions.v0008_us312_create_baselines import (
 from src.server.migrations.versions.v0009_us351_drive_statistics_data_quality_column import (  # noqa: E501
     MIGRATION as _V0009,
 )
+from src.server.migrations.versions.v0010_us363_attribution_anomaly_data_quality import (  # noqa: E501
+    MIGRATION as _V0010,
+)
+from src.server.migrations.versions.v0011_us376_ecu_identity import (
+    MIGRATION as _V0011,
+)
+from src.server.migrations.versions.v0012_us377_data_quality_widen import (
+    MIGRATION as _V0012,
+)
 
 # ================================================================================
 # Registry -- append new migrations to the end, in ascending version order
@@ -102,6 +125,9 @@ ALL_MIGRATIONS: tuple[Migration, ...] = (
     _V0007,
     _V0008,
     _V0009,
+    _V0010,
+    _V0011,
+    _V0012,
 )
 
 

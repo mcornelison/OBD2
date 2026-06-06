@@ -562,7 +562,35 @@ shape). Then invoke it.
 
 ---
 
-## 13. Quick reference
+## 13. Shared-checkout discipline (concurrency)
+
+All agents share ONE working checkout (`Z:\o\OBD2v2`) on the chi-nas-01 SMB
+share. Branch switches and concurrent commits **race** — edits, staging, and
+even already-committed work can be silently lost or land on the wrong branch.
+Ratified protocol (CIO 2026-06-01; PM owns the mechanics):
+
+1. **Commit-immediately, office-scoped.** `git add` + `git commit` your OWN
+   `offices/<role>/**` files in small commits right after each edit-set. Never
+   leave work uncommitted across turns — uncommitted work is what disappears on
+   a branch switch. (Sharpens the §12 closeout Phase-5 rule into an
+   every-edit-set habit.)
+2. **Only the PM switches branches / merges / deploys.** No other agent runs
+   `git checkout`, `git switch`, `git merge`, or `git rebase`. Stay on whatever
+   branch is live and commit there; the PM integrates.
+3. **PM announces + waits for a quiet window before any branch switch** — it
+   will not flip the tree while another agent is mid-edit; coordinate via the CIO.
+4. **Retry-on-lock, never force.** A `…/.git/index.lock: File exists` error is a
+   stale lock from the slow share — wait a few seconds and retry. NEVER delete
+   `index.lock` while any `git` process is running (corrupts the index).
+5. **"File modified since read"** in the Edit tool = another agent is writing
+   that file — re-read, re-apply, and prefer editing only your own office.
+
+Lost a finding or a gate sign-off? Tell the PM — don't silently re-do it; the
+PM checks the reflog/branches and recovers it.
+
+---
+
+## 14. Quick reference
 
 | Need | Where |
 |------|-------|
@@ -579,7 +607,7 @@ shape). Then invoke it.
 
 ---
 
-## 14. When in doubt
+## 15. When in doubt
 
 Ask the CIO. Direct conversation overrides any rule in this handbook.
 
