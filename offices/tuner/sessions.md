@@ -7,6 +7,58 @@
 
 ---
 
+## Session 25 — 2026-06-05
+
+**Context**: Long live session driven by CIO. Started as init + Iris DTC-viewer triage, became (1) a new feature — on-Pi DTC/check-engine viewer + gated clear-code — fully advised + spec'd with Iris/Atlas; (2) a real check-engine event (P0443) read live KOEO off the Pi, logged + cleared; (3) the SPEED-PID GPS calibration on Drive 27 — which **overturned the multi-session "2× drift" as a phantom** (unit mislabel; PID reads TRUE, factor 1.00); (4) a full knowledge-base sweep of the wrong data + a saved learning pattern.
+
+### What Happened
+
+**DTC display + clear-code feature (CIO new use case — CEL on both legs of aborted drive-27)**:
+- Authored authoritative advisory `offices/tuner/dtc-display-clear-safety-advisory.md`: static-lookup sizing (<2 MB, go static; DSM P1xxx curation = mine); 3-tier severity taxonomy (🔴 STOP / 🟡 WATCH / 🟢 MINOR, turbo-4G63 engine-protection first); **Mode 04 is all-or-nothing** (no per-code clear — gate keys off highest-severity stored code); **gated single-button clear** (CIO-ratified); log-before-clear + server-sync-ack hard precondition; freeze-frame-first; post-clear re-read + refuse-2nd-clear.
+- CIO add: **suggested-fix field + internet-lookup-on-miss** — folded in as §6 with guardrails: server-side post-drive enrichment (Ollama+web on chi-srv-01) synced to Pi (no in-car network dep); mandatory provenance/trust-badge; **severity OVERRIDES auto-fetched fixes for 🔴/🟡** (a generic internet fix on a turbo misfire is a hazard).
+- **KOEO capture requirement discovered**: current capture is drive-gated (`DriveDetector._startDrive`, RPM>threshold) → key-on/engine-off captures NOTHING. Filed as a hard requirement; the viewer needs a key-on path independent of DriveDetector.
+- Routed to Iris (mockup semantics) + Atlas (architecture). Iris replied with a CIO-approved spec (`docs/superpowers/specs/2026-06-05-pi-dtc-check-engine-viewer-clear-design.md`) carrying my advisory as engine-safety SSOT; I verified her rendering (S-1..S-4 correct) + sent 2 refinements (condition-dependent severity for lean-at-load codes; brand-red vs alert-red on the ribbon).
+- Filed reference code `specs/examples/dtc_read_and_clear_koeo.py` + README (KOEO read + safety-gated clear); informed PM + Atlas of name/location.
+
+**P0443 — live read, logged, cleared**:
+- CIO realized the OBD dongle was unplugged for the GPS-cal drive → that drive's OBD side didn't count; but the stored DTC lives in ECU memory regardless. Dongle reconnected.
+- Read live **KOEO directly off the Pi** (stopped `eclipse-obd` to free the serial channel, python-obd Mode 03/07/02): **P0443 — EVAP Purge Control Valve Circuit. 🟢 MINOR, safe to drive.** Mode 07 empty; **Mode 02 freeze-frame CONFIRMED UNSUPPORTED on MD326328**.
+- Per CIO: logged P0443 (timestamped) into `dtc_log` (server-syncing) THEN cleared via Mode 04; re-read confirmed empty. Likely a disturbed purge-solenoid connector from intake/ECU work.
+
+**SPEED-PID GPS calibration — Drive 27 (the big one)**:
+- Drive 27 = clean **grade-A**, single-attribution (`data_quality='full'`), 4,771 rows; P0443 did NOT return (DTC_COUNT 0, MIL off); LTFT tight (+1.4%) → the EVAP fault was electrical, not a leak. Coolant peaked 101°C (warm-end-of-healthy watch item).
+- Operationalized Atlas's GPS-cal procedure: read the Strava FIT (`strava-drive-27c.fit`) via his `fit_reader.py`, built the aligner, cross-correlated GPS truth vs OBD SPEED. **Result: factor ≈ 1.00, NOT 0.5.** Distance-ratio (primary) 1.0037; speed-ratio 0.9875; scalar-vs-curve gate FLAT (no B-076 curve needed); 0.988 correlation. Atlas's independent aligner reproduced it (A=1.0037, B=0.9889).
+- **The "2× drift" was a phantom.** CIO diagnosed the real root cause: **km/h read as mph** — Drive 26 peak of 84 km/h (=52 mph) was recorded as "84 mph" (Session 19), then gear-math (assumed gear) "confirmed" it. km/h→mph is 1.609×, not 2×; the rough estimate + gear-math stretched the apparent error to ~2×. CIO confirmed no tune change → PID read true all along.
+- **No data corrupted**: the 0.5 seed had non-`empirical-` provenance → `select_empirical_calibrations()` never applied it. Drives 25/26/27 all computed at default 1.0 = correct. No recompute.
+- Ratified `correction_factor = 1.00` (`provenance='empirical-gps-correlation-Drive-27'`); routed the writer update + scalar-gate-PASSED to Atlas/Ralph (DB write is their lane), PM awareness to Marcus.
+
+**Knowledge sweep + learning pattern (CIO directive: "never keep incorrect data, but keep learning patterns")**:
+- Purged the wrong "2× / divide-by-2 / factor 0.5" from ALL SSOT: `knowledge.md` (rewrote the caveat → RESOLVED), `cards/ecu-new-md326328.md`, `cards/drivetrain-f5m33-gear-ratios.md`, `cards/wheels-tires-potenza-205-55r16.md`, `vehicle.md`, `specs/grounded-knowledge.md`, and 4 lines of shared `MEMORY.md`.
+- Saved the meta-lesson as feedback memory `feedback-pin-units-before-magnitude-claims.md` (+ MEMORY.md index): pin the UNIT before asserting a magnitude error; don't let a derivation "confirm" a number you already labeled.
+
+**Code (CIO-directed, lane exception)**: promoted my aligner to `src/calibration/speed_aligner-spool.py` (Spool cross-check variant, independent of Atlas's `speed_aligner.py`); removed the office-scripts duplicate. (Atlas committed his `speed_aligner.py` with TDD tests separately.)
+
+### Key Decisions
+- **DTC clear = gated single-button**, enabled only when every stored code is 🟢 MINOR AND logged+server-acked; Mode 04 all-or-nothing so the gate keys off the worst stored code. Suggested-fix severity-gated; auto-fetched fixes never authoritative for 🔴/🟡.
+- **P0443 = 🟢 MINOR**, cleared after logging per CIO; watch for return → purge-solenoid connector.
+- **SPEED correction_factor = 1.00** (empirical, GPS-correlated Drive 27). The "2× drift" is retired as a unit-mislabel artifact. Both ECUs read SPEED true.
+- **Keep both the cal utility + the corrector config** (per-ECU table row, not a flat config): cheap insurance for a car under active tuning (VE-table/E85/tire/gear changes can introduce a real VSS error); re-run trigger = after any reflash/tire-size/speedo-VSS change.
+
+### Current Vehicle State
+- 1998 GST 4G63, stock TD04-13G, **ECU MD326328** (ECMLink, drives ≥25; SPEED PID reads TRUE factor 1.00). Fuel [EXACT: 93 octane]. Tires Potenza 205/55R16 (March 2003, CIO-retained). Trans stock F5M33. Engine **grade A through Drive 27**; check-engine (P0443 EVAP) read + cleared this session, did not return. Coolant 101°C peak watch item.
+
+### Open Items
+- **Writer update** (Atlas/Ralph): upsert `speed_pid_calibration` ecu_id=2 → 1.00 `empirical-gps-correlation-Drive-27` (ratified; replaces dormant 0.5 seed).
+- **DSM P1xxx severity + suggested-fix table** — Spool still owes (S-1/S-3 data the DTC spec consumes).
+- **Coolant watch**: 101°C peak on Drive 27 (city/warm-day/heat-soak); flag if it regularly tags 103–105°C.
+- **P0443 watch**: if it returns after a drive cycle → reseat purge-solenoid connector.
+- Carry-forwards: new-ECU baseline (now grade-A through Drive 27); BL-018 battery-runtime tuning; GM 3-bar MAP / wideband (Pin 75 + Pin 92) + E85 pre-wire; RAG card migration remaining per `vehicle.md` manifest.
+
+### Safety Advisories
+- P0443 dispositioned 🟢 MINOR (drive-safe). Mode-04-clears-everything + readiness-monitor-reset surfaced as standing safety semantics for the clear feature. Tire-age + coolant watch items carried (not acute).
+
+---
+
 ## Session 24 — 2026-06-01
 
 **Context**: Init → CIO-driven knowledge session, no drives. Three things landed: (1) ECU part-number CORRECTION (donor ECU MD335287 → MD326328) — Session-19 mis-ID caught via the manufacturer P/N; (2) full tire identity + DOT-date safety episode from CIO sidewall photos; (3) internet-sourced + self-validated stock F5M33 gear ratios that complete the SPEED-PID calibration inputs. All in service of dialing in the new-ECU 2× SPEED drift.
