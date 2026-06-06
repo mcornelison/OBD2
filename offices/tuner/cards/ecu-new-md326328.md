@@ -40,7 +40,7 @@ The ECU in the car since the **2026-05-22 swap**, in service for **drives ≥25*
 - **Mode 09** (calibration identity): SILENT — cannot fingerprint the loaded tune via OBD-II.
 - **Mode 22** (vendor enhanced): NOT IMPLEMENTED — cannot reach ECMLink-internal data (knock retard, knock sum, per-cylinder fuel/timing, target AFR, base advance) via the OBDLink-via-Pi pipe.
 - **The project pipe is for monitoring only**; ECMLink V3 software + USB-to-serial cable is the only path to deep tuning data.
-- **SPEED PID drift**: this ECU reads **~2× actual ground speed** (likely modified VSS calibration constants in the loaded tune). Divide by ~2 for a ground-truth estimate until a GPS-correlation run lands. Seeded as `correction_factor = 0.5`, `provenance = 'seed'` per US-370; refine post-GPS-correlation. (Contrast: the stock prior ECU read SPEED correctly, factor 1.0.)
+- **SPEED PID reads TRUE — factor ≈ 1.00** (GPS-confirmed Drive 27, 2026-06-05; scalar gate flat). The earlier "~2× drift / divide by 2 / `correction_factor = 0.5`" was a **gear-math artifact** (assumed-gear error on Drive 26), NOT a real calibration error — DO NOT divide SPEED. The `0.5` seed was dormant (non-`empirical-` provenance → never applied), so no data was corrupted. Ratified `correction_factor = 1.00`, `provenance = 'empirical-gps-correlation-Drive-27'` (writer update routed to Atlas/Ralph). See knowledge.md "RESOLVED — new-ECU SPEED PID reads TRUE" + `scripts/speed_cal_align.py`.
 
 This ECU's tune is **modified** (ECMLink) — the only modified tune in the project history. Use "ECMLink V3 flash mod" or "97 non-EPROM ECU conversion" — never "modified EPROM."
 

@@ -376,24 +376,23 @@ CIO swapped from the stock ECU (MD346675) to the ECMLink-flash-modified ECU (MD3
 - Manufacturer: OBD Solutions LLC (AT@1)
 - ATRV reports battery voltage at OBD port pin 16 (independent of K-line bandwidth)
 
-### ⚠ NEW-ECU CAVEAT — SPEED PID reads ~2× actual ground speed (caught 2026-05-22, Session 19)
+### ✅ RESOLVED — new-ECU SPEED PID reads TRUE (factor ≈ 1.00, GPS-confirmed Drive 27, 2026-06-05)
 
-Drive 26 (first city-driving telemetry on new ECU) reported SPEED peak 84 mph. CIO confirmed actual ground speed was city-roads tip-in (~40 mph estimated). Gear math at RPM 3,788 places 2nd-gear ≈ 39 mph, 3rd-gear ≈ 55 mph — consistent with CIO's report, inconsistent with the 84 mph reading. **The new ECU's SPEED PID reads approximately 2× actual ground speed.**
+**The "~2× drift" was a phantom — a gear-math artifact, NOT a real calibration error. GPS truth proves the new-ECU SPEED PID reads correct ground speed.** This supersedes the Session-19→24 "divide by 2 / factor 0.5" narrative in full. Do NOT divide SPEED by anything.
 
-Sanity check against prior-ECU Drive 18: RPM 3,937 / SPEED 60 mph = 3rd-gear math fit (theoretical 57 mph). The prior ECU's SPEED PID was calibrated correctly. The discrepancy is new-ECU-specific.
+**The measurement (Drive 27, GPS via Strava FIT cross-correlated with OBD SPEED — Atlas's procedure, Spool's aligner `scripts/speed_cal_align.py`):**
+- Estimator A (distance-ratio, primary, clock-skew-immune): GPS 6,421 m vs OBD-integrated 6,398 m → **scale = 1.0037**.
+- Estimator B (speed-ratio, median): **0.9875**; cross-correlation 0.988 at −1 s lag.
+- Scalar-vs-curve gate: **FLAT** (median ratio 0.99 / 0.99 / 0.985 across 20→80 km/h) → single scalar is valid; NO B-076 curve/piecewise needed.
+- **Ratified correction_factor = 1.00** (PID needs no correction).
 
-**Likely cause**: the new ECU's ECMLink tune has different VSS (vehicle speed sensor) calibration constants — non-OEM speedometer-gear-ratio assumption or a different VSS pulse-per-rev expectation. Common for aftermarket tunes if the tuner anticipated different gearing. (Note: the stock ECU MD346675 read SPEED correctly, factor 1.0 — this drift is specific to the new ECU's tune.)
+**Why the old "2×" was wrong**: it came from **gear-math on Drive 26 with an assumed gear** (2nd-gear math → ~37 mph vs 84 PID). Gear-math is only as good as the assumed gear; GPS needs no gear assumption. CIO confirmed (2026-06-05) the **tune's speed cal was NOT changed** between Drive 26 and 27 — so the PID was reading ~true all along; the 84 figure was simply a higher-gear/real speed, not 2× error. The lesson: **measure (GPS) before asserting; don't trust single-gear gear-math as ground truth.**
 
-**Tire-size ruled OUT as a cause (2026-06-01)**: the mounted tires are **Bridgestone Potenza 205/55R16** — the *factory* GST size (see [`cards/wheels-tires-potenza-205-55r16.md`](cards/wheels-tires-potenza-205-55r16.md)). Correct overall diameter satisfies the OEM VSS assumption, so tires contribute ~0% to the drift. A 2× error is a *scaling constant* anyway — far beyond any tire-size delta (a few %). Rolling circumference ≈ **1.985 m** geometric / ~1.96 m loaded (~811 rev/mi) is the gear-math **cross-check** input; the **primary** calibration remains the GPS-correlation run (tire-independent).
+**No data was corrupted**: the `0.5` seed in `speed_pid_calibration` carried **non-`empirical-` provenance**, so `select_empirical_calibrations()` never applied it. Drives 25/26/27 were all computed at the default factor 1.0 = correct. **No recompute needed.**
 
-**Gear-math cross-check now runnable + validated (2026-06-01)**: stock **F5M33** 5-speed ratios sourced (3.090/1.833/1.217/0.888/0.741, **final drive 4.153** — see `cards/drivetrain-f5m33-gear-ratios.md`; CIO confirmed stock unmodified). Plugging Drive 18 (prior STOCK ECU): RPM 3,937 ÷ (1.217 × 4.153) × 1.985 m = **57.6 mph computed** vs 60 mph recorded / theoretical-57 — **reproduces**, so the ratios + tire circumference are both confirmed. The identical math on Drive 26 (new ECU) lands ~37 mph in 2nd vs the 84 mph PID reading → **cleanly ~2×**. The gear math now independently corroborates the 2× drift is a tune VSS constant. (Earlier "W5MG1" transaxle note was wrong — that's the AWD box; FWD GST = F5M33.)
+**Writer action (routed to Atlas/Ralph — not Spool's lane to touch the DB)**: replace the dormant `0.5` seed on `ecu_id=2` with `correction_factor = 1.00`, `provenance = 'empirical-gps-correlation-Drive-27'`, `capture_method = 'gps_correlation'`. A no-op on computed values, but it grounds the cal and retires the wrong seed.
 
-**Until verified with a GPS-correlation drive**:
-- Treat SPEED on new ECU as **directional only — divide by ~2 for ground-truth estimate**.
-- Any analytics keyed off SPEED (distance, avg speed, gear inference) will be off by the same factor.
-- **None of the engine-grade analysis depends on SPEED** (RPM, LOAD, MAF, TIMING, STFT, COOLANT all measured independently). Engine assessments remain trustworthy.
-
-**Calibration check** (2-min exercise on next drive): cruise at a GPS-verified known speed (e.g., 30 mph on a straight road), record the SPEED PID reading at that moment, derive correction factor. Update this caveat with empirical ratio once captured.
+**Engine-grade analysis was never affected** (RPM/LOAD/MAF/TIMING/STFT/COOLANT all measured independently of SPEED).
 
 ---
 
