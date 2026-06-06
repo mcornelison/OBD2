@@ -13,7 +13,7 @@
 | Card | ECU | Status | Summary |
 |------|-----|--------|---------|
 | [[ecu-prior-md346675]] | prior | current | 1998 factory FWD-turbo ECU; 100% stock, never flashed; flash-hardware but not ECMLink-flashable; drives ≤24 = stock baselines. |
-| [[ecu-new-md326328]] | new | current | 1997 ECMLink-V3 board (mfr E2T61683), installed 2026-05-22; running prior-tuner ECMLink tune; Mode 09/22 silent; SPEED reads ~2× actual. |
+| [[ecu-new-md326328]] | new | current | 1997 ECMLink-V3 board (mfr E2T61683), installed 2026-05-22; running prior-tuner ECMLink tune; Mode 09/22 silent; SPEED PID reads TRUE (factor 1.00, GPS-confirmed Drive 27 — old "2×" was a km/h/mph mislabel). |
 | [[safe-range-coolant-temp]] | both | current | Normal 185–205°F; danger >220°F. Two-tier alert 210/220°F. Head-gasket risk. |
 | [[safe-range-timing-knock]] | both | current | Timing danger <5°/negative; knock count >5/pull danger (ECMLink-only). 4500–5000 RPM knock window. |
 | [[safe-range-fuel-trims]] | both | current | STFT danger >±15%, LTFT >±10%; O2 oscillates 0.1–0.9V @1–3Hz. This-car LTFT ~−6.25% normal. |
@@ -21,7 +21,7 @@
 | [[safe-range-boost]] | both | current | Stock TD04 boost 10–12 normal, >15 danger; injector duty >85% danger. Boost not OBD-readable (0x0B). |
 | [[safe-range-battery-voltage]] | both | current | Running 13.5–14.5V normal; <12.0/>15.0V danger. Read via ELM ATRV, not a PID. |
 | [[safe-range-engine-envelope]] | both | current | Redline 7000 RPM; load >90% danger; IAT >60°C heat-soak; MAF saturates ~150 g/s. |
-| [[wheels-tires-potenza-205-55r16]] | both | current | Bridgestone Potenza 205/55R16 91H on aftermarket 16" 5-lug wheels; STOCK size → rolling circ ≈1.985 m, ~811 rev/mi; confirms new-ECU 2× SPEED drift is a tune VSS constant, not tires. Aged (made March 2003, DOT 1003, ~23 yr) but full tread + garaged + CIO-inspected no rot → CIO retaining; cleared for low-speed calibration drive. |
+| [[wheels-tires-potenza-205-55r16]] | both | current | Bridgestone Potenza 205/55R16 91H on aftermarket 16" 5-lug wheels; STOCK size → rolling circ ≈1.985 m, ~811 rev/mi; tires not a speed-cal factor (new-ECU "2× SPEED drift" disproven 2026-06-05 — PID reads TRUE, factor 1.00). Aged (made March 2003, DOT 1003, ~23 yr) but full tread + garaged + CIO-inspected no rot → CIO retaining; cleared for low-speed calibration drive. |
 | [[drivetrain-f5m33-gear-ratios]] | both | current | Stock F5M33 5-speed (2G FWD turbo): 3.090/1.833/1.217/0.888/0.741, final 4.153. Cross-validated vs prior-ECU Drive 18. ~24 mph/1000rpm in 5th. |
 
 ## Planned cards (migration manifest)

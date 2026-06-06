@@ -380,7 +380,7 @@ CIO swapped from the stock ECU (MD346675) to the ECMLink-flash-modified ECU (MD3
 
 **The "~2× drift" was a phantom — a gear-math artifact, NOT a real calibration error. GPS truth proves the new-ECU SPEED PID reads correct ground speed.** This supersedes the Session-19→24 "divide by 2 / factor 0.5" narrative in full. Do NOT divide SPEED by anything.
 
-**The measurement (Drive 27, GPS via Strava FIT cross-correlated with OBD SPEED — Atlas's procedure, Spool's aligner `scripts/speed_cal_align.py`):**
+**The measurement (Drive 27, GPS via Strava FIT cross-correlated with OBD SPEED — Atlas's procedure + `src/calibration/speed_aligner.py`; Spool cross-check `src/calibration/speed_aligner-spool.py` — two independent impls agree A=1.0037):**
 - Estimator A (distance-ratio, primary, clock-skew-immune): GPS 6,421 m vs OBD-integrated 6,398 m → **scale = 1.0037**.
 - Estimator B (speed-ratio, median): **0.9875**; cross-correlation 0.988 at −1 s lag.
 - Scalar-vs-curve gate: **FLAT** (median ratio 0.99 / 0.99 / 0.985 across 20→80 km/h) → single scalar is valid; NO B-076 curve/piecewise needed.

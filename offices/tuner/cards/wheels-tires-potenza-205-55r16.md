@@ -2,7 +2,7 @@
 id: wheels-tires-potenza-205-55r16
 title: Mounted tires — Bridgestone Potenza 205/55R16 91H (stock size)
 topic: wheels-tires
-summary: Bridgestone Potenza (RE0_0 series) 205/55R16 91H on aftermarket 16" 5-lug wheels; STOCK SIZE → rolling circ ≈1.985 m, ~811 rev/mi (confirms new-ECU 2× SPEED drift is a tune VSS constant, not tires). Aged (DOT 1003 = March 2003, ~23 yr) but full tread + garaged + CIO-inspected no rot → CIO retaining; cleared for low-speed calibration drive, revisit before highway/spirited.
+summary: Bridgestone Potenza (RE0_0 series) 205/55R16 91H on aftermarket 16" 5-lug wheels; STOCK SIZE → rolling circ ≈1.985 m, ~811 rev/mi (tires are not a speed-cal factor; the new-ECU "2× SPEED drift" was disproven 2026-06-05 — PID reads TRUE, factor 1.00). Aged (DOT 1003 = March 2003, ~23 yr) but full tread + garaged + CIO-inspected no rot → CIO retaining; cleared for low-speed calibration drive, revisit before highway/spirited.
 ecu: both
 mod_state: premod
 fuel: n/a
@@ -51,7 +51,7 @@ The DOT date code `1003` dates these tires to **March 2003** — **~23 years old
 
 The 1998 Eclipse GST factory tire is **205/55R16** — exactly what is mounted. The wheels are aftermarket but the **overall diameter matches factory**, so the OEM VSS / speedometer assumption is satisfied.
 
-**Calibration consequence**: the tires are **NOT** a contributor to the new-ECU 2× SPEED error. A correct-size tire is why the *stock* ECU [[ecu-prior-md346675]] read SPEED dead-on (factor 1.0). The ~2× drift on the ECMLink [[ecu-new-md326328]] tune is therefore confirmed a **scaling constant in the tune** (VSS pulse-per-rev or speedo-gear assumption), not a tire/gearing effect. Tire size moves a speedo a few percent at most — never 2×.
+**Calibration consequence**: the tires are not a speed-cal factor. **There was no "2× SPEED error"** — GPS Drive-27 (2026-06-05) proved the new-ECU [[ecu-new-md326328]] SPEED PID reads TRUE (factor **1.00**); the apparent "2×" was a km/h-read-as-mph **unit mislabel**, not a tune/tire/gearing effect. (Correct-size tires do keep the speedo honest — but that was never in question.)
 
 ## Rolling-circumference constant (for the SPEED-PID gear-math cross-check)
 

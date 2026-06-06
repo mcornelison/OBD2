@@ -35,7 +35,7 @@ Total reduction = gear × final drive: 1st 12.83 · 2nd 7.61 · 3rd 5.05 · 4th 
 Using these ratios + the stock-size tire rolling circumference (≈1.985 m, see [[wheels-tires-potenza-205-55r16]]):
 
 - **Drive 18 (prior STOCK ECU [[ecu-prior-md346675]], SPEED read correctly):** RPM 3,937 in 3rd → 3,937 ÷ 5.054 = 779 wheel-rev/min × 1.985 m = **57.6 mph computed** vs 60 mph recorded (theoretical-57 note). **Reproduces** → ratios + circumference both confirmed.
-- **Drive 26 (new ECU [[ecu-new-md326328]]):** the same math lands ~37 mph in 2nd vs the **84 mph** the SPEED PID reported → **cleanly ~2×**. Independently corroborates that the new-ECU SPEED drift is a **tune VSS/pulse-per-rev constant**, not drivetrain or tire.
+- **Drive 26 (new ECU [[ecu-new-md326328]]):** the SPEED PID reported **84** — which is **84 km/h = 52 mph** (consistent with this gear math), NOT 84 mph. The old "~2× drift" was a **unit mislabel** (km/h recorded as mph in Session 19), DISPROVEN by GPS on Drive 27 (factor **1.00**). Gear math here corroborates the tire circ + ratios, not any drift.
 
 Quick reference: **~24 mph per 1,000 RPM in 5th** (≈72 mph @ 3,000 RPM).
 
