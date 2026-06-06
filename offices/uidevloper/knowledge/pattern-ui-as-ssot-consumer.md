@@ -22,4 +22,13 @@ When designing a UI surface that displays system state, the surface is a **consu
 
 **Confirmed:** B-103 splash design 2026-05-26 — splash consumes two SSOTs (`/run/eclipse/boot-state` from boot-progress-finalize; `/run/eclipse/shutdown-state` from ShutdownSequencer). Splash never polls hardware. Atlas confirmed (2026-05-22 hello-ack) that "specs/UI/ tokens (color/type/iconography) under that [SSOT] pattern is correct precedent, not a one-off."
 
+## Two safety-UI corollaries for consequential actions (DTC clear-code, 2026-06-05 — Spool-endorsed)
+
+When the UI offers a **consequential / destructive action** (e.g. Mode-04 clear that wipes codes + freeze-frame + readiness monitors), two extra rules layer on top of "consume, don't author":
+
+1. **Re-check the gate at the action path — never trust the UI's enabled state.** The button being enabled is convenience only; the actual action must re-verify its preconditions where it executes (server/service side), so a tampered or stale UI can't force it. Spool: "endorse — defense-in-depth." Mirrors the F-092 service-control privilege model.
+2. **Override a dangerous suggestion by REPLACING it, not hiding it.** For a high-severity code the suggested-fix slot is *replaced* by a "diagnose, don't just swap parts" directive — not blanked. A hidden slot reads as "no info"; a replaced slot actively steers the human away from the wrong action. Spool: "exactly right." Design dangerous-content slots to be **replaceable by a directive**, not merely conditional-hidden.
+
+Both confirmed in `inbox/2026-06-05-from-spool-dtc-viewer-confirm-plus-live-results.md` ("you rendered the SSOT faithfully… two of your calls improve on mine").
+
 Related: [[pattern-argus-ui-acceptance-criteria]]; [[feedback-cio-architectural-paths-belong-to-atlas]].
