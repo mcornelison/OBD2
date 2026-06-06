@@ -49,13 +49,17 @@
 
 ### Open Items
 - **Writer update** (Atlas/Ralph): upsert `speed_pid_calibration` ecu_id=2 → 1.00 `empirical-gps-correlation-Drive-27` (ratified; replaces dormant 0.5 seed).
-- **DSM P1xxx severity + suggested-fix table** — Spool still owes (S-1/S-3 data the DTC spec consumes).
+- **DSM P1xxx severity + suggested-fix table** — ✅ DELIVERED post-closeout (`offices/tuner/dsm-p1xxx-severity-table.md`); routed to Iris.
 - **Coolant watch**: 101°C peak on Drive 27 (city/warm-day/heat-soak); flag if it regularly tags 103–105°C.
 - **P0443 watch**: if it returns after a drive cycle → reseat purge-solenoid connector.
 - Carry-forwards: new-ECU baseline (now grade-A through Drive 27); BL-018 battery-runtime tuning; GM 3-bar MAP / wideband (Pin 75 + Pin 92) + E85 pre-wire; RAG card migration remaining per `vehicle.md` manifest.
 
 ### Safety Advisories
 - P0443 dispositioned 🟢 MINOR (drive-safe). Mode-04-clears-everything + readiness-monitor-reset surfaced as standing safety semantics for the clear feature. Tire-age + coolant watch items carried (not acute).
+
+### Post-Closeout Addendum (same session) — DSM P1xxx severity table
+- CIO directed building the DSM P1xxx severity table (last owed DTC-feature deliverable). **Grounded the code list in [troublecodes.net's 95-Eclipse-Turbo/96-98 Mitsubishi list](https://www.troublecodes.net/mitsu/) — web-researched, NOT from memory** (applying the same-session unit-mislabel lesson: don't assert manufacturer codes from recall).
+- Built `offices/tuner/dsm-p1xxx-severity-table.md`: **7 engine-relevant P1xxx** (P1103/04 wastegate, P1105 fuel-pressure, P1300 timing, P1400 MDP/EGR, P1500 alternator, P1600 comms) — all 🟡 WATCH, none clearable (circuit faults recur until fixed); **4 are condition-dependent** (P1103/04/05/P1300 escalate to 🔴 under overboost/lean/knock). Plus **5 auto-trans codes flagged N/A for our manual F5M33** (P1715/1750/1751/1791/1795) — would indicate a misread, not a real fault. No 🟢-clearable P1xxx (those are generic evap, e.g. P0443). Severity/clearable/suggested_fix = Spool-validated. Routed to Iris (S-1/S-3 data); committed `59ff9d3`. **Closes the last item owed on the DTC feature.**
 
 ---
 
