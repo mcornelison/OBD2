@@ -1,8 +1,8 @@
 {
   "$comment": "Regression manifest -- features that must keep working. Per Mike 2026-05-08 directive: main = 'fully validated stable.' Sprint branches stay deployed-but-pre-merge until real-hardware drill validates affected features. /sprint-validated bumps last_validated for features in the sprint's bigDefinitionOfDone. Stdlib-JSON to match backlog.json / story_counter.json / sprint.json convention (no PyYAML dep).",
   "manifestVersion": 1,
-  "lastUpdated": "2026-05-22",
-  "lastUpdatedBy": "Argus (Tester) -- F-005+F-007 rollback per Marcus 2026-05-22 ask + Atlas drive-23/24 dual-attribution disposition (CIO-ratified). Bump from 153b43a reverted; HOLD until V0.28.0 tripwire (B-107).",
+  "lastUpdated": "2026-06-05",
+  "lastUpdatedBy": "Marcus (PM, Sprints 44+45 / V0.28 chain validated)",
   "categories": [
     "lifecycle",
     "connection",
@@ -86,8 +86,8 @@
       "id": "F-005",
       "name": "drive_summary INSERT fires on drive_end",
       "category": "data_capture",
-      "lastValidated": null,
-      "validatedBy": "REGRESSED 2026-05-08 (Drives 6+7 produced 0 drive_summary rows despite drive_end events firing). Same bug class as Sprint 19 US-237. Targeted in V0.27.2. [HOLD 2026-05-22 per Atlas drive-23/24 dual-attribution disposition + CIO ratification: bump reverted; re-validates only after V0.28.0 tripwire lands (B-107 dual-attribution detector tripwire pre-condition).]",
+      "lastValidated": "2026-06-05",
+      "validatedBy": "Mike (CIO confirmed) + drive-27 single-attribution IRL drill (Atlas A-9 gate PASS, drive_id=27 full/is_real/anomalies=0) + Session-46 pre-drill schema verification (22 bigDoD clauses GREEN)",
       "validationMethod": "real_engine_on_test",
       "staleThresholdDays": 30,
       "affectedBySprints": [
@@ -114,8 +114,8 @@
       "id": "F-007",
       "name": "Sync to chi-srv-01 on home WiFi (delta push)",
       "category": "sync",
-      "lastValidated": null,
-      "validatedBy": "NOT VALIDATED -- prior REGRESSED citation (2026-05-08) was fictitious per BL-011 (v0007 was never designed to apply on Pi; BL-010 closure had established Pi-side sync_log + server-side sync_history are separate tables on separate hosts). Re-validation requires next Drive N -> home WiFi sync round-trip -> assert chi-srv-01 received the delta + sync_history row written. Cleanest validation: capture Drive 8 (engine on, drive, return home, observe sync), then SSH chi-srv-01 + verify sync_history has the new row. [HOLD 2026-05-22 per Atlas drive-23/24 dual-attribution disposition + CIO ratification: bump reverted; re-validates only after V0.28.0 tripwire lands (B-107 dual-attribution detector tripwire pre-condition).]",
+      "lastValidated": "2026-06-05",
+      "validatedBy": "Mike (CIO confirmed) + drive-27 single-attribution IRL drill (Atlas A-9 gate PASS, drive_id=27 full/is_real/anomalies=0) + Session-46 pre-drill schema verification (22 bigDoD clauses GREEN)",
       "validationMethod": "real_engine_on_test",
       "staleThresholdDays": 30,
       "affectedBySprints": [
