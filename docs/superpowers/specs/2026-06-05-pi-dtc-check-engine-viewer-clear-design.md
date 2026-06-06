@@ -1,12 +1,12 @@
-# Pi DTC / Check-Engine Viewer + Gated Clear-Code — Design Spec v1
+# Pi DTC / Check-Engine Viewer + Gated Clear-Code — Design Spec v1.1
 
 | Field | Value |
 |---|---|
 | Feature | **DTC / Check-Engine viewer** (on-Pi display) + **gated Clear-Code (Mode 04)** |
 | Surfaces | Full-screen **takeover alert** (new code) + **Alerts card** (Card 5 of the touch carousel) + per-code **detail view** + **Clear flow** |
 | Author | Iris (UI/UX Designer) |
-| Date | 2026-06-05 |
-| Status | **DRAFT — design brainstormed live with CIO via visual companion + CIO-approved end-to-end; pending Atlas design-gate (Rule 10) + Spool semantics sign-off + Argus acceptance** |
+| Date | 2026-06-05 (v1); 2026-06-05 (v1.1 — folded Spool's live results + 2 SME refinements) |
+| Status | **DRAFT — design brainstormed live with CIO via visual companion + CIO-approved end-to-end; Spool semantics S-1..S-4 CONFIRMED ("ship it") + live-validated; pending Atlas design-gate (Rule 10) + Argus acceptance** |
 | Target sprint | V0.28+ |
 | Depends on | **F-092/F-097 carousel shell** (`docs/superpowers/specs/2026-06-05-pi-touch-carousel-dashboard-f092-f097-design.md`) — this is its **Card 5 (Alerts+DTC)**, previously named-but-deferred — and transitively **F-103 splash** (shared chromium kiosk + `eclipse-states-http`). |
 | Engine-safety SSOT | **`offices/tuner/dtc-display-clear-safety-advisory.md`** (Spool, CIO-ratified 2026-06-05) — severity tiers, clear-gate preconditions, suggested-fix provenance + severity override. **Non-negotiable on engine-protection grounds; this spec renders against it, it does not redefine it.** |
@@ -24,6 +24,15 @@ Triggered by the CIO's check-engine light coming on during both legs of the (abo
 | D-5 | **Code detail view** = fixed skeleton (hero · status · freeze-frame · suggested-fix · log/sync), with a **severity-gated fix area** and a **3-state trust badge** | Renders Spool's §6 suggested-fix semantics: 🔴/🟡 replace the fix with a "diagnose, don't swap parts" directive; only 🟢 MINOR shows a real fix, always badged by provenance. |
 | D-6 | **Clear = one gated button** on the list (Mode 04 is all-or-nothing) with 3 states + hard confirm + post-clear re-read + refuse-2nd-clear | Renders Spool's §4 safety gate verbatim in spirit. There is no per-code clear in OBD-II, so the gate keys off the **highest-severity stored code**, not the one on screen. |
 
+### 0.1 Changelog — v1.1 (Spool confirm + live results, 2026-06-05)
+
+Spool reviewed v1 (`inbox/2026-06-05-from-spool-dtc-viewer-confirm-plus-live-results.md`): **S-1..S-4 confirmed correct, "ship it"**, and endorsed two of this spec's calls as improvements on his advisory (the §3 "gate re-enforced at the action path, not trusted from the button state" and the §5.4 "fix slot replaced, not hidden"). Folded:
+
+- **Mode 02 freeze-frame CONFIRMED UNSUPPORTED on MD326328** (live KOEO probe). The §5.4 realtime_data fallback is now the **default** rendering for this ECU, not a contingency. Resolves the §11 open question + narrows Atlas A-4.
+- **Live-validated end-to-end:** first real code **P0443** (EVAP purge-valve circuit, 🟢 MINOR; python-obd has the description, no static table needed) was read KOEO → logged (`dtc_log`, timestamped, syncing) → cleared (Mode 04) → re-read empty. The log→clear→confirm flow + "read before clear" are proven. Mechanics reference: `specs/examples/dtc_read_and_clear_koeo.py`.
+- **R-1 condition-dependent severity** (S-1 nuance): some codes aren't one fixed tier — e.g. **P0171** (lean) is 🟡 at idle/cruise but 🔴 under boost/load. With Mode 02 dead there's no freeze-LOAD to auto-escalate from, so Spool's table classifies these **conservatively 🟡 with a "🔴 if set under load — verify" caveat**. The detail view + chip must support a **severity that carries a caveat line**, not just a flat chip (§4, §5.4).
+- **R-2 ribbon red distinguishability** (S-2): the §5.2 ribbon rides on normal cards where brand-red elements live, so the ribbon's STOP-red must stay visually distinct from brand-red (use the brighter alert `--red-light` + a leading ⚠ glyph / subtle pulse) or the alarm reads as decoration (§5.2).
+
 ## 1. Executive Summary
 
 A check-engine / DTC surface for the OSOYOO 3.5″ 480×320 touch dashboard. When a **new** diagnostic trouble code sets (MIL rising-edge), a **full-screen takeover** appears, styled by Spool's severity tier (🔴 STOP / 🟡 WATCH / 🟢 MINOR) — red "pull over" for a misfire, calm green "safe to clear once logged" for a gas-cap. After Acknowledge/Dismiss the alert persists as a slim **ribbon** on every carousel card until the code clears. The **Alerts card** (Card 5) is the home: a **hero + list** of all stored/pending codes, worst-first, tappable into a **detail view** (code · long description · freeze-frame snapshot · suggested-fix · log/sync state). The **suggested-fix** area is **severity-gated** — only MINOR codes show an actual fix, always carrying a **trust badge** (✓ verified by Spool / 👥 community-unverified / ⏳ not fetched offline). **Clearing codes** is a single, all-or-nothing **Mode 04** button on the list, gated so it is enabled **only when every stored code is MINOR and has been captured + server-sync-acked**; it requires a hard confirm (warns about freeze-frame loss + readiness-monitor reset), re-reads to prove the clear, and refuses a second clear of any code that re-sets in the session ("don't chase the light"). The Pi is a **pure consumer** of a new `dtc` state file; it never decides severity, never fabricates a description or fix, and never blocks on a network call.
@@ -38,8 +47,8 @@ A check-engine / DTC surface for the OSOYOO 3.5″ 480×320 touch dashboard. Whe
 | During-drive Mode 03 cadence + drive-end Mode 07 | `src/pi/obdii/dtc_logger.py` | built |
 | `dtc_log` capture table | `src/pi/obdii/dtc_log_schema.py` | built |
 | Pi→server `dtc_log` mirror (sync) | US-238 | built ("report to server" half done) |
-| `dtc_freeze_frame` server infra | US-368 | built (**Pi-side Mode 02 capture UNCONFIRMED on this ECU**) |
-| **Clear-DTC (Mode 04)** | — | **DOES NOT EXIST — net-new** |
+| `dtc_freeze_frame` server infra | US-368 | built (**Pi-side Mode 02 capture CONFIRMED UNSUPPORTED on MD326328** — live KOEO probe 2026-06-05; detail view falls back to realtime_data context by default) |
+| **Clear-DTC (Mode 04)** | — | **DOES NOT EXIST — net-new** (but the read→log→clear→re-read flow is live-validated against P0443 via `specs/examples/dtc_read_and_clear_koeo.py`) |
 
 ### Why now
 The CIO's MIL is on (drive-27). He needs to *see* the code(s), understand severity, and — for harmless codes — clear them safely once logged. The carousel dashboard already reserved this as **Card 5 (Alerts+DTC)**; this pulls it forward.
@@ -91,6 +100,8 @@ The Pi display is a **consumer** of a new `dtc` state file, mirroring the F-103 
 
 The severity value is **read from the `dtc` state**, classified upstream from Spool's table. The display maps tier → color + directive + behavior; it does not classify.
 
+**Condition-dependent severity (R-1).** A few codes aren't a single fixed tier — e.g. **P0171** (lean) is 🟡 at idle/cruise but 🔴 under boost/load. With Mode 02 dead on this ECU there is no freeze-LOAD to auto-escalate from, so Spool's table classifies these **conservatively 🟡 with a caveat** (`severityCaveat: "🔴 if set under load — verify"`). The display must render a tier chip that can **carry a caveat line** beneath it (takeover hero + detail), not just a flat chip. The caveat never silently upgrades the tier — it warns the human to check the conditions.
+
 ## 5. Surfaces — Visual Spec
 
 Visual SSOT = F-103 tokens (mono type; `--text-secondary #888`, `--text-tertiary #666`; brand reds; `--amber-warn #FFC400`). One **new** token: `--green-ok #35C46A` for the MINOR / OK / "linked" state (§7 — needs adding to `specs/UI/`). No web fonts.
@@ -107,6 +118,7 @@ Full-bleed overlay above the dashboard, fired on a new code. Skeleton: icon · "
 - **One** takeover at a time.
 - **Escalation re-fires**: a WATCH→STOP escalation, or a new STOP, re-triggers even after an earlier dismiss.
 - After Acknowledge/Dismiss → persistent **ribbon** (red/amber) under the top bar on every carousel card: `⚠ CHECK ENGINE · <hero code> <desc> · tap ›`. Ribbon clears when the code is gone (or cleared, for MINOR).
+- **Ribbon red ≠ brand red (R-2).** Unlike the full-bleed takeover, the ribbon rides on normal cards where brand-red chrome may live. The ribbon's STOP state must stay visually distinct from any brand-red — use the brighter alert `--red-light #F61D2D` (not brand `--red`), a leading ⚠ glyph, and/or a subtle slow pulse, so it reads as an alarm and never as decoration.
 
 ### 5.3 Alerts card — hero + list (D-4)
 Card 5 of the carousel. Top bar (shared) + card body:
@@ -130,7 +142,7 @@ CHECK ENGINE                          3 stored · 1 pending
 ### 5.4 Code detail view (D-5)
 Fixed skeleton (scrolls on the panel): **‹ Back · code** | hero (chip + code + short desc) | severity directive band (🔴/🟡) | status meta (`STORED/PENDING · set <age> · Drive N · MIL on/off`) | **freeze-frame** grid | **suggested-fix** area | log/sync footer.
 
-- **Freeze frame** ("crown jewel", advisory §4c) — sensor snapshot at the instant the code set: RPM, LOAD, COOLANT, STFT, LTFT, TIMING (+ boost where available). On STOP, load/RPM rendered hot. If Mode 02 unsupported on this ECU (advisory §5) → fall back to "context from `realtime_data`" or "no freeze frame captured" — **honest about which**.
+- **Freeze frame** ("crown jewel", advisory §4c) — sensor snapshot at the instant the code set: RPM, LOAD, COOLANT, STFT, LTFT, TIMING (+ boost where available). On STOP, load/RPM rendered hot. **On MD326328 (current ECU) Mode 02 is CONFIRMED unsupported** (live probe 2026-06-05), so the **default** rendering is the honest `realtime_data`-context fallback labeled "no freeze frame captured (this ECU) — showing context at fault time". A true freeze-frame grid renders only if a future ECU supports Mode 02. Never blank, never implied-but-empty.
 - **Suggested-fix area — severity-gated (advisory §6b):**
   - 🔴 STOP / 🟡 WATCH → fix slot **replaced** by a directive band: "⚠ STOP — diagnose, don't just swap parts" + Spool's reasoning. The area is designed to be *replaced*, not merely hidden, so a dangerous code never shows a casual internet fix.
   - 🟢 MINOR → shows the actual `suggested_fix` text + a **trust badge**.
@@ -178,7 +190,7 @@ Severity chips: STOP = red bg/white text; WATCH = amber bg/black text; MINOR = g
 | DTC views (takeover + Alerts card + detail) in the dashboard kiosk | NEW (HTML/JS) | Card 5 of the carousel + the takeover overlay |
 | `dtc` state emitter → `/var/run/eclipse-obd/states/dtc` | NEW | publishes current codes + severity + suggested_fix + provenance + freeze-frame + log/sync status for the UI to read |
 | `eclipse-states-http` | EXTEND | serve the new `dtc` endpoint read-only (already extended to full runtime in F-092) |
-| Pi-side **Mode 02 freeze-frame capture** | NEW/VERIFY | confirm support on MD326328; capture before clear; fall back honestly if silent (advisory §5) |
+| Pi-side **Mode 02 freeze-frame capture** | **DEFERRED** (not needed for MD326328) | Mode 02 confirmed unsupported on the current ECU → detail view uses the realtime_data fallback by default. Build the capture path only when/if a Mode-02-capable ECU appears. |
 | **Clear-DTC (Mode 04)** path: `dtc_client.clear()` + privileged action endpoint + server-side gate re-check | **NET-NEW (load-bearing)** | the only writer; gate enforced here, not in UI |
 | Static lookup table loader (severity/desc/`clear_eligible`/`suggested_fix`/provenance), synced | NEW (consumes Spool's table) | merge into the `dtc` state so the UI reads enriched codes |
 | Sync-ack signal (capture-before-clear) | NEW | surface "server has acked this code's sync" to gate the Clear button |
@@ -257,7 +269,7 @@ Reuses the F-092 carousel touch enablement; takeover buttons + list rows ≥40×
 | A-1 | **Clear-DTC (Mode 04) path** — net-new writer to the vehicle; who issues it, privilege path (polkit/helper, F-092 precedent), and **server-side/service-side gate re-check** so a clear can't be forced from the UI | PENDING |
 | A-2 | `dtc` state emitter — ownership, path, schema (`/var/run/eclipse-obd/states/dtc`); merge of live codes + synced static table + server enrichment | PENDING |
 | A-3 | Extend `eclipse-states-http` with the read-only `dtc` endpoint | PENDING |
-| A-4 | **Pi-side Mode 02 freeze-frame capture** on MD326328 — capture-before-clear; honest fallback if unsupported (advisory §5) | PENDING (jointly w/ Spool) |
+| A-4 | ~~Pi-side Mode 02 freeze-frame capture on MD326328~~ — **RESOLVED**: Mode 02 confirmed unsupported (Spool live probe 2026-06-05). Capture path deferred; realtime_data fallback is the default render. Atlas only blesses the fallback contract. | RESOLVED — confirm fallback |
 | A-5 | **Capture-before-clear sync-ack signal** — where "server acked this code" originates + how the gate reads it | PENDING |
 | A-6 | Takeover lifecycle over the kiosk (auto-surface overlay vs carousel; escalation re-fire; ribbon) | PENDING |
 | A-7 | `suggested_fix` server-side enrichment + sync into the `dtc` state (web + Ollama; advisory §6a) — server architecture | PENDING |
@@ -269,7 +281,7 @@ Reuses the F-092 carousel touch enablement; takeover buttons + list rows ≥40×
 | S-1 | Severity classification per code (the `severity` value in the `dtc` state) — incl. DSM P1xxx subset (advisory §7.1) |
 | S-2 | `clear_eligible` + the clear-gate thresholds (all-MINOR; capture+sync-ack) — confirm rendered correctly |
 | S-3 | `suggested_fix` + `fix_provenance` values + the severity-override copy ("diagnose, don't swap parts") |
-| S-4 | Live drive-27 code classification + Mode 02 probe result (advisory §7.2–7.3) — gates I-1/I-2 |
+| S-4 | ~~Live drive-27 code classification + Mode 02 probe~~ — **DONE** (2026-06-05): first code P0443 = 🟢 MINOR, read→log→clear→re-read live-validated; Mode 02 confirmed unsupported. Remaining: DSM P1xxx severity + `suggested_fix` subset (S-1/S-3 data, on Spool's plate). |
 
 ### Argus (advisory)
 | # | Item |
@@ -281,12 +293,12 @@ Reuses the F-092 carousel touch enablement; takeover buttons + list rows ≥40×
 ### Marcus (PM — sprint scoping)
 | # | Item |
 |---|---|
-| M-1 | Proposed split: **US-A** `dtc` emitter + state-server endpoint + static-table loader/sync · **US-B** takeover + ribbon (severity-styled, frequency rules) · **US-C** Alerts card (hero+list) + detail view (freeze-frame + severity-gated fix + trust badge) · **US-D** Clear-DTC Mode 04 path + gate + confirm + re-read + session-lock (load-bearing — pairs with Atlas A-1) · **US-E** Mode 02 freeze-frame capture (or honest-fallback) |
+| M-1 | Proposed split: **US-A** `dtc` emitter + state-server endpoint + static-table loader/sync · **US-B** takeover + ribbon (severity-styled, frequency rules) · **US-C** Alerts card (hero+list) + detail view (freeze-frame + severity-gated fix + trust badge) · **US-D** Clear-DTC Mode 04 path + gate + confirm + re-read + session-lock (load-bearing — pairs with Atlas A-1) · **US-E** detail-view realtime_data fallback render (Mode 02 unsupported on current ECU — no capture path; lands with US-C) |
 | M-2 | **Depends on** the F-092/F-097 carousel shell (Card 5 slot) + F-103 kiosk/state-server — sequence after/with them |
 | M-3 | Rule-10 DoD: the emitter + Mode 04 path + token land matching `specs/architecture.md` + `specs/UI/` updates in-sprint (A-1/A-2/A-8) |
 
 ## 11. Open Questions
-- **Mode 02 support on MD326328** — if the live probe (advisory §7.2) shows freeze-frame is silent, the detail view shows the `realtime_data` context fallback; confirm that's acceptable vs. omitting the section. (Atlas A-4 / Spool S-4.)
+- ~~Mode 02 support on MD326328~~ — **RESOLVED 2026-06-05**: confirmed unsupported (Spool live probe). Detail view uses the realtime_data context fallback as the default; no capture path built for this ECU.
 - **Takeover dismissal on STOP while driving** — "Acknowledge" drops to ribbon; confirm there's no scenario where STOP must stay full-screen (vs. always allowing the driver to clear the view to see the road). Current design favors driver control (ribbon persists).
 - **Clear of mixed pending+stored** — Mode 04 wipes pending too; confirm the gate copy makes that clear (covered in confirm text; flag if more emphasis wanted).
 
