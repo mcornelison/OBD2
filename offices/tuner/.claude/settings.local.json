@@ -1,8 +1,5 @@
 {
   "permissions": {
-    "additionalDirectories": [
-      "Z:/o/OBD2v2"
-    ],
     "allow": [
       "Read",
       "Glob",
@@ -21,7 +18,6 @@
       "Skill(optimize-office-tuner)",
       "Skill(review-stories-tuner)",
       "PowerShell(Test-Path *)",
-
       "Edit(//z/o/OBD2v2/*)",
       "Write(//z/o/OBD2v2/*)",
       "Edit(//z/o/OBD2v2/data/**)",
@@ -40,10 +36,8 @@
       "Write(//z/o/OBD2v2/tests/**)",
       "Edit(//z/o/OBD2v2/tools/**)",
       "Write(//z/o/OBD2v2/tools/**)",
-
       "Edit(//z/o/OBD2v2/offices/tuner/**)",
       "Write(//z/o/OBD2v2/offices/tuner/**)",
-
       "Write(//z/o/OBD2v2/offices/architect/inbox/**)",
       "Edit(//z/o/OBD2v2/offices/architect/inbox/**)",
       "Write(//z/o/OBD2v2/offices/pm/inbox/**)",
@@ -54,7 +48,6 @@
       "Edit(//z/o/OBD2v2/offices/tester/inbox/**)",
       "Write(//z/o/OBD2v2/offices/uidevloper/inbox/**)",
       "Edit(//z/o/OBD2v2/offices/uidevloper/inbox/**)",
-
       "Bash(ls *)",
       "Bash(ls)",
       "Bash(cat *)",
@@ -129,13 +122,18 @@
       "Bash(pdftotext *)",
       "Bash(\"/c/Program Files/MariaDB 12.2/bin/mysql.exe\" *)",
       "Bash('/c/Program Files/MariaDB 12.2/bin/mysql.exe' *)",
-      "Bash(\"C:\\\\Program Files\\\\MariaDB 12.2\\\\bin\\\\mysql.exe\" *)"
+      "Bash(\"C:\\\\Program Files\\\\MariaDB 12.2\\\\bin\\\\mysql.exe\" *)",
+      "WebFetch(domain:roadraceengineering.com)",
+      "WebFetch(domain:www.troublecodes.net)"
     ],
     "deny": [
       "Bash(rm -rf /)",
       "Bash(rm -rf ~)",
       "Bash(rm -rf /z/o/OBD2v2)",
       "Bash(rm -rf //z/o/OBD2v2)"
+    ],
+    "additionalDirectories": [
+      "Z:/o/OBD2v2"
     ]
   }
 }
