@@ -1,9 +1,24 @@
-# Session Log — Archive (2026-05-18 → 2026-06-01 cont.3)
+# Session Log — Archive (2026-05-18 → 2026-06-01 cont.4)
 
 Verbatim archive of Atlas session-log entries, extracted from charter §9 to keep
 the charter lean. The latest in-flight entry stays in `claude.md` §9; this file
 holds everything before it. Order matches the charter (newest archived entry —
 cont.3 — first; onboarding last). See `claude.md` §9 for the dated index.
+
+---
+### 2026-06-01 (cont. 4) — A-13 resolved on prod + V0.28.2 Rule 13 PASS + handbook §13 adopted
+
+Fast-moving session; the team shipped a lot in parallel (V0.28.1 deployed, IRL drill, V0.28.2 spun). Triaged inbox + executed the owed items:
+
+- **A-13 ECU-id correction — RESOLVED.** Checked chi-srv-01 directly (parsed creds from the shared `.env`, queried via SSH): v0011 had deployed with the wrong `MD335287`. Per CIO ("small project, small adjustments, avoid a runaway-train sprint"), fixed prod with **one guarded UPDATE** (`ecu` id=2 `MD335287→MD326328`, 1 row, verified) — the normalized FK design made it a one-row fix (everything refs `ecu.id`, so `speed_pid` factor 0.5 + FKs preserved, no re-backfill, no v0012). **Spool ratified** `MD326328`/`E2T61683` (same physical box, mis-ID — validates my disposition). Code-seed fix groomed into **US-378** (V0.28.2) from my grep table. Corrected **architecture.md §5** seed (3 spots) + added an A-13 provenance note (no silent value change). Deploy-record note to PM committed (`e742ce5`). Discipline lesson: I over-produced artifacts (multiple dispatch notes) for a one-row fix — CIO corrected me twice; the ceremony serves the work, not vice-versa. **Lighten up on small adjustments.**
+
+- **V0.28.2 PM Rule 13 — PASS** (US-377 + US-378). Verified vs code: US-377 widens `data_quality`→VARCHAR(20) (`DATA_QUALITY_COLUMN_LENGTH=20` SSOT constant, v0012) with a **generic width-INVARIANT guard** (every CHECK-enum column ≥ its longest value — kills the SQLite-vs-MariaDB false-pass class structurally); ran the audit myself (no other enum-width mismatch: data_source 11≤16, capture_method 15≤32). US-378 `grep MD335287 src/ tests/ = 0` (all-sites-coherent, matches my A-13 constraint). bigDoD 6 = exact per-story sum; hash `b800f046`; key tests green on my box. Filed `../pm/inbox/2026-06-01-from-atlas-v0.28.2-rule-13-PASS.md`.
+
+- **Git-races flagged → handbook §13.** My evidence-based note on the shared-checkout commit races (files vanishing, commits racing branch switches) → CIO ratified the **lightweight soft protocol** (handbook §13 "Shared-checkout discipline"), my diagnosis drove it. Adopted into §5 Operating Model (commit-immediately office-scoped; never switch branches — PM integrates; retry-on-lock; re-read on "modified since read"). Nothing was actually lost — all my commits are on `sprint45-V0.28.2`.
+
+- **GPS calibration inputs all in** (Spool sourced): tire Potenza 205/55R16 ≈1.985 m circ; F5M33 ratios (5th 0.741 / final 4.153). Gear-math cross-check already corroborates the expected **clean ~0.5 scalar** (Drive 26 ~37 computed vs 84 PID = 2×). GPS run stays primary + tire/gear-independent; rides the drive-27 drill. **Still owe:** US-367 backfill ruling ("2 rows vs append-only+PRE_TRACKING 3 rows") when it re-grooms.
+
+- **architecture.md optimized (CIO-directed, −35%).** It had grown to 3749 lines/237KB; now **2553 lines/154KB**. Extracted 4 non-current bodies to `specs/arch/` (verbatim, pointers left), no current-system content removed: (1) Phase-2 ECMLink+data-volume design → `phase2-data-architecture.md`; (2) full mod-history → `architecture-changelog.md`; (3) per-version migration registry v0001–v0012 + V0.28.x schema-pass narratives + Rule-10 records → `schema-migration-history.md`; (4) Shutdown-Sequencer superseded design + Sprint-40 F-7/F-8 fix narratives + Data-Pipeline retired-writer cross-links + V0.27.17 empirical snapshot + B-104 lesson + both Rule-10 gate records → `subsystem-evolution-history.md`. §11 reviewed → all current deploy reference, nothing extracted. Commits `5abae71`/`c7abae9`/`c0f2a7b`.
 
 ---
 ### 2026-06-01 (cont. 3) — SPEED-PID GPS calibration spec'd + ECU-id correction MD335287→MD326328 caught (A-13)
