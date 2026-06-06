@@ -3,20 +3,22 @@
     "additionalDirectories": [
       "Z:/o/OBD2v2",
       "/z/o/OBD2v2",
-      "C:/Users/mcorn/.claude"
+      "C:/Users/mcorn/.claude/projects/Z--o-OBD2v2"
     ],
     "allow": [
-      "Read(**)",
-      "Edit(**)",
-      "Write(**)",
+      "Read(Z:/o/OBD2v2/**)",
+      "Read(Z:/O/OBD2v2/**)",
+      "Read(/z/o/OBD2v2/**)",
+      "Read(//z/o/OBD2v2/**)",
+      "Read(C:/Users/mcorn/.claude/projects/Z--o-OBD2v2/**)",
       "Edit(Z:/o/OBD2v2/**)",
       "Write(Z:/o/OBD2v2/**)",
-      "Edit(//z/o/OBD2v2/**)",
-      "Write(//z/o/OBD2v2/**)",
       "Edit(/z/o/OBD2v2/**)",
       "Write(/z/o/OBD2v2/**)",
-      "Edit(C:/Users/mcorn/.claude/**)",
-      "Write(C:/Users/mcorn/.claude/**)",
+      "Edit(//z/o/OBD2v2/**)",
+      "Write(//z/o/OBD2v2/**)",
+      "Edit(C:/Users/mcorn/.claude/projects/Z--o-OBD2v2/memory/**)",
+      "Write(C:/Users/mcorn/.claude/projects/Z--o-OBD2v2/memory/**)",
       "Glob",
       "Grep",
       "WebFetch",
@@ -118,7 +120,20 @@
       "Bash(XAUTHORITY=*)",
       "Bash(until:*)"
     ],
-    "deny": [],
+    "deny": [
+      "Read(**/.ssh/**)",
+      "Edit(**/.ssh/**)",
+      "Write(**/.ssh/**)",
+      "Read(**/.aws/**)",
+      "Edit(**/.aws/**)",
+      "Write(**/.aws/**)",
+      "Edit(**/.git/hooks/**)",
+      "Write(**/.git/hooks/**)",
+      "Edit(C:/Users/mcorn/.claude/settings.json)",
+      "Write(C:/Users/mcorn/.claude/settings.json)",
+      "Edit(C:/Users/mcorn/.claude/hooks/**)",
+      "Write(C:/Users/mcorn/.claude/hooks/**)"
+    ],
     "ask": []
   }
 }
