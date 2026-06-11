@@ -105,6 +105,55 @@ starts from.
 - The CIO can see + measure the physical part; trust his lived reading and make
   the model agree with HIS datum (see also `feedback-cio-measures-clearance-from-glass-edge.md`).
 
+## Lesson 7 — The model frame is "viewed from the BACK"; the CIO photographs the FRONT → left-right is MIRRORED, and a Y-symmetric mount lets the board install flipped (2026-06-10)
+
+v2.5 fit-check. The SCAD frame comment says *"viewed from the BACK."* The CIO's
+photos are **screen-facing (front view)**. Front view mirrors X vs the model — so
+his "USB-C is on the **right**" and my source's `X=0` (left) are the **same port**,
+just mirrored. He even started saying "usb-c on the left" (model intent) then
+corrected to "on the right" (what the photo shows) — both true, different frames.
+
+Worse: the mount-hole pattern is **Y-symmetric** (3.5 mm from both long edges,
+same X columns), so the PCB physically installs **either Y-orientation** and the
+screws still fit perfectly. The real board went in Y-flipped from my assumption,
+stranding the HDMI clearance gap + button holes on the **opposite long edge** from
+the actual HDMI port. That single root cause was 2 of his 5 change requests at once
+("buttons → opposite wall" + "HDMI gap → other side").
+
+**How to apply:**
+- State BOTH the model frame AND the CIO's viewing frame, and the transform between
+  them. Here: CIO front view = model **180° rotated** (mirror X + flip Y).
+- Two questions cause backwards edits — resolve them with **binary `AskUserQuestion`s
+  BEFORE editing**: (1) the Y question — "with HDMI up, is feature X on top or
+  bottom?"; (2) the sign of any shift — "'4 mm to the right' = toward which named
+  landmark (logo / USB-C)?" Don't infer left/right from the word; infer from the
+  landmark he names.
+- Render the result back **in the CIO's exact view** (his "top" at image top, his
+  "right" at image right) — NOT the model's native frame — so the confirmation
+  picture matches what he's holding. My first schematic used the model's top/bottom
+  and he caught it immediately; the re-render in his frame confirmed cleanly.
+- A Y-symmetric (or X-symmetric) mount pattern is a TRAP: "the screws fit" does NOT
+  prove the board is in the intended orientation. Check a *non*-symmetric feature
+  (connector edge) to know which way it really sits.
+
+## Lesson 8 — Reading a connector clearance off a ruler photo: parallax magnifies, so err the protrusion LONG (2026-06-10)
+
+CIO sent the 90° HDMI plug fully inserted with a ruler laid alongside, asked for
+"plug + 3 mm." The plug body sits ~1 cm **above** the ruler (it's on the elevated
+device), so the camera's parallax makes it appear **larger** against the paper
+scale than it really is. Read ≈18 mm → true protrusion is likely ≤18 mm. Reading
+it slightly long and adding the 3 mm there (set 21.5 mm glass-edge-to-wall) is the
+**safe** direction — a clearance over-estimate just adds a hair of plastic; an
+under-estimate is a failed print (same spirit as Lesson 6's "err toward more
+connector room"). Also restate the **datum** for the plug read (I measured to the
+visible glass edge → used the `3.5 + clearance_top` glass-datum formula).
+
+Design note: a **frozen window + an adjustable `pcb_shift`** cleanly decouples two
+concerns — `window_origin` sets where the screen sits *cosmetically* (centering),
+while `pcb_shift_x` moves the *mounts* to register the real (off-center) glass onto
+that window so the lid snaps. The CIO's "center the screen" and "shift posts 4 mm"
+were two different knobs, not a conflict.
+
 See also: `knowledge/pattern-openscad-cli-numeric-part-selector.md`,
 `knowledge/feedback-cio-architectural-paths-belong-to-atlas.md`,
 `knowledge/feedback-cio-measures-clearance-from-glass-edge.md`,
