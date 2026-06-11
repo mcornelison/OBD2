@@ -7,6 +7,11 @@
 //   v2 rebuild    2026-05-28 (CIO fit-check)
 //   v2.1 rebuild  2026-05-29 — driven by the OFFICIAL 2024009100 datasheet
 //                 (datasheets/2024009100_hdmi_datasheet.pdf) per CIO.
+//   v2.7 2026-06-10 — CIO fit-check of the v2.5 print (photos/PXL_20260611_*):
+//     #4 posts +4mm toward logo (real glass off-center on mounts -> lid snaps);
+//     #3 screen centered L-R; #5 HDMI clearance moved to the HDMI(Y=0) long edge;
+//     #1 button holes -> Y=0 wall; #2 Type-C exit -> Y=0/HDMI corner;
+//     HDMI 90° plug measured ~18mm -> clearance set for plug+3mm (21.5mm).
 //
 // Render:
 //   openscad -o stl/back_shell.stl  -D part=1 display-case.scad
@@ -26,10 +31,13 @@
 //
 // FRAME (datasheet landscape, viewed from the BACK):
 //   model +X = long axis toward the OSOYOO logo (RIGHT short edge)
-//   model  X = 0  -> LEFT short edge  (Type-C)         -> +6mm clearance here
-//   model +Y = TOP long edge (HDMI / buttons / power)  -> 19mm gap to top wall
-//   model  Y = 0  -> BOTTOM long edge
-//   model  Z = 0  -> outer BACK face (front/bezel = +Z)
+//   model  X = 0  -> LEFT short edge  (Type-C)         -> +clearance_left here
+//   model +Z = front/bezel;  model Z = 0 -> outer BACK face
+//   CORRECTED 2026-06-10 (CIO front-view fit-check): the HDMI / buttons / Type-C
+//   corner is physically the model Y=0 long edge (NOT +Y as the datasheet frame
+//   nominally reads). All HDMI-side features (clearance gap, button holes,
+//   Type-C exit) live on Y=0. The screen window is pushed to the +Y end so the
+//   ~clearance_top empty band falls on the Y=0 (HDMI) side.
 // =========================================================================
 
 part = 0;   // 0 = assembly (with cues), 1 = back shell, 2 = front shell
@@ -41,10 +49,12 @@ corner_r    = 2.0;
 print_tol   = 0.3;
 
 // ---- #6 asymmetric clearance --------------------------------------------
-clearance_top  = 15.5;  // +Y long edge -> 19mm GLASS-edge-to-top-wall gap (CIO
-                        // ruler datum = glass surface edge, not PCB). Gives the
-                        // 90° micro-HDMI plug body + its left turn room to share
-                        // the LEFT-wall exit. PCB-edge-to-wall = 21.3mm.
+clearance_top  = 18.0;  // HDMI long-edge clearance. After the #5 window flip this
+                        // gap lands on the Y=0 (HDMI) side. CIO measured the 90°
+                        // micro-HDMI plug body at ~18mm protrusion from the GLASS
+                        // edge (photo PXL_20260611_031121677 + ruler, 2026-06-10);
+                        // +3mm required -> 21mm min. Set for 21.5mm glass-edge-to-
+                        // wall (buffer for parallax). PCB-edge-to-wall = 23.3mm.
                         // glass-edge gap = 3.5 + clearance_top; PCB-edge gap = 5.8 + clearance_top.
 clearance_left = 6.0;   //  X=0 short edge (Type-C 90° head)
 
@@ -62,10 +72,12 @@ pcb_x = 85.00;    // PCB long axis (X)
 pcb_y = 56.00;    // PCB short axis (Y) -- datasheet "49mm" is the mount-hole
                   // vertical c-c (3.5 + 49 + 3.5 = 56), NOT the edge; CIO's 56 was right
 
-// PCB registration behind the glass. Datasheet active area is centered on the
-// glass and the v1 window fit with the PCB centered, so default = centered.
-// If a fit-check shows a real offset, bump these (CIO gaps hinted ~+? right).
-pcb_shift_x = 0.0;
+// PCB registration behind the glass. The real OSOYOO glass is NOT centered on
+// its mount-hole pattern: CIO's v2.5 fit-check (2026-06-10) showed the lid would
+// not snap because the standoff-placed screen sat ~4mm off the frozen window.
+// pcb_shift_x = mount-center offset from window-center (toward +X / OSOYOO logo)
+// so the real glass registers back onto the window. v2.7.
+pcb_shift_x = 4.0;   // #4 — CIO ruler: posts 4mm toward the logo (front-view)
 pcb_shift_y = 0.0;
 
 // ---- Mount holes (datasheet trapezoid; x from LEFT/X=0, y from BOTTOM/Y=0) -
@@ -115,9 +127,14 @@ base_case_y = glass_cutout_y + 2*(bezel_width + wall_t);
 case_x = base_case_x + clearance_left;   // extra on X=0 side
 case_y = base_case_y + clearance_top;    // extra on +Y side
 
-// ---- Frozen window placement (extra clearance on X=0 and +Y) ------------
-window_origin_x = bezel_width + wall_t + clearance_left;  // push window +X
-window_origin_y = bezel_width + wall_t;                   // extra falls on +Y
+// ---- Window placement -----------------------------------------------------
+// #3 CIO 2026-06-10: CENTER the screen left-right in the case (case outline /
+//    snap unchanged; only the window slides within it -> symmetric L-R bezel).
+// #5 CIO 2026-06-10: the HDMI 90deg clearance gap belongs on the HDMI long edge,
+//    which is physically the Y=0 side. Push the window to the +Y end so the
+//    ~clearance_top empty band falls on the Y=0 (HDMI) side, not +Y.
+window_origin_x = (case_x - glass_cutout_x) / 2;         // centered in X
+window_origin_y = bezel_width + wall_t + clearance_top;  // gap falls on Y=0 (HDMI)
 glass_cx = window_origin_x + glass_cutout_x/2;
 glass_cy = window_origin_y + glass_cutout_y/2;
 
@@ -153,13 +170,16 @@ vent_margin       = 6.0;
 vent_keepout_disc = disc_diameter/2 + 4.0;
 vent_keepout_seat   = seat_cup_d/2 + 3.0;
 
-// ---- #5 cable exit (LEFT / X=0 wall, aligned with the Type-C port) -------
-// CIO: Type-C is on the LEFT short edge, 6.4 mm from the TOP (+Y), 9 mm long.
-usbc_from_top  = 6.4;
+// ---- #2 cable exit (LEFT / X=0 wall, aligned with the Type-C port) -------
+// Type-C is on the LEFT short edge, 6.4 mm from the HDMI long edge. The HDMI
+// long edge is physically the Y=0 side (CIO front-view 2026-06-10), so the
+// Type-C sits near the Y=0 end of the short edge — moved here from the +Y end
+// to follow the screen up to the HDMI side (#2: "closer to the new buttons").
+usbc_from_hdmi = 6.4;              // along the short edge, from the HDMI(Y=0) edge
 usbc_len       = 9.0;
 cable_slot_len = usbc_len + 9.0;   // 18mm — connector + 90° head clearance
 cable_slot_h   = 14.0;             // along Z (taller opening per CIO)
-cable_slot_cy  = (pcb_origin_y + pcb_y) - usbc_from_top - usbc_len/2;  // centered on the Type-C
+cable_slot_cy  = pcb_origin_y + usbc_from_hdmi + usbc_len/2;  // near the Y=0/HDMI corner
 cable_slot_z0  = wall_t + 2.0;
 
 // =========================================================================
@@ -189,9 +209,10 @@ module back_shell() {
             cube([wall_t + 0.2, cable_slot_len, cable_slot_h]);
         // standoff seat cuts
         for (p = mount_pts) translate([p[0], p[1], 0]) seat_cut();
-        // #4 button holes through the TOP (+Y) wall — buttons face +Y like the HDMI
+        // #1 button holes through the Y=0 wall — buttons sit on the HDMI long
+        // edge, which is physically the Y=0 side (CIO front-view 2026-06-10).
         for (bx = button_x_pts)
-            translate([bx, case_y - wall_t - 0.1, button_z])
+            translate([bx, -0.1, button_z])
                 rotate([-90, 0, 0])
                     cylinder(h = wall_t + 0.2, d = button_hole_dia + print_tol, $fn = 24);
         // #7 vents
@@ -274,7 +295,7 @@ module front_shell() {
 module assembly_view() {
     back_shell();
     color("cyan", 0.5) translate([0, 0, back_shell_z]) front_shell();
-    for (bx = button_x_pts) color("orange") translate([bx, case_y - wall_t, button_z]) rotate([-90,0,0]) cylinder(h = wall_t, d = button_hole_dia, $fn = 24);
+    for (bx = button_x_pts) color("orange") translate([bx, 0, button_z]) rotate([-90,0,0]) cylinder(h = wall_t, d = button_hole_dia, $fn = 24);
 }
 
 // =========================================================================
