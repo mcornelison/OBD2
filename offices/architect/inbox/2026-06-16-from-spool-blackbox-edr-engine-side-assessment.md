@@ -44,7 +44,16 @@ I'll own the full engine-trigger threshold spec when this grooms.
 ## 5. Architectural tension with B-104 (your call)
 B-104 deliberately made the **Pi a dumb emitter, server the brain** (server computes analytics from raw `realtime_data`). The EDR model puts **trigger logic + event-sealing back ON the Pi.** Not necessarily contradictory — you can stream raw *and* keep a local ring + event vault — but it's a real fork and shouldn't *silently* reverse B-104. Flagging for an explicit ruling.
 
-## 6. Credit + cross-refs
+## 6. Single source of truth + a dedicated reader per source (CIO architectural directive)
+CIO directive to carry into this design: **every data consumer sources from exactly ONE canonical source — never directly from the device.** And: **stand up a dedicated data-reading process** that owns the hardware I/O, normalizes, and publishes; all consumers (recorder/event-vault, trigger service, sync/export, display, and the server pipeline) read from that single published source downstream — never reach around it to the hardware.
+
+Why this is a hardware constraint here, not just tidy design:
+- **The K-line physically tolerates ONE reader.** The ELM327 is request-reply over a single 10.4 kbps channel — two processes polling it concurrently corrupt the sequencing and tank the already-thin ~6 samples/sec budget. A single dedicated OBD reader isn't a preference; it's forced by the bus.
+- It **resolves the ECMLink/OBDLink contention** in §3 cleanly: one reader owns the diagnostic channel and arbitrates OBD-vs-ECMLink access, instead of two services racing the same port.
+- It keeps faith with **B-104**: the server already treats raw `realtime_data` as its one source. Extend the same discipline Pi-side — the dedicated reader is the single *producer*; ring buffer, event vault, triggers, and display are all *consumers* of that one stream.
+- Line in the sand: the external plan's `sensor-obd` / `sensor-imu` / `sensor-light` split is fine **only** if each is the sole owner of its bus (OBD on serial; IMU + light on I²C) and publishes into the one canonical buffer — and no consumer (especially display or triggers) ever opens the hardware itself.
+
+## 7. Credit + cross-refs
 - **Power integrity** (the plan's stated #1 risk): we're already ahead — ShutdownSequencer (F-7), UPS HAT, MAX17048, EEPROM `POWER_OFF_ON_HALT`. The hard part is largely solved.
 - **Light sensor → display auto-dim:** CIO flagged this as a use beyond context-logging. That's **Iris's lane** (UI/display brightness) — routing a pointer to her; not architecting it here.
 - **Scope:** this is a **V0.3x+ epic**, not a sprint — complements the tuning mission (event reconstruction + datalog context), doesn't replace it. PM should size it as such.
