@@ -58,6 +58,26 @@ Why this is a hardware constraint here, not just tidy design:
 - **Light sensor → display auto-dim:** CIO flagged this as a use beyond context-logging. That's **Iris's lane** (UI/display brightness) — routing a pointer to her; not architecting it here.
 - **Scope:** this is a **V0.3x+ epic**, not a sprint — complements the tuning mission (event reconstruction + datalog context), doesn't replace it. PM should size it as such.
 
+## 8. Derived-signal catalog + compute placement (IMU × speed × engine)
+CIO's framing: the 9-DoF IMU turns our 1-D speed trace into a full 6-DOF picture of what the car — and the engine — was doing. Confirmed RPM **is** in our logged set, so gear is derivable. Catalog ranked by tuning value, each tagged with where it should compute:
+
+| # | Inference | Inputs | Tuning value | Compute |
+|---|---|---|---|---|
+| 1 | **Gear + shift quality + clutch slip** | speed÷RPM (F5M33 ratios) + long-g | gear is the master context for every trim/knock/load reading; slip protects drivetrain | **Server** derives; Pi may show live gear |
+| 2 | **Road grade → grade-corrected load** | accel gravity vector + gyro (pitch) | removes the #1 confounder in fuel-trim/knock analysis (hill vs boost) | **Server** (fusion) |
+| 3 | **Boost onset / spool characterization** | long-g rate inflection + RPM | maps where TD04-13G lights + spool consistency drive-to-drive, with **no boost PID** | **Server** |
+| 4 | **Lateral-g ↔ fuel-trim correlation** | lateral-g + STFT/LTFT | separates real lean tune fault from corner fuel-slosh (hazard on boost) | **Server** |
+| 5 | **Vertical-g ↔ knock discrimination** | vertical-g + knock-retard | knock sensor is an accelerometer — hears potholes as "knock"; throws out road-induced false knock | **Server** (gated on ECMLink §3) |
+| 6 | **DFCO window flag** | long-g + throttle + RPM | excludes decel-fuel-cut samples that pollute LTFT interpretation | **Server** |
+| 7 | **Poor-man's dyno trend** | long-g × mass (~1300 kg) + drag model | drive-to-drive thrust consistency → catches boost leak / failing pump without a dyno | **Server** |
+
+**"During the drive" vs server — the placement rule (ties to §6 + B-104):**
+- Server compute is only available *after* sync (home WiFi), so server-derived signals inform the **next** drive + build the engine's behavioral model over time — they are not a live readout.
+- **Live on Pi** (cheap, safety-relevant, off the one canonical stream — never re-reading hardware): current gear, live lateral/longitudinal-g, road grade, and safety alerts (coolant ≥104 °C, knock if ECMLink, voltage brownout).
+- **Server** (heavy fusion/correlation/modeling): items 2–7. Fusing 100 Hz IMU against ~6 Hz OBD needs interpolation/time-alignment the Pi shouldn't burn cycles on mid-drive — inherently a server job, and consistent with B-104.
+
+**Build-first recommendation:** items 1–3 (**gear, grade-corrected load, spool characterization**) — they re-contextualize *every datalog we already have* and need nothing but the IMU + our existing PID set. Items 4–7 are higher-sophistication payoffs on that foundation.
+
 ## What I can deliver when you want it
 1. Measured OBD throughput budget + PID-priority allocation for our K-line.
 2. Full engine-protection trigger spec with thresholds + rationale.
