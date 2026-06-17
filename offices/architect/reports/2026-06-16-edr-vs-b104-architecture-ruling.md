@@ -88,6 +88,31 @@ event-vault *marker* (when/why a trigger fired) syncs as an event-log record (pe
 `drive_start_timestamp`/`data_source` fields the Pi already writes and the server already preserves
 without overwriting), **not** as a computed-analytics row.
 
+### 3a. Refinement (CIO 2026-06-16): server sync is a uniform bus subscriber, not a special path.
+
+Correcting a framing in §2/§3: the server-sync is **not** a separate emitter sitting beside the bus
+("raw flows to the server"). It is **just another subscriber** — one whose sole job is to read the
+raw stream off the bus, persist it to a local durable store, and hand it to the server on next
+upload. No bespoke sync emitter; sync is a normal consumer of the one producer. This is strictly
+more uniform and is the correct expression of the SSOT-bus direction (Watch List A-14): the bus is
+the only producer, *everything* — vault, display, triggers, **and sync** — is a subscriber.
+
+Two consequences this refinement makes cleaner:
+
+- **Bound B becomes a subscription filter, not a remembered rule.** "Don't send the server what it
+  can recompute" is enforced by *what the sync subscriber is wired to listen to* — it subscribes to
+  the **raw topics** (raw OBD, raw IMU) and the event-log/marker topic, and **not** the
+  transform-tier topics (derived analytics). A new raw source → the "all-raw" sync subscriber picks
+  it up with zero code change; a new derived transform → sync ignores it (server recomputes). Self-
+  enforcing beats remembered-discipline.
+- **Per-subscriber QoS is now a required property of the bus.** Because sync is a subscriber and the
+  server is the *authority*, the sync subscription MUST be **lossless/durable** — a dropped sample is
+  a permanent hole in the authoritative record. The safety-trigger subscription is likewise lossless
+  (a missed coolant alarm is unacceptable). The display subscription, by contrast, is **lossy-OK**
+  (drop a late frame rather than stall the producer). So subscribers declare a *delivery guarantee*,
+  not just a topic. This is a load-bearing requirement on gate #1 (the dedicated-reader/bus
+  contract): a single drop policy for all consumers is wrong; QoS is per-subscription.
+
 ## 4. Consequence for §6 (single reader) — this ruling depends on it
 
 This ruling assumes Spool §6 / the CIO single-reader directive holds: **one dedicated process owns
