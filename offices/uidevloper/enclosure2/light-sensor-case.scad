@@ -119,14 +119,14 @@ module board_ghost() {
                 cylinder(h = 1.6, r = 2.3);
 }
 
-// diffuser plate (template / ghost) in board-local space
+// diffuser plate (ghost) in board-local space — resting downhill against the
+// short (low-Y) wall, edges captured groove_depth into the two angled walls.
 module diffuser_plate() {
-    // spans inner footprint; long edges sit groove_depth into each wall
-    py0 = -clr - (groove_depth - 0.4);
-    py1 = (board_h + clr) + (groove_depth - 0.4);
+    px0 = -clr - (groove_depth - 0.4);
+    px1 = (board_w + clr) + (groove_depth - 0.4);
     on_board()
-        translate([-clr, py0, diffuser_floor])
-            cube([inner_x, py1 - py0, lid_thickness]);
+        translate([px0, -clr + 0.3, diffuser_floor])
+            cube([px1 - px0, inner_y - 0.6, lid_thickness]);
 }
 
 // ======================================================================
@@ -178,15 +178,19 @@ module shell() {
         // ---- trim the top to the tilted (board-parallel) rim plane ----
         on_board() translate([-50, -50, case_top_local]) cube([100, 100, 60]);
 
-        // ---- diffuser grooves: low-Y long wall ----
-        on_board() translate([-clr - wall - 3, -clr - groove_depth, diffuser_floor])
-            cube([inner_x + clr + wall + 3, groove_depth, lid_thickness + lid_clear]);
-        // ---- diffuser grooves: high-Y long wall ----
-        on_board() translate([-clr - wall - 3, board_h + clr, diffuser_floor])
-            cube([inner_x + clr + wall + 3, groove_depth, lid_thickness + lid_clear]);
-        // ---- insertion mouth through the near (X=0) short wall ----
-        on_board() translate([-clr - wall - 3, -clr - groove_depth - 0.5, diffuser_floor])
-            cube([wall + 3.5, inner_y + 2*groove_depth + 1, lid_thickness + lid_clear]);
+        // ---- diffuser grooves: BLIND, interior only, in the two ANGLED ----
+        // (X-end, sloped-top) walls. Run down-slope (local +Y) from the
+        // tall-wall mouth to the short-wall stop. Depth < wall so the outer
+        // faces of the angled walls stay clean (no visible groove).
+        // X=0 angled wall:
+        on_board() translate([-clr - groove_depth, -clr, diffuser_floor])
+            cube([groove_depth, inner_y + wall + 2, lid_thickness + lid_clear]);
+        // X=max angled wall:
+        on_board() translate([board_w + clr, -clr, diffuser_floor])
+            cube([groove_depth, inner_y + wall + 2, lid_thickness + lid_clear]);
+        // ---- insertion mouth: the ONLY visible slot, in the TALL (high-Y) wall ----
+        on_board() translate([-clr - groove_depth, board_h + clr, diffuser_floor])
+            cube([inner_x + 2*groove_depth, wall + 2, lid_thickness + lid_clear]);
 
         // ---- cable exit slot (low-Y wall, passenger side), rounded ----
         translate([case_x/2, wall/2, bottom_wall + cable_h/2])
@@ -212,9 +216,9 @@ module shell() {
 if (part == 1) {
     shell();
 } else if (part == 2) {
-    // flat diffuser template, laid flat for printing / as a cut template
-    translate([-clr, -clr - (groove_depth - 0.4), 0])
-        cube([inner_x, (board_h + 2*clr) + 2*(groove_depth - 0.4), lid_thickness]);
+    // flat diffuser template (cut guide for the plastic sheet), laid flat.
+    // width spans into both grooves; length = down-slope travel.
+    cube([inner_x + 2*(groove_depth - 0.4), inner_y - 0.6, lid_thickness]);
 } else {
     // assembly view
     shell();
