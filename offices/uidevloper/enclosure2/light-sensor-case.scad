@@ -68,6 +68,12 @@ cable_h  = 3.5;         // rounded slot height
 vhb_lip    = 1.5;       // perimeter lip width around the recess
 vhb_recess = 0.5;       // recess depth
 
+// ---- Air vents (thin rounded-end vertical slots) ------------------------
+vent_w      = 1.3;      // slot width (the thin dimension)
+vent_len    = 4.5;      // slot length (vertical)
+vent_z      = 5.5;      // center Z of tall-wall vents
+vent_z_side = 5.0;      // center Z of angled-wall vents (kept below the side grooves)
+
 // ---- Derived ------------------------------------------------------------
 header_rest_z = bottom_wall + cable_clr;          // Z of board bottom at header edge
 x0 = wall + clr;                                  // board local origin X (world)
@@ -100,6 +106,20 @@ $fn = 48;
 // board lying in +X/+Y, tilted +tilt about X, pivot at the header edge).
 module on_board() {
     translate([x0, y0, header_rest_z]) rotate([tilt, 0, 0]) children();
+}
+
+// vertical rounded-end vent slot, cut THROUGH a wall along Y (for front/back walls)
+module vent_slot_Y() {
+    hull() for (s = [-1, 1])
+        translate([0, 0, s * (vent_len - vent_w) / 2])
+            rotate([90, 0, 0]) cylinder(h = wall * 3, r = vent_w / 2, center = true);
+}
+
+// vertical rounded-end vent slot, cut THROUGH a wall along X (for the angled walls)
+module vent_slot_X() {
+    hull() for (s = [-1, 1])
+        translate([0, 0, s * (vent_len - vent_w) / 2])
+            rotate([0, 90, 0]) cylinder(h = wall * 3, r = vent_w / 2, center = true);
 }
 
 // rounded rectangle (2D), corner radius r
@@ -224,6 +244,15 @@ module shell() {
         translate([vhb_lip, vhb_lip, -0.01])
             linear_extrude(vhb_recess + 0.01)
                 rrect(case_x - 2*vhb_lip, case_y - 2*vhb_lip, max(corner_r - vhb_lip, 0.4));
+
+        // ---- air vents: 3 vertical on the TALL (back) wall, evenly spaced in X ----
+        for (i = [1:3])
+            translate([case_x * i/4, case_y - wall/2, vent_z]) vent_slot_Y();
+        // ---- air vents: 2 vertical on EACH angled (X-end) wall, evenly spaced in Y ----
+        for (j = [1:2]) {
+            translate([wall/2,          case_y * j/3, vent_z_side]) vent_slot_X();
+            translate([case_x - wall/2, case_y * j/3, vent_z_side]) vent_slot_X();
+        }
     }
     // standoffs + ledge live inside the cavity
     standoffs();

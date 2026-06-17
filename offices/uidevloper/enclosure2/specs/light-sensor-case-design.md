@@ -63,6 +63,11 @@ The TSL2591 chip (the light aperture) is surface-mounted on the top face.
    rounded slot sized for **4–5 small wires** (~7 × 3.5 mm).
 7. **Interior** — recommend matte black (black filament or paint) to kill stray
    internal reflections. Optical, not geometry.
+8. **Air vents (CIO 2026-06-16)** — thin vertical rounded-end slots (`vent_w` 1.3 ×
+   `vent_len` 4.5 mm): **3 evenly spaced on the tall/back wall**, **2 on each angled
+   side wall**, all in the lower region (clear of the diffuser grooves, mouth, and
+   cable hole). Help convection so the sealed case doesn't bake the sensor on a
+   sun-loaded dash.
 
 ## Print
 
