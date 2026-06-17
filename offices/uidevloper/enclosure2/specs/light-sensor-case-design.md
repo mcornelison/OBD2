@@ -60,6 +60,8 @@ The TSL2591 chip (the light aperture) is surface-mounted on the top face.
 | Param | Value | Note |
 |---|---|---|
 | Material | **PETG** (default) | proven on enclosure #1; in-car thermal margin. ASA better for UV/heat (CIO spec) but warp-prone — geometry identical, only tolerances differ. |
+| Board clearance | **1.0 mm/side** | easy drop-in (CIO 2026-06-16); opening 21.05 × 18.51, outer 25.05 × 22.51 |
+| Diffuser plate | `lid_thickness` **1.5 mm** | sized for 1.0–1.5 mm sheet; groove slot 1.8 mm |
 | Wall thickness | 2.0 mm | durability + groove room |
 | Layer height | 0.16–0.20 mm | |
 | Walls / infill | 3–4 perimeters / 20–30 % | small part |

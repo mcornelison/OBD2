@@ -27,7 +27,8 @@
 //   Diffuser plate slides in along +X from the X=0 short end; back-stop at far X.
 // =========================================================================
 
-part = 0;   // 0 = assembly view, 1 = shell (printable), 2 = diffuser plate template
+part = 0;   // 0 = assembly, 1 = shell, 2 = diffuser template,
+            // 3 = cross-section thru a standoff, 4 = cross-section thru middle (cable)
 
 // ---- Board facts --------------------------------------------------------
 board_w      = 19.05;   // X long edge
@@ -40,7 +41,7 @@ hole_inset_y = 2.54;    // from the high-Y (mount) edge
 
 // ---- Geometry knobs -----------------------------------------------------
 tilt        = 15;       // board tilt (deg)
-clr         = 0.75;     // board-to-wall clearance, each side
+clr         = 1.0;      // board-to-wall clearance, each side (easy drop-in)
 wall        = 2.0;      // side-wall thickness
 bottom_wall = 2.0;      // floor thickness
 cable_clr   = 2.5;      // space under header edge (solder joints + wires)
@@ -48,7 +49,7 @@ air_gap     = 1.5;      // board top -> diffuser underside
 corner_r    = 1.5;      // outer corner radius
 
 // ---- Diffuser slide cover ----------------------------------------------
-lid_thickness = 1.0;    // <-- PLATE THICKNESS PARAM (retune to chosen material)
+lid_thickness = 1.5;    // <-- PLATE THICKNESS PARAM (sized for 1.0-1.5mm sheet)
 lid_clear     = 0.3;    // groove clearance (slide fit)
 groove_depth  = 1.2;    // how far each plate edge sits into the long walls
 top_lip       = 1.5;    // wall material above the diffuser (capture + recess look)
@@ -219,6 +220,20 @@ if (part == 1) {
     // flat diffuser template (cut guide for the plastic sheet), laid flat.
     // width spans into both grooves; length = down-slope travel.
     cube([inner_x + 2*(groove_depth - 0.4), inner_y - 0.6, lid_thickness]);
+} else if (part == 3 || part == 4) {
+    // cross-section through the tilt. Keep the half with X >= section_x and show
+    // the cut face. part 3 cuts through a screw standoff; part 4 through the middle.
+    section_x = (part == 3) ? (x0 + hole_inset_x) : (case_x / 2);
+    difference() {
+        union() {
+            shell();
+            color("DarkSlateBlue") on_board() cube([board_w, board_h, board_t]);
+            color("DimGray") on_board()
+                translate([board_w*0.25, board_h*0.30, board_t]) cube([board_w*0.5, board_h*0.4, comp_h]);
+            color("LightCyan") diffuser_plate();
+        }
+        translate([-200, -200, -200]) cube([200 + section_x, 400, 400]);
+    }
 } else {
     // assembly view
     shell();
