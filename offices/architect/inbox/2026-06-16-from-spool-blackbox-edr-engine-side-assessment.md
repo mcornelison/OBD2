@@ -78,6 +78,18 @@ CIO's framing: the 9-DoF IMU turns our 1-D speed trace into a full 6-DOF picture
 
 **Build-first recommendation:** items 1–3 (**gear, grade-corrected load, spool characterization**) — they re-contextualize *every datalog we already have* and need nothing but the IMU + our existing PID set. Items 4–7 are higher-sophistication payoffs on that foundation.
 
+## 9. Display as a consumer surface (architecture implications)
+CIO pulled Iris in on the display angle; full data palette went to her (`offices/uidevloper/inbox/2026-06-16-from-spool-edr-display-data-palette.md`). The architecture-relevant pieces for you:
+
+- **The display is another CONSUMER of the one canonical stream — never a hardware reader** (reinforces §6). It subscribes to the dedicated reader's output; it must not open the K-line/I²C itself.
+- **Two display surfaces, fed differently** — falls straight out of the Pi-live-vs-server split (§8):
+  - **Live in-drive instrument** — only the *on-Pi* signals exist during the drive: gear, lateral/longitudinal g, grade, and **safety alerts**. Needs a **low-latency live path** from the reader/derive step to the display.
+  - **Post-drive review** — the server-derived analytics (spool maps, dyno trend, corner-lean, gear-context datalogs). Sourced from the server after sync, not live.
+- **Safety-alert rendering priority is driven by my engine thresholds, not aesthetics** — coolant ≥104 °C and knock (if ECMLink) are 🔴 "own-the-screen," brownout/lean-under-load 🟡, reusing the DTC severity taxonomy. Route the live-alert path so these reach the display with minimal latency; a buried/late coolant alert defeats the purpose.
+- **Light sensor → display auto-dim** is an Iris UX thread (TSL2591 lux at ~1–2 Hz supports it); noting it so the sensor's consumer list includes the display, not just the recorder.
+
+Net: the display doesn't change the data architecture — it's one more consumer on the single stream — but it does add a **latency requirement on the live-alert path** that pure logging/sync wouldn't.
+
 ## What I can deliver when you want it
 1. Measured OBD throughput budget + PID-priority allocation for our K-line.
 2. Full engine-protection trigger spec with thresholds + rationale.
