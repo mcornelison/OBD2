@@ -29,15 +29,17 @@ The TSL2591 chip (the light aperture) is surface-mounted on the top face.
    (clear hard plastic OR translucent **milk-jug HDPE = built-in diffuser**),
    slides into **side grooves**. Swappable / consumable. Diffuser kills direct-sun
    hot-spots; auto-dim only needs *relative* brightness so a cheap diffuser is free.
-2. **Slide cover (v2, gravity-slide — CIO rework 2026-06-16)** — the diffuser plate
-   inserts through a **single mouth in the TALL wall** (high/mount edge), rides
-   **blind interior grooves on the two angled end walls**, and **slides downhill to
-   rest against the SHORT wall** (low/cable edge), held by **gravity + friction**.
-   Only the tall wall shows a slot; the angled walls and short wall are clean
-   outside. The tilt rises toward the tall/mouth wall, so mounting that wall toward
-   the glass gives both the windshield aim and gravity retention. Groove sized by
-   `lid_thickness` param (default 1.0 mm + 0.3 clearance) — one number to retune to
-   the chosen material.
+2. **Slide cover (v4 U-channel — CIO fit-check 2026-06-16)** — the diffuser plate
+   inserts through a **single mouth in the TALL/BACK wall** (high/mount edge) and
+   rides a **3-sided U-channel of blind interior grooves on the LEFT, RIGHT and
+   FRONT walls**; it **slides downhill and seats its front edge into the front
+   groove** (the down-slope stop), held by **gravity + friction**. Only the back
+   wall shows a slot; left, right and front outer faces stay clean. The tilt rises
+   toward the back/mouth wall, so mounting that wall toward the glass gives both the
+   windshield aim and gravity retention. (v2 had side grooves only + a butt stop;
+   v4 adds the front groove so the channel actually captures the plate.) Groove
+   sized by `lid_thickness` (default 1.5 mm + 0.3 clearance) — one number to retune
+   to the chosen sheet.
 3. **Form** — **one-piece shell**: closed flat bottom (VHB face, 0.5 mm recessed lip
    to hide tape edges), four walls, open top. Board drops in from the top, screws
    down, diffuser slides in to close.
