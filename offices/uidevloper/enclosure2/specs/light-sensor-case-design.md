@@ -29,10 +29,15 @@ The TSL2591 chip (the light aperture) is surface-mounted on the top face.
    (clear hard plastic OR translucent **milk-jug HDPE = built-in diffuser**),
    slides into **side grooves**. Swappable / consumable. Diffuser kills direct-sun
    hot-spots; auto-dim only needs *relative* brightness so a cheap diffuser is free.
-2. **Slide cover** — slides in from **one short end**, **positive back-stop** at the
-   far wall, three sides captured, open insertion mouth faces the windshield.
-   Slide axis = long axis (X). Groove sized by `lid_thickness` param (default 1.0 mm
-   + 0.3 clearance) — one number to retune to the chosen material.
+2. **Slide cover (v2, gravity-slide — CIO rework 2026-06-16)** — the diffuser plate
+   inserts through a **single mouth in the TALL wall** (high/mount edge), rides
+   **blind interior grooves on the two angled end walls**, and **slides downhill to
+   rest against the SHORT wall** (low/cable edge), held by **gravity + friction**.
+   Only the tall wall shows a slot; the angled walls and short wall are clean
+   outside. The tilt rises toward the tall/mouth wall, so mounting that wall toward
+   the glass gives both the windshield aim and gravity retention. Groove sized by
+   `lid_thickness` param (default 1.0 mm + 0.3 clearance) — one number to retune to
+   the chosen material.
 3. **Form** — **one-piece shell**: closed flat bottom (VHB face, 0.5 mm recessed lip
    to hide tape edges), four walls, open top. Board drops in from the top, screws
    down, diffuser slides in to close.
