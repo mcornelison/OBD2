@@ -40,6 +40,13 @@ The TSL2591 chip (the light aperture) is surface-mounted on the top face.
    v4 adds the front groove so the channel actually captures the plate.) Groove
    sized by `lid_thickness` (default 1.5 mm + 0.3 clearance) — one number to retune
    to the chosen sheet.
+   - **v5 (CIO STL fit-check 2026-06-16):** the FRONT groove is now built in WORLD
+     coords (a horizontal recess in the front wall inner face at the plate's
+     front-edge height), because a board-parallel (tilted) groove gets sheared
+     *forward* by the 15° tilt and punches through the short wall's OUTER face. Side
+     grooves stay tilted (depth is in X, unaffected by the tilt) but `groove_depth`
+     dropped 1.2→1.0 mm to leave more outer skin. Only the back wall opening breaks
+     an outer face; front/left/right outer faces are clean.
 3. **Form** — **one-piece shell**: closed flat bottom (VHB face, 0.5 mm recessed lip
    to hide tape edges), four walls, open top. Board drops in from the top, screws
    down, diffuser slides in to close.

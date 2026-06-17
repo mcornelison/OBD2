@@ -51,8 +51,9 @@ corner_r    = 1.5;      // outer corner radius
 // ---- Diffuser slide cover ----------------------------------------------
 lid_thickness = 1.5;    // <-- PLATE THICKNESS PARAM (sized for 1.0-1.5mm sheet)
 lid_clear     = 0.3;    // groove clearance (slide fit)
-groove_depth  = 1.2;    // how far each plate edge sits into the long walls
+groove_depth  = 1.0;    // groove cut depth into the walls (skin left = wall - this = 1.0)
 top_lip       = 1.5;    // wall material above the diffuser (capture + recess look)
+front_skin    = 1.0;    // outer skin left on the FRONT wall under its groove
 
 // ---- Fastening ----------------------------------------------------------
 post_r   = 2.6;         // standoff boss outer radius
@@ -80,6 +81,14 @@ diffuser_floor = board_t + air_gap;               // board-local Z, plate unders
 diffuser_roof  = diffuser_floor + lid_thickness + lid_clear;
 case_top_local = diffuser_roof + top_lip;         // board-local Z of the tilted rim
 raw_h = 22;                                        // tall blank; trimmed by tilt plane
+
+// Plate FRONT-edge seating (board-local Y) and its WORLD position. The front
+// groove is built in world coords from these so the tilt can't shear it through
+// the front wall's outer face.
+pf_yl   = -0.2;                                            // plate front edge (board-local Y)
+pf_y_in = y0 + pf_yl*cos(tilt) - diffuser_floor*sin(tilt); // most-interior (+Y) front-edge point
+pf_z_lo = header_rest_z + pf_yl*sin(tilt) + diffuser_floor*cos(tilt);
+pf_z_hi = header_rest_z + pf_yl*sin(tilt) + diffuser_roof*cos(tilt);
 
 $fn = 48;
 
@@ -125,7 +134,7 @@ module board_ghost() {
 module diffuser_plate() {
     px0 = -clr - (groove_depth - 0.4);            // edges seat into L/R grooves
     px1 = (board_w + clr) + (groove_depth - 0.4);
-    py0 = -clr - (groove_depth - 0.4);            // front edge seats into front groove
+    py0 = pf_yl;                                  // front edge seats into front groove
     py1 = (board_h + clr) - 0.3;                  // back edge near the mouth
     on_board()
         translate([px0, py0, diffuser_floor])
@@ -187,15 +196,18 @@ module shell() {
         // edge into the front groove (gravity pulls it down-slope into the stop).
         // Groove depth < wall thickness, so all outer faces stay clean — the only
         // opening that breaks an outer face is the back mouth.
-        // LEFT (X=0) wall groove — runs front->back:
-        on_board() translate([-clr - groove_depth, -clr - groove_depth, diffuser_floor])
+        // LEFT (X=0) wall groove — tilted, runs front->back. Depth is in X so the
+        // tilt does NOT shear it; leaves (wall - groove_depth) outer skin.
+        on_board() translate([-clr - groove_depth, -clr, diffuser_floor])
             cube([groove_depth, inner_y + groove_depth + wall + 2, lid_thickness + lid_clear]);
-        // RIGHT (X=max) wall groove — runs front->back:
-        on_board() translate([board_w + clr, -clr - groove_depth, diffuser_floor])
+        // RIGHT (X=max) wall groove — tilted, runs front->back:
+        on_board() translate([board_w + clr, -clr, diffuser_floor])
             cube([groove_depth, inner_y + groove_depth + wall + 2, lid_thickness + lid_clear]);
-        // FRONT (low-Y / short) wall groove — runs left->right, the down-slope stop:
-        on_board() translate([-clr - groove_depth, -clr - groove_depth, diffuser_floor])
-            cube([inner_x + 2*groove_depth, groove_depth, lid_thickness + lid_clear]);
+        // FRONT (low-Y / short) wall groove — WORLD-aligned horizontal recess in the
+        // inner face at the plate's front-edge height, so the tilt can't shear it out
+        // the front. Leaves front_skin of outer wall; the down-slope seating stop.
+        translate([wall - groove_depth, front_skin, pf_z_lo - 0.4])
+            cube([inner_x + 2*groove_depth, (pf_y_in + 0.3) - front_skin, (pf_z_hi + 0.4) - (pf_z_lo - 0.4)]);
         // BACK (tall) wall insertion mouth — the only outer-face opening:
         on_board() translate([-clr - groove_depth, board_h + clr, diffuser_floor])
             cube([inner_x + 2*groove_depth, wall + 2, lid_thickness + lid_clear]);
@@ -225,8 +237,8 @@ if (part == 1) {
     shell();
 } else if (part == 2) {
     // flat diffuser template (cut guide for the plastic sheet), laid flat.
-    // width spans into both side grooves; length spans front groove -> mouth.
-    cube([inner_x + 2*(groove_depth - 0.4), inner_y + groove_depth - 0.7, lid_thickness]);
+    // width spans into both side grooves; length spans front edge -> mouth.
+    cube([inner_x + 2*(groove_depth - 0.4), (board_h + clr - 0.3) - pf_yl, lid_thickness]);
 } else if (part == 3 || part == 4) {
     // cross-section through the tilt. Keep the half with X >= section_x and show
     // the cut face. part 3 cuts through a screw standoff; part 4 through the middle.
