@@ -1,6 +1,6 @@
-# Light Sensor Enclosure — Design Record v1
+# Light Sensor Enclosure — Design Record (FINAL v6)
 
-**Author:** Iris (UI/UX) · **Date:** 2026-06-16 · **Status:** DESIGN APPROVED (CIO interview) → building v1 STL
+**Author:** Iris (UI/UX) · **Date:** 2026-06-16/17 · **Status:** FINAL — geometry locked at v6; prototyping in PLA on MK3S+ before the PETG/ASA in-car part. Design iterated v1→v6 via CIO STL fit-checks (see §9 session log + git history `8653538`→`cea88de`).
 
 Houses the **Adafruit TSL2591 lux-sensor breakout (#1980)** as a dash-mounted
 ambient-light sensor feeding the Pi display **auto-dim** (day/night + tunnel/garage
@@ -80,12 +80,40 @@ The TSL2591 chip (the light aperture) is surface-mounted on the top face.
 | Layer height | 0.16–0.20 mm | |
 | Walls / infill | 3–4 perimeters / 20–30 % | small part |
 
+## Print settings (PrusaSlicer 2.9.5 — MK3S+, black PLA prototype)
+
+CIO is prototyping in **black PLA** to fit-check before the in-car part. **PLA is
+prototype-only** — it softens on a sun-loaded dash (Tg ~55–60 °C); the final part
+is **PETG (or ASA)**. Geometry is identical between materials.
+
+| Setting | Value |
+|---|---|
+| Layer height | 0.15 mm (first layer 0.2 mm) |
+| Perimeters | 3 |
+| Top / bottom solid layers | 5 / 4 |
+| Infill | 15–20 %, grid or gyroid |
+| Nozzle / bed | 215→210 °C / 60 °C |
+| Cooling | 100 % fan after layer 1 |
+| Brim | Outer brim only, 4 mm (small footprint) |
+| Seam position | Rear (back/tall wall faces the glass) |
+| **Supports** | **On build plate only** — supports the VHB recess pocket; keeps the cavity / diffuser grooves / vents support-free (protects the slide + drop-in fits). Back-mouth lip just bridges. |
+| Support top contact Z | 0.10 mm (peel-clean off the recess floor) |
+| Support top interface layers | 2 |
+
+Orientation: **flat bottom on the bed, open top up** — support-free except the recess.
+Optional `stl/shell-proto-flatbottom.stl` (recess disabled) prints with no supports at
+all if preferred. Surgical alternative to build-plate-only supports: "For support
+enforcers only" + paint enforcers on the recess floor + back-mouth-lip underside.
+
 ## Files
 
-- `light-sensor-case.scad` — parametric source. `part`: 0 = assembly view,
-  1 = shell (printable), 2 = diffuser plate template.
-- `stl/shell.stl`, `stl/diffuser-template.stl` — render outputs.
-- `renders/` — preview PNGs for CIO review.
+- `light-sensor-case.scad` — parametric source. `part`: 0 = assembly · 1 = shell
+  (printable) · 2 = diffuser template · 3 = section@standoff · 4 = section@middle.
+- `stl/shell.stl` — final printable shell (recessed bottom). `stl/diffuser-template.stl`
+  — flat cut-guide for the plastic sheet. `stl/shell-proto-flatbottom.stl` — optional
+  no-support prototype (flat bottom).
+- `slicer/` — CIO's PrusaSlicer 2.9.5 project (`.3mf`) + sliced `.gcode` for the MK3S+.
+- `renders/` — preview PNGs (v1→v6 + sections + bottom + vents).
 
 ## Open (pending CIO physical fit-check of v1 print)
 
