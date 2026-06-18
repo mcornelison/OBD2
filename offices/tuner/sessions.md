@@ -7,6 +7,49 @@
 
 ---
 
+## Session 26 — 2026-06-16
+
+**Context**: Init (`/init-tuner` + `/remote-control`). CIO returned after a few days with new (uneventful) drives + a check-engine light. Session became four threads: (1) CEL triage I couldn't fully close because both boxes were offline; (2) discovery that the server IP move broke Pi→server sync, routed to PM + Atlas; (3) a major brainstorm review — CIO shared an external agent's Pi-5 "black box / event-data-recorder" design and I ran the engine/OBD reality-check, seeding the whole team; (4) a derived-signal catalog (IMU × speed × engine) — the real tuning payoff. Closeout run 2026-06-18.
+
+### What Happened
+- **CEL triage (P0443 presumed, unconfirmed)**: CIO reported a **steady** CEL on the last drive, car **drives normal**. Couldn't read the actual code — Pi offline (parked/WiFi-off) + server unreachable (IP had moved). Strong prior: **P0443 (EVAP purge circuit) returning** — exactly the Session-25 watch item ("if it returns → reseat purge-solenoid connector"). Disposition: **🟢 MINOR, drive-safe** (steady light + normal drivability rule out active misfire / fueling fault). Advised: **do NOT clear until the connector is reseated** — clearing-without-fixing just restarts the loop AND wipes readiness monitors. Actual code pending Pi sync.
+- **Server IP move broke sync**: chi-srv-01 moved **10.27.27.10 → 10.27.27.120**. Server data frozen at **Drive 27 (2026-06-06)**; CIO's recent drives (28+) + the CEL are **stranded on the Pi, unsynced**. Root cause: `config.json:453 pi.companionService.baseUrl` hardcoded to the dead `.10`. Routed two notes: (a) **Marcus** — fix + standing "never hardcode mutable values" rule (CIO directive); (b) **Atlas** — full categorized blast radius of every `10.27.27.10` location for a **by-name resolution design**. Key finding: an address-centralizer **already exists** (`deploy/addresses.sh` + `asm.HostAddresses` + B-044 lint); the `.10` only leaks because the centralizer's own default is stale + a few runtime sites bypass it. Flagged `tests/lint/test_no_hardcoded_addresses.py` as DO-NOT-TOUCH (it's the detector's own fixtures).
+- **Black-box / EDR brainstorm review (the big one)**: CIO shared an external agent's Pi-5 EDR design (adds ICM-20948 9-DoF IMU + TSL2591 light sensor to the OBD stack). My engine/OBD reality-check, grounded against our own data:
+  - **K-line bandwidth ceiling (measured)**: Drive 27 = **16 PIDs, ~0.39 Hz each (one sample every ~2.5 s), ~6.3 samples/sec aggregate.** The plan's "5 Hz × 5 Tier-1 PIDs" = ~4× our *entire* budget. The plan assumed modern CAN; we're ISO 9141-2 @ 10,400 bps. OBD throughput is a fixed ~6 samples/sec budget you *allocate*, not a rate you set.
+  - **PID availability**: validate the recorder schema against our actual supported set. Mode 02 freeze-frame confirmed UNSUPPORTED on MD326328; **MAF + TIMING_ADVANCE confirmed supported** (in our live 16); RPM confirmed logged.
+  - **Knock gap → ECMLink IN-SCOPE (CIO call)**: knock/knock-retard is NOT a standard OBD PID — it lives in ECMLink's datastream. `TIMING_ADVANCE` (0x0E) is base timing, not knock. CIO ruled ECMLink datastream integration in-scope; I flagged it highest-value/highest-risk → **feasibility spike first** (may not be Pi-readable without ECMLink's Windows software; K-line single-reader contention with the OBDLink).
+  - **Engine-protection triggers (my lane, real numbers)**: coolant **≥104 °C / 220 °F absolute** (head-gasket-risk band — NOT a rate trigger); lean-under-load (STFT+LTFT lean while load/MAP high); overboost + high IAT; knock (if ECMLink).
+  - **Single-source + dedicated-reader (CIO directive)**: every consumer sources from ONE canonical stream; one dedicated reader owns hardware I/O. Grounded as a hardware constraint, not hygiene — the K-line physically tolerates only one reader (two = corrupt sequencing).
+  - **B-104 tension**: the EDR puts trigger/event logic back ON the Pi; B-104 made the Pi a dumb emitter. Flagged for an explicit Atlas ruling (reconcilable: stream raw AND keep a local ring/vault).
+- **Derived-signal catalog (IMU × speed × engine)** — the tuning payoff, ranked + tagged Pi-live vs server: **gear + shift/clutch-slip** (speed÷RPM via F5M33 ratios), **road grade → grade-corrected load**, **boost-onset/spool characterization** (long-g inflection, no boost PID needed), **lateral-g ↔ fuel-trim** (corner lean vs slosh), **vertical-g ↔ knock discrimination** (knock sensor is an accelerometer — hears potholes as knock; gated on ECMLink), **DFCO window flag**, **poor-man's dyno trend**. Build-first = **gear / grade-corrected load / spool** (re-contextualize every datalog we already have). Heavy fusion = server (B-104-consistent); live-on-Pi = gear/g/grade + safety alerts only.
+- **Display palette → Iris**: two surfaces (live in-drive instrument vs post-drive review), safety-alert visual priority reusing the DTC 🔴/🟡/🟢 taxonomy (coolant/knock own-the-screen), light→auto-dim (TSL2591 lux ~1–2 Hz), display = consumer of the one stream + a low-latency live-alert path requirement.
+- Seeded all three peers, all consistent on single-source + B-104: **Atlas** (technical SSOT, §1–9 + IP blast-radius note), **Marcus** (EDR epic planning frame + the IP-hardcode/no-hardcode note), **Iris** (display palette). CIO confirmed Iris + Atlas are now working the notes.
+- **Ops**: handled an 18-min stale `index.lock` (crashed git process, no live git) per handbook §13 — waited/retried, verified no running git, cleared safely; office-scoped commits throughout.
+
+### Key Decisions
+- **CEL = 🟢 MINOR, drive-safe** (presumed P0443 returning); do NOT clear until purge-solenoid connector reseated; actual code pending Pi sync.
+- **ECMLink datastream = IN-SCOPE** for the EDR (CIO) — gate behind a feasibility spike.
+- **Black-box coolant trigger = ≥104 °C absolute** (not rate-of-change).
+- **EDR = V0.3x epic** — complements tuning, doesn't replace; the IMU (100 Hz) is the real prize vs our ~6 Hz OBD ceiling; gear/grade/spool upgrade every existing datalog with no new hardware on the analytics side.
+- **F-097 dashboard = battery-HEALTH only, no drain ladder** (CIO directive; saved as feedback memory `feedback-f097-battery-health-no-drain-ladder`).
+
+### Current Vehicle State
+- Unchanged mechanically. 1998 GST 4G63, stock TD04-13G, ECU **MD326328** (ECMLink), 93 octane. **CEL ON (steady) — presumed P0443 EVAP purge returning; drive-safe; UNCONFIRMED pending Pi sync.** Engine grade A through Drive 27 (last synced). **Several unsynced drives (28+) sitting on the Pi.** Monitoring degraded: server frozen at Drive 27 until the by-name IP fix deploys + the Pi reconnects.
+
+### Open Items
+- **CEL confirmation** — read the actual stored code once the Pi syncs; confirm P0443 vs other; verify it didn't bleed into fuel trims; review the new drives (28+).
+- **Pending Iris reply** — F-092/F-097 dashboard semantics (S-1/S-2/S-3) still owed, now informed by the battery-health-only directive (carried from Session 25).
+- **Server-by-name fix** — Marcus (dispatch) + Atlas (resolution design) hold the ball; I run the data-side acceptance check post-deploy.
+- **EDR deliverables I owe when it grooms**: measured OBD throughput budget + PID-priority allocation; full engine-trigger threshold spec; PID-support validation; ECMLink engine-signal wishlist (spike target).
+- **Coolant watch**: 101 °C peak Drive 27; flag if it regularly tags 103–105 °C.
+- **P0443 watch**: reseat purge-solenoid connector; re-read after a drive cycle.
+- Carry-forwards: new-ECU baseline (grade-A through 27); BL-018 battery-runtime tuning; GM 3-bar MAP / wideband (Pin 75 + Pin 92) + E85 pre-wire; RAG card migration per `vehicle.md` manifest.
+
+### Safety Advisories
+- CEL dispositioned **🟢 MINOR** on externally-observable facts (steady light + normal drivability); drive-safe; clear-only-after-fix guidance issued (readiness-monitor-wipe caution). Coolant (101 °C peak) + tire-age watch items carried — not acute. No datalogs analyzed this session (none synced).
+
+---
+
 ## Session 25 — 2026-06-05
 
 **Context**: Long live session driven by CIO. Started as init + Iris DTC-viewer triage, became (1) a new feature — on-Pi DTC/check-engine viewer + gated clear-code — fully advised + spec'd with Iris/Atlas; (2) a real check-engine event (P0443) read live KOEO off the Pi, logged + cleared; (3) the SPEED-PID GPS calibration on Drive 27 — which **overturned the multi-session "2× drift" as a phantom** (unit mislabel; PID reads TRUE, factor 1.00); (4) a full knowledge-base sweep of the wrong data + a saved learning pattern.
