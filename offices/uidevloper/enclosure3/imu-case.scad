@@ -61,12 +61,11 @@ cable_w  = 7.0;
 cable_h  = 5.0;       // taller so wires clear the board (CIO 2026-06-17)
 cable_z  = 3.0;       // center Z above floor; lowered so the slot drops into the under-board gap
 
-// ---- VHB recess (bottom) ------------------------------------------------
-// vhb_recess = 0 -> FLAT smooth bottom (CIO 2026-06-17): full first-layer bed
-// contact for reliable MK3S+ adhesion (a recessed bottom only contacts on a thin
-// lip-ring ~24% area -> mid-print bed-release). VHB tape sticks fine to a flat face.
-vhb_lip    = 1.5;
-vhb_recess = 0.0;       // set >0 (e.g. 0.5) only if you want a tape-edge-hiding recess
+// ---- Bottom face --------------------------------------------------------
+// FLAT (no VHB recess): full first-layer bed contact for reliable MK3S+
+// adhesion. A recessed bottom only contacts on a thin lip-ring (~24% area) and
+// releases mid-print. VHB tape sticks fine to a plain flat face.
+// See knowledge/pattern-flat-base-and-print-orientation.md.
 
 // ---- Derived ------------------------------------------------------------
 x0 = wall + clr;                       // board origin (world) X
@@ -175,10 +174,7 @@ module box() {
             translate([wall/2,          case_y * j/3, bottom_wall + vent_z]) vent_slot_X();
             translate([case_x - wall/2, case_y * j/3, bottom_wall + vent_z]) vent_slot_X();
         }
-
-        // VHB recess on the bottom face
-        translate([vhb_lip, vhb_lip, -0.01]) linear_extrude(vhb_recess + 0.01)
-            rrect(case_x - 2*vhb_lip, case_y - 2*vhb_lip, max(corner_r - vhb_lip, 0.4));
+        // bottom face is FLAT (VHB recess dropped — see param note)
     }
     standoffs();
 }

@@ -64,9 +64,11 @@ pilot_dz = 6.0;         // pilot depth into post (along board normal)
 cable_w  = 7.0;         // rounded slot width  (4-5 small wires)
 cable_h  = 3.5;         // rounded slot height
 
-// ---- VHB recess (bottom) ------------------------------------------------
-vhb_lip    = 1.5;       // perimeter lip width around the recess
-vhb_recess = 0.5;       // recess depth
+// ---- Bottom face --------------------------------------------------------
+// FLAT (no VHB recess): the whole footprint contacts the bed for adhesion,
+// and VHB tape sticks fine to a plain flat face. The recess was dropped after
+// it caused perimeter-only bed contact -> repeated print release. See
+// knowledge/pattern-flat-base-and-print-orientation.md.
 
 // ---- Air vents (thin rounded-end vertical slots) ------------------------
 vent_w      = 1.3;      // slot width (the thin dimension)
@@ -240,10 +242,7 @@ module shell() {
                     translate([ (cable_w-cable_h)/2, 0, 0]) cylinder(h = wall*3, r = cable_h/2, center = true);
                 }
 
-        // ---- VHB recess on the bottom face ----
-        translate([vhb_lip, vhb_lip, -0.01])
-            linear_extrude(vhb_recess + 0.01)
-                rrect(case_x - 2*vhb_lip, case_y - 2*vhb_lip, max(corner_r - vhb_lip, 0.4));
+        // ---- bottom face is FLAT (VHB recess dropped — see param note) ----
 
         // ---- air vents: 3 vertical on the TALL (back) wall, evenly spaced in X ----
         for (i = [1:3])
