@@ -100,10 +100,19 @@ is **PETG (or ASA)**. Geometry is identical between materials.
 | Support top contact Z | 0.10 mm (peel-clean off the recess floor) |
 | Support top interface layers | 2 |
 
-Orientation: **flat bottom on the bed, open top up** — support-free except the recess.
-Optional `stl/shell-proto-flatbottom.stl` (recess disabled) prints with no supports at
-all if preferred. Surgical alternative to build-plate-only supports: "For support
-enforcers only" + paint enforcers on the recess floor + back-mouth-lip underside.
+Orientation: **flat bottom on the bed, open top up.**
+
+### Smooth-bottom print target (CIO 2026-06-17) — recommended for prototyping
+The VHB recess makes the bottom non-smooth AND gives only **24 % of the footprint**
+(133.7 mm² lip-ring vs 563.9 mm² flat) as first-layer bed contact — the likely cause
+of mid-print bed-release (~45 min in). **`stl/shell-smooth-bottom.stl`** (recess
+disabled, `vhb_recess=0`) gives a **flat smooth bottom + full bed contact + no
+supports** — print this for fit-checks. Re-enable the recess (`stl/shell.stl`) for the
+final PETG part once printing is dialed in (tape sticks fine to a flat bottom too).
+Adhesion recipe (MK3S+/PLA): clean smooth PEI sheet (dish-soap wash, handle by edges),
+**5 mm brim**, bed 60–65 °C, **disable part-cooling fan for first 3 layers**, keep out
+of drafts. (Live-Z is not the issue — a 45-min release is warping/small-contact, not
+layer 1.)
 
 ## Files
 
