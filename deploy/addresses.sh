@@ -37,7 +37,7 @@ PI_DEVICE_ID="${PI_DEVICE_ID:-chi-eclipse-01}"
 # ----------------------------------------------------------------------------
 # Server tier (chi-srv-01) -- mirrors config.json server.network.*
 # ----------------------------------------------------------------------------
-SERVER_HOST="${SERVER_HOST:-10.27.27.10}"
+SERVER_HOST="${SERVER_HOST:-10.27.27.120}"
 SERVER_USER="${SERVER_USER:-mcornelison}"
 SERVER_PORT="${SERVER_PORT:-8000}"
 SERVER_HOSTNAME="${SERVER_HOSTNAME:-chi-srv-01}"

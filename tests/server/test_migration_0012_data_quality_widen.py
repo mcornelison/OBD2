@@ -229,7 +229,7 @@ def _fail(stderr: str = 'boom') -> subprocess.CompletedProcess[str]:
 
 
 def _addrs() -> asm.HostAddresses:
-    return asm.HostAddresses(serverHost='10.27.27.10', serverUser='mcornelison')
+    return asm.HostAddresses(serverHost='10.27.27.120', serverUser='mcornelison')
 
 
 def _creds() -> asm.ServerCreds:

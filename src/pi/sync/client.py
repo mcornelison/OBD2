@@ -71,7 +71,7 @@ Uses stdlib :mod:`urllib.request` (no new dependencies on the Pi).  A
 ``POST /api/v1/sync`` looks like::
 
     POST /api/v1/sync HTTP/1.1
-    Host: 10.27.27.10:8000
+    Host: 10.27.27.120:8000
     Content-Type: application/json
     X-API-Key: <COMPANION_API_KEY>
 
@@ -385,7 +385,7 @@ class SyncClient:
 
         US-340 / I-035: skip ``pushAllDeltas`` from the orchestrator
         when this returns False so a Pi mid-drive (away from home WiFi,
-        no route to 10.27.27.10) doesn't pump ~84s of doomed TCP SYN
+        no route to 10.27.27.120) doesn't pump ~84s of doomed TCP SYN
         retries through brcmfmac per "5s" ACTIVE-mode cadence tick.
         Sustained retry activity on the BCM4345 combo chip contends
         with concurrent BT HCI traffic and is one of the WiFi-soft-off

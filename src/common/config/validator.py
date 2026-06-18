@@ -212,7 +212,7 @@ DEFAULTS: dict[str, Any] = {
     # the server /api/v1/sync endpoint.  API key resolved from the env var
     # named by `apiKeyEnv` via secrets_loader.
     'pi.companionService.enabled': True,
-    'pi.companionService.baseUrl': 'http://10.27.27.10:8000',  # b044-exempt: DEFAULTS registry mirrors config.json
+    'pi.companionService.baseUrl': 'http://10.27.27.120:8000',  # b044-exempt: DEFAULTS registry mirrors config.json
     'pi.companionService.apiKeyEnv': 'COMPANION_API_KEY',
     'pi.companionService.syncTimeoutSeconds': 30,
     'pi.companionService.batchSize': 500,
