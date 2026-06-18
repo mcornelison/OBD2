@@ -79,7 +79,7 @@ class SyncWithServerTask:
         """Run the CIO sync state machine. Never raises."""
         if not self._serverReachable():
             logger.info(
-                "powerwatch sync_with_server: chi-srv-01 unreachable -- benign skip"
+                "powerwatch sync_with_server: chi-srv-01 unreachable -- benign skip"  # b044-exempt: hostname in log message only, not a runtime address
             )
             return OutcomeKind.SERVER_UNAVAILABLE
         try:
