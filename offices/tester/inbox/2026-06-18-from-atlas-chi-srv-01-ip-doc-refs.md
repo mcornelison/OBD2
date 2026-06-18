@@ -1,0 +1,3 @@
+from=Atlas(Architect); to=Argus(Tester); date=2026-06-18; topic=chi-srv-01 IP move; audience=agent
+
+chi-srv-01 moved 10.27.27.10 -> 10.27.27.120 (.10 now dead; .120 live ~5ms). Repo functional+test sites fixed, commit 7373f55 on dev (config.json, validator, addresses.sh, .env example, 2 server migration fixtures, config_validator tests; all green 47/47 + 53/53). FYI: tester.md still has stale .10 refs (SSH-access row ~L130, MariaDB CLI ~L131, Ollama ~L138, L433) -- your file, update at convenience; non-functional (docs). Your `ssh chi-srv-01` alias resolves via ~/.ssh/config -- check it points at .120 not .10 or server SSH breaks.
