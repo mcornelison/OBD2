@@ -142,19 +142,19 @@
   .ctape .tlab{position:absolute;bottom:18px;transform:translateX(-50%);font-size:9px;font-weight:600;color:#eef2f6;white-space:nowrap}
   .cindex{position:absolute;top:0;bottom:0;left:50%;width:0;border-left:1px solid var(--amber-warn);box-shadow:0 0 5px var(--amber-warn)}
   .cindex::before{content:"▼";position:absolute;top:-3px;left:-4px;color:var(--amber-warn);font-size:8px}
-  .cbearing{font-size:13px;font-weight:600;color:#eef2f6;margin-top:3px;letter-spacing:.04em}
-  .gearcell{display:flex;align-items:center;justify-content:center;gap:8px}
-  .gnum{font-size:40px;font-weight:700;line-height:1;color:#eef2f6}
+  .cbearing{font-size:14px;font-weight:600;color:#eef2f6;margin-top:5px;letter-spacing:.04em;text-align:center}
+  .compasscell{flex:1.5}
+  .gearcell{flex:.7;display:flex;align-items:center;justify-content:center;gap:8px}
+  .gnum{font-size:34px;font-weight:700;line-height:1;color:#eef2f6}
   .glab2{font-size:9px;letter-spacing:.16em;color:var(--text-tertiary)}
   .graderow{display:flex;align-items:center;gap:8px;margin-top:5px}
-  .gradeval{font-size:22px;font-weight:600;color:#eef2f6;min-width:46px}
-  .gradetrend{flex:1;display:flex;align-items:flex-end;gap:2px;height:30px}
-  .gradetrend i{flex:1;background:#3a6f53;border-radius:1px;display:block;min-height:1px}
-  .gradetrend i.neg{background:#7a542f}
+  .gradeval{font-size:20px;font-weight:600;color:#eef2f6;min-width:42px}
+  .gradetrend{flex:1;height:36px;margin-left:2px}
+  .gradetrend svg{width:100%;height:100%;display:block}
   .gpanel{flex:1;position:relative;background:var(--tile);border:1px solid var(--tile-line);border-radius:8px;overflow:hidden}
   .gpanel canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
   .gpanel .glab{position:absolute;top:6px;left:8px;font-size:9px;color:var(--text-tertiary);z-index:2}
-  .gpanel .gval{position:absolute;bottom:6px;right:8px;font-size:11px;color:var(--text-secondary);z-index:2}
+  .gpanel .gval{position:absolute;top:6px;right:8px;font-size:11px;color:var(--text-secondary);z-index:2}
 
   /* ============ alerts card ============ */
   .hero{border-radius:8px;padding:10px 12px;margin-bottom:10px}
@@ -298,7 +298,7 @@
           <div class="cardtitle">LIVE · DRIVE 27 <span class="rec"></span></div>
           <div class="live2">
             <div class="lcol">
-              <div class="lcell">
+              <div class="lcell compasscell">
                 <div class="clabel">HEADING</div>
                 <div class="ctape-win"><div class="ctape" id="ctape"></div><div class="cindex"></div></div>
                 <div class="cbearing" id="cbearing">042° NE</div>
@@ -572,7 +572,7 @@ const SCREENS = [
     {id:"shutdown", t:"Shutdown splash", n:"Fires when the key-off sequencer enters its grace window (you're still in the seat), reverse animation, then black until power-off.", q:""},
   ]},
   {grp:"Carousel (swipe ↔)", items:[
-    {id:"live", t:"① Live instrument ★ home", n:"<span class='new'>Rebuilt per your layout.</span> Left column = <b>compass tape</b> (360° hash marks + 8 points; scrolls so your heading stays under the amber index) · <b>gear</b> · <b>grade + ~15-min trend bars</b>. Right = <b>g-force</b> with a <b>35s fading trail</b> (dot goes amber past ~0.6g; turning swings the compass). The home card — lands here on boot + while driving.", q:"Does the compass tape read right (heading centered under the index)? Trail length good at ~35s? Anything you'd add to the left column?"},
+    {id:"live", t:"① Live instrument ★ home", n:"<span class='new'>Updated.</span> Left column = bigger <b>compass tape</b> (centered bearing) · smaller <b>gear</b> · <b>grade + altitude-profile line</b>. Right = <b>g-force</b>, 35s trail, lat/lon readout moved up top. <br><b>Data sources:</b> g-force lat/lon = the 9-DoF <b>IMU (ICM-20948)</b> accel axes (enclosure3 / W-10); compass = the IMU magnetometer; grade = IMU pitch + GPS. All flow through the one canonical reader, never polled by the display directly (Spool's hard constraint).", q:"Altitude line read right vs the old bars? Compass bearing centered ok now? IMU as the lat/lon source make sense to you?"},
     {id:"system", t:"② System Status", n:"2×2 tiles + drive banner. OBD link shown RECONNECTING = the I-033 'did it capture my drive?' fix. Tap the Battery tile → Battery card.", q:"At arm's length this is ~13 chunks of text. Too dense for a glance, or fine because it's a lean-in card?"},
     {id:"battery", t:"③ Battery Health", n:"VCELL authoritative + largest; SOC smallest + '(uncalibrated)' (the Drain-Test-6 honesty rule). Sparkline = rested-VCELL trend. Button previews the failsafe state.", q:""},
     {id:"battery-fail", t:"③b Battery — FAILSAFE", n:"Renders ONLY during a real drain (wall power lost). Ladder + estimated runtime. Demoted to failsafe because the new sequencer prevents draining — showing a live ladder normally would be a dishonest instrument.", q:""},
@@ -616,6 +616,8 @@ function show(id){
   const m=META[id];
   if(m){document.getElementById('ntitle').textContent=m.t;
     document.getElementById('nbody').innerHTML=m.n+(m.q?'<br><br><span class="q">◆ '+m.q+'</span>':'');}
+  if(id==='boot-healthy'){replay('bootimg','../../../specs/UI/dist/splash-pi/splash.svg');}
+  if(id==='shutdown'){replay('shutimg','../../../specs/UI/dist/splash-pi/splash-shutdown.svg');}
   if(id==='live'){initLive();}
   if(id==='menu'){armRing();}
 }
@@ -638,7 +640,7 @@ function setScale(s){
 // ---------- live instrument sim ----------
 const PXD=1.5, WINHALF=66;            // px per degree on the compass tape; tape window half-width
 const PTS=[['N',0],['NE',45],['E',90],['SE',135],['S',180],['SW',225],['W',270],['NW',315]];
-let LT=0, heading=42, gTrail=[], gradeHist=[], tapeBuilt=false;
+let LT=0, heading=42, gTrail=[], alt=0, altHist=[], tapeBuilt=false;
 
 function buildTape(){
   const tape=document.getElementById('ctape'); if(!tape||tapeBuilt)return;
@@ -673,6 +675,14 @@ function drawG(){
   const col=mag>0.6?'#FFC400':'#35C46A', px=cx+cur.lat*R, py=cy-cur.lon*R;
   x.shadowBlur=10; x.shadowColor=col; x.beginPath(); x.arc(px,py,6,0,7); x.fillStyle=col; x.fill(); x.shadowBlur=0;
 }
+function renderAlt(){
+  const gt=document.getElementById('gradetrend'); if(!gt||altHist.length<2)return;
+  const n=altHist.length, mn=Math.min(...altHist), mx=Math.max(...altHist), rng=(mx-mn)||1, W=100,H=30,pad=3;
+  const line=altHist.map((v,i)=>((i/(n-1))*W).toFixed(1)+','+(H-pad-((v-mn)/rng)*(H-2*pad)).toFixed(1)).join(' ');
+  gt.innerHTML='<svg viewBox="0 0 '+W+' '+H+'" preserveAspectRatio="none">'+
+    '<polygon points="0,'+H+' '+line+' '+W+','+H+'" fill="rgba(53,196,106,0.15)"/>'+
+    '<polyline points="'+line+'" fill="none" stroke="#35C46A" stroke-width="1.2" vector-effect="non-scaling-stroke"/></svg>';
+}
 setInterval(()=>{
   const live=document.querySelector('.screen[data-id="live"]');
   if(!live||!live.classList.contains('on'))return;
@@ -688,12 +698,12 @@ setInterval(()=>{
   let near='N',best=999; PTS.forEach(([n,d])=>{let df=Math.min(Math.abs(heading-d),360-Math.abs(heading-d));if(df<best){best=df;near=n;}});
   const cb=document.getElementById('cbearing'); if(cb)cb.textContent=String(Math.round(heading)%360).padStart(3,'0')+'° '+near;
   const gn=document.getElementById('gearnum'); if(gn)gn.textContent=2+(Math.abs(Math.sin(LT*0.12))*3|0);
-  const grade=Math.round(3*Math.sin(LT*0.08)+2*Math.sin(LT*0.03));
-  const gvl=document.getElementById('gradeval'); if(gvl)gvl.textContent=(grade>=0?'+':'')+grade+'°';
-  if(Math.round(LT*10)%8===0){
-    gradeHist.push(grade); if(gradeHist.length>15)gradeHist.shift();
-    const gt=document.getElementById('gradetrend');
-    if(gt)gt.innerHTML=gradeHist.map(v=>'<i class="'+(v<0?'neg':'')+'" style="height:'+Math.min(100,Math.abs(v)*13+8)+'%"></i>').join('');
+  const grade=3*Math.sin(LT*0.08)+2*Math.sin(LT*0.03);
+  const gvl=document.getElementById('gradeval'); if(gvl)gvl.textContent=(grade>=0?'+':'')+Math.round(grade)+'°';
+  alt+=grade*0.4;                                  // integrate grade -> altitude profile
+  if(Math.round(LT*10)%2===0){
+    altHist.push(alt); if(altHist.length>80)altHist.shift();   // ~16 min window
+    renderAlt();
   }
 },100);
 
