@@ -30,7 +30,7 @@ hole_inset = 2.54;    // holes 2.54 from each edge (-> c-c 20.32 x 12.70)
 comp_h     = 4.0;     // approx tallest top-side part (STEMMA QT) for ghost/clearance
 
 // ---- Geometry knobs -----------------------------------------------------
-clr         = 2.0;    // board-to-wall clearance, all sides (CIO)
+clr         = 5.0;    // board-to-wall clearance, all sides (CIO 2026-06-17: room for wires)
 wall        = 2.0;    // side-wall thickness
 bottom_wall = 2.0;    // floor thickness
 standoff_h  = 3.0;    // board lift off the floor (under-board clearance + wiring)
@@ -58,8 +58,8 @@ vent_z   = 4.5;       // center Z of wall vents (above floor)
 
 // ---- Wire exit (4-5 wires, -Y long wall) --------------------------------
 cable_w  = 7.0;
-cable_h  = 3.5;
-cable_z  = 4.0;       // center Z of the cable slot
+cable_h  = 5.0;       // taller so wires clear the board (CIO 2026-06-17)
+cable_z  = 3.0;       // center Z above floor; lowered so the slot drops into the under-board gap
 
 // ---- VHB recess (bottom) ------------------------------------------------
 vhb_lip    = 1.5;
@@ -191,9 +191,14 @@ module lid() {
         // top plate (rests on the box rim)
         difference() {
             translate([0, 0, rim_z]) linear_extrude(lid_top_t) rrect(case_x, case_y, corner_r);
-            // debossed FRONT arrow (+X), centered
-            translate([case_x/2 - 5, case_y/2, rim_z + lid_top_t - 0.6])
+            // debossed FRONT arrow (+X), upper area
+            translate([case_x/2 - 5, case_y/2 + 6, rim_z + lid_top_t - 0.6])
                 linear_extrude(1.0) arrow2d();
+            // debossed part-number label, lower area
+            translate([case_x/2, case_y/2 - 6, rim_z + lid_top_t - 0.6])
+                linear_extrude(1.0)
+                    text("ICM-20948", size = 4.5, halign = "center", valign = "center",
+                         font = "Liberation Sans:style=Bold");
         }
         // lip ring hanging down into the box
         translate([wall + lid_clear, wall + lid_clear, rim_z - lid_lip_h])
