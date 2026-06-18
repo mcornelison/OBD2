@@ -1,0 +1,210 @@
+{
+  "_draft": "Atlas-drafted sprint contract for EDR bus slice 1, generated from the spec + TDD plan. NOT frozen, NOT dispatched. PM (Marcus) owns: real sprint number + version, real US-/F-/E- IDs via story_counter, the freeze (frozenAt + bigDoDHash via offices/pm/scripts/prd_to_sprint.py + _freeze.py), sprint_lint, Rule 13 sign-off (Atlas), and dispatch. DO NOT overwrite offices/ralph/sprint.json (the live closed V0.28.2 contract) with this. Proposed IDs below (US-380+) are placeholders -- PM mints the real ones.",
+  "_sourceArtifacts": {
+    "spec": "docs/superpowers/specs/2026-06-18-edr-dedicated-reader-bus-contract-design.md",
+    "plan": "docs/superpowers/plans/2026-06-18-edr-bus-slice1-dedicated-reader.md (9 TDD tasks, complete code examples)",
+    "watchList": "offices/architect/CLAUDE.md A-14"
+  },
+  "schemaVersion": "2.0.0",
+  "sprint": "PENDING-PM (next sprint forks from dev)",
+  "version": "PENDING-PM (V0.28.3 patch or V0.29.0 minor -- PM versioning call)",
+  "createdFromPRD": "PENDING-PM (formalize a PRD from the spec, or convert this draft via prd_to_sprint.py)",
+  "stories": [
+    {
+      "id": "US-380",
+      "title": "Bus data types + Subscription (Sample, QoS, topicMatches, bounded queue + QoS overflow)",
+      "parent": "F-EDR-BUS (proposed)",
+      "epicId": "E-006 (proposed: EDR / black-box recorder)",
+      "type": "feature",
+      "size": "M",
+      "status": "pending",
+      "passes": false,
+      "goal": "Create the src/pi/bus/ package foundation: the immutable Sample envelope, the QoS enum, the topic prefix-matcher, and Subscription (one bounded queue per consumer with a QoS-keyed overflow policy + observability stats). Pure data types + queue logic, no wiring.",
+      "acceptance": [
+        "Sample is a frozen dataclass with fields: topic, source, value(float|tuple), unit, tsUtc, tsCapture, driveId, dataSource, seq",
+        "QoS enum has exactly LOSSLESS and LOSSY",
+        "topicMatches('raw.*','raw.obd.RPM')=True; exact pattern matches only itself; NOT regex",
+        "Subscription bounded queue: LOSSY drops oldest on full (droppedCount bumps); LOSSLESS _offer returns False on overflow and NEVER blocks; the already-queued sample is preserved",
+        "stats() exposes depth, highWater, droppedCount, lastSeqBySource",
+        "stdlib only (dataclasses/enum/queue), no new dependencies",
+        "Typecheck (mypy) passes",
+        "Tests pass"
+      ],
+      "validationCriteria": [
+        { "action": "pytest tests/pi/bus/test_sample.py tests/pi/bus/test_subscription.py", "outcome": "green" },
+        { "action": "construct a Sample then assign .value", "outcome": "raises FrozenInstanceError" },
+        { "action": "offer 3 samples to a LOSSY maxQueue=2 subscription", "outcome": "oldest dropped, poll yields seq 2 then 3, droppedCount=1" },
+        { "action": "offer 2 samples to a LOSSLESS maxQueue=1 subscription", "outcome": "_offer returns False on the 2nd, first sample still queued, call never blocks" }
+      ],
+      "conditionalOutcomes": [
+        "if topic matching seems to need multi-level wildcards beyond a trailing '.*', STOP -- out of scope (YAGNI); confirm with Atlas before adding"
+      ],
+      "dependencies": [],
+      "tasks": []
+    },
+    {
+      "id": "US-381",
+      "title": "SampleBus core -- subscribe/publish fan-out (STREAM) + producer-never-blocks",
+      "parent": "F-EDR-BUS (proposed)",
+      "epicId": "E-006 (proposed)",
+      "type": "feature",
+      "size": "S",
+      "status": "pending",
+      "passes": false,
+      "goal": "Add the SampleBus broker: subscribe() returns a Subscription; publish() fans a Sample out to every matching subscription synchronously and NEVER blocks (the queue buffer is the only async boundary). STREAM topics have no history.",
+      "acceptance": [
+        "SampleBus.subscribe(topics, qos, name, maxQueue) returns a usable Subscription",
+        "publish(sample) delivers only to subscriptions whose patterns match the topic",
+        "STREAM: a subscriber created after a publish does NOT receive that earlier sample",
+        "publish() returns promptly even when a subscriber never drains its queue (no blocking call in the publish path)",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "validationCriteria": [
+        { "action": "pytest tests/pi/bus/test_bus_stream.py", "outcome": "green" },
+        { "action": "publish 1000 samples to an undrained LOSSY maxQueue=2 subscriber", "outcome": "all publish calls return; never hangs" },
+        { "action": "subscribe to 'raw.*' after a prior publish, then poll", "outcome": "no historical sample delivered (only post-subscribe)" }
+      ],
+      "conditionalOutcomes": [],
+      "dependencies": ["US-380"],
+      "tasks": []
+    },
+    {
+      "id": "US-382",
+      "title": "STATE retained topics (last-value-cache) + integrity-gap markers",
+      "parent": "F-EDR-BUS (proposed)",
+      "epicId": "E-006 (proposed)",
+      "type": "feature",
+      "size": "S",
+      "status": "pending",
+      "passes": false,
+      "goal": "Add retained STATE topics (publish(retain=True) -> last-value-cache, replayed to new subscribers) for slowly-changing data (VIN, calibration, state.config.*); and the honest-instrument integrity-gap marker -- a LOSSLESS overflow publishes event.integrity.gap rather than silently dropping.",
+      "acceptance": [
+        "publish(sample, retain=True) stores the latest sample per topic",
+        "a new subscriber matching a retained topic immediately receives the current retained value",
+        "only the latest retained value per topic is kept; STREAM publishes are NOT retained",
+        "a LOSSLESS subscription overflow causes the bus to publish event.integrity.gap (source='bus', unit=<subscriptionName>, seq=<lost seq>) to OTHER subscribers, not the overflowing one",
+        "no overflow => no marker",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "validationCriteria": [
+        { "action": "publish retained 'state.config.serverHost' then subscribe late to 'state.config.*'", "outcome": "retained value delivered on subscribe" },
+        { "action": "overflow a LOSSLESS maxQueue=1 sub while a watcher subscribes to event.integrity.gap", "outcome": "exactly one gap marker with correct subscription name + lost seq" },
+        { "action": "publish within queue capacity (no overflow)", "outcome": "no event.integrity.gap emitted" }
+      ],
+      "conditionalOutcomes": [],
+      "dependencies": ["US-381"],
+      "tasks": []
+    },
+    {
+      "id": "US-383",
+      "title": "PersistenceSubscriber -- writes realtime_data (byte-identical golden master)",
+      "parent": "F-EDR-BUS (proposed)",
+      "epicId": "E-006 (proposed)",
+      "type": "feature",
+      "size": "M",
+      "status": "pending",
+      "passes": false,
+      "goal": "Add the subscriber that persists raw.obd.* samples to realtime_data by REUSING the existing ObdDataLogger.logReading() write path -- so the persisted rows are identical to today's inline path by construction. This is the 'one subscriber that saves data for the server' (B-104 raw emitter).",
+      "acceptance": [
+        "PersistenceSubscriber(subscription, dataLogger) with start(), stop(), and handleSample(sample)",
+        "handleSample reconstructs a LoggedReading from a raw.obd.<param> sample and calls dataLogger.logReading (does NOT reimplement the INSERT)",
+        "non-raw.obd.* topics are ignored (handleSample returns False, no write)",
+        "the drain loop catches write exceptions (subscriber isolation -- never crashes the producer)",
+        "GOLDEN MASTER: realtime_data rows written via the bus path equal rows written via inline logReading on (parameter_name, value, unit, profile_id, drive_id, data_source)",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "validationCriteria": [
+        { "action": "pytest tests/pi/bus/test_persistence_golden_master.py", "outcome": "dbA rows == dbB rows (excluding id + write-time timestamp)" },
+        { "action": "handleSample on a 'derived.gear' sample", "outcome": "returns False; dataLogger.logReading NOT called" },
+        { "action": "pytest tests/pi/bus/test_persistence_subscriber.py", "outcome": "green" }
+      ],
+      "conditionalOutcomes": [
+        "do NOT reimplement the realtime_data INSERT -- reuse ObdDataLogger.logReading so rows stay byte-identical",
+        "if ObdDataLogger.__init__ signature differs from the plan, adapt the test construction and keep both paths identical"
+      ],
+      "dependencies": ["US-380", "US-381"],
+      "tasks": []
+    },
+    {
+      "id": "US-384",
+      "title": "RealtimeDataLogger publish seam + pi.bus.enabled flag (default off)",
+      "parent": "F-EDR-BUS (proposed)",
+      "epicId": "E-006 (proposed)",
+      "type": "feature",
+      "size": "M",
+      "status": "pending",
+      "passes": false,
+      "goal": "Give the OBD poll loop a producer role: when a SampleBus is injected, _logReadingSafe publishes a raw.obd.<param> Sample (per-producer monotonic seq) instead of writing the DB; when no bus, the existing write path is unchanged. Add the pi.bus.enabled config flag, default false.",
+      "acceptance": [
+        "RealtimeDataLogger.__init__ gains optional bus=None and producerSource='obd'; adds a _seq counter",
+        "a dataLogger property exposes the internal ObdDataLogger (for the PersistenceSubscriber to reuse)",
+        "with a bus present, _logReadingSafe publishes raw.obd.<parameterName> (seq increments per publish); with bus None the write path is byte-for-byte unchanged",
+        "pi.bus.enabled defaults False in the validator DEFAULTS and config.json",
+        "existing tests/pi/obdii/data/ pass unchanged with the bus off",
+        "Typecheck passes; validate_config.py passes; Tests pass"
+      ],
+      "validationCriteria": [
+        { "action": "pytest tests/pi/obdii/data/test_realtime_bus_publish.py", "outcome": "green; published Sample topic=raw.obd.RPM, seq increments 1,2,..." },
+        { "action": "pytest tests/pi/obdii/data/ (no bus injected)", "outcome": "green -- inline write path unchanged" },
+        { "action": "python validate_config.py", "outcome": "passes; result pi.bus.enabled == False by default" }
+      ],
+      "conditionalOutcomes": [
+        "VERIFY before coding: whether utcIsoNow and getCurrentDriveId are already imported in realtime.py; add the imports if not"
+      ],
+      "dependencies": ["US-380", "US-381"],
+      "tasks": []
+    },
+    {
+      "id": "US-385",
+      "title": "Orchestrator wiring behind pi.bus.enabled + ships-dark integration (slice-1 cutover)",
+      "parent": "F-EDR-BUS (proposed)",
+      "epicId": "E-006 (proposed)",
+      "type": "feature",
+      "size": "M",
+      "status": "pending",
+      "passes": false,
+      "goal": "Wire the bus into the orchestrator: when pi.bus.enabled, build a SampleBus, start a PersistenceSubscriber on raw.obd.* (LOSSLESS) bound to the logger's ObdDataLogger, and inject the bus into the logger; when off, behavior is identical to today. Slice 1 ships dark.",
+      "acceptance": [
+        "_initializeDataLogger builds a SampleBus + starts a PersistenceSubscriber on ['raw.obd.*'] LOSSLESS + passes the bus to createRealtimeLoggerFromConfig, ONLY when pi.bus.enabled is true",
+        "flag off: no bus, no subscriber, dataLogger behavior identical to today",
+        "the PersistenceSubscriber is stopped on orchestrator shutdown",
+        "full fast suite green with the flag OFF (zero regression -- ships dark)",
+        "Typecheck passes; Tests pass"
+      ],
+      "validationCriteria": [
+        { "action": "pytest tests/pi/obdii/orchestrator/test_lifecycle_bus_wiring.py tests/pi/bus/ tests/pi/obdii/data/", "outcome": "green" },
+        { "action": "pytest tests/ -m 'not slow' with pi.bus.enabled=false", "outcome": "green -- running system unchanged (ships dark)" },
+        { "action": "enable the flag in a harness, push one sample through the orchestrator-built bus", "outcome": "a realtime_data row is written by the PersistenceSubscriber" }
+      ],
+      "conditionalOutcomes": [
+        "VERIFY before coding: createRealtimeLoggerFromConfig signature (add/forward bus), and the orchestrator class + attribute names in lifecycle.py"
+      ],
+      "dependencies": ["US-380", "US-381", "US-382", "US-383", "US-384"],
+      "tasks": []
+    }
+  ],
+  "validation": {
+    "bigDefinitionOfDone": [
+      "(pytest tests/pi/bus/test_sample.py test_subscription.py) → (green)  [from US-380]",
+      "(offer to a full LOSSLESS queue) → (_offer returns False, never blocks, queued sample preserved)  [from US-380]",
+      "(publish 1000 to an undrained subscriber) → (every publish returns; never hangs)  [from US-381]",
+      "(subscribe after a STREAM publish) → (no history delivered)  [from US-381]",
+      "(publish retained then subscribe late) → (retained value delivered on subscribe)  [from US-382]",
+      "(LOSSLESS overflow with a gap watcher) → (one event.integrity.gap with correct subName + lost seq)  [from US-382]",
+      "(pytest test_persistence_golden_master.py) → (bus-path rows == inline-path rows)  [from US-383]",
+      "(handleSample on derived.gear) → (ignored; logReading not called)  [from US-383]",
+      "(pytest tests/pi/obdii/data/ with bus off) → (green; inline write path unchanged)  [from US-384]",
+      "(python validate_config.py) → (passes; pi.bus.enabled default False)  [from US-384]",
+      "(pytest tests/ -m 'not slow' with flag off) → (green; ships dark, zero regression)  [from US-385]",
+      "(enable flag + push one sample through orchestrator bus) → (realtime_data row written by PersistenceSubscriber)  [from US-385]"
+    ],
+    "frozenAt": "PENDING-PM-FREEZE (prd_to_sprint.py + _freeze.py)",
+    "bigDoDHash": "PENDING-PM-FREEZE",
+    "validationMethod": "EDR bus slice 1 (dedicated reader -> in-process pub/sub bus -> PersistenceSubscriber). Ships DARK behind pi.bus.enabled (default false): the full fast suite must stay green with the flag off (zero behavioral change on merge). The load-bearing acceptance gate is the byte-identical golden master -- realtime_data rows written via the bus path equal rows written via the existing inline logReading path. Hardware-independent (stdlib only, existing OBD path) -- does not wait on the IMU/light sensors or the ECMLink spike. Strangler-fig: display, drive detector, and the sync transport are untouched (later slices 2-5). Post-merge flag-flip on the Pi (confirm byte-identical realtime_data + healthy sync) is a separate PM/CIO deploy gate.",
+    "validatesFeatures": ["F-EDR-BUS (proposed)"],
+    "currentVersion": "PENDING-PM"
+  }
+}
