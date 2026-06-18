@@ -228,6 +228,10 @@ if (part == 1) {
     box();
 } else if (part == 2) {
     lid();
+} else if (part == 4) {
+    // lid in PRINT orientation: top face flat on the bed, lip + snap rib pointing up
+    // (so the solid top plate is the first layer -> no bridging, stable, smooth top).
+    translate([0, case_y, rim_z + lid_top_t]) rotate([180, 0, 0]) lid();
 } else if (part == 3) {
     // cross-section through the middle (keep X >= case_x/2, show cut face)
     difference() {

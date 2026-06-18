@@ -48,9 +48,20 @@ plate only (for the VHB recess); lid prints flat-face-down separately.
 
 ## Files
 
-- `imu-case.scad` — parametric source. `part`: 0 = assembly · 1 = box · 2 = lid ·
-  3 = cross-section.
-- `stl/` — render outputs. `renders/` — preview PNGs.
+- `imu-case.scad` — parametric source. `part`: 0 = assembly · 1 = box · 2 = lid
+  (in-place, for assembly) · 3 = cross-section · **4 = lid in PRINT orientation
+  (top-face-down)**.
+- `stl/box.stl` (flat bottom) · `stl/lid.stl` (in-place) · **`stl/lid-print.stl`**
+  (top-face-on-bed — slice THIS one; printing the lid lip-down bridges the whole top).
+- `slicer/box.gcode`, `slicer/lid.gcode` — MK3S+/PLA gcode (CLI-sliced, ~45 min /
+  ~29 min). Config = `../enclosure2/slicer/mk3s-pla.ini` (CIO's profile from his .3mf
+  + adhesion overrides: supports off, 5 mm brim, fan off first 3 layers, rear seam).
+- `renders/` — preview PNGs.
+
+## Print orientation
+- **Box:** flat bottom on the bed (open top up), support-free.
+- **Lid:** **top face on the bed** (`lid-print.stl`) — solid top plate prints as the
+  first layer (no bridging, stable, smooth top); lip + snap rib point up.
 
 ## Open (pending CIO render review + physical fit-check)
 
