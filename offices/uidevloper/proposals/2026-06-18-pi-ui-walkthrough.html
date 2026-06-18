@@ -85,6 +85,20 @@
   .splashimg,.markstatic{position:absolute;inset:0;width:100%;height:100%;z-index:1}
   .splash .wm,.splash .ver,.splash .msg,.splash .ring,.replay{z-index:3}
   .replay{position:absolute;bottom:16px;right:14px;font-size:10px;color:var(--text-tertiary);cursor:pointer;border:1px solid #2a3138;border-radius:5px;padding:3px 8px;background:#0008}
+  /* inline splash fx — exact kit choreography; boot=fwd, shutdown=reverse */
+  .splashfx{position:absolute;inset:0;z-index:1}
+  .splashfx svg{position:absolute;inset:0;width:100%;height:100%}
+  .splashfx .logo3{transform-box:view-box;transform-origin:240px 160px}
+  .splashfx .scaler{transform-box:fill-box;transform-origin:50% 100%}
+  .splashfx.go .logo3{animation:spin3 3s ease-in-out 1.5s both, light3 4.5s linear 1.5s both}
+  .splashfx.go .s-top{animation:bloom3 .4s ease-out .3s both}
+  .splashfx.go .s-side{animation:bloom3 .8s cubic-bezier(.2,.7,.3,1) .7s both}
+  .splashfx.go .dot{animation:dot3 .6s ease-out both}
+  .splashfx.rev.go .logo3,.splashfx.rev.go .s-top,.splashfx.rev.go .s-side,.splashfx.rev.go .dot{animation-direction:reverse}
+  @keyframes spin3{0%{transform:rotate(0)}33.33%{transform:rotate(-120deg)}66.67%{transform:rotate(-240deg)}100%{transform:rotate(-360deg)}}
+  @keyframes bloom3{from{transform:scaleY(0)}to{transform:scaleY(1)}}
+  @keyframes light3{0%{filter:brightness(.25)}22%{filter:brightness(.5)}44%{filter:brightness(.75)}66%{filter:brightness(1)}72%{filter:brightness(.6)}77%{filter:brightness(1)}83%{filter:brightness(.6)}88%{filter:brightness(1)}94%{filter:brightness(.6)}100%{filter:brightness(1)}}
+  @keyframes dot3{0%{opacity:0}50%{opacity:1}100%{opacity:0}}
 
   /* ============ tiles (System Status) ============ */
   .tilegrid{display:grid;grid-template-columns:1fr 1fr;grid-template-rows:1fr 1fr;gap:8px;height:calc(100% - 44px)}
@@ -259,10 +273,17 @@
       <!-- ============ SPLASH ============ -->
       <section class="screen" data-id="boot-healthy">
         <div class="splash">
-          <img class="splashimg" id="bootimg" src="../../../specs/UI/dist/splash-pi/splash.svg" alt="">
+          <div class="splashfx go" id="bootfx"><svg viewBox="0 0 480 320">
+            <defs><linearGradient id="gb" x1="0" y1=".5" x2="1" y2=".5"><stop offset="0%" stop-color="#F61D2D"/><stop offset="50%" stop-color="#E60012"/><stop offset="100%" stop-color="#BF000F"/></linearGradient></defs>
+            <rect width="480" height="320" fill="#000"/>
+            <g class="logo3"><circle class="dot" cx="240" cy="160" r="4" fill="#E60012" opacity="0"/>
+              <g class="scaler s-top"><path d="M240,150 L265,100 L240,50 L215,100 Z" fill="url(#gb)"/></g>
+              <g transform="rotate(-120 240 160)"><g class="scaler s-side"><path d="M240,150 L265,100 L240,50 L215,100 Z" fill="url(#gb)"/></g></g>
+              <g transform="rotate(-240 240 160)"><g class="scaler s-side"><path d="M240,150 L265,100 L240,50 L215,100 Z" fill="url(#gb)"/></g></g>
+            </g></svg></div>
           <div class="wm">ECLIPSE OBD-II</div>
           <div class="ver">V0.28.2 · 26fd488</div>
-          <span class="replay" onclick="replay('bootimg','../../../specs/UI/dist/splash-pi/splash.svg')">↻ replay</span>
+          <span class="replay" onclick="replaySplash('bootfx')">↻ replay</span>
         </div>
       </section>
 
@@ -283,10 +304,17 @@
 
       <section class="screen" data-id="shutdown">
         <div class="splash">
-          <img class="splashimg" id="shutimg" src="../../../specs/UI/dist/splash-pi/splash-shutdown.svg" alt="">
+          <div class="splashfx rev go" id="shutfx"><svg viewBox="0 0 480 320">
+            <defs><linearGradient id="gs" x1="0" y1=".5" x2="1" y2=".5"><stop offset="0%" stop-color="#F61D2D"/><stop offset="50%" stop-color="#E60012"/><stop offset="100%" stop-color="#BF000F"/></linearGradient></defs>
+            <rect width="480" height="320" fill="#000"/>
+            <g class="logo3"><circle class="dot" cx="240" cy="160" r="4" fill="#E60012" opacity="0"/>
+              <g class="scaler s-top"><path d="M240,150 L265,100 L240,50 L215,100 Z" fill="url(#gs)"/></g>
+              <g transform="rotate(-120 240 160)"><g class="scaler s-side"><path d="M240,150 L265,100 L240,50 L215,100 Z" fill="url(#gs)"/></g></g>
+              <g transform="rotate(-240 240 160)"><g class="scaler s-side"><path d="M240,150 L265,100 L240,50 L215,100 Z" fill="url(#gs)"/></g></g>
+            </g></svg></div>
           <div class="wm">ECLIPSE OBD-II</div>
           <div class="ver">powering off · V0.28.2</div>
-          <span class="replay" onclick="replay('shutimg','../../../specs/UI/dist/splash-pi/splash-shutdown.svg')">↻ replay</span>
+          <span class="replay" onclick="replaySplash('shutfx')">↻ replay</span>
         </div>
       </section>
 
@@ -616,12 +644,13 @@ function show(id){
   const m=META[id];
   if(m){document.getElementById('ntitle').textContent=m.t;
     document.getElementById('nbody').innerHTML=m.n+(m.q?'<br><br><span class="q">◆ '+m.q+'</span>':'');}
-  if(id==='boot-healthy'){replay('bootimg','../../../specs/UI/dist/splash-pi/splash.svg');}
-  if(id==='shutdown'){replay('shutimg','../../../specs/UI/dist/splash-pi/splash-shutdown.svg');}
+  if(id==='boot-healthy'){replaySplash('bootfx');}
+  if(id==='shutdown'){replaySplash('shutfx');}
   if(id==='live'){initLive();}
   if(id==='menu'){armRing();}
 }
 function replay(id,src){const im=document.getElementById(id);if(!im)return;im.src='';im.src=src+'?_='+(performance.now()|0);}
+function replaySplash(fxid){const el=document.getElementById(fxid);if(!el)return;el.classList.remove('go');void el.offsetWidth;el.classList.add('go');}
 // carousel cards keep the menu/notes panel pointing at the card
 function card(id){show(id);}
 function openMenu(){show('menu');}
