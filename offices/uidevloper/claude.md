@@ -177,9 +177,72 @@ Open UI/UX/enclosure items I am tracking. Seeded at onboarding 2026-05-22.
 | W-8 | DTC / Check-Engine viewer + gated Mode-04 clear-code (on-Pi) | **Atlas gate = CONDITIONAL PASS (read 2026-06-10) + Spool DSM P1xxx table delivered; spec fold (C-2 KOEO, C-3 Mode02, P1xxx render) owed next DTC/dashboard session** | **2026-06-10 (read at closeout):** (1) Atlas combined gate = **CONDITIONAL PASS** (same report as W-7) — DTC design sound; C-1 F-103-first, **C-2 (new DTC-A9)** key-on Mode 03(+07) read independent of DriveDetector (KOEO blank today — the core "why's my light on?" gap), **C-3** Mode 02 confirmed-unsupported → fix §5 wording + realtime fallback; DTC-A1 clear-gate re-checked at the action path against `dtc_log`+sync-ack (never trust the UI button). (2) **Spool delivered the DSM P1xxx severity/fix table** (`inbox/2026-06-05-from-spool-dsm-p1xxx-severity-table-delivered.md`; data `offices/tuner/dsm-p1xxx-severity-table.md`): 7 engine-relevant P1xxx all 🟡 WATCH + none clearable (clear button stays disabled), 4 condition-dependent (P1103/04/05/P1300 → escalate 🔴 under overboost/lean/knock = render the `severityCaveat` line); 5 auto-trans-only P1xxx are **N/A on the manual F5M33** → quiet "N/A this vehicle" disposition, not an alert. **NEXT (next DTC/dashboard session):** fold C-2/C-3 + the P1xxx table into the spec, then formal Marcus groom-ready. — Prior: CIO-brainstormed live via visual companion 2026-06-05 (his MIL came on drive-27). Spec `docs/superpowers/specs/2026-06-05-pi-dtc-check-engine-viewer-clear-design.md` (v1.1; commits 57f7683 v1 + closeout v1.1). **Card 5 (Alerts+DTC) of the W-7 carousel**; depends on W-7 shell + F-103. Surfaces: full-screen **takeover** (severity-styled 🔴/🟡/🟢 + frequency rules, CIO chose Option B), **ribbon**, **Alerts card** (hero+list), **detail** (freeze-frame/realtime fallback + severity-gated suggested-fix + 3-state trust badge), **gated clear flow** (3 button states + hard confirm + re-read + refuse-2nd-clear). Renders Spool's DTC safety advisory (severity tiers, clear-gate, suggested-fix severity-override). **Live results folded (v1.1):** Mode 02 freeze-frame CONFIRMED unsupported on MD326328 → realtime fallback is default; P0443 read→log→clear→re-read live-validated; +R-1 condition-dependent severity (`severityCaveat`), +R-2 ribbon red≠brand red. Routed: Atlas gate A-1..A-8 (heavy = A-1 Mode 04 path w/ server-side gate re-check) + v1.1 delta, Spool ack+confirm, Argus Q-1..Q-3, Marcus pre-notice (split US-A..US-E). NEW token `--green-ok #35C46A` proposed for `specs/UI/` (W-3, via Atlas A-8). NEXT: await Atlas gate → formal Marcus groom-ready. |
 | W-9 | **Light-sensor enclosure (enclosure2/) — Adafruit TSL2591 lux breakout #1980** | **Design FINAL v6 + CLI-sliced gcode 2026-06-17; awaiting CIO PLA print/fit-check** | NEW sub-project this session (separate from W-2 = display case). One-piece shell, board tilted **15° internally** (flat VHB bottom; 2× M2.5 standoffs at the mount-hole edge + header ledge), **gravity-slide diffuser** (clear/milk-jug HDPE the CIO cuts) in a **3-sided interior U-channel** — inserts through the single TALL-wall mouth, slides downhill, seats its front edge in the front groove. v5 fix: the front groove had to be **world-aligned** (a board-parallel tilted groove sheared through the short wall's OUTER face — see [[pattern-tilted-feature-shear-in-vertical-walls]]). Passenger-side 4-5 wire exit; air vents (3 on the tall wall + 2 per angled wall). **Bottom flattened (recess off) for bed adhesion** — `stl/shell-smooth-bottom.stl` is the print target; recessed `stl/shell.stl` kept for the final. Datasheet-grounded (19.05×16.51 board). Spec `enclosure2/specs/light-sensor-case-design.md`; printer ref `enclosure2/3dprinter.md`; gcode `enclosure2/slicer/`. |
 | W-10 | **IMU enclosure (enclosure3/) — Adafruit TDK ICM-20948 9-DoF** | **v2 + CLI-sliced gcode 2026-06-17; awaiting CIO print/fit-check** | NEW sub-project. Flat box (no tilt), **5 mm clearance all sides** (wire room), **4 corner M2.5 standoffs**, **snap-on lid** (perimeter lip + snap rib into an inner-wall groove), wall vents (3 back + 2/short), **flat VHB bottom + molded FRONT arrow + "ICM-20948" label** on the lid (orientation matters — it's a live g-meter per W-11). Cable slot lowered+taller (board was blocking it). **Lid prints TOP-FACE-DOWN** = `part=4` → `stl/lid-print.stl` (lip-down bridges the top). Open: hole Ø assumed M2.5; snap-fit tuning (`lid_clear`/`snap_d`) on the PLA print. Spec `enclosure3/specs/imu-case-design.md`; gcode `enclosure3/slicer/`. |
-| W-11 | EDR / black-box display surfaces (live g-meter + post-drive review + light auto-dim) | Open — early design input received 2026-06-16 (Spool note) | Spool's `inbox/2026-06-16-from-spool-edr-display-data-palette.md`: the Pi-5 black-box build (adds 9-DoF IMU + TSL2591 light sensor) throws off lots of display material. **Two surfaces:** (1) live in-drive instrument — current gear / live g-meter / road grade / safety alerts (reuse the DTC 🔴/🟡/🟢 severity taxonomy; coolant ≥104°C + knock = own-the-screen); (2) post-drive review — server analytics (spool maps, thrust trends, corner-lean). **Light-sensor → display auto-dim** (TSL2591 lux ~1-2 Hz; the brightness curve is mine). Hard constraint: the display is a CONSUMER of the one canonical data stream, never opens the K-line itself. Enclosures #2/#3 (W-9/W-10) are the hardware homes for this build. Future design. |
+| W-11 | EDR / black-box display surfaces (live g-meter + post-drive review + light auto-dim) | **In-progress — live-instrument home card designed 2026-06-18 (walkthrough); routed Atlas (data contract) + Spool (semantics)** | Spool's `inbox/2026-06-16-from-spool-edr-display-data-palette.md`: the Pi-5 black-box build (adds 9-DoF IMU + TSL2591 light sensor) throws off lots of display material. **Two surfaces:** (1) live in-drive instrument — current gear / live g-meter / road grade / safety alerts (reuse the DTC 🔴/🟡/🟢 severity taxonomy; coolant ≥104°C + knock = own-the-screen); (2) post-drive review — server analytics (spool maps, thrust trends, corner-lean). **Light-sensor → display auto-dim** (TSL2591 lux ~1-2 Hz; the brightness curve is mine). Hard constraint: the display is a CONSUMER of the one canonical data stream, never opens the K-line itself. Enclosures #2/#3 (W-9/W-10) are the hardware homes for this build. **2026-06-18:** live-instrument **home card** (compass tape · gear · grade+altitude-line · g-force w/ 35s trail) realized in the `proposals/2026-06-18-pi-ui-walkthrough.html`; CIO approved. CIO calls: one carousel (live=home card, no separate drive-mode); unified alert layer (W-12) folds the live engine events here. Data path = IMU(ICM-20948)+GPS → canonical reader → state file → display (routed Atlas). Spool 2026-06-18 (`inbox/2026-06-18-from-spool-battery-health-f097-semantics.md` tail): **GEAR derivation is HIS, built+validated vs drive 30** (F5M33 ratios+tire circ, 1Hz resample+debounce; clutch-in/between→`--`, never a wrong number; 4th/5th at OBD sample-rate limit, IMU sharpens). Coolant bands/knock-gating/arbitration answers pending in his substantive reply. |
+| W-12 | **Unified alert layer** — DTC takeover/ribbon + live engine-protection events (coolant/knock/voltage/lean) = ONE surface | **Atlas-gate PENDING 2026-06-18 (DELTA-1); Spool semantics DELIVERED 2026-06-18** | CIO call 2026-06-18 (walkthrough review): the DTC viewer's takeover/ribbon (W-8) and the EDR live engine-protection alerts (W-11, Spool note) **merge into one alert surface** — one full-screen takeover + one persistent ribbon + one priority order, shared 🔴/🟡/🟢 taxonomy. Was two independent mechanisms (would collide for the screen). Routed: **Atlas** (`architect/inbox/2026-06-18-from-iris-ui-walkthrough-gate-deltas.md` DELTA-1 — bless one unified `alerts` emitter + priority arbitration ownership; my proposal: highest-severity wins, newest breaks ties, emitter decides not consumer); **Spool** (`tuner/inbox/2026-06-18-from-iris-alerts-and-live-instrument-semantics.md`). **Spool SSOT delivered `tuner/edr-alert-live-instrument-thresholds-advisory.md` (2026-06-18):** COOLANT 🟢≤99 / 🟡100-103 pre-warn / 🔴≥104 (2°C hyst; amber sits above observed-normal — car hits 101 in city); KNOCK only w/ ECMLink (🔴 ≥15-18° non-recovering retard; TIMING_ADVANCE≠knock → NO OBD-only knock alarm; gate false-knock via IMU vert-g); VOLTAGE 🟢13.2-14.6 / 🟡12.8-13.2 or 14.6-15.0 / 🔴<12.8 sust or >15.0 (ELM327 ATRV); LEAN 🟡 LTFT>+10% / 🔴 load+O2<0.7V+trims pegged (narrowband=crude+late, NO numeric AFR until wideband). Only **COOLANT+VOLTAGE 🔴-capable today** (IAT=🟡; oil-press would be top-🔴 but no sensor=wishlist; don't render placeholders for unreadable signals). **Arbitration confirmed:** severity → LIVE>STORED → newest; **live thermal/knock 🔴 = un-dismissable while active** (can't swipe away damage-in-progress — bake into the unified takeover). On Atlas verdict: generalize the DTC-state emitter → `alerts`; fold into DTC + dashboard specs. |
 
 ## 9. Session Log
+
+### 2026-06-18 (cont.) — Pi 3.5″ UI review: interactive walkthrough + 2 design deltas routed to Atlas/Spool
+
+- **CIO switched from 3D-printing to the screen/UI.** Asked me to review all proposed
+  Pi screens for "well-defined + easy to use," questions as needed.
+- **Read the four surfaces** (F-103 splash, F-092/F-097 carousel dashboard, DTC viewer,
+  Spool's EDR display note) + the relevant inbox. Verdict: each spec is strong **on its
+  own** (Atlas-gated, honest-instrument, real acceptance criteria); the gaps are at the
+  **system/IA level** — how they fit as one experience on a 3.5″ screen in a moving car.
+  Surfaced 3: (1) **no "driving" view** — everything specced is a *parked* diagnostic
+  surface; the live instrument Spool wants isn't designed/placed; (2) **two competing
+  takeover systems** (DTC vs live engine events); (3) **density** vs glanceability.
+- **CIO decisions (AskUserQuestion):** (1) **one carousel, live = a card** (made it the
+  home card) — NOT a separate drive-mode; (2) **unified alert layer** (one takeover/
+  ribbon/priority for both DTC + live events); (3) **build a clickable HTML walkthrough**.
+- **Built `proposals/2026-06-18-pi-ui-walkthrough.html`** — every screen at true 480×320,
+  clickable, sidebar + per-screen notes with ◆ open questions; 1×/2× scale toggle.
+  Iterated live with the CIO ("I love the new look"):
+  - **Splash:** embedded the **real kit choreography**; first via `<img>` of `splash.svg`/
+    `splash-shutdown.svg`, but the reverse file's `animation-direction:reverse` + `fadeout`
+    fill-mode left the shutdown **blank ~6s** as an img. Fixed by **inlining the exact boot
+    animation** and driving shutdown via CSS `animation-direction:reverse` (re-triggers on
+    open). Knowledge captured — and this is a **latent defect in the real kit's
+    `splash-shutdown.svg`** to watch when F-103 gets built.
+  - **Live home card rebuilt to CIO's layout:** left column = **compass tape** (360° hash
+    marks + 8 points, scrolls so heading stays under the index) · **gear** · **grade +
+    altitude-profile line** (replaced bars); right = **g-force** w/ a **~35s fading trail**;
+    lat/lon moved to top. Noted IMU(ICM-20948)+GPS as the data source (display = consumer).
+- **Routed (CIO: "move the UI through Atlas to get it onto the Pi"):**
+  - **Atlas** `architect/inbox/2026-06-18-from-iris-ui-walkthrough-gate-deltas.md` — gate
+    **DELTA-1** (unified alert emitter + arbitration) + **DELTA-2** (live-instrument data
+    contract) + **green-light** the gated near-term line (F-103 → shell → cards → DTC) to
+    Marcus. Flagged sequencing: the live card + live-alert half ride the **EDR/IMU build**
+    (later); the near-term parked line does NOT depend on it — don't block it on hardware.
+  - **Spool** `tuner/inbox/2026-06-18-from-iris-alerts-and-live-instrument-semantics.md` —
+    SME heads-up: confirm severity tiers (coolant/knock/voltage/lean + arbitration) + live
+    semantics (gear ratios, g color thresholds, grade/altitude, light-dim min-brightness
+    floor for alerts).
+- **Inbox (closeout sweep):** new item **Spool `2026-06-18-from-spool-battery-health-f097-semantics.md`**
+  (arrived after my start sweep). **F-097 battery-HEALTH semantics + a render-breaking trap:**
+  the `battery_health_log` is the **Pi UPS LiPo cell (MAX17048), NOT the car 12V** — don't
+  label "vehicle battery"; columns `start_soc/end_soc` hold **CELL VOLTAGE (4.2→3.4V), not %**
+  (rendering 3.44 as "3.44%" is badly wrong → source SoC% from the MAX17048 SoC register,
+  nonlinear, don't lerp). Health verdict = **GREEN** (full-charge 4.20–4.22V; cutoff ~3.42–3.45V;
+  runtime ~12 min; no degradation) → show full-charge-reachable + runtime-to-cutoff + **last-checked
+  date** (data is month-old; stale-green guard); `ambient_temp_c` never logged → "not captured."
+  Also **acked my alert/live note** + confirmed **GEAR is his + ready** (validated vs drive 30).
+  → FOLD into F-097 spec + walkthrough Battery card + ack Spool **next session**.
+- **Knowledge captured (1 new + 1 refinement):** `pattern-css-svg-reverse-animation-fillmode.md`
+  (reverse-animation fill-mode gotcha + the inline-control fix + kit-defect flag);
+  refined `feedback-cio-prefers-visual-brainstorming.md` (self-contained **committed** HTML
+  walkthrough beats the timing-out companion server for review).
+- **Commits:** `9b92ab0` (walkthrough v1) · `a45748a` (v2 real splash + live card) ·
+  `24db095` (v3 live polish + shutdown auto-replay) · `24a520b` (shutdown fix + Atlas A2AL) ·
+  `0b91ddb` (Spool A2AL) · + this closeout.
+- **Open for next session:** await **Atlas** gate verdict (DELTA-1/2) + green-light → then
+  fold gated deltas **+ C-2 KOEO read / C-3 Mode-02 fallback + Spool P1xxx + F-097 LiPo-voltage
+  semantics + data-age + Spool's EDR alert/live-instrument thresholds (W-12 SSOT)** into the
+  DTC/dashboard/live specs → groom-ready to Marcus. **Spool's thresholds reply + F-097 semantics
+  both RECEIVED + acked 2026-06-18** (SSOTs `tuner/edr-alert-live-instrument-thresholds-advisory.md`
+  + `inbox/2026-06-18-from-spool-battery-health-f097-semantics.md`) — nothing owed back to Spool,
+  just the fold. Enclosures #2/#3/v2.7 (W-9/W-10/W-2) still **awaiting CIO physical print fit-checks**.
 
 ### 2026-06-16/18 — Enclosure #2 (light sensor) build→print, Enclosure #3 (IMU) design, + PrusaSlicer CLI slicing
 

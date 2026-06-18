@@ -47,4 +47,24 @@ persist under `offices/uidevloper/.superpowers/brainstorm/` (gitignored via a `*
 <session-dir>`); a SIGTERM "failed exit 143" notification on the background task is the
 expected stop, not an error.
 
+## Refinement — a self-contained, COMMITTED HTML walkthrough beats the companion server
+
+For **reviewing a set of already-designed screens** (vs. live brainstorming a new one),
+a single self-contained HTML file committed to `offices/uidevloper/proposals/` is more
+durable than the companion server: no idle-timeout, no changing port, CIO opens it via a
+`file:///…` URL and it survives across turns/sessions. Pattern that worked well
+(2026-06-18 Pi UI review, CIO "I love the new look"):
+- One file, every screen rendered at **true 480×320** (a 1×/2× scale toggle so he can feel
+  the *real* cramped size — the honest readability test).
+- Left **sidebar** lists screens grouped by area; **per-screen notes** panel carries the
+  design rationale + a highlighted **◆ open question** where his call matters.
+- Wire the *actual* interactions (tap tiles/rows, ⋮, swipe arrows, long-press sim) so he
+  judges flow, not just static pictures. Embed real animations (inline, controllable —
+  see [[pattern-css-svg-reverse-animation-fillmode]]).
+- Open it for him with `Start-Process <path>` (Windows) and give the `file:///` URL.
+- Iterate the file **live** as he reacts; commit each pass (office-scoped).
+
+Use the companion server for *generative* brainstorming (A/B/C choice clicks); use the
+committed walkthrough for *review/critique* of an existing set.
+
 See also: [[pattern-defects-first-existing-artifact-review]], [[pattern-ground-in-existing-implementation]].
