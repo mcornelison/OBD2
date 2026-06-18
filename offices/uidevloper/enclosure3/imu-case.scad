@@ -62,8 +62,11 @@ cable_h  = 5.0;       // taller so wires clear the board (CIO 2026-06-17)
 cable_z  = 3.0;       // center Z above floor; lowered so the slot drops into the under-board gap
 
 // ---- VHB recess (bottom) ------------------------------------------------
+// vhb_recess = 0 -> FLAT smooth bottom (CIO 2026-06-17): full first-layer bed
+// contact for reliable MK3S+ adhesion (a recessed bottom only contacts on a thin
+// lip-ring ~24% area -> mid-print bed-release). VHB tape sticks fine to a flat face.
 vhb_lip    = 1.5;
-vhb_recess = 0.5;
+vhb_recess = 0.0;       // set >0 (e.g. 0.5) only if you want a tape-edge-hiding recess
 
 // ---- Derived ------------------------------------------------------------
 x0 = wall + clr;                       // board origin (world) X
