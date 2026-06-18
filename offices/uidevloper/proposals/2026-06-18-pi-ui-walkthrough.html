@@ -82,6 +82,9 @@
   .splash.degraded .ring{position:absolute;inset:14px;border:4px solid var(--amber-warn);border-radius:14px}
   .splash.degraded .msg{position:absolute;bottom:70px;color:var(--amber-warn);font-size:11px;letter-spacing:.04em}
   .splash.degraded .wm::after{content:" ⚠"}
+  .splashimg,.markstatic{position:absolute;inset:0;width:100%;height:100%;z-index:1}
+  .splash .wm,.splash .ver,.splash .msg,.splash .ring,.replay{z-index:3}
+  .replay{position:absolute;bottom:16px;right:14px;font-size:10px;color:var(--text-tertiary);cursor:pointer;border:1px solid #2a3138;border-radius:5px;padding:3px 8px;background:#0008}
 
   /* ============ tiles (System Status) ============ */
   .tilegrid{display:grid;grid-template-columns:1fr 1fr;grid-template-rows:1fr 1fr;gap:8px;height:calc(100% - 44px)}
@@ -126,6 +129,32 @@
   .gmeter .glab{position:absolute;top:6px;left:8px;font-size:9px;color:var(--text-tertiary)}
   .gmeter .gval{position:absolute;bottom:6px;right:8px;font-size:11px;color:var(--text-secondary)}
   .live .grade{flex:0 0 36px;background:var(--tile);border:1px solid var(--tile-line);border-radius:8px;display:flex;align-items:center;justify-content:space-between;padding:0 12px;font-size:12px;color:var(--text-secondary)}
+  /* live v2 (compass tape + gear + grade-trend left column; g-force right) */
+  .live2{display:flex;gap:10px;height:calc(100% - 24px)}
+  .lcol{flex:0 0 150px;display:flex;flex-direction:column;gap:8px}
+  .lcell{flex:1;background:var(--tile);border:1px solid var(--tile-line);border-radius:8px;padding:6px 8px;position:relative;overflow:hidden}
+  .clabel{font-size:8px;letter-spacing:.1em;color:var(--text-tertiary)}
+  .ctape-win{position:relative;height:30px;margin-top:3px;overflow:hidden}
+  .ctape{position:absolute;top:0;left:0;height:30px;will-change:transform}
+  .ctape .tick{position:absolute;bottom:2px;width:1px;height:6px;background:#39424b}
+  .ctape .tick.med{height:10px;background:#4a5560}
+  .ctape .tick.maj{height:16px;background:#7a8691}
+  .ctape .tlab{position:absolute;bottom:18px;transform:translateX(-50%);font-size:9px;font-weight:600;color:#eef2f6;white-space:nowrap}
+  .cindex{position:absolute;top:0;bottom:0;left:50%;width:0;border-left:1px solid var(--amber-warn);box-shadow:0 0 5px var(--amber-warn)}
+  .cindex::before{content:"▼";position:absolute;top:-3px;left:-4px;color:var(--amber-warn);font-size:8px}
+  .cbearing{font-size:13px;font-weight:600;color:#eef2f6;margin-top:3px;letter-spacing:.04em}
+  .gearcell{display:flex;align-items:center;justify-content:center;gap:8px}
+  .gnum{font-size:40px;font-weight:700;line-height:1;color:#eef2f6}
+  .glab2{font-size:9px;letter-spacing:.16em;color:var(--text-tertiary)}
+  .graderow{display:flex;align-items:center;gap:8px;margin-top:5px}
+  .gradeval{font-size:22px;font-weight:600;color:#eef2f6;min-width:46px}
+  .gradetrend{flex:1;display:flex;align-items:flex-end;gap:2px;height:30px}
+  .gradetrend i{flex:1;background:#3a6f53;border-radius:1px;display:block;min-height:1px}
+  .gradetrend i.neg{background:#7a542f}
+  .gpanel{flex:1;position:relative;background:var(--tile);border:1px solid var(--tile-line);border-radius:8px;overflow:hidden}
+  .gpanel canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
+  .gpanel .glab{position:absolute;top:6px;left:8px;font-size:9px;color:var(--text-tertiary);z-index:2}
+  .gpanel .gval{position:absolute;bottom:6px;right:8px;font-size:11px;color:var(--text-secondary);z-index:2}
 
   /* ============ alerts card ============ */
   .hero{border-radius:8px;padding:10px 12px;margin-bottom:10px}
@@ -230,27 +259,34 @@
       <!-- ============ SPLASH ============ -->
       <section class="screen" data-id="boot-healthy">
         <div class="splash">
+          <img class="splashimg" id="bootimg" src="../../../specs/UI/dist/splash-pi/splash.svg" alt="">
           <div class="wm">ECLIPSE OBD-II</div>
-          <div class="mark"><div class="rh spin"></div><div class="rh l spin"></div><div class="rh r spin"></div></div>
           <div class="ver">V0.28.2 · 26fd488</div>
+          <span class="replay" onclick="replay('bootimg','../../../specs/UI/dist/splash-pi/splash.svg')">↻ replay</span>
         </div>
       </section>
 
       <section class="screen" data-id="boot-degraded">
         <div class="splash degraded">
+          <svg class="markstatic" viewBox="0 0 480 320">
+            <defs><linearGradient id="gd" x1="0" y1=".5" x2="1" y2=".5"><stop offset="0%" stop-color="#F61D2D"/><stop offset="50%" stop-color="#E60012"/><stop offset="100%" stop-color="#BF000F"/></linearGradient></defs>
+            <g transform="rotate(0 240 160)"><path d="M240,150 L265,100 L240,50 L215,100 Z" fill="url(#gd)"/></g>
+            <g transform="rotate(-120 240 160)"><path d="M240,150 L265,100 L240,50 L215,100 Z" fill="url(#gd)"/></g>
+            <g transform="rotate(-240 240 160)"><path d="M240,150 L265,100 L240,50 L215,100 Z" fill="url(#gd)"/></g>
+          </svg>
           <div class="ring"></div>
           <div class="wm">ECLIPSE OBD-II</div>
-          <div class="mark"><div class="rh"></div><div class="rh l"></div><div class="rh r"></div></div>
           <div class="msg">ECLIPSE-OBD: adapter not detected</div>
           <div class="ver" style="color:var(--amber-warn)">V0.28.2 · 26fd488</div>
         </div>
       </section>
 
       <section class="screen" data-id="shutdown">
-        <div class="splash" style="opacity:.85">
+        <div class="splash">
+          <img class="splashimg" id="shutimg" src="../../../specs/UI/dist/splash-pi/splash-shutdown.svg" alt="">
           <div class="wm">ECLIPSE OBD-II</div>
-          <div class="mark"><div class="rh"></div><div class="rh l"></div><div class="rh r"></div></div>
           <div class="ver">powering off · V0.28.2</div>
+          <span class="replay" onclick="replay('shutimg','../../../specs/UI/dist/splash-pi/splash-shutdown.svg')">↻ replay</span>
         </div>
       </section>
 
@@ -260,17 +296,23 @@
           <span class="glyphs"><span class="g ok">✦BT</span><span class="g ok">⟳2m</span><span class="g ok">⏻CAR</span><span class="kebab" onclick="openMenu()">⋮</span></span></div>
         <div class="cardbody">
           <div class="cardtitle">LIVE · DRIVE 27 <span class="rec"></span></div>
-          <div class="live">
-            <div class="gear"><div class="num" id="gearnum">3</div><div class="lab">GEAR</div></div>
-            <div class="right">
-              <div class="gmeter">
-                <div class="cross"></div>
-                <div class="ring2" style="inset:30px"></div><div class="ring2" style="inset:55px"></div>
-                <div class="glab">G-FORCE</div>
-                <div class="dot" id="gdot"></div>
-                <div class="gval" id="gval">0.0 lat · 0.0 lon</div>
+          <div class="live2">
+            <div class="lcol">
+              <div class="lcell">
+                <div class="clabel">HEADING</div>
+                <div class="ctape-win"><div class="ctape" id="ctape"></div><div class="cindex"></div></div>
+                <div class="cbearing" id="cbearing">042° NE</div>
               </div>
-              <div class="grade"><span>GRADE</span><span style="color:#cfd4da">+3°</span></div>
+              <div class="lcell gearcell"><div class="gnum" id="gearnum">3</div><div class="glab2">GEAR</div></div>
+              <div class="lcell">
+                <div class="clabel">GRADE · trend ~15 min</div>
+                <div class="graderow"><div class="gradeval" id="gradeval">+3°</div><div class="gradetrend" id="gradetrend"></div></div>
+              </div>
+            </div>
+            <div class="gpanel">
+              <canvas id="gcanvas"></canvas>
+              <div class="glab">G-FORCE · 35s trail</div>
+              <div class="gval" id="gval">0.0 lat · 0.0 lon</div>
             </div>
           </div>
         </div>
@@ -530,7 +572,7 @@ const SCREENS = [
     {id:"shutdown", t:"Shutdown splash", n:"Fires when the key-off sequencer enters its grace window (you're still in the seat), reverse animation, then black until power-off.", q:""},
   ]},
   {grp:"Carousel (swipe ↔)", items:[
-    {id:"live", t:"① Live instrument ★ home", n:"<span class='new'>NEW — your call: live = a card, made the home card.</span> Big GEAR + g-meter + grade — the glance-while-driving surface. This is first-pass; not yet in any spec (W-11). <b>Watch the g-dot move.</b>", q:"Is this the right HOME card (what shows on boot + what you land on)? And is gear+g-meter+grade the right content, or do you want a live vital here too (coolant/boost)?"},
+    {id:"live", t:"① Live instrument ★ home", n:"<span class='new'>Rebuilt per your layout.</span> Left column = <b>compass tape</b> (360° hash marks + 8 points; scrolls so your heading stays under the amber index) · <b>gear</b> · <b>grade + ~15-min trend bars</b>. Right = <b>g-force</b> with a <b>35s fading trail</b> (dot goes amber past ~0.6g; turning swings the compass). The home card — lands here on boot + while driving.", q:"Does the compass tape read right (heading centered under the index)? Trail length good at ~35s? Anything you'd add to the left column?"},
     {id:"system", t:"② System Status", n:"2×2 tiles + drive banner. OBD link shown RECONNECTING = the I-033 'did it capture my drive?' fix. Tap the Battery tile → Battery card.", q:"At arm's length this is ~13 chunks of text. Too dense for a glance, or fine because it's a lean-in card?"},
     {id:"battery", t:"③ Battery Health", n:"VCELL authoritative + largest; SOC smallest + '(uncalibrated)' (the Drain-Test-6 honesty rule). Sparkline = rested-VCELL trend. Button previews the failsafe state.", q:""},
     {id:"battery-fail", t:"③b Battery — FAILSAFE", n:"Renders ONLY during a real drain (wall power lost). Ladder + estimated runtime. Demoted to failsafe because the new sequencer prevents draining — showing a live ladder normally would be a dishonest instrument.", q:""},
@@ -574,8 +616,10 @@ function show(id){
   const m=META[id];
   if(m){document.getElementById('ntitle').textContent=m.t;
     document.getElementById('nbody').innerHTML=m.n+(m.q?'<br><br><span class="q">◆ '+m.q+'</span>':'');}
+  if(id==='live'){initLive();}
   if(id==='menu'){armRing();}
 }
+function replay(id,src){const im=document.getElementById(id);if(!im)return;im.src='';im.src=src+'?_='+(performance.now()|0);}
 // carousel cards keep the menu/notes panel pointing at the card
 function card(id){show(id);}
 function openMenu(){show('menu');}
@@ -591,18 +635,67 @@ function setScale(s){
   document.querySelector('.stagewrap').style.height=(320*s+40)+'px';
 }
 
-// animate the g-meter dot so 'live' feels live
-let t=0;setInterval(()=>{t+=0.08;
-  const dot=document.getElementById('gdot');if(!dot)return;
-  const lat=Math.sin(t)*0.55, lon=Math.cos(t*0.7)*0.4;
-  dot.style.left='calc(50% - 7px + '+(lat*70)+'px)';
-  dot.style.top='calc(50% - 7px - '+(lon*55)+'px)';
-  const mag=Math.hypot(lat,lon);
-  dot.style.background=mag>0.6?'var(--amber-warn)':'var(--green-ok)';
-  dot.style.boxShadow='0 0 8px '+(mag>0.6?'var(--amber-warn)':'var(--green-ok)');
-  const gv=document.getElementById('gval');if(gv)gv.textContent=lat.toFixed(1)+' lat · '+lon.toFixed(1)+' lon';
-  const gn=document.getElementById('gearnum');if(gn)gn.textContent=(Math.abs(Math.sin(t*0.3))*1.9+2|0);
-},120);
+// ---------- live instrument sim ----------
+const PXD=1.5, WINHALF=66;            // px per degree on the compass tape; tape window half-width
+const PTS=[['N',0],['NE',45],['E',90],['SE',135],['S',180],['SW',225],['W',270],['NW',315]];
+let LT=0, heading=42, gTrail=[], gradeHist=[], tapeBuilt=false;
+
+function buildTape(){
+  const tape=document.getElementById('ctape'); if(!tape||tapeBuilt)return;
+  const lab={0:'N',45:'NE',90:'E',135:'SE',180:'S',225:'SW',270:'W',315:'NW'};
+  let h='';
+  for(let d=0; d<=720; d+=5){
+    const x=(d*PXD).toFixed(1), m=((d%360)+360)%360;
+    let cls='tick'; if(m%45===0)cls='tick maj'; else if(m%15===0)cls='tick med';
+    h+=`<span class="${cls}" style="left:${x}px"></span>`;
+    if(m%45===0)h+=`<span class="tlab" style="left:${x}px">${lab[m]}</span>`;
+  }
+  tape.innerHTML=h; tape.style.width=(720*PXD)+'px'; tapeBuilt=true;
+}
+function initLive(){
+  buildTape();
+  const c=document.getElementById('gcanvas');
+  if(c){ c.width=c.clientWidth||286; c.height=c.clientHeight||196; }
+}
+function drawG(){
+  const c=document.getElementById('gcanvas'); if(!c||!c.width)return;
+  const x=c.getContext('2d'), W=c.width, H=c.height, cx=W/2, cy=H/2, R=Math.min(cx,cy)-12;
+  x.clearRect(0,0,W,H);
+  x.strokeStyle='#2a3138'; x.lineWidth=1;
+  x.beginPath(); x.moveTo(cx,8); x.lineTo(cx,H-8); x.moveTo(8,cy); x.lineTo(W-8,cy); x.stroke();
+  [R*0.5,R].forEach(r=>{x.beginPath(); x.arc(cx,cy,r,0,7); x.stroke();});
+  for(let i=0;i<gTrail.length;i++){
+    const p=gTrail[i], a=(i+1)/gTrail.length;
+    x.beginPath(); x.arc(cx+p.lat*R, cy-p.lon*R, 1.8, 0, 7);
+    x.fillStyle='rgba(53,196,106,'+(a*0.55)+')'; x.fill();
+  }
+  const cur=gTrail[gTrail.length-1]||{lat:0,lon:0}, mag=Math.hypot(cur.lat,cur.lon);
+  const col=mag>0.6?'#FFC400':'#35C46A', px=cx+cur.lat*R, py=cy-cur.lon*R;
+  x.shadowBlur=10; x.shadowColor=col; x.beginPath(); x.arc(px,py,6,0,7); x.fillStyle=col; x.fill(); x.shadowBlur=0;
+}
+setInterval(()=>{
+  const live=document.querySelector('.screen[data-id="live"]');
+  if(!live||!live.classList.contains('on'))return;
+  LT+=0.1;
+  const lat=0.5*Math.sin(LT*0.4)+0.18*Math.sin(LT*1.1);
+  const lon=0.42*Math.cos(LT*0.3)+0.12*Math.sin(LT*0.9);
+  gTrail.push({lat,lon}); if(gTrail.length>350)gTrail.shift();   // 350 * 100ms = 35s trail
+  drawG();
+  const gv=document.getElementById('gval'); if(gv)gv.textContent=lat.toFixed(2)+' lat · '+lon.toFixed(2)+' lon';
+  heading=(heading+lat*1.6+360)%360;                            // turning couples to lateral g
+  const tape=document.getElementById('ctape');
+  if(tape)tape.style.transform='translateX('+(WINHALF-(heading+360)*PXD)+'px)';
+  let near='N',best=999; PTS.forEach(([n,d])=>{let df=Math.min(Math.abs(heading-d),360-Math.abs(heading-d));if(df<best){best=df;near=n;}});
+  const cb=document.getElementById('cbearing'); if(cb)cb.textContent=String(Math.round(heading)%360).padStart(3,'0')+'° '+near;
+  const gn=document.getElementById('gearnum'); if(gn)gn.textContent=2+(Math.abs(Math.sin(LT*0.12))*3|0);
+  const grade=Math.round(3*Math.sin(LT*0.08)+2*Math.sin(LT*0.03));
+  const gvl=document.getElementById('gradeval'); if(gvl)gvl.textContent=(grade>=0?'+':'')+grade+'°';
+  if(Math.round(LT*10)%8===0){
+    gradeHist.push(grade); if(gradeHist.length>15)gradeHist.shift();
+    const gt=document.getElementById('gradetrend');
+    if(gt)gt.innerHTML=gradeHist.map(v=>'<i class="'+(v<0?'neg':'')+'" style="height:'+Math.min(100,Math.abs(v)*13+8)+'%"></i>').join('');
+  }
+},100);
 
 setScale(2);
 show('live');
