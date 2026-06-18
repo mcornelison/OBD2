@@ -1,0 +1,611 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Eclipse OBD-II · Pi 3.5″ UI Walkthrough — Iris 2026-06-18</title>
+<style>
+  :root{
+    /* F-103 visual SSOT tokens */
+    --text-secondary:#888888;
+    --text-tertiary:#666666;
+    --amber-warn:#FFC400;
+    --amber-soft:#FFC40033;
+    --red:#E60012;          /* BRAND red — mark only */
+    --red-light:#F61D2D;    /* alert red — ribbon/alarm */
+    --red-dark:#BF000F;
+    --green-ok:#35C46A;     /* NEW token (proposed) */
+    --scrn:#0a0c0f;         /* instrument background */
+    --tile:#14181d;
+    --tile-line:#222a31;
+    --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;background:#1b1e22;color:#cfd4da;font-family:var(--mono);font-size:13px}
+  header.app{display:flex;align-items:center;gap:16px;padding:10px 16px;background:#0e1114;border-bottom:1px solid #2a2f35;position:sticky;top:0;z-index:50}
+  header.app h1{font-size:14px;margin:0;font-weight:600;letter-spacing:.04em;color:#e7ebf0}
+  header.app .sub{color:var(--text-secondary);font-size:11px}
+  header.app .controls{margin-left:auto;display:flex;gap:8px;align-items:center}
+  button.ctl{background:#1b2127;color:#cfd4da;border:1px solid #333b43;border-radius:6px;padding:5px 10px;font-family:var(--mono);font-size:12px;cursor:pointer}
+  button.ctl.active{background:var(--amber-soft);border-color:var(--amber-warn);color:var(--amber-warn)}
+  .layout{display:flex;align-items:flex-start;gap:24px;padding:20px}
+  /* sidebar */
+  nav.screens{width:230px;flex:0 0 230px;font-size:12px}
+  nav.screens .grp{margin-bottom:14px}
+  nav.screens .grp h2{font-size:11px;text-transform:uppercase;letter-spacing:.1em;color:var(--text-tertiary);margin:0 0 6px}
+  nav.screens a{display:block;padding:5px 9px;color:#b9c0c8;text-decoration:none;border-radius:5px;cursor:pointer;border:1px solid transparent}
+  nav.screens a:hover{background:#181d22}
+  nav.screens a.sel{background:var(--amber-soft);color:var(--amber-warn);border-color:#3a3320}
+  nav.screens a .k{color:var(--text-tertiary);font-size:10px}
+  /* stage */
+  .stagewrap{flex:0 0 auto;position:sticky;top:64px}
+  .device{width:480px;height:320px;background:#000;border-radius:8px;overflow:hidden;position:relative;box-shadow:0 0 0 10px #15171a,0 0 0 12px #2c3137,0 18px 40px rgba(0,0,0,.6);transform-origin:top left}
+  .screen{position:absolute;inset:0;background:var(--scrn);display:none}
+  .screen.on{display:block}
+  /* notes */
+  .notes{flex:1;min-width:260px;max-width:520px}
+  .notes h3{margin:0 0 6px;font-size:13px;color:#e7ebf0}
+  .notes .body{background:#0e1114;border:1px solid #262b31;border-radius:8px;padding:14px;font-size:12.5px;line-height:1.55;color:#b9c0c8}
+  .notes .body b{color:#e7ebf0}
+  .notes .q{color:var(--amber-warn)}
+  .notes .new{color:var(--green-ok)}
+  .pill{display:inline-block;padding:1px 7px;border-radius:10px;font-size:10px;border:1px solid #3a4047;color:var(--text-secondary);vertical-align:middle}
+  .pill.new{color:var(--green-ok);border-color:#264c39}
+  .pill.proposed{color:var(--amber-warn);border-color:#4c4326}
+
+  /* ============ shared screen chrome ============ */
+  .topbar{position:absolute;top:0;left:0;right:0;height:42px;display:flex;align-items:center;padding:0 12px;border-bottom:1px solid var(--tile-line);background:#0c0f12;z-index:5}
+  .wordmark{font-size:11px;letter-spacing:.14em;color:var(--text-secondary)}
+  .glyphs{margin-left:auto;display:flex;gap:14px;align-items:center;font-size:12px}
+  .glyphs .g{display:flex;gap:4px;align-items:center;color:var(--text-secondary)}
+  .glyphs .g.ok{color:var(--green-ok)} .glyphs .g.warn{color:var(--amber-warn)} .glyphs .g.bad{color:var(--red-light)}
+  .kebab{margin-left:8px;color:#aeb4bb;font-size:18px;cursor:pointer;padding:0 4px}
+  .dots{position:absolute;bottom:0;left:0;right:0;height:30px;display:flex;gap:9px;align-items:center;justify-content:center;background:#0c0f12;border-top:1px solid var(--tile-line);z-index:5}
+  .dots i{width:7px;height:7px;border-radius:50%;background:#333a41;display:block}
+  .dots i.on{width:18px;border-radius:4px;background:var(--amber-warn)}
+  .cardbody{position:absolute;top:42px;bottom:30px;left:0;right:0;padding:12px 14px;overflow:hidden}
+  .cardtitle{font-size:11px;letter-spacing:.12em;color:var(--text-secondary);text-transform:uppercase;margin-bottom:8px;display:flex;justify-content:space-between}
+  .navarrows{position:absolute;top:50%;width:100%;display:flex;justify-content:space-between;pointer-events:none;z-index:6}
+  .navarrows span{pointer-events:auto;cursor:pointer;color:#5b636b;font-size:26px;padding:6px 8px;user-select:none}
+  .navarrows span:hover{color:#aeb4bb}
+
+  /* ============ splash ============ */
+  .splash{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;background:#000}
+  .splash .wm{position:absolute;top:24px;font-size:13px;letter-spacing:.18em;color:var(--text-secondary)}
+  .splash .ver{position:absolute;bottom:18px;font-size:10px;letter-spacing:.06em;color:var(--text-tertiary)}
+  .mark{position:relative;width:120px;height:120px}
+  .rh{position:absolute;width:30px;height:48px;background:linear-gradient(160deg,var(--red-light),var(--red-dark));transform:rotate(45deg);border-radius:4px;left:45px;top:36px}
+  .rh.l{left:18px;top:48px;opacity:.92}
+  .rh.r{left:72px;top:48px;opacity:.92}
+  .spin{animation:spin 3s linear infinite}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  .splash.degraded .ring{position:absolute;inset:14px;border:4px solid var(--amber-warn);border-radius:14px}
+  .splash.degraded .msg{position:absolute;bottom:70px;color:var(--amber-warn);font-size:11px;letter-spacing:.04em}
+  .splash.degraded .wm::after{content:" ⚠"}
+
+  /* ============ tiles (System Status) ============ */
+  .tilegrid{display:grid;grid-template-columns:1fr 1fr;grid-template-rows:1fr 1fr;gap:8px;height:calc(100% - 44px)}
+  .stile{background:var(--tile);border:1px solid var(--tile-line);border-radius:7px;padding:8px 10px;display:flex;flex-direction:column;justify-content:space-between}
+  .stile .lab{font-size:9.5px;letter-spacing:.1em;color:var(--text-tertiary)}
+  .stile .val{font-size:15px;font-weight:600;margin-top:2px}
+  .stile .sub{font-size:9.5px;color:var(--text-tertiary)}
+  .stile.warn{border-color:#4c4326} .stile.warn .val{color:var(--amber-warn)}
+  .stile.ok .val{color:var(--green-ok)}
+  .stile.tap{position:relative;cursor:pointer}
+  .stile.tap::after{content:"›";position:absolute;right:9px;bottom:7px;color:var(--text-tertiary)}
+  .drivebanner{margin-top:8px;font-size:11px;color:#b9c0c8;display:flex;align-items:center;gap:8px}
+  .rec{width:9px;height:9px;border-radius:50%;background:var(--red-light);display:inline-block;animation:pulse 1.4s infinite}
+  @keyframes pulse{50%{opacity:.3}}
+
+  /* ============ battery ============ */
+  .bigval{font-size:30px;font-weight:700}
+  .unit{font-size:13px;color:var(--text-secondary)}
+  .row{display:flex;justify-content:space-between;align-items:baseline;margin:4px 0}
+  .muted{color:var(--text-tertiary);font-size:11px}
+  .spark{display:flex;gap:3px;align-items:flex-end;height:26px;margin:6px 0}
+  .spark i{width:8px;background:#3a6f53;border-radius:2px;display:block}
+  .ladder{display:flex;gap:0;margin:8px 0;font-size:8.5px}
+  .ladder div{flex:1;text-align:center;padding:5px 2px;border:1px solid var(--tile-line);color:var(--text-tertiary)}
+  .ladder div.cur{background:var(--amber-soft);border-color:var(--amber-warn);color:var(--amber-warn)}
+  .statehdr{float:right;font-size:10px;letter-spacing:.06em}
+  .statehdr.charge{color:var(--green-ok)} .statehdr.drain{color:var(--amber-warn)}
+
+  /* ============ live instrument ============ */
+  .live{display:flex;height:100%;gap:10px}
+  .live .gear{flex:0 0 120px;display:flex;flex-direction:column;align-items:center;justify-content:center;background:var(--tile);border:1px solid var(--tile-line);border-radius:8px}
+  .live .gear .num{font-size:64px;font-weight:700;line-height:1;color:#eef2f6}
+  .live .gear .lab{font-size:9px;letter-spacing:.18em;color:var(--text-tertiary);margin-top:4px}
+  .live .right{flex:1;display:flex;flex-direction:column;gap:8px}
+  .gmeter{flex:1;position:relative;background:var(--tile);border:1px solid var(--tile-line);border-radius:8px}
+  .gmeter .cross{position:absolute;inset:0}
+  .gmeter .cross::before,.gmeter .cross::after{content:"";position:absolute;background:#262d34}
+  .gmeter .cross::before{left:50%;top:8px;bottom:8px;width:1px}
+  .gmeter .cross::after{top:50%;left:8px;right:8px;height:1px}
+  .gmeter .ring2{position:absolute;border:1px solid #2a3138;border-radius:50%}
+  .gmeter .dot{position:absolute;width:14px;height:14px;border-radius:50%;background:var(--green-ok);box-shadow:0 0 8px var(--green-ok);transition:all .25s;left:calc(50% - 7px);top:calc(50% - 7px)}
+  .gmeter .glab{position:absolute;top:6px;left:8px;font-size:9px;color:var(--text-tertiary)}
+  .gmeter .gval{position:absolute;bottom:6px;right:8px;font-size:11px;color:var(--text-secondary)}
+  .live .grade{flex:0 0 36px;background:var(--tile);border:1px solid var(--tile-line);border-radius:8px;display:flex;align-items:center;justify-content:space-between;padding:0 12px;font-size:12px;color:var(--text-secondary)}
+
+  /* ============ alerts card ============ */
+  .hero{border-radius:8px;padding:10px 12px;margin-bottom:10px}
+  .hero.stop{background:#2a0608;border:1px solid var(--red-light)}
+  .hero.watch{background:#241d00;border:1px solid var(--amber-warn)}
+  .hero .ht{display:flex;align-items:center;gap:8px;font-size:15px;font-weight:600}
+  .hero .dir{font-size:11px;margin-top:4px;letter-spacing:.04em}
+  .hero.stop .dir{color:var(--red-light)} .hero.watch .dir{color:var(--amber-warn)}
+  .chip{font-size:9px;font-weight:700;padding:2px 6px;border-radius:4px;letter-spacing:.06em}
+  .chip.stop{background:var(--red-light);color:#fff} .chip.watch{background:var(--amber-warn);color:#000}
+  .chip.minor{background:var(--green-ok);color:#04210f} .chip.none{background:#2a2f37;color:var(--text-secondary)}
+  .arow{display:flex;align-items:center;gap:9px;padding:7px 4px;border-bottom:1px solid var(--tile-line);font-size:12px;cursor:pointer}
+  .arow:hover{background:#14181d}
+  .arow .code{font-weight:600;width:54px} .arow .desc{flex:1;color:#b9c0c8} .arow .st{font-size:9px;color:var(--text-tertiary)} .arow .ar{color:var(--text-tertiary)}
+  .clearbtn{margin-top:10px;text-align:center;padding:9px;border-radius:7px;font-size:12px;letter-spacing:.06em}
+  .clearbtn.dis{background:#15191e;border:1px solid var(--tile-line);color:var(--text-tertiary)}
+  .clearbtn.en{background:transparent;border:1px solid var(--green-ok);color:var(--green-ok);cursor:pointer}
+
+  /* ============ takeover overlay ============ */
+  .takeover{position:absolute;inset:0;z-index:20;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:0 26px}
+  .takeover.stop{background:radial-gradient(circle at 50% 40%,#3a070a,#120203)}
+  .takeover.watch{background:radial-gradient(circle at 50% 40%,#2e2500,#0f0c00)}
+  .takeover.minor{background:radial-gradient(circle at 50% 40%,#06251a,#02110b)}
+  .takeover .icon{font-size:34px}
+  .takeover .lab{font-size:12px;letter-spacing:.2em;color:#cfd4da;margin:6px 0}
+  .takeover .code{font-size:26px;font-weight:700}
+  .takeover .sd{font-size:13px;color:#cfd4da;margin-top:2px}
+  .takeover .dir{font-size:13px;font-weight:600;margin:12px 0 4px;letter-spacing:.04em}
+  .takeover.stop .dir{color:var(--red-light)} .takeover.watch .dir{color:var(--amber-warn)} .takeover.minor .dir{color:var(--green-ok)}
+  .takeover .caveat{font-size:10px;color:var(--amber-warn)}
+  .takeover .more{font-size:10px;color:var(--text-secondary);margin-top:6px}
+  .takeover .btns{position:absolute;bottom:22px;display:flex;gap:12px}
+  .tbtn{padding:8px 16px;border-radius:7px;font-size:12px;cursor:pointer;border:1px solid #4a4f55;color:#dfe4ea;background:#1118}
+  .tbtn.primary{border-color:#7a808790}
+  .src{position:absolute;top:10px;left:0;right:0;text-align:center;font-size:9px;letter-spacing:.14em;color:#888a}
+
+  /* ribbon */
+  .ribbon{position:absolute;top:42px;left:0;right:0;height:26px;display:flex;align-items:center;gap:8px;padding:0 12px;font-size:11px;z-index:8;cursor:pointer}
+  .ribbon.stop{background:#2a0608;border-bottom:1px solid var(--red-light);color:var(--red-light)}
+  .ribbon.watch{background:#241d00;border-bottom:1px solid var(--amber-warn);color:var(--amber-warn)}
+  .ribbon .ar{margin-left:auto}
+
+  /* ============ detail ============ */
+  .detail{font-size:12px}
+  .back{color:var(--text-secondary);font-size:11px;margin-bottom:8px;cursor:pointer}
+  .band{border-radius:6px;padding:8px 10px;font-size:11px;margin:8px 0}
+  .band.stop{background:#2a0608;border:1px solid var(--red-light);color:var(--red-light)}
+  .ff{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin:6px 0}
+  .ff div{background:var(--tile);border:1px solid var(--tile-line);border-radius:5px;padding:5px 7px;font-size:10px}
+  .ff div b{display:block;font-size:13px;color:#e7ebf0}
+  .ffnote{font-size:10px;color:var(--text-tertiary);font-style:italic}
+  .fixarea{background:var(--tile);border:1px solid var(--tile-line);border-radius:6px;padding:8px 10px;margin:8px 0;font-size:11px}
+  .badge{display:inline-block;font-size:9px;padding:2px 6px;border-radius:4px;margin-left:6px}
+  .badge.v{color:var(--green-ok);border:1px solid #264c39}
+  .footmeta{font-size:10px;color:var(--text-tertiary);margin-top:6px}
+
+  /* ============ modal / menu ============ */
+  .overlay{position:absolute;inset:0;background:#000a;z-index:30;display:flex;align-items:center;justify-content:center}
+  .modal{width:300px;background:#12161a;border:1px solid #2c333a;border-radius:10px;padding:14px}
+  .modal h4{margin:0 0 8px;font-size:13px}
+  .modal p{font-size:11px;color:#b9c0c8;line-height:1.5}
+  .modal .mbtns{display:flex;gap:10px;margin-top:12px;justify-content:flex-end}
+  .menu{width:330px;background:#12161a;border:1px solid #2c333a;border-radius:10px;overflow:hidden}
+  .menu .mh{padding:10px 14px;font-size:11px;letter-spacing:.12em;color:var(--text-secondary);border-bottom:1px solid #232a30}
+  .menu .sec{font-size:9px;letter-spacing:.1em;color:var(--text-tertiary);padding:8px 14px 2px}
+  .menu .mrow{display:flex;align-items:center;gap:10px;padding:9px 14px;font-size:12px;border-top:1px solid #1b2127}
+  .menu .mrow .dot{width:8px;height:8px;border-radius:50%;background:var(--green-ok)}
+  .menu .mrow .nm{flex:1}
+  .menu .mrow .act{font-size:10px;padding:3px 8px;border:1px solid #3a4148;border-radius:5px;color:#cfd4da;cursor:pointer}
+  .menu .mrow .act.dis{color:#444c54;border-color:#222;cursor:not-allowed}
+  .menu .mrow .act.warn{border-color:#4c4326;color:var(--amber-warn)}
+  .menu .close{display:block;text-align:center;padding:10px;color:var(--text-secondary);border-top:1px solid #232a30;cursor:pointer}
+  /* long-press ring */
+  .ring-fb{position:absolute;inset:0;z-index:25;display:none;align-items:center;justify-content:center}
+  .ring-fb.on{display:flex}
+  .ring-fb svg{width:90px;height:90px}
+  .ring-fb circle{fill:none;stroke:#2a3138;stroke-width:6}
+  .ring-fb circle.fg{stroke:var(--amber-warn);stroke-dasharray:251;stroke-dashoffset:251;transform:rotate(-90deg);transform-origin:center;animation:fill 5s linear forwards}
+  @keyframes fill{to{stroke-dashoffset:0}}
+  .ring-fb .lbl{position:absolute;font-size:10px;color:var(--text-secondary);margin-top:120px}
+
+  .stub{display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;color:var(--text-tertiary);gap:8px}
+  .stub .big{font-size:14px;color:var(--text-secondary)}
+</style>
+</head>
+<body>
+<header class="app">
+  <h1>Eclipse OBD-II · Pi 3.5″ UI Walkthrough</h1>
+  <span class="sub">480×320 · OSOYOO · Iris 2026-06-18 · current specs + CIO calls (live=card · unified alerts)</span>
+  <div class="controls">
+    <button class="ctl" id="scale1" onclick="setScale(1)">1× actual</button>
+    <button class="ctl active" id="scale2" onclick="setScale(2)">2×</button>
+  </div>
+</header>
+
+<div class="layout">
+  <nav class="screens" id="nav"></nav>
+
+  <div class="stagewrap">
+    <div class="device" id="device">
+
+      <!-- ============ SPLASH ============ -->
+      <section class="screen" data-id="boot-healthy">
+        <div class="splash">
+          <div class="wm">ECLIPSE OBD-II</div>
+          <div class="mark"><div class="rh spin"></div><div class="rh l spin"></div><div class="rh r spin"></div></div>
+          <div class="ver">V0.28.2 · 26fd488</div>
+        </div>
+      </section>
+
+      <section class="screen" data-id="boot-degraded">
+        <div class="splash degraded">
+          <div class="ring"></div>
+          <div class="wm">ECLIPSE OBD-II</div>
+          <div class="mark"><div class="rh"></div><div class="rh l"></div><div class="rh r"></div></div>
+          <div class="msg">ECLIPSE-OBD: adapter not detected</div>
+          <div class="ver" style="color:var(--amber-warn)">V0.28.2 · 26fd488</div>
+        </div>
+      </section>
+
+      <section class="screen" data-id="shutdown">
+        <div class="splash" style="opacity:.85">
+          <div class="wm">ECLIPSE OBD-II</div>
+          <div class="mark"><div class="rh"></div><div class="rh l"></div><div class="rh r"></div></div>
+          <div class="ver">powering off · V0.28.2</div>
+        </div>
+      </section>
+
+      <!-- ============ CAROUSEL: LIVE ============ -->
+      <section class="screen" data-id="live">
+        <div class="topbar"><span class="wordmark">ECLIPSE OBD-II</span>
+          <span class="glyphs"><span class="g ok">✦BT</span><span class="g ok">⟳2m</span><span class="g ok">⏻CAR</span><span class="kebab" onclick="openMenu()">⋮</span></span></div>
+        <div class="cardbody">
+          <div class="cardtitle">LIVE · DRIVE 27 <span class="rec"></span></div>
+          <div class="live">
+            <div class="gear"><div class="num" id="gearnum">3</div><div class="lab">GEAR</div></div>
+            <div class="right">
+              <div class="gmeter">
+                <div class="cross"></div>
+                <div class="ring2" style="inset:30px"></div><div class="ring2" style="inset:55px"></div>
+                <div class="glab">G-FORCE</div>
+                <div class="dot" id="gdot"></div>
+                <div class="gval" id="gval">0.0 lat · 0.0 lon</div>
+              </div>
+              <div class="grade"><span>GRADE</span><span style="color:#cfd4da">+3°</span></div>
+            </div>
+          </div>
+        </div>
+        <div class="dots"><i></i><i class="on"></i><i></i><i></i><i></i><i></i></div>
+        <div class="navarrows"><span onclick="card('alerts')">‹</span><span onclick="card('system')">›</span></div>
+      </section>
+
+      <!-- ============ CAROUSEL: SYSTEM STATUS ============ -->
+      <section class="screen" data-id="system">
+        <div class="topbar"><span class="wordmark">ECLIPSE OBD-II</span>
+          <span class="glyphs"><span class="g warn">✦BT</span><span class="g ok">⟳2m</span><span class="g ok">⏻CAR</span><span class="kebab" onclick="openMenu()">⋮</span></span></div>
+        <div class="cardbody">
+          <div class="cardtitle">SYSTEM STATUS</div>
+          <div class="tilegrid">
+            <div class="stile warn"><div><div class="lab">OBD LINK</div><div class="val">RECONNECTING ⚠</div></div><div class="sub">last seen 14s · retry 3</div></div>
+            <div class="stile"><div><div class="lab">LAST SYNC</div><div class="val">2 min ago</div></div><div class="sub">1,204 rows · 0 pending</div></div>
+            <div class="stile"><div><div class="lab">POWER</div><div class="val">CAR · ext</div></div><div class="sub">engine running</div></div>
+            <div class="stile ok tap" onclick="card('battery')"><div><div class="lab">BATTERY</div><div class="val">4.02 V ✓</div></div><div class="sub">healthy</div></div>
+          </div>
+          <div class="drivebanner"><span class="rec"></span> recording · Drive 27</div>
+        </div>
+        <div class="dots"><i></i><i></i><i class="on"></i><i></i><i></i><i></i></div>
+        <div class="navarrows"><span onclick="card('live')">‹</span><span onclick="card('battery')">›</span></div>
+      </section>
+
+      <!-- ============ CAROUSEL: BATTERY (normal) ============ -->
+      <section class="screen" data-id="battery">
+        <div class="topbar"><span class="wordmark">ECLIPSE OBD-II</span>
+          <span class="glyphs"><span class="g warn">✦BT</span><span class="g ok">⟳2m</span><span class="g ok">⏻CAR</span><span class="kebab" onclick="openMenu()">⋮</span></span></div>
+        <div class="cardbody">
+          <div class="cardtitle">BATTERY HEALTH <span class="statehdr charge">⚡ CHARGING · EXTERNAL</span></div>
+          <div class="row"><span><span class="bigval">4.02</span> <span class="unit">V VCELL</span></span><span style="color:var(--green-ok)">HEALTHY</span></div>
+          <div class="row muted"><span>SOC 76% (uncalibrated)</span><span>Charge +1.8%/h</span><span>Weak 0/30d</span></div>
+          <div class="muted" style="margin-top:8px">Rested VCELL · last 8 cycles</div>
+          <div class="spark"><i style="height:60%"></i><i style="height:70%"></i><i style="height:60%"></i><i style="height:72%"></i><i style="height:74%"></i><i style="height:62%"></i><i style="height:76%"></i><i style="height:78%"></i></div>
+          <div class="muted">Holds voltage normally · no degradation trend</div>
+          <div style="margin-top:10px"><span class="ctl" style="font-size:11px;cursor:pointer" onclick="show('battery-fail')">▶ preview FAILSAFE state</span></div>
+        </div>
+        <div class="dots"><i></i><i></i><i></i><i class="on"></i><i></i><i></i></div>
+        <div class="navarrows"><span onclick="card('system')">‹</span><span onclick="card('engine')">›</span></div>
+      </section>
+
+      <!-- battery failsafe -->
+      <section class="screen" data-id="battery-fail">
+        <div class="topbar"><span class="wordmark">ECLIPSE OBD-II</span>
+          <span class="glyphs"><span class="g ok">✦BT</span><span class="g warn">⟳5m</span><span class="g warn">⏻BATT</span><span class="kebab" onclick="openMenu()">⋮</span></span></div>
+        <div class="cardbody">
+          <div class="cardtitle">BATTERY HEALTH <span class="statehdr drain">⚠ ON UPS · DRAINING</span></div>
+          <div class="row"><span><span class="bigval" style="color:var(--amber-warn)">3.58</span> <span class="unit">V VCELL</span></span><span style="color:var(--amber-warn)">WARNING</span></div>
+          <div class="muted">wall power lost</div>
+          <div class="ladder">
+            <div>NORMAL ≥3.70</div><div class="cur">WARNING 3.55–3.70</div><div>IMMINENT 3.45–3.55</div><div>TRIGGER ≤3.45</div>
+          </div>
+          <div class="row"><span class="muted">Est. runtime remaining</span><span style="font-size:18px">~6 min</span></div>
+          <div class="muted" style="margin-top:8px">Auto safe-shutdown at TRIGGER (3.45 V) — pack protected</div>
+          <div style="margin-top:10px"><span class="ctl" style="font-size:11px;cursor:pointer" onclick="show('battery')">◀ back to NORMAL state</span></div>
+        </div>
+        <div class="dots"><i></i><i></i><i></i><i class="on"></i><i></i><i></i></div>
+      </section>
+
+      <!-- engine stub -->
+      <section class="screen" data-id="engine">
+        <div class="topbar"><span class="wordmark">ECLIPSE OBD-II</span>
+          <span class="glyphs"><span class="g ok">✦BT</span><span class="g ok">⟳2m</span><span class="g ok">⏻CAR</span><span class="kebab" onclick="openMenu()">⋮</span></span></div>
+        <div class="cardbody"><div class="cardtitle">ENGINE</div>
+          <div class="stub"><div class="big">Engine vitals card</div><div>coolant · RPM · boost · AFR · timing</div><div class="pill proposed">deferred — grafts from pygame data + B-076 tuning palette</div></div></div>
+        <div class="dots"><i></i><i></i><i></i><i></i><i class="on"></i><i></i></div>
+        <div class="navarrows"><span onclick="card('battery')">‹</span><span onclick="card('alerts')">›</span></div>
+      </section>
+
+      <!-- ============ CAROUSEL: ALERTS / DTC ============ -->
+      <section class="screen" data-id="alerts">
+        <div class="topbar"><span class="wordmark">ECLIPSE OBD-II</span>
+          <span class="glyphs"><span class="g ok">✦BT</span><span class="g ok">⟳2m</span><span class="g ok">⏻CAR</span><span class="kebab" onclick="openMenu()">⋮</span></span></div>
+        <div class="cardbody">
+          <div class="cardtitle">CHECK ENGINE <span style="color:var(--text-tertiary)">3 stored · 1 pending</span></div>
+          <div class="hero stop"><div class="ht"><span class="chip stop">STOP</span> P0301 <span style="font-size:12px;color:#cfd4da;font-weight:400">Cylinder 1 misfire</span></div><div class="dir">REDUCE LOAD · PULL OVER</div></div>
+          <div class="arow" onclick="show('detail')"><span class="chip watch">WATCH</span><span class="code">P0420</span><span class="desc">Catalyst efficiency low</span><span class="ar">›</span></div>
+          <div class="arow" onclick="show('detail-minor')"><span class="chip minor">MINOR</span><span class="code">P0442</span><span class="desc">Evap small leak</span><span class="ar">›</span></div>
+          <div class="arow"><span class="chip none">?</span><span class="code">P1500</span><span class="desc">No description yet</span><span class="st">PEND</span><span class="ar">›</span></div>
+          <div class="clearbtn dis">🔒 CLEAR CODES — unavailable, a STOP code is present</div>
+        </div>
+        <div class="dots"><i></i><i></i><i></i><i></i><i></i><i class="on"></i></div>
+        <div class="navarrows"><span onclick="card('engine')">‹</span><span onclick="card('live')">›</span></div>
+      </section>
+
+      <!-- alerts card, clearable variant -->
+      <section class="screen" data-id="alerts-clearable">
+        <div class="topbar"><span class="wordmark">ECLIPSE OBD-II</span>
+          <span class="glyphs"><span class="g ok">✦BT</span><span class="g ok">⟳2m</span><span class="g ok">⏻CAR</span><span class="kebab" onclick="openMenu()">⋮</span></span></div>
+        <div class="cardbody">
+          <div class="cardtitle">CHECK ENGINE <span style="color:var(--text-tertiary)">1 stored</span></div>
+          <div class="hero watch" style="background:#06251a;border-color:var(--green-ok)"><div class="ht"><span class="chip minor">MINOR</span> P0442 <span style="font-size:12px;color:#cfd4da;font-weight:400">Evap small leak</span></div><div class="dir" style="color:var(--green-ok)">SAFE TO CLEAR ONCE LOGGED</div></div>
+          <div class="muted" style="margin:10px 0">✓ logged · ✓ synced to server · clear-eligible</div>
+          <div class="clearbtn en" onclick="show('clear-confirm')">CLEAR CODES</div>
+        </div>
+        <div class="dots"><i></i><i></i><i></i><i></i><i></i><i class="on"></i></div>
+      </section>
+
+      <!-- ============ UNIFIED ALERT TAKEOVERS ============ -->
+      <section class="screen" data-id="takeover-engine">
+        <div class="takeover stop">
+          <div class="src">LIVE ENGINE EVENT</div>
+          <div class="icon">⚠</div><div class="lab">COOLANT TEMPERATURE</div>
+          <div class="code">108°C / 226°F</div><div class="sd">head-gasket-risk band</div>
+          <div class="dir">REDUCE LOAD · PULL OVER</div>
+          <div class="btns"><span class="tbtn primary" onclick="card('live')">View live ›</span><span class="tbtn" onclick="card('live')">Acknowledge</span></div>
+        </div>
+      </section>
+
+      <section class="screen" data-id="takeover-dtc">
+        <div class="takeover stop">
+          <div class="src">NEW TROUBLE CODE</div>
+          <div class="icon">⚠</div><div class="lab">CHECK ENGINE</div>
+          <div class="code">P0301</div><div class="sd">Cylinder 1 misfire</div>
+          <div class="dir">REDUCE LOAD · PULL OVER</div>
+          <div class="more">+2 more codes</div>
+          <div class="btns"><span class="tbtn primary" onclick="show('detail')">View detail ›</span><span class="tbtn" onclick="card('alerts')">Acknowledge</span></div>
+        </div>
+      </section>
+
+      <section class="screen" data-id="takeover-watch">
+        <div class="takeover watch">
+          <div class="src">NEW TROUBLE CODE</div>
+          <div class="icon">⚠</div><div class="lab">CHECK ENGINE</div>
+          <div class="code">P0171</div><div class="sd">System too lean (bank 1)</div>
+          <div class="dir">DRIVE GENTLY · GET DIAGNOSED</div>
+          <div class="caveat">🔴 if set under boost/load — verify conditions</div>
+          <div class="btns"><span class="tbtn primary" onclick="show('detail')">View detail ›</span><span class="tbtn" onclick="card('alerts')">Dismiss</span></div>
+        </div>
+      </section>
+
+      <section class="screen" data-id="takeover-minor">
+        <div class="takeover minor">
+          <div class="src">NEW TROUBLE CODE</div>
+          <div class="icon">ⓘ</div><div class="lab">CHECK ENGINE</div>
+          <div class="code">P0442</div><div class="sd">Evap small leak (gas cap?)</div>
+          <div class="dir">SAFE TO CLEAR ONCE LOGGED</div>
+          <div class="btns"><span class="tbtn primary" onclick="show('detail-minor')">View detail ›</span><span class="tbtn" onclick="card('alerts')">Dismiss</span></div>
+        </div>
+      </section>
+
+      <!-- ribbon on a normal card -->
+      <section class="screen" data-id="ribbon">
+        <div class="topbar"><span class="wordmark">ECLIPSE OBD-II</span>
+          <span class="glyphs"><span class="g ok">✦BT</span><span class="g ok">⟳2m</span><span class="g ok">⏻CAR</span><span class="kebab" onclick="openMenu()">⋮</span></span></div>
+        <div class="ribbon stop" onclick="card('alerts')">⚠ CHECK ENGINE · P0301 Cylinder 1 misfire<span class="ar">tap ›</span></div>
+        <div class="cardbody" style="top:68px">
+          <div class="cardtitle">LIVE · DRIVE 27 <span class="rec"></span></div>
+          <div class="live" style="opacity:.96">
+            <div class="gear"><div class="num">3</div><div class="lab">GEAR</div></div>
+            <div class="right">
+              <div class="gmeter"><div class="cross"></div><div class="ring2" style="inset:24px"></div><div class="ring2" style="inset:44px"></div><div class="glab">G-FORCE</div><div class="dot" style="left:60%;top:42%"></div><div class="gval">0.3 lat · 0.1 lon</div></div>
+              <div class="grade"><span>GRADE</span><span style="color:#cfd4da">+3°</span></div>
+            </div>
+          </div>
+        </div>
+        <div class="dots"><i></i><i class="on"></i><i></i><i></i><i></i><i></i></div>
+      </section>
+
+      <!-- ============ DETAIL ============ -->
+      <section class="screen" data-id="detail">
+        <div class="cardbody" style="top:0;bottom:0;overflow:auto">
+          <div class="back" onclick="card('alerts')">‹ Back · P0301</div>
+          <div class="detail">
+            <div class="ht" style="display:flex;gap:8px;align-items:center;font-size:16px;font-weight:600"><span class="chip stop">STOP</span> P0301 <span style="font-size:12px;font-weight:400;color:#cfd4da">Cylinder 1 misfire</span></div>
+            <div class="band stop">⚠ STOP — diagnose, don't just swap parts. Misfire under load can wash cylinders / damage the cat.</div>
+            <div class="footmeta">STORED · set 3 min ago · Drive 27 · MIL on</div>
+            <div class="muted" style="margin-top:8px">Context at fault time</div>
+            <div class="ff">
+              <div>RPM<b>4250</b></div><div>LOAD<b style="color:var(--red-light)">92%</b></div><div>COOLANT<b>88°C</b></div>
+              <div>STFT<b>+3%</b></div><div>LTFT<b>+7%</b></div><div>TIMING<b>11°</b></div>
+            </div>
+            <div class="ffnote">no freeze frame captured (this ECU) — showing realtime context at fault time</div>
+            <div class="footmeta">✓ logged · ✓ synced to server</div>
+          </div>
+        </div>
+      </section>
+
+      <section class="screen" data-id="detail-minor">
+        <div class="cardbody" style="top:0;bottom:0;overflow:auto">
+          <div class="back" onclick="card('alerts')">‹ Back · P0442</div>
+          <div class="detail">
+            <div class="ht" style="display:flex;gap:8px;align-items:center;font-size:16px;font-weight:600"><span class="chip minor">MINOR</span> P0442 <span style="font-size:12px;font-weight:400;color:#cfd4da">Evap small leak</span></div>
+            <div class="footmeta" style="margin-top:8px">STORED · set 1 day ago · Drive 26 · MIL on</div>
+            <div class="fixarea">
+              <b style="color:var(--green-ok)">Suggested fix</b> <span class="badge v">✓ Verified · Spool</span>
+              <div style="margin-top:6px;color:#cfd4da">Check / tighten the fuel cap first. If it returns, inspect EVAP hoses &amp; the purge valve.</div>
+            </div>
+            <div class="ffnote">no freeze frame captured (this ECU) — context at fault time below</div>
+            <div class="ff">
+              <div>RPM<b>820</b></div><div>LOAD<b>14%</b></div><div>COOLANT<b>90°C</b></div>
+            </div>
+            <div class="footmeta">✓ logged · ✓ synced to server · clear-eligible</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============ CLEAR FLOW ============ -->
+      <section class="screen" data-id="clear-confirm">
+        <div class="cardbody" style="top:0;bottom:0"></div>
+        <div class="overlay">
+          <div class="modal">
+            <h4>Clear all codes?</h4>
+            <p>Wipes <b>every</b> stored + pending code, <b>erases the freeze-frame</b>, and <b>resets emissions readiness monitors</b> (a full drive cycle is needed before an inspection will pass). Can't be undone.</p>
+            <div class="mbtns"><span class="tbtn" onclick="card('alerts-clearable')">Cancel</span><span class="tbtn primary" style="border-color:var(--green-ok);color:var(--green-ok)" onclick="show('clear-done')">Clear all</span></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="screen" data-id="clear-done">
+        <div class="cardbody">
+          <div class="cardtitle">CHECK ENGINE</div>
+          <div class="stub"><div style="font-size:30px;color:var(--green-ok)">✓</div><div class="big" style="color:var(--green-ok)">Cleared · 0 stored, 0 pending</div><div>MIL off · re-read confirmed</div><div class="pill new">re-read proves the clear — not just "command sent"</div></div>
+        </div>
+        <div class="dots"><i></i><i></i><i></i><i></i><i></i><i class="on"></i></div>
+      </section>
+
+      <!-- ============ SYSTEM SETUP MENU ============ -->
+      <section class="screen" data-id="menu">
+        <div class="topbar"><span class="wordmark">ECLIPSE OBD-II</span>
+          <span class="glyphs"><span class="g ok">✦BT</span><span class="g ok">⟳2m</span><span class="g ok">⏻CAR</span><span class="kebab">⋮</span></span></div>
+        <div class="cardbody"><div class="cardtitle">SYSTEM STATUS</div><div class="stub"><div>(dashboard dimmed behind menu)</div></div></div>
+        <div class="overlay">
+          <div class="menu">
+            <div class="mh">SYSTEM SETUP</div>
+            <div class="sec">OBD-II SERVICES</div>
+            <div class="mrow"><span class="dot"></span><span class="nm">eclipse-obd <span class="muted">data capture</span></span><span class="act">Restart</span><span class="act">Stop</span></div>
+            <div class="mrow"><span class="dot"></span><span class="nm">eclipse-sync <span class="muted">server upload</span></span><span class="act">Restart</span><span class="act">Stop</span></div>
+            <div class="mrow"><span class="dot"></span><span class="nm">🛡 eclipse-powerwatch <span class="muted">safe-shutdown</span></span><span class="act warn">Restart</span><span class="act dis">Stop</span></div>
+            <div class="sec">DISPLAY</div>
+            <div class="mrow"><span class="nm">Exit / Close UI</span><span class="act warn">Exit ›</span></div>
+            <div class="mrow"><span class="nm muted">V0.28.2 · 26fd488 · up 4h12m</span></div>
+            <div class="close" onclick="card('system')">✕ Back to dashboard</div>
+          </div>
+        </div>
+        <div class="ring-fb" id="ringfb"><svg viewBox="0 0 90 90"><circle cx="45" cy="45" r="40"/><circle class="fg" cx="45" cy="45" r="40"/></svg><div class="lbl">hold to open setup… release to cancel</div></div>
+      </section>
+
+    </div><!-- /device -->
+    <div style="margin-top:10px;color:var(--text-tertiary);font-size:11px;text-align:center;width:480px">
+      tip: tap tiles / rows / ⋮ / arrows inside the screen — they're wired
+    </div>
+  </div><!-- /stagewrap -->
+
+  <div class="notes">
+    <h3 id="ntitle">Notes</h3>
+    <div class="body" id="nbody">Pick a screen on the left, or tap inside the device.</div>
+  </div>
+</div>
+
+<script>
+const SCREENS = [
+  {grp:"Boot / Shutdown", items:[
+    {id:"boot-healthy", t:"Boot splash — healthy", n:"Brand mark spins, version chip bottom. Yields to the dashboard when boot is healthy (≥2.5s, hard cap 12s). <b>Honest:</b> only plays 'all good' when services actually came up.", q:"Does the version chip matter to you on every boot, or only after a deploy?"},
+    {id:"boot-degraded", t:"Boot splash — degraded", n:"Amber ring + <b>frozen</b> mark + one-line cause. Three reinforcing channels so it reads even on this panel's narrow gamut. Engine-OFF is NOT degraded (alarm-fatigue guard).", q:"Is one-line cause enough, or do you want the failing service named more specifically?"},
+    {id:"shutdown", t:"Shutdown splash", n:"Fires when the key-off sequencer enters its grace window (you're still in the seat), reverse animation, then black until power-off.", q:""},
+  ]},
+  {grp:"Carousel (swipe ↔)", items:[
+    {id:"live", t:"① Live instrument ★ home", n:"<span class='new'>NEW — your call: live = a card, made the home card.</span> Big GEAR + g-meter + grade — the glance-while-driving surface. This is first-pass; not yet in any spec (W-11). <b>Watch the g-dot move.</b>", q:"Is this the right HOME card (what shows on boot + what you land on)? And is gear+g-meter+grade the right content, or do you want a live vital here too (coolant/boost)?"},
+    {id:"system", t:"② System Status", n:"2×2 tiles + drive banner. OBD link shown RECONNECTING = the I-033 'did it capture my drive?' fix. Tap the Battery tile → Battery card.", q:"At arm's length this is ~13 chunks of text. Too dense for a glance, or fine because it's a lean-in card?"},
+    {id:"battery", t:"③ Battery Health", n:"VCELL authoritative + largest; SOC smallest + '(uncalibrated)' (the Drain-Test-6 honesty rule). Sparkline = rested-VCELL trend. Button previews the failsafe state.", q:""},
+    {id:"battery-fail", t:"③b Battery — FAILSAFE", n:"Renders ONLY during a real drain (wall power lost). Ladder + estimated runtime. Demoted to failsafe because the new sequencer prevents draining — showing a live ladder normally would be a dishonest instrument.", q:""},
+    {id:"engine", t:"④ Engine (deferred)", n:"Placeholder. Grafts later from the existing pygame data + the B-076 tuning palette.", q:""},
+    {id:"alerts", t:"⑤ Alerts / DTC", n:"Hero (worst code) + list, worst-first. No-description code shows '?' not blank. Clear button disabled while any STOP/WATCH present.", q:"Hero+list vs a uniform list — does the hero earn its space on a 480-wide screen?"},
+    {id:"alerts-clearable", t:"⑤b Alerts — clearable", n:"Only a MINOR code left, logged + synced → Clear button enabled. Tap it to see the confirm flow.", q:""},
+  ]},
+  {grp:"Unified alert layer", items:[
+    {id:"takeover-engine", t:"Takeover — engine event", n:"<span class='new'>Your call: unified alerts.</span> A LIVE coolant-overheat event uses the SAME takeover as a trouble code. 'LIVE ENGINE EVENT' source label distinguishes it.", q:"Same skeleton for live-event vs trouble-code, distinguished only by the top source label — clear enough, or should live engine events look visibly different?"},
+    {id:"takeover-dtc", t:"Takeover — STOP code", n:"New 🔴 code. Severity-styled. STOP has Acknowledge (→ribbon), no plain dismiss. '+N more' folds other codes.", q:"While driving, a full takeover covers the road-relevant live card. OK because Acknowledge drops to ribbon fast?"},
+    {id:"takeover-watch", t:"Takeover — WATCH + caveat", n:"🟡 with a condition-dependent caveat line ('🔴 if set under load'). The chip carries a caveat, never silently upgrades.", q:""},
+    {id:"takeover-minor", t:"Takeover — MINOR", n:"🟢 calm green, 'safe to clear once logged'. Can't be the same loudness as a misfire — that's the alarm-fatigue trap.", q:"Should a MINOR code take over the FULL screen at all, or just drop a ribbon? (Full takeover for a gas cap may be too much.)"},
+    {id:"ribbon", t:"Persistent ribbon", n:"After Acknowledge/Dismiss, a slim ribbon rides every card until the code clears. Uses brighter alert-red (≠ brand red) + ⚠ so it reads as alarm, not decoration. Tap → Alerts card.", q:""},
+  ]},
+  {grp:"Detail + Clear", items:[
+    {id:"detail", t:"Code detail — STOP", n:"Fix area REPLACED by a 'diagnose, don't swap parts' band for dangerous codes. Realtime context (Mode 02 freeze-frame unsupported on this ECU) labeled honestly.", q:""},
+    {id:"detail-minor", t:"Code detail — MINOR", n:"Real suggested fix + 3-state trust badge (✓ Verified Spool / 👥 Community / ⏳ offline). Only MINOR codes show an actual fix.", q:""},
+    {id:"clear-confirm", t:"Clear — hard confirm", n:"Spells out freeze-frame erase + readiness reset. Cancel is the easy default. Gate is ALSO re-checked server-side — never trusted from the button.", q:""},
+    {id:"clear-done", t:"Clear — re-read proof", n:"Re-reads after clearing to PROVE 0 codes + MIL off. If a code returns, Clear locks for the session ('don't chase the light').", q:""},
+  ]},
+  {grp:"System Setup", items:[
+    {id:"menu", t:"System Setup menu", n:"Reached by ⋮ or a 5–6s long-press (ring fills; release cancels). powerwatch is Restart-only (Stop disabled). Stop + Exit always confirm.", q:"Two ways in (⋮ + long-press) — keep both, or is ⋮ alone enough and the long-press adds complexity?"},
+  ]},
+];
+
+const nav = document.getElementById('nav');
+SCREENS.forEach(g=>{
+  const d=document.createElement('div');d.className='grp';
+  d.innerHTML='<h2>'+g.grp+'</h2>';
+  g.items.forEach(it=>{
+    const a=document.createElement('a');a.dataset.id=it.id;a.innerHTML=it.t;
+    a.onclick=()=>show(it.id);d.appendChild(a);
+  });
+  nav.appendChild(d);
+});
+
+const META={};SCREENS.forEach(g=>g.items.forEach(it=>META[it.id]=it));
+function show(id){
+  document.querySelectorAll('.screen').forEach(s=>s.classList.toggle('on',s.dataset.id===id));
+  document.querySelectorAll('nav a').forEach(a=>a.classList.toggle('sel',a.dataset.id===id));
+  const m=META[id];
+  if(m){document.getElementById('ntitle').textContent=m.t;
+    document.getElementById('nbody').innerHTML=m.n+(m.q?'<br><br><span class="q">◆ '+m.q+'</span>':'');}
+  if(id==='menu'){armRing();}
+}
+// carousel cards keep the menu/notes panel pointing at the card
+function card(id){show(id);}
+function openMenu(){show('menu');}
+function armRing(){const r=document.getElementById('ringfb');r.classList.add('on');
+  // re-trigger CSS animation
+  const fg=r.querySelector('.fg');fg.style.animation='none';void fg.offsetWidth;fg.style.animation='';
+  setTimeout(()=>r.classList.remove('on'),5200);}
+
+function setScale(s){
+  document.getElementById('device').style.transform='scale('+s+')';
+  document.getElementById('scale1').classList.toggle('active',s===1);
+  document.getElementById('scale2').classList.toggle('active',s===2);
+  document.querySelector('.stagewrap').style.height=(320*s+40)+'px';
+}
+
+// animate the g-meter dot so 'live' feels live
+let t=0;setInterval(()=>{t+=0.08;
+  const dot=document.getElementById('gdot');if(!dot)return;
+  const lat=Math.sin(t)*0.55, lon=Math.cos(t*0.7)*0.4;
+  dot.style.left='calc(50% - 7px + '+(lat*70)+'px)';
+  dot.style.top='calc(50% - 7px - '+(lon*55)+'px)';
+  const mag=Math.hypot(lat,lon);
+  dot.style.background=mag>0.6?'var(--amber-warn)':'var(--green-ok)';
+  dot.style.boxShadow='0 0 8px '+(mag>0.6?'var(--amber-warn)':'var(--green-ok)');
+  const gv=document.getElementById('gval');if(gv)gv.textContent=lat.toFixed(1)+' lat · '+lon.toFixed(1)+' lon';
+  const gn=document.getElementById('gearnum');if(gn)gn.textContent=(Math.abs(Math.sin(t*0.3))*1.9+2|0);
+},120);
+
+setScale(2);
+show('live');
+</script>
+</body>
+</html>
