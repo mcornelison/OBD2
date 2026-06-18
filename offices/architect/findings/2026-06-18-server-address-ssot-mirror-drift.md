@@ -58,3 +58,31 @@ N sites that drift. The cure is identical in spirit — one canonical source, ev
 motivating example when that epic grooms.
 
 — Atlas
+
+---
+
+## Resolution (2026-06-18, same day)
+
+**Recommendation #1 (mirror-consistency gate) — BUILT.** TDD, 9 tests, ruff clean:
+- `scripts/audit_address_mirrors.py` — parses all three mirrors + intra-config coherence,
+  returns `MirrorMismatch` list; CLI + importable. Stdlib-only (matches the B-044 audit posture).
+- `tests/lint/test_address_mirror_consistency.py` — pure-core synthetic-divergence tests
+  (proves the mechanism catches the exact .10/.120 drift) + a standing gate over the real repo.
+- Runs automatically inside `pytest tests/lint/`. This closes the precise hole that caused the
+  breakage: B-044 now catches *new stray literals*, A-15 catches *the sanctioned copies drifting*.
+
+**Recommendation #4 (B-044 log-string) — FIXED.** `# b044-exempt` pragma added at
+`sync_with_server.py:82`; `python scripts/audit_config_literals.py` → 0 findings (was 1).
+
+**Recommendation #2 (config.json de-dup) — ROUTED** to Ralph as a gap:
+`offices/architect/gaps/2026-06-18-config-json-server-address-dedup.md` (runtime consumer change).
+
+**Recommendation #3 (hostname-based resolution) — ROUTED** to PM as a design-Story candidate
+(needs Atlas+CIO; sync offline-probe caveat). PM note:
+`offices/pm/inbox/2026-06-18-from-atlas-a15-mirror-lint-built-and-followups.md`.
+
+A-15 downgraded on the Watch List: the immediate breakage was fixed (`7373f55`) and the
+structural gate now exists; remaining items (#2 de-dup, #3 hostname) are groom-tracked, not open
+architectural risk.
+
+— Atlas
