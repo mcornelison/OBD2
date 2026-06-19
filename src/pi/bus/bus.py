@@ -17,6 +17,9 @@
 #               |              | SubStats, Subscription)
 # 2026-06-19    | Rex          | US-381: add SampleBus (subscribe/publish fan-out,
 #               |              | STREAM, never-block)
+# 2026-06-19    | Rex          | US-382: activate STATE retained topics (last-value
+#               |              | -cache + replay-on-subscribe) + emit
+#               |              | event.integrity.gap on LOSSLESS overflow
 # ================================================================================
 ################################################################################
 
@@ -175,9 +178,10 @@ class SampleBus:
     boundary -- ``publish`` NEVER blocks, even when a consumer never drains.
 
     STREAM topics carry no history: a subscriber created after a publish does
-    not receive that earlier sample. (Retained STATE topics + integrity-gap
-    markers are added in later stories; the ``retain`` flag is accepted now to
-    keep the public signature stable but is not yet honored here.)
+    not receive that earlier sample. STATE topics (``publish(retain=True)``) are
+    a last-value-cache, replayed once to every new matching subscriber. A
+    LOSSLESS subscription overflow is an honest instrument: instead of silently
+    dropping, the bus publishes ``event.integrity.gap`` to the OTHER subscribers.
     """
 
     def __init__(self) -> None:
@@ -207,18 +211,65 @@ class SampleBus:
         sub = Subscription(name, topics, qos, maxQueue=maxQueue)
         with self._lock:
             self._subs.append(sub)
+            # Replay the current retained value for any matching STATE topic, so
+            # a late subscriber sees the latest slowly-changing state at once.
+            retained = [s for t, s in self._retained.items() if sub.matches(t)]
+        for s in retained:
+            sub._offer(s)
         return sub
 
     def publish(self, sample: Sample, retain: bool = False) -> None:
         """Fan ``sample`` out to every matching subscription. Never blocks.
 
+        When ``retain`` is True the sample becomes the last-value-cache for its
+        topic (STATE), delivered immediately to future matching subscribers. A
+        LOSSLESS subscription that overflows triggers an ``event.integrity.gap``
+        marker to the other subscribers -- a loss is recorded, never silent.
+
         Args:
             sample: The sample to deliver.
-            retain: Reserved for STATE last-value-cache (later story); accepted
-                now for signature stability but not yet honored.
+            retain: When True, store ``sample`` as the STATE last-value-cache for
+                its topic (replayed on subscribe). STREAM publishes are not kept.
         """
+        with self._lock:
+            if retain:
+                self._retained[sample.topic] = sample
+            subs = list(self._subs)
+        gaps: list[tuple[str, int]] = []  # (subscriptionName, lostSeq)
+        for sub in subs:
+            if sub.matches(sample.topic):
+                delivered = sub._offer(sample)
+                if not delivered:
+                    gaps.append((sub.name, sample.seq))
+        # Honest instrument: a LOSSLESS loss is recorded explicitly, never silent.
+        for subName, lostSeq in gaps:
+            self._emitIntegrityGap(subName, lostSeq, sample.topic)
+
+    def _emitIntegrityGap(self, subName: str, lostSeq: int, lostTopic: str) -> None:
+        """Publish an ``event.integrity.gap`` marker for a LOSSLESS overflow.
+
+        The marker carries the overflowed subscription name in ``unit`` and the
+        lost sample's ``seq``. It is offered to every OTHER matching subscriber
+        (never back to the overflowing one, which would just overflow again).
+
+        Args:
+            subName: Name of the subscription that overflowed.
+            lostSeq: The ``seq`` of the sample that could not be delivered.
+            lostTopic: The topic whose delivery was lost (context only).
+        """
+        marker = Sample(
+            topic="event.integrity.gap",
+            source="bus",
+            value=1.0,
+            unit=subName,
+            tsUtc="",
+            tsCapture=0.0,
+            driveId=None,
+            dataSource="real",
+            seq=lostSeq,
+        )
         with self._lock:
             subs = list(self._subs)
         for sub in subs:
-            if sub.matches(sample.topic):
-                sub._offer(sample)
+            if sub.name != subName and sub.matches(marker.topic):
+                sub._offer(marker)
