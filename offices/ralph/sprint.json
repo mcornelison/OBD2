@@ -1,118 +1,266 @@
 {
   "schemaVersion": "2.0.0",
-  "sprint": 45,
-  "version": "V0.28.2",
-  "createdFromPRD": "offices/pm/prds/prd-V0.28.2.md",
+  "sprint": 46,
+  "version": "V0.29.0",
+  "createdFromPRD": "offices/pm/prds/prd-V0.29.0.md",
   "stories": [
     {
-      "id": "US-377",
-      "title": "data_quality column too narrow for 'attribution_anomaly' (VARCHAR(16)<19) -- chain-blocking",
-      "parent": "F-107",
-      "epicId": "E-002",
-      "type": "issue",
-      "size": "S",
-      "status": "passed",
-      "passes": true,
+      "id": "US-380",
+      "title": "Bus data types + Subscription (Sample, QoS, topicMatches, bounded queue + QoS overflow)",
+      "parent": "F-110",
+      "epicId": "E-006",
+      "type": "feature",
+      "size": "M",
+      "status": "sprint-ready",
+      "passes": false,
       "acceptance": [
-        "ORM String(16)->String(20) both columns",
-        "v0012 migration MODIFY both columns to VARCHAR(20), idempotent",
-        "test asserting column width >= max CHECK-permitted value length",
-        "post-deploy recompute 23-25 stamps anomaly on 23+24"
+        "Sample is a frozen dataclass with fields: topic, source, value(float|tuple), unit, tsUtc, tsCapture, driveId, dataSource, seq",
+        "QoS enum has exactly LOSSLESS and LOSSY",
+        "topicMatches('raw.*','raw.obd.RPM')=True; exact pattern matches only itself; NOT regex",
+        "Subscription bounded queue: LOSSY drops oldest on full (droppedCount bumps); LOSSLESS _offer returns False on overflow and NEVER blocks; the already-queued sample is preserved",
+        "stats() exposes depth, highWater, droppedCount, lastSeqBySource",
+        "stdlib only (dataclasses/enum/queue), no new dependencies",
+        "Typecheck (mypy) passes",
+        "Tests pass"
       ],
       "validationCriteria": [
         {
-          "action": "SELECT column_type ... data_quality post-v0012",
-          "outcome": "both varchar(20)"
+          "action": "pytest tests/pi/bus/test_sample.py tests/pi/bus/test_subscription.py",
+          "outcome": "green"
         },
         {
-          "action": "recompute_drive_analytics --drive-id 23/24",
-          "outcome": "attribution_anomaly written, no DataError"
+          "action": "construct a Sample then assign .value",
+          "outcome": "raises FrozenInstanceError"
         },
         {
-          "action": "recompute_drive_analytics --drive-id 25",
-          "outcome": "full"
+          "action": "offer 3 samples to a LOSSY maxQueue=2 subscription",
+          "outcome": "oldest dropped, poll yields seq 2 then 3, droppedCount=1"
+        },
+        {
+          "action": "offer 2 samples to a LOSSLESS maxQueue=1 subscription",
+          "outcome": "_offer returns False on the 2nd, first sample still queued, call never blocks"
         }
       ],
       "conditionalOutcomes": [
-        "if other CHECK-enum columns have the same width mismatch, fold the audit in"
+        "if topic matching seems to need multi-level wildcards beyond a trailing '.*', STOP -- out of scope (YAGNI); confirm with Atlas before adding"
       ],
-      "goal": "Widen drive_summary + drive_statistics data_quality columns so the tripwire can stamp 'attribution_anomaly' (unblocks US-364).",
+      "goal": "Create the src/pi/bus/ package foundation: the immutable Sample envelope, the QoS enum, the topic prefix-matcher, and Subscription (one bounded queue per consumer with a QoS-keyed overflow policy + observability stats). Pure data types + queue logic, no wiring.",
       "tasks": []
     },
     {
-      "id": "US-378",
-      "title": "Correct ECU seed MD335287 -> MD326328 across all code sites (A-13, all-sites-coherent)",
-      "parent": "F-076",
-      "epicId": "E-002",
-      "type": "issue",
+      "id": "US-381",
+      "title": "SampleBus core -- subscribe/publish fan-out (STREAM) + producer-never-blocks",
+      "parent": "F-110",
+      "epicId": "E-006",
+      "type": "feature",
       "size": "S",
-      "status": "passed",
-      "passes": true,
+      "status": "sprint-ready",
+      "passes": false,
       "acceptance": [
-        "models.py ECU_SEED_PAIRS (MD335287,UNKCAL)->(MD326328,UNKCAL) + seed comment",
-        "v0010 speed_pid_calibration seed string + comment -> MD326328",
-        "v0011 provenance re-point WHERE ecu_signature=MD335287 -> MD326328",
-        "tests updated red->green (test_ecu_model, test_migration_0011_speed_pid_rekey, test_migration_0010_speed_pid_calibration, test_speed_pid_calibration, test_stamp_ecu_swap, test_vehicle_info_ecu_lineage, test_vehicle_info_identity_immutability_enforced, test_sync_dtc_freeze_frame, test_dtc_freeze_frame_model)",
-        "pytest tests/server -m not slow green; v0010->v0011 converges, no MigrationError"
+        "SampleBus.subscribe(topics, qos, name, maxQueue) returns a usable Subscription",
+        "publish(sample) delivers only to subscriptions whose patterns match the topic",
+        "STREAM: a subscriber created after a publish does NOT receive that earlier sample",
+        "publish() returns promptly even when a subscriber never drains its queue (no blocking call in the publish path)",
+        "Typecheck passes",
+        "Tests pass"
       ],
       "validationCriteria": [
         {
-          "action": "grep -rn MD335287 src/ tests/ after the change",
-          "outcome": "no matches (literal gone from code)"
+          "action": "pytest tests/pi/bus/test_bus_stream.py",
+          "outcome": "green"
         },
         {
-          "action": "pytest tests/server -m not slow",
-          "outcome": "green (0 failed)"
+          "action": "publish 1000 samples to an undrained LOSSY maxQueue=2 subscriber",
+          "outcome": "all publish calls return; never hangs"
         },
         {
-          "action": "fresh create_all + v0010->v0011 on a clean DB",
-          "outcome": "converges; ecu seed (MD326328,UNKCAL); speed_pid JOIN matches; no MigrationError"
+          "action": "subscribe to 'raw.*' after a prior publish, then poll",
+          "outcome": "no historical sample delivered (only post-subscribe)"
+        }
+      ],
+      "conditionalOutcomes": [],
+      "goal": "Add the SampleBus broker: subscribe() returns a Subscription; publish() fans a Sample out to every matching subscription synchronously and NEVER blocks (the queue buffer is the only async boundary). STREAM topics have no history.",
+      "tasks": []
+    },
+    {
+      "id": "US-382",
+      "title": "STATE retained topics (last-value-cache) + integrity-gap markers",
+      "parent": "F-110",
+      "epicId": "E-006",
+      "type": "feature",
+      "size": "S",
+      "status": "sprint-ready",
+      "passes": false,
+      "acceptance": [
+        "publish(sample, retain=True) stores the latest sample per topic",
+        "a new subscriber matching a retained topic immediately receives the current retained value",
+        "only the latest retained value per topic is kept; STREAM publishes are NOT retained",
+        "a LOSSLESS subscription overflow causes the bus to publish event.integrity.gap (source='bus', unit=<subscriptionName>, seq=<lost seq>) to OTHER subscribers, not the overflowing one",
+        "no overflow => no marker",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "validationCriteria": [
+        {
+          "action": "publish retained 'state.config.serverHost' then subscribe late to 'state.config.*'",
+          "outcome": "retained value delivered on subscribe"
+        },
+        {
+          "action": "overflow a LOSSLESS maxQueue=1 sub while a watcher subscribes to event.integrity.gap",
+          "outcome": "exactly one gap marker with correct subscription name + lost seq"
+        },
+        {
+          "action": "publish within queue capacity (no overflow)",
+          "outcome": "no event.integrity.gap emitted"
+        }
+      ],
+      "conditionalOutcomes": [],
+      "goal": "Add retained STATE topics (publish(retain=True) -> last-value-cache, replayed to new subscribers) for slowly-changing data (VIN, calibration, state.config.*); and the honest-instrument integrity-gap marker -- a LOSSLESS overflow publishes event.integrity.gap rather than silently dropping.",
+      "tasks": []
+    },
+    {
+      "id": "US-383",
+      "title": "PersistenceSubscriber -- writes realtime_data (byte-identical golden master)",
+      "parent": "F-110",
+      "epicId": "E-006",
+      "type": "feature",
+      "size": "M",
+      "status": "sprint-ready",
+      "passes": false,
+      "acceptance": [
+        "PersistenceSubscriber(subscription, dataLogger) with start(), stop(), and handleSample(sample)",
+        "handleSample reconstructs a LoggedReading from a raw.obd.<param> sample and calls dataLogger.logReading (does NOT reimplement the INSERT)",
+        "non-raw.obd.* topics are ignored (handleSample returns False, no write)",
+        "the drain loop catches write exceptions (subscriber isolation -- never crashes the producer)",
+        "GOLDEN MASTER: realtime_data rows written via the bus path equal rows written via inline logReading on (parameter_name, value, unit, profile_id, drive_id, data_source)",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "validationCriteria": [
+        {
+          "action": "pytest tests/pi/bus/test_persistence_golden_master.py",
+          "outcome": "dbA rows == dbB rows (excluding id + write-time timestamp)"
+        },
+        {
+          "action": "handleSample on a 'derived.gear' sample",
+          "outcome": "returns False; dataLogger.logReading NOT called"
+        },
+        {
+          "action": "pytest tests/pi/bus/test_persistence_subscriber.py",
+          "outcome": "green"
         }
       ],
       "conditionalOutcomes": [
-        "if a seed site is missed, the migration FAILs LOUDLY on a fresh DB; idempotency+backfill tests must pin the new string",
-        "if MD335287 appears anywhere else in src/ or tests/, fold it in -- the literal must be gone from code"
+        "do NOT reimplement the realtime_data INSERT -- reuse ObdDataLogger.logReading so rows stay byte-identical",
+        "if ObdDataLogger.__init__ signature differs from the plan, adapt the test construction and keep both paths identical"
       ],
-      "goal": "Correct the new-ECU signature mis-ID MD335287 -> MD326328 (mfr E2T61683) at every code seed/identity site so fresh rebuilds seed correctly and the v0010->v0011 JOIN converges. Same-row value correction, not a new unit/reflash.",
-      "tasks": [],
-      "completionNotes": "Done (Rex 2026-06-01, single-agent). At-source value correction, all-sites-coherent: MD335287->MD326328 (mfr E2T61683 stays Spool-card/notes only, NOT a seed value). TDD red->green: edited 9 test files first, confirmed RED on test_migration_0010 (test_newEcuSeedValues) + test_migration_0011 (test_newEcuRepointIsNotEmpiricalPrefixed), then 4 source sites GREEN. Source sites: models.py ECU_SEED_PAIRS tuple ('MD335287',UNKCAL)->('MD326328',UNKCAL) + seed comment (this AUTO-fixes v0011's ecu seed which derives from ECU_SEED_PAIRS); v0010 SEED_NEW_ECU_SPEED_PID_CALIBRATION_DDL VALUES 'MD326328' + comment; v0011 REPOINT_NEW_ECU_PROVENANCE_DDL WHERE ecu_signature='MD326328'; stamp_ecu_swap.py help-text example (folded in per CO#2 -- literal must be gone from src/). cal_signature stays UNKCAL, correction_factor 0.5 + all FKs preserved (same-row, no new ecu row). NO new migration (at-source edit; prod ecu id=2 already corrected by Atlas direct UPDATE). 'modified-EPROM' framing in comments left as-is (out of scope -- story is the literal swap only). GATES: grep -rn MD335287 src/ tests/ = 0 (V-1); pytest tests/server -m 'not slow' = 1081 passed/12 skipped/0 failed (V-2); ruff clean on all 13 files. V-3 (fresh create_all + v0010->v0011 convergence) covered at code layer by hermetic FakeRunner migration tests (DDL now references MD326328 coherently; backfill JOIN spc.ecu_signature=e.ecu_signature matches); full MariaDB convergence + V-4 (SELECT ecu_signature FROM ecu WHERE id=2 -> MD326328) are IRL deploy-drill items (same defer pattern as US-377/US-374). Changes UNSTAGED (PM owns commits).",
-      "feedback": {
-        "filesActuallyTouched": [
-          "src/server/db/models.py",
-          "src/server/migrations/versions/v0010_us363_attribution_anomaly_data_quality.py",
-          "src/server/migrations/versions/v0011_us376_ecu_identity.py",
-          "src/server/cli/stamp_ecu_swap.py",
-          "tests/server/test_vehicle_info_identity_immutability_enforced.py",
-          "tests/server/test_vehicle_info_ecu_lineage.py",
-          "tests/server/test_sync_dtc_freeze_frame.py",
-          "tests/server/test_migration_0011_speed_pid_rekey.py",
-          "tests/server/test_migration_0010_speed_pid_calibration.py",
-          "tests/server/test_ecu_model.py",
-          "tests/server/test_dtc_freeze_frame_model.py",
-          "tests/server/cli/test_stamp_ecu_swap.py",
-          "tests/server/analytics/test_speed_pid_calibration.py"
-        ]
-      }
+      "goal": "Add the subscriber that persists raw.obd.* samples to realtime_data by REUSING the existing ObdDataLogger.logReading() write path -- so the persisted rows are identical to today's inline path by construction. This is the 'one subscriber that saves data for the server' (B-104 raw emitter).",
+      "tasks": []
+    },
+    {
+      "id": "US-384",
+      "title": "RealtimeDataLogger publish seam + pi.bus.enabled flag (default off)",
+      "parent": "F-110",
+      "epicId": "E-006",
+      "type": "feature",
+      "size": "M",
+      "status": "sprint-ready",
+      "passes": false,
+      "acceptance": [
+        "RealtimeDataLogger.__init__ gains optional bus=None and producerSource='obd'; adds a _seq counter",
+        "a dataLogger property exposes the internal ObdDataLogger (for the PersistenceSubscriber to reuse)",
+        "with a bus present, _logReadingSafe publishes raw.obd.<parameterName> (seq increments per publish); with bus None the write path is byte-for-byte unchanged",
+        "pi.bus.enabled defaults False in the validator DEFAULTS and config.json",
+        "existing tests/pi/obdii/data/ pass unchanged with the bus off",
+        "Typecheck passes; validate_config.py passes; Tests pass"
+      ],
+      "validationCriteria": [
+        {
+          "action": "pytest tests/pi/obdii/data/test_realtime_bus_publish.py",
+          "outcome": "green; published Sample topic=raw.obd.RPM, seq increments 1,2,..."
+        },
+        {
+          "action": "pytest tests/pi/obdii/data/ (no bus injected)",
+          "outcome": "green -- inline write path unchanged"
+        },
+        {
+          "action": "python validate_config.py",
+          "outcome": "passes; result pi.bus.enabled == False by default"
+        }
+      ],
+      "conditionalOutcomes": [
+        "VERIFY before coding: whether utcIsoNow and getCurrentDriveId are already imported in realtime.py; add the imports if not"
+      ],
+      "goal": "Give the OBD poll loop a producer role: when a SampleBus is injected, _logReadingSafe publishes a raw.obd.<param> Sample (per-producer monotonic seq) instead of writing the DB; when no bus, the existing write path is unchanged. Add the pi.bus.enabled config flag, default false.",
+      "tasks": []
+    },
+    {
+      "id": "US-385",
+      "title": "Orchestrator wiring behind pi.bus.enabled + ships-dark integration (slice-1 cutover)",
+      "parent": "F-110",
+      "epicId": "E-006",
+      "type": "feature",
+      "size": "M",
+      "status": "sprint-ready",
+      "passes": false,
+      "acceptance": [
+        "_initializeDataLogger builds a SampleBus + starts a PersistenceSubscriber on ['raw.obd.*'] LOSSLESS + passes the bus to createRealtimeLoggerFromConfig, ONLY when pi.bus.enabled is true",
+        "flag off: no bus, no subscriber, dataLogger behavior identical to today",
+        "the PersistenceSubscriber is stopped on orchestrator shutdown",
+        "full fast suite green with the flag OFF (zero regression -- ships dark)",
+        "Typecheck passes; Tests pass"
+      ],
+      "validationCriteria": [
+        {
+          "action": "pytest tests/pi/obdii/orchestrator/test_lifecycle_bus_wiring.py tests/pi/bus/ tests/pi/obdii/data/",
+          "outcome": "green"
+        },
+        {
+          "action": "pytest tests/ -m 'not slow' with pi.bus.enabled=false",
+          "outcome": "green -- running system unchanged (ships dark)"
+        },
+        {
+          "action": "enable the flag in a harness, push one sample through the orchestrator-built bus",
+          "outcome": "a realtime_data row is written by the PersistenceSubscriber"
+        }
+      ],
+      "conditionalOutcomes": [
+        "VERIFY before coding: createRealtimeLoggerFromConfig signature (add/forward bus), and the orchestrator class + attribute names in lifecycle.py"
+      ],
+      "goal": "Wire the bus into the orchestrator: when pi.bus.enabled, build a SampleBus, start a PersistenceSubscriber on raw.obd.* (LOSSLESS) bound to the logger's ObdDataLogger, and inject the bus into the logger; when off, behavior is identical to today. Slice 1 ships dark.",
+      "tasks": []
     }
   ],
   "validation": {
     "bigDefinitionOfDone": [
-      "(SELECT column_type ... data_quality post-v0012) → (both varchar(20))  [from US-377]",
-      "(recompute_drive_analytics --drive-id 23/24) → (attribution_anomaly written, no DataError)  [from US-377]",
-      "(recompute_drive_analytics --drive-id 25) → (full)  [from US-377]",
-      "(grep -rn MD335287 src/ tests/ after the change) → (no matches (literal gone from code))  [from US-378]",
-      "(pytest tests/server -m not slow) → (green (0 failed))  [from US-378]",
-      "(fresh create_all + v0010->v0011 on a clean DB) → (converges; ecu seed (MD326328,UNKCAL); speed_pid JOIN matches; no MigrationError)  [from US-378]"
+      "(pytest tests/pi/bus/test_sample.py tests/pi/bus/test_subscription.py) → (green)  [from US-380]",
+      "(construct a Sample then assign .value) → (raises FrozenInstanceError)  [from US-380]",
+      "(offer 3 samples to a LOSSY maxQueue=2 subscription) → (oldest dropped, poll yields seq 2 then 3, droppedCount=1)  [from US-380]",
+      "(offer 2 samples to a LOSSLESS maxQueue=1 subscription) → (_offer returns False on the 2nd, first sample still queued, call never blocks)  [from US-380]",
+      "(pytest tests/pi/bus/test_bus_stream.py) → (green)  [from US-381]",
+      "(publish 1000 samples to an undrained LOSSY maxQueue=2 subscriber) → (all publish calls return; never hangs)  [from US-381]",
+      "(subscribe to 'raw.*' after a prior publish, then poll) → (no historical sample delivered (only post-subscribe))  [from US-381]",
+      "(publish retained 'state.config.serverHost' then subscribe late to 'state.config.*') → (retained value delivered on subscribe)  [from US-382]",
+      "(overflow a LOSSLESS maxQueue=1 sub while a watcher subscribes to event.integrity.gap) → (exactly one gap marker with correct subscription name + lost seq)  [from US-382]",
+      "(publish within queue capacity (no overflow)) → (no event.integrity.gap emitted)  [from US-382]",
+      "(pytest tests/pi/bus/test_persistence_golden_master.py) → (dbA rows == dbB rows (excluding id + write-time timestamp))  [from US-383]",
+      "(handleSample on a 'derived.gear' sample) → (returns False; dataLogger.logReading NOT called)  [from US-383]",
+      "(pytest tests/pi/bus/test_persistence_subscriber.py) → (green)  [from US-383]",
+      "(pytest tests/pi/obdii/data/test_realtime_bus_publish.py) → (green; published Sample topic=raw.obd.RPM, seq increments 1,2,...)  [from US-384]",
+      "(pytest tests/pi/obdii/data/ (no bus injected)) → (green -- inline write path unchanged)  [from US-384]",
+      "(python validate_config.py) → (passes; result pi.bus.enabled == False by default)  [from US-384]",
+      "(pytest tests/pi/obdii/orchestrator/test_lifecycle_bus_wiring.py tests/pi/bus/ tests/pi/obdii/data/) → (green)  [from US-385]",
+      "(pytest tests/ -m 'not slow' with pi.bus.enabled=false) → (green -- running system unchanged (ships dark))  [from US-385]",
+      "(enable the flag in a harness, push one sample through the orchestrator-built bus) → (a realtime_data row is written by the PersistenceSubscriber)  [from US-385]"
     ],
-    "frozenAt": "2026-06-02T01:06:26Z",
-    "bigDoDHash": "b800f04654b25289659604bda61fa7a852a2b3f75944f058095eb7403e43e5a7",
-    "validationMethod": "V0.28.2 patch (drill-revealed regression + A-13 ECU-id correction): (US-377) widen data_quality VARCHAR(16)->VARCHAR(20) so recompute can stamp attribution_anomaly; (US-378) correct ECU seed MD335287->MD326328 all code sites (same-row, all-sites-coherent). On deploy: DESCRIBE varchar(20); recompute drives 23+24->attribution_anomaly, 25->full, idempotent; grep MD335287 src/ tests/ = none; v0010->v0011 converges on MD326328; releases F-005+F-007 HOLD (closes US-364 + chain pre-condition #4).",
+    "frozenAt": "2026-06-19T14:35:21Z",
+    "bigDoDHash": "17bc9d6f0f67fcdc5d430c9edcddd75c2da80831bdb3049dc499ad2db502681a",
+    "validationMethod": "EDR bus slice 1 (dedicated reader -> in-process pub/sub bus -> PersistenceSubscriber). Ships DARK behind pi.bus.enabled (default false): the full fast suite must stay green with the flag off (zero behavioral change on merge). The load-bearing acceptance gate is the byte-identical golden master -- realtime_data rows written via the bus path equal rows written via the existing inline logReading path. Hardware-independent (stdlib only, existing OBD path) -- does not wait on the IMU/light sensors or the ECMLink spike. Strangler-fig: display, drive detector, and the sync transport are untouched (later slices 2-5). Post-merge flag-flip on the Pi (confirm byte-identical realtime_data + healthy sync) is a separate PM/CIO deploy gate.",
     "validatesFeatures": [
-      "F-005",
-      "F-007"
+      "F-110"
     ],
-    "currentVersion": "V0.28.2",
-    "validatedAt": "2026-06-06T02:37:29Z",
-    "validatedBy": "Mike (CIO confirmed) + drive-27 single-attribution IRL drill (Atlas A-9 gate PASS, drive_id=27 full/is_real/anomalies=0) + Session-46 pre-drill schema verification (22 bigDoD clauses GREEN)"
+    "currentVersion": "V0.29.0",
+    "validatedAt": null,
+    "validatedBy": null
   }
 }
