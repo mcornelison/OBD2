@@ -216,6 +216,14 @@ evidence + resolution history live in `knowledge/watch-list-closed.md`.**
 
 ## 9. Session Log
 
+### 2026-06-19 (cont.2) — single-instance guard ENABLED in config; Pi deploy BLOCKED (Pi offline); Rule-13 PASS on Sprint 46 (EDR bus slice 1)
+
+- **Enabled the single-instance guard in `config.json`** (CIO-directed shortcut, vs Atlas→Marcus→Ralph): added `pi.runtime.singleInstanceGuard {enabled:true, lockPath:/run/eclipse-obd/orchestrator.lock}` — actions my own Rule-10 sign-off (A-9 Root 1). `validate_config.py` green; consumer path reads True. Commit `d6d8b05`; Marcus informed (deploy = his).
+- **Pi deploy BLOCKED — Pi unreachable.** CIO asked to deploy + sprint-review. Pi `10.27.27.28` fails BOTH ping (100% loss) and ssh (connection timed out) — the recurring Pi-offline pattern (ECU unpowered / WiFi off). Did NOT deploy; reported honestly. Surgical deploy (config push + clean `eclipse-obd` stop→start, NOT `deploy-pi.sh` per the EEPROM dry-run mismatch) pending Pi back online.
+- **Rule-13 PASS — Sprint 46 / V0.29.0 (EDR bus slice 1, F-110, US-380..385).** Marcus had frozen it today (hash `17bc9d6f`, 14:35:21Z). Audited the freeze: **intact** (independent recompute == stored; lint 0 errors; bigDoD 19 clauses = exact per-story sum; fresh aggregation reproduces the hash). Architecturally faithful to my bus contract (Sample/QoS, STREAM/STATE, producer-never-blocks, byte-identical golden master, ships-dark behind `pi.bus.enabled`). **Cleared for dispatch.** Report `reports/2026-06-19-rule13-signoff-sprint46-v0.29.0-edr-bus-slice1.md`; PM PASS note filed. _(A-14 gate #1 slice-1 now frozen + signed off.)_
+  - **Verify-before-asserting win:** my first freeze-hash recompute showed "DRIFT" — turned out to be MY bug (bare Windows `open()` → cp1252 mangled the `→` U+2192 in the DoD). Read as UTF-8 → freeze INTACT. Nearly reported a false BLOCK + a false "lint swallows errors" tooling defect; rigor caught my own measurement error. Logged a note to add to `specs/rule-13-audit-discipline.md` (recompute the freeze hash with explicit UTF-8).
+- **Owed:** A-9 RCA sprint Rule-13 when Marcus freezes it; the Pi guard deploy when the Pi is reachable. Two non-blocking heads-ups to Marcus: `--strict` exits 1 on the 15 style warnings; config.json edit-coordination (US-384 adds `pi.bus.enabled` alongside my `pi.runtime`).
+
 ### 2026-06-19 (cont.) — A-9 DriveDetector RCA RULED (CIO-tasked); root found = a fix shipped DISABLED
 
 CIO: "do the A-9 RCA ruling." Did an architect-level RCA — grounded in the live evidence AND direct reads of the real code (detector.py, drive_id.py, lifecycle.py, single_instance.py, server overlap.py, config.json) + a dispatched Explore code-map agent (verified its citations before relying on them). Report: `reports/2026-06-19-a9-drivedetector-rca-ruling.md`.
