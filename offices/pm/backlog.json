@@ -1,11 +1,11 @@
 {
   "schemaVersion": "2.0.0",
-  "lastUpdated": "2026-06-01",
-  "updatedBy": "Marcus (PM)",
+  "lastUpdated": "2026-06-19",
+  "updatedBy": "Marcus (PM) -- integrity sweep: US-379 orphan + counter reconcile",
   "counters": {
     "epic": 6,
     "feature": 110,
-    "story": 373
+    "story": 380
   },
   "epics": [
     {
@@ -2266,6 +2266,44 @@
       "tasks": [],
       "createdAt": "2026-06-01",
       "updatedAt": "2026-06-01"
+    },
+    {
+      "id": "US-379",
+      "title": "Fix stale harness fixture after US-371 drive_id->summary_id rename (test-only)",
+      "parent": "F-076",
+      "type": "tech-debt",
+      "size": "S",
+      "status": "sprint-ready",
+      "goal": "As the test suite, the synthetic divergence fixture should declare its historical drive_statistics table with the current non-data_quality columns (summary_id PK + FK to drive_summary(id)), so the test once again provokes the intended data_quality-missing OperationalError and proves the harness catches the I-041 schema-vs-ORM seam -- rather than failing on a summary_id-missing artifact of the rename.",
+      "definitionOfDone": [
+        "Historical CREATE TABLE drive_statistics block in test_harnessTooling_canCatchSchemaVsOrmDivergence_synthetic uses summary_id (NOT NULL), PRIMARY KEY (summary_id, parameter_name), FOREIGN KEY (summary_id) REFERENCES drive_summary(id)",
+        "No production src/ change (test-only; product already correct)",
+        "Test passes for the right reason: Phase 1 raises OperationalError mentioning data_quality; Phase 2 (re-ADD data_quality) INSERT succeeds"
+      ],
+      "validationCriteria": [
+        {
+          "action": "pytest tests/integration/test_deploy_context_drive_simulator.py::TestHarnessIntegrity::test_harnessTooling_canCatchSchemaVsOrmDivergence_synthetic -v",
+          "outcome": "PASSED"
+        },
+        {
+          "action": "pytest tests/integration -m \"not slow\" -q",
+          "outcome": "no summary_id-missing failures introduced by this change"
+        },
+        {
+          "action": "grep the test for the historical CREATE TABLE block",
+          "outcome": "declares summary_id, not drive_id"
+        }
+      ],
+      "conditionalOutcomes": [
+        "If the historical-shape table is intentionally meant to predate the rename (prove harness catches BOTH the column-rename AND the data_quality gaps): split into two assertions and document which symptom each phase proves -- but keep the default single-symptom (data_quality) intent unless Atlas/Argus rule otherwise."
+      ],
+      "deps": [],
+      "tasks": [],
+      "sourceRefs": [
+        "US-371"
+      ],
+      "createdAt": "2026-06-05",
+      "updatedAt": "2026-06-19"
     }
   ]
 }
