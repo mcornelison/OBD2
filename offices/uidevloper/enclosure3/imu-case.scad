@@ -51,12 +51,24 @@ pilot_dz = 6.0;
 lid_top_t  = 2.0;     // lid top plate thickness
 lid_lip_h  = 5.0;     // how far the lid lip reaches down into the box
 lid_lip_t  = 1.5;     // lid lip wall thickness
-lid_clear  = 0.3;     // friction-lip clearance, lip-to-inner-wall (per side).
-                      //   tune on test-fit: smaller = tighter hold, larger = looser.
-// snap_* params (v1 snap-fit) are now OBSOLETE — lid is a plain friction lip (v2).
+lid_clear  = 0.3;     // locating-lip clearance, lip-to-inner-wall (per side).
+                      //   lip now just ALIGNS the lid; the 2 screws retain it.
+// snap_* params (v1 snap-fit) are now OBSOLETE — lid is screw-retained (v2).
 snap_d     = 0.6;     // (unused)
 snap_h     = 1.2;     // (unused)
 snap_drop  = 2.5;     // (unused)
+
+// ---- Lid retention screws (v2 — CIO: 2 small screws) --------------------
+// 2 M2.5 self-tap screws at DIAGONAL corners (most clearance; clear of the
+// board, vents, and cable slot). Box gets corner bosses; lid gets counterbored
+// through-holes; the lip is pocketed locally so the boss can't hit it.
+lid_scr_inset    = 4.2;   // screw-center inset from each outer wall (corner)
+lid_scr_r        = 3.0;   // box boss radius
+lid_scr_pilot    = 1.05;  // M2.5 self-tap pilot (Phi 2.1)
+lid_scr_pilot_dz = 8.0;   // pilot depth down from the rim
+lid_scr_shank_r  = 1.45;  // shank clearance through the lid (Phi 2.9 for M2.5)
+lid_scr_head_r   = 2.6;   // counterbore for the head (M2.5 socket/pan)
+lid_scr_head_dz  = 1.6;   // counterbore depth from the lid top
 
 // ---- Vents (thin rounded-end vertical slots, like enclosure #2) ---------
 vent_w   = 1.3;
@@ -89,6 +101,10 @@ snap_z  = box_h - snap_drop;                   // snap band height above the flo
 // hole positions (world)
 hole_xy = [ for (sx = [hole_inset, board_l - hole_inset],
                  sy = [hole_inset, board_w - hole_inset]) [x0 + sx, y0 + sy] ];
+
+// lid-screw positions (world) — 2 diagonal corners
+lid_scr_xy = [ [lid_scr_inset, lid_scr_inset],
+               [case_x - lid_scr_inset, case_y - lid_scr_inset] ];
 
 $fn = 48;
 
@@ -149,6 +165,16 @@ module standoffs() {
     }
 }
 
+// lid-retention corner bosses (rise floor -> rim; pilot for M2.5 self-tap)
+module lid_screw_bosses() {
+    for (p = lid_scr_xy) difference() {
+        translate([p[0], p[1], bottom_wall - 0.5])
+            cylinder(h = rim_z - (bottom_wall - 0.5), r = lid_scr_r);
+        translate([p[0], p[1], rim_z - lid_scr_pilot_dz])
+            cylinder(h = lid_scr_pilot_dz + 0.1, r = lid_scr_pilot);
+    }
+}
+
 module box() {
     difference() {
         // outer blank
@@ -178,6 +204,7 @@ module box() {
         // bottom face is FLAT (VHB recess dropped — see param note)
     }
     standoffs();
+    lid_screw_bosses();
 }
 
 // ======================================================================
@@ -188,22 +215,36 @@ module lid() {
     // outer footprint of the lip (fits inside the box with clearance)
     lx = inner_x - 2*lid_clear;
     ly = inner_y - 2*lid_clear;
-    union() {
-        // top plate (rests on the box rim)
-        difference() {
-            translate([0, 0, rim_z]) linear_extrude(lid_top_t) rrect(case_x, case_y, corner_r);
-            // debossed FRONT arrow (+X) — the only top marking (text removed: unreadable)
-            translate([case_x/2 - 5, case_y/2, rim_z + lid_top_t - 0.6])
-                linear_extrude(1.0) arrow2d();
+    difference() {
+        union() {
+            // top plate (rests on the box rim)
+            difference() {
+                translate([0, 0, rim_z]) linear_extrude(lid_top_t) rrect(case_x, case_y, corner_r);
+                // debossed FRONT arrow (+X) — the only top marking (text removed: unreadable)
+                translate([case_x/2 - 5, case_y/2, rim_z + lid_top_t - 0.6])
+                    linear_extrude(1.0) arrow2d();
+            }
+            // locating lip ring hanging down into the box (retention = the 2 screws)
+            translate([wall + lid_clear, wall + lid_clear, rim_z - lid_lip_h])
+                linear_extrude(lid_lip_h)
+                    difference() {
+                        rrect(lx, ly, max(corner_r - wall - lid_clear, 0.6));
+                        translate([lid_lip_t, lid_lip_t])
+                            rrect(lx - 2*lid_lip_t, ly - 2*lid_lip_t, 0.6);
+                    }
         }
-        // lip ring hanging down into the box (friction fit; retention = lip only)
-        translate([wall + lid_clear, wall + lid_clear, rim_z - lid_lip_h])
-            linear_extrude(lid_lip_h)
-                difference() {
-                    rrect(lx, ly, max(corner_r - wall - lid_clear, 0.6));
-                    translate([lid_lip_t, lid_lip_t])
-                        rrect(lx - 2*lid_lip_t, ly - 2*lid_lip_t, 0.6);
-                }
+        // lid-screw cuts: counterbored shank through the top + lip-clearance pocket
+        for (p = lid_scr_xy) translate([p[0], p[1], 0]) {
+            // shank through the full lid stack
+            translate([0, 0, rim_z - lid_lip_h - 1])
+                cylinder(h = lid_lip_h + lid_top_t + 2, r = lid_scr_shank_r);
+            // head counterbore from the top down
+            translate([0, 0, rim_z + lid_top_t - lid_scr_head_dz])
+                cylinder(h = lid_scr_head_dz + 0.1, r = lid_scr_head_r);
+            // lip-zone pocket so the box boss never collides with the lip
+            translate([0, 0, rim_z - lid_lip_h - 0.1])
+                cylinder(h = lid_lip_h + 0.1, r = lid_scr_r + 0.4);
+        }
     }
 }
 
