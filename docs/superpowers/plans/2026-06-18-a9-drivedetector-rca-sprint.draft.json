@@ -1,0 +1,134 @@
+{
+  "_draft": "Atlas-drafted RCA+fix sprint contract for the REOPENED A-9 DriveDetector defect (drives 28/29). NOT frozen, NOT dispatched. PM (Marcus) owns: real sprint number + version, real US-/F-/E- IDs via story_counter, the freeze (prd_to_sprint.py + _freeze.py), sprint_lint, Rule 13 sign-off (Atlas), and dispatch. DO NOT overwrite offices/ralph/sprint.json. Proposed IDs US-386+ are placeholders.",
+  "_nature": "This is an RCA sprint -- investigative, not code-complete. The root cause is a HYPOTHESIS (DriveDetector close/drive-end signal unreliable), not confirmed. Therefore the FIX story (US-388) is explicitly 'shape pending RCA' (US-387) per Watch List A-11: do not freeze a fix whose criteria depend on an unrendered finding. The in-process reproducer (US-386) carries the bulk and needs NO hardware; only the sprint-level IRL clause needs the car.",
+  "_sourceArtifacts": {
+    "finding": "offices/architect/findings/2026-06-18-drivedetector-defect-recurs-28-29.md",
+    "watchList": "offices/architect/CLAUDE.md A-9 (REOPENED 2026-06-18)",
+    "priorFix": "F-107 / V0.28.0 (incomplete -- holds normal drives, fails short/back-to-back)"
+  },
+  "schemaVersion": "2.0.0",
+  "sprint": "PENDING-PM",
+  "version": "PENDING-PM (patch sprint forks from dev)",
+  "createdFromPRD": "PENDING-PM",
+  "stories": [
+    {
+      "id": "US-386",
+      "title": "Deterministic in-process reproducer for the DriveDetector close-signal defect (RED)",
+      "parent": "F-107",
+      "epicId": "E-002",
+      "type": "issue",
+      "size": "M",
+      "status": "pending",
+      "passes": false,
+      "goal": "Build an in-process test harness that drives DriveDetector through the failure scenarios by feeding synthetic RPM / engine-on-off / timing inputs, and asserts CORRECT behavior -- failing RED on current code so the 28/29 defect (drive overlap + stale-open leak) reproduces deterministically WITHOUT the car.",
+      "acceptance": [
+        "test feeds a synthetic RPM/engine-state sequence to DriveDetector for: (a) a short ~3-min drive, (b) two back-to-back drives ~1 min apart, (c) a key-on AFTER a drive whose close never fired",
+        "asserts: exactly ONE drive_id per physical drive (no overlap) AND each drive closes on key-off AND a key-on after a stale-open opens a NEW drive_id (no absorption)",
+        "the test FAILS (RED) on current detector.py, reproducing the 28/29 signature (overlap + missed-close)",
+        "pure in-process -- no IRL/hardware dependency",
+        "Typecheck passes; the RED test runs and its failure is documented"
+      ],
+      "validationCriteria": [
+        { "action": "run the new reproducer against current detector.py", "outcome": "RED -- reproduces overlap + missed-close in-process" },
+        { "action": "inspect the back-to-back scenario", "outcome": "two overlapping drive_ids minted (the defect), ids possibly out of temporal order" }
+      ],
+      "conditionalOutcomes": [
+        "if the defect will NOT reproduce in-process at the detector level (manifests only with the real orchestrator loop / threads / timing), STOP and escalate to Atlas -- the reproduction strategy needs the real lifecycle loop, not just the detector unit"
+      ],
+      "dependencies": [],
+      "tasks": []
+    },
+    {
+      "id": "US-387",
+      "title": "RCA: root-cause the DriveDetector close / drive-end path",
+      "parent": "F-107",
+      "epicId": "E-002",
+      "type": "research",
+      "size": "M",
+      "status": "pending",
+      "passes": false,
+      "goal": "With the reproducer in hand, trace src/pi/obdii/drive/detector.py + orchestrator/lifecycle.py drive-start/-end/close logic and identify the exact mechanism: (1) why a drive fails to close, (2) why a second drive_id opens over an already-open one (ids out of temporal order). Document in an RCA.",
+      "acceptance": [
+        "RCA doc names the exact code path + mechanism (file:line) for BOTH (1) drive fails to close and (2) a second drive_id opens over an open one",
+        "RCA explains the US-386 reproducer's RED behavior",
+        "RCA confirms OR refutes the Atlas hypothesis (defects 1+2 share one root = unreliable close signal) with evidence",
+        "no fix in this story"
+      ],
+      "validationCriteria": [
+        { "action": "read the RCA against the reproducer", "outcome": "mechanism identified, maps to the RED test, cites file:line" },
+        { "action": "Atlas review of the RCA", "outcome": "root cause accepted (gate for US-388)" }
+      ],
+      "conditionalOutcomes": [
+        "if the real root cause differs from the 'unreliable close signal' hypothesis, document what it ACTUALLY is -- do not force-fit the hypothesis"
+      ],
+      "dependencies": ["US-386"],
+      "tasks": []
+    },
+    {
+      "id": "US-388",
+      "title": "FIX DriveDetector close-signal reliability (SHAPE PENDING RCA US-387)",
+      "parent": "F-107",
+      "epicId": "E-002",
+      "type": "issue",
+      "size": "M",
+      "status": "pending",
+      "passes": false,
+      "goal": "Implement the fix so the US-386 reproducer goes GREEN: one drive_id per physical drive, every drive closes on key-off, a stale-open drive cannot absorb a later key-on. The exact change shape depends on the US-387 RCA -- this story is frozen as 'shape pending ruling, build blocked until RCA' per Watch List A-11.",
+      "acceptance": [
+        "US-386 reproducer test GREEN",
+        "no overlapping drive_ids in the back-to-back scenario",
+        "a key-on after a missed close opens a NEW drive_id (no 8-day-leak absorption)",
+        "existing DriveDetector + lifecycle tests stay green",
+        "if the change is load-bearing, specs/architecture.md DriveDetector section updated in-sprint (Atlas design-gate DoD)",
+        "Typecheck passes; tests pass"
+      ],
+      "validationCriteria": [
+        { "action": "pytest the US-386 reproducer + the existing detector/lifecycle suites", "outcome": "all green" },
+        { "action": "re-run the 3 scenarios (short / back-to-back / key-on-after-missed-close)", "outcome": "one drive_id each, all close, no absorption" }
+      ],
+      "conditionalOutcomes": [
+        "BUILD BLOCKED until US-387 RCA is accepted by Atlas -- do not start coding before the root cause is rendered",
+        "if the RCA reveals the fix is architectural (e.g. id-minting concurrency, detector re-entrancy), route back to Atlas for a design ruling BEFORE coding"
+      ],
+      "dependencies": ["US-386", "US-387"],
+      "tasks": []
+    },
+    {
+      "id": "US-389",
+      "title": "Regression lock + server-tripwire backstop confirmation",
+      "parent": "F-107",
+      "epicId": "E-002",
+      "type": "issue",
+      "size": "S",
+      "status": "pending",
+      "passes": false,
+      "goal": "Lock the reproducer into the regression suite/manifest, and confirm the V0.28.0 server tripwire (detect_overlapping_drives) still flags any residual overlap -- belt-and-suspenders so a future Pi regression is still caught server-side.",
+      "acceptance": [
+        "US-386 reproducer added to the fast suite / regression manifest (permanent)",
+        "a server-side test confirms detect_overlapping_drives still stamps data_quality=attribution_anomaly on a synthetic overlap",
+        "Typecheck passes; tests pass"
+      ],
+      "validationCriteria": [
+        { "action": "pytest fast suite including the reproducer", "outcome": "green" },
+        { "action": "synthetic-overlap tripwire test", "outcome": "attribution_anomaly stamped (backstop intact)" }
+      ],
+      "conditionalOutcomes": [],
+      "dependencies": ["US-388"],
+      "tasks": []
+    }
+  ],
+  "validation": {
+    "bigDefinitionOfDone": [
+      "(run the reproducer on current code) → (RED: reproduces overlap + missed-close in-process)  [from US-386]",
+      "(RCA doc reviewed against reproducer) → (mechanism identified at file:line; hypothesis confirmed/refuted)  [from US-387]",
+      "(pytest reproducer + detector/lifecycle suites after fix) → (all green; one drive_id per drive, all close, no absorption)  [from US-388]",
+      "(reproducer in regression manifest + synthetic-overlap tripwire test) → (green; attribution_anomaly stamped — backstop intact)  [from US-389]",
+      "(SPRINT-LEVEL IRL, CIO-gated — needs the car: drive a SHORT/BACK-TO-BACK pair + a key-on after a missed close, then recompute_drive_analytics) → (each physical drive = a single drive_id, all closed, recompute attribution_anomalies=0)  [sprint-level IRL]"
+    ],
+    "frozenAt": "PENDING-PM-FREEZE (prd_to_sprint.py + _freeze.py)",
+    "bigDoDHash": "PENDING-PM-FREEZE",
+    "validationMethod": "RCA + fix for the REOPENED A-9 DriveDetector close-signal defect (drives 28/29). The in-process reproducer (US-386) is the deterministic gate for the fix and needs no hardware. The fix (US-388) is build-blocked on the RCA (US-387) per A-11. The sprint-level IRL clause is the true acceptance gate -- a SHORT/BACK-TO-BACK drive pair + a key-on-after-missed-close (the exact scenario the single drive-27 PASS missed). The V0.28.0 server tripwire remains the backstop, so this is NOT a chain/deploy block -- an honest flagged record already exists for 28/29.",
+    "validatesFeatures": ["F-107"],
+    "currentVersion": "PENDING-PM"
+  }
+}
