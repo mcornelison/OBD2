@@ -207,9 +207,9 @@ When starting a new session, read this section first:
 | OBD-II reference | `specs/obd2-research.md` |
 | Grounded knowledge | `specs/grounded-knowledge.md` |
 | Roadmap | `pm/roadmap.md` |
-| Active PRD | `pm/prds/prd-application-orchestration.md` |
+| Active PRD | `pm/prds/prd-V0.29.0.md` (current sprint); `pm/prds/prd-next-draft.md` (next) |
 | Backlog (structured) | `pm/backlog.json` |
-| Backlog items (detail) | `pm/backlog/B-*.md` |
+| Backlog items (detail) | `pm/backlog/US-*.md` |
 | Story counter | `pm/story_counter.json` |
 
 ---
