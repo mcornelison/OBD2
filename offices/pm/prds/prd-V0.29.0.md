@@ -12,7 +12,9 @@ sprintJsonPath: offices/ralph/sprint.json
 bigDoDHash: 17bc9d6f0f67fcdc
 epic: E-006
 feature: F-110
-atlasRule13: pending
+atlasRule13: PASS
+atlasRule13At: 2026-06-19
+atlasRule13Ref: offices/architect/reports/2026-06-19-rule13-signoff-sprint46-v0.29.0-edr-bus-slice1.md
 ---
 
 # PRD — Sprint 46 / V0.29.0 — EDR Dedicated-Reader Internal Bus (Slice 1)
