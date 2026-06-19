@@ -22,6 +22,12 @@
       "version": "1.0.0",
       "environment": "${APP_ENVIRONMENT:production}"
     },
+    "runtime": {
+      "singleInstanceGuard": {
+        "enabled": true,
+        "lockPath": "/run/eclipse-obd/orchestrator.lock"
+      }
+    },
     "database": {
       "path": "${DB_PATH:./data/obd.db}",
       "walMode": true,
