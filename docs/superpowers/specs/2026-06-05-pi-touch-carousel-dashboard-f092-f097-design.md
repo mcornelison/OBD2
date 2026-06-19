@@ -1,12 +1,12 @@
-# Pi Touch-Carousel Dashboard — F-092 System Status + F-097 Battery Health — Design Spec v1.1
+# Pi Touch-Carousel Dashboard — F-092 System Status + F-097 Battery Health — Design Spec v1.2
 
 | Field | Value |
 |---|---|
 | Feature IDs | **F-092** (System Status tile) · **F-097** (Battery Health, *pivoted* from "drain ladder state UI") |
 | Backlog | `offices/pm/backlog/F-092-system-status-tile.md`, `offices/pm/backlog/F-097-drain-ladder-state-ui.md` |
 | Author | Iris (UI/UX Designer) |
-| Date | 2026-06-05 (v1); 2026-06-05 (v1.1 — folded in the long-press System Setup menu, D-6/D-7) |
-| Status | **DRAFT — design brainstormed + CIO-approved; pending Atlas design-gate (Rule 10) + Spool semantics + Argus acceptance** |
+| Date | 2026-06-05 (v1); 2026-06-05 (v1.1 — folded in the long-press System Setup menu, D-6/D-7); 2026-06-19 (v1.2 — folded Spool's F-097 battery-health semantics + Atlas C-1 sequencing) |
+| Status | **GROOM-READY (pending) — Atlas design-gate = CONDITIONAL PASS (2026-06-05 report, no BLOCK); v1.2 folds Spool's F-097 battery-health value semantics (2 render-breaking) + the C-1 sequencing condition. Near-term line (F-103 → this carousel shell → cards) GREEN-LIT by Atlas → Marcus. Argus acceptance advisory-open (non-blocking).** |
 | Target sprint | V0.28+ |
 | Depends on | **F-103 splash** (shares the chromium kiosk + `eclipse-states-http` localhost state-server) — see `docs/superpowers/specs/2026-05-26-b103-splash-animation-design.md` |
 | Supersedes | `src/pi/hardware/status_display.py` + `dashboard_layout.py` (pygame 4-quadrant dashboard, US-257/B-052) — coordinated sunset, not a hard cut |
@@ -24,6 +24,19 @@ Designed with the CIO via live HTML mockups. Decisions ratified this session:
 | D-5 | **F-097 layout = two-state card** (NORMAL health view + FAILSAFE ladder escalation) | Health primary; ladder/runtime/thresholds render only when a real drain is underway. |
 | D-6 | **System Setup menu** reachable from a **5–6s long-press anywhere** AND the top-bar `⋮` (both open the same menu) | Long-press is a deliberate, accident-proof gesture for consequential actions; `⋮` keeps it discoverable. A filling ring gives hold-feedback; release early cancels. (CIO 2026-06-05.) |
 | D-7 | **Service handling: data services stoppable, `eclipse-powerwatch` restart-only** | Stopping the safe-shutdown guard could leave the Pi unprotected on key-off (drain/corruption). Stop + Exit-UI always confirm first. (CIO chose option A.) |
+
+### 0.1 Changelog — v1.2 (Spool F-097 semantics + Atlas C-1, 2026-06-19)
+
+Folds Spool's battery-health value semantics (`inbox/2026-06-18-from-spool-battery-health-f097-semantics.md`, 28 `battery_health_log` rows read off the Pi) + the Atlas gate's C-1 sequencing condition. **Two of Spool's findings are render-breaking** and must shape the card before build:
+
+- **What it is (naming):** `battery_health_log` is the **Pi UPS-HAT LiPo cell (MAX17048 fuel gauge), NOT the car's 12 V lead-acid.** The card must never label it "vehicle battery". (§6 header clarified.)
+- **Render-breaking #1 — `start_soc`/`end_soc` hold VOLTAGE, not percent.** Those columns (and `start_vcell_v`/`end_vcell_v`) carry **cell voltage 4.2 → 3.4 V**, not 0–100 % SoC. Rendering `3.44` as "3.44 %" would be badly wrong (it's 3.44 V, a near-empty LiPo). **SoC % must come from the MAX17048's own SoC register** — never from the voltage column, and never linearly interpolated from voltage (the curve is nonlinear: 4.2 V≈100, 3.7 V≈40–50, 3.42 V≈cutoff/near-0 under load). (§6 + schema + S-1.)
+- **Render-breaking #2 — stale-green guard.** No drain events since 2026-05-16 → the health data is **month-old**. The card must show **data-age / "last health check"** so a stale GREEN isn't mistaken for a live reading. (§6 + schema `lastHealthCheckTs` + new acceptance test.)
+- **Health verdict = GREEN** (Spool-validated): full charge reached every cycle (4.20–4.22 V), sane cutoff floor (~3.42–3.45 V), runtime-to-cutoff **~12 min** (14 clean full-drains, avg 714 s, range 617–831 s), **no degradation** across 2026-05-04..05-16. NORMAL view shows: full-charge-reachable · runtime-to-cutoff ~12 min · last-checked date.
+- **Honesty gap — `ambient_temp_c` never logged** → can't show temp-vs-runtime (LiPo runtime is temp-sensitive; cold cuts it). Surface as **"not captured"**, don't fake it.
+- **C-1 (sequencing):** unchanged — this carousel shell + cards depend on F-103 (kiosk + `eclipse-states-http`) landing first; nothing in `src/` yet. Already in the header "Depends on" + §7.
+
+(GEAR-derivation note from the same Spool message belongs to the live-instrument surface W-11, not F-097 — tracked there.)
 
 ## 1. Executive Summary
 
@@ -184,18 +197,27 @@ SYSTEM STATUS
 
 ## 6. F-097 — Battery Health Card (pivoted)
 
+> **What this card is about (Spool, render-critical):** the **Pi UPS-HAT LiPo cell** (MAX17048 fuel gauge) — *not* the car's 12 V lead-acid battery. Never label it "vehicle battery". It answers "will the Pi survive a clean shutdown on its own cell?", not anything about the car's charging system.
+
 **Two states** [D-5]. NORMAL is the everyday readout; FAILSAFE renders **only** when `battery-health.draining === true`.
 
 ### NORMAL (on car / charging) — primary
 ```
-BATTERY HEALTH                 ⚡ CHARGING · EXTERNAL
- 4.02 V VCELL          HEALTHY · rested 4.05 V
+UPS BATTERY HEALTH             ⚡ CHARGING · EXTERNAL
+ 4.02 V VCELL          HEALTHY · full charge reached
  SOC 76% (uncalibrated)   Charge +1.8%/h   Weak events 0/30d
- Rested VCELL · last 8 cycles  ▁▂▁▂▂▁▂▂
- Holds voltage normally · no degradation trend
+ Runtime to cutoff  ~12 min          Temp  not captured
+ Rested VCELL · last 8 cycles  ▁▂▁▂▂▁▂▂   no degradation
+ Last health check  2026-05-16 (34d ago)
 ```
-- **VCELL** authoritative + largest. **SOC** smallest, always tagged `(uncalibrated)` (US-264 rule).
+- **VCELL** authoritative + largest. **SOC** smallest, always tagged `(uncalibrated)` (US-264 rule). **SOC % is read from the MAX17048 SoC register — never derived from the voltage columns** (see the value-semantics note below); if only voltage is available, the card shows VCELL alone and omits SOC rather than faking a percent.
+- **Health verdict = GREEN** (Spool-validated, 28 rows): full charge reached every cycle (4.20–4.22 V); sane cutoff floor (~3.42–3.45 V); **runtime-to-cutoff ~12 min** (14 clean full-drains, avg 714 s); no degradation trend.
+- **Runtime-to-cutoff (~12 min)** is a *health stat* (typical full-drain time from Spool's history), distinct from the FAILSAFE's *live* runtime-remaining estimate (S-2, still owed).
+- **Temp "not captured"** — `ambient_temp_c` is never logged, so a temp-vs-runtime view would be fabricated. State the gap honestly; LiPo runtime is temp-sensitive (cold shortens it).
+- **Stale-green guard:** the health data is only as fresh as the last drain cycle (currently 2026-05-16, month-old). The card shows **"last health check · <date> (<age>)"** so a GREEN verdict is never mistaken for a live reading.
 - Charge/discharge state from CRATE sign + power source. Health-over-time = rested-VCELL trend across recent power cycles (from `src/pi/power/battery_health.py` start/end-VCELL event log). "Weak events" = Spool-defined.
+
+> **Value-semantics note (Spool, render-breaking).** The `battery_health_log` columns `start_soc`/`end_soc` (and `start_vcell_v`/`end_vcell_v`) hold **cell voltage in volts (4.2 → 3.4 V), not 0–100 % state-of-charge** — the `_soc` column name is misleading. Rendering `3.44` as "3.44 %" is badly wrong (it's 3.44 V, a near-empty cell). The emitter (§7) must publish `vcellV` from these columns and source `soc` (%) **only** from the MAX17048 SoC register — the voltage→SoC curve is nonlinear (4.2 V≈100, 3.7 V≈40–50, 3.42 V≈cutoff), so **never linearly interpolate** a percent from voltage.
 
 ### FAILSAFE (wall power lost + actually draining) — conditional
 ```
@@ -211,11 +233,16 @@ BATTERY HEALTH                 ⚠ ON UPS BATTERY · DRAINING
 ### Data sources & Spool ownership
 | Element | Source | Owner |
 |---|---|---|
-| VCELL, SOC, CRATE | MAX17048 reader / power-watch | exists |
+| **VCELL** (authoritative) | `battery_health_log.*_vcell_v` / `*_soc` columns (both hold **volts**) + live MAX17048 | exists; **Spool semantics DELIVERED** |
+| **SOC %** | **MAX17048 SoC register ONLY** (never from the voltage columns; never lerp from voltage) | **Spool (S-1) — DELIVERED** (render-breaking trap flagged) |
+| CRATE | MAX17048 reader / power-watch | exists |
 | rested-VCELL history | `battery_health.py` event log | exists |
-| **Ladder thresholds** (3.70 / 3.55 / 3.45 V — *placeholders*) | power-watch staged-shutdown config | **Spool (S-1)** — confirm exact values |
-| **Runtime-remaining formula** (from CRATE / drain rate) | NEW derivation | **Spool (S-2)** — define formula; flag if not derivable |
-| "weak event" / "healthy" / charge-rate semantics | — | **Spool (S-1)** |
+| **Health verdict = GREEN** (full-charge-reachable, cutoff floor, no-degradation) | Spool analysis of 28 rows | **Spool (S-1) — DELIVERED** |
+| **Runtime-to-cutoff ~12 min** (health stat) | Spool history (14 drains, avg 714 s) | **Spool (S-1) — DELIVERED** |
+| **`ambient_temp_c`** | never logged → render "not captured" | **DELIVERED** — confirmed gap, don't fake |
+| **Data-age / last-health-check** | timestamp of last drain cycle | **DELIVERED** — stale-green guard |
+| **Ladder thresholds** (3.70 / 3.55 / 3.45 V — *placeholders*) | power-watch staged-shutdown config | **Spool (S-1)** — confirm exact values (failsafe only) |
+| **Live runtime-remaining formula** (from CRATE / drain rate, during a drain) | NEW derivation | **Spool (S-2)** — still owed; flag if not derivable (failsafe only) |
 | `draining` boolean (when does failsafe render) | power-watch (wall-power-lost + sustained) | **Spool/Atlas** — must be honest re sequencer interplay |
 
 ## 7. Integration / Architecture
@@ -241,13 +268,19 @@ BATTERY HEALTH                 ⚠ ON UPS BATTERY · DRAINING
   "drive": {"state":"recording","driveId":27},
   "ts": "2026-06-05T19:42:00Z" }
 
-// battery-health
-{ "vcellV":4.02, "soc":76, "socCalibrated":false, "crate":1.8,
-  "charging":true, "draining":false,
+// battery-health  (Pi UPS LiPo cell — MAX17048; NOT the car 12V)
+{ "vcellV":4.02,                // authoritative; from battery_health_log *_vcell_v / *_soc (both VOLTS)
+  "soc":76, "socCalibrated":false,// % from the MAX17048 SoC REGISTER ONLY — never lerp from vcellV; null if register unavailable
+  "crate":1.8, "charging":true, "draining":false,
   "restedVcellV":4.05, "weakEvents30d":0, "restedHistory":[4.05,4.04,...],
-  "ladder": null,        // null unless draining
+  "health":"green",             // Spool verdict: full-charge-reachable + sane cutoff + no degradation
+  "fullChargeReached":true,     // 4.20–4.22V every cycle
+  "runtimeToCutoffS":714,       // health stat (typical full-drain ~12min); NOT the live failsafe estimate
+  "ambientTempC": null,         // never logged → UI renders "not captured", never fabricated
+  "lastHealthCheckTs":"2026-05-16T00:00:00Z", // stale-green guard — UI shows date + age
+  "ladder": null,               // null unless draining
   "ts": "2026-06-05T19:42:00Z" }
-// when draining: "ladder": {"stage":"WARNING","thresholds":{...},"runtimeRemainingS":360}
+// when draining: "ladder": {"stage":"WARNING","thresholds":{...},"runtimeRemainingS":360}  // runtimeRemainingS = live (S-2, owed)
 ```
 
 ### Touch
@@ -264,6 +297,10 @@ OSOYOO capacitive touch over USB-C reaches chromium natively; no extra driver wo
 | S-4 | Battery card: `draining:false` → NO ladder DOM; `draining:true` → ladder present | fixture test (both) |
 | S-5 | System menu: `eclipse-powerwatch` row has **no enabled Stop control**; data-service rows do | DOM test |
 | S-6 | Service-control rejects any unit not on the install-fixed allow-list | unit test of the privilege path |
+| S-7 | **SoC never derived from voltage:** fixture `vcellV:3.44` with `soc:null` → card shows `3.44 V` and **omits** the percent (never "3.44 %"); a `soc` value renders only when present + tagged `(uncalibrated)` | fixture test (both branches) |
+| S-8 | **Stale-green guard:** fixture `lastHealthCheckTs` 30+ days old → card shows "last health check · <date> (<age>)"; GREEN verdict is never shown without its data-age | DOM test |
+| S-9 | **Temp gap honest:** `ambientTempC:null` → card shows "not captured", never a fabricated temperature | fixture test |
+| S-10 | Battery card labels the cell as the **UPS/Pi battery**, never "vehicle"/"car battery" | DOM string test |
 
 ### IRL
 | # | Criterion | Evidence |
@@ -272,7 +309,7 @@ OSOYOO capacitive touch over USB-C reaches chromium natively; no extra driver wo
 | I-2 | Swipe L/R navigates System Status ↔ Battery Health on the physical touch panel | screen recording |
 | I-3 | **I-033 fix:** force BT drop mid-drive → OBD link tile shows `RECONNECTING` + retry within ≤2s; top-bar BT glyph flips amber | recording + `cat system-status` |
 | I-4 | Last-sync tile matches actual last successful sync; goes amber when stale-while-driving | screenshot + sync log |
-| I-5 | Battery card NORMAL: VCELL matches MAX17048; SOC tagged `(uncalibrated)` | screenshot + reading |
+| I-5 | Battery card NORMAL: VCELL matches MAX17048; SOC tagged `(uncalibrated)` and matching the SoC register (not voltage-derived); "last health check" date + age shown | screenshot + reading |
 | I-6 | **Failsafe:** pull wall power while parked (no ignition) → card escalates to ladder + runtime within ≤2s; auto-shutdown fires at TRIGGER | recording + power log |
 | I-7 | Pygame `status_display` no longer launched (superseded) | `pgrep`/journal |
 | I-8 | Long-press ~5s opens System Setup (ring fills during hold); a release < 5s cancels with no menu | screen recording |
@@ -291,8 +328,12 @@ OSOYOO capacitive touch over USB-C reaches chromium natively; no extra driver wo
 | F-5 | Touch swipe unreliable / dead zones on the physical panel | I-2 |
 | F-6 | A single accidental tap performs a consequential action (must require long-press + confirm) | I-8, I-11, I-12 |
 | F-7 | `eclipse-powerwatch` can be stopped from the menu (safe-shutdown guard removed) | S-5, I-10 |
-| F-8 | User trapped in the menu with no way back to the dashboard | I-9 (✕/back present) |
-| F-9 | Service-control runs the kiosk as root, or accepts an arbitrary unit name | S-6, code review |
+| F-8 | Cell voltage rendered as a percent (e.g. "3.44 %" from the misnamed `*_soc` column) — the render-breaking trap | S-7 |
+| F-9 | A stale GREEN health verdict shown as if live (no data-age) | S-8 |
+| F-10 | Fabricated ambient temperature shown though `ambient_temp_c` is never logged | S-9 |
+| F-11 | UPS LiPo cell mislabeled as the car/vehicle battery | S-10 |
+| F-12 | User trapped in the menu with no way back to the dashboard | I-9 (✕/back present) |
+| F-13 | Service-control runs the kiosk as root, or accepts an arbitrary unit name | S-6, code review |
 
 ## 9. Routing Surface
 
@@ -311,8 +352,8 @@ OSOYOO capacitive touch over USB-C reaches chromium natively; no extra driver wo
 ### Spool (semantics)
 | # | Item |
 |---|---|
-| S-1 | Ladder thresholds (3.70/3.55/3.45 V — confirm), "weak event"/"healthy"/charge-rate meanings |
-| S-2 | Estimated-runtime-remaining formula (from CRATE/drain rate); flag if not derivable |
+| S-1 | ~~"weak event"/"healthy"/charge-rate meanings + battery-health value semantics~~ — **DELIVERED 2026-06-18** (`inbox/2026-06-18-from-spool-battery-health-f097-semantics.md`): health verdict GREEN, VCELL-authoritative, SoC-from-register (not voltage), runtime-to-cutoff ~12 min, temp-not-captured, stale-green guard. Folded §6/§7. **Ladder thresholds (3.70/3.55/3.45 V) still to confirm** (failsafe only). |
+| S-2 | Estimated **live** runtime-remaining formula (from CRATE/drain rate, *during* a drain — distinct from the ~12 min health stat); flag if not derivable. **Still owed.** |
 | S-3 | "Last sync stale" threshold (when stale-while-driving becomes amber); power-mode (in-car vs wall) semantics |
 
 ### Argus (advisory)
@@ -325,7 +366,7 @@ OSOYOO capacitive touch over USB-C reaches chromium natively; no extra driver wo
 ### Marcus (PM — sprint scoping)
 | # | Item |
 |---|---|
-| M-1 | Proposed split: **US-A** carousel shell (kiosk + swipe + top bar + state-server extension) · **US-B** F-092 System Status card + system-status emitter · **US-C** F-097 Battery Health card + battery-health emitter (+ Spool semantics) · **US-D** pygame sunset · **US-E** System Setup menu (long-press + `⋮` + service control + Exit + privilege path [A-7/A-8]) |
+| M-1 | Proposed split: **US-A** carousel shell (kiosk + swipe + top bar + state-server extension) · **US-B** F-092 System Status card + system-status emitter · **US-C** F-097 Battery Health card + battery-health emitter (+ Spool semantics: SoC-from-register-not-voltage, stale-green data-age, temp-not-captured, UPS-not-vehicle labeling) · **US-D** pygame sunset · **US-E** System Setup menu (long-press + `⋮` + service control + Exit + privilege path [A-7/A-8]) |
 | M-2 | **Depends on F-103** (shared kiosk + `eclipse-states-http`) — sequence F-103 first or together |
 | M-3 | Rule-10 DoD: the state-server extension + emitters land matching `specs/architecture.md` updates in-sprint (per A-2/A-3) |
 
@@ -344,4 +385,4 @@ Iris (this spec) → CIO review
 ```
 
 ---
-*End of spec v1. Held for CIO review before routing.*
+*End of spec v1.2. Atlas design-gate = CONDITIONAL PASS (no BLOCK); v1.2 folds Spool's F-097 battery-health value semantics (2 render-breaking: voltage-not-percent + stale-green) + C-1 sequencing. Near-term line green-lit by Atlas → groom-ready to Marcus. Spool S-2 (live runtime-remaining formula) + ladder thresholds still owed for the failsafe sub-state only. Argus acceptance advisory-open (non-blocking).*
