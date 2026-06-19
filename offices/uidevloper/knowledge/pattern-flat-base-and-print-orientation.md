@@ -40,5 +40,26 @@ Escalation: mouse-ear corner tabs, draft shield.
   rotated 180° about X, dropped onto the bed) rather than relying on slicer rotate
   flags — see [[pattern-prusaslicer-cli-slicing]].
 
+## 4. Delete the trap file — a recurring "wrong print" is a file problem
+On the light-sensor case the CIO failed **6 prints in a row** even after I'd built a
+flat `shell-smooth-bottom.stl`. Root cause on attempt 6: the **recessed** `shell.stl`
+still existed, and the gcode named after the project (`light_sensor_enclosure.gcode`,
+sliced from it) had the *friendlier* name — so that's what kept getting loaded. The good
+flat file sat right next to it, unused.
+
+**Lesson:** when a fix is "use the other file," that's not a fix — it's a standing trap.
+The durable fix is to **make the source default correct and DELETE the bad artifacts** so
+the wrong one can't be chosen. After: `vhb_recess` removed from the SCAD, `shell.stl`
+regenerated flat, recessed gcode/`.3mf` deleted → exactly **one STL + one gcode** per
+part, no recessed twin. Same sweep on enclosure #3 caught `lid.stl` (assembly-orientation,
+Z-min 7.6 — would print lip-down on ~no contact); deleted, leaving only `lid-print.stl`.
+
+**The diagnostic tell that localizes recess-vs-recipe instantly:** *contact area.* "Only
+the perimeter touches, floor sits above the bed" is **never** a recipe (temp/clean/fan)
+problem — a flat part contacts its whole footprint. That single observation says
+"geometry/wrong-file," not "live-Z." Verify a print STL's flatness directly: parse its
+vertices and check the lowest distinct Z — a flat bottom reads `[0.0, <floor_top>, …]`
+with **no** thin intermediate layer (e.g. `0.5`) that would be the recess floor.
+
 Related: [[reference-mk3s-plus-first-print-guide]], [[reference-cio-3d-printing-setup]],
-[[pattern-openscad-cli-numeric-part-selector]].
+[[pattern-openscad-cli-numeric-part-selector]], [[pattern-prusaslicer-cli-slicing]].
