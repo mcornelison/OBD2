@@ -104,25 +104,15 @@ don't duplicate them here:
 | Coding standards / methodology / anti-patterns | `specs/standards.md`, `methodology.md`, `anti-patterns.md` |
 | Shared cross-agent memory index | `MEMORY.md` (loaded each session) |
 
-**One-line system state (re-verify every session):** **V0.27 chain MERGED to
-main 2026-05-23** (`a4c68e7`, tags `V0.27.19`+`chain-V0.27`); main = fully
-validated stable. Now on the **V0.28 chain (dev/main workflow)**, accumulated
-Sprints 43+44+45. **V0.28.2 DEPLOYED 2026-06-01** to BOTH Pi (10.27.27.28) +
-chi-srv-01 (gitHash `cb54311`; origin/dev `ba51ebc`). The V0.28.1-drill
-chain-blocker is **CLEARED**: v0012 widened `data_quality`→`varchar(20)` on prod;
-US-364 recompute ran GREEN (drives 23+24→`attribution_anomaly`, drive 25→`full`;
-idempotent). US-378 ECU-seed fix landed (`grep MD335287 src/ tests/`=0; prod
-`ecu` id=2 = `MD326328`). **NEXT GATE (not mine):** drive-27 single-attribution
-IRL drill → `/sprint-validated` (43/44/45) → `/chain-validated` lands V0.28 to
-main. **2026-06-05: drive-27 gate PASSED** (re-drive 27c after a dongle-unplugged
-scrub) — server `drive_id=27` `data_quality=full`, single drive_id, `attribution_anomalies=0`;
-**A-9 CLOSED**; **A-12/A-13 CLOSED**. Chain CLEAR to close from my axis →
-`/sprint-validated`→`/chain-validated` are Marcus's to run. **GPS speed-cal DONE:**
-FIT reader + aligner built (`src/calibration/`, TDD); drive-27 empirical factor
-**≈1.00** — the "2× high" was a MPH↔km/h units ghost, not a real ECU error; the `0.5`
-seed retires to ~1.0 (Spool ratifies; never applied → no corruption). Owed by Atlas:
-**US-367 ECU-backfill ruling** when it re-grooms; speed-aligner convergence w/ Spool;
-dashboard/DTC gates CONDITIONAL-PASS (groom-ready, F-103-first).
+**One-line system state (re-verify every session — last refreshed 2026-06-19):**
+**main = V0.28.2 stable** (origin/main `48e5567`; V0.28 chain merged 2026-06-05, tag `V0.28.2`).
+**Pi (10.27.27.28) + chi-srv-01 (now `.120`, moved from `.10` 2026-06-18) both on V0.28.2 / `cb54311`.**
+Local **`dev` is ~92 ahead of `origin/dev`** (accumulated V0.28+ work + Sprint 46 in progress — **PM push/integration owed; not my lane**).
+**A-9 is REOPENED (HIGH)** — DriveDetector defect recurred on drives 28/29. **RCA RULED 2026-06-19: TWO roots.**
+**Root 1** (concurrent-process dual-attribution) = **MITIGATED LIVE** — single-instance guard deployed to the Pi 2026-06-19 (`config.json` `pi.runtime.singleInstanceGuard.enabled` `d6d8b05` + `RuntimeDirectory=eclipse-obd` unit fix `fae7ee7`; verified lock acquired, pid==MainPID, NRestarts=0).
+**Root 2** (stale-open-drive leak / unreliable close) = **STILL OPEN** — the substantive work of the A-9 RCA sprint (US-386..389, draft/unfrozen).
+**Sprint 46 / V0.29.0 (EDR bus slice 1, F-110, US-380..385) FROZEN + Atlas Rule-13 PASS 2026-06-19** (`reports/2026-06-19-rule13-signoff-...`); **Ralph actively building it** (US-381..384 committed, US-385 in progress — `lifecycle.py`/`helpers.py` uncommitted = his, DO NOT TOUCH).
+**Owed by Atlas:** A-9 RCA sprint Rule-13 when Marcus freezes it; A-9 Root-2 design support; US-367 ECU-backfill ruling on re-groom; speed-aligner convergence w/ Spool; forward Iris's near-term UI line (F-103→cards→DTC, CONDITIONAL-PASS C-1/C-2/C-3) to Marcus once she files groom-ready; the unified-alert arbiter + live-card are EDR-epic-gated (A-14).
 
 ## 5. Operating Model
 
@@ -216,6 +206,8 @@ evidence + resolution history live in `knowledge/watch-list-closed.md`.**
 
 
 ## 9. Session Log
+
+> **NEXT SESSION STARTS HERE (handoff 2026-06-19, on-demand).** State + owed items are in the §4 one-liner (refreshed today). Quick re-verify on boot: (1) `git log origin/main` still `48e5567`/V0.28.2; (2) Pi guard still healthy — `ssh chi-eclipse-01 'cat /run/eclipse-obd/orchestrator.lock; systemctl is-active eclipse-obd'` (expect a pid == MainPID, active); (3) A-9 still **OPEN/HIGH** (Root 2 unfixed). **Immediate owed:** Rule-13 sign-off on the **A-9 RCA sprint (US-386..389)** when Marcus freezes it (watch US-388-fix stays build-blocked on the RCA; require the matched-pair guard config⇄RuntimeDirectory + the hardened IRL re-gate: short/back-to-back + key-on-after-missed-close + deploy-double-start). **Concurrency caution:** Ralph is mid-Sprint-46 — `src/pi/**` + other offices' files may be uncommitted-in-flight; commit ONLY `offices/architect/**` (handbook §13). `dev` ~92 ahead of `origin/dev` (PM push owed, not mine).
 
 ### 2026-06-19 (cont.3) — single-instance guard DEPLOYED to the Pi (A-9 Root 1 mitigated live) + RuntimeDirectory fix
 
