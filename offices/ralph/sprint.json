@@ -65,8 +65,8 @@
       "epicId": "E-006",
       "type": "feature",
       "size": "S",
-      "status": "sprint-ready",
-      "passes": false,
+      "status": "complete",
+      "passes": true,
       "acceptance": [
         "SampleBus.subscribe(topics, qos, name, maxQueue) returns a usable Subscription",
         "publish(sample) delivers only to subscriptions whose patterns match the topic",
@@ -91,7 +91,14 @@
       ],
       "conditionalOutcomes": [],
       "goal": "Add the SampleBus broker: subscribe() returns a Subscription; publish() fans a Sample out to every matching subscription synchronously and NEVER blocks (the queue buffer is the only async boundary). STREAM topics have no history.",
-      "tasks": []
+      "tasks": [],
+      "feedback": {
+        "filesActuallyTouched": [
+          "src/pi/bus/bus.py (modified -- appended SampleBus class: subscribe()/publish() fan-out; threading import + dormant _retained dict & retain param for signature stability ahead of US-382)",
+          "tests/pi/bus/test_bus_stream.py (created -- 4 tests: fan-out-to-matching-only, STREAM-no-history, usable-subscription, never-block-on-undrained)"
+        ]
+      },
+      "completionNotes": "TDD red->green from docs/superpowers/plans/2026-06-18-edr-bus-slice1-dedicated-reader.md Task 3. RED confirmed: ImportError cannot import name 'SampleBus' from pi.bus.bus. GREEN: appended SampleBus to the SAME bus.py US-380 created -- subscribe() registers+returns a Subscription under a threading.Lock; publish() snapshots the sub list under the lock then _offer()s the sample into every sub whose patterns match (synchronous fan-out, non-blocking enqueue = the queue is the only async boundary -> producer never blocks). STREAM has no history (no replay on subscribe). The retain param + _retained dict are pre-declared dormant (NOT honored here -- retention behavior is US-382 scope) per the plan, to keep the public publish() signature stable across stories. GATES: pytest tests/pi/bus/test_bus_stream.py = 4 passed (VC#1); VC#2 1000 publishes to an undrained LOSSY maxQueue=2 (+ a LOSSLESS maxQueue=2) sub all return, never hangs; VC#3 late subscribe('raw.*') after a prior publish yields only the post-subscribe sample. Full tests/pi/bus/ = 12 passed (8 US-380 + 4 new -> zero regression). ruff check src/pi/bus/ tests/pi/bus/ = All checks passed (auto-sorted the test import members). ENVIRONMENT LIMITATION: mypy NOT installed (system Python 3.13 + .venv; pip install gated behind interactive approval unavailable in headless ralph.sh) -- typecheck acceptance criterion could NOT be executed here; code is mypy-strict-shaped (from __future__ import annotations, fully typed signatures + fields, no Any, no untyped defs). PM/Atlas should run `make typecheck` at integration to close the mypy gate. Additive to one new-this-sprint package file (no pre-existing product file touched) -> zero regression surface. Committed to sprint/sprint46-V0.29.0."
     },
     {
       "id": "US-382",

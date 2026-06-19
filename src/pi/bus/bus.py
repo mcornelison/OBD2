@@ -15,6 +15,8 @@
 # ================================================================================
 # 2026-06-19    | Rex          | Initial implementation for US-380 (topicMatches,
 #               |              | SubStats, Subscription)
+# 2026-06-19    | Rex          | US-381: add SampleBus (subscribe/publish fan-out,
+#               |              | STREAM, never-block)
 # ================================================================================
 ################################################################################
 
@@ -23,6 +25,7 @@
 from __future__ import annotations
 
 import queue
+import threading
 from dataclasses import dataclass
 
 from .sample import QoS, Sample
@@ -161,3 +164,61 @@ class Subscription:
             droppedCount=self._droppedCount,
             lastSeqBySource=dict(self._lastSeqBySource),
         )
+
+
+class SampleBus:
+    """In-process publish/subscribe broker.
+
+    One producer per source publishes; every consumer subscribes. Fan-out is
+    synchronous within :meth:`publish` (a non-blocking ``_offer`` into each
+    matching subscription), so the bounded subscription queue is the only async
+    boundary -- ``publish`` NEVER blocks, even when a consumer never drains.
+
+    STREAM topics carry no history: a subscriber created after a publish does
+    not receive that earlier sample. (Retained STATE topics + integrity-gap
+    markers are added in later stories; the ``retain`` flag is accepted now to
+    keep the public signature stable but is not yet honored here.)
+    """
+
+    def __init__(self) -> None:
+        """Create an empty broker with no subscribers and no retained state."""
+        self._subs: list[Subscription] = []
+        self._lock = threading.Lock()
+        self._retained: dict[str, Sample] = {}
+
+    def subscribe(
+        self,
+        topics: list[str],
+        qos: QoS,
+        name: str,
+        maxQueue: int = DEFAULT_MAX_QUEUE,
+    ) -> Subscription:
+        """Register and return a new Subscription.
+
+        Args:
+            topics: Patterns the subscription matches (see :func:`topicMatches`).
+            qos: Overflow policy for the subscription's bounded queue.
+            name: Human-readable subscription id (used in gap markers).
+            maxQueue: Maximum queued samples before the QoS policy applies.
+
+        Returns:
+            A usable :class:`Subscription` the caller drains on its own thread.
+        """
+        sub = Subscription(name, topics, qos, maxQueue=maxQueue)
+        with self._lock:
+            self._subs.append(sub)
+        return sub
+
+    def publish(self, sample: Sample, retain: bool = False) -> None:
+        """Fan ``sample`` out to every matching subscription. Never blocks.
+
+        Args:
+            sample: The sample to deliver.
+            retain: Reserved for STATE last-value-cache (later story); accepted
+                now for signature stability but not yet honored.
+        """
+        with self._lock:
+            subs = list(self._subs)
+        for sub in subs:
+            if sub.matches(sample.topic):
+                sub._offer(sample)

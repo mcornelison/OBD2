@@ -53,3 +53,31 @@ Outcome: SHIPPED passes:true. New src/pi/bus/ package foundation built TDD red->
 - **Gotcha**: this dev box (system Python 3.13 + project .venv) has ruff but NOT mypy/black; `pip install` is gated behind interactive approval in headless ralph.sh. Treat mypy/black as integration-time gates, not in-loop gates here.
 - **Build-order note**: US-381 appends `SampleBus` (subscribe/publish/fan-out + STREAM) to the SAME bus.py; US-382 adds retain + the `event.integrity.gap` emission that consumes the `_offer()->False` LOSSLESS overflow signal already wired in this story.
 ---
+
+## 2026-06-19 - US-381 (Agent 1 / Rex)
+Task: SampleBus core -- subscribe/publish fan-out (STREAM) + producer-never-blocks
+Outcome: SHIPPED passes:true. Appended the SampleBus broker to the existing src/pi/bus/bus.py, TDD red->green from the slice-1 plan Task 3.
+
+### What was implemented:
+- `SampleBus` broker class in bus.py: `__init__` (subs list + threading.Lock + dormant _retained dict)
+- `subscribe(topics, qos, name, maxQueue=DEFAULT_MAX_QUEUE) -> Subscription` -- builds + registers a Subscription under the lock, returns it usable
+- `publish(sample, retain=False) -> None` -- snapshots the sub list under the lock, then non-blocking `_offer()`s the sample into every subscription whose patterns match the topic (synchronous fan-out; the bounded queue is the only async boundary -> producer NEVER blocks)
+- STREAM semantics: no replay-on-subscribe (a subscriber created after a publish does NOT see the earlier sample)
+- `retain` param + `_retained` dict are pre-declared DORMANT (NOT honored here) per the plan -- keeps the public publish() signature stable; retention BEHAVIOR is US-382 scope
+
+### Files changed:
+- Modified: `src/pi/bus/bus.py` (appended SampleBus; added `import threading`; header mod-history line)
+- Created: `tests/pi/bus/test_bus_stream.py` (4 tests: fan-out-to-matching-only, STREAM-no-history, usable-subscription, never-block-on-1000-undrained)
+
+### Gates:
+- pytest tests/pi/bus/test_bus_stream.py = 4 passed (VC#1)
+- VC#2 1000 publishes to an undrained LOSSY maxQueue=2 (+ a LOSSLESS maxQueue=2) sub -> all return, never hangs
+- VC#3 late subscribe('raw.*') after a prior publish -> only the post-subscribe sample delivered
+- full tests/pi/bus/ = 12 passed (8 US-380 + 4 new -> zero regression)
+- ruff check src/pi/bus/ tests/pi/bus/ = All checks passed (auto-sorted test import members)
+- mypy NOT runnable here (not installed system+venv) -> typecheck AC deferred to PM/Atlas `make typecheck` at integration. Code is mypy-strict-shaped.
+
+### Learnings for future iterations:
+- **Pattern discovered**: publish() snapshots `list(self._subs)` under the lock then releases it BEFORE the `_offer` loop -- so a slow/contended subscriber can't hold the bus lock and stall other producers; the never-block guarantee lives entirely in Subscription._offer (US-380), the bus just iterates.
+- **Build-order note**: US-382 (STATE retained topics + integrity-gap marker) appends to this SAME bus.py -- it activates the `retain` path in publish() + a replay loop in subscribe() (both pre-shaped here), and emits `event.integrity.gap` when a LOSSLESS `_offer()` returns False (signal already wired in US-380). US-383 (PersistenceSubscriber, golden master) is the next NEW file.
+---
