@@ -135,3 +135,36 @@ Outcome: SHIPPED passes:true. New src/pi/bus/persistence_subscriber.py reuses Ob
 - **Byte-identical by construction**: drive_id derives from `getCurrentDriveId()` at write time on BOTH paths (handleSample does NOT pass Sample.driveId through) -- the captured `Sample.driveId` is intentionally ignored in slice 1; capture-time attribution (which also hardens the A-9 boundary-race) is a deferred follow-up per the plan post-notes.
 - **Build-order note**: US-384 (RealtimeDataLogger publish seam + pi.bus.enabled flag) is the FIRST story this sprint to modify a PRE-EXISTING product file (src/pi/obdii/data/realtime.py) -> run tests/pi/obdii/data/ for regression + VERIFY whether utcIsoNow + getCurrentDriveId are already imported in realtime.py (plan Task 7 flag).
 ---
+
+## 2026-06-19 - US-384 (Agent 1 / Rex)
+Task: RealtimeDataLogger publish seam (producer role) + pi.bus.enabled flag (default off)
+Outcome: SHIPPED passes:true. FIRST story this sprint to modify a pre-existing product file. With a SampleBus injected, the OBD poll loop publishes raw.obd.<param> Samples instead of writing the DB; with bus None the inline write path is byte-for-byte unchanged. Ships dark behind pi.bus.enabled=false. TDD red->green from slice-1 plan Task 7 + Task 8.
+
+### What was implemented:
+- `realtime.py` imports: `from common.time.helper import utcIsoNow` + `from ..drive_id import getCurrentDriveId` (both were MISSING -- plan Task 7 flag confirmed) + `from pi.bus.sample import Sample`
+- `RealtimeDataLogger.__init__`: keyword-only `bus: Any = None` + `producerSource: str = "obd"`; stores `_bus`/`_producerSource`/`_seq=0`/`_dataSource` (added `self._dataSource` -- the original __init__ forwarded dataSource to the inner logger but never retained it on self, and the publish path needs it for the Sample origin tag)
+- `dataLogger` property -- exposes the inner ObdDataLogger so the PersistenceSubscriber reuses the same writer (byte-identical rows by construction)
+- `_logReadingSafe` -- returns `self._publishReading(reading)` FIRST when `self._bus is not None`, ELSE the ORIGINAL inline try/logReading/_stats/_markRowWritten path UNCHANGED
+- `_publishReading` -- bumps `_seq`, builds `Sample(topic=f"raw.obd.{reading.parameterName}", source=_producerSource, value/unit from reading, tsUtc=utcIsoNow(), tsCapture=time.monotonic(), driveId=getCurrentDriveId(), dataSource=_dataSource or "real", seq=_seq)`, publishes, bumps totalLogged + _markRowWritten, returns True
+- Config: `'pi.bus.enabled': False` in validator DEFAULTS (near pi.sync.*) + `pi.bus.enabled=false` block in config.json (sibling of pi.sync)
+
+### Files changed:
+- Modified: `src/pi/obdii/data/realtime.py` (imports, __init__ params/body, dataLogger property, _logReadingSafe branch, _publishReading, header mod-history)
+- Modified: `src/common/config/validator.py` (pi.bus.enabled DEFAULT)
+- Modified: `config.json` (pi.bus block)
+- Created: `tests/pi/obdii/data/test_realtime_bus_publish.py` (2 tests)
+- Modified: `tests/test_config_validator.py` (2 tests: busDefault_disabled, busEnabled_explicitValuePreserved)
+
+### Gates:
+- VC#1 pytest tests/pi/obdii/data/test_realtime_bus_publish.py = 2 passed (Sample topic=raw.obd.RPM, seq increments 1 then 2)
+- VC#2 the literal tests/pi/obdii/data/ dir now holds ONLY the new file; existing RealtimeDataLogger coverage lives in tests/test_orchestrator_data_logging_*.py + tests/pi/obdii/test_capture_loop_integration.py + test_data_logger_restart_on_restore.py -> ran those 7 files = 61 passed (inline write path byte-for-byte unchanged, bus off)
+- VC#3 python validate_config.py = All validations passed; pi.bus.enabled resolves False by default (test_validate_busDefault_disabled green); full tests/test_config_validator.py green
+- tests/pi/bus/ = 21 passed (zero regression)
+- ruff check on all touched files = All checks passed
+- mypy NOT runnable here (verified `python -m mypy --version` -> No module named mypy; pip gated behind interactive approval in headless) -> typecheck AC deferred to PM/Atlas `make typecheck` at integration. Code is mypy-strict-shaped.
+
+### Learnings for future iterations:
+- **Plan path-assumption drift**: the plan's VC "pytest tests/pi/obdii/data/" assumes the realtime suite lives in that dir, but it does NOT -- that dir was empty before this story; the real RealtimeDataLogger regression coverage is scattered across tests/test_orchestrator_data_logging_{rate,filtering,callbacks,connections,config}.py + tests/pi/obdii/test_capture_loop_integration.py + test_data_logger_restart_on_restore.py. Run those for the inline-path regression gate, not just the literal plan path.
+- **Hidden state gap**: the original __init__ accepted `dataSource` and forwarded it to ObdDataLogger but never stored it on self -- the publish seam needed `self._dataSource`, so it had to be added (the test helper sets `_dataSource` manually, masking this until you check production wiring). VERIFY-before-code on attribute existence, not just method signatures.
+- **Build-order note**: US-385 (orchestrator wiring) is the LAST slice-1 story -- src/pi/obdii/orchestrator/lifecycle.py _initializeDataLogger builds the SampleBus + starts a PersistenceSubscriber on ['raw.obd.*'] LOSSLESS + injects the bus via createRealtimeLoggerFromConfig (the dataLogger property added here is what the subscriber binds to). VERIFY createRealtimeLoggerFromConfig signature in src/pi/obdii/data/__init__.py + the orchestrator class + attribute names in lifecycle.py before coding (plan Task 9 flag).
+---

@@ -862,3 +862,19 @@ def test_validate_powerWatch_uiPollSec_defaultAndRejectsNonPositive():
     with pytest.raises(ConfigValidationError):
         ConfigValidator().validate(bad)
 
+
+def test_validate_busDefault_disabled():
+    """US-384 (EDR bus slice 1): pi.bus.enabled defaults False so the bus ships
+    dark -- the in-process pub/sub seam is wired but dormant until a separate
+    PM/CIO deploy flips the flag on the Pi."""
+    cfg = ConfigValidator().validate(_baseCfg())
+    assert cfg["pi"]["bus"]["enabled"] is False
+
+
+def test_validate_busEnabled_explicitValuePreserved():
+    """An explicit pi.bus.enabled is preserved (default does not overwrite)."""
+    cfg = _baseCfg()
+    cfg["pi"] = {"bus": {"enabled": True}}
+    result = ConfigValidator().validate(cfg)
+    assert result["pi"]["bus"]["enabled"] is True
+

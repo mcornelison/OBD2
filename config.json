@@ -477,6 +477,9 @@
         "drive_end"
       ]
     },
+    "bus": {
+      "enabled": false
+    },
     "update": {
       "enabled": true,
       "intervalMinutes": 60,
