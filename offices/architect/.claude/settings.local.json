@@ -1,10 +1,5 @@
 {
   "permissions": {
-    "additionalDirectories": [
-      "Z:/o/OBD2v2",
-      "/z/o/OBD2v2",
-      "C:/Users/mcorn/.claude/projects/Z--o-OBD2v2"
-    ],
     "allow": [
       "Read(Z:/o/OBD2v2/**)",
       "Read(Z:/O/OBD2v2/**)",
@@ -118,7 +113,11 @@
       "Bash(SDL_VIDEODRIVER=*)",
       "Bash(DISPLAY=*)",
       "Bash(XAUTHORITY=*)",
-      "Bash(until:*)"
+      "Bash(until:*)",
+      "Bash(PROD_DB_HOST=mcornelison@10.27.27.120 bash offices/pm/scripts/prod_db_query.sh \"SELECT drive_id, COUNT\\(*\\) AS rows, MIN\\(timestamp_utc\\) AS start_utc, MAX\\(timestamp_utc\\) AS end_utc FROM realtime_data WHERE drive_id BETWEEN 27 AND 31 GROUP BY drive_id ORDER BY drive_id;\")",
+      "Bash(PROD_DB_HOST=mcornelison@10.27.27.120 bash offices/pm/scripts/prod_db_query.sh \"SELECT drive_id, COUNT\\(*\\) AS n, MIN\\(timestamp_utc\\) AS start_utc, MAX\\(timestamp_utc\\) AS end_utc FROM realtime_data WHERE drive_id BETWEEN 27 AND 31 GROUP BY drive_id ORDER BY drive_id;\")",
+      "Bash(PROD_DB_HOST=mcornelison@10.27.27.120 bash offices/pm/scripts/prod_db_query.sh \"SELECT drive_id, COUNT\\(*\\) AS n, MIN\\(timestamp\\) AS start_t, MAX\\(timestamp\\) AS end_t FROM realtime_data WHERE drive_id BETWEEN 26 AND 31 GROUP BY drive_id ORDER BY drive_id;\")",
+      "Bash(PROD_DB_HOST=mcornelison@10.27.27.120 bash offices/pm/scripts/prod_db_query.sh \"SELECT id, source_id, data_quality, is_real, row_count, start_time, end_time FROM drive_summary WHERE source_id BETWEEN 26 AND 31 ORDER BY source_id;\")"
     ],
     "deny": [
       "Read(**/.ssh/**)",
@@ -134,6 +133,11 @@
       "Edit(C:/Users/mcorn/.claude/hooks/**)",
       "Write(C:/Users/mcorn/.claude/hooks/**)"
     ],
-    "ask": []
+    "ask": [],
+    "additionalDirectories": [
+      "Z:/o/OBD2v2",
+      "/z/o/OBD2v2",
+      "C:/Users/mcorn/.claude/projects/Z--o-OBD2v2"
+    ]
   }
 }
