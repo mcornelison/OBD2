@@ -26,3 +26,30 @@ Authoritative design: docs/superpowers/specs/2026-06-18-edr-dedicated-reader-bus
 + docs/superpowers/plans/2026-06-18-edr-bus-slice1-dedicated-reader.md (9 TDD tasks, complete code).
 
 (Ralph appends session entries below.)
+
+## 2026-06-19 - US-380 (Agent 1 / Rex)
+Task: Bus data types + Subscription (Sample, QoS, topicMatches, bounded queue + QoS overflow)
+Outcome: SHIPPED passes:true. New src/pi/bus/ package foundation built TDD red->green from the slice-1 plan (Task 1 + Task 2).
+
+### What was implemented:
+- `Sample` frozen dataclass (topic/source/value/unit/tsUtc/tsCapture/driveId/dataSource/seq) + `QoS` enum (LOSSLESS, LOSSY) -- sample.py
+- `topicMatches(pattern, topic)` -- dotted segment-prefix matcher: trailing '.*' matches the bare prefix and any '<prefix>.<...>'; exact pattern matches only itself; NOT regex
+- `SubStats` frozen dataclass (depth/highWater/droppedCount/lastSeqBySource)
+- `Subscription` -- one bounded queue.Queue per consumer; `_offer()` NEVER blocks: LOSSY drops oldest + bumps droppedCount + returns True; LOSSLESS returns False on overflow (so the bus can mark a gap later in US-382) + bumps droppedCount; `get()`/`poll()`/`close()`/`stats()`/`matches()`
+- SampleBus intentionally OMITTED -- it is US-381 scope (next iteration appends to bus.py)
+
+### Files changed:
+- Created: `src/pi/bus/__init__.py`, `src/pi/bus/sample.py`, `src/pi/bus/bus.py`
+- Created: `tests/pi/bus/__init__.py`, `tests/pi/bus/test_sample.py` (3), `tests/pi/bus/test_subscription.py` (5)
+
+### Gates:
+- pytest tests/pi/bus/test_sample.py tests/pi/bus/test_subscription.py = 8 passed (VC#1)
+- VC#2 FrozenInstanceError on .value reassign; VC#3 LOSSY drop-oldest (poll 2,3 / droppedCount=1); VC#4 LOSSLESS overflow returns False, seq 1 preserved, never blocks
+- ruff check clean on src/pi/bus/ + tests/pi/bus/
+- mypy NOT runnable here (not installed system+venv; install needs interactive approval) -> typecheck AC deferred to PM/Atlas `make typecheck` at integration. Code is mypy-strict-shaped (future annotations, full hints, no untyped defs).
+
+### Learnings for future iterations:
+- **Pattern discovered**: tests/conftest.py inserts `src` onto sys.path, so `from pi.bus.sample import ...` resolves from a fresh new package with no extra wiring -- just add `tests/pi/<pkg>/__init__.py` + `src/pi/<pkg>/__init__.py`.
+- **Gotcha**: this dev box (system Python 3.13 + project .venv) has ruff but NOT mypy/black; `pip install` is gated behind interactive approval in headless ralph.sh. Treat mypy/black as integration-time gates, not in-loop gates here.
+- **Build-order note**: US-381 appends `SampleBus` (subscribe/publish/fan-out + STREAM) to the SAME bus.py; US-382 adds retain + the `event.integrity.gap` emission that consumes the `_offer()->False` LOSSLESS overflow signal already wired in this story.
+---
