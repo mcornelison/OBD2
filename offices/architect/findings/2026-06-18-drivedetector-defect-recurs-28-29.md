@@ -94,4 +94,21 @@ trust the `attribution_anomaly` flag to exclude 28/29.
    is trustworthy (verified). No chain/deploy block — the honest record exists.
 5. Routed: PM (needs sprint scope), Spool (disposition reply).
 
+---
+
+## RCA RULING (2026-06-19) — root found; see `reports/2026-06-19-a9-drivedetector-rca-ruling.md`
+
+Architect-level RCA done (CIO-tasked). **Two architectural roots:**
+- **Root 1 (dual-attribution/overlap)** = TWO concurrent orchestrator processes racing the
+  shared `drive_counter` (overlap is impossible single-process → proves concurrency; matches the
+  US-360 RCA). **F-107 already BUILT the fix** (single-instance pidfile guard, Mechanism B) **but
+  shipped it `default-OFF`** and it is NOT enabled in `config.json` → that's why 28/29 recurred.
+  **Rule-10 SIGNED OFF to enable it** (conditions: deploy stop-before-start + pair w/ US-354).
+- **Root 2 (stale-open-drive leak)** = the close path is not guaranteed; the process-global
+  `_currentDriveId` latch stays set so later rows inherit a stale id (F-7 class, untouched by
+  F-107). Fix = guaranteed close + stamp-only-when-RUNNING + gap-fence. NEW RCA+fix.
+- **Strategic:** move drive-boundary segmentation authority server-side (B-104-aligned) — separate epic.
+- **IRL re-gate MUST** include short/back-to-back + key-on-after-missed-close + deploy-double-start
+  (a single clean drive is what falsely re-closed A-9 on drive-27).
+
 — Atlas
