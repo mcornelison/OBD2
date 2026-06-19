@@ -107,8 +107,8 @@
       "epicId": "E-006",
       "type": "feature",
       "size": "S",
-      "status": "sprint-ready",
-      "passes": false,
+      "status": "complete",
+      "passes": true,
       "acceptance": [
         "publish(sample, retain=True) stores the latest sample per topic",
         "a new subscriber matching a retained topic immediately receives the current retained value",
@@ -134,7 +134,15 @@
       ],
       "conditionalOutcomes": [],
       "goal": "Add retained STATE topics (publish(retain=True) -> last-value-cache, replayed to new subscribers) for slowly-changing data (VIN, calibration, state.config.*); and the honest-instrument integrity-gap marker -- a LOSSLESS overflow publishes event.integrity.gap rather than silently dropping.",
-      "tasks": []
+      "tasks": [],
+      "feedback": {
+        "filesActuallyTouched": [
+          "src/pi/bus/bus.py (modified -- activated SampleBus.publish retain path + subscribe replay-on-subscribe; added _emitIntegrityGap helper; header mod-history line)",
+          "tests/pi/bus/test_bus_state.py (created -- 3 tests: late-subscriber-gets-retained, retains-latest-only, stream-not-retained)",
+          "tests/pi/bus/test_bus_integrity_gap.py (created -- 2 tests: lossless-overflow-emits-marker, no-overflow-no-marker)"
+        ]
+      },
+      "completionNotes": "TDD red->green from docs/superpowers/plans/2026-06-18-edr-bus-slice1-dedicated-reader.md Task 4 (STATE retained) + Task 5 (integrity-gap). RED confirmed: 3 failed (retention + gap-emission absent), 2 negative tests passed trivially. GREEN: activated the DORMANT retain path US-381 pre-shaped -- publish(retain=True) stores sample as _retained[topic] last-value-cache; subscribe() replays the current retained value (under-lock snapshot, _offer outside the lock) once to every matching new subscriber; STREAM (retain=False) never stored. New _emitIntegrityGap(): a LOSSLESS _offer()->False (the overflow signal wired in US-380) makes publish() emit Sample(topic=event.integrity.gap, source=bus, value=1.0, unit=<subName>, seq=<lostSeq>) to OTHER matching subscribers only (sub.name != overflowed name -> no recursion/re-overflow). GATES: pytest tests/pi/bus/ = 17 passed (8 US-380 + 4 US-381 + 5 new -> zero regression); VC#1 late subscribe('state.config.*') after retained publish -> retained delivered; VC#2 LOSSLESS maxQueue=1 overflow + watcher -> exactly one marker unit='victim'/seq=2 (added assert watcher.poll() 2nd == None + victim keeps seq 1); VC#3 within-capacity publish -> no marker. ruff check src/pi/bus/bus.py + both new tests = All checks passed. ENVIRONMENT LIMITATION: mypy NOT installed (verified `python -m mypy --version` -> No module named mypy; system Python 3.13 + .venv; pip install gated behind interactive approval unavailable in headless ralph.sh) -- typecheck AC could NOT be executed here; code is mypy-strict-shaped (from __future__ import annotations, fully typed signatures incl. list[tuple[str,int]], no Any, no untyped defs). PM/Atlas should run `make typecheck` at integration to close the mypy gate (same defer pattern as US-380/US-381). Additive behavior on one new-this-sprint package file (no pre-existing product file touched) -> zero regression surface; ships dark behind pi.bus.enabled (no orchestrator wiring until US-385). Committed to sprint/sprint46-V0.29.0 (07a06ce). NOTE for US-383 (next): PersistenceSubscriber is the next NEW file (src/pi/bus/persistence_subscriber.py) -- reuses ObdDataLogger.logReading for the byte-identical golden master; verify ObdDataLogger.__init__ signature before writing the golden-master test (plan Task 6 flags it)."
     },
     {
       "id": "US-383",

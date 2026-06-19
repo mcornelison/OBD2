@@ -81,3 +81,31 @@ Outcome: SHIPPED passes:true. Appended the SampleBus broker to the existing src/
 - **Pattern discovered**: publish() snapshots `list(self._subs)` under the lock then releases it BEFORE the `_offer` loop -- so a slow/contended subscriber can't hold the bus lock and stall other producers; the never-block guarantee lives entirely in Subscription._offer (US-380), the bus just iterates.
 - **Build-order note**: US-382 (STATE retained topics + integrity-gap marker) appends to this SAME bus.py -- it activates the `retain` path in publish() + a replay loop in subscribe() (both pre-shaped here), and emits `event.integrity.gap` when a LOSSLESS `_offer()` returns False (signal already wired in US-380). US-383 (PersistenceSubscriber, golden master) is the next NEW file.
 ---
+
+## 2026-06-19 - US-382 (Agent 1 / Rex)
+Task: STATE retained topics (last-value-cache) + integrity-gap markers
+Outcome: SHIPPED passes:true. Activated the dormant retain path + added the honest-instrument gap marker in the existing src/pi/bus/bus.py, TDD red->green from the slice-1 plan Task 4 + Task 5.
+
+### What was implemented:
+- `SampleBus.publish(sample, retain=True)` now stores the sample as the `_retained[topic]` last-value-cache (STREAM publishes with retain=False are NOT stored); only the latest per topic is kept
+- `SampleBus.subscribe()` replays the current retained value for any matching STATE topic to the new subscriber (under-lock snapshot of matching retained, `_offer()` outside the lock)
+- `SampleBus._emitIntegrityGap()` -- when a LOSSLESS `_offer()` returns False (the overflow signal wired in US-380), publish() emits `Sample(topic="event.integrity.gap", source="bus", value=1.0, unit=<subName>, seq=<lostSeq>)` to OTHER matching subscribers only (`sub.name != overflowedName` -> no recursion / no re-overflow of the victim)
+
+### Files changed:
+- Modified: `src/pi/bus/bus.py` (publish retain path + subscribe replay + `_emitIntegrityGap`; header mod-history line)
+- Created: `tests/pi/bus/test_bus_state.py` (3 tests: late-subscriber-gets-retained, retains-latest-only, stream-not-retained)
+- Created: `tests/pi/bus/test_bus_integrity_gap.py` (2 tests: lossless-overflow-emits-marker, no-overflow-no-marker)
+
+### Gates:
+- pytest tests/pi/bus/ = 17 passed (8 US-380 + 4 US-381 + 5 new -> zero regression)
+- VC#1 late subscribe('state.config.*') after retained publish -> retained value delivered
+- VC#2 LOSSLESS maxQueue=1 overflow + watcher -> exactly one marker unit='victim'/seq=2 (test also asserts watcher's 2nd poll is None + victim keeps seq 1)
+- VC#3 within-capacity publish -> no marker emitted
+- ruff check src/pi/bus/bus.py + both new tests = All checks passed
+- mypy NOT runnable here (verified `python -m mypy --version` -> No module named mypy; pip gated behind interactive approval in headless) -> typecheck AC deferred to PM/Atlas `make typecheck` at integration. Code is mypy-strict-shaped.
+
+### Learnings for future iterations:
+- **Pattern discovered**: the retain replay in subscribe() snapshots the matching retained samples *under* the lock but calls `_offer()` *outside* it -- same lock-discipline as publish()'s fan-out (US-381), so a slow new subscriber can't hold the bus lock during its initial replay.
+- **Gotcha**: the gap marker must skip the overflowing subscription (`sub.name != subName`) -- otherwise emitting the marker would re-offer into the already-full victim and (for a victim that also matches `event.integrity.gap`) could recurse. Markers go only to OTHER subscribers.
+- **Build-order note**: US-383 (PersistenceSubscriber, byte-identical golden master) is the next NEW file `src/pi/bus/persistence_subscriber.py` -- it reuses `ObdDataLogger.logReading` so rows stay byte-identical. VERIFY the `ObdDataLogger.__init__` signature before writing the golden-master test (plan Task 6 explicitly flags it).
+---
