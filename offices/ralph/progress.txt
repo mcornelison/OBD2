@@ -109,3 +109,29 @@ Outcome: SHIPPED passes:true. Activated the dormant retain path + added the hone
 - **Gotcha**: the gap marker must skip the overflowing subscription (`sub.name != subName`) -- otherwise emitting the marker would re-offer into the already-full victim and (for a victim that also matches `event.integrity.gap`) could recurse. Markers go only to OTHER subscribers.
 - **Build-order note**: US-383 (PersistenceSubscriber, byte-identical golden master) is the next NEW file `src/pi/bus/persistence_subscriber.py` -- it reuses `ObdDataLogger.logReading` so rows stay byte-identical. VERIFY the `ObdDataLogger.__init__` signature before writing the golden-master test (plan Task 6 explicitly flags it).
 ---
+
+## 2026-06-19 - US-383 (Agent 1 / Rex)
+Task: PersistenceSubscriber -- writes realtime_data (byte-identical golden master)
+Outcome: SHIPPED passes:true. New src/pi/bus/persistence_subscriber.py reuses ObdDataLogger.logReading; golden master proves byte-identical realtime_data rows old-inline vs bus path. TDD red->green from slice-1 plan Task 6.
+
+### What was implemented:
+- `PersistenceSubscriber(subscription, dataLogger)` -- `start()`/`stop(timeoutS=5.0)` own a daemon drain thread; `_loop` blocks on `subscription.get(_DRAIN_TIMEOUT_S=0.5)` and catches per-sample write exceptions (subscriber isolation -- a stuck/failed write never crashes the producer or other subscribers)
+- `handleSample(sample) -> bool` -- raw.obd.<param> sample: reconstruct a LoggedReading (parameterName = topic tail after `raw.obd.`; profileId=None so logReading falls back to the dataLogger's profileId) and DELEGATE to `dataLogger.logReading` (does NOT reimplement the INSERT -> byte-identical by construction); non-`raw.obd.*` topics return False, no write
+- Golden master: same 3 readings written via (a) inline `logReading` and (b) `bus.publish` -> `PersistenceSubscriber.handleSample` into two fresh SQLite DBs, asserts `realtime_data` rows EQUAL on (parameter_name, value, unit, profile_id, drive_id, data_source); id + write-time timestamp excluded
+
+### Files changed:
+- Created: `src/pi/bus/persistence_subscriber.py` (PersistenceSubscriber)
+- Created: `tests/pi/bus/test_persistence_subscriber.py` (3 unit tests), `tests/pi/bus/test_persistence_golden_master.py` (1 integration test)
+
+### Gates:
+- pytest tests/pi/bus/test_persistence_subscriber.py tests/pi/bus/test_persistence_golden_master.py = 4 passed (VC#1 dbA==dbB; VC#2 derived.gear -> False, logReading NOT called; VC#3 unit suite green)
+- full tests/pi/bus/ = 21 passed (17 prior + 4 new -> zero regression)
+- ruff check on all 3 files = All checks passed
+- mypy NOT runnable here (not installed system+venv; pip gated behind interactive approval in headless) -> typecheck AC deferred to PM/Atlas `make typecheck` at integration. Code is mypy-strict-shaped.
+
+### Learnings for future iterations:
+- **Verify-before-code paid off**: ObdDataLogger.__init__(connection, database, profileId=None, dataSource=None) [logger.py:132] + LoggedReading(parameterName, value, timestamp, unit=None, profileId=None) [types.py:71] matched the plan exactly -> no test adaptation needed (the plan's Task 6 note about possible signature drift did not bite).
+- **Gotcha (FK enforcement)**: `realtime_data.profile_id` FK-references `profiles(id)` AND `_getConnection` runs `PRAGMA foreign_keys = ON` (database.py:211) -- a golden master writing a non-null profile_id MUST seed a `profiles` row first or the INSERT raises a FK violation. Seeded a 'daily' profile in both DBs so profile_id is written + compared non-trivially. (profileId=None would also work but proves less.)
+- **Byte-identical by construction**: drive_id derives from `getCurrentDriveId()` at write time on BOTH paths (handleSample does NOT pass Sample.driveId through) -- the captured `Sample.driveId` is intentionally ignored in slice 1; capture-time attribution (which also hardens the A-9 boundary-race) is a deferred follow-up per the plan post-notes.
+- **Build-order note**: US-384 (RealtimeDataLogger publish seam + pi.bus.enabled flag) is the FIRST story this sprint to modify a PRE-EXISTING product file (src/pi/obdii/data/realtime.py) -> run tests/pi/obdii/data/ for regression + VERIFY whether utcIsoNow + getCurrentDriveId are already imported in realtime.py (plan Task 7 flag).
+---
