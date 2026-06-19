@@ -4,7 +4,7 @@
 
 ## Overview
 
-The Eclipse OBD-II Performance Monitoring System connects to a Bluetooth OBD-II dongle to log vehicle data, provides real-time alerts on an Adafruit 1.3" 240x240 display, performs statistical analysis, and uses AI (ollama with Gemma2/Qwen2.5) to provide performance optimization recommendations focused on air/fuel ratios and engine tuning.
+The Eclipse OBD-II Performance Monitoring System connects to a Bluetooth OBD-II dongle to log vehicle data, provides real-time alerts on an OSOYOO 3.5" 480x320 touchscreen display, performs statistical analysis, and uses AI (ollama with Gemma2/Qwen2.5) to provide performance optimization recommendations focused on air/fuel ratios and engine tuning.
 
 Key features:
 - **Auto-start on boot** - Runs headless or with minimal display
@@ -220,7 +220,7 @@ See `ralph/AGENT.md` for detailed agent instructions.
 
 For the full OBD-II monitoring system:
 - **Raspberry Pi 3B+ or 4** (4GB RAM recommended for AI models)
-- **Adafruit 1.3" 240x240 Color TFT** (ST7789 driver)
+- **OSOYOO 3.5" 480x320 HDMI capacitive touchscreen** (Model 2024009100; micro-HDMI video + USB-C touch/power)
 - **Bluetooth OBD-II dongle** (ELM327-compatible)
 - **12V to 5V adapter** with battery backup (UPS HAT)
 - **Voltage monitoring** via ADC or I2C power monitor
