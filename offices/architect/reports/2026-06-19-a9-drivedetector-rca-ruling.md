@@ -115,4 +115,17 @@ The server overlap detector **groups by the Pi's `drive_id`** (`overlap.py:85-94
 4. **Server tripwire remains the backstop** — consumers exclude `attribution_anomaly` drives (28/29); the flag is trustworthy.
 5. Routed: Spool (A2AL, he hit it), Marcus (PM brief), finding updated with a pointer, charter A-9 row updated.
 
+---
+
+## ADDENDUM 2026-06-19 — guard DEPLOYED to the Pi (Root 1 mitigation live) + a new deploy-contract condition
+
+CIO directed the Pi deploy. **Outcome: guard is live and acquiring — but enabling it surfaced a real deployability gap that is now part of the guard's contract.**
+
+- **Deploy failure caught + fixed:** enabling the guard with the documented default lockPath `/run/eclipse-obd/orchestrator.lock` **crash-looped the orchestrator** — `acquire()` does `mkdir(/run/eclipse-obd)`, but the service runs as non-root `mcornelison` who can't write `/run` → `[Errno 13] Permission denied` → exit 2, systemd restart-loop to counter 10. The guard shipped `default-OFF` and had **never been deployed**, so this path was never exercised. (Precisely why the default-OFF + CIO-review gate existed — vindicated.) I rolled back immediately to restore the service, then fixed forward.
+- **NEW condition C-5 (supersedes my mistaken C-2 "tmpfs is writable" assumption):** enabling the guard **REQUIRES** provisioning the lock dir. Fix applied (CIO chose the proper option): **`RuntimeDirectory=eclipse-obd` in `eclipse-obd.service`** → systemd creates `/run/eclipse-obd` owned by `User=` on start (tmpfs, removed on stop, cleared on reboot — exactly the guard's intent) and it also serves the F-103 state-server's `/run/eclipse-obd/states/`. **The config flag and the unit's RuntimeDirectory are a matched pair — neither ships without the other**, or the non-root service crash-loops on boot.
+- **Verified live:** `/run/eclipse-obd` owned mcornelison; lockfile contents == MainPID (2946); journal `single-instance lock acquired`; one stable process; NRestarts=0; no permission error.
+- **Deploy method:** surgical (config push + unit edit + `daemon-reload` + clean stop→start), NOT `deploy-pi.sh`. `.deploy-version` left at V0.28.2/`cb54311` (an out-of-band guard-enable on top of stable, same pattern as the 06-18 IP fix). Backups on the Pi: `config.json.bak-pre-guard-20260619`, `eclipse-obd.service.bak-pre-runtimedir-20260619`.
+- **Repo persisted:** `config.json` guard-enable (`d6d8b05`) + `deploy/eclipse-obd.service` RuntimeDirectory (`fae7ee7`) — so a future full `deploy-pi.sh` won't silently re-break it.
+- **For the A-9 RCA sprint (US-386..389):** Root 1 is now *mitigated in production* (guard live). The sprint's Root-1 work narrows to: confirm the journal spawn-source (C-3) + add the RuntimeDirectory to the canonical deploy path as a tested invariant. **Root 2 (stale-open-drive leak) is still fully open** and remains the sprint's substantive work.
+
 — Atlas
