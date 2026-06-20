@@ -26,6 +26,15 @@
 #                               first successful row.  Lets the health
 #                               check catch a stuck logger in 60s instead
 #                               of 11h.  _monotonicFn is the test seam.
+# 2026-06-19    | Rex (US-384) | EDR bus slice 1 publish seam: optional bus +
+#                               producerSource kwargs + _seq counter.  With a
+#                               bus injected, _logReadingSafe publishes a
+#                               raw.obd.<param> Sample instead of writing the
+#                               DB (the PersistenceSubscriber owns the write);
+#                               with bus=None the write path is byte-for-byte
+#                               unchanged.  dataLogger property exposes the
+#                               inner ObdDataLogger for subscriber reuse.
+#                               Ships dark behind pi.bus.enabled (default off).
 # ================================================================================
 ################################################################################
 """
@@ -68,6 +77,10 @@ from collections.abc import Callable
 from datetime import datetime
 from typing import Any
 
+from common.time.helper import utcIsoNow
+from pi.bus.sample import Sample
+
+from ..drive_id import getCurrentDriveId
 from ..error_classification import CaptureErrorClass, classifyCaptureError
 from .exceptions import DataLoggerError, ParameterNotSupportedError, ParameterReadError
 from .logger import ObdDataLogger
@@ -134,6 +147,8 @@ class RealtimeDataLogger:
         captureErrorHandler: Callable[[BaseException], CaptureErrorClass] | None = None,
         onFatalError: Callable[[BaseException], None] | None = None,
         ecuSilentMultiplier: int = DEFAULT_ECU_SILENT_MULTIPLIER,
+        bus: Any = None,
+        producerSource: str = "obd",
     ):
         """
         Initialize the realtime data logger.
@@ -167,6 +182,15 @@ class RealtimeDataLogger:
                 reported ECU_SILENT.  Cleared on the first successful
                 query so the loop snaps back to normal cadence when
                 the ECU wakes up.
+            bus: US-384 (EDR bus slice 1) optional :class:`SampleBus`.
+                When provided, :meth:`_logReadingSafe` publishes a
+                ``raw.obd.<param>`` :class:`Sample` instead of writing
+                the database directly -- the bus PersistenceSubscriber
+                owns the write (byte-identical row).  When ``None``
+                (the default, ``pi.bus.enabled=false``), the legacy
+                inline write path runs unchanged.
+            producerSource: Producer id stamped on published Samples'
+                ``source`` field (US-384).  Defaults to ``"obd"``.
         """
         self.config = config
         self.connection = connection
@@ -199,6 +223,16 @@ class RealtimeDataLogger:
             profileId=self.profileId, dataSource=dataSource,
         )
 
+        # US-384 (EDR bus slice 1): optional publish seam.  With a bus wired,
+        # _logReadingSafe publishes a raw.obd.<param> Sample (per-producer
+        # monotonic _seq) instead of writing the DB; the PersistenceSubscriber
+        # owns the write.  _dataSource is retained here (the inner logger also
+        # derives its own) so published Samples carry the origin tag.
+        self._bus = bus
+        self._producerSource = producerSource
+        self._seq = 0
+        self._dataSource = dataSource
+
         # Callbacks
         self._onReading: Callable[[LoggedReading], None] | None = None
         self._onError: Callable[[str, Exception], None] | None = None
@@ -218,6 +252,16 @@ class RealtimeDataLogger:
         # time.monotonic.
         self._lastRowWrittenMonotonic: float | None = None
         self._monotonicFn: Callable[[], float] = time.monotonic
+
+    @property
+    def dataLogger(self) -> ObdDataLogger:
+        """The internal :class:`ObdDataLogger` (US-384).
+
+        Exposed so the bus :class:`PersistenceSubscriber` reuses the exact
+        same writer instance, guaranteeing byte-identical ``realtime_data``
+        rows across the inline and bus paths.
+        """
+        return self._dataLogger
 
     @property
     def state(self) -> LoggingState:
@@ -676,12 +720,19 @@ class RealtimeDataLogger:
         """
         Log a reading safely, catching database errors.
 
+        US-384 (EDR bus slice 1): when a :class:`SampleBus` is wired
+        (``pi.bus.enabled``), publish a ``raw.obd.<param>`` :class:`Sample`
+        instead of writing the database -- the PersistenceSubscriber owns the
+        write.  With no bus the original inline write path runs unchanged.
+
         Args:
             reading: LoggedReading to store
 
         Returns:
-            True if logged successfully
+            True if logged (published or written) successfully
         """
+        if self._bus is not None:
+            return self._publishReading(reading)
         try:
             self._dataLogger.logReading(reading)
             self._stats.totalLogged += 1
@@ -694,6 +745,38 @@ class RealtimeDataLogger:
             logger.warning(f"Failed to log reading: {e}")
             self._stats.totalErrors += 1
             return False
+
+    def _publishReading(self, reading: LoggedReading) -> bool:
+        """Publish a ``raw.obd.<param>`` Sample to the bus (producer role).
+
+        US-384: the OBD poll loop's producer side.  Stamps a per-producer
+        monotonic ``seq`` so the bus / subscribers can detect drops or gaps.
+        ``tsUtc``/``driveId``/``dataSource`` mirror exactly what the inline
+        write path stamps (``utcIsoNow``/``getCurrentDriveId``), so a
+        downstream PersistenceSubscriber reproduces byte-identical rows.
+
+        Args:
+            reading: LoggedReading to publish.
+
+        Returns:
+            True (publish never blocks; the bounded queue absorbs overflow).
+        """
+        self._seq += 1
+        sample = Sample(
+            topic=f"raw.obd.{reading.parameterName}",
+            source=self._producerSource,
+            value=reading.value,
+            unit=reading.unit,
+            tsUtc=utcIsoNow(),
+            tsCapture=time.monotonic(),
+            driveId=getCurrentDriveId(),
+            dataSource=self._dataSource or "real",
+            seq=self._seq,
+        )
+        self._bus.publish(sample)
+        self._stats.totalLogged += 1
+        self._markRowWritten()
+        return True
 
     def _handleParameterError(self, paramName: str, error: Exception) -> None:
         """

@@ -48,6 +48,14 @@ Type=simple
 # User to run the service as (matches the Pi's interactive SSH user)
 User=mcornelison
 
+# Runtime dir for the single-instance pidfile (F-107 Mechanism B / A-9 Root 1)
+# and the F-103 state-server's /run/eclipse-obd/states/. systemd creates
+# /run/eclipse-obd owned by User= on start (tmpfs, removed on stop, cleared on
+# reboot) so the non-root service can write its lock. REQUIRED when
+# pi.runtime.singleInstanceGuard.enabled is true -- without it acquire() hits
+# EPERM on mkdir(/run/eclipse-obd) and the orchestrator crash-loops on boot.
+RuntimeDirectory=eclipse-obd
+
 # Working directory — where src/pi/main.py lives after deploy-pi.sh sync
 WorkingDirectory=/home/mcornelison/Projects/Eclipse-01
 

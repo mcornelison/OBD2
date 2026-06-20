@@ -235,6 +235,7 @@ def createRealtimeLoggerFromConfig(
     *,
     captureErrorHandler: Callable[[BaseException], CaptureErrorClass] | None = None,
     onFatalError: Callable[[BaseException], None] | None = None,
+    bus: Any = None,
 ) -> RealtimeDataLogger:
     """
     Create a RealtimeDataLogger from configuration.
@@ -255,6 +256,12 @@ def createRealtimeLoggerFromConfig(
             exception when the classifier re-raises FATAL.  Production
             wires this to the orchestrator's ``stop()`` so systemd
             ``Restart=always`` bounces the process.
+        bus: US-385 (EDR bus slice 1) optional :class:`SampleBus`.  When
+            provided, the returned :class:`RealtimeDataLogger` publishes
+            ``raw.obd.<param>`` Samples instead of writing the DB inline --
+            the orchestrator's PersistenceSubscriber owns the write.  When
+            ``None`` (the default, ``pi.bus.enabled=false``) the legacy
+            inline write path runs unchanged.
 
     Returns:
         Configured RealtimeDataLogger instance.
@@ -277,4 +284,5 @@ def createRealtimeLoggerFromConfig(
         profileId=activeProfile, dataSource=dataSource,
         captureErrorHandler=captureErrorHandler,
         onFatalError=onFatalError,
+        bus=bus,
     )

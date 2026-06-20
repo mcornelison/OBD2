@@ -1,9 +1,14 @@
 // =========================================================================
 // IMU Enclosure (#3)  —  Adafruit TDK InvenSense ICM-20948 9-DoF IMU
-// Flat box, 4 corner standoffs, snap-on lid, wall vents, 4-5 wire exit, VHB base.
+// Flat box, 4 corner standoffs, friction-lip lid, wall vents, 4-5 wire exit, VHB base.
 // Part of the Pi-5 black-box / EDR build. Spec: enclosure3/specs/imu-case-design.md
 // Iris (UI/UX Designer)
 //   v1  2026-06-17  — CIO interview design.
+//   v2  2026-06-19  — CIO 1st-print fit-check: dropped lid SNAP rib + box groove
+//                     (PLA too rigid to flex past the snap -> lid wouldn't seat);
+//                     lid now a plain friction lip. Removed the unreadable lid TEXT
+//                     label (arrow kept). Wire-exit "foot" clearance pending frame
+//                     confirm. Top-of-lid smoothness = build-sheet, not model (note).
 //
 // Render (git bash; numeric part selector avoids CLI quote-mangling):
 //   "/c/Program Files/OpenSCAD/openscad.exe" -o stl/box.stl -D part=1 imu-case.scad
@@ -46,10 +51,24 @@ pilot_dz = 6.0;
 lid_top_t  = 2.0;     // lid top plate thickness
 lid_lip_h  = 5.0;     // how far the lid lip reaches down into the box
 lid_lip_t  = 1.5;     // lid lip wall thickness
-lid_clear  = 0.3;     // fit clearance, lip-to-inner-wall (per side)
-snap_d     = 0.6;     // snap rib/groove depth
-snap_h     = 1.2;     // snap rib/groove height
-snap_drop  = 2.5;     // snap band below the rim
+lid_clear  = 0.3;     // locating-lip clearance, lip-to-inner-wall (per side).
+                      //   lip now just ALIGNS the lid; the 2 screws retain it.
+// snap_* params (v1 snap-fit) are now OBSOLETE — lid is screw-retained (v2).
+snap_d     = 0.6;     // (unused)
+snap_h     = 1.2;     // (unused)
+snap_drop  = 2.5;     // (unused)
+
+// ---- Lid retention screws (v2 — CIO: 2 small screws) --------------------
+// 2 M2.5 self-tap screws at DIAGONAL corners (most clearance; clear of the
+// board, vents, and cable slot). Box gets corner bosses; lid gets counterbored
+// through-holes; the lip is pocketed locally so the boss can't hit it.
+lid_scr_inset    = 4.2;   // screw-center inset from each outer wall (corner)
+lid_scr_r        = 3.0;   // box boss radius
+lid_scr_pilot    = 1.05;  // M2.5 self-tap pilot (Phi 2.1)
+lid_scr_pilot_dz = 8.0;   // pilot depth down from the rim
+lid_scr_shank_r  = 1.45;  // shank clearance through the lid (Phi 2.9 for M2.5)
+lid_scr_head_r   = 2.6;   // counterbore for the head (M2.5 socket/pan)
+lid_scr_head_dz  = 1.6;   // counterbore depth from the lid top
 
 // ---- Vents (thin rounded-end vertical slots, like enclosure #2) ---------
 vent_w   = 1.3;
@@ -82,6 +101,10 @@ snap_z  = box_h - snap_drop;                   // snap band height above the flo
 // hole positions (world)
 hole_xy = [ for (sx = [hole_inset, board_l - hole_inset],
                  sy = [hole_inset, board_w - hole_inset]) [x0 + sx, y0 + sy] ];
+
+// lid-screw positions (world) — 2 diagonal corners
+lid_scr_xy = [ [lid_scr_inset, lid_scr_inset],
+               [case_x - lid_scr_inset, case_y - lid_scr_inset] ];
 
 $fn = 48;
 
@@ -142,6 +165,16 @@ module standoffs() {
     }
 }
 
+// lid-retention corner bosses (rise floor -> rim; pilot for M2.5 self-tap)
+module lid_screw_bosses() {
+    for (p = lid_scr_xy) difference() {
+        translate([p[0], p[1], bottom_wall - 0.5])
+            cylinder(h = rim_z - (bottom_wall - 0.5), r = lid_scr_r);
+        translate([p[0], p[1], rim_z - lid_scr_pilot_dz])
+            cylinder(h = lid_scr_pilot_dz + 0.1, r = lid_scr_pilot);
+    }
+}
+
 module box() {
     difference() {
         // outer blank
@@ -151,14 +184,8 @@ module box() {
         translate([wall, wall, bottom_wall])
             linear_extrude(box_h + 1) rrect(inner_x, inner_y, max(corner_r - wall, 0.6));
 
-        // snap groove around the inner wall perimeter (inner hole shrunk 0.1/side
-        // so the cut overlaps the cavity void -> no coincident face -> manifold)
-        translate([0, 0, bottom_wall + snap_z]) linear_extrude(snap_h)
-            difference() {
-                translate([wall - snap_d, wall - snap_d])
-                    rrect(inner_x + 2*snap_d, inner_y + 2*snap_d, max(corner_r - wall + snap_d, 0.6));
-                translate([wall + 0.1, wall + 0.1]) rrect(inner_x - 0.2, inner_y - 0.2, max(corner_r - wall, 0.6));
-            }
+        // (v2) snap groove REMOVED — lid is now a plain friction lip (CIO: PLA too
+        // rigid to flex past the snap rib, lid wouldn't seat). Lip fit = lid_clear.
 
         // wire exit slot (-Y long wall), rounded
         translate([case_x/2, wall/2, bottom_wall + cable_z]) rotate([90, 0, 0])
@@ -177,43 +204,47 @@ module box() {
         // bottom face is FLAT (VHB recess dropped — see param note)
     }
     standoffs();
+    lid_screw_bosses();
 }
 
 // ======================================================================
-// lid (printable part 2) — perimeter lip + snap rib + FRONT arrow
+// lid (printable part 2) — perimeter friction lip + FRONT arrow
+//   (v2) snap rib removed; text label removed. Arrow kept as the orientation cue.
 // ======================================================================
 module lid() {
     // outer footprint of the lip (fits inside the box with clearance)
     lx = inner_x - 2*lid_clear;
     ly = inner_y - 2*lid_clear;
-    union() {
-        // top plate (rests on the box rim)
-        difference() {
-            translate([0, 0, rim_z]) linear_extrude(lid_top_t) rrect(case_x, case_y, corner_r);
-            // debossed FRONT arrow (+X), upper area
-            translate([case_x/2 - 5, case_y/2 + 6, rim_z + lid_top_t - 0.6])
-                linear_extrude(1.0) arrow2d();
-            // debossed part-number label, lower area
-            translate([case_x/2, case_y/2 - 6, rim_z + lid_top_t - 0.6])
-                linear_extrude(1.0)
-                    text("ICM-20948", size = 4.5, halign = "center", valign = "center",
-                         font = "Liberation Sans:style=Bold");
-        }
-        // lip ring hanging down into the box
-        translate([wall + lid_clear, wall + lid_clear, rim_z - lid_lip_h])
-            linear_extrude(lid_lip_h)
-                difference() {
-                    rrect(lx, ly, max(corner_r - wall - lid_clear, 0.6));
-                    translate([lid_lip_t, lid_lip_t])
-                        rrect(lx - 2*lid_lip_t, ly - 2*lid_lip_t, 0.6);
-                }
-        // snap rib on the lip outer face (clicks into the box groove)
-        translate([0, 0, bottom_wall + snap_z]) linear_extrude(snap_h)
+    difference() {
+        union() {
+            // top plate (rests on the box rim)
             difference() {
-                translate([wall + lid_clear - snap_d, wall + lid_clear - snap_d])
-                    rrect(lx + 2*snap_d, ly + 2*snap_d, max(corner_r - wall - lid_clear + snap_d, 0.6));
-                translate([wall + lid_clear, wall + lid_clear]) rrect(lx, ly, max(corner_r - wall - lid_clear, 0.6));
+                translate([0, 0, rim_z]) linear_extrude(lid_top_t) rrect(case_x, case_y, corner_r);
+                // debossed FRONT arrow (+X) — the only top marking (text removed: unreadable)
+                translate([case_x/2 - 5, case_y/2, rim_z + lid_top_t - 0.6])
+                    linear_extrude(1.0) arrow2d();
             }
+            // locating lip ring hanging down into the box (retention = the 2 screws)
+            translate([wall + lid_clear, wall + lid_clear, rim_z - lid_lip_h])
+                linear_extrude(lid_lip_h)
+                    difference() {
+                        rrect(lx, ly, max(corner_r - wall - lid_clear, 0.6));
+                        translate([lid_lip_t, lid_lip_t])
+                            rrect(lx - 2*lid_lip_t, ly - 2*lid_lip_t, 0.6);
+                    }
+        }
+        // lid-screw cuts: counterbored shank through the top + lip-clearance pocket
+        for (p = lid_scr_xy) translate([p[0], p[1], 0]) {
+            // shank through the full lid stack
+            translate([0, 0, rim_z - lid_lip_h - 1])
+                cylinder(h = lid_lip_h + lid_top_t + 2, r = lid_scr_shank_r);
+            // head counterbore from the top down
+            translate([0, 0, rim_z + lid_top_t - lid_scr_head_dz])
+                cylinder(h = lid_scr_head_dz + 0.1, r = lid_scr_head_r);
+            // lip-zone pocket so the box boss never collides with the lip
+            translate([0, 0, rim_z - lid_lip_h - 0.1])
+                cylinder(h = lid_lip_h + 0.1, r = lid_scr_r + 0.4);
+        }
     }
 }
 

@@ -108,7 +108,7 @@ B-014 (Pi Testing) ── last in chain, depends on B-012, B-013, B-015
 | Name | Hostname | IP | Type | Purpose |
 |------|----------|----|------|---------|
 | **EclipseTuner** | chi-eclipse-tuner | 10.27.27.28 | Raspberry Pi 5 (8GB) | In-vehicle OBD-II monitor |
-| **Chi-srv-01** | Chi-Srv-01 | 10.27.27.10 | Debian 13 server (i7-5960X, 128GB, 2TB RAID5) | Ollama LLM host (CPU) + companion service |
+| **Chi-srv-01** | Chi-Srv-01 | 10.27.27.120 | Debian 13 server (i7-5960X, 128GB, 2TB RAID5) | Ollama LLM host (CPU) + companion service |
 | **Chi-NAS-01** | Chi-NAS-01 | 10.27.27.121 | Synology 5-disk RAID NAS | Secondary backup target |
 | **DeathStarWiFi** | -- | 10.27.27.0/24 | Home WiFi SSID | Triggers sync/backup/AI when Pi connects |
 

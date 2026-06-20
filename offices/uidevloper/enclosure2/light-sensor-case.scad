@@ -5,6 +5,9 @@
 // Iris (UI/UX Designer)
 //   v1  2026-06-16  — CIO interview design (one-piece, 15deg internal tilt,
 //                     slide-in diffuser plate, passenger-side cable exit).
+//   v6.1 2026-06-19 — CIO 1st-print fit-check: header ledge (the "foot") sat in
+//                     the cable path -> added a wire pass-through notch in the
+//                     ledge aligned with the cable-exit slot. (Recess already flat.)
 //
 // Render (git bash; numeric part selector avoids CLI quote-mangling):
 //   "/c/Program Files/OpenSCAD/openscad.exe" -o stl/shell.stl            -D part=1 light-sensor-case.scad
@@ -186,13 +189,23 @@ module standoffs() {
 }
 
 module header_ledge() {
-    // line support under the header (low-Y) edge, flush to board bottom at Y=0
-    lw = 2.2;   // ledge width in Y
-    intersection() {
-        translate([x0, y0 - 0.1, bottom_wall])
-            cube([board_w, lw, header_rest_z - bottom_wall + 2]);
-        // trim its top to the board-bottom plane
-        on_board() translate([-50, -50, -60]) cube([100, 100, 60]);
+    // line support under the header (low-Y) edge, flush to board bottom at Y=0.
+    // v6.1 (CIO 1st-print fit-check): the ledge sits right inside the cable-exit
+    // wall and blocked the wires. Cut a pass-through NOTCH aligned with the cable
+    // slot so the header wires route straight out. The ledge still supports the
+    // header edge on both sides of the notch.
+    lw = 2.2;            // ledge width in Y
+    notch_w = cable_w + 1.5;   // wire clearance through the ledge (matches cable slot + margin)
+    difference() {
+        intersection() {
+            translate([x0, y0 - 0.1, bottom_wall])
+                cube([board_w, lw, header_rest_z - bottom_wall + 2]);
+            // trim its top to the board-bottom plane
+            on_board() translate([-50, -50, -60]) cube([100, 100, 60]);
+        }
+        // wire pass-through notch, centered on the cable exit slot (full height)
+        translate([case_x/2 - notch_w/2, y0 - 1.1, bottom_wall - 1])
+            cube([notch_w, lw + 2, header_rest_z - bottom_wall + 4]);
     }
 }
 

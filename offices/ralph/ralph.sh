@@ -95,14 +95,24 @@ trap 'cleanup; exit 130' INT TERM
 # ── Authoritative story tally, straight from sprint.json ─────────────────────
 # Mirrors agent.py: a story counts complete only when `passes` is the boolean
 # True. Prints "<complete> <total>"; always two ints, even on a broken file.
+#
+# NOTE (2026-06-19): emit via sys.stdout.buffer.write (raw LF) NOT print(). On
+# Windows, Python's text-mode stdout translates "\n" -> "\r\n"; with process
+# substitution `read -r a b < <(story_counts)` the trailing "\r" sticks to the
+# LAST field, so `total` becomes "6\r" and every `[ "$total" -gt 0 ]` /
+# `[ "$after_complete" -ge "$total" ]` test fails with "integer expression
+# expected" -- which silently broke COMPLETION DETECTION (the sprint never
+# read as done) and the false-stall that followed. buffer.write bypasses the
+# CRLF translation so the tally is always clean integers.
 story_counts() {
   python - "$SCRIPT_DIR/sprint.json" <<'PY'
 import json, sys
 try:
     stories = json.load(open(sys.argv[1], encoding="utf-8")).get("stories", [])
 except Exception:
-    print("0 0"); raise SystemExit(0)
-print(sum(1 for s in stories if s.get("passes") is True), len(stories))
+    sys.stdout.buffer.write(b"0 0\n"); raise SystemExit(0)
+c = sum(1 for s in stories if s.get("passes") is True)
+sys.stdout.buffer.write(f"{c} {len(stories)}\n".encode())
 PY
 }
 

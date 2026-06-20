@@ -232,6 +232,12 @@ DEFAULTS: dict[str, Any] = {
     'pi.sync.enabled': True,
     'pi.sync.intervalSeconds': 60,
     'pi.sync.triggerOn': ['interval', 'drive_end'],
+    # Pi-tier EDR in-process pub/sub bus (US-384 / F-110, EDR slice 1).
+    # Defaults False so slice 1 ships DARK: the SampleBus publish seam in
+    # RealtimeDataLogger + the PersistenceSubscriber are wired but dormant
+    # until a separate PM/CIO deploy flips this on the Pi (and confirms
+    # byte-identical realtime_data + healthy sync).
+    'pi.bus.enabled': False,
     # Pi-tier orchestrator engine-on escalation (US-242 / B-049).  When the
     # adapter-level BATTERY_V sample exceeds engineOnVoltageThreshold for
     # engineOnSampleCount consecutive samples, the orchestrator transitions

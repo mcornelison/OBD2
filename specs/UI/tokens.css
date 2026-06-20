@@ -1,0 +1,78 @@
+/* ============================================================================
+ * Eclipse OBD-II — Visual SSOT: design tokens
+ * ----------------------------------------------------------------------------
+ * Owner: Iris (UI/UX). SSOT-design-pattern owner: Atlas (specs/ssot-design-pattern.md).
+ * This is the single source of truth for color + type tokens across every
+ * human-facing surface: F-103 boot/shutdown splash, the F-092/F-097 touch
+ * carousel dashboard, the DTC viewer (Card 5), and future tuning gauges.
+ *
+ * RULE (the whole point of this file): consumers render against these tokens,
+ * NEVER against literal hex/px values. A new literal in a surface = drift.
+ * If a surface needs a value not here, add it HERE first (route token additions
+ * through Atlas under Rule-10; tuning-semantics colors through Spool).
+ *
+ * Provenance of every value below is a shipped/gated spec — nothing invented:
+ *   - F-103 splash spec  docs/superpowers/specs/2026-05-26-b103-splash-animation-design.md §4
+ *   - DTC viewer spec    docs/superpowers/specs/2026-06-05-pi-dtc-check-engine-viewer-clear-design.md §7
+ *   - Atlas gate A-8 (2026-06-05 + 2026-06-19): add `--green-ok` once, here.
+ *
+ * Target panel: OSOYOO 3.5" 480x320 (narrow gamut) — values chosen to read at
+ * small sizes on this display. System mono only; no web fonts / no font CDN.
+ * ============================================================================ */
+
+:root {
+  /* --- Type --------------------------------------------------------------- */
+  --font-mono: ui-monospace, Menlo, Consolas, monospace;  /* the only family */
+
+  /* --- Neutral text ------------------------------------------------------- */
+  --text-secondary: #888888;   /* wordmark; primary readable label           */
+  --text-tertiary:  #666666;   /* version chip; de-emphasized meta           */
+
+  /* --- Warn (project-wide) ------------------------------------------------ */
+  --amber-warn:     #FFC400;   /* WATCH tier / degraded escalation; tuning
+                                  gauges inherit this (Spool S-2 concurs)     */
+  --amber-soft:     #FFC40033; /* ~20% alpha amber for soft backdrops        */
+
+  /* --- OK / MINOR / linked ------------------------------------------------ */
+  --green-ok:       #35C46A;   /* MINOR DTC tier, OK/healthy, "linked",
+                                  trust-badge verified. Added per Atlas A-8.  */
+
+  /* --- Neutral chip ------------------------------------------------------- */
+  --neutral-chip-bg: #2a2f37;  /* "no description yet" + "N/A this vehicle"
+                                  chips — deliberately un-alarming            */
+
+  /* --- BRAND identity reds — RESERVED, brand mark ONLY -------------------- */
+  /* Spool S-2 (load-bearing): these are the 3-rhombus brand mark's colors.   */
+  /* They MUST NOT be reused as a state-alarm ("PULL OVER") red — if the      */
+  /* permanent brand mark is red AND a critical alarm is also red, the driver */
+  /* cannot tell "brand" from "danger". Alarm red is --critical-red (below).  */
+  --red:       #E60012;        /* brand mark base                             */
+  --red-light: #F61D2D;        /* brand mark highlight                        */
+  --red-dark:  #BF000F;        /* brand mark shadow                          */
+}
+
+/* ============================================================================
+ * RESERVED — declared so the SSOT is scoped holistically, not retrofitted
+ * under deadline pressure. Values TBD; surfaces MUST NOT render these until
+ * a value is set (route through Spool for semantics + Atlas for the token).
+ *
+ *   --critical-red:  TBD;  state-alarm red ("PULL OVER NOW"). MUST be visually
+ *                          distinct from the brand reds above — cooler /
+ *                          orange-shifted, ~#D32F2F (Spool S-2 target).
+ *   --neutral-blue:  TBD;  normal-state tuning readouts, ~#7B9CAE.
+ *
+ * Not yet tokenized (intentionally — no grounded value exists yet):
+ *   - base background color  (splash renders on black; not yet a named token)
+ *   - --text-primary         (no surface has defined a primary text color
+ *                             above --text-secondary)
+ * ============================================================================ */
+
+/* ----------------------------------------------------------------------------
+ * OPEN CONFLICT (flagged 2026-06-19 — owed resolution before DTC build):
+ * The DTC viewer's STOP tier + ribbon currently render with the BRAND reds
+ * (--red / --red-light) because --critical-red has no value yet. That violates
+ * the Spool-S-2 brand-vs-alarm separation above. Resolution = set --critical-red
+ * (Spool: semantics/value; Atlas: token), then repoint the DTC STOP tier + the
+ * unified alert takeover/ribbon to it. Tracked: Iris W-3/W-12; routed to Atlas
+ * + Spool 2026-06-19. Until resolved, treat STOP-red as a placeholder, not final.
+ * -------------------------------------------------------------------------- */

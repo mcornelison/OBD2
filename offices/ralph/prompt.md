@@ -51,7 +51,7 @@ Full text + sizing caps + reviewer discipline: `offices/ralph/knowledge/sprint-c
 2. Read acceptance criteria — they define WHAT, you decide HOW.
 3. Read `scope.filesToRead` from the story (and only those).
 4. **TDD**: write failing test → minimal code to pass → refactor → run all tests.
-5. Run quality gates: `pytest tests/` and `make lint`.
+5. Run quality gates: `pytest tests/` and `make lint`. **Run the gate SYNCHRONOUSLY (blocking) — do NOT launch it in the background and end the iteration.** An iteration must reach steps 6–7 (commit + `passes:true`) for the story it finished; ending with validation still running in the background leaves the story complete-but-uncommitted and reads to `ralph.sh` as a no-progress stall. If a full-suite gate is genuinely too slow to finish within one iteration (e.g. slow SMB share), run the targeted/scoped suite that covers your change as the in-iteration gate, commit + flip the story, and note the deferred full-suite check in `completionNotes` for PM integration — never background-and-exit.
 6. If green, **commit your work to the current sprint branch** (`git add` your changed files + `git commit`, conventional format `feat: [US-XXX] …`). This preserves your work per handbook §13 (uncommitted work is lost on a branch switch). **Do NOT `git push`, `checkout`, `switch`, `merge`, or `branch`** — PM owns push/integration/deploy (see PM Protocol).
 7. Update `sprint.json`: set `passes: true`, populate `feedback.filesActuallyTouched`, add `completionNotes`.
 8. Update `ralph_agents.json`: set your `status` to `unassigned`, `taskid` to `""`, refresh `note` with a short close summary.
