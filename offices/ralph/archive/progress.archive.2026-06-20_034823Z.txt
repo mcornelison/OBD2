@@ -1,0 +1,184 @@
+# Ralph Progress Log
+
+Rolling log: most recent session entries only. When this file grows large
+(target ~30 KB), older entries roll into `archive/progress.archive.YYYY-MM-DD.txt`.
+
+Latest cutover: 2026-06-19 -- Sprint 45 (V0.28.2) close. See
+`archive/progress.archive.2026-06-19_143228Z.txt` for the full prior log.
+
+Format per session entry (append at bottom):
+
+## YYYY-MM-DD - US-XXX (Agent / Session N)
+Task: [title]
+Outcome: [what shipped / status]
+
+---
+
+## Sprint 46 / V0.29.0 -- EDR Dedicated-Reader Internal Bus (Slice 1)
+
+Epic E-006 (EDR / Black-Box Recorder), Feature F-110. 6 stories US-380..385.
+Ships DARK behind `pi.bus.enabled` (default off). Build order follows `deps`:
+US-380 (data types) -> US-381 (bus core) -> US-382 (STATE/integrity-gap)
+-> US-383 (PersistenceSubscriber, golden master) -> US-384 (publish seam + flag)
+-> US-385 (orchestrator wiring, ships-dark cutover).
+
+Authoritative design: docs/superpowers/specs/2026-06-18-edr-dedicated-reader-bus-contract-design.md
++ docs/superpowers/plans/2026-06-18-edr-bus-slice1-dedicated-reader.md (9 TDD tasks, complete code).
+
+(Ralph appends session entries below.)
+
+## 2026-06-19 - US-380 (Agent 1 / Rex)
+Task: Bus data types + Subscription (Sample, QoS, topicMatches, bounded queue + QoS overflow)
+Outcome: SHIPPED passes:true. New src/pi/bus/ package foundation built TDD red->green from the slice-1 plan (Task 1 + Task 2).
+
+### What was implemented:
+- `Sample` frozen dataclass (topic/source/value/unit/tsUtc/tsCapture/driveId/dataSource/seq) + `QoS` enum (LOSSLESS, LOSSY) -- sample.py
+- `topicMatches(pattern, topic)` -- dotted segment-prefix matcher: trailing '.*' matches the bare prefix and any '<prefix>.<...>'; exact pattern matches only itself; NOT regex
+- `SubStats` frozen dataclass (depth/highWater/droppedCount/lastSeqBySource)
+- `Subscription` -- one bounded queue.Queue per consumer; `_offer()` NEVER blocks: LOSSY drops oldest + bumps droppedCount + returns True; LOSSLESS returns False on overflow (so the bus can mark a gap later in US-382) + bumps droppedCount; `get()`/`poll()`/`close()`/`stats()`/`matches()`
+- SampleBus intentionally OMITTED -- it is US-381 scope (next iteration appends to bus.py)
+
+### Files changed:
+- Created: `src/pi/bus/__init__.py`, `src/pi/bus/sample.py`, `src/pi/bus/bus.py`
+- Created: `tests/pi/bus/__init__.py`, `tests/pi/bus/test_sample.py` (3), `tests/pi/bus/test_subscription.py` (5)
+
+### Gates:
+- pytest tests/pi/bus/test_sample.py tests/pi/bus/test_subscription.py = 8 passed (VC#1)
+- VC#2 FrozenInstanceError on .value reassign; VC#3 LOSSY drop-oldest (poll 2,3 / droppedCount=1); VC#4 LOSSLESS overflow returns False, seq 1 preserved, never blocks
+- ruff check clean on src/pi/bus/ + tests/pi/bus/
+- mypy NOT runnable here (not installed system+venv; install needs interactive approval) -> typecheck AC deferred to PM/Atlas `make typecheck` at integration. Code is mypy-strict-shaped (future annotations, full hints, no untyped defs).
+
+### Learnings for future iterations:
+- **Pattern discovered**: tests/conftest.py inserts `src` onto sys.path, so `from pi.bus.sample import ...` resolves from a fresh new package with no extra wiring -- just add `tests/pi/<pkg>/__init__.py` + `src/pi/<pkg>/__init__.py`.
+- **Gotcha**: this dev box (system Python 3.13 + project .venv) has ruff but NOT mypy/black; `pip install` is gated behind interactive approval in headless ralph.sh. Treat mypy/black as integration-time gates, not in-loop gates here.
+- **Build-order note**: US-381 appends `SampleBus` (subscribe/publish/fan-out + STREAM) to the SAME bus.py; US-382 adds retain + the `event.integrity.gap` emission that consumes the `_offer()->False` LOSSLESS overflow signal already wired in this story.
+---
+
+## 2026-06-19 - US-381 (Agent 1 / Rex)
+Task: SampleBus core -- subscribe/publish fan-out (STREAM) + producer-never-blocks
+Outcome: SHIPPED passes:true. Appended the SampleBus broker to the existing src/pi/bus/bus.py, TDD red->green from the slice-1 plan Task 3.
+
+### What was implemented:
+- `SampleBus` broker class in bus.py: `__init__` (subs list + threading.Lock + dormant _retained dict)
+- `subscribe(topics, qos, name, maxQueue=DEFAULT_MAX_QUEUE) -> Subscription` -- builds + registers a Subscription under the lock, returns it usable
+- `publish(sample, retain=False) -> None` -- snapshots the sub list under the lock, then non-blocking `_offer()`s the sample into every subscription whose patterns match the topic (synchronous fan-out; the bounded queue is the only async boundary -> producer NEVER blocks)
+- STREAM semantics: no replay-on-subscribe (a subscriber created after a publish does NOT see the earlier sample)
+- `retain` param + `_retained` dict are pre-declared DORMANT (NOT honored here) per the plan -- keeps the public publish() signature stable; retention BEHAVIOR is US-382 scope
+
+### Files changed:
+- Modified: `src/pi/bus/bus.py` (appended SampleBus; added `import threading`; header mod-history line)
+- Created: `tests/pi/bus/test_bus_stream.py` (4 tests: fan-out-to-matching-only, STREAM-no-history, usable-subscription, never-block-on-1000-undrained)
+
+### Gates:
+- pytest tests/pi/bus/test_bus_stream.py = 4 passed (VC#1)
+- VC#2 1000 publishes to an undrained LOSSY maxQueue=2 (+ a LOSSLESS maxQueue=2) sub -> all return, never hangs
+- VC#3 late subscribe('raw.*') after a prior publish -> only the post-subscribe sample delivered
+- full tests/pi/bus/ = 12 passed (8 US-380 + 4 new -> zero regression)
+- ruff check src/pi/bus/ tests/pi/bus/ = All checks passed (auto-sorted test import members)
+- mypy NOT runnable here (not installed system+venv) -> typecheck AC deferred to PM/Atlas `make typecheck` at integration. Code is mypy-strict-shaped.
+
+### Learnings for future iterations:
+- **Pattern discovered**: publish() snapshots `list(self._subs)` under the lock then releases it BEFORE the `_offer` loop -- so a slow/contended subscriber can't hold the bus lock and stall other producers; the never-block guarantee lives entirely in Subscription._offer (US-380), the bus just iterates.
+- **Build-order note**: US-382 (STATE retained topics + integrity-gap marker) appends to this SAME bus.py -- it activates the `retain` path in publish() + a replay loop in subscribe() (both pre-shaped here), and emits `event.integrity.gap` when a LOSSLESS `_offer()` returns False (signal already wired in US-380). US-383 (PersistenceSubscriber, golden master) is the next NEW file.
+---
+
+## 2026-06-19 - US-382 (Agent 1 / Rex)
+Task: STATE retained topics (last-value-cache) + integrity-gap markers
+Outcome: SHIPPED passes:true. Activated the dormant retain path + added the honest-instrument gap marker in the existing src/pi/bus/bus.py, TDD red->green from the slice-1 plan Task 4 + Task 5.
+
+### What was implemented:
+- `SampleBus.publish(sample, retain=True)` now stores the sample as the `_retained[topic]` last-value-cache (STREAM publishes with retain=False are NOT stored); only the latest per topic is kept
+- `SampleBus.subscribe()` replays the current retained value for any matching STATE topic to the new subscriber (under-lock snapshot of matching retained, `_offer()` outside the lock)
+- `SampleBus._emitIntegrityGap()` -- when a LOSSLESS `_offer()` returns False (the overflow signal wired in US-380), publish() emits `Sample(topic="event.integrity.gap", source="bus", value=1.0, unit=<subName>, seq=<lostSeq>)` to OTHER matching subscribers only (`sub.name != overflowedName` -> no recursion / no re-overflow of the victim)
+
+### Files changed:
+- Modified: `src/pi/bus/bus.py` (publish retain path + subscribe replay + `_emitIntegrityGap`; header mod-history line)
+- Created: `tests/pi/bus/test_bus_state.py` (3 tests: late-subscriber-gets-retained, retains-latest-only, stream-not-retained)
+- Created: `tests/pi/bus/test_bus_integrity_gap.py` (2 tests: lossless-overflow-emits-marker, no-overflow-no-marker)
+
+### Gates:
+- pytest tests/pi/bus/ = 17 passed (8 US-380 + 4 US-381 + 5 new -> zero regression)
+- VC#1 late subscribe('state.config.*') after retained publish -> retained value delivered
+- VC#2 LOSSLESS maxQueue=1 overflow + watcher -> exactly one marker unit='victim'/seq=2 (test also asserts watcher's 2nd poll is None + victim keeps seq 1)
+- VC#3 within-capacity publish -> no marker emitted
+- ruff check src/pi/bus/bus.py + both new tests = All checks passed
+- mypy NOT runnable here (verified `python -m mypy --version` -> No module named mypy; pip gated behind interactive approval in headless) -> typecheck AC deferred to PM/Atlas `make typecheck` at integration. Code is mypy-strict-shaped.
+
+### Learnings for future iterations:
+- **Pattern discovered**: the retain replay in subscribe() snapshots the matching retained samples *under* the lock but calls `_offer()` *outside* it -- same lock-discipline as publish()'s fan-out (US-381), so a slow new subscriber can't hold the bus lock during its initial replay.
+- **Gotcha**: the gap marker must skip the overflowing subscription (`sub.name != subName`) -- otherwise emitting the marker would re-offer into the already-full victim and (for a victim that also matches `event.integrity.gap`) could recurse. Markers go only to OTHER subscribers.
+- **Build-order note**: US-383 (PersistenceSubscriber, byte-identical golden master) is the next NEW file `src/pi/bus/persistence_subscriber.py` -- it reuses `ObdDataLogger.logReading` so rows stay byte-identical. VERIFY the `ObdDataLogger.__init__` signature before writing the golden-master test (plan Task 6 explicitly flags it).
+---
+
+## 2026-06-19 - US-383 (Agent 1 / Rex)
+Task: PersistenceSubscriber -- writes realtime_data (byte-identical golden master)
+Outcome: SHIPPED passes:true. New src/pi/bus/persistence_subscriber.py reuses ObdDataLogger.logReading; golden master proves byte-identical realtime_data rows old-inline vs bus path. TDD red->green from slice-1 plan Task 6.
+
+### What was implemented:
+- `PersistenceSubscriber(subscription, dataLogger)` -- `start()`/`stop(timeoutS=5.0)` own a daemon drain thread; `_loop` blocks on `subscription.get(_DRAIN_TIMEOUT_S=0.5)` and catches per-sample write exceptions (subscriber isolation -- a stuck/failed write never crashes the producer or other subscribers)
+- `handleSample(sample) -> bool` -- raw.obd.<param> sample: reconstruct a LoggedReading (parameterName = topic tail after `raw.obd.`; profileId=None so logReading falls back to the dataLogger's profileId) and DELEGATE to `dataLogger.logReading` (does NOT reimplement the INSERT -> byte-identical by construction); non-`raw.obd.*` topics return False, no write
+- Golden master: same 3 readings written via (a) inline `logReading` and (b) `bus.publish` -> `PersistenceSubscriber.handleSample` into two fresh SQLite DBs, asserts `realtime_data` rows EQUAL on (parameter_name, value, unit, profile_id, drive_id, data_source); id + write-time timestamp excluded
+
+### Files changed:
+- Created: `src/pi/bus/persistence_subscriber.py` (PersistenceSubscriber)
+- Created: `tests/pi/bus/test_persistence_subscriber.py` (3 unit tests), `tests/pi/bus/test_persistence_golden_master.py` (1 integration test)
+
+### Gates:
+- pytest tests/pi/bus/test_persistence_subscriber.py tests/pi/bus/test_persistence_golden_master.py = 4 passed (VC#1 dbA==dbB; VC#2 derived.gear -> False, logReading NOT called; VC#3 unit suite green)
+- full tests/pi/bus/ = 21 passed (17 prior + 4 new -> zero regression)
+- ruff check on all 3 files = All checks passed
+- mypy NOT runnable here (not installed system+venv; pip gated behind interactive approval in headless) -> typecheck AC deferred to PM/Atlas `make typecheck` at integration. Code is mypy-strict-shaped.
+
+### Learnings for future iterations:
+- **Verify-before-code paid off**: ObdDataLogger.__init__(connection, database, profileId=None, dataSource=None) [logger.py:132] + LoggedReading(parameterName, value, timestamp, unit=None, profileId=None) [types.py:71] matched the plan exactly -> no test adaptation needed (the plan's Task 6 note about possible signature drift did not bite).
+- **Gotcha (FK enforcement)**: `realtime_data.profile_id` FK-references `profiles(id)` AND `_getConnection` runs `PRAGMA foreign_keys = ON` (database.py:211) -- a golden master writing a non-null profile_id MUST seed a `profiles` row first or the INSERT raises a FK violation. Seeded a 'daily' profile in both DBs so profile_id is written + compared non-trivially. (profileId=None would also work but proves less.)
+- **Byte-identical by construction**: drive_id derives from `getCurrentDriveId()` at write time on BOTH paths (handleSample does NOT pass Sample.driveId through) -- the captured `Sample.driveId` is intentionally ignored in slice 1; capture-time attribution (which also hardens the A-9 boundary-race) is a deferred follow-up per the plan post-notes.
+- **Build-order note**: US-384 (RealtimeDataLogger publish seam + pi.bus.enabled flag) is the FIRST story this sprint to modify a PRE-EXISTING product file (src/pi/obdii/data/realtime.py) -> run tests/pi/obdii/data/ for regression + VERIFY whether utcIsoNow + getCurrentDriveId are already imported in realtime.py (plan Task 7 flag).
+---
+
+## 2026-06-19 - US-384 (Agent 1 / Rex)
+Task: RealtimeDataLogger publish seam (producer role) + pi.bus.enabled flag (default off)
+Outcome: SHIPPED passes:true. FIRST story this sprint to modify a pre-existing product file. With a SampleBus injected, the OBD poll loop publishes raw.obd.<param> Samples instead of writing the DB; with bus None the inline write path is byte-for-byte unchanged. Ships dark behind pi.bus.enabled=false. TDD red->green from slice-1 plan Task 7 + Task 8.
+
+### What was implemented:
+- `realtime.py` imports: `from common.time.helper import utcIsoNow` + `from ..drive_id import getCurrentDriveId` (both were MISSING -- plan Task 7 flag confirmed) + `from pi.bus.sample import Sample`
+- `RealtimeDataLogger.__init__`: keyword-only `bus: Any = None` + `producerSource: str = "obd"`; stores `_bus`/`_producerSource`/`_seq=0`/`_dataSource` (added `self._dataSource` -- the original __init__ forwarded dataSource to the inner logger but never retained it on self, and the publish path needs it for the Sample origin tag)
+- `dataLogger` property -- exposes the inner ObdDataLogger so the PersistenceSubscriber reuses the same writer (byte-identical rows by construction)
+- `_logReadingSafe` -- returns `self._publishReading(reading)` FIRST when `self._bus is not None`, ELSE the ORIGINAL inline try/logReading/_stats/_markRowWritten path UNCHANGED
+- `_publishReading` -- bumps `_seq`, builds `Sample(topic=f"raw.obd.{reading.parameterName}", source=_producerSource, value/unit from reading, tsUtc=utcIsoNow(), tsCapture=time.monotonic(), driveId=getCurrentDriveId(), dataSource=_dataSource or "real", seq=_seq)`, publishes, bumps totalLogged + _markRowWritten, returns True
+- Config: `'pi.bus.enabled': False` in validator DEFAULTS (near pi.sync.*) + `pi.bus.enabled=false` block in config.json (sibling of pi.sync)
+
+### Files changed:
+- Modified: `src/pi/obdii/data/realtime.py` (imports, __init__ params/body, dataLogger property, _logReadingSafe branch, _publishReading, header mod-history)
+- Modified: `src/common/config/validator.py` (pi.bus.enabled DEFAULT)
+- Modified: `config.json` (pi.bus block)
+- Created: `tests/pi/obdii/data/test_realtime_bus_publish.py` (2 tests)
+- Modified: `tests/test_config_validator.py` (2 tests: busDefault_disabled, busEnabled_explicitValuePreserved)
+
+### Gates:
+- VC#1 pytest tests/pi/obdii/data/test_realtime_bus_publish.py = 2 passed (Sample topic=raw.obd.RPM, seq increments 1 then 2)
+- VC#2 the literal tests/pi/obdii/data/ dir now holds ONLY the new file; existing RealtimeDataLogger coverage lives in tests/test_orchestrator_data_logging_*.py + tests/pi/obdii/test_capture_loop_integration.py + test_data_logger_restart_on_restore.py -> ran those 7 files = 61 passed (inline write path byte-for-byte unchanged, bus off)
+- VC#3 python validate_config.py = All validations passed; pi.bus.enabled resolves False by default (test_validate_busDefault_disabled green); full tests/test_config_validator.py green
+- tests/pi/bus/ = 21 passed (zero regression)
+- ruff check on all touched files = All checks passed
+- mypy NOT runnable here (verified `python -m mypy --version` -> No module named mypy; pip gated behind interactive approval in headless) -> typecheck AC deferred to PM/Atlas `make typecheck` at integration. Code is mypy-strict-shaped.
+
+### Learnings for future iterations:
+- **Plan path-assumption drift**: the plan's VC "pytest tests/pi/obdii/data/" assumes the realtime suite lives in that dir, but it does NOT -- that dir was empty before this story; the real RealtimeDataLogger regression coverage is scattered across tests/test_orchestrator_data_logging_{rate,filtering,callbacks,connections,config}.py + tests/pi/obdii/test_capture_loop_integration.py + test_data_logger_restart_on_restore.py. Run those for the inline-path regression gate, not just the literal plan path.
+- **Hidden state gap**: the original __init__ accepted `dataSource` and forwarded it to ObdDataLogger but never stored it on self -- the publish seam needed `self._dataSource`, so it had to be added (the test helper sets `_dataSource` manually, masking this until you check production wiring). VERIFY-before-code on attribute existence, not just method signatures.
+- **Build-order note**: US-385 (orchestrator wiring) is the LAST slice-1 story -- src/pi/obdii/orchestrator/lifecycle.py _initializeDataLogger builds the SampleBus + starts a PersistenceSubscriber on ['raw.obd.*'] LOSSLESS + injects the bus via createRealtimeLoggerFromConfig (the dataLogger property added here is what the subscriber binds to). VERIFY createRealtimeLoggerFromConfig signature in src/pi/obdii/data/__init__.py + the orchestrator class + attribute names in lifecycle.py before coding (plan Task 9 flag).
+---
+
+## 2026-06-19 - US-385 (Agent 1 / Rex; PM-integrated)
+Task: Orchestrator wiring behind pi.bus.enabled + ships-dark integration (slice-1 cutover)
+Outcome: SHIPPED passes:true. FINAL story of Sprint 46/V0.29.0. Code was complete + VC1-green from a prior iteration but left UNCOMMITTED when ralph.sh false-stalled (slow SMB full-suite vs iteration patience; task #18). PM integrated: re-verified VC1 (27 passed), ran VC2 (full pytest -m "not slow") green = ships-dark zero-regression, committed (6a2f688), flipped passes:true.
+
+### What shipped:
+- helpers.py createRealtimeLoggerFromConfig forwards optional bus
+- lifecycle.py _initializeDataLogger builds SampleBus + PersistenceSubscriber(['raw.obd.*'] LOSSLESS) gated on pi.bus.enabled; subscriber stopped on shutdown
+- tests/pi/obdii/orchestrator/test_lifecycle_bus_wiring.py: flag on/off wiring + end-to-end push-one-sample-writes-realtime-row
+
+### Gates: VC1 27 passed; VC2 full fast suite green (ships dark, flag off); ruff clean.
+
+*** SPRINT 46 / V0.29.0 COMPLETE: 6/6 passes:true. EDR bus Slice 1 ships dark behind pi.bus.enabled (default off). Ready for /sprint-deploy-pm. ***
+---

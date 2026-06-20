@@ -1081,7 +1081,7 @@
       "parent": "E-OPS",
       "title": "vehicle_info ECU + Calibration Signature Manual-Tracking Field",
       "description": "vehicle_info ECU + Calibration Signature Manual-Tracking Field",
-      "status": "active",
+      "status": "pending",
       "renamedFrom": "B-108",
       "createdAt": "2026-05-27",
       "updatedAt": "2026-05-27"
@@ -1103,7 +1103,10 @@
       "parent": "E-006",
       "status": "active",
       "createdAt": "2026-06-19",
-      "updatedAt": "2026-06-19"
+      "updatedAt": "2026-06-19",
+      "deployStatus": "awaiting-validation",
+      "currentVersion": "V0.29.0",
+      "note": "EDR bus Slice 1 shipped Sprint 46 (6/6); deployed V0.29.0 ships-dark behind pi.bus.enabled=false. Awaiting post-merge Pi flag-flip + byte-identical realtime_data validation (separate deploy gate) before complete."
     }
   ],
   "stories": [
