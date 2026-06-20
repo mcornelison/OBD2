@@ -9,6 +9,13 @@
 # ================================================================================
 # Date          | Author       | Description
 # ================================================================================
+# 2026-06-19    | Rex (US-385) | EDR bus slice 1 (ships dark): _initializeData
+#               |              | Logger builds a SampleBus + starts a
+#               |              | PersistenceSubscriber on ['raw.obd.*'] LOSSLESS
+#               |              | + injects the bus into createRealtimeLogger
+#               |              | FromConfig ONLY when pi.bus.enabled is True;
+#               |              | _shutdownDataLogger stops the subscriber.
+#               |              | Flag off (default) == today's behavior.
 # 2026-05-15    | Plan (T10)   | Cutover: removed in-process _recordStartupLog/
 #               |              | recordBootReason wiring (US-287). startup_log
 #               |              | is now written by boot-progress-arm.service
@@ -459,6 +466,12 @@ class LifecycleMixin:
     # F-107 (US-361) Mechanism B: pidfile single-instance guard.  Stays None
     # unless ``pi.runtime.singleInstanceGuard.enabled`` is True in config.
     _singleInstanceGuard: Any | None
+    # US-385 (EDR bus slice 1): the in-process SampleBus + its raw.obd.*
+    # PersistenceSubscriber.  Both stay None unless ``pi.bus.enabled`` is True
+    # (slice 1 ships dark).  Built in _initializeDataLogger, stopped in
+    # _shutdownDataLogger.
+    _sampleBus: Any | None
+    _persistenceSubscriber: Any | None
 
     def _initializeAllComponents(self) -> None:
         """
@@ -1479,15 +1492,46 @@ class LifecycleMixin:
         ADAPTER_UNREACHABLE / ECU_SILENT) and the ``_onCaptureFatalError``
         shutdown hook bounces the process on genuinely broken state via
         systemd ``Restart=always``.
+
+        US-385 (EDR bus slice 1): when ``pi.bus.enabled`` is True, route the
+        OBD reader through an in-process :class:`SampleBus` and a
+        :class:`PersistenceSubscriber` (subscribed to ``raw.obd.*``, LOSSLESS)
+        instead of the inline DB write.  The subscriber reuses the logger's
+        own :class:`ObdDataLogger` so the persisted rows are byte-identical to
+        the inline path.  Slice 1 ships dark: with the flag off (the default)
+        no bus or subscriber is built and behavior is identical to today.
         """
         logger.info("Starting dataLogger...")
+        # US-385: default to no bus / no subscriber (the ships-dark state).
+        self._sampleBus = None
+        self._persistenceSubscriber = None
+        busEnabled = bool(
+            self._config.get('pi', {}).get('bus', {}).get('enabled', False)
+        )
         try:
             from ..data import createRealtimeLoggerFromConfig
+            bus = None
+            if busEnabled:
+                from pi.bus.bus import SampleBus
+                bus = SampleBus()
+                self._sampleBus = bus
             self._dataLogger = createRealtimeLoggerFromConfig(
                 self._config, self._connection, self._database,
                 captureErrorHandler=self.handleCaptureError,
                 onFatalError=self._onCaptureFatalError,
+                bus=bus,
             )
+            if busEnabled:
+                from pi.bus.persistence_subscriber import PersistenceSubscriber
+                from pi.bus.sample import QoS
+                sub = bus.subscribe(["raw.obd.*"], QoS.LOSSLESS, "persistence")
+                self._persistenceSubscriber = PersistenceSubscriber(
+                    sub, self._dataLogger.dataLogger
+                )
+                self._persistenceSubscriber.start()
+                logger.info(
+                    "SampleBus + PersistenceSubscriber started (pi.bus.enabled)"
+                )
             logger.info("DataLogger started successfully")
         except ImportError:
             logger.warning("DataLogger not available, skipping")
@@ -2212,7 +2256,21 @@ class LifecycleMixin:
         self._shutdownSingleInstanceGuard()
 
     def _shutdownDataLogger(self) -> None:
-        """Shutdown the data logger component."""
+        """Shutdown the data logger component.
+
+        US-385: stop the EDR PersistenceSubscriber drain thread first (if the
+        bus was enabled) so it stops consuming before the logger/DB tear down.
+        A no-op when the flag was off (subscriber stays None).
+        """
+        subscriber = getattr(self, '_persistenceSubscriber', None)
+        if subscriber is not None:
+            try:
+                subscriber.stop()
+            except Exception as e:  # noqa: BLE001 -- shutdown must not raise out
+                logger.warning("Failed to stop PersistenceSubscriber: %s", e)
+            finally:
+                self._persistenceSubscriber = None
+                self._sampleBus = None
         self._stopComponentWithTimeout(self._dataLogger, 'dataLogger')
         self._dataLogger = None
 
