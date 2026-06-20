@@ -19,3 +19,7 @@ being blocked is pulled into a PRD.
 Distinct from a Story being in `status: blocked` — that's a state any Story can enter
 when impeded mid-work, captured via a `## Blockers` section in the Story.md. A
 `type: blocker` Story is a Story whose entire purpose is to unblock other work.
+
+---
+
+**2026-06-19 — bulk-archived.** All prior `blockers` records were moved to `offices/pm/archive/intake-records/blockers/` (records preserved + searchable; this folder stays retired per Rule 11). Re-surface any still-actionable record as a typed Story under its Feature.

@@ -26,3 +26,7 @@ PM inbox notes from other agents flagging defects (e.g., `2026-05-21-from-tester
 files) continue to land in `offices/pm/inbox/`, NOT here. Old inbox-style files
 sitting in this directory (e.g., the `2026-05-11-*` and `2026-05-21-*` entries) are
 legacy mis-routing — move to inbox or archive when noticed during grooming.
+
+---
+
+**2026-06-19 — bulk-archived.** All prior `issues` records were moved to `offices/pm/archive/intake-records/issues/` (records preserved + searchable; this folder stays retired per Rule 11). Re-surface any still-actionable record as a typed Story under its Feature.

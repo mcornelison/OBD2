@@ -20,3 +20,7 @@ in the affected area is pulled into a PRD.
 Going forward, all tech-debt work is named `US-NNN-*.md` (under
 `offices/pm/backlog/`) — never `TD-NNN`. The TD- prefix is retired from new
 issuance; the typed-Story system handles classification via the `type` field.
+
+---
+
+**2026-06-19 — bulk-archived.** All prior `tech_debt` records were moved to `offices/pm/archive/intake-records/tech_debt/` (records preserved + searchable; this folder stays retired per Rule 11). Re-surface any still-actionable record as a typed Story under its Feature.
