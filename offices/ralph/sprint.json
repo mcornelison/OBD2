@@ -245,8 +245,8 @@
       "epicId": "E-006",
       "type": "feature",
       "size": "M",
-      "status": "sprint-ready",
-      "passes": false,
+      "status": "passed",
+      "passes": true,
       "acceptance": [
         "_initializeDataLogger builds a SampleBus + starts a PersistenceSubscriber on ['raw.obd.*'] LOSSLESS + passes the bus to createRealtimeLoggerFromConfig, ONLY when pi.bus.enabled is true",
         "flag off: no bus, no subscriber, dataLogger behavior identical to today",

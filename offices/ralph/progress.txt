@@ -168,3 +168,17 @@ Outcome: SHIPPED passes:true. FIRST story this sprint to modify a pre-existing p
 - **Hidden state gap**: the original __init__ accepted `dataSource` and forwarded it to ObdDataLogger but never stored it on self -- the publish seam needed `self._dataSource`, so it had to be added (the test helper sets `_dataSource` manually, masking this until you check production wiring). VERIFY-before-code on attribute existence, not just method signatures.
 - **Build-order note**: US-385 (orchestrator wiring) is the LAST slice-1 story -- src/pi/obdii/orchestrator/lifecycle.py _initializeDataLogger builds the SampleBus + starts a PersistenceSubscriber on ['raw.obd.*'] LOSSLESS + injects the bus via createRealtimeLoggerFromConfig (the dataLogger property added here is what the subscriber binds to). VERIFY createRealtimeLoggerFromConfig signature in src/pi/obdii/data/__init__.py + the orchestrator class + attribute names in lifecycle.py before coding (plan Task 9 flag).
 ---
+
+## 2026-06-19 - US-385 (Agent 1 / Rex; PM-integrated)
+Task: Orchestrator wiring behind pi.bus.enabled + ships-dark integration (slice-1 cutover)
+Outcome: SHIPPED passes:true. FINAL story of Sprint 46/V0.29.0. Code was complete + VC1-green from a prior iteration but left UNCOMMITTED when ralph.sh false-stalled (slow SMB full-suite vs iteration patience; task #18). PM integrated: re-verified VC1 (27 passed), ran VC2 (full pytest -m "not slow") green = ships-dark zero-regression, committed (6a2f688), flipped passes:true.
+
+### What shipped:
+- helpers.py createRealtimeLoggerFromConfig forwards optional bus
+- lifecycle.py _initializeDataLogger builds SampleBus + PersistenceSubscriber(['raw.obd.*'] LOSSLESS) gated on pi.bus.enabled; subscriber stopped on shutdown
+- tests/pi/obdii/orchestrator/test_lifecycle_bus_wiring.py: flag on/off wiring + end-to-end push-one-sample-writes-realtime-row
+
+### Gates: VC1 27 passed; VC2 full fast suite green (ships dark, flag off); ruff clean.
+
+*** SPRINT 46 / V0.29.0 COMPLETE: 6/6 passes:true. EDR bus Slice 1 ships dark behind pi.bus.enabled (default off). Ready for /sprint-deploy-pm. ***
+---
