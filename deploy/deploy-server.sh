@@ -49,7 +49,12 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=addresses.sh
 . "$SCRIPT_DIR/addresses.sh"
 
-HOST="${SERVER_USER}@${SERVER_HOSTNAME}"
+# Connect via SERVER_HOST (the canonical IP from addresses.sh <- config.json
+# server.network.host), NOT SERVER_HOSTNAME. The hostname depends on local
+# name resolution (~/.ssh/config / DNS / hosts), which drifted stale to the
+# dead 10.27.27.10 after chi-srv-01 relocated to .120 (2026-06-18) and silently
+# routed every deploy to a dead address. The IP is the SSOT; use it directly.
+HOST="${SERVER_USER}@${SERVER_HOST}"
 PROJECT="${SERVER_PROJECT_PATH}"
 VENV="$HOME/obd2-server-venv"
 REMOTE_VENV="/home/${SERVER_USER}/obd2-server-venv"
@@ -74,7 +79,7 @@ for arg in "$@"; do
 done
 
 echo "=== OBD2v2 Server Deployment ==="
-echo "Host: ${SERVER_HOSTNAME}"
+echo "Host: ${SERVER_USER}@${SERVER_HOST} (${SERVER_HOSTNAME})"
 echo "Project: $PROJECT"
 echo ""
 
