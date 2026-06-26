@@ -8,6 +8,9 @@
 //   v6.1 2026-06-19 — CIO 1st-print fit-check: header ledge (the "foot") sat in
 //                     the cable path -> added a wire pass-through notch in the
 //                     ledge aligned with the cable-exit slot. (Recess already flat.)
+//   v6.2 2026-06-19 — CIO 2nd fit-check: +3mm board-to-wall clearance/side
+//                     (clr 1.0->4.0); back insertion mouth now OPEN to the rim to
+//                     kill the top_lip bridge that sagged/failed at ~95%.
 //
 // Render (git bash; numeric part selector avoids CLI quote-mangling):
 //   "/c/Program Files/OpenSCAD/openscad.exe" -o stl/shell.stl            -D part=1 light-sensor-case.scad
@@ -44,10 +47,15 @@ hole_inset_y = 2.54;    // from the high-Y (mount) edge
 
 // ---- Geometry knobs -----------------------------------------------------
 tilt        = 15;       // board tilt (deg)
-clr         = 1.0;      // board-to-wall clearance, each side (easy drop-in)
+clr         = 4.0;      // board-to-wall clearance, each side (v6.2 CIO: +3mm/side
+                        //   over the original 1.0 for more wiring/handling room)
 wall        = 2.0;      // side-wall thickness
 bottom_wall = 2.0;      // floor thickness
-cable_clr   = 2.5;      // space under header edge (solder joints + wires)
+cable_clr   = 5.5;      // space under header edge (solder joints + wires).
+                        //   v6.3 CIO 2026-06-26: +3mm (2.5->5.5) for more wire room.
+                        //   This single value drives board height, so it raises the
+                        //   standoffs, the header ledge ("lower support") AND the
+                        //   exterior walls/rim 3mm together (all referenced off it).
 air_gap     = 1.5;      // board top -> diffuser underside
 corner_r    = 1.5;      // outer corner radius
 
@@ -64,7 +72,7 @@ pilot_r  = 1.05;        // M2.5 self-tap pilot (Phi 2.1)
 pilot_dz = 6.0;         // pilot depth into post (along board normal)
 
 // ---- Cable exit (passenger side, low-Y wall) ----------------------------
-cable_w  = 7.0;         // rounded slot width  (4-5 small wires)
+cable_w  = 10.0;        // rounded slot width  (v6.3 CIO 2026-06-26: 7->10, +3mm wider)
 cable_h  = 3.5;         // rounded slot height
 
 // ---- Bottom face --------------------------------------------------------
@@ -91,7 +99,8 @@ case_y  = inner_y + 2*wall;
 diffuser_floor = board_t + air_gap;               // board-local Z, plate underside
 diffuser_roof  = diffuser_floor + lid_thickness + lid_clear;
 case_top_local = diffuser_roof + top_lip;         // board-local Z of the tilted rim
-raw_h = 22;                                        // tall blank; trimmed by tilt plane
+raw_h = 25;                                        // tall blank; trimmed by tilt plane
+                                                   //   (v6.3: 22->25 to clear the +3mm rim)
 
 // Plate FRONT-edge seating (board-local Y) and its WORLD position. The front
 // groove is built in world coords from these so the tilt can't shear it through
@@ -243,9 +252,14 @@ module shell() {
         // the front. Leaves front_skin of outer wall; the down-slope seating stop.
         translate([wall - groove_depth, front_skin, pf_z_lo - 0.4])
             cube([inner_x + 2*groove_depth, (pf_y_in + 0.3) - front_skin, (pf_z_hi + 0.4) - (pf_z_lo - 0.4)]);
-        // BACK (tall) wall insertion mouth — the only outer-face opening:
+        // BACK (tall) wall insertion mouth — OPEN ALL THE WAY TO THE RIM (v6.2).
+        // Previously the wall continued above the mouth (the top_lip), which forced
+        // a full-width unsupported BRIDGE across the mouth at the top — it sagged and
+        // failed at ~95%. Removing that strip eliminates the bridge entirely (no
+        // supports needed). The diffuser is still retained by the L/R side grooves +
+        // the front-edge stop + gravity (it seats down-slope toward the front).
         on_board() translate([-clr - groove_depth, board_h + clr, diffuser_floor])
-            cube([inner_x + 2*groove_depth, wall + 2, lid_thickness + lid_clear]);
+            cube([inner_x + 2*groove_depth, wall + 2, (case_top_local - diffuser_floor) + 6]);
 
         // ---- cable exit slot (low-Y wall, passenger side), rounded ----
         translate([case_x/2, wall/2, bottom_wall + cable_h/2])

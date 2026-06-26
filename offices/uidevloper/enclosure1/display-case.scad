@@ -133,6 +133,12 @@ case_y = base_case_y + clearance_top;    // extra on +Y side
 // #5 CIO 2026-06-10: the HDMI 90deg clearance gap belongs on the HDMI long edge,
 //    which is physically the Y=0 side. Push the window to the +Y end so the
 //    ~clearance_top empty band falls on the Y=0 (HDMI) side, not +Y.
+// v2.8 CIO 2026-06-26: open the window 2mm on the LEFT interior of the screen
+//    hole. In the CIO's front view (cable/Type-C on the RIGHT, wide band on TOP),
+//    his LEFT = the model +X edge (toward the OSOYOO logo, opposite the cable).
+//    Front shell ONLY; the frozen glass_cutout_x + case outline + back shell are
+//    untouched. Origin stays put; the +X window edge moves out 2mm.
+window_left_open = 2.0;   // extra window opening on the +X (logo-side) interior
 window_origin_x = (case_x - glass_cutout_x) / 2;         // centered in X
 window_origin_y = bezel_width + wall_t + clearance_top;  // gap falls on Y=0 (HDMI)
 glass_cx = window_origin_x + glass_cutout_x/2;
@@ -272,8 +278,10 @@ module front_shell() {
                 rounded_box(case_x - 2*interlock_inset, case_y - 2*interlock_inset,
                             1.8, max(corner_r - interlock_inset, 0.5));
         }
+        // window: frozen glass cutout, opened +window_left_open on the +X (logo)
+        // side only -> the CIO's "left interior of the screen hole" (front view).
         translate([window_origin_x, window_origin_y, -0.1])
-            cube([glass_cutout_x, glass_cutout_y, front_shell_z + 0.2]);
+            cube([glass_cutout_x + window_left_open, glass_cutout_y, front_shell_z + 0.2]);
         for (x = clip_positions_long) {
             translate([x - (clip_width+print_tol)/2, 0, 0])
                 cube([clip_width+print_tol, wall_t+print_tol+clip_hook_proud+0.5, clip_height+0.5]);

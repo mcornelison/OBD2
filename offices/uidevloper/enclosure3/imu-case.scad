@@ -38,7 +38,10 @@ comp_h     = 4.0;     // approx tallest top-side part (STEMMA QT) for ghost/clea
 clr         = 5.0;    // board-to-wall clearance, all sides (CIO 2026-06-17: room for wires)
 wall        = 2.0;    // side-wall thickness
 bottom_wall = 2.0;    // floor thickness
-standoff_h  = 3.0;    // board lift off the floor (under-board clearance + wiring)
+standoff_h  = 6.0;    // board lift off the floor (under-board clearance + wiring).
+                      //   v3 CIO 2026-06-26: +3mm (3->6). box_h = standoff_h + board_t
+                      //   + comp_clear, so this lifts the board 3mm AND raises the
+                      //   walls/rim 3mm together (comp_clear above the board preserved).
 comp_clear  = 6.0;    // open height above the board (connectors + soldered wires)
 corner_r    = 2.0;
 
@@ -76,7 +79,7 @@ vent_len = 4.5;
 vent_z   = 4.5;       // center Z of wall vents (above floor)
 
 // ---- Wire exit (4-5 wires, -Y long wall) --------------------------------
-cable_w  = 7.0;
+cable_w  = 10.0;      // v3 CIO 2026-06-26: 7->10, +3mm wider wire exit
 cable_h  = 5.0;       // taller so wires clear the board (CIO 2026-06-17)
 cable_z  = 3.0;       // center Z above floor; lowered so the slot drops into the under-board gap
 
