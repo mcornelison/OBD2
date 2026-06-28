@@ -182,3 +182,22 @@ Outcome: SHIPPED passes:true. FINAL story of Sprint 46/V0.29.0. Code was complet
 
 *** SPRINT 46 / V0.29.0 COMPLETE: 6/6 passes:true. EDR bus Slice 1 ships dark behind pi.bus.enabled (default off). Ready for /sprint-deploy-pm. ***
 ---
+
+## 2026-06-28 - (no story) Sprint 47/V0.29.1 dispatch refused (Agent 1 / Rex)
+Task: ralph.sh started an iteration against Sprint 47/V0.29.1
+Outcome: REFUSED-FIRST (Rule 1). Sprint is frozen-pending-gates, NOT dispatched. No story worked. Filed offices/pm/blockers/BL-sprint47-not-dispatched.md; emitted HUMAN_INTERVENTION_REQUIRED.
+
+### Why:
+- No `sprint/sprint47-V0.29.1` branch (working checkout on `dev`); Ralph cannot create branches (PM-owned, handbook §13).
+- HEAD = `5788c4c freeze(pm): ... routed to Atlas for Rule-13` -- Rule-13 sign-off not in history.
+- Pending `/resize-sprint` split decision (9 stories; candidate 47a A-9 / 47b rest) could re-shape stories before build.
+
+### Unblock path (PM):
+1. Confirm Atlas Rule-13 PASS on frozen bigDoDHash 687eb90b...
+2. Make /resize-sprint call (whole vs 47a/47b); re-freeze if scope changes.
+3. Create + switch `sprint/sprint47-V0.29.1` (fork dev), announce quiet window.
+4. Re-run ralph.sh -> Agent 1 picks US-386 (pure in-process RED reproducer, buildable, no IRL).
+
+### Learnings for future iterations:
+- **Gotcha**: a frozen sprint.json (frozenAt + bigDoDHash present, stories sprint-ready) does NOT mean dispatched. Check for the sprint branch + Atlas Rule-13 commit before working. "frozen" != "on a sprint branch + Rule-13 passed + dispatched".
+---
