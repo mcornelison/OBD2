@@ -1,11 +1,11 @@
 {
   "schemaVersion": "2.0.0",
-  "lastUpdated": "2026-06-19",
-  "updatedBy": "Marcus (PM) -- mint EDR bus Slice 1 (E-006/F-110/US-380..385)",
+  "lastUpdated": "2026-06-28",
+  "updatedBy": "Marcus (PM) -- mint Sprint 47/V0.29.1 data-integrity stories (A-9 US-386..390 + US-391 dtc-quarantine + US-392 A-15 config de-dup)",
   "counters": {
     "epic": 7,
     "feature": 111,
-    "story": 386
+    "story": 393
   },
   "epics": [
     {
@@ -511,7 +511,7 @@
       "parent": "E-004",
       "title": "Config-Driven Infrastructure Addresses (Standing Rule)",
       "description": "",
-      "status": "in-sprint",
+      "status": "active",
       "renamedFrom": "B-044",
       "createdAt": "2026-05-27",
       "updatedAt": "2026-05-27"
@@ -1291,7 +1291,7 @@
       "id": "US-380",
       "title": "Bus data types + Subscription (Sample, QoS, topicMatches, bounded queue + QoS overflow)",
       "parent": "F-110",
-      "type": "feature",
+      "type": "normal",
       "size": "M",
       "status": "sprint-ready",
       "goal": "Create the src/pi/bus/ package foundation: the immutable Sample envelope, the QoS enum, the topic prefix-matcher, and Subscription (one bounded queue per consumer with a QoS-keyed overflow policy + observability stats). Pure data types + queue logic, no wiring.",
@@ -1341,7 +1341,7 @@
       "id": "US-381",
       "title": "SampleBus core -- subscribe/publish fan-out (STREAM) + producer-never-blocks",
       "parent": "F-110",
-      "type": "feature",
+      "type": "normal",
       "size": "S",
       "status": "sprint-ready",
       "goal": "Add the SampleBus broker: subscribe() returns a Subscription; publish() fans a Sample out to every matching subscription synchronously and NEVER blocks (the queue buffer is the only async boundary). STREAM topics have no history.",
@@ -1385,7 +1385,7 @@
       "id": "US-382",
       "title": "STATE retained topics (last-value-cache) + integrity-gap markers",
       "parent": "F-110",
-      "type": "feature",
+      "type": "normal",
       "size": "S",
       "status": "sprint-ready",
       "goal": "Add retained STATE topics (publish(retain=True) -> last-value-cache, replayed to new subscribers) for slowly-changing data (VIN, calibration, state.config.*); and the honest-instrument integrity-gap marker -- a LOSSLESS overflow publishes event.integrity.gap rather than silently dropping.",
@@ -1430,7 +1430,7 @@
       "id": "US-383",
       "title": "PersistenceSubscriber -- writes realtime_data (byte-identical golden master)",
       "parent": "F-110",
-      "type": "feature",
+      "type": "normal",
       "size": "M",
       "status": "sprint-ready",
       "goal": "Add the subscriber that persists raw.obd.* samples to realtime_data by REUSING the existing ObdDataLogger.logReading() write path -- so the persisted rows are identical to today's inline path by construction. This is the 'one subscriber that saves data for the server' (B-104 raw emitter).",
@@ -1479,7 +1479,7 @@
       "id": "US-384",
       "title": "RealtimeDataLogger publish seam + pi.bus.enabled flag (default off)",
       "parent": "F-110",
-      "type": "feature",
+      "type": "normal",
       "size": "M",
       "status": "sprint-ready",
       "goal": "Give the OBD poll loop a producer role: when a SampleBus is injected, _logReadingSafe publishes a raw.obd.<param> Sample (per-producer monotonic seq) instead of writing the DB; when no bus, the existing write path is unchanged. Add the pi.bus.enabled config flag, default false.",
@@ -1526,7 +1526,7 @@
       "id": "US-385",
       "title": "Orchestrator wiring behind pi.bus.enabled + ships-dark integration (slice-1 cutover)",
       "parent": "F-110",
-      "type": "feature",
+      "type": "normal",
       "size": "M",
       "status": "sprint-ready",
       "goal": "Wire the bus into the orchestrator: when pi.bus.enabled, build a SampleBus, start a PersistenceSubscriber on raw.obd.* (LOSSLESS) bound to the logger's ObdDataLogger, and inject the bus into the logger; when off, behavior is identical to today. Slice 1 ships dark.",
@@ -1570,6 +1570,203 @@
       ],
       "createdAt": "2026-06-19",
       "updatedAt": "2026-06-19"
+    },
+    {
+      "id": "US-386",
+      "parent": "F-107",
+      "title": "Deterministic in-process reproducer for the DriveDetector close-signal defect (RED)",
+      "type": "issue",
+      "size": "M",
+      "status": "sprint-ready",
+      "goal": "As the regression suite, I want an in-process harness that drives DriveDetector through the failure scenarios via synthetic RPM / engine-on-off / timing inputs (NO comms events -- Spool ruled out comms-drop; connection_log shows zero drive_id on any failure/disconnect), asserting CORRECT behavior so the drives-28/29 defect (overlap + stale-open leak) reproduces deterministically WITHOUT the car.",
+      "definitionOfDone": [
+        "feeds a synthetic engine-state sequence for: (a) short ~3-min drive, (b) two back-to-back drives ~1 min apart, (c) key-on AFTER a drive whose close never fired",
+        "asserts: exactly ONE drive_id per physical drive (no overlap), each drive closes on key-off, a key-on after a stale-open opens a NEW drive_id (no absorption)",
+        "FAILS (RED) on current detector.py, reproducing the 28/29 signature (overlap + missed-close)",
+        "pure in-process; no IRL/hardware dependency",
+        "Typecheck passes; the RED test runs and its failure is documented"
+      ],
+      "conditionalOutcomes": [
+        "if the defect will NOT reproduce at the detector unit level (manifests only with the real orchestrator loop/threads/timing), STOP + escalate to Atlas -- reproduction needs the real lifecycle loop"
+      ],
+      "validationCriteria": [
+        { "action": "run the reproducer against current detector.py", "outcome": "RED -- reproduces overlap + missed-close in-process" },
+        { "action": "inspect the back-to-back scenario", "outcome": "two overlapping drive_ids minted (the defect); ids possibly out of temporal order" }
+      ],
+      "deps": [],
+      "sourceRefs": ["A-9", "F-107", "atlas-rca-ruling-2026-06-19", "spool-corroboration-29-vs-18-2026-06-18"],
+      "tasks": [],
+      "createdAt": "2026-06-28",
+      "updatedAt": "2026-06-28"
+    },
+    {
+      "id": "US-387",
+      "parent": "F-107",
+      "title": "RCA: root-cause the DriveDetector close / drive-end path",
+      "type": "research",
+      "size": "M",
+      "status": "sprint-ready",
+      "goal": "As the architect-gated investigation, with the reproducer in hand I want the exact mechanism for BOTH defects rendered. Opening premise (Spool, 2-table corroborated): comms-drop is RULED OUT -- the K-line is stable mid-drive; the drive never closing is purely the DriveDetector close-signal state machine not firing. Trace src/pi/obdii/drive/detector.py + orchestrator/lifecycle.py drive-start/-end/close logic.",
+      "definitionOfDone": [
+        "RCA names the exact code path + mechanism (file:line) for BOTH (1) drive fails to close and (2) a second drive_id opens over an open one (ids out of temporal order)",
+        "RCA explains the US-386 reproducer's RED behavior",
+        "RCA confirms/refutes the one-root hypothesis (defects 1+2 share the unreliable-close root) with evidence; incorporates Spool's connection_log finding (drive_start 29 / drive_end 18; zero drive_id on comms failures)",
+        "no fix in this story"
+      ],
+      "conditionalOutcomes": [
+        "if the real root differs from the unreliable-close-signal hypothesis, document what it ACTUALLY is -- do not force-fit"
+      ],
+      "validationCriteria": [
+        { "action": "read the RCA against the reproducer", "outcome": "mechanism identified, maps to the RED test, cites file:line" },
+        { "action": "Atlas review of the RCA", "outcome": "root cause accepted (gate for US-388)" }
+      ],
+      "deps": ["US-386"],
+      "sourceRefs": ["A-9", "F-107", "atlas-rca-ruling-2026-06-19"],
+      "tasks": [],
+      "createdAt": "2026-06-28",
+      "updatedAt": "2026-06-28"
+    },
+    {
+      "id": "US-388",
+      "parent": "F-107",
+      "title": "FIX DriveDetector close-signal reliability -- Root 2 (SHAPE PENDING RCA US-387)",
+      "type": "issue",
+      "size": "M",
+      "status": "pending",
+      "goal": "As the Pi drive-lifecycle, I want the Root-2 fix so the US-386 reproducer goes GREEN. Per Atlas ruling the target behaviors are: guaranteed-close + stamp drive_id ONLY when RUNNING + gap-fence the drive_id latch (idle/KOEO rows -> NULL so a stale-open cannot absorb a later key-on). Exact change shape pending the US-387 RCA -- frozen as shape-pending, build-blocked, per A-11.",
+      "definitionOfDone": [
+        "US-386 reproducer GREEN",
+        "no overlapping drive_ids in the back-to-back scenario",
+        "a key-on after a missed close opens a NEW drive_id (no multi-day-leak absorption)",
+        "idle/KOEO rows carry NULL drive_id (gap-fence)",
+        "existing DriveDetector + lifecycle tests stay green",
+        "if load-bearing, specs/architecture.md DriveDetector section updated in-sprint (Atlas design-gate DoD)",
+        "Typecheck passes; tests pass"
+      ],
+      "conditionalOutcomes": [
+        "BUILD BLOCKED until US-387 RCA accepted by Atlas -- do not code before the root cause is rendered",
+        "if the RCA reveals the fix is architectural (id-minting concurrency, detector re-entrancy), route back to Atlas for a design ruling BEFORE coding"
+      ],
+      "validationCriteria": [
+        { "action": "pytest the US-386 reproducer + existing detector/lifecycle suites", "outcome": "all green" },
+        { "action": "re-run the 3 scenarios (short / back-to-back / key-on-after-missed-close)", "outcome": "one drive_id each, all close, no absorption" }
+      ],
+      "deps": ["US-386", "US-387"],
+      "sourceRefs": ["A-9", "F-107", "atlas-rca-ruling-2026-06-19"],
+      "tasks": [],
+      "createdAt": "2026-06-28",
+      "updatedAt": "2026-06-28"
+    },
+    {
+      "id": "US-389",
+      "parent": "F-107",
+      "title": "Root 1 closure: bake single-instance guard + RuntimeDirectory as a matched-pair tested deploy invariant + version-stamp",
+      "type": "issue",
+      "size": "S",
+      "status": "sprint-ready",
+      "goal": "As the deploy path, I want Root 1 (concurrent-process dual-attribution -- mitigated out-of-band via guard enable d6d8b05 + RuntimeDirectory=eclipse-obd fae7ee7 + Pi deploy) made durable: bake the guard config flag + RuntimeDirectory as a MATCHED PAIR (Atlas C-5 -- neither ships without the other or the non-root service crash-loops) into the canonical deploy path as a tested invariant, confirm the journal spawn-source for the 06-06 double-process, and fold the out-of-band change into a proper V0.29.1 version stamp.",
+      "definitionOfDone": [
+        "deploy-pi.sh (or canonical deploy path) asserts BOTH pi.runtime.singleInstanceGuard.enabled=true AND RuntimeDirectory=eclipse-obd present in the deployed unit -- a test/guard fails the deploy if either is missing (matched-pair invariant, Atlas C-5)",
+        "deploy MUST systemctl stop the orchestrator before start (pair with the US-354 deploy-hygiene class) so the guard refuses a double-start rather than racing",
+        "journal confirmation: name the spawn trigger for the two concurrent eclipse-obd PIDs ~06-06 02:25 (systemd Restart= race / watchdog / manual+service overlap) -- documented in story notes or RCA",
+        ".deploy-version reconciled: the guard-enable + RuntimeDirectory recorded in the V0.29.1 version stamp (no longer silent-on-top-of V0.28.2)",
+        "specs/architecture.md boot-path section updated in-sprint (load-bearing boot change; Atlas Rule-10 signed off in the 2026-06-19 ruling -- action it)",
+        "Typecheck passes; tests pass"
+      ],
+      "conditionalOutcomes": [
+        "if the journal no longer holds the 06-06 boot window, document best-available evidence + the most likely spawn trigger rather than blocking"
+      ],
+      "validationCriteria": [
+        { "action": "run the deploy-invariant test with RuntimeDirectory removed from the unit fixture", "outcome": "deploy invariant FAILS loudly (matched-pair enforced)" },
+        { "action": "run the deploy-invariant test with the guard flag false", "outcome": "deploy invariant FAILS loudly" },
+        { "action": "inspect .deploy-version after a V0.29.1 deploy", "outcome": "records guard-enabled + RuntimeDirectory state" }
+      ],
+      "deps": [],
+      "sourceRefs": ["A-9", "F-107", "atlas-guard-DEPLOYED-2026-06-19", "atlas-rca-ruling-2026-06-19-C5", "US-354"],
+      "tasks": [],
+      "createdAt": "2026-06-28",
+      "updatedAt": "2026-06-28"
+    },
+    {
+      "id": "US-390",
+      "parent": "F-107",
+      "title": "Regression lock + server-tripwire backstop confirmation",
+      "type": "issue",
+      "size": "S",
+      "status": "pending",
+      "goal": "As the project, I want the US-386 reproducer locked into the regression suite/manifest permanently, and the V0.28.0 server tripwire (detect_overlapping_drives) confirmed to still flag any residual overlap -- belt-and-suspenders so a future Pi regression is still caught server-side even if the Pi fix regresses again.",
+      "definitionOfDone": [
+        "US-386 reproducer added to the fast suite / regression manifest (permanent)",
+        "a server-side test confirms detect_overlapping_drives still stamps data_quality=attribution_anomaly on a synthetic overlap",
+        "Typecheck passes; tests pass"
+      ],
+      "conditionalOutcomes": [],
+      "validationCriteria": [
+        { "action": "pytest fast suite including the reproducer", "outcome": "green" },
+        { "action": "synthetic-overlap tripwire test", "outcome": "attribution_anomaly stamped (backstop intact)" }
+      ],
+      "deps": ["US-388"],
+      "sourceRefs": ["A-9", "F-107"],
+      "tasks": [],
+      "createdAt": "2026-06-28",
+      "updatedAt": "2026-06-28"
+    },
+    {
+      "id": "US-391",
+      "parent": "F-076",
+      "title": "dtc_freeze_frame sync: quarantine unresolvable cross-tier rows after N failures (stop silent infinite retry)",
+      "type": "issue",
+      "size": "S",
+      "status": "sprint-ready",
+      "goal": "As the sync subsystem, I want a single unresolvable freeze-frame to stop retrying forever (it ran 27x/day for 3+ weeks with no dead-letter/quarantine/alert -- a silent infinite loop that would mask a REAL sync failure in the noise). 'Fail loudly, no silent re-resolve' is correct per-attempt but wrong at the queue level. After N consecutive identical resolution failures, quarantine the record (dead-letter table OR data_quality flag -- Atlas quick-read requested) and surface it ONCE. General safety net; US-367 self-heals the current specific orphan.",
+      "definitionOfDone": [
+        "after N consecutive identical cross-tier resolution failures on the same record, the sync loop quarantines it (dead-letter table or data_quality flag) and stops re-attempting every cycle",
+        "the quarantine event is surfaced exactly once (log/alert), not per-cycle",
+        "a quarantined record does NOT advance sync_log.last_synced_id and does NOT block other tables/records from syncing",
+        "quarantine is reversible: once the resolution target exists (e.g. US-367 lands), the record can re-enter the queue and sync",
+        "Typecheck passes; tests pass; a test proves N-failures -> quarantine -> single surfacing"
+      ],
+      "conditionalOutcomes": [
+        "if the dead-letter-table vs data_quality-flag choice turns architectural (schema/contract impact), route to Atlas for a ruling BEFORE coding (quick-read requested 2026-06-28)"
+      ],
+      "validationCriteria": [
+        { "action": "simulate an unresolvable cross-tier row for N+1 cycles", "outcome": "quarantined after N; surfaced once; no per-cycle re-fail" },
+        { "action": "make the resolution target resolvable then re-run", "outcome": "record leaves quarantine and syncs" },
+        { "action": "inspect sync_history during the unresolvable window", "outcome": "no unbounded identical-failure spam after quarantine" }
+      ],
+      "deps": [],
+      "sourceRefs": ["F-076", "spool-dtc-orphan-2026-06-28-defect-2", "sync.py:564"],
+      "tasks": [],
+      "createdAt": "2026-06-28",
+      "updatedAt": "2026-06-28"
+    },
+    {
+      "id": "US-392",
+      "parent": "F-044",
+      "title": "De-dup the server address inside config.json (derive base URLs from serverHost:serverPort)",
+      "type": "tech-debt",
+      "size": "S",
+      "status": "sprint-ready",
+      "goal": "As the infrastructure config, I want the A-15 structural gap behind the .10->.120 breakage closed: config.json holds the server address in multiple literals (serverBaseUrl / companionService.baseUrl) that nothing forces to agree. Derive them from serverHost:serverPort so the literal lives in ONE key -- a box move = one edit. Atlas's mirror-consistency lint already guards divergence; this removes the duplication it guards.",
+      "definitionOfDone": [
+        "config.json server/companion base URLs derive from serverHost:serverPort (single source key); no duplicated host literal",
+        "runtime consumers resolve the derived URL identically to before (no behavioral change)",
+        "scripts/audit_address_mirrors.py + tests/lint/test_address_mirror_consistency.py pass",
+        "validate_config.py passes; Typecheck passes; tests pass"
+      ],
+      "conditionalOutcomes": [
+        "if a consumer reads a base-URL key that cannot be cleanly derived (offline route-probe hasRouteToServer is IP-route-based), keep that consumer's IP resolution + document why; do NOT fold the hostname-resolution design change (separate A-15 design story) into this de-dup"
+      ],
+      "validationCriteria": [
+        { "action": "python validate_config.py", "outcome": "all pass" },
+        { "action": "pytest tests/lint/test_address_mirror_consistency.py -q", "outcome": "green" },
+        { "action": "grep config.json for the server IP literal", "outcome": "appears in exactly one key" }
+      ],
+      "deps": [],
+      "sourceRefs": ["A-15", "F-044", "atlas-a15-mirror-lint-2026-06-18", "config-json-server-address-dedup-gap"],
+      "tasks": [],
+      "createdAt": "2026-06-28",
+      "updatedAt": "2026-06-28"
     }
   ]
 }
