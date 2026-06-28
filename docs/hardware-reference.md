@@ -2,9 +2,9 @@
 
 ## Overview
 
-This document provides complete hardware specifications for the Eclipse OBD-II Raspberry Pi system. It covers the target platform, UPS HAT, display, and all hardware interfaces.
+This document provides complete hardware specifications for the Eclipse OBD-II Raspberry Pi system. It covers the target platform, UPS HAT, display, EDR sensors, and all hardware interfaces.
 
-**Last Updated**: 2026-01-25
+**Last Updated**: 2026-06-27 (added EDR sensors: TSL2591 light + ICM-20948 9-DoF IMU)
 
 For detailed specifications and developer guidance, see [specs/samples/piSpecs.md](../specs/samples/piSpecs.md).
 
@@ -30,7 +30,7 @@ For detailed specifications and developer guidance, see [specs/samples/piSpecs.m
 |-----------|---------|
 | USB-C | Power input from X1209 UPS HAT |
 | GPIO | Shutdown button, status LED |
-| I2C | UPS telemetry (battery voltage, current, percentage) |
+| I2C | UPS telemetry (0x36) + EDR sensors: TSL2591 light (0x29), ICM-20948 9-DoF IMU (0x69) |
 | HDMI | Display output (OSOYOO 3.5" screen) |
 | USB-A | Touch input from display |
 | Bluetooth | OBD-II ELM327 dongle communication |
@@ -80,9 +80,15 @@ I2C is used only for the MAX17048 fuel gauge's battery-health telemetry.
 
 | Parameter | Value | Notes |
 |-----------|-------|-------|
-| I2C Bus | 1 | Default on Raspberry Pi (`/dev/i2c-1`) |
-| UPS Address | `0x36` | Primary address for X1209 |
-| Alternate Address | `0x57` | Some X1209 variants use this |
+| I2C Bus | 1 | Default on Raspberry Pi (`/dev/i2c-1`) — shared multi-drop bus |
+| UPS Address | `0x36` | Primary address for X1209 (MAX17048 fuel gauge) |
+| UPS Alternate | `0x57` | Some X1209 variants use this |
+| TSL2591 (light) | `0x29` | **Fixed**, not changeable. EDR sensor — see EDR Sensors section |
+| ICM-20948 (IMU) | `0x69` | Default; `0x68` if `AD0`→GND. EDR sensor — see EDR Sensors section |
+
+All four devices share one multi-drop I2C bus (bus 1, pins 3/5). Addresses are
+distinct → no collision. `sudo i2cdetect -y 1` should show `29 36 69` (plus `57`
+on some UPS variants).
 
 ### Enabling I2C
 
@@ -119,6 +125,49 @@ For power-source detection see GPIO 6 PLD below + `PowerSourceProvider`
 in `src/pi/power/power_source_provider.py`. Refer to `src/pi/hardware/ups_monitor.py`
 for the byte-swap + scale-factor math (the chip stores word registers
 big-endian but SMBus `read_word_data` returns little-endian).
+
+---
+
+## EDR Sensors (Black-Box / Event Data Recorder)
+
+Two I2C sensors added 2026-06-27 for the EDR epic. Both join the **existing
+bus 1** (the same SDA/SCL the UPS HAT uses) as additional multi-drop devices —
+4 wires each (3.3 V / GND / SDA / SCL), powered at **3.3 V**. Full wiring/field
+card: [`docs/edr-sensors-wiring-reference.md`](edr-sensors-wiring-reference.md).
+
+> Software note: these are wired for the EDR-bus reader (a future epic). The
+> hardware milestone is `i2cdetect -y 1` showing all addresses; production
+> integration follows the EDR-bus contract (single dedicated reader → pub/sub),
+> not ad-hoc per-consumer reads.
+
+### TSL2591 — High-Dynamic-Range Light Sensor (Adafruit)
+
+| Spec | Value |
+|---|---|
+| I2C address | `0x29` (**fixed**, not changeable) |
+| Supply (`VIN`) | 3–5 V (use **3.3 V**); onboard regulator + level shifting |
+| Channels | visible, infrared, full-spectrum → computed lux |
+| Gain | 1x / 25x (default) / 428x / 9876x |
+| Integration time | 100 ms (default) … 600 ms |
+| Library | `adafruit-circuitpython-tsl2591` |
+| Use | ambient-light logging + display auto-dim (Iris UX) |
+
+### ICM-20948 — 9-DoF IMU (TDK InvenSense, Adafruit/SparkFun)
+
+| Spec | Value |
+|---|---|
+| I2C address | `0x69` (default); `0x68` if `AD0`→GND |
+| Supply (`VIN`) | 3–5 V (use **3.3 V**); onboard regulator + level shifting |
+| Sensors | 3-axis accel + 3-axis gyro (InvenSense) + 3-axis magnetometer (AK09916) |
+| Units | accel m/s² (gravity incl.) · gyro **rad/s** · mag µT |
+| Library | `adafruit-circuitpython-icm20x` (class `ICM20948`) |
+| Use | g-force / orientation / compass for event reconstruction + IMU-fusion analytics |
+
+**Mounting (data-quality critical):** ICM-20948 must be **rigidly chassis-mounted**
+with a known/documented axis orientation (resting Z ≈ 9.8 m/s² when level is the
+sanity check); magnetometer needs hard/soft-iron calibration in its final
+position, away from steel/motors/speakers. TSL2591 must face representative
+ambient light, not a dark cubby.
 
 ---
 
@@ -286,6 +335,8 @@ display_hdmi_rotate=2
 | OSOYOO Display | Touch | USB-A |
 | Shutdown Button | GPIO | GPIO17 (Pin 11) + GND |
 | Status LED | GPIO | GPIO27 (Pin 13) + GND |
+| TSL2591 (light, EDR) | I2C (3.3V/GND/SDA/SCL) | Pins 1·6·3·5 (shared bus) — addr 0x29 |
+| ICM-20948 (IMU, EDR) | I2C (3.3V/GND/SDA/SCL) | Pins 17·9·3·5 (shared bus) — addr 0x69 |
 
 ---
 
@@ -559,6 +610,7 @@ python src/pi/main.py
 
 | Date | Author | Description |
 |------|--------|-------------|
+| 2026-06-27 | Atlas (Architect) | Added EDR sensors: TSL2591 light (0x29) + ICM-20948 9-DoF IMU (0x69) on shared I2C bus 1. New EDR Sensors section, updated I2C/interface/connection tables. Field wiring card at `docs/edr-sensors-wiring-reference.md`. Specs + library names verified against Adafruit CircuitPython sources 2026-06-27. |
 | 2026-05-19 | Plan (SS-T9) | F-3 closed: deleted fictitious `0x08 Power Source` I2C register from the MAX17048 telemetry table + the example code; replaced with corrected MAX17048-only telemetry shape (VCELL/SOC/CRATE). F-4 closed: HAT identity stated vendor-confirmed + Bench-Check-A PASS. Power Loss Detection section repointed to the GPIO 6 PLD `PowerSourceProvider` SSOT + the 5 s smoothing window. |
 | 2026-01-25 | Ralph Agent | US-RPI-004: Added Initial Setup section with pi_setup.sh documentation |
 | 2026-01-25 | Ralph Agent | US-RPI-002: Added OBD2 module compatibility section, module matrix |
