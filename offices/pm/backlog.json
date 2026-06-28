@@ -1081,10 +1081,10 @@
       "parent": "E-OPS",
       "title": "vehicle_info ECU + Calibration Signature Manual-Tracking Field",
       "description": "vehicle_info ECU + Calibration Signature Manual-Tracking Field",
-      "status": "pending",
+      "status": "active",
       "renamedFrom": "B-108",
       "createdAt": "2026-05-27",
-      "updatedAt": "2026-05-27"
+      "updatedAt": "2026-06-28"
     },
     {
       "id": "F-109",
@@ -1113,47 +1113,68 @@
     {
       "id": "US-367",
       "parent": "F-108",
-      "title": "Backfill 2 ECU rows (prior + 2026-05-22 swap) + join verification",
+      "title": "Backfill 2 ECU lineage rows (supersede placeholder; close MD346675 era + open MD326328 era) + join verification",
       "type": "normal",
       "size": "S",
-      "status": "pending",
-      "goal": "As a server-side analytics consumer wanting per-drive ECU attribution, I want the historical ECU lineage backfilled into vehicle_info (prior ECU active before 2026-05-22 + new modified-EPROM ECU active from 2026-05-22 onward) so that any drive's start_time_utc can join to the active ECU at that time.",
+      "status": "sprint-ready",
+      "goal": "As a server-side analytics consumer wanting per-drive ECU attribution, I want the historical ECU lineage backfilled into vehicle_info as exactly two real eras -- prior ECU (MD346675) active before the ~2026-05-22 swap + new modified-EPROM ECU (MD326328) active from the swap onward -- SUPERSEDING the degenerate PRE_TRACKING_UNKNOWN bootstrap placeholder, so any drive's start_time_utc resolves to the active ECU at that time (and the stuck June-5 dtc_freeze_frame orphan self-heals). Per Atlas 2026-06-28 ruling: 2 rows (option a), NOT 3.",
       "definitionOfDone": [
-        "Backfill seeds exactly 2 rows: prior ECU (signature per Spool sign-off; install ts from CIO records; removal ts = 2026-05-22 swap) + new ECU (signature per F-108; install ts = 2026-05-22; removal ts = NULL)",
-        "Data sources documented in commit body: prior-ECU install timestamp source (Eclipse 1998 Projects.gsheet or earliest realtime_data.captured_at -- approximate but documented); 2026-05-22 swap timestamp precise per chain-merge history",
+        "Supersede the degenerate PRE_TRACKING_UNKNOWN placeholder (zero-width install==removal==2026-05-01 11:53:45) -- it is a failed bootstrap, NOT lineage; do NOT retain it as a 3rd live row. Net post-backfill state = exactly 2 real ECU-era rows (Atlas ruling option a; a 3rd row would overlap the MD346675 window at the resolver's >1-window raise, sync.py:605)",
+        "FK target = ecu_id: the backfill calls resolveOrCreateEcu for BOTH ECUs (MD346675 + MD326328), sets vehicle_info.ecu_id, and DERIVES the TEXT ecu_signature/cal_signature snapshot columns from the resolved ecu rows so findEcuCoherenceViolations() returns empty (Atlas: resolver + coherence key on ecu_id; TEXT signatures are derived snapshots)",
+        "Boundaries form a gapless single-active partition: prior ECU (MD346675) install = start-of-tracking (earliest tracked capture / the existing bootstrap instant -> gapless partition start, NULL per Atlas), removal = swap instant; new ECU (MD326328) install = swap instant, removal = NULL (currently active)",
+        "Swap instant is Spool's to derive (last old-ECU drive-end / first new-ECU drive-start, ~2026-05-22) and is passed to the backfill as a script PARAM -- NOT hardcoded",
         "Spool sign-off on signature naming convention recorded BEFORE backfill (per F-108 last bullet)",
-        "Backfill executed via stamp_ecu_swap CLI OR one-shot backfill script for first-row bootstrap",
-        "Join verification: SELECT drive_summary.drive_id, vehicle_info.ecu_signature FROM drive_summary JOIN vehicle_info ON drive_summary.start_time_utc BETWEEN install AND COALESCE(removal, NOW()) correctly partitions drives 1-24 (prior) + drives 25+ (new)"
+        "Placeholder provenance is recorded in the backfill script log + commit message -- NOT as a live lineage row",
+        "Bless the one-shot bootstrap/backfill script as the SOLE sanctioned exception to 'stamp_ecu_swap is the only vehicle_info mutator,' scoped to initial spine establishment (stamp_ecu_swap correctly refuses here -- placeholder closed -> getActiveVehicleInfo()==None; correcting a botched bootstrap is the backfill's job)",
+        "Data sources documented in commit body: prior-ECU start-of-tracking instant source (earliest realtime_data.captured_at or Eclipse 1998 Projects.gsheet -- approximate but documented); swap instant precise per Spool derivation",
+        "Join verification: drive_summary JOIN vehicle_info ON start_time_utc within [install, COALESCE(removal, NOW())] correctly partitions drives 1-24 (prior MD346675) + drives 25+ (new MD326328)",
+        "Coherence verification: findEcuCoherenceViolations() (vehicle_info_coherence.py) returns empty post-backfill; the resolver (sync.py:564-609) raises for NO drive (no >1-window overlap)"
       ],
       "conditionalOutcomes": [
-        "if Spool has not signed off on signature naming convention, BLOCK the backfill + route A2AL note to Spool",
-        "if stamp_ecu_swap cannot stamp the first row (bootstrap edge case), a one-shot backfill script handles the first row",
-        "if join verification shows any drive 1-24 partitioning to new ECU (or any drive 25+ partitioning to prior ECU), revise + re-backfill"
+        "if Spool has not signed off on signature naming convention OR has not derived the swap instant, BLOCK the backfill + route an A2AL note to Spool",
+        "if join verification shows any drive 1-24 partitioning to the new ECU (or any drive 25+ to the prior ECU), revise + re-backfill",
+        "if the resolver raises a >1-window overlap for any drive post-backfill, the partition is not gapless-single-active -- fix the install/removal boundaries (do NOT introduce an artificial micro-gap)"
       ],
       "validationCriteria": [
         {
           "action": "SELECT COUNT(*) FROM vehicle_info post-backfill",
-          "outcome": "Returns 2"
+          "outcome": "Returns 2 (placeholder superseded; 2 real eras)"
+        },
+        {
+          "action": "SELECT COUNT(*) FROM vehicle_info WHERE ecu_signature = 'PRE_TRACKING_UNKNOWN' (placeholder sentinel) post-backfill",
+          "outcome": "Returns 0 (placeholder superseded, not retained)"
         },
         {
           "action": "SELECT COUNT(*) FROM vehicle_info WHERE ecu_removal_timestamp_utc IS NULL post-backfill",
           "outcome": "Returns 1 (currently-active new ECU)"
         },
         {
+          "action": "SELECT COUNT(*) FROM vehicle_info WHERE ecu_id IS NULL post-backfill",
+          "outcome": "Returns 0 (both rows carry a resolved ecu_id FK)"
+        },
+        {
+          "action": "Run findEcuCoherenceViolations() post-backfill",
+          "outcome": "Returns empty (derived TEXT snapshots agree with the resolved ecu rows)"
+        },
+        {
           "action": "Run join verification SELECT against drive_summary for drives 1-24",
-          "outcome": "All rows JOIN to the prior-ECU row"
+          "outcome": "All rows JOIN to the prior-ECU (MD346675) row"
         },
         {
           "action": "Run join verification SELECT against drive_summary for drives 25+",
-          "outcome": "All rows JOIN to the new-ECU row"
+          "outcome": "All rows JOIN to the new-ECU (MD326328) row"
+        },
+        {
+          "action": "Inspect the backfill script signature / invocation",
+          "outcome": "Swap instant is a CLI/script param, not a hardcoded literal"
         },
         {
           "action": "Inspect commit body",
-          "outcome": "Both data sources documented: prior-ECU install timestamp source named (gsheet or realtime_data); 2026-05-22 swap timestamp precise + cross-referenced"
+          "outcome": "Data sources documented (start-of-tracking source + swap instant) + placeholder-supersede provenance recorded in script log/commit"
         },
         {
           "action": "Inspect Spool's inbox or offices/pm/inbox/",
-          "outcome": "Spool sign-off note on naming convention exists with date before backfill commit"
+          "outcome": "Spool sign-off note on naming convention + swap-instant derivation exists, dated before the backfill commit"
         }
       ],
       "deps": [
@@ -1162,13 +1183,13 @@
       ],
       "sourceRefs": [
         "F-108",
-        "prd-V0.28.0",
-        "atlas-refinement-row-9"
+        "prd-V0.29.1",
+        "atlas-refinement-row-9",
+        "atlas-sprint47-ruling-2026-06-28-2rows"
       ],
       "tasks": [],
       "createdAt": "2026-05-28",
-      "updatedAt": "2026-06-19",
-      "deferredNote": "Deferred from Sprint 43 (passes=False). ECU-backfill spine: bootstrap script never built + needs re-groom for ecu_id FK model + Atlas 2-vs-3-rows design ruling. Critical path; tracker prd-next-draft.md. (PM task #7)"
+      "updatedAt": "2026-06-28"
     },
     {
       "id": "US-370",
@@ -1668,7 +1689,7 @@
       "definitionOfDone": [
         "deploy-pi.sh (or canonical deploy path) asserts BOTH pi.runtime.singleInstanceGuard.enabled=true AND RuntimeDirectory=eclipse-obd present in the deployed unit -- a test/guard fails the deploy if either is missing (matched-pair invariant, Atlas C-5)",
         "deploy MUST systemctl stop the orchestrator before start (pair with the US-354 deploy-hygiene class) so the guard refuses a double-start rather than racing",
-        "journal confirmation: name the spawn trigger for the two concurrent eclipse-obd PIDs ~06-06 02:25 (systemd Restart= race / watchdog / manual+service overlap) -- documented in story notes or RCA",
+        "journal confirmation (Atlas RCA condition C-3): name the spawn trigger for the two concurrent eclipse-obd PIDs ~06-06 02:25 (systemd Restart= race / watchdog / manual+service overlap) -- documented in story notes or RCA; Root 1 is mitigated (guard live) but the spawn TRIGGER must be confirmed",
         ".deploy-version reconciled: the guard-enable + RuntimeDirectory recorded in the V0.29.1 version stamp (no longer silent-on-top-of V0.28.2)",
         "specs/architecture.md boot-path section updated in-sprint (load-bearing boot change; Atlas Rule-10 signed off in the 2026-06-19 ruling -- action it)",
         "Typecheck passes; tests pass"
@@ -1679,10 +1700,11 @@
       "validationCriteria": [
         { "action": "run the deploy-invariant test with RuntimeDirectory removed from the unit fixture", "outcome": "deploy invariant FAILS loudly (matched-pair enforced)" },
         { "action": "run the deploy-invariant test with the guard flag false", "outcome": "deploy invariant FAILS loudly" },
-        { "action": "inspect .deploy-version after a V0.29.1 deploy", "outcome": "records guard-enabled + RuntimeDirectory state" }
+        { "action": "inspect .deploy-version after a V0.29.1 deploy", "outcome": "records guard-enabled + RuntimeDirectory state" },
+        { "action": "inspect the story notes / RCA for the 06-06 02:25 spawn-source finding (Atlas RCA condition C-3)", "outcome": "names the spawn trigger (systemd Restart= race / watchdog / manual+service overlap), or best-available evidence + most-likely trigger if the journal aged out" }
       ],
       "deps": [],
-      "sourceRefs": ["A-9", "F-107", "atlas-guard-DEPLOYED-2026-06-19", "atlas-rca-ruling-2026-06-19-C5", "US-354"],
+      "sourceRefs": ["A-9", "F-107", "atlas-guard-DEPLOYED-2026-06-19", "atlas-rca-ruling-2026-06-19-C5", "atlas-rca-ruling-2026-06-19-C3", "US-354"],
       "tasks": [],
       "createdAt": "2026-06-28",
       "updatedAt": "2026-06-28"
@@ -1720,22 +1742,24 @@
       "status": "sprint-ready",
       "goal": "As the sync subsystem, I want a single unresolvable freeze-frame to stop retrying forever (it ran 27x/day for 3+ weeks with no dead-letter/quarantine/alert -- a silent infinite loop that would mask a REAL sync failure in the noise). 'Fail loudly, no silent re-resolve' is correct per-attempt but wrong at the queue level. After N consecutive identical resolution failures, quarantine the record (dead-letter table OR data_quality flag -- Atlas quick-read requested) and surface it ONCE. General safety net; US-367 self-heals the current specific orphan.",
       "definitionOfDone": [
-        "after N consecutive identical cross-tier resolution failures on the same record, the sync loop quarantines it (dead-letter table or data_quality flag) and stops re-attempting every cycle",
-        "the quarantine event is surfaced exactly once (log/alert), not per-cycle",
+        "Atlas invariant 1 -- after N consecutive identical cross-tier resolution failures on the same record, the sync loop quarantines it (dead-letter table or data_quality flag) and stops re-attempting every cycle",
+        "Atlas invariant 2 -- the raw freeze-frame record is PRESERVED (never dropped) when quarantined; quarantine throttles re-resolution, it does not discard data",
+        "Atlas invariant 3 -- the quarantine event is surfaced exactly once (log/alert), not per-cycle",
+        "Atlas invariant 4 -- quarantine is re-drainable (throttled/retryable, NOT terminal): once the resolution target exists (e.g. US-367 lands), the record re-enters the queue and syncs",
         "a quarantined record does NOT advance sync_log.last_synced_id and does NOT block other tables/records from syncing",
-        "quarantine is reversible: once the resolution target exists (e.g. US-367 lands), the record can re-enter the queue and sync",
-        "Typecheck passes; tests pass; a test proves N-failures -> quarantine -> single surfacing"
+        "Typecheck passes; tests pass; a test proves N-failures -> quarantine -> single surfacing -> re-drain"
       ],
       "conditionalOutcomes": [
-        "if the dead-letter-table vs data_quality-flag choice turns architectural (schema/contract impact), route to Atlas for a ruling BEFORE coding (quick-read requested 2026-06-28)"
+        "if the chosen mechanism needs a NEW CROSS-TIER TABLE (A-4-family versioned-contract change), route to Atlas for a ruling BEFORE coding -- per his 2026-06-28 quick-read a data_quality flag is Ralph-pickable, a new cross-tier dead-letter table is the architectural case"
       ],
       "validationCriteria": [
         { "action": "simulate an unresolvable cross-tier row for N+1 cycles", "outcome": "quarantined after N; surfaced once; no per-cycle re-fail" },
-        { "action": "make the resolution target resolvable then re-run", "outcome": "record leaves quarantine and syncs" },
+        { "action": "after quarantine, query the source table for the offending freeze-frame record", "outcome": "the raw record still exists (preserved, not deleted)" },
+        { "action": "make the resolution target resolvable then re-run", "outcome": "record leaves quarantine and syncs (re-drainable)" },
         { "action": "inspect sync_history during the unresolvable window", "outcome": "no unbounded identical-failure spam after quarantine" }
       ],
       "deps": [],
-      "sourceRefs": ["F-076", "spool-dtc-orphan-2026-06-28-defect-2", "sync.py:564"],
+      "sourceRefs": ["F-076", "spool-dtc-orphan-2026-06-28-defect-2", "sync.py:564", "atlas-sprint47-ruling-2026-06-28-us391"],
       "tasks": [],
       "createdAt": "2026-06-28",
       "updatedAt": "2026-06-28"

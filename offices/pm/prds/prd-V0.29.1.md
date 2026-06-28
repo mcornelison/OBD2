@@ -11,7 +11,7 @@ epic: E-002
 feature: F-107
 theme: Data-integrity hardening
 atlasRule13: PENDING
-freezeGate: "US-367 DoD re-groom pending Atlas 2-vs-3-row ruling (requested 2026-06-28); do not freeze until it lands (A-11)"
+freezeGate: "CLOSED 2026-06-28 -- Atlas ruled US-367=2 rows (option a, supersede placeholder) + US-391 quick-read + RCA C-3 + re-drain deploy-gate (inbox 2026-06-28-from-atlas-sprint47-rulings-us367-us391); US-367 DoD re-groomed in backlog.json. Ready for prd_to_sprint.py freeze."
 ---
 
 # PRD — Sprint 47 / V0.29.1 — Data-Integrity Hardening
@@ -60,7 +60,7 @@ conditional outcomes) is the single source of truth in `backlog.json` and the
 | **US-388** | F-107 | M | **Root-2 fix** — guaranteed-close + stamp-only-when-RUNNING + gap-fence the drive_id latch. **SHAPE-PENDING, build-blocked on US-387 (A-11).** |
 | **US-389** | F-107 | S | **Root-1 closure** — bake the single-instance guard + `RuntimeDirectory` as a matched-pair tested deploy invariant (C-5) + version-stamp the out-of-band change. |
 | **US-390** | F-107 | S | Regression lock + confirm the server tripwire backstop. |
-| **US-367** | F-108 | S | **ECU lineage-spine backfill** — close `MD346675` era + open `MD326328` era; self-heals the stuck June-5 freeze-frame. **DoD re-groom pending Atlas 2-vs-3-row ruling.** |
+| **US-367** | F-108 | S | **ECU lineage-spine backfill** — **supersede the `PRE_TRACKING_UNKNOWN` placeholder** + write 2 real eras (close `MD346675`, open `MD326328`), FK=`ecu_id`, swap-instant as param; self-heals the stuck June-5 freeze-frame. **Atlas ruled 2 rows (option a) 2026-06-28.** |
 | **US-391** | F-076 | S | `dtc_freeze_frame` sync quarantine after N failures (stop silent infinite retry). |
 | **US-392** | F-044 | S | A-15 config.json server-address de-dup (derive base URLs from `serverHost:serverPort`). |
 | **US-379** | F-076 | S | Test-only: fix the stale harness fixture from the US-371 `drive_id`→`summary_id` rename. |
@@ -68,16 +68,26 @@ conditional outcomes) is the single source of truth in `backlog.json` and the
 Build chain: US-386 → US-387 → US-388 → US-390 (A-9 core); US-389, US-367, US-391,
 US-392, US-379 are independent.
 
-## Open freeze-gates (must close before `prd_to_sprint.py`)
+## Freeze-gates
 
-1. **US-367 — Atlas 2-vs-3-row ruling** (requested 2026-06-28). Per Watch List
-   A-11, US-367's DoD must not be frozen with rendered detail until the ruling
-   lands. Re-groom US-367 in `backlog.json` to the ruling, then freeze.
+1. **US-367 — Atlas 2-vs-3-row ruling — CLOSED 2026-06-28.** Atlas ruled **2 rows
+   (option a)**: supersede the degenerate `PRE_TRACKING_UNKNOWN` placeholder (3 rows
+   = resolver overlap hazard at `sync.py:605`). DoD re-groomed in `backlog.json` to
+   the 5 conditions (FK=`ecu_id` via `resolveOrCreateEcu` + derived TEXT snapshots;
+   swap-instant as script param; `MD346675` install = start-of-tracking/NULL;
+   placeholder→log-not-row; bless the one-shot bootstrap script). Coherence +
+   resolver no-overlap added to validation.
 2. **US-388 — stays shape-pending.** Its `validationCriteria` are stable (reproducer
    green + 3-scenario behavior) but the implementation shape is deliberately
-   unfrozen; keep the build-blocked conditionalOutcome.
-3. **US-391 — Atlas quick-read** on dead-letter-table vs `data_quality`-flag
-   (non-blocking; a conditionalOutcome routes back if it turns structural).
+   unfrozen; keep the build-blocked conditionalOutcome. (Atlas confirmed correct as
+   drafted.)
+3. **US-391 — Atlas quick-read — CLOSED 2026-06-28.** Ralph-pickable with the 4
+   invariants now encoded in DoD (stop-after-N / preserve-raw / surface-once /
+   re-drainable); the conditionalOutcome routes back to Atlas only if it needs a
+   **new cross-tier table** (A-4-family versioned-contract change).
+4. **US-387/389 — RCA condition C-3 added.** Confirm the 06-06 02:25 spawn-source
+   for the two concurrent `eclipse-obd` PIDs (now an explicit acceptance criterion
+   on US-389).
 
 ## Validation (Argus)
 
@@ -105,9 +115,17 @@ falsely re-closed A-9 on drive-27.
 
 The A-9 IRL re-gate and the US-367 self-heal verification (confirming
 `dtc_freeze_frame` COUNT > 0 + no recurring sync failures on chi-srv-01) are
-deploy-time validations, not part of the merge. Also fold the still-pending
-**Sprint 46 / V0.29.0 Pi flag-flip validation** (`pi.bus.enabled`) into this
-deploy window if convenient — both target the same Pi.
+deploy-time validations, not part of the merge.
+
+**US-367 ↔ US-391 cross-story (Atlas §3, 2026-06-28):** US-367 self-heals the
+June-5 orphan by making it resolve on the next sync cycle — but if US-391 has
+already quarantined that record, the self-heal only lands if quarantine is
+re-drainable (US-391 invariant 4). So the post-merge gate must, **alongside the
+existing `COUNT(*) > 0` check, re-drain the quarantine after US-367 lands** and
+confirm the orphan clears.
+
+Also fold the still-pending **Sprint 46 / V0.29.0 Pi flag-flip validation**
+(`pi.bus.enabled`) into this deploy window if convenient — both target the same Pi.
 
 ## Sizing note (PM)
 

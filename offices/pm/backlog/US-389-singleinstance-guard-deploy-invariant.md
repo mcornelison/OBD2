@@ -6,8 +6,9 @@ parent: F-107
 epicId: E-002
 size: S
 status: sprint-ready
-sourceRefs: [A-9, F-107, atlas-guard-DEPLOYED-2026-06-19, atlas-rca-ruling-2026-06-19-C5, US-354]
+sourceRefs: [A-9, F-107, atlas-guard-DEPLOYED-2026-06-19, atlas-rca-ruling-2026-06-19-C5, atlas-rca-ruling-2026-06-19-C3, US-354]
 created: 2026-06-28
+updated: 2026-06-28
 ---
 
 # US-389 — Root 1 closure: matched-pair guard + RuntimeDirectory deploy invariant
@@ -38,7 +39,7 @@ change into a proper V0.29.1 version stamp.
 
 - deploy-pi.sh (or canonical deploy path) asserts BOTH pi.runtime.singleInstanceGuard.enabled=true AND RuntimeDirectory=eclipse-obd present in the deployed unit — a test/guard fails the deploy if either is missing (matched-pair invariant, Atlas C-5)
 - deploy MUST systemctl stop the orchestrator before start (pair with the US-354 deploy-hygiene class) so the guard refuses a double-start rather than racing
-- journal confirmation: name the spawn trigger for the two concurrent eclipse-obd PIDs ~06-06 02:25 (systemd Restart= race / watchdog / manual+service overlap) — documented in story notes or RCA
+- journal confirmation (**Atlas RCA condition C-3**): name the spawn trigger for the two concurrent eclipse-obd PIDs ~06-06 02:25 (systemd Restart= race / watchdog / manual+service overlap) — documented in story notes or RCA; Root 1 is mitigated (guard live) but the spawn TRIGGER must be confirmed
 - .deploy-version reconciled: the guard-enable + RuntimeDirectory recorded in the V0.29.1 version stamp (no longer silent-on-top-of V0.28.2)
 - specs/architecture.md boot-path section updated in-sprint (load-bearing boot change; Atlas Rule-10 signed off in the 2026-06-19 ruling — action it)
 - Typecheck passes; tests pass
@@ -48,6 +49,7 @@ change into a proper V0.29.1 version stamp.
 - (run the deploy-invariant test with RuntimeDirectory removed from the unit fixture) → (deploy invariant FAILS loudly (matched-pair enforced))
 - (run the deploy-invariant test with the guard flag false) → (deploy invariant FAILS loudly)
 - (inspect .deploy-version after a V0.29.1 deploy) → (records guard-enabled + RuntimeDirectory state)
+- (inspect the story notes / RCA for the 06-06 02:25 spawn-source finding — **Atlas RCA condition C-3**) → (names the spawn trigger — systemd Restart= race / watchdog / manual+service overlap — or best-available evidence + most-likely trigger if the journal aged out)
 
 ## Conditional Outcomes
 
@@ -58,3 +60,9 @@ change into a proper V0.29.1 version stamp.
 Implements Atlas condition C-5 (matched-pair invariant). No dependency on the
 US-386/387/388 reproducer chain — the Root-1 mitigation is already deployed; this
 Story makes it a durable, tested, version-stamped invariant.
+
+**2026-06-28 (Atlas freeze-gate ruling §4):** Atlas flagged that RCA condition
+**C-3** (confirm the 06-06 02:25 spawn TRIGGER for the two concurrent
+`eclipse-obd` PIDs) was not visible as an acceptance criterion. It lives in this
+Story's DoD (journal-confirmation bullet) and is now also an explicit validation
+criterion. Root 1 is mitigated (guard live) but the spawn trigger is unconfirmed.
