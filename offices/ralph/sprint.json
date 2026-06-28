@@ -1,309 +1,398 @@
 {
   "schemaVersion": "2.0.0",
-  "sprint": 46,
-  "version": "V0.29.0",
-  "createdFromPRD": "offices/pm/prds/prd-V0.29.0.md",
+  "sprint": 47,
+  "version": "V0.29.1",
+  "createdFromPRD": "offices/pm/prds/prd-V0.29.1.md",
   "stories": [
     {
-      "id": "US-380",
-      "title": "Bus data types + Subscription (Sample, QoS, topicMatches, bounded queue + QoS overflow)",
-      "parent": "F-110",
-      "epicId": "E-006",
-      "type": "feature",
+      "id": "US-386",
+      "title": "Deterministic in-process reproducer for the DriveDetector close-signal defect (RED)",
+      "parent": "F-107",
+      "epicId": "E-002",
+      "type": "issue",
       "size": "M",
-      "status": "passed",
-      "passes": true,
+      "status": "sprint-ready",
+      "passes": false,
       "acceptance": [
-        "Sample is a frozen dataclass with fields: topic, source, value(float|tuple), unit, tsUtc, tsCapture, driveId, dataSource, seq",
-        "QoS enum has exactly LOSSLESS and LOSSY",
-        "topicMatches('raw.*','raw.obd.RPM')=True; exact pattern matches only itself; NOT regex",
-        "Subscription bounded queue: LOSSY drops oldest on full (droppedCount bumps); LOSSLESS _offer returns False on overflow and NEVER blocks; the already-queued sample is preserved",
-        "stats() exposes depth, highWater, droppedCount, lastSeqBySource",
-        "stdlib only (dataclasses/enum/queue), no new dependencies",
-        "Typecheck (mypy) passes",
-        "Tests pass"
+        "feeds a synthetic engine-state sequence for: (a) short ~3-min drive, (b) two back-to-back drives ~1 min apart, (c) key-on AFTER a drive whose close never fired",
+        "asserts: exactly ONE drive_id per physical drive (no overlap), each drive closes on key-off, a key-on after a stale-open opens a NEW drive_id (no absorption)",
+        "FAILS (RED) on current detector.py, reproducing the 28/29 signature (overlap + missed-close)",
+        "pure in-process; no IRL/hardware dependency",
+        "Typecheck passes; the RED test runs and its failure is documented"
       ],
       "validationCriteria": [
         {
-          "action": "pytest tests/pi/bus/test_sample.py tests/pi/bus/test_subscription.py",
-          "outcome": "green"
+          "action": "run the reproducer against current detector.py",
+          "outcome": "RED -- reproduces overlap + missed-close in-process"
         },
         {
-          "action": "construct a Sample then assign .value",
-          "outcome": "raises FrozenInstanceError"
-        },
-        {
-          "action": "offer 3 samples to a LOSSY maxQueue=2 subscription",
-          "outcome": "oldest dropped, poll yields seq 2 then 3, droppedCount=1"
-        },
-        {
-          "action": "offer 2 samples to a LOSSLESS maxQueue=1 subscription",
-          "outcome": "_offer returns False on the 2nd, first sample still queued, call never blocks"
+          "action": "inspect the back-to-back scenario",
+          "outcome": "two overlapping drive_ids minted (the defect); ids possibly out of temporal order"
         }
       ],
       "conditionalOutcomes": [
-        "if topic matching seems to need multi-level wildcards beyond a trailing '.*', STOP -- out of scope (YAGNI); confirm with Atlas before adding"
+        "if the defect will NOT reproduce at the detector unit level (manifests only with the real orchestrator loop/threads/timing), STOP + escalate to Atlas -- reproduction needs the real lifecycle loop"
       ],
-      "goal": "Create the src/pi/bus/ package foundation: the immutable Sample envelope, the QoS enum, the topic prefix-matcher, and Subscription (one bounded queue per consumer with a QoS-keyed overflow policy + observability stats). Pure data types + queue logic, no wiring.",
-      "tasks": [],
-      "feedback": {
-        "filesActuallyTouched": [
-          "src/pi/bus/__init__.py (created -- new bus package marker + header)",
-          "src/pi/bus/sample.py (created -- frozen Sample dataclass + QoS enum)",
-          "src/pi/bus/bus.py (created -- topicMatches(), SubStats, Subscription; SampleBus deferred to US-381)",
-          "tests/pi/bus/__init__.py (created -- test package marker)",
-          "tests/pi/bus/test_sample.py (created -- 3 tests: immutability, all-fields, QoS members)",
-          "tests/pi/bus/test_subscription.py (created -- 5 tests: topicMatches, FIFO poll, LOSSY drop-oldest, LOSSLESS overflow-signal, stats)"
-        ]
-      },
-      "completionNotes": "TDD red->green. Built from docs/superpowers/plans/2026-06-18-edr-bus-slice1-dedicated-reader.md Task 1 (Sample/QoS) + Task 2 (topicMatches/SubStats/Subscription); SampleBus intentionally NOT included (it is US-381 scope). stdlib only (dataclasses/enum/queue). GATES: pytest tests/pi/bus/test_sample.py tests/pi/bus/test_subscription.py = 8 passed (VC#1 green); FrozenInstanceError on .value reassign (VC#2); LOSSY maxQueue=2 + 3 offers -> poll yields seq 2 then 3, droppedCount=1 (VC#3); LOSSLESS maxQueue=1 + 2 offers -> 2nd _offer returns False, seq 1 preserved, never blocks (VC#4). ruff check clean on src/pi/bus/ + tests/pi/bus/. ENVIRONMENT LIMITATION: mypy NOT installed (system + .venv); pip install requires interactive approval unavailable in headless run -- typecheck acceptance criterion could NOT be executed here. Code is written to mypy-strict standards (from __future__ import annotations, fully typed dataclass fields + function signatures, no untyped defs, no Any). PM/Atlas should run `make typecheck` at integration to close the mypy gate. Additive-only (new package); no existing files touched -> zero regression surface. Changes committed to sprint branch sprint/sprint46-V0.29.0."
+      "goal": "As the regression suite, I want an in-process harness that drives DriveDetector through the failure scenarios via synthetic RPM / engine-on-off / timing inputs (NO comms events -- Spool ruled out comms-drop; connection_log shows zero drive_id on any failure/disconnect), asserting CORRECT behavior so the drives-28/29 defect (overlap + stale-open leak) reproduces deterministically WITHOUT the car.",
+      "tasks": []
     },
     {
-      "id": "US-381",
-      "title": "SampleBus core -- subscribe/publish fan-out (STREAM) + producer-never-blocks",
-      "parent": "F-110",
-      "epicId": "E-006",
-      "type": "feature",
-      "size": "S",
-      "status": "passed",
-      "passes": true,
-      "acceptance": [
-        "SampleBus.subscribe(topics, qos, name, maxQueue) returns a usable Subscription",
-        "publish(sample) delivers only to subscriptions whose patterns match the topic",
-        "STREAM: a subscriber created after a publish does NOT receive that earlier sample",
-        "publish() returns promptly even when a subscriber never drains its queue (no blocking call in the publish path)",
-        "Typecheck passes",
-        "Tests pass"
-      ],
-      "validationCriteria": [
-        {
-          "action": "pytest tests/pi/bus/test_bus_stream.py",
-          "outcome": "green"
-        },
-        {
-          "action": "publish 1000 samples to an undrained LOSSY maxQueue=2 subscriber",
-          "outcome": "all publish calls return; never hangs"
-        },
-        {
-          "action": "subscribe to 'raw.*' after a prior publish, then poll",
-          "outcome": "no historical sample delivered (only post-subscribe)"
-        }
-      ],
-      "conditionalOutcomes": [],
-      "goal": "Add the SampleBus broker: subscribe() returns a Subscription; publish() fans a Sample out to every matching subscription synchronously and NEVER blocks (the queue buffer is the only async boundary). STREAM topics have no history.",
-      "tasks": [],
-      "feedback": {
-        "filesActuallyTouched": [
-          "src/pi/bus/bus.py (modified -- appended SampleBus class: subscribe()/publish() fan-out; threading import + dormant _retained dict & retain param for signature stability ahead of US-382)",
-          "tests/pi/bus/test_bus_stream.py (created -- 4 tests: fan-out-to-matching-only, STREAM-no-history, usable-subscription, never-block-on-undrained)"
-        ]
-      },
-      "completionNotes": "TDD red->green from docs/superpowers/plans/2026-06-18-edr-bus-slice1-dedicated-reader.md Task 3. RED confirmed: ImportError cannot import name 'SampleBus' from pi.bus.bus. GREEN: appended SampleBus to the SAME bus.py US-380 created -- subscribe() registers+returns a Subscription under a threading.Lock; publish() snapshots the sub list under the lock then _offer()s the sample into every sub whose patterns match (synchronous fan-out, non-blocking enqueue = the queue is the only async boundary -> producer never blocks). STREAM has no history (no replay on subscribe). The retain param + _retained dict are pre-declared dormant (NOT honored here -- retention behavior is US-382 scope) per the plan, to keep the public publish() signature stable across stories. GATES: pytest tests/pi/bus/test_bus_stream.py = 4 passed (VC#1); VC#2 1000 publishes to an undrained LOSSY maxQueue=2 (+ a LOSSLESS maxQueue=2) sub all return, never hangs; VC#3 late subscribe('raw.*') after a prior publish yields only the post-subscribe sample. Full tests/pi/bus/ = 12 passed (8 US-380 + 4 new -> zero regression). ruff check src/pi/bus/ tests/pi/bus/ = All checks passed (auto-sorted the test import members). ENVIRONMENT LIMITATION: mypy NOT installed (system Python 3.13 + .venv; pip install gated behind interactive approval unavailable in headless ralph.sh) -- typecheck acceptance criterion could NOT be executed here; code is mypy-strict-shaped (from __future__ import annotations, fully typed signatures + fields, no Any, no untyped defs). PM/Atlas should run `make typecheck` at integration to close the mypy gate. Additive to one new-this-sprint package file (no pre-existing product file touched) -> zero regression surface. Committed to sprint/sprint46-V0.29.0."
-    },
-    {
-      "id": "US-382",
-      "title": "STATE retained topics (last-value-cache) + integrity-gap markers",
-      "parent": "F-110",
-      "epicId": "E-006",
-      "type": "feature",
-      "size": "S",
-      "status": "passed",
-      "passes": true,
-      "acceptance": [
-        "publish(sample, retain=True) stores the latest sample per topic",
-        "a new subscriber matching a retained topic immediately receives the current retained value",
-        "only the latest retained value per topic is kept; STREAM publishes are NOT retained",
-        "a LOSSLESS subscription overflow causes the bus to publish event.integrity.gap (source='bus', unit=<subscriptionName>, seq=<lost seq>) to OTHER subscribers, not the overflowing one",
-        "no overflow => no marker",
-        "Typecheck passes",
-        "Tests pass"
-      ],
-      "validationCriteria": [
-        {
-          "action": "publish retained 'state.config.serverHost' then subscribe late to 'state.config.*'",
-          "outcome": "retained value delivered on subscribe"
-        },
-        {
-          "action": "overflow a LOSSLESS maxQueue=1 sub while a watcher subscribes to event.integrity.gap",
-          "outcome": "exactly one gap marker with correct subscription name + lost seq"
-        },
-        {
-          "action": "publish within queue capacity (no overflow)",
-          "outcome": "no event.integrity.gap emitted"
-        }
-      ],
-      "conditionalOutcomes": [],
-      "goal": "Add retained STATE topics (publish(retain=True) -> last-value-cache, replayed to new subscribers) for slowly-changing data (VIN, calibration, state.config.*); and the honest-instrument integrity-gap marker -- a LOSSLESS overflow publishes event.integrity.gap rather than silently dropping.",
-      "tasks": [],
-      "feedback": {
-        "filesActuallyTouched": [
-          "src/pi/bus/bus.py (modified -- activated SampleBus.publish retain path + subscribe replay-on-subscribe; added _emitIntegrityGap helper; header mod-history line)",
-          "tests/pi/bus/test_bus_state.py (created -- 3 tests: late-subscriber-gets-retained, retains-latest-only, stream-not-retained)",
-          "tests/pi/bus/test_bus_integrity_gap.py (created -- 2 tests: lossless-overflow-emits-marker, no-overflow-no-marker)"
-        ]
-      },
-      "completionNotes": "TDD red->green from docs/superpowers/plans/2026-06-18-edr-bus-slice1-dedicated-reader.md Task 4 (STATE retained) + Task 5 (integrity-gap). RED confirmed: 3 failed (retention + gap-emission absent), 2 negative tests passed trivially. GREEN: activated the DORMANT retain path US-381 pre-shaped -- publish(retain=True) stores sample as _retained[topic] last-value-cache; subscribe() replays the current retained value (under-lock snapshot, _offer outside the lock) once to every matching new subscriber; STREAM (retain=False) never stored. New _emitIntegrityGap(): a LOSSLESS _offer()->False (the overflow signal wired in US-380) makes publish() emit Sample(topic=event.integrity.gap, source=bus, value=1.0, unit=<subName>, seq=<lostSeq>) to OTHER matching subscribers only (sub.name != overflowed name -> no recursion/re-overflow). GATES: pytest tests/pi/bus/ = 17 passed (8 US-380 + 4 US-381 + 5 new -> zero regression); VC#1 late subscribe('state.config.*') after retained publish -> retained delivered; VC#2 LOSSLESS maxQueue=1 overflow + watcher -> exactly one marker unit='victim'/seq=2 (added assert watcher.poll() 2nd == None + victim keeps seq 1); VC#3 within-capacity publish -> no marker. ruff check src/pi/bus/bus.py + both new tests = All checks passed. ENVIRONMENT LIMITATION: mypy NOT installed (verified `python -m mypy --version` -> No module named mypy; system Python 3.13 + .venv; pip install gated behind interactive approval unavailable in headless ralph.sh) -- typecheck AC could NOT be executed here; code is mypy-strict-shaped (from __future__ import annotations, fully typed signatures incl. list[tuple[str,int]], no Any, no untyped defs). PM/Atlas should run `make typecheck` at integration to close the mypy gate (same defer pattern as US-380/US-381). Additive behavior on one new-this-sprint package file (no pre-existing product file touched) -> zero regression surface; ships dark behind pi.bus.enabled (no orchestrator wiring until US-385). Committed to sprint/sprint46-V0.29.0 (07a06ce). NOTE for US-383 (next): PersistenceSubscriber is the next NEW file (src/pi/bus/persistence_subscriber.py) -- reuses ObdDataLogger.logReading for the byte-identical golden master; verify ObdDataLogger.__init__ signature before writing the golden-master test (plan Task 6 flags it)."
-    },
-    {
-      "id": "US-383",
-      "title": "PersistenceSubscriber -- writes realtime_data (byte-identical golden master)",
-      "parent": "F-110",
-      "epicId": "E-006",
-      "type": "feature",
+      "id": "US-387",
+      "title": "RCA: root-cause the DriveDetector close / drive-end path",
+      "parent": "F-107",
+      "epicId": "E-002",
+      "type": "research",
       "size": "M",
-      "status": "passed",
-      "passes": true,
+      "status": "sprint-ready",
+      "passes": false,
       "acceptance": [
-        "PersistenceSubscriber(subscription, dataLogger) with start(), stop(), and handleSample(sample)",
-        "handleSample reconstructs a LoggedReading from a raw.obd.<param> sample and calls dataLogger.logReading (does NOT reimplement the INSERT)",
-        "non-raw.obd.* topics are ignored (handleSample returns False, no write)",
-        "the drain loop catches write exceptions (subscriber isolation -- never crashes the producer)",
-        "GOLDEN MASTER: realtime_data rows written via the bus path equal rows written via inline logReading on (parameter_name, value, unit, profile_id, drive_id, data_source)",
-        "Typecheck passes",
-        "Tests pass"
+        "RCA names the exact code path + mechanism (file:line) for BOTH (1) drive fails to close and (2) a second drive_id opens over an open one (ids out of temporal order)",
+        "RCA explains the US-386 reproducer's RED behavior",
+        "RCA confirms/refutes the one-root hypothesis (defects 1+2 share the unreliable-close root) with evidence; incorporates Spool's connection_log finding (drive_start 29 / drive_end 18; zero drive_id on comms failures)",
+        "no fix in this story"
       ],
       "validationCriteria": [
         {
-          "action": "pytest tests/pi/bus/test_persistence_golden_master.py",
-          "outcome": "dbA rows == dbB rows (excluding id + write-time timestamp)"
+          "action": "read the RCA against the reproducer",
+          "outcome": "mechanism identified, maps to the RED test, cites file:line"
         },
         {
-          "action": "handleSample on a 'derived.gear' sample",
-          "outcome": "returns False; dataLogger.logReading NOT called"
-        },
-        {
-          "action": "pytest tests/pi/bus/test_persistence_subscriber.py",
-          "outcome": "green"
+          "action": "Atlas review of the RCA",
+          "outcome": "root cause accepted (gate for US-388)"
         }
       ],
       "conditionalOutcomes": [
-        "do NOT reimplement the realtime_data INSERT -- reuse ObdDataLogger.logReading so rows stay byte-identical",
-        "if ObdDataLogger.__init__ signature differs from the plan, adapt the test construction and keep both paths identical"
+        "if the real root differs from the unreliable-close-signal hypothesis, document what it ACTUALLY is -- do not force-fit"
       ],
-      "goal": "Add the subscriber that persists raw.obd.* samples to realtime_data by REUSING the existing ObdDataLogger.logReading() write path -- so the persisted rows are identical to today's inline path by construction. This is the 'one subscriber that saves data for the server' (B-104 raw emitter).",
-      "tasks": [],
-      "feedback": {
-        "filesActuallyTouched": [
-          "src/pi/bus/persistence_subscriber.py (created -- PersistenceSubscriber: start()/stop()/_loop drain thread + handleSample raw.obd.* -> LoggedReading -> dataLogger.logReading)",
-          "tests/pi/bus/test_persistence_subscriber.py (created -- 3 unit tests: reconstruct+delegate, param-name-from-topic-tail, ignore-non-raw.obd)",
-          "tests/pi/bus/test_persistence_golden_master.py (created -- 1 integration test: byte-identical realtime_data rows old inline path vs bus path)"
-        ]
-      },
-      "completionNotes": "TDD red->green from docs/superpowers/plans/2026-06-18-edr-bus-slice1-dedicated-reader.md Task 6 (Steps 1-6). PI-ONLY, additive: new file src/pi/bus/persistence_subscriber.py + 2 new test files -- NO pre-existing product file touched -> zero regression surface. VERIFY-BEFORE-CODE (story conditionalOutcome + plan flag) done: confirmed ObdDataLogger.__init__(connection, database, profileId=None, dataSource=None) [logger.py:132] and LoggedReading(parameterName, value, timestamp, unit=None, profileId=None) [types.py:71] match the plan -- no test adaptation needed. RED: ModuleNotFoundError No module named 'pi.bus.persistence_subscriber' (both test files). GREEN: handleSample() reuses ObdDataLogger.logReading (does NOT reimplement the INSERT) -- reconstructs a LoggedReading from the raw.obd.<param> sample (parameterName = topic tail after 'raw.obd.'; profileId=None so logReading falls back to the dataLogger's own profileId), returns True; non-raw.obd.* topics return False with no write (CO#1 honored). _loop drain thread catches per-write exceptions (subscriber isolation -- never crashes the producer); start()/stop(timeoutS) own a daemon thread. GOLDEN MASTER: writes 3 READINGS via (a) inline loggerA.logReading and (b) bus.publish->PersistenceSubscriber.handleSample into two fresh SQLite DBs, asserts realtime_data rows EQUAL on (parameter_name, value, unit, profile_id, drive_id, data_source) -- id + write-time timestamp excluded. Byte-identity is by construction (same logReading path); drive_id derives from getCurrentDriveId() at write time on BOTH paths (capture-time Sample.driveId attribution is a deferred slice-1 follow-up per plan post-notes). ENV NOTE: realtime_data.profile_id FK-references profiles(id) and FK enforcement is ON (database.py:211) -> the golden master seeds a 'daily' profile row in both DBs so profile_id is written+compared non-trivially. GATES: pytest tests/pi/bus/test_persistence_subscriber.py tests/pi/bus/test_persistence_golden_master.py = 4 passed (VC#1 dbA==dbB; VC#2 derived.gear -> False, logReading NOT called; VC#3 unit suite green); full tests/pi/bus/ = 21 passed (17 prior + 4 new -> zero regression); ruff check on all 3 files = All checks passed. ENVIRONMENT LIMITATION: mypy NOT installed (system Python 3.13 + .venv; pip install gated behind interactive approval unavailable in headless ralph.sh) -> 'Typecheck passes' AC could NOT be executed here; code is mypy-strict-shaped (from __future__ import annotations, full hints, Google docstrings, no untyped defs). One narrow note for `make typecheck` at integration: handleSample passes Sample.value (float | tuple[float, ...]) into LoggedReading.value (float) -- raw.obd.* samples are always scalar at runtime so it is safe; same construction the plan specifies. PM/Atlas run `make typecheck` to close the mypy gate (same defer pattern as US-380/381/382). Committed to sprint/sprint46-V0.29.0. NEXT (US-384): RealtimeDataLogger publish seam (src/pi/obdii/data/realtime.py) + pi.bus.enabled flag default off -- VERIFY whether utcIsoNow + getCurrentDriveId are already imported in realtime.py (plan Task 7 flag)."
+      "goal": "As the architect-gated investigation, with the reproducer in hand I want the exact mechanism for BOTH defects rendered. Opening premise (Spool, 2-table corroborated): comms-drop is RULED OUT -- the K-line is stable mid-drive; the drive never closing is purely the DriveDetector close-signal state machine not firing. Trace src/pi/obdii/drive/detector.py + orchestrator/lifecycle.py drive-start/-end/close logic.",
+      "tasks": []
     },
     {
-      "id": "US-384",
-      "title": "RealtimeDataLogger publish seam + pi.bus.enabled flag (default off)",
-      "parent": "F-110",
-      "epicId": "E-006",
-      "type": "feature",
+      "id": "US-388",
+      "title": "FIX DriveDetector close-signal reliability -- Root 2 (SHAPE PENDING RCA US-387)",
+      "parent": "F-107",
+      "epicId": "E-002",
+      "type": "issue",
       "size": "M",
-      "status": "passed",
-      "passes": true,
+      "status": "sprint-ready",
+      "passes": false,
       "acceptance": [
-        "RealtimeDataLogger.__init__ gains optional bus=None and producerSource='obd'; adds a _seq counter",
-        "a dataLogger property exposes the internal ObdDataLogger (for the PersistenceSubscriber to reuse)",
-        "with a bus present, _logReadingSafe publishes raw.obd.<parameterName> (seq increments per publish); with bus None the write path is byte-for-byte unchanged",
-        "pi.bus.enabled defaults False in the validator DEFAULTS and config.json",
-        "existing tests/pi/obdii/data/ pass unchanged with the bus off",
-        "Typecheck passes; validate_config.py passes; Tests pass"
+        "US-386 reproducer GREEN",
+        "no overlapping drive_ids in the back-to-back scenario",
+        "a key-on after a missed close opens a NEW drive_id (no multi-day-leak absorption)",
+        "idle/KOEO rows carry NULL drive_id (gap-fence)",
+        "existing DriveDetector + lifecycle tests stay green",
+        "if load-bearing, specs/architecture.md DriveDetector section updated in-sprint (Atlas design-gate DoD)",
+        "Typecheck passes; tests pass"
       ],
       "validationCriteria": [
         {
-          "action": "pytest tests/pi/obdii/data/test_realtime_bus_publish.py",
-          "outcome": "green; published Sample topic=raw.obd.RPM, seq increments 1,2,..."
+          "action": "pytest the US-386 reproducer + existing detector/lifecycle suites",
+          "outcome": "all green"
         },
         {
-          "action": "pytest tests/pi/obdii/data/ (no bus injected)",
-          "outcome": "green -- inline write path unchanged"
+          "action": "re-run the 3 scenarios (short / back-to-back / key-on-after-missed-close)",
+          "outcome": "one drive_id each, all close, no absorption"
+        }
+      ],
+      "conditionalOutcomes": [
+        "BUILD BLOCKED until US-387 RCA accepted by Atlas -- do not code before the root cause is rendered",
+        "if the RCA reveals the fix is architectural (id-minting concurrency, detector re-entrancy), route back to Atlas for a design ruling BEFORE coding"
+      ],
+      "goal": "As the Pi drive-lifecycle, I want the Root-2 fix so the US-386 reproducer goes GREEN. Per Atlas ruling the target behaviors are: guaranteed-close + stamp drive_id ONLY when RUNNING + gap-fence the drive_id latch (idle/KOEO rows -> NULL so a stale-open cannot absorb a later key-on). Exact change shape pending the US-387 RCA -- frozen as shape-pending, build-blocked, per A-11.",
+      "tasks": []
+    },
+    {
+      "id": "US-389",
+      "title": "Root 1 closure: bake single-instance guard + RuntimeDirectory as a matched-pair tested deploy invariant + version-stamp",
+      "parent": "F-107",
+      "epicId": "E-002",
+      "type": "issue",
+      "size": "S",
+      "status": "sprint-ready",
+      "passes": false,
+      "acceptance": [
+        "deploy-pi.sh (or canonical deploy path) asserts BOTH pi.runtime.singleInstanceGuard.enabled=true AND RuntimeDirectory=eclipse-obd present in the deployed unit -- a test/guard fails the deploy if either is missing (matched-pair invariant, Atlas C-5)",
+        "deploy MUST systemctl stop the orchestrator before start (pair with the US-354 deploy-hygiene class) so the guard refuses a double-start rather than racing",
+        "journal confirmation (Atlas RCA condition C-3): name the spawn trigger for the two concurrent eclipse-obd PIDs ~06-06 02:25 (systemd Restart= race / watchdog / manual+service overlap) -- documented in story notes or RCA; Root 1 is mitigated (guard live) but the spawn TRIGGER must be confirmed",
+        ".deploy-version reconciled: the guard-enable + RuntimeDirectory recorded in the V0.29.1 version stamp (no longer silent-on-top-of V0.28.2)",
+        "specs/architecture.md boot-path section updated in-sprint (load-bearing boot change; Atlas Rule-10 signed off in the 2026-06-19 ruling -- action it)",
+        "Typecheck passes; tests pass"
+      ],
+      "validationCriteria": [
+        {
+          "action": "run the deploy-invariant test with RuntimeDirectory removed from the unit fixture",
+          "outcome": "deploy invariant FAILS loudly (matched-pair enforced)"
         },
+        {
+          "action": "run the deploy-invariant test with the guard flag false",
+          "outcome": "deploy invariant FAILS loudly"
+        },
+        {
+          "action": "inspect .deploy-version after a V0.29.1 deploy",
+          "outcome": "records guard-enabled + RuntimeDirectory state"
+        },
+        {
+          "action": "inspect the story notes / RCA for the 06-06 02:25 spawn-source finding (Atlas RCA condition C-3)",
+          "outcome": "names the spawn trigger (systemd Restart= race / watchdog / manual+service overlap), or best-available evidence + most-likely trigger if the journal aged out"
+        }
+      ],
+      "conditionalOutcomes": [
+        "if the journal no longer holds the 06-06 boot window, document best-available evidence + the most likely spawn trigger rather than blocking"
+      ],
+      "goal": "As the deploy path, I want Root 1 (concurrent-process dual-attribution -- mitigated out-of-band via guard enable d6d8b05 + RuntimeDirectory=eclipse-obd fae7ee7 + Pi deploy) made durable: bake the guard config flag + RuntimeDirectory as a MATCHED PAIR (Atlas C-5 -- neither ships without the other or the non-root service crash-loops) into the canonical deploy path as a tested invariant, confirm the journal spawn-source for the 06-06 double-process, and fold the out-of-band change into a proper V0.29.1 version stamp.",
+      "tasks": []
+    },
+    {
+      "id": "US-390",
+      "title": "Regression lock + server-tripwire backstop confirmation",
+      "parent": "F-107",
+      "epicId": "E-002",
+      "type": "issue",
+      "size": "S",
+      "status": "sprint-ready",
+      "passes": false,
+      "acceptance": [
+        "US-386 reproducer added to the fast suite / regression manifest (permanent)",
+        "a server-side test confirms detect_overlapping_drives still stamps data_quality=attribution_anomaly on a synthetic overlap",
+        "Typecheck passes; tests pass"
+      ],
+      "validationCriteria": [
+        {
+          "action": "pytest fast suite including the reproducer",
+          "outcome": "green"
+        },
+        {
+          "action": "synthetic-overlap tripwire test",
+          "outcome": "attribution_anomaly stamped (backstop intact)"
+        }
+      ],
+      "conditionalOutcomes": [],
+      "goal": "As the project, I want the US-386 reproducer locked into the regression suite/manifest permanently, and the V0.28.0 server tripwire (detect_overlapping_drives) confirmed to still flag any residual overlap -- belt-and-suspenders so a future Pi regression is still caught server-side even if the Pi fix regresses again.",
+      "tasks": []
+    },
+    {
+      "id": "US-367",
+      "title": "Backfill 2 ECU lineage rows (supersede placeholder; close MD346675 era + open MD326328 era) + join verification",
+      "parent": "F-108",
+      "epicId": "E-OPS",
+      "type": "normal",
+      "size": "S",
+      "status": "sprint-ready",
+      "passes": false,
+      "acceptance": [
+        "Supersede the degenerate PRE_TRACKING_UNKNOWN placeholder (zero-width install==removal==2026-05-01 11:53:45) -- it is a failed bootstrap, NOT lineage; do NOT retain it as a 3rd live row. Net post-backfill state = exactly 2 real ECU-era rows (Atlas ruling option a; a 3rd row would overlap the MD346675 window at the resolver's >1-window raise, sync.py:605)",
+        "FK target = ecu_id: the backfill calls resolveOrCreateEcu for BOTH ECUs (MD346675 + MD326328), sets vehicle_info.ecu_id, and DERIVES the TEXT ecu_signature/cal_signature snapshot columns from the resolved ecu rows so findEcuCoherenceViolations() returns empty (Atlas: resolver + coherence key on ecu_id; TEXT signatures are derived snapshots)",
+        "Boundaries form a gapless single-active partition: prior ECU (MD346675) install = start-of-tracking (earliest tracked capture / the existing bootstrap instant -> gapless partition start, NULL per Atlas), removal = swap instant; new ECU (MD326328) install = swap instant, removal = NULL (currently active)",
+        "Swap instant is Spool's to derive (last old-ECU drive-end / first new-ECU drive-start, ~2026-05-22) and is passed to the backfill as a script PARAM -- NOT hardcoded",
+        "Spool sign-off on signature naming convention recorded BEFORE backfill (per F-108 last bullet)",
+        "Placeholder provenance is recorded in the backfill script log + commit message -- NOT as a live lineage row",
+        "Bless the one-shot bootstrap/backfill script as the SOLE sanctioned exception to 'stamp_ecu_swap is the only vehicle_info mutator,' scoped to initial spine establishment (stamp_ecu_swap correctly refuses here -- placeholder closed -> getActiveVehicleInfo()==None; correcting a botched bootstrap is the backfill's job)",
+        "Data sources documented in commit body: prior-ECU start-of-tracking instant source (earliest realtime_data.captured_at or Eclipse 1998 Projects.gsheet -- approximate but documented); swap instant precise per Spool derivation",
+        "Join verification: drive_summary JOIN vehicle_info ON start_time_utc within [install, COALESCE(removal, NOW())] correctly partitions drives 1-24 (prior MD346675) + drives 25+ (new MD326328)",
+        "Coherence verification: findEcuCoherenceViolations() (vehicle_info_coherence.py) returns empty post-backfill; the resolver (sync.py:564-609) raises for NO drive (no >1-window overlap)"
+      ],
+      "validationCriteria": [
+        {
+          "action": "SELECT COUNT(*) FROM vehicle_info post-backfill",
+          "outcome": "Returns 2 (placeholder superseded; 2 real eras)"
+        },
+        {
+          "action": "SELECT COUNT(*) FROM vehicle_info WHERE ecu_signature = 'PRE_TRACKING_UNKNOWN' (placeholder sentinel) post-backfill",
+          "outcome": "Returns 0 (placeholder superseded, not retained)"
+        },
+        {
+          "action": "SELECT COUNT(*) FROM vehicle_info WHERE ecu_removal_timestamp_utc IS NULL post-backfill",
+          "outcome": "Returns 1 (currently-active new ECU)"
+        },
+        {
+          "action": "SELECT COUNT(*) FROM vehicle_info WHERE ecu_id IS NULL post-backfill",
+          "outcome": "Returns 0 (both rows carry a resolved ecu_id FK)"
+        },
+        {
+          "action": "Run findEcuCoherenceViolations() post-backfill",
+          "outcome": "Returns empty (derived TEXT snapshots agree with the resolved ecu rows)"
+        },
+        {
+          "action": "Run join verification SELECT against drive_summary for drives 1-24",
+          "outcome": "All rows JOIN to the prior-ECU (MD346675) row"
+        },
+        {
+          "action": "Run join verification SELECT against drive_summary for drives 25+",
+          "outcome": "All rows JOIN to the new-ECU (MD326328) row"
+        },
+        {
+          "action": "Inspect the backfill script signature / invocation",
+          "outcome": "Swap instant is a CLI/script param, not a hardcoded literal"
+        },
+        {
+          "action": "Inspect commit body",
+          "outcome": "Data sources documented (start-of-tracking source + swap instant) + placeholder-supersede provenance recorded in script log/commit"
+        },
+        {
+          "action": "Inspect Spool's inbox or offices/pm/inbox/",
+          "outcome": "Spool sign-off note on naming convention + swap-instant derivation exists, dated before the backfill commit"
+        }
+      ],
+      "conditionalOutcomes": [
+        "if Spool has not signed off on signature naming convention OR has not derived the swap instant, BLOCK the backfill + route an A2AL note to Spool",
+        "if join verification shows any drive 1-24 partitioning to the new ECU (or any drive 25+ to the prior ECU), revise + re-backfill",
+        "if the resolver raises a >1-window overlap for any drive post-backfill, the partition is not gapless-single-active -- fix the install/removal boundaries (do NOT introduce an artificial micro-gap)"
+      ],
+      "goal": "As a server-side analytics consumer wanting per-drive ECU attribution, I want the historical ECU lineage backfilled into vehicle_info as exactly two real eras -- prior ECU (MD346675) active before the ~2026-05-22 swap + new modified-EPROM ECU (MD326328) active from the swap onward -- SUPERSEDING the degenerate PRE_TRACKING_UNKNOWN bootstrap placeholder, so any drive's start_time_utc resolves to the active ECU at that time (and the stuck June-5 dtc_freeze_frame orphan self-heals). Per Atlas 2026-06-28 ruling: 2 rows (option a), NOT 3.",
+      "tasks": []
+    },
+    {
+      "id": "US-391",
+      "title": "dtc_freeze_frame sync: quarantine unresolvable cross-tier rows after N failures (stop silent infinite retry)",
+      "parent": "F-076",
+      "epicId": "E-002",
+      "type": "issue",
+      "size": "S",
+      "status": "sprint-ready",
+      "passes": false,
+      "acceptance": [
+        "Atlas invariant 1 -- after N consecutive identical cross-tier resolution failures on the same record, the sync loop quarantines it (dead-letter table or data_quality flag) and stops re-attempting every cycle",
+        "Atlas invariant 2 -- the raw freeze-frame record is PRESERVED (never dropped) when quarantined; quarantine throttles re-resolution, it does not discard data",
+        "Atlas invariant 3 -- the quarantine event is surfaced exactly once (log/alert), not per-cycle",
+        "Atlas invariant 4 -- quarantine is re-drainable (throttled/retryable, NOT terminal): once the resolution target exists (e.g. US-367 lands), the record re-enters the queue and syncs",
+        "a quarantined record does NOT advance sync_log.last_synced_id and does NOT block other tables/records from syncing",
+        "Typecheck passes; tests pass; a test proves N-failures -> quarantine -> single surfacing -> re-drain"
+      ],
+      "validationCriteria": [
+        {
+          "action": "simulate an unresolvable cross-tier row for N+1 cycles",
+          "outcome": "quarantined after N; surfaced once; no per-cycle re-fail"
+        },
+        {
+          "action": "after quarantine, query the source table for the offending freeze-frame record",
+          "outcome": "the raw record still exists (preserved, not deleted)"
+        },
+        {
+          "action": "make the resolution target resolvable then re-run",
+          "outcome": "record leaves quarantine and syncs (re-drainable)"
+        },
+        {
+          "action": "inspect sync_history during the unresolvable window",
+          "outcome": "no unbounded identical-failure spam after quarantine"
+        }
+      ],
+      "conditionalOutcomes": [
+        "if the chosen mechanism needs a NEW CROSS-TIER TABLE (A-4-family versioned-contract change), route to Atlas for a ruling BEFORE coding -- per his 2026-06-28 quick-read a data_quality flag is Ralph-pickable, a new cross-tier dead-letter table is the architectural case"
+      ],
+      "goal": "As the sync subsystem, I want a single unresolvable freeze-frame to stop retrying forever (it ran 27x/day for 3+ weeks with no dead-letter/quarantine/alert -- a silent infinite loop that would mask a REAL sync failure in the noise). 'Fail loudly, no silent re-resolve' is correct per-attempt but wrong at the queue level. After N consecutive identical resolution failures, quarantine the record (dead-letter table OR data_quality flag -- Atlas quick-read requested) and surface it ONCE. General safety net; US-367 self-heals the current specific orphan.",
+      "tasks": []
+    },
+    {
+      "id": "US-392",
+      "title": "De-dup the server address inside config.json (derive base URLs from serverHost:serverPort)",
+      "parent": "F-044",
+      "epicId": "E-004",
+      "type": "tech-debt",
+      "size": "S",
+      "status": "sprint-ready",
+      "passes": false,
+      "acceptance": [
+        "config.json server/companion base URLs derive from serverHost:serverPort (single source key); no duplicated host literal",
+        "runtime consumers resolve the derived URL identically to before (no behavioral change)",
+        "scripts/audit_address_mirrors.py + tests/lint/test_address_mirror_consistency.py pass",
+        "validate_config.py passes; Typecheck passes; tests pass"
+      ],
+      "validationCriteria": [
         {
           "action": "python validate_config.py",
-          "outcome": "passes; result pi.bus.enabled == False by default"
-        }
-      ],
-      "conditionalOutcomes": [
-        "VERIFY before coding: whether utcIsoNow and getCurrentDriveId are already imported in realtime.py; add the imports if not"
-      ],
-      "goal": "Give the OBD poll loop a producer role: when a SampleBus is injected, _logReadingSafe publishes a raw.obd.<param> Sample (per-producer monotonic seq) instead of writing the DB; when no bus, the existing write path is unchanged. Add the pi.bus.enabled config flag, default false.",
-      "tasks": [],
-      "feedback": {
-        "filesActuallyTouched": [
-          "src/pi/obdii/data/realtime.py (modified -- FIRST pre-existing product file this sprint: added imports utcIsoNow + getCurrentDriveId + Sample; __init__ gains bus=None/producerSource='obd' kwargs + stores _bus/_producerSource/_seq/_dataSource; new dataLogger property; _logReadingSafe branches to _publishReading when bus present; new _publishReading; header mod-history line)",
-          "src/common/config/validator.py (modified -- added 'pi.bus.enabled': False to DEFAULTS near pi.sync.*)",
-          "config.json (modified -- added pi.bus.enabled=false block, sibling of pi.sync)",
-          "tests/pi/obdii/data/test_realtime_bus_publish.py (created -- 2 tests: publishes-Sample-when-bus-present, seq-increments-per-call)",
-          "tests/test_config_validator.py (modified -- added 2 tests: busDefault_disabled, busEnabled_explicitValuePreserved)"
-        ]
-      },
-      "completionNotes": "TDD red->green from docs/superpowers/plans/2026-06-18-edr-bus-slice1-dedicated-reader.md Task 7 (publish seam) + Task 8 (config flag). FIRST story this sprint to modify a PRE-EXISTING product file (realtime.py). VERIFY-BEFORE-CODE (story CO + plan Task 7 flag) done: utcIsoNow + getCurrentDriveId were NOT imported in realtime.py -> added 'from common.time.helper import utcIsoNow' (absolute, matches logger.py:59) + 'from ..drive_id import getCurrentDriveId' (relative, same data/ dir as logger.py:63); getCurrentDriveId() is a pure module-level global read (drive_id.py:284) so it is test-safe (returns None, no DB). RED confirmed: test_logReadingSafe_publishesSampleWhenBusPresent + test_publishReading_incrementsSeqPerCall failed ('object has no attribute _dataLogger' / IndexError, no publish); test_validate_busDefault_disabled KeyError 'bus'. GREEN: __init__ gains keyword-only bus=None + producerSource='obd', stores self._bus/_producerSource/_seq=0/_dataSource (note: the original __init__ passed dataSource to the inner logger but did NOT retain it on self -- added self._dataSource so the publish path can stamp it); new dataLogger property exposes the inner ObdDataLogger for the PersistenceSubscriber to reuse (byte-identical rows by construction); _logReadingSafe now returns self._publishReading(reading) FIRST when self._bus is not None, else the ORIGINAL inline try/logReading/_stats/_markRowWritten path byte-for-byte unchanged; _publishReading bumps _seq, builds Sample(topic=raw.obd.<parameterName>, source=producerSource, value/unit from reading, tsUtc=utcIsoNow(), tsCapture=time.monotonic(), driveId=getCurrentDriveId(), dataSource=self._dataSource or 'real', seq), publishes, bumps totalLogged + _markRowWritten, returns True. Config: 'pi.bus.enabled': False added to validator DEFAULTS near pi.sync.*; config.json pi.bus.enabled=false block added sibling of pi.sync. GATES: VC#1 pytest tests/pi/obdii/data/test_realtime_bus_publish.py = 2 passed (Sample topic=raw.obd.RPM, seq 1 then 2); VC#2 the literal tests/pi/obdii/data/ dir now holds only the new file (existing RealtimeDataLogger coverage lives in tests/test_orchestrator_data_logging_*.py + tests/pi/obdii/test_capture_loop_integration.py + test_data_logger_restart_on_restore.py) -> ran those 7 files = 61 passed, inline write path byte-for-byte unchanged with bus off; VC#3 python validate_config.py = All validations passed + pi.bus.enabled resolves False (test_validate_busDefault_disabled green); full tests/test_config_validator.py green; tests/pi/bus/ = 21 passed (zero regression). ruff check on all touched files = All checks passed. ENVIRONMENT LIMITATION: mypy NOT installed (verified python -m mypy --version -> No module named mypy; system Python 3.13 + .venv; pip install gated behind interactive approval unavailable in headless ralph.sh) -> 'Typecheck passes' AC could NOT be executed here; code is mypy-strict-shaped (full hints on new params/property/methods, no Any beyond the pre-existing bus:Any seam matching the plan, no untyped defs, Google docstrings). One narrow integration note: _publishReading passes reading.value (float) into Sample.value (float | tuple[float,...]) -- always scalar from the OBD path, safe. PM/Atlas run make typecheck to close the mypy gate (same defer pattern as US-380/381/382/383). Committed to sprint/sprint46-V0.29.0. NEXT (US-385): orchestrator wiring in src/pi/obdii/orchestrator/lifecycle.py behind pi.bus.enabled -- builds SampleBus + PersistenceSubscriber on ['raw.obd.*'] LOSSLESS + injects bus via createRealtimeLoggerFromConfig (VERIFY that factory's signature in src/pi/obdii/data/__init__.py + the orchestrator class/attribute names in lifecycle.py before coding, per plan Task 9)."
-    },
-    {
-      "id": "US-385",
-      "title": "Orchestrator wiring behind pi.bus.enabled + ships-dark integration (slice-1 cutover)",
-      "parent": "F-110",
-      "epicId": "E-006",
-      "type": "feature",
-      "size": "M",
-      "status": "passed",
-      "passes": true,
-      "acceptance": [
-        "_initializeDataLogger builds a SampleBus + starts a PersistenceSubscriber on ['raw.obd.*'] LOSSLESS + passes the bus to createRealtimeLoggerFromConfig, ONLY when pi.bus.enabled is true",
-        "flag off: no bus, no subscriber, dataLogger behavior identical to today",
-        "the PersistenceSubscriber is stopped on orchestrator shutdown",
-        "full fast suite green with the flag OFF (zero regression -- ships dark)",
-        "Typecheck passes; Tests pass"
-      ],
-      "validationCriteria": [
+          "outcome": "all pass"
+        },
         {
-          "action": "pytest tests/pi/obdii/orchestrator/test_lifecycle_bus_wiring.py tests/pi/bus/ tests/pi/obdii/data/",
+          "action": "pytest tests/lint/test_address_mirror_consistency.py -q",
           "outcome": "green"
         },
         {
-          "action": "pytest tests/ -m 'not slow' with pi.bus.enabled=false",
-          "outcome": "green -- running system unchanged (ships dark)"
-        },
-        {
-          "action": "enable the flag in a harness, push one sample through the orchestrator-built bus",
-          "outcome": "a realtime_data row is written by the PersistenceSubscriber"
+          "action": "grep config.json for the server IP literal",
+          "outcome": "appears in exactly one key"
         }
       ],
       "conditionalOutcomes": [
-        "VERIFY before coding: createRealtimeLoggerFromConfig signature (add/forward bus), and the orchestrator class + attribute names in lifecycle.py"
+        "if a consumer reads a base-URL key that cannot be cleanly derived (offline route-probe hasRouteToServer is IP-route-based), keep that consumer's IP resolution + document why; do NOT fold the hostname-resolution design change (separate A-15 design story) into this de-dup"
       ],
-      "goal": "Wire the bus into the orchestrator: when pi.bus.enabled, build a SampleBus, start a PersistenceSubscriber on raw.obd.* (LOSSLESS) bound to the logger's ObdDataLogger, and inject the bus into the logger; when off, behavior is identical to today. Slice 1 ships dark.",
+      "goal": "As the infrastructure config, I want the A-15 structural gap behind the .10->.120 breakage closed: config.json holds the server address in multiple literals (serverBaseUrl / companionService.baseUrl) that nothing forces to agree. Derive them from serverHost:serverPort so the literal lives in ONE key -- a box move = one edit. Atlas's mirror-consistency lint already guards divergence; this removes the duplication it guards.",
+      "tasks": []
+    },
+    {
+      "id": "US-379",
+      "title": "Fix stale harness fixture after US-371 drive_id->summary_id rename (test-only)",
+      "parent": "F-076",
+      "epicId": "E-002",
+      "type": "tech-debt",
+      "size": "S",
+      "status": "sprint-ready",
+      "passes": false,
+      "acceptance": [
+        "Historical CREATE TABLE drive_statistics block in test_harnessTooling_canCatchSchemaVsOrmDivergence_synthetic uses summary_id (NOT NULL), PRIMARY KEY (summary_id, parameter_name), FOREIGN KEY (summary_id) REFERENCES drive_summary(id)",
+        "No production src/ change (test-only; product already correct)",
+        "Test passes for the right reason: Phase 1 raises OperationalError mentioning data_quality; Phase 2 (re-ADD data_quality) INSERT succeeds"
+      ],
+      "validationCriteria": [
+        {
+          "action": "pytest tests/integration/test_deploy_context_drive_simulator.py::TestHarnessIntegrity::test_harnessTooling_canCatchSchemaVsOrmDivergence_synthetic -v",
+          "outcome": "PASSED"
+        },
+        {
+          "action": "pytest tests/integration -m \"not slow\" -q",
+          "outcome": "no summary_id-missing failures introduced by this change"
+        },
+        {
+          "action": "grep the test for the historical CREATE TABLE block",
+          "outcome": "declares summary_id, not drive_id"
+        }
+      ],
+      "conditionalOutcomes": [
+        "If the historical-shape table is intentionally meant to predate the rename (prove harness catches BOTH the column-rename AND the data_quality gaps): split into two assertions and document which symptom each phase proves -- but keep the default single-symptom (data_quality) intent unless Atlas/Argus rule otherwise."
+      ],
+      "goal": "As the test suite, the synthetic divergence fixture should declare its historical drive_statistics table with the current non-data_quality columns (summary_id PK + FK to drive_summary(id)), so the test once again provokes the intended data_quality-missing OperationalError and proves the harness catches the I-041 schema-vs-ORM seam -- rather than failing on a summary_id-missing artifact of the rename.",
       "tasks": []
     }
   ],
   "validation": {
     "bigDefinitionOfDone": [
-      "(pytest tests/pi/bus/test_sample.py tests/pi/bus/test_subscription.py) → (green)  [from US-380]",
-      "(construct a Sample then assign .value) → (raises FrozenInstanceError)  [from US-380]",
-      "(offer 3 samples to a LOSSY maxQueue=2 subscription) → (oldest dropped, poll yields seq 2 then 3, droppedCount=1)  [from US-380]",
-      "(offer 2 samples to a LOSSLESS maxQueue=1 subscription) → (_offer returns False on the 2nd, first sample still queued, call never blocks)  [from US-380]",
-      "(pytest tests/pi/bus/test_bus_stream.py) → (green)  [from US-381]",
-      "(publish 1000 samples to an undrained LOSSY maxQueue=2 subscriber) → (all publish calls return; never hangs)  [from US-381]",
-      "(subscribe to 'raw.*' after a prior publish, then poll) → (no historical sample delivered (only post-subscribe))  [from US-381]",
-      "(publish retained 'state.config.serverHost' then subscribe late to 'state.config.*') → (retained value delivered on subscribe)  [from US-382]",
-      "(overflow a LOSSLESS maxQueue=1 sub while a watcher subscribes to event.integrity.gap) → (exactly one gap marker with correct subscription name + lost seq)  [from US-382]",
-      "(publish within queue capacity (no overflow)) → (no event.integrity.gap emitted)  [from US-382]",
-      "(pytest tests/pi/bus/test_persistence_golden_master.py) → (dbA rows == dbB rows (excluding id + write-time timestamp))  [from US-383]",
-      "(handleSample on a 'derived.gear' sample) → (returns False; dataLogger.logReading NOT called)  [from US-383]",
-      "(pytest tests/pi/bus/test_persistence_subscriber.py) → (green)  [from US-383]",
-      "(pytest tests/pi/obdii/data/test_realtime_bus_publish.py) → (green; published Sample topic=raw.obd.RPM, seq increments 1,2,...)  [from US-384]",
-      "(pytest tests/pi/obdii/data/ (no bus injected)) → (green -- inline write path unchanged)  [from US-384]",
-      "(python validate_config.py) → (passes; result pi.bus.enabled == False by default)  [from US-384]",
-      "(pytest tests/pi/obdii/orchestrator/test_lifecycle_bus_wiring.py tests/pi/bus/ tests/pi/obdii/data/) → (green)  [from US-385]",
-      "(pytest tests/ -m 'not slow' with pi.bus.enabled=false) → (green -- running system unchanged (ships dark))  [from US-385]",
-      "(enable the flag in a harness, push one sample through the orchestrator-built bus) → (a realtime_data row is written by the PersistenceSubscriber)  [from US-385]"
+      "(run the reproducer against current detector.py) \u2192 (RED -- reproduces overlap + missed-close in-process)  [from US-386]",
+      "(inspect the back-to-back scenario) \u2192 (two overlapping drive_ids minted (the defect); ids possibly out of temporal order)  [from US-386]",
+      "(read the RCA against the reproducer) \u2192 (mechanism identified, maps to the RED test, cites file:line)  [from US-387]",
+      "(Atlas review of the RCA) \u2192 (root cause accepted (gate for US-388))  [from US-387]",
+      "(pytest the US-386 reproducer + existing detector/lifecycle suites) \u2192 (all green)  [from US-388]",
+      "(re-run the 3 scenarios (short / back-to-back / key-on-after-missed-close)) \u2192 (one drive_id each, all close, no absorption)  [from US-388]",
+      "(run the deploy-invariant test with RuntimeDirectory removed from the unit fixture) \u2192 (deploy invariant FAILS loudly (matched-pair enforced))  [from US-389]",
+      "(run the deploy-invariant test with the guard flag false) \u2192 (deploy invariant FAILS loudly)  [from US-389]",
+      "(inspect .deploy-version after a V0.29.1 deploy) \u2192 (records guard-enabled + RuntimeDirectory state)  [from US-389]",
+      "(inspect the story notes / RCA for the 06-06 02:25 spawn-source finding (Atlas RCA condition C-3)) \u2192 (names the spawn trigger (systemd Restart= race / watchdog / manual+service overlap), or best-available evidence + most-likely trigger if the journal aged out)  [from US-389]",
+      "(pytest fast suite including the reproducer) \u2192 (green)  [from US-390]",
+      "(synthetic-overlap tripwire test) \u2192 (attribution_anomaly stamped (backstop intact))  [from US-390]",
+      "(SELECT COUNT(*) FROM vehicle_info post-backfill) \u2192 (Returns 2 (placeholder superseded; 2 real eras))  [from US-367]",
+      "(SELECT COUNT(*) FROM vehicle_info WHERE ecu_signature = 'PRE_TRACKING_UNKNOWN' (placeholder sentinel) post-backfill) \u2192 (Returns 0 (placeholder superseded, not retained))  [from US-367]",
+      "(SELECT COUNT(*) FROM vehicle_info WHERE ecu_removal_timestamp_utc IS NULL post-backfill) \u2192 (Returns 1 (currently-active new ECU))  [from US-367]",
+      "(SELECT COUNT(*) FROM vehicle_info WHERE ecu_id IS NULL post-backfill) \u2192 (Returns 0 (both rows carry a resolved ecu_id FK))  [from US-367]",
+      "(Run findEcuCoherenceViolations() post-backfill) \u2192 (Returns empty (derived TEXT snapshots agree with the resolved ecu rows))  [from US-367]",
+      "(Run join verification SELECT against drive_summary for drives 1-24) \u2192 (All rows JOIN to the prior-ECU (MD346675) row)  [from US-367]",
+      "(Run join verification SELECT against drive_summary for drives 25+) \u2192 (All rows JOIN to the new-ECU (MD326328) row)  [from US-367]",
+      "(Inspect the backfill script signature / invocation) \u2192 (Swap instant is a CLI/script param, not a hardcoded literal)  [from US-367]",
+      "(Inspect commit body) \u2192 (Data sources documented (start-of-tracking source + swap instant) + placeholder-supersede provenance recorded in script log/commit)  [from US-367]",
+      "(Inspect Spool's inbox or offices/pm/inbox/) \u2192 (Spool sign-off note on naming convention + swap-instant derivation exists, dated before the backfill commit)  [from US-367]",
+      "(simulate an unresolvable cross-tier row for N+1 cycles) \u2192 (quarantined after N; surfaced once; no per-cycle re-fail)  [from US-391]",
+      "(after quarantine, query the source table for the offending freeze-frame record) \u2192 (the raw record still exists (preserved, not deleted))  [from US-391]",
+      "(make the resolution target resolvable then re-run) \u2192 (record leaves quarantine and syncs (re-drainable))  [from US-391]",
+      "(inspect sync_history during the unresolvable window) \u2192 (no unbounded identical-failure spam after quarantine)  [from US-391]",
+      "(python validate_config.py) \u2192 (all pass)  [from US-392]",
+      "(pytest tests/lint/test_address_mirror_consistency.py -q) \u2192 (green)  [from US-392]",
+      "(grep config.json for the server IP literal) \u2192 (appears in exactly one key)  [from US-392]",
+      "(pytest tests/integration/test_deploy_context_drive_simulator.py::TestHarnessIntegrity::test_harnessTooling_canCatchSchemaVsOrmDivergence_synthetic -v) \u2192 (PASSED)  [from US-379]",
+      "(pytest tests/integration -m \"not slow\" -q) \u2192 (no summary_id-missing failures introduced by this change)  [from US-379]",
+      "(grep the test for the historical CREATE TABLE block) \u2192 (declares summary_id, not drive_id)  [from US-379]"
     ],
-    "frozenAt": "2026-06-19T14:35:21Z",
-    "bigDoDHash": "17bc9d6f0f67fcdc5d430c9edcddd75c2da80831bdb3049dc499ad2db502681a",
-    "validationMethod": "EDR bus slice 1 (dedicated reader -> in-process pub/sub bus -> PersistenceSubscriber). Ships DARK behind pi.bus.enabled (default false): the full fast suite must stay green with the flag off (zero behavioral change on merge). The load-bearing acceptance gate is the byte-identical golden master -- realtime_data rows written via the bus path equal rows written via the existing inline logReading path. Hardware-independent (stdlib only, existing OBD path) -- does not wait on the IMU/light sensors or the ECMLink spike. Strangler-fig: display, drive detector, and the sync transport are untouched (later slices 2-5). Post-merge flag-flip on the Pi (confirm byte-identical realtime_data + healthy sync) is a separate PM/CIO deploy gate.",
-    "validatesFeatures": [
-      "F-110"
-    ],
-    "currentVersion": "V0.29.0",
+    "frozenAt": "2026-06-28T22:55:49Z",
+    "bigDoDHash": "687eb90b75187048abe82eb09f259dba1edb2c17241cab094964220b25f9e86d",
+    "validationMethod": "A-9 IRL re-gate (CIO-gated, needs the car): drive a short/back-to-back pair + a key-on after a missed close + a deploy double-start, then recompute_drive_analytics -> each physical drive = a single drive_id, all closed, attribution_anomalies=0, and the guard refuses the 2nd process on the double-start. Plus US-367 self-heal (dtc_freeze_frame COUNT>0 + re-drain quarantine after US-367) + US-391 quarantine behavior (N-failures -> quarantine -> single surfacing -> re-drain) + US-392 config de-dup (validate_config.py green). Fold the pending Sprint 46 / V0.29.0 Pi flag-flip (pi.bus.enabled) into the same deploy window. A single clean drive is explicitly insufficient.",
+    "validatesFeatures": ["F-107", "F-108", "F-076", "F-044"],
+    "currentVersion": "V0.29.1",
     "validatedAt": null,
     "validatedBy": null
   }
