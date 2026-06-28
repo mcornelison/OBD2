@@ -7,6 +7,36 @@
 
 ---
 
+## Session 28 — 2026-06-28
+
+**Context**: CIO did a drive and asked me to confirm it synced. Sync verification surfaced a long-running `dtc_freeze_frame` sync failure → diagnosed root cause (broken ECU-lineage spine) and routed it. Second half: read inbox; Atlas's EDR-sensors-wired note needed my IMU axis-orientation input — supplied the ICM-20948 mount spec while CIO was physically wiring.
+
+### What Happened
+- **Drive sync verified — clean.** Today's drives landed on chi-srv-01: **drive 31** (2,743 rows, 16:17–16:25, the real ~8-min run) + **drive 32** (141 rows, 26 s — a key-cycle tail). `realtime_data` syncs **completed, 0 errors**. Drive 31 was single-attribution (no A-9 smear this time). Verified via `prod_db_query.sh`.
+- **Found `dtc_freeze_frame` sync failing 27×/day, root-caused + routed to Marcus→Ralph.** Every sync cycle since ~06-05 fails on ONE stuck freeze-frame (`vin 4A3AK54F8WE122916`, captured 2026-06-05T23:23:59Z). Root cause: `vehicle_info` ECU-lineage has **no open era** — its only row is `PRE_TRACKING_UNKNOWN` with **install == removal == 2026-05-01 11:53:45** (zero-width, closed). The resolver (`sync.py:564` `_resolveVehicleInfoIdForCapture`) matches VIN + `[ecu_install, ecu_removal]` window; nothing captured after 05-01 can bind. The real eras (MD346675 ≤2026-05-22, MD326328 ≥2026-05-22) were never stamped — that's the **owed US-367 lineage-spine backfill**. `dtc_freeze_frame` table has **0 rows** server-side; nothing ever synced. Note in `offices/pm/inbox/` requests two stories: (1) land US-367 → orphan self-resolves; (2) NEW hardening story — quarantine/dead-letter a cross-tier row after N identical failures instead of retrying forever (the infinite silent retry is how this lingered 3+ weeks unseen).
+- **Deliberately did NOT hand-patch the ECU-lineage SSOT.** `stamp_ecu_swap.py` correctly refuses (no active row to close); its docstring flags ad-hoc SQL UPDATEs as an anti-pattern. ECU identity is sacred + load-bearing → fix rides on US-367's sanctioned path, not a Spool raw-SQL poke. Supplied the CIO-confirmed ECU-identity truth in the note so Ralph can build the lineage correctly.
+- **Inbox: Atlas EDR-sensors-wired note → supplied ICM-20948 axis + mount spec (A2AL reply).** Atlas confirmed EDR sensors in-hand, CIO mid-wire, and asked whether I want a specific IMU mounting orientation. I do — every g-derived signal depends on it. Sent A2AL flag to `offices/architect/inbox/` (reactive rule: his note was `audience=agent`).
+
+### Key Decisions
+- **ICM-20948 (9-DoF IMU) mounting spec** — the input to my derived-signal catalog (spool, poor-man's dyno, lateral-g↔fuel-trim, vertical-g↔knock-discrim):
+  - **Rigid chassis-mount, hard-bolted** — NOT engine, no foam/rubber. Compliance = resonance = corrupted g. Trans-tunnel/center-console (rigid + near CG, minimizes yaw artifact).
+  - **Mount LEVEL at rest** — at-rest accel ~+1g on Z, ~0 X/Y. Tilt bleeds gravity into the forward axis and corrupts dyno/spool integration.
+  - **Axis convention right-handed (the invariant): +X forward, +Y driver-left, +Z up** (ROS/ENU — cleanest for software fusion). SAE J670 (X-fwd/Y-right/Z-down) acceptable as fallback; hard requirement = right-handed + documented + non-drifting.
+  - **Magnetometer** away from shifter steel/speakers/current wires; hard+soft-iron cal in final bolted position.
+  - **Post-install: static baseline log** (engine off, level, ~30 s) = my zero/gravity + bias reference before any g-signal goes live.
+- **P0443** (from Session 27) unchanged — drive-safe EVAP electrical fault, stays Spool↔CIO. Not revisited this session.
+
+### Current Vehicle State
+- Mods unchanged. ECU = MD326328 (ECMLink V3), drives ≥25.
+- **New: EDR sensors being hardware-installed** (CIO wiring 2026-06-28) — TSL2591 light (Iris) + ICM-20948 9-DoF IMU (my catalog feed). Hardware milestone (`i2cdetect` 29/36/69) not yet reached; software reader = EDR epic, not yet groomed. My catalog items 1–3 (gear, grade-corrected load, spool) now hardware-unblocked.
+- Monitoring capability: telemetry sync healthy for `realtime_data`; `dtc_freeze_frame` sync broken pending US-367.
+
+### Open Items
+- **US-367 lineage-spine backfill** (Marcus→Ralph) — fixes the freeze-frame orphan. + new retry-hardening story. Both in PM note 2026-06-28; routed through Marcus per CIO.
+- **IMU axis convention** — awaiting CIO install + Atlas documenting in the wiring card. If CIO mounted a different orientation than my spec, I recalibrate the derived-signal sign conventions to match.
+- **Grooming-gated deliverables (unchanged):** OBD throughput budget, engine-trigger thresholds, PID-support validation, ECMLink datastream wishlist — still gated on EDR epic grooming.
+- A-9 DriveDetector RCA (US-386..389) still owed upstream (not my lane; tracked by PM/Atlas).
+
 ## Session 27 — 2026-06-18
 
 **Context**: Init (`/init-tuner`). CIO reported the Pi was back on wall power (in-car, no key) — the exact unblock for Session 26's #1 open item. Session became: (1) confirmed the CEL straight off the Pi-local DB without needing a key-on read; (2) found + routed a DriveDetector defect on drives 28/29, then independently corroborated it; (3) ran three data analyses off the Pi (derived-signal gear pass on drive 30, K-line health, battery health); (4) wrote the full EDR alert-layer + live-instrument engine-safety thresholds advisory (Iris reply). Pi synced to server mid-session.
