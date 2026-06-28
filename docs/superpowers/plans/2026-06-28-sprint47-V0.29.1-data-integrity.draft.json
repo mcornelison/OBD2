@@ -1,0 +1,264 @@
+{
+  "_draft": "PM (Marcus) Sprint 47 / V0.29.1 data-integrity sprint blueprint. NOT frozen, NOT in backlog.json yet, NOT dispatched. Supersedes Atlas's 2026-06-18 A-9 4-story draft (refined per his 2026-06-19 RCA ruling -> 5 stories). Composition CIO-directed 2026-06-28. Freeze path: (1) author US-386..392 into backlog.json + Story.md; re-groom US-367 to Atlas ruling; (2) write PRD md with selectedStories; (3) prd_to_sprint.py freeze (bigDoDHash); (4) sprint_lint; (5) Atlas Rule-13; (6) dispatch to offices/ralph/sprint.json + branch sprint/sprint47-V0.29.1 from dev.",
+  "_gates": {
+    "US-367": "BLOCKED on Atlas 2-vs-3-row design ruling (requested 2026-06-28 offices/architect/inbox/2026-06-28-from-marcus-sprint47-rulings-request.md). DoD shape pending; do NOT freeze rendered detail until ruling lands (A-11).",
+    "US-388": "SHAPE-PENDING build-blocked on US-387 RCA (A-11). Keep fix-detail unfrozen until RCA accepted by Atlas.",
+    "US-391": "Atlas quick-read requested on dead-letter-table vs data_quality-flag (non-blocking; conditionalOutcome routes back if structural).",
+    "Rule-13": "Atlas owes the freeze sign-off once US-367 ruling lands + PM freezes."
+  },
+  "schemaVersion": "2.0.0",
+  "sprint": "Sprint 47",
+  "version": "V0.29.1 (patch sprint, forks from dev)",
+  "theme": "Data-integrity hardening: drive lifecycle (A-9) + ECU lineage spine + sync-orphan quarantine + test/infra cleanup",
+  "createdFromPRD": "PENDING-PM (prd-V0.29.1.md)",
+  "stories": [
+    {
+      "id": "US-386",
+      "title": "Deterministic in-process reproducer for the DriveDetector close-signal defect (RED)",
+      "parent": "F-107",
+      "epicId": "E-002",
+      "type": "issue",
+      "size": "M",
+      "goal": "Build an in-process test harness that drives DriveDetector through the failure scenarios via synthetic RPM / engine-on-off / timing inputs (NO comms events -- Spool ruled out comms-drop as the cause, connection_log shows zero drive_id on any failure/disconnect), asserting CORRECT behavior so the 28/29 defect (overlap + stale-open leak) reproduces deterministically WITHOUT the car.",
+      "acceptance": [
+        "feeds a synthetic engine-state sequence for: (a) short ~3-min drive, (b) two back-to-back drives ~1 min apart, (c) key-on AFTER a drive whose close never fired",
+        "asserts: exactly ONE drive_id per physical drive (no overlap), each drive closes on key-off, a key-on after a stale-open opens a NEW drive_id (no absorption)",
+        "FAILS (RED) on current detector.py, reproducing the 28/29 signature (overlap + missed-close)",
+        "pure in-process; no IRL/hardware dependency",
+        "Typecheck passes; the RED test runs and its failure is documented"
+      ],
+      "validationCriteria": [
+        { "action": "run the reproducer against current detector.py", "outcome": "RED -- reproduces overlap + missed-close in-process" },
+        { "action": "inspect the back-to-back scenario", "outcome": "two overlapping drive_ids minted (the defect); ids possibly out of temporal order" }
+      ],
+      "conditionalOutcomes": [
+        "if the defect will NOT reproduce at the detector unit level (manifests only with the real orchestrator loop/threads/timing), STOP + escalate to Atlas -- reproduction needs the real lifecycle loop"
+      ],
+      "deps": [],
+      "sourceRefs": ["A-9", "F-107", "atlas-rca-ruling-2026-06-19", "spool-corroboration-29-vs-18-2026-06-18"]
+    },
+    {
+      "id": "US-387",
+      "title": "RCA: root-cause the DriveDetector close / drive-end path",
+      "parent": "F-107",
+      "epicId": "E-002",
+      "type": "research",
+      "size": "M",
+      "goal": "With the reproducer in hand, render the exact mechanism for BOTH defects. Opening premise (Spool, 2-table corroborated): comms-drop is RULED OUT -- the K-line is stable mid-drive; the drive never closing is purely the DriveDetector close-signal state machine not firing. Trace src/pi/obdii/drive/detector.py + orchestrator/lifecycle.py drive-start/-end/close logic.",
+      "acceptance": [
+        "RCA names the exact code path + mechanism (file:line) for BOTH (1) drive fails to close and (2) a second drive_id opens over an open one (ids out of temporal order)",
+        "RCA explains the US-386 reproducer's RED behavior",
+        "RCA confirms/refutes the one-root hypothesis (defects 1+2 share the unreliable-close root) with evidence; incorporates Spool's connection_log finding (drive_start 29 / drive_end 18; zero drive_id on comms failures)",
+        "no fix in this story"
+      ],
+      "validationCriteria": [
+        { "action": "read the RCA against the reproducer", "outcome": "mechanism identified, maps to the RED test, cites file:line" },
+        { "action": "Atlas review of the RCA", "outcome": "root cause accepted (gate for US-388)" }
+      ],
+      "conditionalOutcomes": [
+        "if the real root differs from the unreliable-close-signal hypothesis, document what it ACTUALLY is -- do not force-fit"
+      ],
+      "deps": ["US-386"],
+      "sourceRefs": ["A-9", "F-107", "atlas-rca-ruling-2026-06-19"]
+    },
+    {
+      "id": "US-388",
+      "title": "FIX DriveDetector close-signal reliability -- Root 2 (SHAPE PENDING RCA US-387)",
+      "parent": "F-107",
+      "epicId": "E-002",
+      "type": "issue",
+      "size": "M",
+      "goal": "Implement the Root-2 fix so the US-386 reproducer goes GREEN. Per Atlas ruling, the target behaviors are: guaranteed-close + stamp drive_id ONLY when RUNNING + gap-fence the drive_id latch (idle/KOEO rows -> NULL so a stale-open cannot absorb a later key-on). Exact change shape pending the US-387 RCA -- frozen as shape-pending, build-blocked, per A-11.",
+      "acceptance": [
+        "US-386 reproducer GREEN",
+        "no overlapping drive_ids in the back-to-back scenario",
+        "a key-on after a missed close opens a NEW drive_id (no multi-day-leak absorption)",
+        "idle/KOEO rows carry NULL drive_id (gap-fence)",
+        "existing DriveDetector + lifecycle tests stay green",
+        "if load-bearing, specs/architecture.md DriveDetector section updated in-sprint (Atlas design-gate DoD)",
+        "Typecheck passes; tests pass"
+      ],
+      "validationCriteria": [
+        { "action": "pytest the US-386 reproducer + existing detector/lifecycle suites", "outcome": "all green" },
+        { "action": "re-run the 3 scenarios (short / back-to-back / key-on-after-missed-close)", "outcome": "one drive_id each, all close, no absorption" }
+      ],
+      "conditionalOutcomes": [
+        "BUILD BLOCKED until US-387 RCA accepted by Atlas -- do not code before the root cause is rendered",
+        "if the RCA reveals the fix is architectural (id-minting concurrency, detector re-entrancy), route back to Atlas for a design ruling BEFORE coding"
+      ],
+      "deps": ["US-386", "US-387"],
+      "sourceRefs": ["A-9", "F-107", "atlas-rca-ruling-2026-06-19"]
+    },
+    {
+      "id": "US-389",
+      "title": "Root 1 closure: bake single-instance guard + RuntimeDirectory as a matched-pair tested deploy invariant + version-stamp",
+      "parent": "F-107",
+      "epicId": "E-002",
+      "type": "issue",
+      "size": "S",
+      "goal": "Root 1 (concurrent-process dual-attribution) was mitigated out-of-band: the F-107 single-instance guard was enabled in config.json (d6d8b05) + RuntimeDirectory=eclipse-obd added to the unit (deploy/eclipse-obd.service fae7ee7) + deployed to the Pi. Make that durable: bake the guard config flag + RuntimeDirectory as a MATCHED PAIR (Atlas C-5 -- neither ships without the other or the non-root service crash-loops) into the canonical deploy path as a tested invariant, confirm the journal spawn-source for the 06-06 double-process, and fold the out-of-band change into a proper version stamp.",
+      "acceptance": [
+        "deploy-pi.sh (or canonical deploy path) asserts BOTH pi.runtime.singleInstanceGuard.enabled=true AND RuntimeDirectory=eclipse-obd present in the deployed unit -- a test/guard fails the deploy if either is missing (matched-pair invariant, Atlas C-5)",
+        "deploy MUST systemctl stop the orchestrator before start (pair with the US-354 deploy-hygiene class) so the guard refuses a double-start rather than racing",
+        "journal confirmation: name the spawn trigger for the two concurrent eclipse-obd PIDs ~06-06 02:25 (systemd Restart= race / watchdog / manual+service overlap) -- documented in the story notes or RCA",
+        ".deploy-version reconciled: the guard-enable + RuntimeDirectory recorded in the V0.29.1 version stamp (no longer silent-on-top-of V0.28.2)",
+        "specs/architecture.md boot-path section updated in-sprint (load-bearing boot change; Atlas Rule-10 -- signed off in the 2026-06-19 ruling, action it)",
+        "Typecheck passes; tests pass"
+      ],
+      "validationCriteria": [
+        { "action": "run the deploy-invariant test with RuntimeDirectory removed from the unit fixture", "outcome": "deploy invariant FAILS loudly (matched-pair enforced)" },
+        { "action": "run the deploy-invariant test with the guard flag false", "outcome": "deploy invariant FAILS loudly" },
+        { "action": "inspect .deploy-version after a V0.29.1 deploy", "outcome": "records guard-enabled + RuntimeDirectory state" }
+      ],
+      "conditionalOutcomes": [
+        "if the journal no longer holds the 06-06 boot window, document best-available evidence + the most likely spawn trigger rather than blocking"
+      ],
+      "deps": [],
+      "sourceRefs": ["A-9", "F-107", "atlas-guard-DEPLOYED-2026-06-19", "atlas-rca-ruling-2026-06-19-C5", "US-354"]
+    },
+    {
+      "id": "US-390",
+      "title": "Regression lock + server-tripwire backstop confirmation",
+      "parent": "F-107",
+      "epicId": "E-002",
+      "type": "issue",
+      "size": "S",
+      "goal": "Lock the US-386 reproducer into the regression suite/manifest permanently, and confirm the V0.28.0 server tripwire (detect_overlapping_drives) still flags any residual overlap -- belt-and-suspenders so a future Pi regression is still caught server-side even if the Pi fix regresses again.",
+      "acceptance": [
+        "US-386 reproducer added to the fast suite / regression manifest (permanent)",
+        "a server-side test confirms detect_overlapping_drives still stamps data_quality=attribution_anomaly on a synthetic overlap",
+        "Typecheck passes; tests pass"
+      ],
+      "validationCriteria": [
+        { "action": "pytest fast suite including the reproducer", "outcome": "green" },
+        { "action": "synthetic-overlap tripwire test", "outcome": "attribution_anomaly stamped (backstop intact)" }
+      ],
+      "conditionalOutcomes": [],
+      "deps": ["US-388"],
+      "sourceRefs": ["A-9", "F-107"]
+    },
+    {
+      "id": "US-367",
+      "title": "Backfill ECU lineage spine into vehicle_info (close MD346675 era + open MD326328 era) -- SHAPE PENDING ATLAS ROW-COUNT RULING",
+      "parent": "F-108",
+      "epicId": "E-OPS",
+      "type": "normal",
+      "size": "S",
+      "goal": "Backfill the real append-only ECU lineage so per-drive ECU attribution resolves AND the live dtc_freeze_frame sync orphan self-heals. vehicle_info currently holds one degenerate zero-width row (install==removal, ecu_id=3 PRE_TRACKING_UNKNOWN) -> no open era -> every post-2026-05-01 freeze-frame fails _resolveVehicleInfoIdForCapture (sync.py:564). Write: closed MD346675/cal-6675 era (start-of-tracking -> 2026-05-22 swap) + open MD326328/UNKCAL era (2026-05-22 -> NULL). EXISTING backlog story US-367; re-groom to Atlas's 2-vs-3-row ruling + ecu_id FK model before freeze.",
+      "acceptance": [
+        "PENDING ATLAS RULING: (a) 2 rows = supersede the PRE_TRACKING_UNKNOWN placeholder, OR (b) 3 rows = keep placeholder + append two real eras",
+        "vehicle_info has the correct append-only lineage: closed MD346675 era + single open MD326328 era; vehicle_info_coherence.py passes",
+        "swap instant derived from drive data (last old-ECU drive end / first new-ECU drive start, ~2026-05-22 mid-afternoon); data sources documented in commit body",
+        "bootstrap via one-shot backfill script (stamp_ecu_swap.py correctly refuses the first row -- no active row to close); NO ad-hoc UPDATE (append-only invariant)",
+        "Spool sign-off on signature naming recorded before backfill",
+        "self-heal verified: stuck 2026-06-05 freeze-frame resolves -> SELECT COUNT(*) FROM dtc_freeze_frame > 0, bound to the MD326328 (ecu_id=2) era",
+        "sync_history shows no recurring dtc_freeze_frame failures after the fix"
+      ],
+      "validationCriteria": [
+        { "action": "SELECT COUNT(*) FROM vehicle_info WHERE ecu_removal_timestamp_utc IS NULL", "outcome": "Returns 1 (currently-active MD326328 era)" },
+        { "action": "join drive_summary -> vehicle_info on start_time_utc BETWEEN install AND COALESCE(removal, NOW())", "outcome": "drives 1-24 -> MD346675; drives 25+ -> MD326328" },
+        { "action": "SELECT COUNT(*) FROM dtc_freeze_frame on chi-srv-01 after next sync cycle", "outcome": "> 0 (June-5 orphan resolved + synced)" },
+        { "action": "inspect sync_history for dtc_freeze_frame", "outcome": "no recurring resolution failures" }
+      ],
+      "conditionalOutcomes": [
+        "BLOCK + route to Atlas if the 2-vs-3-row ruling has not landed (do not freeze rendered DoD before the ruling -- A-11)",
+        "BLOCK + route to Spool if signature-naming sign-off is missing",
+        "if join verification mis-partitions any drive, revise the swap instant + re-backfill"
+      ],
+      "deps": [],
+      "sourceRefs": ["F-108", "US-367-existing-backlog", "spool-dtc-orphan-2026-06-28", "atlas-row-count-ruling-pending"]
+    },
+    {
+      "id": "US-391",
+      "title": "dtc_freeze_frame sync: quarantine unresolvable cross-tier rows after N failures (stop silent infinite retry)",
+      "parent": "F-076",
+      "epicId": "E-002",
+      "type": "issue",
+      "size": "S",
+      "goal": "A single unresolvable freeze-frame retries forever (27x/day for 3+ weeks) with no dead-letter / quarantine / alert -- a silent infinite loop that would mask a REAL sync failure in the noise. 'Fail loudly, no silent re-resolve' is correct per-attempt but wrong at the queue level. After N consecutive identical resolution failures, quarantine the record (dead-letter table OR data_quality flag -- Atlas quick-read requested) and surface it ONCE, instead of re-failing every cycle. General safety net; US-367 self-heals the current specific orphan.",
+      "acceptance": [
+        "after N consecutive identical cross-tier resolution failures on the same record, the sync loop quarantines it (dead-letter table or data_quality flag) and stops re-attempting every cycle",
+        "the quarantine event is surfaced exactly once (log/alert), not per-cycle",
+        "a quarantined record does NOT advance sync_log.last_synced_id and does NOT block other tables/records from syncing",
+        "quarantine is reversible: once the resolution target exists (e.g. US-367 lands), the record can re-enter the queue and sync",
+        "Typecheck passes; tests pass; a test proves N-failures -> quarantine -> single surfacing"
+      ],
+      "validationCriteria": [
+        { "action": "simulate an unresolvable cross-tier row for N+1 cycles", "outcome": "quarantined after N; surfaced once; no per-cycle re-fail" },
+        { "action": "make the resolution target resolvable then re-run", "outcome": "record leaves quarantine and syncs" },
+        { "action": "inspect sync_history during the unresolvable window", "outcome": "no unbounded identical-failure spam after quarantine" }
+      ],
+      "conditionalOutcomes": [
+        "if the dead-letter-table vs data_quality-flag choice turns architectural (schema/contract impact), route to Atlas for a ruling BEFORE coding (quick-read requested 2026-06-28)"
+      ],
+      "deps": [],
+      "sourceRefs": ["F-076", "spool-dtc-orphan-2026-06-28-defect-2", "sync.py:564"]
+    },
+    {
+      "id": "US-392",
+      "title": "De-dup the server address inside config.json (derive base URLs from serverHost:serverPort)",
+      "parent": "F-044",
+      "epicId": "E-004",
+      "type": "tech-debt",
+      "size": "S",
+      "goal": "Close the A-15 structural gap behind the .10->.120 breakage: config.json holds the server address in multiple literals (serverBaseUrl / companionService.baseUrl) that nothing forces to agree. Derive them from serverHost:serverPort so the literal lives in ONE key -- a box move = one edit. Atlas's mirror-consistency lint (tests/lint/test_address_mirror_consistency.py) already guards divergence; this removes the duplication it guards.",
+      "acceptance": [
+        "config.json server/companion base URLs derive from serverHost:serverPort (single source key); no duplicated host literal",
+        "runtime consumers resolve the derived URL identically to before (no behavioral change)",
+        "scripts/audit_address_mirrors.py + tests/lint/test_address_mirror_consistency.py pass",
+        "validate_config.py passes; Typecheck passes; tests pass"
+      ],
+      "validationCriteria": [
+        { "action": "python validate_config.py", "outcome": "all pass" },
+        { "action": "pytest tests/lint/test_address_mirror_consistency.py -q", "outcome": "green" },
+        { "action": "grep config.json for the server IP literal", "outcome": "appears in exactly one key" }
+      ],
+      "conditionalOutcomes": [
+        "if a consumer reads a base-URL key that cannot be cleanly derived (offline route-probe hasRouteToServer is IP-route-based), keep that consumer's IP resolution + document why; do NOT fold the hostname-resolution design change (separate A-15 design story) into this de-dup"
+      ],
+      "deps": [],
+      "sourceRefs": ["A-15", "F-044", "atlas-a15-mirror-lint-2026-06-18", "config-json-server-address-dedup-gap"]
+    },
+    {
+      "id": "US-379",
+      "title": "Fix stale harness fixture after US-371 drive_id->summary_id rename (test-only)",
+      "parent": "F-076",
+      "epicId": "E-002",
+      "type": "tech-debt",
+      "size": "S",
+      "status": "sprint-ready",
+      "goal": "EXISTING sprint-ready backlog story. Historical CREATE TABLE drive_statistics block in the synthetic-divergence harness fixture should declare summary_id (PK + FK to drive_summary(id)) so the test again provokes the intended data_quality-missing OperationalError -- rather than failing on a summary_id-missing artifact of the US-371 rename. Test-only; product already correct.",
+      "acceptance": [
+        "fixture uses summary_id (NOT NULL), PRIMARY KEY (summary_id, parameter_name), FK (summary_id) REFERENCES drive_summary(id)",
+        "no production src/ change",
+        "test passes for the right reason: Phase 1 raises OperationalError mentioning data_quality; Phase 2 (re-ADD data_quality) INSERT succeeds"
+      ],
+      "validationCriteria": [
+        { "action": "pytest tests/integration/test_deploy_context_drive_simulator.py::TestHarnessIntegrity::test_harnessTooling_canCatchSchemaVsOrmDivergence_synthetic -v", "outcome": "PASSED" },
+        { "action": "pytest tests/integration -m \"not slow\" -q", "outcome": "no summary_id-missing failures introduced" }
+      ],
+      "conditionalOutcomes": [],
+      "deps": [],
+      "sourceRefs": ["US-371", "US-379-existing-backlog"]
+    }
+  ],
+  "validation": {
+    "bigDefinitionOfDone": [
+      "(run the reproducer on current code) -> (RED: reproduces overlap + missed-close in-process)  [US-386]",
+      "(RCA doc reviewed against reproducer; Spool comms-ruled-out premise incorporated) -> (mechanism identified at file:line; hypothesis confirmed/refuted; Atlas-accepted)  [US-387]",
+      "(pytest reproducer + detector/lifecycle suites after Root-2 fix) -> (all green; one drive_id per drive, all close, no absorption, idle/KOEO NULL)  [US-388]",
+      "(deploy-invariant test with guard flag or RuntimeDirectory removed) -> (deploy FAILS loudly; matched-pair C-5 enforced; .deploy-version reconciled; architecture.md boot-path updated)  [US-389]",
+      "(reproducer in regression manifest + synthetic-overlap tripwire test) -> (green; attribution_anomaly stamped -- backstop intact)  [US-390]",
+      "(backfill ECU lineage to Atlas row-count ruling + next sync cycle) -> (single open MD326328 era; drives 1-24/25+ partition correctly; dtc_freeze_frame COUNT > 0; no recurring sync failures)  [US-367]",
+      "(simulate unresolvable cross-tier row for N+1 cycles) -> (quarantined after N; surfaced once; no per-cycle spam; reversible)  [US-391]",
+      "(validate_config.py + address-mirror lint after config de-dup) -> (green; server IP literal in exactly one key; no behavioral change)  [US-392]",
+      "(pytest the synthetic-divergence harness fixture) -> (PASSED for the right reason: data_quality OperationalError then re-ADD succeeds)  [US-379]",
+      "(SPRINT-LEVEL IRL, CIO-gated -- needs the car: drive a SHORT/BACK-TO-BACK pair + a key-on after a missed close + a deploy-double-start, then recompute_drive_analytics) -> (each physical drive = single drive_id, all closed, recompute attribution_anomalies=0; guard refuses the 2nd process on double-start)  [sprint-level IRL]"
+    ],
+    "frozenAt": "PENDING-PM-FREEZE (prd_to_sprint.py + _freeze.py)",
+    "bigDoDHash": "PENDING-PM-FREEZE",
+    "validationMethod": "Data-integrity sprint. A-9 (US-386..390) refined per Atlas 2026-06-19 RCA ruling: Root 1 (concurrent-process) mitigated out-of-band + hardened to a matched-pair deploy invariant (US-389); Root 2 (stale-open-drive leak) is the substantive fix (US-388, build-blocked on the US-387 RCA per A-11); in-process reproducer (US-386) is the hardware-free gate. US-367 backfills the ECU lineage spine (self-heals the live dtc_freeze_frame orphan; shape pending Atlas row-count ruling). US-391 adds queue-level quarantine so a benign orphan can't mask a malignant one. US-392 (A-15 config de-dup) + US-379 (test fixture) are cleanup. The sprint-level IRL clause (short/back-to-back + key-on-after-missed-close + deploy-double-start) is the true A-9 acceptance gate -- the exact scenarios the single drive-27 PASS missed. Server tripwire remains the backstop -> NOT a chain/deploy block.",
+    "validatesFeatures": ["F-107", "F-108", "F-076", "F-044"],
+    "currentVersion": "V0.29.1 (PENDING-PM)"
+  }
+}
