@@ -252,6 +252,32 @@ Outcome: SHIPPED passes:true. RCA deliverable renders the exact mechanism (file:
 - **Research-story gate handling**: an RCA whose validationCriteria includes "Atlas review" is shippable passes:true once the deliverable + the Ralph-satisfiable VCs are met; the external review is the downstream build-gate (for US-388), routed via inbox, not a blocker on the RCA itself. Same shape as deferring mypy/Atlas sign-off at integration.
 ---
 
+## 2026-06-28 - US-391 (Agent 1 / Rex)
+Task: dtc_freeze_frame sync quarantine -- stop the silent infinite retry after N failures
+Outcome: SHIPPED passes:true. Pi-side queue-level quarantine; server resolution unchanged.
+
+### What was implemented:
+- `src/pi/data/sync_log.py` -- two new columns (consecutive_failures, quarantined_at) + idempotent `ensureQuarantineSchema` migration (fresh DBs get them in SYNC_LOG_SCHEMA) + `recordPushFailure` (increments + quarantines on the Nth, returns just-quarantined for surface-once) + `getQuarantineState` + `clearQuarantine`. Never advances last_synced_id.
+- `src/pi/sync/client.py` -- injected `clock` (deterministic throttle), `PushStatus.QUARANTINED` (skip with NO network while throttled), surface-ONCE `SYNC_QUARANTINE` WARNING on transition, `clearQuarantine` on success, `forcePush` bypasses the throttle (explicit re-drain), `_PushFailure.serverRejected` so ONLY server HTTP-rejections count (transient network failures do NOT quarantine).
+- `src/common/config/validator.py` + `config.json` -- `pi.companionService.quarantineThreshold` (5) + `quarantineThrottleSeconds` (3600) + range validation (bool-rejected-first).
+
+### Files changed:
+- Modified: `src/pi/data/sync_log.py`, `src/pi/sync/client.py`, `src/common/config/validator.py`, `config.json`, `tests/pi/data/test_sync_log.py`, `tests/test_config_validator.py`
+- Created: `tests/pi/data/test_sync_log_quarantine.py` (6), `tests/pi/sync/test_sync_client_quarantine.py` (4 incl. AC6 lifecycle), `offices/pm/inbox/2026-06-28-from-rex-us391-quarantine-shipped-doc-proposal.md`, `offices/pm/issues/I-stale-sync-client-baseurl-test-old-ip.md`
+
+### Gates:
+- ruff clean on all 7 touched src/test files; `python validate_config.py` green.
+- tests/pi/sync + tests/pi/data + tests/test_config_validator all green EXCEPT one PRE-EXISTING unrelated red: `test_client_config_paths::test_validatorOutput_constructsSyncClient` asserts the dead `.10` server IP (default is `.120` since the 2026-06-18 relocation). US-391 never touches baseUrl -> filed `I-stale-sync-client-baseurl-test-old-ip.md` (out of scope; fold into US-392).
+- mypy NOT installed here -> Typecheck deferred to PM `make typecheck` (code mypy-strict-shaped). Full `pytest tests/` deferred to PM integration (slow SMB); scoped suites covering the change ran green in-iteration.
+
+### Learnings for future iterations:
+- **The goal sentence can BE the design spec**: "fail loudly per-attempt is correct but wrong at the queue level" pinned the fix to the Pi QUEUE (sync_log + SyncClient), not the server resolver -- avoiding a much larger server/cross-tier-protocol change. Read the goal prose, not just the ACs.
+- **Quarantine == THROTTLE, not STOP**: AC4 "throttled/retryable, NOT terminal" + the PRD "resolve on the next sync cycle" mean the record stays queued (HWM never advances), re-attempts drop from every-cycle to once-per-throttle-window, and auto-redrain happens on throttle-elapse or forcePush. Never advancing last_synced_id is what keeps it preserved + re-drainable (the US-149 invariant does double duty).
+- **Discriminate failure types for quarantine**: only count SERVER HTTP-rejections (server reached us and said no); transient network failures (URLError/timeout) must NOT quarantine or a WiFi outage wrongly throttles a healthy table. `_PushFailure.serverRejected` carries that bit out of the retry loop.
+- **Gotcha (pipe hides pytest exit code)**: `pytest ... | tail` makes the shell exit code the exit of `tail` (always 0) -- the "exit code 0" task notifications were meaningless; ALWAYS read the actual pytest summary line, not the notification's exit code. Caught a pre-existing red that the exit code hid.
+- **Gotcha (forcePush iterates ALL tables)**: a test seeding only one table fails forcePush with "no such table"; seed the full IN_SCOPE_TABLES stub set (mirror tests/pi/sync/test_sync_client.py::_createEmptyInScopeTables).
+---
+
 ## 2026-06-28 - US-389 (Agent 1 / Rex)
 Task: Root 1 closure -- single-instance guard + RuntimeDirectory as a matched-pair tested deploy invariant + version-stamp
 Outcome: SHIPPED passes:true. The out-of-band guard mitigation is now a durable, TESTED deploy invariant. No Pi needed -- the whole deliverable is dev-box-runnable (static + helper-with-fixtures patterns).
