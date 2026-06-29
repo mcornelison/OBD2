@@ -102,6 +102,8 @@ class TestInitDbCreatesSchema:
         info = {row[1]: row for row in c.execute("PRAGMA table_info(sync_log)")}
         # US-315 added last_synced_modified_at (NULL by default; carries
         # the parallel modified_at cursor for SYNC_UPDATE_TABLES_PK).
+        # US-391 added consecutive_failures + quarantined_at (queue-level
+        # quarantine bookkeeping; see ensureQuarantineSchema).
         assert set(info.keys()) == {
             'table_name',
             'last_synced_id',
@@ -109,6 +111,8 @@ class TestInitDbCreatesSchema:
             'last_batch_id',
             'status',
             'last_synced_modified_at',
+            'consecutive_failures',
+            'quarantined_at',
         }
         # table_name is PRIMARY KEY
         assert info['table_name'][5] == 1  # pk column from PRAGMA

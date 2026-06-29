@@ -502,6 +502,34 @@ class TestCompanionServiceConfig:
         assert cs['batchSize'] == 500
         assert cs['retryMaxAttempts'] == 3
         assert cs['retryBackoffSeconds'] == [1, 2, 4, 8, 16]
+        # US-391: queue-level quarantine defaults.
+        assert cs['quarantineThreshold'] == 5
+        assert cs['quarantineThrottleSeconds'] == 3600
+
+    def test_companionService_quarantineThreshold_belowOne_raises(self):
+        """US-391: a quarantineThreshold < 1 is rejected at load time."""
+        validator = ConfigValidator(requiredKeys=[])
+        config = self._minimalTierConfig()
+        config['pi']['companionService'] = {'quarantineThreshold': 0}
+
+        with pytest.raises(ConfigValidationError) as excInfo:
+            validator.validate(config)
+
+        assert 'pi.companionService.quarantineThreshold' in excInfo.value.missingFields
+
+    def test_companionService_quarantineThrottle_nonPositive_raises(self):
+        """US-391: a non-positive quarantineThrottleSeconds is rejected."""
+        validator = ConfigValidator(requiredKeys=[])
+        config = self._minimalTierConfig()
+        config['pi']['companionService'] = {'quarantineThrottleSeconds': 0}
+
+        with pytest.raises(ConfigValidationError) as excInfo:
+            validator.validate(config)
+
+        assert (
+            'pi.companionService.quarantineThrottleSeconds'
+            in excInfo.value.missingFields
+        )
 
     def test_companionService_fullyPopulated_roundTripPreserved(self):
         """
@@ -677,6 +705,73 @@ class TestCompanionServiceConfig:
         cs = result['pi']['companionService']
         assert cs['baseUrl'] == 'http://10.27.27.120:8000'
         assert cs['retryBackoffSeconds'] == [1, 2, 4, 8, 16]
+
+    # ------------------------------------------------------------------
+    # US-392 (A-15 de-dup): base URLs derive from serverHost:serverPort.
+    # ------------------------------------------------------------------
+    def test_companionService_baseUrl_derivedFromServerHostPort_whenAbsent(self):
+        """
+        Given: a config with an explicit server.network.serverHost/serverPort
+               but NO pi.companionService.baseUrl
+        When: validate() is called
+        Then: pi.companionService.baseUrl is DERIVED as http://{host}:{port}
+              (single-source de-dup -- the host literal is not duplicated)
+        """
+        validator = ConfigValidator(requiredKeys=[])
+        config = self._minimalTierConfig()
+        config['server']['network'] = {'serverHost': '10.0.0.5', 'serverPort': 9999}
+
+        result = validator.validate(config)
+
+        assert result['pi']['companionService']['baseUrl'] == 'http://10.0.0.5:9999'
+
+    def test_serverBaseUrl_derivedFromServerHostPort_whenAbsent(self):
+        """
+        Given: a config with server.network.serverHost/serverPort but no
+               server.network.serverBaseUrl
+        When: validate() is called
+        Then: server.network.serverBaseUrl is DERIVED as http://{host}:{port}
+        """
+        validator = ConfigValidator(requiredKeys=[])
+        config = self._minimalTierConfig()
+        config['server']['network'] = {'serverHost': '10.0.0.5', 'serverPort': 9999}
+
+        result = validator.validate(config)
+
+        assert result['server']['network']['serverBaseUrl'] == 'http://10.0.0.5:9999'
+
+    def test_baseUrl_explicitValue_notOverriddenByDerivation(self):
+        """
+        Given: an explicit companionService.baseUrl AND a different serverHost
+        When: validate() is called
+        Then: the explicit baseUrl wins (derivation only fills an ABSENT URL --
+              addresses.sh ``:-`` fallback semantics; behavior-preserving)
+        """
+        validator = ConfigValidator(requiredKeys=[])
+        config = self._minimalTierConfig()
+        config['server']['network'] = {'serverHost': '10.0.0.5', 'serverPort': 9999}
+        config['pi']['companionService'] = {'baseUrl': 'http://192.168.1.50:9000'}
+
+        result = validator.validate(config)
+
+        assert result['pi']['companionService']['baseUrl'] == 'http://192.168.1.50:9000'
+
+    def test_companionService_baseUrl_derivedFromDefaultServerHost(self):
+        """
+        Given: a config with no server.network section at all
+        When: validate() is called
+        Then: serverHost/serverPort DEFAULTS supply the single source and the
+              companion baseUrl derives to the production address (the literal
+              lives only in the validator DEFAULTS registry + config.json)
+        """
+        validator = ConfigValidator(requiredKeys=[])
+        config = self._minimalTierConfig()  # server has no network section
+
+        result = validator.validate(config)
+
+        assert result['pi']['companionService']['baseUrl'] == 'http://10.27.27.120:8000'
+        assert result['server']['network']['serverHost'] == '10.27.27.120'
+        assert result['server']['network']['serverPort'] == 8000
 
 
 class TestHomeNetworkConfig:

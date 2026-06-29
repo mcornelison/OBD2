@@ -212,12 +212,18 @@ DEFAULTS: dict[str, Any] = {
     # the server /api/v1/sync endpoint.  API key resolved from the env var
     # named by `apiKeyEnv` via secrets_loader.
     'pi.companionService.enabled': True,
-    'pi.companionService.baseUrl': 'http://10.27.27.120:8000',  # b044-exempt: DEFAULTS registry mirrors config.json
     'pi.companionService.apiKeyEnv': 'COMPANION_API_KEY',
     'pi.companionService.syncTimeoutSeconds': 30,
     'pi.companionService.batchSize': 500,
     'pi.companionService.retryMaxAttempts': 3,
     'pi.companionService.retryBackoffSeconds': [1, 2, 4, 8, 16],
+    # US-391 (F-076): queue-level quarantine.  After this many consecutive
+    # server-rejection failures on one table the push is quarantined and
+    # re-attempts are throttled to once per quarantineThrottleSeconds (instead
+    # of every cadence tick) -- stops a single unresolvable record from
+    # retrying forever and masking a real sync failure in the noise.
+    'pi.companionService.quarantineThreshold': 5,
+    'pi.companionService.quarantineThrottleSeconds': 3600,
     # Pi-tier home-network detection (US-188, B-043 component 1).  Consumed
     # by src.pi.network.HomeNetworkDetector to decide at shutdown time
     # whether the Pi should attempt a sync push before powering off.
@@ -303,6 +309,16 @@ DEFAULTS: dict[str, Any] = {
     # the tier split -- see src/pi/obdii/config/loader.py:124).  Constant
     # OLLAMA_GENERATE_TIMEOUT in types.py remains the back-compat fallback
     # when this key is absent.
+    # US-392 (A-15 address de-dup): the server address is the SINGLE source
+    # held here (validator mirror) + config.json server.network.serverHost
+    # ONLY. The companion-service + server base URLs are DERIVED from
+    # serverHost:serverPort in _deriveServerUrls below -- they are NOT
+    # duplicated as independent literals that nothing forces to agree (the
+    # structural gap behind the 2026-06-18 .10 -> .120 sync breakage).
+    # Mirrors deploy/addresses.sh, which already derives SERVER_BASE_URL from
+    # ${SERVER_HOST}:${SERVER_PORT}.
+    'server.network.serverHost': '10.27.27.120',  # b044-exempt: DEFAULTS registry mirrors config.json
+    'server.network.serverPort': 8000,
     'server.ai.generateTimeoutSeconds': 120,
     'hardware.telemetry.logInterval': 10,
     'hardware.telemetry.logPath': '/var/log/carpi/telemetry.log',
@@ -389,6 +405,11 @@ class ConfigValidator:
         # Apply defaults
         config = self._applyDefaults(config)
 
+        # Derive base URLs from the single serverHost:serverPort source
+        # (US-392 A-15 de-dup) -- runs after defaults so the source keys are
+        # guaranteed present.
+        self._deriveServerUrls(config)
+
         # Post-default semantic validation of tier-specific sections that
         # carry numeric ranges / shape constraints beyond "key present".
         self._validateCompanionService(config)
@@ -399,6 +420,40 @@ class ConfigValidator:
 
         logger.info("Configuration validated successfully")
         return config
+
+    def _deriveServerUrls(self, config: dict[str, Any]) -> None:
+        """Derive base URLs from the single serverHost:serverPort source (US-392).
+
+        A-15 address de-dup: config.json holds the server address in ONE key
+        (``server.network.serverHost``); the companion-service base URL
+        (``pi.companionService.baseUrl``) and the server base URL
+        (``server.network.serverBaseUrl``) are DERIVED here rather than
+        duplicated as independent literals that nothing forces to agree -- the
+        structural gap that let the 2026-06-18 chi-srv-01 ``.10 -> .120`` move
+        break sync. This mirrors ``deploy/addresses.sh``, which already derives
+        ``SERVER_BASE_URL`` from ``${SERVER_HOST}:${SERVER_PORT}``.
+
+        Derivation only fills a base URL that is ABSENT; an explicitly
+        configured baseUrl still wins (the addresses.sh ``:-`` fallback
+        semantics), so this is behavior-preserving for any config that set the
+        URL directly. Called after :meth:`_applyDefaults`, so serverHost +
+        serverPort are guaranteed present (DEFAULTS supply them when the
+        section omits them); if the host is somehow still absent, derivation is
+        skipped rather than producing a malformed URL.
+
+        Args:
+            config: Validated configuration (post-default-application);
+                mutated in place.
+        """
+        host = self._getNestedValue(config, 'server.network.serverHost')
+        port = self._getNestedValue(config, 'server.network.serverPort')
+        if not host or port is None:
+            return
+        derived = f"http://{host}:{port}"
+        if self._getNestedValue(config, 'server.network.serverBaseUrl') is None:
+            self._setNestedValue(config, 'server.network.serverBaseUrl', derived)
+        if self._getNestedValue(config, 'pi.companionService.baseUrl') is None:
+            self._setNestedValue(config, 'pi.companionService.baseUrl', derived)
 
     def _validateCompanionService(self, config: dict[str, Any]) -> None:
         """
@@ -465,6 +520,34 @@ class ConfigValidator:
                 f"pi.companionService.retryBackoffSeconds must be a list "
                 f"(got {type(backoff).__name__})",
                 missingFields=['pi.companionService.retryBackoffSeconds'],
+            )
+
+        # US-391: quarantine threshold (consecutive failures) must be a
+        # positive int; bool rejected first so a stray true/false can't pose
+        # as 1/0.
+        quarantineThreshold = section.get('quarantineThreshold')
+        if quarantineThreshold is not None and (
+            isinstance(quarantineThreshold, bool)
+            or not isinstance(quarantineThreshold, int)
+            or quarantineThreshold < 1
+        ):
+            raise ConfigValidationError(
+                f"pi.companionService.quarantineThreshold must be an integer "
+                f">= 1 (got {quarantineThreshold!r})",
+                missingFields=['pi.companionService.quarantineThreshold'],
+            )
+
+        # US-391: throttle window (seconds) must be a positive number.
+        quarantineThrottle = section.get('quarantineThrottleSeconds')
+        if quarantineThrottle is not None and (
+            isinstance(quarantineThrottle, bool)
+            or not isinstance(quarantineThrottle, (int, float))
+            or quarantineThrottle <= 0
+        ):
+            raise ConfigValidationError(
+                f"pi.companionService.quarantineThrottleSeconds must be a "
+                f"positive number (got {quarantineThrottle!r})",
+                missingFields=['pi.companionService.quarantineThrottleSeconds'],
             )
 
     def _validateHomeNetwork(self, config: dict[str, Any]) -> None:

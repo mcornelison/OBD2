@@ -441,3 +441,125 @@ def test_dryRunSmokeTestStillPasses():
     assert result.returncode == 0, (
         f"deploy-pi.sh smoke test failed post-US-354 edits (exit={result.returncode})"
     )
+
+
+# ----------------------------------------------------------------------------
+# US-389: single-instance matched-pair deploy invariant + stop-before-start
+#
+# F-107 Root 1 closure (Atlas C-5): the guard config flag
+# (pi.runtime.singleInstanceGuard.enabled) and the systemd
+# RuntimeDirectory=eclipse-obd are a MATCHED PAIR. The deploy gate must:
+#   1. assert both halves are present BEFORE syncing/restarting (fail loudly
+#      on the workstation, never reach the Pi with a broken pair); and
+#   2. stop-before-start the orchestrator so the outgoing process releases the
+#      single-instance pidfile before the incoming process acquires it
+#      (release-then-acquire ordering -- the deploy-hygiene check architecture.md
+#      §10.7.1 gates the guard's production-enable on).
+# These static assertions pin the fix shape so a future refactor cannot silently
+# drop the gate or revert to a bare `systemctl restart`.
+# ----------------------------------------------------------------------------
+
+
+def test_us389_citedInScript():
+    """The matched-pair gate + stop-before-start must cite US-389 so archaeology
+    can trace them back to their acceptance criteria.
+    """
+    text = _scriptText()
+    assert "US-389" in text, "deploy-pi.sh must cite US-389 on the matched-pair gate"
+
+
+def test_us389_matchedPairStep_exists():
+    """A dedicated matched-pair assertion step must exist so its presence is
+    observable in the deploy log and its absence trips RED here.
+    """
+    text = _scriptText()
+    assert "step_assert_single_instance_matched_pair" in text, (
+        "deploy-pi.sh must define a step_assert_single_instance_matched_pair "
+        "function (US-389 AC#1 -- the deploy fails if the guard flag or "
+        "RuntimeDirectory is missing)"
+    )
+
+
+def test_us389_matchedPairStep_checksBothHalves():
+    """The gate must shell out to the deploy_invariants helper with BOTH the
+    config (guard flag half) and the unit (RuntimeDirectory half).
+    """
+    text = _scriptText()
+    body = _stepBody(text, "step_assert_single_instance_matched_pair")
+    assert "deploy_invariants.py" in body, (
+        "the gate must invoke scripts/deploy_invariants.py (the testable "
+        "assertion logic)"
+    )
+    assert "check-pair" in body, "the gate must call the check-pair subcommand"
+    assert "config.json" in body, "the gate must pass config.json (guard-flag half)"
+    assert ".service" in body, "the gate must pass the unit (RuntimeDirectory half)"
+
+
+def test_us389_matchedPairStep_failsDeployOnViolation():
+    """A broken pair must abort the deploy (exit non-zero), not warn-and-continue.
+    The presence of a real file is the only warn-and-skip path; an actual
+    violation from a present pair must `exit`.
+    """
+    text = _scriptText()
+    body = _stepBody(text, "step_assert_single_instance_matched_pair")
+    hasExit = any(f"exit {n}" in body for n in range(1, 256))
+    assert hasExit, (
+        "step_assert_single_instance_matched_pair must `exit <non-zero>` when "
+        "the matched-pair check fails -- a broken pair reaching the Pi "
+        "crash-loops the non-root orchestrator (US-389 AC#1)"
+    )
+
+
+def test_us389_matchedPairStep_runsBeforeSyncTree():
+    """The gate must run BEFORE sync_tree so a broken pair aborts on the
+    workstation and never ships to the Pi.
+    """
+    text = _scriptText()
+    setEOffset = text.find("\nset -e")
+    body = text[setEOffset:]
+    gateCallIdx = body.rfind("step_assert_single_instance_matched_pair")
+    syncCallIdx = body.rfind("sync_tree")
+    assert gateCallIdx > -1, "matched-pair gate not called in body"
+    assert syncCallIdx > -1, "sync_tree not called in body"
+    assert gateCallIdx < syncCallIdx, (
+        "step_assert_single_instance_matched_pair must run BEFORE sync_tree "
+        "(abort on the workstation, never ship a broken pair to the Pi)"
+    )
+
+
+def test_us389_restartService_stopsBeforeStart():
+    """step_restart_service must stop-then-start (release-then-acquire), NOT a
+    bare `systemctl restart` -- so the outgoing orchestrator releases the
+    single-instance pidfile before the incoming one acquires it.
+    """
+    text = _scriptText()
+    body = _stepBody(text, "step_restart_service")
+    stopIdx = body.find("systemctl stop ${SERVICE_NAME}")
+    startIdx = body.find("systemctl start ${SERVICE_NAME}")
+    assert stopIdx > -1, (
+        "step_restart_service must `systemctl stop ${SERVICE_NAME}` (US-389 "
+        "release-then-acquire ordering)"
+    )
+    assert startIdx > -1, (
+        "step_restart_service must `systemctl start ${SERVICE_NAME}` after the stop"
+    )
+    assert stopIdx < startIdx, (
+        "the stop must precede the start (the guard refuses a double-start; a "
+        "bare restart can race the still-dying old pid)"
+    )
+
+
+def test_us389_deployVersion_recordsSingleInstanceState():
+    """step_write_deploy_version must thread the single-instance summary into
+    the release record so .deploy-version is no longer silent on the
+    matched-pair guard state (US-389 AC#4).
+    """
+    text = _scriptText()
+    body = _stepBody(text, "step_write_deploy_version")
+    assert "deploy_invariants.py" in body and "summarize" in body, (
+        "step_write_deploy_version must summarize the single-instance state"
+    )
+    assert "--single-instance" in body, (
+        "step_write_deploy_version must pass --single-instance to compose-record "
+        "so the .deploy-version stamp records guardEnabled + runtimeDirectory"
+    )

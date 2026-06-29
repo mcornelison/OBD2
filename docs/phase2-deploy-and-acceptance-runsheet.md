@@ -28,7 +28,7 @@ This is the **last in-code task** before the sprint hands off to the CIO bench.
 ## 1. Preconditions — verify before kicking off the drill
 
 - [ ] **Battery charged.** UPS LiPo charged on external power, Pi idle, for ≥1 h before starting. Long benches of forced cycles drain the pack flat (a near-empty pack will trip the `vcellFloorVolts=3.50` emergency short-circuit mid-cycle and confuse the drill).
-- [ ] **`chi-eclipse-01` reachable on home WiFi**; `chi-srv-01` (10.27.27.10) up (for the reachable-path leg in §3).
+- [ ] **`chi-eclipse-01` reachable on home WiFi**; `chi-srv-01` (10.27.27.120) up (for the reachable-path leg in §3).
 - [ ] **EEPROM is `POWER_OFF_ON_HALT=1`** on the Pi (one-liner): `ssh chi-eclipse-01 "sudo rpi-eeprom-config | grep POWER_OFF_ON_HALT"` → expect `POWER_OFF_ON_HALT=1`. (If absent or `=0`, the post-redeploy enforce script will set it on the next deploy; verify before §2.)
 - [ ] **`eclipse-powerwatch` reinstalled by the latest deploy.** It was manually removed during the V0.27.14 bricking recovery; `deploy/deploy-pi.sh` reinstalls it via `step_install_power_watch_unit`. Confirm: `ssh chi-eclipse-01 "systemctl is-enabled eclipse-powerwatch.service"` → expect `enabled`.
 - [ ] **Service active and armed.** `ssh chi-eclipse-01 "systemctl is-active eclipse-powerwatch.service && journalctl -u eclipse-powerwatch.service -b --no-pager | tail -10"` → expect `active`, and the startup line `powerwatch service up (GPIO%d PLD SSOT trigger): perTask=20s totalCap=45s vcellFloor=3.50V smoothing=5s bootGrace=120s` (config-tunable; the bootGrace + smoothing values come from `pi.powerWatch.{bootGraceSec,smoothingSec}`).

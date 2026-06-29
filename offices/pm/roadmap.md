@@ -1,307 +1,62 @@
 # Project Roadmap
 
 **Project**: Eclipse OBD-II Performance Monitoring System
-**Last Updated**: 2026-04-11
-**Target Platform**: Raspberry Pi 5
+**Last Updated**: 2026-06-29 (Session 50 — full rewrite; prior version was a 2026-04-11 pre-V0.24 relic on the retired Phase/B-XXX scheme)
+**Target Platform**: Raspberry Pi 5 (edge) + Chi-Srv-01 (server)
+
+> This is the **high-level delivery roadmap** — epics, the release-chain model, and near-term priorities. Story-level detail lives in `offices/pm/backlog.json` (single source of truth; no duplication per PM Rule 4). Session history lives in `offices/pm/projectManager.md`. Tuning/vehicle vision lives in `offices/tuner/knowledge/` (Spool-owned).
 
 ---
 
-## Phase Summary
+## Where we are now (2026-06-29)
 
-| Phase | Name | Status | Key Deliverable |
-|-------|------|--------|-----------------|
-| 1 | Foundation | Complete | Config, logging, error handling, test framework |
-| 2 | OBD-II Core | Complete | 12 modules: database, OBD connection, VIN, alerts, stats, profiles, display, export, AI |
-| 3 | Simulator | Complete | Physics-based OBD simulator for hardware-free testing |
-| 4 | Module Refactoring | Complete | Clean subpackage architecture, 16 user stories |
-| 5 | Application Orchestration | **Active** | Main loop, startup/shutdown, deployment |
-| 5.5 | Pi Deployment | **Active** | Pi setup, CI/CD, database init, testing on hardware |
-| 6 | Hardware Integration | Planned | Touch screen display, Pi-specific hardware |
-| 6.5 | ECMLink Integration | Future | Programmable ECU, wideband AFR, knock data |
-| 7 | Polish & Deploy | Planned | snake_case migration, dependency cleanup, production hardening |
-| -- | Tuning Intelligence | **Active** | Alert thresholds, display content, server analysis, PID validation (cross-cutting) |
+**Release state** (dev/main branching workflow — `docs/superpowers/specs/2026-05-28-dev-main-branching-workflow-design.md`):
+- **`main` = `V0.28.2`** — last fully-validated stable (merged 2026-06-05; drive-27 single-attribution IRL drill passed).
+- **`dev` = V0.29 chain** carrying:
+  - **V0.29.0** — EDR dedicated-reader bus Slice 1 (E-006/F-110). Deployed, ships **dark** behind `pi.bus.enabled=false`; awaiting Pi flag-flip + byte-identical validation.
+  - **V0.29.1 / Sprint 47 — IN FLIGHT** (Ralph executing on `sprint/sprint47-V0.29.1`): data-integrity hardening — A-9 DriveDetector RCA+fix, ECU lineage spine, sync quarantine, config de-dup.
+
+**System** (3-tier): Pi 5 `10.27.27.28` (in-vehicle capture) → **Chi-Srv-01 `10.27.27.120`** (MariaDB `obd2db` + Ollama `llama3.1:8b`) → AI analysis. Architecture: **Pi = canonical raw emitter, server = analytics authority** (B-104).
+
+**Vehicle**: 1998 Eclipse GST (4G63 turbo). Driving (Drive 27+) on the **new modified-EPROM ECU `MD326328`** (swapped ~2026-05-22, drives ≥25; prior factory ECU `MD346675` for drives ≤24). SPEED reads true (factor 1.0 on both ECUs — the "2× drift" was a km/h-as-mph mislabel, GPS-resolved). **ECMLink V3 owned, not yet installed** (planned summer 2026). Live OBD-II data flowing to the server; baselines establishing.
 
 ---
 
-## Phase 5: Application Orchestration (Active)
+## How we work
 
-**PRD**: `pm/prds/prd-application-orchestration.md`
-**Status**: 0/20 user stories complete
-
-### Scope
-
-- ApplicationOrchestrator class (central lifecycle management)
-- Startup/shutdown sequences
-- Component wiring (connect all 12 modules)
-- Background thread management
-- Backup integration (Google Drive)
-- systemd service setup for Pi
-- Integration and end-to-end testing
-
-### Related Backlog Items
-
-- B-002: Comprehensive Backup Strategy (partially covered by US-TD-012, US-TD-013)
+- **Release chains**: a `V0.X` chain = a `V0.X.0` minor sprint + stacked `V0.X.N` patch sprints, integrated on `dev`. When the whole chain is IRL-validated, `/chain-validated` merges `dev`→`main` and tags `V0.X.N`.
+- **Sprints**: each runs on its own branch off `dev`; PM (Marcus) freezes the contract (`sprint.json` + `bigDoDHash`), Atlas Rule-13 signs off, Ralph executes, PM merges at close via `/sprint-deploy-pm`.
+- **Backlog v2**: Epic (E-) > Feature (F-) > Story (US-). Typed stories (issue/blocker/tech-debt/research/housekeeping/security) replace the old I-/BL-/TD- intake.
+- **Team**: Marcus (PM/orchestration) · Atlas (architecture + design gate) · Ralph/Rex (dev) · Spool (tuning SME) · Argus (QA) · Iris (UI/UX). CIO ratifies + drives hardware/IRL.
 
 ---
 
-## Phase 5.5: Pi Deployment (Groomed)
+## Epic roadmap
 
-All backlog items groomed with PRDs or checklists. The Pi 5 with HDMI touch screen is available (no UPS power unit yet).
-
-### Scope
-
-- Pi 5 initial setup (OS, SSH, networking, display)
-- CI/CD pipeline (Windows dev → Pi deployment)
-- Database verify and initialize script
-- Testing on Pi hardware (simulator + real Bluetooth OBD2)
-- Remote Ollama server integration
-
-### Pre-Deployment (do before deploying to Pi)
-
-- B-020: Fix Config Drift in obd_config.json (High, S) -- **Complete**
-- B-021: Push Unpushed Commits to Remote (High, S) -- **Complete**
-
-### Related Backlog Items and PRDs
-
-| Item | PRD | Stories | Status |
-|------|-----|---------|--------|
-| B-012: Pi 5 Initial Setup (EclipseTuner) | CIO manual checklist (in backlog item) | n/a | Groomed |
-| B-013: CI/CD Pipeline | `pm/prds/prd-pi-deployment.md` | US-DEP-001 through US-DEP-007 | **Complete** |
-| B-015: Database Verify & Init | `pm/prds/prd-database-verify-init.md` | US-DBI-001 through US-DBI-004 | **In Progress** (Ralph) |
-| B-016: Remote Ollama (Chi-srv-01) | `pm/prds/prd-remote-ollama.md` | US-OLL-001 through US-OLL-005 | **In Progress** (Ralph) |
-| B-022: Chi-srv-01 Companion Service | `pm/prds/prd-companion-service.md` | US-CMP-001 through US-CMP-009 | **Groomed** |
-| B-023: WiFi-Triggered Sync & AI | None yet | n/a | Pending |
-| B-024: Remove Local Ollama References | None yet | n/a | Pending |
-| B-026: Simulate DB Validation Test | None yet | n/a | Pending |
-| B-027: Client-Side Sync to Chi-Srv-01 | None yet | n/a | Pending (depends B-022, B-023) |
-| B-014: Pi 5 Testing | `pm/prds/prd-pi-testing.md` | US-PIT-001 through US-PIT-004 | Groomed (blocked) |
-
-### Dependency Chain
-
-```
-B-020 (Fix Config) ──── Complete
-B-021 (Push Commits) ── Complete
-
-B-012 (Pi Setup - EclipseTuner) ─────┐
-    |                                 │
-    ├── B-013 (CI/CD Pipeline) ───────┤
-    │       |                         │
-    │       └── B-014 (Pi Testing) ◄──┘
-    |
-    └── B-015 (Database Init) ────── B-014 (Pi Testing)
-
-B-016 (Remote Ollama Config) ─── B-024 (Remove Local Ollama Refs)
-    |
-    └── B-022 (Chi-srv-01 Companion Service) ── separate repo: OBD2-Server
-            |
-            ├── B-027 (Client-Side Sync) ── EclipseTuner repo changes
-            |
-            └── B-023 (WiFi-Triggered Sync & AI) ── depends on B-012, B-013, B-022, B-027
-
-B-026 (Simulate DB Validation Test) ── enforces new Definition of Done
-
-B-014 (Pi Testing) ── last in chain, depends on B-012, B-013, B-015
-```
-
-### Named Infrastructure
-
-| Name | Hostname | IP | Type | Purpose |
-|------|----------|----|------|---------|
-| **EclipseTuner** | chi-eclipse-tuner | 10.27.27.28 | Raspberry Pi 5 (8GB) | In-vehicle OBD-II monitor |
-| **Chi-srv-01** | Chi-Srv-01 | 10.27.27.120 | Debian 13 server (i7-5960X, 128GB, 2TB RAID5) | Ollama LLM host (CPU) + companion service |
-| **Chi-NAS-01** | Chi-NAS-01 | 10.27.27.121 | Synology 5-disk RAID NAS | Secondary backup target |
-| **DeathStarWiFi** | -- | 10.27.27.0/24 | Home WiFi SSID | Triggers sync/backup/AI when Pi connects |
-
-**Chi-srv-01 specs (updated 2026-04-09)**: i7-5960X (8c/16t), 128GB DDR4, 12GB NVIDIA GPU (GPU-accelerated Ollama), 2TB RAID5 SSD, Debian 13.
+| Epic | Theme | State + next |
+|------|-------|-------------|
+| **E-001** | UI/UX Polish | **CIO-driven near-term line.** F-103 splash **groom-ready** (the required-first chromium-kiosk runtime); F-092 System Status + F-097 Battery Health carousel + F-111 DTC viewer/Mode-04 clear **pending Atlas design-gate signoff**. Sequence: F-103 → carousel → cards → DTC Card 5. Staging plan: `prds/prd-uiline-draft.md`. |
+| **E-002** | Data Pipeline & Analytics | **Active (Sprint 47).** A-9 DriveDetector (F-107) + ECU lineage (F-108) + sync hardening (F-076). Direction: server-side analytics authority (F-104, B-104). Pending: derived signals, baselines, sync-cadence cleanups. |
+| **E-003** | Tuning Intelligence | Mostly **gated on ECMLink + accumulated clean data**. GEM dashboard-intelligence items (F-087..F-095), MAP PID (F-074), ECMLink integration (F-025). Spool-led. |
+| **E-004** | Infrastructure & Deploy | Active: Pi pipeline (F-037), auto-sync/shutdown (F-043), config-driven addresses (F-044). Pending: Pi self-update (F-047), fuse-box power (F-063), hostname cleanup `Chi-Eclips-Tuner`→`chi-eclipse-01` (F-102). |
+| **E-005** | Reports & CLI | Pending: Excel export (F-041), audio reports (F-091), Ollama fallback docs (F-003). |
+| **E-006** | **EDR / Black-Box Recorder** | **Emerging V0.3x+ multi-sprint direction.** Slice 1 bus shipped (F-110, dark). Phases filed: **F-112 ECMLink feasibility spike** + **F-113 bus-contract design** (both **hardware-independent → groomable now**); **F-114 IMU/light channels** + **F-115 event-vault+triggers** (hardware-gated). Sensors **hardware-installed 2026-06-27** (ahead of schedule); CIO mid-wire, gate = `i2cdetect` 29/36/69. Atlas Watch List A-14. |
+| **E-OPS** | Operational Hygiene | Standing typed-story home: power/UPS, sync hygiene, connection-log noise, schema cleanups, DTC freeze-frame (F-108/F-109), arch-doc maintenance (F-105). |
 
 ---
 
-## Tuning Intelligence (Cross-Cutting, Active)
+## Near-term priorities
 
-**Source**: Spool Tuning Spec (2026-04-10) — comprehensive tuning SME specifications
-**Epic**: E-10 in `backlog.json`
-**Status**: 32 stories across 5 backlog items. Phase 1 items buildable now, Phase 2 items blocked on ECMLink.
-
-Spool (Tuning SME) delivered domain knowledge that drives the system's intelligence layer. This work spans multiple phases and systems.
-
-### Backlog Items
-
-| Item | Stories | Status | Phase Dependency |
-|------|---------|--------|-----------------|
-| B-028: Phase 1 Alert Thresholds | US-107 – US-112 (6) | Groomed | Buildable now |
-| B-029: Phase 2 Alert Thresholds + Ethanol Interpolation | US-113 – US-120 (8) | Blocked | Needs ECMLink (summer 2026) |
-| B-030: Tuning-Driven Display Layout | US-121 – US-128 (8) | Groomed | Needs B-007 hardware layer |
-| B-031: Server Analysis Pipeline | US-129 – US-135 (7) | Groomed | Needs B-022 companion service |
-| B-032: PID Polling Validation + Data Architecture | US-136 – US-138 (3) | Groomed | US-136 buildable now; US-137/138 design work |
-
-### Spool's Vehicle Modification Roadmap
-
-Maps software features to vehicle hardware state. Drives sprint planning.
-
-**Tuning Phase 0 — Pre-Hardware (NOW, April 2026)**
-- Vehicle: Car in garage, battery charger, Pi on desk
-- System: 144+ modules built, simulator working, no live data
-- Build: Current sprint work (orchestration, DB verify, Ollama cleanup)
-- Build: Alert threshold engine (B-028) against simulator
-- Build: Drive summary generation (US-135)
-- Build: Display rendering for 3.5" screen (B-030)
-- Spool provides: All thresholds, examples, analysis specs (delivered)
-
-**Tuning Phase 1 — First Live Connection (May–June 2026)**
-- Vehicle: Out of storage, driving on pump gas, stock ECU
-- Pi: Installed in car, OBDLink LX Bluetooth connected
-- Data: OBD-II only, ~5 PIDs/sec, ~18,000 rows/hour
-- Milestone: **First real datalog uploaded to server**
-- System: Core 5 PIDs at 1 Hz, coolant/RPM/status on display, Phase 1 alerts, local storage, WiFi sync, drive summaries
-- Server: Baseline comparison, thermal analysis
-- Spool validates: First live data, PID support, sensor accuracy, baseline establishment
-
-**Tuning Phase 2 — ECMLink + Wideband (June–July 2026)**
-- Vehicle: ECMLink flashed, wideband installed, pump gas
-- New hardware: Fuel pump, flex fuel sensor, exhaust upgrade
-- Data: OBD-II + ECMLink serial (if Pi can receive), ~540,000 rows/hour
-- Milestone: **First WOT datalog with real AFR and knock data**
-- System: All Phase 1 + ECMLink ingestion, AFR/boost on display, ALL Phase 2 alerts (B-029), knock correlation (US-129), AFR drift trending (US-130)
-- Server: Establishes "real" baseline with full data
-
-**Tuning Phase 3 — E85 + Full Tune (July–August 2026)**
-- Vehicle: Injectors swapped, E85 in tank, flex fuel active, tuned
-- Data: Full ECMLink + flex fuel sensor
-- Milestone: **First E85 datalog with ethanol-adjusted thresholds**
-- System: All Phase 2 + ethanol-aware AFR thresholds (US-115 interpolation), E85 content tracking (US-133), IDC tracking (US-131), full baseline comparison (US-134), all 6 server analyses
-
-**Tuning Phase 4 — Mature System (September 2026+)**
-- Vehicle: Fully tuned, E85, all monitoring active
-- System: Multi-drive trend analysis, seasonal comparison, anomaly detection, advisory messages pushed to Pi
-
-**Tuning Phase 5 — Edge Intelligence (Future, late 2026+)**
-- Requires: Full summer of clean data, validated pipelines, proven thresholds
-- Could become: Small ML model on Pi, predictive alerts, automatic tune suggestions (validated by Spool), closed-loop tune adjustments
+1. **Finish + validate Sprint 47 / V0.29.1** (in flight) → A-9 IRL re-gate (CIO-gated: short/back-to-back + key-on-after-missed-close + deploy double-start) → merge dev → deploy/test → `main` on pass.
+2. **Validate Sprint 46 / V0.29.0** — Pi flag-flip (`pi.bus.enabled=true`) + byte-identical `realtime_data` → `/sprint-validated`. Fold into the Sprint-47 deploy window.
+3. **UI line** — groom **F-103** (ready now; unblocks the whole line); carousel + DTC viewer await Atlas design-gate signoffs.
+4. **EDR (next themed direction)** — groom the **hardware-independent** foundation now: ECMLink feasibility spike (F-112) + bus-contract design (F-113). Hardware integration (F-114/F-115) once `i2cdetect` passes. Staging plan: `prds/prd-edr-next-draft.md`.
 
 ---
 
-## Phase 6: Hardware Integration (Planned)
+## Long-term vehicle / tuning vision
 
-**PRD**: `pm/prds/prd-raspberry-pi-hardware-integration.md`
-
-### Scope
-
-- OSOYOO 3.5" HDMI touch screen driver (480x320)
-- Touch input handling (tap, swipe)
-- Full-screen dashboard UI
-- Power management via Geekworm X1209 UPS HAT (when available)
-
-### Related Backlog Items
-
-- B-007: Touch Screen Display Support
-
----
-
-## Phase 6.5: ECMLink Integration (Future)
-
-**PRD**: None yet
-**Prerequisite**: Programmable ECU installed in vehicle, Pi deployment complete
-**Target**: Q2/Q3 2026 (ECMLink install planned for spring/summer when Chicago temps warm up)
-
-The project's ultimate purpose is gathering OBD-II data to inform ECU tuning via ECMLink V3. This phase adds:
-
-- Data export formatted for ECMLink's Excel import
-- AI recommendations that reference specific fuel map / timing map cells
-- Before/after drive comparison for tuning impact tracking
-- Tuning session log (date, parameter, old value, new value)
-
-### Related Backlog Items
-
-- B-025: ECMLink Data Integration (Medium, L)
-
----
-
-## Phase 7: Polish & Deploy (Planned)
-
-No PRD yet. Composed of backlog items:
-
-- B-019: Split oversized files (XL) -- orchestrator.py critical
-- B-006: snake_case migration (XL)
-- B-004: Dependency evaluation (S)
-- B-003: Ollama fallback documentation (S)
-- B-008: Data retention update (S)
-- B-009: Error classification docs fix (S)
-- B-010: Pi target docs update (S)
-- B-001: Test runner cleanup (S)
-- B-005: Commit untracked docs (S)
-
----
-
-## Backlog Summary
-
-| ID | Title | Priority | Size | Status | Phase |
-|----|-------|----------|------|--------|-------|
-| B-001 | Clean Up Test Runner Scripts | Low | S | Pending | 7 |
-| B-002 | Comprehensive Backup Strategy | Medium | L | Groomed | 5 |
-| B-003 | Document Ollama Fallback | Medium | S | Pending | 7 |
-| B-004 | Evaluate Dependencies | Medium | S | Pending | 7 |
-| B-005 | Commit Untracked Docs | Low | S | Pending | 7 |
-| B-006 | snake_case Migration | Medium | XL | Pending | 7 |
-| B-007 | Touch Screen Display | Medium | L | Pending | 6 |
-| B-008 | Data Retention Update | Low | S | Pending | 7 |
-| B-009 | Error Classification Docs | Low | S | Pending | 7 |
-| B-010 | Pi Target Docs Update | Low | S | Pending | 7 |
-| B-011 | OBD2 Patterns Reference | Low | L | Complete | -- |
-| B-012 | Pi 5 Initial Setup | **High** | M | Complete | 5.5 |
-| B-013 | CI/CD Pipeline (Win → Pi) | **High** | M | Complete | 5.5 |
-| B-014 | Pi 5 Testing (Sim + Real) | **High** | L | Groomed (blocked) | 5.5 |
-| B-015 | Database Verify & Initialize | **High** | S | **In Progress** (Ralph) | 5.5 |
-| B-016 | Remote Ollama Server | Medium | M | **Complete** | 5.5 |
-| B-022 | Chi-srv-01 Companion Service | **High** | L | **Groomed** (PRD ready) | 5.5 |
-| B-023 | WiFi-Triggered Sync & AI | **High** | M | Pending | 5.5 |
-| B-024 | Remove Local Ollama References | **High** | S | Pending | 5.5 |
-| B-025 | ECMLink Data Integration | Medium | L | Pending | 6.5 |
-| B-026 | Simulate DB Validation Test | **High** | S | Pending | 5.5 |
-| B-027 | Client-Side Sync to Chi-Srv-01 | **High** | M | Pending | 5.5 |
-| B-017 | Add Coding Rules to Standards | **High** | S | Complete | -- |
-| B-018 | Fix Specs-to-Code Drift | **High** | M | Complete | -- |
-| B-019 | Split Oversized Files | Medium | XL | Pending | 7 |
-| B-020 | Fix Config Drift (obd_config) | **High** | S | Complete | 5.5 |
-| B-021 | Push Unpushed Commits | **High** | S | Complete | 5.5 |
-| B-028 | Phase 1 Alert Thresholds | **High** | M | **Groomed** | Tuning |
-| B-029 | Phase 2 Alert Thresholds + Ethanol | **High** | L | Blocked (ECMLink) | Tuning |
-| B-030 | Tuning-Driven Display Layout | **High** | L | **Groomed** | Tuning |
-| B-031 | Server Analysis Pipeline | **High** | L | **Groomed** | Tuning |
-| B-032 | PID Polling + Data Architecture | **High** | M | **Groomed** | Tuning |
-
----
-
-## Critical Path
-
-```
-Phase 5 (Orchestration)
-    |
-    ├── US-OSC-001: ApplicationOrchestrator class
-    │       |
-    │       ├── US-OSC-002: Startup sequence
-    │       │       |
-    │       │       └── US-OSC-005: Main loop wiring
-    │       │               |
-    │       │               └── US-OSC-015: Integration tests
-    │       |
-    │       └── US-OSC-003: Shutdown sequence
-    |
-    └── US-TD-012/013: Backup integration
-            |
-            v
-Phase 5.5 (Pi Deployment)
-    |
-    ├── B-012: Pi Setup
-    │       |
-    │       ├── B-013: CI/CD → B-014: Testing
-    │       |
-    │       └── B-015: DB Init → B-014: Testing
-    |
-    └── B-016: Remote Ollama (parallel)
-            |
-            v
-Phase 6 (Hardware) → Phase 7 (Polish)
-```
+The north star is unchanged: **collect OBD-II data → AI analysis on Chi-Srv-01 → inform ECU tuning via ECMLink V3**, then track tuning impact drive-over-drive. The detailed multi-phase vehicle-modification roadmap (pre-hardware → live OBD-II → ECMLink+wideband → E85+full-tune → mature/edge-intelligence) is **Spool-owned** — see `offices/tuner/knowledge/`. Current position: **live OBD-II collection on the modified-EPROM ECU, pre-ECMLink-install.**
 
 ---
 
@@ -309,13 +64,5 @@ Phase 6 (Hardware) → Phase 7 (Polish)
 
 | Date | Author | Description |
 |------|--------|-------------|
-| 2026-01-29 | Marcus (PM) | Initial roadmap from restructured project data |
-| 2026-01-29 | Marcus (PM) | Added Phase 5.5 (Pi Deployment): B-012 through B-016, expanded B-002 |
-| 2026-01-29 | Marcus (PM) | Added B-017 through B-021 from developer reports; B-017, B-018 completed (specs fixes) |
-| 2026-01-31 | Marcus (PM) | Groomed all Phase 5.5 items. Created PRDs: prd-database-verify-init.md (B-015, 4 stories), prd-remote-ollama.md (B-016, 5 stories), prd-pi-testing.md (B-014, 4 stories). B-012 groomed as CIO checklist. B-013 already in progress via Ralph. |
-| 2026-01-31 | Marcus (PM) | Added B-022 (Chi-srv-01 companion), B-023 (WiFi-triggered sync), B-024 (remove local Ollama refs). Named infrastructure: EclipseTuner, Chi-srv-01, DeathStarWiFi. Updated dependency chain. |
-| 2026-01-31 | Marcus (PM) | Phase 5.5 now Active. B-012 In Progress, B-013 Complete, B-015/B-016 In Progress (Ralph). ECMLink target Q2/Q3 2026. |
-| 2026-02-01 | Marcus (PM) | Groomed B-022 into PRD (9 stories, FastAPI, MySQL, separate repo). Created B-026 (simulate DB validation), B-027 (client-side sync). Updated dependency chain. |
-| 2026-02-02 | Marcus (PM) | Chi-Srv-01 specs finalized. Repo created: `OBD2-Server`. Updated IP 10.27.27.100 → 10.27.27.10. CPU-only Ollama inference (GT 730 not usable for AI). |
-| 2026-02-05 | Marcus (PM) | Session 10: OBD-II research complete — protocol constraints, stock PIDs, safe ranges, mobile apps. Created `specs/obd2-research.md` as grounding reference for all OBD-II stories. CIO knowledge captured (driving patterns, preferences, hardware plan). Added PM Rule 7 (no fabricated data). |
-| 2026-04-11 | Marcus (PM) | Session 14: Processed Spool's tuning spec (2026-04-10) into backlog. Created Epic E-10 (Tuning Intelligence) with 5 new items (B-028 – B-032), 32 stories (US-107 – US-138). Added Spool's 5-phase vehicle modification roadmap. Updated Chi-Srv-01 specs (GPU upgrade). Updated B-016 to Complete. Story counter advanced to US-139. |
+| 2026-01-29 → 2026-04-11 | Marcus (PM) | Original roadmap (Phase/B-XXX scheme): Phases 1–7, Pi-deployment items B-012..B-032, Spool 5-phase tuning roadmap, Chi-Srv-01 spec. Superseded. |
+| 2026-06-29 | Marcus (PM) | **Full rewrite (Session 50).** Replaced the retired Phase/B-XXX model with the backlog-v2 epic roadmap + the V0.X release-chain/dev-main workflow. Refreshed to current state: `main`=V0.28.2, `dev`=V0.29.1 (Sprint 47 in flight), chi-srv-01=`.120`, new ECU `MD326328`, SPEED=1.0. Added E-006 EDR direction (sensors installed). De-duplicated against `backlog.json` (now the story-level SSOT). |

@@ -45,6 +45,18 @@
 #                               inner `with conn:` retains the existing
 #                               commit-on-clean-exit / rollback-on-exception
 #                               transaction semantics.
+# 2026-06-28    | Rex (US-391) | F-076 queue-level quarantine.  After N
+#                               consecutive SERVER-REJECTION failures on a
+#                               table the push is quarantined: re-attempts are
+#                               throttled to once per quarantineThrottleSeconds
+#                               (instead of every cadence tick) and the event
+#                               is surfaced exactly ONCE.  A successful push
+#                               clears it (re-drainable -- e.g. after US-367
+#                               backfills the ECU era the orphan resolves).
+#                               Transient network failures do NOT quarantine.
+#                               forcePush bypasses the throttle (explicit
+#                               re-drain).  Injected clock for deterministic
+#                               throttle math.
 # ================================================================================
 ################################################################################
 
@@ -142,6 +154,11 @@ class PushStatus(StrEnum):
     # integrity problem.  A future upsert-sync story will introduce a
     # separate path for these tables.
     SKIPPED = "skipped"
+    # US-391: the table is quarantined (N consecutive server-rejection
+    # failures) and the throttle window has not elapsed, so this cycle skips
+    # the push entirely -- no network call.  Distinct from FAILED (which DID
+    # attempt + fail).  Cleared by the next successful push or a forcePush.
+    QUARANTINED = "quarantined"
 
 
 @dataclass(slots=True)
@@ -306,6 +323,7 @@ class SyncClient:
         dbPath: str | None = None,
         httpOpener: Any | None = None,
         sleep: Any | None = None,
+        clock: Any | None = None,
     ) -> None:
         """Construct a SyncClient from a validated Pi config dict.
 
@@ -321,6 +339,9 @@ class SyncClient:
             sleep: Callable taking a float-seconds argument; injected in
                 tests so backoff windows don't actually sleep.  Defaults to
                 :func:`time.sleep`.
+            clock: Zero-arg callable returning an aware UTC ``datetime``;
+                injected in tests so the US-391 quarantine throttle window is
+                deterministic.  Defaults to ``datetime.now(UTC)``.
 
         Raises:
             ConfigurationError: If ``companionService.enabled`` is True but
@@ -344,6 +365,7 @@ class SyncClient:
 
         self._httpOpener = httpOpener or urllib.request.urlopen
         self._sleep = sleep or time.sleep
+        self._clock = clock or (lambda: datetime.now(UTC))
 
         self._apiKey: str | None = None
         if self.isEnabled:
@@ -439,9 +461,38 @@ class SyncClient:
         maxAttempts = int(self._companion.get("retryMaxAttempts", 0))
         return [float(s) for s in schedule[:maxAttempts]]
 
+    def _readQuarantineThreshold(self) -> int:
+        """Consecutive server-rejection failures before a table is quarantined."""
+        return int(self._companion.get("quarantineThreshold", 5))
+
+    def _readQuarantineThrottleSeconds(self) -> float:
+        """Min seconds between re-attempts of a quarantined table (US-391)."""
+        return float(self._companion.get("quarantineThrottleSeconds", 3600))
+
+    def _nowIso(self) -> str:
+        """Aware-UTC ISO-8601 stamp from the injected clock (US-391)."""
+        return self._clock().isoformat()
+
+    def _quarantineThrottleElapsed(self, quarantinedAt: str) -> bool:
+        """Return True when enough time has passed to re-attempt a quarantined push.
+
+        An unparseable stamp degrades to True so a record can never get stuck
+        quarantined forever on a bad timestamp.
+        """
+        try:
+            stamped = datetime.fromisoformat(quarantinedAt)
+        except ValueError:
+            return True
+        if stamped.tzinfo is None:
+            stamped = stamped.replace(tzinfo=UTC)
+        elapsed = (self._clock() - stamped).total_seconds()
+        return elapsed >= self._readQuarantineThrottleSeconds()
+
     # ---- public API --------------------------------------------------------
 
-    def pushDelta(self, tableName: str) -> PushResult:
+    def pushDelta(
+        self, tableName: str, *, bypassQuarantine: bool = False,
+    ) -> PushResult:
         """Push one table's delta rows.  See module docstring for semantics.
 
         Args:
@@ -450,6 +501,9 @@ class SyncClient:
                 tables (see :data:`sync_log.SNAPSHOT_TABLES`) surface as
                 :data:`PushStatus.SKIPPED` rather than being pushed --
                 they do not fit the delta-by-PK model (US-194).
+            bypassQuarantine: When True, ignore the US-391 quarantine throttle
+                and attempt the push regardless (used by :meth:`forcePush` as
+                the explicit re-drain).
 
         Returns:
             A :class:`PushResult` describing the outcome.  A failed network
@@ -525,6 +579,29 @@ class SyncClient:
             # DB picks up the schema on first push.  No-op if already done.
             if supportsUpdateSync:
                 sync_log.ensureSyncModifiedAtSchema(conn)
+            # US-391: queue-level quarantine.  If this table was quarantined
+            # after N consecutive server-rejection failures, throttle the
+            # re-attempt -- skip the push entirely until the throttle window
+            # elapses (or forcePush bypasses it).  This is what stops the
+            # silent 27x/day retry without ever advancing the high-water mark.
+            sync_log.ensureQuarantineSchema(conn)
+            _, quarantinedAt = sync_log.getQuarantineState(conn, tableName)
+            if (
+                quarantinedAt is not None
+                and not bypassQuarantine
+                and not self._quarantineThrottleElapsed(quarantinedAt)
+            ):
+                return PushResult(
+                    tableName=tableName,
+                    rowsPushed=0,
+                    batchId="",
+                    elapsed=time.monotonic() - start,
+                    status=PushStatus.QUARANTINED,
+                    reason=(
+                        f"{tableName} quarantined at {quarantinedAt}; "
+                        "re-attempt throttled (US-391)"
+                    ),
+                )
             lastId, _, _, _ = sync_log.getHighWaterMark(conn, tableName)
             lastModifiedAt: str | None = (
                 sync_log.getModifiedHighWaterMark(conn, tableName)
@@ -567,12 +644,34 @@ class SyncClient:
                 self._postBatchWithRetry(tableName, batchId, payloadRows, lastId)
             except _PushFailure as failure:
                 # On failure, record status='failed' + last_batch_id +
-                # last_synced_at WITHOUT advancing last_synced_id.  We do
-                # this by re-writing the existing mark through the UPSERT
-                # with the same lastId it already held.
-                sync_log.updateHighWaterMark(
-                    conn, tableName, lastId, batchId, status="failed",
-                )
+                # last_synced_at WITHOUT advancing last_synced_id (US-149
+                # invariant -- the raw record must stay re-sendable).
+                if failure.serverRejected:
+                    # US-391: the server REACHED us and rejected the push
+                    # (e.g. an unresolvable cross-tier FK -> HTTP 500).  Count
+                    # it toward quarantine so a permanently-unresolvable record
+                    # stops being re-attempted every cycle.
+                    justQuarantined = sync_log.recordPushFailure(
+                        conn, tableName, batchId,
+                        quarantineThreshold=self._readQuarantineThreshold(),
+                        nowIso=self._nowIso(),
+                    )
+                    if justQuarantined:
+                        # Surface ONCE on the transition (not per-cycle).
+                        logger.warning(
+                            "SYNC_QUARANTINE table=%s quarantined after %d "
+                            "consecutive server-rejection failures; throttling "
+                            "re-attempts to once per %.0fs. Last reason: %s",
+                            tableName, self._readQuarantineThreshold(),
+                            self._readQuarantineThrottleSeconds(), str(failure),
+                        )
+                else:
+                    # Transient network failure (DNS/refused/timeout): NOT an
+                    # identical resolution failure -- preserve the mark without
+                    # advancing the quarantine counter (pre-US-391 behavior).
+                    sync_log.updateHighWaterMark(
+                        conn, tableName, lastId, batchId, status="failed",
+                    )
                 return PushResult(
                     tableName=tableName,
                     rowsPushed=0,
@@ -600,6 +699,10 @@ class SyncClient:
                 conn, tableName, newHighWater, batchId, status="ok",
                 lastModifiedAt=newModifiedAt,
             )
+            # US-391: a successful push clears any quarantine so the record is
+            # re-drainable and the consecutive-failure counter resets (e.g.
+            # once US-367 backfills the ECU era the orphan now resolves).
+            sync_log.clearQuarantine(conn, tableName)
             # US-319 (B-071): forensic INFO at cursor advance.  Stable
             # journalctl-grep token "FORENSIC sync_push_table_advance".
             # Confirms US-315 dual-cursor (id + modified_at) progression
@@ -652,12 +755,17 @@ class SyncClient:
         )
         return {int(pk): str(modAt) for pk, modAt in cursor.fetchall()}
 
-    def pushAllDeltas(self) -> list[PushResult]:
+    def pushAllDeltas(self, *, bypassQuarantine: bool = False) -> list[PushResult]:
         """Push every in-scope table in deterministic order.
 
         Snapshot tables return :data:`PushStatus.SKIPPED` -- they are still
         in the result set so operator output (``scripts/sync_now.py``) keeps
         visibility into all eight in-scope tables.
+
+        Args:
+            bypassQuarantine: Forwarded to :meth:`pushDelta`; when True the
+                US-391 quarantine throttle is ignored (explicit re-drain via
+                :meth:`forcePush`).
 
         Returns:
             One :class:`PushResult` per table in
@@ -666,7 +774,9 @@ class SyncClient:
         """
         results: list[PushResult] = []
         for tableName in sorted(sync_log.IN_SCOPE_TABLES):
-            results.append(self.pushDelta(tableName))
+            results.append(
+                self.pushDelta(tableName, bypassQuarantine=bypassQuarantine),
+            )
         return results
 
     def forcePush(self) -> PushSummary:
@@ -703,7 +813,10 @@ class SyncClient:
         logger.info(
             "forcePush: flushing pending deltas (explicit manual trigger)"
         )
-        results = self.pushAllDeltas()
+        # US-391: forcePush is the explicit re-drain -- bypass the quarantine
+        # throttle so a deploy-time / pre-poweroff flush re-attempts any
+        # quarantined table (e.g. after US-367 lands the ECU lineage spine).
+        results = self.pushAllDeltas(bypassQuarantine=True)
         results.append(self.pushDriveCounter())
 
         rowsPushed = 0
@@ -849,6 +962,9 @@ class SyncClient:
         # backoff, subsequent attempts sleep delays[attempt-1] before firing.
         totalAttempts = 1 + len(delays)
         lastReason: str = "no attempts executed"
+        # US-391: track whether the FINAL failure was a server HTTP rejection
+        # (counts toward quarantine) vs a transient network failure (does not).
+        lastWasServerRejection = False
 
         for attempt in range(totalAttempts):
             if attempt > 0:
@@ -865,24 +981,26 @@ class SyncClient:
             except urllib.error.HTTPError as exc:
                 code = getattr(exc, "code", 0) or 0
                 lastReason = f"HTTP {code} {exc.reason}"
+                lastWasServerRejection = True
                 if not _isRetryableHttpStatus(code):
                     logger.warning(
                         "sync push for %s -> %s rejected: %s (no retry)",
                         tableName, url, lastReason,
                     )
-                    raise _PushFailure(lastReason) from exc
+                    raise _PushFailure(lastReason, serverRejected=True) from exc
                 logger.warning(
                     "sync push for %s -> %s attempt %d/%d failed: %s",
                     tableName, url, attempt + 1, totalAttempts, lastReason,
                 )
             except _RETRYABLE_NETWORK_EXCEPTIONS as exc:
                 lastReason = f"{type(exc).__name__}: {exc}"
+                lastWasServerRejection = False
                 logger.warning(
                     "sync push for %s -> %s attempt %d/%d network error: %s",
                     tableName, url, attempt + 1, totalAttempts, lastReason,
                 )
 
-        raise _PushFailure(lastReason)
+        raise _PushFailure(lastReason, serverRejected=lastWasServerRejection)
 
 
     def _postDriveCounterWithRetry(
@@ -956,4 +1074,13 @@ class _PushFailure(Exception):
 
     Never propagates out of :meth:`SyncClient.pushDelta`; caught there and
     converted into ``PushResult(status=FAILED)``.
+
+    US-391: ``serverRejected`` is True when the final failure was an HTTP error
+    response (the server reached us and rejected the push -- counts toward
+    quarantine) and False for a transient network failure (DNS/refused/timeout
+    -- must NOT quarantine).
     """
+
+    def __init__(self, reason: str, *, serverRejected: bool = False) -> None:
+        super().__init__(reason)
+        self.serverRejected = serverRejected

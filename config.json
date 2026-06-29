@@ -456,7 +456,6 @@
     },
     "companionService": {
       "enabled": true,
-      "baseUrl": "http://10.27.27.120:8000",
       "apiKeyEnv": "COMPANION_API_KEY",
       "syncTimeoutSeconds": 30,
       "batchSize": 500,
@@ -467,7 +466,9 @@
         4,
         8,
         16
-      ]
+      ],
+      "quarantineThreshold": 5,
+      "quarantineThrottleSeconds": 3600
     },
     "sync": {
       "enabled": true,
@@ -544,8 +545,7 @@
       "serverUser": "mcornelison",
       "serverPort": 8000,
       "serverHostname": "chi-srv-01",
-      "serverProjectPath": "/mnt/projects/O/OBD2v2",
-      "serverBaseUrl": "http://10.27.27.120:8000"
+      "serverProjectPath": "/mnt/projects/O/OBD2v2"
     },
     "ai": {
       "enabled": false,

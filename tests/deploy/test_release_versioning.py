@@ -322,6 +322,36 @@ class TestComposeReleaseRecord:
         assert "T" in rec["releasedAt"]
         assert m.validateRelease(rec) is True
 
+    def test_composeReleaseRecord_embedsSingleInstanceState(self, tmp_path):
+        """US-389: the optional singleInstance summary is embedded under the
+        record's singleInstance key so .deploy-version records the matched-pair
+        guard state, and the record still passes validateRelease (the extra
+        key is additive, not a required-field change).
+        """
+        m = _loadHelpers()
+        vf = tmp_path / "RELEASE_VERSION"
+        vf.write_text(json.dumps({
+            "version": "V0.29.1", "theme": "Data integrity", "description": "Test"
+        }))
+        si = {"guardEnabled": True, "runtimeDirectory": "eclipse-obd"}
+        rec = m.composeReleaseRecord(
+            vf, gitHash="abc1234", releasedAt="2026-06-28T14:32:00Z", singleInstance=si
+        )
+        assert rec["singleInstance"] == si
+        assert m.validateRelease(rec) is True
+
+    def test_composeReleaseRecord_omitsSingleInstanceWhenNotProvided(self, tmp_path):
+        """Without the singleInstance arg the record shape is unchanged
+        (back-compat: pre-US-389 callers produce identical records).
+        """
+        m = _loadHelpers()
+        vf = tmp_path / "RELEASE_VERSION"
+        vf.write_text(json.dumps({
+            "version": "V0.18.0", "theme": "Ops Hardening", "description": "Test"
+        }))
+        rec = m.composeReleaseRecord(vf, gitHash="abc1234", releasedAt="2026-04-30T14:32:00Z")
+        assert "singleInstance" not in rec
+
     def test_composeReleaseRecord_missingVersionFile_raises(self, tmp_path):
         m = _loadHelpers()
         with pytest.raises(FileNotFoundError):

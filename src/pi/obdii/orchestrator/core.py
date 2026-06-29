@@ -53,6 +53,14 @@
 #               |              | adapter+ECU readiness flips the tracker
 #               |              | True on a subsequent pass and fires
 #               |              | _handleConnectionRestored.
+# 2026-06-29    | Rex (US-388) | F-107 Root-2: runLoop now calls
+#               |              | _driveDetector.evaluateTimeouts() each pass
+#               |              | (exception-isolated) so the drive-close
+#               |              | deadline is evaluated OFF the reading-tick --
+#               |              | a STOPPING / ECU-silent drive closes even when
+#               |              | the OBD poll loop quiesces, instead of leaking
+#               |              | open and absorbing a later key-on (drives
+#               |              | 28/29).  Atlas C-alpha off-tick close.
 # ================================================================================
 ################################################################################
 
@@ -760,6 +768,20 @@ class ApplicationOrchestrator(  # type: ignore[misc]
                         else:
                             self._handleConnectionLost()
                         lastConnectionState = currentConnectionState
+
+                    # US-388 (F-107 Root-2, Atlas C-alpha): drive the detector's
+                    # OFF-TICK close every loop pass.  The drive-close state
+                    # machine is otherwise tick-driven -- when the OBD readings
+                    # stop (engine off, poll loop quiesces) a STOPPING / ECU-
+                    # silent drive would never close and a later key-on would be
+                    # absorbed into the stale-open drive_id (drives 28/29).
+                    # Cheap: evaluateTimeouts early-exits when no drive is active
+                    # or the deadline has not yet elapsed.
+                    if self._driveDetector is not None:
+                        try:
+                            self._driveDetector.evaluateTimeouts()
+                        except Exception as e:  # noqa: BLE001 -- must not crash loop
+                            logger.debug(f"Drive timeout evaluation failed: {e}")
 
                     # Perform health check if interval elapsed
                     now = datetime.now()
