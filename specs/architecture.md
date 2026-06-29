@@ -1915,6 +1915,14 @@ nonzero exit the deploy script checks) plus a deploy-hygiene check proving
 `systemctl restart` release-then-acquire ordering — incremental US-361
 follow-up, not this sprint.
 
+> **Status update (Sprint 47 / V0.29.1, US-389 — both gates now met).** The
+> two-concurrent-process overlap DID recur in production (drives 28/29,
+> ~2026-06-06), so per Atlas's 2026-06-19 RCA ruling the guard was
+> **enabled out-of-band** (`pi.runtime.singleInstanceGuard.enabled=true`,
+> commit `d6d8b05`) with its required `RuntimeDirectory=eclipse-obd` partner
+> (commit `fae7ee7`) and deployed to the Pi. US-389 makes that durable: see
+> **§10.7.1.1** below. Mechanism B is now **LIVE**, not dark.
+
 **Mechanism C — server-side `attribution_anomaly` tripwire (LIVE; US-362 +
 US-363).** `src/server/analytics/overlap.py::detect_overlapping_drives` is
 the SSOT detector over raw `realtime_data` (US-362). US-363 wires it into
@@ -1933,6 +1941,64 @@ idempotent re-run zero-diff, and release of the `regression_manifest`
 F-005 + F-007 HOLDs on the observed result — runs as part of the Sprint-43
 IRL validation drill, not a headless dev iteration (BL-022). It executes the
 already-built path; it does not change the architecture documented here.
+
+### 10.7.1.1 Root 1 deploy-invariant closure (US-389, Sprint 47 / V0.29.1)
+
+The drives-28/29 recurrence re-confirmed Root 1 (two concurrent `eclipse-obd`
+processes racing the shared `drive_counter` — the per-process `_currentDriveId`
+singleton means neither sees the other's open drive, so a single physical leg
+splits across two minting processes; full trace in
+`docs/rca/2026-06-28-us387-drivedetector-close-signal-rca.md`). The guard +
+`RuntimeDirectory` mitigation was applied out-of-band; US-389 bakes it into the
+boot/deploy path as a **tested invariant** so it cannot silently regress.
+
+**Matched-pair invariant (Atlas C-5).** The guard config flag
+(`pi.runtime.singleInstanceGuard.enabled=true`) and the systemd unit's
+`RuntimeDirectory=eclipse-obd` are a **matched pair** — neither may ship
+without the other:
+
+- guard ON **without** `RuntimeDirectory` ⇒ the non-root service (`User=mcornelison`)
+  hits `EPERM` on `mkdir(/run/eclipse-obd)` when `acquire()` creates the lock's
+  parent dir, and crash-loops on boot;
+- `RuntimeDirectory` **without** the guard ⇒ the Root-1 dual-process defect is
+  left un-prevented.
+
+`deploy/deploy-pi.sh::step_assert_single_instance_matched_pair` shells out to
+`scripts/deploy_invariants.py check-pair` (the testable assertion) **before**
+`sync_tree`, so a broken pair **fails the deploy on the workstation** (exit 10)
+and never reaches the Pi. The assertion logic + its loud-failure contract are
+pinned by `tests/deploy/test_deploy_invariants.py` (guard-flag-false and
+`RuntimeDirectory`-removed fixtures both raise `MatchedPairViolation`) and the
+deploy wiring by `tests/deploy/test_deploy_pi.py` (US-389 static assertions).
+
+**Release-then-acquire deploy hygiene.** `step_restart_service` now does an
+explicit `systemctl stop` → settle → `systemctl start` (not a bare
+`systemctl restart`), pairing with the US-354 deploy-hygiene class: the outgoing
+orchestrator fully exits and **releases** the single-instance pidfile before the
+incoming process **acquires** it, so the guard cannot observe a still-dying old
+pid and refuse the new instance.
+
+**Version stamp.** `step_write_deploy_version` embeds the live
+`{guardEnabled, runtimeDirectory}` summary under the `.deploy-version`
+`singleInstance` key (via `deploy_invariants.py summarize` →
+`version_helpers.py compose-record --single-instance`), so the V0.29.1 stamp
+records the matched-pair state rather than being silent on top of V0.28.2.
+
+**06-06 spawn-trigger (Atlas RCA condition C-3) — best-available evidence.**
+The two concurrent `eclipse-obd` PIDs at ~2026-06-06 02:25 predate this sprint
+by ~3 weeks; the boot-window journal has aged out of the Pi's persistent ring,
+so the precise spawn event cannot be re-read (US-389 `conditionalOutcome`:
+document best-available + most-likely trigger rather than block). **Most-likely
+trigger:** a `systemctl restart` (or `Restart=always` flap, `StartLimitBurst=10`
+within 300 s) that re-spawned the orchestrator **before** the prior process had
+exited — at the time there was no `RuntimeDirectory` lock and no stop-before-start
+ordering, so two `main.py` processes could briefly co-exist, each minting from
+the shared counter. A manual `python src/pi/main.py` run overlapping the live
+service is the secondary candidate. **Both are now structurally prevented**: the
+guard refuses the second instance, the matched-pair invariant guarantees the
+`RuntimeDirectory` lock exists, and stop-before-start removes the restart race.
+Residual overlap remains backstopped server-side by the Mechanism C
+`attribution_anomaly` tripwire (US-390 confirms it stays armed).
 
 *Gate-ratification note: §10.7.1 added per the 2026-05-18 design-gate
 governance rule (PM Rule 10) + Atlas's Sprint-43 PM Rule 13 validation-block

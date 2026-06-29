@@ -17,6 +17,10 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-04-30    | Rex          | Initial implementation (Sprint 19 US-241)
+# 2026-06-28    | Rex (US-389) | composeReleaseRecord embeds optional
+#               |              | singleInstance {guardEnabled, runtimeDirectory}
+#               |              | state so .deploy-version is no longer silent on
+#               |              | the matched-pair guard config (F-107 Root 1).
 # ================================================================================
 ################################################################################
 
@@ -210,6 +214,7 @@ def composeReleaseRecord(
     versionFile: str | Path,
     gitHash: str,
     releasedAt: str | None = None,
+    singleInstance: dict | None = None,
 ) -> dict:
     """Compose a release record for a deploy run.
 
@@ -218,9 +223,14 @@ def composeReleaseRecord(
         gitHash: short git hash for the deployed tree (caller runs
             `git rev-parse --short HEAD`).
         releasedAt: Optional UTC ISO-8601-Z timestamp. If None, uses now (UTC).
+        singleInstance: Optional {guardEnabled, runtimeDirectory} summary
+            (US-389). When provided it is embedded under the record's
+            "singleInstance" key so .deploy-version records the matched-pair
+            guard state rather than being silent on top of the prior stamp.
 
     Returns:
-        Validated record {version, releasedAt, gitHash, theme, description}.
+        Validated record {version, releasedAt, gitHash, theme, description}
+        plus an optional "singleInstance" key when supplied.
 
     Raises:
         FileNotFoundError: versionFile does not exist.
@@ -270,6 +280,11 @@ def composeReleaseRecord(
     }
     if not validateRelease(record):
         raise ValueError(f"composed record failed validation: {record}")
+    # US-389: embed the matched-pair state AFTER validation (validateRelease
+    # keys only on the required release fields; the extra key is additive and
+    # ignored by readers that predate it).
+    if singleInstance is not None:
+        record["singleInstance"] = singleInstance
     return record
 
 
@@ -298,10 +313,14 @@ def _resolveGitHashFallback() -> str:
 
 
 def _runComposeRecord(args: argparse.Namespace) -> int:
+    singleInstance = None
+    if args.single_instance:
+        singleInstance = json.loads(args.single_instance)
     record = composeReleaseRecord(
         args.version_file,
         gitHash=args.git_hash or _resolveGitHashFallback(),
         releasedAt=args.released_at,
+        singleInstance=singleInstance,
     )
     print(json.dumps(record))
     return 0
@@ -320,6 +339,12 @@ def main(argv: list[str] | None = None) -> int:
     compose.add_argument("--version-file", required=True, help="Path to deploy/RELEASE_VERSION")
     compose.add_argument("--git-hash", default="", help="Short git hash; falls back to local repo")
     compose.add_argument("--released-at", default=None, help="UTC ISO-8601-Z; default now")
+    compose.add_argument(
+        "--single-instance",
+        default="",
+        help="JSON {guardEnabled, runtimeDirectory} to embed (US-389); from "
+        "scripts/deploy_invariants.py summarize",
+    )
 
     args = parser.parse_args(argv)
     if args.cmd == "compose-record":

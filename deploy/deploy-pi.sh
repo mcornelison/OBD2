@@ -261,6 +261,42 @@ require_ssh() {
 # Step routines (each idempotent)
 ################################################################################
 
+step_assert_single_instance_matched_pair() {
+    # US-389 (F-107 Root 1 closure, Atlas C-5): the single-instance guard config
+    # flag (pi.runtime.singleInstanceGuard.enabled) and the systemd
+    # RuntimeDirectory=eclipse-obd are a MATCHED PAIR -- neither may ship without
+    # the other.  Enabling the guard WITHOUT RuntimeDirectory makes the non-root
+    # orchestrator hit EPERM on mkdir(/run/eclipse-obd) and crash-loop on boot;
+    # shipping RuntimeDirectory WITHOUT the guard leaves the Root-1 dual-process
+    # attribution defect un-prevented.  This gate FAILS THE DEPLOY before it
+    # touches the Pi if either half is missing.
+    #
+    # Reads LOCAL files only (the source-of-truth config.json + the unit that
+    # gets synced), so it runs for real even under --dry-run -- a violation
+    # should surface in preview, not on the Pi.
+    #
+    # Missing-file gate mirrors step_write_deploy_version: if the helper,
+    # config.json, or the unit isn't present relative to $REPO_ROOT (test
+    # harness, partial sync, hand-extracted tarball), warn + skip rather than
+    # abort, so the offline smoke test (deploy/ only) stays green.
+    echo "--- Step: Asserting single-instance matched pair (US-389, Atlas C-5) ---"
+    local helper="$REPO_ROOT/scripts/deploy_invariants.py"
+    local configFile="$REPO_ROOT/config.json"
+    local unitFile="$REPO_ROOT/deploy/${SERVICE_NAME}.service"
+    if [ ! -f "$helper" ] || [ ! -f "$configFile" ] || [ ! -f "$unitFile" ]; then
+        echo "WARN: skipping matched-pair invariant -- missing $(
+            [ ! -f "$helper" ] && echo scripts/deploy_invariants.py
+            [ ! -f "$configFile" ] && echo config.json
+            [ ! -f "$unitFile" ] && echo deploy/${SERVICE_NAME}.service
+        ) at $REPO_ROOT"
+        return 0
+    fi
+    if ! python "$helper" check-pair --config "$configFile" --unit "$unitFile"; then
+        echo "ERROR: single-instance matched-pair invariant FAILED -- aborting deploy (US-389)." >&2
+        exit 10
+    fi
+}
+
 step_wipe_legacy_projects() {
     # CIO Session 16: confirmed safe to wipe ~/Projects/ leftover content.
     # This routine ONLY runs in --init. Safety verification:
@@ -1035,10 +1071,29 @@ step_write_deploy_version() {
     else
         gitHash="unknown"
     fi
+    # US-389: capture the single-instance matched-pair state so .deploy-version
+    # records {guardEnabled, runtimeDirectory} rather than being silent on top
+    # of the prior (V0.28.2) stamp.  Best-effort: a summarize failure (missing
+    # helper / files) just omits the field -- it must NEVER abort the version
+    # write (the matched-pair gate already hard-failed the deploy earlier if the
+    # pair was actually broken).
+    local invariantsHelper="$REPO_ROOT/scripts/deploy_invariants.py"
+    local configFile="$REPO_ROOT/config.json"
+    local unitFile="$REPO_ROOT/deploy/${SERVICE_NAME}.service"
+    local siJson=""
+    if [ -f "$invariantsHelper" ] && [ -f "$configFile" ] && [ -f "$unitFile" ]; then
+        siJson=$(python "$invariantsHelper" summarize \
+            --config "$configFile" --unit "$unitFile" 2>/dev/null || echo "")
+    fi
+    local -a siArgs=()
+    if [ -n "$siJson" ]; then
+        siArgs=(--single-instance "$siJson")
+    fi
     local versionJson
     versionJson=$(python "$helpersPath" compose-record \
         --version-file "$versionFile" \
-        --git-hash "$gitHash") || {
+        --git-hash "$gitHash" \
+        "${siArgs[@]}") || {
         echo "ERROR: failed to compose release record from $versionFile" >&2
         exit 8
     }
@@ -1054,10 +1109,20 @@ step_write_deploy_version() {
 
 step_restart_service() {
     echo "--- Step: Restarting ${SERVICE_NAME} systemd service ---"
-    # If service isn't installed yet (fresh Pi before first install), this is a warn, not a fail.
+    # US-389 + US-354 deploy-hygiene class: STOP before START (not a bare
+    # `systemctl restart`) so the outgoing orchestrator fully exits and RELEASES
+    # the single-instance pidfile (/run/eclipse-obd/orchestrator.lock) before the
+    # incoming process ACQUIREs it.  A bare restart can let the new instance's
+    # guard observe the still-dying old pid and refuse to start; the explicit
+    # stop -> settle -> start enforces the release-then-acquire ordering that
+    # architecture.md §10.7.1 gates the guard's production-enable on (Atlas).
+    # If the service isn't installed yet (fresh Pi before first install), this
+    # is a warn, not a fail.
     remote "
         if systemctl list-unit-files | grep -q '${SERVICE_NAME}.service'; then
-            sudo systemctl restart ${SERVICE_NAME}
+            sudo systemctl stop ${SERVICE_NAME} || true
+            sleep 1
+            sudo systemctl start ${SERVICE_NAME}
             sleep 1
             sudo systemctl is-active ${SERVICE_NAME} && echo 'Service active.' || echo 'WARN: service not active after restart — check journalctl -u ${SERVICE_NAME}'
         else
@@ -1169,6 +1234,13 @@ if ! $DRY_RUN; then
     require_sync_tool
     require_ssh
 fi
+
+# US-389 (F-107 Root 1): assert the single-instance guard / RuntimeDirectory
+# matched pair BEFORE anything is synced or restarted -- a broken pair must
+# abort the deploy on the workstation, never reach the Pi.  Runs in every mode
+# that ships code (default + --init); the local read-only check is cheap and
+# valuable even in --dry-run preview.
+step_assert_single_instance_matched_pair
 
 if $INIT; then
     step_wipe_legacy_projects
