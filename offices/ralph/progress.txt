@@ -302,3 +302,27 @@ Outcome: SHIPPED passes:true. The out-of-band guard mitigation is now a durable,
 - **Gotcha (offline smoke test)**: `tests/deploy/test_deploy_pi.sh` test 5/6/8 copy ONLY `deploy/` (+ addresses.sh) into a temp dir and run `--dry-run`; they do NOT copy `config.json` or `scripts/`. Any new step that reads `$REPO_ROOT/config.json` or shells out to `scripts/*.py` MUST presence-gate (warn+skip on absent) or it false-fails the smoke test. Same precedent: `step_write_deploy_version`'s missing-helper gate.
 - **PM-owned vs Ralph-owned on the version stamp**: the deploy scripts NEVER bump `deploy/RELEASE_VERSION` (PM does, at sprint close) -- they only READ it and stamp `.deploy-version` per tier. So "record the guard state in the V0.29.1 stamp" splits: the embed MECHANISM is Ralph's (built + tested), the V0.29.1 version bump + real Pi write are PM's at deploy. Build + test the mechanism; defer the version bump.
 ---
+
+## 2026-06-29 - US-392 (Agent 1 / Rex)
+Task: De-dup the server address inside config.json (derive base URLs from serverHost:serverPort)
+Outcome: SHIPPED passes:true. The A-15 structural gap behind the .10->.120 breakage is closed -- the server IP literal now lives in EXACTLY ONE config.json key.
+
+### What was implemented:
+- `src/common/config/validator.py`: new `_deriveServerUrls` (runs after `_applyDefaults`) sets `server.network.serverBaseUrl` + `pi.companionService.baseUrl` to `http://{serverHost}:{serverPort}` ONLY WHEN ABSENT (derive-when-absent -> explicit baseUrl still wins, addresses.sh `:-` semantics). DEFAULTS: dropped the `pi.companionService.baseUrl` literal; added `server.network.serverHost`(b044-exempt mirror) + `serverPort` as the validator single source + the fallback when a config omits the server.network section.
+- `config.json`: removed `server.network.serverBaseUrl` + `pi.companionService.baseUrl` literals (IP now only in `server.network.serverHost`).
+- `scripts/audit_address_mirrors.py` + `tests/lint/test_address_mirror_consistency.py` (both named in AC3): reworked to the single-source model -- cross-check host/port/hostname across config.json / addresses.sh / validator DEFAULTS (the real 2026-06-18 drift guard, kept + extended to validator serverHost/serverPort); obsolete intra-config base-URL literal checks retired.
+- `tests/pi/sync/test_client_config_paths.py`: stale `.10` assertion -> derive expectation from the validated config's serverHost:serverPort (drift-proof; closes the pre-existing red I filed during US-391).
+
+### Files changed:
+- Modified: `src/common/config/validator.py`, `config.json`, `scripts/audit_address_mirrors.py`, `tests/lint/test_address_mirror_consistency.py`, `tests/test_config_validator.py` (4 new derivation tests), `tests/pi/sync/test_client_config_paths.py`, `offices/pm/issues/I-stale-sync-client-baseurl-test-old-ip.md` (marked RESOLVED)
+
+### Gates:
+- VC: `validate_config.py` green; `pytest tests/lint/test_address_mirror_consistency.py` 9 green; `audit_address_mirrors.py` CLI "A-15 OK"; `grep -c 10.27.27.120 config.json` = 1 (serverHost only).
+- tests/test_config_validator 55, tests/lint A-15 + B-044 25, tests/pi/sync+update+network+orchestrator-wiring 213 -- all green. ruff clean (5 .py); `audit_config_literals.py` (B-044) clean. mypy NOT installed -> typecheck deferred to PM integration (code mypy-strict-shaped). Full `pytest tests/` deferred to PM (slow SMB); scoped consumer suites green in-iteration. Committed b3fc6fd.
+
+### Learnings for future iterations:
+- **The single-source lives where derivation can run, not where the value is declared**: JSON can't self-reference and the secrets_loader only expands env-vars, so "derive serverBaseUrl from serverHost" can't be a JSON trick -- it belongs in the validator (the load/defaults layer). addresses.sh already proved the pattern for bash (`SERVER_BASE_URL=${SERVER_HOST}:${SERVER_PORT}`); the validator is its Python analogue.
+- **De-dup that's guarded by a lint must rewrite the lint too**: Atlas's A-15 audit existed to verify the duplicated base-url literals agreed. Removing the duplication removes what it guarded, so the audit + its lint test (BOTH named in the AC) had to be reworked to the surviving single source (host/port/hostname across the 3 mirrors). The AC naming the audit/lint = sanction to modify them; the conditionalOutcome only fenced off the *separate* hostname-resolution design change.
+- **derive-when-absent = behavior-preserving**: keying derivation on "URL absent" (not "always overwrite") means every existing fixture/consumer that set baseUrl explicitly is untouched -- the AC2 "no behavioral change" falls out for free, and only the configs that RELIED on the duplicated literal (the real config.json) flip to the derived path.
+- **Gotcha (zsh `<->` glob in commit messages)**: a commit `-m` string containing `<->` (e.g. "config<->validator") trips a zsh numeric-range-glob safety guard even under git-bash. Use `/` or words instead, or commit via `git commit -F <file>`.
+---
