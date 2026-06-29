@@ -225,3 +225,29 @@ Outcome: SHIPPED passes:true. New RED-as-xfail reproducer turns the 28/29 missed
 - **Gotcha (ECU-silence won't fire on resume)**: `processValue` sets `_lastEcuReadingTime=now` for any ECU-dependent param (RPM included) at the TOP, BEFORE `_checkEcuSilenceDriveEnd`. So the key-on RPM tick resets the silence clock first -> silence never fires on resume -> the stale session is continued (absorption). This is why "no comms events + gap = no ticks" is the right model for a missed close.
 - **Pattern (RED-as-xfail)**: the team converts a RED reproducer into a suite-green deliverable via `@pytest.mark.xfail(reason=..., strict=False)`; the fix story removes the marker. Verify true RED-ness with `--runxfail` (disables xfail, shows the literal assertion) -- guards against an XPASS-silent non-reproducing "reproducer".
 ---
+
+## 2026-06-28 - US-387 (Agent 1 / Rex)
+Task: RCA -- root-cause the DriveDetector close / drive-end path
+Outcome: SHIPPED passes:true. RCA deliverable renders the exact mechanism (file:line) for both 28/29 defect halves and REFUTES the one-root hypothesis -> two independent roots. No production code change (research story, "no fix" per AC). US-388 stays build-blocked pending Atlas acceptance of this RCA.
+
+### What was implemented:
+- `docs/rca/2026-06-28-us387-drivedetector-close-signal-rca.md` -- the RCA. Sections: observed defect; how the close signal works (tick-driven, load-bearing); Root 2 (stale-open/missed-close, US-388); Root 1 (concurrent-process overlap, US-389/390); Spool's connection_log finding incorporated; one-root REFUTED; US-388 hand-off scope; evidence index.
+- LOAD-BEARING FINDING: the close state machine is TICK-DRIVEN ONLY. `processValue` (detector.py:521) is the sole evaluator of every close decision, called from exactly one place: `EventRouter._handleReading` (event_router.py:404-407). No watchdog/timer thread. Readings stop -> no close ever evaluated. `_handleConnectionLost` (event_router.py:522-556) does NOT close a drive.
+- Root 2 trace: RPM=0 ticks stop @ ~20s < driveEndDurationSeconds 60s -> STOPPING->drive_end debounce (detector.py:665-672) never re-evaluated; no heartbeat -> ECU-silence (detector.py:932-986 @ :569) never fires; later key-on continues stale RUNNING/STOPPING session (detector.py:655-677) -> _startDrive/_openDriveId never reached -> 2nd drive ABSORBED, no new mint. US-361 _isEcuSilenceContinuation does NOT cover (needs a silence drive_end to have fired).
+- Root 1 trace: two eclipse-obd PIDs race shared drive_counter; nextDriveId (drive_id.py:211-231) lacks BEGIN IMMEDIATE (its own docstring warns); _currentDriveId per-process singleton (drive_id.py:265-266). NOT in-process reproducible by construction (one _currentSession detector.py:218; only _endDrive detector.py:790 exits RUNNING).
+
+### Files changed:
+- Created: `docs/rca/2026-06-28-us387-drivedetector-close-signal-rca.md`
+- Created: `offices/architect/inbox/2026-06-28-from-rex-us387-rca-ready-for-review.md` (Atlas review request -- US-388 build gate)
+- Created: `offices/pm/inbox/2026-06-28-from-rex-us387-rca-complete.md` (PM status)
+
+### Gates:
+- VC#1 SATISFIED: reproducer re-run --runxfail -> both stale-open scenarios got=[1] (absorption) map exactly to the Root-2 trace; normal mode 2 passed + 2 xfailed (suite green, zero regression -- no code touched).
+- VC#2 (Atlas accepts root cause = gate for US-388) is an EXTERNAL gate -> routed to Atlas inbox, pending review, NOT in Ralph's hands (US-386 deferred-Atlas precedent).
+- No lint/typecheck applicable: zero .py change (markdown deliverable + inbox notes only).
+
+### Learnings for future iterations:
+- **Tick-driven close is the structural root**: any close decision reachable ONLY by a reading that may never arrive is unreliable by design. The 28/29 missed-close isn't a threshold tuning issue -- it's that the evaluator (processValue) and its only caller (_handleReading) both go silent together when the engine stops. US-388 needs a close path that does not depend on a future tick (idle/connection-lost-driven or time-anchored re-eval -- Atlas design call).
+- **Absorption vs overlap are opposite signatures**: Root 2 absorption gives FEWER distinct ids than physical drives (one id spans two); Root 1 overlap gives MORE, out-of-temporal-order ids (two open at once). `start_count != end_count` in connection_log conflates them -- separate by counting distinct-ids-per-window and checking temporal ordering. Don't force-fit one root.
+- **Research-story gate handling**: an RCA whose validationCriteria includes "Atlas review" is shippable passes:true once the deliverable + the Ralph-satisfiable VCs are met; the external review is the downstream build-gate (for US-388), routed via inbox, not a blocker on the RCA itself. Same shape as deferring mypy/Atlas sign-off at integration.
+---
