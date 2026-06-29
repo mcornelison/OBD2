@@ -77,6 +77,25 @@
 #                               structurally moot: server reads raw
 #                               realtime_data MIN/MAX/COUNT directly,
 #                               needs no marker.
+# 2026-06-29    | Rex (US-388) | F-107 Root-2 fix: guaranteed deadline-anchored
+#                               close (Atlas C-alpha..delta ruling 2026-06-29).
+#                               (1) _processRpmValue STOPPING branch now
+#                               evaluates the drive-end deadline FIRST via the
+#                               new _maybeCloseOnDeadline helper -- so a close
+#                               whose debounce completed inside a reading GAP
+#                               fires when the next tick arrives, and a fresh
+#                               crank then mints a NEW drive_id instead of being
+#                               absorbed into the stale-open session (drives
+#                               28/29 missed-close leak).  (2) new public
+#                               evaluateTimeouts(now) runs the SAME close paths
+#                               OFF the reading-tick (orchestrator main loop
+#                               calls it each pass) so the close fires even when
+#                               readings stop entirely; acquires the existing
+#                               self._lock (C-beta re-entrancy guard).  A
+#                               confirmed RPM-debounce close does NOT set the
+#                               US-361 ECU-silence marker, so it mints fresh
+#                               (vs the tentative link-dropped close that
+#                               re-attaches within MIN_INTER_DRIVE_SECONDS).
 # ================================================================================
 ################################################################################
 """
@@ -663,18 +682,100 @@ class DriveDetector:
                 self._belowThresholdSince = None
 
         elif self._driveState == DriveState.STOPPING:
-            if rpmAtOrBelowEnd:
-                # Check if duration met
-                if self._belowThresholdSince:
-                    elapsed = (now - self._belowThresholdSince).total_seconds()
-                    if elapsed >= self._config.driveEndDurationSeconds:
-                        # Drive ended!
-                        self._endDrive()
-            else:
-                # RPM went back up, drive continues
+            # F-107 Root-2 (US-388): evaluate the drive-end deadline FIRST,
+            # regardless of this reading's RPM.  The close debounce can complete
+            # inside a reading GAP -- the readings stop at engine-off and the
+            # next tick (or an off-tick evaluateTimeouts pass) only arrives after
+            # belowThresholdSince + driveEndDurationSeconds has already elapsed.
+            # The pre-US-388 code only checked the deadline while rpmAtOrBelowEnd
+            # was still True, so a key-on tick (RPM back up) after the gap was
+            # treated as a continuation and ABSORBED the second physical drive
+            # into the first's stale-open drive_id (the drives 28/29 leak).
+            if self._maybeCloseOnDeadline(now):
+                # Drive closed (deadline-anchored).  Re-evaluate THIS same
+                # reading in the now-STOPPED state so a fresh crank reaches
+                # _startDrive and mints a NEW drive_id (no absorption).  A
+                # confirmed RPM-debounce close leaves the ECU-silence marker
+                # unset, so _isEcuSilenceContinuation is False -> fresh id, not a
+                # re-attach.  Recursion depth is 1: STOPPED never re-enters this
+                # branch within a single call.
+                self._processRpmValue(rpm, now)
+            elif not rpmAtOrBelowEnd:
+                # RPM back up BEFORE the deadline -> genuine continuation; the
+                # engine never actually stopped (US-361 short-blip path).
                 self._belowThresholdSince = None
                 self._transitionState(DriveState.RUNNING)
                 logger.debug("RPM went above threshold, drive continues")
+
+    def _maybeCloseOnDeadline(self, now: datetime) -> bool:
+        """Close the drive if the STOPPING RPM-debounce deadline has elapsed.
+
+        F-107 Root-2 (US-388), Atlas constraint C-gamma (deadline-anchored).
+        Returns ``True`` iff the detector is in ``STOPPING`` with
+        ``_belowThresholdSince`` set and at least ``driveEndDurationSeconds`` has
+        elapsed since -- in which case the drive is ended NOW.  The elapsed
+        window is measured to ``now``, so the close fires correctly even when
+        the completing instant fell inside a reading GAP (the missed close that
+        the triggering tick, or :meth:`evaluateTimeouts`, only arrives after).
+        No-op (returns ``False``) in any other state.
+
+        This is a CONFIRMED engine-off close (an RPM=0 reading was observed to
+        arm STOPPING): it deliberately does NOT set the ECU-silence continuation
+        marker, so the next :meth:`_startDrive` mints a fresh ``drive_id`` rather
+        than re-attaching.  Contrast :meth:`_checkEcuSilenceDriveEnd`, the
+        tentative link-dropped close that DOES re-attach within
+        ``MIN_INTER_DRIVE_SECONDS`` (US-361).
+        """
+        if self._driveState != DriveState.STOPPING:
+            return False
+        if self._belowThresholdSince is None:
+            return False
+        elapsed = (now - self._belowThresholdSince).total_seconds()
+        if elapsed < self._config.driveEndDurationSeconds:
+            return False
+        self._endDrive()
+        return True
+
+    def evaluateTimeouts(self, now: datetime | None = None) -> DriveState:
+        """Evaluate the drive-close deadlines OFF the reading-tick path.
+
+        F-107 Root-2 (US-388), Atlas constraint C-alpha.  The drive-close state
+        machine is otherwise tick-driven -- every close decision is evaluated
+        only inside :meth:`processValue`.  When the data-acquisition readings
+        STOP (engine off, OBD poll loop quiesces) no close is ever evaluated, so
+        the drive sits open and a later key-on is absorbed into the stale
+        session (the drives 28/29 stale-open leak).
+
+        The orchestrator main loop (:meth:`...orchestrator.core.runLoop`) calls
+        this on every pass so the close fires when the deadline elapses even if
+        NO further reading ever arrives.  It evaluates the SAME two close paths a
+        tick would: the ``STOPPING`` RPM-debounce deadline
+        (:meth:`_maybeCloseOnDeadline`) and the ECU-silence backstop
+        (:meth:`_checkEcuSilenceDriveEnd`).
+
+        Atlas C-beta: acquires the EXISTING ``self._lock`` (the re-entrancy
+        guard) before reading or mutating drive state, exactly like
+        :meth:`processValue` -- so an off-tick close is safe against an in-flight
+        tick.  Atlas C-gamma: deadline-anchored -- it never closes a healthy
+        ``RUNNING`` drive or a ``STOPPING`` drive whose debounce has not yet
+        elapsed; the bare connection-lost event does not reach this path.
+
+        Args:
+            now: Evaluation instant; defaults to ``datetime.now()``.  Injectable
+                so tests can drive the deadline deterministically.
+
+        Returns:
+            The drive state after evaluation.
+        """
+        if self._detectorState != DetectorState.MONITORING:
+            return self._driveState
+        with self._lock:
+            if self._currentSession is None:
+                return self._driveState
+            evalNow = now if now is not None else datetime.now()
+            self._maybeCloseOnDeadline(evalNow)
+            self._checkEcuSilenceDriveEnd(evalNow)
+            return self._driveState
 
     def _transitionState(self, newState: DriveState) -> None:
         """

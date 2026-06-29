@@ -75,16 +75,16 @@ and no comms events.  Scenarios:
    a key-on a full day after a drive whose close never fired.  Same Root-2
    mechanism across a key cycle.  RED on current code -> ships ``xfail``.
 
-Ships RED-as-xfail (the team pattern established by the US-359 Drive 23/24
-reproducer): the two stale-open assertions currently fail, pytest reports them
-``xfailed``, and the default ``-m "not slow"`` sweep stays GREEN (every sibling
-F-107 Story requires "Pi tests stay GREEN").  Run with ``-rx`` to see the
-captured absorption message, or ``--runxfail`` to observe the literal assertion
-failure (US-386 validationCriteria V-1).  US-388 collapses the absorption to a
-fresh drive_id per physical drive and REMOVES the two ``xfail`` markers (one
-line each) so the tests become the permanent Root-2 regression net (US-388 AC
-"US-386 reproducer GREEN" + US-390 "added to the fast suite / regression
-manifest, permanent").
+Shipped RED-as-xfail at US-386 (the team pattern established by the US-359
+Drive 23/24 reproducer); US-388 fixed the DriveDetector close-signal state
+machine and REMOVED the two ``xfail`` markers, so all four scenarios now PASS
+and the file is the permanent Root-2 regression net (US-388 AC "US-386
+reproducer GREEN" + US-390 "added to the fast suite / regression manifest,
+permanent").  The US-388 fix is deadline-anchored: when a STOPPING drive's
+``driveEndDurationSeconds`` debounce completes inside a reading gap, the next
+tick (or the off-tick ``DriveDetector.evaluateTimeouts`` pass driven by the
+orchestrator loop) closes the drive, and a fresh crank then mints a NEW
+``drive_id`` instead of being absorbed into the stale-open session.
 
 Determinism: the detector reads ``datetime.now()`` for every state-machine
 timing decision.  This harness patches the ``datetime`` symbol in both
@@ -360,15 +360,6 @@ class TestShortDriveControl:
 class TestBackToBackMissedClose:
     """Two back-to-back drives, the first's close missed, must NOT be absorbed."""
 
-    @pytest.mark.xfail(
-        reason=(
-            "US-386 Root-2 reproducer (drives 28/29 stale-open leak): the first "
-            "drive's missed close leaves the session open, so the back-to-back "
-            "second drive is ABSORBED into drive_id #1 instead of minting #2. "
-            "US-388 fixes the close-signal state machine and REMOVES this marker."
-        ),
-        strict=False,
-    )
     def test_backToBackMissedClose_eachPhysicalDriveOwnDriveId(
         self, makeDb: Callable[[], ObdDatabase]
     ) -> None:
@@ -381,9 +372,11 @@ class TestBackToBackMissedClose:
         Then (correct): two distinct drive_ids, each opened AND closed; no
             absorption of the second physical drive into the first's id.
 
-        RED on current code: the stale-open first session absorbs the second
-        drive -> a single drive_id spans both physical drives (the missed-close
-        half of the 28/29 signature).  Ships xfail; US-388 flips it GREEN.
+        Pre-US-388 this failed (the stale-open first session absorbed the
+        second drive -> a single drive_id spanned both physical drives, the
+        missed-close half of the 28/29 signature).  US-388's deadline-anchored
+        close ends the first drive when the next crank arrives after the
+        debounce window has elapsed, so the second drive mints its own id.
         """
         db = makeDb()
 
@@ -409,16 +402,6 @@ class TestBackToBackMissedClose:
 class TestKeyOnAfterMissedClose:
     """A key-on after a stale-open drive must open a NEW drive_id."""
 
-    @pytest.mark.xfail(
-        reason=(
-            "US-386 Root-2 reproducer (drives 28/29 stale-open leak): a drive "
-            "whose close never fired stays open across a key cycle, so the next "
-            "day's key-on is ABSORBED into the stale drive_id instead of minting "
-            "a fresh one. US-388 fixes the close-signal state machine and REMOVES "
-            "this marker."
-        ),
-        strict=False,
-    )
     def test_keyOnAfterMissedClose_mintsNewDriveId_noAbsorption(
         self, makeDb: Callable[[], ObdDatabase]
     ) -> None:
@@ -430,9 +413,11 @@ class TestKeyOnAfterMissedClose:
         Then (correct): the key-on opens a NEW drive_id -- two distinct drive_ids,
             each opened AND closed, no absorption.
 
-        RED on current code: the next-day key-on continues the stale session, so
-        both physical drives share one drive_id (the multi-day-leak / missed-close
-        half of the 28/29 signature).  Ships xfail; US-388 flips it GREEN.
+        Pre-US-388 this failed (the next-day key-on continued the stale session,
+        so both physical drives shared one drive_id -- the multi-day-leak /
+        missed-close half of the 28/29 signature).  US-388's deadline-anchored
+        close ends the first drive on the next-day crank (the debounce elapsed
+        across the gap), so the next day's drive mints a fresh id.
         """
         db = makeDb()
 
