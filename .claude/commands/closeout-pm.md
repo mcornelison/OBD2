@@ -85,8 +85,10 @@ If MEMORY.md grows past ~150 lines, condense closed-history sections (Sprint X d
 
 This is the PM-only deep-history file (1500+ lines is fine).
 
-1. Bump header `**Last Updated**:` to today + session number.
-2. Update `**Current Phase**:` if changed.
+1. Bump header `**Last Updated**:` to a **ONE-LINE pointer ONLY**. Format:
+   `**Last Updated**: YYYY-MM-DD (Session N — <short title>; see Last Session Summary below).`
+   **Do NOT** prepend a session paragraph or cram the session summary into this line — the full narrative belongs in the "Last Session Summary" block (step 3). `/optimize-office-pm` repeatedly has to undo ~11KB of header bloat that accumulates here; keep it to one line.
+2. Update `**Current Phase**:` if changed (this may be a short paragraph; the **Last Updated** line above stays one line regardless).
 3. **Rename existing "Last Session Summary" → "Previous Session Summary"** then write a new "Last Session Summary" with format:
    ```
    ### Last Session Summary (YYYY-MM-DD, Session N — Short Title)
