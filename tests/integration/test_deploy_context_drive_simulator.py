@@ -781,7 +781,7 @@ class TestHarnessIntegrity:
                 conn.exec_driver_sql("DROP TABLE drive_statistics")
                 conn.exec_driver_sql(
                     "CREATE TABLE drive_statistics ("
-                    "    drive_id INTEGER NOT NULL,"
+                    "    summary_id INTEGER NOT NULL,"
                     "    parameter_name VARCHAR(64) NOT NULL,"
                     "    min_value FLOAT,"
                     "    max_value FLOAT,"
@@ -791,14 +791,14 @@ class TestHarnessIntegrity:
                     "    outlier_max FLOAT,"
                     "    sample_count INTEGER NOT NULL,"
                     "    computed_at DATETIME,"
-                    "    PRIMARY KEY (drive_id, parameter_name),"
-                    "    FOREIGN KEY (drive_id) REFERENCES "
+                    "    PRIMARY KEY (summary_id, parameter_name),"
+                    "    FOREIGN KEY (summary_id) REFERENCES "
                     "drive_summary(id) ON DELETE CASCADE"
                     ")"
                 )
 
             # Seed a drive_summary parent row so the FK on the
-            # reconstructed drive_statistics drive_id column resolves.
+            # reconstructed drive_statistics summary_id column resolves.
             with Session(engine) as session:
                 summary = DriveSummary(
                     source_device="harness", source_id=999,
