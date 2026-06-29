@@ -201,3 +201,27 @@ Outcome: REFUSED-FIRST (Rule 1). Sprint is frozen-pending-gates, NOT dispatched.
 ### Learnings for future iterations:
 - **Gotcha**: a frozen sprint.json (frozenAt + bigDoDHash present, stories sprint-ready) does NOT mean dispatched. Check for the sprint branch + Atlas Rule-13 commit before working. "frozen" != "on a sprint branch + Rule-13 passed + dispatched".
 ---
+
+## 2026-06-28 - US-386 (Agent 1 / Rex)
+Task: Deterministic in-process reproducer for the DriveDetector close-signal defect (drives 28/29)
+Outcome: SHIPPED passes:true. New RED-as-xfail reproducer turns the 28/29 missed-close/stale-open defect into a deterministic, car-free, comms-free regression harness. Sprint 47/V0.29.1 now DISPATCHED (branch live, Atlas Rule-13 PASS 029ce3b) -- the prior-iteration refusal is resolved.
+
+### What was implemented:
+- `tests/pi/obdii/drive/test_drive2829_close_signal_reproducer.py` -- 4 tests, reusing the proven US-359 InjectedClock harness (patches `datetime` in detector+types modules; replay advances the clock explicitly -> no wall-clock, no time.sleep, bit-for-bit reproducible).
+- RPM-ONLY sequences, **NO comms events** (no BATTERY_V heartbeat) per the US-386 contract. A "missed close" is modelled by the ABSENCE of ticks: engine-off readings stop @ 20s (< the 60s RPM-debounce) and there's no heartbeat to drive the US-229 ECU-silence path -> the drive never closes (stale-open).
+- Scenario (a) clean ~3min drive = GREEN control (1 closed id; proves the harness yields correct attribution, so the RED is a real defect not a harness artifact). Scenarios (b) back-to-back ~1min apart w/ missed first close + (c) key-on a full day after a missed close = RED-as-xfail, each asserting CORRECT behavior (2 distinct closed drive_ids, no absorption). Plus a determinism test (two runs identical).
+
+### Files changed:
+- Created: `tests/pi/obdii/drive/test_drive2829_close_signal_reproducer.py`
+- Created: `offices/pm/inbox/2026-06-28-from-rex-us386-root2-reproducer-scope.md` (PM/Atlas coordination: Root-1/overlap scope boundary)
+
+### Gates:
+- VC#1 normal run = 2 passed + 2 xfailed (suite GREEN); `--runxfail` confirms both stale-open tests fail RED with `got=[1]` -- one drive_id absorbing TWO physical drives (the 28/29 missed-close signature). VC#2 (back-to-back) confirmed: second drive absorbed into id #1.
+- Regression: `tests/pi/obdii/drive/` = 4 passed, 2 xfailed (incl. US-359 sibling -- zero regression).
+- ruff clean on the new file. mypy NOT installed on this dev box -> typecheck AC deferred to PM/Atlas `make typecheck` at integration (code is mypy-strict-shaped: future annotations + full hints). Full `pytest tests/` deferred to PM integration (test-only addition, zero production change, context-managed patch = no cross-test leakage).
+
+### Learnings for future iterations:
+- **Scope boundary (Root 1 vs Root 2)**: a SINGLE in-process DriveDetector can NEVER reproduce the connection_log *overlap* (two ids open at once) -- the only exit from RUNNING is `_endDrive`, which writes the matching drive_end. Overlap = Root 1 = two racing PROCESSES on the shared drive_counter (Atlas RCA), owned by US-389/US-390. The unit-reproducible half is Root 2 = stale-open/missed-close/absorption. The US-386 `conditionalOutcome` escalation did NOT fire because Root 2 (the half US-388 fixes) DOES reproduce in-process -- don't block when the *substantive* defect reproduces even if a sibling root doesn't.
+- **Gotcha (ECU-silence won't fire on resume)**: `processValue` sets `_lastEcuReadingTime=now` for any ECU-dependent param (RPM included) at the TOP, BEFORE `_checkEcuSilenceDriveEnd`. So the key-on RPM tick resets the silence clock first -> silence never fires on resume -> the stale session is continued (absorption). This is why "no comms events + gap = no ticks" is the right model for a missed close.
+- **Pattern (RED-as-xfail)**: the team converts a RED reproducer into a suite-green deliverable via `@pytest.mark.xfail(reason=..., strict=False)`; the fix story removes the marker. Verify true RED-ness with `--runxfail` (disables xfail, shows the literal assertion) -- guards against an XPASS-silent non-reproducing "reproducer".
+---

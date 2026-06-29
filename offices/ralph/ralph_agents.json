@@ -8,7 +8,7 @@
       "status": "unassigned",
       "taskid": "",
       "lastCheck": "2026-06-28",
-      "note": "Sprint 47/V0.29.1 NOT DISPATCHED -- refused-first (Rule 1) + filed offices/pm/blockers/BL-sprint47-not-dispatched.md + emitted HUMAN_INTERVENTION_REQUIRED. Evidence: no sprint/sprint47-V0.29.1 branch (on dev), HEAD=freeze commit 'routed to Atlas for Rule-13' (no Rule-13 sign-off after), pending /resize-sprint split decision (47a A-9 / 47b rest). PM must: confirm Atlas Rule-13, make resize call, create+switch sprint branch, then re-run ralph.sh -> Agent1 picks US-386 (in-process RED reproducer, buildable). Prior: Sprint 46 V0.29.0 EDR bus Slice 1 COMPLETE 6/6, awaiting Pi pi.bus.enabled flag-flip + /sprint-validated."
+      "note": "US-386 DONE (passes:true). Shipped tests/pi/obdii/drive/test_drive2829_close_signal_reproducer.py -- deterministic in-process reproducer (US-359 InjectedClock harness, RPM-only, NO comms events). RED-as-xfail reproduces the Root-2 stale-open/missed-close/absorption half of the 28/29 signature: both stale-open scenarios fail RED got=[1] (one drive_id absorbing two physical drives); clean-short-drive control + determinism are GREEN. Normal run: 2 passed + 2 xfailed (suite green). Root 1 (concurrent-process *overlap*) is NOT unit-reproducible by construction -> owned by US-389/US-390; note filed to pm/inbox. mypy absent on box -> typecheck deferred to make typecheck at integration. Next available: US-387 (RCA, depends on this reproducer) -- gated on Atlas RCA acceptance for US-388."
     },
     {
       "id": 2,
