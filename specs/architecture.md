@@ -17,7 +17,16 @@ This document describes the system architecture, technology decisions, and desig
 > behavior + invariants). −35% file size; no current-system content removed. (§11
 > Deployment was reviewed — it's all current reference, nothing extracted.)
 
-**Last Updated**: 2026-06-01 (Sprint 44 / V0.28.1 — new §5 "V0.28.1 — B-076
+**Last Updated**: 2026-06-29 (Sprint 47 / V0.29.1 — F-107 A-9 closure, two new
+subsections under §10.7.1: **§10.7.1.1** Root-1 deploy-invariant closure
+(US-389 — single-instance guard ⇄ `RuntimeDirectory` matched-pair tested deploy
+invariant + version stamp) and **§10.7.1.2** Root-2 guaranteed-close (US-388 —
+deadline-anchored close + off-tick `DriveDetector.evaluateTimeouts` driven by
+the orchestrator loop, per Atlas's 2026-06-29 C-α…δ shape ruling). Both per the
+2026-05-18 design-gate governance rule (PM Rule 10 / C-4 DoD); A-9 stays OPEN
+until the live IRL re-gate (short / back-to-back / key-on-after-missed-close /
+deploy-double-start) passes.)
+Prior: 2026-06-01 (Sprint 44 / V0.28.1 — new §5 "V0.28.1 — B-076
 first slice" subsection documenting the normalized `ecu` identity dimension
 (pair-keyed on (ecu_signature, cal_signature); immutability carve-out),
 `vehicle_info.ecu_id` NOT NULL FK + transitional-snapshot coherence guard, and
@@ -123,7 +132,7 @@ Prior: 2026-05-19 (SS-T9 — design-gate reconciliation:
 |--------|---------|-------------------|
 | OBDLink LX (MAC: `00:04:3E:85:0D:FB`, FW 5.6.19) | Vehicle data acquisition | Bluetooth (ELM327 protocol) |
 | NHTSA API | VIN decoding | HTTPS REST API |
-| Ollama on Chi-Srv-01 | AI recommendations | HTTP (10.27.27.10:11434) -- GPU-accelerated, never local on Pi |
+| Ollama on Chi-Srv-01 | AI recommendations | HTTP (10.27.27.120:11434) -- GPU-accelerated, never local on Pi |
 
 ### Hardware
 
@@ -539,7 +548,7 @@ next tick resends.
    ```
 2. Check server-side counts:
    ```
-   ssh mcornelison@10.27.27.10 \
+   ssh mcornelison@10.27.27.120 \
      'mysql obd2db -e "SELECT COUNT(*) FROM realtime_data"'
    ```
 3. Manual flush (Walk-phase path — still valid in Run phase as an
@@ -1064,7 +1073,7 @@ permanently.
 
 **Post-deploy verification.**
 
-    ssh mcornelison@10.27.27.10 'mysql obd2db -e \
+    ssh mcornelison@10.27.27.120 'mysql obd2db -e \
         "SELECT version, description, applied_at FROM schema_migrations ORDER BY version"'
 
 Should list every applied migration with its apply timestamp.  On an
@@ -1220,7 +1229,7 @@ rejects non-positive `syncTimeoutSeconds`, `batchSize < 1`, non-list
 | Key | Default | Purpose |
 |-----|---------|---------|
 | `enabled` | `true` | When `false`, sync short-circuits to a no-op (US-149 owns the check) |
-| `baseUrl` | `http://10.27.27.10:8000` | Chi-Srv-01 FastAPI root |
+| `baseUrl` | `http://10.27.27.120:8000` | Chi-Srv-01 FastAPI root |
 | `apiKeyEnv` | `COMPANION_API_KEY` | Env var name resolved by `secrets_loader` — key itself is never in the JSON |
 | `syncTimeoutSeconds` | `30` | Per-request HTTP timeout (positive number) |
 | `batchSize` | `500` | Rows per `/api/v1/sync` POST (integer >= 1) |
@@ -1999,6 +2008,70 @@ guard refuses the second instance, the matched-pair invariant guarantees the
 `RuntimeDirectory` lock exists, and stop-before-start removes the restart race.
 Residual overlap remains backstopped server-side by the Mechanism C
 `attribution_anomaly` tripwire (US-390 confirms it stays armed).
+
+### 10.7.1.2 Root 2 guaranteed-close (US-388, Sprint 47 / V0.29.1)
+
+Root 1 (above) explains the *overlap*; Root 2 explains the *stale-open leak*
+that re-recurred on drives 28/29 (`drive_start` fired 29×, `drive_end` only
+18× — 11 drives never closed). RCA:
+`docs/rca/2026-06-28-us387-drivedetector-close-signal-rca.md`. The close state
+machine was **tick-driven only**: every close decision is evaluated inside
+`processValue`, whose sole caller is `EventRouter._handleReading`. When the
+engine stops and the data-acquisition readings stop *before* the
+`driveEndDurationSeconds` (60 s) RPM-debounce completes — with no adapter
+heartbeat to drive the ECU-silence backstop either — **no close is ever
+evaluated**. A later key-on then re-enters the still-open `STOPPING` session
+(RPM-above-end → `belowThresholdSince=None` → back to `RUNNING`), never reaching
+`_startDrive`, so the second physical drive is **absorbed** into the first's
+`drive_id` (fewer ids than drives — the inverse signature of Root 1's overlap).
+`_handleConnectionLost` does **not** close a drive, and the US-361
+`_isEcuSilenceContinuation` path does not cover this (it requires a silence
+`drive_end` to have fired first).
+
+US-388 makes the close **guaranteed** under Atlas's 2026-06-29 shape ruling
+(`offices/architect/reports/2026-06-29-us387-rca-acceptance-us388-close-shape-ruling.md`),
+four binding constraints:
+
+- **Deadline-anchored close (C-γ), evaluated regardless of the current reading.**
+  `DriveDetector._processRpmValue`'s `STOPPING` branch now calls the new
+  `_maybeCloseOnDeadline(now)` **first**: if `now - belowThresholdSince ≥
+  driveEndDurationSeconds` the drive ends immediately — *even if this tick's RPM
+  is back above threshold*. The debounce can complete inside a reading gap; the
+  first tick after the gap (a key-on) is then past the deadline, so the stale
+  drive closes and the same reading is re-evaluated in the now-`STOPPED` state,
+  reaching `_startDrive` and minting a **fresh** `drive_id` (no absorption). A
+  short blip that resumes *before* the deadline is still a continuation
+  (`RUNNING`), so US-361 is not regressed.
+- **Off-tick close (C-α).** New public `DriveDetector.evaluateTimeouts(now=None)`
+  runs the same two close paths (`_maybeCloseOnDeadline` + the US-229
+  `_checkEcuSilenceDriveEnd`) **off the reading-tick**. The orchestrator main
+  loop (`orchestrator/core.py::runLoop`) calls it on every pass (every
+  `_loopSleepInterval`, exception-isolated), so the close fires when the deadline
+  elapses **even if no further reading ever arrives** — reusing the existing
+  periodic loop rather than adding a watchdog thread.
+- **Lock discipline (C-β).** `evaluateTimeouts` acquires the **existing**
+  `self._lock` before reading/mutating `_currentSession`/`_driveState`, exactly
+  like `processValue` — the off-tick writer is safe against an in-flight tick. No
+  new lock, no lock-free mutation.
+- **Fresh-mint vs re-attach.** A confirmed RPM-debounce/deadline close does **not**
+  set the ECU-silence continuation marker, so the next `_startDrive` mints a fresh
+  id (the missed-close *is* a real engine-off). Only the tentative link-dropped
+  `_checkEcuSilenceDriveEnd` close arms the US-361 re-attach. This is what
+  distinguishes "two back-to-back drives" (two ids) from "one drive with a
+  mid-leg dropout" (one id).
+
+**Gap-fence corollary.** Because the close now fires, `_closeDriveId` clears the
+process-wide `drive_id` latch, so idle/KOEO rows after the close carry `NULL`
+`drive_id` — a stale-open can no longer absorb a later key-on (US-388 AC#4).
+
+**Oracle.** `tests/pi/obdii/drive/test_drive2829_close_signal_reproducer.py` (the
+US-386 in-process reproducer, `xfail` markers removed) is the code oracle for the
+gap-resume half; `tests/pi/obdii/drive/test_off_tick_close.py` pins the off-tick
+method; `tests/test_orchestrator_loop_health.py::TestOffTickCloseWiring` pins the
+loop wiring. Per Atlas, **true acceptance is the live IRL re-gate** (short /
+back-to-back / key-on-after-missed-close / deploy-double-start) — an off-tick
+close that rides the heartbeat loop can only be fully validated on the car;
+A-9 stays OPEN until that passes.
 
 *Gate-ratification note: §10.7.1 added per the 2026-05-18 design-gate
 governance rule (PM Rule 10) + Atlas's Sprint-43 PM Rule 13 validation-block

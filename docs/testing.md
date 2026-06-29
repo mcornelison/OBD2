@@ -179,7 +179,7 @@ python scripts/apply_server_migrations.py --execute
 #      [execute] verified: server schema now matches Pi-side shape
 
 # 3. Manually verify with a direct DESCRIBE (independent of the script).
-ssh mcornelison@10.27.27.10 "mysql obd2db -e 'DESCRIBE realtime_data; DESCRIBE connection_log; DESCRIBE statistics; DESCRIBE alert_log; SHOW CREATE TABLE drive_counter;'"
+ssh mcornelison@10.27.27.120 "mysql obd2db -e 'DESCRIBE realtime_data; DESCRIBE connection_log; DESCRIBE statistics; DESCRIBE alert_log; SHOW CREATE TABLE drive_counter;'"
 
 # 4. Idempotency check: a second --execute should emit zero DDL.
 python scripts/apply_server_migrations.py --dry-run
@@ -258,7 +258,7 @@ the deploy halts **before** the service restart.  No half-deployed state.
 ### Post-deploy verification
 
 ```bash
-ssh mcornelison@10.27.27.10 "mysql obd2db -e \
+ssh mcornelison@10.27.27.120 "mysql obd2db -e \
     'SELECT version, description, applied_at FROM schema_migrations ORDER BY version'"
 ```
 
@@ -1537,7 +1537,7 @@ Expected output shape:
 
 ```
 Sync started: 2026-04-18 14:32:05
-Config: baseUrl=http://10.27.27.10:8000, batchSize=500
+Config: baseUrl=http://10.27.27.120:8000, batchSize=500
 
 alert_log                 0 new rows -> nothing to sync
 calibration_sessions      0 new rows -> nothing to sync
@@ -1682,7 +1682,7 @@ bash scripts/replay_pi_fixture.sh --dry-run cold_start
 Prerequisites:
 
 - Key-based SSH works: `ssh mcornelison@10.27.27.28 hostname` and
-  `ssh mcornelison@10.27.27.10 hostname` both return cleanly.
+  `ssh mcornelison@10.27.27.120 hostname` both return cleanly.
 - `COMPANION_API_KEY` present in the Pi `.env` and matches the server
   `.env` `API_KEY`.
 - Chi-Srv-01:8000 reachable from the Pi network-wise.
@@ -1920,7 +1920,7 @@ ssh mcornelison@10.27.27.28 \
      FROM sync_log ORDER BY last_synced_at DESC"'
 
 # Server side: row counts
-ssh mcornelison@10.27.27.10 \
+ssh mcornelison@10.27.27.120 \
   'mysql obd2db -e "SELECT
       (SELECT MAX(synced_at) FROM realtime_data) AS last_synced_at,
       (SELECT COUNT(*) FROM realtime_data) AS row_count"'
@@ -1940,7 +1940,7 @@ ssh mcornelison@10.27.27.28 \
 Expected output:
 ```
 Sync started: 2026-04-23 18:14:22
-Config: baseUrl=http://10.27.27.10:8000, batchSize=500
+Config: baseUrl=http://10.27.27.120:8000, batchSize=500
 
 realtime_data:         247 new rows -> pushed -> accepted (batch: chi-eclipse-01-...)
 statistics:              0 new rows -> nothing to sync
@@ -1957,7 +1957,7 @@ In the orchestrator journal, at boot you should see **one** of:
 
 ```
 # Healthy:
-SyncClient initialized: baseUrl=http://10.27.27.10:8000 intervalSeconds=60 triggerOn=['interval', 'drive_end']
+SyncClient initialized: baseUrl=http://10.27.27.120:8000 intervalSeconds=60 triggerOn=['interval', 'drive_end']
 
 # Warning (still bootable, sync disabled):
 SyncClient initialization failed, sync disabled: ...
@@ -1988,7 +1988,7 @@ If the auto-trigger isn't firing (no `"Interval sync"` log lines over
 | Master switch | `jq '.pi.sync.enabled' config.json` | Must be `true`. |
 | Transport switch | `jq '.pi.companionService.enabled' config.json` | Must be `true`. |
 | API key env | `grep COMPANION_API_KEY ~/.env` | Must be set (server must have matching key). |
-| Server reachable | `curl -I http://10.27.27.10:8000/docs` | Should return `200 OK`. |
+| Server reachable | `curl -I http://10.27.27.120:8000/docs` | Should return `200 OK`. |
 | Collector running | `systemctl is-active eclipse-obd` | Must be `active`. |
 
 ### 5. Off-Pi test coverage
@@ -2327,7 +2327,7 @@ post-deploy sanity check + the recovery-from-crash drill.
 ### Post-deploy assertions
 
 ```bash
-ssh mcornelison@10.27.27.10 'systemctl status obd-server.service --no-pager | head -10'
+ssh mcornelison@10.27.27.120 'systemctl status obd-server.service --no-pager | head -10'
 ```
 
 Expected:
@@ -2342,7 +2342,7 @@ Expected:
 Quick summary commands:
 
 ```bash
-ssh mcornelison@10.27.27.10 '
+ssh mcornelison@10.27.27.120 '
     echo "=== unit ===";        systemctl is-active obd-server.service
     echo "=== enabled ===";     systemctl is-enabled obd-server.service
     echo "=== restart pol ==="; systemctl show -p Restart obd-server.service
@@ -2378,20 +2378,20 @@ Verify the Restart=always policy actually fires:
 
 ```bash
 # 1. Capture current PID for the before/after comparison.
-BEFORE=$(ssh mcornelison@10.27.27.10 'systemctl show -p MainPID --value obd-server.service')
+BEFORE=$(ssh mcornelison@10.27.27.120 'systemctl show -p MainPID --value obd-server.service')
 echo "Before kill: PID=$BEFORE"
 
 # 2. Force-kill the uvicorn process (sudo required).
-ssh mcornelison@10.27.27.10 'sudo kill -9 $(systemctl show -p MainPID --value obd-server.service)'
+ssh mcornelison@10.27.27.120 'sudo kill -9 $(systemctl show -p MainPID --value obd-server.service)'
 
 # 3. Wait for systemd to restart (RestartSec=5 + a few seconds for warmup).
 sleep 10
 
 # 4. Confirm new PID + active state + healthy endpoint.
-AFTER=$(ssh mcornelison@10.27.27.10 'systemctl show -p MainPID --value obd-server.service')
+AFTER=$(ssh mcornelison@10.27.27.120 'systemctl show -p MainPID --value obd-server.service')
 echo "After  kill: PID=$AFTER (must differ from $BEFORE)"
-ssh mcornelison@10.27.27.10 'systemctl is-active obd-server.service'
-curl -s http://10.27.27.10:8000/api/v1/health
+ssh mcornelison@10.27.27.120 'systemctl is-active obd-server.service'
+curl -s http://10.27.27.120:8000/api/v1/health
 ```
 
 Expected: `BEFORE != AFTER`, `is-active = active`, `/health` returns
@@ -2406,14 +2406,14 @@ the Pi is currently doing.
 
 ```bash
 # 1. Trigger reboot.
-ssh mcornelison@10.27.27.10 'sudo systemctl reboot'
+ssh mcornelison@10.27.27.120 'sudo systemctl reboot'
 
 # 2. Wait for the box to come back (give it 60-90s for full systemd target reach).
 sleep 90
 
 # 3. Verify autostart fired without operator intervention.
-ssh mcornelison@10.27.27.10 'systemctl is-active obd-server.service && systemctl is-enabled obd-server.service'
-curl -s http://10.27.27.10:8000/api/v1/health
+ssh mcornelison@10.27.27.120 'systemctl is-active obd-server.service && systemctl is-enabled obd-server.service'
+curl -s http://10.27.27.120:8000/api/v1/health
 ```
 
 Expected: `active` + `enabled` + `/health` returns 200 within 60-90s of the
