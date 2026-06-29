@@ -969,12 +969,12 @@
     {
       "id": "F-097",
       "parent": "E-001",
-      "title": "S-3 — Drain ladder state UI (when Pi on UPS battery show stage + VCELL + estimated runtime remaining)",
-      "description": "S-3 — Drain ladder state UI (when Pi on UPS battery show stage + VCELL + estimated runtime remaining)",
+      "title": "Battery Health card (touch-dashboard; Pi power/battery health) -- PIVOTED 2026-06-05 from S-3 'Drain ladder state UI'",
+      "description": "Battery Health card on the F-092/F-097 chromium touch-carousel. PIVOTED 2026-06-05 (Iris, CIO-approved): the key-off sequencer now prevents the Pi draining down the UPS ladder, so the old 'drain ladder state UI' framing is obsolete -- ladder demoted to a failsafe; this surface shows battery HEALTH (renamedFrom intent, same ID per Iris). Hard dep on F-103 (shared chromium kiosk + eclipse-states-http). Spec docs/superpowers/specs/2026-06-05-pi-touch-carousel-dashboard-f092-f097-design.md; groom-ready pending Atlas design-gate signoff.",
       "status": "pending",
       "renamedFrom": "B-097",
       "createdAt": "2026-05-27",
-      "updatedAt": "2026-05-27"
+      "updatedAt": "2026-06-28"
     },
     {
       "id": "F-098",
@@ -1089,12 +1089,21 @@
     {
       "id": "F-109",
       "parent": "E-OPS",
-      "title": "Mode 02 Freeze-Frame Capture for Forensic DTC Enrichment",
-      "description": "Mode 02 Freeze-Frame Capture for Forensic DTC Enrichment",
+      "title": "Freeze-Frame Capture for Forensic DTC Enrichment (Mode 02 UNSUPPORTED on MD326328 -> realtime_data fallback per Atlas C-3)",
+      "description": "Freeze-frame enrichment for DTC forensics. CAVEAT (Atlas greenlight C-3, 2026-06-19): Mode 02 is confirmed DEAD on the MD326328 ECU -- there is NO Mode 02 capture path; build the realtime_data fallback instead and fix the stale 'Mode 02' caveat. Coordinate with F-111 US-E (freeze-frame capture-or-fallback). Original framing 'Mode 02 Freeze-Frame Capture' is obsolete.",
       "status": "active",
       "renamedFrom": "B-109",
       "createdAt": "2026-05-27",
-      "updatedAt": "2026-05-27"
+      "updatedAt": "2026-06-28"
+    },
+    {
+      "id": "F-111",
+      "parent": "E-001",
+      "title": "On-Pi DTC / check-engine viewer + gated Mode-04 clear (Card 5 of the touch dashboard)",
+      "description": "On-Pi DTC/check-engine viewer surface + safety-gated Mode-04 clear, with a KOEO read independent of DriveDetector. Card 5 (Alerts+DTC) of the F-092/F-097 carousel. Spec drafted + CIO-approved 2026-06-05 (post drive-27 MIL: P0443 EVAP read+cleared off the Pi); spec docs/superpowers/specs/2026-06-05-pi-dtc-check-engine-viewer-clear-design.md. STATUS: pending Atlas design-gate signoff (load-bearing net-new write-to-vehicle Mode-04 path) -- Iris files the formal groom-ready pointer on Atlas's nod. SEQUENCE (Atlas greenlight 2026-06-19): F-103 -> carousel shell -> System Status + Battery Health cards -> System Setup+polkit -> pygame sunset -> THIS (Card 5, LAST). BUILD CONDITIONS: C-2 KOEO capture path independent of DriveDetector (drive_id=NULL, or viewer is blank key-on); C-3 Mode 02 dead on MD326328 -> realtime_data fallback (see F-109). Rule-10 DoD: state-server extension + emitters + Mode-04 path + token each land with matching specs/architecture.md (+ specs/UI/) in-sprint. Iris story split (spec section 10 M-1): US-A dtc emitter + state-server endpoint + static-table loader/sync; US-B takeover + severity-styled ribbon; US-C Alerts card (hero+list) + detail (freeze-frame + severity-gated fix + trust badge); US-D Clear-DTC Mode-04 path + gate + confirm + re-read + session-lock (load-bearing, pairs w/ Atlas A-1); US-E freeze-frame capture-or-honest-fallback. Spool owns severity taxonomy + DSM P1xxx curation; safety semantics offices/tuner/dtc-display-clear-safety-advisory.md; reference code specs/examples/dtc_read_and_clear_koeo.py.",
+      "status": "pending",
+      "createdAt": "2026-06-28",
+      "updatedAt": "2026-06-28"
     },
     {
       "id": "F-110",
