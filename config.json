@@ -467,7 +467,9 @@
         4,
         8,
         16
-      ]
+      ],
+      "quarantineThreshold": 5,
+      "quarantineThrottleSeconds": 3600
     },
     "sync": {
       "enabled": true,

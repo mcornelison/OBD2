@@ -34,6 +34,18 @@
 #                               ensureSyncModifiedAtSchema migration helper.
 #                               INSERT-side semantics unchanged for non-opt-in
 #                               tables (back-compat preserved).
+# 2026-06-28    | Rex (US-391) | F-076 queue-level quarantine: two new sync_log
+#                               columns (consecutive_failures, quarantined_at)
+#                               + ensureQuarantineSchema migration +
+#                               recordPushFailure / getQuarantineState /
+#                               clearQuarantine.  A record whose cross-tier
+#                               push keeps being rejected by the server is
+#                               quarantined after N consecutive failures so the
+#                               SyncClient throttles re-attempts (stop the
+#                               silent 27x/day retry) instead of hammering it
+#                               every cycle.  HWM advance semantics unchanged
+#                               (failures never advance last_synced_id), so the
+#                               raw record is preserved + re-drainable.
 # ================================================================================
 ################################################################################
 
@@ -85,11 +97,15 @@ __all__ = [
     'SYNC_MODIFIED_AT_COLUMN',
     'SYNC_UPDATE_TABLES_PK',
     'VALID_STATUSES',
+    'clearQuarantine',
+    'ensureQuarantineSchema',
     'ensureSyncModifiedAtSchema',
     'getDeltaRows',
     'getHighWaterMark',
     'getModifiedHighWaterMark',
+    'getQuarantineState',
     'initDb',
+    'recordPushFailure',
     'updateHighWaterMark',
 ]
 
@@ -174,6 +190,10 @@ VALID_STATUSES: frozenset[str] = frozenset({'ok', 'pending', 'failed'})
 # for the parallel modified_at cursor used by SYNC_UPDATE_TABLES_PK.
 # Older DBs from before US-315 will pick the column up via the idempotent
 # ALTER TABLE branch in :func:`ensureSyncModifiedAtSchema`.
+#
+# US-391 / F-076: ``consecutive_failures`` + ``quarantined_at`` carry the
+# queue-level quarantine state.  Fresh DBs land with the columns; older DBs
+# pick them up via the idempotent ALTER in :func:`ensureQuarantineSchema`.
 SYNC_LOG_SCHEMA: str = """
 CREATE TABLE IF NOT EXISTS sync_log (
     table_name              TEXT    PRIMARY KEY,
@@ -182,7 +202,9 @@ CREATE TABLE IF NOT EXISTS sync_log (
     last_batch_id           TEXT,
     status                  TEXT    NOT NULL DEFAULT 'pending'
                             CHECK (status IN ('ok','pending','failed')),
-    last_synced_modified_at TEXT
+    last_synced_modified_at TEXT,
+    consecutive_failures    INTEGER NOT NULL DEFAULT 0,
+    quarantined_at          TEXT
 )
 """
 
@@ -668,3 +690,186 @@ def ensureSyncModifiedAtSchema(conn: sqlite3.Connection) -> bool:
 
     conn.commit()
     return didWork
+
+
+# ================================================================================
+# Queue-level quarantine (US-391 / F-076)
+# ================================================================================
+#
+# A record whose cross-tier resolution keeps failing server-side (e.g. a
+# dtc_freeze_frame row whose ``vehicle_info_vin`` has no ECU era yet) makes the
+# server reject the whole push every cycle.  "Fail loudly, no silent re-resolve"
+# is correct per-attempt, but at the QUEUE level it becomes a silent infinite
+# loop (27x/day for 3+ weeks) that masks a real sync failure in the noise.
+#
+# The quarantine is per-table bookkeeping on sync_log: ``consecutive_failures``
+# counts server-rejection failures (not transient network failures), and once it
+# reaches the threshold ``quarantined_at`` is stamped ONCE.  The SyncClient reads
+# this state to throttle re-attempts.  Crucially this NEVER advances
+# ``last_synced_id`` -- the raw record stays on the Pi, preserved and
+# re-drainable: a successful push (e.g. after US-367 backfills the ECU era)
+# calls :func:`clearQuarantine` and the record flows normally again.
+
+
+def _hasQuarantineColumns(conn: sqlite3.Connection) -> bool:
+    """Return True iff sync_log carries the US-391 quarantine columns."""
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(sync_log)")}
+    return {'consecutive_failures', 'quarantined_at'} <= cols
+
+
+def ensureQuarantineSchema(conn: sqlite3.Connection) -> bool:
+    """Idempotently add the US-391 quarantine columns to sync_log.
+
+    Fresh DBs already have them (they are in :data:`SYNC_LOG_SCHEMA`); this
+    handles pre-US-391 DBs via ``ALTER TABLE ... ADD COLUMN``.  Safe to call on
+    every boot / every push (matches :func:`ensureSyncModifiedAtSchema`).
+
+    Args:
+        conn: Open sqlite3 connection.  ``initDb`` is called first so a fresh
+            DB lands in a known shape before the ALTER probes run.
+
+    Returns:
+        ``True`` if any ALTER actually ran (DB was previously un-migrated);
+        ``False`` when both columns were already present.
+    """
+    initDb(conn)
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(sync_log)")}
+    didWork = False
+    if 'consecutive_failures' not in cols:
+        conn.execute(
+            "ALTER TABLE sync_log "
+            "ADD COLUMN consecutive_failures INTEGER NOT NULL DEFAULT 0",
+        )
+        didWork = True
+    if 'quarantined_at' not in cols:
+        conn.execute("ALTER TABLE sync_log ADD COLUMN quarantined_at TEXT")
+        didWork = True
+    conn.commit()
+    return didWork
+
+
+def recordPushFailure(
+    conn: sqlite3.Connection,
+    tableName: str,
+    batchId: str,
+    *,
+    quarantineThreshold: int,
+    nowIso: str,
+) -> bool:
+    """Record a server-rejection push failure; quarantine after N in a row.
+
+    Increments ``consecutive_failures`` and writes ``status='failed'`` +
+    diagnostics WITHOUT advancing ``last_synced_id`` (the US-149 failed-push
+    invariant -- the raw record must stay re-sendable).  When the counter
+    reaches ``quarantineThreshold`` for the first time, ``quarantined_at`` is
+    stamped with ``nowIso`` and this function returns ``True`` exactly once so
+    the caller can surface the event a single time (not per-cycle).
+
+    Only call this for failures where the server REJECTED the push (an HTTP
+    error response).  Transient network failures (DNS/refused/timeout) must NOT
+    flow here -- they are not an "identical resolution failure" and would
+    wrongly quarantine a table during an outage.
+
+    Args:
+        conn: Open sqlite3 connection.
+        tableName: Must be in :data:`IN_SCOPE_TABLES`.
+        batchId: Batch identifier for the diagnostic trail (``last_batch_id``).
+        quarantineThreshold: Consecutive-failure count at which the record is
+            quarantined.  ``<= 0`` disables quarantine (always returns False).
+        nowIso: Caller-supplied ISO-8601 timestamp stamped as ``quarantined_at``
+            on the transition (the caller owns the clock so throttle math in
+            :class:`SyncClient` stays consistent + testable).
+
+    Returns:
+        ``True`` iff THIS call transitioned the table into quarantine (stamp a
+        fresh ``quarantined_at``); ``False`` otherwise (below threshold, or
+        already quarantined).
+
+    Raises:
+        ValueError: If ``tableName`` is not in :data:`IN_SCOPE_TABLES`.
+    """
+    _validateTable(tableName)
+    ensureQuarantineSchema(conn)
+
+    row = conn.execute(
+        "SELECT last_synced_id, consecutive_failures, quarantined_at "
+        "FROM sync_log WHERE table_name = ?",
+        (tableName,),
+    ).fetchone()
+    lastId = int(row[0]) if row is not None else 0
+    priorCount = int(row[1]) if row is not None else 0
+    priorQuarantinedAt = row[2] if row is not None else None
+
+    newCount = priorCount + 1
+    justQuarantined = (
+        quarantineThreshold > 0
+        and newCount >= quarantineThreshold
+        and priorQuarantinedAt is None
+    )
+    newQuarantinedAt = nowIso if justQuarantined else priorQuarantinedAt
+
+    now = _utcIsoTimestamp()
+    conn.execute(
+        """
+        INSERT INTO sync_log
+            (table_name, last_synced_id, last_synced_at, last_batch_id,
+             status, consecutive_failures, quarantined_at)
+        VALUES (?, ?, ?, ?, 'failed', ?, ?)
+        ON CONFLICT(table_name) DO UPDATE SET
+            last_synced_at       = excluded.last_synced_at,
+            last_batch_id        = excluded.last_batch_id,
+            status               = 'failed',
+            consecutive_failures = excluded.consecutive_failures,
+            quarantined_at       = excluded.quarantined_at
+        """,
+        (tableName, lastId, now, batchId, newCount, newQuarantinedAt),
+    )
+    conn.commit()
+    return justQuarantined
+
+
+def getQuarantineState(
+    conn: sqlite3.Connection,
+    tableName: str,
+) -> tuple[int, str | None]:
+    """Return ``(consecutive_failures, quarantined_at)`` for ``tableName``.
+
+    ``quarantined_at`` is ``None`` when the table is not quarantined.  On a
+    pre-US-391 sync_log (columns absent) returns ``(0, None)`` so a stale DB on
+    a fresh client install degrades cleanly instead of crashing.
+
+    Raises:
+        ValueError: If ``tableName`` is not in :data:`IN_SCOPE_TABLES`.
+    """
+    _validateTable(tableName)
+    if not _hasQuarantineColumns(conn):
+        return (0, None)
+    row = conn.execute(
+        "SELECT consecutive_failures, quarantined_at "
+        "FROM sync_log WHERE table_name = ?",
+        (tableName,),
+    ).fetchone()
+    if row is None:
+        return (0, None)
+    return (int(row[0]), row[1])
+
+
+def clearQuarantine(conn: sqlite3.Connection, tableName: str) -> None:
+    """Reset the failure counter + quarantine flag for ``tableName``.
+
+    Call after a successful push so a previously-quarantined record becomes
+    re-drainable / un-throttled (US-391 invariant 4).  A no-op when no sync_log
+    row exists yet or the quarantine columns are absent (pre-US-391 DB).
+
+    Raises:
+        ValueError: If ``tableName`` is not in :data:`IN_SCOPE_TABLES`.
+    """
+    _validateTable(tableName)
+    if not _hasQuarantineColumns(conn):
+        return
+    conn.execute(
+        "UPDATE sync_log SET consecutive_failures = 0, quarantined_at = NULL "
+        "WHERE table_name = ?",
+        (tableName,),
+    )
+    conn.commit()

@@ -218,6 +218,13 @@ DEFAULTS: dict[str, Any] = {
     'pi.companionService.batchSize': 500,
     'pi.companionService.retryMaxAttempts': 3,
     'pi.companionService.retryBackoffSeconds': [1, 2, 4, 8, 16],
+    # US-391 (F-076): queue-level quarantine.  After this many consecutive
+    # server-rejection failures on one table the push is quarantined and
+    # re-attempts are throttled to once per quarantineThrottleSeconds (instead
+    # of every cadence tick) -- stops a single unresolvable record from
+    # retrying forever and masking a real sync failure in the noise.
+    'pi.companionService.quarantineThreshold': 5,
+    'pi.companionService.quarantineThrottleSeconds': 3600,
     # Pi-tier home-network detection (US-188, B-043 component 1).  Consumed
     # by src.pi.network.HomeNetworkDetector to decide at shutdown time
     # whether the Pi should attempt a sync push before powering off.
@@ -465,6 +472,34 @@ class ConfigValidator:
                 f"pi.companionService.retryBackoffSeconds must be a list "
                 f"(got {type(backoff).__name__})",
                 missingFields=['pi.companionService.retryBackoffSeconds'],
+            )
+
+        # US-391: quarantine threshold (consecutive failures) must be a
+        # positive int; bool rejected first so a stray true/false can't pose
+        # as 1/0.
+        quarantineThreshold = section.get('quarantineThreshold')
+        if quarantineThreshold is not None and (
+            isinstance(quarantineThreshold, bool)
+            or not isinstance(quarantineThreshold, int)
+            or quarantineThreshold < 1
+        ):
+            raise ConfigValidationError(
+                f"pi.companionService.quarantineThreshold must be an integer "
+                f">= 1 (got {quarantineThreshold!r})",
+                missingFields=['pi.companionService.quarantineThreshold'],
+            )
+
+        # US-391: throttle window (seconds) must be a positive number.
+        quarantineThrottle = section.get('quarantineThrottleSeconds')
+        if quarantineThrottle is not None and (
+            isinstance(quarantineThrottle, bool)
+            or not isinstance(quarantineThrottle, (int, float))
+            or quarantineThrottle <= 0
+        ):
+            raise ConfigValidationError(
+                f"pi.companionService.quarantineThrottleSeconds must be a "
+                f"positive number (got {quarantineThrottle!r})",
+                missingFields=['pi.companionService.quarantineThrottleSeconds'],
             )
 
     def _validateHomeNetwork(self, config: dict[str, Any]) -> None:

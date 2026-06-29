@@ -502,6 +502,34 @@ class TestCompanionServiceConfig:
         assert cs['batchSize'] == 500
         assert cs['retryMaxAttempts'] == 3
         assert cs['retryBackoffSeconds'] == [1, 2, 4, 8, 16]
+        # US-391: queue-level quarantine defaults.
+        assert cs['quarantineThreshold'] == 5
+        assert cs['quarantineThrottleSeconds'] == 3600
+
+    def test_companionService_quarantineThreshold_belowOne_raises(self):
+        """US-391: a quarantineThreshold < 1 is rejected at load time."""
+        validator = ConfigValidator(requiredKeys=[])
+        config = self._minimalTierConfig()
+        config['pi']['companionService'] = {'quarantineThreshold': 0}
+
+        with pytest.raises(ConfigValidationError) as excInfo:
+            validator.validate(config)
+
+        assert 'pi.companionService.quarantineThreshold' in excInfo.value.missingFields
+
+    def test_companionService_quarantineThrottle_nonPositive_raises(self):
+        """US-391: a non-positive quarantineThrottleSeconds is rejected."""
+        validator = ConfigValidator(requiredKeys=[])
+        config = self._minimalTierConfig()
+        config['pi']['companionService'] = {'quarantineThrottleSeconds': 0}
+
+        with pytest.raises(ConfigValidationError) as excInfo:
+            validator.validate(config)
+
+        assert (
+            'pi.companionService.quarantineThrottleSeconds'
+            in excInfo.value.missingFields
+        )
 
     def test_companionService_fullyPopulated_roundTripPreserved(self):
         """
