@@ -251,3 +251,28 @@ Outcome: SHIPPED passes:true. RCA deliverable renders the exact mechanism (file:
 - **Absorption vs overlap are opposite signatures**: Root 2 absorption gives FEWER distinct ids than physical drives (one id spans two); Root 1 overlap gives MORE, out-of-temporal-order ids (two open at once). `start_count != end_count` in connection_log conflates them -- separate by counting distinct-ids-per-window and checking temporal ordering. Don't force-fit one root.
 - **Research-story gate handling**: an RCA whose validationCriteria includes "Atlas review" is shippable passes:true once the deliverable + the Ralph-satisfiable VCs are met; the external review is the downstream build-gate (for US-388), routed via inbox, not a blocker on the RCA itself. Same shape as deferring mypy/Atlas sign-off at integration.
 ---
+
+## 2026-06-28 - US-389 (Agent 1 / Rex)
+Task: Root 1 closure -- single-instance guard + RuntimeDirectory as a matched-pair tested deploy invariant + version-stamp
+Outcome: SHIPPED passes:true. The out-of-band guard mitigation is now a durable, TESTED deploy invariant. No Pi needed -- the whole deliverable is dev-box-runnable (static + helper-with-fixtures patterns).
+
+### What was implemented:
+- `scripts/deploy_invariants.py` (new): matched-pair assertion logic. `assertMatchedPair(config, unit)` raises `MatchedPairViolation` (loud) if `pi.runtime.singleInstanceGuard.enabled` is not True OR the unit's `RuntimeDirectory != eclipse-obd` (Atlas C-5: neither half ships without the other or the non-root orchestrator crash-loops on EPERM mkdir /run/eclipse-obd). `readGuardEnabled` / `readUnitRuntimeDirectory` / `summarizeSingleInstanceState` helpers + CLI `check-pair` (exit 1 on violation, 2 on missing file) / `summarize` (JSON for the stamp).
+- `deploy/deploy-pi.sh`: (AC#1) new `step_assert_single_instance_matched_pair` shells out to `check-pair`, runs BEFORE `sync_tree` -> broken pair aborts on the workstation (exit 10), never reaches the Pi. Offline-safe missing-file gate (mirrors `step_write_deploy_version`) keeps the temp-dir bash smoke test green. (AC#2) `step_restart_service` now `systemctl stop` -> settle -> `start` (release-then-acquire), pairing with the US-354 deploy-hygiene class. (AC#4) `step_write_deploy_version` threads the `{guardEnabled, runtimeDirectory}` summary into `compose-record`.
+- `scripts/version_helpers.py`: `composeReleaseRecord` gains optional `singleInstance` param (additive embed AFTER `validateRelease`; required fields + back-compat unchanged) + `--single-instance` CLI flag.
+- `specs/architecture.md`: new section 10.7.1.1 (Atlas design-gate DoD) -- matched-pair invariant + rationale, release-then-acquire hygiene, version stamp, Mechanism-B status flipped LIVE; the 06-06 02:25 spawn-trigger documented best-available (journal aged out; most-likely = restart/flap re-spawn before prior exit).
+
+### Files changed:
+- Created: `scripts/deploy_invariants.py`, `tests/deploy/test_deploy_invariants.py` (19 tests)
+- Modified: `scripts/version_helpers.py`, `deploy/deploy-pi.sh`, `tests/deploy/test_deploy_pi.py` (US-389 static assertions), `tests/deploy/test_release_versioning.py` (embed tests), `specs/architecture.md`
+
+### Gates:
+- VC#1 (RuntimeDirectory removed -> FAILS) + VC#2 (guard false -> FAILS): proven by fixtures + a live `check-pair` demo (exit 1, MatchedPairViolation names the missing half). VC#3 (.deploy-version records state): end-to-end dry-run stamp embeds `singleInstance:{guardEnabled:true,runtimeDirectory:eclipse-obd}`. VC#4: architecture.md spawn-trigger finding.
+- full `tests/deploy/` = 188 passed + 1 skipped (zero regression); bash `test_deploy_pi.sh` 29/29; ruff clean on all 7 files. mypy NOT installed -> Typecheck deferred to PM `make typecheck` (code mypy-strict-shaped).
+- DEFERRED-TO-PM: RELEASE_VERSION V0.29.0->V0.29.1 bump + the real Pi-side `.deploy-version` write happen at `/sprint-deploy-pm` (RELEASE_VERSION bump is PM-owned per the version_helpers contract; Ralph must not bump it). The mechanism is built + tested here.
+
+### Learnings for future iterations:
+- **Matched-pair invariant pattern**: when two config artifacts MUST agree or production crash-loops (guard flag <-> RuntimeDirectory), encode the assertion in a testable Python helper + a deploy-time gate that runs BEFORE the irreversible step (sync), with a missing-file warn+skip so the offline smoke harness (deploy/ only, no config.json) stays green. The gate's `exit <non-zero>` on a present-but-broken pair is the load-bearing line; the warn+skip is only for absent files (test harness / partial tarball).
+- **Gotcha (offline smoke test)**: `tests/deploy/test_deploy_pi.sh` test 5/6/8 copy ONLY `deploy/` (+ addresses.sh) into a temp dir and run `--dry-run`; they do NOT copy `config.json` or `scripts/`. Any new step that reads `$REPO_ROOT/config.json` or shells out to `scripts/*.py` MUST presence-gate (warn+skip on absent) or it false-fails the smoke test. Same precedent: `step_write_deploy_version`'s missing-helper gate.
+- **PM-owned vs Ralph-owned on the version stamp**: the deploy scripts NEVER bump `deploy/RELEASE_VERSION` (PM does, at sprint close) -- they only READ it and stamp `.deploy-version` per tier. So "record the guard state in the V0.29.1 stamp" splits: the embed MECHANISM is Ralph's (built + tested), the V0.29.1 version bump + real Pi write are PM's at deploy. Build + test the mechanism; defer the version bump.
+---
