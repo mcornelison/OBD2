@@ -16,6 +16,10 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-06-18    | Atlas        | Initial implementation (A-15 mirror-drift gate)
+# 2026-06-28    | Rex (US-392) | A-15 de-dup: base URLs now DERIVED from
+#                                serverHost:serverPort; gate now checks the
+#                                single host/port/hostname source across
+#                                config.json, addresses.sh, validator DEFAULTS.
 # ================================================================================
 ################################################################################
 
@@ -27,10 +31,14 @@ The server/Pi addresses appear in three places that MUST move together:
     2. validator.py DEFAULTS   (# b044-exempt: mirrors config.json)
     3. deploy/addresses.sh     (# b044-exempt: canonical bash-side mirror)
 
-Plus config.json itself triplicates the server address (serverHost,
-serverBaseUrl, companionService.baseUrl). B-044's audit exempts all of these,
-so it cannot catch them drifting apart -- which is exactly what bit us. This
-test is the standing gate. Run locally:
+US-392 collapsed config.json's old triplication of the server address
+(serverHost + serverBaseUrl + companionService.baseUrl): the base URLs are now
+DERIVED from serverHost:serverPort (validator ``_deriveServerUrls`` for Python,
+``${SERVER_HOST}:${SERVER_PORT}`` for bash), so no base-URL literal can drift
+from its host. What remains is the single host/port/hostname fact mirrored
+across the three files; B-044's audit exempts all of them, so it cannot catch
+them drifting apart -- which is exactly what bit us on the 2026-06-18 .10 ->
+.120 move. This test is the standing gate. Run locally:
     pytest tests/lint/test_address_mirror_consistency.py -v
 """
 
@@ -53,15 +61,17 @@ REPO_ROOT = Path(__file__).parent.parent.parent
 
 
 def _consistentFacts() -> tuple[dict, dict, dict]:
-    """Return (config, addressesSh, validatorDefaults) that all agree."""
+    """Return (config, addressesSh, validatorDefaults) that all agree.
+
+    US-392: the single source is host/port/hostname -- base URLs are derived,
+    not mirrored, so they are no longer part of these facts.
+    """
     config = {
         "serverHost": "10.27.27.120",
         "serverPort": "8000",
         "serverHostname": "chi-srv-01",
-        "serverBaseUrl": "http://10.27.27.120:8000",
         "piHost": "10.27.27.28",
         "piHostname": "chi-eclipse-01",
-        "companionBaseUrl": "http://10.27.27.120:8000",
     }
     addressesSh = {
         "SERVER_HOST": "10.27.27.120",
@@ -70,7 +80,7 @@ def _consistentFacts() -> tuple[dict, dict, dict]:
         "PI_HOST": "10.27.27.28",
         "PI_HOSTNAME": "chi-eclipse-01",
     }
-    validatorDefaults = {"companionBaseUrl": "http://10.27.27.120:8000"}
+    validatorDefaults = {"serverHost": "10.27.27.120", "serverPort": "8000"}
     return config, addressesSh, validatorDefaults
 
 
@@ -89,18 +99,19 @@ class TestCompareMirrorsCore:
         mismatches = compareMirrors(config, sh, validator)
         assert any(m.fact == "server host" for m in mismatches)
 
-    def test_compareMirrors_validatorBaseUrlDiverges_returnsMismatch(self) -> None:
+    def test_compareMirrors_validatorServerHostDiverges_returnsMismatch(self) -> None:
+        # US-392: the validator DEFAULTS serverHost left behind config.json.
         config, sh, validator = _consistentFacts()
-        validator["companionBaseUrl"] = "http://10.27.27.10:8000"
+        validator["serverHost"] = "10.27.27.10"
         mismatches = compareMirrors(config, sh, validator)
         assert any("validator" in m.message.lower() for m in mismatches)
 
-    def test_compareMirrors_intraConfigBaseUrlStale_returnsMismatch(self) -> None:
-        # serverBaseUrl no longer matches host:port within config.json itself.
+    def test_compareMirrors_validatorServerPortDiverges_returnsMismatch(self) -> None:
+        # US-392: the derived URL depends on serverPort too -- guard it.
         config, sh, validator = _consistentFacts()
-        config["serverBaseUrl"] = "http://10.27.27.10:8000"
+        validator["serverPort"] = "9999"
         mismatches = compareMirrors(config, sh, validator)
-        assert any(m.fact == "server base url" for m in mismatches)
+        assert any(m.fact == "validator server port" for m in mismatches)
 
     def test_compareMirrors_returnsMirrorMismatchInstances(self) -> None:
         config, sh, validator = _consistentFacts()
@@ -117,18 +128,19 @@ class TestParsers:
     def test_parseConfigAddresses_realConfig_extractsServerHost(self) -> None:
         facts = parseConfigAddresses(REPO_ROOT / "config.json")
         assert facts["serverHost"] == "10.27.27.120"
-        assert facts["companionBaseUrl"].startswith("http://")
+        assert facts["serverPort"] == "8000"
 
     def test_parseAddressesSh_realFile_extractsDefaults(self) -> None:
         facts = parseAddressesSh(REPO_ROOT / "deploy" / "addresses.sh")
         assert facts["SERVER_HOST"] == "10.27.27.120"
         assert facts["PI_HOST"] == "10.27.27.28"
 
-    def test_parseValidatorDefaults_realFile_extractsCompanionBaseUrl(self) -> None:
+    def test_parseValidatorDefaults_realFile_extractsServerHostPort(self) -> None:
         facts = parseValidatorDefaults(
             REPO_ROOT / "src" / "common" / "config" / "validator.py"
         )
-        assert facts["companionBaseUrl"] == "http://10.27.27.120:8000"
+        assert facts["serverHost"] == "10.27.27.120"
+        assert facts["serverPort"] == "8000"
 
 
 class TestStandingGate:

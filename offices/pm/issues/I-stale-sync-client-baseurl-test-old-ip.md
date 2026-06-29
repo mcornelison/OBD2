@@ -4,6 +4,14 @@
 **Severity:** Low (test-only; product is correct).
 **Scope:** OUTSIDE US-391 — filed per Scope Fence (Rule 3), not fixed inline.
 
+> **RESOLVED 2026-06-28 in US-392 (A-15 address de-dup).** The assertion was
+> made drift-proof rather than re-pinned: `test_validatorOutput_constructsSyncClient`
+> now derives its expectation from the validated config's
+> `server.network.serverHost:serverPort` (the single source US-392 established),
+> so it can never diverge from the address again. The validator now DERIVES
+> `pi.companionService.baseUrl` from `serverHost:serverPort`, so the dead `.10`
+> default literal is gone entirely. No further action needed.
+
 ## Symptom
 
 `tests/pi/sync/test_client_config_paths.py::TestValidatorShapeCompatibility::test_validatorOutput_constructsSyncClient`

@@ -108,7 +108,14 @@ class TestValidatorShapeCompatibility:
         client = SyncClient(config)
 
         assert client.isEnabled is True
-        assert client.baseUrl == "http://10.27.27.10:8000"
+        # US-392 (A-15 de-dup): the companion baseUrl is DERIVED by the
+        # validator from server.network.serverHost:serverPort -- assert it
+        # equals that derived value (not a hardcoded literal) so this test
+        # can never drift from the single-source address again (the exact
+        # failure mode of the dead .10 assertion this replaces).
+        network = config["server"]["network"]
+        expectedBaseUrl = f"http://{network['serverHost']}:{network['serverPort']}"
+        assert client.baseUrl == expectedBaseUrl
         assert client.deviceId == "chi-eclipse-01"
         assert client.dbPath == tempDbPath
 

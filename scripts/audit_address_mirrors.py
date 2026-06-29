@@ -20,22 +20,35 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-06-18    | Atlas        | Initial implementation (A-15 mirror-drift gate)
+# 2026-06-28    | Rex (US-392) | A-15 de-dup: the base URLs are now DERIVED from
+#                                serverHost:serverPort (validator + addresses.sh),
+#                                no longer duplicated literals. Audit now checks
+#                                the SINGLE source (serverHost/serverPort/
+#                                hostnames) agrees across config.json,
+#                                addresses.sh, and validator DEFAULTS; the
+#                                obsolete intra-config base-URL literal checks
+#                                are retired.
 # ================================================================================
 ################################################################################
 
 """
 A-15 mirror-consistency audit.
 
-The address SSOT was never single -- it is "documented duplication" across
-three sanctioned mirrors that must move together:
+The address SSOT is "documented duplication" across three sanctioned mirrors
+that must move together:
 
-    config.json            -- server.network.* + pi.network.* + companionService
-    validator.py DEFAULTS  -- pi.companionService.baseUrl
+    config.json            -- server.network.* + pi.network.*
+    validator.py DEFAULTS  -- server.network.serverHost / serverPort
     deploy/addresses.sh    -- SERVER_HOST / PI_HOST / ... defaults
 
-plus config.json itself triplicates the server address (serverHost,
-serverBaseUrl, companionService.baseUrl). This audit parses all three and
-asserts every copy of each fact agrees. It does the one thing B-044's
+US-392 collapsed the WORST of the duplication: config.json no longer holds the
+server address three times (serverHost + serverBaseUrl + companionService.
+baseUrl). The base URLs are now DERIVED from serverHost:serverPort -- by the
+validator (``_deriveServerUrls``) for Python consumers and by addresses.sh
+(``${SERVER_HOST}:${SERVER_PORT}``) for bash consumers -- so there is no longer
+a base-URL literal that can drift from its host. What remains is the single
+host/port/hostname fact, mirrored across the three files above; this audit
+asserts every copy of that fact agrees. It does the one thing B-044's
 literal-scan cannot: catch the mirrors diverging.
 
 CLI:
@@ -66,25 +79,27 @@ class MirrorMismatch:
 # Parsers -- read the real on-disk mirrors.
 # ---------------------------------------------------------------------------
 def parseConfigAddresses(configPath: Path) -> dict[str, str]:
-    """Extract address facts from config.json.
+    """Extract the single-source address facts from config.json.
+
+    US-392: the base URLs (serverBaseUrl / companionService.baseUrl) are no
+    longer literals in config.json -- they are derived from serverHost:
+    serverPort -- so this parser reads only the source host/port/hostname
+    facts that still appear as literals.
 
     Returns:
-        Mapping with keys: serverHost, serverPort, serverHostname,
-        serverBaseUrl, piHost, piHostname, companionBaseUrl. Missing keys
-        resolve to '' so the comparator flags them rather than KeyError-ing.
+        Mapping with keys: serverHost, serverPort, serverHostname, piHost,
+        piHostname. Missing keys resolve to '' so the comparator flags them
+        rather than KeyError-ing.
     """
     data = json.loads(Path(configPath).read_text(encoding="utf-8"))
     server = data.get("server", {}).get("network", {})
     pi = data.get("pi", {}).get("network", {})
-    companion = data.get("pi", {}).get("companionService", {})
     return {
         "serverHost": str(server.get("serverHost", "")),
         "serverPort": str(server.get("serverPort", "")),
         "serverHostname": str(server.get("serverHostname", "")),
-        "serverBaseUrl": str(server.get("serverBaseUrl", "")),
         "piHost": str(pi.get("piHost", "")),
         "piHostname": str(pi.get("piHostname", "")),
-        "companionBaseUrl": str(companion.get("baseUrl", "")),
     }
 
 
@@ -104,20 +119,32 @@ def parseAddressesSh(shPath: Path) -> dict[str, str]:
     return facts
 
 
-_VALIDATOR_COMPANION = re.compile(
-    r"""['"]pi\.companionService\.baseUrl['"]\s*:\s*['"]([^'"]+)['"]"""
+_VALIDATOR_SERVER_HOST = re.compile(
+    r"""['"]server\.network\.serverHost['"]\s*:\s*['"]([^'"]+)['"]"""
+)
+_VALIDATOR_SERVER_PORT = re.compile(
+    r"""['"]server\.network\.serverPort['"]\s*:\s*(\d+)"""
 )
 
 
 def parseValidatorDefaults(validatorPath: Path) -> dict[str, str]:
     """Extract the address-bearing DEFAULTS entries from validator.py.
 
+    US-392: the validator no longer carries a companionService.baseUrl literal
+    (it DERIVES the base URLs from serverHost:serverPort); the single source it
+    mirrors from config.json is server.network.serverHost + serverPort, so the
+    audit checks those agree.
+
     Regex-parsed (not imported) to keep this module stdlib-only and free of
     the validator's import side effects -- matching the B-044 audit's posture.
     """
     text = Path(validatorPath).read_text(encoding="utf-8")
-    match = _VALIDATOR_COMPANION.search(text)
-    return {"companionBaseUrl": match.group(1) if match else ""}
+    hostMatch = _VALIDATOR_SERVER_HOST.search(text)
+    portMatch = _VALIDATOR_SERVER_PORT.search(text)
+    return {
+        "serverHost": hostMatch.group(1) if hostMatch else "",
+        "serverPort": portMatch.group(1) if portMatch else "",
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -153,48 +180,27 @@ def compareMirrors(
     cross("pi host", "piHost", "PI_HOST")
     cross("pi hostname", "piHostname", "PI_HOSTNAME")
 
-    # Intra-config coherence: the two derived base URLs must equal host:port.
-    expectedBaseUrl = f"http://{config.get('serverHost', '')}:{config.get('serverPort', '')}"
-    if config.get("serverBaseUrl", "") != expectedBaseUrl:
-        mismatches.append(
-            MirrorMismatch(
-                fact="server base url",
-                message=(
-                    f"config.json serverBaseUrl ({config.get('serverBaseUrl', '')!r}) "
-                    f"!= derived {expectedBaseUrl!r} (serverHost:serverPort)"
-                ),
-                sources={"serverBaseUrl": config.get("serverBaseUrl", "")},
+    # validator.py DEFAULTS <-> config.json. US-392: the validator mirrors the
+    # single server address source (serverHost + serverPort) used by
+    # _deriveServerUrls; these are the new fallback-when-section-omitted
+    # defaults and must equal config.json's canonical values.
+    def crossValidator(fact: str, key: str) -> None:
+        cfgVal = config.get(key, "")
+        valVal = validatorDefaults.get(key, "")
+        if cfgVal != valVal:
+            mismatches.append(
+                MirrorMismatch(
+                    fact=fact,
+                    message=(
+                        f"validator.py DEFAULTS {key} ({valVal!r}) != "
+                        f"config.json ({cfgVal!r})"
+                    ),
+                    sources={"validator.py": valVal, "config.json": cfgVal},
+                )
             )
-        )
-    if config.get("companionBaseUrl", "") != expectedBaseUrl:
-        mismatches.append(
-            MirrorMismatch(
-                fact="companion base url",
-                message=(
-                    f"config.json companionService.baseUrl "
-                    f"({config.get('companionBaseUrl', '')!r}) != derived "
-                    f"{expectedBaseUrl!r} (serverHost:serverPort)"
-                ),
-                sources={"companionBaseUrl": config.get("companionBaseUrl", "")},
-            )
-        )
 
-    # validator.py DEFAULTS <-> config.json
-    if validatorDefaults.get("companionBaseUrl", "") != config.get("companionBaseUrl", ""):
-        mismatches.append(
-            MirrorMismatch(
-                fact="validator companion base url",
-                message=(
-                    f"validator.py DEFAULTS companionService.baseUrl "
-                    f"({validatorDefaults.get('companionBaseUrl', '')!r}) != "
-                    f"config.json ({config.get('companionBaseUrl', '')!r})"
-                ),
-                sources={
-                    "validator.py": validatorDefaults.get("companionBaseUrl", ""),
-                    "config.json": config.get("companionBaseUrl", ""),
-                },
-            )
-        )
+    crossValidator("validator server host", "serverHost")
+    crossValidator("validator server port", "serverPort")
 
     return mismatches
 
