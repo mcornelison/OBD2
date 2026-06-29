@@ -326,3 +326,26 @@ Outcome: SHIPPED passes:true. The A-15 structural gap behind the .10->.120 break
 - **derive-when-absent = behavior-preserving**: keying derivation on "URL absent" (not "always overwrite") means every existing fixture/consumer that set baseUrl explicitly is untouched -- the AC2 "no behavioral change" falls out for free, and only the configs that RELIED on the duplicated literal (the real config.json) flip to the derived path.
 - **Gotcha (zsh `<->` glob in commit messages)**: a commit `-m` string containing `<->` (e.g. "config<->validator") trips a zsh numeric-range-glob safety guard even under git-bash. Use `/` or words instead, or commit via `git commit -F <file>`.
 ---
+
+## 2026-06-29 - US-379 (Agent 1 / Rex)
+Task: Fix stale harness fixture after US-371 drive_id->summary_id rename (test-only)
+Outcome: SHIPPED passes:true. The synthetic schema-vs-ORM divergence fixture once again provokes the intended I-041 data_quality-missing OperationalError instead of a summary_id-missing rename artifact. No production src/ change. Sprint 47 now 6/9; the 3 remaining stories are all externally gated -> SPRINT_BLOCKED.
+
+### What was implemented:
+- `tests/integration/test_deploy_context_drive_simulator.py` -- the historical CREATE TABLE drive_statistics block in `test_harnessTooling_canCatchSchemaVsOrmDivergence_synthetic` (TestHarnessIntegrity) renamed `drive_id` -> `summary_id` in the column decl (`summary_id INTEGER NOT NULL`), the PRIMARY KEY (`summary_id, parameter_name`), and the FOREIGN KEY (`summary_id REFERENCES drive_summary(id) ON DELETE CASCADE`) + the adjacent seed comment.
+- ROOT CAUSE: the production ORM (`DriveStatistic`, models.py:1046) writes `summary_id` since the US-371 rename, so the Phase-1 INSERT `INSERT INTO drive_statistics (summary_id, ..., data_quality)` hit `summary_id` (absent in the stale `drive_id`-shaped table) BEFORE `data_quality` -> OperationalError 'no such column: summary_id' -> the `\"data_quality\" in errMsg` assertion failed RED for the WRONG reason. With the historical block now declaring `summary_id`, the SOLE remaining divergence from the ORM is the missing `data_quality` column -> Phase 1 raises the data_quality OperationalError (right reason) and Phase 2 (ALTER ADD COLUMN data_quality) INSERT succeeds.
+
+### Files changed:
+- Modified: `tests/integration/test_deploy_context_drive_simulator.py` (historical CREATE TABLE block drive_id->summary_id; comment)
+
+### Gates:
+- VC1 target test PASSED for the right reason (data_quality assertion held); RED-for-wrong-reason ('no such column: summary_id') confirmed BEFORE the fix.
+- VC2 `pytest tests/integration -m "not slow"` = 18 passed (zero regression; no summary_id-missing failures introduced).
+- VC3 grep confirms the historical block declares `summary_id` not `drive_id` (lines 784/794/795); the remaining `drive_id` references are the legitimate `DriveSummary.drive_id` column on the DIFFERENT drive_summary table + its seeding, untouched.
+- ruff clean on the touched file. mypy NOT installed on this dev box -> Typecheck AC deferred to PM/Atlas `make typecheck` at integration (test-only change adds no type surface). Committed 7193b0b.
+
+### Learnings for future iterations:
+- **A column rename leaves rename-shaped artifacts in hand-rolled SQL fixtures**: `create_all`-based fixtures auto-track an ORM rename, but any test that hand-writes a divergent CREATE TABLE (to PROVE the harness catches schema drift) pins the OLD column name and silently changes WHICH divergence the test exercises. After a column rename, grep test SQL string-literals (`exec_driver_sql`, raw `CREATE TABLE`) for the old name -- `create_all` callers are safe, raw-SQL callers are not.
+- **A passing-or-failing assertion can still be testing the wrong thing**: this test was RED, but the value was that it was RED for a *different* symptom than the one it claims to prove. When a divergence test asserts a SPECIFIC error substring, a fixture drift can make it fail on an EARLIER divergence -- always read the actual error text against the asserted substring, don't just trust red/green.
+- **Single-symptom divergence fixtures need exactly-one divergence**: the fixture's whole point is to isolate the data_quality seam; it works only if the historical table differs from the ORM in EXACTLY the data_quality column. The drive_id->summary_id rename smuggled in a SECOND divergence that fired first. Keep such fixtures minimal-divergence by construction.
+---
