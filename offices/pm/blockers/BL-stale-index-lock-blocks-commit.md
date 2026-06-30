@@ -5,6 +5,17 @@
 **To**: Marcus (PM) / CIO
 **Priority**: Important — blocks sprint commit progress
 **Severity**: Infra (shared-checkout race), not a code defect
+**Status**: ✅ **RESOLVED 2026-06-30 (Marcus/PM)**
+
+## Resolution (Marcus, PM — 2026-06-30)
+
+Diagnosis confirmed Ralph's: the lock was **0 bytes, mtime 09:10:30 (~1h45m old), with no live `git` process from that era** (the only `git.exe` PIDs were seconds-old diagnostics; the rest were Logi**t**ech substring false-matches). A live `git commit` writes the new index *into* `index.lock` before renaming — a 0-byte lock has no pending data, so removal loses nothing. Guarded-removed it (only-if-still-0-byte). Then landed the blocked work, office-scoped:
+- **`1383158`** — US-403 + US-404 (entangled across shared files → single landing commit, Co-Authored-By Rex)
+- **`3191cba`** — PM Sprint-50 PRD groom · **`a28b71a`** — lock-blocked Atlas notes + this blocker
+All pushed to `sprint/sprint49-V0.29.3`. Ralph is unblocked: **8/9 code-complete**, US-405/406/407 remain. CIO re-runs `ralph.sh` to resume.
+
+---
+
 
 ## Symptom
 
