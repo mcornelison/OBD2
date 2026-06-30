@@ -63,8 +63,9 @@ runtime underpins shutdown, deploy, defects). **US-397, US-398 are independent.*
 ### US-393 — F-103 boot splash (Iris US-A)
 - **Goal:** As the Pi at boot, I want a branded boot splash on the 3.5" display backed by a chromium kiosk + a localhost state server, so the operator sees boot progress instead of a console/blank screen.
 - **DoD:** chromium kiosk launches on boot rendering the splash; new `eclipse-boot-state.service` emits boot phases; new `eclipse-states-http.service` serves state on `localhost:9899` with token auth (token SSOT, one source); splash reflects the eclipse-obd 3-tier health (T1/T2=degraded, T3 engine-off=informational per Spool S-1/S-2) + `HEALTHY_YIELD`; retry-once on transient display/IPC failure. **Rule-10:** the state-server + emitters land with matching `specs/architecture.md` + `specs/UI/` updates in-sprint.
+- **[ATLAS C-5 / design-gate — states-dir boot provisioning]:** `/run/eclipse-obd/states/` must exist at boot **independent of `eclipse-obd.service`**. That unit only creates `/run/eclipse-obd` via `RuntimeDirectory=eclipse-obd` on *its own* start (and removes it on stop), and it does **not** create the `states/` subdir. So the F-103 emitter + HTTP server must provision the dir themselves — each F-103 unit shares `RuntimeDirectory=eclipse-obd` (systemd ref-counts a shared name) **or** a `tmpfiles.d` entry creates `/run/eclipse-obd/states/` (owned non-root `mcornelison`) at boot — and the chosen mechanism is reconciled with eclipse-obd.service's remove-on-stop so the two do not fight. (No `tmpfiles.d` exists today; the deploy-time `install -d` is wiped on every reboot — neither covers this. Same EPERM/ENOENT crash-loop class as the A-9 guard C-5.)
 - **ValidationCriteria (bench/boot drill):**
-  - reboot the Pi → splash renders on the 3.5" display within the spec's boot-grace window → splash visible (not console/blank)
+  - **cold reboot** (power-cycle, NOT a warm restart with eclipse-obd already up) → splash renders on the 3.5" display within the spec's boot-grace window → splash visible (not console/blank). A warm bench where the dir already exists is **insufficient** — it must prove `states/` exists at boot without eclipse-obd having provisioned it.
   - `curl -H <token> localhost:9899/...` → returns the current boot state JSON
   - feed a synthetic boot-phase sequence → splash transitions through the phases (spec §9 synthetic criteria)
 - **ConditionalOutcomes:** if HDMI/display isn't ready at boot, retry-once then degrade gracefully (no crash, no boot stall).
@@ -72,17 +73,21 @@ runtime underpins shutdown, deploy, defects). **US-397, US-398 are independent.*
 ### US-394 — F-103 shutdown splash (Iris US-B)
 - **Goal:** As the Pi during shutdown, I want a shutdown splash so the operator sees the staged shutdown instead of a frozen/blank screen.
 - **DoD:** `ShutdownSequencer` emits phase events [A-2] the splash renders; shutdown splash shows the staged shutdown; sequencer docstring documents the timing invariant [A-6]; **`specs/architecture.md` §10.6 updated in-sprint** (load-bearing ShutdownSequencer change — Atlas design-gate DoD; BLOCKs if the hook ships without the spec update, M-1a).
+- **[ATLAS C-5 — shutdown-state survives eclipse-obd stop]:** `shutdown-state` must remain readable **after `eclipse-obd.service` has stopped**. eclipse-obd's `RuntimeDirectory=eclipse-obd` is *removed on stop* — if it exclusively owns `/run/eclipse-obd`, the dir (and `shutdown-state`) vanish at the exact moment the shutdown splash needs them. `eclipse-states-http.service` (and the states dir) must be ordered / ref-counted (shared `RuntimeDirectory=eclipse-obd`) to **outlive** eclipse-obd during the shutdown sequence.
 - **ValidationCriteria (bench/shutdown drill):**
   - trigger a shutdown → shutdown splash renders + transitions through the shutdown stages
+  - trigger a shutdown with `eclipse-obd.service` **already stopped** → shutdown splash still renders from `shutdown-state` (proves the dir/file survives the RuntimeDirectory cleanup, not just a warm path where eclipse-obd is still up)
   - inspect `specs/architecture.md` §10.6 → documents the phase-emit hook + timing invariant
 - **ConditionalOutcomes:** ShutdownSequencer IS load-bearing → the §10.6 update is mandatory in-sprint (not a follow-up).
 
 ### US-395 — F-103 deploy integration (Iris US-C)
 - **Goal:** As the deploy path, I want F-103's units folded into `deploy-pi.sh` so the splash ships with every Pi deploy.
 - **DoD:** `deploy-pi.sh` installs + enables `eclipse-boot-state.service` + `eclipse-states-http.service` (sync-if-changed, mirroring the existing unit-install steps); `version.txt` written; deploy **WARNs (not BLOCKs)** if splash assets are missing [A-9].
+- **[ATLAS C-5 — deploy owns the states-dir provisioning]:** `deploy-pi.sh` installs the provisioning mechanism that makes `/run/eclipse-obd/states/` exist at **every** boot (a `tmpfiles.d` entry or shared `RuntimeDirectory=eclipse-obd` on the F-103 units — **NOT** the existing deploy-time `install -d` alone, which tmpfs wipes on reboot), and `specs/architecture.md` documents the `/run/eclipse-obd/states/` ownership + lifecycle across the `eclipse-obd` / `eclipse-boot-state` / `eclipse-states-http` units (one place; the multi-owner runtime dir is an SSOT-lifecycle contract).
 - **ValidationCriteria (bench):**
   - run `deploy-pi.sh` → the two F-103 units install + enable; re-run → no-op (sync-if-changed)
   - remove a splash asset + deploy → WARN emitted, deploy continues (not BLOCK)
+  - after deploy, **cold reboot** → `/run/eclipse-obd/states/` is present + non-root-writable before any drive activity (the provisioning is boot-durable, not deploy-only)
 
 ### US-396 — F-103 defects + install-time checks (Iris US-D)
 - **Goal:** As the F-103 surface, I want the spec's known defects closed + the install-time checks passing.
@@ -125,6 +130,7 @@ F-103's "IRL" acceptance from the spec §9 is boot/shutdown observation, not dri
 - Forks from `dev`; continues the **V0.29 chain as V0.29.2** (CIO 2026-06-29: stack on the chain, defer dev→main). `main` stays `V0.28.2`.
 - **Route to Atlas in parallel:** request his design-gate signoff on the carousel (F-092/F-097) + DTC viewer (F-111) so they can groom as the next sprint (Sprint 49). Also owed at V0.29.1 validation: Atlas US-388 Rule-10 + US-367 FLAG-1 blessing.
 - **Open question:** F-103 boot/shutdown rendering needs the 3.5" display attached + the Pi reachable for the bench drills — confirm the display is wired for Argus's acceptance pass.
+- **[ATLAS design-gate addition 2026-06-29]:** the bench plan MUST include a **cold reboot** and a **shutdown-after-eclipse-obd-stopped** drill (added to US-393/394/395 above), not only warm drills — those two windows are where the `/run/eclipse-obd/states/` provisioning + RuntimeDirectory-lifecycle gap (C-5 class) actually bites. Routed to Marcus to fold into the US-393/394/395 DoD at `/groom-user-stories` (backlog.json is the DoD SSOT). This is the only architectural change to the PRD; rest reviewed sound.
 
 ## Next steps (PM)
 1. `/groom-user-stories` → author US-393..398 into `backlog.json` + Story.md mirrors (counter 393→399).

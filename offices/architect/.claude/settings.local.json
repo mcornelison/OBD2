@@ -111,7 +111,10 @@
       "Bash(DISPLAY=*)",
       "Bash(XAUTHORITY=*)",
       "Bash(until:*)",
-      "Bash(PROD_DB_HOST=*)"
+      "Bash(PROD_DB_HOST=*)",
+      "Read(//z/o/OBD2v2/offices/architect/**)",
+      "Bash(ls -la .claude/skills/)",
+      "Bash(sed -n '1,12p' .claude/skills/a2al/SKILL.md)"
     ],
     "deny": [
       "Read(**/.ssh/**)",

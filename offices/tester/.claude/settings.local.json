@@ -5,13 +5,11 @@
       "Read(//z/o/OBD2v2/**)",
       "Glob(**)",
       "Grep(**)",
-
       "Read(//z/O/OBD2v2/offices/tester/**)",
       "Edit(//z/O/OBD2v2/offices/tester/**)",
       "Write(//z/O/OBD2v2/offices/tester/**)",
       "Edit(tester/**)",
       "Write(tester/**)",
-
       "Read(//z/O/OBD2v2/offices/architect/inbox/**)",
       "Write(//z/O/OBD2v2/offices/architect/inbox/**)",
       "Read(//z/O/OBD2v2/offices/pm/inbox/**)",
@@ -20,11 +18,9 @@
       "Write(//z/O/OBD2v2/offices/ralph/inbox/**)",
       "Read(//z/O/OBD2v2/offices/tuner/inbox/**)",
       "Write(//z/O/OBD2v2/offices/tuner/inbox/**)",
-
       "Read(//c/Users/mcorn/.ssh/**)",
       "Read(//tmp/**)",
       "Read(//z/O/OBD2v2/.claude/commands/**)",
-
       "Bash(pytest *)",
       "Bash(python *)",
       "Bash(python3 *)",
@@ -54,7 +50,6 @@
       "Bash(jobs)",
       "Bash(echo *)",
       "Bash(echo \"exit=$?\")",
-
       "Bash(git status *)",
       "Bash(git log *)",
       "Bash(git diff *)",
@@ -71,8 +66,9 @@
       "Bash(git -C * add *)",
       "Bash(git -C * commit *)",
       "Bash(git -C \"Z:\\\\O\\\\OBD2v2\" log --oneline -10)",
-
-      "Skill(update-config)"
+      "Skill(update-config)",
+      "Bash(ls offices/tester/.claude/skills/)",
+      "Bash(ls offices/tester/.claude/skills/a2al/)"
     ],
     "deny": [
       "Read(//z/O/OBD2v2/offices/architect/findings/**)",
@@ -84,7 +80,6 @@
       "Write(//z/O/OBD2v2/offices/architect/findings/**)",
       "Write(//z/O/OBD2v2/offices/architect/knowledge/**)",
       "Write(//z/O/OBD2v2/offices/architect/*.md)",
-
       "Read(//z/O/OBD2v2/offices/pm/backlog/**)",
       "Read(//z/O/OBD2v2/offices/pm/blockers/**)",
       "Read(//z/O/OBD2v2/offices/pm/issues/**)",
@@ -117,7 +112,6 @@
       "Write(//z/O/OBD2v2/offices/pm/*.md)",
       "Write(//z/O/OBD2v2/offices/pm/*.json)",
       "Write(pm/projectManager.md)",
-
       "Read(//z/O/OBD2v2/offices/ralph/knowledge/**)",
       "Read(//z/O/OBD2v2/offices/ralph/*.json)",
       "Read(//z/O/OBD2v2/offices/ralph/*.txt)",
@@ -131,14 +125,12 @@
       "Write(//z/O/OBD2v2/offices/ralph/*.md)",
       "Write(//z/O/OBD2v2/offices/ralph/*.sh)",
       "Write(ralph/**)",
-
       "Read(//z/O/OBD2v2/offices/tuner/knowledge/**)",
       "Read(//z/O/OBD2v2/offices/tuner/*.md)",
       "Edit(//z/O/OBD2v2/offices/tuner/knowledge/**)",
       "Edit(//z/O/OBD2v2/offices/tuner/*.md)",
       "Write(//z/O/OBD2v2/offices/tuner/knowledge/**)",
       "Write(//z/O/OBD2v2/offices/tuner/*.md)",
-
       "Bash(git push *)",
       "Bash(git push:*)",
       "Bash(git merge *)",
