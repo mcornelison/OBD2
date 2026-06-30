@@ -781,3 +781,57 @@ Task: Pygame sunset -- retire status_display.py/dashboard_layout.py once the HTM
 - **Pattern**: when a factory expects a sub-tree but the caller passes the full config, make the FACTORY pi-aware (nested-first, flat-fallback) rather than changing what the caller passes -- changing the caller (config['pi']) would have broken the factory's other pi-prefixed read (pi.shutdown.poweroffTimeoutSeconds).
 - **Sequencing flag for PM**: US-400/401 deferred the emitter live call-site wiring to Pi-bench. The emitter mechanism exists (republish path in place), but until emit() is wired live IN THE SAME deploy as the pygame retirement, the HTML cards read `unavailable` (honest) not live data. Retiring pygame + landing the emit wiring must ship together.
 ---
+
+## 2026-06-30 - US-403 (Agent 1 / Rex)
+Task: System Setup menu + gated service control -- long-press/menu, install-fixed allow-list via A-7 privilege path, Exit/Close
+Outcome: SHIPPED passes:true. Carousel F-092 surface now COMPLETE (US-399/400/401/402/403 all green).
+
+### What was implemented:
+- NEW `src/pi/splash/service_control.py` -- the action-path SSOT: install-fixed SERVICE_ALLOWLIST (obd/sync start+stop+restart, dashboard stop+restart, powerwatch RESTART-ONLY), isAllowed gate, runServiceAction(unit,verb,*,runner=subprocess.run) that RE-CHECKS the allow-list at exec (defense-in-depth), honest failure on nonzero/never-raises on timeout.
+- `states_http_server.py` do_POST /service-control -- the ONLY write route (token-gated, off-list 403, allowed 200 w/ honest body, bad-path 404, GET read-only). Drains the POST body before responding (WinError-10053 fix).
+- `carousel.js` -- pure node-testable menu logic (serviceMenuItems powerwatch-canStop-false / requiresConfirm / actionRequest UI-mirror / longPressProgress / isLongPressComplete / exceedsMoveCancel) + browser-only DOM (long-press ring + menu-btn open #setup-menu; Stop/Exit confirm modal, Restart direct; powerwatch Stop disabled; Exit=stop eclipse-dashboard).
+- `dashboard.html` #setup-menu/#longpress-ring/#confirm-modal/#menu-close/#menu-exit; `dashboard.css` menu+ring+confirm styles, .svc-btn:disabled inert, >=40px tap targets.
+- NEW `deploy/polkit-rules/51-eclipse-service-control.rules` -- manage-units scoped to mcornelison, keyed on unit AND verb, powerwatch restart-only w/ explicit polkit.Result.NO; sibling of the 50- poweroff rule. `deploy-pi.sh` step_install_polkit_service_control + wired after step_install_polkit_poweroff.
+- Rule-10: `specs/architecture.md` F-092 'System Setup menu + gated service control (US-403)' subsection.
+
+### Files changed:
+- Created: `src/pi/splash/service_control.py`, `tests/pi/splash/test_service_control.py`, `tests/pi/splash/test_states_http_service_control.py`, `deploy/polkit-rules/51-eclipse-service-control.rules`, `offices/pm/issues/I-eclipse-sync-service-not-a-deployed-unit.md`
+- Modified: `src/pi/splash/states_http_server.py`, `specs/UI/dist/dashboard-pi/{carousel.js,dashboard.html,dashboard.css}`, `deploy/deploy-pi.sh`, `specs/architecture.md`, `tests/deploy/test_dashboard_kit.py`
+
+### Gates:
+- TDD red->green: test_service_control.py 23 + test_states_http_service_control.py 6 + test_dashboard_kit.py +6 (file 34 passed).
+- Full tests/pi/splash + tests/deploy/test_dashboard_kit = 114 passed, 1 skip (node/bash gate), 0 regressions. ruff clean on all touched .py; deploy-pi.sh bash -n OK; carousel.js node --check green.
+- DEFERRED Pi-bench (per validationMethod, mock/real systemctl + touch panel): I-8/9/10/11/12 + the A-7 polkit-deny drill -- logic unit/node-tested + ready.
+
+### Learnings for future iterations:
+- **Pattern (3-layer privilege)**: an unprivileged kiosk controlling root-ish services = UI-disabled-button + action-path-re-check + scoped-polkit-rule, each layer assuming the one above is bypassed. The polkit rule must key on unit AND verb so a verb can be denied per-unit (the powerwatch restart-only guard needs an explicit polkit.Result.NO, not mere absence).
+- **Gotcha (Windows HTTP)**: BaseHTTPRequestHandler must DRAIN the POST request body before sending an error response, or the connection resets (WinError 10053) and the client can't read the response. Read Content-Length up front.
+- **Gotcha (test token)**: the systemd unit name `eclipse-obd.service` contains the substring `obd.`, which false-positived the reads-only-hardware guard's Python-ism token. Swapped `obd.` -> `python-obd` (+ `navigator.usb`); `serial` already covers WebSerial.
+- **Deploy gap**: `eclipse-sync.service` is named in the design allow-list but no unit ships in deploy/ (sync runs in-orchestrator) -- filed pm/issues; mechanism is forward-compatible (honest systemctl failure).
+---
+
+## 2026-06-30 - US-404 (Agent 1 / Rex)
+Task: DTC KOEO read + `dtc` emitter -- key-on Mode 03(+07) on the OBD connection-edge (no DriveDetector, drive_id=NULL explicit)
+Outcome: CODE-COMPLETE + all scoped suites green, but **COMMIT BLOCKED** by a 58-min-stale `.git/index.lock` (see BL-stale-index-lock-blocks-commit.md) -> emitted HUMAN_INTERVENTION_REQUIRED.
+
+### What was implemented:
+- NEW `DtcLogger.logKeyOnDtcs(*, connection)` + `KeyOnDtcResult` -- one-shot key-on Mode 03(+07) read reusing the existing `DtcClient`; persists every `dtc_log` row with `drive_id = NULL` stamped EXPLICITLY (passes None straight to `_insertCodes`, NEVER `getCurrentDriveId` -- the A-9 Root 2 guard against a pre-US-388 stale-open-drive leak). Returns the captured codes so the dispatcher emits without a re-read.
+- `EventRouterMixin._dispatchKeyOnDtcs` + `_emitDtcState` wired into `_handleConnectionRestored` (the OBD connection-established edge): one-shot, gated on `not _driveDetector.isDriving()` (a RUNNING drive owns capture via the drive-scoped paths -- Atlas A-9; gate FAILS CLOSED on an unverifiable state). The `_dtcEmitter` hook's live injection is deferred per the US-400/401 pattern.
+- NEW `src/pi/splash/dtc_emitter.py` -- 4th states-dir writer (C-5). Pure `buildDtcState` (design-spec §8 schema) + best-effort `makeDtcEmitter` (reuses ensureStatesDir/writeStateAtomic, logged-never-raised) -> `/run/eclipse-obd/states/dtc`. `enrichCode` merges Spool's table; un-tabled codes -> `unknown` + python-obd desc (no fabricated severity/fix); `freezeFrame` always null (Mode 02 dead on MD326328). `_computeClearGate` = honest UI-side derivation; US-407 re-checks at the action path.
+- NEW `src/pi/splash/dtc_severity_table.py` -- `loadP1xxxSeverityTable` parses Spool's SSOT markdown into `{code -> enrichment}` (6 engine P1xxx watch, 4 condition-dependent w/ a non-upgrading `severityCaveat` R-1, 5 auto-trans `na`); missing file -> `{}` (honest). The Pi never decides severity.
+- states-http already serves any safe state file token-gated read-only -> locked `/dtc` with a test (GET 200/401, POST 404). Rule-10: `specs/architecture.md` F-092 'DTC capture path (US-404)' subsection + C-5 writers note -> 4.
+
+### Files changed:
+- Created: `src/pi/splash/dtc_emitter.py`, `src/pi/splash/dtc_severity_table.py`
+- Created (tests): `tests/pi/splash/test_dtc_emitter.py`, `tests/pi/splash/test_dtc_severity_table.py`, `tests/pi/splash/test_states_http_dtc_endpoint.py`, `tests/pi/obdii/test_dtc_logger_keyon.py`, `tests/pi/orchestrator/test_keyon_dtc_dispatch.py`
+- Modified: `src/pi/obdii/dtc_logger.py` (logKeyOnDtcs + KeyOnDtcResult), `src/pi/obdii/orchestrator/event_router.py` (KOEO dispatch + emit), `specs/architecture.md` (Rule-10), `tests/pi/obdii/test_data_logger_restart_on_restore.py` (stub binds the new method)
+
+### Gates:
+- pytest: severity-table 6 + emitter 8 + states-http /dtc 3 + KOEO logger 4 + KOEO dispatch 9 ALL green; tests/pi/splash + tests/pi/orchestrator + tests/pi/obdii/test_dtc_logger.py + test_data_logger_restart_on_restore.py = 0 regressions (1 skip = node/bash gate). ruff clean on all touched .py.
+- DEFERRED Pi-bench (per validationMethod): S-11/I-8 real drive-27 P0443 KOEO read (read-don't-clear, Argus Q-2) + live `_dtcEmitter` call-site injection (US-400/401 pattern). S-9 'card unavailable' lands with US-406 (no dtc card exists yet).
+
+### Learnings for future iterations:
+- **Pattern discovered**: the existing drive-scoped DTC methods fall back to `getCurrentDriveId()` when passed `driveId=None` -- so "NULL" required a NEW entrypoint that passes None *directly* to the insert; passing None to the old methods would have inherited a stale context id (the exact A-9 Root 2 leak).
+- **Pattern discovered**: states-http serves any safe file in the states dir, so a new `dtc` endpoint needed NO server code -- just the emitter writing the file + a regression test locking read-only behavior.
+- **Gotcha (shared-checkout)**: a 58-min-stale `.git/index.lock` blocked ALL commits (it also left US-403 uncommitted). The harness gates `rm .git/index.lock` as a sensitive file and handbook Rule-4 forbids forcing a lock that might be a live cross-machine op -> the correct move is escalate (blocker + HUMAN_INTERVENTION_REQUIRED), not force. CIO/PM must clear it before the next iteration can commit.
+---

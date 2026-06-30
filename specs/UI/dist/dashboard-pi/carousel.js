@@ -332,6 +332,85 @@
     };
   }
 
+  // -------------------------------------------------------------------------
+  // US-403 System Setup menu -- pure, node-testable logic (D-6/D-7/A-7/A-8).
+  // The menu is reachable by a deliberate ~5s long-press (a filling ring; an
+  // early release cancels) OR the top-bar `⋮`. Service control is on an
+  // INSTALL-FIXED allow-list that MIRRORS service_control.py + the 51- polkit
+  // rule; `eclipse-powerwatch` (the safe-shutdown guard) is RESTART-ONLY. The
+  // kiosk is unprivileged -- the action POST is authorized by polkit, and the
+  // server re-checks this allow-list (defense-in-depth), so a UI bug can never
+  // drive an off-list action.
+  // -------------------------------------------------------------------------
+
+  var LONG_PRESS_MS = 5000;     // sustained hold to open the menu (D-6)
+  var LONG_PRESS_ARM_MS = 600;  // hold before the ring starts showing
+  var LONG_PRESS_MOVE_PX = 10;  // movement above this = a swipe/scroll, cancel
+
+  // Allow-list mirror (service_control.SERVICE_ALLOWLIST + the 51- polkit rule).
+  var SERVICE_ALLOWLIST = {
+    "eclipse-obd.service": ["start", "stop", "restart"],
+    "eclipse-sync.service": ["start", "stop", "restart"],
+    "eclipse-powerwatch.service": ["restart"],
+    "eclipse-dashboard.service": ["stop", "restart"],
+  };
+
+  // The OBD-II service rows shown in the menu (D-6). powerwatch carries no Stop
+  // (canStop:false) because stopping the safe-shutdown guard could leave the Pi
+  // unprotected on key-off (D-7 / F-7 / I-10).
+  function serviceMenuItems() {
+    return [
+      { unit: "eclipse-obd.service", label: "eclipse-obd", sub: "data capture",
+        canStop: true, canRestart: true },
+      { unit: "eclipse-sync.service", label: "eclipse-sync", sub: "server upload",
+        canStop: true, canRestart: true },
+      { unit: "eclipse-powerwatch.service", label: "eclipse-powerwatch",
+        sub: "safe-shutdown guard", canStop: false, canRestart: true },
+    ];
+  }
+
+  function uiIsAllowed(unit, verb) {
+    var verbs = SERVICE_ALLOWLIST[unit];
+    return !!verbs && verbs.indexOf(verb) !== -1;
+  }
+
+  // Consequential actions confirm before acting (Stop, and Exit which is a
+  // dashboard Stop); Restart self-recovers and acts directly. No single tap
+  // performs a consequential action (F-6: the menu itself is behind long-press).
+  function requiresConfirm(verb) {
+    return verb === "stop";
+  }
+
+  // Build a validated action request, or null if the UI allow-list forbids it
+  // (the server re-checks regardless). Carries the confirm flag for the DOM.
+  function actionRequest(unit, verb) {
+    if (!uiIsAllowed(unit, verb)) return null;
+    return { unit: unit, verb: verb, confirm: requiresConfirm(verb) };
+  }
+
+  // Long-press ring fill fraction 0..1 (clamped). holdMs defaults to the full
+  // open threshold.
+  function longPressProgress(elapsedMs, holdMs) {
+    var hold = holdMs == null ? LONG_PRESS_MS : holdMs;
+    if (hold <= 0) return 1;
+    var p = elapsedMs / hold;
+    if (p < 0) return 0;
+    if (p > 1) return 1;
+    return p;
+  }
+
+  function isLongPressComplete(elapsedMs, holdMs) {
+    var hold = holdMs == null ? LONG_PRESS_MS : holdMs;
+    return elapsedMs >= hold;
+  }
+
+  // Movement beyond the threshold means the gesture is a swipe/scroll, not a
+  // press -> cancel the long-press.
+  function exceedsMoveCancel(dx, dy, threshold) {
+    var t = threshold == null ? LONG_PRESS_MOVE_PX : threshold;
+    return Math.sqrt(dx * dx + dy * dy) > t;
+  }
+
   var api = {
     clampIndex: clampIndex,
     nextIndex: nextIndex,
@@ -351,8 +430,17 @@
     tempTile: tempTile,
     ladderView: ladderView,
     batteryHealthView: batteryHealthView,
+    serviceMenuItems: serviceMenuItems,
+    requiresConfirm: requiresConfirm,
+    actionRequest: actionRequest,
+    longPressProgress: longPressProgress,
+    isLongPressComplete: isLongPressComplete,
+    exceedsMoveCancel: exceedsMoveCancel,
     POLL_MS: POLL_MS,
     SWIPE_THRESHOLD_PX: SWIPE_THRESHOLD_PX,
+    LONG_PRESS_MS: LONG_PRESS_MS,
+    LONG_PRESS_ARM_MS: LONG_PRESS_ARM_MS,
+    LONG_PRESS_MOVE_PX: LONG_PRESS_MOVE_PX,
   };
 
   // -------------------------------------------------------------------------
@@ -514,7 +602,189 @@
 
       render();
       startAvailabilityPoll(cards, glyphEls);
+      setupMenu();
     };
+
+    // --- US-403 System Setup menu DOM (browser only) -----------------------
+
+    // POST an allow-listed action to the state server's /service-control route.
+    // The kiosk is unprivileged; polkit authorizes the systemctl call and the
+    // server re-checks the allow-list. Failures surface in the menu status line
+    // (no console logging, never a fabricated success).
+    function postAction(unit, verb, statusEl) {
+      if (!actionRequest(unit, verb)) {
+        if (statusEl) statusEl.textContent = unit + " " + verb + ": not permitted";
+        return;
+      }
+      if (statusEl) statusEl.textContent = verb + " " + unit + " …";
+      var headers = { "Content-Type": "application/json" };
+      if (token) headers["X-Splash-Token"] = token;
+      fetch("/service-control", {
+        method: "POST",
+        headers: headers,
+        body: JSON.stringify({ unit: unit, verb: verb }),
+      })
+        .then(function (r) {
+          return r.json().then(null, function () { return { ok: false }; });
+        })
+        .then(function (res) {
+          if (!statusEl) return;
+          statusEl.textContent = res.ok
+            ? verb + " " + unit + " ok"
+            : verb + " " + unit + " failed: " + (res.reason || res.error || "");
+        })
+        .then(null, function () {
+          if (statusEl) statusEl.textContent = verb + " " + unit + " failed";
+        });
+    }
+
+    function setupMenu() {
+      var menu = document.getElementById("setup-menu");
+      if (!menu) return;
+      var menuBtn = document.getElementById("menu-btn");
+      var closeBtn = document.getElementById("menu-close");
+      var list = document.getElementById("svc-list");
+      var statusEl = document.getElementById("menu-status");
+      var exitBtn = document.getElementById("menu-exit");
+      var ring = document.getElementById("longpress-ring");
+      var confirmModal = document.getElementById("confirm-modal");
+      var confirmText = document.getElementById("confirm-text");
+      var confirmOk = document.getElementById("confirm-ok");
+      var confirmCancel = document.getElementById("confirm-cancel");
+
+      function hideConfirm() {
+        if (confirmModal) confirmModal.hidden = true;
+      }
+      function openMenu() {
+        buildList();
+        menu.hidden = false;
+      }
+      function closeMenu() {
+        menu.hidden = true;
+        hideConfirm();
+      }
+      // Consequential actions (Stop, Exit) require a confirm; ✕/Cancel always
+      // returns control (the user is never trapped).
+      function askConfirm(message, onYes) {
+        if (!confirmModal) {
+          onYes();
+          return;
+        }
+        if (confirmText) confirmText.textContent = message;
+        confirmModal.hidden = false;
+        confirmOk.onclick = function () {
+          hideConfirm();
+          onYes();
+        };
+        confirmCancel.onclick = hideConfirm;
+      }
+      function doAction(unit, verb) {
+        var req = actionRequest(unit, verb);
+        if (!req) return;
+        if (req.confirm) {
+          askConfirm(verb + " " + unit + "?", function () {
+            postAction(unit, verb, statusEl);
+          });
+        } else {
+          postAction(unit, verb, statusEl);
+        }
+      }
+
+      function buildList() {
+        if (!list) return;
+        list.textContent = "";
+        var items = serviceMenuItems();
+        for (var i = 0; i < items.length; i++) {
+          (function (item) {
+            var row = document.createElement("div");
+            row.className = "svc-row";
+            var nm = document.createElement("span");
+            nm.className = "svc-name";
+            nm.textContent = item.label + " · " + item.sub;
+            row.appendChild(nm);
+
+            var restart = document.createElement("button");
+            restart.className = "svc-btn tap-target";
+            restart.textContent = "Restart";
+            restart.addEventListener("click", function () {
+              doAction(item.unit, "restart");
+            });
+            row.appendChild(restart);
+
+            var stop = document.createElement("button");
+            stop.className = "svc-btn tap-target";
+            stop.textContent = "Stop";
+            // F-7 / D-7 / I-10: the safe-shutdown guard has no working Stop.
+            if (!item.canStop) {
+              stop.disabled = true;
+              stop.title = "safe-shutdown guard — restart only";
+            } else {
+              stop.addEventListener("click", function () {
+                doAction(item.unit, "stop");
+              });
+            }
+            row.appendChild(stop);
+            list.appendChild(row);
+          })(items[i]);
+        }
+      }
+
+      if (menuBtn) menuBtn.addEventListener("click", openMenu);
+      if (closeBtn) closeBtn.addEventListener("click", closeMenu);
+      if (exitBtn) {
+        // Exit / Close UI (A-8): a dashboard stop -> drops to desktop; the
+        // splash hand-off re-launches it on the next reboot.
+        exitBtn.addEventListener("click", function () {
+          doAction("eclipse-dashboard.service", "stop");
+        });
+      }
+
+      // Long-press anywhere on the carousel opens the menu (D-6). A filling ring
+      // gives feedback after the arm delay; movement or an early release cancels.
+      var carousel = document.getElementById("carousel");
+      if (carousel && ring) {
+        var pressStart = null;
+        var pressX = 0;
+        var pressY = 0;
+        var timer = null;
+        var armed = false;
+        function clearPress() {
+          pressStart = null;
+          armed = false;
+          if (timer) {
+            clearInterval(timer);
+            timer = null;
+          }
+          ring.hidden = true;
+          ring.style.setProperty("--fill", "0");
+        }
+        carousel.addEventListener("pointerdown", function (e) {
+          pressStart = Date.now();
+          pressX = e.clientX;
+          pressY = e.clientY;
+          timer = setInterval(function () {
+            var elapsed = Date.now() - pressStart;
+            if (elapsed >= LONG_PRESS_ARM_MS && !armed) {
+              armed = true;
+              ring.hidden = false;
+            }
+            if (armed) {
+              ring.style.setProperty("--fill", String(longPressProgress(elapsed)));
+            }
+            if (isLongPressComplete(elapsed)) {
+              clearPress();
+              openMenu();
+            }
+          }, 50);
+        });
+        carousel.addEventListener("pointermove", function (e) {
+          if (pressStart === null) return;
+          if (exceedsMoveCancel(e.clientX - pressX, e.clientY - pressY)) clearPress();
+        });
+        carousel.addEventListener("pointerup", clearPress);
+        carousel.addEventListener("pointercancel", clearPress);
+      }
+    }
 
     // Honest-instrument poll: fetch each card's state file; missing/malformed ->
     // `unavailable` (never a crash, never green-when-broken). The shell sets the

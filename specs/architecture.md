@@ -2473,9 +2473,12 @@ caller's `ladder` dict; the emitter/render **never fabricate** them — a draini
 pack with no Spool data shows the stage + volts only, no minutes.
 
 **C-5 states-dir writers.** The `battery-health` emitter is the third post-boot
-writer into the F-103-provisioned `states/` tmpfs dir (after `system-status`; the
-`dtc` writer is US-404), ordered after the states-dir provisioning — it reuses
-`ensureStatesDir`/`writeStateAtomic`, never re-invents the lifecycle.
+writer into the F-103-provisioned `states/` tmpfs dir, after `system-status` and
+before the **fourth writer `dtc` (US-404)**. All four reuse
+`ensureStatesDir`/`writeStateAtomic`, ordered after the states-dir provisioning —
+they never re-invent the lifecycle. The full post-boot writer set is therefore
+`system-status` · `battery-health` · `dtc` (the F-103 boot/shutdown emitters own
+`boot-state` / `shutdown-state`).
 
 #### Pygame sunset — parity-gated cut-over (US-402) [Atlas A-4]
 
@@ -2505,6 +2508,122 @@ escape hatch). This mirrors the factory's own pi-nested
 `pi.shutdown.poweroffTimeoutSeconds` read. `status_display.py` /
 `dashboard_layout.py` remain in the tree (not launched), so the overlay can still
 be re-enabled for a bench diagnostic without a rebuild.
+
+#### System Setup menu + gated service control (US-403) [Atlas A-7/A-8]
+
+The dashboard's persistent `⋮` and a deliberate **~5s long-press** (a filling
+ring; an early release or any movement >10px cancels — `carousel.js`
+`longPressProgress`/`isLongPressComplete`/`exceedsMoveCancel`) both open the
+**System Setup menu** (D-6). The menu offers **gated service control** over an
+**install-fixed allow-list** of `eclipse-*` units and an **Exit / Close UI**
+item (A-8). Confirm-before-consequential: **Stop** and **Exit** require a confirm
+modal; **Restart** acts directly; a `✕`/Back is always present (the operator is
+never trapped, F-6).
+
+**Privilege path (A-7) — three independent defense-in-depth layers.** The
+chromium kiosk runs **unprivileged** and can only do HTTP; it never runs as root
+and never holds sudo.
+
+1. **UI layer** — the menu mirrors the allow-list (`carousel.js`
+   `SERVICE_ALLOWLIST`/`serviceMenuItems`/`actionRequest`); `eclipse-powerwatch`'s
+   Stop button is rendered **disabled** (it is the safe-shutdown guard — D-7).
+2. **Action-path layer** — the kiosk POSTs `/service-control {unit, verb}` to the
+   token-gated route on `eclipse-states-http` (the only IPC the kiosk has). The
+   server delegates to `src/pi/splash/service_control.py`, the **SSOT** for the
+   allow-list, which **re-checks** every action at execution time (a tampered or
+   bypassed UI can never drive an off-list action — the F-092 analog of US-407's
+   S-10 clear-gate re-check). Off-list → 403, never executed.
+3. **PolicyKit layer** — `service_control` shells out to `systemctl <verb> <unit>`
+   as the unprivileged `mcornelison` user; the net-new
+   `deploy/polkit-rules/51-eclipse-service-control.rules` authorizes it. The rule
+   grants `org.freedesktop.systemd1.manage-units` **keyed on BOTH the unit AND
+   the verb**, so the verb can be denied per-unit. It is a **sibling** of the
+   I-036 `50-…poweroff` rule (a different action, `manage-units`), **not** a
+   widening of it and **not** a privileged helper daemon.
+
+**Allow-list (one SSOT mirrored across the three layers):**
+
+| Unit | Verbs | Note |
+|------|-------|------|
+| `eclipse-obd.service` | start / stop / restart | data capture |
+| `eclipse-sync.service` | start / stop / restart | server upload (unit not yet deployed — see below) |
+| `eclipse-dashboard.service` | stop / restart | **A-8**: Exit = stop the kiosk |
+| `eclipse-powerwatch.service` | **restart ONLY** | **D-7/F-7**: stop/kill DENIED at the polkit rule itself |
+
+**The powerwatch restart-only guard (D-7/F-7) is the load-bearing invariant.**
+Stopping the safe-shutdown guard could leave the Pi unprotected on key-off. A
+`stop`/`kill` is refused at **all three** layers — and critically at the polkit
+rule (an explicit `polkit.Result.NO`), so even a direct
+`systemctl stop eclipse-powerwatch` issued at the action path with the UI
+bypassed is refused. This mirrors US-407's "re-check at the action path, never
+trust the UI."
+
+**Exit/Close lifecycle (A-8).** Exit issues `stop eclipse-dashboard.service`,
+dropping to the desktop. The unit has no `[Install]` section — it is started by
+the splash `OnSuccess=` hand-off — so the next **reboot** re-launches it (or
+`systemctl restart eclipse-dashboard` over SSH brings it back immediately); the
+confirm dialog states how it returns.
+
+**Deploy note — `eclipse-sync.service` is not yet a deployed unit.** The design
+names `eclipse-sync` as a controllable service, but no such unit ships in
+`deploy/` yet (Pi sync currently runs inside the orchestrator / `sync_now.py`,
+not a standalone unit). It is included in the install-fixed allow-list +
+polkit rule as designed; until the unit exists, an action on it returns an honest
+`systemctl` failure (the status reflects reality, no fabrication). Filed to PM as
+a deploy gap — the mechanism is complete and forward-compatible.
+
+#### DTC capture path — key-on (KOEO) read + `dtc` emitter (US-404) [Atlas A-9 / F-111]
+
+The DTC viewer (Alerts card US-406, takeover/ribbon US-405, Mode-04 clear US-407)
+is a **pure consumer** of a new `dtc` state file. US-404 builds the Pi-side data
+layer that publishes it: the key-on read, the emitter, the severity loader, and
+the read-only HTTP endpoint. One direction of data flow — the display never reads
+hardware and never decides severity.
+
+**Key-on (KOEO) read on the connection edge.** `EventRouterMixin._dispatchKeyOnDtcs`
+fires a **one-shot** Mode 03(+07) read on the OBD **connection-established edge**
+(`_handleConnectionRestored`), **gated on no active RUNNING drive**
+(`_driveDetector.isDriving()` — the gate **fails closed**: an unverifiable drive
+state skips the read). While a drive is RUNNING the drive-scoped paths
+(session-start / MIL / periodic) own capture; the KOEO read exists only for
+key-on/engine-off (RPM 0) where `DriveDetector` never arms — closing the "blank at
+key-on" gap. **Ownership is the DTC capture path, NOT DriveDetector** (Atlas A-9):
+the new `DtcLogger.logKeyOnDtcs` reuses the existing `DtcClient` and persists every
+`dtc_log` row with **`drive_id = NULL` stamped EXPLICITLY** — it does **not**
+consult `getCurrentDriveId`. A pre-US-388 stale-open-drive leak could leave a
+phantom `drive_id` on the process context; inheriting it would mis-attribute a
+key-on read to a drive that isn't happening (cross-links A-9 Root 2). NULL is the
+honest attribution, and the display renders "key-on read" rather than "Drive N".
+
+**`dtc` emitter (fourth states-dir writer).** `src/pi/splash/dtc_emitter.py`
+mirrors the `system-status` / `battery-health` seam: a pure `buildDtcState` +
+best-effort `makeDtcEmitter` that reuses `ensureStatesDir`/`writeStateAtomic` (C-5)
+and writes `/run/eclipse-obd/states/dtc` atomically; a write failure is logged,
+never raised, so the publish hook can never block the connection-edge read. The
+DTC capture path **owns and calls** the emitter (the `_dtcEmitter` hook on the
+orchestrator — its live injection follows the US-400/401 deferral pattern). The
+state schema is design-spec §8: `mil` · `codes[]` (each with
+`severity`/`severityCaveat`/`short`/`setAtTs`/`driveId`/`freezeFrame`/
+`suggestedFix`/`fixProvenance`/`logged`/`syncAcked`/`clearEligible`) · `newSinceTs`
+· `clearGate` · `sessionResetLock` · `ts`.
+
+**Honest-instrument by construction.** The Pi never decides severity: a static
+loader (`dtc_severity_table.py`) parses **Spool's SSOT**
+(`offices/tuner/dsm-p1xxx-severity-table.md`) into the `{code → enrichment}` map
+the emitter merges verbatim — engine P1xxx → `watch`, condition-dependent codes
+carry a `severityCaveat` that **never auto-upgrades the tier** (R-1), auto-trans
+P1xxx → `na` (quiet disposition). A code **absent** from the table degrades to
+`severity: unknown` with whatever description python-obd supplied (empty → the
+display shows "No description yet") — no fabricated severity or fix. `freezeFrame`
+is always `null` (Mode 02 confirmed unsupported on MD326328; US-406 renders the
+realtime fallback). The `clearGate` is the honest UI-side derivation from the
+captured codes (severity_present → sync_pending → ok); **US-407 re-checks it
+authoritatively at the privileged action path** — the UI is never the gate.
+
+**Read-only endpoint.** `eclipse-states-http` already serves any safe file in the
+states dir token-gated; the carousel polls `GET /dtc`. The endpoint is strictly
+read-only — the only write route is `/service-control` (US-403), so `POST /dtc` →
+404.
 
 ### Release Versioning + Deploy Records (US-241, B-047 US-A)
 

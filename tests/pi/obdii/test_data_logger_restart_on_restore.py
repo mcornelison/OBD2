@@ -247,6 +247,11 @@ def _buildEventRouterStub(
     stub._restartDataLoggerOnConnectionRestored = (
         lambda: EventRouterMixin._restartDataLoggerOnConnectionRestored(stub)
     )
+    # US-404: _handleConnectionRestored now also fires the KOEO DTC read.
+    # Bind the real impl; with _dtcLogger=None it early-returns (safe no-op).
+    stub._dispatchKeyOnDtcs = (
+        lambda: EventRouterMixin._dispatchKeyOnDtcs(stub)
+    )
     return stub  # type: ignore[return-value]
 
 

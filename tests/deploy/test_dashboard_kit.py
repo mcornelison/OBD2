@@ -102,7 +102,10 @@ def test_carouselJs_readsOnlyStateFiles_neverHardware():
     hardware directly (no smbus / serial / obd imports in the kiosk JS)."""
     js = _read(KIT_DIR, "carousel.js")
     assert 'fetch("/"' in js or "fetch('/'" in js or 'fetch("/" +' in js
-    for forbidden in ("smbus", "serial", "/dev/", "i2c", "obd."):
+    # Hardware-access vectors. `serial` also covers WebSerial (navigator.serial).
+    # Note: a Python `obd.` token would false-positive on the systemd unit name
+    # `eclipse-obd.service` (US-403 menu) -- the JS guard is `python-obd` instead.
+    for forbidden in ("smbus", "serial", "/dev/", "i2c", "python-obd", "navigator.usb"):
         assert forbidden not in js.lower(), f"kiosk JS must not touch hardware: {forbidden}"
 
 
@@ -546,3 +549,149 @@ def test_shippedConfig_retiresPygameStatusDisplay_f4():
         "pi.hardware.statusDisplay.enabled must be false to retire the pygame "
         "surface (A-4 parity-gated sunset); the HTML carousel is the sole dashboard"
     )
+
+
+# ---------------------------------------------------------------------------
+# US-403 -- System Setup menu + gated service control (F-092 / Atlas A-7/A-8).
+# The pure menu logic (long-press ring math, the service allow-list mirror,
+# confirm-before-consequential, the powerwatch restart-only guard) is node-
+# tested; the gesture/DOM drills (I-8..I-12) are Pi-bench, deferred.
+# ---------------------------------------------------------------------------
+
+_US403_NODE_SCRIPT = r"""
+const assert = require('assert');
+const c = require(process.argv[1]);
+
+// Long-press ring math (D-6): the ring fills over the hold; complete at hold.
+assert.strictEqual(c.longPressProgress(0, 5000), 0, 'ring empty at start');
+assert.strictEqual(c.longPressProgress(2500, 5000), 0.5, 'ring half at half');
+assert.strictEqual(c.longPressProgress(6000, 5000), 1, 'ring clamps at full');
+assert.strictEqual(c.isLongPressComplete(5000, 5000), true, 'complete at hold');
+assert.strictEqual(c.isLongPressComplete(4999, 5000), false, 'not before hold');
+// Movement past the threshold cancels the long-press (it is a swipe/scroll).
+assert.strictEqual(c.exceedsMoveCancel(20, 0, 10), true, 'horizontal move cancels');
+assert.strictEqual(c.exceedsMoveCancel(3, 3, 10), false, 'small jitter holds');
+
+// The service menu mirrors the install-fixed allow-list. powerwatch is the
+// safe-shutdown guard -> RESTART-ONLY, no Stop control (D-7 / F-7 / I-10).
+const items = c.serviceMenuItems();
+assert.strictEqual(items.length, 3, 'three OBD-II services listed');
+const pw = items.find(function (i) { return i.unit === 'eclipse-powerwatch.service'; });
+assert.ok(pw, 'powerwatch present');
+assert.strictEqual(pw.canStop, false, 'powerwatch has no Stop (F-7)');
+assert.strictEqual(pw.canRestart, true, 'powerwatch can restart');
+const obd = items.find(function (i) { return i.unit === 'eclipse-obd.service'; });
+assert.strictEqual(obd.canStop, true, 'eclipse-obd can stop');
+assert.strictEqual(obd.canRestart, true, 'eclipse-obd can restart');
+
+// Confirm-before-consequential: Stop (and Exit, a dashboard stop) confirm;
+// Restart does not (it self-recovers).
+assert.strictEqual(c.requiresConfirm('stop'), true, 'stop confirms');
+assert.strictEqual(c.requiresConfirm('restart'), false, 'restart no confirm');
+
+// actionRequest mirrors the server allow-list (defense-in-depth, the server
+// re-checks): off-list -> null, powerwatch stop -> null (F-7/S-6/F-13).
+const ok = c.actionRequest('eclipse-obd.service', 'restart');
+assert.ok(ok && ok.unit === 'eclipse-obd.service' && ok.verb === 'restart', 'allowed action');
+assert.strictEqual(c.actionRequest('eclipse-powerwatch.service', 'stop'), null, 'powerwatch stop blocked');
+assert.strictEqual(c.actionRequest('ssh.service', 'stop'), null, 'off-list unit blocked');
+assert.strictEqual(c.actionRequest('eclipse-obd.service', 'mask'), null, 'off-list verb blocked');
+// Exit = stop the dashboard kiosk (A-8), allow-listed + confirms.
+const exit = c.actionRequest('eclipse-dashboard.service', 'stop');
+assert.ok(exit && exit.confirm === true, 'exit is allowed and confirms');
+
+console.log('US403_OK');
+"""
+
+
+@pytest.mark.skipif(not _nodeAvailable(), reason="node not available on PATH")
+def test_serviceMenuLogic_allowListAndGuards_us403():
+    """US-403: the menu logic exposes the long-press ring math + the allow-list
+    mirror with the powerwatch restart-only guard + confirm-before-consequential."""
+    result = subprocess.run(
+        ["node", "-e", _US403_NODE_SCRIPT, str(KIT_DIR / "carousel.js")],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "US403_OK" in result.stdout
+
+
+def test_dashboardHtml_hasSetupMenuAndLongPressRing_us403():
+    """US-403: the System Setup menu overlay + the long-press ring + a confirm
+    modal mount + an always-present back/close affordance are in the HTML."""
+    html = _read(KIT_DIR, "dashboard.html")
+    assert 'id="setup-menu"' in html
+    assert 'id="longpress-ring"' in html
+    assert 'id="confirm-modal"' in html
+    # menu-btn (the visible shortcut) already exists from the shell.
+    assert 'id="menu-btn"' in html
+    # A back/close control so the menu never traps the user.
+    assert 'id="menu-close"' in html
+    # The Exit / Close UI item (A-8).
+    assert "Exit" in html or "Close UI" in html
+
+
+def test_dashboardCss_hasMenuAndRingStyles_us403():
+    """US-403: the menu/ring/confirm styles exist and the menu buttons keep the
+    >=40px tap target (no accidental consequential tap, F-6)."""
+    css = _read(KIT_DIR, "dashboard.css")
+    assert "#setup-menu" in css
+    assert "#longpress-ring" in css
+    assert "#confirm-modal" in css
+    # A disabled service button (powerwatch Stop) is visibly inert (I-10/F-7).
+    assert ".svc-btn:disabled" in css or "svc-btn[disabled]" in css
+    # The menu action buttons reference the >=40px tap target.
+    assert css.count("var(--tap-min)") >= 3
+
+
+# ---------------------------------------------------------------------------
+# US-403 -- the net-new 51- polkit rule (A-7 privilege path) + its deploy wiring.
+# The kiosk is unprivileged; this rule (NOT a root helper, NOT a widening of the
+# 50- poweroff rule) authorizes the fixed allow-list of systemctl actions.
+# ---------------------------------------------------------------------------
+
+POLKIT_RULE = DEPLOY_DIR / "polkit-rules" / "51-eclipse-service-control.rules"
+
+
+def test_polkitRule_scopesManageUnitsToUser_a7():
+    """A-7: the rule grants the systemd manage-units action to the kiosk user
+    only -- a scoped polkit rule, the I-036 precedent, not a root helper."""
+    rule = POLKIT_RULE.read_text(encoding="utf-8")
+    assert "org.freedesktop.systemd1.manage-units" in rule
+    assert "mcornelison" in rule
+
+
+def test_polkitRule_keysOnUnitAndVerb_a7():
+    """A-7: the decision is keyed on BOTH the unit AND the verb (so a verb can be
+    denied per-unit -- the powerwatch restart-only guard needs this)."""
+    rule = POLKIT_RULE.read_text(encoding="utf-8")
+    assert 'action.lookup("unit")' in rule
+    assert 'action.lookup("verb")' in rule
+
+
+def test_polkitRule_powerwatchRestartOnly_deniesStop_f7():
+    """A-7 / D-7 / F-7: eclipse-powerwatch is RESTART-ONLY -- a stop/kill is
+    DENIED at the rule itself (an explicit polkit.Result.NO), not merely absent;
+    the data services + the dashboard kiosk are granted."""
+    rule = POLKIT_RULE.read_text(encoding="utf-8")
+    assert "eclipse-powerwatch.service" in rule
+    assert "polkit.Result.NO" in rule  # explicit deny, defense-in-depth
+    assert "polkit.Result.YES" in rule
+    for unit in (
+        "eclipse-obd.service",
+        "eclipse-sync.service",
+        "eclipse-dashboard.service",
+    ):
+        assert unit in rule, f"allow-listed unit {unit} missing from the rule"
+
+
+def test_deployPi_installsServiceControlPolkitRule_a7():
+    """deploy-pi.sh installs the 51- service-control rule (defined + called),
+    sibling to the 50- poweroff rule."""
+    sh = _read(DEPLOY_DIR, "deploy-pi.sh")
+    assert "step_install_polkit_service_control" in sh
+    assert sh.count("step_install_polkit_service_control") >= 2  # defined + called
+    assert "51-eclipse-service-control.rules" in sh
+    assert "/etc/polkit-1/rules.d/51-eclipse-service-control.rules" in sh

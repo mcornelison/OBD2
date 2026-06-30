@@ -19,25 +19,44 @@
 # 2026-06-30    | Ralph (Rex)  | US-399 [A-2]: multi-assets-dir support (serve the
 #               |              | carousel dashboard kit same-origin alongside the
 #               |              | splash) -- full-runtime extension of the server.
+# 2026-06-30    | Ralph (Rex)  | US-403 [A-7]: one token-gated POST /service-control
+#               |              | action endpoint (delegates the allow-list gate to
+#               |              | service_control). GET stays read-only.
 # ================================================================================
 ################################################################################
 
-"""Localhost-only, token-gated, read-only HTTP server for the splash states."""
+"""Localhost-only, token-gated state server (read-only GET + the US-403 action).
+
+GET is read-only (states + same-origin assets). US-403 adds exactly ONE write
+route -- POST /service-control -- so the unprivileged chromium kiosk can request
+a `systemctl restart/stop` on the install-fixed allow-list. The endpoint is a
+thin transport: the allow-list gate is the ``service_control`` SSOT and the real
+privilege is the 51- polkit rule; the kiosk never runs as root.
+"""
 
 from __future__ import annotations
 
 import hmac
+import json
 import mimetypes
 from collections.abc import Sequence
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
+from pi.splash import service_control
+
 # Placeholder substituted with the live token when the kiosk HTML is served.
 _TOKEN_PLACEHOLDER = "__SPLASH_TOKEN__"
 
 # HTML entry points get the token injected; treated as the same-origin bootstrap.
 _INDEX_NAMES = frozenset({"", "index.html"})
+
+# US-403 [A-7]: the single write route -- a service-control action request.
+_ACTION_PATH = "/service-control"
+
+# Largest service-control request body we will read (a tiny {unit, verb} JSON).
+_MAX_ACTION_BODY = 4096
 
 
 def _isSafeFile(baseDir: str, name: str) -> Path | None:
@@ -147,6 +166,61 @@ def makeStatesHandler(
             )
 
         do_HEAD = do_GET  # noqa: N815 (stdlib alias)
+
+        def do_POST(self) -> None:  # noqa: N802 (stdlib signature)
+            # Drain the request body FIRST (bounded). Responding to a POST before
+            # consuming its body resets the connection on some clients/platforms
+            # (WinError 10053); read it up front so every error path is clean.
+            try:
+                length = int(self.headers.get("Content-Length", "0"))
+            except ValueError:
+                length = 0
+            rawBody = self.rfile.read(length) if 0 < length <= _MAX_ACTION_BODY else b""
+
+            # US-403 [A-7]: the ONLY write route. Everything else is 404 (the
+            # server is otherwise read-only).
+            rawPath = unquote(urlsplit(self.path).path)
+            if rawPath != _ACTION_PATH:
+                self._send(404, b'{"error":"not found"}', "application/json")
+                return
+            # Token-gated -- same gate as the state reads.
+            if not self._tokenOk():
+                self._send(401, b'{"error":"unauthorized"}', "application/json")
+                return
+
+            try:
+                payload = json.loads(rawBody.decode("utf-8"))
+                unit = payload["unit"]
+                verb = payload["verb"]
+            except (ValueError, KeyError, TypeError, UnicodeDecodeError):
+                self._send(400, b'{"error":"bad request"}', "application/json")
+                return
+
+            # Action-path gate: an off-list (unit, verb) is rejected (403) and
+            # never executed. The same allow-list SSOT backs runServiceAction's
+            # own re-check (defense-in-depth).
+            if not service_control.isAllowed(unit, verb):
+                self._send(
+                    403,
+                    b'{"ok":false,"error":"action not on the allow-list"}',
+                    "application/json",
+                )
+                return
+
+            result = service_control.runServiceAction(unit, verb)
+            body = json.dumps(
+                {
+                    "ok": result.ok,
+                    "unit": result.unit,
+                    "verb": result.verb,
+                    "returnCode": result.returnCode,
+                    "reason": result.reason,
+                }
+            ).encode("utf-8")
+            # The action ran (the gate passed); the body's ok flag carries the
+            # honest systemctl outcome -- a failed stop is a 200 with ok:false,
+            # never a fabricated success.
+            self._send(200, body, "application/json")
 
         def _serveIndex(self) -> None:
             # The first asset dir holding an index.html owns `/` (the splash kit

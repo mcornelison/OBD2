@@ -46,6 +46,42 @@
   <!-- Page dots: one per card, ≥40px touch target (S-2). -->
   <nav id="dots" aria-label="cards"></nav>
 
+  <!-- US-403 long-press ring (D-6): fills during a ~5s hold anywhere on the
+       carousel; releasing early or moving cancels. JS sets --fill 0..1. -->
+  <div id="longpress-ring" hidden></div>
+
+  <!-- US-403 System Setup menu (D-6/D-7/A-7/A-8): opened by the long-press OR
+       the top-bar ⋮. Service control is on the install-fixed allow-list; the
+       powerwatch Stop is rendered disabled (safe-shutdown guard, F-7). A ✕
+       (back) is always present so the menu never traps the operator. -->
+  <div id="setup-menu" hidden role="dialog" aria-label="System Setup">
+    <header class="menu-head">
+      <span class="menu-title">System Setup</span>
+      <button id="menu-close" class="tap-target" aria-label="Back to dashboard">✕</button>
+    </header>
+    <section class="menu-section">
+      <h3 class="menu-section-title">OBD-II Services</h3>
+      <div id="svc-list"><!-- JS fills service rows (Restart / Stop) --></div>
+    </section>
+    <section class="menu-section">
+      <h3 class="menu-section-title">Display</h3>
+      <button id="menu-exit" class="menu-wide tap-target">Exit / Close UI</button>
+    </section>
+    <div id="menu-status" class="menu-status" aria-live="polite"></div>
+  </div>
+
+  <!-- US-403 confirm modal: Stop / Exit are consequential -> confirm first
+       (F-6 no single accidental consequential tap). Cancel always returns. -->
+  <div id="confirm-modal" hidden role="alertdialog" aria-label="Confirm">
+    <div class="confirm-box">
+      <p id="confirm-text"></p>
+      <div class="confirm-actions">
+        <button id="confirm-cancel" class="tap-target">Cancel</button>
+        <button id="confirm-ok" class="tap-target">Confirm</button>
+      </div>
+    </div>
+  </div>
+
   <script>
     // Token injected by the state server at serve time (token SSOT). Previewed
     // from file:// the placeholder stays and the polls fail closed to

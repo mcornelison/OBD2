@@ -142,3 +142,91 @@ html, body {
   position: fixed; left: 0; right: 0; top: 28px; height: 22px;
   background: var(--red-light); color: #fff; z-index: 9;
 }
+
+/* --- US-403 long-press ring (D-6) ------------------------------------------- */
+/* A radial fill driven by the JS --fill (0..1). Centered; non-interactive so it
+   never intercepts the press it visualizes. */
+#longpress-ring {
+  position: fixed; top: 50%; left: 50%;
+  width: 72px; height: 72px; margin: -36px 0 0 -36px;
+  border-radius: 50%; z-index: 30; pointer-events: none;
+  --fill: 0;
+  background: conic-gradient(var(--ok-green) calc(var(--fill) * 360deg),
+                             rgba(255, 255, 255, 0.12) 0);
+  -webkit-mask: radial-gradient(circle 28px at center, transparent 98%, #000 100%);
+          mask: radial-gradient(circle 28px at center, transparent 98%, #000 100%);
+}
+
+/* --- US-403 System Setup menu (D-6/D-7/A-7) --------------------------------- */
+#setup-menu {
+  position: fixed; inset: 0; z-index: 40;
+  background: rgba(0, 0, 0, 0.92);
+  display: flex; flex-direction: column; gap: 6px;
+  padding: 6px 12px 10px; box-sizing: border-box; overflow-y: auto;
+}
+.menu-head {
+  display: flex; align-items: center; height: 36px;
+  border-bottom: 1px solid var(--surface);
+}
+.menu-title {
+  font-size: 14px; font-weight: 700; letter-spacing: 0.06em;
+  text-transform: uppercase; color: var(--text-primary);
+}
+#menu-close {
+  margin-left: auto;
+  min-width: var(--tap-min); min-height: var(--tap-min);
+  background: transparent; border: 0; color: var(--text-secondary);
+  font-size: 18px; cursor: pointer;
+}
+.menu-section { display: flex; flex-direction: column; gap: 4px; }
+.menu-section-title {
+  margin: 4px 0 0; font-size: 10px; letter-spacing: 0.08em;
+  text-transform: uppercase; color: var(--text-secondary);
+}
+.svc-row {
+  display: flex; align-items: center; gap: 6px;
+  padding: 2px 0; border-bottom: 1px solid var(--surface);
+}
+.svc-name { flex: 1; font-size: 12px; color: var(--text-primary); }
+.svc-btn {
+  min-width: var(--tap-min); min-height: var(--tap-min);
+  padding: 0 10px; font-size: 12px; cursor: pointer;
+  background: var(--surface); color: var(--text-primary);
+  border: 1px solid var(--text-tertiary); border-radius: 4px;
+}
+/* I-10 / F-7: a disabled control (powerwatch Stop) is visibly inert + ignores
+   taps (no consequential action). */
+.svc-btn:disabled {
+  color: var(--text-tertiary); border-color: var(--surface);
+  opacity: 0.5; cursor: not-allowed;
+}
+.menu-wide {
+  min-height: var(--tap-min); width: 100%;
+  font-size: 13px; cursor: pointer;
+  background: var(--surface); color: var(--text-primary);
+  border: 1px solid var(--text-tertiary); border-radius: 4px;
+}
+.menu-status {
+  margin-top: auto; font-size: 11px; color: var(--text-secondary);
+  min-height: 14px;
+}
+
+/* --- US-403 confirm modal (F-6 confirm-before-consequential) ---------------- */
+#confirm-modal {
+  position: fixed; inset: 0; z-index: 50;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(0, 0, 0, 0.6);
+}
+.confirm-box {
+  background: var(--surface); border: 1px solid var(--amber-warn);
+  border-radius: 6px; padding: 14px 16px; max-width: 88%;
+}
+.confirm-box p { margin: 0 0 12px; font-size: 13px; color: var(--text-primary); }
+.confirm-actions { display: flex; gap: 10px; justify-content: flex-end; }
+.confirm-actions button {
+  min-width: var(--tap-min); min-height: var(--tap-min);
+  padding: 0 14px; font-size: 13px; cursor: pointer; border-radius: 4px;
+  background: var(--surface); color: var(--text-primary);
+  border: 1px solid var(--text-tertiary);
+}
+#confirm-ok { border-color: var(--red-light); color: var(--red-light); }

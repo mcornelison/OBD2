@@ -93,6 +93,7 @@ __all__ = [
     'DatabaseLike',
     'DriveEndResult',
     'DtcLogger',
+    'KeyOnDtcResult',
     'MilEventResult',
     'SessionStartResult',
 ]
@@ -152,6 +153,30 @@ class MilEventResult:
 
     inserted: int
     updated: int
+
+
+@dataclass(frozen=True)
+class KeyOnDtcResult:
+    """Per-call summary returned from :meth:`DtcLogger.logKeyOnDtcs` (US-404).
+
+    The key-on (KOEO) connection-edge read. Unlike the drive-scoped paths,
+    every row is stamped ``drive_id = NULL`` explicitly (no
+    :func:`getCurrentDriveId` fallback), so a stale open-drive on the process
+    context can never pollute a key-on capture (A-9 Root 2 cross-link).
+
+    Attributes:
+        storedCount: Number of Mode 03 rows persisted.
+        pendingCount: Number of Mode 07 rows persisted (zero when Mode 07 is
+            unsupported on this connection).
+        mode07Probe: Probe result so the caller can cache the verdict.
+        codes: The captured DiagnosticCodes (stored + pending) so the caller
+            can feed the ``dtc`` emitter without a re-read.
+    """
+
+    storedCount: int
+    pendingCount: int
+    mode07Probe: Mode07ProbeResult
+    codes: list[DiagnosticCode]
 
 
 @dataclass(frozen=True)
@@ -291,6 +316,61 @@ class DtcLogger:
                 storedCount=len(stored),
                 pendingCount=len(pending),
                 mode07Probe=probe,
+            )
+
+    # ------------------------------------------------------------------
+    # US-404 -- key-on (KOEO) connection-edge path
+    # ------------------------------------------------------------------
+
+    def logKeyOnDtcs(
+        self,
+        *,
+        connection: ObdConnectionLike,
+    ) -> KeyOnDtcResult:
+        """Run a one-shot key-on Mode 03(+07) read with ``drive_id = NULL``.
+
+        Fired from the OBD connection-established edge (``event_router``
+        ``onConnectionRestored``) when NO drive is RUNNING -- the operator
+        walks up to a lit MIL at key-on/engine-off (RPM 0) where DriveDetector
+        never arms. Reuses :class:`DtcClient` exactly as the drive paths do.
+
+        The load-bearing difference from :meth:`logSessionStartDtcs`: this path
+        stamps ``drive_id = NULL`` **explicitly** -- it does NOT consult
+        :func:`getCurrentDriveId`. A pre-US-388 stale-open-drive leak could
+        leave a phantom drive_id on the process context; inheriting it here
+        would mis-attribute a key-on read to a drive that is not happening
+        (A-9 Root 2). NULL is the honest attribution for a KOEO read, and the
+        display renders "key-on read" rather than "Drive N".
+
+        Args:
+            connection: Live OBD connection.
+
+        Returns:
+            :class:`KeyOnDtcResult` with per-mode counts, the Mode 07 probe
+            verdict, and the captured codes (for the ``dtc`` emitter).
+
+        Raises:
+            DtcClientError: Re-raised if the connection is not open.
+        """
+        with self._markRetrievalActive():
+            # drive_id = NULL stamped EXPLICITLY -- never getCurrentDriveId().
+            stored: list[DiagnosticCode] = self._client.readStoredDtcs(connection)
+            pending, probe = self._client.readPendingDtcs(connection)
+
+            with self._database.connect() as conn:
+                self._insertCodes(conn, stored, None)
+                self._insertCodes(conn, pending, None)
+
+            if not probe.supported:
+                logger.info(
+                    "Mode 07 unsupported on this connection (key-on) -- caching probe"
+                )
+
+            return KeyOnDtcResult(
+                storedCount=len(stored),
+                pendingCount=len(pending),
+                mode07Probe=probe,
+                codes=[*stored, *pending],
             )
 
     # ------------------------------------------------------------------

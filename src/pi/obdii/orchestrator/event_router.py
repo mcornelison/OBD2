@@ -586,6 +586,12 @@ class EventRouterMixin:
         # already RUNNING) so calling here is safe regardless of state.
         self._restartDataLoggerOnConnectionRestored()
 
+        # US-404: one-shot key-on (KOEO) DTC read on the connection-established
+        # edge.  Gated internally on no active RUNNING drive -- it surfaces
+        # codes at key-on/engine-off (RPM 0) where DriveDetector never arms,
+        # closing the "blank at key-on" gap (F-111 / DTC-A9).
+        self._dispatchKeyOnDtcs()
+
         # Call external callback
         if self._onConnectionRestored is not None:
             try:
@@ -655,6 +661,77 @@ class EventRouterMixin:
             )
         except Exception as e:  # noqa: BLE001 -- defensive
             logger.warning(f"DTC session-start dispatch failed: {e}")
+
+    def _dispatchKeyOnDtcs(self) -> None:
+        """Fire a one-shot key-on (KOEO) DTC read on the connection edge (US-404).
+
+        Gated on NO active RUNNING drive: while a drive is RUNNING the
+        drive-scoped DTC paths (session-start / MIL / periodic) own capture; the
+        KOEO read exists only for key-on/engine-off (RPM 0) where DriveDetector
+        never arms (Atlas A-9).  Skips silently when DTC capture isn't applicable
+        (no logger / no live connection -- e.g. simulator or replay).  Persists
+        every row ``drive_id = NULL`` (DtcLogger.logKeyOnDtcs) and, when a ``dtc``
+        emitter is wired, publishes the enriched state.  Exception-isolated so
+        the connection-restored handler stays non-fatal; the drive gate FAILS
+        CLOSED (an unverifiable drive state skips the read) so a KOEO row is
+        never written while a drive might be in progress.
+        """
+        if self._dtcLogger is None or self._connection is None:
+            return
+
+        driveDetector = getattr(self, '_driveDetector', None)
+        if driveDetector is not None:
+            try:
+                if driveDetector.isDriving():
+                    return  # a RUNNING drive owns DTC capture, not the KOEO path
+            except Exception as e:  # noqa: BLE001 -- fail closed on an unknown state
+                logger.debug(f"KOEO drive-state gate uncertain, skipping: {e}")
+                return
+
+        try:
+            result = self._dtcLogger.logKeyOnDtcs(connection=self._connection)
+            logger.info(
+                "DTC key-on | stored=%d | pending=%d",
+                getattr(result, 'storedCount', 0),
+                getattr(result, 'pendingCount', 0),
+            )
+            self._emitDtcState(result)
+        except Exception as e:  # noqa: BLE001 -- defensive
+            logger.warning(f"DTC key-on dispatch failed: {e}")
+
+    def _emitDtcState(self, result: Any) -> None:
+        """Publish the captured KOEO codes to the ``dtc`` state file (US-404).
+
+        Best-effort: when no ``dtc`` emitter is wired (the live call-site
+        injection follows the US-400/401 deferral pattern) this is a no-op.
+        Converts the captured ``DiagnosticCode`` list into the emitter's raw
+        code dicts, stamping ``driveId = None`` (a KOEO read is never a drive)
+        and ``logged = True`` (the rows were just written).  ``mil`` is the
+        honest "a stored fault is present" proxy; ``newSinceTs`` (the takeover
+        trigger) is US-405's concern and ``sessionResetLock`` is US-407's.
+        """
+        emitter = getattr(self, '_dtcEmitter', None)
+        if emitter is None:
+            return
+        codes = getattr(result, 'codes', None) or []
+        rawCodes = [
+            {
+                "code": getattr(c, 'code', None),
+                "status": getattr(c, 'status', None),
+                "description": getattr(c, 'description', ''),
+                "driveId": None,
+                "setAtTs": None,
+                "logged": True,
+                "syncAcked": False,
+            }
+            for c in codes
+        ]
+        emitter(
+            codes=rawCodes,
+            mil=getattr(result, 'storedCount', 0) > 0,
+            newSinceTs=None,
+            sessionResetLock=[],
+        )
 
     def _dispatchMilEventDtcs(self) -> None:
         """Fire DtcLogger.logMilEventDtcs from _handleReading on rising edge."""
