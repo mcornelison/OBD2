@@ -311,7 +311,7 @@
       "parent": "E-OPS",
       "title": "Migrate from camelCase to snake_case",
       "description": "",
-      "status": "declined",
+      "status": "active",
       "renamedFrom": "B-006",
       "createdAt": "2026-05-27",
       "updatedAt": "2026-05-27"
@@ -1031,7 +1031,7 @@
       "parent": "E-001",
       "title": "Pi Splash Animation -- Boot + Shutdown",
       "description": "Pi Splash Animation -- Boot + Shutdown",
-      "status": "pending",
+      "status": "active",
       "renamedFrom": "B-103",
       "createdAt": "2026-05-27",
       "updatedAt": "2026-05-27"
@@ -1836,6 +1836,175 @@
       "tasks": [],
       "createdAt": "2026-06-28",
       "updatedAt": "2026-06-28"
+    },
+    {
+      "id": "US-393",
+      "parent": "F-103",
+      "title": "F-103 boot splash -- chromium kiosk + localhost state server on the 3.5\" display",
+      "type": "normal",
+      "size": "M",
+      "status": "sprint-ready",
+      "goal": "As the Pi at boot, I want a branded boot splash on the 3.5\" display backed by a chromium kiosk + a localhost state server, so the operator sees boot progress instead of a console/blank screen.",
+      "definitionOfDone": [
+        "chromium kiosk launches on boot rendering the splash on the 3.5\" display",
+        "new eclipse-boot-state.service emits boot phases [A-1]",
+        "new eclipse-states-http.service serves state on localhost:9899 with token auth (token SSOT, one source)",
+        "splash reflects the eclipse-obd 3-tier health (T1/T2=degraded, T3 engine-off=informational per Spool S-1/S-2) + HEALTHY_YIELD",
+        "retry-once on transient display/IPC failure",
+        "Rule-10: the state-server + emitters land with matching specs/architecture.md + specs/UI/ updates in-sprint",
+        "[ATLAS C-5 states-dir boot provisioning] /run/eclipse-obd/states/ must exist at boot INDEPENDENT of eclipse-obd.service (that unit only creates /run/eclipse-obd via RuntimeDirectory=eclipse-obd on its own start, removes it on stop, and does NOT create the states/ subdir): the F-103 emitter + HTTP server provision the dir themselves -- each F-103 unit shares RuntimeDirectory=eclipse-obd (systemd ref-counts a shared name) OR a tmpfiles.d entry creates /run/eclipse-obd/states/ (owned non-root mcornelison) at boot -- and the chosen mechanism is reconciled with eclipse-obd.service's remove-on-stop so the two do not fight (no tmpfiles.d exists today; the deploy-time install -d is wiped on every reboot)"
+      ],
+      "conditionalOutcomes": [
+        "if HDMI/display isn't ready at boot, retry-once then degrade gracefully (no crash, no boot stall)"
+      ],
+      "validationCriteria": [
+        { "action": "cold reboot (power-cycle, NOT a warm restart with eclipse-obd already up)", "outcome": "splash renders on the 3.5\" display within the spec's boot-grace window (not console/blank); proves /run/eclipse-obd/states/ exists at boot without eclipse-obd having provisioned it -- a warm bench where the dir already exists is insufficient" },
+        { "action": "curl -H <token> localhost:9899/...", "outcome": "returns the current boot state JSON" },
+        { "action": "feed a synthetic boot-phase sequence", "outcome": "splash transitions through the phases (spec section 9 synthetic criteria)" }
+      ],
+      "deps": [],
+      "sourceRefs": ["F-103", "prd-V0.29.2", "iris-f103-spec-v1.2", "atlas-c5-2026-06-29"],
+      "tasks": [],
+      "createdAt": "2026-06-29",
+      "updatedAt": "2026-06-29"
+    },
+    {
+      "id": "US-394",
+      "parent": "F-103",
+      "title": "F-103 shutdown splash -- ShutdownSequencer phase-emit hook + architecture.md section 10.6",
+      "type": "normal",
+      "size": "M",
+      "status": "sprint-ready",
+      "goal": "As the Pi during shutdown, I want a shutdown splash so the operator sees the staged shutdown instead of a frozen/blank screen.",
+      "definitionOfDone": [
+        "ShutdownSequencer emits phase events [A-2] and the splash renders",
+        "shutdown splash shows the staged shutdown",
+        "sequencer docstring documents the timing invariant [A-6]",
+        "specs/architecture.md §10.6 updated in-sprint (load-bearing ShutdownSequencer change -- Atlas design-gate DoD; BLOCKs if the hook ships without the spec update, M-1a)",
+        "[ATLAS C-5 shutdown-state survives eclipse-obd stop] shutdown-state must remain readable AFTER eclipse-obd.service has stopped: eclipse-obd's RuntimeDirectory=eclipse-obd is removed on stop, so if it exclusively owns /run/eclipse-obd the dir (and shutdown-state) vanish at the exact moment the shutdown splash needs them -- eclipse-states-http.service (and the states dir) must be ordered/ref-counted (shared RuntimeDirectory=eclipse-obd) to OUTLIVE eclipse-obd during the shutdown sequence"
+      ],
+      "conditionalOutcomes": [
+        "ShutdownSequencer IS load-bearing -> the §10.6 update is mandatory in-sprint (not a follow-up)"
+      ],
+      "validationCriteria": [
+        { "action": "trigger a shutdown", "outcome": "shutdown splash renders + transitions through the shutdown stages" },
+        { "action": "trigger a shutdown with eclipse-obd.service already stopped", "outcome": "shutdown splash still renders from shutdown-state (proves the dir/file survives the RuntimeDirectory cleanup, not just a warm path where eclipse-obd is still up)" },
+        { "action": "inspect specs/architecture.md §10.6", "outcome": "documents the phase-emit hook + timing invariant" }
+      ],
+      "deps": ["US-393"],
+      "sourceRefs": ["F-103", "prd-V0.29.2", "iris-f103-spec-v1.2", "atlas-c5-2026-06-29"],
+      "tasks": [],
+      "createdAt": "2026-06-29",
+      "updatedAt": "2026-06-29"
+    },
+    {
+      "id": "US-395",
+      "parent": "F-103",
+      "title": "F-103 deploy integration -- fold splash units into deploy-pi.sh + states-dir provisioning",
+      "type": "normal",
+      "size": "S",
+      "status": "sprint-ready",
+      "goal": "As the deploy path, I want F-103's units folded into deploy-pi.sh so the splash ships with every Pi deploy.",
+      "definitionOfDone": [
+        "deploy-pi.sh installs + enables eclipse-boot-state.service + eclipse-states-http.service (sync-if-changed, mirroring the existing unit-install steps)",
+        "version.txt written",
+        "deploy WARNs (not BLOCKs) if splash assets are missing [A-9]",
+        "[ATLAS C-5 deploy owns the states-dir provisioning] deploy-pi.sh installs the provisioning mechanism that makes /run/eclipse-obd/states/ exist at EVERY boot (a tmpfiles.d entry or shared RuntimeDirectory=eclipse-obd on the F-103 units -- NOT the existing deploy-time install -d alone, which tmpfs wipes on reboot)",
+        "specs/architecture.md documents the /run/eclipse-obd/states/ ownership + lifecycle across the eclipse-obd / eclipse-boot-state / eclipse-states-http units (one place; the multi-owner runtime dir is an SSOT-lifecycle contract)"
+      ],
+      "conditionalOutcomes": [
+        "if splash assets are missing at deploy time, WARN and continue -- do NOT BLOCK the deploy [A-9]"
+      ],
+      "validationCriteria": [
+        { "action": "run deploy-pi.sh", "outcome": "the two F-103 units install + enable; re-run -> no-op (sync-if-changed)" },
+        { "action": "remove a splash asset + deploy", "outcome": "WARN emitted, deploy continues (not BLOCK)" },
+        { "action": "after deploy, cold reboot", "outcome": "/run/eclipse-obd/states/ is present + non-root-writable before any drive activity (the provisioning is boot-durable, not deploy-only)" }
+      ],
+      "deps": ["US-394"],
+      "sourceRefs": ["F-103", "prd-V0.29.2", "iris-f103-spec-v1.2", "atlas-c5-2026-06-29"],
+      "tasks": [],
+      "createdAt": "2026-06-29",
+      "updatedAt": "2026-06-29"
+    },
+    {
+      "id": "US-396",
+      "parent": "F-103",
+      "title": "F-103 defects + install-time checks (D-1/D-2/D-3 + V-1/V-2)",
+      "type": "normal",
+      "size": "S",
+      "status": "sprint-ready",
+      "goal": "As the F-103 surface, I want the spec's known defects closed + the install-time checks passing.",
+      "definitionOfDone": [
+        "spec defects D-1/D-2/D-3 resolved",
+        "V-1/V-2 install-time checks pass",
+        "may fold into US-393/US-394 at dev discretion (zero information loss)"
+      ],
+      "conditionalOutcomes": [
+        "may fold into US-393/US-394 at dev discretion (zero information loss)"
+      ],
+      "validationCriteria": [
+        { "action": "re-run the D-1/D-2/D-3 repros", "outcome": "they no longer reproduce" },
+        { "action": "run V-1/V-2 install-time checks on a clean deploy", "outcome": "they pass" }
+      ],
+      "deps": ["US-395"],
+      "sourceRefs": ["F-103", "prd-V0.29.2", "iris-f103-spec-v1.2", "atlas-c5-2026-06-29"],
+      "tasks": [],
+      "createdAt": "2026-06-29",
+      "updatedAt": "2026-06-29"
+    },
+    {
+      "id": "US-397",
+      "parent": "F-076",
+      "title": "Fix sync_now.py import break -- normalize Pi entry-point to pi.*-on-src convention",
+      "type": "issue",
+      "size": "S",
+      "status": "sprint-ready",
+      "goal": "As the operator, I want python scripts/sync_now.py to run on the Pi so I can trigger a manual sync without a PYTHONPATH workaround.",
+      "definitionOfDone": [
+        "sync_now.py follows the project Pi-tier convention ([[feedback-path-convention-no-src-prefix]]): put src/ on sys.path + import pi.sync / pi.data (matching the services), NOT ROOT + src.pi.* (root cause: sync_now.py inserts repo ROOT on sys.path + imports src.pi.*, but src/pi/obdii/__init__.py:26 uses bare from pi.display import ... -> ModuleNotFoundError: No module named 'pi')",
+        "it imports + runs on the Pi with no PYTHONPATH override",
+        "batch-audit other Pi-side scripts/*.py entry points for the same ROOT-insert + src.pi.* pattern; fix the cluster (Rule 5 batch)"
+      ],
+      "conditionalOutcomes": [
+        "if 3+ scripts share the bug, fix all in this one story (batch)",
+        "if a script genuinely needs the ROOT/src.pi.* convention (server-side), leave + document"
+      ],
+      "validationCriteria": [
+        { "action": "on the Pi, python scripts/sync_now.py --dry-run", "outcome": "runs, no ModuleNotFoundError" },
+        { "action": "run an import/smoke test covering the sync_now.py (and any sibling) entry-point import under the service convention", "outcome": "passes" }
+      ],
+      "deps": [],
+      "sourceRefs": ["F-076", "prd-V0.29.2", "I-sync-now-import-broken"],
+      "tasks": [],
+      "createdAt": "2026-06-29",
+      "updatedAt": "2026-06-29"
+    },
+    {
+      "id": "US-398",
+      "parent": "F-006",
+      "title": "Fix simulate duplicate (timestamp, parameter) rows -- test-fidelity vs data-quality ruling",
+      "type": "issue",
+      "size": "S",
+      "status": "sprint-ready",
+      "goal": "As the simulate-mode test suite, I want test_noDuplicateTimestampParameterCombinations to pass deterministically, with the underlying data-quality question resolved.",
+      "definitionOfDone": [
+        "rule between (a) test-fidelity -- the 'no two rows share a (second-timestamp, parameter)' invariant is false at sub-second poll rates (realtime_data.timestamp is second-granularity ISO); the assertion should key on a higher-resolution timestamp or id; vs (b) real data-quality -- if production also writes sub-second-duplicate rows, second-bucketed analytics could double-count -> needs a finer timestamp or a uniqueness guard; then implement the corresponding fix (NOT investigation-only)",
+        "the test passes deterministically (machine-speed-independent)",
+        "the ruling (a vs b) + the fix are documented",
+        "if (b), the realtime_data write path / analytics is corrected (NOT just the test)"
+      ],
+      "conditionalOutcomes": [
+        "if ruling=(b) real data-quality, fix the realtime_data write path / analytics, not just the test"
+      ],
+      "validationCriteria": [
+        { "action": "run pytest tests/test_simulate_db_validation.py::...::test_noDuplicateTimestampParameterCombinations -q", "outcome": "passes (and passes on a fast box, where it currently fails with 185 dups)" },
+        { "action": "if ruling=(b): a query/test on production realtime_data for second-bucketed double-counting", "outcome": "confirms production no longer double-counts in second-bucketed analytics" }
+      ],
+      "deps": [],
+      "sourceRefs": ["F-006", "prd-V0.29.2", "I-simulate-duplicate-timestamp"],
+      "tasks": [],
+      "createdAt": "2026-06-29",
+      "updatedAt": "2026-06-29"
     }
   ]
 }
