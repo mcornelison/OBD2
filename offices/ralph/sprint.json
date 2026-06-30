@@ -120,8 +120,9 @@
       "epicId": "E-001",
       "type": "normal",
       "size": "S",
-      "status": "sprint-ready",
-      "passes": false,
+      "status": "complete",
+      "passes": true,
+      "completionNotes": "F-103 deploy integration SHIPPED (TDD red->green). Three new sync-if-changed steps wired into deploy-pi.sh's default body AFTER step_install_power_watch_unit, in runtime-dependency order (tmpfiles -> assets -> units), each mirroring the sibling unit installers (cmp -s; daemon-reload only on change; enable --now idempotent; missing-file warn+skip for offline-smoke safety; DRY_RUN branch). (1) step_install_states_tmpfiles [AC#4 Atlas C-5]: installs deploy/eclipse-obd-states.conf -> /etc/tmpfiles.d/ AND runs `systemd-tmpfiles --create` so /run/eclipse-obd/states/ exists THIS deploy + at EVERY boot (the boot-durable mechanism, NOT install -d alone which tmpfs wipes). (2) step_install_splash_assets [AC#2-3, A-9]: installs the BACKEND-served kit (index.html/styles.css/boot-state-poll.js) from specs/UI/dist/splash-pi/ to /opt/splash + writes /opt/splash/version.txt (bare SemVer parsed from deploy/RELEASE_VERSION via python json, V?.?.? fallback = same sentinel boot-state-poll.js uses). A-9 honored TWICE: local-source-missing -> WARN + return 0 (deploy continues), per-asset-missing -> WARN + skip; NO `exit 1` anywhere in the step (asserted by test). (3) step_install_state_server_units [AC#1]: install+enable eclipse-boot-state.service + eclipse-states-http.service; BOTH long-running Type=simple so they ALSO `systemctl restart` every deploy (US-354 dead-code-in-memory class), HTTP server restarted BEFORE the emitter so the emitter's first write lands after the server listens. RULE-10 DoD [AC#5]: specs/architecture.md F-103 section gains a 'Deploy provisioning (US-395)' subsection (the 3 ordered steps + A-9 WARN + the US-396 render-side seam); the multi-owner /run/eclipse-obd/states/ ownership+lifecycle contract was already documented there (US-393) + §10.6.1 (US-394). SCOPE SEAM: this story = the BACKEND (state-server units + states-dir + served assets + version.txt). The chromium kiosk UNIT (splash-boot.service.{wayland,x11}) + shutdown render assets + the UI-team kit installer (specs/UI/dist/splash-pi/install.sh, svgs, shutdown.html -- untracked, NOT mine) = US-396 render side, same producer/render seam as US-394. GATES: pytest tests/deploy/ = 196 passed (188 prior + 8 new US-395 static/dry-run assertions, zero regression); bash tests/deploy/test_deploy_pi.sh = 29 passed (offline-smoke green: new steps warn+skip when only deploy/ present); repo-root `deploy-pi.sh --dry-run` exits 0 + echoes all 3 F-103 steps (version.txt = V0.29.1 from current RELEASE_VERSION). ruff clean on the touched test file (no src/ .py change). DEFERRED-TO-PM/CIO (BENCH-ONLY per validationMethod, not dev-box runnable): (a) run deploy-pi.sh against the Pi -> two units install+enable, re-run no-op; (b) remove a splash asset + deploy -> WARN, deploy continues; (c) after deploy, COLD REBOOT -> /run/eclipse-obd/states/ present + non-root-writable before any drive activity (boot-durable proof). mypy not on dev box + full-suite (slow SMB) deferred to PM integration; scoped deploy suite is the in-iteration gate per slow-share carve-out (changes are deploy-script + test + spec-doc only, zero product src/ change). NOTE: version.txt currently derives V0.29.1; PM bumps deploy/RELEASE_VERSION to V0.29.2 at /sprint-deploy-pm (PM-owned), which the next deploy stamps automatically.",
       "acceptance": [
         "deploy-pi.sh installs + enables eclipse-boot-state.service + eclipse-states-http.service (sync-if-changed, mirroring the existing unit-install steps)",
         "version.txt written",
@@ -147,7 +148,14 @@
         "if splash assets are missing at deploy time, WARN and continue -- do NOT BLOCK the deploy [A-9]"
       ],
       "goal": "As the deploy path, I want F-103's units folded into deploy-pi.sh so the splash ships with every Pi deploy.",
-      "tasks": []
+      "tasks": [],
+      "feedback": {
+        "filesActuallyTouched": [
+          "deploy/deploy-pi.sh",
+          "tests/deploy/test_deploy_pi.py",
+          "specs/architecture.md"
+        ]
+      }
     },
     {
       "id": "US-396",

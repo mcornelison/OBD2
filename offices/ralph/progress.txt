@@ -502,3 +502,34 @@ Outcome: SHIPPED passes:true. The shutdown-state PRODUCER side. ShutdownSequence
 - **Honest instrument**: the VCELL-floor fast-path skips the pipeline, so it emits powering_off with NO preceding flushing (no flush actually happened); and a power-return mid-window emits a late `cancelled` so the splash aborts instead of hanging in BLACK_TAIL.
 - **Scope seam (US-394 vs US-396)**: US-394 = PRODUCER (this story's title). The RENDER side -- splash-grace.service+.path trigger units (D-2 retire splash-shutdown.service), shutdown.html D-1 fix, shutdown-state-poll.js, V-1/V-2 -- is US-396. The bench shutdown-render drill needs BOTH; flagged to PM inbox.
 ---
+
+## 2026-06-29 - US-395 (Agent 1 / Rex)
+Task: F-103 deploy integration -- fold splash units into deploy-pi.sh + states-dir provisioning
+Outcome: SHIPPED passes:true. The F-103 backend now ships with every Pi deploy. TDD red->green (8 new tests). Three sync-if-changed steps wired into deploy-pi.sh's default body.
+
+### What was implemented:
+- `deploy/deploy-pi.sh`: three new step functions + main-flow wiring after step_install_power_watch_unit, in runtime-dependency order (tmpfiles -> assets -> units):
+  - `step_install_states_tmpfiles` [AC#4 Atlas C-5]: installs deploy/eclipse-obd-states.conf -> /etc/tmpfiles.d/ (cmp -s sync-if-changed) AND runs `systemd-tmpfiles --create` so /run/eclipse-obd/states/ exists THIS deploy + at EVERY boot -- the boot-durable mechanism (NOT install -d alone, which tmpfs wipes on reboot).
+  - `step_install_splash_assets` [AC#2-3, A-9]: installs the BACKEND-served kit (index.html/styles.css/boot-state-poll.js) from specs/UI/dist/splash-pi/ -> /opt/splash + writes /opt/splash/version.txt (bare SemVer parsed from deploy/RELEASE_VERSION via `python -c json`, V?.?.? fallback = the same sentinel boot-state-poll.js renders). A-9: local-source-missing -> WARN + `return 0`; per-asset-missing -> WARN + skip; NO `exit 1` anywhere (deploy never blocks on a missing kit).
+  - `step_install_state_server_units` [AC#1]: install + enable eclipse-boot-state.service + eclipse-states-http.service (cmp -s, daemon-reload-on-change, enable --now); BOTH long-running Type=simple so they ALSO `systemctl restart` every deploy (US-354 dead-code-in-memory class), HTTP server restarted BEFORE the emitter so the emitter's first write lands after the server listens.
+- `specs/architecture.md`: F-103 section gains a 'Deploy provisioning (US-395)' subsection (the 3 ordered steps + A-9 WARN-not-BLOCK + the US-396 render-side seam). [Rule-10 DoD]
+- `tests/deploy/test_deploy_pi.py`: 8 new static/dry-run assertions (cited US-395; both units installed; sync-if-changed+enable; long-running restart; tmpfiles systemd-tmpfiles --create; version.txt to /opt/splash; WARN-not-BLOCK no-exit-1; all 3 steps wired into main flow).
+
+### Files changed:
+- Modified: `deploy/deploy-pi.sh`, `tests/deploy/test_deploy_pi.py`, `specs/architecture.md`
+
+### Gates:
+- TDD: 8 US-395 tests RED (steps undefined) -> GREEN after implementation.
+- pytest tests/deploy/ = 196 passed (188 prior + 8 new, ZERO regression).
+- bash tests/deploy/test_deploy_pi.sh = 29 passed (offline smoke: new steps warn+skip when only deploy/ present, exit 0).
+- repo-root `bash deploy/deploy-pi.sh --dry-run` exits 0 + echoes all 3 F-103 step headers (version.txt = V0.29.1 from current RELEASE_VERSION).
+- ruff clean on the touched test file (no src/ .py change).
+- DEFERRED-TO-PM/CIO (BENCH-ONLY per validationMethod, not dev-box runnable): run deploy-pi.sh on the Pi (two units install+enable, re-run no-op) / remove a splash asset + deploy -> WARN continues / after deploy cold-reboot -> /run/eclipse-obd/states/ present + non-root-writable. mypy (not on dev box) + full-suite (slow SMB) at PM integration; scoped deploy suite is the in-iteration gate (deploy-script + test + spec-doc only, zero product src/ change).
+
+### Learnings for future iterations:
+- **The sibling unit installer IS the spec for a new one**: deploy-pi.sh has a stable install-a-systemd-unit idiom (cmp -s sync-if-changed / daemon-reload only on change / enable --now idempotent / missing-file warn+skip / DRY_RUN echo branch). step_install_boot_progress_units (pair) + step_install_power_watch_unit (long-running -> unconditional restart) compose directly into the two-long-running-units case. Match the idiom byte-for-byte; don't invent a new shape.
+- **Long-running Type=simple units MUST restart every deploy (US-354), one-shots must not**: the boot-progress oneshots only daemon-reload+enable; the state-server pair (like power-watch) adds an unconditional `systemctl restart` so rsynced source changes actually run -- otherwise the old interpreter stays memory-mapped on old code. Restart the HTTP server before the emitter (listener-before-writer ordering).
+- **A-9 'WARN not BLOCK' = both an early `return 0` on missing local source AND no `exit 1` in the remote path**: the offline smoke test (deploy/ only, no specs/) exercises exactly the missing-assets path -- so the warn+continue behavior AC#3 wants is the SAME behavior that keeps test_deploy_pi.sh green. Asserting `"exit 1" not in body` pins A-9 structurally.
+- **version.txt is the bare SemVer string, not the JSON record**: boot-state-poll.js fetches version.txt as a public (no-token) static asset and renders its trimmed text; deploy parses just the `version` field out of deploy/RELEASE_VERSION (which is a JSON {version,theme,description}) and writes the bare string, with the same V?.?.? fallback the JS uses on a malformed/absent file. PM's RELEASE_VERSION bump at /sprint-deploy-pm flows into version.txt automatically on the next deploy.
+- **Scope seam (US-395 backend vs US-396 render)**: US-395 = the state-server backend (units + states-dir + served assets + version.txt). The chromium kiosk UNIT (splash-boot.service.{wayland,x11}), shutdown render assets, and the UI-team kit installer (specs/UI/dist/splash-pi/install.sh + svgs + shutdown.html -- untracked, NOT Ralph's) = US-396 render side. Same producer/render seam as US-394. Committed ONLY my 3 files; left the UI-kit untracked files for US-396/Iris.
+---
