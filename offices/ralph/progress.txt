@@ -759,3 +759,25 @@ Outcome: SHIPPED passes:true. Symmetric to US-400; reused the F-103/US-400 emitt
 - **Pattern discovered**: an honest-instrument "never derive X from Y" rule is best LOCKED BY ABSENCE (no code path) rather than guarded by a runtime check -- F-8 (no vcellV->soc) can't be tripped because the path doesn't exist. Similarly the A-6 ladder invariant lives in the PURE BUILDER (the SSOT), so every entry point inherits it.
 - **Gotcha**: compute a displayed data-age from the two ISO fields already in the state file (ts - lastHealthCheckTs), NOT from a browser/wall clock -- keeps the stale-green guard deterministic + node-testable.
 ---
+
+## 2026-06-30 - US-402 (Agent 1 / Rex)
+Task: Pygame sunset -- retire status_display.py/dashboard_layout.py once the HTML carousel reaches parity
+
+### What was implemented:
+- Parity-gated cut-over (A-4): now that US-400 (System Status) + US-401 (Battery Health) cards reached parity, retired the legacy pygame StatusDisplay overlay so the HTML carousel is the SOLE dashboard surface (F-4 never-both).
+- config.json: `pi.hardware.statusDisplay.enabled` true -> false. With the overlay off, HardwareManager._initializeStatusDisplay returns early -> no pygame surface opens.
+- Found + fixed a load-bearing latent bug: createHardwareManagerFromConfig resolved the overlay flag from the FLAT top-level `hardware.statusDisplay.*`, but lifecycle.py passes the FULL config where the canonical flag is NESTED at `pi.hardware.statusDisplay.*`. So pre-US-402 the nested flag was silently ignored and pygame always launched on its True default -- a config flip ALONE would not have retired it. Factory now resolves the nested path FIRST, flat + legacy display.enabled as fallbacks (US-198 escape hatch preserved).
+- Rule-10: specs/architecture.md F-092 'Pygame sunset (US-402)' subsection + A-4 sequencing note -> DONE + 'Two Display Surfaces' Status-overlay banner-marked RETIRED.
+
+### Files changed:
+- Modified: `config.json` (pi.hardware.statusDisplay.enabled -> false -- the cut-over)
+- Modified: `src/pi/hardware/hardware_manager.py` (factory: pi-aware nested statusDisplay resolution + docstring)
+- Modified: `tests/pi/hardware/test_manager_status_display_disable.py` (+5 TestPiNestedConfigResolution)
+- Modified: `tests/deploy/test_dashboard_kit.py` (+1 test_shippedConfig_retiresPygameStatusDisplay_f4 -- F-4 cut-over-artifact proof)
+- Modified: `specs/architecture.md` (Rule-10 sunset docs)
+
+### Learnings for future iterations:
+- **Gotcha (load-bearing)**: a "flip a config flag to disable X" story can be a no-op if the flag isn't actually consumed. The factory read the FLAT `hardware.*` path while the orchestrator passes the FULL config (flag nested under `pi.hardware.*`) -- VERIFY the launch path actually reads the path config.json writes before assuming a flip works. The factory was internally inconsistent (already read `pi.shutdown.*` pi-prefixed but `hardware.*` flat).
+- **Pattern**: when a factory expects a sub-tree but the caller passes the full config, make the FACTORY pi-aware (nested-first, flat-fallback) rather than changing what the caller passes -- changing the caller (config['pi']) would have broken the factory's other pi-prefixed read (pi.shutdown.poweroffTimeoutSeconds).
+- **Sequencing flag for PM**: US-400/401 deferred the emitter live call-site wiring to Pi-bench. The emitter mechanism exists (republish path in place), but until emit() is wired live IN THE SAME deploy as the pygame retirement, the HTML cards read `unavailable` (honest) not live data. Retiring pygame + landing the emit wiring must ship together.
+---

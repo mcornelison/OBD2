@@ -25,6 +25,9 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-06-30    | Ralph (Rex)  | Initial implementation (US-399 carousel shell).
+# 2026-06-30    | Ralph (Rex)  | US-402: pygame sunset -- assert the shipped
+#               |              | config.json retires the StatusDisplay overlay
+#               |              | (F-4: HTML carousel is the sole surface).
 # ================================================================================
 ################################################################################
 
@@ -511,3 +514,35 @@ def test_uninstall_removesUnitAndAssets():
     sh = UNINSTALL_SH.read_text(encoding="utf-8")
     assert "eclipse-dashboard.service" in sh
     assert "/opt/dashboard" in sh
+
+
+# ---------------------------------------------------------------------------
+# US-402 -- pygame sunset (A-4 parity-gated): the shipped config retires the
+# legacy pygame StatusDisplay overlay so the HTML carousel is the sole surface
+# (F-4 "pygame + HTML never both active"). The cards reached parity in US-400
+# (System Status) + US-401 (Battery Health), so the cut-over is now safe.
+# ---------------------------------------------------------------------------
+
+import json  # noqa: E402  (grouped with the US-402 cut-over assertions)
+
+CONFIG_JSON = REPO_ROOT / "config.json"
+
+
+def test_shippedConfig_retiresPygameStatusDisplay_f4():
+    """US-402 / F-4: the deployed config.json disables the pygame StatusDisplay
+    overlay (`pi.hardware.statusDisplay.enabled == false`). With the overlay off
+    the orchestrator never opens a pygame surface, so the HTML carousel kiosk is
+    the only dashboard surface -- the two are never active at the same time. This
+    is the parity-gated cut-over (A-4): pygame is retired ONLY now that the
+    System Status + Battery Health cards have reached parity (US-400 / US-401)."""
+    config = json.loads(CONFIG_JSON.read_text(encoding="utf-8"))
+    enabled = (
+        config.get("pi", {})
+        .get("hardware", {})
+        .get("statusDisplay", {})
+        .get("enabled")
+    )
+    assert enabled is False, (
+        "pi.hardware.statusDisplay.enabled must be false to retire the pygame "
+        "surface (A-4 parity-gated sunset); the HTML carousel is the sole dashboard"
+    )

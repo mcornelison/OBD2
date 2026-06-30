@@ -444,7 +444,7 @@
         "vcellBatteryThresholdSustainedSeconds": 30
       },
       "statusDisplay": {
-        "enabled": true,
+        "enabled": false,
         "forceSoftwareRenderer": true
       }
     },

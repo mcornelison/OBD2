@@ -1420,6 +1420,12 @@ which reduces the last N rows of the `statistics` table per parameter
 
 ### Two Display Surfaces (primary + status_display overlay)
 
+> **Retired (US-402, V0.29.3):** the **Status overlay** below is retired in
+> production — `pi.hardware.statusDisplay.enabled=false` — superseded by the F-092
+> HTML carousel (see "F-092 Carousel Dashboard Subsystem → Pygame sunset"). The
+> module stays in the tree (re-enablable for a bench diagnostic) but the
+> orchestrator no longer launches it; the carousel is the sole dashboard surface.
+
 The Pi runtime wires two distinct pygame surfaces that must not fight over
 GPU resources:
 
@@ -2362,9 +2368,11 @@ to `/opt/dashboard` (WARN-not-BLOCK if absent, A-9), mirroring
 session-aware `install.sh` (V-1/V-2), the same seam as the splash kiosk unit.
 
 > **Sequencing note (A-4):** the dashboard and the pygame `status_display` must
-> never run simultaneously. The pygame surface is retired (parity-gated) in
-> **US-402**; the sprint deploys US-399…402 together, so the shipped artifact has
-> exactly one surface.
+> never run simultaneously. The pygame surface is **retired (parity-gated) in
+> US-402** — once the System Status + Battery Health cards reached parity
+> (US-400/401) — by setting `pi.hardware.statusDisplay.enabled=false` in
+> `config.json`. The sprint deploys US-399…402 together, so the shipped artifact
+> has exactly one surface. See the US-402 subsection below for the resolution fix.
 
 #### System Status card + `system-status` emitter (US-400) [Atlas A-3]
 
@@ -2468,6 +2476,35 @@ pack with no Spool data shows the stage + volts only, no minutes.
 writer into the F-103-provisioned `states/` tmpfs dir (after `system-status`; the
 `dtc` writer is US-404), ordered after the states-dir provisioning — it reuses
 `ensureStatesDir`/`writeStateAtomic`, never re-invents the lifecycle.
+
+#### Pygame sunset — parity-gated cut-over (US-402) [Atlas A-4]
+
+Once the System Status (US-400) and Battery Health (US-401) cards reached parity
+with the legacy pygame **status overlay**, that overlay is **retired** so the HTML
+carousel is the **sole** dashboard surface (failure **F-4**: the two must never be
+active simultaneously). The data the overlay used to paint is now republished
+through the `system-status` + `battery-health` emitters into the state files the
+carousel reads.
+
+**Cut-over mechanism.** The retirement is a single config flip:
+`pi.hardware.statusDisplay.enabled` → `false` in `config.json`. With the overlay
+off, `HardwareManager._initializeStatusDisplay` returns early and never opens a
+pygame surface; the carousel kiosk (launched by the splash `OnSuccess=` hand-off)
+is the only surface. This is parity-gated — pygame is retired **only** now that
+the cards exist, never before.
+
+**Resolution fix (load-bearing).** `createHardwareManagerFromConfig` historically
+resolved the overlay flag from the **flat** top-level `hardware.statusDisplay.*`
+path, but the orchestrator (`lifecycle.py`) passes the **full** config, where the
+canonical flag lives at the **nested** `pi.hardware.statusDisplay.*` (config.json).
+So before US-402 the nested flag was silently ignored and the overlay always
+launched on its `True` default — a config flip alone would not have retired it.
+The factory now resolves the **nested path first**, falling back to the flat path
+and then the legacy `hardware.display.enabled` (preserving the US-198 operator
+escape hatch). This mirrors the factory's own pi-nested
+`pi.shutdown.poweroffTimeoutSeconds` read. `status_display.py` /
+`dashboard_layout.py` remain in the tree (not launched), so the overlay can still
+be re-enabled for a bench diagnostic without a rebuild.
 
 ### Release Versioning + Deploy Records (US-241, B-047 US-A)
 

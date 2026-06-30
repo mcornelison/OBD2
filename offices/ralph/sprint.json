@@ -178,7 +178,7 @@
       "type": "normal",
       "size": "S",
       "status": "sprint-ready",
-      "passes": false,
+      "passes": true,
       "acceptance": [
         "status_display.py/dashboard_layout.py no longer launched (superseded; data republished via the emitters)",
         "both surfaces never run simultaneously (A-4 parity-gated)"
@@ -197,7 +197,17 @@
         "pygame is retired ONLY once the HTML carousel reaches parity; never run both surfaces at once (A-4)"
       ],
       "goal": "As the Pi, I want exactly one dashboard surface, so retire pygame once the HTML reaches parity.",
-      "tasks": []
+      "tasks": [],
+      "feedback": {
+        "filesActuallyTouched": [
+          "config.json",
+          "src/pi/hardware/hardware_manager.py",
+          "tests/pi/hardware/test_manager_status_display_disable.py",
+          "tests/deploy/test_dashboard_kit.py",
+          "specs/architecture.md"
+        ]
+      },
+      "completionNotes": "Pygame sunset SHIPPED -- parity-gated (A-4) now that BOTH carousel cards reached parity (US-400 System Status + US-401 Battery Health). CUT-OVER = `pi.hardware.statusDisplay.enabled` -> false in config.json: with the overlay off, HardwareManager._initializeStatusDisplay returns early and never opens a pygame surface, so the HTML carousel (launched by the splash OnSuccess= hand-off) is the SOLE dashboard surface -- the two are never both active (F-4). status_display.py/dashboard_layout.py stay in the tree (NOT deleted -- acceptance is 'no longer launched', and they remain re-enablable for a bench diagnostic + preserve the US-198 escape hatch + existing tests). LOAD-BEARING BUG FOUND + FIXED (this is why a config flip alone would NOT have worked): createHardwareManagerFromConfig resolved the overlay flag from the FLAT top-level `hardware.statusDisplay.*`, but lifecycle.py passes the FULL config where the canonical flag lives at the NESTED `pi.hardware.statusDisplay.*` (config.json) -- so pre-US-402 the nested flag was SILENTLY IGNORED and the overlay always launched on its True default (verified: lifecycle.py:1341 passes self._config, the factory reads top-level `hardware.*` while config.json has only `pi.hardware.*`; the factory is internally inconsistent -- it already reads `pi.shutdown.poweroffTimeoutSeconds` pi-prefixed). FIX: factory now resolves the nested path FIRST (pi.hardware.statusDisplay.enabled / .forceSoftwareRenderer), falling back to the flat path then legacy hardware.display.enabled -- mirrors the factory's own pi.shutdown pattern; flat fallback preserves the US-198 operator escape hatch. NOT passing config['pi'] to the factory (that would have broken the pi.shutdown.poweroffTimeoutSeconds read -> reverted it to default). SCOPE: DisplayManager (pi.display, headless by default) is a SEPARATE subsystem -- out of scope; US-402 targets exactly the status_display.py/dashboard_layout.py pygame overlay named in the story. Rule-10 (load-bearing surface retirement): specs/architecture.md F-092 section gained a 'Pygame sunset (US-402)' subsection (cut-over mechanism + the resolution-fix root cause) + the A-4 sequencing note updated to DONE + the older 'Two Display Surfaces' section banner-marked the Status overlay RETIRED. GATES (BENCH per validationMethod, TDD red->green): tests/pi/hardware/test_manager_status_display_disable.py +5 (TestPiNestedConfigResolution: nested-disable honored, init-skips-construction=no-pygame, nested-forceSoftwareRenderer, nested-precedes-flat, flat-back-compat-preserved) all green incl. the 7 pre-existing; tests/deploy/test_dashboard_kit.py +1 (test_shippedConfig_retiresPygameStatusDisplay_f4 = config.json ships statusDisplay.enabled=false, the F-4 cut-over-artifact proof) = full file green; full tests/pi/hardware suite 0 regressions (4 platform skips); tests/pi/obdii/orchestrator green; python validate_config.py PASS; ruff clean on all touched .py. DEFERRED (Pi bench, per validationMethod): I-7 (systemctl/log check post-deploy -> pygame status_display not launched) = live check at sprint validation (not reproducible off-Pi). DEFERRED-PM SEQUENCING (honest-instrument flag): the US-400/401 emitter live call-site wiring (orchestrator/power emit(...) feeding real BT/sync/power/drive + MAX17048/health-log readings) was DEFERRED by US-400/401 to the Pi-bench integration. The emitter MECHANISM exists (republish path in place), so 'data republished via the emitters' is structurally satisfied; but until the live emit() call-sites land IN THE SAME Pi deploy window, the HTML cards will read `unavailable` (honest-instrument, no fabrication) rather than live data. The sprint deploys US-399..402 together (per US-399), so PM must fold the deferred US-400/401 emit wiring into the same Pi deploy so the cards aren't blank once pygame is gone. DEFERRED-PM: mypy (not on dev box; factory change is fully-hinted) + full `pytest tests/` (slow SMB; the scoped suites above are the in-iteration gate). NEXT (Agent 1, single-agent): US-403 (System Setup menu + gated service control, deps US-399, A-7 polkit privilege path) OR the DTC line US-404->405->406->407 (US-404 KOEO read + dtc emitter first, per Atlas Ruling 1: event_router onConnectionRestored, drive_id=NULL explicit). Carousel cards (US-399/400/401) + pygame sunset (US-402) all passes:true; F-092 carousel surface is complete."
     },
     {
       "id": "US-403",
