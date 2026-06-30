@@ -701,3 +701,30 @@ Outcome: SHIPPED passes:true. The post-boot touch dashboard SHELL: a chromium ca
 - **OnSuccess= is the clean systemd hand-off for a self-closing kiosk**: a Type=simple unit whose JS calls window.close() exits 0, so `OnSuccess=next.service` chains the next surface; the failure branch (DEGRADED, no close) naturally suppresses the hand-off. No watchdog/.path file/pkill needed. The dashboard unit has no `[Install]` so it is ONLY hand-off-started.
 - **Gotcha (pytest [Install] prose match)**: asserting a systemd unit has no `[Install]` section must be line-anchored (`"[Install]" in [l.strip() for l in lines]`), not a substring -- the header comment legitimately mentions "[Install]" in prose.
 ---
+
+## 2026-06-30 - US-400 (Agent 1 / Rex)
+Task: System Status card + system-status emitter -- OBD-link/sync/power/drive tiles + I-033 BT-reconnect visibility
+Outcome: SHIPPED passes:true. New src/pi/splash/system_status_emitter.py (A-3 schema builder + best-effort emit factory + stale-while-driving policy) mirrors the F-103 shutdown_state_emitter seam; carousel.js gains the System Status card render logic (honest tiles + amber glyph binding, never green-when-broken).
+
+### What was implemented:
+- `system_status_emitter.py`: `buildSystemStatusState` (pure A-3 schema), `makeSystemStatusEmitter(statesDir, *, syncStaleThresholdS, nowIsoFn)` -> best-effort `emit(**live readings)` (computes stale, atomic write via reused ensureStatesDir/writeStateAtomic, write failure logged-never-raised), `isSyncStaleWhileDriving` policy helper, OBD_LINKED/RECONNECTING/DOWN constants.
+- A-3 ownership: orchestrator/sync tier owns + calls the emitter (unidirectional, like power_watch->shutdown emitter). Honest-instrument: obdLink.state verbatim, never fabricated 'linked'; absent/unparseable last-sync while recording -> stale. Threshold is a REQUIRED param (Spool S-3 owns; config supplies) -- no hardcoded tuning number.
+- `carousel.js`: pure node-testable exports obdLinkTile/syncTile/powerTile/driveTile/btGlyphState/syncGlyphState/powerGlyphState/systemStatusView; DOM renderSystemStatusCard (textContent verbatim, binds top-bar glyph data-state) + resetSystemGlyphs on unavailable; tick() dispatches system-status (battery-health slot reserved for US-401). F-1: green only when genuinely good.
+- `dashboard.css`: .tile + [data-level=ok/amber/down/unavailable] colours.
+- `specs/architecture.md`: Rule-10 US-400 subsection under F-092 (A-3 ownership, I-033 visibility, F-1 honest render, I-4 stale + Spool-S-3 threshold).
+
+### Files changed:
+- Created: `src/pi/splash/system_status_emitter.py`, `tests/pi/splash/test_system_status_emitter.py`
+- Modified: `specs/UI/dist/dashboard-pi/carousel.js`, `specs/UI/dist/dashboard-pi/dashboard.css`, `tests/deploy/test_dashboard_kit.py`, `specs/architecture.md`
+
+### Gates:
+- pytest tests/pi/splash/test_system_status_emitter.py = 9 passed (A-3 shape, honest down-link verbatim, stale policy x5, atomic write+computed-stale, never-raise).
+- pytest tests/deploy/test_dashboard_kit.py = 24 passed incl. US-400 node-logic (S-3 malformed->null, I-3 RECONNECTING+amber BT glyph, I-4 stale-sync amber, F-1 degraded-never-green + healthy-IS-green control + missing-subobject->unavailable) + CSS tile-level + carousel.js node --check (S-1).
+- tests/pi/splash + tests/deploy/test_dashboard_kit = 0 regressions (1 skip = node/bash gate). ruff clean on all touched .py.
+- DEFERRED (Pi bench): I-3 real BT-drop + I-4 stale-on-real-drive + orchestrator call-site wiring (live integration; unit+display tested+ready). DEFERRED-PM: mypy (not on box) + full pytest (slow SMB).
+
+### Learnings for future iterations:
+- **Pattern discovered**: the state-emitter trio (boot/shutdown/system-status) share one seam -- reuse `ensureStatesDir` + `writeStateAtomic` from boot_state_emitter; build a pure `buildXState` + a best-effort `makeXEmitter` factory whose `emit` is logged-never-raised. US-401 battery-health should mirror it exactly.
+- **Gotcha**: the carousel `tick()` loop already carries a `battery-health -> US-401` dispatch slot + glyph-reset discipline -- US-401 plugs a `renderBatteryCard` in symmetrically; don't restructure the poll.
+- **Gotcha**: a Spool-owned tuning threshold (S-3) must be an injected/required param, NOT a default magic number (Refusal Rule 2). The factory takes `syncStaleThresholdS`; config wires it at the (deferred) orchestrator call site.
+---

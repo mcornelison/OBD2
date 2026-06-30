@@ -81,6 +81,28 @@ html, body {
   color: var(--text-tertiary); font-style: italic;
 }
 
+/* --- US-400 System Status tiles --------------------------------------------- */
+/* Each tile = label + prominent value + detail. The [data-level] attribute
+   drives the value colour; a degraded tile (amber/down/unavailable) is NEVER
+   green (honest-instrument F-1). The default value colour is neutral. */
+.tile {
+  display: flex; flex-direction: column;
+  padding: 4px 0; border-bottom: 1px solid var(--surface);
+}
+.tile:last-child { border-bottom: 0; }
+.tile-label {
+  font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--text-secondary);
+}
+.tile-value { font-size: 15px; font-weight: 600; color: var(--text-primary); }
+.tile-detail { font-size: 11px; color: var(--text-tertiary); }
+.tile[data-level="ok"]    .tile-value { color: var(--ok-green); }
+.tile[data-level="amber"] .tile-value { color: var(--amber-warn); }
+.tile[data-level="down"]  .tile-value { color: var(--red-light); }
+.tile[data-level="unavailable"] .tile-value {
+  color: var(--text-tertiary); font-style: italic; font-weight: 400;
+}
+
 /* --- page dots (>=40px touch target, 10px visual) --------------------------- */
 #dots {
   position: absolute; bottom: 0; left: 0; right: 0; height: 24px;

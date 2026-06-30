@@ -71,7 +71,7 @@
       "type": "normal",
       "size": "M",
       "status": "sprint-ready",
-      "passes": false,
+      "passes": true,
       "acceptance": [
         "new system-status emitter writes /run/eclipse-obd/states/system-status (schema per A-3)",
         "card renders it verbatim; malformed JSON -> `unavailable`",
@@ -101,7 +101,18 @@
         "if the underlying state is stale/down, the tile never renders green/healthy (honest-instrument)"
       ],
       "goal": "As the operator, I want OBD-link / sync / power / drive status at a glance, and to SEE when the BT link drops, so I'm not blind to a reconnect (I-033).",
-      "tasks": []
+      "tasks": [],
+      "feedback": {
+        "filesActuallyTouched": [
+          "src/pi/splash/system_status_emitter.py",
+          "tests/pi/splash/test_system_status_emitter.py",
+          "specs/UI/dist/dashboard-pi/carousel.js",
+          "specs/UI/dist/dashboard-pi/dashboard.css",
+          "tests/deploy/test_dashboard_kit.py",
+          "specs/architecture.md"
+        ]
+      },
+      "completionNotes": "System Status card + system-status emitter SHIPPED. EMITTER (new src/pi/splash/system_status_emitter.py, mirrors the F-103 shutdown_state_emitter seam): buildSystemStatusState (pure A-3 schema -- obdLink{state,retries,lastSeenS}/sync{lastOkTs,rows,pending,stale}/power{mode,source}/drive{state,driveId}/ts) + makeSystemStatusEmitter(statesDir, *, syncStaleThresholdS, nowIsoFn) -> best-effort emit(**live readings) that computes stale + writes atomically (reuses ensureStatesDir/writeStateAtomic; write failure logged-never-raised so the dashboard hook never blocks the orchestrator loop) + isSyncStaleWhileDriving(driveState, lastOkTs, nowIso, *, thresholdS) policy helper. A-3 OWNERSHIP: the orchestrator/sync tier owns the emitter (holds live BT-link + sync_log + DriveDetector state) and CALLS emit(...) -- unidirectional, same as power_watch->shutdown emitter; the emitter never reaches back. HONEST-INSTRUMENT: obdLink.state reported verbatim (linked/reconnecting/down), never fabricated 'linked'; absent/unparseable last-sync while recording -> stale (never claim unprovable freshness). THRESHOLD: syncStaleThresholdS is a REQUIRED factory param (Spool S-3 owns the value, config supplies it) -- NO hardcoded tuning number (Refusal Rule 2 / PM Rule 7). CARD (carousel.js): added pure node-testable render logic exported on `api` -- obdLinkTile/syncTile/powerTile/driveTile (each -> {label,value,detail,level}), btGlyphState/syncGlyphState/powerGlyphState, systemStatusView(data) (non-object -> null). F-1 cardinal rule: a tile/glyph is `ok`(green) ONLY when the underlying state is genuinely good; down/reconnecting/stale/battery -> amber/down/neutral, never green. DOM render (browser-only): renderSystemStatusCard fills the card-body via textContent (verbatim, no innerHTML) + binds the top-bar glyph data-state; resetSystemGlyphs returns glyphs to neutral on unavailable (no lingering stale-green). I-033: reconnecting -> tile RECONNECTING + retries + amber BT glyph, surfaced within the 4Hz poll (<=2s). dashboard.css: .tile + [data-level=ok/amber/down/unavailable] value colours bound to the palette. Rule-10: specs/architecture.md F-092 section gained a 'System Status card + system-status emitter (US-400)' subsection (A-3 ownership, I-033 visibility, F-1 honest render, I-4 stale-while-driving + Spool-S-3 threshold). GATES (BENCH per validationMethod): tests/pi/splash/test_system_status_emitter.py 9 passed (A-3 shape, honest down-link verbatim, stale policy x5, atomic write + computed-stale, never-raise); tests/deploy/test_dashboard_kit.py 24 passed incl. new US-400 node-logic test (S-3 malformed->null, I-3 RECONNECTING+amber BT glyph, I-4 stale-sync amber, F-1 degraded-never-green + healthy-IS-green positive control + missing-subobject->unavailable) + CSS tile-level assertion + carousel.js node --check (S-1). Full tests/pi/splash + tests/deploy/test_dashboard_kit = 0 regressions (1 skip = node/bash gate). ruff clean on all touched .py. DEFERRED (Pi bench, per validationMethod): I-3 real BT-drop on the rig + I-4 stale-while-driving on a real drive + the orchestrator call-site wiring that feeds emit(...) live BT/sync/power/drive readings (live integration, validated on the Pi; the unit + display are tested + ready -- same deferral pattern as US-399's boot->dashboard handoff drill). DEFERRED-PM: mypy (not on dev box; code mypy-strict-shaped -- full hints, future annotations, no untyped defs) + full `pytest tests/` (slow SMB; the two scoped suites above are the in-iteration gate). NEXT: US-401 (Battery Health card + battery-health emitter) symmetric to this -- the tick() loop already has the `battery-health -> US-401` dispatch slot; or US-402/US-403."
     },
     {
       "id": "US-401",

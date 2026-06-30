@@ -183,6 +183,105 @@ def test_dashboardCss_carriesStopRedToken():
 
 
 # ---------------------------------------------------------------------------
+# US-400 -- System Status card render logic (S-3 / I-3 / I-4 / F-1).
+# ---------------------------------------------------------------------------
+
+_US400_NODE_SCRIPT = r"""
+const assert = require('assert');
+const c = require(process.argv[1]);
+
+// S-3: a non-object (null / malformed-parsed-to-null) -> no view (the shell
+// renders `unavailable`); a plain object yields a structured view.
+assert.strictEqual(c.systemStatusView(null), null, 'null -> no view');
+assert.strictEqual(c.systemStatusView('x'), null, 'string -> no view');
+assert.strictEqual(c.systemStatusView([]), null, 'array -> no view');
+
+// I-3: a reconnecting OBD link -> tile shows RECONNECTING (amber), retries
+// surfaced; the top-bar BT glyph flips amber.
+const reconn = {
+  obdLink: {state: 'reconnecting', retries: 3, lastSeenS: 14},
+  sync: {lastOkTs: '2026-06-30T19:40:00Z', rows: 10, pending: 0, stale: false},
+  power: {mode: 'car', source: 'external'},
+  drive: {state: 'recording', driveId: 27},
+  ts: '2026-06-30T19:42:00Z'
+};
+const rv = c.systemStatusView(reconn);
+assert.strictEqual(rv.tiles.obdLink.level, 'amber', 'reconnect tile amber');
+assert.ok(/RECONNECTING/i.test(rv.tiles.obdLink.value), 'tile says RECONNECTING');
+assert.ok(/3/.test(rv.tiles.obdLink.detail), 'retries surfaced');
+assert.strictEqual(rv.glyphs.bt, 'amber', 'BT glyph amber on reconnect');
+
+// I-4: a stale-while-driving sync -> sync tile amber + sync glyph amber.
+const stale = JSON.parse(JSON.stringify(reconn));
+stale.obdLink = {state: 'linked', retries: 0, lastSeenS: 1};
+stale.sync.stale = true;
+const sv = c.systemStatusView(stale);
+assert.strictEqual(sv.tiles.sync.level, 'amber', 'stale sync tile amber');
+assert.strictEqual(sv.glyphs.sync, 'amber', 'sync glyph amber when stale');
+
+// F-1 (honest-instrument): a fully-degraded underlying state NEVER renders a
+// green/ok tile or glyph.
+const degraded = {
+  obdLink: {state: 'down', retries: 0, lastSeenS: null},
+  sync: {lastOkTs: null, rows: 0, pending: 12, stale: true},
+  power: {mode: 'car', source: 'battery'},
+  drive: {state: 'idle', driveId: null},
+  ts: '2026-06-30T19:42:00Z'
+};
+const dv = c.systemStatusView(degraded);
+assert.strictEqual(dv.tiles.obdLink.level, 'down', 'down link not ok');
+assert.strictEqual(dv.tiles.sync.level, 'amber', 'stale sync not ok');
+assert.strictEqual(dv.tiles.power.level, 'amber', 'battery power not ok');
+const dglyphs = [dv.glyphs.bt, dv.glyphs.sync, dv.glyphs.power];
+assert.ok(dglyphs.indexOf('ok') === -1, 'no glyph is ok when degraded');
+
+// A healthy state DOES render green (the positive control -- ok is reachable).
+const healthy = {
+  obdLink: {state: 'linked', retries: 0, lastSeenS: 2},
+  sync: {lastOkTs: '2026-06-30T19:41:50Z', rows: 50, pending: 0, stale: false},
+  power: {mode: 'car', source: 'external'},
+  drive: {state: 'recording', driveId: 27},
+  ts: '2026-06-30T19:42:00Z'
+};
+const hv = c.systemStatusView(healthy);
+assert.strictEqual(hv.tiles.obdLink.level, 'ok', 'linked -> ok');
+assert.strictEqual(hv.glyphs.bt, 'ok', 'BT glyph ok when linked');
+assert.strictEqual(hv.glyphs.power, 'ok', 'power glyph ok on external');
+
+// A missing sub-object -> that tile is `unavailable`, never green.
+const partial = c.systemStatusView({ts: '2026-06-30T19:42:00Z'});
+assert.strictEqual(partial.tiles.obdLink.level, 'unavailable', 'missing link tile');
+assert.strictEqual(partial.glyphs.bt, 'neutral', 'missing link glyph neutral');
+
+console.log('US400_OK');
+"""
+
+
+@pytest.mark.skipif(not _nodeAvailable(), reason="node not available on PATH")
+def test_systemStatusView_renderLogic_s3_i3_i4_f1():
+    """US-400: the System Status render logic maps emitter JSON -> honest tiles +
+    glyph states (RECONNECTING amber, stale-sync amber, never green-when-broken)."""
+    result = subprocess.run(
+        ["node", "-e", _US400_NODE_SCRIPT, str(KIT_DIR / "carousel.js")],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "US400_OK" in result.stdout
+
+
+def test_dashboardCss_carriesTileLevelColors_us400():
+    """US-400: the card-tile level styles bind ok/amber/down to the palette so a
+    degraded tile is visibly not-green (honest-instrument)."""
+    css = _read(KIT_DIR, "dashboard.css")
+    assert '.tile' in css
+    assert 'data-level="amber"' in css
+    assert 'data-level="down"' in css
+    assert 'data-level="ok"' in css
+
+
+# ---------------------------------------------------------------------------
 # A-1 -- splash -> dashboard hand-off (OnSuccess=).
 # ---------------------------------------------------------------------------
 

@@ -2366,6 +2366,53 @@ session-aware `install.sh` (V-1/V-2), the same seam as the splash kiosk unit.
 > **US-402**; the sprint deploys US-399…402 together, so the shipped artifact has
 > exactly one surface.
 
+#### System Status card + `system-status` emitter (US-400) [Atlas A-3]
+
+The **System Status** card (Card 1) renders the `system-status` state file at 4
+Hz: OBD-link / sync / power / drive tiles + the top-bar BT/sync/power glyphs.
+
+**`system-status` emitter (`src/pi/splash/system_status_emitter.py`).** The
+**orchestrator/sync tier owns this emitter** (A-3): it holds the live BT-link,
+the `sync_log` high-water mark, the power source, and the `DriveDetector` state,
+so it calls the injected `makeSystemStatusEmitter(...)` → `emit(...)` callable —
+the same unidirectional seam as the shutdown emitter (`power_watch` → splash):
+the emitter never reaches back into the orchestrator. The emit is **best-effort**
+(write failures logged, never raised → the dashboard hook can never block the
+orchestrator loop) and writes the A-3 schema atomically (`writeStateAtomic`,
+reusing the boot-state primitives). Schema (spec §7):
+
+```json
+{ "obdLink": {"state":"reconnecting","retries":3,"lastSeenS":14},
+  "sync": {"lastOkTs":"…","rows":1204,"pending":0,"stale":false},
+  "power": {"mode":"car","source":"external"},
+  "drive": {"state":"recording","driveId":27},
+  "ts":"…" }
+```
+
+**I-033 reconnect visibility.** `obdLink.state` is reported **verbatim** —
+`linked` (green) / `reconnecting` (amber, with `retries` + `lastSeenS`) / `down`
+(red) — never fabricated as `linked`. On a mid-drive BT drop the reconnect loop
+flips the state to `reconnecting`; the 4 Hz poll surfaces `RECONNECTING` on the
+tile and an amber BT glyph within ≤2 s (the operator finally *sees* the
+reconnect, closing the I-033 "did it capture my drive?" blind spot).
+
+**Honest-instrument render (F-1).** `carousel.js#systemStatusView` maps the state
+to tile levels (`ok`/`amber`/`down`/`unavailable`) + glyph states; a level/glyph
+is **`ok` (green) only when the underlying state is genuinely good**. A
+down/reconnecting link, a stale sync, or running on battery renders
+amber/down/neutral — never green. A missing sub-object renders that tile
+`unavailable` (the rest of the card still renders); a missing/malformed file
+renders the whole card `unavailable` and resets the glyphs to neutral (no
+lingering stale-green). Tiles are built with `textContent` (no `innerHTML`), so
+emitter values render verbatim, never as markup.
+
+**Stale-while-driving (I-4).** `isSyncStaleWhileDriving` flags `sync.stale=true`
+**only while recording** (a parked Pi catches up on WiFi return) when the last
+sync exceeds the threshold — and treats an absent/unparseable last-sync as stale
+(never claim a freshness we can't prove). The **threshold is Spool-owned (S-3)**
+and supplied by config: the emitter takes `syncStaleThresholdS` as a required
+parameter and **hardcodes no tuning number** (PM Rule 7 / Refusal Rule 2).
+
 ### Release Versioning + Deploy Records (US-241, B-047 US-A)
 
 Pre-US-241 every deploy was anonymous: a `git pull` + service restart with no
