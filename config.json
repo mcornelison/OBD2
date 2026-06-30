@@ -481,6 +481,25 @@
     "bus": {
       "enabled": false
     },
+    "splash": {
+      "enabled": true,
+      "statesDir": "/run/eclipse-obd/states",
+      "tokenPath": "/run/eclipse-obd/states/.http-token",
+      "assetsDir": "/opt/splash",
+      "stateServer": {
+        "host": "127.0.0.1",
+        "port": 9899
+      },
+      "bootState": {
+        "pollIntervalMs": 500,
+        "hardCapSeconds": 12,
+        "criticalServices": [
+          "eclipse-powerwatch",
+          "eclipse-obd",
+          "boot-progress-finalize"
+        ]
+      }
+    },
     "update": {
       "enabled": true,
       "intervalMinutes": 60,

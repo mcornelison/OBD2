@@ -2179,6 +2179,60 @@ RestartSec=5
 WantedBy=multi-user.target
 ```
 
+### F-103 Splash Subsystem -- state server + emitters + `/run/eclipse-obd/states/` lifecycle (US-393, Sprint 48 / V0.29.2)
+
+The boot/shutdown splash is a **pure SSOT consumer** (`specs/ssot-design-pattern.md`):
+a chromium kiosk that *renders* state but never *decides* system condition. Three
+cooperating processes communicate via a tmpfs directory.
+
+| Unit | Source of Truth | Role |
+|------|-----------------|------|
+| `eclipse-boot-state.service` | `deploy/eclipse-boot-state.service` | [A-1] Boot-state emitter (`python -m pi.splash.boot_state_emitter`). Polls `systemctl is-active` for the critical set + assesses the tiered eclipse-obd health, writes `boot-state` JSON @ 500ms. The authority for `healthy`/`degraded`. |
+| `eclipse-states-http.service` | `deploy/eclipse-states-http.service` | [A-4] Localhost state server (`python -m pi.splash.states_http_server`). Binds **127.0.0.1:9899 only**, serves the read-only `states/*` JSON, **token-gated** (token SSOT), path-traversal-guarded, `Cache-Control: no-store`. The only IPC chromium can `fetch()`. |
+| `splash-boot.service.{wayland,x11}` | `specs/UI/dist/splash-pi/` | [A-8] Chromium kiosk. Loads `http://127.0.0.1:9899/` (same-origin, token injected) and runs the `boot-state-poll.js` state machine. |
+
+**Code:** `src/pi/splash/` — `boot_state_emitter.py` (honest-instrument verdict
+logic: 3-tier eclipse-obd health, alarm-fatigue guard, retry-once, hard-cap
+degrade), `states_http_server.py` (the localhost server), `token.py` (the
+one-source auth token).
+
+**Token SSOT (US-393 DoD):** exactly one file — `/run/eclipse-obd/states/.http-token`
+(0600) — is the authority. `token.loadOrCreateToken` generates it once and never
+regenerates. The server loads it to validate the `X-Splash-Token` /
+`Authorization: Bearer` header on the state-JSON endpoints; the kiosk receives it
+**injected into the index page the server serves same-origin**, so the token never
+lands in an on-disk asset.
+
+**`/run/eclipse-obd/states/` ownership + lifecycle (Atlas C-5 — the load-bearing
+multi-owner runtime-dir contract).** `/run` is tmpfs (wiped every reboot). The dir
+has three would-be owners that must be reconciled so they do not fight:
+
+1. **`eclipse-obd.service`** declares `RuntimeDirectory=eclipse-obd` → systemd
+   creates `/run/eclipse-obd` on *its* start and **removes it on its stop**, and
+   it never creates the `states/` subdir. Owning the dir *exclusively* would make
+   `states/` (and `shutdown-state`) vanish the moment eclipse-obd stops — exactly
+   when the US-394 shutdown splash needs it.
+2. **The F-103 units share `RuntimeDirectory=eclipse-obd`** (same name → systemd
+   **ref-counts** it). `eclipse-states-http.service` runs continuously, so the
+   ref-count never hits zero while it is up → `/run/eclipse-obd` **outlives**
+   eclipse-obd.service across its stop/restart. `RuntimeDirectoryPreserve=yes`
+   reinforces this.
+3. **`/etc/tmpfiles.d/eclipse-obd-states.conf`** (`deploy/eclipse-obd-states.conf`)
+   creates `/run/eclipse-obd/states/` (owned `mcornelison`) **at every boot,
+   independent of any unit's start order** — the cold-reboot invariant the bench
+   drill proves (splash renders without eclipse-obd having provisioned the dir).
+
+The emitter + server also `ensureStatesDir()` the `states/` subdir in-process
+(`RuntimeDirectory` makes only the parent `/run/eclipse-obd`, not `states/`).
+Together: tmpfiles guarantees boot-time existence; the shared ref-counted
+`RuntimeDirectory` guarantees mid-session survival across eclipse-obd's lifecycle.
+The old deploy-time `install -d` alone is **insufficient** (tmpfs wipes it on the
+next reboot). `deploy-pi.sh` installs the tmpfiles entry + the two units (US-395).
+
+> **Forward ref:** the shutdown-state half of this contract (the ShutdownSequencer
+> phase-emit hook + the "shutdown-state survives eclipse-obd stop" guarantee) is
+> documented in §10.6 by US-394 (same sprint).
+
 ### Release Versioning + Deploy Records (US-241, B-047 US-A)
 
 Pre-US-241 every deploy was anonymous: a `git pull` + service restart with no

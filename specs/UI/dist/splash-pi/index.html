@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=480, height=320, initial-scale=1, user-scalable=no"/>
+<title>Eclipse OBD-II Boot Splash</title>
+<!-- F-103 boot splash (US-393). Served same-origin by eclipse-states-http at
+     http://127.0.0.1:9899/ so the auth token is injected below (the token SSOT
+     never lands on disk). Text layers are HTML overlays above the embedded SVG
+     (spec §4) so the version chip + degraded message are trivially data-bound. -->
+<link rel="stylesheet" href="styles.css"/>
+</head>
+<body>
+  <div id="splash-stage">
+    <!-- 3-rhombus brand animation; geometry unchanged (spec §4 center mark). -->
+    <object id="mark" type="image/svg+xml" data="splash.svg" aria-label="boot splash"></object>
+
+    <!-- HTML text overlays (absolute-positioned via styles.css). -->
+    <div id="wordmark" class="overlay">ECLIPSE OBD-II<span id="warn-glyph"></span></div>
+    <div id="degraded-msg" class="overlay" hidden></div>
+    <div id="version-chip" class="overlay">V?.?.?</div>
+
+    <!-- Amber degraded outer ring (hidden until boot-state.degraded). -->
+    <div id="amber-ring" hidden></div>
+  </div>
+
+  <script>
+    // Token injected by the state server at serve time (spec: token SSOT).
+    // When previewed from file:// the placeholder is left as-is and the polls
+    // simply fail closed to DEGRADED -- the preview still renders the animation.
+    window.SPLASH_TOKEN = "__SPLASH_TOKEN__";
+  </script>
+  <script src="boot-state-poll.js"></script>
+</body>
+</html>

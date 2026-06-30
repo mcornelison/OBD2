@@ -1,0 +1,67 @@
+/* ============================================================================
+ * File:    styles.css
+ * Purpose: F-103 splash text-layer + degraded-escalation styles (spec §4).
+ *          Externalized from index.html so the HTML overlay bindings stay clean.
+ * Author:  Ralph Agent (Rex)
+ * Created: 2026-06-29 -- Sprint 48 US-393 (F-103 boot splash)
+ * ==========================================================================*/
+
+:root {
+  --text-secondary: #888888;   /* wordmark */
+  --text-tertiary:  #666666;   /* version chip */
+  --amber-warn:     #FFC400;   /* degraded escalation; project-wide warn token */
+  --amber-soft:     #FFC40033; /* 20% alpha amber for soft backdrops */
+  /* Future tuning-instrument reservations (Spool S-2; NOT used in splash v1):
+     --critical-red and --neutral-blue are declared in the spec only -- the
+     splash never renders them, and brand reds are never reused as critical red. */
+}
+
+html, body {
+  margin: 0; padding: 0; width: 100%; height: 100%;
+  background: #000; overflow: hidden; cursor: none;
+}
+
+#splash-stage {
+  position: relative; width: 100vw; height: 100vh; background: #000;
+}
+
+#mark {
+  width: 100vw; height: 100vh; object-fit: contain;
+  background: #000; border: 0; display: block;
+}
+
+/* Single font family: system mono only -- no web fonts, no CDN dependency. */
+.overlay {
+  position: absolute; left: 0; right: 0; text-align: center;
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  pointer-events: none;
+}
+
+#wordmark {
+  top: 18px; font-size: 14px; font-weight: 500;
+  color: var(--text-secondary); letter-spacing: 0.12em; text-transform: uppercase;
+}
+
+#version-chip {
+  bottom: 12px; font-size: 10px; font-weight: 400;
+  color: var(--text-tertiary); letter-spacing: 0.06em;
+}
+
+#degraded-msg {
+  top: 200px; font-size: 11px; font-weight: 500;
+  color: var(--amber-warn); letter-spacing: 0.06em;
+}
+
+/* Degraded escalation (spec §5): three reinforcing channels. */
+body.degraded #amber-ring {
+  position: absolute; inset: 0; border: 4px solid var(--amber-warn);
+  box-sizing: border-box; opacity: 0; animation: amber-fade-in 0.3s forwards;
+}
+
+body.degraded #version-chip { color: var(--amber-warn); }
+
+/* Motion FREEZE: visual silence is the alarm. Stop every SVG animation by
+   pausing the embedded document's animations via the object element. */
+body.degraded #mark { animation-play-state: paused; }
+
+@keyframes amber-fade-in { from { opacity: 0; } to { opacity: 1; } }

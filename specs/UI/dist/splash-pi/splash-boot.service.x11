@@ -1,0 +1,36 @@
+# ==============================================================================
+# File:    splash-boot.service.x11  (one of two variants; install.sh picks)
+# Purpose: F-103 status-aware boot splash, X11 fallback. Same as the Wayland
+#          variant but talks to an X server (DISPLAY=:0) instead of Wayland.
+#          install.sh selects this only when the detected session type is x11
+#          (V-2); guessing wrong gives the D-3 class of bug, so detection must
+#          fail loudly rather than default.
+# Author:  Ralph Agent (Rex)  (D-3 corrected unit per spec §7)
+# Created: 2026-06-29 -- Sprint 48 US-393 (F-103 boot splash)
+#
+# Token SSOT: chromium loads http://127.0.0.1:9899/ so the token is injected
+#   same-origin and never lands on disk. Requires eclipse-states-http.
+# Type=simple [A-8]. __PI_USER__ substituted by install.sh (V-1).
+# ==============================================================================
+
+[Unit]
+Description=Animated boot splash (status-aware, X11)
+After=graphical.target eclipse-states-http.service eclipse-boot-state.service
+Wants=graphical.target eclipse-states-http.service eclipse-boot-state.service
+
+[Service]
+Type=simple
+User=__PI_USER__
+Environment=DISPLAY=:0
+Environment=XDG_RUNTIME_DIR=/run/user/%U
+ExecStart=/usr/bin/chromium-browser \
+  --kiosk \
+  --noerrdialogs --disable-infobars --hide-scrollbars \
+  --autoplay-policy=no-user-gesture-required \
+  --check-for-update-interval=31536000 \
+  --user-data-dir=/tmp/splash-chromium-boot \
+  http://127.0.0.1:9899/
+# Splash exits via JS window.close() at HEALTHY_YIELD / DEGRADED (D-3).
+
+[Install]
+WantedBy=graphical.target

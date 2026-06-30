@@ -11,8 +11,9 @@
       "epicId": "E-001",
       "type": "normal",
       "size": "M",
-      "status": "sprint-ready",
-      "passes": false,
+      "status": "complete",
+      "passes": true,
+      "completionNotes": "F-103 boot-splash required-first runtime SHIPPED. NEW src/pi/splash/ package: token.py (token SSOT -- loadOrCreateToken: secrets.token_urlsafe, O_CREAT|O_EXCL 0600, idempotent single-source); boot_state_emitter.py [A-1] (computeBootState pure honest-instrument verdict: 3-tier eclipse-obd health, alarm-fatigue guard = synced-no-data/T3-engine-off is NOT degraded per Spool S-1/F-7, first-failure one-line degradedReason, progress fraction, hard-cap timeout degrade; assessObdTier retry-once on T2/T3 slow-init transient but NOT T1; ensureStatesDir + atomic writeStateAtomic; runForever loop + main() CLI); states_http_server.py [A-4] (stdlib http.server, 127.0.0.1-only bind, token-gated state JSON via X-Splash-Token/Bearer + hmac.compare_digest, path-traversal 404 guard, Cache-Control no-store, serves read-only states/* + token-injected same-origin index so the token never lands on disk, listen-fail raises->non-zero exit->splash DEGRADED). Systemd: deploy/eclipse-boot-state.service + deploy/eclipse-states-http.service (both Type=simple, shared RuntimeDirectory=eclipse-obd ref-counted + RuntimeDirectoryPreserve=yes so /run/eclipse-obd OUTLIVES eclipse-obd.service stop per C-5; dual-PYTHONPATH guard). C-5 states-dir: deploy/eclipse-obd-states.conf tmpfiles.d creates /run/eclipse-obd/states (mcornelison) at EVERY boot independent of eclipse-obd; emitter+server also ensureStatesDir in-process. Kiosk assets (specs/UI/dist/splash-pi/): rewrote index.html (token placeholder + HTML overlay layers), new boot-state-poll.js (INIT->PLAYING_NORMAL->HEALTHY_YIELD@>=2.5s | DEGRADED amber-ring+freeze+msg, retry-once on transient IPC failure, version.txt chip with V?.?.? fallback), new styles.css (spec S4 typography + degraded escalation), new splash-boot.service.{wayland,x11} (D-3 fix: After=graphical.target, Wayland-native, JS window.close exit, loads http://127.0.0.1:9899/). Rule-10: specs/architecture.md F-103 subsection (state-server+emitters+/run/eclipse-obd/states/ multi-owner lifecycle SSOT contract) + config.json pi.splash section (validate_config PASS). GATES: pytest tests/pi/splash/ = 33 passed/1 skipped (POSIX-perms test skips on Windows dev box); ruff check src/pi/splash tests/pi/splash = clean. DEFERRED: (1) mypy not installed on dev box (code is mypy-strict-shaped; PM/Atlas make typecheck at integration); (2) full-suite pytest deferred to PM integration (slow SMB share -- scoped splash suite is the in-iteration gate per prompt slow-share carve-out; changes are additive, only shared file = config.json which validated); (3) BENCH-ONLY final acceptance on Pi (cold-reboot states-dir-without-eclipse-obd proof, curl localhost:9899 with token, synthetic boot-phase transition) per sprint.json validationMethod -- chromium rendering + cold-reboot drill are CIO/Argus bench, not dev-box runnable. NOTE token design: kiosk loads http://127.0.0.1:9899/ (server injects token same-origin) rather than file:///opt/splash/index.html so the token SSOT never lands in an on-disk asset -- documented in architecture.md + unit headers.",
       "acceptance": [
         "chromium kiosk launches on boot rendering the splash on the 3.5\" display",
         "new eclipse-boot-state.service emits boot phases [A-1]",
@@ -40,7 +41,29 @@
         "if HDMI/display isn't ready at boot, retry-once then degrade gracefully (no crash, no boot stall)"
       ],
       "goal": "As the Pi at boot, I want a branded boot splash on the 3.5\" display backed by a chromium kiosk + a localhost state server, so the operator sees boot progress instead of a console/blank screen.",
-      "tasks": []
+      "tasks": [],
+      "feedback": {
+        "filesActuallyTouched": [
+          "src/pi/splash/__init__.py",
+          "src/pi/splash/token.py",
+          "src/pi/splash/boot_state_emitter.py",
+          "src/pi/splash/states_http_server.py",
+          "tests/pi/splash/__init__.py",
+          "tests/pi/splash/test_token.py",
+          "tests/pi/splash/test_boot_state_emitter.py",
+          "tests/pi/splash/test_states_http_server.py",
+          "deploy/eclipse-boot-state.service",
+          "deploy/eclipse-states-http.service",
+          "deploy/eclipse-obd-states.conf",
+          "specs/UI/dist/splash-pi/index.html",
+          "specs/UI/dist/splash-pi/styles.css",
+          "specs/UI/dist/splash-pi/boot-state-poll.js",
+          "specs/UI/dist/splash-pi/splash-boot.service.wayland",
+          "specs/UI/dist/splash-pi/splash-boot.service.x11",
+          "specs/architecture.md",
+          "config.json"
+        ]
+      }
     },
     {
       "id": "US-394",

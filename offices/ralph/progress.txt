@@ -427,3 +427,49 @@ Outcome: SHIPPED passes:true. The historical ECU spine is established as exactly
 - **A bootstrap script is the Atlas-blessed carve-out to a single-mutator invariant**: stamp_ecu_swap REFUSES first-row bootstrap by design (getActiveVehicleInfo()==None once the placeholder is closed). Establishing the spine is a distinct, one-shot job -- a separate blessed script, not a relaxation of the steady-state writer's append-only guard.
 - **Shared-checkout index.lock contention recurred (handbook §13)**: the `.git/index.lock` was held >60s by another active agent; READ git ops worked but `git add` blocked. Waited + retried, never forced; prepared all state-file edits (sprint.json/ralph_agents.json/progress.txt) via the file tools first, then committed in one shot when the lock cleared.
 ---
+
+## Sprint 48 / V0.29.2 -- Pi UI Foundation (F-103 boot/shutdown splash) + bug cleanup
+
+Epic E-001 (F-103) + bug cleanup (F-076, F-006). 6 stories US-393..398.
+BENCH-ONLY validation (CIO waived drive requirements 2026-06-29). Forks from dev.
+F-103 spec: docs/superpowers/specs/2026-05-26-b103-splash-animation-design.md (v1.2).
+Build chain: US-393 -> US-394 -> US-395 -> US-396 (F-103 sequential); US-397/398 independent.
+
+## 2026-06-29 - US-393 (Agent 1 / Rex)
+Task: F-103 boot splash -- chromium kiosk + localhost state server on the 3.5" display
+Outcome: SHIPPED passes:true. The "required-first runtime" the rest of the Pi UI line depends on (Atlas C-1).
+
+### What was implemented:
+- NEW src/pi/splash/ package (TDD red->green):
+  - token.py -- token SSOT: loadOrCreateToken (secrets.token_urlsafe, O_CREAT|O_EXCL 0600 atomic create, idempotent; the file is the single source -- never regenerated)
+  - boot_state_emitter.py [Atlas A-1] -- computeBootState pure honest-instrument verdict (3-tier eclipse-obd health; ALARM-FATIGUE GUARD: synced-no-data/T3 engine-off ECU-silence is NOT degraded per Spool S-1 / failure-mode F-7; first-failure one-line degradedReason; progress fraction; hard-cap timeout degrade with no silent green-when-slow). assessObdTier = retry-once on a T2/T3 slow-init transient but NOT T1 (adapter physically missing). ensureStatesDir + atomic writeStateAtomic. runForever loop (sleeps between, not after last) + main() CLI.
+  - states_http_server.py [Atlas A-4] -- stdlib http.server, 127.0.0.1-only bind, token-gated state JSON (X-Splash-Token or Authorization: Bearer, hmac.compare_digest constant-time), path-traversal ".." segment -> 404, Cache-Control: no-store, serves read-only states/* + TOKEN-INJECTED same-origin index (so the token never lands in an on-disk asset), listen-fail raises -> non-zero exit -> kiosk fetch errors -> splash DEGRADED. main() CLI.
+- Systemd units: deploy/eclipse-boot-state.service + deploy/eclipse-states-http.service (both Type=simple [A-8], SHARED RuntimeDirectory=eclipse-obd ref-counted + RuntimeDirectoryPreserve=yes so /run/eclipse-obd OUTLIVES eclipse-obd.service stop = Atlas C-5; dual-PYTHONPATH guard mirroring boot-progress-arm).
+- C-5 states-dir provisioning: deploy/eclipse-obd-states.conf tmpfiles.d entry (creates /run/eclipse-obd + /run/eclipse-obd/states owned mcornelison at EVERY boot, independent of eclipse-obd start order; tmpfs is wiped each reboot so deploy-time install -d alone was insufficient). Belt-and-suspenders with the in-process ensureStatesDir + shared RuntimeDirectory ref-count.
+- Kiosk consumer assets (specs/UI/dist/splash-pi/): rewrote index.html (token placeholder + HTML overlay layers per spec S4); NEW boot-state-poll.js (state machine INIT -> PLAYING_NORMAL -> HEALTHY_YIELD@elapsed>=2.5s | DEGRADED amber-ring + mark-freeze + degradedReason; retry-once on transient IPC failure before treating boot-state missing; version.txt chip with V?.?.? malformed fallback); NEW styles.css (typography + 3-channel degraded escalation); NEW splash-boot.service.{wayland,x11} (D-3 fix: After=graphical.target not Before, Wayland-native --ozone-platform=wayland, JS window.close exit not pkill, loads http://127.0.0.1:9899/).
+- Rule-10: specs/architecture.md NEW F-103 subsection (state-server + emitters + the multi-owner /run/eclipse-obd/states/ ownership+lifecycle SSOT contract); config.json pi.splash section (validate_config.py PASS).
+
+### Files changed:
+- Created: src/pi/splash/{__init__,token,boot_state_emitter,states_http_server}.py
+- Created: tests/pi/splash/{__init__,test_token,test_boot_state_emitter,test_states_http_server}.py
+- Created: deploy/{eclipse-boot-state.service,eclipse-states-http.service,eclipse-obd-states.conf}
+- Created: specs/UI/dist/splash-pi/{styles.css,boot-state-poll.js,splash-boot.service.wayland,splash-boot.service.x11}
+- Modified: specs/UI/dist/splash-pi/index.html (poll + token + overlay layers)
+- Modified: specs/architecture.md (F-103 subsection), config.json (pi.splash)
+
+### Gates:
+- pytest tests/pi/splash/ = 33 passed, 1 skipped (POSIX 0600 mode-check skips on the Windows dev box)
+- ruff check src/pi/splash tests/pi/splash = All checks passed
+- python validate_config.py = All validations passed (pi.splash added)
+- pytest tests/ --collect-only = exit 0, clean (additive package -> no import breakage anywhere)
+- DEFERRED to PM/Atlas integration: mypy (not installed on dev box; code is mypy-strict-shaped) + full-suite execution (slow SMB share; scoped splash suite is the in-iteration gate per prompt slow-share carve-out).
+- DEFERRED to CIO/Argus BENCH (per sprint.json validationMethod): cold-reboot proving /run/eclipse-obd/states/ exists at boot without eclipse-obd provisioning it; curl -H <token> localhost:9899/boot-state returns JSON; synthetic boot-phase sequence transitions the splash. Chromium rendering + cold reboot are not dev-box runnable.
+
+### Learnings for future iterations:
+- **Pattern discovered**: tests/conftest.py puts src/ on sys.path -> a brand-new src/pi/<pkg>/ + tests/pi/<pkg>/__init__.py resolves `from pi.<pkg>.X import Y` with zero extra wiring (same as the US-380 bus package).
+- **Pattern discovered**: to unit-test a stdlib HTTPServer honestly, bind it on 127.0.0.1:0 (ephemeral) in a daemon thread and hit it with urllib -- expose actualPort via server_address[1]. No mocks; real request/response incl. status codes + headers.
+- **Gotcha (C-5)**: systemd RuntimeDirectory=NAME only creates /run/NAME, NOT subdirs -- the states/ subdir still needs tmpfiles.d (boot-durable) + in-process makedirs. And RuntimeDirectory is ref-counted across units sharing the same NAME, which is the mechanism that lets /run/eclipse-obd outlive eclipse-obd.service (needed for the US-394 shutdown splash).
+- **Gotcha (path traversal)**: a urllib client may NOT normalize ".." before sending, and a "../assets/" probe can resolve back INTO the base dir -- so the spec-literal guard (reject any ".." path segment outright -> 404) is both simpler and stricter than relying on resolve()+relative_to() alone.
+- **Design note (token SSOT)**: pointing chromium at http://127.0.0.1:9899/ (server injects the token into the served index) keeps the token in ONE file and off-disk-in-assets -- cleaner than baking the token into index.html at deploy time. The state server thus also serves the splash HTML (a small, documented extension of the spec's "serves states/*").
+- **Build-order note**: US-394 (shutdown splash) builds directly on this runtime -- it adds the ShutdownSequencer phase-emit hook writing /run/eclipse-obd/states/shutdown-state (which this runtime already serves + keeps alive across eclipse-obd stop via the shared ref-counted RuntimeDirectory), the shutdown.html D-1 fix, and the Rule-10 specs/architecture.md S10.6 update (Atlas BLOCKs otherwise).
+---

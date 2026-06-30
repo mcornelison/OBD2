@@ -1,0 +1,59 @@
+# ==============================================================================
+# File:    eclipse-boot-state.service
+# Purpose: F-103 boot-state emitter [Atlas A-1]. Polls `systemctl is-active` for
+#          the critical-services set + the tiered eclipse-obd health and writes
+#          the boot-state JSON SSOT (/run/eclipse-obd/states/boot-state) that the
+#          chromium splash kiosk consumes. The splash NEVER decides system
+#          condition -- this unit is the authority (specs/ssot-design-pattern.md).
+# Author:  Ralph Agent (Rex)
+# Created: 2026-06-29 -- Sprint 48 US-393 (F-103 boot splash)
+#
+# Why a NEW dedicated unit (not an extension of boot-progress-finalize) [A-1]:
+#   boot-progress-finalize is a SHUTDOWN finalizer (ExecStart=/bin/true,
+#   ExecStop only). Its lifecycle is "run once at shutdown," not "continuously
+#   emit live boot status." Clean separation -- each unit owns one job.
+#
+# C-5 states-dir provisioning (Atlas 2026-06-29):
+#   /run/eclipse-obd/states/ must exist at boot INDEPENDENT of eclipse-obd.service
+#   (whose RuntimeDirectory=eclipse-obd is ref-counted + REMOVED on its own stop,
+#   and which never creates the states/ subdir). Two reinforcing mechanisms:
+#     1. RuntimeDirectory=eclipse-obd here (shared name -> systemd ref-counts it;
+#        /run/eclipse-obd survives as long as ANY sharer runs, so it does not
+#        vanish when eclipse-obd.service stops -- see eclipse-states-http.service
+#        + US-394 shutdown-splash requirement).
+#     2. /etc/tmpfiles.d/eclipse-obd-states.conf creates the states/ subdir at
+#        boot regardless of unit start order (tmpfs is wiped every reboot).
+#   The emitter ALSO ensures states/ in-process (RuntimeDirectory makes only the
+#   parent /run/eclipse-obd, not the states/ subdir).
+#
+# Import-path guard (MANDATORY -- mirrors boot-progress-arm.service + main.py):
+#   PYTHONPATH MUST contain BOTH the repo root (so `python -m pi.splash.X`
+#   resolves under the src/ layout) AND <repo>/src (the project-wide bare
+#   `from pi.X` convention). Do NOT "simplify" to one entry.
+#
+# Installation (manual parity reference; deploy-pi.sh folds this in -- US-395):
+#   sudo cp deploy/eclipse-boot-state.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now eclipse-boot-state.service
+# ==============================================================================
+
+[Unit]
+Description=Eclipse OBD F-103 boot-state emitter (honest instrument)
+After=local-fs.target
+Wants=eclipse-states-http.service
+
+[Service]
+Type=simple
+User=mcornelison
+# Shared ref-counted runtime dir (C-5). Creates /run/eclipse-obd owned by User=.
+RuntimeDirectory=eclipse-obd
+RuntimeDirectoryPreserve=yes
+WorkingDirectory=/home/mcornelison/Projects/Eclipse-01
+Environment=PYTHONPATH=/home/mcornelison/Projects/Eclipse-01:/home/mcornelison/Projects/Eclipse-01/src
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/home/mcornelison/obd2-venv/bin/python -m pi.splash.boot_state_emitter --states-dir /run/eclipse-obd/states --poll-ms 500
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
