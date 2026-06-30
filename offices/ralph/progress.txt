@@ -610,3 +610,54 @@ Task: Fix sync_now.py import break -- normalize Pi entry-point to pi.*-on-src co
   breaks `except` clauses against deeper code that still raises `src.common.*`. Flip pi.* freely;
   leave common.* on whatever form the raisers use.
 ---
+
+## 2026-06-29 - US-398 (Agent 1 / Rex)
+Task: Fix simulate duplicate (timestamp, parameter) rows -- test-fidelity vs data-quality ruling
+
+### What was implemented:
+- RULING = (a) TEST-FIDELITY, not (b) data-quality. Fix is TEST-ONLY (no production
+  write-path / analytics change). Evidence chain:
+  1. realtime_data.timestamp is canonical SECOND-resolution ISO-8601 by design --
+     utcIsoNow() = strftime('%Y-%m-%dT%H:%M:%SZ') + the SQLite column DEFAULT
+     strftime('%Y-%m-%dT%H:%M:%SZ','now') (TD-027/US-202). Not a bug; a project-wide
+     canonical format.
+  2. The schema's ONLY unique key is `id INTEGER PRIMARY KEY AUTOINCREMENT`; there is
+     NO UNIQUE(timestamp, parameter_name). The data model EXPLICITLY permits multiple
+     distinct samples per (second, parameter). At 2 Hz two distinct noise samples
+     legitimately share a second -> the old invariant was false by construction.
+  3. The old test passed on slow boxes and failed on fast ones (~185 collisions) =
+     machine-speed-dependent = test-fidelity smell, not a data defect.
+- RULED OUT (b): compute_drive_statistics (drive_statistics_compute.py) and
+  basic._collectReadings / collectReadingsForDrive both SELECT every row for a drive
+  into a flat value list and compute min/max/avg/std over ALL of them -- no
+  GROUP BY timestamp, no DISTINCT timestamp anywhere. Extra samples-per-second are
+  correct additional samples, never double-counts. No write-path change warranted.
+- FIX: rekeyed test_noDuplicateTimestampParameterCombinations (NAME KEPT -- the
+  bigDoDHash + validationCriteria reference it) to the schema's real invariants:
+  (i) every row id is unique; (ii) no (second-timestamp, parameter) bucket exceeds the
+  poll-cadence ceiling ceil(1000/POLLING_INTERVAL_MS)+1 = 3 -- still catches a genuine
+  double-INSERT regression while tolerating valid sub-second multi-sampling.
+- DRY: added module constant POLLING_INTERVAL_MS=500 used by BOTH getSimValidationConfig
+  (the rate the orchestrator runs at) AND the ceiling, so the two can't drift.
+- Ruling documented in the test method docstring (lives with the code).
+
+### Files changed:
+- Modified: `tests/test_simulate_db_validation.py` (ruling + rekeyed dup test, math import,
+  POLLING_INTERVAL_MS SSOT constant)
+
+### Learnings for future iterations:
+- **Pattern discovered**: a "uniqueness" data-quality test must key on the schema's
+  ACTUAL unique key (here `id AUTOINCREMENT`), not on a derived/low-resolution column.
+  Keying a dup check on a second-resolution timestamp asserts a uniqueness the schema
+  never promised; it becomes a machine-speed-dependent flake at sub-second write rates.
+- **Pattern discovered**: to rule test-fidelity vs data-quality, trace the CONSUMER.
+  The duplicate-row question is only a data defect if a downstream consumer bucketed by
+  the colliding key. Both analytics paths flatten all rows -> no consumer bucketed by
+  second -> test-fidelity, not data-quality.
+- **Gotcha**: keep the test METHOD NAME stable when it is referenced by the frozen
+  bigDoDHash / validationCriteria -- rename the body/docstring, not the symbol, or the
+  validation command silently stops resolving.
+- **Gotcha (cadence ceiling)**: bound the per-second multiplicity check by the SAME
+  poll-interval constant the orchestrator runs at (a shared SSOT constant), so the guard
+  can't drift from the real cadence and stays machine-speed-independent.
+---
