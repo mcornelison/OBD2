@@ -32,10 +32,50 @@ both halves of that contract.
 
 from __future__ import annotations
 
+import os
+import subprocess
+import sys
+from pathlib import Path
+
 import pytest
 
+from pi.power.battery_health import LOAD_CLASS_DEFAULT
 from scripts import record_drain_test
-from src.pi.power.battery_health import LOAD_CLASS_DEFAULT
+
+# Repo root: tests/scripts/test_record_drain_test.py -> parents[2].
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+def _runEntryPointCleanEnv(
+    scriptRelPath: str, *args: str,
+) -> subprocess.CompletedProcess[str]:
+    """Run a ``scripts/`` entry point exactly as an operator does on the Pi.
+
+    Reproduces a bare ``python scripts/<name>.py`` invocation: a fresh
+    interpreter whose only path bootstrap is whatever the script does for
+    itself.  ``PYTHONPATH`` is stripped so the test fails if the script
+    leans on an external path override instead of putting ``src/`` on
+    ``sys.path`` itself (the convention the live systemd services use).
+
+    Args:
+        scriptRelPath: Repo-relative path to the entry point, e.g.
+            ``"scripts/record_drain_test.py"``.
+        *args: CLI arguments (``--help`` triggers the full module-import
+            chain, then argparse exits 0).
+
+    Returns:
+        The completed subprocess with captured ``stdout`` / ``stderr``.
+    """
+    env = dict(os.environ)
+    env.pop("PYTHONPATH", None)
+    return subprocess.run(
+        [sys.executable, str(_REPO_ROOT / scriptRelPath), *args],
+        cwd=str(_REPO_ROOT),
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
 
 # =============================================================================
 # Constants + fixtures
@@ -237,3 +277,36 @@ def _writeMinimalConfig(tmp_path) -> str:  # type: ignore[no-untyped-def]
     path = tmp_path / 'config.json'
     path.write_text(json.dumps(config), encoding='utf-8')
     return str(path)
+
+
+class TestOperatorRuntimeImport:
+    """US-397: the CLI must import + run under the bare operator invocation.
+
+    Same regression class as ``test_sync_now`` -- ``record_drain_test``
+    inserted only the repo ROOT on ``sys.path`` and imported ``src.pi.*``,
+    so the bare ``from pi.display`` inside ``pi.obdii.__init__`` raised
+    ``ModuleNotFoundError: No module named 'pi'`` under the real
+    ``python scripts/record_drain_test.py`` runtime.  The in-process tests
+    above never caught it because ``tests/conftest.py`` seeds ``src/`` onto
+    ``sys.path`` for the whole pytest session.
+    """
+
+    def test_recordDrainTestCli_bareOperatorInvocation_importsWithoutModuleError(
+        self,
+    ) -> None:
+        """
+        Given: a fresh interpreter with no PYTHONPATH override.
+        When:  python scripts/record_drain_test.py --help is run from root.
+        Then:  the module-import chain resolves (no ModuleNotFoundError)
+               and argparse exits 0 after printing help.
+        """
+        result = _runEntryPointCleanEnv(
+            "scripts/record_drain_test.py", "--help",
+        )
+
+        assert "ModuleNotFoundError" not in result.stderr, result.stderr
+        assert "No module named 'pi'" not in result.stderr, result.stderr
+        assert result.returncode == 0, (
+            "--help should exit 0 after a clean import; "
+            f"rc={result.returncode}\nstderr={result.stderr}"
+        )

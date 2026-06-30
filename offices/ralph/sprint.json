@@ -210,8 +210,9 @@
       "epicId": "E-002",
       "type": "issue",
       "size": "S",
-      "status": "sprint-ready",
-      "passes": false,
+      "status": "complete",
+      "passes": true,
+      "completionNotes": "sync_now.py import break FIXED + batch-audited the scripts/*.py cluster (TDD red->green). ROOT CAUSE confirmed by operator-runtime repro (python scripts/sync_now.py --dry-run, no PYTHONPATH): the script inserted only repo ROOT on sys.path + imported src.pi.sync -> src.pi.sync.client -> src.pi.obdii.drive_id -> src/pi/obdii/__init__.py:26 bare `from pi.display` -> ModuleNotFoundError: No module named 'pi' (top-level `pi` unimportable because only ROOT, not src/, was on the path). FIX (mirrors src/pi/main.py:46-57 dual-path bootstrap): add src/ to sys.path FIRST (so bare `from pi.display` resolves) + keep ROOT (so transitive `from src.common...` legacy form still resolves); flip the PI imports to the convention (src.pi.data->pi.data, src.pi.sync->pi.sync) per acceptance #1 + [[feedback-path-convention-no-src-prefix]]. CROSS-MODULE IDENTITY GUARD ([[feedback-cross-module-enum-identity]]): kept the common.* imports on the legacy src.common.* form ON PURPOSE -- pi.sync.client raises src.common.errors.handler.ConfigurationError, so main()'s `except ConfigurationError` must catch THAT exact class object; `common.errors.handler` resolves to a DIFFERENT (non-caught) class with no unifying re-export, which would turn the graceful 'Error: API key missing' (exit 1) into an uncaught traceback. Verified: operator `python scripts/sync_now.py --dry-run` now imports cleanly + reports the missing-secret config error gracefully (exit 1, no traceback) on this dev box (no COMPANION_API_KEY); on the Pi with the key set it proceeds to the dry-run delta report. TEST FIDELITY: the pre-existing in-process tests (`from scripts import sync_now`) NEVER caught this because tests/conftest.py:38 seeds src/ onto sys.path for the whole pytest session -- so the bug only manifests under the real bare-`python scripts/...` runtime. Added TestOperatorRuntimeImport (subprocess smoke: fresh interpreter, PYTHONPATH stripped, cwd=repo root, `--help` triggers the full import chain then argparse exits 0; asserts no ModuleNotFoundError + rc==0) to BOTH test files -- the only test that reproduces the operator path. Flipped the two test files' src.pi.* imports -> pi.* in lockstep so test-created PushStatus/PushResult share identity with the fixed script's comparisons (pi.sync.__init__ re-exports from src.pi.sync.client, so identity unifies). BATCH AUDIT (acceptance #3, Rule 5): probed every scripts/*.py entry point via `--help`; SAME bug in scripts/record_drain_test.py (ROOT-only + src.pi.obdii.database/src.pi.power.battery_health -> No module named 'pi') -> FIXED identically (cluster = 2). scripts/backfill_pi_battery_health_log_historical_drains.py has a DIFFERENT failure (No module named 'src' -- NO path bootstrap at all, not the ROOT+src.pi.* pattern) -> OUT OF SCOPE, filed offices/pm/tech_debt/TD-056. Scripts already on the clean pi.*-on-src convention (check_platform, render_*, verify_database) or already inserting both paths (seed_pi_fixture, seed_scenarios, schema_diff) left untouched. GATES: pytest tests/scripts/ = ALL PASS (full cluster, zero regression incl. the 2 new subprocess tests); ruff check on all 4 touched files = clean (ruff --fix reorganized import order after the src.pi->pi flip, scoped to touched files per [[feedback-ruff-scope-discipline]]). DEFERRED-TO-PM: mypy not on dev box (no signature changes, only import-path + sys.path edits); full-suite deferred (slow SMB) -- tests/scripts/ is the in-iteration gate per slow-share carve-out, changes are import-path-only in 2 scripts + their 2 tests. ON-PI per validationMethod (validationCriteria #1): `python scripts/sync_now.py --dry-run` on the Pi with no ModuleNotFoundError -- reproduced equivalently off-Pi (clean-env subprocess) but the real Pi run is the bench gate.",
       "acceptance": [
         "sync_now.py follows the project Pi-tier convention ([[feedback-path-convention-no-src-prefix]]): put src/ on sys.path + import pi.sync / pi.data (matching the services), NOT ROOT + src.pi.* (root cause: sync_now.py inserts repo ROOT on sys.path + imports src.pi.*, but src/pi/obdii/__init__.py:26 uses bare from pi.display import ... -> ModuleNotFoundError: No module named 'pi')",
         "it imports + runs on the Pi with no PYTHONPATH override",
@@ -232,7 +233,16 @@
         "if a script genuinely needs the ROOT/src.pi.* convention (server-side), leave + document"
       ],
       "goal": "As the operator, I want python scripts/sync_now.py to run on the Pi so I can trigger a manual sync without a PYTHONPATH workaround.",
-      "tasks": []
+      "tasks": [],
+      "feedback": {
+        "filesActuallyTouched": [
+          "scripts/sync_now.py",
+          "scripts/record_drain_test.py",
+          "tests/scripts/test_sync_now.py",
+          "tests/scripts/test_record_drain_test.py",
+          "offices/pm/tech_debt/TD-056-backfill-battery-health-script-no-path-bootstrap.md"
+        ]
+      }
     },
     {
       "id": "US-398",

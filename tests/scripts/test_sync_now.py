@@ -29,13 +29,51 @@ config-loading + masking.  All tests inject a fake SyncClient via the
 from __future__ import annotations
 
 import json
+import os
+import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
 import pytest
 
+from pi.sync import PushResult, PushStatus
 from scripts import sync_now
-from src.pi.sync import PushResult, PushStatus
+
+# Repo root: tests/scripts/test_sync_now.py -> parents[2].
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+def _runEntryPointCleanEnv(
+    scriptRelPath: str, *args: str,
+) -> subprocess.CompletedProcess[str]:
+    """Run a ``scripts/`` entry point exactly as an operator does on the Pi.
+
+    Reproduces a bare ``python scripts/<name>.py`` invocation: a fresh
+    interpreter whose only path bootstrap is whatever the script does for
+    itself.  ``PYTHONPATH`` is stripped so the test fails if the script
+    leans on an external path override instead of putting ``src/`` on
+    ``sys.path`` itself (the convention the live systemd services use).
+
+    Args:
+        scriptRelPath: Repo-relative path to the entry point, e.g.
+            ``"scripts/sync_now.py"``.
+        *args: CLI arguments to pass (``--help`` triggers the full
+            module-import chain, then argparse exits 0).
+
+    Returns:
+        The completed subprocess with captured ``stdout`` / ``stderr``.
+    """
+    env = dict(os.environ)
+    env.pop("PYTHONPATH", None)
+    return subprocess.run(
+        [sys.executable, str(_REPO_ROOT / scriptRelPath), *args],
+        cwd=str(_REPO_ROOT),
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
 
 # =============================================================================
 # Helpers / fixtures
@@ -339,7 +377,7 @@ class TestCliFlags:
         # yet -- sync_log.initDb creates the table on first open.
         import sqlite3
 
-        from src.pi.data import sync_log
+        from pi.data import sync_log
         dbPath = str(tmp_path / "dryrun.db")
         conn = sqlite3.connect(dbPath)
         sync_log.initDb(conn)
@@ -431,3 +469,35 @@ class TestConfigResolution:
         assert rc != 0
         # The CLI should surface the missing-file problem to the operator.
         assert "no-such-config" in combined or "config" in combined.lower()
+
+
+class TestOperatorRuntimeImport:
+    """US-397: the CLI must import + run under the bare operator invocation.
+
+    Regression lock for the Pi-tier path convention
+    ([[feedback-path-convention-no-src-prefix]]): the script must put
+    ``src/`` on ``sys.path`` itself so the bare ``from pi.display`` inside
+    ``pi.obdii.__init__`` resolves.  The in-process tests above pass even
+    while the operator path is broken, because ``tests/conftest.py``
+    already seeds ``src/`` onto ``sys.path`` for the whole pytest session
+    -- this subprocess test is the only one that reproduces the real
+    ``python scripts/sync_now.py`` runtime.
+    """
+
+    def test_syncNowCli_bareOperatorInvocation_importsWithoutModuleError(
+        self,
+    ) -> None:
+        """
+        Given: a fresh interpreter with no PYTHONPATH override.
+        When:  python scripts/sync_now.py --help is run from the repo root.
+        Then:  the module-import chain resolves (no ModuleNotFoundError)
+               and argparse exits 0 after printing help.
+        """
+        result = _runEntryPointCleanEnv("scripts/sync_now.py", "--help")
+
+        assert "ModuleNotFoundError" not in result.stderr, result.stderr
+        assert "No module named 'pi'" not in result.stderr, result.stderr
+        assert result.returncode == 0, (
+            "--help should exit 0 after a clean import; "
+            f"rc={result.returncode}\nstderr={result.stderr}"
+        )

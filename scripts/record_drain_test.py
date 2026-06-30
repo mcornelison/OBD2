@@ -22,6 +22,10 @@
 #                                orchestrator auto-writes real shutdowns as
 #                                'production'.  Library LOAD_CLASS_DEFAULT stays
 #                                'production' (US-216 auto-write path).
+# 2026-06-29    | Rex (US-397) | Normalize to the Pi-tier pi.*-on-src convention
+#                                (put src/ on sys.path + import pi.*/common.*) so
+#                                the operator's bare `python scripts/...` no
+#                                longer dies with No module named 'pi'.
 # ================================================================================
 ################################################################################
 
@@ -81,11 +85,34 @@ import sys
 from pathlib import Path
 from typing import Any
 
+# Pi-tier entry-point path bootstrap (mirrors src/pi/main.py + sync_now.py).
+# src/ goes on sys.path so the Pi imports below resolve as the canonical
+# `pi.*` form -- and so the bare `from pi.display import ...` in
+# pi.obdii.__init__ (pulled in transitively) resolves.  Inserting only the
+# repo ROOT (the old behavior) left top-level `pi` unimportable, so the
+# operator's plain `python scripts/record_drain_test.py` died with
+# `ModuleNotFoundError: No module named 'pi'` (US-397).  ROOT stays on the
+# path too: the shared `common.*` modules keep the legacy `from src.common...`
+# form on purpose (the pi codebase raises src.common exceptions that main()
+# must catch by identity -- see the import note below).
+# Convention: see [[feedback-path-convention-no-src-prefix]].
 _SCRIPT_DIR = Path(__file__).resolve().parent
 _PROJECT_ROOT = _SCRIPT_DIR.parent
+_SRC_DIR = _PROJECT_ROOT / "src"
+if str(_SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(_SRC_DIR))
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
+# `common.*` shared modules stay on the legacy `src.common.*` form on purpose:
+# the deeper pi code raises `src.common.errors.handler.ConfigurationError`, so
+# main() must catch that exact class object (the `common.*` form resolves to a
+# different, non-caught class).  Only the `pi.*` imports flip to the convention.
+from pi.obdii.database import initializeDatabase  # noqa: E402
+from pi.power.battery_health import (  # noqa: E402
+    LOAD_CLASS_VALUES,
+    BatteryHealthRecorder,
+)
 from src.common.config.secrets_loader import (  # noqa: E402
     loadConfigWithSecrets,
     loadEnvFile,
@@ -95,11 +122,6 @@ from src.common.config.validator import (  # noqa: E402
     ConfigValidator,
 )
 from src.common.errors.handler import ConfigurationError  # noqa: E402
-from src.pi.obdii.database import initializeDatabase  # noqa: E402
-from src.pi.power.battery_health import (  # noqa: E402
-    LOAD_CLASS_VALUES,
-    BatteryHealthRecorder,
-)
 
 logger = logging.getLogger(__name__)
 
