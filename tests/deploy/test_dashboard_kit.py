@@ -282,6 +282,106 @@ def test_dashboardCss_carriesTileLevelColors_us400():
 
 
 # ---------------------------------------------------------------------------
+# US-401 -- Battery Health card render logic (F-8 / F-9 / F-10 / F-11 / F-2).
+# ---------------------------------------------------------------------------
+
+_US401_NODE_SCRIPT = r"""
+const assert = require('assert');
+const c = require(process.argv[1]);
+
+// A non-object payload -> no view (the shell renders `unavailable`).
+assert.strictEqual(c.batteryHealthView(null), null, 'null -> no view');
+assert.strictEqual(c.batteryHealthView('x'), null, 'string -> no view');
+assert.strictEqual(c.batteryHealthView([]), null, 'array -> no view');
+
+// F-8 (voltage-is-not-percent): vcellV:3.44 with soc:null -> the card shows
+// "3.44 V" and OMITS the percent (soc.shown false); "3.44 %" must never appear.
+const noPct = {
+  vcellV: 3.44, soc: null, socCalibrated: false, crate: -2.0,
+  charging: false, draining: false, restedVcellV: null, weakEvents30d: 0,
+  restedHistory: [], health: 'attn', fullChargeReached: false,
+  runtimeToCutoffS: null, ambientTempC: null,
+  lastHealthCheckTs: '2026-05-16T00:00:00Z', ladder: null,
+  ts: '2026-06-30T19:42:00Z'
+};
+const npv = c.batteryHealthView(noPct);
+assert.strictEqual(npv.vcell.value, '3.44 V', 'cell shown in volts');
+assert.strictEqual(npv.soc.shown, false, 'percent omitted when soc null');
+assert.ok(npv.vcell.value.indexOf('%') === -1, 'never a percent on the volts');
+assert.strictEqual(npv.label, 'Pi UPS battery', 'F-11: UPS cell, not vehicle');
+assert.ok(/UPS|Pi/i.test(npv.vcell.detail), 'F-11: cell labeled UPS/Pi');
+
+// A real SoC renders the percent (positive control) tagged (uncalibrated).
+const withPct = JSON.parse(JSON.stringify(noPct));
+withPct.soc = 76; withPct.socCalibrated = false;
+const wpv = c.batteryHealthView(withPct);
+assert.strictEqual(wpv.soc.shown, true, 'percent shown when soc present');
+assert.strictEqual(wpv.soc.value, '76%', 'percent rendered');
+assert.ok(/uncalibrated/i.test(wpv.soc.detail), 'uncalibrated tag');
+
+// F-9 (stale-green guard): a 45-day-old health check -> a GREEN verdict carries
+// "last health check · <date> (<age>)"; GREEN is never shown without its age.
+const green = JSON.parse(JSON.stringify(noPct));
+green.health = 'green';
+green.lastHealthCheckTs = '2026-05-16T00:00:00Z'; // 45 days before ts
+const gv = c.batteryHealthView(green);
+assert.strictEqual(gv.health.level, 'ok', 'green -> ok');
+assert.ok(/last health check/.test(gv.health.detail), 'green carries data-age');
+assert.ok(/2026-05-16/.test(gv.health.detail), 'date present');
+assert.ok(/45 days ago/.test(gv.health.detail), 'age present');
+assert.strictEqual(gv.healthCheck.ageDays, 45, 'age computed from ts');
+
+// F-10 (temp honest): ambientTempC:null -> "not captured", never a number.
+assert.strictEqual(gv.temp.value, 'not captured', 'temp not captured');
+const warm = JSON.parse(JSON.stringify(green));
+warm.ambientTempC = 24;
+assert.strictEqual(c.batteryHealthView(warm).temp.value, '24 °C', 'temp number');
+
+// F-2 / A-6 (no false failsafe): draining:false -> NO ladder; draining:true ->
+// ladder present. A draining pack with no Spool runtime shows stage, no minutes.
+assert.strictEqual(gv.ladder, null, 'draining false -> no ladder DOM');
+const drain = JSON.parse(JSON.stringify(green));
+drain.draining = true;
+drain.ladder = {stage: 'WARNING', thresholds: {warn: 3.70}, runtimeRemainingS: 360};
+const dv = c.batteryHealthView(drain);
+assert.ok(dv.ladder !== null, 'draining true -> ladder present');
+assert.strictEqual(dv.ladder.stage, 'WARNING', 'stage carried');
+assert.strictEqual(dv.ladder.runtimeRemainingS, 360, 'runtime carried (Spool S-2)');
+const drainNoSpool = JSON.parse(JSON.stringify(green));
+drainNoSpool.draining = true; drainNoSpool.ladder = null; // S-2 not delivered
+const dnv = c.batteryHealthView(drainNoSpool);
+assert.ok(dnv.ladder !== null, 'draining still renders a failsafe');
+assert.strictEqual(dnv.ladder.runtimeRemainingS, null, 'no fabricated minutes');
+assert.strictEqual(dnv.ladder.stage, 'DRAINING', 'stage defaults honestly');
+
+console.log('US401_OK');
+"""
+
+
+@pytest.mark.skipif(not _nodeAvailable(), reason="node not available on PATH")
+def test_batteryHealthView_renderLogic_f8_f9_f10_f2():
+    """US-401: the Battery Health render logic maps emitter JSON -> an honest
+    card (volts-not-percent, stale-green data-age, temp-not-captured, ladder only
+    when draining, UPS-not-vehicle labeling)."""
+    result = subprocess.run(
+        ["node", "-e", _US401_NODE_SCRIPT, str(KIT_DIR / "carousel.js")],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "US401_OK" in result.stdout
+
+
+def test_dashboardCss_carriesLadderFailsafeStyles_us401():
+    """US-401: the failsafe ladder block has styles (rendered only when draining);
+    the TRIGGER stage escalates to STOP-red."""
+    css = _read(KIT_DIR, "dashboard.css")
+    assert ".ladder" in css
+    assert 'data-stage="TRIGGER"' in css
+
+
+# ---------------------------------------------------------------------------
 # A-1 -- splash -> dashboard hand-off (OnSuccess=).
 # ---------------------------------------------------------------------------
 

@@ -103,6 +103,24 @@ html, body {
   color: var(--text-tertiary); font-style: italic; font-weight: 400;
 }
 
+/* --- US-401 Battery Health failsafe ladder (F-2/A-6) ------------------------ */
+/* The drain ladder block is appended ONLY when battery-health.draining===true;
+   it never renders otherwise (no false failsafe). The amber/red staging mirrors
+   the honest-instrument palette. */
+.ladder {
+  margin-top: 8px; padding: 8px 10px;
+  display: flex; flex-direction: column; gap: 2px;
+  border: 1px solid var(--amber-warn); border-radius: 4px;
+  background: rgba(255, 196, 0, 0.06);
+}
+.ladder-banner {
+  font-size: 13px; font-weight: 700; letter-spacing: 0.06em;
+  color: var(--amber-warn);
+}
+.ladder[data-stage="TRIGGER"] { border-color: var(--red-light); }
+.ladder[data-stage="TRIGGER"] .ladder-banner { color: var(--red-light); }
+.ladder-runtime { font-size: 11px; color: var(--text-secondary); }
+
 /* --- page dots (>=40px touch target, 10px visual) --------------------------- */
 #dots {
   position: absolute; bottom: 0; left: 0; right: 0; height: 24px;

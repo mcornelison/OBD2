@@ -2413,6 +2413,62 @@ sync exceeds the threshold — and treats an absent/unparseable last-sync as sta
 and supplied by config: the emitter takes `syncStaleThresholdS` as a required
 parameter and **hardcodes no tuning number** (PM Rule 7 / Refusal Rule 2).
 
+#### Battery Health card + `battery-health` emitter (US-401) [Atlas A-3]
+
+The **Battery Health** card (Card 2) renders the `battery-health` state file at 4
+Hz: the Spool health verdict + VCELL + charge + temp, and a failsafe drain ladder
+**only during a real drain**. The cell is the **Pi UPS-HAT LiPo (MAX17048 fuel
+gauge), never the car's 12 V lead-acid (F-11)**.
+
+**`battery-health` emitter (`src/pi/splash/battery_health_emitter.py`).** The
+**orchestrator/power tier owns this emitter** (A-3): it holds the live MAX17048
+reads, the `battery_health_log` history, and the power-watch draining state, so it
+calls `makeBatteryHealthEmitter(...)` → `emit(...)` — the same unidirectional
+best-effort seam as the system-status + shutdown emitters (write failures logged,
+never raised; atomic `writeStateAtomic`). Schema (spec §7):
+
+```json
+{ "vcellV":4.02, "soc":76, "socCalibrated":false,
+  "crate":1.8, "charging":true, "draining":false,
+  "restedVcellV":4.05, "weakEvents30d":0, "restedHistory":[…],
+  "health":"green", "fullChargeReached":true, "runtimeToCutoffS":714,
+  "ambientTempC":null, "lastHealthCheckTs":"2026-05-16T00:00:00Z",
+  "ladder":null, "ts":"…" }
+```
+
+**Two render-breaking honesty traps locked at the data contract:**
+
+- **Voltage-is-not-percent (F-8).** `battery_health_log.*_soc` columns hold
+  **volts**, not percent. The emitter has **no code path from `vcellV` to `soc`** —
+  the percent comes only from the MAX17048 SoC register, and a `null` register read
+  passes through as `soc:null`. `carousel.js#batteryHealthView`/`socTile` renders
+  the percent **only when `soc` is a real number** (tagged `(uncalibrated)` when
+  `socCalibrated:false`); a `null` soc omits the percent and the card shows volts
+  (`vcellTile`, `"3.44 V"`). The trap is locked by **absence** — a voltage can
+  never be painted as a percent.
+- **Stale-green guard (F-9).** A GREEN verdict **always** carries
+  `"last health check · <date> (<age>)"`, computed by `healthCheckLine` from
+  `ts − lastHealthCheckTs` (both in the state file, so the age is deterministic /
+  node-testable, not browser-clock dependent). A month-old reading is never
+  mistaken for live.
+
+**Temp honest (F-10).** `ambientTempC:null` → the card renders **"not captured"**,
+never a fabricated number.
+
+**No-false-failsafe (A-6 / F-2).** The failsafe `ladder` block (stage + thresholds
++ runtime) renders **only when `draining === true`**. The invariant is enforced in
+the **pure builder** (`buildBatteryHealthState` forces `ladder=None` whenever
+`draining` is false, even if a caller supplies one) — the SSOT, so a buggy caller
+can't light a phantom drain. The **live runtime-remaining + ladder thresholds
+(3.70/3.55/3.45 V) are Spool-owned (S-2, failsafe-only)** and arrive inside the
+caller's `ladder` dict; the emitter/render **never fabricate** them — a draining
+pack with no Spool data shows the stage + volts only, no minutes.
+
+**C-5 states-dir writers.** The `battery-health` emitter is the third post-boot
+writer into the F-103-provisioned `states/` tmpfs dir (after `system-status`; the
+`dtc` writer is US-404), ordered after the states-dir provisioning — it reuses
+`ensureStatesDir`/`writeStateAtomic`, never re-invents the lifecycle.
+
 ### Release Versioning + Deploy Records (US-241, B-047 US-A)
 
 Pre-US-241 every deploy was anonymous: a `git pull` + service restart with no

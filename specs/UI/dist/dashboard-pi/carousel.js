@@ -180,6 +180,158 @@
     };
   }
 
+  // -------------------------------------------------------------------------
+  // US-401 Battery Health card -- pure render logic, node-testable (F-8/F-9/
+  // F-10/F-11/F-2). The card is an HONEST consumer of the `battery-health`
+  // emitter (Atlas A-3 schema) for the Pi UPS LiPo cell -- NEVER the car
+  // battery (F-11). The two render-breaking traps are locked here:
+  //   F-8  the SoC percent is shown ONLY when `soc` is a real number; a null
+  //        soc omits the percent and shows volts -- a voltage is NEVER painted
+  //        as a percent.
+  //   F-9  a GREEN verdict ALWAYS carries "last health check · <date> (<age>)"
+  //        (computed from ts - lastHealthCheckTs, both in the state file) so a
+  //        month-old reading is never mistaken for live.
+  // The drain ladder DOM is present ONLY when `draining === true` (F-2 / A-6).
+  // -------------------------------------------------------------------------
+
+  var BATTERY_LABEL = "Pi UPS battery"; // F-11: never "vehicle/car battery".
+  var MS_PER_DAY = 86400000;
+
+  // Map a Spool health verdict tier -> a display level (the card never decides
+  // severity; green -> ok, attn -> amber, low -> down, unknown -> unavailable).
+  function healthLevel(h) {
+    if (h === "green") return "ok";
+    if (h === "attn") return "amber";
+    if (h === "low") return "down";
+    return "unavailable";
+  }
+
+  function healthValue(h) {
+    if (h === "green") return "HEALTHY";
+    if (h === "attn") return "ATTENTION";
+    if (h === "low") return "LOW";
+    return "—";
+  }
+
+  // The date portion (YYYY-MM-DD) of an ISO instant, or null.
+  function isoDate(ts) {
+    if (typeof ts !== "string") return null;
+    var i = ts.indexOf("T");
+    return i > 0 ? ts.slice(0, i) : ts;
+  }
+
+  // Whole-day age between two ISO instants (now - then). Null if either is not
+  // parseable -- we never assert an age we cannot compute.
+  function ageDays(nowTs, thenTs) {
+    if (typeof nowTs !== "string" || typeof thenTs !== "string") return null;
+    var now = Date.parse(nowTs);
+    var then = Date.parse(thenTs);
+    if (isNaN(now) || isNaN(then)) return null;
+    return Math.floor((now - then) / MS_PER_DAY);
+  }
+
+  function ageText(days) {
+    if (days == null) return "age unknown";
+    if (days <= 0) return "today";
+    if (days === 1) return "1 day ago";
+    return days + " days ago";
+  }
+
+  // The stale-green guard line (F-9). ALWAYS produced so a GREEN verdict can
+  // never be shown without its data-age. A missing check -> "never".
+  function healthCheckLine(d) {
+    var date = isoDate(d.lastHealthCheckTs);
+    if (date == null) {
+      return { date: null, ageDays: null, label: "last health check · never" };
+    }
+    var age = ageDays(d.ts, d.lastHealthCheckTs);
+    return {
+      date: date,
+      ageDays: age,
+      label: "last health check · " + date + " (" + ageText(age) + ")",
+    };
+  }
+
+  // VCELL tile -- authoritative volts, ALWAYS rendered in volts, never percent.
+  function vcellTile(d) {
+    if (typeof d.vcellV !== "number") {
+      return { label: "CELL", value: "—", detail: "unavailable", level: "unavailable" };
+    }
+    return {
+      label: "CELL",
+      value: d.vcellV.toFixed(2) + " V",
+      detail: BATTERY_LABEL,
+      level: "neutral",
+    };
+  }
+
+  // SoC tile (F-8) -- the percent renders ONLY when `soc` is a real number from
+  // the MAX17048 register; null -> omit the percent (shown:false), the card
+  // falls back to volts. A voltage is NEVER rendered as a percent.
+  function socTile(d) {
+    if (typeof d.soc !== "number") {
+      return {
+        label: "CHARGE",
+        value: "—",
+        detail: "% unavailable · see volts",
+        level: "unavailable",
+        shown: false,
+      };
+    }
+    return {
+      label: "CHARGE",
+      value: d.soc + "%",
+      detail: d.socCalibrated === true ? "register" : "(uncalibrated)",
+      level: "neutral",
+      shown: true,
+    };
+  }
+
+  // Temp tile (F-10) -- a null reading is "not captured", never a fabricated
+  // number.
+  function tempTile(d) {
+    if (typeof d.ambientTempC !== "number") {
+      return { label: "TEMP", value: "not captured", detail: "", level: "neutral" };
+    }
+    return { label: "TEMP", value: d.ambientTempC + " °C", detail: "", level: "neutral" };
+  }
+
+  // Failsafe ladder view (F-2 / A-6) -- present ONLY when draining is true. The
+  // runtime minutes render ONLY when the power tier supplied a real number
+  // (Spool S-2); otherwise the failsafe shows stage + volts, never a fabricated
+  // estimate. draining:false -> null (the DOM renderer draws no ladder).
+  function ladderView(d) {
+    if (d.draining !== true) return null;
+    var l = isObj(d.ladder) ? d.ladder : {};
+    var rt = typeof l.runtimeRemainingS === "number" ? l.runtimeRemainingS : null;
+    return {
+      stage: typeof l.stage === "string" ? l.stage : "DRAINING",
+      thresholds: isObj(l.thresholds) ? l.thresholds : null,
+      runtimeRemainingS: rt,
+    };
+  }
+
+  // The full structured view consumed by the DOM renderer + the node tests.
+  // Non-object payload -> null (the shell renders `unavailable`).
+  function batteryHealthView(data) {
+    if (!isObj(data)) return null;
+    return {
+      label: BATTERY_LABEL,
+      health: {
+        label: "HEALTH",
+        value: healthValue(data.health),
+        detail: healthCheckLine(data).label,
+        level: healthLevel(data.health),
+      },
+      vcell: vcellTile(data),
+      soc: socTile(data),
+      temp: tempTile(data),
+      healthCheck: healthCheckLine(data),
+      ladder: ladderView(data),
+      ts: typeof data.ts === "string" ? data.ts : null,
+    };
+  }
+
   var api = {
     clampIndex: clampIndex,
     nextIndex: nextIndex,
@@ -193,6 +345,12 @@
     syncGlyphState: syncGlyphState,
     powerGlyphState: powerGlyphState,
     systemStatusView: systemStatusView,
+    healthCheckLine: healthCheckLine,
+    vcellTile: vcellTile,
+    socTile: socTile,
+    tempTile: tempTile,
+    ladderView: ladderView,
+    batteryHealthView: batteryHealthView,
     POLL_MS: POLL_MS,
     SWIPE_THRESHOLD_PX: SWIPE_THRESHOLD_PX,
   };
@@ -249,6 +407,42 @@
       if (glyphEls.bt) glyphEls.bt.setAttribute("data-state", "neutral");
       if (glyphEls.sync) glyphEls.sync.setAttribute("data-state", "neutral");
       if (glyphEls.power) glyphEls.power.setAttribute("data-state", "neutral");
+    }
+
+    // --- US-401 Battery Health DOM render (browser only) --------------------
+
+    // Render the failsafe ladder block (F-2 / A-6) -- built ONLY when draining.
+    // Minutes appear only when the power tier supplied a real runtimeRemainingS
+    // (Spool S-2); otherwise stage + volts only, no fabricated estimate.
+    function appendLadder(parent, ladder) {
+      var box = document.createElement("div");
+      box.className = "ladder";
+      box.setAttribute("data-stage", ladder.stage);
+      var banner = document.createElement("span");
+      banner.className = "ladder-banner";
+      banner.textContent = "DRAINING · " + ladder.stage;
+      box.appendChild(banner);
+      if (ladder.runtimeRemainingS != null) {
+        var rt = document.createElement("span");
+        rt.className = "ladder-runtime";
+        rt.textContent = "~" + Math.round(ladder.runtimeRemainingS / 60) + " min to cutoff";
+        box.appendChild(rt);
+      }
+      parent.appendChild(box);
+    }
+
+    function renderBatteryHealthCard(card, view) {
+      var body = card.querySelector(".card-body");
+      if (!body) return;
+      body.textContent = "";
+      appendTile(body, view.health);
+      appendTile(body, view.vcell);
+      // F-8: render the percent tile only when a real SoC exists; a null soc
+      // omits the percent (volts already shown above), never a voltage-as-%.
+      if (view.soc.shown) appendTile(body, view.soc);
+      appendTile(body, view.temp);
+      // F-2 / A-6: the ladder DOM exists only when actually draining.
+      if (view.ladder) appendLadder(body, view.ladder);
     }
 
     var setup = function () {
@@ -357,8 +551,10 @@
           // available -> the per-card renderer owns the body.
           if (name === "system-status") {
             renderSystemStatusCard(card, systemStatusView(data), glyphEls);
+          } else if (name === "battery-health") {
+            var bv = batteryHealthView(data);
+            if (bv) renderBatteryHealthCard(card, bv);
           }
-          // battery-health -> US-401.
         }
         setTimeout(tick, POLL_MS);
       }

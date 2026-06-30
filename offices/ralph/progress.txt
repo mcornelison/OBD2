@@ -728,3 +728,34 @@ Outcome: SHIPPED passes:true. New src/pi/splash/system_status_emitter.py (A-3 sc
 - **Gotcha**: the carousel `tick()` loop already carries a `battery-health -> US-401` dispatch slot + glyph-reset discipline -- US-401 plugs a `renderBatteryCard` in symmetrically; don't restructure the poll.
 - **Gotcha**: a Spool-owned tuning threshold (S-3) must be an injected/required param, NOT a default magic number (Refusal Rule 2). The factory takes `syncStaleThresholdS`; config wires it at the (deferred) orchestrator call site.
 ---
+
+## 2026-06-30 - US-401 (Agent 1 / Rex)
+Task: Battery Health card + battery-health emitter -- honest UPS LiPo view (voltage-is-not-percent + stale-green traps locked)
+Outcome: SHIPPED passes:true. Symmetric to US-400; reused the F-103/US-400 emitter seam + the carousel's reserved battery-health dispatch slot.
+
+### What was implemented:
+- NEW src/pi/splash/battery_health_emitter.py: buildBatteryHealthState (pure A-3 schema, design-spec §7) + makeBatteryHealthEmitter(statesDir,*,nowIsoFn)->best-effort emit (atomic via reused ensureStatesDir/writeStateAtomic, logged-never-raised) + HEALTH_GREEN/ATTN/LOW verdict constants. A-3: orchestrator/power tier OWNS+CALLS (holds MAX17048 + battery_health_log + draining state), unidirectional. F-11: cell labeled 'Pi UPS battery' never vehicle.
+- F-8 (voltage-is-not-percent) LOCKED BY ABSENCE: no code path vcellV->soc; soc passes through verbatim (null when register unavailable). render socTile shows the percent ONLY when soc is a real number; null -> vcellTile shows '3.44 V', never '%'.
+- A-6 (no-false-failsafe) enforced in the PURE BUILDER: buildBatteryHealthState forces ladder=None whenever draining is false even if a caller supplies one -> a buggy caller can't light a phantom drain.
+- Spool S-2 (live runtime) + ladder thresholds (3.70/3.55/3.45 V) NOT hardcoded (Refusal Rule 2) -- failsafe-only, arrive in the caller's ladder dict; emitter/render never fabricate (draining w/ no Spool data -> stage+volts only, no minutes).
+- carousel.js: batteryHealthView + healthCheckLine (F-9 age from ts-lastHealthCheckTs, node-testable, GREEN always carries 'last health check . <date> (<age>)') + vcellTile/socTile/tempTile (F-10 null->'not captured') + ladderView (F-2 null unless draining). tick() now dispatches battery-health -> renderBatteryHealthCard (DOM textContent; appendLadder only when draining).
+- dashboard.css .ladder failsafe block (amber border; TRIGGER stage -> --red-light). Rule-10 architecture.md F-092 'Battery Health card + battery-health emitter (US-401)' subsection (+ C-5 third states-dir writer).
+
+### Files changed:
+- Created: `src/pi/splash/battery_health_emitter.py` (A-3 schema builder + best-effort emit factory)
+- Created: `tests/pi/splash/test_battery_health_emitter.py` (8 tests: A-3 shape, F-8 soc-null verbatim, A-6 ladder invariant, atomic write, never-raise)
+- Modified: `specs/UI/dist/dashboard-pi/carousel.js` (batteryHealthView + helpers + DOM render + tick dispatch + api exports)
+- Modified: `specs/UI/dist/dashboard-pi/dashboard.css` (.ladder failsafe styles)
+- Modified: `tests/deploy/test_dashboard_kit.py` (US-401 node-logic test F-8/F-9/F-10/F-2/F-11 + CSS .ladder assertion)
+- Modified: `specs/architecture.md` (Rule-10 US-401 subsection)
+
+### Gates:
+- pytest tests/pi/splash/test_battery_health_emitter.py = 8 passed; tests/deploy/test_dashboard_kit.py = +2 (US-401 node test + CSS) = 36 passed.
+- tests/pi/splash + tests/deploy/test_dashboard_kit = 0 regressions (1 skip = node/bash gate). carousel.js node --check green (via test_carouselJs_passesNodeSyntaxCheck_s1). ruff clean on all touched .py.
+- DEFERRED (Pi bench): I-6 wall-power-pull UPS-drain drill + orchestrator/power call-site live wiring (unit+display tested+ready). DEFERRED-PM: mypy (not on box) + full pytest (slow SMB).
+
+### Learnings for future iterations:
+- **Pattern confirmed**: the state-emitter quartet (boot/shutdown/system-status/battery-health) all share the same seam -- reuse `ensureStatesDir` + `writeStateAtomic`, build a pure `buildXState` + a best-effort `makeXEmitter` whose `emit` is logged-never-raised. US-404's `dtc` emitter is the next in line.
+- **Pattern discovered**: an honest-instrument "never derive X from Y" rule is best LOCKED BY ABSENCE (no code path) rather than guarded by a runtime check -- F-8 (no vcellV->soc) can't be tripped because the path doesn't exist. Similarly the A-6 ladder invariant lives in the PURE BUILDER (the SSOT), so every entry point inherits it.
+- **Gotcha**: compute a displayed data-age from the two ISO fields already in the state file (ts - lastHealthCheckTs), NOT from a browser/wall clock -- keeps the stale-green guard deterministic + node-testable.
+---
