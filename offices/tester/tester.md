@@ -1,4 +1,7 @@
+## Session-Open Discipline (read every session)
 
+- **Shared-checkout discipline — follow `offices/handbook.md` §13** (CIO-ratified 2026-06-01). All agents share ONE checkout on the slow chi-nas-01 share → branch switches + concurrent commits race (lost edits/commits, `index.lock` churn). My rules as Tester: (1) **commit-immediately, office-scoped** — `add`+`commit` my own `offices/tester/**` in small commits right after each edit-set; never leave work uncommitted across turns. (2) **Only the PM switches branches/merges/deploys** — I never `checkout`/`switch`/`merge`/`rebase`; I stay on the live branch and commit there. (3) **Retry-on-lock, never force.** (4) **"file modified since read"** = someone else is writing → re-read + re-apply. Especially relevant to me because validation drills interleave with PM deploys.
+- I commit my office files but **do not push** — PM owns the remote (`knowledge/feedback-tester-commits-not-pushes-pm-owns-remote.md`).
 
 ### Finding File Template
 
@@ -116,6 +119,20 @@ Every Monday (or designated day):
 | Spool (Tuner SME) | Tuning subject-matter expert — `offices/tuner/`; owns drive/drain analysis; files PM notes |
 | OBD2-Server Tester | Companion-service tester (coordinate; the server now runs from the NAS monorepo, not a separate repo) |
 
+## ⚠️ KNOWLEDGE-BASE STALENESS (flagged 2026-06-29)
+
+**My detailed Component Health table + Issue Tracker below reflect V0.27.18 (2026-05-22) — they are ~5 weeks stale.** My office was dormant 2026-05-23 → 2026-06-28; the V0.27→V0.29 chain advanced without my drills being logged here. Current ground truth per shared `MEMORY.md` (cross-agent, authoritative for high-level state):
+
+- **V0.28.2 chain → main ~2026-06-05** — drive-27 IRL drill PASSED (single-attribution F-107 fix); tag `V0.28.2`. This means Marcus's 2026-06-01 V0.28.2 drill-runsheet assignment to me is **SUPERSEDED** (the drill happened + passed; I never built the runsheet, but the event is closed).
+- **A-9 DriveDetector dual-attribution has REOPENED** — recurred on drives 28/29 after the F-107 fix proved incomplete. This is the same bug class as my TI-009 (drives 23/24 overlap). Now the subject of an active RCA sprint (Sprint 47 / V0.29.1, US-386..390). Atlas 2026-06-19 RCA: Root 1 = concurrent-process (mitigated out-of-band); Root 2 = stale-open-drive leak (the substantive open fix).
+- **Sprint 46 / V0.29.0** (EDR bus, E-006/F-110) SHIPPED + deployed, ships DARK behind `pi.bus.enabled=false`; **awaits Pi flag-flip + byte-identical validation → `/sprint-validated`** (a drill I will likely own).
+- **Sprint 47 / V0.29.1** (data-integrity: A-9 RCA + US-367 ECU lineage backfill + dtc quarantine + config de-dup) — GROOMED, freeze-pending an Atlas US-367 ruling. NOT yet dispatched.
+- **Sprint 48 / V0.29.2** (Pi UI foundation — **F-103 splash**) — DRAFTED. ← makes the three Iris UI advisories in my inbox now time-sensitive (see Inbox Triage 2026-06-29).
+- **Infra**: chi-srv-01 moved `10.27.27.10`→`10.27.27.120` (2026-06-18; `.10` dead). Env facts above corrected.
+- **Carry-forward drills I may own**: V0.29.0 Pi flag-flip validation; V0.29.1 A-9 fresh drive-attribution drill once dispatched; F-005/F-007 manifest HOLD still pending V0.28.0 B-107 dual-attribution tripwire (and now entangled with the A-9 reopening).
+
+*Do not trust the dated Component Health / Issue Tracker rows below as current — re-drill before asserting any are still green. They are preserved as V0.27.18-era history.*
+
 ## Project State (as of 2026-05-22, end of session — Sprint 41 / V0.27.18 VALIDATED via /sprint-validated; chain-merge ready for Marcus /chain-validated)
 
 - **Workflow rule (Mike 2026-05-08, refined 2026-05-10)**: `main` = "fully functional working system." Feature sprints = `V0.X.0`; subsequent bug-fix sprints iterate the patch (`V0.X.1`, `.2`, …) **on sprint branches**. A whole minor-version *chain* merges to `main` together via `/chain-validated`, only after the chain is IRL-validated. `/sprint-deploy-pm` deploys from the sprint branch (no merge); `/sprint-validated` updates `regression_manifest.json` after a real-hardware drill.
@@ -127,15 +144,15 @@ Every Monday (or designated day):
 
 | Item | Value | Notes |
 |------|-------|-------|
-| **SSH access** | **WORKS** — `ssh chi-eclipse-01` (Pi, 10.27.27.28) and `ssh chi-srv-01` (10.27.27.10), user `mcornelison`, key `~/.ssh/id_ed25519` | Pi has passwordless sudo; chi-srv-01 needs `sudo -S` (prompts CIO live) — see memory `feedback_chi_srv_01_sudo_dash_S.md` |
-| **MariaDB CLI** | local client at `C:\Program Files\MariaDB 12.2\bin` — `mysql -h 10.27.27.10 -u obd2 -p<pw> obd2db` | `<pw>` = the password in `DATABASE_URL` in repo-root `.env` (`mysql+aiomysql://obd2:<pw>@localhost/obd2db`) |
+| **SSH access** | **WORKS** — `ssh chi-eclipse-01` (Pi, 10.27.27.28) and `ssh chi-srv-01` (**10.27.27.120** — moved from `.10` 2026-06-18, `.10` now dead), user `mcornelison`, key `~/.ssh/id_ed25519` | Pi has passwordless sudo; chi-srv-01 needs `sudo -S` (prompts CIO live) — see memory `feedback_chi_srv_01_sudo_dash_S.md`. SSH config `~/.ssh/config` verified pointing at `.120` 2026-06-29. |
+| **MariaDB CLI** | local client at `C:\Program Files\MariaDB 12.2\bin` — `mysql -h 10.27.27.120 -u obd2 -p<pw> obd2db` (host moved `.10`→`.120` 2026-06-18) | `<pw>` = the password in `DATABASE_URL` in repo-root `.env` (`mysql+aiomysql://obd2:<pw>@localhost/obd2db`) |
 | Pi deploy | `~/Projects/Eclipse-01` on the Pi (a file copy, not a git clone); `eclipse-obd.service` runs `obd2-venv/bin/python src/pi/main.py`; DB at `~/Projects/Eclipse-01/data/obd.db` (SQLite) | `.deploy-version` JSON has version + gitHash; hostname still reports `Chi-Eclips-Tuner` |
 | Server deploy | `obd-server.service` on chi-srv-01 runs `obd2-server-venv/bin/uvicorn src.server.main:app` with `WorkingDirectory=/mnt/projects/O/OBD2v2` (= the NAS = this repo). The `~/Projects/OBD2v2` clone on chi-srv-01 is a stale Sprint-7 leftover — ignore it. | EnvironmentFile = `/mnt/projects/O/OBD2v2/.env` |
 | This working dir | `Z:\O\OBD2v2` = `\\chi-nas-01\PPS-Projects\O\OBD2v2` = `/mnt/projects/O/OBD2v2` (same files the server runs) | currently on branch `sprint/sprint31-bugfixes-V0.27.5` (Sprint 32 work layered on top) |
 | OBDLink LX MAC | `00:04:3E:85:0D:FB` | paired/bonded/trusted since Session 23 |
 | MariaDB prod / test DB | `obd2db` / `obd2db_test` | server-side; Pi-side tables differ in some column names (e.g. `battery_health_log` PK is `drain_event_id` on Pi, `id` on server; Pi renamed `start_soc`→`start_vcell_v` per US-289, server kept old names) |
 | `drive_statistics` table | server-side only; **0 rows** as of 2026-05-11 — no production writer fires for it (Sprint 32 US-324 builds one) | needed for `calibration` (MIN_REAL_DRIVES=5) |
-| Ollama | `llama3.1:8b` @ `http://10.27.27.10:11434` | drive_summary writer was decoupled from the Ollama trigger in US-317 (V0.27.4) |
+| Ollama | `llama3.1:8b` @ `http://10.27.27.120:11434` (host moved `.10`→`.120` 2026-06-18) | drive_summary writer was decoupled from the Ollama trigger in US-317 (V0.27.4) |
 
 ## Test Suite State
 
@@ -239,6 +256,37 @@ Every Monday (or designated day):
 - The V0.28 server-schema-normalization epic (renames, `source_id`→`vehicle_id`, drop `source_device`, drop drive_counter both sides, FK normalization, devices+IP/OS cols, `(drive_id, vehicle_id)` composite uniqueness, + the 16 data-profile items) — CIO directive; auto-memory `project_v028_server_schema_epic.md` will surface it at V0.28.0 grooming.
 
 ## Session Log
+
+### 2026-06-29 — Re-engaged via `/init-tester`; inbox triage + knowledge-base refresh (no drills)
+
+- **Trigger**: CIO re-engaged the Tester role after ~5 weeks dormant; directed "triage the inbox and refresh my knowledge base." No deploy/drill this session — pure context restoration + housekeeping.
+- **Staleness discovered**: my `tester.md` session log ended 2026-05-22 (V0.27.18); inbox had 8 unread messages through 2026-06-18; project advanced to V0.29.x per shared `MEMORY.md`. Added the **KNOWLEDGE-BASE STALENESS banner** at the top of Project State documenting the V0.28.2→main merge, the A-9 reopening, Sprints 46/47/48, and the carry-forward drills I may own. Component Health + Issue Tracker rows explicitly marked V0.27.18-era history (not current).
+- **Env-fact correction (Atlas 2026-06-18 note)**: chi-srv-01 `10.27.27.10`→`10.27.27.120` (`.10` dead). Fixed 3 Environment-Facts rows (SSH, MariaDB CLI, Ollama). **Verified** `~/.ssh/config` already resolves `chi-srv-01`→`.120` (connectivity unaffected; only docs were stale).
+- **Session-Open Discipline added** (Marcus + CIO 2026-06-01 ask): prepended a top-of-file pointer to **handbook §13 shared-checkout discipline** (commit-immediately office-scoped; only PM switches branches/merges/deploys; retry-on-lock; re-read on "file modified") so it loads every session.
+- **Inbox triage — 8 messages dispositioned** (see "Inbox Triage 2026-06-29" table below). Headlines:
+  - Marcus 2026-06-01 V0.28.2 drill-runsheet assignment → **SUPERSEDED** (drive-27 drill happened + PASSED per MEMORY; runsheet never built, event closed). The *pattern* (prep runsheets while dev runs) carries forward to the imminent Sprint 47 A-9 drill.
+  - Marcus 2026-06-01 pre-drill baseline + concurrency protocol → **ABSORBED** (baseline historical; §13 now in bootup).
+  - Atlas 2026-06-18 IP move → **DONE** (env facts fixed; SSH verified).
+  - **3 Iris UI acceptance-criteria advisories OPEN, awaiting my sign-off** — F-103 splash (Q-1/Q-2/Q-3; re-pinged 2026-06-03), DTC viewer+clear (2026-06-05), F-092/F-097 carousel dashboard (2026-06-05). Non-blocking when sent, but **F-103 is now time-sensitive** (Sprint 48 drafting). These are squarely my lane (I sign off on UI acceptance criteria before Marcus sprints them, per the 2026-05-22 collaboration model). **Owed: substantive replies.** Flagged to CIO for prioritization.
+- **Deliverables**: this knowledge-base refresh (tester.md edits). No findings/gaps/reports filed (no drill run). Committing office files per §13; not pushing (PM owns remote).
+- **HANDOFF — next session**:
+  1. **Reply to the 3 Iris advisories** — prioritize **F-103 splash** (Sprint 48 imminent). Each asks for §9/§8 acceptance-criteria sign-off + degraded-path IRL methodology + visual-evidence-capture protocol (the recurring hard problem: proving a negative / capturing visual state on the browser-rendered OSOYOO panel with no journalctl story).
+  2. **Sprint 47 / V0.29.1 A-9 drill** — when Marcus dispatches + deploys, expect a fresh drive-attribution drill (Root-2 stale-open-drive leak is the substantive fix; drive_start 29 / drive_end 18 imbalance is the signal). My old TI-009 is this same class.
+  3. **Sprint 46 / V0.29.0 Pi flag-flip validation** — `pi.bus.enabled=false`→`true` + byte-identical EDR validation → `/sprint-validated`. Likely folds into the same Pi deploy window as Sprint 47.
+  4. **F-005/F-007 manifest HOLD** still pending V0.28.0 B-107 tripwire, now entangled with A-9 reopening — do not bump.
+
+#### Inbox Triage 2026-06-29 (8 messages since 2026-05-22)
+
+| Date | From | Topic | Disposition |
+|------|------|-------|-------------|
+| 2026-06-01 | Marcus | Shared-checkout concurrency protocol (handbook §13) — add to bootup | **DONE** — Session-Open Discipline pointer added top of tester.md |
+| 2026-06-01 | Marcus | Parallel prep — V0.28.2 deploy-drill runsheets (US-364/377/378, F-005/F-007) | **SUPERSEDED** — drive-27 drill happened + PASSED; chain merged to main. Runsheet never built; pattern carries to Sprint 47 A-9 drill |
+| 2026-06-01 | Marcus | V0.28.2 pre-drill baseline — schema+data GREEN on prod | **ABSORBED** (historical baseline; useful reference if re-validating V0.28 schema) |
+| 2026-06-18 | Atlas | chi-srv-01 IP `.10`→`.120` + stale tester.md refs | **DONE** — 3 env-fact rows fixed; SSH config verified `.120` |
+| 2026-05-26 | Iris | B-103/F-103 splash — §9 acceptance sign-off (Q-1/2/3) | **OPEN — reply owed** (re-pinged 2026-06-03; now time-sensitive, Sprint 48 drafting) |
+| 2026-06-03 | Iris | F-103 splash advisory re-ping (v1.2 groom-ready) | **OPEN — reply owed** (priority: highest Iris item) |
+| 2026-06-05 | Iris | DTC viewer + Mode-04 clear — §9 acceptance sign-off | **OPEN — reply owed** (pending Atlas gate; Q-2: drive-27 CEL code is real/live — don't induce/clear before Spool reads) |
+| 2026-06-05 | Iris | F-092/F-097 touch-carousel dashboard — §8 acceptance sign-off | **OPEN — reply owed** (pending Atlas gate; I-033 BT-drop guard + dishonest-instrument guard are the load-bearing checks) |
 
 ### 2026-05-22 — Sprint 41 / V0.27.18 IRL drill PASS 6/6 Tester-owned bigDoD; settings hardened for lane discipline
 
