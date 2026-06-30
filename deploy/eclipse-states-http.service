@@ -1,0 +1,56 @@
+# ==============================================================================
+# File:    eclipse-states-http.service
+# Purpose: F-103 localhost state HTTP server [Atlas A-4]. The only IPC the
+#          chromium kiosk can fetch -- chromium cannot fetch('file:///run/...')
+#          cleanly. Binds 127.0.0.1:9899 ONLY, serves the read-only states/*
+#          JSON the emitters write, token-gated (US-393 DoD: token SSOT), with a
+#          path-traversal guard + Cache-Control: no-store. stdlib only.
+# Author:  Ralph Agent (Rex)
+# Created: 2026-06-29 -- Sprint 48 US-393 (F-103 boot splash)
+#
+# C-5 lifecycle contract (the load-bearing reason this unit runs CONTINUOUSLY):
+#   This unit shares RuntimeDirectory=eclipse-obd and runs from multi-user.target
+#   onward. systemd ref-counts the shared runtime dir, so /run/eclipse-obd (and
+#   the states/ subdir under it) OUTLIVES eclipse-obd.service when that unit
+#   stops -- exactly what the US-394 shutdown splash needs (shutdown-state must
+#   remain readable AFTER eclipse-obd has stopped). If this unit exclusively
+#   owned the dir it would vanish on eclipse-obd stop; sharing the name is what
+#   reconciles the two.
+#
+# Listen-failure semantics (spec §8): if the 9899 bind fails (port in use), the
+#   process raises + the unit exits non-zero -> the kiosk fetch errors -> the
+#   splash falls to DEGRADED. No silent green-when-broken.
+#
+# Token SSOT: the token lives in ONE file (/run/eclipse-obd/states/.http-token,
+#   0600). The server loads it to validate requests; the kiosk receives it
+#   injected into the index page it is served same-origin -- the token never
+#   lands in an on-disk asset.
+#
+# Import-path guard: see eclipse-boot-state.service (same dual-PYTHONPATH rule).
+#
+# Installation (deploy-pi.sh folds this in -- US-395):
+#   sudo cp deploy/eclipse-states-http.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now eclipse-states-http.service
+# ==============================================================================
+
+[Unit]
+Description=Eclipse OBD F-103 localhost state server (127.0.0.1:9899)
+After=local-fs.target
+
+[Service]
+Type=simple
+User=mcornelison
+# Shared ref-counted runtime dir (C-5) -- keeps /run/eclipse-obd alive across
+# eclipse-obd.service stop so the shutdown splash can still read shutdown-state.
+RuntimeDirectory=eclipse-obd
+RuntimeDirectoryPreserve=yes
+WorkingDirectory=/home/mcornelison/Projects/Eclipse-01
+Environment=PYTHONPATH=/home/mcornelison/Projects/Eclipse-01:/home/mcornelison/Projects/Eclipse-01/src
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/home/mcornelison/obd2-venv/bin/python -m pi.splash.states_http_server --states-dir /run/eclipse-obd/states --assets-dir /opt/splash --host 127.0.0.1 --port 9899
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

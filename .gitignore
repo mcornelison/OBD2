@@ -13,6 +13,12 @@ __pycache__/
 build/
 develop-eggs/
 dist/
+# The generic Python `dist/` rule above also matched specs/UI/dist/ -- the splash
+# UI deliverable kit (NOT Python build output). Un-ignore it so the F-103 splash
+# assets are version-controlled + deployable (US-393 Rule-10: specs/UI/ updates
+# must land in-sprint). specs/UI/dist is a hand-authored design deliverable.
+!specs/UI/dist/
+!specs/UI/dist/**
 downloads/
 eggs/
 .eggs/

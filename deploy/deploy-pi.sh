@@ -1039,6 +1039,192 @@ step_install_power_watch_unit() {
     "
 }
 
+step_install_states_tmpfiles() {
+    # US-395 (F-103, Atlas C-5): install the tmpfiles.d entry that provisions
+    # /run/eclipse-obd/states/ at EVERY boot, owned non-root (mcornelison),
+    # INDEPENDENT of any unit start order.  /run is a tmpfs on Raspberry Pi OS
+    # (wiped every reboot), so the old deploy-time `install -d` ran once and was
+    # gone on the next boot; eclipse-obd.service creates only /run/eclipse-obd
+    # (via RuntimeDirectory) on its OWN start and removes it on stop, and never
+    # makes the states/ subdir.  A tmpfiles.d entry is run by
+    # systemd-tmpfiles-setup early at boot, every boot -- the cold-reboot
+    # invariant the bench drill proves (splash renders without eclipse-obd having
+    # provisioned the dir).  This is AC#4: the boot-durable provisioning
+    # mechanism, NOT install -d alone.
+    #
+    # Sync-if-changed mirrors step_install_journald_persistent (cmp -s the
+    # rsynced source vs the installed copy).  After install we run
+    # `systemd-tmpfiles --create` so the dir exists IMMEDIATELY (this deploy),
+    # not only after the next reboot.  Missing-file gate (warn + skip) keeps the
+    # offline smoke test green when only deploy/ is present.  Runs AFTER
+    # sync_tree so deploy/eclipse-obd-states.conf exists on the Pi.
+    echo "--- Step: Installing F-103 states-dir tmpfiles.d provisioning (US-395, Atlas C-5) ---"
+    local sourceFile="deploy/eclipse-obd-states.conf"
+    local targetPath="/etc/tmpfiles.d/eclipse-obd-states.conf"
+    if $DRY_RUN; then
+        echo "DRY-RUN would install ${PI_PATH}/${sourceFile} -> ${targetPath}"
+        echo "DRY-RUN would: sudo systemd-tmpfiles --create ${targetPath} (so /run/eclipse-obd/states exists now, not just next boot)"
+        return 0
+    fi
+    remote "
+        set -e
+        SRC='${PI_PATH}/${sourceFile}'
+        DST='${targetPath}'
+        if [ ! -f \"\$SRC\" ]; then
+            echo 'WARN: ${sourceFile} not present on Pi -- skipping states-dir tmpfiles install.' >&2
+            exit 0
+        fi
+        if sudo test -f \"\$DST\" && sudo cmp -s \"\$SRC\" \"\$DST\"; then
+            echo 'states-dir tmpfiles entry already current at ${targetPath} (no change).'
+        else
+            sudo install -m 644 \"\$SRC\" \"\$DST\"
+            echo 'states-dir tmpfiles entry installed: ${targetPath}'
+        fi
+        # Apply now so /run/eclipse-obd/states exists this deploy, not only after
+        # the next reboot (tmpfiles is normally run by systemd-tmpfiles-setup at
+        # boot).  Idempotent -- creates only what's absent.
+        sudo systemd-tmpfiles --create \"\$DST\"
+        echo '/run/eclipse-obd/states provisioned (systemd-tmpfiles --create).'
+    "
+}
+
+step_install_splash_assets() {
+    # US-395 (F-103, AC#2 + AC#3/A-9): install the splash kit assets the
+    # eclipse-states-http.service serves to the chromium kiosk
+    # (specs/UI/dist/splash-pi/) into /opt/splash, and write
+    # /opt/splash/version.txt (the version chip boot-state-poll.js fetches as a
+    # public static asset; malformed/absent -> the JS 'V?.?.?' fallback).
+    #
+    # A-9: if the splash kit is ABSENT this WARNs and lets the deploy CONTINUE --
+    # it MUST NOT block.  A Pi deploy without the (UI-team) kit still ships the
+    # rest of the tier.  The local-source guard returns 0; the remote
+    # per-asset guard skips-with-warn any individual missing file.
+    #
+    # Scope seam: this installs the BACKEND-served assets (index.html, styles.css,
+    # boot-state-poll.js) + version.txt.  The chromium kiosk UNIT
+    # (splash-boot.service.{wayland,x11}) + the shutdown render assets are US-396
+    # (render side), mirroring the US-394 producer/render seam.
+    #
+    # Runs AFTER sync_tree so ${PI_PATH}/specs/UI/dist/splash-pi/ exists on the Pi.
+    echo "--- Step: Installing F-103 splash assets + version.txt to /opt/splash (US-395) ---"
+    local assetSrc="$REPO_ROOT/specs/UI/dist/splash-pi"
+    local installDir="/opt/splash"
+    local assets="index.html styles.css boot-state-poll.js"
+    if [ ! -d "$assetSrc" ]; then
+        echo "WARN: splash assets not found at $assetSrc -- skipping splash asset install + version.txt; deploy continues (A-9)." >&2
+        return 0
+    fi
+    # Derive the bare version string from deploy/RELEASE_VERSION (JSON {version}).
+    # version.txt holds just the SemVer string the chip renders; a parse failure
+    # falls back to the same 'V?.?.?' sentinel the kiosk JS uses.
+    local splashVersion="V?.?.?"
+    local versionFile="$REPO_ROOT/deploy/RELEASE_VERSION"
+    if [ -f "$versionFile" ]; then
+        splashVersion=$(python -c "import json,sys; print(json.load(open(sys.argv[1]))['version'])" "$versionFile" 2>/dev/null || echo "V?.?.?")
+    fi
+    if $DRY_RUN; then
+        echo "DRY-RUN would: sudo install -d ${installDir}"
+        echo "DRY-RUN would: sudo install -m 0644 ${PI_PATH}/specs/UI/dist/splash-pi/{${assets}} ${installDir}/"
+        echo "DRY-RUN would: write ${installDir}/version.txt = ${splashVersion}"
+        return 0
+    fi
+    remote "
+        set -e
+        SRC='${PI_PATH}/specs/UI/dist/splash-pi'
+        DST='${installDir}'
+        if [ ! -d \"\$SRC\" ]; then
+            echo 'WARN: splash assets not present on Pi at '\"\$SRC\"' -- skipping (A-9).' >&2
+            exit 0
+        fi
+        sudo install -d -m 0755 \"\$DST\"
+        for f in ${assets}; do
+            if [ -f \"\$SRC/\$f\" ]; then
+                sudo install -m 0644 \"\$SRC/\$f\" \"\$DST/\$f\"
+                echo \"installed \$f -> \$DST/\"
+            else
+                echo \"WARN: splash asset \$f missing in \$SRC -- skipped (A-9).\" >&2
+            fi
+        done
+        printf '%s\n' '${splashVersion}' | sudo tee \"\$DST/version.txt\" >/dev/null
+        echo \"wrote \$DST/version.txt = ${splashVersion}\"
+    "
+}
+
+step_install_state_server_units() {
+    # US-395 (F-103, AC#1): idempotent sync-if-changed install of the two F-103
+    # state-server units -- eclipse-boot-state.service (the [A-1] boot-state
+    # emitter) + eclipse-states-http.service (the [A-4] localhost token-gated
+    # state server the kiosk fetch()es).  Mirrors step_install_boot_progress_units
+    # byte-for-byte: cmp -s on the rsynced source vs the installed copy,
+    # daemon-reload only when something actually changed, enable --now idempotent
+    # and re-asserted every deploy so the units recover from an out-of-band
+    # 'systemctl disable'.
+    #
+    # Unlike the boot-progress units (oneshot), BOTH of these are long-running
+    # Type=simple services -- so, like step_install_power_watch_unit, they must
+    # also `systemctl restart` on EVERY deploy: daemon-reload + enable --now
+    # alone leave the OLD interpreter on the OLD rsynced code (the V0.27.16
+    # dead-code-in-memory bug, US-354).  Restart the HTTP server FIRST so the
+    # emitter's first write lands after the server is listening.
+    #
+    # Runs AFTER sync_tree so deploy/eclipse-{boot-state,states-http}.service
+    # exist on the Pi.  Missing-file gate (warn + skip) keeps the offline smoke
+    # test green when only deploy/ is present.
+    echo "--- Step: Installing F-103 state-server units (US-395, sync-if-changed) ---"
+    if $DRY_RUN; then
+        echo "DRY-RUN would: sudo cmp -s ${PI_PATH}/deploy/eclipse-boot-state.service /etc/systemd/system/eclipse-boot-state.service || (install + daemon-reload)"
+        echo "DRY-RUN would: sudo cmp -s ${PI_PATH}/deploy/eclipse-states-http.service /etc/systemd/system/eclipse-states-http.service || (install + daemon-reload)"
+        echo "DRY-RUN would: sudo systemctl enable --now eclipse-boot-state.service eclipse-states-http.service"
+        echo "DRY-RUN would: sudo systemctl restart eclipse-states-http.service eclipse-boot-state.service (long-running Type=simple, US-354)"
+        return 0
+    fi
+    remote "
+        set -e
+        SRC_BS='${PI_PATH}/deploy/eclipse-boot-state.service'
+        DST_BS='/etc/systemd/system/eclipse-boot-state.service'
+        SRC_HTTP='${PI_PATH}/deploy/eclipse-states-http.service'
+        DST_HTTP='/etc/systemd/system/eclipse-states-http.service'
+
+        if [ ! -f \"\$SRC_BS\" ] || [ ! -f \"\$SRC_HTTP\" ]; then
+            echo 'WARN: F-103 state-server unit files not present in deploy/ on the Pi -- skipping install.' >&2
+            exit 0
+        fi
+
+        # Sync-if-changed install of the unit pair.  daemon-reload happens only
+        # when at least one file actually changed to avoid pointless systemd
+        # churn on routine no-op deploys.
+        changed=false
+        if sudo test -f \"\$DST_BS\" && sudo cmp -s \"\$SRC_BS\" \"\$DST_BS\"; then
+            echo 'eclipse-boot-state.service already up-to-date.'
+        else
+            sudo install -m 644 \"\$SRC_BS\" \"\$DST_BS\"
+            echo 'eclipse-boot-state.service installed.'
+            changed=true
+        fi
+        if sudo test -f \"\$DST_HTTP\" && sudo cmp -s \"\$SRC_HTTP\" \"\$DST_HTTP\"; then
+            echo 'eclipse-states-http.service already up-to-date.'
+        else
+            sudo install -m 644 \"\$SRC_HTTP\" \"\$DST_HTTP\"
+            echo 'eclipse-states-http.service installed.'
+            changed=true
+        fi
+
+        if [ \"\$changed\" = true ]; then
+            sudo systemctl daemon-reload
+            echo 'systemd daemon-reload complete.'
+        fi
+
+        # enable --now is idempotent (recovers from an out-of-band disable).
+        sudo systemctl enable --now eclipse-boot-state.service eclipse-states-http.service
+
+        # US-354: long-running Type=simple services must restart on EVERY deploy
+        # so rsynced source changes actually run (not just on a unit-file diff).
+        # HTTP server first so the emitter's first write lands after it listens.
+        sudo systemctl restart eclipse-states-http.service eclipse-boot-state.service
+        echo 'F-103 state-server units enabled + restarted onto current code (US-354).'
+    "
+}
+
 step_write_deploy_version() {
     # US-241: stamp ${PI_PATH}/.deploy-version with the {version, releasedAt,
     # gitHash, description} record describing this deploy. Composed locally
@@ -1332,6 +1518,21 @@ step_install_boot_progress_units
 # other units; additionally restarts the long-running service on change so the
 # new code actually runs. No extra runtime dirs (outcome record -> data/).
 step_install_power_watch_unit
+
+# US-395: F-103 boot/shutdown splash deploy integration.  Order matters at
+# RUNTIME, so provision in dependency order:
+#   1. states-dir tmpfiles.d (the dir the emitter + server write/read; created at
+#      EVERY boot independent of eclipse-obd -- Atlas C-5 / AC#4),
+#   2. splash assets + version.txt to /opt/splash (WARN-not-BLOCK if the kit is
+#      absent -- A-9 / AC#2-3),
+#   3. the two state-server units (enable + restart; AC#1).
+# All three run AFTER sync_tree so deploy/*.service, deploy/eclipse-obd-states.conf,
+# and specs/UI/dist/splash-pi/ exist on the Pi.  Same sync-if-changed posture as
+# the other unit installers; the two state units are long-running Type=simple so
+# they also restart every deploy (US-354).
+step_install_states_tmpfiles
+step_install_splash_assets
+step_install_state_server_units
 
 # US-354 reordering: restart first, then verify both long-running services
 # came back with start times AFTER DEPLOY_START_EPOCH, THEN bump

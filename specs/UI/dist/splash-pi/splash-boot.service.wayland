@@ -1,0 +1,40 @@
+# ==============================================================================
+# File:    splash-boot.service.wayland  (one of two variants; install.sh picks)
+# Purpose: F-103 status-aware boot splash, Bookworm/Wayland. Chromium kiosk that
+#          renders the boot splash + polls the localhost state server. D-3 fix:
+#          ordered AFTER the display server (After=graphical.target, not Before),
+#          Wayland-native (--ozone-platform=wayland), JS-driven exit (no pkill).
+# Author:  Ralph Agent (Rex)  (D-3 corrected unit per spec §7)
+# Created: 2026-06-29 -- Sprint 48 US-393 (F-103 boot splash)
+#
+# Token SSOT: chromium loads http://127.0.0.1:9899/ (NOT file:///opt/splash/...)
+#   so the state server serves the index same-origin with the token injected --
+#   the token never lands in an on-disk asset. Requires eclipse-states-http.
+#
+# Type=simple [A-8] -- oneshot was D-2's root contributor and is rejected here.
+# __PI_USER__ is substituted by install.sh at install time (V-1).
+# ==============================================================================
+
+[Unit]
+Description=Animated boot splash (status-aware, Wayland)
+After=graphical.target eclipse-states-http.service eclipse-boot-state.service
+Wants=graphical.target eclipse-states-http.service eclipse-boot-state.service
+
+[Service]
+Type=simple
+User=__PI_USER__
+Environment=WAYLAND_DISPLAY=wayland-0
+Environment=XDG_RUNTIME_DIR=/run/user/%U
+ExecStart=/usr/bin/chromium-browser \
+  --kiosk \
+  --ozone-platform=wayland \
+  --noerrdialogs --disable-infobars --hide-scrollbars \
+  --autoplay-policy=no-user-gesture-required \
+  --check-for-update-interval=31536000 \
+  --user-data-dir=/tmp/splash-chromium-boot \
+  http://127.0.0.1:9899/
+# Splash exits via its own JS calling window.close() once the state machine
+# reaches HEALTHY_YIELD or DEGRADED. No hardcoded sleep/pkill (D-3).
+
+[Install]
+WantedBy=graphical.target

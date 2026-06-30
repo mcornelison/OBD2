@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=480, height=320, initial-scale=1, user-scalable=no"/>
+<title>Eclipse OBD-II Shutdown Splash</title>
+<!-- F-103 shutdown splash (US-396). Served same-origin by eclipse-states-http at
+     http://127.0.0.1:9899/shutdown.html so the auth token is injected below (the
+     token SSOT never lands on disk -- the HTTP server token-injects .html assets).
+     D-1 fix: this embeds splash-shutdown.svg (the REVERSE dim-down animation), NOT
+     splash.svg -- the prior kit loaded the forward boot animation here. -->
+<link rel="stylesheet" href="styles.css"/>
+</head>
+<body>
+  <!-- PRE_ROLL safety (spec §6): nothing paints for the first 1s. The stage
+       starts hidden; shutdown-state-poll.js reveals it only after the debounce
+       window clears, so a grace that cancels in ~500ms never flashes a frame. -->
+  <div id="splash-stage" style="visibility:hidden">
+    <!-- Reverse 3-rhombus dim-down (spec §6 ANIMATING). -->
+    <object id="mark" type="image/svg+xml" data="splash-shutdown.svg" aria-label="shutdown splash"></object>
+
+    <!-- HTML text overlays (absolute-positioned via styles.css). -->
+    <div id="wordmark" class="overlay">ECLIPSE OBD-II<span id="warn-glyph"></span></div>
+    <div id="version-chip" class="overlay">V?.?.?</div>
+  </div>
+
+  <script>
+    // Token injected by the state server at serve time (token SSOT). When
+    // previewed from file:// the placeholder stays as-is and the shutdown-state
+    // polls fail closed -- the preview still renders the reverse animation.
+    window.SPLASH_TOKEN = "__SPLASH_TOKEN__";
+  </script>
+  <script src="shutdown-state-poll.js"></script>
+</body>
+</html>

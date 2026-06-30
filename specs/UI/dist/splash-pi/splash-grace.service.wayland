@@ -1,0 +1,37 @@
+# ==============================================================================
+# File:    splash-grace.service.wayland  (one of two variants; install.sh picks)
+# Purpose: F-103 grace-period shutdown splash, Bookworm/Wayland. Activated by
+#          splash-grace.path the instant shutdown-state appears. Chromium kiosk
+#          renders the reverse dim-down + polls /shutdown-state via the localhost
+#          state server. Type=simple [A-8] -- oneshot plus the self-cancel
+#          directive were D-2's root cause and are rejected here. JS-driven exit
+#          (window.close), no external kill.
+# Author:  Ralph Agent (Rex)
+# Created: 2026-06-29 -- Sprint 48 US-396 (F-103 shutdown splash, D-2 replacement)
+#
+# Token SSOT: chromium loads http://127.0.0.1:9899/shutdown.html (NOT a file://
+#   asset) so the state server injects the token same-origin -- it never lands on
+#   disk. Requires eclipse-states-http.service. __PI_USER__ substituted by
+#   install.sh at install time (V-1).
+# ==============================================================================
+
+[Unit]
+Description=Grace-period shutdown splash (Wayland)
+After=eclipse-states-http.service
+Wants=eclipse-states-http.service
+
+[Service]
+Type=simple
+User=__PI_USER__
+Environment=WAYLAND_DISPLAY=wayland-0
+Environment=XDG_RUNTIME_DIR=/run/user/%U
+ExecStart=/usr/bin/chromium-browser \
+  --kiosk \
+  --ozone-platform=wayland \
+  --noerrdialogs --disable-infobars --hide-scrollbars \
+  --autoplay-policy=no-user-gesture-required \
+  --check-for-update-interval=31536000 \
+  --user-data-dir=/tmp/splash-chromium-shutdown \
+  http://127.0.0.1:9899/shutdown.html
+# Splash exits via its own JS calling window.close() on cancelled / poweroff /
+# the BLACK_TAIL 60s safety cap. No hardcoded sleep or external kill (D-3 lesson).
