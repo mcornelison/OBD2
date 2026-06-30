@@ -1,0 +1,32 @@
+# ==============================================================================
+# File:    splash-grace.service.x11  (one of two variants; install.sh picks)
+# Purpose: F-103 grace-period shutdown splash, X11 fallback. Same as the Wayland
+#          variant but talks to an X server (DISPLAY=:0). install.sh selects this
+#          only when the detected session type is x11 (V-2); guessing wrong gives
+#          the D-3 class of bug, so detection fails loudly rather than defaulting.
+# Author:  Ralph Agent (Rex)
+# Created: 2026-06-29 -- Sprint 48 US-396 (F-103 shutdown splash, D-2 replacement)
+#
+# Token SSOT: chromium loads http://127.0.0.1:9899/shutdown.html so the token is
+#   injected same-origin and never lands on disk. Requires eclipse-states-http.
+# Type=simple [A-8]. __PI_USER__ substituted by install.sh (V-1).
+# ==============================================================================
+
+[Unit]
+Description=Grace-period shutdown splash (X11)
+After=eclipse-states-http.service
+Wants=eclipse-states-http.service
+
+[Service]
+Type=simple
+User=__PI_USER__
+Environment=DISPLAY=:0
+Environment=XDG_RUNTIME_DIR=/run/user/%U
+ExecStart=/usr/bin/chromium-browser \
+  --kiosk \
+  --noerrdialogs --disable-infobars --hide-scrollbars \
+  --autoplay-policy=no-user-gesture-required \
+  --check-for-update-interval=31536000 \
+  --user-data-dir=/tmp/splash-chromium-shutdown \
+  http://127.0.0.1:9899/shutdown.html
+# Splash exits via JS window.close() on cancelled / poweroff / BLACK_TAIL cap.

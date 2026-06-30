@@ -1,0 +1,26 @@
+# ==============================================================================
+# File:    splash-grace.path
+# Purpose: F-103 shutdown-splash trigger (spec §6). Always armed; the instant
+#          ShutdownSequencer writes the shutdown-state SSOT, this .path unit
+#          activates splash-grace.service. Clean decoupling -- the sequencer
+#          never names the splash unit; it only writes the state file.
+# Author:  Ralph Agent (Rex)
+# Created: 2026-06-29 -- Sprint 48 US-396 (F-103 shutdown splash, D-2 replacement)
+#
+# Replaces the retired splash-shutdown.service, whose self-cancel directive made
+# systemd stop the splash the moment shutdown began (D-2 root cause).
+# ==============================================================================
+
+[Unit]
+Description=Watch for shutdown-state -> fire the grace-period splash
+
+[Path]
+# The shutdown-state SSOT written by ShutdownSequencer (US-394). Path matches
+# the emitter's statesDir (/run/eclipse-obd/states), NOT the spec's /var/run
+# prose alias -- /var/run is a symlink to /run on Bookworm, and the producer
+# writes the literal /run path.
+PathExists=/run/eclipse-obd/states/shutdown-state
+Unit=splash-grace.service
+
+[Install]
+WantedBy=multi-user.target

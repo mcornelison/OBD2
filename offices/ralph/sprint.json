@@ -164,8 +164,9 @@
       "epicId": "E-001",
       "type": "normal",
       "size": "S",
-      "status": "sprint-ready",
-      "passes": false,
+      "status": "complete",
+      "passes": true,
+      "completionNotes": "F-103 RENDER-SIDE defects + install-time checks SHIPPED (TDD red->green, 17 new synthetic CI-runnable tests in tests/deploy/test_splash_kit.py covering spec S-1..S-4 + D-1/D-2/D-3 + V-1/V-2). This closes the producer/render seam US-394 flagged: US-393/394/395 built the BACKEND (state-server units, emitters, deploy fold-in); US-396 is the RENDER side that consumes the shutdown-state SSOT. DEFECTS: (D-1) shutdown.html now embeds splash-shutdown.svg (the REVERSE dim-down) -- was data='splash.svg' (the forward boot animation, pure copy-paste regression); rebuilt shutdown.html into a real render page (styles.css + token placeholder + shutdown-state-poll.js, mirroring index.html) loaded same-origin via http://127.0.0.1:9899/shutdown.html so the HTTP server token-injects it (token SSOT never on disk -- states_http_server already token-injects .html assets, NO server change). (D-2) DELETED splash-shutdown.service (its Conflicts=reboot/halt/poweroff.target made systemd cancel the splash the instant shutdown began); replaced with splash-grace.path (PathExists=/run/eclipse-obd/states/shutdown-state -> Unit=splash-grace.service; matches the US-394 emitter's literal /run path, NOT spec /var/run prose alias) + splash-grace.service.{wayland,x11} (Type=simple [A-8], chromium kiosk loads .../shutdown.html, JS-driven exit no pkill). (D-3) DELETED the original splash-boot.service (Before=graphical.target + DISPLAY=:0 -- fired before the display server, X11-only on a Wayland Bookworm box); the US-393 splash-boot.service.{wayland,x11} variants (After=graphical.target, Wayland-native) already replace it. NEW shutdown-state-poll.js = spec §6 phase state machine: 250ms poll of token-gated /shutdown-state; phase=grace/flushing/powering_off CONTINUE (reveal stage only after the 1s PRE_ROLL debounce so a ~500ms false-positive grace never paints a frame -- spec §6 PRE_ROLL no-paint), phase=cancelled OR unrecognized -> ABORT (window.close, fail-safe), shutdown-state missing -> retry 3x then EXIT, BLACK_TAIL 60s safety cap -> exit (no forever-black if sequencer hangs). INSTALL CHECKS: rewrote install.sh -- (V-1) detect_pi_user = single non-root /home/* owner, fail loud if 0/ambiguous (no more hardcoded User=pi); (V-2) detect_session_type = loginctl Type then wayland-0-socket fallback, fail LOUD on unknown (never default X11 -> that's the D-3 bug class); substitutes __PI_USER__ into the picked boot+grace variants, installs the session-matched variants as splash-boot.service/splash-grace.service + splash-grace.path, sweeps the retired splash-shutdown.service on upgrade-in-place, daemon-reload + enable (idempotent). NEW --dry-run (S-4) reports the user+session+variants it WOULD pick and exits 0 WITHOUT installing, runs unprivileged (root gate moved to the real-install path only). Detection is overridable (SPLASH_FORCE_USER / SPLASH_FORCE_SESSION / SPLASH_USER_HOME_GLOB) so the dry-run report is deterministic off-Pi for CI. uninstall.sh updated to remove the grace pair + sweep the legacy splash-shutdown.service. INSTALL.md refreshed (file list, render model, --dry-run, troubleshooting D-2 symptom rewritten to point at splash-grace.path/shutdown-state). SCOPE NOTE: states_http_server.py / boot_state_emitter.py / shutdown_state_emitter.py NOT touched (US-393/394 backend, out of scope -- the server already serves token-injected shutdown.html + /shutdown-state). GATES: pytest tests/deploy/ = 213 passed (196 prior US-393/395 + 17 new, ZERO regression); ruff clean on the new test; bash -n clean on install.sh + uninstall.sh. GIT/§13 NOTE: the whole specs/UI/dist/splash-pi/ kit was UNTRACKED at session start (gitignore .../dist rule once swallowed it); .gitignore lines 20-21 already un-ignore specs/UI/dist/ (PM resolved the flagged issue), so this commit lands the full kit -- my US-396 render files AND the previously-untracked US-393/395 sibling assets (index.html, styles.css, boot-state-poll.js, splash-boot.service.{wayland,x11}, splash.svg, splash-shutdown.svg, preview.html) -- to prevent handbook-§13 loss on the next PM branch switch. DEFERRED BENCH-ONLY per validationMethod (CIO/Argus, not dev-box runnable): re-run D-1/D-2/D-3 repros on the Pi (shutdown splash plays the reverse animation + is NOT cancelled at shutdown; cold-boot splash renders on Wayland); install.sh --dry-run + real install on the Pi (V-1/V-2 detect the real Chi-Eclips-Tuner user + Wayland session, pick the wayland variants). mypy not on dev box (assets are shell/html/js, no .py product change); full-suite deferred to PM (slow SMB) -- the deploy suite is the in-iteration gate since my only .py is the additive test file.",
       "acceptance": [
         "spec defects D-1/D-2/D-3 resolved",
         "V-1/V-2 install-time checks pass",
@@ -185,7 +186,22 @@
         "may fold into US-393/US-394 at dev discretion (zero information loss)"
       ],
       "goal": "As the F-103 surface, I want the spec's known defects closed + the install-time checks passing.",
-      "tasks": []
+      "tasks": [],
+      "feedback": {
+        "filesActuallyTouched": [
+          "specs/UI/dist/splash-pi/shutdown.html",
+          "specs/UI/dist/splash-pi/shutdown-state-poll.js",
+          "specs/UI/dist/splash-pi/splash-grace.path",
+          "specs/UI/dist/splash-pi/splash-grace.service.wayland",
+          "specs/UI/dist/splash-pi/splash-grace.service.x11",
+          "specs/UI/dist/splash-pi/install.sh",
+          "specs/UI/dist/splash-pi/uninstall.sh",
+          "specs/UI/dist/splash-pi/INSTALL.md",
+          "specs/UI/dist/splash-pi/splash-shutdown.service (DELETED -- D-2)",
+          "specs/UI/dist/splash-pi/splash-boot.service (DELETED -- D-3)",
+          "tests/deploy/test_splash_kit.py"
+        ]
+      }
     },
     {
       "id": "US-397",
