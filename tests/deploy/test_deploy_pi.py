@@ -563,3 +563,112 @@ def test_us389_deployVersion_recordsSingleInstanceState():
         "step_write_deploy_version must pass --single-instance to compose-record "
         "so the .deploy-version stamp records guardEnabled + runtimeDirectory"
     )
+
+
+# -----------------------------------------------------------------------------
+# US-395: F-103 deploy integration -- fold the splash state-server units +
+# states-dir provisioning + splash assets/version.txt into deploy-pi.sh.
+# -----------------------------------------------------------------------------
+
+
+def test_us395_citedInScript():
+    """The F-103 deploy integration must cite US-395 so archaeology can trace it."""
+    text = _scriptText()
+    assert "US-395" in text, "deploy-pi.sh must cite US-395 on the F-103 splash steps"
+
+
+def test_us395_stateServerUnits_stepExists_installsBothUnits():
+    """deploy-pi.sh must define a step that installs BOTH F-103 state-server
+    units (eclipse-boot-state.service + eclipse-states-http.service) -- AC#1.
+    """
+    text = _scriptText()
+    body = _stepBody(text, "step_install_state_server_units")
+    assert "eclipse-boot-state.service" in body, (
+        "step_install_state_server_units must install eclipse-boot-state.service"
+    )
+    assert "eclipse-states-http.service" in body, (
+        "step_install_state_server_units must install eclipse-states-http.service"
+    )
+
+
+def test_us395_stateServerUnits_syncIfChangedAndEnabled():
+    """The state-server units install must mirror the existing unit-install
+    steps: cmp -s sync-if-changed, daemon-reload, enable --now (AC#1).
+    """
+    body = _stepBody(_scriptText(), "step_install_state_server_units")
+    assert "cmp -s" in body, "must be sync-if-changed (cmp -s) like the sibling unit installers"
+    assert "daemon-reload" in body, "must daemon-reload when a unit file changed"
+    assert "enable --now" in body, "must enable --now both state-server units"
+
+
+def test_us395_stateServerUnits_restartLongRunningServices():
+    """The two state-server units are long-running Type=simple services -- they
+    must restart on EVERY deploy so rsynced source changes actually run (US-354
+    dead-code-in-memory lesson), not just on a unit-file diff.
+    """
+    body = _stepBody(_scriptText(), "step_install_state_server_units")
+    assert "systemctl restart eclipse-states-http.service" in body, (
+        "step_install_state_server_units must restart eclipse-states-http.service "
+        "unconditionally (US-354 long-running-service restart class)"
+    )
+    assert "systemctl restart" in body and "eclipse-boot-state.service" in body, (
+        "step_install_state_server_units must restart eclipse-boot-state.service too"
+    )
+
+
+def test_us395_statesTmpfiles_stepProvisionsRunDir():
+    """AC#4 (Atlas C-5): deploy installs the tmpfiles.d provisioning mechanism
+    that makes /run/eclipse-obd/states/ exist at EVERY boot -- NOT the
+    deploy-time `install -d` alone (which tmpfs wipes on reboot).
+    """
+    body = _stepBody(_scriptText(), "step_install_states_tmpfiles")
+    assert "eclipse-obd-states.conf" in body, (
+        "must install deploy/eclipse-obd-states.conf"
+    )
+    assert "/etc/tmpfiles.d" in body, "must target /etc/tmpfiles.d"
+    assert "systemd-tmpfiles --create" in body, (
+        "must apply the tmpfiles entry immediately (systemd-tmpfiles --create) so "
+        "/run/eclipse-obd/states exists without waiting for the next boot"
+    )
+
+
+def test_us395_splashAssets_writesVersionTxt():
+    """AC#2: a version.txt must be written into the splash assets dir
+    (/opt/splash) -- the kiosk version chip consumes it.
+    """
+    body = _stepBody(_scriptText(), "step_install_splash_assets")
+    assert "version.txt" in body, "step_install_splash_assets must write version.txt"
+    assert "/opt/splash" in body, "version.txt + assets land in /opt/splash"
+
+
+def test_us395_splashAssets_warnsNotBlocksOnMissing():
+    """AC#3 / A-9: missing splash assets must WARN and let the deploy CONTINUE,
+    never BLOCK. The local-source guard must `return 0` (not exit non-zero) so a
+    deploy without the splash kit still completes.
+    """
+    body = _stepBody(_scriptText(), "step_install_splash_assets")
+    assert "specs/UI/dist/splash-pi" in body, (
+        "step_install_splash_assets must source the splash kit from "
+        "specs/UI/dist/splash-pi"
+    )
+    assert "WARN" in body, "missing assets must emit a WARN"
+    # The whole point of A-9: the step must not contain a hard non-zero exit for
+    # the missing-assets path. (`exit 0` / `return 0` are fine.)
+    assert "exit 1" not in body, (
+        "step_install_splash_assets must not BLOCK (exit non-zero) on missing assets (A-9)"
+    )
+
+
+def test_us395_splashSteps_wiredIntoMainFlow():
+    """All three US-395 steps must be CALLED from the default-mode body, not just
+    defined. A `step_*` name appearing only once = defined-but-never-invoked.
+    """
+    text = _scriptText()
+    for step in (
+        "step_install_states_tmpfiles",
+        "step_install_splash_assets",
+        "step_install_state_server_units",
+    ):
+        assert text.count(step) >= 2, (
+            f"{step} must be both defined AND called in the main deploy flow"
+        )

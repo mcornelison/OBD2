@@ -2285,7 +2285,31 @@ The emitter + server also `ensureStatesDir()` the `states/` subdir in-process
 Together: tmpfiles guarantees boot-time existence; the shared ref-counted
 `RuntimeDirectory` guarantees mid-session survival across eclipse-obd's lifecycle.
 The old deploy-time `install -d` alone is **insufficient** (tmpfs wipes it on the
-next reboot). `deploy-pi.sh` installs the tmpfiles entry + the two units (US-395).
+next reboot).
+
+**Deploy provisioning (US-395).** `deploy-pi.sh` folds the whole F-103 backend into
+every Pi deploy, in dependency order, all `sync-if-changed` (mirroring the sibling
+unit installers — `cmp -s`, `daemon-reload` only on change, `enable --now`
+idempotent):
+
+1. `step_install_states_tmpfiles` installs `deploy/eclipse-obd-states.conf` →
+   `/etc/tmpfiles.d/` **and runs `systemd-tmpfiles --create`** so
+   `/run/eclipse-obd/states/` exists *this* deploy, not only after the next reboot
+   (the boot-durable provisioning mechanism AC#4 requires — **not** `install -d`
+   alone).
+2. `step_install_splash_assets` installs the served kit (`index.html`,
+   `styles.css`, `boot-state-poll.js`) from `specs/UI/dist/splash-pi/` into
+   `/opt/splash` and writes `/opt/splash/version.txt` (the bare SemVer string the
+   kiosk version chip fetches; derived from `deploy/RELEASE_VERSION`, `V?.?.?`
+   fallback). **A-9:** a missing splash kit **WARNs and the deploy continues** — it
+   never blocks.
+3. `step_install_state_server_units` installs + enables `eclipse-boot-state.service`
+   + `eclipse-states-http.service`; both are long-running `Type=simple`, so they
+   also `systemctl restart` on every deploy (the US-354 dead-code-in-memory class).
+
+The chromium kiosk **unit** (`splash-boot.service.{wayland,x11}`) + the shutdown
+render assets are the **render side (US-396)** — the same producer/render seam as
+US-394.
 
 > **Cross-ref:** the shutdown-state half of this contract (the ShutdownSequencer
 > phase-emit hook + the "shutdown-state survives eclipse-obd stop" guarantee) is
