@@ -1,0 +1,38 @@
+# ==============================================================================
+# File:    dashboard.service.x11  (one of two variants; install.sh picks)
+# Purpose: US-399 carousel dashboard kiosk, X11 session. Chromium kiosk that
+#          renders the carousel + polls the localhost state server. Touch
+#          enabled (A-5: --touch-events=enabled). Loads /dashboard.html
+#          same-origin so the token is injected (token SSOT).
+# Author:  Ralph Agent (Rex)
+# Created: 2026-06-30 -- Sprint 49 US-399 (carousel shell)
+#
+# A-1 hand-off: NOT WantedBy=graphical.target -- started by the splash-boot
+#   `OnSuccess=eclipse-dashboard.service` directive only after HEALTHY_YIELD.
+#   No [Install] section by design (dependency-started, not enabled).
+#
+# Token SSOT + assets: requires eclipse-states-http with /opt/dashboard on its
+#   --assets-dir search path (deploy/eclipse-states-http.service, US-399 A-2).
+#
+# Type=simple [A-8]. __PI_USER__ substituted by install.sh at install time.
+# ==============================================================================
+
+[Unit]
+Description=Eclipse OBD carousel dashboard kiosk (X11)
+After=graphical.target eclipse-states-http.service
+Wants=eclipse-states-http.service
+
+[Service]
+Type=simple
+User=__PI_USER__
+Environment=DISPLAY=:0
+ExecStart=/usr/bin/chromium-browser \
+  --kiosk \
+  --touch-events=enabled \
+  --noerrdialogs --disable-infobars --hide-scrollbars \
+  --autoplay-policy=no-user-gesture-required \
+  --check-for-update-interval=31536000 \
+  --user-data-dir=/tmp/dashboard-chromium \
+  http://127.0.0.1:9899/dashboard.html
+Restart=on-failure
+RestartSec=2

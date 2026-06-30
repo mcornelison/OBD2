@@ -48,7 +48,12 @@ RuntimeDirectoryPreserve=yes
 WorkingDirectory=/home/mcornelison/Projects/Eclipse-01
 Environment=PYTHONPATH=/home/mcornelison/Projects/Eclipse-01:/home/mcornelison/Projects/Eclipse-01/src
 Environment=PYTHONUNBUFFERED=1
-ExecStart=/home/mcornelison/obd2-venv/bin/python -m pi.splash.states_http_server --states-dir /run/eclipse-obd/states --assets-dir /opt/splash --host 127.0.0.1 --port 9899
+# US-399 [A-2]: serve BOTH co-located kits same-origin (token injected into
+# either). --assets-dir is repeatable + searched in order: splash owns `/`, the
+# carousel dashboard is reached at /dashboard.html. This is the "full runtime"
+# extension -- the server already runs continuously (C-5), it now serves the
+# post-boot dashboard too.
+ExecStart=/home/mcornelison/obd2-venv/bin/python -m pi.splash.states_http_server --states-dir /run/eclipse-obd/states --assets-dir /opt/splash --assets-dir /opt/dashboard --host 127.0.0.1 --port 9899
 Restart=on-failure
 RestartSec=2
 

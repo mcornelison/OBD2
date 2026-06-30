@@ -12,7 +12,7 @@
       "type": "normal",
       "size": "M",
       "status": "sprint-ready",
-      "passes": false,
+      "passes": true,
       "acceptance": [
         "dashboard kiosk (Wayland/X11, F-103 launch-flag parity) starts on the splash HEALTHY_YIELD hand-off (A-1)",
         "eclipse-states-http extended boot-only -> full runtime serving the new state files read-only (A-2)",
@@ -40,7 +40,28 @@
         "if a state file is missing/malformed, the card shows `unavailable`, no crash (honest-instrument)"
       ],
       "goal": "As the operator at the dash, I want a swipeable chromium dashboard with a persistent top bar so I can glance at system + battery state on the 3.5\" panel after boot.",
-      "tasks": []
+      "tasks": [],
+      "feedback": {
+        "filesActuallyTouched": [
+          "src/pi/splash/states_http_server.py",
+          "tests/pi/splash/test_states_http_multi_assets.py",
+          "specs/UI/dist/dashboard-pi/dashboard.html",
+          "specs/UI/dist/dashboard-pi/dashboard.css",
+          "specs/UI/dist/dashboard-pi/carousel.js",
+          "specs/UI/dist/dashboard-pi/dashboard.service.wayland",
+          "specs/UI/dist/dashboard-pi/dashboard.service.x11",
+          "specs/UI/dist/dashboard-pi/install.sh",
+          "specs/UI/dist/dashboard-pi/uninstall.sh",
+          "specs/UI/dist/dashboard-pi/INSTALL.md",
+          "specs/UI/dist/splash-pi/splash-boot.service.wayland",
+          "specs/UI/dist/splash-pi/splash-boot.service.x11",
+          "deploy/eclipse-states-http.service",
+          "deploy/deploy-pi.sh",
+          "specs/architecture.md",
+          "tests/deploy/test_dashboard_kit.py"
+        ]
+      },
+      "completionNotes": "Carousel shell SHIPPED. A-2: extended states_http_server with repeatable --assets-dir (ordered search, first-match-wins) so ONE eclipse-states-http serves BOTH kits same-origin (token injected into either) -- splash owns `/`, dashboard at /dashboard.html; deploy/eclipse-states-http.service ExecStart now passes --assets-dir /opt/splash --assets-dir /opt/dashboard. The server already ran continuously (C-5), so 'full runtime' was a serving extension, not a lifecycle one. Single-string assetsDir back-compat preserved (US-393 call sites untouched). A-1 hand-off: splash-boot.service.{wayland,x11} gained OnSuccess=eclipse-dashboard.service -- HEALTHY_YIELD window.close() -> Type=simple splash exits 0 -> systemd starts the dashboard; DEGRADED splash persists (no close) -> no hand-off (honest). Dashboard dist kit specs/UI/dist/dashboard-pi/ (mirrors splash-pi): carousel.js exposes node-testable pure logic (nextIndex clamp-no-wrap / swipeDirection / cardAvailability) + DOM swipe (pointerdown/up, vertical-ignore) + 4Hz honest-instrument availability poll (missing/malformed -> `unavailable`, try/catch, never green-when-broken); dashboard.css >=40px tap targets (--tap-min) on dots+menu; dashboard.html persistent top bar (BT/sync/power glyphs + version chip + inert ⋮ menu affordance for US-403) + 2 card slots (system-status/battery-health) + page-dot mount + STOP-red ribbon mount (#dtc-ribbon for US-405). dashboard.service.{wayland,x11} touch kiosk (--touch-events=enabled, A-5), NO [Install] (hand-off-started not enabled). install.sh/uninstall.sh mirror splash V-1/V-2 detection + --dry-run (DASHBOARD_FORCE_USER/SESSION overrides). deploy-pi.sh step_install_dashboard_assets (-> /opt/dashboard, WARN-not-BLOCK A-9, presence-gated for the offline smoke test). Rule-10: specs/architecture.md new 'F-092 Carousel Dashboard Subsystem' section (A-1 hand-off, A-2 multi-dir, honest-instrument, deploy, A-4 sequencing note). GATES (BENCH per validationMethod): S-1 = tests/deploy/test_dashboard_kit.py (card slots + top bar + dots + token + reads-only-state + node --check carousel.js + no always-on console.error) 22 passed; S-2 = node logic test (swipe->index->dot) + CSS >=40px tap targets; A-1/A-2 static unit+ExecStart assertions. tests/pi/splash (multi-assets 6 + existing states-http 7) green incl. back-compat. tests/deploy bash smoke 29/29. ruff clean on all .py. DEFERRED: I-1 (boot splash->dashboard <=3s on the OSOYOO) = Pi bench drill at sprint validation (not reproducible off-Pi). DEFERRED-PM: mypy (not on dev box; code mypy-strict-shaped); full `pytest tests/` (slow SMB). NOTE-TO-PM: full tests/pi/splash+tests/deploy run = 255 passed, 1 skipped, 1 ERROR = tests/deploy/test_drain_forensics_install.py::TestDeployPiShDryRunAnnouncesNewStep -- a subprocess TimeoutExpired (30s cap) running `bash deploy-pi.sh --dry-run` over the \\\\chi-nas-01 UNC path UNDER SUITE CONTENTION; the SAME dry-run runs in 8.3s exit 0 with correct output (incl. my dashboard step) when run alone -> environmental SMB-contention flake at the 30s boundary (prior session recorded this class green), NOT a US-399 regression. My deploy-pi.sh addition adds only one `[ -d ]` stat + 2 echos to the dry-run (no python/ssh). Consider raising that class's 30s timeout. SEQUENCING: the dashboard auto-launches via OnSuccess every healthy boot once deployed; pygame status_display retirement is US-402 (A-4) -- the sprint deploys US-399..402 together so the shipped artifact has one surface."
     },
     {
       "id": "US-400",

@@ -16,6 +16,9 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-06-29    | Ralph (Rex)  | Initial implementation (US-393 F-103 boot splash)
+# 2026-06-30    | Ralph (Rex)  | US-399 [A-2]: multi-assets-dir support (serve the
+#               |              | carousel dashboard kit same-origin alongside the
+#               |              | splash) -- full-runtime extension of the server.
 # ================================================================================
 ################################################################################
 
@@ -25,6 +28,7 @@ from __future__ import annotations
 
 import hmac
 import mimetypes
+from collections.abc import Sequence
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
@@ -51,10 +55,33 @@ def _isSafeFile(baseDir: str, name: str) -> Path | None:
     return candidate if candidate.is_file() else None
 
 
+def _normalizeAssetsDirs(
+    assetsDir: str | Sequence[str] | None,
+) -> tuple[str, ...]:
+    """Normalize the assets-dir argument to a search-ordered tuple of dirs.
+
+    Accepts a single path string (the US-393 single-kit call sites), a sequence
+    of paths (US-399: splash kit first, dashboard kit second -- both served
+    same-origin so the token is injected into either kit's HTML), or ``None``.
+    The order is the lookup order; the first dir holding a requested name wins.
+    """
+    if assetsDir is None:
+        return ()
+    if isinstance(assetsDir, str):
+        return (assetsDir,)
+    return tuple(assetsDir)
+
+
 def makeStatesHandler(
-    statesDir: str, token: str, assetsDir: str | None = None
+    statesDir: str, token: str, assetsDir: str | Sequence[str] | None = None
 ) -> type[BaseHTTPRequestHandler]:
-    """Build a request-handler class bound to one states dir + token + assets."""
+    """Build a request-handler class bound to one states dir + token + assets.
+
+    ``assetsDir`` may be a single path or an ordered sequence of paths (searched
+    in order, first match wins) so one server can serve multiple co-located kits
+    (the splash + the carousel dashboard) same-origin with the token injected.
+    """
+    assetsDirs = _normalizeAssetsDirs(assetsDir)
 
     class _StatesHandler(BaseHTTPRequestHandler):
         # Silence default stderr request logging -- the journal captures stdout.
@@ -98,9 +125,11 @@ def makeStatesHandler(
                 return
 
             # Public static asset (svg/js/css). Never token-gated -- the page
-            # must load before it can authenticate the state polls.
-            if assetsDir is not None:
-                assetFile = _isSafeFile(assetsDir, name)
+            # must load before it can authenticate the state polls. Search the
+            # asset dirs in order (first match wins) so co-located kits (splash
+            # + dashboard) are both served by the one runtime server.
+            for assetsBase in assetsDirs:
+                assetFile = _isSafeFile(assetsBase, name)
                 if assetFile is not None:
                     self._serveAsset(assetFile)
                     return
@@ -120,17 +149,19 @@ def makeStatesHandler(
         do_HEAD = do_GET  # noqa: N815 (stdlib alias)
 
         def _serveIndex(self) -> None:
-            if assetsDir is None:
-                self._send(404, b"not found", "text/plain")
-                return
-            indexFile = _isSafeFile(assetsDir, "index.html")
-            if indexFile is None:
-                self._send(404, b"not found", "text/plain")
-                return
-            html = indexFile.read_text(encoding="utf-8").replace(
-                _TOKEN_PLACEHOLDER, token
-            )
-            self._send(200, html.encode("utf-8"), "text/html; charset=utf-8")
+            # The first asset dir holding an index.html owns `/` (the splash kit
+            # in the runtime config); the dashboard is reached by its own name.
+            for assetsBase in assetsDirs:
+                indexFile = _isSafeFile(assetsBase, "index.html")
+                if indexFile is not None:
+                    html = indexFile.read_text(encoding="utf-8").replace(
+                        _TOKEN_PLACEHOLDER, token
+                    )
+                    self._send(
+                        200, html.encode("utf-8"), "text/html; charset=utf-8"
+                    )
+                    return
+            self._send(404, b"not found", "text/plain")
 
         def _serveAsset(self, assetFile: Path) -> None:
             contentType, _ = mimetypes.guess_type(str(assetFile))
@@ -159,7 +190,7 @@ class StatesHttpServer:
         token: str,
         host: str = "127.0.0.1",
         port: int = 9899,
-        assetsDir: str | None = None,
+        assetsDir: str | Sequence[str] | None = None,
     ) -> None:
         self.host = host
         self.statesDir = statesDir
@@ -196,11 +227,15 @@ def main(argv: list[str] | None = None) -> int:
 
     parser = argparse.ArgumentParser(description="F-103 localhost state server")
     parser.add_argument("--states-dir", default="/run/eclipse-obd/states")
-    parser.add_argument("--assets-dir", default="/opt/splash")
+    # Repeatable: pass once per co-located kit (splash first, dashboard second).
+    # Searched in order, first match wins. Defaults to the splash kit alone.
+    parser.add_argument("--assets-dir", action="append", dest="assets_dirs")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=9899)
     parser.add_argument("--token-path", default="/run/eclipse-obd/states/.http-token")
     args = parser.parse_args(argv)
+
+    assetsDirs = args.assets_dirs if args.assets_dirs else ["/opt/splash"]
 
     ensureStatesDir(args.states_dir)
     token = loadOrCreateToken(args.token_path)
@@ -209,7 +244,7 @@ def main(argv: list[str] | None = None) -> int:
         token=token,
         host=args.host,
         port=args.port,
-        assetsDir=args.assets_dir,
+        assetsDir=assetsDirs,
     )
     server.serveForever()
     return 0

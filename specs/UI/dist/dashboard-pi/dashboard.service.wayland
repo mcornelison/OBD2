@@ -1,0 +1,47 @@
+# ==============================================================================
+# File:    dashboard.service.wayland  (one of two variants; install.sh picks)
+# Purpose: US-399 carousel dashboard kiosk, Bookworm/Wayland. Chromium kiosk
+#          that renders the carousel + polls the localhost state server. Touch
+#          enabled (A-5: --touch-events=enabled). Wayland-native
+#          (--ozone-platform=wayland). Loads /dashboard.html (NOT /, which the
+#          splash owns) same-origin so the token is injected (token SSOT).
+# Author:  Ralph Agent (Rex)
+# Created: 2026-06-30 -- Sprint 49 US-399 (carousel shell)
+#
+# A-1 hand-off: this unit is NOT WantedBy=graphical.target. It is started by the
+#   splash-boot.service `OnSuccess=eclipse-dashboard.service` directive -- i.e.
+#   only AFTER the boot splash reaches HEALTHY_YIELD (window.close() -> the
+#   Type=simple splash exits 0). A DEGRADED boot keeps the splash up (no
+#   window.close) so the dashboard never starts on a sick boot. There is no
+#   [Install] section by design (it is dependency-started, not enabled).
+#
+# Token SSOT + assets: requires eclipse-states-http with /opt/dashboard on its
+#   --assets-dir search path (deploy/eclipse-states-http.service, US-399 A-2).
+#
+# Type=simple [A-8] -- matches the splash unit; Exit/Close (US-403) ends it.
+# __PI_USER__ is substituted by install.sh at install time (V-1).
+# ==============================================================================
+
+[Unit]
+Description=Eclipse OBD carousel dashboard kiosk (Wayland)
+After=graphical.target eclipse-states-http.service
+Wants=eclipse-states-http.service
+
+[Service]
+Type=simple
+User=__PI_USER__
+Environment=WAYLAND_DISPLAY=wayland-0
+Environment=XDG_RUNTIME_DIR=/run/user/%U
+ExecStart=/usr/bin/chromium-browser \
+  --kiosk \
+  --ozone-platform=wayland \
+  --touch-events=enabled \
+  --noerrdialogs --disable-infobars --hide-scrollbars \
+  --autoplay-policy=no-user-gesture-required \
+  --check-for-update-interval=31536000 \
+  --user-data-dir=/tmp/dashboard-chromium \
+  http://127.0.0.1:9899/dashboard.html
+# The kiosk runs until Exit/Close (US-403) calls window.close() or systemd
+# stops it. No hardcoded sleep/pkill.
+Restart=on-failure
+RestartSec=2

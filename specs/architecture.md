@@ -2315,6 +2315,57 @@ US-394.
 > phase-emit hook + the "shutdown-state survives eclipse-obd stop" guarantee) is
 > documented in **§10.6.1** (landed by US-394, same sprint).
 
+### F-092 Carousel Dashboard Subsystem -- shell + splash hand-off + full-runtime state server (US-399, Sprint 49 / V0.29.3) [Atlas A-1/A-2/A-5]
+
+The post-boot touch dashboard reuses the F-103 splash seam wholesale: it is a
+**pure SSOT consumer** chromium kiosk that *renders* state files and **never
+polls hardware**. The carousel shell (US-399) is the frame; the System Status /
+Battery Health card bodies + emitters are US-400 / US-401; the DTC card (Card 5)
++ viewer is US-404..407.
+
+| Piece | Source | Role |
+|------|--------|------|
+| Dashboard kit | `specs/UI/dist/dashboard-pi/` | `dashboard.html` (top bar + 2 card slots + page dots), `dashboard.css` (≥40px tap targets), `carousel.js` (swipe-nav + dots + honest-instrument availability poll). Served at `/dashboard.html`. |
+| `eclipse-dashboard.service.{wayland,x11}` | `specs/UI/dist/dashboard-pi/` | [A-5] Chromium **touch** kiosk (`--touch-events=enabled`). Loads `http://127.0.0.1:9899/dashboard.html` same-origin (token injected). **No `[Install]`** -- started by the splash hand-off, not enabled. |
+
+**A-1 splash → dashboard hand-off.** `splash-boot.service.{wayland,x11}` carries
+`OnSuccess=eclipse-dashboard.service`. When the boot splash reaches
+`HEALTHY_YIELD`, `boot-state-poll.js` calls `window.close()`; the `Type=simple`
+splash unit exits 0; systemd starts the dashboard. A **DEGRADED** boot keeps the
+splash up (no `window.close`), so the dashboard never starts on a sick boot
+(honest-instrument: the operator sees the amber-ring splash, not a dashboard
+pretending all is well). No watchdog/timer, no `pkill` -- the same JS-driven exit
+discipline as the splash (D-3).
+
+**A-2 "full runtime" extension of `eclipse-states-http`.** The server already
+ran *continuously* (C-5: `WantedBy=multi-user.target`), so "boot-only → full
+runtime" is a **serving** extension, not a lifecycle one: `states_http_server`
+now accepts a **repeatable `--assets-dir`** (an ordered search path, first match
+wins) so one server serves **both** co-located kits same-origin --
+`deploy/eclipse-states-http.service` passes `--assets-dir /opt/splash
+--assets-dir /opt/dashboard`. The splash owns `/` (its `index.html`); the
+dashboard is reached at `/dashboard.html`. The token is injected into either
+kit's HTML, so it still never lands on disk. A missing `/opt/dashboard` is
+harmless (the asset lookup just skips it). The new state files the dashboard
+reads (`system-status`, `battery-health`, `dtc`) are served by the existing
+generic token-gated state route -- no per-endpoint code (US-400/401/404 add the
+*emitters*; the server already serves whatever they write).
+
+**Honest-instrument availability (carousel shell).** `carousel.js` polls each
+card's `data-state` file at 4 Hz; a missing/malformed payload sets the card to
+`unavailable` (never a fabricated value, never green-when-broken). Until the
+US-400/401 emitters exist, both cards correctly read `unavailable`.
+
+**Deploy.** `deploy-pi.sh step_install_dashboard_assets` installs the served kit
+to `/opt/dashboard` (WARN-not-BLOCK if absent, A-9), mirroring
+`step_install_splash_assets`; the kiosk **unit** is installed by the kit's
+session-aware `install.sh` (V-1/V-2), the same seam as the splash kiosk unit.
+
+> **Sequencing note (A-4):** the dashboard and the pygame `status_display` must
+> never run simultaneously. The pygame surface is retired (parity-gated) in
+> **US-402**; the sprint deploys US-399…402 together, so the shipped artifact has
+> exactly one surface.
+
 ### Release Versioning + Deploy Records (US-241, B-047 US-A)
 
 Pre-US-241 every deploy was anonymous: a `git pull` + service restart with no

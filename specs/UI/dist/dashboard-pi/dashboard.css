@@ -1,0 +1,104 @@
+/* ============================================================================
+ * File:    dashboard.css
+ * Purpose: US-399 carousel-shell styles (F-092). Persistent top bar + swipe
+ *          carousel + page dots for the 3.5" 480x320 panel. The card BODIES are
+ *          styled minimally here (shell); US-400/US-401 own their content. Tap
+ *          targets are >=40px (S-2). Color tokens mirror the splash kit + the
+ *          spec palette (--red-light, --amber-warn) so the DTC ribbon (US-405)
+ *          and honest-instrument states share one source.
+ * Author:  Ralph Agent (Rex)
+ * Created: 2026-06-30 -- Sprint 49 US-399 (carousel shell)
+ * ==========================================================================*/
+
+:root {
+  --bg:             #000000;
+  --surface:        #111111;
+  --text-primary:   #DDDDDD;
+  --text-secondary: #888888;
+  --text-tertiary:  #666666;
+  --amber-warn:     #FFC400;   /* project-wide warn token (BT drop, stale) */
+  --red-light:      #F61D2D;   /* STOP-red for the DTC ribbon (US-405) */
+  --ok-green:       #2ECC71;   /* healthy verdict (US-400/401 bind it) */
+  --tap-min:        40px;      /* minimum touch target (S-2) */
+}
+
+html, body {
+  margin: 0; padding: 0; width: 100%; height: 100%;
+  background: var(--bg); overflow: hidden;
+  color: var(--text-primary);
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  -webkit-user-select: none; user-select: none;
+  touch-action: pan-y;   /* let JS own horizontal swipe; vertical scrolls */
+}
+
+/* --- persistent top bar (D-3) ------------------------------------------------ */
+#topbar {
+  position: fixed; top: 0; left: 0; right: 0; height: 28px;
+  display: flex; align-items: center; gap: 10px;
+  padding: 0 10px; box-sizing: border-box;
+  background: var(--surface); font-size: 13px;
+  z-index: 10;
+}
+#topbar .glyph { color: var(--text-secondary); letter-spacing: 0.04em; }
+#topbar .glyph[data-state="amber"] { color: var(--amber-warn); }
+#topbar .glyph[data-state="ok"]    { color: var(--ok-green); }
+#topbar .glyph[data-state="down"]  { color: var(--red-light); }
+#version-chip {
+  margin-left: auto; color: var(--text-tertiary);
+  font-size: 10px; letter-spacing: 0.06em;
+}
+#menu-btn {
+  min-width: var(--tap-min); min-height: var(--tap-min);
+  background: transparent; border: 0; color: var(--text-secondary);
+  font-size: 20px; line-height: 1; cursor: pointer;
+}
+
+/* --- swipe carousel --------------------------------------------------------- */
+#carousel {
+  position: absolute; top: 28px; bottom: 24px; left: 0; right: 0;
+  overflow: hidden;
+}
+#track {
+  display: flex; height: 100%;
+  transition: transform 0.25s ease-out;
+  will-change: transform;
+}
+.card {
+  flex: 0 0 100%; width: 100%; height: 100%;
+  box-sizing: border-box; padding: 14px 16px;
+  display: flex; flex-direction: column;
+}
+.card-title {
+  margin: 0 0 8px 0; font-size: 13px; font-weight: 600;
+  color: var(--text-secondary); text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.card-body { flex: 1; font-size: 14px; color: var(--text-primary); }
+/* Honest-instrument: a missing/malformed state file reads `unavailable`,
+   never a fabricated value and never green. */
+.card.unavailable .card-body,
+.card-body.unavailable {
+  color: var(--text-tertiary); font-style: italic;
+}
+
+/* --- page dots (>=40px touch target, 10px visual) --------------------------- */
+#dots {
+  position: absolute; bottom: 0; left: 0; right: 0; height: 24px;
+  display: flex; justify-content: center; align-items: center; gap: 4px;
+}
+.dot {
+  min-width: var(--tap-min); min-height: var(--tap-min);
+  display: flex; align-items: center; justify-content: center;
+  background: transparent; border: 0; padding: 0; cursor: pointer;
+}
+.dot::before {
+  content: ""; width: 8px; height: 8px; border-radius: 50%;
+  background: var(--text-tertiary); transition: background 0.2s;
+}
+.dot.active::before { background: var(--text-primary); }
+
+/* --- STOP-red DTC ribbon mount (US-405 fills + animates it) ------------------ */
+#dtc-ribbon {
+  position: fixed; left: 0; right: 0; top: 28px; height: 22px;
+  background: var(--red-light); color: #fff; z-index: 9;
+}

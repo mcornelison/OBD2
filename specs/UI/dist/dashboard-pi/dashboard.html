@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=480, height=320, initial-scale=1, user-scalable=no"/>
+<title>Eclipse OBD-II Dashboard</title>
+<!-- US-399 carousel shell (F-092). Served same-origin by eclipse-states-http at
+     http://127.0.0.1:9899/dashboard.html so the auth token is injected below
+     (token SSOT never lands on disk -- same seam as the F-103 splash). The
+     dashboard is a PURE CONSUMER: it reads the state files the emitters write
+     and renders them; it never polls hardware (specs/ssot-design-pattern.md).
+     The two card BODIES (System Status / Battery Health) are filled by US-400 /
+     US-401; this shell provides the swipe carousel, page dots, persistent top
+     bar, and the honest-instrument `unavailable` fallback. -->
+<link rel="stylesheet" href="dashboard.css"/>
+</head>
+<body>
+  <!-- Persistent top bar (D-3): BT / sync / power glyphs + version chip + menu
+       affordance. Glyph STATE (amber on BT drop, etc.) is bound by US-400 from
+       system-status; the shell renders them in a neutral state. The ⋮ button is
+       the System Setup menu affordance -- US-403 wires its behaviour. -->
+  <header id="topbar">
+    <span class="glyph" id="glyph-bt" data-state="neutral" title="Bluetooth">BT</span>
+    <span class="glyph" id="glyph-sync" data-state="neutral" title="Sync">⇅</span>
+    <span class="glyph" id="glyph-power" data-state="neutral" title="Power">⚡</span>
+    <span id="version-chip">V?.?.?</span>
+    <button id="menu-btn" class="tap-target" aria-label="System Setup">⋮</button>
+  </header>
+
+  <!-- STOP-red DTC ribbon mount point (US-405 fills it; absent here). -->
+  <div id="dtc-ribbon" hidden></div>
+
+  <main id="carousel" aria-roledescription="carousel">
+    <div id="track">
+      <section class="card" data-state="system-status" aria-label="System Status">
+        <h2 class="card-title">System Status</h2>
+        <div class="card-body">unavailable</div>
+      </section>
+      <section class="card" data-state="battery-health" aria-label="Battery Health">
+        <h2 class="card-title">Battery Health</h2>
+        <div class="card-body">unavailable</div>
+      </section>
+    </div>
+  </main>
+
+  <!-- Page dots: one per card, ≥40px touch target (S-2). -->
+  <nav id="dots" aria-label="cards"></nav>
+
+  <script>
+    // Token injected by the state server at serve time (token SSOT). Previewed
+    // from file:// the placeholder stays and the polls fail closed to
+    // `unavailable` -- the carousel shell still renders + swipes.
+    window.SPLASH_TOKEN = "__SPLASH_TOKEN__";
+  </script>
+  <script src="carousel.js"></script>
+</body>
+</html>

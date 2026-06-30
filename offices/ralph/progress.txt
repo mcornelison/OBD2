@@ -661,3 +661,43 @@ Task: Fix simulate duplicate (timestamp, parameter) rows -- test-fidelity vs dat
   poll-interval constant the orchestrator runs at (a shared SSOT constant), so the guard
   can't drift from the real cadence and stays machine-speed-independent.
 ---
+
+## Sprint 49 / V0.29.3 -- Pi Touch-Carousel Dashboard + DTC viewer
+
+Epic E-001, features F-092 (carousel) / F-097 (battery) / F-111 (DTC). 9 stories
+US-399..407. Builds on F-103 (Sprint 48): reuses the chromium kiosk +
+eclipse-states-http + token + states dir. Atlas design-gate SIGNED OFF
+(A-1..A-8 carousel + KOEO/Mode-04 DTC rulings, 2026-06-30). BENCH-ONLY
+validation (CIO waived drives). Build order: carousel US-399 -> (US-400,US-401)
+-> US-402; US-403 deps US-399. DTC US-404 -> US-405+US-406 -> US-407 (last).
+
+## 2026-06-30 - US-399 (Agent 1 / Rex)
+Task: Carousel shell -- chromium dashboard kiosk + swipe-nav + page dots + persistent top bar + eclipse-states-http full runtime
+Outcome: SHIPPED passes:true. The post-boot touch dashboard SHELL: a chromium carousel kiosk (sibling to the F-103 splash) reached via the splash HEALTHY_YIELD hand-off, served by the existing states-http server extended to multi-kit. Card BODIES (System Status / Battery Health) are US-400/US-401; this is the frame + plumbing.
+
+### What was implemented:
+- **A-2 (states_http_server full-runtime extension):** `--assets-dir` is now repeatable -> an ordered search path (first match wins) so ONE eclipse-states-http serves BOTH co-located kits same-origin (token injected into either kit's HTML). Splash owns `/`; dashboard at `/dashboard.html`. `deploy/eclipse-states-http.service` ExecStart -> `--assets-dir /opt/splash --assets-dir /opt/dashboard`. The server already ran continuously (C-5), so "full runtime" was a SERVING extension, not lifecycle. Single-string `assetsDir` back-compat preserved (US-393 call sites untouched).
+- **A-1 (splash -> dashboard hand-off):** `splash-boot.service.{wayland,x11}` gained `OnSuccess=eclipse-dashboard.service`. HEALTHY_YIELD -> `window.close()` -> Type=simple splash exits 0 -> systemd starts the dashboard. DEGRADED boot keeps the splash up (no close) -> no hand-off (honest-instrument).
+- **Dashboard dist kit** `specs/UI/dist/dashboard-pi/` (mirrors splash-pi): `carousel.js` (node-testable pure logic `clampIndex`/`nextIndex` clamp-no-wrap/`swipeDirection`/`cardAvailability` + DOM pointer-swipe with vertical-ignore + keyboard arrows + 4Hz honest-instrument availability poll: missing/malformed -> `unavailable`, try/catch, never green-when-broken); `dashboard.css` (>=40px tap targets via `--tap-min` on dots+menu; STOP-red `#F61D2D` reserved for US-405); `dashboard.html` (persistent top bar = BT/sync/power glyphs + version chip + inert `⋮` menu affordance for US-403; 2 card slots; page-dot mount; `#dtc-ribbon` mount for US-405); `dashboard.service.{wayland,x11}` (touch kiosk `--touch-events=enabled` A-5; NO `[Install]` -> hand-off-started, not enabled); `install.sh`/`uninstall.sh` (V-1/V-2 user+session detection + `--dry-run`, DASHBOARD_FORCE_* overrides); `INSTALL.md`.
+- **Deploy:** `deploy-pi.sh step_install_dashboard_assets` -> `/opt/dashboard` (WARN-not-BLOCK A-9, presence-gated for the offline smoke test). Kiosk UNIT install stays with the kit's session-aware install.sh (same seam as the splash kiosk unit).
+- **Rule-10:** `specs/architecture.md` new "F-092 Carousel Dashboard Subsystem" section (A-1 hand-off, A-2 multi-dir, honest-instrument poll, deploy, A-4 single-surface sequencing note).
+
+### Files changed:
+- Created: `specs/UI/dist/dashboard-pi/{dashboard.html,dashboard.css,carousel.js,dashboard.service.wayland,dashboard.service.x11,install.sh,uninstall.sh,INSTALL.md}`, `tests/pi/splash/test_states_http_multi_assets.py`, `tests/deploy/test_dashboard_kit.py`
+- Modified: `src/pi/splash/states_http_server.py`, `deploy/eclipse-states-http.service`, `deploy/deploy-pi.sh`, `specs/UI/dist/splash-pi/splash-boot.service.{wayland,x11}`, `specs/architecture.md`
+
+### Gates (BENCH per validationMethod):
+- S-1: `tests/deploy/test_dashboard_kit.py` 22 passed (card slots + top bar glyphs + dots + token + reads-only-state guard + `node --check carousel.js` + no always-on console.error + honest-instrument unavailable).
+- S-2: node logic test (swipe -> nextIndex -> active dot; clamp-no-wrap) + CSS >=40px tap targets.
+- A-1/A-2: static unit assertions (OnSuccess=, dual --assets-dir, deploy step present+called).
+- tests/pi/splash: multi-assets 6 + existing states-http 7 (back-compat confirmed). deploy bash smoke 29/29. ruff clean on all .py.
+- DEFERRED: I-1 (boot splash -> dashboard <=3s on the OSOYOO) = Pi bench drill at sprint validation (not reproducible off-Pi). mypy + full `pytest tests/` = PM integration (slow SMB).
+- NOTE-TO-PM: full tests/pi/splash+tests/deploy = 255 passed / 1 skipped / 1 ERROR. The ERROR = `test_drain_forensics_install.py::TestDeployPiShDryRunAnnouncesNewStep` -- a 30s `subprocess.TimeoutExpired` running `bash deploy-pi.sh --dry-run` over the \\chi-nas-01 UNC path UNDER SUITE CONTENTION. The SAME dry-run = 8.3s exit 0 with correct output (incl. my dashboard step) run alone -> SMB-contention flake at the 30s boundary, NOT a US-399 regression (my deploy-pi.sh add is one `[ -d ]` stat + 2 echos, no python/ssh). Recommend raising that class's 30s cap.
+
+### Learnings for future iterations:
+- **"Extend X to full runtime" can be a serving change, not a lifecycle change**: eclipse-states-http already ran continuously (C-5 ref-counted RuntimeDirectory), so A-2 was just making the ONE server serve a second asset dir -- repeatable `--assets-dir` with first-match-wins. Read the existing unit's lifecycle before assuming you must change it.
+- **Make browser JS node-testable by splitting pure logic from DOM wiring**: carousel.js wraps an IIFE that exports `{nextIndex, swipeDirection, cardAvailability}` via `module.exports` (CJS, default .js) and only touches `document` under a `typeof document !== 'undefined'` guard. `node -e "require(process.argv[1])"` gives a real S-2 logic test + `node --check` gives a real "no console errors at load" syntax gate -- no jsdom/package.json needed (none in this Python repo).
+- **Diagnose a timeout by isolation + timing, not by re-running**: the dry-run "failed" at a 30s cap under suite contention but ran in 8.3s clean. Measure the underlying op (via the test's exact path resolution) before attributing a timeout to your change. The shared SMB checkout makes subprocess-spawning tests boundary-flaky.
+- **OnSuccess= is the clean systemd hand-off for a self-closing kiosk**: a Type=simple unit whose JS calls window.close() exits 0, so `OnSuccess=next.service` chains the next surface; the failure branch (DEGRADED, no close) naturally suppresses the hand-off. No watchdog/.path file/pkill needed. The dashboard unit has no `[Install]` so it is ONLY hand-off-started.
+- **Gotcha (pytest [Install] prose match)**: asserting a systemd unit has no `[Install]` section must be line-anchored (`"[Install]" in [l.strip() for l in lines]`), not a substring -- the header comment legitimately mentions "[Install]" in prose.
+---
