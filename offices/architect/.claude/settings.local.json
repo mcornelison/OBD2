@@ -114,7 +114,10 @@
       "Bash(PROD_DB_HOST=*)",
       "Read(//z/o/OBD2v2/offices/architect/**)",
       "Bash(ls -la .claude/skills/)",
-      "Bash(sed -n '1,12p' .claude/skills/a2al/SKILL.md)"
+      "Bash(sed -n '1,12p' .claude/skills/a2al/SKILL.md)",
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Read(//tmp/**)"
     ],
     "deny": [
       "Read(**/.ssh/**)",
