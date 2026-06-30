@@ -72,8 +72,9 @@
       "epicId": "E-001",
       "type": "normal",
       "size": "M",
-      "status": "sprint-ready",
-      "passes": false,
+      "status": "complete",
+      "passes": true,
+      "completionNotes": "F-103 shutdown-state PRODUCER side SHIPPED (TDD red->green). ShutdownSequencer (SSOT of shutdown phase) now emits a shutdown-state phase event at each handleOnBattery transition via an OPTIONAL generic phaseEmitFn: grace (T=0, BEFORE smoothing resolves -- splash triggers immediately, animation IS the grace countdown) -> cancelled (smoothing-fail OR late power-return abort) | flushing (bounded pipeline about to run) -> powering_off (before systemctl poweroff; VCELL-floor fast-path emits powering_off with NO flushing -- honest instrument, no flush happened). UNIDIRECTIONAL dependency (spec §6/§481): the phase-string constants (PHASE_GRACE/CANCELLED/FLUSHING/POWERING_OFF + DEFAULT_SHUTDOWN_REASON) live in controller.py (sequencer = SSOT of phase); src/pi/splash/shutdown_state_emitter.py IMPORTS them -- the sequencer NEVER imports the splash. A-2 constraints honored: (a) non-blocking best-effort write; (b) emission AFTER each transition is decided; (c) an emit that raises is logged + NEVER blocks shutdown (emitter closure catches + sequencer _emitPhase wraps belt-and-braces). NEW shutdown_state_emitter.py = pinned spec §6 schema (buildShutdownState: phase/tGraceStartedAt/tGraceTotalS/tRemainingS/reason/ts) + makeShutdownPhaseEmitter best-effort atomic writer (reuses ensureStatesDir/writeStateAtomic, no dup). When phaseEmitFn is unwired the sequencer runs the BYTE-IDENTICAL legacy path with NO extra isOnBattery() read (explicit regression guard test). Wired in __main__.py gated on pi.splash.enabled (statesDir from pi.splash.statesDir). A-6 timing invariant added verbatim (spec §469-479) to controller.py module docstring. RULE-10 DoD: specs/architecture.md §10.6.1 documents the hook + phase table + A-2/A-6 + the C-5 shutdown-state-survives-eclipse-obd-stop guarantee; the F-103 subsection forward-ref updated to a cross-ref. C-5 needs NO new units -- US-393 already made eclipse-states-http.service share RuntimeDirectory=eclipse-obd + RuntimeDirectoryPreserve=yes and tmpfiles.d recreates states/ every boot (documented §10.6.1). GATES: pytest tests/pi/splash tests/pi/power = 108 passed/1 skipped (POSIX-perms test skips on Windows); ruff clean on all touched files; __main__ import smoke OK. SCOPE SEAM (flagged PM inbox 2026-06-29-from-rex-us394-shutdown-emit-shipped.md): this story = the PRODUCER (title = 'phase-emit hook + architecture.md §10.6'). The RENDER side -- splash-grace.service+splash-grace.path trigger units (D-2 retire splash-shutdown.service), shutdown.html D-1 fix, shutdown-state-poll.js, V-1/V-2 install checks -- is US-396. The BENCH shutdown-render drill (validationMethod) needs BOTH US-394+US-396; sequence it after US-396. DEFERRED-TO-PM: mypy (not on dev box; code mypy-strict-shaped) + full-suite (slow SMB; scoped splash+power suite is the in-iter gate per slow-share carve-out -- changes are additive, no shared-file edits except specs/architecture.md docs); BENCH-ONLY shutdown drills (trigger shutdown -> splash renders+transitions; shutdown-with-eclipse-obd-already-stopped -> renders from shutdown-state; inspect §10.6.1) per validationMethod.",
       "acceptance": [
         "ShutdownSequencer emits phase events [A-2] and the splash renders",
         "shutdown splash shows the staged shutdown",
@@ -99,7 +100,18 @@
         "ShutdownSequencer IS load-bearing -> the \u00a710.6 update is mandatory in-sprint (not a follow-up)"
       ],
       "goal": "As the Pi during shutdown, I want a shutdown splash so the operator sees the staged shutdown instead of a frozen/blank screen.",
-      "tasks": []
+      "tasks": [],
+      "feedback": {
+        "filesActuallyTouched": [
+          "src/pi/splash/shutdown_state_emitter.py",
+          "tests/pi/splash/test_shutdown_state_emitter.py",
+          "src/pi/power/power_watch/controller.py",
+          "tests/pi/power/power_watch/test_controller_phase_emit.py",
+          "src/pi/power/power_watch/__main__.py",
+          "specs/architecture.md",
+          "offices/pm/inbox/2026-06-29-from-rex-us394-shutdown-emit-shipped.md"
+        ]
+      }
     },
     {
       "id": "US-395",

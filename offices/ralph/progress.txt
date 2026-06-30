@@ -473,3 +473,32 @@ Outcome: SHIPPED passes:true. The "required-first runtime" the rest of the Pi UI
 - **Design note (token SSOT)**: pointing chromium at http://127.0.0.1:9899/ (server injects the token into the served index) keeps the token in ONE file and off-disk-in-assets -- cleaner than baking the token into index.html at deploy time. The state server thus also serves the splash HTML (a small, documented extension of the spec's "serves states/*").
 - **Build-order note**: US-394 (shutdown splash) builds directly on this runtime -- it adds the ShutdownSequencer phase-emit hook writing /run/eclipse-obd/states/shutdown-state (which this runtime already serves + keeps alive across eclipse-obd stop via the shared ref-counted RuntimeDirectory), the shutdown.html D-1 fix, and the Rule-10 specs/architecture.md S10.6 update (Atlas BLOCKs otherwise).
 ---
+
+## 2026-06-29 - US-394 (Agent 1 / Rex)
+Task: F-103 shutdown splash -- ShutdownSequencer phase-emit hook + architecture.md §10.6.1
+Outcome: SHIPPED passes:true. The shutdown-state PRODUCER side. ShutdownSequencer (SSOT of shutdown phase) emits a shutdown-state phase event at each handleOnBattery transition via an OPTIONAL generic phaseEmitFn; the splash CONSUMES the phase constants (unidirectional, spec §6/§481 -- sequencer never imports splash). TDD red->green.
+
+### What was implemented:
+- `src/pi/splash/shutdown_state_emitter.py` (NEW) -- pinned spec §6 schema `buildShutdownState` (phase/tGraceStartedAt/tGraceTotalS/tRemainingS/reason/ts) + `makeShutdownPhaseEmitter` best-effort atomic writer (reuses ensureStatesDir/writeStateAtomic from boot_state_emitter -- no dup). Imports PHASE_*/DEFAULT_REASON from controller.py.
+- `controller.py` ShutdownSequencer: new optional ctor params `phaseEmitFn`/`nowIsoFn`/`shutdownReason`; `_beginGraceAndEmit` (capture grace start ISO+mono, emit grace), `_graceRemainingS`, `_emitPhase` (guarded best-effort wrapper). Emit points: grace at T=0 (BEFORE smoothing) -> cancelled (smoothing-fail) | flushing (pipeline) -> powering_off (normal + VCELL-floor fast-path) | cancelled (late power-return abort). Phase constants PHASE_GRACE/CANCELLED/FLUSHING/POWERING_OFF + DEFAULT_SHUTDOWN_REASON now live here (sequencer = phase SSOT). A-6 timing invariant added verbatim (spec §469-479) to the module docstring.
+- `__main__.py` -- wire `makeShutdownPhaseEmitter(statesDir)` into the production ShutdownSequencer, gated on `pi.splash.enabled`; statesDir from `pi.splash.statesDir`.
+- `specs/architecture.md` §10.6.1 (NEW, Rule-10 DoD) -- hook + phase table + A-2 constraints + A-6 invariant + C-5 shutdown-state-survives-eclipse-obd-stop; F-103 subsection forward-ref -> cross-ref.
+
+### Files changed:
+- Created: `src/pi/splash/shutdown_state_emitter.py`, `tests/pi/splash/test_shutdown_state_emitter.py` (5), `tests/pi/power/power_watch/test_controller_phase_emit.py` (7)
+- Modified: `src/pi/power/power_watch/controller.py`, `src/pi/power/power_watch/__main__.py`, `specs/architecture.md`
+- Created: `offices/pm/inbox/2026-06-29-from-rex-us394-shutdown-emit-shipped.md` (scope-seam handoff)
+
+### Gates:
+- pytest tests/pi/splash tests/pi/power = 108 passed, 1 skipped (POSIX-perms test skips on Windows)
+- New: 5 emitter tests + 7 sequencer-hook tests (grace-at-T0, blip->grace+cancelled, floor-fastpath->grace+powering_off-no-flushing, late-return->cancelled, emit-raise-never-blocks, no-emitter-byte-identical-read-count)
+- ruff clean on all touched files; `python -c import __main__` smoke OK
+- DEFERRED to PM/Atlas: mypy (not on dev box; mypy-strict-shaped) + full-suite (slow SMB; scoped splash+power suite is the in-iter gate per slow-share carve-out -- additive change, only specs/architecture.md is a shared-file doc edit)
+- DEFERRED to CIO/Argus BENCH (validationMethod): trigger shutdown -> splash renders+transitions; shutdown-with-eclipse-obd-already-stopped -> renders from shutdown-state; inspect §10.6.1. NEEDS US-396 render assets too.
+
+### Learnings for future iterations:
+- **SSOT direction is load-bearing**: spec §481 says "splash depends on the sequencer's timing contract; the sequencer does not know splash exists." So the phase-string constants live in controller.py and shutdown_state_emitter.py IMPORTS them -- NOT the reverse. controller.py imports only stdlib, so splash->controller is cycle-free + cheap. Injecting a GENERIC `phaseEmitFn(phase, **kw)` (not a splash object) keeps the sequencer ignorant of the splash schema.
+- **Gotcha (don't perturb iterator-mocks)**: the emit path needs an entry isOnBattery() read to emit grace at T=0, but the legacy tests use iter([...]).__next__ mocks whose consumption count is asserted. Guarding the entry read on `phaseEmitFn is not None` keeps the unwired path byte-identical (0 extra reads). Added an explicit regression test that counts isOnBattery() calls == 2 on the no-emitter path.
+- **Honest instrument**: the VCELL-floor fast-path skips the pipeline, so it emits powering_off with NO preceding flushing (no flush actually happened); and a power-return mid-window emits a late `cancelled` so the splash aborts instead of hanging in BLACK_TAIL.
+- **Scope seam (US-394 vs US-396)**: US-394 = PRODUCER (this story's title). The RENDER side -- splash-grace.service+.path trigger units (D-2 retire splash-shutdown.service), shutdown.html D-1 fix, shutdown-state-poll.js, V-1/V-2 -- is US-396. The bench shutdown-render drill needs BOTH; flagged to PM inbox.
+---
