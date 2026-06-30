@@ -87,6 +87,9 @@ from src.pi.power.power_watch.pipeline import runPipeline  # noqa: E402
 from src.pi.power.power_watch.tasks.sync_with_server import (  # noqa: E402
     SyncWithServerTask,
 )
+from src.pi.splash.shutdown_state_emitter import (  # noqa: E402
+    makeShutdownPhaseEmitter,
+)
 from src.pi.sync.client import SyncClient  # noqa: E402
 
 logger = logging.getLogger(__name__)
@@ -321,6 +324,17 @@ def main(argv: list[str] | None = None) -> int:
         writeRecord=writeRecord,
     )
 
+    # F-103 [A-2]: wire the shutdown-splash phase-emit hook. The sequencer emits
+    # a shutdown-state phase event (grace -> cancelled | flushing -> powering_off)
+    # at each transition; the splash-grace kiosk renders it. Disabled (None) when
+    # pi.splash.enabled is false -- the sequencer then runs unchanged. Best-effort
+    # by contract: a write failure never blocks shutdown.
+    splashCfg = config.get("pi", {}).get("splash", {}) or {}
+    phaseEmitFn = None
+    if bool(splashCfg.get("enabled", True)):
+        statesDir = splashCfg.get("statesDir", "/run/eclipse-obd/states")
+        phaseEmitFn = makeShutdownPhaseEmitter(statesDir)
+
     shutdownSequencer = ShutdownSequencer(
         isOnBattery=provider.isPowerLost,
         vcell=monitor.getVcell,
@@ -334,6 +348,7 @@ def main(argv: list[str] | None = None) -> int:
         totalCapSec=totalWindowCapSec,
         smoothingSec=smoothingSec,
         smoothingPollSec=smoothingPollSec,
+        phaseEmitFn=phaseEmitFn,
     )
 
     # TRIGGER = the X1209 GPIO6 PLD hardware line via the PowerSourceProvider

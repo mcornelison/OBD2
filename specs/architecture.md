@@ -1717,6 +1717,64 @@ straight to poweroff; a *failed* VCELL read never powers off
 > record → **`specs/arch/subsystem-evolution-history.md`**. Current behavior is
 > the Flow above.
 
+### 10.6.1 F-103 shutdown-splash phase-emit hook (US-394, Sprint 48 / V0.29.2) [Atlas A-2]
+
+The `ShutdownSequencer` is the **SSOT of shutdown phase + timing**. US-394 added a
+**phase-emit hook** so the F-103 grace-period shutdown splash can render the staged
+shutdown the driver is watching, instead of a frozen/blank screen. The hook is a
+single OPTIONAL constructor dependency — `phaseEmitFn` — injected in
+`__main__.py` from `pi.splash.shutdown_state_emitter.makeShutdownPhaseEmitter`
+(gated on `pi.splash.enabled`). When unwired (`None`) the sequencer runs the exact
+legacy path with **no extra `isOnBattery()` read** — byte-identical behavior.
+
+**Dependency direction is strictly unidirectional (spec §6/§481).** The sequencer
+owns the phase **decisions** and the canonical phase-string constants
+(`PHASE_GRACE` / `PHASE_CANCELLED` / `PHASE_FLUSHING` / `PHASE_POWERING_OFF` in
+`controller.py`); the splash subsystem **consumes** them
+(`pi.splash.shutdown_state_emitter` imports them). The sequencer **never imports
+the splash** — it calls a generic callback and stays ignorant of the splash schema.
+
+**Phases emitted (mapped to the sequencer's code-path transitions):**
+
+| Transition point in `handleOnBattery` | Phase | Splash response |
+|---|---|---|
+| Power-lost signal present at entry, **before** smoothing resolves (T=0) | `grace` | TRIGGER splash; play PRE_ROLL + ANIMATING (the animation *is* the grace countdown) |
+| Smoothing window failed (power returned mid-smoothing) | `cancelled` | ABORT splash (kill chromium, no fadeout) |
+| Smoothing confirmed + above VCELL floor; bounded pipeline about to run | `flushing` | CONTINUE (no state change) |
+| Immediately before `systemctl poweroff` (normal path **or** VCELL-floor fast-path) | `powering_off` | CONTINUE → enters BLACK_TAIL |
+| Power returned during the bounded pipeline window (late abort) | `cancelled` | ABORT splash (so it does not sit in BLACK_TAIL awaiting a poweroff that will not fire) |
+
+The VCELL-floor fast-path skips the pipeline, so it emits `powering_off` **without**
+a preceding `flushing` (honest instrument — no flush happened).
+
+**Emit-hook constraints (Atlas A-2):** (a) the write is best-effort and non-blocking;
+(b) emission happens **after** each transition is decided, never before; (c) a write
+failure (or a hook that raises) is logged but **NEVER blocks shutdown progress** —
+the emitter closure catches, and the sequencer's `_emitPhase` wraps the call site
+belt-and-braces. The shutdown-state schema (`phase`, `tGraceStartedAt`,
+`tGraceTotalS`, `tRemainingS`, `reason`, `ts`) is written atomically to
+`/run/eclipse-obd/states/shutdown-state` (the `splash-grace.path` unit watches that
+file; the kiosk polls it at 250 ms).
+
+**Timing invariant [Atlas A-6]** (owned by the `controller.py` module docstring;
+splash holds it by trust): the splash's 7.5 s animation budget fits inside the
+sequencer's ~10–12 s time-to-poweroff at the default `pi.powerWatch.smoothingSec=7`.
+If `smoothingSec < 4` the animation may be killed mid-frame — *acceptable* failure
+mode (degraded UX, no data loss). No new config key, no runtime coordination.
+
+**C-5 lifecycle — `shutdown-state` must survive `eclipse-obd.service` stop.** The
+shutdown splash reads `shutdown-state` *during* the shutdown sequence, after
+`eclipse-obd.service` may already have stopped. Because `eclipse-obd.service`'s
+`RuntimeDirectory=eclipse-obd` is removed on its stop, the states dir would vanish
+exactly when the splash needs it — unless another live unit holds the shared
+ref-counted `RuntimeDirectory`. `eclipse-states-http.service` runs continuously and
+shares `RuntimeDirectory=eclipse-obd` (+ `RuntimeDirectoryPreserve=yes`), and the
+`/etc/tmpfiles.d/eclipse-obd-states.conf` entry recreates `states/` at every boot.
+Together these keep `/run/eclipse-obd/states/shutdown-state` readable across
+`eclipse-obd`'s stop. The multi-owner runtime-dir contract is documented in full in
+the **F-103 Splash Subsystem** section below (US-393); this section is the
+shutdown-state half of that contract.
+
 ## 10.7 Data Pipeline Architecture (B-104 Step 1, Sprint 41 / V0.27.17)
 
 **Architectural principle (CIO 2026-05-21).** Pi = telemetry emitter +
@@ -2229,9 +2287,9 @@ Together: tmpfiles guarantees boot-time existence; the shared ref-counted
 The old deploy-time `install -d` alone is **insufficient** (tmpfs wipes it on the
 next reboot). `deploy-pi.sh` installs the tmpfiles entry + the two units (US-395).
 
-> **Forward ref:** the shutdown-state half of this contract (the ShutdownSequencer
+> **Cross-ref:** the shutdown-state half of this contract (the ShutdownSequencer
 > phase-emit hook + the "shutdown-state survives eclipse-obd stop" guarantee) is
-> documented in §10.6 by US-394 (same sprint).
+> documented in **§10.6.1** (landed by US-394, same sprint).
 
 ### Release Versioning + Deploy Records (US-241, B-047 US-A)
 
