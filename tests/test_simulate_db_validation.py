@@ -86,6 +86,7 @@ full policy). This file demonstrates the canonical approach.
 **See also:** specs/methodology.md Section 3 — Definition of Done
 """
 
+import math
 import sqlite3
 import threading
 import time
@@ -120,6 +121,13 @@ LOGGED_PARAMETERS = [
 # Simulation duration in seconds (enough for multiple logging cycles and
 # drive detection to trigger)
 SIMULATION_DURATION_SECONDS = 15
+
+# Data-logger poll cadence (ms).  The logger writes one realtime_data row per
+# logged parameter per poll, so this is the row-emission rate.  Single source
+# of truth: referenced both by getSimValidationConfig (the value the
+# orchestrator actually runs at) and by the duplicate-detection test's
+# per-second cadence ceiling (US-398), so the two can never drift.
+POLLING_INTERVAL_MS = 500  # 2 Hz
 
 # RPM idle range for the default vehicle profile (idleRpm=800, +/- noise)
 RPM_IDLE_MIN = 600
@@ -186,7 +194,7 @@ def getSimValidationConfig(dbPath: str) -> dict[str, Any]:
                 "queryOnFirstConnection": False,
             },
             "realtimeData": {
-                "pollingIntervalMs": 500,  # 2 Hz polling for reasonable data volume
+                "pollingIntervalMs": POLLING_INTERVAL_MS,  # 2 Hz polling for reasonable data volume
                 "parameters": [
                     {"name": "RPM", "logData": True, "displayOnDashboard": True},
                     {"name": "SPEED", "logData": True, "displayOnDashboard": True},
@@ -220,7 +228,7 @@ def getSimValidationConfig(dbPath: str) -> dict[str, Any]:
                         "id": "test",
                         "name": "Test Profile",
                         "description": "Profile for DB validation tests",
-                        "pollingIntervalMs": 500,
+                        "pollingIntervalMs": POLLING_INTERVAL_MS,
                     }
                 ],
             },
@@ -722,27 +730,76 @@ class TestParameterCompletenessAndDataQuality:
         self, simRunResult: dict[str, Any]
     ):
         """
-        Given: Orchestrator ran in simulate mode with data logged
-        When: (timestamp, parameter_name) pairs are inspected
-        Then: No duplicate combinations exist
+        Given: Orchestrator ran in simulate mode at sub-second (2 Hz) polling
+        When: rows are inspected for duplicate samples
+        Then: every row has a unique id, and no (second-timestamp, parameter)
+              bucket exceeds the poll-cadence ceiling
+
+        RULING (US-398) -- (a) test-fidelity, NOT (b) data-quality:
+
+        The original invariant "no two rows share a (second-timestamp,
+        parameter)" is FALSE BY DESIGN at sub-second poll rates.
+        ``realtime_data.timestamp`` is canonical second-resolution ISO-8601
+        (``%Y-%m-%dT%H:%M:%SZ`` via ``utcIsoNow`` and the SQLite column
+        DEFAULT -- TD-027 / US-202), while the poll cadence here is 2 Hz, so
+        two DISTINCT samples of the same parameter legitimately land in the
+        same wall-clock second.  The schema's real unique key is
+        ``id INTEGER PRIMARY KEY AUTOINCREMENT``; there is NO UNIQUE
+        constraint on ``(timestamp, parameter_name)`` -- the data model
+        explicitly permits multiple samples per (second, parameter).  On a
+        fast box the old assertion failed with ~185 such "duplicates"; on a
+        slow box it happened to pass -- i.e., it was machine-speed-dependent,
+        the hallmark of a test-fidelity defect rather than a data defect.
+
+        Why NOT (b) -- production analytics do not double-count: every
+        server-side aggregate reads EVERY row for a drive into a flat value
+        list and computes min/max/avg/std over it
+        (``drive_statistics_compute.compute_drive_statistics`` and
+        ``basic._collectReadings`` / ``collectReadingsForDrive``).  There is
+        no ``GROUP BY timestamp`` or ``DISTINCT timestamp`` second-bucketing
+        anywhere, so additional samples-per-second are correct extra samples,
+        never double-counts.  No production write-path change is warranted.
+
+        Corrected invariant (deterministic, machine-speed-independent):
+          1. Every persisted row has a unique ``id`` -- the schema's actual
+             uniqueness guarantee, and what the duplicate check should key on.
+          2. No (second-timestamp, parameter) bucket holds more rows than the
+             poll cadence can physically emit in one second.  This still
+             catches a genuine double-INSERT regression (each poll writing a
+             row twice would overflow the ceiling) while tolerating the valid
+             sub-second multi-sampling that broke the old assertion.
         """
         # Arrange
         rows = simRunResult["rows"]
 
-        # Act — collect all (timestamp, parameter_name) pairs
-        seen: set[tuple[str, str]] = set()
-        duplicates: list[tuple[str, str]] = []
+        # 1. id is the schema's real unique key -- assert no PK-level
+        #    duplicates (also catches an accidental JOIN/query fan-out).
+        ids = [r["id"] for r in rows]
+        assert len(ids) == len(set(ids)), (
+            f"Found {len(ids) - len(set(ids))} duplicate row id(s) -- "
+            f"realtime_data.id (AUTOINCREMENT) must be unique"
+        )
 
+        # 2. Bucket by (second-timestamp, parameter).  At most
+        #    ceil(1000 / pollIntervalMs) polls can fall inside a single
+        #    wall-clock second; +1 absorbs the second-boundary slot.  A count
+        #    above this ceiling means the same poll wrote a row twice (a real
+        #    duplicate-INSERT bug), as opposed to valid sub-second sampling.
+        maxRowsPerSecondBucket = math.ceil(1000 / POLLING_INTERVAL_MS) + 1
+        bucketCounts: dict[tuple[str, str], int] = {}
         for row in rows:
             key = (str(row["timestamp"]), row["parameter_name"])
-            if key in seen:
-                duplicates.append(key)
-            seen.add(key)
+            bucketCounts[key] = bucketCounts.get(key, 0) + 1
 
-        # Assert
-        assert len(duplicates) == 0, (
-            f"Found {len(duplicates)} duplicate (timestamp, parameter_name) "
-            f"combinations: {duplicates[:5]}"  # Show first 5
+        overfilled = {
+            k: c for k, c in bucketCounts.items() if c > maxRowsPerSecondBucket
+        }
+        assert not overfilled, (
+            f"{len(overfilled)} (second-timestamp, parameter) bucket(s) "
+            f"exceed the poll-cadence ceiling of {maxRowsPerSecondBucket} "
+            f"rows/second (POLLING_INTERVAL_MS={POLLING_INTERVAL_MS}) -- "
+            f"indicates a duplicate-INSERT regression, not valid sub-second "
+            f"multi-sampling: {dict(list(overfilled.items())[:5])}"
         )
 
     def test_assertParameterInRange_reusableHelper(
