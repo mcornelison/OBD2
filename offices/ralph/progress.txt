@@ -564,3 +564,49 @@ Outcome: SHIPPED passes:true. Closes the producer/render seam US-394/US-395 flag
 - **Spec /var/run vs producer /run**: the spec §6/§8 prose says `/var/run/eclipse-obd/states/`, but the US-394 emitter writes the literal `/run/eclipse-obd/states/` path. `/var/run` is a symlink to `/run` on Bookworm, but `splash-grace.path` must watch the path the producer actually writes -> used `/run`. Match the producer, not the prose alias.
 - **Gitignore §13 hazard**: the whole `specs/UI/dist/splash-pi/` kit (incl. US-393/395 assets) was UNTRACKED at session start because a generic `dist/` gitignore rule once swallowed it. `.gitignore` lines 20-21 already un-ignore `specs/UI/dist/` (PM resolved the flag), so this commit lands the FULL kit -- mine + the previously-untracked sibling assets -- to prevent handbook-§13 loss on the next PM branch switch. When you find related work uncommitted-but-trackable in the dir you're editing, commit it (don't leave it to vanish).
 ---
+
+## 2026-06-29 - US-397 (Rex / Agent 1)
+Task: Fix sync_now.py import break -- normalize Pi entry-point to pi.*-on-src convention
+
+### What was implemented:
+- ROOT-CAUSE repro (operator runtime, no PYTHONPATH): `python scripts/sync_now.py --dry-run`
+  -> ROOT-only sys.path + `from src.pi.sync` chained src.pi.sync.client -> src.pi.obdii.drive_id
+  -> src/pi/obdii/__init__.py:26 bare `from pi.display` -> ModuleNotFoundError: No module named 'pi'.
+- FIX (mirrors src/pi/main.py:46-57 dual-path bootstrap): insert src/ on sys.path FIRST
+  (resolves bare `pi.*`) + keep ROOT (resolves transitive legacy `src.common.*`); flip PI
+  imports src.pi.data/src.pi.sync -> pi.data/pi.sync per acceptance #1 + the no-src-prefix convention.
+- CROSS-MODULE IDENTITY GUARD: kept common.* imports on legacy src.common.* form deliberately --
+  pi.sync.client raises src.common.errors.handler.ConfigurationError, so main()'s `except` must
+  catch THAT class object; the bare `common.errors.handler` is a different (non-caught) class with
+  no unifying re-export -> would convert graceful 'Error: API key missing' (exit 1) to an uncaught
+  traceback. Verified operator dry-run now imports clean + exits 1 gracefully on the dev box.
+- TDD: added subprocess `TestOperatorRuntimeImport` (fresh interpreter, PYTHONPATH stripped,
+  cwd=repo root, `--help` triggers full import chain then argparse exit 0; asserts no
+  ModuleNotFoundError + rc==0) to BOTH affected test files -- the only test that reproduces the
+  bare-`python scripts/...` operator path (in-process tests were masked by conftest.py:38 seeding src/).
+- Flipped the two test files' src.pi.* imports -> pi.* in lockstep (PushStatus/PushResult identity).
+- BATCH AUDIT (Rule 5): probed every scripts/*.py via --help; SAME bug in record_drain_test.py
+  -> fixed identically (cluster=2). backfill_pi_battery_health_log_historical_drains.py has a
+  DIFFERENT failure (No module named 'src' -- no path bootstrap at all) -> out of scope, filed TD-056.
+
+### Files changed:
+- Modified: `scripts/sync_now.py` (src/ + ROOT path bootstrap; pi.data/pi.sync imports; common.* kept src.common.*)
+- Modified: `scripts/record_drain_test.py` (same fix)
+- Modified: `tests/scripts/test_sync_now.py` (subprocess operator-runtime test; src.pi.*->pi.* imports)
+- Modified: `tests/scripts/test_record_drain_test.py` (same)
+- Created: `offices/pm/tech_debt/TD-056-backfill-battery-health-script-no-path-bootstrap.md`
+- Modified: `offices/ralph/sprint.json` (US-397 passes:true)
+
+### Learnings for future iterations:
+- **Pattern discovered**: Pi-tier entry-point path bootstrap = mirror src/pi/main.py: insert src/
+  (for bare `pi.*`) THEN repo ROOT (for legacy `src.common.*`/`src.pi.*`). Inserting only ONE leaves
+  half the import forms broken.
+- **Gotcha (test fidelity)**: in-process tests (`from scripts import X`) CANNOT catch operator
+  sys.path bugs because tests/conftest.py:38 already seeds src/ for the whole pytest session.
+  An entry-point import bug needs a subprocess smoke (clean env, no PYTHONPATH) to reproduce the
+  real `python scripts/...` runtime.
+- **Gotcha (identity)**: when normalizing src.X->X imports, the `common.*` packages have NO unifying
+  re-export (unlike `pi.*` package __init__ files), so flipping a `common.*` exception import silently
+  breaks `except` clauses against deeper code that still raises `src.common.*`. Flip pi.* freely;
+  leave common.* on whatever form the raisers use.
+---
