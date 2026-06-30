@@ -921,7 +921,7 @@
       "parent": "E-001",
       "title": "GEM-7 — System status tile (BT link, last sync, Pi power mode, ladder stage)",
       "description": "GEM-7 — System status tile (BT link, last sync, Pi power mode, ladder stage)",
-      "status": "pending",
+      "status": "active",
       "renamedFrom": "B-092",
       "createdAt": "2026-05-27",
       "updatedAt": "2026-05-27"
@@ -971,7 +971,7 @@
       "parent": "E-001",
       "title": "Battery Health card (touch-dashboard; Pi power/battery health) -- PIVOTED 2026-06-05 from S-3 'Drain ladder state UI'",
       "description": "Battery Health card on the F-092/F-097 chromium touch-carousel. PIVOTED 2026-06-05 (Iris, CIO-approved): the key-off sequencer now prevents the Pi draining down the UPS ladder, so the old 'drain ladder state UI' framing is obsolete -- ladder demoted to a failsafe; this surface shows battery HEALTH (renamedFrom intent, same ID per Iris). Hard dep on F-103 (shared chromium kiosk + eclipse-states-http). Spec docs/superpowers/specs/2026-06-05-pi-touch-carousel-dashboard-f092-f097-design.md; groom-ready pending Atlas design-gate signoff.",
-      "status": "pending",
+      "status": "active",
       "renamedFrom": "B-097",
       "createdAt": "2026-05-27",
       "updatedAt": "2026-06-28"
@@ -1101,7 +1101,7 @@
       "parent": "E-001",
       "title": "On-Pi DTC / check-engine viewer + gated Mode-04 clear (Card 5 of the touch dashboard)",
       "description": "On-Pi DTC/check-engine viewer surface + safety-gated Mode-04 clear, with a KOEO read independent of DriveDetector. Card 5 (Alerts+DTC) of the F-092/F-097 carousel. Spec drafted + CIO-approved 2026-06-05 (post drive-27 MIL: P0443 EVAP read+cleared off the Pi); spec docs/superpowers/specs/2026-06-05-pi-dtc-check-engine-viewer-clear-design.md. STATUS: pending Atlas design-gate signoff (load-bearing net-new write-to-vehicle Mode-04 path) -- Iris files the formal groom-ready pointer on Atlas's nod. SEQUENCE (Atlas greenlight 2026-06-19): F-103 -> carousel shell -> System Status + Battery Health cards -> System Setup+polkit -> pygame sunset -> THIS (Card 5, LAST). BUILD CONDITIONS: C-2 KOEO capture path independent of DriveDetector (drive_id=NULL, or viewer is blank key-on); C-3 Mode 02 dead on MD326328 -> realtime_data fallback (see F-109). Rule-10 DoD: state-server extension + emitters + Mode-04 path + token each land with matching specs/architecture.md (+ specs/UI/) in-sprint. Iris story split (spec section 10 M-1): US-A dtc emitter + state-server endpoint + static-table loader/sync; US-B takeover + severity-styled ribbon; US-C Alerts card (hero+list) + detail (freeze-frame + severity-gated fix + trust badge); US-D Clear-DTC Mode-04 path + gate + confirm + re-read + session-lock (load-bearing, pairs w/ Atlas A-1); US-E freeze-frame capture-or-honest-fallback. Spool owns severity taxonomy + DSM P1xxx curation; safety semantics offices/tuner/dtc-display-clear-safety-advisory.md; reference code specs/examples/dtc_read_and_clear_koeo.py.",
-      "status": "pending",
+      "status": "active",
       "createdAt": "2026-06-28",
       "updatedAt": "2026-06-28"
     },
@@ -2005,6 +2005,281 @@
       "tasks": [],
       "createdAt": "2026-06-29",
       "updatedAt": "2026-06-29"
+    },
+    {
+      "id": "US-399",
+      "parent": "F-092",
+      "title": "Carousel shell -- chromium dashboard kiosk + swipe-nav + page dots + persistent top bar + eclipse-states-http full runtime",
+      "type": "normal",
+      "size": "M",
+      "status": "sprint-ready",
+      "goal": "As the operator at the dash, I want a swipeable chromium dashboard with a persistent top bar so I can glance at system + battery state on the 3.5\" panel after boot.",
+      "definitionOfDone": [
+        "dashboard kiosk (Wayland/X11, F-103 launch-flag parity) starts on the splash HEALTHY_YIELD hand-off (A-1)",
+        "eclipse-states-http extended boot-only -> full runtime serving the new state files read-only (A-2)",
+        "swipe-nav between cards + page dots",
+        "persistent top bar with BT/sync/power glyphs (D-3, I-033 visibility)",
+        "touch enabled in the chromium kiosk (A-5)",
+        "reads ONLY state files (never polls hardware)",
+        "Rule-10 architecture.md updates for the runtime extension + splash->dashboard handoff in-sprint"
+      ],
+      "conditionalOutcomes": [
+        "if a state file is missing/malformed, the card shows `unavailable`, no crash (honest-instrument)"
+      ],
+      "validationCriteria": [
+        { "action": "load dashboard HTML headless", "outcome": "both cards render, no console errors (S-1)" },
+        { "action": "swipe L/R on the panel / synthetic swipe event", "outcome": "advances card + updates page dot; tap target >=40px (S-2)" },
+        { "action": "boot the Pi: splash reaches HEALTHY_YIELD", "outcome": "dashboard visible on the OSOYOO within <=3s of yield (I-1)" }
+      ],
+      "deps": [],
+      "sourceRefs": ["F-092", "F-097", "prd-V0.29.3", "iris-carousel-spec-v1.2", "atlas-A1-A8-2026-06-30"],
+      "tasks": [],
+      "createdAt": "2026-06-30",
+      "updatedAt": "2026-06-30"
+    },
+    {
+      "id": "US-400",
+      "parent": "F-092",
+      "title": "System Status card + system-status emitter -- OBD-link/sync/power/drive tiles + I-033 BT-reconnect visibility",
+      "type": "normal",
+      "size": "M",
+      "status": "sprint-ready",
+      "goal": "As the operator, I want OBD-link / sync / power / drive status at a glance, and to SEE when the BT link drops, so I'm not blind to a reconnect (I-033).",
+      "definitionOfDone": [
+        "new system-status emitter writes /run/eclipse-obd/states/system-status (schema per A-3)",
+        "card renders it verbatim; malformed JSON -> `unavailable`",
+        "I-033 fix: BT drop -> tile shows RECONNECTING + retries within <=2s + top-bar BT glyph flips amber",
+        "last-sync tile goes amber when stale-while-driving",
+        "green-when-broken forbidden (never healthy when underlying state is stale/down) -- honest-instrument"
+      ],
+      "conditionalOutcomes": [
+        "if the underlying state is stale/down, the tile never renders green/healthy (honest-instrument)"
+      ],
+      "validationCriteria": [
+        { "action": "fixture: malformed emitter JSON", "outcome": "card shows `unavailable`, no crash (S-3)" },
+        { "action": "induce a BT drop on the rig / fixture `state:reconnecting`", "outcome": "tile RECONNECTING + retry <=2s; top-bar glyph amber (I-3)" },
+        { "action": "fixture: stale last-sync while driving", "outcome": "last-sync tile amber (I-4)" },
+        { "action": "fixture: any stale/down underlying state", "outcome": "tile never renders green/healthy (F-1)" }
+      ],
+      "deps": ["US-399"],
+      "sourceRefs": ["F-092", "F-097", "prd-V0.29.3", "iris-carousel-spec-v1.2", "atlas-A1-A8-2026-06-30"],
+      "tasks": [],
+      "createdAt": "2026-06-30",
+      "updatedAt": "2026-06-30"
+    },
+    {
+      "id": "US-401",
+      "parent": "F-097",
+      "title": "Battery Health card + battery-health emitter -- honest UPS LiPo view (voltage-is-not-percent + stale-green traps locked)",
+      "type": "normal",
+      "size": "M",
+      "status": "sprint-ready",
+      "goal": "As the operator, I want an HONEST view of the Pi UPS battery's health (not the car battery), so I know it can shut down cleanly -- without being lied to by voltage-as-percent or stale-green.",
+      "definitionOfDone": [
+        "new battery-health emitter writes /run/eclipse-obd/states/battery-health (schema per A-3)",
+        "render-breaking trap 1 LOCKED (F-8): SoC % from MAX17048 register only, `null` -> omit percent, show volts -- never lerp percent from voltage",
+        "render-breaking trap 2 LOCKED (F-9): a GREEN verdict always carries \"last health check . <date> (<age>)\" so stale isn't mistaken for live",
+        "temp = \"not captured\" never fabricated (F-10); the cell is labeled UPS/Pi battery, never vehicle/car battery (F-11)",
+        "ladder DOM present ONLY when `draining:true` (failsafe, A-6 draining-semantics joint w/ Spool -- no false failsafe)",
+        "VCELL authoritative from `battery_health_log`"
+      ],
+      "conditionalOutcomes": [
+        "Spool S-2 (live runtime-remaining formula) + the ladder thresholds (3.70/3.55/3.45 V) are failsafe-only + owed by Spool; if not yet delivered, the failsafe shows VCELL + stage only (no minutes) -- do NOT fabricate a runtime estimate. Route to Spool if blocked."
+      ],
+      "validationCriteria": [
+        { "action": "fixture `vcellV:3.44, soc:null`", "outcome": "card shows `3.44 V`, omits percent, never \"3.44 %\" (S-7/F-8)" },
+        { "action": "fixture `lastHealthCheckTs` 30+ days old", "outcome": "shows \"last health check . <date> (<age>)\"; GREEN never shown without data-age (S-8/F-9)" },
+        { "action": "fixture `ambientTempC:null`", "outcome": "\"not captured\", never a number (S-9/F-10)" },
+        { "action": "fixture `draining:false` then `draining:true`", "outcome": "draining:false -> NO ladder DOM; draining:true -> ladder present (S-4/F-2)" },
+        { "action": "pull wall power on the UPS rig while parked", "outcome": "card escalates to ladder + runtime within <=2s (I-6)" }
+      ],
+      "deps": ["US-399"],
+      "sourceRefs": ["F-092", "F-097", "prd-V0.29.3", "iris-carousel-spec-v1.2", "atlas-A1-A8-2026-06-30"],
+      "tasks": [],
+      "createdAt": "2026-06-30",
+      "updatedAt": "2026-06-30"
+    },
+    {
+      "id": "US-402",
+      "parent": "F-092",
+      "title": "Pygame sunset -- retire status_display.py/dashboard_layout.py once the HTML carousel reaches parity",
+      "type": "normal",
+      "size": "S",
+      "status": "sprint-ready",
+      "goal": "As the Pi, I want exactly one dashboard surface, so retire pygame once the HTML reaches parity.",
+      "definitionOfDone": [
+        "status_display.py/dashboard_layout.py no longer launched (superseded; data republished via the emitters)",
+        "both surfaces never run simultaneously (A-4 parity-gated)"
+      ],
+      "conditionalOutcomes": [
+        "pygame is retired ONLY once the HTML carousel reaches parity; never run both surfaces at once (A-4)"
+      ],
+      "validationCriteria": [
+        { "action": "systemctl/log check post-deploy", "outcome": "pygame status_display not launched (I-7)" },
+        { "action": "start sequence", "outcome": "pygame + HTML never both active (F-4)" }
+      ],
+      "deps": ["US-400", "US-401"],
+      "sourceRefs": ["F-092", "F-097", "prd-V0.29.3", "iris-carousel-spec-v1.2", "atlas-A1-A8-2026-06-30"],
+      "tasks": [],
+      "createdAt": "2026-06-30",
+      "updatedAt": "2026-06-30"
+    },
+    {
+      "id": "US-403",
+      "parent": "F-092",
+      "title": "System Setup menu + gated service control -- long-press/menu, install-fixed allow-list via A-7 privilege path, Exit/Close",
+      "type": "normal",
+      "size": "M",
+      "status": "sprint-ready",
+      "goal": "As the operator, I want a deliberate, accident-proof menu to restart/stop services + exit the UI, without the kiosk running as root or letting me brick the safe-shutdown guard.",
+      "definitionOfDone": [
+        "long-press ~5s (ring fills; release <5s cancels) AND top-bar `:` both open the menu (D-6)",
+        "service control on an install-fixed allow-list via the A-7 privilege path (polkit rule or privileged helper; kiosk unprivileged, never root)",
+        "`eclipse-powerwatch` restart-only, no working Stop (D-7 safety guard)",
+        "`eclipse-obd`/`eclipse-sync` stop+restart with confirm",
+        "Exit/Close stops the kiosk + returns on reboot (A-8)",
+        "confirm-before-consequential; close/back always present (never trapped)"
+      ],
+      "conditionalOutcomes": [
+        "a service-control request for a unit NOT on the install-fixed allow-list is rejected (never executed)"
+      ],
+      "validationCriteria": [
+        { "action": "long-press 5s; release <5s", "outcome": "menu opens; release <5s -> no menu (I-8)" },
+        { "action": "top-bar `:` tap", "outcome": "same menu (I-9)" },
+        { "action": "tap `eclipse-powerwatch` Stop then Restart", "outcome": "Stop disabled, no-op (I-10/F-7); Restart restarts the service" },
+        { "action": "Stop `eclipse-obd` -> confirm", "outcome": "stops; status dot stopped <=2s; Restart brings it back (I-11)" },
+        { "action": "service-control with a unit NOT on the allow-list; single accidental tap", "outcome": "off-list rejected (S-6/F-13); single tap -> no consequential action (F-6)" },
+        { "action": "Exit/Close -> confirm", "outcome": "kiosk closes to desktop; returns on next reboot (I-12)" }
+      ],
+      "deps": ["US-399"],
+      "sourceRefs": ["F-092", "F-097", "prd-V0.29.3", "iris-carousel-spec-v1.2", "atlas-A1-A8-2026-06-30"],
+      "tasks": [],
+      "createdAt": "2026-06-30",
+      "updatedAt": "2026-06-30"
+    },
+    {
+      "id": "US-404",
+      "parent": "F-111",
+      "title": "DTC KOEO read + dtc emitter -- key-on Mode 03(+07) on the OBD connection-edge (no DriveDetector, drive_id=NULL explicit)",
+      "type": "normal",
+      "size": "M",
+      "status": "sprint-ready",
+      "goal": "As the operator walking up to a lit MIL at key-on, I want the code(s) on the dashboard at the exact moment I ask \"why's my light on?\" -- a key-on read that doesn't depend on a drive being active.",
+      "definitionOfDone": [
+        "a key-on Mode 03(+07) read fires on the OBD connection-established edge (`event_router` `onConnectionRestored`), one-shot, gated on no active RUNNING drive, owned by the DTC capture path (`dtc_logger` connection-edge entrypoint reusing `dtc_client`) -- NOT DriveDetector (Atlas A-9 ruling)",
+        "`dtc_log` rows written with `drive_id = NULL` stamped EXPLICITLY (not via `getCurrentDriveId` -- avoids a pre-US-388 stale-open leak; cross-links A-9 Root 2)",
+        "new `dtc` emitter writes /run/eclipse-obd/states/dtc (codes + severity + suggested_fix + provenance + freeze-frame/fallback + log/sync), ordered AFTER the F-103 states-dir provisioning (C-5)",
+        "`eclipse-states-http` extended to serve the `dtc` endpoint read-only",
+        "static P1xxx severity-table loader consumes Spool's `dsm-p1xxx-severity-table.md` (SSOT) into the state",
+        "Rule-10 architecture.md (the `dtc` writer + KOEO path + 3-writer states-dir list) in-sprint"
+      ],
+      "conditionalOutcomes": [
+        "code with no Spool-table entry -> \"No description yet\" (never blank)"
+      ],
+      "validationCriteria": [
+        { "action": "DriveDetector inactive/RPM 0, key-on read", "outcome": "captures stored+pending; `dtc_log` rows `drive_id=NULL`; detail shows \"key-on read\" not \"Drive N\" (S-11)" },
+        { "action": "key-on/engine-off with a lit MIL, e.g. the P0443 reference", "outcome": "code on the Alerts card within seconds; `dtc_log` row `drive_id=NULL` (I-8)" },
+        { "action": "malformed/empty `dtc` JSON", "outcome": "card \"unavailable\", no crash (S-9)" }
+      ],
+      "deps": ["US-399"],
+      "sourceRefs": ["F-111", "prd-V0.29.3", "iris-dtc-spec-v1.2", "atlas-dtc-signoff-2026-06-30", "spool-dtc-safety-advisory"],
+      "tasks": [],
+      "createdAt": "2026-06-30",
+      "updatedAt": "2026-06-30"
+    },
+    {
+      "id": "US-405",
+      "parent": "F-111",
+      "title": "DTC takeover + ribbon -- full-screen severity takeover on a NEW code + persistent STOP-red ribbon on every card",
+      "type": "normal",
+      "size": "S",
+      "status": "sprint-ready",
+      "goal": "As the operator, I want a NEW check-engine code to grab my attention, then stay visible -- without ever trapping me from seeing the road.",
+      "definitionOfDone": [
+        "full-screen takeover per-severity color + directive + dismiss controls (STOP has no plain dismiss; \"Acknowledge\" drops to ribbon -- driver keeps view control)",
+        "fires ONLY on a NEW code (`newSinceTs` / MIL rising-edge), one at a time, escalation re-fires",
+        "persistent STOP-red ribbon (`--red-light #F61D2D`, distinct from brand-red, leading warning glyph, subtle pulse) on every carousel card while a code is present"
+      ],
+      "conditionalOutcomes": [
+        "STOP code -> \"Acknowledge\" drops to ribbon (driver can clear the view); never forces full-screen while the road needs watching"
+      ],
+      "validationCriteria": [
+        { "action": "fixture: new code", "outcome": "takeover renders correct color+directive+dismiss per severity (S-1)" },
+        { "action": "fixture: known/old code", "outcome": "no takeover; ribbon present (S-2)" },
+        { "action": "ribbon present", "outcome": "STOP-red distinct from brand-red, warning glyph + pulse (R-2)" }
+      ],
+      "deps": ["US-404"],
+      "sourceRefs": ["F-111", "prd-V0.29.3", "iris-dtc-spec-v1.2", "atlas-dtc-signoff-2026-06-30", "spool-dtc-safety-advisory"],
+      "tasks": [],
+      "createdAt": "2026-06-30",
+      "updatedAt": "2026-06-30"
+    },
+    {
+      "id": "US-406",
+      "parent": "F-111",
+      "title": "DTC Alerts card (Card 5) + detail -- hero/worst-first list, freeze-frame-or-realtime fallback, severity-gated fix + trust badge",
+      "type": "normal",
+      "size": "M",
+      "status": "sprint-ready",
+      "goal": "As the operator, I want an honest detail view per code -- severity, what to do, the freeze-frame context (or an honest fallback), and a fix ONLY when it's safe -- so I'm never misled into clearing a real fault or swapping the wrong part.",
+      "definitionOfDone": [
+        "Alerts card = Card 5 of the carousel; hero = highest-severity code + directive; tappable list sorted worst-first",
+        "detail = code . description . severity . freeze-frame OR the realtime_data fallback (\"no freeze frame captured (this ECU) -- showing context at fault time\"; Mode 02 dead on MD326328 -- folds US-E)",
+        "severity-gated fix: red/yellow show the diagnose-don't-swap directive, NO raw fix even if `suggestedFix` non-null; green show the fix + a 3-state trust badge per `fixProvenance` (verified / community / offline)",
+        "log/sync footer; condition-dependent `severityCaveat` (base chip + caveat line, NOT auto-upgraded) + quiet N/A disposition (auto-trans P1xxx -> \"N/A this vehicle\", sorts last, no takeover/ribbon)",
+        "the display maps tier->color/directive ONLY -- it never classifies (reads Spool's severity SSOT)",
+        "Rule-10 specs/UI in-sprint"
+      ],
+      "conditionalOutcomes": [
+        "code with no table entry -> \"No description yet\" (I-3); the display never decides severity"
+      ],
+      "validationCriteria": [
+        { "action": "fixture: red/yellow code, `suggestedFix` non-null", "outcome": "detail shows diagnose directive, NO raw fix (S-4/I-4)" },
+        { "action": "fixture: green code", "outcome": "fix shown + correct trust badge per `fixProvenance` (S-4)" },
+        { "action": "fixture: missing freeze-frame", "outcome": "\"no freeze frame captured (this ECU)...\" fallback, never blank (S-5)" },
+        { "action": "fixture: auto-trans P1xxx `severity:na`", "outcome": "quiet N/A chip, sorts last, no takeover/ribbon (S-12)" },
+        { "action": "fixture: P1300 `severityCaveat` (red if knock)", "outcome": "base yellow chip + caveat line, tier NOT auto-upgraded (S-13)" },
+        { "action": "tap the real P0443 code", "outcome": "detail opens with the fallback context (I-2)" }
+      ],
+      "deps": ["US-404"],
+      "sourceRefs": ["F-111", "prd-V0.29.3", "iris-dtc-spec-v1.2", "atlas-dtc-signoff-2026-06-30", "spool-dtc-safety-advisory"],
+      "tasks": [],
+      "createdAt": "2026-06-30",
+      "updatedAt": "2026-06-30"
+    },
+    {
+      "id": "US-407",
+      "parent": "F-111",
+      "title": "DTC Clear (Mode-04) path -- polkit-gated dtc_client.clear() + action-path gate re-check + hard confirm + re-read + session-lock",
+      "type": "normal",
+      "size": "M",
+      "status": "sprint-ready",
+      "goal": "As the operator, I want to clear a MINOR code safely -- but ONLY when it's safe, fully logged, and proven cleared -- so I never erase a real fault's evidence or \"chase the light.\"",
+      "definitionOfDone": [
+        "renders against `offices/tuner/dtc-display-clear-safety-advisory.md` -- Spool SSOT, non-negotiable; this story does NOT redefine it",
+        "a net-new Mode-04 `dtc_client.clear()` via the polkit/privileged-action pattern (same as the F-092 menu; kiosk stays unprivileged)",
+        "the clear gate = ALL stored codes MINOR (green) AND logged AND server-sync-acked -- disabled with reason if any watch/stop present (\"a STOP/WATCH code is present\") or capture/sync incomplete (\"waiting for server sync\")",
+        "a hard confirm modal (wipes stored+pending, erases freeze-frame, resets emissions readiness -- full drive cycle before inspection)",
+        "an immediate re-read (Mode 03) proving \"0 stored, 0 pending, MIL off\" (never \"command sent\")",
+        "a session-lock -- a cleared code that returns immediately locks Clear for the session (\"don't chase the light\")",
+        "the gate is RE-CHECKED at the privileged action path (all-MINOR + logged + server-acked) -- a tampered/stale UI MUST NOT force a clear (defense-in-depth)",
+        "Rule-10 architecture.md (Mode-04 write path + privilege mechanism) in-sprint"
+      ],
+      "conditionalOutcomes": [
+        "the action-path gate is authoritative (never trust the UI); if the SSOT advisory and the spec ever disagree, the advisory wins (engine-protection)"
+      ],
+      "validationCriteria": [
+        { "action": "fixture: `clearGate` stop_present/watch_present, then sync_pending, then ok", "outcome": "stop/watch -> Clear disabled + reason; sync_pending -> disabled + reason; ok -> enabled (S-6)" },
+        { "action": "action path: Clear requested with the gate failing server-side, UI tampered", "outcome": "REJECTED at the action path (S-10)" },
+        { "action": "fixture: red/yellow code", "outcome": "no Clear button; detail shows diagnose directive, no raw fix (I-4)" },
+        { "action": "real MINOR, e.g. P0443: log + server-ack -> Clear -> confirm -> Mode 04 -> re-read", "outcome": "capture-before-clear holds; re-read cleared + MIL off; freeze-frame preserved server-side (I-5/I-6)" },
+        { "action": "cleared code returns immediately", "outcome": "Clear locks for the session (I-7/S-8)" }
+      ],
+      "deps": ["US-406"],
+      "sourceRefs": ["F-111", "prd-V0.29.3", "iris-dtc-spec-v1.2", "atlas-dtc-signoff-2026-06-30", "spool-dtc-safety-advisory"],
+      "tasks": [],
+      "createdAt": "2026-06-30",
+      "updatedAt": "2026-06-30"
     }
   ]
 }
