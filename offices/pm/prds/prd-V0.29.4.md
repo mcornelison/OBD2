@@ -8,7 +8,7 @@
 | Theme | EDR sensor-reader, built hardware-deferred + a curated backlog drain |
 | Validation | **BENCH ONLY** — CIO waived drive drills for the V0.29 chain. Mock-sensor rigs, idle-soak log audits, DB-column checks. |
 | Story range | US-408 … US-417 (10 stories) |
-| Design gate | **EDR stories pending Atlas gate #2 (raw-sensor schema)** — routed `offices/architect/inbox/2026-06-30-from-marcus-sprint50-edr-design-gate-request.md` 2026-06-30; CIO working it with Atlas. Gate #1 bus-contract design already exists (`docs/superpowers/specs/2026-06-18-edr-dedicated-reader-bus-contract-design.md`). |
+| Design gate | **APPROVED (decision level) — Atlas 2026-06-30** (`offices/pm/inbox/2026-06-30-from-atlas-edr-gate-sprint50-APPROVAL.md`): scope + approach + all 5 items ruled (A-14 gates #1/#2). EDR stories are groomable against his rulings; the **concrete DDL + bus message framing + per-channel cadence numbers come in his ADR — a CIO sit-down deliverable produced next**. Gate #1 bus-contract design also at `docs/superpowers/specs/2026-06-18-edr-dedicated-reader-bus-contract-design.md`. |
 
 ---
 
@@ -34,7 +34,7 @@ Two threads in one sprint:
 
 ## 3. User Stories
 
-> **EDR design dependency:** US-408–410's schema/contract-specific acceptance criteria reference Atlas's gate #2 deliverable. They are drafted against the known bus model (`raw.<source>.<channel>`, frozen `Sample` envelope, `PersistenceSubscriber` pattern) and **finalize once Atlas's schema note lands.** Do not freeze the EDR stories' DDL specifics until then.
+> **EDR design status:** Atlas's gate is **APPROVED** with rulings on all 5 items (folded into US-408–410 below). The **shape is locked**; the only thing still pending is the **concrete DDL + bus message frame + per-channel cadence numbers**, which arrive in Atlas's ADR (CIO sit-down). Stories are groomable now; the literal table columns / cadence constants finalize when the ADR lands (before freeze).
 
 ---
 
@@ -44,28 +44,34 @@ Two threads in one sprint:
 **Acceptance Criteria:**
 - [ ] A source-reader probes for each sensor at startup (ICM-20948 @ `0x69`, fallback `0x68`; TSL2591 @ `0x29`) on `/dev/i2c-1`.
 - [ ] **Sensor present** → reader publishes `Sample` envelopes on `raw.imu.<channel>` (accel x/y/z, gyro x/y/z, mag x/y/z, temp) and `raw.light.<channel>` (lux, visible, infrared, full_spectrum) with `source` set to `imu` / `light`.
-- [ ] **Sensor absent** → reader logs a single "sensor absent" line at startup, skips that source, and the process continues normally (no exception, no crash-loop, no repeated log spam).
-- [ ] Sample rates follow Atlas's bus-contract guidance (IMU higher-rate than the ~6 Hz OBD; producer never blocks; bounded queue per the bus contract).
-- [ ] Reader is gated behind the dark-ship flag (per US-409 decision — `pi.bus.enabled` umbrella or `pi.sensors.enabled`); default OFF.
-- [ ] Unit tests cover both the present (mock-sensor) and absent paths.
+- [ ] **Sensor absent (Atlas item 3):** probe-at-init marks the channel `status: sensor_absent`, then **skips publish AND skips persist** — the reader **never emits null/zero samples** (a downstream consumer must not mistake "not wired" for a real zero-g / zero-lux reading). One startup log line, no crash, no spam. Connect-when-wired = the probe succeeds on the next reader restart and the channel goes live with **no code change**.
+- [ ] **QoS (Atlas item 1):** IMU (~50–100 Hz) and light (~1–5 Hz) are heterogeneous-rate **STREAM/LOSSY** topics — bounded per-consumer queue, **producer-never-blocks, drop-oldest**. The OBD/sync path stays on its **separate lossless/durable** QoS lane (sensor channels are strictly additive; they must NOT perturb `raw.obd.*` or the F-110 golden master).
+- [ ] **Sample rate decoupled from persist rate (Atlas item 1):** the reader may sample at full rate but persistence runs at a configured (lower) cadence; full-raw-rate retention is an F-115 event-window concern, not this phase.
+- [ ] **Dark-ship flags (Atlas item 4):** per-sensor `pi.sensors.imu.enabled` + `pi.sensors.light.enabled`, **each requiring `pi.bus.enabled`**; both default OFF. (Per-sensor so the CIO enables each as he wires it.)
+- [ ] Unit tests cover the present (mock-sensor) and absent (`sensor_absent`, no fabricated sample) paths.
 - [ ] `ruff check` passes on modified files.
 
 **Downstream impact:** Adds `raw.imu.*` / `raw.light.*` topics to the bus. No existing subscriber consumes them yet (additive). Must not change `raw.obd.*` behavior.
 
 ---
 
-### US-409: EDR raw-sensor persistence subscriber + versioned schema (dark-ship)
-**Description:** As the system, I want a persistence subscriber that drains the IMU/light topics and writes them to a versioned raw-sensor schema, so that sensor data is durably recorded once enabled.
+### US-409: EDR raw-sensor persistence subscriber + versioned schema — **Pi-local, dark-ship**
+**Description:** As the system, I want a persistence subscriber that drains the IMU/light topics and writes them to a versioned **Pi-local** raw-sensor schema, so that sensor data is durably recorded on the Pi once enabled.
+
+> **Atlas item 2 — Pi-LOCAL ONLY this phase.** Raw IMU at ~100 Hz is too voluminous to sync and isn't needed server-side until the event-vault/display phase (F-115). **No server table and no sync path in this sprint.** The future server schema (F-115) will derive from the **same `src/common/` definition**, so there's zero divergence by construction.
 
 **Acceptance Criteria:**
-- [ ] New subscriber (modeled on `PersistenceSubscriber`) subscribes to `raw.imu.*` / `raw.light.*` and writes samples to the **Atlas-designed versioned table(s)** (gate #2), with sample timestamp, `drive_id` (NULL when no drive is active — per the established NULL-when-no-drive rule), and `schema_version`.
-- [ ] Migration creates the table(s); **deployed AND verified**: `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME='<edr_table>'` returns the expected columns (server side); Pi-side SQLite table created with matching shape.
-- [ ] **Pi and server schemas are identical** through the sync path (anti-divergence — per Atlas gate #2). Whether raw samples sync to the server this phase or stay Pi-local follows Atlas's ruling; the story implements whichever he specifies.
-- [ ] Entire path ships **dark** behind the flag; with the flag OFF, no table writes occur and the inline OBD path is byte-for-byte unchanged.
+- [ ] New subscriber (modeled on `PersistenceSubscriber`) subscribes to `raw.imu.*` / `raw.light.*` and writes samples to a **versioned Pi-local SQLite table**, with sample timestamp, `drive_id`, and an explicit **`schema_version`** column.
+- [ ] **Schema SSOT (Atlas item 2):** the table is defined under the versioned `src/common/` contract discipline; the Pi DDL is generated from that single definition (NOT hand-written) so a future F-115 server table derives from the same source. Migration is **forward-only**.
+- [ ] **`drive_id` NULL-latch (Atlas item 2):** `drive_id` FK is stamped **NULL explicitly when no RUNNING drive** — do NOT inherit a stale `_currentDriveId` (same latch discipline as the A-9 gap-fence and the DTC KOEO `drive_id=NULL` rule).
+- [ ] Persistence runs at the **configured (lower) cadence**, decoupled from the reader's sample rate (per US-408).
+- [ ] Pi-side table created and verified (schema introspection shows expected columns + `schema_version`).
+- [ ] Entire path ships **dark** behind the per-sensor flags; with both OFF, no table writes occur and the inline OBD path is byte-for-byte unchanged.
 - [ ] Subscriber observability: depth / dropped-count exposed via the existing `SubStats`.
+- [ ] **Exact column list + types finalize with Atlas's ADR** (CIO sit-down); the shape above is locked.
 - [ ] `ruff check` passes on modified files.
 
-**Downstream impact:** New table(s) only; no existing table altered. The sync path gains a new table **only if** Atlas rules raw samples sync this phase.
+**Downstream impact:** One new Pi-local table; no existing table altered; **no server/sync change** (deferred to F-115).
 
 ---
 
@@ -73,10 +79,10 @@ Two threads in one sprint:
 **Description:** As the developer, I need a mock-sensor harness and a regression that proves the OBD golden-master is untouched, so that the EDR build is verifiable with no hardware and safe to ship dark.
 
 **Acceptance Criteria:**
-- [ ] Mock-sensor harness feeds synthetic IMU + light readings through the reader → bus → persistence subscriber; rows land in the EDR table(s) with correct shape.
-- [ ] **Absent-path test:** with no sensors and the flag ON, the system starts, logs the absences, and writes zero EDR rows without error.
-- [ ] **Golden-master regression:** with the flag OFF (and ON, OBD-only), `realtime_data` rows are **byte-identical** to the pre-bus inline path (reuses the F-110 golden-master test discipline).
-- [ ] Documented **connect-when-wired bench drill**: enable the flag on a Pi with sensors physically attached, confirm `i2cdetect -y 1` shows `29 … 69`, and confirm EDR rows accumulate — recorded as the acceptance drill (run when the CIO wires the sensors; not a sprint blocker).
+- [ ] Mock-sensor harness feeds synthetic IMU + light readings through the reader → bus → persistence subscriber; rows land in the Pi-local EDR table with correct shape.
+- [ ] **Absent-path test:** with no sensors and the per-sensor flags ON, the system starts, marks each channel `sensor_absent`, writes **zero EDR rows**, and **emits no null/zero samples** (assert: not a single fabricated reading) — without error.
+- [ ] **Golden-master regression:** with the flags OFF (and ON, OBD-only), `realtime_data` rows are **byte-identical** to the pre-bus inline path (reuses the F-110 golden-master test discipline).
+- [ ] Documented **connect-when-wired bench drill**: flip `pi.sensors.imu.enabled` / `pi.sensors.light.enabled` on a Pi with sensors physically attached, confirm `i2cdetect -y 1` shows `29 … 69`, and confirm EDR rows accumulate — recorded as the acceptance drill (run when the CIO wires the sensors; not a sprint blocker).
 - [ ] `ruff check` passes on modified files.
 
 **Downstream impact:** Test-only; no production code paths changed beyond test hooks.
@@ -177,8 +183,9 @@ Two threads in one sprint:
 
 **Acceptance Criteria:**
 - [ ] Review all files changed in this sprint.
-- [ ] `specs/architecture.md` updated for the EDR reader/persistence (the Rule-10 section Atlas names in his gate ruling) and any sync-coverage changes.
-- [ ] New EDR tables documented (schema + ownership + dark-ship flag) in the appropriate schema/architecture doc.
+- [ ] `specs/architecture.md` EDR-bus section (the F-110 dedicated-reader subsection) extended with the **sensor-channel contract** + a **new raw-sensor-schema subsection** (Atlas item 5, Rule-10 — in-sprint).
+- [ ] `specs/ssot-design-pattern.md` gains the EDR raw-sensor schema as the **worked anti-divergence example** (Atlas A-14 gate #4).
+- [ ] New Pi-local EDR table documented (schema + ownership + per-sensor dark-ship flags) in the appropriate schema/architecture doc; any sync-coverage changes (US-411/412) documented.
 - [ ] `CLAUDE.md` updated if new config keys (`pi.sensors.enabled` etc.) or commands were added.
 - [ ] `regression_manifest.json` reflects the new/changed features (F-113/F-114 EDR; F-101/F-064 sync; F-096/F-098 UI).
 - [ ] All spec docs reflect current state (no stale references).
@@ -189,8 +196,8 @@ Two threads in one sprint:
 
 - FR-1: A single threaded source-reader probes ICM-20948 (`0x69`/`0x68`) + TSL2591 (`0x29`) on `/dev/i2c-1` and publishes `raw.imu.*` / `raw.light.*` samples to the dedicated-reader bus.
 - FR-2: Sensor absence is non-fatal — probe, log once, skip; the process runs normally with no sensors wired.
-- FR-3: A persistence subscriber writes IMU/light samples to an Atlas-designed versioned schema (`drive_id` NULL when no drive; `schema_version` stamped), Pi and server schemas identical.
-- FR-4: All EDR functionality ships dark behind a flag; flag OFF ⇒ zero behavioral change, `realtime_data` byte-identical to the pre-bus path.
+- FR-3: A persistence subscriber writes IMU/light samples to a versioned **Pi-local** SQLite table (`drive_id` NULL-when-no-drive stamped explicitly; `schema_version` stamped), defined from a single `src/common/` source; **no server/sync this phase** (deferred to F-115).
+- FR-4: All EDR functionality ships dark behind **per-sensor flags** (`pi.sensors.imu.enabled` / `pi.sensors.light.enabled`, each requiring `pi.bus.enabled`); flags OFF ⇒ zero behavioral change, `realtime_data` byte-identical to the pre-bus path.
 - FR-5: Server gains `power_log` + `startup_log` tables; Pi sync coverage pushes both idempotently with reconnect catch-up.
 - FR-6: `drive_counter` mirror is fixed so the server's `last_drive_id` tracks the Pi.
 - FR-7: Idle `connection_log` / `sync_history` growth is materially reduced; `sync_history` timestamps are single-timezone UTC.
@@ -200,7 +207,7 @@ Two threads in one sprint:
 ## 5. Non-Goals (Out of Scope)
 
 - **F-112 (ECMLink datastream feasibility spike)** — ECMLink isn't installed; out this sprint (pending Atlas confirm).
-- **F-115 (EDR display surfaces / event-vault triggers / on-Pi triggers)** — later phase; this sprint is reader + persistence only.
+- **F-115 (EDR display surfaces / event-vault triggers / on-Pi triggers + raw-sensor SERVER sync)** — later phase; this sprint is reader + **Pi-local** persistence only. Per Atlas, raw-sample server sync is explicitly an F-115 concern (with a downsample/event-window policy reusing the same `src/common/` schema).
 - **F-061 (drop battery_health legacy SOC columns)** — **blocked**: depends on F-060 (SOC% wiring) being merged + prod-validated first. Deferred; groom F-060 ahead of it.
 - **Physically wiring the sensors** — the CIO does this on his schedule; the connect-when-wired drill (US-410) runs then.
 - **The hardware/ops half of F-080** (RTC coin-cell replacement, timesyncd ordering config) — tracked as action-items, not sprint code.
@@ -214,7 +221,7 @@ Two threads in one sprint:
 
 ## 7. Technical Considerations
 
-- **Atlas gate #2 (schema) is the EDR critical path.** US-409's DDL specifics finalize only when his schema note lands. Gate #1 (bus-contract) already exists as a spec.
+- **Atlas's gate is APPROVED** (2026-06-30); the design shape is locked. The remaining dependency is his **ADR** (concrete table DDL, bus message frame/encoding, per-channel cadence numbers, `architecture.md` prose) — a **CIO sit-down deliverable** produced next. US-409's literal columns + the persist-cadence constant finalize when the ADR lands; everything else is groomable now.
 - **Golden-master discipline (F-110):** the OBD `realtime_data` write path must remain byte-identical; the EDR work is strictly additive and flag-gated. US-410 enforces this with the existing regression.
 - **Verify-first items (US-413, US-414):** prior backoff/cadence work may have already fixed some idle-chatter; re-query the live Pi and close-with-evidence rather than re-fixing. The Pi may be off wall-power at points — coordinate the re-query window with the CIO.
 - **Sync conventions:** US-411/412 follow the B-076 schema-FK + sync-batch conventions and the `battery_health_log` sync pattern.
@@ -230,11 +237,12 @@ Two threads in one sprint:
 
 ## 9. Open Questions
 
-1. **(Atlas)** Do raw IMU/light samples sync to the server this phase, or stay Pi-local? (Drives US-409's sync scope.)
-2. **(Atlas)** Dark-ship flag: reuse `pi.bus.enabled`, or a new `pi.sensors.enabled` / per-sensor flags?
-3. **(US-411)** `power_log` volume strategy — raw-every-poll vs sampled/state-change-only? (Table grows fast.)
+1. ✅ **RESOLVED (Atlas)** — raw samples are **Pi-local only** this phase; server sync deferred to F-115.
+2. ✅ **RESOLVED (Atlas)** — **per-sensor flags** `pi.sensors.imu.enabled` / `pi.sensors.light.enabled`, each requiring `pi.bus.enabled`.
+3. **(US-411)** `power_log` volume strategy — raw-every-poll vs sampled/state-change-only? (Table grows fast.) Decide at story time.
 4. **(Spool, US-415)** Exact LTFT source — which PID in `realtime_data` (or a derived table)? Confirm before build.
 5. **(Resize)** US-413 is a deliberate 4-item batch — accept as one story, or split the TZ fix (F-079) out? Decide at `/resize-sprint`.
+6. **(Atlas ADR / CIO sit-down)** Concrete EDR table DDL + per-channel persist cadence numbers + bus message frame — needed before freeze; not blocking grooming.
 
 ---
 
