@@ -2625,6 +2625,43 @@ states dir token-gated; the carousel polls `GET /dtc`. The endpoint is strictly
 read-only — the only write route is `/service-control` (US-403), so `POST /dtc` →
 404.
 
+#### DTC takeover + STOP-red ribbon (US-405) [F-111 / design §5.1–5.2]
+
+The dashboard-side consumers of the `dtc` state. The carousel polls `GET /dtc` in
+the same 4 Hz tick as the cards and drives two surfaces, both pure functions in
+`carousel.js` (node-tested) with thin DOM wiring:
+
+**Full-screen takeover (`takeoverView` / `takeoverShouldShow`).** Fired on a
+**new** code only. The `dtc` state is level-triggered (it always carries the
+present codes), but the alarm must be **edge-triggered** — so the emitter stamps
+`newSinceTs` when a new code appears and the display tracks the
+last-acknowledged stamp: `takeoverShouldShow` compares them, so the same code
+never re-takes-over, but a **newer** code (a different stamp) re-fires
+(escalation, design D-3). One takeover at a time — the **highest-severity code is
+the hero**, the rest fold into "+N more". The overlay is **severity-styled** (the
+display maps a tier → color + directive + dismiss controls; it never classifies):
+🔴 STOP = brand `--red` bg · "REDUCE LOAD · PULL OVER" · **Acknowledge only** (no
+plain dismiss); 🟡 WATCH = amber · "DRIVE GENTLY · GET DIAGNOSED" · Dismiss; 🟢
+MINOR = dark-green · "SAFE TO CLEAR ONCE LOGGED" · Dismiss. Every dismiss path
+(incl. STOP's Acknowledge) **drops to the ribbon** — the driver always keeps view
+control, never trapped full-screen while the road needs watching. `unknown`
+(uncurated) gets the honest middle — a "GET DIAGNOSED" caution, never a false
+"safe to clear" or a false "pull over".
+
+**Persistent ribbon (`ribbonView`).** While any alert-eligible code is present, a
+ribbon rides under the top bar on every card: `⚠ CHECK ENGINE · <hero code>
+<desc> · +N more`. **R-2 (ribbon red ≠ brand red):** the ribbon shares cards with
+brand-red chrome, so its STOP state uses the **brighter alert `--red-light`
+(#F61D2D)** — distinct from brand `--red` (#E60012, used by the takeover bg) — plus
+a leading ⚠ glyph and a subtle pulse, so it reads as an alarm and never as
+decoration.
+
+**`na` is a quiet disposition (design §4).** Auto-trans P1xxx on the manual F5M33
+are dropped from `alertableCodes` — **no takeover, no ribbon**, and not counted in
+"+N more". A missing/malformed `dtc` file → no alert (honest: absence of the state
+= no active fault), never a fabricated code. The Alerts card (Card 5) + detail +
+Mode-04 clear are US-406/US-407.
+
 ### Release Versioning + Deploy Records (US-241, B-047 US-A)
 
 Pre-US-241 every deploy was anonymous: a `git pull` + service restart with no

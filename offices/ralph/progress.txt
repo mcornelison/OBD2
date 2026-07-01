@@ -835,3 +835,34 @@ Outcome: CODE-COMPLETE + all scoped suites green, but **COMMIT BLOCKED** by a 58
 - **Pattern discovered**: states-http serves any safe file in the states dir, so a new `dtc` endpoint needed NO server code -- just the emitter writing the file + a regression test locking read-only behavior.
 - **Gotcha (shared-checkout)**: a 58-min-stale `.git/index.lock` blocked ALL commits (it also left US-403 uncommitted). The harness gates `rm .git/index.lock` as a sensitive file and handbook Rule-4 forbids forcing a lock that might be a live cross-machine op -> the correct move is escalate (blocker + HUMAN_INTERVENTION_REQUIRED), not force. CIO/PM must clear it before the next iteration can commit.
 ---
+
+## 2026-06-30 - US-405 (Agent 1 / Rex)
+Task: DTC takeover + STOP-red ribbon -- full-screen severity takeover on a NEW code + persistent ribbon on every card
+
+### What was implemented:
+- The first CONSUMER of US-404's `dtc` state. Two surfaces, both PURE node-testable logic in `carousel.js` (exported on `api`) + thin browser-only DOM, mirroring the US-400/401 card seam. The Pi never decides severity -- the display maps Spool's classified tier -> color/directive.
+- **Edge-trigger insight (load-bearing)**: the `dtc` state is LEVEL (always carries the present codes) but the takeover alarm must be EDGE (fire once per NEW code, not every 4Hz poll). Solved via the emitter's `newSinceTs` stamp + a display-side last-acknowledged stamp: `takeoverShouldShow(view,lastAckedTs)` = `view.newSinceTs !== lastAckedTs` -> the same code never re-takes-over; a NEWER code (different stamp) re-fires (escalation, design D-3). Plain string inequality, no clock math.
+- `takeoverView(data)` -> null unless `newSinceTs` non-null AND an alert-eligible code exists -> a KNOWN code at boot (newSinceTs null) = RIBBON ONLY (S-2). One takeover at a time: `alertableCodes` sorts worst-first (rank stop3/watch2/minor1/unknown0; `na` + unrecognized dropped), hero=[0], the rest fold into `moreCount` ('+N more').
+- Severity-styled per design §5.1 (`TAKEOVER_STYLE`): stop=brand `--red` / "REDUCE LOAD . PULL OVER" / `plainDismiss:false` "Acknowledge" (no dismiss+forget); watch=`--amber-warn` / "DRIVE GENTLY . GET DIAGNOSED" / Dismiss; minor=`--ok-green` / "SAFE TO CLEAR ONCE LOGGED" / Dismiss. EVERY dismiss path (incl STOP's Acknowledge) drops to the ribbon -> the driver always keeps view control, never trapped full-screen (the conditionalOutcome). `unknown` (uncurated) = honest middle amber/"GET DIAGNOSED"/plain Dismiss -- never false-green nor false-STOP (Refusal Rule 2).
+- `ribbonView(data)` -> persistent ribbon while ANY alert-eligible code is present (level=hero severity, glyph ⚠, "CHECK ENGINE . <code> <desc> . +N more"). R-2: the ribbon STOP state uses the BRIGHTER `--red-light #F61D2D` (added brand `--red #E60012` + `--red-dark #BF000F` to :root -> the two reds are provably distinct) + a leading ⚠ + a subtle `@keyframes ribbon-pulse`.
+- `na` (auto-trans P1xxx on the manual F5M33, design §4) dropped from alertableCodes -> NO takeover, NO ribbon, not counted in "+N more". A missing/malformed `dtc` file -> no alert (honest: absence of state = no fault), never fabricated.
+- DOM: `updateDtcSurfaces(dtc)` runs each 4Hz tick (fetches `/dtc` alongside the cards); `showTakeover` fills `#dtc-takeover` + wires Acknowledge/Dismiss + View-detail (both drop to ribbon; the Alerts card + real detail nav land in US-406); `renderRibbon` sets `#dtc-ribbon[data-level]`+text.
+
+### Files changed:
+- Modified: `specs/UI/dist/dashboard-pi/carousel.js` (alertableCodes/takeoverView/takeoverShouldShow/ribbonView pure logic + exports + updateDtcSurfaces DOM wiring)
+- Modified: `specs/UI/dist/dashboard-pi/dashboard.html` (filled the reserved #dtc-ribbon + added the #dtc-takeover overlay)
+- Modified: `specs/UI/dist/dashboard-pi/dashboard.css` (brand-red tokens + ribbon block per-level/pulse/glyph + takeover overlay per-severity radial bg, >=40px tap targets)
+- Modified: `tests/deploy/test_dashboard_kit.py` (+4: US-405 node logic S-1/S-2 + escalation + na; R-2 CSS distinct-reds+pulse+glyph; per-severity takeover CSS; HTML mounts)
+- Modified: `specs/architecture.md` (F-092 "DTC takeover + STOP-red ribbon (US-405)" subsection -- Rule-10)
+
+### Gates:
+- pytest tests/deploy/test_dashboard_kit.py = 38 passed (was 34; +4 US-405), 0 regressions. carousel.js `node --check` green (via test_carouselJs_passesNodeSyntaxCheck_s1). reads-only-hardware + no-console.error guards still green. ruff clean on the touched .py.
+- DEFERRED Pi-bench (per validationMethod): the live auto-surface drill (real KOEO/drive new code -> takeover auto-appears on the OSOYOO + drops-to-ribbon + escalation) rides the SAME live `_dtcEmitter` call-site injection deferred by US-404 (the emitter must publish `dtc` with a live `newSinceTs` before the takeover can fire on real hardware). LOGIC node-tested + ready; only the on-Pi render is deferred.
+- DEFERRED-PM: mypy (no new .py logic -- carousel.js is JS; only the test .py was touched) + full `pytest tests/` (slow SMB; the scoped suite is the in-iteration gate).
+
+### Learnings for future iterations:
+- **Pattern discovered**: level-vs-edge is the recurring shape for these dashboard alarms. The emitter publishes a level state + a change-stamp (`newSinceTs`); the consumer stays stateless-pure by delegating the "is this new?" decision to a tiny `shouldShow(view, lastSeenStamp)` helper (string inequality). No timers, no dedupe sets.
+- **Gotcha**: US-405's acceptance (unlike US-404/406) has no explicit Rule-10 clause, but the takeover/ribbon is a load-bearing safety surface on F-092 -> added the architecture.md note anyway (PM Rule 10 / Atlas design-gate). Over-document a check-engine alarm, don't under-document.
+- **Gotcha**: the reads-only-hardware guard forbids the substring "serial" (WebSerial) in carousel.js -- "radial-gradient" is CSS-only (safe), but keep JS free of serial/usb/i2c tokens when adding fetch-driven surfaces.
+- **Build-order note**: US-406 (Alerts card = Card 5 + detail) will repoint the takeover "View detail" button + the ribbon tap at the new Alerts card; today both just drop to the ribbon.
+---

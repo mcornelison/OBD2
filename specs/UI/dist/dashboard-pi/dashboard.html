@@ -27,8 +27,33 @@
     <button id="menu-btn" class="tap-target" aria-label="System Setup">⋮</button>
   </header>
 
-  <!-- STOP-red DTC ribbon mount point (US-405 fills it; absent here). -->
-  <div id="dtc-ribbon" hidden></div>
+  <!-- US-405 persistent DTC ribbon: rides under the top bar on every card while
+       a code is present. STOP state uses the brighter --red-light (R-2, distinct
+       from brand-red) + a leading ⚠ + a subtle pulse. JS sets the level + text. -->
+  <div id="dtc-ribbon" hidden>
+    <span class="ribbon-glyph">⚠</span>
+    <span class="ribbon-text"></span>
+  </div>
+
+  <!-- US-405 full-screen DTC takeover: fired on a NEW code (newSinceTs), one at a
+       time, severity-styled. STOP has no plain dismiss -- only "Acknowledge"
+       (drops to the ribbon) so the driver always keeps view control. JS fills the
+       content + wires the buttons from the polled `dtc` state. -->
+  <div id="dtc-takeover" hidden role="alertdialog" aria-label="Check engine alert">
+    <div class="takeover-inner">
+      <span class="takeover-icon" id="takeover-icon">⚠</span>
+      <span class="takeover-head">CHECK ENGINE</span>
+      <span class="takeover-chip" id="takeover-chip"></span>
+      <span class="takeover-code" id="takeover-code"></span>
+      <span class="takeover-desc" id="takeover-desc"></span>
+      <span class="takeover-directive" id="takeover-directive"></span>
+      <span class="takeover-more" id="takeover-more" hidden></span>
+      <div class="takeover-actions">
+        <button id="takeover-detail" class="tap-target">View detail ›</button>
+        <button id="takeover-dismiss" class="tap-target">Dismiss</button>
+      </div>
+    </div>
+  </div>
 
   <main id="carousel" aria-roledescription="carousel">
     <div id="track">

@@ -411,6 +411,101 @@
     return Math.sqrt(dx * dx + dy * dy) > t;
   }
 
+  // -------------------------------------------------------------------------
+  // US-405 DTC takeover + ribbon -- pure, node-testable logic (S-1/S-2/R-2).
+  // The display is a PURE CONSUMER of the `dtc` state (severity classified
+  // upstream from Spool's table -- the Pi never decides it). The takeover fires
+  // ONLY on a NEW code (`newSinceTs`), one at a time (highest severity = hero,
+  // the rest fold into "+N more"); after Acknowledge/Dismiss a persistent ribbon
+  // carries the alert on every card. `na` (auto-trans on this manual car) is a
+  // quiet disposition -- never a takeover, never a ribbon (design §4/§5.2).
+  // -------------------------------------------------------------------------
+
+  // Severity ordering (worst-first). `na` is not an alert; `unknown` is a real
+  // uncurated code (ranks below the classified tiers but still alerts honestly).
+  var DTC_SEVERITY_RANK = { stop: 3, watch: 2, minor: 1, unknown: 0 };
+
+  // Per-severity takeover styling. The display maps a tier -> color + directive
+  // + dismiss behavior; it never classifies. STOP has NO plain dismiss -- only
+  // "Acknowledge" (which drops to the ribbon) so a misfire is never dismissed-
+  // and-forgotten, yet the driver still keeps view control (design §5.1/D-3).
+  // `unknown` (severity not curated) gets the honest middle: a "get diagnosed"
+  // caution -- never a false "safe to clear" (green) nor a false "pull over".
+  var TAKEOVER_STYLE = {
+    stop: { colorVar: "--red", icon: "⚠", directive: "REDUCE LOAD · PULL OVER",
+            dismissLabel: "Acknowledge", plainDismiss: false },
+    watch: { colorVar: "--amber-warn", icon: "⚠", directive: "DRIVE GENTLY · GET DIAGNOSED",
+            dismissLabel: "Dismiss", plainDismiss: true },
+    minor: { colorVar: "--ok-green", icon: "ⓘ", directive: "SAFE TO CLEAR ONCE LOGGED",
+            dismissLabel: "Dismiss", plainDismiss: true },
+    unknown: { colorVar: "--amber-warn", icon: "⚠", directive: "GET DIAGNOSED",
+            dismissLabel: "Dismiss", plainDismiss: true },
+  };
+
+  function severityRank(sev) {
+    return Object.prototype.hasOwnProperty.call(DTC_SEVERITY_RANK, sev)
+      ? DTC_SEVERITY_RANK[sev]
+      : -1;
+  }
+
+  // The alert-eligible codes, worst-first. `na` and any unrecognized severity
+  // are dropped (they never alarm). Stable within a rank (input order kept).
+  function alertableCodes(codes) {
+    if (!Array.isArray(codes)) return [];
+    var out = [];
+    for (var i = 0; i < codes.length; i++) {
+      var c = codes[i];
+      if (isObj(c) && severityRank(c.severity) >= 0) out.push(c);
+    }
+    out.sort(function (a, b) { return severityRank(b.severity) - severityRank(a.severity); });
+    return out;
+  }
+
+  // The takeover view for a NEW code, or null (no new code / no alertable code /
+  // malformed). One takeover at a time: the worst code is the hero; the rest are
+  // "+N more". Firing (vs a prior ack) is a stateful concern -> takeoverShouldShow.
+  function takeoverView(data) {
+    if (!isObj(data)) return null;
+    if (data.newSinceTs == null) return null; // known code at boot -> ribbon only
+    var alertable = alertableCodes(data.codes);
+    if (alertable.length === 0) return null;   // no real fault (e.g. all `na`)
+    var hero = alertable[0];
+    var style = TAKEOVER_STYLE[hero.severity] || TAKEOVER_STYLE.unknown;
+    return {
+      newSinceTs: data.newSinceTs,
+      severity: hero.severity,
+      code: hero.code,
+      short: (hero.short && String(hero.short).trim()) || "No description yet",
+      directive: style.directive,
+      colorVar: style.colorVar,
+      icon: style.icon,
+      dismissLabel: style.dismissLabel,
+      plainDismiss: style.plainDismiss,
+      moreCount: alertable.length - 1,
+    };
+  }
+
+  // Edge-trigger: show the takeover only when its `newSinceTs` differs from the
+  // last-acknowledged stamp. Same stamp -> already handled (no re-show); a newer
+  // code changes the stamp -> re-fire (escalation, design D-3).
+  function takeoverShouldShow(view, lastAckedTs) {
+    return !!view && view.newSinceTs !== lastAckedTs;
+  }
+
+  // The persistent ribbon while ANY alert-eligible code is present (design §5.2).
+  // Level = the hero severity (drives the color); `na`/empty -> null (no ribbon).
+  function ribbonView(data) {
+    if (!isObj(data)) return null;
+    var alertable = alertableCodes(data.codes);
+    if (alertable.length === 0) return null;
+    var hero = alertable[0];
+    var text = "CHECK ENGINE · " + hero.code;
+    var desc = hero.short && String(hero.short).trim();
+    if (desc) text += " " + desc;
+    if (alertable.length > 1) text += " · +" + (alertable.length - 1) + " more";
+    return { level: hero.severity, glyph: "⚠", text: text, code: hero.code };
+  }
+
   var api = {
     clampIndex: clampIndex,
     nextIndex: nextIndex,
@@ -436,6 +531,10 @@
     longPressProgress: longPressProgress,
     isLongPressComplete: isLongPressComplete,
     exceedsMoveCancel: exceedsMoveCancel,
+    alertableCodes: alertableCodes,
+    takeoverView: takeoverView,
+    takeoverShouldShow: takeoverShouldShow,
+    ribbonView: ribbonView,
     POLL_MS: POLL_MS,
     SWIPE_THRESHOLD_PX: SWIPE_THRESHOLD_PX,
     LONG_PRESS_MS: LONG_PRESS_MS,
@@ -804,6 +903,86 @@
         }
       }
 
+      // --- US-405 DTC takeover + ribbon surfaces (browser only) --------------
+      var ribbonEl = document.getElementById("dtc-ribbon");
+      var takeoverEl = document.getElementById("dtc-takeover");
+      var tvIcon = document.getElementById("takeover-icon");
+      var tvChip = document.getElementById("takeover-chip");
+      var tvCode = document.getElementById("takeover-code");
+      var tvDesc = document.getElementById("takeover-desc");
+      var tvDirective = document.getElementById("takeover-directive");
+      var tvMore = document.getElementById("takeover-more");
+      var tvDismiss = document.getElementById("takeover-dismiss");
+      var tvDetail = document.getElementById("takeover-detail");
+      // The last-acknowledged `newSinceTs` (edge-trigger). Acknowledge/Dismiss
+      // records it so the same code never re-takes-over; a newer code (a
+      // different stamp) re-fires (escalation, D-3).
+      var dtcLastAckedTs = null;
+
+      function hideTakeover() {
+        if (takeoverEl) takeoverEl.hidden = true;
+      }
+      // Acknowledge/Dismiss -> record the stamp + drop to the ribbon (the ribbon
+      // keeps carrying the alert). STOP has no plain dismiss, but Acknowledge is
+      // still a drop-to-ribbon so the driver can always clear the view.
+      function ackTakeover(view) {
+        dtcLastAckedTs = view.newSinceTs;
+        hideTakeover();
+      }
+      function showTakeover(view) {
+        if (!takeoverEl) return;
+        takeoverEl.setAttribute("data-severity", view.severity);
+        if (tvIcon) tvIcon.textContent = view.icon;
+        if (tvChip) tvChip.textContent = view.severity.toUpperCase();
+        if (tvCode) tvCode.textContent = view.code;
+        if (tvDesc) tvDesc.textContent = view.short;
+        if (tvDirective) tvDirective.textContent = view.directive;
+        if (tvMore) {
+          if (view.moreCount > 0) {
+            tvMore.textContent = "+" + view.moreCount + " more";
+            tvMore.hidden = false;
+          } else {
+            tvMore.hidden = true;
+          }
+        }
+        if (tvDismiss) {
+          tvDismiss.textContent = view.dismissLabel;
+          tvDismiss.onclick = function () { ackTakeover(view); };
+        }
+        // View detail: the Alerts card (Card 5) + detail land in US-406; until
+        // then this drops to the ribbon so the driver still keeps view control.
+        if (tvDetail) tvDetail.onclick = function () { ackTakeover(view); };
+        takeoverEl.hidden = false;
+      }
+
+      function renderRibbon(view) {
+        if (!ribbonEl) return;
+        if (!view) {
+          ribbonEl.hidden = true;
+          ribbonEl.removeAttribute("data-level");
+          return;
+        }
+        ribbonEl.setAttribute("data-level", view.level);
+        var glyph = ribbonEl.querySelector(".ribbon-glyph");
+        var text = ribbonEl.querySelector(".ribbon-text");
+        if (glyph) glyph.textContent = view.glyph;
+        if (text) text.textContent = view.text;
+        ribbonEl.hidden = false;
+      }
+
+      // Apply the polled `dtc` state to the ribbon + takeover. A missing/malformed
+      // `dtc` file -> no alert (honest: absence of the state = no active fault),
+      // never a fabricated code.
+      function updateDtcSurfaces(dtcData) {
+        renderRibbon(ribbonView(dtcData));
+        var view = takeoverView(dtcData);
+        if (view && takeoverShouldShow(view, dtcLastAckedTs)) {
+          showTakeover(view);
+        } else {
+          hideTakeover();
+        }
+      }
+
       async function tick() {
         for (var c = 0; c < cards.length; c++) {
           var card = cards[c];
@@ -826,6 +1005,8 @@
             if (bv) renderBatteryHealthCard(card, bv);
           }
         }
+        // US-405: drive the takeover + persistent ribbon from the `dtc` state.
+        updateDtcSurfaces(await fetchState("dtc"));
         setTimeout(tick, POLL_MS);
       }
       tick();

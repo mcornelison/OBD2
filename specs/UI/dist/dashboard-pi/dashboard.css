@@ -17,7 +17,9 @@
   --text-secondary: #888888;
   --text-tertiary:  #666666;
   --amber-warn:     #FFC400;   /* project-wide warn token (BT drop, stale) */
-  --red-light:      #F61D2D;   /* STOP-red for the DTC ribbon (US-405) */
+  --red:            #E60012;   /* brand STOP-red -- the full-bleed takeover bg */
+  --red-light:      #F61D2D;   /* brighter alert red -- the DTC ribbon (R-2) */
+  --red-dark:       #BF000F;   /* takeover radial edge */
   --ok-green:       #2ECC71;   /* healthy verdict (US-400/401 bind it) */
   --tap-min:        40px;      /* minimum touch target (S-2) */
 }
@@ -137,10 +139,79 @@ html, body {
 }
 .dot.active::before { background: var(--text-primary); }
 
-/* --- STOP-red DTC ribbon mount (US-405 fills + animates it) ------------------ */
+/* --- US-405 persistent DTC ribbon -------------------------------------------- */
+/* Rides under the top bar on every card while a code is present. R-2: the ribbon
+   shares cards with brand-red chrome, so its STOP state uses the BRIGHTER alert
+   --red-light (never brand --red) + a leading ⚠ glyph + a subtle pulse, so it
+   reads as an alarm and never as decoration. Level is set by JS from `dtc`. */
 #dtc-ribbon {
-  position: fixed; left: 0; right: 0; top: 28px; height: 22px;
-  background: var(--red-light); color: #fff; z-index: 9;
+  position: fixed; left: 0; right: 0; top: 28px; min-height: 22px;
+  display: flex; align-items: center; gap: 6px;
+  padding: 2px 10px; box-sizing: border-box;
+  font-size: 12px; font-weight: 700; letter-spacing: 0.03em;
+  color: #fff; z-index: 9;
+  animation: ribbon-pulse 2s ease-in-out infinite;
+}
+#dtc-ribbon[data-level="stop"]    { background: var(--red-light); color: #fff; }
+#dtc-ribbon[data-level="watch"]   { background: var(--amber-warn); color: #000; }
+#dtc-ribbon[data-level="minor"]   { background: var(--ok-green); color: #000; }
+#dtc-ribbon[data-level="unknown"] { background: var(--amber-warn); color: #000; }
+.ribbon-glyph { font-size: 13px; line-height: 1; flex: 0 0 auto; }
+.ribbon-text {
+  flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* Subtle pulse so a persistent alert never fades into chrome. */
+@keyframes ribbon-pulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.72; }
+}
+
+/* --- US-405 full-screen DTC takeover ---------------------------------------- */
+/* Fired on a NEW code, severity-styled: same skeleton, per-tier bg + directive +
+   dismiss controls (STOP has no plain dismiss). The takeover STOP bg is the
+   BRAND --red (distinct from the ribbon's brighter --red-light, R-2). */
+#dtc-takeover {
+  position: fixed; inset: 0; z-index: 60;
+  display: flex; align-items: center; justify-content: center;
+  text-align: center; color: #fff;
+}
+#dtc-takeover[data-severity="stop"] {
+  background: radial-gradient(circle at 50% 38%, var(--red) 0%, var(--red-dark) 100%);
+}
+#dtc-takeover[data-severity="watch"] {
+  background: radial-gradient(circle at 50% 38%, var(--amber-warn) 0%, #7a5b00 100%);
+  color: #000;
+}
+#dtc-takeover[data-severity="minor"] {
+  background: radial-gradient(circle at 50% 38%, #12603a 0%, #062617 100%);
+}
+#dtc-takeover[data-severity="unknown"] {
+  background: radial-gradient(circle at 50% 38%, var(--amber-warn) 0%, #7a5b00 100%);
+  color: #000;
+}
+.takeover-inner {
+  display: flex; flex-direction: column; align-items: center; gap: 5px;
+  padding: 0 18px; max-width: 92%;
+}
+.takeover-icon { font-size: 40px; line-height: 1; }
+.takeover-head { font-size: 12px; letter-spacing: 0.14em; font-weight: 700; }
+.takeover-chip {
+  font-size: 11px; font-weight: 700; letter-spacing: 0.08em;
+  padding: 1px 8px; border-radius: 10px; text-transform: uppercase;
+  border: 1px solid currentColor;
+}
+.takeover-code { font-size: 30px; font-weight: 800; letter-spacing: 0.04em; }
+.takeover-desc { font-size: 13px; opacity: 0.9; }
+.takeover-directive {
+  font-size: 15px; font-weight: 700; letter-spacing: 0.04em; margin-top: 2px;
+}
+.takeover-more { font-size: 11px; opacity: 0.85; }
+.takeover-actions { display: flex; gap: 10px; margin-top: 12px; }
+.takeover-actions button {
+  min-width: var(--tap-min); min-height: var(--tap-min);
+  padding: 0 16px; font-size: 13px; font-weight: 700; cursor: pointer;
+  border-radius: 4px; border: 1px solid currentColor;
+  background: rgba(0, 0, 0, 0.28); color: inherit;
 }
 
 /* --- US-403 long-press ring (D-6) ------------------------------------------- */

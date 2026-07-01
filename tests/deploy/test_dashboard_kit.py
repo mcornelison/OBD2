@@ -695,3 +695,146 @@ def test_deployPi_installsServiceControlPolkitRule_a7():
     assert sh.count("step_install_polkit_service_control") >= 2  # defined + called
     assert "51-eclipse-service-control.rules" in sh
     assert "/etc/polkit-1/rules.d/51-eclipse-service-control.rules" in sh
+
+
+# ---------------------------------------------------------------------------
+# US-405 -- DTC takeover + STOP-red ribbon (F-111).
+# The takeover fires ONLY on a NEW code (`newSinceTs`), one at a time
+# (highest-severity = hero, others fold into "+N more"), severity-styled
+# (color + directive + dismiss controls -- STOP has no plain dismiss); the
+# persistent ribbon rides every card while a code is present. `na` codes
+# (auto-trans on this manual car) never take over or ribbon (design §4/§5.2).
+# The takeover-firing + severity-mapping logic is pure + node-tested; the
+# auto-surface DOM drill is a Pi-bench item.
+# ---------------------------------------------------------------------------
+
+_US405_NODE_SCRIPT = r"""
+const assert = require('assert');
+const c = require(process.argv[1]);
+
+function code(sev, cd, short, status) {
+  return { code: cd, severity: sev, short: short || '', status: status || 'stored',
+           severityCaveat: null };
+}
+function dtc(codes, newSinceTs) {
+  return { mil: true, codes: codes, newSinceTs: newSinceTs === undefined ? null : newSinceTs,
+           clearGate: {}, sessionResetLock: [], ts: '2026-06-30T19:40:05Z' };
+}
+
+// --- S-1: takeover renders per severity (color + directive + dismiss) --------
+const stopV = c.takeoverView(dtc([code('stop', 'P0301', 'Cyl 1 misfire')], '2026-06-30T19:40:00Z'));
+assert.ok(stopV, 'stop new code -> takeover');
+assert.strictEqual(stopV.severity, 'stop', 'stop severity');
+assert.strictEqual(stopV.code, 'P0301', 'hero code');
+assert.ok(/PULL OVER/i.test(stopV.directive), 'stop directive = pull over');
+assert.strictEqual(stopV.plainDismiss, false, 'STOP has NO plain dismiss (Acknowledge only)');
+assert.ok(/acknowledge/i.test(stopV.dismissLabel), 'stop dismiss label = Acknowledge');
+assert.strictEqual(stopV.colorVar, '--red', 'stop uses the brand red bg (takeover)');
+
+const watchV = c.takeoverView(dtc([code('watch', 'P0401', 'EGR flow')], '2026-06-30T19:40:00Z'));
+assert.strictEqual(watchV.severity, 'watch', 'watch severity');
+assert.ok(/DRIVE GENTLY/i.test(watchV.directive), 'watch directive');
+assert.strictEqual(watchV.plainDismiss, true, 'watch is dismissible');
+assert.strictEqual(watchV.colorVar, '--amber-warn', 'watch amber');
+
+const minorV = c.takeoverView(dtc([code('minor', 'P0442', 'Evap small leak')], '2026-06-30T19:40:00Z'));
+assert.strictEqual(minorV.severity, 'minor', 'minor severity');
+assert.ok(/SAFE TO CLEAR/i.test(minorV.directive), 'minor directive');
+assert.strictEqual(minorV.plainDismiss, true, 'minor dismissible');
+assert.strictEqual(minorV.colorVar, '--ok-green', 'minor green');
+
+// hero = highest severity; the rest fold into "+N more" (one takeover at a time).
+const multiV = c.takeoverView(dtc(
+  [code('minor', 'P0442', 'Evap'), code('stop', 'P0301', 'Misfire'), code('watch', 'P0420', 'Cat')],
+  '2026-06-30T19:40:00Z'));
+assert.strictEqual(multiV.severity, 'stop', 'hero = worst severity');
+assert.strictEqual(multiV.code, 'P0301', 'hero code = worst');
+assert.strictEqual(multiV.moreCount, 2, '+2 more folded');
+
+// --- S-2: known/old code (newSinceTs null) -> NO takeover; ribbon present ----
+const known = dtc([code('stop', 'P0301', 'Cyl 1 misfire')], null);
+assert.strictEqual(c.takeoverView(known), null, 'no new code -> no takeover');
+const rb = c.ribbonView(known);
+assert.ok(rb, 'ribbon present while a code exists');
+assert.strictEqual(rb.level, 'stop', 'ribbon level = hero severity');
+assert.strictEqual(rb.glyph, '⚠', 'ribbon carries a leading warning glyph');
+assert.ok(/P0301/.test(rb.text), 'ribbon carries the hero code');
+
+// --- escalation re-fires: a newer newSinceTs re-shows even after an ack ------
+assert.strictEqual(c.takeoverShouldShow(stopV, null), true, 'first fire (nothing acked)');
+assert.strictEqual(c.takeoverShouldShow(stopV, '2026-06-30T19:40:00Z'), false,
+  'acked exactly -> no re-fire');
+assert.strictEqual(c.takeoverShouldShow(stopV, '2026-06-30T18:00:00Z'), true,
+  'a newer code (different newSinceTs) re-fires (escalation)');
+
+// --- na (auto-trans on the manual F5M33): NO takeover, NO ribbon (design §4) --
+const naData = dtc([code('na', 'P1750', 'Auto-trans solenoid')], '2026-06-30T19:40:00Z');
+assert.strictEqual(c.takeoverView(naData), null, 'na -> no takeover');
+assert.strictEqual(c.ribbonView(naData), null, 'na -> no ribbon');
+// a na code alongside a real code -> the real code drives hero, na is not counted.
+const mixed = c.takeoverView(dtc(
+  [code('na', 'P1750', 'Auto-trans'), code('watch', 'P0420', 'Cat')], '2026-06-30T19:40:00Z'));
+assert.strictEqual(mixed.severity, 'watch', 'na ignored -> watch is hero');
+assert.strictEqual(mixed.moreCount, 0, 'na not counted in +N more');
+
+// --- no codes / malformed -> nothing (honest-instrument) ---------------------
+assert.strictEqual(c.takeoverView(dtc([], null)), null, 'no codes -> no takeover');
+assert.strictEqual(c.ribbonView(dtc([], null)), null, 'no codes -> no ribbon');
+assert.strictEqual(c.takeoverView(null), null, 'null -> no takeover');
+assert.strictEqual(c.ribbonView('x'), null, 'string -> no ribbon');
+assert.strictEqual(c.takeoverView([]), null, 'array -> no takeover');
+
+console.log('US405_OK');
+"""
+
+
+@pytest.mark.skipif(not _nodeAvailable(), reason="node not available on PATH")
+def test_dtcTakeoverAndRibbonLogic_s1_s2_r2_us405():
+    """US-405: the takeover fires only on a new code, severity-styled with the
+    correct directive + dismiss controls (STOP = Acknowledge only), hero = worst
+    code, and the ribbon persists while any non-na code is present."""
+    result = subprocess.run(
+        ["node", "-e", _US405_NODE_SCRIPT, str(KIT_DIR / "carousel.js")],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "US405_OK" in result.stdout
+
+
+def test_dashboardHtml_hasTakeoverAndRibbon_us405():
+    """US-405: the full-screen takeover overlay + the persistent ribbon mount are
+    present in the HTML (JS fills their content per the polled `dtc` state)."""
+    html = _read(KIT_DIR, "dashboard.html")
+    assert 'id="dtc-takeover"' in html
+    assert 'id="dtc-ribbon"' in html
+    # The takeover has both a dismiss action and a view-detail affordance.
+    assert 'id="takeover-dismiss"' in html
+    assert 'id="takeover-directive"' in html
+
+
+def test_dashboardCss_ribbonRedDistinctFromBrandRed_r2():
+    """R-2: the ribbon rides on cards where brand-red chrome may live, so its STOP
+    state uses the BRIGHTER alert red (--red-light #F61D2D), distinct from brand
+    --red (#E60012), plus a leading warning glyph + a subtle pulse animation."""
+    css = _read(KIT_DIR, "dashboard.css")
+    # Both reds defined -> provably distinct (R-2).
+    assert "--red:" in css and "#E60012" in css, "brand --red token missing"
+    assert "--red-light:" in css and "#F61D2D" in css, "alert --red-light token missing"
+    # The ribbon's STOP state uses the brighter --red-light, not brand --red.
+    assert "#dtc-ribbon" in css
+    assert 'data-level="stop"' in css
+    # A subtle pulse so the ribbon reads as an alarm, never as decoration.
+    assert "@keyframes" in css
+    assert "animation" in css
+    # A leading warning glyph element.
+    assert ".ribbon-glyph" in css
+
+
+def test_dashboardCss_takeoverPerSeverityStyles_s1_us405():
+    """S-1: the takeover overlay is severity-styled (per-tier background)."""
+    css = _read(KIT_DIR, "dashboard.css")
+    assert "#dtc-takeover" in css
+    for sev in ("stop", "watch", "minor"):
+        assert f'data-severity="{sev}"' in css, f"takeover missing {sev} styling"
