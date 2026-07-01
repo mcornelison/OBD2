@@ -181,3 +181,34 @@ Task: Wire UpsMonitor SoC% through orchestrator to recorder (F-060)
 - **Gotcha (a 0-100 range check is not a correctness check)**: the MAX17048 cold-start window returns in-range-but-wrong SoC%. An acceptance gate that only asserts 0-100 passes on calibration garbage. Honest-instrument recording needs a cold-start guard, not just a range assert -- the exact US-234 lesson.
 - **Process (blocker-not-block-sprint, 2nd time this sprint)**: like US-421, a single-story block does NOT stop the sprint. Set the story 'blocked', point completionNotes at the BL file, refresh the agent note, and emit NO tag so ralph.sh continues to the next pickable story (US-424). Do not emit SPRINT_BLOCKED -- other work remains.
 ---
+
+## 2026-07-01 - US-424 (Rex / Agent 1)
+Task: Foreign-vehicle contamination marker + ingest guard (F-116, Atlas-ruled)
+
+### What was implemented:
+- ADOPT-UNCOMMITTED: session started with fully-built US-424 work uncommitted (prior session stalled pre-commit -- the recurring headless async-wait, same as US-416/419). Inspected it end-to-end (did not author it), proved all 7 ACs, ran the gate SYNCHRONOUSLY, added the ONE missing AC (AC#6 architecture.md doc) + fixed 1 ruff import-sort the prior session missed, THEN committed (7283651).
+- 2-axis honest marker: (row) data_source='foreign' appended to the Pi SSOT data_source.py DATA_SOURCE_VALUES; the CHECK clause is DERIVED (DATA_SOURCE_CHECK_CLAUSE/DATA_SOURCE_COLUMN_DDL) so a new value propagates; the 9 hand-written schema literals are pinned equal to the SSOT by test_everySchemaCheckMatchesSsot (A-4). Server enum mirrored in models.py (no server DB-level CHECK -> no migration for this axis; Pi<->server pinned equal). (drive) data_quality='foreign_vehicle' in drive_statistics_compute SSOT (the classifier-vs-enum divergence assert grew to 5 values, stays green) + model enums.
+- Forward-only widens on BOTH tiers, each derived from the SSOT: Pi ensureDataSourceCheckWidened (SQLite table-rebuild -- SQLite can't ALTER a CHECK; realtime_data only, no inbound FK, rows+indexes preserved); server v0015 DROP+re-ADD named CHECK (mirrors v0010, INFORMATION_SCHEMA pre/post probe, idempotent).
+- foreign_guard.py: sustained rolling-window bus-rate guard (samples/window > 7/s over the Eclipse ISO 9141-2 K-line ceiling of about 6.3/s -> foreign). SSOT for 'is drive foreign?' -- poll loop feeds observeSample, writer consults isDriveForeign; neither classifies. 'Sustained' is structural (3s measurement window + 10s sustained hold) so a start-of-drive Eclipse burst never false-trips. On trip: retro-tag open drive's 'real' rows 'foreign' + latch so the writer stamps subsequent rows. Re-tag never delete; ships DARK (pi.foreignGuard.enabled=false).
+- Server backstop tripwire DROPPED (Atlas resize-droppable per pmSignOff -- marker + Pi guard are the must-haves).
+
+### Files changed:
+- Created: `src/pi/obdii/foreign_guard.py`, `src/server/migrations/versions/v0015_us424_foreign_vehicle_data_quality.py`, `tests/pi/obdii/test_foreign_guard.py`, `tests/pi/data/test_data_source_foreign_marker.py`, `tests/server/test_migration_0015_foreign_vehicle_data_quality.py`
+- Modified (SSOT+enum): `src/pi/obdii/data_source.py`, `src/server/db/models.py`, `src/server/analytics/drive_statistics_compute.py`
+- Modified (schema CHECK widen): `src/pi/obdii/database_schema.py`, `drive_summary.py`, `dtc_freeze_frame_schema.py`, `dtc_log_schema.py`, `src/pi/power/battery_health.py`, `src/pi/obdii/database.py`
+- Modified (wiring): `src/pi/obdii/data/helpers.py` (install guard), `data/realtime.py` (observeSample), `data/logger.py` (foreign stamp), `src/common/config/validator.py` (pi.foreignGuard.* DEFAULTS)
+- Modified (Rule-10 doc + lock-downs): `specs/architecture.md`, `tests/pi/data/test_data_source_column.py`, `tests/pi/data/test_data_source_hygiene.py`, `src/server/migrations/__init__.py`
+
+### Verification (this iteration, synchronous):
+- pytest test_foreign_guard + test_data_source_foreign_marker + test_data_source_column + test_data_source_hygiene + test_migration_0015 = 86 pass
+- pytest tests/server/test_db_models + tests/server/analytics + tests/server/test_migrations = pass
+- pytest tests/pi/data + tests/pi/obdii regression = pass (1 skip)
+- ruff clean on all 22 touched files (fixed 1 I001 import-sort the prior session missed)
+- Committed 7283651 before ending the iteration (prompt step 5/6)
+
+### Learnings for future iterations:
+- **Pattern (adopt-uncommitted, 2nd time this sprint)**: uncommitted work at session start matching the claimed story is the recurring headless stall. DON'T blind-commit -- inspect end-to-end, prove each AC yourself, run the gate SYNCHRONOUSLY, and check the LEFTOVERS the stall skipped (here: the AC#6 doc was never written and one new test file was never ruff'd). The commit is the last step, not the first.
+- **Gotcha (in-sprint Rule-10 doc is a per-story AC, not just US-425's job)**: AC#6 required the architecture.md data-contract update IN this story. A dedicated doc-sync story (US-425) later in the same sprint does NOT discharge another story's own Rule-10 DoD AC -- if an AC names architecture.md, land it in-story or the story isn't strictly passing.
+- **Gotcha (derived-CHECK still needs the literals pinned)**: the SSOT derives DATA_SOURCE_CHECK_CLAUSE, but the 9 per-table schema strings are hand-written literals -- they only stay in lockstep because test_everySchemaCheckMatchesSsot re-parses each and asserts equality to the tuple. When adding an enum value, widen every literal AND trust the parity test to catch a miss, rather than assuming 'derived' means 'auto-updated everywhere'.
+- **Gotcha (resize-droppable is a sanctioned compression, not scope-cut drift)**: US-424's pmSignOff pre-authorized dropping the server tripwire if the L ran heavy. Dropping it kept the story to one clean iteration -- but only because the drop was explicitly blessed. Never silently drop an AC; a pre-blessed relief valve is the exception.
+---
