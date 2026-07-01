@@ -1,0 +1,40 @@
+## 2026-06-30 - US-408 (Agent 1 / Rex / Session 51)
+Task: EDR versioned schema contract + Pi tables (src/common/edr/sensor_schema.py, ADR section 2)
+
+### What was implemented:
+- New tier-neutral package `src/common/edr/` holding `sensor_schema.py`: the SINGLE-SOURCE
+  versioned DDL for `edr_imu_sample` + `edr_light_sample`, authored verbatim per Atlas's
+  2026-06-30 EDR sensor-reader ADR section 2.2 (A-4 anti-divergence gate).
+- `SCHEMA_VERSION: int = 1` bare-int module constant (mirrors `power_watch.RECORD_SCHEMA_VERSION`),
+  interpolated into the DDL `DEFAULT {SCHEMA_VERSION}` so the constant is the single source of the
+  version stamp (renders identical to the ADR's `DEFAULT 1`).
+- `data_source` CHECK enum ('real','replay','physics_sim','fixture'); 4 indexes (drive_id + ts on
+  both tables); `EDR_SCHEMAS` / `EDR_INDEXES` registration lists for clean Pi wiring.
+- Pi startup wiring (import-and-splat): `database_schema.py` imports `EDR_SCHEMAS`/`EDR_INDEXES`
+  from `common.edr.sensor_schema` and `*`-appends them into `ALL_SCHEMAS`/`ALL_INDEXES`, so the
+  existing `ObdDatabase.initialize()` CREATE-IF-NOT-EXISTS loop creates the tables idempotently.
+- Scope-fenced: NO `pi.sensors.*` config keys (owned by US-409/US-410); Pi-LOCAL ONLY, no server
+  table created this phase (ADR section 2.5, F-115 adds server sync).
+
+### Files changed:
+- Created: `src/common/edr/__init__.py` (new EDR contract package)
+- Created: `src/common/edr/sensor_schema.py` (single-source versioned DDL + SCHEMA_VERSION)
+- Modified: `src/pi/obdii/database_schema.py` (import + splat EDR schemas/indexes into ALL_SCHEMAS/ALL_INDEXES)
+- Created: `tests/common/edr/__init__.py`
+- Created: `tests/common/edr/test_sensor_schema.py` (10 tests -- contract-level)
+- Created: `tests/pi/obdii/test_edr_tables_created.py` (7 tests -- Pi-startup level)
+
+### Learnings for future iterations:
+- **Pattern discovered**: To keep a `src/common/` DDL as the single source AND wire it into the Pi's
+  existing table-creation loop, expose `*_SCHEMAS`/`*_INDEXES` `list[tuple[name, ddl]]` and
+  `*`-splat them into `ALL_SCHEMAS`/`ALL_INDEXES`. The Pi inherits idempotency for free -- no
+  bespoke create path, no second-boot risk.
+- **Gotcha (import-root identity)**: `common.X` and `src.common.X` both resolve but are cached as
+  DISTINCT module objects (dual import-root convention). A `foo is bar` identity check across the
+  two roots ALWAYS fails; assert value equality (`==`) to prove "no divergent copy" instead.
+- **Gotcha (index-in-ALL_INDEXES safety)**: a `drive_id` index is only safe in `ALL_INDEXES` when
+  the column is defined in the table's own CREATE TABLE (true for the EDR tables). The US-200
+  `realtime_data` drive_id indexes are deliberately NOT in `ALL_INDEXES` because that column was
+  migration-added and may not exist when the indexer runs on a legacy DB.
+- **Gotcha (env)**: mypy is not installed on this dev box; deferred to PM (module is fully hinted).
+---

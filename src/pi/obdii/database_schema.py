@@ -131,6 +131,12 @@ from __future__ import annotations
 
 import sqlite3
 
+# EDR raw-sensor tables (edr_imu_sample / edr_light_sample) are authored ONCE in
+# the tier-neutral src/common/edr contract so the Pi and the future server never
+# diverge (A-4 anti-divergence, US-408). The Pi imports the DDL and appends it to
+# ALL_SCHEMAS / ALL_INDEXES below -- it never re-declares the columns here.
+from common.edr.sensor_schema import EDR_INDEXES, EDR_SCHEMAS
+
 # ================================================================================
 # Schema Definitions
 # ================================================================================
@@ -739,6 +745,9 @@ ALL_SCHEMAS = [
     # ``drive_statistics`` retired V0.27.17 per US-351 / B-104 Step 1b
     # (CIO 2026-05-21 ratification).  ensureDriveStatisticsRetired() drops
     # the table on first boot; server-side compute is sole writer now.
+    # EDR raw-sensor tables (US-408, F-114) -- DDL owned by src/common/edr,
+    # imported so the single-source contract is the only authority.
+    *EDR_SCHEMAS,
 ]
 
 # All index statements
@@ -759,4 +768,8 @@ ALL_INDEXES = [
     # drive_id.ensureDriveIdColumn() so legacy databases (where the
     # column doesn't exist yet at ALL_INDEXES time) don't trip "no such
     # column" when the indexer runs before the migration.
+    # EDR raw-sensor indexes (US-408, F-114) -- drive_id + ts on both tables.
+    # Safe in ALL_INDEXES: drive_id is defined in the EDR CREATE TABLE, so the
+    # column always exists by the time the indexer runs.
+    *EDR_INDEXES,
 ]

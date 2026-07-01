@@ -12,7 +12,7 @@
       "type": "normal",
       "size": "M",
       "status": "sprint-ready",
-      "passes": false,
+      "passes": true,
       "acceptance": [
         "new module src/common/edr/sensor_schema.py holds the single-source DDL for edr_imu_sample + edr_light_sample exactly per ADR section 2.2, plus a bare-int schema_version constant (mirrors power_watch.RECORD_SCHEMA_VERSION)",
         "Pi creates both SQLite tables from that module at startup (CREATE TABLE IF NOT EXISTS, idempotent); the data_source CHECK contract + indexes match ADR section 2.2",
@@ -32,7 +32,18 @@
       ],
       "conditionalOutcomes": [],
       "goal": "As the system, I want the raw-sensor tables defined once in a versioned src/common/ contract, so Pi and the future server never diverge (A-4 anti-divergence).",
-      "tasks": []
+      "tasks": [],
+      "feedback": {
+        "filesActuallyTouched": [
+          "src/common/edr/__init__.py (created -- new tier-neutral EDR contract package)",
+          "src/common/edr/sensor_schema.py (created -- single-source versioned DDL: SCHEMA_VERSION bare-int constant, SCHEMA_EDR_IMU_SAMPLE/SCHEMA_EDR_LIGHT_SAMPLE, 4 index constants, EDR_SCHEMAS/EDR_INDEXES registration lists -- verbatim per ADR section 2.2)",
+          "src/pi/obdii/database_schema.py (modified -- import EDR_SCHEMAS/EDR_INDEXES from common.edr and splat them into ALL_SCHEMAS/ALL_INDEXES so ObdDatabase.initialize() creates the tables idempotently at startup)",
+          "tests/common/edr/__init__.py (created)",
+          "tests/common/edr/test_sensor_schema.py (created -- 10 tests: SCHEMA_VERSION bare-int, exact ADR column lists+order, NOT NULL contract, 4 indexes, data_source CHECK accept/reject, schema_version DEFAULT 1 on insert, idempotent double-apply)",
+          "tests/pi/obdii/test_edr_tables_created.py (created -- 7 tests: both tables + 4 indexes created by initialize(), schema_version defaults, second initialize idempotent, EDR entries in ALL_SCHEMAS/ALL_INDEXES, DDL not hand-copied)"
+        ]
+      },
+      "completionNotes": "DONE (passes:true). EDR raw-sensor schema authored ONCE in src/common/edr/sensor_schema.py verbatim per the 2026-06-30 ADR section 2.2 (docs/superpowers/specs/2026-06-30-edr-sensor-reader-schema-bus-adr.md). SCHEMA_VERSION is a bare int=1 mirroring power_watch.RECORD_SCHEMA_VERSION and is interpolated into the DDL DEFAULT (single source -- rendered SQL == ADR's `DEFAULT 1`). Pi wiring is import-and-splat: database_schema.py imports EDR_SCHEMAS/EDR_INDEXES (from common.edr, per project no-src-prefix convention) and appends them to ALL_SCHEMAS/ALL_INDEXES, so ObdDatabase.initialize()'s existing CREATE IF NOT EXISTS loop creates them idempotently -- no bespoke create path, second-boot-safe by construction. SCOPE-FENCED: no config keys added (pi.sensors.* belongs to US-409/US-410); Pi-LOCAL ONLY -- no server table created (ADR section 2.5). EDR indexes are safe in ALL_INDEXES (unlike the US-200 drive_id indexes) because drive_id is defined in the EDR CREATE TABLE, so the column exists when the indexer runs. TDD red->green both files. GATES: tests/common/edr (10) + tests/pi/obdii/test_edr_tables_created.py (7) = 17 passed; full tests/pi/obdii + tests/pi/data regression = all passed (1 skip, 0 failures -- base-module database_schema.py change is clean); data_source hygiene AST audit passes; ruff clean on all modified files. DEFERRED-PM: mypy not installed on dev box (module is fully type-hinted; same defer as US-407). One `is`->`==` test relaxation documented in-test: common.edr and src.common.edr resolve to separate module caches so string identity differs across import roots; value-equality still proves no divergent DDL copy. NEXT: US-409 (IMU+light readers) consumes this contract's tables; US-410 subscriber writes rows stamping SCHEMA_VERSION explicitly (DDL DEFAULT is the safety net, not the write path)."
     },
     {
       "id": "US-409",
