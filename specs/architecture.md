@@ -686,8 +686,15 @@ Every row written into a capture table carries a `data_source` column identifyin
 | `replay` | Flat-file replay harness (US-191, B-045) | Deterministic SQLite fixtures seeded ahead of a sync test |
 | `physics_sim` | Physics simulator (SensorSimulator / scenario runner) | Simulator-driven captures + `scripts/seed_scenarios.py` output |
 | `fixture` | Regression fixture seeder | `scripts/seed_pi_fixture.py` rows + hand-rolled test fixtures |
+| `foreign` | Foreign-vehicle contamination marker (US-424 / F-116) | Rows captured from a vehicle that is **not** the Eclipse (the Ford Explorer, drive 33). Set by the Pi ingest guard's retro-tag + the writer latch — real captures of the wrong vehicle, preserved as evidence, NOT synthetic test data |
 
 **Scope** — tables that carry the column (both Pi SQLite and server MariaDB): `realtime_data`, `connection_log`, `statistics`, `calibration_sessions`, `profiles`. Server also adds it to analytics `drive_summary`, and US-204 adds it to `dtc_log`. Tables that can only ever carry real data (`vehicle_info`, `sync_log`, `ai_recommendations`, `alert_log`, `power_log`) do not need the column.  (`battery_log` was also in this list until US-223 deleted the table with its writer BatteryMonitor.)
+
+**SSOT + no-drift (A-4)** — the enum tuple is defined once per tier (`src/pi/obdii/data_source.py::DATA_SOURCE_VALUES` on the Pi, `src/server/db/models.py::DATA_SOURCE_VALUES` on the server) and pinned equal by `tests/pi/data/test_data_source_foreign_marker.py`. On the Pi every capture-table CHECK is *derived* from the tuple (`DATA_SOURCE_CHECK_CLAUSE` / `DATA_SOURCE_COLUMN_DDL`), so a new value propagates to all nine schema literals without hand-editing each. The server `data_source` column carries no DB-level CHECK (application-enforced), so widening the enum needs no server migration; the Pi widens existing DBs via the forward-only SQLite table-rebuild `ensureDataSourceCheckWidened('realtime_data')` (SQLite cannot `ALTER` a CHECK).
+
+**Foreign-vehicle marker (US-424 / F-116) — two axes.** `data_source='foreign'` is the **primary row-level** exclusion axis: because the filter rule below already selects `WHERE data_source='real'`, foreign rows are auto-excluded with zero consumer changes. Its drive-level companion is `data_quality='foreign_vehicle'` on `drive_summary` / `drive_statistics` (see §7 / v0015 migration). Contamination is **re-tagged, never deleted** — evidence is preserved.
+
+**Ingest guard (US-424 / F-116; ships DARK behind `pi.foreignGuard.enabled=false`).** The discriminator is protocol speed, not identity: a dongle-MAC allowlist can't tell the two cars apart (same dongle) and Mode-09 VIN is silent on the Eclipse's ECU. The 1998 Eclipse GST speaks ISO 9141-2 over the K-line with a sustained PID-response ceiling of ~6.3/s; one `realtime_data` row is written per response, so a **sustained** row rate above ~7/s (`pi.foreignGuard.busRateThresholdHz`) over a rolling window means a faster-protocol (non-Eclipse) vehicle is connected. `src/pi/obdii/foreign_guard.py::ForeignVehicleGuard` is the SSOT for the "is this drive foreign?" fact — the poll loop feeds it samples (`observeSample`) and the writer consults it (`isDriveForeign`); neither classifies on its own. "Sustained" is structural (rate held above the bar for the full `sustainedSeconds` window), so a legit start-of-drive Eclipse burst never false-trips. On trip the guard (a) retro-tags the open drive's already-written `'real'` rows `'foreign'` and (b) latches the drive so the writer stamps subsequent rows `'foreign'`. The rows still sync, but land tagged `'foreign'` so the server's `WHERE data_source='real'` filter excludes them — tagging **is** the exclusion.
 
 **Default** — `'real'` at the DB level is a **narrow safety net for the single live-OBD collector path**, NOT a catchall for dev writers. Writers outside the live-OBD path MUST pass `data_source` explicitly at the call site. The live-OBD writer (:class:`src.pi.obdii.data.logger.ObdDataLogger` + :func:`src.pi.obdii.data.helpers.logReading`) honors this contract by auto-deriving the tag from `connection.isSimulated`: real connections produce `'real'`, :class:`SimulatedObdConnection` produces `'physics_sim'`. An explicit `dataSource=` override wins in both constructors so fixture harnesses can tag correctly. The call-site discipline is enforced by `tests/pi/data/test_data_source_hygiene.py`, an AST audit that fails the suite if any seed script INSERT into a capture table omits the `data_source` column (US-212 closed the ~352K-row hygiene bug surfaced by US-205).
 
@@ -1106,7 +1113,8 @@ identity dimension keyed on the `(ecu_signature, cal_signature)` pair (both
 carries append-only ECU lineage + a STORED single-active marker;
 `dtc_freeze_frame` is the Mode-02 capture table;
 `drive_summary`/`drive_statistics.data_quality` are `VARCHAR(20)` with the
-`attribution_anomaly` tripwire; `drive_statistics`'s former `drive_id` is
+`attribution_anomaly` tripwire (and the US-424 / F-116 `foreign_vehicle`
+marker, added by the v0015 CHECK-widen migration); `drive_statistics`'s former `drive_id` is
 `summary_id`; `drive_summary.drive_id ↔ source_id` is CHECK-invariant. See the
 migration-history file for how each landed.
 
@@ -1638,7 +1646,7 @@ health review — has a recorded answer.
 | `first_seen_timestamp` | DEFAULT `strftime('%Y-%m-%dT%H:%M:%SZ', 'now')` — US-202 canonical. |
 | `last_seen_timestamp` | Same default; bumped via UPDATE on duplicate within the same drive. |
 | `drive_id` | INTEGER NULL — inherited from US-200 context (`getCurrentDriveId()`). |
-| `data_source` | DEFAULT `'real'` per US-195; CHECK enum (`real`/`replay`/`physics_sim`/`fixture`). |
+| `data_source` | DEFAULT `'real'` per US-195; CHECK enum (`real`/`replay`/`physics_sim`/`fixture`/`foreign`). `foreign` = US-424 foreign-vehicle marker. |
 
 Indexes: `IX_dtc_log_drive_id` (per-drive analytics) + `IX_dtc_log_dtc_code`
 (cross-drive lookup of a specific code).

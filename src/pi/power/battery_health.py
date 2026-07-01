@@ -216,7 +216,7 @@ CREATE TABLE IF NOT EXISTS battery_health_log (
     -- US-195 origin tag.  Drain events written by real hardware =
     -- 'real'; test-fixture rows in unit tests may pass 'fixture'.
     data_source TEXT NOT NULL DEFAULT 'real'
-        CHECK (data_source IN ('real','replay','physics_sim','fixture'))
+        CHECK (data_source IN ('real','replay','physics_sim','fixture','foreign'))
 );
 """
 

@@ -72,7 +72,7 @@ from src.pi.power.power_db import (
     ensurePowerLogVcellColumn,
 )
 
-from .data_source import ensureAllCaptureTables
+from .data_source import ensureAllCaptureTables, ensureDataSourceCheckWidened
 from .database_schema import (
     ALL_INDEXES,
     ALL_SCHEMAS,
@@ -263,6 +263,19 @@ class ObdDatabase:
                     logger.info(
                         "Added data_source column to tables: %s",
                         ', '.join(migrated),
+                    )
+
+                # US-424 (F-116) forward-only CHECK-widen: rebuild realtime_data
+                # so its data_source CHECK accepts 'foreign' (the value the
+                # ingest guard retro-tags contaminating foreign-vehicle rows
+                # with).  SQLite can't ALTER a CHECK, so this rebuilds the table
+                # once on a pre-US-424 DB; a no-op on fresh / already-widened
+                # DBs.  realtime_data is the only table the guard tags 'foreign'
+                # and has no inbound FKs, so the rebuild is safe.
+                if ensureDataSourceCheckWidened(conn, 'realtime_data'):
+                    logger.info(
+                        "Widened realtime_data data_source CHECK for 'foreign' "
+                        "(US-424 / F-116)"
                     )
 
                 # US-200 idempotent migration: back-fill drive_id on any

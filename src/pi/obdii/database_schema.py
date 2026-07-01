@@ -183,7 +183,7 @@ CREATE TABLE IF NOT EXISTS profiles (
 
     -- Data origin (US-195 / Spool CR #4)
     data_source TEXT NOT NULL DEFAULT 'real'
-        CHECK (data_source IN ('real','replay','physics_sim','fixture')),
+        CHECK (data_source IN ('real','replay','physics_sim','fixture','foreign')),
 
     -- Audit columns
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -237,7 +237,7 @@ CREATE TABLE IF NOT EXISTS realtime_data (
 
     -- Data origin (US-195 / Spool CR #4)
     data_source TEXT NOT NULL DEFAULT 'real'
-        CHECK (data_source IN ('real','replay','physics_sim','fixture')),
+        CHECK (data_source IN ('real','replay','physics_sim','fixture','foreign')),
 
     -- Per-drive scoping (US-200 / Spool Data v2 Story 2).  Nullable --
     -- pre-US-200 rows and rows written while no drive is active remain
@@ -304,7 +304,7 @@ CREATE TABLE IF NOT EXISTS statistics (
     -- Data origin -- statistics inherit the tag of the dominant input
     -- rows; live-path defaults to 'real' (US-195 / Spool CR #4).
     data_source TEXT NOT NULL DEFAULT 'real'
-        CHECK (data_source IN ('real','replay','physics_sim','fixture')),
+        CHECK (data_source IN ('real','replay','physics_sim','fixture','foreign')),
 
     -- Per-drive scoping (US-200).  Statistics computed post-drive carry
     -- the drive_id of the drive they summarize; multi-drive rollups
@@ -389,7 +389,7 @@ CREATE TABLE IF NOT EXISTS calibration_sessions (
 
     -- Data origin (US-195 / Spool CR #4)
     data_source TEXT NOT NULL DEFAULT 'real'
-        CHECK (data_source IN ('real','replay','physics_sim','fixture')),
+        CHECK (data_source IN ('real','replay','physics_sim','fixture','foreign')),
 
     -- Audit column
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -491,7 +491,7 @@ CREATE TABLE IF NOT EXISTS connection_log (
 
     -- Data origin (US-195 / Spool CR #4)
     data_source TEXT NOT NULL DEFAULT 'real'
-        CHECK (data_source IN ('real','replay','physics_sim','fixture')),
+        CHECK (data_source IN ('real','replay','physics_sim','fixture','foreign')),
 
     -- Per-drive scoping (US-200).  drive_start / drive_end events that
     -- frame a drive carry its drive_id; pre-CRANKING connection attempts

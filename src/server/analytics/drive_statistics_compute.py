@@ -67,6 +67,7 @@ from src.server.analytics.helpers import computeBasicStats
 from src.server.analytics.overlap import detect_overlapping_drives
 from src.server.db.models import (
     DATA_QUALITY_ATTRIBUTION_ANOMALY,
+    DATA_QUALITY_FOREIGN_VEHICLE,
     DRIVE_STATISTICS_DATA_QUALITY_VALUES,
     DriveStatistic,
     DriveSummary,
@@ -97,12 +98,19 @@ DATA_QUALITY_FULL = "full"
 # SSOT so the classifier-vs-enum guard below stays meaningful.
 DATA_QUALITY_ANOMALY = DATA_QUALITY_ATTRIBUTION_ANOMALY
 
+# US-424 / F-116: drive-level foreign-vehicle marker.  Also not a sample-count
+# bucket -- applied by the re-tag SQL / server backstop tripwire when a drive
+# was captured from a non-Eclipse vehicle (drive 33, the Explorer).  Aliased
+# from the model SSOT for the classifier-vs-enum guard.
+DATA_QUALITY_FOREIGN = DATA_QUALITY_FOREIGN_VEHICLE
+
 # Sanity-check at import time -- the model module owns the canonical enum.
 assert set(DRIVE_STATISTICS_DATA_QUALITY_VALUES) == {
     DATA_QUALITY_BELOW_THRESHOLD,
     DATA_QUALITY_SPARSE,
     DATA_QUALITY_FULL,
     DATA_QUALITY_ANOMALY,
+    DATA_QUALITY_FOREIGN,
 }, (
     "data_quality classifiers diverged from the model enum -- update both "
     "together (src/server/db/models.py:DRIVE_STATISTICS_DATA_QUALITY_VALUES "
@@ -306,6 +314,7 @@ def _assertGenericInvariants(
 
 __all__ = [
     "DATA_QUALITY_ANOMALY",
+    "DATA_QUALITY_FOREIGN",
     "DATA_QUALITY_BELOW_THRESHOLD",
     "DATA_QUALITY_FULL",
     "DATA_QUALITY_SPARSE",

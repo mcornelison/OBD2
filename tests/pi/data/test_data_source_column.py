@@ -77,9 +77,15 @@ def _columnInfo(
 # Constants + enum discipline
 # ================================================================================
 
-def test_dataSourceEnum_expectedFourValues():
-    """DATA_SOURCE_VALUES is the Spool-enumerated closed set."""
-    assert DATA_SOURCE_VALUES == ('real', 'replay', 'physics_sim', 'fixture')
+def test_dataSourceEnum_expectedValues():
+    """DATA_SOURCE_VALUES is the Spool-enumerated closed set.
+
+    US-424 (F-116) added 'foreign' -- the foreign-vehicle contamination marker
+    -- to the tail of the Spool CR #4 set.
+    """
+    assert DATA_SOURCE_VALUES == (
+        'real', 'replay', 'physics_sim', 'fixture', 'foreign',
+    )
 
 
 def test_dataSourceDefault_isReal():

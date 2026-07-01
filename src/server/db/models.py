@@ -123,6 +123,15 @@ class Base(DeclarativeBase):
 
 DATA_SOURCE_VALUES: tuple[str, ...] = (
     'real', 'replay', 'physics_sim', 'fixture',
+    # US-424 / F-116: foreign-vehicle contamination marker.  Mirrors the Pi
+    # SSOT (src/pi/obdii/data_source.py::DATA_SOURCE_VALUES) so a foreign-tagged
+    # row synced up from the Pi is a known value, and every server-side
+    # ``WHERE data_source='real'`` analytics filter auto-excludes it.  The
+    # server data_source column carries no DB-level CHECK (application-enforced
+    # only), so no server migration is needed to accept the value; the Pi and
+    # server tuples are pinned equal by
+    # tests/pi/data/test_data_source_foreign_marker.py (A-4, no-drift).
+    'foreign',
 )
 DATA_SOURCE_DEFAULT: str = 'real'
 DATA_SOURCE_LENGTH: int = 16
@@ -926,6 +935,16 @@ class Device(Base):
 DATA_QUALITY_ATTRIBUTION_ANOMALY: str = "attribution_anomaly"
 
 
+# US-424 / F-116: drive-level foreign-vehicle marker.  The companion to the
+# row-level data_source='foreign' tag -- a drive captured from a vehicle that is
+# NOT the Eclipse (the Ford Explorer, drive 33) is stamped 'foreign_vehicle' on
+# drive_summary + drive_statistics so per-drive analytics can exclude it.
+# Single source of truth for the literal; both the model enums below and the
+# compute-path classifier import it (drive_statistics_compute.py).  15 chars --
+# fits DATA_QUALITY_COLUMN_LENGTH (20) with headroom.
+DATA_QUALITY_FOREIGN_VEHICLE: str = "foreign_vehicle"
+
+
 # US-377 / F-107: shared VARCHAR width for the data_quality columns on both
 # drive_summary and drive_statistics.  Must stay >= the longest CHECK-permitted
 # value ('attribution_anomaly', 19 chars).  The original VARCHAR(16) was too
@@ -945,6 +964,7 @@ DRIVE_SUMMARY_DATA_QUALITY_DEFAULT: str = "full"
 DRIVE_SUMMARY_DATA_QUALITY_VALUES: tuple[str, ...] = (
     DRIVE_SUMMARY_DATA_QUALITY_DEFAULT,
     DATA_QUALITY_ATTRIBUTION_ANOMALY,
+    DATA_QUALITY_FOREIGN_VEHICLE,
 )
 
 
@@ -1101,6 +1121,7 @@ class DriveSummary(Base):
 
 DRIVE_STATISTICS_DATA_QUALITY_VALUES: tuple[str, ...] = (
     "full", "sparse", "below_threshold", DATA_QUALITY_ATTRIBUTION_ANOMALY,
+    DATA_QUALITY_FOREIGN_VEHICLE,
 )
 DRIVE_STATISTICS_DATA_QUALITY_DEFAULT: str = "full"
 
@@ -1397,6 +1418,7 @@ __all__ = [
     "DriveStatistic",
     "DRIVE_STATISTICS_DATA_QUALITY_VALUES",
     "DRIVE_STATISTICS_DATA_QUALITY_DEFAULT",
+    "DATA_QUALITY_FOREIGN_VEHICLE",
     "DATA_QUALITY_COLUMN_LENGTH",
     "TrendSnapshot",
     "AnomalyLog",

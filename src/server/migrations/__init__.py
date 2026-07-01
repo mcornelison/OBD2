@@ -121,6 +121,9 @@ from src.server.migrations.versions.v0013_us412_power_log import (
 from src.server.migrations.versions.v0014_us417_startup_log import (
     MIGRATION as _V0014,
 )
+from src.server.migrations.versions.v0015_us424_foreign_vehicle_data_quality import (
+    MIGRATION as _V0015,
+)
 
 # ================================================================================
 # Registry -- append new migrations to the end, in ascending version order
@@ -141,6 +144,7 @@ ALL_MIGRATIONS: tuple[Migration, ...] = (
     _V0012,
     _V0013,
     _V0014,
+    _V0015,
 )
 
 

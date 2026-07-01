@@ -82,6 +82,7 @@ from pi.bus.sample import Sample
 
 from ..drive_id import getCurrentDriveId
 from ..error_classification import CaptureErrorClass, classifyCaptureError
+from ..foreign_guard import observeSample
 from .exceptions import DataLoggerError, ParameterNotSupportedError, ParameterReadError
 from .logger import ObdDataLogger
 from .types import LoggedReading, LoggingState, LoggingStats
@@ -572,6 +573,14 @@ class RealtimeDataLogger:
 
                     # Log to database
                     self._logReadingSafe(reading)
+
+                    # US-424 (F-116): feed the captured sample (one OBD
+                    # query-response = one realtime_data row) to the
+                    # foreign-vehicle guard.  No-op when the guard is dark
+                    # (pi.foreignGuard.enabled=false, the default); when armed a
+                    # sustained row rate above the Eclipse K-line ceiling latches
+                    # the drive foreign.
+                    observeSample(getCurrentDriveId())
 
                     # Update stats
                     self._stats.totalReadings += 1
