@@ -919,7 +919,17 @@ class ApplicationOrchestrator(  # type: ignore[misc]
             return False
 
         try:
-            results = self._syncClient.pushAllDeltas()
+            results = list(self._syncClient.pushAllDeltas())
+            # US-413 (F-064): drive_counter is a single-row state mirror, not
+            # a delta-by-PK table, so pushAllDeltas skips it.  Push it on every
+            # regular sync tick so the server's last_drive_id tracks the Pi --
+            # previously it advanced only on the forcePush power-down flush, so
+            # an unclean power cycle stranded the server counter behind the Pi
+            # (e.g. Pi minted drive 10, server still at 3).  The server upsert
+            # is a monotonic GREATEST(), so a repeat push never regresses.
+            # This runs only past the offline route gate above, so it adds no
+            # doomed-retry cost when the Pi has no route (US-340 guard).
+            results.append(self._syncClient.pushDriveCounter())
         except Exception as e:  # noqa: BLE001 -- sync must never crash runLoop
             logger.error("Interval sync push crashed: %s", e, exc_info=True)
             # Even on a transport hiccup the controller must learn the
@@ -980,7 +990,13 @@ class ApplicationOrchestrator(  # type: ignore[misc]
         self._lastSyncAttemptTime = datetime.now()
         controller = self._syncCadenceController
         try:
-            results = self._syncClient.pushAllDeltas()
+            results = list(self._syncClient.pushAllDeltas())
+            # US-413 (F-064): a drive just ended, so the drive_counter singleton
+            # advanced at this drive's start.  Push it here too (pushAllDeltas
+            # skips singletons) so the server's last_drive_id tracks the Pi with
+            # minimal lag -- not only on the forcePush power-down flush.  Server
+            # upsert is monotonic GREATEST(), so a repeat push never regresses.
+            results.append(self._syncClient.pushDriveCounter())
         except Exception as e:  # noqa: BLE001
             logger.error(
                 "Drive-end sync push crashed: %s", e, exc_info=True,
