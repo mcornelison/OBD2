@@ -45,7 +45,7 @@ Sprint 51 clears the deferred hygiene backlog behind the V0.29 chain and complet
 
 ## 3. User Stories
 
-> **Design refs:** US-416/417 build to Atlas's ruling `offices/architect/reports/2026-07-01-us416-startup-log-snapshot-sync-ruling.md`. US-424 (F-116) is **design-pending Atlas** — routed `offices/architect/inbox/2026-07-01-from-marcus-f116-foreign-vehicle-design-gate.md`; its acceptance finalizes when his ruling lands (before freeze).
+> **Design refs:** US-416/417 build to Atlas's ruling `offices/architect/reports/2026-07-01-us416-startup-log-snapshot-sync-ruling.md`. US-424 (F-116) design is **RULED by Atlas 2026-07-01** (`offices/architect/reports/2026-07-01-f116-foreign-vehicle-marker-and-guard-ruling.md`); ACs finalized in-story.
 
 ---
 
@@ -165,12 +165,14 @@ Sprint 51 clears the deferred hygiene backlog behind the V0.29 chain and complet
 ### US-424: Foreign-vehicle contamination marker + ingest guard (F-116) — design-pending Atlas
 **Description:** As the CIO, I want foreign-vehicle rows honestly markable and prevented from recurring, so the Explorer (drive 33) can't pollute real-data tuning queries.
 
-> **Design-pending Atlas** (routed 2026-07-01): the marker-enum semantics + guard mechanism + where-it-lives. Acceptance finalizes when his ruling lands.
+> **[ATLAS] Design RULED 2026-07-01** — `offices/architect/reports/2026-07-01-f116-foreign-vehicle-marker-and-guard-ruling.md`. ACs finalized below.
 
-**Acceptance Criteria (shape; finalizes on Atlas ruling):**
-- [ ] Marker enum added (`data_source='foreign'` and/or `data_quality='foreign_vehicle'` per Atlas) — forward-only CHECK migration on both tiers; drive 33's 1,364 rows re-tagged via Spool's SQL.
-- [ ] Ingest guard (Atlas-decided; lead = bus-rate sanity check > ~7 samples/sec = impossible on the Eclipse K-line → flag/quarantine) — prevents recurrence. **No VIN guard** (Eclipse ECU is Mode 09 silent).
-- [ ] Guard placement (Pi quarantine vs server tripwire) per Atlas.
+**Acceptance Criteria:**
+- [ ] **Marker (2 axes).** `data_source='foreign'` added to the SSOT `src/pi/obdii/data_source.py` `DATA_SOURCE_VALUES` (propagates to all 5 Pi table CHECKs) + **mirrored on the server** `data_source` CHECK — this is the primary row-level exclusion axis (every real-data query filters `WHERE data_source='real'` → foreign auto-excluded, zero consumer changes; NOT `'fixture'`). AND `data_quality='foreign_vehicle'` added to the `src/server/analytics/drive_statistics_compute.py` `DRIVE_STATISTICS_DATA_QUALITY_VALUES` SSOT + the model enum (the `:101` divergence assertion must stay green) for drive-level honesty.
+- [ ] **A-4:** both are forward-only CHECK migrations applied **identically on both tiers** (define once per SSOT, mirror the other). Drive 33's 1,364 rows re-tagged via **Spool's SQL** (`data_source='foreign'` + `drive_summary.data_quality='foreign_vehicle' WHERE drive_id=33`) — **re-tag, never delete** (evidence preserved).
+- [ ] **Ingest guard = sustained bus-rate check (primary).** Aggregate sample rate over a rolling window > ~7/s (Eclipse K-line ceiling ~6.3/s) → flag foreign. **SUSTAINED window, not instantaneous** (no false-flag on a legit Eclipse burst). On trip → **flag/quarantine (mark `foreign`), NEVER silently delete.** **NOT** a device/dongle-MAC allowlist (same dongle served both vehicles — wouldn't catch it). **NOT** a VIN guard (Eclipse Mode-09 silent → backwards). Protocol-ID (ISO 9141-2 vs CAN via ELM327 `ATDPN`) is a stronger/faster future signal but needs new plumbing → **out of scope this sprint**.
+- [ ] **Placement = layered.** Pi-side PRIMARY: on trip, retro-tag the open drive's rows `foreign` + don't sync as real (mark-on-detection; A-9-adjacent — same connection-edge, distinct concern, don't couple). Server-side BACKSTOP tripwire (like `detect_overlapping_drives`): flag any synced drive whose aggregate rate exceeds the ceiling → `data_quality='foreign_vehicle'`. *(Server tripwire is belt-and-suspenders — resize-droppable if tight; marker + Pi guard are the must-haves.)*
+- [ ] **Rule-10:** `specs/architecture.md` data-contract section names the `foreign`/`foreign_vehicle` values + the bus-rate guard, in-sprint (US-425 doc-sync must include these).
 - [ ] `ruff check` passes.
 
 **Downstream impact:** CHECK-constraint change both tiers; ties loosely to A-9 (distinct concern — cross-vehicle identity).
@@ -197,7 +199,7 @@ Sprint 51 clears the deferred hygiene backlog behind the V0.29 chain and complet
 
 ## 5. Open Questions
 
-1. **(Atlas, US-424)** marker enum semantics + guard mechanism + placement — pending his ruling.
+1. ~~**(Atlas, US-424)** marker enum semantics + guard mechanism + placement~~ — **RULED 2026-07-01** (`reports/2026-07-01-f116-foreign-vehicle-marker-and-guard-ruling.md`); ACs finalized in US-424.
 2. **(Resize)** US-418 is a deliberate multi-item batch (F-077/078/058) — accept as one or split? US-416 (general mechanism) may also warrant a look.
 3. **(Spool, US-420)** exact LTFT PID/source — confirm before build.
 
