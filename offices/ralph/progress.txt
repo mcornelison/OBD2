@@ -57,3 +57,31 @@ Task: Register startup_log onto the snapshot-sync path (deps US-416; closes BL-0
 - **Gotcha**: recorded_at has been in startup_log since US-263 (git -S proved it), so the 'if absent' Pi migration is a defensive no-op, not a real backfill. Verify a column's history with `git log -S` before writing a migration for it -- don't fabricate a backfill the schema never needed.
 - **Gotcha (data hygiene)**: ralph_agents.json was already malformed JSON (a stray `"` mid-note from a prior session's concatenation) -- fixed by rewriting the note clean. json.load the agents/sprint files after editing; a broken agents.json would silently break ralph.sh's claim logic.
 ---
+
+## 2026-07-01 - US-418 (Rex / Agent 1)
+Task: Idle log-noise + sync-cadence hygiene (F-077 + F-078 + F-058, verify-first)
+
+### What was implemented:
+- VERIFY-FIRST via CODE INSPECTION (no live-Pi/SSH in headless Windows dev; BENCH-ONLY sprint). Established prior fixes (US-340b deduped connection_log outage churn ~99%; US-298/299 SyncCadenceController made cadence engine-aware, 60s IDLE heartbeat) and root-caused the RESIDUAL idle sources from code -- changed code only where evidence showed a real un-fixed gap.
+- F-078 (sync_history): server postSync() writes a sync_history row on EVERY POST (sync.py:1115, pre-payload-check) + pushDriveCounter() POSTed the counter unconditionally whenever last_drive_id>0, so each 60s engine-off heartbeat wrote 1 server sync_history row (~1/min). pushDelta already skips the POST when zero delta rows, so the counter push was the SOLE idle POST. FIX: pushDriveCounter gates the POST on an unchanged-value process-local high-water mark (self._lastPushedDriveCounter), advanced ONLY on a SUCCESSFUL push (a FAILED push stays re-sendable); forcePush passes force=True to bypass (power-down flush must always deliver -- matches the method's own 'forcePush is the explicit bypass point' docstring).
+- F-077/F-058 (connection_log): ecu_silent_wait was NOT in the US-340b repeat-suppressed set, so engine-off-but-adapter-reachable logged 1 ecu_silent_wait per reduced-cadence poll AND (being treated as a state change) reset the dedup tracker each poll. FIX: added EVENT_ECU_SILENT_WAIT to _REPEAT_SUPPRESSED_EVENTS. First occurrence per engine-off window + real state changes still log/clear.
+
+### Files changed:
+- Modified: `src/pi/sync/client.py` (pushDriveCounter idle gate + force param + forcePush bypass + __init__ high-water mark)
+- Modified: `src/pi/data/connection_logger.py` (ecu_silent_wait -> _REPEAT_SUPPRESSED_EVENTS)
+- Modified: `tests/pi/sync/test_drive_counter_sync.py` (+4 idle-gate tests)
+- Modified: `tests/pi/data/test_connection_log_event_types.py` (+2 ecu_silent dedup tests)
+
+### Verification (this iteration, synchronous):
+- New tests RED confirmed pre-fix, GREEN post-fix.
+- pytest pi/sync + connection-log + orchestrator + diagnostics + bt-resilience + reconnect = 169 pass
+- pytest orchestrator + obdii + server sync (test_sync, test_drive_counter_sync) = 742 pass, 1 skip
+- ruff clean on all 4 touched files
+- Committed 18c5574 before ending the iteration (prompt step 5)
+
+### Learnings for future iterations:
+- **Pattern**: A verify-first story that mandates a live-Pi re-query can still be discharged from the dev box by CODE INSPECTION: trace what prior stories (named in the AC) already fixed, then change code ONLY at the residual root cause, and DEFER the live idle-soak to the PM bench window (this is a BENCH-ONLY sprint -- same deferral shape as US-417's deploy). Don't blind-change a live sync path; find the exact un-fixed source first.
+- **Gotcha (root cause > mechanism)**: the story SUGGESTED a pi_state.sync_idle gate, but the true root cause was pushDriveCounter re-POSTing an unchanged singleton every tick (US-413). Fixing the source (dedup the counter push) beats bolting on a new state flag -- and the story explicitly warned against reusing the no_new_drives drain gate. Read the OR-list as outcomes, not a closed mechanism set.
+- **Gotcha (idle POST accounting)**: a server sync_history row is written per POST regardless of payload; to stop idle growth you must stop the Pi from POSTing when there is nothing new, not filter server-side. pushDelta already no-POSTs on empty; the leak was the always-on counter push riding every tick.
+- **Gotcha (agents.json edit)**: replacing the `note` value with an old_string that only matches the START of the note orphans the trailing text outside the JSON string -> invalid JSON. Match to the value's real closing quote (or json.load-verify immediately after every agents/sprint edit -- I caught two comma/quote breaks this way).
+---
