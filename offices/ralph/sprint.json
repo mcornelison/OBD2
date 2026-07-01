@@ -40,7 +40,23 @@
         "sizeAcknowledged": "L",
         "rationale": "General reusable snapshot-sync mechanism (registry + Pi snapshot reader + parameterized server upsert + A-4 single-definition) is intrinsically one cohesive unit -- splitting the mechanism from itself would fragment the contract. Atlas-ruled shape. startup_log (US-417) is the separate consumer story. If Ralph compresses, flag and PM will split the server-upsert half out."
       },
-      "landedBy": "Marcus (PM) -- verified 66 tests green after Ralph stalled pre-commit (headless async-wait)"
+      "landedBy": "Marcus (PM) -- verified 66 tests green after Ralph stalled pre-commit (headless async-wait)",
+      "feedback": {
+        "filesActuallyTouched": [
+          "src/common/sync/__init__.py",
+          "src/common/sync/snapshot_registry.py",
+          "src/pi/data/sync_log.py",
+          "src/pi/sync/client.py",
+          "src/server/api/sync.py",
+          "tests/common/sync/__init__.py",
+          "tests/common/sync/test_snapshot_registry.py",
+          "tests/pi/data/test_snapshot_sync.py",
+          "tests/pi/data/test_sync_log.py",
+          "tests/pi/sync/test_sync_client_snapshot.py",
+          "tests/server/test_snapshot_sync_upsert.py"
+        ]
+      },
+      "completionNotes": "Code landed by PM in commit 600b8a0 (built by Rex prior session, PM committed after headless async-wait stall). Rex re-verified SYNCHRONOUSLY this iteration: pytest tests/common/sync tests/pi/data tests/pi/sync tests/server/test_snapshot_sync_upsert = 382 passed; server sync-endpoint regression set (test_sync, test_sync_dtc_freeze_frame, test_power_log_sync, test_drive_counter_sync) = 62 passed; ruff on all 11 touched files = clean. All 6 acceptance criteria confirmed: (1) SNAPSHOT_SYNC registry {table->(naturalKeyCols,cursorCol)} in src/common/sync + Pi reader deltas by recorded_at cursor tracked in sync_log.last_snapshot_cursor (NOT rowid/full-snapshot); (2) server runSnapshotUpsert/_upsertSnapshotBatch upserts on (source_device,*naturalKeyCols) w/ ON-CONFLICT -- new pattern distinct from id->source_id; (3) A-4 proven by test_piAndServerSeeTheSameRegistration (both tiers reference the SAME SnapshotSyncSpec object via shared registry); (4) dtc_freeze_frame FK resolver untouched (its tests still green); (5) idempotent re-sync (test_twoSyncCyclesAreIdempotent) + cursor-bounds-volume (test_cursorBoundsVolume) covered; (6) ruff clean. Registry ships EMPTY (mechanism-only) per pmSignOff -- startup_log registers in US-417. NOT compressed -- full mechanism delivered, no PM split needed."
     },
     {
       "id": "US-417",
