@@ -1,1 +1,321 @@
-{}
+{
+  "schemaVersion": "2.0.0",
+  "sprint": 51,
+  "version": "V0.29.5",
+  "createdFromPRD": "offices/pm/prds/prd-V0.29.5.md",
+  "stories": [
+    {
+      "id": "US-416",
+      "title": "General natural-key snapshot-sync path + SNAPSHOT_SYNC registry (Atlas-ruled, F-115-reusable)",
+      "parent": "F-101",
+      "epicId": "E-002",
+      "type": "normal",
+      "size": "L",
+      "status": "sprint-ready",
+      "passes": false,
+      "acceptance": [
+        "Pi SNAPSHOT_SYNC registry {table -> (naturalKeyCols, cursorCol)} + a snapshot reader that deltas by an explicit recorded_at cursor per table (tracked in sync_log) -- NOT full-snapshot, NOT rowid (TEXT-PK tables have no stable rowid; VACUUM renumbers)",
+        "server natural-key upsert parameterized by naturalKeyCols -> UNIQUE(source_device, *naturalKeyCols) + ON-CONFLICT; a NEW pattern, distinct from the id->source_id registry path",
+        "A-4 guard: each table's naturalKeyCols defined ONCE, referenced by both tiers (shared contract, not two drifting lists)",
+        "does NOT touch or refactor dtc_freeze_frame's FK-resolution special-case (leave shipped code alone)",
+        "unit tests: idempotent re-sync on the natural key; cursor bounds volume",
+        "ruff check passes"
+      ],
+      "validationCriteria": [
+        {
+          "action": "register a test table in SNAPSHOT_SYNC and run two sync cycles",
+          "outcome": "server rows dedup on the natural key; re-sync is idempotent (no duplicates, no regression)"
+        },
+        {
+          "action": "inspect the naturalKeyCols definition",
+          "outcome": "defined once in a shared contract referenced by both Pi and server (A-4), not two lists"
+        }
+      ],
+      "conditionalOutcomes": [],
+      "goal": "As the system, I want a reusable table-parameterized snapshot-sync mechanism for TEXT-PK / insert-once tables, so startup_log (and F-115's event-vault) can sync without the integer-delta cursor.",
+      "tasks": [],
+      "pmSignOff": {
+        "reviewer": "Marcus (PM)",
+        "date": "2026-07-01",
+        "sizeAcknowledged": "L",
+        "rationale": "General reusable snapshot-sync mechanism (registry + Pi snapshot reader + parameterized server upsert + A-4 single-definition) is intrinsically one cohesive unit -- splitting the mechanism from itself would fragment the contract. Atlas-ruled shape. startup_log (US-417) is the separate consumer story. If Ralph compresses, flag and PM will split the server-upsert half out."
+      }
+    },
+    {
+      "id": "US-417",
+      "title": "Register startup_log onto the snapshot-sync path (deps US-416; closes BL-013)",
+      "parent": "F-101",
+      "epicId": "E-002",
+      "type": "normal",
+      "size": "M",
+      "status": "sprint-ready",
+      "passes": false,
+      "acceptance": [
+        "startup_log registered in SNAPSHOT_SYNC with naturalKeyCols=(boot_id), cursor recorded_at",
+        "two migrations: Pi recorded_at column (if absent); server UNIQUE(source_device, boot_id) -- deployed AND verified via INFORMATION_SCHEMA",
+        "post-sync, server startup_log rows match Pi; idempotent on re-sync",
+        "ruff check passes"
+      ],
+      "validationCriteria": [
+        {
+          "action": "run a sync cycle after registering startup_log",
+          "outcome": "server startup_log rows match Pi rows; re-sync idempotent on (source_device, boot_id)"
+        }
+      ],
+      "conditionalOutcomes": [],
+      "goal": "As the CIO, I want startup_log mirrored to the server, so boot history is server-queryable.",
+      "tasks": []
+    },
+    {
+      "id": "US-418",
+      "title": "Idle log-noise + sync-cadence hygiene (F-077 + F-078 + F-058, verify-first)",
+      "parent": "F-077",
+      "epicId": "E-OPS",
+      "type": "normal",
+      "size": "M",
+      "status": "sprint-ready",
+      "passes": false,
+      "acceptance": [
+        "VERIFY-FIRST: re-query the deployed Pi; prior backoff/cadence work (US-325/US-332) may have fixed some -- if a live table is healthy, close as already-fixed WITH EVIDENCE rather than changing code",
+        "(F-077/F-058) enumerate every connection_log writer; idle growth drops to a defined healthy rate (or close-with-evidence)",
+        "(F-078) at idle, sync_history stops accumulating ~1.5 rows/min -- slow/batch the engine-off poll loop OR a dedicated pi_state.sync_idle gate (NOT the no_new_drives drain gate -- the wrong US-332 fix); verify via idle-soak",
+        "must NOT suppress real connection/sync events -- only idle noise",
+        "ruff check passes"
+      ],
+      "validationCriteria": [
+        {
+          "action": "re-query the live Pi + run an idle-soak",
+          "outcome": "connection_log + sync_history idle growth is materially reduced OR closed-as-already-healthy with row-count evidence; real events still logged"
+        }
+      ],
+      "conditionalOutcomes": [],
+      "goal": "As the CIO, I want the Pi to stop writing chatty connection_log / sync_history rows at idle, so the tables do not grow 24/7.",
+      "tasks": []
+    },
+    {
+      "id": "US-419",
+      "title": "Pi post-reboot clock-drift guard (F-080, code angle; verify-first)",
+      "parent": "F-080",
+      "epicId": "E-004",
+      "type": "normal",
+      "size": "M",
+      "status": "sprint-ready",
+      "passes": false,
+      "acceptance": [
+        "VERIFY-FIRST: re-query the Pi (timedatectl, hwclock, systemctl status systemd-timesyncd, recent power_log timestamps); if the clock is sane post-reboot (fixed out-of-band), close as not-needed WITH EVIDENCE",
+        "if still drifting: the startup_log/power_log timestamp writers gain a boot-time sanity guard -- the first post-boot row's timestamp is validated against an NTP-confirmed/monotonic source; drift beyond threshold flags data_quality='clock_unsynced' rather than writing drifted time as truth",
+        "a unit test simulates a pre-NTP-sync boot timestamp and asserts the guard flags (not crashes)",
+        "the RTC coin-cell / timesyncd ordering fix is ops (AI-1), out of this story's scope",
+        "ruff check passes"
+      ],
+      "validationCriteria": [
+        {
+          "action": "simulate a pre-NTP-sync boot timestamp through the writer",
+          "outcome": "the row is flagged data_quality='clock_unsynced' (not silently written as truth), no crash"
+        }
+      ],
+      "conditionalOutcomes": [],
+      "goal": "As the CIO, I want post-reboot log timestamps to be sane, so power/boot history is not corrupted by RTC drift.",
+      "tasks": []
+    },
+    {
+      "id": "US-420",
+      "title": "LTFT multi-drive trend card (F-096, carousel)",
+      "parent": "F-096",
+      "epicId": "E-001",
+      "type": "normal",
+      "size": "M",
+      "status": "sprint-ready",
+      "passes": false,
+      "acceptance": [
+        "new carousel card renders an LTFT trend across the last N drives (multi-drive, not per-drive), sourced from the LTFT PID in realtime_data (confirm exact PID/source per Spool's S-2 note at story time)",
+        "distinguishes healthy migration-toward-0 from drift beyond +/-10% (honest-instrument color/threshold -- never green-when-stale)",
+        "empty/insufficient-data state renders gracefully",
+        "bench-validatable via fixture/DOM test against canned multi-drive LTFT data",
+        "depends on the Sprint-49 carousel shell (US-399, on dev); ruff check passes"
+      ],
+      "validationCriteria": [
+        {
+          "action": "render the card against canned multi-drive LTFT fixture data",
+          "outcome": "trend displays; drift beyond +/-10% is visually distinct from healthy; empty-data state does not crash"
+        }
+      ],
+      "conditionalOutcomes": [],
+      "goal": "As the CIO, I want a carousel card showing long-term fuel trim across recent drives, so I can watch LTFT migrate toward 0 (healthy) vs drift beyond +/-10%.",
+      "tasks": []
+    },
+    {
+      "id": "US-421",
+      "title": "Power-mode badge -- in-car vs wall-power (F-098, carousel)",
+      "parent": "F-098",
+      "epicId": "E-OPS",
+      "type": "normal",
+      "size": "S",
+      "status": "sprint-ready",
+      "passes": false,
+      "acceptance": [
+        "a small persistent badge shows current power mode, sourced from the existing power-mode SSOT provider (src/pi/power/ -- confirm the provider; do NOT add a second acquisition path per the SSOT directive)",
+        "updates on mode change; honest-instrument: undeterminable -> 'unknown', never a confident wrong state",
+        "bench-validatable via fixture/DOM test with mocked mode states",
+        "depends on the Sprint-49 carousel shell (US-399, on dev); ruff check passes"
+      ],
+      "validationCriteria": [
+        {
+          "action": "render the badge with mocked in-car / wall-power / undeterminable states",
+          "outcome": "badge shows the correct mode; undeterminable renders 'unknown' not a wrong mode"
+        }
+      ],
+      "conditionalOutcomes": [],
+      "goal": "As the CIO, I want a corner badge showing in-car vs wall-power-debug mode, so the power_log analytical-guardrail confusion is eliminated at the UI.",
+      "tasks": []
+    },
+    {
+      "id": "US-422",
+      "title": "Wire UpsMonitor SoC% through orchestrator to recorder (F-060)",
+      "parent": "F-060",
+      "epicId": "E-OPS",
+      "type": "normal",
+      "size": "M",
+      "status": "sprint-ready",
+      "passes": false,
+      "acceptance": [
+        "UpsMonitor SoC% flows through the orchestrator to the recorder and lands in battery_health_log (start/end SoC% via the register, not derived from voltage)",
+        "a bench drill (UPS-drain rig) shows SoC% populated on a closed battery_health_log row",
+        "ruff check passes"
+      ],
+      "validationCriteria": [
+        {
+          "action": "run a UPS-drain bench drill",
+          "outcome": "the closed battery_health_log row has start/end SoC% populated from the MAX17048 register"
+        }
+      ],
+      "conditionalOutcomes": [],
+      "goal": "As the system, I want the MAX17048 SoC% wired end-to-end into battery_health_log, so SoC% is recorded (the prerequisite to retiring the legacy columns).",
+      "tasks": []
+    },
+    {
+      "id": "US-423",
+      "title": "Drop legacy battery_health_log SoC columns (F-061, deps US-422)",
+      "parent": "F-061",
+      "epicId": "E-OPS",
+      "type": "normal",
+      "size": "M",
+      "status": "sprint-ready",
+      "passes": false,
+      "acceptance": [
+        "Pi SQLite migration (CREATE-AS-SELECT-DROP-RENAME -- SQLite has no ALTER DROP) removes start_soc/end_soc; server MariaDB ALTER TABLE ... DROP COLUMN; both deployed AND verified via schema introspection",
+        "all consumers migrated to start_vcell_v/end_vcell_v (+ the US-422 SoC%); lock-down tests updated to drop the removed-column refs",
+        "ruff check passes"
+      ],
+      "validationCriteria": [
+        {
+          "action": "run the migrations + schema introspection on both tiers",
+          "outcome": "start_soc/end_soc are gone from Pi SQLite and server MariaDB; consumers + lock-down tests green on the new columns"
+        }
+      ],
+      "conditionalOutcomes": [],
+      "goal": "As the system, I want the legacy start_soc/end_soc columns dropped once SoC% is wired, so there is one source of truth.",
+      "tasks": []
+    },
+    {
+      "id": "US-424",
+      "title": "Foreign-vehicle contamination marker + ingest guard (F-116, Atlas-ruled)",
+      "parent": "F-116",
+      "epicId": "E-002",
+      "type": "normal",
+      "size": "L",
+      "status": "sprint-ready",
+      "passes": false,
+      "acceptance": [
+        "Marker 2 axes: data_source='foreign' added to the SSOT src/pi/obdii/data_source.py DATA_SOURCE_VALUES (propagates to all 5 Pi table CHECKs) + mirrored on the server data_source CHECK -- the PRIMARY row-level exclusion axis (every WHERE data_source='real' query auto-excludes it, zero consumer changes; NOT 'fixture' -- risks evidence deletion). AND data_quality='foreign_vehicle' added to src/server/analytics/drive_statistics_compute.py DRIVE_STATISTICS_DATA_QUALITY_VALUES SSOT + the model enum (the :101 divergence assertion stays green)",
+        "A-4: both forward-only CHECK migrations applied IDENTICALLY on both tiers (define once per SSOT, mirror the other -- not two hand-maintained lists)",
+        "re-tag drive 33: Spool runs the reclassification SQL once the enums land (realtime_data.data_source='foreign' + drive_summary.data_quality='foreign_vehicle' WHERE drive_id=33) -- re-tag, NEVER delete (evidence preserved)",
+        "ingest guard = sustained bus-rate check (primary): aggregate rate over a ROLLING WINDOW > ~7/s (Eclipse K-line ceiling ~6.3/s) -> flag foreign; SUSTAINED not instantaneous (no false-flag on a legit Eclipse burst); on trip -> flag/quarantine (mark foreign), NEVER silently delete. NOT a dongle-MAC allowlist (same dongle both vehicles), NOT VIN (Mode-09 silent -> backwards); protocol-ID deferred (no accessor today)",
+        "placement layered: Pi-side PRIMARY (on trip, retro-tag the open drive's rows foreign + do not sync as real; A-9-adjacent, do not couple) + server-side BACKSTOP tripwire like detect_overlapping_drives (resize-droppable if tight -- marker + Pi guard are the must-haves)",
+        "Rule-10: specs/architecture.md data-contract section names the foreign/foreign_vehicle values + the bus-rate guard, in-sprint",
+        "ruff check passes"
+      ],
+      "validationCriteria": [
+        {
+          "action": "add the two enum values + run a query filtering WHERE data_source='real'",
+          "outcome": "foreign rows are auto-excluded with zero consumer changes; both CHECK migrations identical on both tiers (A-4)"
+        },
+        {
+          "action": "feed a sustained >7/s sample stream through the Pi guard",
+          "outcome": "the drive's rows are retro-tagged foreign and not synced as real; a legit Eclipse burst is NOT false-flagged"
+        },
+        {
+          "action": "re-tag drive 33 via Spool's SQL",
+          "outcome": "drive 33's 1,364 rows become data_source='foreign' + drive_summary foreign_vehicle; rows preserved, none deleted"
+        }
+      ],
+      "conditionalOutcomes": [],
+      "goal": "As the CIO, I want foreign-vehicle rows honestly markable and prevented from recurring, so the Explorer (drive 33) cannot pollute real-data tuning queries.",
+      "tasks": [],
+      "pmSignOff": {
+        "reviewer": "Marcus (PM)",
+        "date": "2026-07-01",
+        "sizeAcknowledged": "L",
+        "rationale": "Atlas-ruled 4-part (2 marker-enum axes + re-tag + Pi bus-rate guard + server tripwire) but tightly coupled around one data-contract change. Server tripwire is Atlas-flagged RESIZE-DROPPABLE (marker + Pi guard are the must-haves) -- the built-in relief valve if it runs heavy. Build order: enums+re-tag first, then Pi guard, then server tripwire (drop if compressing)."
+      }
+    },
+    {
+      "id": "US-425",
+      "title": "Sprint 51 documentation sync (Rule-10)",
+      "parent": "F-101",
+      "epicId": "E-002",
+      "type": "normal",
+      "size": "S",
+      "status": "sprint-ready",
+      "passes": false,
+      "acceptance": [
+        "specs/architecture.md sync section updated for the SNAPSHOT_SYNC mechanism (Rule-10, in-sprint)",
+        "data-contract section names the new foreign/foreign_vehicle enum values + the bus-rate guard (US-424 Rule-10) + the clock_unsynced flag; battery_health_log column change documented",
+        "regression_manifest.json reflects new/changed features (F-101/060/061/077/078/080/096/098/116)",
+        "all spec docs reflect current state; no stale references"
+      ],
+      "validationCriteria": [
+        {
+          "action": "review the sprint's changed files + update the docs",
+          "outcome": "architecture.md sync + data-contract sections current; regression_manifest updated; no stale refs"
+        }
+      ],
+      "conditionalOutcomes": [],
+      "goal": "As the PM, I need docs to reflect the sprint's sync/schema/UI changes, so the design gate and SSOT stay current in-sprint.",
+      "tasks": []
+    }
+  ],
+  "validation": {
+    "bigDefinitionOfDone": [
+      "(register a test table in SNAPSHOT_SYNC and run two sync cycles) \u2192 (server rows dedup on the natural key; re-sync is idempotent (no duplicates, no regression))  [from US-416]",
+      "(inspect the naturalKeyCols definition) \u2192 (defined once in a shared contract referenced by both Pi and server (A-4), not two lists)  [from US-416]",
+      "(run a sync cycle after registering startup_log) \u2192 (server startup_log rows match Pi rows; re-sync idempotent on (source_device, boot_id))  [from US-417]",
+      "(re-query the live Pi + run an idle-soak) \u2192 (connection_log + sync_history idle growth is materially reduced OR closed-as-already-healthy with row-count evidence; real events still logged)  [from US-418]",
+      "(simulate a pre-NTP-sync boot timestamp through the writer) \u2192 (the row is flagged data_quality='clock_unsynced' (not silently written as truth), no crash)  [from US-419]",
+      "(render the card against canned multi-drive LTFT fixture data) \u2192 (trend displays; drift beyond +/-10% is visually distinct from healthy; empty-data state does not crash)  [from US-420]",
+      "(render the badge with mocked in-car / wall-power / undeterminable states) \u2192 (badge shows the correct mode; undeterminable renders 'unknown' not a wrong mode)  [from US-421]",
+      "(run a UPS-drain bench drill) \u2192 (the closed battery_health_log row has start/end SoC% populated from the MAX17048 register)  [from US-422]",
+      "(run the migrations + schema introspection on both tiers) \u2192 (start_soc/end_soc are gone from Pi SQLite and server MariaDB; consumers + lock-down tests green on the new columns)  [from US-423]",
+      "(add the two enum values + run a query filtering WHERE data_source='real') \u2192 (foreign rows are auto-excluded with zero consumer changes; both CHECK migrations identical on both tiers (A-4))  [from US-424]",
+      "(feed a sustained >7/s sample stream through the Pi guard) \u2192 (the drive's rows are retro-tagged foreign and not synced as real; a legit Eclipse burst is NOT false-flagged)  [from US-424]",
+      "(re-tag drive 33 via Spool's SQL) \u2192 (drive 33's 1,364 rows become data_source='foreign' + drive_summary foreign_vehicle; rows preserved, none deleted)  [from US-424]",
+      "(review the sprint's changed files + update the docs) \u2192 (architecture.md sync + data-contract sections current; regression_manifest updated; no stale refs)  [from US-425]"
+    ],
+    "frozenAt": "2026-07-01T16:43:39Z",
+    "bigDoDHash": "ae4f41d87645e494839c2c87d09870df9f2cfbeb47c8c93b8ed968a56f5f145a",
+    "validationMethod": "BENCH-ONLY",
+    "validatesFeatures": [
+      "F-101",
+      "F-060",
+      "F-061",
+      "F-077",
+      "F-080",
+      "F-096",
+      "F-098",
+      "F-116"
+    ],
+    "currentVersion": "V0.29.5",
+    "validatedAt": null,
+    "validatedBy": null
+  }
+}
