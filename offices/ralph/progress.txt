@@ -38,3 +38,51 @@ Task: EDR versioned schema contract + Pi tables (src/common/edr/sensor_schema.py
   migration-added and may not exist when the indexer runs on a legacy DB.
 - **Gotcha (env)**: mypy is not installed on this dev box; deferred to PM (module is fully hinted).
 ---
+
+## 2026-06-30 - US-409 (Agent 1 / Rex / Session 51)
+Task: EDR IMU + light readers -- additive bus topics + graceful-absence + presence STATE (ADR section 1/3)
+
+### What was implemented:
+- New Pi-tier package `src/pi/sensors/` with `sensor_reader.py`: the PRODUCER side of the
+  EDR sensor path (US-410 = sibling persistence subscriber; US-411 = end-to-end harness).
+- `ImuReader` + `LightReader` on ONE shared `_BaseSensorReader` scaffold (pmSignOff Rule-5
+  batch-similar): the scaffold owns probe/graceful-absence, per-producer `seq`, retained
+  presence STATE, and the daemon poll loop; the per-sensor read is the only delta.
+- IMU = one BURST poll (accel+gyro+mag+temp read together) publishing
+  `raw.imu.{accel,gyro,mag,temp}` all under the SAME `seq` -- read the whole burst BEFORE
+  publishing so a mid-read fault emits nothing for that seq (atomic -> US-410 assembles one
+  `edr_imu_sample` row per seq). Light = `raw.light.lux` (None on saturation/non-finite,
+  never inf) + `raw.light.raw` counts under its own independent seq stream.
+- Graceful-absence (the `pld_sensor` idiom): injectable `deviceFactory`; the real default
+  lazy-imports `adafruit_icm20x`/`adafruit_tsl2591` and raises on a non-Pi host / absent bus.
+  `probe()` catches -> `present=False`, logs once at WARN, publishes a RETAINED
+  `state.sensor.*=absent` marker, starts NO poll thread -> pure silence, zero fabricated
+  0.0/null. Present -> retained `state.sensor.*=present` + poll thread at `sampleHz`.
+- Config: `pi.sensors.{imu,light}.enabled` (default False) each REQUIRE `pi.bus.enabled`
+  (enforced in `createSensorReadersFromConfig`); `sampleHz` defaults 50/1. `persistHz` +
+  `retentionDays` deliberately scope-fenced to US-410.
+- One base-contract touch: widened `Sample.value` to `float | tuple[float, ...] | None` so a
+  saturated `raw.light.lux` can publish None (annotation-only, back-compat).
+
+### Files changed:
+- Created: `src/pi/sensors/__init__.py`, `src/pi/sensors/sensor_reader.py`
+- Modified: `src/pi/bus/sample.py` (Sample.value union widened to allow None)
+- Modified: `src/common/config/validator.py` (4 pi.sensors.* DEFAULTS)
+- Modified: `config.json` (mirrored pi.sensors section after pi.bus)
+- Created: `tests/pi/sensors/__init__.py`, `tests/pi/sensors/test_sensor_reader.py` (15 tests)
+- Modified: `tests/test_config_validator.py` (+2 sensor-defaults tests)
+
+### Learnings for future iterations:
+- **Pattern discovered**: on the SampleBus, "LOSSY / producer-never-blocks" is entirely a
+  SUBSCRIBER-side property (drop-oldest lives in `Subscription._offer`). A producer just calls
+  `bus.publish(sample)` and is non-blocking by construction -- a reader needs no QoS wiring.
+- **Pattern discovered**: presence/STATE with a numeric-only `Sample.value` envelope -> encode
+  present/absent as a float (1.0/0.0) and put the human label in `unit`; the shipped
+  `test_bus_state.py` already encodes STATE as a float, so this is precedent, not a new idiom.
+- **Gotcha (graceful-absence)**: mirror `pld_sensor` -- DI a `deviceFactory` whose default does
+  the hardware import INSIDE the function (local import) so the module imports fine on a dev box
+  with no sensor libs; constructing the device IS the I2C probe (WHO_AM_I read raises when absent).
+- **Gotcha (ralph_agents.json)**: the `note` field had accumulated a stale concatenated tail from
+  prior sessions; a prefix-only Edit compounded it into invalid JSON. Rewrite the whole small
+  JSON file when the note churns, and `python -c "import json; json.load(...)"` to verify.
+---

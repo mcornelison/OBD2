@@ -481,6 +481,16 @@
     "bus": {
       "enabled": false
     },
+    "sensors": {
+      "imu": {
+        "enabled": false,
+        "sampleHz": 50
+      },
+      "light": {
+        "enabled": false,
+        "sampleHz": 1
+      }
+    },
     "splash": {
       "enabled": true,
       "statesDir": "/run/eclipse-obd/states",
