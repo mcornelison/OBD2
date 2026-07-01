@@ -866,3 +866,25 @@ Task: DTC takeover + STOP-red ribbon -- full-screen severity takeover on a NEW c
 - **Gotcha**: the reads-only-hardware guard forbids the substring "serial" (WebSerial) in carousel.js -- "radial-gradient" is CSS-only (safe), but keep JS free of serial/usb/i2c tokens when adding fetch-driven surfaces.
 - **Build-order note**: US-406 (Alerts card = Card 5 + detail) will repoint the takeover "View detail" button + the ribbon tap at the new Alerts card; today both just drop to the ribbon.
 ---
+
+## 2026-06-30 - US-406 (Agent 1 / Rex)
+Task: DTC Alerts card (Card 5) + detail -- hero/worst-first list, freeze-frame-or-realtime fallback, severity-gated fix + trust badge
+
+### What was implemented:
+- Added a 3rd carousel card (data-state=dtc, label Alerts): alertsCardView -> hero (worst ALERT-eligible code + directive; na/unrecognized NEVER a hero, S-12) + rows sorted worst-first with na LAST (design 5.3); no-desc -> `?` + "No description yet" (I-3); empty -> "No stored codes"; malformed -> shell unavailable (S-9).
+- Per-code detail overlay (codeDetailView): hero, directive band (stop/watch only), caveat LINE, status meta, freeze-frame-or-realtime fallback, severity-gated fix, log/sync footer.
+- Locked TWO render-safety invariants in the PURE builders (SSOT): (F-1/S-4) fixArea REPLACES the fix slot with a diagnose directive for stop/watch/unknown -- raw suggestedFix NEVER rendered even when non-null; only MINOR shows the fix + a 3-state trust badge (verified/community/offline). (S-13) severityCaveat renders as a line; the tier is NEVER auto-upgraded (reads severity verbatim).
+- freezeFrameView (S-5): Mode 02 unsupported on MD326328 -> null -> labeled realtime fallback, never blank. dtcStatusMeta: null driveId -> "key-on read" (US-404 KOEO), never a fabricated Drive N.
+- tick() now fetches GET /dtc ONCE and shares it with the Alerts card render + the US-405 ribbon/takeover (was a double-fetch); the takeover View-detail + a ribbon tap navigate to the Alerts card + open the hero detail (goTo passed into startAvailabilityPoll).
+
+### Files changed:
+- Modified: `specs/UI/dist/dashboard-pi/carousel.js` (alertsCardView/codeDetailView/dtcListSorted/dtcRow/fixArea/freezeFrameView/trustBadge + DOM render + detail overlay + tick refactor)
+- Modified: `specs/UI/dist/dashboard-pi/dashboard.html` (3rd card slot + #dtc-detail overlay)
+- Modified: `specs/UI/dist/dashboard-pi/dashboard.css` (.dtc-chip per-tier, .dtc-hero/.dtc-row, #dtc-detail, .dtc-fix-directive, .dtc-trust-badge)
+- Modified: `tests/deploy/test_dashboard_kit.py` (+3 US-406 tests; card-count 2->3 update)
+- Modified: `specs/architecture.md` (F-092 "DTC Alerts card (Card 5) + detail (US-406)" subsection)
+
+### Learnings for future iterations:
+- **Pattern discovered**: lock render-safety invariants (severity-gated fix, caveat-not-upgraded) in the PURE view builder, not the DOM layer -- the DOM stays a dumb painter and a UI bug cannot leak a raw fix onto a dangerous code.
+- **Gotcha**: an Edit whose old_string matches only the OPENING of a long JSON string field leaves the old tail appended after your new closing quote -> two juxtaposed strings = invalid JSON. Validate JSON after editing note/completionNotes fields (open with encoding="utf-8" on Windows -- default cp1252 chokes on the middot/arrow/emoji).
+---

@@ -506,6 +506,210 @@
     return { level: hero.severity, glyph: "⚠", text: text, code: hero.code };
   }
 
+  // -------------------------------------------------------------------------
+  // US-406 DTC Alerts card (Card 5) + detail -- pure, node-testable logic
+  // (S-4/S-5/S-12/S-13/I-3). The card is a PURE CONSUMER of the `dtc` state:
+  // the display maps a Spool-classified tier -> chip label + color + directive;
+  // it NEVER classifies. Two render-safety invariants are locked in the pure
+  // builders (the SSOT) so a buggy DOM layer can't violate them:
+  //   F-1/S-4  the fix area for a 🔴/🟡 code is REPLACED by a "diagnose, don't
+  //            swap parts" directive -- the raw `suggestedFix` is never rendered
+  //            even when non-null (only a 🟢 MINOR code shows a real fix + badge).
+  //   S-13     a `severityCaveat` renders as a caveat LINE beneath the base chip;
+  //            it NEVER auto-upgrades the tier (the display reads `severity`
+  //            verbatim). `na` (auto-trans on this manual car) is a quiet
+  //            disposition -- an N/A chip that sorts LAST, never a hero (S-12).
+  // -------------------------------------------------------------------------
+
+  // Tier -> display presentation (chip label + CSS level + hero/detail
+  // directive). `unknown` = an uncurated code (no Spool entry) -> the honest
+  // middle "GET DIAGNOSED", never a false "safe to clear" nor a false "pull
+  // over". `na` = not applicable to this vehicle (quiet, unalarming).
+  var DTC_TIER = {
+    stop: { chip: "STOP", level: "stop", directive: "REDUCE LOAD · PULL OVER" },
+    watch: { chip: "WATCH", level: "watch", directive: "DRIVE GENTLY · GET DIAGNOSED" },
+    minor: { chip: "MINOR", level: "minor", directive: "SAFE TO CLEAR ONCE LOGGED" },
+    unknown: { chip: "?", level: "unknown", directive: "GET DIAGNOSED" },
+    na: { chip: "N/A", level: "na", directive: "not applicable to this vehicle" },
+  };
+
+  // List ordering for the Alerts card: worst-first, but `na` ALWAYS sorts last
+  // (design §5.3) -- higher rank = higher in the list. An unrecognized severity
+  // is treated as `unknown` (never dropped -- hiding a code could hide a fault).
+  var DTC_LIST_RANK = { stop: 4, watch: 3, minor: 2, unknown: 1, na: 0 };
+
+  function dtcTier(sev) {
+    return Object.prototype.hasOwnProperty.call(DTC_TIER, sev)
+      ? DTC_TIER[sev]
+      : DTC_TIER.unknown;
+  }
+
+  function dtcListRank(sev) {
+    return Object.prototype.hasOwnProperty.call(DTC_LIST_RANK, sev)
+      ? DTC_LIST_RANK[sev]
+      : DTC_LIST_RANK.unknown;
+  }
+
+  function dtcShort(code) {
+    return (code.short && String(code.short).trim()) || "No description yet";
+  }
+
+  function dtcCaveat(code) {
+    return (code.severityCaveat && String(code.severityCaveat).trim()) || null;
+  }
+
+  // All valid code objects sorted worst-first (na last). Stable within a rank
+  // (input order preserved), so same-severity codes keep their capture order.
+  function dtcListSorted(codes) {
+    if (!Array.isArray(codes)) return [];
+    var out = [];
+    for (var i = 0; i < codes.length; i++) {
+      if (isObj(codes[i])) out.push(codes[i]);
+    }
+    out.sort(function (a, b) { return dtcListRank(b.severity) - dtcListRank(a.severity); });
+    return out;
+  }
+
+  // One compact list row (chip · code · short · caveat hint · status).
+  function dtcRow(code) {
+    var tier = dtcTier(code.severity);
+    return {
+      code: code.code,
+      chip: tier.chip,
+      level: tier.level,
+      short: dtcShort(code),
+      caveat: dtcCaveat(code),
+      status: code.status === "pending" ? "PEND" : "STORED",
+      isNa: code.severity === "na",
+    };
+  }
+
+  // The Alerts card view: hero (worst ALERT-eligible code + its directive; `na`
+  // and unrecognized severities are never a hero) + the full list (worst-first,
+  // na last) + stored/pending counts. Non-object payload -> null (the shell
+  // renders `unavailable`). An empty `codes` array is a valid no-fault view.
+  function alertsCardView(data) {
+    if (!isObj(data)) return null;
+    var codes = Array.isArray(data.codes) ? data.codes.filter(isObj) : [];
+    var alertable = alertableCodes(codes); // drops na + unrecognized (never a hero)
+    var hero = null;
+    if (alertable.length > 0) {
+      var h = alertable[0];
+      var t = dtcTier(h.severity);
+      hero = {
+        code: h.code,
+        chip: t.chip,
+        level: t.level,
+        short: dtcShort(h),
+        directive: t.directive,
+        caveat: dtcCaveat(h),
+      };
+    }
+    var stored = 0;
+    var pending = 0;
+    for (var i = 0; i < codes.length; i++) {
+      if (codes[i].status === "pending") pending++;
+      else stored++;
+    }
+    return {
+      hero: hero,
+      rows: dtcListSorted(codes).map(dtcRow),
+      storedCount: stored,
+      pendingCount: pending,
+      mil: data.mil === true,
+    };
+  }
+
+  // 3-state trust badge (design §5.4). Verified (Spool) / community-unverified /
+  // offline-not-yet-fetched. Any unrecognized/absent provenance -> offline (the
+  // honest "no live net in the car" default), never a fabricated authority.
+  function trustBadge(fixProvenance) {
+    if (fixProvenance === "spool-validated") {
+      return { kind: "verified", label: "✓ Verified · Spool" };
+    }
+    if (fixProvenance === "auto-unverified" || fixProvenance === "sourced") {
+      return { kind: "community", label: "👥 Community · unverified" };
+    }
+    return { kind: "offline", label: "⏳ Looking into it" };
+  }
+
+  // Severity-gated fix area (S-4/F-1 -- the load-bearing safety invariant). A
+  // 🔴/🟡 (or uncurated `unknown`) code's fix slot is REPLACED by a diagnose
+  // directive; the raw `suggestedFix` is NEVER rendered for it, even when
+  // non-null. Only a 🟢 MINOR code shows the actual fix + a trust badge. `na`
+  // is not applicable. A missing MINOR fix is honest text, never fabricated.
+  function fixArea(code) {
+    var sev = code.severity;
+    if (sev === "na") {
+      return { mode: "na", text: "Not applicable to this vehicle", badge: null };
+    }
+    if (sev !== "minor") {
+      var lead =
+        sev === "stop"
+          ? "⚠ STOP — diagnose, don't just swap parts"
+          : sev === "watch"
+            ? "⚠ WATCH — get it diagnosed, don't swap parts"
+            : "Get it diagnosed before replacing parts";
+      return { mode: "directive", text: lead, badge: null };
+    }
+    var fix = (code.suggestedFix && String(code.suggestedFix).trim()) || null;
+    return {
+      mode: "fix",
+      text: fix || "No fix available offline — arrives on next sync.",
+      badge: trustBadge(code.fixProvenance),
+    };
+  }
+
+  // Freeze-frame view (S-5). Mode 02 is confirmed unsupported on the current
+  // ECU (MD326328) -> the default is the labeled realtime-context fallback,
+  // never blank. A grid renders only if a future Mode-02-capable ECU supplies
+  // one (freezeFrame is a non-null object).
+  function freezeFrameView(code) {
+    var ff = isObj(code.freezeFrame) ? code.freezeFrame : null;
+    if (!ff) {
+      return {
+        hasFrame: false,
+        fallbackText: "no freeze frame captured (this ECU) — showing context at fault time",
+        grid: null,
+      };
+    }
+    return { hasFrame: true, fallbackText: null, grid: ff };
+  }
+
+  // Status meta line. A null `driveId` is a KOEO (key-on) read (US-404 A-9) --
+  // shown as "key-on read", NEVER a fabricated "Drive N".
+  function dtcStatusMeta(code) {
+    var parts = [];
+    parts.push(code.status === "pending" ? "PENDING" : "STORED");
+    parts.push(code.driveId == null ? "key-on read" : "Drive " + code.driveId);
+    return parts.join(" · ");
+  }
+
+  // The per-code detail view. Non-object -> null. The directive band renders
+  // only for 🔴/🟡 (drives the "get diagnosed" message); the caveat is a line,
+  // never a tier upgrade (S-13).
+  function codeDetailView(code) {
+    if (!isObj(code)) return null;
+    var tier = dtcTier(code.severity);
+    var isStopWatch = code.severity === "stop" || code.severity === "watch";
+    return {
+      code: code.code,
+      chip: tier.chip,
+      level: tier.level,
+      short: dtcShort(code),
+      long: (code.long && String(code.long).trim()) || null,
+      directive: isStopWatch ? tier.directive : null,
+      caveat: dtcCaveat(code),
+      statusMeta: dtcStatusMeta(code),
+      freezeFrame: freezeFrameView(code),
+      fix: fixArea(code),
+      logged: code.logged === true,
+      syncAcked: code.syncAcked === true,
+      clearEligible: code.clearEligible === true,
+      isNa: code.severity === "na",
+    };
+  }
+
   var api = {
     clampIndex: clampIndex,
     nextIndex: nextIndex,
@@ -535,6 +739,13 @@
     takeoverView: takeoverView,
     takeoverShouldShow: takeoverShouldShow,
     ribbonView: ribbonView,
+    dtcListSorted: dtcListSorted,
+    dtcRow: dtcRow,
+    alertsCardView: alertsCardView,
+    trustBadge: trustBadge,
+    fixArea: fixArea,
+    freezeFrameView: freezeFrameView,
+    codeDetailView: codeDetailView,
     POLL_MS: POLL_MS,
     SWIPE_THRESHOLD_PX: SWIPE_THRESHOLD_PX,
     LONG_PRESS_MS: LONG_PRESS_MS,
@@ -700,7 +911,7 @@
       });
 
       render();
-      startAvailabilityPoll(cards, glyphEls);
+      startAvailabilityPoll(cards, glyphEls, goTo);
       setupMenu();
     };
 
@@ -889,7 +1100,7 @@
     // `unavailable` (never a crash, never green-when-broken). The shell sets the
     // availability class; the per-card renderer (US-400 system-status; US-401
     // battery-health) paints the fields on top when available.
-    function startAvailabilityPoll(cards, glyphEls) {
+    function startAvailabilityPoll(cards, glyphEls, goTo) {
       async function fetchState(name) {
         try {
           var r = await fetch("/" + name, {
@@ -918,6 +1129,37 @@
       // records it so the same code never re-takes-over; a newer code (a
       // different stamp) re-fires (escalation, D-3).
       var dtcLastAckedTs = null;
+
+      // --- US-406 Alerts card (Card 5) + per-code detail (browser only) ------
+      var detailEl = document.getElementById("dtc-detail");
+      var detailBody = document.getElementById("detail-body");
+      var detailBack = document.getElementById("detail-back");
+      var detailCodeHead = document.getElementById("detail-code-head");
+      // The most-recent `dtc` state, so a ribbon/takeover "View detail" tap can
+      // resolve a code string back to its full object.
+      var lastDtc = null;
+      // The Alerts card index, so a tap navigates the carousel to it.
+      var dtcCardIndex = -1;
+      for (var ci = 0; ci < cards.length; ci++) {
+        if (cards[ci].getAttribute("data-state") === "dtc") dtcCardIndex = ci;
+      }
+
+      function findCode(codeStr) {
+        if (!lastDtc || !Array.isArray(lastDtc.codes)) return null;
+        for (var i = 0; i < lastDtc.codes.length; i++) {
+          if (lastDtc.codes[i] && lastDtc.codes[i].code === codeStr) return lastDtc.codes[i];
+        }
+        return null;
+      }
+      function closeDetail() {
+        if (detailEl) detailEl.hidden = true;
+      }
+      // Navigate the carousel to the Alerts card; optionally open a code detail.
+      function openAlertsCard(codeStr) {
+        if (dtcCardIndex >= 0 && typeof goTo === "function") goTo(dtcCardIndex);
+        var codeObj = codeStr ? findCode(codeStr) : null;
+        if (codeObj) openDetail(codeObj);
+      }
 
       function hideTakeover() {
         if (takeoverEl) takeoverEl.hidden = true;
@@ -949,9 +1191,14 @@
           tvDismiss.textContent = view.dismissLabel;
           tvDismiss.onclick = function () { ackTakeover(view); };
         }
-        // View detail: the Alerts card (Card 5) + detail land in US-406; until
-        // then this drops to the ribbon so the driver still keeps view control.
-        if (tvDetail) tvDetail.onclick = function () { ackTakeover(view); };
+        // View detail (US-406): ack the takeover (drops it) + navigate to the
+        // Alerts card and open the hero code's detail.
+        if (tvDetail) {
+          tvDetail.onclick = function () {
+            ackTakeover(view);
+            openAlertsCard(view.code);
+          };
+        }
         takeoverEl.hidden = false;
       }
 
@@ -970,10 +1217,215 @@
         ribbonEl.hidden = false;
       }
 
+      // --- US-406 detail render (browser only) -------------------------------
+
+      // A labeled line: a bold label + a plain value (textContent -> verbatim,
+      // never markup). Returns the row element so callers can tag it.
+      function detailLine(cls, label, value) {
+        var row = document.createElement("div");
+        row.className = cls;
+        if (label) {
+          var l = document.createElement("span");
+          l.className = "detail-label";
+          l.textContent = label;
+          row.appendChild(l);
+        }
+        var v = document.createElement("span");
+        v.className = "detail-value";
+        v.textContent = value;
+        row.appendChild(v);
+        return row;
+      }
+
+      // Render the per-code detail body from codeDetailView(). Every branch is
+      // honest: a 🔴/🟡 fix is a diagnose directive (never a raw fix); a missing
+      // freeze-frame is the labeled realtime fallback; a caveat is a line, never
+      // a tier upgrade.
+      function renderDetailBody(view) {
+        if (!detailBody) return;
+        detailBody.textContent = "";
+        if (detailCodeHead) detailCodeHead.textContent = view.code;
+
+        // Hero: chip + code + short description.
+        var hero = document.createElement("div");
+        hero.className = "detail-hero";
+        var chip = document.createElement("span");
+        chip.className = "dtc-chip";
+        chip.setAttribute("data-level", view.level);
+        chip.textContent = view.chip;
+        hero.appendChild(chip);
+        var codeSpan = document.createElement("span");
+        codeSpan.className = "detail-code";
+        codeSpan.textContent = view.code;
+        hero.appendChild(codeSpan);
+        var shortSpan = document.createElement("span");
+        shortSpan.className = "detail-short";
+        shortSpan.textContent = view.short;
+        hero.appendChild(shortSpan);
+        detailBody.appendChild(hero);
+
+        // Severity directive band (🔴/🟡 only).
+        if (view.directive) {
+          detailBody.appendChild(detailLine("detail-directive", "", view.directive));
+        }
+        // Condition-dependent caveat -- a LINE beneath the chip, never a tier
+        // upgrade (S-13).
+        if (view.caveat) {
+          detailBody.appendChild(detailLine("detail-caveat", "", "⚠ " + view.caveat));
+        }
+        // Status meta (STORED/PENDING · key-on read | Drive N).
+        detailBody.appendChild(detailLine("detail-meta", "", view.statusMeta));
+
+        // Freeze-frame grid OR the labeled realtime fallback (S-5, never blank).
+        var ff = document.createElement("div");
+        ff.className = "detail-freeze";
+        var ffLabel = document.createElement("span");
+        ffLabel.className = "detail-label";
+        ffLabel.textContent = "FREEZE FRAME";
+        ff.appendChild(ffLabel);
+        if (view.freezeFrame.hasFrame) {
+          var grid = view.freezeFrame.grid;
+          for (var k in grid) {
+            if (Object.prototype.hasOwnProperty.call(grid, k)) {
+              ff.appendChild(detailLine("detail-ff-cell", k, String(grid[k])));
+            }
+          }
+        } else {
+          ff.appendChild(detailLine("detail-ff-fallback", "", view.freezeFrame.fallbackText));
+        }
+        detailBody.appendChild(ff);
+
+        // Severity-gated fix (S-4/F-1): directive for 🔴/🟡, real fix + badge for
+        // 🟢, N/A for na.
+        var fixBox = document.createElement("div");
+        fixBox.className = "detail-fix";
+        fixBox.setAttribute("data-mode", view.fix.mode);
+        if (view.fix.mode === "fix") {
+          var fixLabel = document.createElement("span");
+          fixLabel.className = "detail-label";
+          fixLabel.textContent = "SUGGESTED FIX";
+          fixBox.appendChild(fixLabel);
+          fixBox.appendChild(detailLine("detail-fix-text", "", view.fix.text));
+          if (view.fix.badge) {
+            var badge = document.createElement("span");
+            badge.className = "dtc-trust-badge";
+            badge.setAttribute("data-kind", view.fix.badge.kind);
+            badge.textContent = view.fix.badge.label;
+            fixBox.appendChild(badge);
+          }
+        } else {
+          // directive / na -> the fix slot is REPLACED (never a raw fix).
+          fixBox.appendChild(detailLine("dtc-fix-directive", "", view.fix.text));
+        }
+        detailBody.appendChild(fixBox);
+
+        // Log/sync footer (the capture-before-clear precondition, made visible).
+        var footer = detailLine(
+          "detail-footer",
+          "",
+          (view.logged ? "✓ logged" : "· not yet logged") +
+            " · " +
+            (view.syncAcked ? "✓ synced to server" : "· sync pending")
+        );
+        detailBody.appendChild(footer);
+      }
+
+      function openDetail(codeObj) {
+        var view = codeDetailView(codeObj);
+        if (!view || !detailEl) return;
+        renderDetailBody(view);
+        detailEl.hidden = false;
+      }
+
+      // --- US-406 Alerts card render (browser only) --------------------------
+
+      function renderAlertsCard(card, view) {
+        var body = card.querySelector(".card-body");
+        if (!body || !view) return;
+        body.textContent = "";
+
+        // Header count line (stored · pending).
+        var head = document.createElement("div");
+        head.className = "dtc-count";
+        head.textContent = view.storedCount + " stored · " + view.pendingCount + " pending";
+        body.appendChild(head);
+
+        // Hero block (worst code + its directive), when an alert-eligible code
+        // exists (na-only / empty -> no hero).
+        if (view.hero) {
+          var heroEl = document.createElement("button");
+          heroEl.className = "dtc-hero tap-target";
+          heroEl.setAttribute("data-level", view.hero.level);
+          var hChip = document.createElement("span");
+          hChip.className = "dtc-chip";
+          hChip.setAttribute("data-level", view.hero.level);
+          hChip.textContent = view.hero.chip;
+          heroEl.appendChild(hChip);
+          var hCode = document.createElement("span");
+          hCode.className = "dtc-hero-code";
+          hCode.textContent = view.hero.code;
+          heroEl.appendChild(hCode);
+          var hShort = document.createElement("span");
+          hShort.className = "dtc-hero-short";
+          hShort.textContent = view.hero.short;
+          heroEl.appendChild(hShort);
+          var hDir = document.createElement("span");
+          hDir.className = "dtc-hero-directive";
+          hDir.textContent = view.hero.directive;
+          heroEl.appendChild(hDir);
+          (function (codeStr) {
+            heroEl.addEventListener("click", function () { openAlertsCard(codeStr); });
+          })(view.hero.code);
+          body.appendChild(heroEl);
+        } else if (view.rows.length === 0) {
+          // No codes at all -> an honest all-clear (never a fabricated green).
+          body.appendChild(detailLine("dtc-noalert", "", "No stored codes"));
+        }
+
+        // Compact tappable rows (worst-first, na last). Each opens the detail.
+        for (var i = 0; i < view.rows.length; i++) {
+          (function (r) {
+            var row = document.createElement("button");
+            row.className = "dtc-row tap-target";
+            row.setAttribute("data-level", r.level);
+            var rChip = document.createElement("span");
+            rChip.className = "dtc-chip";
+            rChip.setAttribute("data-level", r.level);
+            rChip.textContent = r.chip;
+            row.appendChild(rChip);
+            var rCode = document.createElement("span");
+            rCode.className = "dtc-row-code";
+            rCode.textContent = r.code;
+            row.appendChild(rCode);
+            var rShort = document.createElement("span");
+            rShort.className = "dtc-row-short";
+            rShort.textContent = r.short + (r.caveat ? "  ⚠ " + r.caveat : "");
+            row.appendChild(rShort);
+            var rStatus = document.createElement("span");
+            rStatus.className = "dtc-row-status";
+            rStatus.textContent = r.status;
+            row.appendChild(rStatus);
+            row.addEventListener("click", function () { openDetail(findCode(r.code) || r); });
+            body.appendChild(row);
+          })(view.rows[i]);
+        }
+      }
+
+      if (detailBack) detailBack.addEventListener("click", closeDetail);
+      // The ribbon is tappable -> jump to the Alerts card + the hero detail.
+      if (ribbonEl) {
+        ribbonEl.addEventListener("click", function () {
+          if (ribbonEl.hidden) return;
+          var view = ribbonView(lastDtc);
+          openAlertsCard(view ? view.code : null);
+        });
+      }
+
       // Apply the polled `dtc` state to the ribbon + takeover. A missing/malformed
       // `dtc` file -> no alert (honest: absence of the state = no active fault),
       // never a fabricated code.
       function updateDtcSurfaces(dtcData) {
+        lastDtc = dtcData;
         renderRibbon(ribbonView(dtcData));
         var view = takeoverView(dtcData);
         if (view && takeoverShouldShow(view, dtcLastAckedTs)) {
@@ -984,11 +1436,13 @@
       }
 
       async function tick() {
+        var dtcData = null; // fetched once (the Alerts card + ribbon/takeover share it)
         for (var c = 0; c < cards.length; c++) {
           var card = cards[c];
           var name = card.getAttribute("data-state");
           if (!name) continue;
           var data = await fetchState(name);
+          if (name === "dtc") dtcData = data;
           var avail = cardAvailability(data);
           card.classList.toggle("unavailable", avail === "unavailable");
           if (avail === "unavailable") {
@@ -1003,10 +1457,13 @@
           } else if (name === "battery-health") {
             var bv = batteryHealthView(data);
             if (bv) renderBatteryHealthCard(card, bv);
+          } else if (name === "dtc") {
+            renderAlertsCard(card, alertsCardView(data));
           }
         }
-        // US-405: drive the takeover + persistent ribbon from the `dtc` state.
-        updateDtcSurfaces(await fetchState("dtc"));
+        // US-405/US-406: drive the takeover + persistent ribbon from the same
+        // `dtc` state the Alerts card rendered (one fetch per tick).
+        updateDtcSurfaces(dtcData);
         setTimeout(tick, POLL_MS);
       }
       tick();

@@ -2659,8 +2659,52 @@ decoration.
 **`na` is a quiet disposition (design §4).** Auto-trans P1xxx on the manual F5M33
 are dropped from `alertableCodes` — **no takeover, no ribbon**, and not counted in
 "+N more". A missing/malformed `dtc` file → no alert (honest: absence of the state
-= no active fault), never a fabricated code. The Alerts card (Card 5) + detail +
-Mode-04 clear are US-406/US-407.
+= no active fault), never a fabricated code. The Mode-04 clear is US-407.
+
+#### DTC Alerts card (Card 5) + detail (US-406) [F-111 / design §5.3–5.4]
+
+The persistent home of the DTC state — a third carousel card (`data-state="dtc"`,
+label **Alerts**) plus a per-code detail overlay. Both are pure functions in
+`carousel.js` (node-tested) with thin DOM wiring; the Alerts card is polled in the
+same 4 Hz tick as the other cards (the tick now fetches `GET /dtc` **once** and
+shares it with the card render *and* the US-405 ribbon/takeover). The display maps
+a Spool-classified tier → chip label + color + directive; **it never classifies.**
+
+**Alerts card (`alertsCardView`).** Hero + list (design D-4). The **hero** is the
+worst *alert-eligible* code (via `alertableCodes`, so `na` and unrecognized
+severities are **never** a hero — S-12) with its tier directive; the **list**
+(`dtcListSorted`) shows every code worst-first with **`na` sorted last** (design
+§5.3, `DTC_LIST_RANK` gives `na` the lowest rank). A no-description code shows a
+neutral `?` chip + "No description yet" (never blank — I-3). An empty `codes`
+array is an honest **"No stored codes"** (never a fabricated green). A
+missing/malformed file → the shell's `unavailable` (S-9). Every row + the hero are
+≥40px tap targets that open the detail.
+
+**Detail (`codeDetailView`).** Fixed skeleton: hero (chip + code + short) ·
+severity directive band (🔴/🟡 only) · condition-dependent caveat **line** ·
+status meta · freeze-frame-or-realtime fallback · severity-gated fix · log/sync
+footer. Two render-safety invariants are **locked in the pure builders** (the SSOT,
+so a buggy DOM layer can't violate them):
+
+- **Severity-gated fix (`fixArea`, S-4/F-1 — load-bearing).** A 🔴/🟡 (or uncurated
+  `unknown`) code's fix slot is **REPLACED** by a "diagnose, don't swap parts"
+  directive — the raw `suggestedFix` is never rendered for it, **even when
+  non-null**. Only a 🟢 MINOR code shows the actual fix + a **3-state trust badge**
+  (`trustBadge`: `spool-validated` → ✓ Verified · Spool; `auto-unverified`/
+  `sourced` → 👥 Community · unverified; `none`/absent → ⏳ Looking into it). A
+  missing MINOR fix is honest text ("arrives on next sync"), never fabricated.
+- **Caveat never upgrades the tier (S-13).** `severityCaveat` renders as a caveat
+  line beneath the base chip; the display reads `severity` verbatim, so a P1300
+  WATCH with a "🔴 if knock" caveat stays a **WATCH** chip.
+
+**Freeze-frame fallback (`freezeFrameView`, S-5).** Mode 02 is confirmed
+unsupported on MD326328, so `freezeFrame` is null and the default render is the
+labeled realtime-context fallback ("no freeze frame captured (this ECU) — showing
+context at fault time") — never blank. A grid renders only if a future
+Mode-02-capable ECU supplies one. **`driveId` null → "key-on read"** (a US-404 KOEO
+read), never a fabricated "Drive N" (A-9 cross-link). The takeover "View detail" +
+a ribbon tap both navigate to the Alerts card and open the hero's detail. The
+Mode-04 clear button + gate are US-407.
 
 ### Release Versioning + Deploy Records (US-241, B-047 US-A)
 

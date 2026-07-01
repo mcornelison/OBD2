@@ -68,11 +68,13 @@ def _nodeAvailable() -> bool:
 
 
 def test_dashboardHtml_hasBothCardSlots_s1():
-    """S-1: the carousel has the two card slots (System Status + Battery Health)."""
+    """S-1: the carousel has the System Status + Battery Health card slots, plus
+    the Alerts (DTC) card added in US-406."""
     html = _read(KIT_DIR, "dashboard.html")
-    assert html.count('class="card"') == 2
+    assert html.count('class="card"') == 3
     assert 'data-state="system-status"' in html
     assert 'data-state="battery-health"' in html
+    assert 'data-state="dtc"' in html
 
 
 def test_dashboardHtml_hasPersistentTopBarGlyphs_d3():
@@ -838,3 +840,181 @@ def test_dashboardCss_takeoverPerSeverityStyles_s1_us405():
     assert "#dtc-takeover" in css
     for sev in ("stop", "watch", "minor"):
         assert f'data-severity="{sev}"' in css, f"takeover missing {sev} styling"
+
+
+# ---------------------------------------------------------------------------
+# US-406 -- DTC Alerts card (Card 5) + detail (F-111 / design §5.3-5.4).
+# Hero (worst code + directive) + a tappable list sorted worst-first with `na`
+# sorted LAST; a per-code detail view with a severity-GATED fix (🔴/🟡 replace
+# the fix with a diagnose directive, NO raw fix even if suggestedFix is non-null;
+# 🟢 shows the fix + a 3-state trust badge), the freeze-frame-or-realtime
+# fallback, and the log/sync footer. The display maps a tier -> chip/color/
+# directive ONLY; it never classifies (reads Spool's severity SSOT). All of it
+# is pure + node-tested; the row/detail DOM is thin browser wiring.
+# ---------------------------------------------------------------------------
+
+_US406_NODE_SCRIPT = r"""
+const assert = require('assert');
+const c = require(process.argv[1]);
+
+function code(sev, cd, opts) {
+  opts = opts || {};
+  return {
+    code: cd, severity: sev,
+    short: opts.short === undefined ? (cd + ' desc') : opts.short,
+    long: opts.long || null,
+    status: opts.status || 'stored',
+    setAtTs: opts.setAtTs || '2026-06-30T19:40:00Z',
+    driveId: opts.driveId === undefined ? null : opts.driveId,
+    freezeFrame: opts.freezeFrame === undefined ? null : opts.freezeFrame,
+    suggestedFix: opts.suggestedFix === undefined ? null : opts.suggestedFix,
+    fixProvenance: opts.fixProvenance || 'none',
+    severityCaveat: opts.severityCaveat === undefined ? null : opts.severityCaveat,
+    logged: opts.logged === undefined ? true : opts.logged,
+    syncAcked: opts.syncAcked === undefined ? true : opts.syncAcked,
+    clearEligible: opts.clearEligible === undefined ? false : opts.clearEligible,
+  };
+}
+function dtc(codes) {
+  return { mil: true, codes: codes, newSinceTs: null, clearGate: {},
+           sessionResetLock: [], ts: '2026-06-30T19:40:05Z' };
+}
+
+// --- alertsCardView: hero = worst; rows worst-first; na sorts LAST -----------
+const v = c.alertsCardView(dtc([
+  code('minor', 'P0442', {short: 'Evap small leak'}),
+  code('na', 'P1750', {short: 'Auto-trans solenoid'}),
+  code('stop', 'P0301', {short: 'Cyl 1 misfire'}),
+  code('watch', 'P0420', {short: 'Catalyst low'}),
+]));
+assert.ok(v, 'valid dtc -> card view');
+assert.strictEqual(v.hero.code, 'P0301', 'hero = worst (stop)');
+assert.strictEqual(v.hero.level, 'stop', 'hero chip level = stop');
+assert.ok(/PULL OVER/i.test(v.hero.directive), 'hero carries the stop directive');
+const order = v.rows.map(function (r) { return r.code; });
+assert.deepStrictEqual(order, ['P0301', 'P0420', 'P0442', 'P1750'],
+  'rows sorted worst-first, na LAST (S-12)');
+assert.strictEqual(v.rows[3].chip, 'N/A', 'na row shows the quiet N/A chip');
+assert.strictEqual(v.rows[3].isNa, true, 'na row flagged');
+assert.strictEqual(v.storedCount, 4, 'stored count');
+assert.strictEqual(v.pendingCount, 0, 'pending count');
+
+// --- no-description code -> "No description yet" (I-3), never blank ----------
+const nd = c.alertsCardView(dtc([code('unknown', 'P1601', {short: ''})]));
+assert.strictEqual(nd.rows[0].short, 'No description yet', 'no-desc -> placeholder');
+assert.strictEqual(nd.rows[0].chip, '?', 'unknown chip = ?');
+
+// --- na-only -> NO hero block (S-12: na is never a hero) ---------------------
+const naOnly = c.alertsCardView(dtc([code('na', 'P1750', {short: 'A/T'})]));
+assert.strictEqual(naOnly.hero, null, 'na-only -> no hero block');
+assert.strictEqual(naOnly.rows.length, 1, 'na still listed');
+
+// --- malformed / empty (S-9 the card surface) -------------------------------
+assert.strictEqual(c.alertsCardView(null), null, 'null -> unavailable');
+assert.strictEqual(c.alertsCardView('x'), null, 'string -> unavailable');
+const empty = c.alertsCardView(dtc([]));
+assert.ok(empty, 'empty codes still a (no-fault) view');
+assert.strictEqual(empty.hero, null, 'no codes -> no hero');
+assert.strictEqual(empty.rows.length, 0, 'no rows');
+
+// --- S-4 / F-1: 🔴/🟡 fix REPLACED by a diagnose directive, NO raw fix -------
+const stopFix = c.codeDetailView(code('stop', 'P0301', {suggestedFix: 'Replace coil pack'}));
+assert.strictEqual(stopFix.fix.mode, 'directive', 'stop fix = directive, not a raw fix');
+assert.ok(!/coil pack/i.test(stopFix.fix.text), 'stop NEVER shows the raw fix text (F-1)');
+assert.strictEqual(stopFix.fix.badge, null, 'no trust badge on a directive');
+assert.ok(/PULL OVER/i.test(stopFix.directive), 'stop detail carries the directive band');
+const watchFix = c.codeDetailView(code('watch', 'P0420', {suggestedFix: 'Replace catalytic converter'}));
+assert.strictEqual(watchFix.fix.mode, 'directive', 'watch fix = directive');
+assert.ok(!/catalytic/i.test(watchFix.fix.text), 'watch NEVER shows the raw fix (F-1)');
+
+// --- S-4: 🟢 shows the fix + a trust badge per fixProvenance -----------------
+const minVer = c.codeDetailView(code('minor', 'P0442',
+  {suggestedFix: 'Check/tighten fuel cap', fixProvenance: 'spool-validated'}));
+assert.strictEqual(minVer.fix.mode, 'fix', 'minor shows the fix');
+assert.ok(/fuel cap/i.test(minVer.fix.text), 'minor shows the actual fix text');
+assert.strictEqual(minVer.fix.badge.kind, 'verified', 'spool-validated -> verified badge');
+const minCom = c.codeDetailView(code('minor', 'P0455',
+  {suggestedFix: 'Inspect EVAP hoses', fixProvenance: 'auto-unverified'}));
+assert.strictEqual(minCom.fix.badge.kind, 'community', 'auto-unverified -> community badge');
+const minOff = c.codeDetailView(code('minor', 'P0440', {suggestedFix: null, fixProvenance: 'none'}));
+assert.strictEqual(minOff.fix.badge.kind, 'offline', 'none -> offline badge');
+assert.ok(!/null/i.test(minOff.fix.text), 'a missing fix is honest text, never "null"');
+
+// --- S-5: missing freeze-frame -> labeled fallback, never blank -------------
+const noFF = c.codeDetailView(code('minor', 'P0442', {freezeFrame: null}));
+assert.strictEqual(noFF.freezeFrame.hasFrame, false, 'no freeze frame');
+assert.ok(/no freeze frame captured/i.test(noFF.freezeFrame.fallbackText), 'labeled fallback');
+assert.ok(noFF.freezeFrame.fallbackText.length > 0, 'never blank');
+const withFF = c.codeDetailView(code('stop', 'P0301', {freezeFrame: {rpm: 4250, loadPct: 92}}));
+assert.strictEqual(withFF.freezeFrame.hasFrame, true, 'freeze frame present');
+assert.strictEqual(withFF.freezeFrame.grid.rpm, 4250, 'grid carries the snapshot');
+
+// --- S-13: severityCaveat -> base chip, tier NOT auto-upgraded --------------
+const caveat = c.codeDetailView(code('watch', 'P1300', {severityCaveat: 'stop if knock -- verify'}));
+assert.strictEqual(caveat.level, 'watch', 'base tier stays WATCH (NOT auto-upgraded)');
+assert.strictEqual(caveat.chip, 'WATCH', 'base chip = WATCH');
+assert.ok(/knock/i.test(caveat.caveat), 'the caveat line is rendered');
+
+// --- driveId: null -> "key-on read"; a number -> "Drive N" (US-404 A-9) -----
+const koeo = c.codeDetailView(code('minor', 'P0443', {driveId: null}));
+assert.ok(/key-on read/i.test(koeo.statusMeta), 'null driveId -> key-on read');
+assert.ok(!/Drive/i.test(koeo.statusMeta), 'never fabricates a Drive N for a KOEO read');
+const drv = c.codeDetailView(code('minor', 'P0443', {driveId: 27}));
+assert.ok(/Drive 27/.test(drv.statusMeta), 'numeric driveId -> Drive N');
+
+// --- na detail is a quiet N/A (no directive, no fix) ------------------------
+const naDetail = c.codeDetailView(code('na', 'P1750', {short: 'A/T solenoid'}));
+assert.strictEqual(naDetail.isNa, true, 'na flagged');
+assert.strictEqual(naDetail.fix.mode, 'na', 'na fix disposition');
+assert.strictEqual(naDetail.directive, null, 'na has no directive band');
+
+// --- malformed detail -------------------------------------------------------
+assert.strictEqual(c.codeDetailView(null), null, 'null -> no detail');
+assert.strictEqual(c.codeDetailView('x'), null, 'string -> no detail');
+
+// --- log/sync footer surfaces the capture-before-clear precondition ---------
+const footer = c.codeDetailView(code('minor', 'P0442', {logged: true, syncAcked: true}));
+assert.strictEqual(footer.logged, true, 'logged surfaced');
+assert.strictEqual(footer.syncAcked, true, 'syncAcked surfaced');
+
+console.log('US406_OK');
+"""
+
+
+@pytest.mark.skipif(not _nodeAvailable(), reason="node not available on PATH")
+def test_dtcAlertsCardAndDetailLogic_s4_s5_s12_s13_us406():
+    """US-406: the Alerts card hero+list sort worst-first (na last), and the
+    per-code detail severity-GATES the fix (🔴/🟡 diagnose directive, no raw fix;
+    🟢 fix + trust badge), renders the freeze-frame-or-realtime fallback, keeps a
+    severityCaveat from auto-upgrading the tier, and shows "key-on read" for a
+    null driveId."""
+    result = subprocess.run(
+        ["node", "-e", _US406_NODE_SCRIPT, str(KIT_DIR / "carousel.js")],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "US406_OK" in result.stdout
+
+
+def test_dashboardHtml_hasAlertsCardAndDetail_us406():
+    """US-406: the Alerts card (Card 5) slot + the per-code detail overlay mount
+    are present (JS fills their content per the polled `dtc` state)."""
+    html = _read(KIT_DIR, "dashboard.html")
+    assert 'data-state="dtc"' in html, "Alerts card slot missing"
+    assert 'id="dtc-detail"' in html, "detail overlay mount missing"
+    assert 'id="detail-back"' in html, "detail must have a Back control (never trapped)"
+    assert 'id="detail-body"' in html
+
+
+def test_dashboardCss_hasAlertsCardAndDetailStyles_us406():
+    """US-406: chip styles per severity tier (incl. the quiet N/A) + the detail
+    overlay + trust-badge + fix-directive styles exist."""
+    css = _read(KIT_DIR, "dashboard.css")
+    assert ".dtc-chip" in css
+    for sev in ("stop", "watch", "minor", "na", "unknown"):
+        assert f'.dtc-chip[data-level="{sev}"]' in css, f"chip missing {sev} styling"
+    assert "#dtc-detail" in css
+    assert ".dtc-fix-directive" in css
+    assert ".dtc-trust-badge" in css

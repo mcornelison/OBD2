@@ -301,3 +301,125 @@ html, body {
   border: 1px solid var(--text-tertiary);
 }
 #confirm-ok { border-color: var(--red-light); color: var(--red-light); }
+
+/* --- US-406 DTC Alerts card (Card 5) + detail ------------------------------- */
+/* The display maps a Spool-classified tier -> chip color; it never classifies.
+   The chip level tokens mirror the ribbon/takeover palette so all DTC surfaces
+   share one source. `na` (auto-trans on this manual car) + `unknown` (uncurated)
+   are deliberately un-alarming (neutral surface), never green (honest F-1). */
+.dtc-count {
+  font-size: 11px; color: var(--text-secondary);
+  letter-spacing: 0.04em; margin-bottom: 4px;
+}
+.dtc-noalert { color: var(--text-tertiary); font-style: italic; font-size: 13px; }
+
+.dtc-chip {
+  display: inline-block; flex: 0 0 auto;
+  font-size: 10px; font-weight: 700; letter-spacing: 0.06em;
+  padding: 1px 6px; border-radius: 8px; text-transform: uppercase;
+}
+.dtc-chip[data-level="stop"]    { background: var(--red-light); color: #fff; }
+.dtc-chip[data-level="watch"]   { background: var(--amber-warn); color: #000; }
+.dtc-chip[data-level="minor"]   { background: var(--ok-green);   color: #000; }
+.dtc-chip[data-level="na"]      { background: #2a2f37; color: var(--text-secondary); }
+.dtc-chip[data-level="unknown"] { background: #2a2f37; color: var(--text-secondary); }
+
+/* Hero block: the worst code + its directive (a tappable block -> detail). */
+.dtc-hero {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+  width: 100%; min-height: var(--tap-min);
+  padding: 6px 8px; margin-bottom: 6px; box-sizing: border-box;
+  text-align: left; cursor: pointer;
+  border: 1px solid var(--surface); border-radius: 4px;
+  background: var(--surface); color: var(--text-primary);
+}
+.dtc-hero[data-level="stop"]  { border-color: var(--red-light); }
+.dtc-hero[data-level="watch"] { border-color: var(--amber-warn); }
+.dtc-hero-code { font-size: 17px; font-weight: 800; letter-spacing: 0.04em; }
+.dtc-hero-short { font-size: 12px; color: var(--text-secondary); flex: 1 1 100%; }
+.dtc-hero-directive {
+  font-size: 12px; font-weight: 700; letter-spacing: 0.03em;
+  flex: 1 1 100%; color: var(--text-primary);
+}
+
+/* Compact tappable rows (worst-first, na last). */
+.dtc-row {
+  display: flex; align-items: center; gap: 6px;
+  width: 100%; min-height: var(--tap-min);
+  padding: 2px 8px; box-sizing: border-box; text-align: left; cursor: pointer;
+  border: 0; border-bottom: 1px solid var(--surface);
+  background: transparent; color: var(--text-primary);
+}
+.dtc-row-code { font-size: 13px; font-weight: 700; flex: 0 0 auto; }
+.dtc-row-short {
+  flex: 1; font-size: 12px; color: var(--text-secondary);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.dtc-row-status { font-size: 10px; color: var(--text-tertiary); flex: 0 0 auto; }
+
+/* Per-code detail overlay: a fixed skeleton that scrolls on the panel. A ‹ Back
+   is always present so the operator is never trapped. */
+#dtc-detail {
+  position: fixed; inset: 0; z-index: 45;
+  background: rgba(0, 0, 0, 0.95);
+  display: flex; flex-direction: column;
+  padding: 4px 12px 10px; box-sizing: border-box; overflow-y: auto;
+}
+.detail-head {
+  display: flex; align-items: center; gap: 8px; height: 36px;
+  border-bottom: 1px solid var(--surface);
+}
+#detail-back {
+  min-width: var(--tap-min); min-height: var(--tap-min);
+  background: transparent; border: 0; color: var(--text-secondary);
+  font-size: 14px; cursor: pointer;
+}
+.detail-code-head {
+  font-size: 14px; font-weight: 700; letter-spacing: 0.06em;
+  color: var(--text-primary);
+}
+.detail-body { display: flex; flex-direction: column; gap: 6px; padding-top: 6px; }
+.detail-hero { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.detail-code { font-size: 20px; font-weight: 800; letter-spacing: 0.04em; }
+.detail-short { font-size: 13px; color: var(--text-secondary); flex: 1 1 100%; }
+.detail-directive {
+  font-size: 14px; font-weight: 700; letter-spacing: 0.03em;
+  color: var(--red-light);
+}
+.detail-caveat { font-size: 12px; color: var(--amber-warn); }
+.detail-meta { font-size: 11px; color: var(--text-tertiary); letter-spacing: 0.03em; }
+.detail-freeze {
+  display: flex; flex-direction: column; gap: 2px;
+  padding: 6px 8px; border: 1px solid var(--surface); border-radius: 4px;
+}
+.detail-ff-cell { display: flex; gap: 8px; font-size: 12px; }
+.detail-ff-cell .detail-label { min-width: 70px; }
+.detail-ff-fallback { font-size: 12px; color: var(--text-secondary); font-style: italic; }
+.detail-label {
+  font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--text-secondary);
+}
+.detail-value { font-size: 13px; color: var(--text-primary); }
+.detail-fix {
+  display: flex; flex-direction: column; gap: 4px;
+  padding: 6px 8px; border: 1px solid var(--surface); border-radius: 4px;
+}
+.detail-fix-text { font-size: 13px; color: var(--text-primary); }
+/* The fix slot REPLACED by a diagnose directive for a 🔴/🟡 code (never a raw
+   internet fix on a dangerous code -- F-1/S-4). */
+.dtc-fix-directive {
+  font-size: 13px; font-weight: 700; color: var(--amber-warn); letter-spacing: 0.02em;
+}
+.detail-fix[data-mode="directive"] { border-color: var(--amber-warn); }
+/* 3-state trust badge: verified reads authoritative; community is muted/dashed;
+   offline is a neutral "arrives on next sync". */
+.dtc-trust-badge {
+  align-self: flex-start; font-size: 11px; font-weight: 700;
+  padding: 1px 8px; border-radius: 8px;
+}
+.dtc-trust-badge[data-kind="verified"]  { background: rgba(46, 204, 113, 0.18); color: var(--ok-green); }
+.dtc-trust-badge[data-kind="community"] {
+  border: 1px dashed var(--text-secondary); color: var(--text-secondary);
+}
+.dtc-trust-badge[data-kind="offline"]   { color: var(--text-tertiary); }
+.detail-footer { font-size: 11px; color: var(--text-secondary); margin-top: 2px; }

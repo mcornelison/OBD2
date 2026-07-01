@@ -65,8 +65,27 @@
         <h2 class="card-title">Battery Health</h2>
         <div class="card-body">unavailable</div>
       </section>
+      <!-- US-406 Alerts card (Card 5, F-111): hero (worst code + directive) +
+           a tappable list sorted worst-first (na last). JS fills the body from
+           the polled `dtc` state; a missing/malformed file -> `unavailable`. -->
+      <section class="card" data-state="dtc" aria-label="Alerts">
+        <h2 class="card-title">Alerts</h2>
+        <div class="card-body">unavailable</div>
+      </section>
     </div>
   </main>
+
+  <!-- US-406 per-code detail overlay: opened by a list-row tap, the takeover
+       "View detail", or a ribbon tap. Fixed skeleton (hero · status · freeze-
+       frame-or-realtime fallback · severity-gated fix + trust badge · log/sync
+       footer). A ‹ Back is always present so the operator is never trapped. -->
+  <div id="dtc-detail" hidden role="dialog" aria-label="Code detail">
+    <header class="detail-head">
+      <button id="detail-back" class="tap-target" aria-label="Back to Alerts">‹ Back</button>
+      <span id="detail-code-head" class="detail-code-head"></span>
+    </header>
+    <div id="detail-body" class="detail-body"><!-- JS fills the detail --></div>
+  </div>
 
   <!-- Page dots: one per card, ≥40px touch target (S-2). -->
   <nav id="dots" aria-label="cards"></nav>
