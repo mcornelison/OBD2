@@ -138,3 +138,56 @@ Task: EDR persistence subscriber + rolling-window retention (ADR section 2.3/2.4
   time (mirroring the DTC-KOEO ruling). The safe default (no fn) is always-False -> NULL, so an
   unwired latch never fabricates a drive attribution.
 ---
+
+## 2026-07-01 - US-411 (Agent 1 / Rex / Session 51)
+Task: EDR bench harness + golden-master regression + connect-when-wired drill
+
+### What was implemented:
+- The VERIFICATION cap on the EDR sensor path (US-408 schema, US-409 producer
+  readers, US-410 persistence subscriber all DONE prior). A bench-harness +
+  golden-master-regression + drill-doc story -- NO production-code change.
+- `tests/pi/sensors/test_edr_end_to_end.py` (7 tests): the harness wires the REAL
+  production classes end-to-end (ImuReader + LightReader -> SampleBus ->
+  EdrPersistenceSubscriber -> edr_imu_sample/edr_light_sample) with ONLY the two
+  I2C device handles mocked (_MockImu/_MockLight/_SaturatingLight/_absentFactory).
+  `_buildPipeline` builds the 50/50 no-decimation pipeline; `_pump` probes + runs
+  N deterministic `pollOnce` cycles + drains inline (no poll thread -> row count
+  == poll count exactly; reliable on the slow SMB share).
+- Acceptance coverage: (1) synthetic both-sensor -> one edr_imu_sample row per
+  IMU burst seq [1,2,3] + light rows, burst values + `data_source='fixture'`
+  mapped; (2) absent path (`_absentFactory` raises OSError, flags on) ->
+  `state.sensor.{imu,light}=absent` on a watched STATE subscription + ZERO raw
+  samples published + both tables empty (silence, never a fabricated 0.0);
+  (3) golden-master reuses the F-110 discipline -- FLAGS-OFF (factory returns
+  None, ships dark) `realtime_data` byte-identical to the inline logReading
+  reference; FLAGS-ON OBD-only (a live EDR subscriber coexists on the same bus,
+  subscribes raw.imu.*/raw.light.* only) -> `realtime_data` byte-identical +
+  zero EDR rows (isolation by construction, ADR 1.2); (4) `_SaturatingLight.lux`
+  raises OverflowError -> LightReader publishes lux=None -> persists NULL + raw
+  counts (65535 x3), asserted never a float inf.
+- `docs/edr-connect-when-wired-drill.md`: the CIO connect-when-wired bench
+  acceptance (i2cdetect -y 1 shows 29/36/69, flip pi.sensors.{imu,light}.enabled
+  under pi.bus.enabled, restart, confirm state.sensor.*=present, confirm EDR rows
+  climb, confirm retentionDays vs `df -h`).
+
+### Files changed:
+- Created: `tests/pi/sensors/test_edr_end_to_end.py` (harness + 7 e2e/golden tests)
+- Created: `docs/edr-connect-when-wired-drill.md` (CIO connect-when-wired drill)
+
+### Learnings for future iterations:
+- **Pattern discovered**: to bench-verify an end-to-end pipeline deterministically,
+  mock ONLY the leaf I/O (the I2C device handle) and drive the real classes with
+  `probe()` + N x `pollOnce()` + an inline `subscription.poll()` drain -- exact,
+  thread-free, and share-reliable. Reserve the threaded `start()/stop()` lifecycle
+  for a single dedicated test (already in US-410's suite).
+- **Pattern discovered**: the F-110 golden master is preserved for a NEW consumer
+  "by construction" -- assert it by publishing ONLY raw.obd.* while a live EDR
+  subscriber (raw.imu.*/raw.light.* patterns) coexists on the same bus: the topic
+  patterns cannot match, so realtime_data is byte-identical AND the EDR tables stay
+  empty. No shared write path == no re-verification needed, but the coexistence
+  test makes the guarantee explicit.
+- **Gotcha (saturation)**: the LightReader translates a `.lux` OverflowError to None
+  BEFORE publish, so the saturating mock must RAISE on the `.lux` property (not
+  return inf) to exercise the real `_readLux` saturation branch; raw counts are read
+  separately (`int(dev.visible)` ...) so they still persist.
+---
