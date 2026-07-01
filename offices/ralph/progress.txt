@@ -191,3 +191,58 @@ Task: EDR bench harness + golden-master regression + connect-when-wired drill
   return inf) to exercise the real `_readLux` saturation branch; raw counts are read
   separately (`int(dev.visible)` ...) so they still persist.
 ---
+
+## 2026-07-01 - US-412 (Agent 1 / Rex / Session 51)
+Task: Sync power_log + startup_log from Pi to server (F-101)
+
+### What was implemented (PARTIAL -- power_log DONE, startup_log BLOCKED):
+- Resumed an interrupted prior iteration: the power_log half existed in the
+  working tree but was UNCOMMITTED (loss risk per handbook §13) and BL-013 was
+  filed for the startup_log half. This iteration verified, fixed, and committed.
+- power_log now delta-syncs Pi->server on its integer `id` PK exactly like the
+  battery_health_log pattern: server `PowerLog` model (mirrors Pi
+  SCHEMA_POWER_LOG) + v0013 MariaDB migration (create power_log, idempotent
+  INFORMATION_SCHEMA probe) + Pi `PK_COLUMN['power_log']='id'` (joins
+  DELTA_SYNC_TABLES) + server `_TABLE_REGISTRY` entry (runSyncUpsert maps
+  id -> source_id, upsert on (source_device, source_id)).
+- Volume strategy DECIDED + documented (acceptance #4): raw-every-event.
+  power_log writes one row per power-source / shutdown-stage transition (NOT
+  per poll), so volume is naturally bounded -- no sampling needed.
+- FOUND + FIXED a regression the prior partial missed: adding power_log to the
+  delta set makes `pushAllDeltas` iterate it, so `getDeltaRows` raised
+  "no such table: power_log" against `test_sync_client_upsert.py`'s
+  production-shaped fixture. Fix: the fixture's `_createAllInScopeStubs` now
+  creates a power_log table mirroring SCHEMA_POWER_LOG.
+- startup_log half BLOCKED -> BL-013. TEXT `boot_id` PK cannot be a monotonic
+  delta cursor; server ingest needs an integer source_id. Needs a bespoke
+  natural-key (source_device, boot_id) upsert on BOTH tiers + a design decision
+  -- above the scope-fence (Refusal Rule 1). US-412 stays passes:false.
+
+### Files changed:
+- Modified: `src/pi/data/sync_log.py` (register power_log 'id' in PK_COLUMN)
+- Created: `src/server/db/models.py::PowerLog` (Pi-mirror model)
+- Modified: `src/server/api/sync.py` (_TABLE_REGISTRY power_log entry)
+- Modified: `src/server/migrations/__init__.py` (register v0013)
+- Created: `src/server/migrations/versions/v0013_us412_power_log.py`
+- Created: `tests/server/test_power_log_sync.py` (13 tests)
+- Modified: `tests/pi/data/test_sync_client_upsert.py` (fixture power_log table)
+- Modified: 5 other sync/model/migration tests (in-scope/count expectations)
+- Created: `offices/pm/blockers/BL-013-startup-log-sync-text-pk.md`
+
+### Learnings for future iterations:
+- **Gotcha (delta-set fixtures)**: adding a table to `PK_COLUMN`/DELTA_SYNC_TABLES
+  is a base-module change with blast radius -- EVERY production-shaped test
+  fixture that runs `pushAllDeltas` must now also CREATE that table, or
+  `getDeltaRows` raises "no such table". A targeted single-file test run can
+  miss this; run the whole sync path (tests/pi/sync + tests/scripts +
+  tests/integration) when touching the sync registry.
+- **Gotcha (TEXT-PK sync)**: an insert-once TEXT-PK table (startup_log's
+  boot_id) does NOT fit the delta-by-integer-PK cursor and cannot be forced
+  through the generic path -- it needs a natural-key upsert resolver + a design
+  gate. That is a blocker (BL-013), not a workaround.
+- **Pattern (resume an interrupted iteration)**: when a prior iteration left
+  work uncommitted + a blocker filed, the correct move is verify -> fix any
+  missed regression -> commit (preserve per §13) -> record the block, NOT
+  silently re-do or discard. Committing the completed half de-risks it even
+  though the atomic story stays passes:false.
+---

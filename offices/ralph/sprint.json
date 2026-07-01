@@ -209,7 +209,21 @@
       ],
       "conditionalOutcomes": [],
       "goal": "As the CIO, I want the Pi's power_log + startup_log mirrored to the server, so power/boot history is queryable server-side alongside the rest of the telemetry.",
-      "tasks": []
+      "tasks": [],
+      "blockedBy": "offices/pm/blockers/BL-013-startup-log-sync-text-pk.md",
+      "feedback": {
+        "filesActuallyTouched": [
+          "src/pi/data/sync_log.py (modified -- registered power_log 'id' in PK_COLUMN so it joins DELTA_SYNC_TABLES; doc/scope-comment updates from Pi-only -> synced)",
+          "src/server/db/models.py (created PowerLog model mirroring Pi SCHEMA_POWER_LOG: id/source_id/source_device/synced_at/sync_batch_id sync cols + timestamp/event_type/power_source/on_ac_power/vcell Pi-native cols; UNIQUE(source_device, source_id))",
+          "src/server/api/sync.py (added power_log -> (PowerLog, ()) to _TABLE_REGISTRY so runSyncUpsert maps id -> source_id like every capture table)",
+          "src/server/migrations/__init__.py (registered v0013 in ALL_MIGRATIONS)",
+          "src/server/migrations/versions/v0013_us412_power_log.py (created -- CREATE power_log on live MariaDB; INFORMATION_SCHEMA idempotency probe + post-condition probe)",
+          "tests/server/test_power_log_sync.py (created -- model contract + sync registration + runSyncUpsert insert/idempotent/null-vcell/multi-device, 13 tests)",
+          "tests/pi/data/test_sync_client_upsert.py (modified -- _createAllInScopeStubs now creates the power_log table so pushAllDeltas/getDeltaRows do not raise 'no such table: power_log' now that it is in-scope)",
+          "tests/pi/data/test_sync_log.py, tests/pi/data/test_sync_log_pk_variants.py, tests/server/test_db_models.py, tests/server/test_migration_0012_data_quality_widen.py, tests/server/test_sync.py (modified -- power_log added to in-scope/registry/migration-count expectations)"
+        ]
+      },
+      "completionNotes": "PARTIAL / BLOCKED (passes:false -- atomic story, startup_log half unmet). power_log HALF IS DONE + COMMITTED (0fd1795): power_log now delta-syncs Pi->server on its integer 'id' PK exactly like the battery_health_log pattern (server PowerLog model + v0013 MariaDB migration + Pi PK_COLUMN registration + server _TABLE_REGISTRY entry). Volume strategy DECIDED + documented: raw-every-event (power_log writes one row per power-source / shutdown-stage transition, NOT per poll, so volume is naturally bounded -- no sampling needed). Fixed a regression the prior partial iteration missed: adding power_log to the delta set makes pushAllDeltas iterate it, so the test_sync_client_upsert production-shaped fixture had to create a power_log table (else getDeltaRows raises 'no such table'). GATES: tests/server + tests/pi/data + tests/pi/sync + tests/scripts + tests/integration + orchestrator sync-wiring all green; ruff clean on all modified files. startup_log HALF IS BLOCKED -> BL-013 (offices/pm/blockers/): its PK is boot_id (TEXT, random 32-char hex) which cannot be a monotonic delta cursor, and the server ingest path requires an integer source_id -- startup_log needs a bespoke natural-key (source_device, boot_id) upsert on BOTH tiers + a design decision (which idempotency/cursor model), which is above Ralph's scope-fence and warrants an SSOT/architecture gate (Refusal Rule 1). Recommendation in BL-013: split US-412 -- mark power_log complete, carve startup_log into its own story with a design gate. US-412 stays passes:false until PM/Atlas rule + the startup_log half lands. Does NOT block US-413/414/415 (all independent). DEFERRED-PM: mypy not installed on dev box (module fully type-hinted; same defer as US-407..411)."
     },
     {
       "id": "US-413",
