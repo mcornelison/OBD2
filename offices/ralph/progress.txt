@@ -246,3 +246,44 @@ Task: Sync power_log + startup_log from Pi to server (F-101)
   silently re-do or discard. Committing the completed half de-risks it even
   though the atomic story stays passes:false.
 ---
+
+## 2026-07-01 - US-413 (Agent 1 / Rex / Session 51)
+Task: drive_counter server-side sync gap fix (F-064)
+
+### What was implemented:
+- ROOT CAUSE (acceptance #1): the mirror writer IS running -- SyncClient.pushDriveCounter()
+  (US-314) + server runDriveCounterUpsert() already exist and are tested. The gap is that
+  drive_counter is NOT on the regular sync path: it is a single-row STATE MIRROR (not a
+  delta-by-PK capture table), so it rides a dedicated push -- and that push was wired ONLY
+  into forcePush() (client.py:820, the power-down / explicit manual flush). The two periodic
+  triggers _maybeTriggerIntervalSync (core.py) and triggerDriveEndSync call pushAllDeltas()
+  only, which skips the singleton. So the server last_drive_id advanced ONLY on a clean
+  shutdown flush; an unclean power cycle (common for an in-car Pi) stranded the server
+  counter behind the Pi (the reported "Pi at 10, server at 3").
+- FIX: append `self._syncClient.pushDriveCounter()` after `pushAllDeltas()` inside the
+  EXISTING try/except of BOTH regular ticks. Interval path adds it AFTER the US-340 offline
+  route gate -> inherits the no-route short-circuit (zero doomed-retry cost off home WiFi).
+  Drive-end path pushes the counter where it JUST advanced (minimal server lag). Used
+  `results = list(pushAllDeltas())` so the counter PushResult folds into the existing
+  rowsPushed/failed tally AND the mock's shared return list is never mutated in tests.
+- IDEMPOTENT / NEVER-REGRESS (acceptance #2): server upsert is monotonic --
+  GREATEST(existing, incoming) (MariaDB) / MAX(...) (SQLite) at sync.py:737/747 -- so a
+  repeat or older push never rewinds last_drive_id.
+
+### Files changed:
+- Modified: `src/pi/obdii/orchestrator/core.py` (wire pushDriveCounter into both sync ticks)
+- Modified: `tests/pi/orchestrator/test_sync_wiring.py` (+5 tests, TestDriveCounterRidesRegularSync)
+
+### Learnings for future iterations:
+- **Pattern discovered**: when a "sync X to server" story reports a stale value, first `rg`
+  the push method -- the writer often already EXISTS but is wired into only ONE trigger path.
+  A singleton (drive_counter) rides its own push separate from pushAllDeltas(); check every
+  caller of the regular sync ticks, not just that a push method exists.
+- **Gotcha (mock shared list)**: `mock.pushAllDeltas.return_value = []` returns the SAME list
+  object each call; appending to it in production would mutate the mock's shared list across
+  calls. `results = list(mock_return())` copies it -- defensive, and production's real
+  pushAllDeltas already returns a fresh list so no behavior change.
+- **Gotcha (offline-gate ordering)**: the US-340 route gate returns BEFORE the try/except, so
+  adding the counter push inside the try automatically inherits the offline short-circuit --
+  no extra guard needed, and a test pins that pushDriveCounter is NOT called with no route.
+---
