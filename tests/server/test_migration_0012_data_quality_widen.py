@@ -283,10 +283,12 @@ class TestModuleExports:
         versions = [m.version for m in ALL_MIGRATIONS]
         assert '0012' in versions
 
-    def test_registryStaysSortedWithV0012AtTail(self) -> None:
+    def test_registryStaysSortedWithV0012InOrder(self) -> None:
+        # v0012 was the tail when this test was written; later stories (US-412
+        # v0013 ...) append after it.  Lock the sorted invariant + v0012's
+        # neighbour relationship rather than the now-stale "at tail" claim.
         versions = [m.version for m in ALL_MIGRATIONS]
         assert versions == sorted(versions)
-        assert versions[-1] == '0012'
         assert versions[versions.index('0012') - 1] == '0011'
 
     def test_targetWidthMatchesOrmConstant(self) -> None:

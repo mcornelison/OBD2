@@ -197,6 +197,7 @@ class TestSyncRequestValidation:
             "drive_summary",  # US-206
             "battery_health_log",  # US-217
             "dtc_freeze_frame",  # US-369 (F-109)
+            "power_log",  # US-412 (F-101)
         }
 
 

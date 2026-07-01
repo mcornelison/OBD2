@@ -138,6 +138,7 @@ from src.server.db.models import (
     DriveSummary,
     DtcFreezeFrame,
     DtcLog,
+    PowerLog,
     Profile,
     RealtimeData,
     Statistic,
@@ -184,6 +185,10 @@ _TABLE_REGISTRY: dict[str, tuple[type, tuple[tuple[str, str], ...]]] = {
     # -> mapped to source_id by runSyncUpsert, matching every other
     # synced capture table.  One row per UPS drain event.
     "battery_health_log": (BatteryHealthLog, ()),
+    # US-412 (F-101): power_log capture table.  Integer 'id' PK -> mapped to
+    # source_id by runSyncUpsert.  One row per power-source / shutdown-stage
+    # transition (NOT per poll).  Formerly Pi-only health telemetry.
+    "power_log": (PowerLog, ()),
 }
 
 # US-369 (F-109): dtc_freeze_frame is a synced capture table but is NOT a

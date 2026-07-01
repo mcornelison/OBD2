@@ -45,6 +45,9 @@
 #               |              | (drive_summary + drive_statistics data_quality
 #               |              | VARCHAR(16)->VARCHAR(20); drill-revealed
 #               |              | DataError 1406 on 'attribution_anomaly').
+# 2026-07-01    | Rex (US-412) | Sprint 50 V0.29.4 -- registered v0013 (create
+#               |              | power_log table on live MariaDB; F-101 Pi
+#               |              | power-event history mirror).  Forward-only.
 # ================================================================================
 ################################################################################
 
@@ -110,6 +113,9 @@ from src.server.migrations.versions.v0011_us376_ecu_identity import (
 from src.server.migrations.versions.v0012_us377_data_quality_widen import (
     MIGRATION as _V0012,
 )
+from src.server.migrations.versions.v0013_us412_power_log import (
+    MIGRATION as _V0013,
+)
 
 # ================================================================================
 # Registry -- append new migrations to the end, in ascending version order
@@ -128,6 +134,7 @@ ALL_MIGRATIONS: tuple[Migration, ...] = (
     _V0010,
     _V0011,
     _V0012,
+    _V0013,
 )
 
 

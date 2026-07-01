@@ -46,6 +46,13 @@
 #                               every cycle.  HWM advance semantics unchanged
 #                               (failures never advance last_synced_id), so the
 #                               raw record is preserved + re-drainable.
+# 2026-07-01    | Rex (US-412) | F-101: register power_log (PK 'id') in
+#                               PK_COLUMN so power-event history syncs
+#                               Pi->server.  Append-only integer-PK delta
+#                               like every other capture table; formerly
+#                               Pi-only.  (startup_log is NOT added here --
+#                               its TEXT boot_id PK does not fit the delta
+#                               cursor; see BL-013.)
 # ================================================================================
 ################################################################################
 
@@ -70,10 +77,12 @@ section 2.1):
 
 - Included: ``realtime_data``, ``statistics``, ``profiles``, ``vehicle_info``,
   ``ai_recommendations``, ``connection_log``, ``alert_log``,
-  ``calibration_sessions``.
-- Excluded (Pi-only -- never uploaded): ``power_log``.
-  (``battery_log`` was also excluded historically but was deleted in US-223
-  when its sole writer :class:`BatteryMonitor` was removed.)
+  ``calibration_sessions``, ``power_log`` (US-412).
+- Formerly Pi-only, now synced: ``power_log`` was local-only health
+  telemetry until US-412 (F-101) mirrored it to the server so power/boot
+  history is queryable server-side.  (``battery_log`` was also excluded
+  historically but was deleted in US-223 when its sole writer
+  :class:`BatteryMonitor` was removed.)
 
 Any call that references a table outside :data:`IN_SCOPE_TABLES` raises
 :class:`ValueError`.  This doubles as the SQL-injection guard: the table
@@ -153,6 +162,13 @@ PK_COLUMN: dict[str, str] = {
     # (the cross-tier vehicle_info_vin -> server vehicle_info_id resolution
     # happens server-side in src/server/api/sync.py).
     'dtc_freeze_frame':     'id',
+    # US-412 (F-101): power_log -- one row per power-source / shutdown-stage
+    # transition (NOT per poll), append-only with an integer 'id' PK, so it
+    # delta-syncs exactly like the other capture tables.  Local-only Pi
+    # health telemetry until US-412 mirrored it to the server so power/boot
+    # history is queryable server-side.  Volume is naturally bounded by real
+    # power events (raw-every-event; no sampling needed).
+    'power_log':            'id',
 }
 
 # Append-only (event-stream) tables eligible for delta-by-PK sync.
@@ -173,10 +189,10 @@ SNAPSHOT_TABLES: frozenset[str] = frozenset({
 
 # Union of delta + snapshot tables -- preserved for BC.  Used by the server
 # payload whitelist (``_validateTable``), ``scripts/seed_pi_fixture.py``,
-# and ``tests/scripts/test_seed_pi_fixture.py``.  power_log is intentionally
-# absent: it is local-only Pi health telemetry that the server does not want.
-# (battery_log was also absent historically but the table was removed in
-# US-223 when BatteryMonitor was deleted.)
+# and ``tests/scripts/test_seed_pi_fixture.py``.  power_log joined the delta
+# set in US-412 (F-101) so power/boot history mirrors to the server.
+# (battery_log was absent historically but the table was removed in US-223
+# when BatteryMonitor was deleted.)
 # See specs/architecture.md "Sync Log Table".
 IN_SCOPE_TABLES: frozenset[str] = DELTA_SYNC_TABLES | SNAPSHOT_TABLES
 
