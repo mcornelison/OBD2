@@ -1,3 +1,18 @@
+---
+sprint: 50
+version: V0.29.4
+status: draft
+createdAt: 2026-06-30
+createdBy: Marcus (PM)
+reviewTier: load-bearing
+forksFrom: dev
+epic: E-006, E-002, E-OPS
+feature: F-113, F-114, F-101, F-064, F-079
+theme: EDR sensor-reader (hardware-deferred) built to the FINAL ADR + quick sync/data-pipeline drain
+validationMode: BENCH ONLY (CIO waived drive requirements; mock-sensor rigs + i2cdetect + DB-column checks + golden-master regression -- NO drive drills)
+selectedStories: [US-408, US-409, US-410, US-411, US-412, US-413, US-414, US-415]
+---
+
 # PRD: Sprint 50 / V0.29.4 — EDR sensor-reader (hardware-deferred) + quick sync drain
 
 | Field | Value |
