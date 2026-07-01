@@ -4,7 +4,7 @@
 |---|---|
 | **Author** | Atlas (Architect) |
 | **Date** | 2026-06-30 |
-| **Status** | DRAFT — contract complete; **numeric defaults pending CIO sit-down** (see §7 Open Decisions) |
+| **Status** | **FINAL** — all 6 decisions resolved (CIO 2026-06-30, §7); ready to groom. Only deploy-time `retentionDays` sizing + tomorrow's `i2cdetect 29/36/69` remain. |
 | **Feature** | F-113 (bus-contract) + F-114 (versioned raw-sensor schema); extends F-110 (EDR dedicated-reader bus, shipped V0.29.0) |
 | **Gate** | Atlas EDR gate APPROVED 2026-06-30 (items 1–5); this ADR is the concrete DDL + framing the build leans on |
 | **Refs** | `docs/superpowers/specs/2026-06-18-edr-dedicated-reader-bus-contract-design.md` · `docs/edr-sensors-wiring-reference.md` · `src/pi/bus/{sample,bus,persistence_subscriber}.py` · A-14, A-4 |
@@ -36,7 +36,7 @@ The reader publishes on the existing `SampleBus` using the shipped `Sample` enve
 ### 1.2 Cadence + QoS/backpressure
 
 - **QoS = LOSSY** on every sensor topic — `Subscription` drop-oldest on a full bounded queue, **producer never blocks** (the shipped semantics). Sensor sampling is lossy-OK; the OBD/sync path keeps its own LOSSLESS lane, unchanged.
-- **Rates (PROPOSED defaults — CIO-tunable, §7-Q1/Q2):** IMU burst **50 Hz**; light **1 Hz**. Sample rate is **decoupled from persist rate** (§2.3): the reader may publish at full rate for a future high-rate display consumer while persistence writes at a lower, configured cadence.
+- **Rates (RESOLVED, CIO 2026-06-30 — "low baseline now, event-bursts in F-115"):** IMU burst published to the bus at **50 Hz** (for a future live g-meter/compass consumer); light **1 Hz**. Persistence is **decoupled** and writes the **baseline** (§2.3) — the higher-rate event-triggered bursts are F-115. Full IMU burst (accel+gyro+mag+temp) read **per poll → one row** (§7-Q2 resolved: yes).
 - **Golden-master guarantee (the hard constraint):** sensor channels share **no code path** with `raw.obd.* → realtime_data`. The F-110 `PersistenceSubscriber` and its `realtime_data` INSERT are untouched; the byte-identical golden-master test holds **by construction**, not by re-verification. New sensor persistence is a *sibling* subscriber writing *sibling* tables.
 
 ---
@@ -90,21 +90,24 @@ CREATE INDEX IF NOT EXISTS ix_edr_light_sample_ts       ON edr_light_sample(ts_u
 
 Conventions match `realtime_data` (`database_schema.py`): `CREATE TABLE IF NOT EXISTS`, snake_case columns, the `data_source` CHECK contract (US-195/US-212), `INTEGER PRIMARY KEY AUTOINCREMENT`.
 
-### 2.3 Persist rate decoupled from sample rate
-The IMU persistence subscriber writes at a **configured persist cadence** (`pi.sensors.imu.persistHz`, PROPOSED default = the sample rate, i.e. no decimation — pending §7-Q1). Decimation, if chosen, happens at the persistence subscriber, not the producer — the bus still carries full-rate for any live display consumer.
+### 2.3 Persist rate decoupled from sample rate (baseline)
+The IMU persistence subscriber writes at a **configured baseline cadence** `pi.sensors.imu.persistHz` — **default 25 Hz** (decimated from the 50 Hz bus rate: the "low baseline" the CIO chose; smooth enough for g/heading analysis, ~half the volume). Decimation happens at the persistence subscriber, not the producer — the bus still carries full 50 Hz for a live display consumer. Light persists at its 1 Hz sample rate. The event-triggered **high-rate** capture (100–200 Hz windows) is **F-115**, not this phase.
 
-### 2.4 `drive_id` = NULL-when-no-drive (ONE rule across the Pi)
-Sensor rows stamp `drive_id` from `getCurrentDriveId()` **only when a drive is RUNNING**, else **NULL, stamped explicitly** — the same latch discipline as the A-9 gap-fence (US-388) and the DTC KOEO ruling. A sensor sample must never inherit a stale `_currentDriveId`. One NULL-latch rule, three consumers.
+### 2.4 Capture window = ALWAYS-ON (CIO 2026-06-30, §7-Q3) + `drive_id` NULL-when-no-drive
+The reader persists **whenever it runs — key-on including engine-off** (true black-box; a parked/key-on event is captured). Rows stamp `drive_id` from `getCurrentDriveId()` **only when a drive is RUNNING**, else **NULL, stamped explicitly** — the same latch discipline as the A-9 gap-fence (US-388) and the DTC KOEO ruling. A sensor sample must never inherit a stale `_currentDriveId`. One NULL-latch rule, three consumers.
 
 ### 2.5 Migration shape
 Forward-only. `CREATE TABLE IF NOT EXISTS` at startup (idempotent) via the `src/common/edr` schema module, plus the project's `ensure<Column>` ALTER pattern for later additive columns; `schema_version` bumps when the contract changes. **Sync: Pi-LOCAL ONLY this phase** — no server table is created and no sync path is wired; F-115 adds server persistence generated from the same contract with a downsample/event-window policy (so zero divergence by construction).
+
+### 2.6 Retention = rolling window (CIO 2026-06-30, §7-Q4)
+Always-on persistence needs a bound. A periodic purge job (piggybacked on an existing maintenance tick, e.g. the sync/health loop — no new daemon) **deletes rows older than `pi.sensors.retentionDays`** from both tables. **Default 7 days**, tunable. Rough disk math at the 25 Hz IMU baseline, always-on: 25 Hz × 86 400 s ≈ 2.16 M IMU rows/day ≈ **~325 MB/day** (~150 B/row incl. indexes) → **~2.3 GB for a 7-day window**; light is negligible. **Confirm `retentionDays` against the Pi's actual free space at deploy** (a 64 GB+ card absorbs 7 days easily; drop to 3 days ≈ ~1 GB if tight). The purge is a plain `DELETE ... WHERE ts_utc < :cutoff` + periodic `PRAGMA optimize` / occasional `VACUUM`.
 
 ---
 
 ## 3. Graceful-absence contract (item 3)
 
 - **Probe at init** — the reader pings each sensor's I²C address (a test read). **Absent → log once at WARN, publish NO samples for that channel, persist nothing.** A sensor that isn't wired produces *silence*, never a fabricated `0.0` / `null` sample a downstream consumer could mistake for a real zero-g / zero-lux reading (honest-instrument).
-- **Optional presence STATE topic** — the reader publishes a retained STATE topic `state.sensor.imu` / `state.sensor.light` = `present|absent` so a future UI shows "sensor not installed" honestly (STATE = last-value retained, already in the bus). Not required for this phase; recommended.
+- **Presence STATE topic (INCLUDED — CIO §7-Q6):** the reader publishes a retained STATE topic `state.sensor.imu` / `state.sensor.light` = `present|absent` (STATE = last-value retained, already in the bus). Cheap, enables an honest "sensor not installed" UI later — and is the fastest live confirmation during **tomorrow's wiring debug** that the probe detected each sensor.
 - **Connect-when-wired** — on the next reader start (or a periodic re-probe, PROPOSED off for v1), the probe succeeds and the channel goes live with **no code change**. A flag flipped `true` before the sensor is physically present is **safe** — it takes the absent path, not a crash.
 - **Saturation honesty (light)** — TSL2591 `.lux` returns overflow when saturated; the reader publishes `lux=None` (persist NULL) and still publishes raw counts. Never `inf`.
 
@@ -118,9 +121,10 @@ Per-sensor, under the bus master gate:
 pi.bus.enabled              (existing)  — master; the whole SampleBus
   pi.sensors.imu.enabled    (NEW, default false)  — requires pi.bus.enabled
   pi.sensors.light.enabled  (NEW, default false)  — requires pi.bus.enabled
-  pi.sensors.imu.sampleHz   (NEW, default 50)     — §7-Q1
-  pi.sensors.imu.persistHz  (NEW, default = sampleHz)  — §2.3 / §7-Q1
+  pi.sensors.imu.sampleHz   (NEW, default 50)     — bus publish rate (live display)
+  pi.sensors.imu.persistHz  (NEW, default 25)     — decimated baseline persist (§2.3)
   pi.sensors.light.sampleHz (NEW, default 1)
+  pi.sensors.retentionDays  (NEW, default 7)      — rolling-window purge (§2.6); confirm vs Pi free space at deploy
 ```
 
 Ships dark: both `enabled` false. The CIO flips each **as he wires that sensor** — independent, deterministic connect-when-wired. A sensor whose flag is on but which probes absent → graceful-absence (§3), never a crash.
@@ -131,7 +135,7 @@ Ships dark: both `enabled` false. The CIO flips each **as he wires that sensor**
 
 Add under the EDR-bus section of `specs/architecture.md` (new subsection, e.g. **§10.8.2 "EDR sensor reader + raw-sensor persistence (Sprint 50 / V0.29.4)"**):
 
-> **EDR sensor reader (F-113/F-114).** A dedicated reader polls two I²C sensors on bus-1 — ICM-20948 9-DoF IMU (@0x69) and TSL2591 light (@0x29) — and publishes them on the F-110 `SampleBus` as **additive** LOSSY topics (`raw.imu.{accel,gyro,mag,temp}`, `raw.light.{lux,raw}`), sharing one `seq` per IMU burst. The channels never touch the `raw.obd.* → realtime_data` path, so the F-110 byte-identical golden master is preserved by construction. A sibling persistence subscriber writes `edr_imu_sample` / `edr_light_sample`, whose DDL is authored once in the versioned `src/common/edr/sensor_schema.py` contract (A-4 anti-divergence: the future server table derives from the same module). Rows stamp `drive_id` only when a drive is RUNNING, else explicit NULL (the A-9/DTC-KOEO latch rule). The reader is **graceful-absent** (probe → silence, never fabricate) and ships **dark** behind `pi.sensors.{imu,light}.enabled` under `pi.bus.enabled`. Raw samples are **Pi-local this phase**; server sync + the event vault + vehicle-frame transforms are F-115. The reader stores **sensor-frame** values; vehicle-frame rotation + magnetometer hard/soft-iron calibration are deferred transforms (F-115), pending the recorded mounting axis-orientation.
+> **EDR sensor reader (F-113/F-114).** A dedicated reader polls two I²C sensors on bus-1 — ICM-20948 9-DoF IMU (@0x69) and TSL2591 light (@0x29) — and publishes them on the F-110 `SampleBus` as **additive** LOSSY topics (`raw.imu.{accel,gyro,mag,temp}`, `raw.light.{lux,raw}`), sharing one `seq` per IMU burst. The channels never touch the `raw.obd.* → realtime_data` path, so the F-110 byte-identical golden master is preserved by construction. A sibling persistence subscriber writes `edr_imu_sample` / `edr_light_sample`, whose DDL is authored once in the versioned `src/common/edr/sensor_schema.py` contract (A-4 anti-divergence: the future server table derives from the same module). Persistence is **always-on** (key-on incl. engine-off — true black-box) at a decimated baseline (`persistHz`, default 25 Hz); rows stamp `drive_id` only when a drive is RUNNING, else explicit NULL (the A-9/DTC-KOEO latch rule). A rolling-window purge job (`retentionDays`, default 7) bounds the Pi-local volume. The reader is **graceful-absent** (probe → silence, never fabricate) and ships **dark** behind `pi.sensors.{imu,light}.enabled` under `pi.bus.enabled`. Raw samples are **Pi-local this phase**; server sync, the event vault, and the event-triggered high-rate (100–200 Hz) capture are F-115. The reader stores **sensor-frame** values; vehicle-frame rotation + magnetometer hard/soft-iron calibration are deferred transforms (F-115), pending the recorded mounting axis-orientation.
 
 Also add the schema as a worked example to `specs/ssot-design-pattern.md` (A-14 gate #4: SSOT for a cross-tier fact, authored once).
 
@@ -143,19 +147,18 @@ Also add the schema as a worked example to `specs/ssot-design-pattern.md` (A-14 
 
 ---
 
-## 7. Open Decisions — need the CIO (these set the numbers, not the shape)
+## 7. Decisions — RESOLVED (CIO 2026-06-30)
 
-**Q1 — IMU sample + persist rate.** What is the EDR intent? (a) *everyday g-meter / compass* → ~10–25 Hz is plenty; (b) *hard-event / crash forensics* → ≥100–200 Hz **around events** (which really wants event-triggered high-rate bursts = F-115), with a low baseline otherwise. Proposed default: 50 Hz sample, persist = sample (no decimation). Your call on the baseline rate and whether we decimate persistence.
+| # | Decision | Resolution |
+|---|---|---|
+| **Q1** | IMU intent / rate | **Both** — 50 Hz bus baseline now; **event-triggered high-rate (100–200 Hz) bursts = F-115.** Persist a decimated **25 Hz baseline** (§2.3). |
+| **Q2** | Burst-per-poll, one row | **Yes** — accel+gyro+mag+temp read together each poll → one `edr_imu_sample` row (§1.1). |
+| **Q3** | Capture window | **Always-on** (key-on incl. engine-off — true black-box); `drive_id` NULL off-drive (§2.4). |
+| **Q4** | Retention | **Rolling window**, purge older than `retentionDays` (default 7; ~2.3 GB; confirm vs Pi free space at deploy) (§2.6). |
+| **Q5** | Frame / mag cal | **Store raw sensor-frame now**; vehicle-frame rotation + mag hard/soft-iron cal deferred to F-115. **CIO mounts + records the axis map at tomorrow's wiring** (Spool's owed axis-orientation input folds there). |
+| **Q6** | Presence STATE topic | **Included** — `state.sensor.{imu,light}=present|absent` (§3); also the fastest live confirmation during tomorrow's wiring debug. |
 
-**Q2 — full IMU burst per poll, one row?** Read accel+gyro+mag+temp together each poll → one `edr_imu_sample` row (simplest, mag@50 Hz is cheap). OK, or do you want mag/temp at a slower separate cadence?
-
-**Q3 — always-on, or drive-only?** A black-box arguably wants to capture an event even while parked (key-on, engine-off). Persist whenever the reader runs (drive_id NULL off-drive), or only during a RUNNING drive to bound volume? This is the main volume driver.
-
-**Q4 — retention/rotation.** 50 Hz always-on IMU ≈ 4.3M rows/day on the Pi's SQLite. Do we (a) keep a rolling window (N days, purge older), (b) cap this phase's rate low and defer rotation to the F-115 event-vault, or (c) ring-buffer? What's N / the disk budget on the Pi?
-
-**Q5 — axis orientation + mag calibration.** Confirm we store **raw sensor-frame** values now and defer the vehicle-frame rotation + mag hard/soft-iron cal to F-115 (needs the final mounted orientation — the wiring ref flagged "write down which pad-axis = forward/lateral/up"). Is that mounting decided yet, or still open? (Spool also has an owed axis-orientation input.)
-
-**Q6 — presence STATE topic.** Include `state.sensor.{imu,light}=present|absent` now (cheap, enables an honest "not installed" UI later), or defer to F-115?
+All numeric defaults are set; the only deploy-time confirmation is `retentionDays` vs the Pi's actual free space. **DRAFT → FINAL.**
 
 ---
 
