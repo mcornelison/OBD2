@@ -26,3 +26,34 @@ Task: General natural-key snapshot-sync path + SNAPSHOT_SYNC registry (Atlas-rul
 - **Gotcha (process)**: The code was built complete last session but the headless loop dropped an async regression result before commit -> read as a no-progress stall -> PM had to hand-land it (600b8a0). RUN THE GATE SYNCHRONOUSLY (prompt step 5) and commit before ending the iteration.
 - **Gotcha (shared checkout)**: The working tree changed under me mid-iteration (PM committed 600b8a0 while I was reading files) -- git status from session start was stale. Always re-check HEAD before assuming uncommitted work needs committing.
 ---
+
+## 2026-07-01 - US-417 (Rex / Agent 1)
+Task: Register startup_log onto the snapshot-sync path (deps US-416; closes BL-013)
+
+### What was implemented:
+- Shared registry: SNAPSHOT_SYNC['startup_log'] = SnapshotSyncSpec(naturalKeyCols=('boot_id',), cursorCol='recorded_at'). Defined ONCE, both tiers reference the shared dict (A-4). The US-416 same-object A-4 proof (test_piAndServerSeeTheSameRegistration) stays green.
+- Server StartupLog model (src/server/db/models.py): UNIQUE(source_device, boot_id), NO source_id -- natural-key dedup, distinct from the id->source_id delta path. Timestamp columns are ISO-8601 TEXT (VARCHAR) matching the Pi, so journal timestamps (possibly NULL) land verbatim with no DATETIME coercion.
+- Server sync (src/server/api/sync.py): import StartupLog + _SNAPSHOT_TABLE_REGISTRY['startup_log']=StartupLog. runSyncUpsert already routes registered snapshot tables to runSnapshotUpsert (US-416); this makes startup_log resolvable.
+- Server migration v0014_us417_startup_log.py: CREATE TABLE startup_log ... UNIQUE KEY uq_startup_log_boot(source_device, boot_id); INFORMATION_SCHEMA pre/post probes (idempotent, mirrors v0013 power_log). Registered in ALL_MIGRATIONS + mod-history.
+- Pi recorded_at 'if absent' guard (src/pi/obdii/database_schema.py::ensureStartupLogRecordedAt): idempotent, PRAGMA-guarded, nullable-TEXT ALTER (SQLite forbids the schema's non-constant strftime default), skips a missing table. Wired into boot_progress._writeStartupLogRow next to ensureStartupLogForensicColumns.
+- Pi pushSnapshot missing-table guard (src/pi/sync/client.py): sqlite_master check -> EMPTY when a registered snapshot table isn't CREATE-d yet (mirrors _readLocalDriveCounter), so pushAllDeltas survives a fresh/partial DB.
+
+### Files changed:
+- Modified: `src/common/sync/snapshot_registry.py` (register startup_log)
+- Created: `src/server/db/models.py` StartupLog model (+ __all__), `src/server/migrations/versions/v0014_us417_startup_log.py`
+- Modified: `src/server/api/sync.py` (import + registry), `src/server/migrations/__init__.py` (register v0014)
+- Modified: `src/pi/obdii/database_schema.py` (ensureStartupLogRecordedAt), `src/pi/diagnostics/boot_progress.py` (call guard), `src/pi/sync/client.py` (missing-table guard)
+- Created: `tests/server/test_startup_log_sync.py`, `tests/pi/obdii/test_startup_log_recorded_at.py`
+- Modified: `tests/pi/sync/test_sync_client_snapshot.py` (missing-table tests), `tests/pi/sync/test_sync_client.py` + `tests/pi/sync/test_sync_force_push.py` + `tests/pi/data/test_sync_client_upsert.py` (sweep-count +1 snapshot table), `tests/server/test_db_models.py` (24->25 tables)
+
+### Verification (this iteration, synchronous):
+- pytest tests/server + tests/pi/obdii = all pass (0 failures, only skips)
+- pytest tests/pi/sync + tests/pi/data + tests/common/sync + tests/pi/diagnostics + tests/integration/test_pi_to_server_e2e + tests/server/test_startup_log_sync = 475 passed
+- 26 US-417 direct tests pass; ruff clean on all 15 touched files
+- Committed 58ac97d before ending the iteration (prompt step 5)
+
+### Learnings for future iterations:
+- **Pattern**: Registering the FIRST table onto a generic sweep mechanism (US-416 shipped SNAPSHOT_SYNC empty) is where the sweep's missing-table / count-lock-down edges first bite. Grep tests for `len(IN_SCOPE_TABLES)` / total-table-count assertions BEFORE registering -- they encode the old sweep size and must grow by the registered set.
+- **Gotcha**: recorded_at has been in startup_log since US-263 (git -S proved it), so the 'if absent' Pi migration is a defensive no-op, not a real backfill. Verify a column's history with `git log -S` before writing a migration for it -- don't fabricate a backfill the schema never needed.
+- **Gotcha (data hygiene)**: ralph_agents.json was already malformed JSON (a stray `"` mid-note from a prior session's concatenation) -- fixed by rewriting the note clean. json.load the agents/sprint files after editing; a broken agents.json would silently break ralph.sh's claim logic.
+---

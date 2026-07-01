@@ -66,7 +66,7 @@
       "type": "normal",
       "size": "M",
       "status": "sprint-ready",
-      "passes": false,
+      "passes": true,
       "acceptance": [
         "startup_log registered in SNAPSHOT_SYNC with naturalKeyCols=(boot_id), cursor recorded_at",
         "two migrations: Pi recorded_at column (if absent); server UNIQUE(source_device, boot_id) -- deployed AND verified via INFORMATION_SCHEMA",
@@ -81,7 +81,27 @@
       ],
       "conditionalOutcomes": [],
       "goal": "As the CIO, I want startup_log mirrored to the server, so boot history is server-queryable.",
-      "tasks": []
+      "tasks": [],
+      "feedback": {
+        "filesActuallyTouched": [
+          "src/common/sync/snapshot_registry.py",
+          "src/server/db/models.py",
+          "src/server/api/sync.py",
+          "src/server/migrations/versions/v0014_us417_startup_log.py",
+          "src/server/migrations/__init__.py",
+          "src/pi/obdii/database_schema.py",
+          "src/pi/diagnostics/boot_progress.py",
+          "src/pi/sync/client.py",
+          "tests/server/test_startup_log_sync.py",
+          "tests/pi/obdii/test_startup_log_recorded_at.py",
+          "tests/pi/sync/test_sync_client_snapshot.py",
+          "tests/pi/sync/test_sync_client.py",
+          "tests/pi/sync/test_sync_force_push.py",
+          "tests/pi/data/test_sync_client_upsert.py",
+          "tests/server/test_db_models.py"
+        ]
+      },
+      "completionNotes": "Committed 58ac97d. Registered startup_log onto the US-416 SNAPSHOT_SYNC mechanism (BL-013 closed). (1) Shared registry SNAPSHOT_SYNC['startup_log']=(naturalKeyCols=('boot_id',), cursorCol='recorded_at') -- one definition, both tiers reference it via the shared dict (A-4; proven by test_snapshot_registry.test_piAndServerSeeTheSameRegistration which stays green). (2) Server: new StartupLog model with UNIQUE(source_device, boot_id) and NO source_id (natural-key dedup, distinct from the id->source_id delta path) + _SNAPSHOT_TABLE_REGISTRY['startup_log']=StartupLog + import; runSyncUpsert routes startup_log to runSnapshotUpsert. (3) Server migration v0014_us417_startup_log (CREATE TABLE ... UNIQUE KEY uq_startup_log_boot(source_device,boot_id), INFORMATION_SCHEMA-probe idempotent, mirrors v0013) registered in ALL_MIGRATIONS. (4) Pi recorded_at 'if absent' migration: recorded_at has shipped in SCHEMA_STARTUP_LOG since the table's creation (US-263, git 665863e -- verified), so it is NEVER absent on a real Pi DB; added idempotent ensureStartupLogRecordedAt guard anyway (nullable TEXT ALTER -- SQLite forbids the non-constant strftime default; skips a missing table) + wired it into boot_progress._writeStartupLogRow. (5) pushSnapshot now guards a registered-but-not-created snapshot table (sqlite_master check -> EMPTY, mirrors _readLocalDriveCounter) so the new pushAllDeltas sweep survives a fresh/partial DB (the _createEmptyInScopeTables shape) -- this prevented a 'no such table: startup_log' regression across the sync suites. Idempotent re-sync on (source_device, boot_id) proven (test_reSyncIsIdempotentOnNaturalKey: 2nd cycle updated=1, count stays 1). VERIFICATION (synchronous): pytest tests/server + tests/pi/obdii = all pass (0 failures, only skips); tests/pi/sync + tests/pi/data + tests/common/sync + tests/pi/diagnostics + tests/integration/test_pi_to_server_e2e + tests/server/test_startup_log_sync = 475 pass; 26 US-417 direct tests pass; ruff clean on all 15 touched files. Updated 5 lock-down tests for the +1 registered snapshot table (test_sync_client, test_sync_force_push, test_sync_client_upsert sweep counts; test_db_models 24->25 tables) -- legitimate: registering the first snapshot table grows the pushAllDeltas sweep by one. DEPLOY DEFERRED to PM (BENCH-ONLY sprint): apply v0014 + INFORMATION_SCHEMA-verify UNIQUE(source_device,boot_id) on live MariaDB, and the live Pi->server sync-cycle row-match check, run in the deploy window (the migration carries its own INFORMATION_SCHEMA post-condition probe)."
     },
     {
       "id": "US-418",
