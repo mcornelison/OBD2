@@ -287,3 +287,55 @@ Task: drive_counter server-side sync gap fix (F-064)
   adding the counter push inside the try automatically inherits the offline short-circuit --
   no extra guard needed, and a test pins that pushDriveCounter is NOT called with no route.
 ---
+
+## 2026-07-01 - US-414 (Agent 1 / Rex / Session 51)
+Task: sync_history timezone mismatch fix (F-079)
+
+### What was implemented:
+- PROVENANCE FIRST (Refusal Rule 1 -- verify before acting): F-079 == B-079
+  (renamed 2026-05-27; backlog left status:pending). The reported bug -- every
+  recent sync_history row had started_at and completed_at EXACTLY 5h (18000s =
+  America/Chicago CDT offset) apart WITHIN one row -- was ALREADY FIXED by US-333
+  (2026-05-12). `_createSyncHistoryRow` stamps started_at from
+  `datetime.now(UTC).replace(tzinfo=None)`; `_completeSyncHistoryRow` (via
+  postSync syncedAt) and `_failSyncHistoryRow` stamp completed_at from the same
+  UTC clock. The US-333 regression test `test_sync_history_timestamps_utc.py`
+  pins create+complete consistency and RUNS GREEN today (verified 2 passed).
+- All 3 US-414 ACs were already satisfied by existing code+test. Rather than
+  fabricate a redundant production edit (dishonest), I closed the ONE genuine
+  coverage gap: the FAIL path (`_failSyncHistoryRow`, which also stamps
+  completed_at on a sync error) had NO regression pin -- a future revert of that
+  line to DB-local `func.now()` would silently reintroduce the 5h mismatch on
+  error rows, uncaught.
+- Added `test_failSyncHistoryRow_stampsCompletedAtFromUtcClock`: freezes the
+  module UTC clock to two 2031 moments 4s apart, creates then fails a row,
+  asserts the failed row's completed_at == the frozen fail moment and
+  completed_at-started_at == 4s (< 60s, not the ~18000s artifact). All three
+  writer paths (create/complete/fail) are now UTC-pinned.
+- Filed TD-058 (latent `server_default=func.now()` = MariaDB-server-local footgun
+  on SyncHistory + AnalysisHistory.started_at) + an A2AL inbox note to Marcus
+  (F-079==B-079 duplicate provenance; suggest marking the backlog item resolved).
+
+### Files changed:
+- Modified: `tests/server/test_sync_history_timestamps_utc.py` (fail-path UTC pin + header)
+- Created: `offices/pm/tech_debt/TD-058-synchistory-analysishistory-started-at-local-default-footgun.md`
+- Created: `offices/pm/inbox/2026-07-01-from-rex-us414-f079-already-fixed-by-us333.md`
+- (NO production code change -- the fix already exists from US-333)
+
+### Learnings for future iterations:
+- **Pattern discovered**: a groomed story can be a re-grooming of an already-closed
+  bug (F-079 renamed from B-079, which US-333 already fixed). ALWAYS verify the
+  reported symptom against current code + run the existing regression test FIRST.
+  If green, the honest move is to document the provenance and close the genuine
+  residual (here: an untested sibling writer path), NOT to fabricate a redundant
+  edit to "earn" the story.
+- **Gotcha (latent DB default)**: `server_default=func.now()` maps to MariaDB
+  `CURRENT_TIMESTAMP` = SERVER-LOCAL time (CDT/CST), NOT UTC. US-333 patched the
+  writer but left the column default -- a latent footgun for any future writer
+  that omits the column. NOT red-testable on the dev box (SQLite CURRENT_TIMESTAMP
+  is already UTC), so it's a MariaDB-migration + SSOT decision -> TD, not inline.
+- **Gotcha (discriminating a green-on-arrival pin)**: freeze the module clock to a
+  far-future sentinel (2031) so a DB-local fallback would stamp real wall-clock
+  (2026) and the ==-sentinel assertion fails -- proves the pin genuinely tests the
+  UTC-clock path, not just the mock.
+---
