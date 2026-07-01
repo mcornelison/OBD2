@@ -85,3 +85,29 @@ Task: Idle log-noise + sync-cadence hygiene (F-077 + F-078 + F-058, verify-first
 - **Gotcha (idle POST accounting)**: a server sync_history row is written per POST regardless of payload; to stop idle growth you must stop the Pi from POSTing when there is nothing new, not filter server-side. pushDelta already no-POSTs on empty; the leak was the always-on counter push riding every tick.
 - **Gotcha (agents.json edit)**: replacing the `note` value with an old_string that only matches the START of the note orphans the trailing text outside the JSON string -> invalid JSON. Match to the value's real closing quote (or json.load-verify immediately after every agents/sprint edit -- I caught two comma/quote breaks this way).
 ---
+
+## 2026-07-01 - US-419 (Rex / Agent 1)
+Task: Pi post-reboot clock-drift guard (F-080, code angle; verify-first)
+
+### What was implemented:
+- ADOPTED prior-session work found fully-built but UNCOMMITTED at session start (a prior iteration stalled pre-commit -- the recurring headless async-wait pattern from US-416). Inspected it end-to-end (I did not author it), verified correctness against the ACs, ran the gate SYNCHRONOUSLY, committed.
+- SSOT honest-instrument: src/pi/diagnostics/clock_sync.py is the single authoritative "is this boot timestamp trustworthy?" provider. Two signals: (a) sanity FLOOR -- subprocess-free lexical ISO-8601 compare vs CLOCK_SANITY_FLOOR_ISO='2025-01-01T00:00:00Z' (a pre-floor wall clock = definitive dead-RTC epoch/build reset, flagged unconditionally, FLOOR WINS even if NTP later reads synced); (b) best-effort timedatectl NTPSynchronized probe -- tri-state True/False/None, an UNREACHABLE probe (non-systemd/dev box) returns None and falls back to the floor alone (no false-positive flood). classifyClockQuality = pure/total floor-only seam (power_log, zero write latency); assessClockQuality = probe+classify (startup_log, once/boot).
+- Wiring: startup_log writer (boot_progress._writeStartupLogRow, threaded via arm()) stamps data_quality with the full NTP-probe assessor; all 5 power_log writers stamp with the floor-only classifier (power-down race adds no NTP latency). data_quality TEXT col added to power_log + startup_log schema + idempotent PRAGMA-guarded ALTER migrations (nullable; legacy rows NULL).
+- WIRE-STRIP: server PowerLog/StartupLog models have NO data_quality (models.py:742/787), so added 'data_quality' to sync_log._WIRE_STRIPPED_COLUMNS applied in BOTH getDeltaRows (power_log delta) + getSnapshotRows (startup_log snapshot) -- else the US-412/US-417 sync would crash on the unknown column. RTC/timesyncd ordering fix left as ops (AI-1).
+
+### Files changed:
+- Created: `src/pi/diagnostics/clock_sync.py` (SSOT classifier + NTP probe)
+- Created: `tests/pi/diagnostics/test_clock_sync.py`, `tests/pi/diagnostics/test_startup_log_clock_quality.py`, `tests/pi/power/test_power_log_clock_quality.py`, `tests/pi/data/test_sync_data_quality_strip.py`
+- Modified: `src/pi/diagnostics/boot_progress.py` (assessClockQuality wiring + injection seam), `src/pi/power/power_db.py` (all 5 writers stamp data_quality, floor-only default), `src/pi/obdii/database_schema.py` (data_quality on both schemas + ensureStartupLogDataQuality), `src/pi/obdii/database.py` (ensurePowerLogDataQuality migration), `src/pi/data/sync_log.py` (_WIRE_STRIPPED_COLUMNS + snapshot-reader strip), `tests/pi/power/test_power_monitor_db_write.py` (schema +data_quality)
+
+### Verification (this iteration, synchronous):
+- pytest 38 US-419-targeted tests = all pass
+- sync-path regression (tests/pi/data + tests/pi/sync + tests/common/sync + tests/server/test_power_log_sync + test_startup_log_sync + test_sync) = exit 0, no failures (~437 tests -- wire-strip broke no sync path)
+- ruff clean on all 11 touched files
+- Committed e622db2 before ending the iteration (prompt step 5)
+
+### Learnings for future iterations:
+- **Pattern (adopt-uncommitted)**: when a session starts with uncommitted work matching the claimed story, DON'T blind-commit it. Inspect it end-to-end, prove correctness against the ACs yourself, run the gate SYNCHRONOUSLY, THEN commit. Here that inspection surfaced the one real risk (the global wire-strip) and let me verify it was safe rather than assume.
+- **Gotcha (global wire-strip blast radius)**: adding a column name to a GLOBAL strip set (_WIRE_STRIPPED_COLUMNS applied to every delta+snapshot table) is only safe if NO other syncing table has a column of that name that the server maps + stores. Verified by grep (power_log+startup_log are the only Pi tables with data_quality; server data_quality is server-authored drive_summary/drive_statistics only). Always check the blast radius of a global strip, not just the two tables you're adding.
+- **Gotcha (honest instrument must not false-flag)**: the NTP probe is tri-state on purpose -- an UNREACHABLE probe returns None (fall back to floor), NOT False (flag everything). A dev box / non-systemd host has no timedatectl; treating that as "not synced" would paint every row clock_unsynced. Unreachable != not-synced.
+---
