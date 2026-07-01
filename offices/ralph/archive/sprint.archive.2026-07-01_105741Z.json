@@ -1,0 +1,365 @@
+{
+  "schemaVersion": "2.0.0",
+  "sprint": 50,
+  "version": "V0.29.4",
+  "createdFromPRD": "offices/pm/prds/prd-V0.29.4.md",
+  "stories": [
+    {
+      "id": "US-408",
+      "title": "EDR versioned schema contract + Pi tables (src/common/edr/sensor_schema.py, ADR section 2)",
+      "parent": "F-114",
+      "epicId": "E-006",
+      "type": "normal",
+      "size": "M",
+      "status": "sprint-ready",
+      "passes": true,
+      "acceptance": [
+        "new module src/common/edr/sensor_schema.py holds the single-source DDL for edr_imu_sample + edr_light_sample exactly per ADR section 2.2, plus a bare-int schema_version constant (mirrors power_watch.RECORD_SCHEMA_VERSION)",
+        "Pi creates both SQLite tables from that module at startup (CREATE TABLE IF NOT EXISTS, idempotent); the data_source CHECK contract + indexes match ADR section 2.2",
+        "schema_version stamped into every row (default 1); forward-only migration shape (ADR section 2.5)",
+        "Pi-local only this phase -- no server table created",
+        "ruff check passes on modified files"
+      ],
+      "validationCriteria": [
+        {
+          "action": "create the schema module + run Pi startup table creation",
+          "outcome": "schema introspection shows the ADR section 2.2 columns, indexes, and data_source CHECK on both tables"
+        },
+        {
+          "action": "re-run startup twice",
+          "outcome": "CREATE IF NOT EXISTS is idempotent -- no error, no duplicate tables, schema_version present"
+        }
+      ],
+      "conditionalOutcomes": [],
+      "goal": "As the system, I want the raw-sensor tables defined once in a versioned src/common/ contract, so Pi and the future server never diverge (A-4 anti-divergence).",
+      "tasks": [],
+      "feedback": {
+        "filesActuallyTouched": [
+          "src/common/edr/__init__.py (created -- new tier-neutral EDR contract package)",
+          "src/common/edr/sensor_schema.py (created -- single-source versioned DDL: SCHEMA_VERSION bare-int constant, SCHEMA_EDR_IMU_SAMPLE/SCHEMA_EDR_LIGHT_SAMPLE, 4 index constants, EDR_SCHEMAS/EDR_INDEXES registration lists -- verbatim per ADR section 2.2)",
+          "src/pi/obdii/database_schema.py (modified -- import EDR_SCHEMAS/EDR_INDEXES from common.edr and splat them into ALL_SCHEMAS/ALL_INDEXES so ObdDatabase.initialize() creates the tables idempotently at startup)",
+          "tests/common/edr/__init__.py (created)",
+          "tests/common/edr/test_sensor_schema.py (created -- 10 tests: SCHEMA_VERSION bare-int, exact ADR column lists+order, NOT NULL contract, 4 indexes, data_source CHECK accept/reject, schema_version DEFAULT 1 on insert, idempotent double-apply)",
+          "tests/pi/obdii/test_edr_tables_created.py (created -- 7 tests: both tables + 4 indexes created by initialize(), schema_version defaults, second initialize idempotent, EDR entries in ALL_SCHEMAS/ALL_INDEXES, DDL not hand-copied)"
+        ]
+      },
+      "completionNotes": "DONE (passes:true). EDR raw-sensor schema authored ONCE in src/common/edr/sensor_schema.py verbatim per the 2026-06-30 ADR section 2.2 (docs/superpowers/specs/2026-06-30-edr-sensor-reader-schema-bus-adr.md). SCHEMA_VERSION is a bare int=1 mirroring power_watch.RECORD_SCHEMA_VERSION and is interpolated into the DDL DEFAULT (single source -- rendered SQL == ADR's `DEFAULT 1`). Pi wiring is import-and-splat: database_schema.py imports EDR_SCHEMAS/EDR_INDEXES (from common.edr, per project no-src-prefix convention) and appends them to ALL_SCHEMAS/ALL_INDEXES, so ObdDatabase.initialize()'s existing CREATE IF NOT EXISTS loop creates them idempotently -- no bespoke create path, second-boot-safe by construction. SCOPE-FENCED: no config keys added (pi.sensors.* belongs to US-409/US-410); Pi-LOCAL ONLY -- no server table created (ADR section 2.5). EDR indexes are safe in ALL_INDEXES (unlike the US-200 drive_id indexes) because drive_id is defined in the EDR CREATE TABLE, so the column exists when the indexer runs. TDD red->green both files. GATES: tests/common/edr (10) + tests/pi/obdii/test_edr_tables_created.py (7) = 17 passed; full tests/pi/obdii + tests/pi/data regression = all passed (1 skip, 0 failures -- base-module database_schema.py change is clean); data_source hygiene AST audit passes; ruff clean on all modified files. DEFERRED-PM: mypy not installed on dev box (module is fully type-hinted; same defer as US-407). One `is`->`==` test relaxation documented in-test: common.edr and src.common.edr resolve to separate module caches so string identity differs across import roots; value-equality still proves no divergent DDL copy. NEXT: US-409 (IMU+light readers) consumes this contract's tables; US-410 subscriber writes rows stamping SCHEMA_VERSION explicitly (DDL DEFAULT is the safety net, not the write path)."
+    },
+    {
+      "id": "US-409",
+      "title": "EDR IMU + light readers -- additive bus topics + graceful-absence + presence STATE (ADR section 1/3)",
+      "parent": "F-113",
+      "epicId": "E-006",
+      "type": "normal",
+      "size": "L",
+      "status": "sprint-ready",
+      "passes": true,
+      "acceptance": [
+        "IMU: one burst poll reads accel+gyro+mag+temp together, publishing raw.imu.{accel,gyro,mag,temp} LOSSY topics all carrying the same seq (ADR section 1.1); rate pi.sensors.imu.sampleHz default 50",
+        "light: publishes raw.light.lux (+ raw.light.raw) at pi.sensors.light.sampleHz default 1; saturation -> lux=None (never inf) per ADR section 3",
+        "graceful-absence: probe each I2C address at init; absent -> log once at WARN, publish NO samples, fabricate nothing (silence, never 0.0/null); flag-on-but-absent takes the absent path, never crashes",
+        "publishes retained presence STATE topics state.sensor.imu / state.sensor.light = present|absent (ADR section 3)",
+        "additive only (no change to raw.obd.*), LOSSY QoS (drop-oldest, producer-never-blocks)",
+        "per-sensor flags pi.sensors.{imu,light}.enabled, each requiring pi.bus.enabled, default false",
+        "unit tests cover present (mock-sensor) + absent paths for both sensors; ruff clean"
+      ],
+      "validationCriteria": [
+        {
+          "action": "run a mock IMU burst poll",
+          "outcome": "raw.imu.{accel,gyro,mag,temp} publish with one shared seq per poll on LOSSY topics"
+        },
+        {
+          "action": "start reader with no sensors wired, flags on",
+          "outcome": "state.sensor.{imu,light}=absent, zero samples published, no fabricated 0.0/null"
+        },
+        {
+          "action": "feed a saturating TSL2591 reading",
+          "outcome": "raw.light.lux publishes None (persists NULL), raw counts still published, never inf"
+        }
+      ],
+      "conditionalOutcomes": [],
+      "goal": "As the system, I want a reader that polls both sensors and publishes them on the F-110 bus as additive channels, reading-if-present and silent-if-absent, so wiring a sensor is the only step to live data.",
+      "tasks": [],
+      "feedback": {
+        "filesActuallyTouched": [
+          "src/pi/sensors/__init__.py (created -- new Pi-tier EDR sensor-reader package)",
+          "src/pi/sensors/sensor_reader.py (created -- ImuReader + LightReader on a shared _BaseSensorReader scaffold: probe/graceful-absence, per-producer seq, retained presence STATE, daemon poll loop; ImuReader burst-poll publishes raw.imu.{accel,gyro,mag,temp} under ONE shared seq; LightReader publishes raw.light.{lux,raw} with lux->None on saturation/non-finite; createSensorReadersFromConfig factory gates each per-sensor flag behind pi.bus.enabled; default device factories lazy-import adafruit_icm20x/adafruit_tsl2591 behind pragma:no-cover hardware glue)",
+          "src/pi/bus/sample.py (modified -- widened Sample.value type union to `float | tuple[float, ...] | None` so a saturated raw.light.lux can publish None; additive/back-compat, annotation-only)",
+          "src/common/config/validator.py (modified -- added 4 DEFAULTS: pi.sensors.{imu,light}.enabled=False + pi.sensors.imu.sampleHz=50 / pi.sensors.light.sampleHz=1; persistHz/retentionDays deliberately scope-fenced to US-410)",
+          "config.json (modified -- mirrored pi.sensors.{imu,light} section after pi.bus for DEFAULTS-registry hygiene)",
+          "tests/pi/sensors/__init__.py (created)",
+          "tests/pi/sensors/test_sensor_reader.py (created -- 15 tests: IMU burst shared-seq + values/units, seq-per-burst, absent-path (state=absent + zero raw samples + no fabricated 0.0/null) via injected AND real default factory, present STATE (imu+light), light lux+raw shared seq, saturation->lux None + raw kept, non-finite lux->None, additive isolation from raw.obd.*, factory bus-off/per-flag/default-off)",
+          "tests/test_config_validator.py (modified -- +2 tests: sensor flags default dark with default rates; explicit per-sensor flag preserved + sibling fills from defaults)"
+        ]
+      },
+      "completionNotes": "DONE (passes:true). US-409 = the PRODUCER side of the EDR sensor path (US-410 owns the sibling persistence subscriber; US-411 the end-to-end harness). Built ImuReader + LightReader on ONE shared _BaseSensorReader scaffold per the pmSignOff Rule-5 batch-similar exception -- the delta is the per-sensor read (IMU 4-topic burst+shared-seq vs light 2-topic+saturation), not a second scaffold. CONTRACT (ADR sections 1/3): IMU read as one burst per poll (accel+gyro+mag+temp) with all four raw.imu.* topics carrying the SAME seq (atomic burst -- read all before publishing so a mid-read fault emits nothing for that seq -> US-410 assembles one edr_imu_sample row per seq); light publishes raw.light.lux (None on saturation/non-finite, never inf) + raw.light.raw counts under its own independent seq stream. GRACEFUL-ABSENCE (the pld_sensor idiom): an injectable deviceFactory whose real default lazy-imports adafruit_icm20x/adafruit_tsl2591 and raises on a non-Pi host / absent bus; probe() catches -> present=False, logs once at WARN, publishes a RETAINED state.sensor.{imu,light}=absent marker, starts NO poll thread -> pure silence, zero fabricated samples. Flag-on-but-absent takes this path (never crashes) -- proven by tests using BOTH an injected raiser AND the real default factory on this dev box. Present -> retained state.sensor.*=present + daemon poll loop at sampleHz. STATE presence encoded as float on the Sample.value envelope (PRESENT=1.0/ABSENT=0.0) with a human 'present'/'absent' unit label -- the envelope is numeric (no string) and the shipped test_bus_state.py already encodes STATE as a float; a raw-topic assertion (not state) proves 'no fabricated 0.0'. ADDITIVE: readers only publish raw.imu.*/raw.light.*/state.sensor.* -- a raw.obd.* subscriber gets nothing (tested); LOSSY drop-oldest is the subscriber's concern so the producer never blocks by construction. FLAGS: pi.sensors.{imu,light}.enabled (default False) each REQUIRE pi.bus.enabled, enforced in createSensorReadersFromConfig (bus off -> empty list); sampleHz defaults 50/1. SCOPE-FENCE: did NOT wire into lifecycle.py (US-410 wires the full dark path: reader-start + sibling subscriber) and did NOT add persistHz/retentionDays (US-410 keys). One base-contract touch: Sample.value widened to include None (required for lux=None) -- annotation-only, back-compat, all Sample consumers (bus/persistence_subscriber/realtime) stay green. TDD red->green. GATES: tests/pi/sensors 15 + tests/test_config_validator (sensor+bus) all pass; tests/pi/bus + tests/pi/obdii/data + tests/pi/obdii/orchestrator regression all green (Sample widening clean); ruff clean on all modified files; python validate_config.py passes with the new keys. DEFERRED-PM: mypy not installed on dev box (module fully type-hinted; same defer as US-407/408). NEXT: US-410 consumes raw.imu.*/raw.light.* via a sibling subscriber -> edr_imu_sample/edr_light_sample (one IMU row per seq, drive_id NULL-latch per section 2.4, decimated persistHz, retention purge) + wires reader-start into lifecycle behind the flags.",
+      "pmSignOff": {
+        "reviewer": "Marcus (PM)",
+        "date": "2026-06-30",
+        "sizeAcknowledged": "L",
+        "rationale": "Rule-5 batch-similar exception: IMU + light readers share one reader module + the same probe/publish/graceful-absence/presence-STATE/flag scaffold; the per-sensor read logic (IMU 4-topic burst + shared seq vs light 2-topic + saturation) is the delta, not a second scaffold. Splitting would duplicate the scaffold across two stories. Build order: IMU reader first, then light on the same seams. If Ralph finds himself compressing, flag it and PM will split into US-409-a/-b."
+      }
+    },
+    {
+      "id": "US-410",
+      "title": "EDR persistence subscriber + rolling-window retention (ADR section 2.3/2.4/2.6)",
+      "parent": "F-114",
+      "epicId": "E-006",
+      "type": "normal",
+      "size": "M",
+      "status": "sprint-ready",
+      "passes": true,
+      "feedback": {
+        "filesActuallyTouched": [
+          "src/pi/bus/edr_persistence_subscriber.py (created -- EdrPersistenceSubscriber sibling drain: raw.imu.*/raw.light.* burst assembly -> one edr_imu_sample row per seq / edr_light_sample; seq-decimation to imuPersistHz; drive_id NULL-latch via injected isDrivingFn gate; rolling-window purgeExpired + maybePurge cadence gate piggybacked on the drain thread; createEdrPersistenceSubscriberFromConfig factory)",
+          "src/common/config/validator.py (modified -- added 2 DEFAULTS: pi.sensors.imu.persistHz=25 + pi.sensors.retentionDays=7)",
+          "config.json (modified -- mirrored imu.persistHz + sensors.retentionDays in the pi.sensors section for DEFAULTS-registry hygiene)",
+          "src/pi/obdii/orchestrator/lifecycle.py (modified -- _initializeDataLogger now calls new _startEdrSensorPath(bus) inside the pi.bus.enabled block: builds+starts the sensor readers + EDR subscriber behind the per-sensor flags; _shutdownDataLogger stops readers then the EDR subscriber (flush) before the OBD subscriber; 2 new ships-dark attributes _sensorReaders/_edrPersistenceSubscriber)",
+          "tests/pi/bus/test_edr_persistence_subscriber.py (created -- 23 tests: burst-one-row-per-seq, value/vector mapping, partial-burst seq-boundary flush, schema_version + data_source stamped, decimation keep-every-Nth + persistHz>=sampleHz keeps-all, drive_id NULL-when-not-running/stamped-when-running/default-NULL, light lux+raw + saturation->NULL lux + light-not-decimated, additive isolation ignores raw.obd.*, purge deletes-older-than-retention both tables + injected-clock + maybePurge interval gate, end-to-end over a real bus + drain thread, stop flushes partial, factory gating none-when-bus-off/none-when-no-sensor/built-when-enabled)",
+          "tests/test_config_validator.py (modified -- +1 test: imu.persistHz=25 + retentionDays=7 defaults)"
+        ]
+      },
+      "completionNotes": "DONE (passes:true). US-410 = the CONSUMER/persistence side of the EDR sensor path (US-409 = producer readers; US-411 = end-to-end harness). Built EdrPersistenceSubscriber: a SIBLING of the OBD PersistenceSubscriber -- separate subscriber, separate topics (raw.imu.*/raw.light.* LOSSY, never raw.obd.*), separate tables (edr_imu_sample/edr_light_sample) -- so the F-110 byte-identical realtime_data golden master is untouched BY CONSTRUCTION (acceptance #5 / criterion 3). BURST ASSEMBLY (acceptance #1): the IMU reader publishes accel+gyro+mag+temp under ONE shared seq; the subscriber accumulates per (table,seq) and writes exactly ONE edr_imu_sample row per seq -- flushed on burst-complete (all 4 fields) OR on the next-seq boundary (a dropped field persists NULL -- honest gap), plus a final flush on stop(). Light assembles lux+raw under its own seq. DECIMATION (acceptance #2): whole-burst seq-decimation keep-1-of-N where N=round(imuSampleHz/imuPersistHz)=round(50/25)=2, so the 50Hz bus persists a 25Hz baseline (decimation is a SUBSCRIBER concern -- the bus still carries full 50Hz for a future live g-meter consumer, ADR 2.3); light is not decimated (persists at its 1Hz). DRIVE_ID NULL-LATCH (acceptance #3, ADR 2.4): drive_id stamped from getCurrentDriveId() ONLY when isDrivingFn() reports a RUNNING drive, else EXPLICIT NULL -- the fallback on any uncertainty (or a raising latch) is NULL, never a possibly-stale _currentDriveId. This mirrors the DTC-KOEO ruling (US-404) exactly: the isDrivingFn is wired in lifecycle to the live DriveDetector.isDriving() (the same gate event_router uses for the KOEO read); default (no fn injected) -> always-False -> NULL (safe default that never fabricates a drive attribution). Proven by a test that injects driveIdFn=lambda:7 + isDrivingFn=lambda:False and asserts the row is NULL (never inherit stale). RETENTION (acceptance #4, ADR 2.6): purgeExpired() DELETEs rows older than pi.sensors.retentionDays (default 7) from BOTH tables via lexicographic ts_utc<cutoff (utcIsoNow's fixed-width %Y-%m-%dT%H:%M:%SZ is compare-safe). PIGGYBACK CHOICE: the purge runs on the SUBSCRIBER'S OWN drain thread via maybePurge() gated to at most hourly -- this is NOT a new daemon (the drain thread already exists for this feature), honoring ADR 2.6 'no new daemon' while keeping ALL EDR-persistence concerns in one SSOT module (no core.py runLoop edit -> lower base-module blast radius). maybePurge is unit-tested with an injected monotonic clock (not-due -> no delete; advance past interval -> delete). ALWAYS-ON (ADR 2.4): the subscriber persists every (decimated) sample regardless of drive state -- key-on incl engine-off is captured (true black-box); drive state only affects the drive_id STAMP, not WHETHER to persist. SHIPS DARK: createEdrPersistenceSubscriberFromConfig returns None unless pi.bus.enabled AND >=1 pi.sensors.{imu,light}.enabled; lifecycle _startEdrSensorPath is a no-op with the default flags off (nothing built, OBD path unchanged). SubStats observability via stats() passthrough. SCOPE: added only the 2 US-410 keys (imu.persistHz, retentionDays) -- US-409 already added imu/light enabled+sampleHz. TDD red->green (23 subscriber tests + 1 config test). GATES: tests/pi/bus (all) + tests/pi/sensors + tests/test_config_validator + tests/pi/obdii (full, incl orchestrator -- the base-module lifecycle change) all pass (1 pre-existing skip, 0 failures); ruff clean on all modified files; python validate_config.py passes with the 2 new keys. DEFERRED-PM: mypy not installed on dev box (module fully type-hinted; same defer as US-407/408/409). NEXT: US-411 (bench harness + golden-master regression + connect-when-wired drill) exercises reader->bus->subscriber end-to-end + proves the F-110 realtime_data golden master byte-identical with the EDR flags on.",
+      "acceptance": [
+        "new sibling subscriber (separate from the OBD PersistenceSubscriber) drains raw.imu.*/raw.light.* -> edr_imu_sample/edr_light_sample; one IMU row per seq (assembles the burst)",
+        "persist cadence decoupled: IMU at pi.sensors.imu.persistHz default 25 (decimated from 50Hz bus); light at 1Hz (ADR section 2.3)",
+        "always-on capture (key-on incl engine-off); drive_id from getCurrentDriveId() only when a drive is RUNNING, else explicit NULL (A-9/DTC-KOEO latch -- never inherit stale _currentDriveId) (ADR section 2.4)",
+        "retention: periodic purge piggybacked on an existing maintenance tick (no new daemon) deletes rows older than pi.sensors.retentionDays default 7 from both tables (ADR section 2.6)",
+        "ships dark behind the per-sensor flags; both off -> no writes, OBD inline path byte-for-byte unchanged; SubStats observability; ruff clean"
+      ],
+      "validationCriteria": [
+        {
+          "action": "run the subscriber with flags on + mock samples",
+          "outcome": "edr_imu_sample writes one row per seq at 25Hz baseline; drive_id NULL when no RUNNING drive"
+        },
+        {
+          "action": "advance the maintenance tick past retention cutoff",
+          "outcome": "rows older than retentionDays are deleted from both tables"
+        },
+        {
+          "action": "run with both flags off",
+          "outcome": "zero EDR writes and realtime_data rows byte-identical to the pre-bus inline path"
+        }
+      ],
+      "conditionalOutcomes": [],
+      "goal": "As the system, I want a sibling subscriber to persist sensor samples Pi-local at a decimated always-on baseline with a bounded retention window, so the black-box records without unbounded growth.",
+      "tasks": []
+    },
+    {
+      "id": "US-411",
+      "title": "EDR bench harness + golden-master regression + connect-when-wired drill",
+      "parent": "F-114",
+      "epicId": "E-006",
+      "type": "normal",
+      "size": "M",
+      "status": "sprint-ready",
+      "passes": true,
+      "feedback": {
+        "filesActuallyTouched": [
+          "tests/pi/sensors/test_edr_end_to_end.py (created -- EDR bench harness + F-110 golden-master regression: mock I2C device handles (_MockImu/_MockLight/_SaturatingLight/_absentFactory) are the ONLY fakes; _buildPipeline wires the REAL ImuReader+LightReader -> real SampleBus -> real EdrPersistenceSubscriber (no decimation, 50/50) -> edr_imu_sample/edr_light_sample; _pump probes+drives N deterministic pollOnce cycles then drains inline. 7 tests: synthetic both-sensors one-row-per-imu-seq, imu burst values+data_source='fixture' tag, light values, absent-path state.sensor.*=absent + zero rows + no fabricated sample, golden-master flags-off realtime byte-identical (factory returns None), golden-master flags-on OBD-only realtime byte-identical + zero EDR rows, saturating-light lux NULL + raw counts + never inf)",
+          "docs/edr-connect-when-wired-drill.md (created -- CIO connect-when-wired bench acceptance: i2cdetect -y 1 shows 29/36/69, flip pi.sensors.{imu,light}.enabled under pi.bus.enabled, restart, confirm state.sensor.*=present, confirm edr_imu_sample/edr_light_sample rows climb, retentionDays vs df -h; flag-on-but-absent -> graceful-absent pass criteria)"
+        ]
+      },
+      "completionNotes": "DONE (passes:true). US-411 = the VERIFICATION cap on the EDR sensor path (US-408 schema, US-409 producer readers, US-410 persistence subscriber). This is a bench-harness + golden-master-regression + drill-doc story -- NO production-code change: the EDR path already exists, so the harness wires the REAL production classes end-to-end with ONLY the two I2C device handles mocked (ImuReader+LightReader -> SampleBus -> EdrPersistenceSubscriber -> edr_imu_sample/edr_light_sample). Deterministic pump (probe + N x pollOnce + inline drain, no poll thread) so row count == poll count exactly -- reliable on the slow SMB share; the threaded start()/stop() lifecycle is already covered by US-410's TestEndToEndOverBus. ACCEPTANCE: (1) synthetic both-sensor harness -> one edr_imu_sample row per IMU burst seq [1,2,3] + light rows, with burst values + data_source='fixture' (honest synthetic tag, CHECK enum accepts it) mapped correctly; (2) absent path via _absentFactory (raises OSError like an absent I2C addr) with flags-on readers -> state.sensor.{imu,light}=absent on a watched STATE subscription + ZERO raw samples published (sub.poll() is None) + both EDR tables empty -- proves silence, never a fabricated 0.0/null; (3) golden-master reuses the F-110 discipline (tests/pi/bus/test_persistence_golden_master.py _COLS pattern): FLAGS-OFF -> createEdrPersistenceSubscriberFromConfig returns None (ships dark) and realtime_data via the bus OBD path == the inline logReading reference byte-for-byte; FLAGS-ON OBD-only -> a LIVE EDR subscriber coexists on the same bus but subscribes raw.imu.*/raw.light.* only, so publishing raw.obd.* leaves realtime_data byte-identical AND writes zero EDR rows (isolation by construction, ADR section 1.2); (4) _SaturatingLight.lux raises OverflowError -> LightReader publishes lux=None -> persists NULL + raw counts (65535,65535,65535), asserted never a float inf. GATES: tests/pi/sensors/test_edr_end_to_end.py 7 passed; full tests/pi/sensors + tests/pi/bus regression = 66 passed (the F-110 golden master itself re-runs green -- proof the EDR path did not perturb it); ruff clean on the new test file. DEFERRED-PM: mypy not installed on dev box (same defer as US-407/408/409/410). Drill doc (docs/edr-connect-when-wired-drill.md) is the CIO's one manual step for a wired Pi (i2cdetect 29/36/69 -> flags -> state present -> rows climb). SPRINT REMAINDER: US-412 (power_log/startup_log sync), US-413 (drive_counter sync gap), US-414 (sync_history TZ), US-415 (doc sync) remain unclaimed -- none block the rest, single-agent so no promise tag; ralph.sh continues to US-412.",
+      "acceptance": [
+        "mock-sensor harness feeds synthetic IMU+light reader->bus->subscriber; rows land in both tables with correct shape + one-row-per-IMU-seq",
+        "absent-path test: flags on, no sensors -> state.sensor.*=absent, zero rows, no fabricated samples (assert not a single row), no error",
+        "golden-master regression: flags off (and on, OBD-only) -> realtime_data byte-identical to the pre-bus inline path (reuses F-110 discipline)",
+        "saturation test: a saturating TSL2591 read persists lux=NULL + raw counts, never inf",
+        "documented connect-when-wired bench drill (flip flags on a wired Pi -> i2cdetect 29 36 69 + state present + rows accumulate) as the CIO acceptance drill; ruff clean"
+      ],
+      "validationCriteria": [
+        {
+          "action": "run the golden-master regression flags-off and OBD-only",
+          "outcome": "realtime_data shows 0 byte differences vs the pre-bus inline path"
+        },
+        {
+          "action": "run the absent-path test",
+          "outcome": "state.sensor.*=absent, 0 EDR rows, 0 fabricated samples, no error"
+        }
+      ],
+      "conditionalOutcomes": [],
+      "goal": "As the developer, I need the EDR verifiable with no hardware and proof the F-110 OBD golden master is untouched, so it ships dark safely.",
+      "tasks": []
+    },
+    {
+      "id": "US-412",
+      "title": "Sync power_log + startup_log from Pi to server (F-101)",
+      "parent": "F-101",
+      "epicId": "E-002",
+      "type": "normal",
+      "size": "M",
+      "status": "sprint-ready",
+      "passes": true,
+      "acceptance": [
+        "server tables obd2db.power_log + obd2db.startup_log exist (new migration), deployed AND verified via INFORMATION_SCHEMA",
+        "Pi sync coverage pushes both idempotently, catch-up on reconnect (follows the battery_health_log pattern)",
+        "post-sync, server rows match Pi rows (counts + spot-checked values)",
+        "power_log volume strategy decided + documented at story time (raw-every-poll vs sampled); ruff clean"
+      ],
+      "validationCriteria": [
+        {
+          "action": "run the migration + INFORMATION_SCHEMA check",
+          "outcome": "obd2db.power_log and obd2db.startup_log exist with the expected columns"
+        },
+        {
+          "action": "run a sync cycle",
+          "outcome": "server rows for both tables match the Pi rows (counts + spot-checked values), idempotent on re-sync"
+        }
+      ],
+      "conditionalOutcomes": [],
+      "goal": "As the CIO, I want the Pi's power_log + startup_log mirrored to the server, so power/boot history is queryable server-side alongside the rest of the telemetry.",
+      "tasks": [],
+      "blockedBy": "offices/pm/blockers/BL-013-startup-log-sync-text-pk.md",
+      "feedback": {
+        "filesActuallyTouched": [
+          "src/pi/data/sync_log.py (modified -- registered power_log 'id' in PK_COLUMN so it joins DELTA_SYNC_TABLES; doc/scope-comment updates from Pi-only -> synced)",
+          "src/server/db/models.py (created PowerLog model mirroring Pi SCHEMA_POWER_LOG: id/source_id/source_device/synced_at/sync_batch_id sync cols + timestamp/event_type/power_source/on_ac_power/vcell Pi-native cols; UNIQUE(source_device, source_id))",
+          "src/server/api/sync.py (added power_log -> (PowerLog, ()) to _TABLE_REGISTRY so runSyncUpsert maps id -> source_id like every capture table)",
+          "src/server/migrations/__init__.py (registered v0013 in ALL_MIGRATIONS)",
+          "src/server/migrations/versions/v0013_us412_power_log.py (created -- CREATE power_log on live MariaDB; INFORMATION_SCHEMA idempotency probe + post-condition probe)",
+          "tests/server/test_power_log_sync.py (created -- model contract + sync registration + runSyncUpsert insert/idempotent/null-vcell/multi-device, 13 tests)",
+          "tests/pi/data/test_sync_client_upsert.py (modified -- _createAllInScopeStubs now creates the power_log table so pushAllDeltas/getDeltaRows do not raise 'no such table: power_log' now that it is in-scope)",
+          "tests/pi/data/test_sync_log.py, tests/pi/data/test_sync_log_pk_variants.py, tests/server/test_db_models.py, tests/server/test_migration_0012_data_quality_widen.py, tests/server/test_sync.py (modified -- power_log added to in-scope/registry/migration-count expectations)"
+        ]
+      },
+      "completionNotes": "PARTIAL / BLOCKED (passes:false -- atomic story, startup_log half unmet). power_log HALF IS DONE + COMMITTED (0fd1795): power_log now delta-syncs Pi->server on its integer 'id' PK exactly like the battery_health_log pattern (server PowerLog model + v0013 MariaDB migration + Pi PK_COLUMN registration + server _TABLE_REGISTRY entry). Volume strategy DECIDED + documented: raw-every-event (power_log writes one row per power-source / shutdown-stage transition, NOT per poll, so volume is naturally bounded -- no sampling needed). Fixed a regression the prior partial iteration missed: adding power_log to the delta set makes pushAllDeltas iterate it, so the test_sync_client_upsert production-shaped fixture had to create a power_log table (else getDeltaRows raises 'no such table'). GATES: tests/server + tests/pi/data + tests/pi/sync + tests/scripts + tests/integration + orchestrator sync-wiring all green; ruff clean on all modified files. startup_log HALF IS BLOCKED -> BL-013 (offices/pm/blockers/): its PK is boot_id (TEXT, random 32-char hex) which cannot be a monotonic delta cursor, and the server ingest path requires an integer source_id -- startup_log needs a bespoke natural-key (source_device, boot_id) upsert on BOTH tiers + a design decision (which idempotency/cursor model), which is above Ralph's scope-fence and warrants an SSOT/architecture gate (Refusal Rule 1). Recommendation in BL-013: split US-412 -- mark power_log complete, carve startup_log into its own story with a design gate. US-412 stays passes:false until PM/Atlas rule + the startup_log half lands. Does NOT block US-413/414/415 (all independent). DEFERRED-PM: mypy not installed on dev box (module fully type-hinted; same defer as US-407..411).",
+      "pmDescope": {
+        "reviewer": "Marcus (PM)",
+        "date": "2026-07-01",
+        "decision": "Descoped to power_log-only. power_log Pi->server delta sync is DONE + tested + migrated (v0013). startup_log carved to US-416 per BL-013.",
+        "carvedTo": "US-416",
+        "rationale": "startup_log has a TEXT boot_id PK that cannot use the delta-by-integer-PK sync pattern; it needs a natural-key (source_device, boot_id) upsert path that does not exist yet -- a cross-tier design decision (Atlas gate), not an in-sprint bolt-on. Primary story value (power_log) delivered."
+      }
+    },
+    {
+      "id": "US-413",
+      "title": "drive_counter server-side sync gap fix (F-064)",
+      "parent": "F-064",
+      "epicId": "E-002",
+      "type": "normal",
+      "size": "S",
+      "status": "sprint-ready",
+      "passes": true,
+      "feedback": {
+        "filesActuallyTouched": [
+          "src/pi/obdii/orchestrator/core.py (modified -- wired SyncClient.pushDriveCounter() into BOTH regular sync ticks: _maybeTriggerIntervalSync (past the US-340 offline route gate) and triggerDriveEndSync; results = list(pushAllDeltas()) then results.append(pushDriveCounter()) inside the existing try/except so a counter-push hiccup is exception-isolated like the delta push)",
+          "tests/pi/orchestrator/test_sync_wiring.py (modified -- +5 tests in TestDriveCounterRidesRegularSync: interval tick pushes counter, interval offline-gate skips counter (US-340 preserved), interval counter-crash swallowed, drive-end tick pushes counter, drive-end counter-crash swallowed)"
+        ]
+      },
+      "completionNotes": "DONE (passes:true). ROOT CAUSE (acceptance #1): the mirror writer IS running and drive_counter IS syncable -- SyncClient.pushDriveCounter() (US-314) + server runDriveCounterUpsert() already exist and are tested. The gap was that drive_counter is NOT on the regular sync path: it is a single-row state mirror (not a delta-by-PK capture table), so it rides its own dedicated push, and that push was wired ONLY into forcePush() (client.py:820, the power-down / explicit manual flush). The two periodic triggers -- _maybeTriggerIntervalSync (core.py:922) and triggerDriveEndSync (core.py:983) -- call pushAllDeltas() only, which skips the singleton. So the server last_drive_id advanced ONLY on a clean shutdown flush; an unclean power cycle (common for an in-car Pi) stranded the server counter behind the Pi (the reported 'Pi at 10, server at 3'). FIX: append self._syncClient.pushDriveCounter() after pushAllDeltas() inside the existing try/except of BOTH regular ticks (results = list(...) so the mock's shared return list is never mutated in tests; the counter push is exception-isolated so a hiccup never crashes the runLoop). Interval path adds the counter push AFTER the US-340 offline route gate, so it inherits the no-route short-circuit -- zero doomed-retry cost when the Pi is away from home WiFi (US-340/I-035 storm guard preserved, pinned by test_intervalSync_offline_skipsDriveCounter). Drive-end path pushes the counter where it JUST advanced (minimal server lag) and mirrors the pre-existing unconditional pushAllDeltas there. IDEMPOTENT / NEVER-REGRESS (acceptance #2): the server upsert is monotonic -- MariaDB GREATEST(existing, incoming) / SQLite MAX(...) (sync.py:737/747) -- so re-pushing an unchanged or older value never rewinds last_drive_id. TDD red->green (5 new tests; RED showed pushDriveCounter Called 0 times pre-fix). GATES: tests/pi/orchestrator + tests/pi/sync + tests/server/test_drive_counter_sync.py + tests/integration/test_pi_to_server_sync_recovery.py + tests/pi/sync/test_sync_loop_cadence_integration.py all green (no regressions on the base-module core.py change); ruff clean on both modified files. The final 'server row == Pi value on a live sync cycle' (validationCriteria) is a BENCH/IRL step -- the pushDriveCounter+upsert DB mechanics were already IRL-validated under US-314; this story only closed the wiring gap, which is fully unit-covered. DEFERRED-PM: mypy not installed on dev box (both touched files fully type-hinted; same defer as US-407..412). Does NOT block US-414/415 (independent). NEXT: US-414 (sync_history TZ mismatch, S).",
+      "acceptance": [
+        "root cause stated (mirror writer not running vs not in the sync set -- rg drive_counter src/pi/)",
+        "after fix + a sync cycle, obd2db.drive_counter.last_drive_id equals the Pi's current value; idempotent (re-sync does not regress)",
+        "ruff check passes on modified files"
+      ],
+      "validationCriteria": [
+        {
+          "action": "run a sync cycle after the fix",
+          "outcome": "obd2db.drive_counter.last_drive_id equals the Pi's value and does not regress on re-sync"
+        }
+      ],
+      "conditionalOutcomes": [],
+      "goal": "As the CIO, I want the server's drive_counter to track the Pi's, so the server last_drive_id is not stale (Pi at 10, server at 3).",
+      "tasks": []
+    },
+    {
+      "id": "US-414",
+      "title": "sync_history timezone mismatch fix (F-079)",
+      "parent": "F-079",
+      "epicId": "E-OPS",
+      "type": "normal",
+      "size": "S",
+      "status": "sprint-ready",
+      "passes": true,
+      "feedback": {
+        "filesActuallyTouched": [
+          "tests/server/test_sync_history_timestamps_utc.py (modified -- added test_failSyncHistoryRow_stampsCompletedAtFromUtcClock: freezes the module UTC clock, creates then fails a sync_history row 4s apart, asserts completed_at == the frozen fail moment AND completed_at-started_at is seconds-scale, not the ~18000s CDT/UTC artifact; imports _failSyncHistoryRow; header mod-history entry)",
+          "offices/pm/tech_debt/TD-058-synchistory-analysishistory-started-at-local-default-footgun.md (created -- latent server_default=func.now() MariaDB-local footgun on SyncHistory/AnalysisHistory.started_at; out-of-scope schema decision for PM/Atlas)",
+          "offices/pm/inbox/2026-07-01-from-rex-us414-f079-already-fixed-by-us333.md (created -- A2AL note to Marcus: F-079==B-079 already fixed by US-333; what US-414 added; TD-058 pointer; suggest marking F-079 backlog resolved)"
+        ]
+      },
+      "completionNotes": "DONE (passes:true). PROVENANCE: F-079 == B-079 (renamed 2026-05-27; backlog left status:pending). The reported bug -- every recent sync_history row had started_at and completed_at EXACTLY 5h (18000s = America/Chicago CDT offset) apart WITHIN one row because started_at fell to the model's server_default=func.now() (MariaDB SERVER-LOCAL) while completed_at was datetime.now(UTC) -- was ALREADY FIXED by US-333 (2026-05-12): _createSyncHistoryRow stamps started_at from datetime.now(UTC).replace(tzinfo=None); _completeSyncHistoryRow (via postSync syncedAt) + _failSyncHistoryRow stamp completed_at from the same UTC clock. The US-333 regression test tests/server/test_sync_history_timestamps_utc.py pins create+complete consistency and RUNS GREEN today (verified: 2 passed). So all 3 ACs were satisfied by existing code+test before this story: (AC1) writer writes both columns in UTC -- yes, all three writer paths; (AC2) a test asserts a written row's two timestamps consistent -- yes, test_syncHistoryDuration_isSecondsNotTimezoneOffset asserts delta==3s <60s; (AC3) ruff clean. GENUINE IN-SCOPE DELTA: the FAIL path (_failSyncHistoryRow, which also stamps completed_at on a sync error) had NO regression pin -- a future revert of that line to DB-local func.now() would silently reintroduce the 5h mismatch on error rows, uncaught. Added test_failSyncHistoryRow_stampsCompletedAtFromUtcClock (freezes the module clock to two 2031 moments 4s apart; asserts the failed row's completed_at == the frozen fail moment and delta==4s), so all three writer paths (create/complete/fail) are now UTC-pinned. The pin is discriminating: the frozen clock yields 2031 moments, so a DB-local fallback would stamp real 2026 wall-clock and the ==-2031 assertion fails. NO PRODUCTION CODE CHANGE -- the fix already exists; fabricating a redundant edit would be dishonest (Refusal Rules / honesty). FILED TD-058: SyncHistory.started_at + AnalysisHistory.started_at still carry server_default=func.now() (= MariaDB server-local, NOT UTC) as a LATENT footgun -- no live bug (every writer sets started_at explicitly) but any future writer/backfill omitting started_at reintroduces F-079 on new rows; fixing the column default is a MariaDB migration + SSOT schema-convention decision + NOT red-testable on the dev box (SQLite CURRENT_TIMESTAMP is already UTC) -> out of scope for this XS drain story, routed to PM/Atlas. Inbox A2AL note to Marcus documents the F-079==B-079 duplicate + suggests marking the backlog item resolved (US-333 fix + US-414 coverage completion). GATES: tests/server/test_sync_history_timestamps_utc.py 3 passed; server regression slice (test_sync + retention_migration + db_models + timestamps_utc) 128 passed, 0 failures; ruff clean on the modified test file. DEFERRED-PM: mypy not installed on dev box (same defer as US-407..413). Does NOT block US-415 (independent doc-sync). NEXT: US-415 (Sprint 50 doc-sync, S) is the only remaining actionable story; US-412 stays BLOCKED (BL-013, power_log half committed).",
+      "acceptance": [
+        "the sync_history writer writes both columns in UTC (canonical ISO-8601 per specs/standards.md); the exact-5h mismatch is gone for new rows",
+        "a test asserts a written row's two timestamps are same-timezone/consistent",
+        "ruff check passes on modified files"
+      ],
+      "validationCriteria": [
+        {
+          "action": "write a sync_history row via the fixed writer",
+          "outcome": "started_at and completed_at are both UTC ISO-8601 with no 5h offset between them"
+        }
+      ],
+      "conditionalOutcomes": [],
+      "goal": "As the CIO, I want sync_history.started_at + completed_at written in one timezone, so the data is trustworthy (no exact-5h CDT/UTC mismatch within a row).",
+      "tasks": []
+    },
+    {
+      "id": "US-415",
+      "title": "Sprint 50 documentation sync -- architecture.md 10.8.2 + ssot-design-pattern + regression manifest (Rule-10)",
+      "parent": "F-114",
+      "epicId": "E-006",
+      "type": "normal",
+      "size": "S",
+      "status": "sprint-ready",
+      "passes": true,
+      "feedback": {
+        "filesActuallyTouched": [
+          "specs/architecture.md (modified -- NEW section 10.8 'EDR Sensor Bus Architecture (F-110 bus + F-113/F-114 sensor reader)' inserted after 10.7.1, before section 11: 10.8.1 F-110 SampleBus recap (Sprint 46/V0.29.0) + 10.8.2 EDR sensor reader + raw-sensor persistence carrying the ADR section 5 prose VERBATIM + a ships-dark config-key block + a gate-ratification note; 'Last Updated' header bumped to 2026-07-01, prior 2026-06-29 entry demoted to Prior:)",
+          "specs/ssot-design-pattern.md (modified -- added Worked example #3 'Raw-sensor schema fact (cross-tier EDR persistence)' after example #2: the src/common/edr/sensor_schema.py single-source DDL as the A-4/A-14-gate-#4 anti-divergence cure, same bug class as the A-15 address mirrors)",
+          "CLAUDE.md (modified -- Configuration System section gains an 'EDR sensor-bus keys (Sprint 50/V0.29.4, ship dark)' block documenting pi.bus.enabled + the 6 pi.sensors.* keys with their validator.py defaults + a pointer to architecture.md 10.8 and src/common/edr/sensor_schema.py)",
+          "specs/arch/architecture-changelog.md (modified -- prepended the 2026-07-01 US-415 change row, newest-first per the file's own convention; the fuller record of the 10.8 addition)",
+          "offices/pm/regression_manifest.json (VERIFIED, NO CHANGE -- already carried F-113/F-114/F-101/F-064 with affectedBySprints:[50], pre-registered by Marcus 2026-06-30; AC #3 satisfied by existing state)"
+        ]
+      },
+      "completionNotes": "DONE (passes:true). US-415 = the Rule-10 in-sprint doc-sync cap on Sprint 50 (design-gate DoD: a sprint touching a load-bearing subsystem -- the EDR bus -- updates specs/architecture.md WITHIN the sprint or Atlas blocks). DOC-ONLY story: ZERO production/test .py touched, so pytest/ruff gates are N/A (ruff targets src/+tests/; markdown is not linted). VERIFICATION for a doc story = sections/refs exist + coherent + faithful to source + no stale refs. AC#1 (architecture.md 10.8.2): the F-110 EDR bus (V0.29.0) had NEVER been given an architecture.md section, so a bare 10.8.2 would be malformed -- I created a well-formed parent '## 10.8 EDR Sensor Bus Architecture' with 10.8.1 (F-110 SampleBus recap, grounded in the 2026-06-18 bus-contract design spec + src/pi/bus/{bus,sample,persistence_subscriber}.py + the ADR) and 10.8.2 carrying Atlas's 2026-06-30 EDR ADR section 5 prose VERBATIM + a config-key block (grounded in validator.py DEFAULTS lines 246-260: pi.bus.enabled + pi.sensors.imu.{enabled,sampleHz=50,persistHz=25} + pi.sensors.light.{enabled,sampleHz=1} + pi.sensors.retentionDays=7) + a gate note. Verified header coherence: 10.8 -> 10.8.1 -> 10.8.2 -> 11, no collision. AC#2 (ssot-design-pattern.md worked example): added example #3 to the existing '## Worked examples' section (NOT the unratified 'Emerging direction' draft) -- the src/common/edr/sensor_schema.py single-source DDL is the concrete A-14 gate #4 realization, framed as the SAME bug class as the A-15 address-mirror drift (one fact, N tiers, one source; Pi imports EDR_SCHEMAS/EDR_INDEXES, server derives at F-115). AC#3 (regression_manifest.json): ALREADY correct -- Marcus pre-registered F-113/F-114/F-101/F-064 (affectedBySprints:[50], lastValidated:null) on 2026-06-30; editing solely to bump a date would be churn + dishonestly attribute the registration to US-415 -> VERIFIED + left unchanged (same honesty posture as US-414's already-fixed case). AC#4 (CLAUDE.md pi.sensors.* + no stale refs): added the ship-dark key block to the Configuration System section; all my cross-refs (architecture.md 10.8/10.8.2, src/common/edr/sensor_schema.py, the ADR path, EDR_SCHEMAS/EDR_INDEXES, power_watch.RECORD_SCHEMA_VERSION) point at files/sections that exist -> no stale references. Also honored the doc's own mod-history convention: 'Last Updated' bumped in-file + a newest-first row appended to the extracted specs/arch/architecture-changelog.md (the file explicitly instructs 'append new change entries here'). Committed e8ccfa6 (4 files, doc-only). SPRINT STATE: this closes the last ACTIONABLE story. US-412 stays passes:false -- BLOCKED by BL-013 (startup_log TEXT boot_id PK needs a bespoke natural-key upsert + an idempotency-model design decision above Ralph's scope-fence; power_log half already done+committed 0fd1795). US-412 is the ONLY remaining incomplete story and it is fully blocked pending a PM/Atlas design ruling -> single-agent SPRINT_BLOCKED. DEFERRED-PM: mypy not on dev box (no .py touched here anyway).",
+      "acceptance": [
+        "specs/architecture.md gains section 10.8.2 'EDR sensor reader + raw-sensor persistence' using the ADR section 5 prose (in-sprint Rule-10)",
+        "specs/ssot-design-pattern.md gains the EDR raw-sensor schema as the worked anti-divergence example (A-14 gate #4)",
+        "regression_manifest.json reflects new/changed features (F-113/F-114 EDR; F-101/F-064 sync)",
+        "any new config keys (pi.sensors.*) documented in CLAUDE.md; no stale references"
+      ],
+      "validationCriteria": [
+        {
+          "action": "review the sprint's changed files + update the docs",
+          "outcome": "architecture.md section 10.8.2 + ssot-design-pattern worked example present and faithful to the ADR; regression_manifest updated"
+        }
+      ],
+      "conditionalOutcomes": [],
+      "goal": "As the PM, I need docs to reflect the sprint's EDR + sync changes, so the design gate and SSOT stay current in-sprint.",
+      "tasks": []
+    }
+  ],
+  "validation": {
+    "bigDefinitionOfDone": [
+      "(create the schema module + run Pi startup table creation) \u2192 (schema introspection shows the ADR section 2.2 columns, indexes, and data_source CHECK on both tables)  [from US-408]",
+      "(re-run startup twice) \u2192 (CREATE IF NOT EXISTS is idempotent -- no error, no duplicate tables, schema_version present)  [from US-408]",
+      "(run a mock IMU burst poll) \u2192 (raw.imu.{accel,gyro,mag,temp} publish with one shared seq per poll on LOSSY topics)  [from US-409]",
+      "(start reader with no sensors wired, flags on) \u2192 (state.sensor.{imu,light}=absent, zero samples published, no fabricated 0.0/null)  [from US-409]",
+      "(feed a saturating TSL2591 reading) \u2192 (raw.light.lux publishes None (persists NULL), raw counts still published, never inf)  [from US-409]",
+      "(run the subscriber with flags on + mock samples) \u2192 (edr_imu_sample writes one row per seq at 25Hz baseline; drive_id NULL when no RUNNING drive)  [from US-410]",
+      "(advance the maintenance tick past retention cutoff) \u2192 (rows older than retentionDays are deleted from both tables)  [from US-410]",
+      "(run with both flags off) \u2192 (zero EDR writes and realtime_data rows byte-identical to the pre-bus inline path)  [from US-410]",
+      "(run the golden-master regression flags-off and OBD-only) \u2192 (realtime_data shows 0 byte differences vs the pre-bus inline path)  [from US-411]",
+      "(run the absent-path test) \u2192 (state.sensor.*=absent, 0 EDR rows, 0 fabricated samples, no error)  [from US-411]",
+      "(run the migration + INFORMATION_SCHEMA check) \u2192 (obd2db.power_log and obd2db.startup_log exist with the expected columns)  [from US-412]",
+      "(run a sync cycle) \u2192 (server rows for both tables match the Pi rows (counts + spot-checked values), idempotent on re-sync)  [from US-412]",
+      "(run a sync cycle after the fix) \u2192 (obd2db.drive_counter.last_drive_id equals the Pi's value and does not regress on re-sync)  [from US-413]",
+      "(write a sync_history row via the fixed writer) \u2192 (started_at and completed_at are both UTC ISO-8601 with no 5h offset between them)  [from US-414]",
+      "(review the sprint's changed files + update the docs) \u2192 (architecture.md section 10.8.2 + ssot-design-pattern worked example present and faithful to the ADR; regression_manifest updated)  [from US-415]"
+    ],
+    "frozenAt": "2026-07-01T03:49:27Z",
+    "bigDoDHash": "8d08a8fbf94b3eb30b41ebb760936461a097ce0089a65df7e56372c078a80a7a",
+    "validationMethod": "BENCH-ONLY",
+    "validatesFeatures": [
+      "F-113",
+      "F-114",
+      "F-101",
+      "F-064"
+    ],
+    "currentVersion": "V0.29.4",
+    "validatedAt": null,
+    "validatedBy": null
+  }
+}
