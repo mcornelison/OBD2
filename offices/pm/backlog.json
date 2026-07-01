@@ -1159,6 +1159,14 @@
       "status": "pending",
       "createdAt": "2026-06-28",
       "updatedAt": "2026-06-28"
+    },
+    {
+      "id": "F-116",
+      "parent": "E-002",
+      "title": "Foreign / non-target vehicle contamination -- marker enum + ingest guard",
+      "description": "Drive 33 = a 2014 Ford Explorer logged as Eclipse data_source='real' (shared OBDLink auto-pair). Add a foreign-vehicle marker enum + re-tag, and an ingest guard (bus-rate sanity check) so it can't recur. Design-gated to Atlas (enum semantics + guard mechanism + placement).",
+      "status": "pending",
+      "createdAt": "2026-06-30"
     }
   ],
   "stories": [
