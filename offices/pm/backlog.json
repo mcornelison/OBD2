@@ -489,7 +489,7 @@
     {
       "id": "F-042",
       "parent": "E-OPS",
-      "title": "Rename src/pi/obd/ â†’ src/pi/obdii/ (resolve I-014 name collision)",
+      "title": "Rename src/pi/obd/ \u00e2\u2020\u2019 src/pi/obdii/ (resolve I-014 name collision)",
       "description": "",
       "status": "complete",
       "renamedFrom": "B-042",
@@ -549,8 +549,8 @@
     {
       "id": "F-049",
       "parent": "E-OPS",
-      "title": "drive_detect idle-poll gap — engine-on never detected in idle-poll",
-      "description": "drive_detect idle-poll gap — engine-on never detected in idle-poll",
+      "title": "drive_detect idle-poll gap \u2014 engine-on never detected in idle-poll",
+      "description": "drive_detect idle-poll gap \u2014 engine-on never detected in idle-poll",
       "status": "pending",
       "renamedFrom": "B-049",
       "createdAt": "2026-05-27",
@@ -559,8 +559,8 @@
     {
       "id": "F-050",
       "parent": "E-OPS",
-      "title": "PowerMonitor DB-write path activation — UpsMonitor → power_log → US-216",
-      "description": "PowerMonitor DB-write path activation — UpsMonitor → power_log → US-216",
+      "title": "PowerMonitor DB-write path activation \u2014 UpsMonitor \u2192 power_log \u2192 US-216",
+      "description": "PowerMonitor DB-write path activation \u2014 UpsMonitor \u2192 power_log \u2192 US-216",
       "status": "pending",
       "renamedFrom": "B-050",
       "createdAt": "2026-05-27",
@@ -819,8 +819,8 @@
     {
       "id": "F-082",
       "parent": "E-002",
-      "title": "Tester's V0.28+ data-profile findings — rollup (8 bugs + 8 design smells)",
-      "description": "Tester's V0.28+ data-profile findings — rollup (8 bugs + 8 design smells)",
+      "title": "Tester's V0.28+ data-profile findings \u2014 rollup (8 bugs + 8 design smells)",
+      "description": "Tester's V0.28+ data-profile findings \u2014 rollup (8 bugs + 8 design smells)",
       "status": "pending",
       "renamedFrom": "B-082",
       "createdAt": "2026-05-27",
@@ -859,8 +859,8 @@
     {
       "id": "F-086",
       "parent": "E-001",
-      "title": "GEM-1 — Warnings-first quiet UI on the 3.5\" display",
-      "description": "GEM-1 — Warnings-first quiet UI on the 3.5\" display",
+      "title": "GEM-1 \u2014 Warnings-first quiet UI on the 3.5\" display",
+      "description": "GEM-1 \u2014 Warnings-first quiet UI on the 3.5\" display",
       "status": "pending",
       "renamedFrom": "B-086",
       "createdAt": "2026-05-27",
@@ -869,8 +869,8 @@
     {
       "id": "F-087",
       "parent": "E-003",
-      "title": "GEM-2 — Deterministic anomaly + Ollama explanation pattern (mature US-326 + US-317 + ingest the brainstorm prompt pack)",
-      "description": "GEM-2 — Deterministic anomaly + Ollama explanation pattern (mature US-326 + US-317 + ingest the brainstorm prompt pack)",
+      "title": "GEM-2 \u2014 Deterministic anomaly + Ollama explanation pattern (mature US-326 + US-317 + ingest the brainstorm prompt pack)",
+      "description": "GEM-2 \u2014 Deterministic anomaly + Ollama explanation pattern (mature US-326 + US-317 + ingest the brainstorm prompt pack)",
       "status": "pending",
       "renamedFrom": "B-087",
       "createdAt": "2026-05-27",
@@ -879,8 +879,8 @@
     {
       "id": "F-088",
       "parent": "E-003",
-      "title": "GEM-3 — Knock-retard real-time alert with chime ladder",
-      "description": "GEM-3 — Knock-retard real-time alert with chime ladder",
+      "title": "GEM-3 \u2014 Knock-retard real-time alert with chime ladder",
+      "description": "GEM-3 \u2014 Knock-retard real-time alert with chime ladder",
       "status": "pending",
       "renamedFrom": "B-088",
       "createdAt": "2026-05-27",
@@ -889,8 +889,8 @@
     {
       "id": "F-089",
       "parent": "E-003",
-      "title": "GEM-4 — Spool engine grade per drive (A/B/C/D + 1-line reason)",
-      "description": "GEM-4 — Spool engine grade per drive (A/B/C/D + 1-line reason)",
+      "title": "GEM-4 \u2014 Spool engine grade per drive (A/B/C/D + 1-line reason)",
+      "description": "GEM-4 \u2014 Spool engine grade per drive (A/B/C/D + 1-line reason)",
       "status": "pending",
       "renamedFrom": "B-089",
       "createdAt": "2026-05-27",
@@ -899,8 +899,8 @@
     {
       "id": "F-090",
       "parent": "E-003",
-      "title": "GEM-5 — MARK EVENT button (bookmark plus/minus 60s window for later analysis)",
-      "description": "GEM-5 — MARK EVENT button (bookmark plus/minus 60s window for later analysis)",
+      "title": "GEM-5 \u2014 MARK EVENT button (bookmark plus/minus 60s window for later analysis)",
+      "description": "GEM-5 \u2014 MARK EVENT button (bookmark plus/minus 60s window for later analysis)",
       "status": "pending",
       "renamedFrom": "B-090",
       "createdAt": "2026-05-27",
@@ -909,8 +909,8 @@
     {
       "id": "F-091",
       "parent": "E-005",
-      "title": "GEM-6 — Audio drive reports via Android Auto",
-      "description": "GEM-6 — Audio drive reports via Android Auto",
+      "title": "GEM-6 \u2014 Audio drive reports via Android Auto",
+      "description": "GEM-6 \u2014 Audio drive reports via Android Auto",
       "status": "pending",
       "renamedFrom": "B-091",
       "createdAt": "2026-05-27",
@@ -919,9 +919,10 @@
     {
       "id": "F-092",
       "parent": "E-001",
-      "title": "GEM-7 — System status tile (BT link, last sync, Pi power mode, ladder stage)",
-      "description": "GEM-7 — System status tile (BT link, last sync, Pi power mode, ladder stage)",
-      "status": "active",
+      "title": "GEM-7 \u2014 System status tile (BT link, last sync, Pi power mode, ladder stage)",
+      "description": "GEM-7 \u2014 System status tile (BT link, last sync, Pi power mode, ladder stage)",
+      "status": "awaiting-validation",
+      "currentVersion": "V0.29.3",
       "renamedFrom": "B-092",
       "createdAt": "2026-05-27",
       "updatedAt": "2026-05-27"
@@ -929,8 +930,8 @@
     {
       "id": "F-093",
       "parent": "E-003",
-      "title": "GEM-8 — Baseline-relative anomaly detection (vs pre-mod shelf, not generic thresholds)",
-      "description": "GEM-8 — Baseline-relative anomaly detection (vs pre-mod shelf, not generic thresholds)",
+      "title": "GEM-8 \u2014 Baseline-relative anomaly detection (vs pre-mod shelf, not generic thresholds)",
+      "description": "GEM-8 \u2014 Baseline-relative anomaly detection (vs pre-mod shelf, not generic thresholds)",
       "status": "pending",
       "renamedFrom": "B-093",
       "createdAt": "2026-05-27",
@@ -939,8 +940,8 @@
     {
       "id": "F-094",
       "parent": "E-003",
-      "title": "GEM-9 — MrSpool digital twin: RAG over Spool knowledge + DSM references + mod/maintenance log",
-      "description": "GEM-9 — MrSpool digital twin: RAG over Spool knowledge + DSM references + mod/maintenance log",
+      "title": "GEM-9 \u2014 MrSpool digital twin: RAG over Spool knowledge + DSM references + mod/maintenance log",
+      "description": "GEM-9 \u2014 MrSpool digital twin: RAG over Spool knowledge + DSM references + mod/maintenance log",
       "status": "pending",
       "renamedFrom": "B-094",
       "createdAt": "2026-05-27",
@@ -949,8 +950,8 @@
     {
       "id": "F-095",
       "parent": "E-003",
-      "title": "S-1 — Heat soak recovery time PID (IAT-minus-ambient delta after cruise; intercooler degradation signal)",
-      "description": "S-1 — Heat soak recovery time PID (IAT-minus-ambient delta after cruise; intercooler degradation signal)",
+      "title": "S-1 \u2014 Heat soak recovery time PID (IAT-minus-ambient delta after cruise; intercooler degradation signal)",
+      "description": "S-1 \u2014 Heat soak recovery time PID (IAT-minus-ambient delta after cruise; intercooler degradation signal)",
       "status": "pending",
       "renamedFrom": "B-095",
       "createdAt": "2026-05-27",
@@ -959,8 +960,8 @@
     {
       "id": "F-096",
       "parent": "E-001",
-      "title": "S-2 — LTFT trend display (multi-drive, healthy migration toward 0)",
-      "description": "S-2 — LTFT trend display (multi-drive, healthy migration toward 0)",
+      "title": "S-2 \u2014 LTFT trend display (multi-drive, healthy migration toward 0)",
+      "description": "S-2 \u2014 LTFT trend display (multi-drive, healthy migration toward 0)",
       "status": "pending",
       "renamedFrom": "B-096",
       "createdAt": "2026-05-27",
@@ -971,7 +972,8 @@
       "parent": "E-001",
       "title": "Battery Health card (touch-dashboard; Pi power/battery health) -- PIVOTED 2026-06-05 from S-3 'Drain ladder state UI'",
       "description": "Battery Health card on the F-092/F-097 chromium touch-carousel. PIVOTED 2026-06-05 (Iris, CIO-approved): the key-off sequencer now prevents the Pi draining down the UPS ladder, so the old 'drain ladder state UI' framing is obsolete -- ladder demoted to a failsafe; this surface shows battery HEALTH (renamedFrom intent, same ID per Iris). Hard dep on F-103 (shared chromium kiosk + eclipse-states-http). Spec docs/superpowers/specs/2026-06-05-pi-touch-carousel-dashboard-f092-f097-design.md; groom-ready pending Atlas design-gate signoff.",
-      "status": "active",
+      "status": "awaiting-validation",
+      "currentVersion": "V0.29.3",
       "renamedFrom": "B-097",
       "createdAt": "2026-05-27",
       "updatedAt": "2026-06-28"
@@ -979,8 +981,8 @@
     {
       "id": "F-098",
       "parent": "E-OPS",
-      "title": "S-4 — Mode badge: in-car vs wall-power debug (small corner indicator)",
-      "description": "S-4 — Mode badge: in-car vs wall-power debug (small corner indicator)",
+      "title": "S-4 \u2014 Mode badge: in-car vs wall-power debug (small corner indicator)",
+      "description": "S-4 \u2014 Mode badge: in-car vs wall-power debug (small corner indicator)",
       "status": "pending",
       "renamedFrom": "B-098",
       "createdAt": "2026-05-27",
@@ -989,8 +991,8 @@
     {
       "id": "F-099",
       "parent": "E-OPS",
-      "title": "Telegram bot — bidirectional driver-context channel (CIO ↔ system; LLM-mediated text→DB ingestion)",
-      "description": "Telegram bot — bidirectional driver-context channel (CIO ↔ system; LLM-mediated text→DB ingestion)",
+      "title": "Telegram bot \u2014 bidirectional driver-context channel (CIO \u2194 system; LLM-mediated text\u2192DB ingestion)",
+      "description": "Telegram bot \u2014 bidirectional driver-context channel (CIO \u2194 system; LLM-mediated text\u2192DB ingestion)",
       "status": "pending",
       "renamedFrom": "B-099",
       "createdAt": "2026-05-27",
@@ -999,8 +1001,8 @@
     {
       "id": "F-100",
       "parent": "E-002",
-      "title": "`drive_summary` writer broken — every server row is an empty shell + drives 6-10 missing entirely",
-      "description": "`drive_summary` writer broken — every server row is an empty shell + drives 6-10 missing entirely",
+      "title": "`drive_summary` writer broken \u2014 every server row is an empty shell + drives 6-10 missing entirely",
+      "description": "`drive_summary` writer broken \u2014 every server row is an empty shell + drives 6-10 missing entirely",
       "status": "pending",
       "renamedFrom": "B-100",
       "createdAt": "2026-05-27",
@@ -1049,8 +1051,8 @@
     {
       "id": "F-105",
       "parent": "E-OPS",
-      "title": "architecture.md §20 modification-history SS-T9 row backfill",
-      "description": "architecture.md §20 modification-history SS-T9 row backfill",
+      "title": "architecture.md \u00a720 modification-history SS-T9 row backfill",
+      "description": "architecture.md \u00a720 modification-history SS-T9 row backfill",
       "status": "active",
       "renamedFrom": "B-105",
       "createdAt": "2026-05-27",
@@ -1059,8 +1061,8 @@
     {
       "id": "F-106",
       "parent": "E-002",
-      "title": "Derived Signals From Speed + Time — Acceleration + Estimated Odometer (with CIO Factual Recalibration)",
-      "description": "Derived Signals From Speed + Time — Acceleration + Estimated Odometer (with CIO Factual Recalibration)",
+      "title": "Derived Signals From Speed + Time \u2014 Acceleration + Estimated Odometer (with CIO Factual Recalibration)",
+      "description": "Derived Signals From Speed + Time \u2014 Acceleration + Estimated Odometer (with CIO Factual Recalibration)",
       "status": "pending",
       "renamedFrom": "B-106",
       "createdAt": "2026-05-27",
@@ -1101,7 +1103,8 @@
       "parent": "E-001",
       "title": "On-Pi DTC / check-engine viewer + gated Mode-04 clear (Card 5 of the touch dashboard)",
       "description": "On-Pi DTC/check-engine viewer surface + safety-gated Mode-04 clear, with a KOEO read independent of DriveDetector. Card 5 (Alerts+DTC) of the F-092/F-097 carousel. Spec drafted + CIO-approved 2026-06-05 (post drive-27 MIL: P0443 EVAP read+cleared off the Pi); spec docs/superpowers/specs/2026-06-05-pi-dtc-check-engine-viewer-clear-design.md. STATUS: pending Atlas design-gate signoff (load-bearing net-new write-to-vehicle Mode-04 path) -- Iris files the formal groom-ready pointer on Atlas's nod. SEQUENCE (Atlas greenlight 2026-06-19): F-103 -> carousel shell -> System Status + Battery Health cards -> System Setup+polkit -> pygame sunset -> THIS (Card 5, LAST). BUILD CONDITIONS: C-2 KOEO capture path independent of DriveDetector (drive_id=NULL, or viewer is blank key-on); C-3 Mode 02 dead on MD326328 -> realtime_data fallback (see F-109). Rule-10 DoD: state-server extension + emitters + Mode-04 path + token each land with matching specs/architecture.md (+ specs/UI/) in-sprint. Iris story split (spec section 10 M-1): US-A dtc emitter + state-server endpoint + static-table loader/sync; US-B takeover + severity-styled ribbon; US-C Alerts card (hero+list) + detail (freeze-frame + severity-gated fix + trust badge); US-D Clear-DTC Mode-04 path + gate + confirm + re-read + session-lock (load-bearing, pairs w/ Atlas A-1); US-E freeze-frame capture-or-honest-fallback. Spool owns severity taxonomy + DSM P1xxx curation; safety semantics offices/tuner/dtc-display-clear-safety-advisory.md; reference code specs/examples/dtc_read_and_clear_koeo.py.",
-      "status": "active",
+      "status": "awaiting-validation",
+      "currentVersion": "V0.29.3",
       "createdAt": "2026-06-28",
       "updatedAt": "2026-06-28"
     },
@@ -1245,7 +1248,7 @@
       "status": "pending",
       "goal": "As a server-side analytics consumer aggregating SPEED PID for distance / gear-inference, I want a speed_pid_calibration table keyed by ecu_signature (FK to vehicle_info) carrying a multiplicative correction_factor so that the new modified-EPROM ECU's ~2x SPEED-reading drift gets corrected per-drive. NOTE: new-ECU seed correction_factor=0.5 is INITIAL ESTIMATE; Spool empirical refinement Q2 PENDING.",
       "definitionOfDone": [
-        "Alembic v0010 substep creates speed_pid_calibration table per F-076 V0.28 §1 schema: id PK; ecu_signature FK -> vehicle_info; correction_factor DOUBLE; capture_method ENUM; captured_at_timestamp_utc; captured_by; provenance TEXT NOT NULL; notes",
+        "Alembic v0010 substep creates speed_pid_calibration table per F-076 V0.28 \u00a71 schema: id PK; ecu_signature FK -> vehicle_info; correction_factor DOUBLE; capture_method ENUM; captured_at_timestamp_utc; captured_by; provenance TEXT NOT NULL; notes",
         "Seed 2 rows: prior ECU correction_factor=1.0, provenance='gear-math-drive-18-3rd-gear-fit' (Drive 18 gear math fit); new ECU correction_factor=0.5, provenance='rough-seed-drive-26-gear-math' (Drive 26 rough estimate)",
         "notes field documents initial estimate flag for new-ECU seed",
         "Ordering: US-365 substep runs BEFORE US-370 substep in v0010 (US-370 FKs to US-365's column); documented in migration docstring per Atlas Refinements row 16",
@@ -1261,7 +1264,7 @@
       "validationCriteria": [
         {
           "action": "DESCRIBE speed_pid_calibration post-migration",
-          "outcome": "Shows columns per F-076 V0.28 §1 schema with FK to vehicle_info"
+          "outcome": "Shows columns per F-076 V0.28 \u00a71 schema with FK to vehicle_info"
         },
         {
           "action": "SELECT correction_factor FROM speed_pid_calibration WHERE ecu_signature = '<prior-ECU-sig>'",
@@ -1656,11 +1659,22 @@
         "if the defect will NOT reproduce at the detector unit level (manifests only with the real orchestrator loop/threads/timing), STOP + escalate to Atlas -- reproduction needs the real lifecycle loop"
       ],
       "validationCriteria": [
-        { "action": "run the reproducer against current detector.py", "outcome": "RED -- reproduces overlap + missed-close in-process" },
-        { "action": "inspect the back-to-back scenario", "outcome": "two overlapping drive_ids minted (the defect); ids possibly out of temporal order" }
+        {
+          "action": "run the reproducer against current detector.py",
+          "outcome": "RED -- reproduces overlap + missed-close in-process"
+        },
+        {
+          "action": "inspect the back-to-back scenario",
+          "outcome": "two overlapping drive_ids minted (the defect); ids possibly out of temporal order"
+        }
       ],
       "deps": [],
-      "sourceRefs": ["A-9", "F-107", "atlas-rca-ruling-2026-06-19", "spool-corroboration-29-vs-18-2026-06-18"],
+      "sourceRefs": [
+        "A-9",
+        "F-107",
+        "atlas-rca-ruling-2026-06-19",
+        "spool-corroboration-29-vs-18-2026-06-18"
+      ],
       "tasks": [],
       "createdAt": "2026-06-28",
       "updatedAt": "2026-06-28"
@@ -1683,11 +1697,23 @@
         "if the real root differs from the unreliable-close-signal hypothesis, document what it ACTUALLY is -- do not force-fit"
       ],
       "validationCriteria": [
-        { "action": "read the RCA against the reproducer", "outcome": "mechanism identified, maps to the RED test, cites file:line" },
-        { "action": "Atlas review of the RCA", "outcome": "root cause accepted (gate for US-388)" }
+        {
+          "action": "read the RCA against the reproducer",
+          "outcome": "mechanism identified, maps to the RED test, cites file:line"
+        },
+        {
+          "action": "Atlas review of the RCA",
+          "outcome": "root cause accepted (gate for US-388)"
+        }
       ],
-      "deps": ["US-386"],
-      "sourceRefs": ["A-9", "F-107", "atlas-rca-ruling-2026-06-19"],
+      "deps": [
+        "US-386"
+      ],
+      "sourceRefs": [
+        "A-9",
+        "F-107",
+        "atlas-rca-ruling-2026-06-19"
+      ],
       "tasks": [],
       "createdAt": "2026-06-28",
       "updatedAt": "2026-06-28"
@@ -1714,11 +1740,24 @@
         "if the RCA reveals the fix is architectural (id-minting concurrency, detector re-entrancy), route back to Atlas for a design ruling BEFORE coding"
       ],
       "validationCriteria": [
-        { "action": "pytest the US-386 reproducer + existing detector/lifecycle suites", "outcome": "all green" },
-        { "action": "re-run the 3 scenarios (short / back-to-back / key-on-after-missed-close)", "outcome": "one drive_id each, all close, no absorption" }
+        {
+          "action": "pytest the US-386 reproducer + existing detector/lifecycle suites",
+          "outcome": "all green"
+        },
+        {
+          "action": "re-run the 3 scenarios (short / back-to-back / key-on-after-missed-close)",
+          "outcome": "one drive_id each, all close, no absorption"
+        }
       ],
-      "deps": ["US-386", "US-387"],
-      "sourceRefs": ["A-9", "F-107", "atlas-rca-ruling-2026-06-19"],
+      "deps": [
+        "US-386",
+        "US-387"
+      ],
+      "sourceRefs": [
+        "A-9",
+        "F-107",
+        "atlas-rca-ruling-2026-06-19"
+      ],
       "tasks": [],
       "createdAt": "2026-06-28",
       "updatedAt": "2026-06-28"
@@ -1743,13 +1782,32 @@
         "if the journal no longer holds the 06-06 boot window, document best-available evidence + the most likely spawn trigger rather than blocking"
       ],
       "validationCriteria": [
-        { "action": "run the deploy-invariant test with RuntimeDirectory removed from the unit fixture", "outcome": "deploy invariant FAILS loudly (matched-pair enforced)" },
-        { "action": "run the deploy-invariant test with the guard flag false", "outcome": "deploy invariant FAILS loudly" },
-        { "action": "inspect .deploy-version after a V0.29.1 deploy", "outcome": "records guard-enabled + RuntimeDirectory state" },
-        { "action": "inspect the story notes / RCA for the 06-06 02:25 spawn-source finding (Atlas RCA condition C-3)", "outcome": "names the spawn trigger (systemd Restart= race / watchdog / manual+service overlap), or best-available evidence + most-likely trigger if the journal aged out" }
+        {
+          "action": "run the deploy-invariant test with RuntimeDirectory removed from the unit fixture",
+          "outcome": "deploy invariant FAILS loudly (matched-pair enforced)"
+        },
+        {
+          "action": "run the deploy-invariant test with the guard flag false",
+          "outcome": "deploy invariant FAILS loudly"
+        },
+        {
+          "action": "inspect .deploy-version after a V0.29.1 deploy",
+          "outcome": "records guard-enabled + RuntimeDirectory state"
+        },
+        {
+          "action": "inspect the story notes / RCA for the 06-06 02:25 spawn-source finding (Atlas RCA condition C-3)",
+          "outcome": "names the spawn trigger (systemd Restart= race / watchdog / manual+service overlap), or best-available evidence + most-likely trigger if the journal aged out"
+        }
       ],
       "deps": [],
-      "sourceRefs": ["A-9", "F-107", "atlas-guard-DEPLOYED-2026-06-19", "atlas-rca-ruling-2026-06-19-C5", "atlas-rca-ruling-2026-06-19-C3", "US-354"],
+      "sourceRefs": [
+        "A-9",
+        "F-107",
+        "atlas-guard-DEPLOYED-2026-06-19",
+        "atlas-rca-ruling-2026-06-19-C5",
+        "atlas-rca-ruling-2026-06-19-C3",
+        "US-354"
+      ],
       "tasks": [],
       "createdAt": "2026-06-28",
       "updatedAt": "2026-06-28"
@@ -1769,11 +1827,22 @@
       ],
       "conditionalOutcomes": [],
       "validationCriteria": [
-        { "action": "pytest fast suite including the reproducer", "outcome": "green" },
-        { "action": "synthetic-overlap tripwire test", "outcome": "attribution_anomaly stamped (backstop intact)" }
+        {
+          "action": "pytest fast suite including the reproducer",
+          "outcome": "green"
+        },
+        {
+          "action": "synthetic-overlap tripwire test",
+          "outcome": "attribution_anomaly stamped (backstop intact)"
+        }
       ],
-      "deps": ["US-388"],
-      "sourceRefs": ["A-9", "F-107"],
+      "deps": [
+        "US-388"
+      ],
+      "sourceRefs": [
+        "A-9",
+        "F-107"
+      ],
       "tasks": [],
       "createdAt": "2026-06-28",
       "updatedAt": "2026-06-28"
@@ -1798,13 +1867,30 @@
         "if the chosen mechanism needs a NEW CROSS-TIER TABLE (A-4-family versioned-contract change), route to Atlas for a ruling BEFORE coding -- per his 2026-06-28 quick-read a data_quality flag is Ralph-pickable, a new cross-tier dead-letter table is the architectural case"
       ],
       "validationCriteria": [
-        { "action": "simulate an unresolvable cross-tier row for N+1 cycles", "outcome": "quarantined after N; surfaced once; no per-cycle re-fail" },
-        { "action": "after quarantine, query the source table for the offending freeze-frame record", "outcome": "the raw record still exists (preserved, not deleted)" },
-        { "action": "make the resolution target resolvable then re-run", "outcome": "record leaves quarantine and syncs (re-drainable)" },
-        { "action": "inspect sync_history during the unresolvable window", "outcome": "no unbounded identical-failure spam after quarantine" }
+        {
+          "action": "simulate an unresolvable cross-tier row for N+1 cycles",
+          "outcome": "quarantined after N; surfaced once; no per-cycle re-fail"
+        },
+        {
+          "action": "after quarantine, query the source table for the offending freeze-frame record",
+          "outcome": "the raw record still exists (preserved, not deleted)"
+        },
+        {
+          "action": "make the resolution target resolvable then re-run",
+          "outcome": "record leaves quarantine and syncs (re-drainable)"
+        },
+        {
+          "action": "inspect sync_history during the unresolvable window",
+          "outcome": "no unbounded identical-failure spam after quarantine"
+        }
       ],
       "deps": [],
-      "sourceRefs": ["F-076", "spool-dtc-orphan-2026-06-28-defect-2", "sync.py:564", "atlas-sprint47-ruling-2026-06-28-us391"],
+      "sourceRefs": [
+        "F-076",
+        "spool-dtc-orphan-2026-06-28-defect-2",
+        "sync.py:564",
+        "atlas-sprint47-ruling-2026-06-28-us391"
+      ],
       "tasks": [],
       "createdAt": "2026-06-28",
       "updatedAt": "2026-06-28"
@@ -1827,12 +1913,26 @@
         "if a consumer reads a base-URL key that cannot be cleanly derived (offline route-probe hasRouteToServer is IP-route-based), keep that consumer's IP resolution + document why; do NOT fold the hostname-resolution design change (separate A-15 design story) into this de-dup"
       ],
       "validationCriteria": [
-        { "action": "python validate_config.py", "outcome": "all pass" },
-        { "action": "pytest tests/lint/test_address_mirror_consistency.py -q", "outcome": "green" },
-        { "action": "grep config.json for the server IP literal", "outcome": "appears in exactly one key" }
+        {
+          "action": "python validate_config.py",
+          "outcome": "all pass"
+        },
+        {
+          "action": "pytest tests/lint/test_address_mirror_consistency.py -q",
+          "outcome": "green"
+        },
+        {
+          "action": "grep config.json for the server IP literal",
+          "outcome": "appears in exactly one key"
+        }
       ],
       "deps": [],
-      "sourceRefs": ["A-15", "F-044", "atlas-a15-mirror-lint-2026-06-18", "config-json-server-address-dedup-gap"],
+      "sourceRefs": [
+        "A-15",
+        "F-044",
+        "atlas-a15-mirror-lint-2026-06-18",
+        "config-json-server-address-dedup-gap"
+      ],
       "tasks": [],
       "createdAt": "2026-06-28",
       "updatedAt": "2026-06-28"
@@ -1858,12 +1958,26 @@
         "if HDMI/display isn't ready at boot, retry-once then degrade gracefully (no crash, no boot stall)"
       ],
       "validationCriteria": [
-        { "action": "cold reboot (power-cycle, NOT a warm restart with eclipse-obd already up)", "outcome": "splash renders on the 3.5\" display within the spec's boot-grace window (not console/blank); proves /run/eclipse-obd/states/ exists at boot without eclipse-obd having provisioned it -- a warm bench where the dir already exists is insufficient" },
-        { "action": "curl -H <token> localhost:9899/...", "outcome": "returns the current boot state JSON" },
-        { "action": "feed a synthetic boot-phase sequence", "outcome": "splash transitions through the phases (spec section 9 synthetic criteria)" }
+        {
+          "action": "cold reboot (power-cycle, NOT a warm restart with eclipse-obd already up)",
+          "outcome": "splash renders on the 3.5\" display within the spec's boot-grace window (not console/blank); proves /run/eclipse-obd/states/ exists at boot without eclipse-obd having provisioned it -- a warm bench where the dir already exists is insufficient"
+        },
+        {
+          "action": "curl -H <token> localhost:9899/...",
+          "outcome": "returns the current boot state JSON"
+        },
+        {
+          "action": "feed a synthetic boot-phase sequence",
+          "outcome": "splash transitions through the phases (spec section 9 synthetic criteria)"
+        }
       ],
       "deps": [],
-      "sourceRefs": ["F-103", "prd-V0.29.2", "iris-f103-spec-v1.2", "atlas-c5-2026-06-29"],
+      "sourceRefs": [
+        "F-103",
+        "prd-V0.29.2",
+        "iris-f103-spec-v1.2",
+        "atlas-c5-2026-06-29"
+      ],
       "tasks": [],
       "createdAt": "2026-06-29",
       "updatedAt": "2026-06-29"
@@ -1880,19 +1994,35 @@
         "ShutdownSequencer emits phase events [A-2] and the splash renders",
         "shutdown splash shows the staged shutdown",
         "sequencer docstring documents the timing invariant [A-6]",
-        "specs/architecture.md §10.6 updated in-sprint (load-bearing ShutdownSequencer change -- Atlas design-gate DoD; BLOCKs if the hook ships without the spec update, M-1a)",
+        "specs/architecture.md \u00a710.6 updated in-sprint (load-bearing ShutdownSequencer change -- Atlas design-gate DoD; BLOCKs if the hook ships without the spec update, M-1a)",
         "[ATLAS C-5 shutdown-state survives eclipse-obd stop] shutdown-state must remain readable AFTER eclipse-obd.service has stopped: eclipse-obd's RuntimeDirectory=eclipse-obd is removed on stop, so if it exclusively owns /run/eclipse-obd the dir (and shutdown-state) vanish at the exact moment the shutdown splash needs them -- eclipse-states-http.service (and the states dir) must be ordered/ref-counted (shared RuntimeDirectory=eclipse-obd) to OUTLIVE eclipse-obd during the shutdown sequence"
       ],
       "conditionalOutcomes": [
-        "ShutdownSequencer IS load-bearing -> the §10.6 update is mandatory in-sprint (not a follow-up)"
+        "ShutdownSequencer IS load-bearing -> the \u00a710.6 update is mandatory in-sprint (not a follow-up)"
       ],
       "validationCriteria": [
-        { "action": "trigger a shutdown", "outcome": "shutdown splash renders + transitions through the shutdown stages" },
-        { "action": "trigger a shutdown with eclipse-obd.service already stopped", "outcome": "shutdown splash still renders from shutdown-state (proves the dir/file survives the RuntimeDirectory cleanup, not just a warm path where eclipse-obd is still up)" },
-        { "action": "inspect specs/architecture.md §10.6", "outcome": "documents the phase-emit hook + timing invariant" }
+        {
+          "action": "trigger a shutdown",
+          "outcome": "shutdown splash renders + transitions through the shutdown stages"
+        },
+        {
+          "action": "trigger a shutdown with eclipse-obd.service already stopped",
+          "outcome": "shutdown splash still renders from shutdown-state (proves the dir/file survives the RuntimeDirectory cleanup, not just a warm path where eclipse-obd is still up)"
+        },
+        {
+          "action": "inspect specs/architecture.md \u00a710.6",
+          "outcome": "documents the phase-emit hook + timing invariant"
+        }
       ],
-      "deps": ["US-393"],
-      "sourceRefs": ["F-103", "prd-V0.29.2", "iris-f103-spec-v1.2", "atlas-c5-2026-06-29"],
+      "deps": [
+        "US-393"
+      ],
+      "sourceRefs": [
+        "F-103",
+        "prd-V0.29.2",
+        "iris-f103-spec-v1.2",
+        "atlas-c5-2026-06-29"
+      ],
       "tasks": [],
       "createdAt": "2026-06-29",
       "updatedAt": "2026-06-29"
@@ -1916,12 +2046,28 @@
         "if splash assets are missing at deploy time, WARN and continue -- do NOT BLOCK the deploy [A-9]"
       ],
       "validationCriteria": [
-        { "action": "run deploy-pi.sh", "outcome": "the two F-103 units install + enable; re-run -> no-op (sync-if-changed)" },
-        { "action": "remove a splash asset + deploy", "outcome": "WARN emitted, deploy continues (not BLOCK)" },
-        { "action": "after deploy, cold reboot", "outcome": "/run/eclipse-obd/states/ is present + non-root-writable before any drive activity (the provisioning is boot-durable, not deploy-only)" }
+        {
+          "action": "run deploy-pi.sh",
+          "outcome": "the two F-103 units install + enable; re-run -> no-op (sync-if-changed)"
+        },
+        {
+          "action": "remove a splash asset + deploy",
+          "outcome": "WARN emitted, deploy continues (not BLOCK)"
+        },
+        {
+          "action": "after deploy, cold reboot",
+          "outcome": "/run/eclipse-obd/states/ is present + non-root-writable before any drive activity (the provisioning is boot-durable, not deploy-only)"
+        }
       ],
-      "deps": ["US-394"],
-      "sourceRefs": ["F-103", "prd-V0.29.2", "iris-f103-spec-v1.2", "atlas-c5-2026-06-29"],
+      "deps": [
+        "US-394"
+      ],
+      "sourceRefs": [
+        "F-103",
+        "prd-V0.29.2",
+        "iris-f103-spec-v1.2",
+        "atlas-c5-2026-06-29"
+      ],
       "tasks": [],
       "createdAt": "2026-06-29",
       "updatedAt": "2026-06-29"
@@ -1943,11 +2089,24 @@
         "may fold into US-393/US-394 at dev discretion (zero information loss)"
       ],
       "validationCriteria": [
-        { "action": "re-run the D-1/D-2/D-3 repros", "outcome": "they no longer reproduce" },
-        { "action": "run V-1/V-2 install-time checks on a clean deploy", "outcome": "they pass" }
+        {
+          "action": "re-run the D-1/D-2/D-3 repros",
+          "outcome": "they no longer reproduce"
+        },
+        {
+          "action": "run V-1/V-2 install-time checks on a clean deploy",
+          "outcome": "they pass"
+        }
       ],
-      "deps": ["US-395"],
-      "sourceRefs": ["F-103", "prd-V0.29.2", "iris-f103-spec-v1.2", "atlas-c5-2026-06-29"],
+      "deps": [
+        "US-395"
+      ],
+      "sourceRefs": [
+        "F-103",
+        "prd-V0.29.2",
+        "iris-f103-spec-v1.2",
+        "atlas-c5-2026-06-29"
+      ],
       "tasks": [],
       "createdAt": "2026-06-29",
       "updatedAt": "2026-06-29"
@@ -1970,11 +2129,21 @@
         "if a script genuinely needs the ROOT/src.pi.* convention (server-side), leave + document"
       ],
       "validationCriteria": [
-        { "action": "on the Pi, python scripts/sync_now.py --dry-run", "outcome": "runs, no ModuleNotFoundError" },
-        { "action": "run an import/smoke test covering the sync_now.py (and any sibling) entry-point import under the service convention", "outcome": "passes" }
+        {
+          "action": "on the Pi, python scripts/sync_now.py --dry-run",
+          "outcome": "runs, no ModuleNotFoundError"
+        },
+        {
+          "action": "run an import/smoke test covering the sync_now.py (and any sibling) entry-point import under the service convention",
+          "outcome": "passes"
+        }
       ],
       "deps": [],
-      "sourceRefs": ["F-076", "prd-V0.29.2", "I-sync-now-import-broken"],
+      "sourceRefs": [
+        "F-076",
+        "prd-V0.29.2",
+        "I-sync-now-import-broken"
+      ],
       "tasks": [],
       "createdAt": "2026-06-29",
       "updatedAt": "2026-06-29"
@@ -1997,11 +2166,21 @@
         "if ruling=(b) real data-quality, fix the realtime_data write path / analytics, not just the test"
       ],
       "validationCriteria": [
-        { "action": "run pytest tests/test_simulate_db_validation.py::...::test_noDuplicateTimestampParameterCombinations -q", "outcome": "passes (and passes on a fast box, where it currently fails with 185 dups)" },
-        { "action": "if ruling=(b): a query/test on production realtime_data for second-bucketed double-counting", "outcome": "confirms production no longer double-counts in second-bucketed analytics" }
+        {
+          "action": "run pytest tests/test_simulate_db_validation.py::...::test_noDuplicateTimestampParameterCombinations -q",
+          "outcome": "passes (and passes on a fast box, where it currently fails with 185 dups)"
+        },
+        {
+          "action": "if ruling=(b): a query/test on production realtime_data for second-bucketed double-counting",
+          "outcome": "confirms production no longer double-counts in second-bucketed analytics"
+        }
       ],
       "deps": [],
-      "sourceRefs": ["F-006", "prd-V0.29.2", "I-simulate-duplicate-timestamp"],
+      "sourceRefs": [
+        "F-006",
+        "prd-V0.29.2",
+        "I-simulate-duplicate-timestamp"
+      ],
       "tasks": [],
       "createdAt": "2026-06-29",
       "updatedAt": "2026-06-29"
@@ -2027,12 +2206,27 @@
         "if a state file is missing/malformed, the card shows `unavailable`, no crash (honest-instrument)"
       ],
       "validationCriteria": [
-        { "action": "load dashboard HTML headless", "outcome": "both cards render, no console errors (S-1)" },
-        { "action": "swipe L/R on the panel / synthetic swipe event", "outcome": "advances card + updates page dot; tap target >=40px (S-2)" },
-        { "action": "boot the Pi: splash reaches HEALTHY_YIELD", "outcome": "dashboard visible on the OSOYOO within <=3s of yield (I-1)" }
+        {
+          "action": "load dashboard HTML headless",
+          "outcome": "both cards render, no console errors (S-1)"
+        },
+        {
+          "action": "swipe L/R on the panel / synthetic swipe event",
+          "outcome": "advances card + updates page dot; tap target >=40px (S-2)"
+        },
+        {
+          "action": "boot the Pi: splash reaches HEALTHY_YIELD",
+          "outcome": "dashboard visible on the OSOYOO within <=3s of yield (I-1)"
+        }
       ],
       "deps": [],
-      "sourceRefs": ["F-092", "F-097", "prd-V0.29.3", "iris-carousel-spec-v1.2", "atlas-A1-A8-2026-06-30"],
+      "sourceRefs": [
+        "F-092",
+        "F-097",
+        "prd-V0.29.3",
+        "iris-carousel-spec-v1.2",
+        "atlas-A1-A8-2026-06-30"
+      ],
       "tasks": [],
       "createdAt": "2026-06-30",
       "updatedAt": "2026-06-30"
@@ -2056,13 +2250,33 @@
         "if the underlying state is stale/down, the tile never renders green/healthy (honest-instrument)"
       ],
       "validationCriteria": [
-        { "action": "fixture: malformed emitter JSON", "outcome": "card shows `unavailable`, no crash (S-3)" },
-        { "action": "induce a BT drop on the rig / fixture `state:reconnecting`", "outcome": "tile RECONNECTING + retry <=2s; top-bar glyph amber (I-3)" },
-        { "action": "fixture: stale last-sync while driving", "outcome": "last-sync tile amber (I-4)" },
-        { "action": "fixture: any stale/down underlying state", "outcome": "tile never renders green/healthy (F-1)" }
+        {
+          "action": "fixture: malformed emitter JSON",
+          "outcome": "card shows `unavailable`, no crash (S-3)"
+        },
+        {
+          "action": "induce a BT drop on the rig / fixture `state:reconnecting`",
+          "outcome": "tile RECONNECTING + retry <=2s; top-bar glyph amber (I-3)"
+        },
+        {
+          "action": "fixture: stale last-sync while driving",
+          "outcome": "last-sync tile amber (I-4)"
+        },
+        {
+          "action": "fixture: any stale/down underlying state",
+          "outcome": "tile never renders green/healthy (F-1)"
+        }
       ],
-      "deps": ["US-399"],
-      "sourceRefs": ["F-092", "F-097", "prd-V0.29.3", "iris-carousel-spec-v1.2", "atlas-A1-A8-2026-06-30"],
+      "deps": [
+        "US-399"
+      ],
+      "sourceRefs": [
+        "F-092",
+        "F-097",
+        "prd-V0.29.3",
+        "iris-carousel-spec-v1.2",
+        "atlas-A1-A8-2026-06-30"
+      ],
       "tasks": [],
       "createdAt": "2026-06-30",
       "updatedAt": "2026-06-30"
@@ -2087,14 +2301,37 @@
         "Spool S-2 (live runtime-remaining formula) + the ladder thresholds (3.70/3.55/3.45 V) are failsafe-only + owed by Spool; if not yet delivered, the failsafe shows VCELL + stage only (no minutes) -- do NOT fabricate a runtime estimate. Route to Spool if blocked."
       ],
       "validationCriteria": [
-        { "action": "fixture `vcellV:3.44, soc:null`", "outcome": "card shows `3.44 V`, omits percent, never \"3.44 %\" (S-7/F-8)" },
-        { "action": "fixture `lastHealthCheckTs` 30+ days old", "outcome": "shows \"last health check . <date> (<age>)\"; GREEN never shown without data-age (S-8/F-9)" },
-        { "action": "fixture `ambientTempC:null`", "outcome": "\"not captured\", never a number (S-9/F-10)" },
-        { "action": "fixture `draining:false` then `draining:true`", "outcome": "draining:false -> NO ladder DOM; draining:true -> ladder present (S-4/F-2)" },
-        { "action": "pull wall power on the UPS rig while parked", "outcome": "card escalates to ladder + runtime within <=2s (I-6)" }
+        {
+          "action": "fixture `vcellV:3.44, soc:null`",
+          "outcome": "card shows `3.44 V`, omits percent, never \"3.44 %\" (S-7/F-8)"
+        },
+        {
+          "action": "fixture `lastHealthCheckTs` 30+ days old",
+          "outcome": "shows \"last health check . <date> (<age>)\"; GREEN never shown without data-age (S-8/F-9)"
+        },
+        {
+          "action": "fixture `ambientTempC:null`",
+          "outcome": "\"not captured\", never a number (S-9/F-10)"
+        },
+        {
+          "action": "fixture `draining:false` then `draining:true`",
+          "outcome": "draining:false -> NO ladder DOM; draining:true -> ladder present (S-4/F-2)"
+        },
+        {
+          "action": "pull wall power on the UPS rig while parked",
+          "outcome": "card escalates to ladder + runtime within <=2s (I-6)"
+        }
       ],
-      "deps": ["US-399"],
-      "sourceRefs": ["F-092", "F-097", "prd-V0.29.3", "iris-carousel-spec-v1.2", "atlas-A1-A8-2026-06-30"],
+      "deps": [
+        "US-399"
+      ],
+      "sourceRefs": [
+        "F-092",
+        "F-097",
+        "prd-V0.29.3",
+        "iris-carousel-spec-v1.2",
+        "atlas-A1-A8-2026-06-30"
+      ],
       "tasks": [],
       "createdAt": "2026-06-30",
       "updatedAt": "2026-06-30"
@@ -2115,11 +2352,26 @@
         "pygame is retired ONLY once the HTML carousel reaches parity; never run both surfaces at once (A-4)"
       ],
       "validationCriteria": [
-        { "action": "systemctl/log check post-deploy", "outcome": "pygame status_display not launched (I-7)" },
-        { "action": "start sequence", "outcome": "pygame + HTML never both active (F-4)" }
+        {
+          "action": "systemctl/log check post-deploy",
+          "outcome": "pygame status_display not launched (I-7)"
+        },
+        {
+          "action": "start sequence",
+          "outcome": "pygame + HTML never both active (F-4)"
+        }
       ],
-      "deps": ["US-400", "US-401"],
-      "sourceRefs": ["F-092", "F-097", "prd-V0.29.3", "iris-carousel-spec-v1.2", "atlas-A1-A8-2026-06-30"],
+      "deps": [
+        "US-400",
+        "US-401"
+      ],
+      "sourceRefs": [
+        "F-092",
+        "F-097",
+        "prd-V0.29.3",
+        "iris-carousel-spec-v1.2",
+        "atlas-A1-A8-2026-06-30"
+      ],
       "tasks": [],
       "createdAt": "2026-06-30",
       "updatedAt": "2026-06-30"
@@ -2144,15 +2396,41 @@
         "a service-control request for a unit NOT on the install-fixed allow-list is rejected (never executed)"
       ],
       "validationCriteria": [
-        { "action": "long-press 5s; release <5s", "outcome": "menu opens; release <5s -> no menu (I-8)" },
-        { "action": "top-bar `:` tap", "outcome": "same menu (I-9)" },
-        { "action": "tap `eclipse-powerwatch` Stop then Restart", "outcome": "Stop disabled, no-op (I-10/F-7); Restart restarts the service" },
-        { "action": "Stop `eclipse-obd` -> confirm", "outcome": "stops; status dot stopped <=2s; Restart brings it back (I-11)" },
-        { "action": "service-control with a unit NOT on the allow-list; single accidental tap", "outcome": "off-list rejected (S-6/F-13); single tap -> no consequential action (F-6)" },
-        { "action": "Exit/Close -> confirm", "outcome": "kiosk closes to desktop; returns on next reboot (I-12)" }
+        {
+          "action": "long-press 5s; release <5s",
+          "outcome": "menu opens; release <5s -> no menu (I-8)"
+        },
+        {
+          "action": "top-bar `:` tap",
+          "outcome": "same menu (I-9)"
+        },
+        {
+          "action": "tap `eclipse-powerwatch` Stop then Restart",
+          "outcome": "Stop disabled, no-op (I-10/F-7); Restart restarts the service"
+        },
+        {
+          "action": "Stop `eclipse-obd` -> confirm",
+          "outcome": "stops; status dot stopped <=2s; Restart brings it back (I-11)"
+        },
+        {
+          "action": "service-control with a unit NOT on the allow-list; single accidental tap",
+          "outcome": "off-list rejected (S-6/F-13); single tap -> no consequential action (F-6)"
+        },
+        {
+          "action": "Exit/Close -> confirm",
+          "outcome": "kiosk closes to desktop; returns on next reboot (I-12)"
+        }
       ],
-      "deps": ["US-399"],
-      "sourceRefs": ["F-092", "F-097", "prd-V0.29.3", "iris-carousel-spec-v1.2", "atlas-A1-A8-2026-06-30"],
+      "deps": [
+        "US-399"
+      ],
+      "sourceRefs": [
+        "F-092",
+        "F-097",
+        "prd-V0.29.3",
+        "iris-carousel-spec-v1.2",
+        "atlas-A1-A8-2026-06-30"
+      ],
       "tasks": [],
       "createdAt": "2026-06-30",
       "updatedAt": "2026-06-30"
@@ -2177,12 +2455,29 @@
         "code with no Spool-table entry -> \"No description yet\" (never blank)"
       ],
       "validationCriteria": [
-        { "action": "DriveDetector inactive/RPM 0, key-on read", "outcome": "captures stored+pending; `dtc_log` rows `drive_id=NULL`; detail shows \"key-on read\" not \"Drive N\" (S-11)" },
-        { "action": "key-on/engine-off with a lit MIL, e.g. the P0443 reference", "outcome": "code on the Alerts card within seconds; `dtc_log` row `drive_id=NULL` (I-8)" },
-        { "action": "malformed/empty `dtc` JSON", "outcome": "card \"unavailable\", no crash (S-9)" }
+        {
+          "action": "DriveDetector inactive/RPM 0, key-on read",
+          "outcome": "captures stored+pending; `dtc_log` rows `drive_id=NULL`; detail shows \"key-on read\" not \"Drive N\" (S-11)"
+        },
+        {
+          "action": "key-on/engine-off with a lit MIL, e.g. the P0443 reference",
+          "outcome": "code on the Alerts card within seconds; `dtc_log` row `drive_id=NULL` (I-8)"
+        },
+        {
+          "action": "malformed/empty `dtc` JSON",
+          "outcome": "card \"unavailable\", no crash (S-9)"
+        }
       ],
-      "deps": ["US-399"],
-      "sourceRefs": ["F-111", "prd-V0.29.3", "iris-dtc-spec-v1.2", "atlas-dtc-signoff-2026-06-30", "spool-dtc-safety-advisory"],
+      "deps": [
+        "US-399"
+      ],
+      "sourceRefs": [
+        "F-111",
+        "prd-V0.29.3",
+        "iris-dtc-spec-v1.2",
+        "atlas-dtc-signoff-2026-06-30",
+        "spool-dtc-safety-advisory"
+      ],
       "tasks": [],
       "createdAt": "2026-06-30",
       "updatedAt": "2026-06-30"
@@ -2204,12 +2499,29 @@
         "STOP code -> \"Acknowledge\" drops to ribbon (driver can clear the view); never forces full-screen while the road needs watching"
       ],
       "validationCriteria": [
-        { "action": "fixture: new code", "outcome": "takeover renders correct color+directive+dismiss per severity (S-1)" },
-        { "action": "fixture: known/old code", "outcome": "no takeover; ribbon present (S-2)" },
-        { "action": "ribbon present", "outcome": "STOP-red distinct from brand-red, warning glyph + pulse (R-2)" }
+        {
+          "action": "fixture: new code",
+          "outcome": "takeover renders correct color+directive+dismiss per severity (S-1)"
+        },
+        {
+          "action": "fixture: known/old code",
+          "outcome": "no takeover; ribbon present (S-2)"
+        },
+        {
+          "action": "ribbon present",
+          "outcome": "STOP-red distinct from brand-red, warning glyph + pulse (R-2)"
+        }
       ],
-      "deps": ["US-404"],
-      "sourceRefs": ["F-111", "prd-V0.29.3", "iris-dtc-spec-v1.2", "atlas-dtc-signoff-2026-06-30", "spool-dtc-safety-advisory"],
+      "deps": [
+        "US-404"
+      ],
+      "sourceRefs": [
+        "F-111",
+        "prd-V0.29.3",
+        "iris-dtc-spec-v1.2",
+        "atlas-dtc-signoff-2026-06-30",
+        "spool-dtc-safety-advisory"
+      ],
       "tasks": [],
       "createdAt": "2026-06-30",
       "updatedAt": "2026-06-30"
@@ -2234,15 +2546,41 @@
         "code with no table entry -> \"No description yet\" (I-3); the display never decides severity"
       ],
       "validationCriteria": [
-        { "action": "fixture: red/yellow code, `suggestedFix` non-null", "outcome": "detail shows diagnose directive, NO raw fix (S-4/I-4)" },
-        { "action": "fixture: green code", "outcome": "fix shown + correct trust badge per `fixProvenance` (S-4)" },
-        { "action": "fixture: missing freeze-frame", "outcome": "\"no freeze frame captured (this ECU)...\" fallback, never blank (S-5)" },
-        { "action": "fixture: auto-trans P1xxx `severity:na`", "outcome": "quiet N/A chip, sorts last, no takeover/ribbon (S-12)" },
-        { "action": "fixture: P1300 `severityCaveat` (red if knock)", "outcome": "base yellow chip + caveat line, tier NOT auto-upgraded (S-13)" },
-        { "action": "tap the real P0443 code", "outcome": "detail opens with the fallback context (I-2)" }
+        {
+          "action": "fixture: red/yellow code, `suggestedFix` non-null",
+          "outcome": "detail shows diagnose directive, NO raw fix (S-4/I-4)"
+        },
+        {
+          "action": "fixture: green code",
+          "outcome": "fix shown + correct trust badge per `fixProvenance` (S-4)"
+        },
+        {
+          "action": "fixture: missing freeze-frame",
+          "outcome": "\"no freeze frame captured (this ECU)...\" fallback, never blank (S-5)"
+        },
+        {
+          "action": "fixture: auto-trans P1xxx `severity:na`",
+          "outcome": "quiet N/A chip, sorts last, no takeover/ribbon (S-12)"
+        },
+        {
+          "action": "fixture: P1300 `severityCaveat` (red if knock)",
+          "outcome": "base yellow chip + caveat line, tier NOT auto-upgraded (S-13)"
+        },
+        {
+          "action": "tap the real P0443 code",
+          "outcome": "detail opens with the fallback context (I-2)"
+        }
       ],
-      "deps": ["US-404"],
-      "sourceRefs": ["F-111", "prd-V0.29.3", "iris-dtc-spec-v1.2", "atlas-dtc-signoff-2026-06-30", "spool-dtc-safety-advisory"],
+      "deps": [
+        "US-404"
+      ],
+      "sourceRefs": [
+        "F-111",
+        "prd-V0.29.3",
+        "iris-dtc-spec-v1.2",
+        "atlas-dtc-signoff-2026-06-30",
+        "spool-dtc-safety-advisory"
+      ],
       "tasks": [],
       "createdAt": "2026-06-30",
       "updatedAt": "2026-06-30"
@@ -2269,14 +2607,37 @@
         "the action-path gate is authoritative (never trust the UI); if the SSOT advisory and the spec ever disagree, the advisory wins (engine-protection)"
       ],
       "validationCriteria": [
-        { "action": "fixture: `clearGate` stop_present/watch_present, then sync_pending, then ok", "outcome": "stop/watch -> Clear disabled + reason; sync_pending -> disabled + reason; ok -> enabled (S-6)" },
-        { "action": "action path: Clear requested with the gate failing server-side, UI tampered", "outcome": "REJECTED at the action path (S-10)" },
-        { "action": "fixture: red/yellow code", "outcome": "no Clear button; detail shows diagnose directive, no raw fix (I-4)" },
-        { "action": "real MINOR, e.g. P0443: log + server-ack -> Clear -> confirm -> Mode 04 -> re-read", "outcome": "capture-before-clear holds; re-read cleared + MIL off; freeze-frame preserved server-side (I-5/I-6)" },
-        { "action": "cleared code returns immediately", "outcome": "Clear locks for the session (I-7/S-8)" }
+        {
+          "action": "fixture: `clearGate` stop_present/watch_present, then sync_pending, then ok",
+          "outcome": "stop/watch -> Clear disabled + reason; sync_pending -> disabled + reason; ok -> enabled (S-6)"
+        },
+        {
+          "action": "action path: Clear requested with the gate failing server-side, UI tampered",
+          "outcome": "REJECTED at the action path (S-10)"
+        },
+        {
+          "action": "fixture: red/yellow code",
+          "outcome": "no Clear button; detail shows diagnose directive, no raw fix (I-4)"
+        },
+        {
+          "action": "real MINOR, e.g. P0443: log + server-ack -> Clear -> confirm -> Mode 04 -> re-read",
+          "outcome": "capture-before-clear holds; re-read cleared + MIL off; freeze-frame preserved server-side (I-5/I-6)"
+        },
+        {
+          "action": "cleared code returns immediately",
+          "outcome": "Clear locks for the session (I-7/S-8)"
+        }
       ],
-      "deps": ["US-406"],
-      "sourceRefs": ["F-111", "prd-V0.29.3", "iris-dtc-spec-v1.2", "atlas-dtc-signoff-2026-06-30", "spool-dtc-safety-advisory"],
+      "deps": [
+        "US-406"
+      ],
+      "sourceRefs": [
+        "F-111",
+        "prd-V0.29.3",
+        "iris-dtc-spec-v1.2",
+        "atlas-dtc-signoff-2026-06-30",
+        "spool-dtc-safety-advisory"
+      ],
       "tasks": [],
       "createdAt": "2026-06-30",
       "updatedAt": "2026-06-30"
