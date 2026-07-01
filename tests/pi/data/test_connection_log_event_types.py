@@ -408,3 +408,73 @@ class TestUs340bConnectionLogDedup:
             'reconnect_attempt',
             'reconnect_success',
         ], f"US-340b dedup must cover adapter_wait + reconnect_attempt too; got {observed}"
+
+    def test_repeatedEcuSilentWait_writesOnlyOneRow(self, freshDb) -> None:
+        """
+        US-418 (F-077/F-058): engine-off ecu_silent_wait must dedup too.
+
+        Given: many ecu_silent_wait events for the same mac (engine off,
+               adapter reachable -- the classifier fires ECU_SILENT on every
+               reduced-cadence poll)
+        When: each is passed to logConnectionEvent
+        Then: only ONE row lands (the sustained engine-off idle noise that
+              US-340b left un-deduped because ecu_silent_wait was not in the
+              repeat-suppressed set)
+        """
+        mac = '00:04:3E:85:0D:FB'
+        for _ in range(6):
+            logConnectionEvent(
+                database=freshDb,
+                eventType=EVENT_ECU_SILENT_WAIT,
+                macAddress=mac,
+            )
+        with freshDb.connect() as conn:
+            cnt = conn.execute(
+                "SELECT COUNT(*) FROM connection_log "
+                "WHERE event_type = 'ecu_silent_wait' AND mac_address = ?",
+                (mac,),
+            ).fetchone()[0]
+        assert cnt == 1, (
+            f"US-418: 6 ecu_silent_wait events for the same mac should collapse "
+            f"to 1 row (engine-off idle-noise dedup); got {cnt}."
+        )
+
+    def test_ecuSilentWait_reLogsAfterStateChange(self, freshDb) -> None:
+        """
+        The FIRST ecu_silent_wait of each engine-off window still logs.
+
+        Given: ecu_silent_wait repeats, then a state change (reconnect_success
+               when the engine finally cranks + the ECU answers), then a new
+               engine-off window
+        When: the sequence fires
+        Then: one ecu_silent_wait per window is preserved -- the transition
+              signal survives; only the per-poll repeats are suppressed
+        """
+        from src.pi.data.connection_logger import EVENT_RECONNECT_SUCCESS
+
+        mac = '00:04:3E:85:0D:FB'
+        for _ in range(3):
+            logConnectionEvent(database=freshDb,
+                               eventType=EVENT_ECU_SILENT_WAIT, macAddress=mac)
+        logConnectionEvent(database=freshDb,
+                           eventType=EVENT_RECONNECT_SUCCESS, macAddress=mac,
+                           success=True)
+        for _ in range(3):
+            logConnectionEvent(database=freshDb,
+                               eventType=EVENT_ECU_SILENT_WAIT, macAddress=mac)
+
+        with freshDb.connect() as conn:
+            rows = conn.execute(
+                "SELECT event_type FROM connection_log "
+                "WHERE mac_address = ? ORDER BY id",
+                (mac,),
+            ).fetchall()
+        observed = [r[0] for r in rows]
+        assert observed == [
+            'ecu_silent_wait',
+            'reconnect_success',
+            'ecu_silent_wait',
+        ], (
+            f"US-418: first ecu_silent_wait per engine-off window must survive "
+            f"the dedup; got {observed}"
+        )

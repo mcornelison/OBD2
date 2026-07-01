@@ -57,6 +57,14 @@
 #                               forcePush bypasses the throttle (explicit
 #                               re-drain).  Injected clock for deterministic
 #                               throttle math.
+# 2026-07-01    | Rex (US-418) | F-078: idle sync_history hygiene.
+#                               pushDriveCounter() now skips the POST when
+#                               last_drive_id is unchanged since the last
+#                               SUCCESSFUL push (process-local high-water mark),
+#                               so an engine-off heartbeat stops writing a
+#                               server sync_history row every 60s tick.
+#                               forcePush passes force=True to bypass the gate
+#                               (power-down flush must always deliver).
 # 2026-07-01    | Rex (US-416) | F-101/F-115: pushSnapshot() -- the natural-key
 #                               snapshot-sync push for append-only TEXT-PK tables
 #                               registered in src.common.sync.snapshot_registry.
@@ -382,6 +390,15 @@ class SyncClient:
         self._apiKey: str | None = None
         if self.isEnabled:
             self._apiKey = self._resolveApiKey()
+
+        # US-418 (F-078): last drive_counter value SUCCESSFULLY delivered to
+        # the server on the interval-sync path.  ``pushDriveCounter`` skips the
+        # POST when the local value is unchanged since this, so an engine-off
+        # heartbeat stops writing a server-side sync_history row every tick.
+        # ``None`` = never pushed -> the first tick always delivers a baseline.
+        # Process-local (resets on restart): a single re-push per boot is
+        # harmless because the server upsert is a monotonic GREATEST().
+        self._lastPushedDriveCounter: int | None = None
 
     # ---- config surface ----------------------------------------------------
 
@@ -947,7 +964,11 @@ class SyncClient:
         # throttle so a deploy-time / pre-poweroff flush re-attempts any
         # quarantined table (e.g. after US-367 lands the ECU lineage spine).
         results = self.pushAllDeltas(bypassQuarantine=True)
-        results.append(self.pushDriveCounter())
+        # US-418: forcePush is the explicit power-down flush -- bypass the
+        # unchanged-value idle gate so the server singleton is guaranteed
+        # current before poweroff, even if an interval tick already delivered
+        # the same value.
+        results.append(self.pushDriveCounter(force=True))
 
         rowsPushed = 0
         tablesOk = 0
@@ -986,7 +1007,7 @@ class SyncClient:
             elapsed=elapsed,
         )
 
-    def pushDriveCounter(self) -> PushResult:
+    def pushDriveCounter(self, *, force: bool = False) -> PushResult:
         """Push the local ``drive_counter`` singleton to the server (US-314).
 
         ``drive_counter`` is a single-row state mirror, not a delta-by-PK
@@ -999,10 +1020,20 @@ class SyncClient:
 
         * :data:`PushStatus.DISABLED` -- companion service off in config.
         * :data:`PushStatus.EMPTY` -- counter table missing OR
-          ``last_drive_id`` is 0 (no drives minted yet); no POST sent.
+          ``last_drive_id`` is 0 (no drives minted yet), OR the value is
+          unchanged since the last successful push and ``force`` is False
+          (US-418 idle gate); no POST sent.
         * :data:`PushStatus.FAILED` -- transport error, retries
           exhausted; the singleton stays where it was on the server.
         * :data:`PushStatus.OK` -- value successfully delivered.
+
+        Args:
+            force: When True, bypass the US-418 unchanged-value idle gate
+                and POST the current value regardless.  :meth:`forcePush`
+                (the US-216 power-down flush) sets this so the server
+                singleton is guaranteed current before ``systemctl
+                poweroff``.  The interval-sync path leaves it False so an
+                engine-off heartbeat does not re-POST a static counter.
 
         Returns:
             :class:`PushResult` with ``tableName='drive_counter'``.
@@ -1032,6 +1063,30 @@ class SyncClient:
                 status=PushStatus.EMPTY,
             )
 
+        # US-418 (F-078): idle-noise gate.  The counter only advances when a
+        # NEW drive is minted, so re-POSTing an unchanged value on every 60s
+        # engine-off heartbeat is pure noise -- each POST writes one server
+        # sync_history row (~1/min at idle).  Skip the POST when the value is
+        # unchanged since the last SUCCESSFUL delivery.  The high-water mark
+        # advances only on OK (below), so a FAILED push stays re-sendable, and
+        # ``force`` (forcePush power-down flush) bypasses the gate entirely.
+        if (
+            not force
+            and self._lastPushedDriveCounter is not None
+            and lastDriveId == self._lastPushedDriveCounter
+        ):
+            return PushResult(
+                tableName=DRIVE_COUNTER_TABLE,
+                rowsPushed=0,
+                batchId="",
+                elapsed=time.monotonic() - start,
+                status=PushStatus.EMPTY,
+                reason=(
+                    f"drive_counter unchanged at {lastDriveId} since last "
+                    "push; idle re-POST suppressed (US-418)"
+                ),
+            )
+
         # US-319 (B-071): forensic INFO before drive_counter push.
         # Stable journalctl-grep token "FORENSIC sync_push_drive_counter".
         # Resolves V0.27.3 US-314 watch-item: drive_counter advance +
@@ -1045,6 +1100,8 @@ class SyncClient:
         try:
             self._postDriveCounterWithRetry(batchId, lastDriveId)
         except _PushFailure as failure:
+            # Do NOT advance the idle-gate high-water mark on failure -- the
+            # value must stay re-sendable on the next tick (US-418).
             return PushResult(
                 tableName=DRIVE_COUNTER_TABLE,
                 rowsPushed=0,
@@ -1054,6 +1111,9 @@ class SyncClient:
                 reason=str(failure),
             )
 
+        # US-418: record the delivered value so an unchanged interval tick is
+        # gated until the next real drive-start advance.
+        self._lastPushedDriveCounter = lastDriveId
         return PushResult(
             tableName=DRIVE_COUNTER_TABLE,
             rowsPushed=1,

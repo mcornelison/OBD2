@@ -369,3 +369,143 @@ class TestPushDriveCounterMethod:
 
         assert result.status == PushStatus.FAILED
         assert "500" in result.reason
+
+
+# =============================================================================
+# US-418 (F-078): idle sync_history hygiene -- pushDriveCounter must NOT POST
+# an unchanged counter on every idle tick.  Pre-fix, pushDriveCounter POSTed
+# unconditionally whenever last_drive_id > 0, so each 60s engine-off heartbeat
+# wrote one server-side sync_history row (~1/min idle growth).  The server
+# upsert is monotonic GREATEST(), so re-pushing an unchanged value is pure
+# noise -- gate it to the first push + real advances.
+# =============================================================================
+
+
+class TestPushDriveCounterIdleGate:
+    """US-418: skip the counter POST when nothing advanced since last push."""
+
+    def test_pushDriveCounter_skipsRepeatPush_whenCounterUnchanged(
+        self,
+        tempDbPath: str,
+        stubApiKey: str,  # noqa: ARG002
+        noSleep: Any,
+    ) -> None:
+        """First push posts; a second call with the SAME value posts nothing.
+
+        This is the F-078 idle-noise fix: at engine-off the counter never
+        advances, so every heartbeat after the first must be a no-op (no
+        POST -> no server sync_history row).
+        """
+        with sqlite3.connect(tempDbPath) as conn:
+            _seedDriveCounter(conn, lastDriveId=10)
+
+        opener = _capturingOpener()
+        client = SyncClient(
+            _baseConfig(tempDbPath), httpOpener=opener, sleep=noSleep,
+        )
+
+        first = client.pushDriveCounter()
+        second = client.pushDriveCounter()
+        third = client.pushDriveCounter()
+
+        assert first.status == PushStatus.OK
+        assert second.status == PushStatus.EMPTY
+        assert third.status == PushStatus.EMPTY
+        bodies = opener.bodies  # type: ignore[attr-defined]
+        assert len(bodies) == 1, (
+            f"idle re-push must not POST an unchanged counter; bodies={bodies}"
+        )
+
+    def test_pushDriveCounter_reposts_whenCounterAdvances(
+        self,
+        tempDbPath: str,
+        stubApiKey: str,  # noqa: ARG002
+        noSleep: Any,
+    ) -> None:
+        """A real drive-start advance re-opens the push (not suppressed)."""
+        with sqlite3.connect(tempDbPath) as conn:
+            _seedDriveCounter(conn, lastDriveId=10)
+
+        opener = _capturingOpener()
+        client = SyncClient(
+            _baseConfig(tempDbPath), httpOpener=opener, sleep=noSleep,
+        )
+
+        assert client.pushDriveCounter().status == PushStatus.OK
+        assert client.pushDriveCounter().status == PushStatus.EMPTY  # unchanged
+
+        # A new drive is minted -> counter advances -> next push delivers it.
+        with sqlite3.connect(tempDbPath) as conn:
+            _seedDriveCounter(conn, lastDriveId=11)
+
+        advanced = client.pushDriveCounter()
+        assert advanced.status == PushStatus.OK
+        bodies = opener.bodies  # type: ignore[attr-defined]
+        assert len(bodies) == 2
+        assert bodies[-1]["driveCounter"] == {"lastDriveId": 11}
+
+    def test_pushDriveCounter_reposts_afterFailedPush(
+        self,
+        tempDbPath: str,
+        stubApiKey: str,  # noqa: ARG002
+        noSleep: Any,
+    ) -> None:
+        """A FAILED push must not poison the gate -- next tick retries.
+
+        The gate high-water mark advances only on a SUCCESSFUL delivery,
+        so a transport failure leaves the counter re-sendable.
+        """
+        with sqlite3.connect(tempDbPath) as conn:
+            _seedDriveCounter(conn, lastDriveId=10)
+
+        state = {"fail": True}
+
+        def _flakyOpener(req: Any, timeout: float = 30) -> Any:  # noqa: ARG001
+            if state["fail"]:
+                raise urllib.error.HTTPError(
+                    url="http://test/", code=500, msg="boom",
+                    hdrs=None, fp=None,  # type: ignore[arg-type]
+                )
+            return _CapturingResponse()
+
+        client = SyncClient(
+            _baseConfig(tempDbPath), httpOpener=_flakyOpener, sleep=noSleep,
+        )
+
+        assert client.pushDriveCounter().status == PushStatus.FAILED
+        state["fail"] = False
+        # The gate did NOT record the failed value, so this retries + delivers.
+        assert client.pushDriveCounter().status == PushStatus.OK
+
+    def test_forcePush_alwaysPushesCounter_evenWhenUnchanged(
+        self,
+        tempDbPath: str,
+        stubApiKey: str,  # noqa: ARG002
+        noSleep: Any,
+    ) -> None:
+        """forcePush is the explicit bypass -- the idle gate never applies.
+
+        The US-216 power-down flush must deliver the counter even if a
+        prior interval tick already pushed the same value.
+        """
+        with sqlite3.connect(tempDbPath) as conn:
+            _seedDriveCounter(conn, lastDriveId=10)
+
+        opener = _capturingOpener()
+        client = SyncClient(
+            _baseConfig(tempDbPath), httpOpener=opener, sleep=noSleep,
+        )
+
+        # Prime the gate with an interval-path push.
+        assert client.pushDriveCounter().status == PushStatus.OK
+        # An unchanged interval push is now suppressed...
+        assert client.pushDriveCounter().status == PushStatus.EMPTY
+        # ...but forcePush bypasses the gate and re-delivers.
+        client.forcePush()
+
+        bodies = opener.bodies  # type: ignore[attr-defined]
+        bodiesWithCounter = [b for b in bodies if "driveCounter" in b]
+        assert len(bodiesWithCounter) == 2, (
+            "forcePush must always deliver the counter (explicit bypass); "
+            f"bodiesWithCounter={bodiesWithCounter}"
+        )

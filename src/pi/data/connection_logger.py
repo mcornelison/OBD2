@@ -20,6 +20,13 @@
 #               |              | to one row.  State-change events ALWAYS log.
 #               |              | Eliminates ~99% of row volume during sustained
 #               |              | adapter outages (was ~2000 rows/day).
+# 2026-07-01    | Rex (US-418) | F-077/F-058: add ecu_silent_wait to the
+#               |              | repeat-suppressed set.  Engine-off-but-adapter-
+#               |              | reachable logs one ecu_silent_wait per reduced-
+#               |              | cadence poll -- a 24/7 idle-growth source
+#               |              | US-340b left uncovered.  First occurrence per
+#               |              | engine-off window still logs; state changes
+#               |              | still clear the tracker.
 # ================================================================================
 ################################################################################
 
@@ -145,10 +152,20 @@ CANONICAL_EVENT_TYPES: frozenset[str] = frozenset({
 #: Event types that are "still trying" actions, not state transitions.
 #: Repeated rows of these for the SAME mac_address are noise; only the
 #: first one of a sustained sequence is informative.
+#:
+#: US-418 (F-077/F-058): ``ecu_silent_wait`` joins the set.  With the engine
+#: off but the adapter reachable, the capture loop classifies ECU_SILENT on
+#: every reduced-cadence poll and logs one ``ecu_silent_wait`` row each time --
+#: a sustained 24/7 idle-growth source US-340b missed (ecu_silent_wait was
+#: treated as a state change, so it both logged AND reset the tracker every
+#: poll).  Suppressing repeats collapses an engine-off window to one row; a
+#: real state change (reconnect_success on engine crank, disconnect) still
+#: clears the tracker so the next window logs its first ecu_silent_wait again.
 _REPEAT_SUPPRESSED_EVENTS: frozenset[str] = frozenset({
     EVENT_CONNECT_ATTEMPT,
     EVENT_ADAPTER_WAIT,
     EVENT_RECONNECT_ATTEMPT,
+    EVENT_ECU_SILENT_WAIT,
 })
 
 #: Per-mac "outage tracker": the set of "still trying" event_types already
