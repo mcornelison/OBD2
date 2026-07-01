@@ -5,8 +5,8 @@
       "id": 1,
       "name": "Rex",
       "type": "windows-dev",
-      "status": "unassigned",
-      "taskid": "",
+      "status": "active",
+      "taskid": "US-416",
       "lastCheck": "2026-07-01",
       "note": "US-415 DONE (passes:true, committed e8ccfa6). Sprint 50 Rule-10 in-sprint doc-sync (design-gate DoD for the EDR bus). DOC-ONLY: zero .py touched -> pytest/ruff N/A (markdown not linted); verification = sections/refs exist + coherent + faithful. Delivered: (1) architecture.md NEW section 10.8 'EDR Sensor Bus Architecture' -- 10.8.1 F-110 SampleBus recap + 10.8.2 EDR sensor reader (F-113/F-114) carrying Atlas's 2026-06-30 EDR ADR section 5 prose VERBATIM + config-key block + gate note; the F-110 bus had NEVER been documented so I built the well-formed 10.8 parent (header coherence verified 10.8->10.8.1->10.8.2->11). (2) ssot-design-pattern.md worked example #3 (src/common/edr/sensor_schema.py single-source DDL = A-4/A-14-gate-#4 anti-divergence, same bug class as A-15 address mirrors). (3) CLAUDE.md pi.sensors.* ship-dark key block (defaults grounded in validator.py 246-260). (4) architecture-changelog.md newest-first row + 'Last Updated' bump (doc's own convention). regression_manifest.json ALREADY carried F-113/F-114/F-101/F-064 (Marcus pre-registered 2026-06-30) -> VERIFIED, no change (bumping a date = churn + false attribution; same honesty posture as US-414). SPRINT STATE: 7/8 passing. This closes the LAST actionable story. US-412 stays BLOCKED (BL-013: startup_log TEXT boot_id PK needs a natural-key upsert + idempotency-model design decision above scope-fence; power_log half done+committed 0fd1795). US-412 is the ONLY remaining incomplete story and is fully blocked pending a PM/Atlas design ruling -> single-agent SPRINT_BLOCKED emitted."
     },

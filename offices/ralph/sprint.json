@@ -12,7 +12,7 @@
       "type": "normal",
       "size": "L",
       "status": "sprint-ready",
-      "passes": false,
+      "passes": true,
       "acceptance": [
         "Pi SNAPSHOT_SYNC registry {table -> (naturalKeyCols, cursorCol)} + a snapshot reader that deltas by an explicit recorded_at cursor per table (tracked in sync_log) -- NOT full-snapshot, NOT rowid (TEXT-PK tables have no stable rowid; VACUUM renumbers)",
         "server natural-key upsert parameterized by naturalKeyCols -> UNIQUE(source_device, *naturalKeyCols) + ON-CONFLICT; a NEW pattern, distinct from the id->source_id registry path",
@@ -39,7 +39,8 @@
         "date": "2026-07-01",
         "sizeAcknowledged": "L",
         "rationale": "General reusable snapshot-sync mechanism (registry + Pi snapshot reader + parameterized server upsert + A-4 single-definition) is intrinsically one cohesive unit -- splitting the mechanism from itself would fragment the contract. Atlas-ruled shape. startup_log (US-417) is the separate consumer story. If Ralph compresses, flag and PM will split the server-upsert half out."
-      }
+      },
+      "landedBy": "Marcus (PM) -- verified 66 tests green after Ralph stalled pre-commit (headless async-wait)"
     },
     {
       "id": "US-417",

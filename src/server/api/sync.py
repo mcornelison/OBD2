@@ -74,6 +74,16 @@
 #               |              | autoAnalysisTriggered stays in SyncResponse for
 #               |              | Pi-side wire-format compatibility but is always
 #               |              | False (server compute runs out-of-band).
+# 2026-07-01    | Rex (US-416) | F-101/F-115: natural-key SNAPSHOT upsert path
+#               |              | for append-only TEXT-PK tables registered in
+#               |              | src.common.sync.snapshot_registry (A-4 shared
+#               |              | contract).  runSnapshotUpsert + _upsertSnapshotBatch
+#               |              | upsert on (source_device, *naturalKeyCols) against
+#               |              | a UNIQUE(source_device, *naturalKeyCols) constraint
+#               |              | -- a NEW pattern, distinct from the id->source_id
+#               |              | registry path AND from dtc_freeze_frame's FK
+#               |              | resolver (left untouched).  Registry + model
+#               |              | registry ship empty; startup_log registers US-417.
 # ================================================================================
 ################################################################################
 
@@ -122,11 +132,16 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request, status
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import func as sa_func
-from sqlalchemy import or_, select, update
+from sqlalchemy import or_, select, tuple_, update
 from sqlalchemy.dialects.mysql import insert as mysql_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session
 
+from src.common.sync.snapshot_registry import (
+    getSnapshotSpec,
+    isSnapshotSyncTable,
+    snapshotSyncTables,
+)
 from src.server.db.connection import getAsyncSession
 from src.server.db.models import (
     AiRecommendation,
@@ -198,9 +213,33 @@ _TABLE_REGISTRY: dict[str, tuple[type, tuple[tuple[str, str], ...]]] = {
 # here and routed through the dedicated resolver _syncDtcFreezeFrameRows.
 DTC_FREEZE_FRAME_TABLE: str = "dtc_freeze_frame"
 
+# US-416 (F-101/F-115): server-side model registry for the natural-key SNAPSHOT
+# sync path.  Maps a snapshot-sync table name -> its SQLAlchemy model.  The
+# per-table (naturalKeyCols, cursorCol) contract lives in the SHARED registry
+# src.common.sync.snapshot_registry.SNAPSHOT_SYNC (A-4); this map only supplies
+# the server model for each registered table.  Ships EMPTY -- startup_log adds
+# its (name -> model) row in US-417; the F-115 event-vault registers here too.
+_SNAPSHOT_TABLE_REGISTRY: dict[str, type] = {}
+
+# NOTE: ACCEPTED_TABLES is the STATIC delta + dtc_freeze_frame set, preserved for
+# back-compat (it is imported by tests + operator tooling).  The payload
+# whitelist is computed dynamically by :func:`acceptedTables` so a snapshot-sync
+# registration (module-level in US-417, or a test fixture) is honoured without
+# editing this constant.
 ACCEPTED_TABLES: frozenset[str] = (
     frozenset(_TABLE_REGISTRY.keys()) | {DTC_FREEZE_FRAME_TABLE}
 )
+
+
+def acceptedTables() -> frozenset[str]:
+    """Return every table name the sync payload accepts, computed live.
+
+    ``ACCEPTED_TABLES`` (delta tables + dtc_freeze_frame) UNION the currently
+    registered natural-key snapshot-sync tables.  Computed on each call so a
+    registration in :data:`SNAPSHOT_SYNC` -- whether module-level or a test
+    fixture -- is visible to the Pydantic validator immediately.
+    """
+    return ACCEPTED_TABLES | snapshotSyncTables()
 
 # Columns never overwritten on upsert conflict.
 #
@@ -284,12 +323,13 @@ class SyncRequest(BaseModel):
     def _tablesMustBeAccepted(
         cls, value: dict[str, TableData],
     ) -> dict[str, TableData]:
-        """Reject any table name not in ACCEPTED_TABLES."""
-        unknown = set(value) - ACCEPTED_TABLES
+        """Reject any table name not accepted (delta + dtc_ff + snapshot-sync)."""
+        accepted = acceptedTables()
+        unknown = set(value) - accepted
         if unknown:
             raise ValueError(
                 f"Unknown table name(s): {sorted(unknown)}. "
-                f"Accepted: {sorted(ACCEPTED_TABLES)}.",
+                f"Accepted: {sorted(accepted)}.",
             )
         return value
 
@@ -391,6 +431,11 @@ def runSyncUpsert(
         # in this same batch are already upserted and resolvable.
         if tableName == DTC_FREEZE_FRAME_TABLE:
             continue
+        # US-416: natural-key snapshot-sync tables use a different resolver
+        # (upsert on (source_device, *naturalKeyCols), no id->source_id); they
+        # are processed after this generic loop.
+        if isSnapshotSyncTable(tableName):
+            continue
         model, renames = _TABLE_REGISTRY[tableName]
         rows = payload["rows"] if isinstance(payload, dict) else payload.rows
         if not rows:
@@ -468,6 +513,21 @@ def runSyncUpsert(
         ffRows = payload["rows"] if isinstance(payload, dict) else payload.rows
         result[DTC_FREEZE_FRAME_TABLE] = _syncDtcFreezeFrameRows(
             session, deviceId, ffRows, syncHistoryId,
+        )
+
+    # US-416: natural-key snapshot-sync tables, routed by the shared registry.
+    for tableName, payload in tables.items():
+        if not isSnapshotSyncTable(tableName):
+            continue
+        model = _SNAPSHOT_TABLE_REGISTRY.get(tableName)
+        if model is None:
+            raise ValueError(
+                f"snapshot-sync table {tableName!r} has no server model "
+                f"registered in _SNAPSHOT_TABLE_REGISTRY",
+            )
+        snapRows = payload["rows"] if isinstance(payload, dict) else payload.rows
+        result[tableName] = runSnapshotUpsert(
+            session, deviceId, tableName, model, snapRows, syncHistoryId,
         )
 
     return result
@@ -691,6 +751,155 @@ def _syncDtcFreezeFrameRows(
 
     _upsertBatch(session, DtcFreezeFrame, prepared)
     return {"inserted": inserted, "updated": updated, "errors": 0}
+
+
+# ==============================================================================
+# Natural-key snapshot upsert (US-416 / F-101 / F-115-reusable)
+# ==============================================================================
+#
+# The GENERAL server-side resolver for append-only TEXT-PK tables that the Pi
+# pushes via the SNAPSHOT_SYNC path (startup_log, the F-115 event-vault).  Unlike
+# the generic id->source_id registry path, these rows have no meaningful integer
+# id to map; they dedup on the NATURAL key.  The upsert keys on
+# (source_device, *naturalKeyCols) against a matching UNIQUE constraint, so a
+# re-sync (the Pi's cursor over-reads harmlessly by design) is idempotent -- no
+# duplicates.  This is a NEW pattern, distinct from dtc_freeze_frame's cross-tier
+# FK resolver (which is orthogonal and deliberately left untouched).
+
+
+def runSnapshotUpsert(
+    session: Session,
+    deviceId: str,
+    tableName: str,
+    model: type,
+    rows: list[dict[str, Any]],
+    syncHistoryId: int,
+) -> dict[str, int]:
+    """Upsert Pi snapshot rows onto ``model``, deduped on the natural key.
+
+    Args:
+        session: Caller-owned SQLAlchemy session (shares the batch transaction).
+        deviceId: Stamped as ``source_device`` on every row + half of the
+            dedup key.
+        tableName: The snapshot-sync table name; must be registered in the
+            shared :data:`SNAPSHOT_SYNC` registry (supplies ``naturalKeyCols``).
+        model: The server SQLAlchemy model for ``tableName``.
+        rows: Pi-native rows for this table (each carrying every
+            ``naturalKeyCols`` column).
+        syncHistoryId: Stamped into ``sync_batch_id`` when the model has it.
+
+    Returns:
+        ``{"inserted": N, "updated": M, "errors": 0}``.
+
+    Raises:
+        KeyError: If ``tableName`` is not registered in :data:`SNAPSHOT_SYNC`.
+    """
+    naturalKeyCols = getSnapshotSpec(tableName).naturalKeyCols
+    if not rows:
+        return {"inserted": 0, "updated": 0, "errors": 0}
+
+    columnNames = {c.name for c in model.__table__.columns}  # type: ignore[attr-defined]
+    prepared: list[dict[str, Any]] = []
+    incomingKeys: list[tuple[Any, ...]] = []
+    for piRow in rows:
+        # Copy only columns the server model actually has; drop any Pi-native
+        # ``id`` (the server autoincrements its own PK -- natural-key tables
+        # have no id->source_id mapping).
+        serverRow: dict[str, Any] = {
+            k: v for k, v in piRow.items()
+            if k in columnNames and k != "id"
+        }
+        serverRow["source_device"] = deviceId
+        if "sync_batch_id" in columnNames:
+            serverRow["sync_batch_id"] = syncHistoryId
+        if "synced_at" in columnNames:
+            serverRow["synced_at"] = datetime.now(UTC).replace(tzinfo=None)
+        # US-195 parity: coerce missing/None data_source to 'real' when present.
+        if "data_source" in columnNames and serverRow.get("data_source") is None:
+            serverRow["data_source"] = "real"
+        _coerceRowColumns(model, serverRow)
+        prepared.append(serverRow)
+        incomingKeys.append(tuple(serverRow[c] for c in naturalKeyCols))
+
+    keyCols = [getattr(model, c) for c in naturalKeyCols]
+    existing = session.execute(
+        select(*keyCols).where(
+            model.source_device == deviceId,  # type: ignore[attr-defined]
+            tuple_(*keyCols).in_(incomingKeys),
+        ),
+    ).all()
+    existingSet = {tuple(row) for row in existing}
+    inserted = sum(1 for k in incomingKeys if k not in existingSet)
+    updated = len(incomingKeys) - inserted
+
+    _upsertSnapshotBatch(session, model, prepared, naturalKeyCols)
+    return {"inserted": inserted, "updated": updated, "errors": 0}
+
+
+def _upsertSnapshotBatch(
+    session: Session,
+    model: type,
+    rows: list[dict[str, Any]],
+    naturalKeyCols: tuple[str, ...],
+) -> None:
+    """Dialect-aware bulk upsert on ``(source_device, *naturalKeyCols)``."""
+    if not rows:
+        return
+
+    table = model.__table__  # type: ignore[attr-defined]
+    dialectName = session.bind.dialect.name  # type: ignore[union-attr]
+    conflictCols = ("source_device", *naturalKeyCols)
+
+    # Normalise keys -- executemany needs identical columns on every row.
+    allKeys: set[str] = set()
+    for r in rows:
+        allKeys.update(r.keys())
+    for r in rows:
+        for k in allKeys:
+            r.setdefault(k, None)
+
+    # Columns to SET on conflict: everything present in the payload except the
+    # server-owned bookkeeping (_PRESERVE_ON_UPDATE) and the conflict key itself.
+    def _updatableColNames() -> list[str]:
+        return [
+            c.name for c in table.columns
+            if c.name in allKeys
+            and c.name not in _PRESERVE_ON_UPDATE
+            and c.name not in conflictCols
+        ]
+
+    if dialectName in {"mysql", "mariadb"}:
+        stmt = mysql_insert(table)
+        updatable = _updatableColNames()
+        if updatable:
+            stmt = stmt.on_duplicate_key_update(
+                **{name: stmt.inserted[name] for name in updatable},
+            )
+        else:
+            # Nothing to update beyond the key -- keep it a no-op idempotent
+            # write by re-setting a key column to itself (MariaDB has no
+            # DO NOTHING for INSERT ... ON DUPLICATE KEY).
+            firstKey = conflictCols[0]
+            stmt = stmt.on_duplicate_key_update(
+                **{firstKey: getattr(table.c, firstKey)},
+            )
+    elif dialectName == "sqlite":
+        stmt = sqlite_insert(table)
+        updatable = _updatableColNames()
+        if updatable:
+            stmt = stmt.on_conflict_do_update(
+                index_elements=list(conflictCols),
+                set_={name: getattr(stmt.excluded, name) for name in updatable},
+            )
+        else:
+            stmt = stmt.on_conflict_do_nothing(index_elements=list(conflictCols))
+    else:
+        raise ValueError(
+            f"Unsupported dialect for upsert: {dialectName!r}. "
+            "Expected mysql, mariadb, or sqlite.",
+        )
+
+    session.execute(stmt, rows)
 
 
 # ==============================================================================
@@ -995,8 +1204,10 @@ __all__ = [
     "SyncResponse",
     "TableData",
     "TableResult",
+    "acceptedTables",
     "detectDriveDataReceived",
     "router",
     "runDriveCounterUpsert",
+    "runSnapshotUpsert",
     "runSyncUpsert",
 ]

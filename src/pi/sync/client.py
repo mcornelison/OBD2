@@ -57,6 +57,17 @@
 #                               forcePush bypasses the throttle (explicit
 #                               re-drain).  Injected clock for deterministic
 #                               throttle math.
+# 2026-07-01    | Rex (US-416) | F-101/F-115: pushSnapshot() -- the natural-key
+#                               snapshot-sync push for append-only TEXT-PK tables
+#                               registered in src.common.sync.snapshot_registry.
+#                               Reads the per-table time-cursor from sync_log,
+#                               fetches rows where cursorCol > cursor, POSTs them
+#                               on the standard /api/v1/sync envelope (the server
+#                               routes snapshot tables to its natural-key upsert),
+#                               and advances the cursor to max(cursorCol) on
+#                               success.  pushAllDeltas now also sweeps the
+#                               registered snapshot tables (empty until US-417
+#                               registers startup_log, so no behaviour change yet).
 # ================================================================================
 ################################################################################
 
@@ -128,6 +139,7 @@ from typing import Any
 
 from src.common.config.secrets_loader import getSecret
 from src.common.errors.handler import ConfigurationError
+from src.common.sync.snapshot_registry import getSnapshotSpec, snapshotSyncTables
 from src.pi.data import sync_log
 from src.pi.obdii.drive_id import DRIVE_COUNTER_TABLE
 
@@ -755,12 +767,108 @@ class SyncClient:
         )
         return {int(pk): str(modAt) for pk, modAt in cursor.fetchall()}
 
+    def pushSnapshot(self, tableName: str) -> PushResult:
+        """Push one natural-key snapshot table's new rows (US-416 / F-101).
+
+        The snapshot-sync path for append-only, immutable, TEXT-PK tables
+        registered in :data:`src.common.sync.snapshot_registry.SNAPSHOT_SYNC`
+        (startup_log, the F-115 event-vault).  Unlike :meth:`pushDelta` this
+        deltas by an explicit time-cursor (``cursorCol > last_snapshot_cursor``)
+        rather than an integer PK, and the server upserts on the natural key
+        ``(source_device, *naturalKeyCols)``.
+
+        Because the server upsert is idempotent on the natural key, an
+        over-reading cursor is harmless -- re-pushed rows dedup.  A failed push
+        does NOT advance the cursor (mirrors the US-149 failed-push invariant),
+        so the rows are re-sent next cycle.
+
+        Args:
+            tableName: Must be registered in :data:`SNAPSHOT_SYNC`.
+
+        Returns:
+            A :class:`PushResult`.  ``DISABLED`` when the companion service is
+            off, ``EMPTY`` when the cursor is caught up, ``OK`` on a successful
+            push, ``FAILED`` (not raised) on a transport error.
+
+        Raises:
+            ValueError: If ``tableName`` is not registered in SNAPSHOT_SYNC.
+        """
+        # Whitelist guard (delegates to sync_log; SQL-injection defence).
+        sync_log._validateSnapshotTable(tableName)  # noqa: SLF001 -- intentional reuse
+
+        start = time.monotonic()
+
+        if not self.isEnabled:
+            return PushResult(
+                tableName=tableName,
+                rowsPushed=0,
+                batchId="",
+                elapsed=time.monotonic() - start,
+                status=PushStatus.DISABLED,
+            )
+
+        cursorCol = getSnapshotSpec(tableName).cursorCol
+
+        with closing(sqlite3.connect(self._dbPath)) as conn, conn:
+            sync_log.initDb(conn)
+            sync_log.ensureSnapshotSyncSchema(conn)
+            lastCursor = sync_log.getSnapshotCursor(conn, tableName)
+            rows = sync_log.getSnapshotRows(
+                conn, tableName, lastCursor, self._readBatchSize(),
+            )
+
+            if not rows:
+                return PushResult(
+                    tableName=tableName,
+                    rowsPushed=0,
+                    batchId="",
+                    elapsed=time.monotonic() - start,
+                    status=PushStatus.EMPTY,
+                )
+
+            batchId = _makeBatchId(self._deviceId)
+            try:
+                # lastSyncedId is informational for snapshot tables (they carry
+                # no integer delta cursor); the server routes by table name.
+                self._postBatchWithRetry(tableName, batchId, rows, 0)
+            except _PushFailure as failure:
+                # Do NOT advance the cursor on failure -- rows stay re-sendable.
+                return PushResult(
+                    tableName=tableName,
+                    rowsPushed=0,
+                    batchId=batchId,
+                    elapsed=time.monotonic() - start,
+                    status=PushStatus.FAILED,
+                    reason=str(failure),
+                )
+
+            newCursor = max(str(row[cursorCol]) for row in rows)
+            sync_log.updateSnapshotCursor(
+                conn, tableName, newCursor, batchId, status="ok",
+            )
+            logger.info(
+                "FORENSIC sync_push_snapshot_advance | table=%s | "
+                "old_cursor=%s | new_cursor=%s | rows=%d",
+                tableName, lastCursor, newCursor, len(rows),
+            )
+            return PushResult(
+                tableName=tableName,
+                rowsPushed=len(rows),
+                batchId=batchId,
+                elapsed=time.monotonic() - start,
+                status=PushStatus.OK,
+            )
+
     def pushAllDeltas(self, *, bypassQuarantine: bool = False) -> list[PushResult]:
         """Push every in-scope table in deterministic order.
 
-        Snapshot tables return :data:`PushStatus.SKIPPED` -- they are still
-        in the result set so operator output (``scripts/sync_now.py``) keeps
-        visibility into all eight in-scope tables.
+        Snapshot/upsert reject-list tables (``profiles`` / ``vehicle_info``)
+        return :data:`PushStatus.SKIPPED` -- they are still in the result set so
+        operator output (``scripts/sync_now.py``) keeps visibility into every
+        in-scope table.  Natural-key snapshot-sync tables (US-416, registered in
+        :data:`SNAPSHOT_SYNC`) are swept AFTER the delta tables via
+        :meth:`pushSnapshot`; the registry is empty until US-417 registers
+        startup_log, so this adds no rows to the sweep until then.
 
         Args:
             bypassQuarantine: Forwarded to :meth:`pushDelta`; when True the
@@ -768,15 +876,17 @@ class SyncClient:
                 :meth:`forcePush`).
 
         Returns:
-            One :class:`PushResult` per table in
-            :data:`sync_log.IN_SCOPE_TABLES`, ordered by table name so
-            operator-facing output is stable across runs.
+            One :class:`PushResult` per delta table in
+            :data:`sync_log.IN_SCOPE_TABLES` (sorted), then one per registered
+            snapshot-sync table (sorted), so operator-facing output is stable.
         """
         results: list[PushResult] = []
         for tableName in sorted(sync_log.IN_SCOPE_TABLES):
             results.append(
                 self.pushDelta(tableName, bypassQuarantine=bypassQuarantine),
             )
+        for tableName in sorted(snapshotSyncTables()):
+            results.append(self.pushSnapshot(tableName))
         return results
 
     def forcePush(self) -> PushSummary:

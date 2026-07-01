@@ -104,6 +104,9 @@ class TestInitDbCreatesSchema:
         # the parallel modified_at cursor for SYNC_UPDATE_TABLES_PK).
         # US-391 added consecutive_failures + quarantined_at (queue-level
         # quarantine bookkeeping; see ensureQuarantineSchema).
+        # US-416 added last_snapshot_cursor (NULL by default; carries the
+        # per-table time-cursor for the natural-key SNAPSHOT_SYNC path;
+        # see ensureSnapshotSyncSchema).
         assert set(info.keys()) == {
             'table_name',
             'last_synced_id',
@@ -113,6 +116,7 @@ class TestInitDbCreatesSchema:
             'last_synced_modified_at',
             'consecutive_failures',
             'quarantined_at',
+            'last_snapshot_cursor',
         }
         # table_name is PRIMARY KEY
         assert info['table_name'][5] == 1  # pk column from PRAGMA
