@@ -1420,6 +1420,12 @@ which reduces the last N rows of the `statistics` table per parameter
 
 ### Two Display Surfaces (primary + status_display overlay)
 
+> **Retired (US-402, V0.29.3):** the **Status overlay** below is retired in
+> production — `pi.hardware.statusDisplay.enabled=false` — superseded by the F-092
+> HTML carousel (see "F-092 Carousel Dashboard Subsystem → Pygame sunset"). The
+> module stays in the tree (re-enablable for a bench diagnostic) but the
+> orchestrator no longer launches it; the carousel is the sole dashboard surface.
+
 The Pi runtime wires two distinct pygame surfaces that must not fight over
 GPU resources:
 
@@ -2314,6 +2320,437 @@ US-394.
 > **Cross-ref:** the shutdown-state half of this contract (the ShutdownSequencer
 > phase-emit hook + the "shutdown-state survives eclipse-obd stop" guarantee) is
 > documented in **§10.6.1** (landed by US-394, same sprint).
+
+### F-092 Carousel Dashboard Subsystem -- shell + splash hand-off + full-runtime state server (US-399, Sprint 49 / V0.29.3) [Atlas A-1/A-2/A-5]
+
+The post-boot touch dashboard reuses the F-103 splash seam wholesale: it is a
+**pure SSOT consumer** chromium kiosk that *renders* state files and **never
+polls hardware**. The carousel shell (US-399) is the frame; the System Status /
+Battery Health card bodies + emitters are US-400 / US-401; the DTC card (Card 5)
++ viewer is US-404..407.
+
+| Piece | Source | Role |
+|------|--------|------|
+| Dashboard kit | `specs/UI/dist/dashboard-pi/` | `dashboard.html` (top bar + 2 card slots + page dots), `dashboard.css` (≥40px tap targets), `carousel.js` (swipe-nav + dots + honest-instrument availability poll). Served at `/dashboard.html`. |
+| `eclipse-dashboard.service.{wayland,x11}` | `specs/UI/dist/dashboard-pi/` | [A-5] Chromium **touch** kiosk (`--touch-events=enabled`). Loads `http://127.0.0.1:9899/dashboard.html` same-origin (token injected). **No `[Install]`** -- started by the splash hand-off, not enabled. |
+
+**A-1 splash → dashboard hand-off.** `splash-boot.service.{wayland,x11}` carries
+`OnSuccess=eclipse-dashboard.service`. When the boot splash reaches
+`HEALTHY_YIELD`, `boot-state-poll.js` calls `window.close()`; the `Type=simple`
+splash unit exits 0; systemd starts the dashboard. A **DEGRADED** boot keeps the
+splash up (no `window.close`), so the dashboard never starts on a sick boot
+(honest-instrument: the operator sees the amber-ring splash, not a dashboard
+pretending all is well). No watchdog/timer, no `pkill` -- the same JS-driven exit
+discipline as the splash (D-3).
+
+**A-2 "full runtime" extension of `eclipse-states-http`.** The server already
+ran *continuously* (C-5: `WantedBy=multi-user.target`), so "boot-only → full
+runtime" is a **serving** extension, not a lifecycle one: `states_http_server`
+now accepts a **repeatable `--assets-dir`** (an ordered search path, first match
+wins) so one server serves **both** co-located kits same-origin --
+`deploy/eclipse-states-http.service` passes `--assets-dir /opt/splash
+--assets-dir /opt/dashboard`. The splash owns `/` (its `index.html`); the
+dashboard is reached at `/dashboard.html`. The token is injected into either
+kit's HTML, so it still never lands on disk. A missing `/opt/dashboard` is
+harmless (the asset lookup just skips it). The new state files the dashboard
+reads (`system-status`, `battery-health`, `dtc`) are served by the existing
+generic token-gated state route -- no per-endpoint code (US-400/401/404 add the
+*emitters*; the server already serves whatever they write).
+
+**Honest-instrument availability (carousel shell).** `carousel.js` polls each
+card's `data-state` file at 4 Hz; a missing/malformed payload sets the card to
+`unavailable` (never a fabricated value, never green-when-broken). Until the
+US-400/401 emitters exist, both cards correctly read `unavailable`.
+
+**Deploy.** `deploy-pi.sh step_install_dashboard_assets` installs the served kit
+to `/opt/dashboard` (WARN-not-BLOCK if absent, A-9), mirroring
+`step_install_splash_assets`; the kiosk **unit** is installed by the kit's
+session-aware `install.sh` (V-1/V-2), the same seam as the splash kiosk unit.
+
+> **Sequencing note (A-4):** the dashboard and the pygame `status_display` must
+> never run simultaneously. The pygame surface is **retired (parity-gated) in
+> US-402** — once the System Status + Battery Health cards reached parity
+> (US-400/401) — by setting `pi.hardware.statusDisplay.enabled=false` in
+> `config.json`. The sprint deploys US-399…402 together, so the shipped artifact
+> has exactly one surface. See the US-402 subsection below for the resolution fix.
+
+#### System Status card + `system-status` emitter (US-400) [Atlas A-3]
+
+The **System Status** card (Card 1) renders the `system-status` state file at 4
+Hz: OBD-link / sync / power / drive tiles + the top-bar BT/sync/power glyphs.
+
+**`system-status` emitter (`src/pi/splash/system_status_emitter.py`).** The
+**orchestrator/sync tier owns this emitter** (A-3): it holds the live BT-link,
+the `sync_log` high-water mark, the power source, and the `DriveDetector` state,
+so it calls the injected `makeSystemStatusEmitter(...)` → `emit(...)` callable —
+the same unidirectional seam as the shutdown emitter (`power_watch` → splash):
+the emitter never reaches back into the orchestrator. The emit is **best-effort**
+(write failures logged, never raised → the dashboard hook can never block the
+orchestrator loop) and writes the A-3 schema atomically (`writeStateAtomic`,
+reusing the boot-state primitives). Schema (spec §7):
+
+```json
+{ "obdLink": {"state":"reconnecting","retries":3,"lastSeenS":14},
+  "sync": {"lastOkTs":"…","rows":1204,"pending":0,"stale":false},
+  "power": {"mode":"car","source":"external"},
+  "drive": {"state":"recording","driveId":27},
+  "ts":"…" }
+```
+
+**I-033 reconnect visibility.** `obdLink.state` is reported **verbatim** —
+`linked` (green) / `reconnecting` (amber, with `retries` + `lastSeenS`) / `down`
+(red) — never fabricated as `linked`. On a mid-drive BT drop the reconnect loop
+flips the state to `reconnecting`; the 4 Hz poll surfaces `RECONNECTING` on the
+tile and an amber BT glyph within ≤2 s (the operator finally *sees* the
+reconnect, closing the I-033 "did it capture my drive?" blind spot).
+
+**Honest-instrument render (F-1).** `carousel.js#systemStatusView` maps the state
+to tile levels (`ok`/`amber`/`down`/`unavailable`) + glyph states; a level/glyph
+is **`ok` (green) only when the underlying state is genuinely good**. A
+down/reconnecting link, a stale sync, or running on battery renders
+amber/down/neutral — never green. A missing sub-object renders that tile
+`unavailable` (the rest of the card still renders); a missing/malformed file
+renders the whole card `unavailable` and resets the glyphs to neutral (no
+lingering stale-green). Tiles are built with `textContent` (no `innerHTML`), so
+emitter values render verbatim, never as markup.
+
+**Stale-while-driving (I-4).** `isSyncStaleWhileDriving` flags `sync.stale=true`
+**only while recording** (a parked Pi catches up on WiFi return) when the last
+sync exceeds the threshold — and treats an absent/unparseable last-sync as stale
+(never claim a freshness we can't prove). The **threshold is Spool-owned (S-3)**
+and supplied by config: the emitter takes `syncStaleThresholdS` as a required
+parameter and **hardcodes no tuning number** (PM Rule 7 / Refusal Rule 2).
+
+#### Battery Health card + `battery-health` emitter (US-401) [Atlas A-3]
+
+The **Battery Health** card (Card 2) renders the `battery-health` state file at 4
+Hz: the Spool health verdict + VCELL + charge + temp, and a failsafe drain ladder
+**only during a real drain**. The cell is the **Pi UPS-HAT LiPo (MAX17048 fuel
+gauge), never the car's 12 V lead-acid (F-11)**.
+
+**`battery-health` emitter (`src/pi/splash/battery_health_emitter.py`).** The
+**orchestrator/power tier owns this emitter** (A-3): it holds the live MAX17048
+reads, the `battery_health_log` history, and the power-watch draining state, so it
+calls `makeBatteryHealthEmitter(...)` → `emit(...)` — the same unidirectional
+best-effort seam as the system-status + shutdown emitters (write failures logged,
+never raised; atomic `writeStateAtomic`). Schema (spec §7):
+
+```json
+{ "vcellV":4.02, "soc":76, "socCalibrated":false,
+  "crate":1.8, "charging":true, "draining":false,
+  "restedVcellV":4.05, "weakEvents30d":0, "restedHistory":[…],
+  "health":"green", "fullChargeReached":true, "runtimeToCutoffS":714,
+  "ambientTempC":null, "lastHealthCheckTs":"2026-05-16T00:00:00Z",
+  "ladder":null, "ts":"…" }
+```
+
+**Two render-breaking honesty traps locked at the data contract:**
+
+- **Voltage-is-not-percent (F-8).** `battery_health_log.*_soc` columns hold
+  **volts**, not percent. The emitter has **no code path from `vcellV` to `soc`** —
+  the percent comes only from the MAX17048 SoC register, and a `null` register read
+  passes through as `soc:null`. `carousel.js#batteryHealthView`/`socTile` renders
+  the percent **only when `soc` is a real number** (tagged `(uncalibrated)` when
+  `socCalibrated:false`); a `null` soc omits the percent and the card shows volts
+  (`vcellTile`, `"3.44 V"`). The trap is locked by **absence** — a voltage can
+  never be painted as a percent.
+- **Stale-green guard (F-9).** A GREEN verdict **always** carries
+  `"last health check · <date> (<age>)"`, computed by `healthCheckLine` from
+  `ts − lastHealthCheckTs` (both in the state file, so the age is deterministic /
+  node-testable, not browser-clock dependent). A month-old reading is never
+  mistaken for live.
+
+**Temp honest (F-10).** `ambientTempC:null` → the card renders **"not captured"**,
+never a fabricated number.
+
+**No-false-failsafe (A-6 / F-2).** The failsafe `ladder` block (stage + thresholds
++ runtime) renders **only when `draining === true`**. The invariant is enforced in
+the **pure builder** (`buildBatteryHealthState` forces `ladder=None` whenever
+`draining` is false, even if a caller supplies one) — the SSOT, so a buggy caller
+can't light a phantom drain. The **live runtime-remaining + ladder thresholds
+(3.70/3.55/3.45 V) are Spool-owned (S-2, failsafe-only)** and arrive inside the
+caller's `ladder` dict; the emitter/render **never fabricate** them — a draining
+pack with no Spool data shows the stage + volts only, no minutes.
+
+**C-5 states-dir writers.** The `battery-health` emitter is the third post-boot
+writer into the F-103-provisioned `states/` tmpfs dir, after `system-status` and
+before the **fourth writer `dtc` (US-404)**. All four reuse
+`ensureStatesDir`/`writeStateAtomic`, ordered after the states-dir provisioning —
+they never re-invent the lifecycle. The full post-boot writer set is therefore
+`system-status` · `battery-health` · `dtc` (the F-103 boot/shutdown emitters own
+`boot-state` / `shutdown-state`).
+
+#### Pygame sunset — parity-gated cut-over (US-402) [Atlas A-4]
+
+Once the System Status (US-400) and Battery Health (US-401) cards reached parity
+with the legacy pygame **status overlay**, that overlay is **retired** so the HTML
+carousel is the **sole** dashboard surface (failure **F-4**: the two must never be
+active simultaneously). The data the overlay used to paint is now republished
+through the `system-status` + `battery-health` emitters into the state files the
+carousel reads.
+
+**Cut-over mechanism.** The retirement is a single config flip:
+`pi.hardware.statusDisplay.enabled` → `false` in `config.json`. With the overlay
+off, `HardwareManager._initializeStatusDisplay` returns early and never opens a
+pygame surface; the carousel kiosk (launched by the splash `OnSuccess=` hand-off)
+is the only surface. This is parity-gated — pygame is retired **only** now that
+the cards exist, never before.
+
+**Resolution fix (load-bearing).** `createHardwareManagerFromConfig` historically
+resolved the overlay flag from the **flat** top-level `hardware.statusDisplay.*`
+path, but the orchestrator (`lifecycle.py`) passes the **full** config, where the
+canonical flag lives at the **nested** `pi.hardware.statusDisplay.*` (config.json).
+So before US-402 the nested flag was silently ignored and the overlay always
+launched on its `True` default — a config flip alone would not have retired it.
+The factory now resolves the **nested path first**, falling back to the flat path
+and then the legacy `hardware.display.enabled` (preserving the US-198 operator
+escape hatch). This mirrors the factory's own pi-nested
+`pi.shutdown.poweroffTimeoutSeconds` read. `status_display.py` /
+`dashboard_layout.py` remain in the tree (not launched), so the overlay can still
+be re-enabled for a bench diagnostic without a rebuild.
+
+#### System Setup menu + gated service control (US-403) [Atlas A-7/A-8]
+
+The dashboard's persistent `⋮` and a deliberate **~5s long-press** (a filling
+ring; an early release or any movement >10px cancels — `carousel.js`
+`longPressProgress`/`isLongPressComplete`/`exceedsMoveCancel`) both open the
+**System Setup menu** (D-6). The menu offers **gated service control** over an
+**install-fixed allow-list** of `eclipse-*` units and an **Exit / Close UI**
+item (A-8). Confirm-before-consequential: **Stop** and **Exit** require a confirm
+modal; **Restart** acts directly; a `✕`/Back is always present (the operator is
+never trapped, F-6).
+
+**Privilege path (A-7) — three independent defense-in-depth layers.** The
+chromium kiosk runs **unprivileged** and can only do HTTP; it never runs as root
+and never holds sudo.
+
+1. **UI layer** — the menu mirrors the allow-list (`carousel.js`
+   `SERVICE_ALLOWLIST`/`serviceMenuItems`/`actionRequest`); `eclipse-powerwatch`'s
+   Stop button is rendered **disabled** (it is the safe-shutdown guard — D-7).
+2. **Action-path layer** — the kiosk POSTs `/service-control {unit, verb}` to the
+   token-gated route on `eclipse-states-http` (the only IPC the kiosk has). The
+   server delegates to `src/pi/splash/service_control.py`, the **SSOT** for the
+   allow-list, which **re-checks** every action at execution time (a tampered or
+   bypassed UI can never drive an off-list action — the F-092 analog of US-407's
+   S-10 clear-gate re-check). Off-list → 403, never executed.
+3. **PolicyKit layer** — `service_control` shells out to `systemctl <verb> <unit>`
+   as the unprivileged `mcornelison` user; the net-new
+   `deploy/polkit-rules/51-eclipse-service-control.rules` authorizes it. The rule
+   grants `org.freedesktop.systemd1.manage-units` **keyed on BOTH the unit AND
+   the verb**, so the verb can be denied per-unit. It is a **sibling** of the
+   I-036 `50-…poweroff` rule (a different action, `manage-units`), **not** a
+   widening of it and **not** a privileged helper daemon.
+
+**Allow-list (one SSOT mirrored across the three layers):**
+
+| Unit | Verbs | Note |
+|------|-------|------|
+| `eclipse-obd.service` | start / stop / restart | data capture |
+| `eclipse-sync.service` | start / stop / restart | server upload (unit not yet deployed — see below) |
+| `eclipse-dashboard.service` | stop / restart | **A-8**: Exit = stop the kiosk |
+| `eclipse-powerwatch.service` | **restart ONLY** | **D-7/F-7**: stop/kill DENIED at the polkit rule itself |
+
+**The powerwatch restart-only guard (D-7/F-7) is the load-bearing invariant.**
+Stopping the safe-shutdown guard could leave the Pi unprotected on key-off. A
+`stop`/`kill` is refused at **all three** layers — and critically at the polkit
+rule (an explicit `polkit.Result.NO`), so even a direct
+`systemctl stop eclipse-powerwatch` issued at the action path with the UI
+bypassed is refused. This mirrors US-407's "re-check at the action path, never
+trust the UI."
+
+**Exit/Close lifecycle (A-8).** Exit issues `stop eclipse-dashboard.service`,
+dropping to the desktop. The unit has no `[Install]` section — it is started by
+the splash `OnSuccess=` hand-off — so the next **reboot** re-launches it (or
+`systemctl restart eclipse-dashboard` over SSH brings it back immediately); the
+confirm dialog states how it returns.
+
+**Deploy note — `eclipse-sync.service` is not yet a deployed unit.** The design
+names `eclipse-sync` as a controllable service, but no such unit ships in
+`deploy/` yet (Pi sync currently runs inside the orchestrator / `sync_now.py`,
+not a standalone unit). It is included in the install-fixed allow-list +
+polkit rule as designed; until the unit exists, an action on it returns an honest
+`systemctl` failure (the status reflects reality, no fabrication). Filed to PM as
+a deploy gap — the mechanism is complete and forward-compatible.
+
+#### DTC capture path — key-on (KOEO) read + `dtc` emitter (US-404) [Atlas A-9 / F-111]
+
+The DTC viewer (Alerts card US-406, takeover/ribbon US-405, Mode-04 clear US-407)
+is a **pure consumer** of a new `dtc` state file. US-404 builds the Pi-side data
+layer that publishes it: the key-on read, the emitter, the severity loader, and
+the read-only HTTP endpoint. One direction of data flow — the display never reads
+hardware and never decides severity.
+
+**Key-on (KOEO) read on the connection edge.** `EventRouterMixin._dispatchKeyOnDtcs`
+fires a **one-shot** Mode 03(+07) read on the OBD **connection-established edge**
+(`_handleConnectionRestored`), **gated on no active RUNNING drive**
+(`_driveDetector.isDriving()` — the gate **fails closed**: an unverifiable drive
+state skips the read). While a drive is RUNNING the drive-scoped paths
+(session-start / MIL / periodic) own capture; the KOEO read exists only for
+key-on/engine-off (RPM 0) where `DriveDetector` never arms — closing the "blank at
+key-on" gap. **Ownership is the DTC capture path, NOT DriveDetector** (Atlas A-9):
+the new `DtcLogger.logKeyOnDtcs` reuses the existing `DtcClient` and persists every
+`dtc_log` row with **`drive_id = NULL` stamped EXPLICITLY** — it does **not**
+consult `getCurrentDriveId`. A pre-US-388 stale-open-drive leak could leave a
+phantom `drive_id` on the process context; inheriting it would mis-attribute a
+key-on read to a drive that isn't happening (cross-links A-9 Root 2). NULL is the
+honest attribution, and the display renders "key-on read" rather than "Drive N".
+
+**`dtc` emitter (fourth states-dir writer).** `src/pi/splash/dtc_emitter.py`
+mirrors the `system-status` / `battery-health` seam: a pure `buildDtcState` +
+best-effort `makeDtcEmitter` that reuses `ensureStatesDir`/`writeStateAtomic` (C-5)
+and writes `/run/eclipse-obd/states/dtc` atomically; a write failure is logged,
+never raised, so the publish hook can never block the connection-edge read. The
+DTC capture path **owns and calls** the emitter (the `_dtcEmitter` hook on the
+orchestrator — its live injection follows the US-400/401 deferral pattern). The
+state schema is design-spec §8: `mil` · `codes[]` (each with
+`severity`/`severityCaveat`/`short`/`setAtTs`/`driveId`/`freezeFrame`/
+`suggestedFix`/`fixProvenance`/`logged`/`syncAcked`/`clearEligible`) · `newSinceTs`
+· `clearGate` · `sessionResetLock` · `ts`.
+
+**Honest-instrument by construction.** The Pi never decides severity: a static
+loader (`dtc_severity_table.py`) parses **Spool's SSOT**
+(`offices/tuner/dsm-p1xxx-severity-table.md`) into the `{code → enrichment}` map
+the emitter merges verbatim — engine P1xxx → `watch`, condition-dependent codes
+carry a `severityCaveat` that **never auto-upgrades the tier** (R-1), auto-trans
+P1xxx → `na` (quiet disposition). A code **absent** from the table degrades to
+`severity: unknown` with whatever description python-obd supplied (empty → the
+display shows "No description yet") — no fabricated severity or fix. `freezeFrame`
+is always `null` (Mode 02 confirmed unsupported on MD326328; US-406 renders the
+realtime fallback). The `clearGate` is the honest UI-side derivation from the
+captured codes (severity_present → sync_pending → ok); **US-407 re-checks it
+authoritatively at the privileged action path** — the UI is never the gate.
+
+**Read-only endpoint.** `eclipse-states-http` already serves any safe file in the
+states dir token-gated; the carousel polls `GET /dtc`. The endpoint is strictly
+read-only — the only write route is `/service-control` (US-403), so `POST /dtc` →
+404.
+
+#### DTC takeover + STOP-red ribbon (US-405) [F-111 / design §5.1–5.2]
+
+The dashboard-side consumers of the `dtc` state. The carousel polls `GET /dtc` in
+the same 4 Hz tick as the cards and drives two surfaces, both pure functions in
+`carousel.js` (node-tested) with thin DOM wiring:
+
+**Full-screen takeover (`takeoverView` / `takeoverShouldShow`).** Fired on a
+**new** code only. The `dtc` state is level-triggered (it always carries the
+present codes), but the alarm must be **edge-triggered** — so the emitter stamps
+`newSinceTs` when a new code appears and the display tracks the
+last-acknowledged stamp: `takeoverShouldShow` compares them, so the same code
+never re-takes-over, but a **newer** code (a different stamp) re-fires
+(escalation, design D-3). One takeover at a time — the **highest-severity code is
+the hero**, the rest fold into "+N more". The overlay is **severity-styled** (the
+display maps a tier → color + directive + dismiss controls; it never classifies):
+🔴 STOP = brand `--red` bg · "REDUCE LOAD · PULL OVER" · **Acknowledge only** (no
+plain dismiss); 🟡 WATCH = amber · "DRIVE GENTLY · GET DIAGNOSED" · Dismiss; 🟢
+MINOR = dark-green · "SAFE TO CLEAR ONCE LOGGED" · Dismiss. Every dismiss path
+(incl. STOP's Acknowledge) **drops to the ribbon** — the driver always keeps view
+control, never trapped full-screen while the road needs watching. `unknown`
+(uncurated) gets the honest middle — a "GET DIAGNOSED" caution, never a false
+"safe to clear" or a false "pull over".
+
+**Persistent ribbon (`ribbonView`).** While any alert-eligible code is present, a
+ribbon rides under the top bar on every card: `⚠ CHECK ENGINE · <hero code>
+<desc> · +N more`. **R-2 (ribbon red ≠ brand red):** the ribbon shares cards with
+brand-red chrome, so its STOP state uses the **brighter alert `--red-light`
+(#F61D2D)** — distinct from brand `--red` (#E60012, used by the takeover bg) — plus
+a leading ⚠ glyph and a subtle pulse, so it reads as an alarm and never as
+decoration.
+
+**`na` is a quiet disposition (design §4).** Auto-trans P1xxx on the manual F5M33
+are dropped from `alertableCodes` — **no takeover, no ribbon**, and not counted in
+"+N more". A missing/malformed `dtc` file → no alert (honest: absence of the state
+= no active fault), never a fabricated code. The Mode-04 clear is US-407.
+
+#### DTC Alerts card (Card 5) + detail (US-406) [F-111 / design §5.3–5.4]
+
+The persistent home of the DTC state — a third carousel card (`data-state="dtc"`,
+label **Alerts**) plus a per-code detail overlay. Both are pure functions in
+`carousel.js` (node-tested) with thin DOM wiring; the Alerts card is polled in the
+same 4 Hz tick as the other cards (the tick now fetches `GET /dtc` **once** and
+shares it with the card render *and* the US-405 ribbon/takeover). The display maps
+a Spool-classified tier → chip label + color + directive; **it never classifies.**
+
+**Alerts card (`alertsCardView`).** Hero + list (design D-4). The **hero** is the
+worst *alert-eligible* code (via `alertableCodes`, so `na` and unrecognized
+severities are **never** a hero — S-12) with its tier directive; the **list**
+(`dtcListSorted`) shows every code worst-first with **`na` sorted last** (design
+§5.3, `DTC_LIST_RANK` gives `na` the lowest rank). A no-description code shows a
+neutral `?` chip + "No description yet" (never blank — I-3). An empty `codes`
+array is an honest **"No stored codes"** (never a fabricated green). A
+missing/malformed file → the shell's `unavailable` (S-9). Every row + the hero are
+≥40px tap targets that open the detail.
+
+**Detail (`codeDetailView`).** Fixed skeleton: hero (chip + code + short) ·
+severity directive band (🔴/🟡 only) · condition-dependent caveat **line** ·
+status meta · freeze-frame-or-realtime fallback · severity-gated fix · log/sync
+footer. Two render-safety invariants are **locked in the pure builders** (the SSOT,
+so a buggy DOM layer can't violate them):
+
+- **Severity-gated fix (`fixArea`, S-4/F-1 — load-bearing).** A 🔴/🟡 (or uncurated
+  `unknown`) code's fix slot is **REPLACED** by a "diagnose, don't swap parts"
+  directive — the raw `suggestedFix` is never rendered for it, **even when
+  non-null**. Only a 🟢 MINOR code shows the actual fix + a **3-state trust badge**
+  (`trustBadge`: `spool-validated` → ✓ Verified · Spool; `auto-unverified`/
+  `sourced` → 👥 Community · unverified; `none`/absent → ⏳ Looking into it). A
+  missing MINOR fix is honest text ("arrives on next sync"), never fabricated.
+- **Caveat never upgrades the tier (S-13).** `severityCaveat` renders as a caveat
+  line beneath the base chip; the display reads `severity` verbatim, so a P1300
+  WATCH with a "🔴 if knock" caveat stays a **WATCH** chip.
+
+**Freeze-frame fallback (`freezeFrameView`, S-5).** Mode 02 is confirmed
+unsupported on MD326328, so `freezeFrame` is null and the default render is the
+labeled realtime-context fallback ("no freeze frame captured (this ECU) — showing
+context at fault time") — never blank. A grid renders only if a future
+Mode-02-capable ECU supplies one. **`driveId` null → "key-on read"** (a US-404 KOEO
+read), never a fabricated "Drive N" (A-9 cross-link). The takeover "View detail" +
+a ribbon tap both navigate to the Alerts card and open the hero's detail. The
+Mode-04 clear button + gate are US-407.
+
+#### DTC Clear (Mode-04) path — the only vehicle-write (US-407) [F-111 / design §6, advisory §4]
+
+The single DTC path that **writes to the ECU**. Mode 04 is **all-or-nothing**: it
+wipes every stored + pending code, erases the freeze-frame, and resets emissions
+readiness monitors in one shot — so the whole design is built around never
+clearing a real fault's evidence and never being forced by a tampered UI. It
+renders against **Spool's SSOT** (`offices/tuner/dtc-display-clear-safety-advisory.md`);
+this story implements those semantics, it does not redefine them.
+
+**The gate is re-checked at the privileged action path — never trusted from the
+UI (S-10 / F-3, load-bearing).** `src/pi/splash/dtc_clear.py` is the authoritative
+gate SSOT. `evaluateClearGate` **re-derives** the verdict from the raw captured
+codes and deliberately **ignores** any precomputed `clearGate.enabled` in the
+state: enabled only when **every stored (non-`na`) code is MINOR (green) AND
+logged AND server-sync-acked**, and no code re-set this session. Any STOP/WATCH →
+`severity_present`; an un-synced MINOR → `sync_pending` (capture-before-clear,
+advisory §4c); a returned code (`sessionResetLock`) → `session_locked` ("don't
+chase the light", §4d); nothing clearable → `no_codes`. This is the DTC analog of
+US-403's action-path allow-list re-check in `service_control.py`.
+
+**Three defense-in-depth layers (same shape as US-403's privilege path).**
+1. **UI layer** — `carousel.js` `clearButtonView` mirrors the gate *for display*
+   (the Clear button in the detail overlay is disabled with an honest reason
+   label for a STOP/WATCH / un-synced / re-set code); a hard-confirm modal
+   (`confirmClearText`) names the freeze-frame-erase + readiness-reset
+   consequences (S-7). The button is convenience, not the gate.
+2. **Action-path layer** — the unprivileged kiosk POSTs `/dtc-clear` (token-gated)
+   to `eclipse-states-http`, which **re-reads its own `dtc` state** and calls
+   `dtc_clear.performClear`. If the re-derived gate fails, the injected Mode-04
+   runner is **never called** (403; no vehicle-write, no freeze-frame destroyed).
+3. **Vehicle-write primitive** — `DtcClient.clearDtcs` issues Mode 04 (`CLEAR_DTC`)
+   and then **immediately re-reads Mode 03(+07)** to *prove* the clear ("0 stored,
+   0 pending, MIL off") rather than reporting a bare "command sent" (§4d), which
+   also catches an **instant re-set**: a code present before AND after the wipe is
+   flagged (`reSetCodes`) so US-407 locks Clear for the session.
+
+**Honest unavailability + deferred live wiring.** `eclipse-states-http` runs as a
+standalone service and holds **no** OBD connection, so `makeStatesHandler` takes
+an injected `clearRunner` (owned by the connection holder — the orchestrator on
+the Pi). When it is `None`, `POST /dtc-clear` returns an honest **503** rather than
+fabricating a success. Wiring the live runner across the process boundary (the
+orchestrator consuming the clear request on its OBD loop, then re-emitting the
+`dtc` state with the updated `sessionResetLock`) is the same Pi-bench-deferred
+integration as US-404's live `_dtcEmitter` injection; the gate, the Mode-04
+primitive, and the endpoint mechanism are complete and unit-tested.
 
 ### Release Versioning + Deploy Records (US-241, B-047 US-A)
 

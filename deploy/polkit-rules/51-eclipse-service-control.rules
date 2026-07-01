@@ -1,0 +1,69 @@
+// ============================================================================
+// 51-eclipse-service-control.rules
+//
+// PolicyKit rule granting user 'mcornelison' the
+// org.freedesktop.systemd1.manage-units action, SCOPED to a fixed allow-list of
+// eclipse-* units + verbs. This is the A-7 privilege path for the US-403 System
+// Setup menu: the chromium dashboard kiosk runs UNPRIVILEGED and asks the local
+// state server to run `systemctl <verb> <unit>`; this rule is what authorizes
+// those calls without sudo/root.
+//
+// Why a SIBLING 51- file (not a widening of 50-eclipse-obd-poweroff.rules): that
+// rule grants ONLY org.freedesktop.login1.power-off and explicitly says new
+// privileges get a new file. This rule is a different action entirely
+// (manage-units), so it lives on its own (50- comment: "add a SECOND rule file
+// (51-...) rather than widening this one").
+//
+// Allow-list (mirrors src/pi/splash/service_control.py SERVICE_ALLOWLIST):
+//   eclipse-obd.service        -> start / stop / restart   (data capture)
+//   eclipse-sync.service       -> start / stop / restart   (server upload)
+//   eclipse-dashboard.service  -> stop / restart           (A-8 Exit = stop kiosk)
+//   eclipse-powerwatch.service -> restart ONLY             (D-7 safe-shutdown guard)
+//
+// SAFETY (D-7 / F-7, the load-bearing reason this rule keys on the VERB too):
+// eclipse-powerwatch is the safe-shutdown guard. A stop/kill is DENIED HERE, at
+// the rule itself (an explicit polkit.Result.NO) -- NOT merely a disabled UI
+// button. A kiosk compromise, or a direct `systemctl stop eclipse-powerwatch`
+// issued at the action path with the UI bypassed, is still refused. This is the
+// defense-in-depth that mirrors US-407's action-path clear-gate re-check.
+//
+// Anything not on the allow-list returns no decision -> PolicyKit default deny.
+//
+// Install: deploy-pi.sh copies this to
+//   /etc/polkit-1/rules.d/51-eclipse-service-control.rules
+// (root-owned, 0644). PolicyKit auto-reloads on file change; no daemon-reload.
+//
+// Reference: US-403, Atlas A-7 (carousel/DTC design-gate signoff 2026-06-30),
+//   design spec 2026-06-05 sec 4.6; I-036 / 50- polkit precedent.
+// ============================================================================
+
+polkit.addRule(function(action, subject) {
+    if (action.id != "org.freedesktop.systemd1.manage-units" ||
+        subject.user != "mcornelison") {
+        return;  // not ours -> defer to other rules / PolicyKit default
+    }
+
+    var unit = action.lookup("unit");
+    var verb = action.lookup("verb");
+
+    // eclipse-powerwatch = the safe-shutdown guard: RESTART-ONLY. A stop/kill is
+    // refused at the rule itself so the guard can never be removed from the UI
+    // OR a bypassed action path (D-7 / F-7 defense-in-depth).
+    if (unit == "eclipse-powerwatch.service") {
+        if (verb == "restart") {
+            return polkit.Result.YES;
+        }
+        return polkit.Result.NO;
+    }
+
+    // Data services + the dashboard kiosk: start / stop / restart.
+    if (unit == "eclipse-obd.service" ||
+        unit == "eclipse-sync.service" ||
+        unit == "eclipse-dashboard.service") {
+        if (verb == "start" || verb == "stop" || verb == "restart") {
+            return polkit.Result.YES;
+        }
+    }
+
+    // Any other unit, or a verb outside a unit's set -> no decision (default deny).
+});

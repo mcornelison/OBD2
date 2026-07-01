@@ -121,12 +121,13 @@ Build chain: carousel **US-399 → (US-400, US-401) → US-402**; **US-403** dep
 
 ### US-403 — System Setup menu + gated service control (F-092)
 - **Goal:** As the operator, I want a deliberate, accident-proof menu to restart/stop services + exit the UI, without the kiosk running as root or letting me brick the safe-shutdown guard.
-- **DoD:** long-press ~5s (ring fills; release <5s cancels) AND top-bar `⋮` both open the menu (D-6); service control on an **install-fixed allow-list** via the A-7 privilege path (polkit rule or privileged helper; kiosk unprivileged); **`eclipse-powerwatch` restart-only, no working Stop** (D-7 safety guard); `eclipse-obd`/`eclipse-sync` stop+restart with confirm; Exit/Close stops the kiosk + returns on reboot (A-8); confirm-before-consequential; ✕/back always present (never trapped).
+- **DoD:** long-press ~5s (ring fills; release <5s cancels) AND top-bar `⋮` both open the menu (D-6); service control on an **install-fixed allow-list** via the A-7 privilege path — a **net-new `org.freedesktop.systemd1.manage-units`-scoped polkit rule** (a sibling `51-…` file; **NOT** a privileged helper, **NOT** a widening of the I-036 `50-…poweroff` rule — verified that rule grants only `login1.power-off`; kiosk unprivileged), keyed on **BOTH `action.lookup("unit")` AND `action.lookup("verb")`**; **[ATLAS A-7 defense-in-depth] `eclipse-powerwatch` → `restart` ONLY, `stop`/`kill` DENIED at the polkit rule itself** — not merely a disabled UI button (D-7 safety guard; a kiosk compromise or a direct action-path call must NOT be able to stop the safe-shutdown guard, failure F-7); `eclipse-obd`/`eclipse-sync` → `{start,stop,restart}` with confirm; all other units denied; Exit/Close stops the kiosk + returns on reboot (A-8); confirm-before-consequential; ✕/back always present (never trapped).
 - **ValidationCriteria (bench, mock systemctl or rig):**
   - (long-press 5s) -> (menu opens; release <5s -> no menu — I-8); (`⋮` tap) -> (same menu — I-9)
   - (tap `eclipse-powerwatch` Stop) -> (disabled, no-op — I-10/F-7); (Restart) -> (service restarts)
   - (Stop `eclipse-obd` -> confirm) -> (stops; status dot stopped <=2s; Restart brings it back — I-11)
   - (service-control with a unit NOT on the allow-list) -> (rejected — S-6/F-13); (single accidental tap) -> (no consequential action — F-6)
+  - **[ATLAS A-7]** (`systemctl stop eclipse-powerwatch` issued at the privileged action path directly, UI bypassed) -> (REJECTED by the polkit rule itself — the verb-deny holds even when the disabled UI button is bypassed; this is the defense-in-depth that mirrors US-407's S-10 action-path re-check, NOT just I-10's UI-button test)
   - (Exit/Close -> confirm) -> (kiosk closes to desktop; returns on next reboot — I-12)
 
 ### US-404 — DTC KOEO read + `dtc` emitter (F-111)

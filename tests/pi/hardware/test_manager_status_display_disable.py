@@ -13,6 +13,13 @@
 #               |              | and statusDisplay.forceSoftwareRenderer through
 #               |              | the factory so operators can disable the overlay
 #               |              | or flip the renderer knob without code changes.
+# 2026-06-30    | Ralph (Rex)  | US-402: pygame sunset -- make the factory's
+#               |              | StatusDisplay resolution pi-aware so the
+#               |              | canonical config.json path
+#               |              | (pi.hardware.statusDisplay.enabled) is honored
+#               |              | when the orchestrator passes the FULL config
+#               |              | (lifecycle.py). Top-level path kept as a
+#               |              | back-compat fallback (US-198 escape hatch).
 # ================================================================================
 ################################################################################
 
@@ -156,3 +163,103 @@ class TestForceSoftwareRendererThreading:
 
         assert manager._statusDisplay is not None
         assert manager._statusDisplay.forceSoftwareRenderer is True
+
+
+# ================================================================================
+# US-402 pygame sunset -- pi-nested config path is honored
+# ================================================================================
+
+
+class TestPiNestedConfigResolution:
+    """US-402: the orchestrator (lifecycle.py) passes the FULL config to the
+    factory, where the StatusDisplay overlay lives under the canonical nested
+    path ``pi.hardware.statusDisplay`` (config.json). The factory reads
+    ``hardware.statusDisplay`` (no ``pi.`` prefix), so before US-402 the nested
+    flag was silently ignored and the overlay always launched on the default.
+
+    The pygame sunset retires the overlay via ``config.json`` -- so the factory
+    MUST honor the nested path. The flat (top-level) path stays a back-compat
+    fallback (the US-198 escape hatch), and the nested value takes precedence.
+    """
+
+    def test_fromConfig_piNestedStatusDisplayEnabledFalse_honored(self):
+        """
+        Given: a FULL config with pi.hardware.statusDisplay.enabled=False
+               (the shape the orchestrator actually passes)
+        When:  createHardwareManagerFromConfig runs
+        Then:  manager._displayEnabled is False -- the pygame overlay is retired.
+        """
+        config = {
+            "pi": {
+                "hardware": {
+                    "statusDisplay": {"enabled": False}
+                }
+            }
+        }
+        manager = createHardwareManagerFromConfig(config)
+
+        assert manager._displayEnabled is False
+
+    def test_fromConfig_piNestedStatusDisplayEnabledFalse_initSkipsConstruction(self):
+        """
+        Given: a FULL config that retires the overlay via the nested path
+        When:  _initializeStatusDisplay runs
+        Then:  self._statusDisplay stays None -- no pygame surface is created,
+               so it can never coexist with the HTML carousel (F-4).
+        """
+        config = {
+            "pi": {
+                "hardware": {
+                    "statusDisplay": {"enabled": False}
+                }
+            }
+        }
+        manager = createHardwareManagerFromConfig(config)
+        manager._initializeStatusDisplay()
+
+        assert manager._statusDisplay is None
+
+    def test_fromConfig_piNestedForceSoftwareRendererFalse_honored(self):
+        """
+        Given: a FULL config with pi.hardware.statusDisplay.forceSoftwareRenderer=False
+        When:  createHardwareManagerFromConfig runs
+        Then:  manager._displayForceSoftwareRenderer reflects the nested value.
+        """
+        config = {
+            "pi": {
+                "hardware": {
+                    "statusDisplay": {"forceSoftwareRenderer": False}
+                }
+            }
+        }
+        manager = createHardwareManagerFromConfig(config)
+
+        assert manager._displayForceSoftwareRenderer is False
+
+    def test_fromConfig_nestedDisablePrecedesFlatEnable(self):
+        """
+        Given: a config carrying BOTH the nested (pi.hardware.statusDisplay) and
+               the flat (hardware.statusDisplay) paths with conflicting values
+        When:  the factory resolves the flag
+        Then:  the canonical nested path wins (False) -- the deployed config.json
+               cut-over is authoritative over a stale flat override.
+        """
+        config = {
+            "pi": {"hardware": {"statusDisplay": {"enabled": False}}},
+            "hardware": {"statusDisplay": {"enabled": True}},
+        }
+        manager = createHardwareManagerFromConfig(config)
+
+        assert manager._displayEnabled is False
+
+    def test_fromConfig_flatPathStillHonored_backCompat(self):
+        """
+        Given: the legacy flat-only config (no pi section) -- the US-198 shape
+        When:  the factory resolves the flag
+        Then:  the flat path still works (enabled=False honored), so the US-198
+               operator escape hatch is preserved.
+        """
+        config = {"hardware": {"statusDisplay": {"enabled": False}}}
+        manager = createHardwareManagerFromConfig(config)
+
+        assert manager._displayEnabled is False

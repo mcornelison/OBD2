@@ -639,6 +639,38 @@ step_install_polkit_poweroff() {
     "
 }
 
+step_install_polkit_service_control() {
+    # US-403 / A-7: install the net-new polkit rule granting mcornelison
+    # org.freedesktop.systemd1.manage-units, scoped to a fixed allow-list of
+    # eclipse-* units + verbs (eclipse-obd / eclipse-sync / eclipse-dashboard
+    # start/stop/restart; eclipse-powerwatch RESTART-ONLY -- stop DENIED at the
+    # rule). Lets the unprivileged chromium dashboard kiosk's System Setup menu
+    # control services without sudo/root. SIBLING to the 50- poweroff rule (NOT
+    # a widening of it -- that rule grants only login1.power-off). Same idempotent
+    # sync-if-changed pattern; PolicyKit auto-reloads on file change, so no
+    # daemon-reload is required.
+    echo "--- Step: Installing polkit rule for systemctl service control (US-403, A-7) ---"
+    local sourceFile="deploy/polkit-rules/51-eclipse-service-control.rules"
+    local targetPath="/etc/polkit-1/rules.d/51-eclipse-service-control.rules"
+
+    if $DRY_RUN; then
+        echo "DRY-RUN would install ${PI_PATH}/${sourceFile} -> ${targetPath}"
+        echo "DRY-RUN would: polkit auto-reloads on file change (no daemon-reload)"
+        return 0
+    fi
+
+    remote "
+        set -e
+        sudo mkdir -p /etc/polkit-1/rules.d
+        if sudo test -f '${targetPath}' && sudo cmp -s '${PI_PATH}/${sourceFile}' '${targetPath}'; then
+            echo 'polkit service-control rule already current at ${targetPath} (no change).'
+        else
+            sudo install -m 644 '${PI_PATH}/${sourceFile}' '${targetPath}'
+            echo 'polkit service-control rule installed: ${targetPath}'
+        fi
+    "
+}
+
 step_install_nm_wifi_powersave() {
     # US-325 / I-025: install the NetworkManager drop-in that disables WiFi
     # power-save on the Pi 5.  The BCM4345/6 WiFi+BT combo chip starves WiFi
@@ -1150,6 +1182,57 @@ step_install_splash_assets() {
     "
 }
 
+step_install_dashboard_assets() {
+    # US-399 (F-092, A-1/A-2): install the carousel dashboard kit assets the
+    # eclipse-states-http.service serves to the chromium dashboard kiosk
+    # (specs/UI/dist/dashboard-pi/) into /opt/dashboard. The server's
+    # --assets-dir search path lists /opt/splash then /opt/dashboard, so the
+    # dashboard is reached at /dashboard.html same-origin (token injected).
+    #
+    # A-9 posture (mirrors step_install_splash_assets): if the dashboard kit is
+    # ABSENT this WARNs and the deploy CONTINUES -- a Pi without the (UI-team)
+    # kit still ships the rest of the tier, and a /opt/dashboard that doesn't
+    # exist is harmless to the server (the asset lookup just skips it).
+    #
+    # Scope seam: this installs the BACKEND-served assets only. The chromium
+    # dashboard kiosk UNIT (eclipse-dashboard.service) is installed by the kit's
+    # session-aware install.sh on the Pi (V-1/V-2 detection) -- the same seam as
+    # the splash kiosk unit -- and is started by the splash OnSuccess= hand-off.
+    #
+    # Runs AFTER sync_tree so ${PI_PATH}/specs/UI/dist/dashboard-pi/ exists.
+    echo "--- Step: Installing carousel dashboard assets to /opt/dashboard (US-399) ---"
+    local assetSrc="$REPO_ROOT/specs/UI/dist/dashboard-pi"
+    local installDir="/opt/dashboard"
+    local assets="dashboard.html dashboard.css carousel.js"
+    if [ ! -d "$assetSrc" ]; then
+        echo "WARN: dashboard assets not found at $assetSrc -- skipping; deploy continues (A-9)." >&2
+        return 0
+    fi
+    if $DRY_RUN; then
+        echo "DRY-RUN would: sudo install -d ${installDir}"
+        echo "DRY-RUN would: sudo install -m 0644 ${PI_PATH}/specs/UI/dist/dashboard-pi/{${assets}} ${installDir}/"
+        return 0
+    fi
+    remote "
+        set -e
+        SRC='${PI_PATH}/specs/UI/dist/dashboard-pi'
+        DST='${installDir}'
+        if [ ! -d \"\$SRC\" ]; then
+            echo 'WARN: dashboard assets not present on Pi at '\"\$SRC\"' -- skipping (A-9).' >&2
+            exit 0
+        fi
+        sudo install -d -m 0755 \"\$DST\"
+        for f in ${assets}; do
+            if [ -f \"\$SRC/\$f\" ]; then
+                sudo install -m 0644 \"\$SRC/\$f\" \"\$DST/\$f\"
+                echo \"installed \$f -> \$DST/\"
+            else
+                echo \"WARN: dashboard asset \$f missing in \$SRC -- skipped (A-9).\" >&2
+            fi
+        done
+    "
+}
+
 step_install_state_server_units() {
     # US-395 (F-103, AC#1): idempotent sync-if-changed install of the two F-103
     # state-server units -- eclipse-boot-state.service (the [A-1] boot-state
@@ -1456,6 +1539,13 @@ step_install_journald_persistent
 # Runs AFTER sync_tree so deploy/polkit-rules/ exists on the Pi.
 step_install_polkit_poweroff
 
+# US-403 / A-7: net-new polkit rule granting mcornelison scoped systemd
+# manage-units (the install-fixed eclipse-* allow-list) so the unprivileged
+# dashboard kiosk's System Setup menu can restart/stop services without root.
+# Sibling to the 50- poweroff rule (different action: manage-units). Runs AFTER
+# sync_tree so deploy/polkit-rules/ exists on the Pi.
+step_install_polkit_service_control
+
 # US-325 / I-025: NetworkManager wifi.powersave=2 drop-in. Same rationale as
 # the journald drop-in -- idempotent, canonical-source-of-truth OS config that
 # every deploy reasserts (so a Pi rebuilt from scratch via --init lands
@@ -1532,6 +1622,11 @@ step_install_power_watch_unit
 # they also restart every deploy (US-354).
 step_install_states_tmpfiles
 step_install_splash_assets
+# US-399 (F-092): carousel dashboard served assets -> /opt/dashboard (the
+# eclipse-states-http server's 2nd --assets-dir). WARN-not-BLOCK if absent (A-9).
+# Runs before the state-server restart so the server picks up the assets it now
+# serves at /dashboard.html. The kiosk UNIT is installed by the kit's install.sh.
+step_install_dashboard_assets
 step_install_state_server_units
 
 # US-354 reordering: restart first, then verify both long-running services

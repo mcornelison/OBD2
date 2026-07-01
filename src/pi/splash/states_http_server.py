@@ -16,24 +16,55 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-06-29    | Ralph (Rex)  | Initial implementation (US-393 F-103 boot splash)
+# 2026-06-30    | Ralph (Rex)  | US-399 [A-2]: multi-assets-dir support (serve the
+#               |              | carousel dashboard kit same-origin alongside the
+#               |              | splash) -- full-runtime extension of the server.
+# 2026-06-30    | Ralph (Rex)  | US-403 [A-7]: one token-gated POST /service-control
+#               |              | action endpoint (delegates the allow-list gate to
+#               |              | service_control). GET stays read-only.
 # ================================================================================
 ################################################################################
 
-"""Localhost-only, token-gated, read-only HTTP server for the splash states."""
+"""Localhost-only, token-gated state server (read-only GET + the US-403 action).
+
+GET is read-only (states + same-origin assets). US-403 adds exactly ONE write
+route -- POST /service-control -- so the unprivileged chromium kiosk can request
+a `systemctl restart/stop` on the install-fixed allow-list. The endpoint is a
+thin transport: the allow-list gate is the ``service_control`` SSOT and the real
+privilege is the 51- polkit rule; the kiosk never runs as root.
+"""
 
 from __future__ import annotations
 
 import hmac
+import json
 import mimetypes
+from collections.abc import Callable, Sequence
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
+
+from pi.splash import dtc_clear, service_control
 
 # Placeholder substituted with the live token when the kiosk HTML is served.
 _TOKEN_PLACEHOLDER = "__SPLASH_TOKEN__"
 
 # HTML entry points get the token injected; treated as the same-origin bootstrap.
 _INDEX_NAMES = frozenset({"", "index.html"})
+
+# US-403 [A-7]: the service-control write route.
+_ACTION_PATH = "/service-control"
+
+# US-407 [F-111]: the Mode-04 DTC clear write route. The gate is re-checked here
+# from the server's own `dtc` state (never the request body) before the injected
+# clear runner is ever invoked -- a tampered/stale UI can't force a clear.
+_CLEAR_PATH = "/dtc-clear"
+
+# The `dtc` state file the clear gate re-check reads (matches dtc_emitter).
+_DTC_STATE_FILENAME = "dtc"
+
+# Largest action request body we will read (tiny {unit, verb} / {confirm} JSON).
+_MAX_ACTION_BODY = 4096
 
 
 def _isSafeFile(baseDir: str, name: str) -> Path | None:
@@ -51,10 +82,41 @@ def _isSafeFile(baseDir: str, name: str) -> Path | None:
     return candidate if candidate.is_file() else None
 
 
+def _normalizeAssetsDirs(
+    assetsDir: str | Sequence[str] | None,
+) -> tuple[str, ...]:
+    """Normalize the assets-dir argument to a search-ordered tuple of dirs.
+
+    Accepts a single path string (the US-393 single-kit call sites), a sequence
+    of paths (US-399: splash kit first, dashboard kit second -- both served
+    same-origin so the token is injected into either kit's HTML), or ``None``.
+    The order is the lookup order; the first dir holding a requested name wins.
+    """
+    if assetsDir is None:
+        return ()
+    if isinstance(assetsDir, str):
+        return (assetsDir,)
+    return tuple(assetsDir)
+
+
 def makeStatesHandler(
-    statesDir: str, token: str, assetsDir: str | None = None
+    statesDir: str,
+    token: str,
+    assetsDir: str | Sequence[str] | None = None,
+    clearRunner: Callable[[], object] | None = None,
 ) -> type[BaseHTTPRequestHandler]:
-    """Build a request-handler class bound to one states dir + token + assets."""
+    """Build a request-handler class bound to one states dir + token + assets.
+
+    ``assetsDir`` may be a single path or an ordered sequence of paths (searched
+    in order, first match wins) so one server can serve multiple co-located kits
+    (the splash + the carousel dashboard) same-origin with the token injected.
+
+    ``clearRunner`` (US-407) is the injected Mode-04 clear runner owned by the OBD
+    connection holder (the orchestrator on the Pi). When ``None`` the POST
+    /dtc-clear route returns an honest 503 (the standalone server has no OBD
+    connection) rather than fabricating a success.
+    """
+    assetsDirs = _normalizeAssetsDirs(assetsDir)
 
     class _StatesHandler(BaseHTTPRequestHandler):
         # Silence default stderr request logging -- the journal captures stdout.
@@ -98,9 +160,11 @@ def makeStatesHandler(
                 return
 
             # Public static asset (svg/js/css). Never token-gated -- the page
-            # must load before it can authenticate the state polls.
-            if assetsDir is not None:
-                assetFile = _isSafeFile(assetsDir, name)
+            # must load before it can authenticate the state polls. Search the
+            # asset dirs in order (first match wins) so co-located kits (splash
+            # + dashboard) are both served by the one runtime server.
+            for assetsBase in assetsDirs:
+                assetFile = _isSafeFile(assetsBase, name)
                 if assetFile is not None:
                     self._serveAsset(assetFile)
                     return
@@ -119,18 +183,132 @@ def makeStatesHandler(
 
         do_HEAD = do_GET  # noqa: N815 (stdlib alias)
 
+        def do_POST(self) -> None:  # noqa: N802 (stdlib signature)
+            # Drain the request body FIRST (bounded). Responding to a POST before
+            # consuming its body resets the connection on some clients/platforms
+            # (WinError 10053); read it up front so every error path is clean.
+            try:
+                length = int(self.headers.get("Content-Length", "0"))
+            except ValueError:
+                length = 0
+            rawBody = self.rfile.read(length) if 0 < length <= _MAX_ACTION_BODY else b""
+
+            # Exactly two write routes (US-403 service-control, US-407 dtc-clear).
+            # Everything else is 404 (the server is otherwise read-only).
+            rawPath = unquote(urlsplit(self.path).path)
+            if rawPath == _ACTION_PATH:
+                self._handleServiceControl(rawBody)
+                return
+            if rawPath == _CLEAR_PATH:
+                self._handleDtcClear()
+                return
+            self._send(404, b'{"error":"not found"}', "application/json")
+
+        def _handleServiceControl(self, rawBody: bytes) -> None:
+            # Token-gated -- same gate as the state reads.
+            if not self._tokenOk():
+                self._send(401, b'{"error":"unauthorized"}', "application/json")
+                return
+
+            try:
+                payload = json.loads(rawBody.decode("utf-8"))
+                unit = payload["unit"]
+                verb = payload["verb"]
+            except (ValueError, KeyError, TypeError, UnicodeDecodeError):
+                self._send(400, b'{"error":"bad request"}', "application/json")
+                return
+
+            # Action-path gate: an off-list (unit, verb) is rejected (403) and
+            # never executed. The same allow-list SSOT backs runServiceAction's
+            # own re-check (defense-in-depth).
+            if not service_control.isAllowed(unit, verb):
+                self._send(
+                    403,
+                    b'{"ok":false,"error":"action not on the allow-list"}',
+                    "application/json",
+                )
+                return
+
+            result = service_control.runServiceAction(unit, verb)
+            body = json.dumps(
+                {
+                    "ok": result.ok,
+                    "unit": result.unit,
+                    "verb": result.verb,
+                    "returnCode": result.returnCode,
+                    "reason": result.reason,
+                }
+            ).encode("utf-8")
+            # The action ran (the gate passed); the body's ok flag carries the
+            # honest systemctl outcome -- a failed stop is a 200 with ok:false,
+            # never a fabricated success.
+            self._send(200, body, "application/json")
+
+        def _handleDtcClear(self) -> None:
+            # US-407: the privileged Mode-04 clear path. The gate is re-checked
+            # HERE against the server's OWN `dtc` state (never the request body),
+            # so a tampered/stale UI cannot force a clear (S-10 / F-3).
+            if not self._tokenOk():
+                self._send(401, b'{"error":"unauthorized"}', "application/json")
+                return
+            # Honest unavailability: the standalone server holds no OBD connection
+            # unless a clear runner was wired in -- never fabricate a success.
+            if clearRunner is None:
+                self._send(
+                    503,
+                    b'{"error":"clear runner not available on this server"}',
+                    "application/json",
+                )
+                return
+            # Load the server's authoritative copy of the `dtc` state.
+            stateFile = _isSafeFile(statesDir, _DTC_STATE_FILENAME)
+            if stateFile is None:
+                self._send(
+                    409,
+                    b'{"error":"no dtc state -- nothing to clear"}',
+                    "application/json",
+                )
+                return
+            try:
+                dtcState = json.loads(stateFile.read_text(encoding="utf-8"))
+            except (ValueError, OSError, UnicodeDecodeError):
+                self._send(
+                    409, b'{"error":"dtc state unreadable"}', "application/json"
+                )
+                return
+
+            outcome = dtc_clear.performClear(dtcState, clearRunner=clearRunner)
+            body = json.dumps(
+                {
+                    "issued": outcome.issued,
+                    "reason": outcome.reason,
+                    "cleared": outcome.cleared,
+                    "storedAfter": outcome.storedAfter,
+                    "pendingAfter": outcome.pendingAfter,
+                    "milAfter": outcome.milAfter,
+                    "reSetCodes": outcome.reSetCodes,
+                }
+            ).encode("utf-8")
+            # Gate rejected the clear -> 403, the vehicle-write never happened.
+            if not outcome.issued:
+                self._send(403, body, "application/json")
+                return
+            self._send(200, body, "application/json")
+
         def _serveIndex(self) -> None:
-            if assetsDir is None:
-                self._send(404, b"not found", "text/plain")
-                return
-            indexFile = _isSafeFile(assetsDir, "index.html")
-            if indexFile is None:
-                self._send(404, b"not found", "text/plain")
-                return
-            html = indexFile.read_text(encoding="utf-8").replace(
-                _TOKEN_PLACEHOLDER, token
-            )
-            self._send(200, html.encode("utf-8"), "text/html; charset=utf-8")
+            # The first asset dir holding an index.html owns `/` (the splash kit
+            # in the runtime config); the dashboard is reached by its own name.
+            for assetsBase in assetsDirs:
+                indexFile = _isSafeFile(assetsBase, "index.html")
+                if indexFile is not None:
+                    html = indexFile.read_text(encoding="utf-8").replace(
+                        _TOKEN_PLACEHOLDER, token
+                    )
+                    self._send(
+                        200, html.encode("utf-8"), "text/html; charset=utf-8"
+                    )
+                    return
+            self._send(404, b"not found", "text/plain")
 
         def _serveAsset(self, assetFile: Path) -> None:
             contentType, _ = mimetypes.guess_type(str(assetFile))
@@ -159,11 +337,12 @@ class StatesHttpServer:
         token: str,
         host: str = "127.0.0.1",
         port: int = 9899,
-        assetsDir: str | None = None,
+        assetsDir: str | Sequence[str] | None = None,
+        clearRunner: Callable[[], object] | None = None,
     ) -> None:
         self.host = host
         self.statesDir = statesDir
-        handler = makeStatesHandler(statesDir, token, assetsDir)
+        handler = makeStatesHandler(statesDir, token, assetsDir, clearRunner)
         # Bind eagerly so a port conflict fails loudly at construction (the unit
         # then exits non-zero -> the kiosk's fetch errors -> splash DEGRADED;
         # no silent green-when-broken, spec §8 listen-failure semantics).
@@ -196,11 +375,15 @@ def main(argv: list[str] | None = None) -> int:
 
     parser = argparse.ArgumentParser(description="F-103 localhost state server")
     parser.add_argument("--states-dir", default="/run/eclipse-obd/states")
-    parser.add_argument("--assets-dir", default="/opt/splash")
+    # Repeatable: pass once per co-located kit (splash first, dashboard second).
+    # Searched in order, first match wins. Defaults to the splash kit alone.
+    parser.add_argument("--assets-dir", action="append", dest="assets_dirs")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=9899)
     parser.add_argument("--token-path", default="/run/eclipse-obd/states/.http-token")
     args = parser.parse_args(argv)
+
+    assetsDirs = args.assets_dirs if args.assets_dirs else ["/opt/splash"]
 
     ensureStatesDir(args.states_dir)
     token = loadOrCreateToken(args.token_path)
@@ -209,7 +392,7 @@ def main(argv: list[str] | None = None) -> int:
         token=token,
         host=args.host,
         port=args.port,
-        assetsDir=args.assets_dir,
+        assetsDir=assetsDirs,
     )
     server.serveForever()
     return 0

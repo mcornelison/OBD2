@@ -50,6 +50,7 @@ from dataclasses import dataclass
 from typing import Any, Protocol
 
 __all__ = [
+    'ClearReadback',
     'DiagnosticCode',
     'DtcClient',
     'DtcClientError',
@@ -92,6 +93,25 @@ class DiagnosticCode:
     code: str
     description: str
     status: str
+
+
+@dataclass(frozen=True)
+class ClearReadback:
+    """Post-clear proof: the immediate Mode 03(+07) re-read after a Mode 04 wipe.
+
+    US-407 issues Mode 04 (all-or-nothing) and then re-reads at once so it can
+    prove the clear ("0 stored, 0 pending") and catch an instant re-set instead
+    of reporting a bare "command sent" (Spool advisory §4d).
+
+    Attributes:
+        stored: Stored DTCs from the post-clear Mode 03 re-read (empty = cleared).
+        pending: Pending DTCs from the post-clear Mode 07 re-read.
+        mode07Probe: The Mode 07 support verdict from the re-read.
+    """
+
+    stored: list[DiagnosticCode]
+    pending: list[DiagnosticCode]
+    mode07Probe: Mode07ProbeResult
 
 
 @dataclass(frozen=True)
@@ -184,6 +204,7 @@ class DtcClient:
 
     _MODE_03_COMMAND_NAME = 'GET_DTC'
     _MODE_07_COMMAND_NAME = 'GET_CURRENT_DTC'
+    _MODE_04_COMMAND_NAME = 'CLEAR_DTC'
 
     def __init__(
         self,
@@ -268,6 +289,40 @@ class DtcClient:
             if self._isValidEntry(entry)
         ]
         return codes, Mode07ProbeResult(supported=True, reason='supported')
+
+    # ------------------------------------------------------------------
+    # Mode 04 -- clear stored + pending DTCs (US-407, the only vehicle-write)
+    # ------------------------------------------------------------------
+
+    def clearDtcs(self, connection: ObdConnectionLike) -> ClearReadback:
+        """Issue Mode 04 (CLEAR_DTC) then immediately re-read Mode 03(+07).
+
+        Mode 04 is all-or-nothing: it wipes every stored + pending code, the
+        freeze-frame, and resets emissions-readiness monitors. This method is the
+        raw vehicle-write primitive -- it is issued ONLY after the authoritative
+        clear gate has passed (see :mod:`src.pi.splash.dtc_clear`). Per Spool
+        advisory §4d the clear is issued FIRST and then proven by an immediate
+        re-read (never a bare "command sent"), which also catches a code that
+        re-sets instantly.
+
+        Args:
+            connection: Live OBD connection.
+
+        Returns:
+            A :class:`ClearReadback` with the post-clear stored + pending re-read
+            (empty stored list = the wipe took effect).
+
+        Raises:
+            DtcClientError: If the connection is not open (a vehicle-write must
+                never be attempted on a closed connection).
+        """
+        self._requireConnected(connection)
+        clearCmd = self._commandFactory(self._MODE_04_COMMAND_NAME)
+        connection.obd.query(clearCmd)  # Mode 04 -- all-or-nothing wipe
+        # Advisory §4d: prove the clear (and catch an instant re-set) by re-reading.
+        stored = self.readStoredDtcs(connection)
+        pending, probe = self.readPendingDtcs(connection)
+        return ClearReadback(stored=stored, pending=pending, mode07Probe=probe)
 
     # ------------------------------------------------------------------
     # Internal helpers

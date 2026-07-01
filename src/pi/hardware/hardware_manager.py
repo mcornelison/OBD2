@@ -727,9 +727,13 @@ def createHardwareManagerFromConfig(
             - hardware.ups.lowBatteryThreshold: Low battery threshold (default: 10)
             - hardware.display.enabled: Display enabled (default: True)
             - hardware.display.refreshRate: Display refresh rate (default: 2)
-            - hardware.statusDisplay.enabled: StatusDisplay overlay enabled
-                (default: True; falls back to hardware.display.enabled)
-            - hardware.statusDisplay.forceSoftwareRenderer: Force SDL software
+            - pi.hardware.statusDisplay.enabled: StatusDisplay overlay enabled
+                (canonical nested path used by config.json; resolved FIRST).
+                US-402 retires the pygame overlay by setting this False.
+                Falls back to the flat hardware.statusDisplay.enabled, then to
+                the legacy hardware.display.enabled (default: True).
+            - pi.hardware.statusDisplay.forceSoftwareRenderer / the flat
+                hardware.statusDisplay.forceSoftwareRenderer: Force SDL software
                 renderer for the overlay (default: True; TD-024 fix)
             - hardware.telemetry.logPath: Telemetry log path
             - hardware.telemetry.logInterval: Telemetry log interval (default: 10)
@@ -763,15 +767,27 @@ def createHardwareManagerFromConfig(
     pollInterval = getConfigValue('hardware.ups.pollInterval', 5)
     shutdownDelay = getConfigValue('hardware.ups.shutdownDelay', 30)
     lowBatteryThreshold = getConfigValue('hardware.ups.lowBatteryThreshold', 10)
-    # statusDisplay.enabled takes precedence; falls back to legacy display.enabled
-    # to preserve the pre-US-198 config contract.
+    # US-402 pygame sunset: the canonical config lives at the pi-nested path
+    # ``pi.hardware.statusDisplay.*`` (config.json), but the orchestrator
+    # (lifecycle.py) passes the FULL config to this factory -- and the factory
+    # historically read the flat top-level ``hardware.statusDisplay.*``, so the
+    # nested flag was silently ignored and the overlay always launched on the
+    # default. Resolve the nested path FIRST so the parity-gated sunset
+    # (statusDisplay.enabled=false in config.json) actually retires the pygame
+    # surface; keep the flat path + legacy display.enabled as back-compat
+    # fallbacks (the US-198 operator escape hatch). Same pi-nested pattern as
+    # ``pi.shutdown.poweroffTimeoutSeconds`` below.
     displayEnabled = getConfigValue(
-        'hardware.statusDisplay.enabled',
-        getConfigValue('hardware.display.enabled', True),
+        'pi.hardware.statusDisplay.enabled',
+        getConfigValue(
+            'hardware.statusDisplay.enabled',
+            getConfigValue('hardware.display.enabled', True),
+        ),
     )
     displayRefreshRate = getConfigValue('hardware.display.refreshRate', 2.0)
     displayForceSoftwareRenderer = getConfigValue(
-        'hardware.statusDisplay.forceSoftwareRenderer', True
+        'pi.hardware.statusDisplay.forceSoftwareRenderer',
+        getConfigValue('hardware.statusDisplay.forceSoftwareRenderer', True),
     )
     telemetryLogPath = getConfigValue(
         'hardware.telemetry.logPath',

@@ -19,6 +19,10 @@
 Description=Animated boot splash (status-aware, Wayland)
 After=graphical.target eclipse-states-http.service eclipse-boot-state.service
 Wants=graphical.target eclipse-states-http.service eclipse-boot-state.service
+# A-1 hand-off (US-399): at HEALTHY_YIELD the splash JS calls window.close(),
+# this Type=simple unit exits 0, and systemd starts the carousel dashboard. A
+# DEGRADED boot keeps the splash up (no window.close) -> no dashboard hand-off.
+OnSuccess=eclipse-dashboard.service
 
 [Service]
 Type=simple

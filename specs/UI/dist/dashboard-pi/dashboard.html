@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=480, height=320, initial-scale=1, user-scalable=no"/>
+<title>Eclipse OBD-II Dashboard</title>
+<!-- US-399 carousel shell (F-092). Served same-origin by eclipse-states-http at
+     http://127.0.0.1:9899/dashboard.html so the auth token is injected below
+     (token SSOT never lands on disk -- same seam as the F-103 splash). The
+     dashboard is a PURE CONSUMER: it reads the state files the emitters write
+     and renders them; it never polls hardware (specs/ssot-design-pattern.md).
+     The two card BODIES (System Status / Battery Health) are filled by US-400 /
+     US-401; this shell provides the swipe carousel, page dots, persistent top
+     bar, and the honest-instrument `unavailable` fallback. -->
+<link rel="stylesheet" href="dashboard.css"/>
+</head>
+<body>
+  <!-- Persistent top bar (D-3): BT / sync / power glyphs + version chip + menu
+       affordance. Glyph STATE (amber on BT drop, etc.) is bound by US-400 from
+       system-status; the shell renders them in a neutral state. The ⋮ button is
+       the System Setup menu affordance -- US-403 wires its behaviour. -->
+  <header id="topbar">
+    <span class="glyph" id="glyph-bt" data-state="neutral" title="Bluetooth">BT</span>
+    <span class="glyph" id="glyph-sync" data-state="neutral" title="Sync">⇅</span>
+    <span class="glyph" id="glyph-power" data-state="neutral" title="Power">⚡</span>
+    <span id="version-chip">V?.?.?</span>
+    <button id="menu-btn" class="tap-target" aria-label="System Setup">⋮</button>
+  </header>
+
+  <!-- US-405 persistent DTC ribbon: rides under the top bar on every card while
+       a code is present. STOP state uses the brighter --red-light (R-2, distinct
+       from brand-red) + a leading ⚠ + a subtle pulse. JS sets the level + text. -->
+  <div id="dtc-ribbon" hidden>
+    <span class="ribbon-glyph">⚠</span>
+    <span class="ribbon-text"></span>
+  </div>
+
+  <!-- US-405 full-screen DTC takeover: fired on a NEW code (newSinceTs), one at a
+       time, severity-styled. STOP has no plain dismiss -- only "Acknowledge"
+       (drops to the ribbon) so the driver always keeps view control. JS fills the
+       content + wires the buttons from the polled `dtc` state. -->
+  <div id="dtc-takeover" hidden role="alertdialog" aria-label="Check engine alert">
+    <div class="takeover-inner">
+      <span class="takeover-icon" id="takeover-icon">⚠</span>
+      <span class="takeover-head">CHECK ENGINE</span>
+      <span class="takeover-chip" id="takeover-chip"></span>
+      <span class="takeover-code" id="takeover-code"></span>
+      <span class="takeover-desc" id="takeover-desc"></span>
+      <span class="takeover-directive" id="takeover-directive"></span>
+      <span class="takeover-more" id="takeover-more" hidden></span>
+      <div class="takeover-actions">
+        <button id="takeover-detail" class="tap-target">View detail ›</button>
+        <button id="takeover-dismiss" class="tap-target">Dismiss</button>
+      </div>
+    </div>
+  </div>
+
+  <main id="carousel" aria-roledescription="carousel">
+    <div id="track">
+      <section class="card" data-state="system-status" aria-label="System Status">
+        <h2 class="card-title">System Status</h2>
+        <div class="card-body">unavailable</div>
+      </section>
+      <section class="card" data-state="battery-health" aria-label="Battery Health">
+        <h2 class="card-title">Battery Health</h2>
+        <div class="card-body">unavailable</div>
+      </section>
+      <!-- US-406 Alerts card (Card 5, F-111): hero (worst code + directive) +
+           a tappable list sorted worst-first (na last). JS fills the body from
+           the polled `dtc` state; a missing/malformed file -> `unavailable`. -->
+      <section class="card" data-state="dtc" aria-label="Alerts">
+        <h2 class="card-title">Alerts</h2>
+        <div class="card-body">unavailable</div>
+      </section>
+    </div>
+  </main>
+
+  <!-- US-406 per-code detail overlay: opened by a list-row tap, the takeover
+       "View detail", or a ribbon tap. Fixed skeleton (hero · status · freeze-
+       frame-or-realtime fallback · severity-gated fix + trust badge · log/sync
+       footer). A ‹ Back is always present so the operator is never trapped. -->
+  <div id="dtc-detail" hidden role="dialog" aria-label="Code detail">
+    <header class="detail-head">
+      <button id="detail-back" class="tap-target" aria-label="Back to Alerts">‹ Back</button>
+      <span id="detail-code-head" class="detail-code-head"></span>
+    </header>
+    <div id="detail-body" class="detail-body"><!-- JS fills the detail --></div>
+    <!-- US-407 gated Mode-04 clear (design §6): enabled ONLY when every stored
+         code is MINOR + logged + server-acked (the display mirror; the server
+         RE-CHECKS the gate on submit). A STOP/WATCH / un-synced / re-set code
+         disables it with an honest reason. Hidden when nothing is clearable. -->
+    <div id="dtc-clear-zone">
+      <button id="dtc-clear-btn" class="tap-target" hidden></button>
+      <div id="dtc-clear-result" aria-live="polite"></div>
+    </div>
+  </div>
+
+  <!-- US-407 hard-confirm modal (design §6.2): the clear wipes EVERY code, erases
+       the freeze-frame, and resets emissions readiness. Cancel is the easy
+       default; Clear all is the deliberate action. Kept separate from the US-403
+       menu confirm so the two consequential flows never cross-wire. -->
+  <div id="clear-confirm" hidden role="alertdialog" aria-label="Confirm clear codes">
+    <div class="confirm-box">
+      <p id="clear-confirm-title" class="confirm-title"></p>
+      <p id="clear-confirm-text"></p>
+      <div class="confirm-actions">
+        <button id="clear-confirm-cancel" class="tap-target">Cancel</button>
+        <button id="clear-confirm-ok" class="tap-target">Clear all</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Page dots: one per card, ≥40px touch target (S-2). -->
+  <nav id="dots" aria-label="cards"></nav>
+
+  <!-- US-403 long-press ring (D-6): fills during a ~5s hold anywhere on the
+       carousel; releasing early or moving cancels. JS sets --fill 0..1. -->
+  <div id="longpress-ring" hidden></div>
+
+  <!-- US-403 System Setup menu (D-6/D-7/A-7/A-8): opened by the long-press OR
+       the top-bar ⋮. Service control is on the install-fixed allow-list; the
+       powerwatch Stop is rendered disabled (safe-shutdown guard, F-7). A ✕
+       (back) is always present so the menu never traps the operator. -->
+  <div id="setup-menu" hidden role="dialog" aria-label="System Setup">
+    <header class="menu-head">
+      <span class="menu-title">System Setup</span>
+      <button id="menu-close" class="tap-target" aria-label="Back to dashboard">✕</button>
+    </header>
+    <section class="menu-section">
+      <h3 class="menu-section-title">OBD-II Services</h3>
+      <div id="svc-list"><!-- JS fills service rows (Restart / Stop) --></div>
+    </section>
+    <section class="menu-section">
+      <h3 class="menu-section-title">Display</h3>
+      <button id="menu-exit" class="menu-wide tap-target">Exit / Close UI</button>
+    </section>
+    <div id="menu-status" class="menu-status" aria-live="polite"></div>
+  </div>
+
+  <!-- US-403 confirm modal: Stop / Exit are consequential -> confirm first
+       (F-6 no single accidental consequential tap). Cancel always returns. -->
+  <div id="confirm-modal" hidden role="alertdialog" aria-label="Confirm">
+    <div class="confirm-box">
+      <p id="confirm-text"></p>
+      <div class="confirm-actions">
+        <button id="confirm-cancel" class="tap-target">Cancel</button>
+        <button id="confirm-ok" class="tap-target">Confirm</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // Token injected by the state server at serve time (token SSOT). Previewed
+    // from file:// the placeholder stays and the polls fail closed to
+    // `unavailable` -- the carousel shell still renders + swipes.
+    window.SPLASH_TOKEN = "__SPLASH_TOKEN__";
+  </script>
+  <script src="carousel.js"></script>
+</body>
+</html>

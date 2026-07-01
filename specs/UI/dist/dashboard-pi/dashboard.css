@@ -1,0 +1,458 @@
+/* ============================================================================
+ * File:    dashboard.css
+ * Purpose: US-399 carousel-shell styles (F-092). Persistent top bar + swipe
+ *          carousel + page dots for the 3.5" 480x320 panel. The card BODIES are
+ *          styled minimally here (shell); US-400/US-401 own their content. Tap
+ *          targets are >=40px (S-2). Color tokens mirror the splash kit + the
+ *          spec palette (--red-light, --amber-warn) so the DTC ribbon (US-405)
+ *          and honest-instrument states share one source.
+ * Author:  Ralph Agent (Rex)
+ * Created: 2026-06-30 -- Sprint 49 US-399 (carousel shell)
+ * ==========================================================================*/
+
+:root {
+  --bg:             #000000;
+  --surface:        #111111;
+  --text-primary:   #DDDDDD;
+  --text-secondary: #888888;
+  --text-tertiary:  #666666;
+  --amber-warn:     #FFC400;   /* project-wide warn token (BT drop, stale) */
+  --red:            #E60012;   /* brand STOP-red -- the full-bleed takeover bg */
+  --red-light:      #F61D2D;   /* brighter alert red -- the DTC ribbon (R-2) */
+  --red-dark:       #BF000F;   /* takeover radial edge */
+  --ok-green:       #2ECC71;   /* healthy verdict (US-400/401 bind it) */
+  --tap-min:        40px;      /* minimum touch target (S-2) */
+}
+
+html, body {
+  margin: 0; padding: 0; width: 100%; height: 100%;
+  background: var(--bg); overflow: hidden;
+  color: var(--text-primary);
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  -webkit-user-select: none; user-select: none;
+  touch-action: pan-y;   /* let JS own horizontal swipe; vertical scrolls */
+}
+
+/* --- persistent top bar (D-3) ------------------------------------------------ */
+#topbar {
+  position: fixed; top: 0; left: 0; right: 0; height: 28px;
+  display: flex; align-items: center; gap: 10px;
+  padding: 0 10px; box-sizing: border-box;
+  background: var(--surface); font-size: 13px;
+  z-index: 10;
+}
+#topbar .glyph { color: var(--text-secondary); letter-spacing: 0.04em; }
+#topbar .glyph[data-state="amber"] { color: var(--amber-warn); }
+#topbar .glyph[data-state="ok"]    { color: var(--ok-green); }
+#topbar .glyph[data-state="down"]  { color: var(--red-light); }
+#version-chip {
+  margin-left: auto; color: var(--text-tertiary);
+  font-size: 10px; letter-spacing: 0.06em;
+}
+#menu-btn {
+  min-width: var(--tap-min); min-height: var(--tap-min);
+  background: transparent; border: 0; color: var(--text-secondary);
+  font-size: 20px; line-height: 1; cursor: pointer;
+}
+
+/* --- swipe carousel --------------------------------------------------------- */
+#carousel {
+  position: absolute; top: 28px; bottom: 24px; left: 0; right: 0;
+  overflow: hidden;
+}
+#track {
+  display: flex; height: 100%;
+  transition: transform 0.25s ease-out;
+  will-change: transform;
+}
+.card {
+  flex: 0 0 100%; width: 100%; height: 100%;
+  box-sizing: border-box; padding: 14px 16px;
+  display: flex; flex-direction: column;
+}
+.card-title {
+  margin: 0 0 8px 0; font-size: 13px; font-weight: 600;
+  color: var(--text-secondary); text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.card-body { flex: 1; font-size: 14px; color: var(--text-primary); }
+/* Honest-instrument: a missing/malformed state file reads `unavailable`,
+   never a fabricated value and never green. */
+.card.unavailable .card-body,
+.card-body.unavailable {
+  color: var(--text-tertiary); font-style: italic;
+}
+
+/* --- US-400 System Status tiles --------------------------------------------- */
+/* Each tile = label + prominent value + detail. The [data-level] attribute
+   drives the value colour; a degraded tile (amber/down/unavailable) is NEVER
+   green (honest-instrument F-1). The default value colour is neutral. */
+.tile {
+  display: flex; flex-direction: column;
+  padding: 4px 0; border-bottom: 1px solid var(--surface);
+}
+.tile:last-child { border-bottom: 0; }
+.tile-label {
+  font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--text-secondary);
+}
+.tile-value { font-size: 15px; font-weight: 600; color: var(--text-primary); }
+.tile-detail { font-size: 11px; color: var(--text-tertiary); }
+.tile[data-level="ok"]    .tile-value { color: var(--ok-green); }
+.tile[data-level="amber"] .tile-value { color: var(--amber-warn); }
+.tile[data-level="down"]  .tile-value { color: var(--red-light); }
+.tile[data-level="unavailable"] .tile-value {
+  color: var(--text-tertiary); font-style: italic; font-weight: 400;
+}
+
+/* --- US-401 Battery Health failsafe ladder (F-2/A-6) ------------------------ */
+/* The drain ladder block is appended ONLY when battery-health.draining===true;
+   it never renders otherwise (no false failsafe). The amber/red staging mirrors
+   the honest-instrument palette. */
+.ladder {
+  margin-top: 8px; padding: 8px 10px;
+  display: flex; flex-direction: column; gap: 2px;
+  border: 1px solid var(--amber-warn); border-radius: 4px;
+  background: rgba(255, 196, 0, 0.06);
+}
+.ladder-banner {
+  font-size: 13px; font-weight: 700; letter-spacing: 0.06em;
+  color: var(--amber-warn);
+}
+.ladder[data-stage="TRIGGER"] { border-color: var(--red-light); }
+.ladder[data-stage="TRIGGER"] .ladder-banner { color: var(--red-light); }
+.ladder-runtime { font-size: 11px; color: var(--text-secondary); }
+
+/* --- page dots (>=40px touch target, 10px visual) --------------------------- */
+#dots {
+  position: absolute; bottom: 0; left: 0; right: 0; height: 24px;
+  display: flex; justify-content: center; align-items: center; gap: 4px;
+}
+.dot {
+  min-width: var(--tap-min); min-height: var(--tap-min);
+  display: flex; align-items: center; justify-content: center;
+  background: transparent; border: 0; padding: 0; cursor: pointer;
+}
+.dot::before {
+  content: ""; width: 8px; height: 8px; border-radius: 50%;
+  background: var(--text-tertiary); transition: background 0.2s;
+}
+.dot.active::before { background: var(--text-primary); }
+
+/* --- US-405 persistent DTC ribbon -------------------------------------------- */
+/* Rides under the top bar on every card while a code is present. R-2: the ribbon
+   shares cards with brand-red chrome, so its STOP state uses the BRIGHTER alert
+   --red-light (never brand --red) + a leading ⚠ glyph + a subtle pulse, so it
+   reads as an alarm and never as decoration. Level is set by JS from `dtc`. */
+#dtc-ribbon {
+  position: fixed; left: 0; right: 0; top: 28px; min-height: 22px;
+  display: flex; align-items: center; gap: 6px;
+  padding: 2px 10px; box-sizing: border-box;
+  font-size: 12px; font-weight: 700; letter-spacing: 0.03em;
+  color: #fff; z-index: 9;
+  animation: ribbon-pulse 2s ease-in-out infinite;
+}
+#dtc-ribbon[data-level="stop"]    { background: var(--red-light); color: #fff; }
+#dtc-ribbon[data-level="watch"]   { background: var(--amber-warn); color: #000; }
+#dtc-ribbon[data-level="minor"]   { background: var(--ok-green); color: #000; }
+#dtc-ribbon[data-level="unknown"] { background: var(--amber-warn); color: #000; }
+.ribbon-glyph { font-size: 13px; line-height: 1; flex: 0 0 auto; }
+.ribbon-text {
+  flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* Subtle pulse so a persistent alert never fades into chrome. */
+@keyframes ribbon-pulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.72; }
+}
+
+/* --- US-405 full-screen DTC takeover ---------------------------------------- */
+/* Fired on a NEW code, severity-styled: same skeleton, per-tier bg + directive +
+   dismiss controls (STOP has no plain dismiss). The takeover STOP bg is the
+   BRAND --red (distinct from the ribbon's brighter --red-light, R-2). */
+#dtc-takeover {
+  position: fixed; inset: 0; z-index: 60;
+  display: flex; align-items: center; justify-content: center;
+  text-align: center; color: #fff;
+}
+#dtc-takeover[data-severity="stop"] {
+  background: radial-gradient(circle at 50% 38%, var(--red) 0%, var(--red-dark) 100%);
+}
+#dtc-takeover[data-severity="watch"] {
+  background: radial-gradient(circle at 50% 38%, var(--amber-warn) 0%, #7a5b00 100%);
+  color: #000;
+}
+#dtc-takeover[data-severity="minor"] {
+  background: radial-gradient(circle at 50% 38%, #12603a 0%, #062617 100%);
+}
+#dtc-takeover[data-severity="unknown"] {
+  background: radial-gradient(circle at 50% 38%, var(--amber-warn) 0%, #7a5b00 100%);
+  color: #000;
+}
+.takeover-inner {
+  display: flex; flex-direction: column; align-items: center; gap: 5px;
+  padding: 0 18px; max-width: 92%;
+}
+.takeover-icon { font-size: 40px; line-height: 1; }
+.takeover-head { font-size: 12px; letter-spacing: 0.14em; font-weight: 700; }
+.takeover-chip {
+  font-size: 11px; font-weight: 700; letter-spacing: 0.08em;
+  padding: 1px 8px; border-radius: 10px; text-transform: uppercase;
+  border: 1px solid currentColor;
+}
+.takeover-code { font-size: 30px; font-weight: 800; letter-spacing: 0.04em; }
+.takeover-desc { font-size: 13px; opacity: 0.9; }
+.takeover-directive {
+  font-size: 15px; font-weight: 700; letter-spacing: 0.04em; margin-top: 2px;
+}
+.takeover-more { font-size: 11px; opacity: 0.85; }
+.takeover-actions { display: flex; gap: 10px; margin-top: 12px; }
+.takeover-actions button {
+  min-width: var(--tap-min); min-height: var(--tap-min);
+  padding: 0 16px; font-size: 13px; font-weight: 700; cursor: pointer;
+  border-radius: 4px; border: 1px solid currentColor;
+  background: rgba(0, 0, 0, 0.28); color: inherit;
+}
+
+/* --- US-403 long-press ring (D-6) ------------------------------------------- */
+/* A radial fill driven by the JS --fill (0..1). Centered; non-interactive so it
+   never intercepts the press it visualizes. */
+#longpress-ring {
+  position: fixed; top: 50%; left: 50%;
+  width: 72px; height: 72px; margin: -36px 0 0 -36px;
+  border-radius: 50%; z-index: 30; pointer-events: none;
+  --fill: 0;
+  background: conic-gradient(var(--ok-green) calc(var(--fill) * 360deg),
+                             rgba(255, 255, 255, 0.12) 0);
+  -webkit-mask: radial-gradient(circle 28px at center, transparent 98%, #000 100%);
+          mask: radial-gradient(circle 28px at center, transparent 98%, #000 100%);
+}
+
+/* --- US-403 System Setup menu (D-6/D-7/A-7) --------------------------------- */
+#setup-menu {
+  position: fixed; inset: 0; z-index: 40;
+  background: rgba(0, 0, 0, 0.92);
+  display: flex; flex-direction: column; gap: 6px;
+  padding: 6px 12px 10px; box-sizing: border-box; overflow-y: auto;
+}
+.menu-head {
+  display: flex; align-items: center; height: 36px;
+  border-bottom: 1px solid var(--surface);
+}
+.menu-title {
+  font-size: 14px; font-weight: 700; letter-spacing: 0.06em;
+  text-transform: uppercase; color: var(--text-primary);
+}
+#menu-close {
+  margin-left: auto;
+  min-width: var(--tap-min); min-height: var(--tap-min);
+  background: transparent; border: 0; color: var(--text-secondary);
+  font-size: 18px; cursor: pointer;
+}
+.menu-section { display: flex; flex-direction: column; gap: 4px; }
+.menu-section-title {
+  margin: 4px 0 0; font-size: 10px; letter-spacing: 0.08em;
+  text-transform: uppercase; color: var(--text-secondary);
+}
+.svc-row {
+  display: flex; align-items: center; gap: 6px;
+  padding: 2px 0; border-bottom: 1px solid var(--surface);
+}
+.svc-name { flex: 1; font-size: 12px; color: var(--text-primary); }
+.svc-btn {
+  min-width: var(--tap-min); min-height: var(--tap-min);
+  padding: 0 10px; font-size: 12px; cursor: pointer;
+  background: var(--surface); color: var(--text-primary);
+  border: 1px solid var(--text-tertiary); border-radius: 4px;
+}
+/* I-10 / F-7: a disabled control (powerwatch Stop) is visibly inert + ignores
+   taps (no consequential action). */
+.svc-btn:disabled {
+  color: var(--text-tertiary); border-color: var(--surface);
+  opacity: 0.5; cursor: not-allowed;
+}
+.menu-wide {
+  min-height: var(--tap-min); width: 100%;
+  font-size: 13px; cursor: pointer;
+  background: var(--surface); color: var(--text-primary);
+  border: 1px solid var(--text-tertiary); border-radius: 4px;
+}
+.menu-status {
+  margin-top: auto; font-size: 11px; color: var(--text-secondary);
+  min-height: 14px;
+}
+
+/* --- US-403 confirm modal (F-6 confirm-before-consequential) ---------------- */
+#confirm-modal {
+  position: fixed; inset: 0; z-index: 50;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(0, 0, 0, 0.6);
+}
+.confirm-box {
+  background: var(--surface); border: 1px solid var(--amber-warn);
+  border-radius: 6px; padding: 14px 16px; max-width: 88%;
+}
+.confirm-box p { margin: 0 0 12px; font-size: 13px; color: var(--text-primary); }
+.confirm-actions { display: flex; gap: 10px; justify-content: flex-end; }
+.confirm-actions button {
+  min-width: var(--tap-min); min-height: var(--tap-min);
+  padding: 0 14px; font-size: 13px; cursor: pointer; border-radius: 4px;
+  background: var(--surface); color: var(--text-primary);
+  border: 1px solid var(--text-tertiary);
+}
+#confirm-ok { border-color: var(--red-light); color: var(--red-light); }
+
+/* --- US-406 DTC Alerts card (Card 5) + detail ------------------------------- */
+/* The display maps a Spool-classified tier -> chip color; it never classifies.
+   The chip level tokens mirror the ribbon/takeover palette so all DTC surfaces
+   share one source. `na` (auto-trans on this manual car) + `unknown` (uncurated)
+   are deliberately un-alarming (neutral surface), never green (honest F-1). */
+.dtc-count {
+  font-size: 11px; color: var(--text-secondary);
+  letter-spacing: 0.04em; margin-bottom: 4px;
+}
+.dtc-noalert { color: var(--text-tertiary); font-style: italic; font-size: 13px; }
+
+.dtc-chip {
+  display: inline-block; flex: 0 0 auto;
+  font-size: 10px; font-weight: 700; letter-spacing: 0.06em;
+  padding: 1px 6px; border-radius: 8px; text-transform: uppercase;
+}
+.dtc-chip[data-level="stop"]    { background: var(--red-light); color: #fff; }
+.dtc-chip[data-level="watch"]   { background: var(--amber-warn); color: #000; }
+.dtc-chip[data-level="minor"]   { background: var(--ok-green);   color: #000; }
+.dtc-chip[data-level="na"]      { background: #2a2f37; color: var(--text-secondary); }
+.dtc-chip[data-level="unknown"] { background: #2a2f37; color: var(--text-secondary); }
+
+/* Hero block: the worst code + its directive (a tappable block -> detail). */
+.dtc-hero {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+  width: 100%; min-height: var(--tap-min);
+  padding: 6px 8px; margin-bottom: 6px; box-sizing: border-box;
+  text-align: left; cursor: pointer;
+  border: 1px solid var(--surface); border-radius: 4px;
+  background: var(--surface); color: var(--text-primary);
+}
+.dtc-hero[data-level="stop"]  { border-color: var(--red-light); }
+.dtc-hero[data-level="watch"] { border-color: var(--amber-warn); }
+.dtc-hero-code { font-size: 17px; font-weight: 800; letter-spacing: 0.04em; }
+.dtc-hero-short { font-size: 12px; color: var(--text-secondary); flex: 1 1 100%; }
+.dtc-hero-directive {
+  font-size: 12px; font-weight: 700; letter-spacing: 0.03em;
+  flex: 1 1 100%; color: var(--text-primary);
+}
+
+/* Compact tappable rows (worst-first, na last). */
+.dtc-row {
+  display: flex; align-items: center; gap: 6px;
+  width: 100%; min-height: var(--tap-min);
+  padding: 2px 8px; box-sizing: border-box; text-align: left; cursor: pointer;
+  border: 0; border-bottom: 1px solid var(--surface);
+  background: transparent; color: var(--text-primary);
+}
+.dtc-row-code { font-size: 13px; font-weight: 700; flex: 0 0 auto; }
+.dtc-row-short {
+  flex: 1; font-size: 12px; color: var(--text-secondary);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.dtc-row-status { font-size: 10px; color: var(--text-tertiary); flex: 0 0 auto; }
+
+/* Per-code detail overlay: a fixed skeleton that scrolls on the panel. A ‹ Back
+   is always present so the operator is never trapped. */
+#dtc-detail {
+  position: fixed; inset: 0; z-index: 45;
+  background: rgba(0, 0, 0, 0.95);
+  display: flex; flex-direction: column;
+  padding: 4px 12px 10px; box-sizing: border-box; overflow-y: auto;
+}
+.detail-head {
+  display: flex; align-items: center; gap: 8px; height: 36px;
+  border-bottom: 1px solid var(--surface);
+}
+#detail-back {
+  min-width: var(--tap-min); min-height: var(--tap-min);
+  background: transparent; border: 0; color: var(--text-secondary);
+  font-size: 14px; cursor: pointer;
+}
+.detail-code-head {
+  font-size: 14px; font-weight: 700; letter-spacing: 0.06em;
+  color: var(--text-primary);
+}
+.detail-body { display: flex; flex-direction: column; gap: 6px; padding-top: 6px; }
+.detail-hero { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.detail-code { font-size: 20px; font-weight: 800; letter-spacing: 0.04em; }
+.detail-short { font-size: 13px; color: var(--text-secondary); flex: 1 1 100%; }
+.detail-directive {
+  font-size: 14px; font-weight: 700; letter-spacing: 0.03em;
+  color: var(--red-light);
+}
+.detail-caveat { font-size: 12px; color: var(--amber-warn); }
+.detail-meta { font-size: 11px; color: var(--text-tertiary); letter-spacing: 0.03em; }
+.detail-freeze {
+  display: flex; flex-direction: column; gap: 2px;
+  padding: 6px 8px; border: 1px solid var(--surface); border-radius: 4px;
+}
+.detail-ff-cell { display: flex; gap: 8px; font-size: 12px; }
+.detail-ff-cell .detail-label { min-width: 70px; }
+.detail-ff-fallback { font-size: 12px; color: var(--text-secondary); font-style: italic; }
+.detail-label {
+  font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--text-secondary);
+}
+.detail-value { font-size: 13px; color: var(--text-primary); }
+.detail-fix {
+  display: flex; flex-direction: column; gap: 4px;
+  padding: 6px 8px; border: 1px solid var(--surface); border-radius: 4px;
+}
+.detail-fix-text { font-size: 13px; color: var(--text-primary); }
+/* The fix slot REPLACED by a diagnose directive for a 🔴/🟡 code (never a raw
+   internet fix on a dangerous code -- F-1/S-4). */
+.dtc-fix-directive {
+  font-size: 13px; font-weight: 700; color: var(--amber-warn); letter-spacing: 0.02em;
+}
+.detail-fix[data-mode="directive"] { border-color: var(--amber-warn); }
+/* 3-state trust badge: verified reads authoritative; community is muted/dashed;
+   offline is a neutral "arrives on next sync". */
+.dtc-trust-badge {
+  align-self: flex-start; font-size: 11px; font-weight: 700;
+  padding: 1px 8px; border-radius: 8px;
+}
+.dtc-trust-badge[data-kind="verified"]  { background: rgba(46, 204, 113, 0.18); color: var(--ok-green); }
+.dtc-trust-badge[data-kind="community"] {
+  border: 1px dashed var(--text-secondary); color: var(--text-secondary);
+}
+.dtc-trust-badge[data-kind="offline"]   { color: var(--text-tertiary); }
+.detail-footer { font-size: 11px; color: var(--text-secondary); margin-top: 2px; }
+
+/* --- US-407 DTC Clear (Mode-04) surface ------------------------------------ */
+/* The gated Clear button lives in the detail overlay. ENABLED (green-outline)
+   only when every stored code is MINOR + logged + server-acked; DISABLED reads
+   visibly inert (the display mirror of the authoritative server-side gate). The
+   server RE-CHECKS on submit, so a disabled button is convenience, not the gate.
+   A STOP/WATCH / un-synced / re-set code shows the honest reason as the label. */
+#dtc-clear-zone { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; }
+#dtc-clear-btn {
+  min-height: var(--tap-min); padding: 0 14px; align-self: flex-start;
+  font-size: 13px; font-weight: 700; cursor: pointer; border-radius: 4px;
+  background: var(--surface); color: var(--ok-green);
+  border: 1px solid var(--ok-green);
+}
+#dtc-clear-btn:disabled {
+  cursor: not-allowed; color: var(--text-tertiary);
+  border-color: var(--surface); font-weight: 400;
+}
+#dtc-clear-result { font-size: 12px; color: var(--text-secondary); }
+#dtc-clear-result[data-level="cleared"] { color: var(--ok-green); }
+#dtc-clear-result[data-level="reset"]   { color: var(--red-light); font-weight: 700; }
+#dtc-clear-result[data-level="blocked"] { color: var(--amber-warn); }
+
+/* The dedicated hard-confirm modal (reuses the .confirm-box shell). Its border
+   reads STOP-red -- the clear is the most consequential action on the dash. */
+#clear-confirm {
+  position: fixed; inset: 0; z-index: 55;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(0, 0, 0, 0.6);
+}
+#clear-confirm .confirm-box { border-color: var(--red-light); }
+.confirm-title { font-weight: 700; }
+#clear-confirm-ok { border-color: var(--red-light); color: var(--red-light); }
