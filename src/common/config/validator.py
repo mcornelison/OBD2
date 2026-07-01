@@ -249,12 +249,15 @@ DEFAULTS: dict[str, Any] = {
     # createSensorReadersFromConfig, which builds no reader when the bus is off.
     # Ships DARK: both enabled default False so nothing is read until the CIO
     # flips a sensor on as he wires it (connect-when-wired).  sampleHz is the bus
-    # publish rate; the decimated persist cadence (persistHz) + rolling-window
-    # retentionDays are the persistence subscriber's keys (US-410), not here.
+    # publish rate; persistHz is the decimated always-on persist cadence and
+    # retentionDays bounds the Pi-local rolling window -- both consumed by the
+    # EDR persistence subscriber (US-410 / ADR 2.3, 2.6).
     'pi.sensors.imu.enabled': False,
     'pi.sensors.imu.sampleHz': 50,
+    'pi.sensors.imu.persistHz': 25,
     'pi.sensors.light.enabled': False,
     'pi.sensors.light.sampleHz': 1,
+    'pi.sensors.retentionDays': 7,
     # Pi-tier orchestrator engine-on escalation (US-242 / B-049).  When the
     # adapter-level BATTERY_V sample exceeds engineOnVoltageThreshold for
     # engineOnSampleCount consecutive samples, the orchestrator transitions

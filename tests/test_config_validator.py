@@ -994,3 +994,12 @@ def test_validate_sensorEnabled_explicitValuePreserved():
     # The unspecified sibling still fills from defaults.
     assert result["pi"]["sensors"]["light"]["enabled"] is False
 
+
+def test_validate_sensorPersistenceKeys_defaults():
+    """US-410 (EDR persistence): imu.persistHz decimates the 50 Hz bus to a
+    25 Hz baseline; retentionDays bounds the Pi-local rolling window at 7 days."""
+    cfg = ConfigValidator().validate(_baseCfg())
+    sensors = cfg["pi"]["sensors"]
+    assert sensors["imu"]["persistHz"] == 25
+    assert sensors["retentionDays"] == 7
+

@@ -86,3 +86,55 @@ Task: EDR IMU + light readers -- additive bus topics + graceful-absence + presen
   prior sessions; a prefix-only Edit compounded it into invalid JSON. Rewrite the whole small
   JSON file when the note churns, and `python -c "import json; json.load(...)"` to verify.
 ---
+
+## 2026-07-01 - US-410 (Agent 1 / Rex / Session 51)
+Task: EDR persistence subscriber + rolling-window retention (ADR section 2.3/2.4/2.6)
+
+### What was implemented:
+- New `src/pi/bus/edr_persistence_subscriber.py` `EdrPersistenceSubscriber`: the CONSUMER
+  side of the EDR sensor path (US-409 = producer readers; US-411 = end-to-end harness).
+  A SIBLING of the OBD `PersistenceSubscriber` -- separate subscriber, separate LOSSY topics
+  (`raw.imu.*`/`raw.light.*`, never `raw.obd.*`), separate tables (`edr_imu_sample`/
+  `edr_light_sample`) -> the F-110 `realtime_data` byte-identical golden master is untouched
+  BY CONSTRUCTION.
+- BURST ASSEMBLY: accumulate fields per (table, seq); write exactly ONE `edr_imu_sample` row
+  per seq -- flush on burst-complete (all 4 fields) OR the next-seq boundary (a dropped field
+  persists NULL -- honest gap) OR the final flush on `stop()`. Light assembles lux+raw under
+  its own seq.
+- DECIMATION (ADR 2.3): whole-burst seq keep-1-of-N, N = round(imuSampleHz/imuPersistHz) =
+  round(50/25) = 2 -> a 25 Hz decimated persist baseline (a SUBSCRIBER concern -- the bus still
+  carries 50 Hz for a future live g-meter consumer). Light is not decimated (1 Hz).
+- DRIVE_ID NULL-LATCH (ADR 2.4): stamp `getCurrentDriveId()` ONLY when the injected
+  `isDrivingFn()` (wired in lifecycle to the live `DriveDetector.isDriving()` -- the SAME gate
+  `event_router` uses for the KOEO read) reports a RUNNING drive, else EXPLICIT NULL. Default /
+  uncertain / raising latch -> NULL. Never inherit a stale `_currentDriveId`.
+- RETENTION (ADR 2.6): `purgeExpired()` DELETEs `ts_utc < cutoff` (lexicographic; utcIsoNow's
+  fixed-width `%Y-%m-%dT%H:%M:%SZ` is compare-safe) from BOTH tables. `maybePurge()` runs the
+  purge at most hourly on the SUBSCRIBER'S OWN drain thread -- NOT a new daemon, so no core.py
+  runLoop edit (all EDR-persistence concerns stay in one SSOT module).
+- Config: added `pi.sensors.imu.persistHz`=25 + `pi.sensors.retentionDays`=7 (US-409 already
+  added enabled+sampleHz). Lifecycle `_startEdrSensorPath(bus)` builds+starts the readers +
+  subscriber behind the flags (no-op with flags off); `_shutdownDataLogger` stops readers then
+  the subscriber (flush) before the OBD subscriber.
+
+### Files changed:
+- Created: `src/pi/bus/edr_persistence_subscriber.py` (EdrPersistenceSubscriber + factory)
+- Modified: `src/common/config/validator.py` (2 DEFAULTS: imu.persistHz, retentionDays)
+- Modified: `config.json` (mirrored the 2 keys in pi.sensors)
+- Modified: `src/pi/obdii/orchestrator/lifecycle.py` (_startEdrSensorPath wiring + shutdown)
+- Created: `tests/pi/bus/test_edr_persistence_subscriber.py` (23 tests)
+- Modified: `tests/test_config_validator.py` (+1 persistence-defaults test)
+
+### Learnings for future iterations:
+- **Pattern discovered**: burst assembly across an ordered single-producer stream -> buffer per
+  (table, seq); flush on "all expected fields present" for the happy path AND on the next-seq
+  boundary for the dropped-field path. Robust to LOSSY drops (partial -> NULL) without a timer.
+- **Pattern discovered**: "piggyback on an existing maintenance tick, no new daemon" is best
+  satisfied by the feature's OWN already-existing thread (the subscriber drain loop) with an
+  interval-gated `maybePurge()` -- keeps the SSOT in one module and avoids editing core.py's
+  runLoop (lower base-module blast radius than adding a `_maybeTrigger*` there).
+- **Gotcha (drive_id latch)**: the ADR says stamp `getCurrentDriveId()` gated on RUNNING -- so
+  the subscriber IGNORES `sample.driveId` and re-resolves via an injected isDrivingFn at persist
+  time (mirroring the DTC-KOEO ruling). The safe default (no fn) is always-False -> NULL, so an
+  unwired latch never fabricates a drive attribution.
+---

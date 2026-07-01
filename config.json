@@ -484,12 +484,14 @@
     "sensors": {
       "imu": {
         "enabled": false,
-        "sampleHz": 50
+        "sampleHz": 50,
+        "persistHz": 25
       },
       "light": {
         "enabled": false,
         "sampleHz": 1
-      }
+      },
+      "retentionDays": 7
     },
     "splash": {
       "enabled": true,
