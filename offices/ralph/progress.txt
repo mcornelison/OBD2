@@ -136,3 +136,25 @@ Task: LTFT multi-drive trend card (F-096, carousel)
 - **Gotcha (card-count lock-down)**: test_dashboard_kit.py::test_dashboardHtml_hasBothCardSlots_s1 hard-codes `html.count('class="card"') == N`. Registering a new card grows it by one -- grep the card-count assertion BEFORE adding a slot (same shape as the US-417 snapshot-table +1 sweep lock-downs).
 - **Gotcha (scope = match the siblings)**: makeBatteryHealthEmitter/makeDtcEmitter/makeSystemStatusEmitter have NO src call site (grep proved it) -- the runtime wiring of state emitters is owner/deploy-side, not part of a card story. So US-420 ships emitter+reader+card+tests (bench-validatable) and defers the emit() wiring, exactly matching the shipped cards. Don't balloon a card story into orchestrator wiring.
 ---
+
+## 2026-07-01 - US-421 (Rex / Agent 1) -- BLOCKED (Refusal Rule 1, no code)
+Task: Power-mode badge -- in-car vs wall-power (F-098, carousel)
+
+### Outcome: BLOCKED, filed offices/pm/blockers/BL-014-power-mode-ssot-provider-missing.md
+- AC#1 requires the badge be "sourced from the existing power-mode SSOT provider (src/pi/power/)". CONFIRMED that provider does NOT exist -- refused-first per Rule 1 rather than fabricate an acquisition path.
+- (a) PowerSourceProvider is the SSOT for a DIFFERENT fact: external-AC vs UPS-battery (GPIO6 PLD isExternalPowerPresent). Both in-car AND wall-power normally read "external present", so it CANNOT distinguish the deployment mode -- using it would paint a confident wrong state, which AC#2 explicitly forbids ("undeterminable -> 'unknown', never a confident wrong state").
+- (b) No config key exists for power mode: grep config.json + validator DEFAULTS returns only pi.display.mode / displayCanvas.mode / calibration.mode -- none is power mode. No env var, no menu setting, no detector.
+- (c) The DATA CONTRACT already exists but is unsourced: system_status_emitter.buildSystemStatusState() already accepts powerMode ('car'|'wall') and writes power.mode; carousel.js powerTile() already renders CAR/WALL/unavailable -- but grep finds NO caller of makeSystemStatusEmitter and nothing sets powerMode (pass-through placeholder).
+- The acquisition mechanism (config key vs operator-set menu vs runtime detection) is an unratified SSOT/architecture decision -> routed to Atlas (standing directive + PM Rule 10). Recommended in BL-014: config key pi.power.mode default 'unknown' (honest-instrument), optionally menu-overridable.
+- Sprint NOT blocked: US-422/423/424/425 remain pickable. Story status set 'blocked', passes:false, completionNotes points to BL-014.
+
+### Files changed:
+- Created: `offices/pm/blockers/BL-014-power-mode-ssot-provider-missing.md`
+- Modified: `offices/ralph/sprint.json` (US-421 status=blocked + completionNotes -> BL-014)
+- Modified: `offices/ralph/ralph_agents.json` (Rex note = block summary; status unassigned)
+
+### Learnings for future iterations:
+- **Pattern (confirm-the-premise before building)**: when an AC says "source from the existing X provider -- confirm the provider", TREAT "confirm" as a real gate. Here the premise was false (no provider). Verify the SSOT exists BEFORE writing a line -- Rule 1 (ambiguity is a blocker) beats guessing an acquisition path, especially when the wrong guess (PowerSourceProvider) would violate a different AC (confident-wrong-state).
+- **Gotcha (fact vs fact)**: "power SOURCE" (external-AC vs battery, a live GPIO reading) and "power MODE" (in-car vs wall-power, a deployment context) are DISTINCT facts. An existing SSOT for one is not an SSOT for the other. Don't let a near-name-match ("power...") collapse two facts.
+- **Gotcha (agents.json edit, THIRD time in this sprint)**: replacing a `note` value with an old_string that matches only the START of the old note orphans the trailing text after the new closing quote -> invalid JSON (json.load caught it: "Expecting ',' delimiter"). For a full-note rewrite, Write the whole small file instead of Edit-matching a prefix; and always json.load-verify agents.json + sprint.json after editing.
+---

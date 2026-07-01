@@ -224,8 +224,9 @@
       "epicId": "E-OPS",
       "type": "normal",
       "size": "S",
-      "status": "sprint-ready",
+      "status": "blocked",
       "passes": false,
+      "completionNotes": "BLOCKED -> offices/pm/blockers/BL-014-power-mode-ssot-provider-missing.md (Refusal Rule 1). AC#1 requires sourcing the badge from 'the existing power-mode SSOT provider (src/pi/power/)' -- that provider does NOT exist. Confirmed 2026-07-01: (a) PowerSourceProvider is the SSOT for a DIFFERENT fact (external-AC vs UPS-battery via GPIO6 PLD) -- both in-car and wall-power normally read 'external present', so it cannot distinguish the deployment mode; using it = a confident wrong state, which AC#2 forbids. (b) NO config key for power mode (grep config.json + validator DEFAULTS: only display/displayCanvas/calibration 'mode' keys exist). (c) The data contract ALREADY exists but is unsourced: system_status_emitter.buildSystemStatusState() accepts powerMode ('car'|'wall') and writes power.mode; carousel.js powerTile() already renders CAR/WALL/unavailable -- but grep finds NO caller of makeSystemStatusEmitter and nothing sets powerMode (pass-through placeholder). The acquisition mechanism (config key vs operator-set menu vs runtime detection) is an unratified SSOT/architecture decision -> routed to Atlas (standing directive + PM Rule 10). Does NOT block the sprint: US-422/424/425 remain pickable. Once Atlas rules, the follow-up is small (state field power.mode + powerTile renderer already exist; needs only provider+config contract, orchestrator wiring, and the persistent corner-badge DOM/CSS+DOM test).",
       "acceptance": [
         "a small persistent badge shows current power mode, sourced from the existing power-mode SSOT provider (src/pi/power/ -- confirm the provider; do NOT add a second acquisition path per the SSOT directive)",
         "updates on mode change; honest-instrument: undeterminable -> 'unknown', never a confident wrong state",
