@@ -39,12 +39,12 @@ from __future__ import annotations
 import hmac
 import json
 import mimetypes
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
-from pi.splash import service_control
+from pi.splash import dtc_clear, service_control
 
 # Placeholder substituted with the live token when the kiosk HTML is served.
 _TOKEN_PLACEHOLDER = "__SPLASH_TOKEN__"
@@ -52,10 +52,18 @@ _TOKEN_PLACEHOLDER = "__SPLASH_TOKEN__"
 # HTML entry points get the token injected; treated as the same-origin bootstrap.
 _INDEX_NAMES = frozenset({"", "index.html"})
 
-# US-403 [A-7]: the single write route -- a service-control action request.
+# US-403 [A-7]: the service-control write route.
 _ACTION_PATH = "/service-control"
 
-# Largest service-control request body we will read (a tiny {unit, verb} JSON).
+# US-407 [F-111]: the Mode-04 DTC clear write route. The gate is re-checked here
+# from the server's own `dtc` state (never the request body) before the injected
+# clear runner is ever invoked -- a tampered/stale UI can't force a clear.
+_CLEAR_PATH = "/dtc-clear"
+
+# The `dtc` state file the clear gate re-check reads (matches dtc_emitter).
+_DTC_STATE_FILENAME = "dtc"
+
+# Largest action request body we will read (tiny {unit, verb} / {confirm} JSON).
 _MAX_ACTION_BODY = 4096
 
 
@@ -92,13 +100,21 @@ def _normalizeAssetsDirs(
 
 
 def makeStatesHandler(
-    statesDir: str, token: str, assetsDir: str | Sequence[str] | None = None
+    statesDir: str,
+    token: str,
+    assetsDir: str | Sequence[str] | None = None,
+    clearRunner: Callable[[], object] | None = None,
 ) -> type[BaseHTTPRequestHandler]:
     """Build a request-handler class bound to one states dir + token + assets.
 
     ``assetsDir`` may be a single path or an ordered sequence of paths (searched
     in order, first match wins) so one server can serve multiple co-located kits
     (the splash + the carousel dashboard) same-origin with the token injected.
+
+    ``clearRunner`` (US-407) is the injected Mode-04 clear runner owned by the OBD
+    connection holder (the orchestrator on the Pi). When ``None`` the POST
+    /dtc-clear route returns an honest 503 (the standalone server has no OBD
+    connection) rather than fabricating a success.
     """
     assetsDirs = _normalizeAssetsDirs(assetsDir)
 
@@ -177,12 +193,18 @@ def makeStatesHandler(
                 length = 0
             rawBody = self.rfile.read(length) if 0 < length <= _MAX_ACTION_BODY else b""
 
-            # US-403 [A-7]: the ONLY write route. Everything else is 404 (the
-            # server is otherwise read-only).
+            # Exactly two write routes (US-403 service-control, US-407 dtc-clear).
+            # Everything else is 404 (the server is otherwise read-only).
             rawPath = unquote(urlsplit(self.path).path)
-            if rawPath != _ACTION_PATH:
-                self._send(404, b'{"error":"not found"}', "application/json")
+            if rawPath == _ACTION_PATH:
+                self._handleServiceControl(rawBody)
                 return
+            if rawPath == _CLEAR_PATH:
+                self._handleDtcClear()
+                return
+            self._send(404, b'{"error":"not found"}', "application/json")
+
+        def _handleServiceControl(self, rawBody: bytes) -> None:
             # Token-gated -- same gate as the state reads.
             if not self._tokenOk():
                 self._send(401, b'{"error":"unauthorized"}', "application/json")
@@ -220,6 +242,57 @@ def makeStatesHandler(
             # The action ran (the gate passed); the body's ok flag carries the
             # honest systemctl outcome -- a failed stop is a 200 with ok:false,
             # never a fabricated success.
+            self._send(200, body, "application/json")
+
+        def _handleDtcClear(self) -> None:
+            # US-407: the privileged Mode-04 clear path. The gate is re-checked
+            # HERE against the server's OWN `dtc` state (never the request body),
+            # so a tampered/stale UI cannot force a clear (S-10 / F-3).
+            if not self._tokenOk():
+                self._send(401, b'{"error":"unauthorized"}', "application/json")
+                return
+            # Honest unavailability: the standalone server holds no OBD connection
+            # unless a clear runner was wired in -- never fabricate a success.
+            if clearRunner is None:
+                self._send(
+                    503,
+                    b'{"error":"clear runner not available on this server"}',
+                    "application/json",
+                )
+                return
+            # Load the server's authoritative copy of the `dtc` state.
+            stateFile = _isSafeFile(statesDir, _DTC_STATE_FILENAME)
+            if stateFile is None:
+                self._send(
+                    409,
+                    b'{"error":"no dtc state -- nothing to clear"}',
+                    "application/json",
+                )
+                return
+            try:
+                dtcState = json.loads(stateFile.read_text(encoding="utf-8"))
+            except (ValueError, OSError, UnicodeDecodeError):
+                self._send(
+                    409, b'{"error":"dtc state unreadable"}', "application/json"
+                )
+                return
+
+            outcome = dtc_clear.performClear(dtcState, clearRunner=clearRunner)
+            body = json.dumps(
+                {
+                    "issued": outcome.issued,
+                    "reason": outcome.reason,
+                    "cleared": outcome.cleared,
+                    "storedAfter": outcome.storedAfter,
+                    "pendingAfter": outcome.pendingAfter,
+                    "milAfter": outcome.milAfter,
+                    "reSetCodes": outcome.reSetCodes,
+                }
+            ).encode("utf-8")
+            # Gate rejected the clear -> 403, the vehicle-write never happened.
+            if not outcome.issued:
+                self._send(403, body, "application/json")
+                return
             self._send(200, body, "application/json")
 
         def _serveIndex(self) -> None:
@@ -265,10 +338,11 @@ class StatesHttpServer:
         host: str = "127.0.0.1",
         port: int = 9899,
         assetsDir: str | Sequence[str] | None = None,
+        clearRunner: Callable[[], object] | None = None,
     ) -> None:
         self.host = host
         self.statesDir = statesDir
-        handler = makeStatesHandler(statesDir, token, assetsDir)
+        handler = makeStatesHandler(statesDir, token, assetsDir, clearRunner)
         # Bind eagerly so a port conflict fails loudly at construction (the unit
         # then exits non-zero -> the kiosk's fetch errors -> splash DEGRADED;
         # no silent green-when-broken, spec §8 listen-failure semantics).

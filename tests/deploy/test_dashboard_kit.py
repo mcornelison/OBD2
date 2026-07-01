@@ -1018,3 +1018,129 @@ def test_dashboardCss_hasAlertsCardAndDetailStyles_us406():
     assert "#dtc-detail" in css
     assert ".dtc-fix-directive" in css
     assert ".dtc-trust-badge" in css
+
+
+# ---------------------------------------------------------------------------
+# US-407 -- DTC Clear (Mode-04) path (F-111 / design §6, Spool advisory §4).
+# The clear button state mirrors the authoritative gate FOR DISPLAY (all stored
+# codes MINOR + logged + server-acked; a STOP/WATCH or an un-synced code or a
+# re-set code disables it with an honest reason); the hard confirm names the
+# freeze-frame-erase + readiness-reset consequences (S-7); the post-clear message
+# reports the re-read PROOF ("0 stored, 0 pending, MIL off"), never a bare
+# "command sent", and surfaces an instant re-set (I-7 / S-8). The load-bearing
+# gate re-check + the Mode-04 write live server-side (tests/pi/splash/
+# test_dtc_clear.py + test_states_http_dtc_clear.py); this covers the UI logic.
+# ---------------------------------------------------------------------------
+
+_US407_NODE_SCRIPT = r"""
+const assert = require('assert');
+const c = require(process.argv[1]);
+
+function code(sev, cd, opts) {
+  opts = opts || {};
+  return {
+    code: cd, severity: sev, status: opts.status || 'stored',
+    logged: opts.logged === undefined ? true : opts.logged,
+    syncAcked: opts.syncAcked === undefined ? true : opts.syncAcked,
+  };
+}
+function dtc(codes, lock) {
+  return { mil: true, codes: codes, newSinceTs: null,
+           clearGate: { enabled: true, reason: 'ok' },
+           sessionResetLock: lock || [], ts: '2026-06-30T19:42:00Z' };
+}
+
+// --- S-6 ok: all MINOR + logged + synced -> enabled -------------------------
+const ok = c.clearButtonView(dtc([code('minor', 'P0443')]));
+assert.strictEqual(ok.visible, true, 'clearable -> button visible');
+assert.strictEqual(ok.enabled, true, 'S-6 ok -> enabled');
+assert.strictEqual(ok.reason, 'ok');
+
+// --- S-6/S-10 display mirror: a STOP present -> disabled, IGNORES clearGate --
+const sev = c.clearButtonView(dtc([code('minor', 'P0443'), code('stop', 'P0301')]));
+assert.strictEqual(sev.enabled, false, 'stop present -> disabled (re-derived, not trusting clearGate.enabled)');
+assert.strictEqual(sev.reason, 'severity_present');
+assert.ok(/STOP\/WATCH/i.test(sev.label), 'label names the STOP/WATCH block');
+
+// --- S-6 sync_pending: MINOR not server-acked -> disabled -------------------
+const syn = c.clearButtonView(dtc([code('minor', 'P0443', {syncAcked: false})]));
+assert.strictEqual(syn.enabled, false);
+assert.strictEqual(syn.reason, 'sync_pending');
+assert.ok(/server sync/i.test(syn.label), 'label = waiting for server sync');
+
+// --- S-8 session-locked -> disabled, "don't chase the light" ----------------
+const lk = c.clearButtonView(dtc([code('minor', 'P0443')], ['P0443']));
+assert.strictEqual(lk.enabled, false);
+assert.strictEqual(lk.reason, 'session_locked');
+assert.ok(/returned|won't fix/i.test(lk.label), 'session-lock label');
+
+// --- nothing clearable -> no button (no codes / na-only) --------------------
+assert.strictEqual(c.clearButtonView(dtc([])).visible, false, 'no codes -> no button');
+assert.strictEqual(c.clearButtonView(dtc([code('na', 'P1750')])).visible, false,
+  'na-only -> no clear button (not a real fault)');
+assert.strictEqual(c.clearButtonView(null).visible, false, 'malformed -> no button');
+
+// --- S-7 confirm copy: freeze-frame erase + readiness reset -----------------
+const cf = c.confirmClearText();
+assert.ok(/freeze.?frame/i.test(cf.body), 'S-7 confirm names the freeze-frame erase');
+assert.ok(/readiness|emissions/i.test(cf.body), 'S-7 confirm names the readiness reset');
+assert.ok(/drive cycle/i.test(cf.body), 'S-7 names the drive-cycle consequence');
+assert.ok(cf.confirmLabel && cf.cancelLabel, 'confirm + cancel labels present');
+
+// --- postClearMessage: cleared (I-6) -> the re-read PROOF, not "command sent"
+const m1 = c.postClearMessage(
+  {issued: true, cleared: true, storedAfter: [], pendingAfter: [], milAfter: false, reSetCodes: []});
+assert.strictEqual(m1.level, 'cleared');
+assert.ok(/0 stored/i.test(m1.text) && /mil off/i.test(m1.text), 'proof text');
+assert.ok(!/command sent/i.test(m1.text), 'never a bare command-sent');
+
+// --- postClearMessage: instant re-set (I-7 / S-8) ---------------------------
+const m2 = c.postClearMessage(
+  {issued: true, cleared: false, storedAfter: ['P0443'], pendingAfter: [], milAfter: true, reSetCodes: ['P0443']});
+assert.strictEqual(m2.level, 'reset');
+assert.ok(/P0443/.test(m2.text) && /returned/i.test(m2.text), 're-set names the code');
+assert.ok(/won't fix|real fault/i.test(m2.text), "don't-chase-the-light copy");
+
+// --- postClearMessage: gate rejected server-side -> honest blocked ----------
+const m3 = c.postClearMessage({issued: false, reason: 'severity_present'});
+assert.strictEqual(m3.level, 'blocked', 'a server-side gate rejection is surfaced honestly');
+
+console.log('US407_OK');
+"""
+
+
+@pytest.mark.skipif(not _nodeAvailable(), reason="node not available on PATH")
+def test_dtcClearLogic_s6_s7_s8_us407():
+    """US-407: the clear button mirrors the authoritative gate for display (S-6/
+    S-8), the confirm copy names the freeze-frame + readiness consequences (S-7),
+    and the post-clear message reports the re-read proof, never "command sent"."""
+    result = subprocess.run(
+        ["node", "-e", _US407_NODE_SCRIPT, str(KIT_DIR / "carousel.js")],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "US407_OK" in result.stdout
+
+
+def test_dashboardHtml_hasClearButtonAndConfirm_us407():
+    """US-407: the Clear button + result line + a dedicated hard-confirm modal
+    mount are present (JS gates the button + wires the POST /dtc-clear flow)."""
+    html = _read(KIT_DIR, "dashboard.html")
+    assert 'id="dtc-clear-btn"' in html, "Clear button mount missing"
+    assert 'id="dtc-clear-result"' in html, "clear result line missing"
+    assert 'id="clear-confirm"' in html, "clear confirm modal missing"
+    assert 'id="clear-confirm-ok"' in html, "confirm OK missing"
+    assert 'id="clear-confirm-cancel"' in html, "confirm Cancel missing (never trapped)"
+
+
+def test_dashboardCss_hasClearButtonStyles_us407():
+    """US-407: the Clear button carries an enabled + a visibly-inert disabled
+    state, and the confirm modal + its ≥40px tap targets exist."""
+    css = _read(KIT_DIR, "dashboard.css")
+    assert "#dtc-clear-btn" in css
+    assert "#dtc-clear-btn:disabled" in css or "#dtc-clear-btn[disabled]" in css, (
+        "the disabled Clear button must be visibly inert"
+    )
+    assert "#clear-confirm" in css

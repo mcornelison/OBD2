@@ -710,6 +710,106 @@
     };
   }
 
+  // -------------------------------------------------------------------------
+  // US-407 -- DTC Clear (Mode-04) surface (F-111 / design §6).
+  // -------------------------------------------------------------------------
+
+  // Display-only reason -> label. The AUTHORITATIVE gate is re-checked server-
+  // side (pi.splash.dtc_clear); this mirrors it so the button reads honestly.
+  var CLEAR_REASON_LABEL = {
+    ok: "CLEAR CODES",
+    severity_present: "🔒 CLEAR CODES — a STOP/WATCH code is present",
+    sync_pending: "🔒 CLEAR CODES — waiting for server sync",
+    session_locked: "🔒 CLEAR CODES — a cleared code returned; clearing again won't fix it",
+  };
+
+  // Re-derive the clear gate from the raw codes (the display mirror of the
+  // server-side dtc_clear.evaluateClearGate). Deliberately IGNORES any
+  // precomputed clearGate.enabled -- the button never lies just because the
+  // state's flag does. Mode 04 is all-or-nothing, so the gate keys off ALL
+  // stored (non-na) codes, not the one on screen.
+  function clearGateReason(data) {
+    if (!isObj(data)) return "no_codes";
+    var codes = Array.isArray(data.codes) ? data.codes.filter(isObj) : [];
+    var relevant = codes.filter(function (c) {
+      return c.status === "stored" && c.severity !== "na";
+    });
+    if (relevant.length === 0) return "no_codes";
+    if (relevant.some(function (c) { return c.severity !== "minor"; })) {
+      return "severity_present";
+    }
+    if (relevant.some(function (c) { return !(c.logged && c.syncAcked); })) {
+      return "sync_pending";
+    }
+    var lock = {};
+    var raw = Array.isArray(data.sessionResetLock) ? data.sessionResetLock : [];
+    for (var i = 0; i < raw.length; i++) lock[raw[i]] = true;
+    if (relevant.some(function (c) { return lock[c.code]; })) {
+      return "session_locked";
+    }
+    return "ok";
+  }
+
+  // The Clear button view. `no_codes` -> no button (nothing to clear). Otherwise
+  // the button is visible; enabled only when the gate is `ok`, else disabled
+  // with an honest reason label (S-6 / S-8).
+  function clearButtonView(data) {
+    var reason = clearGateReason(data);
+    if (reason === "no_codes") {
+      return { visible: false, enabled: false, reason: reason, label: null };
+    }
+    return {
+      visible: true,
+      enabled: reason === "ok",
+      reason: reason,
+      label: CLEAR_REASON_LABEL[reason] || CLEAR_REASON_LABEL.ok,
+    };
+  }
+
+  // The hard-confirm copy (S-7 / design §6.2). Names the irreversible
+  // consequences: every code wiped, the freeze-frame erased, readiness monitors
+  // reset (a full drive cycle before an inspection will pass).
+  function confirmClearText() {
+    return {
+      title: "Clear all codes?",
+      body:
+        "Wipes every stored + pending code, erases the freeze-frame, and resets " +
+        "emissions readiness monitors (a full drive cycle is needed before an " +
+        "inspection will pass). Can't be undone.",
+      confirmLabel: "Clear all",
+      cancelLabel: "Cancel",
+    };
+  }
+
+  // The post-clear result message from the server's clear outcome (§6.3). The
+  // re-read is the PROOF -- report "0 stored, 0 pending, MIL off", never a bare
+  // "command sent". An instant re-set -> "don't chase the light" (I-7 / S-8).
+  function postClearMessage(outcome) {
+    if (!isObj(outcome)) return null;
+    if (!outcome.issued) {
+      return {
+        level: "blocked",
+        text: "Clear refused — " + (outcome.reason || "not allowed right now"),
+      };
+    }
+    var reSet = Array.isArray(outcome.reSetCodes) ? outcome.reSetCodes : [];
+    if (reSet.length > 0) {
+      return {
+        level: "reset",
+        text:
+          reSet.join(", ") +
+          " returned — a code that comes back is a real fault; clearing again won't fix it",
+      };
+    }
+    if (outcome.cleared) {
+      return { level: "cleared", text: "Cleared — 0 stored, 0 pending, MIL off" };
+    }
+    return {
+      level: "partial",
+      text: "Clear issued, but codes remain — re-check the Alerts card",
+    };
+  }
+
   var api = {
     clampIndex: clampIndex,
     nextIndex: nextIndex,
@@ -746,6 +846,10 @@
     fixArea: fixArea,
     freezeFrameView: freezeFrameView,
     codeDetailView: codeDetailView,
+    clearGateReason: clearGateReason,
+    clearButtonView: clearButtonView,
+    confirmClearText: confirmClearText,
+    postClearMessage: postClearMessage,
     POLL_MS: POLL_MS,
     SWIPE_THRESHOLD_PX: SWIPE_THRESHOLD_PX,
     LONG_PRESS_MS: LONG_PRESS_MS,
@@ -1135,6 +1239,15 @@
       var detailBody = document.getElementById("detail-body");
       var detailBack = document.getElementById("detail-back");
       var detailCodeHead = document.getElementById("detail-code-head");
+      // US-407 clear surface: the gated button + result line inside the detail,
+      // and the dedicated hard-confirm modal.
+      var clearBtn = document.getElementById("dtc-clear-btn");
+      var clearResult = document.getElementById("dtc-clear-result");
+      var clearConfirm = document.getElementById("clear-confirm");
+      var clearConfirmTitle = document.getElementById("clear-confirm-title");
+      var clearConfirmText = document.getElementById("clear-confirm-text");
+      var clearConfirmOk = document.getElementById("clear-confirm-ok");
+      var clearConfirmCancel = document.getElementById("clear-confirm-cancel");
       // The most-recent `dtc` state, so a ribbon/takeover "View detail" tap can
       // resolve a code string back to its full object.
       var lastDtc = null;
@@ -1334,7 +1447,88 @@
         var view = codeDetailView(codeObj);
         if (!view || !detailEl) return;
         renderDetailBody(view);
+        renderClearButton();
         detailEl.hidden = false;
+      }
+
+      // --- US-407 clear surface (browser only) -------------------------------
+
+      // Reflect the (display-mirror) gate onto the Clear button. No button when
+      // nothing is clearable; disabled + reason label otherwise; enabled only on
+      // `ok`. The server RE-CHECKS the gate on submit -- the button never forces.
+      function renderClearButton() {
+        if (!clearBtn) return;
+        if (clearResult) clearResult.textContent = "";
+        var view = clearButtonView(lastDtc);
+        if (!view.visible) {
+          clearBtn.hidden = true;
+          return;
+        }
+        clearBtn.hidden = false;
+        clearBtn.textContent = view.label;
+        clearBtn.disabled = !view.enabled;
+        clearBtn.setAttribute("data-reason", view.reason);
+      }
+
+      function showClearResult(msg) {
+        if (!clearResult || !msg) return;
+        clearResult.textContent = msg.text;
+        clearResult.setAttribute("data-level", msg.level);
+      }
+
+      function hideClearConfirm() {
+        if (clearConfirm) clearConfirm.hidden = true;
+      }
+
+      function openClearConfirm() {
+        if (!clearConfirm) return;
+        var copy = confirmClearText();
+        if (clearConfirmTitle) clearConfirmTitle.textContent = copy.title;
+        if (clearConfirmText) clearConfirmText.textContent = copy.body;
+        if (clearConfirmOk) clearConfirmOk.textContent = copy.confirmLabel;
+        if (clearConfirmCancel) clearConfirmCancel.textContent = copy.cancelLabel;
+        clearConfirm.hidden = false;
+      }
+
+      // POST the clear request. The gate is re-checked SERVER-SIDE from its own
+      // `dtc` state (never this request) -- a 403 means the server refused. The
+      // result reports the re-read proof (or the re-set), never "command sent".
+      function submitClear() {
+        hideClearConfirm();
+        fetch("/dtc-clear", {
+          method: "POST",
+          headers: { "X-Splash-Token": token, "Content-Type": "application/json" },
+          body: JSON.stringify({ confirm: true }),
+        })
+          .then(function (r) {
+            return r.json().then(
+              function (j) { return { status: r.status, body: j }; },
+              function () { return { status: r.status, body: {} }; }
+            );
+          })
+          .then(function (res) {
+            if (res.status === 200) {
+              showClearResult(postClearMessage(res.body));
+            } else {
+              showClearResult({
+                level: "blocked",
+                text: "Clear refused — " + (res.body.reason || res.body.error || "not allowed"),
+              });
+            }
+          })
+          .then(null, function () {
+            showClearResult({ level: "blocked", text: "Clear failed — no response" });
+          });
+      }
+
+      if (clearBtn) {
+        clearBtn.addEventListener("click", function () {
+          if (!clearBtn.disabled) openClearConfirm();
+        });
+      }
+      if (clearConfirmOk) clearConfirmOk.addEventListener("click", submitClear);
+      if (clearConfirmCancel) {
+        clearConfirmCancel.addEventListener("click", hideClearConfirm);
       }
 
       // --- US-406 Alerts card render (browser only) --------------------------

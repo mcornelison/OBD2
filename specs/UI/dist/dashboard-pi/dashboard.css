@@ -423,3 +423,36 @@ html, body {
 }
 .dtc-trust-badge[data-kind="offline"]   { color: var(--text-tertiary); }
 .detail-footer { font-size: 11px; color: var(--text-secondary); margin-top: 2px; }
+
+/* --- US-407 DTC Clear (Mode-04) surface ------------------------------------ */
+/* The gated Clear button lives in the detail overlay. ENABLED (green-outline)
+   only when every stored code is MINOR + logged + server-acked; DISABLED reads
+   visibly inert (the display mirror of the authoritative server-side gate). The
+   server RE-CHECKS on submit, so a disabled button is convenience, not the gate.
+   A STOP/WATCH / un-synced / re-set code shows the honest reason as the label. */
+#dtc-clear-zone { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; }
+#dtc-clear-btn {
+  min-height: var(--tap-min); padding: 0 14px; align-self: flex-start;
+  font-size: 13px; font-weight: 700; cursor: pointer; border-radius: 4px;
+  background: var(--surface); color: var(--ok-green);
+  border: 1px solid var(--ok-green);
+}
+#dtc-clear-btn:disabled {
+  cursor: not-allowed; color: var(--text-tertiary);
+  border-color: var(--surface); font-weight: 400;
+}
+#dtc-clear-result { font-size: 12px; color: var(--text-secondary); }
+#dtc-clear-result[data-level="cleared"] { color: var(--ok-green); }
+#dtc-clear-result[data-level="reset"]   { color: var(--red-light); font-weight: 700; }
+#dtc-clear-result[data-level="blocked"] { color: var(--amber-warn); }
+
+/* The dedicated hard-confirm modal (reuses the .confirm-box shell). Its border
+   reads STOP-red -- the clear is the most consequential action on the dash. */
+#clear-confirm {
+  position: fixed; inset: 0; z-index: 55;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(0, 0, 0, 0.6);
+}
+#clear-confirm .confirm-box { border-color: var(--red-light); }
+.confirm-title { font-weight: 700; }
+#clear-confirm-ok { border-color: var(--red-light); color: var(--red-light); }

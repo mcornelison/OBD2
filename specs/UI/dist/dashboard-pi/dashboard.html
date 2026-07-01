@@ -85,6 +85,29 @@
       <span id="detail-code-head" class="detail-code-head"></span>
     </header>
     <div id="detail-body" class="detail-body"><!-- JS fills the detail --></div>
+    <!-- US-407 gated Mode-04 clear (design §6): enabled ONLY when every stored
+         code is MINOR + logged + server-acked (the display mirror; the server
+         RE-CHECKS the gate on submit). A STOP/WATCH / un-synced / re-set code
+         disables it with an honest reason. Hidden when nothing is clearable. -->
+    <div id="dtc-clear-zone">
+      <button id="dtc-clear-btn" class="tap-target" hidden></button>
+      <div id="dtc-clear-result" aria-live="polite"></div>
+    </div>
+  </div>
+
+  <!-- US-407 hard-confirm modal (design §6.2): the clear wipes EVERY code, erases
+       the freeze-frame, and resets emissions readiness. Cancel is the easy
+       default; Clear all is the deliberate action. Kept separate from the US-403
+       menu confirm so the two consequential flows never cross-wire. -->
+  <div id="clear-confirm" hidden role="alertdialog" aria-label="Confirm clear codes">
+    <div class="confirm-box">
+      <p id="clear-confirm-title" class="confirm-title"></p>
+      <p id="clear-confirm-text"></p>
+      <div class="confirm-actions">
+        <button id="clear-confirm-cancel" class="tap-target">Cancel</button>
+        <button id="clear-confirm-ok" class="tap-target">Clear all</button>
+      </div>
+    </div>
   </div>
 
   <!-- Page dots: one per card, ≥40px touch target (S-2). -->

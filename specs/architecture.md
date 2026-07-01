@@ -2706,6 +2706,52 @@ read), never a fabricated "Drive N" (A-9 cross-link). The takeover "View detail"
 a ribbon tap both navigate to the Alerts card and open the hero's detail. The
 Mode-04 clear button + gate are US-407.
 
+#### DTC Clear (Mode-04) path — the only vehicle-write (US-407) [F-111 / design §6, advisory §4]
+
+The single DTC path that **writes to the ECU**. Mode 04 is **all-or-nothing**: it
+wipes every stored + pending code, erases the freeze-frame, and resets emissions
+readiness monitors in one shot — so the whole design is built around never
+clearing a real fault's evidence and never being forced by a tampered UI. It
+renders against **Spool's SSOT** (`offices/tuner/dtc-display-clear-safety-advisory.md`);
+this story implements those semantics, it does not redefine them.
+
+**The gate is re-checked at the privileged action path — never trusted from the
+UI (S-10 / F-3, load-bearing).** `src/pi/splash/dtc_clear.py` is the authoritative
+gate SSOT. `evaluateClearGate` **re-derives** the verdict from the raw captured
+codes and deliberately **ignores** any precomputed `clearGate.enabled` in the
+state: enabled only when **every stored (non-`na`) code is MINOR (green) AND
+logged AND server-sync-acked**, and no code re-set this session. Any STOP/WATCH →
+`severity_present`; an un-synced MINOR → `sync_pending` (capture-before-clear,
+advisory §4c); a returned code (`sessionResetLock`) → `session_locked` ("don't
+chase the light", §4d); nothing clearable → `no_codes`. This is the DTC analog of
+US-403's action-path allow-list re-check in `service_control.py`.
+
+**Three defense-in-depth layers (same shape as US-403's privilege path).**
+1. **UI layer** — `carousel.js` `clearButtonView` mirrors the gate *for display*
+   (the Clear button in the detail overlay is disabled with an honest reason
+   label for a STOP/WATCH / un-synced / re-set code); a hard-confirm modal
+   (`confirmClearText`) names the freeze-frame-erase + readiness-reset
+   consequences (S-7). The button is convenience, not the gate.
+2. **Action-path layer** — the unprivileged kiosk POSTs `/dtc-clear` (token-gated)
+   to `eclipse-states-http`, which **re-reads its own `dtc` state** and calls
+   `dtc_clear.performClear`. If the re-derived gate fails, the injected Mode-04
+   runner is **never called** (403; no vehicle-write, no freeze-frame destroyed).
+3. **Vehicle-write primitive** — `DtcClient.clearDtcs` issues Mode 04 (`CLEAR_DTC`)
+   and then **immediately re-reads Mode 03(+07)** to *prove* the clear ("0 stored,
+   0 pending, MIL off") rather than reporting a bare "command sent" (§4d), which
+   also catches an **instant re-set**: a code present before AND after the wipe is
+   flagged (`reSetCodes`) so US-407 locks Clear for the session.
+
+**Honest unavailability + deferred live wiring.** `eclipse-states-http` runs as a
+standalone service and holds **no** OBD connection, so `makeStatesHandler` takes
+an injected `clearRunner` (owned by the connection holder — the orchestrator on
+the Pi). When it is `None`, `POST /dtc-clear` returns an honest **503** rather than
+fabricating a success. Wiring the live runner across the process boundary (the
+orchestrator consuming the clear request on its OBD loop, then re-emitting the
+`dtc` state with the updated `sessionResetLock`) is the same Pi-bench-deferred
+integration as US-404's live `_dtcEmitter` injection; the gate, the Mode-04
+primitive, and the endpoint mechanism are complete and unit-tested.
+
 ### Release Versioning + Deploy Records (US-241, B-047 US-A)
 
 Pre-US-241 every deploy was anonymous: a `git pull` + service restart with no

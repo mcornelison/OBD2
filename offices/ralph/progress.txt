@@ -888,3 +888,29 @@ Task: DTC Alerts card (Card 5) + detail -- hero/worst-first list, freeze-frame-o
 - **Pattern discovered**: lock render-safety invariants (severity-gated fix, caveat-not-upgraded) in the PURE view builder, not the DOM layer -- the DOM stays a dumb painter and a UI bug cannot leak a raw fix onto a dangerous code.
 - **Gotcha**: an Edit whose old_string matches only the OPENING of a long JSON string field leaves the old tail appended after your new closing quote -> two juxtaposed strings = invalid JSON. Validate JSON after editing note/completionNotes fields (open with encoding="utf-8" on Windows -- default cp1252 chokes on the middot/arrow/emoji).
 ---
+
+## 2026-06-30 - US-407 (Agent 1 / Session 50)
+Task: DTC Clear (Mode-04) path -- action-path gate re-check + hard confirm + re-read + session-lock (LOAD-BEARING vehicle-write, LAST of Sprint 49)
+
+### What was implemented:
+- The ONLY DTC path that writes to the ECU, built as THREE defense-in-depth layers (mirrors US-403's privilege path).
+- Layer 1 (authoritative gate SSOT, NEW `src/pi/splash/dtc_clear.py`): `evaluateClearGate` RE-DERIVES the verdict from the raw codes and IGNORES any precomputed `clearGate.enabled` -- the S-10/F-3 load-bearing property (a tampered UI can't force a clear while a STOP is stored). `performClear` never calls the runner on a gate-fail (no wipe, no freeze-frame destroyed) + does re-set detection (before-and-after -> session-lock, advisory 4d).
+- Layer 2 (action path, `states_http_server.py`): NEW token-gated `POST /dtc-clear` re-reads the server's OWN `dtc` state (never the request body) -> performClear; gate-fail -> 403 (runner never called), no-runner -> honest 503, missing-state -> 409, GET stays read-only. `clearRunner` is an injected optional (default None, back-compat).
+- Layer 3 (vehicle-write primitive, `dtc_client.py`): NEW `clearDtcs` issues Mode 04 (CLEAR_DTC) then IMMEDIATELY re-reads Mode 03(+07) to PROVE the clear (never "command sent"); requires an open connection.
+- UI (`carousel.js` pure api + thin DOM): `clearButtonView`/`clearGateReason` (display mirror, honest disabled reasons S-6/S-8), `confirmClearText` (S-7 freeze-frame+readiness+drive-cycle warning), `postClearMessage` (re-read proof / re-set "don't chase the light"). Clear button + result in the detail overlay + a dedicated `#clear-confirm` modal.
+- Rule-10: `specs/architecture.md` F-092 "DTC Clear (Mode-04) path (US-407)" subsection.
+
+### Files changed:
+- Created: `src/pi/splash/dtc_clear.py` (authoritative gate + performClear orchestration)
+- Created: `tests/pi/obdii/test_dtc_client_clear.py`, `tests/pi/splash/test_dtc_clear.py`, `tests/pi/splash/test_states_http_dtc_clear.py`
+- Modified: `src/pi/obdii/dtc_client.py` (Mode 04 clearDtcs + ClearReadback)
+- Modified: `src/pi/splash/states_http_server.py` (POST /dtc-clear + clearRunner injection)
+- Modified: `specs/UI/dist/dashboard-pi/{carousel.js,dashboard.html,dashboard.css}` (clear button + confirm + result)
+- Modified: `tests/deploy/test_dashboard_kit.py` (+3 US-407 tests)
+- Modified: `specs/architecture.md` (F-092 US-407 subsection)
+
+### Learnings for future iterations:
+- **Pattern discovered**: for a load-bearing gate, the action path must RE-DERIVE the verdict from the raw source state, never read a precomputed `enabled` flag off the same state -- otherwise the "server-side re-check" is only re-reading the UI's own claim. The S-10 test proves it by passing a state with `clearGate.enabled=true` AND a STOP code and asserting the runner is never called.
+- **Gotcha**: `eclipse-states-http` is a SEPARATE process from `eclipse-obd` (the connection owner), so a "privileged action" that needs the live OBD connection cannot shell out like US-403's systemctl -- it needs cross-process wiring (deferred to Pi-bench, same as US-404's live emitter). The honest interim is an injected runner defaulting to None -> 503, never a fabricated success.
+- **Gotcha**: acceptance said "polkit-gated" but a Mode-04 OBD write has no systemctl/polkit equivalent -- the privilege is connection-access, not a syscall. Flagged the deviation for Atlas/PM rather than bolting on a meaningless polkit rule.
+---
