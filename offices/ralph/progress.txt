@@ -339,3 +339,52 @@ Task: sync_history timezone mismatch fix (F-079)
   (2026) and the ==-sentinel assertion fails -- proves the pin genuinely tests the
   UTC-clock path, not just the mock.
 ---
+
+## 2026-07-01 - US-415 (Agent 1 / Rex / Session 51)
+Task: Sprint 50 documentation sync -- architecture.md 10.8.2 + ssot-design-pattern + regression manifest (Rule-10)
+
+### What was implemented (DOC-ONLY -- zero .py touched):
+- The Rule-10 in-sprint doc-sync cap on Sprint 50 (design-gate DoD: a sprint
+  touching a load-bearing subsystem -- the EDR bus -- updates architecture.md
+  WITHIN the sprint or Atlas blocks).
+- architecture.md: NEW section 10.8 "EDR Sensor Bus Architecture (F-110 bus +
+  F-113/F-114 sensor reader)". The F-110 EDR bus (V0.29.0) had NEVER been given
+  an architecture.md section, so a bare 10.8.2 would be malformed -- built the
+  well-formed parent: 10.8.1 F-110 SampleBus recap (Sprint 46/V0.29.0, grounded
+  in the 2026-06-18 bus-contract design + src/pi/bus/*) + 10.8.2 EDR sensor
+  reader carrying Atlas's 2026-06-30 EDR ADR section 5 prose VERBATIM + a
+  ships-dark config-key block (grounded in validator.py DEFAULTS 246-260) + a
+  gate-ratification note. "Last Updated" header bumped to 2026-07-01.
+- ssot-design-pattern.md: worked example #3 "Raw-sensor schema fact (cross-tier
+  EDR persistence)" -- src/common/edr/sensor_schema.py single-source DDL as the
+  A-4/A-14-gate-#4 anti-divergence cure, framed as the SAME bug class as the
+  A-15 address-mirror drift (one fact, N tiers, one source).
+- CLAUDE.md: pi.sensors.* ship-dark key block in the Configuration System section
+  (pi.bus.enabled master + 6 pi.sensors.* keys with validator.py defaults).
+- architecture-changelog.md: newest-first US-415 row (the file's own convention).
+- regression_manifest.json: ALREADY carried F-113/F-114/F-101/F-064 (Marcus
+  pre-registered 2026-06-30) -> VERIFIED, no change (AC #3 met by existing state).
+
+### Files changed:
+- Modified: `specs/architecture.md` (new section 10.8 + Last Updated bump)
+- Modified: `specs/ssot-design-pattern.md` (worked example #3)
+- Modified: `CLAUDE.md` (pi.sensors.* config keys)
+- Modified: `specs/arch/architecture-changelog.md` (2026-07-01 change row)
+- Verified/unchanged: `offices/pm/regression_manifest.json`
+
+### Learnings for future iterations:
+- **Pattern discovered**: a "gains section X.Y.Z" doc AC can require creating the
+  parent section too. The ADR assumed a 10.8 EDR-bus section existed ("add under
+  the EDR-bus section"), but V0.29.0's F-110 bus was never documented -- a bare
+  10.8.2 with no 10.8 parent is malformed. Build the well-formed parent (grounded
+  10.8.1 recap) so the requested subsection has a home, and verify header
+  coherence (grep `^## 10\.8|^### 10\.8\.`) before committing.
+- **Gotcha (honesty on already-satisfied ACs)**: 2 of 4 deliverables were already
+  done by prior work (manifest pre-registered by PM; no fabrication needed).
+  Same posture as US-414: VERIFY + document the provenance, do NOT bump a date or
+  fabricate an edit to "earn" the AC -- that both churns and mis-attributes.
+- **Gotcha (doc-only gates)**: no .py touched -> pytest/ruff are N/A (ruff targets
+  src/+tests/; markdown is not linted). The real verification for a doc story is
+  refs-exist + section-numbering-coherent + faithful-to-source + no-stale-refs.
+  Validate any JSON you touch with `python -c "import json; json.load(...)"`.
+---
