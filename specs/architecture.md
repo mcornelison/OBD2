@@ -450,7 +450,8 @@ handshake. This matches the protocol documented in `specs/obd2-research.md`.
 | `calibration_sessions` | Calibration session tracking | FK to profiles | SET NULL |
 | `alert_log` | Threshold violation alerts | FK to profiles | SET NULL |
 | `connection_log` | OBD connection events (drive_start/end) | No FK | — |
-| `power_log` | AC/battery power transitions (Pi-only, not synced) | No FK | — |
+| `power_log` | AC/battery power transitions (Pi-authoritative; delta-synced to server since US-412 / F-101) | No FK | — |
+| `startup_log` | Boot-progress / RTC boot markers (Pi-authoritative; natural-key snapshot-synced since US-417 / F-101) | No FK | — |
 | `sync_log` | Per-table high-water mark for Pi -> server delta sync | No FK | — |
 | `sqlite_sequence` | SQLite internal autoincrement tracking | — | — |
 
@@ -472,11 +473,14 @@ One row per synced table; `table_name` is the PRIMARY KEY.
 `statistics`, `profiles`, `vehicle_info`, `ai_recommendations`,
 `connection_log`, `alert_log`, `calibration_sessions`.
 
-**Excluded (Pi-only health telemetry)**: `power_log`. Stays resident on
-the Pi for local diagnostics and is never uploaded.  (`battery_log` was
-the companion Pi-only exclusion until US-223 deleted the table with its
-sole writer `BatteryMonitor`; US-216's `PowerDownOrchestrator` + US-217's
-`battery_health_log` now cover the battery-protection domain.)
+**Also synced (Pi health telemetry, added Sprint 50–51)**: `power_log`
+(delta-by-PK, US-412 / F-101) and `startup_log` (natural-key snapshot,
+US-416/US-417 / F-101). These were Pi-only "never uploaded" until F-101 gave
+each a server mirror — see the *power_log + startup_log server sync*
+subsection below.  (`battery_log` was the historical Pi-only exclusion until
+US-223 deleted the table with its sole writer `BatteryMonitor`; US-216's
+`PowerDownOrchestrator` + US-217's `battery_health_log` now cover the
+battery-protection domain.)
 
 ##### US-194 (TD-025 + TD-026): Per-table PK registry + delta/snapshot split
 
@@ -578,6 +582,68 @@ next tick resends.
      `"SyncClient initialized: baseUrl=... intervalSeconds=... triggerOn=..."`
      (healthy) or
      `"SyncClient initialization failed, sync disabled: ..."` (warning).
+
+##### US-412 / US-416 / US-417 (F-101): power_log + startup_log server sync
+
+Sprint 50–51 extend sync past the eight US-194 tables to the two Pi
+health-telemetry tables, using two distinct transports chosen by PK shape:
+
+- **`power_log` — delta-by-PK (US-412).** `power_log` has an integer `id`
+  PK, so it joins the US-194 delta path: `sync_log.PK_COLUMN['power_log'] =
+  'id'`, delta cursor on `id`, server maps `id → source_id` with
+  `UNIQUE(source_device, source_id)`; migration `v0013` creates the MariaDB
+  mirror. This retires the old "power_log is Pi-only, never uploaded" rule.
+- **`startup_log` — natural-key snapshot (US-416 mechanism, US-417
+  registration).** `startup_log`'s PK is a TEXT `boot_id`, which has no
+  stable integer cursor (and the SQLite `rowid` is unusable — `VACUUM`
+  renumbers it), so it uses a new **snapshot-sync** path built by US-416 and
+  reusable by F-115's future event-vault:
+  - **Shared registry** `src/common/sync/snapshot_registry.py::SNAPSHOT_SYNC`
+    maps `table → SnapshotSyncSpec(naturalKeyCols, cursorCol)`. Defined once;
+    **both tiers import the same object** (A-4 — proven structurally by
+    `test_piAndServerSeeTheSameRegistration`, which asserts Pi and server
+    return the *identical* `SnapshotSyncSpec` instance, so the two lists
+    physically cannot drift). `SNAPSHOT_SYNC['startup_log'] =
+    (naturalKeyCols=('boot_id',), cursorCol='recorded_at')`; the registry is
+    otherwise empty (mechanism-only).
+  - **Pi reader** (`src/pi/data/sync_log.py`) deltas by an explicit
+    `recorded_at` cursor tracked in `sync_log.last_snapshot_cursor` per table
+    (never rewinds; MAX-guarded). Over-reading is harmless — the server dedups.
+  - **Server upsert** (`src/server/api/sync.py::runSnapshotUpsert`) upserts on
+    `UNIQUE(source_device, *naturalKeyCols)` with ON-CONFLICT — a new pattern
+    **distinct** from the `id → source_id` delta path and carrying **no
+    `source_id`**. Migration `v0014` creates `startup_log` with
+    `UNIQUE KEY uq_startup_log_boot(source_device, boot_id)`.
+  - `dtc_freeze_frame`'s pre-existing FK-resolution special-case is left
+    untouched.
+
+The Pi sweep (`pushAllDeltas`) runs the registered snapshot tables after the
+delta tables and guards a registered-but-not-yet-created table (fresh/partial
+DB) as EMPTY rather than crashing.
+
+##### US-419 (F-080): boot clock-quality flag on power_log / startup_log
+
+Post-reboot the Pi's RTC can read a stale/epoch time before
+`systemd-timesyncd` corrects it, which would write drifted timestamps as
+truth. US-419 adds a **Pi-local forensic** `data_quality` TEXT column to
+`power_log` and `startup_log` (nullable; legacy rows stay NULL = unassessed).
+`src/pi/diagnostics/clock_sync.py` is the SSOT for "is this boot timestamp
+trustworthy?": a subprocess-free sanity FLOOR (a wall clock before
+`CLOCK_SANITY_FLOOR_ISO='2025-01-01T00:00:00Z'` is a definitive dead-RTC
+reset, flagged unconditionally — the floor wins even if NTP later reads
+synced) combined with a best-effort `timedatectl NTPSynchronized` probe
+(tri-state: an *unreachable* probe on a non-systemd/dev box returns None and
+falls back to the floor alone, so it never false-flags). A drifted boot row is
+stamped `data_quality='clock_unsynced'` rather than silently trusted; boot-log
+writers apply the verdict as *policy* (they do not each re-acquire a clock
+signal). The RTC coin-cell / timesyncd-ordering fix itself is ops (AI-1), out
+of the code scope.
+
+**Wire-strip.** `data_quality` here is Pi-local only — the server `power_log`
+/ `startup_log` mirrors have no such column — so
+`sync_log._WIRE_STRIPPED_COLUMNS` drops it on both the delta and snapshot push
+paths (safe globally: `power_log` + `startup_log` are the only Pi tables
+carrying `data_quality`).
 
 ```
 ┌─────────────────────┐     ┌─────────────────────┐
@@ -1025,6 +1091,17 @@ Analytics filter `production` + `test` for runtime-trend baselines; `sim` is exc
 - Record results: `python scripts/record_drain_test.py --start-soc 100 --end-soc 20 --runtime 1440 --load-class test --ambient 22`.
 - Push to server: `python scripts/sync_now.py`.
 - Analytics downstream tracks `runtime_seconds` decay for battery-replacement signal (future story).
+
+**Sprint 51 status.** The only `battery_health_log` schema change this sprint
+was US-424 widening its `data_source` CHECK enum to include `'foreign'` (the
+derived-CHECK propagation; the column already existed). The planned SoC%
+rework — wiring the MAX17048 SoC% register end-to-end into the recorder
+(US-422 / F-060) and dropping the legacy misnamed `start_soc`/`end_soc`
+columns that actually store **volts** (US-423 / F-061) — was **BLOCKED** this
+sprint (`offices/pm/blockers/BL-015`: the drain-event recording path the story
+wired through was removed in the SS-T5 shutdown redesign, and no dedicated
+`soc_pct` column exists). `start_soc`/`end_soc` are therefore **unchanged**
+this sprint.
 
 ### Data Retention
 
@@ -2830,6 +2907,41 @@ orchestrator consuming the clear request on its OBD loop, then re-emitting the
 `dtc` state with the updated `sessionResetLock`) is the same Pi-bench-deferred
 integration as US-404's live `_dtcEmitter` injection; the gate, the Mode-04
 primitive, and the endpoint mechanism are complete and unit-tested.
+
+#### LTFT multi-drive trend card (Card 4) + `ltft-trend` emitter (US-420) [F-096]
+
+The **LTFT Trend** card renders a long-term-fuel-trim trend across the last N
+drives so the CIO can watch LTFT migrate toward 0 (healthy) vs drift beyond
+±10%. It follows the same **SSOT / pure-consumer** carousel pattern as the
+System Status / Battery Health / DTC cards: a Python emitter is the single
+authoritative provider that **classifies** the drift; the JS card only maps the
+verdict → colour, it never classifies.
+
+**`ltft-trend` emitter (`src/pi/splash/ltft_trend_emitter.py`).**
+`readLtftTrend()` aggregates per-drive avg/min/max of
+`parameter_name='LONG_FUEL_TRIM_1'` (the single 4G63 bank — bank 2 is unlogged)
+over `realtime_data`, `GROUP BY drive_id` oldest→newest, `WHERE
+data_source='real' AND drive_id IS NOT NULL` (so replay/sim/fixture — and the
+US-424 `'foreign'` rows — can never enter the tune trend, and NULL-drive noise
+is excluded), `LEFT JOIN drive_summary` for the axis timestamp (NULL when a
+drive has trims but no summary). `classifyLtftDrift()`: `|LTFT|≤5` ok, `≤10`
+amber, `>10` down — thresholds grounded in
+`offices/tuner/cards/safe-range-fuel-trims.md` (normal ±5, danger >±10).
+`buildLtftTrendState()` is pure: per-drive levels + a headline verdict + a
+migration direction (improving-toward-0 vs worsening, `TREND_EPSILON_PCT=0.5`
+dead-band). **Honest-instrument**: below `MIN_DRIVES_FOR_TREND=2` the headline
+level is forced to `'insufficient'` — a single in-band reading can never render
+green. `makeLtftTrendEmitter()` is the same best-effort atomic
+`ensureStatesDir`/`writeStateAtomic` (C-5) seam as the sibling emitters (write
+failures logged, never raised).
+
+**Render (`carousel.js`).** `ltftTrendView()` (pure) + `renderLtftTrendCard()`
+paint a multi-drive bar row, each bar coloured by its **own** drift level so a
+>±10% drive is visibly not-green; `tick()` dispatches on
+`data-state='ltft-trend'`. Defense-in-depth: the view re-forces `'insufficient'`
+when `sufficient !== true`, so a mislabeled state can't paint green. As with the
+other emitters, the runtime `emit()` wiring is owner/deploy-side (no `src` call
+site yet), matching the shipped cards.
 
 ### Release Versioning + Deploy Records (US-241, B-047 US-A)
 

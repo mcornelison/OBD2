@@ -212,3 +212,29 @@ Task: Foreign-vehicle contamination marker + ingest guard (F-116, Atlas-ruled)
 - **Gotcha (derived-CHECK still needs the literals pinned)**: the SSOT derives DATA_SOURCE_CHECK_CLAUSE, but the 9 per-table schema strings are hand-written literals -- they only stay in lockstep because test_everySchemaCheckMatchesSsot re-parses each and asserts equality to the tuple. When adding an enum value, widen every literal AND trust the parity test to catch a miss, rather than assuming 'derived' means 'auto-updated everywhere'.
 - **Gotcha (resize-droppable is a sanctioned compression, not scope-cut drift)**: US-424's pmSignOff pre-authorized dropping the server tripwire if the L ran heavy. Dropping it kept the story to one clean iteration -- but only because the drop was explicitly blessed. Never silently drop an AC; a pre-blessed relief valve is the exception.
 ---
+
+## 2026-07-01 - US-425 (Rex / Agent 1)
+Task: Sprint 51 documentation sync (Rule-10)
+
+### What was implemented:
+- HONEST-INSTRUMENT scope-check first: US-421 (F-098), US-422 (F-060), US-423 (F-061) all BLOCKED this sprint (BL-014/BL-015). Docs reflect what SHIPPED, not the frozen AC's optimistic feature list.
+- (AC#1 sync) specs/architecture.md §5: new "US-412/US-416/US-417 (F-101): power_log + startup_log server sync" subsection -- SNAPSHOT_SYNC mechanism (shared src/common/sync/snapshot_registry.py registry; both tiers import the SAME SnapshotSyncSpec object = A-4 proven by test_piAndServerSeeTheSameRegistration; Pi recorded_at cursor in sync_log.last_snapshot_cursor NOT rowid; server runSnapshotUpsert on UNIQUE(source_device,*naturalKeyCols) ON-CONFLICT, distinct from id->source_id delta path; dtc_freeze_frame FK special-case untouched; v0013/v0014). Fixed now-STALE "power_log Pi-only/not-synced/never-uploaded" refs (§5 overview table + Excluded block) + added a startup_log overview row.
+- (AC#2 data-contract) foreign/foreign_vehicle enum + sustained bus-rate ingest guard ALREADY fully documented by US-424's in-sprint Rule-10 AC#6 (Data Source Tagging §) -- verified present, not duplicated. Added new "US-419 (F-080): boot clock-quality flag" subsection (Pi-local forensic data_quality TEXT col; clock_sync.py SSOT = sanity FLOOR + tri-state timedatectl probe; wire-stripped since server mirrors lack the column). battery_health_log documented via a "Sprint 51 status" note: only US-424's data_source CHECK widen landed; the SoC%-column rework (US-422 add / US-423 drop) is BLOCKED (BL-015), columns UNCHANGED.
+- Also added the US-420 LTFT Trend card (Card 4, F-096) carousel subsection (SSOT emitter classifies / JS maps verdict->colour; LONG_FUEL_TRIM_1 single 4G63 bank; +/-5/10 grounded thresholds; insufficient<2-drives never-green) -- genuine new-surface doc gap (US-420 had no architecture.md AC).
+- (AC#3 manifest) offices/pm/regression_manifest.json: annotated sprintStatus="BLOCKED Sprint 51" on F-060/F-061/F-098 so /sprint-validated does not try to validate absent features; shipped F-101/F-077/F-078/F-058/F-080/F-096/F-116 stand; refreshed lastUpdatedBy.
+- (AC#4 no stale refs) swept specs/ -- only my own in-quotes historical retirement note of the old power_log rule remains.
+
+### Files changed:
+- Modified: `specs/architecture.md` (SNAPSHOT_SYNC subsection + clock_unsynced subsection + power_log/startup_log stale-ref fixes + battery_health_log Sprint-51 note + US-420 LTFT card subsection)
+- Modified: `offices/pm/regression_manifest.json` (sprintStatus=BLOCKED on F-060/061/098 + lastUpdatedBy)
+
+### Verification (this iteration, synchronous):
+- pytest tests/pm_scripts/test_chain_validate_aggregate.py tests/deploy/test_deploy_pi.py = 51 pass (the only two tests touching these artifacts; the aggregate test builds its own synthetic manifest so the added sprintStatus field is harmless)
+- json.load clean on regression_manifest.json + sprint.json + ralph_agents.json
+- No .py files touched -> ruff N/A (docs + JSON only)
+
+### Learnings for future iterations:
+- **Pattern (doc-sync = honest-instrument, not stenography)**: a frozen doc-sync AC lists the sprint's PLANNED features, but by the time it runs some may have BLOCKED. Cross-check every named feature against sprint.json passes-state + the blocker files BEFORE writing -- document what shipped, and mark the blocked ones (sprintStatus in the manifest) so downstream /sprint-validated does not try to validate absent code. F-060/061/098 (US-421/422/423) were the trap here.
+- **Gotcha (another story's Rule-10 AC pre-discharges yours)**: US-424 already wrote the foreign/foreign_vehicle + bus-rate guard data-contract doc in-sprint (its AC#6). The doc-sync story must VERIFY-then-skip, not re-write it -- grep the section, confirm coverage, move on. Duplicating it would drift two copies.
+- **Gotcha (stale-ref hunt follows the sprint's edges)**: registering power_log/startup_log for sync (F-101) made the pre-existing "power_log is Pi-only, never uploaded" §5 lines FALSE. A sync-doc story's blast radius includes the adjacent "excluded from sync" prose -- fix it in the same pass or it reads as a contradiction.
+---

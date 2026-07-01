@@ -2,7 +2,7 @@
   "$comment": "Regression manifest -- features that must keep working. Per Mike 2026-05-08 directive: main = 'fully validated stable.' Sprint branches stay deployed-but-pre-merge until real-hardware drill validates affected features. /sprint-validated bumps last_validated for features in the sprint's bigDefinitionOfDone. Stdlib-JSON to match backlog.json / story_counter.json / sprint.json convention (no PyYAML dep).",
   "manifestVersion": 1,
   "lastUpdated": "2026-07-01",
-  "lastUpdatedBy": "Marcus (PM) -- register Sprint 51/V0.29.5 features (F-060/061/077/078/058/080/096/098/116)",
+  "lastUpdatedBy": "Rex (US-425 doc-sync) -- annotated sprintStatus=BLOCKED on F-060/F-061/F-098 (US-421/422/423 did NOT ship this sprint per BL-014/BL-015); shipped Sprint 51 features F-101/F-077/F-078/F-058/F-080/F-096/F-116 stand as registered. Prior: Marcus (PM) registered Sprint 51 features.",
   "categories": [
     "lifecycle",
     "connection",
@@ -387,6 +387,7 @@
       "id": "F-060",
       "name": "UpsMonitor SoC% wired through orchestrator to recorder (battery_health_log start/end SoC% from register)",
       "category": "power_management",
+      "sprintStatus": "BLOCKED Sprint 51 (BL-015) -- US-422 did NOT ship; drain-event recording path was removed in the SS-T5 redesign + no soc_pct column. Registered for a future sprint; nothing changed in the codebase Sprint 51.",
       "affectedBySprints": [
         51
       ],
@@ -399,6 +400,7 @@
       "id": "F-061",
       "name": "battery_health_log legacy start_soc/end_soc columns dropped (both tiers; consumers on vcell)",
       "category": "power_management",
+      "sprintStatus": "BLOCKED Sprint 51 (blocked-by-dep on US-422/BL-015) -- US-423 did NOT ship; the legacy columns remain. Registered for a future sprint; nothing changed in the codebase Sprint 51.",
       "affectedBySprints": [
         51
       ],
@@ -471,6 +473,7 @@
       "id": "F-098",
       "name": "Pi carousel power-mode badge (in-car vs wall-power, SSOT provider, honest 'unknown')",
       "category": "power_management",
+      "sprintStatus": "BLOCKED Sprint 51 (BL-014) -- US-421 did NOT ship; the power-mode SSOT provider does not exist (routed to Atlas). Registered for a future sprint; nothing changed in the codebase Sprint 51.",
       "affectedBySprints": [
         51
       ],
