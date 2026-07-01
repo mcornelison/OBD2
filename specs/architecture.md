@@ -17,7 +17,19 @@ This document describes the system architecture, technology decisions, and desig
 > behavior + invariants). −35% file size; no current-system content removed. (§11
 > Deployment was reviewed — it's all current reference, nothing extracted.)
 
-**Last Updated**: 2026-06-29 (Sprint 47 / V0.29.1 — F-107 A-9 closure, two new
+**Last Updated**: 2026-07-01 (Sprint 50 / V0.29.4 — new **§10.8 EDR Sensor Bus
+Architecture**: **§10.8.1** F-110 `SampleBus` recap (Sprint 46 / V0.29.0) +
+**§10.8.2** EDR sensor reader + raw-sensor persistence (F-113/F-114) — additive
+`raw.imu.*`/`raw.light.*` LOSSY topics on the F-110 bus (one `seq` per IMU
+burst), sibling `edr_imu_sample`/`edr_light_sample` tables authored once in the
+`src/common/edr/sensor_schema.py` versioned contract (A-4 anti-divergence),
+always-on decimated persist (`persistHz` 25) + rolling-window retention
+(`retentionDays` 7), `drive_id` NULL-when-no-drive latch, graceful-absent probe,
+ships dark behind `pi.sensors.*` under `pi.bus.enabled`. Rule-10 in-sprint per
+Atlas's 2026-06-30 EDR ADR §5 (US-415). BENCH-validated (US-411 golden-master +
+absent-path); live IRL acceptance (`i2cdetect` 0x29/0x69 + connect-when-wired)
+pending the first V0.29.4 Pi deploy.)
+Prior: 2026-06-29 (Sprint 47 / V0.29.1 — F-107 A-9 closure, two new
 subsections under §10.7.1: **§10.7.1.1** Root-1 deploy-invariant closure
 (US-389 — single-instance guard ⇄ `RuntimeDirectory` matched-pair tested deploy
 invariant + version stamp) and **§10.7.1.2** Root-2 guaranteed-close (US-388 —
@@ -2141,6 +2153,65 @@ A-9 stays OPEN until that passes.
 governance rule (PM Rule 10) + Atlas's Sprint-43 PM Rule 13 validation-block
 PASS. Mechanism B's keep-dark production-enable disposition is the Atlas
 Rule 10 ruling of 2026-05-29 (CIO-ratified), recorded here + in §20.*
+
+---
+
+## 10.8 EDR Sensor Bus Architecture (F-110 bus + F-113/F-114 sensor reader)
+
+### 10.8.1 F-110 SampleBus (Sprint 46 / V0.29.0)
+
+The Event Data Recorder (EDR) program introduces a dedicated in-process
+publish/subscribe bus, the **`SampleBus`** (`src/pi/bus/{bus,sample,persistence_subscriber}.py`),
+so every data source is read once by a dedicated reader and published to N
+policy-applying consumers — the "SSOT for derived data, enforced at a broker"
+direction (`specs/ssot-design-pattern.md`). Slice 1 (F-110) shipped the bus
+itself plus an OBD path that mirrors the inline logger: a `Sample` envelope
+(`topic, source, value, unit, tsUtc, tsCapture, driveId, dataSource, seq`),
+per-subscriber QoS (LOSSLESS/durable for the sync + safety lane, LOSSY
+drop-oldest for display so a producer never blocks), and a `PersistenceSubscriber`
+that drains `raw.obd.*` to `realtime_data`. It **ships dark** behind
+`pi.bus.enabled` (default `false`); enabling it must reproduce the byte-identical
+`realtime_data` golden master. Contract:
+`docs/superpowers/specs/2026-06-18-edr-dedicated-reader-bus-contract-design.md`.
+
+### 10.8.2 EDR sensor reader + raw-sensor persistence (Sprint 50 / V0.29.4)
+
+**EDR sensor reader (F-113/F-114).** A dedicated reader polls two I²C sensors on
+bus-1 — ICM-20948 9-DoF IMU (@0x69) and TSL2591 light (@0x29) — and publishes
+them on the F-110 `SampleBus` as **additive** LOSSY topics
+(`raw.imu.{accel,gyro,mag,temp}`, `raw.light.{lux,raw}`), sharing one `seq` per
+IMU burst. The channels never touch the `raw.obd.* → realtime_data` path, so the
+F-110 byte-identical golden master is preserved by construction. A sibling
+persistence subscriber writes `edr_imu_sample` / `edr_light_sample`, whose DDL is
+authored once in the versioned `src/common/edr/sensor_schema.py` contract (A-4
+anti-divergence: the future server table derives from the same module).
+Persistence is **always-on** (key-on incl. engine-off — true black-box) at a
+decimated baseline (`persistHz`, default 25 Hz); rows stamp `drive_id` only when
+a drive is RUNNING, else explicit NULL (the A-9/DTC-KOEO latch rule). A
+rolling-window purge job (`retentionDays`, default 7) bounds the Pi-local volume.
+The reader is **graceful-absent** (probe → silence, never fabricate) and ships
+**dark** behind `pi.sensors.{imu,light}.enabled` under `pi.bus.enabled`. Raw
+samples are **Pi-local this phase**; server sync, the event vault, and the
+event-triggered high-rate (100–200 Hz) capture are F-115. The reader stores
+**sensor-frame** values; vehicle-frame rotation + magnetometer hard/soft-iron
+calibration are deferred transforms (F-115), pending the recorded mounting
+axis-orientation.
+
+**Config (ships dark).** Master `pi.bus.enabled` → `pi.sensors.imu.enabled` /
+`pi.sensors.light.enabled` (default `false`, each requires the bus gate);
+`pi.sensors.imu.sampleHz` (`50`, bus publish rate), `pi.sensors.imu.persistHz`
+(`25`, decimated persist), `pi.sensors.light.sampleHz` (`1`),
+`pi.sensors.retentionDays` (`7`, rolling-window purge — confirm vs Pi free space
+at deploy). Built US-408 (schema contract + Pi tables) / US-409 (IMU + light
+readers) / US-410 (persistence subscriber + retention) / US-411 (bench harness +
+golden-master regression + connect-when-wired drill).
+
+*Gate-ratification note: §10.8 added per the 2026-05-18 design-gate governance
+rule (PM Rule 10 / C-4 DoD, in-sprint) from Atlas's 2026-06-30 EDR ADR
+(`docs/superpowers/specs/2026-06-30-edr-sensor-reader-schema-bus-adr.md` §5).
+BENCH-validated (US-411 golden-master + absent-path); live IRL acceptance —
+`i2cdetect` 0x29/0x69 + connect-when-wired — pending the first V0.29.4 Pi
+deploy.*
 
 ---
 

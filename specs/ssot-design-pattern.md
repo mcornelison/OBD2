@@ -76,6 +76,23 @@ against re-divergence).
    inspects.* "No new stray literal" (B-044) and "the blessed copies still agree"
    (A-15) are two different guarantees; you need both gates.
 
+3. **Raw-sensor schema fact (cross-tier EDR persistence).** The EDR raw-sensor
+   tables (`edr_imu_sample` / `edr_light_sample`) are a fact both tiers need: the
+   Pi creates SQLite tables now, and the future server MariaDB migration (F-115)
+   must match column-for-column. Left to hand-written DDL per tier, this is the
+   *same* bug class as the A-15 server-address mirrors — divergent copies of one
+   fact. Cure (A-4 / A-14 gate #4): the DDL is authored **once** in a versioned
+   `src/common/edr/sensor_schema.py` contract (`SCHEMA_VERSION` bare-int stamped
+   into every row, mirroring `power_watch.RECORD_SCHEMA_VERSION`) and both tiers
+   *derive* from it — neither hand-writes its own copy, so the Pi↔server drift
+   cannot arise. The Pi wires the contract by importing `EDR_SCHEMAS`/`EDR_INDEXES`
+   and splatting them into its existing `CREATE IF NOT EXISTS` loop; the server
+   table, when F-115 lands, is generated from the same module. This is SSOT
+   applied *ahead* of the consumers for a cross-tier schema — one source, both
+   tiers reference. Built Sprint 50 / V0.29.4 (US-408). See `specs/architecture.md`
+   §10.8.2 and the ADR
+   `docs/superpowers/specs/2026-06-30-edr-sensor-reader-schema-bus-adr.md` §2.
+
 ## Emerging direction — SSOT for *derived* data, enforced at a broker (EDR bus)
 
 > **STATUS: DRAFT — current CIO thought process, NOT yet ratified.** Captured
