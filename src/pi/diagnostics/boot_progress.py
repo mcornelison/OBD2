@@ -328,11 +328,18 @@ def _writeStartupLogRow(
     # `python -m ... --finalize` subprocess -- the systemd ExecStop
     # invocation). Only the arm/DB path needs this. See
     # feedback-lazy-import-patch-rewiring.
-    from src.pi.obdii.database_schema import ensureStartupLogForensicColumns
+    from src.pi.obdii.database_schema import (
+        ensureStartupLogForensicColumns,
+        ensureStartupLogRecordedAt,
+    )
 
     conn = sqlite3.connect(dbPath, timeout=5.0)
     try:
         ensureStartupLogForensicColumns(conn)
+        # US-417: guarantee the recorded_at SNAPSHOT_SYNC cursor column exists
+        # before the row is written / synced.  No-op on any real Pi DB (present
+        # since US-263); defensive for a legacy/partial startup_log.
+        ensureStartupLogRecordedAt(conn)
         conn.execute(
             "INSERT OR IGNORE INTO startup_log "
             "(boot_id, prior_boot_clean, prior_last_entry_ts, "

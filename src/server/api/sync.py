@@ -156,6 +156,7 @@ from src.server.db.models import (
     PowerLog,
     Profile,
     RealtimeData,
+    StartupLog,
     Statistic,
     SyncHistory,
     VehicleInfo,
@@ -217,9 +218,11 @@ DTC_FREEZE_FRAME_TABLE: str = "dtc_freeze_frame"
 # sync path.  Maps a snapshot-sync table name -> its SQLAlchemy model.  The
 # per-table (naturalKeyCols, cursorCol) contract lives in the SHARED registry
 # src.common.sync.snapshot_registry.SNAPSHOT_SYNC (A-4); this map only supplies
-# the server model for each registered table.  Ships EMPTY -- startup_log adds
-# its (name -> model) row in US-417; the F-115 event-vault registers here too.
-_SNAPSHOT_TABLE_REGISTRY: dict[str, type] = {}
+# the server model for each registered table.  startup_log (US-417) is the first
+# registrant; the F-115 event-vault registers here too.
+_SNAPSHOT_TABLE_REGISTRY: dict[str, type] = {
+    "startup_log": StartupLog,
+}
 
 # NOTE: ACCEPTED_TABLES is the STATIC delta + dtc_freeze_frame set, preserved for
 # back-compat (it is imported by tests + operator tooling).  The payload

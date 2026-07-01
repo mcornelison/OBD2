@@ -650,6 +650,47 @@ def ensureStartupLogForensicColumns(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+def ensureStartupLogRecordedAt(conn: sqlite3.Connection) -> bool:
+    """Idempotently ensure startup_log carries the ``recorded_at`` column.
+
+    ``recorded_at`` is the SNAPSHOT_SYNC delta cursor for startup_log (US-417 /
+    F-101): the Pi push reads rows where ``recorded_at > last_snapshot_cursor``.
+    It has shipped in ``SCHEMA_STARTUP_LOG`` since the table was created (US-263,
+    ``665863e``), so on any real Pi DB this guard is a **no-op** -- it exists to
+    satisfy the US-417 "(if absent)" acceptance path defensively (a legacy /
+    partial startup_log created without the column gains it before sync reads
+    it).
+
+    The column is added as plain nullable ``TEXT``: SQLite's ``ALTER TABLE ...
+    ADD COLUMN`` forbids the schema's non-constant ``strftime(...)`` default, and
+    pre-existing legacy rows carry no cursor value anyway (NULL sorts before
+    every ISO-8601 timestamp, so they are simply re-synced once on first push --
+    harmless under the idempotent natural-key server upsert).
+
+    A missing startup_log table is a graceful no-op (lazy-init pattern shared
+    with :func:`src.pi.data.sync_log.ensureSyncModifiedAtSchema`).
+
+    Args:
+        conn: An open sqlite3 Connection to the Pi-side obd database.  The
+            caller owns the connection; this commits after any ALTER.
+
+    Returns:
+        ``True`` iff the ALTER actually ran (the column was previously absent);
+        ``False`` when the column already existed or the table does not exist.
+    """
+    tableExists = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name = 'startup_log'",
+    ).fetchone()
+    if tableExists is None:
+        return False
+    existing = {r[1] for r in conn.execute("PRAGMA table_info(startup_log)")}
+    if "recorded_at" in existing:
+        return False
+    conn.execute("ALTER TABLE startup_log ADD COLUMN recorded_at TEXT")
+    conn.commit()
+    return True
+
+
 # Pi-side ``drive_statistics`` table -- RETIRED V0.27.17 (US-351 / B-104 Step 1b).
 #
 # Sprint 41 / 2026-05-21: CIO ratified full retirement of the Pi-side

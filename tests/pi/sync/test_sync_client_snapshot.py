@@ -205,3 +205,66 @@ class TestPushSnapshotDisabled:
         client = SyncClient(_config(tempDbPath, enabled=False))
         result = client.pushSnapshot(_TABLE)
         assert result.status == PushStatus.DISABLED
+
+
+class TestPushSnapshotMissingTable:
+    """US-417: a registered table that is not yet CREATE-d must not crash the
+    sweep -- pushSnapshot skips it gracefully (EMPTY), so pushAllDeltas over a
+    fresh/partial DB (or a real Pi before its first boot-log write) survives."""
+
+    @pytest.fixture
+    def noStartupLogDb(self) -> str:
+        fd, path = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+        conn = sqlite3.connect(path)
+        sync_log.initDb(conn)
+        # Full delta-table surface (as ObdDatabase.initialize / the sync tests'
+        # _createEmptyInScopeTables would build) but startup_log deliberately
+        # ABSENT -- the exact shape that would trip the new snapshot sweep.
+        for tableName in sync_log.IN_SCOPE_TABLES:
+            if tableName in sync_log.SNAPSHOT_TABLES:
+                pk = "id" if tableName == "profiles" else "vin"
+                conn.execute(
+                    f"CREATE TABLE IF NOT EXISTS {tableName} ({pk} TEXT PRIMARY KEY)",
+                )
+                continue
+            pk = sync_log.PK_COLUMN[tableName]
+            conn.execute(
+                f"CREATE TABLE IF NOT EXISTS {tableName} "
+                f"({pk} INTEGER PRIMARY KEY AUTOINCREMENT)",
+            )
+        conn.commit()
+        conn.close()
+        try:
+            yield path
+        finally:
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+
+    def test_missingTableReturnsEmptyNotCrash(
+        self, noStartupLogDb: str, stubApiKey: str,
+    ) -> None:
+        # startup_log is registered in SNAPSHOT_SYNC (US-417) but the table is
+        # not present in this DB.
+        assert sync_log.isSnapshotSyncTable("startup_log")
+        client = SyncClient(
+            _config(noStartupLogDb), httpOpener=_successOpener(),
+            sleep=lambda _s: None,
+        )
+        result = client.pushSnapshot("startup_log")
+        assert result.status == PushStatus.EMPTY
+        assert result.rowsPushed == 0
+
+    def test_pushAllDeltasSurvivesMissingSnapshotTable(
+        self, noStartupLogDb: str, stubApiKey: str,
+    ) -> None:
+        client = SyncClient(
+            _config(noStartupLogDb), httpOpener=_successOpener(),
+            sleep=lambda _s: None,
+        )
+        # Must not raise OperationalError("no such table: startup_log").
+        results = client.pushAllDeltas()
+        startup = [r for r in results if r.tableName == "startup_log"]
+        assert startup and startup[0].status == PushStatus.EMPTY

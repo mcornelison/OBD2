@@ -812,6 +812,26 @@ class SyncClient:
         with closing(sqlite3.connect(self._dbPath)) as conn, conn:
             sync_log.initDb(conn)
             sync_log.ensureSnapshotSyncSchema(conn)
+
+            # US-417: a registered snapshot table may not be CREATE-d yet -- a
+            # fresh/partial DB, or a real Pi before its first boot-log row is
+            # written.  Skip it gracefully (EMPTY) rather than letting the raw
+            # "no such table" propagate and abort the whole pushAllDeltas sweep.
+            # Mirrors the missing-table guard in _readLocalDriveCounter.
+            tableExists = conn.execute(
+                "SELECT name FROM sqlite_master "
+                "WHERE type='table' AND name = ?",
+                (tableName,),
+            ).fetchone()
+            if tableExists is None:
+                return PushResult(
+                    tableName=tableName,
+                    rowsPushed=0,
+                    batchId="",
+                    elapsed=time.monotonic() - start,
+                    status=PushStatus.EMPTY,
+                )
+
             lastCursor = sync_log.getSnapshotCursor(conn, tableName)
             rows = sync_log.getSnapshotRows(
                 conn, tableName, lastCursor, self._readBatchSize(),

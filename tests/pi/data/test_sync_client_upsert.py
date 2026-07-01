@@ -347,7 +347,8 @@ class TestPushAllDeltasAfterFix:
     def test_pushAllDeltas_returns_one_result_per_in_scope_table(
         self, syncClient: SyncClient,
     ) -> None:
-        """BC: result set length still equals IN_SCOPE_TABLES count.
+        """BC: result set covers every delta table + every registered
+        natural-key snapshot table (US-417 registered startup_log).
 
         Snapshot tables surface as SKIPPED-style results, not missing
         entries.  This preserves operator-visible table coverage in
@@ -355,7 +356,9 @@ class TestPushAllDeltasAfterFix:
         """
         results = syncClient.pushAllDeltas()
         returnedNames = {r.tableName for r in results}
-        assert returnedNames == sync_log.IN_SCOPE_TABLES
+        assert returnedNames == (
+            sync_log.IN_SCOPE_TABLES | sync_log.snapshotSyncTables()
+        )
 
     def test_pushAllDeltas_completes_without_exceptions(
         self, syncClient: SyncClient,

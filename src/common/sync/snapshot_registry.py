@@ -101,11 +101,15 @@ class SnapshotSyncSpec:
 # The registry
 # ==============================================================================
 #
-# EMPTY on purpose in US-416 -- this story ships the *mechanism*.  startup_log is
-# the first registrant (US-417, naturalKeyCols=("boot_id",), cursorCol=
-# "recorded_at"); the F-115 EDR event-vault registers here rather than getting
-# its own sync code.  Adding a table = one row here, referenced by both tiers.
-SNAPSHOT_SYNC: dict[str, SnapshotSyncSpec] = {}
+# startup_log (US-417) is the first registrant.  Its TEXT ``boot_id`` PK is the
+# natural key; ``recorded_at`` (ISO-8601 insertion timestamp) is the delta
+# cursor.  The F-115 EDR event-vault registers here rather than getting its own
+# sync code.  Adding a table = one row here, referenced by BOTH tiers (the Pi
+# reader in :mod:`src.pi.data.sync_log` + the server upsert in
+# :mod:`src.server.api.sync`) -- one contract, no per-table drift surface (A-4).
+SNAPSHOT_SYNC: dict[str, SnapshotSyncSpec] = {
+    "startup_log": SnapshotSyncSpec(naturalKeyCols=("boot_id",), cursorCol="recorded_at"),
+}
 
 
 def snapshotSyncTables() -> frozenset[str]:

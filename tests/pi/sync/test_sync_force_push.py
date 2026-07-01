@@ -206,10 +206,16 @@ class TestSummaryAggregation:
 
         summary = client.forcePush()
 
-        # US-314: forcePush now appends a drive_counter result alongside
-        # the per-table sweep, so the result list is len(IN_SCOPE_TABLES) + 1.
+        # US-314: forcePush appends a drive_counter result alongside the
+        # per-table sweep (+1).  US-417: the sweep also covers registered
+        # natural-key snapshot tables (startup_log), so the result list is
+        # len(IN_SCOPE_TABLES) + len(snapshotSyncTables()) + 1.
         tableCount = len(summary.results)
-        assert tableCount == len(sync_log.IN_SCOPE_TABLES) + 1
+        assert tableCount == (
+            len(sync_log.IN_SCOPE_TABLES)
+            + len(sync_log.snapshotSyncTables())
+            + 1
+        )
 
         manualOk = sum(
             1 for r in summary.results if r.status == PushStatus.OK
