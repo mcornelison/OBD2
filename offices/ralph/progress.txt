@@ -111,3 +111,28 @@ Task: Pi post-reboot clock-drift guard (F-080, code angle; verify-first)
 - **Gotcha (global wire-strip blast radius)**: adding a column name to a GLOBAL strip set (_WIRE_STRIPPED_COLUMNS applied to every delta+snapshot table) is only safe if NO other syncing table has a column of that name that the server maps + stores. Verified by grep (power_log+startup_log are the only Pi tables with data_quality; server data_quality is server-authored drive_summary/drive_statistics only). Always check the blast radius of a global strip, not just the two tables you're adding.
 - **Gotcha (honest instrument must not false-flag)**: the NTP probe is tri-state on purpose -- an UNREACHABLE probe returns None (fall back to floor), NOT False (flag everything). A dev box / non-systemd host has no timedatectl; treating that as "not synced" would paint every row clock_unsynced. Unreachable != not-synced.
 ---
+
+## 2026-07-01 - US-420 (Rex / Agent 1)
+Task: LTFT multi-drive trend card (F-096, carousel)
+
+### What was implemented:
+- NEW Python emitter src/pi/splash/ltft_trend_emitter.py -- the SSOT for the LTFT trend verdict, mirroring the F-097/F-111 emitter seam (build*State pure + make*Emitter best-effort atomic writer via ensureStatesDir+writeStateAtomic). readLtftTrend() aggregates per-drive avg/min/max of parameter_name='LONG_FUEL_TRIM_1' (single 4G63 bank) over realtime_data, GROUP BY drive_id, oldest->newest, WHERE data_source='real' AND drive_id IS NOT NULL (fixture/replay/sim + future US-424 foreign excluded; NULL-drive noise excluded); LEFT JOIN drive_summary for the axis ts (NULL honest). classifyLtftDrift(): |LTFT|<=5 ok / <=10 amber / >10 down (grounded: offices/tuner/cards/safe-range-fuel-trims.md + AC). buildLtftTrendState() classifies each drive + a headline verdict + migration direction (improving toward 0 / worsening / stable, 0.5% dead-band). HONEST-INSTRUMENT: <2 real drives forces headline level 'insufficient' -- a single in-band reading can never render green.
+- carousel.js: ltftTrendView() pure builder + renderLtftTrendCard() DOM (multi-drive bar row, each bar coloured by its own drift level) + tick() dispatch on data-state='ltft-trend' + api exports (ltftTrendView/fmtLtftPct). The view re-forces 'insufficient' when sufficient!==true (defense-in-depth: a mislabeled state can't paint green).
+- dashboard.html: 4th card slot data-state='ltft-trend'. dashboard.css: .ltft-bars/.ltft-bar[data-level=ok|amber|down] + muted .tile[data-level='insufficient'].
+
+### Files changed:
+- Created: `src/pi/splash/ltft_trend_emitter.py`, `tests/pi/splash/test_ltft_trend_emitter.py`
+- Modified: `specs/UI/dist/dashboard-pi/carousel.js` (ltftTrendView + renderer + dispatch + exports), `dashboard.html` (card slot), `dashboard.css` (bar + insufficient styles)
+- Modified: `tests/deploy/test_dashboard_kit.py` (US-420 node render-logic + HTML/CSS asserts; S-1 card count 3->4)
+
+### Verification (this iteration, synchronous):
+- pytest tests/pi/splash + tests/deploy/test_dashboard_kit.py + tests/deploy/test_splash_kit.py = all pass (1 expected skip)
+- US-420 node test confirmed RUN (not skipped) -- node on PATH, ~8s
+- ruff clean on all 3 touched Python files; node --check carousel.js clean (via S-1 syntax test)
+- Committed a42c76a before ending the iteration (prompt step 5)
+
+### Learnings for future iterations:
+- **Pattern (carousel card = 5 seams)**: adding a card is Python emitter (SSOT classifier: build*State pure + make*Emitter best-effort) + carousel.js *View pure builder + render*Card DOM + tick() dispatch + api export, then HTML slot + CSS [data-level] + the node render-logic test in test_dashboard_kit.py. The emitter CLASSIFIES; the JS only maps verdict->colour (never classifies) -- that's what makes 'never green-when-stale' structurally enforceable.
+- **Gotcha (card-count lock-down)**: test_dashboard_kit.py::test_dashboardHtml_hasBothCardSlots_s1 hard-codes `html.count('class="card"') == N`. Registering a new card grows it by one -- grep the card-count assertion BEFORE adding a slot (same shape as the US-417 snapshot-table +1 sweep lock-downs).
+- **Gotcha (scope = match the siblings)**: makeBatteryHealthEmitter/makeDtcEmitter/makeSystemStatusEmitter have NO src call site (grep proved it) -- the runtime wiring of state emitters is owner/deploy-side, not part of a card story. So US-420 ships emitter+reader+card+tests (bench-validatable) and defers the emit() wiring, exactly matching the shipped cards. Don't balloon a card story into orchestrator wiring.
+---
