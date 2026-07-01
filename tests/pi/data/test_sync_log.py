@@ -19,8 +19,8 @@ Tests for ``src.pi.data.sync_log``.
 
 Covers:
 - Schema DDL (idempotent initDb, exact column + constraint shape).
-- In-scope / out-of-scope table whitelist (power_log excluded as Pi-only;
-  unknown / SQL-injection names rejected with ValueError).
+- In-scope / out-of-scope table whitelist (power_log joined the sync set in
+  US-412; unknown / SQL-injection names rejected with ValueError).
 - ``getDeltaRows`` paging semantics (id ASC, strictly > lastId, limit).
 - ``getHighWaterMark`` / ``updateHighWaterMark`` round-trip, defaults, UPSERT
   insert vs. update paths, atomic single-transaction advance.
@@ -170,10 +170,14 @@ class TestInScopeTables:
         assert 'alert_log' in sync_log.IN_SCOPE_TABLES
         assert 'calibration_sessions' in sync_log.IN_SCOPE_TABLES
 
-    def test_excludesPiOnlyTables(self) -> None:
-        # power_log is explicitly Pi-only per the Walk spec.  (battery_log was
-        # the other Pi-only exclusion historically; US-223 deleted the table.)
-        assert 'power_log' not in sync_log.IN_SCOPE_TABLES
+    def test_powerLogNowInScope(self) -> None:
+        # US-412 (F-101): power_log joined the sync set -- power/boot history
+        # now mirrors to the server.  It was Pi-only until this story.
+        assert 'power_log' in sync_log.IN_SCOPE_TABLES
+
+    def test_excludesUnknownTables(self) -> None:
+        # A fabricated table name never enters the whitelist.
+        assert 'not_a_real_table' not in sync_log.IN_SCOPE_TABLES
 
 
 # --------------------------------------------------------------------------- #
@@ -248,12 +252,14 @@ class TestGetDeltaRows:
         ).fetchone()[0]
         assert count == 0
 
-    def test_piOnlyTables_raiseValueError(
+    def test_outOfScopeTable_raisesValueError(
         self, conn: sqlite3.Connection
     ) -> None:
-        # Even if caller knows power_log exists on the Pi, sync rejects it.
+        # A Pi-local table not in the sync set is rejected.  (power_log used
+        # to be the example here; US-412 brought it into scope, so use a
+        # genuinely out-of-scope table name.)
         with pytest.raises(ValueError):
-            sync_log.getDeltaRows(conn, 'power_log', 0, 10)
+            sync_log.getDeltaRows(conn, 'health_metrics', 0, 10)
 
 
 # --------------------------------------------------------------------------- #
@@ -321,7 +327,7 @@ class TestHighWaterMark:
         self, conn: sqlite3.Connection
     ) -> None:
         with pytest.raises(ValueError):
-            sync_log.updateHighWaterMark(conn, 'power_log', 1, 'batch-x')
+            sync_log.updateHighWaterMark(conn, 'health_metrics', 1, 'batch-x')
 
     def test_updateHighWaterMark_rejectsInvalidStatus(
         self, conn: sqlite3.Connection
@@ -335,7 +341,7 @@ class TestHighWaterMark:
         self, conn: sqlite3.Connection
     ) -> None:
         with pytest.raises(ValueError):
-            sync_log.getHighWaterMark(conn, 'power_log')
+            sync_log.getHighWaterMark(conn, 'health_metrics')
 
 
 # --------------------------------------------------------------------------- #

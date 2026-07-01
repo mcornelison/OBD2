@@ -390,3 +390,93 @@ class TestUS340OfflineGate:
 
         assert fired is True
         assert orch._syncClient.pushAllDeltas.call_count == 1
+
+
+# ================================================================================
+# US-413 / F-064: drive_counter singleton rides every regular sync tick
+# ================================================================================
+#
+# Pre-fix gap: pushDriveCounter() ran ONLY inside forcePush() (the power-down /
+# explicit manual flush).  The interval + drive-end ticks call pushAllDeltas(),
+# which pushes the delta capture tables but SKIPS the drive_counter singleton
+# (it is a single-row state mirror, not a delta-by-PK table).  So the server's
+# last_drive_id advanced only on a clean shutdown flush -- an unclean power
+# cycle stranded the server counter behind the Pi (e.g. Pi minted drive 10,
+# server still at 3).  These tests pin that every regular sync tick also pushes
+# the counter, and that the US-340 offline gate still short-circuits it (no
+# retry storm when there is no route).
+
+
+def _okCounterResult() -> PushResult:
+    return PushResult(
+        tableName="drive_counter",
+        rowsPushed=1,
+        batchId="chi-eclipse-01-c",
+        elapsed=0.01,
+        status=PushStatus.OK,
+    )
+
+
+class TestDriveCounterRidesRegularSync:
+    def test_intervalSync_alsoPushesDriveCounter(self, stubApiKey) -> None:
+        """A due interval tick pushes the counter alongside the deltas."""
+        orch = _makeOrch(_baseConfig(intervalSeconds=60))
+        orch._syncClient = MagicMock()
+        orch._syncClient.hasRouteToServer.return_value = True
+        orch._syncClient.pushAllDeltas.return_value = []
+        orch._syncClient.pushDriveCounter.return_value = _okCounterResult()
+
+        fired = orch._maybeTriggerIntervalSync()
+
+        assert fired is True
+        orch._syncClient.pushDriveCounter.assert_called_once()
+
+    def test_intervalSync_offline_skipsDriveCounter(self, stubApiKey) -> None:
+        """No route -> the whole tick short-circuits; the counter push is
+        skipped too, preserving the US-340 offline-retry-storm guard."""
+        orch = _makeOrch(_baseConfig(intervalSeconds=60))
+        orch._syncClient = MagicMock()
+        orch._syncClient.hasRouteToServer.return_value = False
+        orch._syncClient.pushAllDeltas.return_value = []
+
+        fired = orch._maybeTriggerIntervalSync()
+
+        assert fired is False
+        orch._syncClient.pushDriveCounter.assert_not_called()
+
+    def test_intervalSync_counterCrash_swallowedCleanly(self, stubApiKey) -> None:
+        """A crash in pushDriveCounter must not crash the runLoop."""
+        orch = _makeOrch(_baseConfig(intervalSeconds=60))
+        orch._syncClient = MagicMock()
+        orch._syncClient.hasRouteToServer.return_value = True
+        orch._syncClient.pushAllDeltas.return_value = []
+        orch._syncClient.pushDriveCounter.side_effect = RuntimeError("boom")
+
+        # Must not raise -- sync hiccups never crash the runLoop.
+        fired = orch._maybeTriggerIntervalSync()
+
+        assert fired is False
+
+    def test_driveEndSync_alsoPushesDriveCounter(self, stubApiKey) -> None:
+        """A drive-end tick pushes the counter -- it JUST advanced at this
+        drive's start, so the server tracks it with minimal lag."""
+        orch = _makeOrch(_baseConfig(triggerOn=["drive_end"]))
+        orch._syncClient = MagicMock()
+        orch._syncClient.pushAllDeltas.return_value = []
+        orch._syncClient.pushDriveCounter.return_value = _okCounterResult()
+
+        fired = orch.triggerDriveEndSync()
+
+        assert fired is True
+        orch._syncClient.pushDriveCounter.assert_called_once()
+
+    def test_driveEndSync_counterCrash_swallowedCleanly(self, stubApiKey) -> None:
+        """A crash in the drive-end counter push must not crash the runLoop."""
+        orch = _makeOrch(_baseConfig(triggerOn=["drive_end"]))
+        orch._syncClient = MagicMock()
+        orch._syncClient.pushAllDeltas.return_value = []
+        orch._syncClient.pushDriveCounter.side_effect = RuntimeError("boom")
+
+        fired = orch.triggerDriveEndSync()
+
+        assert fired is False

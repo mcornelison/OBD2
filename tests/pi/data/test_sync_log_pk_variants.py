@@ -70,6 +70,7 @@ EXPECTED_PK_COLUMN: dict[str, str] = {
     'drive_summary':       'drive_id',  # US-206
     'battery_health_log':  'drain_event_id',  # US-217
     'dtc_freeze_frame':    'id',  # US-369 (F-109)
+    'power_log':           'id',  # US-412 (F-101)
 }
 
 # Tables excluded from delta-by-PK sync.  These are upsert/snapshot style --
@@ -218,13 +219,14 @@ class TestDeltaSyncTables:
             sync_log.PK_COLUMN.keys()
         )
 
-    def test_DELTA_SYNC_TABLES_has_ten_entries(self) -> None:
+    def test_DELTA_SYNC_TABLES_has_eleven_entries(self) -> None:
         """Crystalize the expected count so additions are deliberate.
 
         Was 6 pre-US-204; 7 with dtc_log; 8 with US-206 drive_summary;
-        9 with US-217 battery_health_log; 10 with US-369 dtc_freeze_frame.
+        9 with US-217 battery_health_log; 10 with US-369 dtc_freeze_frame;
+        11 with US-412 power_log (F-101).
         """
-        assert len(sync_log.DELTA_SYNC_TABLES) == 10
+        assert len(sync_log.DELTA_SYNC_TABLES) == 11
 
     def test_DELTA_SYNC_TABLES_excludes_profiles(self) -> None:
         assert 'profiles' not in sync_log.DELTA_SYNC_TABLES
@@ -428,16 +430,29 @@ class TestUnknownTableRejected:
                 conn, 'users; DROP TABLE profiles; --', lastId=0, limit=100,
             )
 
-    def test_getDeltaRows_power_log_still_out_of_scope(
+    def test_getDeltaRows_power_log_now_delta_syncs(
         self, conn: sqlite3.Connection,
     ) -> None:
-        """power_log is local-only health telemetry -- must stay excluded.
-
-        (battery_log was the companion Pi-only exclusion until US-223 deleted
-        the table with its writer :class:`BatteryMonitor`; power_log remains
-        as the sole Pi-only health stream still guarding the whitelist.)
+        """US-412 (F-101): power_log joined the delta set -- it delta-syncs
+        on its integer ``id`` PK now (formerly Pi-only, out-of-scope).
         """
-        with pytest.raises(ValueError):
-            sync_log.getDeltaRows(
-                conn, 'power_log', lastId=0, limit=100,
+        conn.execute("""
+            CREATE TABLE power_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp TEXT NOT NULL,
+                event_type TEXT NOT NULL,
+                power_source TEXT NOT NULL,
+                on_ac_power INTEGER NOT NULL DEFAULT 1,
+                vcell REAL
             )
+        """)
+        for i in range(3):
+            conn.execute(
+                "INSERT INTO power_log "
+                "(timestamp, event_type, power_source, on_ac_power) "
+                "VALUES (?, ?, ?, ?)",
+                (f"2026-07-01T00:00:{i:02d}Z", "STAGE", "BATTERY", 0),
+            )
+        conn.commit()
+        rows = sync_log.getDeltaRows(conn, 'power_log', lastId=0, limit=100)
+        assert [row['id'] for row in rows] == [1, 2, 3]

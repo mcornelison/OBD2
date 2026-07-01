@@ -47,6 +47,9 @@
 #               |              | UNIQUE index enforcing exactly-one-active-ECU
 #               |              | (MariaDB lacks partial unique indexes).  Append-
 #               |              | only invariant; server-only (Pi schema unchanged).
+# 2026-07-01    | Rex (US-412) | F-101: PowerLog model mirroring Pi's power_log
+#               |              | table (one row per power-source / shutdown-stage
+#               |              | transition).  power_log was Pi-only until US-412.
 # ================================================================================
 ################################################################################
 
@@ -734,6 +737,51 @@ class BatteryHealthLog(Base):
     data_source: Mapped[str | None] = mapped_column(
         String(DATA_SOURCE_LENGTH), server_default=DATA_SOURCE_DEFAULT,
     )
+
+
+class PowerLog(Base):
+    """Pi power-event log, mirrored from Pi (US-412 / F-101).
+
+    One row per power-source / shutdown-stage transition -- NOT per poll,
+    so volume is naturally bounded by real power events (raw-every-event;
+    no sampling needed).  Append-only with an integer ``id`` PK, so it
+    delta-syncs on ``id`` -> ``source_id`` exactly like every other synced
+    capture table (the battery_health_log pattern).
+
+    power_log was local-only Pi health telemetry until US-412 mirrored it
+    to the server so power/boot history is queryable server-side alongside
+    the rest of the telemetry.
+
+    See ``src/pi/obdii/database_schema.py::SCHEMA_POWER_LOG`` for the
+    Pi-side DDL.  power_log carries no ``data_source`` column (it predates
+    US-195 origin tagging and only ever records real power events).
+    """
+
+    __tablename__ = "power_log"
+    __table_args__ = (
+        UniqueConstraint("source_device", "source_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    source_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    source_device: Mapped[str] = mapped_column(String(64), nullable=False)
+    synced_at: Mapped[datetime | None] = mapped_column(
+        DateTime, server_default=func.now(),
+    )
+    sync_batch_id: Mapped[int | None] = mapped_column(Integer)
+
+    # Pi-native columns (mirror SCHEMA_POWER_LOG exactly)
+    timestamp: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, server_default=func.now(),
+    )
+    event_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    power_source: Mapped[str] = mapped_column(String(32), nullable=False)
+    on_ac_power: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default=text("1"),
+    )
+    # US-252: LiPo cell voltage at stage transition; NULL for legacy
+    # power-source-transition rows that carry no voltage reading.
+    vcell: Mapped[float | None] = mapped_column(Float)
 
 
 # ==============================================================================

@@ -681,10 +681,11 @@
       "parent": "E-002",
       "title": "drive_counter server-side sync gap (Pi at 10, server still says 3)",
       "description": "drive_counter server-side sync gap (Pi at 10, server still says 3)",
-      "status": "active",
+      "status": "awaiting-validation",
       "renamedFrom": "B-064",
       "createdAt": "2026-05-27",
-      "updatedAt": "2026-05-27"
+      "updatedAt": "2026-05-27",
+      "currentVersion": "V0.29.4"
     },
     {
       "id": "F-066",
@@ -791,10 +792,11 @@
       "parent": "E-OPS",
       "title": "sync_history.started_at and completed_at written in different timezones (5h CDT/UTC offset) in the same row",
       "description": "sync_history.started_at and completed_at written in different timezones (5h CDT/UTC offset) in the same row",
-      "status": "active",
+      "status": "awaiting-validation",
       "renamedFrom": "B-079",
       "createdAt": "2026-05-27",
-      "updatedAt": "2026-05-27"
+      "updatedAt": "2026-05-27",
+      "currentVersion": "V0.29.4"
     },
     {
       "id": "F-080",
@@ -1134,18 +1136,20 @@
       "parent": "E-006",
       "title": "EDR Phase 2 -- dedicated-reader + bus-contract design (full; A-4 versioned)",
       "description": "HARDWARE-INDEPENDENT (Atlas 2026-06-16 brief, phase 2; design-only, Atlas-owned). The load-bearing dedicated-reader / in-process pub/sub bus contract everything subscribes to: per-subscriber QoS (lossless sync/safety vs lossy display), bounded queues, producer-never-blocks, 100Hz-IMU-vs-~6/s-OBD rate handling, ECMLink/OBDLink K-line arbitration. F-110 shipped Slice 1 (bus skeleton + PersistenceSubscriber, ships-dark); this is the full contract + consolidation. Atlas open gate #1. Graduates the SSOT-bus direction into specs/ssot-design-pattern.md (gate #4) once CIO firms it. GROOM-READY candidate (design artifact; can run parallel to F-112).",
-      "status": "active",
+      "status": "awaiting-validation",
       "createdAt": "2026-06-28",
-      "updatedAt": "2026-06-28"
+      "updatedAt": "2026-06-28",
+      "currentVersion": "V0.29.4"
     },
     {
       "id": "F-114",
       "parent": "E-006",
       "title": "EDR Phase 3 -- single-reader consolidation + IMU/light raw channels",
       "description": "HARDWARE-GATED (Atlas 2026-06-16 brief, phase 3). Consolidate all sources under ONE threaded reader publishing to the bus; add raw channels for the 9-DoF IMU (ICM-20948 @0x69) + light sensor (TSL2591 @0x29), both I2C on bus-1 (shared w/ X1209 UPS MAX17048 @0x36, no address collision). Needs the versioned src/common/ IMU raw table + schema under A-4 contract discipline (Atlas open gate #2 -- don't repeat the Pi<->server schema divergence). HARDWARE STATUS: sensors hardware-INSTALLED 2026-06-27 (ahead of the ~mid-July estimate); CIO mid-wire; hardware gate = i2cdetect shows 29/36/69 (NOT yet passed). Spec: docs/hardware-reference.md EDR-Sensors section + docs/edr-sensors-wiring-reference.md field card (dev 95d496a).",
-      "status": "active",
+      "status": "awaiting-validation",
       "createdAt": "2026-06-28",
-      "updatedAt": "2026-06-28"
+      "updatedAt": "2026-06-28",
+      "currentVersion": "V0.29.4"
     },
     {
       "id": "F-115",
@@ -2833,6 +2837,30 @@
           "outcome": "architecture.md section 10.8.2 + ssot-design-pattern worked example present and faithful to the ADR; regression_manifest updated"
         }
       ]
+    },
+    {
+      "id": "US-416",
+      "parent": "F-101",
+      "type": "normal",
+      "size": "M",
+      "status": "pending",
+      "title": "Sync startup_log Pi->server -- natural-key (source_device, boot_id) upsert path (carved from US-412 / BL-013)",
+      "goal": "As the CIO, I want startup_log mirrored to the server despite its TEXT boot_id PK, so boot history is server-queryable -- via a natural-key upsert path, not the delta-by-integer-PK pattern.",
+      "definitionOfDone": [
+        "BLOCKED pending an Atlas sync-mechanism design gate: which cursor/idempotency model for a TEXT-PK, insert-once table (full-snapshot vs recorded_at TEXT cursor)",
+        "Pi push path for startup_log that does not use the integer delta cursor (sync_log.PK_COLUMN forbids TEXT PKs -- the US-194 int('daily') class)",
+        "server resolver: a dedicated natural-key (source_device, boot_id) upsert (like _syncDtcFreezeFrameRows), NOT the generic id->source_id registry path; a natural-key unique constraint",
+        "post-sync, server startup_log rows match Pi; idempotent on (source_device, boot_id) re-sync",
+        "ruff check passes on modified files"
+      ],
+      "validationCriteria": [
+        {
+          "action": "run the new startup_log sync path after an Atlas-approved design",
+          "outcome": "server startup_log rows match Pi rows; re-sync is idempotent on (source_device, boot_id)"
+        }
+      ],
+      "conditionalOutcomes": [],
+      "tasks": []
     }
   ]
 }

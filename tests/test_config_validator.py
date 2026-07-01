@@ -973,3 +973,33 @@ def test_validate_busEnabled_explicitValuePreserved():
     result = ConfigValidator().validate(cfg)
     assert result["pi"]["bus"]["enabled"] is True
 
+
+def test_validate_sensorFlags_defaultDarkWithDefaultRates():
+    """US-409 (EDR sensor readers): both per-sensor enable flags default False
+    (ships dark) with their bus publish rates (imu 50 Hz, light 1 Hz)."""
+    cfg = ConfigValidator().validate(_baseCfg())
+    sensors = cfg["pi"]["sensors"]
+    assert sensors["imu"]["enabled"] is False
+    assert sensors["imu"]["sampleHz"] == 50
+    assert sensors["light"]["enabled"] is False
+    assert sensors["light"]["sampleHz"] == 1
+
+
+def test_validate_sensorEnabled_explicitValuePreserved():
+    """An explicit per-sensor flag is preserved (default does not overwrite)."""
+    cfg = _baseCfg()
+    cfg["pi"] = {"sensors": {"imu": {"enabled": True}}}
+    result = ConfigValidator().validate(cfg)
+    assert result["pi"]["sensors"]["imu"]["enabled"] is True
+    # The unspecified sibling still fills from defaults.
+    assert result["pi"]["sensors"]["light"]["enabled"] is False
+
+
+def test_validate_sensorPersistenceKeys_defaults():
+    """US-410 (EDR persistence): imu.persistHz decimates the 50 Hz bus to a
+    25 Hz baseline; retentionDays bounds the Pi-local rolling window at 7 days."""
+    cfg = ConfigValidator().validate(_baseCfg())
+    sensors = cfg["pi"]["sensors"]
+    assert sensors["imu"]["persistHz"] == 25
+    assert sensors["retentionDays"] == 7
+

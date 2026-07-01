@@ -150,6 +150,22 @@ shared keys (`protocolVersion`, `schemaVersion`, `deviceId`, `logging`) plus
 `config.get('pi', {}).get('<section>', ...)` for Pi sections,
 `config.get('server', {}).get('ai', ...)` for server AI config.
 
+**EDR sensor-bus keys (Sprint 50 / V0.29.4, ship dark).** The EDR raw-sensor
+readers gate behind the F-110 bus master switch. All default off/dark so the
+CIO flips each sensor on as he wires it (connect-when-wired):
+
+- `pi.bus.enabled` (default `false`) — master gate for the whole `SampleBus`.
+- `pi.sensors.imu.enabled` / `pi.sensors.light.enabled` (default `false`) —
+  each **requires** `pi.bus.enabled`.
+- `pi.sensors.imu.sampleHz` (`50`) — IMU bus publish rate; `pi.sensors.imu.persistHz`
+  (`25`) — decimated always-on persist cadence.
+- `pi.sensors.light.sampleHz` (`1`).
+- `pi.sensors.retentionDays` (`7`) — rolling-window purge for the Pi-local
+  `edr_imu_sample` / `edr_light_sample` tables; confirm vs the Pi's free space at
+  deploy.
+
+See `specs/architecture.md` §10.8 and `src/common/edr/sensor_schema.py`.
+
 **Critical Pattern**: In `config.json`, use `${ENV_VAR}` syntax for secrets:
 ```json
 {

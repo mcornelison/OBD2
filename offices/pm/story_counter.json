@@ -1,7 +1,7 @@
 {
   "description": "Global story counter for sequential user story IDs. Existing stories keep their current IDs. New stories use US-{nextId} format.",
   "lastUpdated": "2026-06-30",
-  "nextId": "US-416",
+  "nextId": "US-417",
   "existingPrefixes": [
     "US-001 through US-043 (Eclipse OBD-II + Simulator)",
     "US-MR-001 through US-MR-029 (Module Refactoring)",
@@ -218,6 +218,12 @@
       "range": "US-399 to US-407",
       "date": "2026-06-30",
       "outcome": "9/9 passed - Pi touch-carousel (F-092/097: shell, System Status, Battery Health, pygame sunset, System Setup menu) + on-screen DTC viewer (F-111: KOEO read drive_id=NULL, severity takeover/ribbon/Alerts card, action-path-gated Mode-04 clear vs Spool SSOT). Merged to dev V0.29.3. Blocked ~2h mid-sprint by stale index.lock (TD-057)."
+    },
+    {
+      "feature": "ralph/sprint50-V0.29.4",
+      "range": "US-408 to US-415",
+      "date": "2026-07-01",
+      "outcome": "8/8 passed - EDR sensor-reader to FINAL ADR (schema contract, IMU+light readers, persistence+retention, bench+golden-master) + sync drain (power_log sync, drive_counter, sync_history TZ) + doc-sync. US-412 descoped to power_log-only; startup_log carved to US-416 (BL-013, Atlas-gated, Sprint 51). Merged to dev V0.29.4."
     }
   ]
 }

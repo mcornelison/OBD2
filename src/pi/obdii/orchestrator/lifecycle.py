@@ -472,6 +472,13 @@ class LifecycleMixin:
     # _shutdownDataLogger.
     _sampleBus: Any | None
     _persistenceSubscriber: Any | None
+    # US-410 (EDR sensor persistence, ships dark): the EDR sensor readers and the
+    # sibling persistence subscriber that drains raw.imu.*/raw.light.* into the
+    # edr_*_sample tables.  Both stay None unless ``pi.bus.enabled`` AND at least
+    # one ``pi.sensors.{imu,light}.enabled`` is set.  Built in _initializeDataLogger
+    # (alongside the OBD PersistenceSubscriber), stopped in _shutdownDataLogger.
+    _sensorReaders: list[Any] | None
+    _edrPersistenceSubscriber: Any | None
 
     def _initializeAllComponents(self) -> None:
         """
@@ -1505,6 +1512,9 @@ class LifecycleMixin:
         # US-385: default to no bus / no subscriber (the ships-dark state).
         self._sampleBus = None
         self._persistenceSubscriber = None
+        # US-410: default to no EDR sensor readers / subscriber (ships dark too).
+        self._sensorReaders = None
+        self._edrPersistenceSubscriber = None
         busEnabled = bool(
             self._config.get('pi', {}).get('bus', {}).get('enabled', False)
         )
@@ -1532,6 +1542,11 @@ class LifecycleMixin:
                 logger.info(
                     "SampleBus + PersistenceSubscriber started (pi.bus.enabled)"
                 )
+                # US-410: EDR sensor readers + sibling persistence subscriber.
+                # Additive + gated behind pi.sensors.{imu,light}.enabled -- a
+                # no-op (nothing built) when both sensor flags are off, so the
+                # raw.obd.* -> realtime_data golden master is untouched.
+                self._startEdrSensorPath(bus)
             logger.info("DataLogger started successfully")
         except ImportError:
             logger.warning("DataLogger not available, skipping")
@@ -1541,6 +1556,49 @@ class LifecycleMixin:
                 f"DataLogger initialization failed: {e}",
                 component='dataLogger'
             ) from e
+
+    def _startEdrSensorPath(self, bus: Any) -> None:
+        """Build + start the EDR sensor readers and their persistence subscriber.
+
+        US-410 (F-113/F-114): the readers publish raw.imu.*/raw.light.* onto the
+        bus and the sibling subscriber drains them into edr_imu_sample /
+        edr_light_sample.  Everything is gated behind
+        ``pi.sensors.{imu,light}.enabled`` (each requiring ``pi.bus.enabled``),
+        so this is a no-op with the default flags off -- nothing is built and the
+        OBD ``raw.obd.* -> realtime_data`` path is untouched.
+
+        The subscriber is started BEFORE the readers so no early burst is missed
+        (STREAM topics carry no history).  The drive_id latch resolves the live
+        DriveDetector's ``isDriving()`` at persist time -> drive_id is stamped
+        only when a drive is RUNNING, else explicit NULL (ADR 2.4).  Any failure
+        here is caught + logged: an EDR wiring fault must never crash the boot
+        path or disturb the OBD capture path.
+        """
+        try:
+            from pi.sensors.sensor_reader import createSensorReadersFromConfig
+            readers = createSensorReadersFromConfig(self._config, bus)
+            if not readers:
+                return  # no sensor enabled -> ships dark
+            from pi.bus.edr_persistence_subscriber import (
+                createEdrPersistenceSubscriberFromConfig,
+            )
+            edrSubscriber = createEdrPersistenceSubscriberFromConfig(
+                self._config, bus, self._database,
+                driveDetector=self._driveDetector,
+            )
+            if edrSubscriber is None:
+                return
+            edrSubscriber.start()
+            for reader in readers:
+                reader.start()
+            self._sensorReaders = readers
+            self._edrPersistenceSubscriber = edrSubscriber
+            logger.info(
+                "EDR sensor path started (pi.sensors.*): %d reader(s) + "
+                "persistence subscriber", len(readers),
+            )
+        except Exception as e:  # noqa: BLE001 -- EDR wiring must not crash boot
+            logger.error("Failed to start EDR sensor path (continuing): %s", e)
 
     def _onCaptureFatalError(self, exc: BaseException) -> None:
         """Signal orchestrator shutdown when the capture loop reports FATAL.
@@ -2261,7 +2319,28 @@ class LifecycleMixin:
         US-385: stop the EDR PersistenceSubscriber drain thread first (if the
         bus was enabled) so it stops consuming before the logger/DB tear down.
         A no-op when the flag was off (subscriber stays None).
+
+        US-410: stop the EDR sensor readers (producers) first so no new samples
+        are published, then stop the sibling subscriber (which flushes any
+        pending burst), then fall through to the OBD subscriber below.  All
+        no-ops when the sensor flags were off (both stay None).
         """
+        readers = getattr(self, '_sensorReaders', None)
+        if readers:
+            for reader in readers:
+                try:
+                    reader.stop()
+                except Exception as e:  # noqa: BLE001 -- shutdown must not raise out
+                    logger.warning("Failed to stop EDR sensor reader: %s", e)
+            self._sensorReaders = None
+        edrSubscriber = getattr(self, '_edrPersistenceSubscriber', None)
+        if edrSubscriber is not None:
+            try:
+                edrSubscriber.stop()
+            except Exception as e:  # noqa: BLE001 -- shutdown must not raise out
+                logger.warning("Failed to stop EDR persistence subscriber: %s", e)
+            finally:
+                self._edrPersistenceSubscriber = None
         subscriber = getattr(self, '_persistenceSubscriber', None)
         if subscriber is not None:
             try:

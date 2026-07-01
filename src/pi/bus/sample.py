@@ -42,7 +42,9 @@ class Sample:
     Args:
         topic: Routing key, e.g. ``"raw.obd.RPM"``, ``"raw.imu.accel"``.
         source: Producer id, e.g. ``"obd"``, ``"imu"``, ``"transform"``.
-        value: Scalar reading, or a small fixed tuple (e.g. IMU vector).
+        value: Scalar reading, or a small fixed tuple (e.g. IMU vector), or
+            None for an honest-instrument "unreadable" reading (e.g. a
+            saturated ``raw.light.lux`` -- never ``inf``; US-409).
         unit: Unit of measurement, or None.
         tsUtc: ISO-8601 UTC wall-clock string -- the value that persists.
         tsCapture: High-resolution monotonic seconds, for time-alignment.
@@ -53,7 +55,7 @@ class Sample:
 
     topic: str
     source: str
-    value: float | tuple[float, ...]
+    value: float | tuple[float, ...] | None
     unit: str | None
     tsUtc: str
     tsCapture: float

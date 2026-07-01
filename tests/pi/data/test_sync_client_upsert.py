@@ -193,6 +193,20 @@ def _createAllInScopeStubs(conn: sqlite3.Connection) -> None:
         "notes TEXT, "
         "data_source TEXT NOT NULL DEFAULT 'real')"
     )
+    # US-412 (F-101): power_log -- append-only id INTEGER PK, mirrors
+    # SCHEMA_POWER_LOG.  Joined the delta-sync set in US-412, so the
+    # production-shaped fixture must create it (else getDeltaRows raises
+    # "no such table: power_log" when pushAllDeltas iterates it).
+    conn.execute(
+        "CREATE TABLE power_log ("
+        "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+        "timestamp DATETIME NOT NULL "
+        "DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')), "
+        "event_type TEXT NOT NULL, "
+        "power_source TEXT NOT NULL, "
+        "on_ac_power INTEGER NOT NULL DEFAULT 1, "
+        "vcell REAL)"
+    )
     # Snapshot tables with natural TEXT PKs.
     conn.execute(
         "CREATE TABLE profiles ("
