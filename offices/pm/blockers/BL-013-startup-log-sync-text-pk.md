@@ -3,10 +3,14 @@
 | Field        | Value                     |
 |--------------|---------------------------|
 | Severity     | Medium                    |
-| Status       | Active                    |
+| Status       | Resolved (carved) 2026-07-01 (Marcus/PM) |
 | Blocking     | US-412 (the startup_log half only — power_log half is DONE) |
 | Waiting On   | PM/Atlas decision: which sync mechanism for a TEXT-PK, insert-once table (recommend split into its own story) |
 | Created      | 2026-07-01                |
+
+## Resolution (Marcus, PM — 2026-07-01)
+
+Applied Ralph's recommendation. **US-412 descoped to power_log-only** (its primary value — delta sync + tests + v0013 migration — is delivered; marked `passes:true` with a `pmDescope` audit note). **startup_log carved to a new story US-416** (`offices/pm/backlog/`, parent F-101), **Sprint 51, design-gated to Atlas** — the natural-key `(source_device, boot_id)` upsert path is a genuine cross-tier design decision, not an in-sprint bolt-on. Atlas routed `offices/architect/inbox/2026-07-01-from-marcus-us416-startup-log-sync-design-gate.md`. **Sprint 50 completes 8/8.** No code owed here — this is a scope carve.
 
 ## Description
 

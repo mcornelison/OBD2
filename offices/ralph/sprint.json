@@ -190,7 +190,7 @@
       "type": "normal",
       "size": "M",
       "status": "sprint-ready",
-      "passes": false,
+      "passes": true,
       "acceptance": [
         "server tables obd2db.power_log + obd2db.startup_log exist (new migration), deployed AND verified via INFORMATION_SCHEMA",
         "Pi sync coverage pushes both idempotently, catch-up on reconnect (follows the battery_health_log pattern)",
@@ -223,7 +223,14 @@
           "tests/pi/data/test_sync_log.py, tests/pi/data/test_sync_log_pk_variants.py, tests/server/test_db_models.py, tests/server/test_migration_0012_data_quality_widen.py, tests/server/test_sync.py (modified -- power_log added to in-scope/registry/migration-count expectations)"
         ]
       },
-      "completionNotes": "PARTIAL / BLOCKED (passes:false -- atomic story, startup_log half unmet). power_log HALF IS DONE + COMMITTED (0fd1795): power_log now delta-syncs Pi->server on its integer 'id' PK exactly like the battery_health_log pattern (server PowerLog model + v0013 MariaDB migration + Pi PK_COLUMN registration + server _TABLE_REGISTRY entry). Volume strategy DECIDED + documented: raw-every-event (power_log writes one row per power-source / shutdown-stage transition, NOT per poll, so volume is naturally bounded -- no sampling needed). Fixed a regression the prior partial iteration missed: adding power_log to the delta set makes pushAllDeltas iterate it, so the test_sync_client_upsert production-shaped fixture had to create a power_log table (else getDeltaRows raises 'no such table'). GATES: tests/server + tests/pi/data + tests/pi/sync + tests/scripts + tests/integration + orchestrator sync-wiring all green; ruff clean on all modified files. startup_log HALF IS BLOCKED -> BL-013 (offices/pm/blockers/): its PK is boot_id (TEXT, random 32-char hex) which cannot be a monotonic delta cursor, and the server ingest path requires an integer source_id -- startup_log needs a bespoke natural-key (source_device, boot_id) upsert on BOTH tiers + a design decision (which idempotency/cursor model), which is above Ralph's scope-fence and warrants an SSOT/architecture gate (Refusal Rule 1). Recommendation in BL-013: split US-412 -- mark power_log complete, carve startup_log into its own story with a design gate. US-412 stays passes:false until PM/Atlas rule + the startup_log half lands. Does NOT block US-413/414/415 (all independent). DEFERRED-PM: mypy not installed on dev box (module fully type-hinted; same defer as US-407..411)."
+      "completionNotes": "PARTIAL / BLOCKED (passes:false -- atomic story, startup_log half unmet). power_log HALF IS DONE + COMMITTED (0fd1795): power_log now delta-syncs Pi->server on its integer 'id' PK exactly like the battery_health_log pattern (server PowerLog model + v0013 MariaDB migration + Pi PK_COLUMN registration + server _TABLE_REGISTRY entry). Volume strategy DECIDED + documented: raw-every-event (power_log writes one row per power-source / shutdown-stage transition, NOT per poll, so volume is naturally bounded -- no sampling needed). Fixed a regression the prior partial iteration missed: adding power_log to the delta set makes pushAllDeltas iterate it, so the test_sync_client_upsert production-shaped fixture had to create a power_log table (else getDeltaRows raises 'no such table'). GATES: tests/server + tests/pi/data + tests/pi/sync + tests/scripts + tests/integration + orchestrator sync-wiring all green; ruff clean on all modified files. startup_log HALF IS BLOCKED -> BL-013 (offices/pm/blockers/): its PK is boot_id (TEXT, random 32-char hex) which cannot be a monotonic delta cursor, and the server ingest path requires an integer source_id -- startup_log needs a bespoke natural-key (source_device, boot_id) upsert on BOTH tiers + a design decision (which idempotency/cursor model), which is above Ralph's scope-fence and warrants an SSOT/architecture gate (Refusal Rule 1). Recommendation in BL-013: split US-412 -- mark power_log complete, carve startup_log into its own story with a design gate. US-412 stays passes:false until PM/Atlas rule + the startup_log half lands. Does NOT block US-413/414/415 (all independent). DEFERRED-PM: mypy not installed on dev box (module fully type-hinted; same defer as US-407..411).",
+      "pmDescope": {
+        "reviewer": "Marcus (PM)",
+        "date": "2026-07-01",
+        "decision": "Descoped to power_log-only. power_log Pi->server delta sync is DONE + tested + migrated (v0013). startup_log carved to US-416 per BL-013.",
+        "carvedTo": "US-416",
+        "rationale": "startup_log has a TEXT boot_id PK that cannot use the delta-by-integer-PK sync pattern; it needs a natural-key (source_device, boot_id) upsert path that does not exist yet -- a cross-tier design decision (Atlas gate), not an in-sprint bolt-on. Primary story value (power_log) delivered."
+      }
     },
     {
       "id": "US-413",

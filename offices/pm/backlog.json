@@ -2833,6 +2833,30 @@
           "outcome": "architecture.md section 10.8.2 + ssot-design-pattern worked example present and faithful to the ADR; regression_manifest updated"
         }
       ]
+    },
+    {
+      "id": "US-416",
+      "parent": "F-101",
+      "type": "normal",
+      "size": "M",
+      "status": "pending",
+      "title": "Sync startup_log Pi->server -- natural-key (source_device, boot_id) upsert path (carved from US-412 / BL-013)",
+      "goal": "As the CIO, I want startup_log mirrored to the server despite its TEXT boot_id PK, so boot history is server-queryable -- via a natural-key upsert path, not the delta-by-integer-PK pattern.",
+      "definitionOfDone": [
+        "BLOCKED pending an Atlas sync-mechanism design gate: which cursor/idempotency model for a TEXT-PK, insert-once table (full-snapshot vs recorded_at TEXT cursor)",
+        "Pi push path for startup_log that does not use the integer delta cursor (sync_log.PK_COLUMN forbids TEXT PKs -- the US-194 int('daily') class)",
+        "server resolver: a dedicated natural-key (source_device, boot_id) upsert (like _syncDtcFreezeFrameRows), NOT the generic id->source_id registry path; a natural-key unique constraint",
+        "post-sync, server startup_log rows match Pi; idempotent on (source_device, boot_id) re-sync",
+        "ruff check passes on modified files"
+      ],
+      "validationCriteria": [
+        {
+          "action": "run the new startup_log sync path after an Atlas-approved design",
+          "outcome": "server startup_log rows match Pi rows; re-sync is idempotent on (source_device, boot_id)"
+        }
+      ],
+      "conditionalOutcomes": [],
+      "tasks": []
     }
   ]
 }
