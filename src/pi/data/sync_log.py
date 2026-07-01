@@ -287,6 +287,18 @@ SYNC_UPDATE_TABLES_PK: dict[str, str] = {
 # AND newly-INSERTed rows -- only the AFTER UPDATE trigger writes here).
 SYNC_MODIFIED_AT_COLUMN: str = '_sync_modified_at'
 
+# Pi-LOCAL columns that must never appear on the sync wire.  The server rejects
+# unknown columns (its SQLAlchemy bulk insert errors on an unmapped key), so any
+# Pi-only column is stripped from the outbound payload before it is posted:
+#   _sync_modified_at (US-315) -- Pi-side modified_at delta-cursor bookkeeping.
+#   data_quality (US-419 / F-080) -- Pi-local clock-drift honest-instrument flag
+#     on startup_log / power_log.  The server computes its OWN data_quality at
+#     ingest (Pi = emitter, server = authority), so a Pi data_quality value is
+#     never sent upstream.  Harmless no-op strip for tables that lack the column.
+_WIRE_STRIPPED_COLUMNS: frozenset[str] = frozenset(
+    {SYNC_MODIFIED_AT_COLUMN, 'data_quality'}
+)
+
 
 # ================================================================================
 # Internal helpers
@@ -499,11 +511,13 @@ def getDeltaRows(
         )
     columns = [desc[0] for desc in cursor.description]
     rows = [dict(zip(columns, row, strict=True)) for row in cursor.fetchall()]
-    # Strip the Pi-only bookkeeping column from the wire payload.  Server
-    # models have no _sync_modified_at column; leaving it in would fail the
-    # SQLAlchemy bulk insert with an unknown-column error.
+    # Strip Pi-only columns from the wire payload.  Server models have no
+    # _sync_modified_at / data_quality column; leaving either in would fail the
+    # SQLAlchemy bulk insert with an unknown-column error (see
+    # :data:`_WIRE_STRIPPED_COLUMNS`).
     for row in rows:
-        row.pop(SYNC_MODIFIED_AT_COLUMN, None)
+        for stripped in _WIRE_STRIPPED_COLUMNS:
+            row.pop(stripped, None)
     return rows
 
 
@@ -1057,7 +1071,13 @@ def getSnapshotRows(
         (cursorFloor, int(limit)),
     )
     columns = [desc[0] for desc in cursor.description]
-    return [dict(zip(columns, row, strict=True)) for row in cursor.fetchall()]
+    rows = [dict(zip(columns, row, strict=True)) for row in cursor.fetchall()]
+    # Strip Pi-only columns (e.g. the US-419 data_quality clock flag) so the
+    # server's natural-key upsert never sees an unmapped column.
+    for row in rows:
+        for stripped in _WIRE_STRIPPED_COLUMNS:
+            row.pop(stripped, None)
+    return rows
 
 
 def updateSnapshotCursor(

@@ -533,7 +533,13 @@ CREATE TABLE IF NOT EXISTS power_log (
     on_ac_power INTEGER NOT NULL DEFAULT 1,
 
     -- US-252: VCELL volts at stage transition (NULL for legacy rows)
-    vcell REAL
+    vcell REAL,
+
+    -- US-419 (F-080): post-reboot clock-drift honest instrument.  'full' when
+    -- the row's timestamp is trustworthy; 'clock_unsynced' when written
+    -- pre-NTP-sync (dead-RTC reset).  Pi-LOCAL forensic flag -- stripped from
+    -- the sync wire (server computes its own data_quality).  NULL on legacy rows.
+    data_quality TEXT
 );
 """
 
@@ -622,7 +628,14 @@ CREATE TABLE IF NOT EXISTS startup_log (
 
     -- When this row was written (canonical ISO-8601 UTC).
     recorded_at TEXT NOT NULL
-        DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+        DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+
+    -- US-419 (F-080): post-reboot clock-drift honest instrument.  'full' when
+    -- the boot clock is trustworthy; 'clock_unsynced' when the timestamp was
+    -- written pre-NTP-sync (dead-RTC reset) -- see src/pi/diagnostics/clock_sync.py.
+    -- Pi-LOCAL forensic flag: stripped from the sync wire (server computes its
+    -- own data_quality).  NULL on legacy rows written before US-419.
+    data_quality TEXT
 );
 """
 
@@ -687,6 +700,44 @@ def ensureStartupLogRecordedAt(conn: sqlite3.Connection) -> bool:
     if "recorded_at" in existing:
         return False
     conn.execute("ALTER TABLE startup_log ADD COLUMN recorded_at TEXT")
+    conn.commit()
+    return True
+
+
+def ensureStartupLogDataQuality(conn: sqlite3.Connection) -> bool:
+    """Idempotently ensure startup_log carries the ``data_quality`` column.
+
+    ``data_quality`` is the US-419 (F-080) post-reboot clock-drift flag: the
+    boot-log writer stamps ``'clock_unsynced'`` when the row was written before
+    systemd-timesyncd disciplined the clock (dead-RTC reset), ``'full'``
+    otherwise.  Fresh DBs get the column from :data:`SCHEMA_STARTUP_LOG`; a
+    legacy startup_log (present on any Pi deployed before US-419) gains it here.
+
+    Added as plain nullable ``TEXT`` -- SQLite ``ALTER TABLE ... ADD COLUMN``
+    permits a nullable column with no default, and pre-existing rows carry no
+    clock verdict anyway (NULL = unassessed).  Mirrors the PRAGMA-guarded,
+    caller-commits-nothing... actually this commits after its own ALTER, exactly
+    like :func:`ensureStartupLogRecordedAt` (both run from the standalone
+    boot-log write path, not the shared ``initialize`` transaction).
+
+    A missing startup_log table is a graceful no-op.
+
+    Args:
+        conn: An open sqlite3 Connection to the Pi-side obd database.
+
+    Returns:
+        ``True`` iff the ALTER actually ran (column was previously absent);
+        ``False`` when the column already existed or the table does not exist.
+    """
+    tableExists = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name = 'startup_log'",
+    ).fetchone()
+    if tableExists is None:
+        return False
+    existing = {r[1] for r in conn.execute("PRAGMA table_info(startup_log)")}
+    if "data_quality" in existing:
+        return False
+    conn.execute("ALTER TABLE startup_log ADD COLUMN data_quality TEXT")
     conn.commit()
     return True
 

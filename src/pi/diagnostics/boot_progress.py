@@ -41,8 +41,10 @@ import logging
 import os
 import shutil
 import sqlite3
+from collections.abc import Callable
 
 from src.common.time.helper import utcIsoNow
+from src.pi.diagnostics.clock_sync import assessClockQuality
 
 logger = logging.getLogger(__name__)
 
@@ -320,8 +322,15 @@ def _writeStartupLogRow(
     clean: int | None,
     lastStage: str | None,
     reason: str,
+    clockQualityProvider: Callable[[str], str] = assessClockQuality,
 ) -> None:
-    """Idempotent INSERT OR IGNORE startup_log row (one row per boot_id)."""
+    """Idempotent INSERT OR IGNORE startup_log row (one row per boot_id).
+
+    US-419 (F-080): the row is stamped with a ``data_quality`` clock verdict.
+    ``startup_log`` is the canonical one-per-boot "first post-boot row", so it
+    pays the full :func:`assessClockQuality` (NTP probe + sanity floor) at most
+    once per boot.  ``clockQualityProvider`` is the injection seam for tests.
+    """
     # Lazy import: keep the crash-time finalize / --finalize CLI path free
     # of the heavy src.pi.obdii package graph (its __init__ eagerly does
     # `from pi.display import ...` which is not importable in a bare
@@ -329,6 +338,7 @@ def _writeStartupLogRow(
     # invocation). Only the arm/DB path needs this. See
     # feedback-lazy-import-patch-rewiring.
     from src.pi.obdii.database_schema import (
+        ensureStartupLogDataQuality,
         ensureStartupLogForensicColumns,
         ensureStartupLogRecordedAt,
     )
@@ -340,13 +350,18 @@ def _writeStartupLogRow(
         # before the row is written / synced.  No-op on any real Pi DB (present
         # since US-263); defensive for a legacy/partial startup_log.
         ensureStartupLogRecordedAt(conn)
+        # US-419: guarantee the data_quality clock-drift flag column exists.
+        ensureStartupLogDataQuality(conn)
+        recordedAt = utcIsoNow()
+        dataQuality = clockQualityProvider(recordedAt)
         conn.execute(
             "INSERT OR IGNORE INTO startup_log "
             "(boot_id, prior_boot_clean, prior_last_entry_ts, "
             " current_boot_first_entry_ts, recorded_at, "
-            " prior_boot_last_stage, prior_boot_reason) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (bootId, clean, None, None, utcIsoNow(), lastStage, reason),
+            " prior_boot_last_stage, prior_boot_reason, data_quality) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (bootId, clean, None, None, recordedAt, lastStage, reason,
+             dataQuality),
         )
         conn.commit()
     finally:
@@ -360,6 +375,7 @@ def arm(
     bootId: str,
     nasArchiveDir: str,
     nasArchiveEnabled: bool,
+    clockQualityProvider: Callable[[str], str] = assessClockQuality,
 ) -> None:
     """Boot-time reader: classify the prior boot, then re-arm for this one.
 
@@ -386,6 +402,9 @@ def arm(
             archiving is enabled.
         nasArchiveEnabled: When ``True`` and a prior trail exists, copy it
             to ``nasArchiveDir`` before truncation (best-effort).
+        clockQualityProvider: US-419 injection seam mapping the row's
+            ``recorded_at`` to a ``data_quality`` clock verdict.  Defaults to
+            :func:`src.pi.diagnostics.clock_sync.assessClockQuality`.
 
     Returns:
         None.
@@ -394,7 +413,9 @@ def arm(
     clean, lastStage, reason = deriveVerdict(trail)
 
     try:
-        _writeStartupLogRow(dbPath, bootId, clean, lastStage, reason)
+        _writeStartupLogRow(
+            dbPath, bootId, clean, lastStage, reason, clockQualityProvider,
+        )
     except Exception as exc:  # noqa: BLE001 -- never block boot
         logger.error("boot_progress: startup_log write failed: %s", exc)
 

@@ -67,7 +67,10 @@ from src.pi.power.battery_health import (
     ensureBatteryHealthLogTable,
     ensureBatteryHealthLogVcellColumns,
 )
-from src.pi.power.power_db import ensurePowerLogVcellColumn
+from src.pi.power.power_db import (
+    ensurePowerLogDataQuality,
+    ensurePowerLogVcellColumn,
+)
 
 from .data_source import ensureAllCaptureTables
 from .database_schema import (
@@ -334,6 +337,13 @@ class ObdDatabase:
                 # disturbing existing rows.
                 if ensurePowerLogVcellColumn(conn):
                     logger.info("Added vcell column to power_log (US-252)")
+
+                # US-419 idempotent migration: add ``data_quality`` to
+                # power_log for the F-080 post-reboot clock-drift flag.
+                # Pre-US-419 databases gain the column here without
+                # disturbing existing rows.
+                if ensurePowerLogDataQuality(conn):
+                    logger.info("Added data_quality column to power_log (US-419)")
 
                 # US-351 retirement migration: drop the legacy Pi-side
                 # ``drive_statistics`` table on first boot post-V0.27.17.
