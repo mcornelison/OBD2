@@ -64,6 +64,7 @@ from pathlib import Path
 from typing import Any
 
 from src.pi.power.battery_health import (
+    ensureBatteryHealthLogSocPctColumns,
     ensureBatteryHealthLogTable,
     ensureBatteryHealthLogVcellColumns,
 )
@@ -324,15 +325,27 @@ class ObdDatabase:
                     logger.info("Created battery_health_log table (US-217)")
 
                 # US-289 idempotent migration: add start_vcell_v +
-                # end_vcell_v columns to battery_health_log.  The
-                # legacy start_soc / end_soc columns hold VCELL volts
-                # despite the name -- the new columns are the truth-
-                # named replacements.  Caller (BatteryHealthRecorder)
-                # populates BOTH old + new during the deprecation phase.
+                # end_vcell_v columns to battery_health_log.  These are
+                # the truth-named home for LiPo cell voltage.  Must run
+                # BEFORE the US-426 rebuild below (which COALESCEs the
+                # legacy start_soc/end_soc into these columns).
                 if ensureBatteryHealthLogVcellColumns(conn):
                     logger.info(
                         "Added vcell_v columns to battery_health_log "
                         "(US-289)"
+                    )
+
+                # US-426 (BL-015) idempotent rebuild: DROP the misnamed
+                # legacy start_soc/end_soc (VCELL volts, redundant with
+                # *_vcell_v) + ADD start_soc_pct/end_soc_pct (the durable
+                # MAX17048 SoC% home).  CREATE-SELECT-DROP-RENAME with a
+                # COALESCE(vcell, soc) voltage-preserving backfill.  Runs
+                # after the vcell migration so the COALESCE SELECT is valid.
+                if ensureBatteryHealthLogSocPctColumns(conn):
+                    logger.info(
+                        "Rebuilt battery_health_log: dropped legacy "
+                        "start_soc/end_soc, added start_soc_pct/end_soc_pct "
+                        "(US-426)"
                     )
 
                 # US-225 idempotent migration: pi_state singleton for

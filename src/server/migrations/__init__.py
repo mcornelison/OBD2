@@ -45,6 +45,11 @@
 #               |              | (drive_summary + drive_statistics data_quality
 #               |              | VARCHAR(16)->VARCHAR(20); drill-revealed
 #               |              | DataError 1406 on 'attribution_anomaly').
+# 2026-07-01    | Rex (US-426) | Sprint 52 V0.29.6 -- registered v0016
+#               |              | (battery_health_log: drop legacy start_soc/
+#               |              | end_soc + add *_vcell_v + *_soc_pct; BL-015).
+# 2026-07-01    | Rex (US-424) | Sprint 51 V0.29.5 -- registered v0015 (widen
+#               |              | data_quality CHECK with 'foreign_vehicle'; F-116).
 # 2026-07-01    | Rex (US-417) | Sprint 51 V0.29.5 -- registered v0014 (create
 #               |              | startup_log; natural-key snapshot sync, BL-013).
 # 2026-07-01    | Rex (US-412) | Sprint 50 V0.29.4 -- registered v0013 (create
@@ -124,6 +129,9 @@ from src.server.migrations.versions.v0014_us417_startup_log import (
 from src.server.migrations.versions.v0015_us424_foreign_vehicle_data_quality import (
     MIGRATION as _V0015,
 )
+from src.server.migrations.versions.v0016_us426_battery_health_soc_pct import (
+    MIGRATION as _V0016,
+)
 
 # ================================================================================
 # Registry -- append new migrations to the end, in ascending version order
@@ -145,6 +153,7 @@ ALL_MIGRATIONS: tuple[Migration, ...] = (
     _V0013,
     _V0014,
     _V0015,
+    _V0016,
 )
 
 

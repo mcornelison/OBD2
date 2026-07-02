@@ -1,0 +1,31 @@
+## 2026-07-01 - US-426 (Rex / Agent 1)
+Task: battery_health_log SoC% schema -- drop legacy _soc + add _soc_pct, ONE both-tier migration (BL-015/F-061, migration-first)
+
+### What was implemented:
+- Pi SQLite: SCHEMA_BATTERY_HEALTH_LOG drops legacy start_soc/end_soc (VCELL volts, misnamed), adds start_soc_pct/end_soc_pct (REAL nullable).
+- New idempotent `ensureBatteryHealthLogSocPctColumns()` rebuild (CREATE-SELECT-DROP-RENAME) wired into ObdDatabase.initialize() AFTER the vcell helper; COALESCE(start_vcell_v, start_soc) preserves voltage stranded in pre-US-289 rows before the drop (no data loss). Recreates the start index.
+- Recorder: VCELL from startSoc/endSoc -> *_vcell_v only (no more legacy dual-write); optional startSocPct/endSocPct -> *_soc_pct (NULL when omitted; US-427 wires the real MAX17048 register read).
+- Server MariaDB: v0016 migration (registered in ALL_MIGRATIONS) DROPs start_soc/end_soc + ADDs start_vcell_v/end_vcell_v/start_soc_pct/end_soc_pct (FLOAT NULL); INFORMATION_SCHEMA-probed idempotent + post-condition probe. BatteryHealthLog model mirrors it.
+- A-4: added *_vcell_v to the server (was Pi-only divergence) so both tiers are byte-identical AND the full Pi sync payload is consumed with no unmapped keys -- closes the A-4 vcell divergence for this table. Merges old US-423 with the _soc_pct add.
+- Consumers migrated: both backfill scripts (Pi + server) now target end_vcell_v not end_soc. record_drain_test.py needs no US-426 change (recorder API + runtime_seconds only; US-427 owns its SoC% wiring).
+
+### Files changed:
+- Modified: `src/pi/power/battery_health.py` (schema, rebuild helper, recorder, docstrings)
+- Modified: `src/pi/obdii/database.py` (wire ensureBatteryHealthLogSocPctColumns after vcell helper)
+- Modified: `src/server/db/models.py` (BatteryHealthLog columns)
+- Created: `src/server/migrations/versions/v0016_us426_battery_health_soc_pct.py`
+- Modified: `src/server/migrations/__init__.py` (register v0016)
+- Modified: `scripts/backfill_pi_battery_health_log_historical_drains.py`, `scripts/backfill_server_battery_health_log_stranded.py` (end_soc -> end_vcell_v)
+- Modified: 9 test files + 7 new rebuild-helper tests in test_battery_health_log_columns.py
+
+### Verification:
+- ruff check: clean on all touched files.
+- Targeted suite (schema/columns/recorder/socpct-seam/sync/sync-client-upsert/update-propagation/both-backfills/idempotent): 149 passed; columns file (with 7 new rebuild tests) 22 passed.
+- Migration registry loads: 16 migrations, last=0016.
+- PM/integration gates owed: full pytest + mypy; deploy v0016 to server + run Pi rebuild on the real Pi + verify via schema introspection on both tiers (acceptance 'deployed AND verified' is a bench/deploy gate -- no MariaDB on dev, Pi is a deploy target).
+
+### Learnings for future iterations:
+- **Pattern discovered**: SQLite has no DROP COLUMN on our target versions -> CREATE-new/INSERT-SELECT/DROP-old/RENAME idiom, run AFTER any ALTER-ADD helper it depends on (COALESCE SELECT needs the vcell columns to exist first). Order matters in initialize().
+- **Gotcha**: the Pi sync path (getDeltaRows SELECT *) already sent *_vcell_v to a server model that lacked them; making the tiers identical (add vcell to server) both satisfies A-4 and removes the latent unmapped-key risk. Keep DrainEventCloseResult.endSoc / backfill endSoc Python attr names (they now carry the VCELL value) to minimize test churn -- only SQL column identifiers + fixtures changed.
+- **Gotcha**: replace_all matches exact indentation -- a same-string INSERT at a different indent was missed on the first pass; grep for the bare column token afterward to confirm zero stragglers.
+---

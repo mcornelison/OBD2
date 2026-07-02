@@ -39,13 +39,18 @@ class TestBatteryHealthLogModelContract:
 
     def test_modelHasPiNativeColumns(self) -> None:
         cols = {c.name for c in BatteryHealthLog.__table__.columns}
+        # US-426 (A-4): the server mirrors the Pi shape exactly -- *_vcell_v +
+        # *_soc_pct, with the legacy *_soc columns dropped.
         pi = {
             'start_timestamp', 'end_timestamp',
-            'start_soc', 'end_soc',
+            'start_vcell_v', 'end_vcell_v',
+            'start_soc_pct', 'end_soc_pct',
             'runtime_seconds', 'ambient_temp_c',
             'load_class', 'notes', 'data_source',
         }
         assert pi.issubset(cols), f"missing Pi-native cols: {pi - cols}"
+        assert 'start_soc' not in cols
+        assert 'end_soc' not in cols
 
     def test_modelHasSyncColumns(self) -> None:
         cols = {c.name for c in BatteryHealthLog.__table__.columns}
@@ -64,13 +69,13 @@ class TestBatteryHealthLogModelContract:
             'expected UNIQUE(source_device, source_id) for Pi-sync path'
         )
 
-    def test_startSocIsNotNull(self) -> None:
-        col = BatteryHealthLog.__table__.columns['start_soc']
-        assert col.nullable is False
-
-    def test_endSocIsNullable(self) -> None:
-        col = BatteryHealthLog.__table__.columns['end_soc']
-        assert col.nullable is True
+    def test_socPctAndVcellColumnsAreNullable(self) -> None:
+        """US-426: the new *_soc_pct + *_vcell_v columns are all nullable
+        (SoC% is NULL until US-427 wires the register + cold-start guard)."""
+        for name in (
+            'start_vcell_v', 'end_vcell_v', 'start_soc_pct', 'end_soc_pct',
+        ):
+            assert BatteryHealthLog.__table__.columns[name].nullable is True
 
     def test_loadClassDefaultIsProduction(self) -> None:
         col = BatteryHealthLog.__table__.columns['load_class']
@@ -121,8 +126,10 @@ class TestRunSyncUpsertBatteryHealthLog:
                 'id': 5,
                 'start_timestamp': '2026-04-21T12:00:00Z',
                 'end_timestamp': '2026-04-21T12:24:00Z',
-                'start_soc': 100.0,
-                'end_soc': 20.0,
+                'start_vcell_v': 4.15,
+                'end_vcell_v': 3.45,
+                'start_soc_pct': 100.0,
+                'end_soc_pct': 20.0,
                 'runtime_seconds': 1440,
                 'ambient_temp_c': 22.5,
                 'load_class': 'test',
@@ -145,8 +152,11 @@ class TestRunSyncUpsertBatteryHealthLog:
         serverRow = session.query(BatteryHealthLog).one()
         assert serverRow.source_id == 5
         assert serverRow.source_device == 'chi-eclipse-01'
-        assert serverRow.start_soc == 100.0
-        assert serverRow.end_soc == 20.0
+        # US-426: the full Pi payload (vcell + soc_pct) is consumed server-side.
+        assert serverRow.start_vcell_v == 4.15
+        assert serverRow.end_vcell_v == 3.45
+        assert serverRow.start_soc_pct == 100.0
+        assert serverRow.end_soc_pct == 20.0
         assert serverRow.runtime_seconds == 1440
         assert serverRow.ambient_temp_c == 22.5
         assert serverRow.load_class == 'test'
@@ -161,8 +171,10 @@ class TestRunSyncUpsertBatteryHealthLog:
             'id': 6,
             'start_timestamp': '2026-04-21T12:00:00Z',
             'end_timestamp': '2026-04-21T12:24:00Z',
-            'start_soc': 100.0,
-            'end_soc': 20.0,
+            'start_vcell_v': 4.15,
+            'end_vcell_v': 3.45,
+            'start_soc_pct': 100.0,
+            'end_soc_pct': 20.0,
             'runtime_seconds': 1440,
             'load_class': 'test',
             'data_source': 'real',
@@ -173,9 +185,9 @@ class TestRunSyncUpsertBatteryHealthLog:
             syncHistoryId=1,
         )
 
-        # Second push with updated end_soc + runtime on the same row.
+        # Second push with updated end_soc_pct + runtime on the same row.
         second = dict(first)
-        second['end_soc'] = 18.5
+        second['end_soc_pct'] = 18.5
         second['runtime_seconds'] = 1280
         result = runSyncUpsert(
             session, deviceId='chi-eclipse-01', batchId='b2',
@@ -187,7 +199,7 @@ class TestRunSyncUpsertBatteryHealthLog:
             'inserted': 0, 'updated': 1, 'errors': 0,
         }
         serverRow = session.query(BatteryHealthLog).one()
-        assert serverRow.end_soc == 18.5
+        assert serverRow.end_soc_pct == 18.5
         assert serverRow.runtime_seconds == 1280
 
     def test_pushPreClosedRowOmitsEndColumns(self) -> None:
@@ -197,7 +209,7 @@ class TestRunSyncUpsertBatteryHealthLog:
             {
                 'id': 7,
                 'start_timestamp': '2026-04-21T12:00:00Z',
-                'start_soc': 100.0,
+                'start_vcell_v': 4.15,
                 'load_class': 'production',
                 'data_source': 'real',
             },
@@ -209,7 +221,8 @@ class TestRunSyncUpsertBatteryHealthLog:
         )
         serverRow = session.query(BatteryHealthLog).one()
         assert serverRow.end_timestamp is None
-        assert serverRow.end_soc is None
+        assert serverRow.end_vcell_v is None
+        assert serverRow.end_soc_pct is None
         assert serverRow.runtime_seconds is None
 
     def test_differentDevicesDoNotCollide(self) -> None:
@@ -218,7 +231,7 @@ class TestRunSyncUpsertBatteryHealthLog:
         shared = {
             'id': 1,
             'start_timestamp': '2026-04-21T12:00:00Z',
-            'start_soc': 100.0,
+            'start_vcell_v': 4.15,
             'load_class': 'test',
             'data_source': 'real',
         }

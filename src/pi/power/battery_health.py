@@ -43,6 +43,19 @@
 #                               Step 2 (B-060) wires UpsMonitor.getBattery
 #                               Percentage() through the orchestrator.  Step
 #                               3 (B-061) drops the legacy columns.
+# 2026-07-01    | Rex (US-426) | BL-015 (F-061): DROP the legacy start_soc /
+#                               end_soc columns (held VCELL volts, redundant
+#                               with *_vcell_v) + ADD dedicated start_soc_pct /
+#                               end_soc_pct REAL-nullable columns -- the durable
+#                               home for MAX17048 register SoC%.  One forward-
+#                               only rebuild migration (ensureBatteryHealthLog
+#                               SocPctColumns, CREATE-SELECT-DROP-RENAME) with a
+#                               COALESCE(vcell,soc) voltage-preserving backfill.
+#                               Recorder stops dual-writing the dropped columns:
+#                               startSoc/endSoc -> *_vcell_v only; the optional
+#                               startSocPct/endSocPct kwargs now land in
+#                               *_soc_pct (NULL when omitted).  US-427 wires the
+#                               real register read; this story is schema-only.
 # ================================================================================
 ################################################################################
 
@@ -59,42 +72,44 @@ It is closed on :meth:`BatteryHealthRecorder.endDrainEvent` with the
 ending SOC + optional ambient temperature.  ``runtime_seconds`` is
 computed at close time from the two canonical ISO-8601 UTC timestamps.
 
-Schema shape (frozen by Spool Session 6 grounding refs; US-289 column rename):
+Schema shape (US-289 vcell rename; US-426 legacy-soc drop + soc_pct add):
 
 * ``drain_event_id``      INTEGER PK AUTOINCREMENT -- monotonic event id
 * ``start_timestamp``     TEXT NOT NULL (canonical ISO-8601 UTC default)
 * ``end_timestamp``       TEXT NULL (written at close)
-* ``start_vcell_v``       REAL NULL -- LiPo cell volts at event open (US-289)
-* ``end_vcell_v``         REAL NULL -- LiPo cell volts at close (US-289)
-* ``start_soc``           REAL NOT NULL -- DEPRECATED (US-289): named "soc"
-                          but holds VCELL volts (3.4-4.2V).  Kept during the
-                          rename deprecation phase; remove in a future sprint
-                          after analytics consumers migrate to start_vcell_v.
-* ``end_soc``             REAL NULL -- DEPRECATED (US-289), see start_soc.
+* ``start_vcell_v``       REAL NULL -- LiPo cell volts at event open
+* ``end_vcell_v``         REAL NULL -- LiPo cell volts at close
+* ``start_soc_pct``       REAL NULL -- MAX17048 SoC%% (0-100) at open (US-426).
+                          NULL until US-427 wires the register read + NULL in
+                          the ~3-min cold-start calibration window.  Replaces
+                          the misnamed legacy start_soc (VCELL volts), dropped.
+* ``end_soc_pct``         REAL NULL -- MAX17048 SoC%% at close (US-426).
+                          Replaces legacy end_soc, dropped.
 * ``runtime_seconds``     INTEGER NULL (computed at close)
 * ``ambient_temp_c``      REAL NULL (optional)
 * ``load_class``          TEXT NOT NULL DEFAULT 'production'
                           CHECK IN ('production','test','sim')
 * ``notes``               TEXT NULL
 * ``data_source``         TEXT NOT NULL DEFAULT 'real'
-                          CHECK IN ('real','replay','physics_sim','fixture')
+                          CHECK IN ('real','replay','physics_sim','fixture','foreign')
 
-US-289 deprecation contract (stopCondition[1]): the recorder writes the
-same VCELL value to BOTH the new ``*_vcell_v`` columns AND the legacy
-``*_soc`` columns so existing analytics consumers reading the old columns
-keep working through the rename window.  A future sprint drops the
-legacy columns after backfill + reader migration.
+US-426 (BL-015): the legacy ``start_soc`` / ``end_soc`` columns held VCELL
+volts despite the name (redundant with ``*_vcell_v``) and are DROPPED.  The
+recorder writes VCELL volts to ``*_vcell_v`` (their sole home) and the
+optional register SoC%% to the new ``*_soc_pct`` columns.  The rebuild
+migration COALESCEs any voltage stranded in legacy pre-US-289 rows into
+``*_vcell_v`` before dropping, so no data is lost.
 
 Invariants:
 
-* ``start_soc`` + ``start_timestamp`` are authoritative once written; the
+* ``start_vcell_v`` + ``start_timestamp`` are authoritative once written; the
   UPDATE path in :meth:`BatteryHealthRecorder.endDrainEvent` only touches
-  the end-of-event columns (end_timestamp, end_soc, runtime_seconds,
-  ambient_temp_c).
+  the end-of-event columns (end_timestamp, end_vcell_v, end_soc_pct,
+  runtime_seconds, ambient_temp_c).
 * ``drain_event_id`` is auto-incremented + monotonic (per-event, not a
   singleton like ``drive_counter``).
 * Close-once semantic: calling ``endDrainEvent`` a second time on an
-  already-closed row is a no-op -- the original end_timestamp / end_soc
+  already-closed row is a no-op -- the original end_timestamp / end_vcell_v
   are preserved (first-close-wins).
 * Timestamps route through :func:`src.common.time.helper.utcIsoNow` so the
   canonical ISO-8601 UTC format (TD-027 / US-202) is enforced.
@@ -129,6 +144,7 @@ __all__ = [
     'INDEX_BATTERY_HEALTH_LOG_START',
     'ensureBatteryHealthLogTable',
     'ensureBatteryHealthLogVcellColumns',
+    'ensureBatteryHealthLogSocPctColumns',
 ]
 
 logger = logging.getLogger(__name__)
@@ -167,29 +183,26 @@ CREATE TABLE IF NOT EXISTS battery_health_log (
     -- Event-close wall time.  NULL until endDrainEvent lands.
     end_timestamp TEXT,
 
-    -- DEPRECATED by US-289.  Despite the name + the original "0..100
-    -- (MAX17048 integer % scale)" comment, this column actually stores
-    -- LiPo cell VCELL volts (3.4-4.2V) -- the recorder takes whatever
-    -- the caller passes as ``startSoc`` and the orchestrator's caller
-    -- (PowerDownOrchestrator) passes a VCELL value.  start_vcell_v is
-    -- the renamed, correctly-named replacement; both columns receive
-    -- the same value during the deprecation window.  Drop in a future
-    -- sprint after analytics readers migrate.
-    start_soc REAL NOT NULL,
-
-    -- DEPRECATED by US-289 (see start_soc).  end_vcell_v is the renamed
-    -- replacement.  NULL until endDrainEvent lands.
-    end_soc REAL,
-
-    -- LiPo cell volts at event open (US-289 rename).  REAL nullable
-    -- because pre-US-289 rows do not carry this column; the migration
-    -- helper backfills neither legacy nor new column for old rows.
-    -- Post-US-289 rows always have this populated by the recorder.
+    -- LiPo cell volts at event open (US-289 rename; US-426 makes this the
+    -- sole voltage home after the legacy start_soc/end_soc drop).  REAL
+    -- nullable.  Populated by the recorder from ``startSoc``.
     start_vcell_v REAL,
 
-    -- LiPo cell volts at event close (US-289 rename).  NULL until
-    -- endDrainEvent lands.  Mirrors end_soc value during deprecation.
+    -- LiPo cell volts at event close.  NULL until endDrainEvent lands.
     end_vcell_v REAL,
+
+    -- MAX17048 State-of-Charge percent (0-100) at event open (US-426, the
+    -- BL-015 durable home for SoC%).  REAL nullable -- NULL until US-427
+    -- wires UpsMonitor.getBatteryPercentage() into the recording path, and
+    -- NULL whenever the register is read inside its ~3-min cold-start
+    -- calibration window (honest-instrument: never a garbage percent).  This
+    -- REPLACES the misnamed legacy start_soc column (which held VCELL volts,
+    -- not SoC%) dropped in US-426.
+    start_soc_pct REAL,
+
+    -- MAX17048 SoC% at event close (US-426).  NULL until endDrainEvent lands
+    -- (and NULL when the register is uncalibrated).  Replaces legacy end_soc.
+    end_soc_pct REAL,
 
     -- Wall-clock duration between start_timestamp and end_timestamp.
     -- Computed at close so queries don't have to strftime-parse every
@@ -319,6 +332,103 @@ def ensureBatteryHealthLogVcellColumns(conn: sqlite3.Connection) -> bool:
     return altered
 
 
+def ensureBatteryHealthLogSocPctColumns(conn: sqlite3.Connection) -> bool:
+    """Rebuild ``battery_health_log`` to the US-426 SoC%% shape (BL-015).
+
+    ONE forward-only migration that RETIRES the misnamed legacy
+    ``start_soc`` / ``end_soc`` columns (they held VCELL volts, not SoC%%,
+    redundant with ``*_vcell_v``) and ADDS the dedicated ``start_soc_pct`` /
+    ``end_soc_pct`` REAL-nullable columns -- the durable home for the
+    MAX17048 register State-of-Charge percent (Atlas BL-015 ruling
+    2026-07-01, CIO-ratified).  SQLite cannot drop a column in place on the
+    versions we target, so this uses the CREATE-new / INSERT-SELECT /
+    DROP-old / RENAME idiom.
+
+    Data preservation: pre-US-289 legacy rows carry their VCELL voltage ONLY
+    in ``start_soc`` / ``end_soc`` (``start_vcell_v`` / ``end_vcell_v`` are
+    NULL on those rows).  The SELECT therefore COALESCEs
+    ``start_vcell_v`` <- ``start_soc`` (and end) so no voltage is lost when
+    the legacy columns are dropped.  ``start_soc_pct`` / ``end_soc_pct`` are
+    seeded NULL for every existing row -- SoC%% is NOT derivable from volts
+    (that misnaming is exactly what this migration retires); US-427 wires the
+    real register read for rows recorded going forward.
+
+    Must run AFTER :func:`ensureBatteryHealthLogVcellColumns` (which
+    guarantees ``start_vcell_v`` / ``end_vcell_v`` exist so the COALESCE
+    SELECT is valid) -- :meth:`src.pi.obdii.database.ObdDatabase.initialize`
+    calls the two in that order.  Caller owns the commit (mirrors the sibling
+    ``ensureBatteryHealthLog*`` helpers).
+
+    Idempotent: returns ``False`` (no-op) when the table is absent, or when
+    ``start_soc_pct`` is already present AND the legacy ``start_soc`` is
+    already gone (fresh DBs land in the target shape via
+    :data:`SCHEMA_BATTERY_HEALTH_LOG`; a re-run sees nothing to do).
+
+    Args:
+        conn: Open sqlite3 connection.
+
+    Returns:
+        ``True`` if the table was rebuilt on this call, ``False`` otherwise.
+    """
+    if not _tableExists(conn, BATTERY_HEALTH_LOG_TABLE):
+        return False
+
+    columns = {
+        row[1]
+        for row in conn.execute(
+            f"PRAGMA table_info({BATTERY_HEALTH_LOG_TABLE})"
+        ).fetchall()
+    }
+    # Already migrated: soc_pct present + legacy soc gone -> no-op.
+    if 'start_soc_pct' in columns and 'start_soc' not in columns:
+        return False
+
+    newTable = f"{BATTERY_HEALTH_LOG_TABLE}__us426_new"
+    # Explicit target schema (mirrors the post-US-426 SCHEMA_BATTERY_HEALTH_LOG
+    # column set) under a temp name for the rebuild.
+    conn.execute(
+        f"CREATE TABLE {newTable} ("
+        "    drain_event_id INTEGER PRIMARY KEY AUTOINCREMENT,"
+        "    start_timestamp TEXT NOT NULL"
+        "        DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),"
+        "    end_timestamp TEXT,"
+        "    start_vcell_v REAL,"
+        "    end_vcell_v REAL,"
+        "    start_soc_pct REAL,"
+        "    end_soc_pct REAL,"
+        "    runtime_seconds INTEGER,"
+        "    ambient_temp_c REAL,"
+        "    load_class TEXT NOT NULL DEFAULT 'production'"
+        "        CHECK (load_class IN ('production','test','sim')),"
+        "    notes TEXT,"
+        "    data_source TEXT NOT NULL DEFAULT 'real'"
+        "        CHECK (data_source IN ('real','replay','physics_sim','fixture','foreign'))"
+        ")"
+    )
+    # COALESCE preserves the VCELL voltage of pre-US-289 rows (whose only
+    # voltage copy is the legacy start_soc/end_soc); start_soc_pct/end_soc_pct
+    # seed NULL (SoC%% is never derived from volts).
+    conn.execute(
+        f"INSERT INTO {newTable} "
+        "(drain_event_id, start_timestamp, end_timestamp, start_vcell_v, "
+        " end_vcell_v, start_soc_pct, end_soc_pct, runtime_seconds, "
+        " ambient_temp_c, load_class, notes, data_source) "
+        "SELECT drain_event_id, start_timestamp, end_timestamp, "
+        "       COALESCE(start_vcell_v, start_soc), "
+        "       COALESCE(end_vcell_v, end_soc), "
+        "       NULL, NULL, runtime_seconds, ambient_temp_c, load_class, "
+        "       notes, data_source "
+        f"FROM {BATTERY_HEALTH_LOG_TABLE}"
+    )
+    conn.execute(f"DROP TABLE {BATTERY_HEALTH_LOG_TABLE}")
+    conn.execute(
+        f"ALTER TABLE {newTable} RENAME TO {BATTERY_HEALTH_LOG_TABLE}"
+    )
+    # Recreate the start_timestamp index dropped with the old table.
+    conn.execute(INDEX_BATTERY_HEALTH_LOG_START)
+    return True
+
+
 # ================================================================================
 # Dataclasses
 # ================================================================================
@@ -330,11 +440,14 @@ class DrainEventCloseResult:
 
     Attributes:
         drainEventId: The row's ``drain_event_id``.
-        closed: True if this call wrote end_timestamp / end_soc; False
+        closed: True if this call wrote end_timestamp / end_vcell_v; False
             when the row was already closed (close-once semantic).
         endTimestamp: The end_timestamp actually stored on the row
             after this call (may be the pre-existing value on re-close).
-        endSoc: The end_soc actually stored.
+        endSoc: The VCELL voltage actually stored (``end_vcell_v``).  Kept
+            named ``endSoc`` for API back-compat with the ``endSoc`` close
+            argument; US-426 dropped the legacy ``end_soc`` column, so this
+            now reflects ``end_vcell_v``.
         runtimeSeconds: Computed runtime_seconds (may be the pre-
             existing value on re-close).
     """
@@ -421,31 +534,29 @@ class BatteryHealthRecorder:
         # DB DEFAULT would require a post-INSERT SELECT to read it back.
         startTs = utcIsoNow()
 
-        # US-289 deprecation phase: write the same VCELL value to BOTH
-        # legacy start_soc (DEPRECATED) AND the new start_vcell_v column
-        # so existing analytics consumers reading the old column keep
-        # working through the rename window.  US-309 BL-013 Step 1: when
-        # the optional startSocPct kwarg is set, prefer that value for
-        # the legacy start_soc column so it finally holds a real SOC%
-        # (0-100); start_vcell_v always holds the VCELL voltage.
+        # US-426 (BL-015): the legacy start_soc column is dropped.  The VCELL
+        # voltage from ``startSoc`` lands in start_vcell_v (its sole home); the
+        # optional ``startSocPct`` register SoC% lands in the new start_soc_pct
+        # column (NULL when omitted -- US-427 wires the real register read).
         startVcell = float(startSoc)
-        startSocColumn: float = (
-            float(startSocPct) if startSocPct is not None else startVcell
+        startSocPctColumn: float | None = (
+            float(startSocPct) if startSocPct is not None else None
         )
         with self._database.connect() as conn:
             cursor = conn.execute(
                 f"INSERT INTO {BATTERY_HEALTH_LOG_TABLE} "
-                "(start_timestamp, start_soc, start_vcell_v, "
+                "(start_timestamp, start_vcell_v, start_soc_pct, "
                 " load_class, notes, data_source) "
                 "VALUES (?, ?, ?, ?, ?, ?)",
-                (startTs, startSocColumn, startVcell, loadClass, notes,
+                (startTs, startVcell, startSocPctColumn, loadClass, notes,
                  dataSource),
             )
             drainEventId = int(cursor.lastrowid or 0)
 
         logger.info(
-            "drain event opened | id=%d | start_soc=%.1f | load_class=%s",
-            drainEventId, startSocColumn, loadClass,
+            "drain event opened | id=%d | start_vcell_v=%.3f | "
+            "start_soc_pct=%s | load_class=%s",
+            drainEventId, startVcell, startSocPctColumn, loadClass,
         )
         return drainEventId
 
@@ -490,7 +601,7 @@ class BatteryHealthRecorder:
 
         with self._database.connect() as conn:
             existing = conn.execute(
-                f"SELECT start_timestamp, end_timestamp, end_soc, "
+                f"SELECT start_timestamp, end_timestamp, end_vcell_v, "
                 f"       runtime_seconds "
                 f"FROM {BATTERY_HEALTH_LOG_TABLE} "
                 f"WHERE drain_event_id = ?",
@@ -525,37 +636,36 @@ class BatteryHealthRecorder:
                 str(startTsStored), endTs,
             )
 
-            # US-289 deprecation phase: UPDATE both legacy end_soc
-            # (DEPRECATED) and the new end_vcell_v column with the same
-            # VCELL value.  US-309 BL-013 Step 1: when the optional
-            # endSocPct kwarg is set, prefer that value for the legacy
-            # end_soc column so it finally holds a real SOC% (0-100);
-            # end_vcell_v always holds the VCELL voltage.
+            # US-426 (BL-015): legacy end_soc is dropped.  The VCELL voltage
+            # from ``endSoc`` lands in end_vcell_v (its sole home); the optional
+            # ``endSocPct`` register SoC% lands in the new end_soc_pct column
+            # (NULL when omitted -- US-427 wires the real register read).
             endVcell = float(endSoc)
-            endSocColumn: float = (
-                float(endSocPct) if endSocPct is not None else endVcell
+            endSocPctColumn: float | None = (
+                float(endSocPct) if endSocPct is not None else None
             )
             conn.execute(
                 f"UPDATE {BATTERY_HEALTH_LOG_TABLE} SET "
                 "end_timestamp = ?, "
-                "end_soc = ?, "
                 "end_vcell_v = ?, "
+                "end_soc_pct = ?, "
                 "runtime_seconds = ?, "
                 "ambient_temp_c = ? "
                 "WHERE drain_event_id = ?",
-                (endTs, endSocColumn, endVcell, runtimeSeconds, ambientTempC,
+                (endTs, endVcell, endSocPctColumn, runtimeSeconds, ambientTempC,
                  int(drainEventId)),
             )
 
         logger.info(
-            "drain event closed | id=%d | end_soc=%.1f | runtime_s=%s",
-            int(drainEventId), endSocColumn, runtimeSeconds,
+            "drain event closed | id=%d | end_vcell_v=%.3f | "
+            "end_soc_pct=%s | runtime_s=%s",
+            int(drainEventId), endVcell, endSocPctColumn, runtimeSeconds,
         )
         return DrainEventCloseResult(
             drainEventId=int(drainEventId),
             closed=True,
             endTimestamp=endTs,
-            endSoc=endSocColumn,
+            endSoc=endVcell,
             runtimeSeconds=runtimeSeconds,
         )
 

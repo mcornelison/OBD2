@@ -180,13 +180,16 @@ def _createAllInScopeStubs(conn: sqlite3.Connection) -> None:
         "data_source TEXT NOT NULL DEFAULT 'real')"
     )
     # US-217: battery_health_log -- drain_event_id INTEGER PK AUTOINCREMENT.
+    # US-426 shape: legacy start_soc/end_soc dropped; *_vcell_v + *_soc_pct.
     conn.execute(
         "CREATE TABLE battery_health_log ("
         "drain_event_id INTEGER PRIMARY KEY AUTOINCREMENT, "
         "start_timestamp TEXT NOT NULL, "
         "end_timestamp TEXT, "
-        "start_soc REAL NOT NULL, "
-        "end_soc REAL, "
+        "start_vcell_v REAL, "
+        "end_vcell_v REAL, "
+        "start_soc_pct REAL, "
+        "end_soc_pct REAL, "
         "runtime_seconds INTEGER, "
         "ambient_temp_c REAL, "
         "load_class TEXT NOT NULL DEFAULT 'production', "

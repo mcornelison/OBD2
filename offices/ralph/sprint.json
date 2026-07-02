@@ -40,7 +40,8 @@
       "type": "normal",
       "size": "M",
       "status": "sprint-ready",
-      "passes": false,
+      "passes": true,
+      "completionNotes": "US-426 DONE (code-complete; deploy+introspection is a bench/PM gate -- no MariaDB on dev, Pi is a deploy target). Pi SQLite: SCHEMA_BATTERY_HEALTH_LOG dropped legacy start_soc/end_soc, added start_soc_pct/end_soc_pct (REAL nullable); new idempotent ensureBatteryHealthLogSocPctColumns() rebuild (CREATE-SELECT-DROP-RENAME) wired into ObdDatabase.initialize AFTER the vcell helper, COALESCE(vcell,soc) preserves stranded pre-US-289 voltage (no data loss); recorder writes VCELL->*_vcell_v only + optional SocPct kwargs->*_soc_pct (NULL when omitted -- US-427 wires the real register read). Server MariaDB: v0016 migration (registered) DROPs start_soc/end_soc + ADDs start_vcell_v/end_vcell_v/start_soc_pct/end_soc_pct (all FLOAT NULL, INFORMATION_SCHEMA-probed idempotent + post-condition check); BatteryHealthLog model mirrors it. A-4 DECISION: added *_vcell_v to the server too (was Pi-only, A-4 divergence) so both tiers are byte-identical AND the full sync payload the Pi already sends is consumed with no unmapped keys -- closes the A-4 vcell divergence for this table. Merges old US-423 (drop) with the _soc_pct add. Consumers migrated: both backfill scripts (Pi + server) now target end_vcell_v not end_soc; record_drain_test.py untouched (uses recorder API + runtime_seconds only -- US-427 owns its SoC% wiring). Lock-down tests updated (schema/columns/recorder/socpct-seam/sync/sync-client-upsert/update-propagation/both-backfills) + 7 new rebuild-helper tests (drop, idempotency, COALESCE data-preservation, index, initialize path). IN-LOOP GATE: ruff clean on all touched files; targeted suite 149 passed + columns file 22 passed. PM GATES OWED: (1) full pytest suite + mypy; (2) deploy v0016 to server + run the Pi rebuild on the real Pi, verify via schema introspection both tiers (acceptance 'deployed AND verified'); (3) schema_diff real-diff should now show battery_health_log fully A-4-clean. NOTE: adding *_vcell_v to the server was scoped in as required by 'both tiers identical (A-4)' + 'consumers migrated to start_vcell_v/end_vcell_v'; flag to Atlas if a narrower reading was intended.",
       "acceptance": [
         "ONE forward-only migration, both tiers identical (A-4): drops start_soc/end_soc AND adds start_soc_pct/end_soc_pct (Float, nullable). Pi SQLite CREATE-AS-SELECT-DROP-RENAME + server MariaDB DROP+ADD COLUMN + models.py + sync mapping",
         "deployed AND verified via schema introspection on both tiers; consumers migrated to start_vcell_v/end_vcell_v + the new _soc_pct; lock-down tests updated",
@@ -55,7 +56,27 @@
       ],
       "conditionalOutcomes": [],
       "goal": "As the system, I want one forward-only both-tier migration that retires the legacy _soc columns and adds dedicated _soc_pct columns, so SoC% has a durable home.",
-      "tasks": []
+      "tasks": [],
+      "feedback": {
+        "filesActuallyTouched": [
+          "src/pi/power/battery_health.py",
+          "src/pi/obdii/database.py",
+          "src/server/db/models.py",
+          "src/server/migrations/versions/v0016_us426_battery_health_soc_pct.py",
+          "src/server/migrations/__init__.py",
+          "scripts/backfill_pi_battery_health_log_historical_drains.py",
+          "scripts/backfill_server_battery_health_log_stranded.py",
+          "tests/pi/data/test_battery_health_log_schema.py",
+          "tests/pi/power/test_battery_health_log_columns.py",
+          "tests/pi/power/test_battery_health_recorder.py",
+          "tests/pi/power/test_battery_health_recorder_socpct_seam.py",
+          "tests/server/test_battery_health_log_sync.py",
+          "tests/pi/data/test_sync_client_upsert.py",
+          "tests/pi/sync/test_update_propagation.py",
+          "tests/scripts/test_backfill_pi_historical_drains.py",
+          "tests/scripts/test_backfill_server_battery_health_log_stranded.py"
+        ]
+      }
     },
     {
       "id": "US-427",

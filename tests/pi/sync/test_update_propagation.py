@@ -143,10 +143,10 @@ def _setupBatteryHealthLogTable(conn: sqlite3.Connection) -> None:
             drain_event_id INTEGER PRIMARY KEY AUTOINCREMENT,
             start_timestamp TEXT,
             end_timestamp TEXT,
-            start_soc REAL,
-            end_soc REAL,
             start_vcell_v REAL,
             end_vcell_v REAL,
+            start_soc_pct REAL,
+            end_soc_pct REAL,
             runtime_seconds INTEGER,
             ambient_temp_c REAL
         )
