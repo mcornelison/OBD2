@@ -58,25 +58,31 @@ Two threads the CIO prioritized: **(A) analytics/data-integrity foundation** —
 
 ---
 
-### US-432: drive_detect idle-poll gap — engine-on never detected in idle-poll mode (F-049)
+### US-432: drive_detect idle-poll gap — engine-on never detected in idle-poll mode (F-049, verify-first + A-9 guardrails)
 **Description:** As the system, I want engine-on reliably detected in the idle-poll path, so a drive isn't missed when the poll loop is in its idle cadence.
 
+> **Atlas-reviewed:** VERIFY-FIRST — US-242/B-049 **already built** idle-poll→active-poll escalation on engine-on (alternator `BATTERY_V` + RPM-probe injection, `core.py:356/1200/1212`). Root-cause the **RESIDUAL** gap, do NOT re-solve. **A-9 design-gate DoD** (Atlas's lane — start-side, distinct from A-9's close roots).
+
 **Acceptance Criteria:**
-- [ ] Root-cause the idle-poll gap (engine-on RPM not triggering drive_start when the loop is in idle/slow cadence); state the mechanism.
-- [ ] Fix so an engine-on transition promotes the poll cadence + fires drive_start within the expected window.
+- [ ] **Verify-first:** confirm the residual gap on the live Pi against the existing US-242/B-049 escalation; state the specific mechanism that still misses.
+- [ ] Fix the residual gap so an engine-on transition promotes the poll cadence + fires drive_start within the expected window.
+- [ ] **A-9 guardrail (a):** must NOT regress US-388's close-guarantee (`evaluateTimeouts`/deadline-anchored) or the `drive_id` NULL-latch.
+- [ ] **A-9 guardrail (b):** fold this into the A-9 IRL re-gate (missed-start-in-idle-poll = another drive-lifecycle failure to exercise).
 - [ ] Unit test simulating idle→engine-on; `ruff check` passes.
 
-**Downstream impact:** DriveDetector-adjacent (coordinate with the A-9 lane; distinct concern).
+**Downstream impact:** DriveDetector start-side (A-9 lane; Atlas design-gate DoD).
 
 ---
 
 ### US-433: PowerMonitor DB-write path activation — UpsMonitor → power_log (F-050, verify-first)
 **Description:** As the system, I want the UpsMonitor readings written to `power_log`, so power history is captured.
 
+> **Atlas-reviewed: almost certainly DONE** — `lifecycle.py:1873` "PowerMonitor initialized (US-243 power_log write path active)" + synced via US-412. Expect **close-with-evidence**, not new code.
+
 **Acceptance Criteria:**
-- [ ] **Verify-first:** re-query the live Pi — `power_log` may already be populating (Sprint 50 US-412 synced it). If the write path is live + healthy, close with evidence.
-- [ ] If gaps remain: activate/repair the UpsMonitor → `power_log` write path (VCELL/SOC/CRATE/power_source per poll).
-- [ ] Bench-verifiable (rows appear in `power_log`); `ruff check` passes.
+- [ ] **Verify-first:** re-query the live Pi — confirm `power_log` is populating (US-243 path + US-412 sync). If live + healthy, **close with evidence** (row counts + recent timestamps).
+- [ ] Only if a real gap remains: activate/repair the UpsMonitor → `power_log` write path (VCELL/SOC/CRATE/power_source per poll).
+- [ ] Bench-verifiable; `ruff check` passes on any `.py`.
 
 **Downstream impact:** Feeds `power_log` (now server-synced per US-412).
 
@@ -85,12 +91,14 @@ Two threads the CIO prioritized: **(A) analytics/data-integrity foundation** —
 ### US-434: drain_event close-on-poweroff targeted fix (F-062)
 **Description:** As the system, I want drain_event rows to close cleanly on poweroff, so drain records aren't left open.
 
-**Acceptance Criteria:**
-- [ ] **Verify-first:** re-query recent `drain_event` rows for stuck-open records post-poweroff. If clean, close with evidence.
-- [ ] If open-leak persists: a targeted close-on-poweroff fix in the shutdown path (mind the SS-T5 `ShutdownSequencer` — the orchestrator was retired).
-- [ ] Unit/bench test; `ruff check` passes.
+> **Atlas-reviewed: very likely MOOT** — `startDrainEvent`/`endDrainEvent` have **0 production callers** (`hardware_manager.py:73`; only the CLI drill + tests, which open+close in one run). Nothing opens a drain_event during operation → nothing left open at poweroff. Expect **no-op / close-with-evidence**. A real open-path would be a NEW feature contradicting the retired ladder + the BL-015 "~10s shutdown ≠ real drain" semantic — do NOT build it here.
 
-**Downstream impact:** Shutdown path (ShutdownSequencer); coordinate with the power_watch pipeline.
+**Acceptance Criteria:**
+- [ ] **Verify-first:** confirm 0 production `startDrainEvent` callers + no stuck-open `drain_event` rows post-poweroff → **close as moot with evidence** (no code).
+- [ ] Only if a real open-path is found (unexpected): a targeted close in `ShutdownSequencer` (`power_watch/controller.py`) — but flag to PM/Atlas first (it contradicts the retired ladder).
+- [ ] `ruff check` passes on any `.py`.
+
+**Downstream impact:** Expected no-op; honestly closes F-062.
 
 ---
 
@@ -174,12 +182,14 @@ Two threads the CIO prioritized: **(A) analytics/data-integrity foundation** —
 - **`/chain-validated`** — the whole V0.29 chain still awaits bench validation + the Bug-3a live car drill.
 - **No drive drills.**
 
-## 5. Open Questions (for Atlas's review)
+## 5. Open Questions — RESOLVED by Atlas's review (2026-07-02)
 
-1. **Placement:** derived signals (US-436) + cross-drive tool (US-438) — confirm server-side (Pi-emitter/server-authority), not Pi.
-2. **US-432 (drive_detect idle-poll)** — does this touch the A-9 DriveDetector lane enough to need your gate, or is it a contained poll-cadence fix?
-3. **US-434 (drain_event close)** — confirm the ShutdownSequencer is the right seam (orchestrator retired SS-T5).
-4. Any of the verify-first items (US-433/434/437) you expect are already-resolved?
+1. ✅ **Placement:** US-436 + US-438 **CONFIRMED server-side** (B-104: server is sole analytics writer).
+2. ✅ **US-432:** Ralph-ownable WITH the A-9 design-gate DoD (2 guardrails, folded into the story above) + verify-first (US-242/B-049 already built the escalation).
+3. ✅ **US-434:** very likely MOOT (0 production callers) — verify-first → close-with-evidence.
+4. ✅ **Verify-first:** US-433 almost certainly DONE (US-243 + US-412); US-434 moot; US-437 per-bug verify (can't pre-judge).
+
+**Sizing flag (Atlas → `/resize-sprint`):** US-433 + US-434 are likely no-ops → effectively ~8 real stories. Decide at resize whether to accept 8-effective or pull one deferred item forward.
 
 ## Action Items (NOT sprint stories)
 
