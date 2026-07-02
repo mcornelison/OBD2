@@ -86,7 +86,8 @@
       "type": "normal",
       "size": "M",
       "status": "sprint-ready",
-      "passes": false,
+      "passes": true,
+      "completionNotes": "US-427 DONE (code-complete; the UPS-drain-rig bench drill is a PM/bench gate -- no MAX17048 on dev, Pi is a deploy target). record_drain_test.py: new readCalibratedRegisterSocPct(monitor, uptimeSeconds, calibrationWindowSeconds=180) reads UpsMonitor.getBatteryPercentage() ONLY when past the cold-start window; _recordEvent now constructs a UpsMonitor (injectable for tests), reads the register at open+close via the guard, and passes startSocPct/endSocPct into the US-426 recorder kwargs -> start_soc_pct/end_soc_pct (separate from the operator --start-soc voltage slot, which still lands in start_vcell_v). Cold-start guard (US-234): uptime<180s OR uptime unknowable OR read-raises -> NULL, never a garbage percent (honest-instrument, Atlas BL-015 ruling). Uptime sourced from /proc/uptime (None off-Linux -> NULL, so a dev-box run records NULL not garbage). _printResult + docstring show the two _soc_pct slots. TD-058 cleanup: removed the dead batteryHealthRecorder chain end-to-end -- hardware_manager constructor param + self._batteryHealthRecorder store + BatteryHealthRecorder import + factory param/pass-through, AND lifecycle.py _createBatteryHealthRecorder() + its call/wiring (ghost of the SS-T5-deleted PowerDownOrchestrator, 0 callers of startDrainEvent/endDrainEvent in src/). Fixed a dangling :meth: docstring cross-ref in _createPowerLogWriter. IN-LOOP GATE: ruff clean on all 4 touched files; targeted 18 drain-test + 54 touched-module tests (hardware_manager/lifecycle/orchestrator-update) green; DB-validation tests query the real battery_health_log row (DoD #5). PM GATES OWED: (1) full pytest suite + mypy (base modules hardware_manager + lifecycle changed -> prioritize regression); (2) IRL bench drill on the UPS-drain rig -- outside cold-start window a closed row has start/end_soc_pct populated from the register; a drill opened within ~3 min of power-up records NULL. NOTE: cold-start proxy = system uptime (/proc/uptime); the MAX17048 keeps calibration across a Pi reboot while the UPS holds battery, so uptime is a conservative floor (may suppress a genuinely-calibrated gauge after a bare Pi reboot -> NULL, the safe direction). Flag to Atlas if a gauge-power-persistent signal is wanted later.",
       "acceptance": [
         "scripts/record_drain_test.py reads UpsMonitor.getBatteryPercentage() (register SoC%) into start_soc_pct/end_soc_pct (NOT the operator-typed voltage slot; NOT a sequencer drain-event -- ruling picked the bench CLI)",
         "cold-start guard (US-234): SoC% within the ~3-min MAX17048 calibration window -> NULL/flagged, never a garbage percent; guard in the recording path",
@@ -106,7 +107,15 @@
       ],
       "conditionalOutcomes": [],
       "goal": "As the CIO, I want the drain-test CLI to record real MAX17048 SoC% into _soc_pct, guarded against the cold-start calibration window, so recorded SoC% is trustworthy.",
-      "tasks": []
+      "tasks": [],
+      "feedback": {
+        "filesActuallyTouched": [
+          "scripts/record_drain_test.py",
+          "tests/scripts/test_record_drain_test.py",
+          "src/pi/hardware/hardware_manager.py",
+          "src/pi/obdii/orchestrator/lifecycle.py"
+        ]
+      }
     },
     {
       "id": "US-428",

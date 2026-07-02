@@ -29,3 +29,33 @@ Task: battery_health_log SoC% schema -- drop legacy _soc + add _soc_pct, ONE bot
 - **Gotcha**: the Pi sync path (getDeltaRows SELECT *) already sent *_vcell_v to a server model that lacked them; making the tiers identical (add vcell to server) both satisfies A-4 and removes the latent unmapped-key risk. Keep DrainEventCloseResult.endSoc / backfill endSoc Python attr names (they now carry the VCELL value) to minimize test churn -- only SQL column identifiers + fixtures changed.
 - **Gotcha**: replace_all matches exact indentation -- a same-string INSERT at a different indent was missed on the first pass; grep for the bare column token afterward to confirm zero stragglers.
 ---
+
+## 2026-07-01 - US-427 (Rex / Agent 1)
+Task: Wire register SoC% into the bench drain-CLI + US-234 cold-start guard + TD-058 cleanup (BL-015/F-060, deps US-426)
+
+### What was implemented:
+- `readCalibratedRegisterSocPct(monitor, *, uptimeSeconds, calibrationWindowSeconds=180)` -- reads `UpsMonitor.getBatteryPercentage()` ONLY when uptime is past the ~3-min cold-start window; uptime unknowable (None) OR inside the window OR a read that raises `UpsMonitorError` -> returns None WITHOUT reading garbage (US-234 honest-instrument).
+- `_readSystemUptimeSeconds()` -- `/proc/uptime` proxy for seconds-since-power-up (None off-Linux / unreadable).
+- `_recordEvent` now builds an (injectable) `UpsMonitor`, reads the register at open + close through the guard, and passes `startSocPct`/`endSocPct` into the US-426 recorder kwargs -> `start_soc_pct`/`end_soc_pct`. The operator `--start-soc`/`--end-soc` VOLTAGE still lands in `start_vcell_v`/`end_vcell_v` -- the two facts never collide.
+- `_printResult` + module docstring surface the two `_soc_pct` slots (shows `NULL (uncalibrated / no gauge)` when suppressed).
+- TD-058: removed the dead `batteryHealthRecorder` chain end-to-end -- `hardware_manager` constructor param + `self._batteryHealthRecorder` store + `BatteryHealthRecorder` import + factory param/pass-through, AND `lifecycle._createBatteryHealthRecorder()` + its call/wiring (ghost of the SS-T5-deleted `PowerDownOrchestrator`; `grep startDrainEvent\|endDrainEvent src/` = 0 callers). Fixed a now-dangling `:meth:` docstring cross-ref in `_createPowerLogWriter`.
+
+### Files changed:
+- Modified: `scripts/record_drain_test.py` (register-SoC% wiring + cold-start guard + print/docstring)
+- Modified: `tests/scripts/test_record_drain_test.py` (guard unit tests + `_recordEvent` DB-validation tests)
+- Modified: `src/pi/hardware/hardware_manager.py` (TD-058: drop dead recorder param/store/import/factory arg)
+- Modified: `src/pi/obdii/orchestrator/lifecycle.py` (TD-058: drop `_createBatteryHealthRecorder` + wiring)
+
+### Verification:
+- ruff check: clean on all 4 touched files.
+- Targeted: 18 `test_record_drain_test` + 54 touched-module tests (hardware_manager status-display / lifecycle / orchestrator-update-apply) green.
+- DB validation (DoD #5): tests query the real `battery_health_log` row -- past-window run populates `start/end_soc_pct` from the register; in-window run records NULL and never reads the register.
+- Bare-operator CLI smoke: `python scripts/record_drain_test.py --dry-run` imports the full chain (incl. new `pi.hardware.ups_monitor`) + runs.
+- PM/integration gates owed: full pytest + mypy (base modules hardware_manager + lifecycle changed -> prioritize regression); IRL UPS-drain bench drill (register-populated row outside window; NULL inside) -- no MAX17048 on dev, Pi is a deploy target.
+
+### Learnings for future iterations:
+- **Pattern discovered**: honest-instrument guard = pure function taking an injected "time-since-power-up" + an injected hardware double; the CLI wires real `/proc/uptime` + real `UpsMonitor`, tests wire lambdas + a fake. Keeps the cold-start rule unit-testable with zero hardware and no monkeypatching of `/proc`.
+- **Gotcha**: `UpsMonitor()` construction is import- and cold-start-safe on Windows -- `smbus2` is imported lazily inside `I2cClient.connect` (not at module load), and `getBatteryPercentage()` only touches I2C on read (which the guard catches as `UpsMonitorError` -> NULL). So a non-Pi run records NULL, never crashes.
+- **Gotcha**: dead-reference cleanup must follow the whole chain -- the `batteryHealthRecorder` ghost was CONSTRUCTED in `lifecycle.py` and threaded through the factory, not just stored in `hardware_manager`. Removing only the final store would leave a `TypeError` at the call site. grep the symbol across `src/` before declaring it dead.
+- **Design note**: system uptime is a *conservative* calibration proxy -- the MAX17048 keeps its ModelGauge calibration across a bare Pi reboot while the UPS holds battery, so a post-reboot drill could NULL a genuinely-calibrated gauge. That errs toward NULL (the safe, honest direction); flagged to Atlas in `completionNotes` if a gauge-power-persistent signal is wanted later.
+---
