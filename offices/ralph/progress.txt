@@ -336,3 +336,40 @@ Task: Derived signals -- acceleration + estimated distance from speed+time (F-10
   US-440 (its ACs list them) -- left untouched per lane discipline; flagged in
   completionNotes so US-440/PM document the drive_derived_signals table + F-106.
 ---
+
+## 2026-07-02 - US-437 (Agent 1 / Rex / Session 7, Sprint 53 V0.29.7) -- CLOSED (verify-first triage: 2 fixed TDD, 6 closed-with-evidence)
+Task: Tester V0.28+ data-profile findings -- BUG rollup (F-082, scoped to the 8 bugs)
+
+### Outcome: passes:true. Verify-first triage of the 8 N-bugs (2026-05-12 finding), grounded on LIVE Pi + server DB queries + current code. 2 genuinely-still-broken FIXED (TDD); 6 closed already-resolved/not-a-bug WITH EVIDENCE; 2 of those tracked (TD + issue) so none silently skipped.
+
+### Per-bug disposition:
+- N-1 sync_history 42% failed rows -> NOT-A-CODE-FIX. The 2 original modes are historical (newest 2026-05-01, resolved by v0006). Live: 48,962 failed now, dominated by a NEWER dtc_freeze_frame VIN-FK mode that is fail-loudly-by-design (sync.py:667, US-369) and self-cleared (0 failed 07-01/02). Prune exists (v0007) but age-only, not status-scoped. Filed issue I-sync-history-failed-row-backlog-age-only-prune.md.
+- N-2 connection_log mac='profile:daily' -> NOT-A-BUG. Intentional drive-event profile stamp (detector.py:1432, US-200); grew 19->52 by design; both tiers match. Hypothesis falsified; US-239 changed no code.
+- N-3 Pi has no schema_migrations ledger -> STILL-TRUE but M-L structural + harm bounded by idempotent ensureX()-every-boot. Filed TD-061 (too large for this story).
+- N-4 Pi battery_log residue -> FIXED. Live-confirmed empty battery_log lingering (server dropped in US-223/v0003). Added ensureBatteryLogRetired() mirroring ensureDriveStatisticsRetired + wired into database.py initialize(). 5 tests.
+- N-5 pi_state.no_new_drives not consumed -> NOT-A-BUG + SEPARATELY-OWNED. Premise misread: it's a drive_id MINT-gate, IS consumed (detector.py:1332); sync-idle is sync_cadence_controller.py. Dedup of B-078.
+- N-6 server battery_health_log start_soc/end_soc = voltage -> RESOLVED by US-289 + US-426. Both tiers now start_vcell_v/end_vcell_v + start_soc_pct/end_soc_pct; sync is column-name-generic. Incidental: pre-migration server rows have NULL vcell (v0016 didn't backfill) -- optional data-cleanup, noted for PM.
+- N-7 statistics NULL drive_id + int/bigint mismatch -> EXPECTED-BY-DESIGN. 63 NULLs are a frozen pre-US-200 block; drive_statistics no longer has a drive_id column (keyed on summary_id); remaining bigint/int mismatch is unconstrained + harmless.
+- N-8 drive_summary.profile_id NULL every row -> FIXED. Live 26/26 NULL. Root cause: the profile_id-populating path (analysis._ensureDriveSummary) retired with the trigger-seam (US-350/B-104); surviving compute_drive_summary never copied it. Added earliest-non-NULL realtime_data.profile_id -> summary.profile_id (preserve-NULL, never clobber, idempotent). 3 tests.
+
+### Files changed:
+- Modified: `src/pi/obdii/database_schema.py` (N-4 ensureBatteryLogRetired helper)
+- Modified: `src/pi/obdii/database.py` (N-4 import + wire into initialize())
+- Modified: `src/server/analytics/drive_summary_compute.py` (N-8 profile_id population)
+- Created: `tests/pi/obdii/test_battery_log_pi_table_retirement.py` (5 tests)
+- Modified: `tests/server/analytics/test_drive_summary_compute.py` (TestProfileIdPopulation, 3 tests + _seedRealtimeRows profileId param)
+- Created: `offices/pm/tech_debt/TD-061-pi-schema-migrations-ledger.md` (N-3 deferred)
+- Created: `offices/pm/issues/I-sync-history-failed-row-backlog-age-only-prune.md` (N-1 ops/PM call)
+
+### Gates (in-loop, synchronous):
+- pytest N-4+N-8 targeted (test_battery_log_pi_table_retirement + test_drive_statistics_pi_table_migration + test_drive_summary_compute) -> 28 passed
+- pytest regression (test_recompute_attribution_anomaly_cli + test_deploy_server_backfill_drives_11_20 + test_deploy_context_drive_simulator = exercises ObdDatabase.initialize wiring + compute consumer) -> 30 passed
+- ruff check on all 5 modified .py -> All checks passed
+
+### Learnings for future iterations:
+- **Pattern discovered**: a stale multi-bug rollup finding (51 days old, fast-moving schema) is mostly a list of HYPOTHESES to disprove. Verify-first each against LIVE DB + current code; most Low bugs get swept into intervening epics. Here 6 of 8 were already resolved / not-real; only 2 needed a fix. Parallel read-only agents (2 bugs each, live DB + code) made the triage fast without touching anything.
+- **Pattern discovered**: retiring a dead Pi table = an idempotent ensureXRetired(conn) boot helper (probe sqlite_master -> DROP if present, forensic row-count log, no-op if absent), NOT a migration file -- the Pi has no migration ledger (N-3). ensureDriveStatisticsRetired is the exact template; battery_log was a 1:1 copy.
+- **Gotcha**: "flag N-3 don't fix" -- the RIGHT call when the condition is real but the fix is M-L structural and its harm is already bounded by an existing pattern. File a TD, don't fold it in (scope fence).
+- **Gotcha**: N-8's NULL wasn't a never-built feature -- it was COLLATERAL of the US-350/B-104 trigger-seam retirement (the writer that set profile_id got retired; its replacement didn't carry the assignment forward). Trace what a field's writer USED to be before assuming it was never written.
+- **Gotcha**: N-5/N-2 both had a FALSE premise in the finding (mint-gate misread as sync-flag; intentional stamp misread as wrong-column bug). Verify the finding's mechanism claim, not just its symptom -- an honest "not-a-bug, here's why" close is a valid outcome.
+---

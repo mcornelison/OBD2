@@ -820,6 +820,64 @@ def ensureDriveStatisticsRetired(conn: sqlite3.Connection) -> bool:
     return True
 
 
+def ensureBatteryLogRetired(conn: sqlite3.Connection) -> bool:
+    """Idempotently drop the legacy Pi-side ``battery_log`` table.
+
+    US-437 (N-4) schema-drift cleanup.  Server migration ``v0003_us223`` dropped
+    ``battery_log`` (dead ``BatteryMonitor`` table, superseded by
+    ``battery_health_log``) server-side, but the Pi never dropped it -- the empty
+    table lingered on the Pi obd.db as pure schema-drift residue (Argus finding
+    2026-05-12 N-4; still present live 2026-07-02, 0 rows).  Mirrors
+    :func:`ensureDriveStatisticsRetired`'s PRAGMA-guarded pattern so re-runs and
+    fresh DBs are safe no-ops -- the durable, redeploy-safe fix (converges any
+    Pi still carrying the legacy table on its next boot).
+
+    On the FIRST invocation against a legacy DB (table present): logs an
+    INFO-level forensic record with the row count about to be dropped, then
+    issues ``DROP TABLE``.  N-4 confirmed 0 rows so no real data is lost, but
+    the log line lands the auditable proof for the per-Pi deploy record.
+
+    On every subsequent invocation (table absent): emits a DEBUG-level
+    absence-confirmation only -- the table is structurally gone.
+
+    Args:
+        conn: Open sqlite3 Connection to the Pi obd database.
+
+    Returns:
+        ``True`` iff the table existed and was dropped on this call,
+        ``False`` when the table was already absent.
+    """
+    import logging
+    logger = logging.getLogger("eclipse-obd")
+
+    existing = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' "
+        "AND name='battery_log'"
+    ).fetchone()
+    if existing is None:
+        logger.debug(
+            "battery_log table absent (retired per US-223 server-side; "
+            "US-437 N-4 Pi-side cleanup)"
+        )
+        return False
+
+    try:
+        rowCount = conn.execute(
+            "SELECT COUNT(*) FROM battery_log"
+        ).fetchone()[0]
+    except sqlite3.Error:
+        rowCount = -1
+
+    conn.execute("DROP TABLE IF EXISTS battery_log")
+    conn.commit()
+    logger.info(
+        "eclipse-obd | battery_log table dropped (was: %s rows) -- "
+        "US-437 N-4 schema-drift cleanup (server dropped it in US-223 v0003)",
+        rowCount,
+    )
+    return True
+
+
 # All schema statements in order of dependency
 ALL_SCHEMAS = [
     ('vehicle_info', SCHEMA_VEHICLE_INFO),
