@@ -29,29 +29,17 @@ mypy>=1.0.0                   # Static type checker
 types-setuptools>=57.0.0      # Type stubs for setuptools
 
 # --------------------------------------------------------------------------------
-# Database (optional - uncomment if using SQL Server or ORM)
-# --------------------------------------------------------------------------------
-# pyodbc>=4.0.0               # SQL Server connectivity (Windows: requires ODBC driver)
-# sqlalchemy>=2.0.0           # ORM - use if you need database abstraction layer
-
-# --------------------------------------------------------------------------------
-# API/HTTP (optional - uncomment for external API integrations)
-# --------------------------------------------------------------------------------
-# requests>=2.28.0            # HTTP client - use for synchronous API calls
-# httpx>=0.24.0               # Async HTTP client - use for async/concurrent requests
-
-# --------------------------------------------------------------------------------
-# Data Processing (optional - uncomment for data analysis features)
-# --------------------------------------------------------------------------------
-# pandas>=2.0.0               # Data manipulation - use for CSV/DataFrame operations
-# numpy>=1.24.0               # Numerical computing - use for array operations/math
-
-# --------------------------------------------------------------------------------
-# Logging and Monitoring (optional)
-# --------------------------------------------------------------------------------
-# structlog>=23.0.0           # Structured logging - use for JSON-formatted logs
-
-# --------------------------------------------------------------------------------
 # Offline Calibration Tooling (tools/speed_calibration -- NOT pi/server runtime)
 # --------------------------------------------------------------------------------
 fitparse>=1.2.0              # Parse Strava/Garmin FIT files (SPEED-PID GPS calibration)
+
+# --------------------------------------------------------------------------------
+# Tier-specific dependencies live in their own files (US-439 / F-004)
+# --------------------------------------------------------------------------------
+# This file carries only the shared/common + dev-tooling deps. Server-tier deps
+# (fastapi, sqlalchemy, aiomysql, pymysql, httpx, ...) are in requirements-server.txt;
+# Pi-tier deps (obd, lgpio, smbus2, display drivers, ...) are in requirements-pi.txt.
+# The old Python-template "optional -- uncomment if using X" block (pyodbc, requests,
+# pandas, numpy, structlog, plus sqlalchemy/httpx that the server already declares)
+# was removed as dead scaffolding: none were imported here and it implied the ORM
+# was "optional" when the server tier depends on it heavily.

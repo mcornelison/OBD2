@@ -48,5 +48,9 @@ adafruit-circuitpython-icm20x>=1.0.0    # ICM-20948 9-DoF IMU (@0x69)
 # --------------------------------------------------------------------------------
 # System Integration
 # --------------------------------------------------------------------------------
-# systemd integration (for service management)
-# sdnotify>=0.3.0             # systemd notification
+# The Pi services run under systemd as Type=simple / Type=oneshot units (see
+# deploy/*.service), so the sd_notify watchdog protocol is not used and the
+# `sdnotify` Python package is not a dependency. The dead `# sdnotify>=0.3.0`
+# placeholder was removed here (US-439 / F-004). If a unit ever adopts
+# Type=notify + WatchdogSec (the optional self-heal floated in I-034), add the
+# dep in the same story that wires the watchdog pings -- not before.
