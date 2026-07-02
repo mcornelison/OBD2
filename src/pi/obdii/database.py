@@ -67,9 +67,12 @@ from src.pi.power.battery_health import (
     ensureBatteryHealthLogTable,
     ensureBatteryHealthLogVcellColumns,
 )
-from src.pi.power.power_db import ensurePowerLogVcellColumn
+from src.pi.power.power_db import (
+    ensurePowerLogDataQuality,
+    ensurePowerLogVcellColumn,
+)
 
-from .data_source import ensureAllCaptureTables
+from .data_source import ensureAllCaptureTables, ensureDataSourceCheckWidened
 from .database_schema import (
     ALL_INDEXES,
     ALL_SCHEMAS,
@@ -262,6 +265,19 @@ class ObdDatabase:
                         ', '.join(migrated),
                     )
 
+                # US-424 (F-116) forward-only CHECK-widen: rebuild realtime_data
+                # so its data_source CHECK accepts 'foreign' (the value the
+                # ingest guard retro-tags contaminating foreign-vehicle rows
+                # with).  SQLite can't ALTER a CHECK, so this rebuilds the table
+                # once on a pre-US-424 DB; a no-op on fresh / already-widened
+                # DBs.  realtime_data is the only table the guard tags 'foreign'
+                # and has no inbound FKs, so the rebuild is safe.
+                if ensureDataSourceCheckWidened(conn, 'realtime_data'):
+                    logger.info(
+                        "Widened realtime_data data_source CHECK for 'foreign' "
+                        "(US-424 / F-116)"
+                    )
+
                 # US-200 idempotent migration: back-fill drive_id on any
                 # pre-US-200 capture tables.  Also creates the per-table
                 # IX_<table>_drive_id index (idempotent CREATE INDEX IF
@@ -334,6 +350,13 @@ class ObdDatabase:
                 # disturbing existing rows.
                 if ensurePowerLogVcellColumn(conn):
                     logger.info("Added vcell column to power_log (US-252)")
+
+                # US-419 idempotent migration: add ``data_quality`` to
+                # power_log for the F-080 post-reboot clock-drift flag.
+                # Pre-US-419 databases gain the column here without
+                # disturbing existing rows.
+                if ensurePowerLogDataQuality(conn):
+                    logger.info("Added data_quality column to power_log (US-419)")
 
                 # US-351 retirement migration: drop the legacy Pi-side
                 # ``drive_statistics`` table on first boot post-V0.27.17.

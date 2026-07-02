@@ -69,12 +69,14 @@ def _nodeAvailable() -> bool:
 
 def test_dashboardHtml_hasBothCardSlots_s1():
     """S-1: the carousel has the System Status + Battery Health card slots, plus
-    the Alerts (DTC) card added in US-406."""
+    the Alerts (DTC) card added in US-406 and the LTFT Trend card added in
+    US-420 (registering a new card grows the slot count by one)."""
     html = _read(KIT_DIR, "dashboard.html")
-    assert html.count('class="card"') == 3
+    assert html.count('class="card"') == 4
     assert 'data-state="system-status"' in html
     assert 'data-state="battery-health"' in html
     assert 'data-state="dtc"' in html
+    assert 'data-state="ltft-trend"' in html
 
 
 def test_dashboardHtml_hasPersistentTopBarGlyphs_d3():
@@ -1144,3 +1146,131 @@ def test_dashboardCss_hasClearButtonStyles_us407():
         "the disabled Clear button must be visibly inert"
     )
     assert "#clear-confirm" in css
+
+
+# ---------------------------------------------------------------------------
+# US-420 -- LTFT Trend card render logic (F-096). The card is a PURE CONSUMER of
+# the `ltft-trend` emitter (which CLASSIFIES the drift + the insufficient guard);
+# the view only maps the verdict -> a tile level + bar colours. The honest-
+# instrument rule: an insufficient window NEVER renders a green/ok headline, and
+# a drift beyond +/-10% is visibly distinct (down) from a healthy trend.
+# ---------------------------------------------------------------------------
+
+_US420_NODE_SCRIPT = r"""
+const assert = require('assert');
+const c = require(process.argv[1]);
+
+// A non-object payload -> no view (the shell renders `unavailable`).
+assert.strictEqual(c.ltftTrendView(null), null, 'null -> no view');
+assert.strictEqual(c.ltftTrendView('x'), null, 'string -> no view');
+assert.strictEqual(c.ltftTrendView([]), null, 'array -> no view');
+
+function pt(driveId, avg, level) {
+  return { driveId: driveId, ts: null, ltftAvg: avg, level: level };
+}
+function trend(opts) {
+  return {
+    pid: 'LONG_FUEL_TRIM_1',
+    sufficient: opts.sufficient,
+    level: opts.level,
+    driveCount: opts.points.length,
+    minDrives: 2,
+    okAbs: 5.0, driftAbs: 10.0,
+    trend: opts.trend === undefined ? null : opts.trend,
+    current: opts.points.length ? opts.points[opts.points.length - 1] : null,
+    points: opts.points,
+    ts: '2026-07-01T12:00:00Z',
+  };
+}
+
+// --- healthy sufficient window -> headline ok, points carried ----------------
+const healthy = c.ltftTrendView(trend({
+  sufficient: true, level: 'ok', trend: 'improving',
+  points: [pt(31, -8.0, 'amber'), pt(32, -4.0, 'ok'), pt(33, -2.0, 'ok')],
+}));
+assert.ok(healthy, 'valid state -> a view');
+assert.strictEqual(healthy.sufficient, true, 'sufficient carried');
+assert.strictEqual(healthy.headline.level, 'ok', 'healthy -> ok headline');
+assert.ok(/-2\.00%/.test(healthy.headline.value), 'headline = current drift');
+assert.ok(/toward 0/i.test(healthy.headline.detail), 'improving trend surfaced');
+assert.strictEqual(healthy.points.length, 3, 'all drive points carried');
+assert.deepStrictEqual(healthy.points.map(function (p) { return p.level; }),
+  ['amber', 'ok', 'ok'], 'each bar keeps its own drift level');
+assert.strictEqual(healthy.points[0].value, '-8.00%', 'bar value formatted');
+
+// --- drift beyond +/-10% -> headline down (visibly distinct from healthy) -----
+const drift = c.ltftTrendView(trend({
+  sufficient: true, level: 'down', trend: 'worsening',
+  points: [pt(31, -6.0, 'amber'), pt(32, -9.0, 'amber'), pt(33, -14.0, 'down')],
+}));
+assert.strictEqual(drift.headline.level, 'down', 'drift -> down headline');
+assert.notStrictEqual(drift.headline.level, healthy.headline.level, 'down != ok');
+assert.strictEqual(drift.points[2].level, 'down', 'the drifted drive bar is down');
+
+// --- insufficient window -> NEVER green (honest-instrument, forced here too) --
+const thin = c.ltftTrendView(trend({
+  sufficient: false, level: 'insufficient', points: [pt(33, -2.0, 'ok')],
+}));
+assert.strictEqual(thin.sufficient, false, 'insufficient carried');
+assert.strictEqual(thin.headline.level, 'insufficient', 'insufficient headline');
+assert.notStrictEqual(thin.headline.level, 'ok', 'never green off too little data');
+assert.ok(/insufficient/i.test(thin.headline.value), 'value says insufficient');
+assert.ok(/need 2\+/i.test(thin.headline.detail), 'detail names the min-drives need');
+assert.strictEqual(thin.points.length, 1, 'the single point still listed honestly');
+
+// --- defense-in-depth: a mislabeled ok level with sufficient:false stays muted
+const lying = c.ltftTrendView(trend({
+  sufficient: false, level: 'ok', points: [pt(33, -2.0, 'ok')],
+}));
+assert.strictEqual(lying.headline.level, 'insufficient',
+  'sufficient:false forces insufficient even if the state claims ok');
+
+// --- empty points -> insufficient, no crash ----------------------------------
+const empty = c.ltftTrendView(trend({ sufficient: true, level: 'ok', points: [] }));
+assert.strictEqual(empty.sufficient, false, 'no points -> not sufficient');
+assert.strictEqual(empty.headline.level, 'insufficient', 'no points -> insufficient');
+assert.strictEqual(empty.points.length, 0, 'no bars');
+
+// --- fmtLtftPct: signed 2dp; non-number -> "--" ------------------------------
+assert.strictEqual(c.fmtLtftPct(-6.25), '-6.25%', 'negative sign kept');
+assert.strictEqual(c.fmtLtftPct(2.1), '+2.10%', 'positive gets a + and 2dp');
+assert.strictEqual(c.fmtLtftPct(0), '0.00%', 'zero has no sign');
+assert.strictEqual(c.fmtLtftPct(null), '--', 'non-number -> placeholder');
+
+console.log('US420_OK');
+"""
+
+
+@pytest.mark.skipif(not _nodeAvailable(), reason="node not available on PATH")
+def test_ltftTrendView_renderLogic_f096_us420():
+    """US-420: the LTFT Trend view maps the emitter verdict -> an honest headline
+    + per-drive bars (healthy ok, drift-beyond-10 down/distinct, insufficient
+    never green), formatting signed 2-dp percents."""
+    result = subprocess.run(
+        ["node", "-e", _US420_NODE_SCRIPT, str(KIT_DIR / "carousel.js")],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "US420_OK" in result.stdout
+
+
+def test_dashboardHtml_hasLtftTrendCard_us420():
+    """US-420: the LTFT Trend card slot is present (JS fills its body from the
+    polled `ltft-trend` state; a missing/malformed file -> `unavailable`)."""
+    html = _read(KIT_DIR, "dashboard.html")
+    assert 'data-state="ltft-trend"' in html, "LTFT Trend card slot missing"
+    assert "LTFT Trend" in html
+
+
+def test_dashboardCss_hasLtftTrendStyles_us420():
+    """US-420: the per-drive bar styles bind ok/amber/down to the palette so a
+    drifted drive is visibly not-green, and the insufficient headline is muted."""
+    css = _read(KIT_DIR, "dashboard.css")
+    assert ".ltft-bars" in css
+    assert ".ltft-bar" in css
+    assert '.ltft-bar[data-level="down"]  .ltft-bar-value' in css or (
+        '.ltft-bar[data-level="down"]' in css
+    )
+    assert '.tile[data-level="insufficient"]' in css

@@ -536,9 +536,12 @@ class TestDisabledAndEmpty:
 
         results = client.pushAllDeltas()
 
-        assert len(results) == len(sync_log.IN_SCOPE_TABLES)
+        # US-417: the sweep now also covers registered natural-key snapshot
+        # tables (startup_log) after the delta tables.
+        expected = sync_log.IN_SCOPE_TABLES | sync_log.snapshotSyncTables()
+        assert len(results) == len(expected)
         returnedTables = {r.tableName for r in results}
-        assert returnedTables == sync_log.IN_SCOPE_TABLES
+        assert returnedTables == expected
 
         # Only realtime_data has rows in our fixture DB.
         byTable = {r.tableName: r for r in results}
@@ -548,6 +551,10 @@ class TestDisabledAndEmpty:
         # the delta-by-PK model); the remaining delta tables are empty.
         for tableName in sync_log.SNAPSHOT_TABLES:
             assert byTable[tableName].status == PushStatus.SKIPPED
+        # US-417: startup_log is registered for snapshot sync but not created
+        # in this fixture DB -> the missing-table guard yields EMPTY.
+        for tableName in sync_log.snapshotSyncTables():
+            assert byTable[tableName].status == PushStatus.EMPTY
         for tableName in (
             sync_log.IN_SCOPE_TABLES
             - sync_log.SNAPSHOT_TABLES

@@ -123,6 +123,31 @@ html, body {
 .ladder[data-stage="TRIGGER"] .ladder-banner { color: var(--red-light); }
 .ladder-runtime { font-size: 11px; color: var(--text-secondary); }
 
+/* --- US-420 LTFT Trend card (F-096) ----------------------------------------- */
+/* An insufficient trend renders a muted, plainly non-green headline (honest-
+   instrument: too little data is never a confident healthy verdict). */
+.tile[data-level="insufficient"] .tile-value {
+  color: var(--text-tertiary); font-style: italic; font-weight: 400;
+}
+/* The multi-drive bar row: one bar per drive, coloured by its OWN drift level
+   so a drive beyond +/-10% (down) is visibly not-green next to healthy drives. */
+.ltft-bars {
+  display: flex; gap: 4px; margin-top: 8px; padding-bottom: 2px;
+  overflow-x: auto;
+}
+.ltft-bar {
+  flex: 1 0 auto; min-width: 44px;
+  display: flex; flex-direction: column; align-items: center; gap: 2px;
+  padding: 6px 4px; border-radius: 4px;
+  border: 1px solid var(--surface);
+}
+.ltft-bar-value { font-size: 13px; font-weight: 600; color: var(--text-primary); }
+.ltft-bar-drive { font-size: 10px; color: var(--text-tertiary); }
+.ltft-bar[data-level="ok"]    .ltft-bar-value { color: var(--ok-green); }
+.ltft-bar[data-level="amber"] .ltft-bar-value { color: var(--amber-warn); }
+.ltft-bar[data-level="down"]  .ltft-bar-value { color: var(--red-light); }
+.ltft-bar[data-level="down"]  { border-color: var(--red-light); }
+
 /* --- page dots (>=40px touch target, 10px visual) --------------------------- */
 #dots {
   position: absolute; bottom: 0; left: 0; right: 0; height: 24px;

@@ -151,6 +151,17 @@ DEFAULTS: dict[str, Any] = {
     'pi.hardware.upsMonitor.vcellSlopeThresholdVoltsPerMinute': -0.005,
     'pi.hardware.upsMonitor.vcellBatteryThresholdVolts': 3.95,
     'pi.hardware.upsMonitor.vcellBatteryThresholdSustainedSeconds': 30,
+    # US-424 / F-116: foreign-vehicle contamination ingest guard.  Ships DARK
+    # (enabled=false) so the CIO arms it after the bench drill confirms the
+    # Eclipse never false-trips.  busRateThresholdHz sits just above the 1998
+    # Eclipse GST ISO 9141-2 K-line sustained PID-response ceiling (~6.3/s); a
+    # sustained realtime_data row rate above it means a non-Eclipse (faster
+    # protocol) vehicle is connected.  windowSeconds is the rolling averaging
+    # window that makes the check sustained, not instantaneous.
+    'pi.foreignGuard.enabled': False,
+    'pi.foreignGuard.busRateThresholdHz': 7.0,
+    'pi.foreignGuard.sustainedSeconds': 10.0,
+    'pi.foreignGuard.measurementWindowSeconds': 3.0,
     # US-243 / B-050: PowerMonitor activation. Spool's 2026-04-21 audit +
     # 2026-04-29 inverted-power drill found PowerMonitor (783 lines, the
     # writer for power_log) was never instantiated in production -- 5 drain

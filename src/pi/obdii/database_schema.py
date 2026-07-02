@@ -183,7 +183,7 @@ CREATE TABLE IF NOT EXISTS profiles (
 
     -- Data origin (US-195 / Spool CR #4)
     data_source TEXT NOT NULL DEFAULT 'real'
-        CHECK (data_source IN ('real','replay','physics_sim','fixture')),
+        CHECK (data_source IN ('real','replay','physics_sim','fixture','foreign')),
 
     -- Audit columns
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -237,7 +237,7 @@ CREATE TABLE IF NOT EXISTS realtime_data (
 
     -- Data origin (US-195 / Spool CR #4)
     data_source TEXT NOT NULL DEFAULT 'real'
-        CHECK (data_source IN ('real','replay','physics_sim','fixture')),
+        CHECK (data_source IN ('real','replay','physics_sim','fixture','foreign')),
 
     -- Per-drive scoping (US-200 / Spool Data v2 Story 2).  Nullable --
     -- pre-US-200 rows and rows written while no drive is active remain
@@ -304,7 +304,7 @@ CREATE TABLE IF NOT EXISTS statistics (
     -- Data origin -- statistics inherit the tag of the dominant input
     -- rows; live-path defaults to 'real' (US-195 / Spool CR #4).
     data_source TEXT NOT NULL DEFAULT 'real'
-        CHECK (data_source IN ('real','replay','physics_sim','fixture')),
+        CHECK (data_source IN ('real','replay','physics_sim','fixture','foreign')),
 
     -- Per-drive scoping (US-200).  Statistics computed post-drive carry
     -- the drive_id of the drive they summarize; multi-drive rollups
@@ -389,7 +389,7 @@ CREATE TABLE IF NOT EXISTS calibration_sessions (
 
     -- Data origin (US-195 / Spool CR #4)
     data_source TEXT NOT NULL DEFAULT 'real'
-        CHECK (data_source IN ('real','replay','physics_sim','fixture')),
+        CHECK (data_source IN ('real','replay','physics_sim','fixture','foreign')),
 
     -- Audit column
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -491,7 +491,7 @@ CREATE TABLE IF NOT EXISTS connection_log (
 
     -- Data origin (US-195 / Spool CR #4)
     data_source TEXT NOT NULL DEFAULT 'real'
-        CHECK (data_source IN ('real','replay','physics_sim','fixture')),
+        CHECK (data_source IN ('real','replay','physics_sim','fixture','foreign')),
 
     -- Per-drive scoping (US-200).  drive_start / drive_end events that
     -- frame a drive carry its drive_id; pre-CRANKING connection attempts
@@ -533,7 +533,13 @@ CREATE TABLE IF NOT EXISTS power_log (
     on_ac_power INTEGER NOT NULL DEFAULT 1,
 
     -- US-252: VCELL volts at stage transition (NULL for legacy rows)
-    vcell REAL
+    vcell REAL,
+
+    -- US-419 (F-080): post-reboot clock-drift honest instrument.  'full' when
+    -- the row's timestamp is trustworthy; 'clock_unsynced' when written
+    -- pre-NTP-sync (dead-RTC reset).  Pi-LOCAL forensic flag -- stripped from
+    -- the sync wire (server computes its own data_quality).  NULL on legacy rows.
+    data_quality TEXT
 );
 """
 
@@ -622,7 +628,14 @@ CREATE TABLE IF NOT EXISTS startup_log (
 
     -- When this row was written (canonical ISO-8601 UTC).
     recorded_at TEXT NOT NULL
-        DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+        DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+
+    -- US-419 (F-080): post-reboot clock-drift honest instrument.  'full' when
+    -- the boot clock is trustworthy; 'clock_unsynced' when the timestamp was
+    -- written pre-NTP-sync (dead-RTC reset) -- see src/pi/diagnostics/clock_sync.py.
+    -- Pi-LOCAL forensic flag: stripped from the sync wire (server computes its
+    -- own data_quality).  NULL on legacy rows written before US-419.
+    data_quality TEXT
 );
 """
 
@@ -648,6 +661,85 @@ def ensureStartupLogForensicColumns(conn: sqlite3.Connection) -> None:
         if col not in existing:
             conn.execute(f"ALTER TABLE startup_log ADD COLUMN {col} TEXT")
     conn.commit()
+
+
+def ensureStartupLogRecordedAt(conn: sqlite3.Connection) -> bool:
+    """Idempotently ensure startup_log carries the ``recorded_at`` column.
+
+    ``recorded_at`` is the SNAPSHOT_SYNC delta cursor for startup_log (US-417 /
+    F-101): the Pi push reads rows where ``recorded_at > last_snapshot_cursor``.
+    It has shipped in ``SCHEMA_STARTUP_LOG`` since the table was created (US-263,
+    ``665863e``), so on any real Pi DB this guard is a **no-op** -- it exists to
+    satisfy the US-417 "(if absent)" acceptance path defensively (a legacy /
+    partial startup_log created without the column gains it before sync reads
+    it).
+
+    The column is added as plain nullable ``TEXT``: SQLite's ``ALTER TABLE ...
+    ADD COLUMN`` forbids the schema's non-constant ``strftime(...)`` default, and
+    pre-existing legacy rows carry no cursor value anyway (NULL sorts before
+    every ISO-8601 timestamp, so they are simply re-synced once on first push --
+    harmless under the idempotent natural-key server upsert).
+
+    A missing startup_log table is a graceful no-op (lazy-init pattern shared
+    with :func:`src.pi.data.sync_log.ensureSyncModifiedAtSchema`).
+
+    Args:
+        conn: An open sqlite3 Connection to the Pi-side obd database.  The
+            caller owns the connection; this commits after any ALTER.
+
+    Returns:
+        ``True`` iff the ALTER actually ran (the column was previously absent);
+        ``False`` when the column already existed or the table does not exist.
+    """
+    tableExists = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name = 'startup_log'",
+    ).fetchone()
+    if tableExists is None:
+        return False
+    existing = {r[1] for r in conn.execute("PRAGMA table_info(startup_log)")}
+    if "recorded_at" in existing:
+        return False
+    conn.execute("ALTER TABLE startup_log ADD COLUMN recorded_at TEXT")
+    conn.commit()
+    return True
+
+
+def ensureStartupLogDataQuality(conn: sqlite3.Connection) -> bool:
+    """Idempotently ensure startup_log carries the ``data_quality`` column.
+
+    ``data_quality`` is the US-419 (F-080) post-reboot clock-drift flag: the
+    boot-log writer stamps ``'clock_unsynced'`` when the row was written before
+    systemd-timesyncd disciplined the clock (dead-RTC reset), ``'full'``
+    otherwise.  Fresh DBs get the column from :data:`SCHEMA_STARTUP_LOG`; a
+    legacy startup_log (present on any Pi deployed before US-419) gains it here.
+
+    Added as plain nullable ``TEXT`` -- SQLite ``ALTER TABLE ... ADD COLUMN``
+    permits a nullable column with no default, and pre-existing rows carry no
+    clock verdict anyway (NULL = unassessed).  Mirrors the PRAGMA-guarded,
+    caller-commits-nothing... actually this commits after its own ALTER, exactly
+    like :func:`ensureStartupLogRecordedAt` (both run from the standalone
+    boot-log write path, not the shared ``initialize`` transaction).
+
+    A missing startup_log table is a graceful no-op.
+
+    Args:
+        conn: An open sqlite3 Connection to the Pi-side obd database.
+
+    Returns:
+        ``True`` iff the ALTER actually ran (column was previously absent);
+        ``False`` when the column already existed or the table does not exist.
+    """
+    tableExists = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name = 'startup_log'",
+    ).fetchone()
+    if tableExists is None:
+        return False
+    existing = {r[1] for r in conn.execute("PRAGMA table_info(startup_log)")}
+    if "data_quality" in existing:
+        return False
+    conn.execute("ALTER TABLE startup_log ADD COLUMN data_quality TEXT")
+    conn.commit()
+    return True
 
 
 # Pi-side ``drive_statistics`` table -- RETIRED V0.27.17 (US-351 / B-104 Step 1b).

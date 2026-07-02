@@ -123,6 +123,15 @@ class Base(DeclarativeBase):
 
 DATA_SOURCE_VALUES: tuple[str, ...] = (
     'real', 'replay', 'physics_sim', 'fixture',
+    # US-424 / F-116: foreign-vehicle contamination marker.  Mirrors the Pi
+    # SSOT (src/pi/obdii/data_source.py::DATA_SOURCE_VALUES) so a foreign-tagged
+    # row synced up from the Pi is a known value, and every server-side
+    # ``WHERE data_source='real'`` analytics filter auto-excludes it.  The
+    # server data_source column carries no DB-level CHECK (application-enforced
+    # only), so no server migration is needed to accept the value; the Pi and
+    # server tuples are pinned equal by
+    # tests/pi/data/test_data_source_foreign_marker.py (A-4, no-drift).
+    'foreign',
 )
 DATA_SOURCE_DEFAULT: str = 'real'
 DATA_SOURCE_LENGTH: int = 16
@@ -784,6 +793,52 @@ class PowerLog(Base):
     vcell: Mapped[float | None] = mapped_column(Float)
 
 
+class StartupLog(Base):
+    """Pi boot/startup log, mirrored from Pi (US-417 / F-101, closes BL-013).
+
+    One row per boot, keyed on the natural TEXT ``boot_id`` (from
+    ``/proc/sys/kernel/random/boot_id``) -- append-only + immutable
+    (``INSERT OR IGNORE`` once per boot).  A TEXT PK has no monotonic integer
+    cursor and the implicit ``rowid`` is VACUUM-renumberable, so this table
+    syncs via the natural-key **snapshot** path (US-416), NOT the integer
+    ``id`` -> ``source_id`` delta path.  There is therefore **no**
+    ``source_id`` column; rows dedup on ``UNIQUE(source_device, boot_id)`` and
+    the server upsert (``runSnapshotUpsert``) is idempotent on re-sync (the
+    Pi's ``recorded_at`` cursor over-reads harmlessly by design).
+
+    The per-table (naturalKeyCols, cursorCol) contract lives ONCE in the shared
+    ``src.common.sync.snapshot_registry.SNAPSHOT_SYNC`` (A-4); this model is the
+    server half, registered in ``sync._SNAPSHOT_TABLE_REGISTRY``.
+
+    See ``src/pi/obdii/database_schema.py::SCHEMA_STARTUP_LOG`` for the Pi-side
+    DDL.  Timestamp-ish columns are stored as canonical ISO-8601 TEXT (matching
+    the Pi's storage) rather than DATETIME so no coercion is applied to journal
+    timestamps that may be NULL or non-parseable.
+    """
+
+    __tablename__ = "startup_log"
+    __table_args__ = (
+        UniqueConstraint("source_device", "boot_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    source_device: Mapped[str] = mapped_column(String(64), nullable=False)
+    synced_at: Mapped[datetime | None] = mapped_column(
+        DateTime, server_default=func.now(),
+    )
+    sync_batch_id: Mapped[int | None] = mapped_column(Integer)
+
+    # Pi-native columns (mirror SCHEMA_STARTUP_LOG).  boot_id is the natural
+    # key half; the timestamp columns are ISO-8601 TEXT, matching the Pi.
+    boot_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    prior_boot_clean: Mapped[int | None] = mapped_column(Integer)
+    prior_last_entry_ts: Mapped[str | None] = mapped_column(String(40))
+    current_boot_first_entry_ts: Mapped[str | None] = mapped_column(String(40))
+    prior_boot_last_stage: Mapped[str | None] = mapped_column(String(64))
+    prior_boot_reason: Mapped[str | None] = mapped_column(String(64))
+    recorded_at: Mapped[str | None] = mapped_column(String(40))
+
+
 # ==============================================================================
 # Server-Only Tables
 # ==============================================================================
@@ -880,6 +935,16 @@ class Device(Base):
 DATA_QUALITY_ATTRIBUTION_ANOMALY: str = "attribution_anomaly"
 
 
+# US-424 / F-116: drive-level foreign-vehicle marker.  The companion to the
+# row-level data_source='foreign' tag -- a drive captured from a vehicle that is
+# NOT the Eclipse (the Ford Explorer, drive 33) is stamped 'foreign_vehicle' on
+# drive_summary + drive_statistics so per-drive analytics can exclude it.
+# Single source of truth for the literal; both the model enums below and the
+# compute-path classifier import it (drive_statistics_compute.py).  15 chars --
+# fits DATA_QUALITY_COLUMN_LENGTH (20) with headroom.
+DATA_QUALITY_FOREIGN_VEHICLE: str = "foreign_vehicle"
+
+
 # US-377 / F-107: shared VARCHAR width for the data_quality columns on both
 # drive_summary and drive_statistics.  Must stay >= the longest CHECK-permitted
 # value ('attribution_anomaly', 19 chars).  The original VARCHAR(16) was too
@@ -899,6 +964,7 @@ DRIVE_SUMMARY_DATA_QUALITY_DEFAULT: str = "full"
 DRIVE_SUMMARY_DATA_QUALITY_VALUES: tuple[str, ...] = (
     DRIVE_SUMMARY_DATA_QUALITY_DEFAULT,
     DATA_QUALITY_ATTRIBUTION_ANOMALY,
+    DATA_QUALITY_FOREIGN_VEHICLE,
 )
 
 
@@ -1055,6 +1121,7 @@ class DriveSummary(Base):
 
 DRIVE_STATISTICS_DATA_QUALITY_VALUES: tuple[str, ...] = (
     "full", "sparse", "below_threshold", DATA_QUALITY_ATTRIBUTION_ANOMALY,
+    DATA_QUALITY_FOREIGN_VEHICLE,
 )
 DRIVE_STATISTICS_DATA_QUALITY_DEFAULT: str = "full"
 
@@ -1339,6 +1406,7 @@ __all__ = [
     "CalibrationSession",
     "DtcLog",
     "DtcFreezeFrame",
+    "StartupLog",
     "VEHICLE_INFO_APPEND_ONLY_COMMENT",
     # Server-only
     "SyncHistory",
@@ -1350,6 +1418,7 @@ __all__ = [
     "DriveStatistic",
     "DRIVE_STATISTICS_DATA_QUALITY_VALUES",
     "DRIVE_STATISTICS_DATA_QUALITY_DEFAULT",
+    "DATA_QUALITY_FOREIGN_VEHICLE",
     "DATA_QUALITY_COLUMN_LENGTH",
     "TrendSnapshot",
     "AnomalyLog",

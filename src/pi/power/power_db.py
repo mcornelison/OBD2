@@ -41,10 +41,12 @@ and delegates row-writing here.
 import logging
 import os
 import sqlite3
+from collections.abc import Callable
 from datetime import datetime
 from typing import Any
 
 from src.common.time.helper import utcIsoNow
+from src.pi.diagnostics.clock_sync import classifyClockQuality
 
 from .types import PowerReading, PowerSource
 
@@ -55,6 +57,7 @@ def logPowerReading(
     database: Any | None,
     reading: PowerReading,
     eventType: str,
+    clockQuality: Callable[[str], str] = classifyClockQuality,
 ) -> None:
     """
     Log a power reading to the database.
@@ -63,6 +66,10 @@ def logPowerReading(
         database: ObdDatabase instance (or None)
         reading: The power reading to log
         eventType: Type of event (ac_power, battery_power)
+        clockQuality: US-419 (F-080) clock-drift verdict for the row's
+            timestamp -> data_quality.  Defaults to the floor-only
+            :func:`src.pi.diagnostics.clock_sync.classifyClockQuality`
+            (subprocess-free -- power_log writes must add no latency).
     """
     if database is None:
         return
@@ -74,17 +81,19 @@ def logPowerReading(
             # The reading.timestamp field may be naive local-time (upstream
             # PowerReading default is naive datetime.now()); capture rows must
             # not inherit that drift.
+            ts = utcIsoNow()
             cursor.execute(
                 """
                 INSERT INTO power_log
-                (timestamp, event_type, power_source, on_ac_power)
-                VALUES (?, ?, ?, ?)
+                (timestamp, event_type, power_source, on_ac_power, data_quality)
+                VALUES (?, ?, ?, ?, ?)
                 """,
                 (
-                    utcIsoNow(),
+                    ts,
                     eventType,
                     reading.powerSource.value,
                     1 if reading.onAcPower else 0,
+                    clockQuality(ts),
                 )
             )
             logger.debug(f"Logged power status to database | type={eventType}")
@@ -97,6 +106,7 @@ def logPowerTransition(
     eventType: str,
     timestamp: datetime,  # noqa: ARG001 -- kept for BC; DB row uses utcIsoNow at write-time
     currentSource: PowerSource,
+    clockQuality: Callable[[str], str] = classifyClockQuality,
 ) -> None:
     """
     Log a power transition event to the database.
@@ -107,6 +117,8 @@ def logPowerTransition(
         timestamp: Historical transition time (retained for API BC; the
             persisted row uses canonical write-time to satisfy TD-027)
         currentSource: Current power source after transition
+        clockQuality: US-419 clock-drift verdict -> data_quality (floor-only
+            default; see :func:`logPowerReading`).
     """
     if database is None:
         return
@@ -115,17 +127,19 @@ def logPowerTransition(
         with database.connect() as conn:
             cursor = conn.cursor()
             # TD-027 / US-203: canonical ISO-8601 UTC at DB-write boundary.
+            ts = utcIsoNow()
             cursor.execute(
                 """
                 INSERT INTO power_log
-                (timestamp, event_type, power_source, on_ac_power)
-                VALUES (?, ?, ?, ?)
+                (timestamp, event_type, power_source, on_ac_power, data_quality)
+                VALUES (?, ?, ?, ?, ?)
                 """,
                 (
-                    utcIsoNow(),
+                    ts,
                     eventType,
                     currentSource.value,
                     1 if currentSource == PowerSource.AC_POWER else 0,
+                    clockQuality(ts),
                 )
             )
             logger.debug(f"Logged power transition to database | type={eventType}")
@@ -137,6 +151,7 @@ def logPowerSavingEvent(
     database: Any | None,
     eventType: str,
     currentSource: PowerSource,
+    clockQuality: Callable[[str], str] = classifyClockQuality,
 ) -> None:
     """
     Log a power saving mode event to the database.
@@ -145,6 +160,8 @@ def logPowerSavingEvent(
         database: ObdDatabase instance (or None)
         eventType: Type of power saving event
         currentSource: Current power source when event occurred
+        clockQuality: US-419 clock-drift verdict -> data_quality (floor-only
+            default; see :func:`logPowerReading`).
     """
     if database is None:
         return
@@ -155,17 +172,19 @@ def logPowerSavingEvent(
             # TD-027 / US-203: canonical ISO-8601 UTC via the shared helper.
             # Previously used naive datetime.now() -- produced America/Chicago
             # local-time strings, colliding with the schema DEFAULT's UTC form.
+            ts = utcIsoNow()
             cursor.execute(
                 """
                 INSERT INTO power_log
-                (timestamp, event_type, power_source, on_ac_power)
-                VALUES (?, ?, ?, ?)
+                (timestamp, event_type, power_source, on_ac_power, data_quality)
+                VALUES (?, ?, ?, ?, ?)
                 """,
                 (
-                    utcIsoNow(),
+                    ts,
                     eventType,
                     currentSource.value,
                     1 if currentSource == PowerSource.AC_POWER else 0,
+                    clockQuality(ts),
                 )
             )
             logger.debug(f"Logged power saving event to database | type={eventType}")
@@ -177,6 +196,7 @@ def logShutdownStage(
     database: Any | None,
     eventType: str,
     vcell: float,
+    clockQuality: Callable[[str], str] = classifyClockQuality,
 ) -> None:
     """Log a PowerDownOrchestrator stage-transition row to power_log (US-252).
 
@@ -218,6 +238,9 @@ def logShutdownStage(
         eventType: One of POWER_LOG_EVENT_STAGE_WARNING /
             POWER_LOG_EVENT_STAGE_IMMINENT / POWER_LOG_EVENT_STAGE_TRIGGER.
         vcell: VCELL volts at the moment of stage transition.
+        clockQuality: US-419 clock-drift verdict -> data_quality.  Floor-only
+            (subprocess-free) default so this durability-critical power-down
+            write adds no latency.
 
     Raises:
         Exception: Any error raised by the INSERT or surrounding
@@ -233,18 +256,25 @@ def logShutdownStage(
             # rows are lost on hard crash before checkpoint.
             conn.execute("PRAGMA synchronous = FULL")
             cursor = conn.cursor()
+            # US-419: floor-only clock verdict (default classifyClockQuality is
+            # subprocess-free) so the power-down race adds no NTP-probe latency;
+            # by shutdown time the clock is long synced, so this is 'full'
+            # unless the RTC is grossly reset (below the sanity floor).
+            ts = utcIsoNow()
             cursor.execute(
                 """
                 INSERT INTO power_log
-                (timestamp, event_type, power_source, on_ac_power, vcell)
-                VALUES (?, ?, ?, ?, ?)
+                (timestamp, event_type, power_source, on_ac_power, vcell,
+                 data_quality)
+                VALUES (?, ?, ?, ?, ?, ?)
                 """,
                 (
-                    utcIsoNow(),
+                    ts,
                     eventType,
                     PowerSource.BATTERY.value,
                     0,
                     float(vcell),
+                    clockQuality(ts),
                 ),
             )
             # Explicit commit before context-manager exit; the outer
@@ -307,6 +337,38 @@ def ensurePowerLogVcellColumn(conn: sqlite3.Connection) -> bool:
         return False
 
     conn.execute("ALTER TABLE power_log ADD COLUMN vcell REAL")
+    return True
+
+
+def ensurePowerLogDataQuality(conn: sqlite3.Connection) -> bool:
+    """Add the ``data_quality`` column to ``power_log`` if absent (US-419).
+
+    Idempotent, PRAGMA-guarded -- mirrors :func:`ensurePowerLogVcellColumn`.
+    ``data_quality`` is the F-080 post-reboot clock-drift flag stamped by the
+    power_log writers (``'clock_unsynced'`` when the row was written before
+    systemd-timesyncd disciplined the clock, else ``'full'``).  Added nullable
+    so legacy rows (written before US-419) stay valid with NULL.  The caller
+    owns commit semantics (matches the ``ObdDatabase.initialize`` transaction).
+
+    Args:
+        conn: Open sqlite3 connection.
+
+    Returns:
+        True if the ALTER TABLE ran, False if the column was already present
+        or the table did not exist.
+    """
+    tableExists = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+        ('power_log',),
+    ).fetchone() is not None
+    if not tableExists:
+        return False
+
+    columns = conn.execute("PRAGMA table_info(power_log)").fetchall()
+    if any(row[1] == 'data_quality' for row in columns):
+        return False
+
+    conn.execute("ALTER TABLE power_log ADD COLUMN data_quality TEXT")
     return True
 
 

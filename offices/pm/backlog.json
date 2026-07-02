@@ -631,10 +631,11 @@
       "parent": "E-OPS",
       "title": "connection_log noise re-profile (post-V0.27.2 quiet-day audit)",
       "description": "connection_log noise re-profile (post-V0.27.2 quiet-day audit)",
-      "status": "active",
+      "status": "awaiting-validation",
       "renamedFrom": "B-058",
       "createdAt": "2026-05-27",
-      "updatedAt": "2026-05-27"
+      "updatedAt": "2026-05-27",
+      "currentVersion": "V0.29.5"
     },
     {
       "id": "F-060",
@@ -772,20 +773,22 @@
       "parent": "E-OPS",
       "title": "OBD reconnect loop too chatty at idle -- connection_log grows ~6 rows/min 24/7",
       "description": "OBD reconnect loop too chatty at idle -- connection_log grows ~6 rows/min 24/7",
-      "status": "active",
+      "status": "awaiting-validation",
       "renamedFrom": "B-077",
       "createdAt": "2026-05-27",
-      "updatedAt": "2026-05-27"
+      "updatedAt": "2026-05-27",
+      "currentVersion": "V0.29.5"
     },
     {
       "id": "F-078",
       "parent": "E-002",
       "title": "sync runs every ~26-40s at idle -- sync_history grows ~1.5 rows/min; engine-off poll loop drives the chatter (V0.28+ design story)",
       "description": "sync runs every ~26-40s at idle -- sync_history grows ~1.5 rows/min; engine-off poll loop drives the chatter (V0.28+ design story)",
-      "status": "active",
+      "status": "awaiting-validation",
       "renamedFrom": "B-078",
       "createdAt": "2026-05-27",
-      "updatedAt": "2026-05-27"
+      "updatedAt": "2026-05-27",
+      "currentVersion": "V0.29.5"
     },
     {
       "id": "F-079",
@@ -803,10 +806,11 @@
       "parent": "E-004",
       "title": "Pi clock jumps ~23h forward post-reboot (RTC drift / timesyncd) -- Spool's Bug 5",
       "description": "Pi clock jumps ~23h forward post-reboot (RTC drift / timesyncd) -- Spool's Bug 5",
-      "status": "active",
+      "status": "awaiting-validation",
       "renamedFrom": "B-080",
       "createdAt": "2026-05-27",
-      "updatedAt": "2026-05-27"
+      "updatedAt": "2026-05-27",
+      "currentVersion": "V0.29.5"
     },
     {
       "id": "F-081",
@@ -964,10 +968,11 @@
       "parent": "E-001",
       "title": "S-2 \u2014 LTFT trend display (multi-drive, healthy migration toward 0)",
       "description": "S-2 \u2014 LTFT trend display (multi-drive, healthy migration toward 0)",
-      "status": "active",
+      "status": "awaiting-validation",
       "renamedFrom": "B-096",
       "createdAt": "2026-05-27",
-      "updatedAt": "2026-05-27"
+      "updatedAt": "2026-05-27",
+      "currentVersion": "V0.29.5"
     },
     {
       "id": "F-097",
@@ -1015,10 +1020,11 @@
       "parent": "E-002",
       "title": "Sync `power_log` + `startup_log` from Pi to server",
       "description": "Sync `power_log` + `startup_log` from Pi to server",
-      "status": "active",
+      "status": "awaiting-validation",
       "renamedFrom": "B-101",
       "createdAt": "2026-05-27",
-      "updatedAt": "2026-05-27"
+      "updatedAt": "2026-05-27",
+      "currentVersion": "V0.29.5"
     },
     {
       "id": "F-102",
@@ -1165,8 +1171,9 @@
       "parent": "E-002",
       "title": "Foreign / non-target vehicle contamination -- marker enum + ingest guard",
       "description": "Drive 33 = a 2014 Ford Explorer logged as Eclipse data_source='real' (shared OBDLink auto-pair). Add a foreign-vehicle marker enum + re-tag, and an ingest guard (bus-rate sanity check) so it can't recur. Design-gated to Atlas (enum semantics + guard mechanism + placement).",
-      "status": "active",
-      "createdAt": "2026-06-30"
+      "status": "awaiting-validation",
+      "createdAt": "2026-06-30",
+      "currentVersion": "V0.29.5"
     }
   ],
   "stories": [

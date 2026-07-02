@@ -54,6 +54,7 @@ from common.time.helper import utcIsoNow
 from ..data_source import DATA_SOURCE_DEFAULT, DATA_SOURCE_VALUES
 from ..drive_id import getCurrentDriveId
 from ..error_classification import CaptureErrorClass
+from ..foreign_guard import installForeignVehicleGuardFromConfig
 from .exceptions import DataLoggerError
 from .logger import ObdDataLogger
 from .realtime import RealtimeDataLogger
@@ -278,6 +279,12 @@ def createRealtimeLoggerFromConfig(
     # Get active profile from config
     profilesConfig = config.get('pi', {}).get('profiles', {})
     activeProfile = profilesConfig.get('activeProfile', None)
+
+    # US-424 (F-116): install the process-wide foreign-vehicle ingest guard.
+    # Ships DARK -- installForeignVehicleGuardFromConfig is a no-op (clears the
+    # singleton) unless pi.foreignGuard.enabled is true, so the live write path
+    # is unchanged until the CIO arms it after the bench drill.
+    installForeignVehicleGuardFromConfig(config, database)
 
     return RealtimeDataLogger(
         config, connection, database,

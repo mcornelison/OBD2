@@ -333,6 +333,68 @@
   }
 
   // -------------------------------------------------------------------------
+  // US-420 LTFT Trend card -- pure render logic, node-testable (F-096). Long-
+  // Term Fuel Trim is a MULTI-DRIVE signal: a healthy tune migrates the trim
+  // TOWARD 0, drift beyond +/-10% is a fault. The `ltft-trend` emitter is the
+  // SSOT that CLASSIFIES the drift (ok/amber/down) + the insufficient guard;
+  // this view only maps the verdict -> a tile level + bar colours, it never
+  // classifies. Honest-instrument (defense-in-depth): an insufficient trend is
+  // forced to a non-green headline HERE too, so a mislabeled state can't paint
+  // a confident green off too little data.
+  // -------------------------------------------------------------------------
+
+  // Signed percent to 2 dp (e.g. -6.25% / +2.10%); a non-number -> "--".
+  function fmtLtftPct(n) {
+    if (typeof n !== "number" || !isFinite(n)) return "--";
+    return (n > 0 ? "+" : "") + n.toFixed(2) + "%";
+  }
+
+  var LTFT_TREND_TEXT = {
+    improving: "trend: migrating toward 0",
+    worsening: "trend: drifting from 0",
+    stable: "trend: stable",
+  };
+
+  function ltftPointView(p) {
+    return {
+      driveId: typeof p.driveId === "number" ? p.driveId : null,
+      value: fmtLtftPct(p.ltftAvg),
+      level: typeof p.level === "string" ? p.level : "unavailable",
+    };
+  }
+
+  function ltftTrendView(data) {
+    if (!isObj(data)) return null;
+    var pts = Array.isArray(data.points) ? data.points.filter(isObj) : [];
+    // Sufficient ONLY when the emitter says so AND real points exist.
+    var sufficient = data.sufficient === true && pts.length > 0;
+    var current = isObj(data.current) ? data.current : null;
+    // The headline verdict: the emitter's level when sufficient, else forced to
+    // `insufficient` (never inherits ok/green off too little data).
+    var headLevel = sufficient
+      ? (typeof data.level === "string" ? data.level : "unavailable")
+      : "insufficient";
+    var trendKey = typeof data.trend === "string" ? data.trend : null;
+    var minDrives = typeof data.minDrives === "number" ? data.minDrives : 2;
+    var detail = sufficient
+      ? (trendKey && LTFT_TREND_TEXT[trendKey] ? LTFT_TREND_TEXT[trendKey] : "")
+      : "need " + minDrives + "+ drives (" + pts.length + " captured)";
+    return {
+      label: "LTFT (bank 1)",
+      sufficient: sufficient,
+      headline: {
+        label: "LTFT · current drift",
+        value: sufficient && current ? fmtLtftPct(current.ltftAvg) : "insufficient data",
+        detail: detail,
+        level: headLevel,
+      },
+      trend: trendKey,
+      points: pts.map(ltftPointView),
+      ts: typeof data.ts === "string" ? data.ts : null,
+    };
+  }
+
+  // -------------------------------------------------------------------------
   // US-403 System Setup menu -- pure, node-testable logic (D-6/D-7/A-7/A-8).
   // The menu is reachable by a deliberate ~5s long-press (a filling ring; an
   // early release cancels) OR the top-bar `⋮`. Service control is on an
@@ -829,6 +891,8 @@
     tempTile: tempTile,
     ladderView: ladderView,
     batteryHealthView: batteryHealthView,
+    fmtLtftPct: fmtLtftPct,
+    ltftTrendView: ltftTrendView,
     serviceMenuItems: serviceMenuItems,
     requiresConfirm: requiresConfirm,
     actionRequest: actionRequest,
@@ -945,6 +1009,43 @@
       appendTile(body, view.temp);
       // F-2 / A-6: the ladder DOM exists only when actually draining.
       if (view.ladder) appendLadder(body, view.ladder);
+    }
+
+    // --- US-420 LTFT Trend DOM render (browser only) ------------------------
+
+    // Render the multi-drive bar row: one bar per drive, coloured by its own
+    // drift level ([data-level] -> CSS), so a drive beyond +/-10% is visibly
+    // not-green. Built with textContent (no innerHTML) -- verbatim, never markup.
+    function appendLtftBars(parent, points) {
+      var bars = document.createElement("div");
+      bars.className = "ltft-bars";
+      for (var i = 0; i < points.length; i++) {
+        var p = points[i];
+        var bar = document.createElement("div");
+        bar.className = "ltft-bar";
+        bar.setAttribute("data-level", p.level);
+        var value = document.createElement("span");
+        value.className = "ltft-bar-value";
+        value.textContent = p.value;
+        var drive = document.createElement("span");
+        drive.className = "ltft-bar-drive";
+        drive.textContent = p.driveId == null ? "—" : "#" + p.driveId;
+        bar.appendChild(value);
+        bar.appendChild(drive);
+        bars.appendChild(bar);
+      }
+      parent.appendChild(bars);
+    }
+
+    function renderLtftTrendCard(card, view) {
+      var body = card.querySelector(".card-body");
+      if (!body) return;
+      body.textContent = "";
+      // The headline tile carries the verdict level (insufficient -> not green).
+      appendTile(body, view.headline);
+      // The per-drive bars render whenever any real point exists (0-1 points is
+      // still shown honestly under an insufficient headline, never fabricated).
+      if (view.points.length > 0) appendLtftBars(body, view.points);
     }
 
     var setup = function () {
@@ -1653,6 +1754,9 @@
             if (bv) renderBatteryHealthCard(card, bv);
           } else if (name === "dtc") {
             renderAlertsCard(card, alertsCardView(data));
+          } else if (name === "ltft-trend") {
+            var lv = ltftTrendView(data);
+            if (lv) renderLtftTrendCard(card, lv);
           }
         }
         // US-405/US-406: drive the takeover + persistent ribbon from the same

@@ -1233,6 +1233,130 @@ step_install_dashboard_assets() {
     "
 }
 
+step_install_ui_kiosk_units() {
+    # BUG-FIX (Atlas 2026-07-01; finding
+    # offices/architect/findings/2026-07-01-pi-display-blank-deploy-contract-gaps.md).
+    # The two ASSET steps above install what eclipse-states-http SERVES, but nothing
+    # installed the chromium KIOSK UNITS that actually render it -- so every real
+    # deploy left the backend serving to 127.0.0.1:9899 with no browser drawing it,
+    # and pygame is sunset (statusDisplay.enabled=false) -> a blank 3.5" screen.
+    # This step closes that seam by running the kit's own session-aware installers:
+    #   specs/UI/dist/splash-pi/install.sh     -> splash-boot + splash-grace units
+    #   specs/UI/dist/dashboard-pi/install.sh  -> eclipse-dashboard unit
+    #
+    # Two things the first on-hardware run proved necessary (do NOT drop them):
+    #  (1) SESSION DETECTION over SSH.  The installers' own V-2 check reads the
+    #      CALLING session's type; over SSH that is 'tty', so the installer aborts
+    #      ("cannot determine session type") rather than guess X11-vs-Wayland -- a
+    #      wrong guess is the D-3 black-screen bug.  We detect the type from the Pi's
+    #      ACTIVE graphical seat0 session and pass it via {SPLASH,DASHBOARD}_FORCE_SESSION.
+    #      If it genuinely can't be determined we WARN + skip -- we never guess.
+    #  (2) chromium BINARY name.  The unit templates hardcode
+    #      ExecStart=/usr/bin/chromium-browser, but current Raspberry Pi OS (Trixie)
+    #      ships /usr/bin/chromium -> the unit dies with 203/EXEC.  We add the compat
+    #      symlink when chromium-browser is absent but chromium exists.  (The ideal
+    #      long-term fix is a kit-installer V-3 binary check that substitutes the real
+    #      path into the unit, like it substitutes User= -- flagged to the UI kit;
+    #      this keeps the DEPLOY self-sufficient meanwhile.)
+    #
+    # Idempotent (the installers are idempotent; `ln -sf` is idempotent).  A-9
+    # posture: absent kit/installer -> WARN + skip, deploy continues.  This installs +
+    # ENABLES the units; the splash renders at the NEXT boot (WantedBy=graphical.target),
+    # so the step does not thrash the live screen mid-deploy.  Runs AFTER the asset +
+    # state-server steps so the served assets + backend are already in place.
+    echo "--- Step: Installing F-103/F-092 chromium kiosk units (splash + dashboard) ---"
+    local splashKit="specs/UI/dist/splash-pi/install.sh"
+    local dashKit="specs/UI/dist/dashboard-pi/install.sh"
+    if [ ! -f "$REPO_ROOT/$splashKit" ] && [ ! -f "$REPO_ROOT/$dashKit" ]; then
+        echo "WARN: UI kit installers not found under $REPO_ROOT/specs/UI/dist -- skipping kiosk-unit install (A-9)." >&2
+        return 0
+    fi
+    if $DRY_RUN; then
+        echo "DRY-RUN would: detect the Pi's ACTIVE graphical seat0 session type (x11|wayland)"
+        echo "DRY-RUN would: ensure /usr/bin/chromium-browser (symlink -> chromium if absent)"
+        echo "DRY-RUN would: sudo {SPLASH,DASHBOARD}_FORCE_SESSION=<type> _FORCE_USER=${PI_USER} bash ${PI_PATH}/{${splashKit},${dashKit}}"
+        return 0
+    fi
+    remote "
+        # (1) Detect the graphical session type from the ACTIVE seat0 session (an
+        #     SSH session reads as 'tty' and would make the installer abort).
+        SESS=''
+        for s in \$(loginctl list-sessions --no-legend 2>/dev/null | awk '{print \$1}'); do
+            seat=\$(loginctl show-session \"\$s\" -p Seat --value 2>/dev/null || true)
+            typ=\$(loginctl show-session \"\$s\" -p Type --value 2>/dev/null || true)
+            act=\$(loginctl show-session \"\$s\" -p Active --value 2>/dev/null || true)
+            if [ \"\$seat\" = 'seat0' ] && [ \"\$act\" = 'yes' ] && { [ \"\$typ\" = 'x11' ] || [ \"\$typ\" = 'wayland' ]; }; then
+                SESS=\"\$typ\"; break
+            fi
+        done
+        if [ -z \"\$SESS\" ]; then
+            if pgrep -x Xorg >/dev/null 2>&1; then SESS=x11
+            elif ls /run/user/*/wayland-0 >/dev/null 2>&1; then SESS=wayland
+            fi
+        fi
+        if [ -z \"\$SESS\" ]; then
+            echo 'WARN: could not determine the Pi graphical session type (no active x11/wayland seat0 session) -- skipping kiosk-unit install; NOT guessing (D-3 black-screen risk). Re-run deploy from a booted graphical session.' >&2
+            exit 0
+        fi
+        echo \"graphical session type: \$SESS\"
+
+        # (2) chromium binary compat: units call /usr/bin/chromium-browser; Trixie
+        #     ships /usr/bin/chromium.  Symlink when the browser name is absent.
+        if ! command -v chromium-browser >/dev/null 2>&1; then
+            if command -v chromium >/dev/null 2>&1; then
+                sudo ln -sf \"\$(command -v chromium)\" /usr/bin/chromium-browser
+                echo \"linked /usr/bin/chromium-browser -> \$(command -v chromium)\"
+            else
+                echo 'WARN: neither chromium-browser nor chromium on the Pi -- kiosk will not launch; install chromium.' >&2
+            fi
+        fi
+
+        # (2b) Disable X screen blanking / DPMS so the panel never sleeps and shows
+        #      'no input' (Bug 4).  Install the persistent xorg.conf.d drop-in (takes
+        #      effect at the next X start) AND apply it live via xset now (best-effort)
+        #      so this deploy needs no X restart.
+        XCONF_SRC='${PI_PATH}/deploy/eclipse-kiosk-no-blank.conf'
+        XCONF_DST='/etc/X11/xorg.conf.d/10-eclipse-kiosk-no-blank.conf'
+        if [ -f \"\$XCONF_SRC\" ]; then
+            if sudo test -f \"\$XCONF_DST\" && sudo cmp -s \"\$XCONF_SRC\" \"\$XCONF_DST\"; then
+                echo 'kiosk no-blank xorg drop-in already current (no change).'
+            else
+                sudo install -d -m 0755 /etc/X11/xorg.conf.d
+                sudo install -m 0644 \"\$XCONF_SRC\" \"\$XCONF_DST\"
+                echo \"installed xorg no-blank drop-in -> \$XCONF_DST\"
+            fi
+        else
+            echo 'WARN: deploy/eclipse-kiosk-no-blank.conf absent on Pi -- screen may blank after 10min (A-9).' >&2
+        fi
+        # Apply live now (best-effort; harmless if no X session is active).
+        if sudo -u ${PI_USER} DISPLAY=:0 XAUTHORITY=/home/${PI_USER}/.Xauthority xset s off -dpms s noblank >/dev/null 2>&1; then
+            echo 'screen blanking/DPMS disabled live on :0.'
+        else
+            echo 'note: could not apply xset live (no active X session?) -- the xorg drop-in covers the next boot.'
+        fi
+
+        # (3) Run the kit's session-aware installers, forcing the detected session +
+        #     the deploy user (env set INSIDE the root shell so sudo does not strip it).
+        SPK='${PI_PATH}/${splashKit}'
+        DSK='${PI_PATH}/${dashKit}'
+        if [ -f \"\$SPK\" ]; then
+            sudo bash -c \"SPLASH_FORCE_SESSION=\$SESS SPLASH_FORCE_USER=${PI_USER} bash '\$SPK'\" \
+                && echo 'splash kiosk units installed + enabled.' \
+                || echo 'WARN: splash-pi/install.sh failed -- deploy continues (A-9); check the Pi session/binary.' >&2
+        else
+            echo 'WARN: splash-pi/install.sh absent on Pi -- skipped (A-9).' >&2
+        fi
+        if [ -f \"\$DSK\" ]; then
+            sudo bash -c \"DASHBOARD_FORCE_SESSION=\$SESS DASHBOARD_FORCE_USER=${PI_USER} bash '\$DSK'\" \
+                && echo 'dashboard kiosk unit installed.' \
+                || echo 'WARN: dashboard-pi/install.sh failed -- deploy continues (A-9).' >&2
+        else
+            echo 'WARN: dashboard-pi/install.sh absent on Pi -- skipped (A-9).' >&2
+        fi
+        echo 'Kiosk units in place; the splash renders at the next boot (WantedBy=graphical.target).'
+    "
+}
+
 step_install_state_server_units() {
     # US-395 (F-103, AC#1): idempotent sync-if-changed install of the two F-103
     # state-server units -- eclipse-boot-state.service (the [A-1] boot-state
@@ -1628,6 +1752,11 @@ step_install_splash_assets
 # serves at /dashboard.html. The kiosk UNIT is installed by the kit's install.sh.
 step_install_dashboard_assets
 step_install_state_server_units
+# Atlas 2026-07-01 BUG-FIX: install the chromium KIOSK UNITS (splash + dashboard).
+# The asset + backend steps above only install what the state server SERVES; without
+# this the kiosk is never installed and the 3.5" screen stays blank (pygame sunset).
+# Runs after the state server is up so the served surface + backend are in place.
+step_install_ui_kiosk_units
 
 # US-354 reordering: restart first, then verify both long-running services
 # came back with start times AFTER DEPLOY_START_EPOCH, THEN bump

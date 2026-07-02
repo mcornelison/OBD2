@@ -53,6 +53,20 @@
 #                               Pi-only.  (startup_log is NOT added here --
 #                               its TEXT boot_id PK does not fit the delta
 #                               cursor; see BL-013.)
+# 2026-07-01    | Rex (US-416) | F-101/F-115: the GENERAL natural-key snapshot
+#                               path for append-only TEXT-PK tables (the shape
+#                               BL-013 blocked on).  Adds last_snapshot_cursor
+#                               to sync_log + ensureSnapshotSyncSchema migration
+#                               + getSnapshotRows / getSnapshotCursor /
+#                               updateSnapshotCursor, parameterised by the
+#                               cross-tier src.common.sync.snapshot_registry
+#                               (A-4 define-once).  Deltas by an explicit
+#                               cursorCol (e.g. recorded_at), NOT rowid (TEXT-PK
+#                               tables have no stable rowid; VACUUM renumbers).
+#                               Registry ships empty; startup_log registers in
+#                               US-417.  Distinct from SNAPSHOT_TABLES (the
+#                               profiles/vehicle_info reject-list) -- opposite
+#                               role, see that constant's docstring.
 # ================================================================================
 ################################################################################
 
@@ -95,12 +109,20 @@ from __future__ import annotations
 import sqlite3
 from typing import Any
 
+from src.common.sync.snapshot_registry import (
+    SNAPSHOT_SYNC,
+    getSnapshotSpec,
+    isSnapshotSyncTable,
+    snapshotSyncTables,
+)
 from src.common.time.helper import utcIsoNow
 
 __all__ = [
     'DELTA_SYNC_TABLES',
     'IN_SCOPE_TABLES',
     'PK_COLUMN',
+    'SNAPSHOT_SYNC',
+    'SNAPSHOT_SYNC_CURSOR_COLUMN',
     'SNAPSHOT_TABLES',
     'SYNC_LOG_SCHEMA',
     'SYNC_MODIFIED_AT_COLUMN',
@@ -108,14 +130,18 @@ __all__ = [
     'VALID_STATUSES',
     'clearQuarantine',
     'ensureQuarantineSchema',
+    'ensureSnapshotSyncSchema',
     'ensureSyncModifiedAtSchema',
     'getDeltaRows',
     'getHighWaterMark',
     'getModifiedHighWaterMark',
     'getQuarantineState',
+    'getSnapshotCursor',
+    'getSnapshotRows',
     'initDb',
     'recordPushFailure',
     'updateHighWaterMark',
+    'updateSnapshotCursor',
 ]
 
 
@@ -210,6 +236,13 @@ VALID_STATUSES: frozenset[str] = frozenset({'ok', 'pending', 'failed'})
 # US-391 / F-076: ``consecutive_failures`` + ``quarantined_at`` carry the
 # queue-level quarantine state.  Fresh DBs land with the columns; older DBs
 # pick them up via the idempotent ALTER in :func:`ensureQuarantineSchema`.
+#
+# US-416 / F-101: ``last_snapshot_cursor`` (TEXT) carries the per-table
+# high-water mark for the natural-key SNAPSHOT_SYNC path -- an ISO-8601 value of
+# the table's ``cursorCol`` (e.g. recorded_at), PARALLEL to the integer
+# ``last_synced_id`` delta cursor.  Snapshot-sync tables (TEXT-PK, insert-once)
+# have no integer delta cursor, so they track progress here instead.  Older DBs
+# pick it up via the idempotent ALTER in :func:`ensureSnapshotSyncSchema`.
 SYNC_LOG_SCHEMA: str = """
 CREATE TABLE IF NOT EXISTS sync_log (
     table_name              TEXT    PRIMARY KEY,
@@ -220,9 +253,14 @@ CREATE TABLE IF NOT EXISTS sync_log (
                             CHECK (status IN ('ok','pending','failed')),
     last_synced_modified_at TEXT,
     consecutive_failures    INTEGER NOT NULL DEFAULT 0,
-    quarantined_at          TEXT
+    quarantined_at          TEXT,
+    last_snapshot_cursor    TEXT
 )
 """
+
+# US-416: sync_log column holding the SNAPSHOT_SYNC path's per-table time-cursor
+# high-water mark (the max cursorCol value successfully pushed so far).
+SNAPSHOT_SYNC_CURSOR_COLUMN: str = 'last_snapshot_cursor'
 
 # US-315 / B-065: opt-in registry for tables that issue UPDATE on existing
 # rows (close-event UPDATEs, last_seen bumps, NULL-backfill writes).  The
@@ -248,6 +286,18 @@ SYNC_UPDATE_TABLES_PK: dict[str, str] = {
 # Stays NULL for rows that have never been UPDATEd (pre-migration rows
 # AND newly-INSERTed rows -- only the AFTER UPDATE trigger writes here).
 SYNC_MODIFIED_AT_COLUMN: str = '_sync_modified_at'
+
+# Pi-LOCAL columns that must never appear on the sync wire.  The server rejects
+# unknown columns (its SQLAlchemy bulk insert errors on an unmapped key), so any
+# Pi-only column is stripped from the outbound payload before it is posted:
+#   _sync_modified_at (US-315) -- Pi-side modified_at delta-cursor bookkeeping.
+#   data_quality (US-419 / F-080) -- Pi-local clock-drift honest-instrument flag
+#     on startup_log / power_log.  The server computes its OWN data_quality at
+#     ingest (Pi = emitter, server = authority), so a Pi data_quality value is
+#     never sent upstream.  Harmless no-op strip for tables that lack the column.
+_WIRE_STRIPPED_COLUMNS: frozenset[str] = frozenset(
+    {SYNC_MODIFIED_AT_COLUMN, 'data_quality'}
+)
 
 
 # ================================================================================
@@ -291,6 +341,22 @@ def _validateDeltaTable(tableName: str) -> None:
         raise ValueError(
             f"table {tableName!r} is not in delta-sync scope; "
             f"expected one of {sorted(DELTA_SYNC_TABLES)}"
+        )
+
+
+def _validateSnapshotTable(tableName: str) -> None:
+    """Raise ValueError unless ``tableName`` is a registered snapshot-sync table.
+
+    The whitelist is :data:`SNAPSHOT_SYNC` (from the shared cross-tier registry).
+    Like :func:`_validateTable` for the delta path, this is the SQL-injection
+    guard for every snapshot function that interpolates ``tableName`` (and its
+    ``cursorCol``) into SQL as an identifier -- an unregistered table must fail
+    loudly, never fall through to a raw interpolation.
+    """
+    if not isSnapshotSyncTable(tableName):
+        raise ValueError(
+            f"table {tableName!r} is not registered for snapshot sync; "
+            f"expected one of {sorted(snapshotSyncTables())}",
         )
 
 
@@ -445,11 +511,13 @@ def getDeltaRows(
         )
     columns = [desc[0] for desc in cursor.description]
     rows = [dict(zip(columns, row, strict=True)) for row in cursor.fetchall()]
-    # Strip the Pi-only bookkeeping column from the wire payload.  Server
-    # models have no _sync_modified_at column; leaving it in would fail the
-    # SQLAlchemy bulk insert with an unknown-column error.
+    # Strip Pi-only columns from the wire payload.  Server models have no
+    # _sync_modified_at / data_quality column; leaving either in would fail the
+    # SQLAlchemy bulk insert with an unknown-column error (see
+    # :data:`_WIRE_STRIPPED_COLUMNS`).
     for row in rows:
-        row.pop(SYNC_MODIFIED_AT_COLUMN, None)
+        for stripped in _WIRE_STRIPPED_COLUMNS:
+            row.pop(stripped, None)
     return rows
 
 
@@ -887,5 +955,186 @@ def clearQuarantine(conn: sqlite3.Connection, tableName: str) -> None:
         "UPDATE sync_log SET consecutive_failures = 0, quarantined_at = NULL "
         "WHERE table_name = ?",
         (tableName,),
+    )
+    conn.commit()
+
+
+# ================================================================================
+# Natural-key snapshot sync (US-416 / F-101)
+# ================================================================================
+#
+# The GENERAL path for append-only, immutable, TEXT-PK tables that do NOT fit the
+# integer-delta cursor (startup_log.boot_id is the motivating case; the F-115 EDR
+# event-vault reuses it).  The per-table shape -- naturalKeyCols + cursorCol --
+# lives ONCE in :mod:`src.common.sync.snapshot_registry` (A-4), imported by both
+# this Pi reader and the server upsert.
+#
+# The Pi deltas by ``cursorCol > last_snapshot_cursor`` (an explicit
+# insertion-timestamp column, e.g. recorded_at) and advances the cursor to the
+# max cursorCol value it pushed.  Per the Atlas ruling: because the server
+# upserts on the natural key, cursor precision is not safety-critical -- an
+# over-reading cursor just harmlessly re-pushes; the cursor bounds VOLUME, the
+# natural key guarantees CORRECTNESS.  This is why we never touch ``rowid`` (a
+# TEXT-PK table has no INTEGER-PK alias, so VACUUM can renumber it and desync).
+
+
+def ensureSnapshotSyncSchema(conn: sqlite3.Connection) -> bool:
+    """Idempotently add the US-416 ``last_snapshot_cursor`` column to sync_log.
+
+    Fresh DBs already have it (it is in :data:`SYNC_LOG_SCHEMA`); this handles
+    pre-US-416 DBs via ``ALTER TABLE ... ADD COLUMN``.  Safe to call on every
+    boot / every push (matches :func:`ensureQuarantineSchema`).
+
+    Args:
+        conn: Open sqlite3 connection.  ``initDb`` is called first so a fresh
+            DB lands in a known shape before the ALTER probe runs.
+
+    Returns:
+        ``True`` if the ALTER actually ran (DB was previously un-migrated);
+        ``False`` when the column was already present.
+    """
+    initDb(conn)
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(sync_log)")}
+    if SNAPSHOT_SYNC_CURSOR_COLUMN not in cols:
+        conn.execute(
+            f"ALTER TABLE sync_log ADD COLUMN {SNAPSHOT_SYNC_CURSOR_COLUMN} TEXT",
+        )
+        conn.commit()
+        return True
+    return False
+
+
+def getSnapshotCursor(
+    conn: sqlite3.Connection,
+    tableName: str,
+) -> str | None:
+    """Return the snapshot-sync high-water cursor for ``tableName`` (US-416).
+
+    The cursor is the max ``cursorCol`` value successfully pushed so far.
+    Returns ``None`` -- meaning "start from the beginning" -- when the sync_log
+    predates US-416 (column absent), when no sync_log row exists yet (first
+    push), or when the row exists but the cursor was never set.  All three
+    "no value" cases collapse to ``None`` so callers do not have to distinguish
+    them; :func:`getSnapshotRows` treats ``None`` as "include every row".
+
+    Raises:
+        ValueError: If ``tableName`` is not registered in :data:`SNAPSHOT_SYNC`.
+    """
+    _validateSnapshotTable(tableName)
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(sync_log)")}
+    if SNAPSHOT_SYNC_CURSOR_COLUMN not in columns:
+        return None
+    row = conn.execute(
+        f"SELECT {SNAPSHOT_SYNC_CURSOR_COLUMN} FROM sync_log "  # noqa: S608 -- const identifier
+        "WHERE table_name = ?",
+        (tableName,),
+    ).fetchone()
+    if row is None:
+        return None
+    return row[0]
+
+
+def getSnapshotRows(
+    conn: sqlite3.Connection,
+    tableName: str,
+    lastCursor: str | None,
+    limit: int,
+) -> list[dict[str, Any]]:
+    """Return the next batch of snapshot rows to push for ``tableName`` (US-416).
+
+    Selects rows where ``cursorCol > lastCursor`` (strictly greater, so an
+    already-synced boundary row is not re-fetched), ordered by ``cursorCol``
+    ASC, capped at ``limit``.  ``lastCursor=None`` (or empty string) means
+    "from the beginning" -- the empty string sorts before every ISO-8601
+    timestamp, so no row is skipped.
+
+    Args:
+        conn: Open sqlite3 connection.  ``row_factory`` need not be configured;
+            this builds dicts itself so callers get a stable shape.
+        tableName: Must be registered in :data:`SNAPSHOT_SYNC`.
+        lastCursor: The high-water cursor from :func:`getSnapshotCursor`.
+        limit: Max rows to return -- bounds the push volume per cycle.
+
+    Returns:
+        List of dict rows ordered by ``cursorCol`` ASC.  Empty if none match.
+
+    Raises:
+        ValueError: If ``tableName`` is not registered in :data:`SNAPSHOT_SYNC`.
+    """
+    _validateSnapshotTable(tableName)
+    spec = getSnapshotSpec(tableName)
+    cursorFloor = lastCursor or ''
+    cursor = conn.execute(
+        f"SELECT * FROM {tableName} "  # noqa: S608 -- whitelisted identifiers
+        f"WHERE {spec.cursorCol} > ? "
+        f"ORDER BY {spec.cursorCol} ASC LIMIT ?",
+        (cursorFloor, int(limit)),
+    )
+    columns = [desc[0] for desc in cursor.description]
+    rows = [dict(zip(columns, row, strict=True)) for row in cursor.fetchall()]
+    # Strip Pi-only columns (e.g. the US-419 data_quality clock flag) so the
+    # server's natural-key upsert never sees an unmapped column.
+    for row in rows:
+        for stripped in _WIRE_STRIPPED_COLUMNS:
+            row.pop(stripped, None)
+    return rows
+
+
+def updateSnapshotCursor(
+    conn: sqlite3.Connection,
+    tableName: str,
+    newCursor: str,
+    batchId: str,
+    status: str = 'ok',
+) -> None:
+    """UPSERT the sync_log row for ``tableName``, advancing the snapshot cursor.
+
+    Writes ``last_snapshot_cursor`` (+ ``last_synced_at`` / ``last_batch_id`` /
+    ``status``) for the table.  The integer ``last_synced_id`` column is left at
+    its default -- snapshot-sync tables have no integer delta cursor.
+
+    The cursor NEVER rewinds: if ``newCursor`` is not strictly greater than the
+    stored value (a stale/duplicate push, or a partial batch that did not extend
+    the frontier) the existing value is preserved via a ``MAX``-style guard.
+    Advancing on a successful push mirrors :func:`updateHighWaterMark`.
+
+    Args:
+        conn: Open sqlite3 connection.
+        tableName: Must be registered in :data:`SNAPSHOT_SYNC`.
+        newCursor: New high-water cursor (typically ``max(row[cursorCol])`` of
+            the pushed batch).
+        batchId: Batch identifier for the diagnostic trail.
+        status: One of :data:`VALID_STATUSES`.  Defaults to ``'ok'``.
+
+    Raises:
+        ValueError: If ``tableName`` is not registered, or ``status`` invalid.
+    """
+    _validateSnapshotTable(tableName)
+    _validateStatus(status)
+    ensureSnapshotSyncSchema(conn)
+
+    now = _utcIsoTimestamp()
+    # COALESCE + comparison keeps the cursor monotonic: if a prior cursor is
+    # already >= newCursor, keep it (never rewind on a stale/partial push).
+    conn.execute(
+        f"""
+        INSERT INTO sync_log
+            (table_name, last_synced_at, last_batch_id, status,
+             {SNAPSHOT_SYNC_CURSOR_COLUMN})
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(table_name) DO UPDATE SET
+            last_synced_at = excluded.last_synced_at,
+            last_batch_id  = excluded.last_batch_id,
+            status         = excluded.status,
+            {SNAPSHOT_SYNC_CURSOR_COLUMN} = CASE
+                WHEN sync_log.{SNAPSHOT_SYNC_CURSOR_COLUMN} IS NULL
+                    THEN excluded.{SNAPSHOT_SYNC_CURSOR_COLUMN}
+                WHEN excluded.{SNAPSHOT_SYNC_CURSOR_COLUMN}
+                     > sync_log.{SNAPSHOT_SYNC_CURSOR_COLUMN}
+                    THEN excluded.{SNAPSHOT_SYNC_CURSOR_COLUMN}
+                ELSE sync_log.{SNAPSHOT_SYNC_CURSOR_COLUMN}
+            END
+        """,  # noqa: S608 -- const identifier interpolation only
+        (tableName, now, batchId, status, newCursor),
     )
     conn.commit()

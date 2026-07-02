@@ -72,6 +72,15 @@
         <h2 class="card-title">Alerts</h2>
         <div class="card-body">unavailable</div>
       </section>
+      <!-- US-420 LTFT Trend card (F-096): a multi-drive long-term fuel-trim
+           trend (healthy migration toward 0 vs drift beyond +/-10%). JS fills
+           the body from the polled `ltft-trend` state; a missing/malformed file
+           -> `unavailable`, and an insufficient window -> a non-green
+           insufficient-data headline (never a fabricated healthy verdict). -->
+      <section class="card" data-state="ltft-trend" aria-label="LTFT Trend">
+        <h2 class="card-title">LTFT Trend</h2>
+        <div class="card-body">unavailable</div>
+      </section>
     </div>
   </main>
 

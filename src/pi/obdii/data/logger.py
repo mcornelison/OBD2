@@ -61,6 +61,7 @@ from pi.obdii.decoders import PARAMETER_DECODERS, DecodedReading, ParameterDecod
 
 from ..data_source import DATA_SOURCE_DEFAULT, DATA_SOURCE_VALUES
 from ..drive_id import getCurrentDriveId
+from ..foreign_guard import isDriveForeign
 from .exceptions import DataLoggerError, ParameterNotSupportedError, ParameterReadError
 from .types import LoggedReading
 
@@ -350,6 +351,18 @@ class ObdDataLogger:
                 # US-212: pass self.dataSource explicitly so simulator runs
                 # land as 'physics_sim' instead of inheriting the live-path
                 # DEFAULT 'real'.
+                # US-424 (F-116): once the foreign-vehicle guard latches the
+                # active drive, stamp its subsequent rows 'foreign' too (the
+                # guard retro-tags the rows written before the trip).  Only the
+                # live 'real' path is overridden -- sim/replay/fixture tags are
+                # deliberate and left intact.
+                driveId = getCurrentDriveId()
+                effectiveDataSource = self.dataSource
+                if (
+                    self.dataSource == DATA_SOURCE_DEFAULT
+                    and isDriveForeign(driveId)
+                ):
+                    effectiveDataSource = 'foreign'
                 cursor.execute(
                     """
                     INSERT INTO realtime_data
@@ -363,8 +376,8 @@ class ObdDataLogger:
                         reading.value,
                         reading.unit,
                         profileId,
-                        getCurrentDriveId(),
-                        self.dataSource,
+                        driveId,
+                        effectiveDataSource,
                     )
                 )
 

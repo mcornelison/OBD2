@@ -224,6 +224,12 @@
       "range": "US-408 to US-415",
       "date": "2026-07-01",
       "outcome": "8/8 passed - EDR sensor-reader to FINAL ADR (schema contract, IMU+light readers, persistence+retention, bench+golden-master) + sync drain (power_log sync, drive_counter, sync_history TZ) + doc-sync. US-412 descoped to power_log-only; startup_log carved to US-416 (BL-013, Atlas-gated, Sprint 51). Merged to dev V0.29.4."
+    },
+    {
+      "feature": "ralph/sprint51-V0.29.5",
+      "range": "US-416 to US-425",
+      "date": "2026-07-01",
+      "outcome": "7/10 passed - US-416/417 general SNAPSHOT_SYNC path + startup_log (closes BL-013), US-418 idle-noise hygiene, US-419 clock-drift guard, US-420 LTFT card, US-424 foreign-vehicle marker+guard (F-116), US-425 doc-sync. US-416 landed by PM after a headless-loop async-wait stall (coached). US-421/422/423 BLOCKED (BL-014 power-mode SSOT missing, BL-015 SoC%-path/schema) -> ruled + carried to Sprint 52. Merged to dev V0.29.5."
     }
   ]
 }
