@@ -168,8 +168,20 @@
       "epicId": "E-002",
       "type": "normal",
       "size": "M",
-      "status": "sprint-ready",
-      "passes": false,
+      "status": "done",
+      "passes": true,
+      "completionNotes": "Full server-side vertical slice (compute + storage + wiring + migration), TDD (16 tests RED->GREEN incl the divide-by-zero + time-gap guards the AC names). CORE = pure computeDerivedSignals((timestamp, speed_kmh) series) -> DerivedSignals dataclass: estimated_distance_km = trapezoidal integral of speed*dt (SPEED is km/h per obd_parameters.py -> km); peak_acceleration_ms2 / peak_deceleration_ms2 = most-positive/most-negative per-segment finite diff, km/h converted to m/s (/3.6) before /dt so peaks carry PHYSICAL m/s^2 (not the odd km/h-per-s). Pure fn = fully unit-testable off-Pi against canned series (= the validationCriteria gate). GUARDS (AC2): dt<=0 (duplicate/non-monotonic timestamps) -> segment skipped, never divided by; dt>GAP_THRESHOLD (reuses drive_summary_compute.GAP_DETECTION_THRESHOLD_SECONDS=300s as the SSOT, no 2nd magic number) -> excluded from distance+accel + tallied in gap_skipped_count (a soak gap isn't continuous travel). <2 samples -> None. STORAGE: new drive_derived_signals table (one row/drive, summary_id PK+FK drive_summary.id ON DELETE CASCADE, mirrors DriveStatistic) via new ORM model DriveDerivedSignal + forward-only CREATE-TABLE migration v0017 (mirrors v0013 power_log: INFORMATION_SCHEMA probe + IF NOT EXISTS + post-condition probe; registered in ALL_MIGRATIONS). Units persisted alongside values (honest-instrument: speed_unit/distance_unit/accel_unit). compute_drive_derived_signals(session, driveId) = thin DB adapter (reads ordered SPEED rows, calls pure core, idempotent delete+insert); WIRED into recompute_drive_analytics CLI as the 3rd per-drive compute (defensive: <2 SPEED rows returns None, no crash, no change to the existing OK/anomaly log -- verified against the US-363 CLI tests which seed RPM-only). IN-LOOP GATES (synchronous): ruff All checks passed on all 7 touched .py; pytest tests/server/analytics/ + tests/server/cli/ = 109 passed (incl 16 new + the 2 US-363 CLI-consumer regressions + migration-registry). NOT TOUCHED (deliberate, lane): specs/architecture.md + regression_manifest.json -> owned by US-440 (its ACs already list 'architecture.md updated for derived signals' + manifest) -- PM/US-440 should document the new drive_derived_signals table + F-106 there. NOTE for PM integration gate: base-module touch = src/server/db/models.py (added a model + __all__ entry) -> prioritize full-suite + mypy at sprint close.",
+      "feedback": {
+        "filesActuallyTouched": [
+          "src/server/analytics/derived_signals_compute.py (new -- pure computeDerivedSignals + compute_drive_derived_signals DB adapter)",
+          "src/server/analytics/analytics_types.py (new DerivedSignals dataclass + __all__)",
+          "src/server/db/models.py (new DriveDerivedSignal ORM model + __all__)",
+          "src/server/cli/recompute_drive_analytics.py (wire the 3rd per-drive compute + mod-history)",
+          "src/server/migrations/versions/v0017_us436_drive_derived_signals.py (new -- CREATE TABLE drive_derived_signals)",
+          "src/server/migrations/__init__.py (register v0017 in ALL_MIGRATIONS + mod-history)",
+          "tests/server/analytics/test_derived_signals_compute.py (new -- 16 tests: pure compute/guards + DB integration + CLI wiring)"
+        ]
+      },
       "acceptance": [
         "compute acceleration (delta-speed/delta-time) + estimated distance (integral speed*dt) SERVER-SIDE (Atlas-confirmed: B-104 server-is-sole-analytics-writer; src/server/analytics/ per-drive compute) -- NOT Pi",
         "derived values stored/queryable per drive; guard against divide-by-zero / time gaps",

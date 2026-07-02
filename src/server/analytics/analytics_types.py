@@ -157,6 +157,37 @@ class CorrelationResult:
 
 
 @dataclass(frozen=True, slots=True)
+class DerivedSignals:
+    """Per-drive derived motion signals (US-436 / F-106).
+
+    Produced by the pure
+    :func:`src.server.analytics.derived_signals_compute.computeDerivedSignals`
+    over a ``(timestamp, speed_kmh)`` series and persisted to the
+    ``drive_derived_signals`` table.  Units are explicit:
+
+    * ``estimated_distance_km`` — trapezoidal integral of speed over time (km).
+    * ``peak_acceleration_ms2`` / ``peak_deceleration_ms2`` — the most positive
+      / most negative segment acceleration in m/s^2 (km/h converted to m/s
+      before dividing by dt).  ``None`` when no valid segment exists.
+    * ``sample_count`` — SPEED samples fed in.
+    * ``segment_count`` — adjacent pairs that produced a valid derivative
+      (dt > 0 and dt <= the gap threshold).
+    * ``gap_skipped_count`` — adjacent pairs skipped because dt exceeded the
+      gap threshold (a soak gap is not continuous travel).
+    """
+
+    estimated_distance_km: float
+    peak_acceleration_ms2: float | None
+    peak_deceleration_ms2: float | None
+    sample_count: int
+    segment_count: int
+    gap_skipped_count: int
+    speed_unit: str
+    distance_unit: str
+    accel_unit: str
+
+
+@dataclass(frozen=True, slots=True)
 class AnomalyResult:
     """Flagged anomaly for one parameter on one drive.
 
@@ -180,6 +211,7 @@ __all__ = [
     "BasicStats",
     "ComparisonStatus",
     "CorrelationResult",
+    "DerivedSignals",
     "DriveStatistics",
     "ParameterComparison",
     "TrendDirection",

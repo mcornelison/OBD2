@@ -264,3 +264,75 @@ Task: Pi + server hostname resolution cleanup (F-102)
   ACCEPT-list and a lint DETECTION regex both legitimately retain the old name.
   Sweeping those would be a functional regression, not a cleanup.
 ---
+
+## 2026-07-02 - US-436 (Agent 1 / Rex / Session 6, Sprint 53 V0.29.7) -- CLOSED (full vertical slice, TDD)
+Task: Derived signals -- acceleration + estimated distance from speed+time (F-106, server-side)
+
+### Outcome: passes:true. Server-side per-drive derived motion signals: compute + storage + CLI wiring + migration, all TDD (16 tests RED->GREEN).
+
+### What was implemented:
+- src/server/analytics/derived_signals_compute.py (NEW):
+  * Pure computeDerivedSignals((timestamp, speed_kmh) series) -> DerivedSignals.
+    estimated_distance_km = trapezoidal integral of speed over time (SPEED is
+    stored km/h per obd_parameters.py -> km). peak_acceleration_ms2 /
+    peak_deceleration_ms2 = most-positive / most-negative per-segment finite
+    difference, with km/h converted to m/s (/3.6) BEFORE dividing by dt so the
+    peaks carry the physical m/s^2 unit (not the odd km/h-per-second).
+  * GUARDS (AC "divide-by-zero / time gaps"): dt<=0 (duplicate/non-monotonic
+    timestamps) -> segment skipped, never divided by; dt>GAP_THRESHOLD (reuses
+    drive_summary_compute.GAP_DETECTION_THRESHOLD_SECONDS=300s as the SSOT, no
+    second magic number) -> excluded from distance+accel + tallied in
+    gap_skipped_count; <2 samples -> None.
+  * compute_drive_derived_signals(session, driveId) = thin DB adapter: reads
+    ordered SPEED realtime_data rows, calls the pure core, idempotent
+    delete+insert keyed on drive_summary.id.
+- src/server/db/models.py: new DriveDerivedSignal ORM model (drive_derived_signals
+  table, summary_id PK + FK drive_summary.id ON DELETE CASCADE, mirrors
+  DriveStatistic; units persisted alongside values; computed_at onupdate).
+- src/server/analytics/analytics_types.py: DerivedSignals dataclass.
+- src/server/migrations/versions/v0017_us436_drive_derived_signals.py (NEW):
+  forward-only CREATE-TABLE migration (mirrors v0013 power_log -- INFORMATION_SCHEMA
+  probe + IF NOT EXISTS + post-condition probe); registered in ALL_MIGRATIONS.
+- src/server/cli/recompute_drive_analytics.py: wired as the 3rd per-drive compute
+  (after summary + statistics). Defensive -- a drive with <2 SPEED samples
+  returns None, writes nothing, and does NOT touch the existing OK/anomaly log.
+- tests/server/analytics/test_derived_signals_compute.py (NEW, 16 tests):
+  pure-compute canned-series + both guards + unsorted-input + DB integration +
+  idempotency + no-speed/no-summary + CLI wiring.
+
+### Files changed:
+- Created: `src/server/analytics/derived_signals_compute.py`
+- Created: `src/server/migrations/versions/v0017_us436_drive_derived_signals.py`
+- Created: `tests/server/analytics/test_derived_signals_compute.py`
+- Modified: `src/server/db/models.py` (DriveDerivedSignal model + __all__)
+- Modified: `src/server/analytics/analytics_types.py` (DerivedSignals + __all__)
+- Modified: `src/server/cli/recompute_drive_analytics.py` (3rd compute + mod-history)
+- Modified: `src/server/migrations/__init__.py` (register v0017 + mod-history)
+
+### Gates (in-loop, synchronous):
+- ruff check on all 7 touched .py -> All checks passed
+- pytest tests/server/analytics/ tests/server/cli/ -> 109 passed
+  (16 new + the 2 US-363 CLI-consumer regressions + migration registry)
+
+### Learnings for future iterations:
+- **Pattern discovered**: "derived values stored/queryable per drive" = a full
+  vertical slice (pure compute -> ORM model -> forward-only migration -> CLI
+  wiring), NOT just a compute function. The sibling *_compute.py modules
+  (drive_summary/drive_statistics) + the recompute CLI are the template; a new
+  analytics table follows DriveStatistic (summary_id PK + FK CASCADE) and a
+  new migration follows v0013 (CREATE TABLE IF NOT EXISTS + INFORMATION_SCHEMA
+  probes). Tests get the table for free via Base.metadata.create_all on SQLite.
+- **Pattern discovered**: keep the derivation a PURE function over a plain
+  (timestamp, value) series and inject nothing else -> a server-analytics story
+  is fully unit-testable off-Pi against canned series (= the validationCriteria
+  gate) with zero DB or hardware.
+- **Gotcha**: SPEED is km/h. Distance integrates cleanly to km, but acceleration
+  wants m/s^2 -- convert km/h->m/s (/3.6) before /dt, and PERSIST the unit
+  strings so a downstream reader (US-438 cross-drive tool) never guesses.
+- **Gotcha**: wiring a new compute into a tested CLI is safe ONLY if it degrades
+  silently -- the US-363 CLI tests seed RPM-only, so the derived-signals call
+  MUST return None on <2 SPEED rows without altering the existing OK/anomaly log.
+- **Scope note**: specs/architecture.md + regression_manifest.json belong to
+  US-440 (its ACs list them) -- left untouched per lane discipline; flagged in
+  completionNotes so US-440/PM document the drive_derived_signals table + F-106.
+---

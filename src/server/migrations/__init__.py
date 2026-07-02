@@ -55,6 +55,9 @@
 # 2026-07-01    | Rex (US-412) | Sprint 50 V0.29.4 -- registered v0013 (create
 #               |              | power_log table on live MariaDB; F-101 Pi
 #               |              | power-event history mirror).  Forward-only.
+# 2026-07-02    | Rex (US-436) | Sprint 53 V0.29.7 -- registered v0017 (create
+#               |              | drive_derived_signals table; F-106 per-drive
+#               |              | acceleration + estimated distance).  Forward-only.
 # ================================================================================
 ################################################################################
 
@@ -132,6 +135,9 @@ from src.server.migrations.versions.v0015_us424_foreign_vehicle_data_quality imp
 from src.server.migrations.versions.v0016_us426_battery_health_soc_pct import (
     MIGRATION as _V0016,
 )
+from src.server.migrations.versions.v0017_us436_drive_derived_signals import (
+    MIGRATION as _V0017,
+)
 
 # ================================================================================
 # Registry -- append new migrations to the end, in ascending version order
@@ -154,6 +160,7 @@ ALL_MIGRATIONS: tuple[Migration, ...] = (
     _V0014,
     _V0015,
     _V0016,
+    _V0017,
 )
 
 
