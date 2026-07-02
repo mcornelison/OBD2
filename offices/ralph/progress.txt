@@ -105,3 +105,45 @@ Task: drive_detect idle-poll gap -- residual engine-on miss (F-049, verify-first
   code-pinned to a region, but the *un-mask API* + its 2G-K-line safety need the
   live Pi -> block + hand the bench-confirm to the CIO rather than ship a guess.
 ---
+
+## 2026-07-02 - US-433 (Agent 1 / Rex / Session 3, Sprint 53 V0.29.7) -- CLOSED WITH LIVE EVIDENCE (no code)
+Task: PowerMonitor DB-write path -- verify + close (F-050, likely DONE)
+
+### Outcome: VERIFY-FIRST close-with-evidence. Confirmed from code AND a live-Pi query. NO src/tests change.
+
+### Code verification (write path fully wired):
+- _initializePowerMonitor (lifecycle.py:1829) -- gated pi.power.power_monitor.enabled
+  (default true) + live DB -- constructs PowerMonitor (US-243).
+- _subscribePowerMonitorToPowerSourceProvider (lifecycle.py:2107) runs a
+  _PowerSourceUiBridge daemon thread at pi.powerWatch.uiPollSec that fires
+  powerMonitor.checkPowerStatus(onAcPower) on each power-source TRANSITION.
+- checkPowerStatus -> logPowerReading / logPowerTransition (power_db.py:56/104)
+  -> INSERT INTO power_log. US-412 syncs power_log to the server.
+
+### Live evidence (read-only ssh, non-destructive):
+- ssh mcornelison@10.27.27.28 sqlite3 /home/mcornelison/Projects/Eclipse-01/data/obd.db
+- power_log = 2115 rows, MIN 2026-05-01T11:08:31Z, MAX 2026-07-02T20:55:20Z.
+- Newest row 2026-07-02T20:55:20Z -- today, ~minutes before the query -> populating + current.
+- Recent rows: ac_power/battery_power transitions, power_source set, data_quality='full'.
+
+### No real gap (bullet-2 not triggered):
+- The "VCELL/SOC/CRATE per poll" repair was conditional ("only if a real gap remains").
+- power_log is transition-based BY DESIGN (SS-T4 A1: UpsMonitor is battery-health-only).
+  Battery VCELL/SOC/CRATE persist to battery_health_log; vcell in power_log is only
+  populated on shutdown STAGE rows (logShutdownStage). No repair warranted.
+
+### Gates:
+- No .py touched -> ruff N/A. No config change -> validate_config N/A.
+
+### Learnings for future iterations:
+- **Pattern discovered**: a verify-first "likely DONE" story closes strongest when you
+  pair CODE wiring proof with a LIVE read-only query -- a bounded ssh (BatchMode=yes,
+  ConnectTimeout) can't hang, is non-destructive (SELECT COUNT + recent rows), and turns
+  "owed to CIO" into evidence-in-hand. The Pi WAS reachable (10.27.27.28).
+- **Gotcha**: don't confuse tables. power_log = power-SOURCE transitions (+ shutdown
+  stage vcell). Battery VCELL/SOC/CRATE readings live in battery_health_log. A story
+  asking for "VCELL/SOC/CRATE in power_log per poll" is describing a repair that was
+  never the design -- verify the DESIGN before treating a missing column as a gap.
+- **Gotcha**: vcell NULL on ac_power/battery_power rows is EXPECTED, not a defect --
+  only logShutdownStage writes vcell (US-252).
+---

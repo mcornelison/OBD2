@@ -79,8 +79,12 @@
       "epicId": "E-OPS",
       "type": "normal",
       "size": "S",
-      "status": "sprint-ready",
-      "passes": false,
+      "status": "done",
+      "passes": true,
+      "completionNotes": "CLOSED WITH LIVE EVIDENCE (verify-first, no code). Confirmed BOTH from code + a live-Pi query. CODE: the US-243 write path is fully wired -- _initializePowerMonitor (lifecycle.py:1829, gated pi.power.power_monitor.enabled default true + live DB) constructs PowerMonitor; _subscribePowerMonitorToPowerSourceProvider (lifecycle.py:2107) runs a _PowerSourceUiBridge daemon thread at pi.powerWatch.uiPollSec that fires powerMonitor.checkPowerStatus(onAcPower) on each source TRANSITION -> logPowerReading/logPowerTransition (power_db.py:56/104) -> INSERT INTO power_log; US-412 syncs it to the server. LIVE (ssh mcornelison@10.27.27.28, read-only sqlite3 on /home/mcornelison/Projects/Eclipse-01/data/obd.db): power_log = 2115 rows spanning 2026-05-01T11:08:31Z -> 2026-07-02T20:55:20Z; newest row 2026-07-02T20:55:20Z (today, ~minutes before the query) -> populating + current. Recent rows are ac_power/battery_power transitions with power_source set + data_quality='full'. NO REAL GAP: bullet-2's 'VCELL/SOC/CRATE per poll' was conditional ('only if a real gap remains'); the path is transition-based BY DESIGN (SS-T4 A1: UpsMonitor is battery-health-only; power_log carries source transitions + shutdown STAGE vcell rows). Battery VCELL/SOC/CRATE persist to battery_health_log, not power_log -- so no repair warranted. vcell NULL on transition rows is expected (only logShutdownStage populates vcell). NO code, NO src/tests change -> ruff N/A (no .py touched). Atlas's 'almost certainly DONE' CONFIRMED with live evidence.",
+      "feedback": {
+        "filesActuallyTouched": []
+      },
       "acceptance": [
         "VERIFY-FIRST (Atlas: almost certainly DONE -- lifecycle.py:1873 US-243 power_log write path active + US-412 synced): re-query the live Pi, confirm power_log populating; if live+healthy CLOSE WITH EVIDENCE (row counts + recent timestamps), no code",
         "only if a real gap remains: activate/repair the UpsMonitor->power_log write path (VCELL/SOC/CRATE/power_source per poll)",
