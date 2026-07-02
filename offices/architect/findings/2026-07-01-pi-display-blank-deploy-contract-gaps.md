@@ -29,4 +29,28 @@ To give the CIO a display now: (a) ran `splash-pi/install.sh` (SPLASH_FORCE_SESS
 - **Sprint 48/49 must NOT be marked bench-validated** until the display renders end-to-end from a clean `deploy-pi.sh` (this reboot proved it doesn't).
 - Lane note: my Sprint 48/49 Rule-13 was *code-honors-contract* (which held); *deploy/hardware validation* is a separate gate — and it just failed here. Honest separation.
 
+---
+
+## UPDATE 2026-07-01 (cont.) — all FOUR gaps + fixes landed + end-to-end validation (CIO-supervised)
+
+Full four-bug tally (a 4th surfaced once the display rendered):
+
+| # | Gap | Fix | Where | Status |
+|---|---|---|---|---|
+| **1** | `deploy-pi.sh` never runs the kit installers → kiosk units never installed → blank | new `step_install_ui_kiosk_units()` runs both kit installers, with SSH-safe session detection (loginctl seat0, never guesses) | `deploy/deploy-pi.sh` | **FIXED + validated** |
+| **2** | Units call `/usr/bin/chromium-browser`, absent on Trixie (`chromium`) → `203/EXEC` | deploy-side compat symlink `chromium-browser → chromium` | `deploy/deploy-pi.sh` (kiosk step) | **FIXED** (deploy shim; proper fix = kit V-3 binary check — UI kit) |
+| **3** | Carousel has no live data (emitters not producing state); CHECK-ENGINE takeover mis-fires on empty state | — | needs the car | **OPEN — QA/Iris** (the pending bench validation) |
+| **4** | X11 DPMS/screen-blank not disabled → panel sleeps after 10 min → "no input" | xorg drop-in disabling BlankTime/Standby/Suspend/Off + live `xset` | `deploy/eclipse-kiosk-no-blank.conf` + `deploy/deploy-pi.sh` | **FIXED** |
+
+### End-to-end validation (the proof, not "looks right")
+- Wrote Bug 1/2 fix into `deploy-pi.sh`; `bash -n` clean; detection logic verified `x11` live.
+- **Tore the kiosk fully back down** (uninstalled both kits + removed the symlink → confirmed BLANK), then ran a **full `deploy-pi.sh`** (default mode). The new step re-detected `x11`, re-created the symlink, and re-installed+enabled splash-boot + splash-grace + eclipse-dashboard from scratch. Deploy OK; eclipse-obd/powerwatch restart-verified; `.deploy-version` stamped (`8c80d49`).
+- **CIO power-cycled the Pi → the boot splash rendered automatically.** That is the end-to-end confirmation that the deploy fix works at real boot — the core blank-screen bug is closed.
+- Then the panel went "no input" → **Bug 4** (DPMS `Monitor is Off` after 600 s; splash still active underneath). Woke it live + disabled blanking; installed the persistent xorg drop-in for future boots.
+
+### Net
+- **Bugs 1, 2, 4 are fixed in the deploy path** (`deploy/deploy-pi.sh` + `deploy/eclipse-kiosk-no-blank.conf`) — a clean deploy now renders the display and it won't sleep. The earlier out-of-band Pi patches are now reproducible by the deploy.
+- **Bug 3 (carousel live-data + empty-state takeover) is the remaining QA/Iris item** — verify on a drive with the car connected (eclipse-obd reaches "ready" → splash yields → carousel).
+- Still holds: **do not `/chain-validated` the V0.29 chain until the display renders end-to-end including live carousel data on the car.**
+
 — Atlas

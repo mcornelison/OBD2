@@ -1311,6 +1311,30 @@ step_install_ui_kiosk_units() {
             fi
         fi
 
+        # (2b) Disable X screen blanking / DPMS so the panel never sleeps and shows
+        #      'no input' (Bug 4).  Install the persistent xorg.conf.d drop-in (takes
+        #      effect at the next X start) AND apply it live via xset now (best-effort)
+        #      so this deploy needs no X restart.
+        XCONF_SRC='${PI_PATH}/deploy/eclipse-kiosk-no-blank.conf'
+        XCONF_DST='/etc/X11/xorg.conf.d/10-eclipse-kiosk-no-blank.conf'
+        if [ -f \"\$XCONF_SRC\" ]; then
+            if sudo test -f \"\$XCONF_DST\" && sudo cmp -s \"\$XCONF_SRC\" \"\$XCONF_DST\"; then
+                echo 'kiosk no-blank xorg drop-in already current (no change).'
+            else
+                sudo install -d -m 0755 /etc/X11/xorg.conf.d
+                sudo install -m 0644 \"\$XCONF_SRC\" \"\$XCONF_DST\"
+                echo \"installed xorg no-blank drop-in -> \$XCONF_DST\"
+            fi
+        else
+            echo 'WARN: deploy/eclipse-kiosk-no-blank.conf absent on Pi -- screen may blank after 10min (A-9).' >&2
+        fi
+        # Apply live now (best-effort; harmless if no X session is active).
+        if sudo -u ${PI_USER} DISPLAY=:0 XAUTHORITY=/home/${PI_USER}/.Xauthority xset s off -dpms s noblank >/dev/null 2>&1; then
+            echo 'screen blanking/DPMS disabled live on :0.'
+        else
+            echo 'note: could not apply xset live (no active X session?) -- the xorg drop-in covers the next boot.'
+        fi
+
         # (3) Run the kit's session-aware installers, forcing the detected session +
         #     the deploy user (env set INSIDE the root shell so sudo does not strip it).
         SPK='${PI_PATH}/${splashKit}'
