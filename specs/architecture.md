@@ -2477,6 +2477,39 @@ US-394.
 > phase-emit hook + the "shutdown-state survives eclipse-obd stop" guarantee) is
 > documented in **§10.6.1** (landed by US-394, same sprint).
 
+**Kiosk-unit install contract (`step_install_ui_kiosk_units`, Bug-1/2/4 — finding
+`offices/architect/findings/2026-07-01-pi-display-blank-deploy-contract-gaps.md`,
+hardened US-428).** The asset + state-server steps above install what
+`eclipse-states-http` *serves*; a separate deploy step installs the chromium kiosk
+**units** that actually draw it (without it the backend serves 127.0.0.1:9899 with
+no browser and the 3.5″ panel stays blank, pygame being sunset). It runs the kits'
+own session-aware `install.sh` (`specs/UI/dist/{splash-pi,dashboard-pi}/`) after the
+state server is up. Three install-contract gaps are closed:
+
+- **Bug-1 (units never installed):** deploy invokes both kit installers every deploy
+  (idempotent), so a fresh deploy is sufficient to render — no manual `install.sh`.
+- **Bug-2 (chromium binary name):** the unit templates parameterize the browser as
+  `ExecStart=__CHROMIUM_BIN__`; each installer's **V-3** check detects the real path
+  (`chromium-browser` OR `chromium` — Raspberry Pi OS Trixie ships `/usr/bin/chromium`)
+  and substitutes it into `ExecStart`, exactly like **V-1** substitutes `User=`. This
+  is **OS-version-proof with no `/usr/bin/chromium-browser` symlink shim**; an absent
+  chromium makes the installer **fail loudly** (its non-zero exit is wrapped
+  WARN-not-BLOCK by the deploy step, A-9), never a silent 203/EXEC unit.
+- **Bug-4 (screen blanking):** deploy installs the persistent xorg drop-in
+  `deploy/eclipse-kiosk-no-blank.conf` → `/etc/X11/xorg.conf.d/` (BlankTime/DPMS all
+  `0`) so the status panel never sleeps to "no input", and applies it live via `xset`.
+
+**Session detection (D-3 guard).** Over SSH the calling session reads as `tty`, so the
+step detects the **ACTIVE graphical `seat0` session** type (x11|wayland) on the Pi and
+passes it via `{SPLASH,DASHBOARD}_FORCE_SESSION`; if it genuinely can't be determined
+it **WARN + skips** (never guesses — a wrong X11-vs-Wayland guess is the D-3
+black-screen bug). **A-9 posture throughout:** an absent kit/installer WARNs and the
+deploy continues; the step never BLOCKs. The units are installed + **enabled** (splash)
+so the splash renders at the **next boot** (`WantedBy=graphical.target`) — the step does
+not thrash the live screen mid-deploy. Coverage: `tests/deploy/test_kiosk_install.py`
+(V-3 substitution + fail-loud + step assertions) and the `deploy-pi.sh` `--dry-run`
+smoke test.
+
 ### F-092 Carousel Dashboard Subsystem -- shell + splash hand-off + full-runtime state server (US-399, Sprint 49 / V0.29.3) [Atlas A-1/A-2/A-5]
 
 The post-boot touch dashboard reuses the F-103 splash seam wholesale: it is a

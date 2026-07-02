@@ -1251,15 +1251,16 @@ step_install_ui_kiosk_units() {
     #      wrong guess is the D-3 black-screen bug.  We detect the type from the Pi's
     #      ACTIVE graphical seat0 session and pass it via {SPLASH,DASHBOARD}_FORCE_SESSION.
     #      If it genuinely can't be determined we WARN + skip -- we never guess.
-    #  (2) chromium BINARY name.  The unit templates hardcode
-    #      ExecStart=/usr/bin/chromium-browser, but current Raspberry Pi OS (Trixie)
-    #      ships /usr/bin/chromium -> the unit dies with 203/EXEC.  We add the compat
-    #      symlink when chromium-browser is absent but chromium exists.  (The ideal
-    #      long-term fix is a kit-installer V-3 binary check that substitutes the real
-    #      path into the unit, like it substitutes User= -- flagged to the UI kit;
-    #      this keeps the DEPLOY self-sufficient meanwhile.)
+    #  (2) chromium BINARY name (US-428 -- Bug 2 proper fix).  The unit templates
+    #      parameterize the browser as ExecStart=__CHROMIUM_BIN__; the kit installers'
+    #      V-3 check detects the real path (chromium-browser OR chromium -- Trixie
+    #      ships /usr/bin/chromium) and substitutes it into ExecStart, exactly like
+    #      V-1 substitutes User=.  The old /usr/bin/chromium-browser symlink shim is
+    #      RETIRED: an absent chromium now makes the installer fail loudly (its exit is
+    #      wrapped WARN-not-BLOCK below, A-9), never a silent 203/EXEC unit.
     #
-    # Idempotent (the installers are idempotent; `ln -sf` is idempotent).  A-9
+    # Idempotent (the installers are idempotent; the V-3 chromium substitution is
+    # deterministic).  A-9
     # posture: absent kit/installer -> WARN + skip, deploy continues.  This installs +
     # ENABLES the units; the splash renders at the NEXT boot (WantedBy=graphical.target),
     # so the step does not thrash the live screen mid-deploy.  Runs AFTER the asset +
@@ -1273,7 +1274,7 @@ step_install_ui_kiosk_units() {
     fi
     if $DRY_RUN; then
         echo "DRY-RUN would: detect the Pi's ACTIVE graphical seat0 session type (x11|wayland)"
-        echo "DRY-RUN would: ensure /usr/bin/chromium-browser (symlink -> chromium if absent)"
+        echo "DRY-RUN would: (kit installers' V-3 check substitutes the real chromium path into ExecStart -- no symlink shim; US-428)"
         echo "DRY-RUN would: sudo {SPLASH,DASHBOARD}_FORCE_SESSION=<type> _FORCE_USER=${PI_USER} bash ${PI_PATH}/{${splashKit},${dashKit}}"
         return 0
     fi
@@ -1300,16 +1301,12 @@ step_install_ui_kiosk_units() {
         fi
         echo \"graphical session type: \$SESS\"
 
-        # (2) chromium binary compat: units call /usr/bin/chromium-browser; Trixie
-        #     ships /usr/bin/chromium.  Symlink when the browser name is absent.
-        if ! command -v chromium-browser >/dev/null 2>&1; then
-            if command -v chromium >/dev/null 2>&1; then
-                sudo ln -sf \"\$(command -v chromium)\" /usr/bin/chromium-browser
-                echo \"linked /usr/bin/chromium-browser -> \$(command -v chromium)\"
-            else
-                echo 'WARN: neither chromium-browser nor chromium on the Pi -- kiosk will not launch; install chromium.' >&2
-            fi
-        fi
+        # (2) chromium binary (US-428 -- Bug 2 proper fix): NO symlink shim here.
+        #     The kit installers' V-3 check detects the real chromium path
+        #     (chromium-browser OR chromium) and substitutes it into the unit
+        #     ExecStart (like User=, V-1), so /usr/bin/chromium-browser need not
+        #     exist.  An absent chromium makes the installer fail loudly below,
+        #     wrapped WARN-not-BLOCK (A-9) -- never a 203/EXEC unit.
 
         # (2b) Disable X screen blanking / DPMS so the panel never sleeps and shows
         #      'no input' (Bug 4).  Install the persistent xorg.conf.d drop-in (takes

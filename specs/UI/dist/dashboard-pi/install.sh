@@ -12,9 +12,16 @@
 #   V-2  detect the session manager (Wayland vs X11) and pick the matching
 #        unit variant; fail loudly if unknown -- guessing wrong gives the
 #        D-3 class of bug (X11 env on a Wayland session => black screen).
+#   V-3  detect the chromium binary path (chromium-browser OR chromium --
+#        Raspberry Pi OS Trixie ships /usr/bin/chromium) and substitute it into
+#        the unit ExecStart, like V-1 substitutes User=; fail loudly if neither
+#        is found. Retires the deploy-side /usr/bin/chromium-browser symlink shim
+#        -- a hardcoded ExecStart=/usr/bin/chromium-browser dies 203/EXEC on
+#        Trixie (US-428 / Bug 2).
 #
-#   --dry-run  report the user + session-type + variant it WOULD pick and
-#              exit WITHOUT installing (runs unprivileged).
+#   --dry-run  report the user + session-type + chromium + variant it WOULD
+#              pick (and the resolved ExecStart) and exit WITHOUT installing
+#              (runs unprivileged).
 #
 # A-1 hand-off: the dashboard unit is started by splash-boot.service's
 #   OnSuccess= directive (after HEALTHY_YIELD), so it is installed but NOT
@@ -23,6 +30,7 @@
 # Detection is overridable for off-Pi CI/testing:
 #   DASHBOARD_FORCE_USER       force the Pi user (empty => simulate "can't tell")
 #   DASHBOARD_FORCE_SESSION    force wayland|x11 (other => simulate "unknown")
+#   DASHBOARD_FORCE_CHROMIUM   force the chromium path (empty => simulate "none")
 #   DASHBOARD_USER_HOME_GLOB   override the /home/* probe glob
 # ============================================================
 set -euo pipefail
@@ -89,6 +97,24 @@ detect_session_type() {
   printf '%s' "$t"
 }
 
+# --- V-3: detect the chromium binary path -------------------------------------
+detect_chromium_bin() {
+  if [[ -n "${DASHBOARD_FORCE_CHROMIUM+x}" ]]; then
+    printf '%s' "$DASHBOARD_FORCE_CHROMIUM"   # forced (may be empty => indeterminate)
+    return 0
+  fi
+  # Prefer the historical name, then the Trixie name. Either is a valid
+  # executable for ExecStart; command -v resolves the absolute path.
+  local c
+  for c in chromium-browser chromium; do
+    if command -v "$c" >/dev/null 2>&1; then
+      command -v "$c"
+      return 0
+    fi
+  done
+  # neither found => print nothing => caller aborts loudly (like V-1/V-2).
+}
+
 PI_USER="$(detect_pi_user)"
 if [[ -z "$PI_USER" ]]; then
   echo "ERROR: cannot determine the target Pi user (expected exactly one" >&2
@@ -107,18 +133,31 @@ case "$SESSION_TYPE" in
     ;;
 esac
 
+CHROMIUM_BIN="$(detect_chromium_bin)"
+if [[ -z "$CHROMIUM_BIN" ]]; then
+  echo "ERROR: cannot find a chromium binary (looked for chromium-browser then" >&2
+  echo "       chromium on PATH). Install chromium, or set DASHBOARD_FORCE_CHROMIUM" >&2
+  echo "       to override. Aborting -- a hardcoded ExecStart=/usr/bin/chromium-" >&2
+  echo "       browser dies with 203/EXEC on Trixie (US-428 / Bug 2)." >&2
+  exit 1
+fi
+
 DASH_VARIANT="dashboard.service.${SESSION_TYPE}"
 
 echo "==> US-399 carousel dashboard kit"
 echo "    Detected Pi user:      $PI_USER"
 echo "    Detected session type: $SESSION_TYPE"
+echo "    Chromium binary:       $CHROMIUM_BIN  (V-3 -> ExecStart)"
 echo "    Dashboard variant:     $DASH_VARIANT -> $SYSTEMD_DIR/eclipse-dashboard.service"
 
 if [[ "$DRY_RUN" -eq 1 ]]; then
   echo "==> DRY RUN -- no changes made. Would copy assets to $INSTALL_DIR,"
-  echo "    substitute User=$PI_USER into the unit template, install"
-  echo "    eclipse-dashboard.service, and daemon-reload. The unit is started"
-  echo "    by splash-boot's OnSuccess= hand-off, so it is NOT enabled here."
+  echo "    substitute User=$PI_USER + chromium=$CHROMIUM_BIN into the unit"
+  echo "    template, install eclipse-dashboard.service, and daemon-reload. The"
+  echo "    unit is started by splash-boot's OnSuccess= hand-off, NOT enabled here."
+  echo "    Resolved ExecStart:"
+  sed -e "s/__PI_USER__/${PI_USER}/g" -e "s#__CHROMIUM_BIN__#${CHROMIUM_BIN}#g" \
+      "$SCRIPT_DIR/$DASH_VARIANT" | grep -m1 '^ExecStart=' | sed 's/^/      /' || true
   exit 0
 fi
 
@@ -128,9 +167,12 @@ if [[ $EUID -ne 0 ]]; then
   exit 1
 fi
 
+# Substitute __PI_USER__ (V-1) and __CHROMIUM_BIN__ (V-3) into the template.
 install_unit() {
   local src="$1" dest="$2"
-  sed "s/__PI_USER__/${PI_USER}/g" "$SCRIPT_DIR/$src" > "$dest"
+  sed -e "s/__PI_USER__/${PI_USER}/g" \
+      -e "s#__CHROMIUM_BIN__#${CHROMIUM_BIN}#g" \
+      "$SCRIPT_DIR/$src" > "$dest"
   chmod 0644 "$dest"
 }
 

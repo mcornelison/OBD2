@@ -542,6 +542,12 @@ def _runInstall(*args: str, env_extra: dict[str, str] | None = None):
     env = os.environ.copy()
     if env_extra:
         env.update(env_extra)
+    # V-3 (US-428): the installer now also resolves a chromium binary and aborts
+    # loudly if none is found (mirrors the V-1/V-2 gates). These off-Pi
+    # user/session previews are orthogonal to the browser path, and a dev box has
+    # no chromium -- default it so the preview reaches the report, unless a test
+    # overrides DASHBOARD_FORCE_CHROMIUM explicitly (e.g. to simulate "none").
+    env.setdefault("DASHBOARD_FORCE_CHROMIUM", "/usr/bin/chromium")
     return subprocess.run(
         ["bash", str(INSTALL_SH), *args],
         capture_output=True,

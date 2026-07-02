@@ -32,7 +32,7 @@ Type=simple
 User=__PI_USER__
 Environment=WAYLAND_DISPLAY=wayland-0
 Environment=XDG_RUNTIME_DIR=/run/user/%U
-ExecStart=/usr/bin/chromium-browser \
+ExecStart=__CHROMIUM_BIN__ \
   --kiosk \
   --ozone-platform=wayland \
   --touch-events=enabled \

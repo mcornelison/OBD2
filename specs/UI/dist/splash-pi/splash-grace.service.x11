@@ -22,7 +22,7 @@ Type=simple
 User=__PI_USER__
 Environment=DISPLAY=:0
 Environment=XDG_RUNTIME_DIR=/run/user/%U
-ExecStart=/usr/bin/chromium-browser \
+ExecStart=__CHROMIUM_BIN__ \
   --kiosk \
   --noerrdialogs --disable-infobars --hide-scrollbars \
   --autoplay-policy=no-user-gesture-required \

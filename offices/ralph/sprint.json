@@ -125,7 +125,8 @@
       "type": "normal",
       "size": "M",
       "status": "sprint-ready",
-      "passes": false,
+      "passes": true,
+      "completionNotes": "US-428 DONE (code-complete; the 'deploy to a Pi whose chromium differs' drill is a PM/bench gate -- no Pi on dev). Bug-2 PROPER FIX: the 6 chromium kiosk unit templates (splash-boot/splash-grace/dashboard x {x11,wayland}) now parameterize the browser as ExecStart=__CHROMIUM_BIN__ (was hardcoded /usr/bin/chromium-browser, which 203/EXECs on Trixie). Both kit installers (specs/UI/dist/{splash-pi,dashboard-pi}/install.sh) gain a V-3 detect_chromium_bin() gate that resolves the real path (command -v chromium-browser then chromium), fails loudly if neither is found (like V-1/V-2), and substitutes it into ExecStart via install_unit's sed -- same seam as __PI_USER__ (V-1). Dry-run renders the resolved ExecStart preview; new SPLASH/DASHBOARD_FORCE_CHROMIUM override for off-Pi CI. deploy-pi.sh step_install_ui_kiosk_units: REMOVED the /usr/bin/chromium-browser `ln -sf` symlink shim entirely (comment + code + dry-run echo) -- the installers' V-3 substitution replaces it; OS-version-proof, no shim. Session-detection (seat0) + xorg no-blank drop-in (Bug-4) + A-9 WARN-not-BLOCK all unchanged. Rule-10: architecture.md F-103 deploy-provisioning section gains a 'Kiosk-unit install contract (Bug-1/2/4)' subsection documenting the V-3 substitution + seat0 detection + A-9 posture. TEST COVERAGE: new tests/deploy/test_kiosk_install.py (12 tests: template parameterization, installer V-3 substitution end-to-end via dry-run render, fail-loud on no chromium, install_unit static, deploy-step no-symlink/seat0/WARN-not-BLOCK/wired, + repo-root deploy --dry-run reaching seat0); bash smoke test_deploy_pi.sh gains 2 kiosk asserts (step exercised + absent-kit WARN); existing test_splash_kit.py/test_dashboard_kit.py _runInstall helpers default FORCE_CHROMIUM (V-3 is a new gate they must satisfy off-Pi). IN-LOOP GATE: bash -n clean on deploy-pi.sh + both installers; ruff clean on all 3 touched .py; 109 targeted tests green (kiosk+deploy_pi+splash_kit+dashboard_kit); bash smoke 31/0. PM GATES OWED: (1) full pytest suite + mypy (deploy-pi.sh is base infra but no src/ change; 4 test files touched); (2) IRL: deploy to the real Pi (Trixie, /usr/bin/chromium) + confirm the kiosk unit ExecStart resolves to the real binary, no 203/EXEC, screen renders end-to-end -- the display-blank chain-validation gate.",
       "acceptance": [
         "review Atlas's committed step_install_ui_kiosk_units + eclipse-kiosk-no-blank.conf (8f6bb58); add deploy-smoke test coverage (runs kit installers, detects seat0 graphical session, presence-gates absent kits WARN-not-BLOCK)",
         "Bug-2 proper fix: the UI-kit installer gains a V-3 binary check that substitutes the real chromium path (chromium vs chromium-browser) into the unit template (like it substitutes User=) -- OS-version-proof WITHOUT the /usr/bin symlink shim",
@@ -144,7 +145,25 @@
       ],
       "conditionalOutcomes": [],
       "goal": "As the CIO, I want the kiosk deploy fix regression-covered and OS-version-proof, so the Pi never silently re-blanks on a deploy.",
-      "tasks": []
+      "tasks": [],
+      "feedback": {
+        "filesActuallyTouched": [
+          "deploy/deploy-pi.sh",
+          "specs/UI/dist/splash-pi/install.sh",
+          "specs/UI/dist/dashboard-pi/install.sh",
+          "specs/UI/dist/splash-pi/splash-boot.service.x11",
+          "specs/UI/dist/splash-pi/splash-boot.service.wayland",
+          "specs/UI/dist/splash-pi/splash-grace.service.x11",
+          "specs/UI/dist/splash-pi/splash-grace.service.wayland",
+          "specs/UI/dist/dashboard-pi/dashboard.service.x11",
+          "specs/UI/dist/dashboard-pi/dashboard.service.wayland",
+          "specs/architecture.md",
+          "tests/deploy/test_kiosk_install.py",
+          "tests/deploy/test_deploy_pi.sh",
+          "tests/deploy/test_splash_kit.py",
+          "tests/deploy/test_dashboard_kit.py"
+        ]
+      }
     },
     {
       "id": "US-429",

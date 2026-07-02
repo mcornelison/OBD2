@@ -59,3 +59,34 @@ Task: Wire register SoC% into the bench drain-CLI + US-234 cold-start guard + TD
 - **Gotcha**: dead-reference cleanup must follow the whole chain -- the `batteryHealthRecorder` ghost was CONSTRUCTED in `lifecycle.py` and threaded through the factory, not just stored in `hardware_manager`. Removing only the final store would leave a `TypeError` at the call site. grep the symbol across `src/` before declaring it dead.
 - **Design note**: system uptime is a *conservative* calibration proxy -- the MAX17048 keeps its ModelGauge calibration across a bare Pi reboot while the UPS holds battery, so a post-reboot drill could NULL a genuinely-calibrated gauge. That errs toward NULL (the safe, honest direction); flagged to Atlas in `completionNotes` if a gauge-power-persistent signal is wanted later.
 ---
+
+## 2026-07-02 - US-428 (Rex / Agent 1)
+Task: Harden deploy-pi.sh kiosk install -- test coverage + Bug-2 proper V-3 chromium-binary check (display finding / F-103)
+
+### What was implemented:
+- **Bug-2 proper fix (V-3)**: the 6 chromium kiosk unit templates (splash-boot / splash-grace / dashboard x {x11,wayland}) now parameterize the browser as `ExecStart=__CHROMIUM_BIN__` instead of hardcoding `/usr/bin/chromium-browser` (which dies 203/EXEC on Raspberry Pi OS Trixie, which ships `/usr/bin/chromium`).
+- Both kit installers (`specs/UI/dist/{splash-pi,dashboard-pi}/install.sh`) gained a `detect_chromium_bin()` V-3 gate: resolves `command -v chromium-browser` then `chromium`, **fails loudly** (exit 1) if neither is found (mirrors the V-1 user / V-2 session gates), and substitutes the resolved path into `ExecStart` via `install_unit`'s sed -- the SAME seam as `__PI_USER__` (V-1). New `SPLASH/DASHBOARD_FORCE_CHROMIUM` override + a dry-run ExecStart render preview.
+- **Removed the symlink shim**: `deploy-pi.sh step_install_ui_kiosk_units` no longer creates the `/usr/bin/chromium-browser` `ln -sf` compat symlink (comment + code + dry-run echo all updated). The installers' V-3 substitution replaces it -- OS-version-proof, no shim. Session-detection (seat0), the Bug-4 xorg no-blank drop-in, and A-9 WARN-not-BLOCK are unchanged.
+- **Rule-10**: `architecture.md` F-103 deploy-provisioning section gained a "Kiosk-unit install contract (Bug-1/2/4)" subsection documenting the V-3 substitution, seat0 detection, and A-9 posture.
+- **Deploy-smoke coverage**: new `tests/deploy/test_kiosk_install.py` (12 tests -- template parameterization, installer V-3 substitution end-to-end via dry-run render, fail-loud on no chromium, install_unit static, deploy-step no-symlink/seat0/WARN-not-BLOCK/wired, + a repo-root `deploy-pi.sh --dry-run` reaching the seat0 line). Bash `test_deploy_pi.sh` gained 2 kiosk asserts (step exercised + absent-kit WARN). Existing `test_splash_kit.py` / `test_dashboard_kit.py` `_runInstall` helpers now default `FORCE_CHROMIUM` (V-3 is a new gate they must satisfy off-Pi).
+
+### Files changed:
+- Modified: `deploy/deploy-pi.sh` (remove chromium symlink shim; V-3 comments; dry-run echo)
+- Modified: `specs/UI/dist/splash-pi/install.sh`, `specs/UI/dist/dashboard-pi/install.sh` (V-3 detect + fail-loud + install_unit sed + dry-run render + header docs)
+- Modified: 6 unit templates `specs/UI/dist/{splash-pi,dashboard-pi}/*.service.{x11,wayland}` (`ExecStart=__CHROMIUM_BIN__`)
+- Modified: `specs/architecture.md` (kiosk-install contract Bug-1/2/4)
+- Created: `tests/deploy/test_kiosk_install.py`
+- Modified: `tests/deploy/test_deploy_pi.sh`, `tests/deploy/test_splash_kit.py`, `tests/deploy/test_dashboard_kit.py`
+
+### Verification:
+- `bash -n`: clean on `deploy-pi.sh` + both installers.
+- ruff: clean on all 3 touched `.py` (kiosk_install + splash_kit + dashboard_kit).
+- Targeted: 109 passed (`test_kiosk_install` + `test_deploy_pi` + `test_splash_kit` + `test_dashboard_kit`); bash smoke `test_deploy_pi.sh` 31/0.
+- Real repo-root `deploy-pi.sh --dry-run` exits 0 and reaches the seat0 + V-3 dry-run lines.
+- PM/integration gates owed: full pytest + mypy; IRL deploy to the real Pi (Trixie `/usr/bin/chromium`) -> the kiosk unit ExecStart resolves to the real binary, no 203/EXEC, screen renders end-to-end (the display-blank chain-validation gate -- no Pi on dev).
+
+### Learnings for future iterations:
+- **Pattern discovered**: the installer's V-1/V-2/V-3 gates are a symmetric family -- each `detect_*()` honors a `FORCE_*` env override (off-Pi CI), aborts loudly on indeterminate, and substitutes a `__PLACEHOLDER__` into the unit via `install_unit`'s sed. Adding V-3 meant: template placeholder + detect fn + resolve/abort block + echo line + dry-run preview + one more `-e` in the sed. Use a `#` sed delimiter for path substitutions (`__CHROMIUM_BIN__` holds `/`).
+- **Gotcha**: a NEW hard-abort validation gate breaks EXISTING dry-run tests that didn't force the new detection. The V-1/V-2 gates abort even under `--dry-run`, so a dev box (no chromium) now aborts previews that only cared about user/session. Fix: default `FORCE_CHROMIUM` in the shared `_runInstall` test helper (via `env.setdefault`, so explicit-empty overrides for the fail-loud negative test still win).
+- **Gotcha**: the `deploy-pi.sh` bash smoke test runs an ISOLATED copy in a temp dir with NO UI kit on disk -> `step_install_ui_kiosk_units` takes the absent-kit guard (`return 0`) BEFORE the seat0 dry-run line. So the isolated smoke asserts the absent-kit WARN path; the seat0-reached path is asserted by a repo-root `--dry-run` in the Python test (kits present).
+---
