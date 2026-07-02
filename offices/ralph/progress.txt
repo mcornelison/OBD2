@@ -373,3 +373,69 @@ Task: Tester V0.28+ data-profile findings -- BUG rollup (F-082, scoped to the 8 
 - **Gotcha**: N-8's NULL wasn't a never-built feature -- it was COLLATERAL of the US-350/B-104 trigger-seam retirement (the writer that set profile_id got retired; its replacement didn't carry the assignment forward). Trace what a field's writer USED to be before assuming it was never written.
 - **Gotcha**: N-5/N-2 both had a FALSE premise in the finding (mint-gate misread as sync-flag; intentional stamp misread as wrong-column bug). Verify the finding's mechanism claim, not just its symptom -- an honest "not-a-bug, here's why" close is a valid outcome.
 ---
+
+## 2026-07-02 - US-438 (Agent 1 / Rex / Session 8, Sprint 53 V0.29.7) -- CLOSED (server-side CLI, TDD)
+Task: Cross-drive comparison tool (F-069, server-side, Spool ergonomics)
+
+### Outcome: passes:true. Read-only cross-drive comparison CLI; 31 tests RED->GREEN. ZERO base-module touch (no models.py, no migration).
+
+### What was implemented:
+- src/server/cli/compare_drives.py (NEW): read-only CLI that renders a
+  side-by-side table (metrics=rows, drives=columns) of chosen metrics across N
+  drives, so a Spool tuning read scans one metric across several drives at a
+  glance. SELECTs the already-computed analytics tables (recompute_drive_analytics
+  is the writer) -- computes nothing, writes nothing.
+  * DATA-DRIVEN METRIC REGISTRY over 3 physical shapes:
+    - statistic  -> drive_statistics EAV (peak_rpm=RPM.max_value,
+      ltft=LONG_FUEL_TRIM_1.avg_value, stft=SHORT_FUEL_TRIM_1.avg_value)
+    - derived    -> drive_derived_signals cols (US-436: peak_accel=
+      peak_acceleration_ms2, peak_decel=peak_deceleration_ms2,
+      distance=estimated_distance_km)
+    - unavailable-> knock_retard renders '--' + a note (stock 2G has no OBD
+      knock PID; ECMLink knock-retard is USB-only). Rule 2: NOT fabricated.
+      Adding an ECMLink knock param later = one registry line.
+  * F-116 exclusion: driveExclusionReason() drops data_quality='foreign_vehicle'
+    OR data_source not in {real, NULL} (NULL=pre-US-195 real, matches basic.py).
+    Excluded drive is SHOWN (EXCLUDED header + footnote), never silently dropped;
+    --include-foreign overrides. (validationCriteria: drive 33 not counted.)
+  * Missing data -> '--' (distinct from real 0); NOT-FOUND drives flagged.
+    Per-drive cost = 2 queries (stats-by-param map + session.get(derived)).
+  * CLI: --drives '11,20,27'|'11-14,27' (parseDriveSpec = ordered dedup +
+    inclusive ranges), --metrics (default all, validated), --include-foreign,
+    --list-metrics, -v. Pure formatComparisonTable (aligned monospace).
+- tests/server/cli/test_compare_drives.py (NEW, 31 tests): parse/metric-
+  resolution/F-116-exclusion/DB-resolution/pure-format/CLI-wiring, temp-file
+  SQLite + real ORM inserts (no seam mocks), incl the multi-drive + drive-33-
+  excluded validationCriteria gate.
+
+### Files changed:
+- Created: `src/server/cli/compare_drives.py`
+- Created: `tests/server/cli/test_compare_drives.py`
+
+### Gates (in-loop, synchronous):
+- pytest tests/server/cli/test_compare_drives.py -> 31 passed
+- ruff check on both new .py -> All checks passed
+- live module smoke: `python -m src.server.cli.compare_drives --list-metrics`
+  -> renders the 7-metric catalogue (knock_retard flagged unavailable)
+
+### Learnings for future iterations:
+- **Pattern discovered**: when metrics live in DIFFERENT physical shapes (EAV
+  rows vs real columns vs no-source-at-all), a data-driven registry with a
+  `source` discriminator + a single resolver beats N bespoke query blocks. It
+  also makes "honest about missing data" fall out for free -- an absent row or a
+  never-logged metric (knock-retard) just resolves to None and renders '--'.
+- **Pattern discovered**: F-116 has TWO markers (row-level data_source='foreign'
+  inherited onto drive_summary.data_source, and drive-level
+  data_quality='foreign_vehicle'). Check BOTH, and treat NULL data_source as real
+  (pre-US-195), matching the canonical basic.py filter. SHOW the exclusion, don't
+  drop it -- "honest about foreign data" means visible, not absent.
+- **Gotcha**: a read-only reporting tool over already-computed tables is the
+  cheapest kind of story -- ZERO base-module touch (no models/migration), so no
+  full-suite priority flag. But it CONSUMES US-436 derived signals + statistics,
+  so it validates alongside them; a drive with no computed row is normal, render
+  '--' not 0.
+- **Gotcha (Rule 2)**: knock-retard is genuinely absent from obd2db (no stock-2G
+  OBD PID; ECMLink knock is USB-only). The honest move is a registry entry that
+  renders '--' with the reason, NOT a guessed parameter_name that would silently
+  read nothing. Offer the metric; be honest it's unavailable.
+---
