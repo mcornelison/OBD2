@@ -52,3 +52,56 @@ Task: MAX17048 SOC% calibration protocol + scripts (F-048)
 - **Rule 2 held**: did NOT invent the measured settle number -- 180.0 stays as the
   grounded provisional default; the rig run (BENCH-ONLY validation) supplies the real value.
 ---
+
+## 2026-07-02 - US-432 (Agent 1 / Rex / Session 2, Sprint 53 V0.29.7) -- BLOCKED (BL-016)
+Task: drive_detect idle-poll gap -- residual engine-on miss (F-049, verify-first + A-9 guardrails)
+
+### Outcome: VERIFY-FIRST root-cause COMPLETE from code; BLOCKED for live-Pi fix disambiguation. No src/tests changed (deliberate).
+
+### Root cause (code-verified -- the shipped escalation is fine, the miss is downstream):
+- The US-242/B-049 alternator-active escalation FIRES correctly (BATTERY_V > 13.8V
+  sustained 3 samples -> _injectRpmProbeForEscalation). The RESIDUAL miss is what
+  happens to the probe (and every regular RPM poll):
+  1. supported_commands is probed ONCE at connect (obd_connection.py:408), never refreshed.
+  2. Cold-boot connect while the ECU is DARK (car key OFF, ELM327 alive on pin-16)
+     omits RPM(0x0c) from python-obd's supported_commands.
+  3. RPM's query is the LEGACY path (RPM in LEGACY_ECU_PARAMETERS, NOT PARAMETER_DECODERS)
+     -> obd.query(cmd) with force=False returns NULL without wire traffic for an
+     unsupported cmd (logger.py:220) -> ParameterReadError.
+  4. _assertPidSupported is a RED HERRING for RPM -- it only guards Spool-v2 decoder
+     PIDs (logger.py:212). So clearing our SupportedPidSet is a NO-OP fix.
+  5. The escalation swallows the null at core.py:1245 + latches _engineOnEscalated;
+     US-221 recovery can't help (clears ECU-silent only on a SUCCESSFUL read).
+     => RPM masked the whole connection -> drive_start never fires.
+- Also structural: one probe only reaches STARTING; drive_start needs sustained RPM
+  from the regular loop, which is masked identically.
+
+### Why blocked (not fixed):
+- The correct un-mask fix depends on python-obd internals + 2G K-line behavior NOT
+  verifiable off the dev box (does a re-probe re-interrogate the ECU? is force=True
+  clean on this ELM327? is the live backend real python-obd or a facade?). A guessed
+  fix risks another mocked-green/IRL-miss regression -- exactly what verify-first
+  exists to catch (the existing escalation tests MOCK queryAndLogParameter and never
+  exercise the real mask, so they are green while the live path misses).
+- Filed BL-016 with the live-Pi repro (cold-boot key-off -> engine-on), journalctl
+  grep tokens, and 3 fix options (A refresh supported_commands / B force RPM /
+  C alternator-active as first-class drive_start) for CIO bench-confirm + Atlas ruling.
+
+### Files changed:
+- Created: `offices/pm/blockers/BL-016-us432-idle-poll-residual-live-pi-rootcause.md`
+- Modified: `offices/ralph/sprint.json` (US-432 status:blocked + completionNotes)
+- Modified: `offices/ralph/ralph_agents.json`, `offices/ralph/progress.txt`
+
+### Learnings for future iterations:
+- **Pattern discovered**: on a verify-first "residual gap" story, trace the FULL
+  runtime path, not just our code -- the mask here is python-obd's supported_commands
+  cache (force=False null-on-unsupported), NOT our _assertPidSupported gate. RPM
+  bypasses _assertPidSupported entirely (it's in LEGACY_ECU_PARAMETERS, not
+  PARAMETER_DECODERS) -- an easy wrong-fix trap.
+- **Gotcha**: existing escalation tests mock the data logger's queryAndLogParameter,
+  so they can't see the real support-cache mask -- a story can look "already fixed"
+  while missing IRL. Mock-blindness is why this residual survived US-242.
+- **Iron Law held**: no fix without a confirmed root cause. The mechanism is
+  code-pinned to a region, but the *un-mask API* + its 2G-K-line safety need the
+  live Pi -> block + hand the bench-confirm to the CIO rather than ship a guess.
+---
