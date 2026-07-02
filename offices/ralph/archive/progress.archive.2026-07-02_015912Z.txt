@@ -1,0 +1,240 @@
+## 2026-07-01 - US-416 (Rex / Agent 1)
+Task: General natural-key snapshot-sync path + SNAPSHOT_SYNC registry (Atlas-ruled, F-115-reusable)
+
+### What was implemented:
+- Shared cross-tier registry src/common/sync/snapshot_registry.py: SNAPSHOT_SYNC {table -> SnapshotSyncSpec(naturalKeyCols, cursorCol)} + helpers (getSnapshotSpec/isSnapshotSyncTable/snapshotSyncTables). Ships EMPTY -- mechanism only; startup_log registers in US-417, F-115 event-vault reuses it.
+- Pi reader (src/pi/data/sync_log.py): last_snapshot_cursor column on sync_log + ensureSnapshotSyncSchema migration + getSnapshotCursor/getSnapshotRows/updateSnapshotCursor. Deltas by cursorCol > last_snapshot_cursor (NOT rowid: TEXT-PK tables have no stable rowid, VACUUM renumbers). Cursor never rewinds (MAX guard).
+- Pi client (src/pi/sync/client.py): pushSnapshot() -- time-cursor push; failed push does NOT advance cursor; pushAllDeltas sweeps registered snapshot tables after delta tables.
+- Server (src/server/api/sync.py): runSnapshotUpsert + _upsertSnapshotBatch upsert on (source_device, *naturalKeyCols) w/ ON-CONFLICT (dialect-aware mysql/sqlite); _SNAPSHOT_TABLE_REGISTRY (name->model); acceptedTables() computes the payload whitelist live so registrations are honored. dtc_freeze_frame FK resolver left UNTOUCHED (Atlas ruling).
+
+### Files changed:
+- Created: `src/common/sync/__init__.py`, `src/common/sync/snapshot_registry.py`
+- Modified: `src/pi/data/sync_log.py` (snapshot reader + cursor + migration)
+- Modified: `src/pi/sync/client.py` (pushSnapshot + sweep)
+- Modified: `src/server/api/sync.py` (runSnapshotUpsert + registry + live whitelist)
+- Created: `tests/common/sync/test_snapshot_registry.py`, `tests/pi/data/test_snapshot_sync.py`, `tests/pi/sync/test_sync_client_snapshot.py`, `tests/server/test_snapshot_sync_upsert.py`
+- Modified: `tests/pi/data/test_sync_log.py` (schema-lockdown: +last_snapshot_cursor)
+
+### Verification (this iteration, synchronous):
+- pytest tests/common/sync tests/pi/data tests/pi/sync tests/server/test_snapshot_sync_upsert = 382 passed
+- pytest server sync-endpoint regression (test_sync, test_sync_dtc_freeze_frame, test_power_log_sync, test_drive_counter_sync) = 62 passed
+- ruff on all 11 touched files = clean
+
+### Learnings for future iterations:
+- **Pattern discovered**: Natural-key snapshot sync separates volume-bounding (Pi time-cursor, best-effort) from correctness (server UNIQUE(source_device,*naturalKeyCols) upsert). An over-reading cursor is harmless because the server dedups -- so no need for a stable integer rowid on TEXT-PK tables.
+- **Pattern discovered**: A-4 single-definition is proven structurally, not by convention -- test asserts pi and server return the SAME SnapshotSyncSpec OBJECT (`is`) from the shared registry, so the two tiers physically cannot drift.
+- **Gotcha (process)**: The code was built complete last session but the headless loop dropped an async regression result before commit -> read as a no-progress stall -> PM had to hand-land it (600b8a0). RUN THE GATE SYNCHRONOUSLY (prompt step 5) and commit before ending the iteration.
+- **Gotcha (shared checkout)**: The working tree changed under me mid-iteration (PM committed 600b8a0 while I was reading files) -- git status from session start was stale. Always re-check HEAD before assuming uncommitted work needs committing.
+---
+
+## 2026-07-01 - US-417 (Rex / Agent 1)
+Task: Register startup_log onto the snapshot-sync path (deps US-416; closes BL-013)
+
+### What was implemented:
+- Shared registry: SNAPSHOT_SYNC['startup_log'] = SnapshotSyncSpec(naturalKeyCols=('boot_id',), cursorCol='recorded_at'). Defined ONCE, both tiers reference the shared dict (A-4). The US-416 same-object A-4 proof (test_piAndServerSeeTheSameRegistration) stays green.
+- Server StartupLog model (src/server/db/models.py): UNIQUE(source_device, boot_id), NO source_id -- natural-key dedup, distinct from the id->source_id delta path. Timestamp columns are ISO-8601 TEXT (VARCHAR) matching the Pi, so journal timestamps (possibly NULL) land verbatim with no DATETIME coercion.
+- Server sync (src/server/api/sync.py): import StartupLog + _SNAPSHOT_TABLE_REGISTRY['startup_log']=StartupLog. runSyncUpsert already routes registered snapshot tables to runSnapshotUpsert (US-416); this makes startup_log resolvable.
+- Server migration v0014_us417_startup_log.py: CREATE TABLE startup_log ... UNIQUE KEY uq_startup_log_boot(source_device, boot_id); INFORMATION_SCHEMA pre/post probes (idempotent, mirrors v0013 power_log). Registered in ALL_MIGRATIONS + mod-history.
+- Pi recorded_at 'if absent' guard (src/pi/obdii/database_schema.py::ensureStartupLogRecordedAt): idempotent, PRAGMA-guarded, nullable-TEXT ALTER (SQLite forbids the schema's non-constant strftime default), skips a missing table. Wired into boot_progress._writeStartupLogRow next to ensureStartupLogForensicColumns.
+- Pi pushSnapshot missing-table guard (src/pi/sync/client.py): sqlite_master check -> EMPTY when a registered snapshot table isn't CREATE-d yet (mirrors _readLocalDriveCounter), so pushAllDeltas survives a fresh/partial DB.
+
+### Files changed:
+- Modified: `src/common/sync/snapshot_registry.py` (register startup_log)
+- Created: `src/server/db/models.py` StartupLog model (+ __all__), `src/server/migrations/versions/v0014_us417_startup_log.py`
+- Modified: `src/server/api/sync.py` (import + registry), `src/server/migrations/__init__.py` (register v0014)
+- Modified: `src/pi/obdii/database_schema.py` (ensureStartupLogRecordedAt), `src/pi/diagnostics/boot_progress.py` (call guard), `src/pi/sync/client.py` (missing-table guard)
+- Created: `tests/server/test_startup_log_sync.py`, `tests/pi/obdii/test_startup_log_recorded_at.py`
+- Modified: `tests/pi/sync/test_sync_client_snapshot.py` (missing-table tests), `tests/pi/sync/test_sync_client.py` + `tests/pi/sync/test_sync_force_push.py` + `tests/pi/data/test_sync_client_upsert.py` (sweep-count +1 snapshot table), `tests/server/test_db_models.py` (24->25 tables)
+
+### Verification (this iteration, synchronous):
+- pytest tests/server + tests/pi/obdii = all pass (0 failures, only skips)
+- pytest tests/pi/sync + tests/pi/data + tests/common/sync + tests/pi/diagnostics + tests/integration/test_pi_to_server_e2e + tests/server/test_startup_log_sync = 475 passed
+- 26 US-417 direct tests pass; ruff clean on all 15 touched files
+- Committed 58ac97d before ending the iteration (prompt step 5)
+
+### Learnings for future iterations:
+- **Pattern**: Registering the FIRST table onto a generic sweep mechanism (US-416 shipped SNAPSHOT_SYNC empty) is where the sweep's missing-table / count-lock-down edges first bite. Grep tests for `len(IN_SCOPE_TABLES)` / total-table-count assertions BEFORE registering -- they encode the old sweep size and must grow by the registered set.
+- **Gotcha**: recorded_at has been in startup_log since US-263 (git -S proved it), so the 'if absent' Pi migration is a defensive no-op, not a real backfill. Verify a column's history with `git log -S` before writing a migration for it -- don't fabricate a backfill the schema never needed.
+- **Gotcha (data hygiene)**: ralph_agents.json was already malformed JSON (a stray `"` mid-note from a prior session's concatenation) -- fixed by rewriting the note clean. json.load the agents/sprint files after editing; a broken agents.json would silently break ralph.sh's claim logic.
+---
+
+## 2026-07-01 - US-418 (Rex / Agent 1)
+Task: Idle log-noise + sync-cadence hygiene (F-077 + F-078 + F-058, verify-first)
+
+### What was implemented:
+- VERIFY-FIRST via CODE INSPECTION (no live-Pi/SSH in headless Windows dev; BENCH-ONLY sprint). Established prior fixes (US-340b deduped connection_log outage churn ~99%; US-298/299 SyncCadenceController made cadence engine-aware, 60s IDLE heartbeat) and root-caused the RESIDUAL idle sources from code -- changed code only where evidence showed a real un-fixed gap.
+- F-078 (sync_history): server postSync() writes a sync_history row on EVERY POST (sync.py:1115, pre-payload-check) + pushDriveCounter() POSTed the counter unconditionally whenever last_drive_id>0, so each 60s engine-off heartbeat wrote 1 server sync_history row (~1/min). pushDelta already skips the POST when zero delta rows, so the counter push was the SOLE idle POST. FIX: pushDriveCounter gates the POST on an unchanged-value process-local high-water mark (self._lastPushedDriveCounter), advanced ONLY on a SUCCESSFUL push (a FAILED push stays re-sendable); forcePush passes force=True to bypass (power-down flush must always deliver -- matches the method's own 'forcePush is the explicit bypass point' docstring).
+- F-077/F-058 (connection_log): ecu_silent_wait was NOT in the US-340b repeat-suppressed set, so engine-off-but-adapter-reachable logged 1 ecu_silent_wait per reduced-cadence poll AND (being treated as a state change) reset the dedup tracker each poll. FIX: added EVENT_ECU_SILENT_WAIT to _REPEAT_SUPPRESSED_EVENTS. First occurrence per engine-off window + real state changes still log/clear.
+
+### Files changed:
+- Modified: `src/pi/sync/client.py` (pushDriveCounter idle gate + force param + forcePush bypass + __init__ high-water mark)
+- Modified: `src/pi/data/connection_logger.py` (ecu_silent_wait -> _REPEAT_SUPPRESSED_EVENTS)
+- Modified: `tests/pi/sync/test_drive_counter_sync.py` (+4 idle-gate tests)
+- Modified: `tests/pi/data/test_connection_log_event_types.py` (+2 ecu_silent dedup tests)
+
+### Verification (this iteration, synchronous):
+- New tests RED confirmed pre-fix, GREEN post-fix.
+- pytest pi/sync + connection-log + orchestrator + diagnostics + bt-resilience + reconnect = 169 pass
+- pytest orchestrator + obdii + server sync (test_sync, test_drive_counter_sync) = 742 pass, 1 skip
+- ruff clean on all 4 touched files
+- Committed 18c5574 before ending the iteration (prompt step 5)
+
+### Learnings for future iterations:
+- **Pattern**: A verify-first story that mandates a live-Pi re-query can still be discharged from the dev box by CODE INSPECTION: trace what prior stories (named in the AC) already fixed, then change code ONLY at the residual root cause, and DEFER the live idle-soak to the PM bench window (this is a BENCH-ONLY sprint -- same deferral shape as US-417's deploy). Don't blind-change a live sync path; find the exact un-fixed source first.
+- **Gotcha (root cause > mechanism)**: the story SUGGESTED a pi_state.sync_idle gate, but the true root cause was pushDriveCounter re-POSTing an unchanged singleton every tick (US-413). Fixing the source (dedup the counter push) beats bolting on a new state flag -- and the story explicitly warned against reusing the no_new_drives drain gate. Read the OR-list as outcomes, not a closed mechanism set.
+- **Gotcha (idle POST accounting)**: a server sync_history row is written per POST regardless of payload; to stop idle growth you must stop the Pi from POSTing when there is nothing new, not filter server-side. pushDelta already no-POSTs on empty; the leak was the always-on counter push riding every tick.
+- **Gotcha (agents.json edit)**: replacing the `note` value with an old_string that only matches the START of the note orphans the trailing text outside the JSON string -> invalid JSON. Match to the value's real closing quote (or json.load-verify immediately after every agents/sprint edit -- I caught two comma/quote breaks this way).
+---
+
+## 2026-07-01 - US-419 (Rex / Agent 1)
+Task: Pi post-reboot clock-drift guard (F-080, code angle; verify-first)
+
+### What was implemented:
+- ADOPTED prior-session work found fully-built but UNCOMMITTED at session start (a prior iteration stalled pre-commit -- the recurring headless async-wait pattern from US-416). Inspected it end-to-end (I did not author it), verified correctness against the ACs, ran the gate SYNCHRONOUSLY, committed.
+- SSOT honest-instrument: src/pi/diagnostics/clock_sync.py is the single authoritative "is this boot timestamp trustworthy?" provider. Two signals: (a) sanity FLOOR -- subprocess-free lexical ISO-8601 compare vs CLOCK_SANITY_FLOOR_ISO='2025-01-01T00:00:00Z' (a pre-floor wall clock = definitive dead-RTC epoch/build reset, flagged unconditionally, FLOOR WINS even if NTP later reads synced); (b) best-effort timedatectl NTPSynchronized probe -- tri-state True/False/None, an UNREACHABLE probe (non-systemd/dev box) returns None and falls back to the floor alone (no false-positive flood). classifyClockQuality = pure/total floor-only seam (power_log, zero write latency); assessClockQuality = probe+classify (startup_log, once/boot).
+- Wiring: startup_log writer (boot_progress._writeStartupLogRow, threaded via arm()) stamps data_quality with the full NTP-probe assessor; all 5 power_log writers stamp with the floor-only classifier (power-down race adds no NTP latency). data_quality TEXT col added to power_log + startup_log schema + idempotent PRAGMA-guarded ALTER migrations (nullable; legacy rows NULL).
+- WIRE-STRIP: server PowerLog/StartupLog models have NO data_quality (models.py:742/787), so added 'data_quality' to sync_log._WIRE_STRIPPED_COLUMNS applied in BOTH getDeltaRows (power_log delta) + getSnapshotRows (startup_log snapshot) -- else the US-412/US-417 sync would crash on the unknown column. RTC/timesyncd ordering fix left as ops (AI-1).
+
+### Files changed:
+- Created: `src/pi/diagnostics/clock_sync.py` (SSOT classifier + NTP probe)
+- Created: `tests/pi/diagnostics/test_clock_sync.py`, `tests/pi/diagnostics/test_startup_log_clock_quality.py`, `tests/pi/power/test_power_log_clock_quality.py`, `tests/pi/data/test_sync_data_quality_strip.py`
+- Modified: `src/pi/diagnostics/boot_progress.py` (assessClockQuality wiring + injection seam), `src/pi/power/power_db.py` (all 5 writers stamp data_quality, floor-only default), `src/pi/obdii/database_schema.py` (data_quality on both schemas + ensureStartupLogDataQuality), `src/pi/obdii/database.py` (ensurePowerLogDataQuality migration), `src/pi/data/sync_log.py` (_WIRE_STRIPPED_COLUMNS + snapshot-reader strip), `tests/pi/power/test_power_monitor_db_write.py` (schema +data_quality)
+
+### Verification (this iteration, synchronous):
+- pytest 38 US-419-targeted tests = all pass
+- sync-path regression (tests/pi/data + tests/pi/sync + tests/common/sync + tests/server/test_power_log_sync + test_startup_log_sync + test_sync) = exit 0, no failures (~437 tests -- wire-strip broke no sync path)
+- ruff clean on all 11 touched files
+- Committed e622db2 before ending the iteration (prompt step 5)
+
+### Learnings for future iterations:
+- **Pattern (adopt-uncommitted)**: when a session starts with uncommitted work matching the claimed story, DON'T blind-commit it. Inspect it end-to-end, prove correctness against the ACs yourself, run the gate SYNCHRONOUSLY, THEN commit. Here that inspection surfaced the one real risk (the global wire-strip) and let me verify it was safe rather than assume.
+- **Gotcha (global wire-strip blast radius)**: adding a column name to a GLOBAL strip set (_WIRE_STRIPPED_COLUMNS applied to every delta+snapshot table) is only safe if NO other syncing table has a column of that name that the server maps + stores. Verified by grep (power_log+startup_log are the only Pi tables with data_quality; server data_quality is server-authored drive_summary/drive_statistics only). Always check the blast radius of a global strip, not just the two tables you're adding.
+- **Gotcha (honest instrument must not false-flag)**: the NTP probe is tri-state on purpose -- an UNREACHABLE probe returns None (fall back to floor), NOT False (flag everything). A dev box / non-systemd host has no timedatectl; treating that as "not synced" would paint every row clock_unsynced. Unreachable != not-synced.
+---
+
+## 2026-07-01 - US-420 (Rex / Agent 1)
+Task: LTFT multi-drive trend card (F-096, carousel)
+
+### What was implemented:
+- NEW Python emitter src/pi/splash/ltft_trend_emitter.py -- the SSOT for the LTFT trend verdict, mirroring the F-097/F-111 emitter seam (build*State pure + make*Emitter best-effort atomic writer via ensureStatesDir+writeStateAtomic). readLtftTrend() aggregates per-drive avg/min/max of parameter_name='LONG_FUEL_TRIM_1' (single 4G63 bank) over realtime_data, GROUP BY drive_id, oldest->newest, WHERE data_source='real' AND drive_id IS NOT NULL (fixture/replay/sim + future US-424 foreign excluded; NULL-drive noise excluded); LEFT JOIN drive_summary for the axis ts (NULL honest). classifyLtftDrift(): |LTFT|<=5 ok / <=10 amber / >10 down (grounded: offices/tuner/cards/safe-range-fuel-trims.md + AC). buildLtftTrendState() classifies each drive + a headline verdict + migration direction (improving toward 0 / worsening / stable, 0.5% dead-band). HONEST-INSTRUMENT: <2 real drives forces headline level 'insufficient' -- a single in-band reading can never render green.
+- carousel.js: ltftTrendView() pure builder + renderLtftTrendCard() DOM (multi-drive bar row, each bar coloured by its own drift level) + tick() dispatch on data-state='ltft-trend' + api exports (ltftTrendView/fmtLtftPct). The view re-forces 'insufficient' when sufficient!==true (defense-in-depth: a mislabeled state can't paint green).
+- dashboard.html: 4th card slot data-state='ltft-trend'. dashboard.css: .ltft-bars/.ltft-bar[data-level=ok|amber|down] + muted .tile[data-level='insufficient'].
+
+### Files changed:
+- Created: `src/pi/splash/ltft_trend_emitter.py`, `tests/pi/splash/test_ltft_trend_emitter.py`
+- Modified: `specs/UI/dist/dashboard-pi/carousel.js` (ltftTrendView + renderer + dispatch + exports), `dashboard.html` (card slot), `dashboard.css` (bar + insufficient styles)
+- Modified: `tests/deploy/test_dashboard_kit.py` (US-420 node render-logic + HTML/CSS asserts; S-1 card count 3->4)
+
+### Verification (this iteration, synchronous):
+- pytest tests/pi/splash + tests/deploy/test_dashboard_kit.py + tests/deploy/test_splash_kit.py = all pass (1 expected skip)
+- US-420 node test confirmed RUN (not skipped) -- node on PATH, ~8s
+- ruff clean on all 3 touched Python files; node --check carousel.js clean (via S-1 syntax test)
+- Committed a42c76a before ending the iteration (prompt step 5)
+
+### Learnings for future iterations:
+- **Pattern (carousel card = 5 seams)**: adding a card is Python emitter (SSOT classifier: build*State pure + make*Emitter best-effort) + carousel.js *View pure builder + render*Card DOM + tick() dispatch + api export, then HTML slot + CSS [data-level] + the node render-logic test in test_dashboard_kit.py. The emitter CLASSIFIES; the JS only maps verdict->colour (never classifies) -- that's what makes 'never green-when-stale' structurally enforceable.
+- **Gotcha (card-count lock-down)**: test_dashboard_kit.py::test_dashboardHtml_hasBothCardSlots_s1 hard-codes `html.count('class="card"') == N`. Registering a new card grows it by one -- grep the card-count assertion BEFORE adding a slot (same shape as the US-417 snapshot-table +1 sweep lock-downs).
+- **Gotcha (scope = match the siblings)**: makeBatteryHealthEmitter/makeDtcEmitter/makeSystemStatusEmitter have NO src call site (grep proved it) -- the runtime wiring of state emitters is owner/deploy-side, not part of a card story. So US-420 ships emitter+reader+card+tests (bench-validatable) and defers the emit() wiring, exactly matching the shipped cards. Don't balloon a card story into orchestrator wiring.
+---
+
+## 2026-07-01 - US-421 (Rex / Agent 1) -- BLOCKED (Refusal Rule 1, no code)
+Task: Power-mode badge -- in-car vs wall-power (F-098, carousel)
+
+### Outcome: BLOCKED, filed offices/pm/blockers/BL-014-power-mode-ssot-provider-missing.md
+- AC#1 requires the badge be "sourced from the existing power-mode SSOT provider (src/pi/power/)". CONFIRMED that provider does NOT exist -- refused-first per Rule 1 rather than fabricate an acquisition path.
+- (a) PowerSourceProvider is the SSOT for a DIFFERENT fact: external-AC vs UPS-battery (GPIO6 PLD isExternalPowerPresent). Both in-car AND wall-power normally read "external present", so it CANNOT distinguish the deployment mode -- using it would paint a confident wrong state, which AC#2 explicitly forbids ("undeterminable -> 'unknown', never a confident wrong state").
+- (b) No config key exists for power mode: grep config.json + validator DEFAULTS returns only pi.display.mode / displayCanvas.mode / calibration.mode -- none is power mode. No env var, no menu setting, no detector.
+- (c) The DATA CONTRACT already exists but is unsourced: system_status_emitter.buildSystemStatusState() already accepts powerMode ('car'|'wall') and writes power.mode; carousel.js powerTile() already renders CAR/WALL/unavailable -- but grep finds NO caller of makeSystemStatusEmitter and nothing sets powerMode (pass-through placeholder).
+- The acquisition mechanism (config key vs operator-set menu vs runtime detection) is an unratified SSOT/architecture decision -> routed to Atlas (standing directive + PM Rule 10). Recommended in BL-014: config key pi.power.mode default 'unknown' (honest-instrument), optionally menu-overridable.
+- Sprint NOT blocked: US-422/423/424/425 remain pickable. Story status set 'blocked', passes:false, completionNotes points to BL-014.
+
+### Files changed:
+- Created: `offices/pm/blockers/BL-014-power-mode-ssot-provider-missing.md`
+- Modified: `offices/ralph/sprint.json` (US-421 status=blocked + completionNotes -> BL-014)
+- Modified: `offices/ralph/ralph_agents.json` (Rex note = block summary; status unassigned)
+
+### Learnings for future iterations:
+- **Pattern (confirm-the-premise before building)**: when an AC says "source from the existing X provider -- confirm the provider", TREAT "confirm" as a real gate. Here the premise was false (no provider). Verify the SSOT exists BEFORE writing a line -- Rule 1 (ambiguity is a blocker) beats guessing an acquisition path, especially when the wrong guess (PowerSourceProvider) would violate a different AC (confident-wrong-state).
+- **Gotcha (fact vs fact)**: "power SOURCE" (external-AC vs battery, a live GPIO reading) and "power MODE" (in-car vs wall-power, a deployment context) are DISTINCT facts. An existing SSOT for one is not an SSOT for the other. Don't let a near-name-match ("power...") collapse two facts.
+- **Gotcha (agents.json edit, THIRD time in this sprint)**: replacing a `note` value with an old_string that matches only the START of the old note orphans the trailing text after the new closing quote -> invalid JSON (json.load caught it: "Expecting ',' delimiter"). For a full-note rewrite, Write the whole small file instead of Edit-matching a prefix; and always json.load-verify agents.json + sprint.json after editing.
+---
+
+## 2026-07-01 - US-422 (Rex / Agent 1) -- BLOCKED (Refusal Rule 1, no code)
+Task: Wire UpsMonitor SoC% through orchestrator to recorder (F-060)
+
+### Outcome: BLOCKED, filed offices/pm/blockers/BL-015-battery-soc-recording-path-and-column-missing.md
+- Pre-flight audit (Explore map + BL-013 archive + direct grep) found the story premise no longer matches the code. Three unratified decisions collide, all Atlas-owned (PM Rule 10) -- refused-first per Rule 1 rather than fabricate a path / schema / calibration reversal.
+- **(1) The 'orchestrator' drain-event recording path is GONE.** BL-013 (2026-05-09) cited src/pi/power/orchestrator.py (PowerDownOrchestrator: open-at-WARNING, close-at-TRIGGER) as the sole production caller. That file was DELETED in the SS-T5 redesign (2026-05-19). Current shutdown owner = ShutdownSequencer (power_watch/controller.py), which runs an abstract runPipelineFn; the V1 task list ships ONLY SyncWithServerTask (__main__.py:136-149). grep startDrainEvent/endDrainEvent in src/ = 0 callers (only tests + scripts/record_drain_test.py). batteryHealthRecorder passed to hardware_manager (hardware_manager.py:233) is a DEAD reference, never called. The sequencer has no WARNING/TRIGGER split -- a drain opened+closed inside its ~10s poweroff window would record runtime~=10s, not a real drain, so the old semantic no longer maps.
+- **(2) No column for the SoC% to survive into.** battery_health_log has no soc_pct column. The only SoC%-write seam (BL-013 Step 1, battery_health.py:378/432-434/458/531-536) writes SoC% into the LEGACY start_soc/end_soc. But US-423 (deps US-422) DROPS start_soc/end_soc, and its AC references '(+ the US-422 SoC%)' as a SURVIVING field -> US-422 must add NEW dedicated start_soc_pct/end_soc_pct columns on BOTH tiers (Pi rebuild-migration + server ADD COLUMN + models.py + sync map). Unratified data-contract change; using the existing seam is self-defeating (US-423 deletes it next story).
+- **(3) Calibration hazard US-234 removed.** Recording register SoC% at drain-open reintroduces the MAX17048 cold-start miscalibration (30-40pt error in first ~3min) that US-234 (Sprint 19) deliberately moved the shutdown ladder OFF SoC% and onto VCELL to avoid. Whether to guard/flag/suppress the cold-start window is a design decision.
+- Validation criteria "run a UPS-drain bench drill" points at scripts/record_drain_test.py (which today takes operator-typed --start-soc/--end-soc into the VOLTAGE slot, never reads the register). Recommended in BL-015: Option A (bench-CLI reads getBatteryPercentage + operator-override + cold-start guard + dedicated pct columns; reconcile US-423's column drop).
+- Sprint NOT blocked: US-424 (foreign-vehicle marker, L, Atlas-ruled pmSignOff present) + US-425 (doc-sync) remain pickable. US-423 blocked-by-dependency on US-422.
+
+### Files changed:
+- Created: `offices/pm/blockers/BL-015-battery-soc-recording-path-and-column-missing.md`
+- Modified: `offices/ralph/sprint.json` (US-422 status=blocked + completionNotes -> BL-015)
+- Modified: `offices/ralph/ralph_agents.json` (Rex note = block summary; status unassigned)
+
+### Learnings for future iterations:
+- **Pattern (a removed subsystem invalidates an inherited scope)**: US-422 was the deferred 'B-060 Step 2' from BL-013 (2026-05-09). But the wiring target BL-013 named (PowerDownOrchestrator) was refactored away 10 days later (SS-T5). When a story quotes an old blocker's plan, VERIFY the named call sites still exist -- `ls` the module + grep the callers -- before treating the plan as current. An inherited scope decays.
+- **Gotcha (two dependent stories can be mutually incoherent)**: US-422 lands SoC% and US-423 drops the columns the only existing seam writes it into. Read the WHOLE feature chain (US-422 + its dependent US-423) together -- a per-story reading missed that US-423's '(+ the US-422 SoC%)' clause forces US-422 to add NEW columns, not reuse the soon-dropped ones.
+- **Gotcha (a 0-100 range check is not a correctness check)**: the MAX17048 cold-start window returns in-range-but-wrong SoC%. An acceptance gate that only asserts 0-100 passes on calibration garbage. Honest-instrument recording needs a cold-start guard, not just a range assert -- the exact US-234 lesson.
+- **Process (blocker-not-block-sprint, 2nd time this sprint)**: like US-421, a single-story block does NOT stop the sprint. Set the story 'blocked', point completionNotes at the BL file, refresh the agent note, and emit NO tag so ralph.sh continues to the next pickable story (US-424). Do not emit SPRINT_BLOCKED -- other work remains.
+---
+
+## 2026-07-01 - US-424 (Rex / Agent 1)
+Task: Foreign-vehicle contamination marker + ingest guard (F-116, Atlas-ruled)
+
+### What was implemented:
+- ADOPT-UNCOMMITTED: session started with fully-built US-424 work uncommitted (prior session stalled pre-commit -- the recurring headless async-wait, same as US-416/419). Inspected it end-to-end (did not author it), proved all 7 ACs, ran the gate SYNCHRONOUSLY, added the ONE missing AC (AC#6 architecture.md doc) + fixed 1 ruff import-sort the prior session missed, THEN committed (7283651).
+- 2-axis honest marker: (row) data_source='foreign' appended to the Pi SSOT data_source.py DATA_SOURCE_VALUES; the CHECK clause is DERIVED (DATA_SOURCE_CHECK_CLAUSE/DATA_SOURCE_COLUMN_DDL) so a new value propagates; the 9 hand-written schema literals are pinned equal to the SSOT by test_everySchemaCheckMatchesSsot (A-4). Server enum mirrored in models.py (no server DB-level CHECK -> no migration for this axis; Pi<->server pinned equal). (drive) data_quality='foreign_vehicle' in drive_statistics_compute SSOT (the classifier-vs-enum divergence assert grew to 5 values, stays green) + model enums.
+- Forward-only widens on BOTH tiers, each derived from the SSOT: Pi ensureDataSourceCheckWidened (SQLite table-rebuild -- SQLite can't ALTER a CHECK; realtime_data only, no inbound FK, rows+indexes preserved); server v0015 DROP+re-ADD named CHECK (mirrors v0010, INFORMATION_SCHEMA pre/post probe, idempotent).
+- foreign_guard.py: sustained rolling-window bus-rate guard (samples/window > 7/s over the Eclipse ISO 9141-2 K-line ceiling of about 6.3/s -> foreign). SSOT for 'is drive foreign?' -- poll loop feeds observeSample, writer consults isDriveForeign; neither classifies. 'Sustained' is structural (3s measurement window + 10s sustained hold) so a start-of-drive Eclipse burst never false-trips. On trip: retro-tag open drive's 'real' rows 'foreign' + latch so the writer stamps subsequent rows. Re-tag never delete; ships DARK (pi.foreignGuard.enabled=false).
+- Server backstop tripwire DROPPED (Atlas resize-droppable per pmSignOff -- marker + Pi guard are the must-haves).
+
+### Files changed:
+- Created: `src/pi/obdii/foreign_guard.py`, `src/server/migrations/versions/v0015_us424_foreign_vehicle_data_quality.py`, `tests/pi/obdii/test_foreign_guard.py`, `tests/pi/data/test_data_source_foreign_marker.py`, `tests/server/test_migration_0015_foreign_vehicle_data_quality.py`
+- Modified (SSOT+enum): `src/pi/obdii/data_source.py`, `src/server/db/models.py`, `src/server/analytics/drive_statistics_compute.py`
+- Modified (schema CHECK widen): `src/pi/obdii/database_schema.py`, `drive_summary.py`, `dtc_freeze_frame_schema.py`, `dtc_log_schema.py`, `src/pi/power/battery_health.py`, `src/pi/obdii/database.py`
+- Modified (wiring): `src/pi/obdii/data/helpers.py` (install guard), `data/realtime.py` (observeSample), `data/logger.py` (foreign stamp), `src/common/config/validator.py` (pi.foreignGuard.* DEFAULTS)
+- Modified (Rule-10 doc + lock-downs): `specs/architecture.md`, `tests/pi/data/test_data_source_column.py`, `tests/pi/data/test_data_source_hygiene.py`, `src/server/migrations/__init__.py`
+
+### Verification (this iteration, synchronous):
+- pytest test_foreign_guard + test_data_source_foreign_marker + test_data_source_column + test_data_source_hygiene + test_migration_0015 = 86 pass
+- pytest tests/server/test_db_models + tests/server/analytics + tests/server/test_migrations = pass
+- pytest tests/pi/data + tests/pi/obdii regression = pass (1 skip)
+- ruff clean on all 22 touched files (fixed 1 I001 import-sort the prior session missed)
+- Committed 7283651 before ending the iteration (prompt step 5/6)
+
+### Learnings for future iterations:
+- **Pattern (adopt-uncommitted, 2nd time this sprint)**: uncommitted work at session start matching the claimed story is the recurring headless stall. DON'T blind-commit -- inspect end-to-end, prove each AC yourself, run the gate SYNCHRONOUSLY, and check the LEFTOVERS the stall skipped (here: the AC#6 doc was never written and one new test file was never ruff'd). The commit is the last step, not the first.
+- **Gotcha (in-sprint Rule-10 doc is a per-story AC, not just US-425's job)**: AC#6 required the architecture.md data-contract update IN this story. A dedicated doc-sync story (US-425) later in the same sprint does NOT discharge another story's own Rule-10 DoD AC -- if an AC names architecture.md, land it in-story or the story isn't strictly passing.
+- **Gotcha (derived-CHECK still needs the literals pinned)**: the SSOT derives DATA_SOURCE_CHECK_CLAUSE, but the 9 per-table schema strings are hand-written literals -- they only stay in lockstep because test_everySchemaCheckMatchesSsot re-parses each and asserts equality to the tuple. When adding an enum value, widen every literal AND trust the parity test to catch a miss, rather than assuming 'derived' means 'auto-updated everywhere'.
+- **Gotcha (resize-droppable is a sanctioned compression, not scope-cut drift)**: US-424's pmSignOff pre-authorized dropping the server tripwire if the L ran heavy. Dropping it kept the story to one clean iteration -- but only because the drop was explicitly blessed. Never silently drop an AC; a pre-blessed relief valve is the exception.
+---
+
+## 2026-07-01 - US-425 (Rex / Agent 1)
+Task: Sprint 51 documentation sync (Rule-10)
+
+### What was implemented:
+- HONEST-INSTRUMENT scope-check first: US-421 (F-098), US-422 (F-060), US-423 (F-061) all BLOCKED this sprint (BL-014/BL-015). Docs reflect what SHIPPED, not the frozen AC's optimistic feature list.
+- (AC#1 sync) specs/architecture.md §5: new "US-412/US-416/US-417 (F-101): power_log + startup_log server sync" subsection -- SNAPSHOT_SYNC mechanism (shared src/common/sync/snapshot_registry.py registry; both tiers import the SAME SnapshotSyncSpec object = A-4 proven by test_piAndServerSeeTheSameRegistration; Pi recorded_at cursor in sync_log.last_snapshot_cursor NOT rowid; server runSnapshotUpsert on UNIQUE(source_device,*naturalKeyCols) ON-CONFLICT, distinct from id->source_id delta path; dtc_freeze_frame FK special-case untouched; v0013/v0014). Fixed now-STALE "power_log Pi-only/not-synced/never-uploaded" refs (§5 overview table + Excluded block) + added a startup_log overview row.
+- (AC#2 data-contract) foreign/foreign_vehicle enum + sustained bus-rate ingest guard ALREADY fully documented by US-424's in-sprint Rule-10 AC#6 (Data Source Tagging §) -- verified present, not duplicated. Added new "US-419 (F-080): boot clock-quality flag" subsection (Pi-local forensic data_quality TEXT col; clock_sync.py SSOT = sanity FLOOR + tri-state timedatectl probe; wire-stripped since server mirrors lack the column). battery_health_log documented via a "Sprint 51 status" note: only US-424's data_source CHECK widen landed; the SoC%-column rework (US-422 add / US-423 drop) is BLOCKED (BL-015), columns UNCHANGED.
+- Also added the US-420 LTFT Trend card (Card 4, F-096) carousel subsection (SSOT emitter classifies / JS maps verdict->colour; LONG_FUEL_TRIM_1 single 4G63 bank; +/-5/10 grounded thresholds; insufficient<2-drives never-green) -- genuine new-surface doc gap (US-420 had no architecture.md AC).
+- (AC#3 manifest) offices/pm/regression_manifest.json: annotated sprintStatus="BLOCKED Sprint 51" on F-060/F-061/F-098 so /sprint-validated does not try to validate absent features; shipped F-101/F-077/F-078/F-058/F-080/F-096/F-116 stand; refreshed lastUpdatedBy.
+- (AC#4 no stale refs) swept specs/ -- only my own in-quotes historical retirement note of the old power_log rule remains.
+
+### Files changed:
+- Modified: `specs/architecture.md` (SNAPSHOT_SYNC subsection + clock_unsynced subsection + power_log/startup_log stale-ref fixes + battery_health_log Sprint-51 note + US-420 LTFT card subsection)
+- Modified: `offices/pm/regression_manifest.json` (sprintStatus=BLOCKED on F-060/061/098 + lastUpdatedBy)
+
+### Verification (this iteration, synchronous):
+- pytest tests/pm_scripts/test_chain_validate_aggregate.py tests/deploy/test_deploy_pi.py = 51 pass (the only two tests touching these artifacts; the aggregate test builds its own synthetic manifest so the added sprintStatus field is harmless)
+- json.load clean on regression_manifest.json + sprint.json + ralph_agents.json
+- No .py files touched -> ruff N/A (docs + JSON only)
+
+### Learnings for future iterations:
+- **Pattern (doc-sync = honest-instrument, not stenography)**: a frozen doc-sync AC lists the sprint's PLANNED features, but by the time it runs some may have BLOCKED. Cross-check every named feature against sprint.json passes-state + the blocker files BEFORE writing -- document what shipped, and mark the blocked ones (sprintStatus in the manifest) so downstream /sprint-validated does not try to validate absent code. F-060/061/098 (US-421/422/423) were the trap here.
+- **Gotcha (another story's Rule-10 AC pre-discharges yours)**: US-424 already wrote the foreign/foreign_vehicle + bus-rate guard data-contract doc in-sprint (its AC#6). The doc-sync story must VERIFY-then-skip, not re-write it -- grep the section, confirm coverage, move on. Duplicating it would drift two copies.
+- **Gotcha (stale-ref hunt follows the sprint's edges)**: registering power_log/startup_log for sync (F-101) made the pre-existing "power_log is Pi-only, never uploaded" §5 lines FALSE. A sync-doc story's blast radius includes the adjacent "excluded from sync" prose -- fix it in the same pass or it reads as a contradiction.
+---
