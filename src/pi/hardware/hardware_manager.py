@@ -65,6 +65,14 @@
 #               |              | The Drain-7 logger CSV's pd_tick_count
 #               |              | column + this in-loop alarm together
 #               |              | discriminate Sprint 22's hypothesis A.
+# 2026-07-01    | Rex (US-427) | TD-058 cleanup: REMOVED the dead
+#               |              | batteryHealthRecorder param + store.  It was a
+#               |              | ghost of the SS-T5-deleted PowerDownOrchestrator
+#               |              | -- constructed in lifecycle.py, threaded through
+#               |              | the factory, stored, and NEVER called (grep for
+#               |              | startDrainEvent/endDrainEvent -> 0 callers in
+#               |              | src/).  The live drain-event writer is the bench
+#               |              | CLI scripts/record_drain_test.py (US-427).
 # ================================================================================
 ################################################################################
 
@@ -100,7 +108,6 @@ import logging
 import threading
 from typing import Any
 
-from src.pi.power.battery_health import BatteryHealthRecorder
 from src.pi.power.types import PowerLogWriter
 
 from .gpio_button import GpioButton, GpioButtonError
@@ -179,7 +186,6 @@ class HardwareManager:
         telemetryLogInterval: float = 10.0,
         telemetryMaxBytes: int = 100 * 1024 * 1024,
         telemetryBackupCount: int = 7,
-        batteryHealthRecorder: BatteryHealthRecorder | None = None,
         powerLogWriter: PowerLogWriter | None = None,
         poweroffTimeoutSeconds: int = 30,
     ):
@@ -203,9 +209,6 @@ class HardwareManager:
             telemetryLogInterval: Telemetry logging interval in seconds (default: 10.0)
             telemetryMaxBytes: Maximum telemetry log file size (default: 100MB)
             telemetryBackupCount: Number of telemetry backup files (default: 7)
-            batteryHealthRecorder: Lifecycle-owned drain-event writer.
-                Passed in so hardware_manager doesn't own database
-                construction. None is fine.
             powerLogWriter: Lifecycle-owned ``(eventType, vcell)``
                 callable that persists power events to ``power_log``.
                 Lifecycle constructs a closure over the live ObdDatabase
@@ -230,7 +233,6 @@ class HardwareManager:
         self._telemetryLogInterval = telemetryLogInterval
         self._telemetryMaxBytes = telemetryMaxBytes
         self._telemetryBackupCount = telemetryBackupCount
-        self._batteryHealthRecorder = batteryHealthRecorder
         self._powerLogWriter = powerLogWriter
         self._poweroffTimeoutSeconds = poweroffTimeoutSeconds
 
@@ -709,7 +711,6 @@ class HardwareManager:
 
 def createHardwareManagerFromConfig(
     config: dict[str, Any],
-    batteryHealthRecorder: BatteryHealthRecorder | None = None,
     powerLogWriter: PowerLogWriter | None = None,
 ) -> HardwareManager:
     """
@@ -823,7 +824,6 @@ def createHardwareManagerFromConfig(
         telemetryLogInterval=float(telemetryLogInterval),
         telemetryMaxBytes=int(telemetryMaxBytes),
         telemetryBackupCount=int(telemetryBackupCount),
-        batteryHealthRecorder=batteryHealthRecorder,
         powerLogWriter=powerLogWriter,
         poweroffTimeoutSeconds=poweroffTimeoutSeconds,
     )

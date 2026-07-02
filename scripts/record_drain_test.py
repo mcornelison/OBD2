@@ -26,6 +26,14 @@
 #                                (put src/ on sys.path + import pi.*/common.*) so
 #                                the operator's bare `python scripts/...` no
 #                                longer dies with No module named 'pi'.
+# 2026-07-01    | Rex (US-427) | BL-015: wire the MAX17048 register SoC% into
+#                                start_soc_pct/end_soc_pct (US-426's new columns)
+#                                via UpsMonitor.getBatteryPercentage(), separate
+#                                from the operator --start-soc voltage slot.
+#                                Added the US-234 cold-start guard: a register
+#                                read inside the ~3-min ModelGauge calibration
+#                                window (or when uptime is unknowable) records
+#                                NULL, never a garbage percent (honest-instrument).
 # ================================================================================
 ################################################################################
 
@@ -60,12 +68,21 @@ Output (non-dry-run):
     drain_event_id: 3
     start_soc:      100.0
     end_soc:        20.0
+    start_soc_pct:  84 (MAX17048 register)
+    end_soc_pct:    19 (MAX17048 register)
     runtime_s:      1440 (24.0 min)
     load_class:     test
     ambient_c:      22.5
     notes:          April baseline drill
 
     Next step: run `python scripts/sync_now.py` to push to Chi-Srv-01.
+
+The ``--start-soc`` / ``--end-soc`` values are the LiPo cell VOLTAGE
+(they land in ``start_vcell_v`` / ``end_vcell_v``).  The register
+State-of-Charge percent (``*_soc_pct``, US-426) is read straight from
+the MAX17048 fuel gauge -- never operator-typed.  A read taken inside
+the ~3-min cold-start calibration window (or when the gauge is absent)
+records ``NULL``, never a garbage percent (US-234 honest-instrument).
 
 Exit codes:
     * 0 -- success (event recorded or dry-run clean)
@@ -82,6 +99,7 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -108,6 +126,7 @@ if str(_PROJECT_ROOT) not in sys.path:
 # the deeper pi code raises `src.common.errors.handler.ConfigurationError`, so
 # main() must catch that exact class object (the `common.*` form resolves to a
 # different, non-caught class).  Only the `pi.*` imports flip to the convention.
+from pi.hardware.ups_monitor import UpsMonitor, UpsMonitorError  # noqa: E402
 from pi.obdii.database import initializeDatabase  # noqa: E402
 from pi.power.battery_health import (  # noqa: E402
     LOAD_CLASS_VALUES,
@@ -132,7 +151,21 @@ logger = logging.getLogger(__name__)
 # Power-Down Orchestrator auto-write path for real shutdowns.
 CLI_DEFAULT_LOAD_CLASS: str = 'test'
 
-__all__ = ['CLI_DEFAULT_LOAD_CLASS', 'main', 'parseArguments']
+# US-427 (BL-015 / US-234): the MAX17048 ModelGauge SoC register mis-reads by
+# 30-40 points for the first few minutes after a cold power-up (the reason the
+# shutdown ladder moved OFF SoC onto VCELL in US-234).  A register read taken
+# within this many seconds of power-up is treated as uncalibrated and recorded
+# as NULL rather than a garbage percent (Atlas BL-015 cold-start ruling,
+# CIO-ratified 2026-07-01; consistent with the US-264 SOC-uncalibrated rule).
+COLD_START_CALIBRATION_WINDOW_SECONDS: float = 180.0
+
+__all__ = [
+    'CLI_DEFAULT_LOAD_CLASS',
+    'COLD_START_CALIBRATION_WINDOW_SECONDS',
+    'main',
+    'parseArguments',
+    'readCalibratedRegisterSocPct',
+]
 
 
 # ==============================================================================
@@ -242,6 +275,71 @@ def _loadConfig(configPath: str) -> dict[str, Any]:
 
 
 # ==============================================================================
+# Register SoC% + cold-start guard (US-427 / BL-015 / US-234)
+# ==============================================================================
+
+
+def _readSystemUptimeSeconds() -> float | None:
+    """Return seconds since power-up from ``/proc/uptime``, or None.
+
+    The MAX17048 fuel gauge starts calibrating when the bench rig powers up,
+    so system uptime is the available proxy for "how long has the gauge had
+    to settle."  Returns ``None`` off-Linux or if the file is unreadable --
+    the caller treats an unknowable uptime as uncalibrated (no number).
+    """
+    try:
+        with open('/proc/uptime', encoding='utf-8') as fh:
+            return float(fh.readline().split()[0])
+    except (OSError, ValueError, IndexError):
+        return None
+
+
+def readCalibratedRegisterSocPct(
+    monitor: Any,
+    *,
+    uptimeSeconds: float | None,
+    calibrationWindowSeconds: float = COLD_START_CALIBRATION_WINDOW_SECONDS,
+) -> int | None:
+    """Read the MAX17048 register SoC%%, guarded against the cold-start window.
+
+    Honest-instrument (US-234 / BL-015): if the gauge is still inside its
+    ~3-min calibration window -- or the uptime that would prove it is past
+    the window cannot be determined -- the register value is garbage, so this
+    returns ``None`` (records NULL) WITHOUT reading the register.  A read
+    failure (hardware absent / I2C error) also yields ``None`` rather than
+    propagating, so an operator drill on a dev box records NULL, not a crash.
+
+    Args:
+        monitor: A ``UpsMonitor``-like object exposing
+            ``getBatteryPercentage() -> int``.
+        uptimeSeconds: Seconds since power-up (see
+            :func:`_readSystemUptimeSeconds`), or ``None`` when unknowable.
+        calibrationWindowSeconds: The cold-start window; reads inside it are
+            suppressed.  Defaults to
+            :data:`COLD_START_CALIBRATION_WINDOW_SECONDS`.
+
+    Returns:
+        The register State-of-Charge percent (0-100), or ``None`` when the
+        gauge is (or may be) uncalibrated or the read fails.
+    """
+    if uptimeSeconds is None or uptimeSeconds < calibrationWindowSeconds:
+        logger.warning(
+            "register SoC%% suppressed -> NULL: fuel gauge within the "
+            "~%.0fs cold-start calibration window (uptime=%s); "
+            "honest-instrument, no garbage percent (US-234).",
+            calibrationWindowSeconds, uptimeSeconds,
+        )
+        return None
+    try:
+        return int(monitor.getBatteryPercentage())
+    except UpsMonitorError as exc:
+        logger.warning(
+            "register SoC%% read failed -> NULL: %s", exc,
+        )
+        return None
+
+
+# ==============================================================================
 # Core flow
 # ==============================================================================
 
@@ -251,6 +349,8 @@ def _printResult(
     drainEventId: int,
     startSoc: float,
     endSoc: float,
+    startSocPct: int | None,
+    endSocPct: int | None,
     runtimeSeconds: int | None,
     loadClass: str,
     ambientC: float | None,
@@ -261,11 +361,21 @@ def _printResult(
         f'{runtimeSeconds} ({runtimeSeconds / 60.0:.1f} min)'
         if runtimeSeconds is not None else 'n/a'
     )
+    startPctStr = (
+        f'{startSocPct} (MAX17048 register)' if startSocPct is not None
+        else 'NULL (uncalibrated / no gauge)'
+    )
+    endPctStr = (
+        f'{endSocPct} (MAX17048 register)' if endSocPct is not None
+        else 'NULL (uncalibrated / no gauge)'
+    )
     print('Drain event recorded')
     print('---------------------')
     print(f'drain_event_id: {drainEventId}')
     print(f'start_soc:      {startSoc}')
     print(f'end_soc:        {endSoc}')
+    print(f'start_soc_pct:  {startPctStr}')
+    print(f'end_soc_pct:    {endPctStr}')
     print(f'runtime_s:      {runtimeMin}')
     print(f'load_class:     {loadClass}')
     print(f'ambient_c:      {ambientC if ambientC is not None else "n/a"}')
@@ -298,21 +408,50 @@ def _overrideRuntimeSeconds(
 def _recordEvent(
     config: dict[str, Any],
     args: argparse.Namespace,
+    *,
+    monitor: Any | None = None,
+    uptimeReader: Callable[[], float | None] | None = None,
 ) -> int:
-    """Open + close a drain event and return its ``drain_event_id``."""
+    """Open + close a drain event and return its ``drain_event_id``.
+
+    The operator ``--start-soc`` / ``--end-soc`` values are LiPo cell VOLTAGE
+    (they land in ``start_vcell_v`` / ``end_vcell_v``).  The register
+    State-of-Charge percent is read straight from the MAX17048 fuel gauge at
+    open + close, cold-start-guarded, and written to ``start_soc_pct`` /
+    ``end_soc_pct`` (US-426 columns) -- never operator-typed (US-427).
+
+    Args:
+        config: Validated Pi config.
+        args: Parsed CLI namespace.
+        monitor: Optional ``UpsMonitor``-like double (tests inject a fake so
+            no real I2C hardware is needed); defaults to a real ``UpsMonitor``.
+        uptimeReader: Optional seconds-since-power-up reader for the cold-start
+            guard; defaults to :func:`_readSystemUptimeSeconds`.
+    """
     database = initializeDatabase(config)
     recorder = BatteryHealthRecorder(database=database)
+    ups = monitor if monitor is not None else UpsMonitor()
+    readUptime = uptimeReader or _readSystemUptimeSeconds
 
+    startSocPct = readCalibratedRegisterSocPct(
+        ups, uptimeSeconds=readUptime(),
+    )
     drainEventId = recorder.startDrainEvent(
         startSoc=args.start_soc,
         loadClass=args.load_class,
         notes=args.notes,
         dataSource='real',
+        startSocPct=startSocPct,
+    )
+
+    endSocPct = readCalibratedRegisterSocPct(
+        ups, uptimeSeconds=readUptime(),
     )
     closeResult = recorder.endDrainEvent(
         drainEventId=drainEventId,
         endSoc=args.end_soc,
         ambientTempC=args.ambient,
+        endSocPct=endSocPct,
     )
 
     runtimeSeconds = closeResult.runtimeSeconds
@@ -324,6 +463,8 @@ def _recordEvent(
         drainEventId=drainEventId,
         startSoc=args.start_soc,
         endSoc=args.end_soc,
+        startSocPct=startSocPct,
+        endSocPct=endSocPct,
         runtimeSeconds=runtimeSeconds,
         loadClass=args.load_class,
         ambientC=args.ambient,
