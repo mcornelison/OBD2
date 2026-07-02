@@ -498,3 +498,85 @@ Task: Evaluate + fix commented dependencies (F-004)
   DEP lines but ignores prose that merely names a package (`# pygame is apt-managed`).
   That lets pygame's documented exception coexist with a "no commented deps" gate.
 ---
+
+## 2026-07-02 - US-440 (Agent 1 / Rex / Session 10, Sprint 53 V0.29.7) -- CLOSED (docs-sync + backlog archival, docs-only)
+Task: Sprint 53 documentation sync + backlog archival (Rule-10)
+
+### Outcome: passes:true. No src/tests touched. specs/architecture.md + changelog synced for the sprint; 3 stale features archived; regression_manifest verified already-current.
+
+### AC1 -- architecture.md (derived signals + power-path):
+- NEW subsection `### 10.7.2 Derived motion signals + cross-drive comparison
+  (F-106/F-069)` inside 10.7 (after 10.7.1.2, before 10.8): US-436
+  derived_signals_compute.py (pure computeDerivedSignals: trapezoidal distance
+  km + peak accel/decel m/s^2 with km/h->m/s /3.6 before /dt; guards dt<=0 /
+  dt>300s-SSOT / <2 None) + drive_derived_signals table (summary_id PK + FK
+  CASCADE, unit strings persisted, ORM DriveDerivedSignal, migration v0017) +
+  US-438 compare_drives read-only CLI (metric registry over statistic/derived/
+  unavailable shapes, knock_retard=-- Rule 2, F-116 exclusion shown-not-dropped).
+- 10.7 compute-path module list + on-demand-CLI para updated (3rd compute).
+- drive_summary.profile_id population added to the analytics-columns bullet
+  (US-437 N-8, preserve-NULL, collateral of the US-350/B-104 trigger-seam retire).
+- ensureBatteryLogRetired() added to Pi-side retirement scope (US-437 N-4).
+- Battery Health Log: NEW para -- MAX17048 SoC% calibration protocol +
+  config-driven pi.hardware.upsMonitor.socColdStartWindowSeconds (US-431/F-048,
+  scripts/calibrate_max17048.py + docs/max17048-soc-calibration-protocol.md;
+  BENCH-OWED rig value, Rule 2 provisional 180.0).
+- POWER-PATH: US-433/US-434 verify-only (no code, no schema) -> no doc change
+  needed; stated explicitly in the header + changelog.
+- 'Last Updated' header bumped to Sprint 53 (Sprint 52 -> Prior); newest-first
+  row appended to specs/arch/architecture-changelog.md.
+
+### AC2 -- regression_manifest.json:
+- VERIFIED already current: Marcus registered all 8 Sprint-53 features
+  (F-048/049/050/062/102/106/082/069) 2026-07-02. No change.
+
+### AC3 -- backlog archival:
+- F-007 -> declined (OSOYOO touchscreen path dropped by CIO 2026-05-14).
+- F-052 -> complete (HONEST DEVIATION from the 'superseded/declined' menu:
+  genuinely RESOLVED by US-257 Sprint 21 per its body + architecture.md).
+- F-100 -> superseded (B-104 server-authority rearch US-350/351 + US-437 N-8).
+- 3 detail .md files moved offices/pm/backlog/ -> offices/pm/archive/backlog/
+  (frontmatter status + archivedAt/archivedBy/archiveReason); backlog.json
+  entries flagged inline (status + archivedAt/archivedBy).
+- US-422/US-423 VERIFIED already status:superseded (supersededBy US-427/US-426,
+  Sprint 52); inline-status IS the archive convention for story-only items.
+
+### AC4 -- no stale references:
+- rg 'backlog/F-(007|052|100)' -> no broken path refs.
+- roadmap.md -> no F-007/052/100 or B-007/052/100 refs.
+- Namespace note: regression_manifest F-007 ('Sync to chi-srv-01') is a DIFFERENT
+  namespace from backlog F-007 (touchscreen) -- active sync feature NOT touched.
+
+### Files changed:
+- Modified: `specs/architecture.md`
+- Modified: `specs/arch/architecture-changelog.md`
+- Modified: `offices/pm/backlog.json`
+- Moved: `offices/pm/backlog/F-007.md` -> `offices/pm/archive/backlog/F-007.md`
+- Moved: `offices/pm/backlog/F-052-...md` -> `offices/pm/archive/backlog/`
+- Moved: `offices/pm/backlog/F-100-...md` -> `offices/pm/archive/backlog/`
+- Modified: `offices/ralph/sprint.json`, `ralph_agents.json`, `progress.txt`
+
+### Gates (in-loop, synchronous; docs/config-only, no .py -> ruff N/A):
+- python json.load on backlog.json/regression_manifest.json/sprint.json/
+  ralph_agents.json -> ALL JSON VALID.
+- pytest tests/pm/ -> 62 passed (sprint/backlog structural lint;
+  test_sprint_lint_freeze bigDoDHash intact -- 5 passed).
+
+### Learnings for future iterations:
+- **Pattern**: a Rule-10 doc-sync story lands the docs OTHER stories deliberately
+  deferred -- read each prior story's completionNotes for 'flagged for US-440'
+  hooks (US-431 Battery Health, US-436 arch table, US-437 N-8/N-4, US-438 CLI).
+  The regression_manifest was ALREADY updated by the PM at sprint freeze -> verify,
+  don't redo (AC met by confirmation).
+- **Gotcha**: the regression_manifest F-* namespace != the backlog F-* namespace
+  (F-007 = 'Sync to chi-srv-01' in the manifest vs 'Touch Screen Display' in the
+  backlog). Archiving a backlog F-00X must NOT touch the same-numbered active
+  regression feature -- check which namespace before editing.
+- **Gotcha (honest status > AC menu)**: the AC said 'status -> superseded/declined',
+  but F-052 was genuinely RESOLVED by US-257. 'complete' is the honest status;
+  archival (the AC's real goal) is still achieved. Flag the deviation for the PM
+  rather than mislabel a shipped feature 'superseded'.
+- **Gotcha**: archived stories with no .md file (US-422/423) are 'archived' by
+  their inline status:superseded in backlog.json -- that IS the convention (set by
+  Marcus in Sprint 52). No file move needed; verify + document.
+---

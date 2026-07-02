@@ -1,10 +1,14 @@
 ---
 id: F-052
 parent: E-OPS
-status: pending
+status: complete
+resolvedBy: US-257
 renamedFrom: B-052
 createdAt: 2026-05-27
-updatedAt: 2026-05-27
+updatedAt: 2026-07-02
+archivedAt: 2026-07-02
+archivedBy: US-440
+archiveReason: "RESOLVED 2026-05-01 by US-257 (Sprint 21, full-canvas status overlay redesign; see specs/architecture.md 'Full-Canvas Status Overlay Redesign'). Backlog entry was stale-pending despite being shipped. Archived complete per Sprint 53 US-440 (honest status: complete, not superseded)."
 ---
 
 # B-052: HDMI dashboard full-canvas redesign

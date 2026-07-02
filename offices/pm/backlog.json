@@ -251,10 +251,12 @@
       "parent": "E-001",
       "title": "Touch Screen Display Support",
       "description": "",
-      "status": "pending",
+      "status": "declined",
       "renamedFrom": "B-007",
       "createdAt": "2026-05-27",
-      "updatedAt": "2026-05-27"
+      "updatedAt": "2026-07-02",
+      "archivedAt": "2026-07-02",
+      "archivedBy": "US-440"
     },
     {
       "id": "F-025",
@@ -581,10 +583,13 @@
       "parent": "E-001",
       "title": "HDMI dashboard full-canvas redesign",
       "description": "HDMI dashboard full-canvas redesign",
-      "status": "pending",
+      "status": "complete",
+      "resolvedBy": "US-257",
       "renamedFrom": "B-052",
       "createdAt": "2026-05-27",
-      "updatedAt": "2026-05-27"
+      "updatedAt": "2026-07-02",
+      "archivedAt": "2026-07-02",
+      "archivedBy": "US-440"
     },
     {
       "id": "F-054",
@@ -1013,10 +1018,13 @@
       "parent": "E-002",
       "title": "`drive_summary` writer broken \u2014 every server row is an empty shell + drives 6-10 missing entirely",
       "description": "`drive_summary` writer broken \u2014 every server row is an empty shell + drives 6-10 missing entirely",
-      "status": "pending",
+      "status": "superseded",
+      "supersededBy": "B-104 server-authority rearchitecture (US-350/US-351) + US-437 N-8",
       "renamedFrom": "B-100",
       "createdAt": "2026-05-27",
-      "updatedAt": "2026-05-27"
+      "updatedAt": "2026-07-02",
+      "archivedAt": "2026-07-02",
+      "archivedBy": "US-440"
     },
     {
       "id": "F-101",

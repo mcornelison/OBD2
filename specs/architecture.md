@@ -17,7 +17,22 @@ This document describes the system architecture, technology decisions, and desig
 > behavior + invariants). −35% file size; no current-system content removed. (§11
 > Deployment was reviewed — it's all current reference, nothing extracted.)
 
-**Last Updated**: 2026-07-02 (Sprint 52 / V0.29.6 — BL-014/BL-015 landings +
+**Last Updated**: 2026-07-02 (Sprint 53 / V0.29.7 — bench-only bug/ops rollup
+doc-sync (US-440, Rule-10): new **§10.7.2 "Derived motion signals + cross-drive
+comparison (F-106/F-069)"** — server-side per-drive `drive_derived_signals` (peak
+accel/decel m/s², estimated distance km via trapezoidal ∫speed·dt) computed by
+`derived_signals_compute.py`, wired as the 3rd per-drive compute in the recompute
+CLI + nightly batch, plus the read-only `compare_drives` CLI (F-069) over the
+already-computed analytics tables. §10.7 Compute-path list + on-demand-CLI updated
+for the 3rd compute; `drive_summary.profile_id` now populated from `realtime_data`
+(US-437 N-8, preserve-NULL/never-clobber); Pi-side retirement scope gains
+`ensureBatteryLogRetired()` (US-437 N-4). **Battery Health Log §** gains the
+MAX17048 SoC% calibration protocol + the config-driven
+`pi.hardware.upsMonitor.socColdStartWindowSeconds` cold-start window
+(US-431/F-048, `scripts/calibrate_max17048.py`). US-433/US-434 were verify-only
+(no code, no schema change → no doc change). Docs-only; full detail in
+`specs/arch/architecture-changelog.md`.)
+Prior: 2026-07-02 (Sprint 52 / V0.29.6 — BL-014/BL-015 landings +
 display hardening doc-sync (US-430, Rule-10): **Battery Health Log §** re-pinned
 to `start_vcell_v`/`end_vcell_v` (volts) + dedicated `start_soc_pct`/`end_soc_pct`
 (SoC%) — the legacy misnamed `start_soc`/`end_soc` dropped in one forward-only
@@ -1083,6 +1098,8 @@ Analytics filter `production` + `test` for runtime-trend baselines; `sim` is exc
 
 **CLI helper** — `scripts/record_drain_test.py` opens and closes a drain event in one invocation for the CIO's monthly drill. Accepts `--start-soc`, `--end-soc`, `--runtime`, `--load-class`, `--ambient`, `--notes` — the operator-typed `--start-soc`/`--end-soc` are VCELL **volts** and land in `start_vcell_v`/`end_vcell_v`. **US-427 (Sprint 52 / V0.29.6)** additionally reads the real MAX17048 register SoC% (`UpsMonitor.getBatteryPercentage()`) into `start_soc_pct`/`end_soc_pct`, guarded by the **US-234 cold-start rule**: a read inside the ~3-min MAX17048 calibration window (or on a box that can't determine uptime) records **NULL, never a garbage percent** (honest-instrument). Follow with `scripts/sync_now.py` to push the row to Chi-Srv-01.
 
+**SoC% calibration protocol + config-driven cold-start window (US-431 / F-048, Sprint 53 / V0.29.7).** The `~3-min` cold-start window that gates the SoC% read is no longer a bare constant — it is config-driven via the new `pi.hardware.upsMonitor.socColdStartWindowSeconds` key (validator DEFAULT + `config.json`, provisional `180.0`), read by `record_drain_test._resolveColdStartWindowSeconds` (falls back to the `COLD_START_CALIBRATION_WINDOW_SECONDS` constant), so the empirically-measured settle time can *feed* the guard rather than a guessed value. The bench tool `scripts/calibrate_max17048.py` samples the register SoC% / VCELL / CRATE at a fixed cadence from a **cold power-up**, logs a schema-free CSV (no `battery_health_log` write — it is a measurement, not a drain event), and its pure `analyzeSettling()` measures how long the MAX17048 ModelGauge takes to settle → prints a margin-padded recommended window + the exact config key to set. The step-by-step bench protocol is `docs/max17048-soc-calibration-protocol.md`. **BENCH-OWED**: the CIO runs the tool on the UPS-drain rig from a cold power-up and writes the measured settle recommendation into `socColdStartWindowSeconds`; `180.0` stays as the grounded provisional default until that rig run (Rule 2 — the measured number was not fabricated).
+
 **Sync shape** — `sync_log.PK_COLUMN['battery_health_log'] = 'drain_event_id'`; the Pi sync client's `_renamePkToId` renames `drain_event_id → id` on the wire; the server's `runSyncUpsert` maps `id → source_id`. Server mirror `BatteryHealthLog` SQLAlchemy model with `UNIQUE(source_device, source_id)`. Registered in `_TABLE_REGISTRY`; deploy-time migration `v0002_us217_battery_health_log.py` creates the MariaDB table.
 
 **Invariants**:
@@ -1909,9 +1926,11 @@ it from raw data, the Pi does not transmit it.*
 
 The server compute path lives in
 `src/server/analytics/drive_summary_compute.py` (US-350; analytics columns
-on `drive_summary`) and `src/server/analytics/drive_statistics_compute.py`
-(US-351; per-`parameter_name` aggregate rows on `drive_statistics`). Both
-are keyed on the Pi-local `drive_id` (matches `realtime_data.drive_id` and
+on `drive_summary`), `src/server/analytics/drive_statistics_compute.py`
+(US-351; per-`parameter_name` aggregate rows on `drive_statistics`), and
+`src/server/analytics/derived_signals_compute.py` (US-436 / F-106; one
+`drive_derived_signals` row per drive — see §10.7.2). All three are keyed on
+the Pi-local `drive_id` (matches `realtime_data.drive_id` and
 `drive_summary.source_id`) and persist on the server-side
 `drive_summary.id` PK.
 
@@ -1925,7 +1944,13 @@ are keyed on the Pi-local `drive_id` (matches `realtime_data.drive_id` and
   (`drive_start_timestamp`, `ambient_temp_at_start_c`,
   `starting_battery_v`, `barometric_kpa_at_start`, `data_source`) are
   preserved unchanged — the server compute path enriches from those
-  columns but never overwrites them.
+  columns but never overwrites them. **US-437 (N-8, Sprint 53 / V0.29.7)**
+  additionally backfills `drive_summary.profile_id` from the earliest
+  non-NULL `realtime_data.profile_id` for the drive (preserve-NULL,
+  never-clobber, idempotent): the profile_id-population path was collateral
+  of the US-350/B-104 trigger-seam retirement (the writer that set it was
+  removed and `compute_drive_summary` never carried the assignment forward),
+  which had left every server row's `profile_id` NULL.
 - `drive_statistics` is computed via `compute_drive_statistics(session,
   driveId)`: read raw rows grouped by `parameter_name`, run
   `src/server/analytics/helpers.computeBasicStats` (Spool FLAG-1 SSOT
@@ -1965,6 +1990,16 @@ are keyed on the Pi-local `drive_id` (matches `realtime_data.drive_id` and
   `src/pi/obdii/orchestrator/lifecycle.py`) is reverted to the
   pre-US-349 shape. Any future `from pi.obdii.drive_statistics import …`
   raises `ImportError` by design.
+- The Pi-side legacy `battery_log` table (whose sole writer
+  `BatteryMonitor` was deleted in US-223) is retired the same way
+  (US-437 N-4, Sprint 53 / V0.29.7): the new
+  `ensureBatteryLogRetired()` helper in
+  `src/pi/obdii/database_schema.py` performs an idempotent
+  `DROP TABLE IF EXISTS`, invoked by `ObdDatabase.initialize()` — an
+  empty `battery_log` had been lingering on the live Pi after the server
+  dropped it in US-223 / `v0003`. Mirrors `ensureDriveStatisticsRetired()`
+  exactly (forensic row-count log on first boot; no-op when absent). The
+  battery-protection domain is covered by US-217's `battery_health_log`.
 - Pi-side raw `realtime_data` table + sync transport
   (`src/pi/obdii/realtime_data.py`, `src/pi/obdii/sync/`) are
   unchanged — the canonical raw event stream still flows to the
@@ -1994,9 +2029,12 @@ independent of any Pi-side end-of-drive marker:
 2. **On-demand CLI** — `python -m src.server.cli.recompute_drive_analytics`
    with `--drive-id N` / `--drive-id-range A-B` / `--all-stale` /
    `--dry-run`. The per-drive loop invokes
-   `compute_drive_summary` and `compute_drive_statistics`
-   atomically so a single CLI tick refreshes both analytics tables
-   (Atlas Q1 single-timer-fires-both-paths).
+   `compute_drive_summary`, `compute_drive_statistics`, and
+   `compute_drive_derived_signals` (US-436) atomically so a single CLI
+   tick refreshes all three analytics tables (Atlas Q1
+   single-timer-fires-both-paths). The derived-signals compute degrades
+   silently — a drive with `<2` SPEED rows returns `None`, writes nothing,
+   and leaves the existing OK/anomaly log untouched.
 
 The sync receipt path is **decoupled from compute**:
 `_tryAutoAnalysisTrigger` in `src/server/api/sync.py` is deleted;
@@ -2252,6 +2290,65 @@ A-9 stays OPEN until that passes.
 governance rule (PM Rule 10) + Atlas's Sprint-43 PM Rule 13 validation-block
 PASS. Mechanism B's keep-dark production-enable disposition is the Atlas
 Rule 10 ruling of 2026-05-29 (CIO-ratified), recorded here + in §20.*
+
+### 10.7.2 Derived motion signals + cross-drive comparison (F-106 / F-069, Sprint 53 / V0.29.7)
+
+**Derived motion signals (US-436, F-106).** A third server-side per-drive
+compute derives *motion context* from the existing SPEED + timestamp stream — no
+new PID, no Pi change (B-104: server is the sole analytics writer).
+
+- **Compute** — `src/server/analytics/derived_signals_compute.py`. The core is a
+  **pure** `computeDerivedSignals((timestamp, speed_kmh) series) → DerivedSignals`
+  (`src/server/analytics/analytics_types.py`), fully unit-testable off-Pi against
+  canned series:
+  - `estimated_distance_km` = trapezoidal integral of `speed · dt` (SPEED is
+    stored km/h per `obd_parameters.py`, so the integral is km).
+  - `peak_acceleration_ms2` / `peak_deceleration_ms2` = most-positive /
+    most-negative per-segment finite difference. km/h is converted to m/s
+    (`/3.6`) **before** dividing by `dt`, so the peaks carry the physical m/s²
+    unit (not km/h-per-second).
+  - **Guards** (the AC's divide-by-zero / time-gap requirement): `dt ≤ 0`
+    (duplicate / non-monotonic timestamps) → segment skipped, never divided by;
+    `dt > GAP_DETECTION_THRESHOLD_SECONDS` (reuses the `drive_summary_compute`
+    300 s SSOT — no second magic number) → excluded from distance + accel and
+    tallied in `gap_skipped_count`; `<2` samples → `None`.
+- **Storage** — `drive_derived_signals` (server MariaDB): one row per drive,
+  `summary_id` PK + `FK drive_summary.id ON DELETE CASCADE` (mirrors
+  `DriveStatistic`; ORM `DriveDerivedSignal` in `src/server/db/models.py`). Value
+  columns (`estimated_distance_km`, `peak_acceleration_ms2`,
+  `peak_deceleration_ms2`, `gap_skipped_count`) persist **alongside their unit
+  strings** (`speed_unit`/`distance_unit`/`accel_unit`) so a downstream reader
+  never guesses units (honest-instrument), plus `computed_at`. Created by
+  forward-only migration `v0017_us436_drive_derived_signals.py` (mirrors the
+  `v0013` power_log pattern — `INFORMATION_SCHEMA` probe + `CREATE TABLE IF NOT
+  EXISTS` + post-condition probe; registered in `ALL_MIGRATIONS`).
+- **DB adapter** — `compute_drive_derived_signals(session, driveId)` reads the
+  ordered SPEED `realtime_data` rows, calls the pure core, and does an idempotent
+  delete + insert keyed on `drive_summary.id`. Wired as the 3rd per-drive compute
+  in the recompute CLI + nightly batch (degrades silently on `<2` SPEED rows).
+
+**Cross-drive comparison CLI (US-438, F-069).**
+`python -m src.server.cli.compare_drives` is a **read-only** reporting tool over
+the already-computed analytics tables (it computes nothing, writes nothing → zero
+base-module touch). It renders a side-by-side table (metrics = rows, drives =
+columns) so a Spool tuning read scans one metric across N drives at a glance.
+
+- **Data-driven metric registry** abstracts the 3 physical shapes a metric can
+  live in: **statistic** — an EAV row in `drive_statistics`
+  (`peak_rpm`=`RPM.max_value`, `ltft`=`LONG_FUEL_TRIM_1.avg_value`,
+  `stft`=`SHORT_FUEL_TRIM_1.avg_value`); **derived** — a real column in
+  `drive_derived_signals` (`peak_accel`, `peak_decel`, `distance`);
+  **unavailable** — `knock_retard` honestly renders `--` with a note (the stock
+  2G ECU exposes no OBD knock PID; ECMLink knock-retard is USB-only — Rule 2, no
+  fabricated parameter name). Adding an ECMLink knock param later = one registry
+  line, no consumer change.
+- **F-116 honesty** — `driveExclusionReason()` excludes a drive stamped
+  `data_quality='foreign_vehicle'` **or** `data_source ∉ {real, NULL}` (NULL =
+  pre-US-195 real, matching `basic.py`); an excluded drive is **shown** with an
+  EXCLUDED header + footnote (never silently dropped), and `--include-foreign`
+  overrides for explicit inspection. Missing data (no computed row / NULL value)
+  renders `--`, distinct from a real `0`. Flags: `--drives '11,20,27'|'11-14,27'`,
+  `--metrics` (default all), `--include-foreign`, `--list-metrics`, `-v`.
 
 ---
 
