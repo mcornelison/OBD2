@@ -11,8 +11,20 @@
       "epicId": "E-OPS",
       "type": "normal",
       "size": "M",
-      "status": "sprint-ready",
-      "passes": false,
+      "status": "done",
+      "passes": true,
+      "completionNotes": "Built the calibration PIPELINE, not just a script -- AC2 ('feed the threshold with real data, not a guessed constant') is unmeetable by a script alone because COLD_START_CALIBRATION_WINDOW_SECONDS=180.0 had no injection point. (1) scripts/calibrate_max17048.py: samples register SoC%/VCELL/CRATE at a fixed cadence from a cold power-up (injected clock+sleep => testable off-Pi), logs schema-free CSV (NO battery_health_log change per AC, unlike F-048's load_class='calibration' sketch), and analyzeSettling() (pure fn) measures the settle time = the empirical value the guess replaces. Prints a margin-padded recommended window + the exact config key to set. (2) Config-drove the guard: new DEFAULT pi.hardware.upsMonitor.socColdStartWindowSeconds=180.0 (provisional) in validator.py + config.json; record_drain_test._resolveColdStartWindowSeconds reads it (falls back to the constant), threaded through _recordEvent both open+close. (3) Protocol doc docs/max17048-soc-calibration-protocol.md (placed in docs/ not offices/tuner/ to respect lane discipline; AC allowed scripts/). Grounded defaults (interval 5s=UpsMonitor poll, duration 600s>=3x guard, tolerance +/-2%=2 LSB integer register, window 30s, margin x1.5/round 10s) documented in the script docstring. IN-LOOP GATES (synchronous): ruff All checks passed on all 5 .py; validate_config All validations passed; pytest tests/scripts/test_calibrate_max17048.py+test_record_drain_test.py = 37 passed; tests/test_config_validator.py = 58 passed (validator DEFAULT addition regression-checked). BENCH VALIDATION OWED (BENCH-ONLY sprint, validationCriteria): CIO runs calibrate_max17048.py on the UPS-drain rig from a cold power-up -> writes the measured settle recommendation into socColdStartWindowSeconds. Ralph did NOT fabricate the measured number (Rule 2); 180.0 stays as the grounded provisional default until the rig run. PM NOTE for US-440 doc-sync: the new socColdStartWindowSeconds config key + calibration protocol should land in specs/architecture.md Battery Health section.",
+      "feedback": {
+        "filesActuallyTouched": [
+          "scripts/calibrate_max17048.py (new -- calibration sampler + settling analysis + CSV + CLI)",
+          "tests/scripts/test_calibrate_max17048.py (new -- 16 tests: analysis, sampler, CSV, argparse, run/main)",
+          "scripts/record_drain_test.py (config-drive the cold-start window via _resolveColdStartWindowSeconds)",
+          "tests/scripts/test_record_drain_test.py (new TestColdStartWindowConfig -- 3 tests)",
+          "src/common/config/validator.py (DEFAULT pi.hardware.upsMonitor.socColdStartWindowSeconds=180.0)",
+          "config.json (pi.hardware.upsMonitor.socColdStartWindowSeconds=180.0)",
+          "docs/max17048-soc-calibration-protocol.md (new -- bench protocol)"
+        ]
+      },
       "acceptance": [
         "a documented calibration protocol + script (offices/tuner/scripts/ or scripts/) runs a controlled charge/discharge learning cycle and captures register SOC% vs a known reference",
         "output feeds the US-234/US-427 cold-start guard threshold (the ~3-min window) with real data, not a guessed constant",

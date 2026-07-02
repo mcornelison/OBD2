@@ -1,0 +1,54 @@
+## 2026-07-02 - US-431 (Agent 1 / Rex / Session 1, Sprint 53 V0.29.7)
+Task: MAX17048 SOC% calibration protocol + scripts (F-048)
+
+### What was implemented:
+- scripts/calibrate_max17048.py (NEW): bench tool that samples the MAX17048
+  register SoC% (+ VCELL + CRATE) at a fixed cadence from a cold power-up, logs
+  every sample to a schema-free CSV, and measures how long the ModelGauge takes
+  to SETTLE. analyzeSettling() is a pure function (finds the earliest sustained
+  in-band suffix around the settled value) -> prints a margin-padded recommended
+  cold-start window + the exact config key to set. collectSamples() takes an
+  injected clock + sleep so the whole flow is testable off-Pi (no I2C needed).
+- Config-drove the cold-start guard so calibration output actually FEEDS it
+  (AC2, "real data not a guessed constant"):
+  * validator.py DEFAULT + config.json: pi.hardware.upsMonitor.socColdStartWindowSeconds = 180.0 (PROVISIONAL until the rig run).
+  * record_drain_test.py: _resolveColdStartWindowSeconds(config) reads the key
+    (falls back to COLD_START_CALIBRATION_WINDOW_SECONDS), threaded through
+    _recordEvent at both open + close.
+- docs/max17048-soc-calibration-protocol.md (NEW): step-by-step bench protocol
+  (prereqs, cold power-up capture, read recommendation, write config, archive).
+- Tests: tests/scripts/test_calibrate_max17048.py (16 -- analysis/sampler/CSV/
+  argparse/run/main + clean-import smoke); +3 in test_record_drain_test.py
+  (TestColdStartWindowConfig).
+
+### Files changed:
+- Created: `scripts/calibrate_max17048.py`
+- Created: `tests/scripts/test_calibrate_max17048.py`
+- Created: `docs/max17048-soc-calibration-protocol.md`
+- Modified: `scripts/record_drain_test.py` (config-driven window)
+- Modified: `tests/scripts/test_record_drain_test.py` (config-threading tests)
+- Modified: `src/common/config/validator.py` (new DEFAULT)
+- Modified: `config.json` (new key)
+
+### Gates (in-loop, synchronous):
+- ruff check on all 5 .py -> All checks passed
+- python validate_config.py -> All validations passed
+- pytest test_calibrate_max17048.py + test_record_drain_test.py -> 37 passed
+- pytest test_config_validator.py -> 58 passed (validator DEFAULT regression check)
+
+### Learnings for future iterations:
+- **Pattern discovered**: when a story says "feed X with real data, not a guessed
+  constant", the real deliverable is usually a PIPELINE (measure -> config -> consume),
+  not just the measuring tool. A hard-coded constant with no injection point can't
+  be "fed" -- config-drive it (default = the old value, so behavior is preserved).
+- **Pattern discovered**: keep the analysis a PURE function (list[Sample] -> Result)
+  and inject clock+sleep into the sampler -> a hardware/bench story becomes fully
+  unit-testable on the Windows dev box (no I2C, no real sleeping).
+- **Gotcha**: `%%` is only correct inside argparse help strings (argparse does
+  %-formatting); in a plain print() it renders literally as `%%`. Use a single `%`.
+- **Gotcha**: the default pytest addopts (coverage) suppresses the pass/fail
+  summary line when running a file subset; add `-p no:cov -o addopts=` to see the
+  real "N passed" line. (Full-suite coverage stays a PM gate -- TD-059.)
+- **Rule 2 held**: did NOT invent the measured settle number -- 180.0 stays as the
+  grounded provisional default; the rig run (BENCH-ONLY validation) supplies the real value.
+---

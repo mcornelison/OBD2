@@ -24,6 +24,9 @@
 #                                None-without-reading, read-error -> None) + the
 #                                _recordEvent DB path (past-window populates
 #                                start/end_soc_pct; in-window records NULL).
+# 2026-07-02    | Rex (US-431) | F-048: pin _resolveColdStartWindowSeconds (reads
+#                                the config key, falls back to the constant) + the
+#                                config-driven window flowing through _recordEvent.
 # ================================================================================
 ################################################################################
 
@@ -494,3 +497,61 @@ class TestSocPctRecordingPath:
         # --start-soc 100 -> the voltage slot; register 42 -> the pct slot.
         assert vcell == 100.0
         assert socPct == 42.0
+
+
+# =============================================================================
+# US-431 -- config-driven cold-start window (F-048 feeds the guard)
+# =============================================================================
+
+
+class TestColdStartWindowConfig:
+    """The cold-start guard window is fed from config, not a hard constant."""
+
+    def test_resolve_readsConfigKey(self) -> None:
+        """
+        Given: a config with pi.hardware.upsMonitor.socColdStartWindowSeconds.
+        When:  _resolveColdStartWindowSeconds runs.
+        Then:  it returns that measured value (calibration output feeds here).
+        """
+        config = {
+            'pi': {'hardware': {'upsMonitor': {'socColdStartWindowSeconds': 42.0}}}
+        }
+        assert record_drain_test._resolveColdStartWindowSeconds(config) == 42.0
+
+    def test_resolve_missingKey_fallsBackToConstant(self) -> None:
+        """
+        Given: a config without the key (older config).
+        When:  _resolveColdStartWindowSeconds runs.
+        Then:  it falls back to the conservative module constant, no crash.
+        """
+        assert (
+            record_drain_test._resolveColdStartWindowSeconds({})
+            == record_drain_test.COLD_START_CALIBRATION_WINDOW_SECONDS
+        )
+
+    def test_recordEvent_usesConfiguredWindow(
+        self,
+        tmp_path,  # type: ignore[no-untyped-def]
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """
+        Given: a lowered window (4s) + an uptime (5s) past THAT window but
+               inside the default 180s guard.
+        When:  _recordEvent runs.
+        Then:  the register IS read (soc_pct populated), proving the config
+               value -- not the 180s constant -- drove the guard.
+        """
+        cfgPath = _writeMinimalConfig(tmp_path)
+        monkeypatch.setenv('COMPANION_API_KEY', 'test-key')
+        config = record_drain_test._loadConfig(cfgPath)
+        config['pi']['hardware']['upsMonitor']['socColdStartWindowSeconds'] = 4.0
+        args = record_drain_test.parseArguments(list(_REQUIRED_ARGS))
+        fake = _FakeUps(socPct=66)
+
+        record_drain_test._recordEvent(
+            config, args, monitor=fake, uptimeReader=lambda: 5.0,
+        )
+
+        startPct, endPct = _querySocPct(tmp_path)
+        assert startPct == 66.0
+        assert endPct == 66.0

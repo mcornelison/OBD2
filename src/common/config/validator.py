@@ -151,6 +151,14 @@ DEFAULTS: dict[str, Any] = {
     'pi.hardware.upsMonitor.vcellSlopeThresholdVoltsPerMinute': -0.005,
     'pi.hardware.upsMonitor.vcellBatteryThresholdVolts': 3.95,
     'pi.hardware.upsMonitor.vcellBatteryThresholdSustainedSeconds': 30,
+    # US-431 / F-048: the MAX17048 ModelGauge mis-reads SoC% by 30-40 points
+    # for the first few minutes after a cold power-up, so register reads inside
+    # this window are recorded as NULL, not a garbage percent (US-234/US-427
+    # honest-instrument guard, consumed by scripts/record_drain_test.py).  The
+    # 180s default is PROVISIONAL -- run scripts/calibrate_max17048.py on the
+    # UPS-drain rig and replace it with the measured settle-time recommendation
+    # (that is the "real data, not a guessed constant" this key exists for).
+    'pi.hardware.upsMonitor.socColdStartWindowSeconds': 180.0,
     # US-424 / F-116: foreign-vehicle contamination ingest guard.  Ships DARK
     # (enabled=false) so the CIO arms it after the bench drill confirms the
     # Eclipse never false-trips.  busRateThresholdHz sits just above the 1998

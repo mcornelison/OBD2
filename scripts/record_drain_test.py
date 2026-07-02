@@ -34,6 +34,11 @@
 #                                read inside the ~3-min ModelGauge calibration
 #                                window (or when uptime is unknowable) records
 #                                NULL, never a garbage percent (honest-instrument).
+# 2026-07-02    | Rex (US-431) | F-048: make the cold-start window config-driven
+#                                (pi.hardware.upsMonitor.socColdStartWindowSeconds)
+#                                via _resolveColdStartWindowSeconds so the value
+#                                measured by scripts/calibrate_max17048.py feeds
+#                                the guard.  180s constant kept as the fallback.
 # ================================================================================
 ################################################################################
 
@@ -157,6 +162,12 @@ CLI_DEFAULT_LOAD_CLASS: str = 'test'
 # within this many seconds of power-up is treated as uncalibrated and recorded
 # as NULL rather than a garbage percent (Atlas BL-015 cold-start ruling,
 # CIO-ratified 2026-07-01; consistent with the US-264 SOC-uncalibrated rule).
+#
+# US-431 (F-048): this is now the fallback default only.  The live window is
+# read from config (pi.hardware.upsMonitor.socColdStartWindowSeconds) via
+# _resolveColdStartWindowSeconds, so the value measured by
+# scripts/calibrate_max17048.py on the rig feeds the guard directly -- real
+# data replacing this guessed constant.
 COLD_START_CALIBRATION_WINDOW_SECONDS: float = 180.0
 
 __all__ = [
@@ -292,6 +303,25 @@ def _readSystemUptimeSeconds() -> float | None:
             return float(fh.readline().split()[0])
     except (OSError, ValueError, IndexError):
         return None
+
+
+def _resolveColdStartWindowSeconds(config: dict[str, Any]) -> float:
+    """Return the cold-start guard window from config, or the fallback constant.
+
+    US-431 (F-048): the window is measured on the UPS-drain rig by
+    ``scripts/calibrate_max17048.py`` and written to
+    ``pi.hardware.upsMonitor.socColdStartWindowSeconds``.  A missing or
+    malformed key falls back to :data:`COLD_START_CALIBRATION_WINDOW_SECONDS`
+    so an older config still guards conservatively rather than crashing.
+    """
+    try:
+        value = config['pi']['hardware']['upsMonitor']['socColdStartWindowSeconds']
+    except (KeyError, TypeError):
+        return COLD_START_CALIBRATION_WINDOW_SECONDS
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return COLD_START_CALIBRATION_WINDOW_SECONDS
 
 
 def readCalibratedRegisterSocPct(
@@ -432,9 +462,11 @@ def _recordEvent(
     recorder = BatteryHealthRecorder(database=database)
     ups = monitor if monitor is not None else UpsMonitor()
     readUptime = uptimeReader or _readSystemUptimeSeconds
+    coldStartWindow = _resolveColdStartWindowSeconds(config)
 
     startSocPct = readCalibratedRegisterSocPct(
         ups, uptimeSeconds=readUptime(),
+        calibrationWindowSeconds=coldStartWindow,
     )
     drainEventId = recorder.startDrainEvent(
         startSoc=args.start_soc,
@@ -446,6 +478,7 @@ def _recordEvent(
 
     endSocPct = readCalibratedRegisterSocPct(
         ups, uptimeSeconds=readUptime(),
+        calibrationWindowSeconds=coldStartWindow,
     )
     closeResult = recorder.endDrainEvent(
         drainEventId=drainEventId,
