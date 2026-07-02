@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | open — needs a `offices/ralph/prompt.md` contract fix (Ralph's office / CIO call) |
+| Status | RESOLVED 2026-07-02 (prompt.md fixed 561e35a; validated -- Ralph flowed US-426..430 zero stalls) — was: needs a `offices/ralph/prompt.md` contract fix (Ralph's office / CIO call) |
 | Priority | P1 (recurring; blocks the first story of EVERY fresh ralph.sh run; forces PM manual-landing) |
 | Category | process / ralph headless contract |
 | Size | S (a prompt.md rule) |
