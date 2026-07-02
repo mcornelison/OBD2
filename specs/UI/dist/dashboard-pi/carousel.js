@@ -71,6 +71,33 @@
     return x !== null && typeof x === "object" && !Array.isArray(x);
   }
 
+  // US-429 honest-availability: read the one-truth-per-source availability fact
+  // (`state.source.<x>`) the emitter wrote. An ABSENT source block is treated as
+  // available (backward compatible with pre-US-429 states); only an explicit
+  // `available: false` is unavailable. The reason (why) travels with it.
+  function sourceUnavailable(data, name) {
+    return (
+      isObj(data) &&
+      isObj(data.source) &&
+      isObj(data.source[name]) &&
+      data.source[name].available === false
+    );
+  }
+
+  function sourceReason(data, name) {
+    if (isObj(data) && isObj(data.source) && isObj(data.source[name])) {
+      var r = data.source[name].reason;
+      if (typeof r === "string" && r) return r;
+    }
+    return "unavailable";
+  }
+
+  // A typed-NA tile: value "NA", the reason as the detail, `unavailable` level.
+  // NA is rendered text derived from a NULL+reason -- NEVER a numeric sentinel.
+  function naTile(label, reason) {
+    return { label: label, value: "NA", detail: reason, level: "unavailable" };
+  }
+
   function seenDetail(s) {
     return s == null ? "" : "seen " + s + "s ago";
   }
@@ -169,15 +196,23 @@
   // Non-object payload -> null (the shell renders `unavailable`).
   function systemStatusView(data) {
     if (!isObj(data)) return null;
+    // US-429: the OBD source owns the OBD-link tile + glyph. When the source is
+    // unavailable (car off / wall power), render a typed NA ("OBD: off") rather
+    // than a fabricated or stale link state -- sync/power/drive are their own
+    // sources and stay honest independently (one truth per SOURCE).
+    var obdOff = sourceUnavailable(data, "obd");
+    var obdTile = obdOff
+      ? naTile("OBD LINK", sourceReason(data, "obd"))
+      : obdLinkTile(data.obdLink);
     return {
       tiles: {
-        obdLink: obdLinkTile(data.obdLink),
+        obdLink: obdTile,
         sync: syncTile(data.sync),
         power: powerTile(data.power),
         drive: driveTile(data.drive),
       },
       glyphs: {
-        bt: btGlyphState(data.obdLink),
+        bt: obdOff ? "neutral" : btGlyphState(data.obdLink),
         sync: syncGlyphState(data.sync),
         power: powerGlyphState(data.power),
       },
@@ -320,8 +355,20 @@
   // Non-object payload -> null (the shell renders `unavailable`).
   function batteryHealthView(data) {
     if (!isObj(data)) return null;
+    // US-429: the UPS/MAX17048 is a single source -- when it is unavailable the
+    // WHOLE card is a typed NA ("gauge unreadable"), never a blank or a stale
+    // last-real cell reading.
+    if (sourceUnavailable(data, "ups")) {
+      return {
+        label: BATTERY_LABEL,
+        unavailable: true,
+        reason: sourceReason(data, "ups"),
+        ts: typeof data.ts === "string" ? data.ts : null,
+      };
+    }
     return {
       label: BATTERY_LABEL,
+      unavailable: false,
       health: {
         label: "HEALTH",
         value: healthValue(data.health),
@@ -533,6 +580,9 @@
   // "+N more". Firing (vs a prior ack) is a stateful concern -> takeoverShouldShow.
   function takeoverView(data) {
     if (!isObj(data)) return null;
+    // US-429 / Bug-3b: an unavailable DTC source (no read happened) NEVER fires
+    // a takeover -- an absent source reads `unavailable`, not "no codes -> alert".
+    if (sourceUnavailable(data, "dtc")) return null;
     if (data.newSinceTs == null) return null; // known code at boot -> ribbon only
     var alertable = alertableCodes(data.codes);
     if (alertable.length === 0) return null;   // no real fault (e.g. all `na`)
@@ -563,6 +613,8 @@
   // Level = the hero severity (drives the color); `na`/empty -> null (no ribbon).
   function ribbonView(data) {
     if (!isObj(data)) return null;
+    // US-429: an unavailable DTC source carries no active fault -> no ribbon.
+    if (sourceUnavailable(data, "dtc")) return null;
     var alertable = alertableCodes(data.codes);
     if (alertable.length === 0) return null;
     var hero = alertable[0];
@@ -657,6 +709,11 @@
   // renders `unavailable`). An empty `codes` array is a valid no-fault view.
   function alertsCardView(data) {
     if (!isObj(data)) return null;
+    // US-429: an unavailable DTC source (no read happened) is a typed NA -- NOT
+    // "No stored codes" (which would falsely imply a clean all-clear read).
+    if (sourceUnavailable(data, "dtc")) {
+      return { unavailable: true, reason: sourceReason(data, "dtc") };
+    }
     var codes = Array.isArray(data.codes) ? data.codes.filter(isObj) : [];
     var alertable = alertableCodes(codes); // drops na + unrecognized (never a hero)
     var hero = null;
@@ -882,6 +939,9 @@
     nextIndex: nextIndex,
     swipeDirection: swipeDirection,
     cardAvailability: cardAvailability,
+    sourceUnavailable: sourceUnavailable,
+    sourceReason: sourceReason,
+    naTile: naTile,
     obdLinkTile: obdLinkTile,
     syncTile: syncTile,
     powerTile: powerTile,
@@ -1002,9 +1062,21 @@
       parent.appendChild(box);
     }
 
+    // US-429: render a whole-card typed NA -- one "NA (<reason>)" tile, honest
+    // (never a blank or a stale last-real card) when the card's source is down.
+    function renderNaBody(body, label, reason) {
+      body.textContent = "";
+      appendTile(body, naTile(label, reason));
+    }
+
     function renderBatteryHealthCard(card, view) {
       var body = card.querySelector(".card-body");
       if (!body) return;
+      // US-429: UPS source unavailable -> the whole card is a typed NA.
+      if (view.unavailable) {
+        renderNaBody(body, view.label, view.reason);
+        return;
+      }
       body.textContent = "";
       appendTile(body, view.health);
       appendTile(body, view.vcell);
@@ -1642,6 +1714,12 @@
       function renderAlertsCard(card, view) {
         var body = card.querySelector(".card-body");
         if (!body || !view) return;
+        // US-429 / Bug-3b: DTC source unavailable -> a typed NA, NOT "No stored
+        // codes" (a false all-clear) and NOT a mis-fired takeover.
+        if (view.unavailable) {
+          renderNaBody(body, "ALERTS", view.reason);
+          return;
+        }
         body.textContent = "";
 
         // Header count line (stored · pending).

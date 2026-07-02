@@ -91,6 +91,7 @@ def test_buildDtcState_schema_hasAllSpecKeys():
         "newSinceTs",
         "clearGate",
         "sessionResetLock",
+        "source",
         "ts",
     }
     assert state["mil"] is True
@@ -201,6 +202,45 @@ def test_buildDtcState_naCode_neverBlocksClearGate():
 
     # No real stored fault -> not 'severity_present'; nothing to clear -> 'ok'.
     assert state["clearGate"]["reason"] != "severity_present"
+
+
+# ---------------------------------------------------------------------------
+# US-429 honest-availability -- the DTC source (Bug-3b: no mis-fired takeover).
+# ---------------------------------------------------------------------------
+
+
+def test_buildDtcState_available_carriesAvailableSource():
+    """US-429: a real read (available) carries source.dtc available, null reason."""
+    state = buildDtcState(
+        codes=[_rawCode("P1300")],
+        severityTable=_TABLE,
+        mil=True,
+        newSinceTs="2026-06-30T19:40:00Z",
+        sessionResetLock=[],
+        nowIso="2026-06-30T19:42:00Z",
+    )
+    assert state["source"] == {"dtc": {"available": True, "reason": None}}
+
+
+def test_buildDtcState_unavailable_freshEmptyNoTakeoverTrigger():
+    """US-429 / Bug-3b: an unavailable DTC source (no read happened) publishes a
+    FRESH empty state -- codes cleared (never stale), newSinceTs None (so the
+    US-405 takeover can NOT mis-fire), mil off -- and source.dtc carries the NA
+    reason. An absent source reads `unavailable`, not "no codes -> all clear"."""
+    state = buildDtcState(
+        codes=[_rawCode("P1300")],  # a stale caller value must NOT leak through
+        severityTable=_TABLE,
+        mil=True,
+        newSinceTs="2026-06-30T19:40:00Z",
+        sessionResetLock=[],
+        nowIso="2026-06-30T19:42:00Z",
+        dtcAvailable=False,
+        dtcUnavailableReason="not read yet",
+    )
+    assert state["codes"] == []
+    assert state["newSinceTs"] is None
+    assert state["mil"] is False
+    assert state["source"] == {"dtc": {"available": False, "reason": "not read yet"}}
 
 
 def test_makeDtcEmitter_writesAtomicValidJsonToDtcFile(tmp_path):

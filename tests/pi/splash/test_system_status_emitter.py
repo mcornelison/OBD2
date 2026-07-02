@@ -66,6 +66,7 @@ def test_buildSystemStatusState_a3Schema_hasExactShape():
         "sync": {"lastOkTs": _SYNC_OK, "rows": 1204, "pending": 0, "stale": False},
         "power": {"mode": "car", "source": "external"},
         "drive": {"state": "recording", "driveId": 27},
+        "source": {"obd": {"available": True, "reason": None}},
         "ts": _NOW,
     }
 
@@ -91,6 +92,41 @@ def test_buildSystemStatusState_honestInstrument_downLinkIsVerbatim():
     assert state["obdLink"]["state"] != OBD_LINKED
     assert state["sync"]["lastOkTs"] is None
     assert state["drive"]["driveId"] is None
+    # A verbatim `down` link is still an AVAILABLE source (we are talking to /
+    # retrying a car) -- distinct from US-429 obd-unavailable (no car at all).
+    assert state["source"]["obd"] == {"available": True, "reason": None}
+
+
+# ---------------------------------------------------------------------------
+# US-429 honest-availability -- the OBD source governs the obdLink tile.
+# ---------------------------------------------------------------------------
+
+
+def test_buildSystemStatusState_obdUnavailable_typedNaNotStaleLink():
+    """US-429: on wall power / car off the OBD source is unavailable -> the
+    obdLink value is a FRESH typed NULL (never a stale/fabricated link state) and
+    the typed reason travels in source.obd. Sync/power/drive stay independent."""
+    state = buildSystemStatusState(
+        obdLinkState=OBD_LINKED,  # a stale caller value must NOT leak through
+        obdRetries=5,
+        obdLastSeenS=3,
+        syncLastOkTs=_SYNC_OK,
+        syncRows=10,
+        syncPending=0,
+        syncStale=False,
+        powerMode="wall",
+        powerSource="external",
+        driveState="idle",
+        driveId=None,
+        nowIso=_NOW,
+        obdAvailable=False,
+        obdUnavailableReason="OBD: off",
+    )
+    assert state["obdLink"] == {"state": None, "retries": 0, "lastSeenS": None}
+    assert state["source"]["obd"] == {"available": False, "reason": "OBD: off"}
+    # Other sources are unaffected (one truth per SOURCE).
+    assert state["sync"]["rows"] == 10
+    assert state["power"]["mode"] == "wall"
 
 
 # ---------------------------------------------------------------------------

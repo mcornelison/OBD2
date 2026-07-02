@@ -83,6 +83,7 @@ def test_buildBatteryHealthState_a3Schema_hasExactShape():
         "ambientTempC": None,
         "lastHealthCheckTs": _LAST_CHECK,
         "ladder": None,
+        "source": {"ups": {"available": True, "reason": None}},
         "ts": _NOW,
     }
 
@@ -136,6 +137,39 @@ def test_buildBatteryHealthState_drainingTrue_noSpoolData_ladderStaysNull():
     state = buildBatteryHealthState(nowIso=_NOW, **kw)
     assert state["draining"] is True
     assert state["ladder"] is None
+
+
+# ---------------------------------------------------------------------------
+# US-429 honest-availability -- the UPS/MAX17048 source (whole card).
+# ---------------------------------------------------------------------------
+
+
+def test_buildBatteryHealthState_upsAvailable_carriesAvailableSource():
+    """US-429: a normal reading carries source.ups available with a null reason
+    (a live source has no NA reason)."""
+    state = buildBatteryHealthState(nowIso=_NOW, **_HEALTHY_KW)
+    assert state["source"] == {"ups": {"available": True, "reason": None}}
+
+
+def test_buildBatteryHealthState_upsUnavailable_forcesFreshNullNeverStale():
+    """US-429: an unreadable gauge -> every ups-owned numeric is a FRESH typed
+    NULL (never a stale last-real cell reading, never a fabricated one) and the
+    typed reason travels in source.ups. NA is NULL+reason, never a number."""
+    kw = dict(_HEALTHY_KW)  # a full real reading the caller may still pass
+    state = buildBatteryHealthState(
+        nowIso=_NOW,
+        upsAvailable=False,
+        upsUnavailableReason="gauge unreadable",
+        **kw,
+    )
+    assert state["vcellV"] is None
+    assert state["soc"] is None
+    assert state["crate"] is None
+    assert state["restedVcellV"] is None
+    assert state["runtimeToCutoffS"] is None
+    assert state["draining"] is False
+    assert state["ladder"] is None
+    assert state["source"] == {"ups": {"available": False, "reason": "gauge unreadable"}}
 
 
 # ---------------------------------------------------------------------------
