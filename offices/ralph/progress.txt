@@ -439,3 +439,62 @@ Task: Cross-drive comparison tool (F-069, server-side, Spool ergonomics)
   renders '--' with the reason, NOT a guessed parameter_name that would silently
   read nothing. Offer the metric; be honest it's unavailable.
 ---
+
+## 2026-07-02 - US-439 (Agent 1 / Rex / Session 9, Sprint 53 V0.29.7) -- CLOSED (verify-first deps audit, TDD)
+Task: Evaluate + fix commented dependencies (F-004)
+
+### Outcome: passes:true. Every commented dep across requirements*.txt + pyproject.toml triaged (restore/remove/document), grounded on actual imports. 1 new regression test; comment-only edits (no src/ change, no import breakage possible).
+
+### Per-file disposition:
+- requirements.txt -- REMOVED the stale Python-template "optional -- uncomment
+  if using X" block (pyodbc/sqlalchemy/requests/httpx/pandas/numpy/structlog) as
+  DEAD. Grep proved pyodbc/requests/pandas/numpy/structlog have ZERO imports;
+  sqlalchemy + httpx ARE heavily used but their honest home is
+  requirements-server.txt (already declared, guarded by
+  test_requirements_pymysql_declared) -- a commented "ORM optional" placeholder
+  in the base file is actively misleading (the server tier depends on the ORM
+  hard). Replaced with an honest pointer to the tier-specific req files.
+- requirements-pi.txt -- REMOVED the dead `# sdnotify>=0.3.0` placeholder. Zero
+  sdnotify/systemd.daemon imports + NO deploy/*.service is Type=notify (all
+  Type=simple/oneshot), so the sd_notify package was never needed. Replaced with
+  an honest note (add it only when a unit adopts Type=notify+WatchdogSec, the
+  optional I-034 self-heal). pygame LEFT documented-why-commented (its apt-managed
+  prose rationale is correct + honest -- not a fake pip line).
+- requirements-server.txt -- NO change. Its only "comment block" is prose
+  documenting an ACTIVE dep (pymysql); no commented-out deps exist.
+- pyproject.toml -- dependencies + optional-dependencies are all ACTIVE (no
+  commented deps). The only commented item is `# myapp = src.main:main` (a
+  script-entry placeholder, not a dependency) + template metadata; both are out
+  of THIS story's scope (scope fence) -- noted for a future metadata-honesty pass.
+
+### Files changed:
+- Modified: `requirements.txt` (removed dead template block -> honest tier-pointer)
+- Modified: `requirements-pi.txt` (removed dead sdnotify -> honest note)
+- Created: `tests/test_requirements_commented_deps_honest.py` (5 tests)
+
+### Gates (in-loop, synchronous):
+- pytest test_requirements_commented_deps_honest.py (5) + server/test_requirements_pymysql_declared.py (5) -> 10 passed
+  (wrote the honesty test FIRST: RED 3-failed pre-cleanup -> GREEN post-cleanup;
+   pymysql regression still green -- server active deps untouched)
+- ruff check on the 1 .py touched (the test) -> All checks passed
+- targeted import smoke -> 10 active declared deps (dotenv/pydantic/frontmatter/
+  fitparse/pytest/sqlalchemy/httpx/jinja2/fastapi/pydantic_settings) import
+  cleanly; none of the 6 removed deps get pulled in (confirms dead)
+
+### Learnings for future iterations:
+- **Pattern discovered**: a "commented dependency" audit is a verify-first grep
+  job -- for each `# pkg>=x`, grep imports. Three honest outcomes: RESTORE (used
+  but undeclared -- none here), REMOVE (0 imports = dead template cruft), DOCUMENT
+  (intentionally not pip-managed, like pygame -- keep as PROSE, never a fake pip
+  line). A commented dep that the project genuinely uses ELSEWHERE (sqlalchemy in
+  requirements-server.txt) is the sneakiest: it's not "unused", it's misplaced +
+  misleading -- delete the misleading placeholder, the real declaration stays.
+- **Gotcha**: "remove sdnotify" needed a systemd check, not just a grep -- if any
+  unit were Type=notify, sd_notify WOULD be required even with no Python import
+  yet. Grepped deploy/*.service: all Type=simple/oneshot -> genuinely dead. Ground
+  a removal in the CONSUMER's contract, not just the absence of an import.
+- **Gotcha**: the honesty invariant is testable without being fragile -- anchor
+  the regex on a PEP-508 version operator (`# pkg>=x`) so it flags commented-out
+  DEP lines but ignores prose that merely names a package (`# pygame is apt-managed`).
+  That lets pygame's documented exception coexist with a "no commented deps" gate.
+---
