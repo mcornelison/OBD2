@@ -147,3 +147,64 @@ Task: PowerMonitor DB-write path -- verify + close (F-050, likely DONE)
 - **Gotcha**: vcell NULL on ac_power/battery_power rows is EXPECTED, not a defect --
   only logShutdownStage writes vcell (US-252).
 ---
+
+## 2026-07-02 - US-434 (Agent 1 / Rex / Session 4, Sprint 53 V0.29.7) -- CLOSED (verify-first, no code)
+Task: drain_event close-on-poweroff -- verify (F-062, likely MOOT)
+
+### Outcome: Forward-looking MOOT confirmed + a historical-residue finding FLAGGED (issue filed). NO src/tests change.
+
+### Verification (0 production callers -> forward-moot):
+- rg '\.startDrainEvent\(|\.endDrainEvent\(' src/ -> NO matches. The only src/
+  occurrences of startDrainEvent/endDrainEvent are the method DEFS + docstrings in
+  battery_health.py and the hardware_manager.py:73 comment that already documents
+  '0 callers' (TD-058/US-427 removed the last dead store).
+- Nothing opens a drain during operation => a poweroff can NEVER orphan one going
+  forward => the F-062 mechanism is MOOT. A ShutdownSequencer close (AC2) would be
+  dead code AND could not fix historical rows.
+- The only live writer is the bench CLI record_drain_test.py, which opens + IMMEDIATELY
+  closes a drain in one operator run ('lands as a single unit', docstring 5-6/445);
+  since US-224 it defaults load_class='test'.
+
+### Live-Pi evidence (read-only ssh, non-destructive):
+- ssh mcornelison@10.27.27.28 sqlite3 -readonly data/obd.db:
+  battery_health_log = 28 rows, but 4 STUCK-OPEN (end_timestamp IS NULL), ALL
+  load_class='production', ids 1/9/18/21, 2026-05-04..2026-05-13 (newest row of any
+  kind 2026-05-16 -- nothing since).
+- Residue root cause: the REMOVED US-216 auto-write path (battery_health.py:40 'current
+  production callers', :155-159 'LOAD_CLASS_DEFAULT stays production -- feeds US-216
+  auto-write') opened production drains in early May; on 4 occasions shutdown left them
+  open -- i.e. F-062 was a REAL bug WHILE that path was live. Path since retired
+  (TD-058/US-427) -> no new orphans can form. Bench CLI's 'test' default (US-224) is
+  not implicated.
+
+### Why blocked-from-code (flagged, not built):
+- No CURRENT open-path (0 callers) + a ShutdownSequencer close can't retroactively close
+  weeks-old rows + closing/backfilling the 4 rows is a live-Pi + already-synced-server
+  data-repair (drain_event_id is the sync PK) touching BL-015 semantics => a PM/Atlas
+  ruling, not a src/ change. Filed I-orphaned-production-drain-event-rows.md with options
+  A(leave; already excluded from runtime-trend baselines that need non-NULL
+  runtime_seconds) / B(both-tier synthetic-close migration) / C(tombstone notes).
+- Honest close: AC1 core met (0 callers; poweroff can't orphan); AC1's 'no stuck rows'
+  sub-clause NOT met (4 exist) -> did NOT silently close-moot; flagged per AC2 ('flag
+  PM/Atlas first, do NOT build unflagged') + Rule 1.
+
+### Files changed:
+- Created: `offices/pm/issues/I-orphaned-production-drain-event-rows.md`
+- Modified: `offices/ralph/sprint.json` (US-434 status:done + passes:true + completionNotes)
+- Modified: `offices/ralph/ralph_agents.json`, `offices/ralph/progress.txt`
+
+### Learnings for future iterations:
+- **Pattern discovered**: a verify-first 'likely MOOT' story can land in a THIRD state
+  the two ACs don't name -- 0 CURRENT callers (forward-moot) but pre-existing RESIDUE
+  from a since-REMOVED path. The right move is neither 'close-moot' (dishonest -- rows
+  exist) nor 'build the AC2 fix' (dead code -- no current path, can't fix history):
+  it's flag-the-residue-as-an-issue + close the code-verification. Match it to the
+  validationCriteria's 'flag before any code' branch.
+- **Gotcha**: load_class disambiguates provenance. 'production' rows came from the
+  removed US-216 auto-write path; the bench CLI writes 'test' since US-224. Reading the
+  enum's history (battery_health.py:40/155-159) turned '4 mystery orphans' into a
+  precisely-attributed, now-closed root cause.
+- **Gotcha**: a live read-only query (sqlite3 -readonly, BatchMode ssh) is the honest
+  gate for a 'no stuck rows' claim -- code-only reasoning would have wrongly closed this
+  moot; the DB said otherwise.
+---
