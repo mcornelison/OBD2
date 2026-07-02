@@ -51,7 +51,7 @@ Full text + sizing caps + reviewer discipline: `offices/ralph/knowledge/sprint-c
 2. Read acceptance criteria — they define WHAT, you decide HOW.
 3. Read `scope.filesToRead` from the story (and only those).
 4. **TDD**: write failing test → minimal code to pass → refactor → run all tests.
-5. Run quality gates: `pytest tests/` and `make lint`. **Run the gate SYNCHRONOUSLY (blocking) — do NOT launch it in the background and end the iteration.** An iteration must reach steps 6–7 (commit + `passes:true`) for the story it finished; ending with validation still running in the background leaves the story complete-but-uncommitted and reads to `ralph.sh` as a no-progress stall. If a full-suite gate is genuinely too slow to finish within one iteration (e.g. slow SMB share), run the targeted/scoped suite that covers your change as the in-iteration gate, commit + flip the story, and note the deferred full-suite check in `completionNotes` for PM integration — never background-and-exit.
+5. **Run the story's TARGETED tests + `make lint` SYNCHRONOUSLY (foreground — block on exit, read the actual summary line), then go straight to commit (step 6), all within THIS iteration.** ⛔ Do NOT run the full `pytest tests/` suite in-loop, and NEVER background a test/gate to "wait for the result": each iteration is a fresh process with **no cross-iteration monitor**, so a backgrounded result is LOST — you wake up with no memory of it and stall complete-but-uncommitted (reads to `ralph.sh` as a no-progress stall). The **scoped/targeted suite that covers your change IS the in-iteration gate** (it's seconds, even on the slow SMB share); the **full suite + mypy are PM/integration-time gates** — if a full-suite check matters, note it in `completionNotes` for PM, don't run it here. (This is a recurring stall — TD-059; it has cost the first story of multiple sprints.)
 6. If green, **commit your work to the current sprint branch** (`git add` your changed files + `git commit`, conventional format `feat: [US-XXX] …`). This preserves your work per handbook §13 (uncommitted work is lost on a branch switch). **Do NOT `git push`, `checkout`, `switch`, `merge`, or `branch`** — PM owns push/integration/deploy (see PM Protocol).
 7. Update `sprint.json`: set `passes: true`, populate `feedback.filesActuallyTouched`, add `completionNotes`.
 8. Update `ralph_agents.json`: set your `status` to `unassigned`, `taskid` to `""`, refresh `note` with a short close summary.
@@ -64,9 +64,9 @@ Full text + sizing caps + reviewer discipline: `offices/ralph/knowledge/sprint-c
 
 ## Definition of Done
 
-1. **Tests pass** — `pytest tests/` and `make lint` clean on all modified files.
+1. **Tests pass** — the story's **TARGETED** tests + `make lint` clean on all modified files, run **synchronously in-loop** (step 5). The full `pytest tests/` suite is a **PM/integration-time gate**, NOT an in-loop requirement — do not run it here.
 2. **Acceptance criteria met** — every AC verified.
-3. **No regressions** — full suite passes for sprints with 15+ stories or base-module changes.
+3. **No regressions** — full-suite regression is a **PM/integration-time gate** (run by PM at sprint close); flag base-module changes or 15+-story sprints in `completionNotes` so PM prioritizes it. Never run the full suite in-loop (TD-059).
 4. **Strict pass/fail** — partial completion = `passes: false`.
 5. **Database stories** — must validate data was actually written (see `specs/methodology.md` §3 Database Output Validation).
 6. **Config stories** — run `python validate_config.py` after changes.

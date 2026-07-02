@@ -26,7 +26,7 @@ Wants=eclipse-states-http.service
 Type=simple
 User=__PI_USER__
 Environment=DISPLAY=:0
-ExecStart=/usr/bin/chromium-browser \
+ExecStart=__CHROMIUM_BIN__ \
   --kiosk \
   --touch-events=enabled \
   --noerrdialogs --disable-infobars --hide-scrollbars \

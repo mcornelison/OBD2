@@ -35,6 +35,13 @@ from datetime import UTC, datetime
 # Reuse the boot-state primitives (one provisioning + atomic-write impl, no dup).
 from pi.splash.boot_state_emitter import ensureStatesDir, writeStateAtomic
 
+# US-429 honest-availability: one source-availability truth per source (SSOT).
+from pi.splash.source_availability import (
+    REASON_OBD_OFF,
+    SOURCE_OBD,
+    buildSourceState,
+)
+
 logger = logging.getLogger(__name__)
 
 # The single SSOT slot the carousel System Status card polls (4 Hz tmpfs read).
@@ -77,6 +84,8 @@ def buildSystemStatusState(
     driveState: str,
     driveId: int | None,
     nowIso: str,
+    obdAvailable: bool = True,
+    obdUnavailableReason: str | None = None,
 ) -> dict:
     """Assemble the system-status payload (pure; spec §7 pinned A-3 schema).
 
@@ -94,16 +103,29 @@ def buildSystemStatusState(
         driveState: ``recording`` or ``idle``.
         driveId: Active drive ID when recording; None when idle.
         nowIso: ISO-8601 emission timestamp (freshness marker).
+        obdAvailable: Whether the OBD source is present at all (US-429). False on
+            wall power / car off -- the OBD-link tile then renders a typed NA, not
+            a fabricated or stale link state. Defaults True (backward compatible).
+        obdUnavailableReason: The typed-NA reason when ``obdAvailable`` is False
+            (defaults to ``REASON_OBD_OFF``). Ignored when available.
 
     Returns:
-        The system-status dict with exactly the spec §7 A-3 keys.
+        The system-status dict with exactly the spec §7 A-3 keys plus the US-429
+        ``source`` block (one availability truth per source).
     """
-    return {
-        "obdLink": {
+    # US-429 honest-availability: the OBD source owns the obdLink tile. When the
+    # source is unavailable, its value is a fresh typed NULL (never the last real
+    # state left stale) and the reason travels in `source.obd`.
+    if obdAvailable:
+        obdLink = {
             "state": obdLinkState,
             "retries": obdRetries,
             "lastSeenS": obdLastSeenS,
-        },
+        }
+    else:
+        obdLink = {"state": None, "retries": 0, "lastSeenS": None}
+    return {
+        "obdLink": obdLink,
         "sync": {
             "lastOkTs": syncLastOkTs,
             "rows": syncRows,
@@ -112,6 +134,11 @@ def buildSystemStatusState(
         },
         "power": {"mode": powerMode, "source": powerSource},
         "drive": {"state": driveState, "driveId": driveId},
+        "source": {
+            SOURCE_OBD: buildSourceState(
+                obdAvailable, obdUnavailableReason or REASON_OBD_OFF
+            )
+        },
         "ts": nowIso,
     }
 
@@ -190,6 +217,8 @@ def makeSystemStatusEmitter(
         powerSource: str,
         driveState: str,
         driveId: int | None,
+        obdAvailable: bool = True,
+        obdUnavailableReason: str | None = None,
     ) -> None:
         try:
             nowIso = nowFn()
@@ -209,6 +238,8 @@ def makeSystemStatusEmitter(
                 driveState=driveState,
                 driveId=driveId,
                 nowIso=nowIso,
+                obdAvailable=obdAvailable,
+                obdUnavailableReason=obdUnavailableReason,
             )
             ensureStatesDir(statesDir)
             writeStateAtomic(target, payload)

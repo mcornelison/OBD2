@@ -642,20 +642,22 @@
       "parent": "E-OPS",
       "title": "Wire UpsMonitor SOC% through orchestrator to recorder (BL-013 Step 2)",
       "description": "Wire UpsMonitor SOC% through orchestrator to recorder (BL-013 Step 2)",
-      "status": "active",
+      "status": "awaiting-validation",
       "renamedFrom": "B-060",
       "createdAt": "2026-05-27",
-      "updatedAt": "2026-05-27"
+      "updatedAt": "2026-05-27",
+      "currentVersion": "V0.29.6"
     },
     {
       "id": "F-061",
       "parent": "E-OPS",
       "title": "Drop battery_health_log start_soc / end_soc legacy columns (BL-013 Step 3)",
       "description": "Drop battery_health_log start_soc / end_soc legacy columns (BL-013 Step 3)",
-      "status": "active",
+      "status": "awaiting-validation",
       "renamedFrom": "B-061",
       "createdAt": "2026-05-27",
-      "updatedAt": "2026-05-27"
+      "updatedAt": "2026-05-27",
+      "currentVersion": "V0.29.6"
     },
     {
       "id": "F-062",
@@ -990,10 +992,11 @@
       "parent": "E-OPS",
       "title": "S-4 \u2014 Mode badge: in-car vs wall-power debug (small corner indicator)",
       "description": "S-4 \u2014 Mode badge: in-car vs wall-power debug (small corner indicator)",
-      "status": "active",
+      "status": "awaiting-validation",
       "renamedFrom": "B-098",
       "createdAt": "2026-05-27",
-      "updatedAt": "2026-05-27"
+      "updatedAt": "2026-05-27",
+      "currentVersion": "V0.29.6"
     },
     {
       "id": "F-099",
@@ -1041,10 +1044,11 @@
       "parent": "E-001",
       "title": "Pi Splash Animation -- Boot + Shutdown",
       "description": "Pi Splash Animation -- Boot + Shutdown",
-      "status": "active",
+      "status": "awaiting-validation",
       "renamedFrom": "B-103",
       "createdAt": "2026-05-27",
-      "updatedAt": "2026-05-27"
+      "updatedAt": "2026-05-27",
+      "currentVersion": "V0.29.6"
     },
     {
       "id": "F-104",
@@ -1111,8 +1115,8 @@
       "parent": "E-001",
       "title": "On-Pi DTC / check-engine viewer + gated Mode-04 clear (Card 5 of the touch dashboard)",
       "description": "On-Pi DTC/check-engine viewer surface + safety-gated Mode-04 clear, with a KOEO read independent of DriveDetector. Card 5 (Alerts+DTC) of the F-092/F-097 carousel. Spec drafted + CIO-approved 2026-06-05 (post drive-27 MIL: P0443 EVAP read+cleared off the Pi); spec docs/superpowers/specs/2026-06-05-pi-dtc-check-engine-viewer-clear-design.md. STATUS: pending Atlas design-gate signoff (load-bearing net-new write-to-vehicle Mode-04 path) -- Iris files the formal groom-ready pointer on Atlas's nod. SEQUENCE (Atlas greenlight 2026-06-19): F-103 -> carousel shell -> System Status + Battery Health cards -> System Setup+polkit -> pygame sunset -> THIS (Card 5, LAST). BUILD CONDITIONS: C-2 KOEO capture path independent of DriveDetector (drive_id=NULL, or viewer is blank key-on); C-3 Mode 02 dead on MD326328 -> realtime_data fallback (see F-109). Rule-10 DoD: state-server extension + emitters + Mode-04 path + token each land with matching specs/architecture.md (+ specs/UI/) in-sprint. Iris story split (spec section 10 M-1): US-A dtc emitter + state-server endpoint + static-table loader/sync; US-B takeover + severity-styled ribbon; US-C Alerts card (hero+list) + detail (freeze-frame + severity-gated fix + trust badge); US-D Clear-DTC Mode-04 path + gate + confirm + re-read + session-lock (load-bearing, pairs w/ Atlas A-1); US-E freeze-frame capture-or-honest-fallback. Spool owns severity taxonomy + DSM P1xxx curation; safety semantics offices/tuner/dtc-display-clear-safety-advisory.md; reference code specs/examples/dtc_read_and_clear_koeo.py.",
-      "status": "active",
-      "currentVersion": "V0.29.3",
+      "status": "awaiting-validation",
+      "currentVersion": "V0.29.6",
       "createdAt": "2026-06-28",
       "updatedAt": "2026-06-28"
     },
@@ -3154,23 +3158,36 @@
     },
     {
       "id": "US-429",
-      "parent": "F-111",
+      "parent": "F-092",
       "type": "normal",
-      "size": "S",
-      "title": "Fix empty-state CHECK-ENGINE takeover mis-fire (display finding, Bug 3b)",
-      "goal": "As the CIO, I want the DTC takeover to NOT fire on empty/no-data state, so a fresh boot with no OBD does not show a jumbled CHECK-ENGINE screen.",
+      "size": "M",
+      "title": "Carousel honest-availability -- per-source availability + typed-NA emitters (SSOT pattern; fixes Bug-3)",
+      "goal": "As the CIO, I want the carousel emitters to always write fresh real-or-typed-NA state per source availability, so the 3.5-inch display is honest when a source is down (never blank/stale/fabricated) and the CHECK-ENGINE takeover never mis-fires on an absent source.",
       "definitionOfDone": [
-        "the full-screen DTC severity takeover (US-405) does NOT trigger on empty/absent/unpopulated dtc state -- only on a real retrieved code",
-        "empty/loading state renders the normal carousel (honest-instrument; no jumbled layout)",
-        "fixture/DOM test: empty dtc state -> no takeover; a real MAJOR code -> takeover (regression both ways)",
-        "ruff check passes"
+        "build to specs/ssot-design-pattern.md 'Honest availability -- the unavailable-source -> typed-NA pattern' (Atlas-ratified 2026-07-01)",
+        "each source (obd-link, ups, dtc) has ONE state.source.<x> = available|unavailable (availability is one truth per SOURCE, not per parameter)",
+        "the 3 shipped emitters (system-status, battery-health, dtc) write a FRESH real-or-(NULL+reason) state EACH tick -- never leave stale",
+        "NA is NULL+reason, NEVER a numeric sentinel anywhere (state or DB) -- no pd_stage=-1-class trap",
+        "display renders 'NA (<reason>)' for an unavailable source (e.g. car-off/wall-power -> 'OBD: off', engine params 'NA (no OBD)') -- honest, not blank cards",
+        "the DTC severity takeover (US-405) fires ONLY on a real new code, NEVER on absent/empty state (subsumes Bug-3b -- an absent source reads unavailable, not 'no codes -> alert')",
+        "fixture/DOM tests per source-state; bench-verifiable (OBD-down case IS wall power -- no car needed); ruff check passes"
       ],
       "validationCriteria": [
         {
-          "action": "render with empty/absent dtc state then with a real MAJOR code",
-          "outcome": "empty -> no takeover, normal carousel; MAJOR -> takeover fires"
+          "action": "render the carousel with obd-link unavailable (wall power, no OBD)",
+          "outcome": "shows 'OBD: off' + engine params 'NA (no OBD)'; no blank/stale cards; no numeric NA sentinel in state or DB"
+        },
+        {
+          "action": "render with empty/absent dtc state, then with a real MAJOR code",
+          "outcome": "empty -> no takeover (normal carousel); MAJOR -> takeover fires"
+        },
+        {
+          "action": "starve an emitter's source mid-run",
+          "outcome": "the next tick writes NULL+reason (not the stale prior value)"
         }
-      ]
+      ],
+      "conditionalOutcomes": [],
+      "tasks": []
     },
     {
       "id": "US-430",

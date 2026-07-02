@@ -98,18 +98,23 @@ Rulings: `offices/architect/reports/2026-07-01-bl014-bl015-power-mode-soc-ruling
 
 ---
 
-### US-429: Fix empty-state CHECK-ENGINE takeover mis-fire (display finding, Bug 3b)
-**Description:** As the CIO, I want the DTC takeover to NOT fire on empty/no-data state, so a fresh boot with no OBD doesn't show a jumbled CHECK-ENGINE screen.
+### US-429: Carousel honest-availability — per-source availability + typed-NA emitters (SSOT pattern; fixes Bug-3)
+**Description:** As the CIO, I want the carousel emitters to always write fresh real-or-typed-NA state per source availability, so the display is honest when a source is down (never blank/stale/fabricated) and the CHECK-ENGINE takeover never mis-fires on an absent source.
+
+> **Atlas ratified this SSOT corollary 2026-07-01** (`specs/ssot-design-pattern.md` → "Honest availability — the unavailable-source → typed-NA pattern"). This is the **proper Bug-3 fix** — it supersedes the earlier narrow empty-state-takeover scope and also fixes the wall-power blank-cards case.
 
 **Acceptance Criteria:**
-- [ ] The full-screen DTC severity takeover (US-405) does NOT trigger when the dtc state is empty/absent/unpopulated — only on a real retrieved code.
-- [ ] Empty/loading state renders the normal carousel (honest-instrument; no jumbled layout).
-- [ ] Fixture/DOM test: empty dtc state → no takeover; a real MAJOR code → takeover (regression both ways).
-- [ ] `ruff check` passes.
+- [ ] Build to the ratified `ssot-design-pattern.md` "Honest availability" section.
+- [ ] Each source (obd-link, ups, dtc) has ONE `state.source.<x> = available|unavailable` (availability is one truth per SOURCE, not per parameter).
+- [ ] The 3 shipped emitters (system-status, battery-health, dtc) write a FRESH real-or-(NULL+reason) state EACH tick — never leave stale.
+- [ ] NA is NULL+reason, NEVER a numeric sentinel (state or DB) — no `pd_stage=-1`-class trap.
+- [ ] Display renders "NA (<reason>)" for an unavailable source (car-off/wall-power → "OBD: off", engine params "NA (no OBD)") — honest, not blank cards.
+- [ ] The DTC severity takeover (US-405) fires ONLY on a real new code, NEVER on absent/empty (subsumes Bug-3b).
+- [ ] Fixture/DOM tests per source-state; bench-verifiable (OBD-down IS wall power — no car needed); `ruff check` passes.
 
-> Bug 3a (carousel live-data with the car connected) is a **separate Argus/Iris car-validation gate**, not this story.
+> Bug 3a (carousel live-data with the car connected) remains a **separate Argus/Iris car-validation gate**, not this story.
 
-**Downstream impact:** Carousel takeover logic; guards the empty case.
+**Downstream impact:** All 3 carousel emitters + display render + takeover logic; establishes the typed-NA SSOT the EDR readers will also build to (Atlas owns that gate).
 
 ---
 

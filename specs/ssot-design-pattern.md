@@ -128,6 +128,64 @@ value, everyone else subscribes. When the CIO ratifies, this section graduates
 from draft to normative and the EDR contract artifacts become its prototype
 reference.
 
+## Honest availability — the *unavailable-source → typed-NA* pattern
+
+> **STATUS: NORMATIVE (CIO-directed 2026-07-01).** The honest-instrument
+> corollary of SSOT for a live data surface. Applies to every consumer that
+> displays or records source data (carousel emitters, EDR-bus display
+> subscribers, any status surface). Owning gate: Atlas.
+
+**The rule.** A live display/record surface must **always show real data or an
+explicit "not available" — never a blank, a stale value, or a fabricated one —
+from one SSOT.** Two sub-rules make it honest:
+
+1. **Availability is a property of the SOURCE, not the parameter — one truth per
+   source.** When the OBD link is down (car off / disconnected), *every* OBD
+   parameter is unavailable *together*. So each source (OBD link, IMU, light,
+   UPS) owns exactly **one availability fact** — a retained STATE topic
+   `state.source.<x> = available | unavailable`, written by that source's reader.
+   Every parameter from that source inherits it. Do not compute availability
+   per-parameter (that re-imports the "N divergent copies of one fact" bug this
+   whole doc kills).
+
+2. **NA is a TYPED absence (NULL + a reason), NEVER a numeric sentinel.** In the
+   data / bus / DB, an unavailable value is **NULL plus a status** (`unavailable`
+   / `sensor_absent` / `stale` / `no_drive` / `na_this_vehicle`), *never* a magic
+   number (`-1`, `0`, `9999`). A numeric NA silently corrupts aggregations
+   (`AVG` over `-1`s) and gets rendered as if real — the exact class of the
+   `pd_stage = -1` sentinel pain (US-276/277) and the reason `data_source` /
+   `data_quality` are enums and `drive_id` goes NULL not `0`. The **display**
+   *renders* "NA" / "—" (a visual, derived from NULL + the reason); the **datum
+   stays NULL** so analytics never counts it. The reason travels with it so the
+   surface is honest about *why* ("OBD: off" vs "sensor not installed" vs "stale
+   — last seen 40s ago") — a driver reads those very differently.
+
+**Layering (where the NA is resolved).** Keep the raw bus **real-or-silent** —
+`raw.<source>.*` STREAM topics carry real numbers or nothing; do **not** put NA
+onto the raw bus (that would force `Sample.value: float | tuple | None` and drag
+NA through the analytics path). Instead the **transform / display-state tier**
+(the emitters that write the state a UI reads) resolves *value + source-
+availability → real-or-typed-NA* **once**, so every consumer shows the same
+thing — this is the "shared transform before publish" of the EDR-bus direction
+above, applied to the derived "what does the operator see" fact. And it must be
+**fresh every tick**: the emitter writes real-or-NA on each cycle and never
+leaves the last real value sitting stale when the source drops. *(Putting NA on
+the raw bus is a real fork; decide it when the EDR bus grooms. Default: don't —
+keep raw analytics pristine.)*
+
+**Worked example.** Pi on wall power, car off → `state.source.obd = unavailable`
+→ the System Status card shows "OBD: off" and every engine parameter shows
+"NA (no OBD)", all fresh, none fabricated. Meanwhile a wired IMU / light sensor
+has `state.source.imu = available` → those show **real** data on the same
+screen. The display is an honest mosaic — real where the source is live,
+typed-NA-with-reason where it isn't — from one SSOT. (Compare the current splash
+"eclipse-obd: not ready" — same idea, generalized to every card.)
+
+**Anti-patterns this forbids:** green-when-source-down; a card frozen on the last
+real value after the link dropped; a numeric NA sentinel in a table/analytic; a
+takeover/alert firing on an empty/absent state (an absent DTC source must read
+`unavailable`, not "no codes → all-clear" and not a mis-fired alert).
+
 ## Cross-references
 
 - Atlas (architect) — owns the design gate that enforces this; office

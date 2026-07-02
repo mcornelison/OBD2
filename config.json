@@ -565,6 +565,7 @@
       }
     },
     "power": {
+      "mode": "unknown",
       "power_monitor": {
         "enabled": true
       }

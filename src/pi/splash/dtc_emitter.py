@@ -47,6 +47,13 @@ from pi.splash.dtc_severity_table import (
     SEVERITY_UNKNOWN,
 )
 
+# US-429 honest-availability: one source-availability truth per source (SSOT).
+from pi.splash.source_availability import (
+    REASON_DTC_NOT_READ,
+    SOURCE_DTC,
+    buildSourceState,
+)
+
 logger = logging.getLogger(__name__)
 
 # The single SSOT slot the carousel Alerts card / takeover / ribbon poll.
@@ -160,6 +167,8 @@ def buildDtcState(
     newSinceTs: str | None,
     sessionResetLock: list[str] | None,
     nowIso: str,
+    dtcAvailable: bool = True,
+    dtcUnavailableReason: str | None = None,
 ) -> dict:
     """Assemble the `dtc` payload (pure; design-spec §8 pinned schema).
 
@@ -173,10 +182,26 @@ def buildDtcState(
         sessionResetLock: Codes that re-set this session -> US-407 refuses a
             2nd clear ("don't chase the light"). None -> empty list.
         nowIso: ISO-8601 emission timestamp (freshness marker).
+        dtcAvailable: Whether a DTC read actually happened (US-429). False when
+            the OBD source is down so no KOEO/drive read could run -- the display
+            then reads the source as *unavailable* (NA), NOT "no codes -> all
+            clear" and never a mis-fired takeover. An unavailable read writes a
+            FRESH empty state (no stale codes, no takeover trigger). Defaults True.
+        dtcUnavailableReason: The typed-NA reason when ``dtcAvailable`` is False
+            (defaults to ``REASON_DTC_NOT_READ``). Ignored when available.
 
     Returns:
-        The `dtc` dict with exactly the spec §8 keys.
+        The `dtc` dict with exactly the spec §8 keys plus the US-429 ``source``
+        block (one availability truth per source).
     """
+    # US-429 honest-availability: an unavailable DTC source (no read happened)
+    # publishes a FRESH empty state -- never leave stale codes and never a
+    # newSinceTs that would mis-fire the US-405 takeover (Bug-3b). The display
+    # reads `source.dtc.available == false` and renders NA, not a false all-clear.
+    if not dtcAvailable:
+        codes = []
+        newSinceTs = None
+        mil = False
     enriched = [enrichCode(raw, severityTable) for raw in codes]
     return {
         "mil": bool(mil),
@@ -184,6 +209,11 @@ def buildDtcState(
         "newSinceTs": newSinceTs,
         "clearGate": _computeClearGate(enriched),
         "sessionResetLock": list(sessionResetLock or []),
+        "source": {
+            SOURCE_DTC: buildSourceState(
+                dtcAvailable, dtcUnavailableReason or REASON_DTC_NOT_READ
+            )
+        },
         "ts": nowIso,
     }
 
@@ -219,6 +249,8 @@ def makeDtcEmitter(
         mil: bool,
         newSinceTs: str | None = None,
         sessionResetLock: list[str] | None = None,
+        dtcAvailable: bool = True,
+        dtcUnavailableReason: str | None = None,
     ) -> None:
         try:
             payload = buildDtcState(
@@ -228,6 +260,8 @@ def makeDtcEmitter(
                 newSinceTs=newSinceTs,
                 sessionResetLock=sessionResetLock,
                 nowIso=nowFn(),
+                dtcAvailable=dtcAvailable,
+                dtcUnavailableReason=dtcUnavailableReason,
             )
             ensureStatesDir(statesDir)
             writeStateAtomic(target, payload)

@@ -18,6 +18,12 @@
 # ================================================================================
 # 2026-04-23    | Rex (US-224) | Initial -- pin 'test' as CLI default + explicit
 #                                production/sim paths; guard docstring rationale.
+# 2026-07-01    | Rex (US-427) | BL-015 register-SoC% wiring + US-234 cold-start
+#                                guard: pin readCalibratedRegisterSocPct (past-
+#                                window reads register, in-window/unknown ->
+#                                None-without-reading, read-error -> None) + the
+#                                _recordEvent DB path (past-window populates
+#                                start/end_soc_pct; in-window records NULL).
 # ================================================================================
 ################################################################################
 
@@ -33,12 +39,14 @@ both halves of that contract.
 from __future__ import annotations
 
 import os
+import sqlite3
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
 
+from pi.hardware.ups_monitor import UpsMonitorError
 from pi.power.battery_health import LOAD_CLASS_DEFAULT
 from scripts import record_drain_test
 
@@ -310,3 +318,179 @@ class TestOperatorRuntimeImport:
             "--help should exit 0 after a clean import; "
             f"rc={result.returncode}\nstderr={result.stderr}"
         )
+
+
+# =============================================================================
+# US-427 -- register SoC% wiring + US-234 cold-start guard
+# =============================================================================
+
+
+class _FakeUps:
+    """Minimal UpsMonitor double: counts reads, returns a set percent or raises."""
+
+    def __init__(self, socPct: int = 50, raiseError: bool = False) -> None:
+        self._socPct = socPct
+        self._raiseError = raiseError
+        self.calls = 0
+
+    def getBatteryPercentage(self) -> int:
+        self.calls += 1
+        if self._raiseError:
+            raise UpsMonitorError("UPS not available (bench double)")
+        return self._socPct
+
+
+def _querySocPct(tmp_path) -> tuple[float | None, float | None]:  # type: ignore[no-untyped-def]
+    """Read (start_soc_pct, end_soc_pct) from the single recorded drain row."""
+    dbPath = tmp_path / 'pi-test.db'
+    conn = sqlite3.connect(str(dbPath))
+    try:
+        row = conn.execute(
+            "SELECT start_soc_pct, end_soc_pct FROM battery_health_log "
+            "ORDER BY drain_event_id DESC LIMIT 1"
+        ).fetchone()
+    finally:
+        conn.close()
+    return (row[0], row[1])
+
+
+class TestColdStartGuard:
+    """readCalibratedRegisterSocPct: honest-instrument cold-start guard (US-234)."""
+
+    def test_pastWindow_returnsRegisterValue(self) -> None:
+        """
+        Given: uptime beyond the calibration window.
+        When:  readCalibratedRegisterSocPct runs.
+        Then:  it returns the register SoC% (the gauge is trustworthy).
+        """
+        fake = _FakeUps(socPct=61)
+        result = record_drain_test.readCalibratedRegisterSocPct(
+            fake, uptimeSeconds=300.0,
+        )
+        assert result == 61
+        assert fake.calls == 1
+
+    def test_withinWindow_returnsNoneWithoutReading(self) -> None:
+        """
+        Given: uptime inside the ~3-min cold-start window.
+        When:  readCalibratedRegisterSocPct runs.
+        Then:  it returns None and NEVER reads the garbage register.
+        """
+        fake = _FakeUps(socPct=61)
+        result = record_drain_test.readCalibratedRegisterSocPct(
+            fake, uptimeSeconds=10.0,
+        )
+        assert result is None
+        assert fake.calls == 0
+
+    def test_uptimeUnknown_returnsNone(self) -> None:
+        """
+        Given: uptime cannot be determined (None).
+        When:  readCalibratedRegisterSocPct runs.
+        Then:  it returns None -- calibration cannot be proven, so no number.
+        """
+        fake = _FakeUps(socPct=61)
+        result = record_drain_test.readCalibratedRegisterSocPct(
+            fake, uptimeSeconds=None,
+        )
+        assert result is None
+        assert fake.calls == 0
+
+    def test_readError_returnsNone(self) -> None:
+        """
+        Given: the register read raises (hardware absent / I2C error).
+        When:  readCalibratedRegisterSocPct runs past the window.
+        Then:  it returns None rather than propagating -- NULL, not a crash.
+        """
+        fake = _FakeUps(raiseError=True)
+        result = record_drain_test.readCalibratedRegisterSocPct(
+            fake, uptimeSeconds=300.0,
+        )
+        assert result is None
+
+
+class TestSocPctRecordingPath:
+    """_recordEvent writes register SoC% into start/end_soc_pct (guarded)."""
+
+    def test_recordEvent_pastWindow_populatesSocPct(
+        self,
+        tmp_path,  # type: ignore[no-untyped-def]
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """
+        Given: a bench drill outside the cold-start window.
+        When:  _recordEvent runs with an injected UPS reading 73%.
+        Then:  the closed row has start_soc_pct == end_soc_pct == 73.
+        """
+        cfgPath = _writeMinimalConfig(tmp_path)
+        monkeypatch.setenv('COMPANION_API_KEY', 'test-key')
+        config = record_drain_test._loadConfig(cfgPath)
+        args = record_drain_test.parseArguments(list(_REQUIRED_ARGS))
+        fake = _FakeUps(socPct=73)
+
+        record_drain_test._recordEvent(
+            config, args, monitor=fake, uptimeReader=lambda: 9999.0,
+        )
+
+        startPct, endPct = _querySocPct(tmp_path)
+        assert startPct == 73.0
+        assert endPct == 73.0
+
+    def test_recordEvent_withinWindow_recordsNullSocPct(
+        self,
+        tmp_path,  # type: ignore[no-untyped-def]
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """
+        Given: a drill opened inside the ~3-min cold-start window.
+        When:  _recordEvent runs.
+        Then:  start/end_soc_pct are NULL (never a garbage percent) and the
+               register was never read.
+        """
+        cfgPath = _writeMinimalConfig(tmp_path)
+        monkeypatch.setenv('COMPANION_API_KEY', 'test-key')
+        config = record_drain_test._loadConfig(cfgPath)
+        args = record_drain_test.parseArguments(list(_REQUIRED_ARGS))
+        fake = _FakeUps(socPct=88)
+
+        record_drain_test._recordEvent(
+            config, args, monitor=fake, uptimeReader=lambda: 5.0,
+        )
+
+        startPct, endPct = _querySocPct(tmp_path)
+        assert startPct is None
+        assert endPct is None
+        assert fake.calls == 0
+
+    def test_recordEvent_populatesVoltageSlotIndependently(
+        self,
+        tmp_path,  # type: ignore[no-untyped-def]
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """
+        Given: a drill outside the window with operator --start-soc voltage.
+        When:  _recordEvent runs.
+        Then:  the operator voltage still lands in start_vcell_v (US-426),
+               separate from the register SoC% -- the two facts don't collide.
+        """
+        cfgPath = _writeMinimalConfig(tmp_path)
+        monkeypatch.setenv('COMPANION_API_KEY', 'test-key')
+        config = record_drain_test._loadConfig(cfgPath)
+        args = record_drain_test.parseArguments(list(_REQUIRED_ARGS))
+        fake = _FakeUps(socPct=42)
+
+        record_drain_test._recordEvent(
+            config, args, monitor=fake, uptimeReader=lambda: 9999.0,
+        )
+
+        conn = sqlite3.connect(str(tmp_path / 'pi-test.db'))
+        try:
+            vcell, socPct = conn.execute(
+                "SELECT start_vcell_v, start_soc_pct FROM battery_health_log "
+                "ORDER BY drain_event_id DESC LIMIT 1"
+            ).fetchone()
+        finally:
+            conn.close()
+        # --start-soc 100 -> the voltage slot; register 42 -> the pct slot.
+        assert vcell == 100.0
+        assert socPct == 42.0

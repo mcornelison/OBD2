@@ -123,10 +123,12 @@ class TestStartDrainEvent:
         drainId = recorder.startDrainEvent(startSoc=72.5)
         with freshDb.connect() as conn:
             row = conn.execute(
-                f"SELECT start_soc FROM {BATTERY_HEALTH_LOG_TABLE} "
+                f"SELECT start_vcell_v FROM {BATTERY_HEALTH_LOG_TABLE} "
                 f"WHERE drain_event_id = ?",
                 (drainId,),
             ).fetchone()
+        # US-426: startSoc (VCELL volts) lands in start_vcell_v, not the
+        # dropped legacy start_soc column.
         assert row[0] == 72.5
 
     def test_preCloseEndColumnsAreNull(
@@ -137,7 +139,7 @@ class TestStartDrainEvent:
         drainId = recorder.startDrainEvent(startSoc=100.0)
         with freshDb.connect() as conn:
             row = conn.execute(
-                f"SELECT end_timestamp, end_soc, runtime_seconds, "
+                f"SELECT end_timestamp, end_vcell_v, runtime_seconds, "
                 f"       ambient_temp_c "
                 f"FROM {BATTERY_HEALTH_LOG_TABLE} "
                 f"WHERE drain_event_id = ?",
@@ -175,7 +177,7 @@ class TestEndDrainEvent:
 
         with freshDb.connect() as conn:
             row = conn.execute(
-                f"SELECT end_timestamp, end_soc, ambient_temp_c, "
+                f"SELECT end_timestamp, end_vcell_v, ambient_temp_c, "
                 f"       runtime_seconds "
                 f"FROM {BATTERY_HEALTH_LOG_TABLE} "
                 f"WHERE drain_event_id = ?",
@@ -249,7 +251,7 @@ class TestCloseOnceSemantic:
         # DB state matches the first close.
         with freshDb.connect() as conn:
             row = conn.execute(
-                f"SELECT end_timestamp, end_soc FROM "
+                f"SELECT end_timestamp, end_vcell_v FROM "
                 f"{BATTERY_HEALTH_LOG_TABLE} WHERE drain_event_id = ?",
                 (drainId,),
             ).fetchone()

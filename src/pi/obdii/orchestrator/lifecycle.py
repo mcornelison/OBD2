@@ -1343,11 +1343,9 @@ class LifecycleMixin:
 
         logger.info("Starting hardwareManager...")
         try:
-            batteryHealthRecorder = self._createBatteryHealthRecorder()
             powerLogWriter = self._createPowerLogWriter()
             self._hardwareManager = createHardwareManagerFromConfig(
                 self._config,
-                batteryHealthRecorder=batteryHealthRecorder,
                 powerLogWriter=powerLogWriter,
             )
             logger.info("HardwareManager initialized successfully")
@@ -1355,37 +1353,13 @@ class LifecycleMixin:
             logger.warning(f"Failed to initialize hardwareManager: {e}")
             self._hardwareManager = None
 
-    def _createBatteryHealthRecorder(self) -> Any | None:
-        """US-216: build a BatteryHealthRecorder when the DB is available.
-
-        The recorder is consumed by the PowerDownOrchestrator inside
-        HardwareManager; constructing it here keeps the DB dependency in
-        lifecycle.py (where the database is already initialized) rather
-        than forcing hardware_manager to know about ObdDatabase.
-        """
-        if self._database is None:
-            logger.info(
-                "BatteryHealthRecorder skipped: database not initialized"
-            )
-            return None
-        try:
-            from pi.power.battery_health import BatteryHealthRecorder
-            return BatteryHealthRecorder(database=self._database)
-        except Exception as e:
-            logger.warning(
-                "BatteryHealthRecorder init failed (orchestrator ladder "
-                "will be disabled): %s", e,
-            )
-            return None
-
     def _createPowerLogWriter(self) -> Any | None:
         """US-252: build a (eventType, vcell) -> None closure over the DB.
 
         The closure persists each PowerDownOrchestrator stage transition
         to ``power_log`` for forensic reconstruction of drain events.
-        Same pattern as :meth:`_createBatteryHealthRecorder` -- the DB
-        dependency stays in lifecycle.py; hardware_manager receives a
-        plain callable.
+        The DB-isolation pattern keeps the ObdDatabase dependency in
+        lifecycle.py; hardware_manager receives a plain callable.
         """
         if self._database is None:
             logger.info(

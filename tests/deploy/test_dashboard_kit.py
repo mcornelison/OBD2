@@ -292,6 +292,94 @@ def test_dashboardCss_carriesTileLevelColors_us400():
 
 
 # ---------------------------------------------------------------------------
+# US-421 -- Power-mode badge (F-098 / BL-014). The powerTile renders the
+# `power.mode` SSOT (fed from PowerModeProvider over pi.power.mode): car -> CAR,
+# wall -> WALL, and -- honest-instrument -- ANYTHING else (unknown / invalid /
+# absent) -> the lowercase `unknown` badge, NEVER a confident wrong CAR/WALL.
+# The mode flows through the same emitter JSON the System Status card consumes,
+# so this drives the tile both directly and through systemStatusView (the DOM
+# render path) with mocked config states.
+# ---------------------------------------------------------------------------
+
+_US421_NODE_SCRIPT = r"""
+const assert = require('assert');
+const c = require(process.argv[1]);
+
+// --- car / wall render the confident UPPERCASE badge (external power) --------
+const car = c.powerTile({mode: 'car', source: 'external'});
+assert.strictEqual(car.value, 'CAR', 'car -> CAR badge');
+assert.strictEqual(car.level, 'ok', 'external power -> ok');
+const wall = c.powerTile({mode: 'wall', source: 'external'});
+assert.strictEqual(wall.value, 'WALL', 'wall -> WALL badge');
+assert.strictEqual(wall.level, 'ok', 'external power -> ok');
+
+// --- honest-instrument: explicit unknown -> lowercase `unknown`, ok level -----
+const unk = c.powerTile({mode: 'unknown', source: 'external'});
+assert.strictEqual(unk.value, 'unknown', 'unknown -> lowercase unknown badge');
+
+// --- invalid / absent config -> unknown, NEVER a confident wrong CAR/WALL -----
+const badModes = ['garage', '', 'CAR', 'Wall', 'battery', 42, true, null, undefined];
+badModes.forEach(function (m) {
+  const t = c.powerTile({mode: m, source: 'external'});
+  assert.strictEqual(t.value, 'unknown',
+    'invalid mode ' + JSON.stringify(m) + ' -> unknown badge');
+  assert.ok(t.value !== 'CAR' && t.value !== 'WALL',
+    'invalid mode ' + JSON.stringify(m) + ' NEVER a confident wrong mode');
+});
+// mode key entirely absent -> unknown (never fabricates a mode).
+assert.strictEqual(c.powerTile({source: 'external'}).value, 'unknown',
+  'absent mode -> unknown');
+
+// --- on-UPS (battery source) surfaces the mode in the detail, amber level -----
+const onUps = c.powerTile({mode: 'car', source: 'battery'});
+assert.strictEqual(onUps.level, 'amber', 'battery -> amber');
+assert.ok(/car/.test(onUps.detail) && /UPS/.test(onUps.detail),
+  'battery detail carries the mode + UPS');
+assert.ok(/wall/.test(c.powerTile({mode: 'wall', source: 'battery'}).detail),
+  'wall mode surfaced in the UPS detail');
+
+// --- non-object payload -> unavailable, never a crash (honest-instrument) -----
+assert.strictEqual(c.powerTile(null).level, 'unavailable', 'null -> unavailable');
+assert.strictEqual(c.powerTile('x').level, 'unavailable', 'string -> unavailable');
+
+// --- the DOM render path (systemStatusView) carries the same honest badge -----
+function state(mode) {
+  return {
+    obdLink: {state: 'linked', retries: 0, lastSeenS: 2},
+    sync: {lastOkTs: '2026-07-01T19:41:50Z', rows: 1, pending: 0, stale: false},
+    power: {mode: mode, source: 'external'},
+    drive: {state: 'idle', driveId: null},
+    ts: '2026-07-01T19:42:00Z'
+  };
+}
+assert.strictEqual(c.systemStatusView(state('car')).tiles.power.value, 'CAR',
+  'DOM path: car config -> CAR');
+assert.strictEqual(c.systemStatusView(state('wall')).tiles.power.value, 'WALL',
+  'DOM path: wall config -> WALL');
+assert.strictEqual(c.systemStatusView(state('garage')).tiles.power.value, 'unknown',
+  'DOM path: invalid config -> unknown, never confident-wrong');
+
+console.log('US421_OK');
+"""
+
+
+@pytest.mark.skipif(not _nodeAvailable(), reason="node not available on PATH")
+def test_powerTile_modeBadgeHonestInstrument_us421():
+    """US-421 / BL-014: the power tile renders the pi.power.mode SSOT -- car->CAR,
+    wall->WALL, and anything else (unknown / invalid / absent) -> the lowercase
+    `unknown` badge, never a confident wrong mode. Verified both directly and
+    through the systemStatusView DOM render path with mocked config states."""
+    result = subprocess.run(
+        ["node", "-e", _US421_NODE_SCRIPT, str(KIT_DIR / "carousel.js")],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "US421_OK" in result.stdout
+
+
+# ---------------------------------------------------------------------------
 # US-401 -- Battery Health card render logic (F-8 / F-9 / F-10 / F-11 / F-2).
 # ---------------------------------------------------------------------------
 
@@ -454,6 +542,12 @@ def _runInstall(*args: str, env_extra: dict[str, str] | None = None):
     env = os.environ.copy()
     if env_extra:
         env.update(env_extra)
+    # V-3 (US-428): the installer now also resolves a chromium binary and aborts
+    # loudly if none is found (mirrors the V-1/V-2 gates). These off-Pi
+    # user/session previews are orthogonal to the browser path, and a dev box has
+    # no chromium -- default it so the preview reaches the report, unless a test
+    # overrides DASHBOARD_FORCE_CHROMIUM explicitly (e.g. to simulate "none").
+    env.setdefault("DASHBOARD_FORCE_CHROMIUM", "/usr/bin/chromium")
     return subprocess.run(
         ["bash", str(INSTALL_SH), *args],
         capture_output=True,
@@ -1274,3 +1368,73 @@ def test_dashboardCss_hasLtftTrendStyles_us420():
         '.ltft-bar[data-level="down"]' in css
     )
     assert '.tile[data-level="insufficient"]' in css
+
+
+# ---------------------------------------------------------------------------
+# US-421 -- power-mode badge (F-098 / BL-014): the tile renders CAR / WALL /
+# unknown from the PowerModeProvider SSOT value, and NEVER coerces an
+# undeterminable/invalid mode into a confident CAR (honest-instrument).
+# ---------------------------------------------------------------------------
+
+_US421_NODE_SCRIPT = r"""
+const assert = require('assert');
+const c = require(process.argv[1]);
+
+// A known car mode on external power -> confident CAR badge.
+const car = c.powerTile({mode: 'car', source: 'external'});
+assert.strictEqual(car.value, 'CAR', 'car -> CAR');
+
+// A known wall (bench) mode -> confident WALL badge.
+const wall = c.powerTile({mode: 'wall', source: 'external'});
+assert.strictEqual(wall.value, 'WALL', 'wall -> WALL');
+
+// Explicit unknown -> honest lowercase 'unknown', NOT a confident CAR/WALL.
+const unk = c.powerTile({mode: 'unknown', source: 'external'});
+assert.strictEqual(unk.value, 'unknown', 'unknown -> unknown badge');
+
+// Absent mode -> unknown (never defaults to CAR -- the BL-014 bug this fixes).
+const absent = c.powerTile({source: 'external'});
+assert.strictEqual(absent.value, 'unknown', 'absent mode -> unknown, not CAR');
+
+// Invalid/garbage mode -> unknown (honest), never a confident wrong mode.
+const bad = c.powerTile({mode: 'garage', source: 'external'});
+assert.strictEqual(bad.value, 'unknown', 'invalid mode -> unknown');
+const upper = c.powerTile({mode: 'CAR', source: 'external'});
+assert.strictEqual(upper.value, 'unknown', 'case-mismatch mode -> unknown');
+
+// On battery the value is BATTERY and the MODE rides in the detail -- it must
+// still be honest (unknown mode -> 'unknown ...' in detail, never 'car ...').
+const batUnknown = c.powerTile({mode: 'unknown', source: 'battery'});
+assert.strictEqual(batUnknown.value, 'BATTERY', 'battery value unchanged');
+assert.ok(/unknown/.test(batUnknown.detail), 'battery detail honest for unknown');
+assert.ok(!/\bcar\b/.test(batUnknown.detail), 'battery detail not confidently car');
+const batWall = c.powerTile({mode: 'wall', source: 'battery'});
+assert.ok(/wall/.test(batWall.detail), 'battery detail carries wall');
+
+// End-to-end through the structured view the DOM renderer consumes.
+const view = c.systemStatusView({
+  obdLink: {state: 'linked', retries: 0, lastSeenS: 2},
+  sync: {lastOkTs: '2026-07-01T00:00:00Z', rows: 1, pending: 0, stale: false},
+  power: {mode: 'unknown', source: 'external'},
+  drive: {state: 'idle', driveId: null},
+  ts: '2026-07-01T00:00:01Z'
+});
+assert.strictEqual(view.tiles.power.value, 'unknown', 'view power tile honest');
+
+console.log('US421_OK');
+"""
+
+
+@pytest.mark.skipif(not _nodeAvailable(), reason="node not available on PATH")
+def test_powerTile_renderLogic_carWallUnknown_us421():
+    """US-421: the power-mode badge renders CAR / WALL / unknown from the SSOT
+    value and never coerces an undeterminable/invalid mode into a confident CAR
+    (BL-014 honest-instrument)."""
+    result = subprocess.run(
+        ["node", "-e", _US421_NODE_SCRIPT, str(KIT_DIR / "carousel.js")],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "US421_OK" in result.stdout

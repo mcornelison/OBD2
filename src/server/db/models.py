@@ -705,8 +705,10 @@ class BatteryHealthLog(Base):
     """UPS drain-event records, mirrored from Pi (US-217 / Spool Session 6).
 
     One row per drain event (Pi lost wall power OR CIO ran a scheduled
-    drill).  Opened at event-start with ``start_soc`` + ``load_class``;
-    closed at event-end with ``end_soc`` + ``runtime_seconds``.  The
+    drill).  Opened at event-start with ``start_vcell_v`` + ``load_class``;
+    closed at event-end with ``end_vcell_v`` + ``runtime_seconds``.  SoC%
+    (``start_soc_pct`` / ``end_soc_pct``) is the durable MAX17048-register
+    fact added in US-426 (BL-015).  The
     Pi-side PK is ``drain_event_id`` -- renamed to ``id`` on the wire by
     the sync client so the server's ``source_id`` mapping stays uniform
     with every other synced capture table.
@@ -730,13 +732,24 @@ class BatteryHealthLog(Base):
     )
     sync_batch_id: Mapped[int | None] = mapped_column(Integer)
 
-    # Pi-native columns
+    # Pi-native columns.  US-426 (BL-015): dropped the misnamed legacy
+    # start_soc/end_soc (VCELL volts) and added the dedicated *_vcell_v +
+    # *_soc_pct columns so this model is byte-for-byte identical to the Pi
+    # battery_health_log (A-4 -- closes the vcell/soc divergence that the
+    # architecture Watch List A-4 flagged for this table).
     start_timestamp: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, server_default=func.now(),
     )
     end_timestamp: Mapped[datetime | None] = mapped_column(DateTime)
-    start_soc: Mapped[float] = mapped_column(Float, nullable=False)
-    end_soc: Mapped[float | None] = mapped_column(Float)
+    # LiPo cell voltage at open/close (US-289 Pi rename; US-426 mirrored to
+    # the server so the full sync payload is consumed -- no unmapped keys).
+    start_vcell_v: Mapped[float | None] = mapped_column(Float)
+    end_vcell_v: Mapped[float | None] = mapped_column(Float)
+    # MAX17048 register State-of-Charge percent (0-100) at open/close.  The
+    # durable SoC% home (US-426 / BL-015); nullable -- US-427 wires the real
+    # register read and the cold-start guard records NULL not a garbage %.
+    start_soc_pct: Mapped[float | None] = mapped_column(Float)
+    end_soc_pct: Mapped[float | None] = mapped_column(Float)
     runtime_seconds: Mapped[int | None] = mapped_column(Integer)
     ambient_temp_c: Mapped[float | None] = mapped_column(Float)
     load_class: Mapped[str] = mapped_column(

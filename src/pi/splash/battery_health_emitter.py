@@ -47,6 +47,13 @@ from datetime import UTC, datetime
 # Reuse the boot-state primitives (one provisioning + atomic-write impl, no dup).
 from pi.splash.boot_state_emitter import ensureStatesDir, writeStateAtomic
 
+# US-429 honest-availability: one source-availability truth per source (SSOT).
+from pi.splash.source_availability import (
+    REASON_UPS_UNREADABLE,
+    SOURCE_UPS,
+    buildSourceState,
+)
+
 logger = logging.getLogger(__name__)
 
 # The single SSOT slot the carousel Battery Health card polls (4 Hz tmpfs read).
@@ -93,6 +100,8 @@ def buildBatteryHealthState(
     lastHealthCheckTs: str | None,
     ladder: dict | None,
     nowIso: str,
+    upsAvailable: bool = True,
+    upsUnavailableReason: str | None = None,
 ) -> dict:
     """Assemble the battery-health payload (pure; spec §7 pinned A-3 schema).
 
@@ -125,13 +134,33 @@ def buildBatteryHealthState(
             ``runtimeRemainingS``) supplied by the power-watch tier, or None.
             Forced to None here whenever ``draining`` is false (A-6).
         nowIso: ISO-8601 emission timestamp (freshness marker + age basis).
+        upsAvailable: Whether the UPS/MAX17048 source is readable (US-429). False
+            when the gauge read fails/absent -- every ups-owned numeric is then a
+            fresh typed NULL (never the last real reading left stale) and the
+            reason travels in ``source.ups``. Defaults True (backward compatible).
+        upsUnavailableReason: The typed-NA reason when ``upsAvailable`` is False
+            (defaults to ``REASON_UPS_UNREADABLE``). Ignored when available.
 
     Returns:
-        The battery-health dict with exactly the spec §7 A-3 keys.
+        The battery-health dict with exactly the spec §7 A-3 keys plus the US-429
+        ``source`` block (one availability truth per source).
     """
     # A-6 no-false-failsafe: the failsafe ladder may ONLY exist while draining.
     # Enforced here (the SSOT) so a buggy caller can never light a phantom drain.
     safeLadder = ladder if draining else None
+    # US-429 honest-availability: when the UPS source is unavailable, EVERY
+    # ups-owned reading is a fresh typed NULL -- never a stale last-real value and
+    # never a fabricated one. The reason travels in `source.ups`; the display
+    # renders the whole card as "NA (<reason>)".
+    if not upsAvailable:
+        vcellV = None
+        soc = None
+        crate = None
+        restedVcellV = None
+        runtimeToCutoffS = None
+        draining = False
+        charging = False
+        safeLadder = None
     return {
         "vcellV": vcellV,
         "soc": soc,
@@ -148,6 +177,11 @@ def buildBatteryHealthState(
         "ambientTempC": ambientTempC,
         "lastHealthCheckTs": lastHealthCheckTs,
         "ladder": safeLadder,
+        "source": {
+            SOURCE_UPS: buildSourceState(
+                upsAvailable, upsUnavailableReason or REASON_UPS_UNREADABLE
+            )
+        },
         "ts": nowIso,
     }
 
@@ -192,6 +226,8 @@ def makeBatteryHealthEmitter(
         ambientTempC: float | None,
         lastHealthCheckTs: str | None,
         ladder: dict | None,
+        upsAvailable: bool = True,
+        upsUnavailableReason: str | None = None,
     ) -> None:
         try:
             payload = buildBatteryHealthState(
@@ -211,6 +247,8 @@ def makeBatteryHealthEmitter(
                 lastHealthCheckTs=lastHealthCheckTs,
                 ladder=ladder,
                 nowIso=nowFn(),
+                upsAvailable=upsAvailable,
+                upsUnavailableReason=upsUnavailableReason,
             )
             ensureStatesDir(statesDir)
             writeStateAtomic(target, payload)
