@@ -208,3 +208,59 @@ Task: drain_event close-on-poweroff -- verify (F-062, likely MOOT)
   gate for a 'no stuck rows' claim -- code-only reasoning would have wrongly closed this
   moot; the DB said otherwise.
 ---
+
+## 2026-07-02 - US-435 (Agent 1 / Rex / Session 5, Sprint 53 V0.29.7) -- CLOSED (verify-first sweep + 1 functional fix)
+Task: Pi + server hostname resolution cleanup (F-102)
+
+### Outcome: passes:true. Doc/comment sweep + one additive deploy-pi.sh fix, grounded on a live read-only Pi query. Handoff filed for a naming decision.
+
+### Ground truth (live read-only ssh, non-destructive):
+- ssh mcornelison@10.27.27.28 hostname -> "Chi-Eclips-01" (dropped the 'e');
+  /etc/hosts 127.0.1.1 = "Chi-Eclips-01 Chi-Eclips-Tuner".
+- Canonical tooling name is "chi-eclipse-01" (with 'e'): SSH ~/.ssh/config alias,
+  deploy/addresses.sh PI_HOSTNAME/PI_DEVICE_ID, config.json piHostname/piDeviceId,
+  and the A-15 mirror lint (asserts PI_HOSTNAME=='chi-eclipse-01').
+
+### The real issue (only ONE code path was actually affected):
+- SSH/deploy resolve regardless of the OS hostname (alias -> IP), and device_id
+  comes from config not `hostname`, so data identity is unaffected. The lone
+  hostname-keyed path is deploy-pi.sh step_set_hostname: its case-stmt whitelist
+  (raspberrypi|chi-eclipse-tuner|chi-eclips-tuner) did NOT include the Pi's new
+  actual name, so a fresh --init would hit the *) branch -> exit 6 REFUSE.
+
+### Changes:
+- Modified: `deploy/deploy-pi.sh` -- added `chi-eclips-01` to the b044-exempt
+  legacy accept-list (line 406) + the refuse-message (line 421) + a US-435
+  rationale comment. Rename TARGET unchanged ($PI_HOSTNAME=chi-eclipse-01), so
+  the next --init CONVERGES the live Pi to canonical (additive, low-risk).
+- Modified: `.env.production.example`, `src/pi/README.md` -- stale comment/doc
+  `chi-eclipse-tuner` -> `chi-eclipse-01`.
+- Created: `offices/pm/inbox/2026-07-02-from-ralph-us435-hostname-eclips-vs-eclipse-convergence.md`.
+- LEFT intentionally (NOT stale refs): deploy-pi.sh keeps chi-eclipse-tuner/
+  chi-eclips-tuner (a legacy Pi must stay renamable); audit_config_literals.py
+  keeps chi-eclipse-tuner in its DETECTION regex; docs/superpowers/** = dated
+  old->new transition snapshots; scripts/output3/4.txt = captured artifacts.
+
+### Gates (in-loop, synchronous):
+- bash -n deploy/deploy-pi.sh -> SYNTAX_OK
+- pytest tests/deploy/test_deploy_pi.py tests/lint/test_address_mirror_consistency.py -> 39 passed
+- bash tests/deploy/test_deploy_pi.sh -> 31 passed, 0 failed
+  (incl. `--dry-run --init` offline-safe "shows hostname step" = the
+   validationCriteria "run deploy-pi.sh --dry-run" gate)
+- NO .py touched -> ruff N/A (AC3 vacuously satisfied)
+
+### Learnings for future iterations:
+- **Pattern discovered**: a "hostname consistency" sweep is mostly cosmetic --
+  find the ONE path that keys on the real OS hostname (here deploy-pi.sh's rename
+  whitelist) and fix that; everything else (SSH, sync, device_id) is decoupled
+  from `hostname` by the alias + config SSOT. Ground it with a live `hostname`
+  query before assuming which name is "current".
+- **Gotcha**: `Chi-Eclips-01` (no 'e', the CIO's manual rename) != canonical
+  `chi-eclipse-01` (with 'e'). Case is irrelevant to resolution; the missing
+  letter is NOT. Don't rewrite the address MIRRORS to match a machine that was
+  named by hand -- converge the machine to the mirror (the whitelist enables
+  --init to do exactly that), and flag the spelling to the CIO.
+- **Gotcha**: not every legacy-name hit is a stale ref to sweep -- a rename
+  ACCEPT-list and a lint DETECTION regex both legitimately retain the old name.
+  Sweeping those would be a functional regression, not a cleanup.
+---

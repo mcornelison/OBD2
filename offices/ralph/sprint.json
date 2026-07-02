@@ -135,8 +135,17 @@
       "epicId": "E-004",
       "type": "normal",
       "size": "S",
-      "status": "sprint-ready",
-      "passes": false,
+      "status": "done",
+      "passes": true,
+      "completionNotes": "Verify-first sweep grounded on a LIVE read-only Pi query (ssh mcornelison@10.27.27.28 hostname) -> the Pi's actual OS hostname is 'Chi-Eclips-01' (dropped the 'e'; /etc/hosts 127.0.1.1='Chi-Eclips-01 Chi-Eclips-Tuner'). Canonical tooling name is 'chi-eclipse-01' (with 'e') -- pinned across SSH ~/.ssh/config alias + deploy/addresses.sh PI_HOSTNAME/PI_DEVICE_ID + config.json piHostname/piDeviceId + the A-15 mirror lint (test_address_mirror_consistency asserts PI_HOSTNAME=='chi-eclipse-01'). SSH/deploy already resolve (alias->IP, independent of OS hostname) and device_id comes from config not hostname (data identity unaffected); the ONLY code path keyed on the live hostname was deploy-pi.sh step_set_hostname, whose case-stmt would hit the *) refuse branch (exit 6) on a fresh --init because 'chi-eclips-01' was not in its accept-list. FIX (functional, additive, low-risk): added 'chi-eclips-01' to the b044-exempt legacy accept-list (line 406) + the refuse-message (line 421) + a US-435 rationale comment; rename target unchanged ($PI_HOSTNAME=chi-eclipse-01) so the next --init CONVERGES the Pi to canonical. DOC SWEEP: .env.production.example + src/pi/README.md stale 'chi-eclipse-tuner' -> 'chi-eclipse-01' (comment/doc). LEFT INTENTIONALLY (not stale): deploy-pi.sh keeps chi-eclipse-tuner/chi-eclips-tuner (a still-legacy Pi must remain renamable); scripts/audit_config_literals.py keeps chi-eclipse-tuner in its DETECTION regex (flags re-hardcoding the legacy name); docs/superpowers/** design specs = dated old->new transition snapshots (also docs/ is b044-exempt); scripts/output3.txt/output4.txt = captured-output artifacts. config.json + all deploy configs already canonical (no change). IN-LOOP GATES (synchronous): bash -n deploy/deploy-pi.sh => SYNTAX_OK; pytest tests/deploy/test_deploy_pi.py + tests/lint/test_address_mirror_consistency.py => 39 passed; bash tests/deploy/test_deploy_pi.sh => 31 passed 0 failed (incl. --dry-run --init offline-safe 'shows hostname step' = the validationCriteria deploy-pi.sh --dry-run gate). NO .py touched => ruff N/A (AC3 vacuously met). AC2 (no functional regression) held -- change is purely additive. HANDOFF (not a blocker, safe convergence path exists): filed offices/pm/inbox/2026-07-02-from-ralph-us435-hostname-eclips-vs-eclipse-convergence.md for CIO to pick convergence trigger A(next --init auto-rename) or B(manual hostnamectl set-hostname chi-eclipse-01); LAN-wide name resolution (F-102 Option C router DNS A-record) + ~/.ssh/config are human-ops outside the repo, noted so not lost.",
+      "feedback": {
+        "filesActuallyTouched": [
+          "deploy/deploy-pi.sh (step_set_hostname: +chi-eclips-01 in the legacy accept-list + refuse-message + US-435 rationale comment; converges the live Pi to canonical on next --init)",
+          ".env.production.example (comment: chi-eclipse-tuner -> chi-eclipse-01)",
+          "src/pi/README.md (doc: chi-eclipse-tuner -> chi-eclipse-01)",
+          "offices/pm/inbox/2026-07-02-from-ralph-us435-hostname-eclips-vs-eclipse-convergence.md (new -- Eclips-vs-Eclipse decision handoff to CIO)"
+        ]
+      },
       "acceptance": [
         "sweep code/config/docs/SSH-config for stale hostname references (chi-eclipse-tuner, old aliases) -> the canonical current name; deploy/SSH paths resolve",
         "no functional regression in deploy-pi.sh / SSH access",

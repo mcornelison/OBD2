@@ -391,6 +391,9 @@ step_set_hostname() {
     # ACCEPTABLE pre-rename states is intentionally hardcoded to
     # legacy/factory names -- those are historical artifacts, not
     # infrastructure addresses, and B-044 does not govern them.
+    # US-435: 'chi-eclips-01' is the CIO's manual `hostnamectl` rename (dropped
+    # the 'e' vs the canonical 'chi-eclipse-01'); accepting it here lets --init
+    # converge the Pi to $PI_HOSTNAME rather than refusing on an unknown name.
     echo "--- Step: Renaming Pi hostname to ${PI_HOSTNAME} ---"
     remote "
         current=\$(hostname)
@@ -400,7 +403,7 @@ step_set_hostname() {
             ${PI_HOSTNAME})
                 echo 'Hostname already ${PI_HOSTNAME}, skipping rename.'
                 ;;
-            raspberrypi|chi-eclipse-tuner|chi-eclips-tuner)  # b044-exempt: legacy hostname whitelist for rename step
+            raspberrypi|chi-eclipse-tuner|chi-eclips-tuner|chi-eclips-01)  # b044-exempt: legacy hostname whitelist for rename step
                 echo \"Renaming \$current -> ${PI_HOSTNAME}\"
                 sudo hostnamectl set-hostname ${PI_HOSTNAME}
                 # Update /etc/hosts loopback so 'sudo' doesn't complain about
@@ -415,7 +418,7 @@ step_set_hostname() {
                 ;;
             *)
                 echo \"REFUSING to rename: unexpected current hostname '\$current'.\"
-                echo 'Expected raspberrypi, chi-eclipse-tuner (any case), chi-eclips-tuner (any case), or ${PI_HOSTNAME}.'  # b044-exempt: legacy hostname whitelist
+                echo 'Expected raspberrypi, chi-eclipse-tuner (any case), chi-eclips-tuner (any case), chi-eclips-01 (any case), or ${PI_HOSTNAME}.'  # b044-exempt: legacy hostname whitelist
                 echo 'Resolve manually, then re-run --init.'
                 exit 6
                 ;;
