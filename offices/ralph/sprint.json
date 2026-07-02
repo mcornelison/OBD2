@@ -173,7 +173,8 @@
       "type": "normal",
       "size": "M",
       "status": "sprint-ready",
-      "passes": false,
+      "passes": true,
+      "completionNotes": "US-429 DONE (code-complete; the live-car carousel render is Bug-3a = Argus/Iris' car gate, NOT this bench story). New src/pi/splash/source_availability.py = the ONE source-availability shape SSOT (buildSourceState + SOURCE_OBD/UPS/DTC + typed reason constants) shared by all 3 emitters -- availability is one truth per SOURCE, NA = NULL+reason NEVER a numeric sentinel. Each emitter gained sourceAvailable/unavailableReason kwargs (default True -> backward compatible, no caller change) + a `source.<x>` block, and writes a FRESH real-or-(NULL+reason) state each tick: system_status obd-unavailable nulls obdLink {state:None} + source.obd carries reason (sync/power/drive stay independent); battery_health ups-unavailable forces every ups-owned numeric NULL (vcell/soc/crate/restedVcell/runtimeToCutoff, draining/charging False, ladder None) + source.ups; dtc unavailable publishes a FRESH empty state (codes [], newSinceTs None, mil False) + source.dtc -- so no stale codes and the US-405 takeover CANNOT mis-fire (Bug-3b). carousel.js: sourceUnavailable/sourceReason/naTile helpers; systemStatusView renders the obdLink tile as 'NA (<reason>)' + neutral glyph when obd down; batteryHealthView + alertsCardView return a whole-card {unavailable:true, reason} view (DOM renderNaBody paints 'NA (<reason>)', never blank/stale/false-all-clear); takeoverView + ribbonView short-circuit to null when source.dtc.available===false. An ABSENT source block = treated available (backward compat with pre-US-429 states). IN-LOOP GATE: ruff clean on all 5 touched .py; targeted 44 (source_availability + 3 emitter lock-down + node carousel fixtures) + full tests/pi/splash 143 passed/1 unrelated-skip. NOTE: carousel.js has no JS test framework in-repo -> the fixture/DOM tests drive its node-exported pure fns via a node subprocess (tests/ui/carousel_probe.js), pytest-skipped when node is absent (node IS on the dev box; a node-less PM/CI box skips them honestly). PM GATES OWED: (1) full pytest suite + mypy (base-module emitters changed, but new kwargs are additive/backward-compatible); (2) Bug-3a live-car carousel render (Argus/Iris) -- the display-blank chain-validation gate; wiring the orchestrator to actually PASS sourceAvailable=False when OBD/UPS are down is runtime work that surfaces on the car (this story built the honest data+display contract the wiring feeds).",
       "acceptance": [
         "build to specs/ssot-design-pattern.md 'Honest availability -- the unavailable-source -> typed-NA pattern' (Atlas-ratified 2026-07-01)",
         "each source (obd-link, ups, dtc) has ONE state.source.<x> = available|unavailable (availability is one truth per SOURCE, not per parameter)",
@@ -199,7 +200,23 @@
       ],
       "conditionalOutcomes": [],
       "goal": "As the CIO, I want the carousel emitters to always write fresh real-or-typed-NA state per source availability, so the 3.5-inch display is honest when a source is down (never blank/stale/fabricated) and the CHECK-ENGINE takeover never mis-fires on an absent source.",
-      "tasks": []
+      "tasks": [],
+      "feedback": {
+        "filesActuallyTouched": [
+          "src/pi/splash/source_availability.py",
+          "src/pi/splash/system_status_emitter.py",
+          "src/pi/splash/battery_health_emitter.py",
+          "src/pi/splash/dtc_emitter.py",
+          "specs/UI/dist/dashboard-pi/carousel.js",
+          "tests/pi/splash/test_source_availability.py",
+          "tests/pi/splash/test_system_status_emitter.py",
+          "tests/pi/splash/test_battery_health_emitter.py",
+          "tests/pi/splash/test_dtc_emitter.py",
+          "tests/ui/__init__.py",
+          "tests/ui/carousel_probe.js",
+          "tests/ui/test_carousel_honest_availability.py"
+        ]
+      }
     },
     {
       "id": "US-430",
