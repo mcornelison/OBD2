@@ -166,6 +166,20 @@ CIO flips each sensor on as he wires it (connect-when-wired):
 
 See `specs/architecture.md` §10.8 and `src/common/edr/sensor_schema.py`.
 
+**Power-mode SSOT key (Sprint 52 / V0.29.6).** `pi.power.mode` is the static
+config-key SSOT for the Pi's **deployment context** — in-car vs. bench/wall
+power — which is a *different fact* from the AC-vs-battery power **source**:
+
+- `pi.power.mode` (default `unknown`) — one of `{car, wall, unknown}`. THE single
+  acquisition path is `PowerModeProvider` (`src/pi/power/`); consumed by
+  `system_status_emitter` → `carousel.js powerTile` (renders CAR/WALL/unknown).
+  An absent/stale/invalid value resolves to `unknown` — **never a confident wrong
+  mode** (honest-instrument). The seam allows a future config→GPIO swap behind the
+  same interface with zero consumer change (GPIO out of scope for V0.29.6).
+
+See `specs/architecture.md` "Power-mode SSOT (US-421 / F-098)" and
+`src/pi/power/` (`PowerModeProvider`).
+
 **Critical Pattern**: In `config.json`, use `${ENV_VAR}` syntax for secrets:
 ```json
 {

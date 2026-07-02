@@ -226,7 +226,8 @@
       "type": "normal",
       "size": "S",
       "status": "sprint-ready",
-      "passes": false,
+      "passes": true,
+      "completionNotes": "US-430 DONE (docs-only; no src/ change -> ruff/make-lint N/A, nothing to compile). architecture.md: Battery Health Log section re-pinned to the post-US-426 schema -- Table shape now start_vcell_v/end_vcell_v (volts) + dedicated start_soc_pct/end_soc_pct (SoC%, REAL/FLOAT nullable), legacy misnamed start_soc/end_soc documented as DROPPED in one forward-only both-tier migration (server v0016, tiers byte-identical incl *_vcell_v, A-4 closed); writer signatures gained startSocPct/endSocPct->*_soc_pct; CLI helper record_drain_test.py now reads register SoC% under the US-234 cold-start guard (NULL never garbage inside the ~3-min MAX17048 window); the retired-in-SS-T5 orchestrator drain consumer documented as removed (US-427/TD-058); invariant #1 + the F-8 voltage-is-not-percent trap re-pinned to *_vcell_v/*_soc_pct; stale 'Sprint 51 BLOCKED' paragraph rewritten to 'Sprint 52 SHIPPED (BL-015 resolved)'. Added a 'Power-mode SSOT (US-421/F-098)' paragraph to the System Status card section (PowerModeProvider reads static pi.power.mode in {car,wall,unknown}, THE SSOT, honest 'unknown', config->GPIO seam). Kiosk-unit install contract (US-428) was already documented in-story. Bumped architecture.md 'Last Updated' header to Sprint 52 (demoted Sprint 50 to Prior) + appended a consolidated Sprint 52 entry to specs/arch/architecture-changelog.md (newest-first). CLAUDE.md: added the pi.power.mode config-key block after the EDR sensor-bus keys. regression_manifest.json: F-098 (US-421) / F-060 (US-427) / F-061 (US-426) flipped BLOCKED->SHIPPED Sprint 52; F-103 HARDENED (US-428), F-092/F-111 EXTENDED (US-429); each carries an OWED bench/deploy validation gate; header lastUpdated/lastUpdatedBy bumped. IN-LOOP GATE: no .py touched (ruff N/A); python validate_config.py all-pass (pi.power.mode present); regression_manifest.json parses (json.load OK); tests/deploy/test_deploy_pi.py 30/30 green (the architecture.md kiosk-contract assertion still holds after my edits). DRIFT FILED: TD-060 -- BatteryHealthRecorder startDrainEvent/endDrainEvent docstrings in src/pi/power/battery_health.py still describe the dropped legacy start_soc dual-write (source-file drift, outside this doc-sync spec scope; runtime code is correct). PM GATES OWED: the sprint's per-feature bench/deploy validation gates remain (validatedAt still null) before /sprint-validated.",
       "acceptance": [
         "architecture.md updated for the _soc_pct schema + pi.power.mode config + kiosk-deploy contract (if not covered in-story)",
         "new config key pi.power.mode documented in CLAUDE.md",
@@ -241,7 +242,16 @@
       ],
       "conditionalOutcomes": [],
       "goal": "As the PM, I need docs to reflect the sprint's schema/config/deploy changes.",
-      "tasks": []
+      "tasks": [],
+      "feedback": {
+        "filesActuallyTouched": [
+          "specs/architecture.md",
+          "specs/arch/architecture-changelog.md",
+          "CLAUDE.md",
+          "offices/pm/regression_manifest.json",
+          "offices/pm/tech_debt/TD-060-stale-battery-health-recorder-docstrings-legacy-soc.md"
+        ]
+      }
     }
   ],
   "validation": {

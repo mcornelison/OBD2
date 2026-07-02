@@ -17,7 +17,19 @@ This document describes the system architecture, technology decisions, and desig
 > behavior + invariants). −35% file size; no current-system content removed. (§11
 > Deployment was reviewed — it's all current reference, nothing extracted.)
 
-**Last Updated**: 2026-07-01 (Sprint 50 / V0.29.4 — new **§10.8 EDR Sensor Bus
+**Last Updated**: 2026-07-02 (Sprint 52 / V0.29.6 — BL-014/BL-015 landings +
+display hardening doc-sync (US-430, Rule-10): **Battery Health Log §** re-pinned
+to `start_vcell_v`/`end_vcell_v` (volts) + dedicated `start_soc_pct`/`end_soc_pct`
+(SoC%) — the legacy misnamed `start_soc`/`end_soc` dropped in one forward-only
+both-tier migration (server `v0016`); register SoC% recorded via the bench drain
+CLI under the US-234 cold-start guard; the retired-in-SS-T5 orchestrator drain
+consumer documented as removed (US-427/TD-058). New **"Power-mode SSOT" §** in
+the System Status card (US-421/F-098): `PowerModeProvider` reads static config
+`pi.power.mode ∈ {car,wall,unknown}` (honest `unknown`, config→GPIO seam). F-8
+voltage-is-not-percent trap re-pinned to `*_vcell_v`/`*_soc_pct`. Kiosk-unit
+install contract (US-428/F-103) documented in-story. Docs-only; full detail in
+`specs/arch/architecture-changelog.md`.)
+Prior: 2026-07-01 (Sprint 50 / V0.29.4 — new **§10.8 EDR Sensor Bus
 Architecture**: **§10.8.1** F-110 `SampleBus` recap (Sprint 46 / V0.29.0) +
 **§10.8.2** EDR sensor reader + raw-sensor persistence (F-113/F-114) — additive
 `raw.imu.*`/`raw.light.*` LOSSY topics on the F-110 bus (one `seq` per IMU
@@ -1054,7 +1066,7 @@ Invariants (Spool Session 6 amendment):
 
 Per CIO directive 3 (Spool Session 6 — monthly drain tests May–Sept driving season; quarterly in storage), the Pi maintains a `battery_health_log` capture table with one row per UPS drain event. US-217 lands the schema + writer surface; US-216 (Power-Down Orchestrator) will consume it when it wires the staged 30/25/20 SOC shutdown ladder.
 
-**Table shape** — Pi SQLite `battery_health_log`: `drain_event_id INTEGER PK AUTOINCREMENT`, `start_timestamp TEXT NOT NULL DEFAULT strftime('%Y-%m-%dT%H:%M:%SZ','now')`, `end_timestamp TEXT NULL`, `start_soc REAL NOT NULL`, `end_soc REAL NULL`, `runtime_seconds INTEGER NULL`, `ambient_temp_c REAL NULL`, `load_class TEXT NOT NULL DEFAULT 'production' CHECK IN ('production','test','sim')`, `notes TEXT NULL`, `data_source TEXT NOT NULL DEFAULT 'real'` with CHECK enum. Index `IX_battery_health_log_start` on `start_timestamp` for time-range queries.
+**Table shape** — Pi SQLite `battery_health_log`: `drain_event_id INTEGER PK AUTOINCREMENT`, `start_timestamp TEXT NOT NULL DEFAULT strftime('%Y-%m-%dT%H:%M:%SZ','now')`, `end_timestamp TEXT NULL`, `start_vcell_v REAL NULL`, `end_vcell_v REAL NULL`, `start_soc_pct REAL NULL`, `end_soc_pct REAL NULL`, `runtime_seconds INTEGER NULL`, `ambient_temp_c REAL NULL`, `load_class TEXT NOT NULL DEFAULT 'production' CHECK IN ('production','test','sim')`, `notes TEXT NULL`, `data_source TEXT NOT NULL DEFAULT 'real'` with CHECK enum. Index `IX_battery_health_log_start` on `start_timestamp` for time-range queries. **US-426 (Sprint 52 / V0.29.6)** dropped the legacy misnamed `start_soc`/`end_soc` columns (which stored VCELL **volts**, not percent) and added the dedicated `start_soc_pct`/`end_soc_pct` (REAL nullable) as the durable home for MAX17048 State-of-Charge % — one forward-only both-tier migration (Pi SQLite CREATE-AS-SELECT-DROP-RENAME + server MariaDB `v0016`; both tiers now byte-identical incl. `*_vcell_v`, closing the A-4 divergence).
 
 **load_class enum**:
 
@@ -1066,42 +1078,44 @@ Analytics filter `production` + `test` for runtime-trend baselines; `sim` is exc
 
 **Writer** — `src/pi/power/battery_health.BatteryHealthRecorder` exposes two methods:
 
-- `startDrainEvent(startSoc, loadClass='production', notes=None, dataSource='real') → drain_event_id` — INSERTs a new row with NULL end columns.
-- `endDrainEvent(drainEventId, endSoc, ambientTempC=None) → DrainEventCloseResult` — UPDATEs end_timestamp + end_soc + runtime_seconds (+ optional ambient). **Close-once semantic**: re-calling on an already-closed row is a no-op that returns the stored values; the original close is authoritative.
+- `startDrainEvent(startSoc, loadClass='production', notes=None, dataSource='real', startSocPct=None) → drain_event_id` — INSERTs a new row with NULL end columns. `startSoc` is VCELL **volts** and lands in `start_vcell_v` (its sole home post-US-426); the optional `startSocPct` register SoC% lands in `start_soc_pct` (NULL when omitted).
+- `endDrainEvent(drainEventId, endSoc, ambientTempC=None, endSocPct=None) → DrainEventCloseResult` — UPDATEs end_timestamp + end_vcell_v + runtime_seconds (+ optional ambient, + optional `endSocPct → end_soc_pct`). **Close-once semantic**: re-calling on an already-closed row is a no-op that returns the stored values; the original close is authoritative.
 
-**CLI helper** — `scripts/record_drain_test.py` opens and closes a drain event in one invocation for the CIO's monthly drill. Accepts `--start-soc`, `--end-soc`, `--runtime`, `--load-class`, `--ambient`, `--notes`. Follow with `scripts/sync_now.py` to push the row to Chi-Srv-01.
+**CLI helper** — `scripts/record_drain_test.py` opens and closes a drain event in one invocation for the CIO's monthly drill. Accepts `--start-soc`, `--end-soc`, `--runtime`, `--load-class`, `--ambient`, `--notes` — the operator-typed `--start-soc`/`--end-soc` are VCELL **volts** and land in `start_vcell_v`/`end_vcell_v`. **US-427 (Sprint 52 / V0.29.6)** additionally reads the real MAX17048 register SoC% (`UpsMonitor.getBatteryPercentage()`) into `start_soc_pct`/`end_soc_pct`, guarded by the **US-234 cold-start rule**: a read inside the ~3-min MAX17048 calibration window (or on a box that can't determine uptime) records **NULL, never a garbage percent** (honest-instrument). Follow with `scripts/sync_now.py` to push the row to Chi-Srv-01.
 
 **Sync shape** — `sync_log.PK_COLUMN['battery_health_log'] = 'drain_event_id'`; the Pi sync client's `_renamePkToId` renames `drain_event_id → id` on the wire; the server's `runSyncUpsert` maps `id → source_id`. Server mirror `BatteryHealthLog` SQLAlchemy model with `UNIQUE(source_device, source_id)`. Registered in `_TABLE_REGISTRY`; deploy-time migration `v0002_us217_battery_health_log.py` creates the MariaDB table.
 
 **Invariants**:
 
-1. `start_soc` + `start_timestamp` are authoritative once written; the close path only touches end-event columns.
+1. `start_vcell_v` + `start_soc_pct` + `start_timestamp` are authoritative once written; the close path only touches end-event columns.
 2. `drain_event_id` is auto-incremented + monotonic (per-event, not a singleton).
 3. Close-once: first `endDrainEvent` wins; re-call is a no-op so a crashed orchestrator that retries on next boot cannot overwrite the original close data.
 4. Timestamps route through `src.common.time.helper.utcIsoNow` (US-202 canonical ISO-8601 UTC).
 
-**Use case — US-216 consumer**:
-
-- At WARNING (30% SOC): `startDrainEvent(startSoc=30, loadClass='production')` → returns drain_event_id.
-- At TRIGGER (20% SOC): `endDrainEvent(drainEventId=…, endSoc=20, ambientTempC=…)` → closes the row just before `systemctl poweroff`.
+**Use case — the live consumer (bench drain CLI)**. The original US-216
+Power-Down Orchestrator drain-event consumer was **retired in the SS-T5 shutdown
+redesign** (its dead `batteryHealthRecorder` wiring was removed end-to-end in
+US-427 / TD-058). The live consumer is now the CIO's monthly bench drill via
+`scripts/record_drain_test.py`, which opens + closes one event per invocation.
 
 **Use case — monthly drain drill (CIO)**:
 
 - Unplug wall power, let Pi drain to the trigger threshold.
-- Record results: `python scripts/record_drain_test.py --start-soc 100 --end-soc 20 --runtime 1440 --load-class test --ambient 22`.
+- Record results (the `--start-soc`/`--end-soc` values are VCELL **volts**): `python scripts/record_drain_test.py --start-soc 4.15 --end-soc 3.42 --runtime 1440 --load-class test --ambient 22`. Outside the MAX17048 cold-start window the CLI also stamps `start_soc_pct`/`end_soc_pct` from the register (US-427).
 - Push to server: `python scripts/sync_now.py`.
 - Analytics downstream tracks `runtime_seconds` decay for battery-replacement signal (future story).
 
-**Sprint 51 status.** The only `battery_health_log` schema change this sprint
-was US-424 widening its `data_source` CHECK enum to include `'foreign'` (the
-derived-CHECK propagation; the column already existed). The planned SoC%
-rework — wiring the MAX17048 SoC% register end-to-end into the recorder
-(US-422 / F-060) and dropping the legacy misnamed `start_soc`/`end_soc`
-columns that actually store **volts** (US-423 / F-061) — was **BLOCKED** this
-sprint (`offices/pm/blockers/BL-015`: the drain-event recording path the story
-wired through was removed in the SS-T5 shutdown redesign, and no dedicated
-`soc_pct` column exists). `start_soc`/`end_soc` are therefore **unchanged**
-this sprint.
+**Sprint 52 / V0.29.6 status (BL-015 resolved).** The SoC% rework shipped this
+sprint (Atlas-ruled, CIO-ratified): **US-426 (F-061)** dropped the legacy
+misnamed `start_soc`/`end_soc` columns (they stored VCELL **volts**, not
+percent) and added the dedicated `start_soc_pct`/`end_soc_pct` columns as one
+forward-only both-tier migration; **US-427 (F-060)** wired the real MAX17048
+register SoC% into the bench drain CLI's recording path under the US-234
+cold-start guard. The BL-015 blocker (no `soc_pct` column + the removed
+drain-event path) is closed: the durable column now exists, and the ruling moved
+the SoC% recording onto the bench CLI rather than the deleted orchestrator path.
+(Sprint 51's only `battery_health_log` change was US-424 widening the
+`data_source` CHECK enum to include `'foreign'` — the column already existed.)
 
 ### Data Retention
 
@@ -2593,6 +2607,20 @@ flips the state to `reconnecting`; the 4 Hz poll surfaces `RECONNECTING` on the
 tile and an amber BT glyph within ≤2 s (the operator finally *sees* the
 reconnect, closing the I-033 "did it capture my drive?" blind spot).
 
+**Power-mode SSOT (US-421 / F-098, Sprint 52 / V0.29.6).** The `power.mode`
+field (`car` / `wall` / `unknown`) reports the **deployment context** — Pi
+installed in-car vs. bench/wall power — which is a *different fact* from
+`power.source` (AC-vs-battery, the `power_source_provider`). Its single
+acquisition path is `PowerModeProvider` (`src/pi/power/`), which reads the
+static config key **`pi.power.mode ∈ {car, wall, unknown}`** (validator DEFAULT
+`unknown`) and is THE SSOT for the fact (zero other acquisition paths). The
+provider is wired through `system_status_emitter.buildSystemStatusState` into
+`carousel.js#powerTile`, which renders CAR / WALL / **unknown**. An
+absent/stale/invalid config resolves to `unknown` — **never a confident wrong
+mode** (honest-instrument). The seam is designed so acquisition can later swap
+config → a GPIO sense line behind the same `PowerModeProvider` interface with
+zero consumer change (future; the GPIO line is out of scope for V0.29.6).
+
 **Honest-instrument render (F-1).** `carousel.js#systemStatusView` maps the state
 to tile levels (`ok`/`amber`/`down`/`unavailable`) + glyph states; a level/glyph
 is **`ok` (green) only when the underlying state is genuinely good**. A
@@ -2635,8 +2663,10 @@ never raised; atomic `writeStateAtomic`). Schema (spec §7):
 
 **Two render-breaking honesty traps locked at the data contract:**
 
-- **Voltage-is-not-percent (F-8).** `battery_health_log.*_soc` columns hold
-  **volts**, not percent. The emitter has **no code path from `vcellV` to `soc`** —
+- **Voltage-is-not-percent (F-8).** `battery_health_log.*_vcell_v` columns hold
+  **volts**; the dedicated `*_soc_pct` columns (US-426) hold percent — the legacy
+  misnamed `*_soc` columns that stored volts were dropped in US-426. The emitter
+  has **no code path from `vcellV` to `soc`** —
   the percent comes only from the MAX17048 SoC register, and a `null` register read
   passes through as `soc:null`. `carousel.js#batteryHealthView`/`socTile` renders
   the percent **only when `soc` is a real number** (tagged `(uncalibrated)` when

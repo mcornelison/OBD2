@@ -119,3 +119,34 @@ Task: Carousel honest-availability -- per-source availability + typed-NA emitter
 - **Gotcha**: exact-shape emitter lock-down tests (`state == {...}` / `set(state) == {...}`) break the instant you add a key -- adding `source` forced updates to all 3 (expected: the AC says update lock-down tests). grep the assert style first.
 - **Design note**: an ABSENT `source` block is treated AVAILABLE (not unavailable) so pre-US-429 state files + other cards render unchanged; only an explicit `available:false` is a NA. The runtime wiring (orchestrator passing sourceAvailable=False when OBD/UPS drop) is the piece that lights this up on the car -- Bug-3a, out of this bench story's scope.
 ---
+
+## 2026-07-02 - US-430 (Rex / Agent 1)
+Task: Sprint 52 documentation sync (Rule-10)
+
+### What was implemented:
+- **architecture.md Battery Health Log section** re-pinned to the post-US-426 schema: Table shape now `start_vcell_v`/`end_vcell_v` (volts) + dedicated `start_soc_pct`/`end_soc_pct` (SoC%, REAL/FLOAT nullable); legacy misnamed `start_soc`/`end_soc` (stored volts) documented as DROPPED in one forward-only both-tier migration (server `v0016`, tiers byte-identical incl `*_vcell_v`, A-4 closed). Writer signatures `startDrainEvent`/`endDrainEvent` gained `startSocPct`/`endSocPct` -> `*_soc_pct`; CLI helper `record_drain_test.py` now reads register SoC% under the US-234 cold-start guard (NULL, never garbage, inside the ~3-min MAX17048 window); the retired-in-SS-T5 orchestrator drain-event consumer documented as removed (US-427/TD-058); invariant #1 + the F-8 "voltage-is-not-percent" trap re-pinned to `*_vcell_v`/`*_soc_pct`; stale "Sprint 51 BLOCKED" paragraph rewritten to "Sprint 52 SHIPPED (BL-015 resolved)".
+- **architecture.md System Status card**: new "Power-mode SSOT (US-421/F-098)" paragraph -- `PowerModeProvider` (`src/pi/power/`) reads static config `pi.power.mode in {car,wall,unknown}` (validator DEFAULT `unknown`), THE single SSOT acquisition path, wired through `system_status_emitter` -> `carousel.js powerTile`; honest `unknown` never a confident wrong mode; config->GPIO swap seam noted (GPIO out of scope V0.29.6). Kiosk-unit install contract (US-428) was already documented in-story.
+- **architecture.md "Last Updated" header** bumped to Sprint 52 (Sprint 50 demoted to Prior) + a consolidated Sprint 52 entry appended to `specs/arch/architecture-changelog.md` (newest-first).
+- **CLAUDE.md**: added the `pi.power.mode` config-key block after the EDR sensor-bus keys.
+- **regression_manifest.json**: F-098 (US-421) / F-060 (US-427) / F-061 (US-426) flipped BLOCKED->SHIPPED Sprint 52; F-103 HARDENED (US-428), F-092/F-111 EXTENDED (US-429); each carries an OWED bench/deploy validation gate; header `lastUpdated`/`lastUpdatedBy` bumped.
+- **TD-060 filed**: `BatteryHealthRecorder.startDrainEvent`/`endDrainEvent` docstrings still describe the dropped legacy `start_soc` dual-write (source-file drift, outside the doc-sync spec scope; runtime code is correct).
+
+### Files changed:
+- Modified: `specs/architecture.md` (Battery Health Log schema/writer/CLI/invariant/F-8/Sprint-status + Power-mode SSOT paragraph + Last Updated header)
+- Modified: `specs/arch/architecture-changelog.md` (consolidated Sprint 52 entry, newest-first)
+- Modified: `CLAUDE.md` (pi.power.mode config-key block)
+- Modified: `offices/pm/regression_manifest.json` (F-098/F-060/F-061 BLOCKED->SHIPPED; F-103/F-092/F-111 Sprint 52 annotations; header bump)
+- Created: `offices/pm/tech_debt/TD-060-stale-battery-health-recorder-docstrings-legacy-soc.md`
+
+### Verification:
+- Docs-only story -> no `.py` touched, so ruff / `make lint` is N/A (nothing to compile).
+- `python validate_config.py`: all validations pass (`pi.power.mode` present in config.json + validator).
+- `regression_manifest.json` + `sprint.json` parse clean (`json.load` OK).
+- `tests/deploy/test_deploy_pi.py` 30/30 green -- the architecture.md kiosk-contract assertion still holds after my edits.
+- `grep start_soc|end_soc specs/`: only intentional "was-dropped" historical mentions remain (Table shape, Sprint-52-status paragraph, F-8 trap, plus the append-only 2026-04-29 changelog entry).
+
+### Learnings for future iterations:
+- **Pattern discovered**: a doc-sync story's scope is the SPEC docs (`specs/`, `CLAUDE.md`) + `regression_manifest.json`, NOT source-file docstrings. When a code file's docstring is stale (US-426 left `battery_health.py` docstrings referencing the dropped `start_soc` dual-write), file a TD (TD-060) rather than reaching into `src/` -- keeps the doc story scope-fenced.
+- **Gotcha**: `architecture.md` carries BOTH an inline "Last Updated" header (with a chain of "Prior:" lines, newest-first) AND a separate `specs/arch/architecture-changelog.md`. Bump the header AND append a changelog row; US-428 (2026-07-02) updated the kiosk section but bumped neither, so the header still read Sprint 50 -- the doc-sync story is the right place to catch that drift.
+- **Gotcha**: a `git ls-files | grep regression_manifest` beats `Glob`/`find` on the slow chi-nas-01 SMB share (Glob timed out twice at 20s; `find` outside the working dir is sandbox-blocked). Use `git ls-files` to locate tracked files here.
+---

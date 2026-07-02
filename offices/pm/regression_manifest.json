@@ -1,8 +1,8 @@
 {
   "$comment": "Regression manifest -- features that must keep working. Per Mike 2026-05-08 directive: main = 'fully validated stable.' Sprint branches stay deployed-but-pre-merge until real-hardware drill validates affected features. /sprint-validated bumps last_validated for features in the sprint's bigDefinitionOfDone. Stdlib-JSON to match backlog.json / story_counter.json / sprint.json convention (no PyYAML dep).",
   "manifestVersion": 1,
-  "lastUpdated": "2026-07-01",
-  "lastUpdatedBy": "Rex (US-425 doc-sync) -- annotated sprintStatus=BLOCKED on F-060/F-061/F-098 (US-421/422/423 did NOT ship this sprint per BL-014/BL-015); shipped Sprint 51 features F-101/F-077/F-078/F-058/F-080/F-096/F-116 stand as registered. Prior: Marcus (PM) registered Sprint 51 features.",
+  "lastUpdated": "2026-07-02",
+  "lastUpdatedBy": "Rex (US-430 Sprint 52 doc-sync) -- BL-014/BL-015 resolved: F-098 (US-421 power-mode SSOT), F-060 (US-427 register SoC% + cold-start guard), F-061 (US-426 both-tier _soc_pct migration) all SHIPPED Sprint 52 / V0.29.6; F-103 HARDENED (US-428 kiosk V-3 chromium check), F-092/F-111 EXTENDED (US-429 honest-availability). All carry OWED bench/deploy validation gates before /sprint-validated. Prior: Rex (US-425 doc-sync) annotated the Sprint 51 BLOCKED state.",
   "categories": [
     "lifecycle",
     "connection",
@@ -291,8 +291,10 @@
       "id": "F-103",
       "name": "Pi boot/shutdown splash on the 3.5-inch display (chromium kiosk + eclipse-states-http localhost state server + token SSOT); /run/eclipse-obd/states/ provisioned at boot independent of eclipse-obd (Atlas C-5)",
       "category": "lifecycle",
+      "sprintStatus": "HARDENED Sprint 52 / V0.29.6 (US-428, Bug-2 proper fix) -- kiosk unit templates parameterize ExecStart=__CHROMIUM_BIN__; both kit installers gain a V-3 detect_chromium_bin() gate that substitutes the real path (chromium vs chromium-browser, fail-loud) -- OS-version-proof WITHOUT the /usr/bin symlink shim (removed). Deploy-smoke test coverage added (seat0 detect + absent-kit WARN-not-BLOCK). IRL deploy to a Trixie Pi (/usr/bin/chromium) -> ExecStart resolves, no 203/EXEC, renders end-to-end -- the display-blank chain-validation gate, OWED.",
       "affectedBySprints": [
-        48
+        48,
+        52
       ],
       "lastValidated": null,
       "staleThresholdDays": 90,
@@ -303,8 +305,10 @@
       "id": "F-092",
       "name": "Pi touch-carousel System Status card -- OBD-link/sync/power/drive tiles, honest-instrument (never green-when-stale/down), BT-reconnect visibility (I-033)",
       "category": "lifecycle",
+      "sprintStatus": "EXTENDED Sprint 52 / V0.29.6 (US-429, honest-availability SSOT, fixes Bug-3b) -- new src/pi/splash/source_availability.py is the ONE per-source availability-block SSOT (buildSourceState + SOURCE_OBD/UPS/DTC + typed reason constants) shared by all 3 emitters; each writes a FRESH real-or-(NULL+reason) state per tick (NA = NULL+reason, NEVER a numeric sentinel), and carousel.js renders 'NA (<reason>)' for a down source (no blank/stale cards). Bench-verifiable (OBD-down IS wall power). Bug-3a live-car carousel render (Argus/Iris) + orchestrator wiring that passes sourceAvailable=False remain a separate car gate.",
       "affectedBySprints": [
-        49
+        49,
+        52
       ],
       "lastValidated": null,
       "staleThresholdDays": 90,
@@ -327,8 +331,10 @@
       "id": "F-111",
       "name": "Pi on-screen DTC viewer + gated Mode-04 clear -- KOEO read (drive_id=NULL), severity-styled takeover/Alerts card, action-path-gated clear against Spool safety SSOT",
       "category": "dtc_retrieval",
+      "sprintStatus": "EXTENDED Sprint 52 / V0.29.6 (US-429, honest-availability) -- the dtc emitter now publishes a FRESH empty state (codes [], newSinceTs None, mil False) + source.dtc when DTC is unavailable, and carousel.js takeoverView/ribbonView short-circuit to null when source.dtc.available===false, so the US-405 severity CHECK-ENGINE takeover can NEVER mis-fire on an absent/empty source (subsumes Bug-3b).",
       "affectedBySprints": [
-        49
+        49,
+        52
       ],
       "lastValidated": null,
       "staleThresholdDays": 90,
@@ -387,9 +393,10 @@
       "id": "F-060",
       "name": "UpsMonitor SoC% wired through orchestrator to recorder (battery_health_log start/end SoC% from register)",
       "category": "power_management",
-      "sprintStatus": "BLOCKED Sprint 51 (BL-015) -- US-422 did NOT ship; drain-event recording path was removed in the SS-T5 redesign + no soc_pct column. Registered for a future sprint; nothing changed in the codebase Sprint 51.",
+      "sprintStatus": "SHIPPED Sprint 52 / V0.29.6 (US-427, BL-015 resolved) -- the Atlas ruling moved SoC% recording off the deleted orchestrator path onto the bench drain CLI: scripts/record_drain_test.py reads UpsMonitor.getBatteryPercentage() into start_soc_pct/end_soc_pct under the US-234 cold-start guard (NULL, never a garbage percent, inside the ~3-min MAX17048 calibration window). TD-058 dead batteryHealthRecorder chain removed. Bench validation (UPS-drain rig: populated row outside window, NULL inside) OWED before /sprint-validated.",
       "affectedBySprints": [
-        51
+        51,
+        52
       ],
       "lastValidated": null,
       "staleThresholdDays": 90,
@@ -398,11 +405,12 @@
     },
     {
       "id": "F-061",
-      "name": "battery_health_log legacy start_soc/end_soc columns dropped (both tiers; consumers on vcell)",
+      "name": "battery_health_log legacy start_soc/end_soc columns dropped (both tiers; consumers on vcell) + dedicated _soc_pct columns added",
       "category": "power_management",
-      "sprintStatus": "BLOCKED Sprint 51 (blocked-by-dep on US-422/BL-015) -- US-423 did NOT ship; the legacy columns remain. Registered for a future sprint; nothing changed in the codebase Sprint 51.",
+      "sprintStatus": "SHIPPED Sprint 52 / V0.29.6 (US-426, merges old US-423) -- ONE forward-only both-tier migration: dropped legacy misnamed start_soc/end_soc (stored volts) AND added dedicated start_soc_pct/end_soc_pct (REAL/FLOAT nullable). Pi SQLite CREATE-AS-SELECT-DROP-RENAME + server MariaDB v0016; both tiers byte-identical incl. *_vcell_v (A-4 divergence closed). Consumers migrated to *_vcell_v; lock-down tests updated. Deploy+schema-introspection on both tiers (no MariaDB/Pi on dev) OWED before /sprint-validated.",
       "affectedBySprints": [
-        51
+        51,
+        52
       ],
       "lastValidated": null,
       "staleThresholdDays": 90,
@@ -473,9 +481,10 @@
       "id": "F-098",
       "name": "Pi carousel power-mode badge (in-car vs wall-power, SSOT provider, honest 'unknown')",
       "category": "power_management",
-      "sprintStatus": "BLOCKED Sprint 51 (BL-014) -- US-421 did NOT ship; the power-mode SSOT provider does not exist (routed to Atlas). Registered for a future sprint; nothing changed in the codebase Sprint 51.",
+      "sprintStatus": "SHIPPED Sprint 52 / V0.29.6 (US-421, BL-014 resolved) -- PowerModeProvider (src/pi/power/) reads static config pi.power.mode in {car,wall,unknown} (validator DEFAULT 'unknown'), THE single SSOT acquisition path; wired through system_status_emitter -> carousel.js powerTile (CAR/WALL/unknown, honest 'unknown' never confident-wrong). Bench validation (set config + render badge) OWED before /sprint-validated.",
       "affectedBySprints": [
-        51
+        51,
+        52
       ],
       "lastValidated": null,
       "staleThresholdDays": 90,
