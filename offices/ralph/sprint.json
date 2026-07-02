@@ -12,7 +12,7 @@
       "type": "normal",
       "size": "S",
       "status": "sprint-ready",
-      "passes": false,
+      "passes": true,
       "acceptance": [
         "new single PowerModeProvider in src/pi/power/ reads config pi.power.mode in {car,wall,unknown}, default unknown (added to validator.py DEFAULTS + config.json); THE single acquisition path (zero existing paths)",
         "wires powerMode into system_status_emitter.buildSystemStatusState (existing pass-through param) -> carousel.js powerTile renders CAR/WALL/unknown",
@@ -29,7 +29,8 @@
       ],
       "conditionalOutcomes": [],
       "goal": "As the CIO, I want the carousel power-mode badge sourced from a real SSOT (config-key), so it shows in-car vs wall-power honestly instead of a confident wrong state.",
-      "tasks": []
+      "tasks": [],
+      "landedBy": "Marcus (PM) -- verified 64 targeted tests green after Ralph full-suite async-wait stall (2nd occurrence)"
     },
     {
       "id": "US-426",

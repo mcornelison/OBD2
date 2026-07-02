@@ -116,12 +116,17 @@
     if (!isObj(p)) {
       return { label: "POWER", value: "—", detail: "unavailable", level: "unavailable" };
     }
-    var mode = p.mode === "wall" ? "wall" : "car";
+    // Power-mode SSOT (US-421 / BL-014): honour car/wall exactly; anything
+    // else -- absent, stale, invalid -- is `unknown`, never a confident CAR
+    // (honest-instrument). `unknown` renders lowercase so a real known mode is
+    // visibly the confident one (CAR/WALL).
+    var mode = p.mode === "car" || p.mode === "wall" ? p.mode : "unknown";
+    var modeBadge = mode === "unknown" ? "unknown" : mode.toUpperCase();
     if (p.source === "battery") {
       return { label: "POWER", value: "BATTERY", detail: mode + " · on UPS", level: "amber" };
     }
     if (p.source === "external") {
-      return { label: "POWER", value: mode.toUpperCase(), detail: "external", level: "ok" };
+      return { label: "POWER", value: modeBadge, detail: "external", level: "ok" };
     }
     return { label: "POWER", value: "—", detail: "unavailable", level: "unavailable" };
   }

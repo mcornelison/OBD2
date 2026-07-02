@@ -170,6 +170,13 @@ DEFAULTS: dict[str, Any] = {
     # the next deploy populates power_log; the gate is kept for tests +
     # any future legacy fallback.
     'pi.power.power_monitor.enabled': True,
+    # US-421 / BL-014: static config-key SSOT for the power-MODE fact (in-car
+    # vs bench/wall deployment) -- distinct from the AC-vs-battery power SOURCE.
+    # Default 'unknown' so an absent key renders an honest badge, never a
+    # confident wrong car/wall. Consumed by src.pi.power.PowerModeProvider
+    # (the single acquisition path); operator sets car/wall on a bench<->car
+    # deploy. Future: swap acquisition to a GPIO sense line behind the same SSOT.
+    'pi.power.mode': 'unknown',
     # Honest boot-progress instrument (spec 2026-05-15). filePath is
     # relative to the Pi project root (systemd WorkingDirectory);
     # nasArchiveDir is the home-only NAS mount; maxTrailBytes bounds the
