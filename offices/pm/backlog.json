@@ -1111,7 +1111,7 @@
       "parent": "E-001",
       "title": "On-Pi DTC / check-engine viewer + gated Mode-04 clear (Card 5 of the touch dashboard)",
       "description": "On-Pi DTC/check-engine viewer surface + safety-gated Mode-04 clear, with a KOEO read independent of DriveDetector. Card 5 (Alerts+DTC) of the F-092/F-097 carousel. Spec drafted + CIO-approved 2026-06-05 (post drive-27 MIL: P0443 EVAP read+cleared off the Pi); spec docs/superpowers/specs/2026-06-05-pi-dtc-check-engine-viewer-clear-design.md. STATUS: pending Atlas design-gate signoff (load-bearing net-new write-to-vehicle Mode-04 path) -- Iris files the formal groom-ready pointer on Atlas's nod. SEQUENCE (Atlas greenlight 2026-06-19): F-103 -> carousel shell -> System Status + Battery Health cards -> System Setup+polkit -> pygame sunset -> THIS (Card 5, LAST). BUILD CONDITIONS: C-2 KOEO capture path independent of DriveDetector (drive_id=NULL, or viewer is blank key-on); C-3 Mode 02 dead on MD326328 -> realtime_data fallback (see F-109). Rule-10 DoD: state-server extension + emitters + Mode-04 path + token each land with matching specs/architecture.md (+ specs/UI/) in-sprint. Iris story split (spec section 10 M-1): US-A dtc emitter + state-server endpoint + static-table loader/sync; US-B takeover + severity-styled ribbon; US-C Alerts card (hero+list) + detail (freeze-frame + severity-gated fix + trust badge); US-D Clear-DTC Mode-04 path + gate + confirm + re-read + session-lock (load-bearing, pairs w/ Atlas A-1); US-E freeze-frame capture-or-honest-fallback. Spool owns severity taxonomy + DSM P1xxx curation; safety semantics offices/tuner/dtc-display-clear-safety-advisory.md; reference code specs/examples/dtc_read_and_clear_koeo.py.",
-      "status": "awaiting-validation",
+      "status": "active",
       "currentVersion": "V0.29.3",
       "createdAt": "2026-06-28",
       "updatedAt": "2026-06-28"
@@ -2969,20 +2969,24 @@
       "parent": "F-098",
       "type": "normal",
       "size": "S",
-      "title": "Power-mode badge -- in-car vs wall-power (F-098, carousel)",
-      "goal": "As the CIO, I want a corner badge showing in-car vs wall-power-debug mode, so the power_log analytical-guardrail confusion is eliminated at the UI.",
+      "title": "Power-mode badge -- PowerModeProvider config-key SSOT (BL-014-ruled, re-groomed)",
+      "goal": "As the CIO, I want the carousel power-mode badge sourced from a real SSOT (config-key), so it shows in-car vs wall-power honestly instead of a confident wrong state.",
       "definitionOfDone": [
-        "a small persistent badge shows current power mode, sourced from the existing power-mode SSOT provider (src/pi/power/ -- confirm the provider; do NOT add a second acquisition path per the SSOT directive)",
-        "updates on mode change; honest-instrument: undeterminable -> 'unknown', never a confident wrong state",
-        "bench-validatable via fixture/DOM test with mocked mode states",
-        "depends on the Sprint-49 carousel shell (US-399, on dev); ruff check passes"
+        "new single PowerModeProvider in src/pi/power/ reads config pi.power.mode in {car,wall,unknown}, default unknown (added to validator.py DEFAULTS + config.json); THE single acquisition path (zero existing paths)",
+        "wires powerMode into system_status_emitter.buildSystemStatusState (existing pass-through param) -> carousel.js powerTile renders CAR/WALL/unknown",
+        "undeterminable/stale/invalid config -> unknown, never a confident wrong mode (honest-instrument)",
+        "seam designed so acquisition can later swap config->GPIO behind the same SSOT interface, zero consumer change (future; do NOT build GPIO this sprint)",
+        "NOT power_source_provider (that is AC-vs-battery, the wrong fact)",
+        "fixture/DOM test with mocked config states; ruff check passes"
       ],
       "validationCriteria": [
         {
-          "action": "render the badge with mocked in-car / wall-power / undeterminable states",
-          "outcome": "badge shows the correct mode; undeterminable renders 'unknown' not a wrong mode"
+          "action": "set pi.power.mode=car|wall|unknown and render the badge",
+          "outcome": "badge shows CAR/WALL/unknown matching config; invalid/absent -> unknown, never a confident wrong mode"
         }
-      ]
+      ],
+      "conditionalOutcomes": [],
+      "tasks": []
     },
     {
       "id": "US-422",
@@ -3001,7 +3005,9 @@
           "action": "run a UPS-drain bench drill",
           "outcome": "the closed battery_health_log row has start/end SoC% populated from the MAX17048 register"
         }
-      ]
+      ],
+      "status": "superseded",
+      "supersededBy": "US-427"
     },
     {
       "id": "US-423",
@@ -3020,7 +3026,9 @@
           "action": "run the migrations + schema introspection on both tiers",
           "outcome": "start_soc/end_soc are gone from Pi SQLite and server MariaDB; consumers + lock-down tests green on the new columns"
         }
-      ]
+      ],
+      "status": "superseded",
+      "supersededBy": "US-426"
     },
     {
       "id": "US-424",
@@ -3072,6 +3080,115 @@
         {
           "action": "review the sprint's changed files + update the docs",
           "outcome": "architecture.md sync + data-contract sections current; regression_manifest updated; no stale refs"
+        }
+      ]
+    },
+    {
+      "id": "US-426",
+      "parent": "F-061",
+      "type": "normal",
+      "size": "M",
+      "title": "battery_health_log SoC% schema -- drop legacy _soc + add _soc_pct, ONE both-tier migration (BL-015, migration-first)",
+      "goal": "As the system, I want one forward-only both-tier migration that retires the legacy _soc columns and adds dedicated _soc_pct columns, so SoC% has a durable home.",
+      "definitionOfDone": [
+        "ONE forward-only migration, both tiers identical (A-4): drops start_soc/end_soc AND adds start_soc_pct/end_soc_pct (Float, nullable). Pi SQLite CREATE-AS-SELECT-DROP-RENAME + server MariaDB DROP+ADD COLUMN + models.py + sync mapping",
+        "deployed AND verified via schema introspection on both tiers; consumers migrated to start_vcell_v/end_vcell_v + the new _soc_pct; lock-down tests updated",
+        "MERGES old US-423 (drop) with the _soc_pct add -- same table, done together",
+        "ruff check passes"
+      ],
+      "validationCriteria": [
+        {
+          "action": "run the migration + schema introspection on both tiers",
+          "outcome": "start_soc/end_soc gone, start_soc_pct/end_soc_pct present (Float nullable) identically on Pi + server; consumers + lock-down tests green"
+        }
+      ]
+    },
+    {
+      "id": "US-427",
+      "parent": "F-060",
+      "type": "normal",
+      "size": "M",
+      "title": "Wire register SoC% into the bench drain-CLI + US-234 cold-start guard (BL-015, deps US-426)",
+      "goal": "As the CIO, I want the drain-test CLI to record real MAX17048 SoC% into _soc_pct, guarded against the cold-start calibration window, so recorded SoC% is trustworthy.",
+      "definitionOfDone": [
+        "scripts/record_drain_test.py reads UpsMonitor.getBatteryPercentage() (register SoC%) into start_soc_pct/end_soc_pct (NOT the operator-typed voltage slot; NOT a sequencer drain-event -- ruling picked the bench CLI)",
+        "cold-start guard (US-234): SoC% within the ~3-min MAX17048 calibration window -> NULL/flagged, never a garbage percent; guard in the recording path",
+        "cleanup (TD-058): remove the dead batteryHealthRecorder reference in hardware_manager (stored, never called since the SS-T5 orchestrator deletion)",
+        "bench drill (UPS-drain rig) shows _soc_pct populated on a closed row; a cold-start-window open records NULL not garbage",
+        "ruff check passes"
+      ],
+      "validationCriteria": [
+        {
+          "action": "run a UPS-drain bench drill outside the cold-start window",
+          "outcome": "the closed row has start/end_soc_pct populated from the register"
+        },
+        {
+          "action": "open a drain within the ~3-min cold-start window",
+          "outcome": "_soc_pct records NULL/flagged, never a garbage percent"
+        }
+      ]
+    },
+    {
+      "id": "US-428",
+      "parent": "F-103",
+      "type": "normal",
+      "size": "M",
+      "title": "Harden deploy-pi.sh kiosk install -- test coverage + Bug-2 proper V-3 binary check (display finding)",
+      "goal": "As the CIO, I want the kiosk deploy fix regression-covered and OS-version-proof, so the Pi never silently re-blanks on a deploy.",
+      "definitionOfDone": [
+        "review Atlas's committed step_install_ui_kiosk_units + eclipse-kiosk-no-blank.conf (8f6bb58); add deploy-smoke test coverage (runs kit installers, detects seat0 graphical session, presence-gates absent kits WARN-not-BLOCK)",
+        "Bug-2 proper fix: the UI-kit installer gains a V-3 binary check that substitutes the real chromium path (chromium vs chromium-browser) into the unit template (like it substitutes User=) -- OS-version-proof WITHOUT the /usr/bin symlink shim",
+        "Rule-10: architecture.md deploy section documents the kiosk-install contract (Bug-1/2/4)",
+        "bash -n deploy-pi.sh clean; ruff check passes on touched .py"
+      ],
+      "validationCriteria": [
+        {
+          "action": "run deploy-pi.sh --dry-run + the new deploy-smoke test",
+          "outcome": "the kiosk-install step is exercised + asserted; absent-kit path WARNs not fails"
+        },
+        {
+          "action": "deploy to a Pi whose chromium binary differs",
+          "outcome": "the V-3 check substitutes the real path into the unit; no 203/EXEC, no symlink shim needed"
+        }
+      ]
+    },
+    {
+      "id": "US-429",
+      "parent": "F-111",
+      "type": "normal",
+      "size": "S",
+      "title": "Fix empty-state CHECK-ENGINE takeover mis-fire (display finding, Bug 3b)",
+      "goal": "As the CIO, I want the DTC takeover to NOT fire on empty/no-data state, so a fresh boot with no OBD does not show a jumbled CHECK-ENGINE screen.",
+      "definitionOfDone": [
+        "the full-screen DTC severity takeover (US-405) does NOT trigger on empty/absent/unpopulated dtc state -- only on a real retrieved code",
+        "empty/loading state renders the normal carousel (honest-instrument; no jumbled layout)",
+        "fixture/DOM test: empty dtc state -> no takeover; a real MAJOR code -> takeover (regression both ways)",
+        "ruff check passes"
+      ],
+      "validationCriteria": [
+        {
+          "action": "render with empty/absent dtc state then with a real MAJOR code",
+          "outcome": "empty -> no takeover, normal carousel; MAJOR -> takeover fires"
+        }
+      ]
+    },
+    {
+      "id": "US-430",
+      "parent": "F-101",
+      "type": "normal",
+      "size": "S",
+      "title": "Sprint 52 documentation sync (Rule-10)",
+      "goal": "As the PM, I need docs to reflect the sprint's schema/config/deploy changes.",
+      "definitionOfDone": [
+        "architecture.md updated for the _soc_pct schema + pi.power.mode config + kiosk-deploy contract (if not covered in-story)",
+        "new config key pi.power.mode documented in CLAUDE.md",
+        "regression_manifest.json reflects F-098/F-060/F-061/F-103/F-111 status",
+        "all spec docs current; no stale references"
+      ],
+      "validationCriteria": [
+        {
+          "action": "review changed files + update docs",
+          "outcome": "architecture.md + CLAUDE.md + regression_manifest current; no stale refs"
         }
       ]
     }
