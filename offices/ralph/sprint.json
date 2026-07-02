@@ -1,1 +1,286 @@
-{}
+{
+  "schemaVersion": "2.0.0",
+  "sprint": 53,
+  "version": "V0.29.7",
+  "createdFromPRD": "offices/pm/prds/prd-V0.29.7.md",
+  "stories": [
+    {
+      "id": "US-431",
+      "title": "MAX17048 SOC% calibration protocol + scripts (F-048)",
+      "parent": "F-048",
+      "epicId": "E-OPS",
+      "type": "normal",
+      "size": "M",
+      "status": "sprint-ready",
+      "passes": false,
+      "acceptance": [
+        "a documented calibration protocol + script (offices/tuner/scripts/ or scripts/) runs a controlled charge/discharge learning cycle and captures register SOC% vs a known reference",
+        "output feeds the US-234/US-427 cold-start guard threshold (the ~3-min window) with real data, not a guessed constant",
+        "bench-verifiable on the UPS-drain rig; results documented",
+        "ruff check passes on any .py"
+      ],
+      "validationCriteria": [
+        {
+          "action": "run the calibration cycle on the UPS-drain rig",
+          "outcome": "register SOC% is captured vs the reference; the cold-start window threshold is set from measured data"
+        }
+      ],
+      "conditionalOutcomes": [],
+      "goal": "As the CIO, I want a repeatable SOC% calibration/learning run for the MAX17048, so the _soc_pct values recorded (Sprint 52) are trustworthy despite the cold-start mis-read.",
+      "tasks": []
+    },
+    {
+      "id": "US-432",
+      "title": "drive_detect idle-poll gap -- residual engine-on miss (F-049, verify-first + A-9 guardrails)",
+      "parent": "F-049",
+      "epicId": "E-OPS",
+      "type": "normal",
+      "size": "M",
+      "status": "sprint-ready",
+      "passes": false,
+      "acceptance": [
+        "VERIFY-FIRST: US-242/B-049 already built idle->active-poll escalation on engine-on (alternator BATTERY_V + RPM-probe injection, core.py:356/1200/1212) -- root-cause the RESIDUAL gap on the live Pi, do NOT re-solve; state the specific mechanism that still misses",
+        "fix the residual gap so an engine-on transition promotes poll cadence + fires drive_start within the expected window",
+        "A-9 guardrail (a): must NOT regress US-388's close-guarantee (evaluateTimeouts/deadline-anchored) or the drive_id NULL-latch",
+        "A-9 guardrail (b): fold into the A-9 IRL re-gate (missed-start-in-idle-poll = another drive-lifecycle failure to exercise)",
+        "unit test simulating idle->engine-on; ruff check passes"
+      ],
+      "validationCriteria": [
+        {
+          "action": "re-query the live Pi against the existing US-242/B-049 escalation",
+          "outcome": "the specific residual miss mechanism is identified (not a re-solve of the shipped escalation)"
+        },
+        {
+          "action": "run the drive-lifecycle regression after the fix",
+          "outcome": "US-388 close-guarantee + drive_id NULL-latch not regressed; idle->engine-on fires drive_start"
+        }
+      ],
+      "conditionalOutcomes": [],
+      "goal": "As the system, I want engine-on reliably detected in the idle-poll path, so a drive is not missed when the poll loop is in its idle cadence.",
+      "tasks": []
+    },
+    {
+      "id": "US-433",
+      "title": "PowerMonitor DB-write path -- verify + close (F-050, likely DONE)",
+      "parent": "F-050",
+      "epicId": "E-OPS",
+      "type": "normal",
+      "size": "S",
+      "status": "sprint-ready",
+      "passes": false,
+      "acceptance": [
+        "VERIFY-FIRST (Atlas: almost certainly DONE -- lifecycle.py:1873 US-243 power_log write path active + US-412 synced): re-query the live Pi, confirm power_log populating; if live+healthy CLOSE WITH EVIDENCE (row counts + recent timestamps), no code",
+        "only if a real gap remains: activate/repair the UpsMonitor->power_log write path (VCELL/SOC/CRATE/power_source per poll)",
+        "ruff check passes on any .py"
+      ],
+      "validationCriteria": [
+        {
+          "action": "re-query the live Pi power_log",
+          "outcome": "rows present + current -> close-with-evidence; OR a real gap is documented + fixed"
+        }
+      ],
+      "conditionalOutcomes": [],
+      "goal": "As the system, I want the UpsMonitor readings written to power_log, so power history is captured.",
+      "tasks": []
+    },
+    {
+      "id": "US-434",
+      "title": "drain_event close-on-poweroff -- verify (F-062, likely MOOT)",
+      "parent": "F-062",
+      "epicId": "E-OPS",
+      "type": "normal",
+      "size": "S",
+      "status": "sprint-ready",
+      "passes": false,
+      "acceptance": [
+        "VERIFY-FIRST (Atlas: very likely MOOT -- startDrainEvent/endDrainEvent have 0 production callers, hardware_manager.py:73; nothing opens a drain during operation): confirm 0 production callers + no stuck-open drain_event rows post-poweroff -> CLOSE AS MOOT WITH EVIDENCE, no code",
+        "only if a real open-path is found (unexpected): a targeted close in ShutdownSequencer (power_watch/controller.py) -- but flag PM/Atlas first (it contradicts the retired ladder + the BL-015 ~10s-shutdown-not-real-drain semantic), do NOT build unflagged",
+        "ruff check passes on any .py"
+      ],
+      "validationCriteria": [
+        {
+          "action": "grep production startDrainEvent callers + query stuck-open drain_event rows",
+          "outcome": "0 callers + 0 stuck rows -> closed as moot with evidence; OR a real open-path is flagged before any code"
+        }
+      ],
+      "conditionalOutcomes": [],
+      "goal": "As the system, I want drain_event rows to close cleanly on poweroff, so drain records are not left open.",
+      "tasks": []
+    },
+    {
+      "id": "US-435",
+      "title": "Pi + server hostname resolution cleanup (F-102)",
+      "parent": "F-102",
+      "epicId": "E-004",
+      "type": "normal",
+      "size": "S",
+      "status": "sprint-ready",
+      "passes": false,
+      "acceptance": [
+        "sweep code/config/docs/SSH-config for stale hostname references (chi-eclipse-tuner, old aliases) -> the canonical current name; deploy/SSH paths resolve",
+        "no functional regression in deploy-pi.sh / SSH access",
+        "ruff check passes on any .py"
+      ],
+      "validationCriteria": [
+        {
+          "action": "grep stale hostname refs + run deploy-pi.sh --dry-run",
+          "outcome": "no stale refs remain; deploy/SSH resolve to the canonical name"
+        }
+      ],
+      "conditionalOutcomes": [],
+      "goal": "As the CIO, I want hostname references consistent, so tooling resolves the Pi correctly (it now reports Chi-Eclips-01).",
+      "tasks": []
+    },
+    {
+      "id": "US-436",
+      "title": "Derived signals -- acceleration + estimated distance from speed+time (F-106, server-side)",
+      "parent": "F-106",
+      "epicId": "E-002",
+      "type": "normal",
+      "size": "M",
+      "status": "sprint-ready",
+      "passes": false,
+      "acceptance": [
+        "compute acceleration (delta-speed/delta-time) + estimated distance (integral speed*dt) SERVER-SIDE (Atlas-confirmed: B-104 server-is-sole-analytics-writer; src/server/analytics/ per-drive compute) -- NOT Pi",
+        "derived values stored/queryable per drive; guard against divide-by-zero / time gaps",
+        "unit tests against canned speed/time series; ruff check passes"
+      ],
+      "validationCriteria": [
+        {
+          "action": "run the server analytics compute against a canned speed/time series",
+          "outcome": "per-drive acceleration + estimated distance computed correctly; gaps/zero-dt handled, no crash"
+        }
+      ],
+      "conditionalOutcomes": [],
+      "goal": "As the CIO, I want acceleration + estimated distance derived from the existing speed+time stream, so drives have richer motion context without new PIDs.",
+      "tasks": []
+    },
+    {
+      "id": "US-437",
+      "title": "Tester V0.28+ data-profile findings -- BUG rollup (F-082, scoped to the 8 bugs)",
+      "parent": "F-082",
+      "epicId": "E-002",
+      "type": "normal",
+      "size": "M",
+      "status": "sprint-ready",
+      "passes": false,
+      "acceptance": [
+        "read the tester's V0.28+ data-profile findings (offices/tester/findings/ or the rolled-up feature file); enumerate the 8 BUGS (the 8 design items are OUT -- deferred)",
+        "fix each confirmed bug OR mark it already-resolved-with-evidence (per-bug verify-first; some may be fixed since filing)",
+        "each fix has a test / DB-verification; ruff check passes"
+      ],
+      "validationCriteria": [
+        {
+          "action": "triage each of the 8 tester bugs",
+          "outcome": "each is fixed-with-test OR closed already-resolved-with-evidence; none silently skipped"
+        }
+      ],
+      "conditionalOutcomes": [],
+      "goal": "As the CIO, I want the tester's confirmed data-quality BUGS fixed, so the dataset is trustworthy.",
+      "tasks": []
+    },
+    {
+      "id": "US-438",
+      "title": "Cross-drive comparison tool (F-069, server-side, Spool ergonomics)",
+      "parent": "F-069",
+      "epicId": "E-002",
+      "type": "normal",
+      "size": "M",
+      "status": "sprint-ready",
+      "passes": false,
+      "acceptance": [
+        "a CLI/query tool compares chosen metrics across N drives (peak RPM, knock-retard, LTFT, the US-436 derived signals) side-by-side",
+        "SERVER-SIDE (Atlas-confirmed): reads obd2db; honest about missing/foreign data (excludes data_source!='real' per F-116)",
+        "bench-verifiable against existing drives; ruff check passes"
+      ],
+      "validationCriteria": [
+        {
+          "action": "run the tool comparing metrics across several existing drives",
+          "outcome": "side-by-side output correct; foreign/missing data excluded (drive 33 not counted)"
+        }
+      ],
+      "conditionalOutcomes": [],
+      "goal": "As Spool, I want a tool to compare metrics across drives, so tuning analysis is faster.",
+      "tasks": []
+    },
+    {
+      "id": "US-439",
+      "title": "Evaluate + fix commented dependencies (F-004)",
+      "parent": "F-004",
+      "epicId": "E-OPS",
+      "type": "normal",
+      "size": "S",
+      "status": "sprint-ready",
+      "passes": false,
+      "acceptance": [
+        "audit commented deps in requirements*.txt / pyproject.toml; for each: restore-and-use, remove-as-dead, or document-why-commented",
+        "no import breakage; ruff check + a targeted import smoke pass"
+      ],
+      "validationCriteria": [
+        {
+          "action": "resolve each commented dep + run an import smoke",
+          "outcome": "every commented dep is restored/removed/documented; no import breakage"
+        }
+      ],
+      "conditionalOutcomes": [],
+      "goal": "As the maintainer, I want the commented-out dependencies evaluated + resolved, so requirements is honest.",
+      "tasks": []
+    },
+    {
+      "id": "US-440",
+      "title": "Sprint 53 documentation sync + backlog archival (Rule-10)",
+      "parent": "F-004",
+      "epicId": "E-OPS",
+      "type": "normal",
+      "size": "S",
+      "status": "sprint-ready",
+      "passes": false,
+      "acceptance": [
+        "specs/architecture.md updated for derived signals + any power-path changes",
+        "regression_manifest.json reflects the sprint's features",
+        "backlog archival: archive the verified-stale/superseded -- F-007, F-052, F-100 + US-422, US-423 (superseded by Sprint 52) -- status -> superseded/declined + moved to archive",
+        "no stale references"
+      ],
+      "validationCriteria": [
+        {
+          "action": "review changed files + archive the stale backlog items",
+          "outcome": "architecture.md + regression_manifest current; F-007/052/100 + US-422/423 archived; no stale refs"
+        }
+      ],
+      "conditionalOutcomes": [],
+      "goal": "As the PM, I need docs current + the stale backlog archived.",
+      "tasks": []
+    }
+  ],
+  "validation": {
+    "bigDefinitionOfDone": [
+      "(run the calibration cycle on the UPS-drain rig) \u2192 (register SOC% is captured vs the reference; the cold-start window threshold is set from measured data)  [from US-431]",
+      "(re-query the live Pi against the existing US-242/B-049 escalation) \u2192 (the specific residual miss mechanism is identified (not a re-solve of the shipped escalation))  [from US-432]",
+      "(run the drive-lifecycle regression after the fix) \u2192 (US-388 close-guarantee + drive_id NULL-latch not regressed; idle->engine-on fires drive_start)  [from US-432]",
+      "(re-query the live Pi power_log) \u2192 (rows present + current -> close-with-evidence; OR a real gap is documented + fixed)  [from US-433]",
+      "(grep production startDrainEvent callers + query stuck-open drain_event rows) \u2192 (0 callers + 0 stuck rows -> closed as moot with evidence; OR a real open-path is flagged before any code)  [from US-434]",
+      "(grep stale hostname refs + run deploy-pi.sh --dry-run) \u2192 (no stale refs remain; deploy/SSH resolve to the canonical name)  [from US-435]",
+      "(run the server analytics compute against a canned speed/time series) \u2192 (per-drive acceleration + estimated distance computed correctly; gaps/zero-dt handled, no crash)  [from US-436]",
+      "(triage each of the 8 tester bugs) \u2192 (each is fixed-with-test OR closed already-resolved-with-evidence; none silently skipped)  [from US-437]",
+      "(run the tool comparing metrics across several existing drives) \u2192 (side-by-side output correct; foreign/missing data excluded (drive 33 not counted))  [from US-438]",
+      "(resolve each commented dep + run an import smoke) \u2192 (every commented dep is restored/removed/documented; no import breakage)  [from US-439]",
+      "(review changed files + archive the stale backlog items) \u2192 (architecture.md + regression_manifest current; F-007/052/100 + US-422/423 archived; no stale refs)  [from US-440]"
+    ],
+    "frozenAt": "2026-07-02T21:00:45Z",
+    "bigDoDHash": "c22282b398806a5df4283a790dab67dff64357ea8198b53eddb76d8a4e00148d",
+    "validationMethod": "BENCH-ONLY",
+    "validatesFeatures": [
+      "F-048",
+      "F-049",
+      "F-050",
+      "F-062",
+      "F-102",
+      "F-106",
+      "F-082",
+      "F-069"
+    ],
+    "currentVersion": "V0.29.7",
+    "validatedAt": null,
+    "validatedBy": null
+  }
+}

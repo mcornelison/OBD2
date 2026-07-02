@@ -2,7 +2,7 @@
   "$comment": "Regression manifest -- features that must keep working. Per Mike 2026-05-08 directive: main = 'fully validated stable.' Sprint branches stay deployed-but-pre-merge until real-hardware drill validates affected features. /sprint-validated bumps last_validated for features in the sprint's bigDefinitionOfDone. Stdlib-JSON to match backlog.json / story_counter.json / sprint.json convention (no PyYAML dep).",
   "manifestVersion": 1,
   "lastUpdated": "2026-07-02",
-  "lastUpdatedBy": "Rex (US-430 Sprint 52 doc-sync) -- BL-014/BL-015 resolved: F-098 (US-421 power-mode SSOT), F-060 (US-427 register SoC% + cold-start guard), F-061 (US-426 both-tier _soc_pct migration) all SHIPPED Sprint 52 / V0.29.6; F-103 HARDENED (US-428 kiosk V-3 chromium check), F-092/F-111 EXTENDED (US-429 honest-availability). All carry OWED bench/deploy validation gates before /sprint-validated. Prior: Rex (US-425 doc-sync) annotated the Sprint 51 BLOCKED state.",
+  "lastUpdatedBy": "Marcus (PM) -- register Sprint 53/V0.29.7 features",
   "categories": [
     "lifecycle",
     "connection",
@@ -497,6 +497,102 @@
       "category": "data_capture",
       "affectedBySprints": [
         51
+      ],
+      "lastValidated": null,
+      "staleThresholdDays": 90,
+      "validatedBy": null,
+      "validationMethod": "automatic"
+    },
+    {
+      "id": "F-048",
+      "name": "MAX17048 SOC% calibration protocol",
+      "category": "power_management",
+      "affectedBySprints": [
+        53
+      ],
+      "lastValidated": null,
+      "staleThresholdDays": 90,
+      "validatedBy": null,
+      "validationMethod": "automatic"
+    },
+    {
+      "id": "F-049",
+      "name": "drive_detect idle-poll engine-on detection",
+      "category": "data_capture",
+      "affectedBySprints": [
+        53
+      ],
+      "lastValidated": null,
+      "staleThresholdDays": 90,
+      "validatedBy": null,
+      "validationMethod": "automatic"
+    },
+    {
+      "id": "F-050",
+      "name": "PowerMonitor->power_log write path",
+      "category": "power_management",
+      "affectedBySprints": [
+        53
+      ],
+      "lastValidated": null,
+      "staleThresholdDays": 90,
+      "validatedBy": null,
+      "validationMethod": "automatic"
+    },
+    {
+      "id": "F-062",
+      "name": "drain_event close-on-poweroff",
+      "category": "power_management",
+      "affectedBySprints": [
+        53
+      ],
+      "lastValidated": null,
+      "staleThresholdDays": 90,
+      "validatedBy": null,
+      "validationMethod": "automatic"
+    },
+    {
+      "id": "F-102",
+      "name": "Pi/server hostname resolution",
+      "category": "lifecycle",
+      "affectedBySprints": [
+        53
+      ],
+      "lastValidated": null,
+      "staleThresholdDays": 90,
+      "validatedBy": null,
+      "validationMethod": "automatic"
+    },
+    {
+      "id": "F-106",
+      "name": "derived signals accel+distance (server)",
+      "category": "data_capture",
+      "affectedBySprints": [
+        53
+      ],
+      "lastValidated": null,
+      "staleThresholdDays": 90,
+      "validatedBy": null,
+      "validationMethod": "automatic"
+    },
+    {
+      "id": "F-082",
+      "name": "tester V0.28+ data-profile bug fixes",
+      "category": "data_capture",
+      "affectedBySprints": [
+        53
+      ],
+      "lastValidated": null,
+      "staleThresholdDays": 90,
+      "validatedBy": null,
+      "validationMethod": "automatic"
+    },
+    {
+      "id": "F-069",
+      "name": "cross-drive comparison tool",
+      "category": "data_capture",
+      "affectedBySprints": [
+        53
       ],
       "lastValidated": null,
       "staleThresholdDays": 90,
