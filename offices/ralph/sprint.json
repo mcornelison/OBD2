@@ -117,27 +117,38 @@
     },
     {
       "id": "US-429",
-      "title": "Fix empty-state CHECK-ENGINE takeover mis-fire (display finding, Bug 3b)",
-      "parent": "F-111",
+      "title": "Carousel honest-availability -- per-source availability + typed-NA emitters (SSOT pattern; fixes Bug-3)",
+      "parent": "F-092",
       "epicId": "E-001",
       "type": "normal",
-      "size": "S",
+      "size": "M",
       "status": "sprint-ready",
       "passes": false,
       "acceptance": [
-        "the full-screen DTC severity takeover (US-405) does NOT trigger on empty/absent/unpopulated dtc state -- only on a real retrieved code",
-        "empty/loading state renders the normal carousel (honest-instrument; no jumbled layout)",
-        "fixture/DOM test: empty dtc state -> no takeover; a real MAJOR code -> takeover (regression both ways)",
-        "ruff check passes"
+        "build to specs/ssot-design-pattern.md 'Honest availability -- the unavailable-source -> typed-NA pattern' (Atlas-ratified 2026-07-01)",
+        "each source (obd-link, ups, dtc) has ONE state.source.<x> = available|unavailable (availability is one truth per SOURCE, not per parameter)",
+        "the 3 shipped emitters (system-status, battery-health, dtc) write a FRESH real-or-(NULL+reason) state EACH tick -- never leave stale",
+        "NA is NULL+reason, NEVER a numeric sentinel anywhere (state or DB) -- no pd_stage=-1-class trap",
+        "display renders 'NA (<reason>)' for an unavailable source (e.g. car-off/wall-power -> 'OBD: off', engine params 'NA (no OBD)') -- honest, not blank cards",
+        "the DTC severity takeover (US-405) fires ONLY on a real new code, NEVER on absent/empty state (subsumes Bug-3b -- an absent source reads unavailable, not 'no codes -> alert')",
+        "fixture/DOM tests per source-state; bench-verifiable (OBD-down case IS wall power -- no car needed); ruff check passes"
       ],
       "validationCriteria": [
         {
-          "action": "render with empty/absent dtc state then with a real MAJOR code",
-          "outcome": "empty -> no takeover, normal carousel; MAJOR -> takeover fires"
+          "action": "render the carousel with obd-link unavailable (wall power, no OBD)",
+          "outcome": "shows 'OBD: off' + engine params 'NA (no OBD)'; no blank/stale cards; no numeric NA sentinel in state or DB"
+        },
+        {
+          "action": "render with empty/absent dtc state, then with a real MAJOR code",
+          "outcome": "empty -> no takeover (normal carousel); MAJOR -> takeover fires"
+        },
+        {
+          "action": "starve an emitter's source mid-run",
+          "outcome": "the next tick writes NULL+reason (not the stale prior value)"
         }
       ],
       "conditionalOutcomes": [],
-      "goal": "As the CIO, I want the DTC takeover to NOT fire on empty/no-data state, so a fresh boot with no OBD does not show a jumbled CHECK-ENGINE screen.",
+      "goal": "As the CIO, I want the carousel emitters to always write fresh real-or-typed-NA state per source availability, so the 3.5-inch display is honest when a source is down (never blank/stale/fabricated) and the CHECK-ENGINE takeover never mis-fires on an absent source.",
       "tasks": []
     },
     {
@@ -174,17 +185,20 @@
       "(open a drain within the ~3-min cold-start window) \u2192 (_soc_pct records NULL/flagged, never a garbage percent)  [from US-427]",
       "(run deploy-pi.sh --dry-run + the new deploy-smoke test) \u2192 (the kiosk-install step is exercised + asserted; absent-kit path WARNs not fails)  [from US-428]",
       "(deploy to a Pi whose chromium binary differs) \u2192 (the V-3 check substitutes the real path into the unit; no 203/EXEC, no symlink shim needed)  [from US-428]",
-      "(render with empty/absent dtc state then with a real MAJOR code) \u2192 (empty -> no takeover, normal carousel; MAJOR -> takeover fires)  [from US-429]",
+      "(render the carousel with obd-link unavailable (wall power, no OBD)) \u2192 (shows 'OBD: off' + engine params 'NA (no OBD)'; no blank/stale cards; no numeric NA sentinel in state or DB)  [from US-429]",
+      "(render with empty/absent dtc state, then with a real MAJOR code) \u2192 (empty -> no takeover (normal carousel); MAJOR -> takeover fires)  [from US-429]",
+      "(starve an emitter's source mid-run) \u2192 (the next tick writes NULL+reason (not the stale prior value))  [from US-429]",
       "(review changed files + update docs) \u2192 (architecture.md + CLAUDE.md + regression_manifest current; no stale refs)  [from US-430]"
     ],
-    "frozenAt": "2026-07-02T02:11:24Z",
-    "bigDoDHash": "1ba0203c7a1d8a1f620539838b208755f1e17399f05ffae67c17ec37f1127e9b",
+    "frozenAt": "2026-07-02T03:02:09Z",
+    "bigDoDHash": "6aad0718f55a5ce7cbce170aef87183984fb7f2b38c3e523e9c9cfbe45425153",
     "validationMethod": "BENCH-ONLY",
     "validatesFeatures": [
       "F-098",
       "F-060",
       "F-061",
       "F-103",
+      "F-092",
       "F-111"
     ],
     "currentVersion": "V0.29.6",

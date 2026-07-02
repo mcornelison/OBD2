@@ -3154,23 +3154,36 @@
     },
     {
       "id": "US-429",
-      "parent": "F-111",
+      "parent": "F-092",
       "type": "normal",
-      "size": "S",
-      "title": "Fix empty-state CHECK-ENGINE takeover mis-fire (display finding, Bug 3b)",
-      "goal": "As the CIO, I want the DTC takeover to NOT fire on empty/no-data state, so a fresh boot with no OBD does not show a jumbled CHECK-ENGINE screen.",
+      "size": "M",
+      "title": "Carousel honest-availability -- per-source availability + typed-NA emitters (SSOT pattern; fixes Bug-3)",
+      "goal": "As the CIO, I want the carousel emitters to always write fresh real-or-typed-NA state per source availability, so the 3.5-inch display is honest when a source is down (never blank/stale/fabricated) and the CHECK-ENGINE takeover never mis-fires on an absent source.",
       "definitionOfDone": [
-        "the full-screen DTC severity takeover (US-405) does NOT trigger on empty/absent/unpopulated dtc state -- only on a real retrieved code",
-        "empty/loading state renders the normal carousel (honest-instrument; no jumbled layout)",
-        "fixture/DOM test: empty dtc state -> no takeover; a real MAJOR code -> takeover (regression both ways)",
-        "ruff check passes"
+        "build to specs/ssot-design-pattern.md 'Honest availability -- the unavailable-source -> typed-NA pattern' (Atlas-ratified 2026-07-01)",
+        "each source (obd-link, ups, dtc) has ONE state.source.<x> = available|unavailable (availability is one truth per SOURCE, not per parameter)",
+        "the 3 shipped emitters (system-status, battery-health, dtc) write a FRESH real-or-(NULL+reason) state EACH tick -- never leave stale",
+        "NA is NULL+reason, NEVER a numeric sentinel anywhere (state or DB) -- no pd_stage=-1-class trap",
+        "display renders 'NA (<reason>)' for an unavailable source (e.g. car-off/wall-power -> 'OBD: off', engine params 'NA (no OBD)') -- honest, not blank cards",
+        "the DTC severity takeover (US-405) fires ONLY on a real new code, NEVER on absent/empty state (subsumes Bug-3b -- an absent source reads unavailable, not 'no codes -> alert')",
+        "fixture/DOM tests per source-state; bench-verifiable (OBD-down case IS wall power -- no car needed); ruff check passes"
       ],
       "validationCriteria": [
         {
-          "action": "render with empty/absent dtc state then with a real MAJOR code",
-          "outcome": "empty -> no takeover, normal carousel; MAJOR -> takeover fires"
+          "action": "render the carousel with obd-link unavailable (wall power, no OBD)",
+          "outcome": "shows 'OBD: off' + engine params 'NA (no OBD)'; no blank/stale cards; no numeric NA sentinel in state or DB"
+        },
+        {
+          "action": "render with empty/absent dtc state, then with a real MAJOR code",
+          "outcome": "empty -> no takeover (normal carousel); MAJOR -> takeover fires"
+        },
+        {
+          "action": "starve an emitter's source mid-run",
+          "outcome": "the next tick writes NULL+reason (not the stale prior value)"
         }
-      ]
+      ],
+      "conditionalOutcomes": [],
+      "tasks": []
     },
     {
       "id": "US-430",
