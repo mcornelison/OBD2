@@ -29,6 +29,12 @@ Pillow>=10.0.0                # Image processing for display
 # I2C for UPS/battery monitoring (X1209 HAT)
 smbus2>=0.4.0                 # I2C communication for X1209 UPS telemetry
 
+# EDR sensor-reader drivers (F-113/114, US-409) — the readers lazy-import these;
+# without them pi.sensors.{imu,light} probe as "absent (No module named ...)"
+# and never read the wired hardware (deploy-gap found on-Pi 2026-07-02).
+adafruit-circuitpython-tsl2591>=1.3.0   # TSL2591 light sensor (@0x29)
+adafruit-circuitpython-icm20x>=1.0.0    # ICM-20948 9-DoF IMU (@0x69)
+
 # Display rendering
 # pygame is intentionally NOT pip-managed on the Pi.
 # Install on the Pi via: sudo apt install python3-pygame
