@@ -1,10 +1,14 @@
 ---
 id: F-100
 parent: E-002
-status: pending
+status: superseded
+supersededBy: B-104 server-authority rearchitecture (US-350/US-351) + US-437 N-8
 renamedFrom: B-100
 createdAt: 2026-05-27
-updatedAt: 2026-05-27
+updatedAt: 2026-07-02
+archivedAt: 2026-07-02
+archivedBy: US-440
+archiveReason: "Original diagnosis (Pi-side writer / sync-handler empty shells) targeted the pre-B-104 trigger-seam architecture, retired in Sprint 41 (US-350/US-351): drive_summary analytics columns are now server-computed from raw realtime_data (compute_drive_summary), and the last surviving NULL-field symptom (profile_id) was fixed by US-437 N-8 (Sprint 53). The original empty-shell/missing-rows framing no longer maps to the current writer. Archived superseded per Sprint 53 US-440."
 ---
 
 # B-100: `drive_summary` writer broken — every server row is an empty shell + drives 6-10 missing entirely

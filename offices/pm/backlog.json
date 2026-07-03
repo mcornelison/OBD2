@@ -251,10 +251,12 @@
       "parent": "E-001",
       "title": "Touch Screen Display Support",
       "description": "",
-      "status": "pending",
+      "status": "declined",
       "renamedFrom": "B-007",
       "createdAt": "2026-05-27",
-      "updatedAt": "2026-05-27"
+      "updatedAt": "2026-07-02",
+      "archivedAt": "2026-07-02",
+      "archivedBy": "US-440"
     },
     {
       "id": "F-025",
@@ -291,10 +293,11 @@
       "parent": "E-OPS",
       "title": "Evaluate and Fix Commented Dependencies",
       "description": "",
-      "status": "active",
+      "status": "awaiting-validation",
       "renamedFrom": "B-004",
       "createdAt": "2026-05-27",
-      "updatedAt": "2026-05-27"
+      "updatedAt": "2026-05-27",
+      "currentVersion": "V0.29.7"
     },
     {
       "id": "F-005",
@@ -541,10 +544,11 @@
       "parent": "E-OPS",
       "title": "MAX17048 SOC% calibration learning run protocol + scripts",
       "description": "MAX17048 SOC% calibration learning run protocol + scripts",
-      "status": "active",
+      "status": "awaiting-validation",
       "renamedFrom": "B-048",
       "createdAt": "2026-05-27",
-      "updatedAt": "2026-05-27"
+      "updatedAt": "2026-05-27",
+      "currentVersion": "V0.29.7"
     },
     {
       "id": "F-049",
@@ -561,10 +565,11 @@
       "parent": "E-OPS",
       "title": "PowerMonitor DB-write path activation \u2014 UpsMonitor \u2192 power_log \u2192 US-216",
       "description": "PowerMonitor DB-write path activation \u2014 UpsMonitor \u2192 power_log \u2192 US-216",
-      "status": "active",
+      "status": "awaiting-validation",
       "renamedFrom": "B-050",
       "createdAt": "2026-05-27",
-      "updatedAt": "2026-05-27"
+      "updatedAt": "2026-05-27",
+      "currentVersion": "V0.29.7"
     },
     {
       "id": "F-051",
@@ -581,10 +586,13 @@
       "parent": "E-001",
       "title": "HDMI dashboard full-canvas redesign",
       "description": "HDMI dashboard full-canvas redesign",
-      "status": "pending",
+      "status": "complete",
+      "resolvedBy": "US-257",
       "renamedFrom": "B-052",
       "createdAt": "2026-05-27",
-      "updatedAt": "2026-05-27"
+      "updatedAt": "2026-07-02",
+      "archivedAt": "2026-07-02",
+      "archivedBy": "US-440"
     },
     {
       "id": "F-054",
@@ -664,10 +672,11 @@
       "parent": "E-OPS",
       "title": "drain_event close-on-poweroff targeted fix (post-Drain-Test-11 evidence)",
       "description": "drain_event close-on-poweroff targeted fix (post-Drain-Test-11 evidence)",
-      "status": "active",
+      "status": "awaiting-validation",
       "renamedFrom": "B-062",
       "createdAt": "2026-05-27",
-      "updatedAt": "2026-05-27"
+      "updatedAt": "2026-05-27",
+      "currentVersion": "V0.29.7"
     },
     {
       "id": "F-063",
@@ -715,10 +724,11 @@
       "parent": "E-002",
       "title": "Cross-drive comparison tool (Spool ergonomics)",
       "description": "Cross-drive comparison tool (Spool ergonomics)",
-      "status": "active",
+      "status": "awaiting-validation",
       "renamedFrom": "B-069",
       "createdAt": "2026-05-27",
-      "updatedAt": "2026-05-27"
+      "updatedAt": "2026-05-27",
+      "currentVersion": "V0.29.7"
     },
     {
       "id": "F-070",
@@ -829,10 +839,11 @@
       "parent": "E-002",
       "title": "Tester's V0.28+ data-profile findings \u2014 rollup (8 bugs + 8 design smells)",
       "description": "Tester's V0.28+ data-profile findings \u2014 rollup (8 bugs + 8 design smells)",
-      "status": "active",
+      "status": "awaiting-validation",
       "renamedFrom": "B-082",
       "createdAt": "2026-05-27",
-      "updatedAt": "2026-05-27"
+      "updatedAt": "2026-05-27",
+      "currentVersion": "V0.29.7"
     },
     {
       "id": "F-083",
@@ -1013,10 +1024,13 @@
       "parent": "E-002",
       "title": "`drive_summary` writer broken \u2014 every server row is an empty shell + drives 6-10 missing entirely",
       "description": "`drive_summary` writer broken \u2014 every server row is an empty shell + drives 6-10 missing entirely",
-      "status": "pending",
+      "status": "superseded",
+      "supersededBy": "B-104 server-authority rearchitecture (US-350/US-351) + US-437 N-8",
       "renamedFrom": "B-100",
       "createdAt": "2026-05-27",
-      "updatedAt": "2026-05-27"
+      "updatedAt": "2026-07-02",
+      "archivedAt": "2026-07-02",
+      "archivedBy": "US-440"
     },
     {
       "id": "F-101",
@@ -1034,10 +1048,11 @@
       "parent": "E-004",
       "title": "Pi + server hostname resolution cleanup (`chi-eclipse-01` / `chi-srv-01` LAN-wide)",
       "description": "Pi + server hostname resolution cleanup (`chi-eclipse-01` / `chi-srv-01` LAN-wide)",
-      "status": "active",
+      "status": "awaiting-validation",
       "renamedFrom": "B-102",
       "createdAt": "2026-05-27",
-      "updatedAt": "2026-05-27"
+      "updatedAt": "2026-05-27",
+      "currentVersion": "V0.29.7"
     },
     {
       "id": "F-103",
@@ -1075,10 +1090,11 @@
       "parent": "E-002",
       "title": "Derived Signals From Speed + Time \u2014 Acceleration + Estimated Odometer (with CIO Factual Recalibration)",
       "description": "Derived Signals From Speed + Time \u2014 Acceleration + Estimated Odometer (with CIO Factual Recalibration)",
-      "status": "active",
+      "status": "awaiting-validation",
       "renamedFrom": "B-106",
       "createdAt": "2026-05-27",
-      "updatedAt": "2026-05-27"
+      "updatedAt": "2026-05-27",
+      "currentVersion": "V0.29.7"
     },
     {
       "id": "F-107",

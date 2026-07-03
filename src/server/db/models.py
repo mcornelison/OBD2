@@ -1197,6 +1197,57 @@ class DriveStatistic(Base):
     )
 
 
+class DriveDerivedSignal(Base):
+    """Per-drive derived motion signals computed server-side (US-436 / F-106).
+
+    One row per drive, keyed on the server-side ``drive_summary.id`` (mirrors
+    :class:`DriveStatistic`), written by
+    :func:`src.server.analytics.derived_signals_compute.compute_drive_derived_signals`
+    from the drive's SPEED ``realtime_data`` stream.  No new PIDs -- acceleration
+    and estimated distance are integrated from the existing speed+time series
+    (F-106 "richer motion context without new PIDs").
+
+    Units are explicit + persisted (honest-instrument).  SPEED is stored in
+    km/h, so ``estimated_distance_km`` trapezoidally integrates to km and the
+    ``peak_*_ms2`` values convert km/h -> m/s (/3.6) before dividing by dt so
+    they carry the physical m/s^2 unit.  ``peak_acceleration_ms2`` /
+    ``peak_deceleration_ms2`` are NULL when the drive has no valid segment
+    (every adjacent sample pair was skipped for a zero/negative dt or a
+    gap wider than the soak threshold).
+
+    ``computed_at`` carries ``onupdate=func.now()`` so a re-run of the
+    idempotent compute advances the timestamp while data columns converge
+    (same discipline as :class:`DriveStatistic`).
+    """
+
+    __tablename__ = "drive_derived_signals"
+
+    summary_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("drive_summary.id", ondelete="CASCADE"),
+        primary_key=True,
+        nullable=False,
+    )
+    estimated_distance_km: Mapped[float | None] = mapped_column(Float)
+    peak_acceleration_ms2: Mapped[float | None] = mapped_column(Float)
+    peak_deceleration_ms2: Mapped[float | None] = mapped_column(Float)
+    sample_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    segment_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    gap_skipped_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    speed_unit: Mapped[str] = mapped_column(
+        String(16), nullable=False, server_default="km/h",
+    )
+    distance_unit: Mapped[str] = mapped_column(
+        String(16), nullable=False, server_default="km",
+    )
+    accel_unit: Mapped[str] = mapped_column(
+        String(16), nullable=False, server_default="m/s^2",
+    )
+    computed_at: Mapped[datetime | None] = mapped_column(
+        DateTime, server_default=func.now(), onupdate=func.now(),
+    )
+
+
 # US-370 / F-076: per-ECU SPEED-PID multiplicative correction.  The new
 # modified-EPROM ECU reads ~2x actual ground speed (Spool 2026-05-22 OBD probe +
 # Drive 26 telemetry); each ECU identity may carry its own VSS calibration, so
@@ -1429,6 +1480,7 @@ __all__ = [
     # Analytics
     "DriveSummary",
     "DriveStatistic",
+    "DriveDerivedSignal",
     "DRIVE_STATISTICS_DATA_QUALITY_VALUES",
     "DRIVE_STATISTICS_DATA_QUALITY_DEFAULT",
     "DATA_QUALITY_FOREIGN_VEHICLE",

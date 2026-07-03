@@ -25,6 +25,10 @@
 #               |              | data_source, drive_start_timestamp) are
 #               |              | preserved -- is_real is derived from the
 #               |              | Pi event-log data_source per Atlas Q2.
+# 2026-07-02    | Rex (US-437) | N-8: populate drive_summary.profile_id (was
+#               |              | NULL on every row) from realtime_data.profile_id
+#               |              | -- the surviving compute path never copied it
+#               |              | after the trigger-seam writer retired.
 # ================================================================================
 ################################################################################
 
@@ -95,9 +99,10 @@ def compute_drive_summary(session: Session, driveId: int) -> int | None:
     Reads every ``realtime_data`` row for ``driveId`` (Pi-local drive_id,
     populated on the column by the US-200 sync path) and writes the
     derived analytics columns (``start_time``, ``end_time``,
-    ``duration_seconds``, ``row_count``, ``is_real``) onto the existing
-    Pi-sync ``drive_summary`` row matched by either ``source_id`` or
-    ``drive_id``.
+    ``duration_seconds``, ``row_count``, ``is_real``, ``profile_id``) onto
+    the existing Pi-sync ``drive_summary`` row matched by either
+    ``source_id`` or ``drive_id``.  ``profile_id`` (US-437 / N-8) is the
+    profile the drive ran under, sourced from ``realtime_data.profile_id``.
 
     Pi event-log columns (``drive_start_timestamp``,
     ``ambient_temp_at_start_c``, ``starting_battery_v``, ``data_source``,
@@ -192,6 +197,24 @@ def compute_drive_summary(session: Session, driveId: int) -> int | None:
             "data_quality=%s",
             driveId, overlappingDriveIds, DATA_QUALITY_ATTRIBUTION_ANOMALY,
         )
+
+    # US-437 (N-8): stamp the profile the drive ran under.
+    # drive_summary.profile_id was NULL on every row -- the retired trigger-seam
+    # writer (analysis._ensureDriveSummary) sourced it from realtime_data, but
+    # the surviving compute path never copied it.  Read the earliest non-NULL
+    # profile_id for the drive from the canonical raw stream; preserve NULL
+    # (honest-instrument) when the raw data carries none -- and never clobber an
+    # already-set summary value with NULL.  Idempotent (same raw data -> same
+    # profile_id on re-run).
+    profileId = session.execute(
+        select(RealtimeData.profile_id)
+        .where(realtimeFilter)
+        .where(RealtimeData.profile_id.isnot(None))
+        .order_by(RealtimeData.timestamp.asc())
+        .limit(1)
+    ).scalars().first()
+    if profileId is not None:
+        summary.profile_id = profileId
 
     summary.start_time = startTime
     summary.end_time = endTime

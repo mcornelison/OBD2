@@ -147,6 +147,7 @@ def _seedRealtimeRows(
     pollIntervalSeconds: float = 1.0,
     samplesPerParameter: int = 10,
     dataSource: str = "real",
+    profileId: str | None = None,
 ) -> int:
     """Seed ``realtime_data`` rows for a drive.  Returns total row count."""
     total = 0
@@ -163,6 +164,7 @@ def _seedRealtimeRows(
                     value=float(100 + i),
                     drive_id=driveId,
                     data_source=dataSource,
+                    profile_id=profileId,
                 )
             )
             sourceIdCursor += 1
@@ -331,6 +333,89 @@ class TestIdempotent:
             ).one()
 
             assert first == second
+
+
+# =========================================================================
+# profile_id population (US-437 / N-8)
+# =========================================================================
+
+
+class TestProfileIdPopulation:
+    """compute_drive_summary stamps drive_summary.profile_id from realtime_data.
+
+    N-8 (Argus 2026-05-12): drive_summary.profile_id was NULL on every row even
+    though realtime_data carries the profile the drive ran under.  The compute
+    path now copies the earliest non-NULL profile_id, preserving NULL when the
+    raw stream has none (honest-instrument -- no coercion).
+    """
+
+    def test_compute_populatesProfileId_fromRealtimeData(self, engine):
+        """profile_id on realtime_data rows -> written onto drive_summary."""
+        driveId = 40
+        startTime = datetime(2026, 6, 1, 10, 0, 0)
+        with Session(engine) as session:
+            summaryId = _seedPiSyncedDriveSummary(session, driveId=driveId)
+            _seedRealtimeRows(
+                session,
+                driveId=driveId,
+                startTime=startTime,
+                parameters=["RPM", "SPEED"],
+                samplesPerParameter=5,
+                profileId="daily",
+            )
+            compute_drive_summary(session, driveId)
+            session.commit()
+
+            row = session.get(DriveSummary, summaryId)
+            assert row.profile_id == "daily"
+
+    def test_compute_nullProfileId_staysNull_noCoercion(self, engine):
+        """No profile_id in the raw stream -> summary.profile_id stays NULL.
+
+        The honest-instrument contract: absence must not be coerced to a
+        confident-but-wrong default.
+        """
+        driveId = 41
+        startTime = datetime(2026, 6, 1, 11, 0, 0)
+        with Session(engine) as session:
+            summaryId = _seedPiSyncedDriveSummary(session, driveId=driveId)
+            _seedRealtimeRows(
+                session,
+                driveId=driveId,
+                startTime=startTime,
+                parameters=["RPM"],
+                samplesPerParameter=5,
+                profileId=None,
+            )
+            compute_drive_summary(session, driveId)
+            session.commit()
+
+            row = session.get(DriveSummary, summaryId)
+            assert row.profile_id is None
+
+    def test_compute_profileId_idempotent(self, engine):
+        """Re-running the compute keeps the same profile_id (no drift)."""
+        driveId = 42
+        startTime = datetime(2026, 6, 1, 12, 0, 0)
+        with Session(engine) as session:
+            summaryId = _seedPiSyncedDriveSummary(session, driveId=driveId)
+            _seedRealtimeRows(
+                session,
+                driveId=driveId,
+                startTime=startTime,
+                parameters=["RPM"],
+                samplesPerParameter=5,
+                profileId="sport",
+            )
+            compute_drive_summary(session, driveId)
+            session.commit()
+            first = session.get(DriveSummary, summaryId).profile_id
+
+            compute_drive_summary(session, driveId)
+            session.commit()
+            second = session.get(DriveSummary, summaryId).profile_id
+
+            assert first == second == "sport"
 
 
 # =========================================================================

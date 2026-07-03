@@ -77,6 +77,7 @@ from .data_source import ensureAllCaptureTables, ensureDataSourceCheckWidened
 from .database_schema import (
     ALL_INDEXES,
     ALL_SCHEMAS,
+    ensureBatteryLogRetired,
     ensureDriveStatisticsRetired,
 )
 from .drive_id import ensureAllDriveIdColumns, ensureDriveCounter
@@ -376,6 +377,12 @@ class ObdDatabase:
                 # Server is sole writer now (B-104 Step 1b).  Idempotent
                 # on subsequent boots (DEBUG absence-confirmation only).
                 ensureDriveStatisticsRetired(conn)
+
+                # US-437 (N-4) retirement migration: drop the legacy Pi-side
+                # ``battery_log`` table (server dropped it in US-223 / v0003;
+                # the Pi kept an empty copy = schema-drift residue).  Idempotent
+                # on subsequent boots (DEBUG absence-confirmation only).
+                ensureBatteryLogRetired(conn)
 
                 self._initialized = True
                 logger.info("Database initialization complete")

@@ -441,7 +441,8 @@
         "historyWindowSeconds": 60,
         "vcellSlopeThresholdVoltsPerMinute": -0.005,
         "vcellBatteryThresholdVolts": 3.95,
-        "vcellBatteryThresholdSustainedSeconds": 30
+        "vcellBatteryThresholdSustainedSeconds": 30,
+        "socColdStartWindowSeconds": 180.0
       },
       "statusDisplay": {
         "enabled": false,
