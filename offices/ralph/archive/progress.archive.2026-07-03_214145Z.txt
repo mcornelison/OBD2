@@ -1,0 +1,582 @@
+## 2026-07-02 - US-431 (Agent 1 / Rex / Session 1, Sprint 53 V0.29.7)
+Task: MAX17048 SOC% calibration protocol + scripts (F-048)
+
+### What was implemented:
+- scripts/calibrate_max17048.py (NEW): bench tool that samples the MAX17048
+  register SoC% (+ VCELL + CRATE) at a fixed cadence from a cold power-up, logs
+  every sample to a schema-free CSV, and measures how long the ModelGauge takes
+  to SETTLE. analyzeSettling() is a pure function (finds the earliest sustained
+  in-band suffix around the settled value) -> prints a margin-padded recommended
+  cold-start window + the exact config key to set. collectSamples() takes an
+  injected clock + sleep so the whole flow is testable off-Pi (no I2C needed).
+- Config-drove the cold-start guard so calibration output actually FEEDS it
+  (AC2, "real data not a guessed constant"):
+  * validator.py DEFAULT + config.json: pi.hardware.upsMonitor.socColdStartWindowSeconds = 180.0 (PROVISIONAL until the rig run).
+  * record_drain_test.py: _resolveColdStartWindowSeconds(config) reads the key
+    (falls back to COLD_START_CALIBRATION_WINDOW_SECONDS), threaded through
+    _recordEvent at both open + close.
+- docs/max17048-soc-calibration-protocol.md (NEW): step-by-step bench protocol
+  (prereqs, cold power-up capture, read recommendation, write config, archive).
+- Tests: tests/scripts/test_calibrate_max17048.py (16 -- analysis/sampler/CSV/
+  argparse/run/main + clean-import smoke); +3 in test_record_drain_test.py
+  (TestColdStartWindowConfig).
+
+### Files changed:
+- Created: `scripts/calibrate_max17048.py`
+- Created: `tests/scripts/test_calibrate_max17048.py`
+- Created: `docs/max17048-soc-calibration-protocol.md`
+- Modified: `scripts/record_drain_test.py` (config-driven window)
+- Modified: `tests/scripts/test_record_drain_test.py` (config-threading tests)
+- Modified: `src/common/config/validator.py` (new DEFAULT)
+- Modified: `config.json` (new key)
+
+### Gates (in-loop, synchronous):
+- ruff check on all 5 .py -> All checks passed
+- python validate_config.py -> All validations passed
+- pytest test_calibrate_max17048.py + test_record_drain_test.py -> 37 passed
+- pytest test_config_validator.py -> 58 passed (validator DEFAULT regression check)
+
+### Learnings for future iterations:
+- **Pattern discovered**: when a story says "feed X with real data, not a guessed
+  constant", the real deliverable is usually a PIPELINE (measure -> config -> consume),
+  not just the measuring tool. A hard-coded constant with no injection point can't
+  be "fed" -- config-drive it (default = the old value, so behavior is preserved).
+- **Pattern discovered**: keep the analysis a PURE function (list[Sample] -> Result)
+  and inject clock+sleep into the sampler -> a hardware/bench story becomes fully
+  unit-testable on the Windows dev box (no I2C, no real sleeping).
+- **Gotcha**: `%%` is only correct inside argparse help strings (argparse does
+  %-formatting); in a plain print() it renders literally as `%%`. Use a single `%`.
+- **Gotcha**: the default pytest addopts (coverage) suppresses the pass/fail
+  summary line when running a file subset; add `-p no:cov -o addopts=` to see the
+  real "N passed" line. (Full-suite coverage stays a PM gate -- TD-059.)
+- **Rule 2 held**: did NOT invent the measured settle number -- 180.0 stays as the
+  grounded provisional default; the rig run (BENCH-ONLY validation) supplies the real value.
+---
+
+## 2026-07-02 - US-432 (Agent 1 / Rex / Session 2, Sprint 53 V0.29.7) -- BLOCKED (BL-016)
+Task: drive_detect idle-poll gap -- residual engine-on miss (F-049, verify-first + A-9 guardrails)
+
+### Outcome: VERIFY-FIRST root-cause COMPLETE from code; BLOCKED for live-Pi fix disambiguation. No src/tests changed (deliberate).
+
+### Root cause (code-verified -- the shipped escalation is fine, the miss is downstream):
+- The US-242/B-049 alternator-active escalation FIRES correctly (BATTERY_V > 13.8V
+  sustained 3 samples -> _injectRpmProbeForEscalation). The RESIDUAL miss is what
+  happens to the probe (and every regular RPM poll):
+  1. supported_commands is probed ONCE at connect (obd_connection.py:408), never refreshed.
+  2. Cold-boot connect while the ECU is DARK (car key OFF, ELM327 alive on pin-16)
+     omits RPM(0x0c) from python-obd's supported_commands.
+  3. RPM's query is the LEGACY path (RPM in LEGACY_ECU_PARAMETERS, NOT PARAMETER_DECODERS)
+     -> obd.query(cmd) with force=False returns NULL without wire traffic for an
+     unsupported cmd (logger.py:220) -> ParameterReadError.
+  4. _assertPidSupported is a RED HERRING for RPM -- it only guards Spool-v2 decoder
+     PIDs (logger.py:212). So clearing our SupportedPidSet is a NO-OP fix.
+  5. The escalation swallows the null at core.py:1245 + latches _engineOnEscalated;
+     US-221 recovery can't help (clears ECU-silent only on a SUCCESSFUL read).
+     => RPM masked the whole connection -> drive_start never fires.
+- Also structural: one probe only reaches STARTING; drive_start needs sustained RPM
+  from the regular loop, which is masked identically.
+
+### Why blocked (not fixed):
+- The correct un-mask fix depends on python-obd internals + 2G K-line behavior NOT
+  verifiable off the dev box (does a re-probe re-interrogate the ECU? is force=True
+  clean on this ELM327? is the live backend real python-obd or a facade?). A guessed
+  fix risks another mocked-green/IRL-miss regression -- exactly what verify-first
+  exists to catch (the existing escalation tests MOCK queryAndLogParameter and never
+  exercise the real mask, so they are green while the live path misses).
+- Filed BL-016 with the live-Pi repro (cold-boot key-off -> engine-on), journalctl
+  grep tokens, and 3 fix options (A refresh supported_commands / B force RPM /
+  C alternator-active as first-class drive_start) for CIO bench-confirm + Atlas ruling.
+
+### Files changed:
+- Created: `offices/pm/blockers/BL-016-us432-idle-poll-residual-live-pi-rootcause.md`
+- Modified: `offices/ralph/sprint.json` (US-432 status:blocked + completionNotes)
+- Modified: `offices/ralph/ralph_agents.json`, `offices/ralph/progress.txt`
+
+### Learnings for future iterations:
+- **Pattern discovered**: on a verify-first "residual gap" story, trace the FULL
+  runtime path, not just our code -- the mask here is python-obd's supported_commands
+  cache (force=False null-on-unsupported), NOT our _assertPidSupported gate. RPM
+  bypasses _assertPidSupported entirely (it's in LEGACY_ECU_PARAMETERS, not
+  PARAMETER_DECODERS) -- an easy wrong-fix trap.
+- **Gotcha**: existing escalation tests mock the data logger's queryAndLogParameter,
+  so they can't see the real support-cache mask -- a story can look "already fixed"
+  while missing IRL. Mock-blindness is why this residual survived US-242.
+- **Iron Law held**: no fix without a confirmed root cause. The mechanism is
+  code-pinned to a region, but the *un-mask API* + its 2G-K-line safety need the
+  live Pi -> block + hand the bench-confirm to the CIO rather than ship a guess.
+---
+
+## 2026-07-02 - US-433 (Agent 1 / Rex / Session 3, Sprint 53 V0.29.7) -- CLOSED WITH LIVE EVIDENCE (no code)
+Task: PowerMonitor DB-write path -- verify + close (F-050, likely DONE)
+
+### Outcome: VERIFY-FIRST close-with-evidence. Confirmed from code AND a live-Pi query. NO src/tests change.
+
+### Code verification (write path fully wired):
+- _initializePowerMonitor (lifecycle.py:1829) -- gated pi.power.power_monitor.enabled
+  (default true) + live DB -- constructs PowerMonitor (US-243).
+- _subscribePowerMonitorToPowerSourceProvider (lifecycle.py:2107) runs a
+  _PowerSourceUiBridge daemon thread at pi.powerWatch.uiPollSec that fires
+  powerMonitor.checkPowerStatus(onAcPower) on each power-source TRANSITION.
+- checkPowerStatus -> logPowerReading / logPowerTransition (power_db.py:56/104)
+  -> INSERT INTO power_log. US-412 syncs power_log to the server.
+
+### Live evidence (read-only ssh, non-destructive):
+- ssh mcornelison@10.27.27.28 sqlite3 /home/mcornelison/Projects/Eclipse-01/data/obd.db
+- power_log = 2115 rows, MIN 2026-05-01T11:08:31Z, MAX 2026-07-02T20:55:20Z.
+- Newest row 2026-07-02T20:55:20Z -- today, ~minutes before the query -> populating + current.
+- Recent rows: ac_power/battery_power transitions, power_source set, data_quality='full'.
+
+### No real gap (bullet-2 not triggered):
+- The "VCELL/SOC/CRATE per poll" repair was conditional ("only if a real gap remains").
+- power_log is transition-based BY DESIGN (SS-T4 A1: UpsMonitor is battery-health-only).
+  Battery VCELL/SOC/CRATE persist to battery_health_log; vcell in power_log is only
+  populated on shutdown STAGE rows (logShutdownStage). No repair warranted.
+
+### Gates:
+- No .py touched -> ruff N/A. No config change -> validate_config N/A.
+
+### Learnings for future iterations:
+- **Pattern discovered**: a verify-first "likely DONE" story closes strongest when you
+  pair CODE wiring proof with a LIVE read-only query -- a bounded ssh (BatchMode=yes,
+  ConnectTimeout) can't hang, is non-destructive (SELECT COUNT + recent rows), and turns
+  "owed to CIO" into evidence-in-hand. The Pi WAS reachable (10.27.27.28).
+- **Gotcha**: don't confuse tables. power_log = power-SOURCE transitions (+ shutdown
+  stage vcell). Battery VCELL/SOC/CRATE readings live in battery_health_log. A story
+  asking for "VCELL/SOC/CRATE in power_log per poll" is describing a repair that was
+  never the design -- verify the DESIGN before treating a missing column as a gap.
+- **Gotcha**: vcell NULL on ac_power/battery_power rows is EXPECTED, not a defect --
+  only logShutdownStage writes vcell (US-252).
+---
+
+## 2026-07-02 - US-434 (Agent 1 / Rex / Session 4, Sprint 53 V0.29.7) -- CLOSED (verify-first, no code)
+Task: drain_event close-on-poweroff -- verify (F-062, likely MOOT)
+
+### Outcome: Forward-looking MOOT confirmed + a historical-residue finding FLAGGED (issue filed). NO src/tests change.
+
+### Verification (0 production callers -> forward-moot):
+- rg '\.startDrainEvent\(|\.endDrainEvent\(' src/ -> NO matches. The only src/
+  occurrences of startDrainEvent/endDrainEvent are the method DEFS + docstrings in
+  battery_health.py and the hardware_manager.py:73 comment that already documents
+  '0 callers' (TD-058/US-427 removed the last dead store).
+- Nothing opens a drain during operation => a poweroff can NEVER orphan one going
+  forward => the F-062 mechanism is MOOT. A ShutdownSequencer close (AC2) would be
+  dead code AND could not fix historical rows.
+- The only live writer is the bench CLI record_drain_test.py, which opens + IMMEDIATELY
+  closes a drain in one operator run ('lands as a single unit', docstring 5-6/445);
+  since US-224 it defaults load_class='test'.
+
+### Live-Pi evidence (read-only ssh, non-destructive):
+- ssh mcornelison@10.27.27.28 sqlite3 -readonly data/obd.db:
+  battery_health_log = 28 rows, but 4 STUCK-OPEN (end_timestamp IS NULL), ALL
+  load_class='production', ids 1/9/18/21, 2026-05-04..2026-05-13 (newest row of any
+  kind 2026-05-16 -- nothing since).
+- Residue root cause: the REMOVED US-216 auto-write path (battery_health.py:40 'current
+  production callers', :155-159 'LOAD_CLASS_DEFAULT stays production -- feeds US-216
+  auto-write') opened production drains in early May; on 4 occasions shutdown left them
+  open -- i.e. F-062 was a REAL bug WHILE that path was live. Path since retired
+  (TD-058/US-427) -> no new orphans can form. Bench CLI's 'test' default (US-224) is
+  not implicated.
+
+### Why blocked-from-code (flagged, not built):
+- No CURRENT open-path (0 callers) + a ShutdownSequencer close can't retroactively close
+  weeks-old rows + closing/backfilling the 4 rows is a live-Pi + already-synced-server
+  data-repair (drain_event_id is the sync PK) touching BL-015 semantics => a PM/Atlas
+  ruling, not a src/ change. Filed I-orphaned-production-drain-event-rows.md with options
+  A(leave; already excluded from runtime-trend baselines that need non-NULL
+  runtime_seconds) / B(both-tier synthetic-close migration) / C(tombstone notes).
+- Honest close: AC1 core met (0 callers; poweroff can't orphan); AC1's 'no stuck rows'
+  sub-clause NOT met (4 exist) -> did NOT silently close-moot; flagged per AC2 ('flag
+  PM/Atlas first, do NOT build unflagged') + Rule 1.
+
+### Files changed:
+- Created: `offices/pm/issues/I-orphaned-production-drain-event-rows.md`
+- Modified: `offices/ralph/sprint.json` (US-434 status:done + passes:true + completionNotes)
+- Modified: `offices/ralph/ralph_agents.json`, `offices/ralph/progress.txt`
+
+### Learnings for future iterations:
+- **Pattern discovered**: a verify-first 'likely MOOT' story can land in a THIRD state
+  the two ACs don't name -- 0 CURRENT callers (forward-moot) but pre-existing RESIDUE
+  from a since-REMOVED path. The right move is neither 'close-moot' (dishonest -- rows
+  exist) nor 'build the AC2 fix' (dead code -- no current path, can't fix history):
+  it's flag-the-residue-as-an-issue + close the code-verification. Match it to the
+  validationCriteria's 'flag before any code' branch.
+- **Gotcha**: load_class disambiguates provenance. 'production' rows came from the
+  removed US-216 auto-write path; the bench CLI writes 'test' since US-224. Reading the
+  enum's history (battery_health.py:40/155-159) turned '4 mystery orphans' into a
+  precisely-attributed, now-closed root cause.
+- **Gotcha**: a live read-only query (sqlite3 -readonly, BatchMode ssh) is the honest
+  gate for a 'no stuck rows' claim -- code-only reasoning would have wrongly closed this
+  moot; the DB said otherwise.
+---
+
+## 2026-07-02 - US-435 (Agent 1 / Rex / Session 5, Sprint 53 V0.29.7) -- CLOSED (verify-first sweep + 1 functional fix)
+Task: Pi + server hostname resolution cleanup (F-102)
+
+### Outcome: passes:true. Doc/comment sweep + one additive deploy-pi.sh fix, grounded on a live read-only Pi query. Handoff filed for a naming decision.
+
+### Ground truth (live read-only ssh, non-destructive):
+- ssh mcornelison@10.27.27.28 hostname -> "Chi-Eclips-01" (dropped the 'e');
+  /etc/hosts 127.0.1.1 = "Chi-Eclips-01 Chi-Eclips-Tuner".
+- Canonical tooling name is "chi-eclipse-01" (with 'e'): SSH ~/.ssh/config alias,
+  deploy/addresses.sh PI_HOSTNAME/PI_DEVICE_ID, config.json piHostname/piDeviceId,
+  and the A-15 mirror lint (asserts PI_HOSTNAME=='chi-eclipse-01').
+
+### The real issue (only ONE code path was actually affected):
+- SSH/deploy resolve regardless of the OS hostname (alias -> IP), and device_id
+  comes from config not `hostname`, so data identity is unaffected. The lone
+  hostname-keyed path is deploy-pi.sh step_set_hostname: its case-stmt whitelist
+  (raspberrypi|chi-eclipse-tuner|chi-eclips-tuner) did NOT include the Pi's new
+  actual name, so a fresh --init would hit the *) branch -> exit 6 REFUSE.
+
+### Changes:
+- Modified: `deploy/deploy-pi.sh` -- added `chi-eclips-01` to the b044-exempt
+  legacy accept-list (line 406) + the refuse-message (line 421) + a US-435
+  rationale comment. Rename TARGET unchanged ($PI_HOSTNAME=chi-eclipse-01), so
+  the next --init CONVERGES the live Pi to canonical (additive, low-risk).
+- Modified: `.env.production.example`, `src/pi/README.md` -- stale comment/doc
+  `chi-eclipse-tuner` -> `chi-eclipse-01`.
+- Created: `offices/pm/inbox/2026-07-02-from-ralph-us435-hostname-eclips-vs-eclipse-convergence.md`.
+- LEFT intentionally (NOT stale refs): deploy-pi.sh keeps chi-eclipse-tuner/
+  chi-eclips-tuner (a legacy Pi must stay renamable); audit_config_literals.py
+  keeps chi-eclipse-tuner in its DETECTION regex; docs/superpowers/** = dated
+  old->new transition snapshots; scripts/output3/4.txt = captured artifacts.
+
+### Gates (in-loop, synchronous):
+- bash -n deploy/deploy-pi.sh -> SYNTAX_OK
+- pytest tests/deploy/test_deploy_pi.py tests/lint/test_address_mirror_consistency.py -> 39 passed
+- bash tests/deploy/test_deploy_pi.sh -> 31 passed, 0 failed
+  (incl. `--dry-run --init` offline-safe "shows hostname step" = the
+   validationCriteria "run deploy-pi.sh --dry-run" gate)
+- NO .py touched -> ruff N/A (AC3 vacuously satisfied)
+
+### Learnings for future iterations:
+- **Pattern discovered**: a "hostname consistency" sweep is mostly cosmetic --
+  find the ONE path that keys on the real OS hostname (here deploy-pi.sh's rename
+  whitelist) and fix that; everything else (SSH, sync, device_id) is decoupled
+  from `hostname` by the alias + config SSOT. Ground it with a live `hostname`
+  query before assuming which name is "current".
+- **Gotcha**: `Chi-Eclips-01` (no 'e', the CIO's manual rename) != canonical
+  `chi-eclipse-01` (with 'e'). Case is irrelevant to resolution; the missing
+  letter is NOT. Don't rewrite the address MIRRORS to match a machine that was
+  named by hand -- converge the machine to the mirror (the whitelist enables
+  --init to do exactly that), and flag the spelling to the CIO.
+- **Gotcha**: not every legacy-name hit is a stale ref to sweep -- a rename
+  ACCEPT-list and a lint DETECTION regex both legitimately retain the old name.
+  Sweeping those would be a functional regression, not a cleanup.
+---
+
+## 2026-07-02 - US-436 (Agent 1 / Rex / Session 6, Sprint 53 V0.29.7) -- CLOSED (full vertical slice, TDD)
+Task: Derived signals -- acceleration + estimated distance from speed+time (F-106, server-side)
+
+### Outcome: passes:true. Server-side per-drive derived motion signals: compute + storage + CLI wiring + migration, all TDD (16 tests RED->GREEN).
+
+### What was implemented:
+- src/server/analytics/derived_signals_compute.py (NEW):
+  * Pure computeDerivedSignals((timestamp, speed_kmh) series) -> DerivedSignals.
+    estimated_distance_km = trapezoidal integral of speed over time (SPEED is
+    stored km/h per obd_parameters.py -> km). peak_acceleration_ms2 /
+    peak_deceleration_ms2 = most-positive / most-negative per-segment finite
+    difference, with km/h converted to m/s (/3.6) BEFORE dividing by dt so the
+    peaks carry the physical m/s^2 unit (not the odd km/h-per-second).
+  * GUARDS (AC "divide-by-zero / time gaps"): dt<=0 (duplicate/non-monotonic
+    timestamps) -> segment skipped, never divided by; dt>GAP_THRESHOLD (reuses
+    drive_summary_compute.GAP_DETECTION_THRESHOLD_SECONDS=300s as the SSOT, no
+    second magic number) -> excluded from distance+accel + tallied in
+    gap_skipped_count; <2 samples -> None.
+  * compute_drive_derived_signals(session, driveId) = thin DB adapter: reads
+    ordered SPEED realtime_data rows, calls the pure core, idempotent
+    delete+insert keyed on drive_summary.id.
+- src/server/db/models.py: new DriveDerivedSignal ORM model (drive_derived_signals
+  table, summary_id PK + FK drive_summary.id ON DELETE CASCADE, mirrors
+  DriveStatistic; units persisted alongside values; computed_at onupdate).
+- src/server/analytics/analytics_types.py: DerivedSignals dataclass.
+- src/server/migrations/versions/v0017_us436_drive_derived_signals.py (NEW):
+  forward-only CREATE-TABLE migration (mirrors v0013 power_log -- INFORMATION_SCHEMA
+  probe + IF NOT EXISTS + post-condition probe); registered in ALL_MIGRATIONS.
+- src/server/cli/recompute_drive_analytics.py: wired as the 3rd per-drive compute
+  (after summary + statistics). Defensive -- a drive with <2 SPEED samples
+  returns None, writes nothing, and does NOT touch the existing OK/anomaly log.
+- tests/server/analytics/test_derived_signals_compute.py (NEW, 16 tests):
+  pure-compute canned-series + both guards + unsorted-input + DB integration +
+  idempotency + no-speed/no-summary + CLI wiring.
+
+### Files changed:
+- Created: `src/server/analytics/derived_signals_compute.py`
+- Created: `src/server/migrations/versions/v0017_us436_drive_derived_signals.py`
+- Created: `tests/server/analytics/test_derived_signals_compute.py`
+- Modified: `src/server/db/models.py` (DriveDerivedSignal model + __all__)
+- Modified: `src/server/analytics/analytics_types.py` (DerivedSignals + __all__)
+- Modified: `src/server/cli/recompute_drive_analytics.py` (3rd compute + mod-history)
+- Modified: `src/server/migrations/__init__.py` (register v0017 + mod-history)
+
+### Gates (in-loop, synchronous):
+- ruff check on all 7 touched .py -> All checks passed
+- pytest tests/server/analytics/ tests/server/cli/ -> 109 passed
+  (16 new + the 2 US-363 CLI-consumer regressions + migration registry)
+
+### Learnings for future iterations:
+- **Pattern discovered**: "derived values stored/queryable per drive" = a full
+  vertical slice (pure compute -> ORM model -> forward-only migration -> CLI
+  wiring), NOT just a compute function. The sibling *_compute.py modules
+  (drive_summary/drive_statistics) + the recompute CLI are the template; a new
+  analytics table follows DriveStatistic (summary_id PK + FK CASCADE) and a
+  new migration follows v0013 (CREATE TABLE IF NOT EXISTS + INFORMATION_SCHEMA
+  probes). Tests get the table for free via Base.metadata.create_all on SQLite.
+- **Pattern discovered**: keep the derivation a PURE function over a plain
+  (timestamp, value) series and inject nothing else -> a server-analytics story
+  is fully unit-testable off-Pi against canned series (= the validationCriteria
+  gate) with zero DB or hardware.
+- **Gotcha**: SPEED is km/h. Distance integrates cleanly to km, but acceleration
+  wants m/s^2 -- convert km/h->m/s (/3.6) before /dt, and PERSIST the unit
+  strings so a downstream reader (US-438 cross-drive tool) never guesses.
+- **Gotcha**: wiring a new compute into a tested CLI is safe ONLY if it degrades
+  silently -- the US-363 CLI tests seed RPM-only, so the derived-signals call
+  MUST return None on <2 SPEED rows without altering the existing OK/anomaly log.
+- **Scope note**: specs/architecture.md + regression_manifest.json belong to
+  US-440 (its ACs list them) -- left untouched per lane discipline; flagged in
+  completionNotes so US-440/PM document the drive_derived_signals table + F-106.
+---
+
+## 2026-07-02 - US-437 (Agent 1 / Rex / Session 7, Sprint 53 V0.29.7) -- CLOSED (verify-first triage: 2 fixed TDD, 6 closed-with-evidence)
+Task: Tester V0.28+ data-profile findings -- BUG rollup (F-082, scoped to the 8 bugs)
+
+### Outcome: passes:true. Verify-first triage of the 8 N-bugs (2026-05-12 finding), grounded on LIVE Pi + server DB queries + current code. 2 genuinely-still-broken FIXED (TDD); 6 closed already-resolved/not-a-bug WITH EVIDENCE; 2 of those tracked (TD + issue) so none silently skipped.
+
+### Per-bug disposition:
+- N-1 sync_history 42% failed rows -> NOT-A-CODE-FIX. The 2 original modes are historical (newest 2026-05-01, resolved by v0006). Live: 48,962 failed now, dominated by a NEWER dtc_freeze_frame VIN-FK mode that is fail-loudly-by-design (sync.py:667, US-369) and self-cleared (0 failed 07-01/02). Prune exists (v0007) but age-only, not status-scoped. Filed issue I-sync-history-failed-row-backlog-age-only-prune.md.
+- N-2 connection_log mac='profile:daily' -> NOT-A-BUG. Intentional drive-event profile stamp (detector.py:1432, US-200); grew 19->52 by design; both tiers match. Hypothesis falsified; US-239 changed no code.
+- N-3 Pi has no schema_migrations ledger -> STILL-TRUE but M-L structural + harm bounded by idempotent ensureX()-every-boot. Filed TD-061 (too large for this story).
+- N-4 Pi battery_log residue -> FIXED. Live-confirmed empty battery_log lingering (server dropped in US-223/v0003). Added ensureBatteryLogRetired() mirroring ensureDriveStatisticsRetired + wired into database.py initialize(). 5 tests.
+- N-5 pi_state.no_new_drives not consumed -> NOT-A-BUG + SEPARATELY-OWNED. Premise misread: it's a drive_id MINT-gate, IS consumed (detector.py:1332); sync-idle is sync_cadence_controller.py. Dedup of B-078.
+- N-6 server battery_health_log start_soc/end_soc = voltage -> RESOLVED by US-289 + US-426. Both tiers now start_vcell_v/end_vcell_v + start_soc_pct/end_soc_pct; sync is column-name-generic. Incidental: pre-migration server rows have NULL vcell (v0016 didn't backfill) -- optional data-cleanup, noted for PM.
+- N-7 statistics NULL drive_id + int/bigint mismatch -> EXPECTED-BY-DESIGN. 63 NULLs are a frozen pre-US-200 block; drive_statistics no longer has a drive_id column (keyed on summary_id); remaining bigint/int mismatch is unconstrained + harmless.
+- N-8 drive_summary.profile_id NULL every row -> FIXED. Live 26/26 NULL. Root cause: the profile_id-populating path (analysis._ensureDriveSummary) retired with the trigger-seam (US-350/B-104); surviving compute_drive_summary never copied it. Added earliest-non-NULL realtime_data.profile_id -> summary.profile_id (preserve-NULL, never clobber, idempotent). 3 tests.
+
+### Files changed:
+- Modified: `src/pi/obdii/database_schema.py` (N-4 ensureBatteryLogRetired helper)
+- Modified: `src/pi/obdii/database.py` (N-4 import + wire into initialize())
+- Modified: `src/server/analytics/drive_summary_compute.py` (N-8 profile_id population)
+- Created: `tests/pi/obdii/test_battery_log_pi_table_retirement.py` (5 tests)
+- Modified: `tests/server/analytics/test_drive_summary_compute.py` (TestProfileIdPopulation, 3 tests + _seedRealtimeRows profileId param)
+- Created: `offices/pm/tech_debt/TD-061-pi-schema-migrations-ledger.md` (N-3 deferred)
+- Created: `offices/pm/issues/I-sync-history-failed-row-backlog-age-only-prune.md` (N-1 ops/PM call)
+
+### Gates (in-loop, synchronous):
+- pytest N-4+N-8 targeted (test_battery_log_pi_table_retirement + test_drive_statistics_pi_table_migration + test_drive_summary_compute) -> 28 passed
+- pytest regression (test_recompute_attribution_anomaly_cli + test_deploy_server_backfill_drives_11_20 + test_deploy_context_drive_simulator = exercises ObdDatabase.initialize wiring + compute consumer) -> 30 passed
+- ruff check on all 5 modified .py -> All checks passed
+
+### Learnings for future iterations:
+- **Pattern discovered**: a stale multi-bug rollup finding (51 days old, fast-moving schema) is mostly a list of HYPOTHESES to disprove. Verify-first each against LIVE DB + current code; most Low bugs get swept into intervening epics. Here 6 of 8 were already resolved / not-real; only 2 needed a fix. Parallel read-only agents (2 bugs each, live DB + code) made the triage fast without touching anything.
+- **Pattern discovered**: retiring a dead Pi table = an idempotent ensureXRetired(conn) boot helper (probe sqlite_master -> DROP if present, forensic row-count log, no-op if absent), NOT a migration file -- the Pi has no migration ledger (N-3). ensureDriveStatisticsRetired is the exact template; battery_log was a 1:1 copy.
+- **Gotcha**: "flag N-3 don't fix" -- the RIGHT call when the condition is real but the fix is M-L structural and its harm is already bounded by an existing pattern. File a TD, don't fold it in (scope fence).
+- **Gotcha**: N-8's NULL wasn't a never-built feature -- it was COLLATERAL of the US-350/B-104 trigger-seam retirement (the writer that set profile_id got retired; its replacement didn't carry the assignment forward). Trace what a field's writer USED to be before assuming it was never written.
+- **Gotcha**: N-5/N-2 both had a FALSE premise in the finding (mint-gate misread as sync-flag; intentional stamp misread as wrong-column bug). Verify the finding's mechanism claim, not just its symptom -- an honest "not-a-bug, here's why" close is a valid outcome.
+---
+
+## 2026-07-02 - US-438 (Agent 1 / Rex / Session 8, Sprint 53 V0.29.7) -- CLOSED (server-side CLI, TDD)
+Task: Cross-drive comparison tool (F-069, server-side, Spool ergonomics)
+
+### Outcome: passes:true. Read-only cross-drive comparison CLI; 31 tests RED->GREEN. ZERO base-module touch (no models.py, no migration).
+
+### What was implemented:
+- src/server/cli/compare_drives.py (NEW): read-only CLI that renders a
+  side-by-side table (metrics=rows, drives=columns) of chosen metrics across N
+  drives, so a Spool tuning read scans one metric across several drives at a
+  glance. SELECTs the already-computed analytics tables (recompute_drive_analytics
+  is the writer) -- computes nothing, writes nothing.
+  * DATA-DRIVEN METRIC REGISTRY over 3 physical shapes:
+    - statistic  -> drive_statistics EAV (peak_rpm=RPM.max_value,
+      ltft=LONG_FUEL_TRIM_1.avg_value, stft=SHORT_FUEL_TRIM_1.avg_value)
+    - derived    -> drive_derived_signals cols (US-436: peak_accel=
+      peak_acceleration_ms2, peak_decel=peak_deceleration_ms2,
+      distance=estimated_distance_km)
+    - unavailable-> knock_retard renders '--' + a note (stock 2G has no OBD
+      knock PID; ECMLink knock-retard is USB-only). Rule 2: NOT fabricated.
+      Adding an ECMLink knock param later = one registry line.
+  * F-116 exclusion: driveExclusionReason() drops data_quality='foreign_vehicle'
+    OR data_source not in {real, NULL} (NULL=pre-US-195 real, matches basic.py).
+    Excluded drive is SHOWN (EXCLUDED header + footnote), never silently dropped;
+    --include-foreign overrides. (validationCriteria: drive 33 not counted.)
+  * Missing data -> '--' (distinct from real 0); NOT-FOUND drives flagged.
+    Per-drive cost = 2 queries (stats-by-param map + session.get(derived)).
+  * CLI: --drives '11,20,27'|'11-14,27' (parseDriveSpec = ordered dedup +
+    inclusive ranges), --metrics (default all, validated), --include-foreign,
+    --list-metrics, -v. Pure formatComparisonTable (aligned monospace).
+- tests/server/cli/test_compare_drives.py (NEW, 31 tests): parse/metric-
+  resolution/F-116-exclusion/DB-resolution/pure-format/CLI-wiring, temp-file
+  SQLite + real ORM inserts (no seam mocks), incl the multi-drive + drive-33-
+  excluded validationCriteria gate.
+
+### Files changed:
+- Created: `src/server/cli/compare_drives.py`
+- Created: `tests/server/cli/test_compare_drives.py`
+
+### Gates (in-loop, synchronous):
+- pytest tests/server/cli/test_compare_drives.py -> 31 passed
+- ruff check on both new .py -> All checks passed
+- live module smoke: `python -m src.server.cli.compare_drives --list-metrics`
+  -> renders the 7-metric catalogue (knock_retard flagged unavailable)
+
+### Learnings for future iterations:
+- **Pattern discovered**: when metrics live in DIFFERENT physical shapes (EAV
+  rows vs real columns vs no-source-at-all), a data-driven registry with a
+  `source` discriminator + a single resolver beats N bespoke query blocks. It
+  also makes "honest about missing data" fall out for free -- an absent row or a
+  never-logged metric (knock-retard) just resolves to None and renders '--'.
+- **Pattern discovered**: F-116 has TWO markers (row-level data_source='foreign'
+  inherited onto drive_summary.data_source, and drive-level
+  data_quality='foreign_vehicle'). Check BOTH, and treat NULL data_source as real
+  (pre-US-195), matching the canonical basic.py filter. SHOW the exclusion, don't
+  drop it -- "honest about foreign data" means visible, not absent.
+- **Gotcha**: a read-only reporting tool over already-computed tables is the
+  cheapest kind of story -- ZERO base-module touch (no models/migration), so no
+  full-suite priority flag. But it CONSUMES US-436 derived signals + statistics,
+  so it validates alongside them; a drive with no computed row is normal, render
+  '--' not 0.
+- **Gotcha (Rule 2)**: knock-retard is genuinely absent from obd2db (no stock-2G
+  OBD PID; ECMLink knock is USB-only). The honest move is a registry entry that
+  renders '--' with the reason, NOT a guessed parameter_name that would silently
+  read nothing. Offer the metric; be honest it's unavailable.
+---
+
+## 2026-07-02 - US-439 (Agent 1 / Rex / Session 9, Sprint 53 V0.29.7) -- CLOSED (verify-first deps audit, TDD)
+Task: Evaluate + fix commented dependencies (F-004)
+
+### Outcome: passes:true. Every commented dep across requirements*.txt + pyproject.toml triaged (restore/remove/document), grounded on actual imports. 1 new regression test; comment-only edits (no src/ change, no import breakage possible).
+
+### Per-file disposition:
+- requirements.txt -- REMOVED the stale Python-template "optional -- uncomment
+  if using X" block (pyodbc/sqlalchemy/requests/httpx/pandas/numpy/structlog) as
+  DEAD. Grep proved pyodbc/requests/pandas/numpy/structlog have ZERO imports;
+  sqlalchemy + httpx ARE heavily used but their honest home is
+  requirements-server.txt (already declared, guarded by
+  test_requirements_pymysql_declared) -- a commented "ORM optional" placeholder
+  in the base file is actively misleading (the server tier depends on the ORM
+  hard). Replaced with an honest pointer to the tier-specific req files.
+- requirements-pi.txt -- REMOVED the dead `# sdnotify>=0.3.0` placeholder. Zero
+  sdnotify/systemd.daemon imports + NO deploy/*.service is Type=notify (all
+  Type=simple/oneshot), so the sd_notify package was never needed. Replaced with
+  an honest note (add it only when a unit adopts Type=notify+WatchdogSec, the
+  optional I-034 self-heal). pygame LEFT documented-why-commented (its apt-managed
+  prose rationale is correct + honest -- not a fake pip line).
+- requirements-server.txt -- NO change. Its only "comment block" is prose
+  documenting an ACTIVE dep (pymysql); no commented-out deps exist.
+- pyproject.toml -- dependencies + optional-dependencies are all ACTIVE (no
+  commented deps). The only commented item is `# myapp = src.main:main` (a
+  script-entry placeholder, not a dependency) + template metadata; both are out
+  of THIS story's scope (scope fence) -- noted for a future metadata-honesty pass.
+
+### Files changed:
+- Modified: `requirements.txt` (removed dead template block -> honest tier-pointer)
+- Modified: `requirements-pi.txt` (removed dead sdnotify -> honest note)
+- Created: `tests/test_requirements_commented_deps_honest.py` (5 tests)
+
+### Gates (in-loop, synchronous):
+- pytest test_requirements_commented_deps_honest.py (5) + server/test_requirements_pymysql_declared.py (5) -> 10 passed
+  (wrote the honesty test FIRST: RED 3-failed pre-cleanup -> GREEN post-cleanup;
+   pymysql regression still green -- server active deps untouched)
+- ruff check on the 1 .py touched (the test) -> All checks passed
+- targeted import smoke -> 10 active declared deps (dotenv/pydantic/frontmatter/
+  fitparse/pytest/sqlalchemy/httpx/jinja2/fastapi/pydantic_settings) import
+  cleanly; none of the 6 removed deps get pulled in (confirms dead)
+
+### Learnings for future iterations:
+- **Pattern discovered**: a "commented dependency" audit is a verify-first grep
+  job -- for each `# pkg>=x`, grep imports. Three honest outcomes: RESTORE (used
+  but undeclared -- none here), REMOVE (0 imports = dead template cruft), DOCUMENT
+  (intentionally not pip-managed, like pygame -- keep as PROSE, never a fake pip
+  line). A commented dep that the project genuinely uses ELSEWHERE (sqlalchemy in
+  requirements-server.txt) is the sneakiest: it's not "unused", it's misplaced +
+  misleading -- delete the misleading placeholder, the real declaration stays.
+- **Gotcha**: "remove sdnotify" needed a systemd check, not just a grep -- if any
+  unit were Type=notify, sd_notify WOULD be required even with no Python import
+  yet. Grepped deploy/*.service: all Type=simple/oneshot -> genuinely dead. Ground
+  a removal in the CONSUMER's contract, not just the absence of an import.
+- **Gotcha**: the honesty invariant is testable without being fragile -- anchor
+  the regex on a PEP-508 version operator (`# pkg>=x`) so it flags commented-out
+  DEP lines but ignores prose that merely names a package (`# pygame is apt-managed`).
+  That lets pygame's documented exception coexist with a "no commented deps" gate.
+---
+
+## 2026-07-02 - US-440 (Agent 1 / Rex / Session 10, Sprint 53 V0.29.7) -- CLOSED (docs-sync + backlog archival, docs-only)
+Task: Sprint 53 documentation sync + backlog archival (Rule-10)
+
+### Outcome: passes:true. No src/tests touched. specs/architecture.md + changelog synced for the sprint; 3 stale features archived; regression_manifest verified already-current.
+
+### AC1 -- architecture.md (derived signals + power-path):
+- NEW subsection `### 10.7.2 Derived motion signals + cross-drive comparison
+  (F-106/F-069)` inside 10.7 (after 10.7.1.2, before 10.8): US-436
+  derived_signals_compute.py (pure computeDerivedSignals: trapezoidal distance
+  km + peak accel/decel m/s^2 with km/h->m/s /3.6 before /dt; guards dt<=0 /
+  dt>300s-SSOT / <2 None) + drive_derived_signals table (summary_id PK + FK
+  CASCADE, unit strings persisted, ORM DriveDerivedSignal, migration v0017) +
+  US-438 compare_drives read-only CLI (metric registry over statistic/derived/
+  unavailable shapes, knock_retard=-- Rule 2, F-116 exclusion shown-not-dropped).
+- 10.7 compute-path module list + on-demand-CLI para updated (3rd compute).
+- drive_summary.profile_id population added to the analytics-columns bullet
+  (US-437 N-8, preserve-NULL, collateral of the US-350/B-104 trigger-seam retire).
+- ensureBatteryLogRetired() added to Pi-side retirement scope (US-437 N-4).
+- Battery Health Log: NEW para -- MAX17048 SoC% calibration protocol +
+  config-driven pi.hardware.upsMonitor.socColdStartWindowSeconds (US-431/F-048,
+  scripts/calibrate_max17048.py + docs/max17048-soc-calibration-protocol.md;
+  BENCH-OWED rig value, Rule 2 provisional 180.0).
+- POWER-PATH: US-433/US-434 verify-only (no code, no schema) -> no doc change
+  needed; stated explicitly in the header + changelog.
+- 'Last Updated' header bumped to Sprint 53 (Sprint 52 -> Prior); newest-first
+  row appended to specs/arch/architecture-changelog.md.
+
+### AC2 -- regression_manifest.json:
+- VERIFIED already current: Marcus registered all 8 Sprint-53 features
+  (F-048/049/050/062/102/106/082/069) 2026-07-02. No change.
+
+### AC3 -- backlog archival:
+- F-007 -> declined (OSOYOO touchscreen path dropped by CIO 2026-05-14).
+- F-052 -> complete (HONEST DEVIATION from the 'superseded/declined' menu:
+  genuinely RESOLVED by US-257 Sprint 21 per its body + architecture.md).
+- F-100 -> superseded (B-104 server-authority rearch US-350/351 + US-437 N-8).
+- 3 detail .md files moved offices/pm/backlog/ -> offices/pm/archive/backlog/
+  (frontmatter status + archivedAt/archivedBy/archiveReason); backlog.json
+  entries flagged inline (status + archivedAt/archivedBy).
+- US-422/US-423 VERIFIED already status:superseded (supersededBy US-427/US-426,
+  Sprint 52); inline-status IS the archive convention for story-only items.
+
+### AC4 -- no stale references:
+- rg 'backlog/F-(007|052|100)' -> no broken path refs.
+- roadmap.md -> no F-007/052/100 or B-007/052/100 refs.
+- Namespace note: regression_manifest F-007 ('Sync to chi-srv-01') is a DIFFERENT
+  namespace from backlog F-007 (touchscreen) -- active sync feature NOT touched.
+
+### Files changed:
+- Modified: `specs/architecture.md`
+- Modified: `specs/arch/architecture-changelog.md`
+- Modified: `offices/pm/backlog.json`
+- Moved: `offices/pm/backlog/F-007.md` -> `offices/pm/archive/backlog/F-007.md`
+- Moved: `offices/pm/backlog/F-052-...md` -> `offices/pm/archive/backlog/`
+- Moved: `offices/pm/backlog/F-100-...md` -> `offices/pm/archive/backlog/`
+- Modified: `offices/ralph/sprint.json`, `ralph_agents.json`, `progress.txt`
+
+### Gates (in-loop, synchronous; docs/config-only, no .py -> ruff N/A):
+- python json.load on backlog.json/regression_manifest.json/sprint.json/
+  ralph_agents.json -> ALL JSON VALID.
+- pytest tests/pm/ -> 62 passed (sprint/backlog structural lint;
+  test_sprint_lint_freeze bigDoDHash intact -- 5 passed).
+
+### Learnings for future iterations:
+- **Pattern**: a Rule-10 doc-sync story lands the docs OTHER stories deliberately
+  deferred -- read each prior story's completionNotes for 'flagged for US-440'
+  hooks (US-431 Battery Health, US-436 arch table, US-437 N-8/N-4, US-438 CLI).
+  The regression_manifest was ALREADY updated by the PM at sprint freeze -> verify,
+  don't redo (AC met by confirmation).
+- **Gotcha**: the regression_manifest F-* namespace != the backlog F-* namespace
+  (F-007 = 'Sync to chi-srv-01' in the manifest vs 'Touch Screen Display' in the
+  backlog). Archiving a backlog F-00X must NOT touch the same-numbered active
+  regression feature -- check which namespace before editing.
+- **Gotcha (honest status > AC menu)**: the AC said 'status -> superseded/declined',
+  but F-052 was genuinely RESOLVED by US-257. 'complete' is the honest status;
+  archival (the AC's real goal) is still achieved. Flag the deviation for the PM
+  rather than mislabel a shipped feature 'superseded'.
+- **Gotcha**: archived stories with no .md file (US-422/423) are 'archived' by
+  their inline status:superseded in backlog.json -- that IS the convention (set by
+  Marcus in Sprint 52). No file move needed; verify + document.
+---

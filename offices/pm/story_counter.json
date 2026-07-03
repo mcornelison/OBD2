@@ -236,6 +236,12 @@
       "range": "US-421 + US-426 to US-430",
       "date": "2026-07-02",
       "outcome": "6/6 passed - BL-014/015 carry-forward + Pi display hardening. US-421 power-mode PowerModeProvider config-key SSOT (PM-landed pre-fix); US-426 _soc->_soc_pct both-tier migration; US-427 bench-CLI register SoC% + cold-start guard + TD-058 cleanup; US-428 Bug-2 V-3 chromium check + kiosk deploy-smoke; US-429 carousel honest-availability (typed-NA SSOT, Bug-3b); US-430 doc-sync. prompt.md in-loop-testing fix (TD-059) VALIDATED - Ralph flowed US-426..430 with zero stalls. Merged to dev V0.29.6."
+    },
+    {
+      "feature": "ralph/sprint53-V0.29.7",
+      "range": "US-431 to US-440",
+      "date": "2026-07-03",
+      "outcome": "9/10 passed - analytics foundation + ops/power hygiene. US-431 SOC%-cal, US-435 hostname, US-436 derived signals (server), US-437 tester 8-bug rollup (N-4/N-8 fixed), US-438 cross-drive tool, US-439/440 deps+doc+archival. US-433 (power_log) + US-434 (drain_event) verify-closed with evidence (no code, Atlas-predicted; US-434 flagged 4 historical orphan rows as issue). US-432 idle-poll BLOCKED (BL-016: cold-boot dark-ECU RPM supported_commands mask; needs Atlas A-9 ruling + live-Pi diagnostic) -> Sprint 54. TD-059 prompt fix held (3rd clean run). Merged to dev V0.29.7."
     }
   ]
 }
