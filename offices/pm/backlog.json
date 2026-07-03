@@ -1194,6 +1194,14 @@
       "status": "awaiting-validation",
       "createdAt": "2026-06-30",
       "currentVersion": "V0.29.5"
+    },
+    {
+      "id": "F-117",
+      "parent": "E-OPS",
+      "title": "OBD capture broken -- eclipse-obd connection-thread race (0 rows captured)",
+      "description": "The Pi captures 0 OBD rows. Atlas live-debug RCA: python-obd connection is not thread-safe; orphaned timeout daemons (TD-036/US-244) + US-301 heartbeat touch the shared connection concurrently with the logger -> serial I/O interleaves -> empty read every connect. Raw python-obd works standalone (hardware/pairing all good). Fix = serialize connection access + fence orphaned daemons, preserve TD-036 no-boot-hang. f389d5b crash-loop hotfix deployed V0.29.7 (stops crash, not the capture fix). Sprint 54 P0.",
+      "status": "pending",
+      "createdAt": "2026-07-03"
     }
   ],
   "stories": [
