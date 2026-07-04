@@ -42,7 +42,6 @@ from src.common.sync.snapshot_registry import isSnapshotSyncTable
 from src.pi.data import sync_log
 from src.pi.obdii.pi_state import ensurePiStateTable, setNoNewDrives
 
-
 # --------------------------------------------------------------------------- #
 # Fixtures
 # --------------------------------------------------------------------------- #
