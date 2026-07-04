@@ -53,6 +53,15 @@
 #                               Pi-only.  (startup_log is NOT added here --
 #                               its TEXT boot_id PK does not fit the delta
 #                               cursor; see BL-013.)
+# 2026-07-04    | Rex (US-453) | D-7/F-082: register pi_state (PK 'id') in
+#                               PK_COLUMN AND SYNC_UPDATE_TABLES_PK so the Pi
+#                               operational-state singleton (no_new_drives gate)
+#                               syncs Pi->server as raw + stays current across
+#                               flips (mutable singleton -> id cursor pushes
+#                               once, modified_at cursor propagates UPDATEs).
+#                               Irreproducible forensic state; server does not
+#                               recompute it.  (power_log already delta-synced
+#                               US-412; startup_log snapshot-synced US-416/417.)
 # 2026-07-01    | Rex (US-416) | F-101/F-115: the GENERAL natural-key snapshot
 #                               path for append-only TEXT-PK tables (the shape
 #                               BL-013 blocked on).  Adds last_snapshot_cursor
@@ -195,6 +204,18 @@ PK_COLUMN: dict[str, str] = {
     # history is queryable server-side.  Volume is naturally bounded by real
     # power events (raw-every-event; no sampling needed).
     'power_log':            'id',
+    # US-453 (D-7 / F-082): pi_state -- the Pi operational-state singleton
+    # (id pinned to 1; carries the US-225 no_new_drives gate flag).  It is
+    # irreproducible Pi-only forensic state (the server cannot derive it), so
+    # it syncs as raw.  Its PK is integer 'id', so it rides the delta path --
+    # BUT unlike the append-only capture tables above it is a MUTABLE singleton
+    # (no_new_drives flips at the US-216 WARNING stage and clears on AC-restore).
+    # A plain id-cursor would push id=1 once and then go permanently stale
+    # (1 > 1 is false forever), so pi_state ALSO opts into the modified_at
+    # update-propagation cursor below (SYNC_UPDATE_TABLES_PK) -- the same
+    # degenerate-single-row case of the drive_summary UPDATE-replay pattern --
+    # so the server mirror stays current across flips.
+    'pi_state':             'id',
 }
 
 # Append-only (event-stream) tables eligible for delta-by-PK sync.
@@ -279,6 +300,14 @@ SYNC_UPDATE_TABLES_PK: dict[str, str] = {
     'battery_health_log': 'drain_event_id',
     'drive_summary':      'drive_id',
     'dtc_log':            'id',
+    # US-453 (D-7 / F-082): pi_state is a MUTABLE singleton -- the
+    # no_new_drives flag is set in place (setNoNewDrives -> UPDATE) at the
+    # US-216 WARNING stage and cleared on AC-restore.  Opting it into the
+    # modified_at cursor makes the AFTER UPDATE trigger stamp _sync_modified_at
+    # so pushDelta re-sends the flipped row (the id cursor sticks at 1 after
+    # the first push).  Without this the server mirror would go stale after the
+    # first sync.  id is the singleton PK (CHECK id=1).
+    'pi_state':           'id',
 }
 
 # Bookkeeping column added to every opt-in table.  TEXT (ISO-8601 with

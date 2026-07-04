@@ -62,6 +62,9 @@
 #               |              | canonical drives identity table + subsume
 #               |              | drive_summary.id as drive_id; F-104 spine).
 #               |              | Forward-only.
+# 2026-07-04    | Rex (US-453) | Sprint 55 V0.29.9 -- registered v0019 (create
+#               |              | pi_state table; D-7/F-082 Pi operational-state
+#               |              | singleton mirrored as raw forensic).  Forward-only.
 # ================================================================================
 ################################################################################
 
@@ -145,6 +148,9 @@ from src.server.migrations.versions.v0017_us436_drive_derived_signals import (
 from src.server.migrations.versions.v0018_us448_canonical_drives import (
     MIGRATION as _V0018,
 )
+from src.server.migrations.versions.v0019_us453_pi_state import (
+    MIGRATION as _V0019,
+)
 
 # ================================================================================
 # Registry -- append new migrations to the end, in ascending version order
@@ -169,6 +175,7 @@ ALL_MIGRATIONS: tuple[Migration, ...] = (
     _V0016,
     _V0017,
     _V0018,
+    _V0019,
 )
 
 
