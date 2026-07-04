@@ -80,3 +80,20 @@ Task: UpsMonitor slow-drain detection + flap-debounce (F-051)
 - **Gotcha**: a flap-debounce is only testable deterministically if the detector takes caller-supplied timestamps (no wall clock) -- inject the clock/timestamp so the debounce interval is exercised by an explicit trace, not real sleeps.
 - **Gotcha**: mypy still NOT installed in this dev env (same as US-441/442) -- flagged for PM integration gate; ruff clean on all 4 files.
 ---
+
+## 2026-07-03 - US-445 (Rex / Sprint 54 Session 5)
+Task: Automated battery test on boot (F-054)
+
+### What was implemented:
+- NEW src/pi/splash/boot_battery_test.py: a boot-time battery test (scoped F-054 slice = register-read + health-assessment + log-a-result; cadence/discharge/trend stories stay in the F-054 backlog). assessBootBatteryHealth(vcellV) is a PURE, grounded verdict: OK at/above the 3.70V discharge knee; WEAK below it (reason 'vcell-below-healthy-floor', sharpened to 'vcell-below-dropout-knee' below the 3.30V buck knee = Drain-7 empirical); UNKNOWN when the read is None OR outside the 2.5-4.35V physical LiPo band (honest-instrument: the classic ~20V un-byte-swapped MAX17048 read -> UNKNOWN, never a confident wrong health). Verdict is VCELL-ONLY (a direct register read, trustworthy at power-up); the SoC% register needs a ~3-min ModelGauge warmup so it is carried as CONTEXT only (socPct + socCalibrated caveat), never the health basis.
+- runBootBatteryTest(readVcell, readSoc, statesDir, ...) is best-effort: a reader that raises resolves to UNKNOWN (a missing/broken fuel gauge must never fail boot) and a state-write failure is logged-never-raised. Writes the 'boot-battery-test' state slot via the reused F-103 ensureStatesDir/writeStateAtomic primitives (no dup). main() CLI mirrors boot_state_emitter.main -- builds real UpsMonitor readers via a lazy import (keeps the pure assessment layer hardware-free + importable on any host), always returns 0 so a boot oneshot unit can invoke it.
+
+### Files changed:
+- Created: `src/pi/splash/boot_battery_test.py` (grounded VCELL assessment + best-effort state emit + CLI)
+- Created: `tests/pi/splash/test_boot_battery_test.py` (13 tests: band verdicts + both implausible directions + boundary, payload shape, run writes-file/provisions-dir, reader-raises->UNKNOWN-still-writes, never-raises-on-write-failure, no-soc path)
+
+### Learnings for future iterations:
+- **Pattern discovered**: the 'battery_health_log / state' fork in a boot-snapshot AC resolves to STATE, not the log -- battery_health_log is drain-EVENT-shaped (start/end/runtime/load_class) and feeds drain baselines; a boot snapshot written there pollutes analytics AND re-opens the US-442 orphan-row class. When a story offers "log OR state", check the target table's SHAPE + who consumes it before picking; the honest-instrument emitter idiom (pure builder + atomic tmpfs state file, best-effort never-raise) is the established home for boot-time signals (boot_state_emitter, battery_health_emitter).
+- **Gotcha**: honest-instrument for a fuel gauge = use the signal trustworthy AT the measurement moment. VCELL is a direct register read (good instantly); SoC% needs a ModelGauge warmup (~3 min) so it is NOT a valid boot verdict basis -- drive the verdict off VCELL and demote SoC to context with a calibration caveat. A physically-implausible read (outside 2.5-4.35V) is a SENSOR fault, not a health claim -> UNKNOWN.
+- **Gotcha**: mypy still NOT installed in this dev env (same as US-441/442/444) -- flagged for PM integration gate; ruff clean on both new files.
+---
