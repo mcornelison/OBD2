@@ -768,7 +768,7 @@
       "parent": "E-004",
       "title": "drive_statistics Pi-side writer + sync (Spool's Approach 2 -- V0.28+ feature)",
       "description": "drive_statistics Pi-side writer + sync (Spool's Approach 2 -- V0.28+ feature)",
-      "status": "pending",
+      "status": "active",
       "renamedFrom": "B-075",
       "createdAt": "2026-05-27",
       "updatedAt": "2026-05-27"
@@ -1073,7 +1073,7 @@
       "parent": "E-002",
       "title": "Server-Side Analytics Authority -- Pi as Emitter, Server as Analyzer (Architecture Epic)",
       "description": "Server-Side Analytics Authority -- Pi as Emitter, Server as Analyzer (Architecture Epic)",
-      "status": "pending",
+      "status": "active",
       "renamedFrom": "B-104",
       "createdAt": "2026-05-27",
       "updatedAt": "2026-05-27"
@@ -3576,6 +3576,223 @@
         {
           "action": "review changed files + update docs",
           "outcome": "architecture.md threading-model + regression_manifest current; no stale refs"
+        }
+      ]
+    },
+    {
+      "id": "US-448",
+      "parent": "F-104",
+      "type": "normal",
+      "size": "L",
+      "title": "Canonical drives table + server drive_id SSOT -- SUBSUME drive_summary.id, natural-key mint (D-2 schema half, MIGRATION-FIRST)",
+      "goal": "As the system, I want ONE canonical server drive-identity (subsuming drive_summary.id) so all analytics reference one authoritative drive_id instead of Pi-minted or scattered ids.",
+      "definitionOfDone": [
+        "[ATLAS load-bearing] drives.drive_id SUBSUMES the existing de-facto identity drive_summary.id (drive_statistics_compute.py already FKs to it, :41/144-186) -- migrate existing drive_summary.id values IN as drive_id + re-point its FKs; do NOT mint a 5th orthogonal id (worsens D-8 sprawl)",
+        "new server table obd2db.drives (forward-only migration): drive_id INTEGER PK AUTOINCREMENT, source_device VARCHAR, source_drive_id INTEGER NULL (Pi advisory), start_time, end_time NULL, data_source, data_quality -- confirm exact columns vs the F-104 ADR at story time",
+        "[ATLAS minting rule] UNIQUE(source_device, source_drive_id) constraint + mint = UPSERT-by-natural-key (idempotent recompute re-uses the existing id, NEVER renumbers). Straight autoincrement is forbidden (breaks US-449 idempotency + orphans FKs)",
+        "[ATLAS tripwire -- do NOT defeat the backstop] detect_overlapping_drives (overlap.py:87-93) MUST keep DETECTING overlap on the RAW realtime_data.drive_id (the Pi-dual-mint signal); 're-point' = map its anomaly OUTPUT/flag to the canonical drives identity. Do NOT regroup by server drive_id (already deduped -> blinds the backstop). Re-point the OUTPUT BEFORE any connection_log rename",
+        "fixture regression: a raw Pi dual-mint pair still trips data_quality='attribution_anomaly' against the new schema",
+        "deployed AND verified via INFORMATION_SCHEMA (drives columns + UNIQUE constraint present); tripwire fixture passes",
+        "[ATLAS Rule-10] does NOT close until US-457 architecture.md server-authority section lands in-sprint",
+        "ruff clean in-loop; mypy (strict) at PM-integration"
+      ],
+      "validationCriteria": [
+        {
+          "action": "run the migration + recompute the same drive twice",
+          "outcome": "drive_id is stable (natural-key upsert re-uses the id, no renumber); drive_summary FKs resolve to the subsumed id"
+        },
+        {
+          "action": "run the tripwire fixture (raw Pi dual-mint pair)",
+          "outcome": "attribution_anomaly still trips on the raw realtime_data.drive_id; the anomaly output maps to the canonical drives identity"
+        }
+      ],
+      "conditionalOutcomes": [],
+      "tasks": []
+    },
+    {
+      "id": "US-449",
+      "parent": "F-104",
+      "type": "normal",
+      "size": "M",
+      "title": "Formalize the existing server compute-harness as the sole authority + manifest + prove idempotency (F-104) -- deps US-448",
+      "goal": "As the system, I want the existing server harness formalized as the single authoritative idempotent writer of persisted analytics, so authority is explicit.",
+      "definitionOfDone": [
+        "[ATLAS: it EXISTS -- do NOT build] the harness = drive_summary_compute.py (US-350) + drive_statistics_compute.py (US-351) + derived_signals_compute.py (US-436) + server-analytics-batch.timer. FORMALIZE these as the authority: an owned-table registry (manifest of which tables the harness solely writes), prove idempotency, re-key to the canonical drives.drive_id (US-448)",
+        "the harness is the SOLE writer of its owned tables + reads ONLY synced raw (realtime_data/connection_log); re-running on the same raw produces byte-identical rows (assert by a re-run-and-diff test = 0 diffs)",
+        "no Pi-transmitted derived state is read; the owned-table manifest is documented",
+        "deployed AND verified: harness re-run on an existing drive = 0 row diffs",
+        "[ATLAS Rule-10] does NOT close until US-457 architecture.md section lands in-sprint",
+        "ruff clean in-loop; mypy (strict) at PM-integration"
+      ],
+      "validationCriteria": [
+        {
+          "action": "re-run the harness on an existing drive",
+          "outcome": "0 row diffs (idempotent); every owned table keyed on the canonical drives.drive_id"
+        },
+        {
+          "action": "inspect the owned-table manifest",
+          "outcome": "each persisted-analytics table has exactly one writer (the harness); no dual-write path exists"
+        }
+      ]
+    },
+    {
+      "id": "US-450",
+      "parent": "F-075",
+      "type": "normal",
+      "size": "M",
+      "title": "drive_statistics -- re-key to canonical drive_id + resolve the empty-table gap (US-446; server-authoritative) -- deps US-449",
+      "goal": "As Spool, I want drive_statistics authoritative + actually populated on chi-srv-01, keyed on the canonical drive_id.",
+      "definitionOfDone": [
+        "[ATLAS: compute EXISTS + Pi-side already retired (detector.py:940 call-site GONE)] re-key compute_drive_statistics from drive_summary.id -> the canonical drives.drive_id (US-448); persisted stat stays SERVER-only (Pi-side compute only if NOT synced -- live dashboard, thrown away)",
+        "[ATLAS empty-table gap] VERIFY the batch actually runs + populates drive_statistics on chi-srv-01 -- Atlas saw 0 rows, Spool saw 434; reconcile the discrepancy (likely a deploy/timer gap). If a deploy gap, fix it or flag QA with evidence; do NOT rebuild the compute",
+        "excludes data_source!='real' (F-116 foreign-guard, drive 33 out); idempotent (re-run 0 diffs); zero/gap guarded",
+        "deployed AND verified: drive_statistics rows present + keyed on canonical drive_id on chi-srv-01",
+        "ruff clean in-loop; mypy (strict) at PM-integration"
+      ],
+      "validationCriteria": [
+        {
+          "action": "query drive_statistics on chi-srv-01 after the batch",
+          "outcome": "rows present, keyed on canonical drives.drive_id, foreign drive 33 excluded; the Atlas-vs-Spool row-count discrepancy is reconciled with evidence"
+        }
+      ]
+    },
+    {
+      "id": "US-451",
+      "parent": "F-104",
+      "type": "normal",
+      "size": "L",
+      "title": "Collapse drive-identity id-families -> one canonical drive_id; Pi ids -> advisory source_*; back-map legacy (D-8) -- deps US-448",
+      "goal": "As the system, I want a single drive identity everywhere so drive_summary/drive_annotations reference the canonical drive_id, not scattered id-families.",
+      "definitionOfDone": [
+        "drive_summary + drive_annotations (+ any table with a drive id) reference the canonical drives.drive_id as FK; the Pi id retained as advisory source_drive_id (nullable) -- ONE identity, no id-families (forward-only migration)",
+        "[ATLAS back-map ruling] existing rows re-keyed via (source_device, source_drive_id) match; UNMAPPABLE legacy (drives 1-12, foreign drive 33, NULL drive_id) -> flag data_quality='unmappable_legacy', ONE row per distinct legacy key, NEVER drop/merge",
+        "deployed AND verified: FK integrity check passes (no orphaned drive refs); a sample drive resolves one identity end-to-end; unmappable rows are flagged not dropped",
+        "ruff clean in-loop; mypy (strict) at PM-integration"
+      ],
+      "validationCriteria": [
+        {
+          "action": "run the identity-collapse migration + FK integrity check",
+          "outcome": "no orphaned drive refs; a sample drive resolves one canonical identity"
+        },
+        {
+          "action": "inspect legacy drives 1-12 + drive 33 + NULL-id rows",
+          "outcome": "each flagged data_quality='unmappable_legacy' (one row per key), none dropped or merged"
+        }
+      ]
+    },
+    {
+      "id": "US-452",
+      "parent": "F-104",
+      "type": "normal",
+      "size": "S",
+      "title": "Reconcile statistics (rollup/view) vs drive_statistics (granular SSOT) -- no dual-write (D-1) -- deps US-450",
+      "goal": "As the system, I want statistics and drive_statistics to have clear non-overlapping roles so there is no dual-write.",
+      "definitionOfDone": [
+        "drive_statistics = granular per-drive SSOT (US-450); statistics = rollup/aggregate view or harness-derived rollup -- both server-derived by the US-449 harness, NEVER dual-written (no path writes the same fact to both independently)",
+        "documented which is authoritative for which fact; a test asserts no independent dual-write",
+        "deployed AND verified; ruff clean in-loop; mypy (strict) at PM-integration"
+      ],
+      "validationCriteria": [
+        {
+          "action": "audit the write paths for statistics + drive_statistics",
+          "outcome": "no fact is dual-written; each has exactly one harness-owned writer"
+        }
+      ]
+    },
+    {
+      "id": "US-453",
+      "parent": "F-082",
+      "type": "normal",
+      "size": "S",
+      "title": "Extend raw-sync scope -- power_log + pi_state as raw (D-7)",
+      "goal": "As the system, I want irreproducible Pi-only forensic tables synced as raw so the server has them (it does not recompute them).",
+      "definitionOfDone": [
+        "reproducibility test applied: power_log + pi_state are irreproducible raw -> sync Pi->server as raw (SNAPSHOT_SYNC natural-key path from US-416 for TEXT-PK, delta path for integer-PK -- confirm per table); startup_log already synced (US-416) -- VERIFY, do not redo",
+        "server does NOT recompute these (raw, not derived)",
+        "deployed AND verified: post-sync server rows match Pi for both tables; idempotent",
+        "ruff clean in-loop; mypy (strict) at PM-integration"
+      ],
+      "validationCriteria": [
+        {
+          "action": "run a sync cycle",
+          "outcome": "server power_log + pi_state rows match Pi; idempotent re-sync; startup_log confirmed already-synced"
+        }
+      ]
+    },
+    {
+      "id": "US-454",
+      "parent": "F-082",
+      "type": "normal",
+      "size": "S",
+      "title": "O2 sensor name normalization -- one canonical name/sensor (D-3, migration-first)",
+      "goal": "As the system, I want each O2 sensor to have one canonical name so analytics do not fragment across name variants.",
+      "definitionOfDone": [
+        "enumerate current O2 name variants; forward-only migration re-maps existing rows to one canonical name per sensor",
+        "[ATLAS] update the US-229 fixture in lockstep so tests reflect canonical names",
+        "deployed AND verified: SELECT DISTINCT on the O2 name column returns only canonical names; ruff clean in-loop; mypy (strict) at PM-integration"
+      ],
+      "validationCriteria": [
+        {
+          "action": "run the migration + SELECT DISTINCT the O2 names",
+          "outcome": "only canonical names remain; US-229 fixture updated in lockstep, tests green"
+        }
+      ]
+    },
+    {
+      "id": "US-455",
+      "parent": "F-082",
+      "type": "normal",
+      "size": "S",
+      "title": "Unit-string canonicalization -- volt not V (D-4, migration-first)",
+      "goal": "As the system, I want canonical unit strings so analytics treat unit as a typed label consistently.",
+      "definitionOfDone": [
+        "canonicalize the unit STRING (e.g. volt not V); KEEP the python-obd native enum overload (do not remove); forward-only migration re-maps existing rows",
+        "[ATLAS] analytics treat unit as a typed LABEL, never numeric -- assert no code parses unit numerically",
+        "deployed AND verified: SELECT DISTINCT unit returns canonical strings; ruff clean in-loop; mypy (strict) at PM-integration"
+      ],
+      "validationCriteria": [
+        {
+          "action": "run the migration + SELECT DISTINCT unit",
+          "outcome": "canonical unit strings only; no code path parses unit as a number"
+        }
+      ]
+    },
+    {
+      "id": "US-456",
+      "parent": "F-082",
+      "type": "normal",
+      "size": "S",
+      "title": "static_data disposition + TD-061 (D-5, CIO-decided)",
+      "goal": "As the CIO, I want static_data honestly handled -- it cannot hold a VIN (the ECU is Mode-09-silent).",
+      "definitionOfDone": [
+        "[ATLAS: not F-104 -- CIO/hardware] VIN un-gettable (Mode-09-silent on MD326328): either DROP static_data (forward-only migration; file TD-061) OR keep honest-empty with a documented reason -- DECIDE + document the choice",
+        "if dropped: TD-061 filed + drop migration deployed AND verified (table gone); if kept: doc note why honest-empty",
+        "ruff clean in-loop; mypy (strict) at PM-integration"
+      ],
+      "validationCriteria": [
+        {
+          "action": "execute the chosen disposition",
+          "outcome": "static_data dropped (verified gone, TD-061 filed) OR documented honest-empty with rationale"
+        }
+      ]
+    },
+    {
+      "id": "US-457",
+      "parent": "F-104",
+      "type": "normal",
+      "size": "S",
+      "title": "Sprint 55 documentation sync + Rule-10 (server-authority spine)",
+      "goal": "As the PM, I need the server-authority architecture documented in-sprint (US-448/449 gate on this).",
+      "definitionOfDone": [
+        "specs/architecture.md gains a server-analytics-authority section: the boundary rule, canonical drives/server-drive_id SSOT, the sole-writer harness + owned-table registry, Pi-ids-as-advisory; cross-links F-104 + B-076",
+        "specs/ssot-design-pattern.md gains the server-authority boundary as a worked example",
+        "regression_manifest.json reflects F-104 + the changed features",
+        "no stale references (esp. any 'Pi computes/transmits derived X' prose now false)"
+      ],
+      "validationCriteria": [
+        {
+          "action": "review changed files + write the server-authority section",
+          "outcome": "architecture.md server-authority section + ssot worked example present + faithful to the F-104 ADR; regression_manifest current; no stale refs"
         }
       ]
     }

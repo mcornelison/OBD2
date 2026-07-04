@@ -2,7 +2,7 @@
   "$comment": "Regression manifest -- features that must keep working. Per Mike 2026-05-08 directive: main = 'fully validated stable.' Sprint branches stay deployed-but-pre-merge until real-hardware drill validates affected features. /sprint-validated bumps last_validated for features in the sprint's bigDefinitionOfDone. Stdlib-JSON to match backlog.json / story_counter.json / sprint.json convention (no PyYAML dep).",
   "manifestVersion": 1,
   "lastUpdated": "2026-07-04",
-  "lastUpdatedBy": "Rex (US-447, Ralph) -- Sprint 54/V0.29.8 doc-sync: add Sprint 54 to F-049.affectedBySprints (US-432 idle-poll RPM-mask fix). F-117/F-051/F-054 pre-registered by Marcus 2026-07-03. F-062 (US-442 data annotation, no runtime change) + F-082 (US-443 triage, no code) left unchanged.",
+  "lastUpdatedBy": "Marcus (PM) -- register Sprint 55/V0.29.9 features",
   "categories": [
     "lifecycle",
     "connection",
@@ -630,6 +630,30 @@
       "category": "power_management",
       "affectedBySprints": [
         54
+      ],
+      "lastValidated": null,
+      "staleThresholdDays": 90,
+      "validatedBy": null,
+      "validationMethod": "automatic"
+    },
+    {
+      "id": "F-104",
+      "name": "Server-side analytics authority -- canonical drives + server drive_id SSOT + sole idempotent compute-harness (Pi ids advisory)",
+      "category": "data_capture",
+      "affectedBySprints": [
+        55
+      ],
+      "lastValidated": null,
+      "staleThresholdDays": 90,
+      "validatedBy": null,
+      "validationMethod": "automatic"
+    },
+    {
+      "id": "F-075",
+      "name": "drive_statistics server-authoritative (compute-harness, canonical drive_id)",
+      "category": "data_capture",
+      "affectedBySprints": [
+        55
       ],
       "lastValidated": null,
       "staleThresholdDays": 90,
