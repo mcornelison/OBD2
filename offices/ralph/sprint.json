@@ -130,7 +130,16 @@
       "type": "normal",
       "size": "M",
       "status": "sprint-ready",
-      "passes": false,
+      "passes": true,
+      "completionNotes": "US-444 CLOSED (bench). Slow-drain detection + flap-debounce (F-051). CRITICAL SCOPE JUDGMENT: F-051's April-2026 ACs framed this as a BATTERY/EXTERNAL power-source flag, but SS-T4 (Atlas 2026-05-19) RETIRED power-source decisions from UpsMonitor -- getPowerSource() is now a loud NotImplementedError tripwire (the VCELL-trend source heuristic bricked the Pi 2026-05-18). US-444's current goal correctly reframes this as a battery-HEALTH signal ('gradual battery drain is caught without false alarms'), so I built a HEALTH verdict, NOT a source decision -- getPowerSource() tripwire untouched, no source-transition path reintroduced. CHANGES: (1) NEW src/pi/hardware/slow_drain_detector.py -- SlowDrainDetector, a pure hardware-free state machine over (timestamp, VCELL) samples emitting DrainState UNKNOWN/STABLE/SLOW_DRAIN. Rolling window (default 300s) + net-decline threshold (0.005V) trip the RAW verdict; a debounce (30s) commits a verdict only after the raw signal holds its new value continuously for the debounce interval (flap suppression); a partial ramp-up window returns UNKNOWN (honest-instrument, never a confident STABLE). All 3 thresholds are module DEFAULT_* constants + injectable ctor params (matches the existing DEFAULT_VCELL_* pattern; no magic numbers), GROUNDED in F-051 drain-tests 1-4 (Drain 4 ~0.034V/min; real idle drain >=~0.001V/min = 0.005V/5min, above noise floor) + the 2026-04-29 inverted-drill flap trace (4 transitions in 45s / 5s flaps -> 30s debounce suppresses all without missing a real >=2min-spaced transition). (2) ups_monitor.py -- extracted _pollOnce() so each poll tick feeds VCELL to BOTH the history buffer AND the detector on ONE shared timestamp; new getSlowDrainState() accessor (pure delegate); ctor gains slowDrainDetector injection + slowDrain{Window,DeclineThreshold,Debounce} params; default detector built if not injected (so HardwareManager gets it free, no config-wiring change). getTelemetry() shape UNCHANGED (no new key) to keep the telemetry-shape gate + downstream TelemetryLogger/DB stable -- slow-drain is exposed via its own accessor, scope stays inside UpsMonitor. GATES (in-loop, synchronous): 10 new detector unit tests + 3 new UpsMonitor wiring tests GREEN; full tests/pi/hardware/ GREEN (no regression from the _pollingLoop->_pollOnce refactor). ruff check PASS on all 4 files. NOTE FOR PM: mypy (strict) NOT run -- not installed in this dev env (.venv/system python both 'No module named mypy', same as US-441/442); code is fully strict-typed (DrainState enum, float/DrainState returns, float|None candidateSince, deque[tuple[float,float]]) -- run the mypy gate at integration. BENCH-verified per the sprint's BENCH-ONLY method; the 'UPS-drain rig' live confirm is a CIO/deploy bench action (feed a real declining VCELL trace and watch getSlowDrainState() flag SLOW_DRAIN within ~5-6min).",
+      "feedback": {
+        "filesActuallyTouched": [
+          "src/pi/hardware/slow_drain_detector.py",
+          "src/pi/hardware/ups_monitor.py",
+          "tests/pi/hardware/test_slow_drain_detector.py",
+          "tests/pi/hardware/test_ups_monitor_degradation.py"
+        ]
+      },
       "acceptance": [
         "slow-drain detection (sustained gradual VCELL decline over a window) with flap-debounce (no rapid on/off)",
         "bench-verifiable on the UPS-drain rig; unit test for the debounce",

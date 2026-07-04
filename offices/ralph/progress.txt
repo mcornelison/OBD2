@@ -60,3 +60,23 @@ Task: Tester V0.28+ data-profile DESIGN improvements (F-082, the 8 design items)
 - **Gotcha**: before deferring a schema-naming item as "safe someday," check what regression tests key on the exact string -- O2_BANK1_SENSOR2_V is load-bearing for the US-229 silence-check (comment in decoders.py), so it is NOT a free rename. Grep the string across tests/ + decoders before calling any rename "low-risk."
 - **Gotcha**: an existing collector class (StaticDataCollector) being present/exported does NOT mean it runs -- grep the orchestrator/ runtime path; it was never wired, which changes the D-5 "populate vs drop" calculus (populate = wire it up AND fix VIN, not just flip a flag).
 ---
+
+## 2026-07-03 - US-444 (Rex / Sprint 54 Session 4)
+Task: UpsMonitor slow-drain detection + flap-debounce (F-051)
+
+### What was implemented:
+- NEW SlowDrainDetector (src/pi/hardware/slow_drain_detector.py): a pure, hardware-free state machine over (timestamp, VCELL) samples emitting a battery-HEALTH DrainState verdict (UNKNOWN/STABLE/SLOW_DRAIN). A rolling window (default 300s) + net-decline threshold (0.005V) trip the RAW verdict; a debounce (30s) commits a verdict only after the raw signal holds its new value continuously for the debounce interval (flap suppression); a partial ramp-up window returns UNKNOWN (honest-instrument, never a confident STABLE). All 3 thresholds are module DEFAULT_* constants + injectable ctor params (matches the existing DEFAULT_VCELL_* pattern), grounded in F-051 drain-tests 1-4 + the 2026-04-29 inverted-drill flap trace.
+- Wired into UpsMonitor (ups_monitor.py): extracted _pollOnce() so each poll tick feeds VCELL to BOTH the history buffer AND the detector on ONE shared timestamp; new getSlowDrainState() accessor (pure delegate); ctor gains slowDrainDetector injection + slowDrain{Window,DeclineThreshold,Debounce} params, builds a default detector if none injected (so HardwareManager gets it free -- no config-wiring change). getTelemetry() shape UNCHANGED (slow-drain is its own accessor) to keep the telemetry-shape gate + downstream TelemetryLogger/DB stable.
+
+### Files changed:
+- Created: `src/pi/hardware/slow_drain_detector.py` (SlowDrainDetector + DrainState + grounded DEFAULT_* constants)
+- Modified: `src/pi/hardware/ups_monitor.py` (extracted _pollOnce, wired detector, getSlowDrainState, ctor params, header entry)
+- Created: `tests/pi/hardware/test_slow_drain_detector.py` (10 detector unit tests)
+- Modified: `tests/pi/hardware/test_ups_monitor_degradation.py` (3 UpsMonitor wiring tests + imports)
+
+### Learnings for future iterations:
+- **Pattern discovered**: When a story's PARENT backlog item predates a major architectural ruling, the CURRENT story goal is authoritative -- F-051 (Apr 2026) framed slow-drain as a power-source BATTERY/EXTERNAL flag, but SS-T4 (May 19) retired power-source from UpsMonitor (getPowerSource() is a loud tripwire). US-444's goal reframes it as a battery-HEALTH signal, so I built a HEALTH verdict, NOT a source decision. Building to the stale parent AC would have reintroduced the exact path that bricked the Pi 2026-05-18. Always reconcile the parent's ACs against later rulings before coding.
+- **Gotcha**: adding a field to getTelemetry() would have broken the exact-key-set telemetry-shape gate AND risked touching TelemetryLogger/DB schema (scope creep). Expose new signals via a dedicated accessor and leave the telemetry contract frozen unless the story explicitly scopes the schema.
+- **Gotcha**: a flap-debounce is only testable deterministically if the detector takes caller-supplied timestamps (no wall clock) -- inject the clock/timestamp so the debounce interval is exercised by an explicit trace, not real sleeps.
+- **Gotcha**: mypy still NOT installed in this dev env (same as US-441/442) -- flagged for PM integration gate; ruff clean on all 4 files.
+---
