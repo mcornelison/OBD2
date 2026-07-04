@@ -7,10 +7,10 @@ createdBy: Marcus (PM)
 reviewTier: load-bearing
 forksFrom: dev
 epic: E-OPS, E-002, E-004
-feature: F-117, F-062, F-082, F-051, F-054, F-075
+feature: F-117, F-062, F-082, F-051, F-054, F-049
 theme: OBD capture reliability (P0) + data-integrity + power hygiene
 validationMode: BENCH ONLY for the code + a live sustained-capture DRIVE for F-117 (thread-named instrumentation; the mocked-connection tests are green while the live path captures nothing) -- the F-117 acceptance drill needs the car
-selectedStories: [US-441, US-442, US-443, US-444, US-445, US-446, US-447]
+selectedStories: [US-441, US-442, US-443, US-444, US-445, US-432, US-447]
 ---
 
 # PRD: Sprint 54 / V0.29.8 — OBD capture reliability (P0) + data-integrity + power hygiene
@@ -39,9 +39,11 @@ The rest is bench-verifiable data-integrity + power hygiene so Ralph has a full 
 
 ## 3. User Stories
 
-> **US-441 is P0 and gates real capture.** Everything else is independent + bench-verifiable — Ralph can build them regardless of the car being available.
+> **US-441 is P0 and gates real capture.** Everything else is bench-verifiable — Ralph builds regardless of the car. **US-432 deps US-441** (the two capture fixes; validated together in one A-9 car re-gate).
 >
-> **Held for a post-F-117 re-groom (NOT in this sprint):** US-432 / BL-016 (idle-poll cold-boot RPM-mask). It's likely entangled with US-441's empty-reads; whether a distinct cold-boot `supported_commands` issue remains is only testable once F-117 restores capture. Re-examine on the live Pi after US-441 lands + Atlas's BL-016 ruling.
+> **All code stories: `ruff` + `mypy` (strict) clean** (Atlas GAP-2; CLAUDE.md standard).
+>
+> **Post-review changes:** US-432/BL-016 is **now IN** (Atlas ruled Option B — a real distinct defect, not a race artifact). US-446 (drive_statistics) is **DEFERRED to Sprint 55** — it's derived analytics in Atlas's F-104 lane; building it Pi-side now risks the churn F-104 exists to prevent.
 
 ---
 
@@ -51,15 +53,16 @@ The rest is bench-verifiable data-integrity + power hygiene so Ralph has a full 
 > **Build to Atlas's RCA.** Root cause: python-obd's connection is NOT thread-safe; orphaned timeout-daemon threads (TD-036/US-244 anti-boot-hang) + the US-301 heartbeat path touch the shared `self._connection.obd` concurrently with the logger → serial I/O interleaves → empty read → 0 rows every connect. Standalone (1 thread) works. (`lifecycle.py:760-885, 921-965`.)
 
 **Acceptance Criteria:**
-- [ ] **Serialize ALL `self._connection` access behind one lock** — no two threads touch the python-obd connection concurrently.
-- [ ] **Fence orphaned timeout daemons** — a timed-out connect/query thread is BARRED from touching a connection a later thread owns (ownership/generation token); it cannot corrupt serial I/O for the owner.
+- [ ] **The single serialization lock lives on the `ObdConnection` WRAPPER (`obd_connection.py`), NOT `lifecycle.py`** (Atlas GAP-1, load-bearing) — it guards EVERY `.obd` access (connect / query / close / probe). **ALL callers acquire that one lock:** the lifecycle connect/query daemons, the US-301 heartbeat path, **AND the realtime logger's direct reads at `logger.py:220 AND 290`** (which do NOT route through lifecycle). A lifecycle-only lock leaves the logger↔daemon race alive while a mocked-at-lifecycle test passes green — the exact mocked-green/IRL-miss trap.
+- [ ] **Fence orphaned timeout daemons** — a timed-out connect/query thread is BARRED (ownership/generation token) from touching a connection a later thread owns; it cannot corrupt serial I/O for the owner.
 - [ ] **Preserve the TD-036 no-boot-hang property** — the anti-boot-hang timeout behavior must not regress (bounded connect; boot never hangs).
-- [ ] **Thread-named instrumentation** added so the concurrency is observable in logs (which thread touched the connection when).
-- [ ] Unit/integration tests exercise the REAL concurrency (not a mocked connection) — a test that fails on the pre-fix race and passes after.
-- [ ] **Acceptance drill (car):** a live sustained-capture drive shows `realtime_data` rows accumulating steadily (not 0, not first-read-then-disconnect). Documented as the F-117 acceptance (CIO's car).
-- [ ] `ruff check` passes.
+- [ ] **Thread-named instrumentation** so the concurrency is observable in logs (which thread touched the connection when).
+- [ ] **Real-concurrency test (Atlas GAP-1 VC):** spin the LOGGER read path concurrently with a superseded/orphaned daemon against the SAME wrapper instance + assert no interleaving — exercises the cross-layer race, not just lifecycle-internal threads. Fails pre-fix, passes after.
+- [ ] **Rule-10 bound to THIS story (Atlas GAP-3, A-11):** US-441 does NOT close until the connection-threading-model section of `specs/architecture.md` is updated in-sprint (authored here or in US-447, but gated on US-441).
+- [ ] **Acceptance drill (car):** a live sustained-capture drive shows `realtime_data` rows accumulating steadily (not 0, not first-read-then-disconnect) — the F-117 acceptance (CIO's car; the one A-9 re-gate also exercises US-432).
+- [ ] `ruff check` **+ `mypy` (strict)** pass (Atlas GAP-2).
 
-**Downstream impact:** The core capture path (`lifecycle.py`); the P0 gate for all capture-dependent validation + `/chain-validated`.
+**Downstream impact:** The `ObdConnection` wrapper + all its callers (`lifecycle.py`, `logger.py:220/290`, US-301 heartbeat); the P0 gate for all capture-dependent validation + `/chain-validated`. Atlas calls this **A-17**.
 
 ---
 
@@ -111,17 +114,19 @@ The rest is bench-verifiable data-integrity + power hygiene so Ralph has a full 
 
 ---
 
-### US-446: drive_statistics Pi-side writer + sync (F-075, Spool's Approach 2)
-**Description:** As Spool, I want per-drive statistics computed + written Pi-side and synced, so drive summaries are richer.
+### US-432: idle-poll cold-boot RPM-mask fix (BL-016, Option B; the 2nd capture fix; deps US-441)
+**Description:** As the system, I want RPM readable after a cold-boot-key-OFF connect so a drive actually starts, so idle-poll doesn't miss engine-on even once F-117 restores capture.
+
+> **Atlas-RULED Option B** (`offices/architect/reports/2026-07-03-bl016-us432-idle-poll-rpm-mask-fix-ruling.md`). A **real, distinct defect** confirmed in code (independent of the A-17 race): a `supported_commands` set built while the ECU is dark marks RPM UNKNOWN (not unsupported) → every RPM query returns null-without-wire-traffic → escalation swallows it → `drive_start` never fires. **Deps US-441** (the race must be fixed first; both validate in one A-9 car re-gate — A-17 fix does NOT fix the mask, mask fix does NOT fix the race).
 
 **Acceptance Criteria:**
-- [ ] Pi-side `drive_statistics` writer (Spool's Approach 2) + sync to the server (idempotent; follows the established sync pattern).
-- [ ] Server rows match Pi post-sync; guards against missing/foreign data (F-116).
-- [ ] Bench-verifiable; `ruff check` passes.
+- [ ] Un-mask RPM past python-obd's dark-ECU support cache via a **`force`** read, **scoped to known-mandatory Mode-01 PIDs (RPM minimum)** — NEVER blanket (blanket re-exposes the 0x42/0x0B/0x15 garbage US-199 skips). RPM is mandatory Mode-01 = known-supported → forcing corrects a false-negative, not a genuinely-unsupported PID.
+- [ ] Applied to **BOTH the escalation probe AND the ongoing poll** — implement as a connection-scoped "engine-confirmed → force mandatory PIDs" latch, set on the escalation edge (`core.py:1205`), cleared on drive_end (`1264`) + disconnect. (Decisive: `drive_start` fires only on RPM sustained > threshold across ticks at `detector.py:660-667` — one probe isn't enough; the ONGOING poll must un-mask.)
+- [ ] **US-388 non-regression:** touches ONLY the read path (force flag) — does NOT touch `evaluateTimeouts` / `_maybeCloseOnDeadline` / `_openDriveId` / the NULL-latch / `_startDrive`. drive_start fires through the unchanged RPM-sustained machine.
+- [ ] **Live-Pi bench confirm** (folds into the A-9 re-gate): after engine-on in the cold-boot-key-OFF sequence, one forced `010C` returns real RPM + a drive_start row + non-NULL RPM.
+- [ ] `ruff check` **+ `mypy` (strict)** pass.
 
-> Confirm placement with Spool's Approach-2 note; coordinate with the server-analytics authority (B-104) — if this belongs server-side, flag at story time.
-
-**Downstream impact:** New `drive_statistics` writer + sync.
+**Downstream impact:** OBD read path (A-9 start-side); the 2nd capture defect. Re-groomed from the Sprint-53 block.
 
 ---
 
@@ -137,7 +142,7 @@ The rest is bench-verifiable data-integrity + power hygiene so Ralph has a full 
 
 ## 4. Non-Goals (Out of Scope)
 
-- **US-432 / BL-016 (idle-poll cold-boot RPM-mask)** — HELD for a post-F-117 re-groom (likely entangled with US-441's empty-reads; needs Atlas's BL-016 ruling + a live-Pi re-test after capture is restored).
+- **US-446 / F-075 (drive_statistics Pi-side writer)** — DEFERRED to Sprint 55 under the F-104 gate (Atlas: derived analytics in his server-authority lane; Pi-side-now risks F-104 churn). If it ever ships Pi-side it must be bounded advisory/local-only, server retains re-derive authority (A-4).
 - **F-104 (Server-Side Analytics Authority)** — Atlas design gate still owed → Sprint 55.
 - **F-083 (Mahalanobis)** — needs a clean baseline (which needs F-117 capture working first) → Sprint 55.
 - **`/chain-validated`** — doubly-gated: F-117 capture + Bug-3a display, both need the car.
