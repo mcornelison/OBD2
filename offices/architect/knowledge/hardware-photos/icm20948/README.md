@@ -5,6 +5,10 @@
 ## Vendor ID (2026-07-03, Atlas — verified vs official Adafruit docs + datasheet)
 
 **Board = Adafruit #4554 *pinout*, but this physical unit is an unbranded CLONE (not genuine Adafruit).**
+**CONFIRMED vendor (2026-07-04, Amazon listing scraped): brand "NebulaGo", title "2PCS ICM-20948
+9-DoF Sensor", ASIN B0G5LP4JRQ (~$17 2-pack — hence the CIO's "secondary board").** Generic
+reseller; listing carries NO electrical spec (no pull-up/CS/logic detail) → no schematic to lean on,
+no guaranteed on-board CS pull-up → the datasheet CS-high-at-power-up rule governs.
 
 - **Matches Adafruit 4554 exactly:** pin labels `FS AD AC G SDO CS` (top) / `VIN 1V8 GND SCL SDA INT` (bottom); the `1V8` regulator-output pin; `AD`/`AC` aux-I²C names; dual STEMMA-QT/Qwiic connectors; X/Y axis arrows. Pin-for-pin 4554-compatible.
 - **But NOT genuine Adafruit:** no "Adafruit" text / no Penguin logo; older vector-font silkscreen; the **back prints a spec table** (`Accel ±2~16g / Gyro ±250~2000 dps / Mag ±49 Gauss`) — genuine Adafruit backs carry branding, not a spec table.
