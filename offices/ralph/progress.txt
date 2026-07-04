@@ -23,3 +23,22 @@ Task: OBD capture -- serialize ObdConnection wrapper + fence orphaned timeout da
 - **Gotcha**: MagicMock connections auto-return a MagicMock from any attribute, so activeGeneration() must be isinstance(int)-gated (MagicMock is not int) and .query() must be explicitly wired to the scripted BT edge in e2e fixtures (a bare .query returns a junk response, never hitting is_null()).
 - **Gotcha**: mypy is NOT installed in this Windows dev env (.venv has no mypy) -- flagged for PM integration gate; ruff runs fine.
 ---
+
+## 2026-07-03 - US-442 (Rex / Sprint 54 Session 2)
+Task: Clean up historical orphan drain_event rows (from US-434)
+
+### What was implemented:
+- New scripts/annotate_orphan_production_drain_events.py: a one-off, idempotent, dry-run-by-default (mode=ro) tombstone-annotation of the 4 historical orphan `production` battery_health_log rows (drain_event_id 1/9/18/21, end_timestamp IS NULL). Chosen disposition = issue Option C / PM "annotate, never delete": write a provenance `notes` string, leave end_timestamp NULL (honest-instrument -- no timing-truth source for a close, so a fabricated close is refused), delete nothing. Mirrors the US-335 backfill idiom (--execute / --no-backup / --drain-event-ids / .bak-before-execute).
+- Guards: annotate ONLY end_timestamp-NULL + load_class='production' + not-already-tagged rows; a closed row / non-production row / already-tagged row each skip with a reason; an existing operator note is PRESERVED (appended after ' | ', never overwritten). The UPDATE re-asserts all 3 guards in its WHERE (+ NOT LIKE tag) so a re-run touches 0 rows. Extra NULL-end production rows outside the configured set = WARNING (never silent widening).
+- AC2 guard/note: src/pi/power/battery_health.py BatteryHealthRecorder docstring + modification-history now document that the US-216 auto-open production path (which produced these orphans) is RETIRED (0 callers post TD-058/US-427) so no new orphan can form, and that any future production drain MUST open+close as a unit or it re-orphans. Documentation only -- no behavior change.
+
+### Files changed:
+- Created: `scripts/annotate_orphan_production_drain_events.py` (idempotent tombstone-annotation CLI)
+- Created: `tests/scripts/test_annotate_orphan_production_drain_events.py` (18 tests; real-schema SQLite DB-verification)
+- Modified: `src/pi/power/battery_health.py` (AC2 re-orphan guard/note; docs only)
+
+### Learnings for future iterations:
+- **Pattern discovered**: For historical-DB-residue stories, the honest-instrument default is Option-C tombstone (provenance `notes`, no fabricated end_timestamp), NOT a synthetic close -- the US-335 backfill only invented an end_timestamp because it HAD a `power_log` stage_trigger timing-truth source; these 4 rows have none, so annotate-don't-close. Reuse the US-335 script skeleton (dry-run mode=ro / --execute / backup / idempotent WHERE-guard) verbatim.
+- **Gotcha**: idempotency without an end_timestamp change needs a content-based guard -- embed a stable PROVENANCE_TAG in the note and gate the UPDATE with `notes NOT LIKE '%tag%'` so a re-run is a true no-op (the US-335 script could lean on `end_timestamp IS NULL` alone).
+- **Gotcha**: mypy still NOT installed in this dev env (same as US-441) -- flagged for PM integration gate; ruff clean on all 3 files.
+---

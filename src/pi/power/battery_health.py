@@ -43,6 +43,18 @@
 #                               Step 2 (B-060) wires UpsMonitor.getBattery
 #                               Percentage() through the orchestrator.  Step
 #                               3 (B-061) drops the legacy columns.
+# 2026-07-03    | Rex (US-442) | AC2 guard/note (F-062): documented that the
+#                               US-216 auto-open 'production' path -- which
+#                               produced the 4 historical orphan rows
+#                               (drain_event_id 1/9/18/21, NULL end_timestamp)
+#                               -- is RETIRED (0 callers post TD-058 / US-427),
+#                               so no new orphan can form.  Any future
+#                               'production' drain MUST open + close as a unit
+#                               (as scripts/record_drain_test.py does) or it
+#                               re-orphans.  scripts/annotate_orphan_production_
+#                               drain_events.py tombstones the historical
+#                               residue.  Documentation only -- no behavior
+#                               change.
 # 2026-07-01    | Rex (US-426) | BL-015 (F-061): DROP the legacy start_soc /
 #                               end_soc columns (held VCELL volts, redundant
 #                               with *_vcell_v) + ADD dedicated start_soc_pct /
@@ -473,9 +485,21 @@ class BatteryHealthRecorder:
 
     Intended callers:
 
-    * :mod:`scripts.record_drain_test` -- CIO manual drill recorder.
-    * US-216 staged shutdown orchestrator -- open event at WARNING stage,
-      close at TRIGGER stage just before ``systemctl poweroff``.
+    * :mod:`scripts.record_drain_test` -- CIO manual drill recorder (opens and
+      closes the row in one operator-driven unit, so it never orphans).
+
+    US-442 / F-062 re-orphan guard (note): the US-216 auto-open ``'production'``
+    path that opened a drain at the WARNING stage and relied on a separate
+    close at TRIGGER-time produced the 4 historical orphan rows
+    (``drain_event_id`` 1/9/18/21 -- NULL ``end_timestamp``) when a poweroff
+    landed before the close flushed.  That auto-open path is RETIRED (0 callers
+    of :meth:`startDrainEvent` / :meth:`endDrainEvent` in ``src/`` after the
+    TD-058 / US-427 dead-store removal), so no new orphan can form going
+    forward.  Any FUTURE ``'production'`` drain writer MUST open and close the
+    row as a single unit (or guarantee the close on the shutdown path) -- an
+    open-without-guaranteed-close re-introduces the orphan class.  The historical
+    residue is tombstone-annotated by
+    ``scripts/annotate_orphan_production_drain_events.py``.
     """
 
     def __init__(self, *, database: DatabaseLike) -> None:

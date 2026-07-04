@@ -68,12 +68,20 @@
       "type": "normal",
       "size": "S",
       "status": "sprint-ready",
-      "passes": false,
+      "passes": true,
+      "completionNotes": "US-442 CLOSED (bench). Tombstone-annotate the 4 historical orphan production drain rows (F-062 / issue I-orphaned-production-drain-event-rows). CHOSEN DISPOSITION = issue Option C / PM 'annotate, never delete': write a provenance `notes` string, leave end_timestamp NULL (honest-instrument -- no timing-truth source for a close; fabricating one is refused), delete nothing. AC1: new scripts/annotate_orphan_production_drain_events.py (mirrors the US-335 backfill idiom: dry-run-by-default mode=ro, --execute, --no-backup, --drain-event-ids, .bak-before-execute, idempotent). Targets drain_event_id {1,9,18,21}; annotates ONLY rows that are end_timestamp IS NULL AND load_class='production' AND not-already-tagged; a closed row / a non-production row / an already-tagged row each skip with a reason; an existing operator note is PRESERVED (appended after ' | ', never overwritten). PROVENANCE_TAG='orphaned-US216-autowrite-residue' embeds in the note for idempotency (UPDATE re-asserts all 3 guards via WHERE + NOT LIKE, so re-run touches 0 rows). Extra NULL-end production rows outside the set = WARNING, never silent widening. AC2 guard/note: src/pi/power/battery_health.py BatteryHealthRecorder docstring + mod-history document that the US-216 auto-open production path (which produced these orphans) is RETIRED (0 callers post TD-058/US-427) so no new orphan can form, and that any future production drain MUST open+close as a unit or it re-orphans -- documentation only, no behavior change (recorder tests stay green). AC3 DB-verified: tests/scripts/test_annotate_orphan_production_drain_events.py seeds a REAL-schema SQLite DB (from SCHEMA_BATTERY_HEALTH_LOG), runs the CLI execute/dry-run, and re-reads the rows. GATES (in-loop, synchronous): 28 targeted tests GREEN (18 new annotation-script + 10 battery_health_recorder). ruff check PASS on all 3 modified files. NOTE FOR PM: mypy (strict) NOT run -- not installed in this dev env (.venv/system python both 'No module named mypy'), same as US-441; code is fully type-annotated to the strict style (typed dataclasses, int|None params, list[...] returns) -- run the mypy gate at integration. LIVE APPLY (deployment/CIO action, like every backfill script -- NOT a bench step): run --execute against the live Pi DB /home/mcornelison/Projects/Eclipse-01/data/obd.db; the notes change then propagates to the already-synced server copy via the US-315/326/331 sync UPDATE path -- confirm the server row post-sync.",
       "acceptance": [
         "the 4 historical orphan drain_event rows flagged in US-434 closed/annotated with provenance (documented as historical, NOT silently deleted)",
         "a guard/note so the now-moot drain_event path does not re-orphan",
         "DB-verified; ruff check + mypy (strict) pass on modified files"
       ],
+      "feedback": {
+        "filesActuallyTouched": [
+          "scripts/annotate_orphan_production_drain_events.py",
+          "tests/scripts/test_annotate_orphan_production_drain_events.py",
+          "src/pi/power/battery_health.py"
+        ]
+      },
       "validationCriteria": [
         {
           "action": "query drain_event for open rows after the cleanup",
