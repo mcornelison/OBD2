@@ -576,7 +576,7 @@
       "parent": "E-OPS",
       "title": "UpsMonitor slow-drain detection + flap-debounce (Sprint 19 US-235 RESCOPE)",
       "description": "UpsMonitor slow-drain detection + flap-debounce (Sprint 19 US-235 RESCOPE)",
-      "status": "pending",
+      "status": "active",
       "renamedFrom": "B-051",
       "createdAt": "2026-05-27",
       "updatedAt": "2026-05-27"
@@ -599,7 +599,7 @@
       "parent": "E-OPS",
       "title": "Automated battery test on boot",
       "description": "Automated battery test on boot",
-      "status": "pending",
+      "status": "active",
       "renamedFrom": "B-054",
       "createdAt": "2026-05-27",
       "updatedAt": "2026-05-27"
@@ -672,7 +672,7 @@
       "parent": "E-OPS",
       "title": "drain_event close-on-poweroff targeted fix (post-Drain-Test-11 evidence)",
       "description": "drain_event close-on-poweroff targeted fix (post-Drain-Test-11 evidence)",
-      "status": "awaiting-validation",
+      "status": "active",
       "renamedFrom": "B-062",
       "createdAt": "2026-05-27",
       "updatedAt": "2026-05-27",
@@ -839,7 +839,7 @@
       "parent": "E-002",
       "title": "Tester's V0.28+ data-profile findings \u2014 rollup (8 bugs + 8 design smells)",
       "description": "Tester's V0.28+ data-profile findings \u2014 rollup (8 bugs + 8 design smells)",
-      "status": "awaiting-validation",
+      "status": "active",
       "renamedFrom": "B-082",
       "createdAt": "2026-05-27",
       "updatedAt": "2026-05-27",
@@ -1200,7 +1200,7 @@
       "parent": "E-OPS",
       "title": "OBD capture broken -- eclipse-obd connection-thread race (0 rows captured)",
       "description": "The Pi captures 0 OBD rows. Atlas live-debug RCA: python-obd connection is not thread-safe; orphaned timeout daemons (TD-036/US-244) + US-301 heartbeat touch the shared connection concurrently with the logger -> serial I/O interleaves -> empty read every connect. Raw python-obd works standalone (hardware/pairing all good). Fix = serialize connection access + fence orphaned daemons, preserve TD-036 no-boot-hang. f389d5b crash-loop hotfix deployed V0.29.7 (stops crash, not the capture fix). Sprint 54 P0.",
-      "status": "pending",
+      "status": "active",
       "createdAt": "2026-07-03"
     }
   ],
@@ -3258,25 +3258,27 @@
       "parent": "F-049",
       "type": "normal",
       "size": "M",
-      "title": "drive_detect idle-poll gap -- residual engine-on miss (F-049, verify-first + A-9 guardrails)",
-      "goal": "As the system, I want engine-on reliably detected in the idle-poll path, so a drive is not missed when the poll loop is in its idle cadence.",
+      "title": "idle-poll cold-boot RPM-mask fix (BL-016, Option B; 2nd capture fix; deps US-441)",
+      "goal": "As the system, I want RPM readable after a cold-boot-key-OFF connect so a drive actually starts, so idle-poll does not miss engine-on even once F-117 restores capture.",
       "definitionOfDone": [
-        "VERIFY-FIRST: US-242/B-049 already built idle->active-poll escalation on engine-on (alternator BATTERY_V + RPM-probe injection, core.py:356/1200/1212) -- root-cause the RESIDUAL gap on the live Pi, do NOT re-solve; state the specific mechanism that still misses",
-        "fix the residual gap so an engine-on transition promotes poll cadence + fires drive_start within the expected window",
-        "A-9 guardrail (a): must NOT regress US-388's close-guarantee (evaluateTimeouts/deadline-anchored) or the drive_id NULL-latch",
-        "A-9 guardrail (b): fold into the A-9 IRL re-gate (missed-start-in-idle-poll = another drive-lifecycle failure to exercise)",
-        "unit test simulating idle->engine-on; ruff check passes"
+        "Atlas-ruled Option B: un-mask RPM past python-obd's dark-ECU support cache via a force read, SCOPED to known-mandatory Mode-01 PIDs (RPM minimum) -- NEVER blanket (blanket re-exposes the 0x42/0x0B/0x15 garbage US-199 skips); RPM is mandatory Mode-01 = known-supported, so forcing corrects a false-negative not an unsupported PID",
+        "applied to BOTH the escalation probe AND the ongoing poll -- a connection-scoped 'engine-confirmed -> force mandatory PIDs' latch set on the escalation edge (core.py:1205), cleared on drive_end (1264) + disconnect (drive_start fires only on RPM sustained>threshold across ticks at detector.py:660-667 -> the ongoing poll must un-mask, not just the probe)",
+        "US-388 non-regression: touches ONLY the read path (force flag) -- NOT evaluateTimeouts/_maybeCloseOnDeadline/_openDriveId/NULL-latch/_startDrive; drive_start fires through the unchanged RPM-sustained machine",
+        "deps US-441 (A-17 race fixed first); live-Pi bench confirm folds into the A-9 re-gate: after engine-on in cold-boot-key-OFF seq, one forced 010C returns real RPM + drive_start row + non-NULL RPM",
+        "ruff check + mypy (strict) pass on modified files"
       ],
       "validationCriteria": [
         {
-          "action": "re-query the live Pi against the existing US-242/B-049 escalation",
-          "outcome": "the specific residual miss mechanism is identified (not a re-solve of the shipped escalation)"
+          "action": "force 010C after engine-on in the cold-boot-key-OFF sequence (live-Pi, post-US-441)",
+          "outcome": "real RPM returns, drive_start fires, RPM non-NULL -- the dark-ECU mask no longer suppresses the drive"
         },
         {
-          "action": "run the drive-lifecycle regression after the fix",
-          "outcome": "US-388 close-guarantee + drive_id NULL-latch not regressed; idle->engine-on fires drive_start"
+          "action": "run the drive-lifecycle regression",
+          "outcome": "US-388 close-guarantee + drive_id NULL-latch untouched (read-path-only change)"
         }
-      ]
+      ],
+      "conditionalOutcomes": [],
+      "tasks": []
     },
     {
       "id": "US-433",
@@ -3427,6 +3429,149 @@
         {
           "action": "review changed files + archive the stale backlog items",
           "outcome": "architecture.md + regression_manifest current; F-007/052/100 + US-422/423 archived; no stale refs"
+        }
+      ]
+    },
+    {
+      "id": "US-441",
+      "parent": "F-117",
+      "type": "normal",
+      "size": "L",
+      "title": "OBD capture -- serialize ObdConnection wrapper + fence orphaned timeout daemons (F-117/A-17, P0)",
+      "goal": "As the CIO, I want eclipse-obd to actually capture OBD rows on the car, so the entire data pipeline works again.",
+      "definitionOfDone": [
+        "the single serialization lock lives on the ObdConnection WRAPPER (obd_connection.py), NOT lifecycle.py (GAP-1, load-bearing) -- guards EVERY .obd access (connect/query/close/probe); ALL callers acquire it: the lifecycle connect/query daemons, the US-301 heartbeat path, AND the realtime logger's direct reads at logger.py:220 AND 290 (which do NOT route through lifecycle)",
+        "fence orphaned timeout daemons: a timed-out connect/query thread is BARRED (ownership/generation token) from touching a connection a later thread owns -- cannot corrupt the owner's serial I/O",
+        "preserve the TD-036 no-boot-hang property (bounded connect; boot never hangs) -- must not regress",
+        "thread-named instrumentation so the concurrency is observable in logs",
+        "real-concurrency test (GAP-1 VC): spin the LOGGER read path concurrently with a superseded/orphaned daemon against the SAME wrapper instance + assert no interleaving -- exercises the cross-layer race, fails pre-fix passes after (NOT a mocked-at-lifecycle test)",
+        "Rule-10 bound HERE (GAP-3/A-11): US-441 does NOT close until the connection-threading-model section of specs/architecture.md is updated in-sprint",
+        "acceptance drill (car): a live sustained-capture drive shows realtime_data rows accumulating steadily (not 0, not first-read-then-disconnect)",
+        "ruff check + mypy (strict) pass on modified files"
+      ],
+      "validationCriteria": [
+        {
+          "action": "run the real-concurrency test (logger read + orphaned daemon on the same wrapper)",
+          "outcome": "no serial-I/O interleaving; the test fails on pre-fix code and passes after"
+        },
+        {
+          "action": "live sustained-capture drive on the car (the A-9 re-gate)",
+          "outcome": "realtime_data rows accumulate steadily -- capture restored (was 0/every-connect)"
+        }
+      ]
+    },
+    {
+      "id": "US-442",
+      "parent": "F-062",
+      "type": "normal",
+      "size": "S",
+      "title": "Clean up historical orphan drain_event rows (from US-434)",
+      "goal": "As the CIO, I want the historical open drain_event rows closed/annotated, so the drain history is honest.",
+      "definitionOfDone": [
+        "the 4 historical orphan drain_event rows flagged in US-434 closed/annotated with provenance (documented as historical, NOT silently deleted)",
+        "a guard/note so the now-moot drain_event path does not re-orphan",
+        "DB-verified; ruff check + mypy (strict) pass on modified files"
+      ],
+      "validationCriteria": [
+        {
+          "action": "query drain_event for open rows after the cleanup",
+          "outcome": "the 4 historical orphans are closed/annotated with provenance; no data deleted"
+        }
+      ]
+    },
+    {
+      "id": "US-443",
+      "parent": "F-082",
+      "type": "normal",
+      "size": "M",
+      "title": "Tester V0.28+ data-profile DESIGN improvements (F-082, the 8 design items)",
+      "goal": "As the CIO, I want the tester's data-profile design recommendations implemented (bugs shipped in US-437), so dataset quality improves.",
+      "definitionOfDone": [
+        "read the tester's V0.28+ data-profile findings; enumerate the 8 DESIGN items (distinct from the US-437 bugs)",
+        "implement the ready ones OR file/defer with rationale (some may need Spool/Atlas input -- flag those, do NOT guess)",
+        "each implemented item has a test / DB-verification; ruff check + mypy (strict) pass on modified files"
+      ],
+      "validationCriteria": [
+        {
+          "action": "triage each of the 8 design items",
+          "outcome": "each is implemented-with-test OR deferred-with-rationale; none silently skipped"
+        }
+      ]
+    },
+    {
+      "id": "US-444",
+      "parent": "F-051",
+      "type": "normal",
+      "size": "M",
+      "title": "UpsMonitor slow-drain detection + flap-debounce (F-051)",
+      "goal": "As the system, I want slow-drain detected + flap-debounced, so gradual battery drain is caught without false alarms.",
+      "definitionOfDone": [
+        "slow-drain detection (sustained gradual VCELL decline over a window) with flap-debounce (no rapid on/off)",
+        "bench-verifiable on the UPS-drain rig; unit test for the debounce",
+        "ruff check + mypy (strict) pass on modified files"
+      ],
+      "validationCriteria": [
+        {
+          "action": "feed a gradual VCELL decline + a flapping signal through the detector",
+          "outcome": "slow-drain flagged on sustained decline; flap does not trigger repeated on/off"
+        }
+      ]
+    },
+    {
+      "id": "US-445",
+      "parent": "F-054",
+      "type": "normal",
+      "size": "M",
+      "title": "Automated battery test on boot (F-054)",
+      "goal": "As the system, I want a battery health check on boot, so degradation is surfaced early.",
+      "definitionOfDone": [
+        "a boot-time battery test (register read + health assessment) logs a result to battery_health_log / state",
+        "honest-instrument: undeterminable -> unknown (no confident wrong health)",
+        "bench-verifiable; ruff check + mypy (strict) pass on modified files"
+      ],
+      "validationCriteria": [
+        {
+          "action": "run the boot-time battery test on the bench",
+          "outcome": "a health result is logged; an undeterminable read logs 'unknown' not a wrong health"
+        }
+      ]
+    },
+    {
+      "id": "US-446",
+      "parent": "F-075",
+      "type": "normal",
+      "size": "M",
+      "status": "pending",
+      "title": "drive_statistics writer + sync (F-075) -- DEFERRED to Sprint 55 under the F-104 gate",
+      "goal": "As Spool, I want per-drive statistics computed + synced -- but placement (Pi vs server) is pending Atlas's F-104 server-analytics-authority ruling.",
+      "definitionOfDone": [
+        "DEFERRED to Sprint 55: Atlas flagged this as derived analytics in his F-104 lane; building it Pi-side now risks the churn F-104 prevents",
+        "when groomed: placement per Atlas's F-104 ruling; if Pi-side, bounded advisory/local-only, server retains re-derive authority (A-4); foreign-guard (F-116)",
+        "ruff check + mypy (strict) pass on modified files"
+      ],
+      "validationCriteria": [
+        {
+          "action": "groom under the F-104 gate (Sprint 55)",
+          "outcome": "placement ruled by Atlas; no Pi->server SSOT divergence"
+        }
+      ]
+    },
+    {
+      "id": "US-447",
+      "parent": "F-117",
+      "type": "normal",
+      "size": "S",
+      "title": "Sprint 54 documentation sync (Rule-10)",
+      "goal": "As the PM, I need docs current after the capture-reliability + power changes.",
+      "definitionOfDone": [
+        "specs/architecture.md updated for the connection-serialization/threading model (F-117/A-17; coordinate with US-441's bound arch update) + any power-path changes",
+        "regression_manifest.json reflects the sprint's features (esp. F-117 capture)",
+        "no stale references"
+      ],
+      "validationCriteria": [
+        {
+          "action": "review changed files + update docs",
+          "outcome": "architecture.md threading-model + regression_manifest current; no stale refs"
         }
       ]
     }
