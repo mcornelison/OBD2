@@ -45,4 +45,13 @@ already powered, so it couldn't re-latch I²C.)
 variable: **CS→1V8 + power-cycle + re-scan.** Then check SDO/AD0 defined (0x69 default) + SCL/SDA
 continuity to the QFN die pad (not just header).
 
+**CS-high source: use `1V8`, NOT the AD (AUX_DA) pad (2026-07-04).** AD is AUX_DA — an *active*
+signal pin, not a rail. The ICM-20948 bypass mux ties AUX_CL/AUX_DA to the internal AK09916 mag
+master (I²C-master mode drives AUX_DA) and/or analog-switches AUX_DA onto the main SDA (pass-through
+mode). So bridging CS→AD only holds during a bare `i2cdetect` (aux bus idle); the instant any 9-DoF
+driver reads the magnetometer, AUX_DA toggles and drags CS low → chip drops out of I²C. **Bridge
+CS→`1V8` (static VDDIO rail).** Board-2 wiring: VIN→3.3V, GND, SCL→GPIO3, SDA→GPIO2, CS→1V8,
+SDO/AD0→default(0x69), power-up with CS already high. (Source: InvenSense DS-000189 bypass-mux /
+aux-I²C section.)
+
 **Sources:** Adafruit 4554 pinouts (learn.adafruit.com) · InvenSense ICM-20948 datasheet DS-000189 · eMD software guide.
