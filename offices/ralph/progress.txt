@@ -43,3 +43,23 @@ Task: Formalize the server compute-harness as sole authority + manifest + prove 
 - **Gotcha**: a 'formalize the sole writer' story must AUDIT for competing writers before asserting authority -- grep every `.add(DriveStatistic(`/`session.commit` writer of the owned table across the full server tree, and trace whether each is LIVE (mounted route) or dead. Here a documented 'retired' claim (analysis.py header) was false -- the /analyze write path survived US-351's trigger-seam retirement.
 - **Pattern discovered**: idempotency-proof diff must EXCLUDE columns designed to advance (`computed_at` onupdate) -- otherwise a true 'byte-identical' assertion fails on the intentional observability timestamp. Snapshot every data column except the volatile one.
 ---
+
+## 2026-07-04 - US-451 (Agent 1 / Rex) -- BLOCKED (BL-018, root BL-017)
+Task: Collapse drive-identity id-families -> one canonical drive_id; Pi ids -> advisory source_*; back-map legacy (D-8)
+
+### What was implemented:
+- Nothing shippable. US-451 is the migration-order-LAST step of the F-104 spine and is transitively blocked by BL-017. Filed BL-018 documenting the block + the technical gate. NO migration/enum/test code authored (all ruling-gated; shipping the FK re-point now is a known live regression, not a scope-fence call).
+
+### BLOCKER (BL-018, root-caused to BL-017) -- why the story cannot proceed:
+- **Migration order is load-bearing + puts US-451 LAST.** prd-V0.29.9.md line 46 STRICT DEPENDENCY CHAIN = US-448 (identity) -> US-449 (harness) -> US-450 (stat re-key) -> US-451 (family collapse); Atlas Open-Q3 (line 198) confirms "each step is independently DB-verifiable" in that order. US-449 is BLOCKED on BL-017 (live drive_statistics dual-writer in /analyze); US-450 deps US-449. The sprint.json title's "deps US-448" understates the authoritative Atlas order.
+- **Technical gate (independent-autoincrement divergence):** drive_summary.id (models.py:1165) and drives.drive_id (models.py:1076) are two INDEPENDENT autoincrement PKs. US-448 aligned only HISTORICAL values via an explicit-id subsume (v0018:116-128 `INSERT INTO drives (drive_id,...) SELECT ds.id,...`); nothing keeps them lockstep for NEW drives (`upsert_drive` does plain `session.add` -> the drives sequence assigns drive_id independently). Ship US-451's forward-only FK re-point (drive_statistics.summary_id / drive_derived_signals.summary_id / drive_summary -> drives.drive_id) NOW, ahead of US-449/450: 0-orphan for existing rows (subsumed) BUT the live US-351 compute (still keyed on drive_summary.id, because US-450's re-key is blocked) writes `summary_id = drive_summary.id` for a NEW drive -> that fresh id is NOT in `drives` -> new-row FK orphan/fail on deploy = live analytics regression. Also collides with the US-214 "Pi-sync writes drive_summary first" contract (models.py:1105). Coherent ONLY after US-449 (harness sole-writer mints drives in lockstep) + US-450 (compute re-key) -- exactly why Atlas ordered family-collapse LAST.
+- Per Refusal Rule 1 (ambiguity/unsafe-sequencing is a blocker) + CLAUDE.md role boundary (architecture -> Atlas), documented the block rather than guess an FK/writer shape that regresses live analytics.
+
+### Files changed:
+- Created: `offices/pm/blockers/BL-018-us451-id-family-collapse-blocked-on-harness-authority.md`
+- Modified: `offices/ralph/sprint.json` (US-451 status blocked + completionNotes + feedback)
+
+### Learnings for future iterations:
+- **Gotcha**: a "collapse the FKs onto the new identity" migration is only safe once the WRITERS are re-keyed onto that identity. A subsume that aligns HISTORICAL values (explicit-id insert) does NOT keep two independent autoincrement PKs in lockstep for NEW rows -- so a forward-only FK to the new identity orphans new writes until the sole-writer/re-key stories land. Respect the PRD's migration ORDER, not just the terse story-title deps.
+- **Gotcha**: don't deliver a "precondition proof" test that has to replicate the prior migration's SQL in test code (a "test mirrors prod migration" smell). US-449's idempotency proof was clean because it ran the REAL harness; US-451 had no equivalent ruling-independent, infra-cheap deliverable (US-448's suite is FakeRunner/DDL-string only, no SQLite data-level subsume harness), so blocking cleanly beat manufacturing a brittle test.
+---
