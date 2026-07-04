@@ -332,6 +332,28 @@ COMPONENT_INIT_ORDER = [
 COMPONENT_SHUTDOWN_ORDER = list(reversed(COMPONENT_INIT_ORDER))
 
 
+def _resolveGeneration(connection: Any) -> int | None:
+    """Resolve a connection's US-441 epoch generation, or None if unavailable.
+
+    Only a real integer engages the epoch fence (see ``ObdConnection.
+    activeGeneration``).  Connection doubles that lack ``activeGeneration()``
+    -- or whose ``activeGeneration()`` returns a ``MagicMock`` rather than an
+    int -- resolve to ``None`` so the caller takes the legacy no-generation
+    path, keeping every pre-US-441 mock-based lifecycle test working unchanged.
+    ``bool`` is excluded (it is an ``int`` subclass but never a real generation).
+    """
+    activeGenFn = getattr(connection, 'activeGeneration', None)
+    if not callable(activeGenFn):
+        return None
+    try:
+        candidate = activeGenFn()
+    except Exception:  # noqa: BLE001 -- a status probe must never break daemon spawn
+        return None
+    if isinstance(candidate, bool) or not isinstance(candidate, int):
+        return None
+    return candidate
+
+
 class _PowerSourceUiBridge:
     """SS-T4 B1: bridges the PowerSourceProvider SSOT to the PowerMonitor
     UI / ``power_log`` status surface.
@@ -783,9 +805,22 @@ class LifecycleMixin:
         connectDoneEvent = threading.Event()
         connectResult: dict[str, Any] = {'success': False, 'error': None}
 
+        # US-441 epoch fence: capture the connection generation BEFORE spawning
+        # so that if this daemon times out (is left running) and a newer connect
+        # wins in the meantime, the wrapper fences this orphan's late re-open.
+        # Resolved defensively -- only a real int (from ObdConnection /
+        # SimulatedObdConnection) engages the fence; MagicMock-based test
+        # connections resolve to None and take the legacy no-generation path.
+        callerGen = _resolveGeneration(self._connection)
+
         def _connectInThread() -> None:
             try:
-                connectResult['success'] = bool(self._connection.connect())
+                if callerGen is not None:
+                    connectResult['success'] = bool(
+                        self._connection.connect(callerGeneration=callerGen)
+                    )
+                else:
+                    connectResult['success'] = bool(self._connection.connect())
             except BaseException as exc:  # noqa: BLE001 -- surface to caller
                 connectResult['error'] = exc
             finally:
@@ -794,7 +829,7 @@ class LifecycleMixin:
         connectThread = threading.Thread(
             target=_connectInThread,
             daemon=True,
-            name="initial-obd-connect",
+            name=f"obd-connect-gen{callerGen if callerGen is not None else '?'}",
         )
         connectThread.start()
 
@@ -874,9 +909,23 @@ class LifecycleMixin:
         queryDoneEvent = threading.Event()
         queryResult: dict[str, Any] = {'value': None, 'error': None}
 
+        # US-441 epoch fence + serialized read: capture the generation before
+        # spawning and route through the wrapper's locked query() so this bounded
+        # (potentially orphaned) query cannot interleave with the realtime logger
+        # or a connect on the one non-thread-safe port.  If the daemon times out
+        # and a reconnect supersedes it, the wrapper fences the late read
+        # (ObdConnectionSupersededError -> surfaced as the query 'error').
+        # MagicMock test connections resolve to None -> legacy .obd.query path.
+        callerGen = _resolveGeneration(self._connection)
+
         def _queryInThread() -> None:
             try:
-                queryResult['value'] = self._connection.obd.query(command)
+                if callerGen is not None:
+                    queryResult['value'] = self._connection.query(
+                        command, callerGeneration=callerGen
+                    )
+                else:
+                    queryResult['value'] = self._connection.obd.query(command)
             except BaseException as exc:  # noqa: BLE001 -- surface to caller
                 queryResult['error'] = exc
             finally:
@@ -885,7 +934,7 @@ class LifecycleMixin:
         threading.Thread(
             target=_queryInThread,
             daemon=True,
-            name=f"obd-query-{command}",
+            name=f"obd-query-{command}-gen{callerGen if callerGen is not None else '?'}",
         ).start()
 
         completed = queryDoneEvent.wait(timeout=timeoutSec)

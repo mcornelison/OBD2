@@ -70,6 +70,14 @@
 #                              | Power source is now the PowerSourceProvider
 #                              | SSOT over X1209 GPIO6 PLD; UI fed by the
 #                              | lifecycle _PowerSourceUiBridge (B1).
+# 2026-07-03    | Rex (US-444) | F-051: wired in the SlowDrainDetector (new
+#                              | slow_drain_detector.py). Extracted _pollOnce()
+#                              | so each poll tick feeds VCELL to both the
+#                              | history buffer AND the slow-drain detector on a
+#                              | single shared timestamp; added getSlowDrainState().
+#                              | Battery-HEALTH verdict only (SLOW_DRAIN/STABLE);
+#                              | does NOT touch getPowerSource() (tripwire kept)
+#                              | or reintroduce a source decision.
 # ================================================================================
 ################################################################################
 
@@ -163,6 +171,13 @@ from .i2c_client import (
     I2cNotAvailableError,
 )
 from .platform_utils import isRaspberryPi
+from .slow_drain_detector import (
+    DEFAULT_SLOW_DRAIN_DEBOUNCE_SECONDS,
+    DEFAULT_SLOW_DRAIN_DECLINE_THRESHOLD_V,
+    DEFAULT_SLOW_DRAIN_WINDOW_SECONDS,
+    DrainState,
+    SlowDrainDetector,
+)
 
 # ============================================================================
 # V0.24.1 hotfix -- self-aliasing module identity guard
@@ -377,6 +392,12 @@ class UpsMonitor:
             DEFAULT_VCELL_BATTERY_THRESHOLD_SUSTAINED_S
         ),
         monotonicClock: Callable[[], float] | None = None,
+        slowDrainDetector: SlowDrainDetector | None = None,
+        slowDrainWindowSeconds: float = DEFAULT_SLOW_DRAIN_WINDOW_SECONDS,
+        slowDrainDeclineThresholdVolts: float = (
+            DEFAULT_SLOW_DRAIN_DECLINE_THRESHOLD_V
+        ),
+        slowDrainDebounceSeconds: float = DEFAULT_SLOW_DRAIN_DEBOUNCE_SECONDS,
     ):
         """
         Initialize UPS monitor.
@@ -408,6 +429,17 @@ class UpsMonitor:
                 sustained-threshold BATTERY rule. Default 30s.
             monotonicClock: Optional callable returning a monotonic time in
                 seconds (for testing); defaults to `time.monotonic`.
+            slowDrainDetector: Optional pre-configured
+                :class:`SlowDrainDetector` (for testing/injection). If None,
+                one is built from the ``slowDrain*`` params below. This is a
+                battery-HEALTH signal only -- it never decides power source
+                (that is the PowerSourceProvider SSOT; see SS-T4).
+            slowDrainWindowSeconds: Rolling window for the slow-drain detector.
+                Default 300 s (F-051).
+            slowDrainDeclineThresholdVolts: Net VCELL decline over the window
+                that trips the raw slow-drain verdict. Default 0.005 V (F-051).
+            slowDrainDebounceSeconds: Debounce interval suppressing flapping
+                verdicts. Default 30 s (F-051).
         """
         self._address = address
         self._bus = bus
@@ -447,6 +479,16 @@ class UpsMonitor:
 
         self._history: deque[tuple[float, float, int]] = deque()
         self._historyLock = threading.Lock()
+
+        # F-051 / US-444: sustained-VCELL-decline health detector with
+        # flap-debounce. Fed one sample per poll tick (see _pollOnce). This is
+        # a battery-HEALTH verdict (SLOW_DRAIN/STABLE) and is deliberately NOT
+        # the power-source decision -- getPowerSource() remains a tripwire.
+        self._slowDrainDetector = slowDrainDetector or SlowDrainDetector(
+            windowSeconds=slowDrainWindowSeconds,
+            declineThresholdVolts=slowDrainDeclineThresholdVolts,
+            debounceSeconds=slowDrainDebounceSeconds,
+        )
 
         logger.debug(
             f"UpsMonitor initialized: address=0x{address:02x}, bus={bus}, "
@@ -560,6 +602,25 @@ class UpsMonitor:
         return [
             (ts, vcell) for ts, vcell, _soc in samples if ts >= cutoff
         ]
+
+    def getSlowDrainState(self) -> DrainState:
+        """Return the current slow-drain health verdict.
+
+        The verdict (``UNKNOWN`` / ``STABLE`` / ``SLOW_DRAIN``) is maintained by
+        the :class:`SlowDrainDetector`, fed one VCELL sample per poll tick
+        (:meth:`_pollOnce`). It reports whether the LiPo cell is *slowly
+        draining* over a sustained window, with flap-debounce so a transient
+        dip or a noisy read does not raise a false alarm (F-051 / US-444).
+
+        This is battery-HEALTH telemetry, NOT a power-source decision: the
+        AC-vs-battery fact is owned by ``PowerSourceProvider`` (SSOT), and
+        :meth:`getPowerSource` remains a loud tripwire (SS-T4).
+
+        Returns:
+            The current committed :class:`DrainState`. ``UNKNOWN`` until at
+            least a near-full window of samples has been observed.
+        """
+        return self._slowDrainDetector.state
 
     def getBatteryPercentage(self) -> int:
         """
@@ -800,15 +861,40 @@ class UpsMonitor:
 
         logger.info("UPS polling stopped")
 
+    def _pollOnce(self) -> None:
+        """Read one VCELL + SOC sample and feed the health consumers.
+
+        Records the sample to the rolling history buffer and to the
+        slow-drain detector, sharing a single timestamp so both see the
+        same tick. A missing/broken fuel gauge surfaces as
+        ``UpsMonitorError`` from :meth:`getBatteryVoltage`, which the
+        polling loop catches and backs off on. A SOC read failure is
+        non-fatal (falls back to 0) so it does not drop the whole sample.
+
+        Raises:
+            UpsMonitorError: If the VCELL read fails.
+            UpsNotAvailableError: If the UPS is not available.
+        """
+        vcell = self.getBatteryVoltage()
+        try:
+            soc = self.getBatteryPercentage()
+        except UpsMonitorError:
+            # SOC is non-critical; fall back to 0 rather than dropping the
+            # whole sample (VCELL is what the health signals need).
+            soc = 0
+
+        sampleTime = self._clock()
+        self.recordHistorySample(sampleTime, vcell, soc)
+        # F-051 / US-444: feed the slow-drain health detector the same tick.
+        self._slowDrainDetector.update(sampleTime, vcell)
+
     def _pollingLoop(self) -> None:
         """Background polling loop.
 
-        Each tick reads VCELL + SOC, records them to the rolling history
-        buffer (feeds VCELL-slope power-source detection), then samples
-        the current power source and fires the onPowerSourceChange
-        callback on transitions.  I2C errors suppress history recording
-        for that tick — subsequent successful ticks will refill the
-        buffer.
+        Each tick reads VCELL + SOC (:meth:`_pollOnce`), records them to the
+        rolling history buffer, and feeds the slow-drain health detector.
+        I2C errors suppress recording for that tick — subsequent successful
+        ticks refill the buffer.
         """
         self._backoffInterval = self._pollInterval
         self._consecutivePollErrors = 0
@@ -817,16 +903,8 @@ class UpsMonitor:
             try:
                 # Exercise the I2C path so missing/broken fuel gauges
                 # surface as UpsMonitorError + backoff.  Also feeds the
-                # rolling buffer used by the VCELL-trend heuristic.
-                vcell = self.getBatteryVoltage()
-                try:
-                    soc = self.getBatteryPercentage()
-                except UpsMonitorError:
-                    # SOC is non-critical for source detection; fall
-                    # back to 0 rather than skipping the whole sample.
-                    soc = 0
-
-                self.recordHistorySample(self._clock(), vcell, soc)
+                # rolling buffer + slow-drain detector (battery-health only).
+                self._pollOnce()
 
                 # SS-T4 A1: source decision + transition detection +
                 # onPowerSourceChange + US-279 fan-out REMOVED. This loop is

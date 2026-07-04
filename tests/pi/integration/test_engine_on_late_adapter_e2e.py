@@ -291,6 +291,11 @@ class _LateAdapterConnection:
         self.obd = MagicMock()
         self.obd.query = _ScriptedObdQuery(rpmValue=rpmValue)
 
+    def query(self, cmd: Any, callerGeneration: int | None = None) -> Any:
+        """US-441: mirror ObdConnection.query -- the serialized path the logger
+        now calls; delegates to the scripted python-obd facade."""
+        return self.obd.query(cmd)
+
     def isConnected(self) -> bool:
         self.isConnectedCallCount += 1
         return self._isConnected

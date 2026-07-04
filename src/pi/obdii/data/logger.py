@@ -216,8 +216,13 @@ class ObdDataLogger:
             # Get the OBD command for this parameter
             cmd = self._getObdCommand(parameterName)
 
-            # Query the parameter - cmd may be the command object or the name
-            response = self.connection.obd.query(cmd)
+            # Query the parameter - cmd may be the command object or the name.
+            # US-441 (F-117/A-17): route through the wrapper's serialized
+            # query() so this read is guarded by the single _ioLock and can no
+            # longer interleave with an orphaned connect/query daemon on the one
+            # non-thread-safe python-obd port (the capture-killing race).  Live
+            # reads pass no generation and are never fenced.
+            response = self.connection.query(cmd)
 
             # Check if response is valid
             if response.is_null():
@@ -287,7 +292,8 @@ class ObdDataLogger:
         """Run a Spool v2 decoder and wrap its output as a LoggedReading."""
         try:
             cmd = self._getObdCommand(entry.obdCommand)
-            response = self.connection.obd.query(cmd)
+            # US-441 (F-117/A-17): serialized wrapper read (see queryParameter).
+            response = self.connection.query(cmd)
 
             if response is None or (hasattr(response, "is_null") and response.is_null()):
                 self._readErrors += 1

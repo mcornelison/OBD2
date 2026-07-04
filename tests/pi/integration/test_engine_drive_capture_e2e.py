@@ -355,6 +355,10 @@ def engineOnHarness(lifecycleDb: ObdDatabase) -> dict[str, Any]:
     scriptedQuery = _ScriptedObdQuery(rpmValue=_RPM_ENGINE_ON)
     mockConnection.obd = MagicMock()
     mockConnection.obd.query = scriptedQuery
+    # US-441: the logger now reads through the wrapper's serialized query();
+    # route it to the same scripted BT edge (a bare MagicMock .query would
+    # return a junk response and never hit _ScriptedObdQuery).
+    mockConnection.query = lambda cmd, callerGeneration=None: scriptedQuery(cmd)
     orchestrator._connection = mockConnection
 
     # Real DriveDetector with zero-duration debounce.

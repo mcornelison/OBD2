@@ -71,6 +71,12 @@ class FakeObdConnection:
             return SimpleNamespace(value=None, unit=None, is_null=lambda: True)
         return resp
 
+    def query(self, cmd: Any, callerGeneration: int | None = None) -> Any:
+        """US-441: mirror ObdConnection.query -- the serialized read path the
+        logger now calls.  Delegates to the python-obd facade; the wrapper's
+        lock/fence is unit-tested separately (test_obd_connection_thread_safety)."""
+        return self._query(cmd)
+
     def isConnected(self) -> bool:
         return self._connected
 

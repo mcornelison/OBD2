@@ -1,8 +1,15 @@
 # Rule 13 Audit Discipline — Patterns from Sprint 43 PRD review
 
+> **RETIRED AS AN ATLAS GATE (CIO 2026-07-03).** The Atlas PRD design-gate review IS the architectural
+> acceptance; there is no separate post-freeze Atlas Rule-13 re-gate. Atlas is the authoritative architect;
+> the PM (Marcus) is master of ceremonies and freezes at will. The freeze-hash arithmetic + bigDoD-aggregation
+> checks below remain the **PM's** mechanic to run at freeze — the gotchas here stay useful reference for
+> whoever runs the freeze. Rationale: the review already covers fidelity; a second architect re-gate was
+> undue back-and-forth delay.
+
 **Date**: 2026-05-28
 **Context**: First PM Rule 13 (validation-block sign-off) executed; Sprint 43 / V0.28.0 PRD review.
-**Audience**: Future Atlas sessions running Rule 13 reviews or any architecture audit against `sprint.json` / `bigDoDHash`.
+**Audience**: Whoever runs the freeze-hash mechanic (PM) — reference for the encoding/aggregation gotchas.
 
 ---
 

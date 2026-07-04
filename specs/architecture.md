@@ -17,7 +17,36 @@ This document describes the system architecture, technology decisions, and desig
 > behavior + invariants). −35% file size; no current-system content removed. (§11
 > Deployment was reviewed — it's all current reference, nothing extracted.)
 
-**Last Updated**: 2026-07-02 (Sprint 53 / V0.29.7 — bench-only bug/ops rollup
+**Last Updated**: 2026-07-04 (Sprint 54 / V0.29.8 — OBD capture-reliability +
+power-hygiene doc-sync (US-447, Rule-10). New **§3.5 "OBD Connection Threading
+Model — serialization + epoch fence" (US-441 / F-117 / A-17)** [authored in-sprint
+by US-441 under its bound Rule-10 AC; registered here + in the changelog]:
+python-obd's connection wraps ONE non-thread-safe serial port driven from multiple
+threads (the lifecycle connect/query timeout daemons left running on timeout per
+TD-036, the US-301 reconnect heartbeat, the realtime logger). The **A-17 defect**
+was the V0.27.1 lock guarding only `connect()` while the logger read
+`self.connection.obd.query()` *directly* → its reads raced an orphaned timed-out
+daemon on the one port → interleaved ELM327 frames → **0 rows on every connect**.
+The model: THE single serialization lock `ObdConnection._ioLock` lives on the
+**wrapper** (not `lifecycle.py`) and guards every `self.obd` access
+(connect/query/close/probe); every caller — the daemons, the heartbeat, AND the
+logger's `queryParameter`/`_queryViaDecoder` (now `connection.query()`, not
+`.obd.query()`) — goes through it. An **epoch fence** (`_generation` bumped per
+connect-success + disconnect, captured via `activeGeneration()`) bars a superseded/
+orphaned connect (refuses re-open) or query (raises `ObdConnectionSupersededError`,
+never touches the port); live callers pass no generation and are never fenced.
+TD-036 no-boot-hang preserved (only `.obd` *access* serialized, daemon + wall-clock
+shape untouched); daemons thread-named `obd-connect-gen<N>`/`obd-query-<cmd>-gen<N>`
+for observability. **Battery Health Log §** gains a "Sprint 54 power-path additions"
+para (US-444/F-051 `SlowDrainDetector` HEALTH verdict in `UpsMonitor` + US-445/F-054
+boot-time VCELL HEALTH verdict → `boot-battery-test` state slot — both battery-health
+signals, neither writes the drain-event-shaped `battery_health_log`). US-432/F-049
+(idle-poll cold-boot RPM-mask force-read) is a read-path fix on the existing OBD
+connection with no new arch surface (documented in-story); US-442 (drain-row
+annotation) + US-443 (data-profile triage) changed no runtime arch.
+`regression_manifest.json`: F-117/F-051/F-054 pre-registered by Marcus, F-049 gains
+Sprint 54. Docs-only; full detail in `specs/arch/architecture-changelog.md`.)
+Prior: 2026-07-02 (Sprint 53 / V0.29.7 — bench-only bug/ops rollup
 doc-sync (US-440, Rule-10): new **§10.7.2 "Derived motion signals + cross-drive
 comparison (F-106/F-069)"** — server-side per-drive `drive_derived_signals` (peak
 accel/decel m/s², estimated distance km via trapezoidal ∫speed·dt) computed by
@@ -396,6 +425,80 @@ Install via `deploy/install-rfcomm-bind.sh` (runs on the Pi) or let
 answered on ISO 9141-2 K-line @ 10,400 bps via the LX; python-obd
 reported `Car Connected | ISO 9141-2 | ELM327 v1.4b` on the first live
 handshake. This matches the protocol documented in `specs/obd2-research.md`.
+
+### 3.5 OBD Connection Threading Model — serialization + epoch fence (US-441 / F-117 / A-17)
+
+`python-obd`'s connection object wraps **one serial port and is NOT
+thread-safe**. eclipse-obd drives that connection from **multiple threads**:
+
+- the lifecycle's bounded connect/query **timeout daemons**, which are
+  deliberately **left running on timeout** (TD-036 / US-244 anti-boot-hang —
+  `_runInitialConnectWithTimeout`, `_queryWithTimeout`);
+- the **US-301 reconnect heartbeat** daemon (a second connect path);
+- the **realtime logger**, which reads `ObdConnection.query()` on the capture
+  loop thread.
+
+**The defect (A-17, root-caused live 2026-07-03).** The V0.27.1 lock guarded
+only `connect()`. The realtime logger read `self.connection.obd.query()`
+*directly*, so its reads raced an **orphaned** (timed-out, left-running)
+connect/query daemon on the one serial port → interleaved ELM327 frames →
+`elm327 __read | Device disconnected while reading` → **0 rows on every
+connect**. (A raw single-threaded `python-obd` session on the same port read
+RPM flawlessly — proving the bug is eclipse-obd's concurrency, not the
+dongle/ECU/K-line/pairing.)
+
+**The model (US-441).** THE single serialization lock — `ObdConnection._ioLock`
+— lives on the **wrapper** (`obd_connection.py`), NOT on `lifecycle.py`, and
+guards **every** access to the underlying `self.obd`:
+
+| Access | Path |
+|--------|------|
+| connect | `connect()` holds `_ioLock` for the whole attempt (ctor + probe) |
+| query | `query()` holds `_ioLock` around `self.obd.query(cmd)` |
+| close | `disconnect()` holds `_ioLock` around `self.obd.close()` |
+| probe | US-199 supported-PID probe runs inside the held connect lock |
+
+**Every caller goes through the wrapper** so no two threads ever drive the
+port at once: the lifecycle connect/query daemons, the US-301 heartbeat's
+`connectFn`, **and the realtime logger's reads (`logger.py` `queryParameter` /
+`_queryViaDecoder`) — which call `connection.query()`, not `connection.obd.query()`.**
+
+**Epoch fence (orphaned-daemon reconciliation).** A monotonically increasing
+**generation** (`ObdConnection._generation`, guarded by `_ioLock`) is bumped on
+each **successful connect** and each **disconnect**, so a live connection
+carries a stable generation between the two. A bounded timeout daemon captures
+the generation via `activeGeneration()` *before* it spawns and passes it back:
+
+- `connect(callerGeneration=…)` — a superseded connect (a newer connection
+  already won while this orphan was blocked) **refuses to re-open** and returns
+  the current connectedness.
+- `query(command, callerGeneration=…)` — a superseded read raises
+  `ObdConnectionSupersededError` and **never touches the port**.
+
+**Live callers pass no generation and are never fenced** — the realtime logger
+always reads the *current* connection. Thus a timed-out daemon that finally
+wakes cannot corrupt (re-open / read) a connection a newer owner now holds,
+even though it cannot be force-killed.
+
+**TD-036 preserved.** Only `.obd` *access* is serialized; the daemon-launch +
+wall-clock-timeout shape (why boot never hangs) is untouched. A wedged connect
+daemon holding `_ioLock` cannot hang boot because `_initializeConnection`
+returns on its own wall-clock cap regardless, and a later query daemon that
+blocks on the lock is itself wall-clock-bounded (and daemon=True, reaped at
+exit).
+
+**Observability.** Connection/query daemons are thread-named with their
+generation (`obd-connect-gen<N>`, `obd-query-<cmd>-gen<N>`); the heartbeat is
+`obd-reconnect-heartbeat`. `isConnectInFlight()` reflects `_ioLock` (any OBD
+I/O in flight) so the heartbeat still skips a tick when a connect is already
+happening.
+
+Code: `src/pi/obdii/obd_connection.py` (`_ioLock`, `_generation`,
+`activeGeneration`, `query`), `orchestrator/lifecycle.py`
+(`_runInitialConnectWithTimeout`, `_queryWithTimeout`, `_resolveGeneration`),
+`data/logger.py` (serialized reads). Contract test:
+`tests/pi/obdii/test_obd_connection_thread_safety.py` (real-concurrency:
+logger read path + orphaned daemon on the same wrapper, no interleaving).
 
 ---
 
@@ -1133,6 +1236,44 @@ drain-event path) is closed: the durable column now exists, and the ruling moved
 the SoC% recording onto the bench CLI rather than the deleted orchestrator path.
 (Sprint 51's only `battery_health_log` change was US-424 widening the
 `data_source` CHECK enum to include `'foreign'` — the column already existed.)
+
+**Sprint 54 / V0.29.8 power-path additions (US-444 / F-051 + US-445 / F-054) —
+battery-health signals adjacent to this log, NOT drain-event writes.** Two new
+battery-health instruments landed this sprint. **Neither writes `battery_health_log`**
+— that table is drain-EVENT-shaped (start/close/runtime/`load_class`) and feeds
+drain baselines, so a health *snapshot* or *trend* written there would pollute the
+baseline and re-open the US-442 orphan-row class.
+
+- **Slow-drain detector (US-444).** `src/pi/hardware/slow_drain_detector.SlowDrainDetector`
+  is a pure decision layer over a stream of `(timestamp, VCELL)` samples emitting a
+  `DrainState` health verdict `{UNKNOWN, STABLE, SLOW_DRAIN}`. A rolling window
+  (default `300 s`) + net-decline threshold (default `0.005 V`) trip the raw verdict;
+  a debounce (default `30 s`) commits it only after the raw signal holds continuously
+  for the interval (flap suppression — the 2026-04-29 inverted-power drill logged 4
+  transitions in 45 s); a partial window returns `UNKNOWN` (honest instrument, never a
+  confident STABLE). All three thresholds are module `DEFAULT_*` constants + injectable
+  ctor params, grounded in F-051 drain-tests 1-4. `UpsMonitor` feeds each poll tick's
+  VCELL to the detector (extracted `_pollOnce`, one shared timestamp) and exposes
+  `getSlowDrainState()`; `getTelemetry()` shape is **unchanged** (the signal has its own
+  accessor, so the telemetry-shape gate + DB stay stable). **Scope boundary (SS-T4,
+  2026-05-19):** this is battery-HEALTH advisory telemetry, NOT a power-source decision
+  — `UpsMonitor.getPowerSource()` stays a loud `NotImplementedError` tripwire; the
+  detector never emits a source verdict and never feeds a shutdown decision (the retired
+  VCELL-trend source heuristic bricked the Pi 2026-05-18).
+- **Boot-time battery test (US-445).** `src/pi/splash/boot_battery_test` reads the
+  MAX17048 VCELL once at boot and writes a grounded health verdict to the
+  `boot-battery-test` **state slot** via the F-103/F-097 honest-instrument emitter idiom
+  (pure builder + atomic tmpfs write, best-effort never-raise). `assessBootBatteryHealth(vcellV)`
+  → `OK` at/above the ~3.70 V discharge knee; `WEAK` below it (a read below the ~3.30 V
+  buck dropout knee = Drain-7 empirical carries a distinct reason, same coarse verdict);
+  `UNKNOWN` when the read is `None` OR outside the ~2.5-4.35 V physical LiPo band (the
+  classic ~20 V un-byte-swapped read → `UNKNOWN`, never a confident wrong health). The
+  verdict is **VCELL-only** (a direct register read, trustworthy at power-up); the SoC%
+  register needs a ~3-min ModelGauge warmup so it is carried as CONTEXT only (`socPct` +
+  `socCalibrated` caveat), never the health basis. `runBootBatteryTest(...)` is
+  best-effort (a reader that raises → `UNKNOWN`; a state-write failure is logged, never
+  raised — a battery test must never fail boot); a `main()` CLI lets a boot oneshot unit
+  invoke it (wiring that unit at boot is a deploy follow-up, out of scope here).
 
 ### Data Retention
 
