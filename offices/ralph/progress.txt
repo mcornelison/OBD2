@@ -121,3 +121,28 @@ Task: O2 sensor name normalization -- one canonical name/sensor (D-3 / F-082, mi
 - **Gotcha**: renaming a decoder-registry KEY is a rename refactor with an inherent blast radius -- every membership set / parametrize tuple / `queryParameter()` call naming the old label breaks. `ripgrep` on the slow SMB share returned INCOMPLETE results without erroring (missed decoders.py + 2 test files on the first pass); always cross-check `files_with_matches` and do a final zero-remaining grep after the edits.
 - **Gotcha**: brittle "tail assertions" (`versions[-1] == 'NNNN'`) in registration tests go silently red on the NEXT registry append and hide until someone runs that file. De-brittle to "present + sorted + directly-after-predecessor". A story that adds to a registry should run the prior registration test too, not just its own.
 ---
+
+## 2026-07-04 - US-455 (Agent 1 / Rex)
+Task: Unit-string canonicalization -- volt not V (D-4 / F-082, migration-first)
+
+### What was implemented:
+- **Canonical decision (grounded):** the decoder-path units now emit the python-obd NATIVE unit string, so a physical unit has ONE label across BOTH write paths. The legacy path already stores `str(response.unit)` = native (logger.py:490-502 `_extractUnit`); the decoder path was OVERRIDING it with a hand-written abbreviation. Grounding (python-obd is NOT installed in the dev env): the decoder test fixtures feed the native unit as the decoder INPUT -- `_response(12.8, unit="volt")` (test_decoders_v2:175), `unit="kilopascal"` (:157), `unit="second"` (:136) -- and the decoder discarded it for 'V'/'kPa'/'s'. So the native strings are the fixtures' own SSOT, not fabricated.
+- **Mapping:** 'V'->'volt' (decodeBatteryVoltage + decodeO2PostCatVoltage), 'kPa'->'kilopascal' (decodeBarometricKpa), 's'->'second' (decodeRuntimeSec). TWO REAL collisions in actually-polled data (both params live in pollingTiers) justify the set: voltage = legacy O2_B1S1 'volt' (tier3, native path) vs decoder 'V' (BATTERY_V tier3 + O2_B1S2 tier2); pressure = legacy INTAKE_PRESSURE 'kilopascal' (tier4, native) vs decoder 'kPa' (BAROMETRIC_KPA tier4). RUNTIME_SEC 's'->'second' has no twin but aligns to the SAME native rule so DISTINCT unit is uniformly canonical.
+- **NOT touched (documented):** DTC_COUNT 'count' (python-obd STATUS carries no pint unit -> no native form, no colliding twin); the enum textLabel OVERLOAD ('CL'/'OL'/'ON'/'OFF' written into the unit column for FUEL_SYSTEM_STATUS/MIL_ON via logger.py:307) is left INTACT per the AC "keep the python-obd native enum overload".
+- **Scope = source->data (mirrors US-454, but NO config.json).** Source: decoders.py 4 return sites + DecodedReading docstring + header. Units are decoder-emitted, NOT config-driven, so config.json was NOT touched (a real difference from US-454's key-rename). Server migration v0021 (forward-only): realtime_data.unit is the SOLE Pi physical-unit column (models.py:174; drive_derived_signals speed/distance/accel_unit are server-computed 'km/h'/'km'/'m/s^2' on a different path -- out of scope). Loops UNIT_REMAP with an idempotent WHERE-guarded UPDATE per abbreviation + a zero-survivor SELECT COUNT post-probe per abbreviation. Registered #21; FakeRunner test mirrors test_migration_0020.
+- **[ATLAS] unit-is-a-typed-label-never-numeric:** new tests/test_unit_is_typed_label.py source-scans every src/ .py for `float()/int()/Decimal()/numeric-compare` of a `.unit` attribute (regex `\.unit\b` excludes pint's `.units` + the `*_unit` columns) -- confirmed ALREADY clean -- plus a structural assert that RealtimeData.unit maps to a String type.
+- **Gate:** 125 targeted tests GREEN (all-dots, 0 F), ruff clean on all 11 files. Commit ff1cf20.
+
+### Files changed:
+- Modified: `src/pi/obdii/decoders.py` (4 unit return sites 'V'/'kPa'/'s' -> native + docstring + header)
+- Created: `src/server/migrations/versions/v0021_us455_unit_string_canonicalization.py`
+- Modified: `src/server/migrations/__init__.py` (register v0021)
+- Modified: `tests/pi/obdii/test_decoders_v2.py` (4 unit assertions -> native), `tests/pi/obdii/test_logger_v2_decoders.py` (1 assertion -> 'volt')
+- Modified: 4 faithful BATTERY_V mock fixtures (`test_idle_poll_no_false_escalation.py`, `test_idle_poll_escalation.py`, `test_drive_lifecycle_cold_start.py`, `test_drive_detector_warm_restart_e2e.py`)
+- Created: `tests/server/test_migration_0021_unit_string_canonicalization.py`, `tests/test_unit_is_typed_label.py`
+
+### Learnings for future iterations:
+- **Pattern discovered**: when a value diverges because two code paths write the SAME fact differently (here: legacy `str(response.unit)` native vs decoder hand-written abbreviation), the canonical is the one already emitted by the widest/most-authoritative path -- pick THAT (the native form) and make the outlier match it, rather than inventing a third form. The test fixtures that feed the native value as INPUT are the grounding when the upstream lib isn't installed.
+- **Gotcha**: a unit-string change is a VALUE change (safe: grep first that no consumer branches on the string -- `unit == 'V'` etc. was zero), unlike US-454's KEY rename (which breaks decoder lookups). So the blast radius is only test assertions/fixtures, not runtime membership sets. Still do the final zero-remaining grep.
+- **Gotcha**: editing a JSON `note` field with a partial-prefix Edit leaves the old note body dangling (and its embedded `"` corrupts the string) -- rewrite the whole note value (or the file) with clean content, then `python -c json.load` both state files before committing.
+---
