@@ -63,3 +63,33 @@ Task: Collapse drive-identity id-families -> one canonical drive_id; Pi ids -> a
 - **Gotcha**: a "collapse the FKs onto the new identity" migration is only safe once the WRITERS are re-keyed onto that identity. A subsume that aligns HISTORICAL values (explicit-id insert) does NOT keep two independent autoincrement PKs in lockstep for NEW rows -- so a forward-only FK to the new identity orphans new writes until the sole-writer/re-key stories land. Respect the PRD's migration ORDER, not just the terse story-title deps.
 - **Gotcha**: don't deliver a "precondition proof" test that has to replicate the prior migration's SQL in test code (a "test mirrors prod migration" smell). US-449's idempotency proof was clean because it ran the REAL harness; US-451 had no equivalent ruling-independent, infra-cheap deliverable (US-448's suite is FakeRunner/DDL-string only, no SQLite data-level subsume harness), so blocking cleanly beat manufacturing a brittle test.
 ---
+
+## 2026-07-04 - US-453 (Agent 1 / Rex) -- CLOSED (stall-recovery)
+Task: Extend raw-sync scope -- power_log + pi_state as raw (D-7/F-082)
+
+### What happened (stall-recovery, not a fresh build):
+- A prior interrupted iteration had already committed the FULL US-453 code + tests (commit 0fa3840) but explicitly could NOT execute the in-loop test/lint gate -- its own commit message: "targeted tests written + trace-verified but NOT executed (pytest is gated behind an approval prompt; git-only allow-list)". That is the exact TD-059 complete-but-unverified stall: sprint.json stayed `passes:false`, ralph_agents.json left me `active` on US-453, and progress had no US-453 entry.
+- THIS iteration executed the missing gate. Targeted suite run SYNCHRONOUSLY (foreground): `pytest tests/pi/data/test_pi_state_sync.py tests/pi/data/test_sync_client_upsert.py tests/pi/data/test_sync_log_pk_variants.py tests/server/test_db_models.py tests/server/test_pi_state_sync.py` = **126 passed, 0 failed** in 65s. `ruff check` on all 10 touched files caught **1 I001 import-sort error** in test_pi_state_sync.py (a stray double blank line) that slipped through precisely because the code-commit never ran lint. Fixed via `ruff --fix`, re-verified clean ("All checks passed!"), committed 25bab40. Then finalized bookkeeping (sprint.json passes:true, this log, agent-state reset).
+
+### What was implemented (per commit 0fa3840):
+- Registered `pi_state` (operational-state singleton; the `no_new_drives` gate) into the Pi->server raw-sync scope. It is irreproducible Pi-only forensic state -> server MIRRORS it, never recomputes (F-104 boundary rule).
+- `pi_state` has an INTEGER `id` PK pinned to 1 -> rides the DELTA path. BUT it is a MUTABLE singleton: a plain id cursor pushes id=1 once then goes permanently stale after a `no_new_drives` flip. So it ALSO opts into the `modified_at` update-propagation cursor (`SYNC_UPDATE_TABLES_PK`) -- the degenerate single-row case of the drive_summary UPDATE-replay pattern -- so flips re-sync and the server mirror stays current.
+- Pi: `PK_COLUMN['pi_state']='id'` + `SYNC_UPDATE_TABLES_PK['pi_state']='id'`. Server: new `PiState` model + v0019 migration (CREATE pi_state, UNIQUE(source_device, source_id)) + `_TABLE_REGISTRY` entry (id->source_id upsert).
+- `power_log` (US-412 delta) + `startup_log` (US-416/417 snapshot) already synced -> VERIFIED, not redone (per AC).
+- Lockstep: DELTA count 11->12, table count 27->28, `EXPECTED_PK_COLUMN` + `_createAllInScopeStubs` + test_db_models updated.
+
+### Files changed:
+- Modified: `src/pi/data/sync_log.py` (PK_COLUMN + SYNC_UPDATE_TABLES_PK pi_state entries)
+- Modified: `src/server/api/sync.py` (_TABLE_REGISTRY pi_state upsert)
+- Modified: `src/server/db/models.py` (PiState model)
+- Modified: `src/server/migrations/__init__.py` (register v0019)
+- Created: `src/server/migrations/versions/v0019_us453_pi_state.py`
+- Created: `tests/pi/data/test_pi_state_sync.py` (+ ruff I001 fix this iteration)
+- Modified: `tests/pi/data/test_sync_client_upsert.py`, `tests/pi/data/test_sync_log_pk_variants.py`, `tests/server/test_db_models.py`
+- Created: `tests/server/test_pi_state_sync.py`
+
+### Learnings for future iterations:
+- **Gotcha (TD-059 recovery)**: a commit is NOT a closed story. If the prior iteration commits code but skips the in-loop test/lint gate, the story is complete-but-unverified -- the recovery iteration must RUN the gate, not assume green. Here the gate caught a real (if cosmetic) lint error the code-commit hid.
+- **Pattern discovered**: a MUTABLE singleton on the integer-PK delta path must ALSO join the `modified_at` update-propagation cursor (`SYNC_UPDATE_TABLES_PK`). A pure id cursor only ever fires on new ids -> an in-place row mutation (id fixed at 1) never re-syncs. Delta-path membership handles inserts; the modified_at cursor handles updates -- a mutable single-row table needs both.
+- **Gotcha**: `pytest -q` prints no summary line in this env (a plugin swallows it); use `--no-header -rN 2>&1 | grep -E "[0-9]+ (passed|failed)"` to get the explicit count. The trailing `[100%]` with no F/E markers already means all-pass, but grab the count for the record.
+---

@@ -191,8 +191,23 @@
       "epicId": "E-002",
       "type": "normal",
       "size": "S",
-      "status": "sprint-ready",
-      "passes": false,
+      "status": "done",
+      "passes": true,
+      "completionNotes": "US-453 pi_state raw-sync SHIPPED + targeted suite GREEN this iteration (126 passed) + ruff clean on all 10 touched files. NOTE ON STATE: the code + tests were committed by a prior interrupted iteration (0fa3840) which explicitly did NOT execute the in-loop test/lint gate (pytest was behind an approval prompt -> TD-059 complete-but-unverified stall; sprint.json passes stayed false, ralph_agents.json left me active on US-453). THIS iteration completed the missing gate: ran the targeted suite SYNCHRONOUSLY (tests/pi/data/test_pi_state_sync + test_sync_client_upsert + test_sync_log_pk_variants + tests/server/test_pi_state_sync + test_db_models = 126 passed, 0 fail) and `ruff check` on all 10 files -- which caught 1 I001 import-sort error in test_pi_state_sync.py that slipped through because the code-commit never ran lint. Fixed it (committed 25bab40, stray double blank line) -> ruff 'All checks passed!'. DELIVERED (per commit 0fa3840): pi_state operational-state singleton (no_new_drives gate) registered into the Pi->server raw-sync scope. pi_state has an INTEGER 'id' PK pinned to 1 -> rides the DELTA path, but as a MUTABLE singleton a plain id cursor would push id=1 once then go permanently stale on a no_new_drives flip -> it also opts into the modified_at update-propagation cursor (SYNC_UPDATE_TABLES_PK, the degenerate single-row case of the drive_summary UPDATE-replay pattern) so flips re-sync. Pi: PK_COLUMN['pi_state']='id' + SYNC_UPDATE_TABLES_PK['pi_state']='id' (sync_log.py). Srv: new PiState model + v0019 migration (CREATE pi_state, UNIQUE(source_device,source_id)) + _TABLE_REGISTRY entry (id->source_id upsert, sync.py/models.py). AC 'power_log + startup_log already synced -- VERIFY not redo': power_log = US-412 delta path, startup_log = US-416/417 snapshot path, both confirmed already in scope, NOT touched. AC 'server does NOT recompute (raw not derived)': pi_state is mirrored via upsert only, no compute path (F-104 boundary rule). Lockstep: DELTA count 11->12, table count 27->28, EXPECTED_PK_COLUMN + _createAllInScopeStubs + test_db_models updated. PM/DEPLOY GATE (bench-only, no MariaDB on Windows dev): AC 'deployed AND verified: post-sync server rows match Pi; idempotent' = PM deploy-time gate on chi-srv-01 (run a real sync cycle + row-match) -- validated here via in-memory SQLite delta+modified_at re-sync proof (Pi side) + server upsert/flag-flip-propagation/migration-wiring tests. mypy (strict) NOT run in-loop (not installed in dev env, sprint-wide) -> PM integration gate.",
+      "feedback": {
+        "filesActuallyTouched": [
+          "src/pi/data/sync_log.py",
+          "src/server/api/sync.py",
+          "src/server/db/models.py",
+          "src/server/migrations/__init__.py",
+          "src/server/migrations/versions/v0019_us453_pi_state.py",
+          "tests/pi/data/test_pi_state_sync.py",
+          "tests/pi/data/test_sync_client_upsert.py",
+          "tests/pi/data/test_sync_log_pk_variants.py",
+          "tests/server/test_db_models.py",
+          "tests/server/test_pi_state_sync.py"
+        ]
+      },
       "acceptance": [
         "reproducibility test applied: power_log + pi_state are irreproducible raw -> sync Pi->server as raw (SNAPSHOT_SYNC natural-key path from US-416 for TEXT-PK, delta path for integer-PK -- confirm per table); startup_log already synced (US-416) -- VERIFY, do not redo",
         "server does NOT recompute these (raw, not derived)",
