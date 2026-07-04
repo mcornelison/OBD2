@@ -14,6 +14,10 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-04-30    | Rex (US-242) | B-049 close: idle->active escalation tests.
+# 2026-07-03    | Rex (US-432) | BL-016: assert the escalation edge ARMS the
+#               |              | connection force-mandatory latch (and drive_end
+#               |              | clears it) so RPM is force-read past the dark-ECU
+#               |              | support cache on BOTH probe + ongoing poll.
 # ================================================================================
 ################################################################################
 
@@ -262,3 +266,82 @@ class TestEventRouterRegression:
 
         assert orchestrator._engineOnEscalated is False
         assert orchestrator._consecutiveAlternatorActiveSamples == 0
+
+
+# ================================================================================
+# US-432 (BL-016): the escalation edge ARMS the connection force-mandatory latch;
+# drive_end (via _resetEngineOnEscalation) clears it.
+# ================================================================================
+
+
+class TestForceMandatoryLatchWiring:
+    """The engine-on escalation edge un-masks RPM past the dark-ECU cache."""
+
+    def test_escalationEdge_armsForceMandatoryLatch(
+        self, orchestrator: ApplicationOrchestrator
+    ) -> None:
+        """On the escalation edge the orchestrator arms the connection latch."""
+        conn = MagicMock()
+        orchestrator._connection = conn
+
+        for voltage in [12.7, 12.7, 11.4, 14.4, 14.4, 14.4]:
+            orchestrator._handleReading(_makeReading("BATTERY_V", voltage))
+
+        conn.setEngineConfirmedForceMandatory.assert_called_once_with(True), (
+            "The engine-on escalation edge must arm the connection's "
+            "force-mandatory latch so the RPM probe + ongoing poll force-read "
+            "past python-obd's dark-ECU support cache (US-432)."
+        )
+
+    def test_driveEndReset_clearsForceMandatoryLatch(
+        self, orchestrator: ApplicationOrchestrator
+    ) -> None:
+        """_resetEngineOnEscalation (fired on drive_end) clears the latch."""
+        conn = MagicMock()
+        orchestrator._connection = conn
+
+        orchestrator._resetEngineOnEscalation()
+
+        conn.setEngineConfirmedForceMandatory.assert_called_once_with(False)
+
+    def test_noConnection_isCleanNoOp(
+        self, orchestrator: ApplicationOrchestrator
+    ) -> None:
+        """Escalation with no connection wired still fires (latch is best-effort)."""
+        orchestrator._connection = None
+
+        for voltage in [14.4, 14.4, 14.4]:
+            orchestrator._handleReading(_makeReading("BATTERY_V", voltage))
+
+        # Escalation still happened; the missing-connection latch call was a
+        # clean no-op (no crash).
+        assert orchestrator._engineOnEscalated is True
+
+    def test_latchArmedBeforeProbeReads(
+        self, orchestrator: ApplicationOrchestrator
+    ) -> None:
+        """The latch is armed BEFORE the single-shot RPM probe runs.
+
+        Ordering matters: the probe reads through the same connection wrapper,
+        so the latch must already be set when the probe's query fires -- else
+        the probe's own RPM read is still masked.
+        """
+        conn = MagicMock()
+        orchestrator._connection = conn
+        events: list[str] = []
+        conn.setEngineConfirmedForceMandatory.side_effect = (
+            lambda enabled: events.append(f"latch={enabled}")
+        )
+        inner = orchestrator._dataLogger._dataLogger
+        inner.queryAndLogParameter.side_effect = (
+            lambda name: events.append(f"probe={name}")
+            or _makeReading("RPM", 800.0)
+        )
+
+        for voltage in [14.4, 14.4, 14.4]:
+            orchestrator._handleReading(_makeReading("BATTERY_V", voltage))
+
+        assert events == ["latch=True", "probe=RPM"], (
+            "The force-mandatory latch must be armed BEFORE the escalation RPM "
+            f"probe reads (else the probe read is still masked); got {events}"
+        )

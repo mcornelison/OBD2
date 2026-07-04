@@ -345,6 +345,20 @@ class SimulatedObdConnection:
         """
         return self.obd.query(command)
 
+    def setEngineConfirmedForceMandatory(self, enabled: bool = True) -> None:
+        """US-432 API parity: no-op on the simulated connection.
+
+        The simulator's ``obd`` interface always returns real values (there is
+        no dark-ECU support cache to bypass), so the force-mandatory latch is a
+        no-op here.  Present so the orchestrator's ``_setForceMandatoryPids``
+        seam calls one method regardless of connection type.
+        """
+        return None
+
+    def isForcingMandatoryPids(self) -> bool:
+        """US-432 API parity: the simulated connection never forces (no mask)."""
+        return False
+
     def connect(self, callerGeneration: int | None = None) -> bool:
         """
         Connect to simulated OBD-II (starts simulator engine).

@@ -1203,6 +1203,12 @@ class ApplicationOrchestrator(  # type: ignore[misc]
             self._engineOnSampleCount,
         )
         self._engineOnEscalated = True
+        # US-432 (BL-016): engine-on is now confirmed, so arm the connection's
+        # force-mandatory latch BEFORE the probe reads RPM.  This un-masks RPM
+        # past python-obd's stale cold-boot-key-OFF support cache for BOTH the
+        # single-shot escalation probe below AND the ongoing realtime poll
+        # (both read through the same self._connection wrapper).
+        self._setForceMandatoryPids(True)
         self._injectRpmProbeForEscalation()
         return True
 
@@ -1261,6 +1267,45 @@ class ApplicationOrchestrator(  # type: ignore[misc]
                 e,
             )
 
+    def _setForceMandatoryPids(self, enabled: bool) -> None:
+        """Arm/clear the connection's force-mandatory-PID latch (US-432 / BL-016).
+
+        Delegates to :meth:`ObdConnection.setEngineConfirmedForceMandatory` so
+        the read path (both the escalation probe and the ongoing poll) forces
+        the known-mandatory Mode-01 PIDs (RPM) past python-obd's dark-ECU
+        support cache while the engine is confirmed on.  Best-effort: a missing
+        connection, a connection type without the latch (legacy/simulated
+        without the seam), or any error is a WARN-level no-op -- the latch must
+        never crash the runLoop.
+
+        Args:
+            enabled: True on the engine-on escalation edge; False on
+                ``drive_end`` (via :meth:`_resetEngineOnEscalation`).
+        """
+        conn = self._connection
+        if conn is None:
+            logger.debug(
+                "Force-mandatory latch %s skipped -- no connection (US-432)",
+                'arm' if enabled else 'clear',
+            )
+            return
+        setter = getattr(conn, 'setEngineConfirmedForceMandatory', None)
+        if setter is None:
+            logger.debug(
+                "Force-mandatory latch %s skipped -- connection lacks the latch "
+                "seam (US-432)",
+                'arm' if enabled else 'clear',
+            )
+            return
+        try:
+            setter(enabled)
+        except Exception as e:  # noqa: BLE001 -- latch must never crash runLoop
+            logger.warning(
+                "Force-mandatory latch %s failed: %s (runLoop continues; US-432)",
+                'arm' if enabled else 'clear',
+                e,
+            )
+
     def _resetEngineOnEscalation(self) -> None:
         """Re-arm the alternator-active escalation for the next drive.
 
@@ -1279,6 +1324,10 @@ class ApplicationOrchestrator(  # type: ignore[misc]
         """
         self._engineOnEscalated = False
         self._consecutiveAlternatorActiveSamples = 0
+        # US-432 (BL-016): drive_end -> the engine is off, so clear the
+        # force-mandatory latch.  The next engine-on escalation re-arms it; a
+        # disconnect also clears it (fresh connection is dark again).
+        self._setForceMandatoryPids(False)
 
     # ================================================================================
     # US-225 / TD-034: Poll-tier pause hooks (US-216 IMMINENT stage)

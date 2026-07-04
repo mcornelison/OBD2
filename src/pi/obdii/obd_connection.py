@@ -46,6 +46,20 @@
 #                |              | connection.  TD-036 no-boot-hang preserved
 #                |              | (the daemon+wall-clock pattern is untouched;
 #                |              | only .obd access is serialized).
+# 2026-07-03    | Rex (US-432) | BL-016 Option B capture fix.  A cold-boot-key-
+#                |              | OFF connect runs the US-199 supported-PID probe
+#                |              | with the engine off, so the dark ECU poisons
+#                |              | python-obd's supported_commands cache for RPM --
+#                |              | every later obd.query(RPM) returns null with NO
+#                |              | wire traffic and the drive never starts.  Add an
+#                |              | engine-confirmed latch (setEngineConfirmedForce-
+#                |              | Mandatory, cleared on drive_end + disconnect) so
+#                |              | query() force-reads the KNOWN-MANDATORY Mode-01
+#                |              | PIDs (MANDATORY_MODE01_PIDS = RPM) past the stale
+#                |              | cache.  SCOPED, never blanket (a blanket force
+#                |              | re-exposes the 0x42/0x0B/0x15 garbage US-199
+#                |              | skips).  Read-path only -- the DriveDetector
+#                |              | RPM-sustained machine (US-388) is untouched.
 # ================================================================================
 ################################################################################
 
@@ -119,6 +133,17 @@ EVENT_TYPE_CONNECT_SUCCESS = 'connect_success'
 EVENT_TYPE_CONNECT_FAILURE = 'connect_failure'
 EVENT_TYPE_DISCONNECT = 'disconnect'
 EVENT_TYPE_RECONNECT = 'reconnect'
+
+# US-432 (BL-016, Option B): the set of KNOWN-MANDATORY Mode-01 PID command
+# names that :meth:`ObdConnection.query` is allowed to force-read past
+# python-obd's dark-ECU support cache while the engine-confirmed latch is set.
+# RPM (PID 0x0C) is mandatory Mode-01 per SAE J1979 -- always supported by any
+# OBD-II ECU with the engine running -- so forcing it corrects a false-negative
+# (a stale engine-OFF probe result), NOT an unsupported PID.  Deliberately
+# NARROW: a blanket force re-exposes the 0x42/0x0B/0x15 garbage the US-199 probe
+# silent-skips.  Keyed by python-obd command name (obdlib.commands.RPM.name), or
+# the bare parameter string when obdlib is unavailable.
+MANDATORY_MODE01_PIDS: frozenset[str] = frozenset({'RPM'})
 
 
 # ================================================================================
@@ -309,6 +334,19 @@ class ObdConnection:
         # None until connect() runs the probe. Consumers (ObdDataLogger) use
         # it to silent-skip unsupported PIDs before dispatching a K-line query.
         self.supportedPids: Any | None = None
+        # US-432 (BL-016): engine-confirmed latch.  On a cold-boot-key-OFF
+        # connect the US-199 probe runs with the engine off, so a dark ECU
+        # answers "RPM unsupported" and python-obd caches that -- every later
+        # obd.query(RPM) then returns null WITHOUT wire traffic and the drive
+        # never starts.  When the orchestrator confirms engine-on (the
+        # alternator-active BATTERY_V escalation edge) it sets this latch so
+        # query() force-reads the known-mandatory Mode-01 PIDs (RPM) past the
+        # stale cache.  Cleared on drive_end and on disconnect().  A plain
+        # atomic bool (not guarded by _ioLock) so setting it from the runLoop
+        # never blocks behind an in-flight bounded query; query() reads it while
+        # already holding _ioLock, and the CPython bool read/write is atomic so
+        # the worst case is one un-forced read on the tick the latch flips.
+        self._forceMandatoryPids: bool = False
 
     def getStatus(self) -> ConnectionStatus:
         """
@@ -384,6 +422,45 @@ class ObdConnection:
         """
         with self._ioLock:
             return self._generation
+
+    def setEngineConfirmedForceMandatory(self, enabled: bool = True) -> None:
+        """Arm/clear the engine-confirmed force-mandatory-PID latch (US-432).
+
+        When ``enabled`` is True, subsequent :meth:`query` calls for a
+        known-mandatory Mode-01 PID (see :data:`MANDATORY_MODE01_PIDS` -- RPM)
+        pass ``force=True`` to python-obd, bypassing the stale engine-OFF
+        support cache that a cold-boot-key-OFF connect poisoned.  SCOPED: only
+        the mandatory PIDs are forced; every other PID still honors the probe
+        (no blanket un-mask -- BL-016 / Refusal Rule 3).
+
+        Called by the orchestrator on the alternator-active escalation edge
+        (engine-on confirmed) and cleared on ``drive_end``; :meth:`disconnect`
+        also clears it so a fresh connection starts dark.
+
+        Idempotent; logs at INFO only on an actual state change so the poll-rate
+        RPM reads do not spam the journal.
+
+        Args:
+            enabled: True to force mandatory PIDs; False to return to the
+                probe-honoring read path.
+        """
+        if self._forceMandatoryPids == enabled:
+            return
+        self._forceMandatoryPids = enabled
+        logger.info(
+            "Engine-confirmed force-mandatory latch %s -- mandatory Mode-01 "
+            "PIDs %s force-read past the dark-ECU support cache "
+            "(US-432 / BL-016)",
+            'ARMED' if enabled else 'CLEARED',
+            'WILL BE' if enabled else 'will NOT be',
+        )
+
+    def isForcingMandatoryPids(self) -> bool:
+        """Return True when the engine-confirmed force latch is armed (US-432).
+
+        Observability seam for tests + logging; cheap (a bool read, no I/O).
+        """
+        return self._forceMandatoryPids
 
     def connect(self, callerGeneration: int | None = None) -> bool:
         """
@@ -478,7 +555,37 @@ class ObdConnection:
                 raise ObdConnectionError(
                     "Cannot query: OBD interface is not connected (obd is None)"
                 )
+            # US-432 (BL-016): while the engine-confirmed latch is armed, force
+            # known-mandatory Mode-01 PIDs (RPM) past python-obd's dark-ECU
+            # support cache.  SCOPED to MANDATORY_MODE01_PIDS -- never blanket.
+            if self._shouldForceMandatory(command):
+                logger.debug(
+                    "query() force-reading mandatory Mode-01 PID past the "
+                    "dark-ECU support cache (US-432 engine-confirmed latch)"
+                )
+                return self.obd.query(command, force=True)
             return self.obd.query(command)
+
+    def _shouldForceMandatory(self, command: Any) -> bool:
+        """Return True when ``command`` must be force-read (US-432).
+
+        True only when the engine-confirmed latch is armed AND ``command``
+        resolves to a name in :data:`MANDATORY_MODE01_PIDS`.  Resolves the name
+        from a python-obd command object (``.name``) or a bare string (the
+        obdlib-absent fallback path in ``ObdDataLogger._getObdCommand``).
+
+        Args:
+            command: The python-obd command object or name being queried.
+
+        Returns:
+            True to pass ``force=True`` to the underlying query.
+        """
+        if not self._forceMandatoryPids:
+            return False
+        name = getattr(command, 'name', None)
+        if name is None and isinstance(command, str):
+            name = command
+        return name in MANDATORY_MODE01_PIDS
 
     def _performConnect(self) -> bool:
         """Internal connect implementation; runs under ``self._ioLock``.
@@ -748,6 +855,13 @@ class ObdConnection:
             # generation so a superseded connect/query daemon bound to the old
             # connection is fenced when it finally wakes.
             self._generation += 1
+
+            # US-432 (BL-016): clear the engine-confirmed force latch on
+            # teardown.  The next connect() re-runs the US-199 probe (dark ECU
+            # again on a cold-boot connect), so a stale force must not carry
+            # across connections -- the escalation re-arms it when engine-on is
+            # re-confirmed.
+            self._forceMandatoryPids = False
 
             # Release the rfcomm device we bound so the next connect() is
             # idempotent and the kernel slot is free for reuse. Path-style BC
