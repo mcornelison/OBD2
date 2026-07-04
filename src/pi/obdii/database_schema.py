@@ -191,7 +191,17 @@ CREATE TABLE IF NOT EXISTS profiles (
 );
 """
 
-# Static data queried once per VIN
+# Static data queried once per VIN (VIN, fuel type, etc.).
+#
+# US-456 / F-082 D-5 disposition (CIO-decided 2026-07-04): this table is KEPT,
+# not dropped, but is intentionally HONEST-EMPTY on the current vehicle. The
+# ECU (MD326328) is Mode-09-silent, so the VIN is un-gettable; because `vin` is
+# a NOT NULL foreign key, the collector (`vehicle/static_collector.py`) queries
+# the VIN FIRST and, on a null response, writes ZERO rows -- it never fabricates
+# a placeholder VIN. The empty table is therefore an honest instrument, and the
+# whole subsystem re-activates automatically if a Mode-09-capable ECU is ever
+# connected. Rationale + drop-vs-keep record: docs/static-data-disposition.md.
+# Guarded by tests/pi/obdii/test_static_data_honest_empty.py.
 SCHEMA_STATIC_DATA = """
 CREATE TABLE IF NOT EXISTS static_data (
     -- Primary key

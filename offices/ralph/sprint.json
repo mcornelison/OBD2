@@ -312,8 +312,16 @@
       "epicId": "E-002",
       "type": "normal",
       "size": "S",
-      "status": "sprint-ready",
-      "passes": false,
+      "status": "done",
+      "passes": true,
+      "completionNotes": "US-456 static_data disposition RESOLVED -- DECISION: KEEP the table honest-empty (NOT drop); no TD-061 filed (that path is only for drop). 3 targeted tests GREEN + ruff clean on both touched .py files. GROUNDED RATIONALE (not fabricated): (1) static_data holds one-time OBD params keyed on the VIN (static_data.vin is NOT NULL FK -> vehicle_info(vin)); the VIN is read over OBD Mode 09; the current ECU MD326328 is Mode-09-SILENT (tuner knowledge: 'Mode 09 silent -- can't fingerprint via OBD') -> VIN un-gettable -> no valid FK -> no honest row can exist. (2) The empty table is ALREADY honest by design: StaticDataCollector.collectStaticData() (src/pi/obdii/vehicle/static_collector.py:220-230) queries the VIN FIRST and on a null response raises VinNotAvailableError + writes ZERO rows -- it never fabricates a placeholder VIN or a synthetic vehicle_info record (verified: _queryVin returns None when response.is_null(), :336-338; shouldCollectStaticData returns False on no-VIN, :147-149). An empty table here is an honest-instrument, faithful to the project's honest-availability/typed-NA discipline. (3) KEEP over DROP because: dropping cascades through an entire Pi subsystem (StaticDataCollector + vehicle/ package + ~15 exports + pi.staticData.* config keys + FK_static_data_vehicle + schema registration) -- grossly out of proportion to a size-S disposition with zero data-integrity benefit (table already empty); and the subsystem re-activates automatically the moment a Mode-09-capable ECU is connected (hardware-conditional, not dead). DELIVERABLES: (a) tests/pi/obdii/test_static_data_honest_empty.py -- 3 real-DB guards (temp SQLite + real INSERT path per I-040; only the OBD connection faked as Mode-09-silent since no real silent ECU on the dev bench): collectStaticData writes 0 static_data rows AND 0 vehicle_info rows on a null VIN + returns success=False/vin=None/errorMessage~VIN; shouldCollectStaticData declines; table still EXISTS post-disposition (keep, not drop). This makes 'honest-empty' a VERIFIED invariant, not just prose -- a future refactor that fabricates a placeholder VIN fails the guard. (b) database_schema.py: authoritative disposition doc-comment above SCHEMA_STATIC_DATA (the table SSOT). (c) docs/static-data-disposition.md: durable drop-vs-keep decision record with grounded rationale + re-evaluate triggers. NO config.json / no migration / no subsystem change (keep path). NOT a Refusal-Rule-1 blocker: the PM scoped a bounded 2-option choice with 'Decide + document', and the CIO already provided the decisive grounding fact (VIN un-gettable). mypy (strict) NOT run in-loop (not installed in dev env, sprint-wide) -> PM integration gate.",
+      "feedback": {
+        "filesActuallyTouched": [
+          "tests/pi/obdii/test_static_data_honest_empty.py",
+          "src/pi/obdii/database_schema.py",
+          "docs/static-data-disposition.md"
+        ]
+      },
       "acceptance": [
         "[ATLAS: not F-104 -- CIO/hardware] VIN un-gettable (Mode-09-silent on MD326328): either DROP static_data (forward-only migration; file TD-061) OR keep honest-empty with a documented reason -- DECIDE + document the choice",
         "if dropped: TD-061 filed + drop migration deployed AND verified (table gone); if kept: doc note why honest-empty",

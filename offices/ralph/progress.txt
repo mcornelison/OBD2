@@ -146,3 +146,24 @@ Task: Unit-string canonicalization -- volt not V (D-4 / F-082, migration-first)
 - **Gotcha**: a unit-string change is a VALUE change (safe: grep first that no consumer branches on the string -- `unit == 'V'` etc. was zero), unlike US-454's KEY rename (which breaks decoder lookups). So the blast radius is only test assertions/fixtures, not runtime membership sets. Still do the final zero-remaining grep.
 - **Gotcha**: editing a JSON `note` field with a partial-prefix Edit leaves the old note body dangling (and its embedded `"` corrupts the string) -- rewrite the whole note value (or the file) with clean content, then `python -c json.load` both state files before committing.
 ---
+
+## 2026-07-04 - US-456 (Agent 1 / Rex)
+Task: static_data disposition + TD-061 (D-5 / F-082, CIO-decided)
+
+### What was implemented:
+- **DECISION: KEEP static_data honest-empty (NOT drop); no TD-061.** The story offered two grounded paths -- drop (file TD-061) or keep honest-empty with a documented reason -- and said "Decide + document the choice." Chose KEEP.
+- **Grounding (not fabricated):** `static_data` holds one-time OBD params keyed on a NOT NULL `vin` FK -> `vehicle_info(vin)`. VIN reads over OBD Mode 09; the current ECU MD326328 is Mode-09-SILENT (tuner knowledge) -> VIN un-gettable -> no valid FK -> no honest row can exist. The collector already handles this honestly: `collectStaticData()` queries the VIN FIRST and on a null response raises `VinNotAvailableError` + writes ZERO rows -- never fabricates a placeholder VIN or synthetic `vehicle_info` record (`static_collector.py:220-230,336-338,147-149`).
+- **Why keep over drop:** the empty table is already an honest instrument (honest-availability discipline); dropping cascades through a whole Pi subsystem (StaticDataCollector + vehicle/ package + ~15 exports + `pi.staticData.*` config + FK constraint + schema registration) -- grossly out of proportion to a size-S disposition with zero data-integrity benefit; and it re-activates automatically the moment a Mode-09-capable ECU is connected (hardware-conditional, not dead).
+- **Made "honest-empty" a VERIFIED invariant, not prose:** new guard test with a real temp SQLite DB + real INSERT path (only the OBD connection faked as Mode-09-silent, since no real silent ECU on the dev bench) asserts 0 rows written to both static_data + vehicle_info on a null VIN, success=False/vin=None, shouldCollect declines, and the table still EXISTS (keep, not drop). A future refactor that fabricates a placeholder VIN fails the guard.
+- **Gate:** 3 targeted tests GREEN, ruff clean on both touched .py files. No config/migration/subsystem change (keep path).
+
+### Files changed:
+- Created: `tests/pi/obdii/test_static_data_honest_empty.py` (3 honest-empty guards)
+- Modified: `src/pi/obdii/database_schema.py` (authoritative disposition doc-comment above SCHEMA_STATIC_DATA)
+- Created: `docs/static-data-disposition.md` (durable drop-vs-keep decision record + rationale + re-evaluate triggers)
+
+### Learnings for future iterations:
+- **Pattern discovered**: a "disposition" story (keep vs drop a table) is best closed by turning the chosen invariant into a guarded contract, not just a doc note. Here the doc claims "honest-empty"; the test PROVES the collector refuses to fabricate -> the claim is verified, not asserted (Refusal Rule 4 + honest-instrument discipline).
+- **Gotcha**: "CIO-decided" in a story title does not automatically mean Refusal-Rule-1 blocker. If the PM scoped a bounded N-option choice with an explicit "Decide + document" AND the decisive grounding fact is already provided (VIN un-gettable = Mode-09-silent ECU), the decision is delegated -- execute the well-grounded, low-risk, size-appropriate option, don't punt it back.
+- **Gotcha**: dropping a table is never "just a migration" when a whole subsystem hangs off it (collector + package + exports + config keys + FK). Weigh the blast radius against the story size before choosing drop; keep-honest-empty is the reversible, size-S choice when the emptiness is hardware-conditional.
+---
