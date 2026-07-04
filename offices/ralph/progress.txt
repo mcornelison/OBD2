@@ -42,3 +42,21 @@ Task: Clean up historical orphan drain_event rows (from US-434)
 - **Gotcha**: idempotency without an end_timestamp change needs a content-based guard -- embed a stable PROVENANCE_TAG in the note and gate the UPDATE with `notes NOT LIKE '%tag%'` so a re-run is a true no-op (the US-335 script could lean on `end_timestamp IS NULL` alone).
 - **Gotcha**: mypy still NOT installed in this dev env (same as US-441) -- flagged for PM integration gate; ruff clean on all 3 files.
 ---
+
+## 2026-07-03 - US-443 (Rex / Sprint 54 Session 3)
+Task: Tester V0.28+ data-profile DESIGN improvements (F-082, the 8 design items)
+
+### What was implemented:
+- TRIAGE, not code. Enumerated the 8 DESIGN items (D-1..D-8) from offices/tester/findings/2026-05-12-obd2db-data-profile-additional-findings.md (distinct from the N-1..N-8 bugs shipped in US-437). Verdict per PRD Open-Q#3: 0 of 8 are Ralph-buildable in Sprint 54; ALL 8 deferred with per-item grounded rationale + owner routing.
+- Grounded the deferral in code, not just the tester's word: D-3 both O2 param names are LIVE (O2_B1S1 config.json logData:true PID 0x14 / O2_BANK1_SENSOR2_V decoders.py PID 0x15) and O2_BANK1_SENSOR2_V is keyed by the US-229 DriveDetector silence-check regression test (rename breaks it + splits historical realtime_data); D-2 connection_log feeds the load-bearing DriveDetector attribution tripwire; D-5 StaticDataCollector exists+exported but is NOT invoked in orchestrator/ (grep=0) and gates on a VIN the Mode-09-silent ECU can't answer, drop needs a Pi migration but Pi has no schema_migrations (N-3=TD-061); D-6 = F-104/F-083 analysis-tier 'is this feature alive' discovery.
+- Owners: Atlas ruling (D-1/2/3/4/7/8), Spool discovery (D-6), CIO/hardware decision (D-5). All fold into the deferred B-076 (schema-normalization) / F-104 (server-authority) lane this PRD already routes to Sprint 55.
+
+### Files changed:
+- Created: `offices/pm/inbox/2026-07-03-from-ralph-us443-design-items-triage.md` (the file/defer-with-rationale deliverable: per-item disposition table + rationale + Sprint-55 homes + PM recommendation)
+- No `.py` touched by design -> ruff/mypy N/A; AC3 'each IMPLEMENTED item has a test' vacuously satisfied (0 implemented).
+
+### Learnings for future iterations:
+- **Pattern discovered**: A "triage the tester's design smells" story where the tester's own verdict is "no fix needed now, just noting" and the owning epic (B-076/F-104) is deferred = the disciplined completion is a rigorous defer-with-rationale artifact, NOT guessed schema churn. Refusal Rule 1 (don't guess architecture) beats shipping-something. Mark passes:true only when EVERY item is triaged (implemented-with-test OR deferred-with-rationale) and none is silently skipped -- that fully meets the validationCriteria.
+- **Gotcha**: before deferring a schema-naming item as "safe someday," check what regression tests key on the exact string -- O2_BANK1_SENSOR2_V is load-bearing for the US-229 silence-check (comment in decoders.py), so it is NOT a free rename. Grep the string across tests/ + decoders before calling any rename "low-risk."
+- **Gotcha**: an existing collector class (StaticDataCollector) being present/exported does NOT mean it runs -- grep the orchestrator/ runtime path; it was never wired, which changes the D-5 "populate vs drop" calculus (populate = wire it up AND fix VIN, not just flip a flag).
+---

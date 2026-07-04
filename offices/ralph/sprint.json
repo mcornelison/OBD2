@@ -100,7 +100,13 @@
       "type": "normal",
       "size": "M",
       "status": "sprint-ready",
-      "passes": false,
+      "passes": true,
+      "completionNotes": "US-443 CLOSED as TRIAGE (bench). AC1 enumerate: read offices/tester/findings/2026-05-12-obd2db-data-profile-additional-findings.md -> the 8 DESIGN items = D-1..D-8 (distinct from the N-1..N-8 bugs shipped in US-437). AC2 implement-or-defer: 0 of 8 are cleanly Ralph-buildable in Sprint 54; ALL 8 deferred WITH per-item grounded rationale + owner routing -> answers PRD Open-Q#3 (buildable-vs-needs-input split). This is the disciplined outcome, NOT a dodge: the tester itself filed all 8 as 'no fix needed now, just noting... for the V0.28 DB-arch discussion'; F-082 says they 'become stories under B-076 PRD' (server schema-normalization epic); and THIS PRD already defers F-104 (server-authority) + schema-normalization to Sprint 55. Each item needs an Atlas architecture ruling (D-1/2/3/4/7/8), a Spool analysis-tier discovery (D-6), or a CIO/hardware decision (D-5) -- guessing any of them violates Refusal Rule 1. EVIDENCE grounding (code, not just the finding): D-3 both O2 names are LIVE (O2_B1S1 config.json logData:true PID 0x14; O2_BANK1_SENSOR2_V decoders.py PID 0x15) AND O2_BANK1_SENSOR2_V is keyed by the US-229 DriveDetector silence-check regression test (explicit decoders.py comment) -> renaming breaks the test + splits historical realtime_data. D-2 connection_log feeds the DriveDetector attribution/detect_overlapping_drives tripwire (load-bearing). D-5 StaticDataCollector exists+exported but is NOT invoked in orchestrator/ (grep=0 hits) AND gates on a VIN the Mode-09-silent ECU can't answer; drop needs a Pi migration but Pi has no schema_migrations (N-3 = TD-061). D-6 = F-104/F-083 analysis-tier 'is this feature alive' discovery. DELIVERABLE (the 'file/defer with rationale' artifact, none silently skipped): offices/pm/inbox/2026-07-03-from-ralph-us443-design-items-triage.md -- full per-item disposition table + rationale + Sprint-55 B-076/F-104 homes + PM recommendation. NO .py touched by design -> ruff/mypy N/A (no code modified); AC3 'each IMPLEMENTED item has a test' is vacuously satisfied (0 implemented). NOTE FOR PM: if you want any item forced into a later Sprint-54 story, D-4 (volt->V unit drift) + D-5 (decision) are lowest-blast-radius, but both still need an Atlas canonical-value ruling first -- routed accordingly, not guessed.",
+      "feedback": {
+        "filesActuallyTouched": [
+          "offices/pm/inbox/2026-07-03-from-ralph-us443-design-items-triage.md"
+        ]
+      },
       "acceptance": [
         "read the tester's V0.28+ data-profile findings; enumerate the 8 DESIGN items (distinct from the US-437 bugs)",
         "implement the ready ones OR file/defer with rationale (some may need Spool/Atlas input -- flag those, do NOT guess)",
