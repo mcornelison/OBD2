@@ -231,8 +231,25 @@
       "epicId": "E-002",
       "type": "normal",
       "size": "S",
-      "status": "sprint-ready",
-      "passes": false,
+      "status": "done",
+      "passes": true,
+      "completionNotes": "US-454 O2 name normalization SHIPPED + 215 targeted tests GREEN + ruff clean on all 11 py files + config valid (commit a3e737c). CANONICAL DECISION (grounded, not fabricated): the ONE divergent stored O2 label 'O2_BANK1_SENSOR2_V' (post-cat, PID 0x15) -> canonical 'O2_B1S2' -- grounded in decoders.py:292 which already declares PARAMETER_DECODERS[...].obdCommand=='O2_B1S2', + the O2_B{bank}S{sensor} convention its sibling 'O2_B1S1' (pre-cat) already follows. groundingRef: src/pi/obdii/decoders.py:290-297 (Pi decoder registry SSOT). Enumeration: only O2_B1S1 (already canonical, untouched) + O2_BANK1_SENSOR2_V (the sole variant) are ever STORED (the two config.json-polled O2 names); the WR names (O2_S1_WR_*) live in the python-obd catalog but are not polled -> not in server data. So the normalization is exactly one mapping. SCOPE = full source->data rename (the ONLY coherent scope; server-DB-only is not durable + contradicts the [ATLAS] fixture directive): (1) SOURCE rename so the Pi stops emitting the variant -- config.json x2 poll names (tier + probe-matrix entries, both PID 0x15) + decoders.py PARAMETER_DECODERS key+parameterName+prose comment + logger.py header-comment. Load-bearing coupling proven: logger.py:210 PARAMETER_DECODERS.get(parameterName) resolves the decoder BY the config `name`, so config.json `name` and the decoders.py key MUST move in lockstep or the decode path falls through to the getattr fallback and fails. (2) LOCKSTEP TEST updates (the rename is a key-rename refactor -> every membership set / parametrize tuple / queryParameter() arg that named the old label): the [ATLAS] US-229 fixture (tests/pi/obdii/test_decoder_metadata.py, the drift guard) + 4 more Pi tests (test_logger_v2_decoders, test_poll_set_expansion, test_decoders_v2, tests/test_polling_tiers). (3) SERVER MIGRATION v0020 (forward-only DATA re-map): UPDATE parameter_name 'O2_BANK1_SENSOR2_V'->'O2_B1S2' across ALL 6 parameter_name tables (realtime_data/statistics/alert_log/drive_statistics/trend_snapshots/anomaly_log) with an idempotent WHERE guard (replay matches 0 rows) + a zero-survivor SELECT COUNT post-probe per table (raises SchemaProbeError on a silent no-op so the runner never records success on a partial re-map). drive_statistics composite-PK collision is impossible (O2_B1S2 never stored pre-migration; a drive is wholly pre- or post-rename) -- documented in the migration docstring. Registered #20 in ALL_MIGRATIONS. Hermetic FakeRunner test (coverage/ordering/idempotency/failure-modes), mirrors test_migration_0018. SIDE-FIX (lockstep, flagged for PM): de-brittled test_migration_0018::test_v0018RegisteredLastAndSorted -- its `versions[-1]=='0018'` absolute-tail assertion went silently RED when US-453 appended v0019 (US-453's targeted suite excluded that file); my v0020 made it '0020'. Re-pointed to assert v0018 PRESENT + sorted + directly-after-v0017 (the real invariant), and avoided planting the same trap in my own v0020 test. PM/DEPLOY GATES (bench-only, no MariaDB on Windows dev): 'deployed AND verified: SELECT DISTINCT parameter_name returns only canonical O2 names on chi-srv-01' = PM deploy-time gate (migration validated here via FakeRunner SQL-shape/idempotency/post-probe). BLAST-RADIUS FLAG for PM: this rename touched config.json (deployed Pi poll config) -- next Pi deploy makes it store post-cat O2 under 'O2_B1S2'; the v0020 migration cleans history so old+new rows unify. This is a BASE-CONFIG + shared-decoder change (>1 tier) -> run the full pytest suite at integration. mypy (strict) NOT run in-loop (not installed in dev env, sprint-wide) -> PM integration gate.",
+      "feedback": {
+        "filesActuallyTouched": [
+          "config.json",
+          "src/pi/obdii/decoders.py",
+          "src/pi/obdii/data/logger.py",
+          "src/server/migrations/versions/v0020_us454_o2_name_normalization.py",
+          "src/server/migrations/__init__.py",
+          "tests/pi/obdii/test_decoder_metadata.py",
+          "tests/pi/obdii/test_logger_v2_decoders.py",
+          "tests/pi/obdii/test_poll_set_expansion.py",
+          "tests/pi/obdii/test_decoders_v2.py",
+          "tests/test_polling_tiers.py",
+          "tests/server/test_migration_0020_o2_name_normalization.py",
+          "tests/server/test_migration_0018_canonical_drives.py"
+        ]
+      },
       "acceptance": [
         "enumerate current O2 name variants; forward-only migration re-maps existing rows to one canonical name per sensor",
         "[ATLAS] update the US-229 fixture in lockstep so tests reflect canonical names",

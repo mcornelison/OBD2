@@ -93,3 +93,31 @@ Task: Extend raw-sync scope -- power_log + pi_state as raw (D-7/F-082)
 - **Pattern discovered**: a MUTABLE singleton on the integer-PK delta path must ALSO join the `modified_at` update-propagation cursor (`SYNC_UPDATE_TABLES_PK`). A pure id cursor only ever fires on new ids -> an in-place row mutation (id fixed at 1) never re-syncs. Delta-path membership handles inserts; the modified_at cursor handles updates -- a mutable single-row table needs both.
 - **Gotcha**: `pytest -q` prints no summary line in this env (a plugin swallows it); use `--no-header -rN 2>&1 | grep -E "[0-9]+ (passed|failed)"` to get the explicit count. The trailing `[100%]` with no F/E markers already means all-pass, but grab the count for the record.
 ---
+
+## 2026-07-04 - US-454 (Agent 1 / Rex)
+Task: O2 sensor name normalization -- one canonical name/sensor (D-3 / F-082, migration-first)
+
+### What was implemented:
+- **Canonical decision (grounded):** the ONE divergent stored O2 label `O2_BANK1_SENSOR2_V` (post-cat, PID 0x15) -> canonical `O2_B1S2`. Grounded in `decoders.py:292` (the decoder entry already declares `obdCommand=="O2_B1S2"`) + the `O2_B{bank}S{sensor}` convention its sibling `O2_B1S1` (pre-cat) already follows. Enumeration confirmed only `O2_B1S1` (already canonical) + `O2_BANK1_SENSOR2_V` are ever STORED (the two config.json-polled O2 names); WR names live in the python-obd catalog but aren't polled -> not in server data. So: exactly one mapping.
+- **Full source->data rename (the only coherent scope).** Server-DB-only was rejected: it's not durable (the Pi would re-emit the variant on the next sync, re-failing SELECT DISTINCT), and the `[ATLAS]` "update the US-229 fixture in lockstep" directive only makes sense if the Pi decoder SOURCE changes. Proven coupling: `logger.py:210` `PARAMETER_DECODERS.get(parameterName)` resolves the decoder BY the config `name`, so `config.json` name + `decoders.py` registry key MUST move in lockstep (else the decode path falls through to the getattr fallback and fails).
+- **Source:** `config.json` x2 poll `name` entries (tier list + probe-matrix, both PID 0x15) + `decoders.py` PARAMETER_DECODERS key/parameterName/prose-comment + `logger.py` header comment.
+- **Lockstep tests (key-rename hits every reference):** the US-229 drift fixture `test_decoder_metadata.py` + `test_logger_v2_decoders.py` + `test_poll_set_expansion.py` + `test_decoders_v2.py` + `test_polling_tiers.py`.
+- **Server migration v0020 (forward-only DATA re-map):** `UPDATE parameter_name 'O2_BANK1_SENSOR2_V'->'O2_B1S2'` across ALL 6 parameter_name tables (realtime_data/statistics/alert_log/drive_statistics/trend_snapshots/anomaly_log), idempotent WHERE guard + a zero-survivor SELECT COUNT post-probe per table (raises SchemaProbeError on a silent no-op). drive_statistics composite-PK collision is impossible (O2_B1S2 never stored pre-migration; a drive is wholly pre- or post-rename). Registered #20 in ALL_MIGRATIONS. Hermetic FakeRunner test mirrors test_migration_0018.
+- **Side-fix (lockstep):** de-brittled `test_migration_0018::test_v0018RegisteredLastAndSorted` -- its `versions[-1]=='0018'` absolute-tail assertion went silently RED when US-453 appended v0019 (US-453's targeted suite excluded that file); v0020 made it '0020'. Re-pointed to assert v0018 present + sorted + directly-after-v0017; avoided the same trap in my own v0020 test.
+- **Gate:** 215 targeted tests GREEN (all-dots, 0 F), ruff clean on all 11 py files, `validate_config.py` passed. Commit a3e737c.
+
+### Files changed:
+- Modified: `config.json` (2 O2 poll names -> O2_B1S2)
+- Modified: `src/pi/obdii/decoders.py` (PARAMETER_DECODERS key/field/comment)
+- Modified: `src/pi/obdii/data/logger.py` (header comment)
+- Created: `src/server/migrations/versions/v0020_us454_o2_name_normalization.py`
+- Modified: `src/server/migrations/__init__.py` (register v0020)
+- Modified: `tests/pi/obdii/test_decoder_metadata.py`, `test_logger_v2_decoders.py`, `test_poll_set_expansion.py`, `test_decoders_v2.py`, `tests/test_polling_tiers.py`
+- Created: `tests/server/test_migration_0020_o2_name_normalization.py`
+- Modified: `tests/server/test_migration_0018_canonical_drives.py` (de-brittle tail assertion)
+
+### Learnings for future iterations:
+- **Pattern discovered**: a data-normalization migration is only DURABLE if the SOURCE stops emitting the variant. Re-mapping historical server rows alone is defeated by the next Pi sync. For an OWN-source label (our config.json/decoders.py, not an external lib), rename the source + migrate history together; the "update the US-229 fixture" ACs are the tell that the source is in scope.
+- **Gotcha**: renaming a decoder-registry KEY is a rename refactor with an inherent blast radius -- every membership set / parametrize tuple / `queryParameter()` call naming the old label breaks. `ripgrep` on the slow SMB share returned INCOMPLETE results without erroring (missed decoders.py + 2 test files on the first pass); always cross-check `files_with_matches` and do a final zero-remaining grep after the edits.
+- **Gotcha**: brittle "tail assertions" (`versions[-1] == 'NNNN'`) in registration tests go silently red on the NEXT registry append and hide until someone runs that file. De-brittle to "present + sorted + directly-after-predecessor". A story that adds to a registry should run the prior registration test too, not just its own.
+---
