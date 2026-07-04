@@ -1,0 +1,25 @@
+## 2026-07-03 - US-441 (Rex / Sprint 54 Session 1)
+Task: OBD capture -- serialize ObdConnection wrapper + fence orphaned timeout daemons (F-117/A-17, P0)
+
+### What was implemented:
+- ObdConnection wrapper (obd_connection.py): renamed _connectLock -> _ioLock = THE single serialization lock guarding EVERY .obd access. New query(command, callerGeneration=None) holds _ioLock around self.obd.query() (the serialized read path the logger now uses). disconnect() holds _ioLock around close(). connect(callerGeneration=None) fences a superseded re-open. New _generation counter (+1 on connect-success AND disconnect) + activeGeneration(); new ObdConnectionSupersededError.
+- logger.py:220 (queryParameter) + :290 (_queryViaDecoder): now call self.connection.query(cmd) instead of self.connection.obd.query(cmd) -- the load-bearing GAP-1 sites that bypassed lifecycle.
+- lifecycle.py: _runInitialConnectWithTimeout + _queryWithTimeout capture the generation (new module fn _resolveGeneration with an isinstance-int gate so MagicMock connections resolve None -> legacy path) and route the query daemon through connection.query(). Daemons thread-named obd-connect-gen<N> / obd-query-<cmd>-gen<N> (heartbeat already obd-reconnect-heartbeat) = observability AC.
+- SimulatedObdConnection: activeGeneration()/query()/connect(callerGeneration=) API parity (no-op fence; no real port).
+- specs/architecture.md: new "### 3.5 OBD Connection Threading Model" (serialization + epoch fence) -- AC6 Rule-10 bound to US-441.
+- Real-concurrency test tests/pi/obdii/test_obd_connection_thread_safety.py: raw .obd.query() interleaves (RED discriminator) vs wrapper query() serialized (maxConcurrent==1); epoch fence drops superseded query/connect; live reader never fenced; ObdDataLogger read path vs orphan daemon on the SAME wrapper = no interleaving.
+
+### Files changed:
+- Modified: `src/pi/obdii/obd_connection.py` (single _ioLock + query() + epoch fence + generation)
+- Modified: `src/pi/obdii/data/logger.py` (serialized reads via connection.query())
+- Modified: `src/pi/obdii/orchestrator/lifecycle.py` (generation capture + _resolveGeneration + thread names)
+- Modified: `src/pi/obdii/simulator/simulated_connection.py` (API parity)
+- Modified: `specs/architecture.md` (new 3.5 threading model)
+- Created: `tests/pi/obdii/test_obd_connection_thread_safety.py` (GAP-1 real-concurrency VC)
+- Modified: 6 test fakes (logger_v2, capture_loop, bt_flap, 3 engine e2e) -- given query() mirroring the wrapper
+
+### Learnings for future iterations:
+- **Pattern discovered**: The capture race was invisible to lifecycle-mocked tests because the logger read self.connection.obd.query() DIRECTLY -- any connection double must now expose query() (delegating to .obd.query) to model the wrapper faithfully. Route the logger through the wrapper, not the raw obd, so the test path == production path (avoids Atlas's "mocked-green/IRL-miss" trap).
+- **Gotcha**: MagicMock connections auto-return a MagicMock from any attribute, so activeGeneration() must be isinstance(int)-gated (MagicMock is not int) and .query() must be explicitly wired to the scripted BT edge in e2e fixtures (a bare .query returns a junk response, never hitting is_null()).
+- **Gotcha**: mypy is NOT installed in this Windows dev env (.venv has no mypy) -- flagged for PM integration gate; ruff runs fine.
+---

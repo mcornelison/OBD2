@@ -25,6 +25,27 @@
 #                |              | heartbeat callers so they can log
 #                |              | already_in_flight and skip instead of
 #                |              | stacking concurrent attempts.
+# 2026-07-03    | Rex (US-441) | F-117/A-17 capture fix.  The V0.27.1 lock only
+#                |              | guarded connect(); the realtime logger reads
+#                |              | self.connection.obd.query() DIRECTLY, racing
+#                |              | orphaned timeout daemons -> "device disconnected
+#                |              | while reading" -> 0 rows.  Rename _connectLock ->
+#                |              | _ioLock and make it the SINGLE serialization
+#                |              | lock for EVERY .obd access: connect(), the new
+#                |              | query() method, disconnect()'s close(), and the
+#                |              | supported-PID probe.  Add a generation/epoch
+#                |              | counter (bumped on each connect-success + each
+#                |              | disconnect) so a superseded (timed-out, left-
+#                |              | running) connect/query daemon is FENCED from
+#                |              | touching a connection a newer owner now holds:
+#                |              | connect(callerGeneration=) skips re-open,
+#                |              | query(callerGeneration=) raises
+#                |              | ObdConnectionSupersededError.  Callers with no
+#                |              | generation (the live logger read path) are
+#                |              | never fenced -- they always read the current
+#                |              | connection.  TD-036 no-boot-hang preserved
+#                |              | (the daemon+wall-clock pattern is untouched;
+#                |              | only .obd access is serialized).
 # ================================================================================
 ################################################################################
 
@@ -182,6 +203,18 @@ class ObdConnectionFailedError(ObdConnectionError):
     pass
 
 
+class ObdConnectionSupersededError(ObdConnectionError):
+    """A query/connect was fenced because a newer connection generation owns
+    the port (US-441 epoch fence).
+
+    Raised by :meth:`ObdConnection.query` when the caller passes a
+    ``callerGeneration`` that no longer matches the wrapper's current
+    generation -- i.e. the caller is a superseded (timed-out, left-running)
+    daemon whose I/O must NOT touch the serial port a later owner established.
+    """
+    pass
+
+
 # ================================================================================
 # OBD Connection Class
 # ================================================================================
@@ -252,15 +285,26 @@ class ObdConnection:
         # configured a literal /dev/rfcommN path (BC), we never bind and
         # must not release.
         self._boundRfcomm: bool = False
-        # V0.27.1 hotfix: serialize concurrent callers of connect().  Sprint
-        # 27 engine-on test #2 evidence: the Sprint 25 _runInitialConnect-
-        # WithTimeout leaked daemon and the US-301 heartbeat's per-tick
-        # connect daemon both invoked self._connection.connect() against the
-        # same /dev/rfcomm0; pyserial rejected the second open with
-        # "multiple access on port?" and zero rows landed in realtime_data.
-        # connect() now runs under this lock so callers serialize naturally;
+        # US-441 (F-117/A-17): THE single serialization lock for every access
+        # to the underlying python-obd connection (self.obd).  python-obd wraps
+        # one serial port and is NOT thread-safe; two threads driving it at once
+        # interleave the ELM327 frames -> "device disconnected while reading" ->
+        # 0 rows.  V0.27.1 introduced this as _connectLock but only guarded
+        # connect(); the realtime logger reads self.obd.query() DIRECTLY, so its
+        # reads raced the orphaned connect/query daemons.  Renamed _ioLock and
+        # now held around connect(), query(), disconnect()'s close(), and the
+        # supported-PID probe so no two threads ever drive the port concurrently.
         # isConnectInFlight() exposes the lock state to heartbeat probers.
-        self._connectLock = threading.Lock()
+        self._ioLock = threading.Lock()
+        # US-441 epoch fence: a monotonically increasing "connection generation".
+        # Bumped on every successful connect and every disconnect, so a live
+        # connection carries a stable generation between the two.  A bounded
+        # timeout daemon captures the generation at spawn (via activeGeneration())
+        # and passes it back to connect()/query(); if the generation has moved on
+        # by the time the orphaned daemon finally acquires the lock, it is fenced
+        # -- it must NOT touch a connection a newer owner now holds.  Guarded by
+        # _ioLock.
+        self._generation = 0
         # US-199: Supported-PID probe result cached at connection-open time.
         # None until connect() runs the probe. Consumers (ObdDataLogger) use
         # it to silent-skip unsupported PIDs before dispatching a K-line query.
@@ -291,7 +335,7 @@ class ObdConnection:
         return self._isConnected()
 
     def isConnectInFlight(self) -> bool:
-        """Return True when another thread is currently inside ``connect()``.
+        """Return True when another thread is currently driving OBD I/O.
 
         V0.27.1 hotfix observability seam.  Heartbeat callers probe this
         before invoking ``connect()`` themselves so a tick that fires while
@@ -300,13 +344,19 @@ class ObdConnection:
         ``outcome=already_in_flight`` and skips, rather than spawning a
         competing connect that collides on ``/dev/rfcomm0``.
 
+        US-441: the probe now reflects the unified ``_ioLock`` -- True while
+        ANY serialized OBD operation (connect OR query OR disconnect) is in
+        flight, not just connect.  In PENDING state (the only time the
+        heartbeat runs) the logger is not querying, so this remains an
+        accurate "a connect is already happening" signal for the heartbeat.
+
         Cheap (no Bluetooth I/O) -- just inspects the local
         :class:`threading.Lock` state.  Always safe to call from any thread.
 
         Returns:
-            True if any thread holds ``self._connectLock``, False otherwise.
+            True if any thread holds ``self._ioLock``, False otherwise.
         """
-        return self._connectLock.locked()
+        return self._ioLock.locked()
 
     def _isConnected(self) -> bool:
         """Internal connection check."""
@@ -318,39 +368,129 @@ class ObdConnection:
         except Exception:
             return False
 
-    def connect(self) -> bool:
+    def activeGeneration(self) -> int:
+        """Return the current connection generation (US-441 epoch fence).
+
+        A bounded timeout daemon (the lifecycle ``_connectInThread`` /
+        ``_queryInThread``) captures this at spawn and passes it back to
+        :meth:`connect` / :meth:`query`.  If the generation has advanced by the
+        time the (possibly orphaned) daemon acquires the lock, its operation is
+        fenced.  Cheap (no serial I/O) -- takes ``_ioLock`` only to read the
+        counter coherently.
+
+        Returns:
+            The current generation integer (starts at 0; +1 per connect-success
+            and per disconnect).
+        """
+        with self._ioLock:
+            return self._generation
+
+    def connect(self, callerGeneration: int | None = None) -> bool:
         """
         Connect to OBD-II dongle with retry logic.
 
         Attempts to connect using exponential backoff retry delays.
         Logs all connection attempts to database if available.
 
-        Thread safety (V0.27.1):
-            ``connect()`` runs under ``self._connectLock`` so concurrent
-            invocations serialize.  A second caller that invokes ``connect()``
-            while a first caller is still inside the inner 6-attempt-with-
-            backoff schedule will block on the lock acquire; if the second
-            caller is the US-301 heartbeat, it should probe
-            :meth:`isConnectInFlight` first and log ``already_in_flight``
-            instead of blocking.  See ``test_connect_thread_safety.py`` for
-            the runtime-validation contract.
+        Thread safety (V0.27.1 / US-441):
+            ``connect()`` runs under ``self._ioLock`` -- THE single lock that
+            also guards :meth:`query` and :meth:`disconnect` -- so no two
+            threads ever drive the serial port concurrently.  A second caller
+            that invokes ``connect()`` while a first is mid-connect blocks on
+            the lock; the US-301 heartbeat probes :meth:`isConnectInFlight`
+            first and logs ``already_in_flight`` instead of blocking.
+
+        Epoch fence (US-441):
+            When ``callerGeneration`` is provided and no longer matches the
+            wrapper's current generation, this attempt has been SUPERSEDED (a
+            newer connection was established while this -- likely orphaned,
+            timed-out -- daemon was blocked).  It refuses to re-open the port
+            and returns the current connectedness instead.  Live callers
+            (``reconnect()``, the heartbeat) pass no generation and always
+            proceed.
+
+        Args:
+            callerGeneration: Optional generation token captured via
+                :meth:`activeGeneration` before spawning a bounded connect
+                daemon.  ``None`` (default) never fences.
 
         Returns:
-            True if connection successful, False otherwise
+            True if connection successful (or already connected on a fenced
+            call), False otherwise.
 
         Raises:
             ObdNotAvailableError: If python-OBD library not available
         """
-        with self._connectLock:
+        with self._ioLock:
+            if callerGeneration is not None and callerGeneration != self._generation:
+                logger.warning(
+                    "connect() fenced -- caller generation %d superseded by "
+                    "current %d; a newer connection owns the port, not "
+                    "re-opening (US-441 epoch fence)",
+                    callerGeneration,
+                    self._generation,
+                )
+                return self._isConnected()
             return self._performConnect()
 
+    def query(self, command: Any, callerGeneration: int | None = None) -> Any:
+        """Run a single OBD query under the serialization lock (US-441).
+
+        THE serialized read path.  Every caller that would otherwise touch
+        ``self.obd.query(...)`` directly -- the realtime logger, the lifecycle
+        query daemon -- goes through here so its serial I/O cannot interleave
+        with a connect, a disconnect, or another query on the one non-thread-
+        safe python-obd connection.  Holding ``_ioLock`` for the whole query is
+        what closes the F-117/A-17 "device disconnected while reading" race.
+
+        Args:
+            command: python-obd command name or command instance to query.
+            callerGeneration: Optional generation token (see
+                :meth:`activeGeneration`).  When provided and stale, the read is
+                fenced -- an orphaned daemon must not read a connection a newer
+                owner holds.  Live readers (the logger) pass ``None`` and are
+                never fenced; they always read the current connection.
+
+        Returns:
+            The python-obd response object.
+
+        Raises:
+            ObdConnectionSupersededError: If ``callerGeneration`` is stale.
+            ObdConnectionError: If there is no live OBD interface (obd is None).
+        """
+        with self._ioLock:
+            if callerGeneration is not None and callerGeneration != self._generation:
+                logger.warning(
+                    "query() fenced -- caller generation %d superseded by "
+                    "current %d; dropping orphaned read (US-441 epoch fence)",
+                    callerGeneration,
+                    self._generation,
+                )
+                raise ObdConnectionSupersededError(
+                    "OBD query dropped: caller generation superseded by a "
+                    "newer connection",
+                    details={
+                        'callerGeneration': callerGeneration,
+                        'currentGeneration': self._generation,
+                    },
+                )
+            if self.obd is None:
+                raise ObdConnectionError(
+                    "Cannot query: OBD interface is not connected (obd is None)"
+                )
+            return self.obd.query(command)
+
     def _performConnect(self) -> bool:
-        """Internal connect implementation; runs under ``self._connectLock``.
+        """Internal connect implementation; runs under ``self._ioLock``.
 
         Body factored out of :meth:`connect` so the V0.27.1 thread-safety
         wrapper is a single ``with`` line at the public entry point.  Do not
         call this directly from production code -- always go through
         :meth:`connect` so the lock is held for the entire attempt.
+
+        US-441: on a successful connect this bumps ``self._generation`` (the
+        caller already holds ``_ioLock``) so any daemon that captured an older
+        generation is fenced from the new connection.
         """
         if not OBD_AVAILABLE and self._obdFactory is None:
             error = "python-OBD library not available"
@@ -400,6 +540,11 @@ class ObdConnection:
                     self._status.lastConnectTime = datetime.now()
                     self._status.totalConnections += 1
                     self._status.retryCount = attempt
+
+                    # US-441 epoch fence: a new live connection = a new
+                    # generation.  Runs under the held _ioLock (connect() wrapper),
+                    # so the bump is atomic w.r.t. activeGeneration()/query().
+                    self._generation += 1
 
                     # US-199: one-shot supported-PID probe so the realtime
                     # logger can silent-skip unsupported PIDs (0x42/0x0B/0x15
@@ -582,26 +727,38 @@ class ObdConnection:
         Disconnect from OBD-II dongle.
 
         Cleanly closes the OBD connection and logs the event.
-        """
-        if self.obd is not None:
-            try:
-                logger.info(f"Disconnecting from OBD-II dongle | mac={self.macAddress}")
-                self.obd.close()
-            except Exception as e:
-                logger.warning(f"Error during disconnect: {e}")
-            finally:
-                self.obd = None
 
-        # Release the rfcomm device we bound so the next connect() is idempotent
-        # and the kernel slot is free for reuse. Path-style BC (self._boundRfcomm
-        # is False) skips this — someone else owns the bind.
-        if self._boundRfcomm:
-            try:
-                bluetooth_helper.releaseRfcomm(device=self.rfcommDevice)
-            except bluetooth_helper.BluetoothHelperError as exc:
-                logger.warning("rfcomm release during disconnect failed | %s", exc)
-            finally:
-                self._boundRfcomm = False
+        US-441: the close + generation bump run under ``self._ioLock`` so a
+        disconnect never interleaves with an in-flight query, and any daemon
+        holding the pre-disconnect generation is fenced from the next
+        connection.  The DB event log is written outside the lock (different
+        resource; no need to hold the serial lock for a SQLite write).
+        """
+        with self._ioLock:
+            if self.obd is not None:
+                try:
+                    logger.info(f"Disconnecting from OBD-II dongle | mac={self.macAddress}")
+                    self.obd.close()
+                except Exception as e:
+                    logger.warning(f"Error during disconnect: {e}")
+                finally:
+                    self.obd = None
+
+            # US-441 epoch fence: tearing down the connection advances the
+            # generation so a superseded connect/query daemon bound to the old
+            # connection is fenced when it finally wakes.
+            self._generation += 1
+
+            # Release the rfcomm device we bound so the next connect() is
+            # idempotent and the kernel slot is free for reuse. Path-style BC
+            # (self._boundRfcomm is False) skips this — someone else owns the bind.
+            if self._boundRfcomm:
+                try:
+                    bluetooth_helper.releaseRfcomm(device=self.rfcommDevice)
+                except bluetooth_helper.BluetoothHelperError as exc:
+                    logger.warning("rfcomm release during disconnect failed | %s", exc)
+                finally:
+                    self._boundRfcomm = False
 
         self._status.state = ConnectionState.DISCONNECTED
         self._status.connected = False

@@ -397,6 +397,80 @@ answered on ISO 9141-2 K-line @ 10,400 bps via the LX; python-obd
 reported `Car Connected | ISO 9141-2 | ELM327 v1.4b` on the first live
 handshake. This matches the protocol documented in `specs/obd2-research.md`.
 
+### 3.5 OBD Connection Threading Model — serialization + epoch fence (US-441 / F-117 / A-17)
+
+`python-obd`'s connection object wraps **one serial port and is NOT
+thread-safe**. eclipse-obd drives that connection from **multiple threads**:
+
+- the lifecycle's bounded connect/query **timeout daemons**, which are
+  deliberately **left running on timeout** (TD-036 / US-244 anti-boot-hang —
+  `_runInitialConnectWithTimeout`, `_queryWithTimeout`);
+- the **US-301 reconnect heartbeat** daemon (a second connect path);
+- the **realtime logger**, which reads `ObdConnection.query()` on the capture
+  loop thread.
+
+**The defect (A-17, root-caused live 2026-07-03).** The V0.27.1 lock guarded
+only `connect()`. The realtime logger read `self.connection.obd.query()`
+*directly*, so its reads raced an **orphaned** (timed-out, left-running)
+connect/query daemon on the one serial port → interleaved ELM327 frames →
+`elm327 __read | Device disconnected while reading` → **0 rows on every
+connect**. (A raw single-threaded `python-obd` session on the same port read
+RPM flawlessly — proving the bug is eclipse-obd's concurrency, not the
+dongle/ECU/K-line/pairing.)
+
+**The model (US-441).** THE single serialization lock — `ObdConnection._ioLock`
+— lives on the **wrapper** (`obd_connection.py`), NOT on `lifecycle.py`, and
+guards **every** access to the underlying `self.obd`:
+
+| Access | Path |
+|--------|------|
+| connect | `connect()` holds `_ioLock` for the whole attempt (ctor + probe) |
+| query | `query()` holds `_ioLock` around `self.obd.query(cmd)` |
+| close | `disconnect()` holds `_ioLock` around `self.obd.close()` |
+| probe | US-199 supported-PID probe runs inside the held connect lock |
+
+**Every caller goes through the wrapper** so no two threads ever drive the
+port at once: the lifecycle connect/query daemons, the US-301 heartbeat's
+`connectFn`, **and the realtime logger's reads (`logger.py` `queryParameter` /
+`_queryViaDecoder`) — which call `connection.query()`, not `connection.obd.query()`.**
+
+**Epoch fence (orphaned-daemon reconciliation).** A monotonically increasing
+**generation** (`ObdConnection._generation`, guarded by `_ioLock`) is bumped on
+each **successful connect** and each **disconnect**, so a live connection
+carries a stable generation between the two. A bounded timeout daemon captures
+the generation via `activeGeneration()` *before* it spawns and passes it back:
+
+- `connect(callerGeneration=…)` — a superseded connect (a newer connection
+  already won while this orphan was blocked) **refuses to re-open** and returns
+  the current connectedness.
+- `query(command, callerGeneration=…)` — a superseded read raises
+  `ObdConnectionSupersededError` and **never touches the port**.
+
+**Live callers pass no generation and are never fenced** — the realtime logger
+always reads the *current* connection. Thus a timed-out daemon that finally
+wakes cannot corrupt (re-open / read) a connection a newer owner now holds,
+even though it cannot be force-killed.
+
+**TD-036 preserved.** Only `.obd` *access* is serialized; the daemon-launch +
+wall-clock-timeout shape (why boot never hangs) is untouched. A wedged connect
+daemon holding `_ioLock` cannot hang boot because `_initializeConnection`
+returns on its own wall-clock cap regardless, and a later query daemon that
+blocks on the lock is itself wall-clock-bounded (and daemon=True, reaped at
+exit).
+
+**Observability.** Connection/query daemons are thread-named with their
+generation (`obd-connect-gen<N>`, `obd-query-<cmd>-gen<N>`); the heartbeat is
+`obd-reconnect-heartbeat`. `isConnectInFlight()` reflects `_ioLock` (any OBD
+I/O in flight) so the heartbeat still skips a tick when a connect is already
+happening.
+
+Code: `src/pi/obdii/obd_connection.py` (`_ioLock`, `_generation`,
+`activeGeneration`, `query`), `orchestrator/lifecycle.py`
+(`_runInitialConnectWithTimeout`, `_queryWithTimeout`, `_resolveGeneration`),
+`data/logger.py` (serialized reads). Contract test:
+`tests/pi/obdii/test_obd_connection_thread_safety.py` (real-concurrency:
+logger read path + orphaned daemon on the same wrapper, no interleaving).
+
 ---
 
 ## 4. Data Flow

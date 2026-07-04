@@ -12,7 +12,24 @@
       "type": "normal",
       "size": "L",
       "status": "sprint-ready",
-      "passes": false,
+      "passes": true,
+      "completionNotes": "US-441 CLOSED (bench). Wrapper-lock + epoch-fence capture fix (F-117/A-17). CHANGES: (1) obd_connection.py -- renamed _connectLock -> _ioLock = THE single lock guarding EVERY .obd access; new query(command, callerGeneration=None) holds _ioLock around self.obd.query() (the serialized read path); disconnect() now holds _ioLock around close(); connect() accepts callerGeneration + fences a superseded re-open; _generation counter (+1 per connect-success AND per disconnect) + activeGeneration(); new ObdConnectionSupersededError. (2) logger.py:220 (queryParameter) + :290 (_queryViaDecoder) now call self.connection.query(cmd) NOT .obd.query(cmd) -- the load-bearing GAP-1 sites that bypassed lifecycle. (3) lifecycle.py _runInitialConnectWithTimeout + _queryWithTimeout capture generation (new module fn _resolveGeneration, isinstance-int gate so MagicMock connections take the legacy no-gen path) and route the query daemon through connection.query(); daemons thread-named obd-connect-gen<N> / obd-query-<cmd>-gen<N> (heartbeat already obd-reconnect-heartbeat) = observability AC. (4) SimulatedObdConnection given activeGeneration()/query()/connect(callerGeneration=) API parity. TD-036 no-boot-hang PRESERVED (daemon+wall-clock shape untouched; only .obd access serialized). REAL-CONCURRENCY TEST (GAP-1 VC, non-mocked): tests/pi/obdii/test_obd_connection_thread_safety.py -- proves raw .obd.query() interleaves (RED discriminator) while wrapper query() serializes (maxConcurrent==1), epoch fence drops superseded query/connect, live reader never fenced, + ObdDataLogger read path vs orphan daemon on the SAME wrapper = no interleaving. AC6 Rule-10: specs/architecture.md new '### 3.5 OBD Connection Threading Model' (serialization + epoch fence) -- authorized by AC6 bound-here despite specs/ normally PM-owned; US-447 finalizes the top 'Last Updated' changelog entry + regression_manifest. GATES (in-loop, synchronous): targeted suites GREEN (61 tests: new thread-safety 8 + connect_thread_safety + logger_v2 + capture_loop + bt_flap + 3 engine e2e + lifecycle_initial_connect_timeout); broader affected dirs GREEN (integration/ orchestrator/ obdii/ data/ simulator/ vin-decode). ruff check PASS on all modified files. NOTE FOR PM: mypy (strict) NOT run -- mypy is not installed in this dev env (.venv has no mypy; system python 'No module named mypy'); code is fully type-annotated to the strict style (all new methods typed: int/bool/Any returns, int|None params) -- run the mypy gate at integration. LIVE ACCEPTANCE (A-9 re-gate, needs the car): sustained-capture drive shows realtime_data accumulating (was 0/every-connect) -- deferred to CIO car drill per BENCH-ONLY sprint validation.",
+      "feedback": {
+        "filesActuallyTouched": [
+          "src/pi/obdii/obd_connection.py",
+          "src/pi/obdii/data/logger.py",
+          "src/pi/obdii/orchestrator/lifecycle.py",
+          "src/pi/obdii/simulator/simulated_connection.py",
+          "specs/architecture.md",
+          "tests/pi/obdii/test_obd_connection_thread_safety.py",
+          "tests/pi/obdii/test_logger_v2_decoders.py",
+          "tests/pi/obdii/test_capture_loop_integration.py",
+          "tests/pi/integration/test_bt_flap_in_process.py",
+          "tests/pi/integration/test_engine_drive_capture_e2e.py",
+          "tests/pi/integration/test_engine_telemetry_capture_e2e.py",
+          "tests/pi/integration/test_engine_on_late_adapter_e2e.py"
+        ]
+      },
       "acceptance": [
         "the single serialization lock lives on the ObdConnection WRAPPER (obd_connection.py), NOT lifecycle.py (GAP-1, load-bearing) -- guards EVERY .obd access (connect/query/close/probe); ALL callers acquire it: the lifecycle connect/query daemons, the US-301 heartbeat path, AND the realtime logger's direct reads at logger.py:220 AND 290 (which do NOT route through lifecycle)",
         "fence orphaned timeout daemons: a timed-out connect/query thread is BARRED (ownership/generation token) from touching a connection a later thread owns -- cannot corrupt the owner's serial I/O",

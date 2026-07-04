@@ -120,6 +120,12 @@ class _FlappingConnection:
         self.disconnectCalls = 0
         self.reconnectCalls = 0
 
+    def query(self, cmd: Any, callerGeneration: int | None = None) -> Any:
+        """US-441: mirror ObdConnection.query -- serialized read path the logger
+        now calls; delegates to the (transiently-flapping) python-obd facade so
+        the rfcomm-error routing under test is unchanged."""
+        return self.obd.query(cmd)
+
     def isConnected(self) -> bool:
         return True
 
