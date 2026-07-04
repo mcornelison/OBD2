@@ -1002,6 +1002,100 @@ DRIVE_SUMMARY_DRIVE_ID_CHECK_CLAUSE: str = (
 )
 
 
+# ==============================================================================
+# US-448 / F-104: canonical server-side drive identity (the analytics-authority
+# spine).  ``drives.drive_id`` is the single drive-identity SSOT.  It SUBSUMES
+# the pre-existing de-facto identity ``drive_summary.id`` (v0018 migrates those
+# values in as ``drive_id`` and future stories re-point the FKs), so the server
+# never mints a second orthogonal id.  The Pi's own drive_counter id is demoted
+# to the advisory, nullable ``source_drive_id``.
+#
+# Minting rule (Atlas ruling, answers F-104 Open-Q1): the autoincrement PK is
+# anchored by ``UNIQUE (source_device, source_drive_id)`` so a mint is an
+# upsert-by-natural-key -- an idempotent recompute re-uses the existing
+# ``drive_id`` for an already-seen (device, drive) pair and NEVER renumbers it.
+# See :mod:`src.server.analytics.drive_identity`.
+# ==============================================================================
+
+DRIVES_TABLE: str = "drives"
+
+# The natural key that anchors the mint.  NULL ``source_drive_id`` rows
+# (unmappable legacy -- pre-connection_log drives, foreign-vehicle rows, NULL
+# realtime_data.drive_id) are distinct under SQL UNIQUE semantics, which is
+# exactly the "one row per distinct legacy key, never merged" behaviour US-451
+# relies on.  Name matches the v0018 migration's constraint so SHOW CREATE
+# TABLE is identical across SQLite (tests) and MariaDB (prod).
+DRIVES_SOURCE_UNIQUE_CONSTRAINT: str = "uq_drives_source_device_source_drive_id"
+
+# drives.data_quality carries the same drive-level enum as drive_summary (the
+# table it subsumes): 'full' | 'attribution_anomaly' | 'foreign_vehicle'.
+# US-451 introduces the 'unmappable_legacy' marker via its own forward-only
+# widen migration (same idiom as v0009/v0010/v0012/v0015) -- deliberately NOT
+# added here to keep US-448 scope-fenced to identity creation.
+DRIVES_DATA_QUALITY_DEFAULT: str = DRIVE_SUMMARY_DATA_QUALITY_DEFAULT
+DRIVES_DATA_QUALITY_VALUES: tuple[str, ...] = DRIVE_SUMMARY_DATA_QUALITY_VALUES
+
+
+class Drive(Base):
+    """Canonical server-minted drive identity -- the F-104 spine (US-448).
+
+    One row per physical drive, keyed on the server-minted autoincrement
+    ``drive_id`` (the single drive-identity SSOT).  ``drives.drive_id``
+    subsumes the historical ``drive_summary.id``: the v0018 migration inserts
+    each existing ``drive_summary.id`` as the ``drive_id`` so the value is
+    preserved and existing ``drive_summary.id`` foreign keys (e.g.
+    ``drive_statistics.summary_id``) stay numerically valid; later spine
+    stories (US-451) formally re-point those FKs at ``drives.drive_id``.
+
+    The Pi's own drive_counter id is recorded only as the advisory, nullable
+    ``source_drive_id``.  ``UNIQUE (source_device, source_drive_id)`` anchors
+    the natural-key upsert mint (:func:`src.server.analytics.drive_identity.
+    upsert_drive`) so a recompute is idempotent and never renumbers a drive.
+
+    The server harness (US-449) is the SOLE writer of this table, deriving
+    rows from synced raw (``connection_log`` lifecycle + ``realtime_data``);
+    the Pi never writes it.
+    """
+
+    __tablename__ = DRIVES_TABLE
+    __table_args__ = (
+        UniqueConstraint(
+            "source_device", "source_drive_id",
+            name=DRIVES_SOURCE_UNIQUE_CONSTRAINT,
+        ),
+        # Enforce the drive-level data_quality enum at the DB layer (SQLite +
+        # MariaDB).  Name matches the v0018 migration's ADD CONSTRAINT so the
+        # physical schema is identical across environments.
+        CheckConstraint(
+            f"data_quality IN "
+            f"({','.join(repr(v) for v in DRIVES_DATA_QUALITY_VALUES)})",
+            name="ck_drives_data_quality",
+        ),
+    )
+
+    drive_id: Mapped[int] = mapped_column(
+        Integer, primary_key=True, autoincrement=True,
+    )
+    # Advisory Pi-side identity (never authoritative).  source_device is the
+    # Pi host id (e.g. "chi-eclipse-01"); source_drive_id is the Pi's
+    # drive_counter id.  Both nullable so unmappable legacy drives can exist
+    # as one honest row per distinct key (US-451) rather than being dropped.
+    source_device: Mapped[str | None] = mapped_column(String(64))
+    source_drive_id: Mapped[int | None] = mapped_column(Integer)
+
+    start_time: Mapped[datetime | None] = mapped_column(DateTime)
+    end_time: Mapped[datetime | None] = mapped_column(DateTime)
+
+    data_source: Mapped[str | None] = mapped_column(
+        String(DATA_SOURCE_LENGTH), server_default=DATA_SOURCE_DEFAULT,
+    )
+    data_quality: Mapped[str] = mapped_column(
+        String(DATA_QUALITY_COLUMN_LENGTH),
+        nullable=False,
+        server_default=DRIVES_DATA_QUALITY_DEFAULT,
+    )
+
+
 class DriveSummary(Base):
     """One row per detected drive -- reconciled single-writer table (US-214).
 
@@ -1478,6 +1572,11 @@ __all__ = [
     "AnalysisRecommendation",
     "Device",
     # Analytics
+    "Drive",
+    "DRIVES_TABLE",
+    "DRIVES_SOURCE_UNIQUE_CONSTRAINT",
+    "DRIVES_DATA_QUALITY_DEFAULT",
+    "DRIVES_DATA_QUALITY_VALUES",
     "DriveSummary",
     "DriveStatistic",
     "DriveDerivedSignal",

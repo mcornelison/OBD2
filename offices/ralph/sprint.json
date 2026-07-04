@@ -12,7 +12,19 @@
       "type": "normal",
       "size": "L",
       "status": "sprint-ready",
-      "passes": false,
+      "passes": true,
+      "completionNotes": "US-448 canonical drives identity spine BUILT + all targeted tests GREEN (36 new: 21 migration + 15 identity) + ruff clean. DELIVERABLES: (1) src/server/db/models.py new `Drive` model (drives table) -- drive_id INTEGER PK AUTOINCREMENT (SSOT identity), source_device/source_drive_id nullable advisory Pi ids, start_time/end_time, data_source, data_quality; UNIQUE(source_device, source_drive_id) natural-key anchor + ck_drives_data_quality CHECK (enum = drive_summary's set, per SSOT). DRIVES_* constants + __all__ export. (2) v0018 migration (registered #18 in ALL_MIGRATIONS, forward-only): _applyCreateDrives (CREATE IF NOT EXISTS + UNIQUE + CHECK, INFORMATION_SCHEMA post-probe) then _applySubsumeDriveSummaryId -- INSERT INTO drives (drive_id,...) SELECT ds.id,... FROM drive_summary (SUBSUMES drive_summary.id as drive_id, per Atlas load-bearing ruling: NOT a 5th orthogonal id; explicit id insert preserves identity so existing drive_statistics.summary_id->drive_summary.id FKs stay numerically valid, US-451 re-points the constraints). Idempotent: NOT IN (SELECT drive_id FROM drives) guard + IF NOT EXISTS. (3) src/server/analytics/drive_identity.py: upsert_drive() = natural-key UPSERT mint (idempotent, re-mint re-uses drive_id, NEVER renumbers -- test-proven; straight autoincrement rejected per Open-Q1); resolve_canonical_drive_id() + map_overlap_to_canonical() = tripwire OUTPUT re-point (raw Pi id -> canonical drives.drive_id). TRIPWIRE NOT BLINDED (Atlas load-bearing): detect_overlapping_drives (overlap.py) UNCHANGED -- still DETECTS on raw realtime_data.drive_id; regression fixture proves a raw Pi dual-mint pair (23/24) STILL trips against the new schema, and the anomaly OUTPUT maps to canonical identity (unminted -> None, never silently dropped). test_db_models table-count updated in lockstep 25->27 (also caught a pre-existing US-436/drive_derived_signals omission). PM/DEPLOY GATES (bench-only sprint, no MariaDB on Windows dev): 'Deployed AND verified via INFORMATION_SCHEMA (drives columns + UNIQUE present)' = PM deploy-time gate on chi-srv-01 -- migration validated here via hermetic FakeRunner (DDL/subsume/ordering/post-probe) + SQLite ORM (model/mint/resolver/tripwire); run apply_server_migrations --run-all + INFORMATION_SCHEMA verify at integration. AC7 Rule-10: architecture.md server-authority section is US-457's in-sprint deliverable (owed later this sprint) -- flag for PM freeze-time bigDoD aggregation. mypy (strict) NOT run in-loop (not installed in dev env, sprint-wide); fully strict-typed -> PM integration gate.",
+      "feedback": {
+        "filesActuallyTouched": [
+          "src/server/db/models.py",
+          "src/server/migrations/versions/v0018_us448_canonical_drives.py",
+          "src/server/migrations/__init__.py",
+          "src/server/analytics/drive_identity.py",
+          "tests/server/test_migration_0018_canonical_drives.py",
+          "tests/server/analytics/test_drive_identity.py",
+          "tests/server/test_db_models.py"
+        ]
+      },
       "acceptance": [
         "[ATLAS load-bearing] drives.drive_id SUBSUMES the existing de-facto identity drive_summary.id (drive_statistics_compute.py already FKs to it, :41/144-186) -- migrate existing drive_summary.id values IN as drive_id + re-point its FKs; do NOT mint a 5th orthogonal id (worsens D-8 sprawl)",
         "new server table obd2db.drives (forward-only migration): drive_id INTEGER PK AUTOINCREMENT, source_device VARCHAR, source_drive_id INTEGER NULL (Pi advisory), start_time, end_time NULL, data_source, data_quality -- confirm exact columns vs the F-104 ADR at story time",

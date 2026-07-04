@@ -1,0 +1,24 @@
+## 2026-07-04 - US-448 (Agent 1 / Rex)
+Task: Canonical drives table + server drive_id SSOT -- SUBSUME drive_summary.id (F-104 spine, migration-first)
+
+### What was implemented:
+- New `Drive` ORM model (`drives` table) in models.py: server-minted `drive_id` INTEGER PK AUTOINCREMENT (the single drive-identity SSOT), advisory nullable `source_device`/`source_drive_id` (Pi ids demoted), `start_time`/`end_time`, `data_source`, `data_quality`. `UNIQUE(source_device, source_drive_id)` natural-key anchor + `ck_drives_data_quality` CHECK (enum reused from drive_summary SSOT). DRIVES_* constants + __all__ export.
+- v0018 forward-only migration (registered #18 in ALL_MIGRATIONS): `_applyCreateDrives` (CREATE IF NOT EXISTS + UNIQUE + CHECK, INFORMATION_SCHEMA post-probe) then `_applySubsumeDriveSummaryId` -- `INSERT INTO drives (drive_id,...) SELECT ds.id,... FROM drive_summary` SUBSUMES drive_summary.id as drive_id (Atlas load-bearing: not a 5th id; explicit-id insert preserves identity -> existing drive_statistics.summary_id FKs stay numerically valid; US-451 re-points constraints). Idempotent via `NOT IN (SELECT drive_id FROM drives)` + `IF NOT EXISTS`.
+- src/server/analytics/drive_identity.py: `upsert_drive` = natural-key UPSERT mint (idempotent -- re-mint re-uses drive_id, NEVER renumbers; straight autoincrement rejected per Open-Q1); `resolve_canonical_drive_id` + `map_overlap_to_canonical` = tripwire OUTPUT re-point (raw Pi id -> canonical drives.drive_id).
+- Tripwire NOT blinded: `detect_overlapping_drives` (overlap.py) UNCHANGED -- still detects on raw `realtime_data.drive_id`; regression fixture proves a raw Pi dual-mint pair (23/24) STILL trips against the new schema, and the anomaly output maps to canonical identity (unminted -> None, never silently dropped).
+
+### Files changed:
+- Modified: `src/server/db/models.py` (Drive model + DRIVES_* constants + __all__)
+- Created: `src/server/migrations/versions/v0018_us448_canonical_drives.py`
+- Modified: `src/server/migrations/__init__.py` (register v0018)
+- Created: `src/server/analytics/drive_identity.py` (mint + canonical resolver)
+- Created: `tests/server/test_migration_0018_canonical_drives.py` (21 tests)
+- Created: `tests/server/analytics/test_drive_identity.py` (15 tests)
+- Modified: `tests/server/test_db_models.py` (table-count 25->27 lockstep)
+
+### Learnings for future iterations:
+- **Pattern discovered**: SUBSUME-not-mint identity migration -- inserting the old PK value as the new autoincrement PK (`INSERT ... SELECT ds.id`) preserves existing FKs numerically, so the FK *constraint* re-point (US-451) is a schema-only change with zero data movement.
+- **Pattern discovered**: tripwire OUTPUT re-point -- keep the detector grouping on the RAW signal (never regroup by the deduped server id, which blinds the backstop); add a separate resolver that maps the detected raw ids to canonical identity for the flag/output only.
+- **Gotcha**: `test_db_models.py::test_totalTableCount` was already stale (expected 25, actual 26 -- US-436's drive_derived_signals was never added to it). Any new table forces this lockstep update; correct the true count, don't just +1.
+- **Gotcha**: bench-only sprint -- 'deployed AND verified via INFORMATION_SCHEMA' is a PM/deploy gate (no MariaDB on Windows dev); migrations are validated via hermetic FakeRunner (DDL/subsume/ordering/post-probe) + SQLite ORM, never a live server.
+---

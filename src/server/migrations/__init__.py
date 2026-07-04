@@ -58,6 +58,10 @@
 # 2026-07-02    | Rex (US-436) | Sprint 53 V0.29.7 -- registered v0017 (create
 #               |              | drive_derived_signals table; F-106 per-drive
 #               |              | acceleration + estimated distance).  Forward-only.
+# 2026-07-04    | Rex (US-448) | Sprint 55 V0.29.9 -- registered v0018 (create
+#               |              | canonical drives identity table + subsume
+#               |              | drive_summary.id as drive_id; F-104 spine).
+#               |              | Forward-only.
 # ================================================================================
 ################################################################################
 
@@ -138,6 +142,9 @@ from src.server.migrations.versions.v0016_us426_battery_health_soc_pct import (
 from src.server.migrations.versions.v0017_us436_drive_derived_signals import (
     MIGRATION as _V0017,
 )
+from src.server.migrations.versions.v0018_us448_canonical_drives import (
+    MIGRATION as _V0018,
+)
 
 # ================================================================================
 # Registry -- append new migrations to the end, in ascending version order
@@ -161,6 +168,7 @@ ALL_MIGRATIONS: tuple[Migration, ...] = (
     _V0015,
     _V0016,
     _V0017,
+    _V0018,
 )
 
 
