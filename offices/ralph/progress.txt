@@ -123,3 +123,26 @@ Task: idle-poll cold-boot RPM-mask fix (BL-016, Option B; 2nd capture fix; deps 
 - **Gotcha**: keep the force set NARROW (RPM only). A blanket force is the exact anti-pattern BL-016 warns against -- it re-exposes the 0x42/0x0B/0x15 PIDs US-199 deliberately silent-skips. The scoped-not-blanket test (COOLANT_TEMP not forced even with the latch on) guards that.
 - **Gotcha**: mypy still NOT installed in this dev env (same as US-441/442/444/445) -- flagged for PM integration gate; ruff clean on all 5 files.
 ---
+
+## 2026-07-04 - US-447 (Rex / Sprint 54 Session 7)
+Task: Sprint 54 documentation sync (Rule-10)
+
+### What was implemented:
+- Docs-only, no code. Sprint 54 Rule-10 architecture.md + regression_manifest sync -- the LAST story; sprint now 7/7 complete.
+- FINDING: US-441 authored specs/architecture.md "### 3.5 OBD Connection Threading Model" in-sprint (its bound GAP-3/A-11 AC) but deliberately LEFT the top "Last Updated" header + the architecture-changelog.md Modification-History row for US-447 (per its own completionNotes). The two power-path additions (US-444 SlowDrainDetector, US-445 boot_battery_test) were NOWHERE in specs/ -- grep for "Sprint 54|V0.29.8|slow-drain|SlowDrainDetector|boot_battery|US-444|US-445" returned 0 hits pre-sync.
+- architecture.md top "Last Updated": new Sprint 54/V0.29.8 entry summarizing §3.5 (wrapper _ioLock serialization + epoch fence + TD-036-preserve + thread-name observability) + the Battery-Health power-path para; prior Sprint 53 entry demoted to "Prior:".
+- architecture.md "Battery Health Log §": new "Sprint 54/V0.29.8 power-path additions" para -- US-444/F-051 SlowDrainDetector (pure (ts,VCELL)->DrainState, 300s/0.005V/30s-debounce, UpsMonitor._pollOnce feed + getSlowDrainState(), getTelemetry() unchanged, BATTERY-HEALTH-ONLY per SS-T4) + US-445/F-054 boot_battery_test (boot MAX17048 VCELL -> OK>=3.70V / WEAK below (distinct <3.30V Drain-7 reason) / UNKNOWN outside 2.5-4.35V -> "boot-battery-test" state slot via the F-103/F-097 idiom, VCELL-only verdict + SoC-as-context, never-raise, main() CLI); EXPLICITLY documents NEITHER writes the drain-event-shaped battery_health_log (snapshot/trend != drain event; avoids baseline pollution + the US-442 orphan class).
+- architecture-changelog.md: new top Modification-History row (newest-first) registering §3.5 + the power-path para + the manifest reconciliation.
+- regression_manifest.json: added Sprint 54 to F-049.affectedBySprints (US-432 changed idle-poll engine-on detection = real regression surface). F-117/F-051/F-054 already pre-registered by Marcus 2026-07-03. F-062 (US-442 = data annotation + docstring, no close-on-poweroff runtime change) + F-082 (US-443 = triage, zero code) deliberately LEFT unchanged -- honest-instrument.
+
+### Files changed:
+- Modified: `specs/architecture.md` (top "Last Updated" header + new Battery-Health power-path para)
+- Modified: `specs/arch/architecture-changelog.md` (new top Modification-History row)
+- Modified: `offices/pm/regression_manifest.json` (F-049 += Sprint 54; header)
+
+### Learnings for future iterations:
+- **Pattern discovered**: a Rule-10 doc-sync story whose companion feature story (US-441) bound its OWN arch section is NOT a no-op -- the feature story authors the section body but hands off the top "Last Updated" header + the changelog Modification-History row to the doc-sync story (so the header isn't rewritten twice mid-sprint). Read the companion story's completionNotes for exactly what it left; here US-441 said "US-447 finalizes the top 'Last Updated' changelog entry + regression_manifest."
+- **Gotcha**: don't trust "regression_manifest already updated" -- Marcus registered only the 3 NEW features (F-117/F-051/F-054) at freeze; the pre-existing parents whose code the sprint TOUCHED (F-049 via US-432) still needed Sprint 54 added. But be honest the other way too: F-062/F-082 are in validatesFeatures yet their sprint-54 stories changed no runtime code (annotation / triage), so adding them would falsely mark them needing re-validation -- leave them.
+- **Gotcha**: full change-entry BODY goes in specs/arch/architecture-changelog.md (per the architecture.md top structure note "append new change entries there"), NOT inline in architecture.md §20 -- the mod-history table was extracted 2026-06-01. The top "Last Updated" block is the summary; the changelog row is the detail.
+- **Gotcha**: ground every doc claim against the landed code, not the story note -- read slow_drain_detector.py + boot_battery_test.py headers/docstrings to confirm the exact thresholds (300s/0.005V/30s, 3.70/3.30/2.5-4.35V) + method names (getSlowDrainState, assessBootBatteryHealth, runBootBatteryTest) before writing them into the spec.
+---
