@@ -555,10 +555,11 @@
       "parent": "E-OPS",
       "title": "drive_detect idle-poll gap \u2014 engine-on never detected in idle-poll",
       "description": "drive_detect idle-poll gap \u2014 engine-on never detected in idle-poll",
-      "status": "active",
+      "status": "awaiting-validation",
       "renamedFrom": "B-049",
       "createdAt": "2026-05-27",
-      "updatedAt": "2026-05-27"
+      "updatedAt": "2026-05-27",
+      "currentVersion": "V0.29.8"
     },
     {
       "id": "F-050",
@@ -576,10 +577,11 @@
       "parent": "E-OPS",
       "title": "UpsMonitor slow-drain detection + flap-debounce (Sprint 19 US-235 RESCOPE)",
       "description": "UpsMonitor slow-drain detection + flap-debounce (Sprint 19 US-235 RESCOPE)",
-      "status": "active",
+      "status": "awaiting-validation",
       "renamedFrom": "B-051",
       "createdAt": "2026-05-27",
-      "updatedAt": "2026-05-27"
+      "updatedAt": "2026-05-27",
+      "currentVersion": "V0.29.8"
     },
     {
       "id": "F-052",
@@ -599,10 +601,11 @@
       "parent": "E-OPS",
       "title": "Automated battery test on boot",
       "description": "Automated battery test on boot",
-      "status": "active",
+      "status": "awaiting-validation",
       "renamedFrom": "B-054",
       "createdAt": "2026-05-27",
-      "updatedAt": "2026-05-27"
+      "updatedAt": "2026-05-27",
+      "currentVersion": "V0.29.8"
     },
     {
       "id": "F-055",
@@ -672,11 +675,11 @@
       "parent": "E-OPS",
       "title": "drain_event close-on-poweroff targeted fix (post-Drain-Test-11 evidence)",
       "description": "drain_event close-on-poweroff targeted fix (post-Drain-Test-11 evidence)",
-      "status": "active",
+      "status": "awaiting-validation",
       "renamedFrom": "B-062",
       "createdAt": "2026-05-27",
       "updatedAt": "2026-05-27",
-      "currentVersion": "V0.29.7"
+      "currentVersion": "V0.29.8"
     },
     {
       "id": "F-063",
@@ -1200,8 +1203,9 @@
       "parent": "E-OPS",
       "title": "OBD capture broken -- eclipse-obd connection-thread race (0 rows captured)",
       "description": "The Pi captures 0 OBD rows. Atlas live-debug RCA: python-obd connection is not thread-safe; orphaned timeout daemons (TD-036/US-244) + US-301 heartbeat touch the shared connection concurrently with the logger -> serial I/O interleaves -> empty read every connect. Raw python-obd works standalone (hardware/pairing all good). Fix = serialize connection access + fence orphaned daemons, preserve TD-036 no-boot-hang. f389d5b crash-loop hotfix deployed V0.29.7 (stops crash, not the capture fix). Sprint 54 P0.",
-      "status": "active",
-      "createdAt": "2026-07-03"
+      "status": "awaiting-validation",
+      "createdAt": "2026-07-03",
+      "currentVersion": "V0.29.8"
     }
   ],
   "stories": [

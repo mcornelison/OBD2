@@ -242,6 +242,12 @@
       "range": "US-431 to US-440",
       "date": "2026-07-03",
       "outcome": "9/10 passed - analytics foundation + ops/power hygiene. US-431 SOC%-cal, US-435 hostname, US-436 derived signals (server), US-437 tester 8-bug rollup (N-4/N-8 fixed), US-438 cross-drive tool, US-439/440 deps+doc+archival. US-433 (power_log) + US-434 (drain_event) verify-closed with evidence (no code, Atlas-predicted; US-434 flagged 4 historical orphan rows as issue). US-432 idle-poll BLOCKED (BL-016: cold-boot dark-ECU RPM supported_commands mask; needs Atlas A-9 ruling + live-Pi diagnostic) -> Sprint 54. TD-059 prompt fix held (3rd clean run). Merged to dev V0.29.7."
+    },
+    {
+      "feature": "ralph/sprint54-V0.29.8",
+      "range": "US-441,442,443,444,445,432,447",
+      "date": "2026-07-03",
+      "outcome": "7/7 passed - OBD capture P0 restored: US-441 ObdConnection wrapper _ioLock serialization + epoch-fence orphaned daemons (F-117/A-17; real-concurrency test) + arch 3.5 threading model; US-432 BL-016 Option B (force mandatory Mode-01 RPM past dark-ECU cache, read-path-only). US-442 tombstone-annotated 4 orphan drain_event rows. US-443 triaged F-082 8 design items -> ALL deferred to S55 (Atlas/Spool/CIO decisions, B-076/F-104). US-444 slow-drain, US-445 battery-test-on-boot. 4th clean TD-059 run. US-441+US-432 IRL acceptance = CIO car re-gate (sustained-capture + cold-boot-key-OFF). Merged to dev V0.29.8. NOTE: mypy not installed in dev env (Ralph flagged) - PM/integration gate."
     }
   ]
 }

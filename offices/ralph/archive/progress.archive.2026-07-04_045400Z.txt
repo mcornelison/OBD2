@@ -1,0 +1,148 @@
+## 2026-07-03 - US-441 (Rex / Sprint 54 Session 1)
+Task: OBD capture -- serialize ObdConnection wrapper + fence orphaned timeout daemons (F-117/A-17, P0)
+
+### What was implemented:
+- ObdConnection wrapper (obd_connection.py): renamed _connectLock -> _ioLock = THE single serialization lock guarding EVERY .obd access. New query(command, callerGeneration=None) holds _ioLock around self.obd.query() (the serialized read path the logger now uses). disconnect() holds _ioLock around close(). connect(callerGeneration=None) fences a superseded re-open. New _generation counter (+1 on connect-success AND disconnect) + activeGeneration(); new ObdConnectionSupersededError.
+- logger.py:220 (queryParameter) + :290 (_queryViaDecoder): now call self.connection.query(cmd) instead of self.connection.obd.query(cmd) -- the load-bearing GAP-1 sites that bypassed lifecycle.
+- lifecycle.py: _runInitialConnectWithTimeout + _queryWithTimeout capture the generation (new module fn _resolveGeneration with an isinstance-int gate so MagicMock connections resolve None -> legacy path) and route the query daemon through connection.query(). Daemons thread-named obd-connect-gen<N> / obd-query-<cmd>-gen<N> (heartbeat already obd-reconnect-heartbeat) = observability AC.
+- SimulatedObdConnection: activeGeneration()/query()/connect(callerGeneration=) API parity (no-op fence; no real port).
+- specs/architecture.md: new "### 3.5 OBD Connection Threading Model" (serialization + epoch fence) -- AC6 Rule-10 bound to US-441.
+- Real-concurrency test tests/pi/obdii/test_obd_connection_thread_safety.py: raw .obd.query() interleaves (RED discriminator) vs wrapper query() serialized (maxConcurrent==1); epoch fence drops superseded query/connect; live reader never fenced; ObdDataLogger read path vs orphan daemon on the SAME wrapper = no interleaving.
+
+### Files changed:
+- Modified: `src/pi/obdii/obd_connection.py` (single _ioLock + query() + epoch fence + generation)
+- Modified: `src/pi/obdii/data/logger.py` (serialized reads via connection.query())
+- Modified: `src/pi/obdii/orchestrator/lifecycle.py` (generation capture + _resolveGeneration + thread names)
+- Modified: `src/pi/obdii/simulator/simulated_connection.py` (API parity)
+- Modified: `specs/architecture.md` (new 3.5 threading model)
+- Created: `tests/pi/obdii/test_obd_connection_thread_safety.py` (GAP-1 real-concurrency VC)
+- Modified: 6 test fakes (logger_v2, capture_loop, bt_flap, 3 engine e2e) -- given query() mirroring the wrapper
+
+### Learnings for future iterations:
+- **Pattern discovered**: The capture race was invisible to lifecycle-mocked tests because the logger read self.connection.obd.query() DIRECTLY -- any connection double must now expose query() (delegating to .obd.query) to model the wrapper faithfully. Route the logger through the wrapper, not the raw obd, so the test path == production path (avoids Atlas's "mocked-green/IRL-miss" trap).
+- **Gotcha**: MagicMock connections auto-return a MagicMock from any attribute, so activeGeneration() must be isinstance(int)-gated (MagicMock is not int) and .query() must be explicitly wired to the scripted BT edge in e2e fixtures (a bare .query returns a junk response, never hitting is_null()).
+- **Gotcha**: mypy is NOT installed in this Windows dev env (.venv has no mypy) -- flagged for PM integration gate; ruff runs fine.
+---
+
+## 2026-07-03 - US-442 (Rex / Sprint 54 Session 2)
+Task: Clean up historical orphan drain_event rows (from US-434)
+
+### What was implemented:
+- New scripts/annotate_orphan_production_drain_events.py: a one-off, idempotent, dry-run-by-default (mode=ro) tombstone-annotation of the 4 historical orphan `production` battery_health_log rows (drain_event_id 1/9/18/21, end_timestamp IS NULL). Chosen disposition = issue Option C / PM "annotate, never delete": write a provenance `notes` string, leave end_timestamp NULL (honest-instrument -- no timing-truth source for a close, so a fabricated close is refused), delete nothing. Mirrors the US-335 backfill idiom (--execute / --no-backup / --drain-event-ids / .bak-before-execute).
+- Guards: annotate ONLY end_timestamp-NULL + load_class='production' + not-already-tagged rows; a closed row / non-production row / already-tagged row each skip with a reason; an existing operator note is PRESERVED (appended after ' | ', never overwritten). The UPDATE re-asserts all 3 guards in its WHERE (+ NOT LIKE tag) so a re-run touches 0 rows. Extra NULL-end production rows outside the configured set = WARNING (never silent widening).
+- AC2 guard/note: src/pi/power/battery_health.py BatteryHealthRecorder docstring + modification-history now document that the US-216 auto-open production path (which produced these orphans) is RETIRED (0 callers post TD-058/US-427) so no new orphan can form, and that any future production drain MUST open+close as a unit or it re-orphans. Documentation only -- no behavior change.
+
+### Files changed:
+- Created: `scripts/annotate_orphan_production_drain_events.py` (idempotent tombstone-annotation CLI)
+- Created: `tests/scripts/test_annotate_orphan_production_drain_events.py` (18 tests; real-schema SQLite DB-verification)
+- Modified: `src/pi/power/battery_health.py` (AC2 re-orphan guard/note; docs only)
+
+### Learnings for future iterations:
+- **Pattern discovered**: For historical-DB-residue stories, the honest-instrument default is Option-C tombstone (provenance `notes`, no fabricated end_timestamp), NOT a synthetic close -- the US-335 backfill only invented an end_timestamp because it HAD a `power_log` stage_trigger timing-truth source; these 4 rows have none, so annotate-don't-close. Reuse the US-335 script skeleton (dry-run mode=ro / --execute / backup / idempotent WHERE-guard) verbatim.
+- **Gotcha**: idempotency without an end_timestamp change needs a content-based guard -- embed a stable PROVENANCE_TAG in the note and gate the UPDATE with `notes NOT LIKE '%tag%'` so a re-run is a true no-op (the US-335 script could lean on `end_timestamp IS NULL` alone).
+- **Gotcha**: mypy still NOT installed in this dev env (same as US-441) -- flagged for PM integration gate; ruff clean on all 3 files.
+---
+
+## 2026-07-03 - US-443 (Rex / Sprint 54 Session 3)
+Task: Tester V0.28+ data-profile DESIGN improvements (F-082, the 8 design items)
+
+### What was implemented:
+- TRIAGE, not code. Enumerated the 8 DESIGN items (D-1..D-8) from offices/tester/findings/2026-05-12-obd2db-data-profile-additional-findings.md (distinct from the N-1..N-8 bugs shipped in US-437). Verdict per PRD Open-Q#3: 0 of 8 are Ralph-buildable in Sprint 54; ALL 8 deferred with per-item grounded rationale + owner routing.
+- Grounded the deferral in code, not just the tester's word: D-3 both O2 param names are LIVE (O2_B1S1 config.json logData:true PID 0x14 / O2_BANK1_SENSOR2_V decoders.py PID 0x15) and O2_BANK1_SENSOR2_V is keyed by the US-229 DriveDetector silence-check regression test (rename breaks it + splits historical realtime_data); D-2 connection_log feeds the load-bearing DriveDetector attribution tripwire; D-5 StaticDataCollector exists+exported but is NOT invoked in orchestrator/ (grep=0) and gates on a VIN the Mode-09-silent ECU can't answer, drop needs a Pi migration but Pi has no schema_migrations (N-3=TD-061); D-6 = F-104/F-083 analysis-tier 'is this feature alive' discovery.
+- Owners: Atlas ruling (D-1/2/3/4/7/8), Spool discovery (D-6), CIO/hardware decision (D-5). All fold into the deferred B-076 (schema-normalization) / F-104 (server-authority) lane this PRD already routes to Sprint 55.
+
+### Files changed:
+- Created: `offices/pm/inbox/2026-07-03-from-ralph-us443-design-items-triage.md` (the file/defer-with-rationale deliverable: per-item disposition table + rationale + Sprint-55 homes + PM recommendation)
+- No `.py` touched by design -> ruff/mypy N/A; AC3 'each IMPLEMENTED item has a test' vacuously satisfied (0 implemented).
+
+### Learnings for future iterations:
+- **Pattern discovered**: A "triage the tester's design smells" story where the tester's own verdict is "no fix needed now, just noting" and the owning epic (B-076/F-104) is deferred = the disciplined completion is a rigorous defer-with-rationale artifact, NOT guessed schema churn. Refusal Rule 1 (don't guess architecture) beats shipping-something. Mark passes:true only when EVERY item is triaged (implemented-with-test OR deferred-with-rationale) and none is silently skipped -- that fully meets the validationCriteria.
+- **Gotcha**: before deferring a schema-naming item as "safe someday," check what regression tests key on the exact string -- O2_BANK1_SENSOR2_V is load-bearing for the US-229 silence-check (comment in decoders.py), so it is NOT a free rename. Grep the string across tests/ + decoders before calling any rename "low-risk."
+- **Gotcha**: an existing collector class (StaticDataCollector) being present/exported does NOT mean it runs -- grep the orchestrator/ runtime path; it was never wired, which changes the D-5 "populate vs drop" calculus (populate = wire it up AND fix VIN, not just flip a flag).
+---
+
+## 2026-07-03 - US-444 (Rex / Sprint 54 Session 4)
+Task: UpsMonitor slow-drain detection + flap-debounce (F-051)
+
+### What was implemented:
+- NEW SlowDrainDetector (src/pi/hardware/slow_drain_detector.py): a pure, hardware-free state machine over (timestamp, VCELL) samples emitting a battery-HEALTH DrainState verdict (UNKNOWN/STABLE/SLOW_DRAIN). A rolling window (default 300s) + net-decline threshold (0.005V) trip the RAW verdict; a debounce (30s) commits a verdict only after the raw signal holds its new value continuously for the debounce interval (flap suppression); a partial ramp-up window returns UNKNOWN (honest-instrument, never a confident STABLE). All 3 thresholds are module DEFAULT_* constants + injectable ctor params (matches the existing DEFAULT_VCELL_* pattern), grounded in F-051 drain-tests 1-4 + the 2026-04-29 inverted-drill flap trace.
+- Wired into UpsMonitor (ups_monitor.py): extracted _pollOnce() so each poll tick feeds VCELL to BOTH the history buffer AND the detector on ONE shared timestamp; new getSlowDrainState() accessor (pure delegate); ctor gains slowDrainDetector injection + slowDrain{Window,DeclineThreshold,Debounce} params, builds a default detector if none injected (so HardwareManager gets it free -- no config-wiring change). getTelemetry() shape UNCHANGED (slow-drain is its own accessor) to keep the telemetry-shape gate + downstream TelemetryLogger/DB stable.
+
+### Files changed:
+- Created: `src/pi/hardware/slow_drain_detector.py` (SlowDrainDetector + DrainState + grounded DEFAULT_* constants)
+- Modified: `src/pi/hardware/ups_monitor.py` (extracted _pollOnce, wired detector, getSlowDrainState, ctor params, header entry)
+- Created: `tests/pi/hardware/test_slow_drain_detector.py` (10 detector unit tests)
+- Modified: `tests/pi/hardware/test_ups_monitor_degradation.py` (3 UpsMonitor wiring tests + imports)
+
+### Learnings for future iterations:
+- **Pattern discovered**: When a story's PARENT backlog item predates a major architectural ruling, the CURRENT story goal is authoritative -- F-051 (Apr 2026) framed slow-drain as a power-source BATTERY/EXTERNAL flag, but SS-T4 (May 19) retired power-source from UpsMonitor (getPowerSource() is a loud tripwire). US-444's goal reframes it as a battery-HEALTH signal, so I built a HEALTH verdict, NOT a source decision. Building to the stale parent AC would have reintroduced the exact path that bricked the Pi 2026-05-18. Always reconcile the parent's ACs against later rulings before coding.
+- **Gotcha**: adding a field to getTelemetry() would have broken the exact-key-set telemetry-shape gate AND risked touching TelemetryLogger/DB schema (scope creep). Expose new signals via a dedicated accessor and leave the telemetry contract frozen unless the story explicitly scopes the schema.
+- **Gotcha**: a flap-debounce is only testable deterministically if the detector takes caller-supplied timestamps (no wall clock) -- inject the clock/timestamp so the debounce interval is exercised by an explicit trace, not real sleeps.
+- **Gotcha**: mypy still NOT installed in this dev env (same as US-441/442) -- flagged for PM integration gate; ruff clean on all 4 files.
+---
+
+## 2026-07-03 - US-445 (Rex / Sprint 54 Session 5)
+Task: Automated battery test on boot (F-054)
+
+### What was implemented:
+- NEW src/pi/splash/boot_battery_test.py: a boot-time battery test (scoped F-054 slice = register-read + health-assessment + log-a-result; cadence/discharge/trend stories stay in the F-054 backlog). assessBootBatteryHealth(vcellV) is a PURE, grounded verdict: OK at/above the 3.70V discharge knee; WEAK below it (reason 'vcell-below-healthy-floor', sharpened to 'vcell-below-dropout-knee' below the 3.30V buck knee = Drain-7 empirical); UNKNOWN when the read is None OR outside the 2.5-4.35V physical LiPo band (honest-instrument: the classic ~20V un-byte-swapped MAX17048 read -> UNKNOWN, never a confident wrong health). Verdict is VCELL-ONLY (a direct register read, trustworthy at power-up); the SoC% register needs a ~3-min ModelGauge warmup so it is carried as CONTEXT only (socPct + socCalibrated caveat), never the health basis.
+- runBootBatteryTest(readVcell, readSoc, statesDir, ...) is best-effort: a reader that raises resolves to UNKNOWN (a missing/broken fuel gauge must never fail boot) and a state-write failure is logged-never-raised. Writes the 'boot-battery-test' state slot via the reused F-103 ensureStatesDir/writeStateAtomic primitives (no dup). main() CLI mirrors boot_state_emitter.main -- builds real UpsMonitor readers via a lazy import (keeps the pure assessment layer hardware-free + importable on any host), always returns 0 so a boot oneshot unit can invoke it.
+
+### Files changed:
+- Created: `src/pi/splash/boot_battery_test.py` (grounded VCELL assessment + best-effort state emit + CLI)
+- Created: `tests/pi/splash/test_boot_battery_test.py` (13 tests: band verdicts + both implausible directions + boundary, payload shape, run writes-file/provisions-dir, reader-raises->UNKNOWN-still-writes, never-raises-on-write-failure, no-soc path)
+
+### Learnings for future iterations:
+- **Pattern discovered**: the 'battery_health_log / state' fork in a boot-snapshot AC resolves to STATE, not the log -- battery_health_log is drain-EVENT-shaped (start/end/runtime/load_class) and feeds drain baselines; a boot snapshot written there pollutes analytics AND re-opens the US-442 orphan-row class. When a story offers "log OR state", check the target table's SHAPE + who consumes it before picking; the honest-instrument emitter idiom (pure builder + atomic tmpfs state file, best-effort never-raise) is the established home for boot-time signals (boot_state_emitter, battery_health_emitter).
+- **Gotcha**: honest-instrument for a fuel gauge = use the signal trustworthy AT the measurement moment. VCELL is a direct register read (good instantly); SoC% needs a ModelGauge warmup (~3 min) so it is NOT a valid boot verdict basis -- drive the verdict off VCELL and demote SoC to context with a calibration caveat. A physically-implausible read (outside 2.5-4.35V) is a SENSOR fault, not a health claim -> UNKNOWN.
+- **Gotcha**: mypy still NOT installed in this dev env (same as US-441/442/444) -- flagged for PM integration gate; ruff clean on both new files.
+---
+
+## 2026-07-03 - US-432 (Rex / Sprint 54 Session 6)
+Task: idle-poll cold-boot RPM-mask fix (BL-016, Option B; 2nd capture fix; deps US-441)
+
+### What was implemented:
+- ROOT CAUSE confirmed in code: a cold-boot-key-OFF connect runs the US-199 supported-PID probe with the engine OFF -> the dark ECU answers "RPM unsupported" -> python-obd caches that in supported_commands for the connection's life -> every later self.obd.query(RPM) returns null WITHOUT sending a 010C frame -> the escalation probe reads None -> drive_start never fires. Key discriminator: RPM is in LEGACY_ECU_PARAMETERS (plain path), NOT PARAMETER_DECODERS, so the US-199 LOGGER mask (_assertPidSupported) does NOT gate it -- the only mask suppressing RPM is python-obd's OWN cache inside obd.query(). So Option B belongs at connection.query(), NOT the logger.
+- obd_connection.py: new MANDATORY_MODE01_PIDS = frozenset({'RPM'}) (grounded: RPM=0x0C mandatory Mode-01 per SAE J1979, always supported engine-on -> forcing corrects a false-negative not an unsupported PID; NARROW by design -- a blanket force re-exposes the 0x42/0x0B/0x15 garbage US-199 skips). New engine-confirmed latch self._forceMandatoryPids (plain atomic bool so the setter never blocks the runLoop behind an in-flight bounded query; query() reads it while already holding _ioLock). setEngineConfirmedForceMandatory(enabled) (idempotent, INFO-logs only on state change) + isForcingMandatoryPids() accessor. query() now force-reads via _shouldForceMandatory(command) (resolves command.name or bare string) ONLY when latch armed AND command in the set -> self.obd.query(command, force=True); else unchanged. disconnect() clears the latch (fresh connect re-probes -> dark again).
+- core.py: _maybeEscalateOnAlternatorActiveSignature ARMS the latch (self._setForceMandatoryPids(True)) at the escalation edge BEFORE _injectRpmProbeForEscalation (so the probe's own read is un-masked); _resetEngineOnEscalation (fired on drive_end) CLEARS it; new best-effort _setForceMandatoryPids helper (None-connection / missing-seam / exception = WARN no-op, never crashes runLoop). ONE connection-scoped latch covers BOTH the escalation probe AND the ongoing poll -- both read through the SAME self._connection wrapper (lifecycle.py:1551 builds the dataLogger with self._connection).
+- simulated_connection.py: no-op setEngineConfirmedForceMandatory/isForcingMandatoryPids parity.
+- US-388 non-regression: read-path only; evaluateTimeouts/_maybeCloseOnDeadline/_openDriveId/NULL-latch/_startDrive untouched -- drive_start still fires through the unchanged RPM-sustained machine (detector.py:660-667).
+
+### Files changed:
+- Modified: `src/pi/obdii/obd_connection.py` (MANDATORY_MODE01_PIDS + engine-confirmed latch + force in query() + clear on disconnect)
+- Modified: `src/pi/obdii/orchestrator/core.py` (arm latch at escalation edge, clear on drive_end, _setForceMandatoryPids helper)
+- Modified: `src/pi/obdii/simulator/simulated_connection.py` (no-op parity)
+- Created: `tests/pi/obdii/test_obd_connection_force_mandatory.py` (12 tests: default-no-force, latch-forces-RPM, scoped-not-blanket, bare-string, latch-clear, disconnect-clears)
+- Modified: `tests/pi/orchestrator/test_idle_poll_escalation.py` (+4 wiring tests: edge-arms, drive-end-clears, no-conn-no-op, latch-armed-BEFORE-probe ordering)
+- Fixed (incidental): stray unescaped `"` in ralph_agents.json's US-445 note tail that had broken the file's JSON validity.
+
+### Learnings for future iterations:
+- **Pattern discovered**: before deciding WHERE a PID mask lives, trace which mask actually applies to THAT PID. RPM looked like it might hit the US-199 logger mask, but RPM is a LEGACY_ECU_PARAMETERS (plain-path) name, not a PARAMETER_DECODERS entry, so _assertPidSupported never sees it -- the real mask is python-obd's internal supported_commands cache. The fix site follows the mask site: connection.query(force=True), not the logger.
+- **Gotcha**: the "connection-scoped latch" is what makes ONE change cover both the escalation probe AND the ongoing poll -- both read through the same ObdConnection wrapper. Verify the wiring (lifecycle builds the dataLogger with self._connection) before assuming a single latch reaches both readers.
+- **Gotcha**: arm-order matters. The latch must be set BEFORE the escalation's single-shot RPM probe fires, or the probe's own read is still masked. Added an explicit ordering test (events == ['latch=True', 'probe=RPM']) so a future refactor can't reorder them silently.
+- **Gotcha**: keep the force set NARROW (RPM only). A blanket force is the exact anti-pattern BL-016 warns against -- it re-exposes the 0x42/0x0B/0x15 PIDs US-199 deliberately silent-skips. The scoped-not-blanket test (COOLANT_TEMP not forced even with the latch on) guards that.
+- **Gotcha**: mypy still NOT installed in this dev env (same as US-441/442/444/445) -- flagged for PM integration gate; ruff clean on all 5 files.
+---
+
+## 2026-07-04 - US-447 (Rex / Sprint 54 Session 7)
+Task: Sprint 54 documentation sync (Rule-10)
+
+### What was implemented:
+- Docs-only, no code. Sprint 54 Rule-10 architecture.md + regression_manifest sync -- the LAST story; sprint now 7/7 complete.
+- FINDING: US-441 authored specs/architecture.md "### 3.5 OBD Connection Threading Model" in-sprint (its bound GAP-3/A-11 AC) but deliberately LEFT the top "Last Updated" header + the architecture-changelog.md Modification-History row for US-447 (per its own completionNotes). The two power-path additions (US-444 SlowDrainDetector, US-445 boot_battery_test) were NOWHERE in specs/ -- grep for "Sprint 54|V0.29.8|slow-drain|SlowDrainDetector|boot_battery|US-444|US-445" returned 0 hits pre-sync.
+- architecture.md top "Last Updated": new Sprint 54/V0.29.8 entry summarizing §3.5 (wrapper _ioLock serialization + epoch fence + TD-036-preserve + thread-name observability) + the Battery-Health power-path para; prior Sprint 53 entry demoted to "Prior:".
+- architecture.md "Battery Health Log §": new "Sprint 54/V0.29.8 power-path additions" para -- US-444/F-051 SlowDrainDetector (pure (ts,VCELL)->DrainState, 300s/0.005V/30s-debounce, UpsMonitor._pollOnce feed + getSlowDrainState(), getTelemetry() unchanged, BATTERY-HEALTH-ONLY per SS-T4) + US-445/F-054 boot_battery_test (boot MAX17048 VCELL -> OK>=3.70V / WEAK below (distinct <3.30V Drain-7 reason) / UNKNOWN outside 2.5-4.35V -> "boot-battery-test" state slot via the F-103/F-097 idiom, VCELL-only verdict + SoC-as-context, never-raise, main() CLI); EXPLICITLY documents NEITHER writes the drain-event-shaped battery_health_log (snapshot/trend != drain event; avoids baseline pollution + the US-442 orphan class).
+- architecture-changelog.md: new top Modification-History row (newest-first) registering §3.5 + the power-path para + the manifest reconciliation.
+- regression_manifest.json: added Sprint 54 to F-049.affectedBySprints (US-432 changed idle-poll engine-on detection = real regression surface). F-117/F-051/F-054 already pre-registered by Marcus 2026-07-03. F-062 (US-442 = data annotation + docstring, no close-on-poweroff runtime change) + F-082 (US-443 = triage, zero code) deliberately LEFT unchanged -- honest-instrument.
+
+### Files changed:
+- Modified: `specs/architecture.md` (top "Last Updated" header + new Battery-Health power-path para)
+- Modified: `specs/arch/architecture-changelog.md` (new top Modification-History row)
+- Modified: `offices/pm/regression_manifest.json` (F-049 += Sprint 54; header)
+
+### Learnings for future iterations:
+- **Pattern discovered**: a Rule-10 doc-sync story whose companion feature story (US-441) bound its OWN arch section is NOT a no-op -- the feature story authors the section body but hands off the top "Last Updated" header + the changelog Modification-History row to the doc-sync story (so the header isn't rewritten twice mid-sprint). Read the companion story's completionNotes for exactly what it left; here US-441 said "US-447 finalizes the top 'Last Updated' changelog entry + regression_manifest."
+- **Gotcha**: don't trust "regression_manifest already updated" -- Marcus registered only the 3 NEW features (F-117/F-051/F-054) at freeze; the pre-existing parents whose code the sprint TOUCHED (F-049 via US-432) still needed Sprint 54 added. But be honest the other way too: F-062/F-082 are in validatesFeatures yet their sprint-54 stories changed no runtime code (annotation / triage), so adding them would falsely mark them needing re-validation -- leave them.
+- **Gotcha**: full change-entry BODY goes in specs/arch/architecture-changelog.md (per the architecture.md top structure note "append new change entries there"), NOT inline in architecture.md §20 -- the mod-history table was extracted 2026-06-01. The top "Last Updated" block is the summary; the changelog row is the detail.
+- **Gotcha**: ground every doc claim against the landed code, not the story note -- read slow_drain_detector.py + boot_battery_test.py headers/docstrings to confirm the exact thresholds (300s/0.005V/30s, 3.70/3.30/2.5-4.35V) + method names (getSlowDrainState, assessBootBatteryHealth, runBootBatteryTest) before writing them into the spec.
+---
