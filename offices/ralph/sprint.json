@@ -62,8 +62,15 @@
       "epicId": "E-002",
       "type": "normal",
       "size": "M",
-      "status": "sprint-ready",
+      "status": "blocked",
       "passes": false,
+      "completionNotes": "BLOCKED on BL-017 (offices/pm/blockers/BL-017-us449-drive-statistics-dual-write-analyze.md) -- AC2/VC2 'sole writer / no dual-write' CANNOT be truthfully asserted: drive_statistics has a SECOND live writer distinct from the harness. src/server/analytics/basic.py::computeDriveStatistics (basic.py:56, session.add(DriveStatistic)+commit at 108/124) is reached in production via POST /api/v1/analyze (api/analyze.py:140) -> services/analysis.py::runAnalysis -> _buildAnalyticsContext (analysis.py:269) -> computeDriveStatistics. It writes the SAME drive_statistics table keyed on summary_id but with DIFFERENT row-selection (drive time-window + source_device) than the harness (realtime_data.drive_id) -> last-writer-wins divergence. Also CONTRADICTS analysis.py header lines 72-75 which claim US-351 'retires the parallel drive_statistics writer' (it retired the trigger-seam writer, NOT the /analyze path). RESOLUTION = Atlas ruling (routed via PM): (A recommended) make /analyze a pure consumer -- read harness-written drive_statistics instead of recompute+write (faithful to F-104; behavior change: empty-harness drive -> /analyze 'no data' short-circuit; likely its own story touching analysis.py/basic.py/tests) OR (B) keep dual-write + reconcile via US-452. The fix touches the load-bearing /analyze AI flow -- files OUTSIDE US-449's enumerated harness scope -- so per CLAUDE.md role boundary (architecture->Atlas) + Refusal Rule 1/3 I did NOT guess it. DELIVERED (ruling-independent, committed 674b063): tests/server/analytics/test_harness_idempotency.py proves AC2/AC4 're-run = 0 owned-row diffs' -- runs the full harness (compute_drive_summary + compute_drive_statistics + compute_drive_derived_signals) twice over identical raw realtime_data and asserts byte-identical owned-table rows (excludes the intentionally-volatile computed_at onupdate timestamp); also asserts owned tables key on drive_summary.id == subsumed canonical drives.drive_id (US-448). 3 tests GREEN + ruff clean. DEFERRED until the ruling: AC1 owned-table MANIFEST (its shape depends on whether drive_statistics is cleanly sole-owned post-fix or contested) + the sole-writer source-scan test. AC5 Rule-10 (US-457 architecture.md) unaffected. CASCADE: US-450 (dep US-449) + US-452 (dep US-450) sit downstream of this ruling.",
+      "feedback": {
+        "filesActuallyTouched": [
+          "tests/server/analytics/test_harness_idempotency.py",
+          "offices/pm/blockers/BL-017-us449-drive-statistics-dual-write-analyze.md"
+        ]
+      },
       "acceptance": [
         "[ATLAS: it EXISTS -- do NOT build] the harness = drive_summary_compute.py (US-350) + drive_statistics_compute.py (US-351) + derived_signals_compute.py (US-436) + server-analytics-batch.timer. FORMALIZE these as the authority: an owned-table registry (manifest of which tables the harness solely writes), prove idempotency, re-key to the canonical drives.drive_id (US-448)",
         "the harness is the SOLE writer of its owned tables + reads ONLY synced raw (realtime_data/connection_log); re-running on the same raw produces byte-identical rows (assert by a re-run-and-diff test = 0 diffs)",

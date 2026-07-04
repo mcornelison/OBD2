@@ -22,3 +22,24 @@ Task: Canonical drives table + server drive_id SSOT -- SUBSUME drive_summary.id 
 - **Gotcha**: `test_db_models.py::test_totalTableCount` was already stale (expected 25, actual 26 -- US-436's drive_derived_signals was never added to it). Any new table forces this lockstep update; correct the true count, don't just +1.
 - **Gotcha**: bench-only sprint -- 'deployed AND verified via INFORMATION_SCHEMA' is a PM/deploy gate (no MariaDB on Windows dev); migrations are validated via hermetic FakeRunner (DDL/subsume/ordering/post-probe) + SQLite ORM, never a live server.
 ---
+
+## 2026-07-04 - US-449 (Agent 1 / Rex) -- BLOCKED (BL-017)
+Task: Formalize the server compute-harness as sole authority + manifest + prove idempotency (F-104)
+
+### What was implemented:
+- **Idempotency proof (ruling-independent, DELIVERED):** `tests/server/analytics/test_harness_idempotency.py` runs the full B-104 harness (compute_drive_summary + compute_drive_statistics + compute_drive_derived_signals, the same order the recompute CLI/timer fire) twice over identical seeded raw realtime_data and asserts byte-identical owned-table rows -- proving US-449 AC2/AC4 're-run = 0 row diffs'. Snapshots drive_summary analytics columns + drive_statistics + drive_derived_signals, EXCLUDING the intentionally-volatile `computed_at` (onupdate=func.now() observability timestamp, designed to advance). Also asserts owned tables key on drive_summary.id (== the US-448-subsumed canonical drives.drive_id) and a non-vacuous guard that run 1 actually populated the tables. In-memory SQLite + real ORM + real INSERTs (post-I-040 no-seam-mock discipline). 3 tests GREEN, ruff clean, committed 674b063.
+
+### BLOCKER (BL-017) -- why the story cannot close:
+- The sole-writer audit found `drive_statistics` has a **second live writer** besides the harness: `src/server/analytics/basic.py::computeDriveStatistics` (session.add(DriveStatistic)+commit), reached in production via `POST /api/v1/analyze` -> `runAnalysis` -> `_buildAnalyticsContext` (analysis.py:269). It writes the SAME table keyed on summary_id but filters raw rows by **drive time-window + source_device** vs the harness's **realtime_data.drive_id** -> divergent rows, last-writer-wins.
+- This directly violates AC2/VC2 'sole writer / no dual-write', and CONTRADICTS analysis.py header lines 72-75 (claims US-351 retired the parallel drive_statistics writer -- it retired the trigger-seam path, NOT /analyze).
+- Fix touches the load-bearing /analyze AI flow (analysis.py/basic.py/api) -- OUTSIDE US-449's enumerated harness scope -- and the reconciliation (read-vs-recompute, empty-harness behavior) is an Atlas architectural decision. Per CLAUDE.md role boundary + Refusal Rule 1/3, filed BL-017 (with options A/B + recommendation) rather than guessing.
+- DEFERRED to post-ruling: AC1 owned-table MANIFEST (its shape depends on whether drive_statistics ends up cleanly sole-owned) + the sole-writer source-scan test.
+
+### Files changed:
+- Created: `tests/server/analytics/test_harness_idempotency.py` (harness idempotency proof; 3 tests)
+- Created: `offices/pm/blockers/BL-017-us449-drive-statistics-dual-write-analyze.md` (dual-write blocker, routed to Atlas via PM)
+
+### Learnings for future iterations:
+- **Gotcha**: a 'formalize the sole writer' story must AUDIT for competing writers before asserting authority -- grep every `.add(DriveStatistic(`/`session.commit` writer of the owned table across the full server tree, and trace whether each is LIVE (mounted route) or dead. Here a documented 'retired' claim (analysis.py header) was false -- the /analyze write path survived US-351's trigger-seam retirement.
+- **Pattern discovered**: idempotency-proof diff must EXCLUDE columns designed to advance (`computed_at` onupdate) -- otherwise a true 'byte-identical' assertion fails on the intentional observability timestamp. Snapshot every data column except the volatile one.
+---
