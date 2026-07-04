@@ -15,6 +15,17 @@
 #                               frozenset + isEcuDependentParameter() helper
 #                               so DriveDetector can distinguish ECU-sourced
 #                               reads from the ELM_VOLTAGE adapter heartbeat.
+# 2026-07-04    | Rex (US-455) | D-4/F-082 unit-string canonicalization: the
+#                               decoder-path units now emit the python-obd
+#                               NATIVE unit string ('volt'/'kilopascal'/'second')
+#                               instead of the divergent abbreviations
+#                               ('V'/'kPa'/'s') so a physical unit has ONE
+#                               canonical label across the legacy path (native)
+#                               and the decoder path.  'V' collided with the
+#                               legacy O2_B1S1 'volt'; 'kPa' with INTAKE_PRESSURE
+#                               'kilopascal'.  DTC 'count' is kept (no native
+#                               pint unit); the enum textLabel overload is
+#                               untouched.
 # ================================================================================
 ################################################################################
 
@@ -69,7 +80,10 @@ class DecodedReading:
 
     Attributes:
         valueNumeric: Float for storage in realtime_data.value.
-        unit: Short unit label (e.g., 'V', 'kPa', 's', 'count').
+        unit: Canonical unit label -- the python-obd NATIVE unit string
+            (e.g., 'volt', 'kilopascal', 'second', 'count'), so a physical
+            unit has one label across the legacy (native) and decoder paths
+            (US-455 / D-4).  Treated as a typed label, never parsed numerically.
         textLabel: Optional enum / state label (e.g., 'CL', 'ON');
             when populated, overrides unit at DB-write time.
     """
@@ -153,7 +167,9 @@ def decodeDtcCount(response: Any) -> DecodedReading:
 def decodeRuntimeSec(response: Any) -> DecodedReading:
     """Decode Mode 01 PID 0x1F to uint16 seconds since engine start."""
     value = _numericMagnitude(_extractRaw(response))
-    return DecodedReading(valueNumeric=value, unit="s")
+    # US-455 / D-4: emit the python-obd native unit 'second' (canonical),
+    # not the 's' abbreviation.
+    return DecodedReading(valueNumeric=value, unit="second")
 
 
 # ================================================================================
@@ -164,7 +180,9 @@ def decodeRuntimeSec(response: Any) -> DecodedReading:
 def decodeBarometricKpa(response: Any) -> DecodedReading:
     """Decode Mode 01 PID 0x33 to kPa (uint8 0-255)."""
     value = _numericMagnitude(_extractRaw(response))
-    return DecodedReading(valueNumeric=value, unit="kPa")
+    # US-455 / D-4: emit the python-obd native unit 'kilopascal' (canonical),
+    # not the 'kPa' abbreviation -- matches the legacy INTAKE_PRESSURE path.
+    return DecodedReading(valueNumeric=value, unit="kilopascal")
 
 
 # ================================================================================
@@ -181,7 +199,9 @@ def decodeBatteryVoltage(response: Any) -> DecodedReading:
     the 2G Eclipse.
     """
     value = _numericMagnitude(_extractRaw(response))
-    return DecodedReading(valueNumeric=value, unit="V")
+    # US-455 / D-4: emit the python-obd native unit 'volt' (canonical),
+    # not the 'V' abbreviation -- matches the legacy O2_B1S1 'volt' path.
+    return DecodedReading(valueNumeric=value, unit="volt")
 
 
 # ================================================================================
@@ -201,7 +221,9 @@ def decodeO2PostCatVoltage(response: Any) -> DecodedReading:
         value = _numericMagnitude(raw[0])
     else:
         value = _numericMagnitude(raw)
-    return DecodedReading(valueNumeric=value, unit="V")
+    # US-455 / D-4: emit the python-obd native unit 'volt' (canonical),
+    # not the 'V' abbreviation.
+    return DecodedReading(valueNumeric=value, unit="volt")
 
 
 # ================================================================================

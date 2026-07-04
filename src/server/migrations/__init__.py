@@ -69,6 +69,11 @@
 #               |              | parameter_name 'O2_BANK1_SENSOR2_V' -> canonical
 #               |              | 'O2_B1S2' across all parameter_name tables;
 #               |              | D-3/F-082).  Forward-only.
+# 2026-07-04    | Rex (US-455) | Sprint 55 V0.29.9 -- registered v0021 (re-map
+#               |              | realtime_data.unit abbreviations 'V'->'volt',
+#               |              | 'kPa'->'kilopascal', 's'->'second' to the
+#               |              | python-obd native canonical form; D-4/F-082).
+#               |              | Forward-only.
 # ================================================================================
 ################################################################################
 
@@ -158,6 +163,9 @@ from src.server.migrations.versions.v0019_us453_pi_state import (
 from src.server.migrations.versions.v0020_us454_o2_name_normalization import (
     MIGRATION as _V0020,
 )
+from src.server.migrations.versions.v0021_us455_unit_string_canonicalization import (
+    MIGRATION as _V0021,
+)
 
 # ================================================================================
 # Registry -- append new migrations to the end, in ascending version order
@@ -184,6 +192,7 @@ ALL_MIGRATIONS: tuple[Migration, ...] = (
     _V0018,
     _V0019,
     _V0020,
+    _V0021,
 )
 
 

@@ -121,7 +121,8 @@ class TestBatteryVoltageAdapterPath:
         reading = logger.queryParameter("BATTERY_V")
 
         assert reading.value == pytest.approx(12.6)
-        assert reading.unit == "V"
+        # US-455 / D-4: canonical python-obd native unit ('volt', not 'V').
+        assert reading.unit == "volt"
 
     def test_query_bypassesSupportedPidCheck_forAdapterCommand(self) -> None:
         """BATTERY_V has pidCode=None — supportedPids should be ignored."""
