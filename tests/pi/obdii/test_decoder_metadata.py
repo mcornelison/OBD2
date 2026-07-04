@@ -66,7 +66,7 @@ class TestRegistryMetadataCompleteness:
             "DTC_COUNT",
             "RUNTIME_SEC",
             "BAROMETRIC_KPA",
-            "O2_BANK1_SENSOR2_V",
+            "O2_B1S2",
         ],
     )
     def test_mode01Pid_tagsEcuDependentTrue(self, parameterName: str) -> None:
@@ -101,7 +101,7 @@ class TestIsEcuDependentParameter:
             "DTC_COUNT",
             "RUNTIME_SEC",
             "BAROMETRIC_KPA",
-            "O2_BANK1_SENSOR2_V",
+            "O2_B1S2",
         ],
     )
     def test_registryMode01Pid_returnsTrue(self, parameterName: str) -> None:
@@ -173,7 +173,7 @@ class TestLegacyEcuParametersFrozenset:
         decoder, this test fails until someone updates LEGACY_ECU_PARAMETERS."""
         # Mode 01 PIDs from config.json pollingTiers (Sprint 18 snapshot).
         # Excludes PARAMETER_DECODERS entries (FUEL_SYSTEM_STATUS, MIL_ON,
-        # DTC_COUNT, RUNTIME_SEC, BAROMETRIC_KPA, O2_BANK1_SENSOR2_V,
+        # DTC_COUNT, RUNTIME_SEC, BAROMETRIC_KPA, O2_B1S2,
         # BATTERY_V) and the CONTROL_MODULE_VOLTAGE-probe-only entry.
         requiredMode01Legacy = {
             "RPM",

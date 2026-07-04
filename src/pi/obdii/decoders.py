@@ -287,8 +287,8 @@ PARAMETER_DECODERS: dict[str, ParameterDecoderEntry] = {
         # reading is NOT a signal that the engine is running.
         isEcuDependent=False,
     ),
-    "O2_BANK1_SENSOR2_V": ParameterDecoderEntry(
-        parameterName="O2_BANK1_SENSOR2_V",
+    "O2_B1S2": ParameterDecoderEntry(
+        parameterName="O2_B1S2",
         obdCommand="O2_B1S2",
         pidCode="0x15",
         decoder=decodeO2PostCatVoltage,
@@ -312,7 +312,7 @@ PARAMETER_DECODERS: dict[str, ParameterDecoderEntry] = {
 # Mirrors the polled Mode 01 PIDs from ``config.json`` pollingTiers
 # (tier 1-4) EXCEPT those already served by PARAMETER_DECODERS entries
 # (FUEL_SYSTEM_STATUS, MIL_ON, DTC_COUNT, RUNTIME_SEC, BAROMETRIC_KPA,
-# O2_BANK1_SENSOR2_V, BATTERY_V).  Adding a new Mode 01 PID to
+# O2_B1S2, BATTERY_V).  Adding a new Mode 01 PID to
 # config.json without also adding it here silently breaks the
 # DriveDetector silence-check in US-229 -- the regression test in
 # ``tests/pi/obdii/test_decoder_metadata.py::TestLegacyEcuParametersFrozenset``

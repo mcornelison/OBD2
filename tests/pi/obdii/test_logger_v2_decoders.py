@@ -176,7 +176,7 @@ class TestSupportedPidGating:
         logger = ObdDataLogger(conn, _db())
 
         with pytest.raises(ParameterNotSupportedError):
-            logger.queryParameter("O2_BANK1_SENSOR2_V")  # PID 0x15 not in set
+            logger.queryParameter("O2_B1S2")  # PID 0x15 not in set
 
     def test_supportedPid_proceedsToQuery(self) -> None:
         conn = FakeObdConnection(
@@ -185,7 +185,7 @@ class TestSupportedPidGating:
         )
         logger = ObdDataLogger(conn, _db())
 
-        reading = logger.queryParameter("O2_BANK1_SENSOR2_V")
+        reading = logger.queryParameter("O2_B1S2")
         assert reading.value == pytest.approx(0.7)
 
     def test_noSupportedPidsCache_treatsAsSupported(self) -> None:

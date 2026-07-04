@@ -121,10 +121,14 @@ class TestRegistration:
     def test_versionIs0018(self) -> None:
         assert m0018.VERSION == '0018'
 
-    def test_v0018RegisteredLastAndSorted(self) -> None:
+    def test_v0018RegisteredAfterV0017AndSorted(self) -> None:
+        # De-brittled (US-454): the registry keeps growing, so asserting v0018
+        # is the ABSOLUTE tail breaks on every later migration (it silently went
+        # red when US-453 appended v0019).  The real invariant is that v0018 is
+        # present, the tuple stays sorted, and v0018 directly follows v0017.
         versions = [m.version for m in ALL_MIGRATIONS]
         assert versions == sorted(versions)
-        assert versions[-1] == '0018'
+        assert '0018' in versions
         assert versions[versions.index('0018') - 1] == '0017'
 
     def test_v0017NotRedefinedForwardOnly(self) -> None:

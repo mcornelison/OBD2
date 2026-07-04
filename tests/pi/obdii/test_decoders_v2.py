@@ -223,7 +223,7 @@ class TestDecoderRegistry:
         "RUNTIME_SEC",
         "BAROMETRIC_KPA",
         "BATTERY_V",
-        "O2_BANK1_SENSOR2_V",
+        "O2_B1S2",
     }
 
     def test_registry_containsAllRequiredParameters(self) -> None:
@@ -251,7 +251,7 @@ class TestDecoderRegistry:
             ("FUEL_SYSTEM_STATUS", "FUEL_STATUS", "0x03"),
             ("RUNTIME_SEC", "RUN_TIME", "0x1F"),
             ("BAROMETRIC_KPA", "BAROMETRIC_PRESSURE", "0x33"),
-            ("O2_BANK1_SENSOR2_V", "O2_B1S2", "0x15"),
+            ("O2_B1S2", "O2_B1S2", "0x15"),
         ],
     )
     def test_registry_bindsSpoolNamesToCorrectPythonObdCommands(

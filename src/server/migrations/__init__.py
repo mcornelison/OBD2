@@ -65,6 +65,10 @@
 # 2026-07-04    | Rex (US-453) | Sprint 55 V0.29.9 -- registered v0019 (create
 #               |              | pi_state table; D-7/F-082 Pi operational-state
 #               |              | singleton mirrored as raw forensic).  Forward-only.
+# 2026-07-04    | Rex (US-454) | Sprint 55 V0.29.9 -- registered v0020 (re-map O2
+#               |              | parameter_name 'O2_BANK1_SENSOR2_V' -> canonical
+#               |              | 'O2_B1S2' across all parameter_name tables;
+#               |              | D-3/F-082).  Forward-only.
 # ================================================================================
 ################################################################################
 
@@ -151,6 +155,9 @@ from src.server.migrations.versions.v0018_us448_canonical_drives import (
 from src.server.migrations.versions.v0019_us453_pi_state import (
     MIGRATION as _V0019,
 )
+from src.server.migrations.versions.v0020_us454_o2_name_normalization import (
+    MIGRATION as _V0020,
+)
 
 # ================================================================================
 # Registry -- append new migrations to the end, in ascending version order
@@ -176,6 +183,7 @@ ALL_MIGRATIONS: tuple[Migration, ...] = (
     _V0017,
     _V0018,
     _V0019,
+    _V0020,
 )
 
 
