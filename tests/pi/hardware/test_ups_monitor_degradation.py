@@ -60,9 +60,11 @@ from pi.hardware.i2c_client import (
     I2cCommunicationError,
     I2cDeviceNotFoundError,
 )
+from pi.hardware.slow_drain_detector import DrainState, SlowDrainDetector
 from pi.hardware.ups_monitor import (
     CRATE_DISABLED_RAW,
     EXT5V_EXTERNAL_THRESHOLD_V,
+    MAX17048_VCELL_LSB_V,
     UpsMonitor,
     UpsMonitorError,
     UpsNotAvailableError,
@@ -458,6 +460,96 @@ def test_startPolling_recoveryAfterTransient_resetsErrorCounter(
 # ups_monitor.py. UpsMonitor is now battery-health only; the UI power-source
 # transition path is owned by the lifecycle _PowerSourceUiBridge over the
 # PowerSourceProvider SSOT (covered by tests/pi/orchestrator/test_lifecycle_power_source_ssot.py).
+
+
+# ================================================================================
+# Slow-drain detector wiring (F-051 / US-444)
+# ================================================================================
+
+
+def _leVcell(volts: float) -> int:
+    """Encode a VCELL voltage back to the little-endian wire word the mock
+    I2cClient returns, so getBatteryVoltage() decodes to ~`volts`."""
+    rawBigEndian = round(volts / MAX17048_VCELL_LSB_V)
+    return _byteSwap16(rawBigEndian)
+
+
+def test_getSlowDrainState_delegatesToInjectedDetector() -> None:
+    """
+    Given: a UpsMonitor built with an injected SlowDrainDetector that has been
+           driven to SLOW_DRAIN
+    When:  getSlowDrainState() is called
+    Then:  it returns the detector's committed state -- the accessor is a pure
+           delegate, so the battery-health verdict is single-sourced.
+    """
+    detector = SlowDrainDetector(
+        windowSeconds=60.0, debounceSeconds=30.0, minWindowFraction=0.9
+    )
+    for i in range(13):  # 0..120 s, declining 0.002 V/step
+        detector.update(10.0 * i, 4.050 - 0.002 * i)
+    assert detector.state is DrainState.SLOW_DRAIN
+
+    monitor = UpsMonitor(i2cClient=MagicMock(), slowDrainDetector=detector)
+
+    assert monitor.getSlowDrainState() is DrainState.SLOW_DRAIN
+
+
+def test_pollOnce_feedsDetector_flagsSustainedDecline() -> None:
+    """
+    Given: a UpsMonitor with an injected controllable clock + a mock I2cClient
+           returning a steadily declining VCELL
+    When:  _pollOnce() is driven once per simulated tick across a full window
+    Then:  getSlowDrainState() commits SLOW_DRAIN -- proving the poll tick feeds
+           the detector VCELL on the monitor's clock (the loop wiring), not just
+           the standalone detector.
+    """
+    clockBox = {"t": 0.0}
+    detector = SlowDrainDetector(
+        windowSeconds=60.0, debounceSeconds=30.0, minWindowFraction=0.9
+    )
+    mockClient = MagicMock()
+    monitor = UpsMonitor(
+        i2cClient=mockClient,
+        slowDrainDetector=detector,
+        monotonicClock=lambda: clockBox["t"],
+    )
+
+    for i in range(13):  # 0..120 s
+        clockBox["t"] = 10.0 * i
+        vcell = 4.050 - 0.002 * i
+        # readWord is called for VCELL (0x02) then SOC (0x04) each tick.
+        mockClient.readWord.side_effect = [_leVcell(vcell), 0xA256]
+        monitor._pollOnce()
+
+    assert monitor.getSlowDrainState() is DrainState.SLOW_DRAIN
+
+
+def test_pollOnce_socReadFailure_stillFeedsVcell() -> None:
+    """
+    Given: SOC reads fail but VCELL reads succeed
+    When:  _pollOnce() runs
+    Then:  the tick is not dropped -- history + detector still get the VCELL
+           sample (SOC failure is non-fatal), so a flaky SOC register does not
+           blind the slow-drain detector.
+    """
+    clockBox = {"t": 0.0}
+    monitor = UpsMonitor(
+        i2cClient=MagicMock(),
+        monotonicClock=lambda: clockBox["t"],
+    )
+
+    def readWord(_addr: int, register: int) -> int:
+        if register == 0x02:  # VCELL
+            return _leVcell(4.10)
+        raise I2cCommunicationError("SOC NACK")  # 0x04 SOC fails
+
+    monitor._i2cClient.readWord.side_effect = readWord
+
+    clockBox["t"] = 0.0
+    monitor._pollOnce()
+
+    # History recorded despite the SOC failure (SOC fell back to 0).
+    assert monitor.getVcellHistory() != []
 
 
 # ================================================================================
