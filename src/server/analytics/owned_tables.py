@@ -53,11 +53,12 @@ into ``drives.drive_id`` by US-448.
 
 **Honesty (F-104 is a half-landed spine).**  ``anomaly_log`` and
 ``trend_snapshots`` are *derived* from ``drive_statistics`` but the harness does
-not yet compute them; ``statistics`` is a legacy rollup US-452 reconciles.  This
-manifest records each table's TRUE current writer and flags the harness-owned
-target as a follow-up rather than claiming a sole-writer state that does not yet
-exist.  What US-449 *does* guarantee -- and the companion test enforces -- is
-that ``/analyze`` writes none of these tables.
+not yet compute them; ``statistics`` is a per-profile rollup mirrored raw from
+the Pi (US-452 reconciled its role vs ``drive_statistics`` -- distinct fact, no
+server-side dual-write).  This manifest records each table's TRUE current writer
+and flags the harness-owned target as a follow-up rather than claiming a
+sole-writer state that does not yet exist.  What US-449 *does* guarantee -- and
+the companion test enforces -- is that ``/analyze`` writes none of these tables.
 """
 
 from __future__ import annotations
@@ -79,6 +80,12 @@ WRITER_TREND_REPORT_CLI = "trend_report_cli"
 # owner (the harness) does not compute it yet.  Distinct from "unknown" -- it
 # is a documented, intentional state pending a future F-104 follow-up.
 WRITER_NONE = "none"
+
+# The generic Pi->server raw-sync mirror (api.sync._TABLE_REGISTRY upsert): the
+# Pi computes the row locally and the server MIRRORS it verbatim (no server-side
+# derivation).  Distinct from WRITER_HARNESS -- a mirror is a raw passthrough,
+# never a re-computation, so it can never dual-derive a fact the harness owns.
+WRITER_SYNC_MIRROR = "sync_mirror"
 
 
 @dataclass(frozen=True, slots=True)
@@ -176,15 +183,23 @@ PERSISTED_ANALYTICS_TABLES: tuple[OwnedTable, ...] = (
     ),
     OwnedTable(
         table="statistics",
-        writer=WRITER_NONE,
-        writer_ref="(none) -- legacy rollup; no code constructs a Statistic row",
+        writer=WRITER_SYNC_MIRROR,
+        writer_ref="src.server.api.sync._TABLE_REGISTRY['statistics'] (raw Pi-sync mirror)",
         harness_owned=False,
         analyze_writes=False,
         notes=(
-            "Legacy crawl-phase rollup table (models.Statistic). No live writer "
-            "exists (grep: no `Statistic(` constructor in src/). US-452 "
-            "reconciles statistics (rollup) vs drive_statistics (granular SSOT) "
-            "as harness-derived with no dual-write."
+            "US-452 (D-1): per-PROFILE per-parameter rollup (mode + dual-std, "
+            "profile_id/analysis_date scoped), computed by the Pi StatisticsEngine "
+            "and MIRRORED verbatim via the raw sync path -- the server never "
+            "derives it (no server-side rollup-row construction; grep-guarded by "
+            "test_statistics_vs_drive_statistics_no_dual_write). It is NOT "
+            "authoritative for per-drive facts: drive_statistics is the granular "
+            "per-drive SSOT; statistics holds the DISTINCT profile-rollup fact. "
+            "No independent dual-write -- only drive_statistics is server-derived. "
+            "F-104 residual debt (follow-up): statistics is a Pi-TRANSMITTED "
+            "derived table, in tension with the 'no derived state the Pi "
+            "transmits' boundary rule; retire-or-rederive is an Atlas call. See "
+            "docs/statistics-vs-drive-statistics-roles.md."
         ),
     ),
 )
@@ -213,6 +228,7 @@ __all__ = [
     "PERSISTED_ANALYTICS_TABLES",
     "WRITER_HARNESS",
     "WRITER_NONE",
+    "WRITER_SYNC_MIRROR",
     "WRITER_TREND_REPORT_CLI",
     "OwnedTable",
     "harness_owned_tables",
