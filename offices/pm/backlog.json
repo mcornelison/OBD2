@@ -3795,6 +3795,55 @@
           "outcome": "architecture.md server-authority section + ssot worked example present + faithful to the F-104 ADR; regression_manifest current; no stale refs"
         }
       ]
+    },
+    {
+      "id": "US-458",
+      "parent": "F-116",
+      "type": "normal",
+      "size": "S",
+      "status": "sprint-ready",
+      "title": "Complete F-116 server marker -- add data_source='foreign' CHECK (US-424 gap; A-4; unblocks drive-33 re-tag + kills sync landmine)",
+      "goal": "As the CIO, I want the F-116 data_source='foreign' marker on the SERVER (it only landed on the Pi) so drive 33 is excludable from real-data queries and the latent sync landmine is closed.",
+      "definitionOfDone": [
+        "forward-only server migration adds 'foreign' to the data_source CHECK on realtime_data + statistics + connection_log (and VERIFY drive_summary/drive_statistics if they carry the data_source axis) -- match the Pi DATA_SOURCE_VALUES (src/pi/obdii/data_source.py) EXACTLY (A-4 both-tier-consistent; server models.py:125 enum currently lacks 'foreign')",
+        "deployed AND verified via INFORMATION_SCHEMA: the server data_source CHECK includes 'foreign' on every listed table, identical to the Pi",
+        "on land, hand off to Spool for the drive-33 re-tag (Spool has the live DB + runs it per Atlas's 07-01 F-116 scope: both tiers, migration-before-UPDATE, re-sync-trap) -- this story delivers the migration + the handoff, NOT the re-tag UPDATE itself",
+        "ruff clean in-loop; mypy (strict) at PM-integration"
+      ],
+      "validationCriteria": [
+        {
+          "action": "run the server migration + INFORMATION_SCHEMA check on realtime_data/statistics/connection_log",
+          "outcome": "the data_source CHECK includes 'foreign' on all sites, identical to the Pi DATA_SOURCE_VALUES"
+        },
+        {
+          "action": "INSERT a data_source='foreign' row on the server",
+          "outcome": "it succeeds (was CHECK-rejected pre-migration) -- the latent sync landmine is closed"
+        }
+      ],
+      "conditionalOutcomes": [],
+      "tasks": []
+    },
+    {
+      "id": "US-459",
+      "parent": "F-116",
+      "type": "normal",
+      "size": "S",
+      "status": "sprint-ready",
+      "title": "data_source enum mirror-consistency test (Pi DATA_SOURCE_VALUES == server CHECK; A-4 anti-drift)",
+      "goal": "As the maintainer, I want a test that fails if the Pi and server data_source enums drift, so the F-116-class half-ship can't recur.",
+      "definitionOfDone": [
+        "a mirror-consistency test asserts Pi DATA_SOURCE_VALUES (src/pi/obdii/data_source.py) == the server data_source CHECK enum (src/server/.../models.py) -- fails on any drift (precedent: tests/lint/test_address_mirror_consistency.py)",
+        "the test is GREEN after US-458 (enums identical); it would RED if they diverge again",
+        "ruff clean in-loop"
+      ],
+      "validationCriteria": [
+        {
+          "action": "run the mirror-consistency test after US-458 lands",
+          "outcome": "green (Pi + server data_source enums identical); a deliberate drift makes it fail"
+        }
+      ],
+      "conditionalOutcomes": [],
+      "tasks": []
     }
   ]
 }
