@@ -260,3 +260,35 @@ Task: drive_statistics -- re-key to canonical drive_id + F-116 foreign guard (F-
 - **Gotcha**: before re-keying a writer onto a new identity, grep for LIVE mint call sites of that identity (`upsert_drive(` had ZERO in src/) -- if nothing mints a divergent id, the re-key is FK-safe on MariaDB even before the FK-constraint re-point (US-451) lands. The divergence hazard US-451 flagged only bites once something mints drives out of lockstep.
 - **Gotcha**: when a story adds a second copy of an exclusion rule (F-116 foreign), pin it to the existing SSOT with a mirror-consistency test rather than importing across a layer boundary (analytics must not import from cli). The test fails on drift; the import would invert the layering.
 ---
+
+## 2026-07-04 - US-452 (Agent 1 / Rex)
+Task: Reconcile statistics (rollup) vs drive_statistics (granular SSOT) -- no dual-write (D-1 / F-104)
+
+### Context (unblocked since last iteration):
+- US-452 was previously "transitively blocked on BL-017". BL-017 has since been RESOLVED via Option A in US-449 (the /analyze drive_statistics dual-write is retired) and US-450 landed, so US-452's dep chain (US-450->US-449) is clear and its shape is no longer ruling-dependent. It became the highest-priority genuinely-available spine story (US-451 remains blocked -- see below).
+
+### What was implemented (audit + document + guard, size-S honest-instrument):
+- **Audit finding:** the two per-parameter tables hold DIFFERENT facts at different grain, written by different authorities:
+  - `drive_statistics` = granular per-DRIVE per-parameter SSOT (server-harness-derived, `compute_drive_statistics`, keyed on canonical `drives.drive_id`).
+  - `statistics` = per-PROFILE per-parameter rollup (mode + dual-std, profile_id/analysis_date scoped) computed by the Pi `StatisticsEngine` and MIRRORED verbatim to the server via the raw sync path (`api.sync._TABLE_REGISTRY['statistics']`, generic upsert -- NOT a bespoke server constructor).
+  - So the SERVER never derives `statistics`; only `drive_statistics` is server-derived -> no single fact is independently derived into both (no dual-write). The Pi no longer computes `drive_statistics` (retired) so no tier dual-writes either.
+- **owned_tables.py manifest** reclassified the `statistics` entry `WRITER_NONE` -> new `WRITER_SYNC_MIRROR` identity (the old WRITER_NONE was inaccurate -- the sync mirror DOES write it). harness_owned=False, analyze_writes=False; notes document the distinct-fact role + no-dual-write + the F-104 residual debt. Docstring + __all__ updated.
+- **Guard test** `test_statistics_vs_drive_statistics_no_dual_write.py` = the AC "a test asserts no independent dual-write": a comment-aware SOURCE-SCAN over src/server (excluding models.py class-def + owned_tables.py manifest + the migrations DDL/DML layer) asserting NO server code constructs a `Statistic(` rollup row (`\bStatistic\(` never matches `DriveStatistic(` -- no word boundary), + manifest role asserts + disjoint-write-path asserts (statistics IN _TABLE_REGISTRY, drive_statistics NOT) + role-doc presence.
+- **docs/statistics-vs-drive-statistics-roles.md** = durable D-1 decision record (grain table, authority ruling, no-dual-write proof, F-104 debt + re-evaluate trigger).
+- **F-104 residual debt flagged (NOT resolved -- architectural, out of size-S scope):** statistics is a Pi-TRANSMITTED derived table, in tension with the "no derived state the Pi transmits" boundary rule. Retire-or-rederive is an Atlas call -> flagged in doc + manifest + routed for the Sprint 56 analysis/AI tier.
+- **Gate:** 18 targeted tests GREEN (my 8 + US-449's 10 manifest tests in lockstep -- my owned_tables change did not regress them) + ruff clean on both .py files. Commit 631eef7.
+
+### CRITICAL board finding (filed PM inbox note):
+- Verified against real code that **US-451 is STILL BLOCKED** despite BL-018's header reading "RESOLVED". The harness-minting gap is OPEN: `upsert_drive` has ZERO live call sites; nothing mints `drives` rows for NEW drives; `compute_drive_statistics` falls back to `drive_summary.id` for an unminted drive. US-449 shipped WITHOUT the minting that PRD line 75 assigned to it, so US-451's FK re-point would still orphan new-row writes on deploy. Where minting happens is an Atlas/architecture decision -> filed `offices/pm/inbox/2026-07-04-from-rex-us451-minting-gap-still-open.md` (Options A/B/C), left US-451 blocked (Refusal Rule 1).
+
+### Files changed:
+- Modified: `src/server/analytics/owned_tables.py` (WRITER_SYNC_MIRROR + statistics entry reclassified + docstring + __all__)
+- Created: `tests/server/analytics/test_statistics_vs_drive_statistics_no_dual_write.py` (8 no-dual-write guards)
+- Created: `docs/statistics-vs-drive-statistics-roles.md` (D-1 decision record)
+- Created: `offices/pm/inbox/2026-07-04-from-rex-us451-minting-gap-still-open.md` (US-451 minting-gap finding)
+
+### Learnings for future iterations:
+- **Pattern discovered**: a "no dual-write" reconciliation is proven by the CHECKABLE server-side invariant, not by deleting a table. Two tables that look redundant can hold facts at different GRAIN (per-drive vs per-profile) written by different AUTHORITIES (server harness vs raw Pi-sync mirror). The guard: source-scan that no server code CONSTRUCTS the mirrored table's row (`\bStatistic\(` isolates `Statistic(` from `DriveStatistic(` via the word boundary) -- the sync mirror is a raw passthrough, not a derivation.
+- **Gotcha**: a `\bStatistic\(` source-scan false-positives on COMMENT text (a migration's model-name listing `# Statistic(statistics), ...`). Make the scan comment-aware (skip whole-line comments) AND exclude the migrations layer (it runs DDL/DML, never constructs ORM rows).
+- **Gotcha (stale "RESOLVED" blocker)**: BL-018's header said RESOLVED on the ASSUMPTION that closing US-449/450 auto-unblocks US-451. Verify the actual technical GATE against code, not the header -- US-449 shipped without the minting half, so the gate the blocker documented is still open. A blocker's status field can lie; the code doesn't.
+---
