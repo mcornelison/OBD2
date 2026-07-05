@@ -369,3 +369,25 @@ Task: Collapse drive-identity id-families -> one canonical drive_id; Pi ids -> a
 - **Gotcha (a "collapse the FK" story is NOT always "add a self-FK")**: the AC's "drive_summary references drives.drive_id as FK" is unsafe as a hard PK self-FK -- US-214 writes drive_summary before drives is minted, and the US-460 mint makes drive_summary.id and drives.drive_id INDEPENDENT autoincrements (divergent for new drives). The collapse is realized by the subsume (US-448) + child re-points; adding the self-FK would point new rows at unrelated old drives. Verify the write-order + identity-sequence coupling before asserting a hard FK.
 - **Gotcha (flag with a default-guard to preserve precedence)**: re-labeling `data_quality='unmappable_legacy'` for NULL-key rows must guard `AND data_quality='full'` so a NULL-key foreign_vehicle/attribution_anomaly row keeps its more-specific marker -- otherwise the honest-availability flag clobbers a real fact.
 ---
+
+## 2026-07-05 - US-458 (Agent 1 / Rex)
+Task: Drop the stale live data_source CHECK -- ORM-vs-DB drift reconcile (BL-019/A-10; unblocks drive-33 re-tag)
+
+### What was implemented:
+- Forward-only v0023 migration that DISCOVERS + DROPS the stale live 4-value `data_source` CHECK (no 'foreign') that US-424 widened the Python enum for but NEVER ALTERed off the live obd2db -- the A-10/TD-055 ORM-vs-DB drift that rejects synced data_source='foreign' rows (drive 33, the F-116 landmine).
+- Unblocked by Atlas's BL-019 resolution (2026-07-04, ruling A': NOT moot; DROP the stale CHECK, do NOT add a net-new one -- a widen would reverse US-424's permissive-mirror design + full-table-scan realtime_data on deploy).
+- Discovery-driven: unlike v0015/v0022 (which DROP a CHECK by a KNOWN ck_* name), the drifted CHECK has an unknown auto-generated name (that IS the drift), so v0023 queries INFORMATION_SCHEMA.CHECK_CONSTRAINTS for every CHECK whose CHECK_CLAUSE LIKE '%data_source%' and DROPs each by discovered (TABLE_NAME, CONSTRAINT_NAME). Schema-wide -> satisfies AC 'the 5 tables + probe for any other via information_schema' for free.
+- Idempotent (drop set = exactly what discovery returns; fresh create_all / replay -> 0 rows -> no-op) + zero-survivor post-probe (re-runs discovery, raises SchemaProbeError if any data_source CHECK survives). DROP-only = low-risk (no validation scan). No ORM change (models.py already declares no data_source CHECK).
+- 16 targeted tests GREEN (hermetic stateful FakeRunner: coverage / drops-before-post-probe ordering / idempotency / multi-table / discovery-fail->SchemaProbeError / drop-fail->MigrationError / silent-no-op-survivor->SchemaProbeError) + ruff clean on all 3 code files.
+
+### Files changed:
+- Created: `src/server/migrations/versions/v0023_us458_drop_stale_data_source_check.py` (the migration)
+- Modified: `src/server/migrations/__init__.py` (registered #23: import + ALL_MIGRATIONS tuple + history line)
+- Created: `tests/server/test_migration_0023_drop_stale_data_source_check.py` (16 hermetic tests)
+- Created: `offices/pm/tech_debt/TD-062-brittle-migration-tail-assertions.md` (out-of-scope drift flag)
+
+### Learnings for future iterations:
+- **Pattern discovered**: to DROP a CHECK whose name is unknown (created ad-hoc on the live DB, never in a migration), DISCOVER it via INFORMATION_SCHEMA.CHECK_CONSTRAINTS filtered on `CHECK_CLAUSE LIKE '%<column>%'` and drop by discovered name -- more robust than hard-coding, and inherently schema-wide. Model it in tests with a STATEFUL FakeRunner (discovery returns present checks, DROP removes the named one) so the post-probe naturally reflects the drops.
+- **Gotcha**: dunder methods (`__call__`) resolve on the TYPE, not the instance -- you cannot override a FakeRunner's `__call__` by assigning `runner.__call__ = fn`. Add a behavior flag (e.g. `dropNoOp`) to the dataclass instead to model silent-no-op drops.
+- **Gotcha**: migration test files that assert `versions[-1] == '<own version>'` (absolute registry tail) silently go RED on the next registry append and stay invisible in-loop (full suite is a PM gate). Use the de-brittled `present + sorted + directly-after-predecessor` invariant. Two such files are currently RED (TD-062); do NOT plant the trap in new tests.
+---
