@@ -3,7 +3,7 @@
 | Field        | Value                     |
 |--------------|---------------------------|
 | Severity     | High                      |
-| Status       | Active                    |
+| Status       | RESOLVED (RESOLVED 2026-07-04 -- Atlas ruled Option A (harness sole wr...)                    |
 | Blocking     | US-449 (AC2/VC2 "sole writer / no dual-write"); cascades to US-450, US-452 (dep US-449) |
 | Waiting On   | Atlas architectural ruling (routed via Marcus/PM) |
 | Created      | 2026-07-04                |

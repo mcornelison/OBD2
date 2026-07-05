@@ -3,7 +3,7 @@
 | Field        | Value                     |
 |--------------|---------------------------|
 | Severity     | High                      |
-| Status       | Active                    |
+| Status       | RESOLVED (RESOLVED 2026-07-04 -- auto-unblocks with US-449/450 (BL-017...)                    |
 | Blocking     | US-451 (AC1 "reference the canonical `drives.drive_id` as FK" + AC3 "FK integrity check passes; a sample drive resolves one identity end-to-end") |
 | Root cause   | Same as **BL-017** (US-449 sole-writer blocked → US-450 stat re-key blocked). US-451 is the migration-order-**last** step of the spine chain. |
 | Waiting On   | BL-017 Atlas ruling → US-449 + US-450 complete first |
