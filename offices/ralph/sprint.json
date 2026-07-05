@@ -62,13 +62,18 @@
       "epicId": "E-002",
       "type": "normal",
       "size": "L",
-      "status": "sprint-ready",
-      "passes": false,
-      "completionNotes": "BLOCKED on BL-017 (offices/pm/blockers/BL-017-us449-drive-statistics-dual-write-analyze.md) -- AC2/VC2 'sole writer / no dual-write' CANNOT be truthfully asserted: drive_statistics has a SECOND live writer distinct from the harness. src/server/analytics/basic.py::computeDriveStatistics (basic.py:56, session.add(DriveStatistic)+commit at 108/124) is reached in production via POST /api/v1/analyze (api/analyze.py:140) -> services/analysis.py::runAnalysis -> _buildAnalyticsContext (analysis.py:269) -> computeDriveStatistics. It writes the SAME drive_statistics table keyed on summary_id but with DIFFERENT row-selection (drive time-window + source_device) than the harness (realtime_data.drive_id) -> last-writer-wins divergence. Also CONTRADICTS analysis.py header lines 72-75 which claim US-351 'retires the parallel drive_statistics writer' (it retired the trigger-seam writer, NOT the /analyze path). RESOLUTION = Atlas ruling (routed via PM): (A recommended) make /analyze a pure consumer -- read harness-written drive_statistics instead of recompute+write (faithful to F-104; behavior change: empty-harness drive -> /analyze 'no data' short-circuit; likely its own story touching analysis.py/basic.py/tests) OR (B) keep dual-write + reconcile via US-452. The fix touches the load-bearing /analyze AI flow -- files OUTSIDE US-449's enumerated harness scope -- so per CLAUDE.md role boundary (architecture->Atlas) + Refusal Rule 1/3 I did NOT guess it. DELIVERED (ruling-independent, committed 674b063): tests/server/analytics/test_harness_idempotency.py proves AC2/AC4 're-run = 0 owned-row diffs' -- runs the full harness (compute_drive_summary + compute_drive_statistics + compute_drive_derived_signals) twice over identical raw realtime_data and asserts byte-identical owned-table rows (excludes the intentionally-volatile computed_at onupdate timestamp); also asserts owned tables key on drive_summary.id == subsumed canonical drives.drive_id (US-448). 3 tests GREEN + ruff clean. DEFERRED until the ruling: AC1 owned-table MANIFEST (its shape depends on whether drive_statistics is cleanly sole-owned post-fix or contested) + the sole-writer source-scan test. AC5 Rule-10 (US-457 architecture.md) unaffected. CASCADE: US-450 (dep US-449) + US-452 (dep US-450) sit downstream of this ruling.",
+      "status": "done",
+      "passes": true,
+      "completionNotes": "US-449 SHIPPED (BL-017 RESOLVED by PM commit 783f205 -- Atlas Option A folded into the DoD; spine 449->452 unblocked). /analyze is now a PURE CONSUMER of harness-authoritative persisted analytics; the drive_statistics dual-write is retired. 199 targeted tests GREEN (40 manifest+advanced+idempotency; 112 analyze+prompt-invoke+reports+parity; 47 basic+writers+scoping regressions; 3 skipped aiosqlite-gated; 0 fail) + ruff clean on all 6 files (commit 14775e4). DELIVERABLES: (1) src/server/services/analysis.py _buildAnalyticsContext REWRITTEN -- READS harness drive_statistics (new _readHarnessDriveStatistics, keyed on drive_summary.id == subsumed canonical drives.drive_id per US-448) and, on a MISS, TRIGGERS the HARNESS compute (compute_drive_statistics from drive_statistics_compute, keyed on the Pi-local drive_id), NEVER basic.py::computeDriveStatistics (whose time-window+device grouping MERGES adjacent drives = the A-9 attribution hazard Atlas warned against). Anomalies + trends computed IN-MEMORY (advanced.evaluateAnomalies / evaluateTrend) for the Jinja prompt context ONLY -- no add/delete/commit of any owned table. (2) src/server/analytics/advanced.py: extracted the pure no-persist cores evaluateAnomalies + evaluateTrend; detectAnomalies + computeTrends KEPT as thin persisting wrappers so their OTHER callers are unchanged (computeTrends still feeds the trend-report CLI's spec-1.8 snapshot accumulation -> test_analytics_advanced/test_reports/test_parity_crawl_walk stay green; basic.py untouched -> test_analytics_basic/test_drive_statistics_writer*/test_analytics_drive_scoping stay green). (3) src/server/analytics/owned_tables.py = the AC1 owned-table MANIFEST: one authoritative writer per persisted-analytics table + analyze_writes=False for ALL (the checkable sole-writer contract the BL-017 audit-gap needed). (4) Corrected the FALSE analysis.py:72-75 header claim (US-351 retired only the trigger-SEAM writer, NOT the live /analyze writer). PROOF: tests/server/analytics/test_owned_table_manifest.py -- behavioural (seed drive-scoped raw with NO stats -> _buildAnalyticsContext triggers the harness -> drive_statistics populated with a harness-only data_quality column; anomaly_log + trend_snapshots stay EMPTY) + source-scan (_buildAnalyticsContext uses compute_drive_statistics/evaluateAnomalies/evaluateTrend, never the persisting writers) + manifest structure vs real ORM tablenames. AC4 idempotency proof (test_harness_idempotency.py, committed 674b063) retained + green. BEHAVIOR CHANGE (Atlas-flagged in the ruling): /analyze now uses the harness drive_id grouping, not basic.py's time-window -> test_analyze_real._seedDrive updated to tag drive_summary (source_id/drive_id) + realtime (drive_id) so the harness attributes the rows. HONESTY (manifest divergence, flagged for PM/Atlas): the DoD manifest line names the harness as sole writer of anomaly_log + trend_snapshots + statistics, but the harness does NOT compute those today (it never did). The manifest documents their TRUE current state -- anomaly_log honest-empty (no live writer post-retirement; detectAnomalies persists but has no live caller), trend_snapshots single non-/analyze writer = the trend-report CLI (spec 1.8), statistics legacy rollup with no live writer (US-452) -- and flags folding them under the harness as a future F-104 follow-up. What US-449 FULLY guarantees + tests: /analyze writes NONE of these tables, and the drive_statistics dual-write (the actual BL-017 bug) is gone. AC Rule-10: SATISFIED -- US-457's specs/architecture.md 10.7.3 already landed in-sprint. PM/DEPLOY GATES (bench-only, no MariaDB on Windows dev): 'deployed AND verified: harness re-run on an existing drive = 0 row diffs' = PM deploy-time gate on chi-srv-01 (idempotency proven here via in-memory SQLite + real ORM + real INSERTs). mypy (strict) NOT run in-loop (not installed in dev env, sprint-wide) -> PM integration gate. FLAG for PM: base-module change (advanced.py is imported widely) -> run the full pytest suite at integration. CASCADE UNBLOCKED: US-450 (dep US-449) now available.",
       "feedback": {
         "filesActuallyTouched": [
+          "src/server/services/analysis.py",
+          "src/server/analytics/advanced.py",
+          "src/server/analytics/owned_tables.py",
+          "tests/server/analytics/test_owned_table_manifest.py",
           "tests/server/analytics/test_harness_idempotency.py",
-          "offices/pm/blockers/BL-017-us449-drive-statistics-dual-write-analyze.md"
+          "tests/server/test_analytics_advanced.py",
+          "tests/server/test_analyze_real.py"
         ]
       },
       "acceptance": [
@@ -114,7 +119,7 @@
       "size": "M",
       "status": "sprint-ready",
       "passes": false,
-      "completionNotes": "TRANSITIVELY BLOCKED on BL-017 (root). US-450 deps US-449 (sole-writer harness), which is BLOCKED on BL-017 (live drive_statistics dual-writer in POST /api/v1/analyze -> basic.py::computeDriveStatistics, awaits Atlas ruling routed via PM). US-450 AC1 re-keys compute_drive_statistics from drive_summary.id -> canonical drives.drive_id; per BL-018 that re-key is coherent ONLY AFTER US-449 makes the harness the sole writer minting drives in lockstep (drive_summary.id and drives.drive_id are two INDEPENDENT autoincrement PKs; re-keying ahead orphans new-row writes = live analytics regression). AC2 (verify the batch populates drive_statistics on chi-srv-01; reconcile the Atlas-0-rows vs Spool-434-rows discrepancy) is deploy-time only (no MariaDB on Windows dev). Not started; no code authored -- ruling-gated per Refusal Rule 1 + CLAUDE.md role boundary (architecture -> Atlas). When BL-017 rules -> US-449 closes -> US-450 re-keys as a clean forward-only migration.",
+      "completionNotes": "NOW UNBLOCKED (was transitively blocked on BL-017). BL-017 is RESOLVED (PM commit 783f205, Atlas Option A) and US-449 is DONE (commit 14775e4) -- the harness is the sole writer of drive_statistics and /analyze is a pure consumer, so US-450's re-key of compute_drive_statistics from drive_summary.id -> canonical drives.drive_id is now coherent (no independent-autoincrement orphan hazard). AVAILABLE = next story in the F-104 spine (US-448 done -> US-449 done -> US-450 -> US-451). Not yet started. AC2 (verify the batch populates drive_statistics on chi-srv-01; reconcile the Atlas-0-rows vs Spool-434-rows discrepancy) remains deploy-time only (no MariaDB on Windows dev).",
       "acceptance": [
         "[ATLAS: compute EXISTS + Pi-side already retired (detector.py:940 call-site GONE)] re-key compute_drive_statistics from drive_summary.id -> the canonical drives.drive_id (US-448); persisted stat stays SERVER-only (Pi-side compute only if NOT synced -- live dashboard, thrown away)",
         "[ATLAS empty-table gap] VERIFY the batch actually runs + populates drive_statistics on chi-srv-01 -- Atlas saw 0 rows, Spool saw 434; reconcile the discrepancy (likely a deploy/timer gap). If a deploy gap, fix it or flag QA with evidence; do NOT rebuild the compute",
@@ -384,6 +389,70 @@
       "conditionalOutcomes": [],
       "goal": "As the PM, I need the server-authority architecture documented in-sprint (US-448/449 gate on this).",
       "tasks": []
+    },
+    {
+      "id": "US-458",
+      "parent": "F-116",
+      "epicId": "E-002",
+      "type": "normal",
+      "size": "S",
+      "status": "sprint-ready",
+      "passes": false,
+      "title": "Complete F-116 server marker -- add data_source='foreign' CHECK (US-424 gap; A-4; unblocks drive-33 re-tag + kills sync landmine)",
+      "goal": "As the CIO, I want the F-116 data_source='foreign' marker on the SERVER (it only landed on the Pi) so drive 33 is excludable from real-data queries and the latent sync landmine is closed.",
+      "definitionOfDone": [
+        "forward-only server migration adds 'foreign' to the data_source CHECK on realtime_data + statistics + connection_log (and VERIFY drive_summary/drive_statistics if they carry the data_source axis) -- match the Pi DATA_SOURCE_VALUES (src/pi/obdii/data_source.py) EXACTLY (A-4 both-tier-consistent; server models.py:125 enum currently lacks 'foreign')",
+        "deployed AND verified via INFORMATION_SCHEMA: the server data_source CHECK includes 'foreign' on every listed table, identical to the Pi",
+        "on land, hand off to Spool for the drive-33 re-tag (Spool has the live DB + runs it per Atlas's 07-01 F-116 scope: both tiers, migration-before-UPDATE, re-sync-trap) -- this story delivers the migration + the handoff, NOT the re-tag UPDATE itself",
+        "ruff clean in-loop; mypy (strict) at PM-integration"
+      ],
+      "acceptance": [
+        "forward-only server migration adds 'foreign' to the data_source CHECK on realtime_data + statistics + connection_log (and VERIFY drive_summary/drive_statistics if they carry the data_source axis) -- match the Pi DATA_SOURCE_VALUES (src/pi/obdii/data_source.py) EXACTLY (A-4 both-tier-consistent; server models.py:125 enum currently lacks 'foreign')",
+        "deployed AND verified via INFORMATION_SCHEMA: the server data_source CHECK includes 'foreign' on every listed table, identical to the Pi",
+        "on land, hand off to Spool for the drive-33 re-tag (Spool has the live DB + runs it per Atlas's 07-01 F-116 scope: both tiers, migration-before-UPDATE, re-sync-trap) -- this story delivers the migration + the handoff, NOT the re-tag UPDATE itself",
+        "ruff clean in-loop; mypy (strict) at PM-integration"
+      ],
+      "validationCriteria": [
+        {
+          "action": "run the server migration + INFORMATION_SCHEMA check on realtime_data/statistics/connection_log",
+          "outcome": "the data_source CHECK includes 'foreign' on all sites, identical to the Pi DATA_SOURCE_VALUES"
+        },
+        {
+          "action": "INSERT a data_source='foreign' row on the server",
+          "outcome": "it succeeds (was CHECK-rejected pre-migration) -- the latent sync landmine is closed"
+        }
+      ],
+      "conditionalOutcomes": [],
+      "tasks": []
+    },
+    {
+      "id": "US-459",
+      "parent": "F-116",
+      "epicId": "E-002",
+      "type": "normal",
+      "size": "S",
+      "status": "sprint-ready",
+      "passes": false,
+      "title": "data_source enum mirror-consistency test (Pi DATA_SOURCE_VALUES == server CHECK; A-4 anti-drift)",
+      "goal": "As the maintainer, I want a test that fails if the Pi and server data_source enums drift, so the F-116-class half-ship can't recur.",
+      "definitionOfDone": [
+        "a mirror-consistency test asserts Pi DATA_SOURCE_VALUES (src/pi/obdii/data_source.py) == the server data_source CHECK enum (src/server/.../models.py) -- fails on any drift (precedent: tests/lint/test_address_mirror_consistency.py)",
+        "the test is GREEN after US-458 (enums identical); it would RED if they diverge again",
+        "ruff clean in-loop"
+      ],
+      "acceptance": [
+        "a mirror-consistency test asserts Pi DATA_SOURCE_VALUES (src/pi/obdii/data_source.py) == the server data_source CHECK enum (src/server/.../models.py) -- fails on any drift (precedent: tests/lint/test_address_mirror_consistency.py)",
+        "the test is GREEN after US-458 (enums identical); it would RED if they diverge again",
+        "ruff clean in-loop"
+      ],
+      "validationCriteria": [
+        {
+          "action": "run the mirror-consistency test after US-458 lands",
+          "outcome": "green (Pi + server data_source enums identical); a deliberate drift makes it fail"
+        }
+      ],
+      "conditionalOutcomes": [],
+      "tasks": []
     }
   ],
   "validation": {
@@ -400,10 +469,13 @@
       "(run the migration + SELECT DISTINCT the O2 names) \u2192 (only canonical names remain; US-229 fixture updated in lockstep, tests green)  [from US-454]",
       "(run the migration + SELECT DISTINCT unit) \u2192 (canonical unit strings only; no code path parses unit as a number)  [from US-455]",
       "(execute the chosen disposition) \u2192 (static_data dropped (verified gone, TD-061 filed) OR documented honest-empty with rationale)  [from US-456]",
-      "(review changed files + write the server-authority section) \u2192 (architecture.md server-authority section + ssot worked example present + faithful to the F-104 ADR; regression_manifest current; no stale refs)  [from US-457]"
+      "(review changed files + write the server-authority section) \u2192 (architecture.md server-authority section + ssot worked example present + faithful to the F-104 ADR; regression_manifest current; no stale refs)  [from US-457]",
+      "(run the server migration + INFORMATION_SCHEMA check on realtime_data/statistics/connection_log) \u2192 (the data_source CHECK includes 'foreign' on all sites, identical to the Pi DATA_SOURCE_VALUES)  [from US-458]",
+      "(INSERT a data_source='foreign' row on the server) \u2192 (it succeeds (was CHECK-rejected pre-migration) -- the latent sync landmine is closed)  [from US-458]",
+      "(run the mirror-consistency test after US-458 lands) \u2192 (green (Pi + server data_source enums identical); a deliberate drift makes it fail)  [from US-459]"
     ],
     "frozenAt": "2026-07-04T21:01:11Z",
-    "bigDoDHash": "b2e15f0678af981e4e9d2aadbe06391254fe80cbd8178c6c2dd7acc62f10be1d",
+    "bigDoDHash": "ff08d189b60d16e4b72c406750b16904080774826e186c134cc1c30e3e7f17f5",
     "validationMethod": "BENCH-ONLY",
     "validatesFeatures": [
       "F-104",

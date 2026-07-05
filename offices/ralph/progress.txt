@@ -213,3 +213,31 @@ Task: iteration found no available unblocked story -- the F-104 spine is fully g
 - **Gotcha**: a story marked `status: sprint-ready` in sprint.json is NOT necessarily *available* -- check its `deps`/parent-chain against open blockers. Here US-450/US-452 were sprint-ready but transitively blocked via US-449's BL-017. The Sprint Status Summary categorization ("Available = passes:false AND deps met AND no blocker") requires resolving the dep chain, not trusting the status label.
 - **Gotcha (single-agent all-blocked)**: when EVERY remaining story is gated on one documented blocker needing an out-of-lane (Atlas/PM) ruling, the correct move is decision-tree #2 -> `SPRINT_BLOCKED` (PM action required to route the ruling). Do NOT emit no-tag (would restart ralph.sh into an all-blocked spin) and do NOT emit multi-agent tags (SPRINT_IN_PROGRESS/ALL_BLOCKED -- forbidden single-agent).
 ---
+
+## 2026-07-04 - US-449 (Agent 1 / Rex) -- UNBLOCKED + SHIPPED
+Task: Formalize the server compute-harness as sole authority + /analyze pure-consumer + owned-table manifest (F-104 / BL-017 Atlas Option A)
+
+### Context (block cleared since last iteration):
+- Last iteration emitted SPRINT_BLOCKED (spine all-gated on BL-017). Since then the PM committed **783f205** -- BL-017 RESOLVED, Atlas Option A folded into US-449's `definitionOfDone`, spine 449->452 unblocked. US-449 became the highest-priority available story. (The prior "all-blocked" agent note was stale, written before that commit.)
+
+### What was implemented:
+- **/analyze is now a PURE CONSUMER (the BL-017 fix).** `services/analysis.py::_buildAnalyticsContext` REWRITTEN: `_readHarnessDriveStatistics` READS the harness-written `drive_statistics` (keyed on `drive_summary.id` == subsumed canonical `drives.drive_id`, US-448); on a MISS it TRIGGERS the HARNESS compute (`drive_statistics_compute.compute_drive_statistics`, keyed on the Pi-local `drive_id`) and re-reads -- NEVER `basic.py::computeDriveStatistics` (whose time-window+device grouping merges adjacent drives = the A-9 hazard). Anomalies + trends are computed IN-MEMORY (`advanced.evaluateAnomalies` / `evaluateTrend`) for the Jinja prompt context only; `/analyze` now performs no add/delete/commit of any owned table.
+- **Pure evaluators extracted (advanced.py).** `evaluateAnomalies` + `evaluateTrend` = the no-persist cores. `detectAnomalies` + `computeTrends` kept as thin persisting wrappers so their OTHER callers are unchanged (the trend-report CLI still accumulates snapshots per spec §1.8). `basic.py` untouched.
+- **Owned-table manifest (AC1).** New `src/server/analytics/owned_tables.py`: one authoritative writer per persisted-analytics table + `analyze_writes=False` for all -- the checkable sole-writer contract the BL-017 audit-gap needed.
+- **Corrected the false comment.** `analysis.py:72-75` claimed US-351 retired the parallel `drive_statistics` writer; it retired only the trigger-SEAM path -- the live /analyze writer survived until now.
+- **Gate:** 199 targeted tests GREEN (manifest+advanced+idempotency 40; analyze+prompt-invoke+reports+parity 112; basic+writers+scoping regressions 47; 3 skipped aiosqlite-gated) + ruff clean on all 6 files. Commit 14775e4.
+
+### Files changed:
+- Modified: `src/server/services/analysis.py` (_buildAnalyticsContext pure-consumer + _readHarnessDriveStatistics + imports + header)
+- Modified: `src/server/analytics/advanced.py` (evaluateAnomalies + evaluateTrend extracted; wrappers persist)
+- Created: `src/server/analytics/owned_tables.py` (owned-table manifest)
+- Created: `tests/server/analytics/test_owned_table_manifest.py` (behavioural + source-scan + structure)
+- Modified: `tests/server/test_analytics_advanced.py` (pure-evaluator no-persist tests)
+- Modified: `tests/server/test_analyze_real.py` (_seedDrive tags drive_id for the harness path)
+
+### Learnings for future iterations:
+- **Pattern discovered**: to retire a dual-writer at a specific call site WITHOUT a sprawling public-API refactor, extract the pure compute core (`evaluateX`) and keep the persisting function (`X = evaluateX + persist`) for its legitimate callers. The consumer switches to the pure core; other callers/tests stay green. Asymmetry is fine: retire persistence fully where the retired call site was the SOLE caller (anomaly_log), keep the persist wrapper where a legit caller remains (trend_snapshots -> trend-report CLI).
+- **Gotcha (behavior change ripples to test seeds)**: switching /analyze from basic.py (time-window+device grouping) to the harness (drive_id grouping) means test drives MUST carry `drive_id` on both `drive_summary` (source_id/drive_id) and `realtime_data` -- else the harness can't attribute rows and every happy-path test collapses to the NO_DATA short-circuit. The ruling flagged this; `test_analyze_real._seedDrive` needed the fix, `test_spool_prompt_invoke` already had it.
+- **Gotcha (honest manifest > literal DoD)**: the DoD named the harness as sole writer of anomaly_log/trend_snapshots/statistics, but the harness never computed those. The manifest documents their TRUE state + flags harness-ownership as a future follow-up, rather than asserting a sole-writer state that doesn't exist. The guaranteed+tested contract (/analyze writes none of them; the drive_statistics dual-write is gone) is what US-449 actually delivers.
+- **Gotcha (stale board across the block)**: a story's agent-note / completionNotes written during a block go stale the moment the PM resolves the blocker mid-flight. Re-read git log at iteration start -- the "all-blocked" note was superseded by the PM's unblock commit.
+---
