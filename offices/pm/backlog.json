@@ -768,10 +768,11 @@
       "parent": "E-004",
       "title": "drive_statistics Pi-side writer + sync (Spool's Approach 2 -- V0.28+ feature)",
       "description": "drive_statistics Pi-side writer + sync (Spool's Approach 2 -- V0.28+ feature)",
-      "status": "active",
+      "status": "awaiting-validation",
       "renamedFrom": "B-075",
       "createdAt": "2026-05-27",
-      "updatedAt": "2026-05-27"
+      "updatedAt": "2026-05-27",
+      "currentVersion": "V0.29.9"
     },
     {
       "id": "F-076",
@@ -842,11 +843,11 @@
       "parent": "E-002",
       "title": "Tester's V0.28+ data-profile findings \u2014 rollup (8 bugs + 8 design smells)",
       "description": "Tester's V0.28+ data-profile findings \u2014 rollup (8 bugs + 8 design smells)",
-      "status": "active",
+      "status": "awaiting-validation",
       "renamedFrom": "B-082",
       "createdAt": "2026-05-27",
       "updatedAt": "2026-05-27",
-      "currentVersion": "V0.29.7"
+      "currentVersion": "V0.29.9"
     },
     {
       "id": "F-083",
@@ -1073,10 +1074,11 @@
       "parent": "E-002",
       "title": "Server-Side Analytics Authority -- Pi as Emitter, Server as Analyzer (Architecture Epic)",
       "description": "Server-Side Analytics Authority -- Pi as Emitter, Server as Analyzer (Architecture Epic)",
-      "status": "active",
+      "status": "awaiting-validation",
       "renamedFrom": "B-104",
       "createdAt": "2026-05-27",
-      "updatedAt": "2026-05-27"
+      "updatedAt": "2026-05-27",
+      "currentVersion": "V0.29.9"
     },
     {
       "id": "F-105",
