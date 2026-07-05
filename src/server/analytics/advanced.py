@@ -13,6 +13,16 @@
 # 2026-04-16    | Ralph Agent  | Initial implementation for US-159 — advanced
 #               |              | analytics (trends/correlations/anomaly) per
 #               |              | server spec §1.8
+# 2026-07-04    | Rex (US-449) | F-104 Option A: extract the pure, no-persist
+#               |              | cores evaluateTrend / evaluateAnomalies so the
+#               |              | /analyze consumer path can compute trend +
+#               |              | anomaly context IN-MEMORY without writing
+#               |              | trend_snapshots / anomaly_log (BL-017 dual-write
+#               |              | retirement).  computeTrends / detectAnomalies
+#               |              | now wrap the pure core + persist -- their
+#               |              | behaviour is unchanged for the trend-report CLI
+#               |              | (spec §1.8 snapshot accumulation) and any other
+#               |              | caller that legitimately persists.
 # ================================================================================
 ################################################################################
 
@@ -86,13 +96,13 @@ DEFAULT_CORRELATION_PAIRS: tuple[tuple[str, str], ...] = (
 # ---- Trend analysis ---------------------------------------------------------
 
 
-def computeTrends(
+def evaluateTrend(
     session: Session,
     parameterName: str,
     windowSize: int = DEFAULT_TREND_WINDOW,
 ) -> TrendResult | None:
     """
-    Compute a rolling trend snapshot for ``parameterName``.
+    Compute a rolling trend for ``parameterName`` WITHOUT persisting it.
 
     Pulls the last ``windowSize`` drives that have a ``drive_statistics`` row
     for the parameter (ordered by ``drive_summary.start_time``), computes the
@@ -104,8 +114,11 @@ def computeTrends(
     * ``RISING`` if drift is > +5 % and slope is non-negative.
     * ``FALLING`` if drift is < -5 % and slope is non-positive.
 
-    A :class:`TrendSnapshot` row is inserted on every call — the table
-    accumulates snapshots over time, which is intentional (see spec §1.8).
+    US-449 / F-104 (Option A): this is the pure, read-only core.  The
+    ``/analyze`` consumer path calls THIS so it never writes ``trend_snapshots``
+    (it is a pure consumer of persisted analytics).  :func:`computeTrends`
+    wraps this and persists a :class:`TrendSnapshot` for the trend-report path
+    that intentionally accumulates snapshots (spec §1.8).
 
     Args:
         session: Open SQLAlchemy session bound to the server database.
@@ -129,19 +142,6 @@ def computeTrends(
     driftPct = _computeDriftPct(avgs)
     direction = _classifyTrendDirection(driftPct, slope)
 
-    session.add(
-        TrendSnapshot(
-            parameter_name=parameterName,
-            window_size=windowSize,
-            direction=direction.value,
-            slope=slope,
-            avg_peak=avgPeak,
-            avg_mean=avgMean,
-            drift_pct=driftPct,
-        )
-    )
-    session.commit()
-
     return TrendResult(
         parameter_name=parameterName,
         window_size=windowSize,
@@ -151,6 +151,52 @@ def computeTrends(
         avg_mean=avgMean,
         drift_pct=driftPct,
     )
+
+
+def computeTrends(
+    session: Session,
+    parameterName: str,
+    windowSize: int = DEFAULT_TREND_WINDOW,
+) -> TrendResult | None:
+    """
+    Compute a rolling trend snapshot for ``parameterName`` and persist it.
+
+    Thin persisting wrapper over :func:`evaluateTrend`.  A
+    :class:`TrendSnapshot` row is inserted on every call that has data — the
+    table accumulates snapshots over time, which is intentional (see spec
+    §1.8) and is relied on by the trend-report path
+    (:func:`src.server.reports.trend_report.buildTrendReport`).
+
+    US-449 / F-104: the ``/analyze`` flow no longer calls this — it uses the
+    pure :func:`evaluateTrend` so it writes no ``trend_snapshots`` rows.
+
+    Args:
+        session: Open SQLAlchemy session bound to the server database.
+        parameterName: Parameter to trend (e.g. ``"RPM"``).
+        windowSize: Max number of most-recent drives to include.
+
+    Returns:
+        A :class:`TrendResult`, or ``None`` if no drive has stats for this
+        parameter.
+    """
+    result = evaluateTrend(session, parameterName, windowSize)
+    if result is None:
+        return None
+
+    session.add(
+        TrendSnapshot(
+            parameter_name=result.parameter_name,
+            window_size=result.window_size,
+            direction=result.direction.value,
+            slope=result.slope,
+            avg_peak=result.avg_peak,
+            avg_mean=result.avg_mean,
+            drift_pct=result.drift_pct,
+        )
+    )
+    session.commit()
+
+    return result
 
 
 def _loadRecentAvgs(
@@ -290,18 +336,19 @@ def _alignedAvgsByDrive(
 # ---- Anomaly detection ------------------------------------------------------
 
 
-def detectAnomalies(session: Session, driveId: int) -> list[AnomalyResult]:
+def evaluateAnomalies(session: Session, driveId: int) -> list[AnomalyResult]:
     """
-    Flag parameters on ``driveId`` that fall outside the historical envelope.
+    Flag parameters on ``driveId`` outside the historical envelope, no persist.
 
     For each parameter the drive has stats for, compute the mean and sample
     standard deviation of ``avg_value`` across **other** drives. Deviations
     with ``|σ| > 2`` are classified :attr:`ComparisonStatus.WATCH` (≤3σ) or
-    :attr:`ComparisonStatus.INVESTIGATE` (>3σ) and persisted to
-    ``anomaly_log``.
+    :attr:`ComparisonStatus.INVESTIGATE` (>3σ).
 
-    Prior ``anomaly_log`` rows for the same ``drive_id`` are deleted first,
-    so re-running the function replaces rather than accumulates.
+    US-449 / F-104 (Option A): this is the pure, read-only core.  The
+    ``/analyze`` consumer path calls THIS so it never writes ``anomaly_log``
+    (it is a pure consumer of persisted analytics).  :func:`detectAnomalies`
+    wraps this and persists the results to ``anomaly_log``.
 
     Args:
         session: Open SQLAlchemy session bound to the server database.
@@ -312,16 +359,10 @@ def detectAnomalies(session: Session, driveId: int) -> list[AnomalyResult]:
         2σ gate. Empty when the drive is entirely within the envelope or when
         there is insufficient history to build one.
     """
-    # Clear any previous anomalies for this drive to keep the call idempotent.
-    session.execute(
-        delete(AnomalyLog).where(AnomalyLog.drive_id == driveId)
-    )
-
     currentStats = session.execute(
         select(DriveStatistic).where(DriveStatistic.summary_id == driveId)
     ).scalars().all()
     if not currentStats:
-        session.commit()
         return []
 
     results: list[AnomalyResult] = []
@@ -330,6 +371,35 @@ def detectAnomalies(session: Session, driveId: int) -> list[AnomalyResult]:
         if anomaly is None:
             continue
         results.append(anomaly)
+    return results
+
+
+def detectAnomalies(session: Session, driveId: int) -> list[AnomalyResult]:
+    """
+    Detect anomalies for ``driveId`` and persist them to ``anomaly_log``.
+
+    Thin persisting wrapper over :func:`evaluateAnomalies`.  Prior
+    ``anomaly_log`` rows for the same ``drive_id`` are deleted first, so
+    re-running the function replaces rather than accumulates.
+
+    US-449 / F-104: the ``/analyze`` flow no longer calls this — it uses the
+    pure :func:`evaluateAnomalies` so it writes no ``anomaly_log`` rows.
+
+    Args:
+        session: Open SQLAlchemy session bound to the server database.
+        driveId: The drive to check.
+
+    Returns:
+        List of :class:`AnomalyResult` for every parameter that tripped the
+        2σ gate.
+    """
+    # Clear any previous anomalies for this drive to keep the call idempotent.
+    session.execute(
+        delete(AnomalyLog).where(AnomalyLog.drive_id == driveId)
+    )
+
+    results = evaluateAnomalies(session, driveId)
+    for anomaly in results:
         session.add(
             AnomalyLog(
                 drive_id=anomaly.drive_id,
@@ -401,4 +471,6 @@ __all__ = [
     "computeCorrelations",
     "computeTrends",
     "detectAnomalies",
+    "evaluateAnomalies",
+    "evaluateTrend",
 ]
