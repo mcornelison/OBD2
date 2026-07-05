@@ -409,9 +409,15 @@
       "epicId": "E-002",
       "type": "normal",
       "size": "S",
-      "status": "sprint-ready",
+      "status": "blocked",
       "passes": false,
       "title": "Complete F-116 server marker -- add data_source='foreign' CHECK (US-424 gap; A-4; unblocks drive-33 re-tag + kills sync landmine)",
+      "completionNotes": "BLOCKED on BL-019 (offices/pm/blockers/BL-019-us458-server-data-source-check-premise-false.md) -- routed to Atlas via PM. AUDIT FINDING: the story's premise is FALSE against the actual code in three ways. (1) 'server models.py:125 enum currently lacks foreign' is STALE -- the server DATA_SOURCE_VALUES tuple (models.py:124-135) ALREADY includes 'foreign' (added by US-424, line 134). (2) There is NO server-side data_source CHECK constraint to widen -- every server data_source column is a plain VARCHAR(16) DEFAULT 'real' with no CHECK (ORM RealtimeData:176/Statistic:217/ConnectionLog:251/SyncLog:535/DtcLog:610/CalibrationSession:699/Profile:759/DriveSummary:1135,1236; migration DDL v0001/v0002:70/v0004:166/v0005:133/v0018:99 all CHECK-less; the 5 server CheckConstraints models.py:1115/1198/1205/1306/1470 are all data_QUALITY, not data_source). models.py:130-131 documents this as a DELIBERATE US-424 decision: 'the server data_source column carries no DB-level CHECK (application-enforced only), so no server migration is needed to accept the value.' (3) Therefore 'foreign' rows ALREADY insert/sync fine on the server -- the 'latent sync landmine' (a CHECK rejecting synced foreign rows) does NOT exist; the validation 'INSERT foreign -> was CHECK-rejected pre-migration' is factually inapplicable. WHY NOT GUESS: the requested fix (add a net-new data_source CHECK) REVERSES US-424's documented permissive-mirror stance AND carries real deploy risk (a net-new CHECK on the populated realtime_data table forces a full-table validation scan + fails the deploy if any historical row is out-of-enum). Whether the server SHOULD DB-enforce the enum vs stay a permissive mirror is an architectural decision -> Atlas (CLAUDE.md role boundary), same discipline as BL-017. BL-019 gives Options A (add net-new CHECK)/B (no CHECK, keep permissive mirror -- RECOMMENDED, the marker already landed in US-424 + drive-33 exclusion already works via US-450 _isForeignDrive analytics filter + the A-4 tuple-mirror guard appears to already exist in tests/pi/data/test_data_source_foreign_marker.py)/C (app-level sync.py enforcement) + recommendation. DID NOT author any migration/CHECK; DID NOT touch US-459's scope. mypy N/A (no code authored).",
+      "feedback": {
+        "filesActuallyTouched": [
+          "offices/pm/blockers/BL-019-us458-server-data-source-check-premise-false.md"
+        ]
+      },
       "goal": "As the CIO, I want the F-116 data_source='foreign' marker on the SERVER (it only landed on the Pi) so drive 33 is excludable from real-data queries and the latent sync landmine is closed.",
       "definitionOfDone": [
         "forward-only server migration adds 'foreign' to the data_source CHECK on realtime_data + statistics + connection_log (and VERIFY drive_summary/drive_statistics if they carry the data_source axis) -- match the Pi DATA_SOURCE_VALUES (src/pi/obdii/data_source.py) EXACTLY (A-4 both-tier-consistent; server models.py:125 enum currently lacks 'foreign')",
@@ -444,9 +450,13 @@
       "epicId": "E-002",
       "type": "normal",
       "size": "S",
-      "status": "sprint-ready",
+      "status": "blocked",
       "passes": false,
       "title": "data_source enum mirror-consistency test (Pi DATA_SOURCE_VALUES == server CHECK; A-4 anti-drift)",
+      "completionNotes": "BLOCKED (transitive on BL-019, root of US-458). US-459's DoD asserts 'Pi DATA_SOURCE_VALUES == the server data_source CHECK enum' and validationCriteria 'run the mirror-consistency test AFTER US-458 lands' -- both premised on a server data_source CHECK that does NOT exist (see BL-019: the server has no data_source CHECK; the mirror is between two Python TUPLES, not a CHECK). US-459's shape is ruling-dependent on the same Atlas decision as US-458: if Option B (no server CHECK), US-459 re-scopes to assert the two Python tuples match (Pi DATA_SOURCE_VALUES == server DATA_SOURCE_VALUES) -- and models.py:132 states that guard is ALREADY covered by tests/pi/data/test_data_source_foreign_marker.py, so US-459 may already be satisfied; if Option A (add server CHECK), the test compares the Pi tuple to the new server CHECK enum. Did not author against a false premise (Refusal Rule 1); did not duplicate the possibly-existing test without the ruling. Independent from US-451 (that is BL-018/minting-gap). mypy N/A.",
+      "feedback": {
+        "filesActuallyTouched": []
+      },
       "goal": "As the maintainer, I want a test that fails if the Pi and server data_source enums drift, so the F-116-class half-ship can't recur.",
       "definitionOfDone": [
         "a mirror-consistency test asserts Pi DATA_SOURCE_VALUES (src/pi/obdii/data_source.py) == the server data_source CHECK enum (src/server/.../models.py) -- fails on any drift (precedent: tests/lint/test_address_mirror_consistency.py)",

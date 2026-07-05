@@ -292,3 +292,30 @@ Task: Reconcile statistics (rollup) vs drive_statistics (granular SSOT) -- no du
 - **Gotcha**: a `\bStatistic\(` source-scan false-positives on COMMENT text (a migration's model-name listing `# Statistic(statistics), ...`). Make the scan comment-aware (skip whole-line comments) AND exclude the migrations layer (it runs DDL/DML, never constructs ORM rows).
 - **Gotcha (stale "RESOLVED" blocker)**: BL-018's header said RESOLVED on the ASSUMPTION that closing US-449/450 auto-unblocks US-451. Verify the actual technical GATE against code, not the header -- US-449 shipped without the minting half, so the gate the blocker documented is still open. A blocker's status field can lie; the code doesn't.
 ---
+
+## 2026-07-04 - US-458 (Agent 1 / Rex) -- BLOCKED (BL-019); SPRINT 55 ALL-BLOCKED
+Task: Complete F-116 server marker -- add data_source='foreign' CHECK (US-424 gap; A-4)
+
+### What happened (audit-first, no code authored):
+- Selected US-458 as the highest-priority available story (US-451 blocked on BL-018; US-458 sprint-ready). Before writing the migration, AUDITED the story's premise against the actual server code (US-449 "audit before asserting authority" lesson) -- and it is FALSE in three ways.
+
+### AUDIT FINDING (grounded, filed BL-019):
+- **(1)** "server models.py:125 enum currently lacks 'foreign'" is STALE: the server DATA_SOURCE_VALUES tuple (models.py:124-135) ALREADY includes 'foreign' -- added by US-424 (line 134), A-4 mirror of the Pi SSOT.
+- **(2)** There is NO server-side data_source CHECK to widen: every server data_source column is a plain VARCHAR(16) DEFAULT 'real' with no CHECK (ORM RealtimeData:176/Statistic:217/ConnectionLog:251/SyncLog:535/DtcLog:610/CalibrationSession:699/Profile:759/DriveSummary:1135,1236; migration DDL v0001 catch-up + v0002:70/v0004:166/v0005:133/v0018:99 all CHECK-less; the 5 server CheckConstraints models.py:1115/1198/1205/1306/1470 are all data_QUALITY). models.py:130-131 documents this as a DELIBERATE US-424 decision: "the server data_source column carries no DB-level CHECK (application-enforced only), so no server migration is needed to accept the value."
+- **(3)** Therefore 'foreign' rows ALREADY insert/sync fine on the server -- the "latent sync landmine" (a CHECK rejecting synced foreign rows) does NOT exist; the validation "INSERT foreign -> was CHECK-rejected pre-migration" is factually inapplicable. Drive-33 exclusion already works via analytics filters (US-450 _isForeignDrive on data_source != 'real'; compare_drives.driveExclusionReason) -- no server CHECK required.
+
+### Why blocked (Refusal Rule 1 + role boundary), not built:
+- The requested fix (add a net-new data_source CHECK) REVERSES US-424's documented permissive-mirror stance AND carries real deploy risk: a net-new CHECK on the populated realtime_data table forces MariaDB to full-scan/validate every existing row and FAILS the deploy if any historical row is out-of-enum. Whether the server SHOULD DB-enforce the enum vs stay a permissive mirror is an ARCHITECTURAL decision -> Atlas (CLAUDE.md role boundary), same discipline as BL-017. Filed BL-019 with Options A (add net-new CHECK) / B (no CHECK, keep permissive mirror -- RECOMMENDED) / C (app-level sync.py enforcement) + recommendation, rather than guess.
+
+### Sprint board (single-agent, ALL remaining blocked):
+- US-451 (BL-018, root minting-gap -> Atlas), US-458 (BL-019 -> Atlas), US-459 (transitive on BL-019). Each needs an out-of-lane Atlas ruling routed via PM -> SPRINT_BLOCKED (decision-tree #2).
+
+### Files changed:
+- Created: `offices/pm/blockers/BL-019-us458-server-data-source-check-premise-false.md`
+- Modified: `offices/ralph/sprint.json` (US-458 + US-459 -> status blocked + completionNotes), `offices/ralph/ralph_agents.json` (all-blocked close note)
+
+### Learnings for future iterations:
+- **Gotcha (audit the premise, not just the DoD)**: a story can be FROZEN + PM-authored and still carry a stale/false premise. US-458 asserted a server CHECK that never existed + an enum gap US-424 already closed. Grep the ACTUAL enforcement (ORM CheckConstraint + every migration DDL that creates the column) before writing a "widen the CHECK" migration -- the CHECK may not exist, inverting the whole story.
+- **Gotcha (net-new CHECK on a populated column is a deploy hazard)**: `ADD CONSTRAINT CHECK` on MariaDB validates every existing row (full-scan/lock on a big table like realtime_data) and fails the deploy on any out-of-enum value. "Add a CHECK" is never free on production data -- flag the validation-scan risk, don't treat it as a schema no-op.
+- **Gotcha (reversing a documented decision = architecture)**: models.py:130-131 explicitly recorded "no server data_source CHECK, application-enforced only" as a US-424 choice. A later story asking to add that CHECK is a design REVERSAL (permissive-mirror vs enforcing) -> route to Atlas, don't silently flip the stance.
+---
