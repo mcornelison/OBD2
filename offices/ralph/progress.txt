@@ -391,3 +391,22 @@ Task: Drop the stale live data_source CHECK -- ORM-vs-DB drift reconcile (BL-019
 - **Gotcha**: dunder methods (`__call__`) resolve on the TYPE, not the instance -- you cannot override a FakeRunner's `__call__` by assigning `runner.__call__ = fn`. Add a behavior flag (e.g. `dropNoOp`) to the dataclass instead to model silent-no-op drops.
 - **Gotcha**: migration test files that assert `versions[-1] == '<own version>'` (absolute registry tail) silently go RED on the next registry append and stay invisible in-loop (full suite is a PM gate). Use the de-brittled `present + sorted + directly-after-predecessor` invariant. Two such files are currently RED (TD-062); do NOT plant the trap in new tests.
 ---
+
+## 2026-07-05 - US-459 (Rex / Session 55)
+Task: data_source APPLIED-schema test -- deployed DB accepts 'foreign' (not Python tuples; A-10 guard)
+
+### What was implemented:
+- Applied-schema guard that the DEPLOYED server DB accepts data_source='foreign' (F-116/A-10), per Atlas CRITICAL: assert the APPLIED/deployed schema, NOT a Python enum-tuple compare. Test-only, NO src/ change.
+- Layer 1 (the real gate) TestAppliedSchemaLive: runs v0023's own information_schema.CHECK_CONSTRAINTS discovery via asm._runServerSql (SSH+mysql) against chi-srv-01, asserts ZERO surviving data_source CHECKs. SKIPPED in-loop (no bench MariaDB), opt-in OBD2_APPLIED_SCHEMA_TEST=1 at deploy.
+- Layer 2 (hermetic, always runs) TestProbeVerdictLogic: stateful FakeAppliedSchemaRunner proves the probe goes RED on a modeled surviving CHECK (across all 5 F-116 tables), GREEN on none, and is loud (SchemaProbeError) when unreachable -- tests the alarm, not the DB.
+- Define-once: probe reuses v0023's public discoverDataSourceCheckSql. Self-scan test pins "never a tuple compare" (split-token to avoid a literal self-match).
+- 6 targeted tests pass + 1 skip (the live gate, by design) + ruff clean.
+
+### Files changed:
+- Created: `tests/server/test_data_source_applied_schema_accepts_foreign.py` (US-459 applied-schema accepts-'foreign' guard)
+
+### Learnings for future iterations:
+- **Pattern discovered**: when the ONLY honest assertion is against a resource absent in-loop (the deployed DB), the honest shape is a two-layer test -- an opt-in/skipif LIVE probe (the real deploy-time gate; a skip never reports green over an un-probed DB, unlike a mocked pass) PLUS hermetic verdict-logic tests that prove the alarm fires RED on a modeled failure. The mocks test the alarm, not the resource, so they are NOT the mocked-green the drift-lesson condemns.
+- **Gotcha**: a create_all-on-SQLite or enum-tuple test is STRUCTURALLY incapable of catching an ad-hoc live-DB-only CHECK that never lived in the ORM/migrations -- it ships green over the exact broken DB. For applied-schema invariants, probe the deployed schema (information_schema), not the source-of-truth.
+- **Pattern discovered**: to make a design constraint ("never a tuple compare") a checkable invariant, self-source-scan the test module and assert a forbidden token is absent -- build the token via string concat ('DATA_SOURCE' + '_VALUES') so the assertion's own presence doesn't defeat it.
+---
