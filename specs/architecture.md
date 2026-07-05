@@ -17,7 +17,37 @@ This document describes the system architecture, technology decisions, and desig
 > behavior + invariants). −35% file size; no current-system content removed. (§11
 > Deployment was reviewed — it's all current reference, nothing extracted.)
 
-**Last Updated**: 2026-07-04 (Sprint 54 / V0.29.8 — OBD capture-reliability +
+**Last Updated**: 2026-07-04 (Sprint 55 / V0.29.9 — F-104 Server-Side Analytics
+Authority spine doc-sync (US-457, Rule-10). New **§10.7.3 "Server-Side Analytics
+Authority (F-104)"** formalizes §10.7's B-104 Step-1 principle into the F-104
+**boundary rule** (a fact is server-authoritative iff the server can reproduce it
+from synced raw → server sole-writer, Pi does not transmit it; irreproducible →
+raw, Pi emits first-class; "no derived state the Pi transmits"; B-076 = schema,
+F-104 = authority + writers). Documents the LANDED identity spine (US-448): the
+canonical `drives` table + server-minted `drive_id` (AUTOINCREMENT anchored by
+`UNIQUE(source_device, source_drive_id)` + upsert-by-natural-key mint, never
+renumbers) **subsuming** `drive_summary.id` (not a 5th orthogonal id; `v0018`
+explicit-id insert keeps `drive_statistics.summary_id` FKs numerically valid),
+Pi ids demoted to advisory `source_drive_id`, and the `attribution_anomaly`
+tripwire re-point (keeps DETECTING on raw `realtime_data.drive_id` — backstop not
+blinded — anomaly OUTPUT maps to canonical identity). The **sole-writer harness +
+owned-table registry** (the EXISTING harness, not a parallel one) is documented as
+the **target** with an honest **Implementation-status** note: US-449 sole-writer
+formalization is BLOCKED (BL-017 — live `/analyze` → `basic.py::computeDriveStatistics`
+dual-write of `drive_statistics`, last-writer-wins), and US-450/451/452 sit
+downstream of that Atlas ruling (idempotency proof landed). LANDED schema
+normalization enumerated: D-7 `power_log`+`pi_state` raw-sync (US-453/`v0019`),
+D-3 O2 name canonicalization (US-454/`v0020`), D-4 unit-string canonicalization to
+python-obd native (US-455/`v0021`), D-5 `static_data` honest-empty (US-456).
+Stale-ref audit: no now-false "Pi transmits derived X" prose (§10.7 already states
+the boundary rule; §5's Pi-`drive_id`→`source_id` is CURRENT — US-451 collapse not
+landed — deliberately left). Also added `[[ssot-design-pattern]]` worked example #4
+(server-analytics authority as the derived-data boundary) +
+`regression_manifest.json` F-082 gains Sprint 55 (US-452/454/455/456 changed its
+data-profile items; F-104/F-075 already registered by Marcus). BENCH-ONLY,
+Rule-10 per Atlas A-11. Docs-only; no `src/` change; full detail in
+`specs/arch/architecture-changelog.md`.)
+Prior: 2026-07-04 (Sprint 54 / V0.29.8 — OBD capture-reliability +
 power-hygiene doc-sync (US-447, Rule-10). New **§3.5 "OBD Connection Threading
 Model — serialization + epoch fence" (US-441 / F-117 / A-17)** [authored in-sprint
 by US-441 under its bound Rule-10 AC; registered here + in the changelog]:
@@ -2490,6 +2520,135 @@ columns) so a Spool tuning read scans one metric across N drives at a glance.
   overrides for explicit inspection. Missing data (no computed row / NULL value)
   renders `--`, distinct from a real `0`. Flags: `--drives '11,20,27'|'11-14,27'`,
   `--metrics` (default all), `--include-foreign`, `--list-metrics`, `-v`.
+
+### 10.7.3 Server-Side Analytics Authority (F-104, Sprint 55 / V0.29.9)
+
+**The boundary rule (F-104, generalizes §10.7's B-104 Step-1 principle into a
+formal authority contract).** A fact is **server-authoritative** iff the server
+can reproduce it from synced raw → the **server is its sole writer** and the Pi
+does **not** transmit it (the Pi *may* compute it locally for a live UI, thrown
+away). If a fact is **irreproducible** → it is **raw** → the Pi emits it as a
+first-class raw event and the server mirrors it (never recomputes). **There is no
+"derived state the Pi transmits."** Division of labour: **B-076 = the schema;
+F-104 = the authority + the writers.** Binding design authority is Atlas's F-104
+ADR (`offices/architect/reports/2026-07-04-f104-server-analytics-authority-design-gate-ruling.md`);
+the sprint implements it, does not deviate.
+
+**Canonical `drives` identity SSOT (US-448 — LANDED).** A server-owned `drives`
+table is the single drive-identity SSOT:
+
+- `drive_id INTEGER PK AUTOINCREMENT` is the canonical identity, anchored by a
+  `UNIQUE (source_device, source_drive_id)` constraint with an
+  **upsert-by-natural-key mint** (`src/server/analytics/drive_identity.py::upsert_drive`)
+  — a recompute/backfill re-uses the existing id for an already-seen drive and
+  **never renumbers** (straight autoincrement would break US-449 idempotency and
+  orphan FKs — Atlas Open-Q1). Advisory columns: `source_device VARCHAR`,
+  `source_drive_id INTEGER NULL` (the Pi's id, **demoted to advisory**),
+  `start_time`, `end_time NULL`, `data_source`, `data_quality`
+  (`ck_drives_data_quality` reuses the `drive_summary` enum set).
+- **`drive_id` SUBSUMES the de-facto identity `drive_summary.id`** (the existing
+  server autoincrement PK that `drive_statistics_compute.py:41,144-186` already
+  FKs to) — it is **not** a 5th orthogonal id (that would worsen the D-8
+  id-family sprawl this spine exists to fix). The `v0018` forward-only migration
+  inserts existing `drive_summary.id` values *in* as `drive_id`
+  (`INSERT INTO drives (drive_id,…) SELECT ds.id,…`), so existing
+  `drive_statistics.summary_id → drive_summary.id` FKs stay **numerically** valid;
+  re-pointing those FK *constraints* onto `drives.drive_id` is the (blocked)
+  US-451 family-collapse pass.
+
+**Attribution tripwire re-point (US-448 — LANDED, backstop preserved).**
+`src/server/analytics/overlap.py::detect_overlapping_drives` MUST keep **detecting**
+overlap on the **raw** `realtime_data.drive_id` — that Pi-stamped id is the very
+signal it exists to catch (the Pi minting two ids for one physical leg). It is
+**not** regrouped by the server `drive_id` (already deduped → would blind the
+Pi-dual-mint backstop). "Re-point" means only its anomaly **output/flag** maps to
+the canonical identity (`drive_identity.map_overlap_to_canonical`; an unminted raw
+id resolves to `None`, **never silently dropped**). A regression fixture proves a
+raw Pi dual-mint pair (drives 23/24) still trips `data_quality='attribution_anomaly'`
+against the new schema (extends the §10.7.1 Mechanism-C backstop, US-362/363).
+
+**Pi ids → advisory (US-448 schema — LANDED).** The Pi's `drive_id` is recorded
+only as advisory `source_drive_id`; the server never treats it as identity. (The
+FK *migration* that collapses `drive_summary`/`drive_annotations` onto
+`drives.drive_id` is US-451 — see status below.)
+
+**Sole-writer compute-harness + owned-table registry (US-449 — formalization
+IN PROGRESS).** The authority is the **existing** server harness, not a new one:
+`src/server/analytics/{drive_summary_compute.py (US-350), drive_statistics_compute.py
+(US-351), derived_signals_compute.py (US-436)}` fired by the on-demand
+`recompute_drive_analytics` CLI + the `server-analytics-batch.timer` (§10.7
+"Trigger seam shift"). Target owned-table registry (server-authoritative,
+harness-derived-from-raw): `drive_summary` analytics columns · `drive_statistics`
+· `drive_derived_signals` · the `statistics` rollup. It reads **only** synced raw
+(`realtime_data`/`connection_log`) — never Pi-transmitted derived state — and is
+**idempotent**: re-running over the same raw yields byte-identical owned rows
+(proven by `tests/server/analytics/test_harness_idempotency.py`, excluding the
+intentionally-advancing `computed_at` observability timestamp).
+
+> **Implementation status (V0.29.9) — honest-instrument.** The boundary rule +
+> the identity spine (US-448) + the idempotency proof are **landed**. Formalizing
+> the harness as the *sole* writer is **BLOCKED (BL-017)**: `drive_statistics` has
+> a **second live writer** — `POST /api/v1/analyze` → `services/analysis.py::runAnalysis`
+> → `basic.py::computeDriveStatistics` writes the same table with *different*
+> row-selection (drive time-window + `source_device` vs. the harness's
+> `realtime_data.drive_id`), last-writer-wins. (This also contradicts the
+> `analysis.py:72-75` header claim that US-351 "retired the parallel
+> drive_statistics writer" — US-351 retired the *trigger-seam* writer, not the
+> `/analyze` path.) Awaiting an Atlas ruling (read-vs-recompute). Downstream and
+> blocked on the same ruling: **US-450** (re-key `drive_statistics` from
+> `drive_summary.id` → canonical `drives.drive_id`; resolve the empty-table
+> deploy gap), **US-451** (collapse the drive-identity id-families onto
+> `drives.drive_id`; flag unmappable legacy — drives 1-12, foreign drive 33,
+> NULL-`drive_id` — with `data_quality='unmappable_legacy'`, one row per distinct
+> legacy key, never dropped/merged), **US-452** (reconcile `statistics` rollup
+> vs. `drive_statistics` granular SSOT, no independent dual-write). The
+> owned-table **manifest** (US-449 AC1) finalizes once the sole-writer question is
+> ruled. Until then the authority-writer layer is documented as the **target**,
+> not asserted as realized.
+
+**Schema normalization landed this sprint (F-082 D-items, migration-first).**
+These are the schema/data-hygiene half of the sprint, independent of the blocked
+authority chain:
+
+- **D-7 (US-453):** `power_log` + `pi_state` sync Pi→server as **raw** (the server
+  mirrors, does not recompute — F-104 boundary rule); `pi_state`, a mutable
+  singleton, rides the delta path *and* the `modified_at` update-propagation cursor
+  so in-place flips re-sync (`v0019`). `startup_log` confirmed already-synced
+  (US-416).
+- **D-3 (US-454):** O2 sensor name canonicalization — the one divergent stored
+  label `O2_BANK1_SENSOR2_V` → `O2_B1S2` (grounded in the `decoders.py` registry
+  convention its sibling `O2_B1S1` already follows). Full source→data rename
+  (`config.json` poll names + `decoders.py` key + US-229 fixture in lockstep) +
+  forward-only `v0020` re-map across all 6 `parameter_name` tables (idempotent
+  guard + zero-survivor post-probe).
+- **D-4 (US-455):** unit-string canonicalization — the decoder path now emits the
+  python-obd **native** strings (`volt`/`kilopascal`/`second`, not `V`/`kPa`/`s`),
+  so a physical unit has ONE label across both write paths; the python-obd native
+  enum overload (`CL`/`OL`/`ON`/`OFF`) is kept; `v0021` re-maps `realtime_data.unit`;
+  a source-scan test pins `unit` as a **typed label, never numeric**.
+- **D-5 (US-456):** `static_data` kept **honest-empty** (not dropped) — the VIN is
+  un-gettable (the MD326328 ECU is Mode-09-silent) so no valid `vehicle_info(vin)`
+  FK can exist; the collector already refuses to fabricate a placeholder VIN, now
+  a guarded invariant. No `TD-061` (that path was only for the drop option).
+
+**Stale-reference audit (US-457 AC).** No "Pi computes/transmits derived X" prose
+is now false: §10.7's principle ("Pi = telemetry emitter; server = sole authority;
+if the server can redo it from raw, the Pi does not transmit it") already states
+the F-104 boundary rule, which this section formalizes. §5's Pi-`drive_id` →
+`drive_summary.source_id` prose remains **current** — the US-451 FK collapse has
+**not** landed — so it is deliberately left unchanged (honest-instrument: do not
+document a migration that hasn't shipped).
+
+**Cross-links.** §10.7 (the B-104 Step-1 pipeline this authority formalizes) ·
+§10.7.1 Mechanism C (the tripwire this re-points) · §5 (schema / B-076) ·
+`[[ssot-design-pattern]]` worked example #4 (server-analytics authority as the
+derived-data boundary).
+
+*Gate-ratification note: §10.7.3 is the Rule-10 in-sprint design-gate deliverable
+(Atlas A-11 — US-448/US-449 do not close until this section lands). Sprint 55 is
+**BENCH-ONLY**: every migration is forward-only + deployed-AND-verified via
+`INFORMATION_SCHEMA` at PM-integration (no MariaDB on the Windows dev bench); the
+authority-writer chain (US-449-452) awaits the BL-017 ruling. No drive drills.*
 
 ---
 
