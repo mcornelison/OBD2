@@ -30,6 +30,15 @@
 #               |              | sample_count>=1) RAISE if violated.  Atlas
 #               |              | Refinement B: data_quality classification
 #               |              | (<10 below_threshold, 10-99 sparse, >=100 full).
+# 2026-07-04    | Rex (US-450) | F-104 spine: re-key the persisted stat from the
+#               |              | bare drive_summary.id onto the US-448 canonical
+#               |              | drives.drive_id (resolve_canonical_drive_id,
+#               |              | natural-key lookup; subsume fallback to
+#               |              | drive_summary.id == drives.drive_id per v0018).
+#               |              | Add the F-116 foreign-vehicle guard: a drive
+#               |              | stamped foreign_vehicle / non-'real' data_source
+#               |              | is excluded from the authoritative table (mirrors
+#               |              | compare_drives.driveExclusionReason).
 # ================================================================================
 ################################################################################
 
@@ -39,8 +48,28 @@ Architectural principle (CIO 2026-05-21): Pi = telemetry emitter; server =
 analytics authority.  Pi-side ``drive_statistics`` table retired entirely;
 server is the sole writer.  The compute path is keyed on the Pi-local
 ``drive_id`` (matches ``realtime_data.drive_id`` and ``drive_summary.source_id``)
-but persists rows keyed on the SERVER-side ``drive_summary.id`` per the
-ForeignKey on :class:`src.server.db.models.DriveStatistic`.
+but persists rows keyed on the **canonical** ``drives.drive_id`` (US-450 / F-104).
+
+US-450 re-key: the persisted stat's key is now resolved through the US-448
+canonical drive-identity SSOT (:func:`src.server.analytics.drive_identity.
+resolve_canonical_drive_id`, a natural-key lookup into ``drives``) rather than
+the bare ``drive_summary.id``.  Because ``drives.drive_id`` SUBSUMES
+``drive_summary.id`` (the v0018 explicit-id migration), the resolved value is
+numerically identical to the old key for every existing drive, so the current
+``DriveStatistic.summary_id -> drive_summary.id`` foreign key stays valid; US-451
+formally re-points the FK constraint at ``drives.drive_id`` (same values).  When
+no canonical row exists yet (unmappable legacy with a NULL natural key, or a
+drive whose ``drives`` row has not been minted), the compute falls back to
+``drive_summary.id`` -- which is exactly the value the subsume preserves, so the
+key is honest either way.  This story only re-keys; it does NOT mint ``drives``
+rows (the harness minting gap is a US-449 follow-up, flagged for the F-104 spine).
+
+F-116 foreign guard (US-450): ``drive_statistics`` is the authoritative per-drive
+analytics table, so a drive captured from a non-Eclipse vehicle (drive 33, the
+Ford Explorer) or otherwise non-``'real'`` data is EXCLUDED -- no stats row is
+written and any prior rows for the drive are cleared.  The exclusion predicate
+mirrors :func:`src.server.cli.compare_drives.driveExclusionReason` (the F-116
+SSOT) so the two never disagree on what "foreign" means.
 
 Invocation triggers (same as :mod:`drive_summary_compute`):
 
@@ -63,11 +92,13 @@ import math
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
+from src.server.analytics.drive_identity import resolve_canonical_drive_id
 from src.server.analytics.helpers import computeBasicStats
 from src.server.analytics.overlap import detect_overlapping_drives
 from src.server.db.models import (
     DATA_QUALITY_ATTRIBUTION_ANOMALY,
     DATA_QUALITY_FOREIGN_VEHICLE,
+    DATA_SOURCE_DEFAULT,
     DRIVE_STATISTICS_DATA_QUALITY_VALUES,
     DriveStatistic,
     DriveSummary,
@@ -142,7 +173,15 @@ def compute_drive_statistics(session: Session, driveId: int) -> int:
     :func:`src.server.analytics.helpers.computeBasicStats` (Spool FLAG-1
     SSOT pin), classifies ``data_quality`` per Atlas Refinement B, and
     UPSERTs one row per parameter into ``drive_statistics`` keyed on the
-    server-side ``drive_summary.id``.
+    US-448 canonical ``drives.drive_id`` (US-450 re-key; resolved via
+    :func:`src.server.analytics.drive_identity.resolve_canonical_drive_id`
+    with a subsume fallback to ``drive_summary.id`` -- see the module
+    docstring).
+
+    F-116 foreign guard (US-450): a drive stamped ``data_quality=
+    'foreign_vehicle'`` or carrying a non-'real' ``data_source`` (drive 33,
+    the Ford Explorer) is EXCLUDED -- prior rows are cleared and ``0`` is
+    returned, so no foreign data enters the authoritative table.
 
     Idempotency: prior rows for the drive are DELETEd before the new ones
     are INSERTed; ``computed_at`` carries ``onupdate=func.now()`` so an
@@ -156,8 +195,9 @@ def compute_drive_statistics(session: Session, driveId: int) -> int:
 
     Returns:
         Number of ``drive_statistics`` rows written.  Returns ``0`` when
-        the drive has no realtime_data OR when no ``drive_summary`` row
-        exists for the drive_id (both non-fatal; logged at WARN).
+        the drive has no realtime_data, when no ``drive_summary`` row
+        exists for the drive_id, OR when the drive is excluded by the
+        F-116 foreign guard (all non-fatal; logged).
 
     Raises:
         InvariantViolation: Atlas Refinement A invariant tripped on at
@@ -184,6 +224,39 @@ def compute_drive_statistics(session: Session, driveId: int) -> int:
         )
         return 0
     summaryId = summary.id
+
+    # US-450 / F-104: resolve the CANONICAL drives.drive_id (US-448) and key
+    # the persisted stat on it.  For every existing drive the natural-key
+    # lookup returns drives.drive_id == drive_summary.id (v0018 subsume), so the
+    # value is unchanged; the fallback covers a drive whose canonical row has
+    # not been minted yet (or an unmappable-legacy NULL natural key), where the
+    # subsumed identity is exactly drive_summary.id.
+    canonicalDriveId = resolve_canonical_drive_id(
+        session, summary.source_device, driveId,
+    )
+    if canonicalDriveId is None:
+        canonicalDriveId = summaryId
+
+    # US-450 / F-116: foreign-vehicle guard.  drive_statistics is the
+    # authoritative per-drive analytics table -- a drive captured from a
+    # non-Eclipse vehicle (drive 33) or otherwise non-'real' data must never
+    # contaminate real-data baselines.  Exclude it: clear any prior rows and
+    # return 0.  Idempotent (a re-run finds nothing to clear and returns 0).
+    if _isForeignDrive(summary):
+        session.execute(
+            delete(DriveStatistic).where(
+                DriveStatistic.summary_id == canonicalDriveId
+            )
+        )
+        session.flush()
+        logger.info(
+            "compute_drive_statistics | drive_id=%s | drive_id_canonical=%s | "
+            "EXCLUDED (F-116: data_quality=%s data_source=%s) -- no "
+            "authoritative stats written",
+            driveId, canonicalDriveId,
+            summary.data_quality, summary.data_source,
+        )
+        return 0
 
     rows = session.execute(
         select(RealtimeData.parameter_name, RealtimeData.value)
@@ -220,9 +293,11 @@ def compute_drive_statistics(session: Session, driveId: int) -> int:
 
     # Pre-clear in a single statement so re-runs converge cleanly without
     # leaving stale parameter_name rows from prior raw-data shapes (e.g.,
-    # a PID was dropped from the poll list).
+    # a PID was dropped from the poll list).  Keyed on the canonical drive_id.
     session.execute(
-        delete(DriveStatistic).where(DriveStatistic.summary_id == summaryId)
+        delete(DriveStatistic).where(
+            DriveStatistic.summary_id == canonicalDriveId
+        )
     )
 
     written = 0
@@ -239,7 +314,7 @@ def compute_drive_statistics(session: Session, driveId: int) -> int:
         )
         session.add(
             DriveStatistic(
-                summary_id=summaryId,
+                summary_id=canonicalDriveId,
                 parameter_name=paramName,
                 min_value=stats.min_value,
                 max_value=stats.max_value,
@@ -256,14 +331,33 @@ def compute_drive_statistics(session: Session, driveId: int) -> int:
     session.flush()
     logger.info(
         "compute_drive_statistics | drive_id=%s | summary_id=%s | "
-        "params=%d | total_samples=%d",
-        driveId, summaryId, written,
+        "drive_id_canonical=%s | params=%d | total_samples=%d",
+        driveId, summaryId, canonicalDriveId, written,
         sum(len(v) for v in valuesByParam.values()),
     )
     return written
 
 
 # ---- Helpers ----------------------------------------------------------------
+
+
+def _isForeignDrive(summary: DriveSummary) -> bool:
+    """F-116 foreign / non-'real' exclusion predicate for drive_statistics.
+
+    Mirrors :func:`src.server.cli.compare_drives.driveExclusionReason` (the
+    established F-116 exclusion SSOT) so ``drive_statistics`` and the
+    cross-drive comparison never disagree on what "foreign" means -- the two
+    predicates are pinned equal by a mirror-consistency test (A-4 anti-drift).
+
+    A drive is excluded when it is stamped ``data_quality='foreign_vehicle'``
+    OR carries a non-NULL ``data_source`` other than ``'real'``.  A NULL
+    ``data_source`` is pre-US-195 history and treated as real (never excluded),
+    matching the ``src/server/analytics/basic.py`` real-data filter.
+    """
+    if summary.data_quality == DATA_QUALITY_FOREIGN_VEHICLE:
+        return True
+    dataSource = summary.data_source
+    return dataSource is not None and dataSource != DATA_SOURCE_DEFAULT
 
 
 def _classifyDataQuality(sampleCount: int) -> str:
