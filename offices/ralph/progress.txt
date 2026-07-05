@@ -241,3 +241,22 @@ Task: Formalize the server compute-harness as sole authority + /analyze pure-con
 - **Gotcha (honest manifest > literal DoD)**: the DoD named the harness as sole writer of anomaly_log/trend_snapshots/statistics, but the harness never computed those. The manifest documents their TRUE state + flags harness-ownership as a future follow-up, rather than asserting a sole-writer state that doesn't exist. The guaranteed+tested contract (/analyze writes none of them; the drive_statistics dual-write is gone) is what US-449 actually delivers.
 - **Gotcha (stale board across the block)**: a story's agent-note / completionNotes written during a block go stale the moment the PM resolves the blocker mid-flight. Re-read git log at iteration start -- the "all-blocked" note was superseded by the PM's unblock commit.
 ---
+
+## 2026-07-04 - US-450 (Agent 1 / Rex)
+Task: drive_statistics -- re-key to canonical drive_id + F-116 foreign guard (F-104 spine, server-authoritative)
+
+### What was implemented:
+- **Re-key (AC1):** `compute_drive_statistics` now keys the persisted stat on the US-448 canonical `drives.drive_id` instead of the bare `drive_summary.id`. Resolution goes through the identity SSOT `resolve_canonical_drive_id(session, summary.source_device, driveId)` (natural-key lookup into `drives`), with a **subsume fallback** to `drive_summary.id` when no canonical row exists (unmappable-legacy NULL natural key, or an unminted drive). Because `drives.drive_id` SUBSUMES `drive_summary.id` (v0018 explicit-id insert), the resolved value is numerically identical to the old key for every existing drive -> the current `DriveStatistic.summary_id -> drive_summary.id` FK stays valid; US-451 re-points the constraint (same values, per PRD line 106). Re-keyed the pre-clear delete, the INSERT, and the log lines onto `canonicalDriveId`.
+- **F-116 foreign-guard (AC3):** new `_isForeignDrive(summary)` excludes a drive stamped `data_quality='foreign_vehicle'` OR carrying a non-NULL `data_source != 'real'` (drive 33, the Explorer). On a foreign drive the compute clears any prior rows + returns 0 (idempotent). The predicate MIRRORS the established F-116 SSOT `src/server/cli/compare_drives.py::driveExclusionReason` and is pinned equal by a parametrized mirror-consistency test (A-4 anti-drift).
+- **Did NOT mint `drives` rows** -- the harness-minting gap (PRD line 75 put it under US-449, which shipped without it) is flagged for PM/Atlas as a US-449 F-104 follow-up, out of US-450's re-key scope.
+- **Gate:** 173 targeted tests GREEN (compute+identity+harness-idempotency 52; superset+attribution-backstop+drive_summary-invariant+cli 139; simulate/deploy integration 34; overlapping sets, 0 fail) + ruff clean on both touched files. Commit 7827d11.
+
+### Files changed:
+- Modified: `src/server/analytics/drive_statistics_compute.py` (re-key via drive_identity + `_isForeignDrive` guard + docstrings/header)
+- Modified: `tests/server/analytics/test_drive_statistics_compute.py` (TestReKeyCanonicalDriveId: divergent-id mechanism proof + subsume + fallback; TestForeignVehicleGuard: exclude/clear/idempotent/real-not-excluded; TestForeignPredicateMirrorsCompareDrives)
+
+### Learnings for future iterations:
+- **Pattern discovered**: a "re-key onto a subsuming identity" is provably safe + test-green when the subsume made the new id == the old id for all existing rows -- resolve through the new SSOT with a fallback to the old key (which the subsume preserves), so the persisted VALUE never changes and the still-in-place FK can't orphan. Prove the resolution path is actually exercised with a *deliberately divergent* canonical id in a SQLite test (FK unenforced), which distinguishes "keyed on canonical" from "keyed on summary.id" -- a same-value test cannot.
+- **Gotcha**: before re-keying a writer onto a new identity, grep for LIVE mint call sites of that identity (`upsert_drive(` had ZERO in src/) -- if nothing mints a divergent id, the re-key is FK-safe on MariaDB even before the FK-constraint re-point (US-451) lands. The divergence hazard US-451 flagged only bites once something mints drives out of lockstep.
+- **Gotcha**: when a story adds a second copy of an exclusion rule (F-116 foreign), pin it to the existing SSOT with a mirror-consistency test rather than importing across a layer boundary (analytics must not import from cli). The test fails on drift; the import would invert the layering.
+---
