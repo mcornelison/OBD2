@@ -74,6 +74,12 @@
 #               |              | 'kPa'->'kilopascal', 's'->'second' to the
 #               |              | python-obd native canonical form; D-4/F-082).
 #               |              | Forward-only.
+# 2026-07-05    | Rex (US-451) | Sprint 55 V0.29.9 -- registered v0022 (drive-
+#               |              | identity collapse: widen drives.data_quality
+#               |              | CHECK with 'unmappable_legacy' + flag NULL-key
+#               |              | legacy drives + re-point drive_statistics/
+#               |              | drive_derived_signals summary_id FKs to
+#               |              | drives.drive_id; F-104/D-8).  Forward-only.
 # ================================================================================
 ################################################################################
 
@@ -166,6 +172,9 @@ from src.server.migrations.versions.v0020_us454_o2_name_normalization import (
 from src.server.migrations.versions.v0021_us455_unit_string_canonicalization import (
     MIGRATION as _V0021,
 )
+from src.server.migrations.versions.v0022_us451_drive_identity_collapse import (
+    MIGRATION as _V0022,
+)
 
 # ================================================================================
 # Registry -- append new migrations to the end, in ascending version order
@@ -193,6 +202,7 @@ ALL_MIGRATIONS: tuple[Migration, ...] = (
     _V0019,
     _V0020,
     _V0021,
+    _V0022,
 )
 
 

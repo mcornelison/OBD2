@@ -1073,13 +1073,22 @@ DRIVES_TABLE: str = "drives"
 # TABLE is identical across SQLite (tests) and MariaDB (prod).
 DRIVES_SOURCE_UNIQUE_CONSTRAINT: str = "uq_drives_source_device_source_drive_id"
 
-# drives.data_quality carries the same drive-level enum as drive_summary (the
-# table it subsumes): 'full' | 'attribution_anomaly' | 'foreign_vehicle'.
-# US-451 introduces the 'unmappable_legacy' marker via its own forward-only
-# widen migration (same idiom as v0009/v0010/v0012/v0015) -- deliberately NOT
-# added here to keep US-448 scope-fenced to identity creation.
+# drives.data_quality carries the drive-level enum it subsumes from drive_summary
+# ('full' | 'attribution_anomaly' | 'foreign_vehicle') PLUS the drives-only
+# 'unmappable_legacy' marker (US-451 / D-8 identity collapse).  A row is
+# 'unmappable_legacy' when it cannot be re-keyed to a Pi identity because its
+# advisory natural key is absent (source_drive_id IS NULL: pre-connection_log
+# drives 1-12, NULL-drive_id raw).  Honest-availability: unmappable = typed-
+# unknown, one row per distinct legacy key, never dropped/merged and never
+# collapsed into another drive.  The marker is drives-only -- drive_summary /
+# drive_statistics keep their own (narrower) enums.  The forward-only CHECK-widen
+# is v0022 (same idiom as v0009/v0010/v0012/v0015).  17 chars fits VARCHAR(20).
+DRIVES_DATA_QUALITY_UNMAPPABLE_LEGACY: str = "unmappable_legacy"
 DRIVES_DATA_QUALITY_DEFAULT: str = DRIVE_SUMMARY_DATA_QUALITY_DEFAULT
-DRIVES_DATA_QUALITY_VALUES: tuple[str, ...] = DRIVE_SUMMARY_DATA_QUALITY_VALUES
+DRIVES_DATA_QUALITY_VALUES: tuple[str, ...] = (
+    *DRIVE_SUMMARY_DATA_QUALITY_VALUES,
+    DRIVES_DATA_QUALITY_UNMAPPABLE_LEGACY,
+)
 
 
 class Drive(Base):
@@ -1288,8 +1297,18 @@ class DriveStatistic(Base):
     DriveSummary delete tears down its DriveStatistic children automatically.
 
     US-371 (F-076): the column was renamed ``drive_id`` -> ``summary_id``.  It
-    never held a Pi-assigned drive_id -- it has always been a ``drive_summary.id``
-    FK -- so the old name lied to readers.  The rename is COMPLETE (no alias).
+    never held a Pi-assigned drive_id -- it has always been a drive-identity FK
+    -- so the old name lied to readers.  The rename is COMPLETE (no alias).
+
+    US-451 (F-104 / D-8 identity collapse): the ``summary_id`` FK is re-pointed
+    from ``drive_summary.id`` to the canonical ``drives.drive_id`` (the single
+    drive-identity SSOT, US-448).  The values are unchanged -- v0018 subsumed
+    ``drive_summary.id`` INTO ``drives.drive_id`` -- so the re-point is 0-orphan
+    for existing rows; and once the harness mints ``drives`` in lockstep
+    (US-460), the compute keys new-drive stats on the (possibly divergent)
+    minted ``drives.drive_id``, which this FK now correctly references.  The
+    column keeps the name ``summary_id`` (a column rename is out of scope and a
+    wider blast radius); it now holds a ``drives.drive_id``.
 
     ``data_quality`` carries Atlas Refinement B's classification (computed by
     :func:`src.server.analytics.drive_statistics_compute.compute_drive_statistics`
@@ -1313,7 +1332,14 @@ class DriveStatistic(Base):
 
     summary_id: Mapped[int] = mapped_column(
         Integer,
-        ForeignKey("drive_summary.id", ondelete="CASCADE"),
+        # US-451: re-pointed drive_summary.id -> canonical drives.drive_id
+        # (values unchanged via the v0018 subsume).  Explicit constraint name
+        # so SHOW CREATE TABLE is identical across SQLite (create_all) + MariaDB
+        # (the v0022 ALTER re-adds the same-named FK).
+        ForeignKey(
+            "drives.drive_id", ondelete="CASCADE",
+            name="fk_drive_statistics_drives",
+        ),
         primary_key=True,
         nullable=False,
     )
@@ -1340,8 +1366,9 @@ class DriveStatistic(Base):
 class DriveDerivedSignal(Base):
     """Per-drive derived motion signals computed server-side (US-436 / F-106).
 
-    One row per drive, keyed on the server-side ``drive_summary.id`` (mirrors
-    :class:`DriveStatistic`), written by
+    One row per drive, keyed on the canonical ``drives.drive_id`` (mirrors
+    :class:`DriveStatistic`; US-451 re-pointed this FK from ``drive_summary.id``
+    to ``drives.drive_id`` -- values unchanged via the v0018 subsume), written by
     :func:`src.server.analytics.derived_signals_compute.compute_drive_derived_signals`
     from the drive's SPEED ``realtime_data`` stream.  No new PIDs -- acceleration
     and estimated distance are integrated from the existing speed+time series
@@ -1364,7 +1391,13 @@ class DriveDerivedSignal(Base):
 
     summary_id: Mapped[int] = mapped_column(
         Integer,
-        ForeignKey("drive_summary.id", ondelete="CASCADE"),
+        # US-451: re-pointed drive_summary.id -> canonical drives.drive_id
+        # (values unchanged via the v0018 subsume).  Explicit constraint name
+        # matches the v0022 ALTER so SHOW CREATE TABLE is identical across envs.
+        ForeignKey(
+            "drives.drive_id", ondelete="CASCADE",
+            name="fk_drive_derived_signals_drives",
+        ),
         primary_key=True,
         nullable=False,
     )
@@ -1624,6 +1657,7 @@ __all__ = [
     "DRIVES_SOURCE_UNIQUE_CONSTRAINT",
     "DRIVES_DATA_QUALITY_DEFAULT",
     "DRIVES_DATA_QUALITY_VALUES",
+    "DRIVES_DATA_QUALITY_UNMAPPABLE_LEGACY",
     "DriveSummary",
     "DriveStatistic",
     "DriveDerivedSignal",
