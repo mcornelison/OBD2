@@ -100,8 +100,9 @@
       "epicId": "E-004",
       "type": "normal",
       "size": "M",
-      "status": "sprint-ready",
+      "status": "blocked",
       "passes": false,
+      "completionNotes": "TRANSITIVELY BLOCKED on BL-017 (root). US-450 deps US-449 (sole-writer harness), which is BLOCKED on BL-017 (live drive_statistics dual-writer in POST /api/v1/analyze -> basic.py::computeDriveStatistics, awaits Atlas ruling routed via PM). US-450 AC1 re-keys compute_drive_statistics from drive_summary.id -> canonical drives.drive_id; per BL-018 that re-key is coherent ONLY AFTER US-449 makes the harness the sole writer minting drives in lockstep (drive_summary.id and drives.drive_id are two INDEPENDENT autoincrement PKs; re-keying ahead orphans new-row writes = live analytics regression). AC2 (verify the batch populates drive_statistics on chi-srv-01; reconcile the Atlas-0-rows vs Spool-434-rows discrepancy) is deploy-time only (no MariaDB on Windows dev). Not started; no code authored -- ruling-gated per Refusal Rule 1 + CLAUDE.md role boundary (architecture -> Atlas). When BL-017 rules -> US-449 closes -> US-450 re-keys as a clean forward-only migration.",
       "acceptance": [
         "[ATLAS: compute EXISTS + Pi-side already retired (detector.py:940 call-site GONE)] re-key compute_drive_statistics from drive_summary.id -> the canonical drives.drive_id (US-448); persisted stat stays SERVER-only (Pi-side compute only if NOT synced -- live dashboard, thrown away)",
         "[ATLAS empty-table gap] VERIFY the batch actually runs + populates drive_statistics on chi-srv-01 -- Atlas saw 0 rows, Spool saw 434; reconcile the discrepancy (likely a deploy/timer gap). If a deploy gap, fix it or flag QA with evidence; do NOT rebuild the compute",
@@ -167,8 +168,9 @@
       "epicId": "E-002",
       "type": "normal",
       "size": "S",
-      "status": "sprint-ready",
+      "status": "blocked",
       "passes": false,
+      "completionNotes": "TRANSITIVELY BLOCKED on BL-017 (root). US-452 deps US-450 -> US-449, both gated on the BL-017 Atlas ruling (live drive_statistics dual-writer in /analyze). US-452 reconciles statistics (rollup) vs drive_statistics (granular SSOT) as no-dual-write -- but per BL-017 Option B the /analyze dual-write reconciliation may FOLD INTO this story, so its shape is ruling-dependent: cannot assert 'each has exactly one harness-owned writer' while basic.py::computeDriveStatistics still writes drive_statistics via /analyze. Not started; no code authored -- ruling-gated. When BL-017 rules + US-450 lands -> US-452 audits the write paths and lands the no-dual-write assertion.",
       "acceptance": [
         "drive_statistics = granular per-drive SSOT (US-450); statistics = rollup/aggregate view or harness-derived rollup -- both server-derived by the US-449 harness, NEVER dual-written (no path writes the same fact to both independently)",
         "documented which is authoritative for which fact; a test asserts no independent dual-write",

@@ -191,3 +191,25 @@ Task: Sprint 55 documentation sync + Rule-10 (server-authority spine) -- F-104
 - **Gotcha**: the regression_manifest lives at `offices/pm/regression_manifest.json` (a PM artifact). Ralph reflects *changed features* (add the sprint to `affectedBySprints`) but does NOT touch `lastValidated`/`validatedBy` -- those are stamped only by the PM /sprint-validated + /chain-validated rituals.
 - **Gotcha (docs-only gate)**: no .py touched -> `ruff`/`pytest` have no targets; the in-loop gate is JSON-parse validation of the touched state files (regression_manifest + ralph_agents + sprint) via `json.load`.
 ---
+
+## 2026-07-04 - (Agent 1 / Rex) -- SPRINT 55 SPINE ALL-BLOCKED (no story taken)
+Task: iteration found no available unblocked story -- the F-104 spine is fully gated on one root blocker
+
+### Assessment (single-agent mode -- only Rex active):
+- **DONE (6/10):** US-448 (canonical drives/drive_id SSOT), US-453 (pi_state raw-sync), US-454 (O2 name norm), US-455 (unit-string canon), US-456 (static_data honest-empty), US-457 (F-104 doc-sync).
+- **BLOCKED (4/10):** US-449, US-450, US-451, US-452 -- ALL transitively gated on ONE root blocker, **BL-017**.
+- **BL-017** = live `drive_statistics` dual-writer: `basic.py::computeDriveStatistics` writes `drive_statistics` via `POST /api/v1/analyze` -> `runAnalysis` -> `_buildAnalyticsContext`, competing with the harness (`drive_statistics_compute.py`) -> violates US-449 AC2 "sole writer / no dual-write". Awaits an **Atlas architectural ruling routed via PM** (Option A: make `/analyze` a pure consumer of harness-written rows [recommended, faithful to F-104]; Option B: keep dual-write, reconcile in US-452). US-450 deps US-449; US-451 = BL-018 (root BL-017, FK re-point orphans new-row writes until the harness mints `drives` in lockstep); US-452 deps US-450.
+- Checked `offices/ralph/inbox/` -- no BL-017 ruling has arrived (latest = 2026-07-04 sprint55 dispatch). Nothing changed since US-457 close.
+
+### What this iteration did (bookkeeping only -- NO code, NO story completed):
+- Flipped **US-450 + US-452** `status: sprint-ready -> blocked` in sprint.json + added transitive-block `completionNotes` pointing at BL-017/BL-018. They were mislabeled "sprint-ready" (read as *available*) though both are deps-blocked -- now the board reads honestly for the PM.
+- Reset `ralph_agents.json` Agent 1 -> `unassigned`; refreshed close note.
+- No src/ touched -> ruff/pytest have no targets; in-loop gate = `json.load` on both state files (both OK).
+
+### Why no story was taken (Refusal Rule 1 + role boundary):
+- Shipping US-450's stat re-key or US-451's FK collapse ahead of the ruling is a **known live-analytics regression** (BL-018: the two identity PKs are independent autoincrements; re-keying/FK-pointing before the harness is the sole lockstep writer orphans new-row writes), not a scope-fence judgment call. Architecture -> Atlas per CLAUDE.md; documented the block, did not guess.
+
+### Learnings for future iterations:
+- **Gotcha**: a story marked `status: sprint-ready` in sprint.json is NOT necessarily *available* -- check its `deps`/parent-chain against open blockers. Here US-450/US-452 were sprint-ready but transitively blocked via US-449's BL-017. The Sprint Status Summary categorization ("Available = passes:false AND deps met AND no blocker") requires resolving the dep chain, not trusting the status label.
+- **Gotcha (single-agent all-blocked)**: when EVERY remaining story is gated on one documented blocker needing an out-of-lane (Atlas/PM) ruling, the correct move is decision-tree #2 -> `SPRINT_BLOCKED` (PM action required to route the ruling). Do NOT emit no-tag (would restart ralph.sh into an all-blocked spin) and do NOT emit multi-agent tags (SPRINT_IN_PROGRESS/ALL_BLOCKED -- forbidden single-agent).
+---
