@@ -180,7 +180,7 @@ def _makeReading(parameterName: str, value: float) -> MagicMock:
     reading = MagicMock(spec=["parameterName", "value", "unit"])
     reading.parameterName = parameterName
     reading.value = value
-    reading.unit = "V" if parameterName == "BATTERY_V" else None
+    reading.unit = "volt" if parameterName == "BATTERY_V" else None
     return reading
 
 

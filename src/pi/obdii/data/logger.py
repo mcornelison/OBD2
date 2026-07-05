@@ -18,7 +18,7 @@
 #                               consults PARAMETER_DECODERS for new
 #                               parameter_names (FUEL_SYSTEM_STATUS, MIL_ON,
 #                               DTC_COUNT, RUNTIME_SEC, BAROMETRIC_KPA,
-#                               BATTERY_V, O2_BANK1_SENSOR2_V). Supported-PID
+#                               BATTERY_V, O2_B1S2). Supported-PID
 #                               probe (via connection.supportedPids) gates
 #                               Mode 01 queries; adapter commands bypass the
 #                               probe. LoggedReading.unit stores the

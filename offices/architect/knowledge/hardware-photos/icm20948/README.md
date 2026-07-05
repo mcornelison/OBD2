@@ -5,6 +5,10 @@
 ## Vendor ID (2026-07-03, Atlas — verified vs official Adafruit docs + datasheet)
 
 **Board = Adafruit #4554 *pinout*, but this physical unit is an unbranded CLONE (not genuine Adafruit).**
+**CONFIRMED vendor (2026-07-04, Amazon listing scraped): brand "NebulaGo", title "2PCS ICM-20948
+9-DoF Sensor", ASIN B0G5LP4JRQ (~$17 2-pack — hence the CIO's "secondary board").** Generic
+reseller; listing carries NO electrical spec (no pull-up/CS/logic detail) → no schematic to lean on,
+no guaranteed on-board CS pull-up → the datasheet CS-high-at-power-up rule governs.
 
 - **Matches Adafruit 4554 exactly:** pin labels `FS AD AC G SDO CS` (top) / `VIN 1V8 GND SCL SDA INT` (bottom); the `1V8` regulator-output pin; `AD`/`AC` aux-I²C names; dual STEMMA-QT/Qwiic connectors; X/Y axis arrows. Pin-for-pin 4554-compatible.
 - **But NOT genuine Adafruit:** no "Adafruit" text / no Penguin logo; older vector-font silkscreen; the **back prints a spec table** (`Accel ±2~16g / Gyro ±250~2000 dps / Mag ±49 Gauss`) — genuine Adafruit backs carry branding, not a spec table.
@@ -44,5 +48,14 @@ already powered, so it couldn't re-latch I²C.)
 **Live scan 2026-07-04:** `i2cdetect -y 1` → 0x29 + 0x36 present, **0x69/0x68 absent.** Untested
 variable: **CS→1V8 + power-cycle + re-scan.** Then check SDO/AD0 defined (0x69 default) + SCL/SDA
 continuity to the QFN die pad (not just header).
+
+**CS-high source: use `1V8`, NOT the AD (AUX_DA) pad (2026-07-04).** AD is AUX_DA — an *active*
+signal pin, not a rail. The ICM-20948 bypass mux ties AUX_CL/AUX_DA to the internal AK09916 mag
+master (I²C-master mode drives AUX_DA) and/or analog-switches AUX_DA onto the main SDA (pass-through
+mode). So bridging CS→AD only holds during a bare `i2cdetect` (aux bus idle); the instant any 9-DoF
+driver reads the magnetometer, AUX_DA toggles and drags CS low → chip drops out of I²C. **Bridge
+CS→`1V8` (static VDDIO rail).** Board-2 wiring: VIN→3.3V, GND, SCL→GPIO3, SDA→GPIO2, CS→1V8,
+SDO/AD0→default(0x69), power-up with CS already high. (Source: InvenSense DS-000189 bypass-mux /
+aux-I²C section.)
 
 **Sources:** Adafruit 4554 pinouts (learn.adafruit.com) · InvenSense ICM-20948 datasheet DS-000189 · eMD software guide.

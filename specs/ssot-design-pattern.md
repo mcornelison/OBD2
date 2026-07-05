@@ -93,6 +93,34 @@ against re-divergence).
    §10.8.2 and the ADR
    `docs/superpowers/specs/2026-06-30-edr-sensor-reader-schema-bus-adr.md` §2.
 
+4. **Server-analytics authority — the *derived-data* boundary (server tier, F-104).**
+   Drive identity had fragmented into an id-family — the Pi-minted `drive_id`, the
+   de-facto server identity `drive_summary.id`, and scattered FKs — and a persisted
+   analytic (`drive_statistics`) had **two** writers (the B-104 compute-harness and
+   the `/analyze` path) that could disagree, last-writer-wins. **Same bug class**
+   as the address mirrors and the power-source saga: N divergent copies of one
+   fact. **Cure (F-104):** one canonical server-minted `drives.drive_id` **SSOT for
+   drive identity** (subsuming `drive_summary.id`, anchored by
+   `UNIQUE(source_device, source_drive_id)` + an idempotent upsert-by-natural-key
+   mint that never renumbers); one **sole-writer compute-harness** that derives
+   every persisted-analytics table **from synced raw** (idempotent — re-run = 0
+   owned-row diffs); Pi ids demoted to advisory `source_*` (compute-locally-for-UI,
+   thrown away). The **boundary rule** is the derived-data generalization of "one
+   provider per fact": *a fact is server-authoritative iff the server can reproduce
+   it from raw → server sole-writer; irreproducible → raw, the Pi emits it
+   first-class; no derived state the Pi transmits.* The **loud failure surfaces**
+   this pattern requires: the `attribution_anomaly` tripwire (kept **detecting on
+   the raw** Pi id so a dual-mint still trips — the backstop is not blinded by the
+   deduped server identity) + the `NotImplementedError` trigger-seam tripwire
+   (`enqueueAutoAnalysisForSync`) guarding against re-introducing a Pi-side writer.
+   *Status (Sprint 55 / V0.29.9):* the identity SSOT (US-448) + idempotency proof
+   are **landed**; formalizing the harness as the *sole* writer is in progress —
+   the second `drive_statistics` writer via `/analyze` (`basic.py`) is an open
+   reconciliation (BL-017), the exact "N divergent writers of one fact" this
+   pattern exists to kill, pending an Atlas ruling. See `specs/architecture.md`
+   §10.7.3 + the F-104 ADR
+   `offices/architect/reports/2026-07-04-f104-server-analytics-authority-design-gate-ruling.md`.
+
 ## Emerging direction — SSOT for *derived* data, enforced at a broker (EDR bus)
 
 > **STATUS: DRAFT — current CIO thought process, NOT yet ratified.** Captured

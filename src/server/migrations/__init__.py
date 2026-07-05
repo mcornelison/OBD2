@@ -58,6 +58,32 @@
 # 2026-07-02    | Rex (US-436) | Sprint 53 V0.29.7 -- registered v0017 (create
 #               |              | drive_derived_signals table; F-106 per-drive
 #               |              | acceleration + estimated distance).  Forward-only.
+# 2026-07-04    | Rex (US-448) | Sprint 55 V0.29.9 -- registered v0018 (create
+#               |              | canonical drives identity table + subsume
+#               |              | drive_summary.id as drive_id; F-104 spine).
+#               |              | Forward-only.
+# 2026-07-04    | Rex (US-453) | Sprint 55 V0.29.9 -- registered v0019 (create
+#               |              | pi_state table; D-7/F-082 Pi operational-state
+#               |              | singleton mirrored as raw forensic).  Forward-only.
+# 2026-07-04    | Rex (US-454) | Sprint 55 V0.29.9 -- registered v0020 (re-map O2
+#               |              | parameter_name 'O2_BANK1_SENSOR2_V' -> canonical
+#               |              | 'O2_B1S2' across all parameter_name tables;
+#               |              | D-3/F-082).  Forward-only.
+# 2026-07-04    | Rex (US-455) | Sprint 55 V0.29.9 -- registered v0021 (re-map
+#               |              | realtime_data.unit abbreviations 'V'->'volt',
+#               |              | 'kPa'->'kilopascal', 's'->'second' to the
+#               |              | python-obd native canonical form; D-4/F-082).
+#               |              | Forward-only.
+# 2026-07-05    | Rex (US-451) | Sprint 55 V0.29.9 -- registered v0022 (drive-
+#               |              | identity collapse: widen drives.data_quality
+#               |              | CHECK with 'unmappable_legacy' + flag NULL-key
+#               |              | legacy drives + re-point drive_statistics/
+#               |              | drive_derived_signals summary_id FKs to
+#               |              | drives.drive_id; F-104/D-8).  Forward-only.
+# 2026-07-05    | Rex (US-458) | Sprint 55 V0.29.9 -- registered v0023 (drop the
+#               |              | stale live data_source CHECK US-424 never
+#               |              | ALTERed away; discovery-driven schema-wide;
+#               |              | F-116/BL-019 A'/A-10/TD-055).  Forward-only.
 # ================================================================================
 ################################################################################
 
@@ -138,6 +164,24 @@ from src.server.migrations.versions.v0016_us426_battery_health_soc_pct import (
 from src.server.migrations.versions.v0017_us436_drive_derived_signals import (
     MIGRATION as _V0017,
 )
+from src.server.migrations.versions.v0018_us448_canonical_drives import (
+    MIGRATION as _V0018,
+)
+from src.server.migrations.versions.v0019_us453_pi_state import (
+    MIGRATION as _V0019,
+)
+from src.server.migrations.versions.v0020_us454_o2_name_normalization import (
+    MIGRATION as _V0020,
+)
+from src.server.migrations.versions.v0021_us455_unit_string_canonicalization import (
+    MIGRATION as _V0021,
+)
+from src.server.migrations.versions.v0022_us451_drive_identity_collapse import (
+    MIGRATION as _V0022,
+)
+from src.server.migrations.versions.v0023_us458_drop_stale_data_source_check import (
+    MIGRATION as _V0023,
+)
 
 # ================================================================================
 # Registry -- append new migrations to the end, in ascending version order
@@ -161,6 +205,12 @@ ALL_MIGRATIONS: tuple[Migration, ...] = (
     _V0015,
     _V0016,
     _V0017,
+    _V0018,
+    _V0019,
+    _V0020,
+    _V0021,
+    _V0022,
+    _V0023,
 )
 
 

@@ -12,6 +12,15 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-04-16    | Ralph Agent  | Initial TDD tests for US-CMP-005 — real AI path
+# 2026-07-04    | Rex (US-449) | F-104 Option A: /analyze is now a PURE CONSUMER
+#               |              | of harness drive_statistics (reads + on-miss
+#               |              | triggers compute_drive_statistics, keyed on the
+#               |              | Pi-local drive_id).  _seedDrive now tags the
+#               |              | drive_summary (source_id/drive_id) + realtime
+#               |              | rows (drive_id) so the harness can attribute
+#               |              | them -- the behaviour change the BL-017 ruling
+#               |              | flagged (harness uses drive_id filtering, not
+#               |              | basic.py's time-window+device grouping).
 # ================================================================================
 ################################################################################
 
@@ -269,13 +278,22 @@ async def asyncAppAndEngine():
 
 
 async def _seedDrive(engine, driveId: int = 101, sampleCount: int = 20):
-    """Insert a drive with ``sampleCount`` RPM readings spread over a minute."""
+    """Insert a drive with ``sampleCount`` RPM readings spread over a minute.
+
+    US-449: rows are tagged with the Pi-local ``drive_id`` (and the summary
+    with ``source_id``/``drive_id``) so the B-104 harness can attribute them —
+    ``/analyze`` now reads harness ``drive_statistics`` and, on a miss, triggers
+    ``compute_drive_statistics`` (which filters ``realtime_data.drive_id``).
+    """
     from sqlalchemy.ext.asyncio import AsyncSession
 
     async with AsyncSession(engine) as session:
         drive = DriveSummary(
             id=driveId,
             device_id="chi-eclipse-01",
+            source_device="chi-eclipse-01",
+            source_id=driveId,
+            drive_id=driveId,
             start_time=datetime(2026, 4, 16, 12, 0, 0),
             end_time=datetime(2026, 4, 16, 12, 1, 0),
             duration_seconds=60,
@@ -291,6 +309,8 @@ async def _seedDrive(engine, driveId: int = 101, sampleCount: int = 20):
                     timestamp=datetime(2026, 4, 16, 12, 0, 0) + timedelta(seconds=i),
                     parameter_name="RPM",
                     value=2000.0 + i * 10.0,
+                    drive_id=driveId,
+                    data_source="real",
                 )
             )
         await session.commit()

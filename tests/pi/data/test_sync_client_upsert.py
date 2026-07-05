@@ -210,6 +210,17 @@ def _createAllInScopeStubs(conn: sqlite3.Connection) -> None:
         "on_ac_power INTEGER NOT NULL DEFAULT 1, "
         "vcell REAL)"
     )
+    # US-453 (D-7 / F-082): pi_state -- the operational-state singleton
+    # (id pinned to 1).  Joined the delta-sync set in US-453 (mirrors
+    # SCHEMA_PI_STATE), so the production-shaped fixture must create it (else
+    # getDeltaRows raises "no such table: pi_state" when pushAllDeltas iterates
+    # it).  It also opts into the modified_at cursor, but that column + trigger
+    # are added lazily by ensureSyncModifiedAtSchema on first push.
+    conn.execute(
+        "CREATE TABLE pi_state ("
+        "id INTEGER PRIMARY KEY CHECK (id = 1), "
+        "no_new_drives INTEGER NOT NULL DEFAULT 0)"
+    )
     # Snapshot tables with natural TEXT PKs.
     conn.execute(
         "CREATE TABLE profiles ("

@@ -537,6 +537,52 @@ class TestDetectAnomalies:
 
 
 # =========================================================================
+# US-449 / F-104 -- pure evaluators (no persistence)
+# =========================================================================
+
+
+class TestPureEvaluators:
+    """evaluateTrend / evaluateAnomalies compute the same result but persist
+    nothing -- the /analyze pure-consumer path relies on this (BL-017)."""
+
+    def test_evaluateTrend_matchesComputeTrends_butWritesNoSnapshot(self, engine):
+        with Session(engine) as session:
+            _seedDrivesWithStats(
+                session,
+                avgSeries=[2000.0 + i * 25.0 for i in range(12)],
+            )
+            result = advanced.evaluateTrend(session, "RPM", windowSize=10)
+            assert isinstance(result, TrendResult)
+            assert result.direction == TrendDirection.RISING
+            # No trend_snapshots row was written.
+            snapshots = session.execute(select(TrendSnapshot)).scalars().all()
+            assert snapshots == []
+
+    def test_evaluateTrend_noData_returnsNoneNoWrite(self, engine):
+        with Session(engine) as session:
+            assert advanced.evaluateTrend(session, "RPM", windowSize=10) is None
+            assert session.execute(select(TrendSnapshot)).scalars().all() == []
+
+    def test_evaluateAnomalies_matchesDetect_butWritesNoAnomalyLog(self, engine):
+        with Session(engine) as session:
+            _seedDrivesWithStats(
+                session,
+                avgSeries=[1900.0, 1950.0, 2000.0, 2050.0, 2100.0, 2400.0],
+            )
+            results = advanced.evaluateAnomalies(session, driveId=6)
+            assert len(results) == 1
+            assert results[0].severity == ComparisonStatus.INVESTIGATE
+            # No anomaly_log row was written.
+            rows = session.execute(select(AnomalyLog)).scalars().all()
+            assert rows == []
+
+    def test_evaluateAnomalies_noStats_returnsEmptyNoWrite(self, engine):
+        with Session(engine) as session:
+            assert advanced.evaluateAnomalies(session, driveId=1) == []
+            assert session.execute(select(AnomalyLog)).scalars().all() == []
+
+
+# =========================================================================
 # Twelve-drive end-to-end sanity check
 # =========================================================================
 

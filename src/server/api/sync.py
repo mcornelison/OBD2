@@ -153,6 +153,7 @@ from src.server.db.models import (
     DriveSummary,
     DtcFreezeFrame,
     DtcLog,
+    PiState,
     PowerLog,
     Profile,
     RealtimeData,
@@ -205,6 +206,12 @@ _TABLE_REGISTRY: dict[str, tuple[type, tuple[tuple[str, str], ...]]] = {
     # source_id by runSyncUpsert.  One row per power-source / shutdown-stage
     # transition (NOT per poll).  Formerly Pi-only health telemetry.
     "power_log": (PowerLog, ()),
+    # US-453 (D-7 / F-082): pi_state operational-state singleton.  Integer 'id'
+    # PK (pinned to 1 on the Pi) -> mapped to source_id; the generic upsert on
+    # (source_device, source_id) applies the Pi's no_new_drives flips (the Pi
+    # opts pi_state into the modified_at cursor so those UPDATEs re-sync).
+    # Irreproducible forensic state -- the server mirrors it, never recomputes.
+    "pi_state": (PiState, ()),
 }
 
 # US-369 (F-109): dtc_freeze_frame is a synced capture table but is NOT a

@@ -70,9 +70,11 @@ from datetime import datetime, timedelta
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from src.server.analytics.drive_identity import upsert_drive
 from src.server.analytics.overlap import detect_overlapping_drives
 from src.server.db.models import (
     DATA_QUALITY_ATTRIBUTION_ANOMALY,
+    DATA_SOURCE_DEFAULT,
     DRIVE_SUMMARY_DATA_QUALITY_DEFAULT,
     DriveSummary,
     RealtimeData,
@@ -231,6 +233,41 @@ def compute_drive_summary(session: Session, driveId: int) -> int | None:
     if summary.source_id is None:
         summary.source_id = driveId
     session.flush()
+
+    # US-460 / F-104: mint the canonical drives identity for this drive.
+    # ``drives`` is a harness-owned table (US-449); the harness that derives a
+    # drive mints its canonical drive_id here via the natural-key upsert
+    # (``upsert_drive``) so US-451's forward-only FK re-point never orphans a
+    # new-drive write.  Idempotent -- a recompute re-uses the existing drive_id
+    # (upsert_drive never renumbers an already-seen drive).  Only minted when
+    # the advisory natural key is fully specified: a legacy row with a NULL
+    # ``source_device`` is deferred to US-451's unmappable-legacy mint path
+    # (upsert_drive requires a non-empty source_device), never fabricated here.
+    if summary.source_device:
+        canonicalDriveId = upsert_drive(
+            session,
+            source_device=summary.source_device,
+            source_drive_id=driveId,
+            start_time=startTime,
+            end_time=endTime,
+            data_source=(
+                summary.data_source
+                if summary.data_source is not None
+                else DATA_SOURCE_DEFAULT
+            ),
+            data_quality=dataQuality,
+        )
+        logger.info(
+            "compute_drive_summary | drive_id=%s | minted canonical "
+            "drives.drive_id=%s",
+            driveId, canonicalDriveId,
+        )
+    else:
+        logger.info(
+            "compute_drive_summary | drive_id=%s | NULL source_device -- "
+            "canonical drives mint deferred to US-451 unmappable-legacy path",
+            driveId,
+        )
 
     logger.info(
         "compute_drive_summary | drive_id=%s | summary_id=%s | "

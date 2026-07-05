@@ -71,8 +71,29 @@
 #               |              | _computeDriveAnalytics remain in-file as
 #               |              | currently-unreferenced helpers; US-351 (B-104
 #               |              | Step 1b) retires the parallel drive_statistics
-#               |              | trigger + writer + Pi table; B-076 (V0.28+ schema
-#               |              | normalization) cleans up residual helpers.
+#               |              | TRIGGER-SEAM writer + Pi table; B-076 (V0.28+
+#               |              | schema normalization) cleans up residual helpers.
+# 2026-07-04    | Rex (US-449) | F-104 Option A (BL-017): CORRECTION to the
+#               |              | US-350 note above -- US-351 retired only the
+#               |              | trigger-SEAM drive_statistics writer, NOT the
+#               |              | live /analyze writer.  _buildAnalyticsContext
+#               |              | still called analytics.basic.computeDriveStatistics
+#               |              | (a SECOND writer of drive_statistics, keyed on a
+#               |              | time-window+device grouping that MERGES adjacent
+#               |              | drives -- the A-9 attribution hazard) plus
+#               |              | detectAnomalies (anomaly_log) + computeTrends
+#               |              | (trend_snapshots).  US-449 makes /analyze a PURE
+#               |              | CONSUMER: it READS the harness-authoritative
+#               |              | drive_statistics and, on a miss, triggers the
+#               |              | HARNESS compute (drive_statistics_compute), never
+#               |              | basic.py; anomalies + trends are computed
+#               |              | IN-MEMORY (evaluateAnomalies / evaluateTrend) for
+#               |              | the prompt context and NO LONGER persisted.  The
+#               |              | harness (src.server.analytics.drive_statistics_
+#               |              | compute + drive_summary_compute + derived_signals_
+#               |              | compute) is the sole writer of its owned tables --
+#               |              | see src.server.analytics.owned_tables (the
+#               |              | owned-table manifest).
 # ================================================================================
 ################################################################################
 
@@ -140,10 +161,18 @@ from src.server.ai.analyzer_ollama import (
 from src.server.ai.exceptions import AiAnalyzerGenerationError
 from src.server.analytics.advanced import (
     computeCorrelations,
-    computeTrends,
-    detectAnomalies,
+    evaluateAnomalies,
+    evaluateTrend,
 )
+
+# NOTE (US-449 / F-104): analytics.basic.computeDriveStatistics is imported ONLY
+# for the retired trigger-seam helper _ensureDriveStatistics (dead code behind
+# the enqueueAutoAnalysisForSync NotImplementedError tripwire; B-076 owns its
+# removal). The LIVE /analyze path (_buildAnalyticsContext) does NOT use it — it
+# reads harness rows and, on a miss, triggers compute_drive_statistics (the
+# harness). See src.server.analytics.owned_tables for the sole-writer manifest.
 from src.server.analytics.basic import computeDriveStatistics
+from src.server.analytics.drive_statistics_compute import compute_drive_statistics
 from src.server.db.connection import getAsyncSession
 from src.server.db.models import (
     AnalysisHistory,
@@ -253,31 +282,74 @@ def _renderUserMessage(context: dict[str, Any]) -> str:
 # ---- Analytics summary build -------------------------------------------------
 
 
+def _readHarnessDriveStatistics(
+    session: Session, drive: DriveSummary,
+) -> list[DriveStatistic]:
+    """Read the harness-authoritative ``drive_statistics`` rows for ``drive``.
+
+    Pure read.  ``drive_statistics`` is keyed on ``drive_summary.id`` (the
+    canonical drive identity subsumed into ``drives.drive_id`` by US-448), so
+    this reads exactly the rows the B-104 harness
+    (:func:`src.server.analytics.drive_statistics_compute.compute_drive_statistics`)
+    wrote for the drive.  Ordered by ``parameter_name`` for a stable context.
+    """
+    return list(
+        session.execute(
+            select(DriveStatistic)
+            .where(DriveStatistic.summary_id == drive.id)
+            .order_by(DriveStatistic.parameter_name)
+        ).scalars().all()
+    )
+
+
 def _buildAnalyticsContext(
     session: Session, drive: DriveSummary,
 ) -> dict[str, Any] | None:
     """
-    Refresh analytics for ``drive`` and collect the Jinja render context.
+    Collect the Jinja render context from harness-authoritative analytics.
 
-    Returns ``None`` when the drive has zero realtime readings (computeDriveStatistics
-    produced no rows) — the caller treats this as the "no data" short-circuit.
+    US-449 / F-104 (BL-017, Atlas Option A): ``/analyze`` is a PURE CONSUMER of
+    the persisted-analytics tables (see
+    :mod:`src.server.analytics.owned_tables`).  This function performs NO
+    ``add`` / ``delete`` / ``commit`` of any owned table.  It:
 
-    This runs inside a single sync session. Any pre-existing
-    ``drive_statistics`` / ``anomaly_log`` rows for the drive are replaced by
-    the analytics calls (idempotent by design).
+    * READS the harness-written ``drive_statistics`` rows for the drive; on a
+      miss it triggers the HARNESS compute
+      (:func:`src.server.analytics.drive_statistics_compute.compute_drive_statistics`,
+      keyed on the Pi-local ``drive_id``) and re-reads — never
+      ``analytics.basic.computeDriveStatistics`` (whose time-window+device
+      grouping merges adjacent drives, the A-9 attribution hazard).
+    * computes anomalies + trends IN-MEMORY via
+      :func:`src.server.analytics.advanced.evaluateAnomalies` /
+      :func:`~src.server.analytics.advanced.evaluateTrend` — for the prompt
+      context only, persisting nothing (``anomaly_log`` / ``trend_snapshots``
+      are not written by ``/analyze``).
+
+    Returns ``None`` when the drive has no harness ``drive_statistics`` even
+    after the on-miss compute (zero realtime readings) — the caller treats
+    this as the "no data" short-circuit.
     """
-    stats = computeDriveStatistics(session, drive.id)
+    stats = _readHarnessDriveStatistics(session, drive)
+    if not stats:
+        # On-miss: trigger the HARNESS compute (keyed on the Pi-local drive_id),
+        # then re-read.  This preserves on-demand freshness with ONE writer —
+        # the harness — instead of /analyze computing+persisting its own rows.
+        piDriveId = drive.drive_id if drive.drive_id is not None else drive.source_id
+        if piDriveId is not None:
+            compute_drive_statistics(session, piDriveId)
+            session.flush()
+            stats = _readHarnessDriveStatistics(session, drive)
     if not stats:
         return None
 
-    anomalies = detectAnomalies(session, drive.id)
+    anomalies = evaluateAnomalies(session, drive.id)
 
-    # Trend per parameter present in this drive's stats — computeTrends is
-    # cheap (reads last N drive_statistics rows for the parameter) and
-    # intentionally writes a snapshot each call.
+    # Trend per parameter present in this drive's stats — evaluateTrend is the
+    # pure, no-persist core (reads last N drive_statistics rows for the
+    # parameter).  /analyze writes no trend_snapshots row.
     trends = []
     for s in stats:
-        result = computeTrends(session, s.parameter_name)
+        result = evaluateTrend(session, s.parameter_name)
         if result is not None:
             trends.append(result)
 

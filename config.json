@@ -196,7 +196,7 @@
           "displayOnDashboard": false
         },
         {
-          "name": "O2_BANK1_SENSOR2_V",
+          "name": "O2_B1S2",
           "logData": true,
           "displayOnDashboard": false
         }
@@ -304,7 +304,7 @@
             "caveat": "US-199: Mode 01 PID 0x01 bits 0-6 \u00e2\u20ac\u201d same PID as MIL_ON; K-line cost absorbed by python-obd response cache"
           },
           {
-            "name": "O2_BANK1_SENSOR2_V",
+            "name": "O2_B1S2",
             "pid": "0x15",
             "caveat": "US-199: SUPPORT UNCERTAIN on 2G; probe at connection open and silent-skip if unsupported (Spool priority 6)"
           }
