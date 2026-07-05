@@ -80,6 +80,10 @@
 #               |              | legacy drives + re-point drive_statistics/
 #               |              | drive_derived_signals summary_id FKs to
 #               |              | drives.drive_id; F-104/D-8).  Forward-only.
+# 2026-07-05    | Rex (US-458) | Sprint 55 V0.29.9 -- registered v0023 (drop the
+#               |              | stale live data_source CHECK US-424 never
+#               |              | ALTERed away; discovery-driven schema-wide;
+#               |              | F-116/BL-019 A'/A-10/TD-055).  Forward-only.
 # ================================================================================
 ################################################################################
 
@@ -175,6 +179,9 @@ from src.server.migrations.versions.v0021_us455_unit_string_canonicalization imp
 from src.server.migrations.versions.v0022_us451_drive_identity_collapse import (
     MIGRATION as _V0022,
 )
+from src.server.migrations.versions.v0023_us458_drop_stale_data_source_check import (
+    MIGRATION as _V0023,
+)
 
 # ================================================================================
 # Registry -- append new migrations to the end, in ascending version order
@@ -203,6 +210,7 @@ ALL_MIGRATIONS: tuple[Migration, ...] = (
     _V0020,
     _V0021,
     _V0022,
+    _V0023,
 )
 
 
