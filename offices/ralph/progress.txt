@@ -319,3 +319,25 @@ Task: Complete F-116 server marker -- add data_source='foreign' CHECK (US-424 ga
 - **Gotcha (net-new CHECK on a populated column is a deploy hazard)**: `ADD CONSTRAINT CHECK` on MariaDB validates every existing row (full-scan/lock on a big table like realtime_data) and fails the deploy on any out-of-enum value. "Add a CHECK" is never free on production data -- flag the validation-scan risk, don't treat it as a schema no-op.
 - **Gotcha (reversing a documented decision = architecture)**: models.py:130-131 explicitly recorded "no server data_source CHECK, application-enforced only" as a US-424 choice. A later story asking to add that CHECK is a design REVERSAL (permissive-mirror vs enforcing) -> route to Atlas, don't silently flip the stance.
 ---
+
+## 2026-07-05 - US-460 (Agent 1 / Rex)
+Task: Wire the canonical drives mint into the harness (upsert_drive; F-104; US-451 deps this)
+
+### Context (block cleared since last iteration):
+- Last iteration emitted SPRINT_BLOCKED with the minting-gap flagged (upsert_drive had ZERO live call sites -> nothing minted `drives` rows for NEW drives -> US-451's FK re-point would orphan new writes). Since then the PM's Sprint-55 closeout fold (commit 4b7a03f) folded the Atlas rulings + ADDED US-460 to close exactly that gap (and reframed US-458 to DROP the stale live CHECK, US-459 to assert the APPLIED schema). US-460 became the highest-priority available F-104 spine story (unblocks the L-size US-451).
+
+### What was implemented:
+- **The mint wiring (AC1):** `compute_drive_summary` (src/server/analytics/drive_summary_compute.py -- the per-drive harness derive entry, called by the batch/`.timer`, the recompute CLI, and /analyze-via-sync) now calls `drive_identity.upsert_drive(source_device=summary.source_device, source_drive_id=driveId, start_time, end_time, data_source, data_quality)` after the summary flush, minting the canonical `drives` identity for the drive it just derived. `drives` is a harness-owned table (US-449), so the harness mints its identity.
+- **Idempotent (AC/VC):** upsert-by-natural-key `(source_device, source_drive_id)` re-uses the existing `drive_id` on recompute and NEVER renumbers -> 0 duplicate `drives` rows across re-runs.
+- **NULL-source_device guard:** `upsert_drive` raises ValueError on an empty `source_device`; a legacy pre-connection_log row (NULL device) DEFERS the mint to US-451's unmappable-legacy path (guarded `if summary.source_device:`) rather than crashing the harness -- the summary still computes.
+- **TDD:** 3 tests written RED-first (2 failed on 0-rows-minted, 1 defer-guard), then GREEN. Full targeted sweep = 137 tests across EVERY `compute_drive_summary` caller (drive_summary_compute[full]+harness_idempotency+owned_table_manifest+drive_identity+drive_statistics_compute+us390_attribution_backstop+deploy_context_drive_simulator+drive_summary_drive_id_invariant+analyze_real+recompute_attribution_anomaly_cli), 0 fail; ruff clean. Commit 153e52f.
+
+### Files changed:
+- Modified: `src/server/analytics/drive_summary_compute.py` (upsert_drive mint + DATA_SOURCE_DEFAULT/upsert_drive imports)
+- Modified: `tests/server/analytics/test_drive_summary_compute.py` (TestCanonicalDriveMint: mint/idempotent/null-device-defer + Drive import)
+
+### Learnings for future iterations:
+- **Pattern discovered**: an identity-mint wired into a compute harness must be idempotent by NATURAL KEY, not by autoincrement -- `upsert_drive` re-uses the existing id on recompute so the harness idempotency proof (byte-identical owned-table rows on re-run) still holds and FKs never orphan. A plain `session.add` mint would renumber every recompute and break both.
+- **Gotcha (a mint ACTIVATES a dormant resolver)**: wiring US-460's mint made US-450's `resolve_canonical_drive_id` (in compute_drive_statistics) START returning the minted `drive_id` (an INDEPENDENT autoincrement, divergent from drive_summary.id for NEW drives) instead of its drive_summary.id fallback -- because the fallback only fired while `drives` was empty. This is the intended F-104 end-state, but it means US-451's FK re-point MUST deploy in lockstep or new-drive drive_statistics writes orphan on live MariaDB. When you wire a producer, trace every consumer that was silently falling back -- the fallback stops the moment you produce.
+- **Gotcha (guard the raising precondition)**: `upsert_drive` deliberately RAISES on a NULL/empty natural key (unmappable-legacy is US-451's job, not a silent skip). A caller wiring it into a batch that iterates ALL drives (incl. legacy NULL-device rows) must guard the precondition or the whole batch dies on the first legacy drive. Read the callee's Raises: before wiring it into a loop.
+---
