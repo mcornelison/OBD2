@@ -3667,7 +3667,8 @@
         "drive_summary + drive_annotations (+ any table with a drive id) reference the canonical drives.drive_id as FK; the Pi id retained as advisory source_drive_id (nullable) -- ONE identity, no id-families (forward-only migration)",
         "[ATLAS back-map ruling] existing rows re-keyed via (source_device, source_drive_id) match; UNMAPPABLE legacy (drives 1-12, foreign drive 33, NULL drive_id) -> flag data_quality='unmappable_legacy', ONE row per distinct legacy key, NEVER drop/merge",
         "deployed AND verified: FK integrity check passes (no orphaned drive refs); a sample drive resolves one identity end-to-end; unmappable rows are flagged not dropped",
-        "ruff clean in-loop; mypy (strict) at PM-integration"
+        "ruff clean in-loop; mypy (strict) at PM-integration",
+        "[ATLAS] DEPS US-460 -- the harness mint must be LIVE before this FK re-point, else new-drive writes orphan on deploy"
       ],
       "validationCriteria": [
         {
@@ -3802,22 +3803,23 @@
       "type": "normal",
       "size": "S",
       "status": "sprint-ready",
-      "title": "Complete F-116 server marker -- add data_source='foreign' CHECK (US-424 gap; A-4; unblocks drive-33 re-tag + kills sync landmine)",
+      "title": "Drop the stale live data_source CHECK -- ORM-vs-DB drift reconcile (BL-019/A-10; unblocks drive-33 re-tag)",
       "goal": "As the CIO, I want the F-116 data_source='foreign' marker on the SERVER (it only landed on the Pi) so drive 33 is excludable from real-data queries and the latent sync landmine is closed.",
       "definitionOfDone": [
-        "forward-only server migration adds 'foreign' to the data_source CHECK on realtime_data + statistics + connection_log (and VERIFY drive_summary/drive_statistics if they carry the data_source axis) -- match the Pi DATA_SOURCE_VALUES (src/pi/obdii/data_source.py) EXACTLY (A-4 both-tier-consistent; server models.py:125 enum currently lacks 'foreign')",
-        "deployed AND verified via INFORMATION_SCHEMA: the server data_source CHECK includes 'foreign' on every listed table, identical to the Pi",
-        "on land, hand off to Spool for the drive-33 re-tag (Spool has the live DB + runs it per Atlas's 07-01 F-116 scope: both tiers, migration-before-UPDATE, re-sync-trap) -- this story delivers the migration + the handoff, NOT the re-tag UPDATE itself",
+        "[ATLAS BL-019 ruling A' -- live-DB verified] the live obd2db has a STALE `data_source in ('real','replay','physics_sim','fixture')` CHECK (NO 'foreign') on realtime_data/statistics/connection_log/profiles/calibration_sessions, while the ORM/code declares no-CHECK (US-424). ROOT = US-424 changed the Python enum but NEVER ALTERed the live DB (A-10/TD-055 drift)",
+        "forward-only migration DROPS the stale data_source CHECK on EVERY table that carries one (the 5 above + probe for any other via information_schema) -- aligns the live DB to the code's documented permissive-mirror. NOT widen-to-5 (that reverses US-424's design + full-scans realtime_data + deploy-fails on any out-of-enum row). Drop is low-risk (no scan)",
+        "deployed AND verified via information_schema: NO rejecting data_source CHECK remains on any table",
+        "on land, hand off to Spool for the drive-33 re-tag (runs AFTER this drop-migration; both tiers; re-sync-trap: Pi drive-33 rows must be re-tagged too)",
         "ruff clean in-loop; mypy (strict) at PM-integration"
       ],
       "validationCriteria": [
         {
-          "action": "run the server migration + INFORMATION_SCHEMA check on realtime_data/statistics/connection_log",
-          "outcome": "the data_source CHECK includes 'foreign' on all sites, identical to the Pi DATA_SOURCE_VALUES"
+          "action": "run the drop-migration + information_schema probe on all 5 tables",
+          "outcome": "no rejecting data_source CHECK remains; the live DB matches the code's permissive-mirror"
         },
         {
-          "action": "INSERT a data_source='foreign' row on the server",
-          "outcome": "it succeeds (was CHECK-rejected pre-migration) -- the latent sync landmine is closed"
+          "action": "INSERT a data_source='foreign' row on the LIVE server",
+          "outcome": "it succeeds (was rejected by the stale live CHECK) -- re-tag unblocked, landmine closed"
         }
       ],
       "conditionalOutcomes": [],
@@ -3829,17 +3831,41 @@
       "type": "normal",
       "size": "S",
       "status": "sprint-ready",
-      "title": "data_source enum mirror-consistency test (Pi DATA_SOURCE_VALUES == server CHECK; A-4 anti-drift)",
+      "title": "data_source APPLIED-schema test -- deployed DB accepts 'foreign' (not Python tuples; A-10 guard)",
       "goal": "As the maintainer, I want a test that fails if the Pi and server data_source enums drift, so the F-116-class half-ship can't recur.",
       "definitionOfDone": [
-        "a mirror-consistency test asserts Pi DATA_SOURCE_VALUES (src/pi/obdii/data_source.py) == the server data_source CHECK enum (src/server/.../models.py) -- fails on any drift (precedent: tests/lint/test_address_mirror_consistency.py)",
-        "the test is GREEN after US-458 (enums identical); it would RED if they diverge again",
+        "[ATLAS CRITICAL] the test asserts the DEPLOYED/APPLIED schema accepts 'foreign' -- information_schema shows no rejecting data_source CHECK, OR an insert-and-rollback probe per table. NOT a Python-tuple comparison (Pi tuple == server enum are ALREADY equal -> would ship GREEN over the broken live DB = the exact mocked-green/IRL-miss that shipped this drift)",
+        "green after US-458 (applied schema accepts 'foreign' on every data_source table); RED if a stale/new rejecting CHECK exists",
         "ruff clean in-loop"
       ],
       "validationCriteria": [
         {
-          "action": "run the mirror-consistency test after US-458 lands",
-          "outcome": "green (Pi + server data_source enums identical); a deliberate drift makes it fail"
+          "action": "run the applied-schema test after US-458",
+          "outcome": "green -- the DEPLOYED schema accepts 'foreign' on all data_source tables; a stale rejecting CHECK makes it RED"
+        }
+      ],
+      "conditionalOutcomes": [],
+      "tasks": []
+    },
+    {
+      "id": "US-460",
+      "parent": "F-104",
+      "type": "normal",
+      "size": "M",
+      "status": "sprint-ready",
+      "title": "Wire the canonical drives mint into the harness (upsert_drive; F-104; US-451 deps this)",
+      "goal": "As the system, I want the harness to mint a drives row for every new drive so US-451's FK re-point does not orphan new-drive writes.",
+      "definitionOfDone": [
+        "[ATLAS ruling] the harness (drive_summary_compute.py / the server-analytics-batch) calls drive_identity.upsert_drive(source_device, source_drive_id, ...) as it derives EACH drive -- `drives` is a harness-owned table (F-104), so the harness mints its identity. Idempotent via the UNIQUE(source_device, source_drive_id) upsert (US-448)",
+        "currently upsert_drive has ZERO live call sites -> a NEW drive gets no drives row (compute falls back to drive_summary.id). After this, a fresh harness compute mints the drives row",
+        "verify: harness on a not-yet-minted drive -> a drives row is minted; re-run mints 0 duplicates (idempotent)",
+        "lands BEFORE US-451's FK re-point (US-451 deps this)",
+        "ruff clean in-loop; mypy (strict) at PM-integration"
+      ],
+      "validationCriteria": [
+        {
+          "action": "run the harness on a new/unminted drive, then re-run",
+          "outcome": "a drives row is minted via upsert_drive on first run; re-run mints 0 duplicates (idempotent)"
         }
       ],
       "conditionalOutcomes": [],

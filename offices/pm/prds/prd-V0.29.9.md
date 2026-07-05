@@ -10,7 +10,7 @@ epic: E-002, E-OPS
 feature: F-104, B-076, F-075, F-082
 theme: F-104 Server-Side Analytics Authority spine -- canonical drives + server drive_id + compute-harness + schema normalization
 validationMode: BENCH ONLY (DB introspection + INFORMATION_SCHEMA + idempotency re-run + tripwire-fixture + compute-vs-raw equivalence tests) -- NO drive drills; F-083 held post-capture
-selectedStories: [US-448, US-449, US-450, US-451, US-452, US-453, US-454, US-455, US-456, US-457, US-458, US-459]
+selectedStories: [US-448, US-449, US-450, US-451, US-452, US-453, US-454, US-455, US-456, US-457, US-458, US-459, US-460]
 ---
 
 # PRD: Sprint 55 / V0.29.9 — F-104 Server-Side Analytics Authority spine

@@ -71,3 +71,6 @@ Building the requested CHECK is not a mechanical scope-fence call:
 ## Resolution path
 
 Atlas rules A/B/C (routed via Marcus). On the ruling: if B → close US-458 as verified-no-op + point US-459 at the tuple-mirror guard (or confirm the existing test covers it). If A/C → re-groom US-458/US-459 with the deploy-risk + enforcement-point specified, and I execute the clean forward-only migration (or sync.py guard) + mirror test.
+
+## RESOLVED 2026-07-04 (Atlas)
+NOT moot -- ORM-vs-live-DB drift (A-10). Ruling A: DROP the stale live 4-value data_source CHECK (US-458 reframed); US-459 asserts the APPLIED schema; drive-33 re-tag after. Folded.
