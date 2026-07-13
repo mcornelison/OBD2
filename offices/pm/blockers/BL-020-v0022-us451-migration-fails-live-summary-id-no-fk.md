@@ -3,9 +3,10 @@
 | Field | Value |
 |---|---|
 | Severity | High (blocks V0.29.9 server deploy) |
-| Status | Active |
+| Status | RULED (Atlas 2026-07-13) — awaiting Ralph patch V0.29.10 |
 | Blocking | V0.29.9 server deploy (Pi deploy held behind it); drive-33 re-tag |
-| Waiting On | Atlas A-10 ruling + Ralph migration fix (patch V0.29.10) |
+| Waiting On | ~~Atlas A-10 ruling~~ FILED 2026-07-13 → Ralph migration fix (patch V0.29.10) |
+| Atlas ruling | `offices/architect/reports/2026-07-13-bl020-v0022-fk-repoint-defensive-ruling.md` (A2AL note in PM inbox 2026-07-13). Verdict: 3-state defensive `_repointSummaryFk` (drop+re-point / no-op / **ADD-only**), verified add-safe on prod (0 orphans, all `int(11)`); no BLOCK. Story1 = defensive v0022 (unblock); Story2 = applied-schema FK guard (TD-055 third leg). |
 | Created | 2026-07-05 |
 | Class | ORM-vs-applied-DB drift (A-10/TD-055) — 3rd occurrence this sprint (after BL-019) |
 
