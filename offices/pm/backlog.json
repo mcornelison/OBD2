@@ -4,8 +4,8 @@
   "updatedBy": "Marcus (PM)",
   "counters": {
     "epic": 7,
-    "feature": 111,
-    "story": 464
+    "feature": 118,
+    "story": 470
   },
   "epics": [
     {
@@ -1208,6 +1208,14 @@
       "status": "awaiting-validation",
       "createdAt": "2026-07-03",
       "currentVersion": "V0.29.8"
+    },
+    {
+      "id": "F-118",
+      "parent": "E-OPS",
+      "status": "active",
+      "title": "Backlog + dev-tooling hygiene (V0.29.12)",
+      "createdAt": "2026-07-13",
+      "updatedAt": "2026-07-13"
     }
   ],
   "stories": [
@@ -4012,6 +4020,179 @@
       ],
       "conditionalOutcomes": [
         "if real-MariaDB (testcontainer) infra cannot run in current CI -> deliver the test runnable locally against a MariaDB service + document the CI-enablement follow-up; do NOT silently skip (that is the create_all trap again)"
+      ],
+      "createdAt": "2026-07-13",
+      "updatedAt": "2026-07-13",
+      "tasks": []
+    },
+    {
+      "id": "US-465",
+      "parent": "F-118",
+      "type": "tech-debt",
+      "size": "M",
+      "status": "sprint-ready",
+      "title": "Backfill backlog metadata (47 drifted stories) + un-break pm_status",
+      "goal": "As the PM, I want every backlog story to carry its required fields and the tooling (pm_status, --backlog lint) to run clean, so the 47-story metadata drift (Sprints 50-55) is repaired and cannot recur.",
+      "definitionOfDone": [
+        "Pre-flight audit: enumerate every backlog.json story missing any required field (status, createdAt, updatedAt, conditionalOutcomes, tasks) and classify each by the sprint/version it shipped in (git history / sprint archives) BEFORE backfilling",
+        "Backfill the missing fields: status per the story REAL end-state (shipped Sprint 50-55 stories -> complete; any genuinely-open -> its real status), conditionalOutcomes/tasks -> [] where absent, createdAt/updatedAt from backlog.json git history (first-appearance commit) where feasible else the story sprint date (mark proxy-derived)",
+        "pm_status.py runs clean (no KeyError) AND sprint_lint --backlog returns 0 errors afterward",
+        "reusable idempotent offices/pm/scripts/backfill_story_metadata.py (skips already-compliant stories; re-run = no-op)",
+        "metadata-only: do NOT alter semantic content (title/goal/DoD/type/size/parent) of any story",
+        "ruff clean in-loop"
+      ],
+      "validationCriteria": [
+        {
+          "action": "run pm_status.py after the backfill",
+          "outcome": "completes without KeyError; prints rollups"
+        },
+        {
+          "action": "run sprint_lint.py --backlog",
+          "outcome": "0 errors"
+        },
+        {
+          "action": "re-run backfill_story_metadata.py",
+          "outcome": "no changes (idempotent)"
+        }
+      ],
+      "conditionalOutcomes": [
+        "if a story real end-state is ambiguous from git/archives -> mark status conservatively + note the proxy; never guess complete for genuinely-open work"
+      ],
+      "createdAt": "2026-07-13",
+      "updatedAt": "2026-07-13",
+      "tasks": []
+    },
+    {
+      "id": "US-466",
+      "parent": "F-118",
+      "type": "housekeeping",
+      "size": "S",
+      "status": "sprint-ready",
+      "title": "PM-tooling Windows UTF-8 hardening (stop cp1252 crashes)",
+      "goal": "As any agent on Windows, I want the PM scripts to not crash on cp1252 when printing/reading unicode, so ad-hoc backlog/sprint audits do not die with UnicodeEncodeError.",
+      "definitionOfDone": [
+        "Pre-flight audit: identify which offices/pm/scripts print or open() unicode (the arrow glyphs etc.) and currently require PYTHONIOENCODING=utf-8 to avoid crashing",
+        "those scripts set UTF-8 internally (guarded sys.stdout/stderr.reconfigure(encoding=utf-8)) AND all open() use encoding=utf-8",
+        "create offices/pm/knowledge/feedback-pm-windows-encoding-ad-hoc-audits.md (canonical recipe: PYTHONIOENCODING + encoding=utf-8; reference _freeze.py)",
+        "ruff clean in-loop"
+      ],
+      "validationCriteria": [
+        {
+          "action": "run each touched PM script on Windows WITHOUT PYTHONIOENCODING set",
+          "outcome": "no UnicodeEncodeError; unicode prints correctly"
+        }
+      ],
+      "conditionalOutcomes": [],
+      "createdAt": "2026-07-13",
+      "updatedAt": "2026-07-13",
+      "tasks": []
+    },
+    {
+      "id": "US-467",
+      "parent": "F-118",
+      "type": "tech-debt",
+      "size": "S",
+      "status": "sprint-ready",
+      "title": "TD-057 stale git index.lock guarded helper (slow-NAS)",
+      "goal": "As an agent on the chi-nas-01 share, I want a guarded helper that waits out (and only clears a truly-stale) .git/index.lock, so lock churn stops blocking commits without ever deleting a lock a live git process holds.",
+      "definitionOfDone": [
+        "Pre-flight audit: confirm the failure mode (stale index.lock from the slow SMB share blocking commits) + how to reliably detect a live git process holding the lock",
+        "helper retries-with-backoff on lock; clears ONLY if no git process is running AND the lock exceeds an age threshold; NEVER force-deletes under a live process (the discipline invariant)",
+        "documented usage; wired where PM commits happen if practical",
+        "ruff clean in-loop"
+      ],
+      "validationCriteria": [
+        {
+          "action": "simulate a stale lock (no live git process)",
+          "outcome": "helper clears it + the commit succeeds"
+        },
+        {
+          "action": "simulate a live-held lock",
+          "outcome": "helper waits/refuses; never deletes"
+        }
+      ],
+      "conditionalOutcomes": [],
+      "createdAt": "2026-07-13",
+      "updatedAt": "2026-07-13",
+      "tasks": []
+    },
+    {
+      "id": "US-468",
+      "parent": "F-118",
+      "type": "housekeeping",
+      "size": "XS",
+      "status": "sprint-ready",
+      "title": "Formalize Story.md-mirror retirement (backlog.json = SSOT)",
+      "goal": "As the PM, I want the dropped Story.md-mirror convention formally retired, so backlog.json is the single story SSOT and no skill/doc implies mirrors are required.",
+      "definitionOfDone": [
+        "Pre-flight audit: grep skills/commands/PM-Rules/folder-structure docs for existing Story.md-mirror references before editing",
+        "update PM Rule / folder-structure docs: stories live in backlog.json; offices/pm/backlog/US-*.md mirrors are retired/optional (newest mirror ~US-398)",
+        "remove or annotate any skill/command step that instructs writing Story.md mirrors"
+      ],
+      "validationCriteria": [
+        {
+          "action": "grep skills/docs for Story.md mirror",
+          "outcome": "only the retirement note remains; no step still requires mirrors"
+        }
+      ],
+      "conditionalOutcomes": [],
+      "createdAt": "2026-07-13",
+      "updatedAt": "2026-07-13",
+      "tasks": []
+    },
+    {
+      "id": "US-469",
+      "parent": "F-118",
+      "type": "tech-debt",
+      "size": "S",
+      "status": "sprint-ready",
+      "title": "SS-T7 deploy-gate tripwire into /sprint-deploy-pm Phase-0",
+      "goal": "As the PM, I want the deploy-gate tripwire welded into /sprint-deploy-pm Phase-0, so a deploy cannot proceed past a failed pre-flight (the best-effort-continue class that let V0.27.17 ship broken).",
+      "definitionOfDone": [
+        "Pre-flight audit: locate the best-effort-continue-past-red gap in the current deploy path (the V0.27.17 marker-on-failure class) + define what Phase-0 must assert",
+        "Phase-0 asserts pre-flight / marker integrity and HALTS on failure (no best-effort continue past a red gate)",
+        "test / dry-run proving a red pre-flight stops the deploy (non-zero exit)",
+        "ruff clean in-loop"
+      ],
+      "validationCriteria": [
+        {
+          "action": "dry-run /sprint-deploy-pm with a forced red pre-flight",
+          "outcome": "deploy halts with non-zero exit; does not continue best-effort"
+        }
+      ],
+      "conditionalOutcomes": [],
+      "createdAt": "2026-07-13",
+      "updatedAt": "2026-07-13",
+      "tasks": []
+    },
+    {
+      "id": "US-470",
+      "parent": "F-104",
+      "type": "tech-debt",
+      "size": "M",
+      "status": "sprint-ready",
+      "title": "Real-MariaDB migration test CI-enablement (testcontainers/11.x)",
+      "goal": "As the maintainer, I want US-464 live real-MariaDB migration test to run in CI (not just on-demand), so the BL-019/020/021 drift class is gated automatically instead of relying on the deploy.",
+      "definitionOfDone": [
+        "Pre-flight audit: confirm US-464 live layer currently honest-skips (no Docker on bench) + what CI infra is available (Docker-enabled runner / MariaDB service container)",
+        "add testcontainers (or a MariaDB service-container config) to a dev/CI-only requirements set -- NOT a runtime dep (Pi/server prod installs must not pull it)",
+        "wire a CI job running pytest tests/server/test_migration_chain_real_mariadb.py -m integration against MariaDB 11.x (matching prod 11.8.6 per Atlas TIGHTEN-2)",
+        "the live layer executes + gates in CI (no longer honest-skip there); document the local DSN path (OBD2_MARIADB_TEST_DSN) for manual runs",
+        "annotate/close TD-055 as addressed (US-464 + this CI wiring); add a pointer from the create_all caveat in tests/integration/test_deploy_context_drive_simulator.py",
+        "ruff clean in-loop"
+      ],
+      "validationCriteria": [
+        {
+          "action": "run the CI job",
+          "outcome": "the live real-MariaDB integration test EXECUTES (not skipped) against 11.x -- passes on clean schema, fails on seeded drift"
+        },
+        {
+          "action": "inspect the runtime/prod requirements",
+          "outcome": "testcontainers is NOT present in runtime/prod deps"
+        }
+      ],
+      "conditionalOutcomes": [
+        "if the CI environment truly cannot run Docker -> document the concrete blocker + keep the DSN-based manual gate as the interim; do NOT silently mark done"
       ],
       "createdAt": "2026-07-13",
       "updatedAt": "2026-07-13",
