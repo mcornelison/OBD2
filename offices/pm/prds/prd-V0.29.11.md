@@ -10,7 +10,7 @@ sprintJsonPath: offices/ralph/sprint.json
 epic: E-002
 feature: F-116 + F-104
 theme: BL-021 unblock -- MODIFY-COLUMN v0023 + TD-055 real-MariaDB migration test
-atlasReview: "PENDING -- Atlas to design-gate this PRD (his BL-021 ruling 2026-07-13-from-atlas-bl021-v0023-modify-column-ruling.md is the basis; report reports/2026-07-13-bl021-v0023-inline-check-modify-column-ruling.md)"
+atlasReview: "PASS 2026-07-13 -- no BLOCK (inbox 2026-07-13-from-atlas-v0.29.11-prd-review.md). TIGHTEN-1 (US-463 real-MariaDB acceptance, in-loop != validated) + TIGHTEN-2 (US-464 pin testcontainer to MariaDB 11.x) FOLDED into story DoD. Basis: BL-021 ruling 2026-07-13-from-atlas-bl021-v0023-modify-column-ruling.md."
 ---
 
 # PRD: V0.29.11 -- BL-021 unblock (MODIFY-COLUMN v0023) + TD-055 real-MariaDB migration test
