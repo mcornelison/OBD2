@@ -1,110 +1,99 @@
 {
   "schemaVersion": "2.0.0",
-  "sprint": 56,
-  "version": "V0.29.10",
-  "createdFromPRD": "offices/pm/prds/prd-V0.29.10.md",
+  "sprint": 57,
+  "version": "V0.29.11",
+  "createdFromPRD": "offices/pm/prds/prd-V0.29.11.md",
   "stories": [
     {
-      "id": "US-461",
-      "title": "3-state defensive v0022 identity-collapse migration (BL-020 unblock)",
-      "parent": "F-104",
+      "id": "US-463",
+      "title": "MODIFY-COLUMN v0023 -- strip stale inline data_source CHECK (BL-021)",
+      "parent": "F-116",
       "epicId": "E-002",
       "type": "blocker",
       "size": "M",
-      "status": "done",
-      "passes": true,
-      "completionNotes": "Rex/Agent1 Sprint 56. Rewrote v0022 _repointSummaryFk to the Atlas 3-STATE per-table branch keyed on the APPLIED summary_id FK (information_schema.KEY_COLUMN_USAGE), NOT the drifted ORM FK: (1) FK->drive_summary => drop stale + ADD->drives.drive_id; (2) FK->drives => no-op; (3) NO FK => ADD-only, skip the drop. Removes the pre-BL-020 line ~343 bug that collapsed states 2+3 and fatalled on state 3 (SchemaProbeError 'the expected FK is missing') -- exactly drive_statistics on the drifted prod schema where create_all never auto-named the FK the ORM assumes. Added _addDrivesFk() shared ADD-path with an _orphanSummaryIdCount() LEFT-JOIN anti-join guard on BOTH state-1 and state-3: a non-zero orphan count fails loud with the count (MigrationError) BEFORE any ADD -- never ADD an FK that will not validate (0 for existing rows, v0018 subsumed drive_summary.id INTO drives.drive_id identical values). Collapse-table set enumerated: drive_statistics [state-3, no FK] + drive_derived_signals [state-1, stale FK->drive_summary from v0017]; drive_annotations docstring CORRECTED -- exists on prod but has NO summary_id column => genuine no-op (was mislabeled 'no such table'). Per Atlas Q2 NO drive_summary.id->drives hard FK added. Idempotent/forward-safe: replay on canonical DB = state-2 everywhere. TESTS (hermetic FakeRunner, no SSH/MariaDB): replaced test_fkMissingEntirelyRaises (encoded the old buggy fatal) with TestRepointThreeState (state-1 drop+add, state-2 no-op, state-3 ADD-only-no-drop, state-3 orphans fail-loud-no-ADD, state-1 orphans fail-loud) + TestApplyDriftedProduction (real BL-020 shape: stats state-3 ADD-only, derived state-1 drop+add). 31 passed, ruff clean in-loop. PM/DEPLOY GATE (BENCH-ONLY, owed at integration on chi-srv-01): run v0022 upgrade against the live drifted DB after 0018-0021 applied -- verify drive_statistics.summary_id ends with exactly one FK->drives.drive_id, no line-~343 fatal; couple with US-462 preflight guard. mypy strict = PM integration gate (not installed in dev).",
-      "feedback": {
-        "filesActuallyTouched": [
-          "src/server/migrations/versions/v0022_us451_drive_identity_collapse.py",
-          "tests/server/test_migration_0022_drive_identity_collapse.py"
-        ]
-      },
+      "status": "sprint-ready",
+      "passes": false,
       "acceptance": [
-        "Pre-flight audit: before writing any branch, read the current v0022 body AND query information_schema for the applied summary_id FK on EVERY collapse table (fixture + prod-mirror) -- enumerate the real tables + their actual FK state; do not assume the ORM's FK",
-        "[ATLAS RULING 2026-07-13] v0022 probes each collapse table's APPLIED summary_id FK and branches 3-STATE per table: (1) FK->drive_summary => drop+re-point to drives.drive_id; (2) FK->drives => no-op; (3) NO FK => ADD-only to drives.drive_id, skip the drop. Removes the line ~343 bug (states 2+3 collapsed, fatals on state 3) NOTE [ATLAS GAP-2]: v0022 is a custom MigrationRunner step (src/server/migrations + scripts/apply_server_migrations.py), raw SQL via _runServerSql -- NOT Alembic op.*",
-        "applied to EVERY collapse table (>=drive_statistics [state 3, no FK] + drive_derived_signals [state 1, stale FK->drive_summary]); drive_annotations comment corrected (exists on prod, no summary_id col => genuine no-op); per Atlas Q2 do NOT add a drive_summary.id->drives hard FK",
-        "idempotent / re-runnable: resumes clean at v0022 (0018-0021 applied); second run is a no-op; forward-safe on an already-canonical DB; on runtime orphans vs drives.drive_id, fail loud with the count (never ADD an FK that won't validate)",
-        "tests: state-3 (no FK)->ADD, state-1 (stale FK)->drop+re-point, state-2 (already->drives)->no-op, 0-orphan precondition; targeted + synchronous + committed in-iteration",
+        "Pre-flight audit: before writing the fix, read the current v0023 body AND introspect (information_schema) the actual data_source column def + CHECK on every affected table (calibration_sessions, connection_log, profiles, realtime_data, statistics) on a real MariaDB; confirm inline (name==column) vs table-level",
+        "[ATLAS RULING 2026-07-13] Replace v0023's DROP with per-table MODIFY COLUMN that strips the inline CHECK while PRESERVING the full INTROSPECTED column def (a bare MODIFY VARCHAR(16) silently resets collation) -- the 5 tables are VARCHAR(16) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'real'; introspect+preserve, do not hardcode. DROP CHECK is NOT MariaDB syntax (1064); DROP CONSTRAINT can't drop an inline CHECK (1091)",
+        "Branch inline-vs-table: inline (name==column) -> MODIFY COLUMN (strip CHECK); table-level (ck_*) -> DROP CONSTRAINT. Keep v0023's existing discovery + post-probe (Atlas: sound). Today all 5 are inline",
+        "Applied to EVERY affected data_source table; idempotent/re-runnable (re-run after success = no-op, no CHECK to strip); replays clean + resumes at v0023 (0018-0022 already applied on prod)",
+        "Tests: fixture table with the stale inline data_source CHECK -> after v0023 the CHECK is gone AND the col def (collation/default/nullability/length) is preserved AND the table accepts data_source='foreign'; re-run = no-op. Real-MariaDB per US-464 where available; targeted+synchronous+committed in-iteration [ATLAS TIGHTEN-1] the in-loop hermetic test is SQLite/create_all and CANNOT reproduce 1091/1064/inline-CHECK semantics -- a green in-loop test does NOT validate the MariaDB DDL fix (the 4-cycle trap); US-464's real-MariaDB test is sequenced AFTER this story. TRUE acceptance = the live deploy resuming clean at v0023 on real MariaDB (Atlas pre-proved MODIFY COLUMN strips the inline CHECK, no 1091/1064).",
         "ruff clean in-loop"
       ],
       "validationCriteria": [
         {
-          "action": "run v0022 upgrade against a fixture where drive_statistics.summary_id has zero FKs",
-          "outcome": "succeeds; column ends with exactly one FK -> drives.drive_id; no fatal at line ~343"
+          "action": "run v0023 against a table carrying the stale inline data_source CHECK (VARCHAR(16) utf8mb4_unicode_ci NOT NULL DEFAULT 'real')",
+          "outcome": "CHECK removed; column def fully preserved (collation/default/nullability/length); table now accepts data_source='foreign'; no 1091 / no 1064"
         },
         {
-          "action": "run v0022 against a fixture where drive_derived_signals.summary_id has a stale FK -> drive_summary",
-          "outcome": "stale FK dropped, canonical FK -> drives.drive_id added; the row is intact"
+          "action": "re-run v0023 after a successful apply",
+          "outcome": "no-op, no error, no data_source CHECK present"
         },
         {
-          "action": "re-run v0022 after a successful apply (state-2 everywhere)",
-          "outcome": "no-op, no error, FK set unchanged"
+          "action": "run v0023 across all 5 affected tables",
+          "outcome": "each inline CHECK stripped; migration chain resumes + completes at v0023"
+        },
+        {
+          "action": "apply v0023 on the real server deploy (real MariaDB 11.x) -- NOT the SQLite/create_all in-loop test",
+          "outcome": "migration chain resumes clean at v0023 and completes; this real-MariaDB pass is US-463's acceptance -- a green in-loop test is NOT sufficient validation"
         }
       ],
       "conditionalOutcomes": [
-        "if enumerating the v0022 body reveals a collapse table beyond drive_statistics/drive_derived_signals -> apply the same 3-state branch; do not skip silently",
-        "if a target column shows orphan rows vs drives.drive_id at runtime -> fail loud with the orphan count (do not ADD an FK that won't validate)"
+        "if a table's data_source CHECK is table-level (ck_*) rather than inline -> use DROP CONSTRAINT for that one (the branch handles both); today all 5 are inline",
+        "if introspection shows a column def differing from utf8mb4_unicode_ci / DEFAULT 'real' -> preserve the ACTUAL introspected def, never assume"
       ],
-      "goal": "As the deploy pipeline, I want v0022 to reconcile each collapse table's summary_id FK by probing its actual applied state and branching 3 ways, so the identity collapse applies cleanly on a drifted production schema without fatalling, guessing, or damaging data.",
+      "goal": "As the deploy pipeline, I want v0023 to strip each table's stale inline data_source CHECK via a definition-preserving MODIFY COLUMN, so the migration applies on real MariaDB (where DROP CONSTRAINT can't drop an inline CHECK and DROP CHECK is not valid syntax) and the V0.29.10 deploy completes.",
       "tasks": []
     },
     {
-      "id": "US-462",
-      "title": "Applied-schema FK/CHECK guard -- pre-migration A-10 drift tripwire",
+      "id": "US-464",
+      "title": "TD-055 real-MariaDB migration-chain CI test (A-10 drift class)",
       "parent": "F-104",
       "epicId": "E-002",
       "type": "tech-debt",
       "size": "M",
-      "status": "done",
-      "passes": true,
-      "completionNotes": "Rex/Agent1 Sprint 56. New src/server/migrations/preflight.py: assertDriveIdentityFks reads the APPLIED schema via information_schema.KEY_COLUMN_USAGE (reuses v0022 _fkNameReferencing -- define-once; NEVER create_all/ORM-metadata = the US-459 theater trap Atlas flagged), fails with PreflightError(MigrationError) naming table+column+expected FK target. DRIVE_IDENTITY_FKS registry built from v0022 constants (drive_statistics + drive_derived_signals summary_id -> drives.drive_id). WIRED into scripts/apply_server_migrations.runRegistry BEFORE the migration set (reg built once, preflight then runAll). TWO-LAYER per Atlas GAP-1: (a) HERMETIC verdict tests (always run) prove RED on a missing expected FK, GREEN when all present, LOUD on unreachable probe; (b) LIVE preflight wired in, fails the deploy on drift, SKIPS HONESTLY (SELECT 1 reachability probe) when no MariaDB. CRITICAL design choice to avoid re-shipping BL-020: the 'before the migration set' wiring would DEADLOCK the BL-020 resume-deploy (v0022 is PENDING and is itself what CREATES these FKs), so the wired entry assertAppliedMigrationFkTopology LEDGER-GATES the expected set by schema_migrations -- asserts only FKs whose sourceVersion is already applied. On the resume-deploy (schema_migrations=0021, v0022 pending) it defers; it fires only when an ALREADY-applied migration's promised topology regressed (true A-10 tripwire). Updated tests/server/test_migrations.py::test_main_runAll_noopOnFullyMigrated (fully-migrated DB now carries the FKs -> its fake runner answers the KEY_COLUMN_USAGE probe). TESTS: 84 passed (preflight 21 + runner/migrations 32 + v0022 31 regression), ruff clean in-loop. conditionalOutcome: TD-055 (create_all-masks-drift, Option A testcontainers third leg) exists ARCHIVED at offices/pm/archive/intake-records/tech_debt/; handed PM an inbox note (2026-07-13-from-rex-us462-td055-third-leg-deferral.md) to annotate the third-leg deferral. PM/DEPLOY GATE (bench-only): after v0022 applies on live drifted DB, next --run-all preflight verifies both summary_id FKs -> drives.drive_id present; drifted DB fails fast. mypy strict = PM integration gate (not installed in dev).",
-      "feedback": {
-        "filesActuallyTouched": [
-          "src/server/migrations/preflight.py",
-          "scripts/apply_server_migrations.py",
-          "tests/server/test_migration_preflight_fk_topology.py",
-          "tests/server/test_migrations.py",
-          "offices/pm/inbox/2026-07-13-from-rex-us462-td055-third-leg-deferral.md"
-        ]
-      },
+      "status": "sprint-ready",
+      "passes": false,
       "acceptance": [
-        "Pre-flight audit: before adding the guard, audit where US-459's applied-schema guard is wired in apply_server_migrations AND which drive-identity FKs the pending migrations require -- mirror that placement + reporting shape",
-        "[ATLAS GAP-1 TWO-LAYER, mirror US-459 tests/server/test_data_source_applied_schema_accepts_foreign.py:39-52] (a) HERMETIC verdict test: preflight goes RED on a missing expected drive-identity FK, GREEN when all present",
-        "[ATLAS GAP-1] (b) LIVE preflight WIRED into apply_server_migrations BEFORE the migration set: FAILS the deploy on drift; when no MariaDB is reachable it SKIPS HONESTLY (never reports pass -- the Windows bench case). Hermetic-test-only + silently-passing live wiring = the exact green-over-broken-deploy that IS BL-020",
-        "[ATLAS Q3] guard reads the APPLIED schema via information_schema (FK topology + relevant CHECKs), never create_all / ORM-metadata-only; failure message names table + column + expected FK target",
+        "Pre-flight audit: identify the current server-migration test path (the SQLite/create_all route that green-passed BL-020 + BL-021) and what real-MariaDB test infra exists (testcontainers / service); confirm the exact gap",
+        "[ATLAS RULING 2026-07-13 -- TD-055 graduates to funded] a test applies the FULL pending migration chain against a REAL MariaDB instance (testcontainer or equivalent), NOT SQLite / create_all -- create_all is precisely what shipped BL-020 + BL-021 green [ATLAS TIGHTEN-2] pin the testcontainer to the PROD MariaDB major (11.x, matching 11.8.6) -- the BL-021 quirk is MariaDB-version-sensitive; a wrong-version container could green-pass a prod-failing migration.",
+        "the test provably CATCHES both classes: BL-020 (FK drift / missing-FK) AND BL-021 (inline-CHECK DROP CONSTRAINT failure) -- seed the drifted schema state + assert the chain applies clean or fails loudly (never green over a broken DB)",
+        "wired into the test suite / CI (marked @pytest.mark.integration|slow if it needs a container); documents the TD-055 lineage (BL-019 -> BL-020 -> US-459 theater-trap -> BL-021, Atlas's 4th cycle)",
         "ruff clean in-loop"
       ],
       "validationCriteria": [
         {
-          "action": "run preflight against a DB missing an expected drive-identity FK",
-          "outcome": "non-zero exit; message names table + column + expected FK target"
+          "action": "run the migration-chain test against a real MariaDB seeded with a drifted schema (missing FK and/or stale inline CHECK)",
+          "outcome": "the test FAILS loudly on the drift (would have caught BL-020 + BL-021), does not green-pass"
         },
         {
-          "action": "run preflight against a fully-reconciled DB",
-          "outcome": "pass, zero exit"
+          "action": "run against the expected/clean schema",
+          "outcome": "the full chain applies and the test passes"
         }
       ],
       "conditionalOutcomes": [
-        "the fuller testcontainer 'third leg' is OUT OF SCOPE here -> file/annotate TD-055 for it (Atlas: 'file it if not built'); this story is the now-achievable preflight assert only"
+        "if real-MariaDB (testcontainer) infra cannot run in current CI -> deliver the test runnable locally against a MariaDB service + document the CI-enablement follow-up; do NOT silently skip (that is the create_all trap again)"
       ],
-      "goal": "As the deploy pipeline, I want a pre-migration preflight that asserts the APPLIED FK/CHECK topology (from information_schema, never create_all) against what the pending migrations require, so A-10 ORM-vs-DB drift fails fast at preflight with an actionable message instead of mid-migration at deploy.",
+      "goal": "As the maintainer, I want a test that applies the full migration chain against a REAL MariaDB (not SQLite/create_all), so the migration-vs-live-DB drift class (BL-019/020/021) is caught in CI instead of one deploy at a time.",
       "tasks": []
     }
   ],
   "validation": {
     "bigDefinitionOfDone": [
-      "(run v0022 upgrade against a fixture where drive_statistics.summary_id has zero FKs) → (succeeds; column ends with exactly one FK -> drives.drive_id; no fatal at line ~343)  [from US-461]",
-      "(run v0022 against a fixture where drive_derived_signals.summary_id has a stale FK -> drive_summary) → (stale FK dropped, canonical FK -> drives.drive_id added; the row is intact)  [from US-461]",
-      "(re-run v0022 after a successful apply (state-2 everywhere)) → (no-op, no error, FK set unchanged)  [from US-461]",
-      "(run preflight against a DB missing an expected drive-identity FK) → (non-zero exit; message names table + column + expected FK target)  [from US-462]",
-      "(run preflight against a fully-reconciled DB) → (pass, zero exit)  [from US-462]"
+      "(run v0023 against a table carrying the stale inline data_source CHECK (VARCHAR(16) utf8mb4_unicode_ci NOT NULL DEFAULT 'real')) → (CHECK removed; column def fully preserved (collation/default/nullability/length); table now accepts data_source='foreign'; no 1091 / no 1064)  [from US-463]",
+      "(re-run v0023 after a successful apply) → (no-op, no error, no data_source CHECK present)  [from US-463]",
+      "(run v0023 across all 5 affected tables) → (each inline CHECK stripped; migration chain resumes + completes at v0023)  [from US-463]",
+      "(apply v0023 on the real server deploy (real MariaDB 11.x) -- NOT the SQLite/create_all in-loop test) → (migration chain resumes clean at v0023 and completes; this real-MariaDB pass is US-463's acceptance -- a green in-loop test is NOT sufficient validation)  [from US-463]",
+      "(run the migration-chain test against a real MariaDB seeded with a drifted schema (missing FK and/or stale inline CHECK)) → (the test FAILS loudly on the drift (would have caught BL-020 + BL-021), does not green-pass)  [from US-464]",
+      "(run against the expected/clean schema) → (the full chain applies and the test passes)  [from US-464]"
     ],
-    "validationMethod": "BENCH-ONLY",
+    "validationMethod": "REAL-MARIADB + DEPLOY",
     "validatesFeatures": [
+      "F-116",
       "F-104"
     ],
-    "currentVersion": "V0.29.10",
+    "currentVersion": "V0.29.11",
     "validatedAt": null,
     "validatedBy": null
   }
