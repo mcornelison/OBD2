@@ -51,3 +51,65 @@ Task: 3-state defensive v0022 identity-collapse migration (BL-020 unblock)
 - **Gotcha**: orphan guard belongs on EVERY ADD path (state-1 after the drop AND
   state-3), not just one — factor it into the shared ADD helper.
 ---
+
+## 2026-07-13 - US-462 (Rex / Agent 1, Session 2 — Sprint 56)
+Task: Applied-schema FK/CHECK guard — pre-migration A-10 drift tripwire
+
+### What was implemented:
+- New `src/server/migrations/preflight.py`: an applied-schema drive-identity FK
+  topology guard. `assertDriveIdentityFks` probes the **APPLIED** schema via
+  `information_schema.KEY_COLUMN_USAGE` (reusing v0022's `_fkNameReferencing` —
+  **define-once**, NEVER `create_all` / ORM-metadata = the US-459 theater trap
+  Atlas flagged) and raises `PreflightError(MigrationError)` naming
+  table + column + expected FK target on any missing FK.
+- `DRIVE_IDENTITY_FKS` registry built from v0022's own constants
+  (`drive_statistics` + `drive_derived_signals` `summary_id` → `drives.drive_id`),
+  each tagged with `sourceVersion='0022'`.
+- **Wired** into `scripts/apply_server_migrations.runRegistry` **before** the
+  migration set (build `reg` once → preflight → `runAll`). Two-layer per Atlas
+  GAP-1: (a) hermetic verdict tests always run; (b) live preflight fails the
+  deploy on drift + **skips honestly** (a `SELECT 1` reachability probe) when no
+  MariaDB is reachable (the Windows bench).
+- **Ledger gate** (the load-bearing design choice): `assertAppliedMigrationFkTopology`
+  asserts only FKs whose `sourceVersion` is already recorded in
+  `schema_migrations`. This is what stops the "before the migration set" wiring
+  from DEADLOCKING the BL-020 resume-deploy — v0022 is *pending* and is itself
+  what CREATES these FKs, so requiring them pre-migration would block the very
+  reconciliation. The guard therefore fires only when an *already-applied*
+  migration's promised topology has regressed (a true A-10 regression tripwire).
+
+### Files changed:
+- Created: `src/server/migrations/preflight.py` (guard + registry + wiring entry)
+- Modified: `scripts/apply_server_migrations.py` (`runRegistry` calls the
+  preflight before `runAll`)
+- Created: `tests/server/test_migration_preflight_fk_topology.py` (hermetic
+  verdict + ledger-gate + honest-skip + wired-before-runAll + design self-scan)
+- Modified: `tests/server/test_migrations.py`
+  (`test_main_runAll_noopOnFullyMigrated` fake runner now answers the
+  KEY_COLUMN_USAGE probe — a fully-migrated DB carries the drive-identity FKs)
+- Created: `offices/pm/inbox/2026-07-13-from-rex-us462-td055-third-leg-deferral.md`
+
+### Verification:
+- `pytest tests/server/test_migration_preflight_fk_topology.py
+  tests/server/test_migrations.py tests/server/test_migration_0022_...` → 84 passed
+- `ruff check` on all 4 touched .py files → All checks passed
+- BENCH-ONLY PM/DEPLOY GATE (owed at integration on chi-srv-01): after v0022
+  applies on the live drifted DB, next `--run-all` preflight verifies both
+  `summary_id` FKs → `drives.drive_id` present; a drifted DB fails fast. mypy
+  strict = PM integration gate (not installed in dev).
+
+### Learnings for future iterations:
+- **Pattern discovered**: when a "before the migration set" preflight would
+  require the very topology a *pending* migration creates, gate the assertion by
+  the applied-migration ledger (`schema_migrations`). It converts a deadlock-prone
+  precondition into a forward-safe **regression tripwire** — assert only what a
+  *completed* migration promised.
+- **Gotcha**: a self-scan design guard that forbids a token (`create_all`) trips
+  on the module's own explanatory prose. Forbid the **invocation** form
+  (`create_all(` + `.metadata`) instead of the bare name (mirrors US-459's
+  split-token trick), and pair it with a *positive* assertion (the probe issues
+  `KEY_COLUMN_USAGE`).
+- **Gotcha**: wiring a preflight into `runRegistry` changes the behaviour of the
+  existing `--run-all` end-to-end tests — a "fully migrated" fixture must now
+  also model the FKs as *present* or the new guard reads it as drift.
+---

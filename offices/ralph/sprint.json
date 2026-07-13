@@ -56,8 +56,18 @@
       "epicId": "E-002",
       "type": "tech-debt",
       "size": "M",
-      "status": "sprint-ready",
-      "passes": false,
+      "status": "done",
+      "passes": true,
+      "completionNotes": "Rex/Agent1 Sprint 56. New src/server/migrations/preflight.py: assertDriveIdentityFks reads the APPLIED schema via information_schema.KEY_COLUMN_USAGE (reuses v0022 _fkNameReferencing -- define-once; NEVER create_all/ORM-metadata = the US-459 theater trap Atlas flagged), fails with PreflightError(MigrationError) naming table+column+expected FK target. DRIVE_IDENTITY_FKS registry built from v0022 constants (drive_statistics + drive_derived_signals summary_id -> drives.drive_id). WIRED into scripts/apply_server_migrations.runRegistry BEFORE the migration set (reg built once, preflight then runAll). TWO-LAYER per Atlas GAP-1: (a) HERMETIC verdict tests (always run) prove RED on a missing expected FK, GREEN when all present, LOUD on unreachable probe; (b) LIVE preflight wired in, fails the deploy on drift, SKIPS HONESTLY (SELECT 1 reachability probe) when no MariaDB. CRITICAL design choice to avoid re-shipping BL-020: the 'before the migration set' wiring would DEADLOCK the BL-020 resume-deploy (v0022 is PENDING and is itself what CREATES these FKs), so the wired entry assertAppliedMigrationFkTopology LEDGER-GATES the expected set by schema_migrations -- asserts only FKs whose sourceVersion is already applied. On the resume-deploy (schema_migrations=0021, v0022 pending) it defers; it fires only when an ALREADY-applied migration's promised topology regressed (true A-10 tripwire). Updated tests/server/test_migrations.py::test_main_runAll_noopOnFullyMigrated (fully-migrated DB now carries the FKs -> its fake runner answers the KEY_COLUMN_USAGE probe). TESTS: 84 passed (preflight 21 + runner/migrations 32 + v0022 31 regression), ruff clean in-loop. conditionalOutcome: TD-055 (create_all-masks-drift, Option A testcontainers third leg) exists ARCHIVED at offices/pm/archive/intake-records/tech_debt/; handed PM an inbox note (2026-07-13-from-rex-us462-td055-third-leg-deferral.md) to annotate the third-leg deferral. PM/DEPLOY GATE (bench-only): after v0022 applies on live drifted DB, next --run-all preflight verifies both summary_id FKs -> drives.drive_id present; drifted DB fails fast. mypy strict = PM integration gate (not installed in dev).",
+      "feedback": {
+        "filesActuallyTouched": [
+          "src/server/migrations/preflight.py",
+          "scripts/apply_server_migrations.py",
+          "tests/server/test_migration_preflight_fk_topology.py",
+          "tests/server/test_migrations.py",
+          "offices/pm/inbox/2026-07-13-from-rex-us462-td055-third-leg-deferral.md"
+        ]
+      },
       "acceptance": [
         "Pre-flight audit: before adding the guard, audit where US-459's applied-schema guard is wired in apply_server_migrations AND which drive-identity FKs the pending migrations require -- mirror that placement + reporting shape",
         "[ATLAS GAP-1 TWO-LAYER, mirror US-459 tests/server/test_data_source_applied_schema_accepts_foreign.py:39-52] (a) HERMETIC verdict test: preflight goes RED on a missing expected drive-identity FK, GREEN when all present",
