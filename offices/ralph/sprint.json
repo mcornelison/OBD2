@@ -1,114 +1,201 @@
 {
   "schemaVersion": "2.0.0",
-  "sprint": 57,
-  "version": "V0.29.11",
-  "createdFromPRD": "offices/pm/prds/prd-V0.29.11.md",
+  "sprint": 58,
+  "version": "V0.29.12",
+  "createdFromPRD": "offices/pm/prds/prd-V0.29.12.md",
   "stories": [
     {
-      "id": "US-463",
-      "title": "MODIFY-COLUMN v0023 -- strip stale inline data_source CHECK (BL-021)",
-      "parent": "F-116",
-      "epicId": "E-002",
-      "type": "blocker",
+      "id": "US-465",
+      "title": "Backfill backlog metadata (47 drifted stories) + un-break pm_status",
+      "parent": "F-118",
+      "epicId": "E-OPS",
+      "type": "tech-debt",
       "size": "M",
       "status": "sprint-ready",
-      "passes": true,
-      "feedback": {
-        "filesActuallyTouched": [
-          "src/server/migrations/versions/v0023_us458_drop_stale_data_source_check.py",
-          "tests/server/test_migration_0023_drop_stale_data_source_check.py"
-        ]
-      },
-      "completionNotes": "BL-021 fix SHIPPED (bench-only; TRUE acceptance = live deploy on real MariaDB 11.x per US-464 + Atlas TIGHTEN-1). v0023 now BRANCHES each discovered data_source CHECK on shape: INLINE (CONSTRAINT_NAME=='data_source', i.e. name==column) -> definition-preserving MODIFY COLUMN that strips the inline CHECK; TABLE-LEVEL (ck_*) -> original DROP CONSTRAINT path. Per Atlas ruling all 5 live CHECKs are inline (realtime_data/statistics/connection_log/profiles/calibration_sessions). New introspectColumnDefSql + _introspectColumnDef read the live col def from information_schema.COLUMNS (COLUMN_TYPE/CHARACTER_SET_NAME/COLLATION_NAME/IS_NULLABLE/COLUMN_DEFAULT) BEFORE modifying; modifyColumnStripCheckSql rebuilds the MODIFY preserving every attribute (a bare MODIFY VARCHAR(16) resets collation) with NO CHECK clause -> the inline CHECK is dropped. COLUMN_DEFAULT echoed verbatim (already a valid SQL expr, e.g. 'real'); nothing hardcoded (introspect+preserve). Discovery + zero-survivor post-probe unchanged (Atlas: sound). Idempotent: after a strip the inline CHECK is gone from CHECK_CONSTRAINTS -> re-run discovers 0 -> no-op. LIMIT (Atlas TIGHTEN-1, the 4-cycle trap): the in-loop hermetic FakeRunner test proves CONTROL FLOW + SQL shape ONLY -- SQLite/create_all CANNOT reproduce 1091/1064/inline-CHECK semantics, so a green in-loop test does NOT validate the MariaDB DDL. PM/DEPLOY GATE (US-463 TRUE acceptance): apply v0023 on the real chi-srv-01 deploy -- migration chain must resume clean at v0023 and complete (0018-0022 already applied on prod); couple with US-464's real-MariaDB testcontainer test. Verification: pytest tests/server/test_migration_0023_drop_stale_data_source_check.py = 28 passed; + test_data_source_applied_schema_accepts_foreign.py (imports v0023 discovery, unchanged) = 34 passed/1 skipped (skip = opt-in OBD2_APPLIED_SCHEMA_TEST live gate); ruff clean on both modified files. mypy strict = PM integration gate (not installed in dev).",
+      "passes": false,
       "acceptance": [
-        "Pre-flight audit: before writing the fix, read the current v0023 body AND introspect (information_schema) the actual data_source column def + CHECK on every affected table (calibration_sessions, connection_log, profiles, realtime_data, statistics) on a real MariaDB; confirm inline (name==column) vs table-level",
-        "[ATLAS RULING 2026-07-13] Replace v0023's DROP with per-table MODIFY COLUMN that strips the inline CHECK while PRESERVING the full INTROSPECTED column def (a bare MODIFY VARCHAR(16) silently resets collation) -- the 5 tables are VARCHAR(16) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'real'; introspect+preserve, do not hardcode. DROP CHECK is NOT MariaDB syntax (1064); DROP CONSTRAINT can't drop an inline CHECK (1091)",
-        "Branch inline-vs-table: inline (name==column) -> MODIFY COLUMN (strip CHECK); table-level (ck_*) -> DROP CONSTRAINT. Keep v0023's existing discovery + post-probe (Atlas: sound). Today all 5 are inline",
-        "Applied to EVERY affected data_source table; idempotent/re-runnable (re-run after success = no-op, no CHECK to strip); replays clean + resumes at v0023 (0018-0022 already applied on prod)",
-        "Tests: fixture table with the stale inline data_source CHECK -> after v0023 the CHECK is gone AND the col def (collation/default/nullability/length) is preserved AND the table accepts data_source='foreign'; re-run = no-op. Real-MariaDB per US-464 where available; targeted+synchronous+committed in-iteration [ATLAS TIGHTEN-1] the in-loop hermetic test is SQLite/create_all and CANNOT reproduce 1091/1064/inline-CHECK semantics -- a green in-loop test does NOT validate the MariaDB DDL fix (the 4-cycle trap); US-464's real-MariaDB test is sequenced AFTER this story. TRUE acceptance = the live deploy resuming clean at v0023 on real MariaDB (Atlas pre-proved MODIFY COLUMN strips the inline CHECK, no 1091/1064).",
+        "Pre-flight audit: enumerate every backlog.json story missing any required field (status, createdAt, updatedAt, conditionalOutcomes, tasks) and classify each by the sprint/version it shipped in (git history / sprint archives) BEFORE backfilling",
+        "Backfill the missing fields: status per the story REAL end-state (shipped Sprint 50-55 stories -> complete; any genuinely-open -> its real status), conditionalOutcomes/tasks -> [] where absent, createdAt/updatedAt from backlog.json git history (first-appearance commit) where feasible else the story sprint date (mark proxy-derived)",
+        "pm_status.py runs clean (no KeyError) AND sprint_lint --backlog returns 0 errors afterward",
+        "reusable idempotent offices/pm/scripts/backfill_story_metadata.py (skips already-compliant stories; re-run = no-op)",
+        "metadata-only: do NOT alter semantic content (title/goal/DoD/type/size/parent) of any story",
         "ruff clean in-loop"
       ],
       "validationCriteria": [
         {
-          "action": "run v0023 against a table carrying the stale inline data_source CHECK (VARCHAR(16) utf8mb4_unicode_ci NOT NULL DEFAULT 'real')",
-          "outcome": "CHECK removed; column def fully preserved (collation/default/nullability/length); table now accepts data_source='foreign'; no 1091 / no 1064"
+          "action": "run pm_status.py after the backfill",
+          "outcome": "completes without KeyError; prints rollups"
         },
         {
-          "action": "re-run v0023 after a successful apply",
-          "outcome": "no-op, no error, no data_source CHECK present"
+          "action": "run sprint_lint.py --backlog",
+          "outcome": "0 errors"
         },
         {
-          "action": "run v0023 across all 5 affected tables",
-          "outcome": "each inline CHECK stripped; migration chain resumes + completes at v0023"
-        },
-        {
-          "action": "apply v0023 on the real server deploy (real MariaDB 11.x) -- NOT the SQLite/create_all in-loop test",
-          "outcome": "migration chain resumes clean at v0023 and completes; this real-MariaDB pass is US-463's acceptance -- a green in-loop test is NOT sufficient validation"
+          "action": "re-run backfill_story_metadata.py",
+          "outcome": "no changes (idempotent)"
         }
       ],
       "conditionalOutcomes": [
-        "if a table's data_source CHECK is table-level (ck_*) rather than inline -> use DROP CONSTRAINT for that one (the branch handles both); today all 5 are inline",
-        "if introspection shows a column def differing from utf8mb4_unicode_ci / DEFAULT 'real' -> preserve the ACTUAL introspected def, never assume"
+        "if a story real end-state is ambiguous from git/archives -> mark status conservatively + note the proxy; never guess complete for genuinely-open work"
       ],
-      "goal": "As the deploy pipeline, I want v0023 to strip each table's stale inline data_source CHECK via a definition-preserving MODIFY COLUMN, so the migration applies on real MariaDB (where DROP CONSTRAINT can't drop an inline CHECK and DROP CHECK is not valid syntax) and the V0.29.10 deploy completes.",
+      "goal": "As the PM, I want every backlog story to carry its required fields and the tooling (pm_status, --backlog lint) to run clean, so the 47-story metadata drift (Sprints 50-55) is repaired and cannot recur.",
       "tasks": []
     },
     {
-      "id": "US-464",
-      "title": "TD-055 real-MariaDB migration-chain CI test (A-10 drift class)",
+      "id": "US-466",
+      "title": "PM-tooling Windows UTF-8 hardening (stop cp1252 crashes)",
+      "parent": "F-118",
+      "epicId": "E-OPS",
+      "type": "housekeeping",
+      "size": "S",
+      "status": "sprint-ready",
+      "passes": false,
+      "acceptance": [
+        "Pre-flight audit: identify which offices/pm/scripts print or open() unicode (the arrow glyphs and similar non-ASCII) and currently require PYTHONIOENCODING=utf-8 to avoid crashing",
+        "those scripts set UTF-8 internally (guarded sys.stdout/stderr.reconfigure(encoding=utf-8)) AND all open() use encoding=utf-8",
+        "create offices/pm/knowledge/feedback-pm-windows-encoding-ad-hoc-audits.md (canonical recipe: PYTHONIOENCODING + encoding=utf-8; reference _freeze.py)",
+        "ruff clean in-loop"
+      ],
+      "validationCriteria": [
+        {
+          "action": "run each touched PM script on Windows WITHOUT PYTHONIOENCODING set",
+          "outcome": "no UnicodeEncodeError; unicode prints correctly"
+        }
+      ],
+      "conditionalOutcomes": [],
+      "goal": "As any agent on Windows, I want the PM scripts to not crash on cp1252 when printing/reading unicode, so ad-hoc backlog/sprint audits do not die with UnicodeEncodeError.",
+      "tasks": []
+    },
+    {
+      "id": "US-467",
+      "title": "TD-057 stale git index.lock guarded helper (slow-NAS)",
+      "parent": "F-118",
+      "epicId": "E-OPS",
+      "type": "tech-debt",
+      "size": "S",
+      "status": "sprint-ready",
+      "passes": false,
+      "acceptance": [
+        "Pre-flight audit: confirm the failure mode (stale index.lock from the slow SMB share blocking commits) + how to reliably detect a live git process holding the lock",
+        "helper retries-with-backoff on lock; clears ONLY if no git process is running AND the lock exceeds an age threshold; NEVER force-deletes under a live process (the discipline invariant)",
+        "documented usage; wired where PM commits happen if practical",
+        "ruff clean in-loop"
+      ],
+      "validationCriteria": [
+        {
+          "action": "simulate a stale lock (no live git process)",
+          "outcome": "helper clears it + the commit succeeds"
+        },
+        {
+          "action": "simulate a live-held lock",
+          "outcome": "helper waits/refuses; never deletes"
+        }
+      ],
+      "conditionalOutcomes": [],
+      "goal": "As an agent on the chi-nas-01 share, I want a guarded helper that waits out (and only clears a truly-stale) .git/index.lock, so lock churn stops blocking commits without ever deleting a lock a live git process holds.",
+      "tasks": []
+    },
+    {
+      "id": "US-468",
+      "title": "Formalize Story.md-mirror retirement (backlog.json = SSOT)",
+      "parent": "F-118",
+      "epicId": "E-OPS",
+      "type": "housekeeping",
+      "size": "S",
+      "status": "sprint-ready",
+      "passes": false,
+      "acceptance": [
+        "Pre-flight audit: grep skills/commands/PM-Rules/folder-structure docs for existing Story.md-mirror references before editing",
+        "update PM Rule / folder-structure docs: stories live in backlog.json; offices/pm/backlog/US-*.md mirrors are retired/optional (newest mirror ~US-398)",
+        "remove or annotate any skill/command step that instructs writing Story.md mirrors"
+      ],
+      "validationCriteria": [
+        {
+          "action": "grep skills/docs for Story.md mirror",
+          "outcome": "only the retirement note remains; no step still requires mirrors"
+        }
+      ],
+      "conditionalOutcomes": [],
+      "goal": "As the PM, I want the dropped Story.md-mirror convention formally retired, so backlog.json is the single story SSOT and no skill/doc implies mirrors are required.",
+      "tasks": []
+    },
+    {
+      "id": "US-469",
+      "title": "SS-T7 deploy-gate tripwire into /sprint-deploy-pm Phase-0",
+      "parent": "F-118",
+      "epicId": "E-OPS",
+      "type": "tech-debt",
+      "size": "S",
+      "status": "sprint-ready",
+      "passes": false,
+      "acceptance": [
+        "Pre-flight audit: locate the best-effort-continue-past-red gap in the current deploy path (the V0.27.17 marker-on-failure class) + define what Phase-0 must assert",
+        "Phase-0 asserts pre-flight / marker integrity and HALTS on failure (no best-effort continue past a red gate)",
+        "[ATLAS GAP 2026-07-13] Phase-0 RUNS pytest -m \"not slow\" (the suite CONTAINING the SS-T7 systemd-parity test) and HALTS on non-zero exit -- run-not-trust: NOT a file/marker check, NOT 'we ran it earlier' or 'Ralph reported green'. SS-T7 lesson (V0.27.12 DOA): the tripwire test EXISTED but the pipeline never RAN it",
+        "ruff clean in-loop"
+      ],
+      "validationCriteria": [
+        {
+          "action": "dry-run /sprint-deploy-pm Phase-0 with a deliberately failing test in the not-slow suite",
+          "outcome": "Phase-0 RUNS pytest -m 'not slow', gets non-zero, and HALTS the deploy -- does not check a marker or trust a prior report"
+        }
+      ],
+      "conditionalOutcomes": [],
+      "goal": "As the PM, I want the deploy-gate tripwire welded into /sprint-deploy-pm Phase-0, so a deploy cannot proceed past a failed pre-flight (the best-effort-continue class that let V0.27.17 ship broken).",
+      "tasks": []
+    },
+    {
+      "id": "US-470",
+      "title": "Real-MariaDB migration test CI-enablement (testcontainers/11.x)",
       "parent": "F-104",
       "epicId": "E-002",
       "type": "tech-debt",
       "size": "M",
       "status": "sprint-ready",
-      "passes": true,
-      "feedback": {
-        "filesActuallyTouched": [
-          "tests/server/_mariadb_chain_harness.py",
-          "tests/server/test_migration_chain_real_mariadb.py",
-          "offices/pm/inbox/2026-07-13-from-rex-us464-td055-real-mariadb-ci-enablement.md"
-        ]
-      },
-      "completionNotes": "SHIPPED (bench: hermetic layer green in-loop; live layer skips honestly -- TRUE acceptance = live run against real MariaDB 11.x per CI-enablement follow-up). Pre-flight audit confirmed the gap: the server-migration test path is FakeRunner-scripted (tests/server/test_migrations.py + test_migration_0022/0023*.py) which is structurally incapable of MariaDB DDL semantics (1091/1064/inline-CHECK/create_all FK-naming); the create_all serverEngine fixture in tests/integration/test_deploy_context_drive_simulator.py is the one that FILED TD-055; no real-MariaDB infra existed (testcontainers NOT installed, no Docker on the Windows bench; pymysql+sqlalchemy present). DELIVERABLE (two layers, mirrors US-462): (1) tests/server/_mariadb_chain_harness.py -- reusable harness. CRUX = MariaDbCommandRunner: every migration issues SQL via ctx.runner(argv, input=<sql>) and parses `mysql -B -N` output, so a single CommandRunner adapter that pipes input SQL into a live MariaDB (pymysql) and re-emits -B -N-shaped output (tab-delim, header-less, None->literal 'NULL') lets the UNMODIFIED real chain (v0022.apply/v0023.apply/MigrationRunner.runAll) run against real DDL. acquireMariaDb() = service DSN ($OBD2_MARIADB_TEST_DSN) OR testcontainers MariaDB 11.x (pinned mariadb:11.8 per Atlas TIGHTEN-2, VERSION() asserted 11.x else honest-skip); raises MariaDbUnavailable when neither reachable. Drifted seeders reproduce BOTH classes: inlineDataSourceCheckTableDdl (BL-021 stale 4-value inline CHECK, no 'foreign' -- create_all CANNOT produce it since the ORM declares no CHECK, so it MUST be hand-seeded); driftedDriveIdentityStatements (BL-020: drive_statistics state-3 no-FK + drive_derived_signals state-1 FK->legacy drive_summary). (2) tests/server/test_migration_chain_real_mariadb.py -- HERMETIC (16 pass in-loop: formatter tab/NULL/multi-row; adapter over fake DB-API conn SELECT->stdout / DDL->'' / DB-error->rc1; honest-skip names both paths + refuses create_all; seed-DDL shape; TD-055 lineage + version-pin self-scan) + LIVE (@integration/@slow, 4 tests skip honestly in-loop): bl021 (foreign rejected pre / accepted post + 0 survivors), bl020 (both summary_id FKs repointed to drives via real v0022._fkNameReferencing), full runAll resume (0001-0021 seeded-applied, 0022/0023 pending = V0.29.10 shape, both fixed), clean-schema no-op (validationCriterion 2). Verification: pytest tests/server/test_migration_chain_real_mariadb.py = 16 passed / 4 skipped (skip reason explicit: 'no OBD2_MARIADB_TEST_DSN + testcontainers not installed... SQLite/create_all is NOT a valid substitute'); ruff clean on both files. PM/CI GATE (TRUE acceptance, do-NOT-silently-skip follow-up in PM inbox note): add testcontainers to a dev/CI req set + a Docker/MariaDB-11.x-service CI job running `-m integration`, OR run locally now via OBD2_MARIADB_TEST_DSN against chi-srv-01's MariaDB coupled with the US-463 deploy-gate. mypy strict = PM integration gate (not installed in dev). NOTE: test file ~365 lines (within ~500 test guideline); harness ~430 lines (reusable support module, not a source module).",
+      "passes": false,
       "acceptance": [
-        "Pre-flight audit: identify the current server-migration test path (the SQLite/create_all route that green-passed BL-020 + BL-021) and what real-MariaDB test infra exists (testcontainers / service); confirm the exact gap",
-        "[ATLAS RULING 2026-07-13 -- TD-055 graduates to funded] a test applies the FULL pending migration chain against a REAL MariaDB instance (testcontainer or equivalent), NOT SQLite / create_all -- create_all is precisely what shipped BL-020 + BL-021 green [ATLAS TIGHTEN-2] pin the testcontainer to the PROD MariaDB major (11.x, matching 11.8.6) -- the BL-021 quirk is MariaDB-version-sensitive; a wrong-version container could green-pass a prod-failing migration.",
-        "the test provably CATCHES both classes: BL-020 (FK drift / missing-FK) AND BL-021 (inline-CHECK DROP CONSTRAINT failure) -- seed the drifted schema state + assert the chain applies clean or fails loudly (never green over a broken DB)",
-        "wired into the test suite / CI (marked @pytest.mark.integration|slow if it needs a container); documents the TD-055 lineage (BL-019 -> BL-020 -> US-459 theater-trap -> BL-021, Atlas's 4th cycle)",
+        "Pre-flight audit: confirm US-464 live layer currently honest-skips (no Docker on bench) + what CI infra is available (Docker-enabled runner / MariaDB service container)",
+        "add testcontainers (or a MariaDB service-container config) to a dev/CI-only requirements set -- NOT a runtime dep (Pi/server prod installs must not pull it)",
+        "wire a CI job running pytest tests/server/test_migration_chain_real_mariadb.py -m integration against MariaDB 11.x (matching prod 11.8.6 per Atlas TIGHTEN-2)",
+        "the live layer executes + gates in CI (no longer honest-skip there); document the local DSN path (OBD2_MARIADB_TEST_DSN) for manual runs",
+        "[ATLAS TIGHTEN 2026-07-13] annotate TD-055; CLOSE it ONLY when the CI test actually EXECUTES + gates (validationCriteria#1 green in CI). If it falls to the DSN-manual interim (Docker unavailable) -> TD-055 stays OPEN-downgraded, NOT closed. Add a pointer from the create_all caveat in tests/integration/test_deploy_context_drive_simulator.py",
         "ruff clean in-loop"
       ],
       "validationCriteria": [
         {
-          "action": "run the migration-chain test against a real MariaDB seeded with a drifted schema (missing FK and/or stale inline CHECK)",
-          "outcome": "the test FAILS loudly on the drift (would have caught BL-020 + BL-021), does not green-pass"
+          "action": "run the CI job",
+          "outcome": "the live real-MariaDB integration test EXECUTES (not skipped) against 11.x -- passes on clean schema, fails on seeded drift"
         },
         {
-          "action": "run against the expected/clean schema",
-          "outcome": "the full chain applies and the test passes"
+          "action": "inspect the runtime/prod requirements",
+          "outcome": "testcontainers is NOT present in runtime/prod deps"
         }
       ],
       "conditionalOutcomes": [
-        "if real-MariaDB (testcontainer) infra cannot run in current CI -> deliver the test runnable locally against a MariaDB service + document the CI-enablement follow-up; do NOT silently skip (that is the create_all trap again)"
+        "if the CI environment truly cannot run Docker -> document the concrete blocker + keep the DSN-based manual gate as the interim; do NOT silently mark done"
       ],
-      "goal": "As the maintainer, I want a test that applies the full migration chain against a REAL MariaDB (not SQLite/create_all), so the migration-vs-live-DB drift class (BL-019/020/021) is caught in CI instead of one deploy at a time.",
+      "goal": "As the maintainer, I want US-464 live real-MariaDB migration test to run in CI (not just on-demand), so the BL-019/020/021 drift class is gated automatically instead of relying on the deploy.",
       "tasks": []
     }
   ],
   "validation": {
     "bigDefinitionOfDone": [
-      "(run v0023 against a table carrying the stale inline data_source CHECK (VARCHAR(16) utf8mb4_unicode_ci NOT NULL DEFAULT 'real')) → (CHECK removed; column def fully preserved (collation/default/nullability/length); table now accepts data_source='foreign'; no 1091 / no 1064)  [from US-463]",
-      "(re-run v0023 after a successful apply) → (no-op, no error, no data_source CHECK present)  [from US-463]",
-      "(run v0023 across all 5 affected tables) → (each inline CHECK stripped; migration chain resumes + completes at v0023)  [from US-463]",
-      "(apply v0023 on the real server deploy (real MariaDB 11.x) -- NOT the SQLite/create_all in-loop test) → (migration chain resumes clean at v0023 and completes; this real-MariaDB pass is US-463's acceptance -- a green in-loop test is NOT sufficient validation)  [from US-463]",
-      "(run the migration-chain test against a real MariaDB seeded with a drifted schema (missing FK and/or stale inline CHECK)) → (the test FAILS loudly on the drift (would have caught BL-020 + BL-021), does not green-pass)  [from US-464]",
-      "(run against the expected/clean schema) → (the full chain applies and the test passes)  [from US-464]"
+      "(run pm_status.py after the backfill) → (completes without KeyError; prints rollups)  [from US-465]",
+      "(run sprint_lint.py --backlog) → (0 errors)  [from US-465]",
+      "(re-run backfill_story_metadata.py) → (no changes (idempotent))  [from US-465]",
+      "(run each touched PM script on Windows WITHOUT PYTHONIOENCODING set) → (no UnicodeEncodeError; unicode prints correctly)  [from US-466]",
+      "(simulate a stale lock (no live git process)) → (helper clears it + the commit succeeds)  [from US-467]",
+      "(simulate a live-held lock) → (helper waits/refuses; never deletes)  [from US-467]",
+      "(grep skills/docs for Story.md mirror) → (only the retirement note remains; no step still requires mirrors)  [from US-468]",
+      "(dry-run /sprint-deploy-pm Phase-0 with a deliberately failing test in the not-slow suite) → (Phase-0 RUNS pytest -m 'not slow', gets non-zero, and HALTS the deploy -- does not check a marker or trust a prior report)  [from US-469]",
+      "(run the CI job) → (the live real-MariaDB integration test EXECUTES (not skipped) against 11.x -- passes on clean schema, fails on seeded drift)  [from US-470]",
+      "(inspect the runtime/prod requirements) → (testcontainers is NOT present in runtime/prod deps)  [from US-470]"
     ],
-    "validationMethod": "REAL-MARIADB + DEPLOY",
+    "validationMethod": "BENCH + CI",
     "validatesFeatures": [
-      "F-116",
       "F-104"
     ],
-    "currentVersion": "V0.29.11",
+    "currentVersion": "V0.29.12",
     "validatedAt": null,
     "validatedBy": null
   }
