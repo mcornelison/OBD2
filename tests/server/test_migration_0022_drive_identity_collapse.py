@@ -194,6 +194,48 @@ def _scriptFullyMigratedState(runner: FakeRunner) -> None:
     ))
 
 
+def _singleTableFkHandler(
+    tableName: str,
+    newFkName: str,
+    *,
+    stale: str | None = None,
+    hasDrivesFk: bool = False,
+    orphans: str = '0\n',
+) -> Callable[[str], subprocess.CompletedProcess[str]]:
+    """One comprehensive handler for a single table's ``_repointSummaryFk`` probes.
+
+    Registered under the table name as needle (every probe SQL in the substep
+    names the table).  Models the three applied FK states:
+
+    * ``stale`` set, ``hasDrivesFk`` False -> **state 1** (FK -> drive_summary).
+    * ``stale`` None, ``hasDrivesFk`` True -> **state 2** (FK -> drives; no-op).
+    * ``stale`` None, ``hasDrivesFk`` False -> **state 3** (no FK; ADD-only).
+
+    After an ``ADD CONSTRAINT`` is observed the drives-referencing probe flips to
+    return ``newFkName`` so the post-condition probe passes (states 1 + 3).
+    """
+    state = {'added': hasDrivesFk}
+
+    def handler(sql: str) -> subprocess.CompletedProcess[str]:
+        if 'information_schema.TABLES' in sql:
+            return _ok(stdout='1\n')
+        if 'ADD CONSTRAINT' in sql:
+            state['added'] = True
+            return _ok()
+        if 'DROP FOREIGN KEY' in sql:
+            return _ok()
+        if 'information_schema.KEY_COLUMN_USAGE' in sql:
+            if "REFERENCED_TABLE_NAME='drive_summary'" in sql:
+                return _ok(stdout=f'{stale}\n' if stale else '')
+            # REFERENCED_TABLE_NAME='drives'
+            return _ok(stdout=f'{newFkName}\n' if state['added'] else '')
+        if 'LEFT JOIN drives' in sql:  # orphan pre-condition probe
+            return _ok(stdout=orphans)
+        return _ok()
+
+    return handler
+
+
 # ================================================================================
 # Module shape + registry
 # ================================================================================
@@ -374,6 +416,211 @@ class TestApplyFullyMigrated:
 
 
 # ================================================================================
+# 3-state summary_id FK re-point (BL-020 / US-461 -- Atlas 3-state ruling)
+# ================================================================================
+
+
+class TestRepointThreeState:
+    """``_repointSummaryFk`` branches per the table's APPLIED FK state.
+
+    (1) FK -> drive_summary => drop + re-point;
+    (2) FK -> drives        => no-op;
+    (3) NO FK               => ADD-only (skip the drop).
+    """
+
+    def test_state1_staleFk_dropsThenAdds(self) -> None:
+        runner = FakeRunner()
+        runner.handlers.append((
+            m0022.DRIVE_DERIVED_SIGNALS_TABLE,
+            _singleTableFkHandler(
+                m0022.DRIVE_DERIVED_SIGNALS_TABLE,
+                m0022.DRIVE_DERIVED_SIGNALS_FK_NAME,
+                stale=_DERIVED_STALE_FK,
+            ),
+        ))
+        m0022._repointSummaryFk(
+            _ctx(runner),
+            m0022.DRIVE_DERIVED_SIGNALS_TABLE,
+            m0022.DRIVE_DERIVED_SIGNALS_FK_NAME,
+            m0022.ADD_DRIVE_DERIVED_SIGNALS_FK_DDL,
+        )
+        alters = [s for s in runner.emittedSqls if s.startswith('ALTER TABLE')]
+        assert alters == [
+            f'ALTER TABLE drive_derived_signals DROP FOREIGN KEY '
+            f'{_DERIVED_STALE_FK};',
+            m0022.ADD_DRIVE_DERIVED_SIGNALS_FK_DDL,
+        ], f'state-1 must drop-then-add; got {alters}'
+
+    def test_state2_alreadyDrives_isNoOp(self) -> None:
+        runner = FakeRunner()
+        runner.handlers.append((
+            m0022.DRIVE_STATISTICS_TABLE,
+            _singleTableFkHandler(
+                m0022.DRIVE_STATISTICS_TABLE,
+                m0022.DRIVE_STATISTICS_FK_NAME,
+                hasDrivesFk=True,
+            ),
+        ))
+        m0022._repointSummaryFk(
+            _ctx(runner),
+            m0022.DRIVE_STATISTICS_TABLE,
+            m0022.DRIVE_STATISTICS_FK_NAME,
+            m0022.ADD_DRIVE_STATISTICS_FK_DDL,
+        )
+        alters = [s for s in runner.emittedSqls if s.startswith('ALTER TABLE')]
+        assert alters == [], f'state-2 must be a no-op; got {alters}'
+
+    def test_state3_noFk_addsOnly_noDrop(self) -> None:
+        # BL-020 core: drive_statistics carries NO summary_id FK on the drifted
+        # prod schema.  The old code fatalled here (line ~343); it must ADD-only.
+        runner = FakeRunner()
+        runner.handlers.append((
+            m0022.DRIVE_STATISTICS_TABLE,
+            _singleTableFkHandler(
+                m0022.DRIVE_STATISTICS_TABLE,
+                m0022.DRIVE_STATISTICS_FK_NAME,
+            ),
+        ))
+        m0022._repointSummaryFk(
+            _ctx(runner),
+            m0022.DRIVE_STATISTICS_TABLE,
+            m0022.DRIVE_STATISTICS_FK_NAME,
+            m0022.ADD_DRIVE_STATISTICS_FK_DDL,
+        )
+        emitted = runner.emittedSqls
+        assert m0022.ADD_DRIVE_STATISTICS_FK_DDL in emitted, (
+            'state-3 must ADD the drives FK'
+        )
+        assert not any('DROP FOREIGN KEY' in s for s in emitted), (
+            'state-3 must NOT drop (there is no stale FK to drop)'
+        )
+
+    def test_state3_orphans_failsLoudWithCount_noAdd(self) -> None:
+        # Never ADD an FK that will not validate: orphan summary_id rows vs
+        # drives.drive_id => fail loud with the count, before any ADD.
+        runner = FakeRunner()
+        runner.handlers.append((
+            m0022.DRIVE_STATISTICS_TABLE,
+            _singleTableFkHandler(
+                m0022.DRIVE_STATISTICS_TABLE,
+                m0022.DRIVE_STATISTICS_FK_NAME,
+                orphans='4\n',
+            ),
+        ))
+        with pytest.raises(asm.MigrationError, match='4'):
+            m0022._repointSummaryFk(
+                _ctx(runner),
+                m0022.DRIVE_STATISTICS_TABLE,
+                m0022.DRIVE_STATISTICS_FK_NAME,
+                m0022.ADD_DRIVE_STATISTICS_FK_DDL,
+            )
+        assert not any(
+            'ADD CONSTRAINT' in s for s in runner.emittedSqls
+        ), 'must not ADD an FK that will not validate'
+
+    def test_state1_orphans_failsLoud_afterDrop(self) -> None:
+        # Orphan guard also applies on the state-1 re-point path.
+        runner = FakeRunner()
+        runner.handlers.append((
+            m0022.DRIVE_DERIVED_SIGNALS_TABLE,
+            _singleTableFkHandler(
+                m0022.DRIVE_DERIVED_SIGNALS_TABLE,
+                m0022.DRIVE_DERIVED_SIGNALS_FK_NAME,
+                stale=_DERIVED_STALE_FK,
+                orphans='7\n',
+            ),
+        ))
+        with pytest.raises(asm.MigrationError, match='7'):
+            m0022._repointSummaryFk(
+                _ctx(runner),
+                m0022.DRIVE_DERIVED_SIGNALS_TABLE,
+                m0022.DRIVE_DERIVED_SIGNALS_FK_NAME,
+                m0022.ADD_DRIVE_DERIVED_SIGNALS_FK_DDL,
+            )
+        assert not any(
+            'ADD CONSTRAINT' in s for s in runner.emittedSqls
+        ), 'must not ADD an FK that will not validate'
+
+
+class TestApplyDriftedProduction:
+    """The real BL-020 prod shape: drive_statistics state-3, derived state-1."""
+
+    def _scriptDriftedProd(self, runner: FakeRunner) -> None:
+        # drives.data_quality CHECK: stale then widened (counter, mirrors v0015).
+        clauseCalls = {'n': 0}
+
+        def clause(_s: str) -> subprocess.CompletedProcess[str]:
+            clauseCalls['n'] += 1
+            return _ok(stdout=_DRIVES_CLAUSE_STALE if clauseCalls['n'] == 1
+                       else _DRIVES_CLAUSE_WIDE)
+
+        runner.handlers.append(('information_schema.CHECK_CONSTRAINTS', clause))
+        runner.handlers.append(('information_schema.TABLES', _tablesHandler()))
+        runner.handlers.append((
+            'SELECT COUNT(*) FROM drives', lambda _s: _ok(stdout='0\n'),
+        ))
+        # Orphan probes: 0 for both tables.
+        runner.handlers.append(('LEFT JOIN drives', lambda _s: _ok(stdout='0\n')))
+        # drive_statistics: state-3 (no FK, flips to present after ADD).
+        statsAdded = {'v': False}
+
+        def statsFk(sql: str) -> subprocess.CompletedProcess[str]:
+            if 'ADD CONSTRAINT' in sql:
+                statsAdded['v'] = True
+                return _ok()
+            if "REFERENCED_TABLE_NAME='drive_summary'" in sql:
+                return _ok(stdout='')
+            return _ok(stdout=f'{m0022.DRIVE_STATISTICS_FK_NAME}\n'
+                       if statsAdded['v'] else '')
+
+        # drive_derived_signals: state-1 (stale FK, drives-ref after drop+add).
+        derivedAdded = {'v': False}
+
+        def derivedFk(sql: str) -> subprocess.CompletedProcess[str]:
+            if 'ADD CONSTRAINT' in sql:
+                derivedAdded['v'] = True
+                return _ok()
+            if "REFERENCED_TABLE_NAME='drive_summary'" in sql:
+                return _ok(stdout=f'{_DERIVED_STALE_FK}\n'
+                           if not derivedAdded['v'] else '')
+            return _ok(stdout=f'{m0022.DRIVE_DERIVED_SIGNALS_FK_NAME}\n'
+                       if derivedAdded['v'] else '')
+
+        # Route KEY_COLUMN_USAGE by table (needle 'KEY_COLUMN_USAGE' + table).
+        def fkRouter(sql: str) -> subprocess.CompletedProcess[str]:
+            if "TABLE_NAME='drive_statistics'" in sql:
+                return statsFk(sql)
+            return derivedFk(sql)
+
+        # ADD CONSTRAINT is table-specific; route by FK name.
+        def addRouter(sql: str) -> subprocess.CompletedProcess[str]:
+            if m0022.DRIVE_STATISTICS_FK_NAME in sql:
+                return statsFk(sql)
+            return derivedFk(sql)
+
+        runner.handlers.append(('information_schema.KEY_COLUMN_USAGE', fkRouter))
+        runner.handlers.append(('ADD CONSTRAINT fk_drive_statistics_drives', addRouter))
+        runner.handlers.append((
+            'ADD CONSTRAINT fk_drive_derived_signals_drives', addRouter,
+        ))
+
+    def test_statsAddsOnly_derivedDropsThenAdds(self) -> None:
+        runner = FakeRunner()
+        self._scriptDriftedProd(runner)
+        m0022.apply(_ctx(runner))
+        drops = [s for s in runner.emittedSqls if 'DROP FOREIGN KEY' in s]
+        # Only the state-1 table (drive_derived_signals) drops a stale FK.
+        assert drops == [
+            f'ALTER TABLE drive_derived_signals DROP FOREIGN KEY '
+            f'{_DERIVED_STALE_FK};',
+        ], f'only derived (state-1) drops; got {drops}'
+        adds = [s for s in runner.emittedSqls if 'ADD CONSTRAINT' in s
+                and 'fk_drive_' in s]
+        assert m0022.ADD_DRIVE_STATISTICS_FK_DDL in adds
+        assert m0022.ADD_DRIVE_DERIVED_SIGNALS_FK_DDL in adds
+
+
+# ================================================================================
 # Failure paths
 # ================================================================================
 
@@ -403,22 +650,6 @@ class TestFailureModes:
         runner = FakeRunner()
         _scriptProductionState(runner, legacySurvivorsAfter='3\n')
         with pytest.raises(asm.SchemaProbeError, match='NULL-natural-key'):
-            m0022.apply(_ctx(runner))
-
-    def test_fkMissingEntirelyRaises(self) -> None:
-        runner = FakeRunner()
-        runner.handlers.append((
-            'information_schema.KEY_COLUMN_USAGE', lambda _s: _ok(stdout=''),
-        ))
-        runner.handlers.append((
-            'information_schema.CHECK_CONSTRAINTS',
-            lambda _s: _ok(stdout=_DRIVES_CLAUSE_WIDE),
-        ))
-        runner.handlers.append(('information_schema.TABLES', _tablesHandler()))
-        runner.handlers.append((
-            'SELECT COUNT(*) FROM drives', lambda _s: _ok(stdout='0\n'),
-        ))
-        with pytest.raises(asm.SchemaProbeError, match='missing'):
             m0022.apply(_ctx(runner))
 
     def test_addFkFailureRaises(self) -> None:

@@ -11,8 +11,15 @@
       "epicId": "E-002",
       "type": "blocker",
       "size": "M",
-      "status": "sprint-ready",
-      "passes": false,
+      "status": "done",
+      "passes": true,
+      "completionNotes": "Rex/Agent1 Sprint 56. Rewrote v0022 _repointSummaryFk to the Atlas 3-STATE per-table branch keyed on the APPLIED summary_id FK (information_schema.KEY_COLUMN_USAGE), NOT the drifted ORM FK: (1) FK->drive_summary => drop stale + ADD->drives.drive_id; (2) FK->drives => no-op; (3) NO FK => ADD-only, skip the drop. Removes the pre-BL-020 line ~343 bug that collapsed states 2+3 and fatalled on state 3 (SchemaProbeError 'the expected FK is missing') -- exactly drive_statistics on the drifted prod schema where create_all never auto-named the FK the ORM assumes. Added _addDrivesFk() shared ADD-path with an _orphanSummaryIdCount() LEFT-JOIN anti-join guard on BOTH state-1 and state-3: a non-zero orphan count fails loud with the count (MigrationError) BEFORE any ADD -- never ADD an FK that will not validate (0 for existing rows, v0018 subsumed drive_summary.id INTO drives.drive_id identical values). Collapse-table set enumerated: drive_statistics [state-3, no FK] + drive_derived_signals [state-1, stale FK->drive_summary from v0017]; drive_annotations docstring CORRECTED -- exists on prod but has NO summary_id column => genuine no-op (was mislabeled 'no such table'). Per Atlas Q2 NO drive_summary.id->drives hard FK added. Idempotent/forward-safe: replay on canonical DB = state-2 everywhere. TESTS (hermetic FakeRunner, no SSH/MariaDB): replaced test_fkMissingEntirelyRaises (encoded the old buggy fatal) with TestRepointThreeState (state-1 drop+add, state-2 no-op, state-3 ADD-only-no-drop, state-3 orphans fail-loud-no-ADD, state-1 orphans fail-loud) + TestApplyDriftedProduction (real BL-020 shape: stats state-3 ADD-only, derived state-1 drop+add). 31 passed, ruff clean in-loop. PM/DEPLOY GATE (BENCH-ONLY, owed at integration on chi-srv-01): run v0022 upgrade against the live drifted DB after 0018-0021 applied -- verify drive_statistics.summary_id ends with exactly one FK->drives.drive_id, no line-~343 fatal; couple with US-462 preflight guard. mypy strict = PM integration gate (not installed in dev).",
+      "feedback": {
+        "filesActuallyTouched": [
+          "src/server/migrations/versions/v0022_us451_drive_identity_collapse.py",
+          "tests/server/test_migration_0022_drive_identity_collapse.py"
+        ]
+      },
       "acceptance": [
         "Pre-flight audit: before writing any branch, read the current v0022 body AND query information_schema for the applied summary_id FK on EVERY collapse table (fixture + prod-mirror) -- enumerate the real tables + their actual FK state; do not assume the ORM's FK",
         "[ATLAS RULING 2026-07-13] v0022 probes each collapse table's APPLIED summary_id FK and branches 3-STATE per table: (1) FK->drive_summary => drop+re-point to drives.drive_id; (2) FK->drives => no-op; (3) NO FK => ADD-only to drives.drive_id, skip the drop. Removes the line ~343 bug (states 2+3 collapsed, fatals on state 3) NOTE [ATLAS GAP-2]: v0022 is a custom MigrationRunner step (src/server/migrations + scripts/apply_server_migrations.py), raw SQL via _runServerSql -- NOT Alembic op.*",

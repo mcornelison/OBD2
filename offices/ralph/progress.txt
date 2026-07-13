@@ -1,0 +1,53 @@
+## 2026-07-13 - US-461 (Rex / Agent 1, Session 1 — Sprint 56)
+Task: 3-state defensive v0022 identity-collapse migration (BL-020 unblock)
+
+### What was implemented:
+- Rewrote `_repointSummaryFk` in v0022 to the Atlas **3-STATE per-table branch**,
+  keyed on the table's **APPLIED** `summary_id` FK topology (probed via
+  `information_schema.KEY_COLUMN_USAGE`), NOT the drifted ORM-declared FK:
+  - State 1 — FK -> `drive_summary`: drop stale (discovered name) + ADD -> `drives.drive_id`.
+  - State 2 — FK -> `drives` already: no-op.
+  - State 3 — NO FK at all: ADD-only, **skip the drop**.
+- Removed the pre-BL-020 line ~343 bug: the old code collapsed states 2+3 and
+  raised `SchemaProbeError('the expected FK is missing')` whenever no FK existed —
+  fatalling on `drive_statistics` (state 3) on the drifted prod schema, where
+  `create_all` never auto-named the FK the ORM assumes.
+- Added `_addDrivesFk()` (shared ADD path for state-1 + state-3) with an
+  `_orphanSummaryIdCount()` LEFT-JOIN anti-join guard: a non-zero orphan count vs
+  `drives.drive_id` **fails loud with the count** (`MigrationError`) BEFORE any ADD —
+  never ADD an FK that will not validate. (0 for existing rows: v0018 subsumed
+  `drive_summary.id` INTO `drives.drive_id` with identical values.)
+- Corrected the `drive_annotations` docstring: it exists on prod but has **no
+  `summary_id` column** => genuine no-op (was mislabeled "no such table exists").
+- Per Atlas Q2: did NOT add a `drive_summary.id -> drives` hard FK.
+
+### Files changed:
+- Modified: `src/server/migrations/versions/v0022_us451_drive_identity_collapse.py`
+  (3-state `_repointSummaryFk`, new `_addDrivesFk` + `_orphanSummaryIdCount`, docstrings)
+- Modified: `tests/server/test_migration_0022_drive_identity_collapse.py`
+  (replaced `test_fkMissingEntirelyRaises` — which encoded the old buggy fatal —
+  with `TestRepointThreeState` [state-1 drop+add, state-2 no-op, state-3 ADD-only,
+  state-3 + state-1 orphan fail-loud] and `TestApplyDriftedProduction` [real BL-020
+  shape: stats state-3 ADD-only, derived state-1 drop+add])
+
+### Verification:
+- `pytest tests/server/test_migration_0022_drive_identity_collapse.py` -> 31 passed
+- `ruff check` on both modified files -> All checks passed
+- BENCH-ONLY: PM/DEPLOY GATE owed at integration — run v0022 against the live
+  drifted DB (post 0018-0021) on chi-srv-01; couple with US-462 preflight.
+
+### Learnings for future iterations:
+- **Pattern discovered**: the FakeRunner "first matching needle wins" dispatch lets
+  you register ONE comprehensive per-table handler keyed on the table name and
+  branch inside it on the SQL verb (TABLES / KEY_COLUMN_USAGE / ADD CONSTRAINT /
+  LEFT JOIN) — cleaner than many narrow needles when a substep issues a mixed
+  sequence of probes + DDL against a single table. Use a mutable `state` dict to
+  flip the drives-referencing probe from absent->present after the ADD, so the
+  post-condition probe passes.
+- **Gotcha**: a migration must branch on the **applied** schema (information_schema),
+  never the ORM's declared FK — the deployed MariaDB drifted from `create_all`
+  (drive_statistics had NO summary_id FK), which is the whole of BL-020 / A-10.
+  Any "the FK the ORM assumes must exist" precondition is the drift bug in disguise.
+- **Gotcha**: orphan guard belongs on EVERY ADD path (state-1 after the drop AND
+  state-3), not just one — factor it into the shared ADD helper.
+---
