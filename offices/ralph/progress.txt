@@ -188,3 +188,76 @@ Task: MODIFY-COLUMN v0023 — strip stale INLINE data_source CHECK (BL-021)
   MariaDB testcontainer. Flag it loudly in completionNotes so PM doesn't
   green-ship on the in-loop pass.
 ---
+
+## 2026-07-13 - US-464 (Rex / Agent 1, Session 4 — Sprint 57)
+Task: TD-055 real-MariaDB migration-chain CI test (A-10 drift class)
+
+### What was implemented:
+- Pre-flight audit confirmed the gap: the server-migration test path is
+  FakeRunner-scripted (test_migrations.py + test_migration_0022/0023*.py),
+  structurally incapable of MariaDB DDL semantics (1091/1064/inline-CHECK,
+  create_all FK-naming); the create_all `serverEngine` fixture in
+  test_deploy_context_drive_simulator.py is the one that FILED TD-055; no
+  real-MariaDB infra existed (testcontainers NOT installed, no Docker on the
+  Windows bench; pymysql + sqlalchemy present).
+- CRUX — `MariaDbCommandRunner`: every migration issues SQL via
+  `ctx.runner(argv, input=<sql>)` and parses `mysql -B -N` output, so ONE
+  CommandRunner adapter that pipes the input SQL into a live MariaDB (pymysql)
+  and re-emits `-B -N`-shaped output (tab-delimited, header-less, None ->
+  literal 'NULL') lets the UNMODIFIED real chain (v0022.apply / v0023.apply /
+  MigrationRunner.runAll) run against REAL DDL — not SQLite/create_all (exactly
+  what shipped BL-020 + BL-021 green).
+- `acquireMariaDb()` = service DSN ($OBD2_MARIADB_TEST_DSN) OR a testcontainers
+  MariaDB 11.x container (pinned `mariadb:11.8` per Atlas TIGHTEN-2; VERSION()
+  asserted 11.x else honest-skip); raises MariaDbUnavailable when neither is
+  reachable so the caller skips with an explicit reason (refuses the create_all
+  substitute — never a silent skip).
+- Drifted seeders reproduce BOTH classes: `inlineDataSourceCheckTableDdl`
+  (BL-021 stale 4-value inline CHECK, no 'foreign' — hand-seeded because the
+  current ORM declares NO data_source CHECK, so create_all cannot produce it);
+  `driftedDriveIdentityStatements` (BL-020: drive_statistics state-3 no-FK +
+  drive_derived_signals state-1 FK -> legacy drive_summary).
+- Two layers (mirrors US-462): HERMETIC (16 tests, in-loop gate) + LIVE
+  (@integration/@slow, 4 tests): bl021 (foreign rejected pre / accepted post,
+  0 survivors), bl020 (both summary_id FKs repointed to drives via the real
+  v0022._fkNameReferencing), full runAll resume (0001-0021 seeded-applied,
+  0022/0023 pending = the V0.29.10 shape), clean-schema no-op
+  (validationCriterion 2).
+
+### Files changed:
+- Created: `tests/server/_mariadb_chain_harness.py` (reusable harness: adapter,
+  acquisition, seeders; underscore-prefixed -> not pytest-collected)
+- Created: `tests/server/test_migration_chain_real_mariadb.py` (hermetic + live)
+- Created: `offices/pm/inbox/2026-07-13-from-rex-us464-td055-real-mariadb-ci-enablement.md`
+  (CI-enablement follow-up — the "do NOT silently skip" documentation)
+
+### Verification:
+- `pytest tests/server/test_migration_chain_real_mariadb.py` -> 16 passed,
+  4 skipped (skip reason explicit + honest: no OBD2_MARIADB_TEST_DSN +
+  testcontainers not installed; create_all is NOT a valid substitute)
+- `ruff check` on both files -> All checks passed
+- TRUE ACCEPTANCE (PM/CI gate, bench-only in-loop): run the live layer against
+  a real MariaDB 11.x — add testcontainers + Docker/MariaDB-11.x-service CI job
+  (`-m integration`), OR OBD2_MARIADB_TEST_DSN against chi-srv-01 coupled with
+  US-463's deploy-gate. mypy strict = PM integration gate.
+
+### Learnings for future iterations:
+- **Pattern discovered**: to run an SSH+mysql-transport migration chain against
+  a real DB in a test, you don't refactor the migrations — you inject a
+  `CommandRunner` adapter that intercepts `input` SQL and re-emits the exact
+  `mysql -B -N` text shape the parsers expect (tab join, None->'NULL'). The
+  chain code is unchanged; only the transport swaps. The adapter's format
+  translation is a PURE function -> hermetically unit-testable in-loop even with
+  no DB (the real in-loop confidence lives there).
+- **Gotcha**: `create_all` is NOT categorically forbidden — create_all-against-
+  SQLite as a SUBSTITUTE for real DDL is the trap. But for BL-021 even
+  create_all-against-real-MariaDB won't reproduce the drift, because the stale
+  inline CHECK is NOT in the current ORM (models.py:130 — server data_source
+  carries no DB CHECK). The historical drift must be hand-seeded as raw DDL.
+- **Gotcha (process)**: when the deliverable's true gate needs infra the dev
+  bench lacks, the honest move is a two-layer split (US-462 precedent): a
+  hermetic layer that PROVES the machinery in-loop + a live layer that skips
+  with a loud, specific reason (naming the missing infra + refusing the
+  substitute), plus a written CI-enablement follow-up so the skip is documented,
+  not silent.
+---
