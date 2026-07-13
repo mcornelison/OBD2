@@ -113,3 +113,78 @@ Task: Applied-schema FK/CHECK guard — pre-migration A-10 drift tripwire
   existing `--run-all` end-to-end tests — a "fully migrated" fixture must now
   also model the FKs as *present* or the new guard reads it as drift.
 ---
+
+## 2026-07-13 - US-463 (Rex / Agent 1, Session 3 — Sprint 57)
+Task: MODIFY-COLUMN v0023 — strip stale INLINE data_source CHECK (BL-021)
+
+### What was implemented:
+- Root cause (Atlas live-introspection ruling 2026-07-13): v0023 dropped every
+  discovered `data_source` CHECK with `ALTER TABLE ... DROP CONSTRAINT <name>`,
+  but all 5 live CHECKs (`realtime_data`/`statistics`/`connection_log`/
+  `profiles`/`calibration_sessions`) are **INLINE** (column-level) — MariaDB
+  names an inline CHECK after the column, so `CONSTRAINT_NAME == 'data_source'`.
+  `DROP CONSTRAINT` on an inline CHECK = MariaDB **1091**; `DROP CHECK` isn't
+  valid syntax = **1064**. Both are why the V0.29.10 deploy stalled at v0023.
+- Rewrote `apply()` to **branch each discovered CHECK on its shape**:
+  - **inline** (`CONSTRAINT_NAME == DATA_SOURCE_COLUMN`) → `_stripInlineDataSourceCheck`:
+    introspect the live column def, then `MODIFY COLUMN` re-declaring the column
+    WITHOUT a CHECK clause (the only in-place strip for an inline CHECK).
+  - **table-level** (`ck_*`) → `_dropTableLevelDataSourceCheck`: the original
+    `DROP CONSTRAINT` path, still correct for a genuinely table-level constraint.
+- New `ColumnDef` dataclass + `introspectColumnDefSql` (reads `COLUMN_TYPE`,
+  `CHARACTER_SET_NAME`, `COLLATION_NAME`, `IS_NULLABLE`, `COLUMN_DEFAULT` from
+  `information_schema.COLUMNS`) + `_introspectColumnDef` (parses the tab row,
+  raises `SchemaProbeError` on probe-fail / missing column — never MODIFY a
+  column whose real def couldn't be read).
+- New `modifyColumnStripCheckSql` rebuilds the MODIFY **preserving every
+  introspected attribute** (charset/collation emitted explicitly — a bare
+  `MODIFY VARCHAR(16)` silently resets collation; nullability explicit;
+  `COLUMN_DEFAULT` echoed verbatim, already a valid SQL expr like `'real'`) with
+  NO CHECK clause. Nothing hardcoded (introspect+preserve).
+- Discovery (`discoverDataSourceCheckSql`) + zero-survivor post-probe unchanged
+  (Atlas: sound). Idempotent: after a strip the inline CHECK is gone from
+  `CHECK_CONSTRAINTS` → re-run discovers 0 → genuine no-op.
+
+### Files changed:
+- Modified: `src/server/migrations/versions/v0023_us458_drop_stale_data_source_check.py`
+  (inline/table-level branch in `apply`; `ColumnDef` + introspect + MODIFY
+  builder + two strip helpers; docstring/header BL-021 update)
+- Modified: `tests/server/test_migration_0023_drop_stale_data_source_check.py`
+  (FakeRunner models inline vs table-level + column-def introspection + MODIFY;
+  `TestApplyInlineBranch` [strip-via-MODIFY, def-preserved, introspect-before-
+  modify, all-removed, ordering, post-probe], `TestApplyTableLevelBranch`
+  [DROP path, mixed inline+table-level], `TestIntrospectSql`, `TestModifyColumnSql`,
+  failure modes [introspect-fail, missing-col, modify-fail, drop-fail, survivor])
+
+### Verification:
+- `pytest tests/server/test_migration_0023_drop_stale_data_source_check.py`
+  → 28 passed
+- `+ test_data_source_applied_schema_accepts_foreign.py` (imports v0023
+  discovery, unchanged) → 34 passed, 1 skipped (skip = opt-in
+  `OBD2_APPLIED_SCHEMA_TEST=1` live gate)
+- `ruff check` on both modified files → All checks passed
+- ⛔ **NOT VALIDATION** (Atlas TIGHTEN-1, the 4-cycle trap): the hermetic
+  FakeRunner proves **control flow + SQL shape ONLY** — SQLite/create_all cannot
+  reproduce 1091/1064/inline-CHECK semantics, so a green in-loop test does NOT
+  validate the MariaDB DDL. **US-463 TRUE acceptance = the live deploy resuming
+  clean at v0023 on real MariaDB 11.x** (PM/DEPLOY gate on chi-srv-01;
+  0018-0022 already applied on prod). Couple with US-464's real-MariaDB test.
+
+### Learnings for future iterations:
+- **Pattern discovered**: to strip an **inline** (column-level) CHECK on MariaDB
+  you must re-declare the column via `MODIFY COLUMN` (DROP CONSTRAINT=1091,
+  DROP CHECK=1064). Introspect `information_schema.COLUMNS` first and re-state
+  **every** attribute — charset/collation are NOT in `COLUMN_TYPE`, so a bare
+  `MODIFY ... VARCHAR(16)` resets them to the table/server default.
+- **Gotcha**: `information_schema.COLUMN_DEFAULT` (MariaDB 10.2+) already returns
+  a valid SQL expression — for a string default it comes back quoted (`'real'`),
+  so echo it verbatim into `DEFAULT ...`; don't re-quote (breaks numeric/expr
+  defaults). `mysql -N` renders SQL NULL as the literal token `NULL` → map to
+  None (omit the clause).
+- **Gotcha (process)**: the in-loop hermetic test for a MariaDB-DDL migration is
+  structurally INCAPABLE of catching the version-specific failure (1091/1064) —
+  it is a control-flow gate, not acceptance. This is the recurring BL-019→020→
+  021 "create_all masks drift" trap; US-464 exists to close it with a real
+  MariaDB testcontainer. Flag it loudly in completionNotes so PM doesn't
+  green-ship on the in-loop pass.
+---
