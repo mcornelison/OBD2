@@ -1,3 +1,18 @@
+---
+sprint: 56
+version: V0.29.10
+status: ready
+createdAt: 2026-07-13
+createdBy: Marcus (PM)
+selectedStories: [US-461, US-462]
+forksFrom: dev @ (recorded at prd_to_sprint.py conversion)
+sprintJsonPath: offices/ralph/sprint.json
+epic: E-002
+feature: F-104
+theme: BL-020 unblock -- 3-state defensive v0022 + applied-schema FK guard
+atlasReview: "PASS 2026-07-13 -- SOUND, no BLOCK (inbox 2026-07-13-from-atlas-v0.29.10-prd-review.md). GAP-1 (US-462 two-layer wiring) + GAP-2 (raw-SQL not Alembic) FOLDED into story DoD. Also BL-020 ruling 2026-07-13-from-atlas-bl020-v0022-fk-defensive-ruling.md. No post-freeze re-gate owed."
+---
+
 # PRD: V0.29.10 — 3-state defensive v0022 + applied-schema FK guard
 
 | Field | Value |
@@ -12,7 +27,7 @@
 
 ## Problem
 
-V0.29.9 server deploy failed at Alembic **v0022** (`v0022_us451_drive_identity_collapse.py::_repointSummaryFk`, line ~343). The migration assumes each collapse table's `summary_id` carries an FK to drop + re-point; the live DB's FK topology has **drifted** from the ORM. The probe refused rather than guess — clean stop, no partial apply, no corruption. Production safe on V0.29.8.
+V0.29.9 server deploy failed at migration **v0022** (`v0022_us451_drive_identity_collapse.py::_repointSummaryFk`, line ~343). *(GAP-2, Atlas: there is no Alembic in this repo — v0022 is a custom `MigrationRunner` step, `src/server/migrations/runner.py` + `scripts/apply_server_migrations.py`, raw SQL via `_runServerSql`. Ralph uses the raw-SQL idiom, not Alembic `op.*`.)* The migration assumes each collapse table's `summary_id` carries an FK to drop + re-point; the live DB's FK topology has **drifted** from the ORM. The probe refused rather than guess — clean stop, no partial apply, no corruption. Production safe on V0.29.8.
 
 ## Atlas ruling (2026-07-13) — verified live, not assumed
 
