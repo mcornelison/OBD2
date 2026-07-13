@@ -22,16 +22,12 @@ Purpose: Convert a PRD MD file (YAML frontmatter + markdown body) into
          at conversion time (sprint.json is frozen; later Story.md edits
          do not propagate).
 """
-import hashlib
 import json
 import sys
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 import frontmatter
-
-from offices.pm.scripts._freeze import canonicalizeBigDoD
 
 
 def convertPrdToSprint(prdPath: Path, outPath: Path, repoRoot: Path) -> None:
@@ -114,14 +110,11 @@ def convertPrdToSprint(prdPath: Path, outPath: Path, repoRoot: Path) -> None:
                 f"({vc.get('action', '')}) → ({vc.get('outcome', '')})  [from {storyId}]"
             )
 
-    # Freeze the contract per spec 2026-05-28 (CIO directive #2).
-    # Canonicalization recipe lives in offices.pm.scripts._freeze so the
-    # freeze write (here) and the freeze-drift read (sprint_lint) share a
-    # single source of truth without a producer→consumer import inversion.
-    canonicalBigDoD = canonicalizeBigDoD(bigDoD)
-    bigDoDHash = hashlib.sha256(canonicalBigDoD.encode("utf-8")).hexdigest()
-    frozenAt = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-
+    # Sprint contract = the aggregated bigDefinitionOfDone + per-story
+    # validationCriteria.  The freeze-hash mechanic (frozenAt / bigDoDHash) was
+    # retired per CIO directive 2026-07-13 -- it added a drift-lock we don't
+    # need on a two-author contract flow.  sprint_lint skips the drift check
+    # when frozenAt is absent, so no consumer change is required.
     sprintJson: dict[str, Any] = {
         "schemaVersion": "2.0.0",
         "sprint": meta["sprint"],
@@ -130,8 +123,6 @@ def convertPrdToSprint(prdPath: Path, outPath: Path, repoRoot: Path) -> None:
         "stories": sprintStories,
         "validation": {
             "bigDefinitionOfDone": bigDoD,
-            "frozenAt": frozenAt,
-            "bigDoDHash": bigDoDHash,
         },
     }
 
