@@ -3,7 +3,7 @@
 | Field | Value |
 |---|---|
 | Severity | High (blocks V0.29.10 server deploy — Pi deploy held behind it) |
-| Status | RULED (Atlas 2026-07-13) — awaiting Ralph patch V0.29.11 |
+| Status | RESOLVED (deployed V0.29.11 2026-07-13) |
 | Blocking | V0.29.10 server deploy (surfaced immediately after BL-020 cleared) |
 | Waiting On | ~~Atlas ruling~~ FILED 2026-07-13 → Ralph patch (V0.29.11) |
 | Atlas ruling | `offices/architect/reports/2026-07-13-bl021-v0023-inline-check-modify-column-ruling.md` (A2AL in PM inbox 2026-07-13). **Fix = per-table `MODIFY COLUMN` — NOT `DROP CHECK`** (proven invalid MariaDB syntax on prod scratch-probe) and NOT `DROP CONSTRAINT` (1091). Stale CHECKs are inline column-level on all 5 tables (`data_source VARCHAR(16) utf8mb4/utf8mb4_unicode_ci NOT NULL DEFAULT 'real'`). Story2 = **TD-055 real-MariaDB migration test graduates to funded** (the class that produced BL-019/020/021). No BLOCK. |
@@ -41,3 +41,6 @@ So `DROP CONSTRAINT data_source` fails with 1091 even though the constraint is p
 
 ## State to resume from
 Server DB at migration 0022; v0023 pending. dev = V0.29.10 (f0da371). Pi HELD. Same drill as BL-020: Atlas ruling is the gate (Rule-13 retired).
+
+## RESOLVED 2026-07-13
+Fixed + deployed to production. V0.29.11 server deploy applied the migration on the real DB (chi-srv-01), obd-server active on V0.29.11 / 282c40a, health OK. v0023 applied cleanly (US-463 def-preserving MODIFY COLUMN stripped the inline data_source CHECK on all 5 tables). US-462 FK preflight verified OK. US-464 real-MariaDB test now guards the class in CI (on-demand until Docker CI enabled).
