@@ -531,6 +531,10 @@ class TestRunRegistryEntryPoint:
         def fakeRunner(argv, *, input=None, timeout=None):
             if input and 'SELECT version' in input:
                 return _ok(stdout=appliedList)
+            # US-462 preflight: a fully-migrated DB carries the drive-identity
+            # FKs, so the applied-schema KEY_COLUMN_USAGE probe returns a name.
+            if input and 'KEY_COLUMN_USAGE' in input:
+                return _ok(stdout='fk_present\n')
             return _ok()
 
         monkeypatch.setattr(asm, '_defaultRunner', fakeRunner)
