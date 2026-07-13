@@ -1,1 +1,94 @@
-{}
+{
+  "schemaVersion": "2.0.0",
+  "sprint": 56,
+  "version": "V0.29.10",
+  "createdFromPRD": "offices/pm/prds/prd-V0.29.10.md",
+  "stories": [
+    {
+      "id": "US-461",
+      "title": "3-state defensive v0022 identity-collapse migration (BL-020 unblock)",
+      "parent": "F-104",
+      "epicId": "E-002",
+      "type": "blocker",
+      "size": "M",
+      "status": "sprint-ready",
+      "passes": false,
+      "acceptance": [
+        "Pre-flight audit: before writing any branch, read the current v0022 body AND query information_schema for the applied summary_id FK on EVERY collapse table (fixture + prod-mirror) -- enumerate the real tables + their actual FK state; do not assume the ORM's FK",
+        "[ATLAS RULING 2026-07-13] v0022 probes each collapse table's APPLIED summary_id FK and branches 3-STATE per table: (1) FK->drive_summary => drop+re-point to drives.drive_id; (2) FK->drives => no-op; (3) NO FK => ADD-only to drives.drive_id, skip the drop. Removes the line ~343 bug (states 2+3 collapsed, fatals on state 3) NOTE [ATLAS GAP-2]: v0022 is a custom MigrationRunner step (src/server/migrations + scripts/apply_server_migrations.py), raw SQL via _runServerSql -- NOT Alembic op.*",
+        "applied to EVERY collapse table (>=drive_statistics [state 3, no FK] + drive_derived_signals [state 1, stale FK->drive_summary]); drive_annotations comment corrected (exists on prod, no summary_id col => genuine no-op); per Atlas Q2 do NOT add a drive_summary.id->drives hard FK",
+        "idempotent / re-runnable: resumes clean at v0022 (0018-0021 applied); second run is a no-op; forward-safe on an already-canonical DB; on runtime orphans vs drives.drive_id, fail loud with the count (never ADD an FK that won't validate)",
+        "tests: state-3 (no FK)->ADD, state-1 (stale FK)->drop+re-point, state-2 (already->drives)->no-op, 0-orphan precondition; targeted + synchronous + committed in-iteration",
+        "ruff clean in-loop"
+      ],
+      "validationCriteria": [
+        {
+          "action": "run v0022 upgrade against a fixture where drive_statistics.summary_id has zero FKs",
+          "outcome": "succeeds; column ends with exactly one FK -> drives.drive_id; no fatal at line ~343"
+        },
+        {
+          "action": "run v0022 against a fixture where drive_derived_signals.summary_id has a stale FK -> drive_summary",
+          "outcome": "stale FK dropped, canonical FK -> drives.drive_id added; the row is intact"
+        },
+        {
+          "action": "re-run v0022 after a successful apply (state-2 everywhere)",
+          "outcome": "no-op, no error, FK set unchanged"
+        }
+      ],
+      "conditionalOutcomes": [
+        "if enumerating the v0022 body reveals a collapse table beyond drive_statistics/drive_derived_signals -> apply the same 3-state branch; do not skip silently",
+        "if a target column shows orphan rows vs drives.drive_id at runtime -> fail loud with the orphan count (do not ADD an FK that won't validate)"
+      ],
+      "goal": "As the deploy pipeline, I want v0022 to reconcile each collapse table's summary_id FK by probing its actual applied state and branching 3 ways, so the identity collapse applies cleanly on a drifted production schema without fatalling, guessing, or damaging data.",
+      "tasks": []
+    },
+    {
+      "id": "US-462",
+      "title": "Applied-schema FK/CHECK guard -- pre-migration A-10 drift tripwire",
+      "parent": "F-104",
+      "epicId": "E-002",
+      "type": "tech-debt",
+      "size": "M",
+      "status": "sprint-ready",
+      "passes": false,
+      "acceptance": [
+        "Pre-flight audit: before adding the guard, audit where US-459's applied-schema guard is wired in apply_server_migrations AND which drive-identity FKs the pending migrations require -- mirror that placement + reporting shape",
+        "[ATLAS GAP-1 TWO-LAYER, mirror US-459 tests/server/test_data_source_applied_schema_accepts_foreign.py:39-52] (a) HERMETIC verdict test: preflight goes RED on a missing expected drive-identity FK, GREEN when all present",
+        "[ATLAS GAP-1] (b) LIVE preflight WIRED into apply_server_migrations BEFORE the migration set: FAILS the deploy on drift; when no MariaDB is reachable it SKIPS HONESTLY (never reports pass -- the Windows bench case). Hermetic-test-only + silently-passing live wiring = the exact green-over-broken-deploy that IS BL-020",
+        "[ATLAS Q3] guard reads the APPLIED schema via information_schema (FK topology + relevant CHECKs), never create_all / ORM-metadata-only; failure message names table + column + expected FK target",
+        "ruff clean in-loop"
+      ],
+      "validationCriteria": [
+        {
+          "action": "run preflight against a DB missing an expected drive-identity FK",
+          "outcome": "non-zero exit; message names table + column + expected FK target"
+        },
+        {
+          "action": "run preflight against a fully-reconciled DB",
+          "outcome": "pass, zero exit"
+        }
+      ],
+      "conditionalOutcomes": [
+        "the fuller testcontainer 'third leg' is OUT OF SCOPE here -> file/annotate TD-055 for it (Atlas: 'file it if not built'); this story is the now-achievable preflight assert only"
+      ],
+      "goal": "As the deploy pipeline, I want a pre-migration preflight that asserts the APPLIED FK/CHECK topology (from information_schema, never create_all) against what the pending migrations require, so A-10 ORM-vs-DB drift fails fast at preflight with an actionable message instead of mid-migration at deploy.",
+      "tasks": []
+    }
+  ],
+  "validation": {
+    "bigDefinitionOfDone": [
+      "(run v0022 upgrade against a fixture where drive_statistics.summary_id has zero FKs) → (succeeds; column ends with exactly one FK -> drives.drive_id; no fatal at line ~343)  [from US-461]",
+      "(run v0022 against a fixture where drive_derived_signals.summary_id has a stale FK -> drive_summary) → (stale FK dropped, canonical FK -> drives.drive_id added; the row is intact)  [from US-461]",
+      "(re-run v0022 after a successful apply (state-2 everywhere)) → (no-op, no error, FK set unchanged)  [from US-461]",
+      "(run preflight against a DB missing an expected drive-identity FK) → (non-zero exit; message names table + column + expected FK target)  [from US-462]",
+      "(run preflight against a fully-reconciled DB) → (pass, zero exit)  [from US-462]"
+    ],
+    "validationMethod": "BENCH-ONLY",
+    "validatesFeatures": [
+      "F-104"
+    ],
+    "currentVersion": "V0.29.10",
+    "validatedAt": null,
+    "validatedBy": null
+  }
+}
