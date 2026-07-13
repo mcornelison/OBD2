@@ -1078,7 +1078,7 @@
       "renamedFrom": "B-104",
       "createdAt": "2026-05-27",
       "updatedAt": "2026-05-27",
-      "currentVersion": "V0.29.10"
+      "currentVersion": "V0.29.11"
     },
     {
       "id": "F-105",
@@ -1198,7 +1198,7 @@
       "description": "Drive 33 = a 2014 Ford Explorer logged as Eclipse data_source='real' (shared OBDLink auto-pair). Add a foreign-vehicle marker enum + re-tag, and an ingest guard (bus-rate sanity check) so it can't recur. Design-gated to Atlas (enum semantics + guard mechanism + placement).",
       "status": "awaiting-validation",
       "createdAt": "2026-06-30",
-      "currentVersion": "V0.29.5"
+      "currentVersion": "V0.29.11"
     },
     {
       "id": "F-117",
@@ -3948,7 +3948,7 @@
       "parent": "F-116",
       "type": "blocker",
       "size": "M",
-      "status": "sprint-ready",
+      "status": "complete",
       "title": "MODIFY-COLUMN v0023 -- strip stale inline data_source CHECK (BL-021)",
       "goal": "As the deploy pipeline, I want v0023 to strip each table's stale inline data_source CHECK via a definition-preserving MODIFY COLUMN, so the migration applies on real MariaDB (where DROP CONSTRAINT can't drop an inline CHECK and DROP CHECK is not valid syntax) and the V0.29.10 deploy completes.",
       "definitionOfDone": [
@@ -3990,7 +3990,7 @@
       "parent": "F-104",
       "type": "tech-debt",
       "size": "M",
-      "status": "sprint-ready",
+      "status": "complete",
       "title": "TD-055 real-MariaDB migration-chain CI test (A-10 drift class)",
       "goal": "As the maintainer, I want a test that applies the full migration chain against a REAL MariaDB (not SQLite/create_all), so the migration-vs-live-DB drift class (BL-019/020/021) is caught in CI instead of one deploy at a time.",
       "definitionOfDone": [
