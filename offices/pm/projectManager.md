@@ -170,6 +170,26 @@ CIO validates output against acceptance criteria
 Completed B- items move to pm/archive/
 ```
 
+### Sprint Lifecycle (canonical — CIO directive 2026-07-13)
+
+The authoritative per-sprint sequence. `(optional)` steps are skipped when they add no value (small/mechanical patches). No freeze/hash-lock step — retired 2026-07-13 (Rule 13).
+
+| # | Step | Owner | Tool / artifact |
+|---|------|-------|-----------------|
+| 1 | Author stories → PRD | Marcus | `/prd`; stories → `backlog.json` + `pm/prds/prd-*.md` |
+| 2 | Architect PRD review | Atlas | `/review-prd` (design-gate; may BLOCK) |
+| 3 | *(optional)* QA PRD review | Argus | reviewer-lane note |
+| 4 | Generate `sprint.json` | Marcus | `prd_to_sprint.py` (no freeze/hash) |
+| 5 | `sprint_lint` green | Marcus | `sprint_lint.py` |
+| 6 | Cut the sprint branch | Marcus | `sprint/sprintNN-VX.Y.Z` from `dev` |
+| 7 | Run `ralph.sh` | **Mike (CIO)** | drives from his own shell (cannot be launched from inside a session) |
+| 8 | Close out sprint | Marcus | archive `sprint.json` + progress; merge sprint → `dev` |
+| 9 | Deploy server | Marcus | `/sprint-deploy-pm` (deploy from `dev`) |
+| 10 | Deploy Pi | Marcus | `/sprint-deploy-pm` |
+| 11 | *(optional)* test / IRL / UI test | Argus / Iris / CIO | `/sprint-validated` → `/chain-validated` when chain green |
+
+Steps 8–10 are bundled by `/sprint-deploy-pm` today; listed separately here to match the CIO's mental model. Chain-merge to `main` (`/chain-validated`) still happens once the whole V0.X chain is IRL-green (Rules 8–9 unchanged).
+
 ---
 
 ## Quick Context for New Sessions
