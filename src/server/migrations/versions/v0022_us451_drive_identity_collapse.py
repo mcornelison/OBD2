@@ -62,21 +62,37 @@ success and skips subsequent runs):
    Idempotent -- a replay matches 0 rows (already-flagged rows are no longer
    ``'full'``); a zero-survivor post-probe guards against a silent no-op.
 
-3. **Re-point the summary_id FKs -> ``drives.drive_id``.**  For
-   ``drive_statistics`` and ``drive_derived_signals`` the current FK on
-   ``summary_id`` (auto-named by ``create_all`` on ``drive_statistics``;
-   ``fk_drive_derived_signals_summary`` on ``drive_derived_signals`` from v0017)
-   is discovered by name via ``INFORMATION_SCHEMA.KEY_COLUMN_USAGE``, dropped,
-   and re-added as a named FK referencing ``drives(drive_id)`` ON DELETE
-   CASCADE.  Because v0018 subsumed ``drive_summary.id`` INTO ``drives.drive_id``
-   (identical values), every existing ``summary_id`` value already exists in
-   ``drives`` -- the ADD validates 0 orphans.  Idempotent: if the FK already
-   references ``drives`` the substep is a no-op.
+3. **Re-point the summary_id FKs -> ``drives.drive_id`` (3-STATE, per-table).**
+   Each collapse table's summary_id FK is reconciled by probing its APPLIED FK
+   topology via ``INFORMATION_SCHEMA.KEY_COLUMN_USAGE`` and branching on the
+   real state -- NOT on the ORM's declared FK, which drifted from the deployed
+   MariaDB (BL-020 / A-10):
+
+   * **State 1 -- FK -> ``drive_summary``** (e.g. ``drive_derived_signals``, whose
+     ``fk_drive_derived_signals_summary`` from v0017 still points at the legacy
+     table): drop the stale FK by its discovered name, then ADD the canonical
+     FK -> ``drives(drive_id)``.
+   * **State 2 -- FK -> ``drives`` already**: no-op (a prior run, or a fresh
+     ``create_all`` from the collapsed ORM).
+   * **State 3 -- NO FK at all** (e.g. ``drive_statistics`` on the drifted prod
+     schema, where ``create_all`` never auto-named the FK the ORM assumes):
+     ADD-only -- skip the drop, since there is nothing to drop.
+
+   The pre-BL-020 code collapsed states 2 + 3 and *fatalled* on state 3 (it
+   demanded a drives-referencing FK already exist).  Before any ADD, an orphan
+   probe counts ``summary_id`` values with no matching ``drives.drive_id``; a
+   non-zero count fails loud with the count rather than issuing an ADD that
+   MariaDB would reject (v0018 subsumed ``drive_summary.id`` INTO
+   ``drives.drive_id`` with identical values, so this is 0 for existing rows).
+   Idempotent + forward-safe: replaying on an already-canonical DB is state 2
+   everywhere.
 
 **Not done here (scope + safety, documented for PM/Atlas):**
 
-* ``drive_annotations`` -- the AC names it, but no such table/ORM model exists
-  in ``src/server``; it is a no-op (nothing to re-point).
+* ``drive_annotations`` -- exists on the production DB but carries NO
+  ``summary_id`` column (and has no ORM model in ``src/server``), so it holds no
+  drive-identity FK to re-point: a genuine no-op, correctly skipped by the
+  collapse-table set below.
 * A hard ``drive_summary.id -> drives.drive_id`` FK is deliberately NOT added.
   ``drive_summary`` links to ``drives`` by the *natural key*
   (``source_device``, ``source_id``) <-> (``source_device``, ``source_drive_id``),
@@ -320,42 +336,44 @@ def _flagUnmappableLegacy(ctx: RunnerContext) -> None:
         )
 
 
-def _repointSummaryFk(
+def _orphanSummaryIdCount(ctx: RunnerContext, tableName: str) -> int:
+    """Return the count of ``tableName.summary_id`` rows with no matching
+    ``drives.drive_id`` -- the rows that would make an FK ADD fail to validate.
+
+    A LEFT JOIN anti-join (NULL summary_id rows are excluded -- they satisfy the
+    FK vacuously).  ``0`` for existing rows because v0018 subsumed
+    ``drive_summary.id`` INTO ``drives.drive_id`` with identical values.
+    """
+    sql = (
+        f'SELECT COUNT(*) AS orphans FROM {tableName} c '
+        f'LEFT JOIN {DRIVES_TABLE} d ON c.{_SUMMARY_FK_COLUMN} = d.drive_id '
+        f'WHERE c.{_SUMMARY_FK_COLUMN} IS NOT NULL AND d.drive_id IS NULL;'
+    )
+    res = _runServerSql(ctx.addrs, ctx.creds, sql, ctx.runner)
+    if res.returncode != 0:
+        raise SchemaProbeError(
+            f'orphan-summary_id probe failed on {tableName!r}: '
+            f'{res.stderr.strip() or res.stdout.strip()}',
+        )
+    out = res.stdout.strip()
+    return int(out.split()[0]) if out else 0
+
+
+def _addDrivesFk(
     ctx: RunnerContext, tableName: str, newFkName: str, addDdl: str,
 ) -> None:
-    """Re-point ``tableName.summary_id`` FK from drive_summary -> drives.
+    """Guard orphans, then ADD the canonical ``summary_id -> drives`` FK.
 
-    Idempotent + name-discovering: if the FK already references ``drives`` the
-    substep is a no-op; if it still references ``drive_summary`` the stale FK is
-    dropped by its discovered name and the drives-referencing FK re-added.
+    Shared by state-1 (after the stale drop) and state-3 (ADD-only).  Fails loud
+    with the orphan count rather than ADDing an FK MariaDB would reject, then
+    post-condition-probes that the FK now references ``drives``.
     """
-    if not serverTableExists(ctx.addrs, ctx.creds, tableName, ctx.runner):
+    orphans = _orphanSummaryIdCount(ctx, tableName)
+    if orphans:
         raise MigrationError(
-            f'{tableName!r} table missing; v0022 cannot re-point its '
-            f'{_SUMMARY_FK_COLUMN} FK.  Investigate why create_all + earlier '
-            'migrations did not land the table.',
-        )
-
-    staleName = _fkNameReferencing(ctx, tableName, _LEGACY_REFERENCED_TABLE)
-    if staleName is None:
-        # No drive_summary-referencing FK -> either already re-pointed, or the
-        # FK is missing entirely.  The drives-referencing FK MUST exist.
-        if _fkNameReferencing(ctx, tableName, DRIVES_TABLE) is None:
-            raise SchemaProbeError(
-                f'{tableName}.{_SUMMARY_FK_COLUMN} references neither '
-                f'{_LEGACY_REFERENCED_TABLE} nor {DRIVES_TABLE}; the expected '
-                'FK is missing.  Investigate the MariaDB session context.',
-            )
-        return  # already re-pointed -- no-op
-
-    dropDdl = (
-        f'ALTER TABLE {tableName} DROP FOREIGN KEY {staleName};'
-    )
-    res = _runServerSql(ctx.addrs, ctx.creds, dropDdl, ctx.runner)
-    if res.returncode != 0:
-        raise MigrationError(
-            f'drop stale FK {staleName!r} on {tableName!r} failed: '
-            f'{res.stderr.strip() or res.stdout.strip()}',
+            f'{orphans} {tableName}.{_SUMMARY_FK_COLUMN} row(s) have no matching '
+            f'{DRIVES_TABLE}.drive_id; refusing to ADD FK {newFkName!r} that '
+            'would not validate.  Reconcile the orphans before re-running v0022.',
         )
 
     res = _runServerSql(ctx.addrs, ctx.creds, addDdl, ctx.runner)
@@ -374,6 +392,50 @@ def _repointSummaryFk(
             f'{DRIVES_TABLE} after the re-point ran; investigate the MariaDB '
             'session context.',
         )
+
+
+def _repointSummaryFk(
+    ctx: RunnerContext, tableName: str, newFkName: str, addDdl: str,
+) -> None:
+    """Reconcile ``tableName.summary_id`` FK to ``drives.drive_id`` -- 3-STATE.
+
+    Branches on the table's APPLIED FK topology (NOT the drifted ORM):
+
+    * **State 1** -- FK -> ``drive_summary``: drop the discovered stale FK, then
+      ADD the canonical FK -> ``drives``.
+    * **State 2** -- FK -> ``drives`` already: no-op.
+    * **State 3** -- no summary_id FK at all: ADD-only (skip the drop).
+
+    Every ADD path guards orphans first (never ADD an FK that will not validate).
+    Idempotent + forward-safe: an already-canonical DB is state 2 everywhere.
+    """
+    if not serverTableExists(ctx.addrs, ctx.creds, tableName, ctx.runner):
+        raise MigrationError(
+            f'{tableName!r} table missing; v0022 cannot re-point its '
+            f'{_SUMMARY_FK_COLUMN} FK.  Investigate why create_all + earlier '
+            'migrations did not land the table.',
+        )
+
+    staleName = _fkNameReferencing(ctx, tableName, _LEGACY_REFERENCED_TABLE)
+    if staleName is not None:
+        # State 1: stale FK -> drive_summary.  Drop it, then re-point.
+        dropDdl = f'ALTER TABLE {tableName} DROP FOREIGN KEY {staleName};'
+        res = _runServerSql(ctx.addrs, ctx.creds, dropDdl, ctx.runner)
+        if res.returncode != 0:
+            raise MigrationError(
+                f'drop stale FK {staleName!r} on {tableName!r} failed: '
+                f'{res.stderr.strip() or res.stdout.strip()}',
+            )
+        _addDrivesFk(ctx, tableName, newFkName, addDdl)
+        return
+
+    if _fkNameReferencing(ctx, tableName, DRIVES_TABLE) is not None:
+        # State 2: already references drives -- no-op.
+        return
+
+    # State 3: no summary_id FK on the applied schema (create_all never named the
+    # FK the ORM assumes).  ADD-only, skipping the drop that has nothing to drop.
+    _addDrivesFk(ctx, tableName, newFkName, addDdl)
 
 
 def apply(ctx: RunnerContext) -> None:

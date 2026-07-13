@@ -969,11 +969,21 @@ def runRegistry(
         MigrationRunner,
         RunnerContext,
     )
+    from src.server.migrations.preflight import (  # noqa: PLC0415
+        assertAppliedMigrationFkTopology,
+    )
     effectiveRunner: CommandRunner = runner or _defaultRunner
     addrs = loadAddresses(addressesPath, runner=effectiveRunner)
     creds = loadServerCreds(addrs, runner=effectiveRunner)
     ctx = RunnerContext(addrs=addrs, creds=creds, runner=effectiveRunner)
-    return MigrationRunner(ALL_MIGRATIONS).runAll(ctx)
+    reg = MigrationRunner(ALL_MIGRATIONS)
+    # US-462 applied-schema FK topology preflight -- assert (BEFORE the migration
+    # set) that already-applied migrations' promised drive-identity FKs still
+    # exist on the deployed schema.  Fails the deploy fast on A-10 drift; skips
+    # honestly when MariaDB is unreachable.  PreflightError is a MigrationError,
+    # so main(--run-all) maps it to a non-zero exit.
+    assertAppliedMigrationFkTopology(ctx, reg)
+    return reg.runAll(ctx)
 
 
 if TYPE_CHECKING:

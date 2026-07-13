@@ -1078,7 +1078,7 @@
       "renamedFrom": "B-104",
       "createdAt": "2026-05-27",
       "updatedAt": "2026-05-27",
-      "currentVersion": "V0.29.9"
+      "currentVersion": "V0.29.10"
     },
     {
       "id": "F-105",
@@ -3878,7 +3878,7 @@
       "parent": "F-104",
       "type": "blocker",
       "size": "M",
-      "status": "sprint-ready",
+      "status": "complete",
       "title": "3-state defensive v0022 identity-collapse migration (BL-020 unblock)",
       "goal": "As the deploy pipeline, I want v0022 to reconcile each collapse table's summary_id FK by probing its actual applied state and branching 3 ways, so the identity collapse applies cleanly on a drifted production schema without fatalling, guessing, or damaging data.",
       "definitionOfDone": [
@@ -3916,7 +3916,7 @@
       "parent": "F-104",
       "type": "tech-debt",
       "size": "M",
-      "status": "sprint-ready",
+      "status": "complete",
       "title": "Applied-schema FK/CHECK guard -- pre-migration A-10 drift tripwire",
       "goal": "As the deploy pipeline, I want a pre-migration preflight that asserts the APPLIED FK/CHECK topology (from information_schema, never create_all) against what the pending migrations require, so A-10 ORM-vs-DB drift fails fast at preflight with an actionable message instead of mid-migration at deploy.",
       "definitionOfDone": [
