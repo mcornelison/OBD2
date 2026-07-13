@@ -3,9 +3,10 @@
 | Field | Value |
 |---|---|
 | Severity | High (blocks V0.29.10 server deploy — Pi deploy held behind it) |
-| Status | Active |
+| Status | RULED (Atlas 2026-07-13) — awaiting Ralph patch V0.29.11 |
 | Blocking | V0.29.10 server deploy (surfaced immediately after BL-020 cleared) |
-| Waiting On | Atlas ruling + Ralph patch (V0.29.11) |
+| Waiting On | ~~Atlas ruling~~ FILED 2026-07-13 → Ralph patch (V0.29.11) |
+| Atlas ruling | `offices/architect/reports/2026-07-13-bl021-v0023-inline-check-modify-column-ruling.md` (A2AL in PM inbox 2026-07-13). **Fix = per-table `MODIFY COLUMN` — NOT `DROP CHECK`** (proven invalid MariaDB syntax on prod scratch-probe) and NOT `DROP CONSTRAINT` (1091). Stale CHECKs are inline column-level on all 5 tables (`data_source VARCHAR(16) utf8mb4/utf8mb4_unicode_ci NOT NULL DEFAULT 'real'`). Story2 = **TD-055 real-MariaDB migration test graduates to funded** (the class that produced BL-019/020/021). No BLOCK. |
 | Created | 2026-07-13 |
 | Class | migration-vs-applied-DB mismatch (A-10 / TD-055) — **4th occurrence** (Atlas's "4th cycle" warning), after BL-019/BL-020 |
 
