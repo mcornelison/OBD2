@@ -10,7 +10,7 @@ sprintJsonPath: offices/ralph/sprint.json
 epic: E-OPS + E-002
 feature: F-118 (Backlog + dev-tooling hygiene) + F-104
 theme: Housekeeping -- backlog metadata repair + dev-tooling hygiene + real-MariaDB CI
-atlasReview: "PENDING -- light architect review (housekeeping sprint; the deploy-gate tripwire US-469 + CI-enablement US-470 are the only load-bearing-adjacent items)"
+atlasReview: "PASS 2026-07-13 -- no BLOCK (inbox 2026-07-13-from-atlas-v0.29.12-prd-review.md). US-465/466/467/468 accepted as-is. GAP (US-469: Phase-0 must RUN pytest -m 'not slow', not check a marker) + TIGHTEN (US-470: close TD-055 only if CI actually gates) FOLDED. Coherence note (PM orchestration): does the deploy path require CI-green? -- tracked below."
 ---
 
 # PRD: V0.29.12 -- Housekeeping (backlog + dev-tooling hygiene)
@@ -48,6 +48,9 @@ The V0.29.10/.11 deploy saga surfaced several latent hygiene issues that are act
 - Rule-13 retired -> Atlas's PRD review IS the gate; no post-freeze re-gate.
 - Load-bearing-adjacent items for Atlas's eye: **US-469** (deploy path) and **US-470** (test infra / dep hygiene). The rest are low-risk PM-office/tooling hygiene.
 - On Atlas PASS: generate `sprint.json` -> lint -> branch `sprint/sprint58-V0.29.12` -> CIO runs `ralph.sh` (US-465 first).
+
+## Coherence follow-up (Atlas note, PM orchestration — post-sprint)
+US-469 (local Phase-0 `not slow` gate) can't run US-470's real-MariaDB test (needs Docker, bench-absent) — so the migration-drift check that would have caught BL-020/021 lives **only in CI**. For that gate to actually protect production, the deploy workflow must **require CI-green for the deployed SHA before `/sprint-deploy-pm` deploys from `dev`**. Today deploys run from `dev` with no CI-green precondition. **PM decision owed** (a small `/sprint-deploy-pm` Phase-0 addition or a documented merge-gate) — tracked as a follow-up, not folded into this sprint.
 
 ## Not in this sprint (flagged, different theme)
 - **US-388 / US-390** (DriveDetector Root-2 fix + regression lock, F-107) -- substantive A-9 data-integrity bug-work, IRL-gated; belongs in a data-integrity sprint.

@@ -4071,7 +4071,7 @@
       "title": "PM-tooling Windows UTF-8 hardening (stop cp1252 crashes)",
       "goal": "As any agent on Windows, I want the PM scripts to not crash on cp1252 when printing/reading unicode, so ad-hoc backlog/sprint audits do not die with UnicodeEncodeError.",
       "definitionOfDone": [
-        "Pre-flight audit: identify which offices/pm/scripts print or open() unicode (the arrow glyphs etc.) and currently require PYTHONIOENCODING=utf-8 to avoid crashing",
+        "Pre-flight audit: identify which offices/pm/scripts print or open() unicode (the arrow glyphs and similar non-ASCII) and currently require PYTHONIOENCODING=utf-8 to avoid crashing",
         "those scripts set UTF-8 internally (guarded sys.stdout/stderr.reconfigure(encoding=utf-8)) AND all open() use encoding=utf-8",
         "create offices/pm/knowledge/feedback-pm-windows-encoding-ad-hoc-audits.md (canonical recipe: PYTHONIOENCODING + encoding=utf-8; reference _freeze.py)",
         "ruff clean in-loop"
@@ -4120,7 +4120,7 @@
       "id": "US-468",
       "parent": "F-118",
       "type": "housekeeping",
-      "size": "XS",
+      "size": "S",
       "status": "sprint-ready",
       "title": "Formalize Story.md-mirror retirement (backlog.json = SSOT)",
       "goal": "As the PM, I want the dropped Story.md-mirror convention formally retired, so backlog.json is the single story SSOT and no skill/doc implies mirrors are required.",
@@ -4151,13 +4151,13 @@
       "definitionOfDone": [
         "Pre-flight audit: locate the best-effort-continue-past-red gap in the current deploy path (the V0.27.17 marker-on-failure class) + define what Phase-0 must assert",
         "Phase-0 asserts pre-flight / marker integrity and HALTS on failure (no best-effort continue past a red gate)",
-        "test / dry-run proving a red pre-flight stops the deploy (non-zero exit)",
+        "[ATLAS GAP 2026-07-13] Phase-0 RUNS pytest -m \"not slow\" (the suite CONTAINING the SS-T7 systemd-parity test) and HALTS on non-zero exit -- run-not-trust: NOT a file/marker check, NOT 'we ran it earlier' or 'Ralph reported green'. SS-T7 lesson (V0.27.12 DOA): the tripwire test EXISTED but the pipeline never RAN it",
         "ruff clean in-loop"
       ],
       "validationCriteria": [
         {
-          "action": "dry-run /sprint-deploy-pm with a forced red pre-flight",
-          "outcome": "deploy halts with non-zero exit; does not continue best-effort"
+          "action": "dry-run /sprint-deploy-pm Phase-0 with a deliberately failing test in the not-slow suite",
+          "outcome": "Phase-0 RUNS pytest -m 'not slow', gets non-zero, and HALTS the deploy -- does not check a marker or trust a prior report"
         }
       ],
       "conditionalOutcomes": [],
@@ -4178,7 +4178,7 @@
         "add testcontainers (or a MariaDB service-container config) to a dev/CI-only requirements set -- NOT a runtime dep (Pi/server prod installs must not pull it)",
         "wire a CI job running pytest tests/server/test_migration_chain_real_mariadb.py -m integration against MariaDB 11.x (matching prod 11.8.6 per Atlas TIGHTEN-2)",
         "the live layer executes + gates in CI (no longer honest-skip there); document the local DSN path (OBD2_MARIADB_TEST_DSN) for manual runs",
-        "annotate/close TD-055 as addressed (US-464 + this CI wiring); add a pointer from the create_all caveat in tests/integration/test_deploy_context_drive_simulator.py",
+        "[ATLAS TIGHTEN 2026-07-13] annotate TD-055; CLOSE it ONLY when the CI test actually EXECUTES + gates (validationCriteria#1 green in CI). If it falls to the DSN-manual interim (Docker unavailable) -> TD-055 stays OPEN-downgraded, NOT closed. Add a pointer from the create_all caveat in tests/integration/test_deploy_context_drive_simulator.py",
         "ruff clean in-loop"
       ],
       "validationCriteria": [
