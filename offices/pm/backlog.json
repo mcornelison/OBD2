@@ -5,7 +5,7 @@
   "counters": {
     "epic": 7,
     "feature": 111,
-    "story": 462
+    "story": 464
   },
   "epics": [
     {
@@ -3942,6 +3942,76 @@
       "tasks": [],
       "createdAt": "2026-07-13",
       "updatedAt": "2026-07-13"
+    },
+    {
+      "id": "US-463",
+      "parent": "F-116",
+      "type": "blocker",
+      "size": "M",
+      "status": "sprint-ready",
+      "title": "MODIFY-COLUMN v0023 -- strip stale inline data_source CHECK (BL-021)",
+      "goal": "As the deploy pipeline, I want v0023 to strip each table's stale inline data_source CHECK via a definition-preserving MODIFY COLUMN, so the migration applies on real MariaDB (where DROP CONSTRAINT can't drop an inline CHECK and DROP CHECK is not valid syntax) and the V0.29.10 deploy completes.",
+      "definitionOfDone": [
+        "Pre-flight audit: before writing the fix, read the current v0023 body AND introspect (information_schema) the actual data_source column def + CHECK on every affected table (calibration_sessions, connection_log, profiles, realtime_data, statistics) on a real MariaDB; confirm inline (name==column) vs table-level",
+        "[ATLAS RULING 2026-07-13] Replace v0023's DROP with per-table MODIFY COLUMN that strips the inline CHECK while PRESERVING the full INTROSPECTED column def (a bare MODIFY VARCHAR(16) silently resets collation) -- the 5 tables are VARCHAR(16) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'real'; introspect+preserve, do not hardcode. DROP CHECK is NOT MariaDB syntax (1064); DROP CONSTRAINT can't drop an inline CHECK (1091)",
+        "Branch inline-vs-table: inline (name==column) -> MODIFY COLUMN (strip CHECK); table-level (ck_*) -> DROP CONSTRAINT. Keep v0023's existing discovery + post-probe (Atlas: sound). Today all 5 are inline",
+        "Applied to EVERY affected data_source table; idempotent/re-runnable (re-run after success = no-op, no CHECK to strip); replays clean + resumes at v0023 (0018-0022 already applied on prod)",
+        "Tests: fixture table with the stale inline data_source CHECK -> after v0023 the CHECK is gone AND the col def (collation/default/nullability/length) is preserved AND the table accepts data_source='foreign'; re-run = no-op. Real-MariaDB per US-464 where available; targeted+synchronous+committed in-iteration",
+        "ruff clean in-loop"
+      ],
+      "validationCriteria": [
+        {
+          "action": "run v0023 against a table carrying the stale inline data_source CHECK (VARCHAR(16) utf8mb4_unicode_ci NOT NULL DEFAULT 'real')",
+          "outcome": "CHECK removed; column def fully preserved (collation/default/nullability/length); table now accepts data_source='foreign'; no 1091 / no 1064"
+        },
+        {
+          "action": "re-run v0023 after a successful apply",
+          "outcome": "no-op, no error, no data_source CHECK present"
+        },
+        {
+          "action": "run v0023 across all 5 affected tables",
+          "outcome": "each inline CHECK stripped; migration chain resumes + completes at v0023"
+        }
+      ],
+      "conditionalOutcomes": [
+        "if a table's data_source CHECK is table-level (ck_*) rather than inline -> use DROP CONSTRAINT for that one (the branch handles both); today all 5 are inline",
+        "if introspection shows a column def differing from utf8mb4_unicode_ci / DEFAULT 'real' -> preserve the ACTUAL introspected def, never assume"
+      ],
+      "createdAt": "2026-07-13",
+      "updatedAt": "2026-07-13",
+      "tasks": []
+    },
+    {
+      "id": "US-464",
+      "parent": "F-104",
+      "type": "tech-debt",
+      "size": "M",
+      "status": "sprint-ready",
+      "title": "TD-055 real-MariaDB migration-chain CI test (A-10 drift class)",
+      "goal": "As the maintainer, I want a test that applies the full migration chain against a REAL MariaDB (not SQLite/create_all), so the migration-vs-live-DB drift class (BL-019/020/021) is caught in CI instead of one deploy at a time.",
+      "definitionOfDone": [
+        "Pre-flight audit: identify the current server-migration test path (the SQLite/create_all route that green-passed BL-020 + BL-021) and what real-MariaDB test infra exists (testcontainers / service); confirm the exact gap",
+        "[ATLAS RULING 2026-07-13 -- TD-055 graduates to funded] a test applies the FULL pending migration chain against a REAL MariaDB instance (testcontainer or equivalent), NOT SQLite / create_all -- create_all is precisely what shipped BL-020 + BL-021 green",
+        "the test provably CATCHES both classes: BL-020 (FK drift / missing-FK) AND BL-021 (inline-CHECK DROP CONSTRAINT failure) -- seed the drifted schema state + assert the chain applies clean or fails loudly (never green over a broken DB)",
+        "wired into the test suite / CI (marked @pytest.mark.integration|slow if it needs a container); documents the TD-055 lineage (BL-019 -> BL-020 -> US-459 theater-trap -> BL-021, Atlas's 4th cycle)",
+        "ruff clean in-loop"
+      ],
+      "validationCriteria": [
+        {
+          "action": "run the migration-chain test against a real MariaDB seeded with a drifted schema (missing FK and/or stale inline CHECK)",
+          "outcome": "the test FAILS loudly on the drift (would have caught BL-020 + BL-021), does not green-pass"
+        },
+        {
+          "action": "run against the expected/clean schema",
+          "outcome": "the full chain applies and the test passes"
+        }
+      ],
+      "conditionalOutcomes": [
+        "if real-MariaDB (testcontainer) infra cannot run in current CI -> deliver the test runnable locally against a MariaDB service + document the CI-enablement follow-up; do NOT silently skip (that is the create_all trap again)"
+      ],
+      "createdAt": "2026-07-13",
+      "updatedAt": "2026-07-13",
+      "tasks": []
     }
   ]
 }
