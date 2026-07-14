@@ -514,3 +514,63 @@ Task: Formalize Story.md-mirror retirement (backlog.json = single story SSOT)
   synthesizes the archive record from JSON — the tooling had ALREADY made mirrors
   optional (2026-06-19); US-468 just formalizes it in the human-facing docs.
 ---
+
+## 2026-07-13 - US-469 (Rex / Agent 1, Session 9 — Sprint 58)
+Task: SS-T7 run-not-trust deploy-gate tripwire into /sprint-deploy-pm Phase-0
+
+### What was implemented:
+- Pre-flight audit (acceptance#1): the best-effort-continue-past-red gap has TWO
+  documented instances, one shared root cause:
+  - **V0.27.12 DOA / SS-T7**: the systemd-parity tripwire test EXISTED
+    (`tests/pi/power/power_watch/test_systemd_parity.py`) but the deploy pipeline
+    never RAN it → shipped dead-on-arrival.
+  - **V0.27.17 marker-on-failure** (`deploy/deploy-server.sh:330` comment): a step
+    treated `exit 0` as success and WROTE a green marker even when the job logged
+    10/10 FAILED.
+  Root cause = trusting a green SIGNAL (marker / "the test exists" / "Ralph
+  reported green") instead of observing a green RESULT. Phase-0 must RUN the
+  not-slow suite itself and HALT on any non-zero exit.
+- NEW `offices/pm/scripts/deploy_preflight_gate.py`: a structurally run-not-trust
+  gate. `runPreflightGate` ALWAYS invokes pytest via `buildPytestArgv` →
+  `[python, -m, pytest, -m, "not slow"]` (the suite containing SS-T7 — verified
+  it carries NO `slow` marker so `-m "not slow"` includes it). NO marker read, NO
+  "prior report"/`assumeGreen` flag, NO skip/dry-run hatch (a test asserts the
+  signature can't grow one). Non-zero pytest exit → HALT (deploy blocked);
+  un-launchable pytest → fail-safe ERROR (also blocked — uncertainty never
+  authorizes a deploy, the V0.27.17 trap in reverse). CLI exit 0 = proceed /
+  2 = HALT.
+- HANDOFF: the one-line Phase-0 weld into `.claude/commands/sprint-deploy-pm.md`
+  is a shared PM-owned command surface Ralph is WRITE-BLOCKED on (lane discipline;
+  US-467 precedent handed off its /sprint-deploy-pm wiring the same way). Exact
+  patch (bash gate line + Stop-condition bullet + flowchart row) filed for PM.
+
+### Files changed:
+- Created: `offices/pm/scripts/deploy_preflight_gate.py` (run-not-trust gate + CLI)
+- Created: `tests/pm/test_deploy_preflight_gate.py` (12 tests)
+- Created: `offices/pm/inbox/2026-07-13-from-rex-us469-phase0-gate-weld.md` (PM weld patch)
+
+### Verification:
+- VC1 realized: `test_realFailingTest_gateRunsPytestAndHalts` plants a deliberately
+  failing test in the target suite, the gate RUNS a REAL nested pytest, observes a
+  non-zero exit, and HALTs (`deployMayProceed` False) — targets a tmp dir, not the
+  project suite, so it's fast (TD-059). Companion e2e proves all-green → PASS.
+- `pytest tests/pm/test_deploy_preflight_gate.py` → 12 passed.
+- `ruff check` on both .py files → All checks passed.
+- Did NOT run the gate CLI live (it would run the whole not-slow suite = full-suite
+  in-loop, TD-059) — the real-invocation + HALT behavior is proven by the tmp e2e.
+- PM/integration gate (NOT in-loop): full `pytest tests/` + mypy strict.
+
+### Learnings for future iterations:
+- **Pattern discovered**: to kill a "trusted-a-green-signal" bug class, make the
+  gate INCAPABLE of trusting — no marker read, no skip flag, always invoke the
+  real check. Guard it with a signature-scan test (`forbidden = {skip, trust,
+  assumeGreen, dryRun, ...}`) so a future refactor can't quietly add a bypass.
+- **Gotcha**: `argv.index("-m")` is ambiguous for a `python -m pytest -m "expr"`
+  argv — the FIRST `-m` is the interpreter's module flag, not the pytest marker.
+  Assert on the argv tail (`argv[-2:] == ["-m", "not slow"]`) or the whole list.
+- **Gotcha (lane)**: the wiring target was `.claude/commands/*.md`, a shared
+  PM-owned command surface Ralph can't write. The SUBSTANCE (the run-not-trust
+  script + its validationCriterion proof) is fully in-lane and shippable; hand off
+  ONLY the call-site insertion via inbox with an exact patch (US-462/464/467
+  precedent) — don't stall the story on a one-line PM-lane doc edit.
+---

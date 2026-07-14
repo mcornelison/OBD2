@@ -180,8 +180,21 @@
       "epicId": "E-OPS",
       "type": "tech-debt",
       "size": "S",
-      "status": "sprint-ready",
-      "passes": false,
+      "status": "complete",
+      "passes": true,
+      "feedback": {
+        "filesActuallyTouched": [
+          "offices/pm/scripts/deploy_preflight_gate.py (NEW -- run-not-trust gate: RUNS pytest -m 'not slow', HALTs on non-zero, fail-safe on un-launchable pytest; CLI exit 0/2)",
+          "tests/pm/test_deploy_preflight_gate.py (NEW -- 12 tests: hermetic control-flow + a REAL nested-pytest e2e that IS the validationCriterion)",
+          "offices/pm/inbox/2026-07-13-from-rex-us469-phase0-gate-weld.md (NEW -- exact Phase-0 weld patch handed to PM; .claude/ command surface is write-blocked for Ralph)"
+        ],
+        "grounding": [
+          "SS-T7 test = tests/pi/power/power_watch/test_systemd_parity.py (verified NO 'slow' marker -> included by -m 'not slow')",
+          "V0.27.17 marker-on-failure class = deploy/deploy-server.sh:330 comment (exit-0-treated-as-success wrote a green marker on a 10/10 FAILED backfill)",
+          "not-slow suite selector = pyproject.toml markers ('slow: ... deselect with -m \"not slow\"')"
+        ]
+      },
+      "completionNotes": "AUDIT (acceptance#1): the best-effort-continue-past-red gap has two documented instances -- (a) V0.27.12 DOA / SS-T7: the systemd-parity tripwire test EXISTED (tests/pi/power/power_watch/test_systemd_parity.py) but the deploy pipeline never RAN it -> shipped dead-on-arrival; (b) V0.27.17 marker-on-failure (deploy-server.sh:330 comment): a step treated exit-0 as success and WROTE a green marker even when the job logged 10/10 FAILED. Shared root cause = trusting a green SIGNAL (marker / 'the test exists' / 'Ralph reported green') instead of observing a green RESULT. Phase-0 must therefore RUN the not-slow suite itself and HALT on any non-zero exit. DESIGN: deploy_preflight_gate.py is structurally run-not-trust -- it ALWAYS invokes pytest (buildPytestArgv -> [python,-m,pytest,-m,'not slow']), has NO marker read, NO 'prior report'/'assumeGreen' flag, NO skip/dry-run hatch (a test asserts the signature can't grow one). Non-zero exit -> HALT (deploy blocked); un-launchable pytest -> fail-safe ERROR (also blocked -- uncertainty never authorizes a deploy, the V0.27.17 trap in reverse). VALIDATION (VC1 realized): test_realFailingTest_gateRunsPytestAndHalts plants a deliberately failing test in the target suite, the gate RUNS a real nested pytest, observes a non-zero exit, and HALTs (deployMayProceed False) -- targets a tmp dir not the project suite so it's fast (TD-059). 12 targeted tests pass, ruff clean on both .py. HANDOFF (acceptance#2/#3 wiring): the one-line Phase-0 weld belongs in .claude/commands/sprint-deploy-pm.md, a shared PM-owned command surface Ralph is WRITE-BLOCKED on (lane discipline; US-467 precedent handed off its /sprint-deploy-pm wiring the same way). The exact bash gate line + Stop-condition bullet + flowchart row are in the inbox note for PM to apply -- the run-not-trust ENFORCEMENT (the script) and its validationCriterion proof are complete in-loop; only the call-site insertion is PM's to apply. PM/integration gate: full pytest + mypy strict (not in-loop).",
       "acceptance": [
         "Pre-flight audit: locate the best-effort-continue-past-red gap in the current deploy path (the V0.27.17 marker-on-failure class) + define what Phase-0 must assert",
         "Phase-0 asserts pre-flight / marker integrity and HALTS on failure (no best-effort continue past a red gate)",
