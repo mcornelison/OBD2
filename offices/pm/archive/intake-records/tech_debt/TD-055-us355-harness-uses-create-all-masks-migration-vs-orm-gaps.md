@@ -1,6 +1,29 @@
 # TD-055 — US-355 deploy-context drive simulator uses `create_all` which masks migration-vs-ORM divergence
 
-**Status**: Open — bonus deferral from US-357 V0.27.18 hotfix loop. Tracked-not-silently-dead via two compensating tests in `tests/integration/test_deploy_context_drive_simulator.py::TestHarnessIntegrity` (see "Compensating coverage" below). Not chain-blocking. Pick up post-V0.27 chain merge to main; appropriate sprint for the refactor is V0.28+ when B-104 Step 2+ grooming adds more analytics surface that this harness would need to cover.
+> **ANNOTATION 2026-07-13 (US-470 / Sprint 58, Rex) — OPEN-downgraded, NOT closed.**
+> The migration-vs-live-DB drift class this TD tracks is now *covered by a real
+> test*: **US-464** built `tests/server/test_migration_chain_real_mariadb.py` +
+> `tests/server/_mariadb_chain_harness.py`, which run the real v0022/v0023 +
+> `MigrationRunner.runAll` against a **real MariaDB 11.x** (Option A from
+> "Proposed cleanup" below — testcontainers/service DSN, NOT SQLite/create_all).
+> **US-470** wired the CI job (`.github/workflows/migration-drift.yml`) +
+> `requirements-dev.txt` (testcontainers, dev/CI-only) so that test can run
+> pre-merge.
+>
+> **Why still OPEN (Atlas TIGHTEN 2026-07-13):** close TD-055 ONLY when the CI
+> test actually **EXECUTES + gates** (US-470 validationCriteria#1 green in CI).
+> The CI job is committed but **unproven** — GitHub Actions enablement + Docker
+> are a CIO decision, and Ralph's Windows bench has no Docker to self-verify.
+> Until a green CI run exists, this stays OPEN-downgraded. See
+> `offices/pm/blockers/BL-022-us470-real-mariadb-ci-enablement.md`.
+>
+> Note: the *original* `serverEngine` create_all fixture in
+> `tests/integration/test_deploy_context_drive_simulator.py` still uses
+> `create_all` (that harness's refactor is separate); the compensating tests +
+> docstring caveat there remain the tripwire for it. What US-464/US-470 close is
+> the **migration-chain** drift class, not that fixture.
+
+**Status**: Open (downgraded — see 2026-07-13 annotation above) — bonus deferral from US-357 V0.27.18 hotfix loop. Tracked-not-silently-dead via two compensating tests in `tests/integration/test_deploy_context_drive_simulator.py::TestHarnessIntegrity` (see "Compensating coverage" below). Not chain-blocking. Pick up post-V0.27 chain merge to main; appropriate sprint for the refactor is V0.28+ when B-104 Step 2+ grooming adds more analytics surface that this harness would need to cover.
 **Filed**: 2026-05-21 (Sprint 41 V0.27.18 hotfix, by Ralph during US-357 bonus deliverable)
 **Origin**: I-041 root cause analysis: US-355's `tests/integration/test_deploy_context_drive_simulator.py` `serverEngine` fixture uses `Base.metadata.create_all(engine)`. That helper builds the schema from the live SQLAlchemy ORM declarations on every test run — so a new ORM column (US-351's `data_quality`) silently appears in every test fixture's schema regardless of whether a migration was filed for it. Production MariaDB has historical tables that pre-date the column; `create_all` is a no-op on existing tables (never ALTERs). The harness designed to catch the V0.27.7/V0.27.16 false-pass class shipped with its own structural blind spot for the migration-vs-ORM divergence class — caught I-041 zero times.
 

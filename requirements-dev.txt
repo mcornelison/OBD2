@@ -1,0 +1,39 @@
+# =============================================================================
+# Dev / CI-only dependencies (NOT a runtime/prod dependency set)
+# =============================================================================
+# Install (dev bench + CI runner only):  pip install -r requirements-dev.txt
+#
+# Scope: tooling that supports LOCAL + CI testing and must NEVER land on a
+#        production install. Pi production installs `requirements.txt` +
+#        `requirements-pi.txt`; the server installs `requirements.txt` +
+#        `requirements-server.txt`. Neither references THIS file, so nothing
+#        here is pulled onto the Pi or the server. (US-470 / F-104 / TD-055;
+#        VC2: `testcontainers` must NOT appear in the runtime/prod reqs.)
+#
+# This set layers ON TOP of `requirements.txt` (shared + dev tooling: pytest,
+# ruff, mypy) and `requirements-server.txt` (sqlalchemy, pymysql -- the
+# real-MariaDB harness drives DDL through pymysql). Install order for the
+# migration-drift CI job:
+#     pip install -r requirements.txt -r requirements-server.txt -r requirements-dev.txt
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Real-MariaDB migration-chain test (US-464 / TD-055)
+# -----------------------------------------------------------------------------
+# Spins up a throwaway MariaDB 11.x container so the LIVE layer of
+# tests/server/test_migration_chain_real_mariadb.py (the @integration|@slow
+# layer) applies the REAL v0022/v0023 + MigrationRunner.runAll chain against
+# real MariaDB DDL -- catching the BL-019/020/021 drift class that
+# SQLite/create_all structurally cannot reproduce.
+#
+# Requires a Docker daemon on the host. The harness (acquireMariaDb) prefers an
+# explicit $OBD2_MARIADB_TEST_DSN service and falls back to a testcontainers
+# MariaDB 11.x container; the CI job (.github/workflows/migration-drift.yml)
+# uses a `services:` MariaDB 11.8 container + $OBD2_MARIADB_TEST_DSN (no
+# Docker-in-Docker), so testcontainers here is primarily for LOCAL Docker runs.
+#
+# Atlas TIGHTEN-2: the BL-021 inline-CHECK quirk is MariaDB-version-sensitive,
+# so the container image is pinned to the prod major (11.x / 11.8.6) in
+# tests/server/_mariadb_chain_harness.py (MARIADB_TEST_IMAGE). testcontainers
+# 4.x provides `testcontainers.mysql.MySqlContainer`, which the harness imports.
+testcontainers>=4.0.0

@@ -218,8 +218,27 @@
       "epicId": "E-002",
       "type": "tech-debt",
       "size": "M",
-      "status": "sprint-ready",
+      "status": "blocked",
       "passes": false,
+      "feedback": {
+        "filesActuallyTouched": [
+          "requirements-dev.txt (NEW -- dev/CI-only set; testcontainers>=4.0.0; prod paths do NOT reference it)",
+          ".github/workflows/migration-drift.yml (NEW -- wired CI job: MariaDB 11.8 service container + OBD2_MARIADB_TEST_DSN + pytest -m integration + fail-on-skip guard; narrow triggers pull_request->dev/main + workflow_dispatch)",
+          ".github/workflows/README.md (UPDATE -- documents the job + manual DSN path + enablement caveat)",
+          "offices/pm/archive/intake-records/tech_debt/TD-055-us355-harness-uses-create-all-masks-migration-vs-orm-gaps.md (UPDATE -- OPEN-downgraded annotation, NOT closed)",
+          "tests/integration/test_deploy_context_drive_simulator.py (UPDATE -- create_all caveat now points to the real-MariaDB coverage + BL-022; pinned-docstring test still green)",
+          "offices/pm/blockers/BL-022-us470-real-mariadb-ci-enablement.md (NEW -- the blocker)",
+          "offices/pm/inbox/2026-07-13-from-rex-us470-real-mariadb-ci-wired-blocked-on-enablement.md (NEW -- PM handoff)"
+        ],
+        "grounding": [
+          "No CI runner exists: .github/workflows had only README.md; prior pylint.yml deliberately removed (US-186, emailed failure on every push)",
+          "Bench has no Docker + no testcontainers (US-464 live layer honest-skips) -- VC1 (CI EXECUTES) unverifiable in-loop",
+          "GitHub remote exists (github.com/mcornelison/OBD2.git) -> the workflow is a runnable artifact, not cargo-cult",
+          "Version pin 11.x = Atlas TIGHTEN-2 (prod MariaDB 11.8.6); marker selector -m integration = pyproject.toml markers"
+        ]
+      },
+      "completionNotes": "BLOCKED on CI-platform enablement (a CIO decision) -> passes:false per US-470's own conditionalOutcome ('if the CI env truly cannot run Docker -> document the blocker + keep the DSN interim; do NOT silently mark done') + Atlas TIGHTEN ('don't close TD-055 over a still-skipping CI'). AUDIT (acceptance#1): US-464's live layer honest-skips (no testcontainers, no Docker on the Windows bench -- confirmed); CI infra available = NONE (.github/workflows held only README.md; the prior pylint.yml was DELIBERATELY removed under US-186 because it emailed a failure on every push, and the README says 'groom a story with the PM' to add CI -> enabling CI is a project/CIO policy call). A GitHub remote DOES exist (github.com/mcornelison/OBD2.git) so the workflow is a real runnable artifact. SHIPPED (all buildable, in-loop-verified): (VC2 GREEN, grep-verified) requirements-dev.txt carries testcontainers>=4.0.0 as a dev/CI-only set that NEITHER requirements-pi.txt NOR requirements-server.txt (the prod install paths) references -> testcontainers is NOT a runtime/prod dep; the wired CI job .github/workflows/migration-drift.yml (MariaDB 11.8 service container per Atlas TIGHTEN-2, OBD2_MARIADB_TEST_DSN->it, pytest -m integration, a FAIL-ON-SKIP guard so a green run cannot mask a silent skip = VC1's 'not skipped' intent + conditionalOutcome's 'do NOT silently skip'), narrow triggers (pull_request->dev/main path-filtered + workflow_dispatch, never blanket on:push -- respects the US-186 removal); DSN path documented (workflow README + requirements-dev.txt); TD-055 annotated OPEN-downgraded (NOT closed); create_all caveat in test_deploy_context_drive_simulator.py points to the new coverage + BL-022. UNMET: VC1 (the live test EXECUTES + gates in CI against 11.x) -- requires GitHub Actions ENABLED on the repo + a Docker-capable runner + an observable green run; none reachable from Ralph's bench. TO CLOSE (CIO/PM, see BL-022): enable Actions, PM push+PR->dev (job runs on GH runners w/ Docker, guard proves it EXECUTED), wire deploy-requires-CI-green (Atlas coherence note), THEN flip passes:true + close TD-055. Interim gate (works today): OBD2_MARIADB_TEST_DSN pointed at chi-srv-01/throwaway MariaDB 11.x, coupled with the US-463 deploy gate. IN-LOOP VERIFIED: VC2 green (grep); ruff clean on the 1 touched .py; pinned-docstring test test_serverEngineFixture_documentsCreateAllLimitation still passes (TD-055/create_all/I-041 tokens preserved); workflow YAML parses (job + triggers correct). PM/integration gate: full pytest + mypy strict (not in-loop).",
+      "blockerRef": "offices/pm/blockers/BL-022-us470-real-mariadb-ci-enablement.md",
       "acceptance": [
         "Pre-flight audit: confirm US-464 live layer currently honest-skips (no Docker on bench) + what CI infra is available (Docker-enabled runner / MariaDB service container)",
         "add testcontainers (or a MariaDB service-container config) to a dev/CI-only requirements set -- NOT a runtime dep (Pi/server prod installs must not pull it)",

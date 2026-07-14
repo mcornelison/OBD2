@@ -574,3 +574,81 @@ Task: SS-T7 run-not-trust deploy-gate tripwire into /sprint-deploy-pm Phase-0
   ONLY the call-site insertion via inbox with an exact patch (US-462/464/467
   precedent) — don't stall the story on a one-line PM-lane doc edit.
 ---
+
+## 2026-07-13 - US-470 (Rex / Agent 1, Session 10 — Sprint 58) — BLOCKED (passes:false)
+Task: Real-MariaDB migration test CI-enablement (testcontainers/11.x)
+
+### Disposition: WIRED in-loop, BLOCKED on CI-platform enablement (a CIO decision)
+US-470's defining acceptance VC1 ("the live real-MariaDB test EXECUTES + gates in
+CI, not skipped, against 11.x") is NOT verifiable in-loop. Per the story's own
+conditionalOutcome ("if the CI env truly cannot run Docker -> document the blocker
++ keep the DSN interim; do NOT silently mark done") + Atlas TIGHTEN ("don't close
+TD-055 over a still-skipping CI"): passes:FALSE, TD-055 stays OPEN-downgraded,
+HUMAN_INTERVENTION_REQUIRED. Blocker: offices/pm/blockers/BL-022-*.md.
+
+### Pre-flight audit (acceptance#1):
+- **No CI runner exists.** `.github/workflows/` held only `README.md`; the prior
+  `pylint.yml` was DELIBERATELY removed (US-186) because it emailed a failure on
+  every push. The README says "groom a story with the PM" to add CI -> enabling
+  CI is a project/CIO policy call, not a Ralph in-loop action.
+- **Bench has no Docker + no testcontainers** (US-464's live layer honest-skips,
+  confirmed) -> cannot run/observe a CI job or even self-smoke the container path.
+- **A GitHub remote DOES exist** (github.com/mcornelison/OBD2.git) -> the workflow
+  is a real runnable artifact, not cargo-cult.
+
+### What was implemented (all buildable, in-loop-verified):
+- `requirements-dev.txt` (NEW) — `testcontainers>=4.0.0`, a **dev/CI-only** set
+  that NEITHER `requirements-pi.txt` NOR `requirements-server.txt` (the prod
+  install paths) references -> **VC2 GREEN** (grep-verified: testcontainers absent
+  from all prod/shared reqs).
+- `.github/workflows/migration-drift.yml` (NEW) — the wired CI job: MariaDB 11.8
+  service container (Atlas TIGHTEN-2), `OBD2_MARIADB_TEST_DSN` -> it,
+  `pytest -m integration`, + a **fail-on-skip guard** (parses the junit report;
+  fails the job if the live layer skipped / collected 0) so a green run cannot
+  mask a silent skip (serves VC1 + "do NOT silently skip"). Triggers deliberately
+  narrow: `pull_request`->dev/main (path-filtered) + `workflow_dispatch`; NEVER
+  blanket `on: push` (respects the US-186 removal).
+- `.github/workflows/README.md` — documents the job + the manual DSN path + the
+  enablement caveat.
+- TD-055 archive record — annotated **OPEN-downgraded** (NOT closed) + US-464/470
+  + BL-022 pointers.
+- `tests/integration/test_deploy_context_drive_simulator.py` — the `serverEngine`
+  create_all caveat now points to the real-MariaDB coverage + BL-022 (the
+  pinned-docstring test still passes; TD-055/create_all/I-041 tokens preserved).
+- `offices/pm/blockers/BL-022-*.md` + PM handoff inbox note (NEW).
+
+### Files changed:
+- Created: `requirements-dev.txt`
+- Created: `.github/workflows/migration-drift.yml`
+- Modified: `.github/workflows/README.md`
+- Modified: `offices/pm/archive/intake-records/tech_debt/TD-055-*.md`
+- Modified: `tests/integration/test_deploy_context_drive_simulator.py`
+- Created: `offices/pm/blockers/BL-022-us470-real-mariadb-ci-enablement.md`
+- Created: `offices/pm/inbox/2026-07-13-from-rex-us470-real-mariadb-ci-wired-blocked-on-enablement.md`
+
+### Verification:
+- VC2 GREEN: `testcontainers` appears ONLY in `requirements-dev.txt` (grep across
+  `requirements*.txt`) -> NOT a runtime/prod dep.
+- ruff clean on the 1 touched `.py`.
+- pinned-docstring test `test_serverEngineFixture_documentsCreateAllLimitation`
+  still passes after the caveat edit.
+- workflow YAML parses (job=real-mariadb-migration-chain; triggers=workflow_dispatch
+  + pull_request).
+- ⛔ VC1 NOT met in-loop (needs GitHub Actions enabled + a Docker runner + an
+  observable green run) -> BL-022; CLOSE US-470 + TD-055 only after a green CI run.
+
+### Learnings for future iterations:
+- **Pattern discovered**: for a "make test X run in CI" story where no CI platform
+  is live, ship the full enablement kit (dev-only dep + workflow YAML + docs) so
+  the CIO's remaining action is one step (enable Actions + push), but do NOT flip
+  passes:true — the deliverable's core OUTCOME (the test executes+gates in CI) is
+  unproven until a real run is green. The conditionalOutcome's "do NOT silently
+  mark done" governs.
+- **Gotcha**: a green CI job over a SKIPPED integration test is the honest-skip
+  trap moved into CI. Add a junit-report guard step that FAILS the job on skip /
+  0-collected, so "green" provably means "the live layer ran against real MariaDB".
+- **Gotcha (policy)**: this repo deliberately has no push-CI (US-186 removed it for
+  email spam). Don't resurrect `on: push`; use `pull_request`->dev/main +
+  `workflow_dispatch` + a `paths:` filter, and flag that ENABLING Actions is a CIO
+  reversal, not a silent add.
+---

@@ -1,0 +1,128 @@
+# =============================================================================
+# Migration-drift CI -- real MariaDB 11.x (US-470 / F-104 / TD-055)
+# =============================================================================
+# Runs the LIVE layer of tests/server/test_migration_chain_real_mariadb.py
+# against a REAL MariaDB 11.x, so the BL-019 -> BL-020 -> US-459 -> BL-021
+# migration-vs-live-DB drift class is gated AUTOMATICALLY (pre-merge) instead of
+# being caught one prod deploy at a time. SQLite/create_all cannot reproduce
+# 1091/1064/inline-CHECK semantics -- that is the whole trap this job closes.
+#
+# WHY conservative triggers (NOT `on: push`): the previous CI workflow
+# (pylint.yml) was deliberately REMOVED (US-186, see this dir's README.md)
+# because it emailed a failure on EVERY push. This job therefore runs only on
+# pull_request into the integration/stable branches (Atlas coherence note
+# 2026-07-13: "CI runs pre-merge-to-dev; deploy is from dev") + on-demand via
+# workflow_dispatch, and only when migration-relevant paths change.
+#
+# ENABLEMENT IS A CIO DECISION (US-470 blocker): GitHub Actions must be enabled
+# on the repo and (Atlas coherence note) the deploy workflow should require this
+# job green before a prod deploy from dev -- otherwise the gate does not gate
+# the actual deploy. See offices/pm/blockers/BL-022-*.md.
+#
+# Atlas TIGHTEN-2: the image is pinned to the prod MariaDB major (11.x /
+# 11.8.6). A wrong-version container can green-pass a prod-failing migration;
+# the harness (_mariadb_chain_harness.py::_assertMariaDbMajor) also refuses a
+# non-11.x engine.
+# =============================================================================
+name: migration-drift-real-mariadb
+
+on:
+  workflow_dispatch: {}
+  pull_request:
+    branches: [dev, main]
+    paths:
+      - "src/server/migrations/**"
+      - "scripts/apply_server_migrations.py"
+      - "tests/server/_mariadb_chain_harness.py"
+      - "tests/server/test_migration_chain_real_mariadb.py"
+      - "requirements.txt"
+      - "requirements-server.txt"
+      - "requirements-dev.txt"
+      - ".github/workflows/migration-drift.yml"
+
+jobs:
+  real-mariadb-migration-chain:
+    runs-on: ubuntu-latest
+
+    # MariaDB 11.x as a service container. Using a service + an explicit DSN
+    # (rather than testcontainers-in-Actions) avoids Docker-in-Docker and lets
+    # the harness's $OBD2_MARIADB_TEST_DSN acquisition path drive the live DB.
+    services:
+      mariadb:
+        image: mariadb:11.8
+        env:
+          MARIADB_ROOT_PASSWORD: test
+          MARIADB_DATABASE: obd2_migration_test
+          MARIADB_USER: test
+          MARIADB_PASSWORD: test
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="healthcheck.sh --connect --innodb_initialized"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
+
+    env:
+      # The harness prefers this DSN over spinning a testcontainer (see
+      # acquireMariaDb). Points at the service container above.
+      OBD2_MARIADB_TEST_DSN: mysql+pymysql://test:test@127.0.0.1:3306/obd2_migration_test
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install deps (shared + server + dev/CI-only)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-server.txt -r requirements-dev.txt
+
+      - name: Run the real-MariaDB migration-chain test (LIVE layer)
+        # -m integration selects the @pytest.mark.integration live layer (it is
+        # also @slow, but the integration marker selects it regardless).
+        # --junitxml lets the guard step below prove it actually EXECUTED.
+        run: |
+          pytest tests/server/test_migration_chain_real_mariadb.py \
+            -m integration -rs --junitxml=migration-drift-report.xml
+
+      - name: Guard -- fail if the live layer was SKIPPED or not collected
+        # US-470 VC1 + conditionalOutcome ("do NOT silently skip"): a green job
+        # over a SKIPPED integration test is exactly the honest-skip-in-CI trap.
+        # The live layer must have genuinely RUN against real MariaDB.
+        if: ${{ always() }}
+        run: |
+          python - <<'PY'
+          # Input is pytest's own junit report from the prior step (self-generated,
+          # trusted) -- stdlib ElementTree is safe here (no external/untrusted XML).
+          import sys, xml.etree.ElementTree as ET
+          tree = ET.parse("migration-drift-report.xml")
+          root = tree.getroot()
+          suites = root.findall(".//testsuite") or [root]
+          tests = skipped = failures = errors = 0
+          for s in suites:
+              tests += int(s.get("tests", 0))
+              skipped += int(s.get("skipped", 0))
+              failures += int(s.get("failures", 0))
+              errors += int(s.get("errors", 0))
+          print(f"tests={tests} skipped={skipped} failures={failures} errors={errors}")
+          if tests == 0:
+              sys.exit("FAIL: the real-MariaDB integration layer collected 0 tests "
+                       "-- it did not run (VC1 requires it to EXECUTE, not skip).")
+          if skipped:
+              sys.exit(f"FAIL: {skipped} test(s) SKIPPED -- the live MariaDB layer "
+                       "must EXECUTE in CI, not honest-skip (US-470 VC1 / "
+                       "conditionalOutcome: do NOT silently skip).")
+          print("OK: real-MariaDB migration-chain live layer EXECUTED and gated.")
+          PY
+
+      - name: Upload test report
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: migration-drift-report
+          path: migration-drift-report.xml
