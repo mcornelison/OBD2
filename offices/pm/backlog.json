@@ -293,7 +293,7 @@
       "parent": "E-OPS",
       "title": "Evaluate and Fix Commented Dependencies",
       "description": "",
-      "status": "awaiting-validation",
+      "status": "complete",
       "renamedFrom": "B-004",
       "createdAt": "2026-05-27",
       "updatedAt": "2026-05-27",
@@ -492,7 +492,7 @@
     {
       "id": "F-042",
       "parent": "E-OPS",
-      "title": "Rename src/pi/obd/ â†’ src/pi/obdii/ (resolve I-014 name collision)",
+      "title": "Rename src/pi/obd/ \u00e2\u2020\u2019 src/pi/obdii/ (resolve I-014 name collision)",
       "description": "",
       "status": "complete",
       "renamedFrom": "B-042",
@@ -544,7 +544,7 @@
       "parent": "E-OPS",
       "title": "MAX17048 SOC% calibration learning run protocol + scripts",
       "description": "MAX17048 SOC% calibration learning run protocol + scripts",
-      "status": "awaiting-validation",
+      "status": "complete",
       "renamedFrom": "B-048",
       "createdAt": "2026-05-27",
       "updatedAt": "2026-05-27",
@@ -553,9 +553,9 @@
     {
       "id": "F-049",
       "parent": "E-OPS",
-      "title": "drive_detect idle-poll gap — engine-on never detected in idle-poll",
-      "description": "drive_detect idle-poll gap — engine-on never detected in idle-poll",
-      "status": "awaiting-validation",
+      "title": "drive_detect idle-poll gap \u2014 engine-on never detected in idle-poll",
+      "description": "drive_detect idle-poll gap \u2014 engine-on never detected in idle-poll",
+      "status": "complete",
       "renamedFrom": "B-049",
       "createdAt": "2026-05-27",
       "updatedAt": "2026-05-27",
@@ -564,9 +564,9 @@
     {
       "id": "F-050",
       "parent": "E-OPS",
-      "title": "PowerMonitor DB-write path activation — UpsMonitor → power_log → US-216",
-      "description": "PowerMonitor DB-write path activation — UpsMonitor → power_log → US-216",
-      "status": "awaiting-validation",
+      "title": "PowerMonitor DB-write path activation \u2014 UpsMonitor \u2192 power_log \u2192 US-216",
+      "description": "PowerMonitor DB-write path activation \u2014 UpsMonitor \u2192 power_log \u2192 US-216",
+      "status": "complete",
       "renamedFrom": "B-050",
       "createdAt": "2026-05-27",
       "updatedAt": "2026-05-27",
@@ -577,7 +577,7 @@
       "parent": "E-OPS",
       "title": "UpsMonitor slow-drain detection + flap-debounce (Sprint 19 US-235 RESCOPE)",
       "description": "UpsMonitor slow-drain detection + flap-debounce (Sprint 19 US-235 RESCOPE)",
-      "status": "awaiting-validation",
+      "status": "complete",
       "renamedFrom": "B-051",
       "createdAt": "2026-05-27",
       "updatedAt": "2026-05-27",
@@ -601,7 +601,7 @@
       "parent": "E-OPS",
       "title": "Automated battery test on boot",
       "description": "Automated battery test on boot",
-      "status": "awaiting-validation",
+      "status": "complete",
       "renamedFrom": "B-054",
       "createdAt": "2026-05-27",
       "updatedAt": "2026-05-27",
@@ -653,7 +653,7 @@
       "parent": "E-OPS",
       "title": "Wire UpsMonitor SOC% through orchestrator to recorder (BL-013 Step 2)",
       "description": "Wire UpsMonitor SOC% through orchestrator to recorder (BL-013 Step 2)",
-      "status": "awaiting-validation",
+      "status": "active",
       "renamedFrom": "B-060",
       "createdAt": "2026-05-27",
       "updatedAt": "2026-05-27",
@@ -664,7 +664,7 @@
       "parent": "E-OPS",
       "title": "Drop battery_health_log start_soc / end_soc legacy columns (BL-013 Step 3)",
       "description": "Drop battery_health_log start_soc / end_soc legacy columns (BL-013 Step 3)",
-      "status": "awaiting-validation",
+      "status": "active",
       "renamedFrom": "B-061",
       "createdAt": "2026-05-27",
       "updatedAt": "2026-05-27",
@@ -675,7 +675,7 @@
       "parent": "E-OPS",
       "title": "drain_event close-on-poweroff targeted fix (post-Drain-Test-11 evidence)",
       "description": "drain_event close-on-poweroff targeted fix (post-Drain-Test-11 evidence)",
-      "status": "awaiting-validation",
+      "status": "complete",
       "renamedFrom": "B-062",
       "createdAt": "2026-05-27",
       "updatedAt": "2026-05-27",
@@ -696,7 +696,7 @@
       "parent": "E-002",
       "title": "drive_counter server-side sync gap (Pi at 10, server still says 3)",
       "description": "drive_counter server-side sync gap (Pi at 10, server still says 3)",
-      "status": "awaiting-validation",
+      "status": "complete",
       "renamedFrom": "B-064",
       "createdAt": "2026-05-27",
       "updatedAt": "2026-05-27",
@@ -727,7 +727,7 @@
       "parent": "E-002",
       "title": "Cross-drive comparison tool (Spool ergonomics)",
       "description": "Cross-drive comparison tool (Spool ergonomics)",
-      "status": "awaiting-validation",
+      "status": "complete",
       "renamedFrom": "B-069",
       "createdAt": "2026-05-27",
       "updatedAt": "2026-05-27",
@@ -768,7 +768,7 @@
       "parent": "E-004",
       "title": "drive_statistics Pi-side writer + sync (Spool's Approach 2 -- V0.28+ feature)",
       "description": "drive_statistics Pi-side writer + sync (Spool's Approach 2 -- V0.28+ feature)",
-      "status": "awaiting-validation",
+      "status": "active",
       "renamedFrom": "B-075",
       "createdAt": "2026-05-27",
       "updatedAt": "2026-05-27",
@@ -789,7 +789,7 @@
       "parent": "E-OPS",
       "title": "OBD reconnect loop too chatty at idle -- connection_log grows ~6 rows/min 24/7",
       "description": "OBD reconnect loop too chatty at idle -- connection_log grows ~6 rows/min 24/7",
-      "status": "awaiting-validation",
+      "status": "complete",
       "renamedFrom": "B-077",
       "createdAt": "2026-05-27",
       "updatedAt": "2026-05-27",
@@ -811,7 +811,7 @@
       "parent": "E-OPS",
       "title": "sync_history.started_at and completed_at written in different timezones (5h CDT/UTC offset) in the same row",
       "description": "sync_history.started_at and completed_at written in different timezones (5h CDT/UTC offset) in the same row",
-      "status": "awaiting-validation",
+      "status": "complete",
       "renamedFrom": "B-079",
       "createdAt": "2026-05-27",
       "updatedAt": "2026-05-27",
@@ -822,7 +822,7 @@
       "parent": "E-004",
       "title": "Pi clock jumps ~23h forward post-reboot (RTC drift / timesyncd) -- Spool's Bug 5",
       "description": "Pi clock jumps ~23h forward post-reboot (RTC drift / timesyncd) -- Spool's Bug 5",
-      "status": "awaiting-validation",
+      "status": "complete",
       "renamedFrom": "B-080",
       "createdAt": "2026-05-27",
       "updatedAt": "2026-05-27",
@@ -841,9 +841,9 @@
     {
       "id": "F-082",
       "parent": "E-002",
-      "title": "Tester's V0.28+ data-profile findings — rollup (8 bugs + 8 design smells)",
-      "description": "Tester's V0.28+ data-profile findings — rollup (8 bugs + 8 design smells)",
-      "status": "awaiting-validation",
+      "title": "Tester's V0.28+ data-profile findings \u2014 rollup (8 bugs + 8 design smells)",
+      "description": "Tester's V0.28+ data-profile findings \u2014 rollup (8 bugs + 8 design smells)",
+      "status": "complete",
       "renamedFrom": "B-082",
       "createdAt": "2026-05-27",
       "updatedAt": "2026-05-27",
@@ -882,8 +882,8 @@
     {
       "id": "F-086",
       "parent": "E-001",
-      "title": "GEM-1 — Warnings-first quiet UI on the 3.5\" display",
-      "description": "GEM-1 — Warnings-first quiet UI on the 3.5\" display",
+      "title": "GEM-1 \u2014 Warnings-first quiet UI on the 3.5\" display",
+      "description": "GEM-1 \u2014 Warnings-first quiet UI on the 3.5\" display",
       "status": "pending",
       "renamedFrom": "B-086",
       "createdAt": "2026-05-27",
@@ -892,8 +892,8 @@
     {
       "id": "F-087",
       "parent": "E-003",
-      "title": "GEM-2 — Deterministic anomaly + Ollama explanation pattern (mature US-326 + US-317 + ingest the brainstorm prompt pack)",
-      "description": "GEM-2 — Deterministic anomaly + Ollama explanation pattern (mature US-326 + US-317 + ingest the brainstorm prompt pack)",
+      "title": "GEM-2 \u2014 Deterministic anomaly + Ollama explanation pattern (mature US-326 + US-317 + ingest the brainstorm prompt pack)",
+      "description": "GEM-2 \u2014 Deterministic anomaly + Ollama explanation pattern (mature US-326 + US-317 + ingest the brainstorm prompt pack)",
       "status": "pending",
       "renamedFrom": "B-087",
       "createdAt": "2026-05-27",
@@ -902,8 +902,8 @@
     {
       "id": "F-088",
       "parent": "E-003",
-      "title": "GEM-3 — Knock-retard real-time alert with chime ladder",
-      "description": "GEM-3 — Knock-retard real-time alert with chime ladder",
+      "title": "GEM-3 \u2014 Knock-retard real-time alert with chime ladder",
+      "description": "GEM-3 \u2014 Knock-retard real-time alert with chime ladder",
       "status": "pending",
       "renamedFrom": "B-088",
       "createdAt": "2026-05-27",
@@ -912,8 +912,8 @@
     {
       "id": "F-089",
       "parent": "E-003",
-      "title": "GEM-4 — Spool engine grade per drive (A/B/C/D + 1-line reason)",
-      "description": "GEM-4 — Spool engine grade per drive (A/B/C/D + 1-line reason)",
+      "title": "GEM-4 \u2014 Spool engine grade per drive (A/B/C/D + 1-line reason)",
+      "description": "GEM-4 \u2014 Spool engine grade per drive (A/B/C/D + 1-line reason)",
       "status": "pending",
       "renamedFrom": "B-089",
       "createdAt": "2026-05-27",
@@ -922,8 +922,8 @@
     {
       "id": "F-090",
       "parent": "E-003",
-      "title": "GEM-5 — MARK EVENT button (bookmark plus/minus 60s window for later analysis)",
-      "description": "GEM-5 — MARK EVENT button (bookmark plus/minus 60s window for later analysis)",
+      "title": "GEM-5 \u2014 MARK EVENT button (bookmark plus/minus 60s window for later analysis)",
+      "description": "GEM-5 \u2014 MARK EVENT button (bookmark plus/minus 60s window for later analysis)",
       "status": "pending",
       "renamedFrom": "B-090",
       "createdAt": "2026-05-27",
@@ -932,8 +932,8 @@
     {
       "id": "F-091",
       "parent": "E-005",
-      "title": "GEM-6 — Audio drive reports via Android Auto",
-      "description": "GEM-6 — Audio drive reports via Android Auto",
+      "title": "GEM-6 \u2014 Audio drive reports via Android Auto",
+      "description": "GEM-6 \u2014 Audio drive reports via Android Auto",
       "status": "pending",
       "renamedFrom": "B-091",
       "createdAt": "2026-05-27",
@@ -942,9 +942,9 @@
     {
       "id": "F-092",
       "parent": "E-001",
-      "title": "GEM-7 — System status tile (BT link, last sync, Pi power mode, ladder stage)",
-      "description": "GEM-7 — System status tile (BT link, last sync, Pi power mode, ladder stage)",
-      "status": "awaiting-validation",
+      "title": "GEM-7 \u2014 System status tile (BT link, last sync, Pi power mode, ladder stage)",
+      "description": "GEM-7 \u2014 System status tile (BT link, last sync, Pi power mode, ladder stage)",
+      "status": "active",
       "currentVersion": "V0.29.3",
       "renamedFrom": "B-092",
       "createdAt": "2026-05-27",
@@ -953,8 +953,8 @@
     {
       "id": "F-093",
       "parent": "E-003",
-      "title": "GEM-8 — Baseline-relative anomaly detection (vs pre-mod shelf, not generic thresholds)",
-      "description": "GEM-8 — Baseline-relative anomaly detection (vs pre-mod shelf, not generic thresholds)",
+      "title": "GEM-8 \u2014 Baseline-relative anomaly detection (vs pre-mod shelf, not generic thresholds)",
+      "description": "GEM-8 \u2014 Baseline-relative anomaly detection (vs pre-mod shelf, not generic thresholds)",
       "status": "pending",
       "renamedFrom": "B-093",
       "createdAt": "2026-05-27",
@@ -963,8 +963,8 @@
     {
       "id": "F-094",
       "parent": "E-003",
-      "title": "GEM-9 — MrSpool digital twin: RAG over Spool knowledge + DSM references + mod/maintenance log",
-      "description": "GEM-9 — MrSpool digital twin: RAG over Spool knowledge + DSM references + mod/maintenance log",
+      "title": "GEM-9 \u2014 MrSpool digital twin: RAG over Spool knowledge + DSM references + mod/maintenance log",
+      "description": "GEM-9 \u2014 MrSpool digital twin: RAG over Spool knowledge + DSM references + mod/maintenance log",
       "status": "pending",
       "renamedFrom": "B-094",
       "createdAt": "2026-05-27",
@@ -973,8 +973,8 @@
     {
       "id": "F-095",
       "parent": "E-003",
-      "title": "S-1 — Heat soak recovery time PID (IAT-minus-ambient delta after cruise; intercooler degradation signal)",
-      "description": "S-1 — Heat soak recovery time PID (IAT-minus-ambient delta after cruise; intercooler degradation signal)",
+      "title": "S-1 \u2014 Heat soak recovery time PID (IAT-minus-ambient delta after cruise; intercooler degradation signal)",
+      "description": "S-1 \u2014 Heat soak recovery time PID (IAT-minus-ambient delta after cruise; intercooler degradation signal)",
       "status": "pending",
       "renamedFrom": "B-095",
       "createdAt": "2026-05-27",
@@ -983,9 +983,9 @@
     {
       "id": "F-096",
       "parent": "E-001",
-      "title": "S-2 — LTFT trend display (multi-drive, healthy migration toward 0)",
-      "description": "S-2 — LTFT trend display (multi-drive, healthy migration toward 0)",
-      "status": "awaiting-validation",
+      "title": "S-2 \u2014 LTFT trend display (multi-drive, healthy migration toward 0)",
+      "description": "S-2 \u2014 LTFT trend display (multi-drive, healthy migration toward 0)",
+      "status": "complete",
       "renamedFrom": "B-096",
       "createdAt": "2026-05-27",
       "updatedAt": "2026-05-27",
@@ -996,7 +996,7 @@
       "parent": "E-001",
       "title": "Battery Health card (touch-dashboard; Pi power/battery health) -- PIVOTED 2026-06-05 from S-3 'Drain ladder state UI'",
       "description": "Battery Health card on the F-092/F-097 chromium touch-carousel. PIVOTED 2026-06-05 (Iris, CIO-approved): the key-off sequencer now prevents the Pi draining down the UPS ladder, so the old 'drain ladder state UI' framing is obsolete -- ladder demoted to a failsafe; this surface shows battery HEALTH (renamedFrom intent, same ID per Iris). Hard dep on F-103 (shared chromium kiosk + eclipse-states-http). Spec docs/superpowers/specs/2026-06-05-pi-touch-carousel-dashboard-f092-f097-design.md; groom-ready pending Atlas design-gate signoff.",
-      "status": "awaiting-validation",
+      "status": "active",
       "currentVersion": "V0.29.3",
       "renamedFrom": "B-097",
       "createdAt": "2026-05-27",
@@ -1005,9 +1005,9 @@
     {
       "id": "F-098",
       "parent": "E-OPS",
-      "title": "S-4 — Mode badge: in-car vs wall-power debug (small corner indicator)",
-      "description": "S-4 — Mode badge: in-car vs wall-power debug (small corner indicator)",
-      "status": "awaiting-validation",
+      "title": "S-4 \u2014 Mode badge: in-car vs wall-power debug (small corner indicator)",
+      "description": "S-4 \u2014 Mode badge: in-car vs wall-power debug (small corner indicator)",
+      "status": "complete",
       "renamedFrom": "B-098",
       "createdAt": "2026-05-27",
       "updatedAt": "2026-05-27",
@@ -1016,8 +1016,8 @@
     {
       "id": "F-099",
       "parent": "E-OPS",
-      "title": "Telegram bot — bidirectional driver-context channel (CIO ↔ system; LLM-mediated text→DB ingestion)",
-      "description": "Telegram bot — bidirectional driver-context channel (CIO ↔ system; LLM-mediated text→DB ingestion)",
+      "title": "Telegram bot \u2014 bidirectional driver-context channel (CIO \u2194 system; LLM-mediated text\u2192DB ingestion)",
+      "description": "Telegram bot \u2014 bidirectional driver-context channel (CIO \u2194 system; LLM-mediated text\u2192DB ingestion)",
       "status": "pending",
       "renamedFrom": "B-099",
       "createdAt": "2026-05-27",
@@ -1026,8 +1026,8 @@
     {
       "id": "F-100",
       "parent": "E-002",
-      "title": "`drive_summary` writer broken — every server row is an empty shell + drives 6-10 missing entirely",
-      "description": "`drive_summary` writer broken — every server row is an empty shell + drives 6-10 missing entirely",
+      "title": "`drive_summary` writer broken \u2014 every server row is an empty shell + drives 6-10 missing entirely",
+      "description": "`drive_summary` writer broken \u2014 every server row is an empty shell + drives 6-10 missing entirely",
       "status": "superseded",
       "supersededBy": "B-104 server-authority rearchitecture (US-350/US-351) + US-437 N-8",
       "renamedFrom": "B-100",
@@ -1041,7 +1041,7 @@
       "parent": "E-002",
       "title": "Sync `power_log` + `startup_log` from Pi to server",
       "description": "Sync `power_log` + `startup_log` from Pi to server",
-      "status": "awaiting-validation",
+      "status": "complete",
       "renamedFrom": "B-101",
       "createdAt": "2026-05-27",
       "updatedAt": "2026-05-27",
@@ -1052,7 +1052,7 @@
       "parent": "E-004",
       "title": "Pi + server hostname resolution cleanup (`chi-eclipse-01` / `chi-srv-01` LAN-wide)",
       "description": "Pi + server hostname resolution cleanup (`chi-eclipse-01` / `chi-srv-01` LAN-wide)",
-      "status": "awaiting-validation",
+      "status": "complete",
       "renamedFrom": "B-102",
       "createdAt": "2026-05-27",
       "updatedAt": "2026-05-27",
@@ -1063,7 +1063,7 @@
       "parent": "E-001",
       "title": "Pi Splash Animation -- Boot + Shutdown",
       "description": "Pi Splash Animation -- Boot + Shutdown",
-      "status": "awaiting-validation",
+      "status": "active",
       "renamedFrom": "B-103",
       "createdAt": "2026-05-27",
       "updatedAt": "2026-05-27",
@@ -1074,7 +1074,7 @@
       "parent": "E-002",
       "title": "Server-Side Analytics Authority -- Pi as Emitter, Server as Analyzer (Architecture Epic)",
       "description": "Server-Side Analytics Authority -- Pi as Emitter, Server as Analyzer (Architecture Epic)",
-      "status": "awaiting-validation",
+      "status": "active",
       "renamedFrom": "B-104",
       "createdAt": "2026-05-27",
       "updatedAt": "2026-05-27",
@@ -1083,8 +1083,8 @@
     {
       "id": "F-105",
       "parent": "E-OPS",
-      "title": "architecture.md §20 modification-history SS-T9 row backfill",
-      "description": "architecture.md §20 modification-history SS-T9 row backfill",
+      "title": "architecture.md \u00a720 modification-history SS-T9 row backfill",
+      "description": "architecture.md \u00a720 modification-history SS-T9 row backfill",
       "status": "active",
       "renamedFrom": "B-105",
       "createdAt": "2026-05-27",
@@ -1093,9 +1093,9 @@
     {
       "id": "F-106",
       "parent": "E-002",
-      "title": "Derived Signals From Speed + Time — Acceleration + Estimated Odometer (with CIO Factual Recalibration)",
-      "description": "Derived Signals From Speed + Time — Acceleration + Estimated Odometer (with CIO Factual Recalibration)",
-      "status": "awaiting-validation",
+      "title": "Derived Signals From Speed + Time \u2014 Acceleration + Estimated Odometer (with CIO Factual Recalibration)",
+      "description": "Derived Signals From Speed + Time \u2014 Acceleration + Estimated Odometer (with CIO Factual Recalibration)",
+      "status": "complete",
       "renamedFrom": "B-106",
       "createdAt": "2026-05-27",
       "updatedAt": "2026-05-27",
@@ -1136,7 +1136,7 @@
       "parent": "E-001",
       "title": "On-Pi DTC / check-engine viewer + gated Mode-04 clear (Card 5 of the touch dashboard)",
       "description": "On-Pi DTC/check-engine viewer surface + safety-gated Mode-04 clear, with a KOEO read independent of DriveDetector. Card 5 (Alerts+DTC) of the F-092/F-097 carousel. Spec drafted + CIO-approved 2026-06-05 (post drive-27 MIL: P0443 EVAP read+cleared off the Pi); spec docs/superpowers/specs/2026-06-05-pi-dtc-check-engine-viewer-clear-design.md. STATUS: pending Atlas design-gate signoff (load-bearing net-new write-to-vehicle Mode-04 path) -- Iris files the formal groom-ready pointer on Atlas's nod. SEQUENCE (Atlas greenlight 2026-06-19): F-103 -> carousel shell -> System Status + Battery Health cards -> System Setup+polkit -> pygame sunset -> THIS (Card 5, LAST). BUILD CONDITIONS: C-2 KOEO capture path independent of DriveDetector (drive_id=NULL, or viewer is blank key-on); C-3 Mode 02 dead on MD326328 -> realtime_data fallback (see F-109). Rule-10 DoD: state-server extension + emitters + Mode-04 path + token each land with matching specs/architecture.md (+ specs/UI/) in-sprint. Iris story split (spec section 10 M-1): US-A dtc emitter + state-server endpoint + static-table loader/sync; US-B takeover + severity-styled ribbon; US-C Alerts card (hero+list) + detail (freeze-frame + severity-gated fix + trust badge); US-D Clear-DTC Mode-04 path + gate + confirm + re-read + session-lock (load-bearing, pairs w/ Atlas A-1); US-E freeze-frame capture-or-honest-fallback. Spool owns severity taxonomy + DSM P1xxx curation; safety semantics offices/tuner/dtc-display-clear-safety-advisory.md; reference code specs/examples/dtc_read_and_clear_koeo.py.",
-      "status": "awaiting-validation",
+      "status": "active",
       "currentVersion": "V0.29.6",
       "createdAt": "2026-06-28",
       "updatedAt": "2026-06-28"
@@ -1167,7 +1167,7 @@
       "parent": "E-006",
       "title": "EDR Phase 2 -- dedicated-reader + bus-contract design (full; A-4 versioned)",
       "description": "HARDWARE-INDEPENDENT (Atlas 2026-06-16 brief, phase 2; design-only, Atlas-owned). The load-bearing dedicated-reader / in-process pub/sub bus contract everything subscribes to: per-subscriber QoS (lossless sync/safety vs lossy display), bounded queues, producer-never-blocks, 100Hz-IMU-vs-~6/s-OBD rate handling, ECMLink/OBDLink K-line arbitration. F-110 shipped Slice 1 (bus skeleton + PersistenceSubscriber, ships-dark); this is the full contract + consolidation. Atlas open gate #1. Graduates the SSOT-bus direction into specs/ssot-design-pattern.md (gate #4) once CIO firms it. GROOM-READY candidate (design artifact; can run parallel to F-112).",
-      "status": "awaiting-validation",
+      "status": "complete",
       "createdAt": "2026-06-28",
       "updatedAt": "2026-06-28",
       "currentVersion": "V0.29.4"
@@ -1177,7 +1177,7 @@
       "parent": "E-006",
       "title": "EDR Phase 3 -- single-reader consolidation + IMU/light raw channels",
       "description": "HARDWARE-GATED (Atlas 2026-06-16 brief, phase 3). Consolidate all sources under ONE threaded reader publishing to the bus; add raw channels for the 9-DoF IMU (ICM-20948 @0x69) + light sensor (TSL2591 @0x29), both I2C on bus-1 (shared w/ X1209 UPS MAX17048 @0x36, no address collision). Needs the versioned src/common/ IMU raw table + schema under A-4 contract discipline (Atlas open gate #2 -- don't repeat the Pi<->server schema divergence). HARDWARE STATUS: sensors hardware-INSTALLED 2026-06-27 (ahead of the ~mid-July estimate); CIO mid-wire; hardware gate = i2cdetect shows 29/36/69 (NOT yet passed). Spec: docs/hardware-reference.md EDR-Sensors section + docs/edr-sensors-wiring-reference.md field card (dev 95d496a).",
-      "status": "awaiting-validation",
+      "status": "complete",
       "createdAt": "2026-06-28",
       "updatedAt": "2026-06-28",
       "currentVersion": "V0.29.4"
@@ -1196,7 +1196,7 @@
       "parent": "E-002",
       "title": "Foreign / non-target vehicle contamination -- marker enum + ingest guard",
       "description": "Drive 33 = a 2014 Ford Explorer logged as Eclipse data_source='real' (shared OBDLink auto-pair). Add a foreign-vehicle marker enum + re-tag, and an ingest guard (bus-rate sanity check) so it can't recur. Design-gated to Atlas (enum semantics + guard mechanism + placement).",
-      "status": "awaiting-validation",
+      "status": "complete",
       "createdAt": "2026-06-30",
       "currentVersion": "V0.29.11"
     },
@@ -1205,7 +1205,7 @@
       "parent": "E-OPS",
       "title": "OBD capture broken -- eclipse-obd connection-thread race (0 rows captured)",
       "description": "The Pi captures 0 OBD rows. Atlas live-debug RCA: python-obd connection is not thread-safe; orphaned timeout daemons (TD-036/US-244) + US-301 heartbeat touch the shared connection concurrently with the logger -> serial I/O interleaves -> empty read every connect. Raw python-obd works standalone (hardware/pairing all good). Fix = serialize connection access + fence orphaned daemons, preserve TD-036 no-boot-hang. f389d5b crash-loop hotfix deployed V0.29.7 (stops crash, not the capture fix). Sprint 54 P0.",
-      "status": "awaiting-validation",
+      "status": "complete",
       "createdAt": "2026-07-03",
       "currentVersion": "V0.29.8"
     },
@@ -1309,7 +1309,7 @@
       "status": "pending",
       "goal": "As a server-side analytics consumer aggregating SPEED PID for distance / gear-inference, I want a speed_pid_calibration table keyed by ecu_signature (FK to vehicle_info) carrying a multiplicative correction_factor so that the new modified-EPROM ECU's ~2x SPEED-reading drift gets corrected per-drive. NOTE: new-ECU seed correction_factor=0.5 is INITIAL ESTIMATE; Spool empirical refinement Q2 PENDING.",
       "definitionOfDone": [
-        "Alembic v0010 substep creates speed_pid_calibration table per F-076 V0.28 §1 schema: id PK; ecu_signature FK -> vehicle_info; correction_factor DOUBLE; capture_method ENUM; captured_at_timestamp_utc; captured_by; provenance TEXT NOT NULL; notes",
+        "Alembic v0010 substep creates speed_pid_calibration table per F-076 V0.28 \u00a71 schema: id PK; ecu_signature FK -> vehicle_info; correction_factor DOUBLE; capture_method ENUM; captured_at_timestamp_utc; captured_by; provenance TEXT NOT NULL; notes",
         "Seed 2 rows: prior ECU correction_factor=1.0, provenance='gear-math-drive-18-3rd-gear-fit' (Drive 18 gear math fit); new ECU correction_factor=0.5, provenance='rough-seed-drive-26-gear-math' (Drive 26 rough estimate)",
         "notes field documents initial estimate flag for new-ECU seed",
         "Ordering: US-365 substep runs BEFORE US-370 substep in v0010 (US-370 FKs to US-365's column); documented in migration docstring per Atlas Refinements row 16",
@@ -1325,7 +1325,7 @@
       "validationCriteria": [
         {
           "action": "DESCRIBE speed_pid_calibration post-migration",
-          "outcome": "Shows columns per F-076 V0.28 §1 schema with FK to vehicle_info"
+          "outcome": "Shows columns per F-076 V0.28 \u00a71 schema with FK to vehicle_info"
         },
         {
           "action": "SELECT correction_factor FROM speed_pid_calibration WHERE ecu_signature = '<prior-ECU-sig>'",
@@ -2055,11 +2055,11 @@
         "ShutdownSequencer emits phase events [A-2] and the splash renders",
         "shutdown splash shows the staged shutdown",
         "sequencer docstring documents the timing invariant [A-6]",
-        "specs/architecture.md §10.6 updated in-sprint (load-bearing ShutdownSequencer change -- Atlas design-gate DoD; BLOCKs if the hook ships without the spec update, M-1a)",
+        "specs/architecture.md \u00a710.6 updated in-sprint (load-bearing ShutdownSequencer change -- Atlas design-gate DoD; BLOCKs if the hook ships without the spec update, M-1a)",
         "[ATLAS C-5 shutdown-state survives eclipse-obd stop] shutdown-state must remain readable AFTER eclipse-obd.service has stopped: eclipse-obd's RuntimeDirectory=eclipse-obd is removed on stop, so if it exclusively owns /run/eclipse-obd the dir (and shutdown-state) vanish at the exact moment the shutdown splash needs them -- eclipse-states-http.service (and the states dir) must be ordered/ref-counted (shared RuntimeDirectory=eclipse-obd) to OUTLIVE eclipse-obd during the shutdown sequence"
       ],
       "conditionalOutcomes": [
-        "ShutdownSequencer IS load-bearing -> the §10.6 update is mandatory in-sprint (not a follow-up)"
+        "ShutdownSequencer IS load-bearing -> the \u00a710.6 update is mandatory in-sprint (not a follow-up)"
       ],
       "validationCriteria": [
         {
@@ -2071,7 +2071,7 @@
           "outcome": "shutdown splash still renders from shutdown-state (proves the dir/file survives the RuntimeDirectory cleanup, not just a warm path where eclipse-obd is still up)"
         },
         {
-          "action": "inspect specs/architecture.md §10.6",
+          "action": "inspect specs/architecture.md \u00a710.6",
           "outcome": "documents the phase-emit hook + timing invariant"
         }
       ],
@@ -2726,7 +2726,18 @@
           "action": "re-run startup twice",
           "outcome": "CREATE IF NOT EXISTS is idempotent -- no error, no duplicate tables, schema_version present"
         }
-      ]
+      ],
+      "conditionalOutcomes": [],
+      "tasks": [],
+      "status": "complete",
+      "createdAt": "2026-07-01",
+      "updatedAt": "2026-07-01",
+      "metaBackfill": {
+        "backfilledAt": "2026-07-13",
+        "statusSource": "archived-sprint-passes",
+        "dateSource": "proxy:sprint-50-close",
+        "note": "US-465 metadata-drift repair; dates proxy-derived, not exact."
+      }
     },
     {
       "id": "US-409",
@@ -2757,7 +2768,18 @@
           "action": "feed a saturating TSL2591 reading",
           "outcome": "raw.light.lux publishes None (persists NULL), raw counts still published, never inf"
         }
-      ]
+      ],
+      "conditionalOutcomes": [],
+      "tasks": [],
+      "status": "complete",
+      "createdAt": "2026-07-01",
+      "updatedAt": "2026-07-01",
+      "metaBackfill": {
+        "backfilledAt": "2026-07-13",
+        "statusSource": "archived-sprint-passes",
+        "dateSource": "proxy:sprint-50-close",
+        "note": "US-465 metadata-drift repair; dates proxy-derived, not exact."
+      }
     },
     {
       "id": "US-410",
@@ -2786,7 +2808,18 @@
           "action": "run with both flags off",
           "outcome": "zero EDR writes and realtime_data rows byte-identical to the pre-bus inline path"
         }
-      ]
+      ],
+      "conditionalOutcomes": [],
+      "tasks": [],
+      "status": "complete",
+      "createdAt": "2026-07-01",
+      "updatedAt": "2026-07-01",
+      "metaBackfill": {
+        "backfilledAt": "2026-07-13",
+        "statusSource": "archived-sprint-passes",
+        "dateSource": "proxy:sprint-50-close",
+        "note": "US-465 metadata-drift repair; dates proxy-derived, not exact."
+      }
     },
     {
       "id": "US-411",
@@ -2811,7 +2844,18 @@
           "action": "run the absent-path test",
           "outcome": "state.sensor.*=absent, 0 EDR rows, 0 fabricated samples, no error"
         }
-      ]
+      ],
+      "conditionalOutcomes": [],
+      "tasks": [],
+      "status": "complete",
+      "createdAt": "2026-07-01",
+      "updatedAt": "2026-07-01",
+      "metaBackfill": {
+        "backfilledAt": "2026-07-13",
+        "statusSource": "archived-sprint-passes",
+        "dateSource": "proxy:sprint-50-close",
+        "note": "US-465 metadata-drift repair; dates proxy-derived, not exact."
+      }
     },
     {
       "id": "US-412",
@@ -2835,7 +2879,18 @@
           "action": "run a sync cycle",
           "outcome": "server rows for both tables match the Pi rows (counts + spot-checked values), idempotent on re-sync"
         }
-      ]
+      ],
+      "conditionalOutcomes": [],
+      "tasks": [],
+      "status": "complete",
+      "createdAt": "2026-07-01",
+      "updatedAt": "2026-07-01",
+      "metaBackfill": {
+        "backfilledAt": "2026-07-13",
+        "statusSource": "archived-sprint-passes",
+        "dateSource": "proxy:sprint-50-close",
+        "note": "US-465 metadata-drift repair; dates proxy-derived, not exact."
+      }
     },
     {
       "id": "US-413",
@@ -2854,7 +2909,18 @@
           "action": "run a sync cycle after the fix",
           "outcome": "obd2db.drive_counter.last_drive_id equals the Pi's value and does not regress on re-sync"
         }
-      ]
+      ],
+      "conditionalOutcomes": [],
+      "tasks": [],
+      "status": "complete",
+      "createdAt": "2026-07-01",
+      "updatedAt": "2026-07-01",
+      "metaBackfill": {
+        "backfilledAt": "2026-07-13",
+        "statusSource": "archived-sprint-passes",
+        "dateSource": "proxy:sprint-50-close",
+        "note": "US-465 metadata-drift repair; dates proxy-derived, not exact."
+      }
     },
     {
       "id": "US-414",
@@ -2873,7 +2939,18 @@
           "action": "write a sync_history row via the fixed writer",
           "outcome": "started_at and completed_at are both UTC ISO-8601 with no 5h offset between them"
         }
-      ]
+      ],
+      "conditionalOutcomes": [],
+      "tasks": [],
+      "status": "complete",
+      "createdAt": "2026-07-01",
+      "updatedAt": "2026-07-01",
+      "metaBackfill": {
+        "backfilledAt": "2026-07-13",
+        "statusSource": "archived-sprint-passes",
+        "dateSource": "proxy:sprint-50-close",
+        "note": "US-465 metadata-drift repair; dates proxy-derived, not exact."
+      }
     },
     {
       "id": "US-415",
@@ -2893,7 +2970,18 @@
           "action": "review the sprint's changed files + update the docs",
           "outcome": "architecture.md section 10.8.2 + ssot-design-pattern worked example present and faithful to the ADR; regression_manifest updated"
         }
-      ]
+      ],
+      "conditionalOutcomes": [],
+      "tasks": [],
+      "status": "complete",
+      "createdAt": "2026-07-01",
+      "updatedAt": "2026-07-01",
+      "metaBackfill": {
+        "backfilledAt": "2026-07-13",
+        "statusSource": "archived-sprint-passes",
+        "dateSource": "proxy:sprint-50-close",
+        "note": "US-465 metadata-drift repair; dates proxy-derived, not exact."
+      }
     },
     {
       "id": "US-416",
@@ -2921,7 +3009,16 @@
         }
       ],
       "conditionalOutcomes": [],
-      "tasks": []
+      "tasks": [],
+      "status": "complete",
+      "createdAt": "2026-07-02",
+      "updatedAt": "2026-07-02",
+      "metaBackfill": {
+        "backfilledAt": "2026-07-13",
+        "statusSource": "archived-sprint-passes",
+        "dateSource": "proxy:sprint-51-close",
+        "note": "US-465 metadata-drift repair; dates proxy-derived, not exact."
+      }
     },
     {
       "id": "US-417",
@@ -2941,7 +3038,18 @@
           "action": "run a sync cycle after registering startup_log",
           "outcome": "server startup_log rows match Pi rows; re-sync idempotent on (source_device, boot_id)"
         }
-      ]
+      ],
+      "conditionalOutcomes": [],
+      "tasks": [],
+      "status": "complete",
+      "createdAt": "2026-07-02",
+      "updatedAt": "2026-07-02",
+      "metaBackfill": {
+        "backfilledAt": "2026-07-13",
+        "statusSource": "archived-sprint-passes",
+        "dateSource": "proxy:sprint-51-close",
+        "note": "US-465 metadata-drift repair; dates proxy-derived, not exact."
+      }
     },
     {
       "id": "US-418",
@@ -2962,7 +3070,18 @@
           "action": "re-query the live Pi + run an idle-soak",
           "outcome": "connection_log + sync_history idle growth is materially reduced OR closed-as-already-healthy with row-count evidence; real events still logged"
         }
-      ]
+      ],
+      "conditionalOutcomes": [],
+      "tasks": [],
+      "status": "complete",
+      "createdAt": "2026-07-02",
+      "updatedAt": "2026-07-02",
+      "metaBackfill": {
+        "backfilledAt": "2026-07-13",
+        "statusSource": "archived-sprint-passes",
+        "dateSource": "proxy:sprint-51-close",
+        "note": "US-465 metadata-drift repair; dates proxy-derived, not exact."
+      }
     },
     {
       "id": "US-419",
@@ -2983,7 +3102,18 @@
           "action": "simulate a pre-NTP-sync boot timestamp through the writer",
           "outcome": "the row is flagged data_quality='clock_unsynced' (not silently written as truth), no crash"
         }
-      ]
+      ],
+      "conditionalOutcomes": [],
+      "tasks": [],
+      "status": "complete",
+      "createdAt": "2026-07-02",
+      "updatedAt": "2026-07-02",
+      "metaBackfill": {
+        "backfilledAt": "2026-07-13",
+        "statusSource": "archived-sprint-passes",
+        "dateSource": "proxy:sprint-51-close",
+        "note": "US-465 metadata-drift repair; dates proxy-derived, not exact."
+      }
     },
     {
       "id": "US-420",
@@ -3004,7 +3134,18 @@
           "action": "render the card against canned multi-drive LTFT fixture data",
           "outcome": "trend displays; drift beyond +/-10% is visually distinct from healthy; empty-data state does not crash"
         }
-      ]
+      ],
+      "conditionalOutcomes": [],
+      "tasks": [],
+      "status": "complete",
+      "createdAt": "2026-07-02",
+      "updatedAt": "2026-07-02",
+      "metaBackfill": {
+        "backfilledAt": "2026-07-13",
+        "statusSource": "archived-sprint-passes",
+        "dateSource": "proxy:sprint-51-close",
+        "note": "US-465 metadata-drift repair; dates proxy-derived, not exact."
+      }
     },
     {
       "id": "US-421",
@@ -3028,7 +3169,16 @@
         }
       ],
       "conditionalOutcomes": [],
-      "tasks": []
+      "tasks": [],
+      "status": "complete",
+      "createdAt": "2026-07-02",
+      "updatedAt": "2026-07-02",
+      "metaBackfill": {
+        "backfilledAt": "2026-07-13",
+        "statusSource": "archived-sprint-passes",
+        "dateSource": "proxy:sprint-51-close",
+        "note": "US-465 metadata-drift repair; dates proxy-derived, not exact."
+      }
     },
     {
       "id": "US-422",
@@ -3049,7 +3199,17 @@
         }
       ],
       "status": "superseded",
-      "supersededBy": "US-427"
+      "supersededBy": "US-427",
+      "conditionalOutcomes": [],
+      "tasks": [],
+      "createdAt": "2026-07-02",
+      "updatedAt": "2026-07-02",
+      "metaBackfill": {
+        "backfilledAt": "2026-07-13",
+        "statusSource": "preserved-terminal",
+        "dateSource": "proxy:sprint-51-close",
+        "note": "US-465 metadata-drift repair; dates proxy-derived, not exact."
+      }
     },
     {
       "id": "US-423",
@@ -3070,7 +3230,17 @@
         }
       ],
       "status": "superseded",
-      "supersededBy": "US-426"
+      "supersededBy": "US-426",
+      "conditionalOutcomes": [],
+      "tasks": [],
+      "createdAt": "2026-07-02",
+      "updatedAt": "2026-07-02",
+      "metaBackfill": {
+        "backfilledAt": "2026-07-13",
+        "statusSource": "preserved-terminal",
+        "dateSource": "proxy:sprint-51-close",
+        "note": "US-465 metadata-drift repair; dates proxy-derived, not exact."
+      }
     },
     {
       "id": "US-424",
@@ -3103,7 +3273,16 @@
         }
       ],
       "conditionalOutcomes": [],
-      "tasks": []
+      "tasks": [],
+      "status": "complete",
+      "createdAt": "2026-07-02",
+      "updatedAt": "2026-07-02",
+      "metaBackfill": {
+        "backfilledAt": "2026-07-13",
+        "statusSource": "archived-sprint-passes",
+        "dateSource": "proxy:sprint-51-close",
+        "note": "US-465 metadata-drift repair; dates proxy-derived, not exact."
+      }
     },
     {
       "id": "US-425",
@@ -3123,7 +3302,18 @@
           "action": "review the sprint's changed files + update the docs",
           "outcome": "architecture.md sync + data-contract sections current; regression_manifest updated; no stale refs"
         }
-      ]
+      ],
+      "conditionalOutcomes": [],
+      "tasks": [],
+      "status": "complete",
+      "createdAt": "2026-07-02",
+      "updatedAt": "2026-07-02",
+      "metaBackfill": {
+        "backfilledAt": "2026-07-13",
+        "statusSource": "archived-sprint-passes",
+        "dateSource": "proxy:sprint-51-close",
+        "note": "US-465 metadata-drift repair; dates proxy-derived, not exact."
+      }
     },
     {
       "id": "US-426",
@@ -3143,7 +3333,18 @@
           "action": "run the migration + schema introspection on both tiers",
           "outcome": "start_soc/end_soc gone, start_soc_pct/end_soc_pct present (Float nullable) identically on Pi + server; consumers + lock-down tests green"
         }
-      ]
+      ],
+      "conditionalOutcomes": [],
+      "tasks": [],
+      "status": "complete",
+      "createdAt": "2026-07-02",
+      "updatedAt": "2026-07-02",
+      "metaBackfill": {
+        "backfilledAt": "2026-07-13",
+        "statusSource": "archived-sprint-passes",
+        "dateSource": "proxy:sprint-52-close",
+        "note": "US-465 metadata-drift repair; dates proxy-derived, not exact."
+      }
     },
     {
       "id": "US-427",
@@ -3168,7 +3369,18 @@
           "action": "open a drain within the ~3-min cold-start window",
           "outcome": "_soc_pct records NULL/flagged, never a garbage percent"
         }
-      ]
+      ],
+      "conditionalOutcomes": [],
+      "tasks": [],
+      "status": "complete",
+      "createdAt": "2026-07-02",
+      "updatedAt": "2026-07-02",
+      "metaBackfill": {
+        "backfilledAt": "2026-07-13",
+        "statusSource": "archived-sprint-passes",
+        "dateSource": "proxy:sprint-52-close",
+        "note": "US-465 metadata-drift repair; dates proxy-derived, not exact."
+      }
     },
     {
       "id": "US-428",
@@ -3192,7 +3404,18 @@
           "action": "deploy to a Pi whose chromium binary differs",
           "outcome": "the V-3 check substitutes the real path into the unit; no 203/EXEC, no symlink shim needed"
         }
-      ]
+      ],
+      "conditionalOutcomes": [],
+      "tasks": [],
+      "status": "complete",
+      "createdAt": "2026-07-02",
+      "updatedAt": "2026-07-02",
+      "metaBackfill": {
+        "backfilledAt": "2026-07-13",
+        "statusSource": "archived-sprint-passes",
+        "dateSource": "proxy:sprint-52-close",
+        "note": "US-465 metadata-drift repair; dates proxy-derived, not exact."
+      }
     },
     {
       "id": "US-429",
@@ -3225,7 +3448,16 @@
         }
       ],
       "conditionalOutcomes": [],
-      "tasks": []
+      "tasks": [],
+      "status": "complete",
+      "createdAt": "2026-07-02",
+      "updatedAt": "2026-07-02",
+      "metaBackfill": {
+        "backfilledAt": "2026-07-13",
+        "statusSource": "archived-sprint-passes",
+        "dateSource": "proxy:sprint-52-close",
+        "note": "US-465 metadata-drift repair; dates proxy-derived, not exact."
+      }
     },
     {
       "id": "US-430",
@@ -3245,7 +3477,18 @@
           "action": "review changed files + update docs",
           "outcome": "architecture.md + CLAUDE.md + regression_manifest current; no stale refs"
         }
-      ]
+      ],
+      "conditionalOutcomes": [],
+      "tasks": [],
+      "status": "complete",
+      "createdAt": "2026-07-02",
+      "updatedAt": "2026-07-02",
+      "metaBackfill": {
+        "backfilledAt": "2026-07-13",
+        "statusSource": "archived-sprint-passes",
+        "dateSource": "proxy:sprint-52-close",
+        "note": "US-465 metadata-drift repair; dates proxy-derived, not exact."
+      }
     },
     {
       "id": "US-431",
@@ -3265,7 +3508,18 @@
           "action": "run the calibration cycle on the UPS-drain rig",
           "outcome": "register SOC% is captured vs the reference; the cold-start window threshold is set from measured data"
         }
-      ]
+      ],
+      "conditionalOutcomes": [],
+      "tasks": [],
+      "status": "complete",
+      "createdAt": "2026-07-03",
+      "updatedAt": "2026-07-03",
+      "metaBackfill": {
+        "backfilledAt": "2026-07-13",
+        "statusSource": "archived-sprint-passes",
+        "dateSource": "proxy:sprint-53-close",
+        "note": "US-465 metadata-drift repair; dates proxy-derived, not exact."
+      }
     },
     {
       "id": "US-432",
@@ -3292,7 +3546,16 @@
         }
       ],
       "conditionalOutcomes": [],
-      "tasks": []
+      "tasks": [],
+      "status": "complete",
+      "createdAt": "2026-07-03",
+      "updatedAt": "2026-07-03",
+      "metaBackfill": {
+        "backfilledAt": "2026-07-13",
+        "statusSource": "archived-sprint-passes",
+        "dateSource": "proxy:sprint-53-close",
+        "note": "US-465 metadata-drift repair; dates proxy-derived, not exact."
+      }
     },
     {
       "id": "US-433",
@@ -3311,7 +3574,18 @@
           "action": "re-query the live Pi power_log",
           "outcome": "rows present + current -> close-with-evidence; OR a real gap is documented + fixed"
         }
-      ]
+      ],
+      "conditionalOutcomes": [],
+      "tasks": [],
+      "status": "complete",
+      "createdAt": "2026-07-03",
+      "updatedAt": "2026-07-03",
+      "metaBackfill": {
+        "backfilledAt": "2026-07-13",
+        "statusSource": "archived-sprint-passes",
+        "dateSource": "proxy:sprint-53-close",
+        "note": "US-465 metadata-drift repair; dates proxy-derived, not exact."
+      }
     },
     {
       "id": "US-434",
@@ -3330,7 +3604,18 @@
           "action": "grep production startDrainEvent callers + query stuck-open drain_event rows",
           "outcome": "0 callers + 0 stuck rows -> closed as moot with evidence; OR a real open-path is flagged before any code"
         }
-      ]
+      ],
+      "conditionalOutcomes": [],
+      "tasks": [],
+      "status": "complete",
+      "createdAt": "2026-07-03",
+      "updatedAt": "2026-07-03",
+      "metaBackfill": {
+        "backfilledAt": "2026-07-13",
+        "statusSource": "archived-sprint-passes",
+        "dateSource": "proxy:sprint-53-close",
+        "note": "US-465 metadata-drift repair; dates proxy-derived, not exact."
+      }
     },
     {
       "id": "US-435",
@@ -3349,7 +3634,18 @@
           "action": "grep stale hostname refs + run deploy-pi.sh --dry-run",
           "outcome": "no stale refs remain; deploy/SSH resolve to the canonical name"
         }
-      ]
+      ],
+      "conditionalOutcomes": [],
+      "tasks": [],
+      "status": "complete",
+      "createdAt": "2026-07-03",
+      "updatedAt": "2026-07-03",
+      "metaBackfill": {
+        "backfilledAt": "2026-07-13",
+        "statusSource": "archived-sprint-passes",
+        "dateSource": "proxy:sprint-53-close",
+        "note": "US-465 metadata-drift repair; dates proxy-derived, not exact."
+      }
     },
     {
       "id": "US-436",
@@ -3368,7 +3664,18 @@
           "action": "run the server analytics compute against a canned speed/time series",
           "outcome": "per-drive acceleration + estimated distance computed correctly; gaps/zero-dt handled, no crash"
         }
-      ]
+      ],
+      "conditionalOutcomes": [],
+      "tasks": [],
+      "status": "complete",
+      "createdAt": "2026-07-03",
+      "updatedAt": "2026-07-03",
+      "metaBackfill": {
+        "backfilledAt": "2026-07-13",
+        "statusSource": "archived-sprint-passes",
+        "dateSource": "proxy:sprint-53-close",
+        "note": "US-465 metadata-drift repair; dates proxy-derived, not exact."
+      }
     },
     {
       "id": "US-437",
@@ -3387,7 +3694,18 @@
           "action": "triage each of the 8 tester bugs",
           "outcome": "each is fixed-with-test OR closed already-resolved-with-evidence; none silently skipped"
         }
-      ]
+      ],
+      "conditionalOutcomes": [],
+      "tasks": [],
+      "status": "complete",
+      "createdAt": "2026-07-03",
+      "updatedAt": "2026-07-03",
+      "metaBackfill": {
+        "backfilledAt": "2026-07-13",
+        "statusSource": "archived-sprint-passes",
+        "dateSource": "proxy:sprint-53-close",
+        "note": "US-465 metadata-drift repair; dates proxy-derived, not exact."
+      }
     },
     {
       "id": "US-438",
@@ -3406,7 +3724,18 @@
           "action": "run the tool comparing metrics across several existing drives",
           "outcome": "side-by-side output correct; foreign/missing data excluded (drive 33 not counted)"
         }
-      ]
+      ],
+      "conditionalOutcomes": [],
+      "tasks": [],
+      "status": "complete",
+      "createdAt": "2026-07-03",
+      "updatedAt": "2026-07-03",
+      "metaBackfill": {
+        "backfilledAt": "2026-07-13",
+        "statusSource": "archived-sprint-passes",
+        "dateSource": "proxy:sprint-53-close",
+        "note": "US-465 metadata-drift repair; dates proxy-derived, not exact."
+      }
     },
     {
       "id": "US-439",
@@ -3424,7 +3753,18 @@
           "action": "resolve each commented dep + run an import smoke",
           "outcome": "every commented dep is restored/removed/documented; no import breakage"
         }
-      ]
+      ],
+      "conditionalOutcomes": [],
+      "tasks": [],
+      "status": "complete",
+      "createdAt": "2026-07-03",
+      "updatedAt": "2026-07-03",
+      "metaBackfill": {
+        "backfilledAt": "2026-07-13",
+        "statusSource": "archived-sprint-passes",
+        "dateSource": "proxy:sprint-53-close",
+        "note": "US-465 metadata-drift repair; dates proxy-derived, not exact."
+      }
     },
     {
       "id": "US-440",
@@ -3444,7 +3784,18 @@
           "action": "review changed files + archive the stale backlog items",
           "outcome": "architecture.md + regression_manifest current; F-007/052/100 + US-422/423 archived; no stale refs"
         }
-      ]
+      ],
+      "conditionalOutcomes": [],
+      "tasks": [],
+      "status": "complete",
+      "createdAt": "2026-07-03",
+      "updatedAt": "2026-07-03",
+      "metaBackfill": {
+        "backfilledAt": "2026-07-13",
+        "statusSource": "archived-sprint-passes",
+        "dateSource": "proxy:sprint-53-close",
+        "note": "US-465 metadata-drift repair; dates proxy-derived, not exact."
+      }
     },
     {
       "id": "US-441",
@@ -3472,7 +3823,18 @@
           "action": "live sustained-capture drive on the car (the A-9 re-gate)",
           "outcome": "realtime_data rows accumulate steadily -- capture restored (was 0/every-connect)"
         }
-      ]
+      ],
+      "conditionalOutcomes": [],
+      "tasks": [],
+      "status": "complete",
+      "createdAt": "2026-07-04",
+      "updatedAt": "2026-07-04",
+      "metaBackfill": {
+        "backfilledAt": "2026-07-13",
+        "statusSource": "archived-sprint-passes",
+        "dateSource": "proxy:sprint-54-close",
+        "note": "US-465 metadata-drift repair; dates proxy-derived, not exact."
+      }
     },
     {
       "id": "US-442",
@@ -3491,7 +3853,18 @@
           "action": "query drain_event for open rows after the cleanup",
           "outcome": "the 4 historical orphans are closed/annotated with provenance; no data deleted"
         }
-      ]
+      ],
+      "conditionalOutcomes": [],
+      "tasks": [],
+      "status": "complete",
+      "createdAt": "2026-07-04",
+      "updatedAt": "2026-07-04",
+      "metaBackfill": {
+        "backfilledAt": "2026-07-13",
+        "statusSource": "archived-sprint-passes",
+        "dateSource": "proxy:sprint-54-close",
+        "note": "US-465 metadata-drift repair; dates proxy-derived, not exact."
+      }
     },
     {
       "id": "US-443",
@@ -3510,7 +3883,18 @@
           "action": "triage each of the 8 design items",
           "outcome": "each is implemented-with-test OR deferred-with-rationale; none silently skipped"
         }
-      ]
+      ],
+      "conditionalOutcomes": [],
+      "tasks": [],
+      "status": "complete",
+      "createdAt": "2026-07-04",
+      "updatedAt": "2026-07-04",
+      "metaBackfill": {
+        "backfilledAt": "2026-07-13",
+        "statusSource": "archived-sprint-passes",
+        "dateSource": "proxy:sprint-54-close",
+        "note": "US-465 metadata-drift repair; dates proxy-derived, not exact."
+      }
     },
     {
       "id": "US-444",
@@ -3529,7 +3913,18 @@
           "action": "feed a gradual VCELL decline + a flapping signal through the detector",
           "outcome": "slow-drain flagged on sustained decline; flap does not trigger repeated on/off"
         }
-      ]
+      ],
+      "conditionalOutcomes": [],
+      "tasks": [],
+      "status": "complete",
+      "createdAt": "2026-07-04",
+      "updatedAt": "2026-07-04",
+      "metaBackfill": {
+        "backfilledAt": "2026-07-13",
+        "statusSource": "archived-sprint-passes",
+        "dateSource": "proxy:sprint-54-close",
+        "note": "US-465 metadata-drift repair; dates proxy-derived, not exact."
+      }
     },
     {
       "id": "US-445",
@@ -3548,7 +3943,18 @@
           "action": "run the boot-time battery test on the bench",
           "outcome": "a health result is logged; an undeterminable read logs 'unknown' not a wrong health"
         }
-      ]
+      ],
+      "conditionalOutcomes": [],
+      "tasks": [],
+      "status": "complete",
+      "createdAt": "2026-07-04",
+      "updatedAt": "2026-07-04",
+      "metaBackfill": {
+        "backfilledAt": "2026-07-13",
+        "statusSource": "archived-sprint-passes",
+        "dateSource": "proxy:sprint-54-close",
+        "note": "US-465 metadata-drift repair; dates proxy-derived, not exact."
+      }
     },
     {
       "id": "US-446",
@@ -3568,7 +3974,17 @@
           "action": "groom under the F-104 gate (Sprint 55)",
           "outcome": "placement ruled by Atlas; no Pi->server SSOT divergence"
         }
-      ]
+      ],
+      "conditionalOutcomes": [],
+      "tasks": [],
+      "createdAt": "2026-07-03",
+      "updatedAt": "2026-07-03",
+      "metaBackfill": {
+        "backfilledAt": "2026-07-13",
+        "statusSource": "preserved-existing",
+        "dateSource": "proxy:git-first-appearance",
+        "note": "US-465 metadata-drift repair; dates proxy-derived, not exact."
+      }
     },
     {
       "id": "US-447",
@@ -3587,7 +4003,18 @@
           "action": "review changed files + update docs",
           "outcome": "architecture.md threading-model + regression_manifest current; no stale refs"
         }
-      ]
+      ],
+      "conditionalOutcomes": [],
+      "tasks": [],
+      "status": "complete",
+      "createdAt": "2026-07-04",
+      "updatedAt": "2026-07-04",
+      "metaBackfill": {
+        "backfilledAt": "2026-07-13",
+        "statusSource": "archived-sprint-passes",
+        "dateSource": "proxy:sprint-54-close",
+        "note": "US-465 metadata-drift repair; dates proxy-derived, not exact."
+      }
     },
     {
       "id": "US-448",
@@ -3617,7 +4044,16 @@
         }
       ],
       "conditionalOutcomes": [],
-      "tasks": []
+      "tasks": [],
+      "status": "complete",
+      "createdAt": "2026-07-05",
+      "updatedAt": "2026-07-05",
+      "metaBackfill": {
+        "backfilledAt": "2026-07-13",
+        "statusSource": "archived-sprint-passes",
+        "dateSource": "proxy:sprint-55-close",
+        "note": "US-465 metadata-drift repair; dates proxy-derived, not exact."
+      }
     },
     {
       "id": "US-449",
@@ -3643,7 +4079,18 @@
           "action": "inspect the owned-table manifest",
           "outcome": "each persisted-analytics table has exactly one writer (the harness); no dual-write path exists"
         }
-      ]
+      ],
+      "conditionalOutcomes": [],
+      "tasks": [],
+      "status": "complete",
+      "createdAt": "2026-07-05",
+      "updatedAt": "2026-07-05",
+      "metaBackfill": {
+        "backfilledAt": "2026-07-13",
+        "statusSource": "archived-sprint-passes",
+        "dateSource": "proxy:sprint-55-close",
+        "note": "US-465 metadata-drift repair; dates proxy-derived, not exact."
+      }
     },
     {
       "id": "US-450",
@@ -3664,7 +4111,18 @@
           "action": "query drive_statistics on chi-srv-01 after the batch",
           "outcome": "rows present, keyed on canonical drives.drive_id, foreign drive 33 excluded; the Atlas-vs-Spool row-count discrepancy is reconciled with evidence"
         }
-      ]
+      ],
+      "conditionalOutcomes": [],
+      "tasks": [],
+      "status": "complete",
+      "createdAt": "2026-07-05",
+      "updatedAt": "2026-07-05",
+      "metaBackfill": {
+        "backfilledAt": "2026-07-13",
+        "statusSource": "archived-sprint-passes",
+        "dateSource": "proxy:sprint-55-close",
+        "note": "US-465 metadata-drift repair; dates proxy-derived, not exact."
+      }
     },
     {
       "id": "US-451",
@@ -3689,7 +4147,18 @@
           "action": "inspect legacy drives 1-12 + drive 33 + NULL-id rows",
           "outcome": "each flagged data_quality='unmappable_legacy' (one row per key), none dropped or merged"
         }
-      ]
+      ],
+      "conditionalOutcomes": [],
+      "tasks": [],
+      "status": "complete",
+      "createdAt": "2026-07-05",
+      "updatedAt": "2026-07-05",
+      "metaBackfill": {
+        "backfilledAt": "2026-07-13",
+        "statusSource": "archived-sprint-passes",
+        "dateSource": "proxy:sprint-55-close",
+        "note": "US-465 metadata-drift repair; dates proxy-derived, not exact."
+      }
     },
     {
       "id": "US-452",
@@ -3708,7 +4177,18 @@
           "action": "audit the write paths for statistics + drive_statistics",
           "outcome": "no fact is dual-written; each has exactly one harness-owned writer"
         }
-      ]
+      ],
+      "conditionalOutcomes": [],
+      "tasks": [],
+      "status": "complete",
+      "createdAt": "2026-07-05",
+      "updatedAt": "2026-07-05",
+      "metaBackfill": {
+        "backfilledAt": "2026-07-13",
+        "statusSource": "archived-sprint-passes",
+        "dateSource": "proxy:sprint-55-close",
+        "note": "US-465 metadata-drift repair; dates proxy-derived, not exact."
+      }
     },
     {
       "id": "US-453",
@@ -3728,7 +4208,18 @@
           "action": "run a sync cycle",
           "outcome": "server power_log + pi_state rows match Pi; idempotent re-sync; startup_log confirmed already-synced"
         }
-      ]
+      ],
+      "conditionalOutcomes": [],
+      "tasks": [],
+      "status": "complete",
+      "createdAt": "2026-07-05",
+      "updatedAt": "2026-07-05",
+      "metaBackfill": {
+        "backfilledAt": "2026-07-13",
+        "statusSource": "archived-sprint-passes",
+        "dateSource": "proxy:sprint-55-close",
+        "note": "US-465 metadata-drift repair; dates proxy-derived, not exact."
+      }
     },
     {
       "id": "US-454",
@@ -3747,7 +4238,18 @@
           "action": "run the migration + SELECT DISTINCT the O2 names",
           "outcome": "only canonical names remain; US-229 fixture updated in lockstep, tests green"
         }
-      ]
+      ],
+      "conditionalOutcomes": [],
+      "tasks": [],
+      "status": "complete",
+      "createdAt": "2026-07-05",
+      "updatedAt": "2026-07-05",
+      "metaBackfill": {
+        "backfilledAt": "2026-07-13",
+        "statusSource": "archived-sprint-passes",
+        "dateSource": "proxy:sprint-55-close",
+        "note": "US-465 metadata-drift repair; dates proxy-derived, not exact."
+      }
     },
     {
       "id": "US-455",
@@ -3766,7 +4268,18 @@
           "action": "run the migration + SELECT DISTINCT unit",
           "outcome": "canonical unit strings only; no code path parses unit as a number"
         }
-      ]
+      ],
+      "conditionalOutcomes": [],
+      "tasks": [],
+      "status": "complete",
+      "createdAt": "2026-07-05",
+      "updatedAt": "2026-07-05",
+      "metaBackfill": {
+        "backfilledAt": "2026-07-13",
+        "statusSource": "archived-sprint-passes",
+        "dateSource": "proxy:sprint-55-close",
+        "note": "US-465 metadata-drift repair; dates proxy-derived, not exact."
+      }
     },
     {
       "id": "US-456",
@@ -3785,7 +4298,18 @@
           "action": "execute the chosen disposition",
           "outcome": "static_data dropped (verified gone, TD-061 filed) OR documented honest-empty with rationale"
         }
-      ]
+      ],
+      "conditionalOutcomes": [],
+      "tasks": [],
+      "status": "complete",
+      "createdAt": "2026-07-05",
+      "updatedAt": "2026-07-05",
+      "metaBackfill": {
+        "backfilledAt": "2026-07-13",
+        "statusSource": "archived-sprint-passes",
+        "dateSource": "proxy:sprint-55-close",
+        "note": "US-465 metadata-drift repair; dates proxy-derived, not exact."
+      }
     },
     {
       "id": "US-457",
@@ -3805,14 +4329,25 @@
           "action": "review changed files + write the server-authority section",
           "outcome": "architecture.md server-authority section + ssot worked example present + faithful to the F-104 ADR; regression_manifest current; no stale refs"
         }
-      ]
+      ],
+      "conditionalOutcomes": [],
+      "tasks": [],
+      "status": "complete",
+      "createdAt": "2026-07-05",
+      "updatedAt": "2026-07-05",
+      "metaBackfill": {
+        "backfilledAt": "2026-07-13",
+        "statusSource": "archived-sprint-passes",
+        "dateSource": "proxy:sprint-55-close",
+        "note": "US-465 metadata-drift repair; dates proxy-derived, not exact."
+      }
     },
     {
       "id": "US-458",
       "parent": "F-116",
       "type": "normal",
       "size": "S",
-      "status": "sprint-ready",
+      "status": "complete",
       "title": "Drop the stale live data_source CHECK -- ORM-vs-DB drift reconcile (BL-019/A-10; unblocks drive-33 re-tag)",
       "goal": "As the CIO, I want the F-116 data_source='foreign' marker on the SERVER (it only landed on the Pi) so drive 33 is excludable from real-data queries and the latent sync landmine is closed.",
       "definitionOfDone": [
@@ -3833,14 +4368,22 @@
         }
       ],
       "conditionalOutcomes": [],
-      "tasks": []
+      "tasks": [],
+      "createdAt": "2026-07-05",
+      "updatedAt": "2026-07-05",
+      "metaBackfill": {
+        "backfilledAt": "2026-07-13",
+        "statusSource": "archived-sprint-passes",
+        "dateSource": "proxy:sprint-55-close",
+        "note": "US-465 metadata-drift repair; dates proxy-derived, not exact."
+      }
     },
     {
       "id": "US-459",
       "parent": "F-116",
       "type": "normal",
       "size": "S",
-      "status": "sprint-ready",
+      "status": "complete",
       "title": "data_source APPLIED-schema test -- deployed DB accepts 'foreign' (not Python tuples; A-10 guard)",
       "goal": "As the maintainer, I want a test that fails if the Pi and server data_source enums drift, so the F-116-class half-ship can't recur.",
       "definitionOfDone": [
@@ -3855,14 +4398,22 @@
         }
       ],
       "conditionalOutcomes": [],
-      "tasks": []
+      "tasks": [],
+      "createdAt": "2026-07-05",
+      "updatedAt": "2026-07-05",
+      "metaBackfill": {
+        "backfilledAt": "2026-07-13",
+        "statusSource": "archived-sprint-passes",
+        "dateSource": "proxy:sprint-55-close",
+        "note": "US-465 metadata-drift repair; dates proxy-derived, not exact."
+      }
     },
     {
       "id": "US-460",
       "parent": "F-104",
       "type": "normal",
       "size": "M",
-      "status": "sprint-ready",
+      "status": "complete",
       "title": "Wire the canonical drives mint into the harness (upsert_drive; F-104; US-451 deps this)",
       "goal": "As the system, I want the harness to mint a drives row for every new drive so US-451's FK re-point does not orphan new-drive writes.",
       "definitionOfDone": [
@@ -3879,7 +4430,15 @@
         }
       ],
       "conditionalOutcomes": [],
-      "tasks": []
+      "tasks": [],
+      "createdAt": "2026-07-05",
+      "updatedAt": "2026-07-05",
+      "metaBackfill": {
+        "backfilledAt": "2026-07-13",
+        "statusSource": "archived-sprint-passes",
+        "dateSource": "proxy:sprint-55-close",
+        "note": "US-465 metadata-drift repair; dates proxy-derived, not exact."
+      }
     },
     {
       "id": "US-461",

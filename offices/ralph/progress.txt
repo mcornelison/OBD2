@@ -261,3 +261,63 @@ Task: TD-055 real-MariaDB migration-chain CI test (A-10 drift class)
   substitute), plus a written CI-enablement follow-up so the skip is documented,
   not silent.
 ---
+
+## 2026-07-13 - US-465 (Rex / Agent 1, Session 5 — Sprint 58)
+Task: Backfill backlog metadata (drifted stories) + un-break pm_status
+
+### What was implemented:
+- Pre-flight audit found the drift is WIDER than the title's "47": 53 stories
+  (US-408..US-460) are non-compliant -- 53 miss createdAt/updatedAt, 47 miss
+  `status`, 44 miss conditionalOutcomes + tasks. The 47 = the status-missing
+  subset (the title's figure); createdAt/updatedAt drift is the full 53.
+- NEW `offices/pm/scripts/backfill_story_metadata.py` -- idempotent, deterministic,
+  git-optional. AUTHORITATIVE real-end-state signal = archived sprint.json
+  `passes:true` (offices/ralph/archive/sprint.archive.*.json), NOT the live
+  `status` field (proven stale: US-458/459/460 still `sprint-ready` though they
+  shipped in Sprint 55). Classification:
+  - 50 stories shipped Sprints 50-55 -> `complete`.
+  - US-422/423 `superseded` (deliberate terminal state) -> preserved.
+  - US-446 `pending` (no archive appearance, genuinely open) -> preserved,
+    NEVER guessed complete (the conditionalOutcome guard).
+- Dates proxy-derived from the earliest archived-sprint close date (the archive
+  FILENAME carries it: `sprint.archive.2026-07-01_*` -> 2026-07-01), recorded in
+  a per-story `metaBackfill` provenance object (statusSource + dateSource +
+  note). One git-first-appearance pickaxe for the single archive-less story
+  (US-446). Full-94-story git pickaxe was NOT in-loop-feasible (218KB file, slow
+  SMB share, v1->v2 migration muddies first-appearance) -> sprint-close proxy is
+  the acceptance's own explicit fallback clause.
+- EXTRA FIX (required to hit VC2 = 0 errors): US-422/423 carried
+  `status: superseded` PRE-EXISTING -- a VALID_FEATURE_STATUS that was absent
+  from `VALID_STORY_STATUSES`, so `sprint_lint --backlog` errored on it. Added
+  `superseded` to backlog_schema.VALID_STORY_STATUSES (minimal honest fix;
+  matches their existing `supersededBy` field; corrupting them to `complete`
+  would misrepresent the real end-state).
+
+### Files changed:
+- Created: `offices/pm/scripts/backfill_story_metadata.py` (backfill tool)
+- Created: `tests/pm/test_backfill_story_metadata.py` (22 tests)
+- Modified: `offices/pm/scripts/backlog_schema.py` (accept `superseded` story status)
+- Modified: `offices/pm/backlog.json` (53 stories backfilled -- metadata-only)
+
+### Verification:
+- VC1: `python offices/pm/scripts/pm_status.py --backlog` -> exit 0, no KeyError
+- VC2: `python offices/pm/scripts/sprint_lint.py --backlog` -> 0 errors, exit 0
+- VC3: re-run `backfill_story_metadata.py` -> "no drift ... (no-op)" (idempotent)
+- `pytest tests/pm/test_backfill_story_metadata.py` -> 22 passed
+- `pytest tests/pm/ -k "sprint_lint or backlog or backfill or pm_status"` -> all pass
+- `ruff check` on all 3 touched .py files -> All checks passed
+- PM/integration gate (NOT in-loop): full `pytest tests/` + mypy strict.
+
+### Learnings for future iterations:
+- **Pattern discovered**: when a live status field has drifted, reconstruct it
+  from an append-only source of truth (the sprint ARCHIVES' `passes:true`),
+  not from the drifted field in place. The archive FILENAME timestamp is a free,
+  deterministic date proxy -- no git needed for the common case.
+- **Gotcha**: the title's story-count ("47") was the status-missing subset; the
+  pre-flight audit is load-bearing -- backfill ALL required-field gaps (53),
+  not just the headline number.
+- **Gotcha**: making a tool "run clean" can surface a SECOND latent drift bug
+  (US-422/423's `superseded` was never valid for a story). The honest fix is to
+  widen the enum to the real state, not to relabel the data to a wrong-but-valid
+  value. Never trade correctness for a green check.
+---

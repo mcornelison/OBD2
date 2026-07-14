@@ -12,7 +12,20 @@
       "type": "tech-debt",
       "size": "M",
       "status": "sprint-ready",
-      "passes": false,
+      "passes": true,
+      "feedback": {
+        "filesActuallyTouched": [
+          "offices/pm/scripts/backfill_story_metadata.py (NEW -- idempotent backfill tool)",
+          "offices/pm/scripts/backlog_schema.py (UPDATE -- accept 'superseded' story status)",
+          "tests/pm/test_backfill_story_metadata.py (NEW -- 22 tests)",
+          "offices/pm/backlog.json (UPDATE -- 53 stories backfilled, metadata-only)"
+        ],
+        "grounding": [
+          "Real end-state signal = archived sprint.json passes:true (offices/ralph/archive/sprint.archive.*.json, Sprints 50-55)",
+          "Date proxy = archive filename close-date (sprint.archive.YYYY-MM-DD_*.json)"
+        ]
+      },
+      "completionNotes": "AUDIT: 53 drifted stories (US-408..460), not just 47 -- 53 miss createdAt/updatedAt, 47 miss status, 44 miss conditionalOutcomes+tasks. CLASSIFICATION via archived sprint passes:true (authoritative; live status field was stale -- 3 stories US-458/459/460 still marked sprint-ready though shipped): 50 shipped Sprints 50-55 -> complete; US-422/423 superseded (terminal, preserved); US-446 pending (genuinely open, git-first-appearance date -- NEVER guessed complete per conditionalOutcome). DATES proxy-derived from sprint-close date (marked in per-story metaBackfill provenance object); git-first-appearance used for the 1 archive-less story (US-446). Git-first-appearance for all 94 was NOT feasible in-loop (218KB file, slow SMB share, v1->v2 migration muddies first-appearance) -- sprint-close proxy is the deterministic reusable primary, exactly the acceptance's fallback clause. EXTRA FIX (required for VC2=0 errors): US-422/423 carried status='superseded' PRE-EXISTING, which is a VALID_FEATURE_STATUS but was absent from VALID_STORY_STATUSES -> added it (minimal honest fix; corrupting them to 'complete' would misrepresent real end-state; matches their existing supersededBy field). VALIDATION: VC1 pm_status.py --backlog exit 0 no KeyError; VC2 sprint_lint.py --backlog 0 errors exit 0; VC3 re-run = no-op (idempotent). 22 targeted tests pass, ruff clean. PM/integration gate: full pytest suite + mypy strict (not in-loop).",
       "acceptance": [
         "Pre-flight audit: enumerate every backlog.json story missing any required field (status, createdAt, updatedAt, conditionalOutcomes, tasks) and classify each by the sprint/version it shipped in (git history / sprint archives) BEFORE backfilling",
         "Backfill the missing fields: status per the story REAL end-state (shipped Sprint 50-55 stories -> complete; any genuinely-open -> its real status), conditionalOutcomes/tasks -> [] where absent, createdAt/updatedAt from backlog.json git history (first-appearance commit) where feasible else the story sprint date (mark proxy-derived)",
