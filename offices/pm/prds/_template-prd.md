@@ -34,7 +34,7 @@ sprintJsonPath: null
 
 ## Before running `prd_to_sprint.py` (per spec 2026-05-28 / CIO directive #2)
 
-1. Verify each selected Story carries non-empty `validationCriteria` + `definitionOfDone` in its Story.md (testable action + outcome pairs).
+1. Verify each selected Story carries non-empty `validationCriteria` + `definitionOfDone` in `backlog.json` — the single story SSOT; the per-story `offices/pm/backlog/US-*.md` Story.md mirror is retired/optional (US-468) — as testable action + outcome pairs.
 2. Route the draft to Atlas for validation-block review per PM Rule 13. Atlas verifies criteria are testable, bigDoD aggregates faithfully, no coverage holes vs Story `goal`.
 3. Atlas PASS clears the freeze gate; PM then runs `prd_to_sprint.py` which pins the `bigDoDHash`. After that, late additions to bigDoD are ERRORs in `sprint_lint.py` — drill-discovered gaps require a patch sprint.
 

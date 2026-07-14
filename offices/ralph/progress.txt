@@ -452,3 +452,65 @@ Task: TD-057 stale git index.lock guarded helper (slow-NAS)
   Inject the sleep + git-process-detector as callables to keep the backoff-loop
   tests hermetic and instant (assert the recorded sleep list == the schedule).
 ---
+
+## 2026-07-13 - US-468 (Rex / Agent 1, Session 8 — Sprint 58)
+Task: Formalize Story.md-mirror retirement (backlog.json = single story SSOT)
+
+### What was implemented:
+- Pre-flight audit (acceptance#1): repo-wide grep for Story.md / backlog/US-* /
+  mirror, then CLASSIFIED every hit into HISTORICAL records vs ACTIVE operative
+  sites. Historical (NOT touched — rewriting history is wrong): projectManager.md
+  session-log narrative ("wrote 7 Story.md mirrors"), old PRDs (V0.29.1/.2/.10),
+  archives, and the DESIGN specs — the 2026-06-29 simplification spec §4.3 ("Drop
+  Story.md mirrors") IS the retirement authority, and 2026-05-27/-28 are its
+  superseded predecessors. ACTIVE sites that still imply/require a mirror = 3:
+  (1) projectManager.md "Key Files" folder-structure table row, (2) _template-prd.md
+  pre-conversion step-1 ("in its Story.md"), (3) specs/rule-13-audit-discipline.md:114
+  (`assert (pm/backlog/{id}.md).exists()`).
+- FIXED the two within Ralph's lane:
+  - `offices/pm/projectManager.md` "Key Files" table: `backlog.json` marked
+    **story SSOT**; the `pm/backlog/US-*.md` row marked **RETIRED/optional** + a
+    retirement blockquote (newest mirror ~US-398; graduate_story.py synthesizes the
+    archive record from JSON when no mirror; authority = 2026-06-29 spec §4.3).
+  - `offices/pm/prds/_template-prd.md` step-1: "in its Story.md" → "in `backlog.json`
+    (the single story SSOT; the per-story `US-*.md` mirror is retired/optional —
+    US-468)". SCOPE-FENCED to the mirror phrase — deliberately left the adjacent
+    Rule-13 / `bigDoDHash` freeze lines (38-39) untouched; the freeze retirement is a
+    separate concern (MEMORY 2026-07-13), out of US-468 scope.
+- HANDED OFF the third site: `specs/` is read-only for Ralph (prompt.md) → filed
+  `offices/pm/issues/I-rule13-audit-spec-still-requires-story-md-mirror.md` (the one
+  remaining "step still requires mirrors"; note also flags the spec encodes the
+  retired Rule-13 freeze mechanic — likely a whole-file retirement for PM).
+- Acceptance#3 (skill/command scrub): grep of ALL `**/.claude/**/*.md` = ZERO
+  "Story.md" hits — NO skill/command instructs writing mirrors (the office
+  `groom-user-stories.md` copies are a stale generic prd.json template with no mirror
+  step). Nothing to remove — requirement pre-satisfied, documented.
+
+### Files changed:
+- Modified: `offices/pm/projectManager.md` (folder-structure table row + retirement note)
+- Modified: `offices/pm/prds/_template-prd.md` (step-1 mirror phrase → backlog.json SSOT)
+- Created: `offices/pm/issues/I-rule13-audit-spec-still-requires-story-md-mirror.md`
+  (read-only-spec handoff)
+
+### Verification:
+- VC1: grep skills/docs for "Story.md mirror" → the two edited docs now carry the
+  RETIREMENT note (not a requirement); `**/.claude/**/*.md` surface is clean (0 hits);
+  the sole remaining "still-requires-mirror" step is the read-only spec, handed to PM.
+- DOCS-ONLY story: no `.py` changed → no targeted tests, no `make lint`
+  (US-468 acceptance carries no "ruff clean in-loop" line — confirms docs-only).
+
+### Learnings for future iterations:
+- **Pattern discovered**: for a "retire a convention" scrub, the load-bearing step is
+  classifying each grep hit as HISTORICAL record (session logs, old PRDs, archives,
+  dated design specs = never rewrite) vs ACTIVE operative site (a checklist/rule/table
+  an agent follows TODAY = the only real scrub targets). Most hits are historical.
+- **Gotcha**: `specs/` is read-only for Ralph — a spec that still encodes the retired
+  convention can't be edited in-loop; file `offices/pm/issues/` and document it so the
+  scrub isn't silently skipped (VC honesty).
+- **Gotcha (scope)**: the PRD template's pre-conversion block bundles the (in-scope)
+  Story.md mirror ref with the (out-of-scope) retired Rule-13/freeze mechanic. Edit
+  ONLY the mirror phrase; a TD/MEMORY-tracked separate retirement owns the freeze.
+- **Judgment**: `graduate_story.py` already treats a missing mirror as a "ghost" and
+  synthesizes the archive record from JSON — the tooling had ALREADY made mirrors
+  optional (2026-06-19); US-468 just formalizes it in the human-facing docs.
+---

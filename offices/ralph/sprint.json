@@ -143,8 +143,21 @@
       "epicId": "E-OPS",
       "type": "housekeeping",
       "size": "S",
-      "status": "sprint-ready",
-      "passes": false,
+      "status": "complete",
+      "passes": true,
+      "feedback": {
+        "filesActuallyTouched": [
+          "offices/pm/projectManager.md (UPDATE -- 'Key Files' folder-structure table: backlog.json marked story SSOT; US-*.md mirror row marked RETIRED/optional + retirement note)",
+          "offices/pm/prds/_template-prd.md (UPDATE -- pre-conversion checklist step 1: 'in its Story.md' -> 'in backlog.json (story SSOT; US-*.md mirror retired/optional)'; scope-fenced to the mirror phrase, freeze/Rule-13 lines untouched)",
+          "offices/pm/issues/I-rule13-audit-spec-still-requires-story-md-mirror.md (NEW -- handoff: specs/ is read-only for Ralph; the one remaining still-requires-mirror step lives in specs/rule-13-audit-discipline.md)"
+        ],
+        "grounding": [
+          "Retirement authority = docs/superpowers/specs/2026-06-29-prd-to-sprint-workflow-simplification-design.md §4.3 'Drop Story.md mirrors' (Retire them; PRD/backlog.json are the source)",
+          "Newest mirror ~US-398 = story acceptance + prd-V0.29.2.md next-steps (last /groom-user-stories run that wrote mirrors, US-393..398)",
+          "graduate_story.py (2026-06-19) already treats a missing Story.md as a 'ghost' and synthesizes the archive record from JSON -> mirror is already optional in tooling"
+        ]
+      },
+      "completionNotes": "AUDIT (acceptance#1): grepped the whole repo for Story.md / backlog/US-*.md / mirror. CLASSIFIED into (a) HISTORICAL records -- session-log narrative in projectManager.md ('wrote 7 Story.md mirrors'), old PRDs (prd-V0.29.1/.2/.10), archives, and the DESIGN specs (2026-06-29 §4.3 IS the retirement authority; 2026-05-27/-28 are superseded design docs) -- NOT rewritten (rewriting history is wrong); vs (b) ACTIVE operative sites that still imply/require a mirror. Active sites found = 3: projectManager.md 'Key Files' folder-table row (pm/backlog/US-*.md as the detail home), _template-prd.md step-1 ('in its Story.md'), and specs/rule-13-audit-discipline.md:114 (assert every story's US-*.md exists). FIXED the two in Ralph's lane: folder-table row -> RETIRED/optional + a retirement note pointing at the 2026-06-29 spec §4.3 (backlog.json = single story SSOT); template step-1 -> backlog.json SSOT, mirror retired/optional (scope-fenced: did NOT touch the adjacent Rule-13/bigDoDHash freeze lines -- freeze retirement is a SEPARATE concern per MEMORY 2026-07-13, out of US-468 scope). HANDED OFF the third: specs/ is read-only for Ralph (prompt.md) -> filed offices/pm/issues/I-rule13-audit-spec-still-requires-story-md-mirror.md (also flags that whole spec encodes the retired Rule-13 freeze mechanic). ACCEPTANCE#3 (skill/command scrub): grep of ALL **/.claude/**/*.md returned ZERO 'Story.md' hits -- NO skill/command instructs writing mirrors (the office groom-user-stories.md copies are a stale generic prd.json template with no mirror step); nothing to remove -> requirement pre-satisfied, documented. graduate_story.py needs NO change: it already synthesizes an archive .md from JSON when no mirror exists (mirror already optional in tooling). VALIDATION (VC1): grep skills/docs for Story.md mirror -> the two edited docs now carry the retirement note (not a requirement); .claude surface is clean; the sole remaining 'still requires mirrors' step is the read-only spec, handed to PM. DOCS-ONLY story: no .py changed -> no targeted tests, no make lint (acceptance has no 'ruff clean' line -- confirms docs-only). LANE NOTE for PM: edited offices/pm/ docs directly per this sprint's E-OPS precedent (US-465/466 edited pm/backlog.json + pm/scripts + pm/knowledge); kept edits surgical + off PM's personal session-log/rules narrative (only the reference folder-table + the shared PRD template).",
       "acceptance": [
         "Pre-flight audit: grep skills/commands/PM-Rules/folder-structure docs for existing Story.md-mirror references before editing",
         "update PM Rule / folder-structure docs: stories live in backlog.json; offices/pm/backlog/US-*.md mirrors are retired/optional (newest mirror ~US-398)",
