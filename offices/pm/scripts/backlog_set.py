@@ -44,6 +44,15 @@ from typing import Any
 REPO_ROOT = Path(__file__).resolve().parents[3]
 BACKLOG_PATH = REPO_ROOT / "offices" / "pm" / "backlog.json"
 
+# Proposed-change lines echo user-supplied notes/field values that may carry
+# Unicode (e.g. the '->' rendered as U+2192, em-dashes), so harden stdout+stderr
+# to UTF-8 before any print (Windows cp1252 crash guard, US-466). Inlined to keep
+# this script self-contained ("Stdlib-only"); canonical recipe: _encoding.py.
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 VALID_STATUSES = {
     "pending", "groomed", "in_sprint", "in_progress",
     "blocked", "complete", "declined",

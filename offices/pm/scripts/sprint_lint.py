@@ -50,7 +50,13 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from offices.pm.scripts._encoding import forceUtf8Stdio  # noqa: E402
 from offices.pm.scripts._freeze import canonicalizeBigDoD  # noqa: E402
+
+# Backlog/sprint titles + bigDefinitionOfDone clauses carry Unicode (e.g. the
+# '->' rendered as U+2192); lint error/warning lines echo that text, so harden
+# stdout+stderr to UTF-8 before any print (Windows cp1252 crash guard, US-466).
+forceUtf8Stdio()
 
 SPRINT_PATH = REPO_ROOT / "offices" / "ralph" / "sprint.json"
 
@@ -477,7 +483,7 @@ def lintBacklog(path: Path) -> tuple[list[LintError], list[LintWarning]]:
     Returns:
         Tuple of (errors, warnings) lists of LintError / LintWarning.
     """
-    from offices.pm.scripts.backlog_schema import validateBacklog, BacklogValidationError
+    from offices.pm.scripts.backlog_schema import BacklogValidationError, validateBacklog
     from offices.pm.scripts.pm_status import computeRollups
 
     data = json.loads(path.read_text(encoding="utf-8"))

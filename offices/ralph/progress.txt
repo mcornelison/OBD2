@@ -321,3 +321,72 @@ Task: Backfill backlog metadata (drifted stories) + un-break pm_status
   widen the enum to the real state, not to relabel the data to a wrong-but-valid
   value. Never trade correctness for a green check.
 ---
+
+## 2026-07-13 - US-466 (Rex / Agent 1, Session 6 — Sprint 58)
+Task: PM-tooling Windows UTF-8 hardening (stop cp1252 crashes)
+
+### What was implemented:
+- Pre-flight audit of all 18 offices/pm/scripts. Crash surface = scripts that
+  print() DATA from backlog/sprint JSON (titles + bigDefinitionOfDone /
+  validation clauses render the sprint-contract '->' as U+2192) or user-supplied
+  free text. Confirmed set NEEDING the guard: sprint_lint (error/warn lines quote
+  titles+DoD, on stdout AND stderr), chain_validate_aggregate (renderHumanReport
+  prints bigDoD clauses), backlog_set (echoes user notes/field values).
+- Already-guarded (US-465, inline stdout-only): pm_status, backfill_story_metadata
+  -- LEFT AS-IS (shipped + US-465-validated; refactoring them risks that gate).
+- The other 11 scripts print ASCII only (paths, US-### IDs, status enums, counts,
+  versions); they WRITE unicode to files but already pass encoding=utf-8. Verified
+  every open()/read_text/write_text across all 18 already uses encoding=utf-8 ->
+  acceptance's open()-clause was already satisfied; nothing to change there.
+- NEW _encoding.forceUtf8Stdio(): reconfigures BOTH stdout+stderr to UTF-8,
+  idempotent, hasattr-defensive (skips pytest-capture / pythonw None streams).
+  This is the SSOT canonical recipe, a sibling to _freeze.py (per acceptance).
+- Wired sprint_lint.py to import+call the helper (it already imports from
+  offices.pm.scripts._freeze, so a package dep is natural). The two 'Stdlib-only'
+  self-contained scripts (chain_validate_aggregate, backlog_set) inline the
+  identical stdout+stderr guard with a comment pointing to _encoding.py --
+  preserving their declared self-containment (importing would add a package dep).
+- Updated the knowledge doc with the Layer-1 in-code recipe + the helper.
+
+### Files changed:
+- Created: `offices/pm/scripts/_encoding.py` (forceUtf8Stdio helper / SSOT recipe)
+- Created: `tests/pm/test_encoding_helper.py` (5 tests)
+- Modified: `offices/pm/scripts/sprint_lint.py` (helper import+call; +fixed a
+  pre-existing I001 unsorted function-local import at :486 to keep the file
+  lint-clean per DoD)
+- Modified: `offices/pm/scripts/chain_validate_aggregate.py` (inline guard)
+- Modified: `offices/pm/scripts/backlog_set.py` (inline guard)
+- Modified: `offices/pm/knowledge/feedback-pm-windows-encoding-ad-hoc-audits.md`
+  (added in-code Layer-1 recipe + _encoding.py canonical home)
+
+### Verification:
+- VC1 on LIVE cp1252 stdout (PYTHONIOENCODING unset, sys.stdout.encoding==cp1252):
+  `chain_validate_aggregate.py --chain V0.29` -> printed 199 U+2192 arrows, EXIT 0;
+  `backlog_set.py --dry-run --updated-by "smoke -> test"` -> printed the arrow;
+  `sprint_lint.py --backlog` -> EXIT 0 (silent = clean backlog post-US-465).
+- `pytest tests/pm/test_encoding_helper.py` -> 5 passed (incl. a functional test
+  seeding a real cp1252 TextIOWrapper: asserts UnicodeEncodeError BEFORE the guard
+  and the UTF-8 arrow bytes land AFTER).
+- `pytest` sprint_lint suites (v2/freeze/filestotouch/feedback-vs-diff) + encoding
+  -> 32 passed (my sprint_lint import edits regress nothing).
+- `ruff check` on all 5 touched .py -> All checks passed.
+- PM/integration gate (NOT in-loop): full `pytest tests/` + mypy strict.
+
+### Learnings for future iterations:
+- **Pattern discovered**: on Windows the console codec is cp1252 and
+  PYTHONIOENCODING is usually unset, so `sys.stdout.encoding` is genuinely cp1252
+  even in this harness -- meaning you can VALIDATE a UTF-8-stdio fix for real by
+  just running the script and counting the glyphs it prints (199 arrows, EXIT 0).
+  No mock needed; the bug reproduces natively.
+- **Gotcha**: a functional test for an stdout-encoding fix does NOT need a real
+  console -- wrap an `io.BytesIO` in `io.TextIOWrapper(encoding="cp1252")`,
+  monkeypatch it onto sys.stdout, assert the arrow raises UnicodeEncodeError,
+  then call the guard and assert the UTF-8 bytes land. Deterministic + hermetic.
+- **Gotcha**: guard stderr too, not just stdout -- lint/aggregation tools emit
+  their ERROR/WARNING lines (which quote titles + DoD text) to stderr. The US-465
+  reactive fixes only did stdout; the two-stream form supersedes them.
+- **Judgment**: 'Stdlib-only' self-containment (advertised in a script's
+  docstring) is a real constraint worth honoring -- inline the guard there rather
+  than adding a package import, and keep ONE tested SSOT (the helper) that the
+  non-self-contained scripts consume. Documented the split in the knowledge doc.
+---

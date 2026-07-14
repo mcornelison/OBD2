@@ -61,8 +61,23 @@
       "epicId": "E-OPS",
       "type": "housekeeping",
       "size": "S",
-      "status": "sprint-ready",
-      "passes": false,
+      "status": "complete",
+      "passes": true,
+      "feedback": {
+        "filesActuallyTouched": [
+          "offices/pm/scripts/_encoding.py (NEW -- canonical forceUtf8Stdio() helper, SSOT recipe)",
+          "offices/pm/scripts/sprint_lint.py (UPDATE -- import+call forceUtf8Stdio; +fixed pre-existing I001 in a function-local import)",
+          "offices/pm/scripts/chain_validate_aggregate.py (UPDATE -- inline stdout+stderr guard, self-contained)",
+          "offices/pm/scripts/backlog_set.py (UPDATE -- inline stdout+stderr guard, self-contained)",
+          "offices/pm/knowledge/feedback-pm-windows-encoding-ad-hoc-audits.md (UPDATE -- added in-code Layer-1 recipe + _encoding.py)",
+          "tests/pm/test_encoding_helper.py (NEW -- 5 tests incl. real-cp1252-stream functional proof)"
+        ],
+        "grounding": [
+          "Windows console default codec = cp1252 (verified live: PYTHONIOENCODING unset, sys.stdout.encoding == cp1252)",
+          "U+2192 RIGHTWARDS ARROW present in migrated backlog titles + bigDefinitionOfDone clauses (pm_status.py:31 comment + live: 199 arrows in chain_validate_aggregate --chain V0.29 output)"
+        ]
+      },
+      "completionNotes": "AUDIT: crash surface = PM scripts that print() DATA derived from backlog/sprint JSON (titles + DoD/validation clauses carry U+2192 '->') or user-supplied free text. Classified all 18 scripts: CONFIRMED crash-surface needing the guard = sprint_lint (error/warn lines quote titles+DoD, stdout AND stderr), chain_validate_aggregate (renderHumanReport prints bigDoD clauses w/ arrows), backlog_set (echoes user notes/field values). Already-guarded (US-465, inline stdout-only) = pm_status, backfill_story_metadata -- LEFT AS-IS (shipped + validated; refactoring risks US-465). NOT crash-surface (ASCII-only: paths, US-### IDs, status enums, counts, versions) = prd_to_sprint/graduate_story/bump_passed_statuses/chain_validate_manifest_bump/migrate_v1_to_v2/pm_regression_status/verify_release_version/repair_ralph_agents/archive_sprint_artifacts/audit_historical_drain_canary/backlog_schema (all WRITE unicode to files but already use encoding=utf-8). open()/read_text/write_text across ALL 18 scripts ALREADY pass encoding=utf-8 (verified suite-wide) -> acceptance#2's open()-clause pre-satisfied, nothing to fix there. DESIGN: created _encoding.forceUtf8Stdio() (guards stdout+stderr, idempotent, hasattr-defensive) as SSOT/canonical recipe (sibling to _freeze.py per acceptance#3). sprint_lint (already imports from offices.pm.scripts._freeze) consumes the helper; the two 'Stdlib-only' self-contained scripts inline the identical guard w/ a comment -> _encoding.py (preserving their declared self-containment; import would add a package dep). VALIDATION: VC1 = ran all 3 touched scripts on LIVE cp1252 stdout (PYTHONIOENCODING unset): chain_validate_aggregate --chain V0.29 printed 199 arrows EXIT 0; backlog_set --dry-run printed 'smoke -> test' arrow; sprint_lint --backlog EXIT 0 (silent = clean backlog post-US-465). pytest test_encoding_helper = 5 pass incl. a functional test seeding a real cp1252 TextIOWrapper, asserting UnicodeEncodeError BEFORE the guard + arrow-bytes-land AFTER. sprint_lint suites (v2/freeze/filestotouch/feedback-vs-diff) + encoding = 32 pass (my sprint_lint import edits regress nothing). ruff clean on all 5 .py. SCOPE NOTE: fixed a PRE-EXISTING I001 (unsorted function-local import at sprint_lint.py:486, NOT in my edit region) to keep the modified file lint-clean per DoD. NOTE for PM: 6 files touched vs the S-size 'feel' -- but no scope.filesToTouch was encoded, changes are uniform+trivial, and the 'Stdlib-only' constraint forced inline copies over a single import site. PM/integration gate: full pytest + mypy strict (not in-loop).",
       "acceptance": [
         "Pre-flight audit: identify which offices/pm/scripts print or open() unicode (the arrow glyphs and similar non-ASCII) and currently require PYTHONIOENCODING=utf-8 to avoid crashing",
         "those scripts set UTF-8 internally (guarded sys.stdout/stderr.reconfigure(encoding=utf-8)) AND all open() use encoding=utf-8",
