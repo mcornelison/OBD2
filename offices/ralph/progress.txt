@@ -390,3 +390,65 @@ Task: PM-tooling Windows UTF-8 hardening (stop cp1252 crashes)
   than adding a package import, and keep ONE tested SSOT (the helper) that the
   non-self-contained scripts consume. Documented the split in the knowledge doc.
 ---
+
+## 2026-07-13 - US-467 (Rex / Agent 1, Session 7 — Sprint 58)
+Task: TD-057 stale git index.lock guarded helper (slow-NAS)
+
+### What was implemented:
+- Pre-flight audit (TD-057): the failure mode is an orphaned/crashed `git`
+  leaving a 0-byte `.git/index.lock` on the slow chi-nas-01 SMB share, which
+  blocks EVERY write git op (add/commit/stash) for all agents while reads keep
+  working. Recurred US-367 (Sprint 47) + Sprint 49 (~2h HUMAN_INTERVENTION +
+  manual PM clear). The PM's validated safe-clear heuristic = remove ONLY if
+  (a) 0 bytes, (b) mtime age > threshold, (c) no live `git` process.
+- NEW `offices/pm/scripts/index_lock.py`. `clearStaleIndexLock` checks the three
+  conditions in a FIXED order with the live-git-process gate FIRST, so no later
+  condition can ever lead to deleting a lock a running git owns -- the discipline
+  invariant (handbook §13 Rule-4) is structurally unbypassable, not just asserted.
+- Default live-git detector `_defaultGitProcessRunning`: EXACT process-name match
+  (`git`/`git.exe`, never substring -- TD-057 warns "Logitech" false-matches),
+  via `tasklist /FI IMAGENAME` on Windows / `ps -e -o comm=` on POSIX. On ANY
+  probe failure it returns True (assume-live) -> refuse: uncertainty must never
+  authorize a destructive delete.
+- `clearStaleIndexLockWithBackoff` retries the `[1,2,4,8,16]` ladder to WAIT OUT
+  a genuinely-live/too-fresh lock (a real commit finishing releases it on its
+  own -> ABSENT); a non-empty lock is terminal (won't cure by waiting -> return
+  for escalation, don't spin). A persistently-live lock is refused after the
+  full schedule -- NEVER deleted.
+- CLI `main`: `python -m offices.pm.scripts.index_lock --repo . [--check] [--age-threshold N] [--retries N]`;
+  exit 0 = safe to proceed (absent/cleared), exit 2 = refused (escalate).
+- Wiring into /closeout-pm + /sprint-deploy-pm + Ralph's lock-blocked path +
+  handbook §13 is PM-owned (shared docs/skills, lane discipline) -> handed off in
+  an inbox note rather than edited here (US-462/464 precedent).
+
+### Files changed:
+- Created: `offices/pm/scripts/index_lock.py` (guarded clearer + backoff + CLI)
+- Created: `tests/pm/test_index_lock.py` (17 tests)
+- Created: `offices/pm/inbox/2026-07-13-from-rex-us467-index-lock-guard-wiring.md`
+
+### Verification:
+- VC1 (stale lock, no git process) -> a REAL-git end-to-end test: git init +
+  stage a file, plant a 0-byte aged lock, assert `git commit` is BLOCKED, run the
+  guard -> CLEARED, assert `git commit` now SUCCEEDS.
+- VC2 (live-held lock) -> refuses (`REFUSED_GIT_LIVE`) and NEVER deletes, verified
+  across the full backoff schedule (the invariant holds through every retry).
+- `pytest tests/pm/test_index_lock.py` -> 17 passed.
+- `ruff check` on both .py files -> All checks passed.
+- PM/integration gate (NOT in-loop): full `pytest tests/` + mypy strict.
+
+### Learnings for future iterations:
+- **Pattern discovered**: encode a safety invariant as CHECK ORDER, not just an
+  assertion. Putting the "is a live git process present?" gate first in
+  `clearStaleIndexLock` means no subsequent branch can reach the `unlink()` under
+  a live process -- the invariant is structural. Pair with a fail-safe default
+  detector (probe error -> assume-live -> refuse) so an undetectable state never
+  authorizes the destructive op.
+- **Gotcha**: match process names EXACTLY (`git`/`git.exe`), never by substring --
+  TD-057 recorded a "Logitech" substring false-match that would have read as a
+  live git and wrongly refused (here) or, in a naive clearer, misjudged state.
+- **Gotcha (test)**: you can prove the whole end-to-end for real without mocking
+  git -- `git init` in tmp_path, plant a 0-byte lock via `os.utime` back-dated
+  mtime, and observe the actual `git commit` fail-then-succeed around the guard.
+  Inject the sleep + git-process-detector as callables to keep the backoff-loop
+  tests hermetic and instant (assert the recorded sleep list == the schedule).
+---

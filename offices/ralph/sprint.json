@@ -101,8 +101,21 @@
       "epicId": "E-OPS",
       "type": "tech-debt",
       "size": "S",
-      "status": "sprint-ready",
-      "passes": false,
+      "status": "complete",
+      "passes": true,
+      "feedback": {
+        "filesActuallyTouched": [
+          "offices/pm/scripts/index_lock.py (NEW -- guarded stale-lock clearer + backoff + CLI)",
+          "tests/pm/test_index_lock.py (NEW -- 17 tests incl. real-git end-to-end)",
+          "offices/pm/inbox/2026-07-13-from-rex-us467-index-lock-guard-wiring.md (NEW -- PM wiring hand-off)"
+        ],
+        "grounding": [
+          "Heuristic = TD-057 line 22 (PM-validated hand-clear): 0-byte + mtime-age + no-live-git-process",
+          "Handbook §13 Rule-4 discipline invariant: never force a lock while a git process is running",
+          "Retry ladder [1,2,4,8,16] = project Quality+Safety constant (prompt.md)"
+        ]
+      },
+      "completionNotes": "AUDIT (acceptance#1): failure mode per TD-057 = orphaned git leaves a 0-byte .git/index.lock on the slow SMB share, blocking all write git ops (add/commit/stash) while reads work; recurred US-367 + Sprint 49 (~2h HUMAN_INTERVENTION). Live-git detection: exact process-name match (git/git.exe) NOT substring (TD-057 warns 'Logitech' false-matches) -- tasklist /FI IMAGENAME filter on Windows, ps -e -o comm= on POSIX. DESIGN: index_lock.py encodes the PM's validated 3-condition heuristic; conditions checked in FIXED order with the live-git gate FIRST so no later branch can ever authorize a delete under a live process (the load-bearing invariant). Default detector fails SAFE = assume-live on any probe error (uncertainty never authorizes a destructive op; the retry-defaults-to-uncertain rule). clearStaleIndexLockWithBackoff retries on [1,2,4,8,16] to wait out a genuinely-live commit (lock vanishes on its own) -- non-empty lock is terminal (won't cure by waiting -> escalate). CLI: python -m offices.pm.scripts.index_lock --repo . [--check]; exit 0 safe-to-proceed / 2 refused. WIRING (acceptance#3): usage fully documented in module docstring + --help; wiring into /closeout-pm + /sprint-deploy-pm + Ralph's lock-blocked path + handbook §13 is PM-owned (shared docs/skills, lane discipline) -> handed off via inbox note (US-462/464 precedent). VALIDATION: VC1 stale-lock (no git) -> real-git end-to-end test: plant lock -> commit BLOCKED -> guard CLEARS -> commit SUCCEEDS. VC2 live-held -> refuses + NEVER deletes across the full backoff schedule. 17 targeted tests pass, ruff clean on both .py. PM/integration gate: full pytest + mypy strict (not in-loop).",
       "acceptance": [
         "Pre-flight audit: confirm the failure mode (stale index.lock from the slow SMB share blocking commits) + how to reliably detect a live git process holding the lock",
         "helper retries-with-backoff on lock; clears ONLY if no git process is running AND the lock exceeds an age threshold; NEVER force-deletes under a live process (the discipline invariant)",
