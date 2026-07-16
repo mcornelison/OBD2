@@ -117,7 +117,9 @@
       "Bash(sed -n '1,12p' .claude/skills/a2al/SKILL.md)",
       "Bash(git add *)",
       "Bash(git commit *)",
-      "Read(//tmp/**)"
+      "Read(//tmp/**)",
+      "Bash(cp \"C:/Users/mcorn/.claude/uploads/82a494a0-d84d-4e38-91dc-3b17411fbb99/1852ee2a-4062.jpg\" offices/architect/knowledge/hardware-photos/icm20948/icm20948-front-labeled.jpg)",
+      "Bash(cp \"C:/Users/mcorn/.claude/uploads/82a494a0-d84d-4e38-91dc-3b17411fbb99/5d2d0058-4063.jpg\" offices/architect/knowledge/hardware-photos/icm20948/icm20948-back-labeled.jpg)"
     ],
     "deny": [
       "Read(**/.ssh/**)",
