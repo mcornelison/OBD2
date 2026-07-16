@@ -58,4 +58,14 @@ CS→`1V8` (static VDDIO rail).** Board-2 wiring: VIN→3.3V, GND, SCL→GPIO3, 
 SDO/AD0→default(0x69), power-up with CS already high. (Source: InvenSense DS-000189 bypass-mux /
 aux-I²C section.)
 
+## Correction guard (2026-07-15, Atlas)
+
+CIO re-confirmed: **this is a CLONE, not genuine Adafruit.** Web research on the *generic* ICM-20948
+describes the GENUINE Adafruit 4554 (primary pins level-shifted to 3–5V → "CS→3.3V"). **That is WRONG
+for this clone** — measured AD/AC = 1.8V (no level shifter; bare 1.8V-logic board). **CS→1V8 (VDDIO),
+never 3.3V** (3.3V > 1.95V abs-max → damage risk). Do not regress to the genuine-Adafruit CS→3.3V
+guidance. Config path is **exhausted** (CS→1V8 + power-cycle tried on BOTH boards, still dark on a
+healthy bus) → remaining suspects = dead SDA/SCL QFN joint or bad batch, NOT config. EDR hardware,
+ships dark, blocks nothing.
+
 **Sources:** Adafruit 4554 pinouts (learn.adafruit.com) · InvenSense ICM-20948 datasheet DS-000189 · eMD software guide.
