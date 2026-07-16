@@ -1,7 +1,8 @@
 ---
 sprint: 47
 version: V0.29.1
-status: draft
+status: superseded
+supersededBy: prd-V0.29.14.md (2026-07-15, Session 55 -- same F-107 chain, version + scope refreshed to the 5-story 386..390; US-367/391/392/379 split out)
 createdAt: 2026-06-28
 createdBy: Marcus (PM)
 selectedStories: [US-386, US-387, US-388, US-389, US-390, US-367, US-391, US-392, US-379]

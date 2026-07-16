@@ -1052,11 +1052,12 @@
       "parent": "E-004",
       "title": "Pi + server hostname resolution cleanup (`chi-eclipse-01` / `chi-srv-01` LAN-wide)",
       "description": "Pi + server hostname resolution cleanup (`chi-eclipse-01` / `chi-srv-01` LAN-wide)",
-      "status": "complete",
+      "status": "active",
       "renamedFrom": "B-102",
       "createdAt": "2026-05-27",
-      "updatedAt": "2026-05-27",
-      "currentVersion": "V0.29.7"
+      "updatedAt": "2026-07-15",
+      "currentVersion": "V0.29.7",
+      "reopenNote": "US-435 code-resolution sweep shipped V0.29.7; the actual Pi OS host-rename (Chi-Eclips-Tuner -> chi-eclipse-01) + convergence sweep (US-473) remains. CIO 2026-07-15."
     },
     {
       "id": "F-103",
@@ -1217,6 +1218,15 @@
       "createdAt": "2026-07-13",
       "updatedAt": "2026-07-13",
       "currentVersion": "V0.29.12"
+    },
+    {
+      "id": "F-119",
+      "parent": "E-OPS",
+      "status": "active",
+      "title": "Deploy-gate CI-green enforcement + CI hardening (V0.29.13)",
+      "description": "Make /sprint-deploy-pm require a green migration-drift CI run for the exact SHA (Option A PR-based integration, proven live via PR #3), scope=migration-touching-only (CIO 2026-07-15); plus Node20->24 action pin on migration-drift.yml. Closes the proactive half of BL-022 (CI now gates the deploy, not just catches mid-deploy).",
+      "createdAt": "2026-07-15",
+      "updatedAt": "2026-07-15"
     }
   ],
   "stories": [
@@ -1786,7 +1796,7 @@
       "title": "FIX DriveDetector close-signal reliability -- Root 2 (SHAPE PENDING RCA US-387)",
       "type": "issue",
       "size": "M",
-      "status": "pending",
+      "status": "sprint-ready",
       "goal": "As the Pi drive-lifecycle, I want the Root-2 fix so the US-386 reproducer goes GREEN. Per Atlas ruling the target behaviors are: guaranteed-close + stamp drive_id ONLY when RUNNING + gap-fence the drive_id latch (idle/KOEO rows -> NULL so a stale-open cannot absorb a later key-on). Exact change shape pending the US-387 RCA -- frozen as shape-pending, build-blocked, per A-11.",
       "definitionOfDone": [
         "US-386 reproducer GREEN",
@@ -1822,7 +1832,7 @@
       ],
       "tasks": [],
       "createdAt": "2026-06-28",
-      "updatedAt": "2026-06-28"
+      "updatedAt": "2026-07-15"
     },
     {
       "id": "US-389",
@@ -1880,7 +1890,7 @@
       "title": "Regression lock + server-tripwire backstop confirmation",
       "type": "issue",
       "size": "S",
-      "status": "pending",
+      "status": "sprint-ready",
       "goal": "As the project, I want the US-386 reproducer locked into the regression suite/manifest permanently, and the V0.28.0 server tripwire (detect_overlapping_drives) confirmed to still flag any residual overlap -- belt-and-suspenders so a future Pi regression is still caught server-side even if the Pi fix regresses again.",
       "definitionOfDone": [
         "US-386 reproducer added to the fast suite / regression manifest (permanent)",
@@ -1907,7 +1917,7 @@
       ],
       "tasks": [],
       "createdAt": "2026-06-28",
-      "updatedAt": "2026-06-28"
+      "updatedAt": "2026-07-15"
     },
     {
       "id": "US-391",
@@ -4757,6 +4767,113 @@
       "createdAt": "2026-07-13",
       "updatedAt": "2026-07-15",
       "tasks": []
+    },
+    {
+      "id": "US-471",
+      "parent": "F-119",
+      "type": "housekeeping",
+      "size": "S",
+      "title": "Wire CI-green gate into /sprint-deploy-pm (Option A, migration-touching-only scope)",
+      "goal": "As the PM deploy path, I want /sprint-deploy-pm to REQUIRE a green migration-drift CI run for the exact SHA being integrated, so the BL-019/020/021 real-MariaDB migration-drift class is caught pre-merge (proactive) instead of mid-deploy (reactive). Per CIO 2026-07-15: CI scope = migration-touching changes only (path-filtered), NOT the full not-slow suite. Option A (PR-based sprint->dev integration) is proven live (PR #3).",
+      "definitionOfDone": [
+        "/sprint-deploy-pm Phase 3.5 changed: instead of merging sprint->dev directly (git merge --no-ff), push the sprint branch + open a PR into dev via `gh pr create`; migration-drift.yml CI runs on the PR",
+        "the PR merges into dev ONLY when the migration-drift check is green for the PR HEAD SHA -- run-not-trust: verify via `gh pr checks` / `gh run list --workflow=migration-drift.yml` that the run EXISTS and conclusion=success for `git rev-parse HEAD` (US-469 principle), never assumed green",
+        "path-filter vacuous-pass documented: if the PR touches no migration-relevant paths the job legitimately does not run -- the gate is satisfied (no migration risk) so a docs-only sprint is NOT blocked waiting for a job that never fires; this is stated explicitly in the skill",
+        "deploy-from-dev (Phase 6) is CI-green by construction (Option A) -- no separate post-merge poll (that was Option B, not chosen)",
+        "skill Phase 3.5 + stop-condition table + Related section updated to describe the PR-gate; self-documenting",
+        "CI-scope decision recorded (migration-only, CIO 2026-07-15) + Option A choice + DSN-manual interim fallback retained -- in the skill body or the existing recommendation doc"
+      ],
+      "conditionalOutcomes": [
+        "if `gh` auth / PR creation fails in the deploy environment, HALT and surface -- do NOT silently fall back to direct-merge (that reintroduces the exact gap this closes); the DSN-manual interim (recommendation #3) is the documented manual fallback",
+        "PM-tooling note: this edits PM's own .claude/commands/sprint-deploy-pm.md (+ optional gh-check helper) -- CIO may elect PM-execution rather than Ralph-dispatch"
+      ],
+      "validationCriteria": [
+        {
+          "action": "dry-run the revised Phase 3.5 against a scratch sprint branch touching a migration path",
+          "outcome": "a PR opens into dev, migration-drift CI triggers, and the flow refuses to merge until the check is green"
+        },
+        {
+          "action": "inspect the run-not-trust check against a known-red / missing-run SHA",
+          "outcome": "the gate HALTs (no merge/deploy) when CI conclusion != success for the HEAD SHA"
+        }
+      ],
+      "deps": [],
+      "sourceRefs": [
+        "BL-022",
+        "US-464",
+        "US-469",
+        "US-470",
+        "recommendation-2026-07-13-ci-green-deploy-gate"
+      ],
+      "tasks": [],
+      "status": "sprint-ready",
+      "createdAt": "2026-07-15",
+      "updatedAt": "2026-07-15"
+    },
+    {
+      "id": "US-472",
+      "parent": "F-119",
+      "type": "housekeeping",
+      "size": "XS",
+      "title": "Pin migration-drift.yml GitHub Actions to Node24 majors (clear Node20 deprecation)",
+      "goal": "As CI maintenance, I want migration-drift.yml pinned to action majors that run on Node 24, so we clear the Node20 end-of-life deprecation before GitHub auto-forces the runtime and the job starts warning/breaking.",
+      "definitionOfDone": [
+        "bump the pinned actions to their current Node24 majors: actions/checkout@v4 -> @v5, actions/setup-python@v5 -> @v6, actions/upload-artifact@v4 -> @v5 (verify each major actually runs on Node24 at pin time; if a listed major is not yet Node24 hold at the newest Node24-compatible major and note it)",
+        "the migration-drift job still runs GREEN on GH runners (re-trigger via workflow_dispatch or a migration-path PR)",
+        "no Node20 deprecation warnings remain in the run log"
+      ],
+      "conditionalOutcomes": [
+        "if a bumped action major has breaking input changes, adapt the `with:` block accordingly (or hold that one action at its last Node24-compatible major) and document why"
+      ],
+      "validationCriteria": [
+        {
+          "action": "re-run migration-drift.yml (workflow_dispatch) after the pin bump",
+          "outcome": "job green; no Node20 deprecation warnings in the log"
+        }
+      ],
+      "deps": [],
+      "sourceRefs": [
+        "US-470",
+        "F-104"
+      ],
+      "tasks": [],
+      "status": "sprint-ready",
+      "createdAt": "2026-07-15",
+      "updatedAt": "2026-07-15"
+    },
+    {
+      "id": "US-473",
+      "parent": "F-102",
+      "type": "housekeeping",
+      "size": "S",
+      "title": "Pi hostname convergence sweep AFTER OS rename Chi-Eclips-Tuner -> chi-eclipse-01 (F-102 close)",
+      "goal": "As the CIO, once the Pi's OS hostname is renamed from Chi-Eclips-Tuner to chi-eclipse-01 (my ops action via hostnamectl), I want a code/config/docs/SSH-config sweep converging EVERY reference on the new canonical name, so deploy + SSH + tooling resolve correctly post-rename and F-102/B-102 finally closes.",
+      "definitionOfDone": [
+        "PREREQUISITE (CIO action-item, NOT a Ralph task): the Pi host is renamed to chi-eclipse-01 on the Pi (hostnamectl set-hostname) -- this sweep runs AFTER that lands",
+        "sweep code/config/docs/SSH-config for interim/old names (Chi-Eclips-Tuner, Chi-Eclips-01, chi-eclipse-tuner, stale aliases) -> canonical chi-eclipse-01",
+        "deploy-pi.sh + SSH alias resolve to chi-eclipse-01; deploy-pi.sh --dry-run succeeds against the new name",
+        "MEMORY.md Pi one-liner + docs/pi-power-state.md + reference-ssh-access updated to the new canonical name; B-102/F-102 closed",
+        "ruff check passes on any touched .py"
+      ],
+      "conditionalOutcomes": [
+        "if the Pi rename has NOT happened at dispatch time, this story is BLOCKED on that CIO action-item -- do NOT sweep to a name the host does not yet answer to (would break deploy/SSH)"
+      ],
+      "validationCriteria": [
+        {
+          "action": "grep stale hostname refs + run deploy-pi.sh --dry-run AFTER the Pi rename",
+          "outcome": "no stale refs remain; deploy/SSH resolve to chi-eclipse-01"
+        }
+      ],
+      "deps": [],
+      "sourceRefs": [
+        "F-102",
+        "B-102",
+        "US-435"
+      ],
+      "tasks": [],
+      "status": "sprint-ready",
+      "createdAt": "2026-07-15",
+      "updatedAt": "2026-07-15"
     }
   ]
 }

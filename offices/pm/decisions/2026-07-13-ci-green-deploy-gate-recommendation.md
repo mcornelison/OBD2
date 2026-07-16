@@ -45,3 +45,17 @@ Run the live layer on demand against a real MariaDB 11.x as part of the deploy g
 
 ## Open question for you
 Do you want CI to gate **only migration-touching changes** (path-filtered, my recommendation — minimal noise) or **the full `not-slow` suite on every PR to dev** (broader safety net, closer to "real CI", slightly more runs)? The migration-drift job is the BL-02x-specific gate; a broader suite is a separate, larger decision.
+
+---
+
+## DECISION (CIO, 2026-07-15) — RESOLVED
+
+- **CI scope = migration-touching changes only** (path-filtered `migration-drift.yml` as-is). The full `not-slow`-suite-on-every-PR option is **deferred** — a separate, larger decision, not taken now.
+- **Enable Actions: YES** — already done (2026-07-15, reverses US-186; narrow triggers avoid the email flood). BL-022 resolved; first `migration-drift.yml` run green via PR #3.
+- **Option A (PR-based sprint→dev integration) chosen** — make it mandatory in `/sprint-deploy-pm`.
+
+**Groomed into work (Session 55):**
+- **US-471** (F-119, V0.29.13) — wire the CI-green gate into `/sprint-deploy-pm` Phase 3.5 (PR-open into dev + run-not-trust merge-gate on migration-drift green for the HEAD SHA). Deploy-from-dev becomes CI-green by construction; path-filter vacuous-pass documented. DSN-manual interim (#3) retained as the fallback.
+- **US-472** (F-119, V0.29.13) — Node20→24 action pin on `migration-drift.yml` (clears the EOL deprecation).
+
+PRD: `offices/pm/prds/prd-V0.29.13.md`. Awaiting Atlas PRD review before `prd_to_sprint.py`.

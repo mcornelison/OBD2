@@ -31,6 +31,20 @@ Format per item:
 
 ---
 
+### AI-003 Rename the Pi OS hostname `Chi-Eclips-Tuner` → `chi-eclipse-01` (unblocks US-473)
+- **Owner**: CIO (Mike)
+- **Status**: open
+- **Filed**: 2026-07-15
+- **Source**: Session 55 grooming; B-102/F-102 (code-resolution sweep US-435 shipped V0.29.7; the actual host rename remains)
+
+**What**: On the Pi, run `sudo hostnamectl set-hostname chi-eclipse-01` (and update `/etc/hosts` if it pins the old name), then reboot/verify. This is an **ops action on the live Pi** — it needs the Pi powered + SSH, so per the dev-only sprint-scope rule it can't be a Ralph story.
+
+**Why it matters**: **US-473** (the code/config/docs/SSH convergence sweep, F-102) is BLOCKED on this — Ralph must not sweep every reference to `chi-eclipse-01` while the host still answers to `Chi-Eclips-Tuner` (would break deploy-pi.sh + SSH). Sequence is: (1) CIO renames the host → (2) US-473 sweeps the code to match → (3) F-102/B-102 closes.
+
+**Acceptance**: `ssh chi-eclipse-01 hostname` returns `chi-eclipse-01`; then US-473 can dispatch. If the CIO does this in the V0.29.13 sprint window, US-473 rides that sprint; otherwise US-473 slips to the next sprint.
+
+---
+
 ## Closed
 
 ### AI-002 Ralph commit-but-not-stage detector — sprint_lint commit-vs-claim verifier
