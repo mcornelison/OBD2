@@ -4806,9 +4806,10 @@
         "recommendation-2026-07-13-ci-green-deploy-gate"
       ],
       "tasks": [],
-      "status": "sprint-ready",
+      "status": "complete",
       "createdAt": "2026-07-15",
-      "updatedAt": "2026-07-15"
+      "updatedAt": "2026-07-16",
+      "completedNote": "PM-executed directly 2026-07-16 (CIO-directed, not Ralph-dispatched). /sprint-deploy-pm Phase 3.5 rewritten to Option A (PR-open into dev + run-not-trust CI-green merge-gate + path-filter vacuous-pass); stop-condition table + Related + workflow-rules updated. Logic proven against live gh 2.86 + real PR#3 CI data: path-detection both directions, run-not-trust returns 1 for the exact green SHA / 0 (HALT) for bogus, gh pr checks --watch/--fail-fast + gh pr merge --merge flags confirmed. First LIVE exercise = the V0.29.13 deploy itself (US-472 touches migration-drift.yml -> triggers the required check on that PR)."
     },
     {
       "id": "US-472",

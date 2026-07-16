@@ -11,8 +11,9 @@ End-of-sprint deployment ritual for Marcus (PM). **Replaces the prior sprint-bra
 
 **WHEN NOT to run**: mid-sprint (Ralph still iterating); during a SEV-1 hotfix on `main` (uses separate hotfix path per spec §8.2); when sprint contract has unresolved blockers active.
 
-**Critical workflow rules (spec 2026-05-28)**:
-- This command merges sprint → `dev` (Phase 3.5) and deploys from `dev`. It does NOT merge to `main`.
+**Critical workflow rules (spec 2026-05-28; US-471 CI-gate 2026-07-15)**:
+- This command integrates sprint → `dev` via a **CI-green PR** (Phase 3.5, Option A) and deploys from `dev`. It does NOT merge to `main`.
+- The sprint branch merges into `dev` **only when the migration-drift CI check is green for the exact HEAD SHA** (run-not-trust), or the PR touches no migration-relevant path (vacuous pass). Never a silent direct-merge fallback.
 - After deploy, the sprint enters "awaiting validation" state on dev. CIO + drill runner exercise sprint.json `validation.bigDefinitionOfDone` IRL.
 - `/sprint-validated` then stamps the sprint validation (no further merge).
 - `/chain-validated` merges `dev` → `main` once the whole V0.X chain is whole-green.
@@ -89,9 +90,13 @@ Last Updated header + Current Phase descriptor. Insert Session narrative.
 
 ---
 
-## Phase 3.5 -- Merge sprint branch into dev (NEW per spec 2026-05-28)
+## Phase 3.5 -- Integrate sprint branch into dev via a CI-green PR (US-471, Option A)
 
-Stage all relevant files on the sprint branch BEFORE merging, so the sprint-close commit body carries the PM artifacts (sprint-close exception to PM Rule 8 dev-only-domain):
+**Why a PR, not a direct merge (US-471 / BL-022):** the real-MariaDB migration-drift check (`migration-drift.yml`, US-470) only runs on `pull_request → dev`. A direct `git merge` bypasses it, so deploy-from-`dev` would see no CI signal -- the exact gap that let BL-019/020/021 reach the deploy attempt. Opening a PR runs the check pre-merge; gating the merge on green makes deploy-from-`dev` **CI-green by construction**. CI scope = **migration-touching changes only** (path-filtered; CIO 2026-07-15) -- a PR that touches no migration path legitimately does not trigger the job (handled as a vacuous pass below).
+
+### 3.5a -- Commit + push the sprint branch
+
+Stage all relevant files on the sprint branch BEFORE integrating, so the sprint-close commit body carries the PM artifacts (sprint-close exception to PM Rule 8 dev-only-domain):
 
 ```bash
 git add -A -- offices/ src/ tests/ scripts/ deploy/ specs/
@@ -100,19 +105,52 @@ git commit -m "feat(sprint-N): <Sprint Name> SHIPPED N/N -- code-complete on spr
 git push origin sprint/sprintN-<phase-name>
 ```
 
-Then merge into `dev`:
+### 3.5b -- Open the PR into dev
 
 ```bash
-git checkout dev
-git pull origin dev                                  # confirm dev base hasn't moved unexpectedly
-git merge --no-ff sprint/sprintN-<phase-name> \
-  -m "Merge sprint/sprintN-<phase-name>: <Sprint Name> code-complete N/N (V0.X.Y on dev)"
-git push origin dev
+SPRINT_BRANCH="sprint/sprintN-<phase-name>"
+gh pr create --base dev --head "$SPRINT_BRANCH" \
+  --title "Merge $SPRINT_BRANCH: <Sprint Name> code-complete N/N (V0.X.Y)" \
+  --body "Sprint-deploy integration PR (US-471 CI-green gate). Migration-drift CI gates the merge."
+PR=$(gh pr view "$SPRINT_BRANCH" --json number --jq .number)
 ```
 
-**Stop condition**: `git pull` brings unexpected commits onto `dev` (someone else pushed a hotfix or parallel sprint). Investigate before merge.
+### 3.5c -- CI-green gate (run-not-trust; US-469 principle)
 
-**Note**: this replaces the old Phase 4 "sprint-deploy commit on sprint branch" pattern. The merge commit IS the sprint-deploy record now. Do NOT merge to `main` here -- that's `/chain-validated`'s job at chain end.
+Determine whether this sprint touched any **migration-relevant path** (the `migration-drift.yml` `paths:` filter). Only then is the check required:
+
+```bash
+HEAD_SHA=$(git rev-parse HEAD)
+MIG_PATHS='^(src/server/migrations/|scripts/apply_server_migrations\.py|tests/server/_mariadb_chain_harness\.py|tests/server/test_migration_chain_real_mariadb\.py|requirements\.txt|requirements-server\.txt|requirements-dev\.txt|\.github/workflows/migration-drift\.yml)'
+if git diff --name-only origin/dev...HEAD | grep -Eq "$MIG_PATHS"; then
+  echo "Migration-relevant paths touched -> migration-drift CI is REQUIRED."
+  gh pr checks "$PR" --watch --fail-fast          # blocks until checks settle; non-zero on failure
+  # run-not-trust: assert a SUCCESS run exists for THIS exact SHA (never assume green)
+  gh run list --workflow=migration-drift.yml --branch="$SPRINT_BRANCH" \
+    --json headSha,conclusion \
+    --jq 'map(select(.headSha=="'"$HEAD_SHA"'" and .conclusion=="success")) | length' \
+    | grep -qx '0' && { echo "HALT: no SUCCESS migration-drift run for $HEAD_SHA"; exit 1; }
+  echo "CI green for $HEAD_SHA."
+else
+  echo "No migration-relevant paths touched -> migration-drift job does not run (vacuous pass, no migration risk)."
+fi
+```
+
+**Stop condition (HALT, do NOT merge/deploy):**
+- `gh pr checks --watch` exits non-zero (a required check failed/errored) -> fix on the sprint branch, push, re-run 3.5c.
+- The run-not-trust assertion finds **no SUCCESS run for the HEAD SHA** (check ran on a different SHA, or never ran when it should have) -> investigate; never merge on assumed-green.
+- `gh` auth / PR creation fails -> **HALT and surface**; do NOT fall back to a silent direct `git merge` (that reintroduces the gap). The documented manual fallback is the **DSN-manual gate** (run the live layer on demand against a real MariaDB 11.x): `OBD2_MARIADB_TEST_DSN=mysql+pymysql://user:pass@host:3306/db pytest tests/server/test_migration_chain_real_mariadb.py -m integration`.
+
+### 3.5d -- Merge the PR into dev
+
+```bash
+gh pr merge "$PR" --merge      # merge commit (preserves --no-ff semantics); keep the branch (short-lived; other agents may hold it locally)
+git checkout dev && git pull origin dev              # bring the merge commit local; refresh base
+```
+
+**Stop condition**: `git pull` brings unexpected commits onto `dev` (parallel sprint / hotfix). Investigate before continuing.
+
+**Note**: the PR merge commit IS the sprint-deploy record now. Do NOT merge to `main` here -- that's `/chain-validated`'s job at chain end.
 
 ---
 
@@ -207,7 +245,10 @@ If drill reveals regression: fix on sprint branch -> bump V0.X.(Y+1) -> re-run /
 | 0 | `--check-feedback` flags missing files | Run rescue-commit pattern; re-run Phase 0 |
 | 0 | `ralph_agents.json` invalid | Run `repair_ralph_agents.py`; re-run Phase 0 |
 | 2 | Archive timestamp collision | Abort; investigate accidental double-run |
-| 3.5 | `git pull origin dev` brought unexpected commits to dev | Investigate; abort merge |
+| 3.5b | `gh` auth / PR creation fails | HALT + surface; do NOT silent direct-merge; DSN-manual gate is the fallback |
+| 3.5c | Required migration-drift check failed/errored (`gh pr checks` non-zero) | Fix on sprint branch, push, re-run 3.5c |
+| 3.5c | No SUCCESS migration-drift run for the HEAD SHA (run-not-trust) | Investigate; never merge on assumed-green |
+| 3.5d | `git pull origin dev` brought unexpected commits to dev | Investigate; abort merge |
 | 5 | RELEASE_VERSION cap violation | Trim before commit (TD-040 / TD-048 lessons) |
 | 7 | Either target shows old version post-deploy | Sprint 22 hidden-bug pattern; investigate before declaring deployed |
 
@@ -225,3 +266,4 @@ Per CIO 2026-05-23 directive #1 + spec 2026-05-28: the V0.27 chain demonstrated 
 - `pm_regression_status.py` -- reports which features are STALE/NEVER-validated; suggests next drill triggers.
 - `regression_manifest.json` -- the project's user-facing feature list with last_validated dates.
 - `feedback_pm_semver_convention.md` -- patch-version-on-sprint-branch rule (V0.X.Y -> V0.X.(Y+1) until validated).
+- `.github/workflows/migration-drift.yml` -- the real-MariaDB migration-drift CI job (US-470) that Phase 3.5c gates on; scope = migration-touching paths only (CIO 2026-07-15). Enablement + rationale: `offices/pm/decisions/2026-07-13-ci-green-deploy-gate-recommendation.md`.

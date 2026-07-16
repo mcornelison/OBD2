@@ -4,7 +4,8 @@ version: V0.29.13
 status: draft
 createdAt: 2026-07-15
 createdBy: Marcus (PM)
-selectedStories: [US-471, US-472, US-473]
+selectedStories: [US-472, US-473]
+preDoneStories: [US-471]  # PM-executed directly 2026-07-16 (CIO-directed); see backlog completedNote + note below
 forksFrom: dev @ (recorded at prd_to_sprint.py conversion)
 sprintJsonPath: offices/ralph/sprint.json
 epic: E-OPS
@@ -40,8 +41,8 @@ The V0.29.12 PRD closed with an explicit **coherence follow-up** (its §"Coheren
 
 ## Notes / sequencing
 
-- **US-471 is the priority** — it's the owed follow-up from V0.29.12 and the durable guard against the entire BL-02x class reaching production.
-- **US-471 is PM-tooling** (edits PM's own `.claude/commands/sprint-deploy-pm.md` + optional `gh`-check helper). CIO may elect **PM-execution** over Ralph-dispatch; either works. Flagged in the story's conditionalOutcomes.
+- **US-471 is DONE — PM-executed directly 2026-07-16** (CIO-directed). `/sprint-deploy-pm` Phase 3.5 rewritten to the Option A PR + CI-green gate; logic proven against live `gh`/PR#3 CI data. Remaining sprint scope = **US-472 + US-473**. See `backlog.json` US-471 `completedNote`.
+- **This sprint's own deploy is the first live exercise of the new gate** (dogfood): US-472 edits `migration-drift.yml` — a migration-relevant path — so the V0.29.13 integration PR triggers the required migration-drift check and Phase 3.5c gates on it for real. Clean self-test of US-471.
 - **US-473 is prerequisite-gated on a CIO ops action** (the Pi rename). If the rename hasn't happened at dispatch, US-473 is BLOCKED — do not sweep to a name the host doesn't answer to. It can ride this sprint if the CIO renames the Pi in-window, or slip to the next sprint. See the CIO action-item note.
 - Rule-13 retired → Atlas's PRD review IS the gate; no post-freeze re-gate.
 - Load-bearing-adjacent for Atlas's eye: **US-471** (deploy path — same surface as US-469). US-472/473 are low-risk CI/hostname hygiene.
