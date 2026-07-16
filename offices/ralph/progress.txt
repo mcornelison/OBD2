@@ -261,3 +261,394 @@ Task: TD-055 real-MariaDB migration-chain CI test (A-10 drift class)
   substitute), plus a written CI-enablement follow-up so the skip is documented,
   not silent.
 ---
+
+## 2026-07-13 - US-465 (Rex / Agent 1, Session 5 — Sprint 58)
+Task: Backfill backlog metadata (drifted stories) + un-break pm_status
+
+### What was implemented:
+- Pre-flight audit found the drift is WIDER than the title's "47": 53 stories
+  (US-408..US-460) are non-compliant -- 53 miss createdAt/updatedAt, 47 miss
+  `status`, 44 miss conditionalOutcomes + tasks. The 47 = the status-missing
+  subset (the title's figure); createdAt/updatedAt drift is the full 53.
+- NEW `offices/pm/scripts/backfill_story_metadata.py` -- idempotent, deterministic,
+  git-optional. AUTHORITATIVE real-end-state signal = archived sprint.json
+  `passes:true` (offices/ralph/archive/sprint.archive.*.json), NOT the live
+  `status` field (proven stale: US-458/459/460 still `sprint-ready` though they
+  shipped in Sprint 55). Classification:
+  - 50 stories shipped Sprints 50-55 -> `complete`.
+  - US-422/423 `superseded` (deliberate terminal state) -> preserved.
+  - US-446 `pending` (no archive appearance, genuinely open) -> preserved,
+    NEVER guessed complete (the conditionalOutcome guard).
+- Dates proxy-derived from the earliest archived-sprint close date (the archive
+  FILENAME carries it: `sprint.archive.2026-07-01_*` -> 2026-07-01), recorded in
+  a per-story `metaBackfill` provenance object (statusSource + dateSource +
+  note). One git-first-appearance pickaxe for the single archive-less story
+  (US-446). Full-94-story git pickaxe was NOT in-loop-feasible (218KB file, slow
+  SMB share, v1->v2 migration muddies first-appearance) -> sprint-close proxy is
+  the acceptance's own explicit fallback clause.
+- EXTRA FIX (required to hit VC2 = 0 errors): US-422/423 carried
+  `status: superseded` PRE-EXISTING -- a VALID_FEATURE_STATUS that was absent
+  from `VALID_STORY_STATUSES`, so `sprint_lint --backlog` errored on it. Added
+  `superseded` to backlog_schema.VALID_STORY_STATUSES (minimal honest fix;
+  matches their existing `supersededBy` field; corrupting them to `complete`
+  would misrepresent the real end-state).
+
+### Files changed:
+- Created: `offices/pm/scripts/backfill_story_metadata.py` (backfill tool)
+- Created: `tests/pm/test_backfill_story_metadata.py` (22 tests)
+- Modified: `offices/pm/scripts/backlog_schema.py` (accept `superseded` story status)
+- Modified: `offices/pm/backlog.json` (53 stories backfilled -- metadata-only)
+
+### Verification:
+- VC1: `python offices/pm/scripts/pm_status.py --backlog` -> exit 0, no KeyError
+- VC2: `python offices/pm/scripts/sprint_lint.py --backlog` -> 0 errors, exit 0
+- VC3: re-run `backfill_story_metadata.py` -> "no drift ... (no-op)" (idempotent)
+- `pytest tests/pm/test_backfill_story_metadata.py` -> 22 passed
+- `pytest tests/pm/ -k "sprint_lint or backlog or backfill or pm_status"` -> all pass
+- `ruff check` on all 3 touched .py files -> All checks passed
+- PM/integration gate (NOT in-loop): full `pytest tests/` + mypy strict.
+
+### Learnings for future iterations:
+- **Pattern discovered**: when a live status field has drifted, reconstruct it
+  from an append-only source of truth (the sprint ARCHIVES' `passes:true`),
+  not from the drifted field in place. The archive FILENAME timestamp is a free,
+  deterministic date proxy -- no git needed for the common case.
+- **Gotcha**: the title's story-count ("47") was the status-missing subset; the
+  pre-flight audit is load-bearing -- backfill ALL required-field gaps (53),
+  not just the headline number.
+- **Gotcha**: making a tool "run clean" can surface a SECOND latent drift bug
+  (US-422/423's `superseded` was never valid for a story). The honest fix is to
+  widen the enum to the real state, not to relabel the data to a wrong-but-valid
+  value. Never trade correctness for a green check.
+---
+
+## 2026-07-13 - US-466 (Rex / Agent 1, Session 6 — Sprint 58)
+Task: PM-tooling Windows UTF-8 hardening (stop cp1252 crashes)
+
+### What was implemented:
+- Pre-flight audit of all 18 offices/pm/scripts. Crash surface = scripts that
+  print() DATA from backlog/sprint JSON (titles + bigDefinitionOfDone /
+  validation clauses render the sprint-contract '->' as U+2192) or user-supplied
+  free text. Confirmed set NEEDING the guard: sprint_lint (error/warn lines quote
+  titles+DoD, on stdout AND stderr), chain_validate_aggregate (renderHumanReport
+  prints bigDoD clauses), backlog_set (echoes user notes/field values).
+- Already-guarded (US-465, inline stdout-only): pm_status, backfill_story_metadata
+  -- LEFT AS-IS (shipped + US-465-validated; refactoring them risks that gate).
+- The other 11 scripts print ASCII only (paths, US-### IDs, status enums, counts,
+  versions); they WRITE unicode to files but already pass encoding=utf-8. Verified
+  every open()/read_text/write_text across all 18 already uses encoding=utf-8 ->
+  acceptance's open()-clause was already satisfied; nothing to change there.
+- NEW _encoding.forceUtf8Stdio(): reconfigures BOTH stdout+stderr to UTF-8,
+  idempotent, hasattr-defensive (skips pytest-capture / pythonw None streams).
+  This is the SSOT canonical recipe, a sibling to _freeze.py (per acceptance).
+- Wired sprint_lint.py to import+call the helper (it already imports from
+  offices.pm.scripts._freeze, so a package dep is natural). The two 'Stdlib-only'
+  self-contained scripts (chain_validate_aggregate, backlog_set) inline the
+  identical stdout+stderr guard with a comment pointing to _encoding.py --
+  preserving their declared self-containment (importing would add a package dep).
+- Updated the knowledge doc with the Layer-1 in-code recipe + the helper.
+
+### Files changed:
+- Created: `offices/pm/scripts/_encoding.py` (forceUtf8Stdio helper / SSOT recipe)
+- Created: `tests/pm/test_encoding_helper.py` (5 tests)
+- Modified: `offices/pm/scripts/sprint_lint.py` (helper import+call; +fixed a
+  pre-existing I001 unsorted function-local import at :486 to keep the file
+  lint-clean per DoD)
+- Modified: `offices/pm/scripts/chain_validate_aggregate.py` (inline guard)
+- Modified: `offices/pm/scripts/backlog_set.py` (inline guard)
+- Modified: `offices/pm/knowledge/feedback-pm-windows-encoding-ad-hoc-audits.md`
+  (added in-code Layer-1 recipe + _encoding.py canonical home)
+
+### Verification:
+- VC1 on LIVE cp1252 stdout (PYTHONIOENCODING unset, sys.stdout.encoding==cp1252):
+  `chain_validate_aggregate.py --chain V0.29` -> printed 199 U+2192 arrows, EXIT 0;
+  `backlog_set.py --dry-run --updated-by "smoke -> test"` -> printed the arrow;
+  `sprint_lint.py --backlog` -> EXIT 0 (silent = clean backlog post-US-465).
+- `pytest tests/pm/test_encoding_helper.py` -> 5 passed (incl. a functional test
+  seeding a real cp1252 TextIOWrapper: asserts UnicodeEncodeError BEFORE the guard
+  and the UTF-8 arrow bytes land AFTER).
+- `pytest` sprint_lint suites (v2/freeze/filestotouch/feedback-vs-diff) + encoding
+  -> 32 passed (my sprint_lint import edits regress nothing).
+- `ruff check` on all 5 touched .py -> All checks passed.
+- PM/integration gate (NOT in-loop): full `pytest tests/` + mypy strict.
+
+### Learnings for future iterations:
+- **Pattern discovered**: on Windows the console codec is cp1252 and
+  PYTHONIOENCODING is usually unset, so `sys.stdout.encoding` is genuinely cp1252
+  even in this harness -- meaning you can VALIDATE a UTF-8-stdio fix for real by
+  just running the script and counting the glyphs it prints (199 arrows, EXIT 0).
+  No mock needed; the bug reproduces natively.
+- **Gotcha**: a functional test for an stdout-encoding fix does NOT need a real
+  console -- wrap an `io.BytesIO` in `io.TextIOWrapper(encoding="cp1252")`,
+  monkeypatch it onto sys.stdout, assert the arrow raises UnicodeEncodeError,
+  then call the guard and assert the UTF-8 bytes land. Deterministic + hermetic.
+- **Gotcha**: guard stderr too, not just stdout -- lint/aggregation tools emit
+  their ERROR/WARNING lines (which quote titles + DoD text) to stderr. The US-465
+  reactive fixes only did stdout; the two-stream form supersedes them.
+- **Judgment**: 'Stdlib-only' self-containment (advertised in a script's
+  docstring) is a real constraint worth honoring -- inline the guard there rather
+  than adding a package import, and keep ONE tested SSOT (the helper) that the
+  non-self-contained scripts consume. Documented the split in the knowledge doc.
+---
+
+## 2026-07-13 - US-467 (Rex / Agent 1, Session 7 — Sprint 58)
+Task: TD-057 stale git index.lock guarded helper (slow-NAS)
+
+### What was implemented:
+- Pre-flight audit (TD-057): the failure mode is an orphaned/crashed `git`
+  leaving a 0-byte `.git/index.lock` on the slow chi-nas-01 SMB share, which
+  blocks EVERY write git op (add/commit/stash) for all agents while reads keep
+  working. Recurred US-367 (Sprint 47) + Sprint 49 (~2h HUMAN_INTERVENTION +
+  manual PM clear). The PM's validated safe-clear heuristic = remove ONLY if
+  (a) 0 bytes, (b) mtime age > threshold, (c) no live `git` process.
+- NEW `offices/pm/scripts/index_lock.py`. `clearStaleIndexLock` checks the three
+  conditions in a FIXED order with the live-git-process gate FIRST, so no later
+  condition can ever lead to deleting a lock a running git owns -- the discipline
+  invariant (handbook §13 Rule-4) is structurally unbypassable, not just asserted.
+- Default live-git detector `_defaultGitProcessRunning`: EXACT process-name match
+  (`git`/`git.exe`, never substring -- TD-057 warns "Logitech" false-matches),
+  via `tasklist /FI IMAGENAME` on Windows / `ps -e -o comm=` on POSIX. On ANY
+  probe failure it returns True (assume-live) -> refuse: uncertainty must never
+  authorize a destructive delete.
+- `clearStaleIndexLockWithBackoff` retries the `[1,2,4,8,16]` ladder to WAIT OUT
+  a genuinely-live/too-fresh lock (a real commit finishing releases it on its
+  own -> ABSENT); a non-empty lock is terminal (won't cure by waiting -> return
+  for escalation, don't spin). A persistently-live lock is refused after the
+  full schedule -- NEVER deleted.
+- CLI `main`: `python -m offices.pm.scripts.index_lock --repo . [--check] [--age-threshold N] [--retries N]`;
+  exit 0 = safe to proceed (absent/cleared), exit 2 = refused (escalate).
+- Wiring into /closeout-pm + /sprint-deploy-pm + Ralph's lock-blocked path +
+  handbook §13 is PM-owned (shared docs/skills, lane discipline) -> handed off in
+  an inbox note rather than edited here (US-462/464 precedent).
+
+### Files changed:
+- Created: `offices/pm/scripts/index_lock.py` (guarded clearer + backoff + CLI)
+- Created: `tests/pm/test_index_lock.py` (17 tests)
+- Created: `offices/pm/inbox/2026-07-13-from-rex-us467-index-lock-guard-wiring.md`
+
+### Verification:
+- VC1 (stale lock, no git process) -> a REAL-git end-to-end test: git init +
+  stage a file, plant a 0-byte aged lock, assert `git commit` is BLOCKED, run the
+  guard -> CLEARED, assert `git commit` now SUCCEEDS.
+- VC2 (live-held lock) -> refuses (`REFUSED_GIT_LIVE`) and NEVER deletes, verified
+  across the full backoff schedule (the invariant holds through every retry).
+- `pytest tests/pm/test_index_lock.py` -> 17 passed.
+- `ruff check` on both .py files -> All checks passed.
+- PM/integration gate (NOT in-loop): full `pytest tests/` + mypy strict.
+
+### Learnings for future iterations:
+- **Pattern discovered**: encode a safety invariant as CHECK ORDER, not just an
+  assertion. Putting the "is a live git process present?" gate first in
+  `clearStaleIndexLock` means no subsequent branch can reach the `unlink()` under
+  a live process -- the invariant is structural. Pair with a fail-safe default
+  detector (probe error -> assume-live -> refuse) so an undetectable state never
+  authorizes the destructive op.
+- **Gotcha**: match process names EXACTLY (`git`/`git.exe`), never by substring --
+  TD-057 recorded a "Logitech" substring false-match that would have read as a
+  live git and wrongly refused (here) or, in a naive clearer, misjudged state.
+- **Gotcha (test)**: you can prove the whole end-to-end for real without mocking
+  git -- `git init` in tmp_path, plant a 0-byte lock via `os.utime` back-dated
+  mtime, and observe the actual `git commit` fail-then-succeed around the guard.
+  Inject the sleep + git-process-detector as callables to keep the backoff-loop
+  tests hermetic and instant (assert the recorded sleep list == the schedule).
+---
+
+## 2026-07-13 - US-468 (Rex / Agent 1, Session 8 — Sprint 58)
+Task: Formalize Story.md-mirror retirement (backlog.json = single story SSOT)
+
+### What was implemented:
+- Pre-flight audit (acceptance#1): repo-wide grep for Story.md / backlog/US-* /
+  mirror, then CLASSIFIED every hit into HISTORICAL records vs ACTIVE operative
+  sites. Historical (NOT touched — rewriting history is wrong): projectManager.md
+  session-log narrative ("wrote 7 Story.md mirrors"), old PRDs (V0.29.1/.2/.10),
+  archives, and the DESIGN specs — the 2026-06-29 simplification spec §4.3 ("Drop
+  Story.md mirrors") IS the retirement authority, and 2026-05-27/-28 are its
+  superseded predecessors. ACTIVE sites that still imply/require a mirror = 3:
+  (1) projectManager.md "Key Files" folder-structure table row, (2) _template-prd.md
+  pre-conversion step-1 ("in its Story.md"), (3) specs/rule-13-audit-discipline.md:114
+  (`assert (pm/backlog/{id}.md).exists()`).
+- FIXED the two within Ralph's lane:
+  - `offices/pm/projectManager.md` "Key Files" table: `backlog.json` marked
+    **story SSOT**; the `pm/backlog/US-*.md` row marked **RETIRED/optional** + a
+    retirement blockquote (newest mirror ~US-398; graduate_story.py synthesizes the
+    archive record from JSON when no mirror; authority = 2026-06-29 spec §4.3).
+  - `offices/pm/prds/_template-prd.md` step-1: "in its Story.md" → "in `backlog.json`
+    (the single story SSOT; the per-story `US-*.md` mirror is retired/optional —
+    US-468)". SCOPE-FENCED to the mirror phrase — deliberately left the adjacent
+    Rule-13 / `bigDoDHash` freeze lines (38-39) untouched; the freeze retirement is a
+    separate concern (MEMORY 2026-07-13), out of US-468 scope.
+- HANDED OFF the third site: `specs/` is read-only for Ralph (prompt.md) → filed
+  `offices/pm/issues/I-rule13-audit-spec-still-requires-story-md-mirror.md` (the one
+  remaining "step still requires mirrors"; note also flags the spec encodes the
+  retired Rule-13 freeze mechanic — likely a whole-file retirement for PM).
+- Acceptance#3 (skill/command scrub): grep of ALL `**/.claude/**/*.md` = ZERO
+  "Story.md" hits — NO skill/command instructs writing mirrors (the office
+  `groom-user-stories.md` copies are a stale generic prd.json template with no mirror
+  step). Nothing to remove — requirement pre-satisfied, documented.
+
+### Files changed:
+- Modified: `offices/pm/projectManager.md` (folder-structure table row + retirement note)
+- Modified: `offices/pm/prds/_template-prd.md` (step-1 mirror phrase → backlog.json SSOT)
+- Created: `offices/pm/issues/I-rule13-audit-spec-still-requires-story-md-mirror.md`
+  (read-only-spec handoff)
+
+### Verification:
+- VC1: grep skills/docs for "Story.md mirror" → the two edited docs now carry the
+  RETIREMENT note (not a requirement); `**/.claude/**/*.md` surface is clean (0 hits);
+  the sole remaining "still-requires-mirror" step is the read-only spec, handed to PM.
+- DOCS-ONLY story: no `.py` changed → no targeted tests, no `make lint`
+  (US-468 acceptance carries no "ruff clean in-loop" line — confirms docs-only).
+
+### Learnings for future iterations:
+- **Pattern discovered**: for a "retire a convention" scrub, the load-bearing step is
+  classifying each grep hit as HISTORICAL record (session logs, old PRDs, archives,
+  dated design specs = never rewrite) vs ACTIVE operative site (a checklist/rule/table
+  an agent follows TODAY = the only real scrub targets). Most hits are historical.
+- **Gotcha**: `specs/` is read-only for Ralph — a spec that still encodes the retired
+  convention can't be edited in-loop; file `offices/pm/issues/` and document it so the
+  scrub isn't silently skipped (VC honesty).
+- **Gotcha (scope)**: the PRD template's pre-conversion block bundles the (in-scope)
+  Story.md mirror ref with the (out-of-scope) retired Rule-13/freeze mechanic. Edit
+  ONLY the mirror phrase; a TD/MEMORY-tracked separate retirement owns the freeze.
+- **Judgment**: `graduate_story.py` already treats a missing mirror as a "ghost" and
+  synthesizes the archive record from JSON — the tooling had ALREADY made mirrors
+  optional (2026-06-19); US-468 just formalizes it in the human-facing docs.
+---
+
+## 2026-07-13 - US-469 (Rex / Agent 1, Session 9 — Sprint 58)
+Task: SS-T7 run-not-trust deploy-gate tripwire into /sprint-deploy-pm Phase-0
+
+### What was implemented:
+- Pre-flight audit (acceptance#1): the best-effort-continue-past-red gap has TWO
+  documented instances, one shared root cause:
+  - **V0.27.12 DOA / SS-T7**: the systemd-parity tripwire test EXISTED
+    (`tests/pi/power/power_watch/test_systemd_parity.py`) but the deploy pipeline
+    never RAN it → shipped dead-on-arrival.
+  - **V0.27.17 marker-on-failure** (`deploy/deploy-server.sh:330` comment): a step
+    treated `exit 0` as success and WROTE a green marker even when the job logged
+    10/10 FAILED.
+  Root cause = trusting a green SIGNAL (marker / "the test exists" / "Ralph
+  reported green") instead of observing a green RESULT. Phase-0 must RUN the
+  not-slow suite itself and HALT on any non-zero exit.
+- NEW `offices/pm/scripts/deploy_preflight_gate.py`: a structurally run-not-trust
+  gate. `runPreflightGate` ALWAYS invokes pytest via `buildPytestArgv` →
+  `[python, -m, pytest, -m, "not slow"]` (the suite containing SS-T7 — verified
+  it carries NO `slow` marker so `-m "not slow"` includes it). NO marker read, NO
+  "prior report"/`assumeGreen` flag, NO skip/dry-run hatch (a test asserts the
+  signature can't grow one). Non-zero pytest exit → HALT (deploy blocked);
+  un-launchable pytest → fail-safe ERROR (also blocked — uncertainty never
+  authorizes a deploy, the V0.27.17 trap in reverse). CLI exit 0 = proceed /
+  2 = HALT.
+- HANDOFF: the one-line Phase-0 weld into `.claude/commands/sprint-deploy-pm.md`
+  is a shared PM-owned command surface Ralph is WRITE-BLOCKED on (lane discipline;
+  US-467 precedent handed off its /sprint-deploy-pm wiring the same way). Exact
+  patch (bash gate line + Stop-condition bullet + flowchart row) filed for PM.
+
+### Files changed:
+- Created: `offices/pm/scripts/deploy_preflight_gate.py` (run-not-trust gate + CLI)
+- Created: `tests/pm/test_deploy_preflight_gate.py` (12 tests)
+- Created: `offices/pm/inbox/2026-07-13-from-rex-us469-phase0-gate-weld.md` (PM weld patch)
+
+### Verification:
+- VC1 realized: `test_realFailingTest_gateRunsPytestAndHalts` plants a deliberately
+  failing test in the target suite, the gate RUNS a REAL nested pytest, observes a
+  non-zero exit, and HALTs (`deployMayProceed` False) — targets a tmp dir, not the
+  project suite, so it's fast (TD-059). Companion e2e proves all-green → PASS.
+- `pytest tests/pm/test_deploy_preflight_gate.py` → 12 passed.
+- `ruff check` on both .py files → All checks passed.
+- Did NOT run the gate CLI live (it would run the whole not-slow suite = full-suite
+  in-loop, TD-059) — the real-invocation + HALT behavior is proven by the tmp e2e.
+- PM/integration gate (NOT in-loop): full `pytest tests/` + mypy strict.
+
+### Learnings for future iterations:
+- **Pattern discovered**: to kill a "trusted-a-green-signal" bug class, make the
+  gate INCAPABLE of trusting — no marker read, no skip flag, always invoke the
+  real check. Guard it with a signature-scan test (`forbidden = {skip, trust,
+  assumeGreen, dryRun, ...}`) so a future refactor can't quietly add a bypass.
+- **Gotcha**: `argv.index("-m")` is ambiguous for a `python -m pytest -m "expr"`
+  argv — the FIRST `-m` is the interpreter's module flag, not the pytest marker.
+  Assert on the argv tail (`argv[-2:] == ["-m", "not slow"]`) or the whole list.
+- **Gotcha (lane)**: the wiring target was `.claude/commands/*.md`, a shared
+  PM-owned command surface Ralph can't write. The SUBSTANCE (the run-not-trust
+  script + its validationCriterion proof) is fully in-lane and shippable; hand off
+  ONLY the call-site insertion via inbox with an exact patch (US-462/464/467
+  precedent) — don't stall the story on a one-line PM-lane doc edit.
+---
+
+## 2026-07-13 - US-470 (Rex / Agent 1, Session 10 — Sprint 58) — BLOCKED (passes:false)
+Task: Real-MariaDB migration test CI-enablement (testcontainers/11.x)
+
+### Disposition: WIRED in-loop, BLOCKED on CI-platform enablement (a CIO decision)
+US-470's defining acceptance VC1 ("the live real-MariaDB test EXECUTES + gates in
+CI, not skipped, against 11.x") is NOT verifiable in-loop. Per the story's own
+conditionalOutcome ("if the CI env truly cannot run Docker -> document the blocker
++ keep the DSN interim; do NOT silently mark done") + Atlas TIGHTEN ("don't close
+TD-055 over a still-skipping CI"): passes:FALSE, TD-055 stays OPEN-downgraded,
+HUMAN_INTERVENTION_REQUIRED. Blocker: offices/pm/blockers/BL-022-*.md.
+
+### Pre-flight audit (acceptance#1):
+- **No CI runner exists.** `.github/workflows/` held only `README.md`; the prior
+  `pylint.yml` was DELIBERATELY removed (US-186) because it emailed a failure on
+  every push. The README says "groom a story with the PM" to add CI -> enabling
+  CI is a project/CIO policy call, not a Ralph in-loop action.
+- **Bench has no Docker + no testcontainers** (US-464's live layer honest-skips,
+  confirmed) -> cannot run/observe a CI job or even self-smoke the container path.
+- **A GitHub remote DOES exist** (github.com/mcornelison/OBD2.git) -> the workflow
+  is a real runnable artifact, not cargo-cult.
+
+### What was implemented (all buildable, in-loop-verified):
+- `requirements-dev.txt` (NEW) — `testcontainers>=4.0.0`, a **dev/CI-only** set
+  that NEITHER `requirements-pi.txt` NOR `requirements-server.txt` (the prod
+  install paths) references -> **VC2 GREEN** (grep-verified: testcontainers absent
+  from all prod/shared reqs).
+- `.github/workflows/migration-drift.yml` (NEW) — the wired CI job: MariaDB 11.8
+  service container (Atlas TIGHTEN-2), `OBD2_MARIADB_TEST_DSN` -> it,
+  `pytest -m integration`, + a **fail-on-skip guard** (parses the junit report;
+  fails the job if the live layer skipped / collected 0) so a green run cannot
+  mask a silent skip (serves VC1 + "do NOT silently skip"). Triggers deliberately
+  narrow: `pull_request`->dev/main (path-filtered) + `workflow_dispatch`; NEVER
+  blanket `on: push` (respects the US-186 removal).
+- `.github/workflows/README.md` — documents the job + the manual DSN path + the
+  enablement caveat.
+- TD-055 archive record — annotated **OPEN-downgraded** (NOT closed) + US-464/470
+  + BL-022 pointers.
+- `tests/integration/test_deploy_context_drive_simulator.py` — the `serverEngine`
+  create_all caveat now points to the real-MariaDB coverage + BL-022 (the
+  pinned-docstring test still passes; TD-055/create_all/I-041 tokens preserved).
+- `offices/pm/blockers/BL-022-*.md` + PM handoff inbox note (NEW).
+
+### Files changed:
+- Created: `requirements-dev.txt`
+- Created: `.github/workflows/migration-drift.yml`
+- Modified: `.github/workflows/README.md`
+- Modified: `offices/pm/archive/intake-records/tech_debt/TD-055-*.md`
+- Modified: `tests/integration/test_deploy_context_drive_simulator.py`
+- Created: `offices/pm/blockers/BL-022-us470-real-mariadb-ci-enablement.md`
+- Created: `offices/pm/inbox/2026-07-13-from-rex-us470-real-mariadb-ci-wired-blocked-on-enablement.md`
+
+### Verification:
+- VC2 GREEN: `testcontainers` appears ONLY in `requirements-dev.txt` (grep across
+  `requirements*.txt`) -> NOT a runtime/prod dep.
+- ruff clean on the 1 touched `.py`.
+- pinned-docstring test `test_serverEngineFixture_documentsCreateAllLimitation`
+  still passes after the caveat edit.
+- workflow YAML parses (job=real-mariadb-migration-chain; triggers=workflow_dispatch
+  + pull_request).
+- ⛔ VC1 NOT met in-loop (needs GitHub Actions enabled + a Docker runner + an
+  observable green run) -> BL-022; CLOSE US-470 + TD-055 only after a green CI run.
+
+### Learnings for future iterations:
+- **Pattern discovered**: for a "make test X run in CI" story where no CI platform
+  is live, ship the full enablement kit (dev-only dep + workflow YAML + docs) so
+  the CIO's remaining action is one step (enable Actions + push), but do NOT flip
+  passes:true — the deliverable's core OUTCOME (the test executes+gates in CI) is
+  unproven until a real run is green. The conditionalOutcome's "do NOT silently
+  mark done" governs.
+- **Gotcha**: a green CI job over a SKIPPED integration test is the honest-skip
+  trap moved into CI. Add a junit-report guard step that FAILS the job on skip /
+  0-collected, so "green" provably means "the live layer ran against real MariaDB".
+- **Gotcha (policy)**: this repo deliberately has no push-CI (US-186 removed it for
+  email spam). Don't resurrect `on: push`; use `pull_request`->dev/main +
+  `workflow_dispatch` + a `paths:` filter, and flag that ENABLING Actions is a CIO
+  reversal, not a silent add.
+---

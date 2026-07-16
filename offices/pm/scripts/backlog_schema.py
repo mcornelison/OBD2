@@ -13,6 +13,7 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-05-27    | Marcus (PM)  | Initial implementation -- Task 1 TDD
+# 2026-07-13    | Rex (Ralph)  | US-465: accept 'superseded' as a story status
 # ================================================================================
 ################################################################################
 
@@ -31,7 +32,8 @@ VALID_EPIC_STATUSES = frozenset({"pending", "active", "complete"})
 VALID_FEATURE_STATUSES = frozenset({"pending", "groomed", "in-sprint", "active", "blocked", "complete", "declined",
                                     "awaiting-validation", "superseded"})
 VALID_STORY_STATUSES = frozenset({"pending", "groomed", "in-prd", "sprint-ready",
-                                  "in-progress", "blocked", "passed", "complete"})
+                                  "in-progress", "blocked", "passed", "complete",
+                                  "superseded"})
 VALID_TASK_STATUSES = frozenset({"open", "done"})
 
 REQUIRED_STORY_FIELDS = frozenset({

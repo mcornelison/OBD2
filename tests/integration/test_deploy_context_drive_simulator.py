@@ -209,6 +209,17 @@ def serverEngine():
       + Session-based INSERT path -- DOES surface the column-missing
       OperationalError when given correctly-divergent schema, via a
       separate two-phase engine that we manipulate directly).
+
+    Real-MariaDB coverage exists now (US-464 / US-470, F-104): the
+    *migration-chain* drift class is caught by
+    ``tests/server/test_migration_chain_real_mariadb.py`` (applies the
+    real v0022/v0023 chain against a real MariaDB 11.x -- NOT
+    ``create_all``), wired into CI via
+    ``.github/workflows/migration-drift.yml`` +
+    ``requirements-dev.txt`` (testcontainers, dev/CI-only). THIS
+    fixture's own ``create_all`` refactor is still deferred (TD-055
+    stays OPEN-downgraded until the CI job runs green -- Atlas TIGHTEN
+    2026-07-13; see BL-022).
     """
     tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
     tmp.close()

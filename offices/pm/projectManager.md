@@ -229,9 +229,11 @@ When starting a new session, read this section first:
 | Grounded knowledge | `specs/grounded-knowledge.md` |
 | Roadmap | `pm/roadmap.md` |
 | Active PRD | `pm/prds/prd-V0.29.0.md` (current sprint); `pm/prds/prd-next-draft.md` (next) |
-| Backlog (structured) | `pm/backlog.json` |
-| Backlog items (detail) | `pm/backlog/US-*.md` |
+| Backlog (structured — **story SSOT**) | `pm/backlog.json` |
+| Backlog item mirrors (**RETIRED / optional**) | `pm/backlog/US-*.md` — legacy only (newest mirror ~US-398); see retirement note below |
 | Story counter | `pm/story_counter.json` |
+
+> **Story.md-mirror retirement (US-468 / F-118).** `backlog.json` is the single story SSOT. The per-story `offices/pm/backlog/US-*.md` mirrors are **retired** — not authored for new stories (newest mirror ~US-398). Legacy mirrors stay readable; `graduate_story.py` synthesizes an archive record from the JSON entry when a mirror is absent. Authority: `docs/superpowers/specs/2026-06-29-prd-to-sprint-workflow-simplification-design.md` §4.3.
 
 ---
 

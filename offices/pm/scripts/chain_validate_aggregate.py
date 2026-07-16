@@ -47,6 +47,16 @@ import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
+
+# Aggregated bigDefinitionOfDone clauses carry Unicode (e.g. the '->' rendered
+# as U+2192); the human report prints them, so harden stdout+stderr to UTF-8
+# before any print (Windows cp1252 crash guard, US-466). Inlined to keep this
+# script self-contained ("Stdlib-only"); canonical recipe: _encoding.py.
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 DEFAULT_ARCHIVE_GLOB = REPO_ROOT / "offices" / "ralph" / "archive" / "sprint.archive.*.json"
 DEFAULT_CURRENT_SPRINT = REPO_ROOT / "offices" / "ralph" / "sprint.json"
 
