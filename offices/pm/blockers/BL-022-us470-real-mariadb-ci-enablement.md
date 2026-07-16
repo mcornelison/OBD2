@@ -1,6 +1,6 @@
 # BL-022 — US-470 real-MariaDB CI cannot EXECUTE in-loop (no CI runner / no Docker on bench)
 
-**Status**: OPEN — needs CIO/PM decision (CI-platform enablement).
+**Status**: RESOLVED 2026-07-15 -- GitHub Actions enabled; migration-drift CI green (real-MariaDB test EXECUTED on GH runners, MariaDB 11.8, fail-on-skip guard passed) via PR #3. US-470 passes; TD-055 closed.
 **Filed**: 2026-07-13 (Sprint 58 / V0.29.12, by Rex during US-470).
 **Blocks**: US-470 VC1 (`passes: false`); keeps **TD-055 OPEN-downgraded** (Atlas TIGHTEN 2026-07-13).
 **Parent**: F-104 (Server-Side Analytics Authority) · **Refs**: US-464, TD-055, BL-019/020/021, Atlas V0.29.12 PRD review.

@@ -104,3 +104,6 @@ Atlas + Marcus + Ralph design at grooming time. Option A is the structural answe
 - **US-357** (Sprint 41 V0.27.18 hotfix in `offices/ralph/sprint.json`) — the hotfix sprint that landed v0009 + filed this TD.
 - **US-355** (Sprint 41 V0.27.17 in `offices/ralph/sprint.json`) — the original harness story whose invariants this TD refines.
 - **B-104** (`offices/pm/backlog/B-104-server-side-analytics-authority.md`) — V0.28+ Step 2+ will add more analytics surface; this TD should land **before** Step 2's first story to avoid re-shipping the gap on a wider blast radius.
+
+## CLOSED 2026-07-15
+Addressed by US-464 (real-MariaDB migration-chain test) + US-470 (CI enablement). migration-drift.yml runs the live layer on GH runners (MariaDB 11.8) with a fail-on-skip guard; first green run via PR #3 2026-07-16. The class that produced BL-019/020/021 is now gated in CI. (Atlas condition: close only when CI actually executes+gates -- met.)

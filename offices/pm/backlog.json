@@ -1,6 +1,6 @@
 {
   "schemaVersion": "2.0.0",
-  "lastUpdated": "2026-07-13",
+  "lastUpdated": "2026-07-15",
   "updatedBy": "Marcus (PM)",
   "counters": {
     "epic": 7,
@@ -1074,11 +1074,11 @@
       "parent": "E-002",
       "title": "Server-Side Analytics Authority -- Pi as Emitter, Server as Analyzer (Architecture Epic)",
       "description": "Server-Side Analytics Authority -- Pi as Emitter, Server as Analyzer (Architecture Epic)",
-      "status": "active",
+      "status": "complete",
       "renamedFrom": "B-104",
       "createdAt": "2026-05-27",
       "updatedAt": "2026-05-27",
-      "currentVersion": "V0.29.11"
+      "currentVersion": "V0.29.12"
     },
     {
       "id": "F-105",
@@ -1212,10 +1212,11 @@
     {
       "id": "F-118",
       "parent": "E-OPS",
-      "status": "active",
+      "status": "complete",
       "title": "Backlog + dev-tooling hygiene (V0.29.12)",
       "createdAt": "2026-07-13",
-      "updatedAt": "2026-07-13"
+      "updatedAt": "2026-07-13",
+      "currentVersion": "V0.29.12"
     }
   ],
   "stories": [
@@ -4589,7 +4590,7 @@
       "parent": "F-118",
       "type": "tech-debt",
       "size": "M",
-      "status": "sprint-ready",
+      "status": "complete",
       "title": "Backfill backlog metadata (47 drifted stories) + un-break pm_status",
       "goal": "As the PM, I want every backlog story to carry its required fields and the tooling (pm_status, --backlog lint) to run clean, so the 47-story metadata drift (Sprints 50-55) is repaired and cannot recur.",
       "definitionOfDone": [
@@ -4618,7 +4619,7 @@
         "if a story real end-state is ambiguous from git/archives -> mark status conservatively + note the proxy; never guess complete for genuinely-open work"
       ],
       "createdAt": "2026-07-13",
-      "updatedAt": "2026-07-13",
+      "updatedAt": "2026-07-15",
       "tasks": []
     },
     {
@@ -4626,7 +4627,7 @@
       "parent": "F-118",
       "type": "housekeeping",
       "size": "S",
-      "status": "sprint-ready",
+      "status": "complete",
       "title": "PM-tooling Windows UTF-8 hardening (stop cp1252 crashes)",
       "goal": "As any agent on Windows, I want the PM scripts to not crash on cp1252 when printing/reading unicode, so ad-hoc backlog/sprint audits do not die with UnicodeEncodeError.",
       "definitionOfDone": [
@@ -4643,7 +4644,7 @@
       ],
       "conditionalOutcomes": [],
       "createdAt": "2026-07-13",
-      "updatedAt": "2026-07-13",
+      "updatedAt": "2026-07-15",
       "tasks": []
     },
     {
@@ -4651,7 +4652,7 @@
       "parent": "F-118",
       "type": "tech-debt",
       "size": "S",
-      "status": "sprint-ready",
+      "status": "complete",
       "title": "TD-057 stale git index.lock guarded helper (slow-NAS)",
       "goal": "As an agent on the chi-nas-01 share, I want a guarded helper that waits out (and only clears a truly-stale) .git/index.lock, so lock churn stops blocking commits without ever deleting a lock a live git process holds.",
       "definitionOfDone": [
@@ -4672,7 +4673,7 @@
       ],
       "conditionalOutcomes": [],
       "createdAt": "2026-07-13",
-      "updatedAt": "2026-07-13",
+      "updatedAt": "2026-07-15",
       "tasks": []
     },
     {
@@ -4680,7 +4681,7 @@
       "parent": "F-118",
       "type": "housekeeping",
       "size": "S",
-      "status": "sprint-ready",
+      "status": "complete",
       "title": "Formalize Story.md-mirror retirement (backlog.json = SSOT)",
       "goal": "As the PM, I want the dropped Story.md-mirror convention formally retired, so backlog.json is the single story SSOT and no skill/doc implies mirrors are required.",
       "definitionOfDone": [
@@ -4696,7 +4697,7 @@
       ],
       "conditionalOutcomes": [],
       "createdAt": "2026-07-13",
-      "updatedAt": "2026-07-13",
+      "updatedAt": "2026-07-15",
       "tasks": []
     },
     {
@@ -4704,7 +4705,7 @@
       "parent": "F-118",
       "type": "tech-debt",
       "size": "S",
-      "status": "sprint-ready",
+      "status": "complete",
       "title": "SS-T7 deploy-gate tripwire into /sprint-deploy-pm Phase-0",
       "goal": "As the PM, I want the deploy-gate tripwire welded into /sprint-deploy-pm Phase-0, so a deploy cannot proceed past a failed pre-flight (the best-effort-continue class that let V0.27.17 ship broken).",
       "definitionOfDone": [
@@ -4721,7 +4722,7 @@
       ],
       "conditionalOutcomes": [],
       "createdAt": "2026-07-13",
-      "updatedAt": "2026-07-13",
+      "updatedAt": "2026-07-15",
       "tasks": []
     },
     {
@@ -4729,7 +4730,7 @@
       "parent": "F-104",
       "type": "tech-debt",
       "size": "M",
-      "status": "sprint-ready",
+      "status": "complete",
       "title": "Real-MariaDB migration test CI-enablement (testcontainers/11.x)",
       "goal": "As the maintainer, I want US-464 live real-MariaDB migration test to run in CI (not just on-demand), so the BL-019/020/021 drift class is gated automatically instead of relying on the deploy.",
       "definitionOfDone": [
@@ -4754,7 +4755,7 @@
         "if the CI environment truly cannot run Docker -> document the concrete blocker + keep the DSN-based manual gate as the interim; do NOT silently mark done"
       ],
       "createdAt": "2026-07-13",
-      "updatedAt": "2026-07-13",
+      "updatedAt": "2026-07-15",
       "tasks": []
     }
   ]
