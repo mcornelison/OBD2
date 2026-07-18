@@ -42,13 +42,39 @@ reliability problem (see Follow-ups).
 7. **Software recoveries from the Pi all failed** (BT disconnect/reconnect, fresh rfcomm rebind,
    dongle power-cycle via unplug/replug) → only a dongle **factory reset** clears it (07-03 precedent).
 
-## Resolution (in progress)
+## Resolution status (2026-07-17 EOD — PARTIAL: config fixed, dongle bond BLOCKED)
 
-CIO factory-reset the LX (15s hold) → LEDs solid-green + slow-blink-blue (healthy, advertising).
-Pi-side stale bond removed. Clean re-pair interrupted when the **Pi dropped off WiFi** mid-scan —
-likely the **Pi 5 WiFi/BT shared-radio coexistence** issue (sustained BT inquiry starves WiFi).
-Pending Pi power-cycle → finish re-pair with short scan bursts → confirm raw RPM → start service →
-verify drive 35 mints.
+**Fixed + proven:**
+- CIO factory-reset the LX (15s hold). **The reset CHANGED the dongle's BT MAC** from
+  `00:04:3E:85:0D:FB` → **`00:04:3C:84:15:6B`** (discovered live in a scan). This is why every
+  connect/bind after the reset failed — all config still pointed at the dead old MAC.
+- **Live RPM proven:** with the new MAC, `rfcomm bind` + a single-threaded raw read returned
+  **6/6 RPM** off the running engine (ISO 9141-2, ~760-784 idle). Dongle hardware = healthy.
+- **Config corrected + persisted:** `/etc/default/obdlink` (the authoritative source — an
+  EnvironmentFile-style `OBD_BT_MAC=`; `.env` can't override it because `secrets_loader.py:90`
+  is `if key not in os.environ`) + `.env` both updated to the new MAC; survives reboot. Backups:
+  `/etc/default/obdlink.bak-20260717`, `.env.bak-pre-macfix-20260717`.
+
+**BLOCKED — dongle will not stay on Bluetooth:**
+- After the one good read, the LX went **catatonic again** and would not return to a
+  discoverable/connectable state — through button-holds (solid blue), unplug/replug power-cycles,
+  a full engine-off + **Pi reboot**, a `systemctl restart bluetooth` + `hciconfig hci0 reset`.
+- **Pi BT radio is HEALTHY** — a classic inquiry (`hcitool scan`) discovered a nearby Pioneer head
+  unit (`DMH-W2770NEX`) but **not** the OBDLink across 5 passes while CIO held the button. The
+  dongle simply isn't broadcasting.
+- **Tooling drift found:** `bluetoothctl scan on` is wedged on this Trixie bluez (`Discovering: no`,
+  0 devices) while legacy `hcitool scan` works — and the sanctioned `scripts/pair_obdlink.sh` is
+  **broken on this bluez** (pexpect waits for the old `[bluetooth]#` prompt; new is `[bluetoothctl]>`).
+- The always-on service needs the new MAC **bonded** (paired+trusted) to auto-reconnect; without a
+  bond it only connected the one time while the ACL link was transiently up. The bond could not be
+  completed remotely (dongle undiscoverable) — needs a bench/interactive pair or a new adapter.
+
+**This is the 3rd catatonic-dongle episode (07-03, earlier 07-17, EOD 07-17).** Recommendation
+elevated: **replace the flaky BT OBDLink LX with a wired/USB adapter for the always-on capture role.**
+
+**Pi left clean:** `eclipse-obd` running (honestly failing to connect the dead dongle — no fabricated
+data), config on the correct new MAC. Capture resumes the instant the dongle is reliably bonded.
+Helper scripts left on Pi: `~/atlas_rawread.py`, `~/atlas_pair.py|2|3.py` (throwaway ops tools).
 
 ## Follow-ups (route to PM once capture restored)
 
