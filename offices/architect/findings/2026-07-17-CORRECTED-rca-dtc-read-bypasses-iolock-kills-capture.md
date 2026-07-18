@@ -52,8 +52,17 @@ DTC (key-on, session-start, during-drive, clear) — shares the single `_ioLock`
 interleave. Extends F-117's own proven pattern to the site it missed.
 
 - Unit-validated: `test_dtc_client.py` 18/18 pass, `test_dtc_logger.py` 18/18 pass, syntax OK.
-- **NOT yet validated on car** — needs deploy + an engine-on drive with a live dongle to confirm
-  sustained capture (drive 35). I will NOT claim it fixed until that passes (tonight's lesson).
+- **DEPLOYED to the Pi 2026-07-17** (out-of-band surgical push onto the V0.29.11 tree — deployed file
+  was byte-identical md5 to my base `282c40a`, so push = deployed + this fix only; pushed md5 ==
+  repo HEAD md5 `7f470b7…`). Service restarted **clean: active, NRestarts=0, no import/DTC errors**.
+  Backup: `dtc_client.py.bak-pre-a17fix-20260717`. Committed to `dev` (`4a17bc1`) so a full deploy keeps it.
+- **NOT yet validated on car** — Pi was on WALL power (no running ECU) at deploy, so capture can't be
+  exercised. Real proof = next engine-on drive: sustained realtime rows + `drive_start` + drive 35.
+  I will NOT claim it fixed until that passes (tonight's lesson).
+- Dongle caveat for that drive: config points at the correct new MAC (`…3C…`) but it's unbonded; the
+  service should still `rfcomm bind` + open a freshly-powered dongle (as the raw read did). If the
+  dongle connects even once, the fix should let capture hold (no more DTC-read collision / reconnect
+  thrash). If the dongle stays catatonic, that's the separate hardware reliability item.
 
 ## Routing / follow-ups (PM + Ralph)
 
