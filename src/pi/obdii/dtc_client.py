@@ -241,7 +241,7 @@ class DtcClient:
         """
         self._requireConnected(connection)
         cmd = self._commandFactory(self._MODE_03_COMMAND_NAME)
-        response = connection.obd.query(cmd)
+        response = self._serializedQuery(connection, cmd)
         raw = self._extractTuples(response)
         return [
             self._asCode(entry, status='stored')
@@ -273,7 +273,7 @@ class DtcClient:
         """
         self._requireConnected(connection)
         cmd = self._commandFactory(self._MODE_07_COMMAND_NAME)
-        response = connection.obd.query(cmd)
+        response = self._serializedQuery(connection, cmd)
 
         if self._isNull(response):
             logger.info(
@@ -318,7 +318,7 @@ class DtcClient:
         """
         self._requireConnected(connection)
         clearCmd = self._commandFactory(self._MODE_04_COMMAND_NAME)
-        connection.obd.query(clearCmd)  # Mode 04 -- all-or-nothing wipe
+        self._serializedQuery(connection, clearCmd)  # Mode 04 -- all-or-nothing wipe
         # Advisory §4d: prove the clear (and catch an instant re-set) by re-reading.
         stored = self.readStoredDtcs(connection)
         pending, probe = self.readPendingDtcs(connection)
@@ -334,6 +334,24 @@ class DtcClient:
             raise DtcClientError(
                 "DtcClient requires an open connection; obd is not connected"
             )
+
+    @staticmethod
+    def _serializedQuery(connection: ObdConnectionLike, cmd: Any) -> Any:
+        """Route a DTC read/write through the wrapper's serialized ``query()``.
+
+        A-17 capture-killing race: the realtime logger reads via
+        ``ObdConnection.query()`` under the single ``_ioLock`` (US-441/F-117),
+        but the DTC paths historically hit RAW ``connection.obd.query()`` which
+        BYPASSED that lock.  A key-on (US-404) / session-start / during-drive DTC
+        read fired on the connection edge then interleaved with the logger's read
+        on the one non-thread-safe python-obd port -> "device disconnected while
+        reading" -> 0 rows captured -> the drive never armed -> the KOEO read
+        re-fired every reconnect (permanent capture failure).  Prefer the locked
+        wrapper ``query()`` so ALL connection reads share the one lock; fall back
+        to raw ``.obd.query`` only for duck-typed test fakes that lack ``query``.
+        """
+        queryFn = getattr(connection, "query", None)
+        return queryFn(cmd) if callable(queryFn) else connection.obd.query(cmd)
 
     @staticmethod
     def _isNull(response: Any) -> bool:
