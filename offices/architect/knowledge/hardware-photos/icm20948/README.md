@@ -68,4 +68,33 @@ guidance. Config path is **exhausted** (CS→1V8 + power-cycle tried on BOTH boa
 healthy bus) → remaining suspects = dead SDA/SCL QFN joint or bad batch, NOT config. EDR hardware,
 ships dark, blocks nothing.
 
-**Sources:** Adafruit 4554 pinouts (learn.adafruit.com) · InvenSense ICM-20948 datasheet DS-000189 · eMD software guide.
+## FINAL VERDICT (2026-07-18 — powered diagnosis, Atlas + CIO + Copilot 365) — DO NOT re-litigate
+
+**Conclusion: both clone boards are DEFECTIVE at the host-I2C interface. NOT the wiring, NOT the Pi,
+NOT power, NOT the CS/mode-select. Replace with a genuine Adafruit #4554. This closes the ICM-20948
+clone bring-up.**
+
+Reached by elimination with LIVE + powered evidence (not a guess this time):
+
+| Checked | Result | Verdict |
+|---|---|---|
+| Pi I2C enabled | `/dev/i2c-1` present, `dtparam=i2c_arm=on` | ✅ not a Pi issue |
+| Bus 1 healthy | UPS `i2cget -y 1 0x36` → `0xff` | ✅ bus works |
+| IMU address | `i2cget 0x68` AND `0x69` → both "Read failed" | ❌ no ACK either addr |
+| **VDDIO rail** | **`1V8`→GND powered ≈ 1.8V** (analog: >1.5, <3) | ✅ **regulator works, NOT over-volted** — VIN→1V8 continuity was THROUGH the regulator, not a short |
+| Bus lines | SDA/SCL idle ≈ 3.3V | ✅ not stuck low (rules out held-bus) |
+| Arbitration | intermittent `i2c_dw_handle_tx_abort: lost arbitration` on FULL scans only; none on targeted probes | symptom of the mis-routed host iface, not a hard jam |
+| Both boards | identical dead behavior | → the boards, not a one-off |
+
+**Root (internal to the clone):** the soldered SDA/SCL pads don't electrically reach the ICM die's
+I2C pins (clone pad-mapping dead-end) and/or the host interface is damaged. Supporting hints: the
+CIO's continuity showed **`SDA→AC` and `SCL→AC` continuity** (AUX_CL entangled with the main bus —
+routing ≠ silkscreen), and SDA/SCL sat at a FULL 3.3V rather than clamping toward ~2.4V, as they
+would if the chip's 1.8V I/O were truly on those lines.
+
+**Superseded:** the earlier CS→1V8 / "config path exhausted / power-cycle" guidance above — powered
+measurement proved power/VDDIO/CS-strap are all FINE (Copilot continuity: CS/AD/SDO already tied to
+1V8 on-board → board strapped for I2C @0x69). The defect is the die-side host interface, unreachable
+by any wiring change. EDR sensor, ships dark, blocks nothing — no urgency; buy a real Adafruit 4554.
+
+**Sources:** Adafruit 4554 pinouts (learn.adafruit.com) · InvenSense ICM-20948 datasheet DS-000189 · eMD software guide · CIO+Copilot 365 diagnostic notes 2026-07-18 (continuity + powered voltages) · Atlas live Pi probes 2026-07-18 (i2cdetect/i2cget/dmesg).
