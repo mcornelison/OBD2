@@ -97,4 +97,33 @@ measurement proved power/VDDIO/CS-strap are all FINE (Copilot continuity: CS/AD/
 1V8 on-board → board strapped for I2C @0x69). The defect is the die-side host interface, unreachable
 by any wiring change. EDR sensor, ships dark, blocks nothing — no urgency; buy a real Adafruit 4554.
 
-**Sources:** Adafruit 4554 pinouts (learn.adafruit.com) · InvenSense ICM-20948 datasheet DS-000189 · eMD software guide · CIO+Copilot 365 diagnostic notes 2026-07-18 (continuity + powered voltages) · Atlas live Pi probes 2026-07-18 (i2cdetect/i2cget/dmesg).
+## EXHAUSTIVE TEST LOG (2026-07-18, CIO-directed "run ALL possible tests") — verdict UNCHANGED
+
+Every software-reachable I2C access method was tried. The IMU is silent on ALL of them; a control
+device (MAX17048 UPS @0x36) answered on EVERY bus/method, proving the Pi + bus + wiring are fine
+throughout. This is as exhaustive as it gets without swapping the board.
+
+| # | Test | Result |
+|---|---|---|
+| 1 | HW i2c-1 scan @ standard clock | only 0x36; IMU absent |
+| 2 | `i2cget` 0x68 & 0x69 | Read failed (both) |
+| 3 | raw `i2ctransfer` WHO_AM_I (w reg0→r1) + read-only | Remote I/O error (both) |
+| 4 | `i2cdump 0x69` | all `XX` |
+| 5 | forced probe methods `-q` (quick-write) AND `-r` (read-byte) | nothing |
+| 6 | SMBus-quick probe | Read failed |
+| 7 | 3× settle/repeat scans | nothing |
+| 8 | `pinctrl` GPIO2/3 | `a3` = SDA1/SCL1, pull-up, idle high ✅ pins ARE I2C |
+| 9 | other buses i2c-13/14 | phantom-full (internal/floating) → IMU not there |
+| 10 | **slow clock 10 kHz** (config + reboot) | IMU still silent; UPS fine |
+| 11 | **bit-banged software I2C** on GPIO2/3 (i2c-gpio bus 8, reboot — bypasses the DesignWare HW controller entirely) | **UPS 0x36 answers `0xff` (bus proven), IMU 0x68/0x69 = "No such device" → rules out controller / clock-stretching incompatibility** |
+| 12 | powered voltages | `1V8`≈1.8V (VDDIO OK), VIN/SDA/SCL=3.3V (bus idle high, not stuck) |
+| 13 | both boards | identical |
+
+**FINAL, exhaustively-proven verdict:** the ICM-20948 clone's host I2C interface is dead/unreachable
+(pads don't reach the die, or the die's I2C is bad) — on TWO boards, correctly powered, on a bus a
+control device proves works, via HW-standard + HW-slow + software-bit-banged masters and every probe
+method. NOT wiring, NOT the Pi, NOT power, NOT clock, NOT the controller. **Not fixable in software or
+wiring — buy a genuine Adafruit 4554.** Config fully reverted after testing (backup
+`config.txt.bak-atlas-i2ctest-20260718` on Pi; hw i2c-1 restored). Do not re-open without a new board.
+
+**Sources:** Adafruit 4554 pinouts (learn.adafruit.com) · InvenSense ICM-20948 datasheet DS-000189 · eMD software guide · CIO+Copilot 365 diagnostic notes 2026-07-18 (continuity + powered voltages) · Atlas live Pi probes 2026-07-18 (i2cdetect/i2cget/i2ctransfer/i2cdump/pinctrl/dmesg + 10kHz + bit-bang i2c-gpio).
