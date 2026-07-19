@@ -1206,9 +1206,11 @@
       "parent": "E-OPS",
       "title": "OBD capture broken -- eclipse-obd connection-thread race (0 rows captured)",
       "description": "The Pi captures 0 OBD rows. Atlas live-debug RCA: python-obd connection is not thread-safe; orphaned timeout daemons (TD-036/US-244) + US-301 heartbeat touch the shared connection concurrently with the logger -> serial I/O interleaves -> empty read every connect. Raw python-obd works standalone (hardware/pairing all good). Fix = serialize connection access + fence orphaned daemons, preserve TD-036 no-boot-hang. f389d5b crash-loop hotfix deployed V0.29.7 (stops crash, not the capture fix). Sprint 54 P0.",
-      "status": "complete",
+      "status": "active",
       "createdAt": "2026-07-03",
-      "currentVersion": "V0.29.8"
+      "currentVersion": "V0.29.8",
+      "updatedAt": "2026-07-19",
+      "reopenNote": "A-17 corrected RCA (2026-07-17): the V0.29.8 F-117 fix left KOEO DTC reads on the raw unlocked path -> connect-edge race killed capture. Fix live (4a17bc1); US-474 hardens it into a typed contract + non-mocked regression."
     },
     {
       "id": "F-118",
@@ -1227,6 +1229,15 @@
       "description": "Make /sprint-deploy-pm require a green migration-drift CI run for the exact SHA (Option A PR-based integration, proven live via PR #3), scope=migration-touching-only (CIO 2026-07-15); plus Node20->24 action pin on migration-drift.yml. Closes the proactive half of BL-022 (CI now gates the deploy, not just catches mid-deploy).",
       "createdAt": "2026-07-15",
       "updatedAt": "2026-07-15"
+    },
+    {
+      "id": "F-120",
+      "parent": "E-OPS",
+      "status": "active",
+      "title": "OBDLink LX / Bluetooth connectivity reliability",
+      "description": "Dongle/BT reliability surfaced by the 2026-07-17/18 session (Atlas R2): pair_obdlink.sh dead on Trixie bluez (R2a/US-475), no real dongle auto-recovery on dead-SPP state (R2b/US-476), and a repo-default stale-MAC landmine that can re-break capture on config regen (R2c/US-477). Factory reset changes the LX MAC -> a hardcoded literal is fragile (Atlas design-note flagged).",
+      "createdAt": "2026-07-19",
+      "updatedAt": "2026-07-19"
     }
   ],
   "stories": [
@@ -4875,6 +4886,185 @@
       "status": "sprint-ready",
       "createdAt": "2026-07-15",
       "updatedAt": "2026-07-15"
+    },
+    {
+      "id": "US-474",
+      "parent": "F-117",
+      "type": "issue",
+      "size": "M",
+      "title": "A-17 capture-fix hardening -- typed query() contract + non-mocked connect-edge concurrency regression (R1)",
+      "goal": "As the OBD capture path, I want the live A-17 DTC-read serialization fix (4a17bc1) hardened into a TYPED contract with real concurrency coverage, so the connect-edge race F-117 missed (KOEO DTC read US-404 on the raw unlocked python-obd port vs the realtime logger -> 'disconnected while reading' -> 0 rows -> drive never arms) cannot silently regress. Per Atlas 2026-07-17 A-17 RCA: the deployed fix routes DTC reads through the serialized wrapper but via a runtime getattr fallback (to spare duck-typed test fakes) and only ran the dtc unit tests -- make it a durable typed contract + full-suite green.",
+      "definitionOfDone": [
+        "add query() to the ObdConnectionLike Protocol (src/pi/obdii/dtc_client.py:137) so serialized access is a TYPED contract; replace the runtime `getattr(connection,'query',None)` (dtc_client.py:353) with the typed call; update the DTC test fakes to satisfy the Protocol",
+        "add a NON-MOCKED regression test for connect-edge concurrency: a realtime-logger read + a KOEO DTC read on ONE connection object serialize through the _ioLock with no interleave (the exact GAP-1 F-117 missed) -- assert no 'disconnected while reading' and no lost reads",
+        "full Pi test suite green: pytest tests/pi -m 'not slow'",
+        "mypy typecheck passes on the touched Pi modules",
+        "if load-bearing, specs/architecture.md OBD-capture / connection-lock section updated in-sprint (Atlas design-gate DoD)"
+      ],
+      "conditionalOutcomes": [
+        "if adding query() to the Protocol breaks duck-typed callers beyond the DTC fakes, enumerate + update them to the typed contract -- do NOT re-introduce a getattr fallback (that fallback IS the hole this closes)"
+      ],
+      "validationCriteria": [
+        {
+          "action": "run the new non-mocked connect-edge concurrency test against the current serialized path",
+          "outcome": "GREEN -- logger + DTC reads serialize, no interleave, no lost reads"
+        },
+        {
+          "action": "locally revert the _ioLock serialization + re-run the new test",
+          "outcome": "RED -- proves the test actually guards the race"
+        },
+        {
+          "action": "pytest tests/pi -m 'not slow'",
+          "outcome": "full pi suite green"
+        }
+      ],
+      "deps": [],
+      "sourceRefs": [
+        "A-17",
+        "F-117",
+        "US-441",
+        "US-404",
+        "atlas-rca-2026-07-17-CORRECTED",
+        "commit-4a17bc1"
+      ],
+      "tasks": [],
+      "status": "sprint-ready",
+      "createdAt": "2026-07-19",
+      "updatedAt": "2026-07-19"
+    },
+    {
+      "id": "US-475",
+      "parent": "F-120",
+      "type": "issue",
+      "size": "S",
+      "title": "Fix pair_obdlink.sh for Trixie bluez (`[bluetoothctl]>` prompt) -- restore the only re-pair path (R2a)",
+      "goal": "As the Pi's only OBDLink re-pair path, I want scripts/pair_obdlink.sh working on the Pi's Trixie bluez, so a dropped/factory-reset dongle can actually be re-paired. Its pexpect waits for the OLD `[bluetooth]#` prompt; the new bluetoothctl prints `[bluetoothctl]>` -> it times out and cannot pair. A corrected pexpect helper is live on the Pi at ~/atlas_pair.py (lift its prompt/passkey handling).",
+      "definitionOfDone": [
+        "pair_obdlink.sh pexpect matches the new bluetoothctl `[bluetoothctl]>` prompt (tolerate the legacy `[bluetooth]#` too for older boxes) -- lift the working handling from the Pi's ~/atlas_pair.py",
+        "passkey/agent handling matches current bluez; a re-pair completes end-to-end",
+        "reads the MAC from OBD_BT_MAC / config, no hardcoded literal (pairs with US-477)",
+        "py/shellcheck lint clean on touched files"
+      ],
+      "conditionalOutcomes": [
+        "if ~/atlas_pair.py is gone from the Pi at dispatch, reconstruct from the bluez `[bluetoothctl]>` prompt behavior documented in Atlas's dongle-saga finding (2026-07-17-obd-capture-rca-dongle-dead-spp-link.md)"
+      ],
+      "validationCriteria": [
+        {
+          "action": "run pair_obdlink.sh against the live LX on the Pi",
+          "outcome": "pairing completes (no prompt-timeout); dongle bonded"
+        }
+      ],
+      "deps": [],
+      "sourceRefs": [
+        "A-17",
+        "F-120",
+        "atlas-dongle-saga-2026-07-17"
+      ],
+      "tasks": [],
+      "status": "sprint-ready",
+      "createdAt": "2026-07-19",
+      "updatedAt": "2026-07-19"
+    },
+    {
+      "id": "US-476",
+      "parent": "F-120",
+      "type": "issue",
+      "size": "M",
+      "title": "OBDLink LX auto-recovery -- full BT re-page after N read failures (not just rfcomm rebind) (R2b)",
+      "goal": "As the OBD reconnect loop, I want real dongle recovery when the LX drops into its dead-SPP/BT state, not just an rfcomm rebind on a stale binding (which loops forever). Per Atlas: after N consecutive read failures, do a full BT disconnect + re-page (bluetoothctl connect) / re-discover.",
+      "definitionOfDone": [
+        "after N consecutive read failures the reconnect path does a full BT disconnect + re-page (bluetoothctl connect), not only an rfcomm rebind",
+        "bounded/backed-off recovery -- no infinite tight loop; log the recovery transition ONCE per episode (not per-cycle)",
+        "graceful when the dongle is simply absent/off (offline-is-normal -- no error spam)",
+        "unit/integration test for the N-failure -> re-page transition (mock the BT layer)",
+        "mypy typecheck + pi lint pass"
+      ],
+      "conditionalOutcomes": [
+        "if robust recovery needs MAC re-discovery (factory reset changes the MAC -> a hardcoded literal is fragile; Atlas flagged a discovery/pairing-based design), STOP at the N-failure-repage slice + route the discovery-based redesign to Atlas as a SEPARATE design story -- do NOT expand scope here"
+      ],
+      "validationCriteria": [
+        {
+          "action": "simulate N consecutive read failures in a test",
+          "outcome": "recovery triggers a full re-page (not just rfcomm rebind), backs off, logs once"
+        }
+      ],
+      "deps": [],
+      "sourceRefs": [
+        "A-17",
+        "F-120",
+        "atlas-dongle-saga-2026-07-17"
+      ],
+      "tasks": [],
+      "status": "sprint-ready",
+      "createdAt": "2026-07-19",
+      "updatedAt": "2026-07-19"
+    },
+    {
+      "id": "US-477",
+      "parent": "F-120",
+      "type": "issue",
+      "size": "XS",
+      "title": "Fix stale OBDLink MAC repo default (landmine) -- addresses.sh -> live 00:04:3C:84:15:6B (R2c)",
+      "goal": "As the deploy config, I want the repo's default OBDLink MAC to match the LIVE dongle so a config regen cannot silently re-break capture. deploy/addresses.sh:50 still defaults OBD_BT_MAC to the OLD DEAD 00:04:3E:85:0D:FB; the live dongle (post-factory-reset) is 00:04:3C:84:15:6B. If install-rfcomm-bind.sh regenerates /etc/default/obdlink from the repo default it reverts the MAC + breaks capture. Atlas fixed the Pi's live config out-of-band; the repo default is the remaining landmine.",
+      "definitionOfDone": [
+        "deploy/addresses.sh:50 OBD_BT_MAC default updated 00:04:3E:85:0D:FB -> 00:04:3C:84:15:6B",
+        "sweep the old MAC repo-wide (config.json pi.bluetooth.macAddress -- addresses.sh comment says it mirrors that -- + any other literal); update live-config paths to the live MAC or annotate a given occurrence as historical",
+        "confirm install-rfcomm-bind.sh regen now emits the LIVE MAC (dry-run / inspect)",
+        "MEMORY.md OBDLink one-liner MAC updated to 00:04:3C:84:15:6B + note the factory-reset-changes-MAC caveat"
+      ],
+      "conditionalOutcomes": [
+        "if multiple config sources hold the MAC and disagree, make the repo consistent on the LIVE MAC now (landmine first) + flag the MAC-SSOT (single source) question to Atlas as a design note"
+      ],
+      "validationCriteria": [
+        {
+          "action": "grep the old MAC repo-wide after the fix + dry-run install-rfcomm-bind.sh",
+          "outcome": "no live-config path emits the old MAC; regen produces 00:04:3C:84:15:6B"
+        }
+      ],
+      "deps": [],
+      "sourceRefs": [
+        "A-17",
+        "F-120",
+        "atlas-dongle-saga-2026-07-17"
+      ],
+      "tasks": [],
+      "status": "sprint-ready",
+      "createdAt": "2026-07-19",
+      "updatedAt": "2026-07-19"
+    },
+    {
+      "id": "US-478",
+      "parent": "F-113",
+      "type": "normal",
+      "size": "S",
+      "title": "EDR IMU bring-up on genuine Adafruit ICM-20948 #4554 (A-14 gate #2) -- BLOCKED on hardware (R3)",
+      "goal": "As the EDR sensor tier, when the genuine Adafruit ICM-20948 #4554 arrives (replacing the exhaustively-dead clone boards -- host-I2C interface defective on both), I want the IMU raw-channel reader validated on the existing F-110 bus + versioned src/common/edr schema. Same chip as the clones -> existing EDR wiring/design (US-409) applies unchanged. Ships dark, blocks nothing.",
+      "definitionOfDone": [
+        "NOTE: adafruit-circuitpython-icm20x>=1.0.0 is ALREADY present (requirements-pi.txt:36) -- Atlas's requirements-check housekeeping is SATISFIED; no dep work needed",
+        "BLOCKED until the genuine ICM-20948 #4554 physically lands + is wired (CIO/hardware) -- A-14 gate #2 EDR-epic groom work",
+        "on hardware-present: confirm the existing EDR IMU reader (US-409, F-113) reads the genuine board via the connect-when-wired drill; all channels default off/dark behind the F-110 bus master switch"
+      ],
+      "conditionalOutcomes": [
+        "if the genuine board shows any register/init delta vs the clone assumption, capture it + route to Atlas (EDR schema is A-4 versioned)"
+      ],
+      "validationCriteria": [
+        {
+          "action": "when hardware lands, run the EDR connect-when-wired IMU drill",
+          "outcome": "genuine ICM-20948 reads on the bus; graceful-absence still holds when unplugged"
+        }
+      ],
+      "deps": [],
+      "sourceRefs": [
+        "A-14",
+        "F-113",
+        "US-409",
+        "atlas-icm20948-verdict-2026-07-18"
+      ],
+      "tasks": [],
+      "status": "pending",
+      "blockedOn": "genuine ICM-20948 #4554 hardware arrival",
+      "createdAt": "2026-07-19",
+      "updatedAt": "2026-07-19"
     }
   ]
 }

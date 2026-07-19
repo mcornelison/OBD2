@@ -4,12 +4,12 @@ version: V0.29.14
 status: draft
 createdAt: 2026-07-15
 createdBy: Marcus (PM)
-selectedStories: [US-386, US-387, US-388, US-389, US-390]
+selectedStories: [US-386, US-387, US-388, US-389, US-390, US-474]
 forksFrom: dev @ (recorded at prd_to_sprint.py conversion)
 sprintJsonPath: offices/ralph/sprint.json
 epic: E-002
-feature: F-107 (DriveDetector Dual-Attribution + Pi-Side Drive Lifecycle Hardening)
-theme: A-9 data integrity -- kill the DriveDetector close-signal defect (overlap + stale-open leak) with a car-free reproducer, RCA, fix, and permanent regression lock
+feature: F-107 (DriveDetector Dual-Attribution + Pi-Side Drive Lifecycle Hardening) + F-117 (OBD-capture reliability, US-474 A-17 hardening)
+theme: A-9 data integrity + A-17 capture reliability -- kill the DriveDetector close-signal defect AND harden the live capture-race fix, both validated on the one drive-35 re-gate
 supersedes: prd-V0.29.1.md (Session-49 draft of the same F-107 work; version + scope refreshed -- 5-story chain, not the 7-story 386..392 draft)
 atlasReview: "PENDING -- routed 2026-07-15 (inbox 2026-07-15-from-marcus-sprint59-60-prd-review-request.md). US-388 build-gated on Atlas acceptance of the US-387 RCA (in-sprint gate)."
 ---
@@ -40,6 +40,7 @@ A-9 / F-107 is the open data-integrity wound in the V0.29 chain. Per Atlas's 202
 | **US-388** | issue | M | **Root-2 FIX** (shape pending RCA): guaranteed-close + stamp `drive_id` ONLY when RUNNING + gap-fence the latch (idle/KOEO → NULL so a stale-open can't absorb a later key-on). Reproducer → GREEN. Updates `specs/architecture.md` DriveDetector section in-sprint. | **BUILD-BLOCKED until US-387 RCA accepted by Atlas** (in-sprint) |
 | **US-389** | issue | S | **Root-1 closure**: bake single-instance guard + `RuntimeDirectory` as a *matched-pair* tested deploy invariant (Atlas C-5) + confirm the 06-06 spawn trigger (C-3) + fold into a proper version stamp. Updates boot-path `specs/architecture.md`. | independent (sprint-ready) |
 | **US-390** | issue | S | **Regression lock**: reproducer → permanent fast-suite/manifest; confirm the server `detect_overlapping_drives` tripwire still stamps `attribution_anomaly` on synthetic overlap (belt-and-suspenders). | deps US-388 |
+| **US-474** | issue | M | **A-17 capture-fix hardening (Atlas R1, F-117):** make the live A-17 DTC-read serialization (`4a17bc1`) a **typed** `ObdConnectionLike.query()` contract (kill the runtime `getattr` fallback) + add a **non-mocked connect-edge concurrency regression** (the exact GAP-1 F-117 missed) + full pi suite. Fix is live; this is durable hardening. | independent (fix already deployed) |
 
 ## Sequencing (in-sprint)
 
