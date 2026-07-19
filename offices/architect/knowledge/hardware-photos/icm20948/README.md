@@ -68,6 +68,17 @@ guidance. Config path is **exhausted** (CS→1V8 + power-cycle tried on BOTH boa
 healthy bus) → remaining suspects = dead SDA/SCL QFN joint or bad batch, NOT config. EDR hardware,
 ships dark, blocks nothing.
 
+## STATUS 2026-07-18: genuine replacement ON ORDER
+
+CIO ordered a **genuine Adafruit ICM-20948 #4554** from **DigiKey** ($19.95, in stock) to replace the
+dead NebulaGo clones. Same chip → all existing EDR wiring/docs/design apply unchanged; genuine board
+is level-shifted + regulated → Pi-I2C-friendly, expected at **0x69**. (Considered + rejected: LSM9DS1
+#3387 = different chip + bigger + header pins; BNO085 #4754 = best sensor but non-standard I2C
+clock-stretching that the Pi HW I2C can't handle — would re-open I2C pain. #4554 = right call for
+Pi+I2C+raw-EDR.) Enclosure to be reprinted to the 25.7×17.7mm STEMMA-QT footprint. Bring-up when it
+lands: `VIN→3.3V, GND→pin6, SDA→pin3, SCL→pin5` → `i2cdetect -y 1` should show **0x69** → read via
+`adafruit-circuitpython-icm20x`. The clone verdict below stays for the record.
+
 ## FINAL VERDICT (2026-07-18 — powered diagnosis, Atlas + CIO + Copilot 365) — DO NOT re-litigate
 
 **Conclusion: both clone boards are DEFECTIVE at the host-I2C interface. NOT the wiring, NOT the Pi,
