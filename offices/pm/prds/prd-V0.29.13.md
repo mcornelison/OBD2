@@ -4,7 +4,7 @@ version: V0.29.13
 status: draft
 createdAt: 2026-07-15
 createdBy: Marcus (PM)
-selectedStories: [US-472, US-473, US-477]
+selectedStories: [US-472, US-473]  # US-477 moved to V0.29.14 (MAC integrity belongs with the capture-restore sprint) 2026-07-20
 preDoneStories: [US-471]  # PM-executed directly 2026-07-16 (CIO-directed); see backlog completedNote + note below
 forksFrom: dev @ (recorded at prd_to_sprint.py conversion)
 sprintJsonPath: offices/ralph/sprint.json
@@ -38,7 +38,8 @@ The V0.29.12 PRD closed with an explicit **coherence follow-up** (its §"Coheren
 | **US-471** | housekeeping | S | F-119 | Wire the CI-green gate into `/sprint-deploy-pm` (Option A): Phase 3.5 opens a PR into `dev`, migration-drift CI runs, merge gates on green **for the exact HEAD SHA** (run-not-trust, US-469 principle). Deploy-from-`dev` becomes CI-green by construction. Path-filter vacuous-pass documented so docs-only sprints aren't blocked. |
 | **US-472** | housekeeping | XS | F-119 | Pin `migration-drift.yml` actions to their Node24 majors (checkout@v4→v5, setup-python@v5→v6, upload-artifact@v4→v5); re-run green; clear the Node20 deprecation warnings. |
 | **US-473** | housekeeping | S | F-102 | **Prereq-gated:** after the CIO renames the Pi OS host `Chi-Eclips-Tuner`→`chi-eclipse-01` (hostnamectl — a CIO action-item, not a Ralph task), sweep code/config/docs/SSH to converge on the canonical name; close B-102/F-102. |
-| **US-477** | normal | XS | F-120 | **Guard test (was an inverted-MAC landmine — CORRECTED 2026-07-20).** Atlas's original R2c had the MAC backwards: the live MAC is `00:04:3E:85:0D:FB` (burned-in; CIO's paired phone confirms), and `00:04:3C:84:15:6B` was a phantom mis-ID appearing only in planning notes. The repo is already correct. Repurposed to a **guard test pinning the MAC to `…3E…` / name `OBDLink LX`** so a future inversion is caught. Pure test — no car. |
+
+> **US-477 moved to V0.29.14** (2026-07-20). It grew from a pure MAC guard test into OBD MAC integrity + deploy self-heal (directly tied to the phantom-MAC connection break), so it belongs with the capture-restore sprint, not general housekeeping.
 
 ## Notes / sequencing
 

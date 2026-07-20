@@ -1,10 +1,11 @@
 ---
 sprint: 61
 version: V0.29.15
-status: draft
+status: SHELVED
+shelvedReason: "CIO 2026-07-20 -- the OBDLink BT adapter works fine; the dongle-catatonia / pair-script-dead 'errors' were architect hallucinations. Archaeology confirmed the BT LINK code was never the regression (US-441/A-17/US-432 changed nothing in connect/rfcomm/pairing; a raw read got 6/6 live RPM on the same MAC). Bond persists across reboots -> re-pairing rarely needed. US-475/476 set pending/shelved in backlog. Revisit ONLY on a real observed re-pair failure. The MAC-integrity slice (US-477) moved to V0.29.14."
 createdAt: 2026-07-19
 createdBy: Marcus (PM)
-selectedStories: [US-475, US-476]
+selectedStories: []  # was [US-475, US-476] -- shelved 2026-07-20
 forksFrom: dev @ (recorded at prd_to_sprint.py conversion)
 sprintJsonPath: offices/ralph/sprint.json
 epic: E-OPS

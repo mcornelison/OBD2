@@ -45,6 +45,24 @@ Format per item:
 
 ---
 
+### AI-004 🔴 REVERT the Pi's OBD MAC from the phantom `…3C…` back to `00:04:3E:85:0D:FB` (likely the connection fix)
+- **Owner**: CIO (Mike) — ops on the Pi (2-minute fix; likely restores the connection)
+- **Status**: open — **HIGHEST PRIORITY (the true gate)**
+- **Filed**: 2026-07-20
+- **Source**: BT-connection archaeology 2026-07-20 + CIO's paired-phone photo (ground truth `OBDLink LX` / `00:04:3E:85:0D:FB`)
+
+**What / why**: On 2026-07-17 the architect repointed the Pi's live `/etc/default/obdlink` + `.env` to a **phantom MAC `00:04:3C:84:15:6B`** (a mis-identified stranger's device — a BT MAC is burned in and cannot change on factory reset). If that's still on the Pi, `rfcomm bind` targets a device that doesn't exist → no `/dev/rfcomm0` → **no connection → zero capture**. This is the most likely reason a weekend of drives captured nothing.
+
+**Steps** (backups already on the Pi):
+1. `ssh <pi> "grep OBD_BT_MAC /etc/default/obdlink /home/mcornelison/.../.env"` — confirm whether it says `…3C…`.
+2. If phantom: restore the backups `/etc/default/obdlink.bak-20260717` + `.env.bak-pre-macfix-20260717`, OR set `OBD_BT_MAC=00:04:3E:85:0D:FB` in both.
+3. `sudo systemctl restart rfcomm-bind.service` (or reboot) → `rfcomm show` should bind `/dev/rfcomm0` to `…3E…`.
+4. Verify: `bash scripts/verify_bt_pair.sh` then `bash scripts/verify_live_idle.sh` (engine idling) → expect CAPTURE PASS.
+
+**Acceptance**: the Pi's `/etc/default/obdlink` holds `00:04:3E:85:0D:FB`; `verify_live_idle.sh` passes (realtime_data rows landing). Then the true gate (Pi online + connecting + capturing) is met and an IRL drive is worth doing. US-477 (V0.29.14) makes the deploy self-heal this so it can't recur.
+
+---
+
 ## Closed
 
 ### AI-002 Ralph commit-but-not-stage detector — sprint_lint commit-vs-claim verifier
