@@ -7,8 +7,8 @@
       "type": "windows-dev",
       "status": "unassigned",
       "taskid": "",
-      "lastCheck": "2026-07-13",
-      "note": "US-470 WIRED but BLOCKED (Sprint 58, F-104/TD-055 -- real-MariaDB migration-chain CI). passes:FALSE + HUMAN_INTERVENTION_REQUIRED. AUDIT: NO CI runner exists (.github/workflows had only README.md; prior pylint.yml deliberately removed US-186 -- emailed a failure on every push); bench has NO Docker/testcontainers (US-464 live layer honest-skips) -> VC1 (live test EXECUTES in CI) UNVERIFIABLE in-loop. GitHub remote DOES exist so the workflow is a real artifact. SHIPPED (all buildable, in-loop-verified): requirements-dev.txt (testcontainers>=4.0.0, dev/CI-only -> VC2 GREEN grep-verified, NOT in prod reqs); .github/workflows/migration-drift.yml (MariaDB 11.8 service container per Atlas TIGHTEN-2 + OBD2_MARIADB_TEST_DSN + pytest -m integration + FAIL-ON-SKIP guard so a green run can't mask a skip; narrow triggers pull_request->dev/main + workflow_dispatch, never on:push); workflow README + DSN docs; TD-055 annotated OPEN-downgraded (NOT closed, Atlas TIGHTEN); create_all caveat in test_deploy_context_drive_simulator.py points to new coverage (pinned-docstring test still green, ruff clean). BLOCKER offices/pm/blockers/BL-022 + PM handoff inbox note. TO CLOSE (CIO/PM): enable GitHub Actions (reverses US-186), PM push+PR->dev (job runs on GH runner w/ Docker, guard proves EXECUTED), wire deploy-requires-CI-green (Atlas coherence note), then flip passes:true + close TD-055. Interim: OBD2_MARIADB_TEST_DSN->chi-srv-01 MariaDB 11.x + US-463 deploy gate. Sprint 58: US-465..469 passes:true; US-470 blocked = last story -> sprint NOT complete, needs CIO judgment." (Sprint 58, F-118, tech-debt -- SS-T7 run-not-trust deploy-gate tripwire). Built offices/pm/scripts/deploy_preflight_gate.py: ACTUALLY RUNS `pytest -m 'not slow'` (the suite containing SS-T7 systemd-parity DOA tripwire) and HALTs the deploy on any non-zero exit. Structurally run-not-trust -- always invokes pytest, NO marker read, NO 'prior report'/'assumeGreen' flag, NO skip hatch (a test guards the signature). Un-launchable pytest -> fail-safe ERROR (also HALT; uncertainty never authorizes a deploy). AUDIT found the two best-effort-past-red instances: V0.27.12 DOA (SS-T7 test existed but pipeline never RAN it) + V0.27.17 marker-on-failure (deploy-server.sh:330 -- exit-0-as-success wrote a green marker on a 10/10 FAILED backfill). VC1 realized by a REAL nested-pytest e2e (deliberately failing test -> gate RUNS pytest -> non-zero -> HALT; tmp dir not project suite, fast per TD-059). 12 tests pass, ruff clean. HANDOFF: the one-line Phase-0 weld into .claude/commands/sprint-deploy-pm.md is a PM-owned command surface Ralph is WRITE-BLOCKED on (lane discipline; US-467 precedent) -> exact patch (bash line + Stop-condition bullet + flowchart row) in offices/pm/inbox/2026-07-13-from-rex-us469-phase0-gate-weld.md for PM to apply. NEXT for Agent1: US-470 (Real-MariaDB migration test CI-enablement -- testcontainers/11.x; conditionalOutcome allows documenting a Docker-unavailable blocker + DSN-manual interim). Sprint 58 remaining: US-470."
+      "lastCheck": "2026-07-20",
+      "note": "Sprint 58 (V0.29.12) closed; US-465..470 shipped, US-470 CI-enablement resolved (BL-022) via PR #3. Ready for Sprint 60 (V0.29.14 capture-restore). Prior verbose Sprint-58 close-note removed 2026-07-20 during a JSON-validity repair (unescaped quote had corrupted this file)."
     },
     {
       "id": 2,
@@ -16,7 +16,7 @@
       "type": "windows-dev",
       "status": "unassigned",
       "taskid": "",
-      "lastCheck": "2026-05-13",
+      "lastCheck": "2026-07-20",
       "note": ""
     }
   ]
