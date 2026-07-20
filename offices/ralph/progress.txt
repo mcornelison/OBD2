@@ -720,3 +720,81 @@ Task: A-17 capture-fix hardening -- drop raw getattr('query') fallback + typed
   hide them -- confirm they reproduce in isolation, file an issue, and flag the
   caveat in completionNotes so PM's integration gate routes them.
 ---
+
+## 2026-07-20 - US-477 (Rex / Agent 1, Session 12 — Sprint 60)
+Task: OBD MAC integrity -- repo guard (00:04:3E:85:0D:FB) + deploy self-heals
+      the Pi's /etc/default/obdlink (07-17 phantom-drift recurrence prevention)
+
+### What was implemented:
+- ROOT CAUSE of the 07-17 phantom: deploy-pi.sh `step_install_rfcomm_bind` pulled
+  the bind MAC from the PI'S OWN `.env` (`piEnvMac` ssh-grep), so once the Pi's
+  `.env` + `/etc/default/obdlink` were repointed to the phantom 00:04:3C:84:15:6B
+  (a mis-ID'd stranger's device; a BT MAC is burned-in + does NOT change on reset),
+  every deploy re-propagated the phantom -> rfcomm bound a dead device -> zero
+  capture for a weekend. The repo was ALREADY correct (...3E...).
+- GUARD `tests/deploy/test_obd_mac_integrity.py` (5 tests): asserts
+  deploy/addresses.sh `OBD_BT_MAC` default == 00:04:3E:85:0D:FB (regex-extracted
+  from the `${OBD_BT_MAC:-...}` form), config.json `pi.bluetooth.macAddress`
+  stays the `${OBD_BT_MAC}` SSOT placeholder (never a hardcoded literal = a bypass
+  vector), device named 'OBDLink LX', phantom absent from BOTH files. Flipping the
+  repo MAC -> RED (VC1).
+- SELF-HEAL `deploy/reassert-obd-mac.sh`: idempotent + logged + SURGICAL. Corrects
+  ONLY the `OBD_BT_MAC=` line via `sed` and passes `OBD_BT_CHANNEL` + every other
+  line/comment through verbatim (acceptance #3 "does not clobber channel/device").
+  No-op when already canonical; appends when the line is absent; exits 0
+  (nothing-to-do) when the env file is missing; validates MAC format; `--dry-run`
+  REPORTS the decision without writing.
+- WIRED `step_reassert_obd_mac` into deploy-pi.sh, called UNCONDITIONALLY on every
+  deploy (NOT `if $INIT`-gated) -- same posture + rationale as
+  `step_enforce_eeprom_power_off_on_halt` (OS-side config modifiable out-of-band;
+  a drifted Pi must self-heal on the next ROUTINE re-deploy, not wait for --init).
+  `$OBDLINK_ENV_FILE` override lets the dry-run demonstrate the self-heal against a
+  fixture (VC2). ALSO rewrote `step_install_rfcomm_bind` to bind the repo-canonical
+  `$OBD_BT_MAC` (from addresses.sh) instead of `piEnvMac` -> the root-cause close.
+
+### Files changed:
+- Created: `deploy/reassert-obd-mac.sh` (surgical idempotent MAC-only self-heal)
+- Modified: `deploy/deploy-pi.sh` (new step_reassert_obd_mac every-deploy; fixed
+  step_install_rfcomm_bind to bind canonical $OBD_BT_MAC not piEnvMac)
+- Created: `tests/deploy/test_obd_mac_integrity.py` (repo-MAC guard, VC1)
+- Created: `tests/deploy/test_reassert_obd_mac.sh` (bash driver, 30 assertions)
+- Created: `tests/deploy/test_reassert_obd_mac.py` (pytest wrapper + static
+  wiring assertions: reassert runs every-deploy, rfcomm binds canonical)
+
+### Verification:
+- VC1: guard reads the live addresses.sh; a phantom flip -> `test_addressesSh_
+  obdMac_isCanonical` RED (proven against a simulated flip; regex extracts phantom).
+- VC2: `reassert-obd-mac.sh --dry-run` against a phantom fixture prints
+  "would correct 00:04:3C:84:15:6B -> 00:04:3E:85:0D:FB (OBDLink LX)" and leaves
+  the file unchanged; the every-deploy step prints the reassert line in a plain
+  `deploy-pi.sh --dry-run`.
+- `pytest tests/deploy/test_obd_mac_integrity.py test_reassert_obd_mac.py` -> 8 pass.
+- `bash tests/deploy/test_reassert_obd_mac.sh` -> 30 passed, 0 failed.
+- `pytest tests/deploy/test_deploy_pi.py test_deploy_invariants.py` -> 49 pass
+  (deploy-pi.sh smoke + static assertions still green after the edits).
+- `python scripts/audit_config_literals.py` -> clean; `tests/lint/
+  test_no_hardcoded_addresses.py` -> 16 pass; ruff clean on both .py.
+- `bash -n` clean on both scripts. shellcheck NOT installed on bench (PM gate) --
+  scripts mirror the lint-clean deploy/enforce-eeprom-power-off-on-halt idioms.
+
+### Learnings for future iterations:
+- **Pattern discovered**: to self-heal an OS-side config on every deploy, mirror
+  `step_enforce_eeprom_power_off_on_halt` -- an UNCONDITIONAL (not --init-gated)
+  step calling an idempotent standalone script that no-ops when already correct.
+  Gate it behind --init and a drifted host stays broken until someone remembers to
+  re-init; that's the whole failure mode.
+- **Pattern discovered**: a "self-heal from an authoritative source" bug is often a
+  "we trusted the drifted host as the source" bug. deploy-pi.sh pulled the bind MAC
+  FROM the Pi's own .env, so the deploy could only ever re-propagate whatever the
+  Pi already had. Bind from the REPO SSOT ($OBD_BT_MAC / addresses.sh), never from
+  the target's current state.
+- **Gotcha (surgical rewrite)**: to correct ONE key in an env file without
+  clobbering siblings, `sed` only that line (`s|^...OBD_BT_MAC...=.*|OBD_BT_MAC=X|`)
+  and pass the rest through -- do NOT wholesale-rewrite the file (install-rfcomm-
+  bind.sh force-writes OBD_BT_CHANNEL=1, which the surgical corrector deliberately
+  avoids per acceptance #3).
+- **Gotcha (bench)**: the Windows sandbox blocks inline `VAR=x cmd | grep` and
+  brace-group constructs; exercise the standalone helper directly (its --dry-run
+  IS what the deploy step invokes) and set fixture paths via a Write'd file +
+  `$OBDLINK_ENV_FILE`. shellcheck is not on the bench -> PM/integration gate.
+---

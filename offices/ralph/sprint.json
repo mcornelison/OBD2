@@ -66,7 +66,7 @@
       "type": "normal",
       "size": "S",
       "status": "sprint-ready",
-      "passes": false,
+      "passes": true,
       "acceptance": [
         "guard test asserts the repo MAC stays 00:04:3E:85:0D:FB (deploy/addresses.sh OBD_BT_MAC default + config.json pi.bluetooth.macAddress) and name 'OBDLink LX'; RED on any change to the phantom ...3C... or another value",
         "deploy (deploy-pi.sh / install-rfcomm-bind.sh) RE-ASSERTS the canonical MAC into the Pi's /etc/default/obdlink on every deploy, so a drifted Pi (like the 07-17 phantom) self-heals on next deploy instead of silently binding a dead device",
@@ -87,7 +87,17 @@
         "if a real SECOND dongle is ever introduced (multi-device), revisit the single-canonical-MAC assumption -- out of scope now (one dongle, one burned-in MAC)"
       ],
       "goal": "As the OBD connection config, I want the canonical OBDLink MAC 00:04:3E:85:0D:FB pinned so a phantom MAC can neither enter the repo nor persist on the Pi. ORIGIN: on 2026-07-17 the Pi's /etc/default/obdlink + .env were repointed to a PHANTOM 00:04:3C:84:15:6B (architect mis-ID of a stranger's device; a BT MAC is burned-in and does NOT change on factory reset) -> rfcomm would bind a nonexistent device -> no connection -> zero capture. The repo is ALREADY correct (...3E...); this pins it and makes the deploy self-heal a drifted Pi so this can't recur.",
-      "tasks": []
+      "tasks": [],
+      "completionNotes": "DONE (Rex, 2026-07-20). (1) GUARD tests/deploy/test_obd_mac_integrity.py: asserts deploy/addresses.sh OBD_BT_MAC default == 00:04:3E:85:0D:FB, config.json pi.bluetooth.macAddress stays the ${OBD_BT_MAC} SSOT placeholder (never a hardcoded literal -- that would be a bypass vector), device named 'OBDLink LX', and the phantom 00:04:3C:84:15:6B is absent from BOTH addresses.sh and config.json. VC1 PROVEN: the regex extracts a flipped phantom and the canonical assertion goes RED (verified against a simulated flip; the live test reads the real file so a real flip is RED). (2) SELF-HEAL deploy/reassert-obd-mac.sh: idempotent, logged, SURGICAL -- corrects ONLY the OBD_BT_MAC line via sed and preserves OBD_BT_CHANNEL + every other line/comment (acceptance #3); no-op when already canonical; appends if the line is absent; exits 0 (nothing-to-do) if the env file is missing; validates MAC format; --dry-run REPORTS without writing. (3) WIRED into deploy-pi.sh as step_reassert_obd_mac, called UNCONDITIONALLY on every deploy (NOT gated behind --init) -- same posture/rationale as step_enforce_eeprom_power_off_on_halt, so a drifted Pi self-heals on the next routine re-deploy (acceptance #2). $OBDLINK_ENV_FILE override lets the --dry-run demonstrate the self-heal against a fixture (VC2). ALSO fixed step_install_rfcomm_bind to bind the repo-canonical $OBD_BT_MAC instead of the piEnvMac ssh-pull from the Pi's .env -- trusting the Pi .env is exactly how the 07-17 phantom propagated into the bind (root-cause close). VC2 DEMONSTRATED: helper --dry-run against a phantom fixture prints 'would correct 00:04:3C:84:15:6B -> 00:04:3E:85:0D:FB (OBDLink LX)' and writes nothing; the every-deploy step prints the reassert line in a plain dry-run. GATES: ruff clean on both .py; B-044 audit + tests/lint/test_no_hardcoded_addresses.py (16) clean; bash driver test_reassert_obd_mac.sh 30/30; pytest guard+wrapper 8/8; deploy_pi + deploy_invariants 49 pass (no regression from the deploy-pi.sh edits); bash -n clean on both scripts. shellcheck NOT installed on the bench (PM/integration gate) -- scripts mirror the lint-clean eeprom-enforce idioms. No spec update in acceptance (US-477 has no architecture.md clause). conditionalOutcome: kept single-canonical-MAC (one dongle); multi-device deferred.",
+      "feedback": {
+        "filesActuallyTouched": [
+          "deploy/reassert-obd-mac.sh",
+          "deploy/deploy-pi.sh",
+          "tests/deploy/test_obd_mac_integrity.py",
+          "tests/deploy/test_reassert_obd_mac.sh",
+          "tests/deploy/test_reassert_obd_mac.py"
+        ]
+      }
     },
     {
       "id": "US-479",
