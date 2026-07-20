@@ -8,7 +8,7 @@
       "status": "unassigned",
       "taskid": "",
       "lastCheck": "2026-07-20",
-      "note": "Sprint 58 (V0.29.12) closed; US-465..470 shipped, US-470 CI-enablement resolved (BL-022) via PR #3. Ready for Sprint 60 (V0.29.14 capture-restore). Prior verbose Sprint-58 close-note removed 2026-07-20 during a JSON-validity repair (unescaped quote had corrupted this file)."
+      "note": "Sprint 60 (V0.29.14): US-474 DONE (A-17 capture-fix hardening). Removed the getattr('query') raw-unlocked fallback in DtcClient._serializedQuery; query() now a typed positional-only member of ObdConnectionLike; updated all 5 DTC test fakes to the typed contract; NEW non-mocked connect-edge concurrency regression (real ObdConnection+DtcClient, logger read + KOEO DTC read serialize through _ioLock, RED if the lock is reverted). 56 DTC/conn tests + lint GREEN. 2 pre-existing UNRELATED pi-suite reds (US-263 vs US-419 startup_log data_quality guard) filed as issue; spec §3.5 DTC-caller addition filed as issue (specs read-only for Ralph). US-477, US-479 remain for next iteration."
     },
     {
       "id": 2,

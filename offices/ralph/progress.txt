@@ -652,3 +652,71 @@ HUMAN_INTERVENTION_REQUIRED. Blocker: offices/pm/blockers/BL-022-*.md.
   `workflow_dispatch` + a `paths:` filter, and flag that ENABLING Actions is a CIO
   reversal, not a silent add.
 ---
+
+## 2026-07-20 - US-474 (Rex / Agent 1, Session 11 — Sprint 60)
+Task: A-17 capture-fix hardening -- drop raw getattr('query') fallback + typed
+      query() Protocol + non-mocked connect-edge concurrency regression (F-117 GAP-1)
+
+### What was implemented:
+- Removed the runtime `getattr(connection,'query',None)` fallback in
+  `DtcClient._serializedQuery` -> now `return connection.query(cmd)`. The raw
+  unlocked `.obd.query` path (the LAST hole letting a DTC read skip the single
+  `_ioLock`) is gone. grep-verified absent post-change.
+- Added `query(self, command, /) -> Any` as a **positional-only** typed member of
+  the `ObdConnectionLike` Protocol + updated its docstring. Positional-only so
+  ObdConnection.query(command, callerGeneration=) AND the cmd-named fakes both
+  structurally conform (mypy-clean without renaming anything). Kept `obd` for the
+  legacy facade (no longer the DTC read path).
+- Enumerated + updated the 5 duck-typed DTC test fakes to the typed contract
+  (added `query()` delegating to `.obd.query`, preserving each fake's routing /
+  call-order recording): test_dtc_client, test_dtc_client_clear, test_dtc_logger,
+  test_dtc_logger_keyon, test_dtc_logger_drive_lifecycle. NO getattr fallback
+  re-introduced (conditionalOutcome honored). Production implementers
+  ObdConnection + SimulatedObdConnection already carry query() (verified) -> no
+  other callers broke.
+- NEW `tests/pi/obdii/test_dtc_connect_edge_concurrency.py`: a **non-mocked**
+  regression. Real ObdConnection + real DtcClient; a realtime-logger read loop
+  and a KOEO Mode03/07 DTC read loop run concurrently on ONE connection against a
+  hand-faked non-thread-safe port that LATCHES on concurrent entry. Asserts no
+  interleave + no lost reads (exact counts) + no disconnected-while-reading class
+  error. A 2nd test pins that a query()-less connection now fails LOUD (no silent
+  raw path).
+
+### Files changed:
+- Modified: `src/pi/obdii/dtc_client.py` (Protocol query() member; getattr
+  fallback removed; docstrings + mod-history)
+- Modified: 5x `tests/pi/obdii/test_dtc_*.py` fakes (added query())
+- Created: `tests/pi/obdii/test_dtc_connect_edge_concurrency.py` (F-117 GAP-1 guard)
+- Created: `offices/pm/issues/I-startup-log-schema-guard-vs-us419-data-quality.md`
+- Created: `offices/pm/issues/I-arch-spec-3.5-dtc-caller-and-us474-contract.md`
+
+### Verification:
+- `pytest` 6 DTC files (incl. the new concurrency test) -> 56 passed.
+- New concurrency test GREEN through the REAL `_ioLock`. validationCriterion-2
+  (revert `with self._ioLock:` in ObdConnection.query -> RED) is by-design: the
+  port's interleave latch depends on the lock; reviewer confirms by hand.
+- grep: `getattr(...'query'...)` fallback gone from dtc_client.py.
+- `ruff check` on all 7 touched files -> All checks passed.
+- ⚠ `pytest tests/pi -m 'not slow'`: 2 FAILURES, BOTH pre-existing + UNRELATED to
+  US-474 -- `test_boot_reason_boot_id.py::TestStartupLogSchema` (US-419
+  `data_quality` 8th col vs the US-263 7-col guard). Reproduces in ISOLATION;
+  none of my 7 files touch startup_log. Filed as a PM issue.
+- mypy NOT installed on the bench (PM/integration gate); code written mypy-clean.
+
+### Learnings for future iterations:
+- **Pattern discovered**: a `getattr(obj, 'method', None)` "graceful fallback"
+  on a serialized path is an anti-pattern -- it converts a missing-method type
+  error into a SILENT lock bypass. Replace it with a typed Protocol member; a
+  positional-only param (`def query(self, command, /)`) lets an impl with a
+  differently-named/extra-defaulted param still conform, so you close the hole
+  without touching call sites.
+- **Gotcha (non-mocked concurrency test)**: to prove a lock actually serializes,
+  don't mock the lock -- drive the REAL wrapper and let a hand-faked resource
+  LATCH when two callers enter at once (counter++ inside a tiny bookkeeping lock,
+  the simulated I/O sleep OUTSIDE it). Serialized => never latches (deterministic
+  GREEN); revert the lock => latches (RED). No Mock/MagicMock needed.
+- **Gotcha (scope/honesty)**: running the acceptance's broader `tests/pi` gate
+  surfaced 2 pre-existing UNRELATED reds. Don't fix them (scope fence) and don't
+  hide them -- confirm they reproduce in isolation, file an issue, and flag the
+  caveat in completionNotes so PM's integration gate routes them.
+---

@@ -12,6 +12,14 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-04-20    | Rex (US-204) | Initial -- Spool Data v2 Story 3 (DTC retrieval).
+# 2026-07-20    | Rex (US-474) | F-117/A-17 hardening. Remove the runtime
+#               |              | getattr(connection,'query') fallback to the RAW
+#               |              | unlocked .obd.query -- that fallback WAS the hole
+#               |              | that let a DTC read skip the _ioLock. query() is
+#               |              | now a typed member of ObdConnectionLike, so ALL
+#               |              | DTC reads provably share the one serialization
+#               |              | lock; a connection without query() is a type
+#               |              | error, not a silent bypass.
 # ================================================================================
 ################################################################################
 
@@ -138,13 +146,21 @@ class ObdConnectionLike(Protocol):
     """Structural interface satisfied by
     :class:`src.pi.obdii.obd_connection.ObdConnection` and test fakes.
 
-    Only ``isConnected()`` + ``.obd.query(cmd)`` are touched.
+    ``isConnected()`` and the serialized ``query(command)`` are the touched
+    members.  US-474 (F-117/A-17): every DTC read MUST go through ``query()`` --
+    the wrapper that holds the single ``_ioLock`` -- so it never interleaves
+    with the realtime logger's read on the one non-thread-safe python-obd port.
+    ``obd`` stays exposed for the underlying python-obd facade but is no longer
+    the DTC read path (the raw unlocked ``.obd.query`` was the capture-killing
+    hole this contract closes).
     """
 
     def isConnected(self) -> bool: ...
 
+    def query(self, command: Any, /) -> Any: ...
+
     @property
-    def obd(self) -> Any: ...  # python-obd facade exposing query(cmd)
+    def obd(self) -> Any: ...  # python-obd facade (legacy; NOT the DTC read path)
 
 
 # ================================================================================
@@ -337,7 +353,7 @@ class DtcClient:
 
     @staticmethod
     def _serializedQuery(connection: ObdConnectionLike, cmd: Any) -> Any:
-        """Route a DTC read/write through the wrapper's serialized ``query()``.
+        """Route every DTC read/write through the wrapper's serialized ``query()``.
 
         A-17 capture-killing race: the realtime logger reads via
         ``ObdConnection.query()`` under the single ``_ioLock`` (US-441/F-117),
@@ -346,12 +362,17 @@ class DtcClient:
         read fired on the connection edge then interleaved with the logger's read
         on the one non-thread-safe python-obd port -> "device disconnected while
         reading" -> 0 rows captured -> the drive never armed -> the KOEO read
-        re-fired every reconnect (permanent capture failure).  Prefer the locked
-        wrapper ``query()`` so ALL connection reads share the one lock; fall back
-        to raw ``.obd.query`` only for duck-typed test fakes that lack ``query``.
+        re-fired every reconnect (permanent capture failure).
+
+        US-474: the runtime ``getattr(connection, 'query', ...)`` fallback to the
+        raw unlocked ``.obd.query`` is REMOVED -- it was the last hole through
+        which a DTC read could skip the lock.  ``query()`` is now a typed member
+        of :class:`ObdConnectionLike`, so ALL DTC reads provably share the one
+        ``_ioLock``.  (The duck-typed test fakes were updated to the typed
+        contract; a connection without ``query`` is now a type/test error, not a
+        silent bypass.)
         """
-        queryFn = getattr(connection, "query", None)
-        return queryFn(cmd) if callable(queryFn) else connection.obd.query(cmd)
+        return connection.query(cmd)
 
     @staticmethod
     def _isNull(response: Any) -> bool:
