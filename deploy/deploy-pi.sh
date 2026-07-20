@@ -742,22 +742,47 @@ step_install_rfcomm_bind() {
     # US-196: install rfcomm-bind.service so /dev/rfcomm0 is re-bound on every
     # boot. Idempotent — re-running re-writes /etc/default/obdlink with the
     # configured MAC and leaves the unit enabled.
+    #
+    # US-477 / F-120: the bind MAC is now the repo-canonical $OBD_BT_MAC (SSOT in
+    # deploy/addresses.sh), NOT a best-effort ssh-pull from the Pi's own .env.
+    # Trusting the Pi's .env is exactly how the 2026-07-17 phantom MAC
+    # (00:04:3C:84:15:6B, a mis-identified device) propagated into the rfcomm
+    # bind -> bound a nonexistent device -> zero capture. Binding the canonical
+    # MAC makes the initial install self-correct too, in lockstep with the
+    # every-deploy step_reassert_obd_mac.
     echo "--- Step: Installing rfcomm-bind systemd unit (US-196 reboot-survive) ---"
-    local piEnvMac
-    # Best-effort pull of the MAC already configured on the Pi (.env).
     if $DRY_RUN; then
-        echo "DRY-RUN would run: sudo bash ${PI_PATH}/deploy/install-rfcomm-bind.sh \$OBD_BT_MAC"
+        echo "DRY-RUN would run: sudo bash ${PI_PATH}/deploy/install-rfcomm-bind.sh ${OBD_BT_MAC}"
         return 0
     fi
-    piEnvMac=$(ssh -p "$PI_PORT" "${PI_USER}@${PI_HOST}" \
-        "grep -E '^OBD_BT_MAC=' '${PI_PATH}/.env' 2>/dev/null | head -1 | cut -d= -f2- | tr -d '\"'\"'\"'" \
-        2>/dev/null || true)
-    if [[ -z "$piEnvMac" ]]; then
-        echo "WARN: OBD_BT_MAC not found in ${PI_PATH}/.env on the Pi — skipping rfcomm-bind install."
-        echo "      Run manually later:  sudo bash ${PI_PATH}/deploy/install-rfcomm-bind.sh <MAC>"
+    remote "sudo bash '${PI_PATH}/deploy/install-rfcomm-bind.sh' '${OBD_BT_MAC}'"
+}
+
+step_reassert_obd_mac() {
+    # US-477 / F-120: self-heal the OBDLink LX MAC on the Pi's /etc/default/obdlink.
+    # Runs on EVERY deploy (not just --init) with the same rationale as the EEPROM
+    # enforcement step: the env file can be modified out-of-band on the Pi, and a
+    # wrong MAC silently binds a dead device (the 2026-07-17 phantom incident that
+    # captured zero rows for a weekend). Re-asserts the repo-canonical $OBD_BT_MAC
+    # (SSOT deploy/addresses.sh). SURGICAL: corrects only the OBD_BT_MAC line and
+    # preserves OBD_BT_CHANNEL. Idempotent -- no-op when already canonical.
+    #
+    # $OBDLINK_ENV_FILE overrides the target path; used by the --dry-run bench
+    # path (US-477 validationCriterion 2) to demonstrate the self-heal against a
+    # fixture without touching a real /etc/default/obdlink.
+    local envFile="${OBDLINK_ENV_FILE:-/etc/default/obdlink}"
+    echo "--- Step: Re-asserting canonical OBDLink MAC ${OBD_BT_MAC} into ${envFile} (US-477 self-heal) ---"
+    if $DRY_RUN; then
+        echo "DRY-RUN would run: sudo bash ${PI_PATH}/deploy/reassert-obd-mac.sh --mac ${OBD_BT_MAC} --env-file ${envFile}"
+        # When a local fixture env file is present (bench / VC2), show the actual
+        # self-heal decision. The helper's --dry-run only REPORTS -- it never
+        # writes -- so this stays dry-run-safe.
+        if [[ -f "$envFile" ]]; then
+            bash "${SCRIPT_DIR}/reassert-obd-mac.sh" --mac "$OBD_BT_MAC" --env-file "$envFile" --dry-run || true
+        fi
         return 0
     fi
-    remote "sudo bash '${PI_PATH}/deploy/install-rfcomm-bind.sh' '${piEnvMac}'"
+    remote "sudo bash '${PI_PATH}/deploy/reassert-obd-mac.sh' --mac '${OBD_BT_MAC}' --env-file '${envFile}'"
 }
 
 step_install_eclipse_obd_unit() {
@@ -1684,6 +1709,14 @@ step_install_nm_wifi_powersave
 # standalone script is idempotent -- no-op when already correct. Runs AFTER
 # sync_tree so deploy/enforce-eeprom-power-off-on-halt.sh exists on the Pi.
 step_enforce_eeprom_power_off_on_halt
+
+# US-477 / F-120: re-assert the canonical OBDLink MAC into /etc/default/obdlink
+# on EVERY deploy so a drifted Pi (like the 2026-07-17 phantom that captured
+# zero rows) self-heals on the next routine re-deploy -- NOT gated behind
+# --init. Same posture as step_enforce_eeprom_power_off_on_halt: idempotent,
+# reasserts canonical OS-side config, runs AFTER sync_tree so
+# deploy/reassert-obd-mac.sh exists on the Pi.
+step_reassert_obd_mac
 
 # US-196: rfcomm-bind.service install needs to run AFTER sync_tree so
 # deploy/install-rfcomm-bind.sh and deploy/rfcomm-bind.service exist on the
