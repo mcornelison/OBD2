@@ -1729,7 +1729,7 @@
       "title": "Deterministic in-process reproducer for the DriveDetector close-signal defect (RED)",
       "type": "issue",
       "size": "M",
-      "status": "sprint-ready",
+      "status": "complete",
       "goal": "As the regression suite, I want an in-process harness that drives DriveDetector through the failure scenarios via synthetic RPM / engine-on-off / timing inputs (NO comms events -- Spool ruled out comms-drop; connection_log shows zero drive_id on any failure/disconnect), asserting CORRECT behavior so the drives-28/29 defect (overlap + stale-open leak) reproduces deterministically WITHOUT the car.",
       "definitionOfDone": [
         "feeds a synthetic engine-state sequence for: (a) short ~3-min drive, (b) two back-to-back drives ~1 min apart, (c) key-on AFTER a drive whose close never fired",
@@ -1760,7 +1760,9 @@
       ],
       "tasks": [],
       "createdAt": "2026-06-28",
-      "updatedAt": "2026-06-28"
+      "updatedAt": "2026-07-20",
+      "passes": true,
+      "shippedNote": "SHIPPED Sprint 47 / V0.29.1 (commit 4bd8444, ancestor of dev; passes:true). Backlog status was stale (sprint-ready) -- corrected per Atlas PRD review 2026-07-20 (git ancestry + detector.py:710 _maybeCloseOnDeadline + architecture.md \u00a710.7.1.2 all confirm). The remaining A-9 closure is the IRL car re-gate (one clean drive: one drive_id, correct close, no absorption) -- NOT a rebuild sprint."
     },
     {
       "id": "US-387",
@@ -1768,7 +1770,7 @@
       "title": "RCA: root-cause the DriveDetector close / drive-end path",
       "type": "research",
       "size": "M",
-      "status": "sprint-ready",
+      "status": "complete",
       "goal": "As the architect-gated investigation, with the reproducer in hand I want the exact mechanism for BOTH defects rendered. Opening premise (Spool, 2-table corroborated): comms-drop is RULED OUT -- the K-line is stable mid-drive; the drive never closing is purely the DriveDetector close-signal state machine not firing. Trace src/pi/obdii/drive/detector.py + orchestrator/lifecycle.py drive-start/-end/close logic.",
       "definitionOfDone": [
         "RCA names the exact code path + mechanism (file:line) for BOTH (1) drive fails to close and (2) a second drive_id opens over an open one (ids out of temporal order)",
@@ -1799,7 +1801,9 @@
       ],
       "tasks": [],
       "createdAt": "2026-06-28",
-      "updatedAt": "2026-06-28"
+      "updatedAt": "2026-07-20",
+      "passes": true,
+      "shippedNote": "SHIPPED Sprint 47 / V0.29.1 (commit f36b44d, ancestor of dev; passes:true). Backlog status was stale (sprint-ready) -- corrected per Atlas PRD review 2026-07-20 (git ancestry + detector.py:710 _maybeCloseOnDeadline + architecture.md \u00a710.7.1.2 all confirm). The remaining A-9 closure is the IRL car re-gate (one clean drive: one drive_id, correct close, no absorption) -- NOT a rebuild sprint."
     },
     {
       "id": "US-388",
@@ -1807,7 +1811,7 @@
       "title": "FIX DriveDetector close-signal reliability -- Root 2 (SHAPE PENDING RCA US-387)",
       "type": "issue",
       "size": "M",
-      "status": "sprint-ready",
+      "status": "complete",
       "goal": "As the Pi drive-lifecycle, I want the Root-2 fix so the US-386 reproducer goes GREEN. Per Atlas ruling the target behaviors are: guaranteed-close + stamp drive_id ONLY when RUNNING + gap-fence the drive_id latch (idle/KOEO rows -> NULL so a stale-open cannot absorb a later key-on). Exact change shape pending the US-387 RCA -- frozen as shape-pending, build-blocked, per A-11.",
       "definitionOfDone": [
         "US-386 reproducer GREEN",
@@ -1843,7 +1847,9 @@
       ],
       "tasks": [],
       "createdAt": "2026-06-28",
-      "updatedAt": "2026-07-15"
+      "updatedAt": "2026-07-20",
+      "passes": true,
+      "shippedNote": "SHIPPED Sprint 47 / V0.29.1 (commit 75384e6, ancestor of dev; passes:true). Backlog status was stale (sprint-ready) -- corrected per Atlas PRD review 2026-07-20 (git ancestry + detector.py:710 _maybeCloseOnDeadline + architecture.md \u00a710.7.1.2 all confirm). The remaining A-9 closure is the IRL car re-gate (one clean drive: one drive_id, correct close, no absorption) -- NOT a rebuild sprint."
     },
     {
       "id": "US-389",
@@ -1851,7 +1857,7 @@
       "title": "Root 1 closure: bake single-instance guard + RuntimeDirectory as a matched-pair tested deploy invariant + version-stamp",
       "type": "issue",
       "size": "S",
-      "status": "sprint-ready",
+      "status": "complete",
       "goal": "As the deploy path, I want Root 1 (concurrent-process dual-attribution -- mitigated out-of-band via guard enable d6d8b05 + RuntimeDirectory=eclipse-obd fae7ee7 + Pi deploy) made durable: bake the guard config flag + RuntimeDirectory as a MATCHED PAIR (Atlas C-5 -- neither ships without the other or the non-root service crash-loops) into the canonical deploy path as a tested invariant, confirm the journal spawn-source for the 06-06 double-process, and fold the out-of-band change into a proper V0.29.1 version stamp.",
       "definitionOfDone": [
         "deploy-pi.sh (or canonical deploy path) asserts BOTH pi.runtime.singleInstanceGuard.enabled=true AND RuntimeDirectory=eclipse-obd present in the deployed unit -- a test/guard fails the deploy if either is missing (matched-pair invariant, Atlas C-5)",
@@ -1893,7 +1899,9 @@
       ],
       "tasks": [],
       "createdAt": "2026-06-28",
-      "updatedAt": "2026-06-28"
+      "updatedAt": "2026-07-20",
+      "passes": true,
+      "shippedNote": "SHIPPED Sprint 47 / V0.29.1 (commit d4d7d22, ancestor of dev; passes:true). Backlog status was stale (sprint-ready) -- corrected per Atlas PRD review 2026-07-20 (git ancestry + detector.py:710 _maybeCloseOnDeadline + architecture.md \u00a710.7.1.2 all confirm). The remaining A-9 closure is the IRL car re-gate (one clean drive: one drive_id, correct close, no absorption) -- NOT a rebuild sprint."
     },
     {
       "id": "US-390",
@@ -1901,7 +1909,7 @@
       "title": "Regression lock + server-tripwire backstop confirmation",
       "type": "issue",
       "size": "S",
-      "status": "sprint-ready",
+      "status": "complete",
       "goal": "As the project, I want the US-386 reproducer locked into the regression suite/manifest permanently, and the V0.28.0 server tripwire (detect_overlapping_drives) confirmed to still flag any residual overlap -- belt-and-suspenders so a future Pi regression is still caught server-side even if the Pi fix regresses again.",
       "definitionOfDone": [
         "US-386 reproducer added to the fast suite / regression manifest (permanent)",
@@ -1928,7 +1936,9 @@
       ],
       "tasks": [],
       "createdAt": "2026-06-28",
-      "updatedAt": "2026-07-15"
+      "updatedAt": "2026-07-20",
+      "passes": true,
+      "shippedNote": "SHIPPED Sprint 47 / V0.29.1 (commit 25fcc0d, ancestor of dev; passes:true). Backlog status was stale (sprint-ready) -- corrected per Atlas PRD review 2026-07-20 (git ancestry + detector.py:710 _maybeCloseOnDeadline + architecture.md \u00a710.7.1.2 all confirm). The remaining A-9 closure is the IRL car re-gate (one clean drive: one drive_id, correct close, no absorption) -- NOT a rebuild sprint."
     },
     {
       "id": "US-391",
@@ -4891,15 +4901,15 @@
       "id": "US-474",
       "parent": "F-117",
       "type": "issue",
-      "size": "M",
-      "title": "A-17 capture-fix hardening -- typed query() contract + non-mocked connect-edge concurrency regression (R1)",
-      "goal": "As the OBD capture path, I want the live A-17 DTC-read serialization fix (4a17bc1) hardened into a TYPED contract with real concurrency coverage, so the connect-edge race F-117 missed (KOEO DTC read US-404 on the raw unlocked python-obd port vs the realtime logger -> 'disconnected while reading' -> 0 rows -> drive never arms) cannot silently regress. Per Atlas 2026-07-17 A-17 RCA: the deployed fix routes DTC reads through the serialized wrapper but via a runtime getattr fallback (to spare duck-typed test fakes) and only ran the dtc unit tests -- make it a durable typed contract + full-suite green.",
+      "size": "S",
+      "title": "A-17 capture-fix hardening -- drop the raw getattr fallback + typed query() + non-mocked connect-edge concurrency regression (R1)",
+      "goal": "As the OBD capture path, I want the live A-17 DTC-read serialization fix (4a17bc1) hardened so the connect-edge race F-117 missed cannot silently regress. Per Atlas 2026-07-20 re-scope (verified): the serialized query() wrapper already exists on ObdConnection and the ObdConnectionLike Protocol already exists (dtc_client.py:137, declaring isConnected()+obd) -- so this is NOT greenfield. The real gap: dtc_client.py:353-354 still keeps a runtime `getattr(connection,'query',None)` fallback to the RAW unlocked `connection.obd.query()`, and the non-mocked connect-edge concurrency regression (F-117 GAP-1) is missing.",
       "definitionOfDone": [
-        "add query() to the ObdConnectionLike Protocol (src/pi/obdii/dtc_client.py:137) so serialized access is a TYPED contract; replace the runtime `getattr(connection,'query',None)` (dtc_client.py:353) with the typed call; update the DTC test fakes to satisfy the Protocol",
+        "remove the runtime `getattr(connection,'query',None)` fallback (dtc_client.py:353-354) so DTC reads ALWAYS go through the serialized query() wrapper -- the raw `obd.query()` fallback is the hole",
+        "add query() as a typed member of the ObdConnectionLike Protocol (dtc_client.py:137) so the serialized call is type-checked (mypy), and update the DTC test fakes to satisfy it (NOTE per Atlas: the wrapper+Protocol infra already exist -- this is a one-method typed-contract close, not building the contract)",
         "add a NON-MOCKED regression test for connect-edge concurrency: a realtime-logger read + a KOEO DTC read on ONE connection object serialize through the _ioLock with no interleave (the exact GAP-1 F-117 missed) -- assert no 'disconnected while reading' and no lost reads",
-        "full Pi test suite green: pytest tests/pi -m 'not slow'",
-        "mypy typecheck passes on the touched Pi modules",
-        "if load-bearing, specs/architecture.md OBD-capture / connection-lock section updated in-sprint (Atlas design-gate DoD)"
+        "full Pi test suite green: pytest tests/pi -m 'not slow'; mypy passes on touched modules",
+        "if load-bearing, specs/architecture.md OBD-capture / connection-lock section updated in-sprint"
       ],
       "conditionalOutcomes": [
         "if adding query() to the Protocol breaks duck-typed callers beyond the DTC fakes, enumerate + update them to the typed contract -- do NOT re-introduce a getattr fallback (that fallback IS the hole this closes)"
@@ -4910,8 +4920,12 @@
           "outcome": "GREEN -- logger + DTC reads serialize, no interleave, no lost reads"
         },
         {
-          "action": "locally revert the _ioLock serialization + re-run the new test",
-          "outcome": "RED -- proves the test actually guards the race"
+          "action": "locally revert the _ioLock serialization + re-run",
+          "outcome": "RED -- proves the test guards the race"
+        },
+        {
+          "action": "grep dtc_client.py for the getattr('query') fallback after the change",
+          "outcome": "gone -- DTC reads have no raw unlocked path"
         },
         {
           "action": "pytest tests/pi -m 'not slow'",
@@ -4930,7 +4944,7 @@
       "tasks": [],
       "status": "sprint-ready",
       "createdAt": "2026-07-19",
-      "updatedAt": "2026-07-19"
+      "updatedAt": "2026-07-20"
     },
     {
       "id": "US-475",
@@ -5002,35 +5016,38 @@
     {
       "id": "US-477",
       "parent": "F-120",
-      "type": "issue",
+      "type": "normal",
       "size": "XS",
-      "title": "Fix stale OBDLink MAC repo default (landmine) -- addresses.sh -> live 00:04:3C:84:15:6B (R2c)",
-      "goal": "As the deploy config, I want the repo's default OBDLink MAC to match the LIVE dongle so a config regen cannot silently re-break capture. deploy/addresses.sh:50 still defaults OBD_BT_MAC to the OLD DEAD 00:04:3E:85:0D:FB; the live dongle (post-factory-reset) is 00:04:3C:84:15:6B. If install-rfcomm-bind.sh regenerates /etc/default/obdlink from the repo default it reverts the MAC + breaks capture. Atlas fixed the Pi's live config out-of-band; the repo default is the remaining landmine.",
+      "title": "Guard test: pin OBDLink MAC to live 00:04:3E:85:0D:FB / name 'OBDLink LX' (anti-inversion)",
+      "goal": "As the deploy config, I want a guard test pinning the canonical OBDLink MAC to 00:04:3E:85:0D:FB and broadcast name 'OBDLink LX', so a future edit can't silently INVERT it. ORIGIN: the prior US-477 (from Atlas's 2026-07-19 routing error) would have repointed addresses.sh to a PHANTOM device 00:04:3C:84:15:6B and permanently re-broken capture. Ground truth (Atlas 2026-07-20, CIO's live-paired phone + repo audit): the MAC is 00:04:3E:85:0D:FB everywhere in product; a BT MAC is burned-in hardware and does NOT change on factory reset; 00:04:3C:... was a mis-ID.",
       "definitionOfDone": [
-        "deploy/addresses.sh:50 OBD_BT_MAC default updated 00:04:3E:85:0D:FB -> 00:04:3C:84:15:6B",
-        "sweep the old MAC repo-wide (config.json pi.bluetooth.macAddress -- addresses.sh comment says it mirrors that -- + any other literal); update live-config paths to the live MAC or annotate a given occurrence as historical",
-        "confirm install-rfcomm-bind.sh regen now emits the LIVE MAC (dry-run / inspect)",
-        "MEMORY.md OBDLink one-liner MAC updated to 00:04:3C:84:15:6B + note the factory-reset-changes-MAC caveat"
+        "a test asserts deploy/addresses.sh OBD_BT_MAC default == 00:04:3E:85:0D:FB (+ config.json pi.bluetooth.macAddress if present) and, if surfaced, the broadcast name 'OBDLink LX'",
+        "complements tests/lint/test_no_hardcoded_addresses.py (value-pin vs no-hardcode) -- place alongside it",
+        "no repo change repoints the MAC to 00:04:3C:84:15:6B (the phantom) -- the guard would fail if it did",
+        "test green in the pi/lint suite"
       ],
-      "conditionalOutcomes": [
-        "if multiple config sources hold the MAC and disagree, make the repo consistent on the LIVE MAC now (landmine first) + flag the MAC-SSOT (single source) question to Atlas as a design note"
-      ],
+      "conditionalOutcomes": [],
       "validationCriteria": [
         {
-          "action": "grep the old MAC repo-wide after the fix + dry-run install-rfcomm-bind.sh",
-          "outcome": "no live-config path emits the old MAC; regen produces 00:04:3C:84:15:6B"
+          "action": "flip addresses.sh OBD_BT_MAC to 00:04:3C:84:15:6B locally + run the guard",
+          "outcome": "test RED (inversion caught)"
+        },
+        {
+          "action": "run the guard against the current repo",
+          "outcome": "GREEN -- MAC pinned to 00:04:3E:85:0D:FB"
         }
       ],
       "deps": [],
       "sourceRefs": [
-        "A-17",
         "F-120",
-        "atlas-dongle-saga-2026-07-17"
+        "atlas-prd-review-2026-07-20",
+        "correction-of-inverted-us477"
       ],
       "tasks": [],
       "status": "sprint-ready",
       "createdAt": "2026-07-19",
-      "updatedAt": "2026-07-19"
+      "updatedAt": "2026-07-20",
+      "correctionNote": "Original US-477 (repoint ...3E... -> ...3C...) was INVERTED and DROPPED per Atlas PRD review 2026-07-20. Verified: ...3C... appears ONLY in backlog.json (this story's old DoD), zero in src/ or deploy/; ...3E... is the live MAC across 18 product files + CIO's paired phone. Repurposed to a guard test."
     },
     {
       "id": "US-478",

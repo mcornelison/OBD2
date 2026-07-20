@@ -9,9 +9,9 @@ preDoneStories: [US-471]  # PM-executed directly 2026-07-16 (CIO-directed); see 
 forksFrom: dev @ (recorded at prd_to_sprint.py conversion)
 sprintJsonPath: offices/ralph/sprint.json
 epic: E-OPS
-feature: F-119 (Deploy-gate CI-green enforcement + CI hardening) + F-102 (hostname convergence) + F-120 (OBDLink MAC landmine, US-477)
+feature: F-119 (Deploy-gate CI-green enforcement + CI hardening) + F-102 (hostname convergence) + F-120 (US-477 MAC guard test)
 theme: Housekeeping -- make the migration-drift CI actually gate the deploy + CI/hostname hygiene
-atlasReview: "PENDING -- routed 2026-07-15 (inbox 2026-07-15-from-marcus-sprint59-60-prd-review-request.md)"
+atlasReview: "PASS w/ correction 2026-07-20. US-471 done, US-472/473 sound. BLOCK on original US-477 (inverted MAC) -- DROPPED + repurposed to a MAC guard test (verified: repo already correct at ...3E...). Inbox 2026-07-20-from-atlas-prd-review-v0.29.13-14-15-corrections.md."
 ---
 
 # PRD: V0.29.13 -- Deploy-gate CI-green enforcement + CI/hostname hygiene
@@ -38,7 +38,7 @@ The V0.29.12 PRD closed with an explicit **coherence follow-up** (its §"Coheren
 | **US-471** | housekeeping | S | F-119 | Wire the CI-green gate into `/sprint-deploy-pm` (Option A): Phase 3.5 opens a PR into `dev`, migration-drift CI runs, merge gates on green **for the exact HEAD SHA** (run-not-trust, US-469 principle). Deploy-from-`dev` becomes CI-green by construction. Path-filter vacuous-pass documented so docs-only sprints aren't blocked. |
 | **US-472** | housekeeping | XS | F-119 | Pin `migration-drift.yml` actions to their Node24 majors (checkout@v4→v5, setup-python@v5→v6, upload-artifact@v4→v5); re-run green; clear the Node20 deprecation warnings. |
 | **US-473** | housekeeping | S | F-102 | **Prereq-gated:** after the CIO renames the Pi OS host `Chi-Eclips-Tuner`→`chi-eclipse-01` (hostnamectl — a CIO action-item, not a Ralph task), sweep code/config/docs/SSH to converge on the canonical name; close B-102/F-102. |
-| **US-477** | issue | XS | F-120 | ⚠️ **Landmine (Atlas R2c):** `deploy/addresses.sh:50` defaults `OBD_BT_MAC` to the **old dead** `00:04:3E:85:0D:FB`; live dongle is `00:04:3C:84:15:6B`. If `install-rfcomm-bind.sh` regenerates config from the repo default it reverts the MAC and re-breaks capture. Update the default + sweep + fix MEMORY.md. Pure repo/config — no car. |
+| **US-477** | normal | XS | F-120 | **Guard test (was an inverted-MAC landmine — CORRECTED 2026-07-20).** Atlas's original R2c had the MAC backwards: the live MAC is `00:04:3E:85:0D:FB` (burned-in; CIO's paired phone confirms), and `00:04:3C:84:15:6B` was a phantom mis-ID appearing only in planning notes. The repo is already correct. Repurposed to a **guard test pinning the MAC to `…3E…` / name `OBDLink LX`** so a future inversion is caught. Pure test — no car. |
 
 ## Notes / sequencing
 

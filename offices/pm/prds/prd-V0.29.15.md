@@ -10,7 +10,7 @@ sprintJsonPath: offices/ralph/sprint.json
 epic: E-OPS
 feature: F-120 (OBDLink LX / Bluetooth connectivity reliability)
 theme: Make the OBDLink LX dongle re-pairable and self-recovering (Atlas R2a/R2b) so capture survives BT drops + factory resets
-atlasReview: "PENDING -- routed 2026-07-19 (inbox 2026-07-19-from-marcus-r1r3-groomed-ack.md)"
+atlasReview: "SOUND 2026-07-20 (inbox 2026-07-20-from-atlas-prd-review...). US-475/476 correctly scoped (both read MAC from config -> pick up correct ...3E...). Design-fork ANSWER: on-demand (do NOT scope discovery-redesign now -- MAC is stable/burned-in). SEQUENCING FLAG: F-120 is all Bluetooth-reliability -> the wired/USB-adapter decision should be made BEFORE investing here (a wired adapter eliminates the whole BT failure class)."
 ---
 
 # PRD: V0.29.15 -- OBDLink LX / Bluetooth connectivity reliability (F-120)
@@ -39,9 +39,13 @@ The dongle went catatonic twice in the live session, and two gaps make that unre
 | **US-475** | issue | S | **R2a** — fix `pair_obdlink.sh` for Trixie bluez (`[bluetoothctl]>` prompt; tolerate legacy `[bluetooth]#`); lift the working handling from the Pi's `~/atlas_pair.py`; read MAC from config (pairs with US-477). Restores the only re-pair path. |
 | **US-476** | issue | M | **R2b** — real auto-recovery: after N consecutive read failures do a full BT disconnect + re-page (`bluetoothctl connect`), not just an rfcomm rebind; bounded/backed-off; log once per episode; graceful when the dongle is simply absent. |
 
-## Design fork flagged to Atlas (US-476)
+## Design fork — ANSWERED (Atlas 2026-07-20): on-demand
 
-Atlas noted the MAC changes on every factory reset → a hardcoded literal is fragile, and a **discovery/pairing-based** approach may deserve its own design story. US-476 is deliberately scoped to the **N-failure → re-page** slice; if robust recovery turns out to need MAC re-discovery, the story STOPs and routes the discovery redesign to Atlas as a separate design story (no scope creep). Flagged in the story's conditionalOutcomes + in the routing note.
+US-476 stays scoped to the **N-failure → re-page** slice. Atlas: **do NOT scope the discovery-redesign now** — the "MAC changes on factory reset" premise was part of his phantom-device error; a BT MAC is **burned-in and stable** (`00:04:3E:85:0D:FB`, CIO's paired phone). A config-sourced fixed MAC is fine; only escalate to a discovery redesign if US-476 genuinely can't recover without re-discovery (its conditionalOutcome already routes that to Atlas).
+
+## ⚠️ Decide BEFORE building this sprint: wired vs Bluetooth (Atlas flag)
+
+F-120 is **entirely Bluetooth-reliability** work. The standing recommendation (CIO's + Atlas's) is a **wired/USB OBD adapter** to eliminate the whole BT failure class. **If the CIO goes wired, most of V0.29.15 is wasted.** So the wired-vs-BT decision should be made before investing in F-120 — surfaced to the CIO as an open decision.
 
 ## Notes / sequencing
 - Rule-13 retired → Atlas's PRD review IS the gate.

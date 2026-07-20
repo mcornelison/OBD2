@@ -1,8 +1,8 @@
 ---
 sprint: 47
 version: V0.29.1
-status: superseded
-supersededBy: prd-V0.29.14.md (2026-07-15, Session 55 -- same F-107 chain, version + scope refreshed to the 5-story 386..390; US-367/391/392/379 split out)
+status: shipped
+shippedNote: "SHIPPED Sprint 47/V0.29.1 -- US-386..390 (F-107 DriveDetector chain) merged to dev, passes:true (commits 4bd8444/f36b44d/75384e6/d4d7d22/25fcc0d). NOT superseded/undelivered -- this is the shipped record. My 2026-07-15 'superseded' mark was a bookkeeping slip corrected 2026-07-20 per Atlas PRD review. Remaining A-9 closure = IRL car re-gate, not a rebuild."
 createdAt: 2026-06-28
 createdBy: Marcus (PM)
 selectedStories: [US-386, US-387, US-388, US-389, US-390, US-367, US-391, US-392, US-379]
