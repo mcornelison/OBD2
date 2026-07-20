@@ -1,3 +1,24 @@
+> # ⛔ SUPERSEDED (2026-07-20) — do NOT act on this finding
+> **Both load-bearing conclusions below were later DISPROVEN. Superseded by
+> `findings/2026-07-17-CORRECTED-rca-dtc-read-bypasses-iolock-kills-capture.md`.**
+>
+> 1. **Verdict "hardware/dead-SPP, NOT software" is WRONG — the root cause was SOFTWARE**
+>    (`dtc_client.py` DTC reads bypassed F-117's `_ioLock`; the CIO insisted it was software and
+>    was right). A raw single-threaded read got **6/6 live RPM on the real dongle** the service
+>    failed on — the decisive software proof.
+> 2. **"Factory reset changed the BT MAC `00:04:3E:85:0D:FB` → `00:04:3C:84:15:6B`" is WRONG.**
+>    A BT MAC is burned into hardware — a factory reset does NOT change it. `…3C…` was a
+>    **phantom / stranger's device** I mis-identified in the marathon. The **real OBDLink LX MAC
+>    is `00:04:3E:85:0D:FB`** (broadcast name `OBDLink LX`), triple-confirmed 2026-07-20: the CIO's
+>    phone-paired Device-details screen, MEMORY.md, and every product file in the repo
+>    (`addresses.sh`, `.env.production.example`, all tests/docs). **Any config or story that
+>    repoints to `…3C…` would break capture — do not.** (This mistake propagated into my
+>    2026-07-19 PM routing note and PM backlog US-477; both corrected.)
+>
+> _Original 2026-07-17 text preserved below verbatim as the point-in-time record._
+
+---
+
 # RCA — OBD capture failure on 2026-07-17 engine-on test = OBDLink LX dead-SPP/BT link (NOT software)
 
 **Context:** CIO ran an engine-on test on V0.29.11 (the deployed stack carrying F-117/A-17,
