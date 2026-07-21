@@ -8,7 +8,7 @@
       "status": "unassigned",
       "taskid": "",
       "lastCheck": "2026-07-20",
-      "note": "Sprint 58 (V0.29.12) closed; US-465..470 shipped, US-470 CI-enablement resolved (BL-022) via PR #3. Ready for Sprint 60 (V0.29.14 capture-restore). Prior verbose Sprint-58 close-note removed 2026-07-20 during a JSON-validity repair (unescaped quote had corrupted this file)."
+      "note": "Sprint 60 (V0.29.14) COMPLETE -- US-474 (A-17 DTC-read serialization hardening) + US-477 (OBD MAC integrity guard + deploy self-heal) + US-479 (pre-drive OBD capture green-light) all passes:true. Note compacted 2026-07-20 during a JSON-validity repair (Ralph's verbose note had an unescaped quote that corrupted this file -- recurring pattern; TODO harden the note writer to escape quotes)."
     },
     {
       "id": 2,

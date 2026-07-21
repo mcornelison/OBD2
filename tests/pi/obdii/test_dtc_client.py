@@ -64,6 +64,13 @@ class _FakeConnection:
         self._connected = connected
         self.obd = SimpleNamespace(query=self._query)
 
+    def query(self, command: Any) -> Any:
+        # US-474: DtcClient routes DTC reads through the serialized query()
+        # member now (the raw .obd.query fallback was removed), so the fake
+        # exposes query() to satisfy the ObdConnectionLike contract. Delegates
+        # to the same _query routing the raw path used.
+        return self.obd.query(command)
+
     def _query(self, cmd: Any) -> Any:
         name = cmd if isinstance(cmd, str) else getattr(cmd, "name", str(cmd))
         resp = self._responses.get(name)
