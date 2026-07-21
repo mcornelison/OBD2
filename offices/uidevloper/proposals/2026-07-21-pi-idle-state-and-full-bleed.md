@@ -4,11 +4,19 @@
 |---|---|
 | **Author** | Iris (UI/UX) |
 | **Date** | 2026-07-21 |
-| **Status** | DRAFT — design-before-build (CIO: Iris-designs-then-reviews-before-Ralph) |
+| **Status** | REVIEWED — CIO decisions locked 2026-07-21 (see §0.1); build-ready pending Atlas data-contract nod |
 | **Companion** | `proposals/2026-07-21-pi-idle-state-and-full-bleed.html` (interactive) |
 | **Palette** | `specs/UI/tokens.css` (SSOT) |
 | **Consumes** | the shipped `system-status`, `battery-health`, `dtc` state files — **no new hardware polling** |
 | **Feeds** | the UI/UX re-groom sprint (`prd-uiline-draft.md`, re-grounded 2026-07-21) |
+
+## 0.1 CIO decisions — locked 2026-07-21 (live artifact review)
+1. **Full-bleed = FLUID** (§2). Not letterbox, not fill — the layout reflows to fill the
+   viewport with relative units. Truest resolution-independence; accept the CSS churn.
+2. **Light sensor = a real DATA FEED into the display** (§1.5). Auto-dim consumes a live lux
+   reading (pure consumer of a state file), **not** a fixed schedule. The brightness curve is
+   mine; the lux source is the EDR light sensor (TSL2591, W-9). Live feed is EDR-gated → the
+   display ships a documented fallback until the lux state file exists.
 
 ## 0. Why these two, why now
 
@@ -77,12 +85,24 @@ display *policy over facts* (allowed), not data acquisition.
 > the display AND-ing two fields? My lean: **emitter-provided** long-term, display-derived
 > acceptable near-term (no new source needed). Routing to Atlas.
 
-### 1.5 Light-sensor auto-dim (ties to W-11 / TSL2591)
-The idle card is the natural first consumer of the light-sensor auto-dim: parked-at-night →
-dim the whole surface (a brightness multiplier on the root). The **dim floor must never hide
-a real active alarm** — a STOP ribbon keeps its minimum legible brightness. Curve is mine;
-lux source is the EDR light sensor (EDR-gated — near-term the idle card just ships a fixed
-dim-when-idle default, live lux later).
+### 1.5 Light-sensor auto-dim — a DATA FEED (CIO-confirmed 2026-07-21)
+Display brightness is **driven by a live lux reading**, not a clock schedule. The whole surface
+is a pure consumer (SSOT): the EDR light sensor (TSL2591, W-9) → the canonical light reader →
+a `light` state file → the display applies a brightness multiplier on the root. The display
+**never reads the sensor itself**.
+
+- **Contract (proposed; routes to Atlas):** the display reads `light.lux` (+ its freshness) from
+  a state file the light reader owns — same pattern as every other card. Brightness =
+  `clamp(MIN, curve(lux), 1.0)`. The **curve is mine** (UI); the **lux value is the EDR reader's**
+  (owner = the single dedicated reader, per Atlas's DELTA-2 pure-consumer ruling).
+- **Alarm floor (load-bearing):** `MIN` never drops the screen below a legible threshold while a
+  **real active alarm** (STOP ribbon/takeover) is present — you can dim a calm idle screen, never
+  a damage-in-progress warning. This floor is a UI guard, independent of the lux value.
+- **Honest fallback (near-term, EDR-gated):** the live lux feed lands with the EDR sensor build
+  (W-9, ~mid-July+). Until the `light` state file exists / is fresh, the display uses a fixed
+  default brightness and **shows no fabricated "auto" behavior** — it does not pretend to be
+  reacting to light it can't read (honest instrument). The dim seen in the mockup is that curve
+  previewed.
 
 ---
 
@@ -99,16 +119,24 @@ layout does not fill a 1080p output.
 | **Fill** (non-uniform) | `scaleX(100vw/480) scaleY(100vh/320)` | fills 100% | only correct **if the panel scaler squishes 1080p back to 3:2** (cancels the stretch) — **must be IRL-confirmed** |
 | **Fluid** (reflow) | drop the fixed box; relative units + `clamp()` typography fill the viewport | truest resolution-independence | most CSS churn |
 
-**Recommendation:**
-1. **Ship the letterbox transform now** — smallest, safest change; preserves the exact,
-   already-gated 480×320 layout; works at any resolution. One wrapper + a resize handler.
-2. **IRL-check the real panel's scaler** — if it stretches 1080p onto a 3:2 physical panel,
-   switch to **fill** (a one-line change) for edge-to-edge with correct aspect.
-3. **Fluid is the long-term ideal** — schedule as a follow-up once the layout is otherwise
-   stable, not in the same sprint as the P0 data fix.
+**DECISION (CIO 2026-07-21): FLUID.** The layout reflows to fill the viewport — not a scaled
+480×320 box. Letterbox/fill are retired as candidates (kept above only to document the reasoning).
 
-Either transform approach also requires changing the viewport meta to
-`width=device-width, initial-scale=1` so the stage measures the real output.
+**Build strategy for Ralph (fluid):**
+1. Change the viewport meta to `width=device-width, initial-scale=1` (drop the hard 480×320).
+2. Make the root a viewport-proportional type/space base so everything scales *and* reflows:
+   `:root{ font-size: clamp(14px, 2.6vmin, 30px); }` — then re-express `dashboard.css`'s fixed
+   `px` (topbar 28px, paddings, tile/font sizes) in **rem/em** off that root.
+3. Structure fills with `%`/`vh`/flex-grow (already mostly true: `#carousel top:28px bottom:24px`,
+   `.card flex:0 0 100%`). Convert the fixed chrome heights (topbar/dots/ribbon) to rem.
+4. **Preserve physical minimums:** tap targets `min-height: max(40px, 6vmin)` so a large viewport
+   never shrinks a target below the S-2 40px floor, and a small one never blows it up.
+5. `text-wrap: balance` on card headlines; keep the mono face.
+
+**Cost note (grooming):** this is the largest lift of the two — it touches most of
+`dashboard.css`. It does *not* depend on the P0 data fix, but it should be its **own story** so
+the data-starvation P0 isn't blocked behind a CSS refactor. Validate on the real 1080p-output Pi
+(a fluid layout is only truly confirmed on-hardware).
 
 ---
 
@@ -133,17 +161,26 @@ This design uses the **SSOT values**. Reconciling `dashboard.css` → tokens is 
    card leaves idle without a manual swipe. ✅/❌
 5. **Real alarm still wins:** a genuine stored STOP code shows the ribbon/takeover while idle
    is displayed (idle never suppresses a real fault). ✅/❌
-6. **Full-bleed:** on a 1080p-output Pi the UI fills the panel (no corner-render); typography
-   legible + tap targets ≥40px at the physical panel size. ✅/❌
+6. **Full-bleed (fluid):** on a 1080p-output Pi the UI fills the panel edge-to-edge with no
+   corner-render and no letterbox bars; text stays legible and every tap target is ≥40px
+   physical at the panel size. Confirmed on the real Pi, not just a desktop browser. ✅/❌
+7. **Light feed + alarm floor:** brightness tracks a live `light.lux` reading when the state
+   file is fresh; when it's absent/stale the screen holds a fixed default (no fake "auto"); and
+   dimming never takes a STOP alarm below its legible floor. ✅/❌
 
 ---
 
 ## 5. Routing / next steps
-- **Atlas (design-gate):** idle-detection SSOT question (§1.4 — emitter flag vs display-derived);
-  full-bleed transform is presentation-only (likely no gate) but confirm; token reconciliation (§3).
+- **Atlas (design-gate):** (a) idle-detection SSOT (§1.4 — emitter `idle` flag vs display-derived);
+  (b) **NEW — the `light` lux state-file contract** (§1.5): the display consumes `light.lux` from
+  the EDR light reader (owner = the single dedicated reader, per his DELTA-2 ruling) — bless the
+  state-file seam + fallback-when-absent; (c) token reconciliation (§3). **Full-bleed is now fluid
+  = presentation-only, no data contract → no gate** (confirming only).
 - **Spool:** none required — idle consumes his battery-health/DTC semantics unchanged; the
   dim-floor-must-not-hide-alarm rule is a UI guard, not a threshold.
-- **Ralph:** builds as a new home card + the transform wrapper, **after** CIO/Atlas review
-  (design-before-build). Pairs with the P0 data-starvation story (idle is the calm backdrop
-  once the emitters write).
-- **Marcus:** folds into the re-groomed UI/UX sprint (`prd-uiline-draft.md`).
+- **Ralph:** builds (after Atlas nod) as: (1) fluid conversion of `dashboard.css` (§2 strategy);
+  (2) the idle home card; (3) the brightness consumer of the `light` state file (+ fixed fallback).
+  Idle pairs with the P0 data-starvation story (calm backdrop once the emitters write); fluid is
+  its own story (a CSS refactor, not blocked behind P0).
+- **Marcus:** folds into the re-groomed UI/UX sprint (`prd-uiline-draft.md`) — 3 stories above +
+  the P0 data fix + the Rule-10 token reconciliation.
