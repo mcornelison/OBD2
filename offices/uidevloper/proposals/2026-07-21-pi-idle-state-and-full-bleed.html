@@ -1,0 +1,258 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Iris · Pi Idle-State Card + Full-Bleed Scaling — 2026-07-21</title>
+<style>
+/* ============================================================================
+ * Iris design mockup — Pi touch-carousel: (1) calm idle-state home card,
+ * (2) full-bleed viewport scaling. Palette = specs/UI/tokens.css verbatim
+ * (reconciled toward the SSOT: --green-ok #35C46A, not the dist drift #2ECC71).
+ * Self-contained (CIO visual-review preference). NOT production code — Ralph
+ * builds; this is the design of record's visual companion.
+ * ==========================================================================*/
+:root{
+  --bg:#000; --surface:#111111; --surface-2:#16181d;
+  --text-primary:#DDDDDD; --text-secondary:#888888; --text-tertiary:#666666;
+  --amber-warn:#FFC400; --green-ok:#35C46A; --neutral-chip-bg:#2a2f37;
+  --red-light:#F61D2D;
+  --font-mono:ui-monospace,Menlo,Consolas,monospace;
+}
+*{box-sizing:border-box;}
+body{margin:0;background:#0b0d10;color:var(--text-primary);font-family:var(--font-mono);
+  padding:24px;line-height:1.5;}
+h1{font-size:18px;margin:0 0 4px;letter-spacing:.04em;}
+.sub{color:var(--text-secondary);font-size:12px;margin:0 0 20px;}
+h2{font-size:13px;text-transform:uppercase;letter-spacing:.1em;color:var(--text-secondary);
+  border-bottom:1px solid #23262c;padding-bottom:6px;margin:28px 0 14px;}
+.controls{display:flex;flex-wrap:wrap;gap:8px;margin:12px 0 18px;align-items:center;}
+button.ctl{font-family:var(--font-mono);font-size:12px;padding:7px 12px;border-radius:5px;
+  border:1px solid #2c3038;background:#15181d;color:var(--text-primary);cursor:pointer;}
+button.ctl.on{border-color:var(--green-ok);color:var(--green-ok);}
+.note{color:var(--text-tertiary);font-size:11px;}
+.legend{font-size:11px;color:var(--text-secondary);margin:6px 0 0;}
+.row{display:flex;gap:26px;flex-wrap:wrap;align-items:flex-start;}
+.col-label{font-size:11px;color:var(--text-tertiary);text-transform:uppercase;
+  letter-spacing:.08em;margin:0 0 8px;}
+
+/* ---- The "device viewport" wrapper: the FULL-BLEED demonstrator -----------
+ * Outer = a simulated HDMI output surface. #stage = the 480x320 design space.
+ * The three modes show how that design space maps onto the output. ----------*/
+.output{position:relative;background:#000;border:1px solid #2c3038;overflow:hidden;
+  border-radius:4px;}
+.output .res-tag{position:absolute;top:4px;right:6px;font-size:9px;color:#3a3f47;z-index:99;}
+#stage-wrap{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;}
+#stage{width:480px;height:320px;position:relative;transform-origin:center center;
+  background:var(--bg);overflow:hidden;box-shadow:0 0 0 1px #23262c;}
+.mini-stage{width:480px;height:320px;position:relative;background:var(--bg);overflow:hidden;}
+
+/* ---- Shared card chrome (mirrors dashboard.css) --------------------------- */
+.topbar{position:absolute;top:0;left:0;right:0;height:28px;display:flex;align-items:center;
+  gap:10px;padding:0 10px;background:var(--surface);font-size:13px;z-index:10;}
+.topbar .glyph{color:var(--text-secondary);letter-spacing:.04em;}
+.topbar .glyph.ok{color:var(--green-ok);} .topbar .glyph.amber{color:var(--amber-warn);}
+.vchip{margin-left:auto;color:var(--text-tertiary);font-size:10px;letter-spacing:.06em;}
+.menu-aff{color:var(--text-secondary);font-size:20px;line-height:1;}
+.dots{position:absolute;bottom:0;left:0;right:0;height:24px;display:flex;justify-content:center;
+  align-items:center;gap:8px;}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--text-tertiary);}
+.dot.active{background:var(--text-primary);}
+.cardarea{position:absolute;top:28px;bottom:24px;left:0;right:0;padding:14px 16px;
+  display:flex;flex-direction:column;overflow:hidden;}
+.card-title{margin:0 0 8px;font-size:13px;font-weight:600;color:var(--text-secondary);
+  text-transform:uppercase;letter-spacing:.08em;}
+
+/* ---- BEFORE: the wall-of-NA (current System Status at idle) --------------- */
+.tile{display:flex;flex-direction:column;padding:5px 0;border-bottom:1px solid var(--surface);}
+.tile:last-child{border-bottom:0;}
+.tile-label{font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--text-secondary);}
+.tile-value{font-size:15px;font-weight:600;color:var(--text-primary);}
+.tile-value.na{color:var(--text-tertiary);font-style:italic;font-weight:400;}
+.tile-detail{font-size:11px;color:var(--text-tertiary);}
+
+/* ---- AFTER: the calm idle-state card -------------------------------------- */
+.idle{flex:1;display:flex;flex-direction:column;}
+.idle-head{display:flex;align-items:baseline;justify-content:space-between;}
+.idle-wordmark{font-size:11px;letter-spacing:.14em;color:var(--text-tertiary);text-transform:uppercase;}
+.idle-clock{font-size:11px;color:var(--text-tertiary);letter-spacing:.04em;}
+.idle-hero{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;}
+.idle-hero .mark{width:26px;height:26px;opacity:.5;transform:rotate(45deg);
+  border:2px solid var(--text-secondary);border-radius:5px;}
+.idle-state{font-size:26px;font-weight:700;letter-spacing:.16em;color:var(--text-secondary);}
+.idle-substate{font-size:12px;color:var(--text-tertiary);letter-spacing:.03em;}
+.idle-summary{display:flex;flex-direction:column;gap:0;border-top:1px solid var(--surface);}
+.sum-row{display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid var(--surface);}
+.sum-row:last-child{border-bottom:0;}
+.sum-label{font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--text-secondary);
+  min-width:66px;}
+.sum-value{font-size:12px;color:var(--text-primary);flex:1;}
+.sum-value .dim{color:var(--text-tertiary);}
+.sum-value .ok{color:var(--green-ok);}
+.idle-foot{font-size:10px;color:var(--text-tertiary);text-align:center;padding-top:6px;letter-spacing:.04em;}
+.dimmed{filter:brightness(.62);transition:filter .4s;}
+
+.pill{display:inline-block;font-size:9px;padding:1px 6px;border-radius:8px;background:var(--neutral-chip-bg);
+  color:var(--text-secondary);letter-spacing:.05em;}
+.callouts{max-width:900px;}
+.callouts li{margin:6px 0;font-size:13px;}
+code{background:#15181d;padding:1px 5px;border-radius:3px;color:var(--green-ok);font-size:12px;}
+.warn{color:var(--amber-warn);}
+</style>
+</head>
+<body>
+<h1>Pi Touch-UI — Idle-State Card + Full-Bleed Scaling</h1>
+<p class="sub">Iris · 2026-07-21 · design companion to
+  <code>proposals/2026-07-21-pi-idle-state-and-full-bleed.md</code> · palette = <code>specs/UI/tokens.css</code></p>
+
+<!-- ===================== FULL-BLEED DEMONSTRATOR ===================== -->
+<h2>1 · Full-bleed scaling — the same 480×320 design, filling any output</h2>
+<div class="controls">
+  <span class="note">Output res:</span>
+  <button class="ctl on" data-res="native">480×320 native</button>
+  <button class="ctl" data-res="letterbox">1080p · letterbox (uniform)</button>
+  <button class="ctl" data-res="fill">1080p · fill (stretch)</button>
+  <button class="ctl" data-res="fluid">1080p · fluid (reflow)</button>
+</div>
+<div id="output" class="output" style="width:480px;height:320px;">
+  <span class="res-tag" id="res-tag">480×320</span>
+  <div id="stage-wrap"><div id="stage"><!-- card injected --></div></div>
+</div>
+<p class="legend" id="fb-legend"></p>
+
+<!-- ===================== IDLE CARD: BEFORE / AFTER ===================== -->
+<h2>2 · Idle-state card — what the carousel shows when the car is parked</h2>
+<div class="controls">
+  <button class="ctl" id="tgl-view" data-view="after">Showing: AFTER (idle card)</button>
+  <button class="ctl" id="tgl-dim" data-dim="0">Light sensor: bright</button>
+  <span class="note">The demonstrator above renders whichever is selected here.</span>
+</div>
+<div class="row">
+  <div>
+    <p class="col-label">Before — current System Status @ idle (reads as broken)</p>
+    <div class="output" style="width:480px;height:320px;"><div id="stage-before" class="mini-stage"></div></div>
+  </div>
+  <div>
+    <p class="col-label">After — calm idle home card (honest, not alarming)</p>
+    <div class="output" style="width:480px;height:320px;"><div id="stage-after" class="mini-stage"></div></div>
+  </div>
+</div>
+
+<h2>3 · Design rules baked in</h2>
+<ul class="callouts">
+  <li><b>Honest idle, not fake-healthy.</b> Idle shows <span class="pill">STANDBY</span> in neutral grey — never green "OK" (nothing was measured) and never amber/red (nothing is wrong). Green appears <i>only</i> on the battery line, which is a real recent reading carrying its "checked Nd ago" age.</li>
+  <li><b>Absence ≠ clean, absence ≠ fault.</b> The Faults line reads <code>"DTC not read since key-off"</code> when there's no key-on read — <span class="warn">not</span> "No codes" (false all-clear) and <span class="warn">not</span> "Check Engine" (the phantom). A genuine stored STOP/WATCH still surfaces via the existing ribbon/takeover on every card.</li>
+  <li><b>Idle is derived from existing SSOT, not invented.</b> Idle = <code>system-status.source.obd.available===false</code> <b>AND</b> <code>drive.state==="idle"</code>. Display policy over facts the emitters already write — no new hardware polling (SSOT-design-pattern). When OBD wakes / a drive starts, the carousel auto-advances off idle to the live view.</li>
+  <li><b>Idle = the parked twin of the (EDR-gated) live home card (W-11).</b> Same home slot: parked→this idle card; driving→the future live instrument. No separate drive-mode.</li>
+  <li><b>Full-bleed:</b> drop the hard <code>&lt;meta viewport width=480,height=320&gt;</code>; fill 100vw×100vh at any resolution. Recommended path below.</li>
+</ul>
+
+<script>
+/* ---- sample state (what the emitters write; here: a parked car) ---------- */
+var STATE = {
+  clock:"19:42", date:"Jul 21",
+  lastDrive:"Drive 34 · 2 h ago",
+  battery:{text:"Pi UPS 4.19 V · HEALTHY", age:"checked 3 days ago", ok:true},
+  faults:"DTC not read since key-off"     // honest: no key-on read yet
+};
+
+/* ---- BEFORE card: current System Status at idle (wall of NA) ------------- */
+function beforeCard(){
+  return `<div class="topbar"><span class="glyph">BT</span><span class="glyph">⇅</span>
+    <span class="glyph">⚡</span><span class="vchip">V0.29.14</span><span class="menu-aff">⋮</span></div>
+    <div class="cardarea">
+      <div class="card-title">System Status</div>
+      <div class="tile"><span class="tile-label">OBD Link</span><span class="tile-value na">NA</span><span class="tile-detail">OBD: off (engine off)</span></div>
+      <div class="tile"><span class="tile-label">Sync</span><span class="tile-value na">—</span><span class="tile-detail">unavailable</span></div>
+      <div class="tile"><span class="tile-label">Power</span><span class="tile-value na">—</span><span class="tile-detail">unavailable</span></div>
+      <div class="tile"><span class="tile-label">Drive</span><span class="tile-value">IDLE</span><span class="tile-detail">not recording</span></div>
+    </div>
+    <div class="dots"><span class="dot active"></span><span class="dot"></span><span class="dot"></span><span class="dot"></span></div>`;
+}
+
+/* ---- AFTER card: the calm idle home card --------------------------------- */
+function idleCard(){
+  var b=STATE.battery;
+  return `<div class="topbar"><span class="glyph">BT</span><span class="glyph">⇅</span>
+    <span class="glyph">⚡</span><span class="vchip">V0.29.14</span><span class="menu-aff">⋮</span></div>
+    <div class="cardarea">
+      <div class="idle">
+        <div class="idle-head"><span class="idle-wordmark">Eclipse OBD-II</span><span class="idle-clock">${STATE.clock} · ${STATE.date}</span></div>
+        <div class="idle-hero">
+          <div class="mark"></div>
+          <div class="idle-state">STANDBY</div>
+          <div class="idle-substate">engine off · OBD asleep</div>
+        </div>
+        <div class="idle-summary">
+          <div class="sum-row"><span class="sum-label">Last drive</span><span class="sum-value">${STATE.lastDrive}</span></div>
+          <div class="sum-row"><span class="sum-label">Battery</span><span class="sum-value"><span class="ok">${b.text}</span> <span class="dim">· ${b.age}</span></span></div>
+          <div class="sum-row"><span class="sum-label">Faults</span><span class="sum-value"><span class="dim">${STATE.faults}</span></span></div>
+        </div>
+        <div class="idle-foot">swipe for details · hold or ⋮ for setup</div>
+      </div>
+    </div>
+    <div class="dots"><span class="dot active"></span><span class="dot"></span><span class="dot"></span><span class="dot"></span></div>`;
+}
+
+var view="after", dim=0;
+function currentCardHtml(){ return view==="after"?idleCard():beforeCard(); }
+
+/* ---- full-bleed demonstrator --------------------------------------------- */
+var OUT_W=480, OUT_H=320;         // native panel
+var BIG_W=640, BIG_H=360;         // scaled 16:9 preview of a 1080p output (÷3)
+function applyRes(res){
+  var out=document.getElementById("output"), stage=document.getElementById("stage"),
+      tag=document.getElementById("res-tag"), leg=document.getElementById("fb-legend");
+  stage.style.width="480px"; stage.style.height="320px";
+  if(res==="native"){
+    out.style.width=OUT_W+"px"; out.style.height=OUT_H+"px";
+    stage.style.transform="none"; tag.textContent="480×320 native (1:1)";
+    leg.innerHTML="On the real panel driven at its native 480×320 the layout is 1:1 — this is what today's build assumes. The bug appears only when the Pi outputs 1080p.";
+  } else if(res==="letterbox"){
+    out.style.width=BIG_W+"px"; out.style.height=BIG_H+"px";
+    var s=Math.min(BIG_W/480,BIG_H/320);
+    stage.style.transform="scale("+s+")"; tag.textContent="1080p · letterbox";
+    leg.innerHTML="<b>Uniform scale</b> — fills the screen, preserves aspect, thin bars on the mismatched axis (16:9 output vs 3:2 design). Safest; zero layout risk. <code>transform:scale(min(100vw/480,100vh/320))</code>";
+  } else if(res==="fill"){
+    out.style.width=BIG_W+"px"; out.style.height=BIG_H+"px";
+    stage.style.transform="scale("+(BIG_W/480)+","+(BIG_H/320)+")"; tag.textContent="1080p · fill";
+    leg.innerHTML="<b>Non-uniform fill</b> — fills 100%, stretches the 3:2 design onto 16:9. Looks right <i>only</i> if the panel's own scaler squishes 1080p back to 3:2 (cancels out) — must be confirmed IRL. <code>scaleX(100vw/480) scaleY(100vh/320)</code>";
+  } else { // fluid
+    out.style.width=BIG_W+"px"; out.style.height=BIG_H+"px";
+    stage.style.width=BIG_W+"px"; stage.style.height=BIG_H+"px"; stage.style.transform="none";
+    tag.textContent="1080p · fluid";
+    leg.innerHTML="<b>Fluid reflow</b> — no fixed design box; the layout fills whatever the viewport is (relative units + clamp typography). Truest resolution-independence, most CSS churn. <b>Recommended long-term.</b>";
+  }
+  paint();
+}
+function paint(){
+  var s=document.getElementById("stage");
+  s.innerHTML=currentCardHtml();
+  s.classList.toggle("dimmed",!!dim && view==="after");
+  document.getElementById("stage-before").innerHTML=beforeCard();
+  var a=document.getElementById("stage-after");
+  a.innerHTML=idleCard();
+  a.classList.toggle("dimmed",!!dim);
+}
+document.querySelectorAll("[data-res]").forEach(function(btn){
+  btn.addEventListener("click",function(){
+    document.querySelectorAll("[data-res]").forEach(function(b){b.classList.remove("on");});
+    btn.classList.add("on"); applyRes(btn.getAttribute("data-res"));
+  });
+});
+document.getElementById("tgl-view").addEventListener("click",function(){
+  view=view==="after"?"before":"after";
+  this.textContent="Showing: "+(view==="after"?"AFTER (idle card)":"BEFORE (wall of NA)");
+  this.dataset.view=view; paint();
+});
+document.getElementById("tgl-dim").addEventListener("click",function(){
+  dim=dim?0:1; this.textContent="Light sensor: "+(dim?"dim (parked, night)":"bright");
+  this.classList.toggle("on",!!dim); paint();
+});
+/* live clock so it feels real */
+function tick(){var d=new Date();STATE.clock=String(d.getHours()).padStart(2,"0")+":"+String(d.getMinutes()).padStart(2,"0");
+  if(view==="after")paint();}
+applyRes("native"); paint(); setInterval(tick,10000);
+</script>
+</body>
+</html>
