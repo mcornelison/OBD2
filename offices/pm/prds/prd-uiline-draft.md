@@ -31,6 +31,15 @@ so this file now needs a **re-groom against build-complete reality**, not a
 first groom. Story-level detail gets (re-)authored at grooming time per the
 backlog-v2 contract.
 
+## PM confirmation (2026-07-21 — Marcus)
+
+Iris's re-groom **blessed** (status flip + "render truthfully" framing + 5-step order adopted). Two asks answered, both Pi/repo-verified:
+
+- **Rule-10 doc reconciliation = largely SATISFIED.** `specs/architecture.md` carries ~44 refs to the shipped UI runtime (`states_http_server`, `system_status_emitter`, `carousel`; 14 for F-111/Mode-04/battery). Build did NOT outrun docs. Small sprint DoD only: (a) confirm `--green-ok #35C46A` token in `specs/UI/` SSOT (grep found none — DTC A-8), (b) spot-check `dtc_clear`/`service_control`/`token` doc paras.
+- **P0 root-cause SEEDED (grounded on the live Pi @ V0.29.14).** `/run/eclipse-obd/states/` holds ONLY `boot-state`. Running: `eclipse-boot-state.service` + `eclipse-states-http.service` only — **NO service unit for `system_status_emitter`/`battery_health_emitter`/`dtc_emitter`, and the orchestrator doesn't invoke them.** The emitter code shipped but was **never wired to execute** (no unit / no orchestrator call / no deploy install); only F-103's boot-state emitter got wired. So P0 = **emitter-execution wiring**, NOT a KOEO-read or state-server bug (server is up + serving; nothing is being written). This narrows Iris's "prime suspect."
+
+Iris cleared to design the 2 gaps (idle-state + full-bleed); CIO reviews mockups; then Marcus grooms the full sprint (P0 wiring + 2 designs + pygame sunset + small Rule-10 DoD) → Iris pre-Ralph review gate.
+
 ## Current reality (2026-07-21 — Iris re-grounding)
 
 The line was **built and deployed ahead of formal grooming.** The gate/spec/fold
