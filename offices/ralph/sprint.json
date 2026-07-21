@@ -107,7 +107,7 @@
       "type": "issue",
       "size": "M",
       "status": "sprint-ready",
-      "passes": false,
+      "passes": true,
       "acceptance": [
         "a single CIO-runnable pre-drive gate (compose scripts/verify_bt_pair.sh + scripts/verify_live_idle.sh, or a thin wrapper) that reports in order: BT bond/link to 00:04:3E:85:0D:FB present -> /dev/rfcomm0 bound -> N seconds live capture -> realtime_data row count + core-PID coverage -> final 'CAPTURE: PASS/FAIL' + reason",
         "the live window EXERCISES the connect-edge concurrency scenario (a KOEO/idle DTC read co-occurring with the realtime logger on ONE connection -- the exact A-17 race) so a happy-path-only pass is impossible (the blind spot that let a weekend of drives capture nothing)",
@@ -129,7 +129,20 @@
         "if the gate shows capture STILL fails after US-474 + the Pi MAC revert (a deeper bug than the A-17 race), STOP + escalate to Atlas with the captured diagnostics -- do NOT green-light a drive on a failing gate"
       ],
       "goal": "As the CIO, before I commit to an IRL drive I want ONE trustworthy command that proves the Pi is (a) BT-linked to the OBDLink LX (00:04:3E:85:0D:FB), (b) rfcomm-bound to /dev/rfcomm0, and (c) actually landing realtime_data rows -- so I never again drive all weekend and capture zero rows. It MUST exercise the connect-edge (a KOEO/idle DTC read co-occurring with the realtime logger on the one connection) so a GREEN cannot happen while the A-17 race silently kills capture.",
-      "tasks": []
+      "tasks": [],
+      "completionNotes": "DONE (Rex, 2026-07-20). NEW src/pi/obdii/pre_drive_gate.py (SSOT logic): runConnectEdgeCapture() opens ONE connection and runs the REAL RealtimeDataLogger (writes realtime_data via the serialized connection.query() path) CONCURRENTLY with a KOEO/idle DTC read loop (DtcClient Mode03/07) on the SAME connection -- the exact A-17 connect-edge (F-117), exercised on purpose. evaluateGate() is the pure PASS/FAIL: connect-edge/interleave/DTC checks run BEFORE the row/coverage checks so 'rows landed' can NEVER on its own green-light -- the load-bearing AC2 rule ('a happy-path-only pass is impossible', the blind spot that let a weekend capture zero). NEW scripts/pre_drive_greenlight.py: thin CLI (--bench SimulatedObdConnection / --live real conn; --koeo-only; --duration; writes to a DEDICATED temp db, never production data/obd.db) that runs the capture + prints rows + core-PID coverage + 'CAPTURE: PASS/FAIL -- reason'. NEW scripts/verify_pre_drive.sh: the ONE CIO-runnable gate -- composes verify_bt_pair.sh (steps 1-2: BT bond/link + /dev/rfcomm0 bind) + KOEO engine-off sub-check (step 3, earliest driveway signal) + live capture window (step 4, connect-edge exercised) + final verdict (step 5); stops eclipse-obd.service so the probe owns rfcomm0 then restarts it (mirrors verify_live_idle.sh); MAC defaults to the $OBD_BT_MAC SSOT (addresses.sh, canonical 00:04:3E:85:0D:FB -- never hardcoded). DOC (AC5): make targets pre-drive / pre-drive-koeo / pre-drive-bench + deploy/README 'Pre-drive OBD green-light' section (copy-pasteable evidence for /sprint-validated). VALIDATION: VC1 -- `bash scripts/verify_pre_drive.sh --bench --duration 5` -> CAPTURE: PASS rows=217 coverage=12/12 connect-edge=exercised, exit 0. TEETH -- test_runConnectEdgeCapture_withRevertedLock_detectsInterleave_andGateFails proves that reverting ObdConnection._ioLock makes the logger+DTC reads interleave on the one non-thread-safe port, the probe observes it, and evaluateGate FAILS (the validationCriterion-2 analog, provable off-Pi). GATES: pytest tests/pi/obdii/test_pre_drive_gate.py (10) + tests/deploy/test_verify_pre_drive.py (4, incl. the 16-assertion bash driver) all GREEN; ruff clean on all 4 .py; bash -n clean on both .sh. NOTE on VC1 wording: I drive the bench with SimulatedObdConnection, NOT the static eclipse_idle.db fixture -- a static fixture replay CANNOT exercise a live concurrent connect-edge (the whole point of the gate needs a driving connection). VC2 (CIO live on Pi, engine idling) is IRL-gated -- the gate is built to emit a clear FAIL that prevents a blind drive; conditionalOutcome (escalate to Atlas if capture STILL fails after US-474 + MAC revert) is a live-only branch. mypy NOT installed on bench (PM/integration gate); code written mypy-clean. SPEC: US-479 acceptance carries no architecture.md clause; pre_drive_gate is a diagnostic composed of existing subsystems (does not change the capture path). If PM/Atlas want an architecture.md §3.5 pointer to the pre-drive gate, that is a doc follow-up (specs/ is read-only for Ralph).",
+      "feedback": {
+        "filesActuallyTouched": [
+          "src/pi/obdii/pre_drive_gate.py",
+          "scripts/pre_drive_greenlight.py",
+          "scripts/verify_pre_drive.sh",
+          "tests/pi/obdii/test_pre_drive_gate.py",
+          "tests/deploy/test_verify_pre_drive.sh",
+          "tests/deploy/test_verify_pre_drive.py",
+          "Makefile",
+          "deploy/README.md"
+        ]
+      }
     }
   ],
   "validation": {

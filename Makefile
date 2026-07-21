@@ -112,6 +112,15 @@ deploy-restart: ## Bounce the eclipse-obd service on the Pi
 deploy-status: ## Check eclipse-obd service status on Pi
 	@. deploy/deploy.conf && ssh -o ConnectTimeout=5 $${PI_USER}@$${PI_HOST} "sudo systemctl status eclipse-obd"
 
+pre-drive: ## Pre-drive OBD green-light (US-479): BT link + rfcomm + live capture w/ connect-edge -> CAPTURE PASS/FAIL
+	bash scripts/verify_pre_drive.sh
+
+pre-drive-koeo: ## Pre-drive KOEO driveway check (engine off): BT link + one read, no live window
+	bash scripts/verify_pre_drive.sh --koeo-only
+
+pre-drive-bench: ## Pre-drive green-light in bench mode (simulator) -- validates logic off-Pi, NOT a live PASS
+	bash scripts/verify_pre_drive.sh --bench
+
 # ================================================================================
 # Cleanup
 # ================================================================================

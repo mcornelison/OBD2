@@ -798,3 +798,77 @@ Task: OBD MAC integrity -- repo guard (00:04:3E:85:0D:FB) + deploy self-heals
   IS what the deploy step invokes) and set fixture paths via a Write'd file +
   `$OBDLINK_ENV_FILE`. shellcheck is not on the bench -> PM/integration gate.
 ---
+
+## 2026-07-20 - US-479 (Rex / Agent 1, Session 13 — Sprint 60)
+Task: Pre-drive OBD connect + capture green-light (CIO-runnable; exercises the
+      A-17 connect-edge) -- F-117 capstone
+
+### What was implemented:
+- NEW `src/pi/obdii/pre_drive_gate.py` (SSOT logic):
+  - `runConnectEdgeCapture()` opens ONE connection and runs the REAL
+    `RealtimeDataLogger` (writes realtime_data via the serialized
+    `connection.query()` path) CONCURRENTLY with a KOEO/idle DTC read loop
+    (`DtcClient` Mode 03 + Mode 07 probe) on the SAME connection -- the exact
+    A-17 connect-edge (F-117), exercised on purpose.
+  - `evaluateGate()` pure PASS/FAIL: the connect-edge / interleave / DTC-read
+    checks run BEFORE the row + coverage checks, so "rows landed" can NEVER on
+    its own green-light (AC2 -- the blind spot that let a weekend capture zero).
+  - Reports rowsWritten + distinct core-PID coverage + connectEdgeExercised +
+    interleaveObserved (None when the port is uninstrumented).
+- NEW `scripts/pre_drive_greenlight.py`: thin CLI (--bench SimulatedObdConnection
+  / --live real ObdConnection / --koeo-only earliest-signal; --duration; writes
+  to a DEDICATED temp db, NEVER production data/obd.db) -> prints rows + coverage
+  + `CAPTURE: PASS/FAIL -- reason`, exit 0/1/2.
+- NEW `scripts/verify_pre_drive.sh`: the ONE CIO gate. Composes
+  `verify_bt_pair.sh` (steps 1-2 BT bond/link + /dev/rfcomm0 bind) + KOEO
+  engine-off sub-check (step 3) + live capture window (step 4, connect-edge
+  exercised) + final verdict (step 5). Stops eclipse-obd.service so the probe
+  owns rfcomm0 then restarts it (mirrors verify_live_idle.sh). MAC defaults to
+  the OBD_BT_MAC SSOT (addresses.sh, canonical ...3E... -- never hardcoded).
+- DOC (AC5): `make pre-drive` / `pre-drive-koeo` / `pre-drive-bench` + a
+  deploy/README "Pre-drive OBD green-light" section (copy-pasteable evidence for
+  /sprint-validated).
+
+### Files changed:
+- Created: `src/pi/obdii/pre_drive_gate.py`
+- Created: `scripts/pre_drive_greenlight.py`
+- Created: `scripts/verify_pre_drive.sh`
+- Created: `tests/pi/obdii/test_pre_drive_gate.py` (10 tests)
+- Created: `tests/deploy/test_verify_pre_drive.sh` (16-assertion bash driver)
+- Created: `tests/deploy/test_verify_pre_drive.py` (pytest wrapper + static wiring)
+- Modified: `Makefile` (pre-drive targets)
+- Modified: `deploy/README.md` (pre-drive green-light section)
+
+### Verification:
+- VC1: `bash scripts/verify_pre_drive.sh --bench --duration 5` -> CAPTURE: PASS,
+  rows=217, coverage=12/12, connect-edge=exercised, exit 0.
+- TEETH (validationCriterion-2 analog, off-Pi): reverting `ObdConnection._ioLock`
+  to a no-op makes the logger + DTC reads interleave on the one non-thread-safe
+  port; the probe observes it and `evaluateGate` FAILS. Proven by
+  `test_runConnectEdgeCapture_withRevertedLock_detectsInterleave_andGateFails`.
+- `pytest tests/pi/obdii/test_pre_drive_gate.py` -> 10 passed.
+- `pytest tests/deploy/test_verify_pre_drive.py` -> 4 passed (incl. the bash
+  driver, 16/16).
+- `ruff check` on all 4 .py -> clean; `bash -n` clean on both .sh.
+- VC2 (CIO live on the Pi, engine idling) is IRL-gated -- the gate emits a clear
+  FAIL that prevents a blind drive; couples with the A-9/A-17 car re-gate +
+  Bug3 display drill. mypy + shellcheck = PM/integration gates (not on bench).
+
+### Learnings for future iterations:
+- **Pattern discovered**: to bench-validate a concurrency SAFETY gate off-Pi,
+  drive the REAL serialized wrapper (ObdConnection.query/_ioLock) against a faked
+  non-thread-safe port that LATCHES on concurrent entry (reused from the US-474
+  harness). A green run proves serialization; a no-op-lock run proves the gate
+  has TEETH (would catch a regression). No Mock/MagicMock needed.
+- **Gotcha (VC wording vs reality)**: the VC said "bench against the eclipse_idle
+  fixture", but a STATIC fixture replay cannot exercise a live concurrent
+  connect-edge -- the gate's whole point needs a DRIVING connection. Used
+  SimulatedObdConnection (the correct bench driver) and documented the deviation
+  rather than faking a fixture path that couldn't prove AC2.
+- **Gotcha (non-contamination)**: a pre-drive diagnostic must write to a
+  DEDICATED temp db, never production data/obd.db -- a green-light check that
+  injects rows into real drive data is its own hygiene bug.
+- **Judgment (the AC2 ordering)**: put the connect-edge/interleave checks BEFORE
+  the row/coverage checks in the pure verdict, so "rows landed" can never mask a
+  live race. The ordering IS the "happy-path-only pass is impossible" guarantee.
+---

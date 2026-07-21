@@ -115,6 +115,38 @@ pytest tests/deploy/ -v
 Asserts flag parsing, `--help`, `--dry-run` safety (no real SSH, no real rsync),
 mutual exclusion of `--init`/`--restart`, and `deploy.conf` override behavior.
 
+## Pre-drive OBD green-light — `verify_pre_drive.sh` (US-479 / F-117)
+
+**The one command to run before every drive.** Proves, in order, that the Pi is
+(1) BT-bonded/linked to the OBDLink LX `00:04:3E:85:0D:FB`, (2) rfcomm-bound to
+`/dev/rfcomm0`, (3) able to complete a KOEO (engine-off) read in the driveway,
+and (4) actually landing `realtime_data` rows during a live window **while the
+A-17 connect-edge is exercised** — a KOEO/idle DTC read co-occurring with the
+realtime logger on the *one* connection. That is the exact race that let a
+weekend of drives capture zero rows, so a happy-path-only pass is impossible: the
+gate refuses to green-light unless the edge was crossed and capture survived it.
+Its output is copy-pasteable evidence for `/sprint-validated`.
+
+```bash
+# Authoritative in-car gate (engine warm, idling) — 30 s window:
+make pre-drive                        # bash scripts/verify_pre_drive.sh
+bash scripts/verify_pre_drive.sh --duration 60
+
+# Driveway, engine OFF — earliest signal (link + one read), no live window:
+make pre-drive-koeo                   # bash scripts/verify_pre_drive.sh --koeo-only
+
+# Off-Pi logic check (simulator) — NOT a substitute for a live PASS:
+make pre-drive-bench                  # bash scripts/verify_pre_drive.sh --bench
+```
+
+Ends with `CAPTURE: PASS` (exit 0, green-light the drive) or `CAPTURE: FAIL`
+(exit 1, do **not** drive blind). The live steps SSH to the Pi (stop the
+collector so the probe owns `/dev/rfcomm0`, then restart it); `--dry-run` prints
+the plan without touching the Pi. The capture probe
+(`scripts/pre_drive_greenlight.py`) writes to a dedicated temp DB, never the
+production `data/obd.db`. Suite coverage: `pytest tests/deploy/test_verify_pre_drive.py`
+and `pytest tests/pi/obdii/test_pre_drive_gate.py`.
+
 ## Pi Tier — systemd service (eclipse-obd.service)
 
 ### Prerequisites
