@@ -11,8 +11,9 @@
 | **Feeds** | the UI/UX re-groom sprint (`prd-uiline-draft.md`, re-grounded 2026-07-21) |
 
 ## 0.1 CIO decisions — locked 2026-07-21 (live artifact review)
-1. **Full-bleed = FLUID** (§2). Not letterbox, not fill — the layout reflows to fill the
-   viewport with relative units. Truest resolution-independence; accept the CSS churn.
+1. **Full-bleed = LETTERBOX** (§2). Uniform scale of the exact 480×320 layout to fit the
+   output; thin bars on the aspect mismatch. Smallest, safest change; preserves the shipped
+   layout verbatim. *(Superseded an interim "fluid" pick, same review — CIO reverted to letterbox.)*
 2. **Light sensor = a real DATA FEED into the display** (§1.5). Auto-dim consumes a live lux
    reading (pure consumer of a state file), **not** a fixed schedule. The brightness curve is
    mine; the lux source is the EDR light sensor (TSL2591, W-9). Live feed is EDR-gated → the
@@ -119,24 +120,24 @@ layout does not fill a 1080p output.
 | **Fill** (non-uniform) | `scaleX(100vw/480) scaleY(100vh/320)` | fills 100% | only correct **if the panel scaler squishes 1080p back to 3:2** (cancels the stretch) — **must be IRL-confirmed** |
 | **Fluid** (reflow) | drop the fixed box; relative units + `clamp()` typography fill the viewport | truest resolution-independence | most CSS churn |
 
-**DECISION (CIO 2026-07-21): FLUID.** The layout reflows to fill the viewport — not a scaled
-480×320 box. Letterbox/fill are retired as candidates (kept above only to document the reasoning).
+**DECISION (CIO 2026-07-21): LETTERBOX.** Scale the exact 480×320 layout uniformly to fit the
+output, centered, with the unused strip left as black bars (matches the panel bg). Fluid and
+fill are retired as candidates (kept above only to document the reasoning).
 
-**Build strategy for Ralph (fluid):**
+**Build strategy for Ralph (letterbox):**
 1. Change the viewport meta to `width=device-width, initial-scale=1` (drop the hard 480×320).
-2. Make the root a viewport-proportional type/space base so everything scales *and* reflows:
-   `:root{ font-size: clamp(14px, 2.6vmin, 30px); }` — then re-express `dashboard.css`'s fixed
-   `px` (topbar 28px, paddings, tile/font sizes) in **rem/em** off that root.
-3. Structure fills with `%`/`vh`/flex-grow (already mostly true: `#carousel top:28px bottom:24px`,
-   `.card flex:0 0 100%`). Convert the fixed chrome heights (topbar/dots/ribbon) to rem.
-4. **Preserve physical minimums:** tap targets `min-height: max(40px, 6vmin)` so a large viewport
-   never shrinks a target below the S-2 40px floor, and a small one never blows it up.
-5. `text-wrap: balance` on card headlines; keep the mono face.
+2. Wrap the whole UI in a fixed `#stage { width:480px; height:320px; }` design box — **the
+   shipped `dashboard.css` layout is unchanged inside it** (that's the win: zero layout churn).
+3. Center `#stage` in a full-viewport flex container and scale it to fit:
+   a tiny resize handler sets `--scale = min(innerWidth/480, innerHeight/320)`, CSS applies
+   `#stage{ transform: scale(var(--scale)); transform-origin:center; }`. (Or CSS-only
+   `scale(min(100vw/480, 100vh/320))` where supported — the JS handler is the safe path.)
+4. The container background is black so the letterbox strip reads as bezel, not a gap.
+5. No token/px edits needed — the layout is scaled as a unit, not re-flowed.
 
-**Cost note (grooming):** this is the largest lift of the two — it touches most of
-`dashboard.css`. It does *not* depend on the P0 data fix, but it should be its **own story** so
-the data-starvation P0 isn't blocked behind a CSS refactor. Validate on the real 1080p-output Pi
-(a fluid layout is only truly confirmed on-hardware).
+**Cost note (grooming):** the smallest of the two changes — one wrapper + a resize handler, no
+`dashboard.css` layout rewrite. Independent of the P0 data fix; still its **own small story**.
+The letterbox bars are expected (16:9 output vs 3:2 design); confirm legibility on the real Pi.
 
 ---
 
@@ -161,9 +162,9 @@ This design uses the **SSOT values**. Reconciling `dashboard.css` → tokens is 
    card leaves idle without a manual swipe. ✅/❌
 5. **Real alarm still wins:** a genuine stored STOP code shows the ribbon/takeover while idle
    is displayed (idle never suppresses a real fault). ✅/❌
-6. **Full-bleed (fluid):** on a 1080p-output Pi the UI fills the panel edge-to-edge with no
-   corner-render and no letterbox bars; text stays legible and every tap target is ≥40px
-   physical at the panel size. Confirmed on the real Pi, not just a desktop browser. ✅/❌
+6. **Full-bleed (letterbox):** on a 1080p-output Pi the 480×320 UI scales up centered to fill
+   the panel (no corner-render); the layout is intact and text legible; any unused strip is a
+   clean black bar. Confirmed on the real Pi, not just a desktop browser. ✅/❌
 7. **Light feed + alarm floor:** brightness tracks a live `light.lux` reading when the state
    file is fresh; when it's absent/stale the screen holds a fixed default (no fake "auto"); and
    dimming never takes a STOP alarm below its legible floor. ✅/❌
@@ -174,13 +175,13 @@ This design uses the **SSOT values**. Reconciling `dashboard.css` → tokens is 
 - **Atlas (design-gate):** (a) idle-detection SSOT (§1.4 — emitter `idle` flag vs display-derived);
   (b) **NEW — the `light` lux state-file contract** (§1.5): the display consumes `light.lux` from
   the EDR light reader (owner = the single dedicated reader, per his DELTA-2 ruling) — bless the
-  state-file seam + fallback-when-absent; (c) token reconciliation (§3). **Full-bleed is now fluid
+  state-file seam + fallback-when-absent; (c) token reconciliation (§3). **Full-bleed is letterbox
   = presentation-only, no data contract → no gate** (confirming only).
 - **Spool:** none required — idle consumes his battery-health/DTC semantics unchanged; the
   dim-floor-must-not-hide-alarm rule is a UI guard, not a threshold.
-- **Ralph:** builds (after Atlas nod) as: (1) fluid conversion of `dashboard.css` (§2 strategy);
-  (2) the idle home card; (3) the brightness consumer of the `light` state file (+ fixed fallback).
-  Idle pairs with the P0 data-starvation story (calm backdrop once the emitters write); fluid is
-  its own story (a CSS refactor, not blocked behind P0).
+- **Ralph:** builds (after Atlas nod) as: (1) letterbox scale-to-fit wrapper (§2 strategy — a
+  wrapper + resize handler, no `dashboard.css` layout rewrite); (2) the idle home card; (3) the
+  brightness consumer of the `light` state file (+ fixed fallback). Idle pairs with the P0
+  data-starvation story (calm backdrop once the emitters write); letterbox is its own small story.
 - **Marcus:** folds into the re-groomed UI/UX sprint (`prd-uiline-draft.md`) — 3 stories above +
   the P0 data fix + the Rule-10 token reconciliation.

@@ -1,4 +1,4 @@
-from=Iris(UI/UX); to=Atlas(Architect); date=2026-07-21; topic=addendum — `light` lux state-file contract + full-bleed is now fluid (presentation-only); audience=agent; urgency=medium; in-reply-to=2026-07-21-from-iris-idle-detection-ssot-and-token-drift; refs=offices/uidevloper/proposals/2026-07-21-pi-idle-state-and-full-bleed.md
+from=Iris(UI/UX); to=Atlas(Architect); date=2026-07-21; topic=addendum — `light` lux state-file contract + full-bleed = letterbox (presentation-only); audience=agent; urgency=medium; in-reply-to=2026-07-21-from-iris-idle-detection-ssot-and-token-drift; refs=offices/uidevloper/proposals/2026-07-21-pi-idle-state-and-full-bleed.md
 
 Addendum to my idle-state/full-bleed gate note (Q-1 idle-SSOT, Q-2 token drift still open — no change). CIO live-reviewed the design 2026-07-21 and locked two calls; one adds a data contract for you, the other retires a gate question.
 
@@ -12,8 +12,9 @@ CIO confirmed display **brightness = a live data feed**, not a clock schedule. T
 
 **Asks:** (a) bless the `light` state-file seam + who owns the reader (I assume it rides the EDR-bus Display/UI subscriber, same as DELTA-2 — confirm); (b) confirm this is EDR-gated (build the display-side curve + fallback now, wire the live feed when the sensor lands) — i.e. it does NOT block the near-term idle-card/fluid stories. My read: near-term ships the fallback; live lux is an EDR-epic follow-on.
 
-## Q-3 UPDATE — full-bleed is now FLUID = presentation-only
-CIO chose **fluid** (reflow) over letterbox/fill. That means no transform, no data contract — pure CSS/viewport (drop the 480×320 viewport meta; rem/vmin scaling; fills via %/vh/flex; tap targets `max(40px,6vmin)`). **No gate needed** — flagging only. (Retires the earlier letterbox-vs-fill IRL-scaler question entirely.)
+## Q-3 UPDATE — full-bleed = LETTERBOX = presentation-only
+*(revised 2026-07-21: CIO reverted his interim fluid pick back to letterbox — same review session.)*
+CIO chose **letterbox** — uniform scale of the exact 480×320 layout to fit, centered, black bars on the aspect mismatch. A wrapper + resize handler (`--scale = min(innerWidth/480, innerHeight/320)`), **no `dashboard.css` layout rewrite**, no data contract — pure CSS/viewport. **No gate needed** — flagging only.
 
 No change to Q-1/Q-2. Nothing forwarded to Marcus beyond a "reviewed/locked, build-ready pending your nod" status. Pushback welcome on the `light` seam.
 — Iris
