@@ -1208,8 +1208,8 @@
       "description": "The Pi captures 0 OBD rows. Atlas live-debug RCA: python-obd connection is not thread-safe; orphaned timeout daemons (TD-036/US-244) + US-301 heartbeat touch the shared connection concurrently with the logger -> serial I/O interleaves -> empty read every connect. Raw python-obd works standalone (hardware/pairing all good). Fix = serialize connection access + fence orphaned daemons, preserve TD-036 no-boot-hang. f389d5b crash-loop hotfix deployed V0.29.7 (stops crash, not the capture fix). Sprint 54 P0.",
       "status": "active",
       "createdAt": "2026-07-03",
-      "currentVersion": "V0.29.8",
-      "updatedAt": "2026-07-19",
+      "currentVersion": "V0.29.14",
+      "updatedAt": "2026-07-20",
       "reopenNote": "A-17 corrected RCA (2026-07-17): the V0.29.8 F-117 fix left KOEO DTC reads on the raw unlocked path -> connect-edge race killed capture. Fix live (4a17bc1); US-474 hardens it into a typed contract + non-mocked regression."
     },
     {
@@ -1237,7 +1237,8 @@
       "title": "OBDLink LX / Bluetooth connectivity reliability",
       "description": "Dongle/BT reliability surfaced by the 2026-07-17/18 session (Atlas R2): pair_obdlink.sh dead on Trixie bluez (R2a/US-475), no real dongle auto-recovery on dead-SPP state (R2b/US-476), and a repo-default stale-MAC landmine that can re-break capture on config regen (R2c/US-477). Factory reset changes the LX MAC -> a hardcoded literal is fragile (Atlas design-note flagged).",
       "createdAt": "2026-07-19",
-      "updatedAt": "2026-07-19"
+      "updatedAt": "2026-07-20",
+      "currentVersion": "V0.29.14"
     }
   ],
   "stories": [
@@ -4942,9 +4943,11 @@
         "commit-4a17bc1"
       ],
       "tasks": [],
-      "status": "sprint-ready",
+      "status": "complete",
       "createdAt": "2026-07-19",
-      "updatedAt": "2026-07-20"
+      "updatedAt": "2026-07-20",
+      "passes": true,
+      "shippedNote": "SHIPPED Sprint 60 / V0.29.14 (code-complete on dev). Feature IRL-gated on the drive-35 capture re-gate."
     },
     {
       "id": "US-475",
@@ -5049,10 +5052,12 @@
         "phantom-mac-07-17-incident"
       ],
       "tasks": [],
-      "status": "sprint-ready",
+      "status": "complete",
       "createdAt": "2026-07-19",
       "updatedAt": "2026-07-20",
-      "correctionNote": "Original US-477 (repoint ...3E... -> ...3C...) was INVERTED and DROPPED per Atlas PRD review 2026-07-20. Verified: ...3C... appears ONLY in backlog.json (this story's old DoD), zero in src/ or deploy/; ...3E... is the live MAC across 18 product files + CIO's paired phone. Repurposed to a guard test."
+      "correctionNote": "Original US-477 (repoint ...3E... -> ...3C...) was INVERTED and DROPPED per Atlas PRD review 2026-07-20. Verified: ...3C... appears ONLY in backlog.json (this story's old DoD), zero in src/ or deploy/; ...3E... is the live MAC across 18 product files + CIO's paired phone. Repurposed to a guard test.",
+      "passes": true,
+      "shippedNote": "SHIPPED Sprint 60 / V0.29.14 (code-complete on dev). Feature IRL-gated on the drive-35 capture re-gate."
     },
     {
       "id": "US-478",
@@ -5126,9 +5131,11 @@
         "verify_bt_pair.sh"
       ],
       "tasks": [],
-      "status": "sprint-ready",
+      "status": "complete",
       "createdAt": "2026-07-20",
-      "updatedAt": "2026-07-20"
+      "updatedAt": "2026-07-20",
+      "passes": true,
+      "shippedNote": "SHIPPED Sprint 60 / V0.29.14 (code-complete on dev). Feature IRL-gated on the drive-35 capture re-gate."
     }
   ]
 }
