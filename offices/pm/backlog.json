@@ -1239,6 +1239,15 @@
       "createdAt": "2026-07-19",
       "updatedAt": "2026-07-20",
       "currentVersion": "V0.29.14"
+    },
+    {
+      "id": "F-121",
+      "parent": "E-001",
+      "status": "active",
+      "title": "Pi dashboard render-truthfully -- emitter wiring + idle-state + full-bleed + light-feed (V0.29.15)",
+      "description": "The F-092/097/111 carousel is built + deployed but renders wrong on the real Pi: (P0) the card emitters were never wired to execute (no service unit / no orchestrator invocation) so only boot-state is written -> carousel starves -> phantom Check Engine; plus two Iris design gaps CIO-locked 2026-07-21 (calm idle-state home card; full-bleed LETTERBOX scaling) + a light-sensor brightness feed + a Rule-10 token reconciliation. Iris spec: offices/uidevloper/proposals/2026-07-21-pi-idle-state-and-full-bleed.md (REVIEWED, CIO-locked 9da4af5). 'Make the deployed line render truthfully' -- additive over the shipped carousel, no redraw.",
+      "createdAt": "2026-07-21",
+      "updatedAt": "2026-07-21"
     }
   ],
   "stories": [
@@ -5136,6 +5145,280 @@
       "updatedAt": "2026-07-20",
       "passes": true,
       "shippedNote": "SHIPPED Sprint 60 / V0.29.14 (code-complete on dev). Feature IRL-gated on the drive-35 capture re-gate."
+    },
+    {
+      "id": "US-480",
+      "parent": "F-121",
+      "type": "issue",
+      "size": "M",
+      "title": "P0: wire the F-092/097/111 card emitters to execute + write state (carousel data-starvation root fix)",
+      "goal": "As the deployed carousel, I want the system-status / battery-health / dtc emitters to actually RUN and write their state files on the Pi, so the cards render live data instead of starving (which leaves the static DTC takeover visible = phantom 'Check Engine'). ROOT CAUSE (PM-verified on the live Pi @ V0.29.14): /run/eclipse-obd/states/ holds ONLY boot-state; only eclipse-boot-state.service + eclipse-states-http.service run -- there is NO service unit for system_status_emitter/battery_health_emitter/dtc_emitter and the orchestrator does not invoke them. The emitter CODE shipped (F-092/097/111) but was never wired to execute (no unit / no orchestrator call / no deploy install).",
+      "definitionOfDone": [
+        "PRE-FLIGHT: on the Pi, confirm the starting state -- /run/eclipse-obd/states/ contains only boot-state; no emitter service units installed (baseline the bug before fixing)",
+        "wire each of system_status_emitter / battery_health_emitter / dtc_emitter to EXECUTE on the Pi -- via systemd unit(s) (mirror eclipse-boot-state.service) AND/OR orchestrator invocation, per Atlas's ruling on the run-model (see conditionalOutcome); each writes its state file to the states dir the eclipse-states-http server reads",
+        "deploy-pi.sh INSTALLS the emitter execution (unit files + enable), so a fresh deploy leaves the emitters running -- not a manual one-off (the exact gap that shipped them dark)",
+        "on the Pi after deploy, the states dir contains system-status + battery-health + dtc files, freshly written + refreshing on cadence; eclipse-states-http serves them (HTTP 200 + non-empty JSON)",
+        "the dtc emitter writes an honest empty/absent state when no code + no key-on read (so takeoverView() correctly renders nothing -- the phantom Check Engine disappears)",
+        "specs/architecture.md emitter/runtime section updated in-sprint if the run-model changes (Rule-10)",
+        "Typecheck + pi tests green"
+      ],
+      "conditionalOutcomes": [
+        "RUN-MODEL is an Atlas call: standalone systemd units (like boot-state) vs orchestrator-invoked vs a single emitter supervisor. Route to Atlas for the ruling BEFORE building if it's not an obvious mirror of eclipse-boot-state.service. Iris Q-1 (idle-detection SSOT: emitter-writes-idle-flag vs display-derives) rides this ruling.",
+        "if an emitter needs live OBD to write meaningful data (dtc KOEO read), it must still write an HONEST absent/asleep state when parked -- never nothing, never fabricated"
+      ],
+      "validationCriteria": [
+        {
+          "action": "after deploy, ls /run/eclipse-obd/states/ + curl the states endpoints",
+          "outcome": "system-status + battery-health + dtc files present, fresh, served 200 with real JSON"
+        },
+        {
+          "action": "load the carousel on the Pi parked (no OBD)",
+          "outcome": "cards render honest state; NO phantom Check Engine takeover"
+        },
+        {
+          "action": "reboot the Pi + re-check (no manual steps)",
+          "outcome": "emitters auto-start + repopulate the states dir (deploy-installed, not one-off)"
+        }
+      ],
+      "deps": [],
+      "sourceRefs": [
+        "F-092",
+        "F-097",
+        "F-111",
+        "F-117",
+        "bt-archaeology-2026-07-20",
+        "iris-idle-fullbleed-spec-2026-07-21",
+        "deploy-validation-distinct-gate"
+      ],
+      "tasks": [],
+      "status": "sprint-ready",
+      "createdAt": "2026-07-21",
+      "updatedAt": "2026-07-21"
+    },
+    {
+      "id": "US-481",
+      "parent": "F-121",
+      "type": "normal",
+      "size": "M",
+      "title": "Idle-state home card -- calm honest parked view (pairs with US-480)",
+      "goal": "As the CIO parked with the engine off, I want a calm, honest home card instead of a wall of NA/unavailable tiles (which reads as broken and is the backdrop the phantom alarm appears against). Per Iris's CIO-locked spec (\u00a71): STANDBY (neutral grey, never green) + clock/date + last-drive + battery (stale-green 'checked Nd ago' guard) + honest faults line ('DTC not read since key-off' -- NOT 'No codes', NOT 'Check Engine'). The parked twin of the EDR-gated live home card (same home slot).",
+      "definitionOfDone": [
+        "idle card renders per Iris spec \u00a71.2: header (wordmark+clock+date), STANDBY hero (neutral grey) + 'engine off / OBD asleep' substate, 3-fact summary strip (last-drive / battery-with-age / honest-faults), footer",
+        "idle detection derived from existing SSOT (spec \u00a71.4): idle == system-status.source.obd.available==false AND drive.state==idle -- pure consumer, no new data acquisition (UNLESS Atlas rules the emitter should write an explicit idle flag per US-480 conditionalOutcome / Iris Q-1)",
+        "carousel makes idle the HOME card while idle holds, and AUTO-ADVANCES off idle to System-Status/live the moment OBD wakes or a drive records (Iris AC-4)",
+        "honest-instrument rules (spec \u00a71.3): never green 'OK' at idle (STANDBY grey; green only on the battery line with its age); never amber/red at idle unless a REAL stored STOP/WATCH code exists (then the existing ribbon/takeover still wins -- idle never suppresses a real fault, Iris AC-5); absence != clean and != fault",
+        "uses specs/UI/tokens.css SSOT values (not the drifted dashboard.css literals -- see US-484)",
+        "Argus-style AC 1/2/3/4/5 from Iris spec \u00a74 pass; pi/UI tests green"
+      ],
+      "conditionalOutcomes": [
+        "if Atlas rules idle should be an emitter-written boolean (Iris Q-1), consume that flag instead of AND-ing two fields -- coordinate with US-480"
+      ],
+      "validationCriteria": [
+        {
+          "action": "parked state (obd.available=false + drive.state=idle) on the Pi/bench",
+          "outcome": "idle card is the home card; STANDBY grey; faults line 'DTC not read since key-off'; no false green"
+        },
+        {
+          "action": "wake OBD / start a drive",
+          "outcome": "home auto-advances off idle without a manual swipe"
+        },
+        {
+          "action": "inject a stored STOP code while idle",
+          "outcome": "ribbon/takeover surfaces the real fault (idle does not suppress it)"
+        }
+      ],
+      "deps": [
+        "US-480"
+      ],
+      "sourceRefs": [
+        "F-121",
+        "iris-idle-fullbleed-spec-2026-07-21-#1",
+        "cio-locked-9da4af5"
+      ],
+      "tasks": [],
+      "status": "sprint-ready",
+      "createdAt": "2026-07-21",
+      "updatedAt": "2026-07-21"
+    },
+    {
+      "id": "US-482",
+      "parent": "F-121",
+      "type": "normal",
+      "size": "S",
+      "title": "Full-bleed LETTERBOX scaling -- fill the 1080p panel (own story, not blocked behind P0)",
+      "goal": "As the CIO, I want the 480x320 UI to fill the whole panel instead of rendering in a corner, so it's legible on the real display. CIO-locked decision 2026-07-21 = LETTERBOX (uniform scale of the exact 480x320 layout, centered, black bars on the aspect mismatch). Presentation-only, no dashboard.css layout rewrite (the win: zero layout churn). Independent of the P0 data fix.",
+      "definitionOfDone": [
+        "viewport meta changed from hard-coded width=480,height=320 to width=device-width,initial-scale=1 (Iris spec \u00a72 build strategy step 1)",
+        "whole UI wrapped in a fixed #stage {480x320} design box; shipped dashboard.css layout UNCHANGED inside it",
+        "#stage centered in a full-viewport flex container + scaled to fit: resize handler sets --scale = min(innerWidth/480, innerHeight/320); transform: scale(var(--scale)); transform-origin:center (JS handler = the safe path per spec)",
+        "container background black so the letterbox strip reads as bezel, not a gap",
+        "NO token/px layout edits -- scaled as a unit, not reflowed",
+        "Iris AC-6: on a real 1080p-output Pi the UI scales up centered to fill the panel (no corner-render), layout intact + text legible, unused strip a clean black bar -- CONFIRMED ON THE REAL PI (not just desktop browser)"
+      ],
+      "conditionalOutcomes": [
+        "if the letterbox bars are unacceptably large on the real panel (16:9 output vs 3:2 design), flag to Iris/CIO -- the fill/fluid alternatives were retired but the IRL scaler check may reopen it"
+      ],
+      "validationCriteria": [
+        {
+          "action": "load the carousel on the real 1080p-output Pi",
+          "outcome": "480x320 UI scales up centered, fills the panel, legible, clean black bars -- no corner render"
+        }
+      ],
+      "deps": [],
+      "sourceRefs": [
+        "F-121",
+        "iris-idle-fullbleed-spec-2026-07-21-#2",
+        "cio-locked-letterbox-9da4af5"
+      ],
+      "tasks": [],
+      "status": "sprint-ready",
+      "createdAt": "2026-07-21",
+      "updatedAt": "2026-07-21"
+    },
+    {
+      "id": "US-483",
+      "parent": "F-121",
+      "type": "normal",
+      "size": "M",
+      "title": "Light-feed brightness consumer -- auto-dim from a `light` lux state file + honest fixed fallback + alarm floor",
+      "goal": "As the display, I want brightness driven by a live lux reading (pure consumer of a `light` state file the EDR light reader owns), not a clock schedule -- CIO-confirmed 2026-07-21 the light sensor is a real data feed. The display never reads the sensor itself. Live lux is EDR-gated (TSL2591, W-9); near-term ships an HONEST fixed-default fallback (no fake 'auto' when the state file is absent/stale).",
+      "definitionOfDone": [
+        "display reads light.lux (+ freshness) from the `light` state file; brightness = clamp(MIN, curve(lux), 1.0) -- curve is Iris's (UI), lux value is the reader's (owner = the single dedicated EDR reader, per Atlas DELTA-2 pure-consumer ruling)",
+        "ALARM FLOOR (load-bearing): MIN never dims the screen below a legible threshold while a REAL active alarm (STOP ribbon/takeover) is present -- dim a calm idle screen, never a damage-in-progress warning; the floor is a UI guard independent of lux",
+        "HONEST FALLBACK: until the `light` state file exists / is fresh, hold a fixed default brightness + show NO fabricated 'auto' behavior (honest instrument) -- do not pretend to react to light it can't read",
+        "Iris AC-7: brightness tracks a fresh light.lux; absent/stale -> fixed default (no fake auto); dimming never takes a STOP alarm below its legible floor",
+        "consumes the state file only -- no hardware polling in the display; pi/UI tests green"
+      ],
+      "conditionalOutcomes": [
+        "GATED on Atlas Q-4: the `light` lux state-file contract (state-file seam + fallback-when-absent). Do NOT finalize the contract shape before Atlas blesses it. The near-term fixed-fallback slice is buildable now; the live-lux consumption lands with the EDR reader (W-9)."
+      ],
+      "validationCriteria": [
+        {
+          "action": "no `light` state file present (near-term)",
+          "outcome": "fixed default brightness, no fake 'auto' indicator"
+        },
+        {
+          "action": "inject a fresh light.lux state file",
+          "outcome": "brightness tracks the curve"
+        },
+        {
+          "action": "STOP alarm present + lux says dark",
+          "outcome": "brightness held at/above the legible alarm floor"
+        }
+      ],
+      "deps": [],
+      "sourceRefs": [
+        "F-121",
+        "iris-idle-fullbleed-spec-2026-07-21-#1.5",
+        "atlas-Q4-light-contract",
+        "EDR-W-9-TSL2591"
+      ],
+      "tasks": [],
+      "status": "sprint-ready",
+      "createdAt": "2026-07-21",
+      "updatedAt": "2026-07-21"
+    },
+    {
+      "id": "US-484",
+      "parent": "F-121",
+      "type": "tech-debt",
+      "size": "S",
+      "title": "Rule-10 token reconciliation -- dashboard.css :root drift vs specs/UI/tokens.css SSOT",
+      "goal": "As the UI SSOT, I want the shipped dashboard.css :root tokens reconciled with specs/UI/tokens.css so there is one source of truth. Iris found drift (spec \u00a73): --ok-green #2ECC71 (dist) vs --green-ok #35C46A (SSOT); --text-primary #DDDDDD in dist but 'not yet tokenized' in SSOT; --critical-red still open. Token ADDITIONS to the specs/UI SSOT route via Atlas (Rule-10).",
+      "definitionOfDone": [
+        "dashboard.css :root uses the specs/UI/tokens.css SSOT values (rename/align --ok-green -> --green-ok #35C46A, etc.); no visual regression on the shipped cards",
+        "token additions needed by the SSOT (--text-primary, --critical-red, --green-ok if absent) added to specs/UI/tokens.css -- routed through Atlas (Rule-10, his call on the SSOT)",
+        "grep confirms no drifted token literal remains in dashboard.css; UI renders unchanged"
+      ],
+      "conditionalOutcomes": [
+        "the specs/UI/ token SSOT edits are Atlas-gated (Rule-10); if he rules a different canonical name/value, use his"
+      ],
+      "validationCriteria": [
+        {
+          "action": "diff dashboard.css :root vs specs/UI/tokens.css after the change",
+          "outcome": "no drift; dashboard uses SSOT tokens; cards render unchanged"
+        }
+      ],
+      "deps": [],
+      "sourceRefs": [
+        "F-121",
+        "iris-idle-fullbleed-spec-2026-07-21-#3",
+        "atlas-Q2-token-drift"
+      ],
+      "tasks": [],
+      "status": "sprint-ready",
+      "createdAt": "2026-07-21",
+      "updatedAt": "2026-07-21"
+    },
+    {
+      "id": "US-485",
+      "parent": "F-121",
+      "type": "tech-debt",
+      "size": "S",
+      "title": "pygame status_display.py sunset -- verify carousel parity then retire",
+      "goal": "As the codebase, I want the legacy pygame status_display.py retired now that the HTML carousel is the sole dashboard surface (architecture.md already notes pi.hardware.statusDisplay.enabled=false, superseded). Verify parity (nothing the carousel lacks) then remove the dead path.",
+      "definitionOfDone": [
+        "confirm the carousel covers what status_display.py rendered (US-264 VCELL-authoritative battery rule preserved -- must not lose it)",
+        "retire status_display.py + its orchestrator launch path + config flag (or confirm already inert); no import/runtime references remain",
+        "architecture.md 'Two Display Surfaces' note updated to reflect the sunset (Rule-10); pi tests green"
+      ],
+      "conditionalOutcomes": [
+        "if status_display.py still holds a capability the carousel lacks (e.g. a VCELL rule), STOP + file it before removing -- do not lose the US-264 authoritative rule"
+      ],
+      "validationCriteria": [
+        {
+          "action": "grep for status_display references + run pi tests after removal",
+          "outcome": "no live references; carousel is sole surface; tests green; VCELL rule preserved"
+        }
+      ],
+      "deps": [],
+      "sourceRefs": [
+        "F-121",
+        "carousel-spec-A-4-pygame-sunset",
+        "US-264-vcell-authoritative"
+      ],
+      "tasks": [],
+      "status": "sprint-ready",
+      "createdAt": "2026-07-21",
+      "updatedAt": "2026-07-21"
+    },
+    {
+      "id": "US-486",
+      "parent": "F-080",
+      "type": "issue",
+      "size": "S",
+      "title": "Fix startup_log schema guard: US-263 7-column set vs shipped US-419 data_quality 8th column (2 red tests)",
+      "goal": "As the pi test suite, I want `pytest tests/pi -m 'not slow'` green -- it currently has exactly 2 failures in tests/pi/diagnostics/test_boot_reason_boot_id.py::TestStartupLogSchema because US-419/F-080 shipped an 8th startup_log column (data_quality, the post-reboot clock-drift flag, database_schema.py:750) but the US-263 guard still asserts exactly 7 columns. Pre-existing drift (NOT a US-474 regression -- reproduces in isolation). Filed by Rex, Sprint 60.",
+      "definitionOfDone": [
+        "confirm the intended canonical shape (PM/Atlas call): data_quality IS part of the canonical startup_log schema (Rex's lean) -> update the guard to 8 columns; do NOT relax the guard (its own message forbids relaxing)",
+        "update EXPECTED_COLUMNS to include ('data_quality','TEXT',0,0) + bump the count guard 7 -> 8 in test_boot_reason_boot_id.py::TestStartupLogSchema",
+        "update the US-263 spec section to document the 8th column (the guard message directs updating both)",
+        "`pytest tests/pi -m 'not slow'` GREEN (the 2 reds gone); no other test disturbed"
+      ],
+      "conditionalOutcomes": [
+        "if Atlas/PM rule data_quality should be a SEPARATE table (not canonical on startup_log), the fix is a schema migration instead of a guard bump -- route to Atlas BEFORE coding (do not guess)"
+      ],
+      "validationCriteria": [
+        {
+          "action": "pytest tests/pi/diagnostics/test_boot_reason_boot_id.py::TestStartupLogSchema",
+          "outcome": "GREEN (8-column canonical set matches shipped US-419)"
+        },
+        {
+          "action": "pytest tests/pi -m 'not slow'",
+          "outcome": "full pi suite green"
+        }
+      ],
+      "deps": [],
+      "sourceRefs": [
+        "F-080",
+        "US-419",
+        "US-263",
+        "I-startup-log-schema-guard-2026-07-20"
+      ],
+      "tasks": [],
+      "status": "sprint-ready",
+      "createdAt": "2026-07-21",
+      "updatedAt": "2026-07-21"
     }
   ]
 }
