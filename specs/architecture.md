@@ -490,8 +490,16 @@ guards **every** access to the underlying `self.obd`:
 
 **Every caller goes through the wrapper** so no two threads ever drive the
 port at once: the lifecycle connect/query daemons, the US-301 heartbeat's
-`connectFn`, **and the realtime logger's reads (`logger.py` `queryParameter` /
-`_queryViaDecoder`) — which call `connection.query()`, not `connection.obd.query()`.**
+`connectFn`, the realtime logger's reads (`logger.py` `queryParameter` /
+`_queryViaDecoder`), **and the DTC read/clear paths (`DtcClient` — Mode 03 /
+07 / 04, including the US-404 KOEO connect-edge read) — all call
+`connection.query()`, never raw `connection.obd.query()`.** US-474 (F-117/A-17)
+removed the last `getattr`-based raw fallback in `DtcClient._serializedQuery`
+and made `query()` a **typed member of the `ObdConnectionLike` Protocol**
+(`obd` stays exposed as the python-obd facade but is explicitly *not* the DTC
+read path), so the raw-bypass hole that killed capture — a KOEO DTC read
+interleaving with the logger's read on the one non-thread-safe port — is now
+closed at the type level, not just by convention.
 
 **Epoch fence (orphaned-daemon reconciliation).** A monotonically increasing
 **generation** (`ObdConnection._generation`, guarded by `_ioLock`) is bumped on
@@ -526,9 +534,14 @@ happening.
 Code: `src/pi/obdii/obd_connection.py` (`_ioLock`, `_generation`,
 `activeGeneration`, `query`), `orchestrator/lifecycle.py`
 (`_runInitialConnectWithTimeout`, `_queryWithTimeout`, `_resolveGeneration`),
-`data/logger.py` (serialized reads). Contract test:
-`tests/pi/obdii/test_obd_connection_thread_safety.py` (real-concurrency:
-logger read path + orphaned daemon on the same wrapper, no interleaving).
+`data/logger.py` (serialized reads), `obdii/dtc_client.py` (`ObdConnectionLike`
+Protocol + `_serializedQuery` — all DTC reads via the locked `query()`).
+Contract tests: `tests/pi/obdii/test_obd_connection_thread_safety.py`
+(real-concurrency: logger read path + orphaned daemon on the same wrapper, no
+interleaving) and `tests/pi/obdii/test_dtc_connect_edge_concurrency.py`
+(US-474 / F-117 GAP-1: a real `DtcClient` KOEO read + a logger read serialize
+through `_ioLock` on one faked non-thread-safe port; reverting the lock makes
+it RED).
 
 ---
 
