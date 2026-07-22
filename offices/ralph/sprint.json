@@ -14,27 +14,32 @@
       "status": "sprint-ready",
       "passes": false,
       "acceptance": [
-        "PRE-FLIGHT: on the Pi, confirm the starting state -- /run/eclipse-obd/states/ contains only boot-state; no emitter service units installed (baseline the bug before fixing)",
-        "wire each of system_status_emitter / battery_health_emitter / dtc_emitter to EXECUTE on the Pi (systemd unit(s) mirroring eclipse-boot-state.service, and/or orchestrator invocation, per Atlas's run-model ruling); each writes its state file to the states dir the eclipse-states-http server reads",
-        "on the Pi, the states dir contains system-status + battery-health + dtc files, freshly written + refreshing on cadence; eclipse-states-http serves them (HTTP 200 + non-empty JSON)",
-        "the dtc emitter writes an honest empty/absent state when no code + no key-on read (so takeoverView() correctly renders nothing -- the phantom Check Engine disappears)",
+        "PRE-FLIGHT baseline: on the Pi confirm /run/eclipse-obd/states/ holds only boot-state; NOTE the phantom-CE seen earlier was STALE deployed carousel.js (deploy drift), already resolved by the V0.29.14 redeploy -- the Pi's /opt/dashboard/carousel.js now matches dev (honest code hides the takeover when no code). So this story measures EMITTER WIRING, not the phantom-CE artifact (Atlas gap-close).",
+        "ATLAS Q-1 RUN-MODEL (load-bearing): system-status + dtc emitters are ORCHESTRATOR-INVOKED from the process owning the single ObdConnection (feed them from the same serialized query() the US-404 KOEO read uses); do NOT add standalone systemd units that open their own OBD connection. boot-state stays its own unit (pre-orchestrator, no OBD). battery-health reads UPS/I2C (MAX17048) not the OBD port -> standalone is safe but prefer in-process for cadence coherence (Ralph's mechanism call; hard constraint = nothing touching the OBD port opens its own connection).",
+        "ATLAS idle-SSOT (b): the system-status emitter WRITES an explicit boolean `idle: true|false` (it owns both inputs obd.available + driveState) -- do NOT leave idle display-derived (that's the DELTA-1 consumer-arbitrates pattern). US-481 consumes this flag.",
+        "on the Pi, the states dir contains system-status + battery-health + dtc files, freshly written + refreshing on cadence; eclipse-states-http serves them (HTTP 200 + non-empty JSON); cards render REAL values (not 'unavailable')",
+        "the dtc emitter writes an honest empty/absent state when no code + no key-on read (verify the takeover stays hidden on the CURRENT Pi assets -- confirms we're measuring wiring, not stale-asset drift)",
         "Typecheck + pi tests green for this slice"
       ],
       "validationCriteria": [
         {
           "action": "on the Pi, ls /run/eclipse-obd/states/ + curl the states endpoints",
-          "outcome": "system-status + battery-health + dtc files present, fresh, served 200 with real JSON"
+          "outcome": "system-status (incl. idle boolean) + battery-health + dtc files present, fresh, served 200 with real JSON"
         },
         {
           "action": "load the carousel on the Pi parked (no OBD)",
-          "outcome": "cards render honest state; NO phantom Check Engine takeover"
+          "outcome": "cards render honest real state (not the NA/unavailable wall); takeover correctly hidden (no code)"
+        },
+        {
+          "action": "confirm no second OBD connection is opened (grep for extra obd.OBD()/connect callers outside the orchestrator)",
+          "outcome": "only the orchestrator owns the ObdConnection -- A-17 race not reintroduced"
         }
       ],
       "conditionalOutcomes": [
-        "RUN-MODEL is an Atlas call (Iris Q-1): standalone systemd units (like boot-state) vs orchestrator-invoked vs a single emitter supervisor. Route to Atlas for the ruling BEFORE building if it's not an obvious mirror of eclipse-boot-state.service. Iris's coupled Q-1 (idle as an emitter-written boolean vs display-derived) rides this ruling.",
+        "the run-model is Atlas-RULED (orchestrator-invoked for OBD emitters) -- do NOT deviate to standalone OBD units; if a non-obvious wiring detail arises, route back to Atlas",
         "if an emitter needs live OBD to write meaningful data (dtc KOEO read), it must still write an HONEST absent/asleep state when parked -- never nothing, never fabricated"
       ],
-      "goal": "As the deployed carousel, I want the system-status / battery-health / dtc emitters to actually RUN and write their state files on the Pi, so the cards render live data instead of starving (which leaves the static DTC takeover visible = phantom 'Check Engine'). ROOT CAUSE (PM-verified on the live Pi @ V0.29.14): /run/eclipse-obd/states/ holds ONLY boot-state; only eclipse-boot-state.service + eclipse-states-http.service run -- there is NO service unit for system_status_emitter/battery_health_emitter/dtc_emitter and the orchestrator does not invoke them. The emitter CODE shipped (F-092/097/111) but was never wired to execute. (Split from US-480; this is the RUNTIME half -- deploy-install is US-480-b.)",
+      "goal": "As the deployed carousel, I want the system-status / battery-health / dtc emitters to actually RUN and write their state files on the Pi, so the cards render live data instead of the current NA/unavailable wall (states dir holds ONLY boot-state -- PM-verified). Per Atlas Q-1 run-model ruling: the OBD-dependent emitters (system-status + dtc) MUST be ORCHESTRATOR-INVOKED inside the process that owns the single ObdConnection -- a standalone systemd unit that reads OBD would open a SECOND connection to the non-thread-safe python-obd port and re-introduce the A-17 race we just closed. (Split from US-480; RUNTIME half -- deploy-install is US-480-b.)",
       "tasks": []
     },
     {
@@ -47,12 +52,12 @@
       "status": "sprint-ready",
       "passes": false,
       "acceptance": [
-        "deploy-pi.sh installs the emitter execution (unit files + systemctl enable), idempotent + logged; pairs the deploy-hygiene pattern (systemctl stop before start, cf. US-354/US-389) so a re-deploy doesn't race",
-        "after deploy, the states dir is populated by the deploy-installed emitters (not a manual start)",
-        "reboot the Pi -> emitters auto-start + repopulate the states dir with NO manual steps",
-        "specs/architecture.md emitter/runtime section updated in-sprint (Rule-10) -- documents the emitter run-model + deploy-install",
-        "SCOPE FENCE: touch only deploy-pi.sh + the emitter unit files + architecture.md; do NOT modify the emitter logic (that's US-480-a) -- must not break US-480-a's running emitters",
-        "Typecheck + pi tests green"
+        "deploy-pi.sh ensures the orchestrator process that emits system-status/dtc state is installed + enabled to run on boot (per US-480-a's orchestrator-invoked model); battery-health emitter execution likewise installed (in-process or its own safe non-OBD unit)",
+        "after deploy, the states dir is populated by the deploy-installed execution (not a manual start)",
+        "reboot the Pi -> the emitting process auto-starts + repopulates the states dir with NO manual steps",
+        "specs/architecture.md emitter/runtime section updated in-sprint (Rule-10) -- documents the Atlas Q-1 orchestrator-invoked run-model + why OBD emitters are NOT standalone units (A-17 single-connection invariant)",
+        "SCOPE FENCE: touch only deploy-pi.sh + unit/enable wiring + architecture.md; do NOT modify emitter logic (US-480-a) -- must not break US-480-a's running emitters",
+        "deploy-hygiene: systemctl stop before start (cf. US-354/US-389) so a re-deploy doesn't race; Typecheck + pi tests green"
       ],
       "validationCriteria": [
         {
@@ -80,12 +85,12 @@
       "status": "sprint-ready",
       "passes": false,
       "acceptance": [
-        "idle card renders per Iris spec \u00a71.2: header (wordmark+clock+date), STANDBY hero (neutral grey) + 'engine off / OBD asleep' substate, 3-fact summary strip (last-drive / battery-with-age / honest-faults), footer",
-        "idle detection derived from existing SSOT (spec \u00a71.4): idle == system-status.source.obd.available==false AND drive.state==idle -- pure consumer, no new data acquisition (UNLESS Atlas rules the emitter should write an explicit idle flag per US-480 conditionalOutcome / Iris Q-1)",
-        "carousel makes idle the HOME card while idle holds, and AUTO-ADVANCES off idle to System-Status/live the moment OBD wakes or a drive records (Iris AC-4)",
-        "honest-instrument rules (spec \u00a71.3): never green 'OK' at idle (STANDBY grey; green only on the battery line with its age); never amber/red at idle unless a REAL stored STOP/WATCH code exists (then the existing ribbon/takeover still wins -- idle never suppresses a real fault, Iris AC-5); absence != clean and != fault",
+        "idle card renders per Iris spec 1.2: header (wordmark+clock+date), STANDBY hero (neutral grey) + 'engine off / OBD asleep' substate, 3-fact summary strip (last-drive / battery-with-age / honest-faults), footer",
+        "ATLAS idle-SSOT (b): idle is read from the system-status emitter's explicit `idle: true|false` boolean (written by US-480-a) -- REPLACE the current display-derived logic (carousel.js:170 derives from the single d.state string); the display renders the emitted flag, it does not arbitrate it",
+        "carousel makes idle the HOME card while idle holds, and AUTO-ADVANCES off idle to System-Status/live the moment idle flips false (OBD wakes or a drive records) (Iris AC-4)",
+        "honest-instrument rules (spec 1.3): never green 'OK' at idle (STANDBY grey; green only on the battery line with its age); never amber/red at idle unless a REAL stored STOP/WATCH code exists (existing ribbon/takeover still wins -- idle never suppresses a real fault, Iris AC-5); absence != clean and != fault",
         "uses specs/UI/tokens.css SSOT values (not the drifted dashboard.css literals -- see US-484)",
-        "Argus-style AC 1/2/3/4/5 from Iris spec \u00a74 pass; pi/UI tests green"
+        "Argus-style AC 1/2/3/4/5 from Iris spec 4 pass; pi/UI tests green"
       ],
       "validationCriteria": [
         {
@@ -102,7 +107,7 @@
         }
       ],
       "conditionalOutcomes": [
-        "if Atlas rules idle should be an emitter-written boolean (Iris Q-1), consume that flag instead of AND-ing two fields -- coordinate with US-480"
+        "depends on US-480-a emitting the `idle` boolean; build the render against the state-file shape, validate once US-480-a writes it"
       ],
       "goal": "As the CIO parked with the engine off, I want a calm, honest home card instead of a wall of NA/unavailable tiles (which reads as broken and is the backdrop the phantom alarm appears against). Per Iris's CIO-locked spec (\u00a71): STANDBY (neutral grey, never green) + clock/date + last-drive + battery (stale-green 'checked Nd ago' guard) + honest faults line ('DTC not read since key-off' -- NOT 'No codes', NOT 'Check Engine'). The parked twin of the EDR-gated live home card (same home slot).",
       "tasks": []
@@ -178,24 +183,29 @@
       "parent": "F-121",
       "epicId": "E-001",
       "type": "tech-debt",
-      "size": "S",
+      "size": "M",
       "status": "sprint-ready",
       "passes": false,
       "acceptance": [
-        "dashboard.css :root uses the specs/UI/tokens.css SSOT values (rename/align --ok-green -> --green-ok #35C46A, etc.); no visual regression on the shipped cards",
-        "token additions needed by the SSOT (--text-primary, --critical-red, --green-ok if absent) added to specs/UI/tokens.css -- routed through Atlas (Rule-10, his call on the SSOT)",
-        "grep confirms no drifted token literal remains in dashboard.css; UI renders unchanged"
+        "green: reconcile dashboard.css --ok-green #2ECC71 -> SSOT --green-ok #35C46A (name AND value); no visual regression",
+        "text-primary: SET it in the specs/UI SSOT with a grounded value (Iris proposes -- contrast on dark bg, #DDDDDD plausible; Atlas gates the token add)",
+        "critical-red (SAFETY): Spool assigns the safety-signal red value + semantics; Atlas gates the token; then REPOINT the DTC STOP tier + takeover OFF brand --red-light #F61D2D onto the safety-red token -- so alarm red != brand red (per the 2026-06-19 split)",
+        "token ADDITIONS to specs/UI/tokens.css route through Atlas (Rule-10); grep confirms no drifted token literal remains in dashboard.css; STOP/takeover render in the safety-red, not brand-red"
       ],
       "validationCriteria": [
         {
           "action": "diff dashboard.css :root vs specs/UI/tokens.css after the change",
-          "outcome": "no drift; dashboard uses SSOT tokens; cards render unchanged"
+          "outcome": "no drift; dashboard uses SSOT green + text-primary; cards render unchanged"
+        },
+        {
+          "action": "trigger a STOP-tier DTC takeover",
+          "outcome": "renders in the Spool-assigned safety-red token, NOT brand --red-light (brand-vs-alarm collision closed)"
         }
       ],
       "conditionalOutcomes": [
-        "the specs/UI/ token SSOT edits are Atlas-gated (Rule-10); if he rules a different canonical name/value, use his"
+        "critical-red is GATED: Spool assigns the value/semantics + Atlas gates the token BEFORE the STOP-tier repoint -- do NOT pick a red yourself. The green + text-primary reconciliations are not blocked on Spool and can land first."
       ],
-      "goal": "As the UI SSOT, I want the shipped dashboard.css :root tokens reconciled with specs/UI/tokens.css so there is one source of truth. Iris found drift (spec \u00a73): --ok-green #2ECC71 (dist) vs --green-ok #35C46A (SSOT); --text-primary #DDDDDD in dist but 'not yet tokenized' in SSOT; --critical-red still open. Token ADDITIONS to the specs/UI SSOT route via Atlas (Rule-10).",
+      "goal": "As the UI SSOT + safety-signal integrity, I want the shipped dashboard.css :root reconciled with specs/UI/tokens.css. Atlas Q-2 confirmed 3 drifts: (1) healthy green name+value fork (--ok-green #2ECC71 dist vs --green-ok #35C46A SSOT); (2) --text-primary invented #DDDDDD in dist, 'not yet tokenized' in SSOT; (3) --critical-red -- dashboard renders STOP/critical in BRAND --red-light #F61D2D = the brand-vs-alarm collision the SSOT explicitly warns against (a SAFETY-signal-integrity item, not cosmetics).",
       "tasks": []
     },
     {
@@ -254,12 +264,42 @@
       ],
       "goal": "As the pi test suite, I want `pytest tests/pi -m 'not slow'` green -- it currently has exactly 2 failures in tests/pi/diagnostics/test_boot_reason_boot_id.py::TestStartupLogSchema because US-419/F-080 shipped an 8th startup_log column (data_quality, the post-reboot clock-drift flag, database_schema.py:750) but the US-263 guard still asserts exactly 7 columns. Pre-existing drift (NOT a US-474 regression -- reproduces in isolation). Filed by Rex, Sprint 60.",
       "tasks": []
+    },
+    {
+      "id": "US-487",
+      "title": "Harden the US-479 pre-drive green-light -- verify the PRODUCTION capture path + non-green exit for weak modes",
+      "parent": "F-117",
+      "epicId": "E-OPS",
+      "type": "issue",
+      "size": "S",
+      "status": "sprint-ready",
+      "passes": false,
+      "acceptance": [
+        "FOLLOW-UP 1 (load-bearing): after the probe stops eclipse-obd + probes a temp DB, it best-effort-restarts the service with NO post-restart check (verify_pre_drive.sh:177,205 `|| true`). Add a post-restart verification that the PRODUCTION path is capturing -- confirm eclipse-obd is active AND writing rows to data/obd.db after the restart, so a GREEN cannot coexist with a dead production service",
+        "FOLLOW-UP 2: --bench (SimulatedObdConnection) and --koeo-only (skips the sustained-capture floor) currently print warnings but still exit 0 as 'CAPTURE: PASS' -- make the non-authoritative modes return a NON-green exit code (or a clearly-distinct status) so a distracted operator can't mistake them for the real full-mode gate",
+        "DOC/DoD honesty: do NOT claim live race DETECTION -- the interleave detector (_readInterleave on connection.obd.interleaved) is inert outside pytest (test-fake-only attribute); live green rests on the _ioLock being correct + the row/coverage floors (belt-and-suspenders detection is fine, just don't overclaim it)",
+        "Typecheck + tests green; the full-mode gate still passes end-to-end"
+      ],
+      "validationCriteria": [
+        {
+          "action": "run the full-mode gate, then kill eclipse-obd before the post-restart check",
+          "outcome": "gate FAILS (production path not capturing) -- no false green"
+        },
+        {
+          "action": "run --bench and --koeo-only",
+          "outcome": "non-green exit code / distinct status, not 'CAPTURE: PASS' exit 0"
+        }
+      ],
+      "conditionalOutcomes": [],
+      "goal": "As the CIO's 'never drive blind' gate, I want the pre-drive green-light to prove the PRODUCTION eclipse-obd service is capturing (not just the throwaway probe), and to stop returning a green exit code in non-authoritative modes. Per Atlas V0.29.14 post-hoc review: US-479 is a real advance (fires a concurrent KOEO DTC read + refuses to PASS if the connect-edge wasn't exercised) but has 2 gaps worth a small hardening story.",
+      "tasks": []
     }
   ],
   "validation": {
     "bigDefinitionOfDone": [
-      "(on the Pi, ls /run/eclipse-obd/states/ + curl the states endpoints) \u2192 (system-status + battery-health + dtc files present, fresh, served 200 with real JSON)  [from US-480-a]",
-      "(load the carousel on the Pi parked (no OBD)) \u2192 (cards render honest state; NO phantom Check Engine takeover)  [from US-480-a]",
+      "(on the Pi, ls /run/eclipse-obd/states/ + curl the states endpoints) \u2192 (system-status (incl. idle boolean) + battery-health + dtc files present, fresh, served 200 with real JSON)  [from US-480-a]",
+      "(load the carousel on the Pi parked (no OBD)) \u2192 (cards render honest real state (not the NA/unavailable wall); takeover correctly hidden (no code))  [from US-480-a]",
+      "(confirm no second OBD connection is opened (grep for extra obd.OBD()/connect callers outside the orchestrator)) \u2192 (only the orchestrator owns the ObdConnection -- A-17 race not reintroduced)  [from US-480-a]",
       "(deploy-pi.sh to a Pi with an empty states dir, then reboot) \u2192 (emitters auto-start + repopulate states dir with no manual steps (deploy-installed, not one-off))  [from US-480-b]",
       "(inspect architecture.md emitter/runtime section) \u2192 (documents the run-model + deploy-install (Rule-10 satisfied))  [from US-480-b]",
       "(parked state (obd.available=false + drive.state=idle) on the Pi/bench) \u2192 (idle card is the home card; STANDBY grey; faults line 'DTC not read since key-off'; no false green)  [from US-481]",
@@ -269,17 +309,21 @@
       "(no `light` state file present (near-term)) \u2192 (fixed default brightness, no fake 'auto' indicator)  [from US-483]",
       "(inject a fresh light.lux state file) \u2192 (brightness tracks the curve)  [from US-483]",
       "(STOP alarm present + lux says dark) \u2192 (brightness held at/above the legible alarm floor)  [from US-483]",
-      "(diff dashboard.css :root vs specs/UI/tokens.css after the change) \u2192 (no drift; dashboard uses SSOT tokens; cards render unchanged)  [from US-484]",
+      "(diff dashboard.css :root vs specs/UI/tokens.css after the change) \u2192 (no drift; dashboard uses SSOT green + text-primary; cards render unchanged)  [from US-484]",
+      "(trigger a STOP-tier DTC takeover) \u2192 (renders in the Spool-assigned safety-red token, NOT brand --red-light (brand-vs-alarm collision closed))  [from US-484]",
       "(grep for status_display references + run pi tests after removal) \u2192 (no live references; carousel is sole surface; tests green; VCELL rule preserved)  [from US-485]",
       "(pytest tests/pi/diagnostics/test_boot_reason_boot_id.py::TestStartupLogSchema) \u2192 (GREEN (8-column canonical set matches shipped US-419))  [from US-486]",
-      "(pytest tests/pi -m 'not slow') \u2192 (full pi suite green)  [from US-486]"
+      "(pytest tests/pi -m 'not slow') \u2192 (full pi suite green)  [from US-486]",
+      "(run the full-mode gate, then kill eclipse-obd before the post-restart check) \u2192 (gate FAILS (production path not capturing) -- no false green)  [from US-487]",
+      "(run --bench and --koeo-only) \u2192 (non-green exit code / distinct status, not 'CAPTURE: PASS' exit 0)  [from US-487]"
     ],
     "validationMethod": "PI-RENDER-TRUTHFULLY + REAL-1080P-PI + BENCH-PI-SUITE",
     "validatesFeatures": [
       "F-092",
       "F-097",
       "F-111",
-      "F-080"
+      "F-080",
+      "F-117"
     ],
     "currentVersion": "V0.29.15",
     "validatedAt": null,
