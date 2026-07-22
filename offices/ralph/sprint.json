@@ -102,8 +102,8 @@
       "epicId": "E-001",
       "type": "normal",
       "size": "M",
-      "status": "sprint-ready",
-      "passes": false,
+      "status": "complete",
+      "passes": true,
       "acceptance": [
         "idle card renders per Iris spec 1.2: header (wordmark+clock+date), STANDBY hero (neutral grey) + 'engine off / OBD asleep' substate, 3-fact summary strip (last-drive / battery-with-age / honest-faults), footer",
         "ATLAS idle-SSOT (b): idle is read from the system-status emitter's explicit `idle: true|false` boolean (written by US-480-a) -- REPLACE the current display-derived logic (carousel.js:170 derives from the single d.state string); the display renders the emitted flag, it does not arbitrate it",
@@ -130,7 +130,18 @@
         "depends on US-480-a emitting the `idle` boolean; build the render against the state-file shape, validate once US-480-a writes it"
       ],
       "goal": "As the CIO parked with the engine off, I want a calm, honest home card instead of a wall of NA/unavailable tiles (which reads as broken and is the backdrop the phantom alarm appears against). Per Iris's CIO-locked spec (\u00a71): STANDBY (neutral grey, never green) + clock/date + last-drive + battery (stale-green 'checked Nd ago' guard) + honest faults line ('DTC not read since key-off' -- NOT 'No codes', NOT 'Check Engine'). The parked twin of the EDR-gated live home card (same home slot).",
-      "tasks": []
+      "tasks": [],
+      "feedback": {
+        "filesActuallyTouched": [
+          "specs/UI/dist/dashboard-pi/carousel.js (NEW pure exports carouselIdle/idleLastDriveFact/idleBatteryFact/idleFaultsFact/idleCardView -- honest-instrument builders; NEW DOM renderIdleCard + fmtClock/fmtDate + updateIdleHome edge-triggered home/auto-advance; sysData/batteryData captured in tick())",
+          "specs/UI/dist/dashboard-pi/dashboard.html (NEW idle-card <section> as the home slot, data-idle-home so the availability poll skips it)",
+          "specs/UI/dist/dashboard-pi/dashboard.css (NEW .idle-* styles -- token var() references only, no hex literal; STANDBY hero neutral grey; fact strip reuses .tile[data-level])",
+          "tests/ui/carousel_probe.js (variadic: fn.apply(null, args) so idleCardView takes 3 fixtures -- backward compatible with single-arg callers)",
+          "tests/ui/test_carousel_idle_home.py (NEW -- 17 pure-logic tests for the idle SSOT + honest-instrument invariants)",
+          "offices/pm/tech_debt/TD-063-idle-card-last-drive-fact-has-no-state-file-source.md (NEW -- last-drive fact has no state-file source yet; degrades honestly)"
+        ]
+      },
+      "completionNotes": "GREEN in-loop: pytest tests/ui/ -> 27 passed (17 new US-481 idle-home + 10 pre-existing US-429 honest-availability regression -- the variadic carousel_probe.js change did not break the single-arg callers); ruff clean on tests/ui/test_carousel_idle_home.py. carousel.js loads under node (the probe requires it, so a JS syntax error would red every test). IDLE-SSOT (AC-2): carouselIdle() reads the US-480-a emitted `idle` boolean and returns true ONLY on an explicit `true` -- absent key / malformed file / false all read NOT-idle (fail closed to the live view, never guess a calm parked state). A dedicated test proves idle:false + drive.state=='idle' stays NOT-idle (the flag wins; the display never re-derives from the drive string). The pre-existing driveTile line (d.state==='idle') is the DRIVE TILE on the System-Status card -- a legitimate per-tile readout -- and is untouched; only the whole-carousel idle-HOME decision now reads the SSOT flag. HONEST-INSTRUMENT (AC-4, spec 1.3), locked in the pure builders so a DOM bug can't violate them: STANDBY hero is ALWAYS neutral (never green); faults line is neutral for a clean read AND for an unread source ('DTC not read since key-off' -- absence != clean, != fault), down/amber ONLY for a real stored STOP/WATCH code, neutral for MINOR/unknown; battery is the ONE line allowed green and only via the Spool verdict carrying its data-age (F-9 stale-green guard). AC-5 (ribbon/takeover still wins): the DTC ribbon+takeover are separate fixed overlays driven by updateDtcSurfaces() every tick regardless of the visible card -- they fire on TOP of the idle card, so surfacing the calm idle view never suppresses a genuine fault. AC-5-token (uses tokens.css SSOT, not drifted literals): the new .idle-* CSS uses only var(--) token references (no hex literal added); green is bound via the shared .tile[data-level=ok] rule -> US-484 renames that var project-wide, so US-481 introduces no NEW drift. NOTE for PM: (a) VC1/VC2 are PI-RUNTIME gates -- idle card is HOME + STANDBY grey + faults 'DTC not read since key-off' + no false green when PARKED (VC1), and auto-advance-off-idle to System Status when OBD wakes / a drive records (VC2, browser-only edge-trigger). They validate on the real Pi at deploy (same class as US-480-a's VCs); the bench proves the pure honest-instrument logic + JS load. VC3 (inject a stored STOP while idle -> ribbon/takeover surfaces) is covered by idleFaultsFact stop->down + the pre-existing takeover tests; the overlay-on-top behavior confirms on the Pi. (b) Iris microcopy: the exact substate ('engine off | OBD asleep') and footer ('monitoring resumes on engine start') are my honest interpretation -- I cannot read Iris's proposal (lane discipline: it lives in offices/uidevloper/), so the ACs were the contract. If Iris's spec 1.2 fixes different footer/substate wording, that's a trivial text swap (cosmetic, no logic change). (c) TD-063 filed: the last-drive fact has no state-file source yet (drive_summary data exists but isn't surfaced to the dashboard state dir) -> it degrades honestly to 'No recent drive' while parked; a real last-drive readout is a future emitter story (US-480-a lane), out of this display story's scope fence. (d) depends-on satisfied: US-480-a (complete, commit f929ed8) emits the `idle` boolean this story consumes."
     },
     {
       "id": "US-482",

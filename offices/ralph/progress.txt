@@ -1009,3 +1009,56 @@ Task: Deploy-install the emitter execution + reboot-persistence + Rule-10 doc (t
   `enable --now` units), and use plain `enable` when a separate step owns the start
   to avoid a double-start race.
 ---
+
+## 2026-07-22 - US-481 (Rex / Agent 1, Session — Sprint 61)
+Task: Idle-state home card — calm honest parked view (pairs with US-480)
+
+### What was implemented:
+- Idle-state home card for the Pi carousel: a PURE CONSUMER of the same three
+  state files the live cards read (system-status / battery-health / dtc). Five
+  new pure, node-testable exports in `carousel.js`:
+  - `carouselIdle(sys)` — reads the US-480-a emitted `idle` SSOT boolean; true
+    ONLY on an explicit `true`, else NOT-idle (fail closed to the live view).
+    Never re-derives idle from the drive-state string (replaces the display-
+    derived pattern; a test locks `idle:false` + `drive.state=='idle'` -> NOT idle).
+  - `idleFaultsFact(dtc)` — unread source -> "DTC not read · since key-off"
+    (neutral); clean read -> "No stored codes" (neutral, NOT green); real STOP ->
+    down, WATCH -> amber; MINOR/unknown -> neutral. Absence != clean, != fault.
+  - `idleBatteryFact(battery)` — the ONE line allowed green, only via the Spool
+    verdict AND always carrying its data-age (F-9 stale-green guard).
+  - `idleLastDriveFact(sys)` — honest degradation ("No recent drive") — no last-
+    drive-summary state file exists yet (see TD-063).
+  - `idleCardView(sys,battery,dtc)` — STANDBY hero (always neutral) + 3-fact strip.
+- DOM (browser-only, Pi-validated): `renderIdleCard` (header wordmark+clock+date,
+  STANDBY hero, 3-fact strip, footer) + `updateIdleHome` edge-triggered home/
+  auto-advance (idle -> idle card; flips false -> System Status; never on every
+  tick, so a manual swipe is never trapped). `data-idle-home` <section> home slot.
+- CSS: `.idle-*` rules using only `var(--)` token references (no hex literal;
+  token reconciliation stays US-484); the 3 fact tiles reuse `.tile[data-level]`
+  so green binds to the SSOT green in exactly one place.
+
+### Files changed:
+- Modified: `specs/UI/dist/dashboard-pi/carousel.js` (5 pure exports + DOM wiring)
+- Modified: `specs/UI/dist/dashboard-pi/dashboard.html` (idle-card home <section>)
+- Modified: `specs/UI/dist/dashboard-pi/dashboard.css` (.idle-* styles)
+- Modified: `tests/ui/carousel_probe.js` (variadic — idleCardView takes 3 fixtures)
+- Created:  `tests/ui/test_carousel_idle_home.py` (17 pure-logic tests)
+- Created:  `offices/pm/tech_debt/TD-063-...md` (last-drive fact data-source gap)
+
+### Learnings for future iterations:
+- **Pattern discovered**: the carousel keeps honest-instrument invariants in PURE
+  builders, upstream of the DOM. Encode the rule as "the bad level is never
+  produced" (faults line returns `neutral` for a clean read) — then no CSS/DOM
+  bug can paint it green. Defense-in-depth by construction, and node-testable.
+- **Pattern discovered**: an unfetched synthetic card (rendered from states the
+  tick already fetched, not its own endpoint) uses `data-idle-home` (no
+  `data-state`) so the availability poll's `if (!name) continue;` skips it — no
+  second HTTP fetch, no second OBD touch. Capture the shared states once in tick().
+- **Gotcha**: the node probe was single-arg; a 3-fixture view needs a variadic
+  `fn.apply(null, args)` (backward compatible). Cheaper than 3 separate helpers.
+- **Gotcha (self)**: adding `feedback`/`completionNotes` to a story that lacked
+  them — the Edit dropped the object's closing `},`. Always re-validate sprint.json
+  with `python -c "import json; json.load(...)"` after a structural story edit.
+- **Lane**: Iris's proposal lives in `offices/uidevloper/` (off-limits) — built to
+  the story ACs; flagged microcopy (substate/footer) as an Iris-ownable text swap.
+---
