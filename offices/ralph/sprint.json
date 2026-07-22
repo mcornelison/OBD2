@@ -150,8 +150,8 @@
       "epicId": "E-001",
       "type": "normal",
       "size": "S",
-      "status": "sprint-ready",
-      "passes": false,
+      "status": "complete",
+      "passes": true,
       "acceptance": [
         "viewport meta changed from hard-coded width=480,height=320 to width=device-width,initial-scale=1 (Iris spec \u00a72 build strategy step 1)",
         "whole UI wrapped in a fixed #stage {480x320} design box; shipped dashboard.css layout UNCHANGED inside it",
@@ -170,7 +170,16 @@
         "if the letterbox bars are unacceptably large on the real panel (16:9 output vs 3:2 design), flag to Iris/CIO -- the fill/fluid alternatives were retired but the IRL scaler check may reopen it"
       ],
       "goal": "As the CIO, I want the 480x320 UI to fill the whole panel instead of rendering in a corner, so it's legible on the real display. CIO-locked decision 2026-07-21 = LETTERBOX (uniform scale of the exact 480x320 layout, centered, black bars on the aspect mismatch). Presentation-only, no dashboard.css layout rewrite (the win: zero layout churn). Independent of the P0 data fix.",
-      "tasks": []
+      "tasks": [],
+      "feedback": {
+        "filesActuallyTouched": [
+          "specs/UI/dist/dashboard-pi/carousel.js (NEW pure computeStageScale(w,h)=min(w/480,h/320) with <=0/non-finite fallback to 1 + STAGE_W/STAGE_H consts, all exported; NEW browser applyStageScale() sets #stage --scale; setup() calls it + wires window 'resize')",
+          "specs/UI/dist/dashboard-pi/dashboard.html (viewport meta width=480,height=320 -> width=device-width,initial-scale=1; whole UI wrapped in #screen > #stage, opened before #topbar + closed before the scripts)",
+          "specs/UI/dist/dashboard-pi/dashboard.css (NEW #screen full-viewport black flex-center frame + #stage fixed 480x320 box scaled by transform: scale(var(--scale,1)) transform-origin center -- appended; NO existing layout rule touched)",
+          "tests/ui/test_carousel_letterbox_scale.py (NEW -- 5 node-probe computeStageScale math tests + 5 static dist-wiring assertions)"
+        ]
+      },
+      "completionNotes": "GREEN in-loop: pytest tests/ui/ -> 37 passed (10 new US-482 + 27 pre-existing US-429/US-481 regression -- carousel.js still loads under node, no syntax break); ruff clean on the new test file (the only Python touched -- JS/HTML/CSS are outside ruff's scope). MECHANISM (the whole trick, zero layout churn per the AC): a CSS `transform` on #stage establishes the containing block for BOTH its position:fixed AND position:absolute descendants, so every shipped top/bottom/left/right coordinate re-resolves against the 480x320 box instead of the viewport -- the layout is scaled as one rigid unit, no reflow, no token/px layout edits. #screen = position:fixed inset:0 black flex-center frame (the black letterbox strip reads as bezel); #stage = the exact 480x320 design box, transform:scale(var(--scale,1)) transform-origin:center; centered by the flex parent so scaling around center keeps it centered. carousel.js: computeStageScale(w,h)=min(w/480,h/320) (largest scale fitting BOTH axes) with a <=0/non-finite guard falling back to 1 (a transient 0x0 boot layout pass must never collapse the UI); applyStageScale() reads window.innerWidth/innerHeight, sets #stage's --scale; setup() calls it once + adds a window 'resize' listener (the JS-handler path per Iris spec 2, not fluid reflow). On 1920x1080 the HEIGHT binds -> 3.375x, clean black bars left+right. NOTE for PM: VC1 (Iris AC-6: on the REAL 1080p-output Pi the UI scales up centered to fill the panel, legible, clean black bars, no corner-render) is a PI-RUNTIME/DEPLOY gate -- it validates at deploy on the real Pi (same class as US-480-a/US-481 render VCs); the bench proves the scale math + the dist wiring (viewport meta, #screen/#stage wrapper, the CSS transform, the JS resize handler). SCOPE: presentation-only; the shipped dashboard.css card/layout rules are untouched (the new #screen/#stage block is appended). If the 16:9-vs-3:2 bars read too large on the real panel, conditionalOutcome says reopen with Iris/CIO -- deferred to the IRL check."
     },
     {
       "id": "US-483",

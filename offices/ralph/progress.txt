@@ -1062,3 +1062,43 @@ Task: Idle-state home card — calm honest parked view (pairs with US-480)
 - **Lane**: Iris's proposal lives in `offices/uidevloper/` (off-limits) — built to
   the story ACs; flagged microcopy (substate/footer) as an Iris-ownable text swap.
 ---
+
+## 2026-07-22 - US-482 (Rex / Agent 1 - Sprint 61)
+Task: Full-bleed LETTERBOX scaling - fill the 1080p panel (F-121)
+
+### What was implemented:
+- Wrapped the whole UI in a full-viewport black `#screen` frame containing a
+  fixed 480x320 `#stage` design box (dashboard.html): the wrapper opens before
+  `#topbar` and closes before the scripts, so every card/overlay renders INSIDE
+  the transformed stage.
+- carousel.js: new pure `computeStageScale(w,h) = min(w/480, h/320)` (largest
+  scale fitting both axes) with a `<=0`/non-finite fallback to 1; `STAGE_W`/
+  `STAGE_H` consts. Browser `applyStageScale()` sets `#stage`'s `--scale`;
+  `setup()` calls it once + wires a `window` `resize` listener.
+- dashboard.css: appended `#screen` (fixed inset:0, black var(--bg), flex-
+  center) + `#stage` (480x320, transform: scale(var(--scale,1)),
+  transform-origin: center center). NO existing layout rule touched.
+- Viewport meta: width=480,height=320 -> width=device-width,initial-scale=1.
+
+### Files changed:
+- Modified: `specs/UI/dist/dashboard-pi/carousel.js` (computeStageScale + consts + browser scaler + resize wiring + exports)
+- Modified: `specs/UI/dist/dashboard-pi/dashboard.html` (viewport meta + #screen/#stage wrapper)
+- Modified: `specs/UI/dist/dashboard-pi/dashboard.css` (appended #screen/#stage letterbox rules)
+- Created: `tests/ui/test_carousel_letterbox_scale.py` (5 node-probe math + 5 static wiring tests)
+
+### Verification:
+- pytest tests/ui/ -> 37 passed (10 new US-482 + 27 pre-existing regression)
+- ruff check tests/ui/test_carousel_letterbox_scale.py -> All checks passed
+- VC1 (Iris AC-6, real-1080p-Pi render) = PI-RUNTIME/DEPLOY gate (validates at deploy)
+
+### Learnings for future iterations:
+- **Pattern discovered**: a CSS transform on an ancestor establishes the
+  containing block for BOTH its position:fixed AND position:absolute descendants.
+  That is the entire letterbox trick - wrap in a transformed #stage and every
+  existing viewport-anchored coordinate re-resolves against the design box,
+  scaling the layout as one rigid unit with zero reflow.
+- **Gotcha**: guard computeStageScale against a <=0 viewport (transient 0x0 boot
+  layout pass) -> fall back to 1, never scale the UI to nothing.
+- **Gotcha**: the node probe (carousel_probe.js) is already variadic, so a new
+  pure export needs no probe change - just add it to the api object.
+---
