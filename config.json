@@ -443,10 +443,6 @@
         "vcellBatteryThresholdVolts": 3.95,
         "vcellBatteryThresholdSustainedSeconds": 30,
         "socColdStartWindowSeconds": 180.0
-      },
-      "statusDisplay": {
-        "enabled": false,
-        "forceSoftwareRenderer": true
       }
     },
     "dtc": {

@@ -1730,49 +1730,39 @@ color. No config duplication.
 which reduces the last N rows of the `statistics` table per parameter
 (N configurable, default 5).
 
-### Two Display Surfaces (primary + status_display overlay)
+### Display Surface (primary driving screen)
 
-> **Retired (US-402, V0.29.3):** the **Status overlay** below is retired in
-> production — `pi.hardware.statusDisplay.enabled=false` — superseded by the F-092
-> HTML carousel (see "F-092 Carousel Dashboard Subsystem → Pygame sunset"). The
-> module stays in the tree (re-enablable for a bench diagnostic) but the
-> orchestrator no longer launches it; the carousel is the sole dashboard surface.
+> **pygame status overlay fully retired (US-485, V0.29.15).** There used to be
+> **two** pygame surfaces (primary + a `pi.hardware.status_display` overlay). The
+> overlay was config-disabled in US-402 (V0.29.3) once the F-092 HTML carousel
+> reached parity, then **fully removed in US-485**: `status_display.py`,
+> `dashboard_layout.py`, all `HardwareManager` wiring, and the
+> `pi.hardware.statusDisplay` config key are gone. The **carousel is the sole
+> dashboard surface** (fed by the US-480 state-file emitters), and the single
+> remaining pygame surface is the primary driving screen below.
 
-The Pi runtime wires two distinct pygame surfaces that must not fight over
-GPU resources:
+The Pi runtime wires one pygame surface for the live driving screen:
 
 | Surface | Module | Owner | Renderer |
 |---------|--------|-------|----------|
 | Primary (driving screen) | `pi.display.manager` + `pi.display.screens.*` | Orchestrator | Headless / Minimal / Developer drivers; the Minimal driver calls `pygame.display.set_mode` under X11 with `DISPLAY=:0 XAUTHORITY=~/.Xauthority SDL_VIDEODRIVER=x11` per Session 22 baseline. |
-| Status overlay | `pi.hardware.status_display` | HardwareManager | Software renderer (US-198). `pygame.display.set_mode((480,320), NOFRAME)` is wrapped by SDL env hints forcing the software path — `SDL_RENDER_DRIVER=software`, `SDL_VIDEO_X11_FORCE_EGL=0`, `SDL_FRAMEBUFFER_ACCELERATION=0` — set *before* `pygame.init()`. |
 
-**Why the split matters (TD-024 / US-198)**: pygame's wheel-bundled SDL2
-defaulted to an EGL/GL context when the overlay initialized under X11 and
-the X server denied GLX with `BadAccess`. Xlib's default error handler calls
-`exit()`, killing the orchestrator runLoop at uptime ~0.6s (Session 23 live
-drill). The software path on the overlay renders visibly and avoids GL
-entirely. The primary display keeps the native x11 renderer because its
-path was already proven in Session 22.
+**Historical note (TD-024 / US-198)** — the retired status overlay ran on SDL's
+*software* renderer because pygame's wheel-bundled SDL2 defaulted to an EGL/GL
+context under X11 and the X server denied GLX with `BadAccess`, whose Xlib
+default handler calls `exit()` and killed the orchestrator runLoop at uptime
+~0.6s (Session 23 live drill). That failure mode retired with the overlay
+(US-485). The primary display keeps the native x11 renderer, proven in Session 22.
 
-**Config surface**:
+### Full-Canvas Status Overlay Redesign (US-257, B-052, Sprint 21) — RETIRED (US-485)
 
-```json
-"pi": {
-  "hardware": {
-    "statusDisplay": {
-      "enabled": true,
-      "forceSoftwareRenderer": true
-    }
-  }
-}
-```
-
-Operators can set `enabled: false` to disable the overlay entirely if it
-ever breaks again — the orchestrator tolerates a null `statusDisplay`.
-Operators can override any `SDL_*` env var at the `.service` / shell level;
-the code only fills in missing values, never clobbering.
-
-### Full-Canvas Status Overlay Redesign (US-257, B-052, Sprint 21)
+> **Retired (US-485, V0.29.15).** This section documents the pygame status
+> overlay's canvas-aware redesign. The overlay is **fully removed** —
+> `status_display.py`, `dashboard_layout.py` (`computeLayout` / `DashboardLayout`
+> / the 4-quadrant layout / `updateShutdownStage` / `ShutdownStage`), and their
+> tests no longer exist. Kept below only as historical record; the HTML carousel
+> is the sole dashboard surface. The `pi.display.displayCanvas` config keys are
+> likewise orphaned (no live consumer).
 
 The legacy 480x320 strip rendered fine on the OSOYOO touchscreen but
 occupied a small fraction of the Eclipse's HDMI canvas (CIO observation
@@ -1832,13 +1822,11 @@ the stage at a glance. NORMAL leaves the background black to avoid
 `pi.display.width`/`height` keys are unchanged so existing dev/test rigs
 keep working.
 
-**Test surface**: `tests/pi/hardware/test_dashboard_layout.py` exercises
-the geometry across (1920,1080) / (1280,720) / (480,320) and asserts the
-quadrants tile the canvas-minus-footer with no gaps, no overlaps, and no
-zero-dim quadrants. `tests/pi/hardware/test_status_display.py`
-parameterizes the constructor + render path over the same three sizes
-and verifies `updateShutdownStage` accepts both the enum and string forms
-with case-insensitive coercion.
+**Test surface** (retired US-485): `tests/pi/hardware/test_dashboard_layout.py`
+and `tests/pi/hardware/test_status_display.py` were removed alongside the
+modules they exercised. They previously covered the geometry tiling across
+(1920,1080) / (1280,720) / (480,320) and the `updateShutdownStage` enum/string
+coercion.
 
 ### Live-Data HDMI Render (US-192)
 
@@ -2981,11 +2969,13 @@ to `/opt/dashboard` (WARN-not-BLOCK if absent, A-9), mirroring
 session-aware `install.sh` (V-1/V-2), the same seam as the splash kiosk unit.
 
 > **Sequencing note (A-4):** the dashboard and the pygame `status_display` must
-> never run simultaneously. The pygame surface is **retired (parity-gated) in
+> never run simultaneously. The pygame surface was **retired (parity-gated) in
 > US-402** — once the System Status + Battery Health cards reached parity
-> (US-400/401) — by setting `pi.hardware.statusDisplay.enabled=false` in
-> `config.json`. The sprint deploys US-399…402 together, so the shipped artifact
-> has exactly one surface. See the US-402 subsection below for the resolution fix.
+> (US-400/401) — by setting `pi.hardware.statusDisplay.enabled=false`, then
+> **fully removed in US-485 (V0.29.15)** (module + wiring + config key deleted).
+> There is now **exactly one** dashboard surface (the carousel) with no overlay
+> flag left to re-enable. See the US-402 subsection below for the original
+> cut-over fix.
 
 #### System Status card + `system-status` emitter (US-400) [Atlas A-3]
 
@@ -3151,34 +3141,37 @@ independent of the orchestrator's start order, so the cards render an honest
 state even before eclipse-obd finishes coming up. **No separate emitter unit
 exists — the orchestrator IS the emitter host.**
 
-#### Pygame sunset — parity-gated cut-over (US-402) [Atlas A-4]
+#### Pygame sunset — parity-gated cut-over (US-402) then full removal (US-485) [Atlas A-4]
 
 Once the System Status (US-400) and Battery Health (US-401) cards reached parity
-with the legacy pygame **status overlay**, that overlay is **retired** so the HTML
+with the legacy pygame **status overlay**, that overlay was **retired** so the HTML
 carousel is the **sole** dashboard surface (failure **F-4**: the two must never be
 active simultaneously). The data the overlay used to paint is now republished
 through the `system-status` + `battery-health` emitters into the state files the
 carousel reads.
 
-**Cut-over mechanism.** The retirement is a single config flip:
-`pi.hardware.statusDisplay.enabled` → `false` in `config.json`. With the overlay
-off, `HardwareManager._initializeStatusDisplay` returns early and never opens a
-pygame surface; the carousel kiosk (launched by the splash `OnSuccess=` hand-off)
-is the only surface. This is parity-gated — pygame is retired **only** now that
-the cards exist, never before.
+**US-402 cut-over mechanism (V0.29.3).** The initial retirement was a single
+config flip: `pi.hardware.statusDisplay.enabled` → `false` in `config.json`. With
+the overlay off, `HardwareManager` never opened a pygame surface; the carousel
+kiosk (launched by the splash `OnSuccess=` hand-off) was the only surface. This
+was parity-gated — pygame retired **only** once the cards existed, never before.
+(That cut-over relied on a factory resolution fix: the canonical flag lives at the
+pi-**nested** `pi.hardware.statusDisplay.*` path that `lifecycle.py` passes, so the
+factory had to resolve the nested path first — the flat top-level path alone had
+silently launched the overlay on its `True` default.)
 
-**Resolution fix (load-bearing).** `createHardwareManagerFromConfig` historically
-resolved the overlay flag from the **flat** top-level `hardware.statusDisplay.*`
-path, but the orchestrator (`lifecycle.py`) passes the **full** config, where the
-canonical flag lives at the **nested** `pi.hardware.statusDisplay.*` (config.json).
-So before US-402 the nested flag was silently ignored and the overlay always
-launched on its `True` default — a config flip alone would not have retired it.
-The factory now resolves the **nested path first**, falling back to the flat path
-and then the legacy `hardware.display.enabled` (preserving the US-198 operator
-escape hatch). This mirrors the factory's own pi-nested
-`pi.shutdown.poweroffTimeoutSeconds` read. `status_display.py` /
-`dashboard_layout.py` remain in the tree (not launched), so the overlay can still
-be re-enabled for a bench diagnostic without a rebuild.
+**US-485 full removal (V0.29.15).** The config-disabled overlay was dead code
+carrying a re-enable footgun, so US-485 completed the sunset: `status_display.py`,
+`dashboard_layout.py`, every `HardwareManager` launch/wiring member
+(`_initializeStatusDisplay`, the `_startComponents` display branch,
+`_displayUpdateLoop`, the `_cleanup` branch, the `statusDisplay` property, the
+`display*` constructor params + factory reads), the `pi.hardware.statusDisplay`
+config key, and the two module tests are all **removed**. `HardwareManager` no
+longer owns any display; its `updateObdStatus` / `updateErrorCount` remain as
+documented **no-op stubs** so the orchestrator's best-effort status push
+(`event_router`) stays valid without an `AttributeError`, and `getStatus()['display']`
+is a permanent `None` for consumer back-compat. There is no longer any bench
+re-enable path — the overlay is gone, not merely disabled.
 
 #### System Setup menu + gated service control (US-403) [Atlas A-7/A-8]
 
