@@ -11,8 +11,8 @@
       "epicId": "E-001",
       "type": "issue",
       "size": "M",
-      "status": "sprint-ready",
-      "passes": false,
+      "status": "complete",
+      "passes": true,
       "acceptance": [
         "PRE-FLIGHT baseline: on the Pi confirm /run/eclipse-obd/states/ holds only boot-state; NOTE the phantom-CE seen earlier was STALE deployed carousel.js (deploy drift), already resolved by the V0.29.14 redeploy -- the Pi's /opt/dashboard/carousel.js now matches dev (honest code hides the takeover when no code). So this story measures EMITTER WIRING, not the phantom-CE artifact (Atlas gap-close).",
         "ATLAS Q-1 RUN-MODEL (load-bearing): system-status + dtc emitters are ORCHESTRATOR-INVOKED from the process owning the single ObdConnection (feed them from the same serialized query() the US-404 KOEO read uses); do NOT add standalone systemd units that open their own OBD connection. boot-state stays its own unit (pre-orchestrator, no OBD). battery-health reads UPS/I2C (MAX17048) not the OBD port -> standalone is safe but prefer in-process for cadence coherence (Ralph's mechanism call; hard constraint = nothing touching the OBD port opens its own connection).",
@@ -40,7 +40,19 @@
         "if an emitter needs live OBD to write meaningful data (dtc KOEO read), it must still write an HONEST absent/asleep state when parked -- never nothing, never fabricated"
       ],
       "goal": "As the deployed carousel, I want the system-status / battery-health / dtc emitters to actually RUN and write their state files on the Pi, so the cards render live data instead of the current NA/unavailable wall (states dir holds ONLY boot-state -- PM-verified). Per Atlas Q-1 run-model ruling: the OBD-dependent emitters (system-status + dtc) MUST be ORCHESTRATOR-INVOKED inside the process that owns the single ObdConnection -- a standalone systemd unit that reads OBD would open a SECOND connection to the non-thread-safe python-obd port and re-introduce the A-17 race we just closed. (Split from US-480; RUNTIME half -- deploy-install is US-480-b.)",
-      "tasks": []
+      "tasks": [],
+      "feedback": {
+        "filesActuallyTouched": [
+          "src/pi/obdii/orchestrator/card_state_emitter.py (NEW -- CardStateEmitterMixin: constructs + in-process invokes the 3 emitters; pure consumer, opens no connection)",
+          "src/pi/obdii/orchestrator/core.py (mix in CardStateEmitterMixin; __init__ emitter state + cadence attrs; runLoop _maybeEmitCardStates() hook; _recordSyncOutcome on both sync paths)",
+          "src/pi/obdii/orchestrator/lifecycle.py (_initializeCardStateEmitters() wired into _initializeAllComponents after connection/hw/drive/power built)",
+          "src/pi/obdii/orchestrator/types.py (DEFAULT_CARD_STATE_EMIT_INTERVAL=2.0, DEFAULT_SYNC_STALE_THRESHOLD_SECONDS=120.0 + __all__)",
+          "src/pi/splash/system_status_emitter.py (idle-SSOT `idle` boolean in buildSystemStatusState -- Atlas ruling b)",
+          "tests/pi/orchestrator/test_card_state_emitters.py (NEW -- 11 tests incl. VC3 static no-second-connection guard)",
+          "tests/pi/splash/test_system_status_emitter.py (idle-SSOT assertions + 3 new idle tests)"
+        ]
+      },
+      "completionNotes": "GREEN in-loop: pytest tests/pi/orchestrator/test_card_state_emitters.py + tests/pi/splash/test_system_status_emitter.py -> 24 passed; regression check pytest tests/pi/orchestrator/ -> 135 passed (base-module core/lifecycle/types change, no regression); ruff clean on all 7 touched files. Run-model = Atlas Q-1 orchestrator-invoked (mixin on ApplicationOrchestrator; _maybeEmitCardStates() called once per runLoop pass on a ~2s cadence gate; all reads best-effort + exception-isolated so a dashboard hiccup never crashes the loop). VC3 satisfied: emitters are pure consumers of self._connection (the orchestrator's single ObdConnection) -- static guard test asserts card_state_emitter.py contains no obd.OBD(/ .connect(/ createConnectionFromConfig; grep confirms no second-connection caller added. idle-SSOT (b): system_status_emitter now WRITES explicit `idle` boolean (idle == OBD source ABSENT AND not recording); US-481 consumes this, replacing carousel.js:170 display-derived logic. Honest initial dtc state at boot (dtcAvailable=false, no codes, takeover hidden). battery-health/system-status degrade to typed-NA when source unreadable -- never stale/fabricated; battery health verdict = 'unknown' (never fabricated green) since no in-process Spool-verdict reader. NOTE for PM: (a) VC1/VC2 are PI-RUNTIME gates (states dir populated + served 200, carousel renders real values, auto-advance-off-idle) -- NOT verifiable on the Windows bench; they validate at deploy on the real Pi, and depend on US-480-b deploy-installing + enabling the emitting orchestrator process (this story is the RUNTIME half only). (b) mypy strict is a PM/integration gate (not installed on bench); code written mypy-clean with a typed mixin attr block. (c) full pytest tests/pi -m 'not slow' still carries the 2 pre-existing US-486 startup_log reds (unrelated -- US-486 fixes them)."
     },
     {
       "id": "US-480-b",

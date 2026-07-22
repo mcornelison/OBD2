@@ -7,8 +7,8 @@
       "type": "windows-dev",
       "status": "unassigned",
       "taskid": "",
-      "lastCheck": "2026-07-21",
-      "note": "Sprint 60 (V0.29.14) COMPLETE -- all 3 stories passes:true (US-474 A-17 DTC-read serialization hardening + US-477 OBD MAC integrity guard/deploy self-heal + US-479 pre-drive OBD capture green-light). No unclaimed work remains; emitted COMPLETE. Awaiting PM sprint-close/deploy + the IRL drive-35 re-capture gate. Reset stale status:active->unassigned (leftover from last session)."
+      "lastCheck": "2026-07-22",
+      "note": "Sprint 61 (V0.29.15): US-480-a DONE (passes:true, commit f929ed8) -- CardStateEmitterMixin wires F-092/097/111 emitters in-process (Atlas Q-1 orchestrator-invoked, no 2nd OBD connection), idle-SSOT boolean added to system_status_emitter. 24 targeted + 135 orchestrator tests green, ruff clean. VC1/VC2 are Pi-runtime gates (need US-480-b deploy-install). Next unclaimed: US-480-b (deploy-install the emitter execution)."
     },
     {
       "id": 2,

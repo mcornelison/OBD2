@@ -872,3 +872,88 @@ Task: Pre-drive OBD connect + capture green-light (CIO-runnable; exercises the
   the row/coverage checks in the pure verdict, so "rows landed" can never mask a
   live race. The ordering IS the "happy-path-only pass is impossible" guarantee.
 ---
+
+## 2026-07-22 - US-480-a (Rex / Agent 1, Session 14 — Sprint 61)
+Task: Wire the F-092/097/111 card emitters to EXECUTE + write state
+      (carousel data-starvation root fix; orchestrator-invoked run-model, Atlas Q-1)
+
+### What was implemented:
+- ROOT CAUSE: the F-092 system-status / F-097 battery-health / F-111 dtc emitter
+  code shipped (US-400/etc.) but was NEVER wired to RUN. Only
+  eclipse-boot-state.service executed, so /run/eclipse-obd/states/ held only
+  boot-state and every card starved -> the NA/unavailable wall (the backdrop the
+  phantom "Check Engine" appeared against). This story makes the emitters run.
+- NEW `CardStateEmitterMixin` (`orchestrator/card_state_emitter.py`): constructs
+  the three emit callables (makeSystemStatusEmitter / makeBatteryHealthEmitter /
+  makeDtcEmitter + PowerModeProvider) and INVOKES them IN-PROCESS from the
+  orchestrator. Per Atlas Q-1 (load-bearing): the OBD-fed emitters (system-status
+  + dtc) MUST run inside the single-ObdConnection owner -- a standalone systemd
+  unit reading OBD would open a SECOND connection to the non-thread-safe
+  python-obd port and re-introduce the A-17 race US-474 just closed.
+  battery-health reads MAX17048 (I2C, not OBD) so it is connection-safe either
+  way; runs in-process for cadence coherence.
+- The mixin is a PURE consumer (ssot-design-pattern): it reads self._connection /
+  _driveDetector / _powerMonitor / _hardwareManager.upsMonitor -- opens no
+  connection, fabricates no reading. An unreadable source emits a typed-NA
+  (available:false), never stale/invented (honest-instrument). battery health
+  verdict degrades to "unknown" (NEVER a fabricated green) -- no in-process
+  Spool-verdict reader yet.
+- HONEST initial dtc state at boot (dtcAvailable=false, codes=[], no takeover
+  trigger) so a parked-from-boot Pi renders "DTC not read since key-off"
+  (US-481 faults line) instead of starving -- kills the phantom-CE backdrop.
+- idle-SSOT (Atlas ruling b): `buildSystemStatusState` now WRITES an explicit
+  `idle` boolean (idle == OBD source ABSENT AND not recording). The emitter owns
+  both inputs so US-481 consumes the flag and never re-derives it (replaces the
+  carousel.js:170 display-derived pattern).
+- Wiring: mixed into ApplicationOrchestrator; _initializeCardStateEmitters() in
+  lifecycle after the data components exist; _maybeEmitCardStates() called once
+  per runLoop pass (~2s cadence gate, best-effort + exception-isolated so a
+  dashboard hiccup never crashes the loop); _recordSyncOutcome() on both sync
+  paths so the sync tile reflects the REAL last push (route-gated -- a no-op tick
+  never claims a sync).
+
+### Files changed:
+- Created: `src/pi/obdii/orchestrator/card_state_emitter.py` (CardStateEmitterMixin)
+- Modified: `src/pi/obdii/orchestrator/core.py` (mix in + __init__ state/cadence
+  attrs + runLoop hook + _recordSyncOutcome on both sync paths)
+- Modified: `src/pi/obdii/orchestrator/lifecycle.py` (_initializeCardStateEmitters wiring)
+- Modified: `src/pi/obdii/orchestrator/types.py` (2 cadence/threshold defaults + __all__)
+- Modified: `src/pi/splash/system_status_emitter.py` (idle-SSOT `idle` boolean)
+- Created: `tests/pi/orchestrator/test_card_state_emitters.py` (11 tests incl. VC3 guard)
+- Modified: `tests/pi/splash/test_system_status_emitter.py` (idle-SSOT assertions + 3 tests)
+
+### Verification:
+- `pytest tests/pi/orchestrator/test_card_state_emitters.py
+  tests/pi/splash/test_system_status_emitter.py` -> 24 passed.
+- Regression (base-module change): `pytest tests/pi/orchestrator/` -> 135 passed.
+- `ruff check` on all 7 touched files -> All checks passed.
+- VC3 satisfied in-loop: static guard test asserts card_state_emitter.py has no
+  obd.OBD(/ .connect(/ createConnectionFromConfig; the mixin only reads the
+  orchestrator's existing self._connection.
+- ⛔ VC1/VC2 are PI-RUNTIME gates (states dir populated + served HTTP 200, cards
+  render real values on the parked Pi, auto-advance-off-idle) -- NOT bench-
+  verifiable; they validate at deploy on the real Pi and DEPEND on US-480-b
+  deploy-installing + enabling the emitting orchestrator process. mypy strict =
+  PM/integration gate (not on bench).
+- NOTE: full `pytest tests/pi -m 'not slow'` still carries the 2 pre-existing
+  US-486 startup_log reds (unrelated; US-486 fixes them).
+
+### Learnings for future iterations:
+- **Pattern discovered**: to feed dashboard state without risking a concurrency
+  regression, make the emitter a MIXIN on the process that already owns the
+  scarce resource (the single ObdConnection) and INVOKE it from the run loop --
+  never a standalone unit that re-acquires the resource. A `getattr`-free pure
+  consumer that reads pre-built attrs + calls pre-built emit callables opens no
+  connection by construction; a static grep-guard test (no obd.OBD(/.connect()
+  locks that invariant in (VC3).
+- **Gotcha (idle-SSOT)**: when a display re-derives a state (idle) from a raw
+  string, move the decision to the ONE producer that holds both inputs and emit
+  an explicit boolean. The consumer renders the flag; it does not arbitrate it.
+- **Gotcha (honest degradation)**: an emitter with no reader for a sub-fact must
+  emit the conservative honest value (typed-NA / health "unknown"), never a
+  fabricated green or a stale last-real value -- absence != clean.
+- **Gotcha (stale index.lock)**: the slow chi-nas-01 share left a 0-byte aged
+  index.lock (no live git). Used the US-467 guarded clearer
+  (`python -m offices.pm.scripts.index_lock --repo .`) -- it verifies
+  empty+aged+no-git-process before unlinking; never force-delete.
+---
