@@ -20,6 +20,8 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-06-30    | Ralph (Rex)  | Initial implementation (US-400 system-status card)
+# 2026-07-21    | Ralph (Rex)  | US-480-a: add the idle-SSOT `idle` boolean (Atlas
+#               |              | ruling b) -- the emitter owns the idle decision.
 # ================================================================================
 ################################################################################
 
@@ -111,7 +113,8 @@ def buildSystemStatusState(
 
     Returns:
         The system-status dict with exactly the spec §7 A-3 keys plus the US-429
-        ``source`` block (one availability truth per source).
+        ``source`` block (one availability truth per source) and the US-480-a
+        ``idle`` boolean (the idle-SSOT the display consumes, never re-derives).
     """
     # US-429 honest-availability: the OBD source owns the obdLink tile. When the
     # source is unavailable, its value is a fresh typed NULL (never the last real
@@ -124,6 +127,14 @@ def buildSystemStatusState(
         }
     else:
         obdLink = {"state": None, "retries": 0, "lastSeenS": None}
+    # US-480-a idle-SSOT (Atlas ruling b): the emitter OWNS the idle decision --
+    # it holds BOTH inputs (obdAvailable + driveState), so the display renders
+    # this flag and never re-derives idle from the drive-state string (the
+    # replaced carousel.js:170 pattern). idle == the calm parked/asleep state:
+    # the OBD source is ABSENT (no car) AND no drive is recording. It flips false
+    # the moment the OBD source wakes OR a drive records (US-481 / Iris AC-4
+    # auto-advance-off-idle).
+    idle = (not obdAvailable) and (driveState != "recording")
     return {
         "obdLink": obdLink,
         "sync": {
@@ -134,6 +145,7 @@ def buildSystemStatusState(
         },
         "power": {"mode": powerMode, "source": powerSource},
         "drive": {"state": driveState, "driveId": driveId},
+        "idle": idle,
         "source": {
             SOURCE_OBD: buildSourceState(
                 obdAvailable, obdUnavailableReason or REASON_OBD_OFF

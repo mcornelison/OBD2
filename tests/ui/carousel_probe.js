@@ -26,12 +26,15 @@ const carousel = require(
 );
 
 const fnName = process.argv[2];
-const fixture = JSON.parse(process.argv[3]);
+// Variadic: every argv past the function name is one JSON-encoded positional
+// argument (US-481 idleCardView takes 3 state fixtures). Backward compatible --
+// the pre-existing single-fixture callers pass exactly one arg.
+const args = process.argv.slice(3).map((a) => JSON.parse(a));
 const fn = carousel[fnName];
 if (typeof fn !== "function") {
   process.stderr.write("no such carousel export: " + fnName);
   process.exit(2);
 }
-const result = fn(fixture);
+const result = fn.apply(null, args);
 // undefined is not valid JSON -- normalize to null so the caller reads it back.
 process.stdout.write(JSON.stringify(result === undefined ? null : result));

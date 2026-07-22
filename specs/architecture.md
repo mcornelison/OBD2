@@ -490,8 +490,16 @@ guards **every** access to the underlying `self.obd`:
 
 **Every caller goes through the wrapper** so no two threads ever drive the
 port at once: the lifecycle connect/query daemons, the US-301 heartbeat's
-`connectFn`, **and the realtime logger's reads (`logger.py` `queryParameter` /
-`_queryViaDecoder`) — which call `connection.query()`, not `connection.obd.query()`.**
+`connectFn`, the realtime logger's reads (`logger.py` `queryParameter` /
+`_queryViaDecoder`), **and the DTC read/clear paths (`DtcClient` — Mode 03 /
+07 / 04, including the US-404 KOEO connect-edge read) — all call
+`connection.query()`, never raw `connection.obd.query()`.** US-474 (F-117/A-17)
+removed the last `getattr`-based raw fallback in `DtcClient._serializedQuery`
+and made `query()` a **typed member of the `ObdConnectionLike` Protocol**
+(`obd` stays exposed as the python-obd facade but is explicitly *not* the DTC
+read path), so the raw-bypass hole that killed capture — a KOEO DTC read
+interleaving with the logger's read on the one non-thread-safe port — is now
+closed at the type level, not just by convention.
 
 **Epoch fence (orphaned-daemon reconciliation).** A monotonically increasing
 **generation** (`ObdConnection._generation`, guarded by `_ioLock`) is bumped on
@@ -526,9 +534,14 @@ happening.
 Code: `src/pi/obdii/obd_connection.py` (`_ioLock`, `_generation`,
 `activeGeneration`, `query`), `orchestrator/lifecycle.py`
 (`_runInitialConnectWithTimeout`, `_queryWithTimeout`, `_resolveGeneration`),
-`data/logger.py` (serialized reads). Contract test:
-`tests/pi/obdii/test_obd_connection_thread_safety.py` (real-concurrency:
-logger read path + orphaned daemon on the same wrapper, no interleaving).
+`data/logger.py` (serialized reads), `obdii/dtc_client.py` (`ObdConnectionLike`
+Protocol + `_serializedQuery` — all DTC reads via the locked `query()`).
+Contract tests: `tests/pi/obdii/test_obd_connection_thread_safety.py`
+(real-concurrency: logger read path + orphaned daemon on the same wrapper, no
+interleaving) and `tests/pi/obdii/test_dtc_connect_edge_concurrency.py`
+(US-474 / F-117 GAP-1: a real `DtcClient` KOEO read + a logger read serialize
+through `_ioLock` on one faked non-thread-safe port; reverting the lock makes
+it RED).
 
 ---
 
@@ -1717,49 +1730,39 @@ color. No config duplication.
 which reduces the last N rows of the `statistics` table per parameter
 (N configurable, default 5).
 
-### Two Display Surfaces (primary + status_display overlay)
+### Display Surface (primary driving screen)
 
-> **Retired (US-402, V0.29.3):** the **Status overlay** below is retired in
-> production — `pi.hardware.statusDisplay.enabled=false` — superseded by the F-092
-> HTML carousel (see "F-092 Carousel Dashboard Subsystem → Pygame sunset"). The
-> module stays in the tree (re-enablable for a bench diagnostic) but the
-> orchestrator no longer launches it; the carousel is the sole dashboard surface.
+> **pygame status overlay fully retired (US-485, V0.29.15).** There used to be
+> **two** pygame surfaces (primary + a `pi.hardware.status_display` overlay). The
+> overlay was config-disabled in US-402 (V0.29.3) once the F-092 HTML carousel
+> reached parity, then **fully removed in US-485**: `status_display.py`,
+> `dashboard_layout.py`, all `HardwareManager` wiring, and the
+> `pi.hardware.statusDisplay` config key are gone. The **carousel is the sole
+> dashboard surface** (fed by the US-480 state-file emitters), and the single
+> remaining pygame surface is the primary driving screen below.
 
-The Pi runtime wires two distinct pygame surfaces that must not fight over
-GPU resources:
+The Pi runtime wires one pygame surface for the live driving screen:
 
 | Surface | Module | Owner | Renderer |
 |---------|--------|-------|----------|
 | Primary (driving screen) | `pi.display.manager` + `pi.display.screens.*` | Orchestrator | Headless / Minimal / Developer drivers; the Minimal driver calls `pygame.display.set_mode` under X11 with `DISPLAY=:0 XAUTHORITY=~/.Xauthority SDL_VIDEODRIVER=x11` per Session 22 baseline. |
-| Status overlay | `pi.hardware.status_display` | HardwareManager | Software renderer (US-198). `pygame.display.set_mode((480,320), NOFRAME)` is wrapped by SDL env hints forcing the software path — `SDL_RENDER_DRIVER=software`, `SDL_VIDEO_X11_FORCE_EGL=0`, `SDL_FRAMEBUFFER_ACCELERATION=0` — set *before* `pygame.init()`. |
 
-**Why the split matters (TD-024 / US-198)**: pygame's wheel-bundled SDL2
-defaulted to an EGL/GL context when the overlay initialized under X11 and
-the X server denied GLX with `BadAccess`. Xlib's default error handler calls
-`exit()`, killing the orchestrator runLoop at uptime ~0.6s (Session 23 live
-drill). The software path on the overlay renders visibly and avoids GL
-entirely. The primary display keeps the native x11 renderer because its
-path was already proven in Session 22.
+**Historical note (TD-024 / US-198)** — the retired status overlay ran on SDL's
+*software* renderer because pygame's wheel-bundled SDL2 defaulted to an EGL/GL
+context under X11 and the X server denied GLX with `BadAccess`, whose Xlib
+default handler calls `exit()` and killed the orchestrator runLoop at uptime
+~0.6s (Session 23 live drill). That failure mode retired with the overlay
+(US-485). The primary display keeps the native x11 renderer, proven in Session 22.
 
-**Config surface**:
+### Full-Canvas Status Overlay Redesign (US-257, B-052, Sprint 21) — RETIRED (US-485)
 
-```json
-"pi": {
-  "hardware": {
-    "statusDisplay": {
-      "enabled": true,
-      "forceSoftwareRenderer": true
-    }
-  }
-}
-```
-
-Operators can set `enabled: false` to disable the overlay entirely if it
-ever breaks again — the orchestrator tolerates a null `statusDisplay`.
-Operators can override any `SDL_*` env var at the `.service` / shell level;
-the code only fills in missing values, never clobbering.
-
-### Full-Canvas Status Overlay Redesign (US-257, B-052, Sprint 21)
+> **Retired (US-485, V0.29.15).** This section documents the pygame status
+> overlay's canvas-aware redesign. The overlay is **fully removed** —
+> `status_display.py`, `dashboard_layout.py` (`computeLayout` / `DashboardLayout`
+> / the 4-quadrant layout / `updateShutdownStage` / `ShutdownStage`), and their
+> tests no longer exist. Kept below only as historical record; the HTML carousel
+> is the sole dashboard surface. The `pi.display.displayCanvas` config keys are
+> likewise orphaned (no live consumer).
 
 The legacy 480x320 strip rendered fine on the OSOYOO touchscreen but
 occupied a small fraction of the Eclipse's HDMI canvas (CIO observation
@@ -1819,13 +1822,11 @@ the stage at a glance. NORMAL leaves the background black to avoid
 `pi.display.width`/`height` keys are unchanged so existing dev/test rigs
 keep working.
 
-**Test surface**: `tests/pi/hardware/test_dashboard_layout.py` exercises
-the geometry across (1920,1080) / (1280,720) / (480,320) and asserts the
-quadrants tile the canvas-minus-footer with no gaps, no overlaps, and no
-zero-dim quadrants. `tests/pi/hardware/test_status_display.py`
-parameterizes the constructor + render path over the same three sizes
-and verifies `updateShutdownStage` accepts both the enum and string forms
-with case-insensitive coercion.
+**Test surface** (retired US-485): `tests/pi/hardware/test_dashboard_layout.py`
+and `tests/pi/hardware/test_status_display.py` were removed alongside the
+modules they exercised. They previously covered the geometry tiling across
+(1920,1080) / (1280,720) / (480,320) and the `updateShutdownStage` enum/string
+coercion.
 
 ### Live-Data HDMI Render (US-192)
 
@@ -2693,14 +2694,61 @@ event-triggered high-rate (100–200 Hz) capture are F-115. The reader stores
 calibration are deferred transforms (F-115), pending the recorded mounting
 axis-orientation.
 
-**Config (ships dark).** Master `pi.bus.enabled` → `pi.sensors.imu.enabled` /
-`pi.sensors.light.enabled` (default `false`, each requires the bus gate);
+**Bus → `states/light` bridge (US-483-a / F-121, Sprint 61 / V0.29.15).** The
+carousel display auto-dim consumer (US-483-b) is a **pure consumer of a
+reader-owned state file** (Atlas DELTA-2) — it never touches the TSL2591. A
+dedicated bridge (`src/pi/sensors/light_state_bridge.py`, `LightStateBridge`)
+subscribes to the additive `raw.light.lux` channel (LOSSY — a display needs only
+the freshest reading) and mirrors it into `states/light` (`{lux, ts}`, written
+atomically via the shared `boot_state_emitter` primitives and served by
+`eclipse-states-http` alongside the US-480-a card states). The bridge opens **no
+I²C device and no OBD connection** — it is orchestrator-invoked as a bus
+subscriber inside `_startEdrSensorPath` (subscribed *before* the readers publish,
+stopped in `_shutdownDataLogger`), so it cannot re-introduce the A-17
+second-connection race. Honest-instrument carries through the seam: a saturated
+read (`lux=None`) is written as JSON `null` (never `inf`/fabricated), and the
+freshness `ts` is the **sample's own read-time** (not write-time), so a stalled
+feed goes honestly stale and the consumer falls back rather than trusting a
+frozen value. Gated behind `pi.bus.enabled` + `pi.sensors.light.enabled`.
+
+**Display auto-dim consumer + config-injection seam (US-483-b / F-121, Sprint 61
+/ V0.29.15).** The carousel drives the panel brightness (a **software dim** — the
+Chromium kiosk can't reach the panel backlight) from the `states/light` feed via
+pure, node-tested logic in `carousel.js`: `brightnessLevel(lightData, cfg, nowMs,
+alarmActive)` = `clamp(minLevel, brightnessCurve(lux), 1.0)` when the feed is
+fresh, else a fixed `defaultLevel` (honest fallback — an absent/stale/`null`
+reading never fabricates an "auto" behavior), then raised to at least
+`alarmFloorLevel` while a **real active STOP** alert is present
+(`brightnessAlarmActive` — the load-bearing safety guard: the PULL-OVER alarm is
+never dimmed below legible, regardless of lux). Applied as a CSS var
+(`--display-brightness`) `filter: brightness()` on the `#screen` frame (the black
+letterbox bars stay black; `#stage`'s own transform remains the containing block
+for its descendants, so US-482 scaling is untouched). The curve values are
+**GROUNDED CONFIG PARAMETERS** under `pi.display.autoDim.*` (`luxMin` 3.0 /
+`luxFull` 1000.0 — standard illuminance anchors; `minLevel` 0.15 / `defaultLevel`
+0.70 / `alarmFloorLevel` 0.40 — Iris-tunable levels; `luxStaleSec` 10; `curve`
+`logarithmic`), **NOT** `pi.display.brightness` (the distinct live 0–100
+hardware-backlight scalar). Tuning is a **config change, not code** (CIO
+2026-07-22): `eclipse-states-http` injects the `pi.display.autoDim` object into
+the served `dashboard.html` at serve time — the same same-origin seam as the
+`__SPLASH_TOKEN__` SSOT — via the quoted `"__DISPLAY_AUTODIM__"` placeholder
+(`states_http_server.loadDisplayAutoDimConfig` reads config.json fail-safe; no
+config → `null` → the carousel's built-in grounded defaults, which mirror
+config.json). The consumer reads **only** `states/light` — it opens no OBD/second
+connection.
+
+**Config (connect-when-wired).** Master `pi.bus.enabled` → `pi.sensors.imu.enabled`
+/ `pi.sensors.light.enabled` (each requires the bus gate);
 `pi.sensors.imu.sampleHz` (`50`, bus publish rate), `pi.sensors.imu.persistHz`
 (`25`, decimated persist), `pi.sensors.light.sampleHz` (`1`),
 `pi.sensors.retentionDays` (`7`, rolling-window purge — confirm vs Pi free space
 at deploy). Built US-408 (schema contract + Pi tables) / US-409 (IMU + light
 readers) / US-410 (persistence subscriber + retention) / US-411 (bench harness +
-golden-master regression + connect-when-wired drill).
+golden-master regression + connect-when-wired drill). **US-483-a (V0.29.15)
+flipped `pi.bus.enabled` + `pi.sensors.light.enabled` ON** — the TSL2591 is wired
++ I²C-addressable @0x29 (verified on the Pi 2026-07-22), so the light feed is now
+live and bridged to `states/light`; the IMU stays dark (clone boards absent — the
+graceful-absent reader stays silent, isolating the live light feed).
 
 *Gate-ratification note: §10.8 added per the 2026-05-18 design-gate governance
 rule (PM Rule 10 / C-4 DoD, in-sprint) from Atlas's 2026-06-30 EDR ADR
@@ -2968,11 +3016,13 @@ to `/opt/dashboard` (WARN-not-BLOCK if absent, A-9), mirroring
 session-aware `install.sh` (V-1/V-2), the same seam as the splash kiosk unit.
 
 > **Sequencing note (A-4):** the dashboard and the pygame `status_display` must
-> never run simultaneously. The pygame surface is **retired (parity-gated) in
+> never run simultaneously. The pygame surface was **retired (parity-gated) in
 > US-402** — once the System Status + Battery Health cards reached parity
-> (US-400/401) — by setting `pi.hardware.statusDisplay.enabled=false` in
-> `config.json`. The sprint deploys US-399…402 together, so the shipped artifact
-> has exactly one surface. See the US-402 subsection below for the resolution fix.
+> (US-400/401) — by setting `pi.hardware.statusDisplay.enabled=false`, then
+> **fully removed in US-485 (V0.29.15)** (module + wiring + config key deleted).
+> There is now **exactly one** dashboard surface (the carousel) with no overlay
+> flag left to re-enable. See the US-402 subsection below for the original
+> cut-over fix.
 
 #### System Status card + `system-status` emitter (US-400) [Atlas A-3]
 
@@ -3096,34 +3146,79 @@ they never re-invent the lifecycle. The full post-boot writer set is therefore
 `system-status` · `battery-health` · `dtc` (the F-103 boot/shutdown emitters own
 `boot-state` / `shutdown-state`).
 
-#### Pygame sunset — parity-gated cut-over (US-402) [Atlas A-4]
+#### Card-state emitter run-model + deploy-install (US-480, Sprint 61 / V0.29.15) [Atlas Q-1]
+
+The three post-boot card emitters above describe **which tier owns each fact**
+(A-3) — but an emitter only *runs* if something invokes it each loop, and only
+survives a reboot if that host is deploy-installed to boot-start. Both were the
+gap that shipped the emitters **dark**: code merged, but `/run/eclipse-obd/states/`
+held only `boot-state` and the carousel cards rendered the NA/unavailable wall.
+
+**Run-model (US-480-a — orchestrator-invoked, NOT standalone units).** The
+OBD-dependent emitters are driven *in-process from the orchestrator process that
+owns the single `ObdConnection`*, via `CardStateEmitterMixin`
+(`src/pi/obdii/orchestrator/card_state_emitter.py`). The mixin constructs the
+three emitters once (`_initializeCardStateEmitters`) and the run-loop calls
+`_maybeEmitCardStates()` once per pass on a ~2 s cadence gate; every read is
+best-effort + exception-isolated so a dashboard hiccup can never crash the
+capture loop. The emitters are **pure consumers** of `self._connection` — they
+open **no** connection of their own. This is load-bearing: a standalone systemd
+unit that read OBD would open a **second** connection to the non-thread-safe
+python-obd port and re-introduce the **A-17** serialization race the DTC-read
+work just closed. (`battery-health` reads the MAX17048 over I²C, not the OBD
+port, so it is safe either way, but rides the same in-process cadence for
+coherence.) The `idle` boolean is written by the `system-status` emitter — it
+owns both inputs (`obd.available` + `driveState`), so `idle` is an explicit SSOT
+flag, not a display-derived guess (consumed by the idle home card, US-481).
+
+**Deploy-install (US-480-b — boot-persistence).** Because the emitters run inside
+`eclipse-obd.service`, deploy-installing their *execution* reduces to one systemd
+fact: `deploy-pi.sh` must **`systemctl enable eclipse-obd`**
+(`step_install_eclipse_obd_unit`) so a fresh `--init` Pi + reboot auto-starts the
+orchestrator — and with it the emitters — with **no manual step**. The unit has
+always declared `WantedBy=multi-user.target`, but "installed" ≠ "enabled"; the
+deploy previously installed + restarted the unit yet never asserted the enable.
+It is `enable` (not `enable --now`): `step_restart_service` owns the actual start
+via an explicit stop→start (US-389 release-then-acquire of the single-instance
+pidfile; a `--now` here would race it). The enable is re-asserted on every deploy
+**outside** the `cmp -s` sync-if-changed gate, so a Pi installed pre-US-480-b —
+or disabled out-of-band — self-heals on a routine re-deploy. The `states/` dir
+itself is already boot-durable via the tmpfiles.d entry (Atlas C-5, above),
+independent of the orchestrator's start order, so the cards render an honest
+state even before eclipse-obd finishes coming up. **No separate emitter unit
+exists — the orchestrator IS the emitter host.**
+
+#### Pygame sunset — parity-gated cut-over (US-402) then full removal (US-485) [Atlas A-4]
 
 Once the System Status (US-400) and Battery Health (US-401) cards reached parity
-with the legacy pygame **status overlay**, that overlay is **retired** so the HTML
+with the legacy pygame **status overlay**, that overlay was **retired** so the HTML
 carousel is the **sole** dashboard surface (failure **F-4**: the two must never be
 active simultaneously). The data the overlay used to paint is now republished
 through the `system-status` + `battery-health` emitters into the state files the
 carousel reads.
 
-**Cut-over mechanism.** The retirement is a single config flip:
-`pi.hardware.statusDisplay.enabled` → `false` in `config.json`. With the overlay
-off, `HardwareManager._initializeStatusDisplay` returns early and never opens a
-pygame surface; the carousel kiosk (launched by the splash `OnSuccess=` hand-off)
-is the only surface. This is parity-gated — pygame is retired **only** now that
-the cards exist, never before.
+**US-402 cut-over mechanism (V0.29.3).** The initial retirement was a single
+config flip: `pi.hardware.statusDisplay.enabled` → `false` in `config.json`. With
+the overlay off, `HardwareManager` never opened a pygame surface; the carousel
+kiosk (launched by the splash `OnSuccess=` hand-off) was the only surface. This
+was parity-gated — pygame retired **only** once the cards existed, never before.
+(That cut-over relied on a factory resolution fix: the canonical flag lives at the
+pi-**nested** `pi.hardware.statusDisplay.*` path that `lifecycle.py` passes, so the
+factory had to resolve the nested path first — the flat top-level path alone had
+silently launched the overlay on its `True` default.)
 
-**Resolution fix (load-bearing).** `createHardwareManagerFromConfig` historically
-resolved the overlay flag from the **flat** top-level `hardware.statusDisplay.*`
-path, but the orchestrator (`lifecycle.py`) passes the **full** config, where the
-canonical flag lives at the **nested** `pi.hardware.statusDisplay.*` (config.json).
-So before US-402 the nested flag was silently ignored and the overlay always
-launched on its `True` default — a config flip alone would not have retired it.
-The factory now resolves the **nested path first**, falling back to the flat path
-and then the legacy `hardware.display.enabled` (preserving the US-198 operator
-escape hatch). This mirrors the factory's own pi-nested
-`pi.shutdown.poweroffTimeoutSeconds` read. `status_display.py` /
-`dashboard_layout.py` remain in the tree (not launched), so the overlay can still
-be re-enabled for a bench diagnostic without a rebuild.
+**US-485 full removal (V0.29.15).** The config-disabled overlay was dead code
+carrying a re-enable footgun, so US-485 completed the sunset: `status_display.py`,
+`dashboard_layout.py`, every `HardwareManager` launch/wiring member
+(`_initializeStatusDisplay`, the `_startComponents` display branch,
+`_displayUpdateLoop`, the `_cleanup` branch, the `statusDisplay` property, the
+`display*` constructor params + factory reads), the `pi.hardware.statusDisplay`
+config key, and the two module tests are all **removed**. `HardwareManager` no
+longer owns any display; its `updateObdStatus` / `updateErrorCount` remain as
+documented **no-op stubs** so the orchestrator's best-effort status push
+(`event_router`) stays valid without an `AttributeError`, and `getStatus()['display']`
+is a permanent `None` for consumer back-compat. There is no longer any bench
+re-enable path — the overlay is gone, not merely disabled.
 
 #### System Setup menu + gated service control (US-403) [Atlas A-7/A-8]
 

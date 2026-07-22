@@ -4,7 +4,8 @@ version: V0.29.15
 status: draft
 createdAt: 2026-07-21
 createdBy: Marcus (PM)
-selectedStories: [US-480-a, US-480-b, US-481, US-482, US-483, US-484, US-485, US-486]
+selectedStories: [US-480-a, US-480-b, US-481, US-482, US-483-a, US-483-b, US-485, US-486, US-487]
+pulledToNextSprint: [US-484]  # blocked on Atlas (--text-primary) + Spool (--critical-red SAFETY) SSOT token adds; BL-024 open; CIO 2026-07-22 close 9/9 + defer 484
 pmFinalSizing: "APPROVED 2026-07-21 (Marcus). 5-dim sizing run; US-480 split (2 Red: files+concerns) -> US-480-a (wire emitters to run) + US-480-b (deploy-install + reboot-persistence + Rule-10), zero info loss. 8 stories, all Green (US-481/483 accepted single-Yellow). Under the 10-story limit. Dispatch order rec: ungated Green first (US-482/485/486/481) while Atlas rules the run-model (Q-1/US-480-a) + Q-2/US-484 + Q-4/US-483."
 forksFrom: dev @ (recorded at prd_to_sprint.py conversion)
 sprintJsonPath: offices/ralph/sprint.json
@@ -12,7 +13,7 @@ epic: E-001 (UI/UX Polish) + F-080 (US-486 startup_log guard)
 feature: F-121 (Pi dashboard render-truthfully) + F-080
 theme: Make the deployed Pi dashboard render truthfully -- wire the emitters, calm idle state, full-bleed letterbox, light-feed, token + startup_log cleanup
 designSpec: offices/uidevloper/proposals/2026-07-21-pi-idle-state-and-full-bleed.md (Iris, REVIEWED + CIO-locked 9da4af5)
-atlasReview: "PENDING -- routed 2026-07-21. Pre-dispatch gates: Iris Q-1 (idle-detection SSOT / emitter run-model, rides US-480), Q-2 (token drift, US-484), Q-4 (light state-file contract, US-483). Full-bleed letterbox (US-482) + idle card (US-481) are presentation/existing-SSOT -> no data gate."
+atlasReview: "PASS 2026-07-21 (inbox 2026-07-21-from-atlas-f121-...). No BLOCK. Rulings folded into backlog: Q-1 run-model = OBD emitters ORCHESTRATOR-INVOKED (not standalone units -> would reopen the port + reintroduce the A-17 race) + idle-SSOT (b) emitter-writes-boolean; Q-2 token = green name+value fork + text-primary SSOT-add + critical-red SAFETY item (Spool value + Atlas gate + repoint STOP off brand-red); Q-4 light contract APPROVED (build curve+fallback now, live lux EDR-gated). GAP CLOSED: the phantom-CE was STALE deployed carousel.js (deploy drift), already resolved by the V0.29.14 redeploy (Pi /opt/dashboard/carousel.js now md5-matches dev) -> US-480-a acceptance re-grounded to measure emitter-wiring, not the phantom. Added US-487 (US-479 pre-drive hardening, Atlas post-hoc). Issue-1 §3.5 = Atlas DONE (45a54d1)."
 reclaims: "V0.29.15 was the shelved F-120 BT-reliability slot; reclaimed for this UI sprint (F-120 dead)."
 ---
 

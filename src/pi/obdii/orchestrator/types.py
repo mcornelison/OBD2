@@ -108,6 +108,14 @@ DEFAULT_CONNECTION_CHECK_INTERVAL = 5.0  # Check connection every 5 seconds
 DEFAULT_RECONNECT_DELAYS = [1, 2, 4, 8, 16]  # Exponential backoff delays in seconds
 DEFAULT_MAX_RECONNECT_ATTEMPTS = 5  # Maximum reconnection attempts
 
+# US-480-a: carousel card-state emit cadence.  The carousel polls the states
+# files at 4 Hz (250 ms); a ~2 s refresh keeps system-status + battery-health
+# fresh without hammering the I2C bus / DB (config: pi.dashboard.*).
+DEFAULT_CARD_STATE_EMIT_INTERVAL = 2.0  # seconds between card-state emits
+# Default stale-while-driving threshold for the system-status sync tile (Spool
+# S-3 owns the tuning value; this is the honest fallback when config omits it).
+DEFAULT_SYNC_STALE_THRESHOLD_SECONDS = 120.0
+
 # Exit codes
 EXIT_CODE_CLEAN = 0
 EXIT_CODE_FORCED = 1
@@ -155,6 +163,8 @@ __all__ = [
     'DEFAULT_HEALTH_CHECK_INTERVAL',
     'DEFAULT_DATA_RATE_LOG_INTERVAL',
     'DEFAULT_CONNECTION_CHECK_INTERVAL',
+    'DEFAULT_CARD_STATE_EMIT_INTERVAL',
+    'DEFAULT_SYNC_STALE_THRESHOLD_SECONDS',
     'DEFAULT_RECONNECT_DELAYS',
     'DEFAULT_MAX_RECONNECT_ATTEMPTS',
     'EXIT_CODE_CLEAN',

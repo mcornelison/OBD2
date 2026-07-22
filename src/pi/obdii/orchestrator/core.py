@@ -93,18 +93,21 @@ from typing import Any
 from ..database import ObdDatabase
 from .backup_coordinator import BackupCoordinatorMixin
 from .bt_resilience import BtResilienceMixin
+from .card_state_emitter import CardStateEmitterMixin
 from .connection_recovery import ConnectionRecoveryMixin
 from .event_router import EventRouterMixin
 from .health_monitor import HealthMonitorMixin
 from .lifecycle import LifecycleMixin
 from .signal_handler import SignalHandlerMixin
 from .types import (
+    DEFAULT_CARD_STATE_EMIT_INTERVAL,
     DEFAULT_CONNECTION_CHECK_INTERVAL,
     DEFAULT_DATA_RATE_LOG_INTERVAL,
     DEFAULT_HEALTH_CHECK_INTERVAL,
     DEFAULT_MAX_RECONNECT_ATTEMPTS,
     DEFAULT_RECONNECT_DELAYS,
     DEFAULT_SHUTDOWN_TIMEOUT,
+    DEFAULT_SYNC_STALE_THRESHOLD_SECONDS,
     EXIT_CODE_CLEAN,
     EXIT_CODE_FORCED,
     HealthCheckStats,
@@ -129,6 +132,7 @@ class ApplicationOrchestrator(  # type: ignore[misc]
     ConnectionRecoveryMixin,
     BtResilienceMixin,
     EventRouterMixin,
+    CardStateEmitterMixin,
 ):
     """
     Central orchestrator for the OBD-II monitoring application.
@@ -264,6 +268,40 @@ class ApplicationOrchestrator(  # type: ignore[misc]
         # cadence (preserves back-compat for tests + simulate-mode paths
         # that bypass lifecycle init).
         self._syncCadenceController: Any | None = None
+
+        # US-480-a: carousel card-state emitters (F-092 system-status / F-097
+        # battery-health / F-111 dtc).  Constructed by
+        # lifecycle._initializeCardStateEmitters and INVOKED in-process from
+        # runLoop -- per Atlas Q-1, the OBD-fed emitters must run inside this
+        # process (the single ObdConnection owner) so no second connection is
+        # opened (A-17).  All three stay None when disabled via
+        # ``pi.dashboard.stateEmitEnabled=false`` or construction fails (soft).
+        self._systemStatusEmitter: Any | None = None
+        self._batteryHealthEmitter: Any | None = None
+        self._dtcEmitter: Any | None = None
+        # Card-state emit cadence + cached sync status (updated by the sync
+        # trigger path so the system-status tile reflects the REAL last push
+        # without a per-tick DB scan).  None before the first tick so the very
+        # first runLoop pass emits (no boot-instant lag).
+        self._lastCardStateEmitTime: datetime | None = None
+        dashConfig = config.get('pi', {}).get('dashboard', {})
+        self._cardStateEmitEnabled: bool = (
+            dashConfig.get('stateEmitEnabled', True) is not False
+        )
+        self._cardStateEmitInterval: float = float(
+            dashConfig.get('stateEmitIntervalSeconds', DEFAULT_CARD_STATE_EMIT_INTERVAL)
+        )
+        self._cardSyncStaleThresholdS: float = float(
+            dashConfig.get(
+                'syncStaleThresholdSeconds', DEFAULT_SYNC_STALE_THRESHOLD_SECONDS
+            )
+        )
+        self._lastSyncOkTsIso: str | None = None
+        self._lastSyncRows: int = 0
+        # Cached PowerModeProvider (deployment context car/wall/unknown SSOT)
+        # for the system-status power tile; built once in
+        # _initializeCardStateEmitters.  None on the bench / when disabled.
+        self._cardPowerModeProvider: Any | None = None
 
         # Backup scheduling state
         self._backupScheduleTimer: threading.Timer | None = None
@@ -821,6 +859,16 @@ class ApplicationOrchestrator(  # type: ignore[misc]
                     # until CIO opts in.
                     self._maybeTriggerUpdateApply()
 
+                    # US-480-a: refresh the carousel card-state files
+                    # (system-status + battery-health) on their own cadence.
+                    # Cheap fast-path -- the method is its own cadence gate and
+                    # short-circuits when not due; all reads are best-effort +
+                    # exception-isolated so a dashboard hiccup never crashes the
+                    # loop.  Orchestrator-invoked (Atlas Q-1) so the OBD-fed
+                    # system-status tile is fed from THIS process's single
+                    # ObdConnection -- no second connection is ever opened.
+                    self._maybeEmitCardStates()
+
                     # Sleep briefly to avoid busy-waiting
                     # This allows shutdown signals to be processed promptly
                     time.sleep(self._loopSleepInterval)
@@ -967,6 +1015,12 @@ class ApplicationOrchestrator(  # type: ignore[misc]
             logger.debug(
                 "Interval sync tick: no pending deltas",
             )
+        # US-480-a: cache the REAL sync outcome for the system-status tile so it
+        # renders the actual last-push time + row count without a per-tick DB
+        # scan.  Only stamp when the push actually completed past the route gate
+        # (this line is unreachable when hasRoute() was false) -- honest: a
+        # tick that never left the Pi does not advance "last synced".
+        self._recordSyncOutcome(rowsPushed)
         return True
 
     def triggerDriveEndSync(self) -> bool:
@@ -1024,6 +1078,9 @@ class ApplicationOrchestrator(  # type: ignore[misc]
         logger.info(
             "Drive-end sync: rowsPushed=%d", rowsPushed,
         )
+        # US-480-a: cache the real drive-end sync outcome for the system-status
+        # tile (same as the interval path).
+        self._recordSyncOutcome(rowsPushed)
         return True
 
     # ================================================================================

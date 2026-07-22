@@ -42,12 +42,22 @@ import mimetypes
 from collections.abc import Callable, Sequence
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
+from typing import Any
 from urllib.parse import unquote, urlsplit
 
 from pi.splash import dtc_clear, service_control
 
 # Placeholder substituted with the live token when the kiosk HTML is served.
 _TOKEN_PLACEHOLDER = "__SPLASH_TOKEN__"
+
+# US-483-b: the QUOTED placeholder the served HTML carries for the display
+# auto-dim config (pi.display.autoDim). Substituted with the JSON config object at
+# serve time so tuning is a config change, not a code change. Quoted so an
+# un-substituted preview stays valid JS (a string the carousel ignores); the
+# substitution replaces the quotes too, yielding a real JS object literal (or
+# ``null`` when no config was provided -> the carousel uses its grounded
+# defaults, honest -- never a fabricated curve).
+_DISPLAY_AUTODIM_PLACEHOLDER = '"__DISPLAY_AUTODIM__"'
 
 # HTML entry points get the token injected; treated as the same-origin bootstrap.
 _INDEX_NAMES = frozenset({"", "index.html"})
@@ -104,6 +114,7 @@ def makeStatesHandler(
     token: str,
     assetsDir: str | Sequence[str] | None = None,
     clearRunner: Callable[[], object] | None = None,
+    displayConfig: dict[str, Any] | None = None,
 ) -> type[BaseHTTPRequestHandler]:
     """Build a request-handler class bound to one states dir + token + assets.
 
@@ -115,8 +126,16 @@ def makeStatesHandler(
     connection holder (the orchestrator on the Pi). When ``None`` the POST
     /dtc-clear route returns an honest 503 (the standalone server has no OBD
     connection) rather than fabricating a success.
+
+    ``displayConfig`` (US-483-b) is the ``pi.display.autoDim`` sub-config injected
+    into the served kiosk HTML so the carousel's auto-dim curve is tunable via
+    config (not code). ``None`` -> the placeholder becomes ``null`` and the
+    carousel falls back to its built-in grounded defaults.
     """
     assetsDirs = _normalizeAssetsDirs(assetsDir)
+    # Serialize once: the JSON object literal substituted for the quoted
+    # placeholder (json.dumps(None) -> "null", the honest no-config fallback).
+    displayConfigJson = json.dumps(displayConfig)
 
     class _StatesHandler(BaseHTTPRequestHandler):
         # Silence default stderr request logging -- the journal captures stdout.
@@ -295,15 +314,21 @@ def makeStatesHandler(
                 return
             self._send(200, body, "application/json")
 
+        def _injectHtml(self, html: str) -> str:
+            # Same-origin injection at serve time: the token SSOT (US-393) and the
+            # display auto-dim config (US-483-b). Neither placeholder value ever
+            # lands in an on-disk asset.
+            return html.replace(_TOKEN_PLACEHOLDER, token).replace(
+                _DISPLAY_AUTODIM_PLACEHOLDER, displayConfigJson
+            )
+
         def _serveIndex(self) -> None:
             # The first asset dir holding an index.html owns `/` (the splash kit
             # in the runtime config); the dashboard is reached by its own name.
             for assetsBase in assetsDirs:
                 indexFile = _isSafeFile(assetsBase, "index.html")
                 if indexFile is not None:
-                    html = indexFile.read_text(encoding="utf-8").replace(
-                        _TOKEN_PLACEHOLDER, token
-                    )
+                    html = self._injectHtml(indexFile.read_text(encoding="utf-8"))
                     self._send(
                         200, html.encode("utf-8"), "text/html; charset=utf-8"
                     )
@@ -314,11 +339,10 @@ def makeStatesHandler(
             contentType, _ = mimetypes.guess_type(str(assetFile))
             if assetFile.suffix == ".svg":
                 contentType = "image/svg+xml"
-            # HTML assets (e.g. shutdown.html) also get the token injected.
+            # HTML assets (e.g. dashboard.html) also get the token + display
+            # config injected same-origin.
             if assetFile.suffix in (".html", ".htm"):
-                html = assetFile.read_text(encoding="utf-8").replace(
-                    _TOKEN_PLACEHOLDER, token
-                )
+                html = self._injectHtml(assetFile.read_text(encoding="utf-8"))
                 self._send(200, html.encode("utf-8"), "text/html; charset=utf-8")
                 return
             self._send(
@@ -339,10 +363,13 @@ class StatesHttpServer:
         port: int = 9899,
         assetsDir: str | Sequence[str] | None = None,
         clearRunner: Callable[[], object] | None = None,
+        displayConfig: dict[str, Any] | None = None,
     ) -> None:
         self.host = host
         self.statesDir = statesDir
-        handler = makeStatesHandler(statesDir, token, assetsDir, clearRunner)
+        handler = makeStatesHandler(
+            statesDir, token, assetsDir, clearRunner, displayConfig
+        )
         # Bind eagerly so a port conflict fails loudly at construction (the unit
         # then exits non-zero -> the kiosk's fetch errors -> splash DEGRADED;
         # no silent green-when-broken, spec §8 listen-failure semantics).
@@ -359,6 +386,32 @@ class StatesHttpServer:
     def shutdown(self) -> None:
         self._httpd.shutdown()
         self._httpd.server_close()
+
+
+def loadDisplayAutoDimConfig(configPath: str) -> dict[str, Any] | None:
+    """Read ``pi.display.autoDim`` from config.json (US-483-b), fail-safe.
+
+    A LIGHT raw ``json.load`` (no secrets loader / validator) -- the auto-dim
+    values are plain numbers with no ``${ENV}`` placeholders, so a full config
+    load would only add failure modes to this standalone server. ANY problem
+    (missing file, unreadable, malformed, section absent) returns ``None`` so the
+    server still serves the dashboard and the carousel falls back to its built-in
+    grounded defaults (honest -- never crash the kiosk over a config read).
+
+    Args:
+        configPath: Path to config.json (relative paths resolve against the
+            process CWD -- the unit's WorkingDirectory).
+
+    Returns:
+        The ``pi.display.autoDim`` dict, or ``None`` when it cannot be read.
+    """
+    try:
+        with open(configPath, encoding="utf-8") as fh:
+            config = json.load(fh)
+        autoDim = config.get("pi", {}).get("display", {}).get("autoDim")
+        return autoDim if isinstance(autoDim, dict) else None
+    except (OSError, ValueError):
+        return None
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -381,6 +434,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=9899)
     parser.add_argument("--token-path", default="/run/eclipse-obd/states/.http-token")
+    # US-483-b: config.json (relative to the unit's WorkingDirectory by default)
+    # supplies the pi.display.autoDim curve injected into the dashboard HTML.
+    parser.add_argument("--config", default="config.json")
     args = parser.parse_args(argv)
 
     assetsDirs = args.assets_dirs if args.assets_dirs else ["/opt/splash"]
@@ -393,6 +449,7 @@ def main(argv: list[str] | None = None) -> int:
         host=args.host,
         port=args.port,
         assetsDir=assetsDirs,
+        displayConfig=loadDisplayAutoDimConfig(args.config),
     )
     server.serveForever()
     return 0

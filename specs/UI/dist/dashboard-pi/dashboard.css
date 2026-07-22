@@ -83,6 +83,40 @@ html, body {
   color: var(--text-tertiary); font-style: italic;
 }
 
+/* --- US-481 idle-state home card (F-121) ------------------------------------ */
+/* The calm, honest PARKED view. Every colour is a token reference (no hex
+   literal here -- token reconciliation is US-484); the STANDBY hero is neutral
+   grey (never green), and the 3 fact tiles reuse the shared `.tile[data-level]`
+   rules above so green is bound to the SSOT green in exactly one place. */
+.idle-card .card-body {
+  display: flex; flex-direction: column; align-items: stretch;
+  gap: 6px; padding: 0;
+}
+.idle-header {
+  display: flex; align-items: baseline; gap: 8px;
+  font-size: 11px; color: var(--text-secondary);
+  letter-spacing: 0.06em;
+}
+.idle-wordmark { font-weight: 700; letter-spacing: 0.14em; }
+.idle-clock { margin-left: auto; font-size: 13px; color: var(--text-primary); }
+.idle-date { color: var(--text-tertiary); }
+/* STANDBY hero -- deliberately un-alarming neutral grey, never green (F-1). */
+.idle-hero {
+  flex: 1; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 4px;
+}
+.idle-hero-title {
+  font-size: 34px; font-weight: 700; letter-spacing: 0.10em;
+  color: var(--text-secondary);
+}
+.idle-hero-sub { font-size: 12px; color: var(--text-tertiary); letter-spacing: 0.04em; }
+.idle-facts { display: flex; flex-direction: column; }
+.idle-footer {
+  font-size: 10px; color: var(--text-tertiary);
+  text-align: center; letter-spacing: 0.04em; padding-top: 2px;
+}
+.idle-boot { color: var(--text-tertiary); font-style: italic; }
+
 /* --- US-400 System Status tiles --------------------------------------------- */
 /* Each tile = label + prominent value + detail. The [data-level] attribute
    drives the value colour; a degraded tile (amber/down/unavailable) is NEVER
@@ -481,3 +515,34 @@ html, body {
 #clear-confirm .confirm-box { border-color: var(--red-light); }
 .confirm-title { font-weight: 700; }
 #clear-confirm-ok { border-color: var(--red-light); color: var(--red-light); }
+
+/* --- US-482 letterbox scaling (F-121) --------------------------------------- */
+/* The UI is authored at a fixed 480x320 design box (#stage) and uniformly
+   scaled to fill the real panel (the Pi outputs 1080p; 480x320 is the design
+   target, matching the 3.5" panel it was drawn for). #screen is the full-
+   viewport black frame -- the letterbox strip on the aspect mismatch reads as
+   bezel, not a gap. #stage is the EXACT 480x320 box; carousel.js sets --scale
+   on load + resize (= min(innerW/480, innerH/320)), and `transform: scale()`
+   grows the whole box as ONE unit. Because #stage is transformed, it becomes
+   the containing block for its fixed/absolute descendants, so every shipped
+   layout rule above is UNCHANGED -- no reflow, no token/px layout edits (CIO-
+   locked LETTERBOX, 2026-07-21). */
+#screen {
+  position: fixed; inset: 0;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--bg);   /* black bezel behind the scaled design box */
+  overflow: hidden;
+  /* US-483-b software auto-dim: carousel.js sets --display-brightness (0..1)
+     from the states/light feed. Applied on the frame so the whole surface dims
+     uniformly (black bars stay black). Defaults to 1 (full) until the first
+     read -- and the filter here does NOT break #stage's transform containing
+     block (that is #stage's own, nearer to the fixed/absolute descendants). */
+  filter: brightness(var(--display-brightness, 1));
+}
+#stage {
+  position: relative;
+  flex: 0 0 auto;
+  width: 480px; height: 320px;   /* the fixed design box (matches STAGE_W/H) */
+  transform: scale(var(--scale, 1));
+  transform-origin: center center;
+}

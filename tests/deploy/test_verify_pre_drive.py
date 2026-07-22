@@ -15,6 +15,10 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-07-20    | Rex (US-479) | Initial implementation.
+# 2026-07-22    | Rex (US-487) | Static assertions for the hardened gate:
+#               |              | production-path verification after restart,
+#               |              | non-authoritative exit codes (bench/koeo-only),
+#               |              | and the DoD honesty note (no live race detection).
 # ================================================================================
 ################################################################################
 
@@ -86,3 +90,56 @@ def test_probe_exercisesConnectEdge():
         "the probe must call runConnectEdgeCapture (the A-17 connect-edge exercise)"
     )
     assert "evaluateGate" in text, "the probe must apply the PASS/FAIL gate logic"
+
+
+# --- US-487: pre-drive green-light hardening -----------------------------------
+
+
+def test_wrapper_verifiesProductionPathAfterRestart():
+    """FOLLOW-UP 1: after restarting eclipse-obd, the gate must prove the PRODUCTION
+    path is capturing -- the unit is active AND new realtime_data rows land in
+    data/obd.db -- so a GREEN can never coexist with a dead production service."""
+    text = WRAPPER.read_text(encoding="utf-8")
+    assert "systemctl is-active" in text, (
+        "wrapper must confirm eclipse-obd is active after the restart"
+    )
+    assert "data/obd.db" in text, (
+        "wrapper must check the PRODUCTION db (data/obd.db), not just the throwaway probe db"
+    )
+    assert "realtime_data" in text, "wrapper must count production realtime_data rows"
+    # The production result must feed the final verdict (a dead service => no green).
+    assert "PROD_RC" in text, "the production-capture result must gate the final verdict"
+    # The final PASS is gated on the production result.
+    assert 'PROD_RC" = "0"' in text, (
+        "the final green verdict must require the production check to have passed"
+    )
+
+
+def test_wrapper_nonAuthoritativeModesReturnDistinctExit():
+    """FOLLOW-UP 2: --bench and --koeo-only must NOT return the green exit 0 -- they
+    return a distinct non-authoritative exit so they can't be mistaken for the gate."""
+    text = WRAPPER.read_text(encoding="utf-8")
+    assert "EXIT_NONAUTH=3" in text, (
+        "wrapper must define a distinct non-authoritative exit code (3)"
+    )
+    assert 'exit "$EXIT_NONAUTH"' in text, (
+        "bench + koeo-only successes must exit the non-authoritative code, not 0"
+    )
+    assert "NON-AUTHORITATIVE PASS" in text, (
+        "wrapper must label bench/koeo-only passes as non-authoritative"
+    )
+    # The documented exit codes must mention the new code.
+    assert "3 -- " in text, "the header exit-code table must document exit 3"
+
+
+def test_wrapper_doesNotOverclaimLiveRaceDetection():
+    """FOLLOW-UP 3 (DoD honesty): the gate must not claim live race DETECTION -- the
+    interleave detector is a test-fake-only attribute, inert outside pytest. A live
+    green rests on the single-connection I/O lock + the row/coverage floors."""
+    lowered = WRAPPER.read_text(encoding="utf-8").lower()
+    assert "iolock" in lowered, (
+        "wrapper header must note live green rests on the I/O lock, not live race detection"
+    )
+    assert "interleave" in lowered, (
+        "wrapper header must acknowledge the interleave detector is not the live signal"
+    )

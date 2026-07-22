@@ -794,9 +794,25 @@ step_install_eclipse_obd_unit() {
     # rsync into ${PI_PATH}/deploy/ alone does NOT update the systemd-loaded copy.
     # Found during Sprint 16 deploy (2026-04-22): Pi was running with pre-US-210
     # unit (still --simulate, Restart=on-failure) despite deploy succeeding.
+    #
+    # US-480-b: also `systemctl enable` the orchestrator so a fresh --init Pi +
+    # reboot AUTO-STARTS it -- and with it the in-process F-092/097/111 card-state
+    # emitters (system-status / battery-health / dtc), which US-480-a wired to run
+    # inside THIS process via CardStateEmitterMixin (Atlas Q-1: the OBD emitters
+    # are orchestrator-invoked, never standalone units -- a standalone unit would
+    # open a 2nd connection to the non-thread-safe OBD port and re-introduce the
+    # A-17 race). Without the enable the unit installs but never boot-starts, so
+    # /run/eclipse-obd/states/ stays empty and the carousel cards render the NA
+    # wall -- the exact "code merged but never deploy-installed" gap that shipped
+    # the emitters dark. `enable` (NOT `enable --now`): step_restart_service owns
+    # the actual start via an explicit stop->start (US-389 release-then-acquire; a
+    # --now here would race it). Re-asserted every deploy, OUTSIDE the cmp -s
+    # change gate, so a Pi installed-but-never-enabled (or disabled out-of-band)
+    # self-heals on a routine re-deploy.
     echo "--- Step: Installing ${SERVICE_NAME} systemd unit (sync-if-changed) ---"
     if $DRY_RUN; then
         echo "DRY-RUN would: sudo cmp -s ${PI_PATH}/deploy/${SERVICE_NAME}.service /etc/systemd/system/${SERVICE_NAME}.service || (install + daemon-reload)"
+        echo "DRY-RUN would: sudo systemctl enable ${SERVICE_NAME} (US-480-b boot-persistence for the in-process emitters; NOT --now -- step_restart_service owns the start)"
         return 0
     fi
     remote "
@@ -814,6 +830,10 @@ step_install_eclipse_obd_unit() {
             sudo systemctl daemon-reload
             echo 'Unit installed + daemon-reload complete.'
         fi
+        # US-480-b: enable (boot-persistence) -- unconditional + idempotent, so a
+        # Pi installed pre-US-480-b (or disabled out-of-band) self-heals. NOT
+        # --now: step_restart_service owns the start (US-389 stop->start).
+        sudo systemctl enable ${SERVICE_NAME} && echo '${SERVICE_NAME} enabled (boot-persistent; in-process emitters auto-start on reboot -- US-480-b).' || echo 'WARN: failed to enable ${SERVICE_NAME} -- reboot will NOT auto-start the emitters. Investigate before relying on the carousel.'
     "
 }
 

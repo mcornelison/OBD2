@@ -341,6 +341,22 @@ DEFAULTS: dict[str, Any] = {
     'pi.display.displayCanvas.width': 1920,
     'pi.display.displayCanvas.height': 1080,
     'pi.display.displayCanvas.mode': 'auto',
+    # US-483-b (F-121): the carousel auto-dim curve -- GROUNDED, PARAMETERIZED
+    # values so tuning the screen brightness is a config change, not a code change
+    # (CIO 2026-07-22). NOTE the distinct key: pi.display.autoDim.* is the
+    # carousel's 0.0-1.0 SOFTWARE-dim multiplier, NOT pi.display.brightness (the
+    # live 0-100 hardware-backlight scalar the adafruit adapter / power_display
+    # dim). luxMin/luxFull grounding = standard illuminance references (civil-
+    # twilight dark ~3.4 lux; overcast daylight ~1000 lux -- see
+    # specs/grounded-knowledge.md illuminance note). Level defaults are Iris's to
+    # tune via config. b044-exempt: DEFAULTS registry mirrors config.json.
+    'pi.display.autoDim.luxMin': 3.0,
+    'pi.display.autoDim.luxFull': 1000.0,
+    'pi.display.autoDim.minLevel': 0.15,
+    'pi.display.autoDim.defaultLevel': 0.70,
+    'pi.display.autoDim.alarmFloorLevel': 0.40,
+    'pi.display.autoDim.luxStaleSec': 10,
+    'pi.display.autoDim.curve': 'logarithmic',
     # US-290 / TD-007: generateTimeoutSeconds closes the lone holdout from
     # US-OLL-002 (which made apiTimeoutSeconds + healthTimeoutSeconds
     # configurable but left the 120 s model-inference timeout hardcoded in
@@ -457,6 +473,7 @@ class ConfigValidator:
         self._validatePiSync(config)
         self._validateBootProgress(config)
         self._validatePowerWatch(config)
+        self._validateDisplayAutoDim(config)
 
         logger.info("Configuration validated successfully")
         return config
@@ -808,6 +825,82 @@ class ConfigValidator:
                 f"pi.powerWatch.pldPowerPresentHigh must be a bool "
                 f"(got {php!r})",
                 missingFields=['pi.powerWatch.pldPowerPresentHigh'],
+            )
+
+    def _validateDisplayAutoDim(self, config: dict[str, Any]) -> None:
+        """Validate pi.display.autoDim.* (US-483-b carousel auto-dim curve).
+
+        Called after defaults are applied. The brightness LEVELS (minLevel,
+        defaultLevel, alarmFloorLevel) must each be a fraction in [0, 1] -- an
+        out-of-band value would either blank the screen or, for the alarmFloor,
+        fail to keep a STOP alert legible (the load-bearing safety floor). The lux
+        anchors must be positive with ``luxFull > luxMin`` so the curve has a real
+        (non-degenerate) range, and ``luxStaleSec`` must be positive. These are
+        Iris-tunable via config; the validator only rejects values that are unsafe
+        or nonsensical by construction, it does not pin the grounded defaults.
+
+        Args:
+            config: Validated configuration (post-default-application).
+
+        Raises:
+            ConfigValidationError: If any pi.display.autoDim value is the wrong
+                type or outside its allowed range.
+        """
+        for key in (
+            'pi.display.autoDim.minLevel',
+            'pi.display.autoDim.defaultLevel',
+            'pi.display.autoDim.alarmFloorLevel',
+        ):
+            val = self._getNestedValue(config, key)
+            if val is not None and (
+                isinstance(val, bool)
+                or not isinstance(val, (int, float))
+                or not (0.0 <= val <= 1.0)
+            ):
+                raise ConfigValidationError(
+                    f"{key} must be a number in [0.0, 1.0] (got {val!r})",
+                    missingFields=[key],
+                )
+
+        luxMin = self._getNestedValue(config, 'pi.display.autoDim.luxMin')
+        luxFull = self._getNestedValue(config, 'pi.display.autoDim.luxFull')
+        for key, val in (
+            ('pi.display.autoDim.luxMin', luxMin),
+            ('pi.display.autoDim.luxFull', luxFull),
+            (
+                'pi.display.autoDim.luxStaleSec',
+                self._getNestedValue(config, 'pi.display.autoDim.luxStaleSec'),
+            ),
+        ):
+            if val is not None and (
+                isinstance(val, bool)
+                or not isinstance(val, (int, float))
+                or val <= 0
+            ):
+                raise ConfigValidationError(
+                    f"{key} must be a positive number (got {val!r})",
+                    missingFields=[key],
+                )
+
+        if (
+            isinstance(luxMin, (int, float))
+            and not isinstance(luxMin, bool)
+            and isinstance(luxFull, (int, float))
+            and not isinstance(luxFull, bool)
+            and luxFull <= luxMin
+        ):
+            raise ConfigValidationError(
+                f"pi.display.autoDim.luxFull ({luxFull!r}) must be greater than "
+                f"luxMin ({luxMin!r})",
+                missingFields=['pi.display.autoDim.luxFull'],
+            )
+
+        curve = self._getNestedValue(config, 'pi.display.autoDim.curve')
+        if curve is not None and curve not in ('logarithmic', 'linear'):
+            raise ConfigValidationError(
+                f"pi.display.autoDim.curve must be 'logarithmic' or 'linear' "
+                f"(got {curve!r})",
+                missingFields=['pi.display.autoDim.curve'],
             )
 
     def _validateRequired(self, config: dict[str, Any]) -> list[str]:

@@ -21,6 +21,14 @@
   var POLL_MS = 250;          // 4 Hz tmpfs read (matches the splash cadence)
   var SWIPE_THRESHOLD_PX = 40; // min horizontal travel to count as a swipe
 
+  // US-482 letterbox scaling: the UI is authored at a fixed STAGE_W x STAGE_H
+  // design box (#stage) and uniformly scaled to fill the real panel (device
+  // resolution varies -- the Pi outputs 1080p). LETTERBOX = a single uniform
+  // scale of the EXACT 480x320 layout, centered, with black bars on the aspect
+  // mismatch (CIO-locked 2026-07-21). No layout reflow -- scaled as one unit.
+  var STAGE_W = 480;          // design-box width  (px) -- matches #stage in css
+  var STAGE_H = 320;          // design-box height (px) -- matches #stage in css
+
   // -------------------------------------------------------------------------
   // Pure carousel logic -- no DOM, node-testable (S-2).
   // -------------------------------------------------------------------------
@@ -46,6 +54,16 @@
     var t = threshold == null ? SWIPE_THRESHOLD_PX : threshold;
     if (Math.abs(dx) < t) return 0;
     return dx < 0 ? 1 : -1;
+  }
+
+  // US-482 uniform letterbox scale for the fixed STAGE_W x STAGE_H design box in
+  // a viewport of (w x h): the LARGEST scale that still fits BOTH axes, so the
+  // whole 480x320 UI stays visible + centered with black bars on the mismatch.
+  // A degenerate (<=0 / non-finite) viewport falls back to 1 -- a transient 0x0
+  // layout pass must never collapse the UI to nothing.
+  function computeStageScale(w, h) {
+    if (!(w > 0) || !(h > 0)) return 1;
+    return Math.min(w / STAGE_W, h / STAGE_H);
   }
 
   // Honest-instrument classifier: the shell decides only AVAILABILITY. A null
@@ -626,6 +644,111 @@
   }
 
   // -------------------------------------------------------------------------
+  // US-481 idle-state home card (F-121) -- pure, node-testable logic. The calm,
+  // honest PARKED view: engine off / OBD asleep. It is a PURE CONSUMER of the
+  // SAME three state files the live cards read (system-status / battery-health /
+  // dtc) -- it fabricates nothing. Honest-instrument (Iris spec 1.3), locked in
+  // the pure builders so a buggy DOM layer can't violate them:
+  //   - NO green "OK" at idle EXCEPT the battery line (and that line always
+  //     carries its data-age, F-9) -- the STANDBY hero is always neutral.
+  //   - NO amber/red at idle UNLESS a REAL stored STOP/WATCH code exists; a
+  //     MINOR/unknown code and a clean read stay neutral.
+  //   - absence != clean and != fault: an unread DTC source is "DTC not read
+  //     since key-off", never "No codes" (a false all-clear) and never a phantom
+  //     Check Engine. The persistent ribbon/takeover still fire on top of this
+  //     card, so idle never SUPPRESSES a genuine fault (Iris AC-5).
+  // -------------------------------------------------------------------------
+
+  // idle is the emitter's SSOT (system-status `idle` boolean, US-480-a / Atlas
+  // idle-SSOT b). The display RENDERS the flag; it NEVER re-derives idle from
+  // the drive-state string (the replaced display-derived pattern). Anything
+  // other than an explicit `true` (absent key / malformed file / false) reads
+  // NOT-idle -- fail closed to the live view, never guess a calm parked state.
+  function carouselIdle(systemStatusData) {
+    return isObj(systemStatusData) && systemStatusData.idle === true;
+  }
+
+  // Last-drive summary fact. Honest degradation: the parked emitter writes
+  // driveId:null when idle, and there is no last-drive-summary state file yet,
+  // so with no drive reference the fact reads "No recent drive" -- absence, not
+  // a fabricated last trip. A real driveId (or an active recording) renders it.
+  function idleLastDriveFact(systemStatusData) {
+    var label = "LAST DRIVE";
+    if (!isObj(systemStatusData) || !isObj(systemStatusData.drive)) {
+      return { label: label, value: "—", detail: "unavailable", level: "unavailable" };
+    }
+    var drive = systemStatusData.drive;
+    if (drive.state === "recording") {
+      var id = drive.driveId == null ? "?" : drive.driveId;
+      return { label: label, value: "REC", detail: "drive " + id, level: "neutral" };
+    }
+    if (drive.driveId != null) {
+      return { label: label, value: "drive " + drive.driveId, detail: "last recorded", level: "neutral" };
+    }
+    return { label: label, value: "No recent drive", detail: "since key-off", level: "neutral" };
+  }
+
+  // Battery-with-age fact. The ONE line allowed to go green at idle -- and only
+  // via the Spool verdict, always carrying its data-age (F-9 stale-green guard).
+  // Reuses the battery-health view (single UPS source -> whole-card NA); prefers
+  // SoC% but falls back to volts (a voltage is never rendered AS a percent).
+  function idleBatteryFact(batteryData) {
+    var label = "BATTERY";
+    var view = batteryHealthView(batteryData);
+    if (view === null) {
+      return { label: label, value: "—", detail: "unavailable", level: "unavailable" };
+    }
+    if (view.unavailable) {
+      return { label: label, value: "NA", detail: view.reason, level: "unavailable" };
+    }
+    var value = view.soc && view.soc.shown ? view.soc.value : view.vcell.value;
+    return {
+      label: label,
+      value: value,
+      detail: view.healthCheck.label,   // "last health check · <date> (<age>)"
+      level: view.health.level,         // green ONLY when the Spool verdict is green
+    };
+  }
+
+  // Honest-faults fact. An unavailable DTC source (no key-on read) -> "DTC not
+  // read · since key-off" NEUTRAL. A real STOP/WATCH stored code surfaces at its
+  // tier (down/amber); a MINOR/unknown code stays neutral (never amber/red at
+  // idle); a clean read is "No stored codes" NEUTRAL (never green). Reuses the
+  // same alertableCodes classifier the ribbon/takeover use (Spool severity).
+  function idleFaultsFact(dtcData) {
+    var label = "FAULTS";
+    if (!isObj(dtcData) || sourceUnavailable(dtcData, "dtc")) {
+      return { label: label, value: "DTC not read", detail: "since key-off", level: "neutral" };
+    }
+    var alertable = alertableCodes(dtcData.codes);
+    if (alertable.length === 0) {
+      return { label: label, value: "No stored codes", detail: "key-on read", level: "neutral" };
+    }
+    var hero = alertable[0];
+    var level = hero.severity === "stop" ? "down"
+      : hero.severity === "watch" ? "amber"
+      : "neutral"; // minor/unknown are real but never amber/red at idle
+    var more = alertable.length > 1 ? " · +" + (alertable.length - 1) + " more" : "";
+    var desc = (hero.short && String(hero.short).trim()) || "";
+    return { label: label, value: hero.code, detail: desc + more, level: level };
+  }
+
+  // The assembled idle card view consumed by the DOM renderer + the node tests.
+  // The STANDBY hero is ALWAYS neutral (never a green "OK" backdrop). The header
+  // wordmark + live clock/date and the footer are DOM-only presentation.
+  function idleCardView(systemStatusData, batteryData, dtcData) {
+    return {
+      wordmark: "ECLIPSE",
+      hero: { title: "STANDBY", substate: "engine off · OBD asleep", level: "neutral" },
+      facts: {
+        lastDrive: idleLastDriveFact(systemStatusData),
+        battery: idleBatteryFact(batteryData),
+        faults: idleFaultsFact(dtcData),
+      },
+    };
+  }
+
+  // -------------------------------------------------------------------------
   // US-406 DTC Alerts card (Card 5) + detail -- pure, node-testable logic
   // (S-4/S-5/S-12/S-13/I-3). The card is a PURE CONSUMER of the `dtc` state:
   // the display maps a Spool-classified tier -> chip label + color + directive;
@@ -934,10 +1057,120 @@
     };
   }
 
+  // -------------------------------------------------------------------------
+  // US-483-b display-brightness consumer (F-121) -- pure, node-testable logic.
+  // The dashboard is a PURE CONSUMER of the states/light file US-483-a writes
+  // ({lux, ts}); it NEVER reads the sensor. The auto-dim curve values are
+  // GROUNDED CONFIG PARAMETERS injected at serve time (window.DISPLAY_AUTODIM),
+  // so tuning is a config change, not a code change (CIO 2026-07-22). These
+  // built-in defaults are the file:// preview / unconfigured fallback and MIRROR
+  // config.json pi.display.autoDim.* (the tuning SSOT). Honest-instrument: an
+  // absent/stale/saturated (null) reading holds the fixed default -- never a
+  // fabricated "auto" behavior; and a real active STOP alert never dims below the
+  // legible alarm floor, regardless of lux (the load-bearing safety guard).
+  // -------------------------------------------------------------------------
+
+  var BRIGHTNESS_DEFAULTS = {
+    luxMin: 3.0,          // lux <= this -> min (grounded: civil-twilight dark)
+    luxFull: 1000.0,      // lux >= this -> full (grounded: overcast daylight)
+    minLevel: 0.15,       // calm-screen dim floor (fraction 0..1)
+    defaultLevel: 0.70,   // fixed fallback when the feed is absent/stale
+    alarmFloorLevel: 0.40, // a real STOP never dims below this (safety)
+    luxStaleSec: 10,      // a reading older than this -> fallback
+    curve: "logarithmic", // perceptual mapping between luxMin..luxFull
+  };
+
+  // Resolve the injected config over the grounded defaults (only well-typed
+  // overrides win). A malformed/absent global leaves every default in place.
+  function resolveAutoDimConfig(cfg) {
+    var out = {};
+    for (var k in BRIGHTNESS_DEFAULTS) {
+      if (Object.prototype.hasOwnProperty.call(BRIGHTNESS_DEFAULTS, k)) {
+        out[k] = BRIGHTNESS_DEFAULTS[k];
+      }
+    }
+    if (cfg && typeof cfg === "object") {
+      for (var key in BRIGHTNESS_DEFAULTS) {
+        if (!Object.prototype.hasOwnProperty.call(cfg, key)) continue;
+        var v = cfg[key];
+        if (key === "curve") {
+          if (typeof v === "string") out[key] = v;
+        } else if (typeof v === "number" && isFinite(v)) {
+          out[key] = v;
+        }
+      }
+    }
+    return out;
+  }
+
+  // The perceptual lux -> 0..1 mapping. Returns 0 at/below luxMin, 1 at/above
+  // luxFull, and a curve value between. A degenerate range (luxFull <= luxMin)
+  // or a non-positive luxMin under the log curve falls back to linear/full so it
+  // can never divide by zero or take log of a non-positive number.
+  function brightnessCurve(lux, luxMin, luxFull, curve) {
+    if (typeof lux !== "number" || !isFinite(lux)) return 0;
+    if (!(luxFull > luxMin)) return 1; // misconfigured range -> full, never div0
+    if (lux <= luxMin) return 0;
+    if (lux >= luxFull) return 1;
+    if (curve !== "linear" && luxMin > 0 && lux > 0) {
+      return (
+        (Math.log(lux) - Math.log(luxMin)) /
+        (Math.log(luxFull) - Math.log(luxMin))
+      );
+    }
+    return (lux - luxMin) / (luxFull - luxMin);
+  }
+
+  // The fresh, finite lux from a states/light payload, or null (fall back). A
+  // missing/malformed file, a null lux (honest saturation), a non-finite value,
+  // or a reading older than luxStaleSec all read null -> the caller holds the
+  // fixed default rather than trusting a frozen/absent value.
+  function freshLux(lightData, luxStaleSec, nowMs) {
+    if (!lightData || typeof lightData !== "object") return null;
+    var lux = lightData.lux;
+    if (typeof lux !== "number" || !isFinite(lux)) return null;
+    var ts = lightData.ts;
+    if (typeof ts !== "string") return null;
+    var t = Date.parse(ts);
+    if (isNaN(t)) return null;
+    var ageSec = (nowMs - t) / 1000;
+    if (!(ageSec <= luxStaleSec)) return null; // stale (or NaN age) -> fallback
+    return lux;
+  }
+
+  // A real ACTIVE STOP alert is present (drives the alarm floor). Reuses the same
+  // honest ribbon classifier the takeover/ribbon use: an unavailable DTC source
+  // carries no active fault -> false; only a STOP-tier hero forces the floor (the
+  // PULL-OVER alarm). A WATCH/MINOR alert is a real code but not the pull-over
+  // alarm, so it does not force the legible floor (Iris AC-7 scope).
+  function brightnessAlarmActive(dtcData) {
+    var rv = ribbonView(dtcData);
+    return !!rv && rv.level === "stop";
+  }
+
+  // The final 0..1 brightness: clamp(minLevel, curve(lux), 1.0) when the feed is
+  // fresh, else the fixed default (honest fallback), then raised to at least the
+  // alarm floor while a real STOP is active. The alarm floor only RAISES (never
+  // caps) -- a bright reading under a STOP still goes full.
+  function brightnessLevel(lightData, cfg, nowMs, alarmActive) {
+    var c = resolveAutoDimConfig(cfg);
+    var lux = freshLux(lightData, c.luxStaleSec, nowMs);
+    var level;
+    if (lux === null) {
+      level = c.defaultLevel; // absent/stale/saturated -> fixed default
+    } else {
+      var curved = brightnessCurve(lux, c.luxMin, c.luxFull, c.curve);
+      level = Math.min(Math.max(curved, c.minLevel), 1.0);
+    }
+    if (alarmActive) level = Math.max(level, c.alarmFloorLevel);
+    return Math.min(Math.max(level, 0), 1);
+  }
+
   var api = {
     clampIndex: clampIndex,
     nextIndex: nextIndex,
     swipeDirection: swipeDirection,
+    computeStageScale: computeStageScale,
     cardAvailability: cardAvailability,
     sourceUnavailable: sourceUnavailable,
     sourceReason: sourceReason,
@@ -969,6 +1202,15 @@
     takeoverShouldShow: takeoverShouldShow,
     ribbonView: ribbonView,
     dtcListSorted: dtcListSorted,
+    brightnessCurve: brightnessCurve,
+    brightnessLevel: brightnessLevel,
+    brightnessAlarmActive: brightnessAlarmActive,
+    resolveAutoDimConfig: resolveAutoDimConfig,
+    carouselIdle: carouselIdle,
+    idleLastDriveFact: idleLastDriveFact,
+    idleBatteryFact: idleBatteryFact,
+    idleFaultsFact: idleFaultsFact,
+    idleCardView: idleCardView,
     dtcRow: dtcRow,
     alertsCardView: alertsCardView,
     trustBadge: trustBadge,
@@ -981,6 +1223,8 @@
     postClearMessage: postClearMessage,
     POLL_MS: POLL_MS,
     SWIPE_THRESHOLD_PX: SWIPE_THRESHOLD_PX,
+    STAGE_W: STAGE_W,
+    STAGE_H: STAGE_H,
     LONG_PRESS_MS: LONG_PRESS_MS,
     LONG_PRESS_ARM_MS: LONG_PRESS_ARM_MS,
     LONG_PRESS_MOVE_PX: LONG_PRESS_MOVE_PX,
@@ -992,6 +1236,23 @@
 
   if (typeof document !== "undefined") {
     var token = global.SPLASH_TOKEN || "";
+
+    // US-483-b: the auto-dim curve config injected same-origin at serve time
+    // (states_http_server substitutes the placeholder from config.json). An
+    // object -> use it; anything else (unsubstituted preview / null) -> the
+    // built-in grounded defaults kick in inside resolveAutoDimConfig.
+    var displayAutoDim =
+      global.DISPLAY_AUTODIM && typeof global.DISPLAY_AUTODIM === "object"
+        ? global.DISPLAY_AUTODIM
+        : null;
+
+    // Apply the computed 0..1 brightness as a CSS var on the screen frame (a
+    // software dim -- the browser kiosk can't drive the panel backlight). Setting
+    // a var (not style.filter) keeps the CSS the single owner of the filter rule.
+    function applyBrightness(level) {
+      var screenEl = document.getElementById("screen");
+      if (screenEl) screenEl.style.setProperty("--display-brightness", String(level));
+    }
 
     // --- US-400 System Status DOM render (browser only) ---------------------
 
@@ -1038,6 +1299,76 @@
       if (glyphEls.bt) glyphEls.bt.setAttribute("data-state", "neutral");
       if (glyphEls.sync) glyphEls.sync.setAttribute("data-state", "neutral");
       if (glyphEls.power) glyphEls.power.setAttribute("data-state", "neutral");
+    }
+
+    // --- US-481 idle-state home card DOM render (browser only) --------------
+
+    // Local wall-clock formatters for the parked header. Local (not UTC) is the
+    // right zone for a kiosk showing the driver the time; the pure view logic
+    // stays clock-free (deterministic tests), so these live in the DOM layer.
+    function two(n) { return (n < 10 ? "0" : "") + n; }
+    var IDLE_DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+    var IDLE_MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                       "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    function fmtClock(d) { return two(d.getHours()) + ":" + two(d.getMinutes()); }
+    function fmtDate(d) {
+      return IDLE_DAYS[d.getDay()] + " " + d.getDate() + " " + IDLE_MONTHS[d.getMonth()];
+    }
+
+    // Render the idle card from the assembled view. Built with textContent (no
+    // innerHTML) so emitter values render verbatim, never as markup. The 3 fact
+    // tiles reuse the shared `.tile[data-level]` styling, so green is bound to
+    // the SSOT token exactly once (US-484) -- the idle card holds no hex literal.
+    function renderIdleCard(card, view, now) {
+      var body = card.querySelector(".card-body");
+      if (!body) return;
+      body.textContent = "";
+
+      // Header: wordmark + live clock + date (Iris 1.2).
+      var header = document.createElement("div");
+      header.className = "idle-header";
+      var wm = document.createElement("span");
+      wm.className = "idle-wordmark";
+      wm.textContent = view.wordmark;
+      var clock = document.createElement("span");
+      clock.className = "idle-clock";
+      clock.textContent = fmtClock(now);
+      var date = document.createElement("span");
+      date.className = "idle-date";
+      date.textContent = fmtDate(now);
+      header.appendChild(wm);
+      header.appendChild(clock);
+      header.appendChild(date);
+      body.appendChild(header);
+
+      // STANDBY hero (neutral grey, never green) + substate.
+      var hero = document.createElement("div");
+      hero.className = "idle-hero";
+      hero.setAttribute("data-level", view.hero.level);
+      var heroTitle = document.createElement("div");
+      heroTitle.className = "idle-hero-title";
+      heroTitle.textContent = view.hero.title;
+      var heroSub = document.createElement("div");
+      heroSub.className = "idle-hero-sub";
+      heroSub.textContent = view.hero.substate;
+      hero.appendChild(heroTitle);
+      hero.appendChild(heroSub);
+      body.appendChild(hero);
+
+      // 3-fact summary strip: last-drive / battery-with-age / honest-faults.
+      var strip = document.createElement("div");
+      strip.className = "idle-facts";
+      appendTile(strip, view.facts.lastDrive);
+      appendTile(strip, view.facts.battery);
+      appendTile(strip, view.facts.faults);
+      body.appendChild(strip);
+
+      // Footer: a calm reassurance that data resumes on engine start (the
+      // carousel auto-advances off idle the moment OBD wakes -- honest).
+      var footer = document.createElement("div");
+      footer.className = "idle-footer";
+      footer.textContent = "monitoring resumes on engine start";
+      body.appendChild(footer);
     }
 
     // --- US-401 Battery Health DOM render (browser only) --------------------
@@ -1125,7 +1456,23 @@
       if (view.points.length > 0) appendLtftBars(body, view.points);
     }
 
+    // US-482 letterbox: uniformly scale the fixed 480x320 #stage design box to
+    // fill the real panel. The transformed #stage becomes the containing block
+    // for its fixed/absolute descendants, so the shipped layout inside it is
+    // untouched -- only the outer scale changes. Idempotent + null-safe.
+    function applyStageScale() {
+      var stage = document.getElementById("stage");
+      if (!stage) return;
+      var scale = computeStageScale(window.innerWidth, window.innerHeight);
+      stage.style.setProperty("--scale", String(scale));
+    }
+
     var setup = function () {
+      // Scale first, then wire re-scale on any viewport change (rotation /
+      // resolution change / the panel reporting late at boot).
+      applyStageScale();
+      window.addEventListener("resize", applyStageScale);
+
       var track = document.getElementById("track");
       var dotsNav = document.getElementById("dots");
       var cards = Array.prototype.slice.call(document.querySelectorAll(".card"));
@@ -1431,8 +1778,19 @@
       var lastDtc = null;
       // The Alerts card index, so a tap navigates the carousel to it.
       var dtcCardIndex = -1;
+      // US-481 idle-home: the idle card element + its index (the HOME slot while
+      // parked) and the System-Status index (where we auto-advance the moment
+      // idle flips false). `lastIdle` edge-triggers the navigation so it fires
+      // only on a state CHANGE -- it never fights a manual swipe while idle holds.
+      var idleCard = document.getElementById("idle-card");
+      var idleIndex = -1;
+      var sysIndex = -1;
+      var lastIdle = null;
       for (var ci = 0; ci < cards.length; ci++) {
-        if (cards[ci].getAttribute("data-state") === "dtc") dtcCardIndex = ci;
+        var st = cards[ci].getAttribute("data-state");
+        if (st === "dtc") dtcCardIndex = ci;
+        else if (st === "system-status") sysIndex = ci;
+        if (cards[ci].getAttribute("data-idle-home") !== null) idleIndex = ci;
       }
 
       function findCode(codeStr) {
@@ -1813,14 +2171,39 @@
         }
       }
 
+      // US-481: render the idle card content from the states the tick already
+      // fetched, then edge-trigger the home/auto-advance. The idle card ALWAYS
+      // renders honest content (so it's ready when parked); navigation only
+      // fires when `idle` changes -- to the idle card when idle becomes true,
+      // to System Status when it flips false (Iris AC-4). The ribbon/takeover
+      // are separate overlays that fire on TOP of any card, so surfacing the
+      // calm idle card never suppresses a real fault (AC-5).
+      function updateIdleHome(sysData, batteryData, dtcData) {
+        if (idleCard) {
+          renderIdleCard(idleCard, idleCardView(sysData, batteryData, dtcData), new Date());
+        }
+        var idle = carouselIdle(sysData);
+        if (idle === lastIdle) return; // edge-trigger only -- never trap a swipe
+        if (idle) {
+          if (idleIndex >= 0) goTo(idleIndex);
+        } else if (sysIndex >= 0) {
+          goTo(sysIndex);
+        }
+        lastIdle = idle;
+      }
+
       async function tick() {
         var dtcData = null; // fetched once (the Alerts card + ribbon/takeover share it)
+        var sysData = null; // shared with the idle-home card (one fetch per tick)
+        var batteryData = null;
         for (var c = 0; c < cards.length; c++) {
           var card = cards[c];
           var name = card.getAttribute("data-state");
           if (!name) continue;
           var data = await fetchState(name);
           if (name === "dtc") dtcData = data;
+          else if (name === "system-status") sysData = data;
+          else if (name === "battery-health") batteryData = data;
           var avail = cardAvailability(data);
           card.classList.toggle("unavailable", avail === "unavailable");
           if (avail === "unavailable") {
@@ -1845,6 +2228,21 @@
         // US-405/US-406: drive the takeover + persistent ribbon from the same
         // `dtc` state the Alerts card rendered (one fetch per tick).
         updateDtcSurfaces(dtcData);
+        // US-481: render the idle-home card + edge-trigger home/auto-advance
+        // from the same fetched states (no extra fetch, no second OBD touch).
+        updateIdleHome(sysData, batteryData, dtcData);
+        // US-483-b: drive the display brightness from the states/light feed
+        // (pure consumer -- never the sensor). A real STOP holds it >= the alarm
+        // floor; an absent/stale feed holds the fixed default (honest fallback).
+        var lightData = await fetchState("light");
+        applyBrightness(
+          brightnessLevel(
+            lightData,
+            displayAutoDim,
+            Date.now(),
+            brightnessAlarmActive(dtcData)
+          )
+        );
         setTimeout(tick, POLL_MS);
       }
       tick();

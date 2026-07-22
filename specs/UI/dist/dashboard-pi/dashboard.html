@@ -2,7 +2,11 @@
 <html lang="en">
 <head>
 <meta charset="utf-8"/>
-<meta name="viewport" content="width=480, height=320, initial-scale=1, user-scalable=no"/>
+<!-- US-482 letterbox scaling: the viewport is the REAL panel (device-width), not
+     the old hard-coded 480x320. The fixed 480x320 design box (#stage) is scaled
+     to fit by carousel.js so the UI fills a 1080p panel instead of rendering in
+     a corner (CIO-locked LETTERBOX 2026-07-21). -->
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no"/>
 <title>Eclipse OBD-II Dashboard</title>
 <!-- US-399 carousel shell (F-092). Served same-origin by eclipse-states-http at
      http://127.0.0.1:9899/dashboard.html so the auth token is injected below
@@ -15,6 +19,13 @@
 <link rel="stylesheet" href="dashboard.css"/>
 </head>
 <body>
+  <!-- US-482 letterbox frame: #screen is the full-viewport black bezel; #stage
+       is the exact 480x320 design box, centered + uniformly scaled as ONE unit
+       (carousel.js sets --scale on resize). Everything below renders INSIDE the
+       transformed #stage, so the shipped 480x320 layout is unchanged -- only the
+       outer scale fills the panel. Black bars read as bezel, not a gap. -->
+  <div id="screen">
+  <div id="stage">
   <!-- Persistent top bar (D-3): BT / sync / power glyphs + version chip + menu
        affordance. Glyph STATE (amber on BT drop, etc.) is bound by US-400 from
        system-status; the shell renders them in a neutral state. The ⋮ button is
@@ -57,6 +68,16 @@
 
   <main id="carousel" aria-roledescription="carousel">
     <div id="track">
+      <!-- US-481 idle-state home card (F-121): the calm, honest PARKED view
+           (engine off / OBD asleep). NOT a polled state file -- it is rendered
+           from the system-status/battery-health/dtc states the carousel already
+           fetches (data-idle-home, so the availability poll skips it). It is the
+           HOME card while `idle` holds and auto-advances to System Status the
+           moment idle flips false (Iris AC-4). STANDBY never renders green;
+           faults never amber/red unless a REAL stored STOP/WATCH code exists. -->
+      <section class="card idle-card" data-idle-home id="idle-card" aria-label="Standby">
+        <div class="card-body"><span class="idle-boot">standby …</span></div>
+      </section>
       <section class="card" data-state="system-status" aria-label="System Status">
         <h2 class="card-title">System Status</h2>
         <div class="card-body">unavailable</div>
@@ -158,11 +179,20 @@
     </div>
   </div>
 
+  </div><!-- #stage -->
+  </div><!-- #screen -->
+
   <script>
     // Token injected by the state server at serve time (token SSOT). Previewed
     // from file:// the placeholder stays and the polls fail closed to
     // `unavailable` -- the carousel shell still renders + swipes.
     window.SPLASH_TOKEN = "__SPLASH_TOKEN__";
+    // US-483-b: the auto-dim curve config (pi.display.autoDim) the state server
+    // substitutes from config.json at serve time -- so tuning is a config change,
+    // not a code change (CIO 2026-07-22). The QUOTED placeholder keeps this valid
+    // JS when un-substituted (file:// preview) -> a string, which carousel.js
+    // ignores in favor of its built-in grounded defaults.
+    window.DISPLAY_AUTODIM = "__DISPLAY_AUTODIM__";
   </script>
   <script src="carousel.js"></script>
 </body>

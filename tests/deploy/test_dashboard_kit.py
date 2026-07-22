@@ -618,34 +618,39 @@ def test_uninstall_removesUnitAndAssets():
 
 
 # ---------------------------------------------------------------------------
-# US-402 -- pygame sunset (A-4 parity-gated): the shipped config retires the
-# legacy pygame StatusDisplay overlay so the HTML carousel is the sole surface
-# (F-4 "pygame + HTML never both active"). The cards reached parity in US-400
-# (System Status) + US-401 (Battery Health), so the cut-over is now safe.
+# US-485 -- pygame sunset COMPLETED (was US-402 config-disable, A-4 parity-gated):
+# the pygame StatusDisplay overlay + its config key are now fully REMOVED, so the
+# HTML carousel is the sole dashboard surface (F-4 "pygame + HTML never both
+# active"). US-402 flipped `pi.hardware.statusDisplay.enabled` to false; US-485
+# deleted status_display.py / dashboard_layout.py + all wiring + the config key.
+# The F-4 invariant is now stronger: there is no pygame status-overlay flag left
+# to accidentally re-enable.
 # ---------------------------------------------------------------------------
 
-import json  # noqa: E402  (grouped with the US-402 cut-over assertions)
+import json  # noqa: E402  (grouped with the pygame-sunset cut-over assertions)
 
 CONFIG_JSON = REPO_ROOT / "config.json"
 
 
 def test_shippedConfig_retiresPygameStatusDisplay_f4():
-    """US-402 / F-4: the deployed config.json disables the pygame StatusDisplay
-    overlay (`pi.hardware.statusDisplay.enabled == false`). With the overlay off
-    the orchestrator never opens a pygame surface, so the HTML carousel kiosk is
-    the only dashboard surface -- the two are never active at the same time. This
-    is the parity-gated cut-over (A-4): pygame is retired ONLY now that the
-    System Status + Battery Health cards have reached parity (US-400 / US-401)."""
+    """US-485 / F-4: the deployed config.json no longer carries the pygame
+    StatusDisplay overlay flag at all (`pi.hardware.statusDisplay` is absent).
+    US-402 disabled it (`enabled == false`); US-485 fully retired the pygame
+    surface -- status_display.py + dashboard_layout.py + the launch path + the
+    config key are gone -- so the HTML carousel kiosk is the only dashboard
+    surface and the two can never be active simultaneously (A-4/F-4). Guarding on
+    ABSENCE (not `enabled == false`) is the stronger invariant: there is no
+    overlay flag left to re-enable."""
     config = json.loads(CONFIG_JSON.read_text(encoding="utf-8"))
-    enabled = (
+    statusDisplay = (
         config.get("pi", {})
         .get("hardware", {})
-        .get("statusDisplay", {})
-        .get("enabled")
+        .get("statusDisplay")
     )
-    assert enabled is False, (
-        "pi.hardware.statusDisplay.enabled must be false to retire the pygame "
-        "surface (A-4 parity-gated sunset); the HTML carousel is the sole dashboard"
+    assert statusDisplay is None, (
+        "pi.hardware.statusDisplay must be ABSENT -- the pygame status overlay is "
+        "fully retired (US-485); the HTML carousel is the sole dashboard surface. "
+        "A lingering flag (even enabled=false) is drift; remove it."
     )
 
 

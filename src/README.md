@@ -64,7 +64,6 @@ the orchestrator split. Future refactors may revisit.
 
 - `pi/power/power.py` (783) — `PowerMonitor` threaded class; DB and display I/O helpers were extracted in Sweep 5, class body is the remaining coherent lifecycle.
 - `pi/obdii/simulator_integration.py` (770) — `SimulatorIntegration` orchestrator-style class; types, factory, and operation helpers extracted in Sweep 5.
-- `pi/hardware/status_display.py` (724) — hardware status rendering.
 - `pi/obdii/drive/detector.py` (706) — drive detection state machine.
 - `pi/analysis/engine.py` (704) — statistics engine main class.
 - `pi/hardware/hardware_manager.py` (692) — hardware lifecycle manager.

@@ -73,6 +73,21 @@
 #               |              | startDrainEvent/endDrainEvent -> 0 callers in
 #               |              | src/).  The live drain-event writer is the bench
 #               |              | CLI scripts/record_drain_test.py (US-427).
+# 2026-07-22    | Rex (US-485) | pygame status_display SUNSET.  REMOVED all
+#               |              | StatusDisplay wiring now that the HTML carousel
+#               |              | is the sole dashboard surface: the import, the
+#               |              | _statusDisplay store, _initializeStatusDisplay,
+#               |              | the _startComponents display branch +
+#               |              | _displayUpdateThread/_displayUpdateLoop, the
+#               |              | _cleanup branch, the statusDisplay property, the
+#               |              | display* constructor params + factory config
+#               |              | reads, and the getStatus 'display' payload
+#               |              | (key kept as a permanent None for consumer
+#               |              | back-compat).  updateObdStatus/updateErrorCount
+#               |              | are retained as no-op stubs so the orchestrator's
+#               |              | best-effort status push (event_router) stays
+#               |              | valid; OBD status + alert counts now reach the
+#               |              | dashboard via the US-480 state-file emitters.
 # ================================================================================
 ################################################################################
 
@@ -80,7 +95,7 @@
 Hardware module integration manager for Raspberry Pi.
 
 This module provides the HardwareManager class that initializes and coordinates
-all hardware modules (UpsMonitor, ShutdownHandler, GpioButton, StatusDisplay,
+all hardware modules (UpsMonitor, ShutdownHandler, GpioButton,
 TelemetryLogger) and wires them together for integrated operation.
 
 Usage:
@@ -113,9 +128,8 @@ from src.pi.power.types import PowerLogWriter
 from .gpio_button import GpioButton, GpioButtonError
 from .platform_utils import isRaspberryPi
 from .shutdown_handler import ShutdownHandler
-from .status_display import StatusDisplay, StatusDisplayError
 from .telemetry_logger import TelemetryLogger
-from .ups_monitor import PowerSource, UpsMonitor, UpsMonitorError
+from .ups_monitor import UpsMonitor, UpsMonitorError
 
 logger = logging.getLogger(__name__)
 
@@ -143,16 +157,18 @@ class HardwareManager:
     - UpsMonitor: Monitors UPS battery status
     - ShutdownHandler: Handles graceful shutdown on power loss
     - GpioButton: Handles physical shutdown button
-    - StatusDisplay: Shows system status on display
     - TelemetryLogger: Logs system telemetry to file
 
     The manager wires these components together:
     - UpsMonitor power-change callback -> ShutdownHandler
-    - UpsMonitor readings -> StatusDisplay updates
     - GpioButton long press -> ShutdownHandler execute shutdown
 
     On non-Pi systems, hardware modules are not initialized and the manager
     operates in a disabled mode with appropriate warnings.
+
+    Note (US-485): the legacy pygame status_display overlay is retired -- the
+    HTML carousel is the sole dashboard surface, fed by the US-480 state-file
+    emitters. This manager no longer owns any display.
 
     Attributes:
         isAvailable: Whether hardware is available on this system
@@ -160,7 +176,6 @@ class HardwareManager:
         upsMonitor: The UPS monitor instance (or None if not available)
         shutdownHandler: The shutdown handler instance (or None)
         gpioButton: The GPIO button instance (or None)
-        statusDisplay: The status display instance (or None)
         telemetryLogger: The telemetry logger instance (or None)
 
     Example:
@@ -179,9 +194,6 @@ class HardwareManager:
         pollInterval: float = 5.0,
         shutdownDelay: int = 30,
         lowBatteryThreshold: int = 10,
-        displayEnabled: bool = True,
-        displayRefreshRate: float = 2.0,
-        displayForceSoftwareRenderer: bool = True,
         telemetryLogPath: str = "/var/log/carpi/telemetry.log",
         telemetryLogInterval: float = 10.0,
         telemetryMaxBytes: int = 100 * 1024 * 1024,
@@ -200,11 +212,6 @@ class HardwareManager:
             pollInterval: UPS polling interval in seconds (default: 5.0)
             shutdownDelay: Seconds to wait before shutdown on power loss (default: 30)
             lowBatteryThreshold: Battery percentage for immediate shutdown (default: 10)
-            displayEnabled: Whether to enable the status display (default: True)
-            displayRefreshRate: Display refresh rate in seconds (default: 2.0)
-            displayForceSoftwareRenderer: Force SDL software renderer for the
-                status_display overlay (default: True). Fix for TD-024 GL
-                BadAccess under X11. See StatusDisplay.__init__ for details.
             telemetryLogPath: Path to telemetry log file
             telemetryLogInterval: Telemetry logging interval in seconds (default: 10.0)
             telemetryMaxBytes: Maximum telemetry log file size (default: 100MB)
@@ -226,9 +233,6 @@ class HardwareManager:
         self._pollInterval = pollInterval
         self._shutdownDelay = shutdownDelay
         self._lowBatteryThreshold = lowBatteryThreshold
-        self._displayEnabled = displayEnabled
-        self._displayRefreshRate = displayRefreshRate
-        self._displayForceSoftwareRenderer = displayForceSoftwareRenderer
         self._telemetryLogPath = telemetryLogPath
         self._telemetryLogInterval = telemetryLogInterval
         self._telemetryMaxBytes = telemetryMaxBytes
@@ -240,17 +244,12 @@ class HardwareManager:
         self._upsMonitor: UpsMonitor | None = None
         self._shutdownHandler: ShutdownHandler | None = None
         self._gpioButton: GpioButton | None = None
-        self._statusDisplay: StatusDisplay | None = None
         self._telemetryLogger: TelemetryLogger | None = None
 
         # State
         self._isAvailable = isRaspberryPi()
         self._isRunning = False
         self._lock = threading.Lock()
-
-        # Display update thread
-        self._displayUpdateThread: threading.Thread | None = None
-        self._stopEvent = threading.Event()
 
         if not self._isAvailable:
             logger.warning(
@@ -293,7 +292,6 @@ class HardwareManager:
                 self._initializeUpsMonitor()
                 self._initializeShutdownHandler()
                 self._initializeGpioButton()
-                self._initializeStatusDisplay()
                 self._initializeTelemetryLogger()
 
                 # Wire components together
@@ -325,12 +323,6 @@ class HardwareManager:
                 return
 
             logger.info("Stopping hardware manager...")
-            self._stopEvent.set()
-
-            # Stop display update thread
-            if (self._displayUpdateThread is not None and
-                    self._displayUpdateThread.is_alive()):
-                self._displayUpdateThread.join(timeout=5.0)
 
             self._cleanup()
             self._isRunning = False
@@ -378,22 +370,6 @@ class HardwareManager:
         except GpioButtonError as e:
             logger.warning(f"Failed to initialize GPIO button: {e}")
             self._gpioButton = None
-
-    def _initializeStatusDisplay(self) -> None:
-        """Initialize the status display."""
-        if not self._displayEnabled:
-            logger.debug("Status display disabled by configuration")
-            return
-
-        try:
-            self._statusDisplay = StatusDisplay(
-                refreshRate=self._displayRefreshRate,
-                forceSoftwareRenderer=self._displayForceSoftwareRenderer,
-            )
-            logger.debug("Status display initialized")
-        except StatusDisplayError as e:
-            logger.warning(f"Failed to initialize status display: {e}")
-            self._statusDisplay = None
 
     def _initializeTelemetryLogger(self) -> None:
         """Initialize the telemetry logger."""
@@ -444,23 +420,6 @@ class HardwareManager:
             except GpioButtonError as e:
                 logger.warning(f"Failed to start GPIO button: {e}")
 
-        # Start status display
-        if self._statusDisplay is not None:
-            try:
-                self._statusDisplay.start()
-                logger.debug("Status display started")
-
-                # Start display update thread
-                self._stopEvent.clear()
-                self._displayUpdateThread = threading.Thread(
-                    target=self._displayUpdateLoop,
-                    name="HardwareDisplayUpdate",
-                    daemon=True
-                )
-                self._displayUpdateThread.start()
-            except StatusDisplayError as e:
-                logger.warning(f"Failed to start status display: {e}")
-
         # Start telemetry logging
         if self._telemetryLogger is not None:
             try:
@@ -468,44 +427,6 @@ class HardwareManager:
                 logger.debug("Telemetry logger started")
             except Exception as e:
                 logger.warning(f"Failed to start telemetry logger: {e}")
-
-    def _displayUpdateLoop(self) -> None:
-        """Background loop for updating display with UPS readings.
-
-        This loop is UI-only: it polls the UPS monitor and refreshes the
-        status display.  It has no shutdown-safety responsibility --
-        eclipse-powerwatch owns the shutdown path.
-        """
-        while not self._stopEvent.is_set():
-            try:
-                if self._upsMonitor is not None and self._statusDisplay is not None:
-                    # Get UPS telemetry
-                    try:
-                        telemetry = self._upsMonitor.getTelemetry()
-
-                        # Update battery info
-                        self._statusDisplay.updateBatteryInfo(
-                            percentage=telemetry['percentage'],
-                            voltage=telemetry['voltage']
-                        )
-
-                        # Update power source
-                        powerSource = telemetry['powerSource']
-                        if powerSource == PowerSource.EXTERNAL:
-                            self._statusDisplay.updatePowerSource('external')
-                        elif powerSource == PowerSource.BATTERY:
-                            self._statusDisplay.updatePowerSource('battery')
-                        else:
-                            self._statusDisplay.updatePowerSource('unknown')
-
-                    except UpsMonitorError as e:
-                        logger.debug(f"Could not get UPS telemetry: {e}")
-
-            except Exception as e:
-                logger.error(f"Error in display update loop: {e}")
-
-            # Wait for next update interval (use UPS poll interval)
-            self._stopEvent.wait(timeout=self._pollInterval)
 
     def _cleanup(self) -> None:
         """Clean up all hardware components."""
@@ -516,14 +437,6 @@ class HardwareManager:
             except Exception as e:
                 logger.warning(f"Error closing telemetry logger: {e}")
             self._telemetryLogger = None
-
-        # Stop status display
-        if self._statusDisplay is not None:
-            try:
-                self._statusDisplay.close()
-            except Exception as e:
-                logger.warning(f"Error closing status display: {e}")
-            self._statusDisplay = None
 
         # Stop GPIO button
         if self._gpioButton is not None:
@@ -549,9 +462,6 @@ class HardwareManager:
                 logger.warning(f"Error closing UPS monitor: {e}")
             self._upsMonitor = None
 
-        self._displayUpdateThread = None
-        self._stopEvent.clear()
-
     def getStatus(self) -> dict[str, Any]:
         """
         Get the current status of all hardware components.
@@ -563,7 +473,8 @@ class HardwareManager:
             - ups: UPS status (voltage, percentage, powerSource) or None
             - shutdownPending: Whether a shutdown is pending
             - gpioButton: GPIO button status or None
-            - display: Display status or None
+            - display: Always None (US-485: the pygame status overlay is
+              retired; key retained for consumer back-compat)
             - telemetry: Telemetry logger status or None
         """
         status: dict[str, Any] = {
@@ -604,14 +515,8 @@ class HardwareManager:
                 'isRunning': self._gpioButton.isRunning,
             }
 
-        # Status display status
-        if self._statusDisplay is not None:
-            status['display'] = {
-                'isAvailable': self._statusDisplay.isAvailable,
-                'isRunning': self._statusDisplay.isRunning,
-                'width': self._statusDisplay.width,
-                'height': self._statusDisplay.height,
-            }
+        # Status display retired (US-485): 'display' stays None (set in the
+        # initial status dict) -- the HTML carousel is the sole surface.
 
         # Telemetry logger status
         if self._telemetryLogger is not None:
@@ -625,24 +530,30 @@ class HardwareManager:
 
     def updateObdStatus(self, status: str) -> None:
         """
-        Update OBD2 connection status on the display.
+        No-op since US-485 (pygame status overlay retired).
+
+        Retained so the orchestrator's best-effort status push
+        (``event_router``) stays valid without an ``AttributeError``. OBD
+        connection status now reaches the HTML dashboard through the US-480
+        ``system-status`` state-file emitter, not this manager.
 
         Args:
             status: Connection status ('connected', 'disconnected', 'reconnecting')
         """
-        if self._statusDisplay is not None:
-            self._statusDisplay.updateObdStatus(status)
 
     def updateErrorCount(self, warnings: int = 0, errors: int = 0) -> None:
         """
-        Update error and warning counts on the display.
+        No-op since US-485 (pygame status overlay retired).
+
+        Retained so the orchestrator's best-effort alert-count push
+        (``event_router``) stays valid without an ``AttributeError``. Alert
+        state now reaches the HTML dashboard through the US-480 emitters, not
+        this manager.
 
         Args:
             warnings: Number of warnings
             errors: Number of errors
         """
-        if self._statusDisplay is not None:
-            self._statusDisplay.updateErrorCount(warnings=warnings, errors=errors)
 
     @property
     def isAvailable(self) -> bool:
@@ -668,11 +579,6 @@ class HardwareManager:
     def gpioButton(self) -> GpioButton | None:
         """Get the GPIO button instance (or None if not available)."""
         return self._gpioButton
-
-    @property
-    def statusDisplay(self) -> StatusDisplay | None:
-        """Get the status display instance (or None if not available)."""
-        return self._statusDisplay
 
     @property
     def telemetryLogger(self) -> TelemetryLogger | None:
@@ -726,16 +632,6 @@ def createHardwareManagerFromConfig(
             - hardware.ups.pollInterval: UPS poll interval (default: 5)
             - hardware.ups.shutdownDelay: Shutdown delay (default: 30)
             - hardware.ups.lowBatteryThreshold: Low battery threshold (default: 10)
-            - hardware.display.enabled: Display enabled (default: True)
-            - hardware.display.refreshRate: Display refresh rate (default: 2)
-            - pi.hardware.statusDisplay.enabled: StatusDisplay overlay enabled
-                (canonical nested path used by config.json; resolved FIRST).
-                US-402 retires the pygame overlay by setting this False.
-                Falls back to the flat hardware.statusDisplay.enabled, then to
-                the legacy hardware.display.enabled (default: True).
-            - pi.hardware.statusDisplay.forceSoftwareRenderer / the flat
-                hardware.statusDisplay.forceSoftwareRenderer: Force SDL software
-                renderer for the overlay (default: True; TD-024 fix)
             - hardware.telemetry.logPath: Telemetry log path
             - hardware.telemetry.logInterval: Telemetry log interval (default: 10)
             - hardware.telemetry.maxBytes: Max log file size (default: 100MB)
@@ -768,28 +664,10 @@ def createHardwareManagerFromConfig(
     pollInterval = getConfigValue('hardware.ups.pollInterval', 5)
     shutdownDelay = getConfigValue('hardware.ups.shutdownDelay', 30)
     lowBatteryThreshold = getConfigValue('hardware.ups.lowBatteryThreshold', 10)
-    # US-402 pygame sunset: the canonical config lives at the pi-nested path
-    # ``pi.hardware.statusDisplay.*`` (config.json), but the orchestrator
-    # (lifecycle.py) passes the FULL config to this factory -- and the factory
-    # historically read the flat top-level ``hardware.statusDisplay.*``, so the
-    # nested flag was silently ignored and the overlay always launched on the
-    # default. Resolve the nested path FIRST so the parity-gated sunset
-    # (statusDisplay.enabled=false in config.json) actually retires the pygame
-    # surface; keep the flat path + legacy display.enabled as back-compat
-    # fallbacks (the US-198 operator escape hatch). Same pi-nested pattern as
-    # ``pi.shutdown.poweroffTimeoutSeconds`` below.
-    displayEnabled = getConfigValue(
-        'pi.hardware.statusDisplay.enabled',
-        getConfigValue(
-            'hardware.statusDisplay.enabled',
-            getConfigValue('hardware.display.enabled', True),
-        ),
-    )
-    displayRefreshRate = getConfigValue('hardware.display.refreshRate', 2.0)
-    displayForceSoftwareRenderer = getConfigValue(
-        'pi.hardware.statusDisplay.forceSoftwareRenderer',
-        getConfigValue('hardware.statusDisplay.forceSoftwareRenderer', True),
-    )
+    # US-485: the pygame status_display overlay is retired -- the HTML carousel
+    # is the sole dashboard surface (fed by the US-480 state-file emitters). The
+    # former pi.hardware.statusDisplay.* config keys are gone; nothing here reads
+    # them anymore.
     telemetryLogPath = getConfigValue(
         'hardware.telemetry.logPath',
         '/var/log/carpi/telemetry.log'
@@ -817,9 +695,6 @@ def createHardwareManagerFromConfig(
         pollInterval=float(pollInterval),
         shutdownDelay=int(shutdownDelay),
         lowBatteryThreshold=int(lowBatteryThreshold),
-        displayEnabled=displayEnabled,
-        displayRefreshRate=float(displayRefreshRate),
-        displayForceSoftwareRenderer=bool(displayForceSoftwareRenderer),
         telemetryLogPath=telemetryLogPath,
         telemetryLogInterval=float(telemetryLogInterval),
         telemetryMaxBytes=int(telemetryMaxBytes),

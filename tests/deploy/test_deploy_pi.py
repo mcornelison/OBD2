@@ -672,3 +672,143 @@ def test_us395_splashSteps_wiredIntoMainFlow():
         assert text.count(step) >= 2, (
             f"{step} must be both defined AND called in the main deploy flow"
         )
+
+
+# ----------------------------------------------------------------------------
+# US-480-b: deploy-install the F-092/097/111 card-state emitter EXECUTION +
+# reboot-persistence.
+#
+# US-480-a wired the system-status / battery-health / dtc emitters to run
+# IN-PROCESS inside the orchestrator (eclipse-obd.service) via
+# CardStateEmitterMixin -- Atlas Q-1 run-model: the OBD emitters are
+# orchestrator-invoked, NOT standalone units, so nothing opens a 2nd OBD
+# connection and re-introduces the A-17 serialization race. But deploy-pi.sh
+# never ENABLED eclipse-obd -- so a fresh --init Pi would install the unit yet
+# not boot-start it, leaving /run/eclipse-obd/states/ empty (only
+# eclipse-boot-state emits) and the carousel cards on the NA wall. That is the
+# exact "code merged but never deploy-installed" gap that shipped the emitters
+# dark (the 'deploy validation is a distinct gate' lesson).
+#
+# These static assertions pin the fix: deploy-pi.sh must `systemctl enable`
+# eclipse-obd (boot-persistence) so a fresh deploy + reboot auto-starts the
+# emitting orchestrator with no manual steps -- and must do so with `enable`
+# (NOT `enable --now`, which would race the US-389 stop->start) and
+# unconditionally (outside the cmp -s change gate, so it self-heals a Pi that
+# was installed-but-never-enabled).
+# ----------------------------------------------------------------------------
+
+
+def test_us480b_citedInScript():
+    """The enable / boot-persistence fix must cite US-480-b so archaeology can
+    trace it back to its acceptance criteria.
+    """
+    text = _scriptText()
+    assert "US-480-b" in text, (
+        "deploy-pi.sh must cite US-480-b on the eclipse-obd enable / "
+        "boot-persistence fix"
+    )
+
+
+def test_us480b_eclipseObdEnabledForBootPersistence():
+    """The orchestrator unit must be `systemctl enable`d so a reboot auto-starts
+    the in-process card-state emitters (US-480-a). Scoped to
+    step_install_eclipse_obd_unit.
+    """
+    body = _stepBody(_scriptText(), "step_install_eclipse_obd_unit")
+    assert "systemctl enable" in body, (
+        "step_install_eclipse_obd_unit must `systemctl enable` the orchestrator "
+        "so a fresh deploy + reboot boot-starts the in-process card-state "
+        "emitters (US-480-b reboot-persistence AC)"
+    )
+
+
+def test_us480b_enableIsNotNow_avoidsRestartRace():
+    """The enable must NOT be `enable --now` -- step_restart_service owns the
+    actual start via an explicit stop->start (US-389 release-then-acquire); a
+    `--now` start here would race that ordering (the US-480-b deploy-hygiene AC).
+    """
+    body = _stepBody(_scriptText(), "step_install_eclipse_obd_unit")
+    # Scope to the ACTUAL enable COMMAND (a `sudo systemctl enable ...` line),
+    # not the echo/DRY-RUN preview lines (which mention "NOT --now" in prose).
+    for line in body.splitlines():
+        if line.strip().startswith("sudo systemctl enable") and "--now" in line:
+            raise AssertionError(
+                "step_install_eclipse_obd_unit must use `systemctl enable` "
+                "(boot-persistence only), NOT `enable --now` -- a --now start "
+                "races the US-389 stop->start in step_restart_service"
+            )
+
+
+def test_us480b_enableUnconditional_notGatedByUnitFileDiff():
+    """The enable must be re-asserted on EVERY deploy (AFTER the cmp -s
+    sync-if-changed if/else `fi`), so a Pi whose unit was installed pre-US-480-b
+    but never enabled -- or disabled out-of-band -- self-heals on a routine
+    re-deploy. If the enable lived only in the install (else) branch, a no-op
+    re-deploy of an already-current-but-disabled unit would never enable it.
+    """
+    body = _stepBody(_scriptText(), "step_install_eclipse_obd_unit")
+    lines = body.splitlines()
+    # The ACTUAL enable command (not the echo/DRY-RUN preview lines).
+    enableIdx = next(
+        (i for i, ln in enumerate(lines)
+         if ln.strip().startswith("sudo systemctl enable")), -1
+    )
+    assert enableIdx > -1, "no `sudo systemctl enable` command line found"
+    lastFiBeforeEnable = max(
+        (i for i in range(enableIdx) if lines[i].strip().startswith("fi")),
+        default=-1,
+    )
+    assert lastFiBeforeEnable > -1, (
+        "the `systemctl enable` must come AFTER the cmp -s sync-if-changed "
+        "if/else (its closing `fi`) -- i.e. unconditional, not nested in the "
+        "install branch (else a no-op re-deploy of a disabled unit never "
+        "enables it)"
+    )
+
+
+def test_us480b_enableStepWiredIntoMainFlow():
+    """step_install_eclipse_obd_unit must be CALLED from the default-mode body,
+    not just defined (so the enable actually runs on a real deploy). The step
+    predates US-480-b; this pins that US-480-b rides an already-wired step.
+    """
+    text = _scriptText()
+    assert text.count("step_install_eclipse_obd_unit") >= 2, (
+        "step_install_eclipse_obd_unit must be both defined AND called in the "
+        "main deploy flow"
+    )
+
+
+def test_us480b_dryRunPreviewsEnable():
+    """The enable must be previewable under --dry-run (the offline smoke test
+    runs --dry-run and never touches a Pi), matching the existing dry-run idiom.
+    """
+    body = _stepBody(_scriptText(), "step_install_eclipse_obd_unit")
+    dryIdx = body.find("$DRY_RUN")
+    assert dryIdx > -1, "step_install_eclipse_obd_unit must have a --dry-run branch"
+    # The dry-run block must mention the enable so the preview reflects it.
+    assert "enable" in body[dryIdx : body.find("return 0", dryIdx)], (
+        "the --dry-run branch of step_install_eclipse_obd_unit must preview the "
+        "`systemctl enable` (so the offline smoke test reflects the US-480-b fix)"
+    )
+
+
+def test_us480b_architectureDocumentsRunModelAndDeployInstall():
+    """Rule-10: the emitter/runtime section of specs/architecture.md must
+    document the US-480 orchestrator-invoked run-model + the deploy-install
+    (eclipse-obd enabled for boot-persistence, why the OBD emitters are NOT
+    standalone units).
+    """
+    archText = (REPO_ROOT / "specs" / "architecture.md").read_text(encoding="utf-8")
+    assert "US-480" in archText, (
+        "specs/architecture.md must document the US-480 card-state emitter "
+        "run-model + deploy-install (Rule-10 in-sprint doc)"
+    )
+    lower = archText.lower()
+    assert "orchestrator-invoked" in lower or "in-process" in lower, (
+        "the doc must state the OBD emitters are orchestrator-invoked / "
+        "in-process (Atlas Q-1), not standalone units"
+    )
+    assert "systemctl enable eclipse-obd" in lower or "boot-persist" in lower, (
+        "the doc must state the deploy-install (eclipse-obd enabled for "
+        "boot-persistence -- US-480-b)"
+    )

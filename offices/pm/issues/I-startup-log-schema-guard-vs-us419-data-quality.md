@@ -1,4 +1,6 @@
-# I: startup_log US-263 7-column schema guard fails vs US-419 `data_quality` column
+# [GROOMED 2026-07-21 → US-486 (V0.29.15, F-080)] I: startup_log US-263 7-column schema guard fails vs US-419 `data_quality` column
+
+> **GROOMED into US-486** (V0.29.15 UI sprint, parent F-080). Atlas confirmed 2026-07-21: bump the guard to 8 columns (don't relax); the `data_quality` 8th column belongs on the canonical `startup_log` (US-419), no separate table. Awaiting Ralph.
 
 - **Found by:** Rex (Ralph agent), Sprint 60 / US-474, 2026-07-20
 - **Type:** pre-existing test/schema drift (NOT a US-474 regression)

@@ -1,4 +1,6 @@
-# I: specs/architecture.md §3.5 — add the DTC read path + US-474 contract test
+# [CLOSED 2026-07-21 — Atlas applied the §3.5 edit, committed `45a54d1`] I: specs/architecture.md §3.5 — add the DTC read path + US-474 contract test
+
+> **RESOLVED.** Atlas (owns architecture.md) applied the requested §3.5 edits: added the DTC read/clear paths (`DtcClient` Mode 03/07/04 + US-404 KOEO connect-edge) to the "every caller goes through the wrapper" list, noted the typed `ObdConnectionLike.query()` closes the raw-bypass hole (US-474), and referenced `tests/pi/obdii/test_dtc_connect_edge_concurrency.py`. Not a Ralph story (specs/ read-only). No further action.
 
 - **Found by:** Rex (Ralph agent), Sprint 60 / US-474, 2026-07-20
 - **Type:** load-bearing spec update owed in-sprint (design-gate DoD / PM Rule 10)

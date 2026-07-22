@@ -66,6 +66,8 @@ def test_buildSystemStatusState_a3Schema_hasExactShape():
         "sync": {"lastOkTs": _SYNC_OK, "rows": 1204, "pending": 0, "stale": False},
         "power": {"mode": "car", "source": "external"},
         "drive": {"state": "recording", "driveId": 27},
+        # US-480-a idle-SSOT (b): recording -> never idle (a drive is active).
+        "idle": False,
         "source": {"obd": {"available": True, "reason": None}},
         "ts": _NOW,
     }
@@ -95,6 +97,10 @@ def test_buildSystemStatusState_honestInstrument_downLinkIsVerbatim():
     # A verbatim `down` link is still an AVAILABLE source (we are talking to /
     # retrying a car) -- distinct from US-429 obd-unavailable (no car at all).
     assert state["source"]["obd"] == {"available": True, "reason": None}
+    # US-480-a idle-SSOT (b): the OBD source is AVAILABLE (a car we are retrying),
+    # so this is NOT the calm parked/asleep state -- idle stays False even though
+    # the drive is idle. Idle requires the OBD source to be ABSENT.
+    assert state["idle"] is False
 
 
 # ---------------------------------------------------------------------------
@@ -127,6 +133,78 @@ def test_buildSystemStatusState_obdUnavailable_typedNaNotStaleLink():
     # Other sources are unaffected (one truth per SOURCE).
     assert state["sync"]["rows"] == 10
     assert state["power"]["mode"] == "wall"
+    # US-480-a idle-SSOT (b): OBD source ABSENT + not recording -> this IS the
+    # calm parked/asleep state -> idle True (US-481 renders the idle home card).
+    assert state["idle"] is True
+
+
+# ---------------------------------------------------------------------------
+# US-480-a idle-SSOT (b) -- the emitter OWNS the idle decision (Atlas ruling).
+# ---------------------------------------------------------------------------
+
+
+def test_buildSystemStatusState_idle_trueOnlyWhenObdAbsentAndNotRecording():
+    """idle == parked-and-asleep: OBD source ABSENT (no car) AND no drive
+    recording. The emitter owns both inputs so the display never re-derives it."""
+    state = buildSystemStatusState(
+        obdLinkState=OBD_DOWN,
+        obdRetries=0,
+        obdLastSeenS=None,
+        syncLastOkTs=None,
+        syncRows=0,
+        syncPending=0,
+        syncStale=False,
+        powerMode="wall",
+        powerSource="external",
+        driveState="idle",
+        driveId=None,
+        nowIso=_NOW,
+        obdAvailable=False,
+    )
+    assert state["idle"] is True
+
+
+def test_buildSystemStatusState_idle_falseWhenObdAvailable():
+    """OBD source present (car awake) -> NOT idle, even with no drive recording
+    (Iris AC-4: idle flips false the moment the OBD source wakes)."""
+    state = buildSystemStatusState(
+        obdLinkState=OBD_LINKED,
+        obdRetries=0,
+        obdLastSeenS=1,
+        syncLastOkTs=_SYNC_OK,
+        syncRows=0,
+        syncPending=0,
+        syncStale=False,
+        powerMode="car",
+        powerSource="external",
+        driveState="idle",
+        driveId=None,
+        nowIso=_NOW,
+        obdAvailable=True,
+    )
+    assert state["idle"] is False
+
+
+def test_buildSystemStatusState_idle_falseWhileRecording():
+    """A recording drive -> NOT idle even if the OBD source were reported absent
+    (Iris AC-4: idle flips false the moment a drive records). Belt-and-suspenders
+    on the driveState half of the SSOT."""
+    state = buildSystemStatusState(
+        obdLinkState=OBD_LINKED,
+        obdRetries=0,
+        obdLastSeenS=1,
+        syncLastOkTs=_SYNC_OK,
+        syncRows=5,
+        syncPending=0,
+        syncStale=False,
+        powerMode="car",
+        powerSource="external",
+        driveState="recording",
+        driveId=42,
+        nowIso=_NOW,
+        obdAvailable=False,
+    )
+    assert state["idle"] is False
 
 
 # ---------------------------------------------------------------------------
