@@ -825,8 +825,8 @@
       "status": "complete",
       "renamedFrom": "B-080",
       "createdAt": "2026-05-27",
-      "updatedAt": "2026-05-27",
-      "currentVersion": "V0.29.5"
+      "updatedAt": "2026-07-22",
+      "currentVersion": "V0.29.15"
     },
     {
       "id": "F-081",
@@ -1208,8 +1208,8 @@
       "description": "The Pi captures 0 OBD rows. Atlas live-debug RCA: python-obd connection is not thread-safe; orphaned timeout daemons (TD-036/US-244) + US-301 heartbeat touch the shared connection concurrently with the logger -> serial I/O interleaves -> empty read every connect. Raw python-obd works standalone (hardware/pairing all good). Fix = serialize connection access + fence orphaned daemons, preserve TD-036 no-boot-hang. f389d5b crash-loop hotfix deployed V0.29.7 (stops crash, not the capture fix). Sprint 54 P0.",
       "status": "active",
       "createdAt": "2026-07-03",
-      "currentVersion": "V0.29.14",
-      "updatedAt": "2026-07-20",
+      "currentVersion": "V0.29.15",
+      "updatedAt": "2026-07-22",
       "reopenNote": "A-17 corrected RCA (2026-07-17): the V0.29.8 F-117 fix left KOEO DTC reads on the raw unlocked path -> connect-edge race killed capture. Fix live (4a17bc1); US-474 hardens it into a typed contract + non-mocked regression."
     },
     {
@@ -1247,7 +1247,8 @@
       "title": "Pi dashboard render-truthfully -- emitter wiring + idle-state + full-bleed + light-feed (V0.29.15)",
       "description": "The F-092/097/111 carousel is built + deployed but renders wrong on the real Pi: (P0) the card emitters were never wired to execute (no service unit / no orchestrator invocation) so only boot-state is written -> carousel starves -> phantom Check Engine; plus two Iris design gaps CIO-locked 2026-07-21 (calm idle-state home card; full-bleed LETTERBOX scaling) + a light-sensor brightness feed + a Rule-10 token reconciliation. Iris spec: offices/uidevloper/proposals/2026-07-21-pi-idle-state-and-full-bleed.md (REVIEWED, CIO-locked 9da4af5). 'Make the deployed line render truthfully' -- additive over the shipped carousel, no redraw.",
       "createdAt": "2026-07-21",
-      "updatedAt": "2026-07-21"
+      "updatedAt": "2026-07-22",
+      "currentVersion": "V0.29.15"
     }
   ],
   "stories": [
@@ -5194,9 +5195,11 @@
         "atlas-gap-phantomCE-is-stale-asset"
       ],
       "tasks": [],
-      "status": "sprint-ready",
+      "status": "complete",
       "createdAt": "2026-07-21",
-      "updatedAt": "2026-07-21"
+      "updatedAt": "2026-07-22",
+      "passes": true,
+      "shippedNote": "SHIPPED V0.29.15 (F-121 UI render-truthfully); IRL-gated on the Pi deploy validation."
     },
     {
       "id": "US-480-b",
@@ -5237,9 +5240,11 @@
         "split-from-US-480"
       ],
       "tasks": [],
-      "status": "sprint-ready",
+      "status": "complete",
       "createdAt": "2026-07-21",
-      "updatedAt": "2026-07-21"
+      "updatedAt": "2026-07-22",
+      "passes": true,
+      "shippedNote": "SHIPPED V0.29.15 (F-121 UI render-truthfully); IRL-gated on the Pi deploy validation."
     },
     {
       "id": "US-481",
@@ -5282,9 +5287,11 @@
         "cio-locked-9da4af5"
       ],
       "tasks": [],
-      "status": "sprint-ready",
+      "status": "complete",
       "createdAt": "2026-07-21",
-      "updatedAt": "2026-07-21"
+      "updatedAt": "2026-07-22",
+      "passes": true,
+      "shippedNote": "SHIPPED V0.29.15 (F-121 UI render-truthfully); IRL-gated on the Pi deploy validation."
     },
     {
       "id": "US-482",
@@ -5317,9 +5324,11 @@
         "cio-locked-letterbox-9da4af5"
       ],
       "tasks": [],
-      "status": "sprint-ready",
+      "status": "complete",
       "createdAt": "2026-07-21",
-      "updatedAt": "2026-07-21"
+      "updatedAt": "2026-07-22",
+      "passes": true,
+      "shippedNote": "SHIPPED V0.29.15 (F-121 UI render-truthfully); IRL-gated on the Pi deploy validation."
     },
     {
       "id": "US-483-a",
@@ -5361,9 +5370,11 @@
         "split-from-US-483"
       ],
       "tasks": [],
-      "status": "sprint-ready",
+      "status": "complete",
       "createdAt": "2026-07-22",
-      "updatedAt": "2026-07-22"
+      "updatedAt": "2026-07-22",
+      "passes": true,
+      "shippedNote": "SHIPPED V0.29.15 (F-121 UI render-truthfully); IRL-gated on the Pi deploy validation."
     },
     {
       "id": "US-483-b",
@@ -5409,9 +5420,11 @@
         "illuminance-refs-tsl2591-datasheet"
       ],
       "tasks": [],
-      "status": "sprint-ready",
+      "status": "complete",
       "createdAt": "2026-07-22",
-      "updatedAt": "2026-07-22"
+      "updatedAt": "2026-07-22",
+      "passes": true,
+      "shippedNote": "SHIPPED V0.29.15 (F-121 UI render-truthfully); IRL-gated on the Pi deploy validation."
     },
     {
       "id": "US-484",
@@ -5449,9 +5462,10 @@
         "token-split-2026-06-19"
       ],
       "tasks": [],
-      "status": "sprint-ready",
+      "status": "blocked",
       "createdAt": "2026-07-21",
-      "updatedAt": "2026-07-21"
+      "updatedAt": "2026-07-22",
+      "carryForwardNote": "Pulled from V0.29.15 to the NEXT sprint (CIO 2026-07-22). Blocked (BL-024) on Atlas --text-primary token + Spool --critical-red SAFETY value. Green reconciliation is buildable; story waits on the two token adds."
     },
     {
       "id": "US-485",
@@ -5481,9 +5495,11 @@
         "US-264-vcell-authoritative"
       ],
       "tasks": [],
-      "status": "sprint-ready",
+      "status": "complete",
       "createdAt": "2026-07-21",
-      "updatedAt": "2026-07-21"
+      "updatedAt": "2026-07-22",
+      "passes": true,
+      "shippedNote": "SHIPPED V0.29.15 (F-121 UI render-truthfully); IRL-gated on the Pi deploy validation."
     },
     {
       "id": "US-486",
@@ -5519,9 +5535,11 @@
         "I-startup-log-schema-guard-2026-07-20"
       ],
       "tasks": [],
-      "status": "sprint-ready",
+      "status": "complete",
       "createdAt": "2026-07-21",
-      "updatedAt": "2026-07-21"
+      "updatedAt": "2026-07-22",
+      "passes": true,
+      "shippedNote": "SHIPPED V0.29.15 (F-121 UI render-truthfully); IRL-gated on the Pi deploy validation."
     },
     {
       "id": "US-487",
@@ -5555,9 +5573,11 @@
         "cio-never-drive-blind"
       ],
       "tasks": [],
-      "status": "sprint-ready",
+      "status": "complete",
       "createdAt": "2026-07-21",
-      "updatedAt": "2026-07-21"
+      "updatedAt": "2026-07-22",
+      "passes": true,
+      "shippedNote": "SHIPPED V0.29.15 (F-121 UI render-truthfully); IRL-gated on the Pi deploy validation."
     }
   ]
 }
