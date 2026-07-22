@@ -532,6 +532,12 @@ html, body {
   display: flex; align-items: center; justify-content: center;
   background: var(--bg);   /* black bezel behind the scaled design box */
   overflow: hidden;
+  /* US-483-b software auto-dim: carousel.js sets --display-brightness (0..1)
+     from the states/light feed. Applied on the frame so the whole surface dims
+     uniformly (black bars stay black). Defaults to 1 (full) until the first
+     read -- and the filter here does NOT break #stage's transform containing
+     block (that is #stage's own, nearer to the fixed/absolute descendants). */
+  filter: brightness(var(--display-brightness, 1));
 }
 #stage {
   position: relative;

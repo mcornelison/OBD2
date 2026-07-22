@@ -187,6 +187,12 @@
     // from file:// the placeholder stays and the polls fail closed to
     // `unavailable` -- the carousel shell still renders + swipes.
     window.SPLASH_TOKEN = "__SPLASH_TOKEN__";
+    // US-483-b: the auto-dim curve config (pi.display.autoDim) the state server
+    // substitutes from config.json at serve time -- so tuning is a config change,
+    // not a code change (CIO 2026-07-22). The QUOTED placeholder keeps this valid
+    // JS when un-substituted (file:// preview) -> a string, which carousel.js
+    // ignores in favor of its built-in grounded defaults.
+    window.DISPLAY_AUTODIM = "__DISPLAY_AUTODIM__";
   </script>
   <script src="carousel.js"></script>
 </body>

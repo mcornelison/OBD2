@@ -63,6 +63,15 @@
         "width": 1920,
         "height": 1080,
         "mode": "auto"
+      },
+      "autoDim": {
+        "luxMin": 3.0,
+        "luxFull": 1000.0,
+        "minLevel": 0.15,
+        "defaultLevel": 0.70,
+        "alarmFloorLevel": 0.40,
+        "luxStaleSec": 10,
+        "curve": "logarithmic"
       }
     },
     "autoStart": {

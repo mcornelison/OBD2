@@ -2711,6 +2711,32 @@ freshness `ts` is the **sample's own read-time** (not write-time), so a stalled
 feed goes honestly stale and the consumer falls back rather than trusting a
 frozen value. Gated behind `pi.bus.enabled` + `pi.sensors.light.enabled`.
 
+**Display auto-dim consumer + config-injection seam (US-483-b / F-121, Sprint 61
+/ V0.29.15).** The carousel drives the panel brightness (a **software dim** — the
+Chromium kiosk can't reach the panel backlight) from the `states/light` feed via
+pure, node-tested logic in `carousel.js`: `brightnessLevel(lightData, cfg, nowMs,
+alarmActive)` = `clamp(minLevel, brightnessCurve(lux), 1.0)` when the feed is
+fresh, else a fixed `defaultLevel` (honest fallback — an absent/stale/`null`
+reading never fabricates an "auto" behavior), then raised to at least
+`alarmFloorLevel` while a **real active STOP** alert is present
+(`brightnessAlarmActive` — the load-bearing safety guard: the PULL-OVER alarm is
+never dimmed below legible, regardless of lux). Applied as a CSS var
+(`--display-brightness`) `filter: brightness()` on the `#screen` frame (the black
+letterbox bars stay black; `#stage`'s own transform remains the containing block
+for its descendants, so US-482 scaling is untouched). The curve values are
+**GROUNDED CONFIG PARAMETERS** under `pi.display.autoDim.*` (`luxMin` 3.0 /
+`luxFull` 1000.0 — standard illuminance anchors; `minLevel` 0.15 / `defaultLevel`
+0.70 / `alarmFloorLevel` 0.40 — Iris-tunable levels; `luxStaleSec` 10; `curve`
+`logarithmic`), **NOT** `pi.display.brightness` (the distinct live 0–100
+hardware-backlight scalar). Tuning is a **config change, not code** (CIO
+2026-07-22): `eclipse-states-http` injects the `pi.display.autoDim` object into
+the served `dashboard.html` at serve time — the same same-origin seam as the
+`__SPLASH_TOKEN__` SSOT — via the quoted `"__DISPLAY_AUTODIM__"` placeholder
+(`states_http_server.loadDisplayAutoDimConfig` reads config.json fail-safe; no
+config → `null` → the carousel's built-in grounded defaults, which mirror
+config.json). The consumer reads **only** `states/light` — it opens no OBD/second
+connection.
+
 **Config (connect-when-wired).** Master `pi.bus.enabled` → `pi.sensors.imu.enabled`
 / `pi.sensors.light.enabled` (each requires the bus gate);
 `pi.sensors.imu.sampleHz` (`50`, bus publish rate), `pi.sensors.imu.persistHz`

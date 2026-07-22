@@ -1057,6 +1057,115 @@
     };
   }
 
+  // -------------------------------------------------------------------------
+  // US-483-b display-brightness consumer (F-121) -- pure, node-testable logic.
+  // The dashboard is a PURE CONSUMER of the states/light file US-483-a writes
+  // ({lux, ts}); it NEVER reads the sensor. The auto-dim curve values are
+  // GROUNDED CONFIG PARAMETERS injected at serve time (window.DISPLAY_AUTODIM),
+  // so tuning is a config change, not a code change (CIO 2026-07-22). These
+  // built-in defaults are the file:// preview / unconfigured fallback and MIRROR
+  // config.json pi.display.autoDim.* (the tuning SSOT). Honest-instrument: an
+  // absent/stale/saturated (null) reading holds the fixed default -- never a
+  // fabricated "auto" behavior; and a real active STOP alert never dims below the
+  // legible alarm floor, regardless of lux (the load-bearing safety guard).
+  // -------------------------------------------------------------------------
+
+  var BRIGHTNESS_DEFAULTS = {
+    luxMin: 3.0,          // lux <= this -> min (grounded: civil-twilight dark)
+    luxFull: 1000.0,      // lux >= this -> full (grounded: overcast daylight)
+    minLevel: 0.15,       // calm-screen dim floor (fraction 0..1)
+    defaultLevel: 0.70,   // fixed fallback when the feed is absent/stale
+    alarmFloorLevel: 0.40, // a real STOP never dims below this (safety)
+    luxStaleSec: 10,      // a reading older than this -> fallback
+    curve: "logarithmic", // perceptual mapping between luxMin..luxFull
+  };
+
+  // Resolve the injected config over the grounded defaults (only well-typed
+  // overrides win). A malformed/absent global leaves every default in place.
+  function resolveAutoDimConfig(cfg) {
+    var out = {};
+    for (var k in BRIGHTNESS_DEFAULTS) {
+      if (Object.prototype.hasOwnProperty.call(BRIGHTNESS_DEFAULTS, k)) {
+        out[k] = BRIGHTNESS_DEFAULTS[k];
+      }
+    }
+    if (cfg && typeof cfg === "object") {
+      for (var key in BRIGHTNESS_DEFAULTS) {
+        if (!Object.prototype.hasOwnProperty.call(cfg, key)) continue;
+        var v = cfg[key];
+        if (key === "curve") {
+          if (typeof v === "string") out[key] = v;
+        } else if (typeof v === "number" && isFinite(v)) {
+          out[key] = v;
+        }
+      }
+    }
+    return out;
+  }
+
+  // The perceptual lux -> 0..1 mapping. Returns 0 at/below luxMin, 1 at/above
+  // luxFull, and a curve value between. A degenerate range (luxFull <= luxMin)
+  // or a non-positive luxMin under the log curve falls back to linear/full so it
+  // can never divide by zero or take log of a non-positive number.
+  function brightnessCurve(lux, luxMin, luxFull, curve) {
+    if (typeof lux !== "number" || !isFinite(lux)) return 0;
+    if (!(luxFull > luxMin)) return 1; // misconfigured range -> full, never div0
+    if (lux <= luxMin) return 0;
+    if (lux >= luxFull) return 1;
+    if (curve !== "linear" && luxMin > 0 && lux > 0) {
+      return (
+        (Math.log(lux) - Math.log(luxMin)) /
+        (Math.log(luxFull) - Math.log(luxMin))
+      );
+    }
+    return (lux - luxMin) / (luxFull - luxMin);
+  }
+
+  // The fresh, finite lux from a states/light payload, or null (fall back). A
+  // missing/malformed file, a null lux (honest saturation), a non-finite value,
+  // or a reading older than luxStaleSec all read null -> the caller holds the
+  // fixed default rather than trusting a frozen/absent value.
+  function freshLux(lightData, luxStaleSec, nowMs) {
+    if (!lightData || typeof lightData !== "object") return null;
+    var lux = lightData.lux;
+    if (typeof lux !== "number" || !isFinite(lux)) return null;
+    var ts = lightData.ts;
+    if (typeof ts !== "string") return null;
+    var t = Date.parse(ts);
+    if (isNaN(t)) return null;
+    var ageSec = (nowMs - t) / 1000;
+    if (!(ageSec <= luxStaleSec)) return null; // stale (or NaN age) -> fallback
+    return lux;
+  }
+
+  // A real ACTIVE STOP alert is present (drives the alarm floor). Reuses the same
+  // honest ribbon classifier the takeover/ribbon use: an unavailable DTC source
+  // carries no active fault -> false; only a STOP-tier hero forces the floor (the
+  // PULL-OVER alarm). A WATCH/MINOR alert is a real code but not the pull-over
+  // alarm, so it does not force the legible floor (Iris AC-7 scope).
+  function brightnessAlarmActive(dtcData) {
+    var rv = ribbonView(dtcData);
+    return !!rv && rv.level === "stop";
+  }
+
+  // The final 0..1 brightness: clamp(minLevel, curve(lux), 1.0) when the feed is
+  // fresh, else the fixed default (honest fallback), then raised to at least the
+  // alarm floor while a real STOP is active. The alarm floor only RAISES (never
+  // caps) -- a bright reading under a STOP still goes full.
+  function brightnessLevel(lightData, cfg, nowMs, alarmActive) {
+    var c = resolveAutoDimConfig(cfg);
+    var lux = freshLux(lightData, c.luxStaleSec, nowMs);
+    var level;
+    if (lux === null) {
+      level = c.defaultLevel; // absent/stale/saturated -> fixed default
+    } else {
+      var curved = brightnessCurve(lux, c.luxMin, c.luxFull, c.curve);
+      level = Math.min(Math.max(curved, c.minLevel), 1.0);
+    }
+    if (alarmActive) level = Math.max(level, c.alarmFloorLevel);
+    return Math.min(Math.max(level, 0), 1);
+  }
+
   var api = {
     clampIndex: clampIndex,
     nextIndex: nextIndex,
@@ -1093,6 +1202,10 @@
     takeoverShouldShow: takeoverShouldShow,
     ribbonView: ribbonView,
     dtcListSorted: dtcListSorted,
+    brightnessCurve: brightnessCurve,
+    brightnessLevel: brightnessLevel,
+    brightnessAlarmActive: brightnessAlarmActive,
+    resolveAutoDimConfig: resolveAutoDimConfig,
     carouselIdle: carouselIdle,
     idleLastDriveFact: idleLastDriveFact,
     idleBatteryFact: idleBatteryFact,
@@ -1123,6 +1236,23 @@
 
   if (typeof document !== "undefined") {
     var token = global.SPLASH_TOKEN || "";
+
+    // US-483-b: the auto-dim curve config injected same-origin at serve time
+    // (states_http_server substitutes the placeholder from config.json). An
+    // object -> use it; anything else (unsubstituted preview / null) -> the
+    // built-in grounded defaults kick in inside resolveAutoDimConfig.
+    var displayAutoDim =
+      global.DISPLAY_AUTODIM && typeof global.DISPLAY_AUTODIM === "object"
+        ? global.DISPLAY_AUTODIM
+        : null;
+
+    // Apply the computed 0..1 brightness as a CSS var on the screen frame (a
+    // software dim -- the browser kiosk can't drive the panel backlight). Setting
+    // a var (not style.filter) keeps the CSS the single owner of the filter rule.
+    function applyBrightness(level) {
+      var screenEl = document.getElementById("screen");
+      if (screenEl) screenEl.style.setProperty("--display-brightness", String(level));
+    }
 
     // --- US-400 System Status DOM render (browser only) ---------------------
 
@@ -2101,6 +2231,18 @@
         // US-481: render the idle-home card + edge-trigger home/auto-advance
         // from the same fetched states (no extra fetch, no second OBD touch).
         updateIdleHome(sysData, batteryData, dtcData);
+        // US-483-b: drive the display brightness from the states/light feed
+        // (pure consumer -- never the sensor). A real STOP holds it >= the alarm
+        // floor; an absent/stale feed holds the fixed default (honest fallback).
+        var lightData = await fetchState("light");
+        applyBrightness(
+          brightnessLevel(
+            lightData,
+            displayAutoDim,
+            Date.now(),
+            brightnessAlarmActive(dtcData)
+          )
+        );
         setTimeout(tick, POLL_MS);
       }
       tick();
