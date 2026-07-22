@@ -2,7 +2,11 @@
 <html lang="en">
 <head>
 <meta charset="utf-8"/>
-<meta name="viewport" content="width=480, height=320, initial-scale=1, user-scalable=no"/>
+<!-- US-482 letterbox scaling: the viewport is the REAL panel (device-width), not
+     the old hard-coded 480x320. The fixed 480x320 design box (#stage) is scaled
+     to fit by carousel.js so the UI fills a 1080p panel instead of rendering in
+     a corner (CIO-locked LETTERBOX 2026-07-21). -->
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no"/>
 <title>Eclipse OBD-II Dashboard</title>
 <!-- US-399 carousel shell (F-092). Served same-origin by eclipse-states-http at
      http://127.0.0.1:9899/dashboard.html so the auth token is injected below
@@ -15,6 +19,13 @@
 <link rel="stylesheet" href="dashboard.css"/>
 </head>
 <body>
+  <!-- US-482 letterbox frame: #screen is the full-viewport black bezel; #stage
+       is the exact 480x320 design box, centered + uniformly scaled as ONE unit
+       (carousel.js sets --scale on resize). Everything below renders INSIDE the
+       transformed #stage, so the shipped 480x320 layout is unchanged -- only the
+       outer scale fills the panel. Black bars read as bezel, not a gap. -->
+  <div id="screen">
+  <div id="stage">
   <!-- Persistent top bar (D-3): BT / sync / power glyphs + version chip + menu
        affordance. Glyph STATE (amber on BT drop, etc.) is bound by US-400 from
        system-status; the shell renders them in a neutral state. The ⋮ button is
@@ -167,6 +178,9 @@
       </div>
     </div>
   </div>
+
+  </div><!-- #stage -->
+  </div><!-- #screen -->
 
   <script>
     // Token injected by the state server at serve time (token SSOT). Previewed
