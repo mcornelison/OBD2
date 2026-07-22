@@ -188,8 +188,10 @@
       "epicId": "E-001",
       "type": "normal",
       "size": "M",
-      "status": "sprint-ready",
+      "status": "blocked",
       "passes": false,
+      "blockerRef": "offices/pm/blockers/BL-023-us483-light-state-file-contract-atlas-q4-ungated.md",
+      "completionNotes": "BLOCKED (BL-023, Rex 2026-07-22): gated on Atlas Q-4 -- the `light` lux state-file contract shape is unblessed and does not exist in-codebase (only the EDR producer side exists). AC1/AC5/VC2 require reading `light.lux`+freshness from the state file, which finalizes the very contract shape the story's conditionalOutcome forbids finalizing before Atlas blesses it. Safety-adjacent (brightness + STOP-alarm legible floor) -- refused to guess the seam per Refusal Rule 1. Resolution options in BL-023: (A) Atlas blesses the Q-4 contract -> build full consumer; (B) PM descopes US-483 this sprint to the ungated fixed-default + lux-independent alarm-floor + no-fake-auto slice (AC2+AC3), deferring live-lux to W-9. Sprint NOT fully blocked -- US-484/485/486/487 remain buildable; loop advances.",
       "acceptance": [
         "display reads light.lux (+ freshness) from the `light` state file; brightness = clamp(MIN, curve(lux), 1.0) -- curve is Iris's (UI), lux value is the reader's (owner = the single dedicated EDR reader, per Atlas DELTA-2 pure-consumer ruling)",
         "ALARM FLOOR (load-bearing): MIN never dims the screen below a legible threshold while a REAL active alarm (STOP ribbon/takeover) is present -- dim a calm idle screen, never a damage-in-progress warning; the floor is a UI guard independent of lux",

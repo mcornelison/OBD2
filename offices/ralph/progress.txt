@@ -1102,3 +1102,46 @@ Task: Full-bleed LETTERBOX scaling - fill the 1080p panel (F-121)
 - **Gotcha**: the node probe (carousel_probe.js) is already variadic, so a new
   pure export needs no probe change - just add it to the api object.
 ---
+
+## 2026-07-22 - US-483 (Rex / Agent 1, Session -- Sprint 61) -- BLOCKED, no code shipped
+Task: Light-feed brightness consumer -- auto-dim from a `light` lux state file (GATED)
+
+### Outcome: REFUSED per Refusal Rule 1 (unmet dependency), filed BL-023
+- US-483 is the highest-priority unclaimed story, but it is GATED on **Atlas Q-4**:
+  the `light` lux state-file contract shape (state-file seam + fallback-when-absent).
+  Its own conditionalOutcome says "Do NOT finalize the contract shape before Atlas
+  blesses it."
+- No Atlas Q-4 ruling exists in offices/ralph/inbox/ (newest inbox item 2026-07-04,
+  predates this sprint). DELTA-2 (display = pure consumer) is cited as ruled; Q-4
+  (the contract shape) is not.
+- No `light` state-file CONSUMER contract exists in-codebase. Only the EDR PRODUCER
+  side exists (src/pi/sensors/sensor_reader.py, src/pi/bus/sample.py,
+  src/pi/bus/edr_persistence_subscriber.py). The states/ consumer contract from
+  US-480-a covers system-status / battery-health / dtc only.
+- AC1 ("reads light.lux + freshness"), AC5 ("consumes the state file"), and VC2
+  ("inject a fresh light.lux -> tracks the curve") cannot be met without finalizing
+  the exact seam the gate forbids finalizing. Safety-adjacent (brightness + a
+  legible floor that must never dim a live STOP alarm), so guessing + reworking is
+  the wrong risk. Did NOT guess.
+
+### Files changed:
+- Created: offices/pm/blockers/BL-023-us483-light-state-file-contract-atlas-q4-ungated.md
+  (blocker + 2 resolution paths: A=Atlas blesses Q-4 contract -> build full consumer;
+  B=PM descopes to the ungated fixed-default + lux-independent alarm-floor + no-fake-auto
+  slice (AC2+AC3), live-lux deferred to W-9 EDR reader)
+- Modified: offices/ralph/sprint.json (US-483 status sprint-ready -> blocked; added
+  blockerRef + completionNotes so the next iteration skips it as Blocked, not Available)
+- Modified: offices/ralph/ralph_agents.json (agent 1 close note)
+
+### Learnings for future iterations:
+- **Pattern**: when the highest-priority story is gated on a design ruling that has
+  NOT arrived (no inbox message, no in-codebase contract to mirror), refuse-first +
+  file a blocker offering PM a concrete descope option -- don't invent a
+  safety-adjacent contract to force a pass. Mark the story status: blocked +
+  blockerRef in sprint.json so the mechanical selector's next pass categorizes it
+  Blocked (not Available) and advances to the next buildable story.
+- **Gotcha**: a story can cite one Atlas ruling as settled (DELTA-2) while another
+  (Q-4) is still pending -- read the conditionalOutcome, not just the AC citations.
+- **Next available by priority**: US-484 (green + text-primary reconciliations are
+  not Spool-gated), then US-485 / US-486 (fully buildable) / US-487.
+---
