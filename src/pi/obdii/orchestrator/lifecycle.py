@@ -553,6 +553,12 @@ class LifecycleMixin:
         # ensureDriveStatisticsRetired in database_schema.py).
         self._initializeSyncClient()
         self._initializePowerMonitor()
+        # US-480-a: wire the carousel card-state emitters (F-092 system-status /
+        # F-097 battery-health / F-111 dtc) LAST among the data components -- it
+        # is a pure consumer of the connection / drive-detector / power-monitor /
+        # hardware-manager (UpsMonitor) already built above, and opens no
+        # connection of its own (Atlas Q-1 single-ObdConnection invariant).
+        self._initializeCardStateEmitters()  # type: ignore[attr-defined]
         self._initializeUpdateChecker()
         self._initializeUpdateApplier()
         self._initializeBackupManager()  # type: ignore[attr-defined]
