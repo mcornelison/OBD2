@@ -148,8 +148,18 @@
       "epicId": "E-001",
       "type": "issue",
       "size": "M",
-      "status": "sprint-ready",
-      "passes": false,
+      "status": "complete",
+      "passes": true,
+      "feedback": {
+        "filesActuallyTouched": [
+          "config.json (pi.bus.enabled false->true, pi.sensors.light.enabled false->true; IMU stays false)",
+          "src/pi/sensors/light_state_bridge.py (NEW -- LightStateBridge: bus raw.light.lux -> states/light, buildLightState, createLightStateBridgeFromConfig)",
+          "src/pi/obdii/orchestrator/lifecycle.py (wire+start bridge in _startEdrSensorPath, _lightStateBridge attr+default, stop in _shutdownDataLogger)",
+          "specs/architecture.md (10.8.2 bus->states/light bridge note, Rule-10)",
+          "tests/pi/sensors/test_light_state_bridge.py (NEW -- 10 tests)"
+        ]
+      },
+      "completionNotes": "DONE (passes:true). BL-023 was RESOLVED (commit 5500876: TSL2591 live+I2C-addressable @0x29, verified on the Pi 2026-07-22) -- built the REAL feed, not a fallback. (1) CONFIG: flipped pi.bus.enabled + pi.sensors.light.enabled ON (connect-when-wired); IMU left OFF (dead clone boards -> graceful-absent reader stays silent, light isolated per conditionalOutcome). validate_config OK. (2) BRIDGE: new src/pi/sensors/light_state_bridge.py LightStateBridge -- a PURE bus consumer (Atlas DELTA-2: reader owns the state file, display never touches sensor). Subscribes raw.light.lux LOSSY (display needs only freshest), drains on its own daemon thread (mirrors EdrPersistenceSubscriber), writes states/light {lux, ts} atomically via the shared boot_state_emitter ensureStatesDir+writeStateAtomic (mirrors US-480-a states/ writers, no dup). eclipse-states-http serves it AS-IS with no server change (its do_GET already serves any file in statesDir, token-gated). SEAM SHAPE for Atlas confirm: file=/run/eclipse-obd/states/light, payload={lux: float|null, ts: ISO-8601} -- mirrors the existing writers. (3) HONEST-INSTRUMENT carried through the seam: saturation (lux=None from sensor_reader._readLux) -> JSON null (never inf/0.0); non-finite coerced to None (defense-in-depth _coerceLux); ts = SAMPLE read-time (not write-time) so a stalled feed goes honestly stale -> US-483-b consumer falls back rather than trusting a frozen lux. (4) RUN-MODEL: orchestrator-invoked in _startEdrSensorPath (subscribe+start BEFORE readers publish so no early sample missed; STREAM has no history), stopped in _shutdownDataLogger. Opens NO I2C device + NO OBD connection -> cannot re-introduce the A-17 second-connection race (VC3 satisfied by construction: no new obd.OBD()/connect caller). (5) Rule-10: architecture.md 10.8.2 documents the bridge + records the config flip. GREEN in-loop: 10 new bridge tests + 4 test_lifecycle_bus_wiring tests = 14 passed; ruff clean on all touched files; validate_config passed. GATES for PM/integration + Pi-runtime: mypy NOT run (not installed on this dev host -- PM/integration typecheck gate; module is fully type-hinted + ruff-clean). VC1 (ls+curl states/light live 200) + VC2 (cover/shine sensor -> lux tracks) are PI-RUNTIME gates (real Pi + engine/bench power + live TSL2591). Atlas SEAM CONFIRM is a heads-up (he APPROVED DELTA-2 pure-consumer) -- built per CIO directive on the approved pattern; flag the {lux,ts} shape for his confirm. Enables US-483-b (consumer) -- its dependency is now met.",
       "acceptance": [
         "connect-when-wired: flip pi.bus.enabled=true + pi.sensors.light.enabled=true (the TSL2591 is physically wired + I2C-addressable @0x29, verified on the Pi 2026-07-22) so sensor_reader publishes raw.light.lux at pi.sensors.light.sampleHz (1 Hz)",
         "bridge raw.light.lux (EDR bus) -> a states/light file at /run/eclipse-obd/states/light, MIRRORING the states/ pattern US-480-a established (fields: lux [float, null on saturation -- never inf, per sensor_reader], plus a freshness timestamp ts); eclipse-states-http serves it",

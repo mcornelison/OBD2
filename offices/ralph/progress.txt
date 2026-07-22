@@ -1326,3 +1326,42 @@ Task: Harden the US-479 pre-drive green-light -- verify the PRODUCTION capture p
   exit-3 are PI-RUNTIME gates (need the real Pi + SSH + engine-on idle); the bench proves the
   bash wiring, the --bench exit-3 (real run), the fail-closed logic path, and the static assertions.
 ---
+
+## 2026-07-22 - US-483-a (Rex / Session 55)
+Task: Enable the live TSL2591 light feed + bridge raw.light.lux -> states/light (connect-when-wired)
+
+### What was implemented:
+- Flipped `pi.bus.enabled` + `pi.sensors.light.enabled` ON in config.json (connect-when-wired:
+  TSL2591 live + I2C-addressable @0x29, verified on the Pi 2026-07-22 -- BL-023 resolved). IMU
+  left OFF: the dead clone boards stay silent via the graceful-absent reader, isolating light.
+- New `LightStateBridge` (src/pi/sensors/light_state_bridge.py): a PURE bus consumer (Atlas
+  DELTA-2 -- the reader owns the state file, the display never touches the sensor). Subscribes
+  `raw.light.lux` LOSSY (a display needs only the freshest reading), drains on its own daemon
+  thread, writes `states/light` {lux, ts} atomically via the shared boot_state_emitter
+  primitives (mirrors the US-480-a states/ writers -- no dup). eclipse-states-http serves it
+  with NO server change (its do_GET already serves any statesDir file, token-gated).
+- Orchestrator-invoked in `_startEdrSensorPath` (subscribe + start BEFORE the readers publish so
+  no early sample is missed -- STREAM has no history), stopped in `_shutdownDataLogger`. Opens NO
+  I2C device + NO OBD connection -> cannot re-introduce the A-17 second-connection race.
+- Honest-instrument carried through the seam: saturation (lux=None) -> JSON null (never inf/0.0);
+  ts = the SAMPLE's read-time (not write-time) so a stalled feed goes honestly stale.
+- Rule-10: specs/architecture.md 10.8.2 documents the bridge + the config flip.
+
+### Files changed:
+- Modified: `config.json` (pi.bus.enabled + pi.sensors.light.enabled false->true; IMU stays false)
+- Created: `src/pi/sensors/light_state_bridge.py` (LightStateBridge + buildLightState + factory)
+- Modified: `src/pi/obdii/orchestrator/lifecycle.py` (wire+start bridge, attr+default, shutdown stop)
+- Modified: `specs/architecture.md` (10.8.2 bus->states/light bridge note, Rule-10)
+- Created: `tests/pi/sensors/test_light_state_bridge.py` (10 tests)
+
+### Learnings for future iterations:
+- **Pattern discovered**: a bus->states bridge = subscribe (LOSSY) + own drain thread
+  (EdrPersistenceSubscriber shape) + the shared boot_state_emitter ensureStatesDir/
+  writeStateAtomic (battery_health/boot writers). The states HTTP server needs NO change to
+  serve a new file -- do_GET serves any token-gated file in statesDir.
+- **Gotcha**: freshness `ts` must be the SAMPLE read-time, not write-time -- otherwise a dead
+  reader would keep stamping a fresh `now` onto a frozen lux and the consumer's staleness guard
+  (US-483-b luxStaleSec) would never fire. Read-time makes a stalled feed honestly stale.
+- **Gotcha**: mypy is not installed on the Windows dev host -> typecheck is a PM/integration
+  gate; keep modules fully type-hinted + ruff-clean so that gate is a formality.
+---
