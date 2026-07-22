@@ -61,8 +61,8 @@
       "epicId": "E-001",
       "type": "issue",
       "size": "S",
-      "status": "sprint-ready",
-      "passes": false,
+      "status": "complete",
+      "passes": true,
       "acceptance": [
         "deploy-pi.sh ensures the orchestrator process that emits system-status/dtc state is installed + enabled to run on boot (per US-480-a's orchestrator-invoked model); battery-health emitter execution likewise installed (in-process or its own safe non-OBD unit)",
         "after deploy, the states dir is populated by the deploy-installed execution (not a manual start)",
@@ -85,7 +85,15 @@
         "run-model must match US-480-a's (Atlas Q-1 ruling); if US-480-a chose orchestrator-invocation over units, the deploy-install adapts accordingly (may be a no-op unit install + an orchestrator-enable check)"
       ],
       "goal": "As the deploy path, I want deploy-pi.sh to INSTALL the emitter execution (unit files + enable) so a fresh deploy + reboot leaves the F-092/097/111 emitters running -- NOT a manual one-off. This closes the exact gap that shipped them dark (code merged but never deploy-installed; the 'deploy validation is a distinct gate' lesson). (Split from US-480; this is the DEPLOY half -- runtime wiring is US-480-a.)",
-      "tasks": []
+      "tasks": [],
+      "feedback": {
+        "filesActuallyTouched": [
+          "deploy/deploy-pi.sh (step_install_eclipse_obd_unit: add unconditional `sudo systemctl enable eclipse-obd` after the cmp -s if/else fi -- boot-persistence for the US-480-a in-process emitters; NOT --now (step_restart_service owns the stop->start); DRY-RUN preview line added; US-480-b comment block)",
+          "specs/architecture.md (NEW subsection 'Card-state emitter run-model + deploy-install (US-480) [Atlas Q-1]' after the battery-health C-5 writers paragraph -- documents orchestrator-invoked run-model, why OBD emitters are NOT standalone units (A-17 single-connection invariant), and the enable boot-persistence deploy-install)",
+          "tests/deploy/test_deploy_pi.py (NEW US-480-b block: 7 static/doc assertions -- citation, enable present + scoped to step_install_eclipse_obd_unit, NOT --now, unconditional (after cmp fi), step wired into main flow, dry-run previews enable, architecture.md documents run-model + deploy-install)"
+        ]
+      },
+      "completionNotes": "GREEN in-loop: pytest tests/deploy/test_deploy_pi.py -> 37 passed (7 new US-480-b + all pre-existing US-354/389/395 static assertions + the offline --dry-run bash smoke test, which validates the shell edits parse); ruff clean on tests/deploy/test_deploy_pi.py. Confirmed `bash deploy/deploy-pi.sh --dry-run` previews the enable line. ROOT GAP CLOSED: deploy-pi.sh installed + restarted eclipse-obd but NEVER `systemctl enable`d it -- so a fresh --init Pi installs the unit (WantedBy=multi-user.target) but it is not boot-persistent; reboot => orchestrator does not auto-start => the US-480-a in-process F-092/097/111 emitters never run => states dir empty => carousel NA wall. Fix = one idempotent `sudo systemctl enable eclipse-obd`, placed OUTSIDE the cmp -s change gate (so a Pi installed-but-never-enabled or disabled out-of-band self-heals on any routine re-deploy) and using `enable` NOT `enable --now` (step_restart_service owns the actual start via US-389 stop->start; a --now would race the release-then-acquire ordering). SCOPE FENCE honored: only deploy-pi.sh + architecture.md + the deploy test touched; NO emitter logic changed (US-480-a untouched). battery-health is in-process too (US-480-a), so enabling the orchestrator covers all 3 emitters -- no separate non-OBD unit needed. The states/ dir is already boot-durable via the existing tmpfiles.d entry (Atlas C-5), so no change needed there. Deploy-hygiene stop-before-start already present in step_restart_service (US-389). Rule-10 satisfied (architecture.md updated in-sprint). NOTE for PM: VC1/VC2 are PI-RUNTIME/DEPLOY gates (deploy to a Pi with empty states dir + reboot => emitters auto-start + repopulate states with no manual steps; inspect architecture.md) -- the reboot-persistence AC validates on the real Pi at deploy; the bench proves the deploy-script wiring + doc. Pairs with US-480-a runtime half (already complete)."
     },
     {
       "id": "US-481",

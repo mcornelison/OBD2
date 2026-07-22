@@ -8,7 +8,7 @@
       "status": "unassigned",
       "taskid": "",
       "lastCheck": "2026-07-22",
-      "note": "Sprint 61 (V0.29.15): US-480-a DONE (passes:true, commit f929ed8) -- CardStateEmitterMixin wires F-092/097/111 emitters in-process (Atlas Q-1 orchestrator-invoked, no 2nd OBD connection), idle-SSOT boolean added to system_status_emitter. 24 targeted + 135 orchestrator tests green, ruff clean. VC1/VC2 are Pi-runtime gates (need US-480-b deploy-install). Next unclaimed: US-480-b (deploy-install the emitter execution)."
+      "note": "Sprint 61 (V0.29.15): US-480-b DONE (passes:true) -- deploy-install/reboot-persistence half of the carousel data-starvation fix. Root gap: deploy-pi.sh installed+restarted eclipse-obd but never `systemctl enable`d it, so a fresh --init Pi wouldn't boot-start the orchestrator that hosts the US-480-a in-process emitters => empty states dir => NA wall. Fix = one idempotent `sudo systemctl enable eclipse-obd` in step_install_eclipse_obd_unit, OUTSIDE the cmp -s change gate (self-heals installed-but-never-enabled), `enable` NOT `--now` (step_restart_service owns the US-389 stop->start). +Rule-10 architecture.md subsection (run-model + why OBD emitters aren't standalone units + deploy-install). 37 deploy tests green (7 new), ruff clean, --dry-run previews the enable. SCOPE: only deploy-pi.sh + architecture.md + test touched; no emitter logic. VC1/VC2 are Pi-deploy/reboot gates. US-480-a also DONE (commit f929ed8). Next unclaimed by priority: US-481 (idle-state home card)."
     },
     {
       "id": 2,

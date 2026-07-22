@@ -957,3 +957,55 @@ Task: Wire the F-092/097/111 card emitters to EXECUTE + write state
   (`python -m offices.pm.scripts.index_lock --repo .`) -- it verifies
   empty+aged+no-git-process before unlinking; never force-delete.
 ---
+
+## 2026-07-22 - US-480-b (Rex / Agent 1, Sprint 61)
+Task: Deploy-install the emitter execution + reboot-persistence + Rule-10 doc (the never-deploy-installed gap)
+
+### What was implemented:
+- Root gap: `deploy-pi.sh` INSTALLED + RESTARTED `eclipse-obd.service` but never
+  `systemctl enable`d it. The unit declares `WantedBy=multi-user.target`, so
+  "installed" != "boot-persistent". A fresh `--init` Pi therefore would not
+  auto-start the orchestrator on reboot -- and the orchestrator is what HOSTS the
+  US-480-a in-process F-092/097/111 card-state emitters (CardStateEmitterMixin).
+  No boot-start => empty `/run/eclipse-obd/states/` => carousel NA/unavailable wall.
+- Fix: added one idempotent `sudo systemctl enable eclipse-obd` in
+  `step_install_eclipse_obd_unit`, placed OUTSIDE the `cmp -s` sync-if-changed
+  if/else (unconditional, so a Pi installed pre-US-480-b or disabled out-of-band
+  self-heals on any routine re-deploy) and using `enable` NOT `enable --now`
+  (step_restart_service owns the actual start via the US-389 stop->start
+  release-then-acquire; a `--now` here would race it). Added the matching
+  `--dry-run` preview line.
+- Rule-10: new `specs/architecture.md` subsection "Card-state emitter run-model +
+  deploy-install (US-480) [Atlas Q-1]" -- documents the orchestrator-invoked
+  run-model, WHY the OBD emitters are NOT standalone units (a 2nd OBD connection
+  would re-introduce the A-17 race), and the enable-for-boot-persistence
+  deploy-install. States that battery-health rides the same in-process cadence and
+  that no separate emitter unit exists.
+
+### Files changed:
+- Modified: `deploy/deploy-pi.sh` (step_install_eclipse_obd_unit: unconditional
+  enable + dry-run preview + US-480-b comment block)
+- Modified: `specs/architecture.md` (new US-480 run-model + deploy-install subsection)
+- Modified: `tests/deploy/test_deploy_pi.py` (7 new US-480-b static/doc assertions)
+
+### Verification:
+- `pytest tests/deploy/test_deploy_pi.py` -> 37 passed (7 new + all pre-existing
+  US-354/389/395 static assertions + the offline `--dry-run` bash smoke test,
+  which validates the shell edits parse)
+- `ruff check tests/deploy/test_deploy_pi.py` -> All checks passed
+- `bash deploy/deploy-pi.sh --dry-run` visibly previews the enable line
+
+### Learnings for future iterations:
+- **Pattern discovered**: the deploy-pi.sh test suite is STATIC-CONTENT assertions
+  (grep the script text, scoped per-step via `_stepBody`) + an offline `--dry-run`
+  subprocess smoke test. When adding a per-step assertion, scope matchers to the
+  ACTUAL command line (`stripped.startswith("sudo systemctl enable")`), NOT a bare
+  substring -- the DRY-RUN preview `echo` lines mention the command in prose
+  (e.g. "NOT --now") and will false-match a naive `"--now" in line` check.
+- **Gotcha**: "installed" != "enabled" for systemd units. deploy-pi.sh had a
+  `step_restart_service` (starts it now) but nothing asserting boot-persistence.
+  For reboot-survival, `systemctl enable` is the load-bearing verb; put it OUTSIDE
+  any unit-file-change gate so it re-asserts every deploy (mirrors the sibling
+  `enable --now` units), and use plain `enable` when a separate step owns the start
+  to avoid a double-start race.
+---

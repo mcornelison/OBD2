@@ -3109,6 +3109,48 @@ they never re-invent the lifecycle. The full post-boot writer set is therefore
 `system-status` · `battery-health` · `dtc` (the F-103 boot/shutdown emitters own
 `boot-state` / `shutdown-state`).
 
+#### Card-state emitter run-model + deploy-install (US-480, Sprint 61 / V0.29.15) [Atlas Q-1]
+
+The three post-boot card emitters above describe **which tier owns each fact**
+(A-3) — but an emitter only *runs* if something invokes it each loop, and only
+survives a reboot if that host is deploy-installed to boot-start. Both were the
+gap that shipped the emitters **dark**: code merged, but `/run/eclipse-obd/states/`
+held only `boot-state` and the carousel cards rendered the NA/unavailable wall.
+
+**Run-model (US-480-a — orchestrator-invoked, NOT standalone units).** The
+OBD-dependent emitters are driven *in-process from the orchestrator process that
+owns the single `ObdConnection`*, via `CardStateEmitterMixin`
+(`src/pi/obdii/orchestrator/card_state_emitter.py`). The mixin constructs the
+three emitters once (`_initializeCardStateEmitters`) and the run-loop calls
+`_maybeEmitCardStates()` once per pass on a ~2 s cadence gate; every read is
+best-effort + exception-isolated so a dashboard hiccup can never crash the
+capture loop. The emitters are **pure consumers** of `self._connection` — they
+open **no** connection of their own. This is load-bearing: a standalone systemd
+unit that read OBD would open a **second** connection to the non-thread-safe
+python-obd port and re-introduce the **A-17** serialization race the DTC-read
+work just closed. (`battery-health` reads the MAX17048 over I²C, not the OBD
+port, so it is safe either way, but rides the same in-process cadence for
+coherence.) The `idle` boolean is written by the `system-status` emitter — it
+owns both inputs (`obd.available` + `driveState`), so `idle` is an explicit SSOT
+flag, not a display-derived guess (consumed by the idle home card, US-481).
+
+**Deploy-install (US-480-b — boot-persistence).** Because the emitters run inside
+`eclipse-obd.service`, deploy-installing their *execution* reduces to one systemd
+fact: `deploy-pi.sh` must **`systemctl enable eclipse-obd`**
+(`step_install_eclipse_obd_unit`) so a fresh `--init` Pi + reboot auto-starts the
+orchestrator — and with it the emitters — with **no manual step**. The unit has
+always declared `WantedBy=multi-user.target`, but "installed" ≠ "enabled"; the
+deploy previously installed + restarted the unit yet never asserted the enable.
+It is `enable` (not `enable --now`): `step_restart_service` owns the actual start
+via an explicit stop→start (US-389 release-then-acquire of the single-instance
+pidfile; a `--now` here would race it). The enable is re-asserted on every deploy
+**outside** the `cmp -s` sync-if-changed gate, so a Pi installed pre-US-480-b —
+or disabled out-of-band — self-heals on a routine re-deploy. The `states/` dir
+itself is already boot-durable via the tmpfiles.d entry (Atlas C-5, above),
+independent of the orchestrator's start order, so the cards render an honest
+state even before eclipse-obd finishes coming up. **No separate emitter unit
+exists — the orchestrator IS the emitter host.**
+
 #### Pygame sunset — parity-gated cut-over (US-402) [Atlas A-4]
 
 Once the System Status (US-400) and Battery Health (US-401) cards reached parity
