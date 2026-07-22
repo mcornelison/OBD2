@@ -1145,3 +1145,60 @@ Task: Light-feed brightness consumer -- auto-dim from a `light` lux state file (
 - **Next available by priority**: US-484 (green + text-primary reconciliations are
   not Spool-gated), then US-485 / US-486 (fully buildable) / US-487.
 ---
+
+## 2026-07-22 - US-484 (Agent 1 / Rex / Session 56)
+Task: Rule-10 token reconciliation -- dashboard.css :root drift vs specs/UI/tokens.css SSOT
+
+### Outcome: BLOCKED (BL-024) -- refused per Refusal Rules 1 (ambiguity) + 2 (never guess a value)
+
+US-484 was the highest-priority non-blocked story (US-483 already blocked, BL-023).
+2 of its 4 ACs require ADDING tokens to the specs/UI/tokens.css SSOT -- which the
+SSOT file itself forbids without a design ruling (Rule-10; safety-red via Spool).
+Verified against both files today, not assumed:
+
+- **AC1 green -- BUILDABLE NOW (not blocked):** SSOT already carries the blessed
+  value `--green-ok: #35C46A` (tokens.css:37, per Atlas A-8). dashboard.css:23
+  still forks `--ok-green: #2ECC71` (name + value). Pure repoint, fully specified.
+- **AC2 text-primary -- GATED on Atlas (Rule-10 token ADD):** dashboard.css:16
+  invents `--text-primary: #DDDDDD`; tokens.css:64-67 keeps it intentionally
+  un-tokenized ("no grounded value exists yet"). Adding a token to the SSOT routes
+  through Atlas.
+- **AC3 critical-red -- GATED on Spool (value/semantics) + Atlas (token). SAFETY:**
+  tokens.css:59-60 `--critical-red: TBD` RESERVED, with tokens.css:56-57 "surfaces
+  MUST NOT render these until a value is set". DTC STOP tier currently renders in
+  BRAND `--red-light #F61D2D` (dashboard.css:214/380/395/362) -- exactly the
+  brand-vs-alarm collision tokens.css:44-51/70-78 (Spool S-2) warns against. Must
+  not pick a "PULL OVER" red myself.
+
+No Atlas Rule-10 / Spool critical-red ruling in offices/ralph/inbox/ (newest item
+2026-07-04, predates this sprint). Filed BL-024 with 2 resolution paths (A: get
+both token blessings -> build full story incl. STOP-tier repoint; B: PM descopes
+to ungated green-only slice AC1, defers the rest -- leaves the brand-vs-alarm
+safety item open). Set US-484 status=blocked + blockerRef so the selector
+categorizes it Blocked and advances to US-485.
+
+### Files changed:
+- Created: `offices/pm/blockers/BL-024-us484-ssot-token-adds-atlas-rule10-and-spool-critical-red.md`
+- Modified: `offices/ralph/sprint.json` (US-484 status=blocked + blockerRef + completionNotes)
+- Modified: `offices/ralph/ralph_agents.json` (agent 1 note)
+
+### Learnings for future iterations:
+- **Pattern discovered**: the visual SSOT (specs/UI/tokens.css) encodes its own
+  refusals -- RESERVED/TBD tokens with an explicit "surfaces MUST NOT render these
+  until a value is set" guard. A token ADD is a design-authority act (Atlas Rule-10;
+  Spool for safety semantics), never a Ralph fill-in. Read the SSOT before assuming
+  a color reconciliation is mechanical.
+- **Gotcha**: a "reconciliation" story can be part-mechanical (green: SSOT value
+  already blessed -> repoint) and part-gated (text-primary + critical-red: token
+  must be ADDED to the SSOT first). Splitting the ungated slice is a PM descope
+  call, not a Ralph half-pass.
+- **Gotcha**: critical-red is a SAFETY signal (the driver's "PULL OVER" cue). The
+  brand-vs-alarm separation is the whole reason --critical-red is reserved distinct
+  from the brand reds -- guessing a value would defeat the invariant the SSOT exists
+  to protect (Refusal Rule 2).
+- **Sprint signal**: TWO consecutive top-priority stories (US-483, US-484) are now
+  gated on external design authority (Atlas Q-4; Atlas Rule-10 + Spool). Flagged to
+  PM to batch the design asks. Buildable work remains: US-485/486/487.
+- **Next available by priority**: US-485 (pygame status_display.py sunset), then
+  US-486 (2 red startup_log tests -- fully buildable) / US-487 (US-479 hardening).
+---

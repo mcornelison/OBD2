@@ -226,8 +226,10 @@
       "epicId": "E-001",
       "type": "tech-debt",
       "size": "M",
-      "status": "sprint-ready",
+      "status": "blocked",
       "passes": false,
+      "blockerRef": "offices/pm/blockers/BL-024-us484-ssot-token-adds-atlas-rule10-and-spool-critical-red.md",
+      "completionNotes": "BLOCKED (BL-024, Rex 2026-07-22): 2 of 4 ACs require ADDING tokens to the specs/UI/tokens.css SSOT, which the SSOT itself forbids without a design ruling. AC1 (green) IS buildable now -- SSOT already carries --green-ok #35C46A (tokens.css:37), dashboard.css:23 still forks --ok-green #2ECC71. AC2 (text-primary) is GATED on Atlas Rule-10: dashboard.css:16 invents --text-primary #DDDDDD but tokens.css:64-67 keeps it intentionally un-tokenized -> adding it routes through Atlas. AC3 (critical-red) is GATED on Spool (value/semantics) + Atlas (token) and is SAFETY: DTC STOP renders in BRAND --red-light #F61D2D (dashboard.css:214/380/395/362) = the brand-vs-alarm collision tokens.css:44-51/70-78 warns against; --critical-red is TBD/RESERVED with an explicit MUST-NOT-render guard. No Atlas/Spool ruling in inbox (newest 2026-07-04). Refused to guess a safety-signal red (Refusal Rule 2). Resolution options in BL-024: (A) get the two token blessings -> build full story incl. the STOP-tier repoint; (B) PM descopes to the ungated green-only slice (AC1), deferring text-primary + critical-red (leaves the brand-vs-alarm safety item open -- flag to CIO). Sprint NOT fully blocked -- US-485/486/487 remain buildable; loop advances.",
       "acceptance": [
         "green: reconcile dashboard.css --ok-green #2ECC71 -> SSOT --green-ok #35C46A (name AND value); no visual regression",
         "text-primary: SET it in the specs/UI SSOT with a grounded value (Iris proposes -- contrast on dark bg, #DDDDDD plausible; Atlas gates the token add)",
