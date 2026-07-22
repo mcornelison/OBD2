@@ -1244,3 +1244,41 @@ Task: pygame status_display.py sunset -- verify carousel parity then retire
   Keep it as a documented no-op stub (scope fence) + file a TD, rather than bleed
   the removal into orchestrator tests inside an 'S' story.
 ---
+
+## 2026-07-22 - US-486 (Rex / Session 55)
+Task: Fix startup_log schema guard: US-263 7-column set vs shipped US-419 data_quality 8th column (2 red tests)
+
+### What was implemented:
+- Reconciled the STRICT startup_log column-set guard (TestStartupLogSchema) with the
+  shipped 8-column schema. The fresh-DB DDL SCHEMA_STARTUP_LOG (database_schema.py:648)
+  has carried an 8th column since V0.29 -- data_quality, the US-419/F-080 post-reboot
+  clock-drift flag ('full' / 'clock_unsynced'; NULL on legacy rows) -- but the guard
+  still asserted exactly 7 columns, producing 2 red tests. Pre-existing drift (flagged
+  by prior US-480-a/US-485 completionNotes), NOT a US-474 regression.
+- AC1 canonical call CONFIRMED: data_quality IS part of the canonical startup_log schema
+  (it lives in the CREATE TABLE, not a separate table) -> the fix is a guard BUMP, not a
+  migration; the conditionalOutcome (route-to-Atlas-if-separate-table) does not apply.
+- Guard NOT relaxed (its own message forbids relaxing): EXPECTED_COLUMNS gains
+  ('data_quality','TEXT',0,0) as a STRICT exact-set entry; column-count guard 7 -> 8;
+  sole-PK guard (boot_id) untouched.
+
+### Files changed:
+- Modified: `tests/pi/diagnostics/test_boot_reason_boot_id.py`
+  - EXPECTED_COLUMNS += ('data_quality','TEXT',0,0)
+  - test_startupLogSchema_columnCount_isSeven -> _isEight, assertion 7 -> 8
+  - class/module/file-header docstrings updated to document the 8th column
+  - Modification-History entry added (US-486, 2026-07-22)
+
+### Learnings for future iterations:
+- **Pattern discovered**: When a STRICT schema-pin test goes red because production shipped
+  a new column, the fix is to reconcile EXPECTED to the shipped truth (never relax the guard) --
+  the guard's own failure message tells you exactly what to update (EXPECTED_COLUMNS + the spec).
+- **Gotcha**: The "US-263 spec" the guard message points at was NOT a standalone doc -- the live
+  SSOT (specs/architecture.md, US-419 section) already documented data_quality; the out-of-sync
+  copy was the embedded schema pin in the test's OWN docstrings. The point-in-time design spec
+  (2026-05-15 §4.4) is a historical as-of-that-date artifact predating US-419 and was left alone.
+- **Gotcha**: `pytest tests/pi -m 'not slow'` (VC2) is effectively full-tier scale and times out
+  past 120s on the SMB share (TD-059) -- it's a PM/integration gate. The targeted single-file run
+  (12 passed) is the authoritative in-loop gate; a src-free test-expected-value change has zero
+  regression surface on other tests.
+---

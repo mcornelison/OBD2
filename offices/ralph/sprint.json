@@ -302,8 +302,14 @@
       "epicId": "E-004",
       "type": "issue",
       "size": "S",
-      "status": "sprint-ready",
-      "passes": false,
+      "status": "complete",
+      "passes": true,
+      "feedback": {
+        "filesActuallyTouched": [
+          "tests/pi/diagnostics/test_boot_reason_boot_id.py (TestStartupLogSchema guard reconciled to the shipped 8-column startup_log: EXPECTED_COLUMNS += ('data_quality','TEXT',0,0); count guard 7 -> 8 with the method renamed test_startupLogSchema_columnCount_isSeven -> _isEight; class + module + file-header docstrings updated to document the US-419/F-080 8th column; Modification-History entry added. Guard NOT relaxed -- still a STRICT exact-set assertion + sole-PK guard.)"
+        ]
+      },
+      "completionNotes": "GREEN in-loop: pytest tests/pi/diagnostics/test_boot_reason_boot_id.py -> 12 passed (the 2 TestStartupLogSchema reds gone: matchesUs263CanonicalColumnSet + the renamed columnCount_isEight); ruff clean on the touched file. Committed 17c1124. CANONICAL SHAPE (AC1, PM/Atlas call): confirmed data_quality IS part of the canonical startup_log schema -- it is defined in the fresh-DB DDL SCHEMA_STARTUP_LOG (database_schema.py:648), not a separate table, so the conditionalOutcome (route-to-Atlas-if-separate-table) does NOT apply; the fix is a guard bump, not a migration. Guard NOT relaxed (its own message forbids it): EXPECTED_COLUMNS still a STRICT exact-set tuple, sole-PK guard untouched, only widened by the one already-shipped column. PRAGMA tuple for the new column verified from the red-state actual: ('data_quality','TEXT',0,0) (nullable, non-PK). AC3 (doc the 8th column): specs/architecture.md ALREADY documents data_quality on startup_log (section 'US-419 (F-080): boot clock-quality flag on power_log / startup_log', lines ~797-819) -- the live spec SSOT was already in sync; the OUT-OF-SYNC 'US-263 spec' the guard message points at was the embedded schema pin in the test's own docstrings, which I brought in line (class docstring 7 -> 8, module docstring, file header). Did NOT edit the point-in-time design spec 2026-05-15-honest-boot-progress-instrument-design.md §4.4 (a historical as-of-that-date artifact predating US-419; architecture.md is the live SSOT). NOTE for PM: VC2 (pytest tests/pi -m 'not slow' full pi suite green) is the story's whole point -- the change is a test-expected-value reconciliation confined to ONE file (no src touched), so it cannot regress other tests, and prior US-480-a/US-485 completionNotes explicitly flagged 'exactly 2 pre-existing US-486 startup_log reds' as the only pi-suite reds. The full pi-tier suite timed out past 120s on the slow SMB share so it is a PM/integration-time gate per TD-059 (not run to completion in-loop); the targeted file (12 passed) is the authoritative in-loop gate. Please confirm the full pi suite green at integration (expected: the 2 reds -> 0, no others disturbed).",
       "acceptance": [
         "confirm the intended canonical shape (PM/Atlas call): data_quality IS part of the canonical startup_log schema (Rex's lean) -> update the guard to 8 columns; do NOT relax the guard (its own message forbids relaxing)",
         "update EXPECTED_COLUMNS to include ('data_quality','TEXT',0,0) + bump the count guard 7 -> 8 in test_boot_reason_boot_id.py::TestStartupLogSchema",
