@@ -5322,47 +5322,96 @@
       "updatedAt": "2026-07-21"
     },
     {
-      "id": "US-483",
+      "id": "US-483-a",
       "parent": "F-121",
-      "type": "normal",
+      "type": "issue",
       "size": "M",
-      "title": "Light-feed brightness consumer -- auto-dim from a `light` lux state file + honest fixed fallback + alarm floor",
-      "goal": "As the display, I want brightness driven by a live lux reading (pure consumer of a `light` state file the EDR light reader owns), not a clock schedule -- CIO-confirmed 2026-07-21 the light sensor is a real data feed. The display never reads the sensor itself. Live lux is EDR-gated (TSL2591, W-9); near-term ships an HONEST fixed-default fallback (no fake 'auto' when the state file is absent/stale).",
+      "title": "Enable the live TSL2591 light feed + bridge raw.light.lux -> states/light (connect-when-wired)",
+      "goal": "As the display's light source, I want the wired TSL2591 (CONFIRMED live @0x29 on the Pi I2C bus, alongside the MAX17048 @0x36) to actually publish lux AND land in a states/light file the dashboard can consume. Today the sensor is addressable but DARK: pi.bus.enabled=false + pi.sensors.light.enabled=false (ships-dark), and the existing producer (sensor_reader.py publishes raw.light.lux on the EDR bus) has NO bridge to a dashboard states/ file. Per Atlas DELTA-2 the display is a pure consumer of a state file the reader owns -- this story provides that state file. (Split from US-483; PRODUCER/SEAM half. Consumer is US-483-b.)",
       "definitionOfDone": [
-        "display reads light.lux (+ freshness) from the `light` state file; brightness = clamp(MIN, curve(lux), 1.0) -- curve is Iris's (UI), lux value is the reader's (owner = the single dedicated EDR reader, per Atlas DELTA-2 pure-consumer ruling)",
-        "ALARM FLOOR (load-bearing): MIN never dims the screen below a legible threshold while a REAL active alarm (STOP ribbon/takeover) is present -- dim a calm idle screen, never a damage-in-progress warning; the floor is a UI guard independent of lux",
-        "HONEST FALLBACK: until the `light` state file exists / is fresh, hold a fixed default brightness + show NO fabricated 'auto' behavior (honest instrument) -- do not pretend to react to light it can't read",
-        "Iris AC-7: brightness tracks a fresh light.lux; absent/stale -> fixed default (no fake auto); dimming never takes a STOP alarm below its legible floor",
-        "consumes the state file only -- no hardware polling in the display; pi/UI tests green"
+        "connect-when-wired: flip pi.bus.enabled=true + pi.sensors.light.enabled=true (the TSL2591 is physically wired + I2C-addressable @0x29, verified on the Pi 2026-07-22) so sensor_reader publishes raw.light.lux at pi.sensors.light.sampleHz (1 Hz)",
+        "bridge raw.light.lux (EDR bus) -> a states/light file at /run/eclipse-obd/states/light, MIRRORING the states/ pattern US-480-a established (fields: lux [float, null on saturation -- never inf, per sensor_reader], plus a freshness timestamp ts); eclipse-states-http serves it",
+        "the bridge preserves the honest-instrument rule: lux=null (saturated) or an absent/stale file is surfaced as-is, never fabricated",
+        "ATLAS SEAM CONFIRM (heads-up, not a hard gate -- he APPROVED the pure-consumer DELTA-2 pattern; this applies it): the states/light file location + {lux, ts} shape mirror the existing writers; flag for his confirm, proceed per CIO build directive",
+        "specs/architecture.md EDR/states section notes the bus->states/light bridge (Rule-10)",
+        "Typecheck + pi tests green"
       ],
       "conditionalOutcomes": [
-        "GATED on Atlas Q-4: the `light` lux state-file contract (state-file seam + fallback-when-absent). Do NOT finalize the contract shape before Atlas blesses it. The near-term fixed-fallback slice is buildable now; the live-lux consumption lands with the EDR reader (W-9)."
+        "if flipping pi.bus.enabled surfaces an unrelated EDR-bus regression (IMU clone boards are dead -- graceful-absence must hold), keep light isolated: light publishes, absent sensors stay silent (US-409 graceful-absence); do NOT let a dead IMU block the light feed",
+        "the bus->states bridge shape mirrors US-480-a's states/ writers; if Atlas rules a different seam, adapt -- but per CIO this builds now on the approved DELTA-2 pattern"
       ],
       "validationCriteria": [
         {
-          "action": "no `light` state file present (near-term)",
-          "outcome": "fixed default brightness, no fake 'auto' indicator"
+          "action": "after enabling, on the Pi: ls /run/eclipse-obd/states/light + curl it",
+          "outcome": "states/light present with a live lux value + fresh ts, served 200"
         },
         {
-          "action": "inject a fresh light.lux state file",
-          "outcome": "brightness tracks the curve"
-        },
-        {
-          "action": "STOP alarm present + lux says dark",
-          "outcome": "brightness held at/above the legible alarm floor"
+          "action": "cover the sensor / shine light on it",
+          "outcome": "lux value tracks (falls when covered, rises in light) -- proves the live feed end-to-end"
         }
       ],
       "deps": [],
       "sourceRefs": [
         "F-121",
-        "iris-idle-fullbleed-spec-2026-07-21-#1.5",
-        "atlas-Q4-light-contract",
-        "EDR-W-9-TSL2591"
+        "US-483",
+        "US-409",
+        "atlas-DELTA-2-pure-consumer",
+        "sensor_reader.py",
+        "i2c-0x29-confirmed-2026-07-22",
+        "split-from-US-483"
       ],
       "tasks": [],
       "status": "sprint-ready",
-      "createdAt": "2026-07-21",
-      "updatedAt": "2026-07-21"
+      "createdAt": "2026-07-22",
+      "updatedAt": "2026-07-22"
+    },
+    {
+      "id": "US-483-b",
+      "parent": "F-121",
+      "type": "normal",
+      "size": "M",
+      "title": "Display brightness consumer -- auto-dim from states/light with GROUNDED parameterized curve + alarm floor + honest fallback",
+      "goal": "As the display, I want brightness driven by the live states/light lux (pure consumer, US-483-a provides it), with a grounded auto-dim curve whose values are CONFIG PARAMETERS (CIO 2026-07-22: 'set a reasonable value based on documentation ... a parameter, not hard-coded'), plus the load-bearing alarm floor + honest fallback. (Split from US-483; CONSUMER half.)",
+      "definitionOfDone": [
+        "display reads states/light {lux, ts} (never the sensor directly); brightness = clamp(minLevel, curve(lux), 1.0)",
+        "GROUNDED + PARAMETERIZED values in config (NOT hardcoded) -- add these keys with grounded defaults (illuminance references cited in the story notes): pi.display.brightness.luxMin=3.0 (lux<=this -> min; grounded = civil-twilight dark limit ~3.4lux), luxFull=1000.0 (lux>=this -> full; grounded = overcast-day ~1000lux), minLevel=0.15 (calm-screen dim floor), defaultLevel=0.70 (fixed fallback), luxStaleSec=10 (lux older -> fallback), curve='logarithmic' (perceptual, between luxMin..luxFull). Iris owns curve tuning; these are tunable via config, no code change",
+        "ALARM FLOOR (load-bearing safety): pi.display.brightness.alarmFloorLevel=0.40 -- brightness NEVER drops below this while a real active STOP ribbon/takeover is present, regardless of lux (a UI guard independent of the lux value)",
+        "HONEST FALLBACK: states/light absent OR ts older than luxStaleSec -> hold defaultLevel + show NO fabricated 'auto' behavior (honest instrument)",
+        "Iris AC-7: brightness tracks live lux when fresh; absent/stale -> fixed default (no fake auto); dimming never takes a STOP below its legible floor",
+        "consumes the state file only; pi/UI tests green (incl. a test that a STOP + dark-lux holds >= alarmFloorLevel)"
+      ],
+      "conditionalOutcomes": [
+        "the brightness LEVEL defaults (0.15/0.40/0.70) are reasonable grounded starting values but are Iris's curve to tune -- they MUST be config params so tuning is a config change, not code (the CIO's hard requirement)"
+      ],
+      "validationCriteria": [
+        {
+          "action": "cover the sensor (dark) with no alarm",
+          "outcome": "screen dims toward minLevel (calm screen may dim)"
+        },
+        {
+          "action": "trigger a STOP takeover, then cover the sensor",
+          "outcome": "brightness held >= alarmFloorLevel (0.40) -- never dims the PULL-OVER alarm below legible"
+        },
+        {
+          "action": "stop US-483-a's feed / stale the file",
+          "outcome": "brightness holds defaultLevel, no fake 'auto' indicator"
+        }
+      ],
+      "deps": [
+        "US-483-a"
+      ],
+      "sourceRefs": [
+        "F-121",
+        "US-483",
+        "iris-idle-fullbleed-spec-2026-07-21-#1.5",
+        "atlas-Q4-APPROVED",
+        "cio-grounded-parameterized-2026-07-22",
+        "illuminance-refs-tsl2591-datasheet"
+      ],
+      "tasks": [],
+      "status": "sprint-ready",
+      "createdAt": "2026-07-22",
+      "updatedAt": "2026-07-22"
     },
     {
       "id": "US-484",

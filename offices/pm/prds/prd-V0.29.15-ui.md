@@ -4,7 +4,7 @@ version: V0.29.15
 status: draft
 createdAt: 2026-07-21
 createdBy: Marcus (PM)
-selectedStories: [US-480-a, US-480-b, US-481, US-482, US-483, US-484, US-485, US-486, US-487]
+selectedStories: [US-480-a, US-480-b, US-481, US-482, US-483-a, US-483-b, US-484, US-485, US-486, US-487]
 pmFinalSizing: "APPROVED 2026-07-21 (Marcus). 5-dim sizing run; US-480 split (2 Red: files+concerns) -> US-480-a (wire emitters to run) + US-480-b (deploy-install + reboot-persistence + Rule-10), zero info loss. 8 stories, all Green (US-481/483 accepted single-Yellow). Under the 10-story limit. Dispatch order rec: ungated Green first (US-482/485/486/481) while Atlas rules the run-model (Q-1/US-480-a) + Q-2/US-484 + Q-4/US-483."
 forksFrom: dev @ (recorded at prd_to_sprint.py conversion)
 sprintJsonPath: offices/ralph/sprint.json

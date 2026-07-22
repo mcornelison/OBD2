@@ -3,7 +3,7 @@
 | Field        | Value                     |
 |--------------|---------------------------|
 | Severity     | Medium                    |
-| Status       | Active                    |
+| Status       | RESOLVED 2026-07-22 (CIO: build the real feed -- sensor is live)  |
 | Blocking     | US-483 (light-feed brightness consumer, Sprint 61 / V0.29.15) |
 | Waiting On   | Atlas Q-4 ruling: the `light` lux state-file contract (state-file seam shape + freshness field + fallback-when-absent semantics) |
 | Created      | 2026-07-22                |
@@ -84,4 +84,11 @@ Either path unblocks. Until one is chosen, US-483 stays `status: blocked` in
 
 ## Resolution
 
-[Fill in when resolved]
+**RESOLVED 2026-07-22 (CIO directive) — build the real feed, neither descope nor wait.**
+The premise "live-lux is EDR-hardware-gated" was wrong: the CIO confirmed the TSL2591 is plugged in, and PM verified it's **I2C-addressable @0x29** on the Pi (`i2cdetect` shows `29`; MAX17048 also present @0x36). It was only *config*-dark (`pi.bus.enabled=false` + `pi.sensors.light.enabled=false`), not hardware-absent. The producer (`sensor_reader.py`, publishes `raw.light.lux`) already exists; the missing piece is the bus→`states/light` bridge (Atlas's approved DELTA-2 pure-consumer pattern) + the display consumer.
+
+**US-483 split → US-483-a + US-483-b** (both sprint-ready):
+- **US-483-a** — connect-when-wired: flip the bus + light gates, bridge `raw.light.lux` → `/run/eclipse-obd/states/light` (`{lux, ts}`, mirroring US-480-a's states/ pattern). Atlas seam-confirm = heads-up (he approved the pattern), not a hard gate, per CIO build directive.
+- **US-483-b** — display brightness consumer with **grounded, parameterized** curve (CIO: "reasonable value from documentation ... a parameter, not hard-coded"): `luxMin=3.0` (civil-twilight dark limit ~3.4 lux), `luxFull=1000` (overcast day ~1000 lux), `minLevel=0.15`, `alarmFloorLevel=0.40` (never dim a live STOP below legible), `defaultLevel=0.70`, `luxStaleSec=10`, `curve=logarithmic` — all config keys; Iris owns curve tuning. Illuminance refs: Adafruit TSL2591 datasheet (188µlux–88klux) + standard illuminance table.
+
+BL-024 (US-484) remains **Active** — CIO chose "get rulings" (Atlas `--text-primary` + Spool `--critical-red` safety value).

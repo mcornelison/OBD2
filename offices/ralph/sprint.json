@@ -40,19 +40,7 @@
         "if an emitter needs live OBD to write meaningful data (dtc KOEO read), it must still write an HONEST absent/asleep state when parked -- never nothing, never fabricated"
       ],
       "goal": "As the deployed carousel, I want the system-status / battery-health / dtc emitters to actually RUN and write their state files on the Pi, so the cards render live data instead of the current NA/unavailable wall (states dir holds ONLY boot-state -- PM-verified). Per Atlas Q-1 run-model ruling: the OBD-dependent emitters (system-status + dtc) MUST be ORCHESTRATOR-INVOKED inside the process that owns the single ObdConnection -- a standalone systemd unit that reads OBD would open a SECOND connection to the non-thread-safe python-obd port and re-introduce the A-17 race we just closed. (Split from US-480; RUNTIME half -- deploy-install is US-480-b.)",
-      "tasks": [],
-      "feedback": {
-        "filesActuallyTouched": [
-          "src/pi/obdii/orchestrator/card_state_emitter.py (NEW -- CardStateEmitterMixin: constructs + in-process invokes the 3 emitters; pure consumer, opens no connection)",
-          "src/pi/obdii/orchestrator/core.py (mix in CardStateEmitterMixin; __init__ emitter state + cadence attrs; runLoop _maybeEmitCardStates() hook; _recordSyncOutcome on both sync paths)",
-          "src/pi/obdii/orchestrator/lifecycle.py (_initializeCardStateEmitters() wired into _initializeAllComponents after connection/hw/drive/power built)",
-          "src/pi/obdii/orchestrator/types.py (DEFAULT_CARD_STATE_EMIT_INTERVAL=2.0, DEFAULT_SYNC_STALE_THRESHOLD_SECONDS=120.0 + __all__)",
-          "src/pi/splash/system_status_emitter.py (idle-SSOT `idle` boolean in buildSystemStatusState -- Atlas ruling b)",
-          "tests/pi/orchestrator/test_card_state_emitters.py (NEW -- 11 tests incl. VC3 static no-second-connection guard)",
-          "tests/pi/splash/test_system_status_emitter.py (idle-SSOT assertions + 3 new idle tests)"
-        ]
-      },
-      "completionNotes": "GREEN in-loop: pytest tests/pi/orchestrator/test_card_state_emitters.py + tests/pi/splash/test_system_status_emitter.py -> 24 passed; regression check pytest tests/pi/orchestrator/ -> 135 passed (base-module core/lifecycle/types change, no regression); ruff clean on all 7 touched files. Run-model = Atlas Q-1 orchestrator-invoked (mixin on ApplicationOrchestrator; _maybeEmitCardStates() called once per runLoop pass on a ~2s cadence gate; all reads best-effort + exception-isolated so a dashboard hiccup never crashes the loop). VC3 satisfied: emitters are pure consumers of self._connection (the orchestrator's single ObdConnection) -- static guard test asserts card_state_emitter.py contains no obd.OBD(/ .connect(/ createConnectionFromConfig; grep confirms no second-connection caller added. idle-SSOT (b): system_status_emitter now WRITES explicit `idle` boolean (idle == OBD source ABSENT AND not recording); US-481 consumes this, replacing carousel.js:170 display-derived logic. Honest initial dtc state at boot (dtcAvailable=false, no codes, takeover hidden). battery-health/system-status degrade to typed-NA when source unreadable -- never stale/fabricated; battery health verdict = 'unknown' (never fabricated green) since no in-process Spool-verdict reader. NOTE for PM: (a) VC1/VC2 are PI-RUNTIME gates (states dir populated + served 200, carousel renders real values, auto-advance-off-idle) -- NOT verifiable on the Windows bench; they validate at deploy on the real Pi, and depend on US-480-b deploy-installing + enabling the emitting orchestrator process (this story is the RUNTIME half only). (b) mypy strict is a PM/integration gate (not installed on bench); code written mypy-clean with a typed mixin attr block. (c) full pytest tests/pi -m 'not slow' still carries the 2 pre-existing US-486 startup_log reds (unrelated -- US-486 fixes them)."
+      "tasks": []
     },
     {
       "id": "US-480-b",
@@ -85,15 +73,7 @@
         "run-model must match US-480-a's (Atlas Q-1 ruling); if US-480-a chose orchestrator-invocation over units, the deploy-install adapts accordingly (may be a no-op unit install + an orchestrator-enable check)"
       ],
       "goal": "As the deploy path, I want deploy-pi.sh to INSTALL the emitter execution (unit files + enable) so a fresh deploy + reboot leaves the F-092/097/111 emitters running -- NOT a manual one-off. This closes the exact gap that shipped them dark (code merged but never deploy-installed; the 'deploy validation is a distinct gate' lesson). (Split from US-480; this is the DEPLOY half -- runtime wiring is US-480-a.)",
-      "tasks": [],
-      "feedback": {
-        "filesActuallyTouched": [
-          "deploy/deploy-pi.sh (step_install_eclipse_obd_unit: add unconditional `sudo systemctl enable eclipse-obd` after the cmp -s if/else fi -- boot-persistence for the US-480-a in-process emitters; NOT --now (step_restart_service owns the stop->start); DRY-RUN preview line added; US-480-b comment block)",
-          "specs/architecture.md (NEW subsection 'Card-state emitter run-model + deploy-install (US-480) [Atlas Q-1]' after the battery-health C-5 writers paragraph -- documents orchestrator-invoked run-model, why OBD emitters are NOT standalone units (A-17 single-connection invariant), and the enable boot-persistence deploy-install)",
-          "tests/deploy/test_deploy_pi.py (NEW US-480-b block: 7 static/doc assertions -- citation, enable present + scoped to step_install_eclipse_obd_unit, NOT --now, unconditional (after cmp fi), step wired into main flow, dry-run previews enable, architecture.md documents run-model + deploy-install)"
-        ]
-      },
-      "completionNotes": "GREEN in-loop: pytest tests/deploy/test_deploy_pi.py -> 37 passed (7 new US-480-b + all pre-existing US-354/389/395 static assertions + the offline --dry-run bash smoke test, which validates the shell edits parse); ruff clean on tests/deploy/test_deploy_pi.py. Confirmed `bash deploy/deploy-pi.sh --dry-run` previews the enable line. ROOT GAP CLOSED: deploy-pi.sh installed + restarted eclipse-obd but NEVER `systemctl enable`d it -- so a fresh --init Pi installs the unit (WantedBy=multi-user.target) but it is not boot-persistent; reboot => orchestrator does not auto-start => the US-480-a in-process F-092/097/111 emitters never run => states dir empty => carousel NA wall. Fix = one idempotent `sudo systemctl enable eclipse-obd`, placed OUTSIDE the cmp -s change gate (so a Pi installed-but-never-enabled or disabled out-of-band self-heals on any routine re-deploy) and using `enable` NOT `enable --now` (step_restart_service owns the actual start via US-389 stop->start; a --now would race the release-then-acquire ordering). SCOPE FENCE honored: only deploy-pi.sh + architecture.md + the deploy test touched; NO emitter logic changed (US-480-a untouched). battery-health is in-process too (US-480-a), so enabling the orchestrator covers all 3 emitters -- no separate non-OBD unit needed. The states/ dir is already boot-durable via the existing tmpfiles.d entry (Atlas C-5), so no change needed there. Deploy-hygiene stop-before-start already present in step_restart_service (US-389). Rule-10 satisfied (architecture.md updated in-sprint). NOTE for PM: VC1/VC2 are PI-RUNTIME/DEPLOY gates (deploy to a Pi with empty states dir + reboot => emitters auto-start + repopulate states with no manual steps; inspect architecture.md) -- the reboot-persistence AC validates on the real Pi at deploy; the bench proves the deploy-script wiring + doc. Pairs with US-480-a runtime half (already complete)."
+      "tasks": []
     },
     {
       "id": "US-481",
@@ -130,18 +110,7 @@
         "depends on US-480-a emitting the `idle` boolean; build the render against the state-file shape, validate once US-480-a writes it"
       ],
       "goal": "As the CIO parked with the engine off, I want a calm, honest home card instead of a wall of NA/unavailable tiles (which reads as broken and is the backdrop the phantom alarm appears against). Per Iris's CIO-locked spec (\u00a71): STANDBY (neutral grey, never green) + clock/date + last-drive + battery (stale-green 'checked Nd ago' guard) + honest faults line ('DTC not read since key-off' -- NOT 'No codes', NOT 'Check Engine'). The parked twin of the EDR-gated live home card (same home slot).",
-      "tasks": [],
-      "feedback": {
-        "filesActuallyTouched": [
-          "specs/UI/dist/dashboard-pi/carousel.js (NEW pure exports carouselIdle/idleLastDriveFact/idleBatteryFact/idleFaultsFact/idleCardView -- honest-instrument builders; NEW DOM renderIdleCard + fmtClock/fmtDate + updateIdleHome edge-triggered home/auto-advance; sysData/batteryData captured in tick())",
-          "specs/UI/dist/dashboard-pi/dashboard.html (NEW idle-card <section> as the home slot, data-idle-home so the availability poll skips it)",
-          "specs/UI/dist/dashboard-pi/dashboard.css (NEW .idle-* styles -- token var() references only, no hex literal; STANDBY hero neutral grey; fact strip reuses .tile[data-level])",
-          "tests/ui/carousel_probe.js (variadic: fn.apply(null, args) so idleCardView takes 3 fixtures -- backward compatible with single-arg callers)",
-          "tests/ui/test_carousel_idle_home.py (NEW -- 17 pure-logic tests for the idle SSOT + honest-instrument invariants)",
-          "offices/pm/tech_debt/TD-063-idle-card-last-drive-fact-has-no-state-file-source.md (NEW -- last-drive fact has no state-file source yet; degrades honestly)"
-        ]
-      },
-      "completionNotes": "GREEN in-loop: pytest tests/ui/ -> 27 passed (17 new US-481 idle-home + 10 pre-existing US-429 honest-availability regression -- the variadic carousel_probe.js change did not break the single-arg callers); ruff clean on tests/ui/test_carousel_idle_home.py. carousel.js loads under node (the probe requires it, so a JS syntax error would red every test). IDLE-SSOT (AC-2): carouselIdle() reads the US-480-a emitted `idle` boolean and returns true ONLY on an explicit `true` -- absent key / malformed file / false all read NOT-idle (fail closed to the live view, never guess a calm parked state). A dedicated test proves idle:false + drive.state=='idle' stays NOT-idle (the flag wins; the display never re-derives from the drive string). The pre-existing driveTile line (d.state==='idle') is the DRIVE TILE on the System-Status card -- a legitimate per-tile readout -- and is untouched; only the whole-carousel idle-HOME decision now reads the SSOT flag. HONEST-INSTRUMENT (AC-4, spec 1.3), locked in the pure builders so a DOM bug can't violate them: STANDBY hero is ALWAYS neutral (never green); faults line is neutral for a clean read AND for an unread source ('DTC not read since key-off' -- absence != clean, != fault), down/amber ONLY for a real stored STOP/WATCH code, neutral for MINOR/unknown; battery is the ONE line allowed green and only via the Spool verdict carrying its data-age (F-9 stale-green guard). AC-5 (ribbon/takeover still wins): the DTC ribbon+takeover are separate fixed overlays driven by updateDtcSurfaces() every tick regardless of the visible card -- they fire on TOP of the idle card, so surfacing the calm idle view never suppresses a genuine fault. AC-5-token (uses tokens.css SSOT, not drifted literals): the new .idle-* CSS uses only var(--) token references (no hex literal added); green is bound via the shared .tile[data-level=ok] rule -> US-484 renames that var project-wide, so US-481 introduces no NEW drift. NOTE for PM: (a) VC1/VC2 are PI-RUNTIME gates -- idle card is HOME + STANDBY grey + faults 'DTC not read since key-off' + no false green when PARKED (VC1), and auto-advance-off-idle to System Status when OBD wakes / a drive records (VC2, browser-only edge-trigger). They validate on the real Pi at deploy (same class as US-480-a's VCs); the bench proves the pure honest-instrument logic + JS load. VC3 (inject a stored STOP while idle -> ribbon/takeover surfaces) is covered by idleFaultsFact stop->down + the pre-existing takeover tests; the overlay-on-top behavior confirms on the Pi. (b) Iris microcopy: the exact substate ('engine off | OBD asleep') and footer ('monitoring resumes on engine start') are my honest interpretation -- I cannot read Iris's proposal (lane discipline: it lives in offices/uidevloper/), so the ACs were the contract. If Iris's spec 1.2 fixes different footer/substate wording, that's a trivial text swap (cosmetic, no logic change). (c) TD-063 filed: the last-drive fact has no state-file source yet (drive_summary data exists but isn't surfaced to the dashboard state dir) -> it degrades honestly to 'No recent drive' while parked; a real last-drive readout is a future emitter story (US-480-a lane), out of this display story's scope fence. (d) depends-on satisfied: US-480-a (complete, commit f929ed8) emits the `idle` boolean this story consumes."
+      "tasks": []
     },
     {
       "id": "US-482",
@@ -170,53 +139,77 @@
         "if the letterbox bars are unacceptably large on the real panel (16:9 output vs 3:2 design), flag to Iris/CIO -- the fill/fluid alternatives were retired but the IRL scaler check may reopen it"
       ],
       "goal": "As the CIO, I want the 480x320 UI to fill the whole panel instead of rendering in a corner, so it's legible on the real display. CIO-locked decision 2026-07-21 = LETTERBOX (uniform scale of the exact 480x320 layout, centered, black bars on the aspect mismatch). Presentation-only, no dashboard.css layout rewrite (the win: zero layout churn). Independent of the P0 data fix.",
-      "tasks": [],
-      "feedback": {
-        "filesActuallyTouched": [
-          "specs/UI/dist/dashboard-pi/carousel.js (NEW pure computeStageScale(w,h)=min(w/480,h/320) with <=0/non-finite fallback to 1 + STAGE_W/STAGE_H consts, all exported; NEW browser applyStageScale() sets #stage --scale; setup() calls it + wires window 'resize')",
-          "specs/UI/dist/dashboard-pi/dashboard.html (viewport meta width=480,height=320 -> width=device-width,initial-scale=1; whole UI wrapped in #screen > #stage, opened before #topbar + closed before the scripts)",
-          "specs/UI/dist/dashboard-pi/dashboard.css (NEW #screen full-viewport black flex-center frame + #stage fixed 480x320 box scaled by transform: scale(var(--scale,1)) transform-origin center -- appended; NO existing layout rule touched)",
-          "tests/ui/test_carousel_letterbox_scale.py (NEW -- 5 node-probe computeStageScale math tests + 5 static dist-wiring assertions)"
-        ]
-      },
-      "completionNotes": "GREEN in-loop: pytest tests/ui/ -> 37 passed (10 new US-482 + 27 pre-existing US-429/US-481 regression -- carousel.js still loads under node, no syntax break); ruff clean on the new test file (the only Python touched -- JS/HTML/CSS are outside ruff's scope). MECHANISM (the whole trick, zero layout churn per the AC): a CSS `transform` on #stage establishes the containing block for BOTH its position:fixed AND position:absolute descendants, so every shipped top/bottom/left/right coordinate re-resolves against the 480x320 box instead of the viewport -- the layout is scaled as one rigid unit, no reflow, no token/px layout edits. #screen = position:fixed inset:0 black flex-center frame (the black letterbox strip reads as bezel); #stage = the exact 480x320 design box, transform:scale(var(--scale,1)) transform-origin:center; centered by the flex parent so scaling around center keeps it centered. carousel.js: computeStageScale(w,h)=min(w/480,h/320) (largest scale fitting BOTH axes) with a <=0/non-finite guard falling back to 1 (a transient 0x0 boot layout pass must never collapse the UI); applyStageScale() reads window.innerWidth/innerHeight, sets #stage's --scale; setup() calls it once + adds a window 'resize' listener (the JS-handler path per Iris spec 2, not fluid reflow). On 1920x1080 the HEIGHT binds -> 3.375x, clean black bars left+right. NOTE for PM: VC1 (Iris AC-6: on the REAL 1080p-output Pi the UI scales up centered to fill the panel, legible, clean black bars, no corner-render) is a PI-RUNTIME/DEPLOY gate -- it validates at deploy on the real Pi (same class as US-480-a/US-481 render VCs); the bench proves the scale math + the dist wiring (viewport meta, #screen/#stage wrapper, the CSS transform, the JS resize handler). SCOPE: presentation-only; the shipped dashboard.css card/layout rules are untouched (the new #screen/#stage block is appended). If the 16:9-vs-3:2 bars read too large on the real panel, conditionalOutcome says reopen with Iris/CIO -- deferred to the IRL check."
+      "tasks": []
     },
     {
-      "id": "US-483",
-      "title": "Light-feed brightness consumer -- auto-dim from a `light` lux state file + honest fixed fallback + alarm floor",
+      "id": "US-483-a",
+      "title": "Enable the live TSL2591 light feed + bridge raw.light.lux -> states/light (connect-when-wired)",
+      "parent": "F-121",
+      "epicId": "E-001",
+      "type": "issue",
+      "size": "M",
+      "status": "sprint-ready",
+      "passes": false,
+      "acceptance": [
+        "connect-when-wired: flip pi.bus.enabled=true + pi.sensors.light.enabled=true (the TSL2591 is physically wired + I2C-addressable @0x29, verified on the Pi 2026-07-22) so sensor_reader publishes raw.light.lux at pi.sensors.light.sampleHz (1 Hz)",
+        "bridge raw.light.lux (EDR bus) -> a states/light file at /run/eclipse-obd/states/light, MIRRORING the states/ pattern US-480-a established (fields: lux [float, null on saturation -- never inf, per sensor_reader], plus a freshness timestamp ts); eclipse-states-http serves it",
+        "the bridge preserves the honest-instrument rule: lux=null (saturated) or an absent/stale file is surfaced as-is, never fabricated",
+        "ATLAS SEAM CONFIRM (heads-up, not a hard gate -- he APPROVED the pure-consumer DELTA-2 pattern; this applies it): the states/light file location + {lux, ts} shape mirror the existing writers; flag for his confirm, proceed per CIO build directive",
+        "specs/architecture.md EDR/states section notes the bus->states/light bridge (Rule-10)",
+        "Typecheck + pi tests green"
+      ],
+      "validationCriteria": [
+        {
+          "action": "after enabling, on the Pi: ls /run/eclipse-obd/states/light + curl it",
+          "outcome": "states/light present with a live lux value + fresh ts, served 200"
+        },
+        {
+          "action": "cover the sensor / shine light on it",
+          "outcome": "lux value tracks (falls when covered, rises in light) -- proves the live feed end-to-end"
+        }
+      ],
+      "conditionalOutcomes": [
+        "if flipping pi.bus.enabled surfaces an unrelated EDR-bus regression (IMU clone boards are dead -- graceful-absence must hold), keep light isolated: light publishes, absent sensors stay silent (US-409 graceful-absence); do NOT let a dead IMU block the light feed",
+        "the bus->states bridge shape mirrors US-480-a's states/ writers; if Atlas rules a different seam, adapt -- but per CIO this builds now on the approved DELTA-2 pattern"
+      ],
+      "goal": "As the display's light source, I want the wired TSL2591 (CONFIRMED live @0x29 on the Pi I2C bus, alongside the MAX17048 @0x36) to actually publish lux AND land in a states/light file the dashboard can consume. Today the sensor is addressable but DARK: pi.bus.enabled=false + pi.sensors.light.enabled=false (ships-dark), and the existing producer (sensor_reader.py publishes raw.light.lux on the EDR bus) has NO bridge to a dashboard states/ file. Per Atlas DELTA-2 the display is a pure consumer of a state file the reader owns -- this story provides that state file. (Split from US-483; PRODUCER/SEAM half. Consumer is US-483-b.)",
+      "tasks": []
+    },
+    {
+      "id": "US-483-b",
+      "title": "Display brightness consumer -- auto-dim from states/light with GROUNDED parameterized curve + alarm floor + honest fallback",
       "parent": "F-121",
       "epicId": "E-001",
       "type": "normal",
       "size": "M",
-      "status": "blocked",
+      "status": "sprint-ready",
       "passes": false,
-      "blockerRef": "offices/pm/blockers/BL-023-us483-light-state-file-contract-atlas-q4-ungated.md",
-      "completionNotes": "BLOCKED (BL-023, Rex 2026-07-22): gated on Atlas Q-4 -- the `light` lux state-file contract shape is unblessed and does not exist in-codebase (only the EDR producer side exists). AC1/AC5/VC2 require reading `light.lux`+freshness from the state file, which finalizes the very contract shape the story's conditionalOutcome forbids finalizing before Atlas blesses it. Safety-adjacent (brightness + STOP-alarm legible floor) -- refused to guess the seam per Refusal Rule 1. Resolution options in BL-023: (A) Atlas blesses the Q-4 contract -> build full consumer; (B) PM descopes US-483 this sprint to the ungated fixed-default + lux-independent alarm-floor + no-fake-auto slice (AC2+AC3), deferring live-lux to W-9. Sprint NOT fully blocked -- US-484/485/486/487 remain buildable; loop advances.",
       "acceptance": [
-        "display reads light.lux (+ freshness) from the `light` state file; brightness = clamp(MIN, curve(lux), 1.0) -- curve is Iris's (UI), lux value is the reader's (owner = the single dedicated EDR reader, per Atlas DELTA-2 pure-consumer ruling)",
-        "ALARM FLOOR (load-bearing): MIN never dims the screen below a legible threshold while a REAL active alarm (STOP ribbon/takeover) is present -- dim a calm idle screen, never a damage-in-progress warning; the floor is a UI guard independent of lux",
-        "HONEST FALLBACK: until the `light` state file exists / is fresh, hold a fixed default brightness + show NO fabricated 'auto' behavior (honest instrument) -- do not pretend to react to light it can't read",
-        "Iris AC-7: brightness tracks a fresh light.lux; absent/stale -> fixed default (no fake auto); dimming never takes a STOP alarm below its legible floor",
-        "consumes the state file only -- no hardware polling in the display; pi/UI tests green"
+        "display reads states/light {lux, ts} (never the sensor directly); brightness = clamp(minLevel, curve(lux), 1.0)",
+        "GROUNDED + PARAMETERIZED values in config (NOT hardcoded) -- add these keys with grounded defaults (illuminance references cited in the story notes): pi.display.brightness.luxMin=3.0 (lux<=this -> min; grounded = civil-twilight dark limit ~3.4lux), luxFull=1000.0 (lux>=this -> full; grounded = overcast-day ~1000lux), minLevel=0.15 (calm-screen dim floor), defaultLevel=0.70 (fixed fallback), luxStaleSec=10 (lux older -> fallback), curve='logarithmic' (perceptual, between luxMin..luxFull). Iris owns curve tuning; these are tunable via config, no code change",
+        "ALARM FLOOR (load-bearing safety): pi.display.brightness.alarmFloorLevel=0.40 -- brightness NEVER drops below this while a real active STOP ribbon/takeover is present, regardless of lux (a UI guard independent of the lux value)",
+        "HONEST FALLBACK: states/light absent OR ts older than luxStaleSec -> hold defaultLevel + show NO fabricated 'auto' behavior (honest instrument)",
+        "Iris AC-7: brightness tracks live lux when fresh; absent/stale -> fixed default (no fake auto); dimming never takes a STOP below its legible floor",
+        "consumes the state file only; pi/UI tests green (incl. a test that a STOP + dark-lux holds >= alarmFloorLevel)"
       ],
       "validationCriteria": [
         {
-          "action": "no `light` state file present (near-term)",
-          "outcome": "fixed default brightness, no fake 'auto' indicator"
+          "action": "cover the sensor (dark) with no alarm",
+          "outcome": "screen dims toward minLevel (calm screen may dim)"
         },
         {
-          "action": "inject a fresh light.lux state file",
-          "outcome": "brightness tracks the curve"
+          "action": "trigger a STOP takeover, then cover the sensor",
+          "outcome": "brightness held >= alarmFloorLevel (0.40) -- never dims the PULL-OVER alarm below legible"
         },
         {
-          "action": "STOP alarm present + lux says dark",
-          "outcome": "brightness held at/above the legible alarm floor"
+          "action": "stop US-483-a's feed / stale the file",
+          "outcome": "brightness holds defaultLevel, no fake 'auto' indicator"
         }
       ],
       "conditionalOutcomes": [
-        "GATED on Atlas Q-4: the `light` lux state-file contract (state-file seam + fallback-when-absent). Do NOT finalize the contract shape before Atlas blesses it. The near-term fixed-fallback slice is buildable now; the live-lux consumption lands with the EDR reader (W-9)."
+        "the brightness LEVEL defaults (0.15/0.40/0.70) are reasonable grounded starting values but are Iris's curve to tune -- they MUST be config params so tuning is a config change, not code (the CIO's hard requirement)"
       ],
-      "goal": "As the display, I want brightness driven by a live lux reading (pure consumer of a `light` state file the EDR light reader owns), not a clock schedule -- CIO-confirmed 2026-07-21 the light sensor is a real data feed. The display never reads the sensor itself. Live lux is EDR-gated (TSL2591, W-9); near-term ships an HONEST fixed-default fallback (no fake 'auto' when the state file is absent/stale).",
+      "goal": "As the display, I want brightness driven by the live states/light lux (pure consumer, US-483-a provides it), with a grounded auto-dim curve whose values are CONFIG PARAMETERS (CIO 2026-07-22: 'set a reasonable value based on documentation ... a parameter, not hard-coded'), plus the load-bearing alarm floor + honest fallback. (Split from US-483; CONSUMER half.)",
       "tasks": []
     },
     {
@@ -228,8 +221,6 @@
       "size": "M",
       "status": "blocked",
       "passes": false,
-      "blockerRef": "offices/pm/blockers/BL-024-us484-ssot-token-adds-atlas-rule10-and-spool-critical-red.md",
-      "completionNotes": "BLOCKED (BL-024, Rex 2026-07-22): 2 of 4 ACs require ADDING tokens to the specs/UI/tokens.css SSOT, which the SSOT itself forbids without a design ruling. AC1 (green) IS buildable now -- SSOT already carries --green-ok #35C46A (tokens.css:37), dashboard.css:23 still forks --ok-green #2ECC71. AC2 (text-primary) is GATED on Atlas Rule-10: dashboard.css:16 invents --text-primary #DDDDDD but tokens.css:64-67 keeps it intentionally un-tokenized -> adding it routes through Atlas. AC3 (critical-red) is GATED on Spool (value/semantics) + Atlas (token) and is SAFETY: DTC STOP renders in BRAND --red-light #F61D2D (dashboard.css:214/380/395/362) = the brand-vs-alarm collision tokens.css:44-51/70-78 warns against; --critical-red is TBD/RESERVED with an explicit MUST-NOT-render guard. No Atlas/Spool ruling in inbox (newest 2026-07-04). Refused to guess a safety-signal red (Refusal Rule 2). Resolution options in BL-024: (A) get the two token blessings -> build full story incl. the STOP-tier repoint; (B) PM descopes to the ungated green-only slice (AC1), deferring text-primary + critical-red (leaves the brand-vs-alarm safety item open -- flag to CIO). Sprint NOT fully blocked -- US-485/486/487 remain buildable; loop advances.",
       "acceptance": [
         "green: reconcile dashboard.css --ok-green #2ECC71 -> SSOT --green-ok #35C46A (name AND value); no visual regression",
         "text-primary: SET it in the specs/UI SSOT with a grounded value (Iris proposes -- contrast on dark bg, #DDDDDD plausible; Atlas gates the token add)",
@@ -261,23 +252,6 @@
       "size": "S",
       "status": "complete",
       "passes": true,
-      "feedback": {
-        "filesActuallyTouched": [
-          "src/pi/hardware/status_display.py (DELETED -- the pygame overlay renderer)",
-          "src/pi/hardware/dashboard_layout.py (DELETED -- pure-geometry helper used ONLY by status_display; orphaned after removal)",
-          "src/pi/hardware/hardware_manager.py (severed: removed the import, _statusDisplay store, _initializeStatusDisplay, the _startComponents display branch + _displayUpdateThread/_displayUpdateLoop, the _cleanup branch, the statusDisplay property, the display* constructor params + factory config reads; updateObdStatus/updateErrorCount -> documented no-op stubs; getStatus['display'] stays a permanent None)",
-          "src/pi/hardware/__init__.py (removed StatusDisplay/StatusDisplayError/DisplayNotAvailableError/ConnectionStatus/PowerSourceDisplay imports + __all__ entries + docstring refs)",
-          "config.json (removed pi.hardware.statusDisplay key)",
-          "tests/pi/hardware/test_status_display.py (DELETED)",
-          "tests/pi/hardware/test_dashboard_layout.py (DELETED)",
-          "tests/pi/hardware/test_manager_status_display_disable.py (DELETED -- its entire subject, the disable/factory-flag path, was removed)",
-          "tests/deploy/test_dashboard_kit.py (F-4 test now guards ABSENCE of pi.hardware.statusDisplay -- stronger invariant than enabled==false)",
-          "specs/architecture.md (Rule-10: Two-Display-Surfaces -> single primary surface; US-257 section bannered RETIRED; A-4 note + US-402 subsection updated to full-removal)",
-          "src/README.md (dropped the deleted status_display.py line)",
-          "offices/pm/tech_debt/TD-064-event-router-no-op-push-to-retired-status-display.md (NEW)"
-        ]
-      },
-      "completionNotes": "GREEN in-loop: pytest tests/pi/hardware + tests/deploy/test_dashboard_kit + tests/test_orchestrator_alerts_registration -> 124 passed, 4 skipped; orchestrator connection/display path (recovery success/failure + display connection errors + vin-decode-display) -> 29 passed; ruff clean on all modified .py; python validate_config.py all-pass (config story DoD). Committed f533230. PARITY (AC1): architecture.md already recorded the overlay was parity-gated retired at US-402 once System Status (US-400) + Battery Health (US-401) cards reached parity; the US-264 VCELL-authoritative battery rule lives UPSTREAM in UpsMonitor/battery-health emitter (the overlay only displayed the percentage/voltage handed to it), so nothing was lost -- no STOP condition. RETIRE (AC2): US-402 only config-flipped enabled=false; the module + all wiring + config key still shipped (dead code + re-enable footgun). US-485 completes the sunset: deleted status_display.py + dashboard_layout.py (its sole consumer -- retiring both as one coherent 'pygame status overlay' unit avoids repeating the exact half-measure that created this story) + all HardwareManager launch/wiring + the config key. grep confirms no import/runtime references to status_display/StatusDisplay/dashboard_layout remain (only historical modification-history comments). SCOPE: updateObdStatus/updateErrorCount kept as documented no-op stubs because event_router.py (a drive-path core module, NOT the 'launch path') still calls them; removing those + editing tests/test_orchestrator_alerts_registration.py is behavioral change beyond an 'S' sunset story -> filed TD-064 (the residual no-op push). getStatus['display'] kept as permanent None so core.py:600's result['hardware'] consumers don't KeyError. DOC (AC3, Rule-10): architecture.md 'Two Display Surfaces' -> single primary pygame surface; the US-257 canvas-redesign section bannered RETIRED (documented modules deleted); the A-4 sequencing note + the US-402 'Pygame sunset' subsection updated to full-removal (US-485). NOTE for PM: BASE-MODULE change (hardware_manager.py) + a config.json change -> please run the full regression at integration time (full pytest tests/ + mypy strict, both PM/integration-time gates not run in-loop per TD-059). The pre-existing 2 US-486 startup_log reds are unrelated (US-486 fixes them) and were not touched here.",
       "acceptance": [
         "confirm the carousel covers what status_display.py rendered (US-264 VCELL-authoritative battery rule preserved -- must not lose it)",
         "retire status_display.py + its orchestrator launch path + config flag (or confirm already inert); no import/runtime references remain",
@@ -304,12 +278,6 @@
       "size": "S",
       "status": "complete",
       "passes": true,
-      "feedback": {
-        "filesActuallyTouched": [
-          "tests/pi/diagnostics/test_boot_reason_boot_id.py (TestStartupLogSchema guard reconciled to the shipped 8-column startup_log: EXPECTED_COLUMNS += ('data_quality','TEXT',0,0); count guard 7 -> 8 with the method renamed test_startupLogSchema_columnCount_isSeven -> _isEight; class + module + file-header docstrings updated to document the US-419/F-080 8th column; Modification-History entry added. Guard NOT relaxed -- still a STRICT exact-set assertion + sole-PK guard.)"
-        ]
-      },
-      "completionNotes": "GREEN in-loop: pytest tests/pi/diagnostics/test_boot_reason_boot_id.py -> 12 passed (the 2 TestStartupLogSchema reds gone: matchesUs263CanonicalColumnSet + the renamed columnCount_isEight); ruff clean on the touched file. Committed 17c1124. CANONICAL SHAPE (AC1, PM/Atlas call): confirmed data_quality IS part of the canonical startup_log schema -- it is defined in the fresh-DB DDL SCHEMA_STARTUP_LOG (database_schema.py:648), not a separate table, so the conditionalOutcome (route-to-Atlas-if-separate-table) does NOT apply; the fix is a guard bump, not a migration. Guard NOT relaxed (its own message forbids it): EXPECTED_COLUMNS still a STRICT exact-set tuple, sole-PK guard untouched, only widened by the one already-shipped column. PRAGMA tuple for the new column verified from the red-state actual: ('data_quality','TEXT',0,0) (nullable, non-PK). AC3 (doc the 8th column): specs/architecture.md ALREADY documents data_quality on startup_log (section 'US-419 (F-080): boot clock-quality flag on power_log / startup_log', lines ~797-819) -- the live spec SSOT was already in sync; the OUT-OF-SYNC 'US-263 spec' the guard message points at was the embedded schema pin in the test's own docstrings, which I brought in line (class docstring 7 -> 8, module docstring, file header). Did NOT edit the point-in-time design spec 2026-05-15-honest-boot-progress-instrument-design.md §4.4 (a historical as-of-that-date artifact predating US-419; architecture.md is the live SSOT). NOTE for PM: VC2 (pytest tests/pi -m 'not slow' full pi suite green) is the story's whole point -- the change is a test-expected-value reconciliation confined to ONE file (no src touched), so it cannot regress other tests, and prior US-480-a/US-485 completionNotes explicitly flagged 'exactly 2 pre-existing US-486 startup_log reds' as the only pi-suite reds. The full pi-tier suite timed out past 120s on the slow SMB share so it is a PM/integration-time gate per TD-059 (not run to completion in-loop); the targeted file (12 passed) is the authoritative in-loop gate. Please confirm the full pi suite green at integration (expected: the 2 reds -> 0, no others disturbed).",
       "acceptance": [
         "confirm the intended canonical shape (PM/Atlas call): data_quality IS part of the canonical startup_log schema (Rex's lean) -> update the guard to 8 columns; do NOT relax the guard (its own message forbids relaxing)",
         "update EXPECTED_COLUMNS to include ('data_quality','TEXT',0,0) + bump the count guard 7 -> 8 in test_boot_reason_boot_id.py::TestStartupLogSchema",
@@ -341,14 +309,6 @@
       "size": "S",
       "status": "complete",
       "passes": true,
-      "feedback": {
-        "filesActuallyTouched": [
-          "scripts/verify_pre_drive.sh (FU-1: NEW post-restart PRODUCTION-capture block after the eclipse-obd restart -- systemctl is-active --quiet + realtime_data row-growth in data/obd.db via prod_row_count() over ssh_pi; new PROD_RC gates the final verdict. FU-2: NEW EXIT_NONAUTH=3; bench success + koeo-only success now exit 3 with a NON-AUTHORITATIVE PASS line instead of 0. FU-3: header honesty note -- no live race detection claim (interleave detector is test-fake-only; green rests on _ioLock + row/coverage floors). New overridable PROD_SETTLE_SECS/PROD_GROWTH_SECS. Exit-code table + report-order doc updated.)",
-          "tests/deploy/test_verify_pre_drive.sh (section 6: --bench now asserts exit 3 + NON-AUTHORITATIVE PASS -- was exit 0)",
-          "tests/deploy/test_verify_pre_drive.py (3 NEW static-wiring tests: production-path-after-restart, non-authoritative-distinct-exit, no-overclaim-live-race-detection; mod-history entry)"
-        ]
-      },
-      "completionNotes": "GREEN in-loop: bash tests/deploy/test_verify_pre_drive.sh -> 16 passed / 0 failed (incl. the real --bench run now exit 3); pytest tests/deploy/test_verify_pre_drive.py -> 7 passed (4 pre-existing US-479 + 3 new US-487); bash -n syntax clean; ruff clean on the one touched .py (bash/sh outside ruff scope). FU-1 (production-path verify): steps 1-4 probe a THROWAWAY temp db (pre_drive_greenlight.py --db default = a temp file, NEVER data/obd.db) + the probe stops eclipse-obd, and the pre-existing restart at verify_pre_drive.sh was best-effort (`|| true`) with NO post-check -- so a GREEN could coexist with a dead production collector. Added a post-restart block (full-mode only; KOEO is engine-off so production can't capture, bench never reaches the live path): (a) `systemctl is-active --quiet eclipse-obd.service`, and (b) two `SELECT COUNT(*) FROM realtime_data` samples from data/obd.db (PI_PATH/data/obd.db, grounded: config.json:32 database.path=${DB_PATH:./data/obd.db} + the probe docstring) PROD_SETTLE_SECS(15) apart-then-PROD_GROWTH_SECS(10) that MUST increase. Either failing sets PROD_RC=1 (fail-closed: non-numeric/empty query output is treated as not-capturing) and the final PASS now requires `$OVERALL_OK && CAPTURE_RC==0 && PROD_RC==0`. FU-2 (non-green weak modes): new EXIT_NONAUTH=3; --bench success and --koeo-only success now print 'CAPTURE: NON-AUTHORITATIVE PASS (...)' and exit 3 (a distinct non-green status) instead of exit 0 -- a distracted operator can't mistake the simulator or the floor-skipping driveway check for the real full-mode gate. Dry-run for both modes still exits 0 (a plan preview is not a verdict, consistent with live --dry-run). FU-3 (DoD honesty): header states plainly the gate does NOT detect the A-17 race live -- connection.obd.interleaved is a test-fake-only attribute inert outside pytest; the live green rests on the single-connection _ioLock + the row/coverage floors (if the race starved capture, no rows land and the floor fails). No overclaim added. Timings are overridable via deploy.conf (PRE_DRIVE_PROD_SETTLE_SECS/PRE_DRIVE_PROD_GROWTH_SECS). SCOPE: touched only verify_pre_drive.sh + its 2 tests; did NOT modify the probe (pre_drive_greenlight.py) or pre_drive_gate.py -- the full-mode gate still passes end-to-end (bash driver green). NOTE for PM: VC1 (run full-mode gate, kill eclipse-obd before the post-restart check -> gate FAILS) and the live --koeo-only exit-3 are PI-RUNTIME gates (require the real Pi + SSH + engine-on idle); they validate at deploy on the real Pi (same class as the US-480-a/US-481/US-482 render VCs). The bench proves: bash wiring + syntax, the --bench exit-3 (real run), the fail-closed row-growth logic path, and all static assertions. The 30s live-gate wall-clock grows by ~PROD_SETTLE+PROD_GROWTH (~25s) for the added production check -- acceptable for a safety gate; tunable via deploy.conf.",
       "acceptance": [
         "FOLLOW-UP 1 (load-bearing): after the probe stops eclipse-obd + probes a temp DB, it best-effort-restarts the service with NO post-restart check (verify_pre_drive.sh:177,205 `|| true`). Add a post-restart verification that the PRODUCTION path is capturing -- confirm eclipse-obd is active AND writing rows to data/obd.db after the restart, so a GREEN cannot coexist with a dead production service",
         "FOLLOW-UP 2: --bench (SimulatedObdConnection) and --koeo-only (skips the sustained-capture floor) currently print warnings but still exit 0 as 'CAPTURE: PASS' -- make the non-authoritative modes return a NON-green exit code (or a clearly-distinct status) so a distracted operator can't mistake them for the real full-mode gate",
@@ -381,9 +341,11 @@
       "(wake OBD / start a drive) \u2192 (home auto-advances off idle without a manual swipe)  [from US-481]",
       "(inject a stored STOP code while idle) \u2192 (ribbon/takeover surfaces the real fault (idle does not suppress it))  [from US-481]",
       "(load the carousel on the real 1080p-output Pi) \u2192 (480x320 UI scales up centered, fills the panel, legible, clean black bars -- no corner render)  [from US-482]",
-      "(no `light` state file present (near-term)) \u2192 (fixed default brightness, no fake 'auto' indicator)  [from US-483]",
-      "(inject a fresh light.lux state file) \u2192 (brightness tracks the curve)  [from US-483]",
-      "(STOP alarm present + lux says dark) \u2192 (brightness held at/above the legible alarm floor)  [from US-483]",
+      "(after enabling, on the Pi: ls /run/eclipse-obd/states/light + curl it) \u2192 (states/light present with a live lux value + fresh ts, served 200)  [from US-483-a]",
+      "(cover the sensor / shine light on it) \u2192 (lux value tracks (falls when covered, rises in light) -- proves the live feed end-to-end)  [from US-483-a]",
+      "(cover the sensor (dark) with no alarm) \u2192 (screen dims toward minLevel (calm screen may dim))  [from US-483-b]",
+      "(trigger a STOP takeover, then cover the sensor) \u2192 (brightness held >= alarmFloorLevel (0.40) -- never dims the PULL-OVER alarm below legible)  [from US-483-b]",
+      "(stop US-483-a's feed / stale the file) \u2192 (brightness holds defaultLevel, no fake 'auto' indicator)  [from US-483-b]",
       "(diff dashboard.css :root vs specs/UI/tokens.css after the change) \u2192 (no drift; dashboard uses SSOT green + text-primary; cards render unchanged)  [from US-484]",
       "(trigger a STOP-tier DTC takeover) \u2192 (renders in the Spool-assigned safety-red token, NOT brand --red-light (brand-vs-alarm collision closed))  [from US-484]",
       "(grep for status_display references + run pi tests after removal) \u2192 (no live references; carousel is sole surface; tests green; VCELL rule preserved)  [from US-485]",
@@ -392,7 +354,7 @@
       "(run the full-mode gate, then kill eclipse-obd before the post-restart check) \u2192 (gate FAILS (production path not capturing) -- no false green)  [from US-487]",
       "(run --bench and --koeo-only) \u2192 (non-green exit code / distinct status, not 'CAPTURE: PASS' exit 0)  [from US-487]"
     ],
-    "validationMethod": "PI-RENDER-TRUTHFULLY + REAL-1080P-PI + BENCH-PI-SUITE",
+    "validationMethod": "PI-RENDER-TRUTHFULLY + REAL-1080P-PI + LIVE-LIGHT-FEED + BENCH-PI-SUITE",
     "validatesFeatures": [
       "F-092",
       "F-097",
