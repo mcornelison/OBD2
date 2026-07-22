@@ -5147,37 +5147,31 @@
       "shippedNote": "SHIPPED Sprint 60 / V0.29.14 (code-complete on dev). Feature IRL-gated on the drive-35 capture re-gate."
     },
     {
-      "id": "US-480",
+      "id": "US-480-a",
       "parent": "F-121",
       "type": "issue",
       "size": "M",
-      "title": "P0: wire the F-092/097/111 card emitters to execute + write state (carousel data-starvation root fix)",
-      "goal": "As the deployed carousel, I want the system-status / battery-health / dtc emitters to actually RUN and write their state files on the Pi, so the cards render live data instead of starving (which leaves the static DTC takeover visible = phantom 'Check Engine'). ROOT CAUSE (PM-verified on the live Pi @ V0.29.14): /run/eclipse-obd/states/ holds ONLY boot-state; only eclipse-boot-state.service + eclipse-states-http.service run -- there is NO service unit for system_status_emitter/battery_health_emitter/dtc_emitter and the orchestrator does not invoke them. The emitter CODE shipped (F-092/097/111) but was never wired to execute (no unit / no orchestrator call / no deploy install).",
+      "title": "Wire the F-092/097/111 card emitters to EXECUTE + write state (carousel data-starvation root fix)",
+      "goal": "As the deployed carousel, I want the system-status / battery-health / dtc emitters to actually RUN and write their state files on the Pi, so the cards render live data instead of starving (which leaves the static DTC takeover visible = phantom 'Check Engine'). ROOT CAUSE (PM-verified on the live Pi @ V0.29.14): /run/eclipse-obd/states/ holds ONLY boot-state; only eclipse-boot-state.service + eclipse-states-http.service run -- there is NO service unit for system_status_emitter/battery_health_emitter/dtc_emitter and the orchestrator does not invoke them. The emitter CODE shipped (F-092/097/111) but was never wired to execute. (Split from US-480; this is the RUNTIME half -- deploy-install is US-480-b.)",
       "definitionOfDone": [
         "PRE-FLIGHT: on the Pi, confirm the starting state -- /run/eclipse-obd/states/ contains only boot-state; no emitter service units installed (baseline the bug before fixing)",
-        "wire each of system_status_emitter / battery_health_emitter / dtc_emitter to EXECUTE on the Pi -- via systemd unit(s) (mirror eclipse-boot-state.service) AND/OR orchestrator invocation, per Atlas's ruling on the run-model (see conditionalOutcome); each writes its state file to the states dir the eclipse-states-http server reads",
-        "deploy-pi.sh INSTALLS the emitter execution (unit files + enable), so a fresh deploy leaves the emitters running -- not a manual one-off (the exact gap that shipped them dark)",
-        "on the Pi after deploy, the states dir contains system-status + battery-health + dtc files, freshly written + refreshing on cadence; eclipse-states-http serves them (HTTP 200 + non-empty JSON)",
+        "wire each of system_status_emitter / battery_health_emitter / dtc_emitter to EXECUTE on the Pi (systemd unit(s) mirroring eclipse-boot-state.service, and/or orchestrator invocation, per Atlas's run-model ruling); each writes its state file to the states dir the eclipse-states-http server reads",
+        "on the Pi, the states dir contains system-status + battery-health + dtc files, freshly written + refreshing on cadence; eclipse-states-http serves them (HTTP 200 + non-empty JSON)",
         "the dtc emitter writes an honest empty/absent state when no code + no key-on read (so takeoverView() correctly renders nothing -- the phantom Check Engine disappears)",
-        "specs/architecture.md emitter/runtime section updated in-sprint if the run-model changes (Rule-10)",
-        "Typecheck + pi tests green"
+        "Typecheck + pi tests green for this slice"
       ],
       "conditionalOutcomes": [
-        "RUN-MODEL is an Atlas call: standalone systemd units (like boot-state) vs orchestrator-invoked vs a single emitter supervisor. Route to Atlas for the ruling BEFORE building if it's not an obvious mirror of eclipse-boot-state.service. Iris Q-1 (idle-detection SSOT: emitter-writes-idle-flag vs display-derives) rides this ruling.",
+        "RUN-MODEL is an Atlas call (Iris Q-1): standalone systemd units (like boot-state) vs orchestrator-invoked vs a single emitter supervisor. Route to Atlas for the ruling BEFORE building if it's not an obvious mirror of eclipse-boot-state.service. Iris's coupled Q-1 (idle as an emitter-written boolean vs display-derived) rides this ruling.",
         "if an emitter needs live OBD to write meaningful data (dtc KOEO read), it must still write an HONEST absent/asleep state when parked -- never nothing, never fabricated"
       ],
       "validationCriteria": [
         {
-          "action": "after deploy, ls /run/eclipse-obd/states/ + curl the states endpoints",
+          "action": "on the Pi, ls /run/eclipse-obd/states/ + curl the states endpoints",
           "outcome": "system-status + battery-health + dtc files present, fresh, served 200 with real JSON"
         },
         {
           "action": "load the carousel on the Pi parked (no OBD)",
           "outcome": "cards render honest state; NO phantom Check Engine takeover"
-        },
-        {
-          "action": "reboot the Pi + re-check (no manual steps)",
-          "outcome": "emitters auto-start + repopulate the states dir (deploy-installed, not one-off)"
         }
       ],
       "deps": [],
@@ -5188,7 +5182,51 @@
         "F-117",
         "bt-archaeology-2026-07-20",
         "iris-idle-fullbleed-spec-2026-07-21",
-        "deploy-validation-distinct-gate"
+        "deploy-validation-distinct-gate",
+        "split-from-US-480"
+      ],
+      "tasks": [],
+      "status": "sprint-ready",
+      "createdAt": "2026-07-21",
+      "updatedAt": "2026-07-21"
+    },
+    {
+      "id": "US-480-b",
+      "parent": "F-121",
+      "type": "issue",
+      "size": "S",
+      "title": "Deploy-install the emitter execution + reboot-persistence + Rule-10 doc (the never-deploy-installed gap)",
+      "goal": "As the deploy path, I want deploy-pi.sh to INSTALL the emitter execution (unit files + enable) so a fresh deploy + reboot leaves the F-092/097/111 emitters running -- NOT a manual one-off. This closes the exact gap that shipped them dark (code merged but never deploy-installed; the 'deploy validation is a distinct gate' lesson). (Split from US-480; this is the DEPLOY half -- runtime wiring is US-480-a.)",
+      "definitionOfDone": [
+        "deploy-pi.sh installs the emitter execution (unit files + systemctl enable), idempotent + logged; pairs the deploy-hygiene pattern (systemctl stop before start, cf. US-354/US-389) so a re-deploy doesn't race",
+        "after deploy, the states dir is populated by the deploy-installed emitters (not a manual start)",
+        "reboot the Pi -> emitters auto-start + repopulate the states dir with NO manual steps",
+        "specs/architecture.md emitter/runtime section updated in-sprint (Rule-10) -- documents the emitter run-model + deploy-install",
+        "SCOPE FENCE: touch only deploy-pi.sh + the emitter unit files + architecture.md; do NOT modify the emitter logic (that's US-480-a) -- must not break US-480-a's running emitters",
+        "Typecheck + pi tests green"
+      ],
+      "conditionalOutcomes": [
+        "run-model must match US-480-a's (Atlas Q-1 ruling); if US-480-a chose orchestrator-invocation over units, the deploy-install adapts accordingly (may be a no-op unit install + an orchestrator-enable check)"
+      ],
+      "validationCriteria": [
+        {
+          "action": "deploy-pi.sh to a Pi with an empty states dir, then reboot",
+          "outcome": "emitters auto-start + repopulate states dir with no manual steps (deploy-installed, not one-off)"
+        },
+        {
+          "action": "inspect architecture.md emitter/runtime section",
+          "outcome": "documents the run-model + deploy-install (Rule-10 satisfied)"
+        }
+      ],
+      "deps": [
+        "US-480-a"
+      ],
+      "sourceRefs": [
+        "F-121",
+        "US-354",
+        "US-389",
+        "deploy-validation-distinct-gate",
+        "split-from-US-480"
       ],
       "tasks": [],
       "status": "sprint-ready",
@@ -5228,7 +5266,7 @@
         }
       ],
       "deps": [
-        "US-480"
+        "US-480-a"
       ],
       "sourceRefs": [
         "F-121",

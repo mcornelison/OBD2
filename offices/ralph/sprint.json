@@ -1,37 +1,248 @@
 {
   "schemaVersion": "2.0.0",
-  "sprint": 60,
-  "version": "V0.29.14",
-  "createdFromPRD": "offices/pm/prds/prd-V0.29.14.md",
+  "sprint": 61,
+  "version": "V0.29.15",
+  "createdFromPRD": "offices/pm/prds/prd-V0.29.15-ui.md",
   "stories": [
     {
-      "id": "US-474",
-      "title": "A-17 capture-fix hardening -- drop the raw getattr fallback + typed query() + non-mocked connect-edge concurrency regression (R1)",
-      "parent": "F-117",
-      "epicId": "E-OPS",
+      "id": "US-480-a",
+      "title": "Wire the F-092/097/111 card emitters to EXECUTE + write state (carousel data-starvation root fix)",
+      "parent": "F-121",
+      "epicId": "E-001",
       "type": "issue",
-      "size": "S",
+      "size": "M",
       "status": "sprint-ready",
-      "passes": true,
+      "passes": false,
       "acceptance": [
-        "remove the runtime `getattr(connection,'query',None)` fallback (dtc_client.py:353-354) so DTC reads ALWAYS go through the serialized query() wrapper -- the raw `obd.query()` fallback is the hole",
-        "add query() as a typed member of the ObdConnectionLike Protocol (dtc_client.py:137) so the serialized call is type-checked (mypy), and update the DTC test fakes to satisfy it (NOTE per Atlas: the wrapper+Protocol infra already exist -- this is a one-method typed-contract close, not building the contract)",
-        "add a NON-MOCKED regression test for connect-edge concurrency: a realtime-logger read + a KOEO DTC read on ONE connection object serialize through the _ioLock with no interleave (the exact GAP-1 F-117 missed) -- assert no 'disconnected while reading' and no lost reads",
-        "full Pi test suite green: pytest tests/pi -m 'not slow'; mypy passes on touched modules",
-        "if load-bearing, specs/architecture.md OBD-capture / connection-lock section updated in-sprint"
+        "PRE-FLIGHT: on the Pi, confirm the starting state -- /run/eclipse-obd/states/ contains only boot-state; no emitter service units installed (baseline the bug before fixing)",
+        "wire each of system_status_emitter / battery_health_emitter / dtc_emitter to EXECUTE on the Pi (systemd unit(s) mirroring eclipse-boot-state.service, and/or orchestrator invocation, per Atlas's run-model ruling); each writes its state file to the states dir the eclipse-states-http server reads",
+        "on the Pi, the states dir contains system-status + battery-health + dtc files, freshly written + refreshing on cadence; eclipse-states-http serves them (HTTP 200 + non-empty JSON)",
+        "the dtc emitter writes an honest empty/absent state when no code + no key-on read (so takeoverView() correctly renders nothing -- the phantom Check Engine disappears)",
+        "Typecheck + pi tests green for this slice"
       ],
       "validationCriteria": [
         {
-          "action": "run the new non-mocked connect-edge concurrency test against the current serialized path",
-          "outcome": "GREEN -- logger + DTC reads serialize, no interleave, no lost reads"
+          "action": "on the Pi, ls /run/eclipse-obd/states/ + curl the states endpoints",
+          "outcome": "system-status + battery-health + dtc files present, fresh, served 200 with real JSON"
         },
         {
-          "action": "locally revert the _ioLock serialization + re-run",
-          "outcome": "RED -- proves the test guards the race"
+          "action": "load the carousel on the Pi parked (no OBD)",
+          "outcome": "cards render honest state; NO phantom Check Engine takeover"
+        }
+      ],
+      "conditionalOutcomes": [
+        "RUN-MODEL is an Atlas call (Iris Q-1): standalone systemd units (like boot-state) vs orchestrator-invoked vs a single emitter supervisor. Route to Atlas for the ruling BEFORE building if it's not an obvious mirror of eclipse-boot-state.service. Iris's coupled Q-1 (idle as an emitter-written boolean vs display-derived) rides this ruling.",
+        "if an emitter needs live OBD to write meaningful data (dtc KOEO read), it must still write an HONEST absent/asleep state when parked -- never nothing, never fabricated"
+      ],
+      "goal": "As the deployed carousel, I want the system-status / battery-health / dtc emitters to actually RUN and write their state files on the Pi, so the cards render live data instead of starving (which leaves the static DTC takeover visible = phantom 'Check Engine'). ROOT CAUSE (PM-verified on the live Pi @ V0.29.14): /run/eclipse-obd/states/ holds ONLY boot-state; only eclipse-boot-state.service + eclipse-states-http.service run -- there is NO service unit for system_status_emitter/battery_health_emitter/dtc_emitter and the orchestrator does not invoke them. The emitter CODE shipped (F-092/097/111) but was never wired to execute. (Split from US-480; this is the RUNTIME half -- deploy-install is US-480-b.)",
+      "tasks": []
+    },
+    {
+      "id": "US-480-b",
+      "title": "Deploy-install the emitter execution + reboot-persistence + Rule-10 doc (the never-deploy-installed gap)",
+      "parent": "F-121",
+      "epicId": "E-001",
+      "type": "issue",
+      "size": "S",
+      "status": "sprint-ready",
+      "passes": false,
+      "acceptance": [
+        "deploy-pi.sh installs the emitter execution (unit files + systemctl enable), idempotent + logged; pairs the deploy-hygiene pattern (systemctl stop before start, cf. US-354/US-389) so a re-deploy doesn't race",
+        "after deploy, the states dir is populated by the deploy-installed emitters (not a manual start)",
+        "reboot the Pi -> emitters auto-start + repopulate the states dir with NO manual steps",
+        "specs/architecture.md emitter/runtime section updated in-sprint (Rule-10) -- documents the emitter run-model + deploy-install",
+        "SCOPE FENCE: touch only deploy-pi.sh + the emitter unit files + architecture.md; do NOT modify the emitter logic (that's US-480-a) -- must not break US-480-a's running emitters",
+        "Typecheck + pi tests green"
+      ],
+      "validationCriteria": [
+        {
+          "action": "deploy-pi.sh to a Pi with an empty states dir, then reboot",
+          "outcome": "emitters auto-start + repopulate states dir with no manual steps (deploy-installed, not one-off)"
         },
         {
-          "action": "grep dtc_client.py for the getattr('query') fallback after the change",
-          "outcome": "gone -- DTC reads have no raw unlocked path"
+          "action": "inspect architecture.md emitter/runtime section",
+          "outcome": "documents the run-model + deploy-install (Rule-10 satisfied)"
+        }
+      ],
+      "conditionalOutcomes": [
+        "run-model must match US-480-a's (Atlas Q-1 ruling); if US-480-a chose orchestrator-invocation over units, the deploy-install adapts accordingly (may be a no-op unit install + an orchestrator-enable check)"
+      ],
+      "goal": "As the deploy path, I want deploy-pi.sh to INSTALL the emitter execution (unit files + enable) so a fresh deploy + reboot leaves the F-092/097/111 emitters running -- NOT a manual one-off. This closes the exact gap that shipped them dark (code merged but never deploy-installed; the 'deploy validation is a distinct gate' lesson). (Split from US-480; this is the DEPLOY half -- runtime wiring is US-480-a.)",
+      "tasks": []
+    },
+    {
+      "id": "US-481",
+      "title": "Idle-state home card -- calm honest parked view (pairs with US-480)",
+      "parent": "F-121",
+      "epicId": "E-001",
+      "type": "normal",
+      "size": "M",
+      "status": "sprint-ready",
+      "passes": false,
+      "acceptance": [
+        "idle card renders per Iris spec \u00a71.2: header (wordmark+clock+date), STANDBY hero (neutral grey) + 'engine off / OBD asleep' substate, 3-fact summary strip (last-drive / battery-with-age / honest-faults), footer",
+        "idle detection derived from existing SSOT (spec \u00a71.4): idle == system-status.source.obd.available==false AND drive.state==idle -- pure consumer, no new data acquisition (UNLESS Atlas rules the emitter should write an explicit idle flag per US-480 conditionalOutcome / Iris Q-1)",
+        "carousel makes idle the HOME card while idle holds, and AUTO-ADVANCES off idle to System-Status/live the moment OBD wakes or a drive records (Iris AC-4)",
+        "honest-instrument rules (spec \u00a71.3): never green 'OK' at idle (STANDBY grey; green only on the battery line with its age); never amber/red at idle unless a REAL stored STOP/WATCH code exists (then the existing ribbon/takeover still wins -- idle never suppresses a real fault, Iris AC-5); absence != clean and != fault",
+        "uses specs/UI/tokens.css SSOT values (not the drifted dashboard.css literals -- see US-484)",
+        "Argus-style AC 1/2/3/4/5 from Iris spec \u00a74 pass; pi/UI tests green"
+      ],
+      "validationCriteria": [
+        {
+          "action": "parked state (obd.available=false + drive.state=idle) on the Pi/bench",
+          "outcome": "idle card is the home card; STANDBY grey; faults line 'DTC not read since key-off'; no false green"
+        },
+        {
+          "action": "wake OBD / start a drive",
+          "outcome": "home auto-advances off idle without a manual swipe"
+        },
+        {
+          "action": "inject a stored STOP code while idle",
+          "outcome": "ribbon/takeover surfaces the real fault (idle does not suppress it)"
+        }
+      ],
+      "conditionalOutcomes": [
+        "if Atlas rules idle should be an emitter-written boolean (Iris Q-1), consume that flag instead of AND-ing two fields -- coordinate with US-480"
+      ],
+      "goal": "As the CIO parked with the engine off, I want a calm, honest home card instead of a wall of NA/unavailable tiles (which reads as broken and is the backdrop the phantom alarm appears against). Per Iris's CIO-locked spec (\u00a71): STANDBY (neutral grey, never green) + clock/date + last-drive + battery (stale-green 'checked Nd ago' guard) + honest faults line ('DTC not read since key-off' -- NOT 'No codes', NOT 'Check Engine'). The parked twin of the EDR-gated live home card (same home slot).",
+      "tasks": []
+    },
+    {
+      "id": "US-482",
+      "title": "Full-bleed LETTERBOX scaling -- fill the 1080p panel (own story, not blocked behind P0)",
+      "parent": "F-121",
+      "epicId": "E-001",
+      "type": "normal",
+      "size": "S",
+      "status": "sprint-ready",
+      "passes": false,
+      "acceptance": [
+        "viewport meta changed from hard-coded width=480,height=320 to width=device-width,initial-scale=1 (Iris spec \u00a72 build strategy step 1)",
+        "whole UI wrapped in a fixed #stage {480x320} design box; shipped dashboard.css layout UNCHANGED inside it",
+        "#stage centered in a full-viewport flex container + scaled to fit: resize handler sets --scale = min(innerWidth/480, innerHeight/320); transform: scale(var(--scale)); transform-origin:center (JS handler = the safe path per spec)",
+        "container background black so the letterbox strip reads as bezel, not a gap",
+        "NO token/px layout edits -- scaled as a unit, not reflowed",
+        "Iris AC-6: on a real 1080p-output Pi the UI scales up centered to fill the panel (no corner-render), layout intact + text legible, unused strip a clean black bar -- CONFIRMED ON THE REAL PI (not just desktop browser)"
+      ],
+      "validationCriteria": [
+        {
+          "action": "load the carousel on the real 1080p-output Pi",
+          "outcome": "480x320 UI scales up centered, fills the panel, legible, clean black bars -- no corner render"
+        }
+      ],
+      "conditionalOutcomes": [
+        "if the letterbox bars are unacceptably large on the real panel (16:9 output vs 3:2 design), flag to Iris/CIO -- the fill/fluid alternatives were retired but the IRL scaler check may reopen it"
+      ],
+      "goal": "As the CIO, I want the 480x320 UI to fill the whole panel instead of rendering in a corner, so it's legible on the real display. CIO-locked decision 2026-07-21 = LETTERBOX (uniform scale of the exact 480x320 layout, centered, black bars on the aspect mismatch). Presentation-only, no dashboard.css layout rewrite (the win: zero layout churn). Independent of the P0 data fix.",
+      "tasks": []
+    },
+    {
+      "id": "US-483",
+      "title": "Light-feed brightness consumer -- auto-dim from a `light` lux state file + honest fixed fallback + alarm floor",
+      "parent": "F-121",
+      "epicId": "E-001",
+      "type": "normal",
+      "size": "M",
+      "status": "sprint-ready",
+      "passes": false,
+      "acceptance": [
+        "display reads light.lux (+ freshness) from the `light` state file; brightness = clamp(MIN, curve(lux), 1.0) -- curve is Iris's (UI), lux value is the reader's (owner = the single dedicated EDR reader, per Atlas DELTA-2 pure-consumer ruling)",
+        "ALARM FLOOR (load-bearing): MIN never dims the screen below a legible threshold while a REAL active alarm (STOP ribbon/takeover) is present -- dim a calm idle screen, never a damage-in-progress warning; the floor is a UI guard independent of lux",
+        "HONEST FALLBACK: until the `light` state file exists / is fresh, hold a fixed default brightness + show NO fabricated 'auto' behavior (honest instrument) -- do not pretend to react to light it can't read",
+        "Iris AC-7: brightness tracks a fresh light.lux; absent/stale -> fixed default (no fake auto); dimming never takes a STOP alarm below its legible floor",
+        "consumes the state file only -- no hardware polling in the display; pi/UI tests green"
+      ],
+      "validationCriteria": [
+        {
+          "action": "no `light` state file present (near-term)",
+          "outcome": "fixed default brightness, no fake 'auto' indicator"
+        },
+        {
+          "action": "inject a fresh light.lux state file",
+          "outcome": "brightness tracks the curve"
+        },
+        {
+          "action": "STOP alarm present + lux says dark",
+          "outcome": "brightness held at/above the legible alarm floor"
+        }
+      ],
+      "conditionalOutcomes": [
+        "GATED on Atlas Q-4: the `light` lux state-file contract (state-file seam + fallback-when-absent). Do NOT finalize the contract shape before Atlas blesses it. The near-term fixed-fallback slice is buildable now; the live-lux consumption lands with the EDR reader (W-9)."
+      ],
+      "goal": "As the display, I want brightness driven by a live lux reading (pure consumer of a `light` state file the EDR light reader owns), not a clock schedule -- CIO-confirmed 2026-07-21 the light sensor is a real data feed. The display never reads the sensor itself. Live lux is EDR-gated (TSL2591, W-9); near-term ships an HONEST fixed-default fallback (no fake 'auto' when the state file is absent/stale).",
+      "tasks": []
+    },
+    {
+      "id": "US-484",
+      "title": "Rule-10 token reconciliation -- dashboard.css :root drift vs specs/UI/tokens.css SSOT",
+      "parent": "F-121",
+      "epicId": "E-001",
+      "type": "tech-debt",
+      "size": "S",
+      "status": "sprint-ready",
+      "passes": false,
+      "acceptance": [
+        "dashboard.css :root uses the specs/UI/tokens.css SSOT values (rename/align --ok-green -> --green-ok #35C46A, etc.); no visual regression on the shipped cards",
+        "token additions needed by the SSOT (--text-primary, --critical-red, --green-ok if absent) added to specs/UI/tokens.css -- routed through Atlas (Rule-10, his call on the SSOT)",
+        "grep confirms no drifted token literal remains in dashboard.css; UI renders unchanged"
+      ],
+      "validationCriteria": [
+        {
+          "action": "diff dashboard.css :root vs specs/UI/tokens.css after the change",
+          "outcome": "no drift; dashboard uses SSOT tokens; cards render unchanged"
+        }
+      ],
+      "conditionalOutcomes": [
+        "the specs/UI/ token SSOT edits are Atlas-gated (Rule-10); if he rules a different canonical name/value, use his"
+      ],
+      "goal": "As the UI SSOT, I want the shipped dashboard.css :root tokens reconciled with specs/UI/tokens.css so there is one source of truth. Iris found drift (spec \u00a73): --ok-green #2ECC71 (dist) vs --green-ok #35C46A (SSOT); --text-primary #DDDDDD in dist but 'not yet tokenized' in SSOT; --critical-red still open. Token ADDITIONS to the specs/UI SSOT route via Atlas (Rule-10).",
+      "tasks": []
+    },
+    {
+      "id": "US-485",
+      "title": "pygame status_display.py sunset -- verify carousel parity then retire",
+      "parent": "F-121",
+      "epicId": "E-001",
+      "type": "tech-debt",
+      "size": "S",
+      "status": "sprint-ready",
+      "passes": false,
+      "acceptance": [
+        "confirm the carousel covers what status_display.py rendered (US-264 VCELL-authoritative battery rule preserved -- must not lose it)",
+        "retire status_display.py + its orchestrator launch path + config flag (or confirm already inert); no import/runtime references remain",
+        "architecture.md 'Two Display Surfaces' note updated to reflect the sunset (Rule-10); pi tests green"
+      ],
+      "validationCriteria": [
+        {
+          "action": "grep for status_display references + run pi tests after removal",
+          "outcome": "no live references; carousel is sole surface; tests green; VCELL rule preserved"
+        }
+      ],
+      "conditionalOutcomes": [
+        "if status_display.py still holds a capability the carousel lacks (e.g. a VCELL rule), STOP + file it before removing -- do not lose the US-264 authoritative rule"
+      ],
+      "goal": "As the codebase, I want the legacy pygame status_display.py retired now that the HTML carousel is the sole dashboard surface (architecture.md already notes pi.hardware.statusDisplay.enabled=false, superseded). Verify parity (nothing the carousel lacks) then remove the dead path.",
+      "tasks": []
+    },
+    {
+      "id": "US-486",
+      "title": "Fix startup_log schema guard: US-263 7-column set vs shipped US-419 data_quality 8th column (2 red tests)",
+      "parent": "F-080",
+      "epicId": "E-004",
+      "type": "issue",
+      "size": "S",
+      "status": "sprint-ready",
+      "passes": false,
+      "acceptance": [
+        "confirm the intended canonical shape (PM/Atlas call): data_quality IS part of the canonical startup_log schema (Rex's lean) -> update the guard to 8 columns; do NOT relax the guard (its own message forbids relaxing)",
+        "update EXPECTED_COLUMNS to include ('data_quality','TEXT',0,0) + bump the count guard 7 -> 8 in test_boot_reason_boot_id.py::TestStartupLogSchema",
+        "update the US-263 spec section to document the 8th column (the guard message directs updating both)",
+        "`pytest tests/pi -m 'not slow'` GREEN (the 2 reds gone); no other test disturbed"
+      ],
+      "validationCriteria": [
+        {
+          "action": "pytest tests/pi/diagnostics/test_boot_reason_boot_id.py::TestStartupLogSchema",
+          "outcome": "GREEN (8-column canonical set matches shipped US-419)"
         },
         {
           "action": "pytest tests/pi -m 'not slow'",
@@ -39,128 +250,38 @@
         }
       ],
       "conditionalOutcomes": [
-        "if adding query() to the Protocol breaks duck-typed callers beyond the DTC fakes, enumerate + update them to the typed contract -- do NOT re-introduce a getattr fallback (that fallback IS the hole this closes)"
+        "if Atlas/PM rule data_quality should be a SEPARATE table (not canonical on startup_log), the fix is a schema migration instead of a guard bump -- route to Atlas BEFORE coding (do not guess)"
       ],
-      "goal": "As the OBD capture path, I want the live A-17 DTC-read serialization fix (4a17bc1) hardened so the connect-edge race F-117 missed cannot silently regress. Per Atlas 2026-07-20 re-scope (verified): the serialized query() wrapper already exists on ObdConnection and the ObdConnectionLike Protocol already exists (dtc_client.py:137, declaring isConnected()+obd) -- so this is NOT greenfield. The real gap: dtc_client.py:353-354 still keeps a runtime `getattr(connection,'query',None)` fallback to the RAW unlocked `connection.obd.query()`, and the non-mocked connect-edge concurrency regression (F-117 GAP-1) is missing.",
-      "tasks": [],
-      "completionNotes": "DONE (Rex, 2026-07-20). (1) Removed the getattr('query') fallback in DtcClient._serializedQuery -> now `return connection.query(cmd)` (raw unlocked .obd.query path gone; grep-verified). (2) Added `query(self, command, /) -> Any` as a positional-only typed member of ObdConnectionLike Protocol (dtc_client.py) + updated docstring; kept `obd` for legacy facade. (3) Enumerated + updated the 5 duck-typed DTC test fakes to the typed contract (added query() delegating to .obd.query): test_dtc_client, test_dtc_client_clear, test_dtc_logger, test_dtc_logger_keyon, test_dtc_logger_drive_lifecycle -- NO getattr fallback re-introduced (conditionalOutcome honored). Production implementers ObdConnection + SimulatedObdConnection already have query() (verified) -> no other callers broke. (4) NEW non-mocked regression tests/pi/obdii/test_dtc_connect_edge_concurrency.py: REAL ObdConnection + REAL DtcClient, a logger read loop + a KOEO Mode03/07 DTC read loop on ONE connection, against a hand-faked non-thread-safe port that latches on concurrent entry -> asserts no interleave + no lost reads (exact counts) + no disconnected-while-reading error; a 2nd test pins that a query()-less connection now fails loud (no silent raw path). VALIDATION: new concurrency test GREEN through the real _ioLock; validationCriterion-2 (revert `with self._ioLock:` in ObdConnection.query -> RED) is by-design (the port's interleave latch depends on the lock) -- reviewer can confirm by hand. GREP: getattr('query') fallback gone. LINT: ruff clean on all 7 touched files. mypy NOT installed on bench (PM/integration gate) -- code written mypy-clean (positional-only Protocol query() so ObdConnection.query(command, callerGeneration=) and the cmd-named fakes both conform). SUITE CAVEAT: `pytest tests/pi -m 'not slow'` has 2 FAILURES, BOTH pre-existing + UNRELATED to US-474 (tests/pi/diagnostics/test_boot_reason_boot_id.py::TestStartupLogSchema -- US-419 data_quality 8th col vs the US-263 7-col guard; reproduces in isolation, none of my 7 files touch startup_log). Filed offices/pm/issues/I-startup-log-schema-guard-vs-us419-data-quality.md. All DTC + connection tests (56 targeted) PASS. SPEC: acceptance#5 load-bearing spec (architecture.md §3.5) is read-only for Ralph -> filed offices/pm/issues/I-arch-spec-3.5-dtc-caller-and-us474-contract.md with the exact §3.5 addition (enumerate DTC caller + reference new contract test) for PM/Atlas.",
-      "feedback": {
-        "filesActuallyTouched": [
-          "src/pi/obdii/dtc_client.py",
-          "tests/pi/obdii/test_dtc_client.py",
-          "tests/pi/obdii/test_dtc_client_clear.py",
-          "tests/pi/obdii/test_dtc_logger.py",
-          "tests/pi/obdii/test_dtc_logger_keyon.py",
-          "tests/pi/obdii/test_dtc_logger_drive_lifecycle.py",
-          "tests/pi/obdii/test_dtc_connect_edge_concurrency.py",
-          "offices/pm/issues/I-startup-log-schema-guard-vs-us419-data-quality.md",
-          "offices/pm/issues/I-arch-spec-3.5-dtc-caller-and-us474-contract.md"
-        ]
-      }
-    },
-    {
-      "id": "US-477",
-      "title": "OBD MAC integrity -- repo guard (00:04:3E:85:0D:FB) + deploy re-asserts canonical MAC to the Pi (self-heal 07-17 phantom drift)",
-      "parent": "F-120",
-      "epicId": "E-OPS",
-      "type": "normal",
-      "size": "S",
-      "status": "sprint-ready",
-      "passes": true,
-      "acceptance": [
-        "guard test asserts the repo MAC stays 00:04:3E:85:0D:FB (deploy/addresses.sh OBD_BT_MAC default + config.json pi.bluetooth.macAddress) and name 'OBDLink LX'; RED on any change to the phantom ...3C... or another value",
-        "deploy (deploy-pi.sh / install-rfcomm-bind.sh) RE-ASSERTS the canonical MAC into the Pi's /etc/default/obdlink on every deploy, so a drifted Pi (like the 07-17 phantom) self-heals on next deploy instead of silently binding a dead device",
-        "the re-assert is idempotent + logged; it corrects only the MAC to the repo canonical (does not clobber a legitimately different channel/device)",
-        "py/shellcheck lint clean on touched files"
-      ],
-      "validationCriteria": [
-        {
-          "action": "flip addresses.sh OBD_BT_MAC to the phantom 00:04:3C:84:15:6B locally + run the guard",
-          "outcome": "test RED (inversion/drift caught)"
-        },
-        {
-          "action": "deploy-pi.sh --dry-run against a fixture /etc/default/obdlink holding the phantom MAC",
-          "outcome": "deploy re-asserts 00:04:3E:85:0D:FB (self-heal)"
-        }
-      ],
-      "conditionalOutcomes": [
-        "if a real SECOND dongle is ever introduced (multi-device), revisit the single-canonical-MAC assumption -- out of scope now (one dongle, one burned-in MAC)"
-      ],
-      "goal": "As the OBD connection config, I want the canonical OBDLink MAC 00:04:3E:85:0D:FB pinned so a phantom MAC can neither enter the repo nor persist on the Pi. ORIGIN: on 2026-07-17 the Pi's /etc/default/obdlink + .env were repointed to a PHANTOM 00:04:3C:84:15:6B (architect mis-ID of a stranger's device; a BT MAC is burned-in and does NOT change on factory reset) -> rfcomm would bind a nonexistent device -> no connection -> zero capture. The repo is ALREADY correct (...3E...); this pins it and makes the deploy self-heal a drifted Pi so this can't recur.",
-      "tasks": [],
-      "completionNotes": "DONE (Rex, 2026-07-20). (1) GUARD tests/deploy/test_obd_mac_integrity.py: asserts deploy/addresses.sh OBD_BT_MAC default == 00:04:3E:85:0D:FB, config.json pi.bluetooth.macAddress stays the ${OBD_BT_MAC} SSOT placeholder (never a hardcoded literal -- that would be a bypass vector), device named 'OBDLink LX', and the phantom 00:04:3C:84:15:6B is absent from BOTH addresses.sh and config.json. VC1 PROVEN: the regex extracts a flipped phantom and the canonical assertion goes RED (verified against a simulated flip; the live test reads the real file so a real flip is RED). (2) SELF-HEAL deploy/reassert-obd-mac.sh: idempotent, logged, SURGICAL -- corrects ONLY the OBD_BT_MAC line via sed and preserves OBD_BT_CHANNEL + every other line/comment (acceptance #3); no-op when already canonical; appends if the line is absent; exits 0 (nothing-to-do) if the env file is missing; validates MAC format; --dry-run REPORTS without writing. (3) WIRED into deploy-pi.sh as step_reassert_obd_mac, called UNCONDITIONALLY on every deploy (NOT gated behind --init) -- same posture/rationale as step_enforce_eeprom_power_off_on_halt, so a drifted Pi self-heals on the next routine re-deploy (acceptance #2). $OBDLINK_ENV_FILE override lets the --dry-run demonstrate the self-heal against a fixture (VC2). ALSO fixed step_install_rfcomm_bind to bind the repo-canonical $OBD_BT_MAC instead of the piEnvMac ssh-pull from the Pi's .env -- trusting the Pi .env is exactly how the 07-17 phantom propagated into the bind (root-cause close). VC2 DEMONSTRATED: helper --dry-run against a phantom fixture prints 'would correct 00:04:3C:84:15:6B -> 00:04:3E:85:0D:FB (OBDLink LX)' and writes nothing; the every-deploy step prints the reassert line in a plain dry-run. GATES: ruff clean on both .py; B-044 audit + tests/lint/test_no_hardcoded_addresses.py (16) clean; bash driver test_reassert_obd_mac.sh 30/30; pytest guard+wrapper 8/8; deploy_pi + deploy_invariants 49 pass (no regression from the deploy-pi.sh edits); bash -n clean on both scripts. shellcheck NOT installed on the bench (PM/integration gate) -- scripts mirror the lint-clean eeprom-enforce idioms. No spec update in acceptance (US-477 has no architecture.md clause). conditionalOutcome: kept single-canonical-MAC (one dongle); multi-device deferred.",
-      "feedback": {
-        "filesActuallyTouched": [
-          "deploy/reassert-obd-mac.sh",
-          "deploy/deploy-pi.sh",
-          "tests/deploy/test_obd_mac_integrity.py",
-          "tests/deploy/test_reassert_obd_mac.sh",
-          "tests/deploy/test_reassert_obd_mac.py"
-        ]
-      }
-    },
-    {
-      "id": "US-479",
-      "title": "Pre-drive OBD connect + capture green-light (CIO-runnable; exercises the A-17 connect-edge)",
-      "parent": "F-117",
-      "epicId": "E-OPS",
-      "type": "issue",
-      "size": "M",
-      "status": "sprint-ready",
-      "passes": true,
-      "acceptance": [
-        "a single CIO-runnable pre-drive gate (compose scripts/verify_bt_pair.sh + scripts/verify_live_idle.sh, or a thin wrapper) that reports in order: BT bond/link to 00:04:3E:85:0D:FB present -> /dev/rfcomm0 bound -> N seconds live capture -> realtime_data row count + core-PID coverage -> final 'CAPTURE: PASS/FAIL' + reason",
-        "the live window EXERCISES the connect-edge concurrency scenario (a KOEO/idle DTC read co-occurring with the realtime logger on ONE connection -- the exact A-17 race) so a happy-path-only pass is impossible (the blind spot that let a weekend of drives capture nothing)",
-        "a KOEO (engine-off) sub-check gives the earliest signal (link + one read succeeds) so the CIO can check in the driveway before the engine is warm; live-idle (engine-on) is the authoritative gate",
-        "bench mode (fixture replay) lets Ralph validate the check logic off-Pi; PASS in bench is explicitly NOT a substitute for live (same discipline as verify_live_idle.sh)",
-        "one documented command (make target or deploy/README) whose output is copy-pasteable evidence for /sprint-validated"
-      ],
-      "validationCriteria": [
-        {
-          "action": "run the gate in bench mode against the eclipse_idle fixture",
-          "outcome": "exercises the connect-edge path + reports PASS with row/coverage evidence"
-        },
-        {
-          "action": "(CIO, live on the Pi, engine idling) run the gate before a drive",
-          "outcome": "CAPTURE: PASS with realtime_data rows landing, or a clear FAIL that prevents a blind drive"
-        }
-      ],
-      "conditionalOutcomes": [
-        "if the gate shows capture STILL fails after US-474 + the Pi MAC revert (a deeper bug than the A-17 race), STOP + escalate to Atlas with the captured diagnostics -- do NOT green-light a drive on a failing gate"
-      ],
-      "goal": "As the CIO, before I commit to an IRL drive I want ONE trustworthy command that proves the Pi is (a) BT-linked to the OBDLink LX (00:04:3E:85:0D:FB), (b) rfcomm-bound to /dev/rfcomm0, and (c) actually landing realtime_data rows -- so I never again drive all weekend and capture zero rows. It MUST exercise the connect-edge (a KOEO/idle DTC read co-occurring with the realtime logger on the one connection) so a GREEN cannot happen while the A-17 race silently kills capture.",
-      "tasks": [],
-      "completionNotes": "DONE (Rex, 2026-07-20). NEW src/pi/obdii/pre_drive_gate.py (SSOT logic): runConnectEdgeCapture() opens ONE connection and runs the REAL RealtimeDataLogger (writes realtime_data via the serialized connection.query() path) CONCURRENTLY with a KOEO/idle DTC read loop (DtcClient Mode03/07) on the SAME connection -- the exact A-17 connect-edge (F-117), exercised on purpose. evaluateGate() is the pure PASS/FAIL: connect-edge/interleave/DTC checks run BEFORE the row/coverage checks so 'rows landed' can NEVER on its own green-light -- the load-bearing AC2 rule ('a happy-path-only pass is impossible', the blind spot that let a weekend capture zero). NEW scripts/pre_drive_greenlight.py: thin CLI (--bench SimulatedObdConnection / --live real conn; --koeo-only; --duration; writes to a DEDICATED temp db, never production data/obd.db) that runs the capture + prints rows + core-PID coverage + 'CAPTURE: PASS/FAIL -- reason'. NEW scripts/verify_pre_drive.sh: the ONE CIO-runnable gate -- composes verify_bt_pair.sh (steps 1-2: BT bond/link + /dev/rfcomm0 bind) + KOEO engine-off sub-check (step 3, earliest driveway signal) + live capture window (step 4, connect-edge exercised) + final verdict (step 5); stops eclipse-obd.service so the probe owns rfcomm0 then restarts it (mirrors verify_live_idle.sh); MAC defaults to the $OBD_BT_MAC SSOT (addresses.sh, canonical 00:04:3E:85:0D:FB -- never hardcoded). DOC (AC5): make targets pre-drive / pre-drive-koeo / pre-drive-bench + deploy/README 'Pre-drive OBD green-light' section (copy-pasteable evidence for /sprint-validated). VALIDATION: VC1 -- `bash scripts/verify_pre_drive.sh --bench --duration 5` -> CAPTURE: PASS rows=217 coverage=12/12 connect-edge=exercised, exit 0. TEETH -- test_runConnectEdgeCapture_withRevertedLock_detectsInterleave_andGateFails proves that reverting ObdConnection._ioLock makes the logger+DTC reads interleave on the one non-thread-safe port, the probe observes it, and evaluateGate FAILS (the validationCriterion-2 analog, provable off-Pi). GATES: pytest tests/pi/obdii/test_pre_drive_gate.py (10) + tests/deploy/test_verify_pre_drive.py (4, incl. the 16-assertion bash driver) all GREEN; ruff clean on all 4 .py; bash -n clean on both .sh. NOTE on VC1 wording: I drive the bench with SimulatedObdConnection, NOT the static eclipse_idle.db fixture -- a static fixture replay CANNOT exercise a live concurrent connect-edge (the whole point of the gate needs a driving connection). VC2 (CIO live on Pi, engine idling) is IRL-gated -- the gate is built to emit a clear FAIL that prevents a blind drive; conditionalOutcome (escalate to Atlas if capture STILL fails after US-474 + MAC revert) is a live-only branch. mypy NOT installed on bench (PM/integration gate); code written mypy-clean. SPEC: US-479 acceptance carries no architecture.md clause; pre_drive_gate is a diagnostic composed of existing subsystems (does not change the capture path). If PM/Atlas want an architecture.md §3.5 pointer to the pre-drive gate, that is a doc follow-up (specs/ is read-only for Ralph).",
-      "feedback": {
-        "filesActuallyTouched": [
-          "src/pi/obdii/pre_drive_gate.py",
-          "scripts/pre_drive_greenlight.py",
-          "scripts/verify_pre_drive.sh",
-          "tests/pi/obdii/test_pre_drive_gate.py",
-          "tests/deploy/test_verify_pre_drive.sh",
-          "tests/deploy/test_verify_pre_drive.py",
-          "Makefile",
-          "deploy/README.md"
-        ]
-      }
+      "goal": "As the pi test suite, I want `pytest tests/pi -m 'not slow'` green -- it currently has exactly 2 failures in tests/pi/diagnostics/test_boot_reason_boot_id.py::TestStartupLogSchema because US-419/F-080 shipped an 8th startup_log column (data_quality, the post-reboot clock-drift flag, database_schema.py:750) but the US-263 guard still asserts exactly 7 columns. Pre-existing drift (NOT a US-474 regression -- reproduces in isolation). Filed by Rex, Sprint 60.",
+      "tasks": []
     }
   ],
   "validation": {
     "bigDefinitionOfDone": [
-      "(run the new non-mocked connect-edge concurrency test against the current serialized path) \u2192 (GREEN -- logger + DTC reads serialize, no interleave, no lost reads)  [from US-474]",
-      "(locally revert the _ioLock serialization + re-run) \u2192 (RED -- proves the test guards the race)  [from US-474]",
-      "(grep dtc_client.py for the getattr('query') fallback after the change) \u2192 (gone -- DTC reads have no raw unlocked path)  [from US-474]",
-      "(pytest tests/pi -m 'not slow') \u2192 (full pi suite green)  [from US-474]",
-      "(flip addresses.sh OBD_BT_MAC to the phantom 00:04:3C:84:15:6B locally + run the guard) \u2192 (test RED (inversion/drift caught))  [from US-477]",
-      "(deploy-pi.sh --dry-run against a fixture /etc/default/obdlink holding the phantom MAC) \u2192 (deploy re-asserts 00:04:3E:85:0D:FB (self-heal))  [from US-477]",
-      "(run the gate in bench mode against the eclipse_idle fixture) \u2192 (exercises the connect-edge path + reports PASS with row/coverage evidence)  [from US-479]",
-      "((CIO, live on the Pi, engine idling) run the gate before a drive) \u2192 (CAPTURE: PASS with realtime_data rows landing, or a clear FAIL that prevents a blind drive)  [from US-479]"
+      "(on the Pi, ls /run/eclipse-obd/states/ + curl the states endpoints) \u2192 (system-status + battery-health + dtc files present, fresh, served 200 with real JSON)  [from US-480-a]",
+      "(load the carousel on the Pi parked (no OBD)) \u2192 (cards render honest state; NO phantom Check Engine takeover)  [from US-480-a]",
+      "(deploy-pi.sh to a Pi with an empty states dir, then reboot) \u2192 (emitters auto-start + repopulate states dir with no manual steps (deploy-installed, not one-off))  [from US-480-b]",
+      "(inspect architecture.md emitter/runtime section) \u2192 (documents the run-model + deploy-install (Rule-10 satisfied))  [from US-480-b]",
+      "(parked state (obd.available=false + drive.state=idle) on the Pi/bench) \u2192 (idle card is the home card; STANDBY grey; faults line 'DTC not read since key-off'; no false green)  [from US-481]",
+      "(wake OBD / start a drive) \u2192 (home auto-advances off idle without a manual swipe)  [from US-481]",
+      "(inject a stored STOP code while idle) \u2192 (ribbon/takeover surfaces the real fault (idle does not suppress it))  [from US-481]",
+      "(load the carousel on the real 1080p-output Pi) \u2192 (480x320 UI scales up centered, fills the panel, legible, clean black bars -- no corner render)  [from US-482]",
+      "(no `light` state file present (near-term)) \u2192 (fixed default brightness, no fake 'auto' indicator)  [from US-483]",
+      "(inject a fresh light.lux state file) \u2192 (brightness tracks the curve)  [from US-483]",
+      "(STOP alarm present + lux says dark) \u2192 (brightness held at/above the legible alarm floor)  [from US-483]",
+      "(diff dashboard.css :root vs specs/UI/tokens.css after the change) \u2192 (no drift; dashboard uses SSOT tokens; cards render unchanged)  [from US-484]",
+      "(grep for status_display references + run pi tests after removal) \u2192 (no live references; carousel is sole surface; tests green; VCELL rule preserved)  [from US-485]",
+      "(pytest tests/pi/diagnostics/test_boot_reason_boot_id.py::TestStartupLogSchema) \u2192 (GREEN (8-column canonical set matches shipped US-419))  [from US-486]",
+      "(pytest tests/pi -m 'not slow') \u2192 (full pi suite green)  [from US-486]"
     ],
-    "validationMethod": "BENCH-PI-SUITE + PRE-DRIVE-GREENLIGHT + IRL-DRIVE35-RECAPTURE",
+    "validationMethod": "PI-RENDER-TRUTHFULLY + REAL-1080P-PI + BENCH-PI-SUITE",
     "validatesFeatures": [
-      "F-117"
+      "F-092",
+      "F-097",
+      "F-111",
+      "F-080"
     ],
-    "currentVersion": "V0.29.14",
+    "currentVersion": "V0.29.15",
     "validatedAt": null,
     "validatedBy": null
   }
