@@ -84,9 +84,12 @@ before "BT bond/link reported before the live window" "Steps 1-2 / 5" "Step 4 / 
 run 0 "--koeo-only --dry-run exits 0" bash "$GATE" --koeo-only --dry-run
 contains "koeo-only skips the live-idle window" "live-idle window SKIPPED"
 
-# 6. --bench real run -> CAPTURE PASS with connect-edge exercised
-run 0 "--bench --duration 5 exits 0" bash "$GATE" --bench --duration 5
-contains "bench reports CAPTURE PASS" "CAPTURE: PASS"
+# 6. --bench real run -> NON-AUTHORITATIVE (distinct non-green exit 3)
+#    US-487 FOLLOW-UP 2: a bench PASS is not the drive green-light, so it must NOT
+#    return exit 0 -- it returns the distinct non-authoritative code so a distracted
+#    operator can't mistake it for the real full-mode gate.
+run 3 "--bench --duration 5 exits 3 (non-authoritative, not a drive green-light)" bash "$GATE" --bench --duration 5
+contains "bench reports NON-AUTHORITATIVE PASS" "NON-AUTHORITATIVE PASS"
 contains "bench exercised the connect-edge" "connect-edge=exercised"
 contains "bench warns it is not a live PASS" "NOT an in-vehicle PASS"
 

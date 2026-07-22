@@ -1282,3 +1282,47 @@ Task: Fix startup_log schema guard: US-263 7-column set vs shipped US-419 data_q
   (12 passed) is the authoritative in-loop gate; a src-free test-expected-value change has zero
   regression surface on other tests.
 ---
+
+## 2026-07-22 - US-487 (Rex / Agent 1, Session 1 — Sprint 61)
+Task: Harden the US-479 pre-drive green-light -- verify the PRODUCTION capture path + non-green exit for weak modes
+
+### What was implemented:
+- FOLLOW-UP 1 (production-path verify): steps 1-4 of the gate probe a THROWAWAY temp db
+  (pre_drive_greenlight.py --db defaults to a temp file, NEVER data/obd.db) and the probe
+  stops eclipse-obd; the pre-existing restart was best-effort (`|| true`) with NO post-check
+  -- so a GREEN could coexist with a dead production collector. Added a post-restart block
+  (full live mode only; KOEO is engine-off so production can't capture, bench never reaches
+  the live path) that proves the PRODUCTION path is alive: `systemctl is-active --quiet
+  eclipse-obd.service` + two `SELECT COUNT(*) FROM realtime_data` samples from data/obd.db
+  (via a `prod_row_count()` ssh helper), PROD_SETTLE_SECS(15) apart-then-PROD_GROWTH_SECS(10),
+  that MUST increase. Either failing sets PROD_RC=1 (fail-closed: non-numeric/empty output =>
+  not-capturing), and the final PASS now requires `OVERALL_OK && CAPTURE_RC==0 && PROD_RC==0`.
+- FOLLOW-UP 2 (non-green weak modes): new `EXIT_NONAUTH=3`. `--bench` success and `--koeo-only`
+  success now print `CAPTURE: NON-AUTHORITATIVE PASS (...)` and exit 3 (a distinct non-green
+  status) instead of exit 0, so a distracted operator can't mistake the simulator /
+  floor-skipping driveway check for the real full-mode gate. Dry-run for both still exits 0
+  (a plan preview is not a verdict).
+- FOLLOW-UP 3 (DoD honesty): header states plainly the gate does NOT detect the A-17 read/write
+  race live -- `connection.obd.interleaved` is a test-fake-only attribute inert outside pytest;
+  the live green rests on the single-connection `_ioLock` + the row/coverage floors. No overclaim.
+- Timings overridable via deploy.conf (PRE_DRIVE_PROD_SETTLE_SECS / PRE_DRIVE_PROD_GROWTH_SECS).
+
+### Files changed:
+- Modified: `scripts/verify_pre_drive.sh` (post-restart PRODUCTION-capture block + PROD_RC
+  gating; EXIT_NONAUTH=3 for bench/koeo-only; `prod_row_count()` helper + PROD_DB; overridable
+  settle/growth vars; exit-code table + report-order doc + honesty note)
+- Modified: `tests/deploy/test_verify_pre_drive.sh` (section 6: --bench now asserts exit 3 + NON-AUTHORITATIVE PASS)
+- Modified: `tests/deploy/test_verify_pre_drive.py` (3 new static-wiring tests + mod-history entry)
+
+### Learnings for future iterations:
+- **Pattern discovered**: a gate that probes a throwaway resource proves nothing about the real
+  service -- after any stop/restart of a production unit, verify the PRODUCTION path itself
+  (unit active + rows growing in the real db) and feed that into the verdict so a green can't
+  coexist with a dead service. Fail closed (non-numeric row count => not-capturing).
+- **Gotcha**: under `set -e`, `python3 ...; rc=$?` loses the failing exit (set -e kills the
+  script before `rc=$?`); use `python3 ... || rc=$?`. And `exit $?` right after `if cmd; then
+  ...; fi` is 0 even when `cmd` failed (the if-statement itself succeeds) -- capture rc explicitly.
+- **Gotcha**: VC1 (kill eclipse-obd before the post-restart check) and the live `--koeo-only`
+  exit-3 are PI-RUNTIME gates (need the real Pi + SSH + engine-on idle); the bench proves the
+  bash wiring, the --bench exit-3 (real run), the fail-closed logic path, and the static assertions.
+---
