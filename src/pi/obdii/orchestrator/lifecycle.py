@@ -501,6 +501,11 @@ class LifecycleMixin:
     # (alongside the OBD PersistenceSubscriber), stopped in _shutdownDataLogger.
     _sensorReaders: list[Any] | None
     _edrPersistenceSubscriber: Any | None
+    # US-483-a (F-121): the light -> states/light bridge (a PURE bus consumer of
+    # raw.light.lux; no I2C/OBD connection).  Stays None unless ``pi.bus.enabled``
+    # AND ``pi.sensors.light.enabled`` are both set.  Built alongside the EDR
+    # sensor path in _initializeDataLogger, stopped in _shutdownDataLogger.
+    _lightStateBridge: Any | None
 
     def _initializeAllComponents(self) -> None:
         """
@@ -1544,6 +1549,8 @@ class LifecycleMixin:
         # US-410: default to no EDR sensor readers / subscriber (ships dark too).
         self._sensorReaders = None
         self._edrPersistenceSubscriber = None
+        # US-483-a: default to no light-state bridge (ships dark with light off).
+        self._lightStateBridge = None
         busEnabled = bool(
             self._config.get('pi', {}).get('bus', {}).get('enabled', False)
         )
@@ -1618,6 +1625,19 @@ class LifecycleMixin:
             if edrSubscriber is None:
                 return
             edrSubscriber.start()
+            # US-483-a: mirror raw.light.lux -> states/light for the dashboard
+            # brightness consumer (US-483-b).  A PURE bus consumer -- it opens no
+            # I2C device and no OBD connection, so it cannot re-introduce the A-17
+            # second-connection race.  Subscribe + start its drain BEFORE the
+            # readers publish so no early lux sample is missed (STREAM has no
+            # history).  Built only when pi.sensors.light.enabled (else None).
+            from pi.sensors.light_state_bridge import (
+                createLightStateBridgeFromConfig,
+            )
+            lightBridge = createLightStateBridgeFromConfig(self._config, bus)
+            if lightBridge is not None:
+                lightBridge.start()
+            self._lightStateBridge = lightBridge
             for reader in readers:
                 reader.start()
             self._sensorReaders = readers
@@ -2362,6 +2382,16 @@ class LifecycleMixin:
                 except Exception as e:  # noqa: BLE001 -- shutdown must not raise out
                     logger.warning("Failed to stop EDR sensor reader: %s", e)
             self._sensorReaders = None
+        # US-483-a: stop the light-state bridge drain thread (no-op when light
+        # was off -- the bridge stays None).
+        lightBridge = getattr(self, '_lightStateBridge', None)
+        if lightBridge is not None:
+            try:
+                lightBridge.stop()
+            except Exception as e:  # noqa: BLE001 -- shutdown must not raise out
+                logger.warning("Failed to stop light-state bridge: %s", e)
+            finally:
+                self._lightStateBridge = None
         edrSubscriber = getattr(self, '_edrPersistenceSubscriber', None)
         if edrSubscriber is not None:
             try:

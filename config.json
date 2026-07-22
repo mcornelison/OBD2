@@ -476,7 +476,7 @@
       ]
     },
     "bus": {
-      "enabled": false
+      "enabled": true
     },
     "sensors": {
       "imu": {
@@ -485,7 +485,7 @@
         "persistHz": 25
       },
       "light": {
-        "enabled": false,
+        "enabled": true,
         "sampleHz": 1
       },
       "retentionDays": 7

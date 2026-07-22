@@ -2694,14 +2694,35 @@ event-triggered high-rate (100–200 Hz) capture are F-115. The reader stores
 calibration are deferred transforms (F-115), pending the recorded mounting
 axis-orientation.
 
-**Config (ships dark).** Master `pi.bus.enabled` → `pi.sensors.imu.enabled` /
-`pi.sensors.light.enabled` (default `false`, each requires the bus gate);
+**Bus → `states/light` bridge (US-483-a / F-121, Sprint 61 / V0.29.15).** The
+carousel display auto-dim consumer (US-483-b) is a **pure consumer of a
+reader-owned state file** (Atlas DELTA-2) — it never touches the TSL2591. A
+dedicated bridge (`src/pi/sensors/light_state_bridge.py`, `LightStateBridge`)
+subscribes to the additive `raw.light.lux` channel (LOSSY — a display needs only
+the freshest reading) and mirrors it into `states/light` (`{lux, ts}`, written
+atomically via the shared `boot_state_emitter` primitives and served by
+`eclipse-states-http` alongside the US-480-a card states). The bridge opens **no
+I²C device and no OBD connection** — it is orchestrator-invoked as a bus
+subscriber inside `_startEdrSensorPath` (subscribed *before* the readers publish,
+stopped in `_shutdownDataLogger`), so it cannot re-introduce the A-17
+second-connection race. Honest-instrument carries through the seam: a saturated
+read (`lux=None`) is written as JSON `null` (never `inf`/fabricated), and the
+freshness `ts` is the **sample's own read-time** (not write-time), so a stalled
+feed goes honestly stale and the consumer falls back rather than trusting a
+frozen value. Gated behind `pi.bus.enabled` + `pi.sensors.light.enabled`.
+
+**Config (connect-when-wired).** Master `pi.bus.enabled` → `pi.sensors.imu.enabled`
+/ `pi.sensors.light.enabled` (each requires the bus gate);
 `pi.sensors.imu.sampleHz` (`50`, bus publish rate), `pi.sensors.imu.persistHz`
 (`25`, decimated persist), `pi.sensors.light.sampleHz` (`1`),
 `pi.sensors.retentionDays` (`7`, rolling-window purge — confirm vs Pi free space
 at deploy). Built US-408 (schema contract + Pi tables) / US-409 (IMU + light
 readers) / US-410 (persistence subscriber + retention) / US-411 (bench harness +
-golden-master regression + connect-when-wired drill).
+golden-master regression + connect-when-wired drill). **US-483-a (V0.29.15)
+flipped `pi.bus.enabled` + `pi.sensors.light.enabled` ON** — the TSL2591 is wired
++ I²C-addressable @0x29 (verified on the Pi 2026-07-22), so the light feed is now
+live and bridged to `states/light`; the IMU stays dark (clone boards absent — the
+graceful-absent reader stays silent, isolating the live light feed).
 
 *Gate-ratification note: §10.8 added per the 2026-05-18 design-gate governance
 rule (PM Rule 10 / C-4 DoD, in-sprint) from Atlas's 2026-06-30 EDR ADR
