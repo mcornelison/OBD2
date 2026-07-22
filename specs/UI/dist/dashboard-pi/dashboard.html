@@ -57,6 +57,16 @@
 
   <main id="carousel" aria-roledescription="carousel">
     <div id="track">
+      <!-- US-481 idle-state home card (F-121): the calm, honest PARKED view
+           (engine off / OBD asleep). NOT a polled state file -- it is rendered
+           from the system-status/battery-health/dtc states the carousel already
+           fetches (data-idle-home, so the availability poll skips it). It is the
+           HOME card while `idle` holds and auto-advances to System Status the
+           moment idle flips false (Iris AC-4). STANDBY never renders green;
+           faults never amber/red unless a REAL stored STOP/WATCH code exists. -->
+      <section class="card idle-card" data-idle-home id="idle-card" aria-label="Standby">
+        <div class="card-body"><span class="idle-boot">standby …</span></div>
+      </section>
       <section class="card" data-state="system-status" aria-label="System Status">
         <h2 class="card-title">System Status</h2>
         <div class="card-body">unavailable</div>

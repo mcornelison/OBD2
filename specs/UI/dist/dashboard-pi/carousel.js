@@ -626,6 +626,111 @@
   }
 
   // -------------------------------------------------------------------------
+  // US-481 idle-state home card (F-121) -- pure, node-testable logic. The calm,
+  // honest PARKED view: engine off / OBD asleep. It is a PURE CONSUMER of the
+  // SAME three state files the live cards read (system-status / battery-health /
+  // dtc) -- it fabricates nothing. Honest-instrument (Iris spec 1.3), locked in
+  // the pure builders so a buggy DOM layer can't violate them:
+  //   - NO green "OK" at idle EXCEPT the battery line (and that line always
+  //     carries its data-age, F-9) -- the STANDBY hero is always neutral.
+  //   - NO amber/red at idle UNLESS a REAL stored STOP/WATCH code exists; a
+  //     MINOR/unknown code and a clean read stay neutral.
+  //   - absence != clean and != fault: an unread DTC source is "DTC not read
+  //     since key-off", never "No codes" (a false all-clear) and never a phantom
+  //     Check Engine. The persistent ribbon/takeover still fire on top of this
+  //     card, so idle never SUPPRESSES a genuine fault (Iris AC-5).
+  // -------------------------------------------------------------------------
+
+  // idle is the emitter's SSOT (system-status `idle` boolean, US-480-a / Atlas
+  // idle-SSOT b). The display RENDERS the flag; it NEVER re-derives idle from
+  // the drive-state string (the replaced display-derived pattern). Anything
+  // other than an explicit `true` (absent key / malformed file / false) reads
+  // NOT-idle -- fail closed to the live view, never guess a calm parked state.
+  function carouselIdle(systemStatusData) {
+    return isObj(systemStatusData) && systemStatusData.idle === true;
+  }
+
+  // Last-drive summary fact. Honest degradation: the parked emitter writes
+  // driveId:null when idle, and there is no last-drive-summary state file yet,
+  // so with no drive reference the fact reads "No recent drive" -- absence, not
+  // a fabricated last trip. A real driveId (or an active recording) renders it.
+  function idleLastDriveFact(systemStatusData) {
+    var label = "LAST DRIVE";
+    if (!isObj(systemStatusData) || !isObj(systemStatusData.drive)) {
+      return { label: label, value: "—", detail: "unavailable", level: "unavailable" };
+    }
+    var drive = systemStatusData.drive;
+    if (drive.state === "recording") {
+      var id = drive.driveId == null ? "?" : drive.driveId;
+      return { label: label, value: "REC", detail: "drive " + id, level: "neutral" };
+    }
+    if (drive.driveId != null) {
+      return { label: label, value: "drive " + drive.driveId, detail: "last recorded", level: "neutral" };
+    }
+    return { label: label, value: "No recent drive", detail: "since key-off", level: "neutral" };
+  }
+
+  // Battery-with-age fact. The ONE line allowed to go green at idle -- and only
+  // via the Spool verdict, always carrying its data-age (F-9 stale-green guard).
+  // Reuses the battery-health view (single UPS source -> whole-card NA); prefers
+  // SoC% but falls back to volts (a voltage is never rendered AS a percent).
+  function idleBatteryFact(batteryData) {
+    var label = "BATTERY";
+    var view = batteryHealthView(batteryData);
+    if (view === null) {
+      return { label: label, value: "—", detail: "unavailable", level: "unavailable" };
+    }
+    if (view.unavailable) {
+      return { label: label, value: "NA", detail: view.reason, level: "unavailable" };
+    }
+    var value = view.soc && view.soc.shown ? view.soc.value : view.vcell.value;
+    return {
+      label: label,
+      value: value,
+      detail: view.healthCheck.label,   // "last health check · <date> (<age>)"
+      level: view.health.level,         // green ONLY when the Spool verdict is green
+    };
+  }
+
+  // Honest-faults fact. An unavailable DTC source (no key-on read) -> "DTC not
+  // read · since key-off" NEUTRAL. A real STOP/WATCH stored code surfaces at its
+  // tier (down/amber); a MINOR/unknown code stays neutral (never amber/red at
+  // idle); a clean read is "No stored codes" NEUTRAL (never green). Reuses the
+  // same alertableCodes classifier the ribbon/takeover use (Spool severity).
+  function idleFaultsFact(dtcData) {
+    var label = "FAULTS";
+    if (!isObj(dtcData) || sourceUnavailable(dtcData, "dtc")) {
+      return { label: label, value: "DTC not read", detail: "since key-off", level: "neutral" };
+    }
+    var alertable = alertableCodes(dtcData.codes);
+    if (alertable.length === 0) {
+      return { label: label, value: "No stored codes", detail: "key-on read", level: "neutral" };
+    }
+    var hero = alertable[0];
+    var level = hero.severity === "stop" ? "down"
+      : hero.severity === "watch" ? "amber"
+      : "neutral"; // minor/unknown are real but never amber/red at idle
+    var more = alertable.length > 1 ? " · +" + (alertable.length - 1) + " more" : "";
+    var desc = (hero.short && String(hero.short).trim()) || "";
+    return { label: label, value: hero.code, detail: desc + more, level: level };
+  }
+
+  // The assembled idle card view consumed by the DOM renderer + the node tests.
+  // The STANDBY hero is ALWAYS neutral (never a green "OK" backdrop). The header
+  // wordmark + live clock/date and the footer are DOM-only presentation.
+  function idleCardView(systemStatusData, batteryData, dtcData) {
+    return {
+      wordmark: "ECLIPSE",
+      hero: { title: "STANDBY", substate: "engine off · OBD asleep", level: "neutral" },
+      facts: {
+        lastDrive: idleLastDriveFact(systemStatusData),
+        battery: idleBatteryFact(batteryData),
+        faults: idleFaultsFact(dtcData),
+      },
+    };
+  }
+
+  // -------------------------------------------------------------------------
   // US-406 DTC Alerts card (Card 5) + detail -- pure, node-testable logic
   // (S-4/S-5/S-12/S-13/I-3). The card is a PURE CONSUMER of the `dtc` state:
   // the display maps a Spool-classified tier -> chip label + color + directive;
@@ -969,6 +1074,11 @@
     takeoverShouldShow: takeoverShouldShow,
     ribbonView: ribbonView,
     dtcListSorted: dtcListSorted,
+    carouselIdle: carouselIdle,
+    idleLastDriveFact: idleLastDriveFact,
+    idleBatteryFact: idleBatteryFact,
+    idleFaultsFact: idleFaultsFact,
+    idleCardView: idleCardView,
     dtcRow: dtcRow,
     alertsCardView: alertsCardView,
     trustBadge: trustBadge,
@@ -1038,6 +1148,76 @@
       if (glyphEls.bt) glyphEls.bt.setAttribute("data-state", "neutral");
       if (glyphEls.sync) glyphEls.sync.setAttribute("data-state", "neutral");
       if (glyphEls.power) glyphEls.power.setAttribute("data-state", "neutral");
+    }
+
+    // --- US-481 idle-state home card DOM render (browser only) --------------
+
+    // Local wall-clock formatters for the parked header. Local (not UTC) is the
+    // right zone for a kiosk showing the driver the time; the pure view logic
+    // stays clock-free (deterministic tests), so these live in the DOM layer.
+    function two(n) { return (n < 10 ? "0" : "") + n; }
+    var IDLE_DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+    var IDLE_MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                       "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    function fmtClock(d) { return two(d.getHours()) + ":" + two(d.getMinutes()); }
+    function fmtDate(d) {
+      return IDLE_DAYS[d.getDay()] + " " + d.getDate() + " " + IDLE_MONTHS[d.getMonth()];
+    }
+
+    // Render the idle card from the assembled view. Built with textContent (no
+    // innerHTML) so emitter values render verbatim, never as markup. The 3 fact
+    // tiles reuse the shared `.tile[data-level]` styling, so green is bound to
+    // the SSOT token exactly once (US-484) -- the idle card holds no hex literal.
+    function renderIdleCard(card, view, now) {
+      var body = card.querySelector(".card-body");
+      if (!body) return;
+      body.textContent = "";
+
+      // Header: wordmark + live clock + date (Iris 1.2).
+      var header = document.createElement("div");
+      header.className = "idle-header";
+      var wm = document.createElement("span");
+      wm.className = "idle-wordmark";
+      wm.textContent = view.wordmark;
+      var clock = document.createElement("span");
+      clock.className = "idle-clock";
+      clock.textContent = fmtClock(now);
+      var date = document.createElement("span");
+      date.className = "idle-date";
+      date.textContent = fmtDate(now);
+      header.appendChild(wm);
+      header.appendChild(clock);
+      header.appendChild(date);
+      body.appendChild(header);
+
+      // STANDBY hero (neutral grey, never green) + substate.
+      var hero = document.createElement("div");
+      hero.className = "idle-hero";
+      hero.setAttribute("data-level", view.hero.level);
+      var heroTitle = document.createElement("div");
+      heroTitle.className = "idle-hero-title";
+      heroTitle.textContent = view.hero.title;
+      var heroSub = document.createElement("div");
+      heroSub.className = "idle-hero-sub";
+      heroSub.textContent = view.hero.substate;
+      hero.appendChild(heroTitle);
+      hero.appendChild(heroSub);
+      body.appendChild(hero);
+
+      // 3-fact summary strip: last-drive / battery-with-age / honest-faults.
+      var strip = document.createElement("div");
+      strip.className = "idle-facts";
+      appendTile(strip, view.facts.lastDrive);
+      appendTile(strip, view.facts.battery);
+      appendTile(strip, view.facts.faults);
+      body.appendChild(strip);
+
+      // Footer: a calm reassurance that data resumes on engine start (the
+      // carousel auto-advances off idle the moment OBD wakes -- honest).
+      var footer = document.createElement("div");
+      footer.className = "idle-footer";
+      footer.textContent = "monitoring resumes on engine start";
+      body.appendChild(footer);
     }
 
     // --- US-401 Battery Health DOM render (browser only) --------------------
@@ -1431,8 +1611,19 @@
       var lastDtc = null;
       // The Alerts card index, so a tap navigates the carousel to it.
       var dtcCardIndex = -1;
+      // US-481 idle-home: the idle card element + its index (the HOME slot while
+      // parked) and the System-Status index (where we auto-advance the moment
+      // idle flips false). `lastIdle` edge-triggers the navigation so it fires
+      // only on a state CHANGE -- it never fights a manual swipe while idle holds.
+      var idleCard = document.getElementById("idle-card");
+      var idleIndex = -1;
+      var sysIndex = -1;
+      var lastIdle = null;
       for (var ci = 0; ci < cards.length; ci++) {
-        if (cards[ci].getAttribute("data-state") === "dtc") dtcCardIndex = ci;
+        var st = cards[ci].getAttribute("data-state");
+        if (st === "dtc") dtcCardIndex = ci;
+        else if (st === "system-status") sysIndex = ci;
+        if (cards[ci].getAttribute("data-idle-home") !== null) idleIndex = ci;
       }
 
       function findCode(codeStr) {
@@ -1813,14 +2004,39 @@
         }
       }
 
+      // US-481: render the idle card content from the states the tick already
+      // fetched, then edge-trigger the home/auto-advance. The idle card ALWAYS
+      // renders honest content (so it's ready when parked); navigation only
+      // fires when `idle` changes -- to the idle card when idle becomes true,
+      // to System Status when it flips false (Iris AC-4). The ribbon/takeover
+      // are separate overlays that fire on TOP of any card, so surfacing the
+      // calm idle card never suppresses a real fault (AC-5).
+      function updateIdleHome(sysData, batteryData, dtcData) {
+        if (idleCard) {
+          renderIdleCard(idleCard, idleCardView(sysData, batteryData, dtcData), new Date());
+        }
+        var idle = carouselIdle(sysData);
+        if (idle === lastIdle) return; // edge-trigger only -- never trap a swipe
+        if (idle) {
+          if (idleIndex >= 0) goTo(idleIndex);
+        } else if (sysIndex >= 0) {
+          goTo(sysIndex);
+        }
+        lastIdle = idle;
+      }
+
       async function tick() {
         var dtcData = null; // fetched once (the Alerts card + ribbon/takeover share it)
+        var sysData = null; // shared with the idle-home card (one fetch per tick)
+        var batteryData = null;
         for (var c = 0; c < cards.length; c++) {
           var card = cards[c];
           var name = card.getAttribute("data-state");
           if (!name) continue;
           var data = await fetchState(name);
           if (name === "dtc") dtcData = data;
+          else if (name === "system-status") sysData = data;
+          else if (name === "battery-health") batteryData = data;
           var avail = cardAvailability(data);
           card.classList.toggle("unavailable", avail === "unavailable");
           if (avail === "unavailable") {
@@ -1845,6 +2061,9 @@
         // US-405/US-406: drive the takeover + persistent ribbon from the same
         // `dtc` state the Alerts card rendered (one fetch per tick).
         updateDtcSurfaces(dtcData);
+        // US-481: render the idle-home card + edge-trigger home/auto-advance
+        // from the same fetched states (no extra fetch, no second OBD touch).
+        updateIdleHome(sysData, batteryData, dtcData);
         setTimeout(tick, POLL_MS);
       }
       tick();
