@@ -1365,3 +1365,49 @@ Task: Enable the live TSL2591 light feed + bridge raw.light.lux -> states/light 
 - **Gotcha**: mypy is not installed on the Windows dev host -> typecheck is a PM/integration
   gate; keep modules fully type-hinted + ruff-clean so that gate is a formality.
 ---
+
+## 2026-07-22 - US-483-b (Rex / Agent 1 — Sprint 61)
+Task: Display brightness consumer — auto-dim from states/light with GROUNDED parameterized curve + alarm floor + honest fallback
+
+### What was implemented:
+- Pure carousel logic (carousel.js, node-tested): brightnessCurve (perceptual
+  lux->0..1 log/linear, div0-safe), brightnessLevel = clamp(minLevel, curve, 1.0)
+  fresh / defaultLevel on absent-stale-null (honest fallback) / raised to
+  >= alarmFloorLevel while a real STOP is active (brightnessAlarmActive reuses
+  ribbonView; floor RAISES only), freshLux (ts vs luxStaleSec), resolveAutoDimConfig.
+- DOM wiring: fetch states/light each tick, applyBrightness via CSS var
+  --display-brightness -> filter:brightness() on #screen (US-482 scaling untouched).
+- GROUNDED CONFIG PARAMS under NEW pi.display.autoDim.* (NOT the live 0-100
+  pi.display.brightness hardware-backlight scalar): luxMin 3.0 / luxFull 1000.0 /
+  minLevel 0.15 / defaultLevel 0.70 / alarmFloorLevel 0.40 / luxStaleSec 10 /
+  curve logarithmic. validator DEFAULTS mirror + _validateDisplayAutoDim range guards.
+- Config->browser seam ("config not code"): eclipse-states-http injects
+  pi.display.autoDim into dashboard.html at serve time via the quoted
+  "__DISPLAY_AUTODIM__" placeholder (mirrors __SPLASH_TOKEN__); loadDisplayAutoDimConfig
+  reads config.json fail-safe (None -> carousel built-in grounded defaults).
+
+### Files changed:
+- Modified: `config.json` (pi.display.autoDim.* grounded params)
+- Modified: `src/common/config/validator.py` (DEFAULTS + _validateDisplayAutoDim)
+- Modified: `specs/UI/dist/dashboard-pi/carousel.js` (pure fns + exports + wiring)
+- Modified: `specs/UI/dist/dashboard-pi/dashboard.css` (#screen brightness filter)
+- Modified: `specs/UI/dist/dashboard-pi/dashboard.html` (DISPLAY_AUTODIM global)
+- Modified: `src/pi/splash/states_http_server.py` (displayConfig injection + loader)
+- Modified: `specs/architecture.md` (Rule-10 consumer + injection-seam note)
+- Created: `tests/ui/test_carousel_brightness.py` (22 tests)
+- Created: `tests/test_display_autodim_config.py` (9 tests)
+- Created: `tests/pi/splash/test_states_http_autodim.py` (2 tests)
+
+### Learnings for future iterations:
+- **Gotcha**: the story named pi.display.brightness.* but that key is the LIVE
+  0-100 hardware-backlight scalar (adafruit adapter, helpers.py int validation,
+  power_display dimming). A 0.0-1.0 software-dim curve needs a DISTINCT key
+  (pi.display.autoDim.*) — grep a config path before nesting under it.
+- **Pattern**: the __SPLASH_TOKEN__ serve-time HTML injection is the reusable seam
+  for getting config.json values into the browser carousel ("config not code")
+  without touching deploy tooling — use a QUOTED placeholder so an unsubstituted
+  file:// preview stays valid JS and the JS falls back to built-in defaults.
+- **Gotcha (state file handoff)**: replacing only the PREFIX of ralph_agents.json's
+  note string leaves the old tail dangling with a stray closing quote -> invalid
+  JSON. Either replace the whole field or bridge the junction (drop the stray ").
+---
