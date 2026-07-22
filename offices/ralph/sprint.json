@@ -259,8 +259,25 @@
       "epicId": "E-001",
       "type": "tech-debt",
       "size": "S",
-      "status": "sprint-ready",
-      "passes": false,
+      "status": "complete",
+      "passes": true,
+      "feedback": {
+        "filesActuallyTouched": [
+          "src/pi/hardware/status_display.py (DELETED -- the pygame overlay renderer)",
+          "src/pi/hardware/dashboard_layout.py (DELETED -- pure-geometry helper used ONLY by status_display; orphaned after removal)",
+          "src/pi/hardware/hardware_manager.py (severed: removed the import, _statusDisplay store, _initializeStatusDisplay, the _startComponents display branch + _displayUpdateThread/_displayUpdateLoop, the _cleanup branch, the statusDisplay property, the display* constructor params + factory config reads; updateObdStatus/updateErrorCount -> documented no-op stubs; getStatus['display'] stays a permanent None)",
+          "src/pi/hardware/__init__.py (removed StatusDisplay/StatusDisplayError/DisplayNotAvailableError/ConnectionStatus/PowerSourceDisplay imports + __all__ entries + docstring refs)",
+          "config.json (removed pi.hardware.statusDisplay key)",
+          "tests/pi/hardware/test_status_display.py (DELETED)",
+          "tests/pi/hardware/test_dashboard_layout.py (DELETED)",
+          "tests/pi/hardware/test_manager_status_display_disable.py (DELETED -- its entire subject, the disable/factory-flag path, was removed)",
+          "tests/deploy/test_dashboard_kit.py (F-4 test now guards ABSENCE of pi.hardware.statusDisplay -- stronger invariant than enabled==false)",
+          "specs/architecture.md (Rule-10: Two-Display-Surfaces -> single primary surface; US-257 section bannered RETIRED; A-4 note + US-402 subsection updated to full-removal)",
+          "src/README.md (dropped the deleted status_display.py line)",
+          "offices/pm/tech_debt/TD-064-event-router-no-op-push-to-retired-status-display.md (NEW)"
+        ]
+      },
+      "completionNotes": "GREEN in-loop: pytest tests/pi/hardware + tests/deploy/test_dashboard_kit + tests/test_orchestrator_alerts_registration -> 124 passed, 4 skipped; orchestrator connection/display path (recovery success/failure + display connection errors + vin-decode-display) -> 29 passed; ruff clean on all modified .py; python validate_config.py all-pass (config story DoD). Committed f533230. PARITY (AC1): architecture.md already recorded the overlay was parity-gated retired at US-402 once System Status (US-400) + Battery Health (US-401) cards reached parity; the US-264 VCELL-authoritative battery rule lives UPSTREAM in UpsMonitor/battery-health emitter (the overlay only displayed the percentage/voltage handed to it), so nothing was lost -- no STOP condition. RETIRE (AC2): US-402 only config-flipped enabled=false; the module + all wiring + config key still shipped (dead code + re-enable footgun). US-485 completes the sunset: deleted status_display.py + dashboard_layout.py (its sole consumer -- retiring both as one coherent 'pygame status overlay' unit avoids repeating the exact half-measure that created this story) + all HardwareManager launch/wiring + the config key. grep confirms no import/runtime references to status_display/StatusDisplay/dashboard_layout remain (only historical modification-history comments). SCOPE: updateObdStatus/updateErrorCount kept as documented no-op stubs because event_router.py (a drive-path core module, NOT the 'launch path') still calls them; removing those + editing tests/test_orchestrator_alerts_registration.py is behavioral change beyond an 'S' sunset story -> filed TD-064 (the residual no-op push). getStatus['display'] kept as permanent None so core.py:600's result['hardware'] consumers don't KeyError. DOC (AC3, Rule-10): architecture.md 'Two Display Surfaces' -> single primary pygame surface; the US-257 canvas-redesign section bannered RETIRED (documented modules deleted); the A-4 sequencing note + the US-402 'Pygame sunset' subsection updated to full-removal (US-485). NOTE for PM: BASE-MODULE change (hardware_manager.py) + a config.json change -> please run the full regression at integration time (full pytest tests/ + mypy strict, both PM/integration-time gates not run in-loop per TD-059). The pre-existing 2 US-486 startup_log reds are unrelated (US-486 fixes them) and were not touched here.",
       "acceptance": [
         "confirm the carousel covers what status_display.py rendered (US-264 VCELL-authoritative battery rule preserved -- must not lose it)",
         "retire status_display.py + its orchestrator launch path + config flag (or confirm already inert); no import/runtime references remain",

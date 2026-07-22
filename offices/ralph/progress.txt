@@ -1202,3 +1202,45 @@ categorizes it Blocked and advances to US-485.
 - **Next available by priority**: US-485 (pygame status_display.py sunset), then
   US-486 (2 red startup_log tests -- fully buildable) / US-487 (US-479 hardening).
 ---
+
+## 2026-07-22 - US-485 (Rex / Agent 1 — Sprint 61)
+Task: pygame status_display.py sunset -- verify carousel parity then retire
+
+### What was implemented:
+- Verified parity (AC1): architecture.md already recorded the overlay was
+  parity-gated retired at US-402 once System Status (US-400) + Battery Health
+  (US-401) cards reached parity. The US-264 VCELL-authoritative battery rule
+  lives UPSTREAM in UpsMonitor/battery-health emitter (the overlay only
+  displayed the % / voltage handed to it) -> nothing lost, no STOP condition.
+- Completed the sunset (US-402 had only config-flipped enabled=false, leaving
+  dead code + a re-enable footgun): DELETED status_display.py +
+  dashboard_layout.py (its sole consumer) + their 3 tests; severed all
+  HardwareManager wiring; removed the pi.hardware.statusDisplay config key.
+- F-4 deploy test now guards ABSENCE of pi.hardware.statusDisplay (stronger
+  invariant than enabled==false).
+- Rule-10 doc: architecture.md Two-Display-Surfaces -> single primary pygame
+  surface; US-257 canvas-redesign section bannered RETIRED; A-4 note + US-402
+  subsection updated to full-removal.
+
+### Files changed:
+- Deleted: `src/pi/hardware/status_display.py`, `src/pi/hardware/dashboard_layout.py`
+- Deleted: `tests/pi/hardware/test_status_display.py`, `test_dashboard_layout.py`, `test_manager_status_display_disable.py`
+- Modified: `src/pi/hardware/hardware_manager.py` (severed overlay wiring; updateObdStatus/updateErrorCount -> no-op stubs; getStatus['display']=None)
+- Modified: `src/pi/hardware/__init__.py` (dropped StatusDisplay exports)
+- Modified: `config.json` (removed pi.hardware.statusDisplay)
+- Modified: `tests/deploy/test_dashboard_kit.py` (F-4 -> absence guard)
+- Modified: `specs/architecture.md`, `src/README.md`
+- Created: `offices/pm/tech_debt/TD-064-event-router-no-op-push-to-retired-status-display.md`
+
+### Learnings for future iterations:
+- **Pattern discovered**: "Retired" in a doc can mean merely config-disabled, not
+  removed. Grep the actual import/runtime references before trusting a "retired"
+  label -- US-402 flipped a flag but the module + all wiring still shipped.
+- **Gotcha**: A CSS/pygame helper split out "for testability" (dashboard_layout via
+  US-257) becomes fully orphaned when its sole consumer is deleted -- retire the
+  pair as one unit or you recreate the exact half-measure the story exists to fix.
+- **Gotcha**: A retired display's data-push API (HardwareManager.updateObdStatus/
+  updateErrorCount) may still be called by a drive-path core module (event_router).
+  Keep it as a documented no-op stub (scope fence) + file a TD, rather than bleed
+  the removal into orchestrator tests inside an 'S' story.
+---
