@@ -25,7 +25,13 @@
   --font-mono: ui-monospace, Menlo, Consolas, monospace;  /* the only family */
 
   /* --- Neutral text ------------------------------------------------------- */
-  --text-secondary: #888888;   /* wordmark; primary readable label           */
+  --text-primary:   #DDDDDD;   /* primary / high-emphasis dashboard text.
+                                  Atlas gate (Rule-10, 2026-07-25, US-484/BL-024):
+                                  value grounded by Iris's CIO-locked Pi dashboard
+                                  design (9da4af5) + ~15:1 contrast on the dark
+                                  panel (WCAG AAA); brightest of the text tier,
+                                  above --text-secondary.                       */
+  --text-secondary: #888888;   /* wordmark; secondary readable label          */
   --text-tertiary:  #666666;   /* version chip; de-emphasized meta           */
 
   /* --- Warn (project-wide) ------------------------------------------------ */
@@ -63,8 +69,8 @@
  *
  * Not yet tokenized (intentionally — no grounded value exists yet):
  *   - base background color  (splash renders on black; not yet a named token)
- *   - --text-primary         (no surface has defined a primary text color
- *                             above --text-secondary)
+ *   (--text-primary was tokenized 2026-07-25 — Atlas gate, US-484/BL-024;
+ *    grounded value #DDDDDD now lives in :root above.)
  * ============================================================================ */
 
 /* ----------------------------------------------------------------------------
