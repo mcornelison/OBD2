@@ -7,6 +7,35 @@
 
 ---
 
+## Session 32 — 2026-07-25/26
+
+**Context**: Init (`/init-tuner`). CIO: dispatch the owed `--critical-red` safety value, read inbox, then a PRD review. (Sessions 29–31 — the 06-30 drive-33 F-116 note + 07-04 US-424 server-migration note — were worked but not logged here.)
+
+### What Happened
+- **Closed BL-024 / US-484 — set `--critical-red = #D32F2F`** (the DTC STOP "PULL OVER" alarm red; Atlas's 06-19 split = Spool owns value+semantics, Atlas gates token, Ralph repoints). Key ruling: **hex alone is NOT sufficient** — #D32F2F vs brand `--red #E60012` differ mainly in *saturation*, the weakest discriminator at arm's length on the narrow-gamut OSOYOO. STOP integrity is carried by **full-bleed area + pulsing motion + "PULL OVER" text + near-black bg + full-brightness-always**; color is the 3rd reinforcement. No warmer/orange shift (would collide with amber WATCH). WATCH stays `#FFC400`, MINOR `#35C46A`. Stamped durable SSOT into `dtc-display-clear-safety-advisory.md` §6d; A2AL to Atlas (token gate) + Marcus (tracking).
+- **Inbox cleared.** F-116/drive-33 re-tag (Atlas 07-01→07-04): final ruling = drop the stale `data_source` CHECK (US-458), THEN I run the drive-33 re-tag (3 tables + `drive_summary.data_quality`, both tiers, re-sync trap). **Gated on US-458 merging — Atlas owes the ping.** Carry-forward. US-367 lineage + speed-cal→1.0 already resolved (unlogged sessions).
+- **PRD review — EDR staging plan (`prd-edr-next-draft.md`, E-006).** Result: GROOMING INPUT, 1 re-scope + 3 grounded inputs → `offices/pm/inbox/2026-07-26-from-spool-edr-prd-review.md` (+ A2AL pointer to Atlas).
+  - **Issue 1 (re-scope F-112):** "is knock reachable over the OBD path" is **already answered NO** — my Drive-25 probe (Mode 22 not implemented on MD326328) proved the OBDLink-via-Pi pipe can't reach ECMLink RAM. Knock = MUT-II RAM-peek over the ECMLink USB cable + PC software. Real open question = is MUT-II **Pi-hostable** without the Windows app. ECMLink not installed yet → F-112-now = paper investigation, no live read.
+  - **Issue 2 (F-113 gating):** single K-line = one reader; MUT-II + OBDLink both ride it → can't run concurrent without arbitration. F-112 output that F-113's K-line-arbitration design depends on.
+  - **Issue 3 (F-113 input):** ground rate-handling on the measured ~6.3 samples/sec / 16-PID budget; I owe a PID-priority allocation (hardware-independent, producible at groom).
+  - **Issue 4 (verify):** IMU @0x69 "installed" (PRD) vs "dead IMU clones graceful-absent" (V0.29.15) — reconcile before F-114/F-115; TSL2591 @0x29 confirmed live.
+  - Concurred with the PRD's option (a) design+spike sprint, with F-112 scoped honestly.
+
+### Story Reviews
+- Reviewed EDR staging plan F-112 + F-113 (engine-signal lane) from `prd-edr-next-draft.md`.
+- Result: GROOMING INPUT (1 re-scope + 3 grounded inputs).
+- Most significant: F-112's "knock over OBD path" question is already a proven NO — re-scope to Pi-hostable MUT-II or the spike re-proves a known negative.
+
+### Open Items
+- **US-484**: my dependency clear; awaiting Atlas token gate → Ralph repoint.
+- **F-116 drive-33 re-tag**: gated on US-458 CHECK-drop merging; awaiting Atlas ping.
+- **EDR groom**: deliver the PID-priority allocation when F-112/F-113 groom; reconcile IMU ground truth.
+
+### Safety Advisories
+- No new acute conditions. `--critical-red` safety-signal integrity ruling issued (area/motion/text > color; full-brightness-always). No datalogs this session.
+
+---
+
 ## Session 28 — 2026-06-28
 
 **Context**: CIO did a drive and asked me to confirm it synced. Sync verification surfaced a long-running `dtc_freeze_frame` sync failure → diagnosed root cause (broken ECU-lineage spine) and routed it. Second half: read inbox; Atlas's EDR-sensors-wired note needed my IMU axis-orientation input — supplied the ICM-20948 mount spec while CIO was physically wiring.

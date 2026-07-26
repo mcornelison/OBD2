@@ -127,6 +127,22 @@ Display distinguishes `spool-validated` (✓ verified) from `auto-unverified` ("
 
 ---
 
+## 6d. `--critical-red` — safety-signal value + integrity ruling (2026-07-25, US-484 / BL-024)
+
+Atlas's 2026-06-19 split: **Spool owns the safety-signal value + semantics; Atlas gates the token; Ralph repoints** the DTC STOP tier + takeover off brand-red onto it. This resolves the tokens.css brand-vs-alarm collision (`specs/UI/tokens.css`).
+
+**Value:** `--critical-red: #D32F2F` (holds the S-2 target; no churn from Iris's expectation). WATCH stays `--amber-warn #FFC400`; MINOR stays `--green-ok #35C46A`.
+
+**Why the hex alone does NOT make it safe (load-bearing):** `#D32F2F` (211,47,47) vs brand `--red #E60012` (230,0,18) differ **mainly in saturation** — the *weakest* discriminator the eye has at arm's length, worse on the narrow-gamut OSOYOO panel under changing cabin light. A color swap alone is insufficient.
+
+**What actually carries the STOP signal (non-negotiable, engine-safety grounds):**
+1. **Area + motion + text carry it, not hue.** STOP = **full-bleed / large-area + pulsing motion + explicit "PULL OVER" text**. The brand mark stays **small + static, always**. The size/motion contrast is what a driver reads in a glance; color is the third reinforcement, not the first.
+2. **STOP red renders on near-black** (`#000`/`#0a0a0a`) with **white** copy — never on brand chrome. Keeps it clear of brand-red proximity; text contrast ≥ WCAG-AA large-text floor.
+3. **No warmer/orange shift** — that collides with amber WATCH (`#FFC400`) and inverts "which is worse." Deeper-and-darker is the correct axis, not hotter.
+4. **A 🔴 alarm is full brightness always, independent of auto-dim** (restated from the EDR advisory S-2 / brightness-floor rule). Only ambient content dims.
+
+Supersedes the "prominent red" placeholder in §3 for the STOP tier's actual color token.
+
 ## 7. Open follow-ups (Spool)
 1. Curate the DSM P1xxx severity/description **+ suggested_fix** subset (grounded; no fabrication).
 2. Confirm Mode 02 freeze-frame support on MD326328 via live probe.
