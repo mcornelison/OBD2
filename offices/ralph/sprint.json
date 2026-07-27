@@ -1,123 +1,144 @@
 {
   "schemaVersion": "2.0.0",
-  "sprint": 62,
-  "version": "V0.29.16",
-  "createdFromPRD": "offices/pm/prds/prd-V0.29.16-ui.md",
+  "sprint": 63,
+  "version": "V0.29.17",
+  "createdFromPRD": "offices/pm/prds/prd-V0.29.17-ui-polish.md",
   "stories": [
     {
-      "id": "US-484-a",
-      "title": "SSOT token reconciliation -- dashboard.css green + text-primary -> specs/UI/tokens.css (buildable now)",
+      "id": "US-488",
+      "title": "TD-067: sweep the 10 non-STOP alarm surfaces off brand --red-light (per Spool per-surface ruling)",
       "parent": "F-121",
       "epicId": "E-001",
       "type": "tech-debt",
       "size": "S",
-      "status": "passed",
-      "passes": true,
+      "status": "sprint-ready",
+      "passes": false,
       "acceptance": [
-        "dashboard.css --ok-green #2ECC71 -> SSOT --green-ok #35C46A (name AND value); no visual regression on the shipped cards",
-        "dashboard.css --text-primary aligned to the SSOT value #DDDDDD (now tokenized in specs/UI/tokens.css:28)",
-        "grep confirms no drifted green/text-primary literal remains in dashboard.css; cards render unchanged",
-        "does NOT touch the STOP/critical-red tier -- that is US-484-b (keep this slice mechanical + safe)"
+        "5 surfaces -> --amber-warn (no gate): #1 topbar down-glyph, #2 down status tile, #4 ltft-bar down (LTFT beyond +-10% = WATCH not STOP), #6 dtc-clear-result reset-banner",
+        "1 surface -> --critical-red (no gate): #3 battery-ladder TRIGGER stage+banner (terminal act-now SYSTEM-critical; copy stays system-appropriate, NOT 'PULL OVER'). Earlier ladder stages -> amber",
+        "1 refactor -> tier-aware (no new token): #5 .detail-directive band must be tier-driven (STOP->--critical-red, WATCH->--amber-warn, MINOR->--green-ok/neutral) -- NOT one blanket red for every severity (a MINOR gas-cap code must not show a red directive)",
+        "2 surfaces -> new --destructive token (Atlas Rule-10 GATE): #7 #clear-confirm .confirm-box + #8 #clear-confirm-ok (Mode-04 destructive action, NOT an engine alarm). Spool constraints: MUST NOT be any alarm-red, MUST NOT be amber; different axis; Iris owns the value, Atlas gates",
+        "whole-file guard: after the sweep, no var(--red*) outside a brand-mark rule; no visual regression on shipped cards; UI tests green; TD-067 closed"
       ],
       "validationCriteria": [
         {
-          "action": "diff dashboard.css :root vs specs/UI/tokens.css for green + text-primary after the change",
-          "outcome": "no drift; dashboard uses SSOT --green-ok + --text-primary; cards render unchanged"
-        }
-      ],
-      "conditionalOutcomes": [],
-      "goal": "As the UI SSOT, I want dashboard.css :root reconciled with specs/UI/tokens.css for the two now-blessed tokens, so there is one source of truth. Both values are decided + in the SSOT: --green-ok #35C46A (Atlas A-8) and --text-primary #DDDDDD (Atlas gated 2026-07-25, US-484/BL-024). (Split from US-484; the mechanical, non-safety half.)",
-      "tasks": [],
-      "feedback": {
-        "filesActuallyTouched": [
-          "specs/UI/dist/dashboard-pi/dashboard.css",
-          "specs/UI/dist/dashboard-pi/carousel.js",
-          "tests/deploy/test_dashboard_kit.py",
-          "tests/ui/test_dashboard_token_ssot.py",
-          "offices/pm/tech_debt/TD-065-dashboard-css-residual-untokenized-literals.md"
-        ],
-        "grounding": [
-          "specs/UI/tokens.css:43 -- --green-ok #35C46A (Atlas gate A-8, 2026-06-05/06-19)",
-          "specs/UI/tokens.css:28 -- --text-primary #DDDDDD (Atlas Rule-10 gate 2026-07-25, US-484/BL-024)",
-          "specs/UI/tokens.css:9-12 -- the SSOT rule: consumers render against tokens, never literals"
-        ]
-      },
-      "completionNotes": "AC1 (green, name AND value): renamed the forked dist token --ok-green #2ECC71 -> SSOT --green-ok #35C46A and repointed all 9 var() consumers (topbar ok glyph, tile ok, ltft-bar ok, dtc-ribbon minor, longpress ring, dtc-chip minor, dtc-clear-btn bg+border, dtc-clear-result cleared). CROSS-FILE CATCH: the token also lives in JS -- carousel.js TAKEOVER_STYLE.minor.colorVar was '--ok-green'; a CSS-only rename would have left the MINOR takeover binding a var that no longer exists (silently unstyled). Repointed it + the matching assertion in tests/deploy/test_dashboard_kit.py:847. AC2 (text-primary): dashboard.css:16 was ALREADY #DDDDDD -- it matched the value Atlas subsequently blessed into the SSOT, so this was a verify-and-pin, not an edit; added provenance comments (SSOT file:line) on the whole neutral/amber tier. AC3 (grep clean): the name-only grep MISSES the rgba() spelling -- .dtc-trust-badge[data-kind=verified] carried rgba(46,204,113,0.18), which IS #2ECC71 at 18% alpha; converted to rgba(53,196,106,0.18) (= #35C46A). Repo grep now returns zero --ok-green / 2ECC71 / rgba(46,204,113) hits outside the guard test's own assertions. AC4 (scope fence): STOP tier untouched -- a test asserts #dtc-ribbon[data-level=stop] + .dtc-chip[data-level=stop] are STILL on brand --red-light and that --critical-red does NOT yet appear in dashboard.css, so US-484-a cannot half-land the safety repoint that US-484-b owns as one coherent change. NEW GUARD (the durable half): tests/ui/test_dashboard_token_ssot.py -- 11 tests that PARSE both files and compare declarations, so drift in EITHER file re-reds (an assertion on dashboard.css alone would not catch a future SSOT edit). Also pins text-secondary/tertiary/amber-warn (already aligned) so the neutral ramp cannot quietly re-fork. GREEN in-loop: 11 new tests pass; tests/ui/ + tests/deploy/test_dashboard_kit.py = 119 passed; ruff clean on both touched py files. GATES for PM/integration: black + mypy are NOT installed on the Windows dev host (same standing gap as prior sprints). VISUAL no-regression on the real panel is a PI-RUNTIME/DEPLOY gate -- the green shifts #2ECC71 -> #35C46A (slightly deeper/less mint), which is the intended SSOT value, not a regression. FILED TD-065: residual untokenized literals in dashboard.css -- (a) two .dtc-chip #2a2f37 that already duplicate SSOT --neutral-chip-bg (mechanical, no gate needed) and (b) --bg/--surface + takeover gradient edges that have NO SSOT counterpart and need an Atlas Rule-10 call on whether the SSOT tokenizes derived/darkened shades at all. Did NOT invent tokens for (b) -- that is the exact drift this story removes. NOTE for US-484-b: --critical-red #D32F2F IS now in the SSOT (tokens.css:69, Atlas gate 2026-07-26, commit 2a64549) -- BL-024 is resolved on both values and US-484-b is unblocked."
-    },
-    {
-      "id": "US-484-b",
-      "title": "DTC STOP-tier SAFETY treatment -- repoint off brand-red + Spool §6d multi-channel (color+area+motion+text+bg+brightness)",
-      "parent": "F-121",
-      "epicId": "E-001",
-      "type": "issue",
-      "size": "M",
-      "status": "passed",
-      "passes": true,
-      "acceptance": [
-        "PREREQ: --critical-red #D32F2F added to specs/UI/tokens.css (Spool assigned the value 2026-07-25; Atlas owes the one-line token gate -- routed). Repoint against the token, not a hardcoded hex.",
-        "repoint the DTC STOP tier + takeover OFF brand --red-light #F61D2D onto --critical-red #D32F2F (dashboard.css #dtc-ribbon[data-level=stop], .dtc-chip[stop], .dtc-hero[stop], #confirm-ok)",
-        "Spool §6d ch.1 -- AREA+MOTION+TEXT carry STOP: STOP takeover is full-bleed/large-area + pulsing motion + explicit 'PULL OVER' text; the brand mark stays small + static. (color is the 3rd reinforcement, not the 1st)",
-        "Spool §6d ch.2 -- STOP red renders on NEAR-BLACK (#000/#0a0a0a) with WHITE copy, never on brand chrome; text contrast >= WCAG-AA large-text",
-        "Spool §6d ch.3 -- deeper-and-darker axis only; NO warmer/orange shift (would collide with amber WATCH #FFC400 and invert severity order). WATCH stays #FFC400, MINOR stays #35C46A -- unchanged",
-        "Spool §6d ch.4 -- a STOP alarm is FULL BRIGHTNESS ALWAYS, independent of the US-483-b auto-dim (only ambient content dims; ties to the alarmFloorLevel guard -- STOP overrides even the floor to full)",
-        "grep confirms the STOP tier no longer references brand --red-light; UI/pi tests green incl. a test that STOP renders full-bleed + full-brightness on near-black"
-      ],
-      "validationCriteria": [
-        {
-          "action": "trigger a STOP-tier DTC takeover on the Pi",
-          "outcome": "renders full-bleed on near-black, white 'PULL OVER' text, pulsing, in --critical-red #D32F2F (not brand --red-light); brand mark small+static"
+          "action": "grep dashboard.css for var(--red-light)/var(--red) after the sweep",
+          "outcome": "only a brand-mark rule (if any) uses brand red; every alarm/degraded surface is amber or critical-red per the ruling; destructive uses --destructive"
         },
         {
-          "action": "trigger STOP while auto-dim says dark",
-          "outcome": "STOP stays full brightness (not dimmed) -- ch.4 satisfied"
-        },
-        {
-          "action": "compare STOP vs WATCH vs MINOR",
-          "outcome": "severity order reads correctly by area/motion/text; no orange collision between STOP and amber WATCH"
+          "action": "render a MINOR DTC detail",
+          "outcome": ".detail-directive is NOT red (tier-aware); a STOP detail shows --critical-red"
         }
       ],
       "conditionalOutcomes": [
-        "if --critical-red is not yet in tokens.css at build time, STOP + ping PM/Atlas for the one-line gate (value is decided #D32F2F; do NOT hardcode the hex or pick your own)",
-        "the pulsing-motion treatment must respect the 'motion never implies a state that isn't real' rule (carousel spec §4) -- pulse ONLY on a live STOP, never decoratively"
+        "the 8 no-gate surfaces + the tier-aware refactor are buildable NOW. The 2 --destructive surfaces (#7/#8) wait on the --destructive token (Iris value + Atlas gate, routed with the live-cards Atlas asks). If not gated when Ralph reaches them, do the 8+refactor and leave #7/#8 as a follow-up rather than guessing a value"
       ],
-      "goal": "As engine-safety signal integrity, I want the DTC STOP/'PULL OVER' tier + takeover to stop rendering in BRAND red --red-light #F61D2D (the brand-vs-alarm collision) and instead carry the STOP signal by Spool's full multi-channel treatment. Per Spool 2026-07-25 (offices/tuner/dtc-display-clear-safety-advisory.md §6d): the hex alone is INSUFFICIENT -- #D32F2F vs brand red differ mainly in saturation (weakest discriminator, worse on the narrow-gamut OSOYOO panel). Area+motion+text carry STOP; color is the third reinforcement. (Split from US-484; the safety half.)",
-      "tasks": [],
-      "feedback": {
-        "filesActuallyTouched": [
-          "specs/UI/dist/dashboard-pi/dashboard.css",
-          "specs/UI/dist/dashboard-pi/carousel.js",
-          "tests/ui/test_dashboard_stop_tier_safety.py",
-          "tests/ui/test_carousel_brightness.py",
-          "tests/ui/test_dashboard_token_ssot.py",
-          "tests/deploy/test_dashboard_kit.py",
-          "offices/pm/tech_debt/TD-066-autodim-alarm-floor-level-now-inert.md",
-          "offices/pm/tech_debt/TD-067-brand-red-still-on-non-stop-alarm-surfaces.md",
-          "offices/pm/issues/I-tokens-css-stop-repoint-note-now-stale.md"
-        ],
-        "grounding": [
-          "specs/UI/tokens.css:69 -- --critical-red #D32F2F (Spool value + §6d semantics 2026-07-25; Atlas Rule-10 gate 2026-07-26, commit 2a64549)",
-          "specs/UI/tokens.css:50-57 -- brand reds RESERVED, brand mark ONLY (Spool S-2)",
-          "offices/tuner/dtc-display-clear-safety-advisory.md §6d ch.1-4 -- area+motion+text carry STOP; near-black + white copy; deeper-darker axis only; full brightness always",
-          "specs/UI/tokens.css:38 -- --amber-warn #FFC400 (WATCH, unchanged); :43 -- --green-ok #35C46A (MINOR, unchanged)"
-        ]
-      },
-      "completionNotes": "PREREQ MET: --critical-red #D32F2F was already gated into tokens.css:69 (Atlas 2026-07-26, commit 2a64549) -- BL-024 fully resolved, nothing hardcoded; the dist declares the token once and every STOP surface goes through var(--critical-red). AC2 REPOINT: #dtc-ribbon[stop], .dtc-chip[stop], .dtc-hero[stop] border, #confirm-ok, and the takeover all off the brand reds; also carousel.js TAKEOVER_STYLE.stop.colorVar '--red' -> '--critical-red' (the token name lives in JS as DATA -- same cross-file trap US-484-a hit with --ok-green; a CSS-only repoint would have left the STOP tier bound to brand red) + the matching assertion in tests/deploy/test_dashboard_kit.py. AC3 ch.1 (the load-bearing half -- colour is the THIRD channel): the STOP takeover keeps the base full-bleed inset:0 (AREA), gains an 8px --critical-red alarm frame that pulses via @keyframes stop-alarm-pulse SCOPED TO [data-severity=stop] so motion can never imply a state that isn't real (MOTION, carousel spec §4), and renders the existing 'REDUCE LOAD · PULL OVER' directive as a white-on-critical-red band at 22px vs the 15px base (TEXT + AREA). No brand mark exists on the dashboard surface at all (the 3-rhombus mark is the F-103 splash), so 'brand mark stays small+static' is satisfied structurally and is enforced as 'no var(--red*) on any STOP rule'. AC4 ch.2: background is var(--bg) = #000000 (one of the two near-black fields §6d permits -- deliberately did NOT invent a new near-black token, which is the TD-065 group-(b) gate), colour #fff; contrast computed IN THE TEST from the parsed tokens: white/critical-red 5.0:1 and critical-red/black 4.0:1, both over the WCAG-AA large-text 3.0 floor. AC5 ch.3: asserted as luminance(critical) < luminance(both brand reds) AND max-channel lower (deeper+darker), plus 'no warm bias' expressed as G == B (an orange shift lifts green above blue) and a >=40deg hue separation from amber WATCH; the pulse darkens toward the near-black field, never toward a warmer hue. WATCH #FFC400 / MINOR #35C46A untouched and pinned. AC6 ch.4: carousel.js brightnessLevel now SHORT-CIRCUITS `if (alarmActive) return STOP_ALARM_LEVEL` (1.0, a named constant) BEFORE any ambient math -- a live STOP overrides the auto-dim curve, the honest 0.70 fallback AND the 0.40 alarmFloorLevel; a dead/stale light sensor cannot dim the alarm. brightnessAlarmActive stays STOP-only, so non-STOP ambient dimming is unchanged (a test pins that US-483-b still works). SUPERSEDED-KEY DRIFT -> TD-066: alarmFloorLevel is now unreachable (its only consumer condition returns full). Left resolvable so a deployed config.json still parses; removal-vs-repurpose (does WATCH want a floor?) is a Spool call, not mine. TESTS: new tests/ui/test_dashboard_stop_tier_safety.py = 29 tests that PARSE both CSS files and COMPUTE luminance/contrast/hue from the token values, so drift in tokens.css OR the dist re-reds them (a hardcoded expected-hex would not). Replaced US-484-a's deliberate scope-fence test (it asserted STOP was STILL on brand red) with the reconciled assertion, and updated the 3 US-483-b alarm-floor tests to the new ch.4 contract. GREEN in-loop: tests/ui/ + tests/deploy/test_dashboard_kit.py = 148 passed; ruff clean on all 4 touched py files. GATES for PM/integration: black + mypy NOT installed on the Windows dev host (standing gap); no config change so validate_config.py not required. PI-RUNTIME/DEPLOY GATE (the story's own validationCriteria): trigger a real STOP-tier takeover on the panel and confirm it reads full-bleed near-black + pulsing + 'PULL OVER', stays FULL brightness with the cabin dark, and that STOP/WATCH/MINOR still read in severity order -- none of that is reproducible off-Pi. ALSO FILED: TD-067 -- 10 non-STOP surfaces (down glyph, degraded tiles, battery TRIGGER, LTFT down, .detail-directive, clear-result reset, the #clear-confirm pair) still paint with brand --red-light even though tokens.css reserves the brand reds for the brand mark; outside this AC's enumeration and needs a Spool severity call (+ possibly a new Rule-10 token) -- note .detail-directive and #clear-confirm-ok are the two that now read inconsistent with the repoint. Plus an issue for Atlas: tokens.css:87-94 still says the STOP repoint is the 'KNOWN-open half' -- stale now; specs/ is read-only for Ralph so it is a request, not an edit."
+      "goal": "As safety-signal integrity, I want the 10 non-STOP alarm surfaces in dashboard.css routed to their CORRECT engine tier (or out of the engine color system), completing the brand-vs-alarm separation. Spool's per-surface ruling (2026-07-27, TD-067): 'Red = danger, one meaning only' -- NO new alarm-red; degraded/down = amber; a destructive USER ACTION is a different axis (new --destructive token).",
+      "tasks": []
+    },
+    {
+      "id": "US-489",
+      "title": "Polish P-1: System Status card -- summary line + 2x2 grid + per-tile status dots (glanceability)",
+      "parent": "F-121",
+      "epicId": "E-001",
+      "type": "normal",
+      "size": "S",
+      "status": "sprint-ready",
+      "passes": false,
+      "acceptance": [
+        "top SUMMARY line: 'SYSTEM \u00b7 OK' (green) ONLY when every source is genuinely good; else the worst state ('SYSTEM \u00b7 1 ISSUE' amber / 'RECONNECTING' amber) -- honest-instrument F-1 (never green unless all-green)",
+        "2x2 tile grid (F-092's original intent) replacing the 1-column stack; same 4 tiles (OBD/Sync/Power/Drive), all current value+detail preserved",
+        "per-tile status DOT (green/amber/red/neutral) mirroring the existing per-tile level -- no new state/data",
+        "presentation-only over existing state (no new data/contract); tokens from specs/UI/tokens.css; UI tests green"
+      ],
+      "validationCriteria": [
+        {
+          "action": "render System Status with one source degraded",
+          "outcome": "summary line shows the worst state (amber, not green); the degraded tile's dot is amber; all values still shown"
+        },
+        {
+          "action": "render with all sources good",
+          "outcome": "summary 'SYSTEM \u00b7 OK' green; 2x2 grid intact"
+        }
+      ],
+      "conditionalOutcomes": [],
+      "goal": "As the CIO glancing at the parked dashboard, I want System Status health readable in one glance, not by reading four stacked paragraphs. Per Iris's CIO-locked polish spec P-1: add a top summary line + a 2x2 tile grid + a per-tile status dot. Refinement of the SHIPPED card -- no new data, all current values/details preserved.",
+      "tasks": []
+    },
+    {
+      "id": "US-490",
+      "title": "Polish P-2: context-aware system-setup menu access (\u22ee parked-only + long-press always)",
+      "parent": "F-121",
+      "epicId": "E-001",
+      "type": "normal",
+      "size": "S",
+      "status": "sprint-ready",
+      "passes": false,
+      "acceptance": [
+        "\u22ee menu button shows only on the parked/idle home card (idle state); HIDDEN while driving (live state) -- keys off the idle/live state the UI already consumes (pure UI, no new data/contract)",
+        "5s long-press-anywhere still opens the menu in any state (deliberate override, filling ring preserved)",
+        "each destructive menu item still behind its existing confirm (unchanged)",
+        "the menu is never reachable by a single tap while driving; UI tests green"
+      ],
+      "validationCriteria": [
+        {
+          "action": "parked/idle state",
+          "outcome": "\u22ee visible + opens the menu on tap; long-press also opens"
+        },
+        {
+          "action": "driving/live state",
+          "outcome": "\u22ee hidden; only the 5s long-press opens the menu (no single-tap path)"
+        }
+      ],
+      "conditionalOutcomes": [
+        "Iris: confirm with Atlas only if the context-aware \u22ee touches the kiosk lifecycle (she reads it as pure UI, no gate expected) -- if it does, route before building"
+      ],
+      "goal": "As the CIO, I want the system-setup menu (service stop/restart, Exit-UI -- consequential) not reachable by a single accidental tap while driving. Per Iris's polish spec P-2, CIO-locked Option C (2026-07-27): the \u22ee shows ONLY on the parked/idle home card; hidden while driving; the 5s long-press stays always-available as the deliberate override.",
+      "tasks": []
+    },
+    {
+      "id": "US-491",
+      "title": "Polish P-3: DTC detail overlay hierarchy -- directive-first + carded sections + bigger Back",
+      "parent": "F-121",
+      "epicId": "E-001",
+      "type": "normal",
+      "size": "S",
+      "status": "sprint-ready",
+      "passes": false,
+      "acceptance": [
+        "directive-first for \ud83d\udd34/\ud83d\udfe1: the action band (REDUCE LOAD\u00b7PULL OVER / GET DIAGNOSED) moves directly under the code+chip hero, larger (\ud83d\udfe2 keeps 'safe to clear once logged')",
+        "card the sections: freeze-frame/context, suggested-fix+trust-badge, and the Clear zone each become a bordered block with a small uppercase label",
+        "consistent spacing scale; the \u2039 Back target >= 40px with clear affordance",
+        "ZERO change to severity gating / S-4 fix-replacement rule / trust badge / Mode-04 clear gate -- presentation only; UI tests green"
+      ],
+      "validationCriteria": [
+        {
+          "action": "open a STOP-tier DTC detail",
+          "outcome": "directive band leads (under the hero, larger); sections are carded; Back >= 40px; gating/safety logic unchanged"
+        }
+      ],
+      "conditionalOutcomes": [],
+      "goal": "As the operator reading a DTC detail, I want the 'what do I do' to land first, not buried in a dense column. Per Iris's polish spec P-3: directive-first for \ud83d\udd34/\ud83d\udfe1, card the sections, consistent rhythm + a bigger Back. TYPOGRAPHIC/LAYOUT hierarchy ONLY -- zero change to severity gating, the fix-replacement safety rule (S-4), the trust badge, or the Mode-04 clear gate.",
+      "tasks": []
     }
   ],
   "validation": {
     "bigDefinitionOfDone": [
-      "(diff dashboard.css :root vs specs/UI/tokens.css for green + text-primary after the change) → (no drift; dashboard uses SSOT --green-ok + --text-primary; cards render unchanged)  [from US-484-a]",
-      "(trigger a STOP-tier DTC takeover on the Pi) → (renders full-bleed on near-black, white 'PULL OVER' text, pulsing, in --critical-red #D32F2F (not brand --red-light); brand mark small+static)  [from US-484-b]",
-      "(trigger STOP while auto-dim says dark) → (STOP stays full brightness (not dimmed) -- ch.4 satisfied)  [from US-484-b]",
-      "(compare STOP vs WATCH vs MINOR) → (severity order reads correctly by area/motion/text; no orange collision between STOP and amber WATCH)  [from US-484-b]"
+      "(grep dashboard.css for var(--red-light)/var(--red) after the sweep) \u2192 (only a brand-mark rule (if any) uses brand red; every alarm/degraded surface is amber or critical-red per the ruling; destructive uses --destructive)  [from US-488]",
+      "(render a MINOR DTC detail) \u2192 (.detail-directive is NOT red (tier-aware); a STOP detail shows --critical-red)  [from US-488]",
+      "(render System Status with one source degraded) \u2192 (summary line shows the worst state (amber, not green); the degraded tile's dot is amber; all values still shown)  [from US-489]",
+      "(render with all sources good) \u2192 (summary 'SYSTEM \u00b7 OK' green; 2x2 grid intact)  [from US-489]",
+      "(parked/idle state) \u2192 (\u22ee visible + opens the menu on tap; long-press also opens)  [from US-490]",
+      "(driving/live state) \u2192 (\u22ee hidden; only the 5s long-press opens the menu (no single-tap path))  [from US-490]",
+      "(open a STOP-tier DTC detail) \u2192 (directive band leads (under the hero, larger); sections are carded; Back >= 40px; gating/safety logic unchanged)  [from US-491]"
     ],
-    "validationMethod": "REAL-1080P-PI + STOP-TIER-RENDER + BENCH-UI-SUITE",
+    "validationMethod": "REAL-1080P-PI + UI-POLISH-RENDER + BENCH-UI-SUITE",
     "validatesFeatures": [
       "F-092",
       "F-097",
       "F-111"
     ],
-    "currentVersion": "V0.29.16",
+    "currentVersion": "V0.29.17",
     "validatedAt": null,
     "validatedBy": null
   }

@@ -5080,13 +5080,14 @@
         "PRE-FLIGHT (hardware): the genuine ICM-20948 is I2C-addressable @0x69 on the Pi bus (i2cdetect shows 69). NOTE 2026-07-27: NOT yet wired -- bus shows only 0x29 (light) + 0x36 (UPS). Blocked on AI-005 (CIO wires the board) until 0x69 appears.",
         "flip pi.sensors.imu.enabled=true (connect-when-wired; pi.bus.enabled already true); sensor_reader publishes the IMU topics at pi.sensors.imu.sampleHz (50)",
         "validate the genuine board READS on the bus: accel/gyro/mag values are live + plausible (not the clone's dead-silence); graceful-absence still holds for BOTH sensors (unplug -> silent, never fabricated; light feed unaffected)",
-        "bridge the raw IMU topics -> a states/imu file at /run/eclipse-obd/states/imu (mirroring US-483-a's states/light bridge; {accel,gyro,mag + ts}), so the future live home card is a pure consumer -- Atlas seam-confirm (same DELTA-2 pattern he blessed for light)",
+        "bridge the IMU topics -> a states/imu file at /run/eclipse-obd/states/imu, publishing DISPLAY-READY DERIVED fields (Iris Q-A, pending Atlas confirm): headingDeg (mag), gradePct (=tan(pitch)*100), gLat/gLon/gMag (tilt-comp horizontal accel), altitudeM (GPS), + ts/freshness -- the READER computes them (display is a pure consumer, never fuses; Atlas DELTA-2). Mirrors the states/light bridge seam.",
         "if the genuine board shows any register/init delta vs the clone assumption, capture it + route to Atlas (EDR schema is A-4 versioned)",
         "Typecheck + pi tests green"
       ],
       "conditionalOutcomes": [
         "HARDWARE-GATED: if 0x69 is absent at dispatch (board not yet wired -- AI-005), the enable+bridge CODE is writable but the read-validation cannot pass. Either wait for the wiring or ship the code with validation deferred to a wired re-check -- PM call at dispatch.",
-        "adafruit-circuitpython-icm20x is already in requirements-pi.txt:36 (no dep work)"
+        "adafruit-circuitpython-icm20x is already in requirements-pi.txt:36 (no dep work)",
+        "states/imu SHAPE gated on Atlas Q-A (derived-field contract) + Q-B (higher-rate transport for the live view -- a compass tape + 35s g-trail wont animate at the 1Hz card poll). Build the bridge to the blessed contract."
       ],
       "validationCriteria": [
         {
@@ -5638,20 +5639,25 @@
       "type": "tech-debt",
       "size": "S",
       "title": "TD-067: sweep the 10 non-STOP alarm surfaces off brand --red-light (per Spool per-surface ruling)",
-      "goal": "As safety-signal integrity, I want the 10 remaining non-STOP alarm/degraded surfaces in dashboard.css moved OFF the brand --red-light (which tokens.css reserves for the brand mark ONLY), completing the brand-vs-alarm separation US-484-b started. Per TD-067 (Ralph, V0.29.16): US-484-b cleaned the STOP tier; these 10 (down glyph, degraded tiles, #clear-confirm-ok destructive-action, per-severity detail band, etc.) still paint brand-red -- each needs a per-surface call (is it --critical-red, a lesser alert token, or a destructive-action token?).",
+      "goal": "As safety-signal integrity, I want the 10 non-STOP alarm surfaces in dashboard.css routed to their CORRECT engine tier (or out of the engine color system), completing the brand-vs-alarm separation. Spool's per-surface ruling (2026-07-27, TD-067): 'Red = danger, one meaning only' -- NO new alarm-red; degraded/down = amber; a destructive USER ACTION is a different axis (new --destructive token).",
       "definitionOfDone": [
-        "GATED on Spool: a per-surface ruling for the 10 --red-light consumers listed in TD-067 -- each surface -> --critical-red (true STOP-equivalent) OR a lesser/new alert token OR a destructive-action token (e.g. #clear-confirm-ok is destructive, not an alarm). Do NOT guess a safety color (Refuse First).",
-        "add any new tokens Spool's ruling requires to specs/UI/tokens.css (Atlas Rule-10 gate)",
-        "repoint each of the 10 surfaces per the ruling; grep confirms no non-brand-mark surface still uses --red-light",
-        "no visual regression on the shipped cards; UI tests green; TD-067 closed"
+        "5 surfaces -> --amber-warn (no gate): #1 topbar down-glyph, #2 down status tile, #4 ltft-bar down (LTFT beyond +-10% = WATCH not STOP), #6 dtc-clear-result reset-banner",
+        "1 surface -> --critical-red (no gate): #3 battery-ladder TRIGGER stage+banner (terminal act-now SYSTEM-critical; copy stays system-appropriate, NOT 'PULL OVER'). Earlier ladder stages -> amber",
+        "1 refactor -> tier-aware (no new token): #5 .detail-directive band must be tier-driven (STOP->--critical-red, WATCH->--amber-warn, MINOR->--green-ok/neutral) -- NOT one blanket red for every severity (a MINOR gas-cap code must not show a red directive)",
+        "2 surfaces -> new --destructive token (Atlas Rule-10 GATE): #7 #clear-confirm .confirm-box + #8 #clear-confirm-ok (Mode-04 destructive action, NOT an engine alarm). Spool constraints: MUST NOT be any alarm-red, MUST NOT be amber; different axis; Iris owns the value, Atlas gates",
+        "whole-file guard: after the sweep, no var(--red*) outside a brand-mark rule; no visual regression on shipped cards; UI tests green; TD-067 closed"
       ],
       "conditionalOutcomes": [
-        "if Spool's ruling needs a NEW token semantic (e.g. a distinct destructive-action red), Atlas gates the token add before the repoint"
+        "the 8 no-gate surfaces + the tier-aware refactor are buildable NOW. The 2 --destructive surfaces (#7/#8) wait on the --destructive token (Iris value + Atlas gate, routed with the live-cards Atlas asks). If not gated when Ralph reaches them, do the 8+refactor and leave #7/#8 as a follow-up rather than guessing a value"
       ],
       "validationCriteria": [
         {
-          "action": "grep dashboard.css for var(--red-light) after the sweep",
-          "outcome": "only the brand mark (if any) remains; no alarm/degraded/destructive surface uses brand red"
+          "action": "grep dashboard.css for var(--red-light)/var(--red) after the sweep",
+          "outcome": "only a brand-mark rule (if any) uses brand red; every alarm/degraded surface is amber or critical-red per the ruling; destructive uses --destructive"
+        },
+        {
+          "action": "render a MINOR DTC detail",
+          "outcome": ".detail-directive is NOT red (tier-aware); a STOP detail shows --critical-red"
         }
       ],
       "deps": [],
@@ -5660,6 +5666,106 @@
         "US-484-b",
         "spool-S-2-brand-vs-alarm",
         "tokens.css-brand-reserved"
+      ],
+      "tasks": [],
+      "status": "sprint-ready",
+      "createdAt": "2026-07-27",
+      "updatedAt": "2026-07-27"
+    },
+    {
+      "id": "US-489",
+      "parent": "F-121",
+      "type": "normal",
+      "size": "S",
+      "title": "Polish P-1: System Status card -- summary line + 2x2 grid + per-tile status dots (glanceability)",
+      "goal": "As the CIO glancing at the parked dashboard, I want System Status health readable in one glance, not by reading four stacked paragraphs. Per Iris's CIO-locked polish spec P-1: add a top summary line + a 2x2 tile grid + a per-tile status dot. Refinement of the SHIPPED card -- no new data, all current values/details preserved.",
+      "definitionOfDone": [
+        "top SUMMARY line: 'SYSTEM \u00b7 OK' (green) ONLY when every source is genuinely good; else the worst state ('SYSTEM \u00b7 1 ISSUE' amber / 'RECONNECTING' amber) -- honest-instrument F-1 (never green unless all-green)",
+        "2x2 tile grid (F-092's original intent) replacing the 1-column stack; same 4 tiles (OBD/Sync/Power/Drive), all current value+detail preserved",
+        "per-tile status DOT (green/amber/red/neutral) mirroring the existing per-tile level -- no new state/data",
+        "presentation-only over existing state (no new data/contract); tokens from specs/UI/tokens.css; UI tests green"
+      ],
+      "conditionalOutcomes": [],
+      "validationCriteria": [
+        {
+          "action": "render System Status with one source degraded",
+          "outcome": "summary line shows the worst state (amber, not green); the degraded tile's dot is amber; all values still shown"
+        },
+        {
+          "action": "render with all sources good",
+          "outcome": "summary 'SYSTEM \u00b7 OK' green; 2x2 grid intact"
+        }
+      ],
+      "deps": [],
+      "sourceRefs": [
+        "iris-polish-spec-2026-07-27-P1",
+        "F-092",
+        "honest-instrument-F1"
+      ],
+      "tasks": [],
+      "status": "sprint-ready",
+      "createdAt": "2026-07-27",
+      "updatedAt": "2026-07-27"
+    },
+    {
+      "id": "US-490",
+      "parent": "F-121",
+      "type": "normal",
+      "size": "S",
+      "title": "Polish P-2: context-aware system-setup menu access (\u22ee parked-only + long-press always)",
+      "goal": "As the CIO, I want the system-setup menu (service stop/restart, Exit-UI -- consequential) not reachable by a single accidental tap while driving. Per Iris's polish spec P-2, CIO-locked Option C (2026-07-27): the \u22ee shows ONLY on the parked/idle home card; hidden while driving; the 5s long-press stays always-available as the deliberate override.",
+      "definitionOfDone": [
+        "\u22ee menu button shows only on the parked/idle home card (idle state); HIDDEN while driving (live state) -- keys off the idle/live state the UI already consumes (pure UI, no new data/contract)",
+        "5s long-press-anywhere still opens the menu in any state (deliberate override, filling ring preserved)",
+        "each destructive menu item still behind its existing confirm (unchanged)",
+        "the menu is never reachable by a single tap while driving; UI tests green"
+      ],
+      "conditionalOutcomes": [
+        "Iris: confirm with Atlas only if the context-aware \u22ee touches the kiosk lifecycle (she reads it as pure UI, no gate expected) -- if it does, route before building"
+      ],
+      "validationCriteria": [
+        {
+          "action": "parked/idle state",
+          "outcome": "\u22ee visible + opens the menu on tap; long-press also opens"
+        },
+        {
+          "action": "driving/live state",
+          "outcome": "\u22ee hidden; only the 5s long-press opens the menu (no single-tap path)"
+        }
+      ],
+      "deps": [],
+      "sourceRefs": [
+        "iris-polish-spec-2026-07-27-P2",
+        "cio-locked-option-C"
+      ],
+      "tasks": [],
+      "status": "sprint-ready",
+      "createdAt": "2026-07-27",
+      "updatedAt": "2026-07-27"
+    },
+    {
+      "id": "US-491",
+      "parent": "F-121",
+      "type": "normal",
+      "size": "S",
+      "title": "Polish P-3: DTC detail overlay hierarchy -- directive-first + carded sections + bigger Back",
+      "goal": "As the operator reading a DTC detail, I want the 'what do I do' to land first, not buried in a dense column. Per Iris's polish spec P-3: directive-first for \ud83d\udd34/\ud83d\udfe1, card the sections, consistent rhythm + a bigger Back. TYPOGRAPHIC/LAYOUT hierarchy ONLY -- zero change to severity gating, the fix-replacement safety rule (S-4), the trust badge, or the Mode-04 clear gate.",
+      "definitionOfDone": [
+        "directive-first for \ud83d\udd34/\ud83d\udfe1: the action band (REDUCE LOAD\u00b7PULL OVER / GET DIAGNOSED) moves directly under the code+chip hero, larger (\ud83d\udfe2 keeps 'safe to clear once logged')",
+        "card the sections: freeze-frame/context, suggested-fix+trust-badge, and the Clear zone each become a bordered block with a small uppercase label",
+        "consistent spacing scale; the \u2039 Back target >= 40px with clear affordance",
+        "ZERO change to severity gating / S-4 fix-replacement rule / trust badge / Mode-04 clear gate -- presentation only; UI tests green"
+      ],
+      "conditionalOutcomes": [],
+      "validationCriteria": [
+        {
+          "action": "open a STOP-tier DTC detail",
+          "outcome": "directive band leads (under the hero, larger); sections are carded; Back >= 40px; gating/safety logic unchanged"
+        }
+      ],
+      "deps": [],
+      "sourceRefs": [
+        "iris-polish-spec-2026-07-27-P3"
       ],
       "tasks": [],
       "status": "sprint-ready",
