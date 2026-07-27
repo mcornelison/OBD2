@@ -1248,7 +1248,7 @@
       "description": "The F-092/097/111 carousel is built + deployed but renders wrong on the real Pi: (P0) the card emitters were never wired to execute (no service unit / no orchestrator invocation) so only boot-state is written -> carousel starves -> phantom Check Engine; plus two Iris design gaps CIO-locked 2026-07-21 (calm idle-state home card; full-bleed LETTERBOX scaling) + a light-sensor brightness feed + a Rule-10 token reconciliation. Iris spec: offices/uidevloper/proposals/2026-07-21-pi-idle-state-and-full-bleed.md (REVIEWED, CIO-locked 9da4af5). 'Make the deployed line render truthfully' -- additive over the shipped carousel, no redraw.",
       "createdAt": "2026-07-21",
       "updatedAt": "2026-07-27",
-      "currentVersion": "V0.29.16"
+      "currentVersion": "V0.29.17"
     }
   ],
   "stories": [
@@ -5668,9 +5668,11 @@
         "tokens.css-brand-reserved"
       ],
       "tasks": [],
-      "status": "sprint-ready",
+      "status": "complete",
       "createdAt": "2026-07-27",
-      "updatedAt": "2026-07-27"
+      "updatedAt": "2026-07-27",
+      "passes": true,
+      "shippedNote": "SHIPPED V0.29.17: 8/10 TD-067 surfaces swept + tier-aware .detail-directive refactor. RESIDUAL: the 2 Mode-04 destructive-confirm surfaces (#7/#8) deferred pending the --destructive token (Iris value + Atlas gate) -- Ralph filed a guard test + a note; ~15min follow-up once gated. TD-067 stays partially open."
     },
     {
       "id": "US-489",
@@ -5703,9 +5705,11 @@
         "honest-instrument-F1"
       ],
       "tasks": [],
-      "status": "sprint-ready",
+      "status": "complete",
       "createdAt": "2026-07-27",
-      "updatedAt": "2026-07-27"
+      "updatedAt": "2026-07-27",
+      "passes": true,
+      "shippedNote": "SHIPPED V0.29.17 (F-121 UI polish)."
     },
     {
       "id": "US-490",
@@ -5739,9 +5743,11 @@
         "cio-locked-option-C"
       ],
       "tasks": [],
-      "status": "sprint-ready",
+      "status": "complete",
       "createdAt": "2026-07-27",
-      "updatedAt": "2026-07-27"
+      "updatedAt": "2026-07-27",
+      "passes": true,
+      "shippedNote": "SHIPPED V0.29.17 (F-121 UI polish)."
     },
     {
       "id": "US-491",
@@ -5768,9 +5774,11 @@
         "iris-polish-spec-2026-07-27-P3"
       ],
       "tasks": [],
-      "status": "sprint-ready",
+      "status": "complete",
       "createdAt": "2026-07-27",
-      "updatedAt": "2026-07-27"
+      "updatedAt": "2026-07-27",
+      "passes": true,
+      "shippedNote": "SHIPPED V0.29.17 (F-121 UI polish)."
     }
   ]
 }
