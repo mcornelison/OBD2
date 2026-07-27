@@ -568,7 +568,7 @@
             dismissLabel: "Acknowledge", plainDismiss: false },
     watch: { colorVar: "--amber-warn", icon: "⚠", directive: "DRIVE GENTLY · GET DIAGNOSED",
             dismissLabel: "Dismiss", plainDismiss: true },
-    minor: { colorVar: "--ok-green", icon: "ⓘ", directive: "SAFE TO CLEAR ONCE LOGGED",
+    minor: { colorVar: "--green-ok", icon: "ⓘ", directive: "SAFE TO CLEAR ONCE LOGGED",
             dismissLabel: "Dismiss", plainDismiss: true },
     unknown: { colorVar: "--amber-warn", icon: "⚠", directive: "GET DIAGNOSED",
             dismissLabel: "Dismiss", plainDismiss: true },

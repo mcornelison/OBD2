@@ -844,7 +844,7 @@ const minorV = c.takeoverView(dtc([code('minor', 'P0442', 'Evap small leak')], '
 assert.strictEqual(minorV.severity, 'minor', 'minor severity');
 assert.ok(/SAFE TO CLEAR/i.test(minorV.directive), 'minor directive');
 assert.strictEqual(minorV.plainDismiss, true, 'minor dismissible');
-assert.strictEqual(minorV.colorVar, '--ok-green', 'minor green');
+assert.strictEqual(minorV.colorVar, '--green-ok', 'minor green (SSOT token, US-484-a)');
 
 // hero = highest severity; the rest fold into "+N more" (one takeover at a time).
 const multiV = c.takeoverView(dtc(

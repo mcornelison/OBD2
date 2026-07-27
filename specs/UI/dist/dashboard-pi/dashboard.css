@@ -8,19 +8,30 @@
  *          and honest-instrument states share one source.
  * Author:  Ralph Agent (Rex)
  * Created: 2026-06-30 -- Sprint 49 US-399 (carousel shell)
+ * Updated: 2026-07-26 -- US-484-a: the :root palette below is reconciled with the
+ *          visual SSOT specs/UI/tokens.css for the tokens Atlas has gated
+ *          (--green-ok, --text-primary). Do NOT re-fork a value here: if a
+ *          surface needs a colour, add it to tokens.css first (Rule-10 / Atlas;
+ *          tuning-semantics colours via Spool). Enforced by
+ *          tests/ui/test_dashboard_token_ssot.py.
  * ==========================================================================*/
 
 :root {
   --bg:             #000000;
   --surface:        #111111;
-  --text-primary:   #DDDDDD;
-  --text-secondary: #888888;
-  --text-tertiary:  #666666;
-  --amber-warn:     #FFC400;   /* project-wide warn token (BT drop, stale) */
+  --text-primary:   #DDDDDD;   /* SSOT tokens.css:28 (Atlas Rule-10 2026-07-25) */
+  --text-secondary: #888888;   /* SSOT tokens.css:34 */
+  --text-tertiary:  #666666;   /* SSOT tokens.css:35 */
+  --amber-warn:     #FFC400;   /* SSOT tokens.css:38 -- WATCH / degraded */
   --red:            #E60012;   /* brand STOP-red -- the full-bleed takeover bg */
   --red-light:      #F61D2D;   /* brighter alert red -- the DTC ribbon (R-2) */
   --red-dark:       #BF000F;   /* takeover radial edge */
-  --ok-green:       #2ECC71;   /* healthy verdict (US-400/401 bind it) */
+  --green-ok:       #35C46A;   /* SSOT tokens.css:43 (Atlas A-8) -- MINOR DTC
+                                  tier, OK/healthy, "linked", trust-badge
+                                  verified. Reconciled off a forked local name +
+                                  value in US-484-a (see git history; the old
+                                  literal is deliberately not repeated here so a
+                                  grep for it stays a clean drift audit). */
   --tap-min:        40px;      /* minimum touch target (S-2) */
 }
 
@@ -43,7 +54,7 @@ html, body {
 }
 #topbar .glyph { color: var(--text-secondary); letter-spacing: 0.04em; }
 #topbar .glyph[data-state="amber"] { color: var(--amber-warn); }
-#topbar .glyph[data-state="ok"]    { color: var(--ok-green); }
+#topbar .glyph[data-state="ok"]    { color: var(--green-ok); }
 #topbar .glyph[data-state="down"]  { color: var(--red-light); }
 #version-chip {
   margin-left: auto; color: var(--text-tertiary);
@@ -85,7 +96,8 @@ html, body {
 
 /* --- US-481 idle-state home card (F-121) ------------------------------------ */
 /* The calm, honest PARKED view. Every colour is a token reference (no hex
-   literal here -- token reconciliation is US-484); the STANDBY hero is neutral
+   literal here; the tokens themselves were reconciled to the SSOT in US-484-a),
+   the STANDBY hero is neutral
    grey (never green), and the 3 fact tiles reuse the shared `.tile[data-level]`
    rules above so green is bound to the SSOT green in exactly one place. */
 .idle-card .card-body {
@@ -132,7 +144,7 @@ html, body {
 }
 .tile-value { font-size: 15px; font-weight: 600; color: var(--text-primary); }
 .tile-detail { font-size: 11px; color: var(--text-tertiary); }
-.tile[data-level="ok"]    .tile-value { color: var(--ok-green); }
+.tile[data-level="ok"]    .tile-value { color: var(--green-ok); }
 .tile[data-level="amber"] .tile-value { color: var(--amber-warn); }
 .tile[data-level="down"]  .tile-value { color: var(--red-light); }
 .tile[data-level="unavailable"] .tile-value {
@@ -177,7 +189,7 @@ html, body {
 }
 .ltft-bar-value { font-size: 13px; font-weight: 600; color: var(--text-primary); }
 .ltft-bar-drive { font-size: 10px; color: var(--text-tertiary); }
-.ltft-bar[data-level="ok"]    .ltft-bar-value { color: var(--ok-green); }
+.ltft-bar[data-level="ok"]    .ltft-bar-value { color: var(--green-ok); }
 .ltft-bar[data-level="amber"] .ltft-bar-value { color: var(--amber-warn); }
 .ltft-bar[data-level="down"]  .ltft-bar-value { color: var(--red-light); }
 .ltft-bar[data-level="down"]  { border-color: var(--red-light); }
@@ -213,7 +225,7 @@ html, body {
 }
 #dtc-ribbon[data-level="stop"]    { background: var(--red-light); color: #fff; }
 #dtc-ribbon[data-level="watch"]   { background: var(--amber-warn); color: #000; }
-#dtc-ribbon[data-level="minor"]   { background: var(--ok-green); color: #000; }
+#dtc-ribbon[data-level="minor"]   { background: var(--green-ok); color: #000; }
 #dtc-ribbon[data-level="unknown"] { background: var(--amber-warn); color: #000; }
 .ribbon-glyph { font-size: 13px; line-height: 1; flex: 0 0 auto; }
 .ribbon-text {
@@ -281,7 +293,7 @@ html, body {
   width: 72px; height: 72px; margin: -36px 0 0 -36px;
   border-radius: 50%; z-index: 30; pointer-events: none;
   --fill: 0;
-  background: conic-gradient(var(--ok-green) calc(var(--fill) * 360deg),
+  background: conic-gradient(var(--green-ok) calc(var(--fill) * 360deg),
                              rgba(255, 255, 255, 0.12) 0);
   -webkit-mask: radial-gradient(circle 28px at center, transparent 98%, #000 100%);
           mask: radial-gradient(circle 28px at center, transparent 98%, #000 100%);
@@ -379,7 +391,7 @@ html, body {
 }
 .dtc-chip[data-level="stop"]    { background: var(--red-light); color: #fff; }
 .dtc-chip[data-level="watch"]   { background: var(--amber-warn); color: #000; }
-.dtc-chip[data-level="minor"]   { background: var(--ok-green);   color: #000; }
+.dtc-chip[data-level="minor"]   { background: var(--green-ok);   color: #000; }
 .dtc-chip[data-level="na"]      { background: #2a2f37; color: var(--text-secondary); }
 .dtc-chip[data-level="unknown"] { background: #2a2f37; color: var(--text-secondary); }
 
@@ -476,7 +488,10 @@ html, body {
   align-self: flex-start; font-size: 11px; font-weight: 700;
   padding: 1px 8px; border-radius: 8px;
 }
-.dtc-trust-badge[data-kind="verified"]  { background: rgba(46, 204, 113, 0.18); color: var(--ok-green); }
+/* The tint is the SSOT green at 18% alpha -- rgb(53,196,106) IS #35C46A. Kept as
+   rgba() (not a token) because it is an opacity of an existing token, not a new
+   colour; if CSS relative-colour lands on this panel it becomes rgb(from ...). */
+.dtc-trust-badge[data-kind="verified"]  { background: rgba(53, 196, 106, 0.18); color: var(--green-ok); }
 .dtc-trust-badge[data-kind="community"] {
   border: 1px dashed var(--text-secondary); color: var(--text-secondary);
 }
@@ -493,15 +508,15 @@ html, body {
 #dtc-clear-btn {
   min-height: var(--tap-min); padding: 0 14px; align-self: flex-start;
   font-size: 13px; font-weight: 700; cursor: pointer; border-radius: 4px;
-  background: var(--surface); color: var(--ok-green);
-  border: 1px solid var(--ok-green);
+  background: var(--surface); color: var(--green-ok);
+  border: 1px solid var(--green-ok);
 }
 #dtc-clear-btn:disabled {
   cursor: not-allowed; color: var(--text-tertiary);
   border-color: var(--surface); font-weight: 400;
 }
 #dtc-clear-result { font-size: 12px; color: var(--text-secondary); }
-#dtc-clear-result[data-level="cleared"] { color: var(--ok-green); }
+#dtc-clear-result[data-level="cleared"] { color: var(--green-ok); }
 #dtc-clear-result[data-level="reset"]   { color: var(--red-light); font-weight: 700; }
 #dtc-clear-result[data-level="blocked"] { color: var(--amber-warn); }
 
