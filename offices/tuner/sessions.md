@@ -26,10 +26,12 @@
 - Result: GROOMING INPUT (1 re-scope + 3 grounded inputs).
 - Most significant: F-112's "knock over OBD path" question is already a proven NO — re-scope to Pi-hostable MUT-II or the spike re-proves a known negative.
 
+- **PID-priority allocation — DELIVERED** (CIO-directed, ahead of groom): `offices/tuner/edr-pid-priority-allocation.md`. Re-grounds the existing US-136 tier engine against the measured ~6.3/s budget + probe-confirmed PID set. Key findings: (a) voltage is FREE off-K-line via adapter `ATRV` (pin 16) → move off rotation; (b) **Tier 4 currently polls 2 probe-confirmed-UNSUPPORTED dead PIDs** (`INTAKE_PRESSURE` 0x0B, `CONTROL_MODULE_VOLTAGE` 0x42) — drop all 3 dead (+`FUEL_PRESSURE` 0x0A); (c) MAP unsupported ⇒ boost NOT OBD-reachable (needs GM 3-bar + ECMLink); (d) re-tiered so COOLANT/RPM/LOAD get ~1.2 Hz vs today's flat 0.39 Hz; (e) EDR event burst = trigger reallocates priority + sheds T3/T4, never accelerates (ceiling is physical). Sent to Atlas (F-113 input) + Marcus (tracking).
+
 ### Open Items
 - **US-484**: my dependency clear; awaiting Atlas token gate → Ralph repoint.
 - **F-116 drive-33 re-tag**: gated on US-458 CHECK-drop merging; awaiting Atlas ping.
-- **EDR groom**: deliver the PID-priority allocation when F-112/F-113 groom; reconcile IMU ground truth.
+- **EDR groom**: PID-priority allocation DONE. Remaining when it grooms — confirm final tier membership if the ECU/PID surface changes; reconcile IMU ground truth (dead-clones vs @0x69); produce F-115 trigger detail against the alert advisory. F-112 = Pi-hostable-MUT-II paper investigation (live read install-gated).
 
 ### Safety Advisories
 - No new acute conditions. `--critical-red` safety-signal integrity ruling issued (area/motion/text > color; full-brightness-always). No datalogs this session.
