@@ -55,6 +55,18 @@
   --red:       #E60012;        /* brand mark base                             */
   --red-light: #F61D2D;        /* brand mark highlight                        */
   --red-dark:  #BF000F;        /* brand mark shadow                          */
+
+  /* --- STATE-ALARM red — "PULL OVER NOW" (NOT a brand red) ---------------- */
+  /* Spool set value+semantics 2026-07-25 (§6d); Atlas gate (Rule-10,          */
+  /* 2026-07-26, US-484-b/BL-024). The HEX IS THE 3RD REINFORCEMENT ONLY —     */
+  /* STOP integrity is load-bearing (engine-safety) and REQUIRES the non-color */
+  /* channels: full-bleed/large area + pulsing motion + "PULL OVER" text +     */
+  /* near-black (#000/#0a0a0a) bg + white copy >= WCAG-AA large-text + FULL    */
+  /* brightness ALWAYS (independent of auto-dim). Axis vs brand red is         */
+  /* DEEPER-DARKER, never a warm/orange shift (that would collide with         */
+  /* --amber-warn WATCH and invert severity). See US-484-b +                   */
+  /* offices/tuner/dtc-display-clear-safety-advisory.md §6d.                    */
+  --critical-red: #D32F2F;
 }
 
 /* ============================================================================
@@ -62,9 +74,8 @@
  * under deadline pressure. Values TBD; surfaces MUST NOT render these until
  * a value is set (route through Spool for semantics + Atlas for the token).
  *
- *   --critical-red:  TBD;  state-alarm red ("PULL OVER NOW"). MUST be visually
- *                          distinct from the brand reds above — cooler /
- *                          orange-shifted, ~#D32F2F (Spool S-2 target).
+ *   (--critical-red was set 2026-07-25/26 — Spool value #D32F2F + §6d, Atlas
+ *    gate; it now lives in :root above with its multi-channel STOP contract.)
  *   --neutral-blue:  TBD;  normal-state tuning readouts, ~#7B9CAE.
  *
  * Not yet tokenized (intentionally — no grounded value exists yet):
@@ -74,11 +85,10 @@
  * ============================================================================ */
 
 /* ----------------------------------------------------------------------------
- * OPEN CONFLICT (flagged 2026-06-19 — owed resolution before DTC build):
- * The DTC viewer's STOP tier + ribbon currently render with the BRAND reds
- * (--red / --red-light) because --critical-red has no value yet. That violates
- * the Spool-S-2 brand-vs-alarm separation above. Resolution = set --critical-red
- * (Spool: semantics/value; Atlas: token), then repoint the DTC STOP tier + the
- * unified alert takeover/ribbon to it. Tracked: Iris W-3/W-12; routed to Atlas
- * + Spool 2026-06-19. Until resolved, treat STOP-red as a placeholder, not final.
+ * RESOLVED 2026-07-26 (flagged 2026-06-19): --critical-red now has a value
+ * (#D32F2F — Spool §6d + Atlas gate, in :root above). The DTC viewer's STOP
+ * tier + ribbon MUST be repointed off the BRAND reds (--red / --red-light) onto
+ * --critical-red — that repoint + Spool's multi-channel STOP treatment ships in
+ * US-484-b (V0.29.16). Until US-484-b lands, any surface still painting STOP
+ * with a brand red is the KNOWN-open half, not the SSOT intent.
  * -------------------------------------------------------------------------- */
