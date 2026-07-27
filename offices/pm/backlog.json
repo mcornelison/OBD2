@@ -5427,45 +5427,83 @@
       "shippedNote": "SHIPPED V0.29.15 (F-121 UI render-truthfully); IRL-gated on the Pi deploy validation."
     },
     {
-      "id": "US-484",
+      "id": "US-484-a",
       "parent": "F-121",
       "type": "tech-debt",
-      "size": "M",
-      "title": "Rule-10 token reconciliation -- dashboard.css :root drift vs specs/UI/tokens.css SSOT",
-      "goal": "As the UI SSOT + safety-signal integrity, I want the shipped dashboard.css :root reconciled with specs/UI/tokens.css. Atlas Q-2 confirmed 3 drifts: (1) healthy green name+value fork (--ok-green #2ECC71 dist vs --green-ok #35C46A SSOT); (2) --text-primary invented #DDDDDD in dist, 'not yet tokenized' in SSOT; (3) --critical-red -- dashboard renders STOP/critical in BRAND --red-light #F61D2D = the brand-vs-alarm collision the SSOT explicitly warns against (a SAFETY-signal-integrity item, not cosmetics).",
+      "size": "S",
+      "title": "SSOT token reconciliation -- dashboard.css green + text-primary -> specs/UI/tokens.css (buildable now)",
+      "goal": "As the UI SSOT, I want dashboard.css :root reconciled with specs/UI/tokens.css for the two now-blessed tokens, so there is one source of truth. Both values are decided + in the SSOT: --green-ok #35C46A (Atlas A-8) and --text-primary #DDDDDD (Atlas gated 2026-07-25, US-484/BL-024). (Split from US-484; the mechanical, non-safety half.)",
       "definitionOfDone": [
-        "green: reconcile dashboard.css --ok-green #2ECC71 -> SSOT --green-ok #35C46A (name AND value); no visual regression",
-        "text-primary: SET it in the specs/UI SSOT with a grounded value (Iris proposes -- contrast on dark bg, #DDDDDD plausible; Atlas gates the token add)",
-        "critical-red (SAFETY): Spool assigns the safety-signal red value + semantics; Atlas gates the token; then REPOINT the DTC STOP tier + takeover OFF brand --red-light #F61D2D onto the safety-red token -- so alarm red != brand red (per the 2026-06-19 split)",
-        "token ADDITIONS to specs/UI/tokens.css route through Atlas (Rule-10); grep confirms no drifted token literal remains in dashboard.css; STOP/takeover render in the safety-red, not brand-red"
+        "dashboard.css --ok-green #2ECC71 -> SSOT --green-ok #35C46A (name AND value); no visual regression on the shipped cards",
+        "dashboard.css --text-primary aligned to the SSOT value #DDDDDD (now tokenized in specs/UI/tokens.css:28)",
+        "grep confirms no drifted green/text-primary literal remains in dashboard.css; cards render unchanged",
+        "does NOT touch the STOP/critical-red tier -- that is US-484-b (keep this slice mechanical + safe)"
       ],
-      "conditionalOutcomes": [
-        "critical-red is GATED: Spool assigns the value/semantics + Atlas gates the token BEFORE the STOP-tier repoint -- do NOT pick a red yourself. The green + text-primary reconciliations are not blocked on Spool and can land first."
-      ],
+      "conditionalOutcomes": [],
       "validationCriteria": [
         {
-          "action": "diff dashboard.css :root vs specs/UI/tokens.css after the change",
-          "outcome": "no drift; dashboard uses SSOT green + text-primary; cards render unchanged"
-        },
-        {
-          "action": "trigger a STOP-tier DTC takeover",
-          "outcome": "renders in the Spool-assigned safety-red token, NOT brand --red-light (brand-vs-alarm collision closed)"
+          "action": "diff dashboard.css :root vs specs/UI/tokens.css for green + text-primary after the change",
+          "outcome": "no drift; dashboard uses SSOT --green-ok + --text-primary; cards render unchanged"
         }
       ],
       "deps": [],
       "sourceRefs": [
         "F-121",
-        "iris-idle-fullbleed-spec-2026-07-21-#3",
-        "atlas-Q2-token-drift",
-        "atlas-F121-Q2-token-2026-07-21",
-        "spool-safety-red-owed",
-        "token-split-2026-06-19"
+        "atlas-text-primary-gated-2026-07-25",
+        "atlas-A8-green-ok",
+        "split-from-US-484"
       ],
       "tasks": [],
-      "status": "blocked",
-      "createdAt": "2026-07-21",
-      "updatedAt": "2026-07-22",
-      "carryForwardNote": "Pulled from V0.29.15 to the NEXT sprint (CIO 2026-07-22). Blocked (BL-024) on Atlas --text-primary token + Spool --critical-red SAFETY value. Green reconciliation is buildable; story waits on the two token adds."
+      "status": "sprint-ready",
+      "createdAt": "2026-07-26",
+      "updatedAt": "2026-07-26"
+    },
+    {
+      "id": "US-484-b",
+      "parent": "F-121",
+      "type": "issue",
+      "size": "M",
+      "title": "DTC STOP-tier SAFETY treatment -- repoint off brand-red + Spool \u00a76d multi-channel (color+area+motion+text+bg+brightness)",
+      "goal": "As engine-safety signal integrity, I want the DTC STOP/'PULL OVER' tier + takeover to stop rendering in BRAND red --red-light #F61D2D (the brand-vs-alarm collision) and instead carry the STOP signal by Spool's full multi-channel treatment. Per Spool 2026-07-25 (offices/tuner/dtc-display-clear-safety-advisory.md \u00a76d): the hex alone is INSUFFICIENT -- #D32F2F vs brand red differ mainly in saturation (weakest discriminator, worse on the narrow-gamut OSOYOO panel). Area+motion+text carry STOP; color is the third reinforcement. (Split from US-484; the safety half.)",
+      "definitionOfDone": [
+        "PREREQ: --critical-red #D32F2F added to specs/UI/tokens.css (Spool assigned the value 2026-07-25; Atlas owes the one-line token gate -- routed). Repoint against the token, not a hardcoded hex.",
+        "repoint the DTC STOP tier + takeover OFF brand --red-light #F61D2D onto --critical-red #D32F2F (dashboard.css #dtc-ribbon[data-level=stop], .dtc-chip[stop], .dtc-hero[stop], #confirm-ok)",
+        "Spool \u00a76d ch.1 -- AREA+MOTION+TEXT carry STOP: STOP takeover is full-bleed/large-area + pulsing motion + explicit 'PULL OVER' text; the brand mark stays small + static. (color is the 3rd reinforcement, not the 1st)",
+        "Spool \u00a76d ch.2 -- STOP red renders on NEAR-BLACK (#000/#0a0a0a) with WHITE copy, never on brand chrome; text contrast >= WCAG-AA large-text",
+        "Spool \u00a76d ch.3 -- deeper-and-darker axis only; NO warmer/orange shift (would collide with amber WATCH #FFC400 and invert severity order). WATCH stays #FFC400, MINOR stays #35C46A -- unchanged",
+        "Spool \u00a76d ch.4 -- a STOP alarm is FULL BRIGHTNESS ALWAYS, independent of the US-483-b auto-dim (only ambient content dims; ties to the alarmFloorLevel guard -- STOP overrides even the floor to full)",
+        "grep confirms the STOP tier no longer references brand --red-light; UI/pi tests green incl. a test that STOP renders full-bleed + full-brightness on near-black"
+      ],
+      "conditionalOutcomes": [
+        "if --critical-red is not yet in tokens.css at build time, STOP + ping PM/Atlas for the one-line gate (value is decided #D32F2F; do NOT hardcode the hex or pick your own)",
+        "the pulsing-motion treatment must respect the 'motion never implies a state that isn't real' rule (carousel spec \u00a74) -- pulse ONLY on a live STOP, never decoratively"
+      ],
+      "validationCriteria": [
+        {
+          "action": "trigger a STOP-tier DTC takeover on the Pi",
+          "outcome": "renders full-bleed on near-black, white 'PULL OVER' text, pulsing, in --critical-red #D32F2F (not brand --red-light); brand mark small+static"
+        },
+        {
+          "action": "trigger STOP while auto-dim says dark",
+          "outcome": "STOP stays full brightness (not dimmed) -- ch.4 satisfied"
+        },
+        {
+          "action": "compare STOP vs WATCH vs MINOR",
+          "outcome": "severity order reads correctly by area/motion/text; no orange collision between STOP and amber WATCH"
+        }
+      ],
+      "deps": [],
+      "sourceRefs": [
+        "F-121",
+        "spool-critical-red-2026-07-25",
+        "tuner-dtc-safety-advisory-6d",
+        "atlas-critical-red-token-gate-owed",
+        "split-from-US-484"
+      ],
+      "tasks": [],
+      "status": "sprint-ready",
+      "createdAt": "2026-07-26",
+      "updatedAt": "2026-07-26"
     },
     {
       "id": "US-485",
