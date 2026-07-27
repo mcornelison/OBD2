@@ -1411,3 +1411,47 @@ Task: Display brightness consumer — auto-dim from states/light with GROUNDED p
   note string leaves the old tail dangling with a stray closing quote -> invalid
   JSON. Either replace the whole field or bridge the junction (drop the stray ").
 ---
+
+## 2026-07-26 - US-484-a (Rex / Agent 1 — Sprint 62)
+Task: SSOT token reconciliation — dashboard.css green + text-primary -> specs/UI/tokens.css
+
+### What was implemented:
+- AC1 green: renamed the forked dist token `--ok-green #2ECC71` -> SSOT
+  `--green-ok #35C46A` (name AND value, tokens.css:43 / Atlas A-8) and repointed
+  all 9 var() consumers (topbar ok glyph, tile ok, ltft-bar ok, dtc-ribbon minor,
+  longpress ring, dtc-chip minor, dtc-clear-btn bg+border, dtc-clear-result cleared).
+- Cross-file half: carousel.js `TAKEOVER_STYLE.minor.colorVar` was also `--ok-green`
+  -> repointed, plus the matching assertion in tests/deploy/test_dashboard_kit.py.
+- AC2 text-primary: dashboard.css already carried #DDDDDD (it matched the value
+  Atlas later blessed into the SSOT) -> verify-and-pin, with SSOT file:line
+  provenance comments added across the neutral/amber tier.
+- AC3 grep-clean: converted `.dtc-trust-badge[verified]` rgba(46,204,113,0.18)
+  -> rgba(53,196,106,0.18) (the SSOT green at the same alpha).
+- AC4 scope fence: STOP tier untouched; a test asserts it is STILL on brand
+  --red-light and that --critical-red does not yet appear in dashboard.css.
+- New guard suite tests/ui/test_dashboard_token_ssot.py (11 tests) that PARSES
+  both files and compares declarations.
+- Filed TD-065 (residual untokenized literals: the #2a2f37 chips duplicating SSOT
+  --neutral-chip-bg, and --bg/--surface/gradient edges with no SSOT counterpart).
+
+### Files changed:
+- Modified: `specs/UI/dist/dashboard-pi/dashboard.css` (token rename + value + rgba + provenance)
+- Modified: `specs/UI/dist/dashboard-pi/carousel.js` (MINOR takeover colorVar)
+- Modified: `tests/deploy/test_dashboard_kit.py` (colorVar assertion)
+- Created: `tests/ui/test_dashboard_token_ssot.py` (11 drift-guard tests)
+- Created: `offices/pm/tech_debt/TD-065-dashboard-css-residual-untokenized-literals.md`
+
+### Learnings for future iterations:
+- **Pattern discovered**: a token-drift guard must PARSE BOTH FILES and compare,
+  not assert a literal in the consumer. Asserting `#35C46A` in dashboard.css alone
+  passes forever even if someone edits the SSOT — the comparison is what makes the
+  SSOT rule enforceable.
+- **Gotcha**: a CSS token rename is never CSS-only here. `carousel.js` holds token
+  NAMES as data (`TAKEOVER_STYLE[*].colorVar`), so a var() rename silently unstyles
+  a tier. grep the token name across .js/.html/tests, not just .css.
+- **Gotcha**: `grep --ok-green` misses drift written as `rgba(46,204,113,...)`.
+  When reconciling a colour, search the hex AND its decimal-rgb spelling.
+- **Gotcha (self-inflicted)**: writing the old value into a provenance comment
+  ("was --ok-green #2ECC71") re-reds a strict no-dead-literal test — correctly.
+  Provenance belongs in git history; keep the file greppable.
+---
