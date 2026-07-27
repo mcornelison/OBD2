@@ -558,26 +558,44 @@ html, body {
 
 /* Per-code detail overlay: a fixed skeleton that scrolls on the panel. A ‹ Back
    is always present so the operator is never trapped. */
+/* US-491 (polish P-3): ONE spacing scale for the whole overlay, declared here
+   and inherited by every section below. Two steps is the whole scale on a
+   480x320 panel -- between sections, and within one. Magic numbers scattered
+   per-rule are what made the old column read as an undifferentiated wall. */
 #dtc-detail {
+  --detail-gap:       8px;      /* between sections */
+  --detail-gap-tight: 4px;      /* within a section */
+  --detail-pad:       8px 10px; /* every section card */
   position: fixed; inset: 0; z-index: 45;
   background: rgba(0, 0, 0, 0.95);
   display: flex; flex-direction: column;
   padding: 4px 12px 10px; box-sizing: border-box; overflow-y: auto;
 }
+/* US-491: was a FIXED 36px around a 40px (--tap-min) Back button, so the one
+   control that guarantees the operator is never trapped overflowed its own
+   header. min-height, and >= the tap minimum. */
 .detail-head {
-  display: flex; align-items: center; gap: 8px; height: 36px;
+  display: flex; align-items: center; gap: var(--detail-gap);
+  min-height: 44px;
   border-bottom: 1px solid var(--surface);
 }
+/* US-491: 40px of transparent nothing is not a target the operator can SEE.
+   Same footprint, now with a visible edge (AC3 "clear affordance"). */
 #detail-back {
   min-width: var(--tap-min); min-height: var(--tap-min);
-  background: transparent; border: 0; color: var(--text-secondary);
-  font-size: 14px; cursor: pointer;
+  padding: 0 12px; box-sizing: border-box;
+  background: var(--surface); border: 1px solid var(--text-tertiary);
+  border-radius: 6px; color: var(--text-primary);
+  font-size: 14px; font-weight: 700; cursor: pointer;
 }
 .detail-code-head {
   font-size: 14px; font-weight: 700; letter-spacing: 0.06em;
   color: var(--text-primary);
 }
-.detail-body { display: flex; flex-direction: column; gap: 6px; padding-top: 6px; }
+.detail-body {
+  display: flex; flex-direction: column;
+  gap: var(--detail-gap); padding-top: var(--detail-gap);
+}
 .detail-hero { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .detail-code { font-size: 20px; font-weight: 800; letter-spacing: 0.04em; }
 .detail-short { font-size: 13px; color: var(--text-secondary); flex: 1 1 100%; }
@@ -589,9 +607,17 @@ html, body {
    directive inherits no severity it does not have; carousel.js tags the row
    with data-level from the SAME tier the chip uses, so the two can never
    disagree. */
+/* US-491 (polish P-3, directive-first): the action band is now a BAND -- a
+   padded slab with a tier-coloured left edge, sized a full step above the base
+   copy so "what do I do" lands first from arm's length. `currentColor` on the
+   edge means the tier rules below still set exactly ONE property (color) and
+   the accent can never disagree with the text it sits beside. */
 .detail-directive {
-  font-size: 14px; font-weight: 700; letter-spacing: 0.03em;
+  font-size: 18px; font-weight: 800; letter-spacing: 0.03em;
   color: var(--text-primary);
+  padding: var(--detail-pad);
+  border-left: 4px solid currentColor; border-radius: 4px;
+  background: var(--surface);
 }
 .detail-directive[data-level="stop"]    { color: var(--critical-red); }
 .detail-directive[data-level="watch"]   { color: var(--amber-warn); }
@@ -601,9 +627,14 @@ html, body {
 .detail-directive[data-level="unknown"] { color: var(--amber-warn); }
 .detail-caveat { font-size: 12px; color: var(--amber-warn); }
 .detail-meta { font-size: 11px; color: var(--text-tertiary); letter-spacing: 0.03em; }
-.detail-freeze {
-  display: flex; flex-direction: column; gap: 2px;
-  padding: 6px 8px; border: 1px solid var(--surface); border-radius: 4px;
+/* US-491 (AC2): the ONE section shell. Freeze-frame/context, suggested-fix and
+   the Clear zone are all `.detail-card` -- three near-identical boxes drift the
+   first time one of them is edited, and the drift is exactly what AC3's
+   "consistent spacing scale" is asking to stop. */
+.detail-card {
+  display: flex; flex-direction: column; gap: var(--detail-gap-tight);
+  padding: var(--detail-pad);
+  border: 1px solid var(--text-tertiary); border-radius: 4px;
 }
 .detail-ff-cell { display: flex; gap: 8px; font-size: 12px; }
 .detail-ff-cell .detail-label { min-width: 70px; }
@@ -612,11 +643,14 @@ html, body {
   font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase;
   color: var(--text-secondary);
 }
-.detail-value { font-size: 13px; color: var(--text-primary); }
-.detail-fix {
-  display: flex; flex-direction: column; gap: 4px;
-  padding: 6px 8px; border: 1px solid var(--surface); border-radius: 4px;
-}
+/* US-491 -- THE LOAD-BEARING FIX. detailLine() wraps EVERY row's text in this
+   span, and a child's own declaration beats an inherited value no matter how
+   specific the parent selector is. While this rule hardcoded 13px +
+   --text-primary, every size and colour the row classes declared was INERT:
+   the caveat never rendered amber, the footer never rendered muted, and the
+   whole tier ramp US-488 built for .detail-directive one story ago painted
+   nothing at all. Inheriting is what lets a row class mean what it says. */
+.detail-value { font-size: inherit; color: inherit; }
 .detail-fix-text { font-size: 13px; color: var(--text-primary); }
 /* The fix slot REPLACED by a diagnose directive for a 🔴/🟡 code (never a raw
    internet fix on a dangerous code -- F-1/S-4). */
@@ -646,7 +680,12 @@ html, body {
    visibly inert (the display mirror of the authoritative server-side gate). The
    server RE-CHECKS on submit, so a disabled button is convenience, not the gate.
    A STOP/WATCH / un-synced / re-set code shows the honest reason as the label. */
-#dtc-clear-zone { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; }
+/* US-491: the zone is now one of the three `.detail-card` sections (border +
+   uppercase label from the shared shell), so it only needs its own separation
+   from the block above. carousel.js hides the whole card when nothing is
+   clearable -- an empty labelled box would be a new visual regression. */
+#dtc-clear-zone { margin-top: var(--detail-gap); }
+#dtc-clear-zone[hidden] { display: none; }
 #dtc-clear-btn {
   min-height: var(--tap-min); padding: 0 14px; align-self: flex-start;
   font-size: 13px; font-weight: 700; cursor: pointer; border-radius: 4px;

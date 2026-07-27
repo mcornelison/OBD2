@@ -1028,6 +1028,23 @@
     };
   }
 
+  // US-491: the heading on the fix card, per mode. AC2 wants every section
+  // card labelled, and the label has to tell the same truth the body does --
+  // heading a 🔴/🟡 diagnose directive "SUGGESTED FIX" would undo S-4 in the
+  // label while the body still obeys it. An unrecognised mode falls back to the
+  // neutral "NEXT STEP", never to "SUGGESTED FIX".
+  var FIX_SECTION_LABEL = {
+    fix: "SUGGESTED FIX",
+    directive: "NEXT STEP",
+    na: "APPLICABILITY",
+  };
+
+  function fixSectionLabel(mode) {
+    return Object.prototype.hasOwnProperty.call(FIX_SECTION_LABEL, mode)
+      ? FIX_SECTION_LABEL[mode]
+      : FIX_SECTION_LABEL.directive;
+  }
+
   // Freeze-frame view (S-5). Mode 02 is confirmed unsupported on the current
   // ECU (MD326328) -> the default is the labeled realtime-context fallback,
   // never blank. A grid renders only if a future Mode-02-capable ECU supplies
@@ -1053,20 +1070,29 @@
     return parts.join(" · ");
   }
 
-  // The per-code detail view. Non-object -> null. The directive band renders
-  // only for 🔴/🟡 (drives the "get diagnosed" message); the caveat is a line,
-  // never a tier upgrade (S-13).
+  // The per-code detail view. Non-object -> null. The caveat is a line, never a
+  // tier upgrade (S-13).
+  //
+  // US-491 (polish P-3, directive-first): the band renders for EVERY actionable
+  // tier, not just 🔴/🟡. The detail is the one screen the operator opens to ask
+  // "what do I do", and the answer already existed in DTC_TIER for MINOR ("safe
+  // to clear once logged") and for an uncurated `unknown` ("get diagnosed") --
+  // the takeover has shown both since US-405 while the detail showed nothing.
+  // A blank band on the screen dedicated to the question reads as "no action
+  // needed", which is the dishonest answer on an uncurated code (F-1). `na` is
+  // the one tier that stays blank: "not applicable to this vehicle" is a FACT,
+  // not an instruction, it never alarms anywhere else in the system, and the
+  // fix slot already states it.
   function codeDetailView(code) {
     if (!isObj(code)) return null;
     var tier = dtcTier(code.severity);
-    var isStopWatch = code.severity === "stop" || code.severity === "watch";
     return {
       code: code.code,
       chip: tier.chip,
       level: tier.level,
       short: dtcShort(code),
       long: (code.long && String(code.long).trim()) || null,
-      directive: isStopWatch ? tier.directive : null,
+      directive: tier.level === "na" ? null : tier.directive,
       caveat: dtcCaveat(code),
       statusMeta: dtcStatusMeta(code),
       freezeFrame: freezeFrameView(code),
@@ -1351,6 +1377,7 @@
     alertsCardView: alertsCardView,
     trustBadge: trustBadge,
     fixArea: fixArea,
+    fixSectionLabel: fixSectionLabel,
     freezeFrameView: freezeFrameView,
     codeDetailView: codeDetailView,
     clearGateReason: clearGateReason,
@@ -1958,6 +1985,7 @@
       // US-407 clear surface: the gated button + result line inside the detail,
       // and the dedicated hard-confirm modal.
       var clearBtn = document.getElementById("dtc-clear-btn");
+      var clearZone = document.getElementById("dtc-clear-zone");
       var clearResult = document.getElementById("dtc-clear-result");
       var clearConfirm = document.getElementById("clear-confirm");
       var clearConfirmTitle = document.getElementById("clear-confirm-title");
@@ -2123,8 +2151,11 @@
         detailBody.appendChild(detailLine("detail-meta", "", view.statusMeta));
 
         // Freeze-frame grid OR the labeled realtime fallback (S-5, never blank).
+        // US-491: `detail-card` is the SHARED section shell (border + the one
+        // spacing scale) -- three near-identical boxes drift the first time one
+        // of them is edited, which is what "consistent rhythm" (AC3) is about.
         var ff = document.createElement("div");
-        ff.className = "detail-freeze";
+        ff.className = "detail-card detail-freeze";
         var ffLabel = document.createElement("span");
         ffLabel.className = "detail-label";
         ffLabel.textContent = "FREEZE FRAME";
@@ -2144,13 +2175,17 @@
         // Severity-gated fix (S-4/F-1): directive for 🔴/🟡, real fix + badge for
         // 🟢, N/A for na.
         var fixBox = document.createElement("div");
-        fixBox.className = "detail-fix";
+        fixBox.className = "detail-card detail-fix";
         fixBox.setAttribute("data-mode", view.fix.mode);
+        // US-491: the heading is now UNCONDITIONAL -- it used to live inside the
+        // `mode === "fix"` branch, so a 🔴/🟡 card rendered a bordered box with
+        // no heading at all. The wording is mode-driven (fixSectionLabel), so a
+        // diagnose directive is never mis-headed "SUGGESTED FIX" (S-4).
+        var fixLabel = document.createElement("span");
+        fixLabel.className = "detail-label";
+        fixLabel.textContent = fixSectionLabel(view.fix.mode);
+        fixBox.appendChild(fixLabel);
         if (view.fix.mode === "fix") {
-          var fixLabel = document.createElement("span");
-          fixLabel.className = "detail-label";
-          fixLabel.textContent = "SUGGESTED FIX";
-          fixBox.appendChild(fixLabel);
           fixBox.appendChild(detailLine("detail-fix-text", "", view.fix.text));
           if (view.fix.badge) {
             var badge = document.createElement("span");
@@ -2193,6 +2228,11 @@
         if (!clearBtn) return;
         if (clearResult) clearResult.textContent = "";
         var view = clearButtonView(lastDtc);
+        // US-491: the zone is now a bordered, LABELLED card, so it must go with
+        // the button -- an empty "CLEAR CODES" box on a nothing-to-clear detail
+        // is a new visual regression. The GATE is untouched: visibility still
+        // comes from clearButtonView(), and the server re-checks on submit.
+        if (clearZone) clearZone.hidden = !view.visible;
         if (!view.visible) {
           clearBtn.hidden = true;
           return;
