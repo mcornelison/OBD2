@@ -90,9 +90,12 @@ code{font-family:var(--mono);font-size:.86em;background:var(--accent-soft);color
 .glab{font-size:10.5px;letter-spacing:.16em;color:var(--dv-t3);margin-top:2px;}
 .gradecell{flex:1.2;display:flex;flex-direction:column;justify-content:center;}
 .graderow{display:flex;align-items:baseline;gap:6px;margin-top:2px;}
-.gradeval{font-size:29px;font-weight:700;color:#eef2f6;}
-.gradetrend{flex:1;height:32px;} .gradetrend svg{width:100%;height:100%;display:block;}
-.gsub{font-size:10.5px;color:var(--dv-t3);letter-spacing:.03em;}
+.gradeval{font-size:27px;font-weight:700;color:#eef2f6;}
+.gradetrend{flex:1;height:30px;} .gradetrend svg{width:100%;height:100%;display:block;}
+.altrow{display:flex;align-items:baseline;gap:7px;margin-top:6px;}
+.altlab{font-size:11.5px;letter-spacing:.16em;color:var(--dv-t3);text-transform:uppercase;}
+.altval{font-size:23px;font-weight:800;color:#eef2f6;letter-spacing:.01em;}
+.altval .u{font-size:13px;font-weight:600;color:var(--dv-t2);margin-left:1px;}
 /* g-force */
 .gcol{flex:1;display:flex;flex-direction:column;}
 .gmeter{position:relative;flex:1;background:var(--dv-tile);border:1px solid var(--dv-line);border-radius:7px;min-height:0;}
@@ -185,6 +188,12 @@ code{font-family:var(--mono);font-size:.86em;background:var(--accent-soft);color
 <script>
 var reduce=window.matchMedia&&window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 var mode="live";
+// Simulated signals (LIVE these come from states/imu + GPS). Grade varies fast
+// enough here that the ~15-min trend visibly scrolls; on the car it moves as the
+// road rises/falls over minutes.
+function simGrade(tt){return 3+3.4*Math.sin(tt*0.42)+1.3*Math.sin(tt*1.05);}         // pitch deg
+function gradePctFrom(tt){return Math.tan(simGrade(tt)*Math.PI/180)*100;}            // road grade %
+function simAlt(tt){return Math.round(205+42*Math.sin(tt*0.16)+10*Math.sin(tt*0.5));}// metres
 // ---- device card skeletons ----
 function topbar(){return '<div class="topbar"><span class="glyph ok">BT</span><span class="glyph ok">⇅</span>'+
   '<span class="glyph ok">⚡</span><span class="vchip">V0.29.16</span><span class="menu-aff">⋮</span></div>';}
@@ -199,13 +208,13 @@ function liveShell(){
           '<div class="compass"><div class="caret"></div><div class="tapewin"><div class="tape" id="tape"></div></div><div class="headnum" id="headnum">—</div></div></div>'+
         '<div class="midrow">'+
           '<div class="lcell gearcell"><div class="gnum" id="gnum">–</div><div class="glab">Gear</div></div>'+
-          '<div class="lcell gradecell"><div class="clabel">Grade % · trend ~15m</div>'+
+          '<div class="lcell gradecell"><div class="clabel">Grade</div>'+
             '<div class="graderow"><div class="gradeval" id="gradeval">+0%</div><div class="gradetrend"><svg id="gsvg" viewBox="0 0 100 30" preserveAspectRatio="none"><polyline id="gline" fill="none" stroke="#35C46A" stroke-width="1.4" points=""/></svg></div></div>'+
-            '<div class="gsub" id="altsub">alt —</div></div>'+
+            '<div class="altrow"><span class="altlab">Alt</span><span class="altval" id="altval">—<span class="u"> m</span></span></div></div>'+
         '</div>'+
       '</div>'+
       '<div class="gcol">'+
-        '<div class="gmeter"><div class="gmlab">G-FORCE · 35s</div><canvas id="gcan"></canvas><div class="gtire" id="gtire">high lat-g · aged tires</div><div class="gval" id="gval"><b>0.0</b> lat · <b>0.0</b> lon</div></div></div>'+
+        '<div class="gmeter"><div class="gmlab">G-FORCE</div><canvas id="gcan"></canvas><div class="gtire" id="gtire">high lat-g · aged tires</div><div class="gval" id="gval"><b>0.0</b> lat · <b>0.0</b> lon</div></div></div>'+
     '</div>'+
   '</div>'+dots();
 }
@@ -233,7 +242,7 @@ function buildTape(){
 // ---- g-force canvas ----
 var trail=[]; // {x,y,age}
 function drawG(cv,gLat,gLon){
-  var ctx=cv.getContext("2d"), w=cv.width, h=cv.height, cx=w/2, cy=h/2, R=Math.min(w,h)*0.47; // R = 1g
+  var ctx=cv.getContext("2d"), w=cv.width, h=cv.height, cx=w/2, cy=h/2, R=Math.min(w,h)*0.52; // R = 1g
   ctx.clearRect(0,0,w,h);
   // cross + rings (0.3g, 0.6g amber)
   ctx.strokeStyle="rgba(255,255,255,.10)"; ctx.lineWidth=1;
@@ -255,7 +264,8 @@ var gradeHist=[], t0=null, raf=null;
 function mount(){
   var s=document.getElementById("stage");
   s.innerHTML = (mode==="live")?liveShell():idleShell();
-  if(mode==="live"){buildTape(); gradeHist=[]; trail=[]; sizeCanvas(); }
+  if(mode==="live"){buildTape(); trail=[]; sizeCanvas();
+    gradeHist=[]; for(var i=0;i<60;i++){gradeHist.push(gradePctFrom((i-59)/30));} } // prefill so the trend is full + moving
 }
 function sizeCanvas(){var cv=document.getElementById("gcan");if(!cv)return;var r=cv.parentElement.getBoundingClientRect();
   cv.width=Math.max(40,r.width);cv.height=Math.max(40,r.height);}
@@ -268,7 +278,7 @@ function frame(ts){
   var heading=(120 + 40*Math.sin(t*0.13) + 8*Math.sin(t*0.7))%360; if(heading<0)heading+=360;
   var gLat=0.45*Math.sin(t*0.9)+0.12*Math.sin(t*2.3);      // cornering
   var gLon=0.30*Math.sin(t*0.5+1)+0.10*Math.sin(t*1.7);    // accel/brake
-  var grade=3+2.4*Math.sin(t*0.11);
+  var grade=simGrade(t);
   var speed=70+22*Math.sin(t*0.3), rpm=3200+900*Math.sin(t*0.6);
   // compass
   var tape=document.getElementById("tape");
@@ -285,8 +295,8 @@ function frame(ts){
   var gv=document.getElementById("gradeval"); if(gv)gv.textContent=(gradePct>=0?"+":"")+gradePct.toFixed(0)+"%";
   gradeHist.push(gradePct); if(gradeHist.length>60)gradeHist.shift();
   var gl=document.getElementById("gline");
-  if(gl){var pts="";for(var i=0;i<gradeHist.length;i++){var x=i/59*100;var y=15-(gradeHist[i])*1.3;pts+=x.toFixed(1)+","+y.toFixed(1)+" ";}gl.setAttribute("points",pts.trim());}
-  var alt=document.getElementById("altsub"); if(alt)alt.textContent="alt "+Math.round(210+18*Math.sin(t*0.11))+" m";
+  if(gl){var pts="";for(var i=0;i<gradeHist.length;i++){var x=i/59*100;var y=15-(gradeHist[i])*1.0;pts+=x.toFixed(1)+","+y.toFixed(1)+" ";}gl.setAttribute("points",pts.trim());}
+  var alt=document.getElementById("altval"); if(alt)alt.innerHTML=simAlt(t)+'<span class="u"> m</span>';
   // g-force
   trail.forEach(function(p){p.age+=1/30;}); trail=trail.filter(function(p){return p.age<35;});
   if(!reduce){trail.push({x:gLat,y:gLon,age:0}); if(trail.length>140)trail.shift();}

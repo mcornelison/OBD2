@@ -36,8 +36,11 @@ the real IMU contract, the shipped tokens/chrome, and Spool's semantics.
 - **Gear:** big glyph. **Spool owns it** — `--` when ambiguous (speed<5 km/h, rpm<900, ratio>15%
   off nearest), `N` rolling-neutral, ≥2 s debounce. **Never a wrong number.** 4th/5th are at the
   OBD sample-rate edge (Spool) → the display must render `--` gracefully there, not guess.
-- **Grade:** current **road grade %** (= tan(pitch°)×100, what road signs use — CIO 2026-07-27)
-  + a ~15-min trend sparkline. Informational (Spool: no alarm).
+- **Grade:** current **road grade %** (= tan(pitch°)×100, what road signs use — CIO 2026-07-27),
+  a **prominent altitude readout** (GPS; CIO wants it primary in this box), and a ~15-min rolling
+  grade-trend sparkline (a live signal — it scrolls as the road rises/falls; static-looking only
+  in the sim when the value drifts slowly). Informational (Spool: no alarm). Titles kept minimal
+  ("GRADE" / "G-FORCE" — no "trend"/"35s" noise; CIO 2026-07-27).
 - **G-force:** a cross-haired meter with concentric rings, a live dot at (lat, lon) g, and a
   fading **~35 s trail**. Informational, never a takeover (Spool). **Amber ring/dot at 0.6 g**
   (Spool) — which doubles as an aged-tire lat-load nudge, advisory not alarm.
