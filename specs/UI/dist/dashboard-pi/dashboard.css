@@ -8,19 +8,38 @@
  *          and honest-instrument states share one source.
  * Author:  Ralph Agent (Rex)
  * Created: 2026-06-30 -- Sprint 49 US-399 (carousel shell)
+ * Updated: 2026-07-26 -- US-484-a: the :root palette below is reconciled with the
+ *          visual SSOT specs/UI/tokens.css for the tokens Atlas has gated
+ *          (--green-ok, --text-primary). Do NOT re-fork a value here: if a
+ *          surface needs a colour, add it to tokens.css first (Rule-10 / Atlas;
+ *          tuning-semantics colours via Spool). Enforced by
+ *          tests/ui/test_dashboard_token_ssot.py.
  * ==========================================================================*/
 
 :root {
   --bg:             #000000;
   --surface:        #111111;
-  --text-primary:   #DDDDDD;
-  --text-secondary: #888888;
-  --text-tertiary:  #666666;
-  --amber-warn:     #FFC400;   /* project-wide warn token (BT drop, stale) */
-  --red:            #E60012;   /* brand STOP-red -- the full-bleed takeover bg */
-  --red-light:      #F61D2D;   /* brighter alert red -- the DTC ribbon (R-2) */
-  --red-dark:       #BF000F;   /* takeover radial edge */
-  --ok-green:       #2ECC71;   /* healthy verdict (US-400/401 bind it) */
+  --text-primary:   #DDDDDD;   /* SSOT tokens.css:28 (Atlas Rule-10 2026-07-25) */
+  --text-secondary: #888888;   /* SSOT tokens.css:34 */
+  --text-tertiary:  #666666;   /* SSOT tokens.css:35 */
+  --amber-warn:     #FFC400;   /* SSOT tokens.css:38 -- WATCH / degraded */
+  /* BRAND identity reds -- RESERVED for the brand mark (SSOT tokens.css:50-57).
+     US-484-b moved every DTC STOP surface OFF these: if the permanent brand
+     mark is red AND the pull-over alarm is also red, the driver cannot tell
+     "brand" from "danger". Declared here so the dist mirrors the SSOT tier. */
+  --red:            #E60012;   /* SSOT tokens.css:55 -- brand mark base */
+  --red-light:      #F61D2D;   /* SSOT tokens.css:56 -- brand mark highlight */
+  --red-dark:       #BF000F;   /* SSOT tokens.css:57 -- brand mark shadow */
+  /* STATE-ALARM red -- "PULL OVER NOW". Spool set value + semantics 2026-07-25
+     (dtc-display-clear-safety-advisory.md 6d); Atlas Rule-10 gate 2026-07-26.
+     The HEX IS ONLY THE 3RD REINFORCEMENT: area + motion + text carry STOP. */
+  --critical-red:   #D32F2F;   /* SSOT tokens.css:69 -- DTC STOP tier only */
+  --green-ok:       #35C46A;   /* SSOT tokens.css:43 (Atlas A-8) -- MINOR DTC
+                                  tier, OK/healthy, "linked", trust-badge
+                                  verified. Reconciled off a forked local name +
+                                  value in US-484-a (see git history; the old
+                                  literal is deliberately not repeated here so a
+                                  grep for it stays a clean drift audit). */
   --tap-min:        40px;      /* minimum touch target (S-2) */
 }
 
@@ -43,7 +62,7 @@ html, body {
 }
 #topbar .glyph { color: var(--text-secondary); letter-spacing: 0.04em; }
 #topbar .glyph[data-state="amber"] { color: var(--amber-warn); }
-#topbar .glyph[data-state="ok"]    { color: var(--ok-green); }
+#topbar .glyph[data-state="ok"]    { color: var(--green-ok); }
 #topbar .glyph[data-state="down"]  { color: var(--red-light); }
 #version-chip {
   margin-left: auto; color: var(--text-tertiary);
@@ -85,7 +104,8 @@ html, body {
 
 /* --- US-481 idle-state home card (F-121) ------------------------------------ */
 /* The calm, honest PARKED view. Every colour is a token reference (no hex
-   literal here -- token reconciliation is US-484); the STANDBY hero is neutral
+   literal here; the tokens themselves were reconciled to the SSOT in US-484-a),
+   the STANDBY hero is neutral
    grey (never green), and the 3 fact tiles reuse the shared `.tile[data-level]`
    rules above so green is bound to the SSOT green in exactly one place. */
 .idle-card .card-body {
@@ -132,7 +152,7 @@ html, body {
 }
 .tile-value { font-size: 15px; font-weight: 600; color: var(--text-primary); }
 .tile-detail { font-size: 11px; color: var(--text-tertiary); }
-.tile[data-level="ok"]    .tile-value { color: var(--ok-green); }
+.tile[data-level="ok"]    .tile-value { color: var(--green-ok); }
 .tile[data-level="amber"] .tile-value { color: var(--amber-warn); }
 .tile[data-level="down"]  .tile-value { color: var(--red-light); }
 .tile[data-level="unavailable"] .tile-value {
@@ -177,7 +197,7 @@ html, body {
 }
 .ltft-bar-value { font-size: 13px; font-weight: 600; color: var(--text-primary); }
 .ltft-bar-drive { font-size: 10px; color: var(--text-tertiary); }
-.ltft-bar[data-level="ok"]    .ltft-bar-value { color: var(--ok-green); }
+.ltft-bar[data-level="ok"]    .ltft-bar-value { color: var(--green-ok); }
 .ltft-bar[data-level="amber"] .ltft-bar-value { color: var(--amber-warn); }
 .ltft-bar[data-level="down"]  .ltft-bar-value { color: var(--red-light); }
 .ltft-bar[data-level="down"]  { border-color: var(--red-light); }
@@ -199,10 +219,11 @@ html, body {
 .dot.active::before { background: var(--text-primary); }
 
 /* --- US-405 persistent DTC ribbon -------------------------------------------- */
-/* Rides under the top bar on every card while a code is present. R-2: the ribbon
-   shares cards with brand-red chrome, so its STOP state uses the BRIGHTER alert
-   --red-light (never brand --red) + a leading ⚠ glyph + a subtle pulse, so it
-   reads as an alarm and never as decoration. Level is set by JS from `dtc`. */
+/* Rides under the top bar on every card while a code is present. R-2 + US-484-b:
+   the ribbon shares cards with brand chrome, so its STOP state renders the
+   STATE-ALARM --critical-red (never a brand red) + a leading ⚠ glyph + a subtle
+   pulse, so it reads as an alarm and never as decoration or as branding. Level
+   is set by JS from `dtc`. */
 #dtc-ribbon {
   position: fixed; left: 0; right: 0; top: 28px; min-height: 22px;
   display: flex; align-items: center; gap: 6px;
@@ -211,9 +232,9 @@ html, body {
   color: #fff; z-index: 9;
   animation: ribbon-pulse 2s ease-in-out infinite;
 }
-#dtc-ribbon[data-level="stop"]    { background: var(--red-light); color: #fff; }
+#dtc-ribbon[data-level="stop"]    { background: var(--critical-red); color: #fff; }
 #dtc-ribbon[data-level="watch"]   { background: var(--amber-warn); color: #000; }
-#dtc-ribbon[data-level="minor"]   { background: var(--ok-green); color: #000; }
+#dtc-ribbon[data-level="minor"]   { background: var(--green-ok); color: #000; }
 #dtc-ribbon[data-level="unknown"] { background: var(--amber-warn); color: #000; }
 .ribbon-glyph { font-size: 13px; line-height: 1; flex: 0 0 auto; }
 .ribbon-text {
@@ -227,15 +248,52 @@ html, body {
 
 /* --- US-405 full-screen DTC takeover ---------------------------------------- */
 /* Fired on a NEW code, severity-styled: same skeleton, per-tier bg + directive +
-   dismiss controls (STOP has no plain dismiss). The takeover STOP bg is the
-   BRAND --red (distinct from the ribbon's brighter --red-light, R-2). */
+   dismiss controls (STOP has no plain dismiss). */
 #dtc-takeover {
   position: fixed; inset: 0; z-index: 60;
   display: flex; align-items: center; justify-content: center;
   text-align: center; color: #fff;
 }
+/* --- US-484-b STOP takeover -- Spool 6d multi-channel treatment -------------
+   --critical-red vs brand red differ mainly in SATURATION -- the weakest one
+   the eye has at arm's length, and worse on the narrow-gamut OSOYOO panel under
+   changing cabin light. So the hex is the THIRD reinforcement; the signal is
+   carried by:
+     AREA   -- full-bleed near-black field (inherited from the base rule, never
+               clawed back) + a thick alarm frame + an oversized directive band;
+     MOTION -- the frame pulses on the deeper-darker axis (ch.3), and ONLY while
+               a live STOP is mounted (carousel spec 4: motion never implies a
+               state that isn't real -- the pulse is scoped to this selector,
+               never to the base takeover rule);
+     TEXT   -- an explicit "PULL OVER" directive (carousel.js TAKEOVER_STYLE);
+     FIELD  -- near-black #000 with WHITE copy (ch.2): no brand chrome anywhere
+               on this surface, and every pairing clears the WCAG-AA large-text
+               floor (white/critical-red 5.0:1, white/black 21:1);
+     LIGHT  -- carousel.js holds the whole surface at FULL brightness while a
+               STOP is live (ch.4) -- it overrides the US-483-b auto-dim curve
+               AND its alarmFloorLevel. Only ambient content dims.
+   Enforced by tests/ui/test_dashboard_stop_tier_safety.py. -------------------*/
 #dtc-takeover[data-severity="stop"] {
-  background: radial-gradient(circle at 50% 38%, var(--red) 0%, var(--red-dark) 100%);
+  background: var(--bg);                    /* near-black field (ch.2) */
+  color: #fff;                              /* white copy (ch.2) */
+  box-sizing: border-box;
+  border: 8px solid var(--critical-red);    /* the large-area alarm frame */
+  animation: stop-alarm-pulse 1.1s ease-in-out infinite;
+}
+/* The directive is the largest thing on the panel on a STOP -- white on the
+   state-alarm red, so AREA + TEXT read before the hue does. */
+#dtc-takeover[data-severity="stop"] .takeover-directive {
+  margin-top: 6px; padding: 5px 14px; border-radius: 3px;
+  background: var(--critical-red); color: #fff;
+  font-size: 22px; letter-spacing: 0.08em;
+}
+#dtc-takeover[data-severity="stop"] .takeover-icon { color: var(--critical-red); }
+/* Deeper-and-darker pulse: the frame drops toward its own near-black field.
+   Never a warmer/orange shift -- that would collide with amber WATCH and invert
+   which tier reads as worse (ch.3). */
+@keyframes stop-alarm-pulse {
+  0%, 100% { border-color: var(--critical-red); }
+  50%      { border-color: var(--bg); }
 }
 #dtc-takeover[data-severity="watch"] {
   background: radial-gradient(circle at 50% 38%, var(--amber-warn) 0%, #7a5b00 100%);
@@ -281,7 +339,7 @@ html, body {
   width: 72px; height: 72px; margin: -36px 0 0 -36px;
   border-radius: 50%; z-index: 30; pointer-events: none;
   --fill: 0;
-  background: conic-gradient(var(--ok-green) calc(var(--fill) * 360deg),
+  background: conic-gradient(var(--green-ok) calc(var(--fill) * 360deg),
                              rgba(255, 255, 255, 0.12) 0);
   -webkit-mask: radial-gradient(circle 28px at center, transparent 98%, #000 100%);
           mask: radial-gradient(circle 28px at center, transparent 98%, #000 100%);
@@ -359,7 +417,10 @@ html, body {
   background: var(--surface); color: var(--text-primary);
   border: 1px solid var(--text-tertiary);
 }
-#confirm-ok { border-color: var(--red-light); color: var(--red-light); }
+/* US-484-b: the consequential-action confirm is an ALARM affordance, so it
+   renders the state-alarm red -- the brand reds are reserved for the brand
+   mark (SSOT tokens.css:50-57). */
+#confirm-ok { border-color: var(--critical-red); color: var(--critical-red); }
 
 /* --- US-406 DTC Alerts card (Card 5) + detail ------------------------------- */
 /* The display maps a Spool-classified tier -> chip color; it never classifies.
@@ -377,9 +438,9 @@ html, body {
   font-size: 10px; font-weight: 700; letter-spacing: 0.06em;
   padding: 1px 6px; border-radius: 8px; text-transform: uppercase;
 }
-.dtc-chip[data-level="stop"]    { background: var(--red-light); color: #fff; }
+.dtc-chip[data-level="stop"]    { background: var(--critical-red); color: #fff; }
 .dtc-chip[data-level="watch"]   { background: var(--amber-warn); color: #000; }
-.dtc-chip[data-level="minor"]   { background: var(--ok-green);   color: #000; }
+.dtc-chip[data-level="minor"]   { background: var(--green-ok);   color: #000; }
 .dtc-chip[data-level="na"]      { background: #2a2f37; color: var(--text-secondary); }
 .dtc-chip[data-level="unknown"] { background: #2a2f37; color: var(--text-secondary); }
 
@@ -392,7 +453,7 @@ html, body {
   border: 1px solid var(--surface); border-radius: 4px;
   background: var(--surface); color: var(--text-primary);
 }
-.dtc-hero[data-level="stop"]  { border-color: var(--red-light); }
+.dtc-hero[data-level="stop"]  { border-color: var(--critical-red); }
 .dtc-hero[data-level="watch"] { border-color: var(--amber-warn); }
 .dtc-hero-code { font-size: 17px; font-weight: 800; letter-spacing: 0.04em; }
 .dtc-hero-short { font-size: 12px; color: var(--text-secondary); flex: 1 1 100%; }
@@ -476,7 +537,10 @@ html, body {
   align-self: flex-start; font-size: 11px; font-weight: 700;
   padding: 1px 8px; border-radius: 8px;
 }
-.dtc-trust-badge[data-kind="verified"]  { background: rgba(46, 204, 113, 0.18); color: var(--ok-green); }
+/* The tint is the SSOT green at 18% alpha -- rgb(53,196,106) IS #35C46A. Kept as
+   rgba() (not a token) because it is an opacity of an existing token, not a new
+   colour; if CSS relative-colour lands on this panel it becomes rgb(from ...). */
+.dtc-trust-badge[data-kind="verified"]  { background: rgba(53, 196, 106, 0.18); color: var(--green-ok); }
 .dtc-trust-badge[data-kind="community"] {
   border: 1px dashed var(--text-secondary); color: var(--text-secondary);
 }
@@ -493,15 +557,15 @@ html, body {
 #dtc-clear-btn {
   min-height: var(--tap-min); padding: 0 14px; align-self: flex-start;
   font-size: 13px; font-weight: 700; cursor: pointer; border-radius: 4px;
-  background: var(--surface); color: var(--ok-green);
-  border: 1px solid var(--ok-green);
+  background: var(--surface); color: var(--green-ok);
+  border: 1px solid var(--green-ok);
 }
 #dtc-clear-btn:disabled {
   cursor: not-allowed; color: var(--text-tertiary);
   border-color: var(--surface); font-weight: 400;
 }
 #dtc-clear-result { font-size: 12px; color: var(--text-secondary); }
-#dtc-clear-result[data-level="cleared"] { color: var(--ok-green); }
+#dtc-clear-result[data-level="cleared"] { color: var(--green-ok); }
 #dtc-clear-result[data-level="reset"]   { color: var(--red-light); font-weight: 700; }
 #dtc-clear-result[data-level="blocked"] { color: var(--amber-warn); }
 
