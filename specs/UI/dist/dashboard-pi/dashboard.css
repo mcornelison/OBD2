@@ -178,6 +178,53 @@ html, body {
   color: var(--text-tertiary); font-style: italic; font-weight: 400;
 }
 
+/* --- US-489 System Status glanceability (Iris polish P-1) ------------------- */
+/* Presentation-only over the SHIPPED US-400 state: a one-glance summary line, a
+   2x2 tile grid, and a per-tile status dot. No new data, no new contract.
+   The dot introduces NO new severity vocabulary -- it MIRRORS the
+   `.tile[data-level] .tile-value` mapping above token-for-token, including
+   `down`, which US-488 (TD-067) just swept to WATCH amber ("degraded is not
+   danger"). A red dot here would re-open that debt a sprint after it closed,
+   and would contradict the value sitting beside it. */
+.sys-summary {
+  display: flex; align-items: baseline; gap: 8px;
+  padding: 2px 0 6px 0; margin-bottom: 6px;
+  border-bottom: 1px solid var(--surface);
+}
+/* Neutral base: an unrecognised level inherits no severity it has not earned. */
+.sys-summary-text {
+  font-size: 17px; font-weight: 700; letter-spacing: 0.06em;
+  color: var(--text-primary);
+}
+.sys-summary-detail {
+  margin-left: auto; font-size: 11px; color: var(--text-tertiary);
+}
+.sys-summary[data-level="ok"] .sys-summary-text { color: var(--green-ok); }
+.sys-summary[data-level="amber"] .sys-summary-text { color: var(--amber-warn); }
+/* TD-067: a degraded source is WATCH, never the pull-over red. */
+.sys-summary[data-level="down"] .sys-summary-text { color: var(--amber-warn); }
+.sys-summary[data-level="unavailable"] .sys-summary-text {
+  color: var(--text-tertiary); font-style: italic; font-weight: 400;
+}
+/* The 2x2 grid (F-092's original intent). ONLY the System Status card regrids;
+   the idle fact strip, the battery card and the LTFT card keep the base `.tile`
+   stack above. `:last-child` is spelled out because the base rule zeroes the
+   bottom border there -- without it the final grid cell renders open-sided. */
+.sys-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.sys-grid .tile, .sys-grid .tile:last-child {
+  border: 1px solid var(--surface); border-radius: 4px; padding: 6px 8px;
+}
+.tile-head { display: flex; align-items: center; gap: 6px; }
+.tile-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  flex: 0 0 auto; background: var(--text-tertiary);
+}
+.tile[data-level="ok"] .tile-dot { background: var(--green-ok); }
+.tile[data-level="amber"] .tile-dot { background: var(--amber-warn); }
+.tile[data-level="down"] .tile-dot { background: var(--amber-warn); }
+.tile[data-level="neutral"] .tile-dot { background: var(--text-secondary); }
+.tile[data-level="unavailable"] .tile-dot { background: var(--text-tertiary); }
+
 /* --- US-401 Battery Health failsafe ladder (F-2/A-6) ------------------------ */
 /* The drain ladder block is appended ONLY when battery-health.draining===true;
    it never renders otherwise (no false failsafe). The amber/red staging mirrors

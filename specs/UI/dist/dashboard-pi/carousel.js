@@ -210,6 +210,93 @@
     return "neutral";
   }
 
+  // -------------------------------------------------------------------------
+  // US-489 (Iris polish P-1) -- the one-glance SUMMARY line. A lossy
+  // compression of the four tiles, which makes it exactly the place a
+  // "green when broken" lie would enter, so honest-instrument F-1 is restated
+  // here at the CARD level: the line is `ok` ONLY when every source is
+  // genuinely good. Presentation-only -- it reads the tiles the card already
+  // renders, never a second read of the state.
+  // -------------------------------------------------------------------------
+
+  // Display order == grid order, so "the worst source" is always named in a
+  // stable, predictable place.
+  var SYS_TILE_ORDER = ["obdLink", "sync", "power", "drive"];
+
+  // Severity rank over the tile-level vocabulary. Three buckets, not two:
+  //   ok            -- genuinely good.
+  //   neutral       -- nominal but inactive. DRIVE=IDLE is the only neutral
+  //                    this card produces and it means "not recording", NOT
+  //                    "broken"; counting it as a fault would make green
+  //                    unreachable in the commonest state (key on, no drive
+  //                    started), which is its own dishonesty -- crying wolf.
+  //   unavailable   -- a known-UNKNOWN. Blocks green (never claim OK over a
+  //                    source we cannot read) without raising an alarm.
+  //   amber / down  -- the only ISSUES.
+  var SYS_LEVEL_RANK = { ok: 0, neutral: 1, unavailable: 2, amber: 3, down: 4 };
+  var SYS_ISSUE_RANK = SYS_LEVEL_RANK.amber;
+
+  // A level this mapper has not been taught resolves to `unavailable`, NEVER to
+  // ok -- a future tile level must not be able to paint the card green by
+  // default.
+  function sysLevelRank(level) {
+    return Object.prototype.hasOwnProperty.call(SYS_LEVEL_RANK, level)
+      ? SYS_LEVEL_RANK[level]
+      : SYS_LEVEL_RANK.unavailable;
+  }
+
+  function sysNoStateSummary() {
+    return {
+      text: "SYSTEM · UNAVAILABLE",
+      detail: "no system state",
+      level: "unavailable",
+      issues: 0,
+    };
+  }
+
+  // Summarise the four rendered tiles. The ISSUE COUNT is the glanceable fact;
+  // the worst source is NAMED in the detail so the line says what to look at
+  // without the operator reading all four tiles.
+  function systemSummary(tiles) {
+    if (!isObj(tiles)) return sysNoStateSummary();
+    var worst = null;
+    var worstRank = -1;
+    var issues = 0;
+    var unknowns = 0;
+    for (var i = 0; i < SYS_TILE_ORDER.length; i++) {
+      var tile = tiles[SYS_TILE_ORDER[i]];
+      if (!isObj(tile)) continue;
+      var rank = sysLevelRank(tile.level);
+      if (rank >= SYS_ISSUE_RANK) issues++;
+      else if (rank === SYS_LEVEL_RANK.unavailable) unknowns++;
+      if (rank > worstRank) {
+        worstRank = rank;
+        worst = tile;
+      }
+    }
+    if (worst === null) return sysNoStateSummary();
+    var named = worst.label + " · " + worst.value;
+    if (issues > 0) {
+      // `worst` carries the highest rank, so with any issue present it IS an
+      // issue tile -- its level is amber/down and drives the headline hue.
+      return {
+        text: "SYSTEM · " + issues + (issues === 1 ? " ISSUE" : " ISSUES"),
+        detail: named,
+        level: worst.level,
+        issues: issues,
+      };
+    }
+    if (unknowns > 0) {
+      return {
+        text: "SYSTEM · " + unknowns + " UNAVAILABLE",
+        detail: named,
+        level: "unavailable",
+        issues: 0,
+      };
+    }
+    return { text: "SYSTEM · OK", detail: "", level: "ok", issues: 0 };
+  }
+
   // The full structured view consumed by the DOM renderer + the node tests.
   // Non-object payload -> null (the shell renders `unavailable`).
   function systemStatusView(data) {
@@ -222,13 +309,17 @@
     var obdTile = obdOff
       ? naTile("OBD LINK", sourceReason(data, "obd"))
       : obdLinkTile(data.obdLink);
+    var tiles = {
+      obdLink: obdTile,
+      sync: syncTile(data.sync),
+      power: powerTile(data.power),
+      drive: driveTile(data.drive),
+    };
     return {
-      tiles: {
-        obdLink: obdTile,
-        sync: syncTile(data.sync),
-        power: powerTile(data.power),
-        drive: driveTile(data.drive),
-      },
+      // US-489: derived from the SAME tiles rendered below, so the headline can
+      // never contradict the grid it summarises.
+      summary: systemSummary(tiles),
+      tiles: tiles,
       glyphs: {
         bt: obdOff ? "neutral" : btGlyphState(data.obdLink),
         sync: syncGlyphState(data.sync),
@@ -1200,6 +1291,7 @@
     btGlyphState: btGlyphState,
     syncGlyphState: syncGlyphState,
     powerGlyphState: powerGlyphState,
+    systemSummary: systemSummary,
     systemStatusView: systemStatusView,
     healthCheckLine: healthCheckLine,
     vcellTile: vcellTile,
@@ -1278,20 +1370,34 @@
     // The level drives the colour via [data-level] CSS -- a degraded tile is
     // never green (F-1). Built with textContent (no innerHTML) so emitter values
     // render verbatim, never as markup.
-    function appendTile(parent, tile) {
+    // US-489: `withDot` prepends the per-tile status dot. It is OPT-IN because
+    // appendTile is shared with the idle, battery and LTFT cards -- defaulting
+    // it on would restyle three shipped cards from a story scoped to one.
+    function appendTile(parent, tile, withDot) {
       var el = document.createElement("div");
       el.className = "tile";
       el.setAttribute("data-level", tile.level);
       var label = document.createElement("span");
       label.className = "tile-label";
       label.textContent = tile.label;
+      if (withDot) {
+        // The dot takes no level of its own -- it inherits the tile's
+        // [data-level], so it can never disagree with the value beside it.
+        var head = document.createElement("div");
+        head.className = "tile-head";
+        var dot = document.createElement("span");
+        dot.className = "tile-dot";
+        head.appendChild(dot);
+        head.appendChild(label);
+        el.appendChild(head);
+      }
       var value = document.createElement("span");
       value.className = "tile-value";
       value.textContent = tile.value;
       var detail = document.createElement("span");
       detail.className = "tile-detail";
       detail.textContent = tile.detail;
-      el.appendChild(label);
+      if (!withDot) el.appendChild(label);
       el.appendChild(value);
       el.appendChild(detail);
       parent.appendChild(el);
@@ -1301,10 +1407,29 @@
       var body = card.querySelector(".card-body");
       if (body) {
         body.textContent = "";
-        appendTile(body, view.tiles.obdLink);
-        appendTile(body, view.tiles.sync);
-        appendTile(body, view.tiles.power);
-        appendTile(body, view.tiles.drive);
+        // US-489 P-1: the one-glance headline, then the 2x2 grid. Built with
+        // textContent (no innerHTML) so emitter values render verbatim.
+        var summary = document.createElement("div");
+        summary.className = "sys-summary";
+        summary.setAttribute("data-level", view.summary.level);
+        var summaryText = document.createElement("span");
+        summaryText.className = "sys-summary-text";
+        summaryText.textContent = view.summary.text;
+        summary.appendChild(summaryText);
+        if (view.summary.detail) {
+          var summaryDetail = document.createElement("span");
+          summaryDetail.className = "sys-summary-detail";
+          summaryDetail.textContent = view.summary.detail;
+          summary.appendChild(summaryDetail);
+        }
+        body.appendChild(summary);
+        var grid = document.createElement("div");
+        grid.className = "sys-grid";
+        appendTile(grid, view.tiles.obdLink, true);
+        appendTile(grid, view.tiles.sync, true);
+        appendTile(grid, view.tiles.power, true);
+        appendTile(grid, view.tiles.drive, true);
+        body.appendChild(grid);
       }
       if (glyphEls.bt) glyphEls.bt.setAttribute("data-state", view.glyphs.bt);
       if (glyphEls.sync) glyphEls.sync.setAttribute("data-state", view.glyphs.sync);
