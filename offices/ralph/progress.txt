@@ -1654,3 +1654,45 @@ Task: Polish P-1 — System Status summary line + 2x2 grid + per-tile status dot
   `:last-child { border-bottom: 0 }`, re-state `:last-child` explicitly or the
   final cell renders open-sided.
 ---
+
+## 2026-07-27 - US-490 (Rex / Session 56)
+Task: Polish P-2: context-aware system-setup menu access (menu button parked-only + long-press always)
+
+### What was implemented:
+- `menuAccess(systemStatusData)` -> `{tapVisible, longPress}`: ONE export carrying
+  both paths into the System Setup menu, because they are one design. `tapVisible`
+  is parked-only (reads the US-480-a `idle` SSOT via carouselIdle -- never
+  re-derived from `drive.state`); `longPress` is unconditionally true.
+- Fail-closed: an absent/malformed/idle-less system-status hides the button (the
+  unknown side of "am I driving?" is the dangerous side). Safe ONLY because the 5s
+  hold is state-blind -- a test asserts the two flags DISAGREE while driving.
+- Three layers keep AC-4 ("never a single tap while driving") honest: explicit
+  `#menu-btn[hidden]{display:none}`; a click handler that returns early on
+  `menuBtn.hidden`; and the button shipping `hidden` in the markup so the
+  pre-first-poll unknown window offers no tap path.
+- `updateMenuAccess(sysData)` wired into the existing poll tick, reusing the fetch
+  `updateIdleHome` already made (no extra fetch, no second OBD touch).
+
+### Files changed:
+- Modified: `specs/UI/dist/dashboard-pi/carousel.js` (menuAccess export + applyMenuAccess/
+  updateMenuAccess + gated click handler + tick wiring)
+- Modified: `specs/UI/dist/dashboard-pi/dashboard.css` (#menu-btn[hidden] display:none)
+- Modified: `specs/UI/dist/dashboard-pi/dashboard.html` (menu-btn ships hidden)
+- Created: `tests/ui/test_carousel_menu_access.py` (17 guards: fail-closed matrix, SSOT
+  both-directions, long-press scope fence, wiring + AC-3 confirm fences)
+
+### Learnings for future iterations:
+- **Gotcha (cost a cycle, generalizes)**: a source-inspection guard PASSED against
+  the un-gated code -- the slice ran on past the handler into `openMenu`/`closeMenu`
+  and matched THEIR `hidden` writes. Bound every source slice to a window that cannot
+  contain an incidental match, and always watch it go red first. A guard that cannot
+  fail is worse than no guard.
+- **Pattern discovered**: when a safety feature hides an affordance, the escape hatch
+  is part of the same invariant -- express both in ONE return value and assert they
+  disagree in the dangerous state. Two separate booleans drift; one object cannot.
+- **Gotcha**: `[hidden]` comes from the UA stylesheet, so ANY author `display`
+  declaration on the same element silently outranks it. In a flex container (here
+  #topbar) that is a live risk -- state `[hidden]{display:none}` explicitly.
+- **Gotcha**: `make` is not on this Windows box's PATH at all (not just black/mypy
+  missing) -- run `python -m ruff check <touched files>` directly.
+---
