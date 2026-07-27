@@ -51,8 +51,8 @@
       "epicId": "E-001",
       "type": "issue",
       "size": "M",
-      "status": "sprint-ready",
-      "passes": false,
+      "status": "complete",
+      "passes": true,
       "acceptance": [
         "PREREQ: --critical-red #D32F2F added to specs/UI/tokens.css (Spool assigned the value 2026-07-25; Atlas owes the one-line token gate -- routed). Repoint against the token, not a hardcoded hex.",
         "repoint the DTC STOP tier + takeover OFF brand --red-light #F61D2D onto --critical-red #D32F2F (dashboard.css #dtc-ribbon[data-level=stop], .dtc-chip[stop], .dtc-hero[stop], #confirm-ok)",
@@ -81,7 +81,27 @@
         "the pulsing-motion treatment must respect the 'motion never implies a state that isn't real' rule (carousel spec \u00a74) -- pulse ONLY on a live STOP, never decoratively"
       ],
       "goal": "As engine-safety signal integrity, I want the DTC STOP/'PULL OVER' tier + takeover to stop rendering in BRAND red --red-light #F61D2D (the brand-vs-alarm collision) and instead carry the STOP signal by Spool's full multi-channel treatment. Per Spool 2026-07-25 (offices/tuner/dtc-display-clear-safety-advisory.md \u00a76d): the hex alone is INSUFFICIENT -- #D32F2F vs brand red differ mainly in saturation (weakest discriminator, worse on the narrow-gamut OSOYOO panel). Area+motion+text carry STOP; color is the third reinforcement. (Split from US-484; the safety half.)",
-      "tasks": []
+      "tasks": [],
+      "feedback": {
+        "filesActuallyTouched": [
+          "specs/UI/dist/dashboard-pi/dashboard.css",
+          "specs/UI/dist/dashboard-pi/carousel.js",
+          "tests/ui/test_dashboard_stop_tier_safety.py",
+          "tests/ui/test_carousel_brightness.py",
+          "tests/ui/test_dashboard_token_ssot.py",
+          "tests/deploy/test_dashboard_kit.py",
+          "offices/pm/tech_debt/TD-066-autodim-alarm-floor-level-now-inert.md",
+          "offices/pm/tech_debt/TD-067-brand-red-still-on-non-stop-alarm-surfaces.md",
+          "offices/pm/issues/I-tokens-css-stop-repoint-note-now-stale.md"
+        ],
+        "grounding": [
+          "specs/UI/tokens.css:69 -- --critical-red #D32F2F (Spool value + \u00a76d semantics 2026-07-25; Atlas Rule-10 gate 2026-07-26, commit 2a64549)",
+          "specs/UI/tokens.css:50-57 -- brand reds RESERVED, brand mark ONLY (Spool S-2)",
+          "offices/tuner/dtc-display-clear-safety-advisory.md \u00a76d ch.1-4 -- area+motion+text carry STOP; near-black + white copy; deeper-darker axis only; full brightness always",
+          "specs/UI/tokens.css:38 -- --amber-warn #FFC400 (WATCH, unchanged); :43 -- --green-ok #35C46A (MINOR, unchanged)"
+        ]
+      },
+      "completionNotes": "PREREQ MET: --critical-red #D32F2F was already gated into tokens.css:69 (Atlas 2026-07-26, commit 2a64549) -- BL-024 fully resolved, nothing hardcoded; the dist declares the token once and every STOP surface goes through var(--critical-red). AC2 REPOINT: #dtc-ribbon[stop], .dtc-chip[stop], .dtc-hero[stop] border, #confirm-ok, and the takeover all off the brand reds; also carousel.js TAKEOVER_STYLE.stop.colorVar '--red' -> '--critical-red' (the token name lives in JS as DATA -- same cross-file trap US-484-a hit with --ok-green; a CSS-only repoint would have left the STOP tier bound to brand red) + the matching assertion in tests/deploy/test_dashboard_kit.py. AC3 ch.1 (the load-bearing half -- colour is the THIRD channel): the STOP takeover keeps the base full-bleed inset:0 (AREA), gains an 8px --critical-red alarm frame that pulses via @keyframes stop-alarm-pulse SCOPED TO [data-severity=stop] so motion can never imply a state that isn't real (MOTION, carousel spec \u00a74), and renders the existing 'REDUCE LOAD \u00b7 PULL OVER' directive as a white-on-critical-red band at 22px vs the 15px base (TEXT + AREA). No brand mark exists on the dashboard surface at all (the 3-rhombus mark is the F-103 splash), so 'brand mark stays small+static' is satisfied structurally and is enforced as 'no var(--red*) on any STOP rule'. AC4 ch.2: background is var(--bg) = #000000 (one of the two near-black fields \u00a76d permits -- deliberately did NOT invent a new near-black token, which is the TD-065 group-(b) gate), colour #fff; contrast computed IN THE TEST from the parsed tokens: white/critical-red 5.0:1 and critical-red/black 4.0:1, both over the WCAG-AA large-text 3.0 floor. AC5 ch.3: asserted as luminance(critical) < luminance(both brand reds) AND max-channel lower (deeper+darker), plus 'no warm bias' expressed as G == B (an orange shift lifts green above blue) and a >=40deg hue separation from amber WATCH; the pulse darkens toward the near-black field, never toward a warmer hue. WATCH #FFC400 / MINOR #35C46A untouched and pinned. AC6 ch.4: carousel.js brightnessLevel now SHORT-CIRCUITS `if (alarmActive) return STOP_ALARM_LEVEL` (1.0, a named constant) BEFORE any ambient math -- a live STOP overrides the auto-dim curve, the honest 0.70 fallback AND the 0.40 alarmFloorLevel; a dead/stale light sensor cannot dim the alarm. brightnessAlarmActive stays STOP-only, so non-STOP ambient dimming is unchanged (a test pins that US-483-b still works). SUPERSEDED-KEY DRIFT -> TD-066: alarmFloorLevel is now unreachable (its only consumer condition returns full). Left resolvable so a deployed config.json still parses; removal-vs-repurpose (does WATCH want a floor?) is a Spool call, not mine. TESTS: new tests/ui/test_dashboard_stop_tier_safety.py = 29 tests that PARSE both CSS files and COMPUTE luminance/contrast/hue from the token values, so drift in tokens.css OR the dist re-reds them (a hardcoded expected-hex would not). Replaced US-484-a's deliberate scope-fence test (it asserted STOP was STILL on brand red) with the reconciled assertion, and updated the 3 US-483-b alarm-floor tests to the new ch.4 contract. GREEN in-loop: tests/ui/ + tests/deploy/test_dashboard_kit.py = 148 passed; ruff clean on all 4 touched py files. GATES for PM/integration: black + mypy NOT installed on the Windows dev host (standing gap); no config change so validate_config.py not required. PI-RUNTIME/DEPLOY GATE (the story's own validationCriteria): trigger a real STOP-tier takeover on the panel and confirm it reads full-bleed near-black + pulsing + 'PULL OVER', stays FULL brightness with the cabin dark, and that STOP/WATCH/MINOR still read in severity order -- none of that is reproducible off-Pi. ALSO FILED: TD-067 -- 10 non-STOP surfaces (down glyph, degraded tiles, battery TRIGGER, LTFT down, .detail-directive, clear-result reset, the #clear-confirm pair) still paint with brand --red-light even though tokens.css reserves the brand reds for the brand mark; outside this AC's enumeration and needs a Spool severity call (+ possibly a new Rule-10 token) -- note .detail-directive and #clear-confirm-ok are the two that now read inconsistent with the repoint. Plus an issue for Atlas: tokens.css:87-94 still says the STOP repoint is the 'KNOWN-open half' -- stale now; specs/ is read-only for Ralph so it is a request, not an edit."
     }
   ],
   "validation": {

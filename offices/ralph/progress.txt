@@ -1455,3 +1455,89 @@ Task: SSOT token reconciliation — dashboard.css green + text-primary -> specs/
   ("was --ok-green #2ECC71") re-reds a strict no-dead-literal test — correctly.
   Provenance belongs in git history; keep the file greppable.
 ---
+
+## 2026-07-26 - US-484-b (Rex / Agent 1, Session 2 — Sprint 62)
+Task: DTC STOP-tier SAFETY treatment — repoint off brand red + Spool §6d
+multi-channel (color+area+motion+text+bg+brightness)
+
+### What was implemented:
+- **Repoint (colour = the THIRD channel, not the first)**: `#dtc-ribbon[stop]`,
+  `.dtc-chip[stop]`, `.dtc-hero[stop]` border, `#confirm-ok` and the takeover
+  all moved off the brand reds onto SSOT `--critical-red #D32F2F`
+  (tokens.css:69, Atlas Rule-10 gate 2026-07-26). Token declared once; every
+  surface goes through `var()`.
+- **ch.1 AREA + MOTION + TEXT** — the STOP takeover keeps the base full-bleed
+  `inset: 0`, gains an 8px `--critical-red` alarm frame animated by
+  `@keyframes stop-alarm-pulse` **scoped to `[data-severity="stop"]`** (motion
+  must never imply a state that isn't real — carousel spec §4), and renders the
+  existing "REDUCE LOAD · PULL OVER" directive as a white-on-critical-red band
+  at 22px against the 15px base.
+- **ch.2 near-black + white** — field is `var(--bg)` = `#000000`, copy `#fff`.
+  No new near-black token invented (that is the TD-065 group-(b) Atlas gate);
+  `#000` is one of the two values §6d permits.
+- **ch.3 deeper-and-darker only** — the pulse darkens toward the near-black
+  field, never toward a warmer hue; WATCH `#FFC400` and MINOR `#35C46A`
+  untouched.
+- **ch.4 FULL BRIGHTNESS ALWAYS** — `carousel.js brightnessLevel()` now
+  short-circuits `if (alarmActive) return STOP_ALARM_LEVEL` (1.0, named
+  constant) **before** any ambient math: a live STOP overrides the auto-dim
+  curve, the 0.70 honest fallback *and* the 0.40 `alarmFloorLevel`.
+  `brightnessAlarmActive` stays STOP-only, so US-483-b ambient dimming is
+  unchanged for every other state.
+- `TAKEOVER_STYLE.stop.colorVar` `"--red"` → `"--critical-red"`.
+
+### Files changed:
+- Modified: `specs/UI/dist/dashboard-pi/dashboard.css` (`--critical-red` token +
+  STOP repoint + the multi-channel takeover block + `stop-alarm-pulse`)
+- Modified: `specs/UI/dist/dashboard-pi/carousel.js` (`STOP_ALARM_LEVEL`
+  short-circuit, `colorVar`, superseded-key comment)
+- Created: `tests/ui/test_dashboard_stop_tier_safety.py` (29 tests — parses both
+  CSS files, computes luminance/contrast/hue from the token values)
+- Modified: `tests/ui/test_carousel_brightness.py` (3 alarm-floor tests → the
+  ch.4 full-brightness contract)
+- Modified: `tests/ui/test_dashboard_token_ssot.py` (US-484-a's scope-fence test
+  → the reconciled assertion)
+- Modified: `tests/deploy/test_dashboard_kit.py` (`colorVar` + R-2 docstring)
+- Created: `offices/pm/tech_debt/TD-066-autodim-alarm-floor-level-now-inert.md`
+- Created: `offices/pm/tech_debt/TD-067-brand-red-still-on-non-stop-alarm-surfaces.md`
+- Created: `offices/pm/issues/I-tokens-css-stop-repoint-note-now-stale.md`
+
+### Verification:
+- `pytest tests/ui/ tests/deploy/test_dashboard_kit.py` → **148 passed**
+- `ruff check` on the 4 touched py files → All checks passed
+- PM/integration gates: black + mypy are not installed on the Windows dev host
+  (standing gap). No config change → `validate_config.py` N/A.
+- **PI-RUNTIME gate owed** (the story's own validationCriteria, not reproducible
+  off-Pi): trigger a real STOP takeover — full-bleed near-black + pulsing +
+  "PULL OVER", FULL brightness with the cabin dark, STOP/WATCH/MINOR still
+  reading in severity order.
+
+### Learnings for future iterations:
+- **Pattern discovered**: for a *perceptual* requirement, assert the physics,
+  not the string. The guard computes WCAG relative luminance, contrast ratio and
+  HSL hue **from the parsed token values in both files**, so "deeper and darker,
+  never warmer" and "≥ AA large-text" survive a future token edit. A test that
+  hardcodes the expected hex passes forever after the SSOT changes underneath it.
+- **Pattern discovered**: "no warmer/orange shift" has a clean mechanical form —
+  an orange shift lifts the GREEN channel above BLUE, so `g == b` on `#D32F2F`
+  proves the axis is saturation+darkness only. Beats asserting a hue angle,
+  which is noisy near 0°/360° (brand red sits at 355°, critical red at 0°).
+- **Gotcha (second time this sprint)**: the design token name lives in JS as
+  **data** (`TAKEOVER_STYLE.colorVar`), so a CSS-only repoint silently leaves a
+  tier bound to the old token — no error, just the wrong colour. Grep the token
+  name across `.css` **and** `.js` before calling a repoint done. Same shape as
+  US-484-a's `--ok-green` catch.
+- **Gotcha**: a naive `_ruleBlock(css, ".takeover-directive {")` helper grabs the
+  first *substring* match — which was the `[data-severity="stop"]
+  .takeover-directive` override sitting earlier in the file, so a
+  "STOP is bigger than base" test compared the override to itself and passed
+  vacuously. Anchor CSS-rule lookups at line start (`re.MULTILINE`).
+- **Gotcha**: writing the token's hex into an explanatory comment re-reds a
+  strict "declared exactly once" test — correctly. Reference the token by name
+  in prose; the hex belongs only in `:root`. (Same lesson as US-484-a, different
+  mechanism.)
+- **Design note**: satisfying ch.4 made `pi.display.autoDim.alarmFloorLevel`
+  unreachable — its only consumer condition now returns full. Filed TD-066
+  rather than deleting a grounded config key: whether WATCH deserves a floor is
+  a Spool call, and the key is the one that already exists for it.
+---
