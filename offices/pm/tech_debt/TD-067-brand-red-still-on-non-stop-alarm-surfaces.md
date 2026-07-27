@@ -4,6 +4,56 @@
 - **Severity:** low-medium (no engine-safety defect — the STOP tier is clean —
   but it keeps the brand-vs-alarm collision alive on 10 other surfaces).
 - **Type:** tech-debt / design-SSOT (brand-token reservation).
+- **Status: 8 of 10 surfaces SWEPT** by US-488 (Sprint 63, V0.29.17). **OPEN on
+  the last 2 only** — the `#clear-confirm` pair, blocked on a `--destructive`
+  token that does not exist yet (Iris owns the value, Atlas gates it under
+  Rule-10). See "Remaining" below. Do NOT close this TD until those two land.
+
+## Remaining (the whole of the open debt)
+
+| Line | Surface | Blocked on |
+|---|---|---|
+| ~596 | `#clear-confirm .confirm-box` | `--destructive` value + Atlas Rule-10 gate |
+| ~598 | `#clear-confirm-ok` | same |
+
+Spool's ruling (2026-07-27) is why these two could not ride along with the other
+eight: a **destructive user action is a different axis** from the engine
+severity tiers. It **MUST NOT** be any alarm-red (Mode-04 wiping stored codes is
+not an engine emergency, and reusing the pull-over red re-creates exactly the
+"one red, two meanings" collision this TD exists to kill) and **MUST NOT** be
+amber (that means WATCH). So it needs its own token — and inventing a hex for it
+inside US-488 would have re-forked the SSOT that US-484-a/b spent two stories
+un-forking.
+
+Both are pinned by `tests/ui/test_dashboard_alarm_tier_sweep.py`: the whole-file
+guard asserts these are the **only** two rules in the sheet still touching a
+brand red (so the debt cannot grow), and a scope-fence test asserts
+`--destructive` is declared/rendered in **neither** file (so it cannot
+half-land). Closing this TD = repoint those two + delete the
+`_DEFERRED_DESTRUCTIVE` tuple; both guards then tighten to zero automatically.
+
+## What US-488 swept (2026-07-27, per Spool's per-surface ruling)
+
+"Red = danger, one meaning only" — no second alarm-red was invented.
+
+| Surface | Now | Why |
+|---|---|---|
+| topbar `down` glyph | `--amber-warn` | degraded ≠ dangerous |
+| `.tile[data-level=down]` value | `--amber-warn` | same |
+| `.ltft-bar[data-level=down]` value + border | `--amber-warn` | ±10% drift is WATCH |
+| `#dtc-clear-result[reset]` | `--amber-warn` | hard fault → "get diagnosed" |
+| `.ladder[data-stage=TRIGGER]` + banner | `--critical-red` | terminal act-now SYSTEM state; earlier stages stay amber so the escalation still escalates; copy stays "DRAINING · TRIGGER", never "PULL OVER" |
+| `.detail-directive` | **tier-driven** | see below |
+
+The `.detail-directive` refactor was the load-bearing one: one blanket brand red
+for *every* severity inverted the ramp twice — a WATCH code's directive read
+*redder* than the `--critical-red` chip beside it, and a MINOR gas-cap code got
+a red instruction it never earned. It is now `data-level`-driven (STOP →
+`--critical-red`, WATCH/unknown → `--amber-warn`, MINOR → `--green-ok`, base
+neutral), tagged in `carousel.js` from the **same** tier the chip uses so the two
+can never disagree.
+
+## Original filing (Sprint 62) — retained for context
 
 ## What
 

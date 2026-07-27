@@ -14,6 +14,13 @@
  *          surface needs a colour, add it to tokens.css first (Rule-10 / Atlas;
  *          tuning-semantics colours via Spool). Enforced by
  *          tests/ui/test_dashboard_token_ssot.py.
+ * Updated: 2026-07-27 -- US-488 (TD-067): every NON-STOP alarm surface swept off
+ *          the brand reds onto its CORRECT tier, per Spool's per-surface ruling
+ *          ("Red = danger, ONE meaning only" -- no second alarm-red invented):
+ *          degraded/DOWN states are WATCH amber; the battery failsafe TRIGGER is
+ *          the one terminal SYSTEM-critical state; the DTC detail directive band
+ *          is now TIER-DRIVEN instead of one blanket red for every severity.
+ *          Enforced by tests/ui/test_dashboard_alarm_tier_sweep.py.
  * ==========================================================================*/
 
 :root {
@@ -26,14 +33,21 @@
   /* BRAND identity reds -- RESERVED for the brand mark (SSOT tokens.css:50-57).
      US-484-b moved every DTC STOP surface OFF these: if the permanent brand
      mark is red AND the pull-over alarm is also red, the driver cannot tell
-     "brand" from "danger". Declared here so the dist mirrors the SSOT tier. */
+     "brand" from "danger". Declared here so the dist mirrors the SSOT tier.
+     US-488 swept the remaining alarm/degraded consumers off them too. The ONLY
+     rules that may still reference these are the two #clear-confirm surfaces
+     awaiting the --destructive token -- see the note at that rule. */
   --red:            #E60012;   /* SSOT tokens.css:55 -- brand mark base */
   --red-light:      #F61D2D;   /* SSOT tokens.css:56 -- brand mark highlight */
   --red-dark:       #BF000F;   /* SSOT tokens.css:57 -- brand mark shadow */
   /* STATE-ALARM red -- "PULL OVER NOW". Spool set value + semantics 2026-07-25
      (dtc-display-clear-safety-advisory.md 6d); Atlas Rule-10 gate 2026-07-26.
      The HEX IS ONLY THE 3RD REINFORCEMENT: area + motion + text carry STOP. */
-  --critical-red:   #D32F2F;   /* SSOT tokens.css:69 -- DTC STOP tier only */
+  --critical-red:   #D32F2F;   /* SSOT tokens.css:69 -- the DTC STOP tier and,
+                                  per US-488, the battery failsafe TRIGGER: the
+                                  two TERMINAL act-now states. Everything merely
+                                  degraded is --amber-warn, so this red keeps
+                                  exactly one meaning (Spool, TD-067). */
   --green-ok:       #35C46A;   /* SSOT tokens.css:43 (Atlas A-8) -- MINOR DTC
                                   tier, OK/healthy, "linked", trust-badge
                                   verified. Reconciled off a forked local name +
@@ -63,7 +77,11 @@ html, body {
 #topbar .glyph { color: var(--text-secondary); letter-spacing: 0.04em; }
 #topbar .glyph[data-state="amber"] { color: var(--amber-warn); }
 #topbar .glyph[data-state="ok"]    { color: var(--green-ok); }
-#topbar .glyph[data-state="down"]  { color: var(--red-light); }
+/* US-488: a DOWN link/service is DEGRADED, not dangerous -- WATCH amber. It
+   shares the amber hue with [data-state="amber"] deliberately: the GLYPH itself
+   (and, from US-489, the per-tile dot) carries which source is unhappy, and
+   inventing a second alarm-red to separate them is what Spool ruled against. */
+#topbar .glyph[data-state="down"]  { color: var(--amber-warn); }
 #version-chip {
   margin-left: auto; color: var(--text-tertiary);
   font-size: 10px; letter-spacing: 0.06em;
@@ -154,7 +172,8 @@ html, body {
 .tile-detail { font-size: 11px; color: var(--text-tertiary); }
 .tile[data-level="ok"]    .tile-value { color: var(--green-ok); }
 .tile[data-level="amber"] .tile-value { color: var(--amber-warn); }
-.tile[data-level="down"]  .tile-value { color: var(--red-light); }
+/* US-488: a degraded tile is WATCH, never the pull-over red (TD-067). */
+.tile[data-level="down"]  .tile-value { color: var(--amber-warn); }
 .tile[data-level="unavailable"] .tile-value {
   color: var(--text-tertiary); font-style: italic; font-weight: 400;
 }
@@ -173,8 +192,13 @@ html, body {
   font-size: 13px; font-weight: 700; letter-spacing: 0.06em;
   color: var(--amber-warn);
 }
-.ladder[data-stage="TRIGGER"] { border-color: var(--red-light); }
-.ladder[data-stage="TRIGGER"] .ladder-banner { color: var(--red-light); }
+/* US-488: TRIGGER is the ladder's TERMINAL stage -- the failsafe is about to
+   halt the Pi -- so it earns the state-alarm red. The earlier stages stay amber
+   above, or the escalation would not read as an escalation. This is a SYSTEM
+   critical state, not the engine one: the banner copy stays "DRAINING · TRIGGER"
+   (carousel.js), never the DTC tier's "PULL OVER". */
+.ladder[data-stage="TRIGGER"] { border-color: var(--critical-red); }
+.ladder[data-stage="TRIGGER"] .ladder-banner { color: var(--critical-red); }
 .ladder-runtime { font-size: 11px; color: var(--text-secondary); }
 
 /* --- US-420 LTFT Trend card (F-096) ----------------------------------------- */
@@ -199,8 +223,11 @@ html, body {
 .ltft-bar-drive { font-size: 10px; color: var(--text-tertiary); }
 .ltft-bar[data-level="ok"]    .ltft-bar-value { color: var(--green-ok); }
 .ltft-bar[data-level="amber"] .ltft-bar-value { color: var(--amber-warn); }
-.ltft-bar[data-level="down"]  .ltft-bar-value { color: var(--red-light); }
-.ltft-bar[data-level="down"]  { border-color: var(--red-light); }
+/* US-488: a drive beyond +/-10% LTFT is a fuel-trim drift worth investigating
+   -- WATCH, not "pull over" (TD-067 ruling #4). Value + border move together;
+   sweeping only one would leave a red box around an amber number. */
+.ltft-bar[data-level="down"]  .ltft-bar-value { color: var(--amber-warn); }
+.ltft-bar[data-level="down"]  { border-color: var(--amber-warn); }
 
 /* --- page dots (>=40px touch target, 10px visual) --------------------------- */
 #dots {
@@ -502,10 +529,24 @@ html, body {
 .detail-hero { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .detail-code { font-size: 20px; font-weight: 800; letter-spacing: 0.04em; }
 .detail-short { font-size: 13px; color: var(--text-secondary); flex: 1 1 100%; }
+/* US-488 (TD-067): the directive band is TIER-DRIVEN, not one blanket red for
+   every severity. It used to paint brand red on EVERY code, which inverted the
+   ramp twice over: a WATCH code's directive read REDDER than the --critical-red
+   chip sitting beside it, and a MINOR gas-cap code got a red instruction it
+   never earned. The base below is deliberately NEUTRAL so an `na` or untagged
+   directive inherits no severity it does not have; carousel.js tags the row
+   with data-level from the SAME tier the chip uses, so the two can never
+   disagree. */
 .detail-directive {
   font-size: 14px; font-weight: 700; letter-spacing: 0.03em;
-  color: var(--red-light);
+  color: var(--text-primary);
 }
+.detail-directive[data-level="stop"]    { color: var(--critical-red); }
+.detail-directive[data-level="watch"]   { color: var(--amber-warn); }
+.detail-directive[data-level="minor"]   { color: var(--green-ok); }
+/* An uncurated code is honestly "get diagnosed" -- amber, never green and never
+   the pull-over red (honest-instrument F-1). */
+.detail-directive[data-level="unknown"] { color: var(--amber-warn); }
 .detail-caveat { font-size: 12px; color: var(--amber-warn); }
 .detail-meta { font-size: 11px; color: var(--text-tertiary); letter-spacing: 0.03em; }
 .detail-freeze {
@@ -566,11 +607,24 @@ html, body {
 }
 #dtc-clear-result { font-size: 12px; color: var(--text-secondary); }
 #dtc-clear-result[data-level="cleared"] { color: var(--green-ok); }
-#dtc-clear-result[data-level="reset"]   { color: var(--red-light); font-weight: 700; }
+/* US-488: a code that RE-SET after a clear is a hard fault (§4d) and stays
+   BOLD, but the honest directive is "get diagnosed", not "pull over" -- the
+   code's OWN severity tier still drives the ribbon/chip if it is a STOP. */
+#dtc-clear-result[data-level="reset"]   { color: var(--amber-warn); font-weight: 700; }
 #dtc-clear-result[data-level="blocked"] { color: var(--amber-warn); }
 
-/* The dedicated hard-confirm modal (reuses the .confirm-box shell). Its border
-   reads STOP-red -- the clear is the most consequential action on the dash. */
+/* The dedicated hard-confirm modal (reuses the .confirm-box shell). The clear
+   is the most consequential action on the dash.
+
+   ⚠ KNOWN-OPEN (US-488 / TD-067) -- these are the LAST TWO rules in this sheet
+   still on a brand red, and they are open ON PURPOSE. Spool ruled that a
+   destructive USER ACTION is a DIFFERENT AXIS from the engine alarm tiers: it
+   MUST NOT be any alarm-red (Mode-04 wiping your codes is not an engine
+   emergency) and MUST NOT be amber (that means WATCH). So it needs a new
+   --destructive token -- Iris owns the value, Atlas gates it under Rule-10 --
+   and that token does not exist yet. Guessing a hex here would re-fork the SSOT
+   the US-484 line of work spent two stories un-forking. Pinned by
+   tests/ui/test_dashboard_alarm_tier_sweep.py so the debt cannot grow. */
 #clear-confirm {
   position: fixed; inset: 0; z-index: 55;
   display: flex; align-items: center; justify-content: center;

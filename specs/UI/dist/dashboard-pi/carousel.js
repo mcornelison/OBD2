@@ -1931,9 +1931,15 @@
         hero.appendChild(shortSpan);
         detailBody.appendChild(hero);
 
-        // Severity directive band (🔴/🟡 only).
+        // Severity directive band (🔴/🟡 only). US-488: the band is TIER-DRIVEN
+        // in CSS, so the row carries data-level from the SAME tier the chip
+        // above uses -- a directive can never disagree with the chip beside it,
+        // and an untagged row falls back to the neutral base rather than
+        // inheriting a severity it does not have.
         if (view.directive) {
-          detailBody.appendChild(detailLine("detail-directive", "", view.directive));
+          var directiveRow = detailLine("detail-directive", "", view.directive);
+          directiveRow.setAttribute("data-level", view.level);
+          detailBody.appendChild(directiveRow);
         }
         // Condition-dependent caveat -- a LINE beneath the chip, never a tier
         // upgrade (S-13).

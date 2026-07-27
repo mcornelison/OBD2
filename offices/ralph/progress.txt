@@ -1541,3 +1541,58 @@ multi-channel (color+area+motion+text+bg+brightness)
   rather than deleting a grounded config key: whether WATCH deserves a floor is
   a Spool call, and the key is the one that already exists for it.
 ---
+
+## 2026-07-27 - US-488 (Agent 1 / Session 56)
+Task: TD-067 -- sweep the 10 non-STOP alarm surfaces off brand --red-light (per Spool per-surface ruling)
+
+### What was implemented:
+- Swept 8 of the 10 brand-red surfaces onto their CORRECT engine tier, per Spool's
+  per-surface ruling (2026-07-27): "Red = danger, ONE meaning only" -- no second
+  alarm-red was invented.
+- AMBER (degraded is not dangerous): topbar `down` glyph; `.tile[data-level=down]`
+  value; `.ltft-bar[data-level=down]` value AND border; `#dtc-clear-result[reset]`
+  (kept font-weight:700 so it stays distinct from `[blocked]`, which is also amber).
+- CRITICAL-RED: `.ladder[data-stage=TRIGGER]` border + banner -- the one terminal
+  act-now SYSTEM state. Earlier ladder stages left amber so the escalation still
+  reads as an escalation.
+- TIER-AWARE REFACTOR (the load-bearing one): `.detail-directive` is now
+  `data-level`-driven (stop -> --critical-red, watch/unknown -> --amber-warn,
+  minor -> --green-ok) over a NEUTRAL base, tagged in carousel.js from `view.level`
+  -- the same tier the chip uses.
+- DEFERRED per the story's own conditionalOutcome: the two `#clear-confirm`
+  surfaces need a `--destructive` token that is not gated yet. TD-067 updated +
+  narrowed (NOT closed); PM inbox note filed routing the Iris-value/Atlas-gate ask.
+
+### Files changed:
+- Modified: `specs/UI/dist/dashboard-pi/dashboard.css` (6 surfaces repointed; the
+  tier-aware directive band; a loud KNOWN-OPEN note on the deferred pair)
+- Modified: `specs/UI/dist/dashboard-pi/carousel.js` (tag the directive row with
+  its tier in renderDetailBody)
+- Created: `tests/ui/test_dashboard_alarm_tier_sweep.py` (19 guard tests)
+- Modified: `offices/pm/tech_debt/TD-067-...md` (status + what remains)
+- Created: `offices/pm/inbox/2026-07-27-from-ralph-us488-destructive-token-gate-needed.md`
+
+### Learnings for future iterations:
+- **Gotcha (severity inversion hides in the "cosmetic" surface)**: `.detail-directive`
+  looked like a one-line colour swap, but one blanket red for EVERY severity inverted
+  the ramp twice -- a WATCH code's directive read REDDER than the --critical-red chip
+  beside it, and a MINOR gas-cap code got a red instruction it never earned. A single
+  rule serving every tier is worth reading as a bug, not a style choice.
+- **Pattern (cross-file token binding -- THIRD sprint running)**: the tier tag is
+  applied in JS, so a CSS-only refactor leaves every band on the neutral base with no
+  error and no styling. US-484-a hit this via TAKEOVER_STYLE.colorVar, US-484-b again,
+  now this. When a CSS change is driven by an attribute, grep the JS that sets it
+  BEFORE calling the change complete -- and assert the JS half in the guard test.
+- **Pattern (self-closing deferral)**: when a story's scope is cut by a missing gate,
+  encode the remainder as an explicit allow-list in the guard (`_DEFERRED_DESTRUCTIVE`)
+  plus a scope-fence asserting the ungated token is in NEITHER file. The debt can then
+  shrink but never silently grow, and closing it = deleting the tuple.
+- **Gotcha (declaration != mention)**: my own scope-fence test failed first time
+  because the CSS comment EXPLAINING why `--destructive` is absent contains the string
+  `--destructive`. Same lesson `_tokenValue` already encodes -- strip comments / match
+  a real declaration, never a bare substring.
+- **Pattern (import the parser, don't re-implement it)**: reused the US-484-b suite's
+  `_ruleBlock`/`_tokenValue`. Its line-anchoring is load-bearing (stops a DESCENDANT
+  rule being mistaken for the base rule it overrides); a hand-copied weaker matcher
+  would have under-asserted silently.
+---
