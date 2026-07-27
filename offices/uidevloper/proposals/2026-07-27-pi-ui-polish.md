@@ -36,16 +36,21 @@ no new contracts. Each is a small, self-contained story.
 **The tension:** `⋮` is discoverable but is a *single tap to a consequential menu* — easy to hit
 by accident on a bumpy road. Long-press is deliberate (can't happen by accident) but undiscoverable.
 
-**Recommendation — context-aware `⋮` (best of both):**
+**DECISION — Option C, context-aware `⋮` (CIO 2026-07-27). LOCKED.**
+
+**Context-aware `⋮` (best of both):**
 - **`⋮` shows only on the parked / idle home card** (discoverable, and you're stopped — safe to tap).
 - **Hidden while driving** (the live card stays clean; no accidental menu in motion).
 - **Long-press (5 s) always available** as the deliberate override, in any state.
 - This leans on the idle/live state the UI already has — system-setup is a parked-context action.
 
-**Alternatives (for your call):**
+**Alternatives (not chosen):**
 - **(A) Long-press-only** — cleanest, safest, least discoverable (my earlier lean).
 - **(B) Always-`⋮`** — the current shipped behavior; discoverable but a single consequential tap in motion.
-- **(C) Context-aware `⋮`** — recommended.
+- **(C) Context-aware `⋮`** — ✅ CHOSEN.
+
+**Build note:** the show/hide keys off the idle/live state the UI already consumes (parked → `⋮`
+shown, driving → hidden) — pure UI, no new data/contract. No Atlas gate expected.
 
 ## P-3 · DTC detail overlay — hierarchy + grouping
 **Now (shipped):** hero · directive · caveat · status meta · freeze-frame/realtime fallback ·
