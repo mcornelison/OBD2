@@ -558,13 +558,18 @@
   var DTC_SEVERITY_RANK = { stop: 3, watch: 2, minor: 1, unknown: 0 };
 
   // Per-severity takeover styling. The display maps a tier -> color + directive
-  // + dismiss behavior; it never classifies. STOP has NO plain dismiss -- only
+  // + dismiss behavior; it never classifies. US-484-b: STOP binds the STATE-
+  // ALARM `--critical-red`, never a brand red -- if the brand mark and the
+  // pull-over alarm are the same red the driver cannot tell them apart (Spool
+  // 6d ch.2). The colour is only the 3rd reinforcement; dashboard.css carries
+  // STOP by area + motion + text on a near-black field.
+  // STOP has NO plain dismiss -- only
   // "Acknowledge" (which drops to the ribbon) so a misfire is never dismissed-
   // and-forgotten, yet the driver still keeps view control (design §5.1/D-3).
   // `unknown` (severity not curated) gets the honest middle: a "get diagnosed"
   // caution -- never a false "safe to clear" (green) nor a false "pull over".
   var TAKEOVER_STYLE = {
-    stop: { colorVar: "--red", icon: "⚠", directive: "REDUCE LOAD · PULL OVER",
+    stop: { colorVar: "--critical-red", icon: "⚠", directive: "REDUCE LOAD · PULL OVER",
             dismissLabel: "Acknowledge", plainDismiss: false },
     watch: { colorVar: "--amber-warn", icon: "⚠", directive: "DRIVE GENTLY · GET DIAGNOSED",
             dismissLabel: "Dismiss", plainDismiss: true },
@@ -1066,16 +1071,26 @@
   // built-in defaults are the file:// preview / unconfigured fallback and MIRROR
   // config.json pi.display.autoDim.* (the tuning SSOT). Honest-instrument: an
   // absent/stale/saturated (null) reading holds the fixed default -- never a
-  // fabricated "auto" behavior; and a real active STOP alert never dims below the
-  // legible alarm floor, regardless of lux (the load-bearing safety guard).
+  // fabricated "auto" behavior; and a real active STOP alert is held at FULL
+  // brightness regardless of lux (the load-bearing safety guard, US-484-b).
   // -------------------------------------------------------------------------
+
+  // Spool 6d ch.4 (US-484-b): "a red alarm is full brightness always,
+  // independent of auto-dim -- only ambient content dims." Full IS the top of
+  // the 0..1 range, so this is a definition, not a tunable: there is no config
+  // key that may lower a live PULL-OVER alarm.
+  var STOP_ALARM_LEVEL = 1.0;
 
   var BRIGHTNESS_DEFAULTS = {
     luxMin: 3.0,          // lux <= this -> min (grounded: civil-twilight dark)
     luxFull: 1000.0,      // lux >= this -> full (grounded: overcast daylight)
     minLevel: 0.15,       // calm-screen dim floor (fraction 0..1)
     defaultLevel: 0.70,   // fixed fallback when the feed is absent/stale
-    alarmFloorLevel: 0.40, // a real STOP never dims below this (safety)
+    alarmFloorLevel: 0.40, // SUPERSEDED by STOP_ALARM_LEVEL (US-484-b ch.4):
+                           // a STOP now goes to FULL, overriding this floor.
+                           // Kept so an existing config.json that still carries
+                           // pi.display.autoDim.alarmFloorLevel resolves cleanly
+                           // (removal is a Spool/Atlas call -- see TD-066).
     luxStaleSec: 10,      // a reading older than this -> fallback
     curve: "logarithmic", // perceptual mapping between luxMin..luxFull
   };
@@ -1149,10 +1164,14 @@
   }
 
   // The final 0..1 brightness: clamp(minLevel, curve(lux), 1.0) when the feed is
-  // fresh, else the fixed default (honest fallback), then raised to at least the
-  // alarm floor while a real STOP is active. The alarm floor only RAISES (never
-  // caps) -- a bright reading under a STOP still goes full.
+  // fresh, else the fixed default (honest fallback).
+  //
+  // US-484-b / Spool 6d ch.4 -- the load-bearing safety short-circuit: while a
+  // real STOP is active the surface is FULL, before any ambient math runs. It
+  // overrides the curve, the fixed default AND the alarmFloorLevel guard, so a
+  // dark cabin (or a dead light sensor) can never dim a PULL-OVER alarm.
   function brightnessLevel(lightData, cfg, nowMs, alarmActive) {
+    if (alarmActive) return STOP_ALARM_LEVEL;
     var c = resolveAutoDimConfig(cfg);
     var lux = freshLux(lightData, c.luxStaleSec, nowMs);
     var level;
@@ -1162,7 +1181,6 @@
       var curved = brightnessCurve(lux, c.luxMin, c.luxFull, c.curve);
       level = Math.min(Math.max(curved, c.minLevel), 1.0);
     }
-    if (alarmActive) level = Math.max(level, c.alarmFloorLevel);
     return Math.min(Math.max(level, 0), 1);
   }
 

@@ -832,7 +832,8 @@ assert.strictEqual(stopV.code, 'P0301', 'hero code');
 assert.ok(/PULL OVER/i.test(stopV.directive), 'stop directive = pull over');
 assert.strictEqual(stopV.plainDismiss, false, 'STOP has NO plain dismiss (Acknowledge only)');
 assert.ok(/acknowledge/i.test(stopV.dismissLabel), 'stop dismiss label = Acknowledge');
-assert.strictEqual(stopV.colorVar, '--red', 'stop uses the brand red bg (takeover)');
+// US-484-b: STOP binds the STATE-ALARM --critical-red, never a brand red (Spool 6d ch.2).
+assert.strictEqual(stopV.colorVar, '--critical-red', 'stop uses the state-alarm red, not brand');
 
 const watchV = c.takeoverView(dtc([code('watch', 'P0401', 'EGR flow')], '2026-06-30T19:40:00Z'));
 assert.strictEqual(watchV.severity, 'watch', 'watch severity');
@@ -919,13 +920,15 @@ def test_dashboardHtml_hasTakeoverAndRibbon_us405():
 
 def test_dashboardCss_ribbonRedDistinctFromBrandRed_r2():
     """R-2: the ribbon rides on cards where brand-red chrome may live, so its STOP
-    state uses the BRIGHTER alert red (--red-light #F61D2D), distinct from brand
-    --red (#E60012), plus a leading warning glyph + a subtle pulse animation."""
+    state must not be a brand red. US-484-b moved it onto the state-alarm
+    --critical-red (#D32F2F, SSOT); the brand tier stays declared so the two are
+    provably distinct. Plus a leading warning glyph + a subtle pulse animation."""
     css = _read(KIT_DIR, "dashboard.css")
-    # Both reds defined -> provably distinct (R-2).
+    # Brand tier + alarm tier both defined -> provably distinct (R-2).
     assert "--red:" in css and "#E60012" in css, "brand --red token missing"
-    assert "--red-light:" in css and "#F61D2D" in css, "alert --red-light token missing"
-    # The ribbon's STOP state uses the brighter --red-light, not brand --red.
+    assert "--red-light:" in css and "#F61D2D" in css, "brand --red-light token missing"
+    assert "--critical-red:" in css and "#D32F2F" in css, "state-alarm token missing"
+    # The ribbon's STOP state uses the state-alarm red, not a brand red.
     assert "#dtc-ribbon" in css
     assert 'data-level="stop"' in css
     # A subtle pulse so the ribbon reads as an alarm, never as decoration.

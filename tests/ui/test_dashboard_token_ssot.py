@@ -7,10 +7,10 @@
 #   `--text-primary` (#DDDDDD, tokenized 2026-07-25 under Rule-10). Both files are
 #   parsed and compared -- a future drift in EITHER file re-reds these tests, which
 #   is the point (the SSOT rule is only real if something enforces it).
-#   The STOP/critical-red tier is deliberately NOT reconciled here -- that is the
-#   safety half (US-484-b, Spool §6d multi-channel). A scope-fence test asserts the
-#   STOP tier is still on the brand reds so this mechanical slice cannot silently
-#   half-land the safety repoint.
+#   The STOP/critical-red tier was fenced OUT of this slice (it is the safety
+#   half -- US-484-b, Spool §6d multi-channel) and landed 2026-07-26; the
+#   token-level half of that repoint is pinned here, and the non-colour safety
+#   channels live in tests/ui/test_dashboard_stop_tier_safety.py.
 # Author: Ralph Agent (Rex)
 # Creation Date: 2026-07-26
 # Copyright: (c) 2026 Eclipse OBD-II Project. All rights reserved.
@@ -141,19 +141,21 @@ def test_dashboardCss_textPrimaryLiteral_appearsOnceInRoot():
 
 
 # ---------------------------------------------------------------------------
-# AC4 -- scope fence: the STOP/critical-red tier belongs to US-484-b.
+# AC4 -- the STOP/critical-red tier (shipped by US-484-b, 2026-07-26).
 # ---------------------------------------------------------------------------
 
 
-def test_stopTier_isUntouchedByThisSlice():
-    """US-484-a is the mechanical half. The DTC STOP surfaces must STILL be on
-    the brand reds here -- repointing them onto --critical-red without Spool's
-    multi-channel (area/motion/text/near-black/full-brightness) treatment would
-    ship a weaker STOP than either design. US-484-b lands that as one change."""
+def test_stopTier_isReconciledOntoTheSsotCriticalRed():
+    """US-484-a fenced the STOP tier off (it was still on the brand reds) so the
+    safety repoint could not half-land without Spool's multi-channel treatment.
+    US-484-b landed both together, so the SSOT rule now covers the STOP token
+    too: --critical-red is declared in BOTH files with one value. The
+    area/motion/text/near-black/full-brightness channels that make the repoint
+    SAFE are asserted in tests/ui/test_dashboard_stop_tier_safety.py."""
     css = _read(_CSS)
-    assert '#dtc-ribbon[data-level="stop"]    { background: var(--red-light);' in css
-    assert '.dtc-chip[data-level="stop"]    { background: var(--red-light);' in css
-    assert "--critical-red" not in css
+    assert _tokenValue(css, "critical-red") == _tokenValue(_read(_TOKENS), "critical-red")
+    assert '#dtc-ribbon[data-level="stop"]    { background: var(--critical-red);' in css
+    assert '.dtc-chip[data-level="stop"]    { background: var(--critical-red);' in css
 
 
 def test_severityTiersBelowStop_keepTheirSsotColours():

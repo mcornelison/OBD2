@@ -3,8 +3,10 @@
 # Purpose/Description: US-483-b tests for the carousel display-brightness
 #   consumer (F-121). The dashboard is a PURE CONSUMER of the states/light file
 #   US-483-a writes ({lux, ts}); it drives an auto-dim curve whose values are
-#   GROUNDED CONFIG PARAMETERS (never hardcoded), with a load-bearing alarm floor
-#   (a real STOP alert never dims below a legible level) and an honest fallback
+#   GROUNDED CONFIG PARAMETERS (never hardcoded), with a load-bearing alarm
+#   override (US-484-b / Spool 6d ch.4: a real STOP alert is FULL brightness
+#   always -- this SUPERSEDES the original alarmFloorLevel floor) and an honest
+#   fallback
 #   (an absent/stale feed holds a fixed default -- no fake "auto" behavior). Two
 #   layers are covered on the bench: (1) the pure brightnessCurve / brightnessLevel
 #   / brightnessAlarmActive math via the node probe, and (2) static wiring
@@ -167,28 +169,28 @@ def test_brightnessLevel_staleTs_holdsDefault():
 
 
 @nodeless
-def test_brightnessLevel_stopAlarmDarkLux_heldAtAlarmFloor():
-    """LOAD-BEARING: a real STOP alert + a dark reading holds >= alarmFloorLevel
-    (0.40) -- the PULL-OVER alarm is never dimmed below legible, regardless of
-    lux."""
+def test_brightnessLevel_stopAlarmDarkLux_isFullBrightness():
+    """LOAD-BEARING (US-484-b supersedes the original 0.40 floor): Spool 6d ch.4
+    makes a real STOP FULL brightness always, so the darkest cabin cannot dim the
+    PULL-OVER alarm at all. Full coverage in test_dashboard_stop_tier_safety.py."""
     light = {"lux": 1.0, "ts": _TS}
-    assert _probe("brightnessLevel", light, _CFG, _fresh(), True) == 0.40
+    assert _probe("brightnessLevel", light, _CFG, _fresh(), True) == 1.0
 
 
 @nodeless
-def test_brightnessLevel_stopAlarmBrightLux_notLoweredToFloor():
-    """The alarm floor is a FLOOR, not a cap: a bright reading under a STOP still
-    goes full (the floor only raises, never lowers)."""
+def test_brightnessLevel_stopAlarmBrightLux_staysFull():
+    """A bright reading under a STOP is full for both reasons -- the ch.4
+    override and the ambient curve agree."""
     light = {"lux": 5000.0, "ts": _TS}
     assert _probe("brightnessLevel", light, _CFG, _fresh(), True) == 1.0
 
 
 @nodeless
-def test_brightnessLevel_stopAlarmStaleFeed_heldAtLeastAlarmFloor():
-    """A STOP with a stale feed falls back to default (0.70) which already clears
-    the floor -- the alarm is still legible."""
+def test_brightnessLevel_stopAlarmStaleFeed_isStillFull():
+    """A STOP with a stale/dead feed does NOT fall back to the 0.70 default --
+    the alarm overrides the honest fallback too (ch.4)."""
     light = {"lux": 1.0, "ts": _TS}
-    assert _probe("brightnessLevel", light, _CFG, _fresh(20000), True) >= 0.40
+    assert _probe("brightnessLevel", light, _CFG, _fresh(20000), True) == 1.0
 
 
 @nodeless
