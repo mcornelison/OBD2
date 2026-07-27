@@ -1249,6 +1249,15 @@
       "createdAt": "2026-07-21",
       "updatedAt": "2026-07-27",
       "currentVersion": "V0.29.17"
+    },
+    {
+      "id": "F-122",
+      "parent": "E-OPS",
+      "status": "active",
+      "title": "Pi operational tooling -- on-Pi service-control maintenance CLI",
+      "description": "CIO-facing maintenance/troubleshooting tools run directly on the Pi. First: a service-control CLI to stop/start/restart/kill/status each OBD-project systemd unit independently or ALL of them, for maintenance + issue diagnosis. Distinct from the kiosk's unprivileged US-403 service_control.py allow-list (the CLI is the CIO's root superset tool).",
+      "createdAt": "2026-07-27",
+      "updatedAt": "2026-07-27"
     }
   ],
   "stories": [
@@ -5779,6 +5788,63 @@
       "updatedAt": "2026-07-27",
       "passes": true,
       "shippedNote": "SHIPPED V0.29.17 (F-121 UI polish)."
+    },
+    {
+      "id": "US-492",
+      "parent": "F-122",
+      "type": "normal",
+      "size": "M",
+      "title": "On-Pi service-control CLI -- stop/start/restart/kill/status each OBD service or ALL (maintenance tool)",
+      "goal": "As the CIO doing maintenance or debugging on the Pi, I want ONE command I can run on the Pi to stop, start, restart, kill, or status any single OBD-project service OR ALL of them, so I can service the system or work through issues without hand-typing systemctl for each unit + remembering the full unit list.",
+      "definitionOfDone": [
+        "a CLI utility on the Pi (e.g. scripts/obdctl.sh + a `make`/deploy-installed entrypoint) run as `obdctl <action> <service|all>`; actions: status, start, stop, restart, kill (SIGKILL for a stuck unit). Bare/no-arg invocation = status of ALL (never a destructive default). --help + --dry-run.",
+        "CANONICAL UNIT LIST (SSOT, grounded -- the 8 deploy-installed OBD-project units, verified on the Pi 2026-07-27): eclipse-obd, eclipse-powerwatch, eclipse-states-http, eclipse-boot-state, eclipse-dashboard, rfcomm-bind, splash-boot, splash-grace. Derive/share the list from a single source (extend the US-403 service_control.py SERVICE_ALLOWLIST or a shared manifest) so it does NOT drift from what deploy installs -- do NOT hardcode a second divergent list.",
+        "short aliases accepted (e.g. `obd`, `powerwatch`, `dashboard`, `states`, `splash`) + the full unit name; `all` targets every unit in the canonical list",
+        "SAFETY -- eclipse-powerwatch is the safe-shutdown guard (D-7/F-7 cardinal rule: never leave it stopped or shutdown protection is disabled). stop/kill of powerwatch (directly or via `all`) prints a LOUD warning + requires an explicit confirm (or a --force/--yes flag); restart/status of powerwatch is unrestricted. The tool must make it easy to see powerwatch is down + to bring it back.",
+        "SAFETY -- `kill` (SIGKILL) is forceful: require explicit intent (confirm or explicit action word), never a fallback of `stop`; document that kill can leave a unit's resources uncleaned (use stop first, kill only when stuck)",
+        "`all` acts in a SENSIBLE ORDER: stop/kill in reverse-dependency order (kiosk/emitters/splash first, then states-http, then the core eclipse-obd/powerwatch last); start in dependency order (states-http before dashboard, etc.) -- avoid races + orphaned kiosks",
+        "HONEST OUTPUT: for each targeted unit print before-state -> action -> after-state (active/inactive/failed/not-installed) + a clear per-unit OK/FAIL; `all` prints a summary table; a not-installed unit is reported honestly, not an error-crash; non-zero exit if any requested action failed",
+        "privilege handled cleanly (systemctl needs root -- sudo or the existing 51-eclipse-service-control polkit path); the tool tells the operator if it lacks privilege rather than failing cryptically",
+        "deploy-installed (deploy-pi.sh) so it's on the Pi after a deploy, on PATH or a known location; documented in deploy/README + a one-line usage in --help",
+        "bash -n / shellcheck clean (or ruff if Python); a test exercises the action-dispatch + the canonical-list-vs-deploy-installed consistency + the powerwatch-stop-guard"
+      ],
+      "conditionalOutcomes": [
+        "if enumerating the canonical unit list from the deploy scripts vs service_control.py reveals a drift (a unit deploy installs that neither list knows), reconcile to ONE SSOT + flag it -- do not silently maintain two lists",
+        "eclipse-sync.service appears in the US-403 allow-list but was NOT in the Pi's installed units (2026-07-27) -- confirm whether it's a real unit or folded into eclipse-obd; include only actually-installed units in `all`, report a listed-but-absent unit honestly"
+      ],
+      "validationCriteria": [
+        {
+          "action": "on the Pi: obdctl status all",
+          "outcome": "lists all 8 OBD units with their live state; no crash on any not-installed unit"
+        },
+        {
+          "action": "obdctl restart obd  (alias)",
+          "outcome": "eclipse-obd restarts; before->after state shown; exit 0"
+        },
+        {
+          "action": "obdctl stop all",
+          "outcome": "stops the units in reverse-dependency order; powerwatch stop triggers the loud warning + confirm; summary table shows per-unit result"
+        },
+        {
+          "action": "obdctl kill dashboard",
+          "outcome": "requires explicit intent, SIGKILLs the kiosk, reports killed + after-state inactive"
+        },
+        {
+          "action": "obdctl stop powerwatch  (without --force)",
+          "outcome": "refuses/warns + requires confirm (safe-shutdown-guard protection); restart powerwatch is unrestricted"
+        }
+      ],
+      "deps": [],
+      "sourceRefs": [
+        "F-122",
+        "US-403-service_control.py",
+        "D-7-F-7-powerwatch-restart-only",
+        "pi-units-verified-2026-07-27"
+      ],
+      "tasks": [],
+      "status": "sprint-ready",
+      "createdAt": "2026-07-27",
+      "updatedAt": "2026-07-27"
     }
   ]
 }
