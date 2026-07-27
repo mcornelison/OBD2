@@ -1696,3 +1696,67 @@ Task: Polish P-2: context-aware system-setup menu access (menu button parked-onl
 - **Gotcha**: `make` is not on this Windows box's PATH at all (not just black/mypy
   missing) -- run `python -m ruff check <touched files>` directly.
 ---
+
+## 2026-07-27 - US-491 (Rex / Session 56)
+Task: Polish P-3: DTC detail overlay hierarchy -- directive-first + carded sections + bigger Back
+
+### What was implemented:
+- `.detail-value` now inherits size + colour instead of hardcoding 13px /
+  --text-primary. THE FINDING: `detailLine()` wraps EVERY row's text in that
+  span, and a child's own declaration beats an inherited value regardless of
+  the parent selector's specificity -- so US-488's whole tier ramp on
+  `.detail-directive` (built, tested and shipped one story earlier) painted
+  NOTHING, and neither did the amber caveat, the muted meta/footer or
+  `.dtc-fix-directive`.
+- Directive band: 18px/800 padded slab with a `currentColor` left edge (tier
+  rules still set exactly ONE property), leading directly under the hero.
+- `codeDetailView` now emits the band for EVERY actionable tier -- MINOR keeps
+  "SAFE TO CLEAR ONCE LOGGED", an uncurated code keeps "GET DIAGNOSED". Only
+  `na` stays blank. It was gated on isStopWatch, so the one screen you open to
+  ask "what do I do" answered nothing on a gas-cap or uncurated code.
+- One `.detail-card` shell + one spacing scale (--detail-gap /
+  --detail-gap-tight / --detail-pad) across freeze-frame, fix and Clear zone.
+  New `fixSectionLabel(mode)` export makes the fix card's heading
+  unconditional and mode-truthful (fix -> SUGGESTED FIX, directive -> NEXT
+  STEP, na -> APPLICABILITY); it used to live inside the `mode === "fix"`
+  branch, so a STOP/WATCH card rendered a bordered box with no heading.
+- `.detail-head` min-height 44px (was a FIXED 36px around a 40px target) and
+  `#detail-back` given a real border/background.
+- Clear zone hides with its button; `#dtc-clear-zone[hidden]{display:none}`
+  stated explicitly. Gate logic untouched.
+
+### Files changed:
+- Modified: `specs/UI/dist/dashboard-pi/carousel.js` (directive for every
+  actionable tier, fixSectionLabel export, card shells, unconditional fix
+  label, clear-zone hide)
+- Modified: `specs/UI/dist/dashboard-pi/dashboard.css` (spacing scale, band,
+  .detail-card shell, .detail-value inheritance, head/Back sizing)
+- Modified: `specs/UI/dist/dashboard-pi/dashboard.html` (clear zone = card +
+  label)
+- Created: `tests/ui/test_dtc_detail_hierarchy.py` (25 guards incl. 5 that
+  re-assert the untouched safety rules)
+
+### Learnings for future iterations:
+- **Gotcha (the big one, generalizes past CSS)**: a test that asserts a PARENT
+  rule's declaration proves the declaration EXISTS -- never that it reaches
+  the glyphs. If the rendered text lives in a child element with its own rule,
+  the child wins no matter how specific the parent selector is, and the parent
+  test passes forever while the surface renders unstyled. Assert that the
+  CHILD inherits. This is how an entire shipped, tested severity ramp turned
+  out to be inert.
+- **Pattern discovered**: on a tier-coloured block, put the accent on
+  `currentColor` (border-left/outline) so the tier rules keep setting exactly
+  ONE property. The accent then cannot disagree with the text beside it, and
+  adding a tier is a one-line change.
+- **Gotcha**: a label rendered inside one branch of a mode switch is a label
+  the other modes silently lose. Hoist it and make the WORDING mode-driven --
+  a heading that contradicts its body ("SUGGESTED FIX" over a diagnose
+  directive) undoes the safety rule in the one line the operator reads first.
+- **Gotcha (US-490's trap, hit for real)**: joining a shared shell class that
+  declares `display: flex` outranks the UA `[hidden]` rule. Any element you
+  intend to hide with `hidden` needs `[hidden]{display:none}` stated
+  explicitly the moment it gains ANY author `display`.
+- **Gotcha**: a fixed-height header around a `--tap-min` control silently
+  overflows. Size containers with `min-height`, and pin it to the same token
+  the target uses.
+---
