@@ -5073,21 +5073,33 @@
       "id": "US-478",
       "parent": "F-113",
       "type": "normal",
-      "size": "S",
-      "title": "EDR IMU bring-up on genuine Adafruit ICM-20948 #4554 (A-14 gate #2) -- BLOCKED on hardware (R3)",
-      "goal": "As the EDR sensor tier, when the genuine Adafruit ICM-20948 #4554 arrives (replacing the exhaustively-dead clone boards -- host-I2C interface defective on both), I want the IMU raw-channel reader validated on the existing F-110 bus + versioned src/common/edr schema. Same chip as the clones -> existing EDR wiring/design (US-409) applies unchanged. Ships dark, blocks nothing.",
+      "size": "M",
+      "title": "EDR IMU bring-up on genuine Adafruit ICM-20948 #4554 -- enable + validate @0x69 + bridge raw IMU -> states/imu",
+      "goal": "As the EDR sensor tier + the future live-motion card, I want the genuine Adafruit ICM-20948 #4554 (received 2026-07-27, replacing the exhaustively-dead clones) brought up on the F-110 EDR bus and its motion data available to the display via a states/imu file. Same chip as the clones -> the existing sensor_reader.py IMU path + wiring/design (US-409) apply unchanged. The bus is already enabled (pi.bus.enabled=true, V0.29.15); this flips pi.sensors.imu.enabled + validates + adds the states bridge the live home card (W-11) will consume.",
       "definitionOfDone": [
-        "NOTE: adafruit-circuitpython-icm20x>=1.0.0 is ALREADY present (requirements-pi.txt:36) -- Atlas's requirements-check housekeeping is SATISFIED; no dep work needed",
-        "BLOCKED until the genuine ICM-20948 #4554 physically lands + is wired (CIO/hardware) -- A-14 gate #2 EDR-epic groom work",
-        "on hardware-present: confirm the existing EDR IMU reader (US-409, F-113) reads the genuine board via the connect-when-wired drill; all channels default off/dark behind the F-110 bus master switch"
+        "PRE-FLIGHT (hardware): the genuine ICM-20948 is I2C-addressable @0x69 on the Pi bus (i2cdetect shows 69). NOTE 2026-07-27: NOT yet wired -- bus shows only 0x29 (light) + 0x36 (UPS). Blocked on AI-005 (CIO wires the board) until 0x69 appears.",
+        "flip pi.sensors.imu.enabled=true (connect-when-wired; pi.bus.enabled already true); sensor_reader publishes the IMU topics at pi.sensors.imu.sampleHz (50)",
+        "validate the genuine board READS on the bus: accel/gyro/mag values are live + plausible (not the clone's dead-silence); graceful-absence still holds for BOTH sensors (unplug -> silent, never fabricated; light feed unaffected)",
+        "bridge the raw IMU topics -> a states/imu file at /run/eclipse-obd/states/imu (mirroring US-483-a's states/light bridge; {accel,gyro,mag + ts}), so the future live home card is a pure consumer -- Atlas seam-confirm (same DELTA-2 pattern he blessed for light)",
+        "if the genuine board shows any register/init delta vs the clone assumption, capture it + route to Atlas (EDR schema is A-4 versioned)",
+        "Typecheck + pi tests green"
       ],
       "conditionalOutcomes": [
-        "if the genuine board shows any register/init delta vs the clone assumption, capture it + route to Atlas (EDR schema is A-4 versioned)"
+        "HARDWARE-GATED: if 0x69 is absent at dispatch (board not yet wired -- AI-005), the enable+bridge CODE is writable but the read-validation cannot pass. Either wait for the wiring or ship the code with validation deferred to a wired re-check -- PM call at dispatch.",
+        "adafruit-circuitpython-icm20x is already in requirements-pi.txt:36 (no dep work)"
       ],
       "validationCriteria": [
         {
-          "action": "when hardware lands, run the EDR connect-when-wired IMU drill",
-          "outcome": "genuine ICM-20948 reads on the bus; graceful-absence still holds when unplugged"
+          "action": "after wiring + enable, on the Pi: i2cdetect shows 0x69 + cat /run/eclipse-obd/states/imu",
+          "outcome": "genuine ICM-20948 present; states/imu has live accel/gyro/mag + fresh ts"
+        },
+        {
+          "action": "move/tilt the board",
+          "outcome": "accel/gyro values track the motion (proves the live feed end-to-end)"
+        },
+        {
+          "action": "unplug the IMU (leave light)",
+          "outcome": "IMU silent (graceful-absence); light feed + carousel unaffected"
         }
       ],
       "deps": [],
@@ -5098,10 +5110,9 @@
         "atlas-icm20948-verdict-2026-07-18"
       ],
       "tasks": [],
-      "status": "pending",
-      "blockedOn": "genuine ICM-20948 #4554 hardware arrival",
+      "status": "sprint-ready",
       "createdAt": "2026-07-19",
-      "updatedAt": "2026-07-19"
+      "updatedAt": "2026-07-27"
     },
     {
       "id": "US-479",
@@ -5620,6 +5631,40 @@
       "updatedAt": "2026-07-22",
       "passes": true,
       "shippedNote": "SHIPPED V0.29.15 (F-121 UI render-truthfully); IRL-gated on the Pi deploy validation."
+    },
+    {
+      "id": "US-488",
+      "parent": "F-121",
+      "type": "tech-debt",
+      "size": "S",
+      "title": "TD-067: sweep the 10 non-STOP alarm surfaces off brand --red-light (per Spool per-surface ruling)",
+      "goal": "As safety-signal integrity, I want the 10 remaining non-STOP alarm/degraded surfaces in dashboard.css moved OFF the brand --red-light (which tokens.css reserves for the brand mark ONLY), completing the brand-vs-alarm separation US-484-b started. Per TD-067 (Ralph, V0.29.16): US-484-b cleaned the STOP tier; these 10 (down glyph, degraded tiles, #clear-confirm-ok destructive-action, per-severity detail band, etc.) still paint brand-red -- each needs a per-surface call (is it --critical-red, a lesser alert token, or a destructive-action token?).",
+      "definitionOfDone": [
+        "GATED on Spool: a per-surface ruling for the 10 --red-light consumers listed in TD-067 -- each surface -> --critical-red (true STOP-equivalent) OR a lesser/new alert token OR a destructive-action token (e.g. #clear-confirm-ok is destructive, not an alarm). Do NOT guess a safety color (Refuse First).",
+        "add any new tokens Spool's ruling requires to specs/UI/tokens.css (Atlas Rule-10 gate)",
+        "repoint each of the 10 surfaces per the ruling; grep confirms no non-brand-mark surface still uses --red-light",
+        "no visual regression on the shipped cards; UI tests green; TD-067 closed"
+      ],
+      "conditionalOutcomes": [
+        "if Spool's ruling needs a NEW token semantic (e.g. a distinct destructive-action red), Atlas gates the token add before the repoint"
+      ],
+      "validationCriteria": [
+        {
+          "action": "grep dashboard.css for var(--red-light) after the sweep",
+          "outcome": "only the brand mark (if any) remains; no alarm/degraded/destructive surface uses brand red"
+        }
+      ],
+      "deps": [],
+      "sourceRefs": [
+        "TD-067",
+        "US-484-b",
+        "spool-S-2-brand-vs-alarm",
+        "tokens.css-brand-reserved"
+      ],
+      "tasks": [],
+      "status": "sprint-ready",
+      "createdAt": "2026-07-27",
+      "updatedAt": "2026-07-27"
     }
   ]
 }

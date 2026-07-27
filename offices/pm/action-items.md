@@ -63,6 +63,20 @@ Format per item:
 
 ---
 
+### AI-005 Wire the genuine Adafruit ICM-20948 #4554 to the Pi I2C bus (@0x69) -- unblocks US-478
+- **Owner**: CIO (Mike) -- hardware install on the Pi
+- **Status**: open
+- **Filed**: 2026-07-27
+- **Source**: Session 55 UI-foundation grooming; genuine IMU received 2026-07-27 (replaces the dead clones)
+
+**What**: The genuine ICM-20948 #4554 arrived but is **not yet on the Pi's I2C bus** -- `i2cdetect -y 1` (2026-07-27) shows only `0x29` (light) + `0x36` (UPS), no `0x69`. Wire/mount the board to the Pi's I2C (SDA/SCL/3V3/GND, same seat as the dead clone) so it enumerates at `0x69`.
+
+**Why it matters**: **US-478** (IMU bring-up) can have its enable+bridge CODE written, but its read-validation (accel/gyro/mag live @0x69) **cannot pass until the board is on the bus**. The IMU data path is also the prerequisite for the **live driving cards** (W-11 home card) -- Iris's design + Ralph's build both need real IMU data to validate. So this wiring gates the whole live-motion UI line.
+
+**Acceptance**: `ssh <pi> "sudo i2cdetect -y 1"` shows `69`; then US-478 can validate. (The `adafruit-circuitpython-icm20x` driver is already installed.)
+
+---
+
 ## Closed
 
 ### AI-002 Ralph commit-but-not-stage detector — sprint_lint commit-vs-claim verifier
