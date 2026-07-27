@@ -634,6 +634,31 @@
     return Math.sqrt(dx * dx + dy * dy) > t;
   }
 
+  // US-490 context-aware menu access (Iris P-2, CIO-locked Option C). The two
+  // paths into the menu carry DIFFERENT intent, so they get different rules:
+  //
+  //   tapVisible -- the top-bar `⋮` is a SINGLE tap away from a service stop /
+  //     Exit UI, so it is offered only while the emitter says parked. Hidden
+  //     while driving, and hidden whenever "am I driving?" is UNREADABLE:
+  //     carouselIdle already fails closed to not-idle, so an absent, malformed
+  //     or idle-less payload hides the affordance rather than guessing a calm
+  //     parked state. (Reads the `idle` SSOT boolean -- never re-derived from
+  //     the drive-state string; Atlas idle-SSOT b.)
+  //   longPress -- the ~5s hold is the DELIBERATE override and is state-blind
+  //     on purpose. It is what makes hiding the `⋮` safe: fail-closed can never
+  //     strand the operator, and driving is the state where they may most need
+  //     to stop a misbehaving service.
+  //
+  // `carouselIdle` is declared further down this IIFE (with the idle-card
+  // logic it belongs to) -- function declarations hoist, so this policy stays
+  // next to the menu it governs.
+  function menuAccess(systemStatusData) {
+    return {
+      tapVisible: carouselIdle(systemStatusData),
+      longPress: true,
+    };
+  }
+
   // -------------------------------------------------------------------------
   // US-405 DTC takeover + ribbon -- pure, node-testable logic (S-1/S-2/R-2).
   // The display is a PURE CONSUMER of the `dtc` state (severity classified
@@ -1307,6 +1332,7 @@
     longPressProgress: longPressProgress,
     isLongPressComplete: isLongPressComplete,
     exceedsMoveCancel: exceedsMoveCancel,
+    menuAccess: menuAccess,
     alertableCodes: alertableCodes,
     takeoverView: takeoverView,
     takeoverShouldShow: takeoverShouldShow,
@@ -1720,6 +1746,20 @@
         });
     }
 
+    // --- US-490 context-aware `⋮` affordance (browser only) ----------------
+    // `hidden` (not a class) is deliberate: it is the property the tap handler
+    // reads back as the rendered truth, so the gate and the paint can never
+    // disagree. The button ships hidden in the markup, so the pre-first-poll
+    // window -- when "am I driving?" is genuinely unknown -- offers no tap path.
+    function applyMenuAccess(btn, access) {
+      if (!btn) return;
+      btn.hidden = !access.tapVisible;
+    }
+
+    function updateMenuAccess(sysData) {
+      applyMenuAccess(document.getElementById("menu-btn"), menuAccess(sysData));
+    }
+
     function setupMenu() {
       var menu = document.getElementById("setup-menu");
       if (!menu) return;
@@ -1811,7 +1851,15 @@
         }
       }
 
-      if (menuBtn) menuBtn.addEventListener("click", openMenu);
+      if (menuBtn) {
+        menuBtn.addEventListener("click", function () {
+          // Defence in depth (US-490 AC-4): the button is display:none while
+          // driving, but a CSS regression must not quietly re-open a one-tap
+          // path into a service stop. `hidden` is the rendered truth.
+          if (menuBtn.hidden) return;
+          openMenu();
+        });
+      }
       if (closeBtn) closeBtn.addEventListener("click", closeMenu);
       if (exitBtn) {
         // Exit / Close UI (A-8): a dashboard stop -> drops to desktop; the
@@ -2380,6 +2428,10 @@
         // US-481: render the idle-home card + edge-trigger home/auto-advance
         // from the same fetched states (no extra fetch, no second OBD touch).
         updateIdleHome(sysData, batteryData, dtcData);
+        // US-490: track the parked/live context every tick from the SAME fetched
+        // state (no extra fetch). An unavailable system-status leaves sysData
+        // null here, which fails closed to a hidden ⋮ -- long-press still opens.
+        updateMenuAccess(sysData);
         // US-483-b: drive the display brightness from the states/light feed
         // (pure consumer -- never the sensor). A real STOP holds it >= the alarm
         // floor; an absent/stale feed holds the fixed default (honest fallback).

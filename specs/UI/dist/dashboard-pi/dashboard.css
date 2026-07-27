@@ -91,6 +91,11 @@ html, body {
   background: transparent; border: 0; color: var(--text-secondary);
   font-size: 20px; line-height: 1; cursor: pointer;
 }
+/* US-490: the ⋮ is parked-only. Stated explicitly rather than leaning on the
+   UA [hidden] rule -- #topbar is a flex container, so any future `display`
+   declaration on #menu-btn would outrank the UA sheet and hand back a
+   clickable target while driving. Removed from flow, not merely faded. */
+#menu-btn[hidden] { display: none; }
 
 /* --- swipe carousel --------------------------------------------------------- */
 #carousel {

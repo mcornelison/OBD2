@@ -35,7 +35,10 @@
     <span class="glyph" id="glyph-sync" data-state="neutral" title="Sync">⇅</span>
     <span class="glyph" id="glyph-power" data-state="neutral" title="Power">⚡</span>
     <span id="version-chip">V?.?.?</span>
-    <button id="menu-btn" class="tap-target" aria-label="System Setup">⋮</button>
+    <!-- US-490: ships HIDDEN. Parked/idle reveals it (carousel.js
+         updateMenuAccess); while driving -- or while the parked/live context is
+         unreadable -- it stays hidden and the 5s long-press is the only way in. -->
+    <button id="menu-btn" class="tap-target" aria-label="System Setup" hidden>⋮</button>
   </header>
 
   <!-- US-405 persistent DTC ribbon: rides under the top bar on every card while
