@@ -4,7 +4,7 @@
 |---|---|
 | **Author** | Iris (UI/UX) |
 | **Date** | 2026-07-27 |
-| **Status** | DRAFT — design-before-build (CIO reviews the mockup; then Marcus grooms into the live-cards sprint, which sequences after US-478 IMU bring-up) |
+| **Status** | **REVIEWED — CIO-locked 2026-07-27** (2 review rounds; may revisit after a few drives). Atlas contract Qs + DELTA-1 arbiter routed. Build sequences after US-478 IMU bring-up. |
 | **Brief** | Marcus 2026-07-27 (`inbox/2026-07-27-from-marcus-live-cards-plus-polish-design-brief.md`) |
 | **Companion** | `proposals/2026-07-27-pi-live-instrument-card.html` + hosted artifact |
 | **Consumes** | `states/imu` (US-478, mirrors the `states/light` bridge) + OBD-derived gear (Spool) |
@@ -99,5 +99,6 @@ US-478 brings the ICM-20948 up on the EDR bus and mirrors `raw.imu.*` → `state
 - **Grade: ° vs %** — ✅ RESOLVED (CIO 2026-07-27): **road-grade %**.
 - **G-force rail (CIO 2026-07-27):** title moved inside the chart; chart spans heading-top →
   grade-bottom; larger g-circle; display fonts bumped. ✅ applied.
-- **What else earns the glance** — speed is on OBD; do you want it on the live card, or is the
-  cluster enough? Coolant/voltage live minis here, or reserved for the alert layer only? (open)
+- **What else earns the glance** — speed on the card? coolant/voltage minis here or alert-layer
+  only? **DEFERRED post-drive (CIO 2026-07-27):** design locked as-is; revisit after a few real
+  drives inform what's actually missing at a glance.
