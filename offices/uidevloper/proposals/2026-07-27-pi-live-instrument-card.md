@@ -36,7 +36,8 @@ the real IMU contract, the shipped tokens/chrome, and Spool's semantics.
 - **Gear:** big glyph. **Spool owns it** — `--` when ambiguous (speed<5 km/h, rpm<900, ratio>15%
   off nearest), `N` rolling-neutral, ≥2 s debounce. **Never a wrong number.** 4th/5th are at the
   OBD sample-rate edge (Spool) → the display must render `--` gracefully there, not guess.
-- **Grade:** current pitch (°) + a ~15-min trend sparkline. Informational (Spool: no alarm).
+- **Grade:** current **road grade %** (= tan(pitch°)×100, what road signs use — CIO 2026-07-27)
+  + a ~15-min trend sparkline. Informational (Spool: no alarm).
 - **G-force:** a cross-haired meter with concentric rings, a live dot at (lat, lon) g, and a
   fading **~35 s trail**. Informational, never a takeover (Spool). **Amber ring/dot at 0.6 g**
   (Spool) — which doubles as an aged-tire lat-load nudge, advisory not alarm.
@@ -92,6 +93,8 @@ US-478 brings the ICM-20948 up on the EDR bus and mirrors `raw.imu.*` → `state
 ## 6. Open design decisions (for the CIO review)
 - **Compass tape vs dial** — tape (approved June-18) reads a heading change directionally; a round
   dial is more familiar. Keeping the tape unless you prefer the dial.
-- **Grade: ° vs %** — degrees (approved) vs road-grade % (what road signs use). Easy to switch.
+- **Grade: ° vs %** — ✅ RESOLVED (CIO 2026-07-27): **road-grade %**.
+- **G-force rail (CIO 2026-07-27):** title moved inside the chart; chart spans heading-top →
+  grade-bottom; larger g-circle; display fonts bumped. ✅ applied.
 - **What else earns the glance** — speed is on OBD; do you want it on the live card, or is the
-  cluster enough? Coolant/voltage live minis here, or reserved for the alert layer only?
+  cluster enough? Coolant/voltage live minis here, or reserved for the alert layer only? (open)

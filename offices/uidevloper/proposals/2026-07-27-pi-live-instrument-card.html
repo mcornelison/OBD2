@@ -64,43 +64,43 @@ code{font-family:var(--mono);font-size:.86em;background:var(--accent-soft);color
 .dot{width:8px;height:8px;border-radius:50%;background:var(--dv-t3);} .dot.active{background:var(--dv-t1);}
 .cardarea{position:absolute;top:28px;bottom:22px;left:0;right:0;padding:8px 12px 10px;display:flex;flex-direction:column;
   font-family:var(--mono);color:var(--dv-t1);}
-.livetitle{display:flex;align-items:center;gap:8px;font-size:11px;letter-spacing:.1em;color:var(--dv-t2);text-transform:uppercase;margin-bottom:6px;}
+.livetitle{display:flex;align-items:center;gap:8px;font-size:12.5px;letter-spacing:.1em;color:var(--dv-t2);text-transform:uppercase;margin-bottom:6px;}
 .rec{width:8px;height:8px;border-radius:50%;background:var(--dv-red);animation:rec 1.4s ease-in-out infinite;}
 @keyframes rec{0%,100%{opacity:1;}50%{opacity:.25;}}
 .stale-badge{margin-left:auto;color:var(--dv-amber);font-size:10px;letter-spacing:.04em;}
 .live2{flex:1;display:flex;gap:8px;min-height:0;}
 .lcol{flex:1.35;display:flex;flex-direction:column;gap:7px;min-width:0;}
 .lcell{background:var(--dv-tile);border:1px solid var(--dv-line);border-radius:7px;padding:6px 8px;}
-.clabel{font-size:9px;letter-spacing:.14em;color:var(--dv-t3);text-transform:uppercase;}
+.clabel{font-size:10.5px;letter-spacing:.14em;color:var(--dv-t3);text-transform:uppercase;}
 /* compass */
-.compass{position:relative;height:52px;overflow:hidden;margin-top:3px;}
+.compass{position:relative;height:56px;overflow:hidden;margin-top:3px;}
 .tapewin{position:absolute;inset:0;overflow:hidden;}
 .tape{position:absolute;top:16px;left:0;height:26px;will-change:transform;}
 .tick{position:absolute;top:0;width:1px;height:9px;background:var(--dv-line);}
 .tick.major{height:13px;background:var(--dv-t3);}
-.tlab{position:absolute;top:13px;transform:translateX(-50%);font-size:11px;color:var(--dv-t2);font-weight:600;}
+.tlab{position:absolute;top:13px;transform:translateX(-50%);font-size:12.5px;color:var(--dv-t2);font-weight:600;}
 .caret{position:absolute;left:50%;top:2px;transform:translateX(-50%);width:0;height:0;border-left:5px solid transparent;
   border-right:5px solid transparent;border-top:7px solid var(--dv-green);z-index:3;}
-.headnum{position:absolute;left:50%;bottom:1px;transform:translateX(-50%);font-size:15px;font-weight:700;color:#eef2f6;letter-spacing:.02em;}
+.headnum{position:absolute;left:50%;bottom:1px;transform:translateX(-50%);font-size:20px;font-weight:700;color:#eef2f6;letter-spacing:.02em;}
 /* gear + grade */
 .midrow{display:flex;gap:7px;flex:1;min-height:0;}
 .gearcell{flex:.8;display:flex;flex-direction:column;align-items:center;justify-content:center;}
-.gnum{font-size:52px;font-weight:800;line-height:.9;color:#eef2f6;}
-.gnum.amb{color:var(--dv-t3);font-size:44px;}
-.glab{font-size:9px;letter-spacing:.16em;color:var(--dv-t3);margin-top:2px;}
+.gnum{font-size:60px;font-weight:800;line-height:.9;color:#eef2f6;}
+.gnum.amb{color:var(--dv-t3);font-size:52px;}
+.glab{font-size:10.5px;letter-spacing:.16em;color:var(--dv-t3);margin-top:2px;}
 .gradecell{flex:1.2;display:flex;flex-direction:column;justify-content:center;}
 .graderow{display:flex;align-items:baseline;gap:6px;margin-top:2px;}
-.gradeval{font-size:22px;font-weight:700;color:#eef2f6;}
-.gradetrend{flex:1;height:30px;} .gradetrend svg{width:100%;height:100%;display:block;}
-.gsub{font-size:9px;color:var(--dv-t3);letter-spacing:.03em;}
+.gradeval{font-size:29px;font-weight:700;color:#eef2f6;}
+.gradetrend{flex:1;height:32px;} .gradetrend svg{width:100%;height:100%;display:block;}
+.gsub{font-size:10.5px;color:var(--dv-t3);letter-spacing:.03em;}
 /* g-force */
 .gcol{flex:1;display:flex;flex-direction:column;}
 .gmeter{position:relative;flex:1;background:var(--dv-tile);border:1px solid var(--dv-line);border-radius:7px;min-height:0;}
 .gmeter canvas{position:absolute;inset:0;width:100%;height:100%;}
-.gmlab{position:absolute;top:5px;left:0;right:0;text-align:center;font-size:9px;letter-spacing:.14em;color:var(--dv-t3);}
-.gval{position:absolute;bottom:5px;left:0;right:0;text-align:center;font-size:11px;color:var(--dv-t2);}
+.gmlab{position:absolute;top:6px;left:0;right:0;text-align:center;font-size:11px;letter-spacing:.14em;color:var(--dv-t3);z-index:2;}
+.gval{position:absolute;bottom:6px;left:0;right:0;text-align:center;font-size:13.5px;color:var(--dv-t2);z-index:2;}
 .gval b{color:#eef2f6;font-weight:700;} .gval.hot b{color:var(--dv-amber);}
-.gtire{position:absolute;bottom:19px;left:0;right:0;text-align:center;font-size:8.5px;color:var(--dv-amber);opacity:0;transition:opacity .3s;}
+.gtire{position:absolute;bottom:24px;left:0;right:0;text-align:center;font-size:10px;color:var(--dv-amber);opacity:0;transition:opacity .3s;z-index:2;}
 .gtire.show{opacity:.9;}
 /* idle fallback (compact) */
 .idlewrap{flex:1;display:flex;flex-direction:column;}
@@ -199,13 +199,13 @@ function liveShell(){
           '<div class="compass"><div class="caret"></div><div class="tapewin"><div class="tape" id="tape"></div></div><div class="headnum" id="headnum">—</div></div></div>'+
         '<div class="midrow">'+
           '<div class="lcell gearcell"><div class="gnum" id="gnum">–</div><div class="glab">Gear</div></div>'+
-          '<div class="lcell gradecell"><div class="clabel">Grade · trend ~15m</div>'+
-            '<div class="graderow"><div class="gradeval" id="gradeval">+0°</div><div class="gradetrend"><svg id="gsvg" viewBox="0 0 100 30" preserveAspectRatio="none"><polyline id="gline" fill="none" stroke="#35C46A" stroke-width="1.4" points=""/></svg></div></div>'+
+          '<div class="lcell gradecell"><div class="clabel">Grade % · trend ~15m</div>'+
+            '<div class="graderow"><div class="gradeval" id="gradeval">+0%</div><div class="gradetrend"><svg id="gsvg" viewBox="0 0 100 30" preserveAspectRatio="none"><polyline id="gline" fill="none" stroke="#35C46A" stroke-width="1.4" points=""/></svg></div></div>'+
             '<div class="gsub" id="altsub">alt —</div></div>'+
         '</div>'+
       '</div>'+
-      '<div class="gcol"><div class="clabel" style="text-align:center">G-force · 35s trail</div>'+
-        '<div class="gmeter"><canvas id="gcan"></canvas><div class="gtire" id="gtire">high lat-g · aged tires</div><div class="gval" id="gval"><b>0.0</b> lat · <b>0.0</b> lon</div></div></div>'+
+      '<div class="gcol">'+
+        '<div class="gmeter"><div class="gmlab">G-FORCE · 35s</div><canvas id="gcan"></canvas><div class="gtire" id="gtire">high lat-g · aged tires</div><div class="gval" id="gval"><b>0.0</b> lat · <b>0.0</b> lon</div></div></div>'+
     '</div>'+
   '</div>'+dots();
 }
@@ -233,7 +233,7 @@ function buildTape(){
 // ---- g-force canvas ----
 var trail=[]; // {x,y,age}
 function drawG(cv,gLat,gLon){
-  var ctx=cv.getContext("2d"), w=cv.width, h=cv.height, cx=w/2, cy=h/2, R=Math.min(w,h)*0.42; // R = 1g
+  var ctx=cv.getContext("2d"), w=cv.width, h=cv.height, cx=w/2, cy=h/2, R=Math.min(w,h)*0.47; // R = 1g
   ctx.clearRect(0,0,w,h);
   // cross + rings (0.3g, 0.6g amber)
   ctx.strokeStyle="rgba(255,255,255,.10)"; ctx.lineWidth=1;
@@ -280,11 +280,12 @@ function frame(ts){
   var gnum=document.getElementById("gnum");
   if(gnum){var amb=(speed<5||rpm<900); var gear=amb?"–":String(Math.max(2,Math.min(5,Math.round(speed/20))));
     gnum.textContent=gear; gnum.className="gnum"+(amb?" amb":"");}
-  // grade + trend
-  var gv=document.getElementById("gradeval"); if(gv)gv.textContent=(grade>=0?"+":"")+grade.toFixed(0)+"°";
-  gradeHist.push(grade); if(gradeHist.length>60)gradeHist.shift();
+  // grade as ROAD-GRADE % (= tan(pitch°) * 100) + trend
+  var gradePct=Math.tan(grade*Math.PI/180)*100;
+  var gv=document.getElementById("gradeval"); if(gv)gv.textContent=(gradePct>=0?"+":"")+gradePct.toFixed(0)+"%";
+  gradeHist.push(gradePct); if(gradeHist.length>60)gradeHist.shift();
   var gl=document.getElementById("gline");
-  if(gl){var pts="";for(var i=0;i<gradeHist.length;i++){var x=i/59*100;var y=15-(gradeHist[i])*2.2;pts+=x.toFixed(1)+","+y.toFixed(1)+" ";}gl.setAttribute("points",pts.trim());}
+  if(gl){var pts="";for(var i=0;i<gradeHist.length;i++){var x=i/59*100;var y=15-(gradeHist[i])*1.3;pts+=x.toFixed(1)+","+y.toFixed(1)+" ";}gl.setAttribute("points",pts.trim());}
   var alt=document.getElementById("altsub"); if(alt)alt.textContent="alt "+Math.round(210+18*Math.sin(t*0.11))+" m";
   // g-force
   trail.forEach(function(p){p.age+=1/30;}); trail=trail.filter(function(p){return p.age<35;});
