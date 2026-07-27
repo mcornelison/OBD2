@@ -14,6 +14,13 @@
  *          surface needs a colour, add it to tokens.css first (Rule-10 / Atlas;
  *          tuning-semantics colours via Spool). Enforced by
  *          tests/ui/test_dashboard_token_ssot.py.
+ * Updated: 2026-07-27 -- US-488 (TD-067): every NON-STOP alarm surface swept off
+ *          the brand reds onto its CORRECT tier, per Spool's per-surface ruling
+ *          ("Red = danger, ONE meaning only" -- no second alarm-red invented):
+ *          degraded/DOWN states are WATCH amber; the battery failsafe TRIGGER is
+ *          the one terminal SYSTEM-critical state; the DTC detail directive band
+ *          is now TIER-DRIVEN instead of one blanket red for every severity.
+ *          Enforced by tests/ui/test_dashboard_alarm_tier_sweep.py.
  * ==========================================================================*/
 
 :root {
@@ -26,14 +33,21 @@
   /* BRAND identity reds -- RESERVED for the brand mark (SSOT tokens.css:50-57).
      US-484-b moved every DTC STOP surface OFF these: if the permanent brand
      mark is red AND the pull-over alarm is also red, the driver cannot tell
-     "brand" from "danger". Declared here so the dist mirrors the SSOT tier. */
+     "brand" from "danger". Declared here so the dist mirrors the SSOT tier.
+     US-488 swept the remaining alarm/degraded consumers off them too. The ONLY
+     rules that may still reference these are the two #clear-confirm surfaces
+     awaiting the --destructive token -- see the note at that rule. */
   --red:            #E60012;   /* SSOT tokens.css:55 -- brand mark base */
   --red-light:      #F61D2D;   /* SSOT tokens.css:56 -- brand mark highlight */
   --red-dark:       #BF000F;   /* SSOT tokens.css:57 -- brand mark shadow */
   /* STATE-ALARM red -- "PULL OVER NOW". Spool set value + semantics 2026-07-25
      (dtc-display-clear-safety-advisory.md 6d); Atlas Rule-10 gate 2026-07-26.
      The HEX IS ONLY THE 3RD REINFORCEMENT: area + motion + text carry STOP. */
-  --critical-red:   #D32F2F;   /* SSOT tokens.css:69 -- DTC STOP tier only */
+  --critical-red:   #D32F2F;   /* SSOT tokens.css:69 -- the DTC STOP tier and,
+                                  per US-488, the battery failsafe TRIGGER: the
+                                  two TERMINAL act-now states. Everything merely
+                                  degraded is --amber-warn, so this red keeps
+                                  exactly one meaning (Spool, TD-067). */
   --green-ok:       #35C46A;   /* SSOT tokens.css:43 (Atlas A-8) -- MINOR DTC
                                   tier, OK/healthy, "linked", trust-badge
                                   verified. Reconciled off a forked local name +
@@ -63,7 +77,11 @@ html, body {
 #topbar .glyph { color: var(--text-secondary); letter-spacing: 0.04em; }
 #topbar .glyph[data-state="amber"] { color: var(--amber-warn); }
 #topbar .glyph[data-state="ok"]    { color: var(--green-ok); }
-#topbar .glyph[data-state="down"]  { color: var(--red-light); }
+/* US-488: a DOWN link/service is DEGRADED, not dangerous -- WATCH amber. It
+   shares the amber hue with [data-state="amber"] deliberately: the GLYPH itself
+   (and, from US-489, the per-tile dot) carries which source is unhappy, and
+   inventing a second alarm-red to separate them is what Spool ruled against. */
+#topbar .glyph[data-state="down"]  { color: var(--amber-warn); }
 #version-chip {
   margin-left: auto; color: var(--text-tertiary);
   font-size: 10px; letter-spacing: 0.06em;
@@ -73,6 +91,11 @@ html, body {
   background: transparent; border: 0; color: var(--text-secondary);
   font-size: 20px; line-height: 1; cursor: pointer;
 }
+/* US-490: the ⋮ is parked-only. Stated explicitly rather than leaning on the
+   UA [hidden] rule -- #topbar is a flex container, so any future `display`
+   declaration on #menu-btn would outrank the UA sheet and hand back a
+   clickable target while driving. Removed from flow, not merely faded. */
+#menu-btn[hidden] { display: none; }
 
 /* --- swipe carousel --------------------------------------------------------- */
 #carousel {
@@ -154,10 +177,58 @@ html, body {
 .tile-detail { font-size: 11px; color: var(--text-tertiary); }
 .tile[data-level="ok"]    .tile-value { color: var(--green-ok); }
 .tile[data-level="amber"] .tile-value { color: var(--amber-warn); }
-.tile[data-level="down"]  .tile-value { color: var(--red-light); }
+/* US-488: a degraded tile is WATCH, never the pull-over red (TD-067). */
+.tile[data-level="down"]  .tile-value { color: var(--amber-warn); }
 .tile[data-level="unavailable"] .tile-value {
   color: var(--text-tertiary); font-style: italic; font-weight: 400;
 }
+
+/* --- US-489 System Status glanceability (Iris polish P-1) ------------------- */
+/* Presentation-only over the SHIPPED US-400 state: a one-glance summary line, a
+   2x2 tile grid, and a per-tile status dot. No new data, no new contract.
+   The dot introduces NO new severity vocabulary -- it MIRRORS the
+   `.tile[data-level] .tile-value` mapping above token-for-token, including
+   `down`, which US-488 (TD-067) just swept to WATCH amber ("degraded is not
+   danger"). A red dot here would re-open that debt a sprint after it closed,
+   and would contradict the value sitting beside it. */
+.sys-summary {
+  display: flex; align-items: baseline; gap: 8px;
+  padding: 2px 0 6px 0; margin-bottom: 6px;
+  border-bottom: 1px solid var(--surface);
+}
+/* Neutral base: an unrecognised level inherits no severity it has not earned. */
+.sys-summary-text {
+  font-size: 17px; font-weight: 700; letter-spacing: 0.06em;
+  color: var(--text-primary);
+}
+.sys-summary-detail {
+  margin-left: auto; font-size: 11px; color: var(--text-tertiary);
+}
+.sys-summary[data-level="ok"] .sys-summary-text { color: var(--green-ok); }
+.sys-summary[data-level="amber"] .sys-summary-text { color: var(--amber-warn); }
+/* TD-067: a degraded source is WATCH, never the pull-over red. */
+.sys-summary[data-level="down"] .sys-summary-text { color: var(--amber-warn); }
+.sys-summary[data-level="unavailable"] .sys-summary-text {
+  color: var(--text-tertiary); font-style: italic; font-weight: 400;
+}
+/* The 2x2 grid (F-092's original intent). ONLY the System Status card regrids;
+   the idle fact strip, the battery card and the LTFT card keep the base `.tile`
+   stack above. `:last-child` is spelled out because the base rule zeroes the
+   bottom border there -- without it the final grid cell renders open-sided. */
+.sys-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.sys-grid .tile, .sys-grid .tile:last-child {
+  border: 1px solid var(--surface); border-radius: 4px; padding: 6px 8px;
+}
+.tile-head { display: flex; align-items: center; gap: 6px; }
+.tile-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  flex: 0 0 auto; background: var(--text-tertiary);
+}
+.tile[data-level="ok"] .tile-dot { background: var(--green-ok); }
+.tile[data-level="amber"] .tile-dot { background: var(--amber-warn); }
+.tile[data-level="down"] .tile-dot { background: var(--amber-warn); }
+.tile[data-level="neutral"] .tile-dot { background: var(--text-secondary); }
+.tile[data-level="unavailable"] .tile-dot { background: var(--text-tertiary); }
 
 /* --- US-401 Battery Health failsafe ladder (F-2/A-6) ------------------------ */
 /* The drain ladder block is appended ONLY when battery-health.draining===true;
@@ -173,8 +244,13 @@ html, body {
   font-size: 13px; font-weight: 700; letter-spacing: 0.06em;
   color: var(--amber-warn);
 }
-.ladder[data-stage="TRIGGER"] { border-color: var(--red-light); }
-.ladder[data-stage="TRIGGER"] .ladder-banner { color: var(--red-light); }
+/* US-488: TRIGGER is the ladder's TERMINAL stage -- the failsafe is about to
+   halt the Pi -- so it earns the state-alarm red. The earlier stages stay amber
+   above, or the escalation would not read as an escalation. This is a SYSTEM
+   critical state, not the engine one: the banner copy stays "DRAINING · TRIGGER"
+   (carousel.js), never the DTC tier's "PULL OVER". */
+.ladder[data-stage="TRIGGER"] { border-color: var(--critical-red); }
+.ladder[data-stage="TRIGGER"] .ladder-banner { color: var(--critical-red); }
 .ladder-runtime { font-size: 11px; color: var(--text-secondary); }
 
 /* --- US-420 LTFT Trend card (F-096) ----------------------------------------- */
@@ -199,8 +275,11 @@ html, body {
 .ltft-bar-drive { font-size: 10px; color: var(--text-tertiary); }
 .ltft-bar[data-level="ok"]    .ltft-bar-value { color: var(--green-ok); }
 .ltft-bar[data-level="amber"] .ltft-bar-value { color: var(--amber-warn); }
-.ltft-bar[data-level="down"]  .ltft-bar-value { color: var(--red-light); }
-.ltft-bar[data-level="down"]  { border-color: var(--red-light); }
+/* US-488: a drive beyond +/-10% LTFT is a fuel-trim drift worth investigating
+   -- WATCH, not "pull over" (TD-067 ruling #4). Value + border move together;
+   sweeping only one would leave a red box around an amber number. */
+.ltft-bar[data-level="down"]  .ltft-bar-value { color: var(--amber-warn); }
+.ltft-bar[data-level="down"]  { border-color: var(--amber-warn); }
 
 /* --- page dots (>=40px touch target, 10px visual) --------------------------- */
 #dots {
@@ -479,38 +558,83 @@ html, body {
 
 /* Per-code detail overlay: a fixed skeleton that scrolls on the panel. A ‹ Back
    is always present so the operator is never trapped. */
+/* US-491 (polish P-3): ONE spacing scale for the whole overlay, declared here
+   and inherited by every section below. Two steps is the whole scale on a
+   480x320 panel -- between sections, and within one. Magic numbers scattered
+   per-rule are what made the old column read as an undifferentiated wall. */
 #dtc-detail {
+  --detail-gap:       8px;      /* between sections */
+  --detail-gap-tight: 4px;      /* within a section */
+  --detail-pad:       8px 10px; /* every section card */
   position: fixed; inset: 0; z-index: 45;
   background: rgba(0, 0, 0, 0.95);
   display: flex; flex-direction: column;
   padding: 4px 12px 10px; box-sizing: border-box; overflow-y: auto;
 }
+/* US-491: was a FIXED 36px around a 40px (--tap-min) Back button, so the one
+   control that guarantees the operator is never trapped overflowed its own
+   header. min-height, and >= the tap minimum. */
 .detail-head {
-  display: flex; align-items: center; gap: 8px; height: 36px;
+  display: flex; align-items: center; gap: var(--detail-gap);
+  min-height: 44px;
   border-bottom: 1px solid var(--surface);
 }
+/* US-491: 40px of transparent nothing is not a target the operator can SEE.
+   Same footprint, now with a visible edge (AC3 "clear affordance"). */
 #detail-back {
   min-width: var(--tap-min); min-height: var(--tap-min);
-  background: transparent; border: 0; color: var(--text-secondary);
-  font-size: 14px; cursor: pointer;
+  padding: 0 12px; box-sizing: border-box;
+  background: var(--surface); border: 1px solid var(--text-tertiary);
+  border-radius: 6px; color: var(--text-primary);
+  font-size: 14px; font-weight: 700; cursor: pointer;
 }
 .detail-code-head {
   font-size: 14px; font-weight: 700; letter-spacing: 0.06em;
   color: var(--text-primary);
 }
-.detail-body { display: flex; flex-direction: column; gap: 6px; padding-top: 6px; }
+.detail-body {
+  display: flex; flex-direction: column;
+  gap: var(--detail-gap); padding-top: var(--detail-gap);
+}
 .detail-hero { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .detail-code { font-size: 20px; font-weight: 800; letter-spacing: 0.04em; }
 .detail-short { font-size: 13px; color: var(--text-secondary); flex: 1 1 100%; }
+/* US-488 (TD-067): the directive band is TIER-DRIVEN, not one blanket red for
+   every severity. It used to paint brand red on EVERY code, which inverted the
+   ramp twice over: a WATCH code's directive read REDDER than the --critical-red
+   chip sitting beside it, and a MINOR gas-cap code got a red instruction it
+   never earned. The base below is deliberately NEUTRAL so an `na` or untagged
+   directive inherits no severity it does not have; carousel.js tags the row
+   with data-level from the SAME tier the chip uses, so the two can never
+   disagree. */
+/* US-491 (polish P-3, directive-first): the action band is now a BAND -- a
+   padded slab with a tier-coloured left edge, sized a full step above the base
+   copy so "what do I do" lands first from arm's length. `currentColor` on the
+   edge means the tier rules below still set exactly ONE property (color) and
+   the accent can never disagree with the text it sits beside. */
 .detail-directive {
-  font-size: 14px; font-weight: 700; letter-spacing: 0.03em;
-  color: var(--red-light);
+  font-size: 18px; font-weight: 800; letter-spacing: 0.03em;
+  color: var(--text-primary);
+  padding: var(--detail-pad);
+  border-left: 4px solid currentColor; border-radius: 4px;
+  background: var(--surface);
 }
+.detail-directive[data-level="stop"]    { color: var(--critical-red); }
+.detail-directive[data-level="watch"]   { color: var(--amber-warn); }
+.detail-directive[data-level="minor"]   { color: var(--green-ok); }
+/* An uncurated code is honestly "get diagnosed" -- amber, never green and never
+   the pull-over red (honest-instrument F-1). */
+.detail-directive[data-level="unknown"] { color: var(--amber-warn); }
 .detail-caveat { font-size: 12px; color: var(--amber-warn); }
 .detail-meta { font-size: 11px; color: var(--text-tertiary); letter-spacing: 0.03em; }
-.detail-freeze {
-  display: flex; flex-direction: column; gap: 2px;
-  padding: 6px 8px; border: 1px solid var(--surface); border-radius: 4px;
+/* US-491 (AC2): the ONE section shell. Freeze-frame/context, suggested-fix and
+   the Clear zone are all `.detail-card` -- three near-identical boxes drift the
+   first time one of them is edited, and the drift is exactly what AC3's
+   "consistent spacing scale" is asking to stop. */
+.detail-card {
+  display: flex; flex-direction: column; gap: var(--detail-gap-tight);
+  padding: var(--detail-pad);
+  border: 1px solid var(--text-tertiary); border-radius: 4px;
 }
 .detail-ff-cell { display: flex; gap: 8px; font-size: 12px; }
 .detail-ff-cell .detail-label { min-width: 70px; }
@@ -519,11 +643,14 @@ html, body {
   font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase;
   color: var(--text-secondary);
 }
-.detail-value { font-size: 13px; color: var(--text-primary); }
-.detail-fix {
-  display: flex; flex-direction: column; gap: 4px;
-  padding: 6px 8px; border: 1px solid var(--surface); border-radius: 4px;
-}
+/* US-491 -- THE LOAD-BEARING FIX. detailLine() wraps EVERY row's text in this
+   span, and a child's own declaration beats an inherited value no matter how
+   specific the parent selector is. While this rule hardcoded 13px +
+   --text-primary, every size and colour the row classes declared was INERT:
+   the caveat never rendered amber, the footer never rendered muted, and the
+   whole tier ramp US-488 built for .detail-directive one story ago painted
+   nothing at all. Inheriting is what lets a row class mean what it says. */
+.detail-value { font-size: inherit; color: inherit; }
 .detail-fix-text { font-size: 13px; color: var(--text-primary); }
 /* The fix slot REPLACED by a diagnose directive for a 🔴/🟡 code (never a raw
    internet fix on a dangerous code -- F-1/S-4). */
@@ -553,7 +680,12 @@ html, body {
    visibly inert (the display mirror of the authoritative server-side gate). The
    server RE-CHECKS on submit, so a disabled button is convenience, not the gate.
    A STOP/WATCH / un-synced / re-set code shows the honest reason as the label. */
-#dtc-clear-zone { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; }
+/* US-491: the zone is now one of the three `.detail-card` sections (border +
+   uppercase label from the shared shell), so it only needs its own separation
+   from the block above. carousel.js hides the whole card when nothing is
+   clearable -- an empty labelled box would be a new visual regression. */
+#dtc-clear-zone { margin-top: var(--detail-gap); }
+#dtc-clear-zone[hidden] { display: none; }
 #dtc-clear-btn {
   min-height: var(--tap-min); padding: 0 14px; align-self: flex-start;
   font-size: 13px; font-weight: 700; cursor: pointer; border-radius: 4px;
@@ -566,11 +698,24 @@ html, body {
 }
 #dtc-clear-result { font-size: 12px; color: var(--text-secondary); }
 #dtc-clear-result[data-level="cleared"] { color: var(--green-ok); }
-#dtc-clear-result[data-level="reset"]   { color: var(--red-light); font-weight: 700; }
+/* US-488: a code that RE-SET after a clear is a hard fault (§4d) and stays
+   BOLD, but the honest directive is "get diagnosed", not "pull over" -- the
+   code's OWN severity tier still drives the ribbon/chip if it is a STOP. */
+#dtc-clear-result[data-level="reset"]   { color: var(--amber-warn); font-weight: 700; }
 #dtc-clear-result[data-level="blocked"] { color: var(--amber-warn); }
 
-/* The dedicated hard-confirm modal (reuses the .confirm-box shell). Its border
-   reads STOP-red -- the clear is the most consequential action on the dash. */
+/* The dedicated hard-confirm modal (reuses the .confirm-box shell). The clear
+   is the most consequential action on the dash.
+
+   ⚠ KNOWN-OPEN (US-488 / TD-067) -- these are the LAST TWO rules in this sheet
+   still on a brand red, and they are open ON PURPOSE. Spool ruled that a
+   destructive USER ACTION is a DIFFERENT AXIS from the engine alarm tiers: it
+   MUST NOT be any alarm-red (Mode-04 wiping your codes is not an engine
+   emergency) and MUST NOT be amber (that means WATCH). So it needs a new
+   --destructive token -- Iris owns the value, Atlas gates it under Rule-10 --
+   and that token does not exist yet. Guessing a hex here would re-fork the SSOT
+   the US-484 line of work spent two stories un-forking. Pinned by
+   tests/ui/test_dashboard_alarm_tier_sweep.py so the debt cannot grow. */
 #clear-confirm {
   position: fixed; inset: 0; z-index: 55;
   display: flex; align-items: center; justify-content: center;

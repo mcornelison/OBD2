@@ -210,6 +210,93 @@
     return "neutral";
   }
 
+  // -------------------------------------------------------------------------
+  // US-489 (Iris polish P-1) -- the one-glance SUMMARY line. A lossy
+  // compression of the four tiles, which makes it exactly the place a
+  // "green when broken" lie would enter, so honest-instrument F-1 is restated
+  // here at the CARD level: the line is `ok` ONLY when every source is
+  // genuinely good. Presentation-only -- it reads the tiles the card already
+  // renders, never a second read of the state.
+  // -------------------------------------------------------------------------
+
+  // Display order == grid order, so "the worst source" is always named in a
+  // stable, predictable place.
+  var SYS_TILE_ORDER = ["obdLink", "sync", "power", "drive"];
+
+  // Severity rank over the tile-level vocabulary. Three buckets, not two:
+  //   ok            -- genuinely good.
+  //   neutral       -- nominal but inactive. DRIVE=IDLE is the only neutral
+  //                    this card produces and it means "not recording", NOT
+  //                    "broken"; counting it as a fault would make green
+  //                    unreachable in the commonest state (key on, no drive
+  //                    started), which is its own dishonesty -- crying wolf.
+  //   unavailable   -- a known-UNKNOWN. Blocks green (never claim OK over a
+  //                    source we cannot read) without raising an alarm.
+  //   amber / down  -- the only ISSUES.
+  var SYS_LEVEL_RANK = { ok: 0, neutral: 1, unavailable: 2, amber: 3, down: 4 };
+  var SYS_ISSUE_RANK = SYS_LEVEL_RANK.amber;
+
+  // A level this mapper has not been taught resolves to `unavailable`, NEVER to
+  // ok -- a future tile level must not be able to paint the card green by
+  // default.
+  function sysLevelRank(level) {
+    return Object.prototype.hasOwnProperty.call(SYS_LEVEL_RANK, level)
+      ? SYS_LEVEL_RANK[level]
+      : SYS_LEVEL_RANK.unavailable;
+  }
+
+  function sysNoStateSummary() {
+    return {
+      text: "SYSTEM · UNAVAILABLE",
+      detail: "no system state",
+      level: "unavailable",
+      issues: 0,
+    };
+  }
+
+  // Summarise the four rendered tiles. The ISSUE COUNT is the glanceable fact;
+  // the worst source is NAMED in the detail so the line says what to look at
+  // without the operator reading all four tiles.
+  function systemSummary(tiles) {
+    if (!isObj(tiles)) return sysNoStateSummary();
+    var worst = null;
+    var worstRank = -1;
+    var issues = 0;
+    var unknowns = 0;
+    for (var i = 0; i < SYS_TILE_ORDER.length; i++) {
+      var tile = tiles[SYS_TILE_ORDER[i]];
+      if (!isObj(tile)) continue;
+      var rank = sysLevelRank(tile.level);
+      if (rank >= SYS_ISSUE_RANK) issues++;
+      else if (rank === SYS_LEVEL_RANK.unavailable) unknowns++;
+      if (rank > worstRank) {
+        worstRank = rank;
+        worst = tile;
+      }
+    }
+    if (worst === null) return sysNoStateSummary();
+    var named = worst.label + " · " + worst.value;
+    if (issues > 0) {
+      // `worst` carries the highest rank, so with any issue present it IS an
+      // issue tile -- its level is amber/down and drives the headline hue.
+      return {
+        text: "SYSTEM · " + issues + (issues === 1 ? " ISSUE" : " ISSUES"),
+        detail: named,
+        level: worst.level,
+        issues: issues,
+      };
+    }
+    if (unknowns > 0) {
+      return {
+        text: "SYSTEM · " + unknowns + " UNAVAILABLE",
+        detail: named,
+        level: "unavailable",
+        issues: 0,
+      };
+    }
+    return { text: "SYSTEM · OK", detail: "", level: "ok", issues: 0 };
+  }
+
   // The full structured view consumed by the DOM renderer + the node tests.
   // Non-object payload -> null (the shell renders `unavailable`).
   function systemStatusView(data) {
@@ -222,13 +309,17 @@
     var obdTile = obdOff
       ? naTile("OBD LINK", sourceReason(data, "obd"))
       : obdLinkTile(data.obdLink);
+    var tiles = {
+      obdLink: obdTile,
+      sync: syncTile(data.sync),
+      power: powerTile(data.power),
+      drive: driveTile(data.drive),
+    };
     return {
-      tiles: {
-        obdLink: obdTile,
-        sync: syncTile(data.sync),
-        power: powerTile(data.power),
-        drive: driveTile(data.drive),
-      },
+      // US-489: derived from the SAME tiles rendered below, so the headline can
+      // never contradict the grid it summarises.
+      summary: systemSummary(tiles),
+      tiles: tiles,
       glyphs: {
         bt: obdOff ? "neutral" : btGlyphState(data.obdLink),
         sync: syncGlyphState(data.sync),
@@ -541,6 +632,31 @@
   function exceedsMoveCancel(dx, dy, threshold) {
     var t = threshold == null ? LONG_PRESS_MOVE_PX : threshold;
     return Math.sqrt(dx * dx + dy * dy) > t;
+  }
+
+  // US-490 context-aware menu access (Iris P-2, CIO-locked Option C). The two
+  // paths into the menu carry DIFFERENT intent, so they get different rules:
+  //
+  //   tapVisible -- the top-bar `⋮` is a SINGLE tap away from a service stop /
+  //     Exit UI, so it is offered only while the emitter says parked. Hidden
+  //     while driving, and hidden whenever "am I driving?" is UNREADABLE:
+  //     carouselIdle already fails closed to not-idle, so an absent, malformed
+  //     or idle-less payload hides the affordance rather than guessing a calm
+  //     parked state. (Reads the `idle` SSOT boolean -- never re-derived from
+  //     the drive-state string; Atlas idle-SSOT b.)
+  //   longPress -- the ~5s hold is the DELIBERATE override and is state-blind
+  //     on purpose. It is what makes hiding the `⋮` safe: fail-closed can never
+  //     strand the operator, and driving is the state where they may most need
+  //     to stop a misbehaving service.
+  //
+  // `carouselIdle` is declared further down this IIFE (with the idle-card
+  // logic it belongs to) -- function declarations hoist, so this policy stays
+  // next to the menu it governs.
+  function menuAccess(systemStatusData) {
+    return {
+      tapVisible: carouselIdle(systemStatusData),
+      longPress: true,
+    };
   }
 
   // -------------------------------------------------------------------------
@@ -912,6 +1028,23 @@
     };
   }
 
+  // US-491: the heading on the fix card, per mode. AC2 wants every section
+  // card labelled, and the label has to tell the same truth the body does --
+  // heading a 🔴/🟡 diagnose directive "SUGGESTED FIX" would undo S-4 in the
+  // label while the body still obeys it. An unrecognised mode falls back to the
+  // neutral "NEXT STEP", never to "SUGGESTED FIX".
+  var FIX_SECTION_LABEL = {
+    fix: "SUGGESTED FIX",
+    directive: "NEXT STEP",
+    na: "APPLICABILITY",
+  };
+
+  function fixSectionLabel(mode) {
+    return Object.prototype.hasOwnProperty.call(FIX_SECTION_LABEL, mode)
+      ? FIX_SECTION_LABEL[mode]
+      : FIX_SECTION_LABEL.directive;
+  }
+
   // Freeze-frame view (S-5). Mode 02 is confirmed unsupported on the current
   // ECU (MD326328) -> the default is the labeled realtime-context fallback,
   // never blank. A grid renders only if a future Mode-02-capable ECU supplies
@@ -937,20 +1070,29 @@
     return parts.join(" · ");
   }
 
-  // The per-code detail view. Non-object -> null. The directive band renders
-  // only for 🔴/🟡 (drives the "get diagnosed" message); the caveat is a line,
-  // never a tier upgrade (S-13).
+  // The per-code detail view. Non-object -> null. The caveat is a line, never a
+  // tier upgrade (S-13).
+  //
+  // US-491 (polish P-3, directive-first): the band renders for EVERY actionable
+  // tier, not just 🔴/🟡. The detail is the one screen the operator opens to ask
+  // "what do I do", and the answer already existed in DTC_TIER for MINOR ("safe
+  // to clear once logged") and for an uncurated `unknown` ("get diagnosed") --
+  // the takeover has shown both since US-405 while the detail showed nothing.
+  // A blank band on the screen dedicated to the question reads as "no action
+  // needed", which is the dishonest answer on an uncurated code (F-1). `na` is
+  // the one tier that stays blank: "not applicable to this vehicle" is a FACT,
+  // not an instruction, it never alarms anywhere else in the system, and the
+  // fix slot already states it.
   function codeDetailView(code) {
     if (!isObj(code)) return null;
     var tier = dtcTier(code.severity);
-    var isStopWatch = code.severity === "stop" || code.severity === "watch";
     return {
       code: code.code,
       chip: tier.chip,
       level: tier.level,
       short: dtcShort(code),
       long: (code.long && String(code.long).trim()) || null,
-      directive: isStopWatch ? tier.directive : null,
+      directive: tier.level === "na" ? null : tier.directive,
       caveat: dtcCaveat(code),
       statusMeta: dtcStatusMeta(code),
       freezeFrame: freezeFrameView(code),
@@ -1200,6 +1342,7 @@
     btGlyphState: btGlyphState,
     syncGlyphState: syncGlyphState,
     powerGlyphState: powerGlyphState,
+    systemSummary: systemSummary,
     systemStatusView: systemStatusView,
     healthCheckLine: healthCheckLine,
     vcellTile: vcellTile,
@@ -1215,6 +1358,7 @@
     longPressProgress: longPressProgress,
     isLongPressComplete: isLongPressComplete,
     exceedsMoveCancel: exceedsMoveCancel,
+    menuAccess: menuAccess,
     alertableCodes: alertableCodes,
     takeoverView: takeoverView,
     takeoverShouldShow: takeoverShouldShow,
@@ -1233,6 +1377,7 @@
     alertsCardView: alertsCardView,
     trustBadge: trustBadge,
     fixArea: fixArea,
+    fixSectionLabel: fixSectionLabel,
     freezeFrameView: freezeFrameView,
     codeDetailView: codeDetailView,
     clearGateReason: clearGateReason,
@@ -1278,20 +1423,34 @@
     // The level drives the colour via [data-level] CSS -- a degraded tile is
     // never green (F-1). Built with textContent (no innerHTML) so emitter values
     // render verbatim, never as markup.
-    function appendTile(parent, tile) {
+    // US-489: `withDot` prepends the per-tile status dot. It is OPT-IN because
+    // appendTile is shared with the idle, battery and LTFT cards -- defaulting
+    // it on would restyle three shipped cards from a story scoped to one.
+    function appendTile(parent, tile, withDot) {
       var el = document.createElement("div");
       el.className = "tile";
       el.setAttribute("data-level", tile.level);
       var label = document.createElement("span");
       label.className = "tile-label";
       label.textContent = tile.label;
+      if (withDot) {
+        // The dot takes no level of its own -- it inherits the tile's
+        // [data-level], so it can never disagree with the value beside it.
+        var head = document.createElement("div");
+        head.className = "tile-head";
+        var dot = document.createElement("span");
+        dot.className = "tile-dot";
+        head.appendChild(dot);
+        head.appendChild(label);
+        el.appendChild(head);
+      }
       var value = document.createElement("span");
       value.className = "tile-value";
       value.textContent = tile.value;
       var detail = document.createElement("span");
       detail.className = "tile-detail";
       detail.textContent = tile.detail;
-      el.appendChild(label);
+      if (!withDot) el.appendChild(label);
       el.appendChild(value);
       el.appendChild(detail);
       parent.appendChild(el);
@@ -1301,10 +1460,29 @@
       var body = card.querySelector(".card-body");
       if (body) {
         body.textContent = "";
-        appendTile(body, view.tiles.obdLink);
-        appendTile(body, view.tiles.sync);
-        appendTile(body, view.tiles.power);
-        appendTile(body, view.tiles.drive);
+        // US-489 P-1: the one-glance headline, then the 2x2 grid. Built with
+        // textContent (no innerHTML) so emitter values render verbatim.
+        var summary = document.createElement("div");
+        summary.className = "sys-summary";
+        summary.setAttribute("data-level", view.summary.level);
+        var summaryText = document.createElement("span");
+        summaryText.className = "sys-summary-text";
+        summaryText.textContent = view.summary.text;
+        summary.appendChild(summaryText);
+        if (view.summary.detail) {
+          var summaryDetail = document.createElement("span");
+          summaryDetail.className = "sys-summary-detail";
+          summaryDetail.textContent = view.summary.detail;
+          summary.appendChild(summaryDetail);
+        }
+        body.appendChild(summary);
+        var grid = document.createElement("div");
+        grid.className = "sys-grid";
+        appendTile(grid, view.tiles.obdLink, true);
+        appendTile(grid, view.tiles.sync, true);
+        appendTile(grid, view.tiles.power, true);
+        appendTile(grid, view.tiles.drive, true);
+        body.appendChild(grid);
       }
       if (glyphEls.bt) glyphEls.bt.setAttribute("data-state", view.glyphs.bt);
       if (glyphEls.sync) glyphEls.sync.setAttribute("data-state", view.glyphs.sync);
@@ -1595,6 +1773,20 @@
         });
     }
 
+    // --- US-490 context-aware `⋮` affordance (browser only) ----------------
+    // `hidden` (not a class) is deliberate: it is the property the tap handler
+    // reads back as the rendered truth, so the gate and the paint can never
+    // disagree. The button ships hidden in the markup, so the pre-first-poll
+    // window -- when "am I driving?" is genuinely unknown -- offers no tap path.
+    function applyMenuAccess(btn, access) {
+      if (!btn) return;
+      btn.hidden = !access.tapVisible;
+    }
+
+    function updateMenuAccess(sysData) {
+      applyMenuAccess(document.getElementById("menu-btn"), menuAccess(sysData));
+    }
+
     function setupMenu() {
       var menu = document.getElementById("setup-menu");
       if (!menu) return;
@@ -1686,7 +1878,15 @@
         }
       }
 
-      if (menuBtn) menuBtn.addEventListener("click", openMenu);
+      if (menuBtn) {
+        menuBtn.addEventListener("click", function () {
+          // Defence in depth (US-490 AC-4): the button is display:none while
+          // driving, but a CSS regression must not quietly re-open a one-tap
+          // path into a service stop. `hidden` is the rendered truth.
+          if (menuBtn.hidden) return;
+          openMenu();
+        });
+      }
       if (closeBtn) closeBtn.addEventListener("click", closeMenu);
       if (exitBtn) {
         // Exit / Close UI (A-8): a dashboard stop -> drops to desktop; the
@@ -1785,6 +1985,7 @@
       // US-407 clear surface: the gated button + result line inside the detail,
       // and the dedicated hard-confirm modal.
       var clearBtn = document.getElementById("dtc-clear-btn");
+      var clearZone = document.getElementById("dtc-clear-zone");
       var clearResult = document.getElementById("dtc-clear-result");
       var clearConfirm = document.getElementById("clear-confirm");
       var clearConfirmTitle = document.getElementById("clear-confirm-title");
@@ -1931,9 +2132,15 @@
         hero.appendChild(shortSpan);
         detailBody.appendChild(hero);
 
-        // Severity directive band (🔴/🟡 only).
+        // Severity directive band (🔴/🟡 only). US-488: the band is TIER-DRIVEN
+        // in CSS, so the row carries data-level from the SAME tier the chip
+        // above uses -- a directive can never disagree with the chip beside it,
+        // and an untagged row falls back to the neutral base rather than
+        // inheriting a severity it does not have.
         if (view.directive) {
-          detailBody.appendChild(detailLine("detail-directive", "", view.directive));
+          var directiveRow = detailLine("detail-directive", "", view.directive);
+          directiveRow.setAttribute("data-level", view.level);
+          detailBody.appendChild(directiveRow);
         }
         // Condition-dependent caveat -- a LINE beneath the chip, never a tier
         // upgrade (S-13).
@@ -1944,8 +2151,11 @@
         detailBody.appendChild(detailLine("detail-meta", "", view.statusMeta));
 
         // Freeze-frame grid OR the labeled realtime fallback (S-5, never blank).
+        // US-491: `detail-card` is the SHARED section shell (border + the one
+        // spacing scale) -- three near-identical boxes drift the first time one
+        // of them is edited, which is what "consistent rhythm" (AC3) is about.
         var ff = document.createElement("div");
-        ff.className = "detail-freeze";
+        ff.className = "detail-card detail-freeze";
         var ffLabel = document.createElement("span");
         ffLabel.className = "detail-label";
         ffLabel.textContent = "FREEZE FRAME";
@@ -1965,13 +2175,17 @@
         // Severity-gated fix (S-4/F-1): directive for 🔴/🟡, real fix + badge for
         // 🟢, N/A for na.
         var fixBox = document.createElement("div");
-        fixBox.className = "detail-fix";
+        fixBox.className = "detail-card detail-fix";
         fixBox.setAttribute("data-mode", view.fix.mode);
+        // US-491: the heading is now UNCONDITIONAL -- it used to live inside the
+        // `mode === "fix"` branch, so a 🔴/🟡 card rendered a bordered box with
+        // no heading at all. The wording is mode-driven (fixSectionLabel), so a
+        // diagnose directive is never mis-headed "SUGGESTED FIX" (S-4).
+        var fixLabel = document.createElement("span");
+        fixLabel.className = "detail-label";
+        fixLabel.textContent = fixSectionLabel(view.fix.mode);
+        fixBox.appendChild(fixLabel);
         if (view.fix.mode === "fix") {
-          var fixLabel = document.createElement("span");
-          fixLabel.className = "detail-label";
-          fixLabel.textContent = "SUGGESTED FIX";
-          fixBox.appendChild(fixLabel);
           fixBox.appendChild(detailLine("detail-fix-text", "", view.fix.text));
           if (view.fix.badge) {
             var badge = document.createElement("span");
@@ -2014,6 +2228,11 @@
         if (!clearBtn) return;
         if (clearResult) clearResult.textContent = "";
         var view = clearButtonView(lastDtc);
+        // US-491: the zone is now a bordered, LABELLED card, so it must go with
+        // the button -- an empty "CLEAR CODES" box on a nothing-to-clear detail
+        // is a new visual regression. The GATE is untouched: visibility still
+        // comes from clearButtonView(), and the server re-checks on submit.
+        if (clearZone) clearZone.hidden = !view.visible;
         if (!view.visible) {
           clearBtn.hidden = true;
           return;
@@ -2249,6 +2468,10 @@
         // US-481: render the idle-home card + edge-trigger home/auto-advance
         // from the same fetched states (no extra fetch, no second OBD touch).
         updateIdleHome(sysData, batteryData, dtcData);
+        // US-490: track the parked/live context every tick from the SAME fetched
+        // state (no extra fetch). An unavailable system-status leaves sysData
+        // null here, which fails closed to a hidden ⋮ -- long-press still opens.
+        updateMenuAccess(sysData);
         // US-483-b: drive the display brightness from the states/light feed
         // (pure consumer -- never the sensor). A real STOP holds it >= the alarm
         // floor; an absent/stale feed holds the fixed default (honest fallback).
