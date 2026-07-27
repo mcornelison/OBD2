@@ -1,0 +1,303 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Iris · Pi Live-Instrument Home Card (W-11) — 2026-07-27</title>
+<style>
+:root{
+  --ground:#e9edec;--paper:#f6f8f7;--card:#fff;--line:#d3dad8;--ink:#141a1b;--ink-2:#4a5658;--ink-3:#7c8a8b;
+  --accent:#1f9d57;--accent-soft:#1f9d5722;--warn:#b57d00;--crit:#c0392b;
+  --dv-bg:#000;--dv-surface:#111;--dv-tile:#14181d;--dv-line:#242a30;--dv-t1:#DDDDDD;--dv-t2:#888;--dv-t3:#666;
+  --dv-amber:#FFC400;--dv-green:#35C46A;--dv-red:#F61D2D;
+  --mono:ui-monospace,"SFMono-Regular",Menlo,Consolas,monospace;--sans:system-ui,"Segoe UI",Roboto,Arial,sans-serif;
+}
+@media(prefers-color-scheme:dark){:root{--ground:#0d100f;--paper:#121615;--card:#171c1b;--line:#242b29;
+  --ink:#e4e9e7;--ink-2:#a5b0ad;--ink-3:#6f7c7a;--accent:#35C46A;--accent-soft:#35C46A1f;--warn:#FFC400;--crit:#F61D2D;}}
+:root[data-theme="light"]{--ground:#e9edec;--paper:#f6f8f7;--card:#fff;--line:#d3dad8;--ink:#141a1b;--ink-2:#4a5658;
+  --ink-3:#7c8a8b;--accent:#1f9d57;--accent-soft:#1f9d5722;--warn:#b57d00;--crit:#c0392b;}
+:root[data-theme="dark"]{--ground:#0d100f;--paper:#121615;--card:#171c1b;--line:#242b29;--ink:#e4e9e7;--ink-2:#a5b0ad;
+  --ink-3:#6f7c7a;--accent:#35C46A;--accent-soft:#35C46A1f;--warn:#FFC400;--crit:#F61D2D;}
+*{box-sizing:border-box;}
+body{margin:0;background:var(--ground);color:var(--ink);font-family:var(--sans);line-height:1.55;-webkit-font-smoothing:antialiased;}
+.wrap{max-width:1080px;margin:0 auto;padding:40px 28px 72px;}
+.masthead{border-bottom:1px solid var(--line);padding-bottom:22px;margin-bottom:12px;}
+.eyebrow{font-family:var(--mono);font-size:11px;letter-spacing:.22em;text-transform:uppercase;color:var(--accent);margin:0 0 10px;}
+h1{font-size:clamp(26px,4vw,40px);line-height:1.08;margin:0;letter-spacing:-.02em;text-wrap:balance;font-weight:680;}
+.dek{color:var(--ink-2);font-size:15px;margin:12px 0 0;max-width:62ch;}
+.meta{display:flex;flex-wrap:wrap;gap:8px 18px;margin-top:16px;font-family:var(--mono);font-size:11.5px;color:var(--ink-3);}
+.meta b{color:var(--ink-2);font-weight:600;}
+section{margin-top:44px;}
+.sec-head{display:flex;align-items:baseline;gap:12px;border-bottom:1px solid var(--line);padding-bottom:10px;margin-bottom:20px;}
+.sec-num{font-family:var(--mono);font-size:12px;color:var(--accent);letter-spacing:.1em;}
+h2{font-size:20px;margin:0;letter-spacing:-.01em;font-weight:640;}
+.sec-sub{margin-left:auto;font-family:var(--mono);font-size:11px;color:var(--ink-3);text-transform:uppercase;letter-spacing:.14em;}
+.split{display:grid;grid-template-columns:minmax(0,auto) 1fr;gap:30px;align-items:start;}
+@media(max-width:820px){.split{grid-template-columns:1fr;}}
+.rail h3{font-size:12px;font-family:var(--mono);text-transform:uppercase;letter-spacing:.12em;color:var(--ink-3);margin:0 0 8px;}
+.rail p{margin:0 0 14px;font-size:14px;color:var(--ink-2);} .rail .lead{color:var(--ink);}
+.controls{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 16px;align-items:center;}
+.controls .lbl{font-family:var(--mono);font-size:11px;color:var(--ink-3);text-transform:uppercase;letter-spacing:.1em;}
+button.ctl{font-family:var(--mono);font-size:12px;padding:8px 13px;border-radius:7px;cursor:pointer;border:1px solid var(--line);
+  background:var(--card);color:var(--ink);transition:all .15s;}
+button.ctl:hover{border-color:var(--ink-3);} button.ctl.on{border-color:var(--accent);color:var(--accent);background:var(--accent-soft);}
+button.ctl:focus-visible{outline:2px solid var(--accent);outline-offset:2px;}
+figure{margin:0;} figcaption{font-family:var(--mono);font-size:10.5px;color:var(--ink-3);text-transform:uppercase;letter-spacing:.08em;margin:0 0 8px;}
+.bezel{background:#05070a;padding:12px;border-radius:14px;border:1px solid var(--line);box-shadow:0 10px 30px -12px rgba(0,0,0,.5),inset 0 0 0 1px #ffffff08;}
+.output{position:relative;background:#000;overflow:hidden;border-radius:3px;width:480px;height:320px;}
+.tag{display:inline-block;font-family:var(--mono);font-size:10.5px;padding:2px 8px;border-radius:999px;border:1px solid var(--line);color:var(--ink-2);letter-spacing:.04em;background:var(--card);}
+.tag.warn{color:var(--warn);border-color:color-mix(in srgb,var(--warn) 45%,var(--line));}
+.tag.ok{color:var(--accent);border-color:color-mix(in srgb,var(--accent) 45%,var(--line));}
+.tag.q{color:var(--crit);border-color:color-mix(in srgb,var(--crit) 40%,var(--line));}
+.callouts{list-style:none;padding:0;margin:0;display:grid;gap:12px;}
+.callouts li{background:var(--card);border:1px solid var(--line);border-left:3px solid var(--accent);border-radius:8px;padding:13px 16px;font-size:14px;color:var(--ink-2);}
+.callouts li b{color:var(--ink);} .callouts li.q{border-left-color:var(--crit);}
+code{font-family:var(--mono);font-size:.86em;background:var(--accent-soft);color:var(--accent);padding:1px 5px;border-radius:4px;}
+.footer{margin-top:48px;border-top:1px solid var(--line);padding-top:18px;font-family:var(--mono);font-size:11.5px;color:var(--ink-3);line-height:1.7;}
+
+/* ===== device card (product-owned dark) ===== */
+.topbar{position:absolute;top:0;left:0;right:0;height:28px;display:flex;align-items:center;gap:10px;padding:0 10px;
+  background:var(--dv-surface);font-size:13px;z-index:10;font-family:var(--mono);}
+.topbar .glyph{color:var(--dv-t2);letter-spacing:.04em;} .topbar .glyph.ok{color:var(--dv-green);}
+.vchip{margin-left:auto;color:var(--dv-t3);font-size:10px;letter-spacing:.06em;} .menu-aff{color:var(--dv-t2);font-size:20px;line-height:1;}
+.dots{position:absolute;bottom:0;left:0;right:0;height:22px;display:flex;justify-content:center;align-items:center;gap:8px;}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--dv-t3);} .dot.active{background:var(--dv-t1);}
+.cardarea{position:absolute;top:28px;bottom:22px;left:0;right:0;padding:8px 12px 10px;display:flex;flex-direction:column;
+  font-family:var(--mono);color:var(--dv-t1);}
+.livetitle{display:flex;align-items:center;gap:8px;font-size:11px;letter-spacing:.1em;color:var(--dv-t2);text-transform:uppercase;margin-bottom:6px;}
+.rec{width:8px;height:8px;border-radius:50%;background:var(--dv-red);animation:rec 1.4s ease-in-out infinite;}
+@keyframes rec{0%,100%{opacity:1;}50%{opacity:.25;}}
+.stale-badge{margin-left:auto;color:var(--dv-amber);font-size:10px;letter-spacing:.04em;}
+.live2{flex:1;display:flex;gap:8px;min-height:0;}
+.lcol{flex:1.35;display:flex;flex-direction:column;gap:7px;min-width:0;}
+.lcell{background:var(--dv-tile);border:1px solid var(--dv-line);border-radius:7px;padding:6px 8px;}
+.clabel{font-size:9px;letter-spacing:.14em;color:var(--dv-t3);text-transform:uppercase;}
+/* compass */
+.compass{position:relative;height:52px;overflow:hidden;margin-top:3px;}
+.tapewin{position:absolute;inset:0;overflow:hidden;}
+.tape{position:absolute;top:16px;left:0;height:26px;will-change:transform;}
+.tick{position:absolute;top:0;width:1px;height:9px;background:var(--dv-line);}
+.tick.major{height:13px;background:var(--dv-t3);}
+.tlab{position:absolute;top:13px;transform:translateX(-50%);font-size:11px;color:var(--dv-t2);font-weight:600;}
+.caret{position:absolute;left:50%;top:2px;transform:translateX(-50%);width:0;height:0;border-left:5px solid transparent;
+  border-right:5px solid transparent;border-top:7px solid var(--dv-green);z-index:3;}
+.headnum{position:absolute;left:50%;bottom:1px;transform:translateX(-50%);font-size:15px;font-weight:700;color:#eef2f6;letter-spacing:.02em;}
+/* gear + grade */
+.midrow{display:flex;gap:7px;flex:1;min-height:0;}
+.gearcell{flex:.8;display:flex;flex-direction:column;align-items:center;justify-content:center;}
+.gnum{font-size:52px;font-weight:800;line-height:.9;color:#eef2f6;}
+.gnum.amb{color:var(--dv-t3);font-size:44px;}
+.glab{font-size:9px;letter-spacing:.16em;color:var(--dv-t3);margin-top:2px;}
+.gradecell{flex:1.2;display:flex;flex-direction:column;justify-content:center;}
+.graderow{display:flex;align-items:baseline;gap:6px;margin-top:2px;}
+.gradeval{font-size:22px;font-weight:700;color:#eef2f6;}
+.gradetrend{flex:1;height:30px;} .gradetrend svg{width:100%;height:100%;display:block;}
+.gsub{font-size:9px;color:var(--dv-t3);letter-spacing:.03em;}
+/* g-force */
+.gcol{flex:1;display:flex;flex-direction:column;}
+.gmeter{position:relative;flex:1;background:var(--dv-tile);border:1px solid var(--dv-line);border-radius:7px;min-height:0;}
+.gmeter canvas{position:absolute;inset:0;width:100%;height:100%;}
+.gmlab{position:absolute;top:5px;left:0;right:0;text-align:center;font-size:9px;letter-spacing:.14em;color:var(--dv-t3);}
+.gval{position:absolute;bottom:5px;left:0;right:0;text-align:center;font-size:11px;color:var(--dv-t2);}
+.gval b{color:#eef2f6;font-weight:700;} .gval.hot b{color:var(--dv-amber);}
+.gtire{position:absolute;bottom:19px;left:0;right:0;text-align:center;font-size:8.5px;color:var(--dv-amber);opacity:0;transition:opacity .3s;}
+.gtire.show{opacity:.9;}
+/* idle fallback (compact) */
+.idlewrap{flex:1;display:flex;flex-direction:column;}
+.idle-hero{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;}
+.idle-mark{width:24px;height:24px;opacity:.5;transform:rotate(45deg);border:2px solid var(--dv-t2);border-radius:5px;}
+.idle-state{font-size:24px;font-weight:700;letter-spacing:.16em;color:var(--dv-t2);}
+.idle-sub{font-size:11px;color:var(--dv-t3);}
+.idle-note{font-size:10px;color:var(--dv-amber);text-align:center;padding-bottom:4px;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="masthead">
+    <p class="eyebrow">Eclipse OBD-II · UI/UX · design review</p>
+    <h1>The driving screen — what the glass shows in motion</h1>
+    <p class="dek">The live-instrument home card: the <b>driving twin</b> of the shipped idle card, same
+      carousel home slot. Compass heading, gear, road grade, and a g-force trail — read from the IMU feed,
+      never fused on the display. When the feed goes quiet, it falls back to idle rather than fake motion.</p>
+    <div class="meta">
+      <span><b>Author</b> Iris</span><span><b>Date</b> 2026-07-27</span>
+      <span><b>Feed</b> states/imu (US-478)</span><span><b>Layout</b> June-18 "live2", CIO-approved</span>
+      <span><b>Status</b> design-before-build</span>
+    </div>
+  </header>
+
+  <section>
+    <div class="sec-head"><span class="sec-num">01</span><h2>Live-instrument home card</h2>
+      <span class="sec-sub">480×320 · animated</span></div>
+    <div class="controls">
+      <span class="lbl">IMU feed</span>
+      <button class="ctl on" id="b-live">Live (driving)</button>
+      <button class="ctl" id="b-stale">Stale / absent → falls back to idle</button>
+    </div>
+    <div class="split">
+      <figure>
+        <figcaption>Live render — heading scrolls, g-dot trails, gear derives</figcaption>
+        <div class="bezel"><div class="output" id="stage"></div></div>
+      </figure>
+      <div class="rail">
+        <h3>The four instruments</h3>
+        <p><b>Compass tape</b> — heading from the magnetometer; scrolls under a fixed caret so a turn reads directionally.</p>
+        <p><b>Gear</b> — <b>Spool's</b> OBD derivation. Shows <code>--</code> when ambiguous (clutch-in, &lt;5 km/h, ratio&gt;15% off), never a wrong number.</p>
+        <p><b>Grade</b> — pitch from the accel gravity vector + a ~15-min trend. Informational, no alarm.</p>
+        <p><b>G-force</b> — lat/lon g with a fading ~35 s trail. Amber ring at <b>0.6 g</b> (Spool) — doubles as an aged-tire load nudge. Never a takeover.</p>
+        <h3>Honest fallback</h3>
+        <p class="lead">Absent or stale <code>states/imu</code> → the home slot shows the idle card. No frozen or zeroed
+          instrument pretending the car is stationary. Try the <b>Stale</b> toggle.</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head"><span class="sec-num">02</span><h2>The contract — routes to Atlas (loop early)</h2>
+      <span class="sec-sub">DELTA-2 class · EDR-gated</span></div>
+    <ul class="callouts">
+      <li class="q"><b>Q-A · derived, not raw.</b> The raw feed is <code>accel/gyro/mag</code>. The display needs
+        display-ready <code>headingDeg · gradePct · gLat · gLon</code>. <b>The reader derives these, the display never
+        fuses sensors</b> (same seam as the light bridge). <span class="tag q">Atlas confirm</span></li>
+      <li class="q"><b>Q-B · refresh rate.</b> A compass tape + 35 s trail won't animate at the 1 Hz card poll — needs a
+        higher-rate STREAM/SSE topic (Atlas's own DELTA-2 open item). <span class="tag q">Atlas confirm</span></li>
+      <li><b>Alarms live elsewhere.</b> Coolant / knock / voltage / DTC-STOP ride the <b>unified alert layer (DELTA-1)</b>
+        on top — a 🔴 is full-brightness + un-dismissable (Spool). This card stays calm; it never recolors into an alarm.</li>
+      <li><b>Gear is OBD, not IMU.</b> Spool's derivation (validated vs Drive 30). The IMU may sharpen it later; the number stays his.</li>
+    </ul>
+  </section>
+
+  <section>
+    <div class="sec-head"><span class="sec-num">03</span><h2>Open — your call</h2><span class="sec-sub">review</span></div>
+    <ul class="callouts">
+      <li><b>Compass: tape or dial?</b> Tape (shown) reads a turn directionally; a round dial is more familiar. <span class="tag">tape by default</span></li>
+      <li><b>Grade: ° or %?</b> Degrees (shown) vs road-sign grade %. One-line change. <span class="tag">° by default</span></li>
+      <li><b>What else earns the glance?</b> Speed's on OBD — put it on the live card, or leave it to the cluster? Coolant/voltage minis here, or alert-layer only?</li>
+    </ul>
+  </section>
+
+  <div class="footer">
+    Design of record — offices/uidevloper/proposals/2026-07-27-pi-live-instrument-card.md<br>
+    Next — loop Atlas on Q-A/Q-B + the DELTA-1 arbiter contract · build sequences after US-478 (IMU bring-up)
+  </div>
+</div>
+
+<script>
+var reduce=window.matchMedia&&window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+var mode="live";
+// ---- device card skeletons ----
+function topbar(){return '<div class="topbar"><span class="glyph ok">BT</span><span class="glyph ok">⇅</span>'+
+  '<span class="glyph ok">⚡</span><span class="vchip">V0.29.16</span><span class="menu-aff">⋮</span></div>';}
+function dots(){return '<div class="dots"><span class="dot active"></span><span class="dot"></span><span class="dot"></span><span class="dot"></span></div>';}
+function liveShell(){
+  return topbar()+
+  '<div class="cardarea">'+
+    '<div class="livetitle"><span class="rec"></span>LIVE · DRIVE 35<span class="stale-badge" id="stale" style="display:none">IMU 3s stale</span></div>'+
+    '<div class="live2">'+
+      '<div class="lcol">'+
+        '<div class="lcell"><div class="clabel">Heading</div>'+
+          '<div class="compass"><div class="caret"></div><div class="tapewin"><div class="tape" id="tape"></div></div><div class="headnum" id="headnum">—</div></div></div>'+
+        '<div class="midrow">'+
+          '<div class="lcell gearcell"><div class="gnum" id="gnum">–</div><div class="glab">Gear</div></div>'+
+          '<div class="lcell gradecell"><div class="clabel">Grade · trend ~15m</div>'+
+            '<div class="graderow"><div class="gradeval" id="gradeval">+0°</div><div class="gradetrend"><svg id="gsvg" viewBox="0 0 100 30" preserveAspectRatio="none"><polyline id="gline" fill="none" stroke="#35C46A" stroke-width="1.4" points=""/></svg></div></div>'+
+            '<div class="gsub" id="altsub">alt —</div></div>'+
+        '</div>'+
+      '</div>'+
+      '<div class="gcol"><div class="clabel" style="text-align:center">G-force · 35s trail</div>'+
+        '<div class="gmeter"><canvas id="gcan"></canvas><div class="gtire" id="gtire">high lat-g · aged tires</div><div class="gval" id="gval"><b>0.0</b> lat · <b>0.0</b> lon</div></div></div>'+
+    '</div>'+
+  '</div>'+dots();
+}
+function idleShell(){
+  return topbar()+
+  '<div class="cardarea"><div class="idlewrap">'+
+    '<div class="idle-hero"><div class="idle-mark"></div><div class="idle-state">STANDBY</div><div class="idle-sub">engine off · OBD asleep</div></div>'+
+    '<div class="idle-note">live instrument hidden — no IMU signal (honest fallback, not frozen motion)</div>'+
+  '</div></div>'+dots();
+}
+
+// ---- build compass tape once ----
+var PXPERDEG=2.0, CARD={0:"N",45:"NE",90:"E",135:"SE",180:"S",225:"SW",270:"W",315:"NW",360:"N"};
+function buildTape(){
+  var tape=document.getElementById("tape"); if(!tape)return;
+  var html=""; // 0..1080 so the middle turn never hits an edge
+  for(var d=0; d<=1080; d+=5){
+    var major=(d%45===0);
+    html+='<span class="tick'+(major?' major':'')+'" style="left:'+(d*PXPERDEG)+'px"></span>';
+    if(major){var c=CARD[d%360]!==undefined?CARD[d%360]:(d%360);html+='<span class="tlab" style="left:'+(d*PXPERDEG)+'px">'+c+'</span>';}
+  }
+  tape.style.width=(1080*PXPERDEG)+"px"; tape.innerHTML=html;
+}
+
+// ---- g-force canvas ----
+var trail=[]; // {x,y,age}
+function drawG(cv,gLat,gLon){
+  var ctx=cv.getContext("2d"), w=cv.width, h=cv.height, cx=w/2, cy=h/2, R=Math.min(w,h)*0.42; // R = 1g
+  ctx.clearRect(0,0,w,h);
+  // cross + rings (0.3g, 0.6g amber)
+  ctx.strokeStyle="rgba(255,255,255,.10)"; ctx.lineWidth=1;
+  ctx.beginPath();ctx.moveTo(cx-R,cy);ctx.lineTo(cx+R,cy);ctx.moveTo(cx,cy-R);ctx.lineTo(cx,cy+R);ctx.stroke();
+  ctx.beginPath();ctx.arc(cx,cy,R*0.3,0,7);ctx.stroke();
+  ctx.strokeStyle="rgba(255,196,0,.45)";ctx.beginPath();ctx.arc(cx,cy,R*0.6,0,7);ctx.stroke();
+  // trail (older = fainter)
+  for(var i=0;i<trail.length;i++){var t=trail[i];var a=Math.max(0,1-t.age/35);
+    ctx.fillStyle="rgba(53,196,106,"+(a*0.5)+")";ctx.beginPath();ctx.arc(cx+t.x*R,cy - t.y*R,2.1,0,7);ctx.fill();}
+  // live dot
+  var mag=Math.sqrt(gLat*gLat+gLon*gLon), hot=mag>=0.6;
+  ctx.fillStyle=hot?"#FFC400":"#35C46A";ctx.beginPath();ctx.arc(cx+gLat*R,cy - gLon*R,4.2,0,7);ctx.fill();
+  ctx.strokeStyle="rgba(0,0,0,.4)";ctx.lineWidth=1;ctx.stroke();
+  return hot;
+}
+
+// ---- render + animate ----
+var gradeHist=[], t0=null, raf=null;
+function mount(){
+  var s=document.getElementById("stage");
+  s.innerHTML = (mode==="live")?liveShell():idleShell();
+  if(mode==="live"){buildTape(); gradeHist=[]; trail=[]; sizeCanvas(); }
+}
+function sizeCanvas(){var cv=document.getElementById("gcan");if(!cv)return;var r=cv.parentElement.getBoundingClientRect();
+  cv.width=Math.max(40,r.width);cv.height=Math.max(40,r.height);}
+window.addEventListener("resize",function(){if(mode==="live")sizeCanvas();});
+
+function frame(ts){
+  if(mode!=="live"){return;}
+  if(t0===null)t0=ts; var t=(ts-t0)/1000;
+  // simulated driving signals
+  var heading=(120 + 40*Math.sin(t*0.13) + 8*Math.sin(t*0.7))%360; if(heading<0)heading+=360;
+  var gLat=0.45*Math.sin(t*0.9)+0.12*Math.sin(t*2.3);      // cornering
+  var gLon=0.30*Math.sin(t*0.5+1)+0.10*Math.sin(t*1.7);    // accel/brake
+  var grade=3+2.4*Math.sin(t*0.11);
+  var speed=70+22*Math.sin(t*0.3), rpm=3200+900*Math.sin(t*0.6);
+  // compass
+  var tape=document.getElementById("tape");
+  if(tape){var centerPx=(document.querySelector(".compass").clientWidth)/2;
+    tape.style.transform="translateX("+(centerPx-(heading+360)*PXPERDEG)+"px)";}
+  var hn=document.getElementById("headnum");
+  if(hn){var card=CARD[Math.round(heading/45)*45%360]||"";hn.textContent=Math.round(heading)+"° "+card;}
+  // gear (Spool logic, simplified): ambiguous when slow/low-rpm
+  var gnum=document.getElementById("gnum");
+  if(gnum){var amb=(speed<5||rpm<900); var gear=amb?"–":String(Math.max(2,Math.min(5,Math.round(speed/20))));
+    gnum.textContent=gear; gnum.className="gnum"+(amb?" amb":"");}
+  // grade + trend
+  var gv=document.getElementById("gradeval"); if(gv)gv.textContent=(grade>=0?"+":"")+grade.toFixed(0)+"°";
+  gradeHist.push(grade); if(gradeHist.length>60)gradeHist.shift();
+  var gl=document.getElementById("gline");
+  if(gl){var pts="";for(var i=0;i<gradeHist.length;i++){var x=i/59*100;var y=15-(gradeHist[i])*2.2;pts+=x.toFixed(1)+","+y.toFixed(1)+" ";}gl.setAttribute("points",pts.trim());}
+  var alt=document.getElementById("altsub"); if(alt)alt.textContent="alt "+Math.round(210+18*Math.sin(t*0.11))+" m";
+  // g-force
+  trail.forEach(function(p){p.age+=1/30;}); trail=trail.filter(function(p){return p.age<35;});
+  if(!reduce){trail.push({x:gLat,y:gLon,age:0}); if(trail.length>140)trail.shift();}
+  var cv=document.getElementById("gcan"); var hot=false; if(cv)hot=drawG(cv,gLat,gLon);
+  var gvv=document.getElementById("gval"); if(gvv){gvv.innerHTML="<b>"+gLat.toFixed(1)+"</b> lat · <b>"+gLon.toFixed(1)+"</b> lon";gvv.className="gval"+(hot?" hot":"");}
+  var tire=document.getElementById("gtire"); if(tire)tire.className="gtire"+(hot?" show":"");
+  raf=requestAnimationFrame(frame);
+}
+function start(){ if(raf)cancelAnimationFrame(raf); t0=null; mount(); if(mode==="live"&&!reduce)raf=requestAnimationFrame(frame); else if(mode==="live"){/* reduced: one static frame */ requestAnimationFrame(function(ts){frame(ts);cancelAnimationFrame(raf);});} }
+document.getElementById("b-live").addEventListener("click",function(){mode="live";this.classList.add("on");document.getElementById("b-stale").classList.remove("on");start();});
+document.getElementById("b-stale").addEventListener("click",function(){mode="stale";this.classList.add("on");document.getElementById("b-live").classList.remove("on");if(raf)cancelAnimationFrame(raf);mount();});
+start();
+</script>
+</body>
+</html>
