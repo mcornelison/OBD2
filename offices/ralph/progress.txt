@@ -1596,3 +1596,61 @@ Task: TD-067 -- sweep the 10 non-STOP alarm surfaces off brand --red-light (per 
   rule being mistaken for the base rule it overrides); a hand-copied weaker matcher
   would have under-asserted silently.
 ---
+
+## 2026-07-27 - US-489 (Rex / Agent 1, Session 2 — Sprint 63)
+Task: Polish P-1 — System Status summary line + 2x2 grid + per-tile status dots
+
+### What was implemented:
+- New pure export `systemSummary(tiles)` in carousel.js: compresses the 4 shipped
+  US-400 tiles into one glanceable headline + a detail naming the worst source.
+  Honest-instrument F-1 restated at the CARD level (`ok` only when every source
+  is genuinely good), with THREE buckets rather than two:
+  - `ok` — good; `neutral` (DRIVE=IDLE) — nominal-inactive, does NOT block green
+    and is NOT an issue; `unavailable` — known-UNKNOWN, BLOCKS green but renders
+    muted grey (not amber); `amber`/`down` — the only ISSUES.
+  - Fail-closed: an unrecognised level ranks as `unavailable`, never `ok`.
+  - Worst-wins (not first-wins); a real issue always outranks an unknown.
+- `systemStatusView` now builds the tiles object ONCE and derives `summary` from
+  it, so the headline can never contradict the grid it summarises.
+- DOM: `.sys-summary` (data-level tagged) + `.sys-grid` 2x2; `appendTile` gained
+  an OPT-IN `withDot` 3rd arg emitting `.tile-head > .tile-dot`.
+- CSS: summary hues + dot hues, all token references; the dot MIRRORS the
+  existing `.tile[data-level] .tile-value` mapping token-for-token.
+
+### Files changed:
+- Modified: `specs/UI/dist/dashboard-pi/carousel.js` (systemSummary + view wiring
+  + export + summary/grid/dot render)
+- Modified: `specs/UI/dist/dashboard-pi/dashboard.css` (US-489 block: .sys-summary,
+  .sys-grid, .tile-head, .tile-dot)
+- Created: `tests/ui/test_carousel_system_summary.py` (32 tests)
+- Created: `offices/pm/tech_debt/TD-068-node-probe-helpers-decode-with-locale-codepage.md`
+
+### Verification:
+- `pytest tests/ui/test_carousel_system_summary.py` -> 32 passed
+- `pytest tests/ui/ tests/deploy/test_dashboard_kit.py` -> 199 passed
+- `ruff check` on the new test file -> All checks passed
+- PI-RUNTIME GATE OWED (480x320): 2x2 must not overflow with the longest tile
+  values; parked/OBD-off must read a MUTED "SYSTEM · 1 UNAVAILABLE".
+
+### Learnings for future iterations:
+- **Pattern discovered**: a roll-up/summary line is a LOSSY COMPRESSION, so it
+  needs a THIRD bucket. Two buckets (good / not-good) force a choice between two
+  dishonesties: green-when-broken, or amber-forever in the normal state (crying
+  wolf, which trains the operator to ignore the instrument). Split "nominal but
+  inactive" and "known-unknown" out from "issue" and both go away. Rank the
+  vocabulary in a table and default UNKNOWN levels to the unknown bucket, never
+  to the pass bucket.
+- **Gotcha**: an AC parenthetical can contradict the AC's own operative clause.
+  P-1 said dots are "(green/amber/red/neutral) mirroring the existing per-tile
+  level" — but US-488 removed red from that mapping the same sprint. Mirror the
+  live mapping and say so loudly; obeying the parenthetical would have re-opened
+  TD-067 a story after it closed.
+- **Gotcha**: `subprocess.run(..., text=True)` with no `encoding=` decodes with
+  the WINDOWS LOCALE CODEPAGE, not UTF-8. node emits UTF-8, so "·" round-trips
+  as "Â·" and fails as a one-character diff that looks exactly like a bad
+  production string. Pin `encoding="utf-8"` on every probe helper (TD-068).
+- **Gotcha**: before extending a shared DOM helper (`appendTile` serves 4 cards),
+  make the new behaviour OPT-IN. And when grid-ing a rule set that had
+  `:last-child { border-bottom: 0 }`, re-state `:last-child` explicitly or the
+  final cell renders open-sided.
+---
