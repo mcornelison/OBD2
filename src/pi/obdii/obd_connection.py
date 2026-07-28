@@ -498,17 +498,7 @@ class ObdConnection:
         Raises:
             ObdNotAvailableError: If python-OBD library not available
         """
-        with self._ioLock:
-            if callerGeneration is not None and callerGeneration != self._generation:
-                logger.warning(
-                    "connect() fenced -- caller generation %d superseded by "
-                    "current %d; a newer connection owns the port, not "
-                    "re-opening (US-441 epoch fence)",
-                    callerGeneration,
-                    self._generation,
-                )
-                return self._isConnected()
-            return self._performConnect()
+        return self._performConnect(callerGeneration)
 
     def query(self, command: Any, callerGeneration: int | None = None) -> Any:
         """Run a single OBD query under the serialization lock (US-441).
@@ -587,17 +577,28 @@ class ObdConnection:
             name = command
         return name in MANDATORY_MODE01_PIDS
 
-    def _performConnect(self) -> bool:
-        """Internal connect implementation; runs under ``self._ioLock``.
+    def _performConnect(self, callerGeneration: int | None = None) -> bool:
+        """Internal connect implementation with PER-ATTEMPT serialization.
 
-        Body factored out of :meth:`connect` so the V0.27.1 thread-safety
-        wrapper is a single ``with`` line at the public entry point.  Do not
-        call this directly from production code -- always go through
-        :meth:`connect` so the lock is held for the entire attempt.
+        Atlas A-17 fix (2026-07-27, "capture-dead-since-0703"): ``_ioLock`` is
+        acquired PER ATTEMPT around only the discrete port work (resolve +
+        ``obd.OBD(...)`` construction + probe) and RELEASED across the backoff
+        sleep.  The US-441 regression held the lock for the WHOLE multi-attempt
+        loop (backoff included), so a timed-out-but-still-running connect daemon
+        monopolized the port lifecycle -- :meth:`disconnect` could never acquire
+        the lock to free ``/dev/rfcommN``, and each retry re-opened the port over
+        an unclosed partial handle -> "device disconnected or multiple access on
+        port?" -> 0 rows for 24 days.
 
-        US-441: on a successful connect this bumps ``self._generation`` (the
-        caller already holds ``_ioLock``) so any daemon that captured an older
-        generation is fenced from the new connection.
+        Fix A: lock released across backoff (below) so ``disconnect()`` /
+        ``query()`` can interleave.  Fix B: :meth:`_closePartialConnection`
+        closes the partial ``obd`` on every failed attempt before the next open.
+
+        The US-441 epoch fence is re-checked at the top of EACH attempt (under
+        the lock) -- because the lock is now free across backoff, a newer
+        connection may have won meanwhile, and a superseded daemon must fence
+        rather than re-open the port.  Live callers (``callerGeneration=None``)
+        are never fenced.
         """
         if not OBD_AVAILABLE and self._obdFactory is None:
             error = "python-OBD library not available"
@@ -609,7 +610,8 @@ class ObdConnection:
 
         logger.info(f"Connecting to OBD-II dongle | mac={self.macAddress}")
 
-        # Attempt connection with retries
+        # Attempt connection with retries.  The lock is taken PER ATTEMPT (around
+        # the port work only) and released across the backoff (fix A).
         for attempt in range(self.maxRetries + 1):
             # US-232 / TD-035: honor an already-set shutdown event before
             # even dispatching the next attempt. Covers the pre-set path
@@ -623,110 +625,156 @@ class ObdConnection:
                 self._status.state = ConnectionState.DISCONNECTED
                 return False
 
-            try:
-                self._logConnectionEvent(
-                    EVENT_TYPE_CONNECT_ATTEMPT,
-                    retryCount=attempt
-                )
+            attemptFailed = False
+            with self._ioLock:
+                # US-441 epoch fence, re-checked each attempt: because the lock
+                # is released across backoff, a newer connection may have won in
+                # the meantime -- a superseded (orphaned) daemon must fence here
+                # and NOT re-open the port a newer owner now holds.
+                if callerGeneration is not None and callerGeneration != self._generation:
+                    logger.warning(
+                        "connect() fenced -- caller generation %d superseded by "
+                        "current %d; a newer connection owns the port, not "
+                        "re-opening (US-441 epoch fence)",
+                        callerGeneration,
+                        self._generation,
+                    )
+                    return self._isConnected()
 
-                # Resolve MAC -> /dev/rfcommN if needed. When the caller
-                # passed a literal device path (or left config empty) we
-                # pass it through unchanged for backwards compatibility.
-                serialPort = self._resolvePort()
-
-                # Create OBD connection
-                if self._obdFactory is not None:
-                    self.obd = self._obdFactory(serialPort, self.connectionTimeout)
-                else:
-                    self.obd = self._createObdConnection(serialPort)
-
-                # Check if connection was successful
-                if self._isConnected():
-                    self._status.state = ConnectionState.CONNECTED
-                    self._status.connected = True
-                    self._status.lastConnectTime = datetime.now()
-                    self._status.totalConnections += 1
-                    self._status.retryCount = attempt
-
-                    # US-441 epoch fence: a new live connection = a new
-                    # generation.  Runs under the held _ioLock (connect() wrapper),
-                    # so the bump is atomic w.r.t. activeGeneration()/query().
-                    self._generation += 1
-
-                    # US-199: one-shot supported-PID probe so the realtime
-                    # logger can silent-skip unsupported PIDs (0x42/0x0B/0x15
-                    # candidates on 2G). Best-effort — probe failure never
-                    # fails the connection itself.
-                    self._runSupportedPidProbe()
-
+                try:
                     self._logConnectionEvent(
-                        EVENT_TYPE_CONNECT_SUCCESS,
-                        success=True,
+                        EVENT_TYPE_CONNECT_ATTEMPT,
                         retryCount=attempt
                     )
 
-                    logger.info(f"Connected to OBD-II dongle | mac={self.macAddress} | attempts={attempt + 1}")
-                    return True
-                else:
-                    # Connection object created but not connected
-                    raise ObdConnectionError("OBD connection not active after creation")
+                    # Resolve MAC -> /dev/rfcommN if needed. When the caller
+                    # passed a literal device path (or left config empty) we
+                    # pass it through unchanged for backwards compatibility.
+                    serialPort = self._resolvePort()
 
-            except Exception as e:
-                self._status.lastError = str(e)
-                self._status.lastErrorTime = datetime.now()
-                self._status.totalErrors += 1
-
-                logger.warning(
-                    f"Connection attempt {attempt + 1}/{self.maxRetries + 1} failed | "
-                    f"mac={self.macAddress} | error={e}"
-                )
-
-                # Check if we should retry
-                if attempt < self.maxRetries:
-                    # Get delay for this attempt (use 0 if empty, else last delay if index out of range)
-                    if not self.retryDelays:
-                        delay = 0
+                    # Create OBD connection
+                    if self._obdFactory is not None:
+                        self.obd = self._obdFactory(serialPort, self.connectionTimeout)
                     else:
-                        delayIndex = min(attempt, len(self.retryDelays) - 1)
-                        delay = self.retryDelays[delayIndex]
+                        self.obd = self._createObdConnection(serialPort)
 
-                    logger.info(f"Retrying in {delay}s...")
-                    # US-232 / TD-035: use event.wait() when a shutdown event
-                    # is plumbed in so a signal handler set() wakes us mid-
-                    # backoff. Returns True when the event fired; return
-                    # False to abort the retry loop cleanly. When no event
-                    # is plumbed in, fall back to legacy time.sleep so the
-                    # behavior is unchanged for any caller that didn't
-                    # opt into the responsiveness seam.
-                    if delay > 0:
-                        if self.shutdownEvent is not None:
-                            if self.shutdownEvent.wait(timeout=delay):
-                                logger.info(
-                                    "Connect retry loop exiting -- shutdown "
-                                    "signaled during backoff (attempt %d/%d)",
-                                    attempt + 1,
-                                    self.maxRetries + 1,
-                                )
-                                self._status.state = ConnectionState.DISCONNECTED
-                                return False
-                        else:
-                            time.sleep(delay)
-                    self._status.retryCount = attempt + 1
+                    # Check if connection was successful
+                    if self._isConnected():
+                        self._status.state = ConnectionState.CONNECTED
+                        self._status.connected = True
+                        self._status.lastConnectTime = datetime.now()
+                        self._status.totalConnections += 1
+                        self._status.retryCount = attempt
+
+                        # US-441 epoch fence: a new live connection = a new
+                        # generation.  Runs under the held _ioLock so the bump is
+                        # atomic w.r.t. activeGeneration()/query().
+                        self._generation += 1
+
+                        # US-199: one-shot supported-PID probe so the realtime
+                        # logger can silent-skip unsupported PIDs (0x42/0x0B/0x15
+                        # candidates on 2G). Best-effort — probe failure never
+                        # fails the connection itself.
+                        self._runSupportedPidProbe()
+
+                        self._logConnectionEvent(
+                            EVENT_TYPE_CONNECT_SUCCESS,
+                            success=True,
+                            retryCount=attempt
+                        )
+
+                        logger.info(f"Connected to OBD-II dongle | mac={self.macAddress} | attempts={attempt + 1}")
+                        return True
+                    else:
+                        # Connection object created but not connected
+                        raise ObdConnectionError("OBD connection not active after creation")
+
+                except Exception as e:
+                    attemptFailed = True
+                    self._status.lastError = str(e)
+                    self._status.lastErrorTime = datetime.now()
+                    self._status.totalErrors += 1
+
+                    # Fix B: close the partially-opened obd (and the serial fd it
+                    # opened on /dev/rfcommN) BEFORE the next attempt re-opens the
+                    # same port -- otherwise pyserial rejects the second open with
+                    # "device disconnected or multiple access on port?".  Runs
+                    # under the held _ioLock.
+                    self._closePartialConnection()
+
+                    logger.warning(
+                        f"Connection attempt {attempt + 1}/{self.maxRetries + 1} failed | "
+                        f"mac={self.macAddress} | error={e}"
+                    )
+
+                    if attempt >= self.maxRetries:
+                        # All retries exhausted
+                        self._status.state = ConnectionState.ERROR
+                        self._logConnectionEvent(
+                            EVENT_TYPE_CONNECT_FAILURE,
+                            success=False,
+                            errorMessage=str(e),
+                            retryCount=attempt
+                        )
+                        logger.error(
+                            f"Failed to connect after {self.maxRetries + 1} attempts | "
+                            f"mac={self.macAddress}"
+                        )
+            # --- _ioLock released here (fix A) ---
+
+            # Backoff OUTSIDE the lock so disconnect()/query() can acquire it and
+            # free the port while this (possibly orphaned) connect waits.
+            if attemptFailed and attempt < self.maxRetries:
+                # Get delay for this attempt (0 if empty, else clamp to last).
+                if not self.retryDelays:
+                    delay = 0
                 else:
-                    # All retries exhausted
-                    self._status.state = ConnectionState.ERROR
-                    self._logConnectionEvent(
-                        EVENT_TYPE_CONNECT_FAILURE,
-                        success=False,
-                        errorMessage=str(e),
-                        retryCount=attempt
-                    )
-                    logger.error(
-                        f"Failed to connect after {self.maxRetries + 1} attempts | "
-                        f"mac={self.macAddress}"
-                    )
+                    delayIndex = min(attempt, len(self.retryDelays) - 1)
+                    delay = self.retryDelays[delayIndex]
+
+                if delay > 0:
+                    logger.info(f"Retrying in {delay}s...")
+                    # US-232 / TD-035: use event.wait() when a shutdown event is
+                    # plumbed in so a signal handler set() wakes us mid-backoff;
+                    # else legacy time.sleep for callers that didn't opt in.
+                    if self.shutdownEvent is not None:
+                        if self.shutdownEvent.wait(timeout=delay):
+                            logger.info(
+                                "Connect retry loop exiting -- shutdown "
+                                "signaled during backoff (attempt %d/%d)",
+                                attempt + 1,
+                                self.maxRetries + 1,
+                            )
+                            self._status.state = ConnectionState.DISCONNECTED
+                            return False
+                    else:
+                        time.sleep(delay)
+                self._status.retryCount = attempt + 1
 
         return False
+
+    def _closePartialConnection(self) -> None:
+        """Close a partially-opened ``obd`` after a FAILED connect attempt (B).
+
+        A python-obd ``OBD()`` constructor that fails the ELM327 handshake can
+        leave the serial fd on ``/dev/rfcommN`` open; the retry loop would then
+        re-open the same port and pyserial rejects the second open with "device
+        reports readiness to read but returned no data (device disconnected or
+        multiple access on port?)".  Closing the partial handle before the next
+        attempt (and before returning on final failure) prevents that
+        self-inflicted collision -- the A-17 capture-dead-since-0703 regression.
+
+        MUST be called with ``self._ioLock`` held (it touches ``self.obd``).
+        Never raises -- cleanup must not mask the original connect error.
+        """
+        if self.obd is None:
+            return
+        try:
+            self.obd.close()
+        except Exception as e:  # noqa: BLE001 -- cleanup must never mask the real error
+            logger.warning("Partial-connection close after failed attempt failed: %s", e)
+        finally:
+            self.obd = None
 
     def _runSupportedPidProbe(self) -> None:
         """Populate :attr:`supportedPids` from python-obd's auto-probed commands.
