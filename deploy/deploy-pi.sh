@@ -674,6 +674,51 @@ step_install_polkit_service_control() {
     "
 }
 
+step_install_obdctl() {
+    # US-492 / F-122: put the `obdctl` operator CLI on the Pi's PATH. The tool
+    # itself is plain source in the synced tree (src/pi/ops/obdctl.py); what is
+    # installed here is a 3-line wrapper at /usr/local/bin/obdctl so the CIO can
+    # type `obdctl status all` from any directory without remembering a path.
+    #
+    # SYSTEM python3 on purpose, NOT ${REMOTE_VENV}: obdctl is the tool you
+    # reach for when the Pi is misbehaving, and a broken/half-installed venv is
+    # one of the things it has to survive. obdctl imports stdlib + its own unit
+    # manifest only, so system python3 is sufficient (a test pins both facts).
+    #
+    # Same idempotent sync-if-changed posture as the polkit rules: write the
+    # wrapper to a temp file, compare, install only on change.
+    echo "--- Step: Installing obdctl operator CLI (US-492, F-122) ---"
+    local targetPath="/usr/local/bin/obdctl"
+    local entryPoint="${PI_PATH}/src/pi/ops/obdctl.py"
+
+    if $DRY_RUN; then
+        echo "DRY-RUN would install wrapper -> ${targetPath} (mode 755)"
+        echo "DRY-RUN would point it at /usr/bin/python3 ${entryPoint}"
+        return 0
+    fi
+
+    remote "
+        set -e
+        TMP_WRAPPER=\$(mktemp)
+        cat > \"\$TMP_WRAPPER\" <<'OBDCTL_WRAPPER'
+#!/bin/sh
+# US-492 obdctl launcher (installed by deploy-pi.sh -- do not edit by hand).
+exec /usr/bin/python3 ${entryPoint} \"\$@\"
+OBDCTL_WRAPPER
+        if sudo test -f '${targetPath}' && sudo cmp -s \"\$TMP_WRAPPER\" '${targetPath}'; then
+            echo 'obdctl already current at ${targetPath} (no change).'
+        else
+            sudo install -m 755 \"\$TMP_WRAPPER\" '${targetPath}'
+            echo 'obdctl installed: ${targetPath}'
+        fi
+        rm -f \"\$TMP_WRAPPER\"
+        if [ ! -f '${entryPoint}' ]; then
+            echo 'WARN: ${entryPoint} missing -- obdctl will not run until the tree syncs.' >&2
+        fi
+        obdctl --help >/dev/null 2>&1 && echo 'obdctl on PATH and runnable.' || echo 'WARN: obdctl installed but not runnable -- check /usr/bin/python3.' >&2
+    "
+}
+
 step_install_nm_wifi_powersave() {
     # US-325 / I-025: install the NetworkManager drop-in that disables WiFi
     # power-save on the Pi 5.  The BCM4345/6 WiFi+BT combo chip starves WiFi
@@ -1755,6 +1800,10 @@ remote "
     fi
 "
 step_install_python_deps
+# US-492: obdctl operator CLI. Runs AFTER the tree sync (the wrapper execs the
+# synced src/pi/ops/obdctl.py) and BEFORE the unit installs, so that if a later
+# step leaves a unit in a bad state the operator already has the tool to fix it.
+step_install_obdctl
 step_install_eclipse_obd_unit
 # US-277: install drain-forensics .service + .timer alongside the main
 # eclipse-obd unit so a fresh deploy is enough to start the forensic
