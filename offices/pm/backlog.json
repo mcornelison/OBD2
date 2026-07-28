@@ -1253,11 +1253,12 @@
     {
       "id": "F-122",
       "parent": "E-OPS",
-      "status": "active",
+      "status": "complete",
       "title": "Pi operational tooling -- on-Pi service-control maintenance CLI",
       "description": "CIO-facing maintenance/troubleshooting tools run directly on the Pi. First: a service-control CLI to stop/start/restart/kill/status each OBD-project systemd unit independently or ALL of them, for maintenance + issue diagnosis. Distinct from the kiosk's unprivileged US-403 service_control.py allow-list (the CLI is the CIO's root superset tool).",
       "createdAt": "2026-07-27",
-      "updatedAt": "2026-07-27"
+      "updatedAt": "2026-07-27",
+      "currentVersion": "V0.29.18"
     }
   ],
   "stories": [
@@ -5842,9 +5843,11 @@
         "pi-units-verified-2026-07-27"
       ],
       "tasks": [],
-      "status": "sprint-ready",
+      "status": "complete",
       "createdAt": "2026-07-27",
-      "updatedAt": "2026-07-27"
+      "updatedAt": "2026-07-27",
+      "passes": true,
+      "shippedNote": "SHIPPED V0.29.18: obdctl on-Pi service-control CLI + src/pi/ops/unit_manifest.py SSOT (kiosk allow-list now derives from it). Powerwatch safe-shutdown guard + kill-intent confirms landed."
     }
   ]
 }
