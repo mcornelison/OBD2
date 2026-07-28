@@ -1760,3 +1760,67 @@ Task: Polish P-3: DTC detail overlay hierarchy -- directive-first + carded secti
   overflows. Size containers with `min-height`, and pin it to the same token
   the target uses.
 ---
+
+## 2026-07-27 - US-492 (Rex / Session 56)
+Task: On-Pi service-control CLI -- obdctl (stop/start/restart/kill/status each
+OBD service or ALL)
+
+### What was implemented:
+- `obdctl [status|start|stop|restart|kill] [<unit>|all]`, installed by
+  deploy-pi.sh to /usr/local/bin/obdctl. Bare invocation = `status all`
+  (never a destructive default). --help, --dry-run, --yes/--force.
+- **THE SHAPING DECISION: Python, not bash.** AC-10 permits either, but AC-2
+  demands ONE unit list -- and the only way to have literally one is for both
+  consumers to IMPORT it. A bash tool would have had to parse a manifest or
+  mirror it: exactly the second list the AC forbids.
+- `src/pi/ops/unit_manifest.py` is that SSOT (names, aliases, order, policy).
+  `service_control.SERVICE_ALLOWLIST` (US-403) is now DERIVED from it.
+- The kiosk list had to stay NARROW (4 units, mirrored by the 51- polkit rule)
+  while the manifest holds 8, so each entry carries `kioskVerbs` DEFAULTING TO
+  EMPTY. Narrowness became a property of the data model rather than of anyone's
+  discipline: adding a unit to the manifest cannot widen the kiosk's reach.
+- Safety: powerwatch stop/kill (direct or via `all`) warns loudly + confirms;
+  restart/status unrestricted; `kill` is SIGKILL, always confirms, and is never
+  reached from a failed `stop`. All confirms are collected BEFORE the first unit
+  is touched, so declining never strands a half-torn-down stack.
+- `all` starts in dependency order, stops in the exact reverse -- both grounded
+  in the units' own After=/Wants= lines, with STOP_ORDER = reversed(START_ORDER).
+
+### Files changed:
+- Created: `src/pi/ops/unit_manifest.py` (the SSOT), `src/pi/ops/obdctl.py`
+  (the CLI), `src/pi/ops/__init__.py`
+- Modified: `src/pi/splash/service_control.py` (allow-list now derived)
+- Modified: `deploy/deploy-pi.sh` (step_install_obdctl + wired into the run),
+  `deploy/README.md` (new obdctl section)
+- Created: `tests/pi/ops/test_unit_manifest.py`, `tests/pi/ops/test_obdctl.py`,
+  `tests/deploy/test_obdctl_install.py`, `tests/deploy/obdctl_wrapper_sim.sh`
+
+### Learnings for future iterations:
+- **Gotcha (the big one; same shape as last sprint's CSS finding)**: my first
+  derivation test was `assert SERVICE_ALLOWLIST == kioskAllowlist()` and it went
+  GREEN against the UNREFACTORED module. Equality proves the values match TODAY,
+  never that one COMES FROM the other -- a copy-paste satisfies it forever.
+  Rewrote it to PERTURB the manifest and reload the consumer, watched it go RED,
+  then refactored. **If you are testing a wiring, perturb the source. If you
+  test the value, you are testing a coincidence.**
+- **Gotcha**: RUN the tool. Every unit test passed and still missed this --
+  invoking obdctl on a host with no systemctl made every state read `unknown`,
+  and the guard banner shouted "SAFE-SHUTDOWN GUARD IS DOWN". `unknown` means
+  the READ failed, not that the guard is down. An operator who chases a phantom
+  outage once stops believing the banner the time it is real. Distinguish
+  "couldn't read it" from "it's off" in every honest instrument.
+- **Pattern discovered**: to share a list between a privileged and an
+  unprivileged consumer, share the NAMES and split the POLICY into a per-entry
+  field that DEFAULTS TO NOTHING. Then the dangerous direction (widening) needs
+  a deliberate edit, and the safe direction (adding a unit) is free.
+- **Pattern discovered**: a drift guard must run in BOTH directions -- "every
+  unit I claim exists is installed" AND "every unit I claim is absent isn't".
+  A one-way check lets the data rot on the side nobody asserts.
+- **Gotcha**: a deploy step that writes a file via a heredoc nested inside a
+  double-quoted string sent over SSH cannot be verified by grepping the step
+  body; a mis-escaped `$@` only surfaces on the Pi as `command not found`.
+  Execute the real step off-Pi with `remote` and `sudo` stubbed
+  (`tests/deploy/obdctl_wrapper_sim.sh`), then run what it produced.
+- **Gotcha**: point maintenance tooling at SYSTEM python3, never the app venv.
+  The venv is one of the things the operator is using the tool to fix.
+---
