@@ -147,6 +147,45 @@ the plan without touching the Pi. The capture probe
 production `data/obd.db`. Suite coverage: `pytest tests/deploy/test_verify_pre_drive.py`
 and `pytest tests/pi/obdii/test_pre_drive_gate.py`.
 
+## On-Pi service control — `obdctl` (US-492 / F-122)
+
+**One command, run ON the Pi, to service any OBD unit or all of them** — instead
+of hand-typing `systemctl` eight times and remembering the unit list. Installed
+to `/usr/local/bin/obdctl` by `deploy-pi.sh` (`step_install_obdctl`), so it is
+there after any deploy.
+
+```bash
+obdctl                          # = status all (a bare call is NEVER destructive)
+obdctl status all               # live state of all 8 units
+obdctl restart obd              # aliases: obd powerwatch states boot-state
+obdctl stop all                 #          splash grace dashboard rfcomm
+obdctl kill dashboard           # SIGKILL a STUCK unit (confirms first)
+obdctl start powerwatch         # bring the safe-shutdown guard back
+obdctl --dry-run stop all       # print the plan, execute nothing
+obdctl --help
+```
+
+`all` starts in dependency order and stops in **reverse**-dependency order
+(kiosk/splash → state server → core), so nothing is orphaned or raced.
+
+**Safety.** `eclipse-powerwatch` is the safe-shutdown guard (D-7/F-7): with it
+stopped the Pi has **no graceful shutdown on power loss**. A `stop`/`kill` of it —
+directly or via `all` — warns loudly and asks first (`--yes`/`--force` to script
+it); `restart` and `status` are unrestricted. Declining during `stop all` stops
+everything *except* the guard. `kill` is SIGKILL and always confirms; it is never
+an automatic fallback for a failed `stop`. Any run that finds the guard down
+prints the recovery command.
+
+**Exit codes:** `0` all good, `1` usage error, `2` an action failed, was declined,
+or a unit named by hand is not installed. States are always read back from
+`systemctl`, never assumed; an unreadable state reports `unknown`, not a guess.
+
+The unit list, aliases and ordering come from `src/pi/ops/unit_manifest.py` — the
+SSOT shared with the US-403 kiosk allow-list, so the two can never disagree about
+what a unit is called. `obdctl` runs on **system** `python3` (not the app venv)
+and imports nothing from the application, so it still works when the venv or the
+config is broken. Suite coverage: `pytest tests/pi/ops/ tests/deploy/test_obdctl_install.py`.
+
 ## Pi Tier — systemd service (eclipse-obd.service)
 
 ### Prerequisites

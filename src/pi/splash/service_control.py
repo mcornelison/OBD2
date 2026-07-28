@@ -38,6 +38,8 @@ import subprocess
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 
+from pi.ops import unit_manifest
+
 # Seconds before a `systemctl` action is abandoned. A hung systemctl must not
 # wedge the state-server request thread; on timeout the action reports an honest
 # failure (never a fabricated success).
@@ -52,13 +54,15 @@ SYSTEMCTL_TIMEOUT_S = 15
 # Any other unit, or a verb outside a unit's set, is denied. Mirrored by the
 # 51-eclipse-service-control polkit rule (deploy/polkit-rules/) which is the
 # ultimate authorization backstop.
+#
+# US-492: the unit NAMES now come from pi.ops.unit_manifest (the SSOT) so the
+# operator CLI and this kiosk path can never disagree about what a unit is
+# called. The POLICY does not: `kioskVerbs` is per-unit and empty by default, so
+# deriving from the manifest keeps this list exactly as narrow as US-403 shipped
+# it -- the manifest's other units (splash, states-http, boot-state) stay
+# UNREACHABLE from the kiosk. Still a code-fixed constant, never config.
 # ---------------------------------------------------------------------------
-SERVICE_ALLOWLIST: Mapping[str, frozenset[str]] = {
-    "eclipse-obd.service": frozenset({"start", "stop", "restart"}),
-    "eclipse-sync.service": frozenset({"start", "stop", "restart"}),
-    "eclipse-powerwatch.service": frozenset({"restart"}),
-    "eclipse-dashboard.service": frozenset({"stop", "restart"}),
-}
+SERVICE_ALLOWLIST: Mapping[str, frozenset[str]] = unit_manifest.kioskAllowlist()
 
 
 @dataclass(frozen=True)
