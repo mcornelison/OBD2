@@ -1209,7 +1209,7 @@
       "status": "active",
       "createdAt": "2026-07-03",
       "currentVersion": "V0.29.15",
-      "updatedAt": "2026-07-22",
+      "updatedAt": "2026-07-28",
       "reopenNote": "A-17 corrected RCA (2026-07-17): the V0.29.8 F-117 fix left KOEO DTC reads on the raw unlocked path -> connect-edge race killed capture. Fix live (4a17bc1); US-474 hardens it into a typed contract + non-mocked regression."
     },
     {
@@ -5848,6 +5848,50 @@
       "updatedAt": "2026-07-27",
       "passes": true,
       "shippedNote": "SHIPPED V0.29.18: obdctl on-Pi service-control CLI + src/pi/ops/unit_manifest.py SSOT (kiosk allow-list now derives from it). Powerwatch safe-shutdown guard + kill-intent confirms landed."
+    },
+    {
+      "id": "US-493",
+      "parent": "F-117",
+      "type": "issue",
+      "size": "M",
+      "status": "sprint-ready",
+      "title": "P0: fix the OBD connect-path regression -- restore live capture (BL-025)",
+      "goal": "As the capture pipeline, I want the service to actually pull ECU data again (dead since 2026-07-03, 0 rows/25 days -- BL-025). Per Spool RCA the regression is in obd_connection.py connect path from US-441 (_ioLock/epoch-fence) + US-432 (connect-time supported-PID probe). PRIME SUSPECT: the US-432 probe runs on key-off reconnects and poisons python-obd supported_commands cache (its own docstring warns this) -> engine-on reads return nothing.",
+      "definitionOfDone": [
+        "BUILD-BLOCKED until Atlas bisect names the exact culprit (US-441 epoch-fence vs US-432 key-off PID-probe cache-poison vs forced portstr=/dev/rfcommN vs the working obd.OBD(fast=False) auto-detect) -- do not code before the bisect",
+        "fix the named culprit so the service connects AND pulls live PIDs (leading hypothesis: do not run / do not let the supported-PID probe poison the cache on a key-off connect; re-probe or clear the cache when the ECU actually answers; and/or align the connect recipe to the proven-working auto-detect)",
+        "preserve the legitimate intent of US-441 (single-serialized port access, no A-17 race) + US-432 (BL-016 RPM-mask fix) while removing the capture regression -- do not reopen the A-17 concurrent-read race",
+        "a reproducer/test that fails on the current connect path and passes on the fix (bench-mockable where possible)",
+        "specs/architecture.md OBD-connection section updated in-sprint (Rule-10)",
+        "Typecheck + pi tests green"
+      ],
+      "conditionalOutcomes": [
+        "shape pending Atlas bisect; if the fix is architectural (connect-recipe redesign), route back to Atlas before coding",
+        "FINAL close gate is IRL, not bench: Spool re-runs probe_obd_capabilities.sh (engine-on) + confirms a clean captured drive (realtime_data grows) -- passes:true on the bench does NOT close BL-025"
+      ],
+      "validationCriteria": [
+        {
+          "action": "run the reproducer against current obd_connection.py",
+          "outcome": "RED -- reproduces connect-succeeds-but-no-data"
+        },
+        {
+          "action": "(Spool, engine-on) service runs a drive",
+          "outcome": "realtime_data grows + a drive_summary row -- capture restored, BL-025 closeable"
+        }
+      ],
+      "deps": [],
+      "sourceRefs": [
+        "BL-025",
+        "spool-rca-0727",
+        "US-441",
+        "US-432",
+        "F-117",
+        "A-17",
+        "BL-016"
+      ],
+      "tasks": [],
+      "createdAt": "2026-07-28",
+      "updatedAt": "2026-07-28"
     }
   ]
 }
