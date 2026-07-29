@@ -5854,7 +5854,7 @@
       "parent": "F-117",
       "type": "issue",
       "size": "M",
-      "status": "sprint-ready",
+      "status": "complete",
       "title": "P0: fix the OBD connect-path regression -- restore live capture (BL-025)",
       "goal": "As the capture pipeline, I want the service to actually pull ECU data again (dead since 2026-07-03, 0 rows/25 days -- BL-025). Per Spool RCA the regression is in obd_connection.py connect path from US-441 (_ioLock/epoch-fence) + US-432 (connect-time supported-PID probe). PRIME SUSPECT: the US-432 probe runs on key-off reconnects and poisons python-obd supported_commands cache (its own docstring warns this) -> engine-on reads return nothing.",
       "definitionOfDone": [
@@ -5891,7 +5891,9 @@
       ],
       "tasks": [],
       "createdAt": "2026-07-28",
-      "updatedAt": "2026-07-28"
+      "updatedAt": "2026-07-28",
+      "passes": true,
+      "shippedNote": "RESOLVED by Atlas P0 hotfix 78f6bc8 (out-of-sprint, CIO-directed): bisect named US-441 (not US-432); A+B fix = per-attempt _ioLock (releases across backoff, A-17 preserved) + close partial obd on every failed attempt. Unit-verified (~150 tests). Deployed V0.29.19. CLOSE GATE STILL OPEN: BL-025 closes only on an IRL captured drive (realtime_data grows) -- Spool verifies."
     }
   ]
 }
