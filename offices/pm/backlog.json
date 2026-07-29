@@ -5123,7 +5123,8 @@
       "tasks": [],
       "status": "sprint-ready",
       "createdAt": "2026-07-19",
-      "updatedAt": "2026-07-27"
+      "updatedAt": "2026-07-29",
+      "s4Note": "S4-emitter for the V0.29.20 carousel-wiring sprint (Atlas). Per Atlas: the states/imu emitter publishes g-force + compass/heading live; ALTITUDE is typed-NA / grays 'no source' (the ICM-20948 has NO barometer -- do NOT derive/fabricate altitude here; future BMP280/GPS). Consumed by US-497 (the IMU card)."
     },
     {
       "id": "US-479",
@@ -5894,6 +5895,231 @@
       "updatedAt": "2026-07-28",
       "passes": true,
       "shippedNote": "RESOLVED by Atlas P0 hotfix 78f6bc8 (out-of-sprint, CIO-directed): bisect named US-441 (not US-432); A+B fix = per-attempt _ioLock (releases across backoff, A-17 preserved) + close partial obd on every failed attempt. Unit-verified (~150 tests). Deployed V0.29.19. CLOSE GATE STILL OPEN: BL-025 closes only on an IRL captured drive (realtime_data grows) -- Spool verifies."
+    },
+    {
+      "id": "US-494",
+      "parent": "F-103",
+      "type": "issue",
+      "size": "S",
+      "title": "S1: Splash handoff fix -- readiness = Pi-core-up, not vehicle-connected (splash reaches the dashboard)",
+      "goal": "As the Pi boot UI, I want the boot splash to reach HEALTHY_YIELD + hand off to the dashboard, so the UI is usable on the bench. Root cause (Atlas, docs/superpowers/specs/2026-07-28-pi-ui-carousel-ssot-wiring-design.md): boot_state_emitter.py assesses the eclipse-obd tier via an injected obdProbeFn, but the systemd entry point never injects one -> defaults to lambda:OBD_STARTING ('starting') forever (boot_state_emitter.py:229,301) -> healthy never true -> splash pins at 'not ready (starting)' + never hands off.",
+      "definitionOfDone": [
+        "the boot readiness bar means 'Pi core / UI up' (states_http serving, dashboard assets present) -- NOT 'vehicle connected'; the eclipse-obd/OBD tier no longer gates HEALTHY_YIELD",
+        "boot_state_emitter reaches healthy on a normal boot with NO vehicle present (bench) -> splash-boot hands off to eclipse-dashboard (A-1 OnSuccess), instead of pinning on OBD_STARTING",
+        "honest-instrument preserved: a genuinely-degraded core boot still holds the splash (don't blanket-force healthy)",
+        "DoD includes a CLEAN DEPLOY + on-Pi RENDER CHECK (not just unit-green) -- verify /opt/* refreshed + the surface renders correctly on the Pi (A-16 merged!=renders lesson)",
+        "Typecheck + pi tests green"
+      ],
+      "conditionalOutcomes": [
+        "if the obdProbeFn injection was intentional for a future vehicle-readiness signal, keep it OPTIONAL/non-gating for core readiness -- the OBD tier is informational at boot, not a handoff gate"
+      ],
+      "validationCriteria": [
+        {
+          "action": "boot the Pi on the bench (no car) + watch the splash",
+          "outcome": "splash reaches healthy + hands off to the dashboard; does NOT pin at 'not ready (starting)'"
+        },
+        {
+          "action": "on the Pi: curl states_http boot-state after boot",
+          "outcome": "reports healthy (core up), not stuck OBD_STARTING"
+        }
+      ],
+      "deps": [],
+      "sourceRefs": [
+        "F-103",
+        "atlas-carousel-ssot-wiring-2026-07-29-S1",
+        "boot_state_emitter.py:229,301",
+        "A-16"
+      ],
+      "tasks": [],
+      "status": "sprint-ready",
+      "createdAt": "2026-07-29",
+      "updatedAt": "2026-07-29"
+    },
+    {
+      "id": "US-495",
+      "parent": "F-111",
+      "type": "issue",
+      "size": "S",
+      "title": "S2: Overlay [hidden] CSS guard + /opt asset force-refresh (kill the dead overlapping DTC takeover)",
+      "goal": "As the dashboard, I want only the active overlay to paint, so the DTC takeover isn't a broken unclickable pile of half-boxes. Root cause (Atlas): 5 full-screen overlays set display:flex via ID selectors with NO [hidden]{display:none} guard (dashboard.css:331,428,482,565,719) -> the hidden attribute is inert -> all overlays paint at once, unclickable. Iris's JS is correct; the CSS defeats it. Plus deploy drift ('Eclipse ODB2' vs repo 'ECLIPSE OBD-II' = stale /opt/*).",
+      "definitionOfDone": [
+        "add the [hidden]{display:none !important} guard (or per-overlay [hidden] rules) so the hidden attribute Iris's JS sets actually hides each overlay -- only the intended overlay renders; the others are gone, not stacked",
+        "the DTC takeover + detail + clear-confirm overlays are individually dismissable/clickable (no overlap); with no DTC, nothing paints",
+        "deploy force-refreshes /opt/splash + /opt/dashboard (stale-asset guard) so the Pi renders the repo assets (the 'ODB2' typo -> 'OBD-II' proves the refresh)",
+        "DoD includes a CLEAN DEPLOY + on-Pi RENDER CHECK (not just unit-green) -- verify /opt/* refreshed + the surface renders correctly on the Pi (A-16 merged!=renders lesson)",
+        "Typecheck + UI tests green"
+      ],
+      "conditionalOutcomes": [],
+      "validationCriteria": [
+        {
+          "action": "on the Pi with no DTC, load the dashboard",
+          "outcome": "no overlay paints; carousel is clean + clickable"
+        },
+        {
+          "action": "trigger one overlay",
+          "outcome": "only that overlay shows, dismissable; others hidden"
+        },
+        {
+          "action": "check the top-bar wordmark after deploy",
+          "outcome": "renders 'ECLIPSE OBD-II' (assets refreshed, not the stale 'Eclipse ODB2')"
+        }
+      ],
+      "deps": [],
+      "sourceRefs": [
+        "F-111",
+        "atlas-carousel-ssot-wiring-2026-07-29-S2",
+        "dashboard.css:331,428,482,565,719",
+        "A-16"
+      ],
+      "tasks": [],
+      "status": "sprint-ready",
+      "createdAt": "2026-07-29",
+      "updatedAt": "2026-07-29"
+    },
+    {
+      "id": "US-496",
+      "parent": "F-121",
+      "type": "issue",
+      "size": "M",
+      "title": "S3: Pi-local cards live + honest-gray -- Pi Health / Battery / Light always present; DTC grayed no-data",
+      "goal": "As the parked dashboard, I want the Pi-local cards to render their real live state from the states/ SSOT with honest-availability (gray, never fake), so the carousel is actually informative on the bench. Per Atlas's CIO-locked card model: always-present + gray-if-offline = Pi Health (WiFi+BT/OBD+power+uptime = system-status), Battery, Light; DTC shows gray 'no data' (NOT a red alert) with no codes; Live Engine Data stays HIDDEN until a vehicle connects.",
+      "definitionOfDone": [
+        "Pi Health / Battery / Light cards render live from their states/ files (system-status, battery-health, light); each sub-field with no producer grays INDIVIDUALLY (honest-availability per specs/ssot-design-pattern.md), never a fabricated value",
+        "DTC card renders a calm gray 'no data / no stored codes' when the dtc state is empty/absent -- NEVER a red alert at idle (ties to the F-6 no-phantom rule)",
+        "Live Engine Data card is HIDDEN until source.obd.available (vehicle connected) -- not shown gray, hidden",
+        "cards use specs/UI/tokens.css SSOT",
+        "DoD includes a CLEAN DEPLOY + on-Pi RENDER CHECK (not just unit-green) -- verify /opt/* refreshed + the surface renders correctly on the Pi (A-16 merged!=renders lesson)",
+        "UI/pi tests green"
+      ],
+      "conditionalOutcomes": [
+        "LTFT card: its emitter is orphaned/dead -- leave it out of the always-present set this slice (Atlas: revisit Slice 2 w/ Spool); do not fake it"
+      ],
+      "validationCriteria": [
+        {
+          "action": "on the Pi (bench, no car), swipe the carousel",
+          "outcome": "Pi Health/Battery/Light show real live values; missing sub-fields gray individually; DTC = gray no-data; Live Engine Data hidden"
+        }
+      ],
+      "deps": [],
+      "sourceRefs": [
+        "F-121",
+        "atlas-carousel-ssot-wiring-2026-07-29-S3",
+        "ssot-design-pattern.md",
+        "A-16"
+      ],
+      "tasks": [],
+      "status": "sprint-ready",
+      "createdAt": "2026-07-29",
+      "updatedAt": "2026-07-29"
+    },
+    {
+      "id": "US-497",
+      "parent": "F-113",
+      "type": "normal",
+      "size": "M",
+      "title": "S4-card: IMU live-instrument card -- g-force + compass live; altitude typed-NA (consumes states/imu from US-478)",
+      "goal": "As the driving/live home slot, I want the IMU live-instrument card (Iris's CIO-locked design) rendering g-force + compass live from the genuine ICM-20948 via states/imu, so there's a real live-motion instrument. Altitude grays 'no source' (the IMU has no barometer -- future BMP280/GPS; does not block). The states/imu emitter is US-478 (S4-emitter, same sprint).",
+      "definitionOfDone": [
+        "IMU live card renders g-force (lat/lon dot + rings + trail) + compass/heading live from states/imu (Iris live-instrument spec 2026-07-21); pure consumer, no sensor fusion in the display",
+        "altitude field is typed-NA / grays 'no source' (IMU has no barometer) -- honest, not fabricated or zeroed; does not block the card",
+        "absent/stale states/imu -> falls back to the idle card (never a frozen/zeroed live instrument); g never a takeover (Spool)",
+        "coordinate final visual details with Iris (S4); uses tokens.css SSOT",
+        "DoD includes a CLEAN DEPLOY + on-Pi RENDER CHECK (not just unit-green) -- verify /opt/* refreshed + the surface renders correctly on the Pi (A-16 merged!=renders lesson) -- NOTE validation needs the genuine ICM-20948 wired @0x69 (AI-005, CIO)",
+        "UI/pi tests green (bench-mockable states/imu fixture where hardware absent)"
+      ],
+      "conditionalOutcomes": [
+        "HARDWARE-GATED for live validation on the CIO wiring the IMU (AI-005); the card render + fixture tests build now, the live-on-Pi check waits for 0x69"
+      ],
+      "validationCriteria": [
+        {
+          "action": "inject a states/imu fixture (or wired IMU) + view the home card while 'driving'",
+          "outcome": "g-force + compass track live; altitude shows NA/no-source; parked/absent -> idle card"
+        }
+      ],
+      "deps": [
+        "US-478"
+      ],
+      "sourceRefs": [
+        "F-113",
+        "atlas-carousel-ssot-wiring-2026-07-29-S4",
+        "iris-live-instrument-card-2026-07-21",
+        "AI-005"
+      ],
+      "tasks": [],
+      "status": "sprint-ready",
+      "createdAt": "2026-07-29",
+      "updatedAt": "2026-07-29"
+    },
+    {
+      "id": "US-498",
+      "parent": "F-103",
+      "type": "normal",
+      "size": "S",
+      "title": "S5: Shutdown/closeout splash -- wire splash-grace -> shutdown.html renders honestly on a real shutdown (NEW, CIO-requested)",
+      "goal": "As the Pi shutdown UX, I want the closeout splash to render honestly on a real shutdown, so the operator sees a clean shutdown sequence (not a blank/broken screen). Per Atlas: verify/wire splash-grace.service.x11 -> shutdown.html (fed by shutdown_state_emitter) with the same handoff + asset-refresh discipline as the boot splash. CIO will give visual feedback on first render -- exact copy is refine-on-first-render.",
+      "definitionOfDone": [
+        "splash-grace.service.x11 renders shutdown.html (fed by shutdown_state_emitter) on a real shutdown/grace event -- loads the correct SVG/HTML (guard the Iris-flagged reverse-animation fill-mode blank-6s trap)",
+        "same discipline as boot: honest handoff + /opt asset refresh; no blank screen during the shutdown window",
+        "DoD includes a CLEAN DEPLOY + on-Pi RENDER CHECK (not just unit-green) -- verify /opt/* refreshed + the surface renders correctly on the Pi (A-16 merged!=renders lesson) -- render check = trigger a real shutdown/grace + confirm the closeout splash shows",
+        "copy is refine-on-first-render (CIO feedback); Typecheck + tests green"
+      ],
+      "conditionalOutcomes": [
+        "if shutdown.html loads the wrong SVG (D-1 class) or the reverse-animation fill-mode blanks it (Iris's known trap), fix as part of this story"
+      ],
+      "validationCriteria": [
+        {
+          "action": "trigger a real shutdown/grace on the Pi",
+          "outcome": "the closeout splash renders honestly (no blank/broken screen) through the shutdown window"
+        }
+      ],
+      "deps": [],
+      "sourceRefs": [
+        "F-103",
+        "atlas-carousel-ssot-wiring-2026-07-29-S5",
+        "shutdown_state_emitter",
+        "iris-reverse-animation-fillmode-trap",
+        "A-16"
+      ],
+      "tasks": [],
+      "status": "sprint-ready",
+      "createdAt": "2026-07-29",
+      "updatedAt": "2026-07-29"
+    },
+    {
+      "id": "US-499",
+      "parent": "F-121",
+      "type": "issue",
+      "size": "S",
+      "title": "S6: UI-render regression test -- catch the CSS-cascade layout class the current jsdom/palette tests miss",
+      "goal": "As the UI test suite, I want an automated render-regression test that would have caught the S1/S2 defects (splash-pinned, overlapping unhidden overlays), so this class of 'unit-green but broken-on-hardware' bug is a permanent backstop. The current jsdom/palette tests miss CSS-cascade layout defects (Atlas: the S6 automated backstop for the A-16 lesson).",
+      "definitionOfDone": [
+        "a render/layout regression test that asserts: [hidden] overlays are actually not-displayed (would have caught S2); only one overlay renders at a time; the splash reaches healthy/handoff on a core-up boot (would have caught S1) -- exercising the real CSS cascade, not just jsdom class presence",
+        "the test is RED against the pre-S1/S2 code and GREEN after -- proving it guards the regression",
+        "runs in the pi/UI suite; documented as the render-regression backstop",
+        "Typecheck + tests green"
+      ],
+      "conditionalOutcomes": [
+        "if a true CSS-cascade render can't be exercised headless, use the closest faithful harness (e.g. a real-browser/kiosk smoke) + document the fidelity limit -- do not ship a test that passes on the broken layout"
+      ],
+      "validationCriteria": [
+        {
+          "action": "run the render-regression test against pre-fix vs post-fix",
+          "outcome": "RED pre-fix (catches overlapping overlays / pinned splash), GREEN post-fix"
+        }
+      ],
+      "deps": [
+        "US-494",
+        "US-495"
+      ],
+      "sourceRefs": [
+        "F-121",
+        "atlas-carousel-ssot-wiring-2026-07-29-S6",
+        "A-16"
+      ],
+      "tasks": [],
+      "status": "sprint-ready",
+      "createdAt": "2026-07-29",
+      "updatedAt": "2026-07-29"
     }
   ]
 }
