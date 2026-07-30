@@ -3001,7 +3001,7 @@ Battery Health card bodies + emitters are US-400 / US-401; the DTC card (Card 5)
 
 | Piece | Source | Role |
 |------|--------|------|
-| Dashboard kit | `specs/UI/dist/dashboard-pi/` | `dashboard.html` (top bar + 2 card slots + page dots), `dashboard.css` (≥40px tap targets), `carousel.js` (swipe-nav + dots + honest-instrument availability poll). Served at `/dashboard.html`. |
+| Dashboard kit | `specs/UI/dist/dashboard-pi/` | `dashboard.html` (top bar + card slots + page dots -- see the card model below), `dashboard.css` (≥40px tap targets), `carousel.js` (swipe-nav + dots + honest-instrument availability poll). Served at `/dashboard.html`. |
 | `eclipse-dashboard.service.{wayland,x11}` | `specs/UI/dist/dashboard-pi/` | [A-5] Chromium **touch** kiosk (`--touch-events=enabled`). Loads `http://127.0.0.1:9899/dashboard.html` same-origin (token injected). **No `[Install]`** -- started by the splash hand-off, not enabled. |
 
 **A-1 splash → dashboard hand-off.** `splash-boot.service.{wayland,x11}` carries
@@ -3052,6 +3052,72 @@ that needs to be present-but-invisible must therefore **not** use `hidden` (use
 `tests/ui/test_dashboard_overlay_hidden_guard.py`, which resolves the real
 cascade (importance → specificity → source order) for every element the shipped
 markup ships `hidden`, so a future overlay is covered the day it is added.
+
+##### Card model: always-present vs vehicle-gated (US-496, F-121)
+
+Per the CIO-locked card model (Atlas,
+`docs/superpowers/specs/2026-07-28-pi-ui-carousel-ssot-wiring-design.md` §4) the
+carousel has **two tiers**, and the difference is *availability semantics*, not
+styling:
+
+| Card | `data-state` | Tier | Absence renders |
+|---|---|---|---|
+| Standby / idle home | *(none -- `data-idle-home`)* | always-present | composed from the cards below |
+| System Status (Pi Health) | `system-status` | always-present | `unavailable` |
+| Battery Health | `battery-health` | always-present | `unavailable` |
+| **Light** | `light` | always-present | **"no data -- light feed absent"** |
+| Alerts (DTC) | `dtc` | always-present | **"no data -- codes not read"** |
+| LTFT Trend | `ltft-trend` | **vehicle-gated** | *not rendered at all* |
+
+**Gray vs hidden is a real distinction.** Gray says *"this instrument is
+broken/unreadable"*; hidden says *"this instrument does not apply right now."* On
+a bench with no car, a grayed fuel-trim card is a false fault report. A card
+marked **`data-vehicle-gated`** is therefore revealed only while
+`vehicleConnected(sysData)` holds -- an **explicit** `source.obd.available ===
+true`. That is deliberately stricter than `sourceUnavailable()`, which treats an
+absent `source` block as available for pre-US-429 backward compatibility: that
+default is right for "should I gray this tile?" and wrong for "should I reveal a
+vehicle card?" An unreadable `system-status` leaves *"is a car plugged in?"*
+genuinely **unknown**, and an unknown must never render as a state (the recurring
+US-492/US-494 finding), so the gate **fails closed to hidden** and the card ships
+`hidden` in the markup for the pre-first-poll window. The Slice-2 Live Engine Data
+card carries the same attribute; gating LTFT is also what takes it out of the
+always-present set while its emitter is orphaned, without faking or deleting it.
+
+**Consequence -- the carousel geometry counts VISIBLE cards.** `#track` is a flex
+row of full-width cards, so a card the `[hidden]` guard removes takes **no slot**.
+`visualPosition` / `nextVisibleIndex` / `nearestVisibleIndex` (pure, node-tested)
+own that math: the `translateX` step count is the visible position, a swipe steps
+*over* a hidden card, a hidden card owns no page dot, and if the card the operator
+is on disappears mid-session the view lands on the nearest visible one (preferring
+the earlier -- the operator's "back", never a jump past unseen cards). This makes
+`.card`/`.dot` keeping **plain** (non-`!important`) `display` declarations
+load-bearing: adding `!important` to either would tie importance against the
+`[hidden]` guard and restore a gated card to the track. Pinned in
+`tests/ui/test_carousel_pi_local_cards.py`.
+
+**Absent-state message per card.** The shell used to write the bare word
+`unavailable` on every card. Two cards get a named `noDataView` because the wrong
+reading of *their* silence is the dangerous one: a missing `dtc` state means the
+codes were **never read** and must never render as "No stored codes" (a fabricated
+clean read) or as an alert -- the F-6 no-phantom rule at card level; a missing
+`light` state means the **feed stopped**, not "dark" (a fabricated 0 lux). Cards
+not listed keep the one-word fallback.
+
+**Light card (US-496).** A pure consumer of the same `states/light` file
+(`{lux, ts}`) that drives the auto-dim (§ Display auto-dim consumer), so the
+reading on the card can never disagree with the screen it explains -- one clock
+per poll tick resolves both. Two tiles through the shared tokenized `.tile`
+component: **AMBIENT** (the reading + its read age) and **CONDITION** (`DARK` /
+`DIM` / `DAYLIGHT`, a *name* for the existing grounded `luxMin`/`luxFull`
+thresholds -- not a third set of numbers that could drift from the curve). A null
+`lux` (the bridge's honest saturated/unreadable marker), an undated payload, or a
+reading older than `luxStaleSec` grays **both fields individually** with the
+*reason* as the tile detail, so the operator learns which fault it is; the card
+itself stays present. Screen brightness is deliberately **not** shown: a live STOP
+alarm holds the surface at full regardless of lux (US-484-b ch.4), so a
+lux-derived percent would contradict the actual screen exactly when it matters
+most.
 
 **Deploy.** `deploy-pi.sh step_install_dashboard_assets` installs the served kit
 to `/opt/dashboard` (WARN-not-BLOCK if absent, A-9), mirroring

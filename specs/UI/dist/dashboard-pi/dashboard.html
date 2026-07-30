@@ -89,6 +89,17 @@
         <h2 class="card-title">Battery Health</h2>
         <div class="card-body">unavailable</div>
       </section>
+      <!-- US-496 Light card (S3, F-121): the always-present ambient-light card.
+           A PURE CONSUMER of the states/light file US-483-a writes ({lux, ts}) --
+           the SAME one truth that drives the auto-dim, so the reading on the card
+           can never disagree with the screen it explains. A null lux (the
+           bridge's honest saturated/unreadable marker) or a reading older than
+           luxStaleSec grays the AMBIENT + CONDITION fields INDIVIDUALLY; only an
+           absent state file grays the whole card. -->
+      <section class="card" data-state="light" aria-label="Light">
+        <h2 class="card-title">Light</h2>
+        <div class="card-body">unavailable</div>
+      </section>
       <!-- US-406 Alerts card (Card 5, F-111): hero (worst code + directive) +
            a tappable list sorted worst-first (na last). JS fills the body from
            the polled `dtc` state; a missing/malformed file -> `unavailable`. -->
@@ -100,8 +111,21 @@
            trend (healthy migration toward 0 vs drift beyond +/-10%). JS fills
            the body from the polled `ltft-trend` state; a missing/malformed file
            -> `unavailable`, and an insufficient window -> a non-green
-           insufficient-data headline (never a fabricated healthy verdict). -->
-      <section class="card" data-state="ltft-trend" aria-label="LTFT Trend">
+           insufficient-data headline (never a fabricated healthy verdict).
+
+           US-496 (S3) `data-vehicle-gated`: fuel trim is a VEHICLE fact, so this
+           card is HIDDEN until source.obd.available is true -- not grayed. Gray
+           says "this instrument is broken"; hidden says "it does not apply right
+           now", which is the truth on a bench with no car. It ships `hidden` so
+           the pre-first-poll window -- when nothing has been read and "is a car
+           connected?" is genuinely unknown -- shows no vehicle card (same
+           fail-closed shape as the US-490 top-bar menu button). This is also
+           what takes the card out of the always-present set while its emitter is
+           orphaned, WITHOUT faking or deleting it (Atlas: Slice 2 revisits the
+           disposition with Spool). The Slice-2 Live Engine Data card carries the
+           same attribute. -->
+      <section class="card" data-state="ltft-trend" aria-label="LTFT Trend"
+               data-vehicle-gated hidden>
         <h2 class="card-title">LTFT Trend</h2>
         <div class="card-body">unavailable</div>
       </section>

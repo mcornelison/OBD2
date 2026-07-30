@@ -76,6 +76,89 @@
     return "available";
   }
 
+  // US-496 (S3) -- the honest whole-card message when a state file is ABSENT or
+  // malformed. The shell used to write the bare word "unavailable" on every
+  // card. Two cards need to say WHICH instrument is silent, because the wrong
+  // reading of their silence is the dangerous one:
+  //   dtc   -- silence means "the codes were never read". It must NEVER read as
+  //            "No stored codes" (a fabricated clean read) and never as an
+  //            alert: the F-6 no-phantom rule at card level.
+  //   light -- silence means "the feed stopped", not "dark" (a fabricated 0 lux).
+  // Cards not listed keep the shipped one-word fallback -- this story was not
+  // scoped to restyle the three it does not touch.
+  var NO_DATA_VIEWS = {
+    dtc: { label: "ALERTS", reason: "no data -- codes not read" },
+    light: { label: "AMBIENT", reason: "no data -- light feed absent" },
+  };
+
+  function noDataView(name) {
+    return Object.prototype.hasOwnProperty.call(NO_DATA_VIEWS, name)
+      ? NO_DATA_VIEWS[name]
+      : null;
+  }
+
+  // US-496 AC-3 -- reveal the vehicle-dependent card(s) ONLY on the positive
+  // claim `source.obd.available === true`. Deliberately STRICTER than
+  // sourceUnavailable(), which treats an absent `source` block as available for
+  // pre-US-429 backward compatibility: that default is right for "should I gray
+  // this tile?" and wrong for "should I reveal a vehicle card?". An absent or
+  // unreadable system-status leaves "is a car plugged in?" genuinely UNKNOWN,
+  // and an unknown must never be rendered as a state (US-492 / US-494) -- so
+  // this fails closed to HIDDEN. Hidden, not gray: gray says "this instrument is
+  // broken"; hidden says "this instrument does not apply right now", which is
+  // the truth on a bench with no car.
+  function vehicleConnected(sysData) {
+    return (
+      isObj(sysData) &&
+      isObj(sysData.source) &&
+      isObj(sysData.source.obd) &&
+      sysData.source.obd.available === true
+    );
+  }
+
+  // US-496 -- the visible-card geometry a gated card forces. `#track` is a flex
+  // row of full-width cards, so a card removed by the [hidden] guard (US-495)
+  // takes NO slot: the translateX step count, the page dots and the swipe must
+  // all count VISIBLE cards or hiding one slides the carousel to a blank frame.
+  // `hidden` is an array of per-card booleans read straight off the DOM
+  // (`card.hidden`), so the geometry can never disagree with what is painted.
+
+  // How many visible cards precede `index` -- i.e. its translateX step count.
+  function visualPosition(index, hidden) {
+    var pos = 0;
+    for (var i = 0; i < index; i++) {
+      if (!(hidden && hidden[i])) pos++;
+    }
+    return pos;
+  }
+
+  // The next VISIBLE index in `dir`, or `current` when there is none. Clamped at
+  // the ends (no wrap -- the shipped kiosk contract) and never lands on a hidden
+  // card, which would read as a blank frame the operator cannot swipe out of.
+  function nextVisibleIndex(current, dir, hidden) {
+    var step = dir > 0 ? 1 : dir < 0 ? -1 : 0;
+    if (step === 0) return current;
+    for (var i = current + step; i >= 0 && i < hidden.length; i += step) {
+      if (!hidden[i]) return i;
+    }
+    return current;
+  }
+
+  // Where to land when the card the operator is ON just became hidden (the
+  // vehicle unplugged mid-session): the nearest visible card, preferring the
+  // EARLIER one -- the operator's "back", never a forward jump past cards they
+  // have not seen. null when nothing is visible, so the caller holds its index
+  // rather than clamping onto a hidden card 0.
+  function nearestVisibleIndex(current, hidden) {
+    for (var d = 0; d < hidden.length; d++) {
+      var back = current - d;
+      if (back >= 0 && !hidden[back]) return back;
+      var fwd = current + d;
+      if (fwd < hidden.length && !hidden[fwd]) return fwd;
+    }
+    return null;
+  }
+
   // -------------------------------------------------------------------------
   // US-400 System Status card -- pure render logic, node-testable (S-3/I-3/
   // I-4/F-1). The card is a verbatim consumer of the `system-status` emitter
@@ -1326,12 +1409,110 @@
     return Math.min(Math.max(level, 0), 1);
   }
 
+  // -------------------------------------------------------------------------
+  // US-496 Light card (S3, F-121) -- pure, node-testable. The card is a PURE
+  // CONSUMER of the SAME states/light file ({lux, ts}) that drives the auto-dim
+  // above, so the number on the card can never disagree with the screen it
+  // explains. The sensor knows exactly one thing, so the card shows exactly two
+  // facts: the reading (with its age) and the auto-dim BAND it falls in. The
+  // band is a NAME for the existing grounded luxMin/luxFull thresholds -- NOT a
+  // third set of numbers that could drift away from the curve.
+  //
+  // Deliberately NOT shown: the resulting screen brightness. A live STOP alarm
+  // holds the surface at FULL regardless of lux (US-484-b ch.4), so a
+  // lux-derived brightness percent on this card would be a number that
+  // disagrees with the actual screen exactly when it matters most.
+  // -------------------------------------------------------------------------
+
+  // Sub-10 lux keeps one decimal: near the dark end a whole-lux round merges
+  // cabins that sit on opposite sides of the DARK boundary (luxMin 3.0).
+  function fmtLux(lux) {
+    return (lux < 10 ? lux.toFixed(1) : String(Math.round(lux))) + " lx";
+  }
+
+  function fmtAgeSec(ageSec) {
+    return (ageSec < 10 ? ageSec.toFixed(1) : String(Math.round(ageSec))) + "s";
+  }
+
+  // The payload's read age in seconds, or null when it carries no parseable ts.
+  // An UNDATED reading is the one most likely to be stale, so it can never be
+  // rendered as current.
+  function readAgeSec(data, nowMs) {
+    if (!isObj(data) || typeof data.ts !== "string") return null;
+    var t = Date.parse(data.ts);
+    if (isNaN(t)) return null;
+    return (nowMs - t) / 1000;
+  }
+
+  // The auto-dim band this reading falls in, resolved against the SAME injected
+  // config the curve uses (so an operator retuning pi.display.autoDim moves the
+  // label and the dimming together).
+  function luxBand(lux, cfg) {
+    var c = resolveAutoDimConfig(cfg);
+    if (lux <= c.luxMin) return "DARK";
+    if (lux >= c.luxFull) return "DAYLIGHT";
+    return "DIM";
+  }
+
+  function lightView(data, cfg, nowMs) {
+    if (!isObj(data)) return null; // absent -> the shell renders the no-data view
+    if (sourceUnavailable(data, "light")) {
+      return { unavailable: true, reason: sourceReason(data, "light") };
+    }
+    var c = resolveAutoDimConfig(cfg);
+    var age = readAgeSec(data, nowMs);
+    var lux = freshLux(data, c.luxStaleSec, nowMs);
+    if (lux === null) {
+      // WHY there is no usable reading IS the value of the gray tile. The order
+      // matters: "no reading arrived at all" is a different fault from "readings
+      // stopped arriving", and the operator needs to know which.
+      var reason =
+        typeof data.lux !== "number" || !isFinite(data.lux)
+          ? "no reading (saturated or unreadable)"
+          : age === null
+            ? "no read time"
+            : "stale -- last read " + fmtAgeSec(age) + " ago";
+      // Both fields gray INDIVIDUALLY (the card stays present -- always-present
+      // is the contract) and the band grays WITH the reading because it is
+      // derived from it: with no lux there is nothing to derive.
+      return {
+        unavailable: false,
+        ambient: naTile("AMBIENT", reason),
+        band: naTile("CONDITION", reason),
+      };
+    }
+    return {
+      unavailable: false,
+      ambient: {
+        label: "AMBIENT",
+        value: fmtLux(lux),
+        detail: "read " + fmtAgeSec(age) + " ago",
+        level: "ok",
+      },
+      band: {
+        label: "CONDITION",
+        value: luxBand(lux, cfg),
+        detail: "auto-dim band",
+        // `neutral`, not `ok`: an ambient band is a fact about the cabin, not a
+        // health verdict -- DARK is not a fault and DAYLIGHT is not a pass.
+        level: "neutral",
+      },
+    };
+  }
+
   var api = {
     clampIndex: clampIndex,
     nextIndex: nextIndex,
     swipeDirection: swipeDirection,
     computeStageScale: computeStageScale,
     cardAvailability: cardAvailability,
+    noDataView: noDataView,
+    vehicleConnected: vehicleConnected,
+    visualPosition: visualPosition,
+    nextVisibleIndex: nextVisibleIndex,
+    nearestVisibleIndex: nearestVisibleIndex,
+    luxBand: luxBand,
+    lightView: lightView,
     sourceUnavailable: sourceUnavailable,
     sourceReason: sourceReason,
     naTile: naTile,
@@ -1615,6 +1796,23 @@
       if (view.ladder) appendLadder(body, view.ladder);
     }
 
+    // --- US-496 Light card DOM render (browser only) ------------------------
+
+    // Two tiles through the SHARED `.tile` component, which is already bound to
+    // specs/UI/tokens.css -- the Light card introduces no palette of its own
+    // (AC-4: a bespoke local colour is exactly the drift the SSOT prevents).
+    function renderLightCard(card, view) {
+      var body = card.querySelector(".card-body");
+      if (!body || !view) return;
+      if (view.unavailable) {
+        renderNaBody(body, "AMBIENT", view.reason);
+        return;
+      }
+      body.textContent = "";
+      appendTile(body, view.ambient);
+      appendTile(body, view.band);
+    }
+
     // --- US-420 LTFT Trend DOM render (browser only) ------------------------
 
     // Render the multi-drive bar row: one bar per drive, coloured by its own
@@ -1693,20 +1891,53 @@
         dots.push(dot);
       }
 
+      // US-496: the per-card visibility flags, read straight off the DOM so the
+      // carousel geometry can never disagree with what is actually painted. A
+      // vehicle-gated card is removed from the flex row by the US-495 [hidden]
+      // guard, so it owns no slot and no page dot.
+      function hiddenFlags() {
+        var flags = [];
+        for (var h = 0; h < cards.length; h++) flags.push(!!cards[h].hidden);
+        return flags;
+      }
+
       function render() {
-        if (track) track.style.transform = "translateX(" + (-current * 100) + "%)";
+        var flags = hiddenFlags();
+        if (track) {
+          var pos = visualPosition(current, flags);
+          track.style.transform = "translateX(" + (-pos * 100) + "%)";
+        }
         for (var d = 0; d < dots.length; d++) {
+          // A hidden card owns no dot: a dot that navigates nowhere is the same
+          // dead affordance as the card behind it.
+          dots[d].hidden = flags[d];
           dots[d].classList.toggle("active", d === current);
         }
       }
 
       function goTo(idx) {
-        current = clampIndex(idx, count);
+        var target = clampIndex(idx, count);
+        // Never navigate ONTO a hidden card -- that paints a blank frame the
+        // operator cannot see their way out of.
+        if (hiddenFlags()[target]) return;
+        current = target;
         render();
       }
 
       function move(dir) {
-        current = nextIndex(current, dir, count);
+        current = nextVisibleIndex(current, dir, hiddenFlags());
+        render();
+      }
+
+      // US-496: the poll calls this after it flips a vehicle-gated card. If the
+      // card the operator was ON just vanished (the vehicle unplugged), land on
+      // the nearest visible one rather than holding a dead index.
+      function onVisibilityChange() {
+        var flags = hiddenFlags();
+        if (flags[current]) {
+          var near = nearestVisibleIndex(current, flags);
+          if (near !== null) current = near;
+        }
         render();
       }
 
@@ -1736,7 +1967,7 @@
       });
 
       render();
-      startAvailabilityPoll(cards, glyphEls, goTo);
+      startAvailabilityPoll(cards, glyphEls, goTo, onVisibilityChange);
       setupMenu();
     };
 
@@ -1947,7 +2178,7 @@
     // `unavailable` (never a crash, never green-when-broken). The shell sets the
     // availability class; the per-card renderer (US-400 system-status; US-401
     // battery-health) paints the fields on top when available.
-    function startAvailabilityPoll(cards, glyphEls, goTo) {
+    function startAvailabilityPoll(cards, glyphEls, goTo, onVisibilityChange) {
       async function fetchState(name) {
         try {
           var r = await fetch("/" + name, {
@@ -2005,11 +2236,35 @@
       var idleIndex = -1;
       var sysIndex = -1;
       var lastIdle = null;
+      // US-496: the vehicle-dependent cards, revealed only while a vehicle is
+      // actually connected (they ship `hidden`, so the pre-first-poll unknown
+      // shows no vehicle card).
+      var gatedCards = [];
       for (var ci = 0; ci < cards.length; ci++) {
         var st = cards[ci].getAttribute("data-state");
         if (st === "dtc") dtcCardIndex = ci;
         else if (st === "system-status") sysIndex = ci;
         if (cards[ci].getAttribute("data-idle-home") !== null) idleIndex = ci;
+        if (cards[ci].getAttribute("data-vehicle-gated") !== null) {
+          gatedCards.push(cards[ci]);
+        }
+      }
+
+      // US-496 AC-3: reveal/hide the vehicle-dependent cards from the SAME
+      // system-status the tick already fetched (no second read). `hidden` (not a
+      // class) is deliberate: it is the property the US-495 guard removes from
+      // the flex track AND the one hiddenFlags() reads back as the rendered
+      // truth, so the gate and the paint can never disagree. The carousel is
+      // re-laid-out only on a real CHANGE, so a steady state never fights a swipe.
+      function applyVehicleGate(sysData) {
+        var wantHidden = !vehicleConnected(sysData);
+        var changed = false;
+        for (var g = 0; g < gatedCards.length; g++) {
+          if (gatedCards[g].hidden === wantHidden) continue;
+          gatedCards[g].hidden = wantHidden;
+          changed = true;
+        }
+        if (changed && typeof onVisibilityChange === "function") onVisibilityChange();
       }
 
       function findCode(codeStr) {
@@ -2433,19 +2688,37 @@
         var dtcData = null; // fetched once (the Alerts card + ribbon/takeover share it)
         var sysData = null; // shared with the idle-home card (one fetch per tick)
         var batteryData = null;
+        var lightData = null; // shared: the US-496 Light card + the auto-dim
+        var lightFetched = false;
+        // US-496: ONE clock for the whole tick, so the Light card's freshness
+        // verdict and the brightness the screen is actually set to are resolved
+        // against the same instant -- the card can never contradict the surface.
+        var nowMs = Date.now();
         for (var c = 0; c < cards.length; c++) {
           var card = cards[c];
           var name = card.getAttribute("data-state");
           if (!name) continue;
+          // US-496: a gated-off card is not rendered and not fetched. It is
+          // display:none -- polling it 4x/s would be a read nobody can see.
+          if (card.hidden) continue;
           var data = await fetchState(name);
           if (name === "dtc") dtcData = data;
           else if (name === "system-status") sysData = data;
           else if (name === "battery-health") batteryData = data;
+          else if (name === "light") {
+            lightData = data;
+            lightFetched = true;
+          }
           var avail = cardAvailability(data);
           card.classList.toggle("unavailable", avail === "unavailable");
           if (avail === "unavailable") {
             var body = card.querySelector(".card-body");
-            if (body) body.textContent = "unavailable";
+            // US-496: a card with a bespoke no-data view NAMES the silent
+            // instrument (`dtc` must never read as an all-clear); every other
+            // card keeps the shipped one-word fallback.
+            var nd = noDataView(name);
+            if (body && nd) renderNaBody(body, nd.label, nd.reason);
+            else if (body) body.textContent = "unavailable";
             if (name === "system-status") resetSystemGlyphs(glyphEls);
             continue;
           }
@@ -2457,11 +2730,17 @@
             if (bv) renderBatteryHealthCard(card, bv);
           } else if (name === "dtc") {
             renderAlertsCard(card, alertsCardView(data));
+          } else if (name === "light") {
+            renderLightCard(card, lightView(data, displayAutoDim, nowMs));
           } else if (name === "ltft-trend") {
             var lv = ltftTrendView(data);
             if (lv) renderLtftTrendCard(card, lv);
           }
         }
+        // US-496 AC-3: reveal/hide the vehicle-dependent cards from the state
+        // just read. An unavailable system-status leaves sysData null here, which
+        // fails closed to hidden -- no vehicle card without a vehicle.
+        applyVehicleGate(sysData);
         // US-405/US-406: drive the takeover + persistent ribbon from the same
         // `dtc` state the Alerts card rendered (one fetch per tick).
         updateDtcSurfaces(dtcData);
@@ -2475,12 +2754,15 @@
         // US-483-b: drive the display brightness from the states/light feed
         // (pure consumer -- never the sensor). A real STOP holds it >= the alarm
         // floor; an absent/stale feed holds the fixed default (honest fallback).
-        var lightData = await fetchState("light");
+        // US-496: reuse the payload the Light card already fetched this tick;
+        // only fall back to a fetch when no Light card slot consumed it (so the
+        // auto-dim keeps working even if the card is ever removed from the markup).
+        if (!lightFetched) lightData = await fetchState("light");
         applyBrightness(
           brightnessLevel(
             lightData,
             displayAutoDim,
-            Date.now(),
+            nowMs,
             brightnessAlarmActive(dtcData)
           )
         );
