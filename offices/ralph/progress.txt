@@ -1824,3 +1824,65 @@ OBD service or ALL)
 - **Gotcha**: point maintenance tooling at SYSTEM python3, never the app venv.
   The venv is one of the things the operator is using the tool to fix.
 ---
+
+## 2026-07-29 - US-494 (Agent 1 / Sprint 66)
+Task: S1: Splash handoff fix -- readiness = Pi-core-up, not vehicle-connected
+
+### What was implemented:
+- **Two coupled defects, each harmless alone.** (1) WIRING:
+  `eclipse-boot-state.service` constructs `BootStateEmitter` with only
+  `statesDir`+`hardCapSeconds`, so `obdProbeFn` fell to its default
+  `lambda: OBD_STARTING`. (2) COUPLING: that tier GATED the handoff. Together:
+  tier never terminal -> progress capped 2/3 -> `healthy` never true ->
+  `boot-state-poll.js` never called `window.close()` -> `splash-boot.service`'s
+  `OnSuccess=eclipse-dashboard.service` never fired. Past the 12s cap it degraded
+  to the literal "eclipse-obd: not ready (starting)" and held until reboot.
+- **Readiness = "Pi core / UI is up."** `CORE_SERVICES_DEFAULT` =
+  `eclipse-states-http` + `eclipse-powerwatch` + `boot-progress-finalize`, plus
+  the dashboard assets being installed. `eclipse-obd` moved to
+  `INFORMATIONAL_SERVICES_DEFAULT`: still sampled, still reported, never gating.
+- **`OBD_NOT_PROBED` ("not-probed")** is the new default when no tier probe is
+  injected. The `obdProbeFn` seam is preserved and stays non-gating (the story's
+  conditionalOutcome).
+- **Payload shape changed.** `services` now carries ONLY `systemctl is-active`
+  strings; the tier moved to its own top-level `obdTier` field. New:
+  `coreServices` (the gate's membership) and `uiAssets` (present|missing).
+- **Missing dashboard assets now degrade** (hold the splash, reason "dashboard
+  assets not installed") rather than merely failing to be healthy -- yielding to
+  a dashboard that was never installed IS the A-16 blank screen.
+- `buildEmitter()` extracted so the production wiring is assertable.
+
+### Files changed:
+- Modified: `src/pi/splash/boot_state_emitter.py` (core gate, informational
+  tier, asset gate, NOT_PROBED, buildEmitter)
+- Modified: `tests/pi/splash/test_boot_state_emitter.py` (rewritten to the new
+  contract; 22 tests)
+- Modified: `deploy/eclipse-boot-state.service` (header described the old gate)
+- Modified: `specs/architecture.md` (F-103 "Readiness contract" subsection --
+  PM Rule 10 in-sprint architecture DoD)
+
+### Learnings for future iterations:
+- **Gotcha (the big one): when a DEFAULT ARGUMENT is the bug, no test of the
+  callee can catch it.** `computeBootState` was always correct and had 13 passing
+  tests. The defect lived entirely in the two-line constructor call in `main()`
+  that never passed the dependency. Extract the wiring into a named builder and
+  assert on the object the entry point actually constructs.
+- **Gotcha**: the offending default was a *lie*, not merely a wrong value.
+  `OBD_STARTING` asserts checks are in progress; none were ever wired, so the
+  claim could never become true. This is the same finding as US-492's
+  `unknown` -> "SAFE-SHUTDOWN GUARD IS DOWN" banner. Two sprints running, the
+  real bug has been **a missing reading rendered as a confident state** --
+  treat `X or <plausible-default>` as a code smell on sight.
+- **Pattern discovered**: when one gate mixes two unrelated facts ("is the UI
+  up" + "is a car plugged in"), the stricter fact silently owns the verdict. Ask
+  what the consumer of the gate actually needs, and give any second fact its own
+  non-gating field.
+- **Pattern discovered**: keep one vocabulary per field. `services` held two
+  systemctl strings and one OBD tier string, which is what made overloading the
+  `eclipse-obd` entry look reasonable in the first place.
+- **Gotcha**: don't "improve" the gate by adding the Pi-local emitters to it --
+  they run under the orchestrator inside `eclipse-obd.service`, so gating on
+  them smuggles the vehicle coupling straight back in.
+- **Host gaps (unchanged from Sprint 64)**: `make`, `black`, `mypy` all absent
+  on this Windows box. Run `python -m ruff check` directly; mypy is PM's gate.
+---
