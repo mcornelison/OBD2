@@ -2023,3 +2023,60 @@ always present; DTC grayed no-data
 - **Host gaps (unchanged, Sprints 64/65/66)**: `make`, `black`, `mypy` absent on
   this Windows box. Run `python -m ruff check` directly; mypy is PM's gate.
 ---
+
+## 2026-07-29 - US-498 (Rex / Agent 1, Session 4 — Sprint 66)
+Task: S5 — closeout/shutdown splash renders honestly on a real shutdown
+
+### What was implemented:
+- **The blank-screen fix.** `splash-shutdown.svg` reversed only each animation's
+  DIRECTION, not the running ORDER. The boot timeline ends with a fadeout delayed
+  6s, and `animation-fill-mode: both` holds the reversed animation's *first
+  relevant* keyframe during that delay — for `direction: reverse` that is
+  `to { opacity: 0 }`. The mark was invisible for 6s of a **7s** grace window
+  (`pi.powerWatch.smoothingSec`). Recomputed every delay as
+  `T − (bootDelay + bootDuration)`, T = 6.5s: spin 1.5→2s, light 1.5→0.5s,
+  fadeout 6→0s, dot 0→5.9s, s-top 0.3→5.8s, s-side 0.7→5s.
+- **Deploy half (AC-2).** The closeout surface was on US-495's keep-list, so it
+  was never installed, pruned or byte-verified by the deploy — its only refresh
+  path was the A-9 kiosk step, which may WARN and skip. Moved `shutdown.html`,
+  `shutdown-state-poll.js`, `splash-shutdown.svg` (and `splash.svg`) into the
+  force-refresh manifest; keep-list is now `version.txt` alone.
+- **Render regression harness.** A CSS animation resolver (cascade + !important,
+  comma-list shorthands, fill-mode/direction/delay) that samples the mark's
+  opacity on a clock across the real grace window read from config.
+- **End-to-end wiring pins.** Real `ShutdownSequencer` grace -> real state file ->
+  real `states_http` over the real kit, fetched at the URL extracted from the
+  shipped `splash-grace.service` unit.
+
+### Files changed:
+- Modified: `specs/UI/dist/splash-pi/splash-shutdown.svg` (reversed timeline)
+- Created: `tests/ui/test_shutdown_splash_render.py` (7 tests, RED first)
+- Created: `tests/pi/splash/test_shutdown_splash_wiring.py` (8 wiring pins)
+- Modified: `deploy/deploy-pi.sh` (splash manifest / keep-list)
+- Modified: `tests/deploy/test_asset_refresh.py` (3 rewritten/new wiring tests,
+  driven off the real `--dry-run` preview line)
+- Modified: `specs/architecture.md` (F-103 reversal contract; corrected the
+  US-495 `/opt` asset-ownership table this change made wrong)
+- Created: `offices/pm/tech_debt/TD-069-*`, `offices/pm/blockers/BL-026-*`
+
+### Verification:
+- `pytest tests/ui tests/pi/splash tests/deploy` -> **745 passed, 2 skipped**
+- `ruff check` on all three touched .py -> clean; `bash -n deploy/deploy-pi.sh` -> clean
+- `bash deploy/deploy-pi.sh --dry-run` -> read the splash step's own preview line
+- ON-PI GATE OWED (AC-3): a real grace event. Watch the FIRST 2 SECONDS.
+
+### Learnings for future iterations:
+- **Pattern discovered**: when a UI "does nothing" and every part tests green,
+  stop testing parts and **sample the output on a clock**. A ~120-line CSS
+  resolver turned "the splash looks broken" into "blank at t=[1.0...6.0] of 7.0s".
+- **Gotcha**: `animation-direction: reverse` also reverses which keyframe the
+  fill-mode holds during the delay (`to`, not `from`). A reversal needs the
+  delays recomputed as `T - (delay + duration)`, or the last thing on boot stays
+  last on shutdown.
+- **Gotcha**: a keep-list entry suppresses the byte-verify as well as the prune.
+  Ask of every entry: *who* refreshes this instead, and are they allowed to skip?
+  Here the other installer was an A-9 step that WARNs and continues.
+- **Pattern**: an over-claiming test is worse than no test. "Brightness never
+  rises" was false against a *designed* throb; the honest invariant was the
+  envelope. Correct the claim, don't keep the green.
+---
