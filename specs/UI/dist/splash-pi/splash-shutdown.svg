@@ -86,14 +86,29 @@
       to   { opacity: 0; }
     }
   ]]></style>
-<!-- Shutdown-only override: flip every animation's direction. The
-     keyframes are symmetric enough that reverse "just works" — see
-     the comment block in splash.svg for details. -->
+<!-- Shutdown-only override: play the BOOT TIMELINE BACKWARDS.
+     US-498: flipping each animation's DIRECTION is only half of a reversal —
+     the running ORDER has to reverse too. It did not, and the cost was a black
+     screen: the boot ends with a fadeout DELAYED 6s, and `animation-fill-mode:
+     both` holds the reversed animation's FIRST RELEVANT keyframe during that
+     delay. For direction:reverse that keyframe is `to { opacity: 0 }` — so the
+     mark stayed invisible for 6 of the 7s grace window (pi.powerWatch.
+     smoothingSec) and only began to appear as the power cut. (Iris flagged the
+     trap; tests/ui/test_shutdown_splash_render.py measures it on a clock.)
+
+     Reversed delay = T − (bootDelay + bootDuration), T = 6.5s boot total. The
+     last thing to happen on boot is now the first thing to happen on shutdown:
+     the mark is up at full opacity before the 1s PRE_ROLL reveal, dims through
+     the light ramp, unwinds the spin, collapses the rhombi, and blinks out —
+     all inside the grace window. Derived from splash.svg's own timings, not
+     new numbers; the delaysMirrorTheBootTimeline test re-derives them. -->
 <style>
-  .logo    { animation-direction: reverse !important; }
-  .dot     { animation-direction: reverse !important; }
-  .s-top   { animation-direction: reverse !important; }
-  .s-side  { animation-direction: reverse !important; }
+  .logo    { animation-direction: reverse !important;
+             /* spin, light, fadeout — order matches animation-name above. */
+             animation-delay: 2s, 0.5s, 0s !important; }
+  .dot     { animation-direction: reverse !important; animation-delay: 5.9s !important; }
+  .s-top   { animation-direction: reverse !important; animation-delay: 5.8s !important; }
+  .s-side  { animation-direction: reverse !important; animation-delay: 5s !important; }
 </style>
 
   <defs>

@@ -29,6 +29,7 @@
 
 """US-495 behavioural tests for the deploy-side /opt stale-asset guard."""
 
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -236,20 +237,88 @@ def test_deployPiSh_assetStep_callsTheRefreshGuard(step, kitDir):
     assert kitDir in body, f"{step} must refresh from the {kitDir} kit"
 
 
-def test_deployPiSh_splashStep_keepListsTheOtherInstallersAssets():
-    """
-    Given: /opt/splash is written by TWO installers
-    Then: the splash step's keep-list names the kit-owned assets + version.txt
+@pytest.fixture(scope="module")
+def splashRefreshArgs() -> tuple[set[str], set[str]]:
+    """The manifest + keep-list the splash step ACTUALLY passes, from a dry run.
 
-    Without the keep-list this step would prune the SVGs and the shutdown
-    surface every deploy, and a skipped kit step (A-9) would leave a Pi with no
-    splash at all -- a worse failure than the stale one being fixed.
+    Drives the shipped `deploy-pi.sh --dry-run` (offline, no SSH) and reads the
+    resolved arguments off its own preview line, rather than re-implementing the
+    step's variable expansion in the test. What the deploy says it would do is
+    the thing under test.
     """
-    from tests.deploy.test_deploy_pi import _scriptText, _stepBody
+    result = subprocess.run(
+        ["bash", str(REPO_ROOT / "deploy" / "deploy-pi.sh"), "--dry-run"],
+        capture_output=True,
+        text=True,
+        timeout=180,
+    )
+    assert result.returncode == 0, result.stderr
+    match = re.search(
+        r"refresh_asset_dir \S*splash-pi \S+ '([^']*)' '([^']*)'", result.stdout
+    )
+    assert match, "no splash refresh_asset_dir preview in the dry-run output"
+    return set(match.group(1).split()), set(match.group(2).split())
 
-    body = _stepBody(_scriptText(), "step_install_splash_assets")
-    for owned in ("version.txt", "splash.svg", "splash-shutdown.svg", "shutdown.html"):
-        assert owned in body, f"{owned} must be keep-listed so the splash step does not prune it"
+
+SHUTDOWN_SURFACE = ("shutdown.html", "shutdown-state-poll.js", "splash-shutdown.svg")
+
+
+def test_deployPiSh_splashStep_forceRefreshesTheShutdownSurface(splashRefreshArgs):
+    """
+    Given: US-495 gave /opt/splash a prune-and-verify refresh
+    Then: the CLOSEOUT surface is in the manifest, not parked on the keep-list
+
+    US-498. A keep-listed asset is never installed, never pruned and never
+    byte-verified by the deploy -- it is refreshed only as a side effect of the
+    kit's own install.sh, which is the A-9 step allowed to WARN and skip. So the
+    exact failure US-495 fixed for the boot surface was still live for the
+    shutdown one: the deploy can report success over a shutdown.html from a
+    retired generation and never touch it. The operator only finds out during a
+    shutdown, when there is no one watching and no way to re-run it.
+    """
+    manifest, keep = splashRefreshArgs
+    for asset in SHUTDOWN_SURFACE:
+        assert asset in manifest, f"{asset} is not force-refreshed by the deploy"
+        assert asset not in keep, f"{asset} is keep-listed -- it will never be verified"
+
+
+def test_deployPiSh_splashStep_accountsForEveryAssetTheKitShips(splashRefreshArgs):
+    """
+    Given: /opt/splash is written by TWO installers (deploy + the kit's install.sh)
+    Then: every asset install.sh ships is either refreshed here or keep-listed
+
+    The two-installer hazard cuts both ways and this pins both edges at once: an
+    asset in NEITHER list is pruned mid-deploy (a Pi with no splash), and an
+    asset the deploy does not own is never verified. Data-driven from install.sh
+    so a new asset added to the kit lands in this test the day it is added.
+    """
+    installSh = (REPO_ROOT / "specs" / "UI" / "dist" / "splash-pi" / "install.sh").read_text(
+        encoding="utf-8"
+    )
+    loop = re.search(r"for asset in (.*?); do", installSh, flags=re.DOTALL)
+    assert loop, "could not find the asset loop in the splash kit's install.sh"
+    kitAssets = loop.group(1).replace("\\\n", " ").split()
+
+    manifest, keep = splashRefreshArgs
+    for asset in kitAssets:
+        assert asset in manifest or asset in keep, (
+            f"{asset} is shipped by install.sh but the deploy refresh neither owns "
+            "nor keeps it -- it gets PRUNED mid-deploy"
+        )
+
+
+def test_deployPiSh_splashStep_keepListsOnlyWhatItCannotOwn(splashRefreshArgs):
+    """
+    Given: the keep-list suppresses both the prune AND the byte-verify
+    Then: nothing sits on it but version.txt, which the deploy writes itself
+
+    A keep-list entry is an asset the guard cannot vouch for, so it is a cost,
+    not a safety net -- the smaller it is, the more of /opt/splash the deploy
+    actually verifies. version.txt earns its place: it is generated from
+    deploy/RELEASE_VERSION after the refresh, not copied from the kit.
+    """
+    _, keep = splashRefreshArgs
+    assert keep == {"version.txt"}, f"unexpected unverified assets in /opt/splash: {keep}"
 
 
 def test_assetRefreshLibrary_isShippedToThePi():

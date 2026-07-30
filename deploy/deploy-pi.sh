@@ -1225,26 +1225,34 @@ step_install_splash_assets() {
     # rest of the tier.  The local-source guard returns 0; the remote
     # per-asset guard skips-with-warn any individual missing file.
     #
-    # Scope seam: this installs the BACKEND-served assets (index.html, styles.css,
-    # boot-state-poll.js) + version.txt.  The chromium kiosk UNIT
-    # (splash-boot.service.{wayland,x11}) + the shutdown render assets are US-396
-    # (render side), mirroring the US-394 producer/render seam.
-    #
-    # US-495 (S2/F-111): the install is now a FORCE-REFRESH via
+    # US-495 (S2/F-111): the install is a FORCE-REFRESH via
     # deploy/asset-refresh.sh -- install the manifest, PRUNE everything the
     # repo does not vouch for, then verify the bytes landed. /opt was previously
     # only ever written to, never pruned, so retired kit generations accumulated
     # there and (because /opt/splash is the FIRST --assets-dir) shadowed the real
-    # assets forever. `keepAssets` names what the OTHER installers own: the kit's
-    # own install.sh writes the SVGs + the shutdown surface, and version.txt is
-    # written below -- pruning those here would break the splash mid-deploy.
+    # assets forever.
+    #
+    # US-498 (S5/F-103): the manifest now covers the WHOLE served surface --
+    # boot AND closeout (shutdown.html, shutdown-state-poll.js) plus both SVGs.
+    # They were previously keep-listed as "the kit's install.sh owns those", but
+    # a keep-listed asset is never installed, never pruned and never verified
+    # here; its only refresh path was the kiosk-unit step, which is an A-9 step
+    # allowed to WARN and skip (install.sh aborts outright if it cannot detect
+    # the session type or the chromium binary). So the stale-asset hole US-495
+    # closed for the boot surface was still wide open for the shutdown one --
+    # and a stale closeout surface only shows itself during a shutdown, with
+    # nobody watching. Both installers copy the same bytes from the same synced
+    # kit dir, so owning them here costs nothing and buys the byte-verify.
+    # `keepAssets` is now version.txt alone: the deploy GENERATES it from
+    # deploy/RELEASE_VERSION below (not a kit file), so the refresh must not
+    # prune it in the window before it is rewritten.
     #
     # Runs AFTER sync_tree so ${PI_PATH}/specs/UI/dist/splash-pi/ exists on the Pi.
     echo "--- Step: Installing F-103 splash assets + version.txt to /opt/splash (US-395) ---"
     local assetSrc="$REPO_ROOT/specs/UI/dist/splash-pi"
     local installDir="/opt/splash"
-    local assets="index.html styles.css boot-state-poll.js"
-    local keepAssets="version.txt shutdown.html shutdown-state-poll.js splash.svg splash-shutdown.svg"
+    local assets="index.html styles.css boot-state-poll.js shutdown.html shutdown-state-poll.js splash.svg splash-shutdown.svg"
+    local keepAssets="version.txt"
     if [ ! -d "$assetSrc" ]; then
         echo "WARN: splash assets not found at $assetSrc -- skipping splash asset install + version.txt; deploy continues (A-9)." >&2
         return 0
