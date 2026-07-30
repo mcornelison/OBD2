@@ -57,6 +57,26 @@
   --tap-min:        40px;      /* minimum touch target (S-2) */
 }
 
+/* --- US-495 (F-111): the [hidden] guard -------------------------------------
+   EVERY show/hide on this surface is carousel.js setting `el.hidden`. The UA
+   sheet's `[hidden] { display: none }` is a USER-AGENT declaration, so ANY
+   author `display` outranks it -- and the five full-screen overlays each set
+   `display: flex` through an ID selector. The result: `hidden` was inert, all
+   five overlays painted at once over the carousel, and the pile intercepted
+   every tap. The JS was always correct; this stylesheet defeated it.
+
+   `!important` rather than a per-overlay rule, deliberately: an ID selector
+   already outranks any plain `[hidden]` rule we could write, so the guard has
+   to win on IMPORTANCE or it has to be duplicated onto every element -- and
+   the next overlay someone adds would ship the bug again. This is the one
+   declaration on the surface that must not be overridable. If an element ever
+   needs to be present-but-invisible, it must not use `hidden` (use
+   `aria-hidden` + `visibility`); `hidden` means NOT RENDERED, full stop.
+
+   Pinned by tests/ui/test_dashboard_overlay_hidden_guard.py, which resolves the
+   real cascade for every element the markup ships `hidden`. */
+[hidden] { display: none !important; }
+
 html, body {
   margin: 0; padding: 0; width: 100%; height: 100%;
   background: var(--bg); overflow: hidden;

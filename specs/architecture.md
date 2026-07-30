@@ -3032,10 +3032,73 @@ card's `data-state` file at 4 Hz; a missing/malformed payload sets the card to
 `unavailable` (never a fabricated value, never green-when-broken). Until the
 US-400/401 emitters exist, both cards correctly read `unavailable`.
 
+**Surface invariant: `hidden` means NOT RENDERED (US-495, F-111).** Every
+show/hide on this surface is `carousel.js` setting `el.hidden`. The UA sheet's
+`[hidden] { display: none }` is a *user-agent* declaration, so **any** author
+`display` outranks it -- and each of the five full-screen overlays
+(`#dtc-takeover`, `#setup-menu`, `#confirm-modal`, `#dtc-detail`,
+`#clear-confirm`) plus `#dtc-ribbon` set `display: flex` through an ID selector.
+The attribute was therefore inert: all six painted simultaneously over the
+carousel, and the stack swallowed every tap. The JS was correct throughout; the
+stylesheet defeated it.
+
+`dashboard.css` now declares **`[hidden] { display: none !important; }`**. The
+`!important` is load-bearing, not defensive: an ID selector already outranks any
+plain `[hidden]` rule, so the guard must win on *importance* or be duplicated
+onto every element -- and the next overlay added would ship the bug again. This
+is the one declaration on the surface that must not be overridable. An element
+that needs to be present-but-invisible must therefore **not** use `hidden` (use
+`aria-hidden` + `visibility`). Pinned by
+`tests/ui/test_dashboard_overlay_hidden_guard.py`, which resolves the real
+cascade (importance → specificity → source order) for every element the shipped
+markup ships `hidden`, so a future overlay is covered the day it is added.
+
 **Deploy.** `deploy-pi.sh step_install_dashboard_assets` installs the served kit
 to `/opt/dashboard` (WARN-not-BLOCK if absent, A-9), mirroring
 `step_install_splash_assets`; the kiosk **unit** is installed by the kit's
 session-aware `install.sh` (V-1/V-2), the same seam as the splash kiosk unit.
+
+##### `/opt` asset-ownership contract -- force-refresh + prune (US-495, F-111)
+
+The ordered search path above has a sharp edge that cost a sprint of "the deploy
+succeeded but the Pi renders something else": **`/opt/splash` is searched
+first**, so any file sitting there shadows the same-named file in
+`/opt/dashboard` permanently, and the dashboard step -- which only ever writes to
+`/opt/dashboard` -- can never dislodge it. Both asset steps used to *only*
+install on top of `/opt`; nothing was ever removed, so retired kit generations
+accumulated there indefinitely. That is how the Pi came to serve a wordmark
+("Eclipse ODB2") that exists nowhere in this repo.
+
+Both steps now delegate to **`deploy/asset-refresh.sh` →
+`refresh_asset_dir SRC DST MANIFEST [KEEP]`**, which makes the installed dir an
+exact mirror of what the repo vouches for:
+
+1. **install** every manifest asset the source kit ships;
+2. **prune** everything else -- including a *manifest* asset the source kit no
+   longer ships. A file the repo cannot vouch for must not be served: an honest
+   404 beats a confident stale render;
+3. **verify** each installed file byte-for-byte against its source.
+
+| Dir | Manifest (installed + owned) | Keep-list (another installer owns) |
+|---|---|---|
+| `/opt/splash` | `index.html`, `styles.css`, `boot-state-poll.js` | `version.txt` (written by the same step, after), `shutdown.html`, `shutdown-state-poll.js`, `splash.svg`, `splash-shutdown.svg` (the kit's own `install.sh`) |
+| `/opt/dashboard` | `dashboard.html`, `dashboard.css`, `carousel.js` | *(none -- single installer)* |
+
+`/opt/<kit>` is **deploy-owned, not hand-edited**: anything dropped there
+out-of-band is pruned by design. The keep-list exists solely so one installer
+never deletes another's work mid-deploy -- pruning `/opt/splash` to only what the
+deploy step installs would delete the SVGs and the shutdown surface, and an A-9
+skip of the kit step would then leave the Pi with **no** splash, a worse failure
+than the stale one being fixed.
+
+**Posture change vs A-9, deliberate.** *Absence* still warns and continues (a Pi
+without the UI kit still ships the rest of the tier). A *failed write* now
+**blocks**. They are different facts: absence is a Pi that was never given a UI;
+a failed write is a deploy that believes it shipped one and did not. Continuing
+past the second is what prints "Deploy OK" over a stale surface and sends the
+operator to debug the UI instead of the deploy (the A-16 lesson). Behaviour is
+pinned by `tests/deploy/test_asset_refresh.py`, which drives the real shell
+function against temp dirs rather than grepping the deploy script.
 
 > **Sequencing note (A-4):** the dashboard and the pygame `status_display` must
 > never run simultaneously. The pygame surface was **retired (parity-gated) in

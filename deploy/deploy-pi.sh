@@ -1230,11 +1230,21 @@ step_install_splash_assets() {
     # (splash-boot.service.{wayland,x11}) + the shutdown render assets are US-396
     # (render side), mirroring the US-394 producer/render seam.
     #
+    # US-495 (S2/F-111): the install is now a FORCE-REFRESH via
+    # deploy/asset-refresh.sh -- install the manifest, PRUNE everything the
+    # repo does not vouch for, then verify the bytes landed. /opt was previously
+    # only ever written to, never pruned, so retired kit generations accumulated
+    # there and (because /opt/splash is the FIRST --assets-dir) shadowed the real
+    # assets forever. `keepAssets` names what the OTHER installers own: the kit's
+    # own install.sh writes the SVGs + the shutdown surface, and version.txt is
+    # written below -- pruning those here would break the splash mid-deploy.
+    #
     # Runs AFTER sync_tree so ${PI_PATH}/specs/UI/dist/splash-pi/ exists on the Pi.
     echo "--- Step: Installing F-103 splash assets + version.txt to /opt/splash (US-395) ---"
     local assetSrc="$REPO_ROOT/specs/UI/dist/splash-pi"
     local installDir="/opt/splash"
     local assets="index.html styles.css boot-state-poll.js"
+    local keepAssets="version.txt shutdown.html shutdown-state-poll.js splash.svg splash-shutdown.svg"
     if [ ! -d "$assetSrc" ]; then
         echo "WARN: splash assets not found at $assetSrc -- skipping splash asset install + version.txt; deploy continues (A-9)." >&2
         return 0
@@ -1248,30 +1258,19 @@ step_install_splash_assets() {
         splashVersion=$(python -c "import json,sys; print(json.load(open(sys.argv[1]))['version'])" "$versionFile" 2>/dev/null || echo "V?.?.?")
     fi
     if $DRY_RUN; then
-        echo "DRY-RUN would: sudo install -d ${installDir}"
-        echo "DRY-RUN would: sudo install -m 0644 ${PI_PATH}/specs/UI/dist/splash-pi/{${assets}} ${installDir}/"
+        echo "DRY-RUN would: source ${PI_PATH}/deploy/asset-refresh.sh"
+        echo "DRY-RUN would: refresh_asset_dir ${PI_PATH}/specs/UI/dist/splash-pi ${installDir} '${assets}' '${keepAssets}'"
+        echo "DRY-RUN would:   (install + PRUNE unvouched files + verify bytes)"
         echo "DRY-RUN would: write ${installDir}/version.txt = ${splashVersion}"
         return 0
     fi
     remote "
         set -e
-        SRC='${PI_PATH}/specs/UI/dist/splash-pi'
-        DST='${installDir}'
-        if [ ! -d \"\$SRC\" ]; then
-            echo 'WARN: splash assets not present on Pi at '\"\$SRC\"' -- skipping (A-9).' >&2
-            exit 0
-        fi
-        sudo install -d -m 0755 \"\$DST\"
-        for f in ${assets}; do
-            if [ -f \"\$SRC/\$f\" ]; then
-                sudo install -m 0644 \"\$SRC/\$f\" \"\$DST/\$f\"
-                echo \"installed \$f -> \$DST/\"
-            else
-                echo \"WARN: splash asset \$f missing in \$SRC -- skipped (A-9).\" >&2
-            fi
-        done
-        printf '%s\n' '${splashVersion}' | sudo tee \"\$DST/version.txt\" >/dev/null
-        echo \"wrote \$DST/version.txt = ${splashVersion}\"
+        . '${PI_PATH}/deploy/asset-refresh.sh'
+        refresh_asset_dir '${PI_PATH}/specs/UI/dist/splash-pi' '${installDir}' \
+                          '${assets}' '${keepAssets}'
+        printf '%s\n' '${splashVersion}' | sudo tee '${installDir}/version.txt' >/dev/null
+        echo 'wrote ${installDir}/version.txt = ${splashVersion}'
     "
 }
 
@@ -1292,6 +1291,11 @@ step_install_dashboard_assets() {
     # session-aware install.sh on the Pi (V-1/V-2 detection) -- the same seam as
     # the splash kiosk unit -- and is started by the splash OnSuccess= hand-off.
     #
+    # US-495 (S2/F-111): force-refresh via deploy/asset-refresh.sh, same as
+    # the splash step. NO keep-list here -- /opt/dashboard has exactly one
+    # installer (this step and the kit's install.sh ship the identical three
+    # files), so anything else in there is a retired generation and gets pruned.
+    #
     # Runs AFTER sync_tree so ${PI_PATH}/specs/UI/dist/dashboard-pi/ exists.
     echo "--- Step: Installing carousel dashboard assets to /opt/dashboard (US-399) ---"
     local assetSrc="$REPO_ROOT/specs/UI/dist/dashboard-pi"
@@ -1302,27 +1306,15 @@ step_install_dashboard_assets() {
         return 0
     fi
     if $DRY_RUN; then
-        echo "DRY-RUN would: sudo install -d ${installDir}"
-        echo "DRY-RUN would: sudo install -m 0644 ${PI_PATH}/specs/UI/dist/dashboard-pi/{${assets}} ${installDir}/"
+        echo "DRY-RUN would: source ${PI_PATH}/deploy/asset-refresh.sh"
+        echo "DRY-RUN would: refresh_asset_dir ${PI_PATH}/specs/UI/dist/dashboard-pi ${installDir} '${assets}'"
+        echo "DRY-RUN would:   (install + PRUNE unvouched files + verify bytes)"
         return 0
     fi
     remote "
         set -e
-        SRC='${PI_PATH}/specs/UI/dist/dashboard-pi'
-        DST='${installDir}'
-        if [ ! -d \"\$SRC\" ]; then
-            echo 'WARN: dashboard assets not present on Pi at '\"\$SRC\"' -- skipping (A-9).' >&2
-            exit 0
-        fi
-        sudo install -d -m 0755 \"\$DST\"
-        for f in ${assets}; do
-            if [ -f \"\$SRC/\$f\" ]; then
-                sudo install -m 0644 \"\$SRC/\$f\" \"\$DST/\$f\"
-                echo \"installed \$f -> \$DST/\"
-            else
-                echo \"WARN: dashboard asset \$f missing in \$SRC -- skipped (A-9).\" >&2
-            fi
-        done
+        . '${PI_PATH}/deploy/asset-refresh.sh'
+        refresh_asset_dir '${PI_PATH}/specs/UI/dist/dashboard-pi' '${installDir}' '${assets}'
     "
 }
 

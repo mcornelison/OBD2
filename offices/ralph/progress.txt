@@ -1886,3 +1886,71 @@ Task: S1: Splash handoff fix -- readiness = Pi-core-up, not vehicle-connected
 - **Host gaps (unchanged from Sprint 64)**: `make`, `black`, `mypy` all absent
   on this Windows box. Run `python -m ruff check` directly; mypy is PM's gate.
 ---
+
+## 2026-07-29 - US-495 (Agent 1 / Session 2)
+Task: S2: Overlay [hidden] CSS guard + /opt asset force-refresh
+
+### What was implemented:
+- **Both halves are the same bug in different clothes**: something was only ever
+  ADDED and never SUBTRACTED, so a retired thing kept winning.
+- **CSS.** Confirmed Atlas's root cause and found a SIXTH offender he had not
+  listed: `#dtc-ribbon`, the nastiest, because it also runs
+  `animation: ribbon-pulse 2s infinite` -- an unhidden ribbon pulses a *phantom
+  alert band* across every card at idle (F-6 no-phantom, not mere clutter).
+  Fix: `[hidden] { display: none !important; }` in `dashboard.css`. No JS
+  touched; Iris's JS was correct and uses `el.hidden` exclusively.
+- **Stale /opt.** `ODB2` appears NOWHERE in this repo (repo-wide grep, zero
+  hits) -- the Pi was serving a generation that no longer exists in source. The
+  two asset steps only ever installed ON TOP of `/opt` and never pruned, and
+  `eclipse-states-http` searches `/opt/splash` BEFORE `/opt/dashboard`, so one
+  forgotten file in the first dir shadows the real asset in the second forever.
+  `install -m 0644` overwriting was never the problem; the absence of deletion was.
+- **`deploy/asset-refresh.sh` → `refresh_asset_dir SRC DST MANIFEST [KEEP]`**:
+  install the manifest, PRUNE anything the repo cannot vouch for, VERIFY
+  byte-for-byte with `cmp`. Both asset steps delegate to it.
+- **Posture change (PM/Atlas review)**: ABSENCE still warns-and-continues (A-9);
+  a FAILED WRITE now BLOCKS.
+
+### Files changed:
+- Modified: `specs/UI/dist/dashboard-pi/dashboard.css` (the `[hidden]` guard)
+- Created: `tests/ui/test_dashboard_overlay_hidden_guard.py` (cascade resolver, 8 tests)
+- Created: `deploy/asset-refresh.sh` (force-refresh + prune + verify)
+- Modified: `deploy/deploy-pi.sh` (both asset steps delegate to the guard)
+- Created: `tests/deploy/test_asset_refresh.py` (7 behavioural + 4 wiring tests)
+- Modified: `specs/architecture.md` (F-092: surface invariant + /opt ownership contract)
+
+### Learnings for future iterations:
+- **Pattern discovered**: *a search path plus an append-only installer is a
+  permanent shadowing trap.* `/opt/splash` precedes `/opt/dashboard`, so one
+  stale file in the first dir can never be dislodged by writing to the second.
+  Any ordered-lookup path needs an owner that PRUNES, not just one that writes.
+- **Pattern discovered**: don't grep an artifact for the fix string -- resolve
+  the artifact's own semantics. The guard test enumerates every element the
+  markup ships `hidden` and resolves the real cascade, so it covers overlays
+  that don't exist yet. State the fidelity limit and make sure the skipped case
+  fails LENIENT (falsely green), never falsely red.
+- **Pattern discovered**: when you add a guard, pin what the guard must not
+  cost. The cheap way to pass "[hidden] hides it" is to delete `display: flex` --
+  which goes green while breaking every overlay's layout.
+- **Gotcha**: `[hidden]` needs `!important` here, and that is not defensive
+  sloppiness -- an ID selector outranks any plain `[hidden]` rule, so the guard
+  must win on IMPORTANCE or be duplicated onto every element forever.
+- **Gotcha (testing shell)**: `ASSET_SUDO= . lib.sh; f args` does NOT set the var
+  for `f` -- bash scopes a prefix assignment to that one command. Use a
+  standalone `export`. And a `C:/...` entry in a git-bash `PATH` is inert; use a
+  relative path with `cwd=` when shimming a binary.
+- **Gotcha (testing shell)**: to prove a step's failure branch, shim the system
+  BINARY through `PATH` (here, `install` → no-op) rather than adding a test-only
+  injection seam to production code.
+- **Gotcha**: `/opt/splash` has TWO installers. A prune scoped to one
+  installer's manifest deletes the other's work mid-deploy -- hence the
+  keep-list. Check for a second writer before making a directory authoritative.
+---
+- **Gotcha (nearly shipped)**: I first put the library at `deploy/lib/` and
+  `git add` refused it -- the generic Python `lib/` rule in `.gitignore` (line
+  25) swallows ANY `lib/` at any depth. It would have worked on my box forever,
+  because `rsync` copies untracked files, and broken on any clean checkout. Moved
+  to `deploy/asset-refresh.sh`, beside the existing sourced `deploy/addresses.sh`.
+  **Read what `git add` refuses -- an ignored new file is a bug that only
+  reproduces somewhere else.**
+---
