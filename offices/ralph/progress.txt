@@ -2178,3 +2178,60 @@ Task: re-verify BL-026 before re-affirming it; no buildable story remains
   shape as the stale `/opt` assets US-495 dug out. Pass it as an override; route
   the decision to an owner.
 ---
+
+## 2026-07-30 - NO STORY TAKEN (Agent 1 / Session 7) - BL-026 re-verified, then ESCALATED
+Task: Sprint 66 (V0.29.20) story selection -- both remaining stories (US-478, US-497)
+re-checked against live primary evidence for the SECOND consecutive session. Both
+gates still closed. Escalated HUMAN_INTERVENTION_REQUIRED rather than spin a third
+iteration against a hardware gate.
+
+### What was implemented:
+- **Nothing, deliberately.** No production code, no tests, no specs. There was no
+  takeable story, and inventing adjacent work is a scope-fence breach (Refusal Rule 3).
+- Re-verified both BL-026 gates against primary evidence, dated 2026-07-30.
+- **Gate 1 (hardware) still closed.** Live `/usr/sbin/i2cdetect -y 1`: `0x29` (light)
+  + `0x36` (UPS), **row 60 empty -- no `0x69`**. AI-005 open.
+- **Gate 2 (contract) still closed**, and I did not trust a negative grep -- Atlas's
+  design spec was modified 2026-07-29 08:51, *after* my last check, so a stale
+  "no hits" would have been indistinguishable from a ruling I missed. Read its IMU
+  content in full: confirms **scope only**, still answers neither Q-A (derived-field
+  list + units) nor Q-B (transport). **New, sharper evidence: `states/imu` has ZERO
+  hits across `specs/architecture.md` and every design spec** -- the artifact this
+  sprint is meant to produce has no written contract anywhere in the repo.
+- **Corrected my own 07-29 deploy-address finding**, which was incomplete: the Pi now
+  holds TWO addresses and `.28` answers on neither. `eth0` = `10.27.27.9` (temp wired),
+  `wlan0` = `10.27.27.100` (DeathstarWifi **activated** -- the WiFi rebuild completed).
+  `hostname` now reads `Chi-Eclips-01` (was `Chi-Eclips-Tuner`) -- B-102's rename
+  appears done, observed but not verified as to who/when.
+
+### Files changed:
+- Modified: `offices/pm/blockers/BL-026-*` (2026-07-30 re-verification, dated, with the
+  actual `i2cdetect` output + the zero-hits `states/imu` finding; corrected the
+  incidental deploy-address section)
+- Created: `offices/pm/inbox/2026-07-30-from-ralph-ADDENDUM-pi-deploy-host-wifi-back-at-100.md`
+- Modified: `offices/ralph/ralph_agents.json`, `offices/ralph/progress.txt`
+
+### Verification:
+- No production code, tests, or specs touched -> nothing can have regressed. Ran no
+  test suite, because there was no change to gate. Stated plainly rather than dressed
+  up as a green run.
+
+### Learnings for future iterations:
+- **Pattern discovered**: **verifying a refusal is cheap, but re-verifying it twice IS
+  the stall.** One re-check converts an assumption into a dated fact (Session 6, correct).
+  Two identical re-checks in a row are evidence the gate is not moving on its own -- at
+  that point the honest move is a hard escalation tag, not a third polite iteration.
+  Re-check once, then escalate.
+- **Gotcha**: `i2cdetect` is NOT on the Pi's non-login `PATH`. `ssh pi "i2cdetect -y 1"`
+  returns `command not found`, which reads exactly like "the tool is gone / the bus is
+  broken" and is neither. Use `/usr/sbin/i2cdetect`. I nearly filed a false finding.
+- **Gotcha**: a **negative grep is only as fresh as the file's mtime**. Check the mtime
+  before concluding "no ruling exists" -- the spec had been edited *after* my previous
+  check, so "zero hits" and "a ruling I missed" would have looked identical.
+- **Pattern**: the strongest way to state a missing-contract blocker is to show the
+  contract's **name** has zero hits repo-wide. "Atlas hasn't answered Q-B" is arguable;
+  "`states/imu` appears nowhere in any spec" is not.
+- **Pattern**: don't bake a moving fact into a default. Had I "fixed" `PI_HOST` to `.9`
+  yesterday, today's evidence (the real path is wlan0 `.100`; an in-car Pi has no
+  ethernet) would already have made it wrong. Pass an override, route the decision.
+---

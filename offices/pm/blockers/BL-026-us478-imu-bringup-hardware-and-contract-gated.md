@@ -5,6 +5,11 @@
 - **RE-VERIFIED 2026-07-29 (Session 6):** both gates re-checked against live evidence
   before re-affirming this file — **both still closed**. Detail in
   "Re-verification" below. No dev work remains in Sprint 66.
+- **RE-VERIFIED AGAIN 2026-07-30 (Session 7): both gates STILL closed.** Second
+  consecutive iteration with no takeable story — see "Re-verification, 2026-07-30".
+  This is now a **standing stop**, not a pause: two dated checks say the same thing,
+  so further Ralph iterations cannot change the outcome. Escalated
+  `HUMAN_INTERVENTION_REQUIRED`.
 - **Blocks:** US-478 (S4-emitter, IMU bring-up), US-497 (S4-card, consumes `states/imu`)
 - **Did NOT block:** US-499 (S6 render-regression) — built and complete
 - **Needs:** a CIO hardware action (AI-005) + an Atlas contract ruling. PM call at dispatch, per the story's own `conditionalOutcomes`.
@@ -78,6 +83,35 @@ testing it against my own invention.
 it decides whether the deliverable is a state file at all, so it cannot be
 deferred to "build it and adjust later".
 
+## Re-verification, 2026-07-30 (Session 7) — second dated check, same answer
+
+Re-checked both gates again rather than re-reading the section above. A blocker is
+only as good as its last verification date, and this one is now the sole reason an
+entire sprint is standing still.
+
+**Gate 1 — hardware. STILL CLOSED.** Live `/usr/sbin/i2cdetect -y 1` on the Pi,
+2026-07-30 (note the absolute path — `i2cdetect` is not on the non-login `PATH`,
+which is worth knowing before you read a bare `command not found` as "the tool is
+gone"):
+
+```
+20: -- -- -- -- -- -- -- -- -- 29 -- -- -- -- -- --
+30: -- -- -- -- -- -- 36 -- -- -- -- -- -- -- -- --
+60: -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- --
+```
+
+Unchanged: `0x29` (light) + `0x36` (UPS), **row 60 empty — no `0x69`**. AI-005 open.
+
+**Gate 2 — contract. STILL CLOSED.** Atlas's design spec was **modified 2026-07-29
+08:51** — i.e. *after* my last check — so I re-read its IMU content in full rather
+than trusting a negative grep. It still confirms **scope only** (line 39 "build
+emitter+card"; line 49 "in scope … grays until then"; line 50 altitude typed-NA;
+line 59 S4 "bench-validatable once the IMU is physically wired"). There is still
+**no derived-field list with units (Q-A) and no word on transport (Q-B)**. Also
+searched `specs/architecture.md` and every design spec for `states/imu`: **zero
+hits** — the file this sprint is supposed to produce has no written contract
+anywhere. Nothing new in `offices/ralph/inbox/` since 2026-07-22.
+
 ## Incidental finding — the Pi is NOT at its deploy address (affects the owed on-Pi checks)
 
 Found while checking the bus, and it lands on the PM's next move rather than on
@@ -90,6 +124,38 @@ address is transient, and baking a temporary one into the deploy script is how a
 stale address becomes permanent. Routed to the PM inbox
 (`2026-07-29-from-ralph-pi-deploy-host-moved.md`) because four stories owe an
 on-Pi render check.
+
+### UPDATED 2026-07-30 — the picture is better than that, and the 07-29 note above is incomplete
+
+Re-checked today, and the state has moved in a good direction. **The WiFi rebuild
+has completed: `wlan0` is UP and activated on the `DeathstarWifi` profile.** The Pi
+now holds **two** addresses, and `hostname` reads **`Chi-Eclips-01`** (it was
+`Chi-Eclips-Tuner`), so the B-102 rename appears to have happened too:
+
+```
+eth0    UP    10.27.27.9/24        <- temp WIRED from the rebuild
+wlan0   UP    10.27.27.100/24      <- WiFi, DeathstarWifi profile activated
+```
+
+`10.27.27.28` answers on **neither** interface. So `.28` is not "temporarily
+unreachable", it is **not this Pi's address any more** — which reframes the fix:
+the deploy default is not stale-by-a-transient, it is simply wrong, and there are
+now two candidate hosts.
+
+**Which one the deploy should use is a CIO/PM call, not mine, but the relevant
+asymmetry is:** `10.27.27.100` (wlan0) is the address that matters for the real
+deployment, because an in-car Pi has no ethernet — `.9` only works while the
+bench cable is in. For today's four owed on-Pi render checks either works
+(`PI_HOST=10.27.27.100` or `PI_HOST=10.27.27.9`). For a *durable* fix, note that
+`.100` looks like DHCP and can move again, so the honest options are a static
+reservation or resolving by name — **not** another hardcoded literal in
+`deploy-pi.sh`, which would just re-run the failure we are standing in.
+
+I have still NOT edited the default. Reason unchanged and now stronger: the
+07-29 note in the PM inbox already says `.9`, and if I had "fixed" the default to
+`.9` yesterday, today's evidence (that the in-car path is `.100`) would have been
+baked over by a bench-only address. Same only-ever-added-never-subtracted shape as
+the stale `/opt` assets US-495 dug out.
 
 ## What unblocks it
 
