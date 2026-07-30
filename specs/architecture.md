@@ -2866,14 +2866,36 @@ cooperating processes communicate via a tmpfs directory.
 
 | Unit | Source of Truth | Role |
 |------|-----------------|------|
-| `eclipse-boot-state.service` | `deploy/eclipse-boot-state.service` | [A-1] Boot-state emitter (`python -m pi.splash.boot_state_emitter`). Polls `systemctl is-active` for the critical set + assesses the tiered eclipse-obd health, writes `boot-state` JSON @ 500ms. The authority for `healthy`/`degraded`. |
+| `eclipse-boot-state.service` | `deploy/eclipse-boot-state.service` | [A-1] Boot-state emitter (`python -m pi.splash.boot_state_emitter`). Polls `systemctl is-active` for the **CORE-readiness** set + checks the dashboard assets are installed, writes `boot-state` JSON @ 500ms. The authority for `healthy`/`degraded`. The eclipse-obd tier is sampled + reported but **does not gate** (US-494, below). |
 | `eclipse-states-http.service` | `deploy/eclipse-states-http.service` | [A-4] Localhost state server (`python -m pi.splash.states_http_server`). Binds **127.0.0.1:9899 only**, serves the read-only `states/*` JSON, **token-gated** (token SSOT), path-traversal-guarded, `Cache-Control: no-store`. The only IPC chromium can `fetch()`. |
 | `splash-boot.service.{wayland,x11}` | `specs/UI/dist/splash-pi/` | [A-8] Chromium kiosk. Loads `http://127.0.0.1:9899/` (same-origin, token injected) and runs the `boot-state-poll.js` state machine. |
 
 **Code:** `src/pi/splash/` — `boot_state_emitter.py` (honest-instrument verdict
-logic: 3-tier eclipse-obd health, alarm-fatigue guard, retry-once, hard-cap
-degrade), `states_http_server.py` (the localhost server), `token.py` (the
-one-source auth token).
+logic: CORE-readiness gate, dashboard-asset gate, informational 3-tier
+eclipse-obd health with retry-once, hard-cap degrade), `states_http_server.py`
+(the localhost server), `token.py` (the one-source auth token).
+
+**Readiness contract = "Pi core / UI is up", NOT "a vehicle is connected"
+(US-494, Sprint 66 / V0.29.20).** The handoff gate (`CORE_SERVICES_DEFAULT`) is
+`eclipse-states-http` + `eclipse-powerwatch` + `boot-progress-finalize`, plus the
+dashboard assets being installed (`/opt/dashboard/dashboard.html`). `eclipse-obd`
+is **deliberately not a gate member**: the Pi spends most of its life on a bench
+with no car, and a vehicle-shaped readiness gate makes the dashboard unreachable
+there. The tier is still assessed and published in the payload's own `obdTier`
+field for post-boot/vehicle-slice consumers, and `services` now carries **only**
+`systemctl is-active` strings (one vocabulary per field) rather than overloading
+the `eclipse-obd` entry with a tier verdict.
+
+*Why this was a bug, not a preference:* before US-494 the tier was gating **and**
+the systemd entry point never injected an `obdProbeFn`, so the probe defaulted to
+`lambda: OBD_STARTING` — a claim that checks are *in progress*, permanently. The
+tier never went terminal → `progress` capped at 2/3 → `healthy` never became true
+→ `boot-state-poll.js` never called `window.close()` → `OnSuccess=eclipse-dashboard.service`
+never fired. After the 12 s cap the splash pinned at *"eclipse-obd: not ready
+(starting)"* until reboot. An absent probe now reports `OBD_NOT_PROBED`
+(`"not-probed"`) — a reading **not taken** is never dressed up as a state.
+Missing dashboard assets likewise **hold the splash with a named reason** rather
+than handing off to a blank screen (the A-16 lesson, made loud).
 
 **Token SSOT (US-393 DoD):** exactly one file — `/run/eclipse-obd/states/.http-token`
 (0600) — is the authority. `token.loadOrCreateToken` generates it once and never

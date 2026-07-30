@@ -1,10 +1,23 @@
 # ==============================================================================
 # File:    eclipse-boot-state.service
 # Purpose: F-103 boot-state emitter [Atlas A-1]. Polls `systemctl is-active` for
-#          the critical-services set + the tiered eclipse-obd health and writes
-#          the boot-state JSON SSOT (/run/eclipse-obd/states/boot-state) that the
-#          chromium splash kiosk consumes. The splash NEVER decides system
-#          condition -- this unit is the authority (specs/ssot-design-pattern.md).
+#          the CORE-readiness service set + checks the dashboard assets are
+#          installed, and writes the boot-state JSON SSOT
+#          (/run/eclipse-obd/states/boot-state) that the chromium splash kiosk
+#          consumes. The splash NEVER decides system condition -- this unit is
+#          the authority (specs/ssot-design-pattern.md).
+#
+# Readiness means "Pi core / UI is up", NOT "a vehicle is connected" (US-494):
+#   The gate is eclipse-states-http + eclipse-powerwatch + boot-progress-finalize
+#   + /opt/dashboard/dashboard.html.  eclipse-obd is sampled and REPORTED (payload
+#   field `obdTier`) but does NOT gate the handoff -- the Pi lives on a bench with
+#   no car most of the time, and a vehicle-shaped gate left the splash pinned at
+#   "eclipse-obd: not ready (starting)" until reboot.  See specs/architecture.md
+#   "F-103 Splash Subsystem" -> Readiness contract.
+#
+# Wants= (not Requires=) eclipse-states-http is deliberate even though that unit
+#   is now a GATE member: the emitter must survive its failure in order to REPORT
+#   it.  An instrument that dies with the thing it measures reports nothing.
 # Author:  Ralph Agent (Rex)
 # Created: 2026-06-29 -- Sprint 48 US-393 (F-103 boot splash)
 #
