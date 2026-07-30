@@ -2080,3 +2080,53 @@ Task: S5 — closeout/shutdown splash renders honestly on a real shutdown
   rises" was false against a *designed* throb; the honest invariant was the
   envelope. Correct the claim, don't keep the green.
 ---
+
+## 2026-07-29 - US-499 (Rex / Agent 1, Session 5 — Sprint 66)
+Task: S6 — UI render-regression backstop (the automated A-16 guard)
+
+### What was implemented:
+- A **two-process** render harness, deliberately split so neither half can
+  launder the other's verdict:
+  - **node** boots the SHIPPED `carousel.js` / `boot-state-poll.js` against a
+    mini-DOM and dumps the resulting attributes. It knows nothing about CSS.
+  - **python** resolves the SHIPPED stylesheet over that DOM (importance →
+    specificity → source order, inline decls, `display:none` inherited through
+    ancestors) and answers: does this element have a box?
+- 15 tests: no overlay paints at idle; a new STOP code paints exactly ONE
+  overlay; "View detail" SWAPS rather than stacks; dismiss returns clean; the
+  JS-created page dots track the visible-card geometry both ways; the splash
+  hands off on a core-up bench boot (real `buildEmitter` wiring) and correctly
+  REFUSES to on a failed core unit / missing dashboard assets.
+- **RED proofs against the real pre-fix artifacts from git**: the pre-US-495
+  stylesheet (all six overlays paint) and the pre-US-494 emitter loaded as a live
+  module (splash pins with the literal "eclipse-obd: not ready (starting)").
+  Plus TWO mutation proofs that never skip (delete the `[hidden]` guard; strip
+  its `!important`), so the backstop is self-verifying with no git dependency.
+
+### Files changed:
+- Created: `tests/ui/mini_dom.js` (DOM object model — only what the kits touch)
+- Created: `tests/ui/dom_probe.js` (boots the real carousel.js, dumps the DOM)
+- Created: `tests/ui/splash_probe.js` (runs the real boot-state-poll.js, virtual clock)
+- Created: `tests/ui/render_harness.py` (markup + CSS parse, cascade, `rendered()`)
+- Created: `tests/ui/test_render_regression.py` (the backstop, 15 tests)
+- Modified: `specs/architecture.md` (F-092 backstop section + F-103/US-495 xrefs)
+
+### Learnings for future iterations:
+- **Pattern discovered**: to catch a COMPOSITION bug, split the harness along the
+  same seam the bug crossed and let the two sides disagree. Real JS decides the
+  attributes; real CSS decides the pixels; the assertion sits past both.
+- **Pattern discovered**: prove a guard RED with the *real historical artifact*
+  (`git show <fix>^:<path>` — a stdlib-only module can be loaded live via
+  importlib), and back it with a MUTATION proof that needs no history. The first
+  is the literal claim; the second is the one that still runs in a shallow CI.
+- **Gotcha**: a harness reproduces the bug's blind spot unless IDL properties
+  REFLECT to content attributes. `el.hidden` stored as a private flag would have
+  passed US-495's broken stylesheet without a murmur.
+- **Gotcha (found by this very test)**: the emitter latches `startMono` in its
+  CONSTRUCTOR — install a fake clock BEFORE building it, or elapsed() is
+  (fake now − real boot time) and no hard cap can fire. Every positive test still
+  passed; only the pre-fix RED test noticed. Restore a patched `time.monotonic`
+  in a `finally`: it is global, and the same process shells out to node next.
+- **Gotcha**: report what the resolver CANNOT judge. A skipped `display` rule
+  makes a render test leniently green, which is worse than no test at all.
+---

@@ -1,8 +1,9 @@
 # BL-026 — US-478 / US-497 (IMU bring-up + IMU card) are gated: no 0x69 on the bus, and the `states/imu` shape is unconfirmed
 
 - **Filed:** 2026-07-29 by Ralph (Rex), Sprint 66 (V0.29.20), after US-498
+- **Updated:** 2026-07-29 after US-499 — these two are now **the entire remaining sprint** (5/7 done)
 - **Blocks:** US-478 (S4-emitter, IMU bring-up), US-497 (S4-card, consumes `states/imu`)
-- **Does NOT block:** US-499 (S6 render-regression) — still fully available, and it is what I am picking up next
+- **Did NOT block:** US-499 (S6 render-regression) — built and complete
 - **Needs:** a CIO hardware action (AI-005) + an Atlas contract ruling. PM call at dispatch, per the story's own `conditionalOutcomes`.
 
 ## Why I did not take US-478 as the highest-priority unclaimed story
@@ -48,6 +49,13 @@ blessed contract may contradict.
 
 ## Sprint impact
 
-Sprint 66 stands at 4/7 (US-494, US-495, US-496, US-498). US-499 is unblocked and
-is the highest-value story left — S1/S2/S3/S5 have every one of them ended with an
-owed on-Pi render check, which is precisely the gap US-499 exists to close.
+**Updated 2026-07-29 (post US-499).** Sprint 66 stands at **5/7** — US-494,
+US-495, US-496, US-498, US-499 all `passes: true`. US-499 (the render-regression
+backstop) is built, so **US-478 and US-497 are now the only remaining stories,
+and both are blocked by this file.** There is no further work Ralph can pick up
+in this sprint; the next move is a CIO/Atlas/PM decision, not a dev iteration.
+
+Note for the PM's sprint-close call: US-499 discharges its own validation
+automatically (RED against the real pre-fix artifacts, GREEN after), but it does
+**not** retire the on-Pi render checks owed by US-494/495/496/498. Those four
+still need one deploy + bench session on the Pi before the sprint is validated.

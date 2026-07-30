@@ -2897,6 +2897,14 @@ never fired. After the 12 s cap the splash pinned at *"eclipse-obd: not ready
 Missing dashboard assets likewise **hold the splash with a named reason** rather
 than handing off to a blank screen (the A-16 lesson, made loud).
 
+*Guarded end-to-end since US-499:* `tests/ui/test_render_regression.py` runs the
+**production wiring** (`buildEmitter` — what the systemd unit constructs) against
+a faked `systemctl`, feeds the emitted payload sequence to the **shipped**
+`boot-state-poll.js`, and asserts `window.close()` is actually called. Its
+partner test loads the **pre-US-494 emitter from git** and asserts the splash
+pins instead — the defect above is now reproducible on demand. See the
+render-regression backstop under F-092.
+
 **Token SSOT (US-393 DoD):** exactly one file — `/run/eclipse-obd/states/.http-token`
 (0600) — is the authority. `token.loadOrCreateToken` generates it once and never
 regenerates. The server loads it to validate the `X-Splash-Token` /
@@ -3090,7 +3098,10 @@ that needs to be present-but-invisible must therefore **not** use `hidden` (use
 `aria-hidden` + `visibility`). Pinned by
 `tests/ui/test_dashboard_overlay_hidden_guard.py`, which resolves the real
 cascade (importance → specificity → source order) for every element the shipped
-markup ships `hidden`, so a future overlay is covered the day it is added.
+markup ships `hidden`, so a future overlay is covered the day it is added --
+and, since US-499, by the render-regression backstop below, which reaches what
+that static sweep cannot: JS-created elements, and the surface *after* the real
+`carousel.js` has run.
 
 ##### Card model: always-present vs vehicle-gated (US-496, F-121)
 
@@ -3216,6 +3227,61 @@ past the second is what prints "Deploy OK" over a stale surface and sends the
 operator to debug the UI instead of the deploy (the A-16 lesson). Behaviour is
 pinned by `tests/deploy/test_asset_refresh.py`, which drives the real shell
 function against temp dirs rather than grepping the deploy script.
+
+##### Render-regression backstop -- the automated A-16 guard (US-499, F-121)
+
+Sprint 66 shipped three defects that **every unit test passed**, because all
+three were *composition* failures rather than component failures:
+
+| Defect | Every part was correct | What was broken |
+|---|---|---|
+| US-494 (S1) | `computeBootState` was right; the splash JS was right | the systemd entry point never injected `obdProbeFn`, so the payload the **production wiring** emits never reached `healthy` -> no handoff |
+| US-495 (S2) | `carousel.js` set `el.hidden` correctly on 18 call sites | an ID-selector `display: flex` outranked the UA `[hidden]` rule, so six overlays painted at once |
+| US-498 (S5) | the delay, the fill-mode and the direction were each valid | their *interaction* held the closeout mark at `opacity: 0` for 6 s of a 7 s grace window |
+
+`tests/ui/test_render_regression.py` is the permanent guard on that class. It is
+deliberately **compositional**, in two processes that cannot see each other's
+verdict:
+
+1. **node** (`tests/ui/dom_probe.js`, `splash_probe.js`, on `mini_dom.js`) boots
+   the **shipped** `carousel.js` / `boot-state-poll.js` against the **shipped**
+   markup and the state files a test declares, then dumps the resulting DOM. It
+   knows nothing about CSS.
+2. **python** (`tests/ui/render_harness.py`) resolves the **shipped** stylesheet
+   over that DOM -- importance -> specificity -> source order, inline
+   declarations, `display: none` inherited through ancestors -- and answers the
+   only question that matters: *does this element have a box?*
+
+The mini-DOM reflects IDL properties onto **content attributes** (`el.hidden =
+true` becomes the `hidden` attribute) because the attribute is what the cascade
+selects on. A harness that stored `hidden` as a private flag would have
+reproduced the US-495 blind spot instead of catching it.
+
+**It is proven RED, not asserted to be.** Each guard has a partner test that runs
+the same harness against the **real pre-fix artifact from git** -- the
+pre-US-495 stylesheet (all six overlays paint) and the pre-US-494 emitter loaded
+as a live module (the splash pins, degrading with the literal
+`eclipse-obd: not ready (starting)` the CIO read off the panel). Two **mutation**
+proofs run unconditionally beside them (delete the `[hidden]` guard rule; strip
+its `!important`), so the backstop stays self-verifying even where git history
+is unavailable -- and they pin the `!important` as load-bearing, which is the
+fragility US-496 flagged.
+
+It also covers the one surface no static sweep can reach: the **page dots are
+created by JS**, so `test_dashboard_overlay_hidden_guard.py` (which enumerates
+elements the *markup* ships `hidden`) can never see them. Here they are built by
+the real `carousel.js` and rendered through the real cascade, against the
+visible-card geometry the US-496 vehicle gate introduced.
+
+**Fidelity limit, stated because an unstated one is how a lenient test passes on
+a broken layout:** this resolves the **cascade**, not **layout**. It sees "not
+painted"; it cannot see overflow, wrapping, or a box pushed off-screen. Sibling
+combinators (`+`, `~`) are not resolved. To stop that leniency being silent,
+`Surface.unresolvableDisplaySelectors()` reports any `display` rule behind a
+pseudo-class the resolver cannot evaluate, and
+`test_harnessCanJudgeEveryDisplayRule` **fails** when one appears -- teach the
+resolver or move the rule; do not delete the test. The residual gap is a real
+kiosk smoke on the panel, which remains the per-story on-Pi render check.
 
 > **Sequencing note (A-4):** the dashboard and the pygame `status_display` must
 > never run simultaneously. The pygame surface was **retired (parity-gated) in
