@@ -2,6 +2,9 @@
 
 - **Filed:** 2026-07-29 by Ralph (Rex), Sprint 66 (V0.29.20), after US-498
 - **Updated:** 2026-07-29 after US-499 — these two are now **the entire remaining sprint** (5/7 done)
+- **RE-VERIFIED 2026-07-29 (Session 6):** both gates re-checked against live evidence
+  before re-affirming this file — **both still closed**. Detail in
+  "Re-verification" below. No dev work remains in Sprint 66.
 - **Blocks:** US-478 (S4-emitter, IMU bring-up), US-497 (S4-card, consumes `states/imu`)
 - **Did NOT block:** US-499 (S6 render-regression) — built and complete
 - **Needs:** a CIO hardware action (AI-005) + an Atlas contract ruling. PM call at dispatch, per the story's own `conditionalOutcomes`.
@@ -35,6 +38,58 @@ Two independent gates, either one sufficient:
 US-497 inherits both gates: it is a pure consumer of the `states/imu` file US-478
 has not defined yet, so a card built now would pin a fixture shape that the
 blessed contract may contradict.
+
+## Re-verification, 2026-07-29 (Session 6) — I did not take these on trust
+
+A blocker I filed myself is exactly the kind of thing that rots into a stale
+excuse, so I re-checked both gates against primary evidence rather than re-reading
+my own note.
+
+**Gate 1 — hardware. Still closed, confirmed against the real bus, today.** Not
+against the 07-27 note in the story's AC. Live `i2cdetect -y 1` on the Pi:
+
+```
+20: -- -- -- -- -- -- -- -- -- 29 -- -- -- -- -- --
+30: -- -- -- -- -- -- 36 -- -- -- -- -- -- -- -- --
+60: -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- --
+```
+
+`0x29` (TSL2591 light) and `0x36` (MAX17048 UPS) only. **Row 60 is empty — no
+`0x69`.** The genuine ICM-20948 is not on the bus; AI-005 is still open. US-478's
+AC-2/AC-3 and all three of its `validationCriteria` are live-read checks against
+that address, so they cannot pass.
+
+**Gate 2 — contract. Still closed, and this is the one that would block even if
+the board were wired.** I checked Atlas's own design spec
+(`docs/superpowers/specs/2026-07-28-pi-ui-carousel-ssot-wiring-design.md`) for a
+ruling. It confirms the *scope* — the IMU emitter is in, altitude is typed-NA with
+no barometer, S4 is "bench-validatable once the IMU is physically wired" — but it
+does **not** answer either question the story gates on. There is no derived-field
+list with units (Q-A) and no word on transport (Q-B). Nothing has arrived in
+`offices/ralph/inbox/` since 2026-07-22.
+
+So the situation is unchanged from what I filed: AC-4's shape is still marked
+*"(Iris Q-A, pending Atlas confirm)"*, and building a heading / grade /
+tilt-compensated-g bridge to it would mean inventing the numeric contract and then
+testing it against my own invention.
+
+**If Atlas has in fact ruled**, the ruling has not reached me — please route it to
+`offices/ralph/inbox/` and gate 2 lifts on arrival. Q-B is the load-bearing half:
+it decides whether the deliverable is a state file at all, so it cannot be
+deferred to "build it and adjust later".
+
+## Incidental finding — the Pi is NOT at its deploy address (affects the owed on-Pi checks)
+
+Found while checking the bus, and it lands on the PM's next move rather than on
+this blocker. **`10.27.27.28` timed out; the Pi answered on `10.27.27.9`** — the
+temp wired address from the WiFi rebuild. `deploy/deploy-pi.sh` defaults
+`PI_HOST=10.27.27.28` and gates on SSH at step 1, so a deploy run as-is will
+**hard-fail before shipping anything**, which is the correct behaviour and not a
+bug. Override with `PI_HOST=10.27.27.9`. I have NOT changed the default: the
+address is transient, and baking a temporary one into the deploy script is how a
+stale address becomes permanent. Routed to the PM inbox
+(`2026-07-29-from-ralph-pi-deploy-host-moved.md`) because four stories owe an
+on-Pi render check.
 
 ## What unblocks it
 

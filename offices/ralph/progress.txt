@@ -2130,3 +2130,51 @@ Task: S6 — UI render-regression backstop (the automated A-16 guard)
 - **Gotcha**: report what the resolver CANNOT judge. A skipped `display` rule
   makes a render test leniently green, which is worse than no test at all.
 ---
+
+## 2026-07-29 - NO STORY (Rex / Agent 1, Session 6 — Sprint 66)
+Task: re-verify BL-026 before re-affirming it; no buildable story remains
+
+### What was done:
+- **Took no story, deliberately.** Sprint 66 is 5/7; the only remaining stories
+  (US-478 IMU bring-up, US-497 IMU card) are both blocked by BL-026. Rather than
+  re-read my own blocker and repeat it, I re-checked **both gates against primary
+  evidence**.
+- **Gate 1 (hardware) — still closed, checked against the real bus today**, not
+  against the 07-27 note in the story's AC. Live `i2cdetect -y 1` on the Pi:
+  `0x29` (TSL2591 light) + `0x36` (MAX17048 UPS), **row 60 empty — no `0x69`**.
+  The genuine ICM-20948 is not wired; AI-005 still open.
+- **Gate 2 (contract) — still closed**, and it would block even with the board
+  wired. Atlas's own design spec confirms the *scope* (IMU emitter in scope,
+  altitude typed-NA, S4 bench-validatable once wired) but answers **neither**
+  gating question: no derived-field list with units (Q-A), nothing on transport
+  (Q-B). Nothing new in `offices/ralph/inbox/` since 2026-07-22.
+- **Incidental finding, worth more than the check itself: the Pi is not at its
+  deploy address.** `10.27.27.28` timed out; it answers on `10.27.27.9` (temp
+  wired address from the WiFi rebuild). `deploy-pi.sh` defaults to `.28` and gates
+  on SSH at step 1, so a deploy run as-is hard-fails before shipping — correct
+  behaviour, but it blocks the four owed on-Pi checks until someone passes
+  `PI_HOST=10.27.27.9`.
+
+### Files changed:
+- Modified: `offices/pm/blockers/BL-026-*` (re-verification section, dated + with
+  the actual `i2cdetect` output; plus the deploy-address finding)
+- Created: `offices/pm/inbox/2026-07-29-from-ralph-pi-deploy-host-moved.md`
+- Modified: `offices/ralph/ralph_agents.json`, `offices/ralph/progress.txt`
+
+### Verification:
+- No production code, no tests, no specs touched → nothing to regress. Deliberate:
+  there was no story to build, and inventing adjacent work is a scope-fence breach.
+
+### Learnings for future iterations:
+- **Pattern discovered**: **verifying a refusal is not the same as repeating one,
+  and it is cheap.** Two commands — one `ssh`, one `grep` of the design spec —
+  either free a story or convert a two-day-old assumption into a dated fact. Do it
+  every time a blocker you filed yourself is the reason you are standing still.
+- **Gotcha**: the payoff came from the *side effect* of checking, not the check.
+  Looking at the bus is what caught a deploy that would have died at its SSH gate
+  during the sprint-close session, with four on-Pi checks queued behind it.
+- **Pattern**: don't "fix" a transient address by editing the default. Baking
+  `10.27.27.9` into `deploy-pi.sh` is the same only-ever-added-never-subtracted
+  shape as the stale `/opt` assets US-495 dug out. Pass it as an override; route
+  the decision to an owner.
+---
