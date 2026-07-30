@@ -1954,3 +1954,72 @@ Task: S2: Overlay [hidden] CSS guard + /opt asset force-refresh
   **Read what `git add` refuses -- an ignored new file is a bug that only
   reproduces somewhere else.**
 ---
+
+## 2026-07-29 - US-496 (Agent 1 / Session 3)
+Task: S3: Pi-local cards live + honest-gray -- Pi Health / Battery / Light
+always present; DTC grayed no-data
+
+### What was implemented:
+- **Light card (new -- it did not exist).** A pure consumer of the SAME
+  `states/light` file (`{lux, ts}`) that already drives the auto-dim, so the
+  tick now resolves ONE clock for both the card's freshness verdict and the
+  brightness actually applied. The card's fetch is REUSED by the brightness
+  consumer (the tick was already fetching `light` at the end -- a naive card
+  would have polled the same file twice per tick at 4 Hz).
+- Two tiles through the shared tokenized `.tile`: **AMBIENT** (reading + read
+  age) and **CONDITION** (DARK/DIM/DAYLIGHT -- a *name* for the existing
+  grounded `luxMin`/`luxFull`, not a third set of numbers). A null lux, an
+  undated payload, or a reading older than `luxStaleSec` grays BOTH fields
+  individually with a DISTINCT reason per fault.
+- **`noDataView(name)`**: the absent-state message for the two cards whose
+  silence is dangerous to misread -- `dtc` ("no data -- codes not read", never
+  an all-clear) and `light` ("no data -- light feed absent", not "dark").
+- **Vehicle gate.** `data-vehicle-gated` cards are HIDDEN, not grayed, until an
+  explicit `source.obd.available === true`. Fails closed to hidden; ships
+  hidden. Applied to the LTFT card.
+- **Visible-card geometry** (the gate's hidden cost): `visualPosition` /
+  `nextVisibleIndex` / `nearestVisibleIndex` now own translateX, the page dots,
+  the swipe step-over and the land-somewhere-visible recovery. `goTo()` refuses
+  a hidden target.
+
+### Files changed:
+- Modified: `specs/UI/dist/dashboard-pi/dashboard.html` (Light card slot; LTFT
+  gains `data-vehicle-gated hidden`)
+- Modified: `specs/UI/dist/dashboard-pi/carousel.js` (lightView/luxBand,
+  noDataView, vehicleConnected, the three visible-index functions,
+  renderLightCard, applyVehicleGate, tick + render/goTo/move wiring)
+- Created: `tests/ui/test_carousel_pi_local_cards.py` (33 tests)
+- Modified: `tests/deploy/test_dashboard_kit.py` (card-slot count 4 -> 5)
+- Modified: `specs/architecture.md` (F-092 card-model section -- PM Rule 10)
+
+### Learnings for future iterations:
+- **Pattern discovered (the big one): a HIDE is not a free styling change -- it
+  changes the GEOMETRY.** `#track` is a flex row of full-width cards and the
+  US-495 `[hidden]` guard genuinely removes the element, so a hidden card takes
+  no slot. Anything computing a position from an index (translateX, page dots,
+  swipe) has to switch to counting VISIBLE items or the first hide slides the UI
+  to a blank frame. Budget that before agreeing a card can be hidden.
+- **Gotcha**: the gate's correctness rests entirely on the `[hidden]` guard
+  winning on IMPORTANCE. Adding `!important` to `.card`/`.dot`'s `display`
+  would tie importance, hand the win to the later same-specificity selector, and
+  silently put a gated card back in the track. One word, US-495's defect back.
+  There is now a test forbidding it.
+- **Pattern discovered**: *gray and hidden are different facts.* Gray = "this
+  instrument is broken"; hidden = "it does not apply right now". A grayed
+  fuel-trim card on a benched Pi is a false fault report.
+- **Gotcha**: the SAME availability helper needs OPPOSITE defaults depending on
+  the question. `sourceUnavailable()` treats an absent `source` block as
+  available (pre-US-429 compat) -- right for "should I gray this tile?", wrong
+  for "should I reveal a vehicle card?". A REVEAL gate must demand the positive
+  claim. Third story this sprint where the bug was a reading NOT TAKEN rendered
+  as a confident state (US-492, US-494, here).
+- **Gotcha**: when a new consumer reads a state file an existing consumer
+  already fetches, check for the double-fetch AND for a second clock. Two
+  `Date.now()` calls in one tick let the card and the screen disagree about
+  whether the same reading is stale.
+- **Pattern discovered**: the strongest part of a "no data" fix is making the
+  reasons DISTINCT. "No reading ever arrived", "readings stopped arriving" and
+  "undated reading" are three different faults; one shared word hides which.
+- **Host gaps (unchanged, Sprints 64/65/66)**: `make`, `black`, `mypy` absent on
+  this Windows box. Run `python -m ruff check` directly; mypy is PM's gate.
+---
