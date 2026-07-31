@@ -2471,3 +2471,61 @@ Task: sprint-completion verification pass (no story available to claim)
   note -- and here the side effect (surfacing US-500 in the handoff) was worth
   more than the check itself.
 ---
+
+## 2026-07-31 - BL-025 rfkill-unblock deploy-bake (Agent 1 / Session 10)
+Task: Bake the boot-time radio unblock into the deploy (CIO-directed P0 hotfix,
+routed by Atlas; ships as V0.29.22, NOT a sprint.json story)
+
+### What was implemented:
+- `deploy/eclipse-rfkill-unblock.service` (NEW) -- Type=oneshot,
+  RemainAfterExit=yes, ExecStart=/usr/sbin/rfkill unblock all,
+  After=systemd-rfkill.service bluetooth.service, WantedBy=multi-user.target.
+- `step_install_rfkill_unblock` in deploy-pi.sh -- sync-if-changed install
+  (cmp -s -> install -m 644 -> daemon-reload-on-change -> enable --now), plus a
+  belt-and-suspenders live `rfkill unblock all` + zeroing of any stale saved
+  block under /var/lib/systemd/rfkill/*bluetooth*. Called TOP-LEVEL on every
+  deploy, ordered before step_install_rfcomm_bind.
+- Registered the unit FIRST in `src/pi/ops/unit_manifest.py` START order
+  (kioskVerbs empty -- the kiosk gains no reach over radios).
+- 16 new tests in `tests/deploy/test_rfkill_unblock_install.py`, RED first.
+- `specs/architecture.md` 3.4 -- "Radio soft-block survival" subsection.
+
+### Files changed:
+- Created: `deploy/eclipse-rfkill-unblock.service` (the standing safety net)
+- Created: `tests/deploy/test_rfkill_unblock_install.py` (16 tests)
+- Modified: `deploy/deploy-pi.sh` (new step + top-level call site)
+- Modified: `src/pi/ops/unit_manifest.py` (register the unit, first in START order)
+- Modified: `tests/pi/ops/test_unit_manifest.py` (EXPECTED_CANONICAL 8 -> 9)
+- Modified: `tests/pi/ops/test_obdctl.py` (hardcoded "8 unit" -> derived count)
+- Modified: `specs/architecture.md` (3.4 radio soft-block survival)
+- Created: `offices/pm/inbox/2026-07-31-from-ralph-rfkill-unblock-baked-into-deploy-ready-for-v0.29.22.md`
+
+### Learnings for future iterations:
+- **The diagnostic order is radio -> bond -> bind -> connect.** Four weeks of
+  zero capture were spent above the radio layer, because every layer above it
+  reported an HONEST "no adapter". Honest instruments do not point downward;
+  when every layer agrees the thing below it is missing, go LOWER before going
+  wider.
+- **Pattern discovered**: an ordering directive can BE the fix. Everything in
+  eclipse-rfkill-unblock.service except `After=systemd-rfkill.service` is
+  plumbing -- unblock before the restore and systemd re-blocks the radio
+  afterwards, leaving a green unit on a dead adapter. Test the ORDERING, not
+  just the presence of the ExecStart.
+- **Gotcha**: `RemainAfterExit=yes` on a oneshot is an HONEST-INSTRUMENT
+  requirement, not a nicety. Without it a perfectly successful unblock reads
+  `inactive (dead)` and the operator's only cheap check (`systemctl is-active`)
+  reports a working unit as broken -- and that is the very check the acceptance
+  criteria depend on.
+- **Gotcha**: a fix that exists only on the live Pi is not a fix. The whole
+  deliverable here was survivability of `--init`/reflash, not behaviour -- the
+  behaviour already worked. When a note says "I fixed it live", the story is
+  always "make it repo-managed".
+- **Pattern (reused, worked again)**: prove the WIRING by running the shipped
+  `deploy-pi.sh --dry-run` and reading its own output, not by grepping for the
+  function definition. That is the US-494 lesson; the same test shape also
+  proves the call is not nested inside `if $INIT`.
+- **Test-hygiene**: when a neighbouring test hardcodes a registry count, ask
+  whether the literal IS the contract. `EXPECTED_CANONICAL` is a deliberate
+  hand-maintained fixture -> grow it. `assert "8 unit" in out` was NOT --
+  the contract is "the CLI counts what it printed", so it became derived.
+---
