@@ -5016,9 +5016,12 @@
         "atlas-dongle-saga-2026-07-17"
       ],
       "tasks": [],
-      "status": "pending",
+      "status": "complete",
+      "passes": true,
+      "supersededBy": "US-515",
+      "completionNotes": "RETIRED-as-delivered 2026-07-31: US-515 (V0.29.22 hotfix) fixed the identical pair_obdlink.sh Trixie-bluez defect and is a strict SUPERSET (US-475 also asked for legacy [bluetooth]# tolerance; the new pattern accepts both > and #). Shelved 2026-07-20 as an architect-hallucination pending a real re-pair failure on the Pi; Atlas observed exactly that (live TIMEOUT 2026-07-31) so the shelve condition fired. Do NOT re-dispatch (build-twice guard, per Ralph).",
       "createdAt": "2026-07-19",
-      "updatedAt": "2026-07-20",
+      "updatedAt": "2026-07-31",
       "shelveNote": "SHELVED per CIO 2026-07-20: the OBDLink BT adapter works fine; the dongle-catatonia / pair-script-dead 'errors' were architect hallucinations. Archaeology confirms the BT LINK code was never the regression (US-441/A-17/US-432 changed nothing in connect/rfcomm/pairing; a raw read got 6/6 live RPM on the same MAC). The bond persists across reboots (Session 23) so re-pairing is rarely needed. Revisit ONLY if a real re-pair failure is observed on the Pi."
     },
     {
