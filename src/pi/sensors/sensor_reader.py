@@ -319,7 +319,16 @@ class ImuReader(_BaseSensorReader):
         accel = _vec3(dev.acceleration)
         gyro = _vec3(dev.gyro)
         mag = _vec3(dev.magnetic)
-        temp = float(dev.temperature)
+        # US-500: the genuine adafruit_icm20x.ICM20948 does NOT expose
+        # .temperature (the clone/FakeImu assumption did). temp is NOT in the
+        # states/imu display contract and edr_imu_sample.temp_c is nullable, so a
+        # missing/bad temp degrades to honest-null (never fabricated) and must
+        # NOT drop the accel/gyro/mag burst the card + EDR need. Best-effort,
+        # decoupled from the atomic critical trio above.
+        try:
+            temp = float(dev.temperature)
+        except (AttributeError, TypeError, ValueError):
+            temp = None
         self._publish(TOPIC_IMU_ACCEL, accel, UNIT_ACCEL, seq)
         self._publish(TOPIC_IMU_GYRO, gyro, UNIT_GYRO, seq)
         self._publish(TOPIC_IMU_MAG, mag, UNIT_MAG, seq)

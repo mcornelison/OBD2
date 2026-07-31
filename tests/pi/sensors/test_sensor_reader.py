@@ -114,6 +114,44 @@ def test_imu_burstPoll_publishesFourTopicsWithSharedSeq():
     assert all(s.source == "imu" for s in samples)
 
 
+class FakeImuNoTemp:
+    """Mimics the GENUINE adafruit_icm20x.ICM20948: vector properties present,
+    but NO .temperature attribute -- the real chip class does not expose it
+    (the live 'ICM20948 object has no attribute temperature' crash, US-500)."""
+
+    def __init__(self) -> None:
+        self.acceleration = (0.11, 0.22, 9.81)
+        self.gyro = (0.01, -0.02, 0.03)
+        self.magnetic = (12.0, -34.0, 56.0)
+        # deliberately no .temperature -> float(dev.temperature) raises AttributeError
+
+
+def test_imu_noTemperatureAttr_publishesAccelGyroMag_tempNone():
+    """US-500: a genuine ICM-20948 has no .temperature. A missing temp must
+    degrade to honest-null and MUST NOT drop the accel/gyro/mag burst the IMU
+    card + EDR actually need -- pre-fix the AttributeError dropped the whole
+    poll ('no sample this poll'), so states/imu was never written.
+    """
+    bus = SampleBus()
+    sub = bus.subscribe(["raw.imu.*"], QoS.LOSSY, "t")
+    reader = ImuReader(bus, deviceFactory=lambda: FakeImuNoTemp())
+    reader.probe()
+
+    reader.pollOnce()
+
+    samples = _drain(sub)
+    byTopic = {s.topic: s for s in samples}
+    # the critical trio still publishes real values
+    assert byTopic[TOPIC_IMU_ACCEL].value == (0.11, 0.22, 9.81)
+    assert byTopic[TOPIC_IMU_GYRO].value == (0.01, -0.02, 0.03)
+    assert byTopic[TOPIC_IMU_MAG].value == (12.0, -34.0, 56.0)
+    # temp degrades to honest-null (never fabricated); the topic is still present
+    assert TOPIC_IMU_TEMP in byTopic
+    assert byTopic[TOPIC_IMU_TEMP].value is None
+    # the whole burst still shares one seq
+    assert len({s.seq for s in samples}) == 1
+
+
 def test_imu_seqIncrementsPerBurstNotPerTopic():
     """Each burst shares one seq; the seq advances by one across bursts."""
     bus = SampleBus()
