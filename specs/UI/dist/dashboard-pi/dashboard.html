@@ -100,6 +100,24 @@
         <h2 class="card-title">Light</h2>
         <div class="card-body">unavailable</div>
       </section>
+      <!-- US-497 IMU live-instrument card (S4-card, F-113): g-force meter +
+           compass, a PURE CONSUMER of the states/imu file US-478's bridge
+           writes. ALWAYS-PRESENT and NOT `data-vehicle-gated`: the ICM-20948 is
+           a PI-LOCAL sensor that reads on the bench with no car, so gating it
+           behind a vehicle would hide a working instrument (Atlas's card model:
+           always-present, gray-if-offline).
+
+           An unwired sensor (available:false), an undated payload or a reading
+           older than IMU_STALE_SEC falls back to a calm gray MOTION body --
+           never a frozen or zeroed instrument, which is the one failure mode a
+           live graphical instrument has and a text tile does not: a dot frozen
+           at 0.4 g reads exactly like a car holding a steady corner. Altitude
+           is ALWAYS typed-NA "no source" (no barometer) and never blocks the
+           card; a dead magnetometer grays HEADING alone. -->
+      <section class="card" data-state="imu" aria-label="Motion">
+        <h2 class="card-title">Motion</h2>
+        <div class="card-body">unavailable</div>
+      </section>
       <!-- US-406 Alerts card (Card 5, F-111): hero (worst code + directive) +
            a tappable list sorted worst-first (na last). JS fills the body from
            the polled `dtc` state; a missing/malformed file -> `unavailable`. -->

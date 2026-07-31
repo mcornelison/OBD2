@@ -84,11 +84,16 @@
   //            "No stored codes" (a fabricated clean read) and never as an
   //            alert: the F-6 no-phantom rule at card level.
   //   light -- silence means "the feed stopped", not "dark" (a fabricated 0 lux).
+  //   imu   -- (US-497) silence means "the motion feed stopped", NOT "not
+  //            moving". A motion instrument reading as stationary is the same
+  //            fabrication as a fabricated 0 lux, and a more dangerous one: a
+  //            still g-meter is exactly what a parked car looks like.
   // Cards not listed keep the shipped one-word fallback -- this story was not
-  // scoped to restyle the three it does not touch.
+  // scoped to restyle the ones it does not touch.
   var NO_DATA_VIEWS = {
     dtc: { label: "ALERTS", reason: "no data -- codes not read" },
     light: { label: "AMBIENT", reason: "no data -- light feed absent" },
+    imu: { label: "MOTION", reason: "no data -- IMU feed absent" },
   };
 
   function noDataView(name) {
@@ -1500,6 +1505,236 @@
     };
   }
 
+  // -------------------------------------------------------------------------
+  // US-497 IMU live-instrument card (S4-card, F-113) -- pure, node-testable.
+  //
+  // A PURE CONSUMER of the states/imu file US-478's bridge writes. The bridge
+  // already resolved the one hard problem (an accelerometer cannot tell gravity
+  // from acceleration; a single slow gravity estimate defines the level frame,
+  // the pitch AND the heading tilt-compensation). This card MAPS and FORMATS
+  // that contract -- it never fuses and never re-derives, because a second
+  // derivation is a second chance for the compass and the grade to disagree
+  // about which way is down (Atlas DELTA-2; specs/architecture.md 10.8.2).
+  //
+  // The failure mode that shapes this whole module: a LIVE GRAPHICAL INSTRUMENT
+  // CAN FREEZE, and a text tile cannot. A gray "NA" reads as dead at a glance; a
+  // g-dot frozen at 0.4 g reads exactly like a car holding a steady corner. So
+  // staleness here blanks the INSTRUMENT (the idle fallback), it does not merely
+  // gray a label -- AC-3, "never a frozen/zeroed live instrument".
+  // -------------------------------------------------------------------------
+
+  // Freshness window, in seconds. GROUNDED TO THE PRODUCER'S CADENCE, not
+  // invented: the bridge writes at pi.sensors.imu.stateHz (default 4 Hz = one
+  // write per 250 ms), so 2.0 s is EIGHT missed writes -- wide enough to ride
+  // out a scheduling hiccup or one slow tmpfs read, short enough that a frozen
+  // instrument cannot linger on screen. Deliberately MUCH tighter than the
+  // light card's 10 s: a 10 s old lux reading is still roughly true, a 10 s old
+  // g-vector is meaningless. Rex-derived; flagged for Atlas/Spool confirmation
+  // against a real drive, same status as the bridge's gravity tau.
+  var IMU_STALE_SEC = 2.0;
+
+  // Outer ring of the g-meter, in g. A street-tired car tops out near 0.9 g
+  // lateral, so a 1.0 g full scale frames real driving without compressing it
+  // into the middle of the dial. Rex-derived DISPLAY scale (not a vehicle
+  // limit) -- flagged for Spool, who owns vehicle dynamics.
+  var G_FULL_SCALE = 1.0;
+
+  // The g-trail window, in seconds (Iris live-instrument spec). At the 4 Hz
+  // state cadence that is ~140 points, drawn as ONE polyline rather than 140
+  // nodes -- a node churn of 560/s on a Pi kiosk buys nothing a line does not.
+  var G_TRAIL_WINDOW_SEC = 35;
+
+  // The bridge's per-field absence vocabulary, in words. This is a NAME map,
+  // not a second set of facts: an unknown code passes straight through rather
+  // than being swallowed into a generic word, because a reason the card has not
+  // been taught is still information the operator can act on.
+  var IMU_REASON_TEXT = {
+    sensor_absent: "sensor not detected",
+    no_mag_reading: "no compass reading",
+    tilt_unresolved: "orientation unresolved",
+    pitch_out_of_range: "pitch beyond range",
+    no_source: "no source",
+  };
+
+  function imuReason(data, field) {
+    var reasons = isObj(data) && isObj(data.reasons) ? data.reasons : {};
+    var code = reasons[field];
+    if (typeof code !== "string" || !code) return "unavailable";
+    return Object.prototype.hasOwnProperty.call(IMU_REASON_TEXT, code)
+      ? IMU_REASON_TEXT[code]
+      : code;
+  }
+
+  // Place the g-dot in a unit box centred on the instrument. The SIGN CONTRACT
+  // (specs/architecture.md 10.8.2) mapped to SCREEN coordinates, which is where
+  // it is easy to invert an instrument in a way that still looks plausible:
+  //   gLon + = accelerating -> the dot moves UP    -> y NEGATIVE (screen y runs down)
+  //   gLon - = braking      -> the dot moves DOWN  -> y POSITIVE
+  //   gLat + = RIGHT        -> the dot moves RIGHT -> x POSITIVE
+  // Over-scale readings clamp to the ring along their OWN direction (never
+  // per-axis, which would swing the dot to a corner and misreport which way the
+  // car was loaded). The clamp cannot understate the event silently: the
+  // numeric readout beside the meter always carries the true magnitude.
+  function gDotPosition(gLat, gLon, fullScale) {
+    var fs = typeof fullScale === "number" && isFinite(fullScale) && fullScale > 0
+      ? fullScale
+      : G_FULL_SCALE;
+    if (typeof gLat !== "number" || !isFinite(gLat)) return null;
+    if (typeof gLon !== "number" || !isFinite(gLon)) return null;
+    var x = gLat / fs;
+    var y = -gLon / fs;
+    var r = Math.sqrt(x * x + y * y);
+    if (r > 1) return { x: x / r, y: y / r, clamped: true };
+    return { x: x, y: y, clamped: false };
+  }
+
+  var COMPASS_ROSE = [
+    "N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE",
+    "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW",
+  ];
+
+  // The 16-point rose label for a bearing. The modulo on the INDEX is the
+  // load-bearing part: 359 degrees rounds to index 16, which runs off the array
+  // and would read `undefined` exactly as the vehicle points north.
+  function headingCardinal(deg) {
+    if (typeof deg !== "number" || !isFinite(deg)) return null;
+    var d = ((deg % 360) + 360) % 360;
+    return COMPASS_ROSE[Math.round(d / 22.5) % 16];
+  }
+
+  function normDeg(deg) {
+    return ((deg % 360) + 360) % 360;
+  }
+
+  // Advance the client-side g-trail (Atlas Q-B: the animation is accumulated
+  // from POLLED values, so eviction is this card's job). Pure: returns a new
+  // array. Eviction runs even when there is NO new point, so a feed that stops
+  // decays the trail to empty instead of freezing its last shape on screen.
+  function pushGTrail(trail, point, nowMs, windowSec) {
+    var w = (typeof windowSec === "number" && windowSec > 0
+      ? windowSec
+      : G_TRAIL_WINDOW_SEC) * 1000;
+    var src = Array.isArray(trail) ? trail : [];
+    var out = [];
+    for (var i = 0; i < src.length; i++) {
+      if (isObj(src[i]) && nowMs - src[i].t <= w) out.push(src[i]);
+    }
+    if (isObj(point) && typeof point.x === "number" && typeof point.y === "number") {
+      out.push({ x: point.x, y: point.y, t: nowMs });
+    }
+    return out;
+  }
+
+  function fmtG(g) {
+    return g.toFixed(2) + " g";
+  }
+
+  // Spell the two components out in words. This puts the SIGN CONTRACT on the
+  // screen, where a mounted-backwards board becomes obvious to the operator
+  // ("0.30 brake" while accelerating) instead of a silently mirrored dot.
+  function gAxisDetail(gLat, gLon) {
+    return (
+      Math.abs(gLat).toFixed(2) + " " + (gLat >= 0 ? "right" : "left") +
+      " · " +
+      Math.abs(gLon).toFixed(2) + " " + (gLon >= 0 ? "accel" : "brake")
+    );
+  }
+
+  function imuHeadingTile(data) {
+    var deg = data.headingDeg;
+    if (typeof deg !== "number" || !isFinite(deg)) {
+      var na = naTile("HEADING", imuReason(data, "headingDeg"));
+      na.deg = null;
+      na.available = false;
+      return na;
+    }
+    var d = normDeg(deg);
+    return {
+      label: "HEADING",
+      value: Math.round(d) + "° " + headingCardinal(d),
+      // MAGNETIC, not true -- no declination is in the contract, so a bearing a
+      // few degrees off a map is expected, not a fault. Saying so on the tile
+      // stops that from being read as a broken compass.
+      detail: "magnetic",
+      level: "neutral",
+      deg: d,
+      available: true,
+    };
+  }
+
+  function imuGradeTile(data) {
+    var pct = data.gradePct;
+    if (typeof pct !== "number" || !isFinite(pct)) {
+      var na = naTile("GRADE", imuReason(data, "gradePct"));
+      na.available = false;
+      return na;
+    }
+    return {
+      label: "GRADE",
+      value: (pct >= 0 ? "+" : "−") + Math.abs(pct).toFixed(1) + " %",
+      detail: pct >= 0 ? "climbing" : "descending",
+      // `neutral`, never `ok`: a road grade is a fact about the road, not a
+      // health verdict. Nothing on this card is a pass/fail.
+      level: "neutral",
+      available: true,
+    };
+  }
+
+  function imuGTile(data) {
+    var dot = gDotPosition(data.gLat, data.gLon, G_FULL_SCALE);
+    var mag = data.gMag;
+    if (dot === null || typeof mag !== "number" || !isFinite(mag)) {
+      var na = naTile("G-FORCE", imuReason(data, "gLat"));
+      // NO DOT. An origin dot would render as a real, measured "no g" -- the
+      // zeroed instrument AC-3 forbids. Absence must look like absence.
+      na.dot = null;
+      na.available = false;
+      return na;
+    }
+    return {
+      label: "G-FORCE",
+      value: fmtG(mag),
+      detail: gAxisDetail(data.gLat, data.gLon),
+      level: "neutral",
+      dot: dot,
+      available: true,
+    };
+  }
+
+  // The whole-card view. Returns:
+  //   null                     -- no state file; the SHELL owns the absent
+  //                               message, so one place decides absence
+  //   {idle:true, reason}      -- present but not renderable as a live
+  //                               instrument (unwired / undated / stale)
+  //   {idle:false, ...}        -- the live instrument
+  function imuView(data, nowMs) {
+    if (!isObj(data)) return null;
+    // The bridge's EXPLICIT availability claim. An unwired sensor writes
+    // available:false (and that write bypasses the bridge's own rate limit, so
+    // an unplug can never leave a live reading sitting here looking current).
+    if (data.available !== true) {
+      // The blanket reason the bridge stamps on every derived field.
+      return { idle: true, reason: imuReason(data, "gLat") };
+    }
+    var age = readAgeSec(data, nowMs);
+    if (age === null) return { idle: true, reason: "no read time" };
+    if (age > IMU_STALE_SEC) {
+      return { idle: true, reason: "stale -- last read " + fmtAgeSec(age) + " ago" };
+    }
+    return {
+      idle: false,
+      ageSec: age,
+      fullScale: G_FULL_SCALE,
+      g: imuGTile(data),
+      heading: imuHeadingTile(data),
+      grade: imuGradeTile(data),
+      // ALWAYS typed-NA (AC-2). The ICM-20948 has no barometer and a zeroed
+      // altitude renders as sea level -- a confident lie. It never blocks the
+      // card; a future BMP280/GPS fills it at the BRIDGE, not here.
+      altitude: naTile("ALTITUDE", imuReason(data, "altitude")),
+    };
+  }
+
   var api = {
     clampIndex: clampIndex,
     nextIndex: nextIndex,
@@ -1513,6 +1748,10 @@
     nearestVisibleIndex: nearestVisibleIndex,
     luxBand: luxBand,
     lightView: lightView,
+    gDotPosition: gDotPosition,
+    headingCardinal: headingCardinal,
+    pushGTrail: pushGTrail,
+    imuView: imuView,
     sourceUnavailable: sourceUnavailable,
     sourceReason: sourceReason,
     naTile: naTile,
@@ -1811,6 +2050,149 @@
       body.textContent = "";
       appendTile(body, view.ambient);
       appendTile(body, view.band);
+    }
+
+    // --- US-497 IMU live-instrument DOM render (browser only) ---------------
+
+    // The g-meter is ONE inline SVG, rebuilt only when its shape changes and
+    // otherwise updated by ATTRIBUTE. At 4 Hz a 140-point trail rebuilt as
+    // discrete nodes would churn ~560 elements/sec on a kiosk Pi; as a single
+    // <polyline> it is one `points` attribute write per tick.
+    var SVG_NS = "http://www.w3.org/2000/svg";
+    var G_METER_R = 46;   // outer ring radius in the meter's own viewBox units
+    var G_METER_C = 50;   // viewBox centre (the box is 100x100)
+
+    function svgEl(name, attrs) {
+      var el = document.createElementNS(SVG_NS, name);
+      for (var k in attrs) {
+        if (Object.prototype.hasOwnProperty.call(attrs, k)) {
+          el.setAttribute(k, String(attrs[k]));
+        }
+      }
+      return el;
+    }
+
+    // Build the static furniture once: the outer ring, the half-scale ring and
+    // the cross-hairs. The rings are LABELLED by the full-scale constant, so a
+    // change to G_FULL_SCALE cannot leave the dial claiming the old scale.
+    function buildGMeter() {
+      var svg = svgEl("svg", {
+        class: "imu-meter",
+        viewBox: "0 0 100 100",
+        "aria-hidden": "true",
+      });
+      svg.appendChild(svgEl("circle", {
+        class: "imu-ring", cx: G_METER_C, cy: G_METER_C, r: G_METER_R,
+      }));
+      svg.appendChild(svgEl("circle", {
+        class: "imu-ring imu-ring-half",
+        cx: G_METER_C, cy: G_METER_C, r: G_METER_R / 2,
+      }));
+      svg.appendChild(svgEl("line", {
+        class: "imu-axis",
+        x1: G_METER_C - G_METER_R, y1: G_METER_C,
+        x2: G_METER_C + G_METER_R, y2: G_METER_C,
+      }));
+      svg.appendChild(svgEl("line", {
+        class: "imu-axis",
+        x1: G_METER_C, y1: G_METER_C - G_METER_R,
+        x2: G_METER_C, y2: G_METER_C + G_METER_R,
+      }));
+      svg.appendChild(svgEl("polyline", { class: "imu-trail", points: "" }));
+      svg.appendChild(svgEl("circle", { class: "imu-dot", cx: G_METER_C, cy: G_METER_C, r: 4 }));
+      return svg;
+    }
+
+    function trailPoints(trail) {
+      var parts = [];
+      for (var i = 0; i < trail.length; i++) {
+        parts.push(
+          (G_METER_C + trail[i].x * G_METER_R).toFixed(1) + "," +
+          (G_METER_C + trail[i].y * G_METER_R).toFixed(1)
+        );
+      }
+      return parts.join(" ");
+    }
+
+    // The compass needle is a rotation of ONE element. `deg` is the vehicle
+    // nose bearing, so the needle points at it directly (the card does not spin
+    // the rose -- a rotating dial with a fixed needle and a rotating needle on a
+    // fixed dial read opposite, and only one of them matches the tile's number).
+    function buildCompass() {
+      var svg = svgEl("svg", {
+        class: "imu-compass", viewBox: "0 0 100 100", "aria-hidden": "true",
+      });
+      svg.appendChild(svgEl("circle", {
+        class: "imu-ring", cx: G_METER_C, cy: G_METER_C, r: G_METER_R,
+      }));
+      var needle = svgEl("polygon", {
+        class: "imu-needle",
+        points: "50,10 56,54 50,46 44,54",
+      });
+      svg.appendChild(needle);
+      return svg;
+    }
+
+    // Render the live instrument, or the calm idle body. The two paths REPLACE
+    // each other wholesale: leaving a stale <svg> in the DOM under an idle
+    // message is precisely the frozen instrument AC-3 forbids.
+    function renderImuCard(card, view, trail) {
+      var body = card.querySelector(".card-body");
+      if (!body || !view) return;
+      if (view.idle) {
+        renderNaBody(body, "MOTION", view.reason);
+        return;
+      }
+      var meter = body.querySelector(".imu-meter");
+      if (!meter) {
+        body.textContent = "";
+        var instruments = document.createElement("div");
+        instruments.className = "imu-instruments";
+        instruments.appendChild(buildGMeter());
+        instruments.appendChild(buildCompass());
+        body.appendChild(instruments);
+        var tiles = document.createElement("div");
+        tiles.className = "imu-tiles";
+        body.appendChild(tiles);
+        meter = body.querySelector(".imu-meter");
+      }
+      var dot = meter.querySelector(".imu-dot");
+      var line = meter.querySelector(".imu-trail");
+      // An unresolved g hides the dot + trail rather than parking them at the
+      // origin, which would read as a measured "stationary".
+      if (view.g.available && view.g.dot) {
+        dot.removeAttribute("hidden");
+        dot.setAttribute("cx", String(G_METER_C + view.g.dot.x * G_METER_R));
+        dot.setAttribute("cy", String(G_METER_C + view.g.dot.y * G_METER_R));
+        dot.setAttribute("data-clamped", view.g.dot.clamped ? "true" : "false");
+        line.setAttribute("points", trailPoints(trail || []));
+      } else {
+        dot.setAttribute("hidden", "hidden");
+        line.setAttribute("points", "");
+      }
+      var needle = body.querySelector(".imu-needle");
+      if (needle) {
+        if (view.heading.available) {
+          needle.removeAttribute("hidden");
+          needle.setAttribute(
+            "transform",
+            "rotate(" + view.heading.deg + " " + G_METER_C + " " + G_METER_C + ")"
+          );
+        } else {
+          // No bearing -> NO needle. A needle frozen at its last bearing is
+          // worse than an absent one (the same rule the bridge applies to a
+          // stale magnetometer reading).
+          needle.setAttribute("hidden", "hidden");
+        }
+      }
+      var tileBox = body.querySelector(".imu-tiles");
+      if (tileBox) {
+        tileBox.textContent = "";
+        appendTile(tileBox, view.g);
+        appendTile(tileBox, view.heading);
+        appendTile(tileBox, view.grade);
+        appendTile(tileBox, view.altitude);
+      }
     }
 
     // --- US-420 LTFT Trend DOM render (browser only) ------------------------
@@ -2236,6 +2618,10 @@
       var idleIndex = -1;
       var sysIndex = -1;
       var lastIdle = null;
+      // US-497 g-trail: accumulated across ticks from the polled states/imu
+      // values (Atlas Q-B). Lives here, not on the card, so it is dropped with
+      // the poll rather than outliving the feed that produced it.
+      var gTrail = [];
       // US-496: the vehicle-dependent cards, revealed only while a vehicle is
       // actually connected (they ship `hidden`, so the pre-first-poll unknown
       // shows no vehicle card).
@@ -2732,6 +3118,19 @@
             renderAlertsCard(card, alertsCardView(data));
           } else if (name === "light") {
             renderLightCard(card, lightView(data, displayAutoDim, nowMs));
+          } else if (name === "imu") {
+            // US-497: the trail is the ONE piece of client state on this card
+            // (Atlas Q-B -- animate from the polled values). It is advanced
+            // only while the instrument is live, and RESET the moment it is
+            // not: splicing a point from before an outage onto one after it
+            // would draw a trail the vehicle never took.
+            var iv = imuView(data, nowMs);
+            if (iv && !iv.idle && iv.g.available && iv.g.dot) {
+              gTrail = pushGTrail(gTrail, iv.g.dot, nowMs, G_TRAIL_WINDOW_SEC);
+            } else {
+              gTrail = [];
+            }
+            renderImuCard(card, iv, gTrail);
           } else if (name === "ltft-trend") {
             var lv = ltftTrendView(data);
             if (lv) renderLtftTrendCard(card, lv);

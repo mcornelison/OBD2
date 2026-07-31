@@ -3167,6 +3167,7 @@ styling:
 | System Status (Pi Health) | `system-status` | always-present | `unavailable` |
 | Battery Health | `battery-health` | always-present | `unavailable` |
 | **Light** | `light` | always-present | **"no data -- light feed absent"** |
+| **Motion (IMU)** | `imu` | always-present | **"no data -- IMU feed absent"** |
 | Alerts (DTC) | `dtc` | always-present | **"no data -- codes not read"** |
 | LTFT Trend | `ltft-trend` | **vehicle-gated** | *not rendered at all* |
 
@@ -3219,6 +3220,53 @@ itself stays present. Screen brightness is deliberately **not** shown: a live ST
 alarm holds the surface at full regardless of lux (US-484-b ch.4), so a
 lux-derived percent would contradict the actual screen exactly when it matters
 most.
+
+##### Motion card -- the IMU live instrument (US-497 / F-113, Sprint 66)
+
+A pure consumer of the `states/imu` file the § 10.8.2 bridge writes. The bridge
+already resolved the hard physics (one slow gravity estimate defining the level
+frame, the pitch *and* the heading tilt-compensation); the card **maps and
+formats only** -- it never fuses and never re-derives, because a second
+derivation is a second chance for the compass and the grade to disagree about
+which way is down (Atlas DELTA-2). It is **always-present, not vehicle-gated**:
+the ICM-20948 is a *Pi-local* sensor that reads on the bench with no car, so
+gating it behind a vehicle would hide a working instrument.
+
+**A live graphical instrument can FREEZE; a text tile cannot.** This is the one
+property that shapes the whole card. A gray "NA" reads as dead at a glance, but a
+g-dot frozen at 0.4 g reads exactly like a car holding a steady corner -- a
+fabricated measurement, not a visible gap. So the freshness gate blanks the
+**instrument** rather than graying a label: an explicit `available: false`, an
+undated payload, or a reading older than `IMU_STALE_SEC` renders the calm gray
+MOTION body and *no geometry at all* (US-497 AC-3). Within a live reading,
+absence is still per field -- a dead magnetometer grays HEADING alone (and hides
+the needle: a needle frozen at its last bearing is worse than an absent one),
+an unresolved tilt grays G-FORCE **and carries no dot**, and `altitude` is
+**always** typed-NA `"no source"` without ever blocking the card.
+
+| Constant | Value | Grounding |
+|---|---|---|
+| `IMU_STALE_SEC` | 2.0 s | the **producer's** cadence -- 8 missed writes at `pi.sensors.imu.stateHz` = 4 Hz. Deliberately far tighter than the light card's 10 s: a 10 s-old lux is still roughly true, a 10 s-old g-vector is meaningless. *Rex-derived; flagged for Atlas/Spool against a real drive.* |
+| `G_FULL_SCALE` | 1.0 g | outer ring. A street-tired car tops out near 0.9 g lateral, so 1 g frames real driving without compressing it. *Rex-derived DISPLAY scale, not a vehicle limit -- flagged for Spool.* |
+| `G_TRAIL_WINDOW_SEC` | 35 s | Iris live-instrument spec. ~140 points at 4 Hz. |
+
+**Sign contract on screen.** `gLon` + = accelerating → the dot moves **up**
+(negative screen y); `gLat` + = **right** → positive x. The G-FORCE tile spells
+both components out in words ("0.30 right · 0.12 brake") so a board mounted
+backwards becomes obvious to the operator instead of silently mirroring the dot.
+An over-scale reading **clamps along its own direction** (never per-axis, which
+would swing the dot to a corner and misreport which way the car was loaded) and
+turns amber, while the tile keeps the true magnitude -- the clamp cannot
+understate a 1.4 g stop as a tidy 1.0 g one.
+
+**The trail is the card's only client state** (Atlas Q-B: animate from the
+polled values; a higher-rate transport is a later refinement, not a gate). It
+lives in the poll closure, is drawn as a single `<polyline>` -- 140 discrete
+nodes rebuilt at 4 Hz would churn ~560 elements/sec on a kiosk Pi for nothing --
+and is **reset the moment the instrument is not live**. Splicing a point from
+before an outage onto one after it would draw a trail the vehicle never took;
+eviction also runs on a tick with no usable point, so a stopped feed decays the
+trail to empty instead of freezing its last shape.
 
 **Deploy.** `deploy-pi.sh step_install_dashboard_assets` installs the served kit
 to `/opt/dashboard` (WARN-not-BLOCK if absent, A-9), mirroring

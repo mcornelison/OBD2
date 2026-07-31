@@ -69,17 +69,19 @@ def _nodeAvailable() -> bool:
 
 def test_dashboardHtml_hasBothCardSlots_s1():
     """S-1: the carousel has the System Status + Battery Health card slots, plus
-    the Alerts (DTC) card added in US-406, the LTFT Trend card added in US-420 and
-    the Light card added in US-496 (registering a new card grows the slot count by
-    one). US-496 also made LTFT vehicle-gated -- the SLOT is still shipped, it is
-    just hidden until a vehicle is connected, so the count includes it."""
+    the Alerts (DTC) card added in US-406, the LTFT Trend card added in US-420,
+    the Light card added in US-496 and the IMU Motion card added in US-497
+    (registering a new card grows the slot count by one). US-496 also made LTFT
+    vehicle-gated -- the SLOT is still shipped, it is just hidden until a vehicle
+    is connected, so the count includes it."""
     html = _read(KIT_DIR, "dashboard.html")
-    assert html.count('class="card"') == 5
+    assert html.count('class="card"') == 6
     assert 'data-state="system-status"' in html
     assert 'data-state="battery-health"' in html
     assert 'data-state="dtc"' in html
     assert 'data-state="light"' in html
     assert 'data-state="ltft-trend"' in html
+    assert 'data-state="imu"' in html
 
 
 def test_dashboardHtml_hasPersistentTopBarGlyphs_d3():
