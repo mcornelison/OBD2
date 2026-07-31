@@ -11,8 +11,8 @@
       "epicId": "E-OPS",
       "type": "issue",
       "size": "S",
-      "status": "sprint-ready",
-      "passes": false,
+      "status": "code-complete",
+      "passes": true,
       "acceptance": [
         "add deploy/eclipse-rfkill-unblock.service: oneshot `rfkill unblock all`, After=systemd-rfkill.service bluetooth.service, WantedBy=multi-user.target (exactly the unit Atlas installed live tonight)",
         "add a deploy-pi.sh step that installs + enables the unit (sync-if-changed, idempotent) AND clears any stale /var/lib/systemd/rfkill/*:bluetooth block state on deploy",
@@ -28,7 +28,19 @@
       ],
       "conditionalOutcomes": [],
       "goal": "As the deploy path, I want the eclipse-rfkill-unblock fix in the repo + deploy-pi.sh, so the capture fix (currently live-on-Pi-by-hand) survives a reflash / deploy --init and can't silently revert to the soft-block that killed capture since 07-03.",
-      "tasks": []
+      "tasks": [],
+      "feedback": {
+        "filesActuallyTouched": [
+          "deploy/eclipse-rfkill-unblock.service",
+          "deploy/deploy-pi.sh",
+          "src/pi/ops/unit_manifest.py",
+          "specs/architecture.md",
+          "tests/deploy",
+          "tests/pi/ops/test_unit_manifest.py",
+          "tests/pi/ops/test_obdctl.py"
+        ]
+      },
+      "completionNotes": "SHIPPED 38a8b14 (Ralph). eclipse-rfkill-unblock.service baked into deploy + deploy-pi.sh step_install_rfkill_unblock (top-level, NOT --init) + stale rfkill-block clear + arch 3.4. tests/deploy+pi/ops 407 passed, ruff clean, bash -n clean, 16 new tests RED-first. PM BLESSED 2 judgement calls: (1) added the unit to UNIT_MANIFEST/US-492 SSOT (prevents the exact drift the manifest exists to stop; consistent w/ rfcomm-bind; kioskVerbs empty so no kiosk reach over radios) -> obdctl covers 9 units; (2) test_unit_manifest EXPECTED_CANONICAL 8->9 literal + test_obdctl count DERIVED from len(CANONICAL_UNITS). OWED AT DEPLOY (PM): mypy at integration (unit_manifest is typed base consumed by obdctl+service_control); on-Pi reboot-verify acceptance 3+4 (rfkill both Soft blocked:no + service enabled/active + bluetoothctl Powered:yes) -- discharged when PM deploys V0.29.22."
     },
     {
       "id": "US-515",
@@ -37,8 +49,20 @@
       "epicId": "E-OPS",
       "type": "issue",
       "size": "S",
-      "status": "sprint-ready",
-      "passes": false,
+      "status": "code-complete",
+      "passes": true,
+      "feedback": {
+        "filesActuallyTouched": [
+          "scripts/pair_obdlink_driver.py",
+          "scripts/pair_obdlink.sh",
+          "tests/pi/obdii/test_pair_obdlink_driver.py",
+          "tests/pi/obdii/test_pair_script.py",
+          "specs/architecture.md",
+          "docs/bluetooth-setup.md",
+          "offices/pm/tech_debt/TD-070-bluetooth-setup-doc-shows-legacy-bluetoothctl-prompt.md"
+        ]
+      },
+      "completionNotes": "BENCH HALF DONE, all 4 AC met. ENGINE-ON acceptance is Spool's and is NOT discharged here.\n\nI CAPTURED THE REAL BYTES BEFORE WRITING THE MATCHER, and that is the whole story of this story. Atlas's note described both bugs accurately and I would STILL have shipped a half-fix from the description alone. Recorded a live bluetoothctl session off the Pi (bluez 5.82, adapter 88:A2:9E:84:46:1D): the prompt is `\\x1b[0;94m[bluetoothctl]> \\x1b[0m`. The obvious fix -- swap `#` for `>` -- leaves a SECOND trap armed, because THE ANSI ESCAPE ITSELF CONTAINS A `[`, so the old greedy `\\[.+\\]#` spans from the escape into the prompt even on a `#` box. One regex, two independent defects, and only the raw bytes show the second. PROMPT_PATTERN now forbids `[`/`]` inside the bracket body and accepts either terminator, so legacy `[bluetooth]#` boxes keep working (US-475's DoD asked for that).\n\nFREE FINDING FROM THE SAME CAPTURE, load-bearing for BL-025: `devices Paired` returned EMPTY -- there is NO bond of any kind on this Pi, on any device. That turns BL-025's bond-less diagnosis from inference into a measurement. Radio reads Powered: yes, so US-514's rfkill fix is holding. Recorded in specs/architecture.md 3.4.\n\nTHE REAL DELIVERABLE WAS NEITHER BUG -- IT WAS THE HEREDOC. The driver lived in `python3 - <<'PYEOF'`. Heredoc code cannot be imported, therefore cannot be tested, therefore two defects sat for months in a file that LOOKED maintained (proper header, stated invariants, shellcheck-clean wrapper). Moved to scripts/pair_obdlink_driver.py with the session logic pexpect-FREE behind a thin PexpectChild adapter (pexpect is Pi-only, absent on this Windows box -- otherwise the whole suite would skip). 33 driver tests + 5 wiring pins, all RED first.\n\nTHE HARNESS FOUND A BUG NOBODY KNEW ABOUT, and it is the argument for verbatim fixtures: bluetoothctl REDRAWS ITS PROMPT SEVERAL TIMES AT STARTUP, so `sendline(cmd); expect(PROMPT)` matches a STALE prompt and `before` returns terminal PADDING as if it were the command's reply -- a SILENT WRONG ANSWER (every `info` read would have parsed as 'no bond'), strictly worse than the hang I was sent to fix. Fixed by anchoring on each command's own pty echo first. A hand-written 'prompt goes here' fixture passes this happily.\n\nTHREE JUDGEMENT CALLS, PM/ATLAS MAY OVERRULE. (1) SUCCESS NOW MEANS A DURABLE BOND: 'Pairing successful' is bluez's word for the LINK, so the driver re-reads `info` after `trust` and FAILS unless Paired+Bonded+Trusted -- the old script printed '--- pair + trust successful ---' having checked nothing, which was a claim, not a reading, and reboot-survival is the actual AC. (2) IDEMPOTENT WITHOUT --force: an existing durable bond is reported and LEFT ALONE, because re-pairing needs the dongle powered (engine on) and a reflexive `remove` on a working bond strands the car; a PARTIAL bond IS cleared first, since that half-state is what makes `pair` fail AlreadyExists. (3) scan on -> wait -> scan OFF -> pair (Atlas's live-proven ordering; an active discovery competes with the handshake on one radio).\n\nAC-4 PRESERVED AND PROVEN: --dry-run still short-circuits before any preflight, and the existing sentinel-shim test (a fake bluetoothctl on PATH that writes a file if called) still passes. Ran the real --dry-run and read its 7 preview lines.\n\nTEST-HYGIENE TRAP WORTH COPYING: my regression pins grepped for `NoInputNoOutput` and `PYEOF` and BOTH FAILED -- on the header comments that DOCUMENT the defect. A pin that greps a defect's NAME fires on its own documentation. Strip comments + the module docstring (ast gives tree.body[0].lineno/end_lineno) and then TEST THE STRIPPER, because a stripper returning nothing makes every pin pass vacuously.\n\nUS-475 IS THIS SAME DEFECT, shelved 2026-07-20 as an 'architect hallucination'. Its own shelve note says revisit ONLY IF a real re-pair failure is observed on the Pi -- Atlas ran it live 07-31 and got the TIMEOUT, so the shelve trigger fired on its own terms. Its DoD is a strict subset of what shipped. RECOMMEND RETIRE-AS-DELIVERED so it is not built twice.\n\nGREEN (synchronous, in-loop): tests/pi/obdii = 674 passed / 1 skipped (shellcheck absent), exit 0. ruff clean on all 3 touched .py; bash -n clean. HOST GAPS unchanged (Sprints 64/65/66): make, black, mypy absent on this Windows box -- PM PLEASE RUN MYPY AT INTEGRATION, the driver is a new typed module. NO deploy change needed: sync_tree rsyncs scripts/ wholesale (verified against deploy-pi.sh's exclude list), so the driver lands beside the script.\n\nFILED TD-070: docs/bluetooth-setup.md's ~20 manual transcript blocks still show the legacy `[bluetooth]#` prompt + a non-display agent. Added a BANNER now so it stops actively misleading the operator; the full refresh is cheap to fold into the engine-on session while a real transcript is on screen.\n\nENGINE-ON GATE OWED (Spool/CIO, cannot be discharged from this box): dongle powered + solid blue LED -> `bash scripts/pair_obdlink.sh 00:04:3E:85:0D:FB` -> '--- pair + trust successful ---'; `bluetoothctl info` Paired/Bonded/Trusted all yes; then REBOOT and re-check, because reboot survival IS the acceptance and a green run is not. WATCH FOR: if it now reaches `pair` and fails THERE, that is PROGRESS not regression -- the old failure was a TIMEOUT before any command ran, so a bluez error at the pair step proves the transport fix worked and isolates the remaining fault to the SSP handshake / pair-mode.",
       "acceptance": [
         "fix the pexpect prompt regex: it expects `\\[.+\\]#` but Trixie bluetoothctl prompts `[bluetoothctl]>` -> it times out and never pairs. Match the real prompt",
         "change the agent from `NoInputNoOutput` (contradicts the script's own Confirm-passkey handling -> auth-fails on the OBDLink) to a display-capable agent (`DisplayYesNo`) so a durable bond + `trust` is written and survives reboot",

@@ -6,6 +6,23 @@ This guide covers pairing your OBD-II Bluetooth dongle with a Raspberry Pi for u
 
 **Last Updated**: 2026-01-23
 
+> ⚠️ **Prompt + agent drift (verified on the Pi 2026-07-31, bluez 5.82 / Trixie).**
+> Every `bluetoothctl` transcript below shows the **legacy** prompt
+> `[bluetooth]#`. Current bluez prompts **`[bluetoothctl]>`** instead (and
+> `[<device alias>]>` once a device is selected). The commands are unchanged —
+> only the prompt text differs, so read `[bluetooth]#` as "the prompt" wherever
+> it appears.
+>
+> Also: for the **OBDLink LX** specifically, use a **display-capable agent** —
+> `agent DisplayYesNo`, *not* `agent NoInputNoOutput`. The LX's SSP sends a real
+> numeric passkey, and the `Confirm passkey NNNNNN (yes/no):` prompt is only
+> emitted to a display-capable agent; under `NoInputNoOutput` pairing can fail
+> with `org.bluez.Error.AuthenticationFailed`.
+>
+> The scripted path (`scripts/pair_obdlink.sh`) already handles both and is the
+> preferred route; this guide is the manual fallback. Full transcript refresh is
+> tracked as **TD-070**.
+
 ---
 
 ## Prerequisites

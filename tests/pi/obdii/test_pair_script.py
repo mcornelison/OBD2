@@ -85,6 +85,107 @@ class TestScriptFile:
 
 
 # ================================================================================
+# Driver wiring (2026-07-31 hotfix) — a correct driver nobody invokes is worth
+# nothing, and no test of the driver itself can tell you it is not invoked.
+# ================================================================================
+
+
+DRIVER_PATH = REPO_ROOT / "scripts" / "pair_obdlink_driver.py"
+
+
+def _executableLines(path: Path) -> list[tuple[int, str]]:
+    """Source lines with comments and the module docstring removed.
+
+    Both defects below are DESCRIBED at length in the headers of these files so
+    nobody re-introduces them; a naive substring scan would therefore fire on
+    the documentation instead of the code.  Prose is skipped, code is not.
+    """
+    body = path.read_text(encoding="utf-8", errors="replace")
+    docstringSpan: range = range(0)
+    if path.suffix == ".py":
+        import ast
+
+        tree = ast.parse(body)
+        first = tree.body[0] if tree.body else None
+        if (
+            isinstance(first, ast.Expr)
+            and isinstance(first.value, ast.Constant)
+            and isinstance(first.value.value, str)
+            and first.end_lineno is not None
+        ):
+            docstringSpan = range(first.lineno, first.end_lineno + 1)
+
+    lines: list[tuple[int, str]] = []
+    for lineNumber, line in enumerate(body.splitlines(), start=1):
+        if lineNumber in docstringSpan or line.lstrip().startswith("#"):
+            continue
+        lines.append((lineNumber, line))
+    return lines
+
+
+class TestDriverWiring:
+
+    def test_driver_module_exists_beside_the_script(self) -> None:
+        """It is located via $SCRIPT_DIR, and rsynced to the Pi with the tree."""
+        assert DRIVER_PATH.is_file(), (
+            f"expected the pairing driver at {DRIVER_PATH}; pair_obdlink.sh "
+            "resolves it relative to its own directory"
+        )
+
+    def test_script_actually_invokes_the_driver(self) -> None:
+        body = SCRIPT_PATH.read_text(encoding="utf-8", errors="replace")
+        assert "pair_obdlink_driver.py" in body
+        assert '"$PYTHON_BIN" "$DRIVER"' in body, (
+            "pair_obdlink.sh must hand off to the driver module"
+        )
+
+    def test_script_no_longer_embeds_an_untestable_heredoc_driver(self) -> None:
+        """
+        The whole reason both defects survived so long: heredoc code cannot be
+        imported, so it could never be covered by a test.
+        """
+        for lineNumber, line in _executableLines(SCRIPT_PATH):
+            assert "PYEOF" not in line, (
+                f"pair_obdlink.sh:{lineNumber} — the pairing logic is back "
+                "inside a heredoc; it is untestable there, keep it in "
+                f"scripts/pair_obdlink_driver.py: {line!r}"
+            )
+
+    def test_no_script_waits_for_the_legacy_hash_only_prompt(self) -> None:
+        """
+        REGRESSION PIN (Atlas 2026-07-31). `\\[.+\\]#` is the exact pattern that
+        made pairing impossible on bluez 5.82, which prompts `[bluetoothctl]>`.
+        """
+        for path in (SCRIPT_PATH, DRIVER_PATH):
+            for lineNumber, line in _executableLines(path):
+                assert r"\[.+\]#" not in line, (
+                    f"{path.name}:{lineNumber} waits for the legacy bluez "
+                    f"prompt — it will time out on the Pi: {line!r}"
+                )
+
+    def test_driver_does_not_register_a_non_display_agent(self) -> None:
+        """
+        REGRESSION PIN: `NoInputNoOutput` never emits the Confirm-passkey
+        prompt, so the confirm branch becomes dead code and SSP can auth-fail.
+        """
+        for lineNumber, line in _executableLines(DRIVER_PATH):
+            assert "NoInputNoOutput" not in line, (
+                f"{DRIVER_PATH.name}:{lineNumber} registers a non-display "
+                f"agent: {line!r}"
+            )
+
+    def test_executableLines_helper_actuallyStripsProse(self) -> None:
+        """
+        A helper that returned nothing would make all three pins above pass
+        vacuously — the exact failure mode a regression pin must not have.
+        """
+        lines = _executableLines(DRIVER_PATH)
+        assert len(lines) > 100, "the helper stripped the whole driver"
+        assert any("DEFAULT_AGENT" in line for _n, line in lines)
+        assert not any(line.lstrip().startswith("#") for _n, line in lines)
+
+
+# ================================================================================
 # --help / --dry-run
 # ================================================================================
 
