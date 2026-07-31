@@ -4,8 +4,8 @@
   "updatedBy": "Marcus (PM)",
   "counters": {
     "epic": 7,
-    "feature": 122,
-    "story": 500
+    "feature": 124,
+    "story": 505
   },
   "epics": [
     {
@@ -1259,6 +1259,24 @@
       "createdAt": "2026-07-27",
       "updatedAt": "2026-07-27",
       "currentVersion": "V0.29.18"
+    },
+    {
+      "id": "F-123",
+      "parent": "E-001",
+      "status": "pending",
+      "title": "Pi dashboard truthfulness round 2 -- card wiring + new sources (CIO bench review 07-31)",
+      "description": "Track A of the CIO 2026-07-31 UI-feedback round (triage SSOT: offices/pm/decisions/2026-07-31-ui-feedback-round2-triage.md). Design-independent wiring + source-build fixes to the shipped V0.29.21 carousel: version chip inject (#1), power-source reader wiring that fixes BOTH the grayed header bolt (#2) and the 'power unavailable' tile (#6) from one root, 12h clock (#3), Battery Health truthfulness (#8: remove the no-source TEMP tile + wire HEALTH verdict + last-health-check), and a new last-drive-summary producer (#4). CIO chose 'build both producers' for #4/#5. Runs parallel to BL-025; does not touch the capture path. Companion design work = F-124 (Iris).",
+      "createdAt": "2026-07-31",
+      "updatedAt": "2026-07-31"
+    },
+    {
+      "id": "F-124",
+      "parent": "E-001",
+      "status": "pending",
+      "title": "Pi dashboard design-fidelity + interaction pass round 2 (Iris, design-before-build)",
+      "description": "Track B of the CIO 2026-07-31 UI-feedback round (triage SSOT: offices/pm/decisions/2026-07-31-ui-feedback-round2-triage.md). Design-owned items requiring Iris design + CIO mockup review BEFORE dev stories are groomed: #14 look/feel fidelity vs the approved design (untokenized literals TD-065 + idle wordmark/footer copy drift + no brand display face), #9 Motion/IMU card redesign to match Iris's CIO-locked live-card spec (compass tape not needle-dial, GEAR readout, 0.6 g amber, home-slot swap) + screen placement, #12 carousel wrap (7<->1, reverses the intentional clamp), #13 auto-rotation + swipe-to-pause + hard-swipe-advance (CIO-chosen; needs a new slow/fast swipe distinction), #7 System-Status 'issue' drill-down detail view, #15 steadier 'parked' concept for the kebab visibility (today it flips with OBD availability). No stories authored until Iris's design lands + CIO approves the mockup (design-before-build pattern).",
+      "createdAt": "2026-07-31",
+      "updatedAt": "2026-07-31"
     }
   ],
   "stories": [
@@ -6177,6 +6195,143 @@
       "updatedAt": "2026-07-31",
       "passes": true,
       "shippedNote": "FIXED + VALIDATED V0.29.21 (Atlas a6aa088). On-Pi (10.27.27.9) states/imu now LIVE: gLat/gLon/gMag/headingDeg 143.2/gradePct 10.6/altitude null(no_source); 0 imu-read-failed. Retires US-478/497 deferred validation."
+    },
+    {
+      "id": "US-501",
+      "parent": "F-123",
+      "type": "issue",
+      "size": "S",
+      "status": "pending",
+      "title": "Wire the dashboard version chip to .deploy-version (stop showing 'V?.?.?')",
+      "goal": "As the operator, I want the header version chip to show the real deployed version, so I can tell at a glance which build is on the Pi instead of a literal 'V?.?.?'.",
+      "definitionOfDone": [
+        "the version-chip literal 'V?.?.?' (dashboard.html:37) is replaced by real version text sourced from .deploy-version (currently V0.29.21)",
+        "wire it the same way the existing token / auto-dim placeholders are injected by the state server _injectHtml (states_http_server.py:317-323) -- add a version placeholder + substitution reading .deploy-version; OR an equivalent JS reader if the state server exposes it. No hardcoded version string in the markup",
+        "if .deploy-version is missing/unreadable, the chip degrades honestly (e.g. blank or 'V?') -- never a fabricated/stale literal",
+        "ruff/lint clean in-loop"
+      ],
+      "validationCriteria": [
+        {
+          "action": "load the dashboard on the Pi after deploy and read the header version chip",
+          "outcome": "chip shows the real deployed version (e.g. V0.29.xx matching .deploy-version), not 'V?.?.?'"
+        }
+      ],
+      "conditionalOutcomes": [],
+      "sourceRefs": ["offices/pm/decisions/2026-07-31-ui-feedback-round2-triage.md#1", "dashboard.html:37", "states_http_server.py:317-323", ".deploy-version"],
+      "createdAt": "2026-07-31",
+      "updatedAt": "2026-07-31",
+      "tasks": []
+    },
+    {
+      "id": "US-502",
+      "parent": "F-123",
+      "type": "issue",
+      "size": "M",
+      "status": "pending",
+      "title": "Wire the real power source to the System-Status power tile + header bolt (fixes both #2 grayed bolt and #6 'unavailable')",
+      "goal": "As the operator, I want the header lightning bolt and the System-Status power tile to reflect the real AC/battery (car/wall) power state, so I stop seeing a grayed bolt + 'power unavailable' when the power source is actually known.",
+      "definitionOfDone": [
+        "ROOT: the power tile + bolt read PowerMonitor.readPowerStatus() (card_state_emitter.py:288-299), which returns None because no reader is ever wired (power.py:410-412). The real source-of-truth (PowerSourceProvider / GPIO6) is routed only to PowerMonitor.checkPowerStatus() -> power_log (lifecycle.py:2250-2258). Wire the tile's source to that real provider so `source` resolves to battery/external instead of 'unknown'",
+        "after the fix: powerGlyphState (carousel.js:294-299) shows amber on battery / ok(lit) on external; powerTile (carousel.js:248-265) renders a real tile, not the 'unavailable' branch -- on BOTH car and wall/bench power",
+        "honest-instrument preserved: if the provider genuinely can't determine the source, `source`='unknown' -> neutral/unavailable is still shown (never a confident wrong state)",
+        "[SEAM CONFIRM -- grooming] confirm with the power-mode SSOT design (PowerModeProvider / specs/architecture.md power sections) that routing PowerSourceProvider to the tile is the intended seam (not a new acquisition path); Atlas nod if it touches the SSOT contract",
+        "test proves the tile/bolt reflect a battery vs external source from the wired provider; ruff clean in-loop"
+      ],
+      "validationCriteria": [
+        {
+          "action": "on the Pi on wall/bench power, view the header bolt + System-Status power tile; then (if feasible) on battery",
+          "outcome": "bolt lit/amber per source + power tile shows a real value -- never grayed/'unavailable' when the source is actually known"
+        }
+      ],
+      "conditionalOutcomes": [
+        "if the SEAM CONFIRM finds the tile should read a different provider/method than PowerSourceProvider, use that -- the DoD is 'tile reflects the real source', not a specific wiring path"
+      ],
+      "sourceRefs": ["offices/pm/decisions/2026-07-31-ui-feedback-round2-triage.md#2", "card_state_emitter.py:288-299", "power.py:410-412", "lifecycle.py:2250-2258", "carousel.js:248-265,294-299"],
+      "createdAt": "2026-07-31",
+      "updatedAt": "2026-07-31",
+      "tasks": []
+    },
+    {
+      "id": "US-503",
+      "parent": "F-123",
+      "type": "normal",
+      "size": "S",
+      "status": "pending",
+      "title": "Idle-card clock to 12-hour AM/PM",
+      "goal": "As the operator, I want the idle-home clock in 12-hour AM/PM format instead of 24-hour, matching how I read time at a glance.",
+      "definitionOfDone": [
+        "fmtClock (carousel.js:1929) renders 12-hour time with an AM/PM meridiem (mod-12 with 12 for noon/midnight), not getHours() 24-hour",
+        "minutes stay zero-padded; no seconds unless already shown",
+        "purely a format change -- no data source touched; ruff/lint clean in-loop"
+      ],
+      "validationCriteria": [
+        {
+          "action": "view the idle-home card clock at a known time (e.g. 14:05)",
+          "outcome": "reads '2:05 PM' (12-hour + meridiem), not '14:05'"
+        }
+      ],
+      "conditionalOutcomes": [],
+      "sourceRefs": ["offices/pm/decisions/2026-07-31-ui-feedback-round2-triage.md#3", "carousel.js:1929,1951"],
+      "createdAt": "2026-07-31",
+      "updatedAt": "2026-07-31",
+      "tasks": []
+    },
+    {
+      "id": "US-504",
+      "parent": "F-123",
+      "type": "issue",
+      "size": "M",
+      "status": "pending",
+      "title": "Battery Health truthfulness: remove no-source TEMP tile + wire HEALTH verdict and last-health-check to real sources",
+      "goal": "As the operator, I want every Battery Health field to reflect a real source (or not appear at all), so the card is honest -- no 'no source' temp, no hardcoded 'unknown' health, no 'never' health-check.",
+      "definitionOfDone": [
+        "REMOVE the TEMP tile: the MAX17048 UPS HAT has NO temperature register -> ambientTempC has no real source on this hardware (card_state_emitter.py:402 hardcodes None). Drop the temp tile rather than show a permanent 'no source' (CIO 07-31). Do NOT confuse with the ICM-20948 IMU temp (US-500, unrelated)",
+        "keep CELL(volts) + CHARGE(%) as-is -- already real MAX17048 reads (card_state_emitter.py:345-346); CHARGE stays tagged (uncalibrated) until socCalibrated",
+        "wire HEALTH verdict to a real producer instead of the hardcoded 'unknown' (card_state_emitter.py:398) -- [SOURCE-CONFIRM: Spool owns the battery-health verdict semantics/source; grooming gate]",
+        "wire lastHealthCheckTs to the real battery_health_log history instead of hardcoded None (card_state_emitter.py:402) so the idle 'last health check' line shows a real timestamp, not 'never' -- [SOURCE-CONFIRM: the battery_health_log producer/reader; grooming gate; ties to the CIO 'build both producers' decision]",
+        "honest-instrument: any field still lacking a real source is REMOVED, not shown as a placeholder; test proves the wired fields read their real source; ruff clean in-loop"
+      ],
+      "validationCriteria": [
+        {
+          "action": "view the Battery Health card on the Pi after deploy",
+          "outcome": "no TEMP 'no source' tile; CELL + CHARGE real; HEALTH shows a real verdict; last-health-check shows a real timestamp (once a check has run) rather than a hardcoded 'never'"
+        }
+      ],
+      "conditionalOutcomes": [
+        "if the SOURCE-CONFIRM finds no producer exists yet for HEALTH verdict or health-check history, that producer is built as part of this story (CIO chose 'build both producers') OR carved to a sized sub-story if it grows -- do NOT ship a hardcoded placeholder"
+      ],
+      "sourceRefs": ["offices/pm/decisions/2026-07-31-ui-feedback-round2-triage.md#5,#8", "card_state_emitter.py:398,402,345-346", "carousel.js:529-534,553-582"],
+      "createdAt": "2026-07-31",
+      "updatedAt": "2026-07-31",
+      "tasks": []
+    },
+    {
+      "id": "US-505",
+      "parent": "F-123",
+      "type": "normal",
+      "size": "M",
+      "status": "pending",
+      "title": "Build a last-drive-summary producer so the idle card shows real last-drive data",
+      "goal": "As the operator, I want the idle-home card to show my actual last drive instead of 'no recent drive', so I can see recent-drive context at a glance.",
+      "definitionOfDone": [
+        "build a last-drive-summary producer/emitter so systemStatusData.drive (or a dedicated last-drive state) carries a real last-drive summary; today idleLastDriveFact returns 'No recent drive' because driveId is null and no last-drive-summary state file exists (carousel.js:881-898)",
+        "[SOURCE-CONFIRM -- grooming gate] confirm the authoritative last-drive source the Pi can read (Pi-local drive_summary / drive boundary event logs) given B-104 made server-side analytics the authority + retired the Pi-side drive_statistics table. The producer reads REAL drive data, never fabricated",
+        "the idle card renders the real last-drive summary (per Iris's idle-card fields); when there genuinely has been no drive, 'No recent drive' remains the honest state",
+        "test proves the producer emits a real last-drive summary from a captured drive; ruff clean in-loop"
+      ],
+      "validationCriteria": [
+        {
+          "action": "after a captured drive, view the idle-home card",
+          "outcome": "shows real last-drive data (not 'no recent drive'); shows the honest 'no recent drive' only when there truly has been none"
+        }
+      ],
+      "conditionalOutcomes": [
+        "NOTE: a fully-populated last-drive card ultimately depends on capture working (BL-025) to have a recent drive to summarize -- the producer + wiring can be built + unit-tested independently now; live validation folds into the post-BL-025 drive"
+      ],
+      "sourceRefs": ["offices/pm/decisions/2026-07-31-ui-feedback-round2-triage.md#4", "carousel.js:881-898", "card_state_emitter.py:301-319"],
+      "createdAt": "2026-07-31",
+      "updatedAt": "2026-07-31",
+      "tasks": []
     }
   ]
 }
