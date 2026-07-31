@@ -2426,3 +2426,48 @@ Task: S4-card: IMU live-instrument card -- g-force + compass live; altitude type
   tokens.css) and treated exact visuals as refine-on-first-render. Building to
   the CONTRACT rather than the visual spec cost nothing and stayed in lane.
 ---
+
+## 2026-07-31 - NO STORY (Agent 1 / Session 10) - Sprint 66 verified COMPLETE
+Task: sprint-completion verification pass (no story available to claim)
+
+### What was implemented:
+- Nothing. Re-read `offices/ralph/sprint.json` from disk and confirmed all 7
+  stories (US-494/495/496/478/497/498/499) carry `passes: true`. Inbox holds
+  nothing newer than the two 2026-07-31 PM notes already acted on last session.
+  Emitted COMPLETE; reset agent status to `unassigned`.
+
+### Files changed:
+- Modified: `offices/ralph/ralph_agents.json` (status active -> unassigned; close note)
+- Modified: `offices/ralph/progress.txt` (this entry)
+
+### Learnings for future iterations:
+- **Flagged, do not lose**: the PM's on-Pi bench validation after V0.29.20 FAILED
+  US-478 + US-497 on real hardware. `src/pi/sensors/sensor_reader.py:322` does
+  `temp=float(dev.temperature)`; the genuine ICM-20948 exposes no `.temperature`,
+  so the entire IMU poll throws -> `states/imu` is never written -> the Motion
+  card renders nothing. Filed by the PM as **US-500** (P1, backlog.json); the
+  one-line graceful-guard hotfix was CIO-directed to **Atlas**. It is NOT in
+  sprint.json, so I did not adopt it -- sprint.json is authoritative and Scope
+  Fence forbids taking a story the PM routed to another agent.
+- **Pattern discovered**: when a story's real work is FLIPPING A CONFIG GATE, the
+  risk is not in the code you write -- it is in the code that STARTS RUNNING. My
+  US-478 notes were careful about the gravity-vector physics and honest about
+  every threshold, and the defect was in none of it: it sits in a file I never
+  touched, on a line that had never once executed because the gate was off. Read
+  the newly-live path end to end for hardware-specific attribute assumptions
+  before flipping the switch.
+- **Gotcha**: "validated against a dead/absent device" is NOT validated. The dead
+  clones never got far enough down the poll to reach the crashing line, so
+  graceful-absence proved absence and never proved presence. An absent-hardware
+  green is evidence about the absence path only.
+- **Process**: this is the third defect this sprint with the same shape -- US-494
+  (a dependency the entry point never injected), US-499's whole thesis (parts
+  green, composition broken), and now an unexercised line inside a working
+  component. The in-loop targeted gate cannot see any of them by construction,
+  which is exactly why these stories each end owing an on-Pi check. The bench
+  session caught in one afternoon what six iterations of green units could not.
+- **Process**: a sprint-complete iteration is still worth its cost when it ends
+  by re-reading the authoritative file rather than trusting the previous close
+  note -- and here the side effect (surfacing US-500 in the handoff) was worth
+  more than the check itself.
+---
