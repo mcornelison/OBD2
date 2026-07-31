@@ -7,6 +7,41 @@
 
 ---
 
+## Session 33 — 2026-07-27 → 07-31 (OBD capture live RCA)
+
+**Context**: CIO drove a 3-leg IRL drive (07-27) and assumed no drive was detected. Verifying that turned into a multi-day live diagnosis of the OBD Bluetooth capture pipeline (the standing IRL-validation gate). Spanned 07-27 (initial forensic) → 07-31 (live engine-on probe + reboot test + coexistence angle).
+
+### What Happened
+- **VERIFIED (not assumed): no engine data captured on the 07-27 drive — and none since drive 34 on 2026-07-03.** From the Pi's own `obd.db`: 0 `realtime_data` rows on 07-27 despite 3 legs; 256/259 connects failed all day; MAC correct (`…:FB`), single reader, DriveDetector fine, power/boot fine. A **24-day silent OBD-capture outage** the team hadn't caught — the "A-17/US-474 fixed capture" narrative was wrong.
+- **First (WRONG) RCA, 07-27:** blamed a service-code regression — US-441 (`_ioLock`/epoch-fence) + US-432 (connect-time PID probe) both landed 07-03, the exact day capture died. Routed to Atlas. **Later disproven (see below).**
+- **Live engine-on probe, 07-31 (CIO idled the engine):** ran `probe_obd_capabilities.sh`.
+  - First attempt FAILED with the same `readiness but no data / multiple access on port` error — at the **serial/rfcomm layer** (auto_baudrate read EOF), before any OBD/service logic. → **My raw recipe reproduced the failure → NOT the US-441/US-432 code.** Correction routed.
+  - Found the Pi had **ZERO bonded BT devices**; `rfcomm0` bound to `…:FB` but "closed"; OBDLink not connected at BT layer.
+  - After the CIO cycled the dongle it showed `Paired: yes / Connected: yes`; re-ran the probe → **`Car Connected`, ISO 9141-2 (id=3), 38 PIDs.** Then the **full `eclipse-obd` service captured live** `realtime_data`: **RPM 768/780, BATTERY_V 13.4/13.6**, drive_start/end firing. **The capture CODE + adapter/ECU/protocol are all healthy.**
+- **Reboot durability test:** post-reboot the service auto-connected + captured with no intervention — BUT then **dropped (`Paired: no → Connected: no`) and never recovered**, retrying every ~2 min with `OBD connection not active after creation`, engine running the whole time (~15+ min dead). **Recurring failure reproduced live.**
+- **Root cause (core):** the OBDLink runs on a **bond-less BT pairing** (`Bonded: no` throughout; `trust` didn't survive reboot) → fragile, drops mid-session, and the service retries a stale rfcomm forever without resetting the transport. Every Pi power-cycle (every car-powered drive) → no durable link → 0 capture. US-477 (07-20) fixed the MAC but not the bond.
+- **CIO insight — WiFi/BT shared radio:** Pi 5 CYW43455 shares one 2.4 GHz radio for WiFi + BT. Off-network on a drive the Pi scans 2.4 GHz continuously → coexistence contention → plausible **drive-time aggravator** (hypothesis, not proven; today's parked drop happened with WiFi idle/ethernet).
+- **Deliverables to Atlas:** working-connection recipe note (07-31) + **consolidated root-cause + fix note** (07-31, supersedes the 07-27 blame). Fix path: real bond+trust, reconnect-resets-transport, boot ordering, 5 GHz/scan mitigation (never disable radio).
+
+### Key Decisions
+- **BL-025 root cause CORRECTED:** it is a **Bluetooth bonding + reconnect-recovery** problem, NOT the US-441/US-432 code regression the team was tracking. Told Atlas not to bisect the code.
+- **Set `Trusted: yes` on the OBDLink** (did not persist reboot — flagged for the durable bond fix).
+- Working recipe confirmed: `obd.OBD(fast=False, timeout=10)`, no forced protocol (auto ISO 9141-2 id=3), rfcomm channel 1; `fast=False` mandatory for the DSM K-line.
+
+### Current Vehicle State
+- Unchanged mechanically. 1998 GST 4G63, ECU MD326328 (ECMLink), 93 octane. Live idle observed healthy: **RPM ~770, BATTERY_V 13.6 (charging)**; P0443 EVAP CEL still present (MIL_ON=1, DTC_COUNT=1, recurring — unchanged disposition).
+- **MONITORING DEGRADED — CAPTURE DEAD:** no engine data captured since drive 34 (2026-07-03); blocked on Atlas's BT bond fix. Pi reachable via DHCP (was `.28`, now `.100`; hostname now `Chi-Eclips-01` — B-102 rename landed). Adapter/ECU proven healthy; only the BT link is the blocker.
+
+### Open Items
+- **BL-025 (top blocker):** Atlas owns the BT bond + reconnect-reset fix; I own the acceptance = verify a clean captured drive (fresh `realtime_data`, single drive_id, full key-on→drive→key-off) once the fix lands.
+- **Coexistence hypothesis:** test BT-drop vs 2.4 GHz scan correlation on a drive; confirm Pi WiFi band (2.4 vs 5 GHz). Never disable the radio.
+- **24-day data gap** (07-03 → present) is load-bearing context for any future datalog analysis — no captures exist in that window.
+
+### Safety Advisories
+- No acute engine conditions (healthy idle, charging voltage). P0443 unchanged. Primary risk is **loss of monitoring** (capture dead) — not an engine hazard, but the safety-net is down until the BT fix lands.
+
+---
+
 ## Session 32 — 2026-07-25/26
 
 **Context**: Init (`/init-tuner`). CIO: dispatch the owed `--critical-red` safety value, read inbox, then a PRD review. (Sessions 29–31 — the 06-30 drive-33 F-116 note + 07-04 US-424 server-migration note — were worked but not logged here.)
