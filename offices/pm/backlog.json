@@ -1168,7 +1168,7 @@
       "parent": "E-006",
       "title": "EDR Phase 2 -- dedicated-reader + bus-contract design (full; A-4 versioned)",
       "description": "HARDWARE-INDEPENDENT (Atlas 2026-06-16 brief, phase 2; design-only, Atlas-owned). The load-bearing dedicated-reader / in-process pub/sub bus contract everything subscribes to: per-subscriber QoS (lossless sync/safety vs lossy display), bounded queues, producer-never-blocks, 100Hz-IMU-vs-~6/s-OBD rate handling, ECMLink/OBDLink K-line arbitration. F-110 shipped Slice 1 (bus skeleton + PersistenceSubscriber, ships-dark); this is the full contract + consolidation. Atlas open gate #1. Graduates the SSOT-bus direction into specs/ssot-design-pattern.md (gate #4) once CIO firms it. GROOM-READY candidate (design artifact; can run parallel to F-112).",
-      "status": "complete",
+      "status": "active",
       "createdAt": "2026-06-28",
       "updatedAt": "2026-07-31",
       "currentVersion": "V0.29.20"
@@ -6134,6 +6134,45 @@
       "updatedAt": "2026-07-31",
       "passes": true,
       "shippedNote": "SHIPPED V0.29.20 (carousel SSOT-wiring, code-complete). On-Pi render/hardware validation = PM bench session at this deploy."
+    },
+    {
+      "id": "US-500",
+      "parent": "F-113",
+      "type": "issue",
+      "size": "S",
+      "status": "sprint-ready",
+      "title": "P1: IMU reader crashes the whole sample on dev.temperature -- genuine ICM20948 has no .temperature (blocks states/imu)",
+      "goal": "As the IMU feed, I want a poll to publish accel/gyro/mag even when the temperature read is unavailable, so states/imu is actually produced. BENCH-VALIDATION CATCH (V0.29.20 deploy 2026-07-31, A-16): with the genuine ICM-20948 @0x69 + imu.enabled=true, EVERY poll fails -- sensor_reader.py:322  throws \"ICM20948 object has no attribute temperature\" (the adafruit_icm20x ICM20948 does not expose it) BEFORE publishing -> no sample -> states/imu never written -> US-497 IMU card has nothing to render. The dead clones never got this far; the real board did.",
+      "definitionOfDone": [
+        "the temperature read (sensor_reader.py:322) is made GRACEFUL -- guard it (try/except -> None, or drop it): a missing/failing .temperature must NOT fail the whole poll. accel/gyro/mag (lines 319-321) still publish",
+        "the states/imu derived contract does NOT need temperature (gLat/gLon/heading/grade only) -- so temp=None is honest + fine; raw EDR schema temp_c becomes null-when-unavailable, never a fabricated value",
+        "on the Pi after deploy: states/imu is WRITTEN with live accel/gyro/mag -> derived gLat/gLon/headingDeg/gradePct populate; US-497 IMU card renders live (retire the US-478/497 deferred on-Pi validation)",
+        "a test (fixture/mock) proves a poll with a driver lacking .temperature still publishes a sample; Typecheck + pi tests green"
+      ],
+      "conditionalOutcomes": [
+        "if the genuine ICM20948 DOES expose temperature under a different attribute/register (adafruit_icm20x variance), use that instead of dropping it -- but the poll must never crash on its absence"
+      ],
+      "validationCriteria": [
+        {
+          "action": "on the Pi (IMU @0x69, imu.enabled): tail eclipse-obd log + cat /run/eclipse-obd/states/imu",
+          "outcome": "no imu-read-failed warnings; states/imu present with live accel/gyro/mag + derived fields"
+        },
+        {
+          "action": "view the IMU card while moving the board",
+          "outcome": "g-force + compass track live (US-497 finally validates)"
+        }
+      ],
+      "deps": [],
+      "sourceRefs": [
+        "US-478",
+        "US-497",
+        "F-113",
+        "sensor_reader.py:322",
+        "bench-validation-2026-07-31-A-16"
+      ],
+      "tasks": [],
+      "createdAt": "2026-07-31",
+      "updatedAt": "2026-07-31"
     }
   ]
 }
