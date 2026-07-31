@@ -3,7 +3,29 @@
 | Field | Value |
 |---|---|
 | Severity | **P0 / project-blocking** (safety-relevant: no engine data for 25+ days) |
-| Status | Active -- **root cause CORRECTED 2026-07-31** (Spool live RCA): it's a **Bluetooth bonding + reconnect-recovery** problem, NOT the US-441/US-432 code regression the earlier theory (below) blamed. Fix design owed (Atlas); PM ready to groom on his fix-shape. |
+| Status | **ROOT CAUSE FOUND + FIXED LIVE 2026-07-31** (Atlas live debug w/ CIO on Pi): a **persistent Bluetooth SOFT-BLOCK** (stale saved rfkill state restored every boot). Fix live + verified across 2 reboots. Two P0 durability fixes **dispatched to Ralph** (deploy-bake + pair_obdlink); PM owes version-bump + deploy on landing. Remaining: #3 reconnect-transport-reset + #4 origin RCA (groom); acceptance = engine-on drive (Spool). |
+
+## ✅ ROOT CAUSE FOUND + FIXED LIVE 2026-07-31 (Atlas + CIO on-Pi debug — supersedes ALL prior theories)
+
+**THE root cause: a persistent Bluetooth soft-block.** `/var/lib/systemd/rfkill/platform-107d50c000.serial:bluetooth = [1]` — a **stale saved rfkill state** that `systemd-rfkill` **restores at every boot**, bringing Bluetooth up **soft-blocked** since ~07-03 → eclipse-obd can't use the dongle → **0 capture on every boot**. Pi-side, system-state, reboot-persistent (exactly the CIO's repeated diagnosis). Explains the intermittency: masking systemd-rfkill let BT come up unblocked (some sessions half-worked); reverting resumed the block.
+
+**FIXED live (verified persistent across 2 reboots):** unblocked BT + installed/enabled `eclipse-rfkill-unblock.service` (oneshot `rfkill unblock all`, `After=systemd-rfkill.service bluetooth.service`). Post-reboot: hci0/phy0 Soft blocked = no, service active/enabled, BT Powered = yes, eclipse-obd active.
+
+**This SUPERSEDES both prior theories:** the US-441/US-432 code-regression theory (wrong — Atlas owns the bad bisect, A-18) AND the "bonding is the primary cause" framing (bonding/reconnect-reset is now demoted to a **P1 hardening** item, not the headline). The 07-03 app code at most *amplified* WiFi coexistence; it did not cause the capture break.
+
+### Resolution work (Atlas prioritized 2026-07-31)
+1. **[P0/deploy — dispatched to Ralph]** Bake the radio-unblock into deploy: `deploy/eclipse-rfkill-unblock.service` + `deploy-pi.sh` install step + clear stale rfkill block on deploy. (Live fix is NOT in repo — a reflash would lose it.) **PM owes: version-bump + deploy on landing.**
+2. **[P0 — dispatched to Ralph]** Fix `scripts/pair_obdlink.sh` (Trixie bluez prompt regex `[bluetoothctl]>` + display-capable agent for durable bond+trust). **PM owes: version-bump on landing.**
+3. **[P1 — GROOM]** Durable bond + reconnect-transport-reset (Spool's path: disconnect → releaseRfcomm → re-bind → reconnect, not re-open `obd.OBD()` on a dead tty).
+4. **[P1 — GROOM]** Root-cause WHY BT got soft-blocked ~07-03 (likely a debug-session rfkill that systemd-rfkill persisted). Unblock service is the safety net regardless.
+5. **[P2/hardware — CIO sign-off]** Wired USB OBD adapter — Atlas standing rec; ends the whole BT-bond/discovery/coexistence class permanently.
+6. **[validation]** Clean engine-on drive (Spool owns) — fresh `realtime_data`, single drive_id, key-on→drive→key-off = acceptance for BL-025/A-17.
+
+**Deploy caveats (Atlas):** use normal `deploy-pi.sh` NOT `--init` (--init would wipe the live fix); post-deploy+reboot verify `rfkill list` both Soft blocked:no + service enabled + eclipse-obd active; pair_obdlink full bond-survives-reboot validation is engine-on (Spool).
+
+---
+
+## (Earlier) ROOT CAUSE CORRECTED 2026-07-31 (Spool live RCA — bonding theory, now itself refined to P1 by the rfkill finding above)
 | Blocking | The entire IRL-validation gate (A-9/A-17/A-16-Bug3/BL-016) + all tuning value of the platform -- **the car captures nothing** |
 | Filed | 2026-07-28 (PM, on CIO direction to investigate Spool's 07-27 RCA) |
 | Refs | **CORRECTED RCA (2026-07-31):** `offices/architect/inbox/2026-07-31-from-spool-obd-bt-rootcause-consolidated.md` + `...-obd-connect-working-recipe.md`; tuner sessions.md S33. Original RCA: `.../2026-07-27-from-spool-obd-bt-capture-dead-since-0703.md`. US-441, US-432, F-117, A-17, BL-016; `src/pi/obdii/obd_connection.py` |
