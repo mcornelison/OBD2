@@ -2711,6 +2711,57 @@ freshness `ts` is the **sample's own read-time** (not write-time), so a stalled
 feed goes honestly stale and the consumer falls back rather than trusting a
 frozen value. Gated behind `pi.bus.enabled` + `pi.sensors.light.enabled`.
 
+**Bus → `states/imu` DERIVED bridge (US-478 / F-113, Sprint 66 / V0.29.20).** The
+same seam, one tier further: `src/pi/sensors/imu_state_bridge.py`
+(`ImuStateBridge`) subscribes to `raw.imu.{accel,mag}` + the retained
+`state.sensor.imu` presence topic (LOSSY) and writes the **display-derived view**
+into `states/imu`. Two artifacts, deliberately separate (Atlas A-4): **raw**
+accel/gyro/mag stay on the bus and in the versioned `edr_imu_sample` store; this
+file is the *derived* view and holds no raw axes at all. **The reader computes,
+the display consumes** (Atlas DELTA-2) — the card never fuses.
+
+*Contract (Atlas Q-A, 2026-07-30).* `{available, ts, gLat, gLon, gMag,
+headingDeg, gradePct, altitude, reasons}`:
+
+| Field | Meaning | Notes |
+|---|---|---|
+| `gLat` / `gLon` / `gMag` | horizontal acceleration, **units = g** (`g_n` = 9.80665 m/s²) | `gLon` + = accelerating, − = braking; `gLat` + = **RIGHT** (automotive convention); `gMag` = hypot |
+| `headingDeg` | magnetic bearing of the vehicle nose, 0–359 | tilt-compensated; **magnetic, not true** (no declination in the contract) |
+| `gradePct` | `tan(pitch) × 100`, pitch from the gravity vector | + = climbing; `null` past `MAX_GRADE_PITCH_DEG` (85°), where `tan` runs away |
+| `altitude` | **always typed `null`** + `reasons.altitude = "no_source"` | the ICM-20948 has no barometer; a zeroed altitude renders as sea level — a confident lie. A future BMP280/GPS fills it, not this bridge |
+| `available` / `ts` | freshness | absent/stale → the US-497 idle-card fallback |
+| `reasons` | per-field absence vocabulary | `sensor_absent`, `no_mag_reading`, `tilt_unresolved`, `pitch_out_of_range`, `no_source` |
+
+*Honest-availability is PER FIELD.* A dead magnetometer grays `headingDeg` alone
+while the g fields stay live; an unwired sensor writes an **explicit**
+`available: false` state (a state *change* bypasses the write-cadence window, so
+an unplug can never leave the last live g reading frozen on the card looking
+current); and a stale mag reading grays the heading rather than carrying an old
+bearing forward — a frozen compass needle is worse than an absent one.
+
+*Why a gravity low-pass (`pi.sensors.imu.gravityTauSec`, default 5 s).* The
+accelerometer measures gravity and vehicle acceleration summed into one vector.
+Publishing the raw horizontal components would pin a permanent phantom **0.17 g**
+on the g-meter for a board bolted in at a 10° tilt. The slow estimate tracks
+mount tilt and road grade (which change over tens of seconds); the fast residual
+is the acceleration the g-meter exists to show. The **same** estimate defines the
+level frame for `gLat`/`gLon`, the pitch for `gradePct`, and the tilt
+compensation for `headingDeg` — one gravity fact, three consumers, no chance for
+three derivations to disagree. The default τ is a **Rex-derived filter constant
+flagged for Atlas/Spool confirmation against a real drive**, not a tuning value.
+
+*Config (all under `pi.sensors.imu.*`, validated in `_validateImuStateBridge`).*
+`stateHz` (default 4) is the state-file write cadence, grounded to the
+**consumer** — `carousel.js POLL_MS = 250` — not the sensor's 50 Hz burst;
+writing tmpfs faster than the only reader polls is churn with no observable
+effect. `mount.{forward,left,up}` (default `+x`/`+y`/`+z`) places the board in the
+**vehicle** frame, so a physical remount is a config edit rather than a code
+edit; a duplicated or malformed axis is rejected at config-validation time (fail
+fast) instead of raising once per sample inside the bus drain, where it would be
+logged and swallowed. Gated behind `pi.bus.enabled` + `pi.sensors.imu.enabled`
+(flipped on in Sprint 66 — connect-when-wired, the genuine Adafruit ICM-20948
+#4554 confirmed @0x69 via `WHO_AM_I = 0xEA`).
+
 **Display auto-dim consumer + config-injection seam (US-483-b / F-121, Sprint 61
 / V0.29.15).** The carousel drives the panel brightness (a **software dim** — the
 Chromium kiosk can't reach the panel backlight) from the `states/light` feed via

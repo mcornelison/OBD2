@@ -506,6 +506,12 @@ class LifecycleMixin:
     # AND ``pi.sensors.light.enabled`` are both set.  Built alongside the EDR
     # sensor path in _initializeDataLogger, stopped in _shutdownDataLogger.
     _lightStateBridge: Any | None
+    # US-478 (F-113): the IMU -> states/imu bridge (a PURE bus consumer of
+    # raw.imu.{accel,mag}; no I2C/OBD connection).  Stays None unless
+    # ``pi.bus.enabled`` AND ``pi.sensors.imu.enabled`` are both set.  Built
+    # alongside the EDR sensor path in _initializeDataLogger, stopped in
+    # _shutdownDataLogger.
+    _imuStateBridge: Any | None
 
     def _initializeAllComponents(self) -> None:
         """
@@ -1551,6 +1557,8 @@ class LifecycleMixin:
         self._edrPersistenceSubscriber = None
         # US-483-a: default to no light-state bridge (ships dark with light off).
         self._lightStateBridge = None
+        # US-478: default to no IMU-state bridge (ships dark with the IMU off).
+        self._imuStateBridge = None
         busEnabled = bool(
             self._config.get('pi', {}).get('bus', {}).get('enabled', False)
         )
@@ -1638,6 +1646,18 @@ class LifecycleMixin:
             if lightBridge is not None:
                 lightBridge.start()
             self._lightStateBridge = lightBridge
+            # US-478: mirror the raw.imu.* burst -> states/imu (the DERIVED
+            # display view the US-497 live-instrument card polls).  Same pure-bus-
+            # consumer seam as the light bridge, and subscribed BEFORE the readers
+            # publish so no early burst is missed (STREAM has no history).  Built
+            # only when pi.sensors.imu.enabled (else None).
+            from pi.sensors.imu_state_bridge import (
+                createImuStateBridgeFromConfig,
+            )
+            imuBridge = createImuStateBridgeFromConfig(self._config, bus)
+            if imuBridge is not None:
+                imuBridge.start()
+            self._imuStateBridge = imuBridge
             for reader in readers:
                 reader.start()
             self._sensorReaders = readers
@@ -2392,6 +2412,17 @@ class LifecycleMixin:
                 logger.warning("Failed to stop light-state bridge: %s", e)
             finally:
                 self._lightStateBridge = None
+        # US-478: stop the IMU-state bridge drain thread (no-op when the IMU was
+        # off -- the bridge stays None).  An orphaned drain thread would keep
+        # writing tmpfs after the process that owned it went away.
+        imuBridge = getattr(self, '_imuStateBridge', None)
+        if imuBridge is not None:
+            try:
+                imuBridge.stop()
+            except Exception as e:  # noqa: BLE001 -- shutdown must not raise out
+                logger.warning("Failed to stop IMU-state bridge: %s", e)
+            finally:
+                self._imuStateBridge = None
         edrSubscriber = getattr(self, '_edrPersistenceSubscriber', None)
         if edrSubscriber is not None:
             try:

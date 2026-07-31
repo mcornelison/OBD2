@@ -2297,3 +2297,72 @@ Task: Sprint 66 gate re-verification -- third consecutive iteration with no take
   The value of this iteration was not the re-check -- it was the side effect of
   attempting it.
 ---
+
+## 2026-07-31 - US-478 (Agent 1 / Session 9)
+Task: S4-emitter: EDR IMU bring-up -- enable pi.sensors.imu + bridge raw.imu.* -> states/imu
+
+### What was implemented:
+- **BL-026 is lifted** (PM, 2026-07-30/31). The contract gate looked unanswered for
+  three sessions because Atlas's Q-A ruling landed in the PM inbox, not mine -- a
+  routing gap, not a missing ruling. Hardware confirmed: genuine ICM-20948 #4554
+  @0x69 (`WHO_AM_I = 0xEA`). Per the 07-31 PM call, this story is built
+  **code-complete against the contract + fixtures**; the on-Pi live-hardware
+  validation is the PM's sprint-close bench session, not a per-iteration gate.
+- `src/pi/sensors/imu_state_bridge.py` -- the derived-view bridge. Subscribes to
+  `raw.imu.{accel,mag}` + the retained `state.sensor.imu` presence topic and writes
+  `states/imu` = `{available, ts, gLat, gLon, gMag, headingDeg, gradePct, altitude,
+  reasons}`. Raw axes stay on the bus / `edr_imu_sample` (A-4); this file holds none.
+- Wired into the orchestrator (`_startEdrSensorPath` builds + starts it before the
+  readers publish; `_shutdownDataLogger` stops it), config-gated behind
+  `pi.bus.enabled` + `pi.sensors.imu.enabled` (flipped ON -- connect-when-wired).
+- New config keys with validation: `pi.sensors.imu.stateHz` (4),
+  `.gravityTauSec` (5.0), `.mount.{forward,left,up}` (+x/+y/+z).
+- Answered the PM's US-496 side-item: `system-status` DOES already emit
+  `source.obd.available` (`source_availability.buildSourceState`). No change needed.
+
+### Files changed:
+- Created: `src/pi/sensors/imu_state_bridge.py` (derived bridge + pure math)
+- Created: `tests/pi/sensors/test_imu_state_bridge.py` (42 tests)
+- Modified: `src/pi/obdii/orchestrator/lifecycle.py` (build/start/stop wiring)
+- Modified: `src/common/config/validator.py` (defaults + `_validateImuStateBridge`)
+- Modified: `config.json` (imu enabled true + the three new key groups)
+- Modified: `specs/architecture.md` (10.8.2 `states/imu` bridge contract -- PM Rule 10)
+
+### Verification:
+- tests/pi/sensors: 74 passed (42 new). Validator + deploy-invariants + both
+  orchestrator startup suites + tests/pi/bus: 130 passed. `python
+  validate_config.py`: all validations passed. ruff clean on all four .py files.
+- Host gaps unchanged: make / black / mypy absent on this Windows box (ran ruff
+  directly). PM: run mypy + the full suite at integration -- lifecycle.py is a
+  base module.
+
+### Learnings for future iterations:
+- **Pattern discovered**: **an accelerometer cannot tell gravity from
+  acceleration**, and the obvious tilt-compensation is mathematically empty --
+  rotate the measured vector onto "up" and subtract its own magnitude and the
+  horizontal residual is IDENTICALLY ZERO by construction. It looks right, it
+  tests green against a hand-built fixture, and it reads zero on a real drive. The
+  fix is a slow low-pass gravity REFERENCE; the fast residual is the g-meter.
+- **Pattern**: derive a shared physical fact ONCE and fan it out. The same gravity
+  estimate defines the level frame (gLat/gLon), the pitch (gradePct) and the tilt
+  compensation (headingDeg). Three separate derivations = three chances for the
+  compass and the grade to disagree about which way is down.
+- **Pattern**: ground a write cadence to the CONSUMER, not the producer. The IMU
+  bursts at 50 Hz; `carousel.js POLL_MS = 250` means 4 Hz is the whole observable
+  budget. Everything above that is tmpfs churn nobody can see.
+- **Gotcha**: a **state CHANGE must bypass the rate-limit window**. Decimating the
+  absent-sensor write would leave the last live g reading on the card looking
+  current -- the rate limiter would have manufactured a frozen instrument.
+- **Gotcha**: a mount orientation is a CALIBRATION value, so it belongs in config
+  and must fail fast at validation. Validated per-sample instead, a bad axis spec
+  raises inside the bus drain, gets caught by the never-crash guard, and is logged
+  and swallowed forever at 50 Hz.
+- **Process**: state which numbers are grounded and which are not. `stateHz=4` is
+  grounded (carousel POLL_MS). `gravityTauSec=5.0` is a Rex-derived filter
+  constant, config-parameterized and explicitly flagged to Atlas/Spool for
+  confirmation against a real drive. Saying so is cheaper than being caught.
+- **Process**: three sessions of "the contract does not exist" turned out to be a
+  MIS-ROUTED note. A refusal that keeps returning the same answer is worth
+  escalating (Session 7's lesson, and it worked) -- but the thing that finally
+  moved was someone re-checking where the answer was FILED, not whether it existed.
+---
