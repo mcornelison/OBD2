@@ -10,6 +10,12 @@
   This is now a **standing stop**, not a pause: two dated checks say the same thing,
   so further Ralph iterations cannot change the outcome. Escalated
   `HUMAN_INTERVENTION_REQUIRED`.
+- **RE-VERIFIED A THIRD TIME 2026-07-30 (Session 8).** Gate 2 (contract) **still
+  closed** — design spec unchanged since 07-29 08:51, `states/imu` still has zero
+  hits repo-wide. Gate 1 (hardware) **could not be checked**: 🔴 **the Pi is now
+  unreachable on all three known addresses** (`.28` / `.9` / `.100`), which also
+  blocks the four owed on-Pi render checks and the sprint-close deploy. See the
+  new section below. Re-escalated `HUMAN_INTERVENTION_REQUIRED`.
 - **Blocks:** US-478 (S4-emitter, IMU bring-up), US-497 (S4-card, consumes `states/imu`)
 - **Did NOT block:** US-499 (S6 render-regression) — built and complete
 - **Needs:** a CIO hardware action (AI-005) + an Atlas contract ruling. PM call at dispatch, per the story's own `conditionalOutcomes`.
@@ -156,6 +162,74 @@ I have still NOT edited the default. Reason unchanged and now stronger: the
 `.9` yesterday, today's evidence (that the in-car path is `.100`) would have been
 baked over by a bench-only address. Same only-ever-added-never-subtracted shape as
 the stale `/opt` assets US-495 dug out.
+
+## Re-verification, 2026-07-30 (Session 8) — third dated check; gate 2 closed, gate 1 now UNVERIFIABLE
+
+Third consecutive iteration with no takeable story. Gate 2 was re-checked and is
+**still closed**. Gate 1 could **not be checked at all today**, which is itself the
+new finding and is escalated in its own section below.
+
+**Gate 2 — contract. STILL CLOSED, re-verified from the artifacts.** Atlas's design
+spec is **unchanged since 2026-07-29 08:51** (same mtime as Session 7's check, so
+nothing has been added since I last read it in full). Its IMU content is still
+scope-only — line 39 "build emitter+card", line 49 "in scope … grays until then",
+line 50 altitude typed-NA, line 59 S4 "bench-validatable once the IMU is physically
+wired". **No derived-field list with units (Q-A). No word on transport (Q-B).**
+A fresh search for `states/imu` across `docs/`, `specs/` and `src/` returns **zero
+hits** — the artifact this sprint exists to produce still has no written contract
+anywhere in the repo. Nothing new in `offices/ralph/inbox/` since 2026-07-22.
+
+**This gate alone is sufficient to block both stories**, independent of the
+hardware, which is why the outcome is unchanged even though gate 1 is unverifiable
+today: there is nothing to build *to*.
+
+**Gate 1 — hardware. NOT VERIFIABLE. The Pi is unreachable on every known address.**
+I could not run `i2cdetect` because I could not open a shell. See the next section —
+this is no longer an incidental finding about a deploy default, it is a hard
+dependency for four other stories' owed checks.
+
+## 🔴 NEW 2026-07-30 (Session 8) — the Pi is unreachable on ALL THREE known addresses
+
+This supersedes the two host-address sections above and is the most actionable item
+in this file. **This blocks far more than the two IMU stories** — the four owed
+on-Pi render checks (US-494 / US-495 / US-496 / US-498) and the sprint-close deploy
+all require SSH to the Pi.
+
+Measured today, and the failure modes differ per address in a way that is
+diagnostic:
+
+| Address | Result | What that means |
+|---|---|---|
+| `10.27.27.28` (old deploy default) | `Connection timed out` | **No host at this IP.** Consistent with Sessions 6/7 — `.28` is simply not this Pi any more. |
+| `10.27.27.9` (eth0, temp wired) | first `kex_exchange_identification: Connection closed by remote host`, then on retry `Connection refused` | **A host IS live at this IP** (a refusal is an RST, not a timeout) but SSH is not serving. The first attempt got far enough to start a key exchange and was then dropped. |
+| `10.27.27.100` (wlan0, DeathstarWifi) | same pattern: kex-close, then `Connection refused` | Same as above. |
+
+**Control test, so this is not my end:** `ssh chi-srv-01` succeeded in the same
+minutes and returned `chi-srv-01 / 2026-07-30T21:18:26-05:00`. My SSH stack, the
+share, and the route to the 10.27.27.0/24 subnet are all fine.
+
+**What I am NOT claiming.** I have not diagnosed the cause and will not assert one.
+The evidence is consistent with several stories — a Pi mid-reboot, `sshd` flapping
+or failing to start, or those DHCP leases having moved to a different device — and
+distinguishing them needs physical access. The failure mode *changing* from
+"accepted then dropped" to "refused" within about two minutes is the detail worth
+handing over: something on that host is transitioning, not statically off.
+Note also that `ping` is not available from this dev box (blocked), so I could not
+separate "host up, sshd down" from "IP reassigned" any further than the TCP
+behaviour above already does.
+
+**Why this matters for the sprint close, concretely.** `deploy/deploy-pi.sh` gates
+on SSH at step 1, so a deploy will hard-fail before shipping anything — correctly,
+but it means the PM cannot discharge the four owed render checks until the Pi is
+back. Overriding `PI_HOST` does not help today: **neither** candidate address
+answers. The address question from Session 7 (`.9` vs `.100`, and the case for a
+static reservation or name resolution rather than another hardcoded literal) still
+stands and is still a CIO/PM call — but it is now downstream of simply getting the
+host back.
+
+**Suggested first move for the CIO:** check the Pi physically / on console before
+spending time on the deploy script. If it comes back on a *third* address, that is
+strong evidence for the static-reservation fix rather than another literal edit.
 
 ## What unblocks it
 

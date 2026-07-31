@@ -2235,3 +2235,65 @@ iteration against a hardware gate.
   yesterday, today's evidence (the real path is wlan0 `.100`; an in-car Pi has no
   ethernet) would already have made it wrong. Pass an override, route the decision.
 ---
+
+## 2026-07-30 - NO STORY TAKEN (Agent 1 / Session 8)
+Task: Sprint 66 gate re-verification -- third consecutive iteration with no takeable story
+
+### What was implemented:
+- No production code. Sprint 66 stands at 5/7; the only two open stories (US-478,
+  US-497) are both still blocked by BL-026, so the correct output of this iteration
+  is dated evidence plus an escalation, not a story.
+- Re-verified GATE 2 (the `states/imu` contract) from the artifacts. Atlas's design
+  spec `docs/superpowers/specs/2026-07-28-pi-ui-carousel-ssot-wiring-design.md` is
+  UNCHANGED since 2026-07-29 08:51 -- the same mtime as Session 7's read, so nothing
+  has been added since I last read it in full. Still scope-only at lines 39/49/50/59
+  (build emitter+card, grays until wired, altitude typed-NA, bench-validatable once
+  wired) and answers NEITHER Q-A (derived-field list + units) NOR Q-B (transport).
+  `states/imu` returns ZERO hits across `docs/`, `specs/` and `src/`. This gate blocks
+  both stories regardless of the hardware: there is nothing to build to.
+- Could NOT verify GATE 1 (hardware) -- no shell on the Pi. That failure is itself the
+  new finding.
+- NEW, and it outranks the IMU work: THE PI IS UNREACHABLE ON ALL THREE KNOWN
+  ADDRESSES. `.28` times out (no host, as before); `.9` (eth0) and `.100` (wlan0) both
+  gave `kex_exchange_identification: Connection closed by remote host` on first contact
+  and `Connection refused` on retry about two minutes later. Control test `ssh
+  chi-srv-01` succeeded in the same minutes, so the fault is Pi-side, not mine.
+- Cause NOT diagnosed and NOT asserted. The evidence fits a reboot, sshd flapping, or
+  reassigned DHCP leases; separating them needs console access. `ping` is blocked from
+  this box, so the TCP behaviour is as far as the evidence goes.
+
+### Files changed:
+- Modified: `offices/pm/blockers/BL-026-us478-imu-bringup-hardware-and-contract-gated.md`
+  (Session 8 re-verification + a new high-priority section on the unreachable Pi)
+- Created: `offices/pm/inbox/2026-07-30-from-ralph-pi-unreachable-blocks-sprint-close.md`
+  (supersedes BOTH of yesterday's host-address notes)
+- Modified: `offices/ralph/ralph_agents.json` (status unassigned, Session 8 close note)
+- Modified: `offices/ralph/progress.txt` (this entry)
+
+### Learnings for future iterations:
+- **Pattern discovered**: SSH failure modes are three different facts, not one.
+  `Connection timed out` = no host at that IP. `Connection refused` = a host IS live
+  (it sent an RST) but nothing is listening on 22. `kex_exchange_identification:
+  Connection closed by remote host` = sshd accepted the TCP connection and dropped it
+  mid-handshake, BEFORE authentication -- so it is never a key or credential problem.
+  Getting kex-close and then refused from the same address minutes apart says the host
+  is transitioning, not statically off. Reading these as one undifferentiated "can't
+  connect" throws away the only diagnosis available from a remote box.
+- **Pattern discovered**: always run a CONTROL host before routing a connectivity
+  finding. One extra `ssh chi-srv-01` is what turns "I cannot reach the Pi" from a
+  claim about my box into a claim about the Pi.
+- **Gotcha**: a hardcoded literal cannot track a moving fact. I recommended
+  `PI_HOST=.9` on 07-29, corrected to `.100` on 07-30, and today both are dead. Had I
+  edited `deploy-pi.sh`'s default either time it would already be wrong twice over.
+  The durable fix is a static DHCP reservation or name resolution -- a CIO/PM call.
+- **Gotcha**: `deploy-pi.sh` gating on SSH at step 1 means an unreachable Pi blocks the
+  whole sprint close, not just the hardware stories -- US-494/495/496/498 each owe an
+  on-Pi render check and none can be discharged.
+- **Gotcha (carried)**: `i2cdetect` is not on the Pi's non-login PATH; use
+  `/usr/sbin/i2cdetect`, or a bare call returns `command not found`, which reads
+  exactly like a broken bus and is not.
+- **Process**: re-verifying a refusal is cheap, but three identical answers is the
+  signal to stop iterating. Escalate with the tag and let the humans move the gate.
+  The value of this iteration was not the re-check -- it was the side effect of
+  attempting it.
+---
