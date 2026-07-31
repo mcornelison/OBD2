@@ -2366,3 +2366,63 @@ Task: S4-emitter: EDR IMU bring-up -- enable pi.sensors.imu + bridge raw.imu.* -
   escalating (Session 7's lesson, and it worked) -- but the thing that finally
   moved was someone re-checking where the answer was FILED, not whether it existed.
 ---
+
+## 2026-07-31 - US-497 (Rex / Session 10)
+Task: S4-card: IMU live-instrument card -- g-force + compass live; altitude typed-NA
+
+### What was implemented:
+- The Motion card: a PURE CONSUMER of the states/imu file US-478's bridge writes.
+  It maps and formats only -- no fusion, no re-derivation (Atlas DELTA-2). Built
+  to the contract in specs/architecture.md 10.8.2, not to the producer's tests.
+- imuView(data, nowMs) returns exactly one of three things: null (no file -- the
+  SHELL owns absence, so one place decides it), {idle:true, reason} (present but
+  not renderable as a live instrument), or the live instrument.
+- Instrument geometry as pure, node-tested functions: gDotPosition (sign contract
+  -> screen coords, directional clamp), headingCardinal (16-point rose),
+  pushGTrail (the 35s client-side trail window).
+- DOM: one inline SVG g-meter (rings + cross-hairs + a single polyline trail +
+  the dot) and a compass needle, updated BY ATTRIBUTE per tick.
+- Wired into tick() with the trail as poll-closure state, reset whenever the
+  instrument is not live.
+
+### Files changed:
+- Modified: `specs/UI/dist/dashboard-pi/carousel.js` (pure view + geometry + renderer + tick wiring + noDataView entry + exports)
+- Modified: `specs/UI/dist/dashboard-pi/dashboard.html` (the always-present card)
+- Modified: `specs/UI/dist/dashboard-pi/dashboard.css` (tokenized instrument styles + the SVG [hidden] guard)
+- Modified: `tests/deploy/test_dashboard_kit.py` (card registry 5 -> 6)
+- Modified: `specs/architecture.md` (F-092 "Motion card" section + table row)
+- Created: `tests/ui/test_carousel_imu_card.py` (39 tests)
+
+### Learnings for future iterations:
+- **Pattern discovered**: EVERY honest-availability pattern here assumes absence
+  is VISIBLE once rendered -- a gray "NA" reads as dead at a glance. A live
+  GRAPHICAL instrument breaks that: a g-dot frozen at 0.4 g reads exactly like a
+  car holding a steady corner. It is a fabricated measurement, not a visible gap.
+  For anything with GEOMETRY, staleness must blank the geometry, not gray a
+  label -- and the renderer must replace the body wholesale, because a stale
+  svg left under an idle message IS the frozen instrument.
+- **Gotcha**: the inverse trap is just as easy to ship. A real, fresh 0.00 g
+  reading is LIVE, not absent -- a stationary car genuinely measures zero.
+  Collapsing "measured zero" into "no reading" blanks a working instrument at
+  every traffic light. Pin both directions.
+- **Pattern discovered**: ground a threshold to its PRODUCER and do not reuse a
+  nearby constant because it exists. IMU_STALE_SEC=2.0 is 8 missed writes at the
+  bridge's stateHz=4; reusing the light card's 10s would have governed a fact it
+  was never measured against (a 10s-old lux is still roughly true, a 10s-old
+  g-vector is meaningless).
+- **Gotcha**: a sign error in an instrument is invisible in a screenshot -- it
+  only shows to a human in a moving car. Pin the SCREEN-COORDINATE conversion by
+  test (gLon+ = accelerating -> NEGATIVE y is where the mistake lives), and put
+  the contract IN WORDS on the card ("0.30 right / 0.12 brake") so a backwards
+  mount is obvious at the bench.
+- **Gotcha**: clamp an over-scale vector DIRECTIONALLY, never per-axis --
+  per-axis swings a diagonal to the corner and misreports which way the car was
+  loaded. And flag the clamp (amber), or a 1.4 g stop renders as a tidy 1.0 g one.
+- **Gotcha**: pytest's "N passed" summary line is SUPPRESSED in this environment;
+  grepping for it returns nothing even on a clean run. Gate on the EXIT CODE.
+- **Process**: the AC cited a spec living in another agent's office
+  (offices/uidevloper/). Lane discipline says that is off-limits, so I built to
+  the shared-location sources (architecture.md, Atlas's design in docs/,
+  tokens.css) and treated exact visuals as refine-on-first-render. Building to
+  the CONTRACT rather than the visual spec cost nothing and stayed in lane.
+---
