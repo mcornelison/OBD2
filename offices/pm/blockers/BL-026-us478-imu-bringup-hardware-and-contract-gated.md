@@ -1,3 +1,11 @@
+# [RESOLVED 2026-07-30 — both gates cleared; contract routed to Ralph] BL-026 — US-478 / US-497 gated: hardware + states/imu contract
+
+> **RESOLVED 2026-07-30 (PM).** Both gates lifted:
+> - **Gate 1 (hardware): CLEARED** — CIO wired the genuine ICM-20948; verified live @0x69 (Atlas `WHO_AM_I=0xEA`; PM re-confirmed via `10.27.27.9`). AI-005 done.
+> - **Gate 2 (contract): was ANSWERED all along — routing gap (my miss).** Atlas rendered the full `states/imu` derived-field schema in his V0.29.20 design-gate PASS note (`offices/pm/inbox/2026-07-29-from-atlas-v0.29.20-design-gate-PASS.md`), but it landed in the PM inbox, not `offices/ralph/inbox/` — so Ralph never saw it and correctly refused to invent it. **Now routed to Ralph** (`offices/ralph/inbox/2026-07-30-from-marcus-BL026-cleared-imu-contract-and-pi-address.md`) with the verbatim field set (gLat/gLon g, headingDeg, gradePct, altitude typed-NULL, available+ts), the Q-B answer (states/imu is a state file), and the Pi address (`.28` dead → use `.9` wired).
+>
+> US-478 + US-497 are now buildable + validatable on real hardware. Ralph to finish. Separately: the deploy default `PI_HOST=10.27.27.28` is stale (Pi moved to `.9`/`.100`) — PM handles the sprint-close deploy host; durable fix (static reservation / name resolution) is a follow-up, NOT a hardcoded literal.
+
 # BL-026 — US-478 / US-497 (IMU bring-up + IMU card) are gated: no 0x69 on the bus, and the `states/imu` shape is unconfirmed
 
 - **Filed:** 2026-07-29 by Ralph (Rex), Sprint 66 (V0.29.20), after US-498
