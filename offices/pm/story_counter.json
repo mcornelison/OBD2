@@ -1,6 +1,6 @@
 {
   "description": "Global story counter for sequential user story IDs. Existing stories keep their current IDs. New stories use US-{nextId} format.",
-  "lastUpdated": "2026-07-27",
+  "lastUpdated": "2026-07-31",
   "nextId": "US-501",
   "existingPrefixes": [
     "US-001 through US-043 (Eclipse OBD-II + Simulator)",

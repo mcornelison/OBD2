@@ -2,11 +2,27 @@
 
 | Field | Value |
 |---|---|
-| Severity | **P0 / project-blocking** (safety-relevant: no engine data for 25 days) |
-| Status | Active -- RCA in hand (Spool); bisect+fix owed (Atlas/dev) |
+| Severity | **P0 / project-blocking** (safety-relevant: no engine data for 25+ days) |
+| Status | Active -- **root cause CORRECTED 2026-07-31** (Spool live RCA): it's a **Bluetooth bonding + reconnect-recovery** problem, NOT the US-441/US-432 code regression the earlier theory (below) blamed. Fix design owed (Atlas); PM ready to groom on his fix-shape. |
 | Blocking | The entire IRL-validation gate (A-9/A-17/A-16-Bug3/BL-016) + all tuning value of the platform -- **the car captures nothing** |
 | Filed | 2026-07-28 (PM, on CIO direction to investigate Spool's 07-27 RCA) |
-| Refs | Spool RCA `offices/architect/inbox/2026-07-27-from-spool-obd-bt-capture-dead-since-0703.md`; US-441, US-432, F-117, A-17, BL-016; `src/pi/obdii/obd_connection.py` |
+| Refs | **CORRECTED RCA (2026-07-31):** `offices/architect/inbox/2026-07-31-from-spool-obd-bt-rootcause-consolidated.md` + `...-obd-connect-working-recipe.md`; tuner sessions.md S33. Original RCA: `.../2026-07-27-from-spool-obd-bt-capture-dead-since-0703.md`. US-441, US-432, F-117, A-17, BL-016; `src/pi/obdii/obd_connection.py` |
+
+## ⚠️ ROOT CAUSE CORRECTED 2026-07-31 (Spool live RCA — supersedes the code-regression theory below)
+
+The 07-03 code-regression theory (US-441 epoch-fence / US-432 PID-probe cache poisoning) is **SUPERSEDED**. Spool's live on-Pi RCA (2026-07-31) proves the fault is a **Bluetooth bonding + reconnect-recovery** problem, **NOT a code regression**:
+
+- A **raw probe reproduces the drop** (so it's not the service's connect wrapper), and the **full service captures fine the instant the BT link is up** (so adapter/ECU/protocol are HEALTHY).
+- Core defect = **bond-less pairing** (`Bonded:no`) → the link drops, and the service then retries a **stale rfcomm** forever instead of resetting the transport.
+- WiFi/BT coexistence is **not fully ruled out** as a drive-time *aggravator* (Pi 5 CYW43455 shared radio) — but it is NOT the primary cause.
+
+**DO NOT bisect US-441 / US-432.** That is the wrong tree; the code shipped 07-03 is not the root cause.
+
+**Corrected fix path (Atlas's lane):** real **bond + trust** (not bond-less pairing) + **reconnect-resets-transport** (drop the stale rfcomm, re-bind) + 5GHz/scan mitigation (**never disable the radio** — see the stranded-Pi rule). Working recipe anchor: `obd.OBD(fast=False)`, rfcomm ch1, ISO 9141-2 auto (Spool's `probe_obd_capabilities.sh`). Spool verifies a captured drive (`realtime_data` grows) before this closes.
+
+---
+
+## Original theory (2026-07-27/28) — PRESERVED FOR AUDIT, now superseded by the correction above
 
 ## The finding (Spool RCA 2026-07-27, PM-verified live 2026-07-28)
 OBD Bluetooth capture has produced **ZERO rows since drive 34 (2026-07-03)**. The CIO drove a 3-leg IRL drive on 2026-07-27 believing data was being collected -- captured nothing. **PM-verified on the Pi 2026-07-28:** `realtime_data` last row = `2026-07-03T21:33:53Z`; 588 connect events in the last 24h, none producing a row.

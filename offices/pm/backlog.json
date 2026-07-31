@@ -1,11 +1,11 @@
 {
   "schemaVersion": "2.0.0",
-  "lastUpdated": "2026-07-15",
+  "lastUpdated": "2026-07-31",
   "updatedBy": "Marcus (PM)",
   "counters": {
     "epic": 7,
-    "feature": 118,
-    "story": 470
+    "feature": 122,
+    "story": 500
   },
   "epics": [
     {
