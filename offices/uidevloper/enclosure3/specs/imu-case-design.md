@@ -35,8 +35,9 @@ short ends.
    **FRONT arrow** on the lid so the board's axes map to the car.
 6. **Vents** — thin rounded-end slots like enclosure #2: 3 on one long wall, 2 on each
    short wall.
-7. **Wire exit** — rounded slot for **4–5 wires** (~7 × 5 mm) on the long wall
-   opposite the vents. Lowered + made taller (CIO 2026-06-17) so it drops into the
+7. **Wire exit** — rounded (obround) slot on the long wall opposite the vents,
+   **11 × 5 mm** (`cable_w` 7→10 v3, →11 v3.1 2026-07-31 so the wiring **connector**
+   passes through, not just the wires). Lowered + made taller (CIO 2026-06-17) so it drops into the
    under-board/side gap (z ~2.5–7.5) and wires aren't blocked by the board.
 8. **Lid markings** — debossed **FRONT arrow** (+X) + **"ICM-20948"** label.
 

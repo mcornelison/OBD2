@@ -9,6 +9,9 @@
 //                     lid now a plain friction lip. Removed the unreadable lid TEXT
 //                     label (arrow kept). Wire-exit "foot" clearance pending frame
 //                     confirm. Top-of-lid smoothness = build-sheet, not model (note).
+//   v3   2026-06-26  — standoff_h 3->6 (taller, walls/rim rise with it); cable_w 7->10.
+//   v3.1 2026-07-31  — cable_w 10->11: wider wire exit so the wiring CONNECTOR fits
+//                     through the opening (box-only re-slice; lid unchanged).
 //
 // Render (git bash; numeric part selector avoids CLI quote-mangling):
 //   "/c/Program Files/OpenSCAD/openscad.exe" -o stl/box.stl -D part=1 imu-case.scad
@@ -79,7 +82,9 @@ vent_len = 4.5;
 vent_z   = 4.5;       // center Z of wall vents (above floor)
 
 // ---- Wire exit (4-5 wires, -Y long wall) --------------------------------
-cable_w  = 10.0;      // v3 CIO 2026-06-26: 7->10, +3mm wider wire exit
+cable_w  = 11.0;      // v3.1 CIO 2026-07-31: 10->11, wider so the wiring CONNECTOR
+                      //   (not just the wires) passes through the exit. Opening is now
+                      //   11.0 wide x cable_h (5.0) tall obround. Box-only change.
 cable_h  = 5.0;       // taller so wires clear the board (CIO 2026-06-17)
 cable_z  = 3.0;       // center Z above floor; lowered so the slot drops into the under-board gap
 
