@@ -5,7 +5,7 @@
   "counters": {
     "epic": 7,
     "feature": 124,
-    "story": 505
+    "story": 513
   },
   "epics": [
     {
@@ -6283,8 +6283,9 @@
       "size": "M",
       "status": "pending",
       "title": "Battery Health truthfulness: remove no-source TEMP tile + wire HEALTH verdict and last-health-check to real sources",
-      "goal": "As the operator, I want every Battery Health field to reflect a real source (or not appear at all), so the card is honest -- no 'no source' temp, no hardcoded 'unknown' health, no 'never' health-check.",
+      "goal": "As the operator, I want every battery field to reflect a real source (or not appear at all), so the card is honest -- no 'no source' temp, no hardcoded 'unknown' health, no 'never' health-check.",
       "definitionOfDone": [
+        "[SEQUENCING] this wires the BATTERY portion of the consolidated 'Health' card (US-507 merges Battery+Light+Fuel Trim). Land US-507 (or coordinate) first so the wiring targets the merged card, not the retired standalone Battery Health card",
         "REMOVE the TEMP tile: the MAX17048 UPS HAT has NO temperature register -> ambientTempC has no real source on this hardware (card_state_emitter.py:402 hardcodes None). Drop the temp tile rather than show a permanent 'no source' (CIO 07-31). Do NOT confuse with the ICM-20948 IMU temp (US-500, unrelated)",
         "keep CELL(volts) + CHARGE(%) as-is -- already real MAX17048 reads (card_state_emitter.py:345-346); CHARGE stays tagged (uncalibrated) until socCalibrated",
         "wire HEALTH verdict to a real producer instead of the hardcoded 'unknown' (card_state_emitter.py:398) -- [SOURCE-CONFIRM: Spool owns the battery-health verdict semantics/source; grooming gate]",
@@ -6329,6 +6330,197 @@
         "NOTE: a fully-populated last-drive card ultimately depends on capture working (BL-025) to have a recent drive to summarize -- the producer + wiring can be built + unit-tested independently now; live validation folds into the post-BL-025 drive"
       ],
       "sourceRefs": ["offices/pm/decisions/2026-07-31-ui-feedback-round2-triage.md#4", "carousel.js:881-898", "card_state_emitter.py:301-319"],
+      "createdAt": "2026-07-31",
+      "updatedAt": "2026-07-31",
+      "tasks": []
+    },
+    {
+      "id": "US-506",
+      "parent": "F-124",
+      "type": "normal",
+      "size": "L",
+      "status": "pending",
+      "title": "Carousel navigation model: wrap (skip gated) + auto-rotate + velocity swipe-pause",
+      "goal": "As the operator, I want the carousel to wrap around, auto-cycle when I'm not touching it, and pause when I settle on a screen, so it's hands-off but never traps me or fights my swipe.",
+      "definitionOfDone": [
+        "#12 WRAP: swiping past the last visible card lands on the first and vice-versa; hidden/vehicle-gated cards are SKIPPED (wrap + auto-rotate traverse only visible cards) -- replaces the current clamp (carousel.js:36-48,143-150)",
+        "#13 AUTO-ROTATE: visible cards auto-cycle every autoRotateS (default 8 s) with a calm thin top progress bar (time-to-next, no countdown number)",
+        "#13 SWIPE-TO-PAUSE via a NEW velocity model (swipe is distance-only today): at pointer-up compute v=dx/dt; FAST if |v|>=0.6 px/ms OR travel>=~55% width -> advance + RESUME auto-rotate; SLOW/settle -> move one card + PAUSE; distance>=~40px still required to count as a swipe at all",
+        "tap on a card or opening any overlay PAUSES; auto-resume after resumeIdleS (default 45 s) of no interaction so it never freezes forever",
+        "all constants land in config under pi.display.carousel.* (autoRotateS/resumeIdleS/velocity threshold/distance thresholds); tests cover wrap-skips-gated + velocity slow-vs-fast + pause/resume; ruff clean"
+      ],
+      "validationCriteria": [
+        {"action": "on the Pi with a gated card hidden: swipe past the last visible card; leave it untouched; do a slow settle swipe then a fast flick", "outcome": "wraps to first (gated card skipped); auto-cycles at the interval; slow swipe pauses, fast flick resumes; 45 s idle auto-resumes"}
+      ],
+      "conditionalOutcomes": [],
+      "sourceRefs": ["offices/uidevloper/proposals/2026-07-31-pi-ui-round2-f124.md#C", "offices/pm/decisions/2026-07-31-ui-feedback-round2-triage.md#12,#13", "carousel.js:36-57,143-150,3168"],
+      "createdAt": "2026-07-31",
+      "updatedAt": "2026-07-31",
+      "tasks": []
+    },
+    {
+      "id": "US-507",
+      "parent": "F-124",
+      "type": "normal",
+      "size": "M",
+      "status": "pending",
+      "title": "Consolidate 6 cards to 4: merge Battery + Light + Fuel Trim into one 'Health' card",
+      "goal": "As the operator, I want fewer screens -- Home, System Status, Health, Alerts -- so the reference readouts that share a glance live on one card instead of three separate swipes.",
+      "definitionOfDone": [
+        "merge the Battery Health + Light + LTFT cards into ONE 'Health' card (battery: verdict + cell V + checked-Nd-ago + runtime-to-cutoff, honest F-9 stale-green guard; light: TSL2591 lux + bright/dimmed state; fuel-trim: the former LTFT-Trend content)",
+        "retitle 'LTFT Trend' -> plain 'Fuel Trim' -- SEMANTICS UNCHANGED (Spool's LTFT meaning preserved); it stays vehicle-gated -> honest 'no engine data' on bench, never fabricated; Battery + Light stay available regardless",
+        "final carousel order: Home . System Status . Health . Alerts (drop the 2 now-merged standalone cards from the DOM/nav)",
+        "the merged card preserves every honest-instrument state of the three sources (insufficient/drift/gated/stale-green) -- relocation only, no new data or semantics",
+        "tests cover the merged card renders each sub-section's real state; the Fuel Trim gate still hides engine data on bench; ruff clean"
+      ],
+      "validationCriteria": [
+        {"action": "on the Pi (bench, engine off): swipe through the carousel and view the Health card", "outcome": "4 cards total (Home/System Status/Health/Alerts); Health shows real battery + light; Fuel Trim reads 'no engine data' (gated), not a fabricated value"}
+      ],
+      "conditionalOutcomes": [],
+      "sourceRefs": ["offices/uidevloper/proposals/2026-07-31-pi-ui-round2-f124.md#F", "offices/pm/decisions/2026-07-31-ui-feedback-round2-triage.md#11"],
+      "createdAt": "2026-07-31",
+      "updatedAt": "2026-07-31",
+      "tasks": []
+    },
+    {
+      "id": "US-508",
+      "parent": "F-124",
+      "type": "normal",
+      "size": "L",
+      "status": "pending",
+      "title": "Live/motion card re-issue to locked spec + home-slot idle-live swap",
+      "goal": "As the driver, I want the home card to become the live instrument when I'm driving (and the calm idle card when parked), matching the design I approved, so the at-a-glance card shows real motion.",
+      "definitionOfDone": [
+        "re-issue the live card to the CIO-locked spec (2026-07-27-pi-live-instrument-card.md): scrolling compass TAPE under a fixed caret (NOT the built rotating-needle dial); add the GEAR glyph (Spool OBD derivation, '--' when ambiguous); AMBER at 0.6 g (not just the 1.0 g full-scale clamp); grade % + prominent altitude + ~15-min moving trend",
+        "HOME-SLOT SWAP: the home slot (position 1) shows the idle card when parked and the live instrument when driving -- one slot, two faces (not a separate always-present card)",
+        "honest fallback: stale/absent states/imu -> idle card, never a frozen motion display (states/imu is live @0x69)",
+        "[GATE -- Atlas] blocked on Atlas confirming Iris's states/imu derived-field contract + >1 Hz transport (architect/inbox/2026-07-27-from-iris-imu-contract-and-delta1-arbiter.md). Do NOT dispatch the build until Atlas rules; US-478/IMU @0x69 is live so that half of the gate is met",
+        "tests cover tape/gear/0.6g-amber render + idle<->live swap + stale-IMU fallback; ruff clean"
+      ],
+      "validationCriteria": [
+        {"action": "on the Pi: view the home card parked, then with live states/imu motion; move the board past 0.6 g", "outcome": "parked shows idle; driving shows compass tape + gear + grade + altitude; amber engages at 0.6 g; stale IMU falls back to idle (never frozen)"}
+      ],
+      "conditionalOutcomes": ["if Atlas's contract ruling changes the derived-field shape, the card binds to the ruled contract"],
+      "deps": ["ATLAS-states-imu-contract"],
+      "sourceRefs": ["offices/uidevloper/proposals/2026-07-31-pi-ui-round2-f124.md#B", "offices/uidevloper/proposals/2026-07-27-pi-live-instrument-card.md", "offices/pm/decisions/2026-07-31-ui-feedback-round2-triage.md#9"],
+      "createdAt": "2026-07-31",
+      "updatedAt": "2026-07-31",
+      "tasks": []
+    },
+    {
+      "id": "US-509",
+      "parent": "F-124",
+      "type": "normal",
+      "size": "M",
+      "status": "pending",
+      "title": "System-Status 'N ISSUE' drill-down overlay",
+      "goal": "As the operator, I want to tap 'SYSTEM · N ISSUE' and see which sources are degraded and why, so the summary isn't a dead end.",
+      "definitionOfDone": [
+        "make the SYSTEM summary line tappable -> a drill-down overlay listing the degraded source(s) WORST-FIRST: each row = source label + state chip (amber/red) + honest reason + freshness ('seen Ns ago'); one row per non-OK source",
+        "a '<- Back' returns to the card (never traps); opening the overlay pauses auto-rotate (interaction)",
+        "honest-instrument: only actually-degraded sources appear (green sources never listed); mirror the DTC detail overlay pattern so the interaction language is consistent",
+        "no change to how source states are computed -- reads the existing per-tile levels; tests cover worst-first ordering + back + green-never-listed; ruff clean"
+      ],
+      "validationCriteria": [
+        {"action": "with one source degraded, tap the SYSTEM summary line; then with all sources good", "outcome": "opens a worst-first list of only the degraded source(s) with reason + freshness + Back; when all good, the summary is not a misleading tap target"}
+      ],
+      "conditionalOutcomes": [],
+      "sourceRefs": ["offices/uidevloper/proposals/2026-07-31-pi-ui-round2-f124.md#D", "offices/pm/decisions/2026-07-31-ui-feedback-round2-triage.md#7"],
+      "createdAt": "2026-07-31",
+      "updatedAt": "2026-07-31",
+      "tasks": []
+    },
+    {
+      "id": "US-510",
+      "parent": "F-124",
+      "type": "normal",
+      "size": "M",
+      "status": "pending",
+      "title": "Fidelity pass: restore approved copy + brand display face + TD-065 tokenization",
+      "goal": "As the CIO, I want the shipped UI to match the look & feel I approved, so it stops feeling generic -- correct wordmark/footer, a brand display face for brand moments, and no raw color literals.",
+      "definitionOfDone": [
+        "A-1 copy (ship-ahead, no gate): restore idle wordmark 'ECLIPSE' -> 'ECLIPSE OBD-II' and footer -> 'swipe for details . hold or the kebab for setup' (verbatim from the locked idle spec)",
+        "A-3 brand face (ship-ahead): add ONE --font-display face (inlined @font-face woff2 data-URI, CSP-safe -- NO font CDN) for the wordmark + card titles ONLY; keep ui-monospace for all data/values; add --font-display to specs/UI/tokens.css alongside --font-mono. Exact face is a CIO pick (Iris supplies the woff2 base64)",
+        "A-2 tokenization (TD-065): point the dashboard at existing tokens where they exist (#2a2f37 -> --neutral-chip-bg tokens.css:44; --critical-red #D32F2F already landed); derive takeover-gradient edges from --green-ok/--amber-warn (no raw hex in a surface)",
+        "[PARTIAL GATE -- Atlas Rule-10] the remaining TD-065 values need Atlas: add --bg/--surface to the SSOT + settle the 2 --destructive reds (Spool semantics if engine-safety, else Atlas). Ship the copy + font + already-tokenized parts ahead; the Atlas-gated literals land when the token values are ruled",
+        "acceptance: no raw color hex in dashboard.css outside :root token defs (for the ungated literals); --font-display renders the wordmark/titles; ruff clean"
+      ],
+      "validationCriteria": [
+        {"action": "on the Pi: read the idle wordmark + footer; inspect dashboard.css for raw hex outside :root", "outcome": "wordmark 'ECLIPSE OBD-II' + correct footer in a brand display face; ungated color literals tokenized; Atlas-gated --bg/--surface/--destructive land once ruled"}
+      ],
+      "conditionalOutcomes": ["if Atlas has not ruled the --bg/--surface/--destructive values by build time, ship the ungated fidelity (copy+font+existing tokens) and carry the gated literals to a fast-follow rather than block the whole story"],
+      "deps": ["ATLAS-td065-token-values"],
+      "sourceRefs": ["offices/uidevloper/proposals/2026-07-31-pi-ui-round2-f124.md#A", "TD-065", "specs/UI/tokens.css", "offices/pm/decisions/2026-07-31-ui-feedback-round2-triage.md#14"],
+      "createdAt": "2026-07-31",
+      "updatedAt": "2026-07-31",
+      "tasks": []
+    },
+    {
+      "id": "US-511",
+      "parent": "F-124",
+      "type": "normal",
+      "size": "S",
+      "status": "pending",
+      "title": "Debounced 'parked' signal for the kebab (stop the OBD-blip flicker)",
+      "goal": "As the operator, I want the kebab to appear on a steady 'parked' concept, so it stops flickering every time OBD availability blips.",
+      "definitionOfDone": [
+        "define a debounced 'parked' signal: parked = idle held true for >= parkedOnS (8 s), reverting only after idle false for >= parkedOffS (3 s) -- hysteresis so brief OBD blips don't flip it",
+        "the context-aware kebab (Option C) keys off 'parked', NOT raw system-status.idle (carousel.js:743-748,876-878)",
+        "NEAR-TERM = display-side debounce of the idle it already consumes -- NO new contract (Iris's recommendation). If instead 'parked' becomes an emitter field, that needs an Atlas nod (same class as the open idle-SSOT question) -- default to display-debounce now",
+        "constants (parkedOnS/parkedOffS) in config; test proves a sub-threshold idle blip does not toggle the kebab; ruff clean"
+      ],
+      "validationCriteria": [
+        {"action": "on the Pi parked, induce a brief OBD-availability blip", "outcome": "the kebab stays put through the blip (no flicker); it shows/hides only on a sustained parked/driving transition; long-press still always works"}
+      ],
+      "conditionalOutcomes": [],
+      "sourceRefs": ["offices/uidevloper/proposals/2026-07-31-pi-ui-round2-f124.md#E", "offices/pm/decisions/2026-07-31-ui-feedback-round2-triage.md#15", "carousel.js:743-748,876-878"],
+      "createdAt": "2026-07-31",
+      "updatedAt": "2026-07-31",
+      "tasks": []
+    },
+    {
+      "id": "US-512",
+      "parent": "F-120",
+      "type": "issue",
+      "size": "M",
+      "status": "pending",
+      "title": "BT capture hardening: durable bond + reconnect-transport-reset",
+      "goal": "As the capture service, I want a reconnect after a dropped BT link to reset the transport instead of re-opening a dead tty, so capture recovers cleanly mid-session instead of retrying a stale rfcomm forever.",
+      "definitionOfDone": [
+        "reconnect-on-failure RESETS the transport (Spool's path: disconnect -> releaseRfcomm -> re-bind -> reconnect) rather than re-opening obd.OBD() on a dead /dev/rfcommN (the stale-rfcomm-retry-forever behavior in BL-025)",
+        "pairing persists a durable link key + trust (complements the dispatched pair_obdlink.sh fix that writes the bond) so the link survives reboot + re-establishes without a manual re-pair",
+        "the reconnect recovery is exercised by a test simulating a mid-session link drop -> transport reset -> capture resumes (real-concurrency style, not a stubbed predicate)",
+        "does NOT re-introduce the rfkill soft-block class -- coexists with eclipse-rfkill-unblock.service; ruff clean",
+        "[NOTE] this is the P1 hardening layer; the P0 rfkill soft-block (the actual capture killer) is fixed live + being baked into deploy separately (V0.29.22 hotfix). This story makes recovery robust, it is not the capture unblock itself"
+      ],
+      "validationCriteria": [
+        {"action": "simulate a mid-session BT link drop on the Pi (or bench harness)", "outcome": "the service resets the transport + reconnects + resumes capture (realtime_data grows again) instead of looping on a dead tty; bond survives a reboot"}
+      ],
+      "conditionalOutcomes": ["final live acceptance is the engine-on validation drive (Spool) -- the reset logic + bond persistence are bench/unit-testable now"],
+      "sourceRefs": ["offices/pm/blockers/BL-025-obd-capture-dead-since-0703-connect-path-regression.md#3", "offices/architect/inbox/2026-07-31-from-atlas-STATUS-bt-softblock-rootcause-fixed-plus-open-work.md", "src/pi/obdii/obd_connection.py"],
+      "createdAt": "2026-07-31",
+      "updatedAt": "2026-07-31",
+      "tasks": []
+    },
+    {
+      "id": "US-513",
+      "parent": "F-120",
+      "type": "research",
+      "size": "S",
+      "status": "pending",
+      "title": "RCA: why BT got soft-blocked ~07-03 (confirm origin so it can't recur)",
+      "goal": "As the maintainer, I want to know WHY the BT rfkill soft-block got saved ~07-03, so we can prevent the origin, not just rely on the unblock safety net.",
+      "definitionOfDone": [
+        "investigate the origin of the persisted /var/lib/systemd/rfkill/*:bluetooth=[1] state (Atlas hypothesis: a debug-session rfkill/reset that systemd-rfkill then persisted at shutdown)",
+        "confirm the trigger + whether any project code/deploy path can cause it; document the finding + a prevention (or confirm the unblock service is sufficient mitigation)",
+        "if a project-side cause is found, file the concrete fix as a follow-up; if purely a one-off manual debug artifact, record that + close",
+        "no code change required unless a project-side cause is confirmed; the eclipse-rfkill-unblock.service is the standing safety net regardless"
+      ],
+      "validationCriteria": [
+        {"action": "review boot/rfkill history + the 07-03 debug context; test whether the identified trigger reproduces the saved-block", "outcome": "a documented origin + prevention (or a documented conclusion that it was a one-off manual artifact fully covered by the unblock service)"}
+      ],
+      "conditionalOutcomes": [],
+      "sourceRefs": ["offices/pm/blockers/BL-025-obd-capture-dead-since-0703-connect-path-regression.md#4", "offices/architect/inbox/2026-07-31-from-atlas-STATUS-bt-softblock-rootcause-fixed-plus-open-work.md"],
       "createdAt": "2026-07-31",
       "updatedAt": "2026-07-31",
       "tasks": []
