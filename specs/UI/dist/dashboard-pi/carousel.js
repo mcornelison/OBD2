@@ -76,6 +76,94 @@
     return "available";
   }
 
+  // US-496 (S3) -- the honest whole-card message when a state file is ABSENT or
+  // malformed. The shell used to write the bare word "unavailable" on every
+  // card. Two cards need to say WHICH instrument is silent, because the wrong
+  // reading of their silence is the dangerous one:
+  //   dtc   -- silence means "the codes were never read". It must NEVER read as
+  //            "No stored codes" (a fabricated clean read) and never as an
+  //            alert: the F-6 no-phantom rule at card level.
+  //   light -- silence means "the feed stopped", not "dark" (a fabricated 0 lux).
+  //   imu   -- (US-497) silence means "the motion feed stopped", NOT "not
+  //            moving". A motion instrument reading as stationary is the same
+  //            fabrication as a fabricated 0 lux, and a more dangerous one: a
+  //            still g-meter is exactly what a parked car looks like.
+  // Cards not listed keep the shipped one-word fallback -- this story was not
+  // scoped to restyle the ones it does not touch.
+  var NO_DATA_VIEWS = {
+    dtc: { label: "ALERTS", reason: "no data -- codes not read" },
+    light: { label: "AMBIENT", reason: "no data -- light feed absent" },
+    imu: { label: "MOTION", reason: "no data -- IMU feed absent" },
+  };
+
+  function noDataView(name) {
+    return Object.prototype.hasOwnProperty.call(NO_DATA_VIEWS, name)
+      ? NO_DATA_VIEWS[name]
+      : null;
+  }
+
+  // US-496 AC-3 -- reveal the vehicle-dependent card(s) ONLY on the positive
+  // claim `source.obd.available === true`. Deliberately STRICTER than
+  // sourceUnavailable(), which treats an absent `source` block as available for
+  // pre-US-429 backward compatibility: that default is right for "should I gray
+  // this tile?" and wrong for "should I reveal a vehicle card?". An absent or
+  // unreadable system-status leaves "is a car plugged in?" genuinely UNKNOWN,
+  // and an unknown must never be rendered as a state (US-492 / US-494) -- so
+  // this fails closed to HIDDEN. Hidden, not gray: gray says "this instrument is
+  // broken"; hidden says "this instrument does not apply right now", which is
+  // the truth on a bench with no car.
+  function vehicleConnected(sysData) {
+    return (
+      isObj(sysData) &&
+      isObj(sysData.source) &&
+      isObj(sysData.source.obd) &&
+      sysData.source.obd.available === true
+    );
+  }
+
+  // US-496 -- the visible-card geometry a gated card forces. `#track` is a flex
+  // row of full-width cards, so a card removed by the [hidden] guard (US-495)
+  // takes NO slot: the translateX step count, the page dots and the swipe must
+  // all count VISIBLE cards or hiding one slides the carousel to a blank frame.
+  // `hidden` is an array of per-card booleans read straight off the DOM
+  // (`card.hidden`), so the geometry can never disagree with what is painted.
+
+  // How many visible cards precede `index` -- i.e. its translateX step count.
+  function visualPosition(index, hidden) {
+    var pos = 0;
+    for (var i = 0; i < index; i++) {
+      if (!(hidden && hidden[i])) pos++;
+    }
+    return pos;
+  }
+
+  // The next VISIBLE index in `dir`, or `current` when there is none. Clamped at
+  // the ends (no wrap -- the shipped kiosk contract) and never lands on a hidden
+  // card, which would read as a blank frame the operator cannot swipe out of.
+  function nextVisibleIndex(current, dir, hidden) {
+    var step = dir > 0 ? 1 : dir < 0 ? -1 : 0;
+    if (step === 0) return current;
+    for (var i = current + step; i >= 0 && i < hidden.length; i += step) {
+      if (!hidden[i]) return i;
+    }
+    return current;
+  }
+
+  // Where to land when the card the operator is ON just became hidden (the
+  // vehicle unplugged mid-session): the nearest visible card, preferring the
+  // EARLIER one -- the operator's "back", never a forward jump past cards they
+  // have not seen. null when nothing is visible, so the caller holds its index
+  // rather than clamping onto a hidden card 0.
+  function nearestVisibleIndex(current, hidden) {
+    for (var d = 0; d < hidden.length; d++) {
+      var back = current - d;
+      if (back >= 0 && !hidden[back]) return back;
+      var fwd = current + d;
+      if (fwd < hidden.length && !hidden[fwd]) return fwd;
+    }
+    return null;
+  }
+
   // -------------------------------------------------------------------------
   // US-400 System Status card -- pure render logic, node-testable (S-3/I-3/
   // I-4/F-1). The card is a verbatim consumer of the `system-status` emitter
@@ -1326,12 +1414,344 @@
     return Math.min(Math.max(level, 0), 1);
   }
 
+  // -------------------------------------------------------------------------
+  // US-496 Light card (S3, F-121) -- pure, node-testable. The card is a PURE
+  // CONSUMER of the SAME states/light file ({lux, ts}) that drives the auto-dim
+  // above, so the number on the card can never disagree with the screen it
+  // explains. The sensor knows exactly one thing, so the card shows exactly two
+  // facts: the reading (with its age) and the auto-dim BAND it falls in. The
+  // band is a NAME for the existing grounded luxMin/luxFull thresholds -- NOT a
+  // third set of numbers that could drift away from the curve.
+  //
+  // Deliberately NOT shown: the resulting screen brightness. A live STOP alarm
+  // holds the surface at FULL regardless of lux (US-484-b ch.4), so a
+  // lux-derived brightness percent on this card would be a number that
+  // disagrees with the actual screen exactly when it matters most.
+  // -------------------------------------------------------------------------
+
+  // Sub-10 lux keeps one decimal: near the dark end a whole-lux round merges
+  // cabins that sit on opposite sides of the DARK boundary (luxMin 3.0).
+  function fmtLux(lux) {
+    return (lux < 10 ? lux.toFixed(1) : String(Math.round(lux))) + " lx";
+  }
+
+  function fmtAgeSec(ageSec) {
+    return (ageSec < 10 ? ageSec.toFixed(1) : String(Math.round(ageSec))) + "s";
+  }
+
+  // The payload's read age in seconds, or null when it carries no parseable ts.
+  // An UNDATED reading is the one most likely to be stale, so it can never be
+  // rendered as current.
+  function readAgeSec(data, nowMs) {
+    if (!isObj(data) || typeof data.ts !== "string") return null;
+    var t = Date.parse(data.ts);
+    if (isNaN(t)) return null;
+    return (nowMs - t) / 1000;
+  }
+
+  // The auto-dim band this reading falls in, resolved against the SAME injected
+  // config the curve uses (so an operator retuning pi.display.autoDim moves the
+  // label and the dimming together).
+  function luxBand(lux, cfg) {
+    var c = resolveAutoDimConfig(cfg);
+    if (lux <= c.luxMin) return "DARK";
+    if (lux >= c.luxFull) return "DAYLIGHT";
+    return "DIM";
+  }
+
+  function lightView(data, cfg, nowMs) {
+    if (!isObj(data)) return null; // absent -> the shell renders the no-data view
+    if (sourceUnavailable(data, "light")) {
+      return { unavailable: true, reason: sourceReason(data, "light") };
+    }
+    var c = resolveAutoDimConfig(cfg);
+    var age = readAgeSec(data, nowMs);
+    var lux = freshLux(data, c.luxStaleSec, nowMs);
+    if (lux === null) {
+      // WHY there is no usable reading IS the value of the gray tile. The order
+      // matters: "no reading arrived at all" is a different fault from "readings
+      // stopped arriving", and the operator needs to know which.
+      var reason =
+        typeof data.lux !== "number" || !isFinite(data.lux)
+          ? "no reading (saturated or unreadable)"
+          : age === null
+            ? "no read time"
+            : "stale -- last read " + fmtAgeSec(age) + " ago";
+      // Both fields gray INDIVIDUALLY (the card stays present -- always-present
+      // is the contract) and the band grays WITH the reading because it is
+      // derived from it: with no lux there is nothing to derive.
+      return {
+        unavailable: false,
+        ambient: naTile("AMBIENT", reason),
+        band: naTile("CONDITION", reason),
+      };
+    }
+    return {
+      unavailable: false,
+      ambient: {
+        label: "AMBIENT",
+        value: fmtLux(lux),
+        detail: "read " + fmtAgeSec(age) + " ago",
+        level: "ok",
+      },
+      band: {
+        label: "CONDITION",
+        value: luxBand(lux, cfg),
+        detail: "auto-dim band",
+        // `neutral`, not `ok`: an ambient band is a fact about the cabin, not a
+        // health verdict -- DARK is not a fault and DAYLIGHT is not a pass.
+        level: "neutral",
+      },
+    };
+  }
+
+  // -------------------------------------------------------------------------
+  // US-497 IMU live-instrument card (S4-card, F-113) -- pure, node-testable.
+  //
+  // A PURE CONSUMER of the states/imu file US-478's bridge writes. The bridge
+  // already resolved the one hard problem (an accelerometer cannot tell gravity
+  // from acceleration; a single slow gravity estimate defines the level frame,
+  // the pitch AND the heading tilt-compensation). This card MAPS and FORMATS
+  // that contract -- it never fuses and never re-derives, because a second
+  // derivation is a second chance for the compass and the grade to disagree
+  // about which way is down (Atlas DELTA-2; specs/architecture.md 10.8.2).
+  //
+  // The failure mode that shapes this whole module: a LIVE GRAPHICAL INSTRUMENT
+  // CAN FREEZE, and a text tile cannot. A gray "NA" reads as dead at a glance; a
+  // g-dot frozen at 0.4 g reads exactly like a car holding a steady corner. So
+  // staleness here blanks the INSTRUMENT (the idle fallback), it does not merely
+  // gray a label -- AC-3, "never a frozen/zeroed live instrument".
+  // -------------------------------------------------------------------------
+
+  // Freshness window, in seconds. GROUNDED TO THE PRODUCER'S CADENCE, not
+  // invented: the bridge writes at pi.sensors.imu.stateHz (default 4 Hz = one
+  // write per 250 ms), so 2.0 s is EIGHT missed writes -- wide enough to ride
+  // out a scheduling hiccup or one slow tmpfs read, short enough that a frozen
+  // instrument cannot linger on screen. Deliberately MUCH tighter than the
+  // light card's 10 s: a 10 s old lux reading is still roughly true, a 10 s old
+  // g-vector is meaningless. Rex-derived; flagged for Atlas/Spool confirmation
+  // against a real drive, same status as the bridge's gravity tau.
+  var IMU_STALE_SEC = 2.0;
+
+  // Outer ring of the g-meter, in g. A street-tired car tops out near 0.9 g
+  // lateral, so a 1.0 g full scale frames real driving without compressing it
+  // into the middle of the dial. Rex-derived DISPLAY scale (not a vehicle
+  // limit) -- flagged for Spool, who owns vehicle dynamics.
+  var G_FULL_SCALE = 1.0;
+
+  // The g-trail window, in seconds (Iris live-instrument spec). At the 4 Hz
+  // state cadence that is ~140 points, drawn as ONE polyline rather than 140
+  // nodes -- a node churn of 560/s on a Pi kiosk buys nothing a line does not.
+  var G_TRAIL_WINDOW_SEC = 35;
+
+  // The bridge's per-field absence vocabulary, in words. This is a NAME map,
+  // not a second set of facts: an unknown code passes straight through rather
+  // than being swallowed into a generic word, because a reason the card has not
+  // been taught is still information the operator can act on.
+  var IMU_REASON_TEXT = {
+    sensor_absent: "sensor not detected",
+    no_mag_reading: "no compass reading",
+    tilt_unresolved: "orientation unresolved",
+    pitch_out_of_range: "pitch beyond range",
+    no_source: "no source",
+  };
+
+  function imuReason(data, field) {
+    var reasons = isObj(data) && isObj(data.reasons) ? data.reasons : {};
+    var code = reasons[field];
+    if (typeof code !== "string" || !code) return "unavailable";
+    return Object.prototype.hasOwnProperty.call(IMU_REASON_TEXT, code)
+      ? IMU_REASON_TEXT[code]
+      : code;
+  }
+
+  // Place the g-dot in a unit box centred on the instrument. The SIGN CONTRACT
+  // (specs/architecture.md 10.8.2) mapped to SCREEN coordinates, which is where
+  // it is easy to invert an instrument in a way that still looks plausible:
+  //   gLon + = accelerating -> the dot moves UP    -> y NEGATIVE (screen y runs down)
+  //   gLon - = braking      -> the dot moves DOWN  -> y POSITIVE
+  //   gLat + = RIGHT        -> the dot moves RIGHT -> x POSITIVE
+  // Over-scale readings clamp to the ring along their OWN direction (never
+  // per-axis, which would swing the dot to a corner and misreport which way the
+  // car was loaded). The clamp cannot understate the event silently: the
+  // numeric readout beside the meter always carries the true magnitude.
+  function gDotPosition(gLat, gLon, fullScale) {
+    var fs = typeof fullScale === "number" && isFinite(fullScale) && fullScale > 0
+      ? fullScale
+      : G_FULL_SCALE;
+    if (typeof gLat !== "number" || !isFinite(gLat)) return null;
+    if (typeof gLon !== "number" || !isFinite(gLon)) return null;
+    var x = gLat / fs;
+    var y = -gLon / fs;
+    var r = Math.sqrt(x * x + y * y);
+    if (r > 1) return { x: x / r, y: y / r, clamped: true };
+    return { x: x, y: y, clamped: false };
+  }
+
+  var COMPASS_ROSE = [
+    "N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE",
+    "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW",
+  ];
+
+  // The 16-point rose label for a bearing. The modulo on the INDEX is the
+  // load-bearing part: 359 degrees rounds to index 16, which runs off the array
+  // and would read `undefined` exactly as the vehicle points north.
+  function headingCardinal(deg) {
+    if (typeof deg !== "number" || !isFinite(deg)) return null;
+    var d = ((deg % 360) + 360) % 360;
+    return COMPASS_ROSE[Math.round(d / 22.5) % 16];
+  }
+
+  function normDeg(deg) {
+    return ((deg % 360) + 360) % 360;
+  }
+
+  // Advance the client-side g-trail (Atlas Q-B: the animation is accumulated
+  // from POLLED values, so eviction is this card's job). Pure: returns a new
+  // array. Eviction runs even when there is NO new point, so a feed that stops
+  // decays the trail to empty instead of freezing its last shape on screen.
+  function pushGTrail(trail, point, nowMs, windowSec) {
+    var w = (typeof windowSec === "number" && windowSec > 0
+      ? windowSec
+      : G_TRAIL_WINDOW_SEC) * 1000;
+    var src = Array.isArray(trail) ? trail : [];
+    var out = [];
+    for (var i = 0; i < src.length; i++) {
+      if (isObj(src[i]) && nowMs - src[i].t <= w) out.push(src[i]);
+    }
+    if (isObj(point) && typeof point.x === "number" && typeof point.y === "number") {
+      out.push({ x: point.x, y: point.y, t: nowMs });
+    }
+    return out;
+  }
+
+  function fmtG(g) {
+    return g.toFixed(2) + " g";
+  }
+
+  // Spell the two components out in words. This puts the SIGN CONTRACT on the
+  // screen, where a mounted-backwards board becomes obvious to the operator
+  // ("0.30 brake" while accelerating) instead of a silently mirrored dot.
+  function gAxisDetail(gLat, gLon) {
+    return (
+      Math.abs(gLat).toFixed(2) + " " + (gLat >= 0 ? "right" : "left") +
+      " · " +
+      Math.abs(gLon).toFixed(2) + " " + (gLon >= 0 ? "accel" : "brake")
+    );
+  }
+
+  function imuHeadingTile(data) {
+    var deg = data.headingDeg;
+    if (typeof deg !== "number" || !isFinite(deg)) {
+      var na = naTile("HEADING", imuReason(data, "headingDeg"));
+      na.deg = null;
+      na.available = false;
+      return na;
+    }
+    var d = normDeg(deg);
+    return {
+      label: "HEADING",
+      value: Math.round(d) + "° " + headingCardinal(d),
+      // MAGNETIC, not true -- no declination is in the contract, so a bearing a
+      // few degrees off a map is expected, not a fault. Saying so on the tile
+      // stops that from being read as a broken compass.
+      detail: "magnetic",
+      level: "neutral",
+      deg: d,
+      available: true,
+    };
+  }
+
+  function imuGradeTile(data) {
+    var pct = data.gradePct;
+    if (typeof pct !== "number" || !isFinite(pct)) {
+      var na = naTile("GRADE", imuReason(data, "gradePct"));
+      na.available = false;
+      return na;
+    }
+    return {
+      label: "GRADE",
+      value: (pct >= 0 ? "+" : "−") + Math.abs(pct).toFixed(1) + " %",
+      detail: pct >= 0 ? "climbing" : "descending",
+      // `neutral`, never `ok`: a road grade is a fact about the road, not a
+      // health verdict. Nothing on this card is a pass/fail.
+      level: "neutral",
+      available: true,
+    };
+  }
+
+  function imuGTile(data) {
+    var dot = gDotPosition(data.gLat, data.gLon, G_FULL_SCALE);
+    var mag = data.gMag;
+    if (dot === null || typeof mag !== "number" || !isFinite(mag)) {
+      var na = naTile("G-FORCE", imuReason(data, "gLat"));
+      // NO DOT. An origin dot would render as a real, measured "no g" -- the
+      // zeroed instrument AC-3 forbids. Absence must look like absence.
+      na.dot = null;
+      na.available = false;
+      return na;
+    }
+    return {
+      label: "G-FORCE",
+      value: fmtG(mag),
+      detail: gAxisDetail(data.gLat, data.gLon),
+      level: "neutral",
+      dot: dot,
+      available: true,
+    };
+  }
+
+  // The whole-card view. Returns:
+  //   null                     -- no state file; the SHELL owns the absent
+  //                               message, so one place decides absence
+  //   {idle:true, reason}      -- present but not renderable as a live
+  //                               instrument (unwired / undated / stale)
+  //   {idle:false, ...}        -- the live instrument
+  function imuView(data, nowMs) {
+    if (!isObj(data)) return null;
+    // The bridge's EXPLICIT availability claim. An unwired sensor writes
+    // available:false (and that write bypasses the bridge's own rate limit, so
+    // an unplug can never leave a live reading sitting here looking current).
+    if (data.available !== true) {
+      // The blanket reason the bridge stamps on every derived field.
+      return { idle: true, reason: imuReason(data, "gLat") };
+    }
+    var age = readAgeSec(data, nowMs);
+    if (age === null) return { idle: true, reason: "no read time" };
+    if (age > IMU_STALE_SEC) {
+      return { idle: true, reason: "stale -- last read " + fmtAgeSec(age) + " ago" };
+    }
+    return {
+      idle: false,
+      ageSec: age,
+      fullScale: G_FULL_SCALE,
+      g: imuGTile(data),
+      heading: imuHeadingTile(data),
+      grade: imuGradeTile(data),
+      // ALWAYS typed-NA (AC-2). The ICM-20948 has no barometer and a zeroed
+      // altitude renders as sea level -- a confident lie. It never blocks the
+      // card; a future BMP280/GPS fills it at the BRIDGE, not here.
+      altitude: naTile("ALTITUDE", imuReason(data, "altitude")),
+    };
+  }
+
   var api = {
     clampIndex: clampIndex,
     nextIndex: nextIndex,
     swipeDirection: swipeDirection,
     computeStageScale: computeStageScale,
     cardAvailability: cardAvailability,
+    noDataView: noDataView,
+    vehicleConnected: vehicleConnected,
+    visualPosition: visualPosition,
+    nextVisibleIndex: nextVisibleIndex,
+    nearestVisibleIndex: nearestVisibleIndex,
+    luxBand: luxBand,
+    lightView: lightView,
+    gDotPosition: gDotPosition,
+    headingCardinal: headingCardinal,
+    pushGTrail: pushGTrail,
+    imuView: imuView,
     sourceUnavailable: sourceUnavailable,
     sourceReason: sourceReason,
     naTile: naTile,
@@ -1615,6 +2035,166 @@
       if (view.ladder) appendLadder(body, view.ladder);
     }
 
+    // --- US-496 Light card DOM render (browser only) ------------------------
+
+    // Two tiles through the SHARED `.tile` component, which is already bound to
+    // specs/UI/tokens.css -- the Light card introduces no palette of its own
+    // (AC-4: a bespoke local colour is exactly the drift the SSOT prevents).
+    function renderLightCard(card, view) {
+      var body = card.querySelector(".card-body");
+      if (!body || !view) return;
+      if (view.unavailable) {
+        renderNaBody(body, "AMBIENT", view.reason);
+        return;
+      }
+      body.textContent = "";
+      appendTile(body, view.ambient);
+      appendTile(body, view.band);
+    }
+
+    // --- US-497 IMU live-instrument DOM render (browser only) ---------------
+
+    // The g-meter is ONE inline SVG, rebuilt only when its shape changes and
+    // otherwise updated by ATTRIBUTE. At 4 Hz a 140-point trail rebuilt as
+    // discrete nodes would churn ~560 elements/sec on a kiosk Pi; as a single
+    // <polyline> it is one `points` attribute write per tick.
+    var SVG_NS = "http://www.w3.org/2000/svg";
+    var G_METER_R = 46;   // outer ring radius in the meter's own viewBox units
+    var G_METER_C = 50;   // viewBox centre (the box is 100x100)
+
+    function svgEl(name, attrs) {
+      var el = document.createElementNS(SVG_NS, name);
+      for (var k in attrs) {
+        if (Object.prototype.hasOwnProperty.call(attrs, k)) {
+          el.setAttribute(k, String(attrs[k]));
+        }
+      }
+      return el;
+    }
+
+    // Build the static furniture once: the outer ring, the half-scale ring and
+    // the cross-hairs. The rings are LABELLED by the full-scale constant, so a
+    // change to G_FULL_SCALE cannot leave the dial claiming the old scale.
+    function buildGMeter() {
+      var svg = svgEl("svg", {
+        class: "imu-meter",
+        viewBox: "0 0 100 100",
+        "aria-hidden": "true",
+      });
+      svg.appendChild(svgEl("circle", {
+        class: "imu-ring", cx: G_METER_C, cy: G_METER_C, r: G_METER_R,
+      }));
+      svg.appendChild(svgEl("circle", {
+        class: "imu-ring imu-ring-half",
+        cx: G_METER_C, cy: G_METER_C, r: G_METER_R / 2,
+      }));
+      svg.appendChild(svgEl("line", {
+        class: "imu-axis",
+        x1: G_METER_C - G_METER_R, y1: G_METER_C,
+        x2: G_METER_C + G_METER_R, y2: G_METER_C,
+      }));
+      svg.appendChild(svgEl("line", {
+        class: "imu-axis",
+        x1: G_METER_C, y1: G_METER_C - G_METER_R,
+        x2: G_METER_C, y2: G_METER_C + G_METER_R,
+      }));
+      svg.appendChild(svgEl("polyline", { class: "imu-trail", points: "" }));
+      svg.appendChild(svgEl("circle", { class: "imu-dot", cx: G_METER_C, cy: G_METER_C, r: 4 }));
+      return svg;
+    }
+
+    function trailPoints(trail) {
+      var parts = [];
+      for (var i = 0; i < trail.length; i++) {
+        parts.push(
+          (G_METER_C + trail[i].x * G_METER_R).toFixed(1) + "," +
+          (G_METER_C + trail[i].y * G_METER_R).toFixed(1)
+        );
+      }
+      return parts.join(" ");
+    }
+
+    // The compass needle is a rotation of ONE element. `deg` is the vehicle
+    // nose bearing, so the needle points at it directly (the card does not spin
+    // the rose -- a rotating dial with a fixed needle and a rotating needle on a
+    // fixed dial read opposite, and only one of them matches the tile's number).
+    function buildCompass() {
+      var svg = svgEl("svg", {
+        class: "imu-compass", viewBox: "0 0 100 100", "aria-hidden": "true",
+      });
+      svg.appendChild(svgEl("circle", {
+        class: "imu-ring", cx: G_METER_C, cy: G_METER_C, r: G_METER_R,
+      }));
+      var needle = svgEl("polygon", {
+        class: "imu-needle",
+        points: "50,10 56,54 50,46 44,54",
+      });
+      svg.appendChild(needle);
+      return svg;
+    }
+
+    // Render the live instrument, or the calm idle body. The two paths REPLACE
+    // each other wholesale: leaving a stale <svg> in the DOM under an idle
+    // message is precisely the frozen instrument AC-3 forbids.
+    function renderImuCard(card, view, trail) {
+      var body = card.querySelector(".card-body");
+      if (!body || !view) return;
+      if (view.idle) {
+        renderNaBody(body, "MOTION", view.reason);
+        return;
+      }
+      var meter = body.querySelector(".imu-meter");
+      if (!meter) {
+        body.textContent = "";
+        var instruments = document.createElement("div");
+        instruments.className = "imu-instruments";
+        instruments.appendChild(buildGMeter());
+        instruments.appendChild(buildCompass());
+        body.appendChild(instruments);
+        var tiles = document.createElement("div");
+        tiles.className = "imu-tiles";
+        body.appendChild(tiles);
+        meter = body.querySelector(".imu-meter");
+      }
+      var dot = meter.querySelector(".imu-dot");
+      var line = meter.querySelector(".imu-trail");
+      // An unresolved g hides the dot + trail rather than parking them at the
+      // origin, which would read as a measured "stationary".
+      if (view.g.available && view.g.dot) {
+        dot.removeAttribute("hidden");
+        dot.setAttribute("cx", String(G_METER_C + view.g.dot.x * G_METER_R));
+        dot.setAttribute("cy", String(G_METER_C + view.g.dot.y * G_METER_R));
+        dot.setAttribute("data-clamped", view.g.dot.clamped ? "true" : "false");
+        line.setAttribute("points", trailPoints(trail || []));
+      } else {
+        dot.setAttribute("hidden", "hidden");
+        line.setAttribute("points", "");
+      }
+      var needle = body.querySelector(".imu-needle");
+      if (needle) {
+        if (view.heading.available) {
+          needle.removeAttribute("hidden");
+          needle.setAttribute(
+            "transform",
+            "rotate(" + view.heading.deg + " " + G_METER_C + " " + G_METER_C + ")"
+          );
+        } else {
+          // No bearing -> NO needle. A needle frozen at its last bearing is
+          // worse than an absent one (the same rule the bridge applies to a
+          // stale magnetometer reading).
+          needle.setAttribute("hidden", "hidden");
+        }
+      }
+      var tileBox = body.querySelector(".imu-tiles");
+      if (tileBox) {
+        tileBox.textContent = "";
+        appendTile(tileBox, view.g);
+        appendTile(tileBox, view.heading);
+        appendTile(tileBox, view.grade);
+        appendTile(tileBox, view.altitude);
+      }
+    }
+
     // --- US-420 LTFT Trend DOM render (browser only) ------------------------
 
     // Render the multi-drive bar row: one bar per drive, coloured by its own
@@ -1693,20 +2273,53 @@
         dots.push(dot);
       }
 
+      // US-496: the per-card visibility flags, read straight off the DOM so the
+      // carousel geometry can never disagree with what is actually painted. A
+      // vehicle-gated card is removed from the flex row by the US-495 [hidden]
+      // guard, so it owns no slot and no page dot.
+      function hiddenFlags() {
+        var flags = [];
+        for (var h = 0; h < cards.length; h++) flags.push(!!cards[h].hidden);
+        return flags;
+      }
+
       function render() {
-        if (track) track.style.transform = "translateX(" + (-current * 100) + "%)";
+        var flags = hiddenFlags();
+        if (track) {
+          var pos = visualPosition(current, flags);
+          track.style.transform = "translateX(" + (-pos * 100) + "%)";
+        }
         for (var d = 0; d < dots.length; d++) {
+          // A hidden card owns no dot: a dot that navigates nowhere is the same
+          // dead affordance as the card behind it.
+          dots[d].hidden = flags[d];
           dots[d].classList.toggle("active", d === current);
         }
       }
 
       function goTo(idx) {
-        current = clampIndex(idx, count);
+        var target = clampIndex(idx, count);
+        // Never navigate ONTO a hidden card -- that paints a blank frame the
+        // operator cannot see their way out of.
+        if (hiddenFlags()[target]) return;
+        current = target;
         render();
       }
 
       function move(dir) {
-        current = nextIndex(current, dir, count);
+        current = nextVisibleIndex(current, dir, hiddenFlags());
+        render();
+      }
+
+      // US-496: the poll calls this after it flips a vehicle-gated card. If the
+      // card the operator was ON just vanished (the vehicle unplugged), land on
+      // the nearest visible one rather than holding a dead index.
+      function onVisibilityChange() {
+        var flags = hiddenFlags();
+        if (flags[current]) {
+          var near = nearestVisibleIndex(current, flags);
+          if (near !== null) current = near;
+        }
         render();
       }
 
@@ -1736,7 +2349,7 @@
       });
 
       render();
-      startAvailabilityPoll(cards, glyphEls, goTo);
+      startAvailabilityPoll(cards, glyphEls, goTo, onVisibilityChange);
       setupMenu();
     };
 
@@ -1947,7 +2560,7 @@
     // `unavailable` (never a crash, never green-when-broken). The shell sets the
     // availability class; the per-card renderer (US-400 system-status; US-401
     // battery-health) paints the fields on top when available.
-    function startAvailabilityPoll(cards, glyphEls, goTo) {
+    function startAvailabilityPoll(cards, glyphEls, goTo, onVisibilityChange) {
       async function fetchState(name) {
         try {
           var r = await fetch("/" + name, {
@@ -2005,11 +2618,39 @@
       var idleIndex = -1;
       var sysIndex = -1;
       var lastIdle = null;
+      // US-497 g-trail: accumulated across ticks from the polled states/imu
+      // values (Atlas Q-B). Lives here, not on the card, so it is dropped with
+      // the poll rather than outliving the feed that produced it.
+      var gTrail = [];
+      // US-496: the vehicle-dependent cards, revealed only while a vehicle is
+      // actually connected (they ship `hidden`, so the pre-first-poll unknown
+      // shows no vehicle card).
+      var gatedCards = [];
       for (var ci = 0; ci < cards.length; ci++) {
         var st = cards[ci].getAttribute("data-state");
         if (st === "dtc") dtcCardIndex = ci;
         else if (st === "system-status") sysIndex = ci;
         if (cards[ci].getAttribute("data-idle-home") !== null) idleIndex = ci;
+        if (cards[ci].getAttribute("data-vehicle-gated") !== null) {
+          gatedCards.push(cards[ci]);
+        }
+      }
+
+      // US-496 AC-3: reveal/hide the vehicle-dependent cards from the SAME
+      // system-status the tick already fetched (no second read). `hidden` (not a
+      // class) is deliberate: it is the property the US-495 guard removes from
+      // the flex track AND the one hiddenFlags() reads back as the rendered
+      // truth, so the gate and the paint can never disagree. The carousel is
+      // re-laid-out only on a real CHANGE, so a steady state never fights a swipe.
+      function applyVehicleGate(sysData) {
+        var wantHidden = !vehicleConnected(sysData);
+        var changed = false;
+        for (var g = 0; g < gatedCards.length; g++) {
+          if (gatedCards[g].hidden === wantHidden) continue;
+          gatedCards[g].hidden = wantHidden;
+          changed = true;
+        }
+        if (changed && typeof onVisibilityChange === "function") onVisibilityChange();
       }
 
       function findCode(codeStr) {
@@ -2433,19 +3074,37 @@
         var dtcData = null; // fetched once (the Alerts card + ribbon/takeover share it)
         var sysData = null; // shared with the idle-home card (one fetch per tick)
         var batteryData = null;
+        var lightData = null; // shared: the US-496 Light card + the auto-dim
+        var lightFetched = false;
+        // US-496: ONE clock for the whole tick, so the Light card's freshness
+        // verdict and the brightness the screen is actually set to are resolved
+        // against the same instant -- the card can never contradict the surface.
+        var nowMs = Date.now();
         for (var c = 0; c < cards.length; c++) {
           var card = cards[c];
           var name = card.getAttribute("data-state");
           if (!name) continue;
+          // US-496: a gated-off card is not rendered and not fetched. It is
+          // display:none -- polling it 4x/s would be a read nobody can see.
+          if (card.hidden) continue;
           var data = await fetchState(name);
           if (name === "dtc") dtcData = data;
           else if (name === "system-status") sysData = data;
           else if (name === "battery-health") batteryData = data;
+          else if (name === "light") {
+            lightData = data;
+            lightFetched = true;
+          }
           var avail = cardAvailability(data);
           card.classList.toggle("unavailable", avail === "unavailable");
           if (avail === "unavailable") {
             var body = card.querySelector(".card-body");
-            if (body) body.textContent = "unavailable";
+            // US-496: a card with a bespoke no-data view NAMES the silent
+            // instrument (`dtc` must never read as an all-clear); every other
+            // card keeps the shipped one-word fallback.
+            var nd = noDataView(name);
+            if (body && nd) renderNaBody(body, nd.label, nd.reason);
+            else if (body) body.textContent = "unavailable";
             if (name === "system-status") resetSystemGlyphs(glyphEls);
             continue;
           }
@@ -2457,11 +3116,30 @@
             if (bv) renderBatteryHealthCard(card, bv);
           } else if (name === "dtc") {
             renderAlertsCard(card, alertsCardView(data));
+          } else if (name === "light") {
+            renderLightCard(card, lightView(data, displayAutoDim, nowMs));
+          } else if (name === "imu") {
+            // US-497: the trail is the ONE piece of client state on this card
+            // (Atlas Q-B -- animate from the polled values). It is advanced
+            // only while the instrument is live, and RESET the moment it is
+            // not: splicing a point from before an outage onto one after it
+            // would draw a trail the vehicle never took.
+            var iv = imuView(data, nowMs);
+            if (iv && !iv.idle && iv.g.available && iv.g.dot) {
+              gTrail = pushGTrail(gTrail, iv.g.dot, nowMs, G_TRAIL_WINDOW_SEC);
+            } else {
+              gTrail = [];
+            }
+            renderImuCard(card, iv, gTrail);
           } else if (name === "ltft-trend") {
             var lv = ltftTrendView(data);
             if (lv) renderLtftTrendCard(card, lv);
           }
         }
+        // US-496 AC-3: reveal/hide the vehicle-dependent cards from the state
+        // just read. An unavailable system-status leaves sysData null here, which
+        // fails closed to hidden -- no vehicle card without a vehicle.
+        applyVehicleGate(sysData);
         // US-405/US-406: drive the takeover + persistent ribbon from the same
         // `dtc` state the Alerts card rendered (one fetch per tick).
         updateDtcSurfaces(dtcData);
@@ -2475,12 +3153,15 @@
         // US-483-b: drive the display brightness from the states/light feed
         // (pure consumer -- never the sensor). A real STOP holds it >= the alarm
         // floor; an absent/stale feed holds the fixed default (honest fallback).
-        var lightData = await fetchState("light");
+        // US-496: reuse the payload the Light card already fetched this tick;
+        // only fall back to a fetch when no Light card slot consumed it (so the
+        // auto-dim keeps working even if the card is ever removed from the markup).
+        if (!lightFetched) lightData = await fetchState("light");
         applyBrightness(
           brightnessLevel(
             lightData,
             displayAutoDim,
-            Date.now(),
+            nowMs,
             brightnessAlarmActive(dtcData)
           )
         );

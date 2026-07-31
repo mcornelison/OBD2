@@ -2711,6 +2711,57 @@ freshness `ts` is the **sample's own read-time** (not write-time), so a stalled
 feed goes honestly stale and the consumer falls back rather than trusting a
 frozen value. Gated behind `pi.bus.enabled` + `pi.sensors.light.enabled`.
 
+**Bus → `states/imu` DERIVED bridge (US-478 / F-113, Sprint 66 / V0.29.20).** The
+same seam, one tier further: `src/pi/sensors/imu_state_bridge.py`
+(`ImuStateBridge`) subscribes to `raw.imu.{accel,mag}` + the retained
+`state.sensor.imu` presence topic (LOSSY) and writes the **display-derived view**
+into `states/imu`. Two artifacts, deliberately separate (Atlas A-4): **raw**
+accel/gyro/mag stay on the bus and in the versioned `edr_imu_sample` store; this
+file is the *derived* view and holds no raw axes at all. **The reader computes,
+the display consumes** (Atlas DELTA-2) — the card never fuses.
+
+*Contract (Atlas Q-A, 2026-07-30).* `{available, ts, gLat, gLon, gMag,
+headingDeg, gradePct, altitude, reasons}`:
+
+| Field | Meaning | Notes |
+|---|---|---|
+| `gLat` / `gLon` / `gMag` | horizontal acceleration, **units = g** (`g_n` = 9.80665 m/s²) | `gLon` + = accelerating, − = braking; `gLat` + = **RIGHT** (automotive convention); `gMag` = hypot |
+| `headingDeg` | magnetic bearing of the vehicle nose, 0–359 | tilt-compensated; **magnetic, not true** (no declination in the contract) |
+| `gradePct` | `tan(pitch) × 100`, pitch from the gravity vector | + = climbing; `null` past `MAX_GRADE_PITCH_DEG` (85°), where `tan` runs away |
+| `altitude` | **always typed `null`** + `reasons.altitude = "no_source"` | the ICM-20948 has no barometer; a zeroed altitude renders as sea level — a confident lie. A future BMP280/GPS fills it, not this bridge |
+| `available` / `ts` | freshness | absent/stale → the US-497 idle-card fallback |
+| `reasons` | per-field absence vocabulary | `sensor_absent`, `no_mag_reading`, `tilt_unresolved`, `pitch_out_of_range`, `no_source` |
+
+*Honest-availability is PER FIELD.* A dead magnetometer grays `headingDeg` alone
+while the g fields stay live; an unwired sensor writes an **explicit**
+`available: false` state (a state *change* bypasses the write-cadence window, so
+an unplug can never leave the last live g reading frozen on the card looking
+current); and a stale mag reading grays the heading rather than carrying an old
+bearing forward — a frozen compass needle is worse than an absent one.
+
+*Why a gravity low-pass (`pi.sensors.imu.gravityTauSec`, default 5 s).* The
+accelerometer measures gravity and vehicle acceleration summed into one vector.
+Publishing the raw horizontal components would pin a permanent phantom **0.17 g**
+on the g-meter for a board bolted in at a 10° tilt. The slow estimate tracks
+mount tilt and road grade (which change over tens of seconds); the fast residual
+is the acceleration the g-meter exists to show. The **same** estimate defines the
+level frame for `gLat`/`gLon`, the pitch for `gradePct`, and the tilt
+compensation for `headingDeg` — one gravity fact, three consumers, no chance for
+three derivations to disagree. The default τ is a **Rex-derived filter constant
+flagged for Atlas/Spool confirmation against a real drive**, not a tuning value.
+
+*Config (all under `pi.sensors.imu.*`, validated in `_validateImuStateBridge`).*
+`stateHz` (default 4) is the state-file write cadence, grounded to the
+**consumer** — `carousel.js POLL_MS = 250` — not the sensor's 50 Hz burst;
+writing tmpfs faster than the only reader polls is churn with no observable
+effect. `mount.{forward,left,up}` (default `+x`/`+y`/`+z`) places the board in the
+**vehicle** frame, so a physical remount is a config edit rather than a code
+edit; a duplicated or malformed axis is rejected at config-validation time (fail
+fast) instead of raising once per sample inside the bus drain, where it would be
+logged and swallowed. Gated behind `pi.bus.enabled` + `pi.sensors.imu.enabled`
+(flipped on in Sprint 66 — connect-when-wired, the genuine Adafruit ICM-20948
+#4554 confirmed @0x69 via `WHO_AM_I = 0xEA`).
+
 **Display auto-dim consumer + config-injection seam (US-483-b / F-121, Sprint 61
 / V0.29.15).** The carousel drives the panel brightness (a **software dim** — the
 Chromium kiosk can't reach the panel backlight) from the `states/light` feed via
@@ -2866,14 +2917,44 @@ cooperating processes communicate via a tmpfs directory.
 
 | Unit | Source of Truth | Role |
 |------|-----------------|------|
-| `eclipse-boot-state.service` | `deploy/eclipse-boot-state.service` | [A-1] Boot-state emitter (`python -m pi.splash.boot_state_emitter`). Polls `systemctl is-active` for the critical set + assesses the tiered eclipse-obd health, writes `boot-state` JSON @ 500ms. The authority for `healthy`/`degraded`. |
+| `eclipse-boot-state.service` | `deploy/eclipse-boot-state.service` | [A-1] Boot-state emitter (`python -m pi.splash.boot_state_emitter`). Polls `systemctl is-active` for the **CORE-readiness** set + checks the dashboard assets are installed, writes `boot-state` JSON @ 500ms. The authority for `healthy`/`degraded`. The eclipse-obd tier is sampled + reported but **does not gate** (US-494, below). |
 | `eclipse-states-http.service` | `deploy/eclipse-states-http.service` | [A-4] Localhost state server (`python -m pi.splash.states_http_server`). Binds **127.0.0.1:9899 only**, serves the read-only `states/*` JSON, **token-gated** (token SSOT), path-traversal-guarded, `Cache-Control: no-store`. The only IPC chromium can `fetch()`. |
 | `splash-boot.service.{wayland,x11}` | `specs/UI/dist/splash-pi/` | [A-8] Chromium kiosk. Loads `http://127.0.0.1:9899/` (same-origin, token injected) and runs the `boot-state-poll.js` state machine. |
 
 **Code:** `src/pi/splash/` — `boot_state_emitter.py` (honest-instrument verdict
-logic: 3-tier eclipse-obd health, alarm-fatigue guard, retry-once, hard-cap
-degrade), `states_http_server.py` (the localhost server), `token.py` (the
-one-source auth token).
+logic: CORE-readiness gate, dashboard-asset gate, informational 3-tier
+eclipse-obd health with retry-once, hard-cap degrade), `states_http_server.py`
+(the localhost server), `token.py` (the one-source auth token).
+
+**Readiness contract = "Pi core / UI is up", NOT "a vehicle is connected"
+(US-494, Sprint 66 / V0.29.20).** The handoff gate (`CORE_SERVICES_DEFAULT`) is
+`eclipse-states-http` + `eclipse-powerwatch` + `boot-progress-finalize`, plus the
+dashboard assets being installed (`/opt/dashboard/dashboard.html`). `eclipse-obd`
+is **deliberately not a gate member**: the Pi spends most of its life on a bench
+with no car, and a vehicle-shaped readiness gate makes the dashboard unreachable
+there. The tier is still assessed and published in the payload's own `obdTier`
+field for post-boot/vehicle-slice consumers, and `services` now carries **only**
+`systemctl is-active` strings (one vocabulary per field) rather than overloading
+the `eclipse-obd` entry with a tier verdict.
+
+*Why this was a bug, not a preference:* before US-494 the tier was gating **and**
+the systemd entry point never injected an `obdProbeFn`, so the probe defaulted to
+`lambda: OBD_STARTING` — a claim that checks are *in progress*, permanently. The
+tier never went terminal → `progress` capped at 2/3 → `healthy` never became true
+→ `boot-state-poll.js` never called `window.close()` → `OnSuccess=eclipse-dashboard.service`
+never fired. After the 12 s cap the splash pinned at *"eclipse-obd: not ready
+(starting)"* until reboot. An absent probe now reports `OBD_NOT_PROBED`
+(`"not-probed"`) — a reading **not taken** is never dressed up as a state.
+Missing dashboard assets likewise **hold the splash with a named reason** rather
+than handing off to a blank screen (the A-16 lesson, made loud).
+
+*Guarded end-to-end since US-499:* `tests/ui/test_render_regression.py` runs the
+**production wiring** (`buildEmitter` — what the systemd unit constructs) against
+a faked `systemctl`, feeds the emitted payload sequence to the **shipped**
+`boot-state-poll.js`, and asserts `window.close()` is actually called. Its
+partner test loads the **pre-US-494 emitter from git** and asserts the splash
+pins instead — the defect above is now reproducible on demand. See the
+render-regression backstop under F-092.
 
 **Token SSOT (US-393 DoD):** exactly one file — `/run/eclipse-obd/states/.http-token`
 (0600) — is the authority. `token.loadOrCreateToken` generates it once and never
@@ -2918,11 +2999,15 @@ idempotent):
    `/run/eclipse-obd/states/` exists *this* deploy, not only after the next reboot
    (the boot-durable provisioning mechanism AC#4 requires — **not** `install -d`
    alone).
-2. `step_install_splash_assets` installs the served kit (`index.html`,
-   `styles.css`, `boot-state-poll.js`) from `specs/UI/dist/splash-pi/` into
-   `/opt/splash` and writes `/opt/splash/version.txt` (the bare SemVer string the
-   kiosk version chip fetches; derived from `deploy/RELEASE_VERSION`, `V?.?.?`
-   fallback). **A-9:** a missing splash kit **WARNs and the deploy continues** — it
+2. `step_install_splash_assets` installs the served kit from
+   `specs/UI/dist/splash-pi/` into `/opt/splash` and writes
+   `/opt/splash/version.txt` (the bare SemVer string the kiosk version chip
+   fetches; derived from `deploy/RELEASE_VERSION`, `V?.?.?` fallback). The
+   manifest covers **both** surfaces — boot (`index.html`, `styles.css`,
+   `boot-state-poll.js`, `splash.svg`) *and* closeout (`shutdown.html`,
+   `shutdown-state-poll.js`, `splash-shutdown.svg`) — force-refreshed and
+   byte-verified (US-498; see the `/opt` asset-ownership contract below).
+   **A-9:** a missing splash kit **WARNs and the deploy continues** — it
    never blocks.
 3. `step_install_state_server_units` installs + enables `eclipse-boot-state.service`
    + `eclipse-states-http.service`; both are long-running `Type=simple`, so they
@@ -2935,6 +3020,41 @@ US-394.
 > **Cross-ref:** the shutdown-state half of this contract (the ShutdownSequencer
 > phase-emit hook + the "shutdown-state survives eclipse-obd stop" guarantee) is
 > documented in **§10.6.1** (landed by US-394, same sprint).
+
+**Closeout (shutdown) surface — the reversal contract (US-498).** The closeout
+splash is the boot splash **played backwards**: one kit, one set of keyframes,
+`splash-shutdown.svg` differing from `splash.svg` only by a trailing override
+block. Two things have to be reversed there, and shipping only the first is a
+black screen:
+
+1. **direction** — `animation-direction: reverse` on every animated class; and
+2. **order** — `animation-delay` recomputed as `T − (bootDelay + bootDuration)`,
+   `T` = the boot animation's total (6.5 s). The *last* thing to happen on boot
+   must be the *first* thing to happen on shutdown.
+
+Skipping (2) is not a cosmetic ordering nit. The boot timeline ends with a
+fadeout **delayed 6 s**, and `animation-fill-mode: both` holds the reversed
+animation's *first relevant* keyframe throughout that delay — which for
+`direction: reverse` is `to`, i.e. `opacity: 0`. The mark was therefore
+invisible for 6 s of a 7 s grace window (`pi.powerWatch.smoothingSec`): the
+operator watched a black screen for the whole shutdown while the code, the unit,
+the state file and the poll script were all working correctly. The animation is
+sized to **finish inside the grace window** so the closeout completes rather
+than being cut off mid-motion by the power drop; after it completes the HTML
+overlays (wordmark + version chip) remain on screen for the flush/poweroff tail,
+so the surface is quiet, never blank.
+
+`tests/ui/test_shutdown_splash_render.py` resolves the shipped CSS on a clock
+(cascade, comma-list shorthands, fill-mode/direction/delay) and samples the
+mark's opacity every 250 ms across the real grace window, so the guard is a
+measurement of what is on screen at second *n*, not a grep for a magic string;
+it re-derives the delays from `splash.svg`, so re-timing the boot animation
+re-aims the closeout instead of silently leaving it out of step.
+`tests/pi/splash/test_shutdown_splash_wiring.py` pins the chain end to end —
+a real `ShutdownSequencer` grace transition writes the real state file, the real
+`eclipse-states-http` serves the real kit, and the page is fetched at the URL
+taken **out of the shipped `splash-grace.service` unit** (the US-494 lesson: the
+defect lives in the seam nobody asserted, not in the parts).
 
 **Kiosk-unit install contract (`step_install_ui_kiosk_units`, Bug-1/2/4 — finding
 `offices/architect/findings/2026-07-01-pi-display-blank-deploy-contract-gaps.md`,
@@ -2979,7 +3099,7 @@ Battery Health card bodies + emitters are US-400 / US-401; the DTC card (Card 5)
 
 | Piece | Source | Role |
 |------|--------|------|
-| Dashboard kit | `specs/UI/dist/dashboard-pi/` | `dashboard.html` (top bar + 2 card slots + page dots), `dashboard.css` (≥40px tap targets), `carousel.js` (swipe-nav + dots + honest-instrument availability poll). Served at `/dashboard.html`. |
+| Dashboard kit | `specs/UI/dist/dashboard-pi/` | `dashboard.html` (top bar + card slots + page dots -- see the card model below), `dashboard.css` (≥40px tap targets), `carousel.js` (swipe-nav + dots + honest-instrument availability poll). Served at `/dashboard.html`. |
 | `eclipse-dashboard.service.{wayland,x11}` | `specs/UI/dist/dashboard-pi/` | [A-5] Chromium **touch** kiosk (`--touch-events=enabled`). Loads `http://127.0.0.1:9899/dashboard.html` same-origin (token injected). **No `[Install]`** -- started by the splash hand-off, not enabled. |
 
 **A-1 splash → dashboard hand-off.** `splash-boot.service.{wayland,x11}` carries
@@ -3010,10 +3130,257 @@ card's `data-state` file at 4 Hz; a missing/malformed payload sets the card to
 `unavailable` (never a fabricated value, never green-when-broken). Until the
 US-400/401 emitters exist, both cards correctly read `unavailable`.
 
+**Surface invariant: `hidden` means NOT RENDERED (US-495, F-111).** Every
+show/hide on this surface is `carousel.js` setting `el.hidden`. The UA sheet's
+`[hidden] { display: none }` is a *user-agent* declaration, so **any** author
+`display` outranks it -- and each of the five full-screen overlays
+(`#dtc-takeover`, `#setup-menu`, `#confirm-modal`, `#dtc-detail`,
+`#clear-confirm`) plus `#dtc-ribbon` set `display: flex` through an ID selector.
+The attribute was therefore inert: all six painted simultaneously over the
+carousel, and the stack swallowed every tap. The JS was correct throughout; the
+stylesheet defeated it.
+
+`dashboard.css` now declares **`[hidden] { display: none !important; }`**. The
+`!important` is load-bearing, not defensive: an ID selector already outranks any
+plain `[hidden]` rule, so the guard must win on *importance* or be duplicated
+onto every element -- and the next overlay added would ship the bug again. This
+is the one declaration on the surface that must not be overridable. An element
+that needs to be present-but-invisible must therefore **not** use `hidden` (use
+`aria-hidden` + `visibility`). Pinned by
+`tests/ui/test_dashboard_overlay_hidden_guard.py`, which resolves the real
+cascade (importance → specificity → source order) for every element the shipped
+markup ships `hidden`, so a future overlay is covered the day it is added --
+and, since US-499, by the render-regression backstop below, which reaches what
+that static sweep cannot: JS-created elements, and the surface *after* the real
+`carousel.js` has run.
+
+##### Card model: always-present vs vehicle-gated (US-496, F-121)
+
+Per the CIO-locked card model (Atlas,
+`docs/superpowers/specs/2026-07-28-pi-ui-carousel-ssot-wiring-design.md` §4) the
+carousel has **two tiers**, and the difference is *availability semantics*, not
+styling:
+
+| Card | `data-state` | Tier | Absence renders |
+|---|---|---|---|
+| Standby / idle home | *(none -- `data-idle-home`)* | always-present | composed from the cards below |
+| System Status (Pi Health) | `system-status` | always-present | `unavailable` |
+| Battery Health | `battery-health` | always-present | `unavailable` |
+| **Light** | `light` | always-present | **"no data -- light feed absent"** |
+| **Motion (IMU)** | `imu` | always-present | **"no data -- IMU feed absent"** |
+| Alerts (DTC) | `dtc` | always-present | **"no data -- codes not read"** |
+| LTFT Trend | `ltft-trend` | **vehicle-gated** | *not rendered at all* |
+
+**Gray vs hidden is a real distinction.** Gray says *"this instrument is
+broken/unreadable"*; hidden says *"this instrument does not apply right now."* On
+a bench with no car, a grayed fuel-trim card is a false fault report. A card
+marked **`data-vehicle-gated`** is therefore revealed only while
+`vehicleConnected(sysData)` holds -- an **explicit** `source.obd.available ===
+true`. That is deliberately stricter than `sourceUnavailable()`, which treats an
+absent `source` block as available for pre-US-429 backward compatibility: that
+default is right for "should I gray this tile?" and wrong for "should I reveal a
+vehicle card?" An unreadable `system-status` leaves *"is a car plugged in?"*
+genuinely **unknown**, and an unknown must never render as a state (the recurring
+US-492/US-494 finding), so the gate **fails closed to hidden** and the card ships
+`hidden` in the markup for the pre-first-poll window. The Slice-2 Live Engine Data
+card carries the same attribute; gating LTFT is also what takes it out of the
+always-present set while its emitter is orphaned, without faking or deleting it.
+
+**Consequence -- the carousel geometry counts VISIBLE cards.** `#track` is a flex
+row of full-width cards, so a card the `[hidden]` guard removes takes **no slot**.
+`visualPosition` / `nextVisibleIndex` / `nearestVisibleIndex` (pure, node-tested)
+own that math: the `translateX` step count is the visible position, a swipe steps
+*over* a hidden card, a hidden card owns no page dot, and if the card the operator
+is on disappears mid-session the view lands on the nearest visible one (preferring
+the earlier -- the operator's "back", never a jump past unseen cards). This makes
+`.card`/`.dot` keeping **plain** (non-`!important`) `display` declarations
+load-bearing: adding `!important` to either would tie importance against the
+`[hidden]` guard and restore a gated card to the track. Pinned in
+`tests/ui/test_carousel_pi_local_cards.py`.
+
+**Absent-state message per card.** The shell used to write the bare word
+`unavailable` on every card. Two cards get a named `noDataView` because the wrong
+reading of *their* silence is the dangerous one: a missing `dtc` state means the
+codes were **never read** and must never render as "No stored codes" (a fabricated
+clean read) or as an alert -- the F-6 no-phantom rule at card level; a missing
+`light` state means the **feed stopped**, not "dark" (a fabricated 0 lux). Cards
+not listed keep the one-word fallback.
+
+**Light card (US-496).** A pure consumer of the same `states/light` file
+(`{lux, ts}`) that drives the auto-dim (§ Display auto-dim consumer), so the
+reading on the card can never disagree with the screen it explains -- one clock
+per poll tick resolves both. Two tiles through the shared tokenized `.tile`
+component: **AMBIENT** (the reading + its read age) and **CONDITION** (`DARK` /
+`DIM` / `DAYLIGHT`, a *name* for the existing grounded `luxMin`/`luxFull`
+thresholds -- not a third set of numbers that could drift from the curve). A null
+`lux` (the bridge's honest saturated/unreadable marker), an undated payload, or a
+reading older than `luxStaleSec` grays **both fields individually** with the
+*reason* as the tile detail, so the operator learns which fault it is; the card
+itself stays present. Screen brightness is deliberately **not** shown: a live STOP
+alarm holds the surface at full regardless of lux (US-484-b ch.4), so a
+lux-derived percent would contradict the actual screen exactly when it matters
+most.
+
+##### Motion card -- the IMU live instrument (US-497 / F-113, Sprint 66)
+
+A pure consumer of the `states/imu` file the § 10.8.2 bridge writes. The bridge
+already resolved the hard physics (one slow gravity estimate defining the level
+frame, the pitch *and* the heading tilt-compensation); the card **maps and
+formats only** -- it never fuses and never re-derives, because a second
+derivation is a second chance for the compass and the grade to disagree about
+which way is down (Atlas DELTA-2). It is **always-present, not vehicle-gated**:
+the ICM-20948 is a *Pi-local* sensor that reads on the bench with no car, so
+gating it behind a vehicle would hide a working instrument.
+
+**A live graphical instrument can FREEZE; a text tile cannot.** This is the one
+property that shapes the whole card. A gray "NA" reads as dead at a glance, but a
+g-dot frozen at 0.4 g reads exactly like a car holding a steady corner -- a
+fabricated measurement, not a visible gap. So the freshness gate blanks the
+**instrument** rather than graying a label: an explicit `available: false`, an
+undated payload, or a reading older than `IMU_STALE_SEC` renders the calm gray
+MOTION body and *no geometry at all* (US-497 AC-3). Within a live reading,
+absence is still per field -- a dead magnetometer grays HEADING alone (and hides
+the needle: a needle frozen at its last bearing is worse than an absent one),
+an unresolved tilt grays G-FORCE **and carries no dot**, and `altitude` is
+**always** typed-NA `"no source"` without ever blocking the card.
+
+| Constant | Value | Grounding |
+|---|---|---|
+| `IMU_STALE_SEC` | 2.0 s | the **producer's** cadence -- 8 missed writes at `pi.sensors.imu.stateHz` = 4 Hz. Deliberately far tighter than the light card's 10 s: a 10 s-old lux is still roughly true, a 10 s-old g-vector is meaningless. *Rex-derived; flagged for Atlas/Spool against a real drive.* |
+| `G_FULL_SCALE` | 1.0 g | outer ring. A street-tired car tops out near 0.9 g lateral, so 1 g frames real driving without compressing it. *Rex-derived DISPLAY scale, not a vehicle limit -- flagged for Spool.* |
+| `G_TRAIL_WINDOW_SEC` | 35 s | Iris live-instrument spec. ~140 points at 4 Hz. |
+
+**Sign contract on screen.** `gLon` + = accelerating → the dot moves **up**
+(negative screen y); `gLat` + = **right** → positive x. The G-FORCE tile spells
+both components out in words ("0.30 right · 0.12 brake") so a board mounted
+backwards becomes obvious to the operator instead of silently mirroring the dot.
+An over-scale reading **clamps along its own direction** (never per-axis, which
+would swing the dot to a corner and misreport which way the car was loaded) and
+turns amber, while the tile keeps the true magnitude -- the clamp cannot
+understate a 1.4 g stop as a tidy 1.0 g one.
+
+**The trail is the card's only client state** (Atlas Q-B: animate from the
+polled values; a higher-rate transport is a later refinement, not a gate). It
+lives in the poll closure, is drawn as a single `<polyline>` -- 140 discrete
+nodes rebuilt at 4 Hz would churn ~560 elements/sec on a kiosk Pi for nothing --
+and is **reset the moment the instrument is not live**. Splicing a point from
+before an outage onto one after it would draw a trail the vehicle never took;
+eviction also runs on a tick with no usable point, so a stopped feed decays the
+trail to empty instead of freezing its last shape.
+
 **Deploy.** `deploy-pi.sh step_install_dashboard_assets` installs the served kit
 to `/opt/dashboard` (WARN-not-BLOCK if absent, A-9), mirroring
 `step_install_splash_assets`; the kiosk **unit** is installed by the kit's
 session-aware `install.sh` (V-1/V-2), the same seam as the splash kiosk unit.
+
+##### `/opt` asset-ownership contract -- force-refresh + prune (US-495, F-111)
+
+The ordered search path above has a sharp edge that cost a sprint of "the deploy
+succeeded but the Pi renders something else": **`/opt/splash` is searched
+first**, so any file sitting there shadows the same-named file in
+`/opt/dashboard` permanently, and the dashboard step -- which only ever writes to
+`/opt/dashboard` -- can never dislodge it. Both asset steps used to *only*
+install on top of `/opt`; nothing was ever removed, so retired kit generations
+accumulated there indefinitely. That is how the Pi came to serve a wordmark
+("Eclipse ODB2") that exists nowhere in this repo.
+
+Both steps now delegate to **`deploy/asset-refresh.sh` →
+`refresh_asset_dir SRC DST MANIFEST [KEEP]`**, which makes the installed dir an
+exact mirror of what the repo vouches for:
+
+1. **install** every manifest asset the source kit ships;
+2. **prune** everything else -- including a *manifest* asset the source kit no
+   longer ships. A file the repo cannot vouch for must not be served: an honest
+   404 beats a confident stale render;
+3. **verify** each installed file byte-for-byte against its source.
+
+| Dir | Manifest (installed + owned) | Keep-list (another installer owns) |
+|---|---|---|
+| `/opt/splash` | `index.html`, `styles.css`, `boot-state-poll.js`, `shutdown.html`, `shutdown-state-poll.js`, `splash.svg`, `splash-shutdown.svg` | `version.txt` (generated by the same step, after) |
+| `/opt/dashboard` | `dashboard.html`, `dashboard.css`, `carousel.js` | *(none -- single installer)* |
+
+`/opt/<kit>` is **deploy-owned, not hand-edited**: anything dropped there
+out-of-band is pruned by design.
+
+**The keep-list is a cost, not a safety net (US-498).** A keep-listed asset is
+never installed, never pruned and never byte-verified by the deploy, so every
+entry is a piece of `/opt` the guard cannot vouch for. US-495 keep-listed the
+whole closeout surface on the reasoning that the kit's own `install.sh` owns it
+-- but that installer is the **A-9 kiosk-unit step, which is allowed to WARN and
+skip** (it aborts outright when it cannot detect the session type or the
+chromium binary), so the closeout surface had no guaranteed refresh path at all.
+The exact hole US-495 closed for the boot surface stayed open for the shutdown
+one, where a stale render only reveals itself *during a shutdown*, with nobody
+watching and no way to re-run it. Both installers copy the same bytes from the
+same synced kit dir, so the deploy owning them costs nothing and buys the
+byte-verify. `version.txt` is the only legitimate entry: the deploy **generates**
+it from `deploy/RELEASE_VERSION` after the refresh, so it is not a kit file the
+manifest could name. Pruning it in the window before it is rewritten is the only
+thing the keep-list now prevents.
+
+**Posture change vs A-9, deliberate.** *Absence* still warns and continues (a Pi
+without the UI kit still ships the rest of the tier). A *failed write* now
+**blocks**. They are different facts: absence is a Pi that was never given a UI;
+a failed write is a deploy that believes it shipped one and did not. Continuing
+past the second is what prints "Deploy OK" over a stale surface and sends the
+operator to debug the UI instead of the deploy (the A-16 lesson). Behaviour is
+pinned by `tests/deploy/test_asset_refresh.py`, which drives the real shell
+function against temp dirs rather than grepping the deploy script.
+
+##### Render-regression backstop -- the automated A-16 guard (US-499, F-121)
+
+Sprint 66 shipped three defects that **every unit test passed**, because all
+three were *composition* failures rather than component failures:
+
+| Defect | Every part was correct | What was broken |
+|---|---|---|
+| US-494 (S1) | `computeBootState` was right; the splash JS was right | the systemd entry point never injected `obdProbeFn`, so the payload the **production wiring** emits never reached `healthy` -> no handoff |
+| US-495 (S2) | `carousel.js` set `el.hidden` correctly on 18 call sites | an ID-selector `display: flex` outranked the UA `[hidden]` rule, so six overlays painted at once |
+| US-498 (S5) | the delay, the fill-mode and the direction were each valid | their *interaction* held the closeout mark at `opacity: 0` for 6 s of a 7 s grace window |
+
+`tests/ui/test_render_regression.py` is the permanent guard on that class. It is
+deliberately **compositional**, in two processes that cannot see each other's
+verdict:
+
+1. **node** (`tests/ui/dom_probe.js`, `splash_probe.js`, on `mini_dom.js`) boots
+   the **shipped** `carousel.js` / `boot-state-poll.js` against the **shipped**
+   markup and the state files a test declares, then dumps the resulting DOM. It
+   knows nothing about CSS.
+2. **python** (`tests/ui/render_harness.py`) resolves the **shipped** stylesheet
+   over that DOM -- importance -> specificity -> source order, inline
+   declarations, `display: none` inherited through ancestors -- and answers the
+   only question that matters: *does this element have a box?*
+
+The mini-DOM reflects IDL properties onto **content attributes** (`el.hidden =
+true` becomes the `hidden` attribute) because the attribute is what the cascade
+selects on. A harness that stored `hidden` as a private flag would have
+reproduced the US-495 blind spot instead of catching it.
+
+**It is proven RED, not asserted to be.** Each guard has a partner test that runs
+the same harness against the **real pre-fix artifact from git** -- the
+pre-US-495 stylesheet (all six overlays paint) and the pre-US-494 emitter loaded
+as a live module (the splash pins, degrading with the literal
+`eclipse-obd: not ready (starting)` the CIO read off the panel). Two **mutation**
+proofs run unconditionally beside them (delete the `[hidden]` guard rule; strip
+its `!important`), so the backstop stays self-verifying even where git history
+is unavailable -- and they pin the `!important` as load-bearing, which is the
+fragility US-496 flagged.
+
+It also covers the one surface no static sweep can reach: the **page dots are
+created by JS**, so `test_dashboard_overlay_hidden_guard.py` (which enumerates
+elements the *markup* ships `hidden`) can never see them. Here they are built by
+the real `carousel.js` and rendered through the real cascade, against the
+visible-card geometry the US-496 vehicle gate introduced.
+
+**Fidelity limit, stated because an unstated one is how a lenient test passes on
+a broken layout:** this resolves the **cascade**, not **layout**. It sees "not
+painted"; it cannot see overflow, wrapping, or a box pushed off-screen. Sibling
+combinators (`+`, `~`) are not resolved. To stop that leniency being silent,
+`Surface.unresolvableDisplaySelectors()` reports any `display` rule behind a
+pseudo-class the resolver cannot evaluate, and
+`test_harnessCanJudgeEveryDisplayRule` **fails** when one appears -- teach the
+resolver or move the rule; do not delete the test. The residual gap is a real
+kiosk smoke on the panel, which remains the per-story on-Pi render check.
 
 > **Sequencing note (A-4):** the dashboard and the pygame `status_display` must
 > never run simultaneously. The pygame surface was **retired (parity-gated) in

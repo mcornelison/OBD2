@@ -1,12 +1,19 @@
 ################################################################################
 # File Name: boot_state_emitter.py
 # Purpose/Description: F-103 boot-state emitter [Atlas A-1]. Polls
-#   `systemctl is-active` for the critical-services set + assesses the tiered
-#   eclipse-obd health, then writes the boot-state JSON SSOT that the splash
-#   kiosk consumes. The splash NEVER decides system condition -- this emitter is
-#   the authority; the splash renders the `healthy`/`degraded` booleans verbatim
-#   (specs/ssot-design-pattern.md). Honest-instrument rules per spec
-#   docs/superpowers/specs/2026-05-26-b103-splash-animation-design.md §5.
+#   `systemctl is-active` for the CORE-readiness service set + checks the
+#   dashboard assets are installed, then writes the boot-state JSON SSOT that the
+#   splash kiosk consumes. The splash NEVER decides system condition -- this
+#   emitter is the authority; the splash renders the `healthy`/`degraded`
+#   booleans verbatim (specs/ssot-design-pattern.md). Honest-instrument rules per
+#   spec docs/superpowers/specs/2026-05-26-b103-splash-animation-design.md §5.
+#
+#   READINESS MEANS "Pi core / UI is up", NOT "a vehicle is connected"
+#   (US-494 / design 2026-07-28-pi-ui-carousel-ssot-wiring-design.md §2). The
+#   eclipse-obd tier is SAMPLED and REPORTED for post-boot consumers but does
+#   NOT gate the handoff: the Pi lives on a bench with no car most of the time,
+#   and gating the dashboard on a vehicle link made the splash unreachable-past
+#   forever (see the OBD_NOT_PROBED note below).
 # Author: Ralph Agent (Rex)
 # Creation Date: 2026-06-29
 # Copyright: (c) 2026 Eclipse OBD-II Project. All rights reserved.
@@ -16,6 +23,11 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-06-29    | Ralph (Rex)  | Initial implementation (US-393 F-103 boot splash)
+# 2026-07-29    | Ralph (Rex)  | US-494 S1: readiness = Pi-core-up. eclipse-obd
+#               |              | tier demoted to informational/non-gating;
+#               |              | dashboard assets joined the gate; an absent
+#               |              | obdProbeFn now reports OBD_NOT_PROBED instead of
+#               |              | claiming "starting" forever.
 # ================================================================================
 ################################################################################
 
@@ -32,34 +44,55 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 # --- eclipse-obd tiered-health granular strings (spec §5, Spool S-1) ----------
-# These are surfaced for POST-BOOT UI consumers; the splash reads only the
-# top-level healthy/degraded booleans this module derives from them.
-OBD_STARTING = "starting"  # checks in progress -> neither healthy nor degraded
-OBD_ADAPTER_MISSING = "adapter-missing"  # T1 fail -> DEGRADED
-OBD_ADAPTER_NO_SYNC = "adapter-no-sync"  # T1 ok, T2 fail -> DEGRADED
-OBD_SYNCED_NO_DATA = "synced-no-data"  # T1+T2 ok, T3 fail (engine off) -> NOT degraded
-OBD_SYNCED_WITH_DATA = "synced-with-data"  # T1+T2+T3 ok -> healthy contributor
+# INFORMATIONAL ONLY as of US-494: reported in the payload's `obdTier` field for
+# post-boot consumers (the vehicle slice), never a gate on the boot handoff.
+OBD_NOT_PROBED = "not-probed"  # no tier probe wired -> reading NOT TAKEN
+OBD_STARTING = "starting"  # checks in progress -> verdict not settled yet
+OBD_ADAPTER_MISSING = "adapter-missing"  # T1 fail (no adapter / no car)
+OBD_ADAPTER_NO_SYNC = "adapter-no-sync"  # T1 ok, T2 fail
+OBD_SYNCED_NO_DATA = "synced-no-data"  # T1+T2 ok, T3 fail (engine off)
+OBD_SYNCED_WITH_DATA = "synced-with-data"  # T1+T2+T3 ok (live vehicle link)
 
-# eclipse-obd tier outcomes that count as "good" (not a fault) for the splash.
-# synced-no-data is INCLUDED: an engine-off boot with the ECU silent is
-# legitimate, not a fault (alarm-fatigue guard, Spool S-1 / failure-mode F-7).
-_OBD_GOOD = frozenset({OBD_SYNCED_NO_DATA, OBD_SYNCED_WITH_DATA})
+# OBD_NOT_PROBED vs OBD_STARTING is the load-bearing distinction (US-494).
+# "starting" asserts checks are RUNNING; "not-probed" admits no check was ever
+# taken. Before US-494 an un-injected probe defaulted to "starting", which is a
+# confident claim that stays false forever -- and because the tier then gated the
+# handoff, the splash pinned at "eclipse-obd: not ready (starting)" until reboot.
+# Same rule as every other instrument here: never dress a missing reading as a
+# state.
 
 # Tier outcomes worth a single slow-init retry before the verdict settles
 # (ISO 9141-2 K-line slow-init can need 2-4s + a retry on first connect).
 # T1 (adapter physically missing) is NOT retried -- it is not a transient.
 _OBD_RETRYABLE = frozenset({OBD_ADAPTER_NO_SYNC, OBD_SYNCED_NO_DATA})
 
-# Critical-services set owned by this emitter (Spool S-1, set unchanged). The
-# splash never decides what counts -- it reads the derived booleans.
-CRITICAL_SERVICES_DEFAULT = (
+# --- CORE readiness: what "the Pi is ready to show its UI" actually means -----
+# All three are plain systemd units, queried with `systemctl is-active`:
+#   eclipse-states-http     serves boot-state AND the dashboard assets -- without
+#                           it the dashboard has no data source at all.
+#   eclipse-powerwatch      the D-7/F-7 safe-shutdown guard.
+#   boot-progress-finalize  the boot/shutdown bookkeeping unit (oneshot,
+#                           RemainAfterExit=yes -> reads `active` once armed).
+# eclipse-obd is DELIBERATELY ABSENT: it is the vehicle tier (see module header).
+CORE_SERVICES_DEFAULT = (
+    "eclipse-states-http",
     "eclipse-powerwatch",
-    "eclipse-obd",
     "boot-progress-finalize",
 )
 
-# Non-eclipse-obd systemctl states that represent a terminal verdict for the
-# progress fraction (the unit has finished deciding).
+# Sampled + reported, never gating. Keeps the OBD unit's real state visible in
+# `services` so an operator can see it without it holding the splash hostage.
+INFORMATIONAL_SERVICES_DEFAULT = ("eclipse-obd",)
+
+# The dashboard the splash hands off to. Handing off when this is absent is the
+# A-16 blank-screen bug, so its presence is part of CORE readiness. Installed by
+# deploy-pi.sh step_install_dashboard_assets.
+UI_ASSET_PATH_DEFAULT = "/opt/dashboard/dashboard.html"
+UI_ASSETS_PRESENT = "present"
+UI_ASSETS_MISSING = "missing"
+
+# systemctl states that represent a terminal verdict for the progress fraction
+# (the unit has finished deciding).
 _TERMINAL_SYSTEMCTL = frozenset({"active", "failed"})
 
 
@@ -82,75 +115,77 @@ def assessObdTier(probeFn: Callable[[], str]) -> str:
 
 
 def computeBootState(
-    serviceStates: dict[str, str],
-    obdTier: str,
+    coreServiceStates: dict[str, str],
+    uiAssetsPresent: bool,
     elapsedSeconds: float,
     hardCapSeconds: float,
-    criticalServices: tuple[str, ...] | list[str],
+    coreServices: tuple[str, ...] | list[str],
     nowIso: str,
+    obdTier: str = OBD_NOT_PROBED,
+    informationalServiceStates: dict[str, str] | None = None,
 ) -> dict:
     """Derive the honest-instrument boot-state from raw inputs (pure function).
 
+    Readiness is "Pi core / UI up": every CORE service good AND the dashboard
+    assets installed. The eclipse-obd tier is carried through untouched in
+    ``obdTier`` and never influences ``healthy``/``degraded`` (US-494 AC-1).
+
     Args:
-        serviceStates: ``systemctl is-active`` result per non-eclipse-obd
-            critical service.
-        obdTier: The assessed eclipse-obd granular tier string.
+        coreServiceStates: ``systemctl is-active`` result per CORE service.
+        uiAssetsPresent: True when the dashboard assets are installed.
         elapsedSeconds: Seconds since the emitter started.
         hardCapSeconds: Degrade if no healthy verdict is reached by this point.
-        criticalServices: The critical-services contract.
+        coreServices: The CORE-readiness contract (the gate's membership).
         nowIso: ISO-8601 timestamp to stamp into the payload.
+        obdTier: Assessed eclipse-obd granular tier string (informational).
+        informationalServiceStates: ``systemctl is-active`` per non-gating
+            service, merged into ``services`` for visibility.
 
     Returns:
         The boot-state dict: ``progress``, ``healthy``, ``degraded``,
-        ``services``, ``degradedReason``, ``ts``.
+        ``services``, ``coreServices``, ``uiAssets``, ``obdTier``,
+        ``degradedReason``, ``ts``.
     """
-    services: dict[str, str] = dict(serviceStates)
-    # The eclipse-obd granular tier string supersedes its raw systemctl state.
-    services["eclipse-obd"] = obdTier
-
-    def isTerminal(svc: str, st: str) -> bool:
-        if svc == "eclipse-obd":
-            return st != OBD_STARTING
-        return st in _TERMINAL_SYSTEMCTL
-
-    def isGood(svc: str, st: str) -> bool:
-        if svc == "eclipse-obd":
-            return st in _OBD_GOOD
-        return st == "active"
+    # `services` holds ONE vocabulary -- raw systemctl states, gating or not.
+    # The OBD tier is a different kind of fact (a vehicle-link assessment) and
+    # therefore gets its own field rather than overwriting a unit's state.
+    services: dict[str, str] = dict(coreServiceStates)
+    services.update(informationalServiceStates or {})
 
     terminalCount = sum(
-        1 for s in criticalServices if isTerminal(s, services.get(s, "unknown"))
+        1
+        for svc in coreServices
+        if services.get(svc, "unknown") in _TERMINAL_SYSTEMCTL
     )
-    progress = round(terminalCount / len(criticalServices), 2) if criticalServices else 1.0
+    progress = round(terminalCount / len(coreServices), 2) if coreServices else 1.0
 
     # First degrading failure wins the one-line degradedReason (one-line
-    # discipline, spec §5 edge cases). T3 (synced-no-data) is intentionally NOT
-    # a degrade trigger.
+    # discipline, spec §5 edge cases). A failed unit outranks missing assets:
+    # it is the more fundamental fault.
     degradedReason: str | None = None
-    for svc in criticalServices:
-        st = services.get(svc, "unknown")
-        if svc == "eclipse-obd":
-            if st == OBD_ADAPTER_MISSING:
-                degradedReason = "OBD adapter not detected"
-                break
-            if st == OBD_ADAPTER_NO_SYNC:
-                degradedReason = "OBD adapter not responding"
-                break
-        elif st == "failed":
+    for svc in coreServices:
+        if services.get(svc, "unknown") == "failed":
             degradedReason = f"{svc}: failed to start"
             break
+    if degradedReason is None and not uiAssetsPresent:
+        # A-16: yielding to a dashboard that was never installed is the
+        # blank-screen bug. Hold the splash and name the reason.
+        degradedReason = "dashboard assets not installed"
 
-    allGood = all(isGood(s, services.get(s, "unknown")) for s in criticalServices)
-    healthy = allGood and progress >= 1.0
+    allCoreGood = all(
+        services.get(svc, "unknown") == "active" for svc in coreServices
+    )
+    healthy = allCoreGood and progress >= 1.0 and uiAssetsPresent
     degraded = degradedReason is not None
 
     # Hard-cap timeout: never reached a healthy verdict in time -> degrade with
-    # the first not-good service as the reason (no silent green-when-slow).
+    # the first not-good CORE service as the reason (no silent green-when-slow).
+    # Only CORE components can appear here -- the OBD tier is not consulted.
     if not healthy and not degraded and elapsedSeconds > hardCapSeconds:
         degraded = True
-        for svc in criticalServices:
+        for svc in coreServices:
             st = services.get(svc, "unknown")
-            if not isGood(svc, st):
+            if st != "active":
                 degradedReason = f"{svc}: not ready ({st})"
                 break
         if degradedReason is None:
@@ -161,6 +196,9 @@ def computeBootState(
         "healthy": healthy,
         "degraded": degraded,
         "services": services,
+        "coreServices": list(coreServices),
+        "uiAssets": UI_ASSETS_PRESENT if uiAssetsPresent else UI_ASSETS_MISSING,
+        "obdTier": obdTier,
         "degradedReason": degradedReason,
         "ts": nowIso,
     }
@@ -204,10 +242,11 @@ def _queryServiceState(serviceName: str) -> str:
 
 
 class BootStateEmitter:
-    """Polls the critical-services set + eclipse-obd tier, writes boot-state.
+    """Polls the CORE-readiness set + dashboard assets, writes boot-state.
 
-    Dependencies are injected (``serviceQueryFn``, ``obdProbeFn``, ``elapsedFn``,
-    ``nowIsoFn``) so the verdict logic is testable without systemd or hardware.
+    Dependencies are injected (``serviceQueryFn``, ``obdProbeFn``,
+    ``uiAssetProbeFn``, ``elapsedFn``, ``nowIsoFn``) so the verdict logic is
+    testable without systemd or hardware.
     """
 
     BOOT_STATE_FILENAME = "boot-state"
@@ -215,18 +254,29 @@ class BootStateEmitter:
     def __init__(
         self,
         statesDir: str,
-        criticalServices: tuple[str, ...] | list[str] = CRITICAL_SERVICES_DEFAULT,
+        coreServices: tuple[str, ...] | list[str] = CORE_SERVICES_DEFAULT,
+        informationalServices: tuple[str, ...]
+        | list[str] = INFORMATIONAL_SERVICES_DEFAULT,
         hardCapSeconds: float = 12.0,
         serviceQueryFn: Callable[[str], str] = _queryServiceState,
         obdProbeFn: Callable[[], str] | None = None,
+        uiAssetPath: str = UI_ASSET_PATH_DEFAULT,
+        uiAssetProbeFn: Callable[[], bool] | None = None,
         elapsedFn: Callable[[], float] | None = None,
         nowIsoFn: Callable[[], str] | None = None,
     ) -> None:
         self.statesDir = statesDir
-        self.criticalServices = tuple(criticalServices)
+        self.coreServices = tuple(coreServices)
+        self.informationalServices = tuple(informationalServices)
         self.hardCapSeconds = hardCapSeconds
+        self.uiAssetPath = uiAssetPath
         self._serviceQueryFn = serviceQueryFn
-        self._obdProbeFn = obdProbeFn or (lambda: OBD_STARTING)
+        # No tier probe wired -> say so (OBD_NOT_PROBED). Never fabricate a
+        # "starting" that can never settle; the tier is non-gating either way.
+        self._obdProbeFn = obdProbeFn or (lambda: OBD_NOT_PROBED)
+        self._uiAssetProbeFn = uiAssetProbeFn or (
+            lambda: Path(self.uiAssetPath).is_file()
+        )
         startMono = time.monotonic()
         self._elapsedFn = elapsedFn or (lambda: time.monotonic() - startMono)
         self._nowIsoFn = nowIsoFn or (
@@ -236,19 +286,19 @@ class BootStateEmitter:
     def runOnce(self) -> dict:
         """Provision the states dir, sample one verdict, write it, return it."""
         ensureStatesDir(self.statesDir)
-        serviceStates = {
-            svc: self._serviceQueryFn(svc)
-            for svc in self.criticalServices
-            if svc != "eclipse-obd"
+        coreStates = {svc: self._serviceQueryFn(svc) for svc in self.coreServices}
+        informationalStates = {
+            svc: self._serviceQueryFn(svc) for svc in self.informationalServices
         }
-        obdTier = assessObdTier(self._obdProbeFn)
         state = computeBootState(
-            serviceStates,
-            obdTier,
-            self._elapsedFn(),
-            self.hardCapSeconds,
-            self.criticalServices,
-            self._nowIsoFn(),
+            coreServiceStates=coreStates,
+            uiAssetsPresent=self._uiAssetProbeFn(),
+            elapsedSeconds=self._elapsedFn(),
+            hardCapSeconds=self.hardCapSeconds,
+            coreServices=self.coreServices,
+            nowIso=self._nowIsoFn(),
+            obdTier=assessObdTier(self._obdProbeFn),
+            informationalServiceStates=informationalStates,
         )
         writeStateAtomic(
             os.path.join(self.statesDir, self.BOOT_STATE_FILENAME), state
@@ -280,6 +330,21 @@ def runForever(
         sleepFn(pollSeconds)
 
 
+def buildEmitter(
+    statesDir: str, hardCapSeconds: float, uiAssetPath: str
+) -> BootStateEmitter:
+    """Construct the emitter the systemd unit runs (the production wiring).
+
+    Extracted from ``main`` so the wiring itself is assertable: US-494's root
+    cause was a dependency the entry point silently never injected.
+    """
+    return BootStateEmitter(
+        statesDir=statesDir,
+        hardCapSeconds=hardCapSeconds,
+        uiAssetPath=uiAssetPath,
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     """CLI entry point for eclipse-boot-state.service."""
     import argparse
@@ -296,10 +361,20 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--hard-cap-seconds", type=float, default=12.0, help="degrade timeout"
     )
+    parser.add_argument(
+        "--ui-asset-path",
+        default=UI_ASSET_PATH_DEFAULT,
+        help=(
+            "dashboard asset whose presence proves the UI is installed "
+            f"(default: {UI_ASSET_PATH_DEFAULT})"
+        ),
+    )
     args = parser.parse_args(argv)
 
-    emitter = BootStateEmitter(
-        statesDir=args.states_dir, hardCapSeconds=args.hard_cap_seconds
+    emitter = buildEmitter(
+        statesDir=args.states_dir,
+        hardCapSeconds=args.hard_cap_seconds,
+        uiAssetPath=args.ui_asset_path,
     )
     runForever(emitter, pollSeconds=args.poll_ms / 1000.0)
     return 0

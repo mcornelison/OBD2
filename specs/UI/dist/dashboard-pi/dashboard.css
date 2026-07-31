@@ -57,6 +57,26 @@
   --tap-min:        40px;      /* minimum touch target (S-2) */
 }
 
+/* --- US-495 (F-111): the [hidden] guard -------------------------------------
+   EVERY show/hide on this surface is carousel.js setting `el.hidden`. The UA
+   sheet's `[hidden] { display: none }` is a USER-AGENT declaration, so ANY
+   author `display` outranks it -- and the five full-screen overlays each set
+   `display: flex` through an ID selector. The result: `hidden` was inert, all
+   five overlays painted at once over the carousel, and the pile intercepted
+   every tap. The JS was always correct; this stylesheet defeated it.
+
+   `!important` rather than a per-overlay rule, deliberately: an ID selector
+   already outranks any plain `[hidden]` rule we could write, so the guard has
+   to win on IMPORTANCE or it has to be duplicated onto every element -- and
+   the next overlay someone adds would ship the bug again. This is the one
+   declaration on the surface that must not be overridable. If an element ever
+   needs to be present-but-invisible, it must not use `hidden` (use
+   `aria-hidden` + `visibility`); `hidden` means NOT RENDERED, full stop.
+
+   Pinned by tests/ui/test_dashboard_overlay_hidden_guard.py, which resolves the
+   real cascade for every element the markup ships `hidden`. */
+[hidden] { display: none !important; }
+
 html, body {
   margin: 0; padding: 0; width: 100%; height: 100%;
   background: var(--bg); overflow: hidden;
@@ -182,6 +202,42 @@ html, body {
 .tile[data-level="unavailable"] .tile-value {
   color: var(--text-tertiary); font-style: italic; font-weight: 400;
 }
+
+/* --- US-497 IMU live-instrument card (S4-card, F-113) ----------------------- */
+/* The g-meter + compass sit side by side above the tile stack. EVERY colour is
+   a var(--token) from specs/UI/tokens.css -- this card forks no palette (AC-4;
+   a bespoke local hex is exactly the drift the SSOT exists to prevent).
+   `currentColor`/`stroke: none` is deliberate on the SVG furniture: it inherits
+   the card's text colour, so the .card.unavailable gray sweeps the instrument
+   too and a dead card cannot leave a bright dial behind. */
+.imu-instruments {
+  display: flex; align-items: center; justify-content: space-around;
+  gap: 10px; padding: 2px 0 6px 0;
+}
+.imu-meter, .imu-compass { width: 96px; height: 96px; flex: 0 0 auto; }
+.imu-ring {
+  fill: none; stroke: var(--surface); stroke-width: 2;
+}
+.imu-ring-half { stroke-dasharray: 3 4; }
+.imu-axis { stroke: var(--surface); stroke-width: 1; }
+/* The trail is the recent past: same hue as the live dot but de-emphasised, so
+   "where the car has been" can never be misread as "where it is now". */
+.imu-trail {
+  fill: none; stroke: var(--text-tertiary); stroke-width: 2;
+  stroke-linejoin: round; stroke-linecap: round;
+}
+.imu-dot { fill: var(--text-primary); }
+/* An over-scale reading is FLAGGED, not silently pinned to the ring: the dot
+   goes amber so a clamped 1.4 g stop cannot read as a tidy 1.0 g one. The true
+   magnitude is always on the G-FORCE tile beside it. */
+.imu-dot[data-clamped="true"] { fill: var(--amber-warn); }
+.imu-needle { fill: var(--text-primary); }
+.imu-tiles { display: flex; flex-direction: column; }
+/* [hidden] on an SVG child needs the same guard the overlays needed (US-495):
+   the UA sheet's [hidden] rule is outranked by the class selectors above, so
+   without this a "hidden" dot or needle would keep painting -- the exact
+   defect S2 fixed, one generation later. */
+.imu-dot[hidden], .imu-needle[hidden] { display: none; }
 
 /* --- US-489 System Status glanceability (Iris polish P-1) ------------------- */
 /* Presentation-only over the SHIPPED US-400 state: a one-glance summary line, a

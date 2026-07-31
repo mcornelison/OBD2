@@ -281,6 +281,20 @@ DEFAULTS: dict[str, Any] = {
     'pi.sensors.imu.enabled': False,
     'pi.sensors.imu.sampleHz': 50,
     'pi.sensors.imu.persistHz': 25,
+    # US-478 (F-113): the raw.imu.* -> states/imu DERIVED display bridge.
+    # stateHz is the state-file write cadence and is grounded to the CONSUMER,
+    # not the sensor: carousel.js POLL_MS = 250 (4 Hz).  Writing tmpfs faster
+    # than the only reader polls is churn with no observable effect.
+    # gravityTauSec is the gravity low-pass time constant that separates static
+    # mount tilt / road grade (slow) from vehicle acceleration (fast) -- without
+    # it a board bolted in at a 10-degree tilt pins a phantom 0.17 g on the
+    # g-meter forever.  mount.* places the board in the VEHICLE frame so a
+    # physical remount is a config edit, not a code edit.
+    'pi.sensors.imu.stateHz': 4,
+    'pi.sensors.imu.gravityTauSec': 5.0,
+    'pi.sensors.imu.mount.forward': '+x',
+    'pi.sensors.imu.mount.left': '+y',
+    'pi.sensors.imu.mount.up': '+z',
     'pi.sensors.light.enabled': False,
     'pi.sensors.light.sampleHz': 1,
     'pi.sensors.retentionDays': 7,
@@ -474,6 +488,7 @@ class ConfigValidator:
         self._validateBootProgress(config)
         self._validatePowerWatch(config)
         self._validateDisplayAutoDim(config)
+        self._validateImuStateBridge(config)
 
         logger.info("Configuration validated successfully")
         return config
@@ -901,6 +916,56 @@ class ConfigValidator:
                 f"pi.display.autoDim.curve must be 'logarithmic' or 'linear' "
                 f"(got {curve!r})",
                 missingFields=['pi.display.autoDim.curve'],
+            )
+
+    def _validateImuStateBridge(self, config: dict[str, Any]) -> None:
+        """Validate pi.sensors.imu.{stateHz,gravityTauSec,mount} (US-478 / F-113).
+
+        Called after defaults are applied. The mount axis map is the one piece of
+        IMU config that is a CALIBRATION fact rather than a rate, and a wrong one
+        is silently wrong -- a duplicated axis would leave the derived frame
+        degenerate and every g/heading reading subtly false rather than absent.
+        So it fails fast HERE (configuration error, 5-tier class 3) instead of
+        raising once per sample inside the bus drain, where it would be logged
+        and swallowed.
+
+        Args:
+            config: Validated configuration (post-default-application).
+
+        Raises:
+            ConfigValidationError: If a rate is non-positive, or an axis spec is
+                not one of +/-x, +/-y, +/-z, or two axes name the same device axis.
+        """
+        for key in ('pi.sensors.imu.stateHz', 'pi.sensors.imu.gravityTauSec'):
+            val = self._getNestedValue(config, key)
+            if val is not None and (
+                isinstance(val, bool) or not isinstance(val, (int, float)) or val <= 0
+            ):
+                raise ConfigValidationError(
+                    f"{key} must be a positive number (got {val!r})",
+                    missingFields=[key],
+                )
+
+        axes = {}
+        for role in ('forward', 'left', 'up'):
+            key = f'pi.sensors.imu.mount.{role}'
+            spec = self._getNestedValue(config, key)
+            if spec is None:
+                continue
+            if not isinstance(spec, str) or spec.strip().lower().lstrip('+-') not in (
+                'x', 'y', 'z'
+            ):
+                raise ConfigValidationError(
+                    f"{key} must name a device axis as +x/-x/+y/-y/+z/-z "
+                    f"(got {spec!r})",
+                    missingFields=[key],
+                )
+            axes[role] = spec.strip().lower().lstrip('+-')
+        if len(set(axes.values())) != len(axes):
+            raise ConfigValidationError(
+                f"pi.sensors.imu.mount must map forward/left/up to three DISTINCT "
+                f"device axes (got {axes!r})",
+                missingFields=['pi.sensors.imu.mount'],
             )
 
     def _validateRequired(self, config: dict[str, Any]) -> list[str]:
