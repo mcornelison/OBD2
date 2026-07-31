@@ -5126,7 +5126,8 @@
       "updatedAt": "2026-07-31",
       "s4Note": "S4-emitter for the V0.29.20 carousel-wiring sprint (Atlas). Per Atlas: the states/imu emitter publishes g-force + compass/heading live; ALTITUDE is typed-NA / grays 'no source' (the ICM-20948 has NO barometer -- do NOT derive/fabricate altitude here; future BMP280/GPS). Consumed by US-497 (the IMU card).",
       "passes": true,
-      "shippedNote": "SHIPPED V0.29.20 (carousel SSOT-wiring, code-complete). On-Pi render/hardware validation = PM bench session at this deploy."
+      "shippedNote": "SHIPPED V0.29.20 (carousel SSOT-wiring, code-complete). On-Pi render/hardware validation = PM bench session at this deploy.",
+      "validatedNote": "On-Pi validated V0.29.21 (2026-07-31): states/imu live off the genuine ICM-20948 @0x69 (derived fields populate); US-497 card render = CIO visual confirm on the 3.5in screen."
     },
     {
       "id": "US-479",
@@ -6058,7 +6059,8 @@
       "createdAt": "2026-07-29",
       "updatedAt": "2026-07-31",
       "passes": true,
-      "shippedNote": "SHIPPED V0.29.20 (carousel SSOT-wiring, code-complete). On-Pi render/hardware validation = PM bench session at this deploy."
+      "shippedNote": "SHIPPED V0.29.20 (carousel SSOT-wiring, code-complete). On-Pi render/hardware validation = PM bench session at this deploy.",
+      "validatedNote": "On-Pi validated V0.29.21 (2026-07-31): states/imu live off the genuine ICM-20948 @0x69 (derived fields populate); US-497 card render = CIO visual confirm on the 3.5in screen."
     },
     {
       "id": "US-498",
@@ -6140,7 +6142,7 @@
       "parent": "F-113",
       "type": "issue",
       "size": "S",
-      "status": "sprint-ready",
+      "status": "complete",
       "title": "P1: IMU reader crashes the whole sample on dev.temperature -- genuine ICM20948 has no .temperature (blocks states/imu)",
       "goal": "As the IMU feed, I want a poll to publish accel/gyro/mag even when the temperature read is unavailable, so states/imu is actually produced. BENCH-VALIDATION CATCH (V0.29.20 deploy 2026-07-31, A-16): with the genuine ICM-20948 @0x69 + imu.enabled=true, EVERY poll fails -- sensor_reader.py:322  throws \"ICM20948 object has no attribute temperature\" (the adafruit_icm20x ICM20948 does not expose it) BEFORE publishing -> no sample -> states/imu never written -> US-497 IMU card has nothing to render. The dead clones never got this far; the real board did.",
       "definitionOfDone": [
@@ -6172,7 +6174,9 @@
       ],
       "tasks": [],
       "createdAt": "2026-07-31",
-      "updatedAt": "2026-07-31"
+      "updatedAt": "2026-07-31",
+      "passes": true,
+      "shippedNote": "FIXED + VALIDATED V0.29.21 (Atlas a6aa088). On-Pi (10.27.27.9) states/imu now LIVE: gLat/gLon/gMag/headingDeg 143.2/gradePct 10.6/altitude null(no_source); 0 imu-read-failed. Retires US-478/497 deferred validation."
     }
   ]
 }
