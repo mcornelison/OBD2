@@ -67,4 +67,25 @@ durable than the companion server: no idle-timeout, no changing port, CIO opens 
 Use the companion server for *generative* brainstorming (A/B/C choice clicks); use the
 committed walkthrough for *review/critique* of an existing set.
 
-See also: [[pattern-defects-first-existing-artifact-review]], [[pattern-ground-in-existing-implementation]].
+## Refinement — publish a hosted Artifact when the browser extension won't connect (2026-07-31)
+
+The most reliable remote path (whole 07-21→31 session — idle/letterbox/live-card/polish reviews):
+**publish the mockup as a private Artifact and give the CIO the URL to paste into any browser.**
+The Claude-in-Chrome extension repeatedly **would not handshake** (`tabs_context_mcp` → "extension
+not connected") even with it installed — don't burn turns retrying it (2-3 attempts max, then pivot).
+The CIO explicitly offered: *"if you give me a link I can cut and paste it into the browser window."*
+
+Pattern that worked (many redeploy rounds, zero friction):
+- Keep the **full standalone HTML** in `proposals/` (committed record, `file://`-openable) AND a
+  **body-only copy** in the scratchpad that I publish via the `Artifact` tool (strip
+  `<!doctype>/<html>/<head>/<body>` wrappers with a `sed` one-liner; keep `<title>`+`<style>`+content+`<script>`).
+- **Republish the SAME scratchpad file path → same URL** every round, so the CIO keeps one link and
+  just refreshes. New subject (e.g. live card vs polish) = new file path = new URL (correct).
+- Redeploy after EVERY CIO change — he iterates fast ("change grade to %", "bigger g-circle"); each
+  round: edit standalone → regen body-only → `Artifact` republish → tell him "refresh, same link".
+- Load `artifact-design` skill before writing; reuse one spec-sheet chrome + the real `specs/UI`
+  device tokens across deliverables for visual continuity; device frames commit to dark (the real panel).
+
+Precedence: hosted Artifact (remote, extension-down — the default now) > committed `file://` walkthrough
+(local, openable) > companion server (generative only, flaky). See also:
+[[pattern-defects-first-existing-artifact-review]], [[pattern-ground-in-existing-implementation]].
