@@ -1067,8 +1067,8 @@
       "status": "active",
       "renamedFrom": "B-103",
       "createdAt": "2026-05-27",
-      "updatedAt": "2026-05-27",
-      "currentVersion": "V0.29.6"
+      "updatedAt": "2026-07-31",
+      "currentVersion": "V0.29.20"
     },
     {
       "id": "F-104",
@@ -1138,9 +1138,9 @@
       "title": "On-Pi DTC / check-engine viewer + gated Mode-04 clear (Card 5 of the touch dashboard)",
       "description": "On-Pi DTC/check-engine viewer surface + safety-gated Mode-04 clear, with a KOEO read independent of DriveDetector. Card 5 (Alerts+DTC) of the F-092/F-097 carousel. Spec drafted + CIO-approved 2026-06-05 (post drive-27 MIL: P0443 EVAP read+cleared off the Pi); spec docs/superpowers/specs/2026-06-05-pi-dtc-check-engine-viewer-clear-design.md. STATUS: pending Atlas design-gate signoff (load-bearing net-new write-to-vehicle Mode-04 path) -- Iris files the formal groom-ready pointer on Atlas's nod. SEQUENCE (Atlas greenlight 2026-06-19): F-103 -> carousel shell -> System Status + Battery Health cards -> System Setup+polkit -> pygame sunset -> THIS (Card 5, LAST). BUILD CONDITIONS: C-2 KOEO capture path independent of DriveDetector (drive_id=NULL, or viewer is blank key-on); C-3 Mode 02 dead on MD326328 -> realtime_data fallback (see F-109). Rule-10 DoD: state-server extension + emitters + Mode-04 path + token each land with matching specs/architecture.md (+ specs/UI/) in-sprint. Iris story split (spec section 10 M-1): US-A dtc emitter + state-server endpoint + static-table loader/sync; US-B takeover + severity-styled ribbon; US-C Alerts card (hero+list) + detail (freeze-frame + severity-gated fix + trust badge); US-D Clear-DTC Mode-04 path + gate + confirm + re-read + session-lock (load-bearing, pairs w/ Atlas A-1); US-E freeze-frame capture-or-honest-fallback. Spool owns severity taxonomy + DSM P1xxx curation; safety semantics offices/tuner/dtc-display-clear-safety-advisory.md; reference code specs/examples/dtc_read_and_clear_koeo.py.",
       "status": "active",
-      "currentVersion": "V0.29.6",
+      "currentVersion": "V0.29.20",
       "createdAt": "2026-06-28",
-      "updatedAt": "2026-06-28"
+      "updatedAt": "2026-07-31"
     },
     {
       "id": "F-110",
@@ -1170,8 +1170,8 @@
       "description": "HARDWARE-INDEPENDENT (Atlas 2026-06-16 brief, phase 2; design-only, Atlas-owned). The load-bearing dedicated-reader / in-process pub/sub bus contract everything subscribes to: per-subscriber QoS (lossless sync/safety vs lossy display), bounded queues, producer-never-blocks, 100Hz-IMU-vs-~6/s-OBD rate handling, ECMLink/OBDLink K-line arbitration. F-110 shipped Slice 1 (bus skeleton + PersistenceSubscriber, ships-dark); this is the full contract + consolidation. Atlas open gate #1. Graduates the SSOT-bus direction into specs/ssot-design-pattern.md (gate #4) once CIO firms it. GROOM-READY candidate (design artifact; can run parallel to F-112).",
       "status": "complete",
       "createdAt": "2026-06-28",
-      "updatedAt": "2026-06-28",
-      "currentVersion": "V0.29.4"
+      "updatedAt": "2026-07-31",
+      "currentVersion": "V0.29.20"
     },
     {
       "id": "F-114",
@@ -1247,8 +1247,8 @@
       "title": "Pi dashboard render-truthfully -- emitter wiring + idle-state + full-bleed + light-feed (V0.29.15)",
       "description": "The F-092/097/111 carousel is built + deployed but renders wrong on the real Pi: (P0) the card emitters were never wired to execute (no service unit / no orchestrator invocation) so only boot-state is written -> carousel starves -> phantom Check Engine; plus two Iris design gaps CIO-locked 2026-07-21 (calm idle-state home card; full-bleed LETTERBOX scaling) + a light-sensor brightness feed + a Rule-10 token reconciliation. Iris spec: offices/uidevloper/proposals/2026-07-21-pi-idle-state-and-full-bleed.md (REVIEWED, CIO-locked 9da4af5). 'Make the deployed line render truthfully' -- additive over the shipped carousel, no redraw.",
       "createdAt": "2026-07-21",
-      "updatedAt": "2026-07-27",
-      "currentVersion": "V0.29.17"
+      "updatedAt": "2026-07-31",
+      "currentVersion": "V0.29.20"
     },
     {
       "id": "F-122",
@@ -5121,10 +5121,12 @@
         "atlas-icm20948-verdict-2026-07-18"
       ],
       "tasks": [],
-      "status": "sprint-ready",
+      "status": "complete",
       "createdAt": "2026-07-19",
-      "updatedAt": "2026-07-29",
-      "s4Note": "S4-emitter for the V0.29.20 carousel-wiring sprint (Atlas). Per Atlas: the states/imu emitter publishes g-force + compass/heading live; ALTITUDE is typed-NA / grays 'no source' (the ICM-20948 has NO barometer -- do NOT derive/fabricate altitude here; future BMP280/GPS). Consumed by US-497 (the IMU card)."
+      "updatedAt": "2026-07-31",
+      "s4Note": "S4-emitter for the V0.29.20 carousel-wiring sprint (Atlas). Per Atlas: the states/imu emitter publishes g-force + compass/heading live; ALTITUDE is typed-NA / grays 'no source' (the ICM-20948 has NO barometer -- do NOT derive/fabricate altitude here; future BMP280/GPS). Consumed by US-497 (the IMU card).",
+      "passes": true,
+      "shippedNote": "SHIPPED V0.29.20 (carousel SSOT-wiring, code-complete). On-Pi render/hardware validation = PM bench session at this deploy."
     },
     {
       "id": "US-479",
@@ -5931,9 +5933,11 @@
         "A-16"
       ],
       "tasks": [],
-      "status": "sprint-ready",
+      "status": "complete",
       "createdAt": "2026-07-29",
-      "updatedAt": "2026-07-29"
+      "updatedAt": "2026-07-31",
+      "passes": true,
+      "shippedNote": "SHIPPED V0.29.20 (carousel SSOT-wiring, code-complete). On-Pi render/hardware validation = PM bench session at this deploy."
     },
     {
       "id": "US-495",
@@ -5972,9 +5976,11 @@
         "A-16"
       ],
       "tasks": [],
-      "status": "sprint-ready",
+      "status": "complete",
       "createdAt": "2026-07-29",
-      "updatedAt": "2026-07-29"
+      "updatedAt": "2026-07-31",
+      "passes": true,
+      "shippedNote": "SHIPPED V0.29.20 (carousel SSOT-wiring, code-complete). On-Pi render/hardware validation = PM bench session at this deploy."
     },
     {
       "id": "US-496",
@@ -6008,9 +6014,11 @@
         "A-16"
       ],
       "tasks": [],
-      "status": "sprint-ready",
+      "status": "complete",
       "createdAt": "2026-07-29",
-      "updatedAt": "2026-07-29"
+      "updatedAt": "2026-07-31",
+      "passes": true,
+      "shippedNote": "SHIPPED V0.29.20 (carousel SSOT-wiring, code-complete). On-Pi render/hardware validation = PM bench session at this deploy."
     },
     {
       "id": "US-497",
@@ -6046,9 +6054,11 @@
         "AI-005"
       ],
       "tasks": [],
-      "status": "sprint-ready",
+      "status": "complete",
       "createdAt": "2026-07-29",
-      "updatedAt": "2026-07-29"
+      "updatedAt": "2026-07-31",
+      "passes": true,
+      "shippedNote": "SHIPPED V0.29.20 (carousel SSOT-wiring, code-complete). On-Pi render/hardware validation = PM bench session at this deploy."
     },
     {
       "id": "US-498",
@@ -6081,9 +6091,11 @@
         "A-16"
       ],
       "tasks": [],
-      "status": "sprint-ready",
+      "status": "complete",
       "createdAt": "2026-07-29",
-      "updatedAt": "2026-07-29"
+      "updatedAt": "2026-07-31",
+      "passes": true,
+      "shippedNote": "SHIPPED V0.29.20 (carousel SSOT-wiring, code-complete). On-Pi render/hardware validation = PM bench session at this deploy."
     },
     {
       "id": "US-499",
@@ -6117,9 +6129,11 @@
         "A-16"
       ],
       "tasks": [],
-      "status": "sprint-ready",
+      "status": "complete",
       "createdAt": "2026-07-29",
-      "updatedAt": "2026-07-29"
+      "updatedAt": "2026-07-31",
+      "passes": true,
+      "shippedNote": "SHIPPED V0.29.20 (carousel SSOT-wiring, code-complete). On-Pi render/hardware validation = PM bench session at this deploy."
     }
   ]
 }
