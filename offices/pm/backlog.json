@@ -5,7 +5,7 @@
   "counters": {
     "epic": 7,
     "feature": 124,
-    "story": 513
+    "story": 515
   },
   "epics": [
     {
@@ -6521,6 +6521,53 @@
       ],
       "conditionalOutcomes": [],
       "sourceRefs": ["offices/pm/blockers/BL-025-obd-capture-dead-since-0703-connect-path-regression.md#4", "offices/architect/inbox/2026-07-31-from-atlas-STATUS-bt-softblock-rootcause-fixed-plus-open-work.md"],
+      "createdAt": "2026-07-31",
+      "updatedAt": "2026-07-31",
+      "tasks": []
+    },
+    {
+      "id": "US-514",
+      "parent": "F-120",
+      "type": "issue",
+      "size": "S",
+      "status": "pending",
+      "title": "P0: bake the BT rfkill-unblock fix into deploy (make the live capture fix repo-managed + reflash-proof)",
+      "goal": "As the deploy path, I want the eclipse-rfkill-unblock fix in the repo + deploy-pi.sh, so the capture fix (currently live-on-Pi-by-hand) survives a reflash / deploy --init and can't silently revert to the soft-block that killed capture since 07-03.",
+      "definitionOfDone": [
+        "add deploy/eclipse-rfkill-unblock.service: oneshot `rfkill unblock all`, After=systemd-rfkill.service bluetooth.service, WantedBy=multi-user.target (exactly the unit Atlas installed live tonight)",
+        "add a deploy-pi.sh step that installs + enables the unit (sync-if-changed, idempotent) AND clears any stale /var/lib/systemd/rfkill/*:bluetooth block state on deploy",
+        "full implementation spec (exact unit + step + acceptance) is in Ralph's inbox: offices/ralph/inbox/2026-07-31-from-atlas-bake-rfkill-unblock-into-deploy.md -- build to it",
+        "does NOT use deploy --init (a normal deploy makes it repo-managed; --init is the exact path that would have wiped the live fix)",
+        "tests cover the deploy-pi.sh step (unit installed + enabled + stale-block cleared); ruff clean"
+      ],
+      "validationCriteria": [
+        {"action": "after PM deploys this + reboots the Pi (bench, no car)", "outcome": "`rfkill list` shows BOTH hci0:Bluetooth and phy0:Wireless LAN Soft blocked:no; `systemctl is-enabled eclipse-rfkill-unblock`=enabled; eclipse-obd active"}
+      ],
+      "conditionalOutcomes": [],
+      "sourceRefs": ["offices/ralph/inbox/2026-07-31-from-atlas-bake-rfkill-unblock-into-deploy.md", "offices/pm/blockers/BL-025-obd-capture-dead-since-0703-connect-path-regression.md#1", "offices/architect/inbox/2026-07-31-from-atlas-STATUS-bt-softblock-rootcause-fixed-plus-open-work.md"],
+      "createdAt": "2026-07-31",
+      "updatedAt": "2026-07-31",
+      "tasks": []
+    },
+    {
+      "id": "US-515",
+      "parent": "F-120",
+      "type": "issue",
+      "size": "S",
+      "status": "pending",
+      "title": "P0: fix scripts/pair_obdlink.sh (Trixie bluez prompt regex + display-capable agent) so a durable bond + trust is written",
+      "goal": "As the pairing tool, I want pair_obdlink.sh to actually pair + trust + bond the OBDLink on Trixie bluez, so a durable bond survives reboot and re-pairing works instead of timing out.",
+      "definitionOfDone": [
+        "fix the pexpect prompt regex: it expects `\\[.+\\]#` but Trixie bluetoothctl prompts `[bluetoothctl]>` -> it times out and never pairs. Match the real prompt",
+        "change the agent from `NoInputNoOutput` (contradicts the script's own Confirm-passkey handling -> auth-fails on the OBDLink) to a display-capable agent (`DisplayYesNo`) so a durable bond + `trust` is written and survives reboot",
+        "full implementation spec (file:line for both bugs + acceptance) is in Ralph's inbox: offices/ralph/inbox/2026-07-31-from-atlas-fix-pair-obdlink-sh.md -- build to it",
+        "--dry-run still MUST NOT invoke bluetoothctl or any external BT stack (preserve the existing guard); tests cover the regex match + agent selection; ruff clean"
+      ],
+      "validationCriteria": [
+        {"action": "run the fixed script's dry-run + unit tests (code/logic layer, bench)", "outcome": "the prompt regex matches `[bluetoothctl]>` + the agent is display-capable; dry-run stays inert. NOTE: full pair + bond-survives-reboot verification is engine-on -- Spool owns that live gate"}
+      ],
+      "conditionalOutcomes": ["the code fix is bench/unit-testable now; the real pair + bond-survives-reboot is engine-on (Spool) and folds into the BL-025 validation drive"],
+      "sourceRefs": ["offices/ralph/inbox/2026-07-31-from-atlas-fix-pair-obdlink-sh.md", "offices/pm/blockers/BL-025-obd-capture-dead-since-0703-connect-path-regression.md#2", "scripts/pair_obdlink.sh"],
       "createdAt": "2026-07-31",
       "updatedAt": "2026-07-31",
       "tasks": []
