@@ -126,6 +126,12 @@ code{font-family:var(--mono);font-size:.85em;background:var(--accent-soft);color
 .gt .gd{font-size:9.5px;color:var(--dv-t3);}
 .simple{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;color:var(--dv-t2);}
 .simple .big{font-size:30px;font-weight:800;color:#eef2f6;} .simple .sm{font-size:11px;color:var(--dv-t3);}
+/* combined Health card */
+.hsec{background:var(--dv-tile);border:1px solid var(--dv-line);border-radius:7px;padding:8px 10px;margin-bottom:8px;display:flex;align-items:baseline;gap:8px;}
+.hsec:last-child{margin-bottom:0;}
+.hsec .hl{font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--dv-t2);min-width:74px;}
+.hsec .hv{font-size:18px;font-weight:800;color:#eef2f6;} .hsec .hv.ok{color:var(--dv-green);} .hsec .hv.dim{color:var(--dv-t3);font-style:italic;font-weight:400;font-size:14px;}
+.hsec .hd{font-size:10px;color:var(--dv-t3);margin-left:auto;text-align:right;line-height:1.35;}
 
 /* drill-down overlay */
 .drill{position:absolute;inset:0;background:rgba(0,0,0,.96);z-index:20;display:flex;flex-direction:column;padding:8px 12px;}
@@ -157,7 +163,7 @@ code{font-family:var(--mono);font-size:.85em;background:var(--accent-soft);color
       <button class="ctl on" id="b-parked">Parked (home = idle · kebab shown)</button>
       <button class="ctl" id="b-driving">Driving (home = live · kebab hidden)</button>
       <span class="lbl">·</span>
-      <button class="ctl" id="b-bench">Bench: hide LTFT (wrap skips it)</button>
+      <button class="ctl" id="b-bench">Bench: engine off (Fuel Trim gates)</button>
       <button class="ctl on" id="b-auto">Auto-rotate: on</button>
     </div>
     <div class="split">
@@ -165,8 +171,10 @@ code{font-family:var(--mono);font-size:.85em;background:var(--accent-soft);color
       <div class="rail">
         <h3>#9 Live card + placement</h3>
         <p class="lead">Back to your locked spec — compass <b>tape</b>, <b>GEAR</b>, amber at <b>0.6 g</b>, grade % + altitude — and moved to the <b>home slot</b>: parked shows idle, driving shows live (toggle above).</p>
+        <h3>Consolidated to 4 screens</h3>
+        <p class="lead">Battery + Light + Fuel Trim are now one <b>Health</b> card (was 3 screens). Full set: <b>Home · System Status · Health · Alerts</b>. On the bench the <b>Fuel Trim</b> line honestly reads "no engine data" (toggle above) rather than a fake value.</p>
         <h3>#12 · #13 Wrap + auto-rotate</h3>
-        <p>Auto-cycles every <b>8 s</b> (top bar), <b>wraps</b>, and <b>skips hidden cards</b> (try Bench-hide). <b>Slow swipe → pause</b> (you're reading); <b>fast flick → resume</b>. Tap a card to pause. Auto-resumes after 45 s idle. Slow-vs-fast is a <b>velocity</b> call (<code>≥0.6 px/ms</code>).</p>
+        <p>Auto-cycles every <b>8 s</b> (top bar) and <b>wraps</b> (last→first). A gated card is skipped when hidden. <b>Slow swipe → pause</b> (you're reading); <b>fast flick → resume</b>. Tap a card to pause. Auto-resumes after 45 s idle. Slow-vs-fast is a <b>velocity</b> call (<code>≥0.6 px/ms</code>).</p>
         <h3>#7 System drill-down</h3>
         <p>Swipe to <b>System Status</b> and tap <b>“SYSTEM · 1 ISSUE”</b> → the degraded source, worst-first, with a Back.</p>
         <h3>#14 Fidelity</h3>
@@ -180,6 +188,7 @@ code{font-family:var(--mono);font-size:.85em;background:var(--accent-soft);color
   <section>
     <div class="sec-head"><span class="sec-num">◆</span><h2>Decisions & the numbers to confirm</h2><span class="sec-sub">your call</span></div>
     <ul class="callouts">
+      <li><b>Consolidated card title:</b> I named the merged Battery + Light + Fuel&nbsp;Trim card <b>“Health”</b>. Alternatives if you prefer: <b>Vitals</b>, <b>Onboard</b>, <b>Status</b> (taken-ish), or <b>Device</b>. Your pick.</li>
       <li><b>Live card placement (#9):</b> I put it on the <b>home slot</b> (idle↔live). If you'd rather it be a dedicated non-home card, tell me the slot and I'll move it.</li>
       <li><b>Auto-rotate numbers (#13):</b> interval <b>8 s</b>, auto-resume after <b>45 s</b> idle, fast-swipe threshold <b>0.6 px/ms</b>. All configurable — say if any feels off.</li>
       <li class="q"><b>Tokens (#14, needs Atlas):</b> <code>--bg</code>/<code>--surface</code> aren't in the SSOT yet, and 2 <code>--destructive</code> reds are unset. <code>--critical-red #D32F2F</code> already landed. Routing the rest to Atlas.</li>
@@ -207,13 +216,12 @@ function gradePct(t){return Math.tan(simGrade(t)*Math.PI/180)*100;}
 function simAlt(t){return Math.round(205+42*Math.sin(t*0.16)+10*Math.sin(t*0.5));}
 
 // ---------- cards (proposed order: home=live/idle, then diagnostics) ----------
+// 4 screens (was 6): Home(live/idle) · System Status · Health(battery+light+fuel trim) · Alerts.
 var cards=[
   {id:"home", title:"", vis:function(){return true;}, render:function(){return driving?liveCard():idleCard();}},
   {id:"system", title:"System Status", vis:function(){return true;}, render:systemCard},
-  {id:"battery", title:"Battery Health", vis:function(){return true;}, render:batteryCard},
-  {id:"light", title:"Light", vis:function(){return true;}, render:lightCard},
-  {id:"alerts", title:"Alerts", vis:function(){return true;}, render:alertsCard},
-  {id:"ltft", title:"LTFT Trend", vis:function(){return !benchHide;}, render:ltftCard}
+  {id:"health", title:"Health", vis:function(){return true;}, render:healthCard},
+  {id:"alerts", title:"Alerts", vis:function(){return true;}, render:alertsCard}
 ];
 function visibleIdxs(){var a=[];for(var i=0;i<cards.length;i++)if(cards[i].vis())a.push(i);return a;}
 function stepVisible(cur,dir){
@@ -261,10 +269,20 @@ function systemCard(){
      '<div class="gt"><div class="h"><span class="dd ok"></span><span class="gl">Drive</span></div><div class="gv">'+(driving?"REC":"IDLE")+'</div><div class="gd">'+(driving?"drive 36":"not recording")+'</div></div>'+
    '</div></div>';
 }
-function batteryCard(){return '<div class="cardwrap"><div class="ctitle">Battery Health</div><div class="simple"><div class="big" style="color:var(--dv-green)">HEALTHY</div><div class="sm">Pi UPS · 4.19 V · checked 3 days ago</div><div class="sm">runtime ~12 min to cutoff</div></div></div>';}
-function lightCard(){return '<div class="cardwrap"><div class="ctitle">Light</div><div class="simple"><div class="big">'+(driving?"820":"6")+' lx</div><div class="sm">TSL2591 · live feed @0x29</div><div class="sm">display '+(driving?"bright":"dimmed (parked)")+'</div></div></div>';}
+// Combined HEALTH card = Battery + Light + Fuel Trim (was 3 screens). Fuel Trim is
+// vehicle-gated: on the bench / key-off it honestly shows "no engine data", not a
+// fabricated value; Battery + Light are always available.
+function healthCard(){
+  var fuel = benchHide
+    ? '<div class="hsec"><span class="hl">Fuel Trim</span><span class="hv dim">no engine data</span><span class="hd">engine off / bench</span></div>'
+    : '<div class="hsec"><span class="hl">Fuel Trim</span><span class="hv ok">+2.1%</span><span class="hd">bank 1 · long-term<br>migrating toward 0</span></div>';
+  return '<div class="cardwrap"><div class="ctitle">Health</div>'+
+    '<div class="hsec"><span class="hl">Battery</span><span class="hv ok">HEALTHY</span><span class="hd">Pi UPS 4.19 V · checked 3d ago<br>~12 min to cutoff</span></div>'+
+    '<div class="hsec"><span class="hl">Light</span><span class="hv">'+(driving?"820 lx":"6 lx")+'</span><span class="hd">TSL2591 @0x29<br>display '+(driving?"bright":"dimmed")+'</span></div>'+
+    fuel+
+  '</div>';
+}
 function alertsCard(){return '<div class="cardwrap"><div class="ctitle">Alerts</div><div class="simple"><div class="big" style="color:var(--dv-t3);font-style:italic;font-size:20px">No stored codes</div><div class="sm">key-on read · 5 min ago</div></div></div>';}
-function ltftCard(){return '<div class="cardwrap"><div class="ctitle">LTFT Trend</div><div class="simple"><div class="big" style="color:var(--dv-green)">+2.1%</div><div class="sm">bank 1 · migrating toward 0</div><div class="sm">vehicle-gated card</div></div></div>';}
 
 // ---------- render frame ----------
 function render(){
