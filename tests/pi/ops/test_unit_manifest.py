@@ -35,10 +35,13 @@ import pytest
 
 from pi.ops import unit_manifest as manifest
 
-# The 8 deploy-installed units, verified on the Pi 2026-07-27 (US-492 AC-2
-# grounding). This literal is the ONE place the expectation is restated -- it is
-# the fixture the SSOT is measured against, not a second production list.
+# The 9 deploy-installed units. The first 8 were verified on the Pi 2026-07-27
+# (US-492 AC-2 grounding); eclipse-rfkill-unblock joined 2026-07-31 with the
+# BL-025 P0 hotfix (verified live on the Pi by Atlas, then made repo-managed).
+# This literal is the ONE place the expectation is restated -- it is the fixture
+# the SSOT is measured against, not a second production list.
 EXPECTED_CANONICAL = {
+    "eclipse-rfkill-unblock.service",
     "eclipse-obd.service",
     "eclipse-powerwatch.service",
     "eclipse-states-http.service",
@@ -55,14 +58,15 @@ EXPECTED_CANONICAL = {
 # ---------------------------------------------------------------------------
 
 
-def test_canonicalUnits_matchesTheEightDeployInstalledUnits():
+def test_canonicalUnits_matchesTheDeployInstalledUnits():
     """
     Given: the manifest is the SSOT for deploy-installed OBD units
     When: the canonical list is read
-    Then: it is exactly the 8 units verified on the Pi 2026-07-27
+    Then: it is exactly the units verified installed on the Pi (8 from
+        2026-07-27 + eclipse-rfkill-unblock from the 2026-07-31 BL-025 hotfix)
     """
     assert set(manifest.CANONICAL_UNITS) == EXPECTED_CANONICAL
-    assert len(manifest.CANONICAL_UNITS) == 8
+    assert len(manifest.CANONICAL_UNITS) == len(EXPECTED_CANONICAL)
 
 
 def test_canonicalUnits_excludesEclipseSyncWhichIsNotInstalled():

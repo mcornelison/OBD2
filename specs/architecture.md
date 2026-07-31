@@ -419,6 +419,38 @@ reboot — bluez stores it under `/var/lib/bluetooth/<adapter>/<mac>/`.
 what enables the adapter to reconnect without user prompts on future
 boots.
 
+**Radio soft-block survival — the layer below everything else (BL-025).**
+Before a bond or an rfcomm bind can matter, the adapter has to be *unblocked*.
+`systemd-rfkill` **persists rfkill soft-block state across reboots** under
+`/var/lib/systemd/rfkill/<id>:bluetooth` and replays it at every boot. This Pi
+carried a saved `[1]` there from ~2026-07-03, so Bluetooth came up soft-blocked
+on every single boot and OBD capture recorded **zero rows for ~4 weeks** — while
+every layer above reported an honest "no adapter". The lesson is the diagnostic
+order: *radio → bond → bind → connect*, and the four-week cost came from
+starting at the top.
+
+`deploy/eclipse-rfkill-unblock.service` is the standing safety net
+(`Type=oneshot`, `RemainAfterExit=yes`, `ExecStart=/usr/sbin/rfkill unblock all`).
+Two details are load-bearing rather than stylistic:
+
+- **`After=systemd-rfkill.service`** — that unit is what *restores* the saved
+  block. Unblocking before it runs just lets it re-block afterwards: a green
+  unit on a dark adapter.
+- **`unblock all`, not `unblock bluetooth`** — the saved-block mechanism is
+  per-radio and the WiFi phy can acquire one identically. On this Pi WiFi is
+  also the remote-access path, so leaving a sibling radio blocked would move the
+  outage rather than end it.
+
+Installed + enabled by `step_install_rfkill_unblock` in `deploy-pi.sh` on
+**every** deploy (not gated behind `--init`, same posture as
+`step_reassert_obd_mac`: a block can be re-saved at any shutdown, so a drifted
+Pi self-heals on the next ordinary re-deploy). The step additionally clears the
+live block and zeroes any stale saved one, closing the window between deploying
+and the next reboot. The unit is registered first in
+`src/pi/ops/unit_manifest.py` START order, so `obdctl status all` surfaces it
+ahead of the units that depend on it. Origin RCA of the saved block is tracked
+separately (BL-025 #4 / US-513); this net stands regardless of the origin.
+
 **RFCOMM bind reboot-survival.** While the bluez bond is persistent,
 `rfcomm bind 0 <MAC> 1` state is NOT — it's cleared on every boot. Two
 layers keep `/dev/rfcomm0` live after reboot:
