@@ -65,7 +65,7 @@ Format per item:
 
 ### AI-005 Wire the genuine Adafruit ICM-20948 #4554 to the Pi I2C bus (@0x69) -- unblocks US-478
 - **Owner**: CIO (Mike) -- hardware install on the Pi
-- **Status**: open
+- **Status**: DONE 2026-07-30 -- IMU verified live @0x69 (i2cdetect). Unblocks US-478 + US-497 live validation. NOTE: the light sensor (0x29) dropped off the bus during the IMU wiring (only 0x36 UPS + 0x69 IMU show) -- re-seat if the light feed is wanted back.
 - **Filed**: 2026-07-27
 - **Source**: Session 55 UI-foundation grooming; genuine IMU received 2026-07-27 (replaces the dead clones)
 
