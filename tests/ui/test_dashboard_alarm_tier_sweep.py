@@ -53,15 +53,20 @@ _JS = os.path.join(_DIST, "carousel.js")
 # tokens.css:50-57 -- RESERVED, brand mark ONLY (Spool S-2).
 _BRAND_REDS = ("var(--red)", "var(--red-light)", "var(--red-dark)")
 
-# The two surfaces US-488 deliberately did NOT sweep. Both are the Mode-04
-# hard-confirm -- a DESTRUCTIVE USER ACTION, which Spool ruled is a different
-# axis from the engine alarm tiers: it MUST NOT be any alarm-red and MUST NOT
-# be amber, so it needs a new --destructive token (Iris owns the value, Atlas
-# gates it under Rule-10). That token does not exist yet, and inventing a value
-# inside this story is exactly the drift the US-484 line of work removes.
-# Listed by selector so the debt cannot grow quietly: the follow-up story closes
-# TD-067 by repointing these two and deleting this tuple.
-_DEFERRED_DESTRUCTIVE = ("#clear-confirm .confirm-box", "#clear-confirm-ok")
+# US-488 deliberately did NOT sweep two surfaces -- the Mode-04 hard-confirm
+# box + button -- because a DESTRUCTIVE USER ACTION is a different axis from the
+# engine alarm tiers (Spool): not an alarm-red, not amber. They waited on a
+# --destructive token nobody had gated, and were listed here by selector so the
+# debt could not grow quietly.
+#
+# US-510 CLOSED IT. Atlas ruled the values 2026-07-31 (--destructive #C62828 +
+# --destructive-border #7F1D1D, both distinct from --critical-red), the two
+# rules were repointed, and this tuple is now EMPTY rather than deleted: the
+# guard below keeps its shape, so if a future surface reaches for a brand red
+# it fails against an empty allow-list instead of against a missing test. The
+# destructive tokens' own values + distinctness are pinned in
+# tests/ui/test_dashboard_fidelity_pass.py.
+_DEFERRED_DESTRUCTIVE = ()
 
 
 def _rules(css: str) -> list:
@@ -236,8 +241,8 @@ def test_carouselJs_detailDirective_isTaggedWithTheTier():
 
 
 def test_noAlarmSurfaceRendersABrandRed_exceptTheDeferredDestructivePair():
-    """TD-067's closing assertion, minus its gated tail. Every OTHER rule in the
-    sheet is now off the brand reds."""
+    """TD-067's closing assertion. US-510 landed the gated tail, so the allow
+    list is now empty and NO rule in the sheet paints a brand red."""
     offenders = {
         sel: _brandRedsIn(body)
         for sel, body in _rules(_read(_CSS))
@@ -246,20 +251,24 @@ def test_noAlarmSurfaceRendersABrandRed_exceptTheDeferredDestructivePair():
     assert set(offenders) == set(_DEFERRED_DESTRUCTIVE), offenders
 
 
-def test_theDestructiveTokenIsNotInventedLocally():
-    """SCOPE FENCE (the US-484-a pattern): --destructive has no gated value yet,
-    so neither file may DECLARE or RENDER it. This test is what stops a
-    well-meaning half-landing -- a locally-guessed hex in the dist would be
-    exactly the SSOT fork the US-484 line of work exists to remove.
+def test_theDestructiveTokenIsDefinedInTheSsot_notForkedIntoTheDist():
+    """RE-AIMED BY US-510 (this test's premise was overturned on purpose).
 
-    Prose is fine and expected: both files carry a comment explaining WHY the
-    token is missing. Only a real declaration (`--destructive:`) or a real
-    consumer (`var(--destructive)`) is the violation -- asserting on the bare
-    string would fail on the explanation itself."""
-    for path in (_TOKENS, _CSS):
-        text = _read(path)
-        assert not re.search(r"^\s*--destructive\s*:", text, re.MULTILINE), path
-        assert "var(--destructive)" not in text, path
+    It used to assert --destructive was declared NOWHERE, because no gated value
+    existed and a locally-guessed hex would have been an SSOT fork. Atlas ruled
+    the value 2026-07-31, so "declared nowhere" is now the WRONG invariant --
+    but the thing it was really guarding is not: the value must come from the
+    SSOT, never be invented in the dist. So the assertion is re-aimed rather
+    than deleted -- the dist may declare the token only as a MIRROR, byte-equal
+    to tokens.css.
+
+    (Deleting it would have dropped a live invariant along with the dead one --
+    the US-506 lesson: an overturned test is evidence, not an obstacle.)"""
+    css, tokens = _read(_CSS), _read(_TOKENS)
+    for name in ("destructive", "destructive-border"):
+        assert re.search(rf"^\s*--{name}\s*:", tokens, re.MULTILINE), name
+        assert _tokenValue(css, name) == _tokenValue(tokens, name), name
+    assert "var(--destructive)" in css, "the action fill must actually be consumed"
 
 
 def test_brandRedTokensAreStillDeclared_andStillMatchTheSsot():

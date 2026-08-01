@@ -22,7 +22,27 @@
 
 :root {
   /* --- Type --------------------------------------------------------------- */
-  --font-mono: ui-monospace, Menlo, Consolas, monospace;  /* the only family */
+  --font-mono: ui-monospace, Menlo, Consolas, monospace;  /* DATA + values     */
+  /* BRAND MOMENTS ONLY -- the `ECLIPSE OBD-II` wordmark + card titles (Iris
+     A-3, US-510). Everything that carries a READING stays --font-mono: the
+     tabular mono IS the instrument vernacular and is deliberately unchanged.
+     Lead face = the CIO's pick (Bahnschrift); the stack is Iris's own, from her
+     CIO-locked round-2 mockup.
+     KNOWN-OPEN (BL-027): the shipped face is meant to be INLINED as a CSP-safe
+     `@font-face` woff2 data-URI -- no font CDN is permitted in the kiosk (it is
+     offline in the car). That asset does not exist yet: Iris supplies the
+     base64 and the face is a CIO pick, so US-510 landed the token + the
+     bindings and left the payload to the fast-follow. Until it lands, the
+     brand moments resolve through this stack to whatever the panel has. */
+  --font-display: "Bahnschrift", "DIN Condensed", "Oswald", "Arial Narrow",
+                  system-ui, sans-serif;
+
+  /* --- Base surfaces ------------------------------------------------------ */
+  /* Atlas Rule-10 ruling 2026-07-31 (US-510/TD-065): PROMOTED from the
+     dashboard.css:27-28 literals. Pure consolidation -- the values ARE the
+     shipped ones, so the promotion is zero-visual-change by construction. */
+  --bg:             #000000;   /* base background (splash + dashboard field)  */
+  --surface:        #111111;   /* raised chrome: top bar, rules, seams        */
 
   /* --- Neutral text ------------------------------------------------------- */
   --text-primary:   #DDDDDD;   /* primary / high-emphasis dashboard text.
@@ -67,6 +87,21 @@
   /* --amber-warn WATCH and invert severity). See US-484-b +                   */
   /* offices/tuner/dtc-display-clear-safety-advisory.md §6d.                    */
   --critical-red: #D32F2F;
+
+  /* --- DESTRUCTIVE ACTION reds — a DIFFERENT AXIS from the alarm tiers ----- */
+  /* Atlas Rule-10 ruling 2026-07-31 (US-510, closing TD-065/TD-067). These
+     dress the Mode-04 clear-codes hard-confirm: a button the OPERATOR presses,
+     not a condition of the VEHICLE. Three constraints, all load-bearing:
+       - NOT a brand red (--red/--red-light) — brand ≠ danger (Spool S-2);
+       - NOT --amber-warn — that means WATCH, a live degraded state;
+       - MUST stay DISTINCT from --critical-red (#D32F2F) — if a destructive
+         ACTION reads as an alarm STATE, the driver cannot tell "you are about
+         to erase your codes" from "pull over". That conflation is the whole
+         reason this pair exists rather than an alias.
+     Iris applies which surface takes which; the reds are UI affordance, not
+     engine safety, so a Spool ratify is optional (Atlas), not blocking. */
+  --destructive:        #C62828;   /* destructive-action fill                 */
+  --destructive-border: #7F1D1D;   /* confirm-box border / secondary surface  */
 }
 
 /* ============================================================================
@@ -79,9 +114,14 @@
  *   --neutral-blue:  TBD;  normal-state tuning readouts, ~#7B9CAE.
  *
  * Not yet tokenized (intentionally — no grounded value exists yet):
- *   - base background color  (splash renders on black; not yet a named token)
+ *   (the base background + raised surface were tokenized 2026-07-31 — Atlas
+ *    Rule-10, US-510/TD-065; --bg #000000 / --surface #111111 now live in
+ *    :root above, promoted at their shipped values so nothing re-rendered.)
  *   (--text-primary was tokenized 2026-07-25 — Atlas gate, US-484/BL-024;
  *    grounded value #DDDDDD now lives in :root above.)
+ *   (--destructive / --destructive-border were set 2026-07-31 — Atlas Rule-10,
+ *    US-510; they close the TD-067 deferral that left the two clear-confirm
+ *    surfaces on the brand reds.)
  * ============================================================================ */
 
 /* ----------------------------------------------------------------------------

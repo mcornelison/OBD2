@@ -4115,6 +4115,49 @@ when `sufficient !== true`, so a mislabeled state can't paint green. As with the
 other emitters, the runtime `emit()` wiring is owner/deploy-side (no `src` call
 site yet), matching the shipped cards.
 
+#### Visual token SSOT + the two-file mirror (US-510, Sprint 68 / V0.29.23) [Atlas Rule-10 2026-07-31]
+
+`specs/UI/tokens.css` is the **visual SSOT** (Iris owns values; Atlas gates
+additions under Rule-10). `dashboard.html` links **only `dashboard.css`**, so the
+dist `:root` is a **runtime MIRROR** of the SSOT, not a second source: every
+token is declared in both files and `tests/ui/test_dashboard_token_ssot.py` +
+`test_dashboard_fidelity_pass.py` compare the VALUES. A value that exists in only
+one file is drift by definition.
+
+US-510 closed the TD-065/TD-067 residue and recorded three decisions worth
+keeping:
+
+1. **Promotion is zero-visual-change by construction.** `--bg #000000` /
+   `--surface #111111` were dist-only literals; Atlas ruled them into the SSOT
+   **at their shipped values**, making "a diff that moves a rendered pixel FAILS"
+   the DoD gate. The same rule drove the takeover's deep gradient edges
+   (`--amber-deep` / `--green-deep` / `--green-deepest`) to **named tokens
+   holding the existing literals** rather than a derived `color-mix()`: a
+   computed mix would produce a *different* colour, which is a restyle wearing a
+   tokenization's clothes.
+2. **A destructive ACTION is a different axis from an alarm STATE.**
+   `--destructive #C62828` + `--destructive-border #7F1D1D` dress the Mode-04
+   clear-confirm and **MUST stay distinct from `--critical-red #D32F2F`**.
+   Aliasing them would "tokenize" the surface while destroying the distinction
+   the split exists for — the operator could no longer tell "you are about to
+   erase your codes" from "pull over". With these landed the brand reds
+   (`--red*`) have **zero consumers** on the dashboard; they stay declared
+   because the mirror carries the tier, not because anything paints it.
+3. **Type is a token tier too.** `--font-mono` (all data/values — the tabular
+   instrument vernacular, deliberately unchanged) and `--font-display` (brand
+   moments ONLY: the `ECLIPSE OBD-II` wordmark + card titles). **KNOWN-OPEN
+   (BL-027):** the brand face is specified as a CSP-safe **inlined `@font-face`
+   woff2 data-URI** — no font CDN, because the kiosk is offline in the car. That
+   asset does not exist in the repo (Iris supplies the base64; the face is a CIO
+   pick), so US-510 landed the token + the bindings and left the payload to a
+   fast-follow. The no-CDN rule is pinned independently of the asset.
+
+Remaining deliberate exception, enumerated rather than silent: `#fff`/`#000` on
+a tiered chip/ribbon/takeover are **contrast pairs** chosen against that tier's
+fill, not palette entries. Naming them means inventing `--on-amber`/`--on-critical`
+(Iris's design call + an Atlas token addition) — routed as **TD-071**, which also
+carries SSOT promotion of the three `--*-deep` edge tokens.
+
 ### Release Versioning + Deploy Records (US-241, B-047 US-A)
 
 Pre-US-241 every deploy was anonymous: a `git pull` + service restart with no

@@ -24,36 +24,83 @@
  * ==========================================================================*/
 
 :root {
-  --bg:             #000000;
-  --surface:        #111111;
-  --text-primary:   #DDDDDD;   /* SSOT tokens.css:28 (Atlas Rule-10 2026-07-25) */
-  --text-secondary: #888888;   /* SSOT tokens.css:34 */
-  --text-tertiary:  #666666;   /* SSOT tokens.css:35 */
-  --amber-warn:     #FFC400;   /* SSOT tokens.css:38 -- WATCH / degraded */
-  /* BRAND identity reds -- RESERVED for the brand mark (SSOT tokens.css:50-57).
+  /* --- Type -----------------------------------------------------------------
+     US-510: the body rule used to write `ui-monospace, Menlo, Consolas,
+     monospace` out longhand -- a second copy of --font-mono's value, i.e. the
+     exact SSOT fork this palette exists to prevent. Both faces are tokens now.
+     --font-display is BRAND MOMENTS ONLY (wordmark + card titles); anything
+     carrying a READING stays mono, which Iris deliberately did not change.
+     BL-027 (known-open): the shipped brand face is meant to arrive as a
+     CSP-safe inlined @font-face woff2; that asset does not exist yet, so the
+     stack below is what resolves on the panel today. NEVER a font CDN -- the
+     kiosk is offline in the car. */
+  /* NOTE ON THE SSOT REFERENCES BELOW: they name the TOKEN, not a line number.
+     US-510 added six declarations to tokens.css and instantly staled every
+     `tokens.css:NN` pointer this block used to carry -- a cross-file line
+     number is a citation that rots on the next edit to the file it cites. The
+     name is the durable address, and tests/ui/test_dashboard_token_ssot.py
+     compares the VALUES, which is the part that actually has to agree. */
+  --font-mono:      ui-monospace, Menlo, Consolas, monospace;  /* SSOT --font-mono */
+  --font-display:   "Bahnschrift", "DIN Condensed", "Oswald", "Arial Narrow",
+                    system-ui, sans-serif;   /* SSOT --font-display */
+  /* --- Base surfaces -- promoted into the SSOT by US-510 (Atlas Rule-10
+     2026-07-31). These two were dist-only literals; the values are UNCHANGED,
+     so the promotion moved no pixels (that was Atlas's explicit DoD gate). */
+  --bg:             #000000;   /* SSOT --bg */
+  --surface:        #111111;   /* SSOT --surface */
+  --text-primary:   #DDDDDD;   /* SSOT --text-primary (Atlas Rule-10 2026-07-25) */
+  --text-secondary: #888888;   /* SSOT --text-secondary */
+  --text-tertiary:  #666666;   /* SSOT --text-tertiary */
+  --amber-warn:     #FFC400;   /* SSOT --amber-warn -- WATCH / degraded */
+  /* The two DEEP gradient edges of the DTC takeover. US-510 relocated these
+     from inline literals in the takeover rules; the VALUES ARE UNCHANGED, so
+     the surface renders identically. Iris (A-2) offered either a derived
+     color-mix() or named `--*-deep` edge tokens -- the named route is taken
+     deliberately, because a computed mix would produce a DIFFERENT colour and
+     the zero-visual-change rule governs this whole story. They live here
+     rather than in the SSOT because a new SSOT token name is an Atlas Rule-10
+     addition and only --bg/--surface/--destructive* were ruled; promotion is
+     routed to him (TD-071). */
+  --amber-deep:     #7a5b00;   /* WATCH/unknown takeover gradient outer edge */
+  --green-deep:     #12603a;   /* MINOR takeover gradient inner edge */
+  --green-deepest:  #062617;   /* MINOR takeover gradient outer edge */
+  /* BRAND identity reds -- RESERVED for the brand mark (SSOT --red/-light/-dark).
      US-484-b moved every DTC STOP surface OFF these: if the permanent brand
      mark is red AND the pull-over alarm is also red, the driver cannot tell
      "brand" from "danger". Declared here so the dist mirrors the SSOT tier.
-     US-488 swept the remaining alarm/degraded consumers off them too. The ONLY
-     rules that may still reference these are the two #clear-confirm surfaces
-     awaiting the --destructive token -- see the note at that rule. */
-  --red:            #E60012;   /* SSOT tokens.css:55 -- brand mark base */
-  --red-light:      #F61D2D;   /* SSOT tokens.css:56 -- brand mark highlight */
-  --red-dark:       #BF000F;   /* SSOT tokens.css:57 -- brand mark shadow */
+     US-488 swept the remaining alarm/degraded consumers off them too, save the
+     two #clear-confirm surfaces -- and US-510 swept THOSE onto --destructive*,
+     so the brand tier now has ZERO consumers on this surface. It stays
+     declared because the mirror must carry the tier, not because anything
+     paints it. */
+  --red:            #E60012;   /* SSOT --red -- brand mark base */
+  --red-light:      #F61D2D;   /* SSOT --red-light -- brand mark highlight */
+  --red-dark:       #BF000F;   /* SSOT --red-dark -- brand mark shadow */
   /* STATE-ALARM red -- "PULL OVER NOW". Spool set value + semantics 2026-07-25
      (dtc-display-clear-safety-advisory.md 6d); Atlas Rule-10 gate 2026-07-26.
      The HEX IS ONLY THE 3RD REINFORCEMENT: area + motion + text carry STOP. */
-  --critical-red:   #D32F2F;   /* SSOT tokens.css:69 -- the DTC STOP tier and,
+  --critical-red:   #D32F2F;   /* SSOT --critical-red -- the DTC STOP tier and,
                                   per US-488, the battery failsafe TRIGGER: the
                                   two TERMINAL act-now states. Everything merely
                                   degraded is --amber-warn, so this red keeps
                                   exactly one meaning (Spool, TD-067). */
-  --green-ok:       #35C46A;   /* SSOT tokens.css:43 (Atlas A-8) -- MINOR DTC
+  /* DESTRUCTIVE-ACTION reds (Atlas Rule-10 2026-07-31, US-510 -- closes the
+     TD-067 deferral). A button the OPERATOR presses, not a state of the
+     VEHICLE. MUST stay distinct from --critical-red above: if the "Clear all"
+     affordance wears the pull-over red, an action and an alarm become the same
+     signal. Pinned by tests/ui/test_dashboard_fidelity_pass.py. */
+  --destructive:        #C62828;   /* SSOT --destructive -- action fill */
+  --destructive-border: #7F1D1D;   /* SSOT --destructive-border -- confirm box */
+  --green-ok:       #35C46A;   /* SSOT --green-ok (Atlas A-8) -- MINOR DTC
                                   tier, OK/healthy, "linked", trust-badge
                                   verified. Reconciled off a forked local name +
                                   value in US-484-a (see git history; the old
                                   literal is deliberately not repeated here so a
                                   grep for it stays a clean drift audit). */
+  --neutral-chip-bg: #2a2f37;  /* SSOT --neutral-chip-bg -- the deliberately
+                                  un-alarming "no description yet" / "N/A this
+                                  vehicle" chip. The token predates US-510; the
+                                  dashboard simply was not pointing at it. */
   --tap-min:        40px;      /* minimum touch target (S-2) */
 }
 
@@ -81,7 +128,7 @@ html, body {
   margin: 0; padding: 0; width: 100%; height: 100%;
   background: var(--bg); overflow: hidden;
   color: var(--text-primary);
-  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-family: var(--font-mono);
   -webkit-user-select: none; user-select: none;
   touch-action: pan-y;   /* let JS own horizontal swipe; vertical scrolls */
 }
@@ -132,10 +179,13 @@ html, body {
   box-sizing: border-box; padding: 14px 16px;
   display: flex; flex-direction: column;
 }
+/* US-510 A-3: a card TITLE is a brand moment, so it takes --font-display. The
+   card BODY is untouched and stays mono -- the title labels the instrument, the
+   body IS the instrument, and only the label gets the brand face. */
 .card-title {
   margin: 0 0 8px 0; font-size: 13px; font-weight: 600;
   color: var(--text-secondary); text-transform: uppercase;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.08em; font-family: var(--font-display);
 }
 .card-body { flex: 1; font-size: 14px; color: var(--text-primary); }
 /* Honest-instrument: a missing/malformed state file reads `unavailable`,
@@ -165,7 +215,11 @@ html, body {
   font-size: 11px; color: var(--text-secondary);
   letter-spacing: 0.06em;
 }
-.idle-wordmark { font-weight: 700; letter-spacing: 0.14em; }
+/* US-510 A-3: the `ECLIPSE OBD-II` wordmark is THE brand moment on this
+   surface -- the one place the product says its own name. */
+.idle-wordmark {
+  font-weight: 700; letter-spacing: 0.14em; font-family: var(--font-display);
+}
 .idle-clock { margin-left: auto; font-size: 13px; color: var(--text-primary); }
 .idle-date { color: var(--text-tertiary); }
 /* STANDBY hero -- deliberately un-alarming neutral grey, never green (F-1). */
@@ -551,15 +605,19 @@ html, body {
   0%, 100% { border-color: var(--critical-red); }
   50%      { border-color: var(--bg); }
 }
+/* US-510 (TD-065): the three deep gradient edges are tokens now (--amber-deep /
+   --green-deep / --green-deepest, :root above). The VALUES are the ones these
+   rules already carried, so the gradients render pixel-identically -- the point
+   was to get the literals out of the surface, not to restyle the takeover. */
 #dtc-takeover[data-severity="watch"] {
-  background: radial-gradient(circle at 50% 38%, var(--amber-warn) 0%, #7a5b00 100%);
+  background: radial-gradient(circle at 50% 38%, var(--amber-warn) 0%, var(--amber-deep) 100%);
   color: #000;
 }
 #dtc-takeover[data-severity="minor"] {
-  background: radial-gradient(circle at 50% 38%, #12603a 0%, #062617 100%);
+  background: radial-gradient(circle at 50% 38%, var(--green-deep) 0%, var(--green-deepest) 100%);
 }
 #dtc-takeover[data-severity="unknown"] {
-  background: radial-gradient(circle at 50% 38%, var(--amber-warn) 0%, #7a5b00 100%);
+  background: radial-gradient(circle at 50% 38%, var(--amber-warn) 0%, var(--amber-deep) 100%);
   color: #000;
 }
 .takeover-inner {
@@ -697,8 +755,8 @@ html, body {
 .dtc-chip[data-level="stop"]    { background: var(--critical-red); color: #fff; }
 .dtc-chip[data-level="watch"]   { background: var(--amber-warn); color: #000; }
 .dtc-chip[data-level="minor"]   { background: var(--green-ok);   color: #000; }
-.dtc-chip[data-level="na"]      { background: #2a2f37; color: var(--text-secondary); }
-.dtc-chip[data-level="unknown"] { background: #2a2f37; color: var(--text-secondary); }
+.dtc-chip[data-level="na"]      { background: var(--neutral-chip-bg); color: var(--text-secondary); }
+.dtc-chip[data-level="unknown"] { background: var(--neutral-chip-bg); color: var(--text-secondary); }
 
 /* Hero block: the worst code + its directive (a tappable block -> detail). */
 .dtc-hero {
@@ -940,23 +998,25 @@ html, body {
 /* The dedicated hard-confirm modal (reuses the .confirm-box shell). The clear
    is the most consequential action on the dash.
 
-   ⚠ KNOWN-OPEN (US-488 / TD-067) -- these are the LAST TWO rules in this sheet
-   still on a brand red, and they are open ON PURPOSE. Spool ruled that a
-   destructive USER ACTION is a DIFFERENT AXIS from the engine alarm tiers: it
+   ✔ CLOSED by US-510 (TD-067's last two rules). These were the final surfaces
+   in this sheet still on a brand red, left open on purpose because Spool ruled
+   a destructive USER ACTION is a DIFFERENT AXIS from the engine alarm tiers: it
    MUST NOT be any alarm-red (Mode-04 wiping your codes is not an engine
-   emergency) and MUST NOT be amber (that means WATCH). So it needs a new
-   --destructive token -- Iris owns the value, Atlas gates it under Rule-10 --
-   and that token does not exist yet. Guessing a hex here would re-fork the SSOT
-   the US-484 line of work spent two stories un-forking. Pinned by
-   tests/ui/test_dashboard_alarm_tier_sweep.py so the debt cannot grow. */
+   emergency) and MUST NOT be amber (that means WATCH). Atlas ruled the values
+   2026-07-31 -- --destructive #C62828 (action fill) + --destructive-border
+   #7F1D1D (the box) -- BOTH deliberately distinct from --critical-red, because
+   a button the operator presses must not read as a condition of the vehicle.
+   The BOX takes the border token and the destructive BUTTON takes the action
+   fill; Cancel stays unstyled so the easy default is visually the quiet one.
+   Pinned by tests/ui/test_dashboard_fidelity_pass.py. */
 #clear-confirm {
   position: fixed; inset: 0; z-index: 55;
   display: flex; align-items: center; justify-content: center;
   background: rgba(0, 0, 0, 0.6);
 }
-#clear-confirm .confirm-box { border-color: var(--red-light); }
+#clear-confirm .confirm-box { border-color: var(--destructive-border); }
 .confirm-title { font-weight: 700; }
-#clear-confirm-ok { border-color: var(--red-light); color: var(--red-light); }
+#clear-confirm-ok { border-color: var(--destructive); color: var(--destructive); }
 
 /* --- US-482 letterbox scaling (F-121) --------------------------------------- */
 /* The UI is authored at a fixed 480x320 design box (#stage) and uniformly

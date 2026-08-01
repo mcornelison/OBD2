@@ -1300,13 +1300,24 @@
   function idleCardView(systemStatusData, batteryData, dtcData, motionReason) {
     var motionless = typeof motionReason === "string" && motionReason !== "";
     return {
-      wordmark: "ECLIPSE",
+      // US-510 A-1: the LOCKED strings, restored verbatim from Iris's idle spec
+      // (2026-07-21-pi-idle-state-and-full-bleed.md §1.2). The build had
+      // paraphrased both -- "ECLIPSE" for the full wordmark, and a STATUS line
+      // where the spec puts a NAVIGATION HINT. Nothing pinned them, which is
+      // exactly why they drifted; tests/ui/test_dashboard_fidelity_pass.py now
+      // asserts them by equality.
+      wordmark: "ECLIPSE OBD-II",
       hero: motionless
         ? { title: "NO MOTION DATA", substate: motionReason, level: "neutral" }
         : { title: "STANDBY", substate: "engine off · OBD asleep", level: "neutral" },
+      // Only the PARKED footer takes the locked hint. The motionless
+      // disposition is US-508's, and it states a FAULT the operator otherwise
+      // has no explanation for (the live card just vanished) -- overwriting it
+      // with a navigation hint would re-merge the two dispositions that story
+      // deliberately split, and lose a real instrument fact to do it.
       footer: motionless
         ? "live instrument resumes when the motion feed returns"
-        : "monitoring resumes on engine start",
+        : "swipe for details · hold or ⋮ for setup",
       facts: {
         lastDrive: idleLastDriveFact(systemStatusData),
         battery: idleBatteryFact(batteryData),
@@ -2721,10 +2732,11 @@
       body.appendChild(strip);
 
       // Footer: US-508 reads it from the VIEW rather than a literal here. The
-      // two idle dispositions need two different lines ("monitoring resumes on
-      // engine start" is wrong when the engine is already running and it is the
-      // MOTION FEED that is down), and copy no test can reach is copy that
-      // drifts from the spec.
+      // two idle dispositions need two different lines (a parked navigation
+      // hint is not the right thing to say when the engine is already running
+      // and it is the MOTION FEED that is down), and copy no test can reach is
+      // copy that drifts from the spec -- which is precisely what US-510 then
+      // had to come back and restore.
       var footer = document.createElement("div");
       footer.className = "idle-footer";
       footer.textContent = view.footer;
