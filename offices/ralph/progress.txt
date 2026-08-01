@@ -83,3 +83,73 @@ Task: Carousel navigation model: wrap (skip gated) + auto-rotate + velocity swip
   is cheap and is exactly what US-494 (a dependency the entry point never
   injected) cost a whole story.
 ---
+
+## 2026-07-31 - US-507 (Agent 1 / Session 13)
+Task: Consolidate 6 cards to 4: merge Battery + Light + Fuel Trim into one "Health" card
+
+### What was implemented:
+- MERGE (AC-1/AC-3): dashboard.html gains `data-states` (PLURAL) naming all three
+  state files. `tick()` fetches each through a NEW per-tick `stateOnce` cache and
+  renders a SECTION per source via `healthCardView` / `renderHealthCard`. The
+  standalone Battery Health, Light and LTFT Trend slots are gone from the DOM/nav.
+- INDEPENDENCE (AC-4): availability resolves PER SECTION, never per card.
+- GATE (AC-2): fuel trim stays vehicle-gated but SPEAKS ("no engine data") instead
+  of hiding; gate evaluated BEFORE the data, gated section carries no view at all;
+  ships `data-gated="true"` so the pre-first-poll window fails closed.
+- RETITLE (AC-2): "LTFT Trend" -> "Fuel Trim". Label only; Spool's LTFT semantics
+  (emitter, thresholds, classifier, insufficient guard) untouched.
+- The three card renderers now take a BODY element rather than a card.
+
+### Files changed:
+- Modified: `specs/UI/dist/dashboard-pi/dashboard.html` (merged card + 3 sections)
+- Modified: `specs/UI/dist/dashboard-pi/carousel.js` (healthCardView + renderers + stateOnce)
+- Modified: `specs/UI/dist/dashboard-pi/dashboard.css` (section chrome, tokens only)
+- Modified: `specs/architecture.md` (multi-source card subsection -- design-gate DoD)
+- Created:  `tests/ui/test_carousel_health_card.py`
+- Modified: `tests/ui/test_carousel_pi_local_cards.py`, `test_carousel_brightness.py`,
+  `test_render_regression.py`, `tests/deploy/test_dashboard_kit.py` (adapted pins)
+
+### Learnings for future iterations:
+- **Gotcha**: A PIN THAT GREPS A DEFECT'S NAME FIRES ON ITS OWN DOCUMENTATION --
+  SECOND OCCURRENCE. My renamed-renderer pin asserted `"renderLtftTrendCard" not
+  in js` and went RED against CORRECT code, because the comment marking the
+  deleted branch NAMES the function it replaced. Session 11 learned this exact
+  shape on `NoInputNoOutput`/`PYEOF`. It recurs because the fix (document the
+  rename) and the test (forbid the old name) pull in opposite directions. Strip
+  comments, then grep.
+- **Pattern discovered**: AND TEST THE STRIPPER, BECAUSE OVER-STRIPPING IS THE
+  DANGEROUS DIRECTION FOR AN ABSENCE ASSERTION. A stripper that eats too much
+  removes the very text the test hunts for, so the pin passes VACUOUSLY. Concrete
+  hazard here: carousel.js:2331 is `"http://www.w3.org/2000/svg"` -- a STRING
+  containing `//`, which a naive line-comment strip truncates. `_stripJsComments`
+  is string-aware and is itself pinned (code landmarks survive, the SVG namespace
+  survives, real prose goes).
+- **Gotcha**: A MERGE CAN MAKE AN OLD ASSERTION VACUOUS WITHOUT TURNING IT RED --
+  the most dangerous test outcome there is. `assert "LTFT Trend" not in cards`
+  guarded the vehicle gate; once no card carries that name it is true for the
+  WRONG reason and would keep passing if the gate broke ENTIRELY. Replaced with a
+  POSITIVE assertion (the section painted `data-gated="true"`). When a story
+  removes the noun an absence assertion names, that assertion is dead -- re-aim it
+  at the surface that now carries the property.
+- **Pattern discovered**: MERGING CARDS MUST NOT MERGE THEIR FAILURES. The obvious
+  implementation routes the merged card through the existing card-level
+  availability check -- and then one dead UPS blanks the two live instruments
+  beside it. That is a FABRICATED "nothing is readable" built out of one real
+  fault. Resolve availability per SECTION.
+- **Pattern discovered**: A GATE'S VOCABULARY IS A FUNCTION OF ITS CONTAINER. As a
+  card, "does not apply" could be said by HIDING. As a section of an
+  always-visible card, hiding leaves a hole, so the same fact must be said in
+  WORDS. The disposition vocabulary grew from two to THREE (gated / no-data /
+  live) -- and collapsing gated into no-data would tell an operator with a running
+  engine that there is no engine.
+- **Gotcha**: DELETE A DEAD BRANCH, DO NOT LEAVE IT UNREACHABLE. The `ltft-trend`
+  tick branch still named the pre-rename `renderLtftTrendCard`. Nothing executed
+  it, so nothing proved it still RESOLVED -- a ReferenceError armed for the day
+  something re-declares that state. Same family as US-500 (the dangerous line is
+  the one that never runs).
+- **Verified, did not assume**: US-507's validationCriteria says "4 cards total",
+  but this story ALONE lands at 5 -- absorbing the Motion card into the home slot
+  is US-508's acceptance, not US-507's. I did NOT delete it (scope fence + it would
+  open a regression window between the two stories) and routed the criteria
+  correction to the PM instead of quietly meeting or quietly missing the number.
+---
