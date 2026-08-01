@@ -191,6 +191,20 @@
     </div>
   </div>
 
+  <!-- US-509 System-Status drill-down: opened by a tap on the "SYSTEM · N ISSUE"
+       summary line, which is a tap target ONLY while a degraded source exists.
+       Deliberately MIRRORS the per-code detail overlay above (same ‹ Back, same
+       head/body skeleton, same shell classes) so the interaction language of the
+       two drill-downs is one language, not two. JS fills the rows worst-first;
+       only actually-degraded sources are ever listed. -->
+  <div id="sys-detail" hidden role="dialog" aria-label="System issues">
+    <header class="detail-head">
+      <button id="sys-detail-back" class="tap-target" aria-label="Back to System Status">‹ Back</button>
+      <span id="sys-detail-head" class="detail-code-head"></span>
+    </header>
+    <div id="sys-detail-body" class="detail-body"><!-- JS fills the rows --></div>
+  </div>
+
   <!-- US-407 hard-confirm modal (design §6.2): the clear wipes EVERY code, erases
        the freeze-frame, and resets emissions readiness. Cancel is the easy
        default; Clear all is the deliberate action. Kept separate from the US-403

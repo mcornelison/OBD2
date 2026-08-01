@@ -851,6 +851,62 @@ html, body {
 .dtc-trust-badge[data-kind="offline"]   { color: var(--text-tertiary); }
 .detail-footer { font-size: 11px; color: var(--text-secondary); margin-top: 2px; }
 
+/* --- US-509 System-Status drill-down overlay -------------------------------- */
+/* Deliberately inherits the per-code detail overlay's shell (`.detail-head`,
+   `.detail-body`, `.detail-card`, `#detail-back`'s sizing) rather than forking a
+   second overlay language: two drill-downs that LOOK different teach the
+   operator two interactions for one idea. Only the row internals are new.
+   Every colour is a tokens.css var -- no literal enters this surface. */
+#sys-detail {
+  --detail-gap:       8px;      /* between rows */
+  --detail-gap-tight: 4px;      /* within a row */
+  --detail-pad:       8px 10px; /* every row card */
+  position: fixed; inset: 0; z-index: 45;
+  background: rgba(0, 0, 0, 0.95);
+  display: flex; flex-direction: column;
+  padding: 4px 12px 10px; box-sizing: border-box; overflow-y: auto;
+}
+#sys-detail[hidden] { display: none; }
+#sys-detail-back {
+  min-width: var(--tap-min); min-height: var(--tap-min);
+  padding: 0 12px; box-sizing: border-box;
+  background: var(--surface); border: 1px solid var(--text-tertiary);
+  border-radius: 6px; color: var(--text-primary);
+  font-size: 14px; font-weight: 700; cursor: pointer;
+}
+.sys-issue-head { display: flex; align-items: baseline; gap: 8px; }
+.sys-issue-label {
+  font-size: 13px; font-weight: 700; letter-spacing: 0.06em;
+  color: var(--text-primary);
+}
+/* The chip carries the severity. It takes NO colour of its own -- the row's
+   [data-level] drives it, so the chip can never disagree with the row it sits
+   in, and the ramp is declared exactly once below. */
+.sys-issue-chip {
+  margin-left: auto; font-size: 11px; font-weight: 700;
+  letter-spacing: 0.06em; padding: 1px 6px; border-radius: 3px;
+  border: 1px solid currentColor;
+}
+.sys-issue-reason { font-size: 12px; color: var(--text-secondary); }
+.sys-issue-freshness { font-size: 11px; color: var(--text-tertiary); }
+.sys-issue-none {
+  font-size: 13px; color: var(--text-tertiary); font-style: italic;
+  padding: var(--detail-pad);
+}
+/* TD-067 holds here too: a degraded source is WATCH amber, never the pull-over
+   red -- the same ramp the summary line and the tile dots already use. An
+   unavailable source is a known-UNKNOWN: muted, never an alarm it has not
+   earned, and never green. */
+.sys-issue-row[data-level="amber"] .sys-issue-chip { color: var(--amber-warn); }
+.sys-issue-row[data-level="down"]  .sys-issue-chip { color: var(--amber-warn); }
+.sys-issue-row[data-level="unavailable"] .sys-issue-chip {
+  color: var(--text-tertiary);
+}
+/* US-509: the summary line only LOOKS like a control when it is one. */
+.sys-summary-tappable { cursor: pointer; }
+.sys-summary-chevron { font-size: 14px; color: var(--text-tertiary); }
+.sys-summary-tappable .sys-summary-detail { margin-left: auto; }
+
 /* --- US-407 DTC Clear (Mode-04) surface ------------------------------------ */
 /* The gated Clear button lives in the detail overlay. ENABLED (green-outline)
    only when every stored code is MINOR + logged + server-acked; DISABLED reads

@@ -532,6 +532,85 @@
     return { text: "SYSTEM · OK", detail: "", level: "ok", issues: 0 };
   }
 
+  // -------------------------------------------------------------------------
+  // US-509 (F-124) -- the drill-down behind the summary line. The headline is a
+  // lossy compression of four tiles; without this it is a dead end that names a
+  // count and nothing to act on. The rows are a PRESENTATION of the SAME tiles
+  // the grid renders -- no second read, no re-derivation, so the overlay can
+  // never contradict the card behind it.
+  // -------------------------------------------------------------------------
+
+  // The listing floor. Deliberately `unavailable`, not `amber`:
+  //   * `ok`      -- never listed. A green source in a fault list is a
+  //                  FABRICATED fault.
+  //   * `neutral` -- never listed either. DRIVE=IDLE is the only neutral this
+  //                  card produces and it means "not recording", NOT "broken";
+  //                  listing it would report a fault in the commonest state
+  //                  there is (key on, no drive started) -- crying wolf.
+  //   * `unavailable` and worse -- listed. The summary reads "SYSTEM · N
+  //                  UNAVAILABLE" in that state, so excluding known-unknowns
+  //                  would make a tappable headline open an EMPTY overlay,
+  //                  which is the exact dead end this story removes.
+  var SYS_ROW_FLOOR = SYS_LEVEL_RANK.unavailable;
+
+  // The typed absence for a source that publishes no age at all. Only the OBD
+  // source emits `lastSeenS` today, so the other three MUST say the age was not
+  // reported rather than render "seen 0s ago" -- which would claim we had just
+  // seen a source we never timed. Same fabrication as a zeroed altitude
+  // (US-508): an unmeasured quantity is an absence, never a zero.
+  var SYS_NO_AGE = "age not reported";
+
+  // Read one source's own freshness fact out of the SAME payload the tiles were
+  // built from. A non-finite or negative age is not a reading.
+  function sysRowFreshness(data, key) {
+    if (isObj(data) && isObj(data[key])) {
+      var s = data[key].lastSeenS;
+      if (typeof s === "number" && isFinite(s) && s >= 0) return seenDetail(s);
+    }
+    return SYS_NO_AGE;
+  }
+
+  // Worst-first rows, one per non-OK source. Ties keep the 2x2 grid order, so
+  // the list never reshuffles between polls under the operator's eyes. Built by
+  // walking the rank buckets top-down rather than sorting, which makes that
+  // stability a property of the construction instead of the sort algorithm.
+  function systemIssueRows(tiles, data) {
+    var rows = [];
+    if (!isObj(tiles)) return rows;
+    var rank = SYS_LEVEL_RANK.down;
+    for (; rank >= SYS_ROW_FLOOR; rank--) {
+      for (var i = 0; i < SYS_TILE_ORDER.length; i++) {
+        var key = SYS_TILE_ORDER[i];
+        var tile = tiles[key];
+        if (!isObj(tile) || sysLevelRank(tile.level) !== rank) continue;
+        var freshness = sysRowFreshness(data, key);
+        var detail = typeof tile.detail === "string" ? tile.detail : "";
+        rows.push({
+          key: key,
+          label: tile.label,
+          value: tile.value,
+          // The row carries the TILE's level verbatim -- the chip and the grid
+          // cell behind it are then incapable of disagreeing.
+          level: tile.level,
+          // The emitter's own words. The drill-down explains what the card
+          // already said; it does not re-diagnose. Dropped when it only repeats
+          // the freshness the row prints beside it (the DOWN OBD tile's detail
+          // IS the seen-age string).
+          reason: detail === freshness ? "" : detail,
+          freshness: freshness,
+        });
+      }
+    }
+    return rows;
+  }
+
+  // The summary line is a tap target ONLY when something is behind it -- an
+  // affordance that opens an empty list is a misleading control.
+  function systemDrill(tiles, data) {
+    var rows = systemIssueRows(tiles, data);
+    return { rows: rows, tappable: rows.length > 0 };
+  }
+
   // The full structured view consumed by the DOM renderer + the node tests.
   // Non-object payload -> null (the shell renders `unavailable`).
   function systemStatusView(data) {
@@ -554,6 +633,9 @@
       // US-489: derived from the SAME tiles rendered below, so the headline can
       // never contradict the grid it summarises.
       summary: systemSummary(tiles),
+      // US-509: and so is the drill-down behind that headline -- one read of
+      // the state file feeds the grid, the summary AND the overlay.
+      drill: systemDrill(tiles, data),
       tiles: tiles,
       glyphs: {
         bt: obdOff ? "neutral" : btGlyphState(data.obdLink),
@@ -2289,6 +2371,9 @@
     syncGlyphState: syncGlyphState,
     powerGlyphState: powerGlyphState,
     systemSummary: systemSummary,
+    sysRowFreshness: sysRowFreshness,
+    systemIssueRows: systemIssueRows,
+    systemDrill: systemDrill,
     systemStatusView: systemStatusView,
     healthCheckLine: healthCheckLine,
     vcellTile: vcellTile,
@@ -2422,6 +2507,13 @@
     }
 
     function renderSystemStatusCard(card, view, glyphEls) {
+      // US-509: the drill-down is fed by the SAME poll that paints the card, and
+      // an OPEN overlay is repainted with it. A drill-down left frozen on the
+      // snapshot that opened it would keep printing "seen 42s ago" while the
+      // age climbed -- the frozen-instrument fabrication this project names for
+      // the g-dot and the rotate bar, in a third geometry.
+      lastSysView = view;
+      if (sysDetailOpen()) renderSysDetail(view);
       var body = card.querySelector(".card-body");
       if (body) {
         body.textContent = "";
@@ -2440,6 +2532,21 @@
           summaryDetail.textContent = view.summary.detail;
           summary.appendChild(summaryDetail);
         }
+        // US-509: the headline becomes a control ONLY when there is something
+        // behind it. An always-tappable summary that opens an empty list on a
+        // healthy system is a misleading affordance -- it promises detail the
+        // card does not have. The chevron is part of the same gate, so the
+        // affordance and the behaviour can never disagree.
+        if (view.drill && view.drill.tappable) {
+          summary.classList.add("sys-summary-tappable");
+          summary.setAttribute("role", "button");
+          summary.setAttribute("tabindex", "0");
+          var chevron = document.createElement("span");
+          chevron.className = "sys-summary-chevron";
+          chevron.textContent = "›";
+          summary.appendChild(chevron);
+          summary.onclick = function () { openSysDetail(); };
+        }
         body.appendChild(summary);
         var grid = document.createElement("div");
         grid.className = "sys-grid";
@@ -2452,6 +2559,92 @@
       if (glyphEls.bt) glyphEls.bt.setAttribute("data-state", view.glyphs.bt);
       if (glyphEls.sync) glyphEls.sync.setAttribute("data-state", view.glyphs.sync);
       if (glyphEls.power) glyphEls.power.setAttribute("data-state", view.glyphs.power);
+    }
+
+    // --- US-509 System-Status drill-down overlay (browser only) -------------
+
+    // The most-recent card view, so a tap on the summary line has rows to show
+    // without a second read of the state file. It is set by the renderer above,
+    // which means the overlay is fed by exactly the same poll that painted the
+    // card -- the two can never drift apart.
+    var lastSysView = null;
+
+    // Elements are looked up LAZILY rather than captured at init: this renderer
+    // lives in the shared render scope (not the browser-only block below), and a
+    // captured-at-load reference would be null under the node/file:// paths that
+    // exercise this file without the full DOM.
+    function renderSysDetail(view) {
+      var bodyEl = document.getElementById("sys-detail-body");
+      if (!bodyEl) return;
+      bodyEl.textContent = "";
+      var head = document.getElementById("sys-detail-head");
+      // The head repeats the LINE THE OPERATOR TAPPED verbatim, rather than
+      // recounting the rows into a second headline. A drill-down whose title
+      // disagrees with the summary that opened it is its own small lie -- and
+      // the counts genuinely differ (the summary counts ISSUES; the list also
+      // carries known-unknowns).
+      if (head) head.textContent = view && view.summary ? view.summary.text : "";
+      var rows = view && view.drill ? view.drill.rows : [];
+      if (!rows.length) {
+        // Reachable while the overlay is OPEN and the last fault clears. Saying
+        // so is the honest move; an empty box reads as a broken overlay, and
+        // closing it would yank the surface out from under the operator.
+        var none = document.createElement("div");
+        none.className = "sys-issue-none";
+        none.textContent = "all sources OK";
+        bodyEl.appendChild(none);
+        return;
+      }
+      for (var i = 0; i < rows.length; i++) {
+        var row = rows[i];
+        var el = document.createElement("div");
+        el.className = "detail-card sys-issue-row";
+        // The row's level came straight off the tile, so the chip colour here
+        // and the grid cell behind the overlay are incapable of disagreeing.
+        el.setAttribute("data-level", row.level);
+        var rowHead = document.createElement("div");
+        rowHead.className = "sys-issue-head";
+        var label = document.createElement("span");
+        label.className = "sys-issue-label";
+        label.textContent = row.label;
+        var chip = document.createElement("span");
+        chip.className = "sys-issue-chip";
+        chip.textContent = row.value;
+        rowHead.appendChild(label);
+        rowHead.appendChild(chip);
+        el.appendChild(rowHead);
+        // Omitted when the view found it only repeated the freshness beside it.
+        if (row.reason) {
+          var reason = document.createElement("span");
+          reason.className = "sys-issue-reason";
+          reason.textContent = row.reason;
+          el.appendChild(reason);
+        }
+        var fresh = document.createElement("span");
+        fresh.className = "sys-issue-freshness";
+        fresh.textContent = row.freshness;
+        el.appendChild(fresh);
+        bodyEl.appendChild(el);
+      }
+    }
+
+    function sysDetailOpen() {
+      var el = document.getElementById("sys-detail");
+      return !!el && el.hidden === false;
+    }
+
+    function openSysDetail() {
+      var el = document.getElementById("sys-detail");
+      // Guarded on `tappable` as well as the handler that called it, so a stale
+      // listener left on a recovered card cannot open an empty overlay.
+      if (!el || !lastSysView || !lastSysView.drill.tappable) return;
+      renderSysDetail(lastSysView);
+      el.hidden = false;
+    }
+
+    function closeSysDetail() {
+      var el = document.getElementById("sys-detail");
+      if (el) el.hidden = true;
     }
 
     // Honest-instrument reset: a missing/malformed system-status file returns the
@@ -3828,6 +4021,10 @@
       }
 
       if (detailBack) detailBack.addEventListener("click", closeDetail);
+      // US-509: the System-Status drill-down's Back, wired beside its sibling so
+      // the two overlays' escape hatches live together. AC2 -- never traps.
+      var sysDetailBack = document.getElementById("sys-detail-back");
+      if (sysDetailBack) sysDetailBack.addEventListener("click", closeSysDetail);
       // The ribbon is tappable -> jump to the Alerts card + the hero detail.
       if (ribbonEl) {
         ribbonEl.addEventListener("click", function () {
