@@ -11,8 +11,26 @@
       "epicId": "E-001",
       "type": "normal",
       "size": "L",
-      "status": "sprint-ready",
-      "passes": false,
+      "status": "complete",
+      "passes": true,
+      "feedback": {
+        "filesActuallyTouched": [
+          "specs/UI/dist/dashboard-pi/carousel.js",
+          "specs/UI/dist/dashboard-pi/dashboard.html",
+          "specs/UI/dist/dashboard-pi/dashboard.css",
+          "config.json",
+          "src/pi/splash/states_http_server.py",
+          "specs/architecture.md",
+          "tests/ui/test_carousel_nav_model.py",
+          "tests/ui/test_carousel_pi_local_cards.py"
+        ],
+        "grounding": [
+          "autoRotateS=8 / resumeIdleS=45 / velocity 0.6 px/ms / travel 0.55 / distance 40px -- ALL from the US-506 acceptance criteria (Iris CIO-locked F-124 spec 2026-07-31, PM-groomed). None Rex-derived.",
+          "swipeMinPx=40 mirrors the pre-existing shipped SWIPE_THRESHOLD_PX=40 (carousel.js, US-399) -- the deadzone is unchanged, not re-derived.",
+          "POLL_MS=250 reused as the bar redraw cadence: 4 Hz over the 8 s default = 32 steps (shipped constant, no second clock introduced)."
+        ]
+      },
+      "completionNotes": "commit f22b410. WRAP: nextVisibleIndex REWRITTEN to wrap at both ends while traversing only VISIBLE cards, bounded by hidden.length so a <=1-visible-card row terminates instead of spinning. AUTO-ROTATE: shouldAutoAdvance + rotateProgress drive a new thin #rotate-progress bar (z-index 8, UNDER the DTC ribbon's 9 -- an alert must win that band); the bar is REMOVED while paused, never frozen part-filled. VELOCITY: new swipeGesture(dx,dy,dtMs,widthPx,cfg)->{dir,fast} replaces the distance-only swipeDirection in the gesture path; fast->resume, settle->pause. PAUSE SELF-EXPIRY: shouldAutoResume; pausing hangs on ONE document-level pointerdown so a future overlay cannot forget to pause. CONFIG: new pi.display.carousel.* section reaches the browser via a NEW quoted placeholder (__DISPLAY_CAROUSEL__) through the SAME serve-time seam US-483-b built -- deliberately a separate placeholder, not a widened autoDim one, so an auto-dim edit cannot break navigation. states_http_server gained carouselConfig (last param, default None -- positional callers safe) + loadDisplayCarouselConfig; the two loaders now share _loadDisplaySection. VERIFIED the entry point actually injects it (main() is the ONLY construction site) -- the US-494 trap. CONTRACT CHANGE FOR PM/ARGUS: test_carousel_pi_local_cards.py::test_nextVisibleIndex_clampsAtTheLastVisibleCard was RENAMED to ...wrapsPastTheLastVisibleCard -- it pinned the clamp this story deliberately overturns; the invariant it really guarded (never land on a hidden card) is re-asserted, not dropped. GREEN in-loop (synchronous): tests/ui + tests/pi/splash + tests/deploy = 866 passed / 1 skipped, exit 0; 39 new tests proven RED first; ruff clean; validate_config.py passes. HOST GAPS unchanged (Sprints 64-67): make/black/mypy absent on this Windows box -- PM please run mypy at integration (states_http_server.py gained a typed helper). ON-PI GATE OWED (AC validationCriteria, cannot be discharged here): with a gated card hidden, swipe past the last visible card -> wraps to first skipping the gated one; leave it untouched -> auto-cycles at 8 s with the thin bar filling; slow settle swipe -> pauses; fast flick -> resumes; 45 s idle -> auto-resumes. WATCH: the bar shares the band under the top bar with the DTC ribbon -- confirm a live code covers it rather than the two fighting.",
       "acceptance": [
         "#12 WRAP: swiping past the last visible card lands on the first and vice-versa; hidden/vehicle-gated cards are SKIPPED (wrap + auto-rotate traverse only visible cards) -- replaces the current clamp (carousel.js:36-48,143-150)",
         "#13 AUTO-ROTATE: visible cards auto-cycle every autoRotateS (default 8 s) with a calm thin top progress bar (time-to-next, no countdown number)",

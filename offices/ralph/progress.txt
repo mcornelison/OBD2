@@ -7,3 +7,79 @@
 # Sprint B (V0.29.24, wiring + capture hardening US-501..505/512/513) follows.
 # Previous sprint (67 / V0.29.22 capture hotfix) archived 2026-08-01_011236Z + DEPLOYED.
 # ---
+
+## 2026-07-31 - US-506 (Agent 1 / Session 12)
+Task: Carousel navigation model: wrap (skip gated) + auto-rotate + velocity swipe-pause
+
+### What was implemented:
+- WRAP (AC-12): `nextVisibleIndex` rewritten -- wraps at both ends, traverses only
+  VISIBLE cards. Bounded by `hidden.length` so a <=1-visible-card row terminates.
+- AUTO-ROTATE (AC-13): `shouldAutoAdvance` + `rotateProgress` drive a new thin
+  `#rotate-progress` bar (0..1 fill, no countdown number). z-index 8, under the
+  DTC ribbon's 9. Removed while paused, not frozen part-filled.
+- VELOCITY (AC-14): new `swipeGesture(dx,dy,dtMs,widthPx,cfg)` -> `{dir,fast}`
+  replaces distance-only `swipeDirection` in the gesture path. Flick -> advance +
+  RESUME; settle -> advance one + PAUSE. 40px deadzone preserved.
+- PAUSE SELF-EXPIRY (AC-15): `shouldAutoResume` (45s). Pause hangs on ONE
+  document-level `pointerdown`, so tap/dot/kebab/any-overlay all pause.
+- CONFIG: new `pi.display.carousel.*` -> `window.DISPLAY_CAROUSEL` via a NEW
+  quoted placeholder through the US-483-b serve-time seam.
+
+### Files changed:
+- Modified: `specs/UI/dist/dashboard-pi/carousel.js` (wrap rewrite + 5 new pure fns + DOM wiring)
+- Modified: `specs/UI/dist/dashboard-pi/dashboard.html` (progress-bar slot + config placeholder)
+- Modified: `specs/UI/dist/dashboard-pi/dashboard.css` (thin calm bar, tertiary token)
+- Modified: `config.json` (`pi.display.carousel` tuning SSOT)
+- Modified: `src/pi/splash/states_http_server.py` (2nd placeholder + `loadDisplayCarouselConfig`; both loaders now share `_loadDisplaySection`)
+- Modified: `specs/architecture.md` (F-092 "Navigation model" subsection -- design-gate DoD)
+- Created:  `tests/ui/test_carousel_nav_model.py` (39 tests)
+- Modified: `tests/ui/test_carousel_pi_local_cards.py` (the clamp pin this story overturns)
+
+### Learnings for future iterations:
+- **Pattern discovered**: THE DEADZONE MUST SURVIVE A VELOCITY MODEL. Adding
+  velocity is adding a DIMENSION, not replacing distance. Drop the distance
+  floor and a 5px twitch over 2ms reads as 2.5 px/ms -- four times the flick
+  threshold -- so the carousel pages on a stray touch. Distance answers "was
+  this a swipe at all?"; velocity answers "what KIND of swipe?". Two questions,
+  two tests, both required. Pinned by test.
+- **Gotcha**: DIVIDING BY A MEASUREMENT IS A FABRICATION RISK, and this one is
+  FELT not just displayed. `travel/dtMs` with dt==0 is Infinity -> classified a
+  flick -> auto-rotate RESUMES under the operator's finger. An unmeasurable
+  duration is not an infinitely fast gesture; it contributes 0 and the travel
+  test (a real reading) answers. Same for a 0-width card box on a transient 0x0
+  layout pass. This project's honest-instrument rule is usually applied to
+  RENDERED values -- it applies just as hard to DERIVED ones that drive behaviour.
+- **Pattern discovered**: A CONFIG SCHEMA CAN MAKE A BAD STATE UNREACHABLE.
+  `resolveCarouselConfig` accepts only finite POSITIVE numbers, so `resumeIdleS:
+  0` falls back to the default and can never reach `shouldAutoResume` to disable
+  the self-unpause. The "pause freezes the carousel forever" failure is not
+  guarded against downstream -- it is inexpressible upstream. Prefer that to a
+  defensive check at every consumer.
+- **Gotcha**: FAIL A MISCONFIGURED INTERVAL TO **OFF**, NOT TO FAST. A
+  non-positive `autoRotateS` naively means "advance when sinceMs >= 0" = every
+  250ms tick. A carousel spinning at the poll rate is unusable and reads as a
+  hardware fault. `shouldAutoAdvance`/`rotateProgress` both return false/0 on a
+  non-positive period. Ask of any interval: what does 0 do?
+- **Pattern discovered**: HANG A CROSS-CUTTING SIDE EFFECT ON ONE DOCUMENT-LEVEL
+  LISTENER, NOT N CALL SITES. "Tap a card or open ANY overlay pauses" could have
+  been 6+ per-overlay `pauseAutoRotate()` calls -- and overlay #7 forgets. One
+  `document` `pointerdown` handler covers every present and future affordance,
+  and the swipe handler resumes afterwards if it turns out to be a flick.
+- **Gotcha**: A PROGRESS BAR MUST BE REMOVED WHEN IT STOPS, NOT FROZEN. Leaving
+  the bar part-filled while paused is the exact frozen-instrument fabrication
+  US-497 named for the g-dot: it promises an advance that is never coming. Same
+  rule, different geometry.
+- **Gotcha**: WHEN A STORY OVERTURNS A CONTRACT, THE OLD TEST IS EVIDENCE, NOT AN
+  OBSTACLE. `test_nextVisibleIndex_clampsAtTheLastVisibleCard` went red BY DESIGN.
+  I did not delete it -- I read what it was really guarding (never land on a
+  hidden card), kept that assertion, and renamed it. Deleting it would have
+  dropped a live invariant along with the dead one; flagged in completionNotes so
+  the PM sees the contract change rather than a quietly-edited test.
+- **Gotcha**: MEASURE THE TRAVEL FRACTION AGAINST THE REAL BOX. `#stage` is
+  letterbox-scaled (US-482), so a hard-coded 480 misreads travel on any panel
+  that is not 1:1. The handler reads `track.getBoundingClientRect().width`.
+- **Verified, did not assume**: `main()` is the ONLY `StatesHttpServer`
+  construction site, so the new config genuinely reaches the browser. That check
+  is cheap and is exactly what US-494 (a dependency the entry point never
+  injected) cost a whole story.
+---
