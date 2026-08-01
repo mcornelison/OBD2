@@ -3,7 +3,7 @@
 | Field | Value |
 |---|---|
 | Severity | **P0 / project-blocking** (safety-relevant: no engine data for 25+ days) |
-| Status | **ROOT CAUSE FOUND + FIXED LIVE 2026-07-31** (Atlas live debug w/ CIO on Pi): a **persistent Bluetooth SOFT-BLOCK** (stale saved rfkill state restored every boot). Fix live + verified across 2 reboots. Two P0 durability fixes **dispatched to Ralph** (deploy-bake + pair_obdlink); PM owes version-bump + deploy on landing. Remaining: #3 reconnect-transport-reset + #4 origin RCA (groom); acceptance = engine-on drive (Spool). |
+| Status | **FIX DEPLOYED + REBOOT-VERIFIED 2026-07-31 (V0.29.22).** Root cause = persistent Bluetooth SOFT-BLOCK (stale saved rfkill state restored every boot; Atlas live RCA). **US-514 (rfkill-unblock deploy-bake) + US-515 (pair_obdlink fix) shipped + deployed to the Pi (10.27.27.100); rebooted + verified GREEN: `rfkill` both `Soft blocked:no` SURVIVE the reboot, eclipse-rfkill-unblock enabled+active, eclipse-obd active, BT Powered:yes, .deploy-version=V0.29.22.** The capture killer is now repo-managed + reflash-proof. **REMAINING to fully close:** (a) engine-on pair + bond-survives-reboot + a captured drive (Spool's gate — `realtime_data` grows); (b) V0.29.23 hardening US-512 reconnect-transport-reset + US-513 origin RCA (groomed). |
 
 ## ✅ ROOT CAUSE FOUND + FIXED LIVE 2026-07-31 (Atlas + CIO on-Pi debug — supersedes ALL prior theories)
 
