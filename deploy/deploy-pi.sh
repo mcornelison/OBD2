@@ -1376,7 +1376,12 @@ step_install_dashboard_assets() {
     echo "--- Step: Installing carousel dashboard assets to /opt/dashboard (US-399) ---"
     local assetSrc="$REPO_ROOT/specs/UI/dist/dashboard-pi"
     local installDir="/opt/dashboard"
-    local assets="dashboard.html dashboard.css carousel.js"
+    # OFL.txt (BL-027): the Oswald brand face ships INSIDE dashboard.css as an
+    # inlined data: URI, and SIL OFL 1.1 requires the licence to travel with the
+    # font. It must be VOUCHED here or refresh_asset_dir prunes it from
+    # /opt/dashboard -- i.e. the repo would look compliant while the deployed
+    # artifact shipped the face bare.
+    local assets="dashboard.html dashboard.css carousel.js OFL.txt"
     if [ ! -d "$assetSrc" ]; then
         echo "WARN: dashboard assets not found at $assetSrc -- skipping; deploy continues (A-9)." >&2
         return 0

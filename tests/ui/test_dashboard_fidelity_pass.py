@@ -417,11 +417,24 @@ def test_fontDisplayMirrorMatchesTheSsot():
 
 
 def test_fontDisplayIsTheLockedBrandStack_notAGenericSans():
-    """Grounded in Iris's own locked mockup stack (proposals/2026-07-31-pi-ui-
-    round2-f124.html:16) -- the CIO's pick leads it. Not a Rex invention."""
+    """A REAL display face leads the stack, and the generic families are the
+    tail -- never the head.
+
+    RE-AIMED by the BL-027 payload drop (2026-08-01). This pin used to name
+    BAHNSCHRIFT, which was the CIO's locked pick at US-510 time. That face
+    turned out to be Microsoft-proprietary, absent from Pi OS and not
+    redistributable, so it could never be embedded and never actually reached
+    the panel. The replacement is the OFL-licensed Oswald subset now inlined in
+    both sheets. The invariant this test was really guarding is UNCHANGED and
+    is kept verbatim: the brand moments must not resolve to a generic sans.
+    What the face IS lives in test_dashboard_brand_font_payload.py, which
+    checks the stack lead against the EMBEDDED family rather than a hardcoded
+    name -- so the next face swap cannot leave the stack and the payload
+    disagreeing.
+    """
     value = _tokenValue(_read(_TOKENS), "font-display")
-    assert "BAHNSCHRIFT" in value
-    assert value.index("BAHNSCHRIFT") < value.index("SANS-SERIF")
+    assert "OSWALD" in value
+    assert value.index("OSWALD") < value.index("SANS-SERIF")
 
 
 def test_fontDisplayBindsToTheBrandMomentsAndNothingElse():
