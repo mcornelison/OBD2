@@ -102,8 +102,31 @@
       "epicId": "E-001",
       "type": "normal",
       "size": "L",
-      "status": "sprint-ready",
-      "passes": false,
+      "status": "complete",
+      "passes": true,
+      "feedback": {
+        "filesActuallyTouched": [
+          "specs/UI/dist/dashboard-pi/carousel.js",
+          "specs/UI/dist/dashboard-pi/dashboard.html",
+          "specs/UI/dist/dashboard-pi/dashboard.css",
+          "specs/architecture.md",
+          "config.json",
+          "src/common/config/validator.py",
+          "src/pi/sensors/imu_state_bridge.py",
+          "tests/ui/test_carousel_live_home_card.py",
+          "tests/ui/test_carousel_imu_card.py",
+          "tests/pi/sensors/test_imu_state_bridge.py",
+          "tests/deploy/test_dashboard_kit.py"
+        ],
+        "grounding": [
+          "0.6 g amber / 1.0 g full-scale / ~15-min trend window / compass tape + fixed caret / GEAR '--' when ambiguous -- ALL from the US-508 acceptance criteria (Iris CIO-locked live-instrument spec 2026-07-27, PM-groomed). None Rex-derived.",
+          "states/imu field shape (headingDeg, gradePct, gLat/gLon, gMag derived-once, altitude typed-NULL + reason 'no_source', available+ts) and the transport band (bridge ~10-15 Hz latest-wins, card ~10 Hz off the existing states_http_server) are VERBATIM from Atlas's 2026-07-31 contract ruling embedded in the AC. Not re-opened.",
+          "IMU_POLL_MS=100 (card) and DEFAULT_STATE_HZ=10 (bridge) are the two ends of that ruled band; the bridge default was 4 and is raised because the CONSUMER moved, not the sensor. sampleHz=50 and persistHz=25 (durable EDR) are UNTOUCHED -- one producer, two cadences.",
+          "IMU_STALE_SEC=2.0 carried over unchanged from US-497 (8 missed writes at the OLD 4 Hz; now 20 at 10 Hz -- strictly more conservative, so no re-grounding needed).",
+          "GEAR is NOT sourced from states/imu (Atlas: separate producer). No producer exists today, so it renders typed-NA -- no gear value is invented."
+        ]
+      },
+      "completionNotes": "commit 57e8452. RESUMED A DIED ITERATION -- the tree already carried the full US-508 implementation + a 44-test suite from a prior iteration that expired before running its gate or committing (TD-059 again, third sprint running). Per the recovery precedent I did NOT re-implement and did NOT trust it: I read the diff, ran the targeted suites (green, exit 0), then AUDITED the work against each AC rather than accepting the green. That audit found two real gaps, which are this iteration's actual contribution. GAP 1 -- ALTITUDE WAS ENTIRELY UNPINNED. The code renders it correctly via naTile and its own comment names the hazard ('a zeroed altitude renders as sea level -- a confident lie'), but NOT ONE test enforced it anywhere in tests/ui. AC-1 asks for a prominent altitude and Atlas ruled it typed-NULL/no_source; it is the one tile whose only correct rendering is an absence, and absence is the easiest thing to 'fix' by accident. Added 4 view pins + 1 DOM-wiring pin (a view key nobody paints is not a readout, and an always-NA tile is exactly what gets tidied away by someone cleaning the renderer). The strongest asserts NO DIGIT AT ALL rather than == 'NA', which also catches the helpful '0 ft'/'0 m' variants. GAP 2 -- THE RAISED BRIDGE CADENCE WAS UNPINNED. DEFAULT_STATE_HZ went 4 -> 10 (the whole AC-5 transport ruling), but every rate test in test_imu_state_bridge.py passes stateHz=4 EXPLICITLY, so the default path was never exercised -- a silent revert to 4 would leave the entire suite green while the tape and g-trail visibly stutter on the panel, a defect only a human in a moving car would ever report. Added a behavioural default-cadence test + a CROSS-ARTIFACT pin that reads the shipped carousel.js IMU_POLL_MS and asserts the producer is never slower than its consumer polls (the constant's docstring CLAIMED that grounding; a claim in a comment is not a check). Also corrected the neighbouring 4 Hz test's docstring, which asserted the old POLL_MS=250 grounding as if it were the rule. TDD ON PRE-EXISTING CODE = MUTATION PROOF: all 5 new pins passed on first run, which proves nothing, so I broke each defect they forbid (fabricate a sea-level altitude / drop the field / compute-but-never-paint it / revert the cadence to 4) and confirmed each went RED naming the right test, restoring from an in-`finally` backup so the uncommitted work could never be lost. Verified the restore by diff-stat before staging. GREEN in-loop (synchronous): tests/ui + tests/deploy/test_dashboard_kit.py + tests/pi/sensors + tests/pi/splash + tests/test_config_validator.py = 779 passed / 1 skipped, exit 0; ruff clean on all 6 touched .py; python validate_config.py passes. HOST GAPS unchanged (Sprints 64-68): make/black/mypy absent on this Windows box -- PM please run mypy at integration (imu_state_bridge.py + validator.py both changed). >>> THIS STORY CLOSES US-507'S FLAGGED VALIDATION GAP: absorbing Motion into the home slot is what reaches the locked 4 cards, so the 'US-507 alone lands at 5' criterion routed to the PM inbox is now discharged by US-507+US-508 jointly. Note test_dashboard_kit's count STAYED 4 across this change for a DIFFERENT REASON (the old idle card wore `card idle-card` and was never counted; the home slot is a plain `.card` and is) -- a bare count that survives for the wrong reason is vacuous, so the inventory test now NAMES every slot. ON-PI GATE OWED (A-16, cannot be discharged here): parked -> idle face; live states/imu -> compass tape + gear + grade + altitude; past 0.6 g -> amber; stale IMU -> falls back to idle, never frozen. WATCH: (1) the tape's SCROLL DIRECTION -- a backwards tape is a plausible instrument that is exactly wrong and no screenshot shows it; turn right, the tape must scroll left. (2) Confirm the swap does not leave a stale <svg> under the idle message. (3) states/imu is live @0x69 but the light sensor at 0x29 is UNPLUGGED -- unrelated to this card, do not read it as an IMU fault.",
       "acceptance": [
         "re-issue the live card to the CIO-locked spec (2026-07-27-pi-live-instrument-card.md): scrolling compass TAPE under a fixed caret (NOT the built rotating-needle dial); add the GEAR glyph (Spool OBD derivation, '--' when ambiguous); AMBER at 0.6 g (not just the 1.0 g full-scale clamp); grade % + prominent altitude + ~15-min moving trend",
         "HOME-SLOT SWAP: the home slot (position 1) shows the idle card when parked and the live instrument when driving -- one slot, two faces (not a separate always-present card)",

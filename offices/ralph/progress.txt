@@ -153,3 +153,78 @@ Task: Consolidate 6 cards to 4: merge Battery + Light + Fuel Trim into one "Heal
   open a regression window between the two stories) and routed the criteria
   correction to the PM instead of quietly meeting or quietly missing the number.
 ---
+
+## 2026-07-31 - US-508 (Agent 1 / Session 14)
+Task: Live/motion card re-issue to locked spec + home-slot idle-live swap
+
+### What was implemented:
+- RESUMED a died iteration: the full implementation + a 44-test suite were
+  already on disk, ungated and uncommitted (TD-059, third sprint running).
+  Audited it against each AC instead of trusting the green.
+- HOME SLOT (AC-2): `homeFace` is the ONE face arbiter -- parked wins outright,
+  live+fresh states/imu shows the instrument, everything else falls back.
+- The idle fallback carries TWO dispositions so a dead feed on a MOVING car
+  never renders the shipped "engine off" hero (AC-3).
+- Compass TAPE under a fixed caret; the rotating-needle builder REMOVED.
+- GEAR from a separate producer (never states/imu); amber at 0.6 g distinct
+  from the 1.0 g clamp; ~15-min decimated grade trend on a FIXED scale.
+- TRANSPORT (AC-5): bridge default 4 -> 10 Hz, card polls ~10 Hz. No new
+  transport; durable EDR persistHz untouched.
+- ADDED THE MISSING PINS (this iteration's real contribution): 5 for the
+  unpinned ALTITUDE readout, 2 for the unpinned raised bridge cadence.
+
+### Files changed:
+- Modified: `specs/UI/dist/dashboard-pi/carousel.js` (home swap, tape, gear, trend)
+- Modified: `specs/UI/dist/dashboard-pi/dashboard.html` (home slot, Motion card gone)
+- Modified: `specs/UI/dist/dashboard-pi/dashboard.css` (live face, tokens only)
+- Modified: `specs/architecture.md` (two-faced home slot -- design-gate DoD)
+- Modified: `config.json`, `src/common/config/validator.py` (stateHz 4 -> 10)
+- Modified: `src/pi/sensors/imu_state_bridge.py` (DEFAULT_STATE_HZ 4 -> 10)
+- Created:  `tests/ui/test_carousel_live_home_card.py` (44 + 5 new altitude pins)
+- Modified: `tests/pi/sensors/test_imu_state_bridge.py` (2 cadence pins)
+- Modified: `tests/ui/test_carousel_imu_card.py`, `tests/deploy/test_dashboard_kit.py`
+
+### Learnings for future iterations:
+- **Pattern discovered**: A GREEN SUITE ON INHERITED WORK PROVES THE TESTS THAT
+  EXIST PASS -- NOT THAT THE RIGHT TESTS EXIST. The died iteration left 44
+  passing tests and I nearly closed on that. Auditing AC-by-AC instead found
+  ALTITUDE with zero assertions anywhere in tests/ui. When you resume someone
+  else's work, the gap is never in what they tested; it is in what they never
+  reached. Walk the acceptance list, not the test list.
+- **Gotcha**: THE HARDEST FIELD TO PIN IS THE ONE THAT IS ALWAYS ABSENT.
+  Altitude has no producer on this Pi, so its only correct rendering is a gap --
+  and a gap looks like an oversight to the next person, who "fixes" it with a 0.
+  A zeroed altitude renders as SEA LEVEL: a confident lie, not a visible
+  absence. Assert NO DIGIT rather than == "NA"; the digit-free assertion also
+  catches the helpful "0 ft" / "0 m" / "--- ft" variants of the same mistake.
+- **Pattern discovered**: AND PIN THAT THE ABSENCE STILL GETS PAINTED. An
+  unconditionally-NA tile is exactly what a renderer cleanup deletes. Atlas kept
+  the field "for zero-rework later" -- so the day a BMP280 lands it needs
+  re-wiring, not re-laying-out. Two pins, one on the value, one on the DOM.
+- **Gotcha**: A DEFAULT NO TEST EVER USES IS NOT TESTED. Every rate test in
+  test_imu_state_bridge.py passes `stateHz=4` EXPLICITLY, so raising the default
+  4 -> 10 -- the entire AC-5 transport ruling -- was invisible to the suite. A
+  silent revert would stay green while the tape stutters on the panel, a defect
+  only a human in a moving car reports. When a story changes a DEFAULT, ask
+  which test exercises the default PATH, not the constant.
+- **Pattern discovered**: A GROUNDING CLAIM IN A COMMENT IS NOT A CHECK. The
+  constant's docstring said it was grounded to carousel.js IMU_POLL_MS. Now a
+  cross-artifact test reads the shipped JS and asserts the producer is never
+  slower than its consumer polls. Writing slower than the reader polls does not
+  slow the poll -- it makes the reader re-read an unchanged file and animate
+  nothing. Same two-correct-halves-that-stopped-agreeing shape as US-494/US-499.
+- **Pattern discovered**: TDD ON PRE-EXISTING CODE = MUTATION PROOF. All 5 new
+  pins passed on the first run, which proves nothing. So I broke each defect they
+  forbid (fabricate a sea-level altitude / drop the field / compute-but-never-
+  paint / revert the cadence) and confirmed each went RED naming the right test.
+  Restore lives in a `finally` and was verified by diff-stat before staging --
+  mutating a file that holds UNCOMMITTED work is how a recovery loses the thing
+  it recovered. Never `git checkout` to undo a mutation on a dirty file.
+- **Gotcha**: A COUNT THAT SURVIVES A CHANGE FOR A DIFFERENT REASON IS VACUOUS.
+  test_dashboard_kit's `class="card"` count stayed 4 across this story -- the old
+  idle card wore `card idle-card` and was never counted, the new home slot is a
+  plain `.card` and is. Two changes cancelled. The test now NAMES every slot.
+  US-507 hit the same family (an absence assertion true for the wrong reason).
+- **Gotcha**: the Bash tool is NOT PowerShell -- a `@'...'@` here-string leaks a
+  literal `@` into the commit subject. Use a `<<'EOF'` heredoc with `-F -`.
+---
