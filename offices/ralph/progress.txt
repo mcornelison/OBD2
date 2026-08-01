@@ -388,3 +388,86 @@ Task: Fidelity pass: restore approved copy + brand display face + TD-065 tokeniz
   Nothing is lost: prior notes are in git history and the per-session record is
   this file. Future sessions: refresh, don't append.
 ---
+
+## 2026-08-01 - US-511 (Agent 1 / Session 17)
+Task: Debounced "parked" signal for the kebab (stop the OBD-blip flicker)
+
+### What was implemented:
+- DEBOUNCE (AC-1): pure reducer `parkedInit()` / `parkedNext(prev, rawIdle,
+  nowMs, cfg)` -> `{parked, raw, sinceMs}`. `parked` needs idle held TRUE for
+  `parkedOnS` (8 s); it reverts only after idle held FALSE for `parkedOffS`
+  (3 s). Clock passed in, like every other US-506 predicate.
+- SEAM (AC-2): `menuAccess(parked)` -- SIGNATURE CHANGED. It no longer takes the
+  system-status payload and no longer calls `carouselIdle`, so keying the kebab
+  off the raw flag is now inexpressible rather than merely discouraged.
+- WIRING: `parkedSignal` lives in the enclosing browser scope;
+  `updateMenuAccess(sysData, nowMs)` advances it from the SHARED tick clock.
+- CONFIG (AC-4): `parkedOnS`/`parkedOffS` join `pi.display.carousel.*` and
+  inherit `resolveCarouselConfig`'s positive-only rule. No new placeholder, no
+  new loader -- `_loadDisplaySection` passes the section wholesale (verified).
+
+### Files changed:
+- Modified: `specs/UI/dist/dashboard-pi/carousel.js` (reducer + menuAccess + wiring)
+- Modified: `config.json` (`pi.display.carousel.parkedOnS/parkedOffS`)
+- Modified: `src/pi/splash/states_http_server.py` (docstring only -- no logic)
+- Modified: `specs/architecture.md` (F-092 debounce subsection -- design-gate DoD)
+- Created:  `tests/ui/test_carousel_parked_debounce.py` (30 tests)
+- Modified: `tests/ui/test_carousel_menu_access.py` (7 pins re-aimed)
+
+### Learnings for future iterations:
+- **Pattern discovered**: A DEBOUNCE IS ONLY REAL IF THE CONSUMER CANNOT SEE
+  PAST IT. `menuAccess` did its own ACQUISITION (it called `carouselIdle`
+  internally), so adding a debouncer upstream would have left two live paths to
+  the same fact and the next edit could take the raw one for free. Changing the
+  signature to `menuAccess(parked)` is the actual fix; the reducer is just
+  plumbing. Ask of any smoothing/validation layer: can the consumer still reach
+  the unsmoothed value? If yes, you have added a convention, not a guarantee.
+- **Gotcha**: NARROWING AN ARGUMENT FROM OBJECT TO BOOLEAN CREATES A FAIL-OPEN
+  FOOTGUN. Every un-migrated caller keeps compiling and now passes a TRUTHY
+  OBJECT. A `!!parked` test reads that as parked FOREVER -- the ⋮ pinned on
+  screen at 70mph, the exact hazard the function exists to prevent. `parked ===
+  true` makes the stale call shape fail CLOSED instead. When a parameter's type
+  narrows, the old shape must land on the SAFE side, not merely be "wrong".
+- **Pattern discovered**: HYSTERESIS IS RE-ANCHORING, NOT ACCUMULATING. The
+  tempting implementation sums not-idle time; then six 2 s blips reach 3 s and
+  un-park, so the flicker is not removed, only delayed and made harder to
+  reproduce. Every CHANGE of reading must restart the run. Pinned by a
+  six-blips-over-27 s sequence and mutation-proved by deleting the re-anchor.
+- **Gotcha**: ASSERT ON EVERY INTERMEDIATE STATE, NOT THE FINAL ONE. A debounce
+  that dips and recovers between two polls is exactly the defect under repair,
+  and it lands in the same final state as one that never dipped. The test helper
+  returns the state after EACH sample so `all(...)` can see the whole run.
+- **Gotcha**: AN UNMEASURED HOLD MUST NOT BE HALF-RECORDED. My first cut stored
+  the new reading when the clock was unreadable but left the old anchor -- so the
+  next real clock credited THIS run's elapsed time to the PREVIOUS reading, a
+  fabricated hold assembled from two halves. Return the state completely
+  untouched; the next real sample re-anchors on the change for free. Found by
+  tracing the test rather than by the test failing, which is the honest account.
+- **Gotcha**: A NEGATIVE ELAPSED TIME STRANDS A SIGNAL SILENTLY. An NTP step
+  back (this Pi has no RTC) makes `now - since` negative, and a run that can
+  never reach its threshold again is frozen for the size of the step -- on the
+  OFF edge that means the ⋮ stays up while the car drives away. Re-anchor on
+  `held < 0`. Note the test must step the clock with the reading UNCHANGED: a
+  step that coincides with a reading change re-anchors for the ordinary reason
+  and would pass with no guard at all.
+- **Gotcha**: THE PIN THAT GREPS A DEFECT'S NAME FIRED ON ITS OWN DOCUMENTATION
+  AGAIN -- FOURTH OCCURRENCE (US-507, US-509), and this time the cause was the
+  HELPER. `_fnBody` (copied from test_carousel_nav_model.py) slices "up to the
+  next function declaration" at a FIXED 4-space indent, but carousel.js declares
+  pure logic at 2-space and browser helpers at 4 -- so a 2-space function's
+  "body" ran on all the way to the DOM block and swallowed the comment that
+  documents the forbidden identifier. Fixed to cut at the function's OWN closing
+  brace (indent-aware) and PINNED THE SLICER AT BOTH EDGES: over-stripping is
+  the dangerous direction, because a slice cut to nothing makes an absence
+  assertion pass VACUOUSLY. The loose helper still lives in the neighbouring
+  suites -- routed to the PM, not fixed here (scope fence, no defect shown).
+- **Gotcha**: THE MOST DANGEROUS BUG IN A DEBOUNCE IS WHERE ITS STATE LIVES.
+  `var parkedSignal = parkedInit()` moved one line down (inside the per-tick
+  function) leaves every pure test green while the kebab NEVER APPEARS -- a hold
+  that resets every 250 ms cannot reach 8 s. No pure test can see this; it needs
+  a source pin on the scope. Mutation-proved.
+- **Verified, did not assume**: `_loadDisplaySection` passes `pi.display.<name>`
+  through WHOLESALE with no key allow-list, so the two new tunables reach the
+  browser with zero server change. Checked the loader rather than assuming the
+  seam was generic -- the US-494 shape in reverse.
+---
