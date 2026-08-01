@@ -228,3 +228,75 @@ Task: Live/motion card re-issue to locked spec + home-slot idle-live swap
 - **Gotcha**: the Bash tool is NOT PowerShell -- a `@'...'@` here-string leaks a
   literal `@` into the commit subject. Use a `<<'EOF'` heredoc with `-F -`.
 ---
+
+## 2026-07-31 - US-509 (Agent 1 / Session 15)
+Task: System-Status "N ISSUE" drill-down overlay
+
+### What was implemented:
+- DRILL-DOWN (AC-1): the US-489 `SYSTEM · N ISSUE` line is a GATED tap target ->
+  `#sys-detail`, an overlay of worst-first rows (source label + state chip + the
+  tile's own reason + freshness) with a `‹ Back` that always returns.
+- ONE READ (AC-4): rows ride on `systemStatusView().drill`, so a single read of
+  the state file feeds the grid, the summary AND the overlay. No source state is
+  recomputed -- `systemIssueRows` reads the levels the shipped tile builders
+  already produced.
+- ORDER: built by walking rank buckets top-down rather than sorting, so
+  "ties keep grid order" is a property of the CONSTRUCTION, not of the sort.
+- GATE (AC-2 validation): `drill.tappable = rows.length > 0` -- a healthy card
+  never advertises detail it does not have.
+- PAUSE (AC-2): NO new code. US-506's single document-level `pointerdown` seam
+  already covers every present and future overlay; pinned rather than re-called.
+- REUSE: the overlay inherits the US-406 per-code detail shell (`.detail-head` /
+  `.detail-body` / `.detail-card`, the same `‹ Back`).
+
+### Files changed:
+- Modified: `specs/UI/dist/dashboard-pi/carousel.js` (systemIssueRows/systemDrill + overlay render + wiring)
+- Modified: `specs/UI/dist/dashboard-pi/dashboard.html` (`#sys-detail` overlay)
+- Modified: `specs/UI/dist/dashboard-pi/dashboard.css` (row chrome, tokens only)
+- Modified: `specs/architecture.md` ("Summary drill-down (US-509)" -- design-gate DoD)
+- Created:  `tests/ui/test_carousel_system_drilldown.py` (27 tests)
+
+### Learnings for future iterations:
+- **Pattern discovered**: "ONLY SHOW WHAT IS BROKEN" HAS TWO OPPOSITE FAILURES,
+  AND A FLOOR THAT FIXES ONE OPENS THE OTHER. Listing a green source is a
+  fabricated fault; so is listing DRIVE=IDLE, which the card's own vocabulary
+  documents as "nominal but inactive, NOT broken" -- that one would report a
+  fault in the commonest state there is. But raise the floor to `amber` to be
+  safe and the headline `SYSTEM · N UNAVAILABLE` becomes a tappable line that
+  opens an EMPTY overlay: a new dead end, built while removing the old one. The
+  floor is `unavailable`. Ask of any filter: what does the state JUST BELOW the
+  cut look like when the summary above it is already counting that state?
+- **Gotcha**: A COUNT IN THE HEADLINE AND A COUNT IN THE LIST ARE DIFFERENT
+  FACTS. The summary counts ISSUES (amber/down); the list also carries
+  known-unknowns, so the rows can outnumber N. Rather than force them equal (and
+  lose a real fact) or let the overlay invent its own headline, the overlay head
+  REPEATS THE TAPPED LINE VERBATIM -- two surfaces that must agree agree best
+  when one of them is the other one.
+- **Gotcha**: FRESHNESS IS A READING, SO IT CAN BE FABRICATED LIKE ANY OTHER.
+  Only `obdLink` publishes `lastSeenS` (verified against the emitter, not
+  assumed). The default "seen 0s ago" would claim we had just seen a source we
+  never timed -- US-508's zeroed altitude in a different costume. Rows for
+  ageless sources read "age not reported".
+- **Gotcha**: AN OVERLAY OPENED FROM A SNAPSHOT GOES STALE WHILE YOU READ IT.
+  Left as-opened, the drill-down prints "seen 42s ago" forever while the real age
+  climbs -- the frozen-instrument fabrication already named for the g-dot
+  (US-497) and the rotate bar (US-506), in a third geometry. It repaints on every
+  poll, and when the last fault clears while it is open it SAYS "all sources OK"
+  rather than showing an empty box or yanking itself shut under the operator.
+- **Gotcha**: `-q` ON THE COMMAND LINE PLUS `-q` IN pyproject ADDOPTS = `-qq`,
+  WHICH SUPPRESSES THE SUMMARY LINE ENTIRELY. I read dots-only output twice
+  before noticing there was no "N passed" anywhere. The contract says to read the
+  actual summary line; that is only possible if you have not silenced it.
+- **Pattern discovered**: COMMIT THE GREEN WORK *BEFORE* MUTATION-PROVING. US-508
+  solved "don't lose uncommitted work while mutating it" with in-`finally`
+  backups; committing first is simpler and strictly safer -- restore becomes a
+  plain `git checkout` and the diff-stat against HEAD proves the restore. 5
+  mutations (strip the pause call / fabricate a zero age / lower the floor to
+  neutral / always-tappable / fork a raw hex into the CSS) all went RED naming
+  the right test.
+- **Verified, did not assume**: `renderSystemStatusCard` lives in the shared
+  render scope, NOT the deeper browser-only block where the DTC overlay's
+  elements are captured. Defining the new overlay's helpers down there would have
+  been a ReferenceError at tick time -- the US-494 shape. They live beside the
+  renderer and look their elements up lazily.
+---

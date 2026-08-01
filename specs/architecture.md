@@ -3665,6 +3665,39 @@ sync exceeds the threshold — and treats an absent/unparseable last-sync as sta
 and supplied by config: the emitter takes `syncStaleThresholdS` as a required
 parameter and **hardcodes no tuning number** (PM Rule 7 / Refusal Rule 2).
 
+**Summary drill-down (US-509, Sprint 68 / V0.29.23).** The US-489 one-glance
+`SYSTEM · N ISSUE` line is **tappable → a drill-down overlay** (`#sys-detail`,
+`carousel.js#systemIssueRows` / `#systemDrill`), one row per non-OK source,
+**worst-first**: source label + state chip + the tile's own reason + freshness,
+with a `‹ Back` that always returns. It is a **presentation of the same tiles**
+the 2×2 grid renders — the drill rows travel on `systemStatusView().drill`, so
+one read of the state file feeds the grid, the summary **and** the overlay, and
+the overlay is structurally incapable of contradicting the card behind it. No
+source state is recomputed. Four decisions are load-bearing:
+
+- **The listing floor is `unavailable`, not `amber`.** `ok` is never listed (a
+  green source in a fault list is a *fabricated* fault) and `neutral` is not
+  either — `DRIVE=IDLE` means "not recording", **not broken**, so listing it
+  would report a fault in the commonest state there is. But a known-**unknown**
+  *is* listed: the summary reads `SYSTEM · N UNAVAILABLE` in that state, so
+  excluding unavailables would make a tappable headline open an **empty**
+  overlay — the exact dead end this surface exists to remove.
+- **Freshness is never fabricated.** Only `obdLink` publishes `lastSeenS`; rows
+  for sources that publish no age read **"age not reported"**, never
+  `"seen 0s ago"` (which would claim we had just seen a source we never timed —
+  the zeroed-altitude lie of US-508 in a different costume).
+- **The affordance is gated on `drill.tappable`** (`rows.length > 0`), so a
+  healthy card never advertises detail it does not have.
+- **An open overlay repaints on every poll** rather than freezing on the
+  snapshot that opened it — a frozen age readout is the same fabrication the
+  g-dot (US-497) and the rotate bar (US-506) are guarded against.
+
+The overlay **reuses the US-406 per-code detail shell** (`.detail-head` /
+`.detail-body` / `.detail-card`, the same `‹ Back`) so the two drill-downs speak
+one interaction language, and it inherits the auto-rotate pause from the single
+document-level `pointerdown` seam US-506 established — no per-overlay pause call
+site to forget.
+
 #### Battery Health card + `battery-health` emitter (US-401) [Atlas A-3]
 
 The **Battery Health** card (Card 2) renders the `battery-health` state file at 4
