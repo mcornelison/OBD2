@@ -36,11 +36,20 @@ the real IMU contract, the shipped tokens/chrome, and Spool's semantics.
 - **Gear:** big glyph. **Spool owns it** — `--` when ambiguous (speed<5 km/h, rpm<900, ratio>15%
   off nearest), `N` rolling-neutral, ≥2 s debounce. **Never a wrong number.** 4th/5th are at the
   OBD sample-rate edge (Spool) → the display must render `--` gracefully there, not guess.
-- **Grade:** current **road grade %** (= tan(pitch°)×100, what road signs use — CIO 2026-07-27),
-  a **prominent altitude readout** (GPS; CIO wants it primary in this box), and a ~15-min rolling
-  grade-trend sparkline (a live signal — it scrolls as the road rises/falls; static-looking only
-  in the sim when the value drifts slowly). Informational (Spool: no alarm). Titles kept minimal
-  ("GRADE" / "G-FORCE" — no "trend"/"35s" noise; CIO 2026-07-27).
+- **Grade:** current **road grade %** (= tan(pitch°)×100 — CIO 2026-07-27) + a ~15-min rolling
+  grade-trend sparkline (live; scrolls as the road rises/falls). Informational (Spool: no alarm).
+  Titles minimal ("GRADE" / "G-FORCE").
+- **Altitude — NO SOURCE today (Atlas 2026-07-31).** Correcting the earlier "prominent altitude
+  readout": the ICM-20948 has **no barometer** and there's **no GPS producer** yet, so `states/imu`
+  resolves altitude as **honest-NA** — render a small **"ALT — no source"** line, grayed, never
+  zeroed. Do NOT make it prominent while it has no data (honest-instrument). Two paths reinstate it:
+  - **Interim (CIO "option 3", pending Spool):** altitude-change = ∫ sin(pitch)·speed dt (IMU grade +
+    OBD speed, home-anchored) — a rough/relative estimate; show only if Spool rules it honest enough
+    (`tuner/inbox/2026-08-01-...interim-grade-speed-altitude.md`).
+  - **Real (CIO ordering):** an **I2C GPS (Adafruit PA1010D #4415)** → a new `states/gps` source
+    (Atlas contract) gives absolute altitude (±10–20 m) **+ true speed / heading / position**;
+    supersedes the interim. When it lands I design altitude + speed properly (the speed the "what
+    else earns the glance" question was waiting on).
 - **G-force:** a cross-haired meter with concentric rings, a live dot at (lat, lon) g, and a
   fading **~35 s trail**. Informational, never a takeover (Spool). **Amber ring/dot at 0.6 g**
   (Spool) — which doubles as an aged-tire lat-load nudge, advisory not alarm.
