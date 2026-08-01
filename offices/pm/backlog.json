@@ -4,8 +4,8 @@
   "updatedBy": "Marcus (PM)",
   "counters": {
     "epic": 7,
-    "feature": 124,
-    "story": 515
+    "feature": 125,
+    "story": 520
   },
   "epics": [
     {
@@ -1277,6 +1277,15 @@
       "description": "Track B of the CIO 2026-07-31 UI-feedback round (triage SSOT: offices/pm/decisions/2026-07-31-ui-feedback-round2-triage.md). Design-owned items requiring Iris design + CIO mockup review BEFORE dev stories are groomed: #14 look/feel fidelity vs the approved design (untokenized literals TD-065 + idle wordmark/footer copy drift + no brand display face), #9 Motion/IMU card redesign to match Iris's CIO-locked live-card spec (compass tape not needle-dial, GEAR readout, 0.6 g amber, home-slot swap) + screen placement, #12 carousel wrap (7<->1, reverses the intentional clamp), #13 auto-rotation + swipe-to-pause + hard-swipe-advance (CIO-chosen; needs a new slow/fast swipe distinction), #7 System-Status 'issue' drill-down detail view, #15 steadier 'parked' concept for the kebab visibility (today it flips with OBD availability). No stories authored until Iris's design lands + CIO approves the mockup (design-before-build pattern).",
       "createdAt": "2026-07-31",
       "updatedAt": "2026-07-31"
+    },
+    {
+      "id": "F-125",
+      "parent": "E-006",
+      "status": "pending",
+      "title": "GPS source + honest altitude (real I2C GPS + interim derived) -- live-card upgrade",
+      "description": "CIO 2026-08-01 (Iris consolidated work-package: offices/pm/inbox/2026-08-01-from-iris-gps-altitude-workpackage-for-grooming.md). states/imu has NO altitude source (no baro on ICM-20948, no GPS producer). Add honest altitude two ways: (a) REAL -- an Adafruit PA1010D I2C GPS (#4415 STEMMA QT) -> new states/gps source (DELTA-2 seam, Atlas contract) giving absolute altitude +-10-20m + true speed/heading/position (CIO ordering the part; Spool owns GPS-value trust); (b) INTERIM (CIO-greenlit to SHOW now, labeled approximate, NOT safety-critical) -- altitude = home-elevation + integral(sin(pitch)*speed dt) from IMU grade + OBD speed, home-anchored, re-anchored on every successful server sync (Spool owns the derivation math). Plus home-location config (pi.location.home.{lat,lon,elevationM}; location PII stays in .env). None of this touches the in-flight V0.29.23 F-124 work -- US-508 altimeter shows 'no source' meanwhile; GPS later swaps the feed + drops the approximate marker.",
+      "createdAt": "2026-08-01",
+      "updatedAt": "2026-08-01"
     }
   ],
   "stories": [
@@ -6672,6 +6681,126 @@
       ],
       "createdAt": "2026-07-31",
       "updatedAt": "2026-07-31",
+      "tasks": []
+    },
+    {
+      "id": "US-516",
+      "parent": "F-125",
+      "type": "normal",
+      "size": "L",
+      "status": "pending",
+      "title": "WP-1: PA1010D I2C GPS reader -> states/gps source (real altitude/speed/heading/position)",
+      "goal": "As the live card, I want a real GPS source publishing states/gps, so altitude/speed/heading come from an absolute sensor instead of a derived estimate.",
+      "definitionOfDone": [
+        "a dedicated reader OWNS NMEA parsing for the Adafruit PA1010D (I2C, STEMMA QT) and publishes states/gps (DELTA-2 single-owner seam, same shape as states/imu): altitude, speed, heading, lat/lon, fixQuality, available(bool), ts",
+        "honest-NA on no-fix: no fix -> available=false + typed-NULL fields (reason like 'no_fix'), NEVER a fabricated/zeroed position or altitude",
+        "the display polls states/gps as a PURE consumer (~1 Hz fine; never opens the bus/I2C itself); raw GPS on the EDR bus + versioned sensor schema, states/gps is the derived display view",
+        "[GATE -- Atlas] blocked on Atlas's states/gps derived-field contract (route it like the states/imu line); [GATE -- hardware] the CIO's PA1010D #4415 arriving + wired on the shared I2C bus. Spool owns GPS-value trust semantics",
+        "test/mock proves: no-fix -> honest-NA; a valid fix -> populated fields; ruff clean"
+      ],
+      "validationCriteria": [
+        {"action": "on the Pi with the PA1010D wired: cat states/gps with no fix, then with a fix", "outcome": "no-fix reads available=false + NA fields (not fabricated); with a fix, real altitude/speed/heading/lat-lon populate"}
+      ],
+      "conditionalOutcomes": ["if Atlas's contract shapes the fields differently, bind to the ruled contract"],
+      "deps": ["ATLAS-states-gps-contract"],
+      "sourceRefs": ["offices/pm/inbox/2026-08-01-from-iris-gps-altitude-workpackage-for-grooming.md#WP-1", "F-125", "states/gps", "states/imu (DELTA-2 seam precedent)"],
+      "createdAt": "2026-08-01",
+      "updatedAt": "2026-08-01",
+      "tasks": []
+    },
+    {
+      "id": "US-517",
+      "parent": "F-125",
+      "type": "normal",
+      "size": "S",
+      "status": "pending",
+      "title": "WP-2: home-location config binding (pi.location.home.{lat,lon,elevationM})",
+      "goal": "As the altitude anchor + GPS home-geofence, I want the home reference in config (from .env), so it's not a hardcoded literal and location PII stays uncommitted.",
+      "definitionOfDone": [
+        "config.json ${...} binding for pi.location.home.{lat, lon, elevationM} reading PI_HOME_LAT / PI_HOME_LON / PI_HOME_ELEVATION_M (=209 m ASL) from .env (Iris already set .env + placeholders in .env.example)",
+        "validator default + a consumer read path; location is PII -> values live ONLY in the gitignored .env, NEVER committed to source",
+        "[SEAM -- Atlas] confirm pi.location.home is the right key/seam (Atlas config-contract lane); test proves the ${...} resolves + the consumer reads it",
+        "ruff clean"
+      ],
+      "validationCriteria": [
+        {"action": "validate_config with PI_HOME_* set in .env", "outcome": "pi.location.home.{lat,lon,elevationM} resolves from .env; no PII literal in committed config.json"}
+      ],
+      "conditionalOutcomes": [],
+      "deps": [],
+      "sourceRefs": ["offices/pm/inbox/2026-08-01-from-iris-gps-altitude-workpackage-for-grooming.md#WP-2", "offices/pm/inbox/2026-08-01-from-iris-home-reference-for-altitude-anchor.md"],
+      "createdAt": "2026-08-01",
+      "updatedAt": "2026-08-01",
+      "tasks": []
+    },
+    {
+      "id": "US-518",
+      "parent": "F-125",
+      "type": "normal",
+      "size": "S",
+      "status": "pending",
+      "title": "WP-3: re-anchor derived altitude to home elevation on every successful server sync",
+      "goal": "As drift control, I want the derived altitude reset to home elevation on each successful sync, so error is bounded to a single drive between syncs.",
+      "definitionOfDone": [
+        "hook the EXISTING sync-success event -> reset the derived altitude accumulator to pi.location.home.elevationM (a successful server sync means the car is home on the home network = a verified 'at home' reset)",
+        "small utility on the sync-success seam (Atlas seam); does not fire on failed/partial syncs",
+        "test proves the reset fires on sync-success + not otherwise; ruff clean"
+      ],
+      "validationCriteria": [
+        {"action": "simulate a successful server sync after the derived altitude has drifted", "outcome": "derived altitude resets to home elevationM on the sync-success; no reset on a failed sync"}
+      ],
+      "conditionalOutcomes": [],
+      "deps": ["US-517", "US-519"],
+      "sourceRefs": ["offices/pm/inbox/2026-08-01-from-iris-gps-altitude-workpackage-for-grooming.md#WP-3"],
+      "createdAt": "2026-08-01",
+      "updatedAt": "2026-08-01",
+      "tasks": []
+    },
+    {
+      "id": "US-519",
+      "parent": "F-125",
+      "type": "normal",
+      "size": "M",
+      "status": "pending",
+      "title": "WP-4: derived altitude source (home-elev + integral sin(pitch)*speed dt) -- interim, show as approximate",
+      "goal": "As the interim altitude source, I want a derived altitude from IMU grade + OBD speed, so the live card shows a rough altitude until the real GPS lands.",
+      "definitionOfDone": [
+        "derived altitude = home_elevation + integral(sin(pitch)*speed dt) (IMU grade from states/imu + OBD speed), home-anchored (WP-2) + re-anchored per WP-3",
+        "CIO 2026-08-01: altitude is NOT safety-critical (a 'fun fact' while driving) -> SHOW it, rendered honestly as APPROXIMATE (e.g. a leading marker); a `source` field = 'derived' (flips to 'gps' when WP-1 lands)",
+        "[GATE -- Spool] Spool owns the derivation math/quality ruling (tuner/inbox/2026-08-01-...interim-grade-speed-altitude.md) -- the integration/units/quality must be his-blessed before it drives the display",
+        "honest-instrument: if grade or speed is unavailable, altitude falls to typed-NA, never a fabricated value; test proves the integration + the NA fallback; ruff clean"
+      ],
+      "validationCriteria": [
+        {"action": "feed known grade+speed over time; then drop speed", "outcome": "altitude integrates to a plausible approximate value (Spool-blessed math), rendered with the approximate marker; drops to NA when grade/speed unavailable"}
+      ],
+      "conditionalOutcomes": ["if Spool rules the derivation not honest enough to show, hold WP-4 for GPS (WP-1) and keep 'no source' -- do NOT show a value Spool hasn't blessed"],
+      "deps": ["US-517"],
+      "sourceRefs": ["offices/pm/inbox/2026-08-01-from-iris-gps-altitude-workpackage-for-grooming.md#WP-4", "states/imu", "Spool interim-grade-speed-altitude ruling"],
+      "createdAt": "2026-08-01",
+      "updatedAt": "2026-08-01",
+      "tasks": []
+    },
+    {
+      "id": "US-520",
+      "parent": "F-125",
+      "type": "normal",
+      "size": "S",
+      "status": "pending",
+      "title": "WP-5: live-card altitude + speed display -- render approximate derived altitude, source-flip derived->gps",
+      "goal": "As the driver, I want the live card to show altitude (and true speed once GPS lands), so the instrument earns the glance.",
+      "definitionOfDone": [
+        "the live card's altimeter renders the derived approximate altitude as the live source, falling to '-- no source' ONLY if grade/speed are unavailable (NOTE: US-508 already shipped with 'no source'; this is a FOLLOW-UP add to the live card, not a change to the closed US-508)",
+        "a `source` field (derived -> gps) flips the feed with NO layout change when WP-1 (GPS) lands; GPS also brings TRUE speed (the deferred 'what else earns the glance')",
+        "Iris design (folded into the live-card spec + mockups); honest markers preserved (approximate for derived, exact for GPS)",
+        "ruff clean; on-Pi render check that the altitude shows the approximate value + flips cleanly to GPS when that source lands"
+      ],
+      "validationCriteria": [
+        {"action": "on the Pi with the derived source live, then with GPS live", "outcome": "altimeter shows approximate derived altitude; when GPS lands the same tile shows exact altitude + true speed with no layout change"}
+      ],
+      "conditionalOutcomes": [],
+      "deps": ["US-519"],
+      "sourceRefs": ["offices/pm/inbox/2026-08-01-from-iris-gps-altitude-workpackage-for-grooming.md#WP-5", "US-508", "F-124"],
+      "createdAt": "2026-08-01",
+      "updatedAt": "2026-08-01",
       "tasks": []
     }
   ]
