@@ -171,6 +171,7 @@ code{font-family:var(--mono);font-size:.85em;background:var(--accent-soft);color
       <div class="rail">
         <h3>#9 Live card + placement</h3>
         <p class="lead">Back to your locked spec — compass <b>tape</b>, <b>GEAR</b>, amber at <b>0.6 g</b>, grade % + altitude — and moved to the <b>home slot</b>: parked shows idle, driving shows live (toggle above).</p>
+        <p><b>Altitude = derived, shown as <code>≈NNN m</code></b> (grade×speed from home 209 m, re-anchored each server sync). It's an approximate <b>fun-fact</b>, not safety-critical — the <code>≈</code> keeps it honest; the GPS you're adding swaps the feed to real altitude later (and drops the <code>≈</code>).</p>
         <h3>Consolidated to 4 screens</h3>
         <p class="lead">Battery + Light + Fuel Trim are now one <b>Health</b> card (was 3 screens). Full set: <b>Home · System Status · Health · Alerts</b>. On the bench the <b>Fuel Trim</b> line honestly reads "no engine data" (toggle above) rather than a fake value.</p>
         <h3>#12 · #13 Wrap + auto-rotate</h3>
@@ -378,7 +379,7 @@ function liveFrame(ts){
   var gp=gradePct(t);var gv=document.getElementById("gv");if(gv)gv.textContent=(gp>=0?"+":"")+gp.toFixed(0)+"%";
   gradeHist.push(gp);if(gradeHist.length>60)gradeHist.shift();
   var gl=document.getElementById("gl");if(gl){var pts="";for(var i=0;i<gradeHist.length;i++){pts+=(i/59*100).toFixed(1)+","+(15-gradeHist[i]*1.0).toFixed(1)+" ";}gl.setAttribute("points",pts.trim());}
-  var av=document.getElementById("av");if(av)av.innerHTML=simAlt(t)+'<span class="u"> m</span>';
+  var av=document.getElementById("av");if(av)av.innerHTML='≈'+simAlt(t)+'<span class="u"> m</span>';  // derived (grade×speed) — approximate fun-fact until GPS
   trail.forEach(function(p){p.age+=1/30;});trail=trail.filter(function(p){return p.age<35;});
   if(!reduce){trail.push({x:gLat,y:gLon,age:0});if(trail.length>140)trail.shift();}
   var cv=document.getElementById("gc");var hot=false;if(cv)hot=drawG(cv,gLat,gLon);

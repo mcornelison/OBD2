@@ -64,6 +64,15 @@
         "height": 1080,
         "mode": "auto"
       },
+      "carousel": {
+        "autoRotateS": 8,
+        "resumeIdleS": 45,
+        "swipeMinPx": 40,
+        "swipeFastVelocityPxPerMs": 0.6,
+        "swipeFastTravelFrac": 0.55,
+        "parkedOnS": 8,
+        "parkedOffS": 3
+      },
       "autoDim": {
         "luxMin": 3.0,
         "luxFull": 1000.0,
@@ -492,7 +501,7 @@
         "enabled": true,
         "sampleHz": 50,
         "persistHz": 25,
-        "stateHz": 4,
+        "stateHz": 10,
         "gravityTauSec": 5.0,
         "mount": {
           "forward": "+x",

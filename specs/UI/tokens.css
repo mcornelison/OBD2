@@ -20,9 +20,54 @@
  * small sizes on this display. System mono only; no web fonts / no font CDN.
  * ============================================================================ */
 
+/* --- Brand face (BL-027, the US-510 A-3 payload) -----------------------------
+   Oswald SemiBold 600, subset to A-Z / 0-9 / space / hyphen (2,896 B) -- cut by
+   Iris 2026-08-01 and INLINED as a data: URI. The kiosk is offline in the car
+   and CSP-fenced, so a font CDN would fail in the ONE place that matters and
+   nowhere else; there is no external font reference anywhere in this kit.
+
+   Licence: SIL Open Font License 1.1 -- specs/UI/dist/dashboard-pi/OFL.txt,
+   which ships with the kit (the face travels INSIDE the stylesheet, so the
+   licence has to travel with the stylesheet). Oswald carries no Reserved Font
+   Name, so the family name "Oswald" is compliant (Iris, confirmed 2026-08-01).
+
+   Why this arrives as a fast-follow: US-510 shipped the token + the bindings
+   and left the payload open because the previously-locked face (Bahnschrift)
+   is Microsoft-proprietary, absent from Pi OS and not redistributable -- so
+   naming it never put it on the panel. Oswald is the open-licence replacement.
+
+   The weight is 600 and ONLY 600: every rule that binds --font-display asks
+   for 600, because a request for 700 against a single-weight subset gets a
+   SYNTHESISED bold, which on a condensed face reads as a rendering fault.
+   Pinned by tests/ui/test_dashboard_brand_font_payload.py. */
+@font-face {
+  font-family: "Oswald";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url(data:font/woff2;base64,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) format("woff2");
+}
+
 :root {
   /* --- Type --------------------------------------------------------------- */
-  --font-mono: ui-monospace, Menlo, Consolas, monospace;  /* the only family */
+  --font-mono: ui-monospace, Menlo, Consolas, monospace;  /* DATA + values     */
+  /* BRAND MOMENTS ONLY -- the `ECLIPSE OBD-II` wordmark + card titles (Iris
+     A-3, US-510). Everything that carries a READING stays --font-mono: the
+     tabular mono IS the instrument vernacular and is deliberately unchanged.
+     BL-027 CLOSED (2026-08-01): the lead face is now the EMBEDDED Oswald
+     subset declared above, so this stack no longer depends on what the host
+     happens to have installed. Bahnschrift and DIN Condensed have LEFT the
+     stack deliberately -- both are host-only faces, so leading with them meant
+     a Windows dev box and the Pi rendering two different "brand" faces while
+     every test stayed green. The embedded face is the one face. */
+  --font-display: "Oswald", "Arial Narrow", system-ui, sans-serif;
+
+  /* --- Base surfaces ------------------------------------------------------ */
+  /* Atlas Rule-10 ruling 2026-07-31 (US-510/TD-065): PROMOTED from the
+     dashboard.css:27-28 literals. Pure consolidation -- the values ARE the
+     shipped ones, so the promotion is zero-visual-change by construction. */
+  --bg:             #000000;   /* base background (splash + dashboard field)  */
+  --surface:        #111111;   /* raised chrome: top bar, rules, seams        */
 
   /* --- Neutral text ------------------------------------------------------- */
   --text-primary:   #DDDDDD;   /* primary / high-emphasis dashboard text.
@@ -67,6 +112,21 @@
   /* --amber-warn WATCH and invert severity). See US-484-b +                   */
   /* offices/tuner/dtc-display-clear-safety-advisory.md §6d.                    */
   --critical-red: #D32F2F;
+
+  /* --- DESTRUCTIVE ACTION reds — a DIFFERENT AXIS from the alarm tiers ----- */
+  /* Atlas Rule-10 ruling 2026-07-31 (US-510, closing TD-065/TD-067). These
+     dress the Mode-04 clear-codes hard-confirm: a button the OPERATOR presses,
+     not a condition of the VEHICLE. Three constraints, all load-bearing:
+       - NOT a brand red (--red/--red-light) — brand ≠ danger (Spool S-2);
+       - NOT --amber-warn — that means WATCH, a live degraded state;
+       - MUST stay DISTINCT from --critical-red (#D32F2F) — if a destructive
+         ACTION reads as an alarm STATE, the driver cannot tell "you are about
+         to erase your codes" from "pull over". That conflation is the whole
+         reason this pair exists rather than an alias.
+     Iris applies which surface takes which; the reds are UI affordance, not
+     engine safety, so a Spool ratify is optional (Atlas), not blocking. */
+  --destructive:        #C62828;   /* destructive-action fill                 */
+  --destructive-border: #7F1D1D;   /* confirm-box border / secondary surface  */
 }
 
 /* ============================================================================
@@ -79,9 +139,14 @@
  *   --neutral-blue:  TBD;  normal-state tuning readouts, ~#7B9CAE.
  *
  * Not yet tokenized (intentionally — no grounded value exists yet):
- *   - base background color  (splash renders on black; not yet a named token)
+ *   (the base background + raised surface were tokenized 2026-07-31 — Atlas
+ *    Rule-10, US-510/TD-065; --bg #000000 / --surface #111111 now live in
+ *    :root above, promoted at their shipped values so nothing re-rendered.)
  *   (--text-primary was tokenized 2026-07-25 — Atlas gate, US-484/BL-024;
  *    grounded value #DDDDDD now lives in :root above.)
+ *   (--destructive / --destructive-border were set 2026-07-31 — Atlas Rule-10,
+ *    US-510; they close the TD-067 deferral that left the two clear-confirm
+ *    surfaces on the brand reds.)
  * ============================================================================ */
 
 /* ----------------------------------------------------------------------------

@@ -296,7 +296,7 @@ function frame(ts){
   gradeHist.push(gradePct); if(gradeHist.length>60)gradeHist.shift();
   var gl=document.getElementById("gline");
   if(gl){var pts="";for(var i=0;i<gradeHist.length;i++){var x=i/59*100;var y=15-(gradeHist[i])*1.0;pts+=x.toFixed(1)+","+y.toFixed(1)+" ";}gl.setAttribute("points",pts.trim());}
-  var alt=document.getElementById("altval"); if(alt)alt.innerHTML=simAlt(t)+'<span class="u"> m</span>';
+  var alt=document.getElementById("altval"); if(alt)alt.innerHTML='≈'+simAlt(t)+'<span class="u"> m</span>';  // derived approx fun-fact until GPS
   // g-force
   trail.forEach(function(p){p.age+=1/30;}); trail=trail.filter(function(p){return p.age<35;});
   if(!reduce){trail.push({x:gLat,y:gLon,age:0}); if(trail.length>140)trail.shift();}

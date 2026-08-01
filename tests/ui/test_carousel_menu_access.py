@@ -97,19 +97,32 @@ def _fnBody(js: str, signature: str) -> str:
 
 # ---------------------------------------------------------------------------
 # AC1 -- the `⋮` single-tap affordance is PARKED-ONLY.
+#
+# US-511 MOVED THE SEAM THESE TESTS SIT ON, and the tests moved with it rather
+# than being deleted. `menuAccess` used to take the system-status payload and
+# call `carouselIdle` on it; it now takes an already-debounced boolean, so a
+# payload fixture can no longer reach it. What these tests were really guarding
+# -- that "is the vehicle parked?" is read from the `idle` SSOT and fails CLOSED
+# on every unreadable variant -- is unchanged and still lives on this path, one
+# link upstream. So they are re-aimed at `carouselIdle`, the link that now owns
+# that question, and the policy half is pinned on the boolean it now receives.
+# US-511's own suite (test_carousel_parked_debounce.py) covers the debounce
+# between the two.
 # ---------------------------------------------------------------------------
 
 
 @_NODE_TESTS
 def test_menuAccess_parked_offersTheTapAffordance():
-    """Idle (parked, engine off): the ⋮ is a convenience, not a hazard."""
-    assert _view("menuAccess", _sys(True))["tapVisible"] is True
+    """Parked (engine off): the ⋮ is a convenience, not a hazard."""
+    assert _view("carouselIdle", _sys(True)) is True
+    assert _view("menuAccess", True)["tapVisible"] is True
 
 
 @_NODE_TESTS
 def test_menuAccess_driving_hidesTheTapAffordance():
     """The whole point (AC-4): no single-tap path into stop/Exit while driving."""
-    assert _view("menuAccess", _driving())["tapVisible"] is False
+    assert _view("carouselIdle", _driving()) is False
+    assert _view("menuAccess", False)["tapVisible"] is False
 
 
 @_NODE_TESTS
@@ -117,7 +130,7 @@ def test_menuAccess_stateUnreadable_failsClosedToHidden():
     """An absent/unreadable system-status is a known-UNKNOWN, and the unknown
     side of "am I driving?" is the dangerous one -- hide. Safe to fail closed
     ONLY because the long-press override is unconditional (see AC2 below)."""
-    assert _view("menuAccess", None)["tapVisible"] is False
+    assert _view("carouselIdle", None) is False
 
 
 @_NODE_TESTS
@@ -125,7 +138,7 @@ def test_menuAccess_idleFlagAbsent_failsClosedToHidden():
     """A payload from an emitter that never wrote `idle` must not read parked."""
     state = _sys(True)
     del state["idle"]
-    assert _view("menuAccess", state)["tapVisible"] is False
+    assert _view("carouselIdle", state) is False
 
 
 @_NODE_TESTS
@@ -133,7 +146,7 @@ def test_menuAccess_idleNotBoolean_failsClosedToHidden():
     """The truthy string "false" is the classic way a JSON-ish flag lies. Only a
     real `true` boolean counts as parked."""
     for junk in ("true", "false", 1, {}):
-        assert _view("menuAccess", _sys(junk))["tapVisible"] is False, junk
+        assert _view("carouselIdle", _sys(junk)) is False, junk
 
 
 @_NODE_TESTS
@@ -142,9 +155,9 @@ def test_menuAccess_readsTheIdleSsot_notTheDriveString():
     re-derives idle from the drive-state string. Pinned in BOTH directions so a
     future "helpful" fallback to `drive.state` re-reds this test."""
     # drive says idle, the SSOT says otherwise -> the SSOT wins (stay hidden).
-    assert _view("menuAccess", _sys(False, driveState="idle"))["tapVisible"] is False
+    assert _view("carouselIdle", _sys(False, driveState="idle")) is False
     # drive says recording, the SSOT says parked -> the SSOT wins (show).
-    assert _view("menuAccess", _sys(True, driveState="recording", driveId=27))["tapVisible"] is True
+    assert _view("carouselIdle", _sys(True, driveState="recording", driveId=27)) is True
 
 
 # ---------------------------------------------------------------------------
@@ -156,15 +169,17 @@ def test_menuAccess_readsTheIdleSsot_notTheDriveString():
 
 @_NODE_TESTS
 def test_menuAccess_longPress_survivesEveryState():
-    for state in (_sys(True), _driving(), None, _sys("true")):
-        assert _view("menuAccess", state)["longPress"] is True, state
+    """Every input `menuAccess` can be handed, including the malformed ones --
+    the override is the one thing that must never depend on the answer."""
+    for parked in (True, False, None, "true", {}):
+        assert _view("menuAccess", parked)["longPress"] is True, parked
 
 
 @_NODE_TESTS
 def test_menuAccess_longPress_isNotTheTapAffordance():
     """While driving the two paths must DISAGREE -- if they ever collapse into
     one flag, either the tap comes back or the override disappears."""
-    access = _view("menuAccess", _driving())
+    access = _view("menuAccess", False)
     assert access["longPress"] != access["tapVisible"]
 
 
@@ -176,9 +191,13 @@ def test_menuAccess_longPress_isNotTheTapAffordance():
 
 
 def test_pollAppliesMenuAccessEveryTick():
-    """The affordance must track the live state, not the state at boot."""
+    """The affordance must track the live state, not the state at boot.
+
+    US-511 added the tick clock to the call (the debounce measures a hold), so
+    the expected call text moved with it. The invariant is unchanged: the poll
+    applies the policy on every tick."""
     js = _read(_JS)
-    assert "updateMenuAccess(sysData)" in js, "menuAccess computed but never applied"
+    assert "updateMenuAccess(sysData, nowMs)" in js, "menuAccess computed but never applied"
 
 
 def test_applyMenuAccess_hidesTheButtonItself():

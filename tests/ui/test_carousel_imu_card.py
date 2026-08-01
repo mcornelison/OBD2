@@ -463,57 +463,70 @@ class TestGTrail:
 class TestImuCardWiring:
     """The shipped markup + tick actually reach the view and the renderer."""
 
-    def test_markup_shipsAnAlwaysPresentImuCard(self):
+    def test_markup_theLiveImuSurfaceIsNeverVehicleGated(self):
         """
         Given: the shipped dashboard.html
-        When: the IMU card is located
-        Then: it exists with data-state="imu" and is NOT vehicle-gated and NOT
-              hidden. The IMU is a PI-LOCAL sensor -- it reads on the bench with
-              no car, so gating it behind a vehicle would hide a working
-              instrument (Atlas's card model: always-present, gray-if-offline).
+        When: the surface carrying the IMU instrument is located
+        Then: it is NOT vehicle-gated and NOT hidden.
+
+        RE-AIMED BY US-508. This test used to locate a standalone
+        data-state="imu" card, which US-508 deliberately dissolved into the home
+        slot. The invariant it was REALLY guarding is untouched and is what is
+        re-asserted here: the IMU is a PI-LOCAL sensor that reads on the bench
+        with no car, so its surface must never hide behind a vehicle gate.
         """
         html = _read(_HTML)
-        m = re.search(r'<section class="card"[^>]*data-state="imu"[^>]*>', html)
-        assert m, "no always-present IMU card section in dashboard.html"
+        m = re.search(r'<section class="card"[^>]*data-idle-home[^>]*>', html)
+        assert m, "no home slot in dashboard.html"
         tag = m.group(0)
         assert "data-vehicle-gated" not in tag
         assert "hidden" not in tag
 
-    def test_tick_callsTheImuViewAndRenderer(self):
+    def test_theLiveLoopCallsTheImuViewAndRenderer(self):
         """
-        Given: the shipped tick body
-        When: the imu branch is read
-        Then: it routes the polled state through imuView + renderImuCard. US-494
+        Given: the shipped live-poll + home-render bodies
+        When: the call sites are read
+        Then: the polled state really reaches the view and the renderer. US-494
               was a dependency the entry point never injected -- no test of the
-              component could see it, so the CALL SITE is what gets pinned.
-        """
-        body = _fnBody(_read(_JS), "tick")
-        assert 'name === "imu"' in body
-        assert "renderImuCard(" in body
-        assert "imuView(" in body
-
-    def test_tick_resolvesTheImuFreshnessAgainstTheSameClockAsTheRestOfTheTick(self):
-        """
-        Given: the tick body
-        When: the imu render is read
-        Then: it passes the tick's shared nowMs. Resolving freshness against a
-              second clock lets the card and the auto-dim disagree by a poll
-              interval about whether a feed is alive (the US-496 lesson).
-        """
-        body = _fnBody(_read(_JS), "tick")
-        assert re.search(r"imuView\(\s*data\s*,\s*nowMs\s*\)", body)
-
-    def test_tick_clearsTheTrailWhenTheFeedGoesIdle(self):
-        """
-        Given: the tick body
-        When: the idle branch is read
-        Then: the trail is reset. Without this, a feed that drops for a minute
-              and returns would splice a minute-old shape onto the new point --
-              a trail that never happened, drawn as if it did.
+              component could see it, so the CALL SITE is what gets pinned. The
+              site MOVED with US-508 (tick branch -> the ~10 Hz live loop); the
+              reason to pin it did not.
         """
         js = _read(_JS)
-        body = _fnBody(js, "tick")
-        assert "gTrail = []" in body or "gTrail.length = 0" in body
+        assert re.search(r'fetchState\(\s*"imu"\s*\)', _fnBody(js, "imuTick"))
+        assert "renderHome(" in _fnBody(js, "imuTick")
+        home = _fnBody(js, "renderHome")
+        assert "homeFace(" in home
+        assert "liveCardView(" in home
+        assert "renderHomeCard(" in home
+
+    def test_oneHomePaint_resolvesEveryFreshnessVerdictAgainstOneClock(self):
+        """
+        Given: the home renderer
+        When: the face decision and the live view are built
+        Then: BOTH read the same `nowMs`.
+
+        RE-AIMED BY US-508, and it matters MORE now, not less. The live feed
+        moved to its own faster loop, so a second clock inside one paint could
+        let `homeFace` say "live" while `liveCardView` says "stale" -- the slot
+        would swap to the live face and then render nothing into it.
+        """
+        home = _fnBody(_read(_JS), "renderHome")
+        assert re.search(r"homeFace\([^)]*nowMs\s*\)", home)
+        assert re.search(r"liveCardView\([^)]*nowMs\s*\)", home)
+
+    def test_theLiveLoopClearsTheTrailWhenTheFeedGoesIdle(self):
+        """
+        Given: the home renderer
+        When: the idle path is read
+        Then: the trail is reset. Without this, a feed that drops for a minute
+              and returns would splice a minute-old shape onto the new point --
+              a trail that never happened, drawn as if it did. US-508 adds the
+              grade trend, which carries the identical hazard.
+        """
+        home = _fnBody(_read(_JS), "renderHome")
+        assert "gTrail = []" in home
+        assert "gradeTrend = []" in home
 
     def test_noDataView_namesTheSilentImuInstrument(self):
         """
@@ -540,14 +553,19 @@ class TestImuCardWiring:
         # any literal hex colour on an .imu- rule line is a fork of the palette
         assert not re.search(r"#[0-9A-Fa-f]{3,8}\b", block), block
 
-    def test_imuCardIsCountedByTheVisibleCardGeometry(self):
+    def test_theImuSurfaceIsCountedByTheVisibleCardGeometry(self):
         """
         Given: the card list the carousel builds
-        When: the IMU card is added to the track
-        Then: it is a plain `.card` in `#track`, so US-496's visible-index
-              geometry (translateX / dots / swipe) counts it automatically --
-              a card added outside the track would own no page dot
+        When: the surface carrying the IMU instrument is located
+        Then: it is a plain `.card` inside `#track`, so US-496's visible-index
+              geometry (translateX / dots / swipe) counts it automatically -- a
+              card added outside the track would own no page dot.
+
+        RE-AIMED BY US-508: that surface is now the HOME slot. Note it must
+        carry the bare `class="card"` -- the pre-US-508 idle card was
+        `class="card idle-card"`, and a two-faced slot cannot wear a
+        permanently-idle class.
         """
         html = _read(_HTML)
         track = html[html.index('<div id="track">'): html.index("</main>")]
-        assert 'data-state="imu"' in track
+        assert re.search(r'<section class="card"[^>]*data-idle-home', track)

@@ -3207,6 +3207,79 @@ card's `data-state` file at 4 Hz; a missing/malformed payload sets the card to
 `unavailable` (never a fabricated value, never green-when-broken). Until the
 US-400/401 emitters exist, both cards correctly read `unavailable`.
 
+**Navigation model: wrap + auto-rotate + velocity swipe (US-506, F-124).** The
+shipped shell clamped at both ends and classified swipes by *distance alone*.
+Both are replaced:
+
+| Fact | Owner | Contract |
+|------|-------|----------|
+| Wrap | `nextVisibleIndex(current, dir, hidden)` | Past the last card → the first, and back. **Traverses only VISIBLE cards** — a wrap onto a vehicle-gated card paints a blank frame the operator cannot swipe out of, strictly worse than the clamp it replaces. Bounded by `hidden.length`, so a row with ≤1 visible card terminates on `current` instead of spinning. |
+| Auto-rotate | `shouldAutoAdvance(paused, sinceMs, autoRotateS)` | Visible cards cycle every `autoRotateS` while unpaused. A non-positive period **disables** rotation rather than firing every tick (fail-to-off: a carousel spinning at the poll rate reads as a hardware fault). |
+| Time-to-next | `rotateProgress(sinceMs, autoRotateS)` | 0..1 for the calm thin `#rotate-progress` bar — a bar, never a countdown number. Clamped at 1 (the redraw is the 4 Hz poll tick, not a real-time clock). **Removed while paused**, not frozen part-filled: a stalled progress bar promises an advance that is not coming. Sits at `z-index: 8` under the DTC ribbon's `9` — an alert always wins that band. |
+| Gesture class | `swipeGesture(dx, dy, dtMs, widthPx, cfg)` → `{dir, fast}` | Distance ≥ `swipeMinPx` is still required to be a swipe *at all* (the deadzone survives). `fast` = `|v| ≥ swipeFastVelocityPxPerMs` **or** travel ≥ `swipeFastTravelFrac` of the card. Flick → advance + **resume**; settle → advance one + **pause**. |
+| Pause self-expiry | `shouldAutoResume(paused, idleMs, resumeIdleS)` | A pause expires after `resumeIdleS` of no interaction, so it can never become a freeze. |
+
+Two honest-instrument guards on the derived quantities: an unmeasurable gesture
+duration (`dt ≤ 0`) or an unusable card width (a transient 0×0 layout pass)
+contributes **nothing** rather than a fabricated `Infinity`. Dividing by either
+would manufacture a flick out of a measurement failure — and `fast` is the signal
+that *resumes rotation under the operator's finger*, so a fabricated one is felt
+immediately.
+
+Pausing is hung on `document` `pointerdown` — **one** entry point — so a tap on a
+card, a page dot, the kebab or any overlay pauses, and an overlay added later
+cannot forget to. All of these constants are `pi.display.carousel.*` in `config.json`
+(the tuning SSOT), injected at serve time as `window.DISPLAY_CAROUSEL` through
+the *same* quoted-placeholder seam US-483-b built for the auto-dim curve
+(`_DISPLAY_CAROUSEL_PLACEHOLDER`, `loadDisplayCarouselConfig`). `resolveCarouselConfig`
+accepts only finite **positive** numbers over the grounded defaults — which is
+what makes a permanent freeze *inexpressible in config*: a `resumeIdleS: 0` can
+never reach the resume predicate to disable the self-unpause. Pinned by
+`tests/ui/test_carousel_nav_model.py`.
+
+**Debounced `parked` signal behind the `⋮` (US-511, F-124).** US-490 gated the
+top-bar kebab directly on the emitter's `idle` SSOT boolean, so every brief
+OBD-availability blip removed the button and put it straight back. Flicker on a
+fixed affordance does not read as *"the state changed"* — it reads as a broken
+panel. A hysteresis debounce now sits between the flag and the menu policy:
+
+| Fact | Owner | Contract |
+|------|-------|----------|
+| Raw "is the vehicle idle?" | `carouselIdle(systemStatusData)` | Unchanged. Reads the `idle` SSOT boolean strictly; never re-derived from the drive-state string (Atlas idle-SSOT b). Fails closed to *not*-idle. |
+| Debounced "is the vehicle parked?" | `parkedNext(prev, rawIdle, nowMs, cfg)` → `{parked, raw, sinceMs}` | `not parked → parked` needs idle held **true** for ≥ `parkedOnS` (8 s); `parked → not parked` needs idle held **false** for ≥ `parkedOffS` (3 s). `parkedInit()` starts **not parked** (fail-closed, matching the button's hidden-in-markup boot state). |
+| Menu policy | `menuAccess(parked)` | Applies policy **only**. `tapVisible = parked === true`; `longPress` stays unconditional. |
+
+**The thresholds are asymmetric on purpose.** Offering a single tap into a
+service stop is a convenience and can afford to be slow; *withdrawing* it once
+the car is moving is the safety half, so it is the fast one. A symmetric
+debounce would hold the `⋮` on screen for a full 8 s of driving.
+
+Three properties carry the design:
+
+- **Re-anchor, don't accumulate.** Every change of reading restarts the run, so
+  six 2 s blips never add up to one 3 s run — otherwise the flicker this removes
+  merely takes longer to arrive.
+- **`menuAccess` no longer acquires.** It used to call `carouselIdle` itself, so
+  an upstream debounce could be bypassed by the next edit for free; it now
+  receives the debounced boolean and cannot reach the raw flag (the standing
+  SSOT directive — one authoritative provider per fact, consumers apply policy).
+  The strict `parked === true` closes the footgun the signature change creates:
+  a caller left un-migrated would pass an *object*, and a truthy test would read
+  that as parked forever — the `⋮` pinned on screen at 70 mph.
+- **An unmeasured hold is not a hold.** An unreadable clock returns the state
+  untouched (recording the reading without a timestamp would let the next real
+  clock credit this run's elapsed time to the previous reading), and a *negative*
+  hold — an NTP step back on a Pi with no RTC — re-anchors rather than stranding
+  the signal for the size of the step.
+
+Display-side only, per the story's own AC: no emitter field, no new contract.
+Promoting `parked` to an *emitted* fact is the same class of question as the open
+idle-SSOT one and needs an Atlas ruling. `parkedOnS`/`parkedOffS` join the same
+`pi.display.carousel.*` section and inherit `resolveCarouselConfig`'s
+positive-only rule, so `parkedOnS: 0` falls back to the default rather than
+silently deleting the debounce. Pinned by
+`tests/ui/test_carousel_parked_debounce.py`.
+
 **Surface invariant: `hidden` means NOT RENDERED (US-495, F-111).** Every
 show/hide on this surface is `carousel.js` setting `el.hidden`. The UA sheet's
 `[hidden] { display: none }` is a *user-agent* declaration, so **any** author
@@ -3240,13 +3313,51 @@ styling:
 
 | Card | `data-state` | Tier | Absence renders |
 |---|---|---|---|
-| Standby / idle home | *(none -- `data-idle-home`)* | always-present | composed from the cards below |
+| **Home** (US-508) | *(none -- `data-idle-home`)* | always-present | **the idle face, see below** |
 | System Status (Pi Health) | `system-status` | always-present | `unavailable` |
-| Battery Health | `battery-health` | always-present | `unavailable` |
-| **Light** | `light` | always-present | **"no data -- light feed absent"** |
-| **Motion (IMU)** | `imu` | always-present | **"no data -- IMU feed absent"** |
+| **Health** (US-507) | *(multi -- `data-states`)* | always-present | **per SECTION, see below** |
 | Alerts (DTC) | `dtc` | always-present | **"no data -- codes not read"** |
-| LTFT Trend | `ltft-trend` | **vehicle-gated** | *not rendered at all* |
+
+The carousel is **four cards** as of V0.29.23 (US-507 merged three reference
+readouts into Health; US-508 folded the standalone Motion card into the home
+slot). Note the `class="card"` count stayed 4 across US-508 for a *different
+reason* -- the pre-US-508 idle card wore `class="card idle-card"` and was not
+counted at all, while the home slot is a plain `.card` and is. The deploy-kit
+inventory test therefore names every slot rather than trusting the number.
+
+##### The Health card is MULTI-SOURCE (US-507 / F-124)
+
+The CIO called six screens too many, so the three slow-moving reference
+readouts merged into one card. `data-states` (plural) names every state file the
+card consumes; `tick()` fetches each through a per-tick cache and renders a
+**section** per source:
+
+| Section | state | Gated? | Absence renders |
+|---|---|---|---|
+| Battery | `battery-health` | no | "no data -- UPS feed absent" |
+| Light | `light` | no | "no data -- light feed absent" |
+| Fuel Trim (was "LTFT Trend") | `ltft-trend` | **vehicle-gated** | **"no engine data"** |
+
+Two properties are load-bearing and are pinned by test:
+
+- **Availability is resolved PER SECTION, never per card.** On separate cards a
+  dead UPS could only blank its own card. Routed through one card-level check it
+  would blank the two live instruments beside it -- a fabricated *"nothing is
+  readable"* built out of one real fault.
+- **The gate SPEAKS instead of hiding.** A standalone card could be `hidden`; a
+  section inside an always-visible card cannot vanish without leaving a hole, so
+  the same fact is rendered in words. A gated section carries **no view at
+  all**, so a stale `ltft-trend` file left from the last drive cannot paint a
+  confident trim for an engine that is not running. It ships
+  `data-gated="true"` to fail closed before the first poll.
+
+Note the vocabulary now has **three** dispositions, not two: *gated* ("does not
+apply"), *no-data* ("the instrument is broken"), and a live reading. Collapsing
+the first two would tell an operator with a running engine that there is no
+engine.
+
+The card-level `data-vehicle-gated` mechanism below is **retained with zero
+current members** -- the Slice-2 Live Engine Data card is its next user.
 
 **Gray vs hidden is a real distinction.** Gray says *"this instrument is
 broken/unreadable"*; hidden says *"this instrument does not apply right now."* On
@@ -3298,7 +3409,50 @@ alarm holds the surface at full regardless of lux (US-484-b ch.4), so a
 lux-derived percent would contradict the actual screen exactly when it matters
 most.
 
-##### Motion card -- the IMU live instrument (US-497 / F-113, Sprint 66)
+##### The HOME SLOT is two-faced -- idle twin / live instrument (US-508 / F-124)
+
+The CIO-locked round-2 design puts the live instrument on the **home slot**:
+parked → the US-481 calm STANDBY card, driving → the live motion instrument.
+**One slot, two faces**, not two cards. A separate always-present motion card
+beside a live home slot would poll and paint the same feed twice and put two
+rules in charge of what the driver lands on.
+
+`homeFace(imuData, sysData, nowMs)` is **the only arbiter** (a second one would
+be two rules owning one fact -- exactly why US-497 declined to build the swap):
+
+1. **Parked wins outright.** `carouselIdle` (the emitter's `idle` SSOT) → the
+   idle face, so a bench IMU reading 0 g does not put a live instrument on a
+   stationary car.
+2. Otherwise a **live and fresh** `states/imu` → the live face.
+3. Everything else -- no file, `available:false`, undated payload, reading older
+   than `IMU_STALE_SEC` -- falls back to the idle face (AC-3: never a frozen
+   motion display).
+
+**The fallback must not fabricate a parked state.** This is the honesty trap the
+swap creates and it is pinned by test. The shipped idle hero reads *"STANDBY ·
+engine off · OBD asleep"*; rendering that verbatim because the IMU died while
+the car is MOVING would state a confident fact about the vehicle manufactured
+out of a sensor fault. So the idle face carries **two dispositions** -- genuinely
+parked keeps the STANDBY hero, while not-parked-with-a-dead-feed renders **"NO
+MOTION DATA"** plus the bridge's own reason. Same layout, same real facts
+beneath it, a different claim. (Third instance of the pattern: US-507's Health
+gate needed three dispositions for the same reason.)
+
+Navigation was **retargeted, not dropped**. US-481 sent the operator to System
+Status when `idle` flipped false, because the home card was a parked-only view.
+The home slot now *becomes* the live instrument, so both edges land on **home**.
+
+**Transport (Atlas ruling, US-508).** A compass tape and a g-trail do not
+animate at the 4 Hz card tick, so the live feed gets its **own ~10 Hz loop**
+(`IMU_POLL_MS = 100`) against the same `states_http_server`, and the bridge
+writes at `pi.sensors.imu.stateHz` = **10 Hz** latest-wins/lossy. Deliberately a
+second loop rather than a faster shared tick: the tick reads five other state
+files, and 2.5×-ing all of them to animate one card would be five reads nobody
+can see for every one they can. The durable EDR persist stays at `persistHz` --
+**one producer, two cadences**. No new transport; SSE remains a future EDR-bus
+target and is explicitly not a gate here.
+
+##### The live instrument itself (US-497 / F-113, re-issued by US-508)
 
 A pure consumer of the `states/imu` file the § 10.8.2 bridge writes. The bridge
 already resolved the hard physics (one slow gravity estimate defining the level
@@ -3321,11 +3475,36 @@ the needle: a needle frozen at its last bearing is worse than an absent one),
 an unresolved tilt grays G-FORCE **and carries no dot**, and `altitude` is
 **always** typed-NA `"no source"` without ever blocking the card.
 
+The **compass TAPE** (US-508) replaces the built rotating needle outright --
+CIO-locked, and leaving the needle beside it would be two heading instruments on
+one card that can disagree. A fixed caret marks the vehicle's bearing and the
+tape scrolls under it: a bearing *clockwise* of the current heading sits to the
+**right**, so turning right walks it toward the caret and the labels travel
+right-to-left. That direction is the most likely defect in the whole card -- a
+backwards tape is a perfectly plausible instrument, and no screenshot reveals
+it -- so it is pinned by test, as is the wrap across north. A dead magnetometer
+renders **no ticks at all**; a tape frozen under the caret reads as a confident
+heading exactly as the frozen needle did.
+
+**GEAR is not an IMU fact.** Atlas kept it out of the `states/imu` contract: it
+is Spool's OBD derivation from a **separate producer** (F5M33 ratios + tyre
+circumference, debounced, validated against drive 30). *That producer does not
+exist yet*, so the glyph follows the **altitude precedent** on this same card --
+the field stays in the contract so a real producer is zero-rework, and it
+resolves to an honest `--` until one lands, never a guessed number. Nothing
+polls a `states/gear` file, because a 404 ten times a second is not a data
+source. The reason rides beside the glyph so *"no producer wired"* stays
+distinguishable from *"the producer is refusing to guess right now"*.
+
 | Constant | Value | Grounding |
 |---|---|---|
-| `IMU_STALE_SEC` | 2.0 s | the **producer's** cadence -- 8 missed writes at `pi.sensors.imu.stateHz` = 4 Hz. Deliberately far tighter than the light card's 10 s: a 10 s-old lux is still roughly true, a 10 s-old g-vector is meaningless. *Rex-derived; flagged for Atlas/Spool against a real drive.* |
+| `IMU_STALE_SEC` | 2.0 s | **Re-grounded by US-508**: at the new 10 Hz `stateHz` this is *20* missed writes, not the 8 it was at 4 Hz. Deliberately NOT retightened in proportion -- this feed now drives the HOME slot, and a slot that flips to the idle face on a brief scheduling stall is its own defect. Still far tighter than the light card's 10 s (a 10 s-old lux is roughly true; a 10 s-old g-vector is meaningless). *Rex-derived; flagged for Atlas/Spool against a real drive.* |
 | `G_FULL_SCALE` | 1.0 g | outer ring. A street-tired car tops out near 0.9 g lateral, so 1 g frames real driving without compressing it. *Rex-derived DISPLAY scale, not a vehicle limit -- flagged for Spool.* |
-| `G_TRAIL_WINDOW_SEC` | 35 s | Iris live-instrument spec. ~140 points at 4 Hz. |
+| `G_AMBER_G` | 0.6 g | **Spool** (Iris locked spec, quoted verbatim in the US-508 AC). A **different fact** from the full scale above, and conflating them is what the built card got wrong: it only coloured at the 1.0 g *clamp*, so a hard 0.8 g corner painted identically to a gentle one. Advisory, never an alarm -- alarms ride the unified alert layer. |
+| `G_TRAIL_WINDOW_SEC` | 35 s | Iris live-instrument spec. ~350 points at the 10 Hz live poll. |
+| `GRADE_TREND_WINDOW_SEC` | 900 s | Iris locked spec's "~15-min moving trend". |
+| `GRADE_TREND_BUCKET_MS` | 5000 | Decimation: 15 min at 10 Hz is ~9000 raw samples; one retained point per 5 s bucket is ≤180, more than a 480×320 sparkline resolves. **Latest-wins within a bucket** -- the retained value is a real reading, never an average that never happened. |
+| `GRADE_TREND_SCALE_PCT` | 10 % | The sparkline's **fixed** vertical scale, deliberately not autoscaled to the observed range: an autoscale stretches a flat road's hundredth-of-a-percent wobble to full height and renders it as a mountain range -- a fabricated terrain built out of real noise. Beyond scale it clamps to the edge (pinned, not vanished). *Rex-derived DISPLAY scale -- flagged for Spool.* |
 
 **Sign contract on screen.** `gLon` + = accelerating → the dot moves **up**
 (negative screen y); `gLat` + = **right** → positive x. The G-FORCE tile spells
@@ -3528,6 +3707,39 @@ sync exceeds the threshold — and treats an absent/unparseable last-sync as sta
 (never claim a freshness we can't prove). The **threshold is Spool-owned (S-3)**
 and supplied by config: the emitter takes `syncStaleThresholdS` as a required
 parameter and **hardcodes no tuning number** (PM Rule 7 / Refusal Rule 2).
+
+**Summary drill-down (US-509, Sprint 68 / V0.29.23).** The US-489 one-glance
+`SYSTEM · N ISSUE` line is **tappable → a drill-down overlay** (`#sys-detail`,
+`carousel.js#systemIssueRows` / `#systemDrill`), one row per non-OK source,
+**worst-first**: source label + state chip + the tile's own reason + freshness,
+with a `‹ Back` that always returns. It is a **presentation of the same tiles**
+the 2×2 grid renders — the drill rows travel on `systemStatusView().drill`, so
+one read of the state file feeds the grid, the summary **and** the overlay, and
+the overlay is structurally incapable of contradicting the card behind it. No
+source state is recomputed. Four decisions are load-bearing:
+
+- **The listing floor is `unavailable`, not `amber`.** `ok` is never listed (a
+  green source in a fault list is a *fabricated* fault) and `neutral` is not
+  either — `DRIVE=IDLE` means "not recording", **not broken**, so listing it
+  would report a fault in the commonest state there is. But a known-**unknown**
+  *is* listed: the summary reads `SYSTEM · N UNAVAILABLE` in that state, so
+  excluding unavailables would make a tappable headline open an **empty**
+  overlay — the exact dead end this surface exists to remove.
+- **Freshness is never fabricated.** Only `obdLink` publishes `lastSeenS`; rows
+  for sources that publish no age read **"age not reported"**, never
+  `"seen 0s ago"` (which would claim we had just seen a source we never timed —
+  the zeroed-altitude lie of US-508 in a different costume).
+- **The affordance is gated on `drill.tappable`** (`rows.length > 0`), so a
+  healthy card never advertises detail it does not have.
+- **An open overlay repaints on every poll** rather than freezing on the
+  snapshot that opened it — a frozen age readout is the same fabrication the
+  g-dot (US-497) and the rotate bar (US-506) are guarded against.
+
+The overlay **reuses the US-406 per-code detail shell** (`.detail-head` /
+`.detail-body` / `.detail-card`, the same `‹ Back`) so the two drill-downs speak
+one interaction language, and it inherits the auto-rotate pause from the single
+document-level `pointerdown` seam US-506 established — no per-overlay pause call
+site to forget.
 
 #### Battery Health card + `battery-health` emitter (US-401) [Atlas A-3]
 
@@ -3934,13 +4146,90 @@ green. `makeLtftTrendEmitter()` is the same best-effort atomic
 `ensureStatesDir`/`writeStateAtomic` (C-5) seam as the sibling emitters (write
 failures logged, never raised).
 
-**Render (`carousel.js`).** `ltftTrendView()` (pure) + `renderLtftTrendCard()`
+**Render (`carousel.js`).** `ltftTrendView()` (pure) + `renderLtftTrendBody()`
 paint a multi-drive bar row, each bar coloured by its **own** drift level so a
->±10% drive is visibly not-green; `tick()` dispatches on
-`data-state='ltft-trend'`. Defense-in-depth: the view re-forces `'insufficient'`
+>±10% drive is visibly not-green. **US-507 relocated the surface**: it is now
+the **"Fuel Trim"** section of the merged Health card, reached through
+`healthCardView()`/`renderHealthCard()` rather than a `data-state` dispatch. The
+retitle is a LABEL change only -- the emitter, the thresholds, the classifier
+and the insufficient guard are all untouched, so Spool's LTFT semantics are
+preserved exactly. Defense-in-depth: the view re-forces `'insufficient'`
 when `sufficient !== true`, so a mislabeled state can't paint green. As with the
 other emitters, the runtime `emit()` wiring is owner/deploy-side (no `src` call
 site yet), matching the shipped cards.
+
+#### Visual token SSOT + the two-file mirror (US-510, Sprint 68 / V0.29.23) [Atlas Rule-10 2026-07-31]
+
+`specs/UI/tokens.css` is the **visual SSOT** (Iris owns values; Atlas gates
+additions under Rule-10). `dashboard.html` links **only `dashboard.css`**, so the
+dist `:root` is a **runtime MIRROR** of the SSOT, not a second source: every
+token is declared in both files and `tests/ui/test_dashboard_token_ssot.py` +
+`test_dashboard_fidelity_pass.py` compare the VALUES. A value that exists in only
+one file is drift by definition.
+
+US-510 closed the TD-065/TD-067 residue and recorded three decisions worth
+keeping:
+
+1. **Promotion is zero-visual-change by construction.** `--bg #000000` /
+   `--surface #111111` were dist-only literals; Atlas ruled them into the SSOT
+   **at their shipped values**, making "a diff that moves a rendered pixel FAILS"
+   the DoD gate. The same rule drove the takeover's deep gradient edges
+   (`--amber-deep` / `--green-deep` / `--green-deepest`) to **named tokens
+   holding the existing literals** rather than a derived `color-mix()`: a
+   computed mix would produce a *different* colour, which is a restyle wearing a
+   tokenization's clothes.
+2. **A destructive ACTION is a different axis from an alarm STATE.**
+   `--destructive #C62828` + `--destructive-border #7F1D1D` dress the Mode-04
+   clear-confirm and **MUST stay distinct from `--critical-red #D32F2F`**.
+   Aliasing them would "tokenize" the surface while destroying the distinction
+   the split exists for — the operator could no longer tell "you are about to
+   erase your codes" from "pull over". With these landed the brand reds
+   (`--red*`) have **zero consumers** on the dashboard; they stay declared
+   because the mirror carries the tier, not because anything paints it.
+3. **Type is a token tier too.** `--font-mono` (all data/values — the tabular
+   instrument vernacular, deliberately unchanged) and `--font-display` (brand
+   moments ONLY: the `ECLIPSE OBD-II` wordmark + card titles). US-510 landed the
+   token + the bindings; the woff2 payload followed as a fast-follow (below).
+
+**BL-027 CLOSED (fast-follow, 2026-08-01) — the brand face is an EMBEDDED
+asset, and the mirror rule extends to it.** The face is an OFL-licensed
+**Oswald** subset (A–Z / 0–9 / space / hyphen, weight 600, 2,896 B) inlined as a
+CSP-safe `@font-face` **base64 data-URI**. Four decisions worth keeping:
+
+- **The mirror is load-bearing for the face, not just for values.** The
+  `@font-face` is declared in **both** `tokens.css` and `dashboard.css`, because
+  `dashboard.html` links only the latter. An SSOT-only drop leaves the panel on a
+  fallback face **with a fully green suite** — the two-correct-halves-that-stopped-
+  agreeing shape (US-494/US-499). `tests/ui/test_dashboard_brand_font_payload.py`
+  asserts the kit sheet carries the face and that both payloads are identical.
+- **Host-only faces left the stack.** The stack is `"Oswald", "Arial Narrow",
+  system-ui, sans-serif`. The previously-locked **Bahnschrift is Microsoft-
+  proprietary, absent from Pi OS and not redistributable** — naming it never put
+  it on the panel, which is why BL-027 existed. Leading with any host-only face
+  means a dev box and the Pi render *different* brand faces; the embedded face is
+  the one face, so the stack lead is pinned **against the embedded family**, not
+  a hardcoded name.
+- **A single-weight subset constrains its consumers.** The subset carries weight
+  600 only, so every rule binding `--font-display` must request 600 — a 700
+  request yields a **synthesised** bold, which on a condensed face reads as a
+  rendering fault. Pinned over the SET of bound rules, and the brand copy is
+  pinned to stay inside the cut glyph range (a stray `·` falls back *per glyph*,
+  splitting a title across two faces mid-word).
+- **The licence ships with the artifact.** SIL OFL 1.1 travels with the font, and
+  the font now travels *inside* the stylesheet — so `OFL.txt` is in the kit **and
+  vouched in `deploy-pi.sh`'s asset list**, since `refresh_asset_dir` prunes
+  unvouched files (an unvouched licence looks compliant in the repo while
+  `/opt/dashboard` ships the face bare).
+
+The no-CDN rule is pinned independently of the asset and now covers the `src`
+descriptor itself: the plausible future "fix" when someone thinks the face is
+broken is a Google Fonts `@import`, which works everywhere except in the car.
+
+Remaining deliberate exception, enumerated rather than silent: `#fff`/`#000` on
+a tiered chip/ribbon/takeover are **contrast pairs** chosen against that tier's
+fill, not palette entries. Naming them means inventing `--on-amber`/`--on-critical`
+(Iris's design call + an Atlas token addition) — routed as **TD-071**, which also
+carries SSOT promotion of the three `--*-deep` edge tokens.
 
 ### Release Versioning + Deploy Records (US-241, B-047 US-A)
 

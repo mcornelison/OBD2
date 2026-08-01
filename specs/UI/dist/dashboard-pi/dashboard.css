@@ -23,37 +23,113 @@
  *          Enforced by tests/ui/test_dashboard_alarm_tier_sweep.py.
  * ==========================================================================*/
 
+/* --- Brand face (BL-027, the US-510 A-3 payload) -----------------------------
+   Oswald SemiBold 600, subset to A-Z / 0-9 / space / hyphen (2,896 B) -- cut by
+   Iris 2026-08-01 and INLINED as a data: URI. The kiosk is offline in the car
+   and CSP-fenced, so a font CDN would fail in the ONE place that matters and
+   nowhere else; there is no external font reference anywhere in this kit.
+
+   Licence: SIL Open Font License 1.1 -- specs/UI/dist/dashboard-pi/OFL.txt,
+   which ships with the kit (the face travels INSIDE the stylesheet, so the
+   licence has to travel with the stylesheet). Oswald carries no Reserved Font
+   Name, so the family name "Oswald" is compliant (Iris, confirmed 2026-08-01).
+
+   Why this arrives as a fast-follow: US-510 shipped the token + the bindings
+   and left the payload open because the previously-locked face (Bahnschrift)
+   is Microsoft-proprietary, absent from Pi OS and not redistributable -- so
+   naming it never put it on the panel. Oswald is the open-licence replacement.
+
+   The weight is 600 and ONLY 600: every rule that binds --font-display asks
+   for 600, because a request for 700 against a single-weight subset gets a
+   SYNTHESISED bold, which on a condensed face reads as a rendering fault.
+   Pinned by tests/ui/test_dashboard_brand_font_payload.py. */
+@font-face {
+  font-family: "Oswald";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url(data:font/woff2;base64,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) format("woff2");
+}
+
 :root {
-  --bg:             #000000;
-  --surface:        #111111;
-  --text-primary:   #DDDDDD;   /* SSOT tokens.css:28 (Atlas Rule-10 2026-07-25) */
-  --text-secondary: #888888;   /* SSOT tokens.css:34 */
-  --text-tertiary:  #666666;   /* SSOT tokens.css:35 */
-  --amber-warn:     #FFC400;   /* SSOT tokens.css:38 -- WATCH / degraded */
-  /* BRAND identity reds -- RESERVED for the brand mark (SSOT tokens.css:50-57).
+  /* --- Type -----------------------------------------------------------------
+     US-510: the body rule used to write `ui-monospace, Menlo, Consolas,
+     monospace` out longhand -- a second copy of --font-mono's value, i.e. the
+     exact SSOT fork this palette exists to prevent. Both faces are tokens now.
+     --font-display is BRAND MOMENTS ONLY (wordmark + card titles); anything
+     carrying a READING stays mono, which Iris deliberately did not change.
+     BL-027 CLOSED (2026-08-01): the brand face is the Oswald subset embedded
+     at the top of THIS file. It is declared here as well as in the SSOT
+     because dashboard.html links ONLY this sheet -- an SSOT-only drop would
+     leave the panel on a fallback face with a fully green suite. NEVER a font
+     CDN: the kiosk is offline in the car. */
+  /* NOTE ON THE SSOT REFERENCES BELOW: they name the TOKEN, not a line number.
+     US-510 added six declarations to tokens.css and instantly staled every
+     `tokens.css:NN` pointer this block used to carry -- a cross-file line
+     number is a citation that rots on the next edit to the file it cites. The
+     name is the durable address, and tests/ui/test_dashboard_token_ssot.py
+     compares the VALUES, which is the part that actually has to agree. */
+  --font-mono:      ui-monospace, Menlo, Consolas, monospace;  /* SSOT --font-mono */
+  --font-display:   "Oswald", "Arial Narrow", system-ui, sans-serif;
+                                             /* SSOT --font-display */
+  /* --- Base surfaces -- promoted into the SSOT by US-510 (Atlas Rule-10
+     2026-07-31). These two were dist-only literals; the values are UNCHANGED,
+     so the promotion moved no pixels (that was Atlas's explicit DoD gate). */
+  --bg:             #000000;   /* SSOT --bg */
+  --surface:        #111111;   /* SSOT --surface */
+  --text-primary:   #DDDDDD;   /* SSOT --text-primary (Atlas Rule-10 2026-07-25) */
+  --text-secondary: #888888;   /* SSOT --text-secondary */
+  --text-tertiary:  #666666;   /* SSOT --text-tertiary */
+  --amber-warn:     #FFC400;   /* SSOT --amber-warn -- WATCH / degraded */
+  /* The two DEEP gradient edges of the DTC takeover. US-510 relocated these
+     from inline literals in the takeover rules; the VALUES ARE UNCHANGED, so
+     the surface renders identically. Iris (A-2) offered either a derived
+     color-mix() or named `--*-deep` edge tokens -- the named route is taken
+     deliberately, because a computed mix would produce a DIFFERENT colour and
+     the zero-visual-change rule governs this whole story. They live here
+     rather than in the SSOT because a new SSOT token name is an Atlas Rule-10
+     addition and only --bg/--surface/--destructive* were ruled; promotion is
+     routed to him (TD-071). */
+  --amber-deep:     #7a5b00;   /* WATCH/unknown takeover gradient outer edge */
+  --green-deep:     #12603a;   /* MINOR takeover gradient inner edge */
+  --green-deepest:  #062617;   /* MINOR takeover gradient outer edge */
+  /* BRAND identity reds -- RESERVED for the brand mark (SSOT --red/-light/-dark).
      US-484-b moved every DTC STOP surface OFF these: if the permanent brand
      mark is red AND the pull-over alarm is also red, the driver cannot tell
      "brand" from "danger". Declared here so the dist mirrors the SSOT tier.
-     US-488 swept the remaining alarm/degraded consumers off them too. The ONLY
-     rules that may still reference these are the two #clear-confirm surfaces
-     awaiting the --destructive token -- see the note at that rule. */
-  --red:            #E60012;   /* SSOT tokens.css:55 -- brand mark base */
-  --red-light:      #F61D2D;   /* SSOT tokens.css:56 -- brand mark highlight */
-  --red-dark:       #BF000F;   /* SSOT tokens.css:57 -- brand mark shadow */
+     US-488 swept the remaining alarm/degraded consumers off them too, save the
+     two #clear-confirm surfaces -- and US-510 swept THOSE onto --destructive*,
+     so the brand tier now has ZERO consumers on this surface. It stays
+     declared because the mirror must carry the tier, not because anything
+     paints it. */
+  --red:            #E60012;   /* SSOT --red -- brand mark base */
+  --red-light:      #F61D2D;   /* SSOT --red-light -- brand mark highlight */
+  --red-dark:       #BF000F;   /* SSOT --red-dark -- brand mark shadow */
   /* STATE-ALARM red -- "PULL OVER NOW". Spool set value + semantics 2026-07-25
      (dtc-display-clear-safety-advisory.md 6d); Atlas Rule-10 gate 2026-07-26.
      The HEX IS ONLY THE 3RD REINFORCEMENT: area + motion + text carry STOP. */
-  --critical-red:   #D32F2F;   /* SSOT tokens.css:69 -- the DTC STOP tier and,
+  --critical-red:   #D32F2F;   /* SSOT --critical-red -- the DTC STOP tier and,
                                   per US-488, the battery failsafe TRIGGER: the
                                   two TERMINAL act-now states. Everything merely
                                   degraded is --amber-warn, so this red keeps
                                   exactly one meaning (Spool, TD-067). */
-  --green-ok:       #35C46A;   /* SSOT tokens.css:43 (Atlas A-8) -- MINOR DTC
+  /* DESTRUCTIVE-ACTION reds (Atlas Rule-10 2026-07-31, US-510 -- closes the
+     TD-067 deferral). A button the OPERATOR presses, not a state of the
+     VEHICLE. MUST stay distinct from --critical-red above: if the "Clear all"
+     affordance wears the pull-over red, an action and an alarm become the same
+     signal. Pinned by tests/ui/test_dashboard_fidelity_pass.py. */
+  --destructive:        #C62828;   /* SSOT --destructive -- action fill */
+  --destructive-border: #7F1D1D;   /* SSOT --destructive-border -- confirm box */
+  --green-ok:       #35C46A;   /* SSOT --green-ok (Atlas A-8) -- MINOR DTC
                                   tier, OK/healthy, "linked", trust-badge
                                   verified. Reconciled off a forked local name +
                                   value in US-484-a (see git history; the old
                                   literal is deliberately not repeated here so a
                                   grep for it stays a clean drift audit). */
+  --neutral-chip-bg: #2a2f37;  /* SSOT --neutral-chip-bg -- the deliberately
+                                  un-alarming "no description yet" / "N/A this
+                                  vehicle" chip. The token predates US-510; the
+                                  dashboard simply was not pointing at it. */
   --tap-min:        40px;      /* minimum touch target (S-2) */
 }
 
@@ -81,7 +157,7 @@ html, body {
   margin: 0; padding: 0; width: 100%; height: 100%;
   background: var(--bg); overflow: hidden;
   color: var(--text-primary);
-  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-family: var(--font-mono);
   -webkit-user-select: none; user-select: none;
   touch-action: pan-y;   /* let JS own horizontal swipe; vertical scrolls */
 }
@@ -132,10 +208,13 @@ html, body {
   box-sizing: border-box; padding: 14px 16px;
   display: flex; flex-direction: column;
 }
+/* US-510 A-3: a card TITLE is a brand moment, so it takes --font-display. The
+   card BODY is untouched and stays mono -- the title labels the instrument, the
+   body IS the instrument, and only the label gets the brand face. */
 .card-title {
   margin: 0 0 8px 0; font-size: 13px; font-weight: 600;
   color: var(--text-secondary); text-transform: uppercase;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.08em; font-family: var(--font-display);
 }
 .card-body { flex: 1; font-size: 14px; color: var(--text-primary); }
 /* Honest-instrument: a missing/malformed state file reads `unavailable`,
@@ -151,7 +230,12 @@ html, body {
    the STANDBY hero is neutral
    grey (never green), and the 3 fact tiles reuse the shared `.tile[data-level]`
    rules above so green is bound to the SSOT green in exactly one place. */
-.idle-card .card-body {
+/* US-508: the selector moved from a fixed `.idle-card` CLASS to the `data-face`
+   ATTRIBUTE the JS sets, because the home slot is no longer permanently idle --
+   it has two faces. The JS and the stylesheet now switch on ONE shared value, so
+   a slot cannot be logically live and visually idle (that mismatch, correct JS
+   defeated by a stylesheet the JS cannot see, is the US-495 class of defect). */
+.card[data-face="idle"] .card-body {
   display: flex; flex-direction: column; align-items: stretch;
   gap: 6px; padding: 0;
 }
@@ -160,7 +244,15 @@ html, body {
   font-size: 11px; color: var(--text-secondary);
   letter-spacing: 0.06em;
 }
-.idle-wordmark { font-weight: 700; letter-spacing: 0.14em; }
+/* US-510 A-3: the `ECLIPSE OBD-II` wordmark is THE brand moment on this
+   surface -- the one place the product says its own name.
+   BL-027 weight tidy: 700 -> 600. The embedded Oswald subset carries ONE
+   weight (600), so a 700 request does not pick a bolder face -- it makes the
+   browser SYNTHESISE one by smearing the 600, which on a condensed face looks
+   like a rendering fault on precisely the string that must look deliberate. */
+.idle-wordmark {
+  font-weight: 600; letter-spacing: 0.14em; font-family: var(--font-display);
+}
 .idle-clock { margin-left: auto; font-size: 13px; color: var(--text-primary); }
 .idle-date { color: var(--text-tertiary); }
 /* STANDBY hero -- deliberately un-alarming neutral grey, never green (F-1). */
@@ -231,13 +323,73 @@ html, body {
    goes amber so a clamped 1.4 g stop cannot read as a tidy 1.0 g one. The true
    magnitude is always on the G-FORCE tile beside it. */
 .imu-dot[data-clamped="true"] { fill: var(--amber-warn); }
-.imu-needle { fill: var(--text-primary); }
+/* US-508: Spool's 0.6 g advisory band. A DIFFERENT fact from the clamp above --
+   the built card only coloured at the 1.0 g clamp, so a hard 0.8 g corner
+   painted identically to a gentle one. Advisory, never an alarm: alarms live on
+   the unified alert layer, and this card stays calm. */
+.imu-dot[data-level="amber"] { fill: var(--amber-warn); }
+.imu-trail[data-level="amber"] { stroke: var(--amber-warn); }
 .imu-tiles { display: flex; flex-direction: column; }
 /* [hidden] on an SVG child needs the same guard the overlays needed (US-495):
    the UA sheet's [hidden] rule is outranked by the class selectors above, so
-   without this a "hidden" dot or needle would keep painting -- the exact
-   defect S2 fixed, one generation later. */
-.imu-dot[hidden], .imu-needle[hidden] { display: none; }
+   without this a "hidden" dot would keep painting -- the exact defect S2 fixed,
+   one generation later. */
+.imu-dot[hidden] { display: none; }
+
+/* --- US-508 live/motion home face (F-124, CIO-locked "live2" layout) --------- */
+/* Compass tape + heading + grade/altitude down the left, the GEAR glyph in the
+   middle, the g-meter on the right. Every colour is a var(--token): the live
+   face forks no palette, same rule the card has followed since US-497. */
+.live-body {
+  display: flex; align-items: stretch; gap: 8px;
+  height: 100%; padding: 0;
+}
+.live-col { display: flex; flex-direction: column; justify-content: center; }
+.live-heading { flex: 1 1 auto; min-width: 0; gap: 2px; }
+.live-gear {
+  flex: 0 0 54px; align-items: center; justify-content: center; gap: 2px;
+  border-left: 1px solid var(--surface); border-right: 1px solid var(--surface);
+}
+.live-g { flex: 0 0 108px; align-items: center; gap: 2px; }
+.live-g .imu-meter { width: 104px; height: 104px; }
+
+/* The compass TAPE. The caret is STATIC furniture: it marks the vehicle's own
+   bearing and never moves -- a tape's readability comes entirely from one fixed
+   reference with the world sliding past it. */
+.imu-tape { width: 100%; height: 30px; flex: 0 0 auto; }
+.imu-caret { fill: var(--text-primary); }
+.imu-tick { stroke: var(--text-tertiary); stroke-width: 1; }
+.imu-tick-major { stroke: var(--text-secondary); stroke-width: 1.5; }
+.imu-tape-label {
+  fill: var(--text-secondary); font-size: 8px; font-weight: 600;
+  letter-spacing: 0.06em;
+}
+
+/* GEAR. Large because it is the one glyph read at a glance mid-corner; the
+   reason line beneath keeps "--" from being a bare shrug (no producer wired vs
+   the producer honestly refusing to guess are different facts). */
+.imu-gear-label {
+  font-size: 9px; letter-spacing: 0.10em; color: var(--text-secondary);
+}
+.imu-gear { font-size: 40px; font-weight: 700; color: var(--text-primary); }
+.imu-gear[data-level="unavailable"] {
+  color: var(--text-tertiary); font-weight: 400;
+}
+.imu-gear-detail {
+  font-size: 8px; color: var(--text-tertiary); text-align: center;
+  line-height: 1.1;
+}
+
+/* The ~15-min grade trend. The zero line is what makes the sparkline readable
+   as a GRADE rather than an anonymous wiggle -- without it a gentle descent and
+   a gentle climb draw the same shape. */
+.imu-grade-box { display: flex; flex-direction: column; gap: 1px; }
+.imu-trend { width: 100%; height: 22px; flex: 0 0 auto; }
+.imu-trend-zero { stroke: var(--surface); stroke-width: 1; }
+.imu-trend-line {
+  fill: none; stroke: var(--text-secondary); stroke-width: 1.5;
+  stroke-linejoin: round; stroke-linecap: round;
+}
 
 /* --- US-489 System Status glanceability (Iris polish P-1) ------------------- */
 /* Presentation-only over the SHIPPED US-400 state: a one-glance summary line, a
@@ -309,7 +461,7 @@ html, body {
 .ladder[data-stage="TRIGGER"] .ladder-banner { color: var(--critical-red); }
 .ladder-runtime { font-size: 11px; color: var(--text-secondary); }
 
-/* --- US-420 LTFT Trend card (F-096) ----------------------------------------- */
+/* --- US-420 fuel-trim trend (F-096; the "Fuel Trim" section since US-507) --- */
 /* An insufficient trend renders a muted, plainly non-green headline (honest-
    instrument: too little data is never a confident healthy verdict). */
 .tile[data-level="insufficient"] .tile-value {
@@ -337,6 +489,42 @@ html, body {
 .ltft-bar[data-level="down"]  .ltft-bar-value { color: var(--amber-warn); }
 .ltft-bar[data-level="down"]  { border-color: var(--amber-warn); }
 
+/* --- US-507 merged Health card (F-124) -------------------------------------- */
+/* Three sources stacked on one 480x320 card, so the section chrome has to be
+   cheap: a small uppercase label + a hairline rule, no boxes-inside-boxes. Every
+   colour is a var(--token) from specs/UI/tokens.css -- the merged card forks no
+   palette, it only re-hosts three existing ones.
+
+   The body SCROLLS rather than compressing: three readouts plus the drain
+   ladder (which appears only while actually draining) can genuinely exceed the
+   card, and squeezing them would either clip a reading or shrink it below
+   glance legibility. Scrolling keeps every value at its honest size.
+
+   The tiles are DENSER here than on a standalone card (tighter padding, smaller
+   value type) -- the same components, re-tuned for a card carrying 3x the
+   content. Values keep the tabular mono face; only the spacing moves. */
+.health-body {
+  display: flex; flex-direction: column; gap: 8px;
+  overflow-y: auto;
+}
+.health-section {
+  display: flex; flex-direction: column;
+  padding-top: 6px;
+  border-top: 1px solid var(--surface);
+}
+.health-section:first-child { padding-top: 0; border-top: 0; }
+.health-section-title {
+  margin: 0 0 2px 0; font-size: 10px; font-weight: 600;
+  color: var(--text-secondary); text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.health-section-body { font-size: 13px; color: var(--text-primary); }
+.health-section .tile { padding: 2px 0; border-bottom: 0; }
+.health-section .tile-value { font-size: 13px; }
+.health-section .ladder { margin-top: 4px; padding: 4px 8px; }
+.health-section .ltft-bars { margin-top: 4px; }
+.health-section .ltft-bar { min-width: 38px; padding: 4px 3px; }
+
 /* --- page dots (>=40px touch target, 10px visual) --------------------------- */
 #dots {
   position: absolute; bottom: 0; left: 0; right: 0; height: 24px;
@@ -352,6 +540,26 @@ html, body {
   background: var(--text-tertiary); transition: background 0.2s;
 }
 .dot.active::before { background: var(--text-primary); }
+
+/* --- US-506 auto-rotate progress bar (F-124) --------------------------------- */
+/* The calm THIN time-to-next readout for the hands-off carousel. Deliberately
+   quiet: it shares the band directly under the top bar with the DTC ribbon, and
+   an alert must always win that band -- hence z-index 8 against the ribbon's 9,
+   so a live code simply covers this. It is ambient chrome, so it borrows the
+   TERTIARY text token rather than any state colour: a green or amber bar here
+   would be a fourth thing claiming to mean "healthy"/"degraded" while actually
+   meaning "seconds until the next card". Removed entirely while paused (the
+   `hidden` attribute -> the global [hidden] guard, US-495). */
+#rotate-progress {
+  position: fixed; left: 0; right: 0; top: 28px; height: 2px;
+  background: transparent; z-index: 8;
+  pointer-events: none;   /* chrome, never a tap target */
+}
+#rotate-progress-fill {
+  display: block; height: 100%;
+  width: calc(var(--rotate-fill, 0) * 100%);
+  background: var(--text-tertiary);
+}
 
 /* --- US-405 persistent DTC ribbon -------------------------------------------- */
 /* Rides under the top bar on every card while a code is present. R-2 + US-484-b:
@@ -430,15 +638,19 @@ html, body {
   0%, 100% { border-color: var(--critical-red); }
   50%      { border-color: var(--bg); }
 }
+/* US-510 (TD-065): the three deep gradient edges are tokens now (--amber-deep /
+   --green-deep / --green-deepest, :root above). The VALUES are the ones these
+   rules already carried, so the gradients render pixel-identically -- the point
+   was to get the literals out of the surface, not to restyle the takeover. */
 #dtc-takeover[data-severity="watch"] {
-  background: radial-gradient(circle at 50% 38%, var(--amber-warn) 0%, #7a5b00 100%);
+  background: radial-gradient(circle at 50% 38%, var(--amber-warn) 0%, var(--amber-deep) 100%);
   color: #000;
 }
 #dtc-takeover[data-severity="minor"] {
-  background: radial-gradient(circle at 50% 38%, #12603a 0%, #062617 100%);
+  background: radial-gradient(circle at 50% 38%, var(--green-deep) 0%, var(--green-deepest) 100%);
 }
 #dtc-takeover[data-severity="unknown"] {
-  background: radial-gradient(circle at 50% 38%, var(--amber-warn) 0%, #7a5b00 100%);
+  background: radial-gradient(circle at 50% 38%, var(--amber-warn) 0%, var(--amber-deep) 100%);
   color: #000;
 }
 .takeover-inner {
@@ -576,8 +788,8 @@ html, body {
 .dtc-chip[data-level="stop"]    { background: var(--critical-red); color: #fff; }
 .dtc-chip[data-level="watch"]   { background: var(--amber-warn); color: #000; }
 .dtc-chip[data-level="minor"]   { background: var(--green-ok);   color: #000; }
-.dtc-chip[data-level="na"]      { background: #2a2f37; color: var(--text-secondary); }
-.dtc-chip[data-level="unknown"] { background: #2a2f37; color: var(--text-secondary); }
+.dtc-chip[data-level="na"]      { background: var(--neutral-chip-bg); color: var(--text-secondary); }
+.dtc-chip[data-level="unknown"] { background: var(--neutral-chip-bg); color: var(--text-secondary); }
 
 /* Hero block: the worst code + its directive (a tappable block -> detail). */
 .dtc-hero {
@@ -730,6 +942,62 @@ html, body {
 .dtc-trust-badge[data-kind="offline"]   { color: var(--text-tertiary); }
 .detail-footer { font-size: 11px; color: var(--text-secondary); margin-top: 2px; }
 
+/* --- US-509 System-Status drill-down overlay -------------------------------- */
+/* Deliberately inherits the per-code detail overlay's shell (`.detail-head`,
+   `.detail-body`, `.detail-card`, `#detail-back`'s sizing) rather than forking a
+   second overlay language: two drill-downs that LOOK different teach the
+   operator two interactions for one idea. Only the row internals are new.
+   Every colour is a tokens.css var -- no literal enters this surface. */
+#sys-detail {
+  --detail-gap:       8px;      /* between rows */
+  --detail-gap-tight: 4px;      /* within a row */
+  --detail-pad:       8px 10px; /* every row card */
+  position: fixed; inset: 0; z-index: 45;
+  background: rgba(0, 0, 0, 0.95);
+  display: flex; flex-direction: column;
+  padding: 4px 12px 10px; box-sizing: border-box; overflow-y: auto;
+}
+#sys-detail[hidden] { display: none; }
+#sys-detail-back {
+  min-width: var(--tap-min); min-height: var(--tap-min);
+  padding: 0 12px; box-sizing: border-box;
+  background: var(--surface); border: 1px solid var(--text-tertiary);
+  border-radius: 6px; color: var(--text-primary);
+  font-size: 14px; font-weight: 700; cursor: pointer;
+}
+.sys-issue-head { display: flex; align-items: baseline; gap: 8px; }
+.sys-issue-label {
+  font-size: 13px; font-weight: 700; letter-spacing: 0.06em;
+  color: var(--text-primary);
+}
+/* The chip carries the severity. It takes NO colour of its own -- the row's
+   [data-level] drives it, so the chip can never disagree with the row it sits
+   in, and the ramp is declared exactly once below. */
+.sys-issue-chip {
+  margin-left: auto; font-size: 11px; font-weight: 700;
+  letter-spacing: 0.06em; padding: 1px 6px; border-radius: 3px;
+  border: 1px solid currentColor;
+}
+.sys-issue-reason { font-size: 12px; color: var(--text-secondary); }
+.sys-issue-freshness { font-size: 11px; color: var(--text-tertiary); }
+.sys-issue-none {
+  font-size: 13px; color: var(--text-tertiary); font-style: italic;
+  padding: var(--detail-pad);
+}
+/* TD-067 holds here too: a degraded source is WATCH amber, never the pull-over
+   red -- the same ramp the summary line and the tile dots already use. An
+   unavailable source is a known-UNKNOWN: muted, never an alarm it has not
+   earned, and never green. */
+.sys-issue-row[data-level="amber"] .sys-issue-chip { color: var(--amber-warn); }
+.sys-issue-row[data-level="down"]  .sys-issue-chip { color: var(--amber-warn); }
+.sys-issue-row[data-level="unavailable"] .sys-issue-chip {
+  color: var(--text-tertiary);
+}
+/* US-509: the summary line only LOOKS like a control when it is one. */
+.sys-summary-tappable { cursor: pointer; }
+.sys-summary-chevron { font-size: 14px; color: var(--text-tertiary); }
+.sys-summary-tappable .sys-summary-detail { margin-left: auto; }
+
 /* --- US-407 DTC Clear (Mode-04) surface ------------------------------------ */
 /* The gated Clear button lives in the detail overlay. ENABLED (green-outline)
    only when every stored code is MINOR + logged + server-acked; DISABLED reads
@@ -763,23 +1031,25 @@ html, body {
 /* The dedicated hard-confirm modal (reuses the .confirm-box shell). The clear
    is the most consequential action on the dash.
 
-   ⚠ KNOWN-OPEN (US-488 / TD-067) -- these are the LAST TWO rules in this sheet
-   still on a brand red, and they are open ON PURPOSE. Spool ruled that a
-   destructive USER ACTION is a DIFFERENT AXIS from the engine alarm tiers: it
+   ✔ CLOSED by US-510 (TD-067's last two rules). These were the final surfaces
+   in this sheet still on a brand red, left open on purpose because Spool ruled
+   a destructive USER ACTION is a DIFFERENT AXIS from the engine alarm tiers: it
    MUST NOT be any alarm-red (Mode-04 wiping your codes is not an engine
-   emergency) and MUST NOT be amber (that means WATCH). So it needs a new
-   --destructive token -- Iris owns the value, Atlas gates it under Rule-10 --
-   and that token does not exist yet. Guessing a hex here would re-fork the SSOT
-   the US-484 line of work spent two stories un-forking. Pinned by
-   tests/ui/test_dashboard_alarm_tier_sweep.py so the debt cannot grow. */
+   emergency) and MUST NOT be amber (that means WATCH). Atlas ruled the values
+   2026-07-31 -- --destructive #C62828 (action fill) + --destructive-border
+   #7F1D1D (the box) -- BOTH deliberately distinct from --critical-red, because
+   a button the operator presses must not read as a condition of the vehicle.
+   The BOX takes the border token and the destructive BUTTON takes the action
+   fill; Cancel stays unstyled so the easy default is visually the quiet one.
+   Pinned by tests/ui/test_dashboard_fidelity_pass.py. */
 #clear-confirm {
   position: fixed; inset: 0; z-index: 55;
   display: flex; align-items: center; justify-content: center;
   background: rgba(0, 0, 0, 0.6);
 }
-#clear-confirm .confirm-box { border-color: var(--red-light); }
+#clear-confirm .confirm-box { border-color: var(--destructive-border); }
 .confirm-title { font-weight: 700; }
-#clear-confirm-ok { border-color: var(--red-light); color: var(--red-light); }
+#clear-confirm-ok { border-color: var(--destructive); color: var(--destructive); }
 
 /* --- US-482 letterbox scaling (F-121) --------------------------------------- */
 /* The UI is authored at a fixed 480x320 design box (#stage) and uniformly

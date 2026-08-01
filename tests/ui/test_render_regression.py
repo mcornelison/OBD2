@@ -322,36 +322,65 @@ class TestVehicleGateRender:
     def _visibleDots(self, surface: rh.Surface) -> int:
         return sum(1 for path in surface.pathsByClass("dot") if surface.rendered(path))
 
-    def test_benchWithNoVehicle_hidesTheGatedCardAndItsDot(self):
+    def _gatedFlag(self, surface: rh.Surface) -> str | None:
+        """The rendered `data-gated` of the fuel-trim section, or None if the
+        section did not paint at all."""
+        for path in surface.pathsByClass("health-fueltrim"):
+            if surface.rendered(path):
+                return path[-1]["attrs"].get("data-gated")
+        return None
+
+    def test_dotsMatchVisibleCards_onABench(self):
         """
         Given: a bench Pi -- system-status reports source.obd.available false
-        Then: the vehicle-gated card does not paint, and neither does its dot
+        Then: exactly one page dot paints per visible card
 
-        A dot that navigates nowhere is the same dead affordance as the card
-        behind it, and it is the one thing the new US-496 geometry could get
-        wrong in a way no pure-function test sees.
+        A dot that navigates nowhere is a dead affordance, and the dot/card
+        geometry is the one thing the visible-index math could get wrong in a
+        way no pure-function test sees. US-507 removed the last vehicle-gated
+        CARD (fuel trim is now a section), so this no longer varies with the
+        gate -- but the geometry it guards is exactly as load-bearing, and
+        US-508 re-introduces a slot swap on top of it.
         """
         dom = rh.runDashboard(routes=_cleanRoutes(obdAvailable=False))
         surface = rh.dashboardSurface(dom["tree"])
         cards = self._visibleCards(surface)
-        assert "LTFT Trend" not in cards, f"a vehicle card painted with no vehicle: {cards}"
+        assert cards, "no cards painted at all"
         assert self._visibleDots(surface) == len(cards), (
             f"{self._visibleDots(surface)} dots for {len(cards)} visible cards {cards}"
         )
 
-    def test_vehicleConnected_revealsTheGatedCardAndItsDot(self):
+    def test_benchWithNoVehicle_paintsTheFuelTrimGateNotAReading(self):
+        """
+        Given: a bench Pi -- system-status reports source.obd.available false
+        Then: the Health card paints, and its fuel-trim section paints GATED
+
+        REPLACES the old "the LTFT card does not paint" assertion, which US-507
+        made vacuous: with no card by that name, `"LTFT Trend" not in cards` is
+        true for the wrong reason and would keep passing if the gate broke
+        entirely. The gate now has to be asserted POSITIVELY, on the surface
+        that actually carries it.
+        """
+        dom = rh.runDashboard(routes=_cleanRoutes(obdAvailable=False))
+        surface = rh.dashboardSurface(dom["tree"])
+        assert "Health" in self._visibleCards(surface), "the Health card did not paint"
+        assert self._gatedFlag(surface) == "true", (
+            "a bench with no vehicle must paint the fuel-trim GATE, not a trim"
+        )
+
+    def test_vehicleConnected_opensTheFuelTrimSection(self):
         """
         Given: system-status reports an available OBD source (a car is plugged in)
-        Then: the gated card paints, and the dot count follows it
+        Then: the fuel-trim section is no longer gated
 
-        The inverse of the test above -- without it, "hide everything" would
-        pass. This is the on-Pi check the story owes, done headless.
+        The inverse of the test above -- without it, "always gate" would pass.
+        This is the on-Pi check the story owes, done headless.
         """
         dom = rh.runDashboard(routes=_cleanRoutes(obdAvailable=True))
         surface = rh.dashboardSurface(dom["tree"])
-        cards = self._visibleCards(surface)
-        assert "LTFT Trend" in cards, f"the vehicle card stayed hidden with a car: {cards}"
-        assert self._visibleDots(surface) == len(cards)
+        assert self._gatedFlag(surface) == "false", (
+            "the fuel-trim section stayed gated with a vehicle connected"
+        )
 
 
 # --- the splash handoff (S1) ------------------------------------------------

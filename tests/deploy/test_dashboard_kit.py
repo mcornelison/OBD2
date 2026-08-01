@@ -36,6 +36,7 @@
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -68,20 +69,38 @@ def _nodeAvailable() -> bool:
 
 
 def test_dashboardHtml_hasBothCardSlots_s1():
-    """S-1: the carousel has the System Status + Battery Health card slots, plus
-    the Alerts (DTC) card added in US-406, the LTFT Trend card added in US-420,
-    the Light card added in US-496 and the IMU Motion card added in US-497
-    (registering a new card grows the slot count by one). US-496 also made LTFT
-    vehicle-gated -- the SLOT is still shipped, it is just hidden until a vehicle
-    is connected, so the count includes it."""
+    """S-1: every card the carousel ships has a slot in the markup.
+
+    REVISED BY US-507 (F-124). The count was 6; the CIO called that too many
+    screens, so Battery Health + Light + LTFT Trend merged into ONE Health card
+    (-2 slots). The invariant this test has always guarded is unchanged and is
+    what is re-asserted: the slot inventory in the markup matches the cards the
+    carousel actually ships, since the tick discovers cards from the DOM and a
+    card with no slot does not exist whatever the JS says.
+
+    The three merged sources are NOT gone -- they are sections of the Health
+    card, declared on it via `data-states` (pinned by the dedicated suite,
+    tests/ui/test_carousel_health_card.py).
+
+    US-508 THEN FOLDED MOTION INTO THE HOME SLOT, which is what reaches the
+    CIO-locked four: Home . System Status . Health . Alerts. Note the count
+    stayed 4 across that change for a DIFFERENT REASON, which is exactly the
+    kind of coincidence that makes a bare count vacuous -- before, the idle card
+    wore `class="card idle-card"` and was not counted at all; now the home slot
+    is a plain `.card` and IS. So the inventory below names every slot rather
+    than trusting the number.
+    """
     html = _read(KIT_DIR, "dashboard.html")
-    assert html.count('class="card"') == 6
+    assert html.count('class="card"') == 4
     assert 'data-state="system-status"' in html
-    assert 'data-state="battery-health"' in html
     assert 'data-state="dtc"' in html
-    assert 'data-state="light"' in html
-    assert 'data-state="ltft-trend"' in html
-    assert 'data-state="imu"' in html
+    assert 'aria-label="Home"' in html
+    assert 'aria-label="Health"' in html
+    # The live instrument is a FACE of the home slot, not a slot of its own.
+    assert 'data-state="imu"' not in html
+    # The merged sources moved rather than vanished: the Health card declares
+    # all three state files it consumes.
+    assert 'data-states="battery-health light ltft-trend"' in html
 
 
 def test_dashboardHtml_hasPersistentTopBarGlyphs_d3():
@@ -1363,12 +1382,28 @@ def test_ltftTrendView_renderLogic_f096_us420():
     assert "US420_OK" in result.stdout
 
 
-def test_dashboardHtml_hasLtftTrendCard_us420():
-    """US-420: the LTFT Trend card slot is present (JS fills its body from the
-    polled `ltft-trend` state; a missing/malformed file -> `unavailable`)."""
+def test_dashboardHtml_hasFuelTrimSlot_us420_us507():
+    """US-420: the fuel-trim surface is present and bound to the `ltft-trend`
+    state.
+
+    RETITLED + RELOCATED BY US-507: it is now the "Fuel Trim" SECTION of the
+    merged Health card, not a standalone "LTFT Trend" card. The jargon left the
+    title; Spool's LTFT semantics did not move at all (the view function and its
+    insufficient/drift rules are untouched). The old title is asserted GONE
+    rather than merely unasserted -- leaving it in the markup alongside the new
+    one is how a half-applied retitle ships.
+    """
     html = _read(KIT_DIR, "dashboard.html")
-    assert 'data-state="ltft-trend"' in html, "LTFT Trend card slot missing"
-    assert "LTFT Trend" in html
+    assert 'data-states="battery-health light ltft-trend"' in html, (
+        "the fuel-trim surface is no longer bound to its state file"
+    )
+    assert "Fuel Trim" in html
+    # The old-title pin must read the RENDERED markup, not the comments: the
+    # section comment explains the retitle and therefore contains the old title.
+    # A pin that greps a defect's NAME otherwise fires on its own documentation.
+    markup = re.sub(r"<!--.*?-->", "", html, flags=re.S)
+    assert "Fuel Trim" in markup, "the stripper ate the markup -- the pin below is vacuous"
+    assert "LTFT Trend" not in markup
 
 
 def test_dashboardCss_hasLtftTrendStyles_us420():
