@@ -1,0 +1,69 @@
+# ==============================================================================
+# File:    eclipse-rfkill-unblock.service
+# Purpose: Unblock all rfkill radios at boot, countering a stale SAVED
+#          Bluetooth soft-block (BL-025 P0 root cause / V0.29.22 hotfix)
+# Author:  Rex (Ralph Agent) -- unit content authored live on the Pi by Atlas
+# Created: 2026-07-31 -- CIO-directed hotfix (BL-025, A-17/A-18)
+#
+# Why
+# ---
+# OBD capture was dead from ~2026-07-03 (zero rows; the 07-27 IRL drive
+# captured nothing).  Root cause, found live 2026-07-31: systemd-rfkill
+# persists radio soft-block state across reboots, and this Pi had a SAVED
+# Bluetooth block --
+#
+#   /var/lib/systemd/rfkill/platform-107d50c000.serial:bluetooth = [1]
+#
+# -- which systemd-rfkill faithfully RESTORES on every single boot.  Bluetooth
+# therefore came up soft-blocked, eclipse-obd could never reach the OBDLink LX,
+# and every layer above it reported an honest "no adapter" while the actual
+# fault sat one level below the whole application stack.  Nothing in this
+# project caused the save (see BL-025 #4 / US-513 for the origin RCA); this
+# unit is the standing safety net regardless of how it got there.
+#
+# The ordering is the fix
+# -----------------------
+# After=systemd-rfkill.service is load-bearing, not decoration.  systemd-rfkill
+# is the service that replays the saved [1].  Unblocking BEFORE it runs simply
+# lets it re-block the radio afterwards -- a green-looking unit on a dark
+# adapter, which is the worst of both worlds.  We unblock AFTER the restore.
+#
+# `unblock all` rather than `unblock bluetooth`: the saved-block mechanism is
+# per-radio and the WiFi phy can acquire one exactly the same way.  Unblocking
+# one radio while leaving its sibling blocked would just move this outage to
+# the other interface -- and on this Pi, WiFi IS the remote-access path (see
+# the standing "never sever the Pi's remote access" rule).
+#
+# RemainAfterExit=yes so `systemctl is-active` answers "did the unblock run
+# this boot?" honestly.  Without it a perfectly successful oneshot reads
+# `inactive (dead)`, and the operator's only cheap check reports a working
+# unit as a broken one (F-1 honest instrument).
+#
+# Installation: auto-wired into deploy/deploy-pi.sh via
+# step_install_rfkill_unblock() (sync-if-changed install + daemon-reload-on-
+# change + enable --now), which ALSO zeroes any stale saved block so the very
+# first deploy does not have to wait for a reboot.  Runs on every deploy, not
+# just --init: a block can be re-saved at any shutdown.
+#
+# Requires the `rfkill` binary at /usr/sbin/rfkill (package `rfkill`, standard
+# on Raspberry Pi OS Trixie).  The path is absolute because systemd units run
+# with a minimal PATH that does not include /usr/sbin for all cases.
+#
+# Verify (after a reboot):
+#   systemctl is-enabled eclipse-rfkill-unblock   # -> enabled
+#   systemctl is-active  eclipse-rfkill-unblock   # -> active (RemainAfterExit)
+#   rfkill list                                   # -> Soft blocked: no  (BOTH)
+#   bluetoothctl show                             # -> Powered: yes
+# ==============================================================================
+
+[Unit]
+Description=Unblock all rfkill radios at boot (counter stale systemd-rfkill BT soft-block)
+After=systemd-rfkill.service bluetooth.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/sbin/rfkill unblock all
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

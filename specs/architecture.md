@@ -392,9 +392,8 @@ unit-file persistence).
 
 **Pairing prerequisites.** Pairing is a **separate, one-time**
 operational step — the OBDLink LX uses Secure Simple Pairing (SSP) with
-passkey confirmation, NOT the legacy "PIN 1234" flow. bluez's default
-`NoInputNoOutput` agent handles most SSP "Just Works" devices, but the
-LX firmware sends a numeric passkey and bluez prompts:
+passkey confirmation, NOT the legacy "PIN 1234" flow. The LX firmware
+sends a numeric passkey and bluez prompts:
 
 ```
 Confirm passkey NNNNNN (yes/no):
@@ -403,9 +402,52 @@ Confirm passkey NNNNNN (yes/no):
 `bt-agent -c NoInputNoOutput` does not intercept this — `bt-device`'s
 internal agent grabs the callback first and prompts to its own stdin. So
 non-interactive pairing needs a `pexpect`-driven bluetoothctl session
-that auto-confirms the passkey. That is what `scripts/pair_obdlink.sh`
-does, via a bash wrapper that execs Python+pexpect inside a heredoc —
-keeping shellcheck-clean arg parsing outside the pexpect block.
+that auto-confirms the passkey. That is `scripts/pair_obdlink.sh`
+(shellcheck-clean arg parsing + preflight) delegating to
+`scripts/pair_obdlink_driver.py` (the session itself).
+
+**The pairing driver contract (2026-07-31 hotfix, BL-025 half 2).** The
+script was **unable to pair at all** from the Trixie/bluez upgrade until this
+fix, for two independent reasons. Both are now regression-pinned in
+`tests/pi/obdii/`:
+
+- **Prompt.** bluez 5.82 prompts `[bluetoothctl]>` — a `>`, not the legacy
+  `#` — and wraps it in ANSI: the captured bytes are
+  `\x1b[0;94m[bluetoothctl]> \x1b[0m`. The old pattern `\[.+\]#` therefore
+  timed out on the *first* `expect()`, before any command was sent. Note the
+  escape sequence itself contains a `[`, so the greedy `.+` was wrong twice
+  over — it would span from the escape into the prompt even on a `#` box. The
+  driver's `PROMPT_PATTERN` forbids `[`/`]` inside the bracket body and
+  accepts either terminator, so old and new bluez both work.
+- **Agent capability.** The script registered `agent NoInputNoOutput`
+  ("just works") while waiting for a `Confirm passkey` line that **only a
+  display-capable agent produces** — the confirm branch was dead code and SSP
+  could fail with `org.bluez.Error.AuthenticationFailed`. The agent is now
+  `DisplayYesNo` (the mode the CIO's phone pairs with).
+
+Three further properties of the driver are contract, not implementation
+detail:
+
+- **Success means a DURABLE bond, not a link.** `Pairing successful` is
+  bluez's word for the connection. The driver re-reads `info <MAC>` after
+  `trust` and **fails** unless `Paired`+`Bonded`+`Trusted` are all yes,
+  because the in-car requirement is a bond that survives a reboot and
+  reconnects unattended. An unread flag is never rendered as a positive.
+- **Idempotent without `--force`.** An existing durable bond is reported and
+  left alone. Re-pairing requires the dongle *powered* (engine on), so a
+  reflexive `remove` on a working bond can strand the car. A *partial* bond is
+  cleared first — that half-state is what makes `pair` fail with
+  `AlreadyExists`.
+- **Echo anchoring.** bluetoothctl redraws its prompt several times during
+  startup, so a naive `sendline(); expect(PROMPT)` matches a **stale** prompt
+  and reads terminal padding back as the command's output — a silent wrong
+  answer rather than a hang. Each command waits for its own pty echo first.
+
+The session lives in an importable module rather than a `<<'PYEOF'` heredoc
+specifically so it can be tested: heredoc code cannot be imported, which is
+why both defects above shipped undetected. `tests/pi/obdii/test_pair_obdlink_driver.py`
+drives the real state machine against a bluetoothctl transcript **captured
+verbatim from the Pi**, ANSI escapes included.
 
 **Pair-mode re-trigger UX (operator-visible).** The LX drops out of
 pair mode ~30s after each failed attempt. Solid blue LED = discoverable.
@@ -417,7 +459,42 @@ power-cycle the dongle before re-running the pair script. Keep within
 reboot — bluez stores it under `/var/lib/bluetooth/<adapter>/<mac>/`.
 `scripts/pair_obdlink.sh` issues `trust <MAC>` after `pair`, which is
 what enables the adapter to reconnect without user prompts on future
-boots.
+boots. Measured state 2026-07-31: `devices Paired` on adapter
+`88:A2:9E:84:46:1D` returned **empty** — there is currently no bond of any
+kind on this Pi, which is the second half of BL-025 and why the engine-on
+re-pair is still owed.
+
+**Radio soft-block survival — the layer below everything else (BL-025).**
+Before a bond or an rfcomm bind can matter, the adapter has to be *unblocked*.
+`systemd-rfkill` **persists rfkill soft-block state across reboots** under
+`/var/lib/systemd/rfkill/<id>:bluetooth` and replays it at every boot. This Pi
+carried a saved `[1]` there from ~2026-07-03, so Bluetooth came up soft-blocked
+on every single boot and OBD capture recorded **zero rows for ~4 weeks** — while
+every layer above reported an honest "no adapter". The lesson is the diagnostic
+order: *radio → bond → bind → connect*, and the four-week cost came from
+starting at the top.
+
+`deploy/eclipse-rfkill-unblock.service` is the standing safety net
+(`Type=oneshot`, `RemainAfterExit=yes`, `ExecStart=/usr/sbin/rfkill unblock all`).
+Two details are load-bearing rather than stylistic:
+
+- **`After=systemd-rfkill.service`** — that unit is what *restores* the saved
+  block. Unblocking before it runs just lets it re-block afterwards: a green
+  unit on a dark adapter.
+- **`unblock all`, not `unblock bluetooth`** — the saved-block mechanism is
+  per-radio and the WiFi phy can acquire one identically. On this Pi WiFi is
+  also the remote-access path, so leaving a sibling radio blocked would move the
+  outage rather than end it.
+
+Installed + enabled by `step_install_rfkill_unblock` in `deploy-pi.sh` on
+**every** deploy (not gated behind `--init`, same posture as
+`step_reassert_obd_mac`: a block can be re-saved at any shutdown, so a drifted
+Pi self-heals on the next ordinary re-deploy). The step additionally clears the
+live block and zeroes any stale saved one, closing the window between deploying
+and the next reboot. The unit is registered first in
+`src/pi/ops/unit_manifest.py` START order, so `obdctl status all` surfaces it
+ahead of the units that depend on it. Origin RCA of the saved block is tracked
+separately (BL-025 #4 / US-513); this net stands regardless of the origin.
 
 **RFCOMM bind reboot-survival.** While the bluez bond is persistent,
 `rfcomm bind 0 <MAC> 1` state is NOT — it's cleared on every boot. Two

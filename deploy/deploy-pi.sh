@@ -783,6 +783,74 @@ step_enforce_eeprom_power_off_on_halt() {
     remote "sudo bash '${PI_PATH}/deploy/enforce-eeprom-power-off-on-halt.sh'"
 }
 
+step_install_rfkill_unblock() {
+    # BL-025 P0 (V0.29.22 hotfix, CIO-directed): make the boot-time radio
+    # unblock REPO-MANAGED so a reflash or `--init` cannot lose it.
+    #
+    # systemd-rfkill restores a SAVED Bluetooth soft-block
+    # (/var/lib/systemd/rfkill/*:bluetooth = [1]) on every boot -> BT comes up
+    # blocked -> eclipse-obd never reaches the OBDLink LX -> zero capture. That
+    # is the "dead since ~07-03" root cause, found live 2026-07-31. The unit
+    # runs After=systemd-rfkill.service and unblocks all radios.
+    #
+    # Same sync-if-changed posture as step_install_orphan_cleanup_unit /
+    # step_install_drain_forensics_unit: cmp -s guard, daemon-reload only on a
+    # real change, `enable --now` re-asserted every deploy so an out-of-band
+    # `systemctl disable` self-heals.
+    #
+    # The extra half the sibling steps do not have: the unit fixes every boot
+    # FROM NOW ON, but a stale [1] is still sitting in /var/lib/systemd/rfkill
+    # right now. Zeroing the saved state closes the window between this deploy
+    # and the next reboot -- and removes the artifact instead of permanently
+    # papering over it.
+    echo "--- Step: Installing eclipse-rfkill-unblock systemd unit (BL-025, sync-if-changed) ---"
+    if $DRY_RUN; then
+        echo "DRY-RUN would: sudo cmp -s ${PI_PATH}/deploy/eclipse-rfkill-unblock.service /etc/systemd/system/eclipse-rfkill-unblock.service || (install + daemon-reload)"
+        echo "DRY-RUN would: sudo systemctl enable --now eclipse-rfkill-unblock.service"
+        echo "DRY-RUN would: sudo rfkill unblock all + zero any saved block under /var/lib/systemd/rfkill/*bluetooth*"
+        return 0
+    fi
+    remote "
+        set -e
+        SRC='${PI_PATH}/deploy/eclipse-rfkill-unblock.service'
+        DST='/etc/systemd/system/eclipse-rfkill-unblock.service'
+
+        if [ ! -f \"\$SRC\" ]; then
+            echo 'WARN: eclipse-rfkill-unblock.service not present in deploy/ on the Pi -- skipping install.' >&2
+            exit 0
+        fi
+
+        if sudo test -f \"\$DST\" && sudo cmp -s \"\$SRC\" \"\$DST\"; then
+            echo 'eclipse-rfkill-unblock.service already up-to-date.'
+        else
+            sudo install -m 644 \"\$SRC\" \"\$DST\"
+            sudo systemctl daemon-reload
+            echo 'eclipse-rfkill-unblock.service installed + daemon-reload complete.'
+        fi
+
+        sudo systemctl enable --now eclipse-rfkill-unblock.service
+        echo 'eclipse-rfkill-unblock.service enabled + active.'
+
+        # Belt-and-suspenders: clear the LIVE block and neutralize the SAVED
+        # one, so this deploy does not leave a blocked radio waiting on a
+        # reboot. Failures here are reported, not fatal -- the unit above is
+        # the durable fix and a missing rfkill binary must not abort a deploy.
+        if sudo rfkill unblock all; then
+            echo 'rfkill: all radios unblocked.'
+        else
+            echo 'WARN: rfkill unblock all failed (is the rfkill package installed?).' >&2
+        fi
+        for f in /var/lib/systemd/rfkill/*bluetooth*; do
+            [ -e \"\$f\" ] || continue
+            if [ \"\$(sudo cat \"\$f\" 2>/dev/null)\" = '0' ]; then
+                echo \"rfkill saved state already clear: \$f\"
+            else
+                echo '0' | sudo tee \"\$f\" >/dev/null && echo \"rfkill saved block CLEARED: \$f\"
+            fi
+        done
+    "
+}
+
 step_install_rfcomm_bind() {
     # US-196: install rfcomm-bind.service so /dev/rfcomm0 is re-bound on every
     # boot. Idempotent — re-running re-writes /etc/default/obdlink with the
@@ -1782,6 +1850,16 @@ step_enforce_eeprom_power_off_on_halt
 # reasserts canonical OS-side config, runs AFTER sync_tree so
 # deploy/reassert-obd-mac.sh exists on the Pi.
 step_reassert_obd_mac
+
+# BL-025 P0: install + enable the boot-time radio unblock. Runs on EVERY deploy
+# (not gated behind --init) for the same reason as step_reassert_obd_mac above:
+# a radio soft-block can be re-saved at any shutdown, so the safety net has to be
+# re-asserted routinely, and a Pi that has drifted must self-heal on the next
+# ordinary re-deploy rather than waiting for a rebuild. Ordered BEFORE
+# step_install_rfcomm_bind because binding /dev/rfcomm0 to a soft-blocked
+# adapter is precisely the failure this unit exists to prevent. Runs AFTER
+# sync_tree so deploy/eclipse-rfkill-unblock.service exists on the Pi.
+step_install_rfkill_unblock
 
 # US-196: rfcomm-bind.service install needs to run AFTER sync_tree so
 # deploy/install-rfcomm-bind.sh and deploy/rfcomm-bind.service exist on the

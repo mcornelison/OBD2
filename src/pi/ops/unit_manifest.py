@@ -99,6 +99,16 @@ class UnitSpec:
 # list reversed, so there is exactly one ordering to keep correct.
 # ---------------------------------------------------------------------------
 UNIT_MANIFEST: tuple[UnitSpec, ...] = (
+    # BL-025: FIRST, because every OBD unit below it needs an unblocked radio.
+    # A stale saved rfkill soft-block killed capture for ~4 weeks while every
+    # layer above reported an honest "no adapter" -- so this is the unit an
+    # operator debugging dead capture should see FIRST in `obdctl status all`.
+    # No kioskVerbs: the unprivileged kiosk has no business touching radios.
+    UnitSpec(
+        unit="eclipse-rfkill-unblock.service",
+        aliases=("rfkill", "unblock"),
+        description="Unblocks all rfkill radios at boot (counters stale saved BT soft-block)",
+    ),
     UnitSpec(
         unit="rfcomm-bind.service",
         aliases=("rfcomm", "bt"),

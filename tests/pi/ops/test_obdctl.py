@@ -271,14 +271,17 @@ def test_main_statusAll_printsASummaryLineCoveringEveryUnit():
     """
     Given: AC-7 -- `all` prints a summary table
     When: status all runs
-    Then: all 8 canonical units appear and a count line summarises them
+    Then: every canonical unit appears and the count line agrees with the
+        manifest. Derived from the manifest rather than a literal: the contract
+        is "the CLI counts what it printed", which a hardcoded number states
+        only by coincidence and has to be re-edited every time a unit is added.
     """
     code, out = runCli(["status", "all"])
 
     assert code == 0
     for unit in manifest.CANONICAL_UNITS:
         assert unit in out
-    assert "8 unit" in out
+    assert f"{len(manifest.CANONICAL_UNITS)} unit" in out
 
 
 def test_main_statusOfAnInactiveOneshot_saysInactiveIsNormal():
