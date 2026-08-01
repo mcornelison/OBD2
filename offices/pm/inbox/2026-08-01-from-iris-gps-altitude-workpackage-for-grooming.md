@@ -15,9 +15,9 @@ Atlas confirmed `states/imu` has **no altitude source** (no baro on the ICM-2094
 
 **WP-3 · Sync-success re-anchor utility (drift control, CIO idea).** On **every successful server sync**, reset the derived altitude to `PI_HOME_ELEVATION_M` — a successful sync means the car is home on the home network, so it's a verified "at home" reset. Bounds drift to a single drive between syncs. A small utility hooking the existing sync-success event → altitude reset (dev + Atlas seam).
 
-**WP-4 · Interim grade×speed altitude (until GPS lands).** `altitude = 209 + ∫ sin(pitch)·speed dt` (IMU grade + OBD speed). **Pending Spool's feasibility/trust ruling** (`tuner/inbox/2026-08-01-...interim-grade-speed-altitude.md`); WP-3 makes it much more viable (bounded drift). If Spool blesses it, small display add on the live card; **GPS (WP-1) supersedes it.**
+**WP-4 · Derived altitude (the near-term source — CIO GREENLIT to SHOW now).** `altitude = 209 + ∫ sin(pitch)·speed dt` (IMU grade + OBD speed), re-anchored per WP-3. **CIO 2026-08-01: altitude is NOT safety-critical — a "fun fact" while driving — so show the derived value now**, labeled approximate (`≈NNN m`). So this is no longer gated on a "should we show it?" call — it's the active source. **Spool still owns the derivation math/quality** (`tuner/inbox/2026-08-01-...interim-grade-speed-altitude.md`); the display just renders it honestly (`≈`). GPS (WP-1) later swaps the feed + drops the `≈`.
 
-**WP-5 · Live-card altitude + speed display (mine).** Near-term US-508 renders altitude **"no source"** (already folded into the spec). When WP-1/WP-4 land I design the altitude readout + **true speed** on the live card — the speed answers the "what else earns the glance" question we'd deferred.
+**WP-5 · Live-card altitude + speed display (mine) — updated.** US-508 now shows the **derived `≈NNN m`** altitude as the live source (folded into the spec + mockups), falling to "— no source" only if grade/speed are unavailable. A `source` field (derived→gps) flips the feed with no layout change when WP-1 lands; GPS also brings **true speed** (answers the deferred "what else earns the glance").
 
 ## Sequencing notes (my read; your call)
 - WP-2 + WP-3 are small and mostly independent (config + a sync hook) — could ride a near-term patch.

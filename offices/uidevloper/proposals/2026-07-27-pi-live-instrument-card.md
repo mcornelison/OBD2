@@ -39,17 +39,21 @@ the real IMU contract, the shipped tokens/chrome, and Spool's semantics.
 - **Grade:** current **road grade %** (= tan(pitch°)×100 — CIO 2026-07-27) + a ~15-min rolling
   grade-trend sparkline (live; scrolls as the road rises/falls). Informational (Spool: no alarm).
   Titles minimal ("GRADE" / "G-FORCE").
-- **Altitude — NO SOURCE today (Atlas 2026-07-31).** Correcting the earlier "prominent altitude
-  readout": the ICM-20948 has **no barometer** and there's **no GPS producer** yet, so `states/imu`
-  resolves altitude as **honest-NA** — render a small **"ALT — no source"** line, grayed, never
-  zeroed. Do NOT make it prominent while it has no data (honest-instrument). Two paths reinstate it:
-  - **Interim (CIO "option 3", pending Spool):** altitude-change = ∫ sin(pitch)·speed dt (IMU grade +
-    OBD speed, home-anchored) — a rough/relative estimate; show only if Spool rules it honest enough
-    (`tuner/inbox/2026-08-01-...interim-grade-speed-altitude.md`).
-  - **Real (CIO ordering):** an **I2C GPS (Adafruit PA1010D #4415)** → a new `states/gps` source
-    (Atlas contract) gives absolute altitude (±10–20 m) **+ true speed / heading / position**;
-    supersedes the interim. When it lands I design altitude + speed properly (the speed the "what
-    else earns the glance" question was waiting on).
+- **Altitude — DERIVED, shown as an approximate fun-fact (CIO 2026-08-01).** The ICM-20948 has no
+  baro and there's no GPS yet, so there is **no measured** altitude. CIO's call: **altitude is not
+  safety-critical — it's a "fun fact" while driving — so show the DERIVED value now**, honestly
+  labeled approximate, and swap the source to GPS when the sensor arrives.
+  - **Source now = derived** `altitude = PI_HOME_ELEVATION_M (209 m) + ∫ sin(pitch)·speed dt`
+    (IMU grade + OBD speed), **re-anchored to home elevation on every successful server sync**
+    (drift bounded to one drive — CIO). Spool owns the derivation math/quality
+    (`tuner/inbox/2026-08-01-...interim-grade-speed-altitude.md`); the display renders it.
+  - **Honest label:** show it as **`≈ NNN m`** (a leading `≈` / "derived" cue), never as a precise
+    fix — it's approximate and drifts. If the derivation is unavailable (no grade/speed), fall back
+    to **"— no source"**, never zeroed.
+  - **Source later = GPS** (I2C Adafruit PA1010D #4415 → `states/gps`, Atlas contract): swaps the
+    feed to absolute altitude (±10–20 m) and **drops the `≈`**; also brings **true speed / heading /
+    position** (the speed answers the deferred "what else earns the glance"). The display is a pure
+    consumer — a `source` field flips derived→gps with no layout change.
 - **G-force:** a cross-haired meter with concentric rings, a live dot at (lat, lon) g, and a
   fading **~35 s trail**. Informational, never a takeover (Spool). **Amber ring/dot at 0.6 g**
   (Spool) — which doubles as an aged-tire lat-load nudge, advisory not alarm.

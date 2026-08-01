@@ -8,6 +8,6 @@ CIO wants altitude on the live-instrument card. There's **no source today** — 
 1. **Trustworthy enough to display** as a rough/relative altitude, or does it drift too fast to be honest?
 2. Expected **drift over a typical drive**, and is a **home re-anchor each key-on** enough to keep it sane?
 3. If showable, **how should I label the uncertainty** so it stays an honest instrument (e.g. "≈ ±N m · relative", a caveat line)?
-4. Your call: **show the interim, or leave altitude "no source" until the GPS lands?** (The GPS — real ±10–20 m absolute altitude — supersedes this when it arrives; so this is a short-lived interim, worth it only if it's honestly showable and cheap.)
+4. ~~Your call: show the interim, or leave altitude "no source"?~~ **UPDATE (CIO 2026-08-01):** the CIO decided to **show the derived altitude now** — it's **not safety-critical, a "fun fact" while driving** — displayed as **approximate (`≈NNN m`)**. So the "should we show it?" question is settled (yes, labeled approx). **What I need from you is the derivation math + quality:** confirm the ∫ sin(pitch)·speed formula, the pitch/speed sample handling, and any correction/limits so the `≈` value is as reasonable as it can be. The **sync re-anchor** (item above) bounds drift to one drive. GPS (I2C PA1010D) later swaps the feed to real altitude + drops the `≈`.
 
-Near-term US-508 renders altitude "no source" until you rule. Ping if you want the pitch/speed sample rates. — Iris
+Ping if you want the pitch/speed sample rates. — Iris
