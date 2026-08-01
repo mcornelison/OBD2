@@ -1,0 +1,547 @@
+# Ralph Progress Log — Sprint 68 / V0.29.23 (Pi UI round 2, F-124) — Sprint A of the /resize-split
+# Branch: sprint/sprint68-V0.29.23 (PM cuts from dev before dispatch)
+# Stories (6): US-506 nav (wrap+auto-rotate+velocity, L) · US-507 consolidate 6->4 Health card ·
+#   US-508 live/motion card + home-swap (L, Atlas contract ruled) · US-509 System-Status drill-down ·
+#   US-510 fidelity (copy+font+tokens, Atlas token values ruled) · US-511 debounced parked kebab
+# Atlas design-gate PASS; rulings folded into US-508/US-510 DoDs. See devCheatSheet in sprint.json.
+# Sprint B (V0.29.24, wiring + capture hardening US-501..505/512/513) follows.
+# Previous sprint (67 / V0.29.22 capture hotfix) archived 2026-08-01_011236Z + DEPLOYED.
+# ---
+
+## 2026-07-31 - US-506 (Agent 1 / Session 12)
+Task: Carousel navigation model: wrap (skip gated) + auto-rotate + velocity swipe-pause
+
+### What was implemented:
+- WRAP (AC-12): `nextVisibleIndex` rewritten -- wraps at both ends, traverses only
+  VISIBLE cards. Bounded by `hidden.length` so a <=1-visible-card row terminates.
+- AUTO-ROTATE (AC-13): `shouldAutoAdvance` + `rotateProgress` drive a new thin
+  `#rotate-progress` bar (0..1 fill, no countdown number). z-index 8, under the
+  DTC ribbon's 9. Removed while paused, not frozen part-filled.
+- VELOCITY (AC-14): new `swipeGesture(dx,dy,dtMs,widthPx,cfg)` -> `{dir,fast}`
+  replaces distance-only `swipeDirection` in the gesture path. Flick -> advance +
+  RESUME; settle -> advance one + PAUSE. 40px deadzone preserved.
+- PAUSE SELF-EXPIRY (AC-15): `shouldAutoResume` (45s). Pause hangs on ONE
+  document-level `pointerdown`, so tap/dot/kebab/any-overlay all pause.
+- CONFIG: new `pi.display.carousel.*` -> `window.DISPLAY_CAROUSEL` via a NEW
+  quoted placeholder through the US-483-b serve-time seam.
+
+### Files changed:
+- Modified: `specs/UI/dist/dashboard-pi/carousel.js` (wrap rewrite + 5 new pure fns + DOM wiring)
+- Modified: `specs/UI/dist/dashboard-pi/dashboard.html` (progress-bar slot + config placeholder)
+- Modified: `specs/UI/dist/dashboard-pi/dashboard.css` (thin calm bar, tertiary token)
+- Modified: `config.json` (`pi.display.carousel` tuning SSOT)
+- Modified: `src/pi/splash/states_http_server.py` (2nd placeholder + `loadDisplayCarouselConfig`; both loaders now share `_loadDisplaySection`)
+- Modified: `specs/architecture.md` (F-092 "Navigation model" subsection -- design-gate DoD)
+- Created:  `tests/ui/test_carousel_nav_model.py` (39 tests)
+- Modified: `tests/ui/test_carousel_pi_local_cards.py` (the clamp pin this story overturns)
+
+### Learnings for future iterations:
+- **Pattern discovered**: THE DEADZONE MUST SURVIVE A VELOCITY MODEL. Adding
+  velocity is adding a DIMENSION, not replacing distance. Drop the distance
+  floor and a 5px twitch over 2ms reads as 2.5 px/ms -- four times the flick
+  threshold -- so the carousel pages on a stray touch. Distance answers "was
+  this a swipe at all?"; velocity answers "what KIND of swipe?". Two questions,
+  two tests, both required. Pinned by test.
+- **Gotcha**: DIVIDING BY A MEASUREMENT IS A FABRICATION RISK, and this one is
+  FELT not just displayed. `travel/dtMs` with dt==0 is Infinity -> classified a
+  flick -> auto-rotate RESUMES under the operator's finger. An unmeasurable
+  duration is not an infinitely fast gesture; it contributes 0 and the travel
+  test (a real reading) answers. Same for a 0-width card box on a transient 0x0
+  layout pass. This project's honest-instrument rule is usually applied to
+  RENDERED values -- it applies just as hard to DERIVED ones that drive behaviour.
+- **Pattern discovered**: A CONFIG SCHEMA CAN MAKE A BAD STATE UNREACHABLE.
+  `resolveCarouselConfig` accepts only finite POSITIVE numbers, so `resumeIdleS:
+  0` falls back to the default and can never reach `shouldAutoResume` to disable
+  the self-unpause. The "pause freezes the carousel forever" failure is not
+  guarded against downstream -- it is inexpressible upstream. Prefer that to a
+  defensive check at every consumer.
+- **Gotcha**: FAIL A MISCONFIGURED INTERVAL TO **OFF**, NOT TO FAST. A
+  non-positive `autoRotateS` naively means "advance when sinceMs >= 0" = every
+  250ms tick. A carousel spinning at the poll rate is unusable and reads as a
+  hardware fault. `shouldAutoAdvance`/`rotateProgress` both return false/0 on a
+  non-positive period. Ask of any interval: what does 0 do?
+- **Pattern discovered**: HANG A CROSS-CUTTING SIDE EFFECT ON ONE DOCUMENT-LEVEL
+  LISTENER, NOT N CALL SITES. "Tap a card or open ANY overlay pauses" could have
+  been 6+ per-overlay `pauseAutoRotate()` calls -- and overlay #7 forgets. One
+  `document` `pointerdown` handler covers every present and future affordance,
+  and the swipe handler resumes afterwards if it turns out to be a flick.
+- **Gotcha**: A PROGRESS BAR MUST BE REMOVED WHEN IT STOPS, NOT FROZEN. Leaving
+  the bar part-filled while paused is the exact frozen-instrument fabrication
+  US-497 named for the g-dot: it promises an advance that is never coming. Same
+  rule, different geometry.
+- **Gotcha**: WHEN A STORY OVERTURNS A CONTRACT, THE OLD TEST IS EVIDENCE, NOT AN
+  OBSTACLE. `test_nextVisibleIndex_clampsAtTheLastVisibleCard` went red BY DESIGN.
+  I did not delete it -- I read what it was really guarding (never land on a
+  hidden card), kept that assertion, and renamed it. Deleting it would have
+  dropped a live invariant along with the dead one; flagged in completionNotes so
+  the PM sees the contract change rather than a quietly-edited test.
+- **Gotcha**: MEASURE THE TRAVEL FRACTION AGAINST THE REAL BOX. `#stage` is
+  letterbox-scaled (US-482), so a hard-coded 480 misreads travel on any panel
+  that is not 1:1. The handler reads `track.getBoundingClientRect().width`.
+- **Verified, did not assume**: `main()` is the ONLY `StatesHttpServer`
+  construction site, so the new config genuinely reaches the browser. That check
+  is cheap and is exactly what US-494 (a dependency the entry point never
+  injected) cost a whole story.
+---
+
+## 2026-07-31 - US-507 (Agent 1 / Session 13)
+Task: Consolidate 6 cards to 4: merge Battery + Light + Fuel Trim into one "Health" card
+
+### What was implemented:
+- MERGE (AC-1/AC-3): dashboard.html gains `data-states` (PLURAL) naming all three
+  state files. `tick()` fetches each through a NEW per-tick `stateOnce` cache and
+  renders a SECTION per source via `healthCardView` / `renderHealthCard`. The
+  standalone Battery Health, Light and LTFT Trend slots are gone from the DOM/nav.
+- INDEPENDENCE (AC-4): availability resolves PER SECTION, never per card.
+- GATE (AC-2): fuel trim stays vehicle-gated but SPEAKS ("no engine data") instead
+  of hiding; gate evaluated BEFORE the data, gated section carries no view at all;
+  ships `data-gated="true"` so the pre-first-poll window fails closed.
+- RETITLE (AC-2): "LTFT Trend" -> "Fuel Trim". Label only; Spool's LTFT semantics
+  (emitter, thresholds, classifier, insufficient guard) untouched.
+- The three card renderers now take a BODY element rather than a card.
+
+### Files changed:
+- Modified: `specs/UI/dist/dashboard-pi/dashboard.html` (merged card + 3 sections)
+- Modified: `specs/UI/dist/dashboard-pi/carousel.js` (healthCardView + renderers + stateOnce)
+- Modified: `specs/UI/dist/dashboard-pi/dashboard.css` (section chrome, tokens only)
+- Modified: `specs/architecture.md` (multi-source card subsection -- design-gate DoD)
+- Created:  `tests/ui/test_carousel_health_card.py`
+- Modified: `tests/ui/test_carousel_pi_local_cards.py`, `test_carousel_brightness.py`,
+  `test_render_regression.py`, `tests/deploy/test_dashboard_kit.py` (adapted pins)
+
+### Learnings for future iterations:
+- **Gotcha**: A PIN THAT GREPS A DEFECT'S NAME FIRES ON ITS OWN DOCUMENTATION --
+  SECOND OCCURRENCE. My renamed-renderer pin asserted `"renderLtftTrendCard" not
+  in js` and went RED against CORRECT code, because the comment marking the
+  deleted branch NAMES the function it replaced. Session 11 learned this exact
+  shape on `NoInputNoOutput`/`PYEOF`. It recurs because the fix (document the
+  rename) and the test (forbid the old name) pull in opposite directions. Strip
+  comments, then grep.
+- **Pattern discovered**: AND TEST THE STRIPPER, BECAUSE OVER-STRIPPING IS THE
+  DANGEROUS DIRECTION FOR AN ABSENCE ASSERTION. A stripper that eats too much
+  removes the very text the test hunts for, so the pin passes VACUOUSLY. Concrete
+  hazard here: carousel.js:2331 is `"http://www.w3.org/2000/svg"` -- a STRING
+  containing `//`, which a naive line-comment strip truncates. `_stripJsComments`
+  is string-aware and is itself pinned (code landmarks survive, the SVG namespace
+  survives, real prose goes).
+- **Gotcha**: A MERGE CAN MAKE AN OLD ASSERTION VACUOUS WITHOUT TURNING IT RED --
+  the most dangerous test outcome there is. `assert "LTFT Trend" not in cards`
+  guarded the vehicle gate; once no card carries that name it is true for the
+  WRONG reason and would keep passing if the gate broke ENTIRELY. Replaced with a
+  POSITIVE assertion (the section painted `data-gated="true"`). When a story
+  removes the noun an absence assertion names, that assertion is dead -- re-aim it
+  at the surface that now carries the property.
+- **Pattern discovered**: MERGING CARDS MUST NOT MERGE THEIR FAILURES. The obvious
+  implementation routes the merged card through the existing card-level
+  availability check -- and then one dead UPS blanks the two live instruments
+  beside it. That is a FABRICATED "nothing is readable" built out of one real
+  fault. Resolve availability per SECTION.
+- **Pattern discovered**: A GATE'S VOCABULARY IS A FUNCTION OF ITS CONTAINER. As a
+  card, "does not apply" could be said by HIDING. As a section of an
+  always-visible card, hiding leaves a hole, so the same fact must be said in
+  WORDS. The disposition vocabulary grew from two to THREE (gated / no-data /
+  live) -- and collapsing gated into no-data would tell an operator with a running
+  engine that there is no engine.
+- **Gotcha**: DELETE A DEAD BRANCH, DO NOT LEAVE IT UNREACHABLE. The `ltft-trend`
+  tick branch still named the pre-rename `renderLtftTrendCard`. Nothing executed
+  it, so nothing proved it still RESOLVED -- a ReferenceError armed for the day
+  something re-declares that state. Same family as US-500 (the dangerous line is
+  the one that never runs).
+- **Verified, did not assume**: US-507's validationCriteria says "4 cards total",
+  but this story ALONE lands at 5 -- absorbing the Motion card into the home slot
+  is US-508's acceptance, not US-507's. I did NOT delete it (scope fence + it would
+  open a regression window between the two stories) and routed the criteria
+  correction to the PM instead of quietly meeting or quietly missing the number.
+---
+
+## 2026-07-31 - US-508 (Agent 1 / Session 14)
+Task: Live/motion card re-issue to locked spec + home-slot idle-live swap
+
+### What was implemented:
+- RESUMED a died iteration: the full implementation + a 44-test suite were
+  already on disk, ungated and uncommitted (TD-059, third sprint running).
+  Audited it against each AC instead of trusting the green.
+- HOME SLOT (AC-2): `homeFace` is the ONE face arbiter -- parked wins outright,
+  live+fresh states/imu shows the instrument, everything else falls back.
+- The idle fallback carries TWO dispositions so a dead feed on a MOVING car
+  never renders the shipped "engine off" hero (AC-3).
+- Compass TAPE under a fixed caret; the rotating-needle builder REMOVED.
+- GEAR from a separate producer (never states/imu); amber at 0.6 g distinct
+  from the 1.0 g clamp; ~15-min decimated grade trend on a FIXED scale.
+- TRANSPORT (AC-5): bridge default 4 -> 10 Hz, card polls ~10 Hz. No new
+  transport; durable EDR persistHz untouched.
+- ADDED THE MISSING PINS (this iteration's real contribution): 5 for the
+  unpinned ALTITUDE readout, 2 for the unpinned raised bridge cadence.
+
+### Files changed:
+- Modified: `specs/UI/dist/dashboard-pi/carousel.js` (home swap, tape, gear, trend)
+- Modified: `specs/UI/dist/dashboard-pi/dashboard.html` (home slot, Motion card gone)
+- Modified: `specs/UI/dist/dashboard-pi/dashboard.css` (live face, tokens only)
+- Modified: `specs/architecture.md` (two-faced home slot -- design-gate DoD)
+- Modified: `config.json`, `src/common/config/validator.py` (stateHz 4 -> 10)
+- Modified: `src/pi/sensors/imu_state_bridge.py` (DEFAULT_STATE_HZ 4 -> 10)
+- Created:  `tests/ui/test_carousel_live_home_card.py` (44 + 5 new altitude pins)
+- Modified: `tests/pi/sensors/test_imu_state_bridge.py` (2 cadence pins)
+- Modified: `tests/ui/test_carousel_imu_card.py`, `tests/deploy/test_dashboard_kit.py`
+
+### Learnings for future iterations:
+- **Pattern discovered**: A GREEN SUITE ON INHERITED WORK PROVES THE TESTS THAT
+  EXIST PASS -- NOT THAT THE RIGHT TESTS EXIST. The died iteration left 44
+  passing tests and I nearly closed on that. Auditing AC-by-AC instead found
+  ALTITUDE with zero assertions anywhere in tests/ui. When you resume someone
+  else's work, the gap is never in what they tested; it is in what they never
+  reached. Walk the acceptance list, not the test list.
+- **Gotcha**: THE HARDEST FIELD TO PIN IS THE ONE THAT IS ALWAYS ABSENT.
+  Altitude has no producer on this Pi, so its only correct rendering is a gap --
+  and a gap looks like an oversight to the next person, who "fixes" it with a 0.
+  A zeroed altitude renders as SEA LEVEL: a confident lie, not a visible
+  absence. Assert NO DIGIT rather than == "NA"; the digit-free assertion also
+  catches the helpful "0 ft" / "0 m" / "--- ft" variants of the same mistake.
+- **Pattern discovered**: AND PIN THAT THE ABSENCE STILL GETS PAINTED. An
+  unconditionally-NA tile is exactly what a renderer cleanup deletes. Atlas kept
+  the field "for zero-rework later" -- so the day a BMP280 lands it needs
+  re-wiring, not re-laying-out. Two pins, one on the value, one on the DOM.
+- **Gotcha**: A DEFAULT NO TEST EVER USES IS NOT TESTED. Every rate test in
+  test_imu_state_bridge.py passes `stateHz=4` EXPLICITLY, so raising the default
+  4 -> 10 -- the entire AC-5 transport ruling -- was invisible to the suite. A
+  silent revert would stay green while the tape stutters on the panel, a defect
+  only a human in a moving car reports. When a story changes a DEFAULT, ask
+  which test exercises the default PATH, not the constant.
+- **Pattern discovered**: A GROUNDING CLAIM IN A COMMENT IS NOT A CHECK. The
+  constant's docstring said it was grounded to carousel.js IMU_POLL_MS. Now a
+  cross-artifact test reads the shipped JS and asserts the producer is never
+  slower than its consumer polls. Writing slower than the reader polls does not
+  slow the poll -- it makes the reader re-read an unchanged file and animate
+  nothing. Same two-correct-halves-that-stopped-agreeing shape as US-494/US-499.
+- **Pattern discovered**: TDD ON PRE-EXISTING CODE = MUTATION PROOF. All 5 new
+  pins passed on the first run, which proves nothing. So I broke each defect they
+  forbid (fabricate a sea-level altitude / drop the field / compute-but-never-
+  paint / revert the cadence) and confirmed each went RED naming the right test.
+  Restore lives in a `finally` and was verified by diff-stat before staging --
+  mutating a file that holds UNCOMMITTED work is how a recovery loses the thing
+  it recovered. Never `git checkout` to undo a mutation on a dirty file.
+- **Gotcha**: A COUNT THAT SURVIVES A CHANGE FOR A DIFFERENT REASON IS VACUOUS.
+  test_dashboard_kit's `class="card"` count stayed 4 across this story -- the old
+  idle card wore `card idle-card` and was never counted, the new home slot is a
+  plain `.card` and is. Two changes cancelled. The test now NAMES every slot.
+  US-507 hit the same family (an absence assertion true for the wrong reason).
+- **Gotcha**: the Bash tool is NOT PowerShell -- a `@'...'@` here-string leaks a
+  literal `@` into the commit subject. Use a `<<'EOF'` heredoc with `-F -`.
+---
+
+## 2026-07-31 - US-509 (Agent 1 / Session 15)
+Task: System-Status "N ISSUE" drill-down overlay
+
+### What was implemented:
+- DRILL-DOWN (AC-1): the US-489 `SYSTEM · N ISSUE` line is a GATED tap target ->
+  `#sys-detail`, an overlay of worst-first rows (source label + state chip + the
+  tile's own reason + freshness) with a `‹ Back` that always returns.
+- ONE READ (AC-4): rows ride on `systemStatusView().drill`, so a single read of
+  the state file feeds the grid, the summary AND the overlay. No source state is
+  recomputed -- `systemIssueRows` reads the levels the shipped tile builders
+  already produced.
+- ORDER: built by walking rank buckets top-down rather than sorting, so
+  "ties keep grid order" is a property of the CONSTRUCTION, not of the sort.
+- GATE (AC-2 validation): `drill.tappable = rows.length > 0` -- a healthy card
+  never advertises detail it does not have.
+- PAUSE (AC-2): NO new code. US-506's single document-level `pointerdown` seam
+  already covers every present and future overlay; pinned rather than re-called.
+- REUSE: the overlay inherits the US-406 per-code detail shell (`.detail-head` /
+  `.detail-body` / `.detail-card`, the same `‹ Back`).
+
+### Files changed:
+- Modified: `specs/UI/dist/dashboard-pi/carousel.js` (systemIssueRows/systemDrill + overlay render + wiring)
+- Modified: `specs/UI/dist/dashboard-pi/dashboard.html` (`#sys-detail` overlay)
+- Modified: `specs/UI/dist/dashboard-pi/dashboard.css` (row chrome, tokens only)
+- Modified: `specs/architecture.md` ("Summary drill-down (US-509)" -- design-gate DoD)
+- Created:  `tests/ui/test_carousel_system_drilldown.py` (27 tests)
+
+### Learnings for future iterations:
+- **Pattern discovered**: "ONLY SHOW WHAT IS BROKEN" HAS TWO OPPOSITE FAILURES,
+  AND A FLOOR THAT FIXES ONE OPENS THE OTHER. Listing a green source is a
+  fabricated fault; so is listing DRIVE=IDLE, which the card's own vocabulary
+  documents as "nominal but inactive, NOT broken" -- that one would report a
+  fault in the commonest state there is. But raise the floor to `amber` to be
+  safe and the headline `SYSTEM · N UNAVAILABLE` becomes a tappable line that
+  opens an EMPTY overlay: a new dead end, built while removing the old one. The
+  floor is `unavailable`. Ask of any filter: what does the state JUST BELOW the
+  cut look like when the summary above it is already counting that state?
+- **Gotcha**: A COUNT IN THE HEADLINE AND A COUNT IN THE LIST ARE DIFFERENT
+  FACTS. The summary counts ISSUES (amber/down); the list also carries
+  known-unknowns, so the rows can outnumber N. Rather than force them equal (and
+  lose a real fact) or let the overlay invent its own headline, the overlay head
+  REPEATS THE TAPPED LINE VERBATIM -- two surfaces that must agree agree best
+  when one of them is the other one.
+- **Gotcha**: FRESHNESS IS A READING, SO IT CAN BE FABRICATED LIKE ANY OTHER.
+  Only `obdLink` publishes `lastSeenS` (verified against the emitter, not
+  assumed). The default "seen 0s ago" would claim we had just seen a source we
+  never timed -- US-508's zeroed altitude in a different costume. Rows for
+  ageless sources read "age not reported".
+- **Gotcha**: AN OVERLAY OPENED FROM A SNAPSHOT GOES STALE WHILE YOU READ IT.
+  Left as-opened, the drill-down prints "seen 42s ago" forever while the real age
+  climbs -- the frozen-instrument fabrication already named for the g-dot
+  (US-497) and the rotate bar (US-506), in a third geometry. It repaints on every
+  poll, and when the last fault clears while it is open it SAYS "all sources OK"
+  rather than showing an empty box or yanking itself shut under the operator.
+- **Gotcha**: `-q` ON THE COMMAND LINE PLUS `-q` IN pyproject ADDOPTS = `-qq`,
+  WHICH SUPPRESSES THE SUMMARY LINE ENTIRELY. I read dots-only output twice
+  before noticing there was no "N passed" anywhere. The contract says to read the
+  actual summary line; that is only possible if you have not silenced it.
+- **Pattern discovered**: COMMIT THE GREEN WORK *BEFORE* MUTATION-PROVING. US-508
+  solved "don't lose uncommitted work while mutating it" with in-`finally`
+  backups; committing first is simpler and strictly safer -- restore becomes a
+  plain `git checkout` and the diff-stat against HEAD proves the restore. 5
+  mutations (strip the pause call / fabricate a zero age / lower the floor to
+  neutral / always-tappable / fork a raw hex into the CSS) all went RED naming
+  the right test.
+- **Verified, did not assume**: `renderSystemStatusCard` lives in the shared
+  render scope, NOT the deeper browser-only block where the DTC overlay's
+  elements are captured. Defining the new overlay's helpers down there would have
+  been a ReferenceError at tick time -- the US-494 shape. They live beside the
+  renderer and look their elements up lazily.
+---
+
+## 2026-08-01 - US-510 (Agent 1 / Session 16)
+Task: Fidelity pass: restore approved copy + brand display face + TD-065 tokenization
+
+### What was implemented:
+- A-1 COPY (locked spec restored verbatim): wordmark `ECLIPSE` -> `ECLIPSE OBD-II`;
+  parked idle footer -> `swipe for details · hold or ⋮ for setup`. Only the
+  PARKED footer took the hint -- US-508's motionless disposition keeps its own line.
+- A-2 TOKENIZATION (closes TD-065 + TD-067's last two rules), both Atlas Rule-10
+  rulings applied: `--bg`/`--surface` PROMOTED into the SSOT at their shipped
+  values; `--destructive` #C62828 + `--destructive-border` #7F1D1D defined and
+  applied to the two `#clear-confirm` surfaces (the sheet's LAST brand-red
+  consumers); `#2a2f37` -> the pre-existing `--neutral-chip-bg`; the takeover's
+  three deep gradient edges -> named tokens holding the EXISTING literals.
+- A-3 BRAND FACE, structural half: `--font-display` joins `--font-mono` in the
+  SSOT, mirrors into dashboard.css, binds to EXACTLY `.idle-wordmark` +
+  `.card-title`. The body rule's longhand `ui-monospace` fork is gone.
+- **passes:false** -- AC A-3 requires an inlined `@font-face` woff2 data-URI and
+  that asset does not exist in the repo. BL-027 filed; TD-071 filed for the one
+  bounded exception + the `--*-deep` SSOT promotion.
+
+### Files changed:
+- Modified: `specs/UI/tokens.css` (SSOT: +--font-display, --bg/--surface, --destructive*)
+- Modified: `specs/UI/dist/dashboard-pi/dashboard.css` (mirror + every surface repoint)
+- Modified: `specs/UI/dist/dashboard-pi/carousel.js` (the two locked strings)
+- Modified: `specs/architecture.md` (F-092 "Visual token SSOT + the two-file mirror")
+- Created:  `tests/ui/test_dashboard_fidelity_pass.py` (~28 tests)
+- Modified: `tests/ui/test_dashboard_alarm_tier_sweep.py` (2 pins re-aimed)
+- Created:  `offices/pm/blockers/BL-027-...`, `offices/pm/tech_debt/TD-071-...`
+
+### Learnings for future iterations:
+- **Gotcha**: A CRITERION THAT NAMES ITS OWN EXTERNAL DEPENDENCY CAN STILL BE
+  UNMEETABLE, AND THE HONEST MOVE IS TO SHIP THE OTHER 90% AND SAY SO. A-3 reads
+  "(Iris supplies the woff2 base64)" -- the AC knew. The tempting failure is to
+  bind a font STACK, watch `--font-display` resolve to something, and call the
+  line met. On the Pi none of Bahnschrift/DIN Condensed/Oswald/Arial Narrow
+  exists, so it lands on DejaVu Sans -- generic, which was the CIO's ORIGINAL
+  complaint. Reporting "brand face shipped" would have been the honest-instrument
+  violation in report form. Ship the seam, file the blocker, keep passes:false.
+- **Pattern discovered**: TOKENIZE BY RELOCATION, NOT BY DERIVATION, WHEN THE
+  RULE IS ZERO-VISUAL-CHANGE. Iris offered `color-mix()` OR named `--*-deep`
+  tokens for the gradient edges. `color-mix()` computes a DIFFERENT colour -- a
+  restyle wearing a tokenization's clothes -- and Atlas had made "a diff that
+  moves a rendered pixel FAILS" the gate for this whole story. It also risks
+  silently invalidating the whole `background` declaration on an older Chromium,
+  which on a takeover surface means a black alert. Named tokens holding the
+  existing literals: same pixels, no browser-support question.
+- **Gotcha**: EDITING A FILE OTHERS CITE BY LINE NUMBER SILENTLY STALES EVERY
+  CITATION. Six new declarations in tokens.css invalidated all ~10
+  `SSOT tokens.css:NN` pointers in dashboard.css at once, and nothing would ever
+  have gone red. Re-addressed them by token NAME. A cross-file line number is a
+  citation that rots on the next edit to the file it cites -- if you add lines to
+  a referenced file, grep for references to it before you finish.
+- **Pattern discovered**: WHEN YOU CANNOT CLOSE A GAP, BOUND IT SO IT CANNOT
+  GROW. ~12 `#fff`/`#000` remain outside `:root`. Naming them needs Iris's
+  vocabulary + an Atlas token addition, so the gap is real. Rather than leave it
+  silent, the whole-file guard allows EXACTLY those two short forms and nothing
+  else, and long-form `#000000` is separately forbidden (that value is `--bg`'s
+  job now). An enumerated exception with a test around it is a debt; an
+  un-enumerated one is a leak. Same shape as the `_DEFERRED_DESTRUCTIVE` tuple
+  US-488 left me -- which is exactly how I knew this story existed.
+- **Pattern discovered**: A DEFERRAL TUPLE SHOULD BE EMPTIED, NOT DELETED. Its
+  own comment said "the follow-up story closes TD-067 by repointing these two and
+  deleting this tuple". I emptied it instead: the guard keeps its shape, so a
+  future surface reaching for a brand red fails against an empty allow-list
+  rather than against a test nobody wrote.
+- **Gotcha**: THE MOST VALUABLE MUTATION IS THE PLAUSIBLE *FIX*, NOT THE
+  PLAUSIBLE BUG. Of six mutations, the one worth the most was adding a Google
+  Fonts `@import` -- because that is precisely what a well-meaning person reaches
+  for when they notice the brand face is not rendering, and it breaks the kiosk
+  only in the car, where it is offline. Pin the rule that survives the missing
+  asset, not just the asset.
+- **Gotcha**: `--font-display` BINDING NEEDED A SET ASSERTION, NOT A SUBSET ONE.
+  "Wordmark + card titles ONLY" is two claims: none missing AND none extra.
+  Asserting the two rules carry it would have passed with the face also on
+  `.tile-value` -- a display face on a DATA readout, the exact thing Iris kept
+  `ui-monospace` for. Mutation-proved by leaking it onto a value tile.
+- **Verified, did not assume**: dashboard.html links ONLY dashboard.css (never
+  tokens.css), so the dist `:root` is a runtime MIRROR, not a redundant copy --
+  which is why every token must be declared twice and value-pinned. Asserted in
+  the test so a future `<link>` to the SSOT re-opens the question loudly.
+- **Housekeeping flag for the PM**: `ralph_agents.json`'s agent-1 `note` had
+  accumulated to **66,191 characters** -- the file could not be read in one pass
+  at session start (28k tokens, over the read cap). The contract calls it the
+  "last-session note", so I REFRESHED it (now ~2k) rather than appending again.
+  Nothing is lost: prior notes are in git history and the per-session record is
+  this file. Future sessions: refresh, don't append.
+---
+
+## 2026-08-01 - US-511 (Agent 1 / Session 17)
+Task: Debounced "parked" signal for the kebab (stop the OBD-blip flicker)
+
+### What was implemented:
+- DEBOUNCE (AC-1): pure reducer `parkedInit()` / `parkedNext(prev, rawIdle,
+  nowMs, cfg)` -> `{parked, raw, sinceMs}`. `parked` needs idle held TRUE for
+  `parkedOnS` (8 s); it reverts only after idle held FALSE for `parkedOffS`
+  (3 s). Clock passed in, like every other US-506 predicate.
+- SEAM (AC-2): `menuAccess(parked)` -- SIGNATURE CHANGED. It no longer takes the
+  system-status payload and no longer calls `carouselIdle`, so keying the kebab
+  off the raw flag is now inexpressible rather than merely discouraged.
+- WIRING: `parkedSignal` lives in the enclosing browser scope;
+  `updateMenuAccess(sysData, nowMs)` advances it from the SHARED tick clock.
+- CONFIG (AC-4): `parkedOnS`/`parkedOffS` join `pi.display.carousel.*` and
+  inherit `resolveCarouselConfig`'s positive-only rule. No new placeholder, no
+  new loader -- `_loadDisplaySection` passes the section wholesale (verified).
+
+### Files changed:
+- Modified: `specs/UI/dist/dashboard-pi/carousel.js` (reducer + menuAccess + wiring)
+- Modified: `config.json` (`pi.display.carousel.parkedOnS/parkedOffS`)
+- Modified: `src/pi/splash/states_http_server.py` (docstring only -- no logic)
+- Modified: `specs/architecture.md` (F-092 debounce subsection -- design-gate DoD)
+- Created:  `tests/ui/test_carousel_parked_debounce.py` (30 tests)
+- Modified: `tests/ui/test_carousel_menu_access.py` (7 pins re-aimed)
+
+### Learnings for future iterations:
+- **Pattern discovered**: A DEBOUNCE IS ONLY REAL IF THE CONSUMER CANNOT SEE
+  PAST IT. `menuAccess` did its own ACQUISITION (it called `carouselIdle`
+  internally), so adding a debouncer upstream would have left two live paths to
+  the same fact and the next edit could take the raw one for free. Changing the
+  signature to `menuAccess(parked)` is the actual fix; the reducer is just
+  plumbing. Ask of any smoothing/validation layer: can the consumer still reach
+  the unsmoothed value? If yes, you have added a convention, not a guarantee.
+- **Gotcha**: NARROWING AN ARGUMENT FROM OBJECT TO BOOLEAN CREATES A FAIL-OPEN
+  FOOTGUN. Every un-migrated caller keeps compiling and now passes a TRUTHY
+  OBJECT. A `!!parked` test reads that as parked FOREVER -- the ⋮ pinned on
+  screen at 70mph, the exact hazard the function exists to prevent. `parked ===
+  true` makes the stale call shape fail CLOSED instead. When a parameter's type
+  narrows, the old shape must land on the SAFE side, not merely be "wrong".
+- **Pattern discovered**: HYSTERESIS IS RE-ANCHORING, NOT ACCUMULATING. The
+  tempting implementation sums not-idle time; then six 2 s blips reach 3 s and
+  un-park, so the flicker is not removed, only delayed and made harder to
+  reproduce. Every CHANGE of reading must restart the run. Pinned by a
+  six-blips-over-27 s sequence and mutation-proved by deleting the re-anchor.
+- **Gotcha**: ASSERT ON EVERY INTERMEDIATE STATE, NOT THE FINAL ONE. A debounce
+  that dips and recovers between two polls is exactly the defect under repair,
+  and it lands in the same final state as one that never dipped. The test helper
+  returns the state after EACH sample so `all(...)` can see the whole run.
+- **Gotcha**: AN UNMEASURED HOLD MUST NOT BE HALF-RECORDED. My first cut stored
+  the new reading when the clock was unreadable but left the old anchor -- so the
+  next real clock credited THIS run's elapsed time to the PREVIOUS reading, a
+  fabricated hold assembled from two halves. Return the state completely
+  untouched; the next real sample re-anchors on the change for free. Found by
+  tracing the test rather than by the test failing, which is the honest account.
+- **Gotcha**: A NEGATIVE ELAPSED TIME STRANDS A SIGNAL SILENTLY. An NTP step
+  back (this Pi has no RTC) makes `now - since` negative, and a run that can
+  never reach its threshold again is frozen for the size of the step -- on the
+  OFF edge that means the ⋮ stays up while the car drives away. Re-anchor on
+  `held < 0`. Note the test must step the clock with the reading UNCHANGED: a
+  step that coincides with a reading change re-anchors for the ordinary reason
+  and would pass with no guard at all.
+- **Gotcha**: THE PIN THAT GREPS A DEFECT'S NAME FIRED ON ITS OWN DOCUMENTATION
+  AGAIN -- FOURTH OCCURRENCE (US-507, US-509), and this time the cause was the
+  HELPER. `_fnBody` (copied from test_carousel_nav_model.py) slices "up to the
+  next function declaration" at a FIXED 4-space indent, but carousel.js declares
+  pure logic at 2-space and browser helpers at 4 -- so a 2-space function's
+  "body" ran on all the way to the DOM block and swallowed the comment that
+  documents the forbidden identifier. Fixed to cut at the function's OWN closing
+  brace (indent-aware) and PINNED THE SLICER AT BOTH EDGES: over-stripping is
+  the dangerous direction, because a slice cut to nothing makes an absence
+  assertion pass VACUOUSLY. The loose helper still lives in the neighbouring
+  suites -- routed to the PM, not fixed here (scope fence, no defect shown).
+- **Gotcha**: THE MOST DANGEROUS BUG IN A DEBOUNCE IS WHERE ITS STATE LIVES.
+  `var parkedSignal = parkedInit()` moved one line down (inside the per-tick
+  function) leaves every pure test green while the kebab NEVER APPEARS -- a hold
+  that resets every 250 ms cannot reach 8 s. No pure test can see this; it needs
+  a source pin on the scope. Mutation-proved.
+- **Verified, did not assume**: `_loadDisplaySection` passes `pi.display.<name>`
+  through WHOLESALE with no key allow-list, so the two new tunables reach the
+  browser with zero server change. Checked the loader rather than assuming the
+  seam was generic -- the US-494 shape in reverse.
+---
+
+## 2026-08-01 - US-510 fast-follow / BL-027 (Agent 1 / Session 18)
+Task: Drop Iris's Oswald woff2 into the --font-display seam (closes BL-027)
+
+### What was implemented:
+- PAYLOAD: Iris's OFL Oswald subset (2,896 B; A-Z/0-9/space/hyphen, weight 600)
+  inlined as a base64 `@font-face` data-URI. No CDN -- the kiosk is offline.
+- MIRROR (the one call beyond the dispatch): the face is declared in BOTH
+  `tokens.css` AND `dashboard.css`. The dispatch named only the SSOT.
+- STACK: `"Oswald", "Arial Narrow", system-ui, sans-serif`. Bahnschrift + DIN
+  Condensed removed deliberately (host-only faces).
+- WEIGHT: `.idle-wordmark` 700 -> 600 (single-weight subset; 700 synthesises).
+- LICENCE: `OFL.txt` into the kit AND vouched in `deploy-pi.sh`'s asset list.
+- Re-aimed the US-510 pin that named BAHNSCHRIFT; kept its real invariant.
+
+### Files changed:
+- Modified: `specs/UI/tokens.css` (@font-face + stack + comment repair)
+- Modified: `specs/UI/dist/dashboard-pi/dashboard.css` (mirror + weight tidy)
+- Created:  `specs/UI/dist/dashboard-pi/OFL.txt` (SIL OFL 1.1, ships with kit)
+- Modified: `deploy/deploy-pi.sh` (vouch OFL.txt so it is not pruned)
+- Created:  `tests/ui/test_dashboard_brand_font_payload.py` (14 tests)
+- Modified: `tests/ui/test_dashboard_fidelity_pass.py` (1 pin re-aimed)
+- Modified: `specs/architecture.md` (BL-027-CLOSED under the two-file mirror)
+
+### Learnings for future iterations:
+- **Pattern discovered**: A MIRROR RULE APPLIES TO THE ASSET, NOT JUST THE
+  VALUE. The dispatch said "add the @font-face to tokens.css" -- correct for a
+  token, wrong for a FACE, because `dashboard.html` links only `dashboard.css`.
+  An SSOT-only drop leaves the Pi on a fallback face while every token/mirror
+  test stays green: the CIO's original "it looks generic" complaint, now with a
+  passing suite on top of it. Same two-correct-halves shape as US-494/US-499.
+  When a rule says "declared in both files", ask whether an @-rule is a
+  declaration too. It is.
+- **Gotcha**: A SINGLE-WEIGHT SUBSET IS A CONSTRAINT ON ITS CONSUMERS, AND CSS
+  DOES NOT REFUSE. Asking 700 of a 600-only face does not fall back to the next
+  family -- the browser SYNTHESISES a bold by smearing the 600, which on a
+  condensed face reads as a rendering fault rather than a style. Nothing errors;
+  it just looks broken. Pinned over the SET of bound rules so a future brand
+  surface cannot reintroduce a 700 quietly.
+- **Gotcha**: A SUBSET IS A CONTRACT WITH THE COPY, AND IT FAILS PER GLYPH.
+  2,896 B buys A-Z/0-9/space/hyphen only. One `·` in a future card title does
+  not fall back for the title -- it falls back for THAT GLYPH, splitting a word
+  across two faces. So the subset assertion is paired with a pin that the
+  wordmark is still the locked string: a glyph-coverage test that has stopped
+  guarding the real copy is validating the drift's coverage instead.
+- **Gotcha**: A LICENCE THAT IS NOT VOUCHED IS NOT SHIPPED. `refresh_asset_dir`
+  PRUNES anything outside `deploy-pi.sh`'s asset list, so `OFL.txt` sitting in
+  the kit directory would look compliant in the repo while `/opt/dashboard`
+  shipped the embedded face bare. The font now travels INSIDE the stylesheet, so
+  the licence has to travel with the stylesheet.
+- **Gotcha**: A `;` INSIDE A CSS VALUE BREAKS THE OBVIOUS VALUE-GRABBER. A data
+  URI contains one (`data:font/woff2;base64,`), so the `[^;]+` reader every
+  other descriptor uses stops dead at `url(data:font/woff2` -- and then EVERY
+  assertion about the src is made against a truncated string that happens to
+  still look like a src. `src` got its own end-of-line reader.
+- **Gotcha**: THE GREPS-A-DEFECT'S-NAME FAMILY, SIXTH OCCURRENCE -- this time in
+  my own INSERTION SCRIPT, not a test. `assert '@font-face' not in text` tripped
+  on the US-510 comment explaining that the @font-face was still owed. The fix
+  is unchanged (strip comments first), but the lesson widened: any guard that
+  greps for a name is exposed to the prose documenting that name, including
+  one-off scripts.
+- **Gotcha**: AN UNANCHORED GREP READS WHICHEVER DECLARATION COMES FIRST.
+  `deploy-pi.sh` has TWO `local assets="..."` lists (splash + dashboard); my pin
+  grabbed the splash one and reported its contents as the dashboard's. It
+  failed loudly here only because the splash list lacks OFL.txt -- had it
+  contained one, the pin would have passed VACUOUSLY. Anchor on the block's own
+  landmark (`assetSrc=".../dashboard-pi"`), not on the first match in the file.
+- **Verified, did not assume**: (a) the base64 decodes to `wOF2` magic and
+  equals Iris's delivered binary byte-for-byte -- a font blob is the one artifact
+  nobody can eyeball, so a truncated paste looks exactly like a working one;
+  (b) the payload contains no `//` or `/*`, so no comment stripper can truncate
+  it; (c) `parseCss` skips non-`@media` at-rules entirely, so the new block does
+  not perturb any existing rule test.
+---
