@@ -4188,12 +4188,42 @@ keeping:
    because the mirror carries the tier, not because anything paints it.
 3. **Type is a token tier too.** `--font-mono` (all data/values — the tabular
    instrument vernacular, deliberately unchanged) and `--font-display` (brand
-   moments ONLY: the `ECLIPSE OBD-II` wordmark + card titles). **KNOWN-OPEN
-   (BL-027):** the brand face is specified as a CSP-safe **inlined `@font-face`
-   woff2 data-URI** — no font CDN, because the kiosk is offline in the car. That
-   asset does not exist in the repo (Iris supplies the base64; the face is a CIO
-   pick), so US-510 landed the token + the bindings and left the payload to a
-   fast-follow. The no-CDN rule is pinned independently of the asset.
+   moments ONLY: the `ECLIPSE OBD-II` wordmark + card titles). US-510 landed the
+   token + the bindings; the woff2 payload followed as a fast-follow (below).
+
+**BL-027 CLOSED (fast-follow, 2026-08-01) — the brand face is an EMBEDDED
+asset, and the mirror rule extends to it.** The face is an OFL-licensed
+**Oswald** subset (A–Z / 0–9 / space / hyphen, weight 600, 2,896 B) inlined as a
+CSP-safe `@font-face` **base64 data-URI**. Four decisions worth keeping:
+
+- **The mirror is load-bearing for the face, not just for values.** The
+  `@font-face` is declared in **both** `tokens.css` and `dashboard.css`, because
+  `dashboard.html` links only the latter. An SSOT-only drop leaves the panel on a
+  fallback face **with a fully green suite** — the two-correct-halves-that-stopped-
+  agreeing shape (US-494/US-499). `tests/ui/test_dashboard_brand_font_payload.py`
+  asserts the kit sheet carries the face and that both payloads are identical.
+- **Host-only faces left the stack.** The stack is `"Oswald", "Arial Narrow",
+  system-ui, sans-serif`. The previously-locked **Bahnschrift is Microsoft-
+  proprietary, absent from Pi OS and not redistributable** — naming it never put
+  it on the panel, which is why BL-027 existed. Leading with any host-only face
+  means a dev box and the Pi render *different* brand faces; the embedded face is
+  the one face, so the stack lead is pinned **against the embedded family**, not
+  a hardcoded name.
+- **A single-weight subset constrains its consumers.** The subset carries weight
+  600 only, so every rule binding `--font-display` must request 600 — a 700
+  request yields a **synthesised** bold, which on a condensed face reads as a
+  rendering fault. Pinned over the SET of bound rules, and the brand copy is
+  pinned to stay inside the cut glyph range (a stray `·` falls back *per glyph*,
+  splitting a title across two faces mid-word).
+- **The licence ships with the artifact.** SIL OFL 1.1 travels with the font, and
+  the font now travels *inside* the stylesheet — so `OFL.txt` is in the kit **and
+  vouched in `deploy-pi.sh`'s asset list**, since `refresh_asset_dir` prunes
+  unvouched files (an unvouched licence looks compliant in the repo while
+  `/opt/dashboard` ships the face bare).
+
+The no-CDN rule is pinned independently of the asset and now covers the `src`
+descriptor itself: the plausible future "fix" when someone thinks the face is
+broken is a Google Fonts `@import`, which works everywhere except in the car.
 
 Remaining deliberate exception, enumerated rather than silent: `#fff`/`#000` on
 a tiered chip/ribbon/takeover are **contrast pairs** chosen against that tier's

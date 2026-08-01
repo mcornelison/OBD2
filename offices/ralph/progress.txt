@@ -471,3 +471,77 @@ Task: Debounced "parked" signal for the kebab (stop the OBD-blip flicker)
   browser with zero server change. Checked the loader rather than assuming the
   seam was generic -- the US-494 shape in reverse.
 ---
+
+## 2026-08-01 - US-510 fast-follow / BL-027 (Agent 1 / Session 18)
+Task: Drop Iris's Oswald woff2 into the --font-display seam (closes BL-027)
+
+### What was implemented:
+- PAYLOAD: Iris's OFL Oswald subset (2,896 B; A-Z/0-9/space/hyphen, weight 600)
+  inlined as a base64 `@font-face` data-URI. No CDN -- the kiosk is offline.
+- MIRROR (the one call beyond the dispatch): the face is declared in BOTH
+  `tokens.css` AND `dashboard.css`. The dispatch named only the SSOT.
+- STACK: `"Oswald", "Arial Narrow", system-ui, sans-serif`. Bahnschrift + DIN
+  Condensed removed deliberately (host-only faces).
+- WEIGHT: `.idle-wordmark` 700 -> 600 (single-weight subset; 700 synthesises).
+- LICENCE: `OFL.txt` into the kit AND vouched in `deploy-pi.sh`'s asset list.
+- Re-aimed the US-510 pin that named BAHNSCHRIFT; kept its real invariant.
+
+### Files changed:
+- Modified: `specs/UI/tokens.css` (@font-face + stack + comment repair)
+- Modified: `specs/UI/dist/dashboard-pi/dashboard.css` (mirror + weight tidy)
+- Created:  `specs/UI/dist/dashboard-pi/OFL.txt` (SIL OFL 1.1, ships with kit)
+- Modified: `deploy/deploy-pi.sh` (vouch OFL.txt so it is not pruned)
+- Created:  `tests/ui/test_dashboard_brand_font_payload.py` (14 tests)
+- Modified: `tests/ui/test_dashboard_fidelity_pass.py` (1 pin re-aimed)
+- Modified: `specs/architecture.md` (BL-027-CLOSED under the two-file mirror)
+
+### Learnings for future iterations:
+- **Pattern discovered**: A MIRROR RULE APPLIES TO THE ASSET, NOT JUST THE
+  VALUE. The dispatch said "add the @font-face to tokens.css" -- correct for a
+  token, wrong for a FACE, because `dashboard.html` links only `dashboard.css`.
+  An SSOT-only drop leaves the Pi on a fallback face while every token/mirror
+  test stays green: the CIO's original "it looks generic" complaint, now with a
+  passing suite on top of it. Same two-correct-halves shape as US-494/US-499.
+  When a rule says "declared in both files", ask whether an @-rule is a
+  declaration too. It is.
+- **Gotcha**: A SINGLE-WEIGHT SUBSET IS A CONSTRAINT ON ITS CONSUMERS, AND CSS
+  DOES NOT REFUSE. Asking 700 of a 600-only face does not fall back to the next
+  family -- the browser SYNTHESISES a bold by smearing the 600, which on a
+  condensed face reads as a rendering fault rather than a style. Nothing errors;
+  it just looks broken. Pinned over the SET of bound rules so a future brand
+  surface cannot reintroduce a 700 quietly.
+- **Gotcha**: A SUBSET IS A CONTRACT WITH THE COPY, AND IT FAILS PER GLYPH.
+  2,896 B buys A-Z/0-9/space/hyphen only. One `·` in a future card title does
+  not fall back for the title -- it falls back for THAT GLYPH, splitting a word
+  across two faces. So the subset assertion is paired with a pin that the
+  wordmark is still the locked string: a glyph-coverage test that has stopped
+  guarding the real copy is validating the drift's coverage instead.
+- **Gotcha**: A LICENCE THAT IS NOT VOUCHED IS NOT SHIPPED. `refresh_asset_dir`
+  PRUNES anything outside `deploy-pi.sh`'s asset list, so `OFL.txt` sitting in
+  the kit directory would look compliant in the repo while `/opt/dashboard`
+  shipped the embedded face bare. The font now travels INSIDE the stylesheet, so
+  the licence has to travel with the stylesheet.
+- **Gotcha**: A `;` INSIDE A CSS VALUE BREAKS THE OBVIOUS VALUE-GRABBER. A data
+  URI contains one (`data:font/woff2;base64,`), so the `[^;]+` reader every
+  other descriptor uses stops dead at `url(data:font/woff2` -- and then EVERY
+  assertion about the src is made against a truncated string that happens to
+  still look like a src. `src` got its own end-of-line reader.
+- **Gotcha**: THE GREPS-A-DEFECT'S-NAME FAMILY, SIXTH OCCURRENCE -- this time in
+  my own INSERTION SCRIPT, not a test. `assert '@font-face' not in text` tripped
+  on the US-510 comment explaining that the @font-face was still owed. The fix
+  is unchanged (strip comments first), but the lesson widened: any guard that
+  greps for a name is exposed to the prose documenting that name, including
+  one-off scripts.
+- **Gotcha**: AN UNANCHORED GREP READS WHICHEVER DECLARATION COMES FIRST.
+  `deploy-pi.sh` has TWO `local assets="..."` lists (splash + dashboard); my pin
+  grabbed the splash one and reported its contents as the dashboard's. It
+  failed loudly here only because the splash list lacks OFL.txt -- had it
+  contained one, the pin would have passed VACUOUSLY. Anchor on the block's own
+  landmark (`assetSrc=".../dashboard-pi"`), not on the first match in the file.
+- **Verified, did not assume**: (a) the base64 decodes to `wOF2` magic and
+  equals Iris's delivered binary byte-for-byte -- a font blob is the one artifact
+  nobody can eyeball, so a truncated paste looks exactly like a working one;
+  (b) the payload contains no `//` or `/*`, so no comment stripper can truncate
+  it; (c) `parseCss` skips non-`@media` at-rules entirely, so the new block does
+  not perturb any existing rule test.
+---
