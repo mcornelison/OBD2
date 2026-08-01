@@ -124,7 +124,10 @@
       "Bash('/c/Program Files/MariaDB 12.2/bin/mysql.exe' *)",
       "Bash(\"C:\\\\Program Files\\\\MariaDB 12.2\\\\bin\\\\mysql.exe\" *)",
       "WebFetch(domain:roadraceengineering.com)",
-      "WebFetch(domain:www.troublecodes.net)"
+      "WebFetch(domain:www.troublecodes.net)",
+      "Bash(ps -W)",
+      "Bash(REMOTE=chi-eclipse-01 timeout 180 bash offices/tuner/scripts/probe_obd_capabilities.sh)",
+      "WebFetch(domain:www.adafruit.com)"
     ],
     "deny": [
       "Bash(rm -rf /)",

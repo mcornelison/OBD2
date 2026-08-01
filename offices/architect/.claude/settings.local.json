@@ -119,7 +119,10 @@
       "Bash(git commit *)",
       "Read(//tmp/**)",
       "Bash(cp \"C:/Users/mcorn/.claude/uploads/82a494a0-d84d-4e38-91dc-3b17411fbb99/1852ee2a-4062.jpg\" offices/architect/knowledge/hardware-photos/icm20948/icm20948-front-labeled.jpg)",
-      "Bash(cp \"C:/Users/mcorn/.claude/uploads/82a494a0-d84d-4e38-91dc-3b17411fbb99/5d2d0058-4063.jpg\" offices/architect/knowledge/hardware-photos/icm20948/icm20948-back-labeled.jpg)"
+      "Bash(cp \"C:/Users/mcorn/.claude/uploads/82a494a0-d84d-4e38-91dc-3b17411fbb99/5d2d0058-4063.jpg\" offices/architect/knowledge/hardware-photos/icm20948/icm20948-back-labeled.jpg)",
+      "Read(//z/o/OBD2v2/src/pi/obdii/**)",
+      "Read(//z/o/OBD2v2/tests/**)",
+      "Bash(cd *)"
     ],
     "deny": [
       "Read(**/.ssh/**)",

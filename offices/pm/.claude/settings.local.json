@@ -1,18 +1,11 @@
 {
   "permissions": {
-    "additionalDirectories": [
-      "Z:/o/OBD2v2",
-      "/z/o/OBD2v2",
-      "//z/o/OBD2v2",
-      "//chi-nas-01/PPS-Projects/O/OBD2v2",
-      "C:/Users/mcorn/.claude/projects/Z--o-OBD2v2"
-    ],
     "allow": [
       "Read(Z:/o/OBD2v2/**)",
       "Read(Z:/O/OBD2v2/**)",
       "Read(/z/o/OBD2v2/**)",
       "Read(/z/O/OBD2v2/**)",
-      "Read(//z/o/OBD2v2/**)",
+      "Read(/z/o/OBD2v2/**)",
       "Read(//chi-nas-01/PPS-Projects/O/OBD2v2/**)",
       "Read(C:/Users/mcorn/.claude/projects/Z--o-OBD2v2/**)",
       "Read(C:/Users/mcorn/.claude/**)",
@@ -21,8 +14,8 @@
       "Write(Z:/o/OBD2v2/**)",
       "Edit(/z/o/OBD2v2/**)",
       "Write(/z/o/OBD2v2/**)",
-      "Edit(//z/o/OBD2v2/**)",
-      "Write(//z/o/OBD2v2/**)",
+      "Edit(/z/o/OBD2v2/**)",
+      "Write(/z/o/OBD2v2/**)",
       "Edit(//chi-nas-01/PPS-Projects/O/OBD2v2/**)",
       "Write(//chi-nas-01/PPS-Projects/O/OBD2v2/**)",
       "Edit(C:/Users/mcorn/.claude/projects/Z--o-OBD2v2/memory/**)",
@@ -132,7 +125,18 @@
       "Bash(until:*)",
       "Bash(for:*)",
       "Bash(while:*)",
-      "Bash(if:*)"
+      "Bash(if:*)",
+      "Bash(cd //chi-nas-01/PPS-Projects/O/OBD2v2)",
+      "Bash(cat offices/pm/inbox/2026-07-01-from-atlas-f116-ruling-prd-revised.md)",
+      "Bash(cat offices/pm/inbox/2026-07-01-from-atlas-f116-backlog-reconciled.md)",
+      "Bash(cat offices/pm/inbox/2026-07-03-from-atlas-sprint54-prd-review.md)",
+      "Bash(cat offices/pm/inbox/2026-07-03-from-atlas-bl016-us432-fix-ruling.md)",
+      "Bash([ -f //chi-nas-01/PPS-Projects/O/OBD2v2/.git/index.lock ])",
+      "Bash(PI_HOST=10.27.27.9 bash deploy/deploy-pi.sh)",
+      "Bash(dev.temperature)",
+      "Bash(sed -i 's/\\\\\"nextId\\\\\": \\\\\"US-500\\\\\"/\\\\\"nextId\\\\\": \\\\\"US-501\\\\\"/' offices/pm/story_counter.json)",
+      "Bash(cp offices/ralph/sprint.json offices/ralph/archive/sprint.archive.__CMDSUB_OUTPUT__.json)",
+      "Bash(cp offices/ralph/progress.txt offices/ralph/archive/progress.archive.__CMDSUB_OUTPUT__.txt)"
     ],
     "deny": [
       "Bash(rm -rf /:*)",
@@ -152,7 +156,14 @@
       "Edit(C:/Users/mcorn/.claude/hooks/**)",
       "Write(C:/Users/mcorn/.claude/hooks/**)"
     ],
-    "ask": []
+    "ask": [],
+    "additionalDirectories": [
+      "Z:/o/OBD2v2",
+      "/z/o/OBD2v2",
+      "/z/o/OBD2v2",
+      "//chi-nas-01/PPS-Projects/O/OBD2v2",
+      "C:/Users/mcorn/.claude/projects/Z--o-OBD2v2"
+    ]
   },
   "_comment_policy": "PM (Marcus) access policy 2026-06-05 (CIO directive: full project access + minimize prompts). FULL Read + Edit/Write + Bash across the entire OBD2v2 project tree, with additionalDirectories registering the project root + per-drive aliases + the project memory dir so the recurring 'allow reading from OBD2v2' directory-trust prompt no longer fires. Mirrors the architect office's security-reviewed pattern (commit 1989e6b). The prior offices-sibling-inbox-only Edit/Write fence was LIFTED by CIO 2026-06-05 to stop y/n friction; shared-checkout concurrency discipline (handbook section 13 + CLAUDE.md core-bootup) still applies as a behavioral norm even though the hard permission fence is gone. Safety denies retained: ~/.ssh + ~/.aws (read+write), .git/hooks, the global ~/.claude/settings.json + hooks (no self-config-write / sandbox-escape), and rm -rf / + force-push."
 }
