@@ -21,6 +21,20 @@
   var POLL_MS = 250;          // 4 Hz tmpfs read (matches the splash cadence)
   var SWIPE_THRESHOLD_PX = 40; // min horizontal travel to count as a swipe
 
+  // US-506 (F-124) carousel navigation model -- the GROUNDED DEFAULTS that
+  // mirror config.json `pi.display.carousel.*` (the tuning SSOT). They are the
+  // file:// preview / unconfigured fallback; the live values arrive at serve
+  // time as window.DISPLAY_CAROUSEL, the same injection seam US-483-b built for
+  // the auto-dim curve. Retuning the feel is a config change, not a code change.
+  var CAROUSEL_DEFAULTS = {
+    autoRotateS: 8,               // hands-off cycle period (CIO-locked, F-124)
+    resumeIdleS: 45,              // a pause self-expires after this much quiet
+    swipeMinPx: 40,               // deadzone -- below this it is a TAP, not a
+                                  // swipe (mirrors SWIPE_THRESHOLD_PX)
+    swipeFastVelocityPxPerMs: 0.6, // |v| at/above this = a FLICK
+    swipeFastTravelFrac: 0.55,    // ...or travel this fraction of the card
+  };
+
   // US-482 letterbox scaling: the UI is authored at a fixed STAGE_W x STAGE_H
   // design box (#stage) and uniformly scaled to fill the real panel (device
   // resolution varies -- the Pi outputs 1080p). LETTERBOX = a single uniform
@@ -40,8 +54,10 @@
     return i;
   }
 
-  // dir > 0 -> next card; dir < 0 -> previous; 0 -> stay. Clamped at the ends
-  // (no wrap -- a kiosk that silently wraps past the last card is disorienting).
+  // dir > 0 -> next card; dir < 0 -> previous; 0 -> stay, clamped at the ends.
+  // SUPERSEDED FOR NAVIGATION by nextVisibleIndex (US-496 gave it visibility
+  // awareness; US-506 gave it wrap). Kept as the count-only helper the deploy
+  // kit's smoke test exercises -- it does NOT describe the shipped nav contract.
   function nextIndex(current, dir, count) {
     var step = dir > 0 ? 1 : dir < 0 ? -1 : 0;
     return clampIndex(current + step, count);
@@ -137,16 +153,138 @@
     return pos;
   }
 
-  // The next VISIBLE index in `dir`, or `current` when there is none. Clamped at
-  // the ends (no wrap -- the shipped kiosk contract) and never lands on a hidden
-  // card, which would read as a blank frame the operator cannot swipe out of.
+  // The next VISIBLE index in `dir`, WRAPPING at the ends (US-506 AC-12 --
+  // this replaces the shipped clamp). Two invariants, and the second is the
+  // load-bearing one:
+  //   1. Swiping past the last card lands on the first, and vice-versa. A kiosk
+  //      the operator can dead-end in is worse than one that cycles.
+  //   2. The wrap traverses only VISIBLE cards. A wrap that lands on a
+  //      vehicle-gated card paints a blank frame the operator cannot swipe out
+  //      of -- strictly worse than the clamp it replaces. Same rule the mid-row
+  //      skip already enforced, now applied across the seam too.
+  // The scan is bounded by hidden.length, so a row with one (or zero) visible
+  // cards terminates on `current` instead of spinning: a wrap loop with no
+  // visible target is the one way this rewrite could hang the kiosk.
   function nextVisibleIndex(current, dir, hidden) {
     var step = dir > 0 ? 1 : dir < 0 ? -1 : 0;
     if (step === 0) return current;
-    for (var i = current + step; i >= 0 && i < hidden.length; i += step) {
+    var n = hidden.length;
+    if (n <= 0) return current;
+    for (var k = 1; k <= n; k++) {
+      // Positive modulo: JS `%` keeps the sign of the dividend, so a backward
+      // wrap past 0 needs the +n before the second reduction.
+      var i = (((current + step * k) % n) + n) % n;
       if (!hidden[i]) return i;
     }
     return current;
+  }
+
+  // -------------------------------------------------------------------------
+  // US-506 (F-124) -- auto-rotate + the velocity swipe model. Pure, node-
+  // testable: every decision takes its clock reading as an argument so nothing
+  // here reads a timer of its own.
+  // -------------------------------------------------------------------------
+
+  // Resolve the injected carousel config over the grounded defaults. Only
+  // well-typed, FINITE, POSITIVE overrides win -- rejecting <= 0 here is what
+  // makes a permanent freeze inexpressible in config: a `resumeIdleS: 0` can
+  // never reach shouldAutoResume to disable the self-unpause. A malformed or
+  // absent global leaves every default in place (never a zeroed config, which
+  // would silently read as a dead feature).
+  function resolveCarouselConfig(cfg) {
+    var out = {};
+    for (var k in CAROUSEL_DEFAULTS) {
+      if (Object.prototype.hasOwnProperty.call(CAROUSEL_DEFAULTS, k)) {
+        out[k] = CAROUSEL_DEFAULTS[k];
+      }
+    }
+    if (cfg && typeof cfg === "object") {
+      for (var key in CAROUSEL_DEFAULTS) {
+        if (!Object.prototype.hasOwnProperty.call(CAROUSEL_DEFAULTS, key)) continue;
+        if (!Object.prototype.hasOwnProperty.call(cfg, key)) continue;
+        var v = cfg[key];
+        if (typeof v === "number" && isFinite(v) && v > 0) out[key] = v;
+      }
+    }
+    return out;
+  }
+
+  // Should the unpaused carousel advance now? `sinceMs` is the time since the
+  // last advance. A non-positive period DISABLES rotation rather than firing
+  // every tick -- a carousel spinning at the poll rate is unusable and reads as
+  // a hardware fault, so a misconfigured interval must fail to OFF.
+  function shouldAutoAdvance(paused, sinceMs, autoRotateS) {
+    if (paused) return false;
+    if (!(typeof autoRotateS === "number" && autoRotateS > 0)) return false;
+    if (!(typeof sinceMs === "number" && isFinite(sinceMs))) return false;
+    return sinceMs >= autoRotateS * 1000;
+  }
+
+  // Time-to-next as a 0..1 fraction for the calm thin bar (AC-13: no countdown
+  // NUMBER -- the bar is the whole readout). Clamped at 1 because the poll is a
+  // 250 ms tick, not a real-time clock, so a late tick must not overfill the
+  // track. Rotation disabled -> 0, an empty bar: a full bar would promise an
+  // advance that is never coming.
+  function rotateProgress(sinceMs, autoRotateS) {
+    if (!(typeof autoRotateS === "number" && autoRotateS > 0)) return 0;
+    if (!(typeof sinceMs === "number" && isFinite(sinceMs)) || sinceMs <= 0) return 0;
+    return Math.min(1, sinceMs / (autoRotateS * 1000));
+  }
+
+  // Has a paused carousel been quiet long enough to resume? `idleMs` is the
+  // time since the last interaction of ANY kind. This is the guard that stops a
+  // pause becoming a freeze: the operator who taps once and walks away gets a
+  // moving dashboard back rather than a screen stuck on one card forever.
+  function shouldAutoResume(paused, idleMs, resumeIdleS) {
+    if (!paused) return false;
+    if (!(typeof resumeIdleS === "number" && resumeIdleS > 0)) return false;
+    if (!(typeof idleMs === "number" && isFinite(idleMs))) return false;
+    return idleMs >= resumeIdleS * 1000;
+  }
+
+  // US-506 AC-14 -- the VELOCITY swipe model. The shipped gesture was
+  // DISTANCE-ONLY (swipeDirection), so it could not tell "I flicked past this"
+  // from "I settled here", and every swipe fought the auto-rotate identically.
+  //
+  //   dx/dy   -- pointer travel (px). Vertical-dominant is ignored so a card
+  //              body can still scroll (touch-action: pan-y).
+  //   dtMs    -- pointer-down duration.
+  //   widthPx -- the card width the travel fraction is measured against.
+  //
+  // Returns {dir, fast}: `dir` is the shipped direction contract (swipe LEFT
+  // advances); `fast` tells the caller whether this was a FLICK (advance +
+  // RESUME auto-rotate) or a SETTLE (advance one + PAUSE).
+  //
+  // Two honest-instrument guards on the derived quantities: an unmeasurable
+  // duration (dt <= 0) or an unusable width (a transient 0x0 layout pass)
+  // contributes NOTHING rather than a fabricated Infinity. Dividing by either
+  // would manufacture a flick out of a measurement failure -- and `fast` is the
+  // signal that RESUMES rotation under the operator's finger, so a fabricated
+  // one is felt immediately.
+  function swipeGesture(dx, dy, dtMs, widthPx, cfg) {
+    var c = resolveCarouselConfig(cfg);
+    var out = { dir: 0, fast: false };
+    if (!(typeof dx === "number" && isFinite(dx))) return out;
+    // Vertical gesture -> not a page turn at all.
+    if (typeof dy === "number" && isFinite(dy) && Math.abs(dx) < Math.abs(dy)) {
+      return out;
+    }
+    var travel = Math.abs(dx);
+    // The deadzone survives the rewrite: distance is still required to count as
+    // a swipe AT ALL, so a 5 px twitch cannot become a flick on velocity alone.
+    if (travel < c.swipeMinPx) return out;
+    out.dir = dx < 0 ? 1 : -1;
+    var velocity =
+      typeof dtMs === "number" && isFinite(dtMs) && dtMs > 0 ? travel / dtMs : 0;
+    var frac =
+      typeof widthPx === "number" && isFinite(widthPx) && widthPx > 0
+        ? travel / widthPx
+        : 0;
+    // Either evidence is enough: a quick flick, OR a deliberate drag most of
+    // the way across the card (slow, but unmistakably a page turn).
+    out.fast =
+      velocity >= c.swipeFastVelocityPxPerMs || frac >= c.swipeFastTravelFrac;
+    return out;
   }
 
   // Where to land when the card the operator is ON just became hidden (the
@@ -1746,6 +1884,11 @@
     visualPosition: visualPosition,
     nextVisibleIndex: nextVisibleIndex,
     nearestVisibleIndex: nearestVisibleIndex,
+    resolveCarouselConfig: resolveCarouselConfig,
+    shouldAutoAdvance: shouldAutoAdvance,
+    shouldAutoResume: shouldAutoResume,
+    rotateProgress: rotateProgress,
+    swipeGesture: swipeGesture,
     luxBand: luxBand,
     lightView: lightView,
     gDotPosition: gDotPosition,
@@ -1806,6 +1949,7 @@
     postClearMessage: postClearMessage,
     POLL_MS: POLL_MS,
     SWIPE_THRESHOLD_PX: SWIPE_THRESHOLD_PX,
+    CAROUSEL_DEFAULTS: CAROUSEL_DEFAULTS,
     STAGE_W: STAGE_W,
     STAGE_H: STAGE_H,
     LONG_PRESS_MS: LONG_PRESS_MS,
@@ -1828,6 +1972,16 @@
       global.DISPLAY_AUTODIM && typeof global.DISPLAY_AUTODIM === "object"
         ? global.DISPLAY_AUTODIM
         : null;
+
+    // US-506: the carousel navigation config (pi.display.carousel), injected
+    // the same way. Resolved ONCE here so every gesture and every tick reads
+    // one object -- resolving per-event would let a mid-session config swap
+    // change the feel halfway through a gesture.
+    var carouselCfg = resolveCarouselConfig(
+      global.DISPLAY_CAROUSEL && typeof global.DISPLAY_CAROUSEL === "object"
+        ? global.DISPLAY_CAROUSEL
+        : null
+    );
 
     // Apply the computed 0..1 brightness as a CSS var on the screen frame (a
     // software dim -- the browser kiosk can't drive the panel backlight). Setting
@@ -2323,32 +2477,116 @@
         render();
       }
 
+      // --- US-506 (AC-13/AC-14/AC-15) auto-rotate + pause state -------------
+      // The carousel is hands-off by default and pauses the moment the operator
+      // engages, so it never moves under someone who is reading it -- and the
+      // pause SELF-EXPIRES so it can never freeze forever.
+      var paused = false;
+      var lastAdvanceMs = Date.now();
+      var lastInteractionMs = Date.now();
+      var rotateBar = document.getElementById("rotate-progress");
+      var rotateFill = document.getElementById("rotate-progress-fill");
+
+      // One pause entry point. Every interaction routes here (a tap on a card, a
+      // page dot, the kebab, any overlay button, a settle swipe, an arrow key),
+      // because it is hung on `document` -- so an overlay added later cannot
+      // forget to pause, which a per-overlay call site inevitably would.
+      function pauseAutoRotate() {
+        paused = true;
+        lastInteractionMs = Date.now();
+        renderRotateBar();
+      }
+
+      // Resume restarts the clock as well as clearing the flag: resuming into a
+      // period that has already elapsed would snap to the next card instantly,
+      // which reads as the flick having advanced TWO cards.
+      function resumeAutoRotate() {
+        paused = false;
+        lastAdvanceMs = Date.now();
+        lastInteractionMs = Date.now();
+        renderRotateBar();
+      }
+
+      // The calm thin time-to-next bar (AC-13 -- a bar, never a countdown
+      // number). A PAUSED carousel has no time-to-next, so the bar is REMOVED
+      // rather than left frozen part-filled: a stalled progress bar is the same
+      // fabrication as a frozen instrument -- it says "something is coming" when
+      // nothing is. Absent elements are tolerated (file:// preview).
+      function renderRotateBar() {
+        if (!rotateBar) return;
+        rotateBar.hidden = paused;
+        if (paused || !rotateFill) return;
+        var frac = rotateProgress(Date.now() - lastAdvanceMs, carouselCfg.autoRotateS);
+        rotateFill.style.setProperty("--rotate-fill", String(frac));
+      }
+
+      // Redrawn on the shipped 4 Hz tick: over the 8 s default period that is 32
+      // steps, which reads as smooth on a 480x320 panel without a second clock.
+      function autoRotateTick() {
+        if (shouldAutoResume(paused, Date.now() - lastInteractionMs, carouselCfg.resumeIdleS)) {
+          resumeAutoRotate();
+        }
+        if (shouldAutoAdvance(paused, Date.now() - lastAdvanceMs, carouselCfg.autoRotateS)) {
+          move(1);
+          lastAdvanceMs = Date.now();
+        }
+        renderRotateBar();
+      }
+
       // Pointer-driven swipe (covers touch + mouse on the kiosk). Vertical drag
       // is ignored (touch-action: pan-y) so the panel can still scroll a card.
+      // US-506: pointer-down time is now recorded too -- the velocity model
+      // needs the gesture DURATION, which the distance-only version discarded.
       var startX = null;
       var startY = null;
+      var startMs = null;
       if (track) {
         track.addEventListener("pointerdown", function (e) {
-          startX = e.clientX; startY = e.clientY;
+          startX = e.clientX; startY = e.clientY; startMs = Date.now();
         });
         track.addEventListener("pointerup", function (e) {
           if (startX === null) return;
           var dx = e.clientX - startX;
           var dy = e.clientY - startY;
-          startX = null; startY = null;
-          if (Math.abs(dx) < Math.abs(dy)) return; // vertical gesture, ignore
-          var dir = swipeDirection(dx, SWIPE_THRESHOLD_PX);
-          if (dir !== 0) move(dir);
+          var dt = Date.now() - startMs;
+          startX = null; startY = null; startMs = null;
+          // Measure the fraction against the REAL card box, not the design-box
+          // constant: #stage is letterbox-scaled (US-482), so a hard-coded 480
+          // would misread travel on any panel that is not 1:1.
+          var width = track.getBoundingClientRect
+            ? track.getBoundingClientRect().width
+            : 0;
+          var g = swipeGesture(dx, dy, dt, width, carouselCfg);
+          if (g.dir === 0) return; // a tap or a vertical drag -- pointerdown
+                                   // already paused; leave it paused.
+          move(g.dir);
+          // A FLICK says "keep going" -> resume. A SETTLE says "I want to look
+          // at this one" -> stay paused. This is the whole point of the velocity
+          // model: the distance-only swipe could not tell these apart.
+          if (g.fast) resumeAutoRotate();
+          else pauseAutoRotate();
         });
       }
 
-      // Keyboard arrows (bench/dev affordance; harmless on a touch panel).
-      document.addEventListener("keydown", function (e) {
-        if (e.key === "ArrowLeft") move(-1);
-        else if (e.key === "ArrowRight") move(1);
+      // Any pointer contact anywhere is an interaction: pause first, and let the
+      // gesture handler above resume if it turns out to be a flick. Pausing on
+      // DOWN (not up) means the carousel stops the instant a finger lands,
+      // rather than advancing out from under a slow deliberate press.
+      document.addEventListener("pointerdown", function () {
+        pauseAutoRotate();
       });
 
+      // Keyboard arrows (bench/dev affordance; harmless on a touch panel). An
+      // arrow is a deliberate single-card move -- a settle, not a flick.
+      document.addEventListener("keydown", function (e) {
+        if (e.key === "ArrowLeft") { move(-1); pauseAutoRotate(); }
+        else if (e.key === "ArrowRight") { move(1); pauseAutoRotate(); }
+      });
+
+      setInterval(autoRotateTick, POLL_MS);
+
       render();
+      renderRotateBar();
       startAvailabilityPoll(cards, glyphEls, goTo, onVisibilityChange);
       setupMenu();
     };

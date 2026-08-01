@@ -301,11 +301,15 @@ def test_nextVisibleIndex_stepsOverAHiddenCard():
     assert _view("nextVisibleIndex", 2, -1, [False, True, False]) == 0
 
 
-def test_nextVisibleIndex_clampsAtTheLastVisibleCard():
-    """No wrap (the shipped kiosk contract) and no landing past the end: a
-    trailing hidden card means the swipe simply stays put."""
-    assert _view("nextVisibleIndex", 1, 1, [False, False, True]) == 1
-    assert _view("nextVisibleIndex", 0, -1, [False, False]) == 0
+def test_nextVisibleIndex_wrapsPastTheLastVisibleCard():
+    """SUPERSEDED BY US-506 (F-124): this used to assert the swipe CLAMPED at the
+    ends. The nav model now WRAPS -- but the invariant this test was really
+    guarding survives intact and is what is re-asserted here: the step never
+    lands on a hidden card. A trailing gated card is skipped on the way round,
+    so the wrap lands on the first VISIBLE card, not the blank frame behind it.
+    Full wrap coverage lives in tests/ui/test_carousel_nav_model.py."""
+    assert _view("nextVisibleIndex", 1, 1, [False, False, True]) == 0
+    assert _view("nextVisibleIndex", 0, -1, [False, False]) == 1
 
 
 def test_nearestVisibleIndex_prefersTheEarlierCard():

@@ -64,6 +64,13 @@
         "height": 1080,
         "mode": "auto"
       },
+      "carousel": {
+        "autoRotateS": 8,
+        "resumeIdleS": 45,
+        "swipeMinPx": 40,
+        "swipeFastVelocityPxPerMs": 0.6,
+        "swipeFastTravelFrac": 0.55
+      },
       "autoDim": {
         "luxMin": 3.0,
         "luxFull": 1000.0,

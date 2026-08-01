@@ -3207,6 +3207,36 @@ card's `data-state` file at 4 Hz; a missing/malformed payload sets the card to
 `unavailable` (never a fabricated value, never green-when-broken). Until the
 US-400/401 emitters exist, both cards correctly read `unavailable`.
 
+**Navigation model: wrap + auto-rotate + velocity swipe (US-506, F-124).** The
+shipped shell clamped at both ends and classified swipes by *distance alone*.
+Both are replaced:
+
+| Fact | Owner | Contract |
+|------|-------|----------|
+| Wrap | `nextVisibleIndex(current, dir, hidden)` | Past the last card → the first, and back. **Traverses only VISIBLE cards** — a wrap onto a vehicle-gated card paints a blank frame the operator cannot swipe out of, strictly worse than the clamp it replaces. Bounded by `hidden.length`, so a row with ≤1 visible card terminates on `current` instead of spinning. |
+| Auto-rotate | `shouldAutoAdvance(paused, sinceMs, autoRotateS)` | Visible cards cycle every `autoRotateS` while unpaused. A non-positive period **disables** rotation rather than firing every tick (fail-to-off: a carousel spinning at the poll rate reads as a hardware fault). |
+| Time-to-next | `rotateProgress(sinceMs, autoRotateS)` | 0..1 for the calm thin `#rotate-progress` bar — a bar, never a countdown number. Clamped at 1 (the redraw is the 4 Hz poll tick, not a real-time clock). **Removed while paused**, not frozen part-filled: a stalled progress bar promises an advance that is not coming. Sits at `z-index: 8` under the DTC ribbon's `9` — an alert always wins that band. |
+| Gesture class | `swipeGesture(dx, dy, dtMs, widthPx, cfg)` → `{dir, fast}` | Distance ≥ `swipeMinPx` is still required to be a swipe *at all* (the deadzone survives). `fast` = `|v| ≥ swipeFastVelocityPxPerMs` **or** travel ≥ `swipeFastTravelFrac` of the card. Flick → advance + **resume**; settle → advance one + **pause**. |
+| Pause self-expiry | `shouldAutoResume(paused, idleMs, resumeIdleS)` | A pause expires after `resumeIdleS` of no interaction, so it can never become a freeze. |
+
+Two honest-instrument guards on the derived quantities: an unmeasurable gesture
+duration (`dt ≤ 0`) or an unusable card width (a transient 0×0 layout pass)
+contributes **nothing** rather than a fabricated `Infinity`. Dividing by either
+would manufacture a flick out of a measurement failure — and `fast` is the signal
+that *resumes rotation under the operator's finger*, so a fabricated one is felt
+immediately.
+
+Pausing is hung on `document` `pointerdown` — **one** entry point — so a tap on a
+card, a page dot, the kebab or any overlay pauses, and an overlay added later
+cannot forget to. All five constants are `pi.display.carousel.*` in `config.json`
+(the tuning SSOT), injected at serve time as `window.DISPLAY_CAROUSEL` through
+the *same* quoted-placeholder seam US-483-b built for the auto-dim curve
+(`_DISPLAY_CAROUSEL_PLACEHOLDER`, `loadDisplayCarouselConfig`). `resolveCarouselConfig`
+accepts only finite **positive** numbers over the grounded defaults — which is
+what makes a permanent freeze *inexpressible in config*: a `resumeIdleS: 0` can
+never reach the resume predicate to disable the self-unpause. Pinned by
+`tests/ui/test_carousel_nav_model.py`.
+
 **Surface invariant: `hidden` means NOT RENDERED (US-495, F-111).** Every
 show/hide on this surface is `carousel.js` setting `el.hidden`. The UA sheet's
 `[hidden] { display: none }` is a *user-agent* declaration, so **any** author

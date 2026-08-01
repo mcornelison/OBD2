@@ -59,6 +59,14 @@ _TOKEN_PLACEHOLDER = "__SPLASH_TOKEN__"
 # defaults, honest -- never a fabricated curve).
 _DISPLAY_AUTODIM_PLACEHOLDER = '"__DISPLAY_AUTODIM__"'
 
+# US-506 (F-124): the same quoted-placeholder seam for the carousel NAVIGATION
+# config (pi.display.carousel) -- auto-rotate period, pause self-expiry and the
+# swipe velocity/travel thresholds. Kept a SEPARATE placeholder rather than
+# widening the auto-dim one: the two sub-configs have different owners and
+# different tuning cadences, and merging them would make an auto-dim edit able
+# to break carousel navigation.
+_DISPLAY_CAROUSEL_PLACEHOLDER = '"__DISPLAY_CAROUSEL__"'
+
 # HTML entry points get the token injected; treated as the same-origin bootstrap.
 _INDEX_NAMES = frozenset({"", "index.html"})
 
@@ -115,6 +123,7 @@ def makeStatesHandler(
     assetsDir: str | Sequence[str] | None = None,
     clearRunner: Callable[[], object] | None = None,
     displayConfig: dict[str, Any] | None = None,
+    carouselConfig: dict[str, Any] | None = None,
 ) -> type[BaseHTTPRequestHandler]:
     """Build a request-handler class bound to one states dir + token + assets.
 
@@ -131,11 +140,16 @@ def makeStatesHandler(
     into the served kiosk HTML so the carousel's auto-dim curve is tunable via
     config (not code). ``None`` -> the placeholder becomes ``null`` and the
     carousel falls back to its built-in grounded defaults.
+
+    ``carouselConfig`` (US-506) is the ``pi.display.carousel`` sub-config -- the
+    auto-rotate period, pause self-expiry and swipe velocity/travel thresholds --
+    injected the same way, with the same ``None`` -> grounded-defaults fallback.
     """
     assetsDirs = _normalizeAssetsDirs(assetsDir)
     # Serialize once: the JSON object literal substituted for the quoted
     # placeholder (json.dumps(None) -> "null", the honest no-config fallback).
     displayConfigJson = json.dumps(displayConfig)
+    carouselConfigJson = json.dumps(carouselConfig)
 
     class _StatesHandler(BaseHTTPRequestHandler):
         # Silence default stderr request logging -- the journal captures stdout.
@@ -315,11 +329,14 @@ def makeStatesHandler(
             self._send(200, body, "application/json")
 
         def _injectHtml(self, html: str) -> str:
-            # Same-origin injection at serve time: the token SSOT (US-393) and the
-            # display auto-dim config (US-483-b). Neither placeholder value ever
-            # lands in an on-disk asset.
-            return html.replace(_TOKEN_PLACEHOLDER, token).replace(
-                _DISPLAY_AUTODIM_PLACEHOLDER, displayConfigJson
+            # Same-origin injection at serve time: the token SSOT (US-393), the
+            # display auto-dim config (US-483-b) and the carousel navigation
+            # config (US-506). No placeholder value ever lands in an on-disk
+            # asset.
+            return (
+                html.replace(_TOKEN_PLACEHOLDER, token)
+                .replace(_DISPLAY_AUTODIM_PLACEHOLDER, displayConfigJson)
+                .replace(_DISPLAY_CAROUSEL_PLACEHOLDER, carouselConfigJson)
             )
 
         def _serveIndex(self) -> None:
@@ -364,11 +381,12 @@ class StatesHttpServer:
         assetsDir: str | Sequence[str] | None = None,
         clearRunner: Callable[[], object] | None = None,
         displayConfig: dict[str, Any] | None = None,
+        carouselConfig: dict[str, Any] | None = None,
     ) -> None:
         self.host = host
         self.statesDir = statesDir
         handler = makeStatesHandler(
-            statesDir, token, assetsDir, clearRunner, displayConfig
+            statesDir, token, assetsDir, clearRunner, displayConfig, carouselConfig
         )
         # Bind eagerly so a port conflict fails loudly at construction (the unit
         # then exits non-zero -> the kiosk's fetch errors -> splash DEGRADED;
@@ -388,10 +406,10 @@ class StatesHttpServer:
         self._httpd.server_close()
 
 
-def loadDisplayAutoDimConfig(configPath: str) -> dict[str, Any] | None:
-    """Read ``pi.display.autoDim`` from config.json (US-483-b), fail-safe.
+def _loadDisplaySection(configPath: str, name: str) -> dict[str, Any] | None:
+    """Read one ``pi.display.<name>`` sub-config from config.json, fail-safe.
 
-    A LIGHT raw ``json.load`` (no secrets loader / validator) -- the auto-dim
+    A LIGHT raw ``json.load`` (no secrets loader / validator) -- these display
     values are plain numbers with no ``${ENV}`` placeholders, so a full config
     load would only add failure modes to this standalone server. ANY problem
     (missing file, unreadable, malformed, section absent) returns ``None`` so the
@@ -401,17 +419,32 @@ def loadDisplayAutoDimConfig(configPath: str) -> dict[str, Any] | None:
     Args:
         configPath: Path to config.json (relative paths resolve against the
             process CWD -- the unit's WorkingDirectory).
+        name: The sub-key under ``pi.display`` to read.
 
     Returns:
-        The ``pi.display.autoDim`` dict, or ``None`` when it cannot be read.
+        The requested dict, or ``None`` when it cannot be read.
     """
     try:
         with open(configPath, encoding="utf-8") as fh:
             config = json.load(fh)
-        autoDim = config.get("pi", {}).get("display", {}).get("autoDim")
-        return autoDim if isinstance(autoDim, dict) else None
+        section = config.get("pi", {}).get("display", {}).get(name)
+        return section if isinstance(section, dict) else None
     except (OSError, ValueError):
         return None
+
+
+def loadDisplayAutoDimConfig(configPath: str) -> dict[str, Any] | None:
+    """Read ``pi.display.autoDim`` from config.json (US-483-b), fail-safe."""
+    return _loadDisplaySection(configPath, "autoDim")
+
+
+def loadDisplayCarouselConfig(configPath: str) -> dict[str, Any] | None:
+    """Read ``pi.display.carousel`` from config.json (US-506), fail-safe.
+
+    The carousel navigation model's tuning SSOT: auto-rotate period, pause
+    self-expiry, and the swipe distance/velocity/travel thresholds.
+    """
+    return _loadDisplaySection(configPath, "carousel")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -434,8 +467,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=9899)
     parser.add_argument("--token-path", default="/run/eclipse-obd/states/.http-token")
-    # US-483-b: config.json (relative to the unit's WorkingDirectory by default)
-    # supplies the pi.display.autoDim curve injected into the dashboard HTML.
+    # US-483-b / US-506: config.json (relative to the unit's WorkingDirectory by
+    # default) supplies the pi.display.autoDim curve AND the pi.display.carousel
+    # navigation model injected into the dashboard HTML.
     parser.add_argument("--config", default="config.json")
     args = parser.parse_args(argv)
 
@@ -450,6 +484,7 @@ def main(argv: list[str] | None = None) -> int:
         port=args.port,
         assetsDir=assetsDirs,
         displayConfig=loadDisplayAutoDimConfig(args.config),
+        carouselConfig=loadDisplayCarouselConfig(args.config),
     )
     server.serveForever()
     return 0

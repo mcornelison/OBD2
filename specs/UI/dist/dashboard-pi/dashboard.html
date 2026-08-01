@@ -41,6 +41,15 @@
     <button id="menu-btn" class="tap-target" aria-label="System Setup" hidden>⋮</button>
   </header>
 
+  <!-- US-506 auto-rotate progress (F-124): a calm THIN time-to-next bar under
+       the top bar. It reads as ambient chrome, never as an alert -- the DTC
+       ribbon owns that register and sits in the same band. JS sets --rotate-fill
+       0..1; the bar is REMOVED (not frozen part-filled) while paused, because a
+       stalled progress bar promises an advance that is not coming. -->
+  <div id="rotate-progress" hidden>
+    <span id="rotate-progress-fill"></span>
+  </div>
+
   <!-- US-405 persistent DTC ribbon: rides under the top bar on every card while
        a code is present. STOP state uses the brighter --red-light (R-2, distinct
        from brand-red) + a leading ⚠ + a subtle pulse. JS sets the level + text. -->
@@ -239,6 +248,12 @@
     // JS when un-substituted (file:// preview) -> a string, which carousel.js
     // ignores in favor of its built-in grounded defaults.
     window.DISPLAY_AUTODIM = "__DISPLAY_AUTODIM__";
+    // US-506: the carousel navigation config (pi.display.carousel) -- the
+    // auto-rotate period, the pause self-expiry and the swipe velocity/travel
+    // thresholds. Same serve-time substitution + same quoted-placeholder trick:
+    // un-substituted it stays a valid JS string, which carousel.js ignores in
+    // favour of its built-in grounded defaults.
+    window.DISPLAY_CAROUSEL = "__DISPLAY_CAROUSEL__";
   </script>
   <script src="carousel.js"></script>
 </body>

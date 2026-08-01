@@ -353,6 +353,26 @@ html, body {
 }
 .dot.active::before { background: var(--text-primary); }
 
+/* --- US-506 auto-rotate progress bar (F-124) --------------------------------- */
+/* The calm THIN time-to-next readout for the hands-off carousel. Deliberately
+   quiet: it shares the band directly under the top bar with the DTC ribbon, and
+   an alert must always win that band -- hence z-index 8 against the ribbon's 9,
+   so a live code simply covers this. It is ambient chrome, so it borrows the
+   TERTIARY text token rather than any state colour: a green or amber bar here
+   would be a fourth thing claiming to mean "healthy"/"degraded" while actually
+   meaning "seconds until the next card". Removed entirely while paused (the
+   `hidden` attribute -> the global [hidden] guard, US-495). */
+#rotate-progress {
+  position: fixed; left: 0; right: 0; top: 28px; height: 2px;
+  background: transparent; z-index: 8;
+  pointer-events: none;   /* chrome, never a tap target */
+}
+#rotate-progress-fill {
+  display: block; height: 100%;
+  width: calc(var(--rotate-fill, 0) * 100%);
+  background: var(--text-tertiary);
+}
+
 /* --- US-405 persistent DTC ribbon -------------------------------------------- */
 /* Rides under the top bar on every card while a code is present. R-2 + US-484-b:
    the ribbon shares cards with brand chrome, so its STOP state renders the
