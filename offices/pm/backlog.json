@@ -6220,7 +6220,12 @@
         }
       ],
       "conditionalOutcomes": [],
-      "sourceRefs": ["offices/pm/decisions/2026-07-31-ui-feedback-round2-triage.md#1", "dashboard.html:37", "states_http_server.py:317-323", ".deploy-version"],
+      "sourceRefs": [
+        "offices/pm/decisions/2026-07-31-ui-feedback-round2-triage.md#1",
+        "dashboard.html:37",
+        "states_http_server.py:317-323",
+        ".deploy-version"
+      ],
       "createdAt": "2026-07-31",
       "updatedAt": "2026-07-31",
       "tasks": []
@@ -6249,7 +6254,13 @@
       "conditionalOutcomes": [
         "if the SEAM CONFIRM finds the tile should read a different provider/method than PowerSourceProvider, use that -- the DoD is 'tile reflects the real source', not a specific wiring path"
       ],
-      "sourceRefs": ["offices/pm/decisions/2026-07-31-ui-feedback-round2-triage.md#2", "card_state_emitter.py:288-299", "power.py:410-412", "lifecycle.py:2250-2258", "carousel.js:248-265,294-299"],
+      "sourceRefs": [
+        "offices/pm/decisions/2026-07-31-ui-feedback-round2-triage.md#2",
+        "card_state_emitter.py:288-299",
+        "power.py:410-412",
+        "lifecycle.py:2250-2258",
+        "carousel.js:248-265,294-299"
+      ],
       "createdAt": "2026-07-31",
       "updatedAt": "2026-07-31",
       "tasks": []
@@ -6274,7 +6285,10 @@
         }
       ],
       "conditionalOutcomes": [],
-      "sourceRefs": ["offices/pm/decisions/2026-07-31-ui-feedback-round2-triage.md#3", "carousel.js:1929,1951"],
+      "sourceRefs": [
+        "offices/pm/decisions/2026-07-31-ui-feedback-round2-triage.md#3",
+        "carousel.js:1929,1951"
+      ],
       "createdAt": "2026-07-31",
       "updatedAt": "2026-07-31",
       "tasks": []
@@ -6304,7 +6318,11 @@
       "conditionalOutcomes": [
         "if the SOURCE-CONFIRM finds no producer exists yet for HEALTH verdict or health-check history, that producer is built as part of this story (CIO chose 'build both producers') OR carved to a sized sub-story if it grows -- do NOT ship a hardcoded placeholder"
       ],
-      "sourceRefs": ["offices/pm/decisions/2026-07-31-ui-feedback-round2-triage.md#5,#8", "card_state_emitter.py:398,402,345-346", "carousel.js:529-534,553-582"],
+      "sourceRefs": [
+        "offices/pm/decisions/2026-07-31-ui-feedback-round2-triage.md#5,#8",
+        "card_state_emitter.py:398,402,345-346",
+        "carousel.js:529-534,553-582"
+      ],
       "createdAt": "2026-07-31",
       "updatedAt": "2026-07-31",
       "tasks": []
@@ -6332,7 +6350,11 @@
       "conditionalOutcomes": [
         "NOTE: a fully-populated last-drive card ultimately depends on capture working (BL-025) to have a recent drive to summarize -- the producer + wiring can be built + unit-tested independently now; live validation folds into the post-BL-025 drive"
       ],
-      "sourceRefs": ["offices/pm/decisions/2026-07-31-ui-feedback-round2-triage.md#4", "carousel.js:881-898", "card_state_emitter.py:301-319"],
+      "sourceRefs": [
+        "offices/pm/decisions/2026-07-31-ui-feedback-round2-triage.md#4",
+        "carousel.js:881-898",
+        "card_state_emitter.py:301-319"
+      ],
       "createdAt": "2026-07-31",
       "updatedAt": "2026-07-31",
       "tasks": []
@@ -6353,10 +6375,17 @@
         "all constants land in config under pi.display.carousel.* (autoRotateS/resumeIdleS/velocity threshold/distance thresholds); tests cover wrap-skips-gated + velocity slow-vs-fast + pause/resume; ruff clean"
       ],
       "validationCriteria": [
-        {"action": "on the Pi with a gated card hidden: swipe past the last visible card; leave it untouched; do a slow settle swipe then a fast flick", "outcome": "wraps to first (gated card skipped); auto-cycles at the interval; slow swipe pauses, fast flick resumes; 45 s idle auto-resumes"}
+        {
+          "action": "on the Pi with a gated card hidden: swipe past the last visible card; leave it untouched; do a slow settle swipe then a fast flick",
+          "outcome": "wraps to first (gated card skipped); auto-cycles at the interval; slow swipe pauses, fast flick resumes; 45 s idle auto-resumes"
+        }
       ],
       "conditionalOutcomes": [],
-      "sourceRefs": ["offices/uidevloper/proposals/2026-07-31-pi-ui-round2-f124.md#C", "offices/pm/decisions/2026-07-31-ui-feedback-round2-triage.md#12,#13", "carousel.js:36-57,143-150,3168"],
+      "sourceRefs": [
+        "offices/uidevloper/proposals/2026-07-31-pi-ui-round2-f124.md#C",
+        "offices/pm/decisions/2026-07-31-ui-feedback-round2-triage.md#12,#13",
+        "carousel.js:36-57,143-150,3168"
+      ],
       "createdAt": "2026-07-31",
       "updatedAt": "2026-07-31",
       "tasks": []
@@ -6377,10 +6406,16 @@
         "tests cover the merged card renders each sub-section's real state; the Fuel Trim gate still hides engine data on bench; ruff clean"
       ],
       "validationCriteria": [
-        {"action": "on the Pi (bench, engine off): swipe through the carousel and view the Health card", "outcome": "4 cards total (Home/System Status/Health/Alerts); Health shows real battery + light; Fuel Trim reads 'no engine data' (gated), not a fabricated value"}
+        {
+          "action": "on the Pi (bench, engine off): swipe through the carousel and view the Health card",
+          "outcome": "after US-507 the carousel has 5 visible cards (Standby/System Status/Health/Motion/Alerts) -- the 3 standalone reference cards merged into ONE Health card (net -2); the 4-card end state is reached by US-508 (jointly discharged US-507+US-508); Health shows real battery + light; Fuel Trim reads 'no engine data' (gated), not a fabricated value"
+        }
       ],
       "conditionalOutcomes": [],
-      "sourceRefs": ["offices/uidevloper/proposals/2026-07-31-pi-ui-round2-f124.md#F", "offices/pm/decisions/2026-07-31-ui-feedback-round2-triage.md#11"],
+      "sourceRefs": [
+        "offices/uidevloper/proposals/2026-07-31-pi-ui-round2-f124.md#F",
+        "offices/pm/decisions/2026-07-31-ui-feedback-round2-triage.md#11"
+      ],
       "createdAt": "2026-07-31",
       "updatedAt": "2026-07-31",
       "tasks": []
@@ -6402,11 +6437,20 @@
         "tests cover tape/gear/0.6g-amber render + idle<->live swap + stale-IMU fallback; ruff clean"
       ],
       "validationCriteria": [
-        {"action": "on the Pi: view the home card parked, then with live states/imu motion; move the board past 0.6 g", "outcome": "parked shows idle; driving shows compass tape + gear + grade + altitude; amber engages at 0.6 g; stale IMU falls back to idle (never frozen)"}
+        {
+          "action": "on the Pi: view the home card parked, then with live states/imu motion; move the board past 0.6 g",
+          "outcome": "parked shows idle; driving shows compass tape + gear + grade + altitude; amber engages at 0.6 g; stale IMU falls back to idle (never frozen)"
+        }
       ],
-      "conditionalOutcomes": ["if Atlas's contract ruling changes the derived-field shape, the card binds to the ruled contract"],
+      "conditionalOutcomes": [
+        "if Atlas's contract ruling changes the derived-field shape, the card binds to the ruled contract"
+      ],
       "deps": [],
-      "sourceRefs": ["offices/uidevloper/proposals/2026-07-31-pi-ui-round2-f124.md#B", "offices/uidevloper/proposals/2026-07-27-pi-live-instrument-card.md", "offices/pm/decisions/2026-07-31-ui-feedback-round2-triage.md#9"],
+      "sourceRefs": [
+        "offices/uidevloper/proposals/2026-07-31-pi-ui-round2-f124.md#B",
+        "offices/uidevloper/proposals/2026-07-27-pi-live-instrument-card.md",
+        "offices/pm/decisions/2026-07-31-ui-feedback-round2-triage.md#9"
+      ],
       "createdAt": "2026-07-31",
       "updatedAt": "2026-07-31",
       "tasks": []
@@ -6418,7 +6462,7 @@
       "size": "M",
       "status": "pending",
       "title": "System-Status 'N ISSUE' drill-down overlay",
-      "goal": "As the operator, I want to tap 'SYSTEM · N ISSUE' and see which sources are degraded and why, so the summary isn't a dead end.",
+      "goal": "As the operator, I want to tap 'SYSTEM \u00c2\u00b7 N ISSUE' and see which sources are degraded and why, so the summary isn't a dead end.",
       "definitionOfDone": [
         "make the SYSTEM summary line tappable -> a drill-down overlay listing the degraded source(s) WORST-FIRST: each row = source label + state chip (amber/red) + honest reason + freshness ('seen Ns ago'); one row per non-OK source",
         "a '<- Back' returns to the card (never traps); opening the overlay pauses auto-rotate (interaction)",
@@ -6426,10 +6470,16 @@
         "no change to how source states are computed -- reads the existing per-tile levels; tests cover worst-first ordering + back + green-never-listed; ruff clean"
       ],
       "validationCriteria": [
-        {"action": "with one source degraded, tap the SYSTEM summary line; then with all sources good", "outcome": "opens a worst-first list of only the degraded source(s) with reason + freshness + Back; when all good, the summary is not a misleading tap target"}
+        {
+          "action": "with one source degraded, tap the SYSTEM summary line; then with all sources good",
+          "outcome": "opens a worst-first list of only the degraded source(s) with reason + freshness + Back; when all good, the summary is not a misleading tap target"
+        }
       ],
       "conditionalOutcomes": [],
-      "sourceRefs": ["offices/uidevloper/proposals/2026-07-31-pi-ui-round2-f124.md#D", "offices/pm/decisions/2026-07-31-ui-feedback-round2-triage.md#7"],
+      "sourceRefs": [
+        "offices/uidevloper/proposals/2026-07-31-pi-ui-round2-f124.md#D",
+        "offices/pm/decisions/2026-07-31-ui-feedback-round2-triage.md#7"
+      ],
       "createdAt": "2026-07-31",
       "updatedAt": "2026-07-31",
       "tasks": []
@@ -6450,11 +6500,21 @@
         "acceptance: no raw color hex in dashboard.css outside :root token defs (for the ungated literals); --font-display renders the wordmark/titles; ruff clean"
       ],
       "validationCriteria": [
-        {"action": "on the Pi: read the idle wordmark + footer; inspect dashboard.css for raw hex outside :root", "outcome": "wordmark 'ECLIPSE OBD-II' + correct footer in a brand display face; ungated color literals tokenized; Atlas-gated --bg/--surface/--destructive land once ruled"}
+        {
+          "action": "on the Pi: read the idle wordmark + footer; inspect dashboard.css for raw hex outside :root",
+          "outcome": "wordmark 'ECLIPSE OBD-II' + correct footer in a brand display face; ungated color literals tokenized; Atlas-gated --bg/--surface/--destructive land once ruled"
+        }
       ],
-      "conditionalOutcomes": ["if Atlas has not ruled the --bg/--surface/--destructive values by build time, ship the ungated fidelity (copy+font+existing tokens) and carry the gated literals to a fast-follow rather than block the whole story"],
+      "conditionalOutcomes": [
+        "if Atlas has not ruled the --bg/--surface/--destructive values by build time, ship the ungated fidelity (copy+font+existing tokens) and carry the gated literals to a fast-follow rather than block the whole story"
+      ],
       "deps": [],
-      "sourceRefs": ["offices/uidevloper/proposals/2026-07-31-pi-ui-round2-f124.md#A", "TD-065", "specs/UI/tokens.css", "offices/pm/decisions/2026-07-31-ui-feedback-round2-triage.md#14"],
+      "sourceRefs": [
+        "offices/uidevloper/proposals/2026-07-31-pi-ui-round2-f124.md#A",
+        "TD-065",
+        "specs/UI/tokens.css",
+        "offices/pm/decisions/2026-07-31-ui-feedback-round2-triage.md#14"
+      ],
       "createdAt": "2026-07-31",
       "updatedAt": "2026-07-31",
       "tasks": []
@@ -6474,10 +6534,17 @@
         "constants (parkedOnS/parkedOffS) in config; test proves a sub-threshold idle blip does not toggle the kebab; ruff clean"
       ],
       "validationCriteria": [
-        {"action": "on the Pi parked, induce a brief OBD-availability blip", "outcome": "the kebab stays put through the blip (no flicker); it shows/hides only on a sustained parked/driving transition; long-press still always works"}
+        {
+          "action": "on the Pi parked, induce a brief OBD-availability blip",
+          "outcome": "the kebab stays put through the blip (no flicker); it shows/hides only on a sustained parked/driving transition; long-press still always works"
+        }
       ],
       "conditionalOutcomes": [],
-      "sourceRefs": ["offices/uidevloper/proposals/2026-07-31-pi-ui-round2-f124.md#E", "offices/pm/decisions/2026-07-31-ui-feedback-round2-triage.md#15", "carousel.js:743-748,876-878"],
+      "sourceRefs": [
+        "offices/uidevloper/proposals/2026-07-31-pi-ui-round2-f124.md#E",
+        "offices/pm/decisions/2026-07-31-ui-feedback-round2-triage.md#15",
+        "carousel.js:743-748,876-878"
+      ],
       "createdAt": "2026-07-31",
       "updatedAt": "2026-07-31",
       "tasks": []
@@ -6498,10 +6565,19 @@
         "[NOTE] this is the P1 hardening layer; the P0 rfkill soft-block (the actual capture killer) is fixed live + being baked into deploy separately (V0.29.22 hotfix). This story makes recovery robust, it is not the capture unblock itself"
       ],
       "validationCriteria": [
-        {"action": "simulate a mid-session BT link drop on the Pi (or bench harness)", "outcome": "the service resets the transport + reconnects + resumes capture (realtime_data grows again) instead of looping on a dead tty; bond survives a reboot"}
+        {
+          "action": "simulate a mid-session BT link drop on the Pi (or bench harness)",
+          "outcome": "the service resets the transport + reconnects + resumes capture (realtime_data grows again) instead of looping on a dead tty; bond survives a reboot"
+        }
       ],
-      "conditionalOutcomes": ["final live acceptance is the engine-on validation drive (Spool) -- the reset logic + bond persistence are bench/unit-testable now"],
-      "sourceRefs": ["offices/pm/blockers/BL-025-obd-capture-dead-since-0703-connect-path-regression.md#3", "offices/architect/inbox/2026-07-31-from-atlas-STATUS-bt-softblock-rootcause-fixed-plus-open-work.md", "src/pi/obdii/obd_connection.py"],
+      "conditionalOutcomes": [
+        "final live acceptance is the engine-on validation drive (Spool) -- the reset logic + bond persistence are bench/unit-testable now"
+      ],
+      "sourceRefs": [
+        "offices/pm/blockers/BL-025-obd-capture-dead-since-0703-connect-path-regression.md#3",
+        "offices/architect/inbox/2026-07-31-from-atlas-STATUS-bt-softblock-rootcause-fixed-plus-open-work.md",
+        "src/pi/obdii/obd_connection.py"
+      ],
       "createdAt": "2026-07-31",
       "updatedAt": "2026-07-31",
       "tasks": []
@@ -6521,10 +6597,16 @@
         "no code change required unless a project-side cause is confirmed; the eclipse-rfkill-unblock.service is the standing safety net regardless"
       ],
       "validationCriteria": [
-        {"action": "review boot/rfkill history + the 07-03 debug context; test whether the identified trigger reproduces the saved-block", "outcome": "a documented origin + prevention (or a documented conclusion that it was a one-off manual artifact fully covered by the unblock service)"}
+        {
+          "action": "review boot/rfkill history + the 07-03 debug context; test whether the identified trigger reproduces the saved-block",
+          "outcome": "a documented origin + prevention (or a documented conclusion that it was a one-off manual artifact fully covered by the unblock service)"
+        }
       ],
       "conditionalOutcomes": [],
-      "sourceRefs": ["offices/pm/blockers/BL-025-obd-capture-dead-since-0703-connect-path-regression.md#4", "offices/architect/inbox/2026-07-31-from-atlas-STATUS-bt-softblock-rootcause-fixed-plus-open-work.md"],
+      "sourceRefs": [
+        "offices/pm/blockers/BL-025-obd-capture-dead-since-0703-connect-path-regression.md#4",
+        "offices/architect/inbox/2026-07-31-from-atlas-STATUS-bt-softblock-rootcause-fixed-plus-open-work.md"
+      ],
       "createdAt": "2026-07-31",
       "updatedAt": "2026-07-31",
       "tasks": []
@@ -6545,10 +6627,17 @@
         "tests cover the deploy-pi.sh step (unit installed + enabled + stale-block cleared); ruff clean"
       ],
       "validationCriteria": [
-        {"action": "after PM deploys this + reboots the Pi (bench, no car)", "outcome": "`rfkill list` shows BOTH hci0:Bluetooth and phy0:Wireless LAN Soft blocked:no; `systemctl is-enabled eclipse-rfkill-unblock`=enabled; eclipse-obd active"}
+        {
+          "action": "after PM deploys this + reboots the Pi (bench, no car)",
+          "outcome": "`rfkill list` shows BOTH hci0:Bluetooth and phy0:Wireless LAN Soft blocked:no; `systemctl is-enabled eclipse-rfkill-unblock`=enabled; eclipse-obd active"
+        }
       ],
       "conditionalOutcomes": [],
-      "sourceRefs": ["offices/ralph/inbox/2026-07-31-from-atlas-bake-rfkill-unblock-into-deploy.md", "offices/pm/blockers/BL-025-obd-capture-dead-since-0703-connect-path-regression.md#1", "offices/architect/inbox/2026-07-31-from-atlas-STATUS-bt-softblock-rootcause-fixed-plus-open-work.md"],
+      "sourceRefs": [
+        "offices/ralph/inbox/2026-07-31-from-atlas-bake-rfkill-unblock-into-deploy.md",
+        "offices/pm/blockers/BL-025-obd-capture-dead-since-0703-connect-path-regression.md#1",
+        "offices/architect/inbox/2026-07-31-from-atlas-STATUS-bt-softblock-rootcause-fixed-plus-open-work.md"
+      ],
       "createdAt": "2026-07-31",
       "updatedAt": "2026-07-31",
       "tasks": []
@@ -6568,10 +6657,19 @@
         "--dry-run still MUST NOT invoke bluetoothctl or any external BT stack (preserve the existing guard); tests cover the regex match + agent selection; ruff clean"
       ],
       "validationCriteria": [
-        {"action": "run the fixed script's dry-run + unit tests (code/logic layer, bench)", "outcome": "the prompt regex matches `[bluetoothctl]>` + the agent is display-capable; dry-run stays inert. NOTE: full pair + bond-survives-reboot verification is engine-on -- Spool owns that live gate"}
+        {
+          "action": "run the fixed script's dry-run + unit tests (code/logic layer, bench)",
+          "outcome": "the prompt regex matches `[bluetoothctl]>` + the agent is display-capable; dry-run stays inert. NOTE: full pair + bond-survives-reboot verification is engine-on -- Spool owns that live gate"
+        }
       ],
-      "conditionalOutcomes": ["the code fix is bench/unit-testable now; the real pair + bond-survives-reboot is engine-on (Spool) and folds into the BL-025 validation drive"],
-      "sourceRefs": ["offices/ralph/inbox/2026-07-31-from-atlas-fix-pair-obdlink-sh.md", "offices/pm/blockers/BL-025-obd-capture-dead-since-0703-connect-path-regression.md#2", "scripts/pair_obdlink.sh"],
+      "conditionalOutcomes": [
+        "the code fix is bench/unit-testable now; the real pair + bond-survives-reboot is engine-on (Spool) and folds into the BL-025 validation drive"
+      ],
+      "sourceRefs": [
+        "offices/ralph/inbox/2026-07-31-from-atlas-fix-pair-obdlink-sh.md",
+        "offices/pm/blockers/BL-025-obd-capture-dead-since-0703-connect-path-regression.md#2",
+        "scripts/pair_obdlink.sh"
+      ],
       "createdAt": "2026-07-31",
       "updatedAt": "2026-07-31",
       "tasks": []

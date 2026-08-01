@@ -3,10 +3,15 @@
 | Field        | Value                     |
 |--------------|---------------------------|
 | Severity     | Medium                    |
-| Status       | Active                    |
-| Blocking     | US-510 acceptance A-3 (the `@font-face` half only — A-1 copy + A-2 tokenization SHIPPED) |
-| Waiting On   | Iris (supplies the woff2 base64) + CIO (confirms the face) |
+| Status       | Active — **US-510 CLOSED with this carved out (PM 2026-08-01); tracked as a fast-follow, NOT sprint-blocking** |
+| Blocking     | Only the on-Pi brand-face render (A-3 payload). US-510 A-1 copy + A-2 tokenization + A-3 structural seam all SHIPPED green. |
+| Waiting On   | **CIO/Iris: pick an OPEN-LICENSE (OFL) condensed-grotesque face** — the locked Bahnschrift is Microsoft-proprietary, NOT redistributable + NOT on Pi OS, so it CANNOT be embedded. Then Iris subsets it → woff2 base64. |
 | Created      | 2026-07-31                |
+
+## ⚠️ PM decision + the real blocker (2026-08-01)
+US-510 is **accepted + closed** (its own `conditionalOutcomes` prefer shipping the ungated fidelity over blocking the whole story). The A-3 brand-face is a **~30-min fast-follow payload drop** into the already-built seam — but it needs ONE upstream decision first:
+
+**The CIO-locked face (Bahnschrift) cannot ship.** It's Microsoft-bundled + proprietary → not legally embeddable as a data-URI woff2, and absent from Raspberry Pi OS. So "Bahnschrift" can't be the embedded face. **The CIO/Iris must pick an open-license (SIL OFL) condensed grotesque** (e.g. Oswald, Barlow Condensed, or similar) that CAN be subset + embedded. Once picked, Iris drops the subsetted woff2 base64 and it's a payload drop (add one `@font-face` to `specs/UI/tokens.css`, put the family at the front of `--font-display`, add a `data:`-URI-not-http test).
 
 ## Description
 
