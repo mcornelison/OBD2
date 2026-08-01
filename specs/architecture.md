@@ -3228,7 +3228,7 @@ immediately.
 
 Pausing is hung on `document` `pointerdown` — **one** entry point — so a tap on a
 card, a page dot, the kebab or any overlay pauses, and an overlay added later
-cannot forget to. All five constants are `pi.display.carousel.*` in `config.json`
+cannot forget to. All of these constants are `pi.display.carousel.*` in `config.json`
 (the tuning SSOT), injected at serve time as `window.DISPLAY_CAROUSEL` through
 the *same* quoted-placeholder seam US-483-b built for the auto-dim curve
 (`_DISPLAY_CAROUSEL_PLACEHOLDER`, `loadDisplayCarouselConfig`). `resolveCarouselConfig`
@@ -3236,6 +3236,49 @@ accepts only finite **positive** numbers over the grounded defaults — which is
 what makes a permanent freeze *inexpressible in config*: a `resumeIdleS: 0` can
 never reach the resume predicate to disable the self-unpause. Pinned by
 `tests/ui/test_carousel_nav_model.py`.
+
+**Debounced `parked` signal behind the `⋮` (US-511, F-124).** US-490 gated the
+top-bar kebab directly on the emitter's `idle` SSOT boolean, so every brief
+OBD-availability blip removed the button and put it straight back. Flicker on a
+fixed affordance does not read as *"the state changed"* — it reads as a broken
+panel. A hysteresis debounce now sits between the flag and the menu policy:
+
+| Fact | Owner | Contract |
+|------|-------|----------|
+| Raw "is the vehicle idle?" | `carouselIdle(systemStatusData)` | Unchanged. Reads the `idle` SSOT boolean strictly; never re-derived from the drive-state string (Atlas idle-SSOT b). Fails closed to *not*-idle. |
+| Debounced "is the vehicle parked?" | `parkedNext(prev, rawIdle, nowMs, cfg)` → `{parked, raw, sinceMs}` | `not parked → parked` needs idle held **true** for ≥ `parkedOnS` (8 s); `parked → not parked` needs idle held **false** for ≥ `parkedOffS` (3 s). `parkedInit()` starts **not parked** (fail-closed, matching the button's hidden-in-markup boot state). |
+| Menu policy | `menuAccess(parked)` | Applies policy **only**. `tapVisible = parked === true`; `longPress` stays unconditional. |
+
+**The thresholds are asymmetric on purpose.** Offering a single tap into a
+service stop is a convenience and can afford to be slow; *withdrawing* it once
+the car is moving is the safety half, so it is the fast one. A symmetric
+debounce would hold the `⋮` on screen for a full 8 s of driving.
+
+Three properties carry the design:
+
+- **Re-anchor, don't accumulate.** Every change of reading restarts the run, so
+  six 2 s blips never add up to one 3 s run — otherwise the flicker this removes
+  merely takes longer to arrive.
+- **`menuAccess` no longer acquires.** It used to call `carouselIdle` itself, so
+  an upstream debounce could be bypassed by the next edit for free; it now
+  receives the debounced boolean and cannot reach the raw flag (the standing
+  SSOT directive — one authoritative provider per fact, consumers apply policy).
+  The strict `parked === true` closes the footgun the signature change creates:
+  a caller left un-migrated would pass an *object*, and a truthy test would read
+  that as parked forever — the `⋮` pinned on screen at 70 mph.
+- **An unmeasured hold is not a hold.** An unreadable clock returns the state
+  untouched (recording the reading without a timestamp would let the next real
+  clock credit this run's elapsed time to the previous reading), and a *negative*
+  hold — an NTP step back on a Pi with no RTC — re-anchors rather than stranding
+  the signal for the size of the step.
+
+Display-side only, per the story's own AC: no emitter field, no new contract.
+Promoting `parked` to an *emitted* fact is the same class of question as the open
+idle-SSOT one and needs an Atlas ruling. `parkedOnS`/`parkedOffS` join the same
+`pi.display.carousel.*` section and inherit `resolveCarouselConfig`'s
+positive-only rule, so `parkedOnS: 0` falls back to the default rather than
+silently deleting the debounce. Pinned by
+`tests/ui/test_carousel_parked_debounce.py`.
 
 **Surface invariant: `hidden` means NOT RENDERED (US-495, F-111).** Every
 show/hide on this surface is `carousel.js` setting `el.hidden`. The UA sheet's

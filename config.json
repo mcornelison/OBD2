@@ -69,7 +69,9 @@
         "resumeIdleS": 45,
         "swipeMinPx": 40,
         "swipeFastVelocityPxPerMs": 0.6,
-        "swipeFastTravelFrac": 0.55
+        "swipeFastTravelFrac": 0.55,
+        "parkedOnS": 8,
+        "parkedOffS": 3
       },
       "autoDim": {
         "luxMin": 3.0,

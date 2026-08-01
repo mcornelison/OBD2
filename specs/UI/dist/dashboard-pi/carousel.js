@@ -42,6 +42,9 @@
                                   // swipe (mirrors SWIPE_THRESHOLD_PX)
     swipeFastVelocityPxPerMs: 0.6, // |v| at/above this = a FLICK
     swipeFastTravelFrac: 0.55,    // ...or travel this fraction of the card
+    // US-511: the `parked` debounce. Asymmetric on purpose -- see parkedNext.
+    parkedOnS: 8,                 // idle must be HELD this long to read parked
+    parkedOffS: 3,                // ...and not-idle this long to give it back
   };
 
   // US-482 letterbox scaling: the UI is authored at a fixed STAGE_W x STAGE_H
@@ -1066,25 +1069,114 @@
   // paths into the menu carry DIFFERENT intent, so they get different rules:
   //
   //   tapVisible -- the top-bar `⋮` is a SINGLE tap away from a service stop /
-  //     Exit UI, so it is offered only while the emitter says parked. Hidden
-  //     while driving, and hidden whenever "am I driving?" is UNREADABLE:
-  //     carouselIdle already fails closed to not-idle, so an absent, malformed
-  //     or idle-less payload hides the affordance rather than guessing a calm
-  //     parked state. (Reads the `idle` SSOT boolean -- never re-derived from
-  //     the drive-state string; Atlas idle-SSOT b.)
+  //     Exit UI, so it is offered only while the vehicle reads parked. Hidden
+  //     while driving, and hidden whenever "am I driving?" is UNREADABLE: the
+  //     acquisition chain fails closed at every link -- carouselIdle reads the
+  //     `idle` SSOT boolean strictly (never re-derived from the drive-state
+  //     string; Atlas idle-SSOT b), parkedNext treats anything but a real
+  //     `true` as not-idle, and this policy accepts only a real `true`. So an
+  //     absent, malformed or idle-less payload hides the affordance rather than
+  //     guessing a calm parked state. US-511: what arrives here is the
+  //     DEBOUNCED signal, so a brief OBD blip no longer flips the button.
   //   longPress -- the ~5s hold is the DELIBERATE override and is state-blind
   //     on purpose. It is what makes hiding the `⋮` safe: fail-closed can never
   //     strand the operator, and driving is the state where they may most need
   //     to stop a misbehaving service.
   //
-  // `carouselIdle` is declared further down this IIFE (with the idle-card
-  // logic it belongs to) -- function declarations hoist, so this policy stays
-  // next to the menu it governs.
-  function menuAccess(systemStatusData) {
+  // US-511 CHANGES WHAT THIS FUNCTION IS HANDED. It used to take the
+  // system-status payload and call `carouselIdle` on it -- i.e. it did its own
+  // ACQUISITION -- which meant any debounce placed upstream could be bypassed
+  // by the next edit for free. It now takes the already-debounced `parked`
+  // boolean and applies POLICY only, so reading the raw flag is out of reach
+  // rather than merely discouraged (the standing SSOT directive: one
+  // authoritative provider per fact, consumers apply policy).
+  //
+  // `parked === true` is a strict test, and that strictness is load-bearing
+  // NOW: the old callers passed an OBJECT here. A `!!parked` test would read an
+  // un-migrated caller's payload as parked FOREVER -- the ⋮ pinned on screen at
+  // 70mph, the exact hazard US-490 exists to prevent. Anything that is not a
+  // real `true` is not-parked.
+  function menuAccess(parked) {
     return {
-      tapVisible: carouselIdle(systemStatusData),
+      tapVisible: parked === true,
       longPress: true,
     };
+  }
+
+  // -------------------------------------------------------------------------
+  // US-511 (F-124) -- the DEBOUNCED `parked` signal behind the ⋮ affordance.
+  //
+  // US-490 keyed the kebab straight off the emitter's `idle` SSOT boolean, so
+  // every brief OBD-availability blip took the button off the screen and put it
+  // straight back. Flicker on a fixed affordance does not read as "the state
+  // changed" -- it reads as a broken panel. This inserts a HYSTERESIS debounce
+  // between the flag and the menu policy:
+  //
+  //   not parked -> parked      idle held TRUE  for >= parkedOnS  (8 s)
+  //   parked -> not parked      idle held FALSE for >= parkedOffS (3 s)
+  //
+  // THE TWO THRESHOLDS DIFFER ON PURPOSE. Offering a single tap into a service
+  // stop is a convenience and can afford to be slow; WITHDRAWING it once the
+  // car is moving is the safety half, so it is the fast one. A symmetric
+  // debounce would hold the ⋮ on screen for a full 8 s of driving.
+  //
+  // Display-side only, per the AC: no emitter field and no new contract -- this
+  // debounces the `idle` the display already consumes. (Promoting `parked` to
+  // an emitted fact is the same class of question as the open idle-SSOT one and
+  // needs an Atlas nod; not taken here.)
+  //
+  // Pure and node-testable like the rest of the navigation model: the clock
+  // arrives as an argument, so nothing here reads a timer of its own.
+  // -------------------------------------------------------------------------
+
+  // The fail-closed start. Nothing has been HELD yet, so "am I parked?" is
+  // unanswered -- and the unanswered side of that question is the one that
+  // hands out a tap into a service stop. Mirrors the button's hidden-in-markup
+  // boot state, so the pre-first-poll window offers no tap path.
+  function parkedInit() {
+    return { parked: false, raw: false, sinceMs: null };
+  }
+
+  // Advance the signal by one observation. `prev` is the last state, `rawIdle`
+  // the emitter's flag for THIS poll, `nowMs` the tick clock.
+  function parkedNext(prev, rawIdle, nowMs, cfg) {
+    var state =
+      isObj(prev) && typeof prev.parked === "boolean"
+        ? { parked: prev.parked, raw: prev.raw === true, sinceMs: prev.sinceMs }
+        : parkedInit();
+    // Only a strict `true` is idle. carouselIdle already applies this rule
+    // upstream; re-applying it means the reducer cannot be broken by a second
+    // caller that hands it a raw payload field instead.
+    var raw = rawIdle === true;
+    // A hold is a MEASURED duration. With no readable clock there is no
+    // measurement, so return the state completely untouched -- including the
+    // reading. Recording the reading without a timestamp would let the NEXT
+    // real clock credit this run's elapsed time to a reading taken during the
+    // previous one, which is a fabricated hold assembled from two halves.
+    if (!(typeof nowMs === "number" && isFinite(nowMs))) return state;
+    var anchored =
+      typeof state.sinceMs === "number" && isFinite(state.sinceMs);
+    var held = anchored ? nowMs - state.sinceMs : -1;
+    // Start a fresh run when the reading CHANGED, when there is no anchor yet
+    // (boot), or when the elapsed time came back negative -- an NTP step back
+    // on a Pi with no RTC. RE-ANCHORING ON EVERY CHANGE IS WHAT MAKES THIS
+    // HYSTERESIS RATHER THAN AN ACCUMULATOR: six 2 s blips must not add up to
+    // one 3 s run, or the flicker this story removes just takes longer to
+    // arrive. An impossible elapsed time is not a measurement either -- left in
+    // place it strands the signal for the size of the step, which on the OFF
+    // edge means the ⋮ stays up while the car drives away.
+    if (raw !== state.raw || held < 0) {
+      state.raw = raw;
+      state.sinceMs = nowMs;
+      return state;
+    }
+    // Each edge is gated on the READING as well as the clock, so a threshold
+    // the clock happens to pass can never fire the WRONG transition: a car sat
+    // idle in the driveway for two minutes must not un-park itself.
+    var c = resolveCarouselConfig(cfg);
+    if (raw && !state.parked && held >= c.parkedOnS * 1000) state.parked = true;
+    else if (!raw && state.parked && held >= c.parkedOffS * 1000) state.parked = false;
+    return state;
   }
 
   // -------------------------------------------------------------------------
@@ -2404,6 +2496,8 @@
     isLongPressComplete: isLongPressComplete,
     exceedsMoveCancel: exceedsMoveCancel,
     menuAccess: menuAccess,
+    parkedInit: parkedInit,
+    parkedNext: parkedNext,
     alertableCodes: alertableCodes,
     takeoverView: takeoverView,
     takeoverShouldShow: takeoverShouldShow,
@@ -3394,8 +3488,15 @@
       btn.hidden = !access.tapVisible;
     }
 
-    function updateMenuAccess(sysData) {
-      applyMenuAccess(document.getElementById("menu-btn"), menuAccess(sysData));
+    // US-511: the debounce state lives HERE, in the enclosing scope, and that
+    // placement is the whole feature. Initialised inside updateMenuAccess it
+    // would reset on every 250 ms tick, no hold could ever reach 8 s, and the
+    // ⋮ would simply never appear -- with every pure test above still green.
+    var parkedSignal = parkedInit();
+
+    function updateMenuAccess(sysData, nowMs) {
+      parkedSignal = parkedNext(parkedSignal, carouselIdle(sysData), nowMs, carouselCfg);
+      applyMenuAccess(document.getElementById("menu-btn"), menuAccess(parkedSignal.parked));
     }
 
     function setupMenu() {
@@ -4222,7 +4323,10 @@
         // US-490: track the parked/live context every tick from the SAME fetched
         // state (no extra fetch). An unavailable system-status leaves sysData
         // null here, which fails closed to a hidden ⋮ -- long-press still opens.
-        updateMenuAccess(sysData);
+        // US-511: this now feeds a DEBOUNCE, so it is handed the shared tick
+        // clock (US-496) rather than reading one of its own -- the affordance
+        // resolves against the same instant as everything else painted here.
+        updateMenuAccess(sysData, nowMs);
         // US-483-b: drive the display brightness from the states/light feed
         // (pure consumer -- never the sensor). A real STOP holds it >= the alarm
         // floor; an absent/stale feed holds the fixed default (honest fallback).

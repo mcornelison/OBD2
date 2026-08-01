@@ -442,7 +442,11 @@ def loadDisplayCarouselConfig(configPath: str) -> dict[str, Any] | None:
     """Read ``pi.display.carousel`` from config.json (US-506), fail-safe.
 
     The carousel navigation model's tuning SSOT: auto-rotate period, pause
-    self-expiry, and the swipe distance/velocity/travel thresholds.
+    self-expiry, the swipe distance/velocity/travel thresholds, and the US-511
+    parked-signal debounce (parkedOnS/parkedOffS). The section is passed through
+    WHOLESALE -- no key allow-list here -- so adding a tunable is a config +
+    display change with no server edit; the display's own resolver is what
+    rejects malformed values.
     """
     return _loadDisplaySection(configPath, "carousel")
 
