@@ -331,39 +331,64 @@ def test_nearestVisibleIndex_nothingVisible_isNull():
 # ---------------------------------------------------------------------------
 
 
-def test_dashboardHtml_shipsTheLightCardSlot():
-    """AC-1: the always-present Light card exists in the markup (the tick
-    discovers cards by [data-state], so no slot = no card, whatever the JS says)."""
+def test_dashboardHtml_shipsTheLightSlot():
+    """AC-1: the always-present light readout exists in the markup (the tick
+    renders from the DOM, so no slot = no readout, whatever the JS says).
+
+    RELOCATED BY US-507: it is now the Light SECTION of the merged Health card
+    rather than a standalone card. Still always-present, still a pure consumer
+    of the same states/light file that drives the auto-dim.
+    """
     html = _read(_HTML)
-    assert 'data-state="light"' in html
+    assert "health-light" in html
+    assert 'data-states="battery-health light ltft-trend"' in html
 
 
-def test_dashboardHtml_vehicleGatedCardShipsHidden():
-    """AC-3: the vehicle-dependent card carries the gate marker AND ships
-    `hidden`, so the pre-first-poll window -- when no state has been read yet --
-    shows no vehicle card. Same fail-closed shape as the US-490 `⋮` button."""
+def test_dashboardHtml_vehicleGatedSurfaceFailsClosed():
+    """AC-3: the vehicle-dependent surface fails CLOSED before the first poll --
+    when nothing has been read and "is a car connected?" is genuinely unknown.
+    Same shape as the US-490 `⋮` button.
+
+    SUPERSEDED IN FORM BY US-507, not in substance. The gated surface used to be
+    a whole CARD, which failed closed by shipping `hidden`. It is now a SECTION
+    of an always-visible card, which cannot vanish without leaving a hole -- so
+    it fails closed by shipping `data-gated="true"` and speaking the gate
+    instead. The property under test is identical: no vehicle reading is shown
+    until a vehicle is positively confirmed.
+    """
     html = _read(_HTML)
-    match = re.search(r"<section[^>]*data-vehicle-gated[^>]*>", html)
-    assert match is not None, "no card carries data-vehicle-gated"
-    assert " hidden" in match.group(0), "the vehicle-gated card must ship hidden"
+    match = re.search(r'<section[^>]*class="health-section health-fueltrim"[^>]*>', html)
+    assert match is not None, "no fuel-trim section in the markup"
+    assert 'data-gated="true"' in match.group(0), (
+        "the vehicle-gated section must ship gated, not open"
+    )
 
 
-def test_dashboardHtml_ltftIsTheVehicleGatedCard():
-    """The LTFT card is the vehicle-dependent card in this generation (its
+def test_dashboardHtml_fuelTrimIsTheVehicleGatedSurface():
+    """Fuel trim is the vehicle-dependent readout in this generation (its
     emitter is orphaned -- Slice 2 revisits it with Spool). Gating it is what
-    takes it out of the always-present set without faking or deleting it."""
+    takes it out of the always-available set without faking or deleting it --
+    and, per US-507, the Battery + Light sections beside it are NOT gated,
+    because they are Pi-local sensors that read on a bench with no car."""
     html = _read(_HTML)
-    match = re.search(r"<section[^>]*data-vehicle-gated[^>]*>", html)
-    assert 'data-state="ltft-trend"' in match.group(0)
+    gated = re.findall(r'<section[^>]*data-gated="true"[^>]*>', html)
+    assert len(gated) == 1, f"exactly one surface should ship gated, found {gated}"
+    assert "health-fueltrim" in gated[0]
 
 
-def test_carouselJs_tickRendersTheLightCard():
-    """The Light card is wired into the poll -- a view function nothing calls
-    renders nothing (the US-494 default-argument lesson)."""
+def test_carouselJs_tickRendersTheLightReadout():
+    """The light readout is wired into the poll -- a view function nothing calls
+    renders nothing (the US-494 default-argument lesson).
+
+    US-507: the tick now reaches it through the merged Health card, so the
+    wiring pin follows the call chain that actually runs.
+    """
     js = _read(_JS)
     tick = _fnBody(js, "tick")
-    assert 'name === "light"' in tick
-    assert "renderLightCard" in tick
+    assert "healthCardView" in tick
+    assert "renderHealthCard" in tick
+    section = _fnBody(js, "renderHealthSection")
+    assert "renderLightBody" in section
 
 
 def test_carouselJs_tickAppliesTheVehicleGate():
@@ -392,12 +417,14 @@ def test_carouselJs_moveUsesNextVisibleIndex():
     assert "nextVisibleIndex" in move
 
 
-def test_carouselJs_lightCardReusesTheTokenizedTile():
-    """AC-4: the new card renders through the shared `.tile` component, which is
-    already bound to specs/UI/tokens.css. A bespoke light-card palette is exactly
-    the drift the SSOT rule exists to prevent."""
+def test_carouselJs_lightReadoutReusesTheTokenizedTile():
+    """AC-4: the light readout renders through the shared `.tile` component,
+    which is already bound to specs/UI/tokens.css. A bespoke light palette is
+    exactly the drift the SSOT rule exists to prevent -- and it survives the
+    US-507 merge: the renderer took a BODY element instead of a card, it did not
+    grow a palette of its own."""
     js = _read(_JS)
-    render = _fnBody(js, "renderLightCard")
+    render = _fnBody(js, "renderLightBody")
     assert "appendTile" in render
 
 

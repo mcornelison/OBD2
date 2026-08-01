@@ -3272,11 +3272,43 @@ styling:
 |---|---|---|---|
 | Standby / idle home | *(none -- `data-idle-home`)* | always-present | composed from the cards below |
 | System Status (Pi Health) | `system-status` | always-present | `unavailable` |
-| Battery Health | `battery-health` | always-present | `unavailable` |
-| **Light** | `light` | always-present | **"no data -- light feed absent"** |
+| **Health** (US-507) | *(multi -- `data-states`)* | always-present | **per SECTION, see below** |
 | **Motion (IMU)** | `imu` | always-present | **"no data -- IMU feed absent"** |
 | Alerts (DTC) | `dtc` | always-present | **"no data -- codes not read"** |
-| LTFT Trend | `ltft-trend` | **vehicle-gated** | *not rendered at all* |
+
+##### The Health card is MULTI-SOURCE (US-507 / F-124)
+
+The CIO called six screens too many, so the three slow-moving reference
+readouts merged into one card. `data-states` (plural) names every state file the
+card consumes; `tick()` fetches each through a per-tick cache and renders a
+**section** per source:
+
+| Section | state | Gated? | Absence renders |
+|---|---|---|---|
+| Battery | `battery-health` | no | "no data -- UPS feed absent" |
+| Light | `light` | no | "no data -- light feed absent" |
+| Fuel Trim (was "LTFT Trend") | `ltft-trend` | **vehicle-gated** | **"no engine data"** |
+
+Two properties are load-bearing and are pinned by test:
+
+- **Availability is resolved PER SECTION, never per card.** On separate cards a
+  dead UPS could only blank its own card. Routed through one card-level check it
+  would blank the two live instruments beside it -- a fabricated *"nothing is
+  readable"* built out of one real fault.
+- **The gate SPEAKS instead of hiding.** A standalone card could be `hidden`; a
+  section inside an always-visible card cannot vanish without leaving a hole, so
+  the same fact is rendered in words. A gated section carries **no view at
+  all**, so a stale `ltft-trend` file left from the last drive cannot paint a
+  confident trim for an engine that is not running. It ships
+  `data-gated="true"` to fail closed before the first poll.
+
+Note the vocabulary now has **three** dispositions, not two: *gated* ("does not
+apply"), *no-data* ("the instrument is broken"), and a live reading. Collapsing
+the first two would tell an operator with a running engine that there is no
+engine.
+
+The card-level `data-vehicle-gated` mechanism below is **retained with zero
+current members** -- the Slice-2 Live Engine Data card is its next user.
 
 **Gray vs hidden is a real distinction.** Gray says *"this instrument is
 broken/unreadable"*; hidden says *"this instrument does not apply right now."* On
@@ -3964,10 +3996,14 @@ green. `makeLtftTrendEmitter()` is the same best-effort atomic
 `ensureStatesDir`/`writeStateAtomic` (C-5) seam as the sibling emitters (write
 failures logged, never raised).
 
-**Render (`carousel.js`).** `ltftTrendView()` (pure) + `renderLtftTrendCard()`
+**Render (`carousel.js`).** `ltftTrendView()` (pure) + `renderLtftTrendBody()`
 paint a multi-drive bar row, each bar coloured by its **own** drift level so a
->±10% drive is visibly not-green; `tick()` dispatches on
-`data-state='ltft-trend'`. Defense-in-depth: the view re-forces `'insufficient'`
+>±10% drive is visibly not-green. **US-507 relocated the surface**: it is now
+the **"Fuel Trim"** section of the merged Health card, reached through
+`healthCardView()`/`renderHealthCard()` rather than a `data-state` dispatch. The
+retitle is a LABEL change only -- the emitter, the thresholds, the classifier
+and the insufficient guard are all untouched, so Spool's LTFT semantics are
+preserved exactly. Defense-in-depth: the view re-forces `'insufficient'`
 when `sufficient !== true`, so a mislabeled state can't paint green. As with the
 other emitters, the runtime `emit()` wiring is owner/deploy-side (no `src` call
 site yet), matching the shipped cards.

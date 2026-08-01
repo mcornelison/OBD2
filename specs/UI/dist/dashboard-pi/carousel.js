@@ -782,6 +782,117 @@
   }
 
   // -------------------------------------------------------------------------
+  // US-507 Health card (F-124) -- the MERGED Battery + Light + Fuel Trim card.
+  // The CIO called six screens too many, so the three slow-moving reference
+  // readouts that share a glance became one card (6 -> 4). This is a pure
+  // RELOCATION: each section still consumes its OWN state file through the SAME
+  // view function it used as a standalone card, so every honest-instrument
+  // state moves with it (battery F-9 stale-green guard, light null/stale
+  // individual graying, fuel-trim insufficient-never-green).
+  //
+  // Two properties are load-bearing, and both are things the merge could
+  // plausibly have broken:
+  //
+  //   INDEPENDENCE -- availability is resolved PER SECTION, never per card. On
+  //   separate cards a dead UPS could only blank its own card; routed through
+  //   one card-level check it would blank two live instruments beside it, which
+  //   is a fabricated "nothing is readable" built out of one real fault.
+  //
+  //   THE GATE SPEAKS INSTEAD OF HIDING -- fuel trim stays vehicle-gated, but a
+  //   standalone card could be HIDDEN ("does not apply right now") whereas a
+  //   section inside an always-visible card cannot vanish without leaving a
+  //   hole. So the same fact is rendered in words: "no engine data". The gate
+  //   is evaluated BEFORE the data, and a gated section carries no view at all
+  //   -- a stale ltft-trend file left on disk from the last drive is exactly
+  //   the input that would otherwise let a bench paint a confident fuel trim
+  //   for an engine that is not running.
+  // -------------------------------------------------------------------------
+
+  // The gated wording. Deliberately NOT the no-data vocabulary: "does not apply"
+  // and "is broken" are different facts, and telling an operator with a running
+  // engine that there is no engine is the worse of the two mistakes.
+  var FUEL_TRIM_GATED_REASON = "no engine data";
+
+  // The section table IS the card's order + vocabulary (one place, so a retitle
+  // or a re-order cannot land in the markup and the renderer out of step).
+  // `noData` is the section-scoped fallback for a source with no entry in
+  // NO_DATA_VIEWS -- stacked three deep, a bare "unavailable" no longer says
+  // WHICH of three readouts went silent (the card title used to supply that).
+  var HEALTH_SECTIONS = [
+    {
+      key: "battery-health", title: "Battery", cls: "health-battery",
+      noData: { label: "BATTERY", reason: "no data -- UPS feed absent" },
+    },
+    {
+      key: "light", title: "Light", cls: "health-light",
+      noData: { label: "AMBIENT", reason: "no data -- light feed absent" },
+    },
+    {
+      key: "ltft-trend", title: "Fuel Trim", cls: "health-fueltrim",
+      vehicleGated: true,
+      noData: { label: "FUEL TRIM", reason: "no data -- trend not computed" },
+    },
+  ];
+
+  function healthSectionSpecs() {
+    return HEALTH_SECTIONS;
+  }
+
+  // Build the per-source view. Kept as a switch on the key rather than a
+  // function reference in the table so the three signatures (which genuinely
+  // differ -- only the light view needs the dim config + a clock) stay explicit.
+  function healthSourceView(key, data, cfg, nowMs) {
+    if (cardAvailability(data) !== "available") return null;
+    if (key === "battery-health") return batteryHealthView(data);
+    if (key === "light") return lightView(data, cfg, nowMs);
+    if (key === "ltft-trend") return ltftTrendView(data);
+    return null;
+  }
+
+  function healthSectionView(spec, data, sysData, cfg, nowMs) {
+    var base = { key: spec.key, title: spec.title, cls: spec.cls };
+    // The gate is checked FIRST and short-circuits: a gated section must carry
+    // no reading, not a suppressed one (nothing downstream can leak what was
+    // never derived).
+    if (spec.vehicleGated && !vehicleConnected(sysData)) {
+      base.gated = true;
+      base.unavailable = false;
+      base.na = { label: spec.noData.label, reason: FUEL_TRIM_GATED_REASON };
+      base.view = null;
+      return base;
+    }
+    var view = healthSourceView(spec.key, data, cfg, nowMs);
+    base.gated = false;
+    if (view === null) {
+      base.unavailable = true;
+      // Reuse the shipped whole-card wording where one exists (light), so the
+      // silent-instrument phrasing lives in exactly one place.
+      base.na = noDataView(spec.key) || spec.noData;
+      base.view = null;
+      return base;
+    }
+    base.unavailable = false;
+    base.na = null;
+    base.view = view;
+    return base;
+  }
+
+  // `states` is the per-tick map of state name -> payload. Each section resolves
+  // independently, so a section is never blanked by a sibling's fault.
+  function healthCardView(states, sysData, cfg, nowMs) {
+    var src = isObj(states) ? states : {};
+    var sections = [];
+    for (var i = 0; i < HEALTH_SECTIONS.length; i++) {
+      var spec = HEALTH_SECTIONS[i];
+      var data = Object.prototype.hasOwnProperty.call(src, spec.key)
+        ? src[spec.key]
+        : null;
+      sections.push(healthSectionView(spec, data, sysData, cfg, nowMs));
+    }
+    return { sections: sections };
+  }
+
+  // -------------------------------------------------------------------------
   // US-403 System Setup menu -- pure, node-testable logic (D-6/D-7/A-7/A-8).
   // The menu is reachable by a deliberate ~5s long-press (a filling ring; an
   // early release cancels) OR the top-bar `⋮`. Service control is on an
@@ -1915,6 +2026,9 @@
     batteryHealthView: batteryHealthView,
     fmtLtftPct: fmtLtftPct,
     ltftTrendView: ltftTrendView,
+    healthSectionSpecs: healthSectionSpecs,
+    healthSectionView: healthSectionView,
+    healthCardView: healthCardView,
     serviceMenuItems: serviceMenuItems,
     requiresConfirm: requiresConfirm,
     actionRequest: actionRequest,
@@ -2170,10 +2284,13 @@
       appendTile(body, naTile(label, reason));
     }
 
-    function renderBatteryHealthCard(card, view) {
-      var body = card.querySelector(".card-body");
-      if (!body) return;
-      // US-429: UPS source unavailable -> the whole card is a typed NA.
+    // US-507: the three merged renderers take a BODY element, not a card. They
+    // used to reach for their own `.card-body`, which silently assumed one
+    // source per card -- the assumption the Health card overturns. Taking the
+    // slot as an argument is what lets three of them paint into one card.
+    function renderBatteryHealthBody(body, view) {
+      if (!body || !view) return;
+      // US-429: UPS source unavailable -> the whole SECTION is a typed NA.
       if (view.unavailable) {
         renderNaBody(body, view.label, view.reason);
         return;
@@ -2194,8 +2311,7 @@
     // Two tiles through the SHARED `.tile` component, which is already bound to
     // specs/UI/tokens.css -- the Light card introduces no palette of its own
     // (AC-4: a bespoke local colour is exactly the drift the SSOT prevents).
-    function renderLightCard(card, view) {
-      var body = card.querySelector(".card-body");
+    function renderLightBody(body, view) {
       if (!body || !view) return;
       if (view.unavailable) {
         renderNaBody(body, "AMBIENT", view.reason);
@@ -2375,15 +2491,46 @@
       parent.appendChild(bars);
     }
 
-    function renderLtftTrendCard(card, view) {
-      var body = card.querySelector(".card-body");
-      if (!body) return;
+    function renderLtftTrendBody(body, view) {
+      if (!body || !view) return;
       body.textContent = "";
       // The headline tile carries the verdict level (insufficient -> not green).
       appendTile(body, view.headline);
       // The per-drive bars render whenever any real point exists (0-1 points is
       // still shown honestly under an insufficient headline, never fabricated).
       if (view.points.length > 0) appendLtftBars(body, view.points);
+    }
+
+    // --- US-507 merged Health card DOM render (browser only) ----------------
+
+    // One section. The gate + the fault BOTH render the shared typed-NA tile,
+    // but they carry different words and are told apart in the DOM by
+    // `data-gated` -- so the render backstop can prove a bench painted the GATE
+    // rather than a fabricated trim, which is the one thing a pure-function
+    // test can never see.
+    function renderHealthSection(root, sec) {
+      if (!root || !sec) return;
+      var body = root.querySelector(".health-section-body");
+      if (!body) return;
+      root.setAttribute("data-gated", sec.gated ? "true" : "false");
+      if (sec.gated || sec.unavailable) {
+        renderNaBody(body, sec.na.label, sec.na.reason);
+        return;
+      }
+      if (sec.key === "battery-health") renderBatteryHealthBody(body, sec.view);
+      else if (sec.key === "light") renderLightBody(body, sec.view);
+      else if (sec.key === "ltft-trend") renderLtftTrendBody(body, sec.view);
+    }
+
+    // Each section is located by its OWN class, never by a shared attribute
+    // selector: three sections carry the same attribute name, so an
+    // attribute-presence match would resolve all three to the first one.
+    function renderHealthCard(card, view) {
+      if (!card || !view || !view.sections) return;
+      for (var s = 0; s < view.sections.length; s++) {
+        var sec = view.sections[s];
+        renderHealthSection(card.querySelector("." + sec.cls), sec);
+      }
     }
 
     // US-482 letterbox: uniformly scale the fixed 480x320 #stage design box to
@@ -3312,27 +3459,58 @@
         var dtcData = null; // fetched once (the Alerts card + ribbon/takeover share it)
         var sysData = null; // shared with the idle-home card (one fetch per tick)
         var batteryData = null;
-        var lightData = null; // shared: the US-496 Light card + the auto-dim
-        var lightFetched = false;
+        var lightData = null; // shared: the US-507 Health card + the auto-dim
         // US-496: ONE clock for the whole tick, so the Light card's freshness
         // verdict and the brightness the screen is actually set to are resolved
         // against the same instant -- the card can never contradict the surface.
         var nowMs = Date.now();
+        // US-507: ONE fetch per state name per tick, however many surfaces
+        // consume it. states/light now feeds BOTH the Health card and the
+        // auto-dim; fetching it twice could resolve the printed reading and the
+        // brightness against two different samples. The cache also removes the
+        // old "whichever card happened to fetch it" coupling -- the shared vars
+        // are now assigned in exactly one place, so they are populated no matter
+        // which surface asked first.
+        var fetched = {};
+        async function stateOnce(name) {
+          if (Object.prototype.hasOwnProperty.call(fetched, name)) return fetched[name];
+          var payload = await fetchState(name);
+          fetched[name] = payload;
+          if (name === "dtc") dtcData = payload;
+          else if (name === "system-status") sysData = payload;
+          else if (name === "battery-health") batteryData = payload;
+          else if (name === "light") lightData = payload;
+          return payload;
+        }
         for (var c = 0; c < cards.length; c++) {
           var card = cards[c];
-          var name = card.getAttribute("data-state");
-          if (!name) continue;
           // US-496: a gated-off card is not rendered and not fetched. It is
           // display:none -- polling it 4x/s would be a read nobody can see.
           if (card.hidden) continue;
-          var data = await fetchState(name);
-          if (name === "dtc") dtcData = data;
-          else if (name === "system-status") sysData = data;
-          else if (name === "battery-health") batteryData = data;
-          else if (name === "light") {
-            lightData = data;
-            lightFetched = true;
+          // US-507: a MULTI-SOURCE card declares every state file it consumes.
+          // Its availability is resolved PER SECTION below, deliberately NOT
+          // through the card-level path -- one dead feed must not blank the two
+          // live instruments beside it.
+          var group = card.getAttribute("data-states");
+          if (group) {
+            var names = group.split(/\s+/).filter(Boolean);
+            var states = {};
+            for (var n = 0; n < names.length; n++) {
+              states[names[n]] = await stateOnce(names[n]);
+            }
+            // The gate resolves against the SAME system-status the rest of the
+            // tick uses (cached -- free when another card already read it), so
+            // the fuel-trim gate can never disagree with the vehicle state the
+            // top bar and the idle-home card were rendered against.
+            renderHealthCard(
+              card,
+              healthCardView(states, await stateOnce("system-status"), displayAutoDim, nowMs)
+            );
+            continue;
           }
+          var name = card.getAttribute("data-state");
+          if (!name) continue;
+          var data = await stateOnce(name);
           var avail = cardAvailability(data);
           card.classList.toggle("unavailable", avail === "unavailable");
           if (avail === "unavailable") {
@@ -3349,13 +3527,8 @@
           // available -> the per-card renderer owns the body.
           if (name === "system-status") {
             renderSystemStatusCard(card, systemStatusView(data), glyphEls);
-          } else if (name === "battery-health") {
-            var bv = batteryHealthView(data);
-            if (bv) renderBatteryHealthCard(card, bv);
           } else if (name === "dtc") {
             renderAlertsCard(card, alertsCardView(data));
-          } else if (name === "light") {
-            renderLightCard(card, lightView(data, displayAutoDim, nowMs));
           } else if (name === "imu") {
             // US-497: the trail is the ONE piece of client state on this card
             // (Atlas Q-B -- animate from the polled values). It is advanced
@@ -3369,10 +3542,12 @@
               gTrail = [];
             }
             renderImuCard(card, iv, gTrail);
-          } else if (name === "ltft-trend") {
-            var lv = ltftTrendView(data);
-            if (lv) renderLtftTrendCard(card, lv);
           }
+          // US-507: the ltft-trend branch is GONE, not merely unreachable. It
+          // still named `renderLtftTrendCard`, which this story renamed -- a
+          // ReferenceError waiting on the day something re-declares a card with
+          // that state. A branch no card can reach is not harmless: nothing
+          // executes it, so nothing proves it still resolves.
         }
         // US-496 AC-3: reveal/hide the vehicle-dependent cards from the state
         // just read. An unavailable system-status leaves sysData null here, which
@@ -3391,10 +3566,11 @@
         // US-483-b: drive the display brightness from the states/light feed
         // (pure consumer -- never the sensor). A real STOP holds it >= the alarm
         // floor; an absent/stale feed holds the fixed default (honest fallback).
-        // US-496: reuse the payload the Light card already fetched this tick;
-        // only fall back to a fetch when no Light card slot consumed it (so the
-        // auto-dim keeps working even if the card is ever removed from the markup).
-        if (!lightFetched) lightData = await fetchState("light");
+        // US-507: `stateOnce` is idempotent, so this REUSES the payload the
+        // Health card's Light section already read and only performs a real
+        // fetch if no surface consumed it -- the auto-dim keeps working even if
+        // the section is ever removed from the markup, with no flag to forget.
+        await stateOnce("light");
         applyBrightness(
           brightnessLevel(
             lightData,

@@ -238,9 +238,18 @@ def test_js_exports_theBrightnessApi():
 
 
 def test_js_tick_fetchesLightState():
-    """The consumer reads states/light (never the sensor) each poll."""
+    """The consumer reads states/light (never the sensor) each poll.
+
+    US-507 moved the read behind the per-tick `stateOnce` cache (the Health
+    card's Light section and the auto-dim now share one payload, so fetching it
+    twice could resolve the printed reading and the brightness against two
+    different samples). The invariant is unchanged and is what is asserted: the
+    poll requests `light`, and that request goes through the STATE-FILE fetcher
+    -- the consumer never touches the sensor.
+    """
     js = _read(_JS)
-    assert 'fetchState("light")' in js
+    assert 'stateOnce("light")' in js
+    assert "await fetchState(name)" in js
 
 
 def test_js_appliesBrightnessViaCssVar():
