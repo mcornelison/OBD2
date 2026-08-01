@@ -1,17 +1,17 @@
 ---
-sprint: 67
+sprint: 68
 version: V0.29.23
 status: draft
 createdAt: 2026-07-31
 createdBy: Marcus (PM)
-selectedStories: [US-501, US-502, US-503, US-504, US-505, US-506, US-507, US-508, US-509, US-510, US-511, US-512, US-513]
-forksFrom: dev @ (recorded at prd_to_sprint.py conversion; AFTER the V0.29.22 capture hotfix lands + deploys)
+selectedStories: [US-506, US-507, US-508, US-509, US-510, US-511]
+forksFrom: dev @ (recorded at prd_to_sprint.py conversion; forks from dev after V0.29.22 landed)
 sprintJsonPath: offices/ralph/sprint.json
-epics: E-001 (UI/UX Polish) + E-OPS (F-120 BT reliability)
-features: F-123 (dashboard truthfulness wiring), F-124 (round-2 UI design), F-120 (BT connectivity reliability)
-theme: One combined sprint (CIO 2026-07-31) — UI round 2 (Iris F-124 design + F-123 wiring, reconciled) + BL-025 capture hardening (#3/#4). Will likely /resize-split.
+epic: E-001 (UI/UX Polish)
+feature: F-124 (round-2 UI design)
+theme: Sprint A of the /resize-split (was a 13-story combined sprint; >10 hard limit). Pi UI round 2 (F-124) -- 6 stories, dispatch-first. The wiring (F-123) + capture hardening (F-120) moved to Sprint B / V0.29.24. Atlas design-gate PASS; his rulings (states/imu contract, TD-065 tokens) folded into US-508/US-510 DoDs -> UNGATED.
 designSpecs: offices/uidevloper/proposals/2026-07-31-pi-ui-round2-f124.md (Iris, CIO-locked) + 2026-07-27-pi-live-instrument-card.md; triage SSOT offices/pm/decisions/2026-07-31-ui-feedback-round2-triage.md
-atlasReview: PENDING — design-gate review requested; two rulings gate US-508 (states/imu contract) + US-510 (TD-065 token values); Atlas offered to gate the BL-025 #3/#4 stories too.
+atlasReview: "PASS 2026-07-31 -- 3 rulings folded into DoDs (US-508 states/imu contract + transport; US-510 TD-065 token values; US-512 reconnect shape in Sprint B). Detail in offices/pm/inbox/2026-07-31-from-atlas-v0.29.23-design-gate-PASS-plus-rulings.md"
 ---
 
 # PRD: V0.29.23 — UI round 2 + capture hardening (combined sprint)

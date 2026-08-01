@@ -672,6 +672,18 @@
       "affectedBySprints": [
         67
       ]
+    },
+    {
+      "id": "F-124",
+      "name": "Pi dashboard round-2 UI design (nav wrap/auto-rotate, 4-card consolidation, live/motion card, drill-down, fidelity, parked kebab)",
+      "category": "lifecycle",
+      "lastValidated": null,
+      "validatedBy": null,
+      "validationMethod": "manual_attestation",
+      "staleThresholdDays": 30,
+      "affectedBySprints": [
+        68
+      ]
     }
   ]
 }

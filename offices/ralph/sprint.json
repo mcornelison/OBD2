@@ -1,98 +1,218 @@
 {
   "schemaVersion": "2.0.0",
-  "sprint": 67,
-  "version": "V0.29.22",
-  "createdFromPRD": "offices/pm/prds/prd-V0.29.22-capture-hotfix.md",
+  "sprint": 68,
+  "version": "V0.29.23",
+  "createdFromPRD": "offices/pm/prds/prd-V0.29.23-ui-round2-plus-capture-hardening.md",
   "stories": [
     {
-      "id": "US-514",
-      "title": "P0: bake the BT rfkill-unblock fix into deploy (make the live capture fix repo-managed + reflash-proof)",
-      "parent": "F-120",
-      "epicId": "E-OPS",
-      "type": "issue",
-      "size": "S",
-      "status": "code-complete",
-      "passes": true,
+      "id": "US-506",
+      "title": "Carousel navigation model: wrap (skip gated) + auto-rotate + velocity swipe-pause",
+      "parent": "F-124",
+      "epicId": "E-001",
+      "type": "normal",
+      "size": "L",
+      "status": "sprint-ready",
+      "passes": false,
       "acceptance": [
-        "add deploy/eclipse-rfkill-unblock.service: oneshot `rfkill unblock all`, After=systemd-rfkill.service bluetooth.service, WantedBy=multi-user.target (exactly the unit Atlas installed live tonight)",
-        "add a deploy-pi.sh step that installs + enables the unit (sync-if-changed, idempotent) AND clears any stale /var/lib/systemd/rfkill/*:bluetooth block state on deploy",
-        "full implementation spec (exact unit + step + acceptance) is in Ralph's inbox: offices/ralph/inbox/2026-07-31-from-atlas-bake-rfkill-unblock-into-deploy.md -- build to it",
-        "does NOT use deploy --init (a normal deploy makes it repo-managed; --init is the exact path that would have wiped the live fix)",
-        "tests cover the deploy-pi.sh step (unit installed + enabled + stale-block cleared); ruff clean"
+        "#12 WRAP: swiping past the last visible card lands on the first and vice-versa; hidden/vehicle-gated cards are SKIPPED (wrap + auto-rotate traverse only visible cards) -- replaces the current clamp (carousel.js:36-48,143-150)",
+        "#13 AUTO-ROTATE: visible cards auto-cycle every autoRotateS (default 8 s) with a calm thin top progress bar (time-to-next, no countdown number)",
+        "#13 SWIPE-TO-PAUSE via a NEW velocity model (swipe is distance-only today): at pointer-up compute v=dx/dt; FAST if |v|>=0.6 px/ms OR travel>=~55% width -> advance + RESUME auto-rotate; SLOW/settle -> move one card + PAUSE; distance>=~40px still required to count as a swipe at all",
+        "tap on a card or opening any overlay PAUSES; auto-resume after resumeIdleS (default 45 s) of no interaction so it never freezes forever",
+        "all constants land in config under pi.display.carousel.* (autoRotateS/resumeIdleS/velocity threshold/distance thresholds); tests cover wrap-skips-gated + velocity slow-vs-fast + pause/resume; ruff clean"
       ],
       "validationCriteria": [
         {
-          "action": "after PM deploys this + reboots the Pi (bench, no car)",
-          "outcome": "`rfkill list` shows BOTH hci0:Bluetooth and phy0:Wireless LAN Soft blocked:no; `systemctl is-enabled eclipse-rfkill-unblock`=enabled; eclipse-obd active"
+          "action": "on the Pi with a gated card hidden: swipe past the last visible card; leave it untouched; do a slow settle swipe then a fast flick",
+          "outcome": "wraps to first (gated card skipped); auto-cycles at the interval; slow swipe pauses, fast flick resumes; 45 s idle auto-resumes"
         }
       ],
       "conditionalOutcomes": [],
-      "goal": "As the deploy path, I want the eclipse-rfkill-unblock fix in the repo + deploy-pi.sh, so the capture fix (currently live-on-Pi-by-hand) survives a reflash / deploy --init and can't silently revert to the soft-block that killed capture since 07-03.",
+      "goal": "As the operator, I want the carousel to wrap around, auto-cycle when I'm not touching it, and pause when I settle on a screen, so it's hands-off but never traps me or fights my swipe.",
       "tasks": [],
-      "feedback": {
-        "filesActuallyTouched": [
-          "deploy/eclipse-rfkill-unblock.service",
-          "deploy/deploy-pi.sh",
-          "src/pi/ops/unit_manifest.py",
-          "specs/architecture.md",
-          "tests/deploy",
-          "tests/pi/ops/test_unit_manifest.py",
-          "tests/pi/ops/test_obdctl.py"
-        ]
-      },
-      "completionNotes": "SHIPPED 38a8b14 (Ralph). eclipse-rfkill-unblock.service baked into deploy + deploy-pi.sh step_install_rfkill_unblock (top-level, NOT --init) + stale rfkill-block clear + arch 3.4. tests/deploy+pi/ops 407 passed, ruff clean, bash -n clean, 16 new tests RED-first. PM BLESSED 2 judgement calls: (1) added the unit to UNIT_MANIFEST/US-492 SSOT (prevents the exact drift the manifest exists to stop; consistent w/ rfcomm-bind; kioskVerbs empty so no kiosk reach over radios) -> obdctl covers 9 units; (2) test_unit_manifest EXPECTED_CANONICAL 8->9 literal + test_obdctl count DERIVED from len(CANONICAL_UNITS). OWED AT DEPLOY (PM): mypy at integration (unit_manifest is typed base consumed by obdctl+service_control); on-Pi reboot-verify acceptance 3+4 (rfkill both Soft blocked:no + service enabled/active + bluetoothctl Powered:yes) -- discharged when PM deploys V0.29.22."
+      "pmSignOff": "PM final sizing 2026-07-31 (Ledger/Marcus): L kept WHOLE -- 3 separable concerns but one cohesive surface; not 2+ Red so no mandatory sub-split. Flagged watch in devCheatSheet; if Ralph context-compresses mid-story, split at the concern boundary (US-506: wrap | auto-rotate+velocity; US-508: card re-issue | home-slot swap)."
     },
     {
-      "id": "US-515",
-      "title": "P0: fix scripts/pair_obdlink.sh (Trixie bluez prompt regex + display-capable agent) so a durable bond + trust is written",
-      "parent": "F-120",
-      "epicId": "E-OPS",
-      "type": "issue",
-      "size": "S",
-      "status": "code-complete",
-      "passes": true,
-      "feedback": {
-        "filesActuallyTouched": [
-          "scripts/pair_obdlink_driver.py",
-          "scripts/pair_obdlink.sh",
-          "tests/pi/obdii/test_pair_obdlink_driver.py",
-          "tests/pi/obdii/test_pair_script.py",
-          "specs/architecture.md",
-          "docs/bluetooth-setup.md",
-          "offices/pm/tech_debt/TD-070-bluetooth-setup-doc-shows-legacy-bluetoothctl-prompt.md"
-        ]
-      },
-      "completionNotes": "BENCH HALF DONE, all 4 AC met. ENGINE-ON acceptance is Spool's and is NOT discharged here.\n\nI CAPTURED THE REAL BYTES BEFORE WRITING THE MATCHER, and that is the whole story of this story. Atlas's note described both bugs accurately and I would STILL have shipped a half-fix from the description alone. Recorded a live bluetoothctl session off the Pi (bluez 5.82, adapter 88:A2:9E:84:46:1D): the prompt is `\\x1b[0;94m[bluetoothctl]> \\x1b[0m`. The obvious fix -- swap `#` for `>` -- leaves a SECOND trap armed, because THE ANSI ESCAPE ITSELF CONTAINS A `[`, so the old greedy `\\[.+\\]#` spans from the escape into the prompt even on a `#` box. One regex, two independent defects, and only the raw bytes show the second. PROMPT_PATTERN now forbids `[`/`]` inside the bracket body and accepts either terminator, so legacy `[bluetooth]#` boxes keep working (US-475's DoD asked for that).\n\nFREE FINDING FROM THE SAME CAPTURE, load-bearing for BL-025: `devices Paired` returned EMPTY -- there is NO bond of any kind on this Pi, on any device. That turns BL-025's bond-less diagnosis from inference into a measurement. Radio reads Powered: yes, so US-514's rfkill fix is holding. Recorded in specs/architecture.md 3.4.\n\nTHE REAL DELIVERABLE WAS NEITHER BUG -- IT WAS THE HEREDOC. The driver lived in `python3 - <<'PYEOF'`. Heredoc code cannot be imported, therefore cannot be tested, therefore two defects sat for months in a file that LOOKED maintained (proper header, stated invariants, shellcheck-clean wrapper). Moved to scripts/pair_obdlink_driver.py with the session logic pexpect-FREE behind a thin PexpectChild adapter (pexpect is Pi-only, absent on this Windows box -- otherwise the whole suite would skip). 33 driver tests + 5 wiring pins, all RED first.\n\nTHE HARNESS FOUND A BUG NOBODY KNEW ABOUT, and it is the argument for verbatim fixtures: bluetoothctl REDRAWS ITS PROMPT SEVERAL TIMES AT STARTUP, so `sendline(cmd); expect(PROMPT)` matches a STALE prompt and `before` returns terminal PADDING as if it were the command's reply -- a SILENT WRONG ANSWER (every `info` read would have parsed as 'no bond'), strictly worse than the hang I was sent to fix. Fixed by anchoring on each command's own pty echo first. A hand-written 'prompt goes here' fixture passes this happily.\n\nTHREE JUDGEMENT CALLS, PM/ATLAS MAY OVERRULE. (1) SUCCESS NOW MEANS A DURABLE BOND: 'Pairing successful' is bluez's word for the LINK, so the driver re-reads `info` after `trust` and FAILS unless Paired+Bonded+Trusted -- the old script printed '--- pair + trust successful ---' having checked nothing, which was a claim, not a reading, and reboot-survival is the actual AC. (2) IDEMPOTENT WITHOUT --force: an existing durable bond is reported and LEFT ALONE, because re-pairing needs the dongle powered (engine on) and a reflexive `remove` on a working bond strands the car; a PARTIAL bond IS cleared first, since that half-state is what makes `pair` fail AlreadyExists. (3) scan on -> wait -> scan OFF -> pair (Atlas's live-proven ordering; an active discovery competes with the handshake on one radio).\n\nAC-4 PRESERVED AND PROVEN: --dry-run still short-circuits before any preflight, and the existing sentinel-shim test (a fake bluetoothctl on PATH that writes a file if called) still passes. Ran the real --dry-run and read its 7 preview lines.\n\nTEST-HYGIENE TRAP WORTH COPYING: my regression pins grepped for `NoInputNoOutput` and `PYEOF` and BOTH FAILED -- on the header comments that DOCUMENT the defect. A pin that greps a defect's NAME fires on its own documentation. Strip comments + the module docstring (ast gives tree.body[0].lineno/end_lineno) and then TEST THE STRIPPER, because a stripper returning nothing makes every pin pass vacuously.\n\nUS-475 IS THIS SAME DEFECT, shelved 2026-07-20 as an 'architect hallucination'. Its own shelve note says revisit ONLY IF a real re-pair failure is observed on the Pi -- Atlas ran it live 07-31 and got the TIMEOUT, so the shelve trigger fired on its own terms. Its DoD is a strict subset of what shipped. RECOMMEND RETIRE-AS-DELIVERED so it is not built twice.\n\nGREEN (synchronous, in-loop): tests/pi/obdii = 674 passed / 1 skipped (shellcheck absent), exit 0. ruff clean on all 3 touched .py; bash -n clean. HOST GAPS unchanged (Sprints 64/65/66): make, black, mypy absent on this Windows box -- PM PLEASE RUN MYPY AT INTEGRATION, the driver is a new typed module. NO deploy change needed: sync_tree rsyncs scripts/ wholesale (verified against deploy-pi.sh's exclude list), so the driver lands beside the script.\n\nFILED TD-070: docs/bluetooth-setup.md's ~20 manual transcript blocks still show the legacy `[bluetooth]#` prompt + a non-display agent. Added a BANNER now so it stops actively misleading the operator; the full refresh is cheap to fold into the engine-on session while a real transcript is on screen.\n\nENGINE-ON GATE OWED (Spool/CIO, cannot be discharged from this box): dongle powered + solid blue LED -> `bash scripts/pair_obdlink.sh 00:04:3E:85:0D:FB` -> '--- pair + trust successful ---'; `bluetoothctl info` Paired/Bonded/Trusted all yes; then REBOOT and re-check, because reboot survival IS the acceptance and a green run is not. WATCH FOR: if it now reaches `pair` and fails THERE, that is PROGRESS not regression -- the old failure was a TIMEOUT before any command ran, so a bluez error at the pair step proves the transport fix worked and isolates the remaining fault to the SSP handshake / pair-mode.",
+      "id": "US-507",
+      "title": "Consolidate 6 cards to 4: merge Battery + Light + Fuel Trim into one 'Health' card",
+      "parent": "F-124",
+      "epicId": "E-001",
+      "type": "normal",
+      "size": "M",
+      "status": "sprint-ready",
+      "passes": false,
       "acceptance": [
-        "fix the pexpect prompt regex: it expects `\\[.+\\]#` but Trixie bluetoothctl prompts `[bluetoothctl]>` -> it times out and never pairs. Match the real prompt",
-        "change the agent from `NoInputNoOutput` (contradicts the script's own Confirm-passkey handling -> auth-fails on the OBDLink) to a display-capable agent (`DisplayYesNo`) so a durable bond + `trust` is written and survives reboot",
-        "full implementation spec (file:line for both bugs + acceptance) is in Ralph's inbox: offices/ralph/inbox/2026-07-31-from-atlas-fix-pair-obdlink-sh.md -- build to it",
-        "--dry-run still MUST NOT invoke bluetoothctl or any external BT stack (preserve the existing guard); tests cover the regex match + agent selection; ruff clean"
+        "merge the Battery Health + Light + LTFT cards into ONE 'Health' card (battery: verdict + cell V + checked-Nd-ago + runtime-to-cutoff, honest F-9 stale-green guard; light: TSL2591 lux + bright/dimmed state; fuel-trim: the former LTFT-Trend content)",
+        "retitle 'LTFT Trend' -> plain 'Fuel Trim' -- SEMANTICS UNCHANGED (Spool's LTFT meaning preserved); it stays vehicle-gated -> honest 'no engine data' on bench, never fabricated; Battery + Light stay available regardless",
+        "final carousel order: Home . System Status . Health . Alerts (drop the 2 now-merged standalone cards from the DOM/nav)",
+        "the merged card preserves every honest-instrument state of the three sources (insufficient/drift/gated/stale-green) -- relocation only, no new data or semantics",
+        "tests cover the merged card renders each sub-section's real state; the Fuel Trim gate still hides engine data on bench; ruff clean"
       ],
       "validationCriteria": [
         {
-          "action": "run the fixed script's dry-run + unit tests (code/logic layer, bench)",
-          "outcome": "the prompt regex matches `[bluetoothctl]>` + the agent is display-capable; dry-run stays inert. NOTE: full pair + bond-survives-reboot verification is engine-on -- Spool owns that live gate"
+          "action": "on the Pi (bench, engine off): swipe through the carousel and view the Health card",
+          "outcome": "4 cards total (Home/System Status/Health/Alerts); Health shows real battery + light; Fuel Trim reads 'no engine data' (gated), not a fabricated value"
+        }
+      ],
+      "conditionalOutcomes": [],
+      "goal": "As the operator, I want fewer screens -- Home, System Status, Health, Alerts -- so the reference readouts that share a glance live on one card instead of three separate swipes.",
+      "tasks": []
+    },
+    {
+      "id": "US-508",
+      "title": "Live/motion card re-issue to locked spec + home-slot idle-live swap",
+      "parent": "F-124",
+      "epicId": "E-001",
+      "type": "normal",
+      "size": "L",
+      "status": "sprint-ready",
+      "passes": false,
+      "acceptance": [
+        "re-issue the live card to the CIO-locked spec (2026-07-27-pi-live-instrument-card.md): scrolling compass TAPE under a fixed caret (NOT the built rotating-needle dial); add the GEAR glyph (Spool OBD derivation, '--' when ambiguous); AMBER at 0.6 g (not just the 1.0 g full-scale clamp); grade % + prominent altitude + ~15-min moving trend",
+        "HOME-SLOT SWAP: the home slot (position 1) shows the idle card when parked and the live instrument when driving -- one slot, two faces (not a separate always-present card)",
+        "honest fallback: stale/absent states/imu -> idle card, never a frozen motion display (states/imu is live @0x69)",
+        "[ATLAS CONTRACT RULED 2026-07-31 -- UNGATED] states/imu is the DERIVED display view produced by the ONE dedicated reader/bridge (single owner, DELTA-2); the display is a PURE consumer (never opens bus/I2C, never fuses). Fields: headingDeg 0-359 from mag TILT-COMPENSATED via accel (flag as known-limit if v1 non-compensated -- the READER owns this, not the display); gradePct=tan(pitch)*100; gLat/gLon = tilt-compensated horizontal accel in UNITS OF g; gMag=sqrt(gLat^2+gLon^2) derived-once (don't recompute in the g-circle); altitude = typed-NULL + reason:'no_source' (NO GPS/baro source today -- honest-NA, never fabricated/zeroed; field stays for zero-rework later); available(bool)+ts(fresh) -> stale ts falls to the idle twin. GEAR is NOT imu (Spool OBD derivation, separate producer -- keep it out of states/imu). Raw accel/gyro/mag/temp_c stay on the EDR bus + sensor_schema.py, NOT states/imu",
+        "[ATLAS TRANSPORT RULED] the states/imu bridge writes the derived file at ~10-15 Hz latest-wins/lossy (no history on the display path; durable EDR persist stays at the ADR persistHz -- one producer, two cadences); the live card polls states/imu at ~10 Hz off the existing states_http_server (localhost, no-store). Animates the tape+g-trail smoothly with NO new transport. A full SSE/stream is the future EDR-bus target, NOT required here -- do not block on it",
+        "tests cover tape/gear/0.6g-amber render + idle<->live swap + stale-IMU fallback; ruff clean"
+      ],
+      "validationCriteria": [
+        {
+          "action": "on the Pi: view the home card parked, then with live states/imu motion; move the board past 0.6 g",
+          "outcome": "parked shows idle; driving shows compass tape + gear + grade + altitude; amber engages at 0.6 g; stale IMU falls back to idle (never frozen)"
         }
       ],
       "conditionalOutcomes": [
-        "the code fix is bench/unit-testable now; the real pair + bond-survives-reboot is engine-on (Spool) and folds into the BL-025 validation drive"
+        "if Atlas's contract ruling changes the derived-field shape, the card binds to the ruled contract"
       ],
-      "goal": "As the pairing tool, I want pair_obdlink.sh to actually pair + trust + bond the OBDLink on Trixie bluez, so a durable bond survives reboot and re-pairing works instead of timing out.",
+      "goal": "As the driver, I want the home card to become the live instrument when I'm driving (and the calm idle card when parked), matching the design I approved, so the at-a-glance card shows real motion.",
+      "tasks": [],
+      "pmSignOff": "PM final sizing 2026-07-31 (Ledger/Marcus): L kept WHOLE -- 3 separable concerns but one cohesive surface; not 2+ Red so no mandatory sub-split. Flagged watch in devCheatSheet; if Ralph context-compresses mid-story, split at the concern boundary (US-506: wrap | auto-rotate+velocity; US-508: card re-issue | home-slot swap)."
+    },
+    {
+      "id": "US-509",
+      "title": "System-Status 'N ISSUE' drill-down overlay",
+      "parent": "F-124",
+      "epicId": "E-001",
+      "type": "normal",
+      "size": "M",
+      "status": "sprint-ready",
+      "passes": false,
+      "acceptance": [
+        "make the SYSTEM summary line tappable -> a drill-down overlay listing the degraded source(s) WORST-FIRST: each row = source label + state chip (amber/red) + honest reason + freshness ('seen Ns ago'); one row per non-OK source",
+        "a '<- Back' returns to the card (never traps); opening the overlay pauses auto-rotate (interaction)",
+        "honest-instrument: only actually-degraded sources appear (green sources never listed); mirror the DTC detail overlay pattern so the interaction language is consistent",
+        "no change to how source states are computed -- reads the existing per-tile levels; tests cover worst-first ordering + back + green-never-listed; ruff clean"
+      ],
+      "validationCriteria": [
+        {
+          "action": "with one source degraded, tap the SYSTEM summary line; then with all sources good",
+          "outcome": "opens a worst-first list of only the degraded source(s) with reason + freshness + Back; when all good, the summary is not a misleading tap target"
+        }
+      ],
+      "conditionalOutcomes": [],
+      "goal": "As the operator, I want to tap 'SYSTEM \u00b7 N ISSUE' and see which sources are degraded and why, so the summary isn't a dead end.",
+      "tasks": []
+    },
+    {
+      "id": "US-510",
+      "title": "Fidelity pass: restore approved copy + brand display face + TD-065 tokenization",
+      "parent": "F-124",
+      "epicId": "E-001",
+      "type": "normal",
+      "size": "M",
+      "status": "sprint-ready",
+      "passes": false,
+      "acceptance": [
+        "A-1 copy (ship-ahead, no gate): restore idle wordmark 'ECLIPSE' -> 'ECLIPSE OBD-II' and footer -> 'swipe for details . hold or the kebab for setup' (verbatim from the locked idle spec)",
+        "A-3 brand face (ship-ahead): add ONE --font-display face (inlined @font-face woff2 data-URI, CSP-safe -- NO font CDN) for the wordmark + card titles ONLY; keep ui-monospace for all data/values; add --font-display to specs/UI/tokens.css alongside --font-mono. Exact face is a CIO pick (Iris supplies the woff2 base64)",
+        "A-2 tokenization (TD-065): point the dashboard at existing tokens where they exist (#2a2f37 -> --neutral-chip-bg tokens.css:44; --critical-red #D32F2F already landed); derive takeover-gradient edges from --green-ok/--amber-warn (no raw hex in a surface)",
+        "[ATLAS TOKENS RULED 2026-07-31 -- UNGATED] promote --bg: #000000 + --surface: #111111 into specs/UI/tokens.css (SSOT) + repoint dashboard.css to var(--bg)/var(--surface) -- PURE consolidation, the values ARE the current ones so ZERO visual change (a diff that changes rendered pixels FAILS the gate). Define --destructive: #C62828 (destructive-action fill) + --destructive-border: #7F1D1D (confirm-box border); BOTH MUST be distinct from --critical-red #D32F2F (a destructive ACTION must not read as an alarm STATE -- that conflation is exactly what the split prevents). Iris applies which-surface-uses-which; reds are UI-affordance not safety, so Spool ratify optional/non-blocking",
+        "acceptance: no raw color hex in dashboard.css outside :root token defs (for the ungated literals); --font-display renders the wordmark/titles; ruff clean"
+      ],
+      "validationCriteria": [
+        {
+          "action": "on the Pi: read the idle wordmark + footer; inspect dashboard.css for raw hex outside :root",
+          "outcome": "wordmark 'ECLIPSE OBD-II' + correct footer in a brand display face; ungated color literals tokenized; Atlas-gated --bg/--surface/--destructive land once ruled"
+        }
+      ],
+      "conditionalOutcomes": [
+        "if Atlas has not ruled the --bg/--surface/--destructive values by build time, ship the ungated fidelity (copy+font+existing tokens) and carry the gated literals to a fast-follow rather than block the whole story"
+      ],
+      "goal": "As the CIO, I want the shipped UI to match the look & feel I approved, so it stops feeling generic -- correct wordmark/footer, a brand display face for brand moments, and no raw color literals.",
+      "tasks": []
+    },
+    {
+      "id": "US-511",
+      "title": "Debounced 'parked' signal for the kebab (stop the OBD-blip flicker)",
+      "parent": "F-124",
+      "epicId": "E-001",
+      "type": "normal",
+      "size": "S",
+      "status": "sprint-ready",
+      "passes": false,
+      "acceptance": [
+        "define a debounced 'parked' signal: parked = idle held true for >= parkedOnS (8 s), reverting only after idle false for >= parkedOffS (3 s) -- hysteresis so brief OBD blips don't flip it",
+        "the context-aware kebab (Option C) keys off 'parked', NOT raw system-status.idle (carousel.js:743-748,876-878)",
+        "NEAR-TERM = display-side debounce of the idle it already consumes -- NO new contract (Iris's recommendation). If instead 'parked' becomes an emitter field, that needs an Atlas nod (same class as the open idle-SSOT question) -- default to display-debounce now",
+        "constants (parkedOnS/parkedOffS) in config; test proves a sub-threshold idle blip does not toggle the kebab; ruff clean"
+      ],
+      "validationCriteria": [
+        {
+          "action": "on the Pi parked, induce a brief OBD-availability blip",
+          "outcome": "the kebab stays put through the blip (no flicker); it shows/hides only on a sustained parked/driving transition; long-press still always works"
+        }
+      ],
+      "conditionalOutcomes": [],
+      "goal": "As the operator, I want the kebab to appear on a steady 'parked' concept, so it stops flickering every time OBD availability blips.",
       "tasks": []
     }
   ],
   "validation": {
     "bigDefinitionOfDone": [
-      "(after PM deploys this + reboots the Pi (bench, no car)) \u2192 (`rfkill list` shows BOTH hci0:Bluetooth and phy0:Wireless LAN Soft blocked:no; `systemctl is-enabled eclipse-rfkill-unblock`=enabled; eclipse-obd active)  [from US-514]",
-      "(run the fixed script's dry-run + unit tests (code/logic layer, bench)) \u2192 (the prompt regex matches `[bluetoothctl]>` + the agent is display-capable; dry-run stays inert. NOTE: full pair + bond-survives-reboot verification is engine-on -- Spool owns that live gate)  [from US-515]"
+      "(on the Pi with a gated card hidden: swipe past the last visible card; leave it untouched; do a slow settle swipe then a fast flick) \u2192 (wraps to first (gated card skipped); auto-cycles at the interval; slow swipe pauses, fast flick resumes; 45 s idle auto-resumes)  [from US-506]",
+      "(on the Pi (bench, engine off): swipe through the carousel and view the Health card) \u2192 (4 cards total (Home/System Status/Health/Alerts); Health shows real battery + light; Fuel Trim reads 'no engine data' (gated), not a fabricated value)  [from US-507]",
+      "(on the Pi: view the home card parked, then with live states/imu motion; move the board past 0.6 g) \u2192 (parked shows idle; driving shows compass tape + gear + grade + altitude; amber engages at 0.6 g; stale IMU falls back to idle (never frozen))  [from US-508]",
+      "(with one source degraded, tap the SYSTEM summary line; then with all sources good) \u2192 (opens a worst-first list of only the degraded source(s) with reason + freshness + Back; when all good, the summary is not a misleading tap target)  [from US-509]",
+      "(on the Pi: read the idle wordmark + footer; inspect dashboard.css for raw hex outside :root) \u2192 (wordmark 'ECLIPSE OBD-II' + correct footer in a brand display face; ungated color literals tokenized; Atlas-gated --bg/--surface/--destructive land once ruled)  [from US-510]",
+      "(on the Pi parked, induce a brief OBD-availability blip) \u2192 (the kebab stays put through the blip (no flicker); it shows/hides only on a sustained parked/driving transition; long-press still always works)  [from US-511]"
     ],
-    "validationMethod": "CLEAN-DEPLOY (normal deploy-pi.sh, NOT --init) + REBOOT-VERIFY (rfkill list both Soft blocked:no + eclipse-rfkill-unblock enabled + eclipse-obd active); pair_obdlink bond-survives-reboot is ENGINE-ON (Spool)",
+    "validationMethod": "CLEAN-DEPLOY + ON-PI RENDER CHECK on the real 480x320 panel (A-16 merged!=renders): 4-card carousel wraps+auto-rotates+velocity-swipe; Health card consolidated; live/motion card renders tape+gear+0.6g off states/imu; System-Status drill-down; fidelity (ECLIPSE OBD-II + brand font + tokens); kebab stops flickering",
     "validatesFeatures": [
-      "F-120"
+      "F-124"
     ],
-    "currentVersion": "V0.29.22",
+    "currentVersion": "V0.29.23",
     "validatedAt": null,
     "validatedBy": null
+  },
+  "devCheatSheet": {
+    "readFirst": [
+      {
+        "file": "specs/UI/dist/dashboard-pi/carousel.js",
+        "reason": "the carousel + all card renderers; every story touches it"
+      },
+      {
+        "file": "specs/UI/dist/dashboard-pi/dashboard.html",
+        "reason": "card DOM order + data-state slots (US-507 consolidation edits this)"
+      },
+      {
+        "file": "specs/UI/tokens.css",
+        "reason": "SSOT palette -- US-510 promotes bg/surface + adds destructive tokens here"
+      },
+      {
+        "file": "offices/uidevloper/proposals/2026-07-31-pi-ui-round2-f124.md",
+        "reason": "Iris CIO-locked spec + Argus-style acceptance for all 6 stories"
+      },
+      {
+        "file": "offices/pm/inbox/2026-07-31-from-atlas-v0.29.23-design-gate-PASS-plus-rulings.md",
+        "reason": "Atlas states/imu contract (US-508) + token values (US-510)"
+      }
+    ],
+    "keyReminders": [
+      "HONEST-INSTRUMENT prime directive: a reading NOT TAKEN renders as typed-NA/removed, NEVER fabricated/zeroed (altitude=no_source; Fuel Trim=no engine data on bench)",
+      "The display is a PURE CONSUMER of states/* -- never opens bus/I2C/DB, never derives/fuses (the states/imu reader owns tilt-comp + fusion, not the card)",
+      "US-510 bg/surface promotion is ZERO-VISUAL-CHANGE (values ARE the current literals); a diff that moves rendered pixels FAILS. --destructive MUST stay distinct from --critical-red (action != alarm)",
+      "US-506/US-508 are the two L stories -- if context compresses mid-story, STOP + note rather than hallucinate",
+      "DoD includes a real on-Pi RENDER check, not just unit-green (merged != renders)",
+      "mypy/black/make are NOT on the Windows box -- run ruff directly; PM runs typecheck at integration"
+    ]
   }
 }

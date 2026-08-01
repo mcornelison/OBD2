@@ -1,0 +1,56 @@
+# Ralph Progress Log — Sprint 67 / V0.29.22 (BL-025 capture hotfix)
+# Branch: hotfix/V0.29.22-capture-fixes (off dev @ 8e64bbf)
+# Stories (land in order): US-514 rfkill-unblock deploy-bake -> US-515 fix pair_obdlink.sh
+# Implementation specs in this inbox:
+#   offices/ralph/inbox/2026-07-31-from-atlas-bake-rfkill-unblock-into-deploy.md  (US-514)
+#   offices/ralph/inbox/2026-07-31-from-atlas-fix-pair-obdlink-sh.md              (US-515)
+# Previous sprint (66 / V0.29.20 carousel-wiring) archived 2026-07-31_223731Z.
+# ---
+
+## 2026-07-31 - US-515 (Rex / Session 11)
+Task: P0 fix scripts/pair_obdlink.sh -- Trixie bluez prompt regex + display-capable agent
+
+### What was implemented:
+- Captured a VERBATIM bluetoothctl transcript off the live Pi first (bluez 5.82,
+  adapter 88:A2:9E:84:46:1D) rather than building to Atlas's description. Ground
+  truth: the prompt is `\x1b[0;94m[bluetoothctl]> \x1b[0m`, and `devices Paired`
+  returned EMPTY -- there is no bond of any kind on this Pi (BL-025 half 2,
+  now a measurement instead of an inference).
+- Bug 1 (prompt): PROMPT_PATTERN forbids `[`/`]` inside the bracket body and
+  accepts `>` OR `#`. Fixes BOTH halves of the defect -- the wrong terminator
+  AND the greedy `.+` that spanned the ANSI escape (which itself contains a `[`).
+- Bug 2 (agent): NoInputNoOutput -> DisplayYesNo, so the Confirm-passkey branch
+  the script already coded can actually fire.
+- Lifted the driver OUT of the `<<'PYEOF'` heredoc into an importable module.
+  That IS the deliverable: heredoc code cannot be imported, so it could never
+  be tested, which is why both defects survived months of looking maintained.
+- Success now means a DURABLE bond: re-reads `info` after `trust` and fails
+  unless Paired+Bonded+Trusted. Idempotent without --force (an existing good
+  bond is left alone; a partial bond is cleared first).
+
+### Files changed:
+- Created: `scripts/pair_obdlink_driver.py` (the testable pairing session)
+- Created: `tests/pi/obdii/test_pair_obdlink_driver.py` (33 tests vs the real transcript)
+- Created: `offices/pm/tech_debt/TD-070-...md` (stale manual walkthrough)
+- Modified: `scripts/pair_obdlink.sh` (delegates to the driver; --force; dry-run preview)
+- Modified: `tests/pi/obdii/test_pair_script.py` (5 wiring/regression pins)
+- Modified: `specs/architecture.md` (3.4 pairing-driver contract -- DoD Rule 10)
+- Modified: `docs/bluetooth-setup.md` (prompt-drift banner; full refresh = TD-070)
+
+### Learnings for future iterations:
+- **Pattern discovered**: capture the real bytes BEFORE writing the matcher. The
+  ANSI wrapper contains a `[`, so fixing only the `#`->`>` terminator would have
+  left the greedy-span trap armed and looked green.
+- **Gotcha**: bluetoothctl redraws its prompt several times at startup, so
+  `sendline(); expect(PROMPT)` matches a STALE prompt and returns terminal
+  padding as the command's output -- a silent WRONG ANSWER, worse than the hang.
+  Anchor on the command's own pty echo first. Only the verbatim fixture exposed
+  this; a hand-written "prompt goes here" fixture passes happily.
+- **Gotcha**: a regression pin that greps for the defect's NAME fires on the
+  header comment that documents the defect. Strip comments + the module
+  docstring (ast gives the span) -- and test the stripper, or the pin passes
+  vacuously.
+- **Gotcha**: pexpect is a Pi-only requirement and is NOT installed on this
+  Windows box. Keep the session logic pexpect-free behind a thin adapter or the
+  whole suite skips.
+---

@@ -6397,14 +6397,15 @@
         "re-issue the live card to the CIO-locked spec (2026-07-27-pi-live-instrument-card.md): scrolling compass TAPE under a fixed caret (NOT the built rotating-needle dial); add the GEAR glyph (Spool OBD derivation, '--' when ambiguous); AMBER at 0.6 g (not just the 1.0 g full-scale clamp); grade % + prominent altitude + ~15-min moving trend",
         "HOME-SLOT SWAP: the home slot (position 1) shows the idle card when parked and the live instrument when driving -- one slot, two faces (not a separate always-present card)",
         "honest fallback: stale/absent states/imu -> idle card, never a frozen motion display (states/imu is live @0x69)",
-        "[GATE -- Atlas] blocked on Atlas confirming Iris's states/imu derived-field contract + >1 Hz transport (architect/inbox/2026-07-27-from-iris-imu-contract-and-delta1-arbiter.md). Do NOT dispatch the build until Atlas rules; US-478/IMU @0x69 is live so that half of the gate is met",
+        "[ATLAS CONTRACT RULED 2026-07-31 -- UNGATED] states/imu is the DERIVED display view produced by the ONE dedicated reader/bridge (single owner, DELTA-2); the display is a PURE consumer (never opens bus/I2C, never fuses). Fields: headingDeg 0-359 from mag TILT-COMPENSATED via accel (flag as known-limit if v1 non-compensated -- the READER owns this, not the display); gradePct=tan(pitch)*100; gLat/gLon = tilt-compensated horizontal accel in UNITS OF g; gMag=sqrt(gLat^2+gLon^2) derived-once (don't recompute in the g-circle); altitude = typed-NULL + reason:'no_source' (NO GPS/baro source today -- honest-NA, never fabricated/zeroed; field stays for zero-rework later); available(bool)+ts(fresh) -> stale ts falls to the idle twin. GEAR is NOT imu (Spool OBD derivation, separate producer -- keep it out of states/imu). Raw accel/gyro/mag/temp_c stay on the EDR bus + sensor_schema.py, NOT states/imu",
+        "[ATLAS TRANSPORT RULED] the states/imu bridge writes the derived file at ~10-15 Hz latest-wins/lossy (no history on the display path; durable EDR persist stays at the ADR persistHz -- one producer, two cadences); the live card polls states/imu at ~10 Hz off the existing states_http_server (localhost, no-store). Animates the tape+g-trail smoothly with NO new transport. A full SSE/stream is the future EDR-bus target, NOT required here -- do not block on it",
         "tests cover tape/gear/0.6g-amber render + idle<->live swap + stale-IMU fallback; ruff clean"
       ],
       "validationCriteria": [
         {"action": "on the Pi: view the home card parked, then with live states/imu motion; move the board past 0.6 g", "outcome": "parked shows idle; driving shows compass tape + gear + grade + altitude; amber engages at 0.6 g; stale IMU falls back to idle (never frozen)"}
       ],
       "conditionalOutcomes": ["if Atlas's contract ruling changes the derived-field shape, the card binds to the ruled contract"],
-      "deps": ["ATLAS-states-imu-contract"],
+      "deps": [],
       "sourceRefs": ["offices/uidevloper/proposals/2026-07-31-pi-ui-round2-f124.md#B", "offices/uidevloper/proposals/2026-07-27-pi-live-instrument-card.md", "offices/pm/decisions/2026-07-31-ui-feedback-round2-triage.md#9"],
       "createdAt": "2026-07-31",
       "updatedAt": "2026-07-31",
@@ -6445,14 +6446,14 @@
         "A-1 copy (ship-ahead, no gate): restore idle wordmark 'ECLIPSE' -> 'ECLIPSE OBD-II' and footer -> 'swipe for details . hold or the kebab for setup' (verbatim from the locked idle spec)",
         "A-3 brand face (ship-ahead): add ONE --font-display face (inlined @font-face woff2 data-URI, CSP-safe -- NO font CDN) for the wordmark + card titles ONLY; keep ui-monospace for all data/values; add --font-display to specs/UI/tokens.css alongside --font-mono. Exact face is a CIO pick (Iris supplies the woff2 base64)",
         "A-2 tokenization (TD-065): point the dashboard at existing tokens where they exist (#2a2f37 -> --neutral-chip-bg tokens.css:44; --critical-red #D32F2F already landed); derive takeover-gradient edges from --green-ok/--amber-warn (no raw hex in a surface)",
-        "[PARTIAL GATE -- Atlas Rule-10] the remaining TD-065 values need Atlas: add --bg/--surface to the SSOT + settle the 2 --destructive reds (Spool semantics if engine-safety, else Atlas). Ship the copy + font + already-tokenized parts ahead; the Atlas-gated literals land when the token values are ruled",
+        "[ATLAS TOKENS RULED 2026-07-31 -- UNGATED] promote --bg: #000000 + --surface: #111111 into specs/UI/tokens.css (SSOT) + repoint dashboard.css to var(--bg)/var(--surface) -- PURE consolidation, the values ARE the current ones so ZERO visual change (a diff that changes rendered pixels FAILS the gate). Define --destructive: #C62828 (destructive-action fill) + --destructive-border: #7F1D1D (confirm-box border); BOTH MUST be distinct from --critical-red #D32F2F (a destructive ACTION must not read as an alarm STATE -- that conflation is exactly what the split prevents). Iris applies which-surface-uses-which; reds are UI-affordance not safety, so Spool ratify optional/non-blocking",
         "acceptance: no raw color hex in dashboard.css outside :root token defs (for the ungated literals); --font-display renders the wordmark/titles; ruff clean"
       ],
       "validationCriteria": [
         {"action": "on the Pi: read the idle wordmark + footer; inspect dashboard.css for raw hex outside :root", "outcome": "wordmark 'ECLIPSE OBD-II' + correct footer in a brand display face; ungated color literals tokenized; Atlas-gated --bg/--surface/--destructive land once ruled"}
       ],
       "conditionalOutcomes": ["if Atlas has not ruled the --bg/--surface/--destructive values by build time, ship the ungated fidelity (copy+font+existing tokens) and carry the gated literals to a fast-follow rather than block the whole story"],
-      "deps": ["ATLAS-td065-token-values"],
+      "deps": [],
       "sourceRefs": ["offices/uidevloper/proposals/2026-07-31-pi-ui-round2-f124.md#A", "TD-065", "specs/UI/tokens.css", "offices/pm/decisions/2026-07-31-ui-feedback-round2-triage.md#14"],
       "createdAt": "2026-07-31",
       "updatedAt": "2026-07-31",
