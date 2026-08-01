@@ -3270,11 +3270,17 @@ styling:
 
 | Card | `data-state` | Tier | Absence renders |
 |---|---|---|---|
-| Standby / idle home | *(none -- `data-idle-home`)* | always-present | composed from the cards below |
+| **Home** (US-508) | *(none -- `data-idle-home`)* | always-present | **the idle face, see below** |
 | System Status (Pi Health) | `system-status` | always-present | `unavailable` |
 | **Health** (US-507) | *(multi -- `data-states`)* | always-present | **per SECTION, see below** |
-| **Motion (IMU)** | `imu` | always-present | **"no data -- IMU feed absent"** |
 | Alerts (DTC) | `dtc` | always-present | **"no data -- codes not read"** |
+
+The carousel is **four cards** as of V0.29.23 (US-507 merged three reference
+readouts into Health; US-508 folded the standalone Motion card into the home
+slot). Note the `class="card"` count stayed 4 across US-508 for a *different
+reason* -- the pre-US-508 idle card wore `class="card idle-card"` and was not
+counted at all, while the home slot is a plain `.card` and is. The deploy-kit
+inventory test therefore names every slot rather than trusting the number.
 
 ##### The Health card is MULTI-SOURCE (US-507 / F-124)
 
@@ -3360,7 +3366,50 @@ alarm holds the surface at full regardless of lux (US-484-b ch.4), so a
 lux-derived percent would contradict the actual screen exactly when it matters
 most.
 
-##### Motion card -- the IMU live instrument (US-497 / F-113, Sprint 66)
+##### The HOME SLOT is two-faced -- idle twin / live instrument (US-508 / F-124)
+
+The CIO-locked round-2 design puts the live instrument on the **home slot**:
+parked → the US-481 calm STANDBY card, driving → the live motion instrument.
+**One slot, two faces**, not two cards. A separate always-present motion card
+beside a live home slot would poll and paint the same feed twice and put two
+rules in charge of what the driver lands on.
+
+`homeFace(imuData, sysData, nowMs)` is **the only arbiter** (a second one would
+be two rules owning one fact -- exactly why US-497 declined to build the swap):
+
+1. **Parked wins outright.** `carouselIdle` (the emitter's `idle` SSOT) → the
+   idle face, so a bench IMU reading 0 g does not put a live instrument on a
+   stationary car.
+2. Otherwise a **live and fresh** `states/imu` → the live face.
+3. Everything else -- no file, `available:false`, undated payload, reading older
+   than `IMU_STALE_SEC` -- falls back to the idle face (AC-3: never a frozen
+   motion display).
+
+**The fallback must not fabricate a parked state.** This is the honesty trap the
+swap creates and it is pinned by test. The shipped idle hero reads *"STANDBY ·
+engine off · OBD asleep"*; rendering that verbatim because the IMU died while
+the car is MOVING would state a confident fact about the vehicle manufactured
+out of a sensor fault. So the idle face carries **two dispositions** -- genuinely
+parked keeps the STANDBY hero, while not-parked-with-a-dead-feed renders **"NO
+MOTION DATA"** plus the bridge's own reason. Same layout, same real facts
+beneath it, a different claim. (Third instance of the pattern: US-507's Health
+gate needed three dispositions for the same reason.)
+
+Navigation was **retargeted, not dropped**. US-481 sent the operator to System
+Status when `idle` flipped false, because the home card was a parked-only view.
+The home slot now *becomes* the live instrument, so both edges land on **home**.
+
+**Transport (Atlas ruling, US-508).** A compass tape and a g-trail do not
+animate at the 4 Hz card tick, so the live feed gets its **own ~10 Hz loop**
+(`IMU_POLL_MS = 100`) against the same `states_http_server`, and the bridge
+writes at `pi.sensors.imu.stateHz` = **10 Hz** latest-wins/lossy. Deliberately a
+second loop rather than a faster shared tick: the tick reads five other state
+files, and 2.5×-ing all of them to animate one card would be five reads nobody
+can see for every one they can. The durable EDR persist stays at `persistHz` --
+**one producer, two cadences**. No new transport; SSE remains a future EDR-bus
+target and is explicitly not a gate here.
+
+##### The live instrument itself (US-497 / F-113, re-issued by US-508)
 
 A pure consumer of the `states/imu` file the § 10.8.2 bridge writes. The bridge
 already resolved the hard physics (one slow gravity estimate defining the level
@@ -3383,11 +3432,36 @@ the needle: a needle frozen at its last bearing is worse than an absent one),
 an unresolved tilt grays G-FORCE **and carries no dot**, and `altitude` is
 **always** typed-NA `"no source"` without ever blocking the card.
 
+The **compass TAPE** (US-508) replaces the built rotating needle outright --
+CIO-locked, and leaving the needle beside it would be two heading instruments on
+one card that can disagree. A fixed caret marks the vehicle's bearing and the
+tape scrolls under it: a bearing *clockwise* of the current heading sits to the
+**right**, so turning right walks it toward the caret and the labels travel
+right-to-left. That direction is the most likely defect in the whole card -- a
+backwards tape is a perfectly plausible instrument, and no screenshot reveals
+it -- so it is pinned by test, as is the wrap across north. A dead magnetometer
+renders **no ticks at all**; a tape frozen under the caret reads as a confident
+heading exactly as the frozen needle did.
+
+**GEAR is not an IMU fact.** Atlas kept it out of the `states/imu` contract: it
+is Spool's OBD derivation from a **separate producer** (F5M33 ratios + tyre
+circumference, debounced, validated against drive 30). *That producer does not
+exist yet*, so the glyph follows the **altitude precedent** on this same card --
+the field stays in the contract so a real producer is zero-rework, and it
+resolves to an honest `--` until one lands, never a guessed number. Nothing
+polls a `states/gear` file, because a 404 ten times a second is not a data
+source. The reason rides beside the glyph so *"no producer wired"* stays
+distinguishable from *"the producer is refusing to guess right now"*.
+
 | Constant | Value | Grounding |
 |---|---|---|
-| `IMU_STALE_SEC` | 2.0 s | the **producer's** cadence -- 8 missed writes at `pi.sensors.imu.stateHz` = 4 Hz. Deliberately far tighter than the light card's 10 s: a 10 s-old lux is still roughly true, a 10 s-old g-vector is meaningless. *Rex-derived; flagged for Atlas/Spool against a real drive.* |
+| `IMU_STALE_SEC` | 2.0 s | **Re-grounded by US-508**: at the new 10 Hz `stateHz` this is *20* missed writes, not the 8 it was at 4 Hz. Deliberately NOT retightened in proportion -- this feed now drives the HOME slot, and a slot that flips to the idle face on a brief scheduling stall is its own defect. Still far tighter than the light card's 10 s (a 10 s-old lux is roughly true; a 10 s-old g-vector is meaningless). *Rex-derived; flagged for Atlas/Spool against a real drive.* |
 | `G_FULL_SCALE` | 1.0 g | outer ring. A street-tired car tops out near 0.9 g lateral, so 1 g frames real driving without compressing it. *Rex-derived DISPLAY scale, not a vehicle limit -- flagged for Spool.* |
-| `G_TRAIL_WINDOW_SEC` | 35 s | Iris live-instrument spec. ~140 points at 4 Hz. |
+| `G_AMBER_G` | 0.6 g | **Spool** (Iris locked spec, quoted verbatim in the US-508 AC). A **different fact** from the full scale above, and conflating them is what the built card got wrong: it only coloured at the 1.0 g *clamp*, so a hard 0.8 g corner painted identically to a gentle one. Advisory, never an alarm -- alarms ride the unified alert layer. |
+| `G_TRAIL_WINDOW_SEC` | 35 s | Iris live-instrument spec. ~350 points at the 10 Hz live poll. |
+| `GRADE_TREND_WINDOW_SEC` | 900 s | Iris locked spec's "~15-min moving trend". |
+| `GRADE_TREND_BUCKET_MS` | 5000 | Decimation: 15 min at 10 Hz is ~9000 raw samples; one retained point per 5 s bucket is ≤180, more than a 480×320 sparkline resolves. **Latest-wins within a bucket** -- the retained value is a real reading, never an average that never happened. |
+| `GRADE_TREND_SCALE_PCT` | 10 % | The sparkline's **fixed** vertical scale, deliberately not autoscaled to the observed range: an autoscale stretches a flat road's hundredth-of-a-percent wobble to full height and renders it as a mountain range -- a fabricated terrain built out of real noise. Beyond scale it clamps to the edge (pinned, not vanished). *Rex-derived DISPLAY scale -- flagged for Spool.* |
 
 **Sign contract on screen.** `gLon` + = accelerating → the dot moves **up**
 (negative screen y); `gLat` + = **right** → positive x. The G-FORCE tile spells

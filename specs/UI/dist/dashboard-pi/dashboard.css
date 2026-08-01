@@ -151,7 +151,12 @@ html, body {
    the STANDBY hero is neutral
    grey (never green), and the 3 fact tiles reuse the shared `.tile[data-level]`
    rules above so green is bound to the SSOT green in exactly one place. */
-.idle-card .card-body {
+/* US-508: the selector moved from a fixed `.idle-card` CLASS to the `data-face`
+   ATTRIBUTE the JS sets, because the home slot is no longer permanently idle --
+   it has two faces. The JS and the stylesheet now switch on ONE shared value, so
+   a slot cannot be logically live and visually idle (that mismatch, correct JS
+   defeated by a stylesheet the JS cannot see, is the US-495 class of defect). */
+.card[data-face="idle"] .card-body {
   display: flex; flex-direction: column; align-items: stretch;
   gap: 6px; padding: 0;
 }
@@ -231,13 +236,73 @@ html, body {
    goes amber so a clamped 1.4 g stop cannot read as a tidy 1.0 g one. The true
    magnitude is always on the G-FORCE tile beside it. */
 .imu-dot[data-clamped="true"] { fill: var(--amber-warn); }
-.imu-needle { fill: var(--text-primary); }
+/* US-508: Spool's 0.6 g advisory band. A DIFFERENT fact from the clamp above --
+   the built card only coloured at the 1.0 g clamp, so a hard 0.8 g corner
+   painted identically to a gentle one. Advisory, never an alarm: alarms live on
+   the unified alert layer, and this card stays calm. */
+.imu-dot[data-level="amber"] { fill: var(--amber-warn); }
+.imu-trail[data-level="amber"] { stroke: var(--amber-warn); }
 .imu-tiles { display: flex; flex-direction: column; }
 /* [hidden] on an SVG child needs the same guard the overlays needed (US-495):
    the UA sheet's [hidden] rule is outranked by the class selectors above, so
-   without this a "hidden" dot or needle would keep painting -- the exact
-   defect S2 fixed, one generation later. */
-.imu-dot[hidden], .imu-needle[hidden] { display: none; }
+   without this a "hidden" dot would keep painting -- the exact defect S2 fixed,
+   one generation later. */
+.imu-dot[hidden] { display: none; }
+
+/* --- US-508 live/motion home face (F-124, CIO-locked "live2" layout) --------- */
+/* Compass tape + heading + grade/altitude down the left, the GEAR glyph in the
+   middle, the g-meter on the right. Every colour is a var(--token): the live
+   face forks no palette, same rule the card has followed since US-497. */
+.live-body {
+  display: flex; align-items: stretch; gap: 8px;
+  height: 100%; padding: 0;
+}
+.live-col { display: flex; flex-direction: column; justify-content: center; }
+.live-heading { flex: 1 1 auto; min-width: 0; gap: 2px; }
+.live-gear {
+  flex: 0 0 54px; align-items: center; justify-content: center; gap: 2px;
+  border-left: 1px solid var(--surface); border-right: 1px solid var(--surface);
+}
+.live-g { flex: 0 0 108px; align-items: center; gap: 2px; }
+.live-g .imu-meter { width: 104px; height: 104px; }
+
+/* The compass TAPE. The caret is STATIC furniture: it marks the vehicle's own
+   bearing and never moves -- a tape's readability comes entirely from one fixed
+   reference with the world sliding past it. */
+.imu-tape { width: 100%; height: 30px; flex: 0 0 auto; }
+.imu-caret { fill: var(--text-primary); }
+.imu-tick { stroke: var(--text-tertiary); stroke-width: 1; }
+.imu-tick-major { stroke: var(--text-secondary); stroke-width: 1.5; }
+.imu-tape-label {
+  fill: var(--text-secondary); font-size: 8px; font-weight: 600;
+  letter-spacing: 0.06em;
+}
+
+/* GEAR. Large because it is the one glyph read at a glance mid-corner; the
+   reason line beneath keeps "--" from being a bare shrug (no producer wired vs
+   the producer honestly refusing to guess are different facts). */
+.imu-gear-label {
+  font-size: 9px; letter-spacing: 0.10em; color: var(--text-secondary);
+}
+.imu-gear { font-size: 40px; font-weight: 700; color: var(--text-primary); }
+.imu-gear[data-level="unavailable"] {
+  color: var(--text-tertiary); font-weight: 400;
+}
+.imu-gear-detail {
+  font-size: 8px; color: var(--text-tertiary); text-align: center;
+  line-height: 1.1;
+}
+
+/* The ~15-min grade trend. The zero line is what makes the sparkline readable
+   as a GRADE rather than an anonymous wiggle -- without it a gentle descent and
+   a gentle climb draw the same shape. */
+.imu-grade-box { display: flex; flex-direction: column; gap: 1px; }
+.imu-trend { width: 100%; height: 22px; flex: 0 0 auto; }
+.imu-trend-zero { stroke: var(--surface); stroke-width: 1; }
+.imu-trend-line {
+  fill: none; stroke: var(--text-secondary); stroke-width: 1.5;
+  stroke-linejoin: round; stroke-linecap: round;
+}
 
 /* --- US-489 System Status glanceability (Iris polish P-1) ------------------- */
 /* Presentation-only over the SHIPPED US-400 state: a one-glance summary line, a

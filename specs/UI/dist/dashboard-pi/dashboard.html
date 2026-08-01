@@ -80,14 +80,29 @@
 
   <main id="carousel" aria-roledescription="carousel">
     <div id="track">
-      <!-- US-481 idle-state home card (F-121): the calm, honest PARKED view
-           (engine off / OBD asleep). NOT a polled state file -- it is rendered
-           from the system-status/battery-health/dtc states the carousel already
-           fetches (data-idle-home, so the availability poll skips it). It is the
-           HOME card while `idle` holds and auto-advances to System Status the
-           moment idle flips false (Iris AC-4). STANDBY never renders green;
-           faults never amber/red unless a REAL stored STOP/WATCH code exists. -->
-      <section class="card idle-card" data-idle-home id="idle-card" aria-label="Standby">
+      <!-- US-508 HOME SLOT (F-124): ONE slot, TWO FACES (CIO-locked round-2
+           design). Parked -> the US-481 calm STANDBY idle view; driving -> the
+           live motion instrument. NOT two cards: a live card sitting beside an
+           always-present idle card would poll and paint the same feed twice and
+           put two rules in charge of the home slot.
+
+           `data-face` is the switch, set by carousel.js from ONE decision
+           (`homeFace`) and read by the stylesheet, so the logical face and the
+           painted face can never disagree. It ships `idle` because that is the
+           honest pre-first-poll state: nothing has been read, so there is no
+           motion to show.
+
+           Still `data-idle-home` with NO `data-state`: the generic availability
+           poll must not reach this slot. Its absence story is not "unavailable"
+           -- an absent/stale states/imu falls back to the idle face (AC-3),
+           never a frozen or zeroed motion display.
+
+           The idle face carries TWO dispositions of its own: genuinely parked
+           ("STANDBY · engine off") and driving-with-a-dead-feed ("NO MOTION
+           DATA"). Saying "engine off" while the car is moving would be a
+           confident lie about the vehicle built out of a sensor fault. -->
+      <section class="card" data-idle-home data-face="idle" id="home-card"
+               aria-label="Home">
         <div class="card-body"><span class="idle-boot">standby …</span></div>
       </section>
       <section class="card" data-state="system-status" aria-label="System Status">
@@ -140,24 +155,11 @@
           </section>
         </div>
       </section>
-      <!-- US-497 IMU live-instrument card (S4-card, F-113): g-force meter +
-           compass, a PURE CONSUMER of the states/imu file US-478's bridge
-           writes. ALWAYS-PRESENT and NOT `data-vehicle-gated`: the ICM-20948 is
-           a PI-LOCAL sensor that reads on the bench with no car, so gating it
-           behind a vehicle would hide a working instrument (Atlas's card model:
-           always-present, gray-if-offline).
-
-           An unwired sensor (available:false), an undated payload or a reading
-           older than IMU_STALE_SEC falls back to a calm gray MOTION body --
-           never a frozen or zeroed instrument, which is the one failure mode a
-           live graphical instrument has and a text tile does not: a dot frozen
-           at 0.4 g reads exactly like a car holding a steady corner. Altitude
-           is ALWAYS typed-NA "no source" (no barometer) and never blocks the
-           card; a dead magnetometer grays HEADING alone. -->
-      <section class="card" data-state="imu" aria-label="Motion">
-        <h2 class="card-title">Motion</h2>
-        <div class="card-body">unavailable</div>
-      </section>
+      <!-- US-508: the standalone Motion card is GONE. The US-497 live
+           instrument it carried now renders on the home slot above as its
+           driving face (the CIO-locked "one slot, two faces"), which is what
+           takes the carousel to the locked four screens: Home · System Status ·
+           Health · Alerts. -->
       <!-- US-406 Alerts card (Card 5, F-111): hero (worst code + directive) +
            a tappable list sorted worst-first (na last). JS fills the body from
            the polled `dtc` state; a missing/malformed file -> `unavailable`. -->

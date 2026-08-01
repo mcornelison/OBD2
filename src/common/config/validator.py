@@ -283,14 +283,19 @@ DEFAULTS: dict[str, Any] = {
     'pi.sensors.imu.persistHz': 25,
     # US-478 (F-113): the raw.imu.* -> states/imu DERIVED display bridge.
     # stateHz is the state-file write cadence and is grounded to the CONSUMER,
-    # not the sensor: carousel.js POLL_MS = 250 (4 Hz).  Writing tmpfs faster
-    # than the only reader polls is churn with no observable effect.
+    # not the sensor.  Writing tmpfs faster than the only reader polls is churn
+    # with no observable effect -- so when the reader got faster, this did too.
+    # US-508 raised it 4 -> 10 Hz per Atlas's transport ruling: the live card is
+    # now the HOME slot and animates a compass tape + a g-trail, which do not
+    # animate at 4 Hz.  It is still far under the 50 Hz sensor rate, still
+    # latest-wins/lossy (no history on the display path), and the DURABLE EDR
+    # persist is untouched at persistHz -- one producer, two cadences.
     # gravityTauSec is the gravity low-pass time constant that separates static
     # mount tilt / road grade (slow) from vehicle acceleration (fast) -- without
     # it a board bolted in at a 10-degree tilt pins a phantom 0.17 g on the
     # g-meter forever.  mount.* places the board in the VEHICLE frame so a
     # physical remount is a config edit, not a code edit.
-    'pi.sensors.imu.stateHz': 4,
+    'pi.sensors.imu.stateHz': 10,
     'pi.sensors.imu.gravityTauSec': 5.0,
     'pi.sensors.imu.mount.forward': '+x',
     'pi.sensors.imu.mount.left': '+y',

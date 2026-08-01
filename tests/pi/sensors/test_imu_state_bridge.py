@@ -18,12 +18,14 @@ from __future__ import annotations
 
 import json
 import math
+import re
 from pathlib import Path
 
 from pi.bus.bus import SampleBus
 from pi.bus.sample import QoS, Sample
 from pi.sensors.imu_state_bridge import (
     DEFAULT_MOUNT,
+    DEFAULT_STATE_HZ,
     IMU_STATE_FILENAME,
     MAX_GRADE_PITCH_DEG,
     REASON_NO_MAG,
@@ -469,8 +471,14 @@ def test_bridge_decimatesTheFiftyHzBurstToTheStateRate(tmp_path: Path):
     Given: the IMU publishing at its 50 Hz sampleHz and a 4 Hz state rate
     When: one second of samples is drained
     Then: the file is written about stateHz times, not 50 -- the tmpfs write rate
-          is the DISPLAY's poll cadence (carousel.js POLL_MS = 250), not the
-          sensor's; anything faster is pure wear with no consumer
+          is the DISPLAY's poll cadence, not the sensor's; anything faster is
+          pure wear with no consumer.
+
+          This test pins the DECIMATION at whatever rate it is handed, which is
+          why it still passes 4 explicitly. What that cadence should DEFAULT to
+          is a separate fact with its own test above -- US-508 moved it to 10 Hz
+          and this docstring used to assert the old grounding as if it were the
+          rule.
     """
     writes = []
     bridge = ImuStateBridge(None, str(tmp_path), stateHz=4)
@@ -478,6 +486,55 @@ def test_bridge_decimatesTheFiftyHzBurstToTheStateRate(tmp_path: Path):
     for i in range(50):
         bridge.handleSample(_accel(_level(), seq=i + 1, capture=i * 0.02))
     assert 4 <= len(writes) <= 5
+
+
+def test_bridge_defaultStateRate_isTheOneTheLiveHomeCardActuallyNeeds(tmp_path: Path):
+    """
+    Given: a bridge built WITHOUT an explicit stateHz -- the way production wires
+           it whenever pi.sensors.imu.stateHz is absent from config
+    When: one second of the 50 Hz burst is drained
+    Then: it writes about DEFAULT_STATE_HZ times, and that default is 10.
+
+          THE GAP THIS CLOSES: every other rate test in this file passes
+          stateHz=4 explicitly, so not one of them exercises the default. US-508
+          raised it 4 -> 10 because the consumer moved onto the home slot and
+          animates a compass tape and a g-trail; a silent revert to 4 would leave
+          the whole suite green while the instrument visibly stutters on the
+          panel -- a defect only a human in a moving car would ever report.
+    """
+    writes = []
+    bridge = ImuStateBridge(None, str(tmp_path))
+    bridge._writeState = lambda payload: writes.append(payload)  # type: ignore[method-assign]
+    for i in range(50):
+        bridge.handleSample(_accel(_level(), seq=i + 1, capture=i * 0.02))
+    assert DEFAULT_STATE_HZ == 10
+    # The band is quantised by the 0.02 s sample grid (the 4 Hz test above takes
+    # the same slack), so it is stated loosely enough to be honest and tightly
+    # enough that a revert to 4 -- which lands at ~4-5 writes -- still fails it.
+    assert 8 <= len(writes) <= 11, len(writes)
+
+
+def test_defaultStateRate_sitsInsideAtlasRuledTransportBand():
+    """
+    Given: Atlas's US-508 transport ruling -- the bridge writes the derived file
+           at ~10-15 Hz and the card polls it at ~10 Hz
+    When: the shipped default is compared against the SHIPPED card
+    Then: the producer is never SLOWER than its consumer polls, and never faster
+          than the ruled band.
+
+          This is a CROSS-ARTIFACT pin and that is the point: the constant's own
+          docstring claims it is grounded to carousel.js IMU_POLL_MS, but a claim
+          in a comment is not a check. The failure it catches is the one this
+          sprint keeps meeting -- two correct halves that stopped agreeing.
+          Writing slower than the reader polls does not slow the poll; it makes
+          the reader re-read a file that has not changed and animate nothing.
+    """
+    js = Path(__file__).resolve().parents[3] / "specs/UI/dist/dashboard-pi/carousel.js"
+    m = re.search(r"IMU_POLL_MS\s*=\s*(\d+)", js.read_text(encoding="utf-8"))
+    assert m, "carousel.js no longer declares IMU_POLL_MS -- re-ground this pin"
+    cardPollHz = 1000.0 / float(m.group(1))
+    assert DEFAULT_STATE_HZ >= cardPollHz, "the bridge writes slower than the card polls"
+    assert DEFAULT_STATE_HZ <= 15, "above Atlas's ruled band -- tmpfs churn no one reads"
 
 
 def test_bridge_settledOnATiltedMount_readsZeroGButNonZeroGrade(tmp_path: Path):

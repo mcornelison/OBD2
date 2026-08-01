@@ -117,10 +117,17 @@ _SUB_NAME = "imu-state"
 _DRAIN_TIMEOUT_S = 0.5
 
 # Default state-file write cadence. GROUNDED to the consumer, not the sensor:
-# carousel.js POLL_MS = 250 (4 Hz tmpfs read). The IMU bursts at 50 Hz; writing
-# the file faster than the only consumer reads it is pure tmpfs churn with no
-# observable effect. Overridable via pi.sensors.imu.stateHz.
-DEFAULT_STATE_HZ = 4
+# writing the file faster than the only consumer reads it is pure tmpfs churn
+# with no observable effect. The IMU bursts at 50 Hz; this is the DISPLAY view.
+#
+# US-508 raised it 4 -> 10 Hz because the consumer got faster, not because the
+# sensor did. The live instrument moved onto the carousel's HOME slot and polls
+# states/imu on its own ~10 Hz loop (carousel.js IMU_POLL_MS = 100) -- a
+# scrolling compass tape and a g-trail simply do not animate at 4 Hz. Per
+# Atlas's transport ruling this stays latest-wins/lossy with no history on the
+# display path; the durable EDR persist is a SEPARATE cadence (persistHz) off
+# the same producer. Overridable via pi.sensors.imu.stateHz.
+DEFAULT_STATE_HZ = 10
 
 # Default gravity low-pass time constant, seconds. Chosen so the estimate tracks
 # mount tilt / road grade (which change over tens of seconds) while rejecting

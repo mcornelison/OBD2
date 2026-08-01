@@ -80,15 +80,24 @@ def test_dashboardHtml_hasBothCardSlots_s1():
 
     The three merged sources are NOT gone -- they are sections of the Health
     card, declared on it via `data-states` (pinned by the dedicated suite,
-    tests/ui/test_carousel_health_card.py). Motion is still a standalone card
-    here; US-508 folds it into the home slot, reaching the locked 4.
+    tests/ui/test_carousel_health_card.py).
+
+    US-508 THEN FOLDED MOTION INTO THE HOME SLOT, which is what reaches the
+    CIO-locked four: Home . System Status . Health . Alerts. Note the count
+    stayed 4 across that change for a DIFFERENT REASON, which is exactly the
+    kind of coincidence that makes a bare count vacuous -- before, the idle card
+    wore `class="card idle-card"` and was not counted at all; now the home slot
+    is a plain `.card` and IS. So the inventory below names every slot rather
+    than trusting the number.
     """
     html = _read(KIT_DIR, "dashboard.html")
     assert html.count('class="card"') == 4
     assert 'data-state="system-status"' in html
     assert 'data-state="dtc"' in html
-    assert 'data-state="imu"' in html
+    assert 'aria-label="Home"' in html
     assert 'aria-label="Health"' in html
+    # The live instrument is a FACE of the home slot, not a slot of its own.
+    assert 'data-state="imu"' not in html
     # The merged sources moved rather than vanished: the Health card declares
     # all three state files it consumes.
     assert 'data-states="battery-health light ltft-trend"' in html
