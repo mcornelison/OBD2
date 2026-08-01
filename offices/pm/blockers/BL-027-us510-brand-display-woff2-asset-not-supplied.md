@@ -5,7 +5,7 @@
 | Severity     | Medium                    |
 | Status       | Active — **US-510 CLOSED with this carved out (PM 2026-08-01); tracked as a fast-follow, NOT sprint-blocking** |
 | Blocking     | Only the on-Pi brand-face render (A-3 payload). US-510 A-1 copy + A-2 tokenization + A-3 structural seam all SHIPPED green. |
-| Waiting On   | **CIO/Iris: pick an OPEN-LICENSE (OFL) condensed-grotesque face** — the locked Bahnschrift is Microsoft-proprietary, NOT redistributable + NOT on Pi OS, so it CANNOT be embedded. Then Iris subsets it → woff2 base64. |
+| Waiting On   | **Iris: subset Oswald** (face DECIDED = Oswald, CIO 2026-08-01, SIL OFL/embeddable — replaces the un-embeddable Bahnschrift) to the brand glyphs (A-Z, 0-9, space, `-`) → woff2 base64, then the ~30-min payload drop into Ralph's seam. |
 | Created      | 2026-07-31                |
 
 ## ⚠️ PM decision + the real blocker (2026-08-01)
