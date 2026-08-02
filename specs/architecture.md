@@ -262,6 +262,29 @@ any second power-source acquisition path (SSOT invariant; Atlas design gate).
 The retired method is retained in the codebase as a `NotImplementedError`
 tripwire so any future reintroduction fails loudly at the call site.
 
+**UI consumer wired (US-502, Sprint 69 / V0.29.24).** The "UI consumes this one
+provider" half of the design above was specified but never built: the System-
+Status power tile read `PowerMonitor.readPowerStatus()`, whose reader is never
+configured in the orchestrator, so `power.source` was permanently `unknown` —
+tile "unavailable", header bolt gray — while the real fact flowed to
+`power_log` through the B1 `_PowerSourceUiBridge`. `CardStateEmitterMixin.
+_gatherPowerSource` now reads `PowerSourceProvider` directly (one fact, one
+provider) and `PowerMonitor` is no longer consulted for it. Two load-bearing
+details:
+
+- **Policy split on uncertainty.** `PowerSourceProvider.isAvailable` (new)
+  exposes whether the PLD line is readable at all. The ShutdownSequencer keeps
+  the non-bricking direction (unreadable ⇒ treat as power present); the DISPLAY
+  must not, because that paints a confident `external` off a dead GPIO — it
+  resolves unreadable/raising ⇒ `unknown` ⇒ the tile's honest "unavailable"
+  branch. Same fact, one provider, two policies — the SSOT pattern, not a
+  second acquisition path.
+- **Lazy read, per emit.** The card emitters are constructed in
+  `_initializeAllComponents`; `_powerSourceProvider` does not exist until
+  `_startHardwareManager` runs later in `runLoop`. A reference captured at
+  emitter-init time is `None` for the life of the process (dead tile, green
+  tests), so the provider is fetched at emit time.
+
 ---
 
 ## 3. Component Architecture

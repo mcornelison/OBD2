@@ -62,3 +62,36 @@ def test_provider_unavailable_isSafeDirection():
     p = PowerSourceProvider(pld=_FakePld(present=False, available=False))
     assert p.isExternalPowerPresent() is True   # uncertain => do NOT shut down
     assert p.startupArmCheck() is False          # but refuse to arm
+
+
+# ---------------------------------------------------------------------------
+# US-502: line readability, so each consumer can apply its OWN uncertainty
+# policy over the one fact (SSOT: one provider, two policies).
+# ---------------------------------------------------------------------------
+
+
+def test_provider_exposesLineReadability_forConsumerUncertaintyPolicy():
+    """The sequencer's safe direction ("unreadable => power present, do NOT
+    self-brick") is a LIE on a UI tile -- it would paint a confident
+    "external" off a dead GPIO. The provider therefore surfaces whether the
+    line is readable at all, so the UI can resolve uncertainty its own way
+    (unknown) without ever acquiring the fact a second way."""
+    assert PowerSourceProvider(pld=_FakePld(present=True)).isAvailable is True
+    assert PowerSourceProvider(pld=_FakePld(present=False)).isAvailable is True
+    unreadable = PowerSourceProvider(pld=_FakePld(present=False, available=False))
+    assert unreadable.isAvailable is False
+    # The safe direction is UNCHANGED -- this adds a fact, it does not
+    # re-point the shutdown path at a new one.
+    assert unreadable.isExternalPowerPresent() is True
+
+
+def test_provider_pldNotReportingAvailability_readsUnreadable():
+    """A duck-typed pld that does not report readability resolves to NOT
+    readable -- the honest direction for a display consumer (unknown), never
+    an assumed-good line."""
+
+    class _SilentPld:
+        def isExternalPowerPresent(self) -> bool:
+            return True
+
+    assert PowerSourceProvider(pld=_SilentPld()).isAvailable is False

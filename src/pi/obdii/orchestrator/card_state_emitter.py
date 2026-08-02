@@ -61,15 +61,17 @@ class CardStateEmitterMixin:
 
     Assumes the composing class (:class:`ApplicationOrchestrator`) provides:
     ``self._config``, ``self._connection``, ``self._driveDetector``,
-    ``self._powerMonitor``, ``self._hardwareManager``, and the US-480-a state
-    attributes set in ``__init__`` (``self._systemStatusEmitter`` etc.).
+    ``self._hardwareManager``, and the US-480-a state attributes set in
+    ``__init__`` (``self._systemStatusEmitter`` etc.). ``self.
+    _powerSourceProvider`` (the US-502 power-source SSOT) is read through
+    ``getattr`` because lifecycle only creates it once hardware starts, which
+    is AFTER this mixin's emitters are constructed.
     """
 
     # These are declared/initialized on the core class; typed here for mypy.
     _config: dict[str, Any]
     _connection: Any | None
     _driveDetector: Any | None
-    _powerMonitor: Any | None
     _hardwareManager: Any | None
     _systemStatusEmitter: Any | None
     _batteryHealthEmitter: Any | None
@@ -270,12 +272,12 @@ class CardStateEmitterMixin:
         return (OBD_DOWN, retries, totalConns > 0)
 
     def _gatherPowerState(self) -> tuple[str, str]:
-        """Return (powerMode, powerSource) from the SSOT providers.
+        """Return (powerMode, powerSource) from the two SSOT providers.
 
-        powerMode = deployment context (car/wall/unknown) from PowerModeProvider.
-        powerSource = external/battery from PowerMonitor.readPowerStatus (True=AC
-        -> external, False=battery, None/absent -> unknown; never a confident
-        wrong source).
+        Two different facts, two different providers (architecture.md §2):
+        powerMode = deployment context (car/wall/unknown) from PowerModeProvider
+        (static config); powerSource = AC-vs-battery from PowerSourceProvider
+        (X1209 GPIO6 PLD). Neither is ever inferred from the other.
         """
         powerMode = "unknown"
         provider = self._cardPowerModeProvider
@@ -285,18 +287,39 @@ class CardStateEmitterMixin:
             except Exception:  # noqa: BLE001 -- honest unknown on read failure
                 powerMode = "unknown"
 
-        powerSource = "unknown"
-        pm = self._powerMonitor
-        if pm is not None:
-            try:
-                onAc = pm.readPowerStatus()  # True=AC, False=battery, None=fail
-                if onAc is True:
-                    powerSource = "external"
-                elif onAc is False:
-                    powerSource = "battery"
-            except Exception:  # noqa: BLE001 -- honest unknown on read failure
-                powerSource = "unknown"
-        return (powerMode, powerSource)
+        return (powerMode, self._gatherPowerSource())
+
+    def _gatherPowerSource(self) -> str:
+        """Return external/battery/unknown from the power-source SSOT (US-502).
+
+        Reads ``PowerSourceProvider`` -- the ONE authoritative acquisition path
+        for the AC-vs-battery fact -- which ``lifecycle._subscribePowerMonitor
+        ToPowerSourceProvider`` builds over the X1209 GPIO6 PLD line. The tile
+        previously read ``PowerMonitor.readPowerStatus()``, whose reader is
+        never configured in the orchestrator: it returned None forever, so the
+        tile said "unavailable" and the header bolt stayed gray while the real
+        fact was already flowing to ``power_log``. PowerMonitor is NOT consulted
+        here -- a second path could disagree with GPIO6, which is exactly the
+        SSOT violation the design gate forbids.
+
+        LAZY on purpose: this mixin's emitters are built in
+        ``_initializeAllComponents``, but the provider does not exist until
+        ``_startHardwareManager`` runs later, so a reference captured at init
+        time would be None for the life of the process.
+
+        UI uncertainty policy: an UNREADABLE line resolves to ``unknown``, not
+        to the provider's non-bricking "treat as present" default -- a display
+        must never show a confident source it cannot actually read.
+        """
+        source = getattr(self, "_powerSourceProvider", None)
+        if source is None:
+            return "unknown"
+        try:
+            if not source.isAvailable:
+                return "unknown"
+            return "external" if source.isExternalPowerPresent() else "battery"
+        except Exception:  # noqa: BLE001 -- honest unknown on read failure
+            return "unknown"
 
     def _gatherDriveState(self) -> tuple[str, int | None]:
         """Return (driveState, driveId): recording+id while a drive runs, else idle."""

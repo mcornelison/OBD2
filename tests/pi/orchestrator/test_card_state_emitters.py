@@ -47,13 +47,13 @@ class _FakeOrch(CardStateEmitterMixin):
         *,
         connection=None,
         driveDetector=None,
-        powerMonitor=None,
+        powerSourceProvider=None,
         hardwareManager=None,
     ):
         self._config = config
         self._connection = connection
         self._driveDetector = driveDetector
-        self._powerMonitor = powerMonitor
+        self._powerSourceProvider = powerSourceProvider
         self._hardwareManager = hardwareManager
         self._systemStatusEmitter = None
         self._batteryHealthEmitter = None
@@ -132,10 +132,12 @@ def test_maybeEmit_linkedCar_recording_writesRealSystemStatus(tmp_path):
         )
     )
     dd = SimpleNamespace(isDriving=lambda: True)
-    pm = SimpleNamespace(readPowerStatus=lambda: True)  # AC / external
+    # US-502: the power-source SSOT (PowerSourceProvider over GPIO6), not the
+    # never-configured PowerMonitor reader this used to fake.
+    psp = SimpleNamespace(isAvailable=True, isExternalPowerPresent=lambda: True)
     orch = _FakeOrch(
         _config(tmp_path, stateEmitIntervalSeconds=0.0),
-        connection=conn, driveDetector=dd, powerMonitor=pm,
+        connection=conn, driveDetector=dd, powerSourceProvider=psp,
     )
     orch._initializeCardStateEmitters()
     orch._lastSyncOkTsIso = "2026-07-21T19:40:00Z"
@@ -194,10 +196,10 @@ def test_maybeEmit_liveUps_writesRealBatteryValues_healthUnknownNeverGreen(tmp_p
         getChargeRatePercentPerHour=lambda: -3.2,
     )
     hw = SimpleNamespace(upsMonitor=ups)
-    pm = SimpleNamespace(readPowerStatus=lambda: False)  # on battery
+    psp = SimpleNamespace(isAvailable=True, isExternalPowerPresent=lambda: False)
     orch = _FakeOrch(
         _config(tmp_path, stateEmitIntervalSeconds=0.0),
-        hardwareManager=hw, powerMonitor=pm,
+        hardwareManager=hw, powerSourceProvider=psp,
     )
     orch._initializeCardStateEmitters()
 
