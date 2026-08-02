@@ -2,15 +2,15 @@
 sprint: 69
 version: V0.29.24
 status: draft
-createdAt: 2026-07-31
+createdAt: 2026-08-01
 createdBy: Marcus (PM)
-selectedStories: [US-501, US-502, US-503, US-504, US-505, US-512, US-513]
-forksFrom: dev @ (recorded at prd_to_sprint.py conversion; forks from dev AFTER Sprint A / V0.29.23 lands)
+selectedStories: [US-501, US-502, US-503, US-504, US-505, US-512, US-513, US-517, US-518, US-521]
+forksFrom: dev @ (recorded at prd_to_sprint.py conversion; forks from dev AFTER V0.29.23 deployed)
 sprintJsonPath: offices/ralph/sprint.json
-epics: E-001 (UI/UX Polish) + E-OPS (F-120 BT reliability)
-features: F-123 (dashboard truthfulness wiring), F-120 (BT connectivity reliability)
-theme: Sprint B of the /resize-split -- dashboard truthfulness WIRING (F-123) + BL-025 capture HARDENING (F-120). 7 stories. Sequenced AFTER Sprint A (US-504 targets A's consolidated Health card; US-512 builds on the V0.29.22 durable bond).
-atlasReview: "PASS 2026-07-31 (same review as Sprint A). Seam-confirms folded: US-502 wire the power tile to the PowerModeProvider power-mode SSOT (one provider per fact, not a 2nd reader); US-505 read the Pi's OWN last-drive (Pi obd.db / connection_log), Pi-local + fresh, not a stale synced server value; US-512 reconnect-transport-reset APPROVED with shape (escalate to full transport reset under _ioLock; hard-dep on the durable bond, now delivered by V0.29.22; live acceptance = engine-on drive with a real BT drop+recover)."
+epics: E-001 (UI/UX Polish) + E-OPS (F-120 BT reliability) + E-006 (EDR)
+features: F-123 (dashboard truthfulness wiring), F-120 (BT connectivity reliability), F-125 (GPS + honest altitude foundation)
+theme: "FULL sprint (CIO 2026-08-01). Dashboard truthfulness WIRING (F-123, incl US-504 re-groomed to Spool's spec) + BL-025 capture HARDENING (F-120) + honest-altitude FOUNDATION (F-125 -- home config + sync re-anchor + gyro-fused pitch). The altitude DISPLAY (US-519/520) + real GPS (US-516) are DEFERRED (Spool sigma-sizing / hardware TBD not ordered)."
+atlasReview: "PASS 2026-07-31 (F-123/F-120) + F-125 contract/seams ruled 2026-08-01 (abfc03f: states/gps contract, US-517 home-config seam, US-518 sync-reanchor seam). Spool rulings folded: US-504 verdict spec (writer-fix-first + [EXACT] thresholds + honest-unknown + never-red); US-521 gyro-fused pitch + ZUPT required before any altitude integration; US-502 power tile -> PowerModeProvider SSOT; US-505 Pi-local last-drive; US-512 transport-reset shape (bond from V0.29.22)."
 ---
 
 # PRD: V0.29.24 -- dashboard wiring + capture hardening (Sprint B of the split)

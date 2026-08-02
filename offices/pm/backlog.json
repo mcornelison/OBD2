@@ -5,7 +5,7 @@
   "counters": {
     "epic": 7,
     "feature": 125,
-    "story": 520
+    "story": 521
   },
   "epics": [
     {
@@ -6306,31 +6306,28 @@
       "id": "US-504",
       "parent": "F-123",
       "type": "issue",
-      "size": "M",
+      "size": "L",
       "status": "pending",
-      "title": "Battery Health truthfulness: remove no-source TEMP tile + wire HEALTH verdict and last-health-check to real sources",
-      "goal": "As the operator, I want every battery field to reflect a real source (or not appear at all), so the card is honest -- no 'no source' temp, no hardcoded 'unknown' health, no 'never' health-check.",
+      "title": "Battery Health truthfulness: remove no-source TEMP + writer-fix + HEALTH verdict + last-health-check (Spool spec)",
+      "goal": "As the operator, I want every battery field on a real source (or absent), so the card is honest -- no 'no source' temp, and a HEALTH verdict grounded in real capacity data rather than a manufactured value or a hardcoded 'unknown'.",
       "definitionOfDone": [
-        "[SEQUENCING] this wires the BATTERY portion of the consolidated 'Health' card (US-507 merges Battery+Light+Fuel Trim). Land US-507 (or coordinate) first so the wiring targets the merged card, not the retired standalone Battery Health card",
-        "REMOVE the TEMP tile: the MAX17048 UPS HAT has NO temperature register -> ambientTempC has no real source on this hardware (card_state_emitter.py:402 hardcodes None). Drop the temp tile rather than show a permanent 'no source' (CIO 07-31). Do NOT confuse with the ICM-20948 IMU temp (US-500, unrelated)",
-        "keep CELL(volts) + CHARGE(%) as-is -- already real MAX17048 reads (card_state_emitter.py:345-346); CHARGE stays tagged (uncalibrated) until socCalibrated",
-        "wire HEALTH verdict to a real producer instead of the hardcoded 'unknown' (card_state_emitter.py:398) -- [SOURCE-CONFIRM: Spool owns the battery-health verdict semantics/source; grooming gate]",
-        "wire lastHealthCheckTs to the real battery_health_log history instead of hardcoded None (card_state_emitter.py:402) so the idle 'last health check' line shows a real timestamp, not 'never' -- [SOURCE-CONFIRM: the battery_health_log producer/reader; grooming gate; ties to the CIO 'build both producers' decision]",
-        "honest-instrument: any field still lacking a real source is REMOVED, not shown as a placeholder; test proves the wired fields read their real source; ruff clean in-loop"
+        "[SEQUENCING] wires the BATTERY portion of the consolidated 'Health' card (US-507); land US-507 first. REMOVE the TEMP tile (MAX17048 has NO temp register) but KEEP the ambient_temp_c column (a future BMP390 baro fills it -- Spool). Keep CELL(volts)+CHARGE(%) as-is (real MAX17048).",
+        "[WRITER-FIX -- BLOCKING SUB-STORY, do FIRST] the producer gap is UPSTREAM: battery_health_log start_vcell_v/end_vcell_v/start_soc_pct/end_soc_pct are NULL on ALL 28 rows -- nothing populates them (Spool live re-query 2026-08-01). Fix the writer to populate vcell/soc; without this the verdict has nothing to consume. Do NOT compute a verdict from NULLs (that manufactures confidence = strictly worse than 'unknown').",
+        "[HEALTH VERDICT PRODUCER -- Spool [EXACT] spec] source = battery_health_log (NOT a live MAX17048 spot read -- capacity fade needs runtime-to-cutoff). Qualifying row gate: end_timestamp NOT NULL AND load_class='production' AND runtime_seconds >= [EXACT:600]. RUNTIME_BASELINE_S=[EXACT:727]. States on median of last 3 qualifying drains: good >= [EXACT:80]% baseline (>=582s) | degraded 60-80% (436-582s) | replace < [EXACT:60]% (<436s) | unknown = default (< 3 qualifying in trailing [EXACT:180] days OR any required input NULL). median-of-3 (not last-1: single-drain scatter +-15%).",
+        "[LAST-HEALTH-CHECK] = MAX(start_timestamp) over qualifying rows only (a partial/aborted drain is NOT a health check). If last check > [EXACT:90] days old, FORCE verdict to unknown regardless of numbers (stale health data is not health data).",
+        "[SEVERITY -- Spool] 🟢 INFORMATIONAL at every state incl 'replace' -- NEVER alarm-red, never owns the screen, never competes with coolant/DTC-STOP on a driving surface (UPS margin is ~12min vs <1min needed = 10x; 'replace' = data-integrity margin thinned, not a car risk).",
+        "[HONEST END-STATE] accept the card legitimately reads 'unknown' + last-check '2026-05-16' until fresh qualifying drains exist -- THAT IS THE INSTRUMENT WORKING, not a bug. Test proves the qualifying-gate + median-of-3 + 90-day override + honest-unknown-on-NULL; ruff clean."
       ],
       "validationCriteria": [
-        {
-          "action": "view the Battery Health card on the Pi after deploy",
-          "outcome": "no TEMP 'no source' tile; CELL + CHARGE real; HEALTH shows a real verdict; last-health-check shows a real timestamp (once a check has run) rather than a hardcoded 'never'"
-        }
+        {"action": "with seeded battery_health_log rows (some qualifying, some partial, some NULL-input) view the Health card", "outcome": "verdict computed only from qualifying rows via median-of-3 vs the 727s baseline; forces 'unknown' on <3 qualifying / any NULL / >90-day-stale; last-health-check ignores partial drains; renders 🟢 never red; no TEMP tile"}
       ],
       "conditionalOutcomes": [
-        "if the SOURCE-CONFIRM finds no producer exists yet for HEALTH verdict or health-check history, that producer is built as part of this story (CIO chose 'build both producers') OR carved to a sized sub-story if it grows -- do NOT ship a hardcoded placeholder"
+        "the writer-fix is the blocking first sub-story; if it grows, carve it (US-504a writer / US-504b producer). Do NOT ship a computed verdict over NULL inputs -- keep honest 'unknown' until real vcell/soc data exists.",
+        "[EXACT:] values (600/727/80/60/180/90) are Spool load-bearing -- flag Spool before any drift"
       ],
       "sourceRefs": [
-        "offices/pm/decisions/2026-07-31-ui-feedback-round2-triage.md#5,#8",
-        "card_state_emitter.py:398,402,345-346",
-        "carousel.js:529-534,553-582"
+        "offices/pm/inbox/2026-08-01-from-spool-us504-battery-health-verdict-source.md",
+        "battery_health_log", "card_state_emitter.py:398,402,345-346", "carousel.js:529-534,553-582"
       ],
       "createdAt": "2026-07-31",
       "updatedAt": "2026-07-31",
@@ -6689,10 +6686,11 @@
       "type": "normal",
       "size": "L",
       "status": "pending",
-      "title": "WP-1: PA1010D I2C GPS reader -> states/gps source (real altitude/speed/heading/position)",
+      "title": "WP-1: GPS reader -> states/gps source (real altitude/speed/heading) -- HARDWARE TBD (not ordered)",
       "goal": "As the live card, I want a real GPS source publishing states/gps, so altitude/speed/heading come from an absolute sensor instead of a derived estimate.",
       "definitionOfDone": [
-        "a dedicated reader OWNS NMEA parsing for the Adafruit PA1010D (I2C, STEMMA QT) and publishes states/gps (DELTA-2 single-owner seam, same shape as states/imu): altitude, speed, heading, lat/lon, fixQuality, available(bool), ts",
+        "[HARDWARE TBD -- PARKED] CIO 2026-08-01: the GPS module + BMP390 baro are Spool's wishlist, NOT ordered. Do NOT dispatch until the CIO orders + the part arrives + he confirms the part. INTERFACE is unresolved: Spool recommends the Adafruit 746/PA1616S (UART/NMEA + external antenna, better fix in a steel cabin) over the PA1010D (I2C, internal antenna) -- reader is UART vs I2C accordingly. Costs zero K-line budget (separate bus).",
+        "a dedicated reader OWNS NMEA parsing for the confirmed module (UART 746 or I2C PA1010D) and publishes states/gps (DELTA-2 single-owner seam, same shape as states/imu): altitude, speed, heading, lat/lon, fixQuality (satellites/HDOP gate the display -- no fix = no altitude, never a stale one), available(bool), ts",
         "honest-NA on no-fix: no fix -> available=false + typed-NULL fields (reason like 'no_fix'), NEVER a fabricated/zeroed position or altitude",
         "the display polls states/gps as a PURE consumer (~1 Hz fine; never opens the bus/I2C itself); raw GPS on the EDR bus + versioned sensor schema, states/gps is the derived display view",
         "[GATE -- Atlas] blocked on Atlas's states/gps derived-field contract (route it like the states/imu line); [GATE -- hardware] the CIO's PA1010D #4415 arriving + wired on the shared I2C bus. Spool owns GPS-value trust semantics",
@@ -6799,6 +6797,31 @@
       "conditionalOutcomes": [],
       "deps": ["US-519"],
       "sourceRefs": ["offices/pm/inbox/2026-08-01-from-iris-gps-altitude-workpackage-for-grooming.md#WP-5", "US-508", "F-124"],
+      "createdAt": "2026-08-01",
+      "updatedAt": "2026-08-01",
+      "tasks": []
+    },
+    {
+      "id": "US-521",
+      "parent": "F-125",
+      "type": "normal",
+      "size": "M",
+      "status": "pending",
+      "title": "Gyro-fused pitch for states/imu (complementary/Madgwick + ZUPT) -- honest grade + altitude foundation",
+      "goal": "As the grade + (future) altitude signals, I want pitch from a gyro-accel fusion, not accel-only tilt, so a 0.3 g acceleration isn't misread as a 16.7-degree climb (Spool: an accelerometer cannot distinguish grade from acceleration -- they are the same measurement).",
+      "definitionOfDone": [
+        "the states/imu pitch (the gradePct source) is GYRO-FUSED (complementary or Madgwick): gyro integrated for short-term, accel corrects the gyro ONLY when |accel| is near 1 g (Spool). gyro-alone drifts; accel-alone is contaminated by longitudinal g; neither works standalone",
+        "[ZUPT] zero-velocity bias update: at every confirmed stop (OBD speed 0 for > [EXACT:3] s) the accel reads pure gravity -> measured tilt = true chassis pitch; average over stops to converge the pitch BIAS out (valid because Chicagoland terrain is flat -> real slopes average ~0). city stoplights are the free calibration signal",
+        "the fused pitch feeds gradePct (the honest grade on US-508) AND is the prerequisite the future interim altitude (US-519) integrates -- publish it in states/imu per Atlas's DELTA-2 contract; raw accel/gyro stay on the EDR bus",
+        "[SPOOL SIZING -- route him] send Spool the current pitch derivation + the pitch/speed sample rates so he sizes expected sigma_pitch BEFORE the altitude display (US-519/520) builds on it",
+        "test proves: a longitudinal 0.3 g on flat ground does NOT produce a ~16.7-degree pitch (the failure mode); ZUPT converges the bias over simulated stops; ruff clean"
+      ],
+      "validationCriteria": [
+        {"action": "on the Pi: apply/simulate a longitudinal 0.3 g on flat ground, then a confirmed stop on a known slope", "outcome": "pitch stays ~0 under pure acceleration (not 16.7 deg); at the stop, pitch reads the true chassis tilt; grade on US-508 is no longer accel-contaminated"}
+      ],
+      "conditionalOutcomes": ["if the current grade/pitch is already gyro-fused (verify first), this narrows to adding ZUPT + confirming the fusion; [EXACT:3]s ZUPT gate is Spool load-bearing"],
+      "deps": [],
+      "sourceRefs": ["offices/uidevloper/inbox/2026-08-01-from-spool-us508-altitude-derivation-ruling.md", "states/imu", "US-508 (gradePct)"],
       "createdAt": "2026-08-01",
       "updatedAt": "2026-08-01",
       "tasks": []
