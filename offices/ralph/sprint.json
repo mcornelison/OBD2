@@ -87,7 +87,7 @@
       "type": "normal",
       "size": "S",
       "status": "sprint-ready",
-      "passes": false,
+      "passes": true,
       "acceptance": [
         "fmtClock (carousel.js:1929) renders 12-hour time with an AM/PM meridiem (mod-12 with 12 for noon/midnight), not getHours() 24-hour",
         "minutes stay zero-padded; no seconds unless already shown",
@@ -101,7 +101,15 @@
       ],
       "conditionalOutcomes": [],
       "goal": "As the operator, I want the idle-home clock in 12-hour AM/PM format instead of 24-hour, matching how I read time at a glance.",
-      "tasks": []
+      "tasks": [],
+      "feedback": {
+        "filesActuallyTouched": [
+          "specs/UI/dist/dashboard-pi/carousel.js",
+          "tests/ui/test_carousel_idle_clock.py",
+          "tests/ui/idle_clock_probe.js"
+        ]
+      },
+      "completionNotes": "fmtClock now renders 12-hour AM/PM: mod-12 with 12 restored for midnight/noon, BARE hour ('2:05 PM', never '02:05 PM'), zero-padded minute, no seconds. Pure format change -- no data source, no state file, no emitter touched, and the Date still comes from the caller. THE ONE CALL THE PM SHOULD KNOW ABOUT: I MOVED fmtClock (and its two() padding helper) out of the browser-only `if (typeof document !== 'undefined')` block up into the pure/exported section. That was not a preference -- under 'use strict' an ES6 function declaration inside a block is BLOCK-SCOPED, so fmtClock was structurally unreachable from the api export literal and from every test; hoisting does not rescue it. It was always pure (it formats the Date it is handed; it never reads a clock), so the block comment's 'the pure view logic stays clock-free, so these live in the DOM layer' rationale was true of fmtDate but never of fmtClock. fmtDate + IDLE_DAYS/IDLE_MONTHS deliberately stayed put -- out of scope. There is now exactly ONE clock formatter in carousel.js; the DOM block CALLS it and does not own one, and the source comment there says so to stop a future edit re-declaring a local. 10 tests, all 10 RED first (the DOM one failed on the real rendered value '22:50' -- the actual bug, not a proxy). 3 mutations proved: bare `% 12` without the `|| 12` restore -> midnight+noon+sweep fail; meridiem boundary `h <= 12` -> noon reads AM, caught by 2; RE-SHADOWING the DOM block with the old 24-hour fmtClock -> ALL NINE fmtClock unit tests stay green and ONLY the end-to-end DOM test catches it. That third one is why the story has an end-to-end test at all: it is the exact US-494/US-499/US-502 shape where both halves are individually correct and simply do not agree. Needed a dedicated probe (tests/ui/idle_clock_probe.js) because carousel_probe.js JSON-decodes its arguments and JSON has no Date -- it would hand fmtClock a Number and the formatter would read NaN; the probe builds the Date from local calendar COMPONENTS so the fixture is the clock FACE, not an instant, and the assertions hold in any timezone. Green in-loop: tests/ui + tests/deploy/test_dashboard_kit.py = 580 passed, exit 0 (the 10 new ones verified RUN not skipped, node present); ruff clean. Not run in-loop per TD-059: full pytest + mypy -- but this touches ONE JS function and no Python source, so the regression risk is confined to the UI suite that already ran whole. FLAG FOR THE ON-PI DRILL (layout, not logic): .idle-header is a flex row (wordmark + clock + date, gap 8px) on the 480px design stage, and the clock string grew ~3 glyphs ('22:05' -> '10:05 PM'). I did NOT pre-emptively touch dashboard.css -- the render harness resolves CSS but does not do text metrics, so any tightening would have been a guess at a panel I cannot see. If the header crowds on the real 480x320 panel, that is a one-line CSS follow-up. OWED: the on-Pi read of the idle-card clock at a known time -- PM/CIO drill, not codeable."
     },
     {
       "id": "US-504",

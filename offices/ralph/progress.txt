@@ -116,3 +116,59 @@ Task: Wire the real power source to the System-Status power tile + header bolt
   value. A fake returning the stored value hides the exact lie the story is
   about.
 ---
+
+## 2026-08-01 - US-503 (Agent 1 / Rex)
+Task: Idle-card clock to 12-hour AM/PM
+
+### What was implemented:
+- `fmtClock` renders a 12-hour AM/PM face: mod-12 with the 12 restored for
+  midnight/noon, a BARE hour (`2:05 PM`, never `02:05 PM`), a zero-padded
+  minute, no seconds. Purely a format change -- no data source, no state
+  file, no emitter touched; the Date is still supplied by the caller.
+- `fmtClock` + its `two()` padding helper MOVED from the browser-only block
+  up into the pure/exported section, and `fmtClock` is now on `api`.
+  carousel.js holds exactly ONE clock formatter; the DOM block calls it.
+- New `tests/ui/idle_clock_probe.js` -- a deterministic node probe that
+  builds a local Date from calendar components and prints `fmtClock`.
+
+### Files changed:
+- Modified: `specs/UI/dist/dashboard-pi/carousel.js` (12-hour formatter,
+  relocated to the pure section + exported; DOM-block comment updated)
+- Created: `tests/ui/test_carousel_idle_clock.py` (10 tests -- 9 formatter
+  cases + 1 end-to-end read of the rendered `.idle-clock` element)
+- Created: `tests/ui/idle_clock_probe.js` (deterministic clock probe)
+
+### Learnings for future iterations:
+- **Gotcha (why the move was forced, not chosen)**: carousel.js runs under
+  `"use strict"`, where an ES6 function declaration inside a block is
+  BLOCK-SCOPED. Anything declared inside
+  `if (typeof document !== "undefined") { ... }` is therefore invisible to
+  the `api` export literal -- hoisting does NOT rescue it. So "just add it
+  to `api`" is not an option for a helper in that block; it has to
+  physically move. Check which side of that brace a function lives on
+  before planning to test it.
+- **Pattern discovered**: that block's header comment ("the pure view logic
+  stays clock-free (deterministic tests), so these live in the DOM layer")
+  was true of `fmtDate` but never of `fmtClock` -- `fmtClock` only ever
+  formatted the Date it was HANDED, so it was pure all along and the
+  comment was quietly protecting the wrong function. A rationale written
+  for a group is worth re-checking per member before inheriting it.
+- **Gotcha (3rd sighting this sprint of the two-correct-halves shape)**:
+  mutation-testing proved the end-to-end test is the one that matters here.
+  Re-declaring the OLD 24-hour `fmtClock` inside the DOM block leaves ALL
+  NINE formatter unit tests green -- they exercise the exported one -- and
+  is caught ONLY by the test that boots the shipped carousel.js over the
+  shipped markup and reads the rendered `.idle-clock` text. Same lesson as
+  US-494/US-499/US-502: when a fix RELOCATES a function, something must pin
+  that the caller moved with it.
+- **Pattern discovered**: `carousel_probe.js` JSON-decodes its argv, and
+  JSON has no Date -- passing an epoch hands the function a Number and it
+  reads NaN. For any Date-taking export, write a small dedicated probe that
+  builds the Date from local calendar COMPONENTS: the fixture is then the
+  clock FACE, not an instant, and the assertions hold in any timezone.
+- **Gotcha (deferred, for the on-Pi drill)**: `.idle-header` is a flex row
+  (wordmark + clock + date, gap 8px) on the 480px design stage and the
+  clock string grew ~3 glyphs. `render_harness.py` resolves CSS but does NO
+  text metrics, so crowding is undetectable from here -- do not pre-tighten
+  the stylesheet on a guess; flag it for the panel read.
+---
