@@ -5,7 +5,7 @@
 | Severity     | Medium                    |
 | Status       | Resolved-by-carry (2026-08-02) |
 | Blocking     | US-504a (Sprint 69 / V0.29.24) -- the LAST open story in the sprint |
-| Waiting On   | (1) PM/Atlas: orphan policy for the drain-event writer (touches the shutdown path). (2) Spool: the qualifying-gate / band overlap in his US-504 verdict spec. |
+| Waiting On   | **Atlas only** (as of 2026-08-02 14:40): orphan policy for the drain-event writer (touches the shutdown path). ~~Spool gate/band~~ RESOLVED -- Spool ruled option (b) depth gate (`c72677e`/`429a3ed`). |
 | Created      | 2026-08-02                |
 
 ## Description
@@ -88,17 +88,24 @@ complete + committed, and neither the V0.29.24 deploy nor the IRL drive depends 
 the drain writer. US-504a marked `status: blocked` + `pmDisposition` in `sprint.json`;
 it re-enters grooming in V0.29.25.
 
-**Ruling routing (order matters — Spool FIRST, he determines *what* gets written):**
-1. **Ruling 2 (gate/band overlap) — Spool.** Already in his inbox
-   (`offices/tuner/inbox/2026-08-02-from-ralph-us504-gate-band-overlap-and-writer-gap.md`);
-   awaiting reply. His `runtime_seconds >= 600` gate sits entirely above both sub-good
-   bands → `degraded`/`replace` unreachable through the real pipeline. His answer
-   (keep duration-gate vs. move to a depth/cutoff-reached gate) changes what US-504a
-   must record.
-2. **Ruling 1 (orphan policy, shutdown path) — Atlas (design gate).** Routed
-   2026-08-02: `offices/architect/inbox/2026-08-02-from-marcus-us504a-orphan-policy-design-ruling.md`.
-   Gated behind Ruling 2. Ralph recommends option (C). Carries the LOAD-BEARING TRAP
-   (reaper must stamp `end_timestamp` + leave `runtime_seconds` NULL; never call
-   `endDrainEvent` across a reboot).
+**Ruling status (2026-08-02 14:40 — Spool answered; now Atlas-only):**
+1. **Ruling 2 (gate/band overlap) — Spool: RESOLVED.** Spool ruled **option (b) depth gate**
+   (`end_vcell_v <= 3.50 V` + 60 s floor), landed `c72677e` + `429a3ed`. This retires his
+   earlier `runtime_seconds >= 600` gate (which sat above the 582 s good/degraded boundary,
+   making `degraded`/`replace` unreachable). Consequence for Atlas: under a depth gate the
+   cutoff-shutdown drain is the ONLY drain that can qualify, so **option (B) is disqualified
+   on data grounds** and the boot reaper drops to **hygiene-only** (never a data path) —
+   leaving (A) vs (C), and Ralph's **(C)** stands.
+2. **Ruling 1 (orphan policy, shutdown path) — Atlas (design gate): OPEN.** Routed
+   2026-08-02 (`offices/architect/inbox/2026-08-02-from-marcus-us504a-orphan-policy-design-ruling.md`);
+   Spool's depth-gate ruling forwarded same day. Carries the LOAD-BEARING TRAP (reaper must
+   stamp `end_timestamp` + leave `runtime_seconds` NULL; never call `endDrainEvent` across a
+   reboot). **This is the only thing US-504a still waits on.**
+
+**US-504b latent-defect note (Spool 2026-08-02):** US-504b shipped `passes:true` against the
+retired `>=600` gate, so as-built it can only ever return `good`/`unknown` (degraded/replace
+unreachable). Latent today (no writer + the 90-day staleness override → card reads `unknown`
+correctly). MUST NOT be booked done-done: the depth-gate band remap (isolated in
+`verdictForMedianRuntime()`) rides WITH US-504a in V0.29.25. Tracked as **TD-074**.
 
 Blocker stays filed for audit; US-504a tracked into V0.29.25 grooming.

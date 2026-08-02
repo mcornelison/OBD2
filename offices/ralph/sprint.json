@@ -113,7 +113,7 @@
     },
     {
       "id": "US-504a",
-  "pmDisposition": "CARRIED to V0.29.25 (Sprint 70) by PM 2026-08-02 -- blocked on 2 unarrived rulings (Atlas orphan-policy + Spool gate/band overlap); see BL-028. Sprint 69 closes 10/11; deploy + IRL drill do not depend on this writer. Re-groom in V0.29.25 after Spool's gate answer (which determines WHAT gets written) then Atlas's orphan-policy ruling.",
+  "pmDisposition": "CARRIED to V0.29.25 (Sprint 70) by PM 2026-08-02; see BL-028. Sprint 69 closes 10/11; deploy + IRL drill do not depend on this writer. Spool's ruling LANDED (c72677e = option (b) depth gate: end_vcell_v <= 3.50 V + 60 s floor; 429a3ed = design implications) -- so US-504a is now ATLAS-ONLY (orphan policy, shutdown path). Spool's depth gate disqualifies option (B) on data grounds and demotes the boot reaper to hygiene-only, leaving (A) vs (C); Ralph's (C) stands. Depth gate + US-504b band remap (verdictForMedianRuntime()) ride WITH US-504a in V0.29.25.",
       "title": "Battery Health writer: a PRODUCTION drain-event writer (battery_health_log gets new rows again)",
       "parent": "F-123",
       "epicId": "E-001",
