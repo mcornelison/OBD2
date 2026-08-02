@@ -214,6 +214,37 @@ real value after the link dropped; a numeric NA sentinel in a table/analytic; a
 takeover/alert firing on an empty/absent state (an absent DTC source must read
 `unavailable`, not "no codes → all-clear" and not a mis-fired alert).
 
+### Config-time corollary — an unresolved `${VAR}` placeholder is a string sentinel
+
+> **STATUS: NORMATIVE (Atlas ruling 2026-08-02, verified in code).** The
+> config-load analog of sub-rule 2. Verified: `secrets_loader._resolveString`
+> (`src/common/config/secrets_loader.py:151-153`) returns the **literal
+> placeholder string verbatim** when the env var is unset *and* the key carries
+> no inline `${VAR:default}` — a warning is logged, nothing raises.
+
+Consequence: for a `${VAR}`-bound optional key with the env var unset, the
+validated config holds a **truthy `"${PI_HOME_LAT}"` string**, so the validator's
+`None` default **never fires** (the key is already "present"). A downstream
+consumer that reads the key directly gets that literal string — a *confident
+wrong value* masquerading as data. This is the numeric-sentinel failure mode of
+sub-rule 2, in string form, moved to config-load time.
+
+**The rule.** For any placeholder-bound key that may legitimately be unset
+(optional secrets, PII like location, hardware not yet installed):
+
+1. The key's **provider normalizes** an unresolved `${...}` literal to typed-NA
+   (`None` + reason), exactly as `HomeLocationProvider` does (US-517) — the same
+   "resolve availability once, at the provider, not at each consumer" discipline
+   as the live-surface rule above. Never leave a raw consumer to discover the
+   literal.
+2. **OR** the key carries an inline `${VAR:default}` — but only when a committed
+   default is honest. It is **not** honest for PII or a fabricated physical
+   anchor (a coordinate/altitude in source is both committed PII *and* a made-up
+   fact); those stay `${VAR}`-bare and rely on rule 1.
+
+A future config lint could flag placeholder-bound keys read without NA-
+normalization — routed as a candidate, not built here.
+
 ## Cross-references
 
 - Atlas (architect) — owns the design gate that enforces this; office
