@@ -112,17 +112,48 @@
       "completionNotes": "fmtClock now renders 12-hour AM/PM: mod-12 with 12 restored for midnight/noon, BARE hour ('2:05 PM', never '02:05 PM'), zero-padded minute, no seconds. Pure format change -- no data source, no state file, no emitter touched, and the Date still comes from the caller. THE ONE CALL THE PM SHOULD KNOW ABOUT: I MOVED fmtClock (and its two() padding helper) out of the browser-only `if (typeof document !== 'undefined')` block up into the pure/exported section. That was not a preference -- under 'use strict' an ES6 function declaration inside a block is BLOCK-SCOPED, so fmtClock was structurally unreachable from the api export literal and from every test; hoisting does not rescue it. It was always pure (it formats the Date it is handed; it never reads a clock), so the block comment's 'the pure view logic stays clock-free, so these live in the DOM layer' rationale was true of fmtDate but never of fmtClock. fmtDate + IDLE_DAYS/IDLE_MONTHS deliberately stayed put -- out of scope. There is now exactly ONE clock formatter in carousel.js; the DOM block CALLS it and does not own one, and the source comment there says so to stop a future edit re-declaring a local. 10 tests, all 10 RED first (the DOM one failed on the real rendered value '22:50' -- the actual bug, not a proxy). 3 mutations proved: bare `% 12` without the `|| 12` restore -> midnight+noon+sweep fail; meridiem boundary `h <= 12` -> noon reads AM, caught by 2; RE-SHADOWING the DOM block with the old 24-hour fmtClock -> ALL NINE fmtClock unit tests stay green and ONLY the end-to-end DOM test catches it. That third one is why the story has an end-to-end test at all: it is the exact US-494/US-499/US-502 shape where both halves are individually correct and simply do not agree. Needed a dedicated probe (tests/ui/idle_clock_probe.js) because carousel_probe.js JSON-decodes its arguments and JSON has no Date -- it would hand fmtClock a Number and the formatter would read NaN; the probe builds the Date from local calendar COMPONENTS so the fixture is the clock FACE, not an instant, and the assertions hold in any timezone. Green in-loop: tests/ui + tests/deploy/test_dashboard_kit.py = 580 passed, exit 0 (the 10 new ones verified RUN not skipped, node present); ruff clean. Not run in-loop per TD-059: full pytest + mypy -- but this touches ONE JS function and no Python source, so the regression risk is confined to the UI suite that already ran whole. FLAG FOR THE ON-PI DRILL (layout, not logic): .idle-header is a flex row (wordmark + clock + date, gap 8px) on the 480px design stage, and the clock string grew ~3 glyphs ('22:05' -> '10:05 PM'). I did NOT pre-emptively touch dashboard.css -- the render harness resolves CSS but does not do text metrics, so any tightening would have been a guess at a panel I cannot see. If the header crowds on the real 480x320 panel, that is a one-line CSS follow-up. OWED: the on-Pi read of the idle-card clock at a known time -- PM/CIO drill, not codeable."
     },
     {
-      "id": "US-504",
-      "title": "Battery Health truthfulness: remove no-source TEMP + writer-fix + HEALTH verdict + last-health-check (Spool spec)",
+      "id": "US-504a",
+      "title": "Battery Health writer: a PRODUCTION drain-event writer (battery_health_log gets new rows again)",
       "parent": "F-123",
       "epicId": "E-001",
       "type": "issue",
-      "size": "L",
-      "status": "sprint-ready",
+      "size": "M",
+      "status": "needs-ruling",
       "passes": false,
       "acceptance": [
-        "[SEQUENCING] wires the BATTERY portion of the consolidated 'Health' card (US-507); land US-507 first. REMOVE the TEMP tile (MAX17048 has NO temp register) but KEEP the ambient_temp_c column (a future BMP390 baro fills it -- Spool). Keep CELL(volts)+CHARGE(%) as-is (real MAX17048).",
-        "[WRITER-FIX -- BLOCKING SUB-STORY, do FIRST] the producer gap is UPSTREAM: battery_health_log start_vcell_v/end_vcell_v/start_soc_pct/end_soc_pct are NULL on ALL 28 rows -- nothing populates them (Spool live re-query 2026-08-01). Fix the writer to populate vcell/soc; without this the verdict has nothing to consume. Do NOT compute a verdict from NULLs (that manufactures confidence = strictly worse than 'unknown').",
+        "[CARVED from US-504 per its own conditionalOutcome. Sibling US-504b (verdict producer) is DONE -- it consumes runtime_seconds/timestamps/load_class only and never reads vcell/soc, so this story was NOT blocking it.]",
+        "[ROOT -- corrected mechanism] BatteryHealthRecorder.startDrainEvent/endDrainEvent already write start_vcell_v/end_vcell_v/start_soc_pct/end_soc_pct correctly, and scripts/record_drain_test.py populates them. What does not exist is ANY production caller in src/ -- the US-216 auto-open path was retired under US-442/TD-058 and nothing replaced it. Consequence: no running Pi ever writes a battery_health_log row, so the card reads 'unknown' PERMANENTLY, not 'until fresh drains exist'. Build the production writer.",
+        "on a real AC->BATTERY transition a drain-event row is opened carrying a REAL start_vcell_v + start_soc_pct read from the MAX17048; on BATTERY->AC (or at cutoff shutdown) it is closed with a real end_vcell_v + end_soc_pct and a real runtime_seconds. Honest-instrument: an unreadable gauge or an uncalibrated SoC register writes NULL, never a guessed number (reuse readCalibratedRegisterSocPct + its cold-start window).",
+        "[SEAM] PowerMonitor.onTransition is the existing registration point and PowerMonitor already receives the GPIO6 truth via the US-502 _PowerSourceUiBridge sink (lifecycle.py ~2250). Read the UPS LATE-BOUND, at transition time, not captured at construction (US-501/502/503 all hit the boot-order trap this sprint).",
+        "[ORPHAN POLICY -- NEEDS A RULING BEFORE BUILD] US-442 requires a production writer to open+close as a single unit OR guarantee the close on the shutdown path -- but the drain most worth measuring is the one that ENDS in a cutoff shutdown, exactly where a deferred close is most likely to be lost. Options: (A) open-at-loss + close-at-restore-or-shutdown + boot reaper; (B) single INSERT at close, drain held in memory (zero orphans, but a hard crash loses the row entirely); (C) A with the ShutdownSequencer close primary and the reaper as backstop. Ralph recommends (C). See offices/pm/inbox/2026-08-02-from-ralph-us504-carved-504a-writer-504b-producer.md",
+        "[LOAD-BEARING TRAP] if a boot reaper is built, it MUST NOT close orphans via endDrainEvent -- that computes runtime_seconds from the timestamp delta, which across a reboot manufactures a runtime spanning the whole downtime, clears the 600s gate, and poisons the verdict median with a fabricated multi-hour 'drain'. The reaper stamps end_timestamp and leaves runtime_seconds NULL so the row can never qualify.",
+        "test proves: a simulated AC->BATTERY->AC cycle writes ONE row with real vcell/soc at both ends; an unreadable gauge writes NULL not a guess; the shutdown path closes an open drain; a reaped orphan carries NULL runtime_seconds and does NOT qualify in the US-504b verdict. ruff clean in-loop",
+        "does NOT delay, block, or add a failure mode to the ShutdownSequencer -- the drain close is best-effort and can never keep the Pi from powering off (I-038 lesson)"
+      ],
+      "validationCriteria": [
+        {
+          "action": "on the Pi, pull wall power (or open the PLD line) and restore it, then query battery_health_log",
+          "outcome": "a NEW row exists for that window with non-NULL start_vcell_v/start_soc_pct/end_vcell_v/end_soc_pct and a real runtime_seconds; no orphan row is left behind across a reboot"
+        }
+      ],
+      "conditionalOutcomes": [
+        "BLOCKED ON TWO RULINGS: (1) PM/Atlas on the orphan policy above (touches the shutdown path); (2) Spool on the gate/band overlap -- his qualifying gate (>=600s) sits entirely ABOVE both sub-good bands (degraded 436-582s, replace <436s), so degraded/replace are unreachable and a pack dying at 500s is discarded as a partial drain. If he moves to a depth/cutoff-reached gate, THIS writer is what has to record that signal -- so his answer changes what gets written. Filed 2026-08-02 to offices/tuner/inbox/.",
+        "[EXACT:] values (600/727/80/60/180/90) are Spool load-bearing -- flag Spool before any drift"
+      ],
+      "goal": "As the battery-health instrument, I want a running Pi to actually record its drain events with real cell voltage and SoC, so the health verdict has fresh qualifying data instead of a history frozen at 2026-05-16 forever.",
+      "tasks": []
+    },
+    {
+      "id": "US-504b",
+      "title": "Battery Health truthfulness: remove no-source TEMP + HEALTH verdict + last-health-check (Spool spec)",
+      "parent": "F-123",
+      "epicId": "E-001",
+      "type": "issue",
+      "size": "M",
+      "status": "sprint-ready",
+      "passes": true,
+      "acceptance": [
+        "[SEQUENCING] wires the BATTERY portion of the consolidated 'Health' card (US-507, landed Sprint 68 / V0.29.23). REMOVE the TEMP tile (MAX17048 has NO temp register) but KEEP the ambient_temp_c column (a future BMP390 baro fills it -- Spool). Keep CELL(volts)+CHARGE(%) as-is (real MAX17048).",
         "[HEALTH VERDICT PRODUCER -- Spool [EXACT] spec] source = battery_health_log (NOT a live MAX17048 spot read -- capacity fade needs runtime-to-cutoff). Qualifying row gate: end_timestamp NOT NULL AND load_class='production' AND runtime_seconds >= [EXACT:600]. RUNTIME_BASELINE_S=[EXACT:727]. States on median of last 3 qualifying drains: good >= [EXACT:80]% baseline (>=582s) | degraded 60-80% (436-582s) | replace < [EXACT:60]% (<436s) | unknown = default (< 3 qualifying in trailing [EXACT:180] days OR any required input NULL). median-of-3 (not last-1: single-drain scatter +-15%).",
         "[LAST-HEALTH-CHECK] = MAX(start_timestamp) over qualifying rows only (a partial/aborted drain is NOT a health check). If last check > [EXACT:90] days old, FORCE verdict to unknown regardless of numbers (stale health data is not health data).",
         "[SEVERITY -- Spool] \ud83d\udfe2 INFORMATIONAL at every state incl 'replace' -- NEVER alarm-red, never owns the screen, never competes with coolant/DTC-STOP on a driving surface (UPS margin is ~12min vs <1min needed = 10x; 'replace' = data-integrity margin thinned, not a car risk).",
@@ -135,12 +166,28 @@
         }
       ],
       "conditionalOutcomes": [
-        "the writer-fix is the blocking first sub-story; if it grows, carve it (US-504a writer / US-504b producer). Do NOT ship a computed verdict over NULL inputs -- keep honest 'unknown' until real vcell/soc data exists.",
         "[EXACT:] values (600/727/80/60/180/90) are Spool load-bearing -- flag Spool before any drift"
       ],
       "goal": "As the operator, I want every battery field on a real source (or absent), so the card is honest -- no 'no source' temp, and a HEALTH verdict grounded in real capacity data rather than a manufactured value or a hardcoded 'unknown'.",
       "tasks": [],
-      "pmSignOff": "PM final sizing 2026-08-01: L accepted -- writer-fix + verdict producer per Spool [EXACT] spec; split US-504a writer / US-504b producer if it grows; honest-unknown until real vcell/soc data."
+      "feedback": {
+        "filesActuallyTouched": [
+          "src/pi/power/battery_health_verdict.py",
+          "src/pi/splash/battery_health_emitter.py",
+          "src/pi/obdii/orchestrator/card_state_emitter.py",
+          "specs/UI/dist/dashboard-pi/carousel.js",
+          "tests/pi/power/test_battery_health_verdict.py",
+          "tests/pi/orchestrator/test_card_battery_health_verdict_wiring.py",
+          "tests/ui/test_carousel_battery_health_verdict.py",
+          "tests/deploy/test_dashboard_kit.py",
+          "tests/pi/splash/test_battery_health_emitter.py",
+          "tests/ui/test_carousel_health_card.py",
+          "tests/ui/test_carousel_idle_home.py",
+          "offices/tuner/inbox/2026-08-02-from-ralph-us504-gate-band-overlap-and-writer-gap.md",
+          "offices/pm/inbox/2026-08-02-from-ralph-us504-carved-504a-writer-504b-producer.md"
+        ]
+      },
+      "completionNotes": "US-504 CARVED into US-504a (writer) + this (producer) on the story's own conditionalOutcome -- it grew, and the writer half turned out to be a different, larger animal (see US-504a + the PM note). Every Spool [EXACT] value implemented verbatim, none drifted: 600 gate / 727 baseline / 80-60 bands / 180-day window / 90-day staleness / median-of-3. THE ONE CALL THE PM SHOULD KNOW ABOUT: AC2 called the writer-fix a BLOCKING sub-story on the grounds that 'without this the verdict has nothing to consume' -- that premise is wrong. Spool's own verdict spec reads start_timestamp/end_timestamp/runtime_seconds/load_class and never touches vcell or soc, so the producer was fully buildable without it and is now built + green. That is why this half landed first rather than stalling behind a story that needs two rulings. THE SPEC BUG WORTH THE MOST ATTENTION (filed to Spool 2026-08-02): the qualifying gate (runtime_seconds >= 600) sits entirely ABOVE both sub-good bands (degraded 436-582s, replace <436s). Every row that survives the gate is >=600s therefore >=582s therefore always 'good' -- so through the real pipeline degraded and replace are UNREACHABLE, and a pack that genuinely dies at 500s is filtered out as a 'partial drain' rather than reported as degraded. The verdict silently cannot degrade; it fails safe toward reassurance, the wrong direction for an honest instrument. Implemented VERBATIM anyway (both numbers are [EXACT] Spool values -- flag, never drift), with the bands isolated in a public verdictForMedianRuntime() so the mapping stays fully exercised by tests and only the gate constant has to move when he rules. SECOND CORRECTION for the record: AC2's 'nothing populates start_vcell_v/end_vcell_v/start_soc_pct/end_soc_pct' is right at the data and wrong at the mechanism -- the recorder writes all four correctly and the bench CLI uses them; there is simply ZERO production caller in src/ since US-442/TD-058 retired the auto-open path. So no running Pi writes ANY row, and the card reads 'unknown' permanently rather than 'until fresh drains exist'. That is US-504a. HONEST-INSTRUMENT throughout: unknown is the DEFAULT, never a swallowed failure -- absent DB, unreadable log, unparseable clock, <3 qualifying rows in the trailing 180 days, or a >90-day-stale last check all resolve to unknown, and the staleness override is checked BEFORE the numbers so a stale reading can never paint a confident verdict of any colour. Today that override fires (newest qualifying row 2026-05-16, 78 days) -- the card correctly reads unknown + 2026-05-16, which is the instrument working. ONE VOCABULARY END-TO-END: the old green/attn/low display tiers were a SECOND enum for the same fact (the cross-module enum-identity class that cost the 9-drain saga) and are RETIRED -- battery_health_emitter now re-exports the producer's good/degraded/replace/unknown rather than declaring its own, and carousel.js healthLevel/healthValue speak those words. Severity per Spool: good->ok, degraded AND replace->neutral, unrecognised->unavailable. 'replace' is deliberately NOT red (the UPS carries ~12min against the <1min a clean shutdown needs -- a thinned data-integrity margin is not a car risk) and deliberately NOT ok either (that would claim health the data does not support); neutral is the only tier that neither alarms nor reassures. TEMP tile REMOVED -- the MAX17048 register map has no temperature at all, so the tile rendered 'not captured' on every row ever logged; the ambient_temp_c COLUMN stays for the BMP390. Verdict read is LAZY per emit via getattr, not captured at emitter construction -- the boot-order trap this sprint has now hit in US-501, US-502 and here; it also means a drain recorded while the orchestrator runs reaches the card without a restart. Green in-loop: tests/pi/power + tests/pi/orchestrator + tests/pi/splash/test_battery_health_emitter.py + tests/ui + tests/deploy/test_dashboard_kit.py = 913 passed, exit 0; ruff clean on all 11 touched files (2 import-sort fixes applied). NOT run in-loop per TD-059: full pytest + mypy -- card_state_emitter.py is a base-module touch for the SECOND time this sprint (US-502 was the first), so prioritise the full-suite regression at close. OWED: the seeded-row read of the Health card on the Pi -- PM/CIO drill, not codeable."
     },
     {
       "id": "US-505",
@@ -305,7 +352,8 @@
       "(load the dashboard on the Pi after deploy and read the header version chip) \u2192 (chip shows the real deployed version (e.g. V0.29.xx matching .deploy-version), not 'V?.?.?')  [from US-501]",
       "(on the Pi on wall/bench power, view the header bolt + System-Status power tile; then (if feasible) on battery) \u2192 (bolt lit/amber per source + power tile shows a real value -- never grayed/'unavailable' when the source is actually known)  [from US-502]",
       "(view the idle-home card clock at a known time (e.g. 14:05)) \u2192 (reads '2:05 PM' (12-hour + meridiem), not '14:05')  [from US-503]",
-      "(with seeded battery_health_log rows (some qualifying, some partial, some NULL-input) view the Health card) \u2192 (verdict computed only from qualifying rows via median-of-3 vs the 727s baseline; forces 'unknown' on <3 qualifying / any NULL / >90-day-stale; last-health-check ignores partial drains; renders \ud83d\udfe2 never red; no TEMP tile)  [from US-504]",
+      "(with seeded battery_health_log rows (some qualifying, some partial, some NULL-input) view the Health card) \u2192 (verdict computed only from qualifying rows via median-of-3 vs the 727s baseline; forces 'unknown' on <3 qualifying / any NULL / >90-day-stale; last-health-check ignores partial drains; renders \ud83d\udfe2 never red; no TEMP tile)  [from US-504b]",
+      "(on the Pi, pull wall power (or open the PLD line) and restore it, then query battery_health_log) \u2192 (a NEW row exists for that window with non-NULL start_vcell_v/start_soc_pct/end_vcell_v/end_soc_pct and a real runtime_seconds; no orphan row is left behind across a reboot)  [from US-504a]",
       "(after a captured drive, view the idle-home card) \u2192 (shows real last-drive data (not 'no recent drive'); shows the honest 'no recent drive' only when there truly has been none)  [from US-505]",
       "(simulate a mid-session BT link drop on the Pi (or bench harness)) \u2192 (the service resets the transport + reconnects + resumes capture (realtime_data grows again) instead of looping on a dead tty; bond survives a reboot)  [from US-512]",
       "(review boot/rfkill history + the 07-03 debug context; test whether the identified trigger reproduces the saved-block) \u2192 (a documented origin + prevention (or a documented conclusion that it was a one-off manual artifact fully covered by the unblock service))  [from US-513]",
@@ -348,8 +396,9 @@
     ],
     "keyReminders": [
       "HONEST-INSTRUMENT: NEVER compute a verdict/altitude from NULL or contaminated inputs -- an honest unknown/no-source beats a confident wrong number",
-      "US-504 writer-fix is the BLOCKING first sub-story: battery_health_log vcell/soc NULL on all rows -- fix the writer before the producer has input",
-      "US-504 verdict is green/informational at EVERY state incl replace -- NEVER alarm-red (Spool: red = act-on-the-car only)",
+      "US-504 CARVED 2026-08-02 -> US-504b producer DONE; US-504a writer NOT started and NEEDS 2 RULINGS (orphan policy / Spool gate-band overlap). The writer was NEVER blocking the producer -- the verdict spec reads runtime_seconds+timestamps only, never vcell/soc",
+      "US-504a real root: the recorder writes vcell/soc fine; there is ZERO production caller in src/ since US-442/TD-058 retired the auto-open path -- so NO new row is ever written and the card reads 'unknown' PERMANENTLY",
+      "US-504b verdict is green/informational at EVERY state incl replace -- NEVER alarm-red (Spool: red = act-on-the-car only)",
       "US-521: pitch must be GYRO-FUSED (accel corrects only near 1g) + ZUPT at stops",
       "US-502 -> PowerModeProvider SSOT; US-505 -> Pi-LOCAL last-drive (obd.db/connection_log)",
       "DEFERRED (do NOT build): US-516 GPS (hardware TBD not ordered), US-519/520 altitude display (Spool sigma pending on US-521)",

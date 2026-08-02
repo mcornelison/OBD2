@@ -369,6 +369,8 @@ class CardStateEmitterMixin:
             soc = int(ups.getBatteryPercentage())
             crate = ups.getChargeRatePercentPerHour()
         except Exception:  # noqa: BLE001 -- gauge unreadable -> typed NA
+            # The verdict's source is the drain LOG, not the gauge, so a dead
+            # MAX17048 must not blank a health history that is still real.
             emitter(**self._batteryHealthKwargs(upsAvailable=False))
             return
 
@@ -391,8 +393,42 @@ class CardStateEmitterMixin:
             )
         )
 
-    @staticmethod
+    def _gatherBatteryHealthVerdict(self) -> tuple[str, str | None, int | None]:
+        """Read the US-504 verdict + last-health-check from battery_health_log.
+
+        The database is resolved through ``getattr`` AT USE TIME, never captured
+        when the emitters are constructed: ``_database`` is built earlier in the
+        boot order today, but a captured reference is the exact trap US-501 and
+        US-502 both hit this sprint, and the log also has to be RE-read each
+        tick so a drain recorded while the orchestrator runs reaches the card
+        without a restart.
+
+        Returns:
+            ``(verdict, lastHealthCheckTs, medianRuntimeS)`` -- honest
+            ``("unknown", None, None)`` whenever the log is absent, unreadable,
+            too thin (< 3 qualifying drains) or stale (> 90 days).
+        """
+        try:
+            from pi.power.battery_health_verdict import (
+                VERDICT_UNKNOWN,
+                readBatteryHealthVerdict,
+            )
+
+            result = readBatteryHealthVerdict(
+                database=getattr(self, "_database", None),
+                nowIso=datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            )
+        except Exception as e:  # noqa: BLE001 -- never block the emit loop
+            logger.debug("battery-health verdict unavailable: %s", e)
+            return ("unknown", None, None)
+        return (
+            result.verdict or VERDICT_UNKNOWN,
+            result.lastHealthCheckTs,
+            result.medianRuntimeS,
+        )
+
     def _batteryHealthKwargs(
+        self,
         *,
         upsAvailable: bool,
         vcellV: float | None = None,
@@ -403,11 +439,18 @@ class CardStateEmitterMixin:
     ) -> dict[str, Any]:
         """Assemble the battery-health emit kwargs with HONEST unknown defaults.
 
-        Every field with no in-process producer is a conservative honest value:
-        no fabricated Spool verdict (health="unknown" -> neutral), no claimed
-        calibration, no claimed full-charge, no rested history, no ladder,
-        last-health-check "never". Only the live gauge reads carry real data.
+        ``health`` / ``lastHealthCheckTs`` / ``runtimeToCutoffS`` come from the
+        US-504 ``battery_health_log`` producer (Spool [EXACT] spec) and are
+        ``unknown`` / null whenever it has nothing real to say. Every remaining
+        field still has no in-process producer and stays a conservative honest
+        value: no claimed calibration, no claimed full-charge, no rested
+        history, no ladder. ``ambientTempC`` stays null by design -- the
+        MAX17048 has NO temperature register, so US-504 removed the TEMP tile
+        rather than invent a source; the column survives for a future BMP390.
         """
+        health, lastHealthCheckTs, medianRuntimeS = (
+            self._gatherBatteryHealthVerdict()
+        )
         return {
             "vcellV": vcellV,
             "soc": soc,
@@ -418,11 +461,11 @@ class CardStateEmitterMixin:
             "restedVcellV": None,
             "weakEvents30d": 0,
             "restedHistory": [],
-            "health": "unknown",
+            "health": health,
             "fullChargeReached": False,
-            "runtimeToCutoffS": None,
+            "runtimeToCutoffS": medianRuntimeS,
             "ambientTempC": None,
-            "lastHealthCheckTs": None,
+            "lastHealthCheckTs": lastHealthCheckTs,
             "ladder": None,
             "upsAvailable": upsAvailable,
         }

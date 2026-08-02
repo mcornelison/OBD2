@@ -189,14 +189,14 @@ def test_idleBatteryFact_upsUnavailable_typedNa():
 
 def test_idleBatteryFact_healthGreen_greenWithAge():
     """A GREEN Spool verdict -> level ok (green) AND the detail carries the data-
-    age (F-9 stale-green guard: a month-old HEALTHY can never read as live)."""
+    age (F-9 stale-green guard: a month-old GOOD can never read as live)."""
     fact = _view(
         "idleBatteryFact",
         {
             "vcellV": 4.02,
             "soc": 76,
             "socCalibrated": True,
-            "health": "green",
+            "health": "good",
             "draining": False,
             "lastHealthCheckTs": "2026-07-20T00:00:00Z",
             "source": _available("ups"),
@@ -209,20 +209,21 @@ def test_idleBatteryFact_healthGreen_greenWithAge():
     assert "2026-07-20" in fact["detail"]
 
 
-def test_idleBatteryFact_healthAttn_amber():
-    """An ATTENTION verdict -> amber (never green)."""
+def test_idleBatteryFact_healthDegraded_isNeutralNeverGreenNeverRed():
+    """US-504: a DEGRADED verdict is informational -- it must not claim health
+    (`ok`) and must not alarm (`down`) on the idle surface either."""
     fact = _view(
         "idleBatteryFact",
         {
             "vcellV": 3.6,
             "soc": 40,
-            "health": "attn",
+            "health": "degraded",
             "lastHealthCheckTs": "2026-07-20T00:00:00Z",
             "source": _available("ups"),
             "ts": "2026-07-22T00:00:00Z",
         },
     )
-    assert fact["level"] == "amber"
+    assert fact["level"] == "neutral"
 
 
 # ---------------------------------------------------------------------------
@@ -258,7 +259,7 @@ def test_idleCardView_assemblesStandbyHeroAndThreeFacts():
             "vcellV": 4.02,
             "soc": 76,
             "socCalibrated": True,
-            "health": "green",
+            "health": "good",
             "lastHealthCheckTs": "2026-07-20T00:00:00Z",
             "source": _available("ups"),
             "ts": "2026-07-22T00:00:00Z",
@@ -282,7 +283,7 @@ def test_idleCardView_heroNeverGreenEvenWhenAllHealthy():
         {
             "vcellV": 4.1,
             "soc": 90,
-            "health": "green",
+            "health": "good",
             "lastHealthCheckTs": "2026-07-22T00:00:00Z",
             "source": _available("ups"),
             "ts": "2026-07-22T00:00:00Z",

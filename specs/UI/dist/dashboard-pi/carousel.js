@@ -657,28 +657,41 @@
   //   F-8  the SoC percent is shown ONLY when `soc` is a real number; a null
   //        soc omits the percent and shows volts -- a voltage is NEVER painted
   //        as a percent.
-  //   F-9  a GREEN verdict ALWAYS carries "last health check · <date> (<age>)"
+  //   F-9  a GOOD verdict ALWAYS carries "last health check · <date> (<age>)"
   //        (computed from ts - lastHealthCheckTs, both in the state file) so a
-  //        month-old reading is never mistaken for live.
+  //        month-old reading is never mistaken for live. US-504 added a second
+  //        layer upstream: the producer itself forces `unknown` once the last
+  //        qualifying check is over 90 days old.
   // The drain ladder DOM is present ONLY when `draining === true` (F-2 / A-6).
   // -------------------------------------------------------------------------
 
   var BATTERY_LABEL = "Pi UPS battery"; // F-11: never "vehicle/car battery".
   var MS_PER_DAY = 86400000;
 
-  // Map a Spool health verdict tier -> a display level (the card never decides
-  // severity; green -> ok, attn -> amber, low -> down, unknown -> unavailable).
+  // US-504: ONE verdict vocabulary end-to-end -- the words Spool's producer
+  // emits (pi/power/battery_health_verdict.py) are the words the card carries.
+  // The earlier green/attn/low display tiers were a SECOND enum for the same
+  // fact and are retired; an unrecognised value falls through to the honest
+  // unavailable state rather than being guessed at.
+  //
+  // NEVER alarm-red, at any state INCLUDING `replace` (Spool, load-bearing):
+  // the UPS carries the Pi through power loss to a clean shutdown, which needs
+  // well under a minute against the ~12 we measure. `replace` means the
+  // data-integrity margin thinned, NOT that anything on the car is at risk, so
+  // this signal must never compete with coolant or a DTC-STOP on a driving
+  // surface. `ok` is withheld from degraded/replace for the opposite reason --
+  // it would claim health the data does not support. Neutral is the only tier
+  // that neither alarms nor reassures.
   function healthLevel(h) {
-    if (h === "green") return "ok";
-    if (h === "attn") return "amber";
-    if (h === "low") return "down";
+    if (h === "good") return "ok";
+    if (h === "degraded" || h === "replace") return "neutral";
     return "unavailable";
   }
 
   function healthValue(h) {
-    if (h === "green") return "HEALTHY";
-    if (h === "attn") return "ATTENTION";
-    if (h === "low") return "LOW";
+    if (h === "good") return "GOOD";
+    if (h === "degraded") return "DEGRADED";
+    if (h === "replace") return "REPLACE";
     return "—";
   }
 
@@ -756,14 +769,12 @@
     };
   }
 
-  // Temp tile (F-10) -- a null reading is "not captured", never a fabricated
-  // number.
-  function tempTile(d) {
-    if (typeof d.ambientTempC !== "number") {
-      return { label: "TEMP", value: "not captured", detail: "", level: "neutral" };
-    }
-    return { label: "TEMP", value: d.ambientTempC + " °C", detail: "", level: "neutral" };
-  }
+  // US-504: the TEMP tile is REMOVED. The MAX17048 is a voltage-based fuel
+  // gauge (VCELL/SOC/CRATE/MODE/VERSION/HIBRT/CONFIG/VALRT/VRESET/STATUS) with
+  // no temperature register at all, so the tile had no source it could ever
+  // read and rendered "not captured" on every row ever logged. The
+  // `ambient_temp_c` COLUMN survives -- a future BMP390 carries a temperature
+  // channel that legitimately fills it, and the tile comes back with it.
 
   // Failsafe ladder view (F-2 / A-6) -- present ONLY when draining is true. The
   // runtime minutes render ONLY when the power tier supplied a real number
@@ -806,7 +817,6 @@
       },
       vcell: vcellTile(data),
       soc: socTile(data),
-      temp: tempTile(data),
       healthCheck: healthCheckLine(data),
       ladder: ladderView(data),
       ts: typeof data.ts === "string" ? data.ts : null,
@@ -1347,7 +1357,7 @@
       label: label,
       value: value,
       detail: view.healthCheck.label,   // "last health check · <date> (<age>)"
-      level: view.health.level,         // green ONLY when the Spool verdict is green
+      level: view.health.level,         // green ONLY on a `good` verdict (US-504)
     };
   }
 
@@ -2496,7 +2506,6 @@
     healthCheckLine: healthCheckLine,
     vcellTile: vcellTile,
     socTile: socTile,
-    tempTile: tempTile,
     ladderView: ladderView,
     batteryHealthView: batteryHealthView,
     fmtLtftPct: fmtLtftPct,
@@ -2901,7 +2910,7 @@
       // F-8: render the percent tile only when a real SoC exists; a null soc
       // omits the percent (volts already shown above), never a voltage-as-%.
       if (view.soc.shown) appendTile(body, view.soc);
-      appendTile(body, view.temp);
+      // US-504: no TEMP tile -- the MAX17048 has no temperature register.
       // F-2 / A-6: the ladder DOM exists only when actually draining.
       if (view.ladder) appendLadder(body, view.ladder);
     }
