@@ -17,6 +17,13 @@
 # 2026-04-23    | Rex (US-232) | TD-035 close: plumb _shutdownEvent into
 #               |              | buildDefaultReconnectLoop so the backoff
 #               |              | sleep wakes on SIGTERM.
+# 2026-08-02    | Rex (US-512) | BL-025 P1: the ADAPTER_UNREACHABLE path now
+#               |              | RESETS the transport (release + re-bind) instead
+#               |              | of a bare disconnect.  The old teardown either
+#               |              | left a stale rfcomm binding for the reopen to
+#               |              | land on, or -- when it did release -- made its
+#               |              | OWN wait unsatisfiable, since the loop's probe
+#               |              | requires /dev/rfcommN to exist.
 # ================================================================================
 ################################################################################
 
@@ -140,7 +147,7 @@ class BtResilienceMixin:
             retryCount=0,
         )
 
-        self._safeDisconnect()
+        self._resetTransport()
 
         loop = self._buildReconnectLoop()
         reached = loop.waitForAdapter()
@@ -149,6 +156,45 @@ class BtResilienceMixin:
             return
 
         self._safeReopen()
+
+    def _resetTransport(self) -> None:
+        """Reset the transport before waiting on the adapter (US-512).
+
+        This used to be a bare :meth:`_safeDisconnect`, which was wrong in two
+        compounding ways:
+
+        1. **It left the stale binding in place.**  ``disconnect()`` releases
+           only a binding the connection itself created, so an inherited or
+           partially-established one survived -- and ``bindRfcomm``'s
+           already-bound short-circuit then handed the reopen the same dead
+           tty.  BL-025's stale-rfcomm-retry-forever.
+        2. **When it DID release, it made its own wait unsatisfiable.**  The
+           loop below probes
+           :func:`~src.pi.obdii.bluetooth_helper.isRfcommReachable`, which
+           requires ``/dev/rfcommN`` to EXIST.  Tearing the binding down and
+           then waiting for it to look reachable is a wait for a state the
+           teardown just removed -- the loop could never report success.
+
+        :meth:`ObdConnection.resetTransport` fixes both: it ends with a FRESH
+        binding, so the probe is answering about a transport that was actually
+        rebuilt.  Duck-typed connections without the method (test doubles, the
+        simulator) fall back to the old teardown.
+        """
+        conn = self._connection
+        if conn is None:
+            return
+        resetFn = getattr(conn, 'resetTransport', None)
+        if resetFn is None:
+            self._safeDisconnect()
+            return
+        try:
+            resetFn()
+        except Exception as exc:  # noqa: BLE001 -- recovery must not raise
+            logger.warning(
+                "Transport reset raised during adapter recovery (%s) -- "
+                "falling back to plain disconnect", exc
+            )
+            self._safeDisconnect()
 
     def _safeDisconnect(self) -> None:
         """Close the python-obd connection, swallowing any close errors.

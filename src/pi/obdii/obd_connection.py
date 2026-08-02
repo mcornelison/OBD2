@@ -60,6 +60,27 @@
 #                |              | re-exposes the 0x42/0x0B/0x15 garbage US-199
 #                |              | skips).  Read-path only -- the DriveDetector
 #                |              | RPM-sustained machine (US-388) is untouched.
+# 2026-08-02    | Rex (US-512) | BL-025 P1 capture hardening.  An rfcomm bind is a
+#                |              | KERNEL TABLE ENTRY that OUTLIVES the ACL link, and
+#                |              | bindRfcomm is idempotent -- so after the dongle
+#                |              | drops, every retry short-circuits on the surviving
+#                |              | entry and re-opens the SAME DEAD tty, forever.
+#                |              | Worse, the entry also outlives the PROCESS: a
+#                |              | SIGKILLed predecessor leaves it bound, the new
+#                |              | process has _boundRfcomm=False so its disconnect
+#                |              | never releases it, and `systemctl restart` does not
+#                |              | clear the fault.  Fix: resetTransport() (Spool's
+#                |              | disconnect -> releaseRfcomm -> re-bind), used by
+#                |              | reconnect(); plus a per-failed-attempt binding drop
+#                |              | keyed on "the configured port is a MAC" (NOT on our
+#                |              | own bookkeeping) so the US-338 heartbeat -- which
+#                |              | calls connect() and never reconnect() -- re-binds
+#                |              | each tick.  Also assures the bluez bond (trust) at
+#                |              | connect time, the runtime half of the durable-bond
+#                |              | story pair_obdlink.sh only ever wrote at pair time.
+#                |              | Deliberately never touches the radio (rfkill /
+#                |              | hciconfig / `power off`) -- that class of recovery
+#                |              | is what got persisted as the 07-03 soft-block.
 # ================================================================================
 ################################################################################
 
@@ -702,6 +723,16 @@ class ObdConnection:
                     # under the held _ioLock.
                     self._closePartialConnection()
 
+                    # US-512: and drop the rfcomm BINDING too, so the next
+                    # attempt re-binds instead of taking bindRfcomm's
+                    # already-bound short-circuit.  Closing the fd is not
+                    # enough: the kernel bind entry survives the dead link, so
+                    # without this the retry re-opens the identical dead tty --
+                    # BL-025's stale-rfcomm-retry-forever.  This is the ONLY
+                    # place the US-338 post-failure heartbeat gets a transport
+                    # reset, because it drives connect() and never reconnect().
+                    self._releaseRfcommBinding()
+
                     logger.warning(
                         f"Connection attempt {attempt + 1}/{self.maxRetries + 1} failed | "
                         f"mac={self.macAddress} | error={e}"
@@ -800,6 +831,144 @@ class ObdConnection:
             logger.warning("Supported-PID probe failed (%s) — falling back to always-supported", exc)
             self.supportedPids = SupportedPidSet.alwaysSupported()
 
+    def _releaseRfcommBinding(self) -> bool:
+        """Drop the rfcomm binding for a MAC-configured port (US-512).
+
+        Keyed on "the configured port is a MAC", NOT on ``self._boundRfcomm``.
+        That distinction is the whole fix for the restart-proof form of
+        BL-025: a predecessor process that was SIGKILLed (or crashed) never
+        ran :meth:`disconnect`, so its bind entry is still in the kernel table
+        when we start.  We did not create it, so ``_boundRfcomm`` is False and
+        a release keyed on our own bookkeeping skips -- then ``bindRfcomm``
+        short-circuits on the inherited entry and we open the predecessor's
+        dead tty.  Restarting the service does not clear that; only releasing
+        an entry we did not make does.
+
+        Path-style configuration (a literal ``/dev/rfcommN``) is exempt: we
+        never bind it, and something else -- ``connect_obdlink.sh``, an
+        operator -- owns it.
+
+        MUST be called with ``self._ioLock`` held.  Never raises: this runs on
+        recovery paths where an exception would surface as FATAL and bounce
+        the service.
+
+        Returns:
+            True when a release was issued without error.
+        """
+        if not bluetooth_helper.isMacAddress(self.macAddress):
+            return False
+        try:
+            bluetooth_helper.releaseRfcomm(device=self.rfcommDevice)
+        except Exception as exc:  # noqa: BLE001 -- recovery cleanup never raises
+            logger.warning(
+                "rfcomm release during transport reset failed | device=%d | %s",
+                self.rfcommDevice,
+                exc,
+            )
+            return False
+        finally:
+            self._boundRfcomm = False
+        return True
+
+    def resetTransport(self) -> str | None:
+        """Spool's transport reset: disconnect -> releaseRfcomm -> re-bind.
+
+        The recovery primitive for a dropped BT link.  Re-opening
+        ``obd.OBD()`` on the surviving ``/dev/rfcommN`` cannot work -- the
+        binding is a kernel table entry that outlived the ACL link, so the
+        device node is present and dead.  This tears the transport down to the
+        binding and builds a genuinely new one, which is what the next
+        :meth:`connect` (and the reconnect loop's reachability probe) needs in
+        order to answer honestly.
+
+        Deliberately leaves the transport BOUND rather than released.  The
+        US-211 reconnect loop probes
+        :func:`bluetooth_helper.isRfcommReachable`, which requires the binding
+        to EXIST -- so a recovery path that only released would leave that
+        probe permanently False and the loop waiting forever for a state its
+        own teardown had made unreachable.
+
+        Never raises, and never touches the radio (no rfkill / ``hciconfig
+        down`` / ``bluetoothctl power off``): systemd-rfkill persists radio
+        state across a reboot, which is how the 07-03 soft-block became sticky.
+
+        Returns:
+            The freshly-bound ``/dev/rfcommN`` path, or ``None`` when the port
+            is path-style (someone else owns the bind) or the re-bind failed
+            (no transport -- an honest answer the caller can act on).
+        """
+        self.disconnect()
+
+        if not bluetooth_helper.isMacAddress(self.macAddress):
+            logger.debug(
+                "resetTransport: port %r is path-style -- not ours to re-bind",
+                self.macAddress,
+            )
+            return None
+
+        with self._ioLock:
+            try:
+                path = bluetooth_helper.resetRfcommBinding(
+                    macAddress=self.macAddress,
+                    device=self.rfcommDevice,
+                    channel=self.rfcommChannel,
+                )
+            except Exception as exc:  # noqa: BLE001 -- recovery must not raise
+                logger.warning(
+                    "Transport reset could not re-bind rfcomm | mac=%s | %s",
+                    self.macAddress,
+                    exc,
+                )
+                self._boundRfcomm = False
+                return None
+            self._boundRfcomm = True
+
+        logger.info(
+            "Transport RESET complete | mac=%s port=%s -- next open gets a "
+            "fresh binding, not the dead one (US-512 / BL-025)",
+            self.macAddress,
+            path,
+        )
+        return path
+
+    def _assureDurableBond(self, macAddress: str) -> None:
+        """Restore a lost ``Trusted`` flag before binding (US-512).
+
+        ``scripts/pair_obdlink.sh`` writes Paired+Bonded+Trusted at pair time
+        and verifies all three; nothing at runtime ever read them back.  A bond
+        that loses ``Trusted`` still reports as paired, but bluez refuses the
+        unattended reconnect -- so the symptom is a dead link whose only
+        apparent remedy is a manual re-pair, which needs the dongle powered,
+        i.e. the engine running.  Trust is a local bluez flag and IS repairable
+        here; pairing is not, so an absent bond record is reported loudly with
+        the actual remedy rather than papered over.
+
+        Best-effort by construction: never raises, and a failure here must
+        never fail a connect attempt that would otherwise have worked.
+
+        Args:
+            macAddress: The configured dongle MAC.
+        """
+        try:
+            state = bluetooth_helper.ensureTrusted(macAddress)
+        except Exception as exc:  # noqa: BLE001 -- advisory check only
+            logger.debug("Bond assurance skipped (%s)", exc)
+            return
+
+        if not bluetooth_helper.isDurableBond(state):
+            logger.warning(
+                "Bond for %s is NOT durable (known=%s paired=%s bonded=%s "
+                "trusted=%s) -- bluez will not reconnect it unattended. Run "
+                "scripts/pair_obdlink.sh %s with the dongle powered (engine "
+                "on) and in pair mode.",
+                macAddress,
+                state.known,
+                state.paired,
+                state.bonded,
+                state.trusted,
+                macAddress,
+            )
+
     def _resolvePort(self) -> str | None:
         """
         Resolve the configured port value to a serial device path.
@@ -822,6 +991,10 @@ class ObdConnection:
         if not bluetooth_helper.isMacAddress(port):
             # Literal path (e.g. /dev/rfcomm0) — pass through unchanged.
             return port
+
+        # US-512: assure the bluez bond before binding.  A binding over a
+        # non-trusted bond binds fine and then refuses to carry traffic.
+        self._assureDurableBond(port)
 
         try:
             resolved = bluetooth_helper.bindRfcomm(
@@ -931,7 +1104,12 @@ class ObdConnection:
         """
         Reconnect to OBD-II dongle.
 
-        Disconnects if connected, then attempts to connect again.
+        US-512: resets the TRANSPORT first (disconnect -> releaseRfcomm ->
+        re-bind) rather than just disconnecting.  ``disconnect()`` alone only
+        releases a binding *this instance* created, so a binding inherited
+        from a killed predecessor -- or left behind by a connect that failed
+        before ``_boundRfcomm`` was set -- survives, ``bindRfcomm``
+        short-circuits on it, and the "reconnect" re-opens the same dead tty.
 
         Returns:
             True if reconnection successful, False otherwise
@@ -941,7 +1119,7 @@ class ObdConnection:
 
         self._logConnectionEvent(EVENT_TYPE_RECONNECT)
 
-        self.disconnect()
+        self.resetTransport()
         return self.connect()
 
     def _logConnectionEvent(
