@@ -1561,6 +1561,7 @@ Resolved at runtime from environment variables. Supports defaults: `${VAR:defaul
 | `pi.homeNetwork` | Pi home-network detection (SSID/subnet/ping) for B-043 auto-sync building block (US-188) |
 | `pi.network` | Pi infrastructure addresses (host, user, path, port, hostname, deviceId) — B-044 canonical source (US-201) |
 | `server.network` | Server infrastructure addresses (host, user, port, hostname, projectPath, baseUrl) — B-044 canonical source (US-201) |
+| `pi.location.home` | Home reference point (lat/lon + elevation ASL) — altitude anchor + future GPS home-geofence; PII, `.env`-only (US-517) |
 
 ### B-044: Config-Driven Infrastructure Addresses (US-201)
 
@@ -1647,6 +1648,57 @@ rejects non-positive `syncTimeoutSeconds`, `batchSize < 1`, non-list
 | `batchSize` | `500` | Rows per `/api/v1/sync` POST (integer >= 1) |
 | `retryMaxAttempts` | `3` | Retry budget on retryable failures (integer >= 0) |
 | `retryBackoffSeconds` | `[1, 2, 4, 8, 16]` | Exponential-backoff schedule in seconds (list) |
+
+#### `pi.location.home` — home reference point (US-517 / F-125)
+
+The Pi's home location: the anchor US-518 re-anchors derived altitude to on
+every successful server sync, and the reference point for the future GPS
+home-geofence (US-516, hardware not yet ordered).
+
+**This section is location PII and is the first config section whose VALUES
+may never be committed.** The real coordinates live only in the gitignored
+`.env`; `config.json` carries bare `${PI_HOME_LAT}` / `${PI_HOME_LON}` /
+`${PI_HOME_ELEVATION_M}` placeholders, and the validator DEFAULTS are `None`.
+The `${VAR:default}` inline-default form is deliberately NOT used — a fallback
+coordinate baked into source would be both committed PII and a fabricated
+anchor.
+
+| Key | Default | Purpose |
+|-----|---------|---------|
+| `lat` | `None` | Home latitude, decimal degrees WGS-84 (`[-90, 90]`) |
+| `lon` | `None` | Home longitude, decimal degrees WGS-84 (`[-180, 180]`) |
+| `elevationM` | `None` | Home elevation above sea level in metres (`[-500, 9000]`) |
+
+**Single read path:** `src.pi.location.HomeLocationProvider`
+(`getHomeElevationM()` / `getHomeCoordinates()` / `getHome()`). Consumers call
+the provider and never parse these keys themselves
+(`specs/ssot-design-pattern.md`).
+
+**No fail-fast validator sub-check, on purpose.** Unlike `pi.homeNetwork` and
+`pi.companionService`, a malformed value here does NOT raise
+`ConfigValidationError`. `validate()` runs on the Pi's boot path, so raising
+would refuse to start the orchestrator over a typo in an *optional* altitude
+anchor — trading a dead OBD capture for a cosmetic fault. The provider reports
+the honest unknown instead; same policy as `pi.power.mode` (US-421).
+
+**Honest-unknown surface.** The provider returns `None` for an absent key, a
+blank env var, an unresolved `${...}` placeholder, a non-numeric string, a
+NaN/infinity, a boolean, or a magnitude outside the physical band above. Two
+consequences worth knowing:
+
+- `elevationM` and the `(lat, lon)` pair are **separate facts**. US-518 needs
+  only the elevation, so it is not coupled to a GPS fix the project has no
+  hardware for. The coordinate pair is both-or-neither — half a fix is not a
+  partial location, it is a different one.
+- The provider **never logs a coordinate value**. `PIIMaskingFilter` (§8) masks
+  email/phone/SSN only, so a coordinate written to journald is PII on a surface
+  with no mask for it. Rejection warnings name the key and the reason only.
+
+**Operational note (owed, not codeable):** `deploy/deploy-pi.sh` excludes
+`.env` from the deploy payload, so the Pi keeps its own `.env`. The `PI_HOME_*`
+values therefore do **not** propagate from the dev checkout — until they are
+written into the Pi's `.env`, the placeholders stay unresolved and the provider
+correctly reports unknown on the box.
 
 ---
 

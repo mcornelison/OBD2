@@ -348,6 +348,23 @@ DEFAULTS: dict[str, Any] = {
     'pi.update.applyEnabled': False,
     'pi.update.stagingPath': '/tmp/eclipse-obd-staging',
     'pi.update.rollbackEnabled': True,
+    # US-517 / F-125: the home-location reference -- altitude anchor (US-518
+    # re-anchors derived altitude to elevationM on every successful server sync)
+    # and the future GPS home-geofence.  Every default is None ON PURPOSE:
+    # location is PII, so the real values live ONLY in the gitignored .env and
+    # reach config.json through the ${PI_HOME_LAT} / ${PI_HOME_LON} /
+    # ${PI_HOME_ELEVATION_M} placeholders.  A shipped coordinate default would
+    # be committed PII AND a fabricated anchor -- the None keeps the key SHAPE
+    # guaranteed while leaving the VALUE honestly unknown.
+    # Deliberately NOT validated with a fail-fast _validate* sub-check: this
+    # runs on the Pi's boot path, and refusing to start the orchestrator over a
+    # typo'd optional altitude anchor would trade a dead OBD capture for a
+    # cosmetic fault.  src.pi.location.HomeLocationProvider is the single read
+    # path and reports the honest unknown instead -- same policy as
+    # pi.power.mode (US-421).
+    'pi.location.home.lat': None,
+    'pi.location.home.lon': None,
+    'pi.location.home.elevationM': None,
     'hardware.display.enabled': True,
     'hardware.display.refreshRate': 2,
     # US-257 / B-052: HDMI dashboard full-canvas redesign. The legacy

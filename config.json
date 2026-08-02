@@ -549,6 +549,13 @@
       "pingTimeoutSeconds": 3,
       "serverPingPath": "/api/v1/ping"
     },
+    "location": {
+      "home": {
+        "lat": "${PI_HOME_LAT}",
+        "lon": "${PI_HOME_LON}",
+        "elevationM": "${PI_HOME_ELEVATION_M}"
+      }
+    },
     "export": {
       "directory": "${EXPORT_DIR:./exports/}",
       "defaultFormat": "csv"

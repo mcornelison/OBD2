@@ -350,3 +350,75 @@ Task: RCA -- why BT got soft-blocked ~07-03 (confirm origin so it can't recur)
   recovery `rm -f`'d the one file carrying the origin timestamp; a `cp` first
   costs nothing and is the difference between a provable and unprovable RCA.
 ---
+
+## 2026-08-02 - US-517 (Agent 1 / Rex)
+Task: WP-2 home-location config binding (pi.location.home.{lat,lon,elevationM})
+
+### What was implemented:
+- `config.json` gained `pi.location.home` bound to `${PI_HOME_LAT}` /
+  `${PI_HOME_LON}` / `${PI_HOME_ELEVATION_M}` -- BARE placeholders, no
+  `${VAR:default}` form, no committed literal.
+- Validator DEFAULTS: the three keys default to `None` (shape guaranteed,
+  value honestly unknown). Deliberately NO fail-fast `_validate*` sub-check.
+- New `pi/location/home_location_provider.py`: the single read path.
+  `getHomeElevationM()` / `getHomeCoordinates()` / `getHome()`, all returning
+  the honest `None` for absent / blank / unresolved-placeholder / non-numeric
+  / NaN / inf / bool / out-of-physical-band values.
+- `specs/architecture.md` §6 gained a `pi.location.home` subsection + a
+  Configuration Sections row (design-gate DoD met in-sprint).
+- Notes filed: Atlas (seam confirm + 3 deltas), PM (the owed ops action),
+  TD-073 (pre-existing lint failure, not mine).
+
+### Files changed:
+- Modified: `config.json` (placeholder-bound `pi.location.home`)
+- Modified: `src/common/config/validator.py` (3 None DEFAULTS + rationale)
+- Modified: `specs/architecture.md` (§6 subsection + table row)
+- Created: `src/pi/location/__init__.py`, `src/pi/location/home_location_provider.py`
+- Created: `tests/pi/location/test_home_location_provider.py` (31 tests)
+- Created: `tests/test_home_location_config_binding.py` (12 tests)
+- Created: `offices/pm/tech_debt/TD-073-ralph-promise-tag-contract-drift.md`
+
+### Learnings for future iterations:
+- **Gotcha (the load-bearing one, and it is GENERAL not local)**:
+  `resolveSecrets` leaves the placeholder VERBATIM when an env var is unset
+  and no inline default is given. So `"${PI_HOME_LAT}"` is a TRUTHY, NON-None
+  string sitting in the validated config -- which means the validator's `None`
+  default NEVER FIRES on a real Pi. Any consumer of any `${...}`-bound key
+  must absorb that literal itself. Report it with the actual remedy ("set X in
+  this host's .env"), not a generic parse error: an unresolved placeholder and
+  a typo'd number have different fixes.
+- **Pattern discovered**: a config key on the BOOT path should not fail-fast.
+  `pi.homeNetwork` / `pi.companionService` raise `ConfigValidationError`, but
+  those are load-bearing for their subsystem. Raising over an OPTIONAL altitude
+  anchor would refuse to start the orchestrator -- trading a dead OBD capture
+  for a cosmetic fault. Follow `pi.power.mode` (US-421): tolerate in the
+  validator, report honest unknown at the provider. Pin it with tests that
+  assert `validate()` does NOT raise.
+- **Gotcha (PII in tests)**: my first draft of the "never log the coordinate"
+  test used the CIO's REAL latitude as its fixture -- committing the exact PII
+  the story exists to protect, inside the test that protects it. The guard
+  needed an OUT-OF-RANGE value to trigger the warning anyway, so 91.5 works and
+  nothing real is needed. When testing a PII rule, check the FIXTURE is fake
+  before checking the assertion is right.
+- **Gotcha**: `float('nan')` and `float('inf')` SUCCEED. A NaN anchor
+  propagates silently through every later sum and never compares unequal to
+  itself, so nothing downstream detects it. `math.isfinite` is not optional on
+  any value that came from a string.
+- **Gotcha**: `float(True)` is `1.0` -- a JSON `true` in a numeric config slot
+  becomes a plausible-looking sea-level anchor. Reject `bool` BEFORE coercing
+  (the codebase's validators already do this; carry it to every new reader).
+- **Pattern discovered (mutation testing earned its keep)**: deleting the
+  unresolved-placeholder branch leaves the `returnsNone` test GREEN -- because
+  `float('${...}')` raises `ValueError` and degrades honestly anyway. ONLY the
+  log-MESSAGE test catches it. When a guard's happy-path outcome is identical
+  to the fallback's, the message is the only observable difference, so the
+  message is what must be asserted.
+- **Operational gotcha**: `deploy-pi.sh` EXCLUDES `.env` (lines 190/217/225);
+  the Pi keeps its own. Nothing you put in the dev checkout's `.env` reaches
+  the box. Check the deploy payload before assuming an env-bound feature will
+  work on the Pi.
+- **Gotcha (bookkeeping, 4th sprint sighting of TD-059)**: hand-editing a
+  large `completionNotes` into `sprint.json` dropped the story object's closing
+  brace and broke the file. `python -c "import json; json.load(...)"` after
+  every sprint.json edit, before committing.
+---
