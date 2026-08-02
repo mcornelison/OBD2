@@ -290,3 +290,63 @@ Task: BT capture hardening: durable bond + reconnect-transport-reset
   deliberately (retry forever). Any test that drives it needs an explicit
   abort, and `sleepFn=lambda _: None` turns "forever" into a hot spin.
 ---
+
+## 2026-08-02 - US-513 (Agent 1 / Rex)
+Task: RCA -- why BT got soft-blocked ~07-03 (confirm origin so it can't recur)
+
+### What was implemented:
+- RCA delivered. Verdict: origin **UNPROVABLE** at this remove, project
+  **EXONERATED**, mitigation **INSUFFICIENT** (found + fixed).
+- No culprit named on purpose: all three forensic sources are gone -- the
+  saved-state file was OVERWRITTEN by the 07-31 recovery (mtime 07-31 20:26;
+  `rm -f /var/lib/systemd/rfkill/*` is in the Pi's bash_history), the journal
+  retains only back to 07-26, and bash_history covers only the recovery.
+- PROVEN half: zero `rfkill block` / `nmcli radio off` / `hciconfig down` /
+  `systemctl stop bluetooth` / `bluetoothctl power off` anywhere in src+
+  scripts+deploy. Every radio verb the repo ships is restorative.
+- DEFECT FOUND while auditing the safety net: `eclipse-rfkill-unblock.service`
+  ordered itself `After=` the producer but `Before=` nothing. Live proof --
+  rfcomm-bind and the unblock BOTH entered active at 20:25:59 on the 07-31
+  boot, the same second. Fixed with `Before=rfcomm-bind eclipse-obd`.
+- New repo-wide static guard so the exoneration stays true by construction.
+- Also recovered + committed US-512's uncommitted bookkeeping (TD-059 stall,
+  third consecutive story).
+
+### Files changed:
+- Modified: `deploy/eclipse-rfkill-unblock.service` (Before= the two consumers)
+- Modified: `tests/deploy/test_rfkill_unblock_install.py` (+5 ordering tests)
+- Created: `tests/deploy/test_no_radio_disable_in_project.py` (25 tests)
+- Created: `docs/rca/2026-08-02-us513-bt-rfkill-soft-block-origin-rca.md`
+- Created: `offices/pm/inbox/2026-08-02-from-ralph-us513-rfkill-origin-rca-plus-ordering-defect.md`
+
+### Learnings for future iterations:
+- **Pattern discovered (the load-bearing one)**: when a test asserts an
+  ordering or dependency, check whether it reads the artifact that ENFORCES
+  the behaviour or a second copy that merely DESCRIBES it. The existing test
+  asserted unblock-before-rfcomm against `unit_manifest.START_ORDER`, a
+  hand-ordered Python tuple. A manifest cannot order boot; only the unit files
+  can. `unit_manifest`'s own header even claims its ordering is "grounded in
+  the units' own declarations, NOT invented" -- and this was the single entry
+  with no declaration behind it. Sixth sighting this sprint of the
+  two-correct-halves shape (US-494/499/502/503/505).
+- **Gotcha**: ordering a systemd safety net `After=` its PRODUCER is only half
+  the job. If nothing is ordered after IT, the consumers race it. `Before=`
+  (never `Wants=`) orders consumers already in the transaction without
+  pulling them in.
+- **Pattern discovered**: give every static/grep-style guard a SELF-TEST that
+  feeds it known-bad input. Mine caught, on its first run, that a
+  whitespace-only separator sees `sudo rfkill block` but misses
+  `subprocess.run(["rfkill","block"])` -- the argv form this codebase actually
+  uses. Without it a rotted regex reports "clean" forever.
+- **Gotcha (US-501's lesson, hit again)**: a guard that scans raw file text
+  trips on the comments DOCUMENTING the thing it forbids. Strip comments, and
+  do not scan `tests/` when the tests assert on those literal strings.
+- **Gotcha (research stories)**: "confirm the origin" can have no answer left.
+  Say so plainly and bound it instead (exonerate what you CAN prove) rather
+  than promoting the leading hypothesis to a finding. Note also that
+  `ssh host "cmd"` is non-interactive and never lands in `.bash_history`, so
+  agent-issued commands leave no trace there at all.
+- **Process**: preserve forensic artifacts before clearing them. The 07-31
+  recovery `rm -f`'d the one file carrying the origin timestamp; a `cp` first
+  costs nothing and is the difference between a provable and unprovable RCA.
+---
