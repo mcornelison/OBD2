@@ -12,7 +12,7 @@
       "type": "issue",
       "size": "S",
       "status": "sprint-ready",
-      "passes": false,
+      "passes": true,
       "acceptance": [
         "the version-chip literal 'V?.?.?' (dashboard.html:37) is replaced by real version text sourced from .deploy-version (currently V0.29.21)",
         "wire it the same way the existing token / auto-dim placeholders are injected by the state server _injectHtml (states_http_server.py:317-323) -- add a version placeholder + substitution reading .deploy-version; OR an equivalent JS reader if the state server exposes it. No hardcoded version string in the markup",
@@ -27,7 +27,16 @@
       ],
       "conditionalOutcomes": [],
       "goal": "As the operator, I want the header version chip to show the real deployed version, so I can tell at a glance which build is on the Pi instead of a literal 'V?.?.?'.",
-      "tasks": []
+      "tasks": [],
+      "feedback": {
+        "filesActuallyTouched": [
+          "specs/UI/dist/dashboard-pi/dashboard.html",
+          "src/pi/splash/states_http_server.py",
+          "tests/pi/splash/test_states_http_deploy_version.py",
+          "tests/ui/test_dashboard_version_chip.py"
+        ]
+      },
+      "completionNotes": "Took the placeholder-injection path the AC named first: dashboard.html now carries __DEPLOY_VERSION__ and the state server substitutes it in _injectHtml, alongside the existing __SPLASH_TOKEN__ / __DISPLAY_AUTODIM__ / __DISPLAY_CAROUSEL__ seams. No JS reader was added -- one rule owns the chip. THE ONE CALL THE PM SHOULD KNOW ABOUT: the version is read PER REQUEST, not cached at handler construction like the two config placeholders are. deploy-pi.sh restarts eclipse-states-http at step_install_state_server_units (line 1939) but stamps .deploy-version LAST at step_write_deploy_version (line 1955) -- deliberately, per US-354, so a failed restart cannot bump the stamp on a Pi still running old code. A start-time cache would therefore have rendered the PREVIOUS deploy's version on EVERY deploy: green tests, correct-looking code, and the exact stale literal the story exists to delete. Mutation-proved: caching at construction makes the chip read V0.29.23 after V0.29.24 was stamped, and only test_index_readsVersionPerRequest_notCachedAtStartup catches it. Cost is one small JSON read per HTML serve; the kiosk loads the page once. Honest degrade per AC#3: readDeployVersion returns None -- never a guess -- for no-path / absent / unreadable / malformed-JSON / missing / blank / non-string version, and the chip renders the SAME 'V?.?.?' sentinel the splash chip already uses, so one glyph means 'unknown build' on both surfaces. The placeholder is always substituted, so a raw __DEPLOY_VERSION__ can never reach the panel. NO deploy or unit-file change needed: --deploy-version-path defaults to '.deploy-version' (WorkingDirectory-relative, same trick as the existing --config, which ExecStart also does not pass), the service runs as mcornelison from the repo root with no sandboxing directives, and dashboard.html is already vouched in step_install_dashboard_assets so refresh_asset_dir will not prune it. 18 tests, 15 RED-first; the 3 markup guards were mutation-proved after the fact (baking a version literal trips 2, re-baking the dead sentinel trips 3). One test-quality note: the first cut of the no-dead-literal guard matched raw file text and tripped on my own explanatory HTML comment -- it now strips comments and asserts only on renderable markup. Green in-loop: tests/pi/splash + tests/ui + tests/deploy/test_dashboard_kit.py = exit 0; ruff clean. FILE:// PREVIEW CAVEAT for Iris: an un-substituted preview shows the raw __DEPLOY_VERSION__ text in the chip rather than a pretty sentinel -- the quoted-placeholder trick the two config seams use does not apply to HTML text content. Deliberate: unmistakably 'not substituted', and dev-only. OWED: the on-Pi read of the header chip after deploy (chip must show the real V0.29.xx) -- PM/CIO drill, not codeable."
     },
     {
       "id": "US-502",

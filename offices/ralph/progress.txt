@@ -7,3 +7,48 @@
 # DEFERRED (not this sprint): US-516 GPS (hardware TBD), US-519/520 altitude display (Spool sigma pending on US-521).
 # Previous: Sprint 68 / V0.29.23 DEPLOYED to Pi(.100)+server, awaiting on-Pi render validation.
 # ---
+
+## 2026-08-01 - US-501 (Agent 1 / Rex)
+Task: Wire the dashboard version chip to .deploy-version (stop showing 'V?.?.?')
+
+### What was implemented:
+- dashboard.html header chip now carries a `__DEPLOY_VERSION__` placeholder
+  instead of the hard literal `V?.?.?` that never changed on a deploy.
+- states_http_server `_injectHtml` substitutes it at serve time, on the SAME
+  seam as `__SPLASH_TOKEN__` / `__DISPLAY_AUTODIM__` / `__DISPLAY_CAROUSEL__`.
+  No JS reader was added -- one rule owns the chip.
+- The version is read PER REQUEST, not closed over at handler construction.
+- New fail-safe reader `readDeployVersion()`: returns None (never a guess) for
+  no-path / absent / unreadable / malformed-JSON / missing / blank / non-string
+  version. The chip then renders the same `V?.?.?` sentinel the splash uses.
+- CLI `--deploy-version-path` defaults to `.deploy-version`, WorkingDirectory-
+  relative -- so the unit file and deploy script needed NO change.
+
+### Files changed:
+- Modified: `specs/UI/dist/dashboard-pi/dashboard.html` (chip -> placeholder)
+- Modified: `src/pi/splash/states_http_server.py` (placeholder + sentinel
+  constants, per-request substitution, readDeployVersion, CLI arg)
+- Created: `tests/pi/splash/test_states_http_deploy_version.py` (14 tests)
+- Created: `tests/ui/test_dashboard_version_chip.py` (4 tests, incl. the real
+  kit served by the real server)
+
+### Learnings for future iterations:
+- **Gotcha (load-bearing)**: deploy-pi.sh writes `.deploy-version` LAST
+  (step_write_deploy_version, line 1955) but restarts eclipse-states-http
+  EARLIER (step_install_state_server_units, line 1939) -- deliberately, per
+  US-354, so a failed restart can't bump the stamp on a Pi running old code.
+  ANY value a long-running Pi service caches from `.deploy-version` at startup
+  is therefore one deploy STALE, permanently. Read it per use. This is invisible
+  to a unit test that only ever reads once; the guard is a test that rewrites
+  the file mid-server-life. Mutation-proved: caching makes the chip render
+  V0.29.23 after V0.29.24 was stamped.
+- **Pattern discovered**: the `_injectHtml` placeholder seam has TWO flavours.
+  The config ones are QUOTED (`"__X__"`) so an un-substituted file:// preview
+  stays valid JS. That trick does NOT apply to HTML *text content* -- an
+  unsubstituted preview shows the raw `__DEPLOY_VERSION__`. Accepted as
+  unmistakably "not substituted" and dev-only, but flag it to Iris rather than
+  inventing a third mechanism.
+- **Gotcha**: a "no dead literal in the markup" guard that greps raw file text
+  will trip on your own explanatory HTML comment discussing that literal. Strip
+  comments and assert only on renderable markup.
+---
