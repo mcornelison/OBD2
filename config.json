@@ -551,9 +551,9 @@
     },
     "location": {
       "home": {
-        "lat": "${PI_HOME_LAT}",
-        "lon": "${PI_HOME_LON}",
-        "elevationM": "${PI_HOME_ELEVATION_M}"
+        "lat": "41.785846",
+        "lon": "-87.881199",
+        "elevationM": "209"
       }
     },
     "export": {
