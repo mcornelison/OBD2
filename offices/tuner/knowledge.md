@@ -901,9 +901,15 @@ Local terrain relief on a city drive here is roughly ±10–20 m (home 209 m ASL
 **So at 0.5° of bias the error exceeds the entire signal.** Usable absolute altitude needs pitch
 bias held under ~0.1° sustained in a vibrating car — a demanding spec for consumer MEMS.
 
-**Uncertainty scales with distance, not time:** `σ_alt ≈ σ_pitch(radians) × distance_travelled`.
-At σ_pitch = 0.3° over 10 km → ±52 m. Cheap to compute from an OBD-speed odometer, and the right
-thing to display alongside any derived altitude.
+**Uncertainty — CORRECTED 2026-08-02 (Rex, US-521).** My first model was
+`σ_alt ≈ σ_pitch(rad) × distance_travelled` (at σ_pitch = 0.3° over 10 km → ±52 m). That assumed a
+*constant* σ_pitch and is wrong. **σ_pitch itself grows with time-since-last-ZUPT** — so the real
+driver is **how often the car actually stops**, not distance and not the filter constants. Highway =
+few stops = drift accumulates; city = stoplights every block = continuously reconverged. The correct
+band widens with time-since-ZUPT. Rex's model, and it's better than mine.
+
+*Descoped 2026-08-02 (CIO): derived altitude is a nice-to-have approximation, no displayed
+uncertainty band. Recorded here as the correct treatment if it's ever needed, not as built code.*
 
 **Corrections, ranked:**
 1. **ZUPT (zero-velocity bias update) — highest value, free.** At every confirmed stop (speed 0
@@ -917,10 +923,18 @@ thing to display alongside any derived altitude.
    it's a bad estimate, not a hill.
 4. **Re-anchor** to a known elevation whenever position is confirmed (home/sync).
 
-**Honest-instrument consequence:** report derived altitude as **Δ-from-anchor with an uncertainty
-band**, never absolute ASL. Absolute ASL borrows credibility from the anchor constant that the
-derived part hasn't earned. Same principle as showing `—` for an ambiguous gear rather than a
-wrong number.
+**Honest-instrument consequence — the one rule that survives every descope:** **refuse to integrate
+until the pitch bias has converged.** Before ZUPT convergence the published pitch carries the full
+unknown mount tilt (possibly several degrees ⇒ the 140 m/10 min regime), and integrating it produces
+a number that ratchets upward and never returns. Publish typed null with reason
+`pitch_bias_unconverged` instead. The bias does not survive a restart, so every boot re-converges
+over ~5 stops — which this rule handles for free. **"Roughly right" is an acceptable target;
+"unbounded ratchet" is not, and the two are different failure modes.** Same principle as showing `—`
+for an ambiguous gear rather than a wrong number.
+
+*Δ-from-anchor display + uncertainty band were my 08-01 recommendation, dropped 08-02 per CIO
+(approximation accepted, `≈NNN m` absolute ASL is fine). The refusal rule above is not part of that
+descope — it prevents brokenness, not imprecision.*
 
 **Supersedes nothing, but note:** real GPS altitude replaces all of this. The 4G63 side of this is
 unaffected — this is purely a signal-derivation constraint.
