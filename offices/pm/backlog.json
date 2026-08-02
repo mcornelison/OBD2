@@ -1107,7 +1107,7 @@
       "parent": "E-002",
       "title": "DriveDetector Dual-Attribution + Pi-Side Drive Lifecycle Hardening (V0.28.0 TOP PRIORITY)",
       "description": "DriveDetector Dual-Attribution + Pi-Side Drive Lifecycle Hardening (V0.28.0 TOP PRIORITY)",
-      "status": "active",
+      "status": "complete",
       "renamedFrom": "B-107",
       "createdAt": "2026-05-27",
       "updatedAt": "2026-05-27"
@@ -1168,7 +1168,7 @@
       "parent": "E-006",
       "title": "EDR Phase 2 -- dedicated-reader + bus-contract design (full; A-4 versioned)",
       "description": "HARDWARE-INDEPENDENT (Atlas 2026-06-16 brief, phase 2; design-only, Atlas-owned). The load-bearing dedicated-reader / in-process pub/sub bus contract everything subscribes to: per-subscriber QoS (lossless sync/safety vs lossy display), bounded queues, producer-never-blocks, 100Hz-IMU-vs-~6/s-OBD rate handling, ECMLink/OBDLink K-line arbitration. F-110 shipped Slice 1 (bus skeleton + PersistenceSubscriber, ships-dark); this is the full contract + consolidation. Atlas open gate #1. Graduates the SSOT-bus direction into specs/ssot-design-pattern.md (gate #4) once CIO firms it. GROOM-READY candidate (design artifact; can run parallel to F-112).",
-      "status": "active",
+      "status": "complete",
       "createdAt": "2026-06-28",
       "updatedAt": "2026-07-31",
       "currentVersion": "V0.29.20"
@@ -1206,7 +1206,7 @@
       "parent": "E-OPS",
       "title": "OBD capture broken -- eclipse-obd connection-thread race (0 rows captured)",
       "description": "The Pi captures 0 OBD rows. Atlas live-debug RCA: python-obd connection is not thread-safe; orphaned timeout daemons (TD-036/US-244) + US-301 heartbeat touch the shared connection concurrently with the logger -> serial I/O interleaves -> empty read every connect. Raw python-obd works standalone (hardware/pairing all good). Fix = serialize connection access + fence orphaned daemons, preserve TD-036 no-boot-hang. f389d5b crash-loop hotfix deployed V0.29.7 (stops crash, not the capture fix). Sprint 54 P0.",
-      "status": "active",
+      "status": "complete",
       "createdAt": "2026-07-03",
       "currentVersion": "V0.29.15",
       "updatedAt": "2026-07-28",
@@ -6315,11 +6315,14 @@
         "[WRITER-FIX -- BLOCKING SUB-STORY, do FIRST] the producer gap is UPSTREAM: battery_health_log start_vcell_v/end_vcell_v/start_soc_pct/end_soc_pct are NULL on ALL 28 rows -- nothing populates them (Spool live re-query 2026-08-01). Fix the writer to populate vcell/soc; without this the verdict has nothing to consume. Do NOT compute a verdict from NULLs (that manufactures confidence = strictly worse than 'unknown').",
         "[HEALTH VERDICT PRODUCER -- Spool [EXACT] spec] source = battery_health_log (NOT a live MAX17048 spot read -- capacity fade needs runtime-to-cutoff). Qualifying row gate: end_timestamp NOT NULL AND load_class='production' AND runtime_seconds >= [EXACT:600]. RUNTIME_BASELINE_S=[EXACT:727]. States on median of last 3 qualifying drains: good >= [EXACT:80]% baseline (>=582s) | degraded 60-80% (436-582s) | replace < [EXACT:60]% (<436s) | unknown = default (< 3 qualifying in trailing [EXACT:180] days OR any required input NULL). median-of-3 (not last-1: single-drain scatter +-15%).",
         "[LAST-HEALTH-CHECK] = MAX(start_timestamp) over qualifying rows only (a partial/aborted drain is NOT a health check). If last check > [EXACT:90] days old, FORCE verdict to unknown regardless of numbers (stale health data is not health data).",
-        "[SEVERITY -- Spool] 🟢 INFORMATIONAL at every state incl 'replace' -- NEVER alarm-red, never owns the screen, never competes with coolant/DTC-STOP on a driving surface (UPS margin is ~12min vs <1min needed = 10x; 'replace' = data-integrity margin thinned, not a car risk).",
+        "[SEVERITY -- Spool] \ud83d\udfe2 INFORMATIONAL at every state incl 'replace' -- NEVER alarm-red, never owns the screen, never competes with coolant/DTC-STOP on a driving surface (UPS margin is ~12min vs <1min needed = 10x; 'replace' = data-integrity margin thinned, not a car risk).",
         "[HONEST END-STATE] accept the card legitimately reads 'unknown' + last-check '2026-05-16' until fresh qualifying drains exist -- THAT IS THE INSTRUMENT WORKING, not a bug. Test proves the qualifying-gate + median-of-3 + 90-day override + honest-unknown-on-NULL; ruff clean."
       ],
       "validationCriteria": [
-        {"action": "with seeded battery_health_log rows (some qualifying, some partial, some NULL-input) view the Health card", "outcome": "verdict computed only from qualifying rows via median-of-3 vs the 727s baseline; forces 'unknown' on <3 qualifying / any NULL / >90-day-stale; last-health-check ignores partial drains; renders 🟢 never red; no TEMP tile"}
+        {
+          "action": "with seeded battery_health_log rows (some qualifying, some partial, some NULL-input) view the Health card",
+          "outcome": "verdict computed only from qualifying rows via median-of-3 vs the 727s baseline; forces 'unknown' on <3 qualifying / any NULL / >90-day-stale; last-health-check ignores partial drains; renders \ud83d\udfe2 never red; no TEMP tile"
+        }
       ],
       "conditionalOutcomes": [
         "the writer-fix is the blocking first sub-story; if it grows, carve it (US-504a writer / US-504b producer). Do NOT ship a computed verdict over NULL inputs -- keep honest 'unknown' until real vcell/soc data exists.",
@@ -6327,7 +6330,9 @@
       ],
       "sourceRefs": [
         "offices/pm/inbox/2026-08-01-from-spool-us504-battery-health-verdict-source.md",
-        "battery_health_log", "card_state_emitter.py:398,402,345-346", "carousel.js:529-534,553-582"
+        "battery_health_log",
+        "card_state_emitter.py:398,402,345-346",
+        "carousel.js:529-534,553-582"
       ],
       "createdAt": "2026-07-31",
       "updatedAt": "2026-07-31",
@@ -6697,11 +6702,23 @@
         "test/mock proves: no-fix -> honest-NA; a valid fix -> populated fields; ruff clean"
       ],
       "validationCriteria": [
-        {"action": "on the Pi with the PA1010D wired: cat states/gps with no fix, then with a fix", "outcome": "no-fix reads available=false + NA fields (not fabricated); with a fix, real altitude/speed/heading/lat-lon populate"}
+        {
+          "action": "on the Pi with the PA1010D wired: cat states/gps with no fix, then with a fix",
+          "outcome": "no-fix reads available=false + NA fields (not fabricated); with a fix, real altitude/speed/heading/lat-lon populate"
+        }
       ],
-      "conditionalOutcomes": ["if Atlas's contract shapes the fields differently, bind to the ruled contract"],
-      "deps": ["ATLAS-states-gps-contract"],
-      "sourceRefs": ["offices/pm/inbox/2026-08-01-from-iris-gps-altitude-workpackage-for-grooming.md#WP-1", "F-125", "states/gps", "states/imu (DELTA-2 seam precedent)"],
+      "conditionalOutcomes": [
+        "if Atlas's contract shapes the fields differently, bind to the ruled contract"
+      ],
+      "deps": [
+        "ATLAS-states-gps-contract"
+      ],
+      "sourceRefs": [
+        "offices/pm/inbox/2026-08-01-from-iris-gps-altitude-workpackage-for-grooming.md#WP-1",
+        "F-125",
+        "states/gps",
+        "states/imu (DELTA-2 seam precedent)"
+      ],
       "createdAt": "2026-08-01",
       "updatedAt": "2026-08-01",
       "tasks": []
@@ -6721,11 +6738,17 @@
         "ruff clean"
       ],
       "validationCriteria": [
-        {"action": "validate_config with PI_HOME_* set in .env", "outcome": "pi.location.home.{lat,lon,elevationM} resolves from .env; no PII literal in committed config.json"}
+        {
+          "action": "validate_config with PI_HOME_* set in .env",
+          "outcome": "pi.location.home.{lat,lon,elevationM} resolves from .env; no PII literal in committed config.json"
+        }
       ],
       "conditionalOutcomes": [],
       "deps": [],
-      "sourceRefs": ["offices/pm/inbox/2026-08-01-from-iris-gps-altitude-workpackage-for-grooming.md#WP-2", "offices/pm/inbox/2026-08-01-from-iris-home-reference-for-altitude-anchor.md"],
+      "sourceRefs": [
+        "offices/pm/inbox/2026-08-01-from-iris-gps-altitude-workpackage-for-grooming.md#WP-2",
+        "offices/pm/inbox/2026-08-01-from-iris-home-reference-for-altitude-anchor.md"
+      ],
       "createdAt": "2026-08-01",
       "updatedAt": "2026-08-01",
       "tasks": []
@@ -6744,11 +6767,19 @@
         "test proves the reset fires on sync-success + not otherwise; ruff clean"
       ],
       "validationCriteria": [
-        {"action": "simulate a successful server sync after the derived altitude has drifted", "outcome": "derived altitude resets to home elevationM on the sync-success; no reset on a failed sync"}
+        {
+          "action": "simulate a successful server sync after the derived altitude has drifted",
+          "outcome": "derived altitude resets to home elevationM on the sync-success; no reset on a failed sync"
+        }
       ],
       "conditionalOutcomes": [],
-      "deps": ["US-517", "US-519"],
-      "sourceRefs": ["offices/pm/inbox/2026-08-01-from-iris-gps-altitude-workpackage-for-grooming.md#WP-3"],
+      "deps": [
+        "US-517",
+        "US-519"
+      ],
+      "sourceRefs": [
+        "offices/pm/inbox/2026-08-01-from-iris-gps-altitude-workpackage-for-grooming.md#WP-3"
+      ],
       "createdAt": "2026-08-01",
       "updatedAt": "2026-08-01",
       "tasks": []
@@ -6768,11 +6799,22 @@
         "honest-instrument: if grade or speed is unavailable, altitude falls to typed-NA, never a fabricated value; test proves the integration + the NA fallback; ruff clean"
       ],
       "validationCriteria": [
-        {"action": "feed known grade+speed over time; then drop speed", "outcome": "altitude integrates to a plausible approximate value (Spool-blessed math), rendered with the approximate marker; drops to NA when grade/speed unavailable"}
+        {
+          "action": "feed known grade+speed over time; then drop speed",
+          "outcome": "altitude integrates to a plausible approximate value (Spool-blessed math), rendered with the approximate marker; drops to NA when grade/speed unavailable"
+        }
       ],
-      "conditionalOutcomes": ["if Spool rules the derivation not honest enough to show, hold WP-4 for GPS (WP-1) and keep 'no source' -- do NOT show a value Spool hasn't blessed"],
-      "deps": ["US-517"],
-      "sourceRefs": ["offices/pm/inbox/2026-08-01-from-iris-gps-altitude-workpackage-for-grooming.md#WP-4", "states/imu", "Spool interim-grade-speed-altitude ruling"],
+      "conditionalOutcomes": [
+        "if Spool rules the derivation not honest enough to show, hold WP-4 for GPS (WP-1) and keep 'no source' -- do NOT show a value Spool hasn't blessed"
+      ],
+      "deps": [
+        "US-517"
+      ],
+      "sourceRefs": [
+        "offices/pm/inbox/2026-08-01-from-iris-gps-altitude-workpackage-for-grooming.md#WP-4",
+        "states/imu",
+        "Spool interim-grade-speed-altitude ruling"
+      ],
       "createdAt": "2026-08-01",
       "updatedAt": "2026-08-01",
       "tasks": []
@@ -6792,11 +6834,20 @@
         "ruff clean; on-Pi render check that the altitude shows the approximate value + flips cleanly to GPS when that source lands"
       ],
       "validationCriteria": [
-        {"action": "on the Pi with the derived source live, then with GPS live", "outcome": "altimeter shows approximate derived altitude; when GPS lands the same tile shows exact altitude + true speed with no layout change"}
+        {
+          "action": "on the Pi with the derived source live, then with GPS live",
+          "outcome": "altimeter shows approximate derived altitude; when GPS lands the same tile shows exact altitude + true speed with no layout change"
+        }
       ],
       "conditionalOutcomes": [],
-      "deps": ["US-519"],
-      "sourceRefs": ["offices/pm/inbox/2026-08-01-from-iris-gps-altitude-workpackage-for-grooming.md#WP-5", "US-508", "F-124"],
+      "deps": [
+        "US-519"
+      ],
+      "sourceRefs": [
+        "offices/pm/inbox/2026-08-01-from-iris-gps-altitude-workpackage-for-grooming.md#WP-5",
+        "US-508",
+        "F-124"
+      ],
       "createdAt": "2026-08-01",
       "updatedAt": "2026-08-01",
       "tasks": []
@@ -6817,11 +6868,20 @@
         "test proves: a longitudinal 0.3 g on flat ground does NOT produce a ~16.7-degree pitch (the failure mode); ZUPT converges the bias over simulated stops; ruff clean"
       ],
       "validationCriteria": [
-        {"action": "on the Pi: apply/simulate a longitudinal 0.3 g on flat ground, then a confirmed stop on a known slope", "outcome": "pitch stays ~0 under pure acceleration (not 16.7 deg); at the stop, pitch reads the true chassis tilt; grade on US-508 is no longer accel-contaminated"}
+        {
+          "action": "on the Pi: apply/simulate a longitudinal 0.3 g on flat ground, then a confirmed stop on a known slope",
+          "outcome": "pitch stays ~0 under pure acceleration (not 16.7 deg); at the stop, pitch reads the true chassis tilt; grade on US-508 is no longer accel-contaminated"
+        }
       ],
-      "conditionalOutcomes": ["if the current grade/pitch is already gyro-fused (verify first), this narrows to adding ZUPT + confirming the fusion; [EXACT:3]s ZUPT gate is Spool load-bearing"],
+      "conditionalOutcomes": [
+        "if the current grade/pitch is already gyro-fused (verify first), this narrows to adding ZUPT + confirming the fusion; [EXACT:3]s ZUPT gate is Spool load-bearing"
+      ],
       "deps": [],
-      "sourceRefs": ["offices/uidevloper/inbox/2026-08-01-from-spool-us508-altitude-derivation-ruling.md", "states/imu", "US-508 (gradePct)"],
+      "sourceRefs": [
+        "offices/uidevloper/inbox/2026-08-01-from-spool-us508-altitude-derivation-ruling.md",
+        "states/imu",
+        "US-508 (gradePct)"
+      ],
       "createdAt": "2026-08-01",
       "updatedAt": "2026-08-01",
       "tasks": []

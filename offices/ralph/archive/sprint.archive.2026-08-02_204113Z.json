@@ -1,0 +1,484 @@
+{
+  "schemaVersion": "2.0.0",
+  "sprint": 69,
+  "version": "V0.29.24",
+  "createdFromPRD": "offices/pm/prds/prd-V0.29.24-dashboard-wiring-plus-capture-hardening.md",
+  "stories": [
+    {
+      "id": "US-501",
+      "title": "Wire the dashboard version chip to .deploy-version (stop showing 'V?.?.?')",
+      "parent": "F-123",
+      "epicId": "E-001",
+      "type": "issue",
+      "size": "S",
+      "status": "sprint-ready",
+      "passes": true,
+      "acceptance": [
+        "the version-chip literal 'V?.?.?' (dashboard.html:37) is replaced by real version text sourced from .deploy-version (currently V0.29.21)",
+        "wire it the same way the existing token / auto-dim placeholders are injected by the state server _injectHtml (states_http_server.py:317-323) -- add a version placeholder + substitution reading .deploy-version; OR an equivalent JS reader if the state server exposes it. No hardcoded version string in the markup",
+        "if .deploy-version is missing/unreadable, the chip degrades honestly (e.g. blank or 'V?') -- never a fabricated/stale literal",
+        "ruff/lint clean in-loop"
+      ],
+      "validationCriteria": [
+        {
+          "action": "load the dashboard on the Pi after deploy and read the header version chip",
+          "outcome": "chip shows the real deployed version (e.g. V0.29.xx matching .deploy-version), not 'V?.?.?'"
+        }
+      ],
+      "conditionalOutcomes": [],
+      "goal": "As the operator, I want the header version chip to show the real deployed version, so I can tell at a glance which build is on the Pi instead of a literal 'V?.?.?'.",
+      "tasks": [],
+      "feedback": {
+        "filesActuallyTouched": [
+          "specs/UI/dist/dashboard-pi/dashboard.html",
+          "src/pi/splash/states_http_server.py",
+          "tests/pi/splash/test_states_http_deploy_version.py",
+          "tests/ui/test_dashboard_version_chip.py"
+        ]
+      },
+      "completionNotes": "Took the placeholder-injection path the AC named first: dashboard.html now carries __DEPLOY_VERSION__ and the state server substitutes it in _injectHtml, alongside the existing __SPLASH_TOKEN__ / __DISPLAY_AUTODIM__ / __DISPLAY_CAROUSEL__ seams. No JS reader was added -- one rule owns the chip. THE ONE CALL THE PM SHOULD KNOW ABOUT: the version is read PER REQUEST, not cached at handler construction like the two config placeholders are. deploy-pi.sh restarts eclipse-states-http at step_install_state_server_units (line 1939) but stamps .deploy-version LAST at step_write_deploy_version (line 1955) -- deliberately, per US-354, so a failed restart cannot bump the stamp on a Pi still running old code. A start-time cache would therefore have rendered the PREVIOUS deploy's version on EVERY deploy: green tests, correct-looking code, and the exact stale literal the story exists to delete. Mutation-proved: caching at construction makes the chip read V0.29.23 after V0.29.24 was stamped, and only test_index_readsVersionPerRequest_notCachedAtStartup catches it. Cost is one small JSON read per HTML serve; the kiosk loads the page once. Honest degrade per AC#3: readDeployVersion returns None -- never a guess -- for no-path / absent / unreadable / malformed-JSON / missing / blank / non-string version, and the chip renders the SAME 'V?.?.?' sentinel the splash chip already uses, so one glyph means 'unknown build' on both surfaces. The placeholder is always substituted, so a raw __DEPLOY_VERSION__ can never reach the panel. NO deploy or unit-file change needed: --deploy-version-path defaults to '.deploy-version' (WorkingDirectory-relative, same trick as the existing --config, which ExecStart also does not pass), the service runs as mcornelison from the repo root with no sandboxing directives, and dashboard.html is already vouched in step_install_dashboard_assets so refresh_asset_dir will not prune it. 18 tests, 15 RED-first; the 3 markup guards were mutation-proved after the fact (baking a version literal trips 2, re-baking the dead sentinel trips 3). One test-quality note: the first cut of the no-dead-literal guard matched raw file text and tripped on my own explanatory HTML comment -- it now strips comments and asserts only on renderable markup. Green in-loop: tests/pi/splash + tests/ui + tests/deploy/test_dashboard_kit.py = exit 0; ruff clean. FILE:// PREVIEW CAVEAT for Iris: an un-substituted preview shows the raw __DEPLOY_VERSION__ text in the chip rather than a pretty sentinel -- the quoted-placeholder trick the two config seams use does not apply to HTML text content. Deliberate: unmistakably 'not substituted', and dev-only. OWED: the on-Pi read of the header chip after deploy (chip must show the real V0.29.xx) -- PM/CIO drill, not codeable."
+    },
+    {
+      "id": "US-502",
+      "title": "Wire the real power source to the System-Status power tile + header bolt (fixes both #2 grayed bolt and #6 'unavailable')",
+      "parent": "F-123",
+      "epicId": "E-001",
+      "type": "issue",
+      "size": "M",
+      "status": "sprint-ready",
+      "passes": true,
+      "acceptance": [
+        "ROOT: the power tile + bolt read PowerMonitor.readPowerStatus() (card_state_emitter.py:288-299), which returns None because no reader is ever wired (power.py:410-412). The real source-of-truth (PowerSourceProvider / GPIO6) is routed only to PowerMonitor.checkPowerStatus() -> power_log (lifecycle.py:2250-2258). Wire the tile's source to that real provider so `source` resolves to battery/external instead of 'unknown'",
+        "after the fix: powerGlyphState (carousel.js:294-299) shows amber on battery / ok(lit) on external; powerTile (carousel.js:248-265) renders a real tile, not the 'unavailable' branch -- on BOTH car and wall/bench power",
+        "honest-instrument preserved: if the provider genuinely can't determine the source, `source`='unknown' -> neutral/unavailable is still shown (never a confident wrong state)",
+        "[SEAM CONFIRM -- grooming] confirm with the power-mode SSOT design (PowerModeProvider / specs/architecture.md power sections) that routing PowerSourceProvider to the tile is the intended seam (not a new acquisition path); Atlas nod if it touches the SSOT contract",
+        "test proves the tile/bolt reflect a battery vs external source from the wired provider; ruff clean in-loop"
+      ],
+      "validationCriteria": [
+        {
+          "action": "on the Pi on wall/bench power, view the header bolt + System-Status power tile; then (if feasible) on battery",
+          "outcome": "bolt lit/amber per source + power tile shows a real value -- never grayed/'unavailable' when the source is actually known"
+        }
+      ],
+      "conditionalOutcomes": [
+        "if the SEAM CONFIRM finds the tile should read a different provider/method than PowerSourceProvider, use that -- the DoD is 'tile reflects the real source', not a specific wiring path"
+      ],
+      "goal": "As the operator, I want the header lightning bolt and the System-Status power tile to reflect the real AC/battery (car/wall) power state, so I stop seeing a grayed bolt + 'power unavailable' when the power source is actually known.",
+      "tasks": [],
+      "feedback": {
+        "filesActuallyTouched": [
+          "src/pi/obdii/orchestrator/card_state_emitter.py",
+          "src/pi/power/power_source_provider.py",
+          "specs/architecture.md",
+          "tests/pi/orchestrator/test_card_power_source_wiring.py",
+          "tests/ui/test_carousel_power_source_wiring.py",
+          "tests/pi/power/test_power_source_provider.py",
+          "tests/pi/orchestrator/test_card_state_emitters.py",
+          "offices/architect/inbox/2026-08-01-from-ralph-us502-power-source-ui-seam.md"
+        ]
+      },
+      "completionNotes": "AC4 SEAM-CONFIRM resolved WITHOUT needing to wait on Atlas: architecture.md SS-T4 ALREADY rules the seam -- 'UI and ShutdownSequencer both consume this one provider, differ only by policy (UI=instantaneous, sequencer=5s smoothed)'. The UI half was simply never built, so this is the specified seam being completed, not a new acquisition path. Note filed to Atlas for the one contract delta (below); no BLOCK, no wait -- if he NAKs a preferred seam the DoD is unchanged ('tile reflects the real source') per conditionalOutcomes. ROOT confirmed as written: _gatherPowerSource now reads PowerSourceProvider (X1209 GPIO6 PLD) direct, and PowerMonitor is REMOVED from that path entirely -- a second acquisition path could disagree with GPIO6, which is the SSOT violation the design gate forbids. THE ONE CALL THE PM SHOULD KNOW ABOUT: the new PowerSourceProvider.isAvailable property is the only contract change, and it exists because the sequencer's safe direction is a LIE on a display. An unreadable PLD deliberately answers isExternalPowerPresent()==True (never self-brick on a dead signal); taking that at face value on the tile paints a confident lit-green 'external' off a DEAD GPIO -- strictly worse than the gray bolt this story exists to fix. So the provider exposes the FACT (is the line readable) and each consumer keeps its OWN uncertainty policy: sequencer=treat-as-present, UI=unknown. isExternalPowerPresent/isPowerLost/startupArmCheck are untouched, so the shutdown path cannot have moved. ALT-REJECTED: a provider returning a display-shaped tri-state = policy inside the SSOT. SECOND TRAP (same shape as US-501's stale .deploy-version cache): the provider is built in _startHardwareManager (lifecycle.py:2251) but the card emitters are built EARLIER in _initializeAllComponents -- so a provider reference captured at emitter-init would be None for the life of the process = permanently dead tile with fully green tests. Read is lazy, per emit, via getattr. Pinned by test_gatherPowerState_providerBuiltAfterEmitterInit_isStillRead. 17 tests, 5 mutations all caught (drop the isAvailable gate / vocab drift external->ac / capture-at-init / drop the exception guard / re-add the PowerMonitor path). The chain is pinned END-TO-END rather than per-half: tests/ui/test_carousel_power_source_wiring.py drives the REAL emitter, reads the REAL state file, and feeds it to the REAL carousel.js powerTile+powerGlyphState under node -- because both halves were already individually correct and simply did not agree, which is the exact failure a per-half test stays green through (US-494/US-499 lesson). Green in-loop: tests/pi/orchestrator + tests/pi/power + tests/ui/test_carousel_power_source_wiring.py = 255 passed, exit 0; the 17 new tests verified as RUN not skipped (node present); ruff clean on all 6 touched files. Design-gate DoD met in-sprint: architecture.md section 2 gained the 'UI consumer wired (US-502)' subsection. NOT run in-loop (PM/integration gate): full pytest + mypy -- card_state_emitter.py is a base-module touch, so prioritise the full-suite regression at close. OWED: the on-Pi read of the header bolt + power tile on wall/bench power (bolt lit + real tile, never gray/'unavailable') -- PM/CIO drill, not codeable."
+    },
+    {
+      "id": "US-503",
+      "title": "Idle-card clock to 12-hour AM/PM",
+      "parent": "F-123",
+      "epicId": "E-001",
+      "type": "normal",
+      "size": "S",
+      "status": "sprint-ready",
+      "passes": true,
+      "acceptance": [
+        "fmtClock (carousel.js:1929) renders 12-hour time with an AM/PM meridiem (mod-12 with 12 for noon/midnight), not getHours() 24-hour",
+        "minutes stay zero-padded; no seconds unless already shown",
+        "purely a format change -- no data source touched; ruff/lint clean in-loop"
+      ],
+      "validationCriteria": [
+        {
+          "action": "view the idle-home card clock at a known time (e.g. 14:05)",
+          "outcome": "reads '2:05 PM' (12-hour + meridiem), not '14:05'"
+        }
+      ],
+      "conditionalOutcomes": [],
+      "goal": "As the operator, I want the idle-home clock in 12-hour AM/PM format instead of 24-hour, matching how I read time at a glance.",
+      "tasks": [],
+      "feedback": {
+        "filesActuallyTouched": [
+          "specs/UI/dist/dashboard-pi/carousel.js",
+          "tests/ui/test_carousel_idle_clock.py",
+          "tests/ui/idle_clock_probe.js"
+        ]
+      },
+      "completionNotes": "fmtClock now renders 12-hour AM/PM: mod-12 with 12 restored for midnight/noon, BARE hour ('2:05 PM', never '02:05 PM'), zero-padded minute, no seconds. Pure format change -- no data source, no state file, no emitter touched, and the Date still comes from the caller. THE ONE CALL THE PM SHOULD KNOW ABOUT: I MOVED fmtClock (and its two() padding helper) out of the browser-only `if (typeof document !== 'undefined')` block up into the pure/exported section. That was not a preference -- under 'use strict' an ES6 function declaration inside a block is BLOCK-SCOPED, so fmtClock was structurally unreachable from the api export literal and from every test; hoisting does not rescue it. It was always pure (it formats the Date it is handed; it never reads a clock), so the block comment's 'the pure view logic stays clock-free, so these live in the DOM layer' rationale was true of fmtDate but never of fmtClock. fmtDate + IDLE_DAYS/IDLE_MONTHS deliberately stayed put -- out of scope. There is now exactly ONE clock formatter in carousel.js; the DOM block CALLS it and does not own one, and the source comment there says so to stop a future edit re-declaring a local. 10 tests, all 10 RED first (the DOM one failed on the real rendered value '22:50' -- the actual bug, not a proxy). 3 mutations proved: bare `% 12` without the `|| 12` restore -> midnight+noon+sweep fail; meridiem boundary `h <= 12` -> noon reads AM, caught by 2; RE-SHADOWING the DOM block with the old 24-hour fmtClock -> ALL NINE fmtClock unit tests stay green and ONLY the end-to-end DOM test catches it. That third one is why the story has an end-to-end test at all: it is the exact US-494/US-499/US-502 shape where both halves are individually correct and simply do not agree. Needed a dedicated probe (tests/ui/idle_clock_probe.js) because carousel_probe.js JSON-decodes its arguments and JSON has no Date -- it would hand fmtClock a Number and the formatter would read NaN; the probe builds the Date from local calendar COMPONENTS so the fixture is the clock FACE, not an instant, and the assertions hold in any timezone. Green in-loop: tests/ui + tests/deploy/test_dashboard_kit.py = 580 passed, exit 0 (the 10 new ones verified RUN not skipped, node present); ruff clean. Not run in-loop per TD-059: full pytest + mypy -- but this touches ONE JS function and no Python source, so the regression risk is confined to the UI suite that already ran whole. FLAG FOR THE ON-PI DRILL (layout, not logic): .idle-header is a flex row (wordmark + clock + date, gap 8px) on the 480px design stage, and the clock string grew ~3 glyphs ('22:05' -> '10:05 PM'). I did NOT pre-emptively touch dashboard.css -- the render harness resolves CSS but does not do text metrics, so any tightening would have been a guess at a panel I cannot see. If the header crowds on the real 480x320 panel, that is a one-line CSS follow-up. OWED: the on-Pi read of the idle-card clock at a known time -- PM/CIO drill, not codeable."
+    },
+    {
+      "id": "US-504a",
+  "pmDisposition": "CARRIED to V0.29.25 (Sprint 70) by PM 2026-08-02; see BL-028. Sprint 69 closes 10/11; deploy + IRL drill do not depend on this writer. Spool's ruling LANDED (c72677e = option (b) depth gate: end_vcell_v <= 3.50 V + 60 s floor; 429a3ed = design implications) -- so US-504a is now ATLAS-ONLY (orphan policy, shutdown path). Spool's depth gate disqualifies option (B) on data grounds and demotes the boot reaper to hygiene-only, leaving (A) vs (C); Ralph's (C) stands. Depth gate + US-504b band remap (verdictForMedianRuntime()) ride WITH US-504a in V0.29.25.",
+      "title": "Battery Health writer: a PRODUCTION drain-event writer (battery_health_log gets new rows again)",
+      "parent": "F-123",
+      "epicId": "E-001",
+      "type": "issue",
+      "size": "M",
+      "status": "blocked",
+      "passes": false,
+      "acceptance": [
+        "[CARVED from US-504 per its own conditionalOutcome. Sibling US-504b (verdict producer) is DONE -- it consumes runtime_seconds/timestamps/load_class only and never reads vcell/soc, so this story was NOT blocking it.]",
+        "[ROOT -- corrected mechanism] BatteryHealthRecorder.startDrainEvent/endDrainEvent already write start_vcell_v/end_vcell_v/start_soc_pct/end_soc_pct correctly, and scripts/record_drain_test.py populates them. What does not exist is ANY production caller in src/ -- the US-216 auto-open path was retired under US-442/TD-058 and nothing replaced it. Consequence: no running Pi ever writes a battery_health_log row, so the card reads 'unknown' PERMANENTLY, not 'until fresh drains exist'. Build the production writer.",
+        "on a real AC->BATTERY transition a drain-event row is opened carrying a REAL start_vcell_v + start_soc_pct read from the MAX17048; on BATTERY->AC (or at cutoff shutdown) it is closed with a real end_vcell_v + end_soc_pct and a real runtime_seconds. Honest-instrument: an unreadable gauge or an uncalibrated SoC register writes NULL, never a guessed number (reuse readCalibratedRegisterSocPct + its cold-start window).",
+        "[SEAM] PowerMonitor.onTransition is the existing registration point and PowerMonitor already receives the GPIO6 truth via the US-502 _PowerSourceUiBridge sink (lifecycle.py ~2250). Read the UPS LATE-BOUND, at transition time, not captured at construction (US-501/502/503 all hit the boot-order trap this sprint).",
+        "[ORPHAN POLICY -- NEEDS A RULING BEFORE BUILD] US-442 requires a production writer to open+close as a single unit OR guarantee the close on the shutdown path -- but the drain most worth measuring is the one that ENDS in a cutoff shutdown, exactly where a deferred close is most likely to be lost. Options: (A) open-at-loss + close-at-restore-or-shutdown + boot reaper; (B) single INSERT at close, drain held in memory (zero orphans, but a hard crash loses the row entirely); (C) A with the ShutdownSequencer close primary and the reaper as backstop. Ralph recommends (C). See offices/pm/inbox/2026-08-02-from-ralph-us504-carved-504a-writer-504b-producer.md",
+        "[LOAD-BEARING TRAP] if a boot reaper is built, it MUST NOT close orphans via endDrainEvent -- that computes runtime_seconds from the timestamp delta, which across a reboot manufactures a runtime spanning the whole downtime, clears the 600s gate, and poisons the verdict median with a fabricated multi-hour 'drain'. The reaper stamps end_timestamp and leaves runtime_seconds NULL so the row can never qualify.",
+        "test proves: a simulated AC->BATTERY->AC cycle writes ONE row with real vcell/soc at both ends; an unreadable gauge writes NULL not a guess; the shutdown path closes an open drain; a reaped orphan carries NULL runtime_seconds and does NOT qualify in the US-504b verdict. ruff clean in-loop",
+        "does NOT delay, block, or add a failure mode to the ShutdownSequencer -- the drain close is best-effort and can never keep the Pi from powering off (I-038 lesson)"
+      ],
+      "validationCriteria": [
+        {
+          "action": "on the Pi, pull wall power (or open the PLD line) and restore it, then query battery_health_log",
+          "outcome": "a NEW row exists for that window with non-NULL start_vcell_v/start_soc_pct/end_vcell_v/end_soc_pct and a real runtime_seconds; no orphan row is left behind across a reboot"
+        }
+      ],
+      "conditionalOutcomes": [
+        "BLOCKED ON TWO RULINGS: (1) PM/Atlas on the orphan policy above (touches the shutdown path); (2) Spool on the gate/band overlap -- his qualifying gate (>=600s) sits entirely ABOVE both sub-good bands (degraded 436-582s, replace <436s), so degraded/replace are unreachable and a pack dying at 500s is discarded as a partial drain. If he moves to a depth/cutoff-reached gate, THIS writer is what has to record that signal -- so his answer changes what gets written. Filed 2026-08-02 to offices/tuner/inbox/.",
+        "[EXACT:] values (600/727/80/60/180/90) are Spool load-bearing -- flag Spool before any drift"
+      ],
+      "goal": "As the battery-health instrument, I want a running Pi to actually record its drain events with real cell voltage and SoC, so the health verdict has fresh qualifying data instead of a history frozen at 2026-05-16 forever.",
+      "tasks": []
+    },
+    {
+      "id": "US-504b",
+      "title": "Battery Health truthfulness: remove no-source TEMP + HEALTH verdict + last-health-check (Spool spec)",
+      "parent": "F-123",
+      "epicId": "E-001",
+      "type": "issue",
+      "size": "M",
+      "status": "sprint-ready",
+      "passes": true,
+      "acceptance": [
+        "[SEQUENCING] wires the BATTERY portion of the consolidated 'Health' card (US-507, landed Sprint 68 / V0.29.23). REMOVE the TEMP tile (MAX17048 has NO temp register) but KEEP the ambient_temp_c column (a future BMP390 baro fills it -- Spool). Keep CELL(volts)+CHARGE(%) as-is (real MAX17048).",
+        "[HEALTH VERDICT PRODUCER -- Spool [EXACT] spec] source = battery_health_log (NOT a live MAX17048 spot read -- capacity fade needs runtime-to-cutoff). Qualifying row gate: end_timestamp NOT NULL AND load_class='production' AND runtime_seconds >= [EXACT:600]. RUNTIME_BASELINE_S=[EXACT:727]. States on median of last 3 qualifying drains: good >= [EXACT:80]% baseline (>=582s) | degraded 60-80% (436-582s) | replace < [EXACT:60]% (<436s) | unknown = default (< 3 qualifying in trailing [EXACT:180] days OR any required input NULL). median-of-3 (not last-1: single-drain scatter +-15%).",
+        "[LAST-HEALTH-CHECK] = MAX(start_timestamp) over qualifying rows only (a partial/aborted drain is NOT a health check). If last check > [EXACT:90] days old, FORCE verdict to unknown regardless of numbers (stale health data is not health data).",
+        "[SEVERITY -- Spool] \ud83d\udfe2 INFORMATIONAL at every state incl 'replace' -- NEVER alarm-red, never owns the screen, never competes with coolant/DTC-STOP on a driving surface (UPS margin is ~12min vs <1min needed = 10x; 'replace' = data-integrity margin thinned, not a car risk).",
+        "[HONEST END-STATE] accept the card legitimately reads 'unknown' + last-check '2026-05-16' until fresh qualifying drains exist -- THAT IS THE INSTRUMENT WORKING, not a bug. Test proves the qualifying-gate + median-of-3 + 90-day override + honest-unknown-on-NULL; ruff clean."
+      ],
+      "validationCriteria": [
+        {
+          "action": "with seeded battery_health_log rows (some qualifying, some partial, some NULL-input) view the Health card",
+          "outcome": "verdict computed only from qualifying rows via median-of-3 vs the 727s baseline; forces 'unknown' on <3 qualifying / any NULL / >90-day-stale; last-health-check ignores partial drains; renders \ud83d\udfe2 never red; no TEMP tile"
+        }
+      ],
+      "conditionalOutcomes": [
+        "[EXACT:] values (600/727/80/60/180/90) are Spool load-bearing -- flag Spool before any drift"
+      ],
+      "goal": "As the operator, I want every battery field on a real source (or absent), so the card is honest -- no 'no source' temp, and a HEALTH verdict grounded in real capacity data rather than a manufactured value or a hardcoded 'unknown'.",
+      "tasks": [],
+      "feedback": {
+        "filesActuallyTouched": [
+          "src/pi/power/battery_health_verdict.py",
+          "src/pi/splash/battery_health_emitter.py",
+          "src/pi/obdii/orchestrator/card_state_emitter.py",
+          "specs/UI/dist/dashboard-pi/carousel.js",
+          "tests/pi/power/test_battery_health_verdict.py",
+          "tests/pi/orchestrator/test_card_battery_health_verdict_wiring.py",
+          "tests/ui/test_carousel_battery_health_verdict.py",
+          "tests/deploy/test_dashboard_kit.py",
+          "tests/pi/splash/test_battery_health_emitter.py",
+          "tests/ui/test_carousel_health_card.py",
+          "tests/ui/test_carousel_idle_home.py",
+          "offices/tuner/inbox/2026-08-02-from-ralph-us504-gate-band-overlap-and-writer-gap.md",
+          "offices/pm/inbox/2026-08-02-from-ralph-us504-carved-504a-writer-504b-producer.md"
+        ]
+      },
+      "completionNotes": "US-504 CARVED into US-504a (writer) + this (producer) on the story's own conditionalOutcome -- it grew, and the writer half turned out to be a different, larger animal (see US-504a + the PM note). Every Spool [EXACT] value implemented verbatim, none drifted: 600 gate / 727 baseline / 80-60 bands / 180-day window / 90-day staleness / median-of-3. THE ONE CALL THE PM SHOULD KNOW ABOUT: AC2 called the writer-fix a BLOCKING sub-story on the grounds that 'without this the verdict has nothing to consume' -- that premise is wrong. Spool's own verdict spec reads start_timestamp/end_timestamp/runtime_seconds/load_class and never touches vcell or soc, so the producer was fully buildable without it and is now built + green. That is why this half landed first rather than stalling behind a story that needs two rulings. THE SPEC BUG WORTH THE MOST ATTENTION (filed to Spool 2026-08-02): the qualifying gate (runtime_seconds >= 600) sits entirely ABOVE both sub-good bands (degraded 436-582s, replace <436s). Every row that survives the gate is >=600s therefore >=582s therefore always 'good' -- so through the real pipeline degraded and replace are UNREACHABLE, and a pack that genuinely dies at 500s is filtered out as a 'partial drain' rather than reported as degraded. The verdict silently cannot degrade; it fails safe toward reassurance, the wrong direction for an honest instrument. Implemented VERBATIM anyway (both numbers are [EXACT] Spool values -- flag, never drift), with the bands isolated in a public verdictForMedianRuntime() so the mapping stays fully exercised by tests and only the gate constant has to move when he rules. SECOND CORRECTION for the record: AC2's 'nothing populates start_vcell_v/end_vcell_v/start_soc_pct/end_soc_pct' is right at the data and wrong at the mechanism -- the recorder writes all four correctly and the bench CLI uses them; there is simply ZERO production caller in src/ since US-442/TD-058 retired the auto-open path. So no running Pi writes ANY row, and the card reads 'unknown' permanently rather than 'until fresh drains exist'. That is US-504a. HONEST-INSTRUMENT throughout: unknown is the DEFAULT, never a swallowed failure -- absent DB, unreadable log, unparseable clock, <3 qualifying rows in the trailing 180 days, or a >90-day-stale last check all resolve to unknown, and the staleness override is checked BEFORE the numbers so a stale reading can never paint a confident verdict of any colour. Today that override fires (newest qualifying row 2026-05-16, 78 days) -- the card correctly reads unknown + 2026-05-16, which is the instrument working. ONE VOCABULARY END-TO-END: the old green/attn/low display tiers were a SECOND enum for the same fact (the cross-module enum-identity class that cost the 9-drain saga) and are RETIRED -- battery_health_emitter now re-exports the producer's good/degraded/replace/unknown rather than declaring its own, and carousel.js healthLevel/healthValue speak those words. Severity per Spool: good->ok, degraded AND replace->neutral, unrecognised->unavailable. 'replace' is deliberately NOT red (the UPS carries ~12min against the <1min a clean shutdown needs -- a thinned data-integrity margin is not a car risk) and deliberately NOT ok either (that would claim health the data does not support); neutral is the only tier that neither alarms nor reassures. TEMP tile REMOVED -- the MAX17048 register map has no temperature at all, so the tile rendered 'not captured' on every row ever logged; the ambient_temp_c COLUMN stays for the BMP390. Verdict read is LAZY per emit via getattr, not captured at emitter construction -- the boot-order trap this sprint has now hit in US-501, US-502 and here; it also means a drain recorded while the orchestrator runs reaches the card without a restart. Green in-loop: tests/pi/power + tests/pi/orchestrator + tests/pi/splash/test_battery_health_emitter.py + tests/ui + tests/deploy/test_dashboard_kit.py = 913 passed, exit 0; ruff clean on all 11 touched files (2 import-sort fixes applied). NOT run in-loop per TD-059: full pytest + mypy -- card_state_emitter.py is a base-module touch for the SECOND time this sprint (US-502 was the first), so prioritise the full-suite regression at close. OWED: the seeded-row read of the Health card on the Pi -- PM/CIO drill, not codeable."
+    },
+    {
+      "id": "US-505",
+      "title": "Build a last-drive-summary producer so the idle card shows real last-drive data",
+      "parent": "F-123",
+      "epicId": "E-001",
+      "type": "normal",
+      "size": "M",
+      "status": "sprint-ready",
+      "passes": true,
+      "acceptance": [
+        "build a last-drive-summary producer/emitter so systemStatusData.drive (or a dedicated last-drive state) carries a real last-drive summary; today idleLastDriveFact returns 'No recent drive' because driveId is null and no last-drive-summary state file exists (carousel.js:881-898)",
+        "[SOURCE-CONFIRM -- grooming gate] confirm the authoritative last-drive source the Pi can read (Pi-local drive_summary / drive boundary event logs) given B-104 made server-side analytics the authority + retired the Pi-side drive_statistics table. The producer reads REAL drive data, never fabricated",
+        "the idle card renders the real last-drive summary (per Iris's idle-card fields); when there genuinely has been no drive, 'No recent drive' remains the honest state",
+        "test proves the producer emits a real last-drive summary from a captured drive; ruff clean in-loop"
+      ],
+      "validationCriteria": [
+        {
+          "action": "after a captured drive, view the idle-home card",
+          "outcome": "shows real last-drive data (not 'no recent drive'); shows the honest 'no recent drive' only when there truly has been none"
+        }
+      ],
+      "conditionalOutcomes": [
+        "NOTE: a fully-populated last-drive card ultimately depends on capture working (BL-025) to have a recent drive to summarize -- the producer + wiring can be built + unit-tested independently now; live validation folds into the post-BL-025 drive"
+      ],
+      "goal": "As the operator, I want the idle-home card to show my actual last drive instead of 'no recent drive', so I can see recent-drive context at a glance.",
+      "tasks": [],
+      "feedback": {
+        "filesActuallyTouched": [
+          "src/pi/obdii/last_drive_summary.py",
+          "src/pi/obdii/orchestrator/card_state_emitter.py",
+          "src/pi/splash/system_status_emitter.py",
+          "specs/UI/dist/dashboard-pi/carousel.js",
+          "tests/pi/obdii/test_last_drive_summary.py",
+          "tests/pi/orchestrator/test_card_last_drive_wiring.py",
+          "tests/pi/splash/test_system_status_last_drive.py",
+          "tests/ui/test_carousel_last_drive.py"
+        ]
+      },
+      "completionNotes": "PROCESS NOTE FIRST (PM should see this): this story was already implemented, complete and green, but left UNCOMMITTED by the prior iteration -- the identical stall that TD-059 describes and the SECOND consecutive story it has hit (US-504b was recovered the same way). This iteration ran the gate synchronously, verified, and committed (65de58d). Nothing was re-implemented; the work was verified rather than trusted. AC2 SOURCE-CONFIRM (the grooming gate) RESOLVED: the authoritative Pi-local source is drive_summary (US-206), which DriveDetector still writes at every drive start -- it carries the two facts Iris's idle spec asks for (drive identity + when the drive began). B-104 is respected rather than worked around: the producer reads identity + start wall-time ONLY and computes no distance/duration/max/avg, because derived per-drive analytics became the SERVER's authority when US-351 retired the Pi-side drive_statistics table -- re-deriving them here would rebuild exactly what that story deleted. THE ROOT, corrected: the tile did not read 'No recent drive' because a drive was missing, it read it PERMANENTLY. The card had only drive.driveId to read, which is the ACTIVE drive and is null whenever nothing is recording; no producer for the most-recent-COMPLETED drive existed anywhere. The absence was real -- it was the absence of a producer, which is why this could never have self-corrected after a drive. THE DESIGN CALL WORTH KNOWING: the anchor is drive START, not drive end. drive_summary has NO end-of-drive column -- there is no Pi-local record of when a drive finished. Synthesising one (e.g. the newest realtime_data sample) would be a guess dressed as a measurement, and doubly so while capture is down (BL-025), so the fact carried is the one that actually exists. Age is likewise formatted at DISPLAY time from the carried timestamp, never pre-computed at emit: a baked '2 h ago' freezes and ages visibly wrong on a kiosk that emits every few seconds but is read minutes later (same pattern the battery card already uses with lastHealthCheckTs). SIM ROWS ARE FILTERED, not relabelled -- presenting a physics_sim bench run as 'your last drive' would be a fabrication in the only terms the panel has. Consequence to know: on a simulator-only box the tile correctly reads 'No recent drive', which can LOOK like a regression; it is logged at debug distinguishably from 'no rows at all' for exactly that reason. ONE VOCABULARY: agoText extends the EXISTING ageText downward (just now / N min / N h) and hands back to it at a day, so '1 day ago' has exactly one definition on the whole surface -- a second age enum for the same fact is the cross-module enum-identity drift that cost the 9-drain saga. HONEST-INSTRUMENT, per HALF: a drive whose start timestamp is missing/blank/unparseable still renders the drive and admits 'age unknown', because the drive genuinely happened and hiding it would lose a real fact to protect a cosmetic one; a FUTURE stamp reads 'just now' rather than a negative age (the Pi has no RTC battery and boots before NTP settles, so a stamp ahead of now is a routine transient); absent DB, missing table, locked file, empty table or a non-integer drive id all resolve to the honest unknown. lastDrive is ALWAYS a key (null when unknown), never sometimes-absent -- an intermittently-missing key is the shape that lets a renderer quietly fall through to the wrong branch. Boot-order trap avoided for the FOURTH time this sprint (US-501/502/504b were the others): the database is resolved via getattr AT USE TIME, so a drive recorded while the orchestrator runs reaches the card without a service restart. THE TEST THAT MATTERS: the producer's SQL is pinned to the REAL schema -- the test builds the table from production SCHEMA_DRIVE_SUMMARY rather than a hand-rolled fake, so a column-name drift fails LOUDLY instead of silently degrading to a permanent 'unknown' (the exact failure this story exists to fix, and one a fake-DB test would sail through). test_chain_realEmitterToRealRenderer_showsTheRealDrive drives the REAL emitter -> REAL state file -> REAL carousel.js under node, the US-494/499/502/503 two-correct-halves shape. Green in-loop: tests/pi/obdii/test_last_drive_summary.py + tests/pi/orchestrator + tests/pi/splash/test_system_status_last_drive.py + tests/ui/test_carousel_last_drive.py = 196 passed, exit 0, ZERO skips (node present); ruff clean on all 8 files. NOT run in-loop per TD-059: full pytest + mypy -- card_state_emitter.py is a base-module touch for the THIRD time this sprint (US-502, US-504b, this), and system_status_emitter.buildSystemStatusState gained a kwarg, so prioritise the full-suite regression at close. OWED: live validation folds into the post-BL-025 drive per the story's own conditionalOutcome -- until a real drive is captured the tile honestly reads 'No recent drive', and on a sim-only bench it will too."
+    },
+    {
+      "id": "US-512",
+      "title": "BT capture hardening: durable bond + reconnect-transport-reset",
+      "parent": "F-120",
+      "epicId": "E-OPS",
+      "type": "issue",
+      "size": "M",
+      "status": "sprint-ready",
+      "passes": true,
+      "acceptance": [
+        "reconnect-on-failure RESETS the transport (Spool's path: disconnect -> releaseRfcomm -> re-bind -> reconnect) rather than re-opening obd.OBD() on a dead /dev/rfcommN (the stale-rfcomm-retry-forever behavior in BL-025)",
+        "pairing persists a durable link key + trust (complements the dispatched pair_obdlink.sh fix that writes the bond) so the link survives reboot + re-establishes without a manual re-pair",
+        "the reconnect recovery is exercised by a test simulating a mid-session link drop -> transport reset -> capture resumes (real-concurrency style, not a stubbed predicate)",
+        "does NOT re-introduce the rfkill soft-block class -- coexists with eclipse-rfkill-unblock.service; ruff clean",
+        "[NOTE] this is the P1 hardening layer; the P0 rfkill soft-block (the actual capture killer) is fixed live + being baked into deploy separately (V0.29.22 hotfix). This story makes recovery robust, it is not the capture unblock itself"
+      ],
+      "validationCriteria": [
+        {
+          "action": "simulate a mid-session BT link drop on the Pi (or bench harness)",
+          "outcome": "the service resets the transport + reconnects + resumes capture (realtime_data grows again) instead of looping on a dead tty; bond survives a reboot"
+        }
+      ],
+      "conditionalOutcomes": [
+        "final live acceptance is the engine-on validation drive (Spool) -- the reset logic + bond persistence are bench/unit-testable now"
+      ],
+      "goal": "As the capture service, I want a reconnect after a dropped BT link to reset the transport instead of re-opening a dead tty, so capture recovers cleanly mid-session instead of retrying a stale rfcomm forever.",
+      "tasks": [],
+      "feedback": {
+        "filesActuallyTouched": [
+          "src/pi/obdii/bluetooth_helper.py",
+          "src/pi/obdii/obd_connection.py",
+          "src/pi/obdii/orchestrator/bt_resilience.py",
+          "tests/pi/obdii/bt_stack_fake.py",
+          "tests/pi/obdii/test_bluetooth_bond_and_reset.py",
+          "tests/pi/obdii/test_obd_connection_transport_reset.py",
+          "tests/pi/integration/test_bt_link_drop_transport_reset.py",
+          "offices/pm/tech_debt/TD-072-durable-bond-defined-twice.md"
+        ]
+      },
+      "completionNotes": "ROOT, stated precisely because the AC's phrasing understates it: an rfcomm bind is a KERNEL TABLE ENTRY, and it outlives the ACL link. When the dongle drops, /dev/rfcomm0 and the bind record are both still there -- so bindRfcomm's IDEMPOTENT short-circuit ('already bound to the right MAC') hands the retry the same DEAD tty, forever. That is the stale-rfcomm-retry-forever signature. THE ONE THE PM SHOULD KNOW ABOUT: the entry also outlives the PROCESS. A SIGKILLed/crashed predecessor never ran disconnect(), so its binding is still in the kernel table at startup; the new ObdConnection has _boundRfcomm=False, its disconnect (which releases only a binding IT created) skips, bindRfcomm short-circuits on the inherited entry, and the fresh process opens the predecessor's dead tty. So `systemctl restart` did NOT clear this fault -- which is exactly why it read as unfixable in the field. The release therefore had to be keyed on 'the configured port is a MAC', NOT on our own bookkeeping. Pinned by test_connect_staleBindingInheritedFromAPriorProcess_isDroppedNotReused. SECOND DEFECT FOUND WHILE TRACING (not in the AC, and it made the first one unrecoverable): bt_resilience._reactToAdapterUnreachable called _safeDisconnect() -- which RELEASES the binding -- and then waited on ReconnectLoop, whose probe is isRfcommReachable, which REQUIRES the binding to exist. The recovery was waiting for a state its own teardown had just removed, so waitForAdapter could never report success and the reopen never ran. That is why Spool's path ends in a RE-BIND rather than a release: resetTransport() leaves the transport freshly BOUND, which is what makes the probe answer honestly again. AC1 is therefore satisfied at THREE call sites, not one: (a) ObdConnection.reconnect() -> resetTransport(); (b) the per-failed-attempt binding drop inside _performConnect -- the ONLY reset the US-338 post-failure heartbeat ever gets, since it drives connect() and never touches reconnect(); (c) the mixin's ADAPTER_UNREACHABLE path. Missing (b) would have left the heartbeat -- the path that actually runs for hours in the car -- entirely unfixed while every reconnect() test stayed green. AC2 (durable bond): the pair-time half was already shipped (the 2026-07-31 P0 hotfix writes + VERIFIES Paired+Bonded+Trusted). What did not exist was the RUNTIME half -- nothing ever read those flags back. A bond that loses Trusted still reports as paired, but bluez refuses the unattended reconnect, so the symptom is a mystery dead link whose only apparent remedy is a manual re-pair -- which needs the dongle powered, i.e. the engine running, i.e. exactly when you cannot do it. ensureTrusted() repairs trust (a local bluez flag, repairable unattended) and reports an absent bond record honestly with the actual remedy, rather than issuing a trust that cannot help. Best-effort by construction: it can never fail a connect that would otherwise have worked. AC4: no rfkill / hciconfig / nmcli / `power off` anywhere on any new path -- guarded at BOTH the helper level and across the whole recovery, because systemd-rfkill persists radio state at shutdown and that is precisely how the 07-03 soft-block became sticky. eclipse-rfkill-unblock.service stays the standing net; this avoids needing it. AC3 test is real-concurrency and nothing load-bearing is stubbed: real ObdConnection + real bluetooth_helper (bind/release/reset/rfcomm-show parsing AND both layers of the reachability probe) + real BtResilienceMixin + real ReconnectLoop + real connection_log in real SQLite + a real capture THREAD polling while the link drops. Only the OS boundary is faked -- the rfcomm/bluetoothctl CLIs and the python-obd handle -- deliberately at the SUBPROCESS seam, because the defect LIVES INSIDE bindRfcomm; a test that stubs bindRfcomm (as the existing US-221 flap test's _FlappingConnection does) deletes the bug from the test. ONE dongle model (tests/pi/obdii/bt_stack_fake.py) serves both the unit and integration halves. 4 MUTATIONS PROVED: revert the mixin to _safeDisconnect -> 4 integration tests red (and FAST, not hung -- the harness bounds the loop through the same _shutdownEvent seam production uses, so a regression cannot wedge CI); drop the failed-attempt release -> 4 unit tests red; a reconnect() reverted to disconnect()+connect() -> the inherited-binding test red; the AC4 radio guards trip on any rfkill/power-off. TD-072 FILED: 'durable bond' is now defined in two modules (bluetooth_helper for connect-time, pair_obdlink_driver for pair-time). I did NOT consolidate -- the driver is standalone by design (sys.path[0] is scripts/, so a src import needs a __file__ bootstrap) and its failure mode is stranding the car. Mitigation shipped instead: the two are pinned against each other across the whole truth table, so drift fails loudly at test time. Green in-loop: tests/pi/obdii + tests/pi/integration = 795 passed, exit 0; tests/pi/orchestrator + the two root orchestrator-recovery files = 177 passed; ruff clean on all 8 files (1 import-sort autofix). NOT run in-loop per TD-059: full pytest + mypy -- obd_connection.py and bt_resilience.py are both base-module touches on the CAPTURE path, so prioritise the full-suite regression at close. OWED (unchanged by this story): the engine-on validation drive is still the final live acceptance per the story's own conditionalOutcome -- bond-survives-reboot + realtime_data grows. This makes recovery robust; it is not the capture unblock itself (that was the V0.29.22 rfkill hotfix)."
+    },
+    {
+      "id": "US-513",
+      "title": "RCA: why BT got soft-blocked ~07-03 (confirm origin so it can't recur)",
+      "parent": "F-120",
+      "epicId": "E-OPS",
+      "type": "research",
+      "size": "S",
+      "status": "sprint-ready",
+      "passes": true,
+      "acceptance": [
+        "investigate the origin of the persisted /var/lib/systemd/rfkill/*:bluetooth=[1] state (Atlas hypothesis: a debug-session rfkill/reset that systemd-rfkill then persisted at shutdown)",
+        "confirm the trigger + whether any project code/deploy path can cause it; document the finding + a prevention (or confirm the unblock service is sufficient mitigation)",
+        "if a project-side cause is found, file the concrete fix as a follow-up; if purely a one-off manual debug artifact, record that + close",
+        "no code change required unless a project-side cause is confirmed; the eclipse-rfkill-unblock.service is the standing safety net regardless"
+      ],
+      "validationCriteria": [
+        {
+          "action": "review boot/rfkill history + the 07-03 debug context; test whether the identified trigger reproduces the saved-block",
+          "outcome": "a documented origin + prevention (or a documented conclusion that it was a one-off manual artifact fully covered by the unblock service)"
+        }
+      ],
+      "conditionalOutcomes": [],
+      "goal": "As the maintainer, I want to know WHY the BT rfkill soft-block got saved ~07-03, so we can prevent the origin, not just rely on the unblock safety net.",
+      "tasks": [],
+      "feedback": {
+        "filesActuallyTouched": [
+          "deploy/eclipse-rfkill-unblock.service",
+          "tests/deploy/test_rfkill_unblock_install.py",
+          "tests/deploy/test_no_radio_disable_in_project.py",
+          "docs/rca/2026-08-02-us513-bt-rfkill-soft-block-origin-rca.md",
+          "offices/pm/inbox/2026-08-02-from-ralph-us513-rfkill-origin-rca-plus-ordering-defect.md"
+        ]
+      },
+      "completionNotes": "RCA VERDICT: origin UNPROVABLE at this remove; project EXONERATED; mitigation found INSUFFICIENT and hardened. Taking those in order. (1) ORIGIN -- I did NOT name a culprit, deliberately. All three forensic sources are destroyed or out of range: the saved-state file was OVERWRITTEN by the 07-31 recovery (mtime now 2026-07-31 20:26:02, contents 0, and `sudo rm -f /var/lib/systemd/rfkill/*` appears in the Pi's bash_history), the systemd journal retains only back to 2026-07-26 12:39:54 (07-03 is ~3 weeks outside the window), and ~/.bash_history covers only the 07-31 recovery session -- and would never have caught an agent's commands anyway, since `ssh host \"cmd\"` is non-interactive and does not append to history. Naming a cause on that evidence would have been a guess dressed as a finding, which is the failure mode this project treats as worse than an admitted unknown. (2) THE STRONG FINDING, and the half that IS provable: NO project code or deploy path can produce a soft-block. Exhaustive audit of src/ + scripts/ + deploy/: ZERO `rfkill block`, ZERO `nmcli radio off`, ZERO `hciconfig <dev> down`, ZERO `systemctl stop/disable/mask bluetooth`, ZERO `bluetoothctl power off`. Every radio verb the repo ships points the other way (pair_obdlink.sh:224 `power on`, pair_obdlink_driver.py:300 `_send(\"power on\")`, deploy-pi.sh:838 + the unit `rfkill unblock all`); connect_obdlink.sh's `rfcomm release` is the closest thing to a teardown and it removes a KERNEL BINDING, not radio state. So the surviving explanation is an external/manual action that systemd-rfkill then saved at shutdown exactly as designed -- Atlas's hypothesis, corroborated (NOT proven) by commit ad59561 showing a live-Pi BT 'pairing-saga' debug session dated exactly 2026-07-03. Recorded as suggestive, not conclusive. (3) THE ONE THE PM MUST ACT ON -- AC2 offers a fork: document a prevention OR confirm the unblock service is sufficient mitigation. I could NOT confirm sufficiency, because auditing it turned up a REAL, LIVE-VERIFIED DEFECT. eclipse-rfkill-unblock.service ordered itself After=systemd-rfkill.service -- the PRODUCER half, which its own header calls 'the fix' -- and Before= NOTHING project-owned. Neither rfcomm-bind.service nor eclipse-obd.service declared any relationship to it, so systemd was free to start all three concurrently. Proven on the box, not inferred: `systemctl show` returns Before=multi-user.target shutdown.target only, and on the 2026-07-31 boot rfcomm-bind and eclipse-rfkill-unblock BOTH entered active at 20:25:59 -- the same second. Harmless that boot because the block had already been zeroed by hand; on the one boot where a block IS saved it is a coin flip, and the losing side binds /dev/rfcomm0 against a dark adapter while EVERY unit still reads `active` -- the exact 'green-looking unit on a dark adapter' the unit's header set out to prevent. WHY NO TEST CAUGHT IT (sixth sighting this sprint of the US-494/499/502/503/505 two-correct-halves shape): the pre-existing test_unitManifest_ordersTheUnblockBeforeTheRfcommBind asserted the ordering against unit_manifest.START_ORDER, a hand-ordered PYTHON TUPLE. unit_manifest's own header states its ordering is 'grounded in the units' own declarations, NOT invented' and then lists the declarations it relies on -- none of which mention the unblock unit. So that was the single entry in the tuple with nothing behind it. The manifest is not decorative (obdctl sequences its own start/stop by it) but it CANNOT order boot, and boot is exactly when a restored block bites. FIX: Before=rfcomm-bind.service eclipse-obd.service. `Before=` and deliberately NOT `Wants=` -- it orders those consumers if they are already in the boot transaction and must never pull them in; no cycle (the unblock is After=bluetooth.service and neither consumer is an ancestor). NO deploy-script change needed: step_install_rfkill_unblock is cmp -s-guarded, so the changed unit installs + daemon-reloads on the next routine deploy -- BUT THE RACE IS STILL LIVE ON THE PI UNTIL THAT DEPLOY RUNS. PREVENTION SHIPPED: tests/deploy/test_no_radio_disable_in_project.py, a repo-wide static guard that turns finding (2) from a point-in-time audit into a standing invariant. US-512 already guards this at RUNTIME but only for two helpers and only for commands they emit -- a new script or deploy step is invisible to it. Guard design notes: patterns match ARGV LISTS as well as shell strings, because its own self-test caught on the FIRST run that a whitespace-only separator sees every `sudo rfkill block` and misses every `subprocess.run([\"rfkill\",\"block\"])` -- which is the form bluetooth_helper actually uses; `\\bblock\\b` after a token separator so `rfkill unblock all` is not condemned (otherwise the guard flags the FIX for the outage it prevents -- pinned by an explicit permit-list test over all 8 restorative forms); whole-line # comments stripped per US-501's lesson, since bluetooth_helper.py and obd_connection.py both DOCUMENT these forbidden commands and a raw-text scanner would flag the prose explaining the rule; tests/ deliberately not scanned because US-512's guards assert on these strings literally; greppable `radio-guard-exempt` escape hatch per the explicit-hatch-over-drift rule. MUTATION-PROVED end-to-end, not just as regex: a real violating .sh dropped into scripts/ trips test_noShippedFileDisablesARadio with a precise file:line message (probe removed). The 4 new ordering tests were RED-first for the right reason before the unit changed. ONE DISCRIMINATOR DELIBERATELY LEFT UNTESTED, flagged to PM: whether `bluetoothctl power off` can itself produce a SAVED block. Settling it means disabling a radio on the car Pi and rebooting; I declined under the standing 'never disable a radio on the Pi remotely' rule (the 2026-07-19 nmcli radio wifi off stranding), with an owed engine-on drive on the box. Safe path is a bench Pi or the car Pi with the CIO present, and it changes NO conclusion above -- the project does not issue that command either way. ALSO FLAGGED TO PM (box-config, not mine to change): the Pi's ~1-week journal retention is the single reason this RCA cannot close harder; a SystemMaxUse=/MaxRetentionSec= bump would make the next slow-burn fault answerable. Green in-loop: tests/deploy + tests/pi/ops = exit 0 (374 existing + 25 new pass, zero skips); ruff clean on both touched test files. NOT run in-loop per TD-059: full pytest + mypy -- but this story touches ONE systemd unit and TWO test files and no Python source, so regression risk is confined to the deploy suite that already ran whole. OWED: nothing codeable. The validationCriteria's 'test whether the identified trigger reproduces the saved-block' is NOT satisfiable -- no trigger was identified to reproduce, and the evidence needed to identify one no longer exists; that is the honest finding, not a skipped step."
+    },
+    {
+      "id": "US-517",
+      "title": "WP-2: home-location config binding (pi.location.home.{lat,lon,elevationM})",
+      "parent": "F-125",
+      "epicId": "E-006",
+      "type": "normal",
+      "size": "S",
+      "status": "sprint-ready",
+      "passes": true,
+      "acceptance": [
+        "config.json ${...} binding for pi.location.home.{lat, lon, elevationM} reading PI_HOME_LAT / PI_HOME_LON / PI_HOME_ELEVATION_M (=209 m ASL) from .env (Iris already set .env + placeholders in .env.example)",
+        "validator default + a consumer read path; location is PII -> values live ONLY in the gitignored .env, NEVER committed to source",
+        "[SEAM -- Atlas] confirm pi.location.home is the right key/seam (Atlas config-contract lane); test proves the ${...} resolves + the consumer reads it",
+        "ruff clean"
+      ],
+      "validationCriteria": [
+        {
+          "action": "validate_config with PI_HOME_* set in .env",
+          "outcome": "pi.location.home.{lat,lon,elevationM} resolves from .env; no PII literal in committed config.json"
+        }
+      ],
+      "conditionalOutcomes": [],
+      "goal": "As the altitude anchor + GPS home-geofence, I want the home reference in config (from .env), so it's not a hardcoded literal and location PII stays uncommitted.",
+      "tasks": [],
+      "feedback": {
+        "filesActuallyTouched": [
+          "config.json",
+          "src/common/config/validator.py",
+          "src/pi/location/__init__.py",
+          "src/pi/location/home_location_provider.py",
+          "specs/architecture.md",
+          "tests/pi/location/__init__.py",
+          "tests/pi/location/test_home_location_provider.py",
+          "tests/test_home_location_config_binding.py",
+          "offices/architect/inbox/2026-08-02-from-ralph-us517-home-location-config-seam.md",
+          "offices/pm/inbox/2026-08-02-from-ralph-us517-home-location-env-not-deployed.md",
+          "offices/pm/tech_debt/TD-073-ralph-promise-tag-contract-drift.md"
+        ]
+      },
+      "completionNotes": "THE ONE THE PM MUST ACT ON, and it is not a code defect: deploy/deploy-pi.sh EXCLUDES .env from the deploy payload (lines 190/217/225 -- the push tar excludes it, the remote cleanup preserves it; the only thing deploy ever writes there is COMPANION_API_KEY at line 430). The Pi keeps its OWN .env. So the PI_HOME_* values Iris put in the dev checkout do NOT propagate, the ${...} placeholders stay unresolved on the box, and the provider correctly reports unknown. Consequence for the next story: US-518's re-anchor is a NO-OP on the Pi until someone writes those three lines into the Pi's .env. Still correct to build (it resets when the anchor is known, does nothing when it is not), but its LIVE validation depends on that ops step, not on its code. I deliberately did NOT add a deploy step: outside this story's ACs, and writing location PII to the box via a deploy script is a CIO call about where his home coordinates may land. Three options + a recommendation (A: CIO appends by hand once, survives all future deploys) filed to pm/inbox. AC3 SEAM-CONFIRM resolved WITHOUT waiting on Atlas: architecture.md section 6 already rules the shape and pi.location.home follows the established pi.<domain> convention (pi.homeNetwork / pi.power / pi.sensors) exactly. Note filed to Atlas naming the three deltas that are MINE rather than the convention's; if he NAKs any, the key path is a rename not a redesign. THE DELIBERATE INCONSISTENCY worth his NAK: NO fail-fast validator sub-check. pi.homeNetwork and pi.companionService both raise ConfigValidationError on a malformed value; this section does not. validate() runs on the Pi's BOOT PATH -- raising would refuse to start the orchestrator over a typo in an OPTIONAL altitude anchor, trading a dead OBD capture for a cosmetic fault (I-038 shape). Policy follows pi.power.mode (US-421) instead: honest unknown at the provider. Pinned by 4 parametrized tests that assert validate() does NOT raise on typo/out-of-range/unresolved/blank. PII HANDLING, the story's actual point: this is the FIRST config section whose VALUES may never be committed. config.json carries BARE ${PI_HOME_*} placeholders and the DEFAULTS are None -- and I deliberately did NOT use the ${VAR:default} inline-default form the rest of the file uses, because a fallback coordinate in source would be BOTH committed PII AND a fabricated anchor. Guarded by a test that regex-asserts every committed value is a bare placeholder with no ':' default, so a future 'helpful' default fails loudly. Every test fixture is a fabricated coordinate (12.25/-34.75/100.0); I caught and removed a real latitude I had used as a fixture in my own first draft of the PII test -- the guard needed an OUT-OF-RANGE value (91.5) to trigger the warning anyway, so proving the rule never required committing the thing it protects. The provider NEVER logs a coordinate value: PIIMaskingFilter masks email/phone/SSN only (architecture.md section 8), so a coordinate in journald is PII on a surface with no mask for it -- rejection warnings name the KEY and the REASON only. THE STRUCTURAL TRAP, and it is general rather than mine: secrets_loader.resolveSecrets leaves the placeholder VERBATIM when an env var is unset with no inline default. So '${PI_HOME_LAT}' is a TRUTHY, NON-None string sitting in the validated config -- which means the validator's None default NEVER FIRES on a real Pi. The provider is what absorbs it, and it reports the actual remedy ('set PI_HOME_LAT in this host's .env') rather than a generic parse error, because an unresolved placeholder and a typo'd number have different fixes. Routed to Atlas as a property of EVERY placeholder-bound key, not a US-517 quirk. DESIGN CALL: elevationM and the (lat,lon) pair are exposed as SEPARATE facts. US-518 needs only the elevation; coupling it to a lat/lon fix whose GPS hardware is not ordered (US-516) would strand the re-anchor on a dependency it never needed. The coordinate PAIR is both-or-neither -- half a fix is not a partial location, it is a different one. Boot-order trap avoided for the FIFTH time this sprint: the config is re-read per call, never parsed at construction. 43 new tests, ALL RED first for the right reason (11 of the 12 binding tests failed on the missing key; the 12th guards Iris's existing .env.example lines from deletion and passed immediately -- stated plainly rather than counted as new coverage). 3 MUTATIONS PROVED, and one was informative: (a) delete the unresolved-placeholder branch -> the returnsNone test STAYS GREEN (float('${...}') raises ValueError so it degrades honestly anyway) and ONLY the log-message test catches it, which is why that test exists; (b) drop the bool guard -> float(True)=1.0 reads as a plausible sea-level anchor, 1 test red; (c) add the 'got {value!r}' that every OTHER validator in this codebase uses -> the PII test goes red, which is the exact drift it exists to stop. NaN/inf are rejected explicitly because float('nan') SUCCEEDS and a NaN anchor propagates silently through every later sum while never comparing unequal to itself. Green in-loop: tests/pi/location + tests/test_home_location_config_binding.py + tests/test_config_validator.py + tests/common = 133 passed, exit 0; ruff clean on all 4 non-test + 2 test files; python validate_config.py = 'All validations passed'. PRE-EXISTING FAILURE FOUND, NOT MINE: tests/lint/test_ralph_promise_tag_contract.py fails on this branch (prompt.md documents COMPLETE + PARTIAL_BLOCKED, ralph.sh has no branches for them). Both files unmodified by me -- filed TD-073 rather than fixing under the scope fence, but FLAGGING IT because it is in the FAST lint suite and WILL fail the integration gate at close. It is the same shape as the US-513 finding (a test asserting a contract against the artifact that DESCRIBES the behaviour, not the one that ENFORCES it) and COMPLETE is the tag that ends a sprint, so it deserves a look not a rubber stamp. NOT run in-loop per TD-059: full pytest + mypy -- validator.py is a base-module touch (DEFAULTS registry), so prioritise the full-suite regression at close. OWED: the ops step above; nothing else codeable."
+    },
+    {
+      "id": "US-518",
+      "title": "WP-3: re-anchor derived altitude to home elevation on every successful server sync",
+      "parent": "F-125",
+      "epicId": "E-006",
+      "type": "normal",
+      "size": "S",
+      "status": "sprint-ready",
+      "passes": true,
+      "acceptance": [
+        "hook the EXISTING sync-success event -> reset the derived altitude accumulator to pi.location.home.elevationM (a successful server sync means the car is home on the home network = a verified 'at home' reset)",
+        "small utility on the sync-success seam (Atlas seam); does not fire on failed/partial syncs",
+        "test proves the reset fires on sync-success + not otherwise; ruff clean"
+      ],
+      "validationCriteria": [
+        {
+          "action": "simulate a successful server sync after the derived altitude has drifted",
+          "outcome": "derived altitude resets to home elevationM on the sync-success; no reset on a failed sync"
+        }
+      ],
+      "conditionalOutcomes": [],
+      "goal": "As drift control, I want the derived altitude reset to home elevation on each successful sync, so error is bounded to a single drive between syncs.",
+      "tasks": [],
+      "feedback": {
+        "filesActuallyTouched": [
+          "src/pi/location/altitude_anchor.py",
+          "src/pi/obdii/orchestrator/card_state_emitter.py",
+          "specs/architecture.md",
+          "tests/pi/location/test_altitude_anchor.py",
+          "tests/pi/orchestrator/test_sync_success_altitude_reanchor.py",
+          "offices/pm/issues/I-041-us505-broke-system-status-exact-shape-tests.md"
+        ]
+      },
+      "completionNotes": "THE FACT THAT SHAPES THE WHOLE STORY, and the PM should read it before judging scope: THERE IS NO DERIVED-ALTITUDE ACCUMULATOR IN THE CODEBASE TO RE-ANCHOR. AC1 says 'reset the derived altitude accumulator', but US-519 (the integrator that would produce it) is DEFERRED this sprint pending Spool's sigma sizing on US-521, and states/imu.altitude is a typed NULL with reason 'no_source' (imu_state_bridge.py:364) because the ICM-20948 has no barometer. I did NOT file a blocker over this: the AC also says 'small utility on the sync-success seam', the PM groomed WP-3 knowing WP-4 was deferred, and US-517 (WP-2) landed the same way -- a read path with no consumer yet. So the deliverable is the accumulator + the reset, and US-519 later supplies the integration. Flagging it plainly rather than letting the story read as if it wired something that already existed. THE HONEST-INSTRUMENT LINE I HELD, and it is the reason this is not a 20-line story: if the anchor also PUBLISHED, the Pi would render home-elevation-forever as its altitude the moment the car left the driveway -- a confident wrong number, which the sprint's own keyReminder forbids and which is strictly worse than the 'no source' the panel honestly shows today. So AltitudeAnchor holds INTERNAL state and publishes nothing; states/imu.altitude is deliberately untouched. US-520 wires the display once US-519 makes the value mean something. THE SEAM CHOICE WORTH REVIEWING: I hooked CardStateEmitterMixin._recordSyncOutcome rather than adding two calls in core.py. That method is the single point BOTH sync-success paths (_maybeTriggerIntervalSync line 1023 + triggerDriveEndSync line 1083) converge on, and it is reached ONLY past the US-340 offline route gate -- so 'sync succeeded' and 'we are on the home network' are the same fact there. One hook means a future third sync path cannot silently skip the re-anchor, which is exactly the US-512 'missing call site (b)' failure mode where the heartbeat path stayed unfixed while every reconnect test was green. Two notes on that choice: (a) _recordSyncOutcome lives on the CARD-STATE mixin, which is a layering smell I accepted for the single-seam guarantee -- it is not gated by pi.dashboard.stateEmitEnabled (only emitter CONSTRUCTION is), so drift control does not depend on a display flag, and I verified that rather than assuming it; (b) the powerwatch power-down forcePush is a SEPARATE PROCESS (src/pi/power/power_watch/__main__.py), so it has no in-memory accumulator to re-anchor and is deliberately not wired -- worth knowing before someone 'fixes' the omission. AC2 ('does not fire on failed/partial syncs') is where the real risk lives, and the negative tests carry more weight than the positive ones. The dangerous case is NOT a failed push -- it is the US-340 route gate: mid-drive, miles from home, the tick bails before pushing. Re-anchoring there would reset the altitude to home elevation while the car is nowhere near home, which is the precise fabrication this work package exists to prevent. Pinned by test_noRouteToServer_doesNotReanchor plus crash/sub-interval/gated-off/no-client cases. Note 'partial' resolves as fires: a push that reaches the server with some tables failing still proves the Pi is on the home network, and zero rows pushed likewise -- the re-anchor keys on 'we are home', not 'we had data'. Stated explicitly because it is a defensible reading of the AC either way. HONEST-INSTRUMENT, per branch: the accumulator starts None and never 0.0 (sea level is a 209 m error in Chicagoland, so a zero default is a fabricated reading rather than an absent one); an unknown home elevation makes the re-anchor a NO-OP that neither invents a value NOR destroys the one the integrator owns -- failing to improve an estimate is not licence to delete it; lastAnchoredAt is stamped ONLY when it actually anchored; NaN/inf/bool/non-numeric are rejected at the write seam (float('nan') succeeds and propagates silently through every later sum, float(True) is 1.0 and reads as a plausible sea-level anchor). The home elevation is read LAZILY per re-anchor, not cached -- boot-order trap avoided for the SIXTH time this sprint, and it also means the anchor starts working on a Pi whose .env gains the value later, with no code change. WHY THIS IS A NO-OP ON THE PI TODAY (inherited from US-517, restated because it bounds what validation can prove): deploy-pi.sh EXCLUDES .env, the Pi keeps its own, so PI_HOME_ELEVATION_M is unresolved on the box and the provider correctly reports unknown. The re-anchor therefore correctly does nothing there until the CIO writes that line into the Pi's .env (US-517 filed 3 options + a recommendation to pm/inbox). The story's validationCriteria is SIMULATION-based ('simulate a successful server sync after the derived altitude has drifted'), which IS satisfied by test_realChain_syncSuccessResetsDriftedAltitude -- real orchestrator seam -> real AltitudeAnchor -> real HomeLocationProvider -> real config. But do not read that as live-validated on the Pi. 47 tests, all RED first (the whole module was missing, so the first run was a clean ModuleNotFoundError rather than 47 assertion failures -- stated plainly rather than claimed as 47 individually-witnessed reds). 3 MUTATIONS PROVED: delete the _recordSyncOutcome hook -> 7 red including the end-to-end chain; fabricate sea level when the anchor is unknown -> 8 red including test_realChain_unconfiguredHome_leavesAltitudeAlone; disable the isfinite guard -> 3 red. The chain is pinned END-TO-END (real emitter seam -> real anchor -> real provider -> real config), not per-half, because both-halves-correct-but-never-connected is the recurring defect of this sprint (US-494/499/502/503/505/513). Green in-loop: tests/pi/location + tests/pi/orchestrator + tests/pi/splash = exit 0, 363 tests, 1 pre-existing skip, EXCLUDING the 2 deselected failures below; ruff clean on all 4 touched files. Design-gate DoD met in-sprint: architecture.md section 6 gained a 'Derived-altitude re-anchor on sync success (US-518 / F-125)' subsection under the US-517 home-location section. PRE-EXISTING FAILURE FOUND, NOT MINE -- I-041 FILED: tests/pi/splash/test_system_status_emitter.py has TWO red tests on this branch (test_buildSystemStatusState_a3Schema_hasExactShape + test_emitter_writesSystemStatusFile_andComputesStale). US-505 (65de58d) added drive.lastDrive to buildSystemStatusState but did not update that file, whose last commit is still f929ed8 (US-480-a); both assert the EXACT state shape, so the extra key breaks them by design -- the guard working, not a bad test. Provenance verified via git log per file, not assumed. Fix is ~2 lines (add 'lastDrive': None to the two expected dicts) but it is outside my scope fence. THIS WILL FAIL THE PM INTEGRATION GATE, and it is the SECOND such red on this branch after TD-073 -- worth asking whether the TD-059 in-loop/PM-gate split needs a middle tier, because US-505's scoped selection could not see it: it ran the story's NEW splash test file but not the EXISTING exact-shape guard for the contract it changed. NOT run in-loop per TD-059: full pytest + mypy -- card_state_emitter.py is a base-module touch for the FOURTH time this sprint (US-502/504b/505 were the others), so prioritise the full-suite regression at close. OWED: nothing codeable for this story. Live validation depends on the US-517 ops step (PI_HOME_ELEVATION_M into the Pi's .env) and, for the re-anchor to be observable at all, on US-519 landing the integrator."
+    },
+    {
+      "id": "US-521",
+      "title": "Gyro-fused pitch for states/imu (complementary/Madgwick + ZUPT) -- honest grade + altitude foundation",
+      "parent": "F-125",
+      "epicId": "E-006",
+      "type": "normal",
+      "size": "M",
+      "status": "sprint-ready",
+      "passes": true,
+      "acceptance": [
+        "the states/imu pitch (the gradePct source) is GYRO-FUSED (complementary or Madgwick): gyro integrated for short-term, accel corrects the gyro ONLY when |accel| is near 1 g (Spool). gyro-alone drifts; accel-alone is contaminated by longitudinal g; neither works standalone",
+        "[ZUPT] zero-velocity bias update: at every confirmed stop (OBD speed 0 for > [EXACT:3] s) the accel reads pure gravity -> measured tilt = true chassis pitch; average over stops to converge the pitch BIAS out (valid because Chicagoland terrain is flat -> real slopes average ~0). city stoplights are the free calibration signal",
+        "the fused pitch feeds gradePct (the honest grade on US-508) AND is the prerequisite the future interim altitude (US-519) integrates -- publish it in states/imu per Atlas's DELTA-2 contract; raw accel/gyro stay on the EDR bus",
+        "[SPOOL SIZING -- route him] send Spool the current pitch derivation + the pitch/speed sample rates so he sizes expected sigma_pitch BEFORE the altitude display (US-519/520) builds on it",
+        "test proves: a longitudinal 0.3 g on flat ground does NOT produce a ~16.7-degree pitch (the failure mode); ZUPT converges the bias over simulated stops; ruff clean"
+      ],
+      "validationCriteria": [
+        {
+          "action": "on the Pi: apply/simulate a longitudinal 0.3 g on flat ground, then a confirmed stop on a known slope",
+          "outcome": "pitch stays ~0 under pure acceleration (not 16.7 deg); at the stop, pitch reads the true chassis tilt; grade on US-508 is no longer accel-contaminated"
+        }
+      ],
+      "conditionalOutcomes": [
+        "if the current grade/pitch is already gyro-fused (verify first), this narrows to adding ZUPT + confirming the fusion; [EXACT:3]s ZUPT gate is Spool load-bearing"
+      ],
+      "goal": "As the grade + (future) altitude signals, I want pitch from a gyro-accel fusion, not accel-only tilt, so a 0.3 g acceleration isn't misread as a 16.7-degree climb (Spool: an accelerometer cannot distinguish grade from acceleration -- they are the same measurement).",
+      "tasks": [],
+      "feedback": {
+        "filesActuallyTouched": [
+          "src/pi/sensors/pitch_fusion.py",
+          "src/pi/sensors/imu_state_bridge.py",
+          "src/common/config/validator.py",
+          "specs/architecture.md",
+          "tests/pi/sensors/test_pitch_fusion.py",
+          "tests/pi/sensors/test_imu_state_bridge.py",
+          "offices/tuner/inbox/2026-08-02-from-ralph-us521-pitch-fusion-shipped-sigma-sizing.md"
+        ]
+      },
+      "completionNotes": "THE conditionalOutcome RESOLVED FIRST, because it decides the size of the story: the pitch was NOT already gyro-fused, so this did not narrow to 'add ZUPT'. But the AC's phrasing understates the situation in the other direction too -- it was not raw accel-only either. US-478 low-passed the accel over 5 s (gravityTauSec) and read the pitch off that vector, which is why the defect never showed on a bench: a 1 s acceleration IS attenuated >90%. A 10 s on-ramp is 2 tau and propagates almost fully. So the phantom was real, just DELAYED, which is worse than obvious -- it appears only under exactly the sustained pull nobody reproduces at a desk. Worth stating precisely because 'accel-only' would have sent a reviewer looking for a bug that is not in the code. TWO FACTS THAT MADE THIS SMALLER THAN IT LOOKS, both verified not assumed: raw.imu.gyro has been published by sensor_reader since US-410 (same burst, same seq) and the bridge simply never subscribed; and raw.obd.SPEED is published onto the SAME SampleBus by the capture loop (realtime._publishReading, gated by the same pi.bus.enabled that builds this bridge). So ZUPT needed NO new acquisition path and the bridge is still a pure bus consumer -- it opens no I2C device and no OBD connection, and cannot re-introduce the A-17 second-connection race. Two more subscription topics, nothing else. THE SIGN I DERIVED RATHER THAN GUESSED, and it is the one thing in here that silently breaks everything if wrong: the gyro-integrated pitch must agree with the accel tilt convention or the two halves of the filter fight each other and the estimate is worse than either alone. The frame is right-handed (forward x left = up), so a nose point moves as omega x forward = -omega_left * up: NOSE UP IS A NEGATIVE LEFT-AXIS RATE, pitchRate = -gyro[1]. Pinned by test_update_positiveLeftAxisRate_isNoseDown and mutation-proved (flipping it reds 3 tests including the ZUPT drift-correction one). Documented in the function so the next person does not re-derive it under pressure. Related caveat I chose to DOCUMENT rather than guard: an angular rate is a pseudovector, so resolveMountFrame is only correct for it if the mount map is a proper rotation (det +1). Every physically realizable remount is; a mirrored axis map is a config typo that already breaks the heading the same way. Adding a determinant check felt like scope. THE CONSTANT THAT DESERVES THE MOST SCRUTINY, and I have routed it to Spool with the arithmetic (AC4): accelTrustBand = 0.02. Specific force under a longitudinal a is sqrt(1+a^2), so a magnitude gate at band b admits a ~ sqrt(2b). At 0.02 that is ~0.2 g and the story's 0.3 g case (1.044 g, a 4.4% excess) is rejected outright -- pinned DIRECTLY by test_accelTrustBand_rejectsTheAccelerationItWasSizedFor, so AC5's guarantee is a property of the constant rather than an accident of the simulation. But I am not hiding the residual: magnitude is a WEAK discriminator at small a (sqrt(1+a^2) ~ 1 + a^2/2, so 0.1 g is only 0.5% off 1 g while contributing 5.7 deg of tilt error), and tightening much below ~0.5% would let road vibration gate the accel off permanently, leaving pure gyro drift with nothing to correct it. A sustained sub-0.2 g pull therefore still leaks in, bounded by the tau blend and erased at the next ZUPT -- which is precisely why Spool specified BOTH mechanisms and not either alone. pitchTauSec/accelTrustBand/zuptSpeedMaxAgeSec/zuptMinStops/zuptWindowStops are all Rex-derived, all config keys, all in the note to Spool. zuptMinStopSec is his [EXACT:3] and is 3.0, verbatim, with its own test asserting the constant. THE DANGEROUS NEGATIVE CASE IS NOT A FAILED SPEED READ, IT IS A STALE ONE -- same shape as US-518's route gate, and it is the single most valuable thing in this story. If the BT link drops while the car is stopped at a light (BL-025 is not hypothetical), the last thing the estimator ever heard is 'speed 0'. Honouring that would keep HARD-SNAPPING the attitude to whatever the accelerometer says for the rest of the drive -- i.e. pinning pitch to the 16.7-degree phantom on every on-ramp, with MORE confidence than the drift it was fixing. Guarded two ways: zuptSpeedMaxAgeSec (2.0, deliberately BELOW the 3 s gate) retires the stop, and confirmation requires zero speed OBSERVED ACROSS the window (lastSpeedCapture - stopSince > 3), not 3 s ELAPSED since one reading. That second rule matters on a slow/jittery SPEED poll, where wall-clock sampling would manufacture stops that never happened. AND AN ABSENT SPEED IS NEVER A ZERO SPEED: on a bench Pi with no OBD, no stop is ever confirmed and no bias is ever claimed. MUTATION TESTING EARNED ITS KEEP AND CAUGHT A BAD TEST OF MINE. 6 mutants: drop the near-1g gate -> 7 red incl. the real-chain end-to-end; drop the staleness guard -> 1 red; flip the gyro sign -> 3 red; bias from a single stop -> 1 red; gravity fallback for gradePct -> 2 red. The SIXTH -- confirm a stop on elapsed time instead of observed span -- SURVIVED on the first run, because my test was being saved by the freshness guard rather than by the rule it claimed to test. Fixed by widening zuptSpeedMaxAgeSec in that test so the guard cannot mask it, plus a new slow-poll test (two zero readings 2 s apart = 2 s of evidence + 1 s of hope, must NOT confirm). Both now kill it. Stated plainly because 'all mutants killed' would have been false on the first pass. HONEST-INSTRUMENT, per branch: pitch starts None and is never a fabricated 0.0 (new reason pitch_unseeded, deliberately DISTINCT from tilt_unresolved -- the sensor is fine, the attitude is simply not known yet, and gradePct null beats a confident 0.0 'flat road'); it seeds ONLY from an uncontaminated reading, because seeding mid-pull bakes the phantom in as the origin the gyro then integrates from; no bias until zuptMinStops stops, since a bias from one stop is the slope of a parking spot reported as a calibration constant; the bias window is ROLLING so a physical remount ages out instead of freezing on an old value; a stale gyro is not integrated (the US-478 frozen-compass rule, carried over); an unplug drops the attitude but KEEPS the bias (how the board is bolted in did not change when the cable did). ONE FACT, ONE PRODUCER: gradePct has NO gravity fallback. A fallback would have kept every existing test green while silently restoring the exact defect this story deletes -- mutation-proved, and it is why that test exists. The gravity low-pass is NOT gone: it still owns the g-meter level frame and the heading tilt-compensation, which are a different job (residual extraction, not attitude). Deliberately left alone -- re-pointing them was unrequested and would have changed a shipped card. SCOPE HELD: Spool's US-508 items 2 and 3 (gate the integrand at >=5 km/h and |dv/dt| < 0.15 g; slew-clamp |sin(pitch)| <= 0.15) are NOT here. They belong to the INTEGRAND, i.e. US-519, which is deferred pending his sigma. Flagged in his note as tracked-not-lost. Nothing publishes an altitude; states/imu.altitude is still a typed null with reason no_source. 48 tests (35 new pitch_fusion + 13 new bridge), plus 5 existing computeGradePct tests RETIRED -- not deleted coverage: that pure math moved to pitch_fusion and all five cases (level/nose-up/nose-down/past-range/degenerate) are covered one-for-one there, with a comment in the old file saying so. Honest about the RED: the first run was one ModuleNotFoundError, not 35 witnessed assertion failures, because the module did not exist -- which is exactly why the 6 mutations were run afterwards. Green in-loop: tests/pi/sensors + tests/pi/bus + tests/test_config_validator.py + tests/ui/test_carousel_imu_card.py + tests/ui/test_carousel_live_home_card.py = 310 passed, exit 0; ruff clean on all 5 code files (1 import-sort autofix); python validate_config.py = 'All validations passed'. Design-gate DoD met in-sprint: architecture.md 10.8 gained a 'Gyro-fused pitch + ZUPT' subsection and the contract table gained pitchDeg + the pitch_unseeded reason. NO CAROUSEL CHANGE: the card renders gradePct, whose NAME and units are unchanged; pitchDeg is published for US-519 per AC3 and the display of it is US-520, deferred. PRE-EXISTING FAILURE, STILL NOT MINE: tests/pi/splash/test_system_status_emitter.py has the same 2 red tests I-041 already documents (US-505's drive.lastDrive vs two exact-shape guards). Unchanged by this story; it WILL fail the PM integration gate, as will TD-073. NOT run in-loop per TD-059: full pytest + mypy -- validator.py is a base-module touch (DEFAULTS registry + a new _IMU_POSITIVE_KEYS tuple), so prioritise the full-suite regression at close. OWED: the on-Pi validation is the story's own validationCriteria (apply/simulate a longitudinal 0.3 g on flat ground, then a confirmed stop on a known slope) and it needs an ENGINE-ON drive, because ZUPT is gated on raw.obd.SPEED and that topic only publishes with OBD connected -- so US-521's live acceptance folds into the same BL-025 validation drive as US-512. Bench/wall-power validation can prove the 0.3 g half but NOT the ZUPT half. Also owed: Spool's sigma_pitch reply before US-519/US-520 build the altitude display on this."
+    }
+  ],
+  "validation": {
+    "bigDefinitionOfDone": [
+      "(load the dashboard on the Pi after deploy and read the header version chip) \u2192 (chip shows the real deployed version (e.g. V0.29.xx matching .deploy-version), not 'V?.?.?')  [from US-501]",
+      "(on the Pi on wall/bench power, view the header bolt + System-Status power tile; then (if feasible) on battery) \u2192 (bolt lit/amber per source + power tile shows a real value -- never grayed/'unavailable' when the source is actually known)  [from US-502]",
+      "(view the idle-home card clock at a known time (e.g. 14:05)) \u2192 (reads '2:05 PM' (12-hour + meridiem), not '14:05')  [from US-503]",
+      "(with seeded battery_health_log rows (some qualifying, some partial, some NULL-input) view the Health card) \u2192 (verdict computed only from qualifying rows via median-of-3 vs the 727s baseline; forces 'unknown' on <3 qualifying / any NULL / >90-day-stale; last-health-check ignores partial drains; renders \ud83d\udfe2 never red; no TEMP tile)  [from US-504b]",
+      "(on the Pi, pull wall power (or open the PLD line) and restore it, then query battery_health_log) \u2192 (a NEW row exists for that window with non-NULL start_vcell_v/start_soc_pct/end_vcell_v/end_soc_pct and a real runtime_seconds; no orphan row is left behind across a reboot)  [from US-504a]",
+      "(after a captured drive, view the idle-home card) \u2192 (shows real last-drive data (not 'no recent drive'); shows the honest 'no recent drive' only when there truly has been none)  [from US-505]",
+      "(simulate a mid-session BT link drop on the Pi (or bench harness)) \u2192 (the service resets the transport + reconnects + resumes capture (realtime_data grows again) instead of looping on a dead tty; bond survives a reboot)  [from US-512]",
+      "(review boot/rfkill history + the 07-03 debug context; test whether the identified trigger reproduces the saved-block) \u2192 (a documented origin + prevention (or a documented conclusion that it was a one-off manual artifact fully covered by the unblock service))  [from US-513]",
+      "(validate_config with PI_HOME_* set in .env) \u2192 (pi.location.home.{lat,lon,elevationM} resolves from .env; no PII literal in committed config.json)  [from US-517]",
+      "(simulate a successful server sync after the derived altitude has drifted) \u2192 (derived altitude resets to home elevationM on the sync-success; no reset on a failed sync)  [from US-518]",
+      "(on the Pi: apply/simulate a longitudinal 0.3 g on flat ground, then a confirmed stop on a known slope) \u2192 (pitch stays ~0 under pure acceleration (not 16.7 deg); at the stop, pitch reads the true chassis tilt; grade on US-508 is no longer accel-contaminated)  [from US-521]"
+    ],
+    "validationMethod": "CLEAN-DEPLOY + ON-PI checks (wiring shows real version/power/clock/last-drive; Health verdict honest per Spool spec; gyro-fused pitch: 0.3g not read as 16.7deg climb) + ENGINE-ON drive for US-512 reconnect-recover (Spool; same drive closes BL-025)",
+    "validatesFeatures": [
+      "F-123",
+      "F-120",
+      "F-125"
+    ],
+    "currentVersion": "V0.29.24",
+    "validatedAt": null,
+    "validatedBy": null
+  },
+  "devCheatSheet": {
+    "readFirst": [
+      {
+        "file": "offices/pm/inbox/2026-08-01-from-spool-us504-battery-health-verdict-source.md",
+        "reason": "US-504 [EXACT] verdict spec: writer-fix FIRST (vcell/soc NULL on all 28 rows), 600s cut, 727s baseline, 80/60pct, 90-day->unknown, never-red"
+      },
+      {
+        "file": "offices/uidevloper/inbox/2026-08-01-from-spool-us508-altitude-derivation-ruling.md",
+        "reason": "US-521 gyro-fused pitch + ZUPT: accel-only tilt reads 0.3g as 16.7deg climb -- the failure to avoid"
+      },
+      {
+        "file": "specs/UI/dist/dashboard-pi/carousel.js",
+        "reason": "dashboard card renderers (US-501/502/503/504 wiring)"
+      },
+      {
+        "file": "src/pi/obdii/orchestrator/card_state_emitter.py",
+        "reason": "the emitter feeding the cards (power source, battery health, last-drive)"
+      },
+      {
+        "file": "src/pi/obdii/obd_connection.py",
+        "reason": "US-512 transport-reset: releaseRfcomm/_resolvePort exist -- wire into the failure path under _ioLock"
+      }
+    ],
+    "keyReminders": [
+      "HONEST-INSTRUMENT: NEVER compute a verdict/altitude from NULL or contaminated inputs -- an honest unknown/no-source beats a confident wrong number",
+      "US-504 CARVED 2026-08-02 -> US-504b producer DONE; US-504a writer NOT started and NEEDS 2 RULINGS (orphan policy / Spool gate-band overlap). The writer was NEVER blocking the producer -- the verdict spec reads runtime_seconds+timestamps only, never vcell/soc",
+      "US-504a real root: the recorder writes vcell/soc fine; there is ZERO production caller in src/ since US-442/TD-058 retired the auto-open path -- so NO new row is ever written and the card reads 'unknown' PERMANENTLY",
+      "US-504b verdict is green/informational at EVERY state incl replace -- NEVER alarm-red (Spool: red = act-on-the-car only)",
+      "US-521: pitch must be GYRO-FUSED (accel corrects only near 1g) + ZUPT at stops",
+      "US-502 -> PowerModeProvider SSOT; US-505 -> Pi-LOCAL last-drive (obd.db/connection_log)",
+      "DEFERRED (do NOT build): US-516 GPS (hardware TBD not ordered), US-519/520 altitude display (Spool sigma pending on US-521)",
+      "mypy/black/make NOT on the box -- run ruff; PM runs typecheck at integration"
+    ]
+  }
+}
