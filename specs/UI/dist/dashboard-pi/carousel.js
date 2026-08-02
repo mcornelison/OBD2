@@ -719,6 +719,31 @@
     return days + " days ago";
   }
 
+  // Relative age with SUB-DAY resolution (US-505). ageText above is day-grain,
+  // which is right for a health-check date but throws the signal away for a
+  // drive that ended 25 minutes ago ("today"). Rather than declare a second age
+  // vocabulary for the same fact -- the cross-module enum-identity drift that
+  // cost the 9-drain saga -- this extends the SAME one downward and hands off to
+  // ageText at a day and beyond, so "1 day ago" / "3 days ago" have exactly one
+  // definition on the whole surface.
+  //
+  // Null on either input, or an unparseable instant, is "age unknown": we never
+  // assert an age we cannot compute, and never render NaN.
+  function agoText(nowTs, thenTs) {
+    if (typeof nowTs !== "string" || typeof thenTs !== "string") return "age unknown";
+    var now = Date.parse(nowTs);
+    var then = Date.parse(thenTs);
+    if (isNaN(now) || isNaN(then)) return "age unknown";
+    var secs = Math.floor((now - then) / 1000);
+    // A FUTURE instant means clock skew, not a negative age. The Pi has no RTC
+    // battery and boots before NTP settles, so a stamp ahead of `now` is a
+    // routine transient -- "-5 min ago" would be a visible nonsense.
+    if (secs < 60) return "just now";
+    if (secs < 3600) return Math.floor(secs / 60) + " min ago";
+    if (secs < 86400) return Math.floor(secs / 3600) + " h ago";
+    return ageText(ageDays(nowTs, thenTs));
+  }
+
   // The stale-green guard line (F-9). ALWAYS produced so a GREEN verdict can
   // never be shown without its data-age. A missing check -> "never".
   function healthCheckLine(d) {
@@ -1319,10 +1344,18 @@
     return isObj(systemStatusData) && systemStatusData.idle === true;
   }
 
-  // Last-drive summary fact. Honest degradation: the parked emitter writes
-  // driveId:null when idle, and there is no last-drive-summary state file yet,
-  // so with no drive reference the fact reads "No recent drive" -- absence, not
-  // a fabricated last trip. A real driveId (or an active recording) renders it.
+  // Last-drive summary fact (US-505). `drive.lastDrive` is the most recent
+  // COMPLETED drive, produced Pi-locally from drive_summary -- a DIFFERENT fact
+  // from `drive.driveId`, which is the ACTIVE drive and is null whenever nothing
+  // is recording. Before that producer existed this tile had only driveId to
+  // read, so it said "No recent drive" PERMANENTLY rather than until the next
+  // drive: the absence was real, but it was the absence of a producer.
+  //
+  // Renders Iris's idle spec shape ("Drive 35 · 2 h ago") across the tile's
+  // value + detail slots. Honest degradation is per-HALF: a drive whose start
+  // timestamp is missing or unparseable still shows the drive and admits
+  // "age unknown", because the drive genuinely happened and hiding it would lose
+  // a real fact to protect a cosmetic one.
   function idleLastDriveFact(systemStatusData) {
     var label = "LAST DRIVE";
     if (!isObj(systemStatusData) || !isObj(systemStatusData.drive)) {
@@ -1333,6 +1366,17 @@
       var id = drive.driveId == null ? "?" : drive.driveId;
       return { label: label, value: "REC", detail: "drive " + id, level: "neutral" };
     }
+    var last = drive.lastDrive;
+    if (isObj(last) && last.driveId != null) {
+      return {
+        label: label,
+        value: "Drive " + last.driveId,
+        detail: agoText(systemStatusData.ts, last.startedAtTs),
+        level: "neutral",
+      };
+    }
+    // Legacy shape: an active driveId with no lastDrive block. Kept so a state
+    // file written by an older Pi (or mid-deploy) still renders the id it has.
     if (drive.driveId != null) {
       return { label: label, value: "drive " + drive.driveId, detail: "last recorded", level: "neutral" };
     }
@@ -2533,6 +2577,7 @@
     resolveAutoDimConfig: resolveAutoDimConfig,
     fmtClock: fmtClock,
     carouselIdle: carouselIdle,
+    agoText: agoText,
     idleLastDriveFact: idleLastDriveFact,
     idleBatteryFact: idleBatteryFact,
     idleFaultsFact: idleFaultsFact,

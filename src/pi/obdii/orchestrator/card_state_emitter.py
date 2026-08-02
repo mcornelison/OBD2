@@ -231,6 +231,7 @@ class CardStateEmitterMixin:
             powerSource=powerSource,
             driveState=driveState,
             driveId=driveId,
+            lastDrive=self._gatherLastDriveSummary(),
             obdAvailable=obdAvailable,
             obdUnavailableReason=None if obdAvailable else REASON_OBD_OFF,
         )
@@ -320,6 +321,39 @@ class CardStateEmitterMixin:
             return "external" if source.isExternalPowerPresent() else "battery"
         except Exception:  # noqa: BLE001 -- honest unknown on read failure
             return "unknown"
+
+    def _gatherLastDriveSummary(self) -> dict[str, Any] | None:
+        """Read the most recent COMPLETED drive from Pi-local ``drive_summary``.
+
+        A DIFFERENT fact from ``_gatherDriveState``, which reports the ACTIVE
+        drive and is None whenever nothing is recording. That is precisely why
+        the idle card read "No recent drive" permanently rather than only until
+        the next drive: there was no producer for the completed-drive fact at
+        all (US-505).
+
+        The database is resolved through ``getattr`` AT USE TIME, never captured
+        when the emitters are constructed. This sprint has hit that boot-order
+        trap in US-501, US-502 and US-504b: the emitters are built in
+        ``_initializeAllComponents`` while their dependencies land later, so a
+        captured reference is None for the life of the process -- a permanently
+        empty tile with fully green unit tests. Re-reading per tick also means a
+        drive recorded while the orchestrator runs reaches the card without a
+        service restart.
+
+        Returns:
+            The ``{"driveId", "startedAtTs"}`` block, or None when no real drive
+            is on record / the log is unreadable (renders the honest
+            "No recent drive").
+        """
+        try:
+            from pi.obdii.last_drive_summary import readLastDriveSummary
+
+            return readLastDriveSummary(
+                database=getattr(self, "_database", None)
+            ).toStatePayload()
+        except Exception as e:  # noqa: BLE001 -- never block the emit loop
+            logger.debug("last-drive summary unavailable: %s", e)
+            return None
 
     def _gatherDriveState(self) -> tuple[str, int | None]:
         """Return (driveState, driveId): recording+id while a drive runs, else idle."""
