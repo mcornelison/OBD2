@@ -2434,6 +2434,21 @@
     return { face: "live", parked: false, reason: null };
   }
 
+  // US-503 idle-card wall clock. PURE -- the caller supplies the Date, so this
+  // formats a clock face without reading one (the tests stay deterministic and
+  // it is node-testable; it previously lived in the browser-only block below,
+  // where block-scoped function declarations put it out of reach of every test).
+  //
+  // A 12-hour AM/PM face is how the operator reads a dashboard at a glance.
+  // Mod-12 ALONE is wrong twice a day -- it renders both midnight and noon as
+  // hour 0 -- so the 12 is restored explicitly. The padding is asymmetric on
+  // purpose: a bare hour ("2:05 PM", never "02:05 PM") and a padded minute.
+  function two(n) { return (n < 10 ? "0" : "") + n; }
+  function fmtClock(d) {
+    var h = d.getHours();
+    return (h % 12 || 12) + ":" + two(d.getMinutes()) + " " + (h < 12 ? "AM" : "PM");
+  }
+
   var api = {
     clampIndex: clampIndex,
     nextIndex: nextIndex,
@@ -2507,6 +2522,7 @@
     brightnessLevel: brightnessLevel,
     brightnessAlarmActive: brightnessAlarmActive,
     resolveAutoDimConfig: resolveAutoDimConfig,
+    fmtClock: fmtClock,
     carouselIdle: carouselIdle,
     idleLastDriveFact: idleLastDriveFact,
     idleBatteryFact: idleBatteryFact,
@@ -2765,11 +2781,13 @@
     // Local wall-clock formatters for the parked header. Local (not UTC) is the
     // right zone for a kiosk showing the driver the time; the pure view logic
     // stays clock-free (deterministic tests), so these live in the DOM layer.
-    function two(n) { return (n < 10 ? "0" : "") + n; }
+    // The CLOCK half is the exception -- US-503 moved `fmtClock` up to the pure
+    // section (it only ever formatted the Date it was handed) so the 12-hour
+    // face the operator reads is pinned by a test. There is exactly ONE clock
+    // formatter; this block calls it, it does not own one.
     var IDLE_DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
     var IDLE_MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
                        "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-    function fmtClock(d) { return two(d.getHours()) + ":" + two(d.getMinutes()); }
     function fmtDate(d) {
       return IDLE_DAYS[d.getDay()] + " " + d.getDate() + " " + IDLE_MONTHS[d.getMonth()];
     }
