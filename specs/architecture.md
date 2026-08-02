@@ -1700,6 +1700,39 @@ values therefore do **not** propagate from the dev checkout — until they are
 written into the Pi's `.env`, the placeholders stay unresolved and the provider
 correctly reports unknown on the box.
 
+#### Derived-altitude re-anchor on sync success (US-518 / F-125)
+
+`AltitudeAnchor` (`src/pi/location/altitude_anchor.py`) owns the derived-altitude
+**accumulator** and resets it to `pi.location.home.elevationM` on every successful
+server sync. A completed push to the companion service means the Pi reached the
+home network, so the car is home — a *verified* "at home" event. Re-anchoring
+there bounds integration error to a single drive between syncs (Spool's altitude
+ruling, 2026-08-01, item 4).
+
+**Seam.** The hook is `CardStateEmitterMixin._recordSyncOutcome`, which is the one
+point both sync-success paths (`_maybeTriggerIntervalSync` and
+`triggerDriveEndSync`) converge on, and which runs only *after* a push completed
+past the US-340 offline route gate. Hooking the convergence point rather than the
+two call sites means a future third sync path cannot silently skip the re-anchor.
+The powerwatch power-down `forcePush` runs in a **separate process**, so it has no
+in-memory accumulator to re-anchor and is deliberately not wired.
+
+**Scope — this owns the reset, not the integration.** The integrator that advances
+the value (`altitude = home + ∫ sin(pitch)·speed dt`) is US-519, deferred pending
+Spool's σ sizing on US-521's gyro-fused pitch; the display is US-520. Until then
+nothing calls `setDerivedAltitudeM` in production and `states/imu.altitude` stays a
+typed NULL with reason `no_source` (`imu_state_bridge`). Publishing
+home-elevation-forever as an altitude would be a confident wrong number — strictly
+worse than the honest "no source" shown today.
+
+**Honest-instrument rules.** The accumulator starts at `None`, never `0.0` (sea
+level is a 209 m error in Chicagoland). When the home elevation is unknown — the
+Pi's actual state today per the operational note above — the re-anchor is a
+**no-op**: it neither fabricates a value nor destroys the one the integrator owns,
+and `getLastAnchoredAtIso()` is stamped only on a re-anchor that actually fired.
+The whole path is exception-isolated: drift control is cosmetic, the sync is not,
+so it can never turn a successful push into a reported failure (I-038 lesson).
+
 ---
 
 ## 7. Error Handling Strategy

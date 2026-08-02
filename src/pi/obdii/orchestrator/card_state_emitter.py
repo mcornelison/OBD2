@@ -28,6 +28,9 @@
 # ================================================================================
 # 2026-07-21    | Ralph (Rex)  | Initial -- US-480-a wire the F-092/097/111
 #               |              | emitters to RUN (orchestrator-invoked, Atlas Q-1).
+# 2026-08-02    | Ralph (Rex)  | US-518: re-anchor the derived altitude to the
+#               |              | home elevation from _recordSyncOutcome -- the
+#               |              | one seam both sync-success paths converge on.
 # ================================================================================
 ################################################################################
 
@@ -83,6 +86,9 @@ class CardStateEmitterMixin:
     _lastCardStateEmitTime: datetime | None
     _lastSyncOkTsIso: str | None
     _lastSyncRows: int
+    # US-518: built lazily by _getAltitudeAnchor, never in __init__ -- declared
+    # here for mypy only. Read through getattr so an absent attribute is fine.
+    _altitudeAnchor: Any | None
 
     # ------------------------------------------------------------------ setup
 
@@ -169,6 +175,60 @@ class CardStateEmitterMixin:
         """
         self._lastSyncOkTsIso = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
         self._lastSyncRows = int(rowsPushed)
+        # US-518 (WP-3, F-125): a reached server means the Pi is on the home
+        # network, i.e. the car is home -- the verified "at home" event that
+        # re-anchors the derived altitude. Hooked HERE rather than at the two
+        # call sites in core.py on purpose: this is the one place both the
+        # interval and drive-end paths converge, so a future third sync path
+        # cannot silently skip the re-anchor (the US-512 "missing call site (b)"
+        # failure mode).
+        self._reanchorDerivedAltitude()
+
+    # ------------------------------------------------------- US-518 altitude
+
+    def _getAltitudeAnchor(self) -> Any | None:
+        """Return the process-wide altitude accumulator, building it on demand.
+
+        Built LAZILY here rather than in :meth:`_initializeCardStateEmitters`
+        for two reasons: that method is gated on ``pi.dashboard.stateEmitEnabled``
+        (drift control must not depend on a display flag), and lazy construction
+        sidesteps the boot-order trap entirely -- there is no window in which a
+        captured reference is None.
+
+        Returns:
+            The cached :class:`AltitudeAnchor`, or None if it cannot be built.
+        """
+        anchor = getattr(self, "_altitudeAnchor", None)
+        if anchor is not None:
+            return anchor
+        try:
+            from pi.location.altitude_anchor import AltitudeAnchor
+
+            anchor = AltitudeAnchor.fromConfig(self._config)
+        except Exception as e:  # noqa: BLE001 -- never break the sync path
+            logger.debug("Altitude anchor unavailable: %s", e)
+            return None
+        self._altitudeAnchor = anchor
+        return anchor
+
+    def _reanchorDerivedAltitude(self) -> bool:
+        """Re-anchor the derived altitude to home after a successful sync.
+
+        Best-effort and fully exception-isolated: drift control is cosmetic,
+        the sync is not, so a failure here can never turn a successful push
+        into a reported failure (I-038 lesson).
+
+        Returns:
+            True when the altitude was re-anchored; False otherwise.
+        """
+        try:
+            anchor = self._getAltitudeAnchor()
+            if anchor is None:
+                return False
+            return bool(anchor.onSyncSuccess())
+        except Exception as e:  # noqa: BLE001 -- sync must never fail on this
+            logger.debug("Altitude re-anchor failed: %s", e)
+            return False
 
     # ------------------------------------------------------------- cadence
 
