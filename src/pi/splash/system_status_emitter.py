@@ -88,6 +88,7 @@ def buildSystemStatusState(
     nowIso: str,
     obdAvailable: bool = True,
     obdUnavailableReason: str | None = None,
+    lastDrive: dict | None = None,
 ) -> dict:
     """Assemble the system-status payload (pure; spec §7 pinned A-3 schema).
 
@@ -110,6 +111,13 @@ def buildSystemStatusState(
             a fabricated or stale link state. Defaults True (backward compatible).
         obdUnavailableReason: The typed-NA reason when ``obdAvailable`` is False
             (defaults to ``REASON_OBD_OFF``). Ignored when available.
+        lastDrive: The US-505 last-COMPLETED-drive block
+            (``{"driveId": int, "startedAtTs": str|None}``) from
+            :func:`pi.obdii.last_drive_summary.readLastDriveSummary`, or None
+            when no real drive is on record. A DIFFERENT fact from ``driveId``,
+            which is the ACTIVE drive and stays null at idle -- merging the two
+            would make a parked Pi read as recording. Transported verbatim: the
+            emitter never reformats or re-derives the producer's fact.
 
     Returns:
         The system-status dict with exactly the spec §7 A-3 keys plus the US-429
@@ -144,7 +152,15 @@ def buildSystemStatusState(
             "stale": syncStale,
         },
         "power": {"mode": powerMode, "source": powerSource},
-        "drive": {"state": driveState, "driveId": driveId},
+        # `lastDrive` is ALWAYS present as a key (null when unknown) rather than
+        # sometimes-absent: an intermittently-missing key is the shape that lets
+        # a renderer quietly fall through to the wrong branch, and a stable
+        # schema is what the display can actually be tested against.
+        "drive": {
+            "state": driveState,
+            "driveId": driveId,
+            "lastDrive": lastDrive,
+        },
         "idle": idle,
         "source": {
             SOURCE_OBD: buildSourceState(
@@ -231,6 +247,7 @@ def makeSystemStatusEmitter(
         driveId: int | None,
         obdAvailable: bool = True,
         obdUnavailableReason: str | None = None,
+        lastDrive: dict | None = None,
     ) -> None:
         try:
             nowIso = nowFn()
@@ -252,6 +269,7 @@ def makeSystemStatusEmitter(
                 nowIso=nowIso,
                 obdAvailable=obdAvailable,
                 obdUnavailableReason=obdUnavailableReason,
+                lastDrive=lastDrive,
             )
             ensureStatesDir(statesDir)
             writeStateAtomic(target, payload)

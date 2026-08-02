@@ -14,6 +14,14 @@
 #                                BT-resilient reconnect loop.  Lightweight
 #                                stat(/dev/rfcommN)-style check; does not
 #                                reconstruct a python-obd OBD() instance.
+# 2026-08-02    | Rex (US-512) | BL-025 P1 capture hardening.  (1) resetRfcommBinding:
+#                                a FORCED release-then-bind, because bindRfcomm's
+#                                already-bound short-circuit is exactly what hands a
+#                                recovery attempt the same dead tty forever.
+#                                (2) BondState / parseBondState / isDurableBond /
+#                                readBondState / ensureTrusted: the runtime half of
+#                                the durable-bond story that scripts/pair_obdlink.sh
+#                                only ever wrote at pair time.
 # ================================================================================
 ################################################################################
 
@@ -63,6 +71,15 @@ MAC_REGEX = re.compile(r'^[0-9A-Fa-f]{2}(?::[0-9A-Fa-f]{2}){5}$')
 # (caller may alternatively symlink / sudoers-allow `/usr/sbin/rfcomm`).
 RFCOMM_CMD = "rfcomm"
 
+# US-512: bluez CLI used for the runtime bond check.  Bare name for the same
+# $PATH reason as RFCOMM_CMD.
+BLUETOOTHCTL_CMD = "bluetoothctl"
+
+# US-512: `bluetoothctl` is an interactive REPL by default; with a command in
+# argv it runs once and exits, but the --timeout guard means a wedged bluez
+# (bluetoothd restarting, D-Bus stalled) can never park a connect attempt.
+BLUETOOTHCTL_TIMEOUT_S = 5
+
 
 # ================================================================================
 # Types
@@ -81,6 +98,29 @@ class RfcommBindInfo:
 
     macAddress: str
     channel: int
+
+
+@dataclass(frozen=True)
+class BondState:
+    """Parsed bluez bond flags for one device (US-512).
+
+    ``known`` is False when bluez has no record of the device at all -- an
+    unread flag is reported as False rather than guessed, so a missing
+    bluetoothctl or an absent record can never render as a confident "bonded"
+    (honest-instrument).
+
+    Attributes:
+        known: True when bluez printed any bond flag for this MAC.
+        paired: The pairing handshake completed.
+        bonded: Link keys are persisted -- the pairing survives a reboot.
+        trusted: bluez will let the device reconnect unattended (the in-car
+            case; without it the link needs an interactive authorization).
+    """
+
+    known: bool = False
+    paired: bool = False
+    bonded: bool = False
+    trusted: bool = False
 
 
 class BluetoothHelperError(Exception):
@@ -189,6 +229,80 @@ def releaseRfcomm(
     logger.info("rfcomm release OK | device=%s", _devicePath(device))
 
 
+def resetRfcommBinding(
+    macAddress: str,
+    device: int = 0,
+    channel: int = 1,
+    subprocessRunner: SubprocessRunner | None = None,
+) -> str:
+    """Force a FRESH rfcomm binding: release, then bind (US-512).
+
+    :func:`bindRfcomm` is deliberately idempotent -- when ``/dev/rfcommN`` is
+    already bound to the requested MAC it short-circuits and hands the path
+    back without touching the kernel.  That is right for a first connect and
+    wrong for a recovery: an rfcomm bind is a kernel table entry that OUTLIVES
+    the ACL link, so after the dongle drops, the entry (and the device node)
+    are still there.  The short-circuit therefore returns the same DEAD tty on
+    every retry, forever -- BL-025's stale-rfcomm-retry-forever signature, and
+    the reason a reconnect could loop for 24 days without recovering.
+
+    This is Spool's prescribed transport reset.  Release is unconditional (a
+    no-op when nothing is bound), the bind that follows always reaches the
+    kernel, and the caller gets a binding that is genuinely new.
+
+    Deliberately does NOT touch the radio: no rfkill, no ``hciconfig down``, no
+    ``bluetoothctl power off``.  The 07-03 capture killer was a PERSISTED
+    rfkill soft-block, and systemd-rfkill saves radio state at shutdown -- a
+    recovery path that cycles the radio can re-arm exactly that failure on the
+    next boot.  The reset stays one layer above, on the binding.
+
+    Args:
+        macAddress: Target Bluetooth MAC.
+        device: rfcomm device number (the ``N`` in ``/dev/rfcommN``).
+        channel: SPP RFCOMM channel on the remote device. OBDLink LX = 1.
+        subprocessRunner: Optional subprocess-runner override for testing.
+
+    Returns:
+        The freshly-bound ``/dev/rfcommN`` path.
+
+    Raises:
+        ValueError: If ``macAddress`` isn't in MAC format.
+        BluetoothHelperError: If the re-bind fails.  Callers must treat this
+            as "no transport", never as a fresh one.
+    """
+    if not isMacAddress(macAddress):
+        raise ValueError(
+            f"resetRfcommBinding requires a MAC address, got: {macAddress!r}"
+        )
+
+    runner = subprocessRunner or _defaultRunner
+
+    # Release first.  Tolerated when nothing is bound -- the point is to
+    # guarantee the bind below is not short-circuited, not to prove there was
+    # something to drop.
+    try:
+        releaseRfcomm(device=device, subprocessRunner=runner)
+    except BluetoothHelperError as exc:
+        # A release that fails still leaves the stale entry, so the bind that
+        # follows will short-circuit -- say so rather than silently returning
+        # the dead path.
+        logger.warning(
+            "rfcomm release during transport reset failed | device=%s | %s",
+            _devicePath(device),
+            exc,
+        )
+
+    _runBind(device, macAddress, channel, runner)
+    logger.info(
+        "rfcomm transport RESET | device=%s mac=%s channel=%d "
+        "(released + re-bound; stale binding cannot survive)",
+        _devicePath(device),
+        macAddress,
+        channel,
+    )
+    return _devicePath(device)
+
+
 def isRfcommBound(
     device: int = 0,
     subprocessRunner: SubprocessRunner | None = None,
@@ -202,6 +316,173 @@ def isRfcommBound(
     """
     runner = subprocessRunner or _defaultRunner
     return _runShow(device, runner) is not None
+
+
+# ================================================================================
+# US-512 -- durable bond state (the RUNTIME half of the pairing story)
+# ================================================================================
+
+# bluez prints one flag per line under `info <MAC>`; a device it has never seen
+# prints "Device <MAC> not available" and no flags at all.
+_BOND_FLAG_RE = {
+    'paired': re.compile(r'^\s*Paired:\s*(yes|no)\s*$', re.MULTILINE),
+    'bonded': re.compile(r'^\s*Bonded:\s*(yes|no)\s*$', re.MULTILINE),
+    'trusted': re.compile(r'^\s*Trusted:\s*(yes|no)\s*$', re.MULTILINE),
+}
+
+_ANSI_RE = re.compile(r'\x1b\[[0-9;?]*[ -/]*[@-~]')
+
+
+def parseBondState(infoOutput: str) -> BondState:
+    """Parse ``bluetoothctl info <MAC>`` output into a :class:`BondState`.
+
+    Args:
+        infoOutput: Raw (possibly ANSI-coloured) bluetoothctl output.
+
+    Returns:
+        The parsed flags.  ``known`` is False when no flag was present at all.
+    """
+    plain = _ANSI_RE.sub('', infoOutput or '')
+    flags: dict[str, bool] = {}
+    known = False
+    for flag, pattern in _BOND_FLAG_RE.items():
+        match = pattern.search(plain)
+        if match is not None:
+            known = True
+            flags[flag] = match.group(1) == 'yes'
+    return BondState(
+        known=known,
+        paired=flags.get('paired', False),
+        bonded=flags.get('bonded', False),
+        trusted=flags.get('trusted', False),
+    )
+
+
+def isDurableBond(state: BondState) -> bool:
+    """True only when the bond survives a reboot AND auto-reconnects.
+
+    ``Paired`` alone is not enough: without ``Bonded`` the link keys are not
+    persisted, and without ``Trusted`` bluez refuses an unattended reconnect --
+    which is precisely the in-car case (BL-025).
+
+    NOTE (one vocabulary): ``scripts/pair_obdlink_driver.py`` holds the same
+    rule for the PAIR-time decision.  The two are pinned against each other
+    across the whole truth table by
+    ``tests/pi/obdii/test_bluetooth_bond_and_reset.py`` so a change to one
+    fails loudly rather than drifting.  See TD-072 for the consolidation.
+    """
+    return bool(state.paired and state.bonded and state.trusted)
+
+
+def readBondState(
+    macAddress: str,
+    subprocessRunner: SubprocessRunner | None = None,
+) -> BondState:
+    """Read the current bluez bond flags for ``macAddress`` (US-512).
+
+    Best-effort and non-raising: a missing ``bluetoothctl`` (the Windows dev
+    box, a stripped bench image), a stalled bluez, or an unparseable reply all
+    resolve to ``BondState(known=False)``.  Reporting "unknown" is the honest
+    answer; reporting "bonded" off an unread flag would let the connect path
+    claim a durable link it never verified.
+
+    Args:
+        macAddress: Target Bluetooth MAC.
+        subprocessRunner: Optional subprocess-runner override for testing.
+
+    Returns:
+        The parsed :class:`BondState`; ``known=False`` when nothing was read.
+    """
+    runner = subprocessRunner or _defaultRunner
+    cmd = [
+        BLUETOOTHCTL_CMD, '--timeout', str(BLUETOOTHCTL_TIMEOUT_S),
+        'info', macAddress,
+    ]
+    try:
+        result = runner(cmd)
+    except Exception as exc:  # noqa: BLE001 -- a bond probe must never raise
+        logger.debug("bond-state read failed (%s): %s", _formatCommand(cmd), exc)
+        return BondState()
+    return parseBondState(result.stdout or '')
+
+
+def ensureTrusted(
+    macAddress: str,
+    subprocessRunner: SubprocessRunner | None = None,
+) -> BondState:
+    """Restore the ``Trusted`` flag when it is the only thing missing (US-512).
+
+    ``scripts/pair_obdlink.sh`` writes Paired+Bonded+Trusted at pair time and
+    verifies all three before claiming success -- but nothing at runtime ever
+    looked at them again.  A bond that loses ``Trusted`` (a stray
+    ``bluetoothctl untrust``, a bluez cache rewrite) still shows as paired, so
+    the failure reads as a mystery dead link whose only apparent fix is a
+    manual re-pair -- which needs the dongle powered, i.e. the car running.
+
+    Trust is the one half that IS repairable unattended: it is a local bluez
+    flag, not a radio handshake.  Pairing is not, so this function repairs
+    trust and reports the rest of the state honestly rather than issuing a
+    ``trust`` that cannot help.
+
+    Never raises -- bond assurance must not be able to fail a connect attempt
+    that would otherwise have worked.
+
+    Args:
+        macAddress: Target Bluetooth MAC.
+        subprocessRunner: Optional subprocess-runner override for testing.
+
+    Returns:
+        The bond state AFTER any repair.  Callers use
+        :func:`isDurableBond` on it to decide whether to warn.
+    """
+    runner = subprocessRunner or _defaultRunner
+
+    state = readBondState(macAddress, subprocessRunner=runner)
+    if not state.known:
+        logger.warning(
+            "No bluez bond record for %s -- a re-pair is required "
+            "(scripts/pair_obdlink.sh, dongle powered + in pair mode)",
+            macAddress,
+        )
+        return state
+    if state.trusted:
+        return state
+
+    logger.warning(
+        "Bond for %s is not Trusted (paired=%s bonded=%s) -- bluez will refuse "
+        "an unattended reconnect; restoring trust",
+        macAddress,
+        state.paired,
+        state.bonded,
+    )
+    cmd = [
+        BLUETOOTHCTL_CMD, '--timeout', str(BLUETOOTHCTL_TIMEOUT_S),
+        'trust', macAddress,
+    ]
+    try:
+        result = runner(cmd)
+    except Exception as exc:  # noqa: BLE001 -- best-effort
+        logger.warning("trust %s failed to run: %s", macAddress, exc)
+        return state
+    if result.returncode != 0:
+        logger.warning(
+            "trust %s failed (rc=%d): %s",
+            macAddress,
+            result.returncode,
+            (result.stderr or result.stdout or '').strip(),
+        )
+        return state
+
+    # Re-read rather than assume: "Changing trust succeeded" describes the
+    # command, not the resulting state.
+    repaired = readBondState(macAddress, subprocessRunner=runner)
+    if isDurableBond(repaired):
+        logger.info(
+            "Bond for %s restored to Paired+Bonded+Trusted -- reconnect no "
+            "longer needs a manual re-pair",
+            macAddress,
+        )
+    return repaired
 
 
 # ================================================================================

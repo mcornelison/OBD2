@@ -28,8 +28,8 @@ import os
 
 from pi.splash.battery_health_emitter import (
     BATTERY_HEALTH_FILENAME,
-    HEALTH_ATTN,
-    HEALTH_GREEN,
+    VERDICT_DEGRADED,
+    VERDICT_GOOD,
     buildBatteryHealthState,
     makeBatteryHealthEmitter,
 )
@@ -48,7 +48,7 @@ _HEALTHY_KW = dict(
     restedVcellV=4.05,
     weakEvents30d=0,
     restedHistory=[4.05, 4.04, 4.06],
-    health=HEALTH_GREEN,
+    health=VERDICT_GOOD,
     fullChargeReached=True,
     runtimeToCutoffS=714,
     ambientTempC=None,
@@ -77,7 +77,7 @@ def test_buildBatteryHealthState_a3Schema_hasExactShape():
         "restedVcellV": 4.05,
         "weakEvents30d": 0,
         "restedHistory": [4.05, 4.04, 4.06],
-        "health": "green",
+        "health": "good",
         "fullChargeReached": True,
         "runtimeToCutoffS": 714,
         "ambientTempC": None,
@@ -227,7 +227,7 @@ def test_emitter_neverRaises_onWriteFailure(tmp_path):
     emit = makeBatteryHealthEmitter(statesDir, nowIsoFn=lambda: _NOW)
 
     kw = dict(_HEALTHY_KW)
-    kw["health"] = HEALTH_ATTN
+    kw["health"] = VERDICT_DEGRADED
     emit(**kw)  # must not raise
 
     assert not os.path.exists(statesDir)

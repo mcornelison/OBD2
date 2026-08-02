@@ -39,6 +39,20 @@ class PowerSourceProvider:
         """
         self._pld = pld
 
+    @property
+    def isAvailable(self) -> bool:
+        """True iff the underlying line is readable at all.
+
+        The fact, not a policy: it lets each consumer resolve uncertainty its
+        own way over this ONE provider. The ShutdownSequencer keeps the
+        non-bricking direction (unreadable => treat as power present); a
+        DISPLAY consumer must not, because taking that at face value paints a
+        confident "external" off a dead GPIO (US-502 honest-instrument). A pld
+        that does not report readability resolves to False -- unknown beats
+        assumed-good.
+        """
+        return bool(getattr(self._pld, "isAvailable", False))
+
     def isExternalPowerPresent(self) -> bool:
         """Instantaneous ground-truth power-source reading."""
         return bool(self._pld.isExternalPowerPresent())

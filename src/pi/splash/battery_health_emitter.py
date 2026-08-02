@@ -59,24 +59,30 @@ logger = logging.getLogger(__name__)
 # The single SSOT slot the carousel Battery Health card polls (4 Hz tmpfs read).
 BATTERY_HEALTH_FILENAME = "battery-health"
 
-# Spool health verdicts (consumer-side view of the cell's condition). The
-# display maps these tiers -> colour ONLY; it never classifies (Spool owns the
-# verdict, this module carries it verbatim).
-#   green = full-charge-reachable + sane cutoff + no degradation -> ok.
-#   attn  = a weak trend / a watch condition -> amber.
-#   low   = the pack cannot be trusted to shut down cleanly -> red.
-HEALTH_GREEN = "green"
-HEALTH_ATTN = "attn"
-HEALTH_LOW = "low"
+# Spool health verdicts. US-504 retired the green/attn/low display tiers this
+# module used to define: they were a SECOND enum for the same fact, and the
+# producer that finally computes the verdict
+# (:mod:`pi.power.battery_health_verdict`) speaks good/degraded/replace/unknown.
+# Re-exported (not re-declared) so there is exactly ONE definition on the path
+# producer -> emitter -> state file -> carousel.js.
+from pi.power.battery_health_verdict import (  # noqa: E402
+    VERDICT_DEGRADED,
+    VERDICT_GOOD,
+    VERDICT_REPLACE,
+    VERDICT_UNKNOWN,
+    VERDICT_VALUES,
+)
 
 # The ISO-8601 instant format the F-103 emitters stamp (second resolution, UTC).
 _ISO_FMT = "%Y-%m-%dT%H:%M:%SZ"
 
 __all__ = [
     "BATTERY_HEALTH_FILENAME",
-    "HEALTH_ATTN",
-    "HEALTH_GREEN",
-    "HEALTH_LOW",
+    "VERDICT_DEGRADED",
+    "VERDICT_GOOD",
+    "VERDICT_REPLACE",
+    "VERDICT_UNKNOWN",
+    "VERDICT_VALUES",
     "buildBatteryHealthState",
     "makeBatteryHealthEmitter",
 ]
@@ -120,13 +126,19 @@ def buildBatteryHealthState(
         restedVcellV: Most recent rested cell voltage, or None.
         weakEvents30d: Count of Spool-defined weak events in the last 30 days.
         restedHistory: Recent rested-VCELL trend (volts).
-        health: Spool verdict -- ``HEALTH_GREEN`` / ``HEALTH_ATTN`` /
-            ``HEALTH_LOW``.
+        health: Spool verdict -- one of :data:`VERDICT_VALUES` (US-504),
+            produced by :func:`pi.power.battery_health_verdict.
+            readBatteryHealthVerdict` from the ``battery_health_log`` drain
+            history. ``VERDICT_UNKNOWN`` is the honest default, never a
+            fallback that hides a failed computation.
         fullChargeReached: Whether the pack reached 4.20-4.22 V last cycle.
         runtimeToCutoffS: Health-stat typical full-drain runtime (NOT the live
             failsafe estimate), or None.
-        ambientTempC: Ambient temperature, or None when never logged (the card
-            renders "not captured" -- F-10, never a fabricated number).
+        ambientTempC: Ambient temperature, or None when never logged. US-504
+            REMOVED the TEMP tile that rendered this -- the MAX17048 has no
+            temperature register, so the tile had no source it could ever read.
+            The field (and the ``ambient_temp_c`` column) survives for a future
+            BMP390, which carries a real temperature channel.
         lastHealthCheckTs: ISO-8601 instant of the last drain/health cycle, or
             None. The card always pairs a GREEN verdict with this date + age so
             a stale reading is not mistaken for live (the stale-green guard F-9).

@@ -441,23 +441,33 @@ assert.strictEqual(wpv.soc.shown, true, 'percent shown when soc present');
 assert.strictEqual(wpv.soc.value, '76%', 'percent rendered');
 assert.ok(/uncalibrated/i.test(wpv.soc.detail), 'uncalibrated tag');
 
-// F-9 (stale-green guard): a 45-day-old health check -> a GREEN verdict carries
-// "last health check · <date> (<age>)"; GREEN is never shown without its age.
+// F-9 (stale-green guard): a 45-day-old health check -> a GOOD verdict carries
+// "last health check · <date> (<age>)"; GOOD is never shown without its age.
 const green = JSON.parse(JSON.stringify(noPct));
-green.health = 'green';
+green.health = 'good';
 green.lastHealthCheckTs = '2026-05-16T00:00:00Z'; // 45 days before ts
 const gv = c.batteryHealthView(green);
-assert.strictEqual(gv.health.level, 'ok', 'green -> ok');
-assert.ok(/last health check/.test(gv.health.detail), 'green carries data-age');
+assert.strictEqual(gv.health.level, 'ok', 'good -> ok');
+assert.strictEqual(gv.health.value, 'GOOD', 'Spool verdict word carried');
+assert.ok(/last health check/.test(gv.health.detail), 'good carries data-age');
 assert.ok(/2026-05-16/.test(gv.health.detail), 'date present');
 assert.ok(/45 days ago/.test(gv.health.detail), 'age present');
 assert.strictEqual(gv.healthCheck.ageDays, 45, 'age computed from ts');
 
-// F-10 (temp honest): ambientTempC:null -> "not captured", never a number.
-assert.strictEqual(gv.temp.value, 'not captured', 'temp not captured');
+// US-504 severity: informational at EVERY state -- a `replace` verdict must
+// never reach the alarm tier, and the retired green/attn/low tiers are gone.
+const worn = JSON.parse(JSON.stringify(green));
+worn.health = 'replace';
+assert.strictEqual(c.batteryHealthView(worn).health.level, 'neutral', 'replace never red');
+worn.health = 'low';
+assert.strictEqual(c.batteryHealthView(worn).health.level, 'unavailable', 'retired tier');
+
+// US-504: the TEMP tile is REMOVED -- the MAX17048 has no temperature register,
+// so the tile had no source it could ever read (the column stays for a BMP390).
+assert.strictEqual(gv.temp, undefined, 'no temp tile');
 const warm = JSON.parse(JSON.stringify(green));
 warm.ambientTempC = 24;
-assert.strictEqual(c.batteryHealthView(warm).temp.value, '24 °C', 'temp number');
+assert.strictEqual(c.batteryHealthView(warm).temp, undefined, 'temp stays gone');
 
 // F-2 / A-6 (no false failsafe): draining:false -> NO ladder; draining:true ->
 // ladder present. A draining pack with no Spool runtime shows stage, no minutes.
@@ -483,7 +493,7 @@ console.log('US401_OK');
 @pytest.mark.skipif(not _nodeAvailable(), reason="node not available on PATH")
 def test_batteryHealthView_renderLogic_f8_f9_f10_f2():
     """US-401: the Battery Health render logic maps emitter JSON -> an honest
-    card (volts-not-percent, stale-green data-age, temp-not-captured, ladder only
+    card (volts-not-percent, stale-green data-age, no-temp-tile, ladder only
     when draining, UPS-not-vehicle labeling)."""
     result = subprocess.run(
         ["node", "-e", _US401_NODE_SCRIPT, str(KIT_DIR / "carousel.js")],

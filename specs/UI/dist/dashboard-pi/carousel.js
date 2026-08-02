@@ -657,28 +657,41 @@
   //   F-8  the SoC percent is shown ONLY when `soc` is a real number; a null
   //        soc omits the percent and shows volts -- a voltage is NEVER painted
   //        as a percent.
-  //   F-9  a GREEN verdict ALWAYS carries "last health check · <date> (<age>)"
+  //   F-9  a GOOD verdict ALWAYS carries "last health check · <date> (<age>)"
   //        (computed from ts - lastHealthCheckTs, both in the state file) so a
-  //        month-old reading is never mistaken for live.
+  //        month-old reading is never mistaken for live. US-504 added a second
+  //        layer upstream: the producer itself forces `unknown` once the last
+  //        qualifying check is over 90 days old.
   // The drain ladder DOM is present ONLY when `draining === true` (F-2 / A-6).
   // -------------------------------------------------------------------------
 
   var BATTERY_LABEL = "Pi UPS battery"; // F-11: never "vehicle/car battery".
   var MS_PER_DAY = 86400000;
 
-  // Map a Spool health verdict tier -> a display level (the card never decides
-  // severity; green -> ok, attn -> amber, low -> down, unknown -> unavailable).
+  // US-504: ONE verdict vocabulary end-to-end -- the words Spool's producer
+  // emits (pi/power/battery_health_verdict.py) are the words the card carries.
+  // The earlier green/attn/low display tiers were a SECOND enum for the same
+  // fact and are retired; an unrecognised value falls through to the honest
+  // unavailable state rather than being guessed at.
+  //
+  // NEVER alarm-red, at any state INCLUDING `replace` (Spool, load-bearing):
+  // the UPS carries the Pi through power loss to a clean shutdown, which needs
+  // well under a minute against the ~12 we measure. `replace` means the
+  // data-integrity margin thinned, NOT that anything on the car is at risk, so
+  // this signal must never compete with coolant or a DTC-STOP on a driving
+  // surface. `ok` is withheld from degraded/replace for the opposite reason --
+  // it would claim health the data does not support. Neutral is the only tier
+  // that neither alarms nor reassures.
   function healthLevel(h) {
-    if (h === "green") return "ok";
-    if (h === "attn") return "amber";
-    if (h === "low") return "down";
+    if (h === "good") return "ok";
+    if (h === "degraded" || h === "replace") return "neutral";
     return "unavailable";
   }
 
   function healthValue(h) {
-    if (h === "green") return "HEALTHY";
-    if (h === "attn") return "ATTENTION";
-    if (h === "low") return "LOW";
+    if (h === "good") return "GOOD";
+    if (h === "degraded") return "DEGRADED";
+    if (h === "replace") return "REPLACE";
     return "—";
   }
 
@@ -704,6 +717,31 @@
     if (days <= 0) return "today";
     if (days === 1) return "1 day ago";
     return days + " days ago";
+  }
+
+  // Relative age with SUB-DAY resolution (US-505). ageText above is day-grain,
+  // which is right for a health-check date but throws the signal away for a
+  // drive that ended 25 minutes ago ("today"). Rather than declare a second age
+  // vocabulary for the same fact -- the cross-module enum-identity drift that
+  // cost the 9-drain saga -- this extends the SAME one downward and hands off to
+  // ageText at a day and beyond, so "1 day ago" / "3 days ago" have exactly one
+  // definition on the whole surface.
+  //
+  // Null on either input, or an unparseable instant, is "age unknown": we never
+  // assert an age we cannot compute, and never render NaN.
+  function agoText(nowTs, thenTs) {
+    if (typeof nowTs !== "string" || typeof thenTs !== "string") return "age unknown";
+    var now = Date.parse(nowTs);
+    var then = Date.parse(thenTs);
+    if (isNaN(now) || isNaN(then)) return "age unknown";
+    var secs = Math.floor((now - then) / 1000);
+    // A FUTURE instant means clock skew, not a negative age. The Pi has no RTC
+    // battery and boots before NTP settles, so a stamp ahead of `now` is a
+    // routine transient -- "-5 min ago" would be a visible nonsense.
+    if (secs < 60) return "just now";
+    if (secs < 3600) return Math.floor(secs / 60) + " min ago";
+    if (secs < 86400) return Math.floor(secs / 3600) + " h ago";
+    return ageText(ageDays(nowTs, thenTs));
   }
 
   // The stale-green guard line (F-9). ALWAYS produced so a GREEN verdict can
@@ -756,14 +794,12 @@
     };
   }
 
-  // Temp tile (F-10) -- a null reading is "not captured", never a fabricated
-  // number.
-  function tempTile(d) {
-    if (typeof d.ambientTempC !== "number") {
-      return { label: "TEMP", value: "not captured", detail: "", level: "neutral" };
-    }
-    return { label: "TEMP", value: d.ambientTempC + " °C", detail: "", level: "neutral" };
-  }
+  // US-504: the TEMP tile is REMOVED. The MAX17048 is a voltage-based fuel
+  // gauge (VCELL/SOC/CRATE/MODE/VERSION/HIBRT/CONFIG/VALRT/VRESET/STATUS) with
+  // no temperature register at all, so the tile had no source it could ever
+  // read and rendered "not captured" on every row ever logged. The
+  // `ambient_temp_c` COLUMN survives -- a future BMP390 carries a temperature
+  // channel that legitimately fills it, and the tile comes back with it.
 
   // Failsafe ladder view (F-2 / A-6) -- present ONLY when draining is true. The
   // runtime minutes render ONLY when the power tier supplied a real number
@@ -806,7 +842,6 @@
       },
       vcell: vcellTile(data),
       soc: socTile(data),
-      temp: tempTile(data),
       healthCheck: healthCheckLine(data),
       ladder: ladderView(data),
       ts: typeof data.ts === "string" ? data.ts : null,
@@ -1309,10 +1344,18 @@
     return isObj(systemStatusData) && systemStatusData.idle === true;
   }
 
-  // Last-drive summary fact. Honest degradation: the parked emitter writes
-  // driveId:null when idle, and there is no last-drive-summary state file yet,
-  // so with no drive reference the fact reads "No recent drive" -- absence, not
-  // a fabricated last trip. A real driveId (or an active recording) renders it.
+  // Last-drive summary fact (US-505). `drive.lastDrive` is the most recent
+  // COMPLETED drive, produced Pi-locally from drive_summary -- a DIFFERENT fact
+  // from `drive.driveId`, which is the ACTIVE drive and is null whenever nothing
+  // is recording. Before that producer existed this tile had only driveId to
+  // read, so it said "No recent drive" PERMANENTLY rather than until the next
+  // drive: the absence was real, but it was the absence of a producer.
+  //
+  // Renders Iris's idle spec shape ("Drive 35 · 2 h ago") across the tile's
+  // value + detail slots. Honest degradation is per-HALF: a drive whose start
+  // timestamp is missing or unparseable still shows the drive and admits
+  // "age unknown", because the drive genuinely happened and hiding it would lose
+  // a real fact to protect a cosmetic one.
   function idleLastDriveFact(systemStatusData) {
     var label = "LAST DRIVE";
     if (!isObj(systemStatusData) || !isObj(systemStatusData.drive)) {
@@ -1323,6 +1366,17 @@
       var id = drive.driveId == null ? "?" : drive.driveId;
       return { label: label, value: "REC", detail: "drive " + id, level: "neutral" };
     }
+    var last = drive.lastDrive;
+    if (isObj(last) && last.driveId != null) {
+      return {
+        label: label,
+        value: "Drive " + last.driveId,
+        detail: agoText(systemStatusData.ts, last.startedAtTs),
+        level: "neutral",
+      };
+    }
+    // Legacy shape: an active driveId with no lastDrive block. Kept so a state
+    // file written by an older Pi (or mid-deploy) still renders the id it has.
     if (drive.driveId != null) {
       return { label: label, value: "drive " + drive.driveId, detail: "last recorded", level: "neutral" };
     }
@@ -1347,7 +1401,7 @@
       label: label,
       value: value,
       detail: view.healthCheck.label,   // "last health check · <date> (<age>)"
-      level: view.health.level,         // green ONLY when the Spool verdict is green
+      level: view.health.level,         // green ONLY on a `good` verdict (US-504)
     };
   }
 
@@ -2434,6 +2488,21 @@
     return { face: "live", parked: false, reason: null };
   }
 
+  // US-503 idle-card wall clock. PURE -- the caller supplies the Date, so this
+  // formats a clock face without reading one (the tests stay deterministic and
+  // it is node-testable; it previously lived in the browser-only block below,
+  // where block-scoped function declarations put it out of reach of every test).
+  //
+  // A 12-hour AM/PM face is how the operator reads a dashboard at a glance.
+  // Mod-12 ALONE is wrong twice a day -- it renders both midnight and noon as
+  // hour 0 -- so the 12 is restored explicitly. The padding is asymmetric on
+  // purpose: a bare hour ("2:05 PM", never "02:05 PM") and a padded minute.
+  function two(n) { return (n < 10 ? "0" : "") + n; }
+  function fmtClock(d) {
+    var h = d.getHours();
+    return (h % 12 || 12) + ":" + two(d.getMinutes()) + " " + (h < 12 ? "AM" : "PM");
+  }
+
   var api = {
     clampIndex: clampIndex,
     nextIndex: nextIndex,
@@ -2481,7 +2550,6 @@
     healthCheckLine: healthCheckLine,
     vcellTile: vcellTile,
     socTile: socTile,
-    tempTile: tempTile,
     ladderView: ladderView,
     batteryHealthView: batteryHealthView,
     fmtLtftPct: fmtLtftPct,
@@ -2507,7 +2575,9 @@
     brightnessLevel: brightnessLevel,
     brightnessAlarmActive: brightnessAlarmActive,
     resolveAutoDimConfig: resolveAutoDimConfig,
+    fmtClock: fmtClock,
     carouselIdle: carouselIdle,
+    agoText: agoText,
     idleLastDriveFact: idleLastDriveFact,
     idleBatteryFact: idleBatteryFact,
     idleFaultsFact: idleFaultsFact,
@@ -2765,11 +2835,13 @@
     // Local wall-clock formatters for the parked header. Local (not UTC) is the
     // right zone for a kiosk showing the driver the time; the pure view logic
     // stays clock-free (deterministic tests), so these live in the DOM layer.
-    function two(n) { return (n < 10 ? "0" : "") + n; }
+    // The CLOCK half is the exception -- US-503 moved `fmtClock` up to the pure
+    // section (it only ever formatted the Date it was handed) so the 12-hour
+    // face the operator reads is pinned by a test. There is exactly ONE clock
+    // formatter; this block calls it, it does not own one.
     var IDLE_DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
     var IDLE_MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
                        "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-    function fmtClock(d) { return two(d.getHours()) + ":" + two(d.getMinutes()); }
     function fmtDate(d) {
       return IDLE_DAYS[d.getDay()] + " " + d.getDate() + " " + IDLE_MONTHS[d.getMonth()];
     }
@@ -2883,7 +2955,7 @@
       // F-8: render the percent tile only when a real SoC exists; a null soc
       // omits the percent (volts already shown above), never a voltage-as-%.
       if (view.soc.shown) appendTile(body, view.soc);
-      appendTile(body, view.temp);
+      // US-504: no TEMP tile -- the MAX17048 has no temperature register.
       // F-2 / A-6: the ladder DOM exists only when actually draining.
       if (view.ladder) appendLadder(body, view.ladder);
     }

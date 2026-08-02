@@ -146,7 +146,7 @@ def _stripJsComments(js: str) -> str:
 def _battery(**extra: object) -> dict:
     """A states/battery-health payload as the US-401 emitter writes it."""
     payload: dict = {
-        "health": "green",
+        "health": "good",
         "vcellV": 4.02,
         "soc": 88,
         "socCalibrated": True,
@@ -268,16 +268,16 @@ def test_healthCardView_sectionTitlesNameTheirInstrument():
 
 def test_healthCardView_batterySection_keepsTheStaleGreenGuard():
     """
-    Given: a GREEN battery verdict whose last health check is a month old
+    Given: a GOOD battery verdict whose last health check is a month old
     Then: the section still carries the "last health check ... (N days ago)"
           line
 
-    F-9 is the trap this card was built around: a month-old GREEN must never
+    F-9 is the trap this card was built around: a month-old GOOD must never
     read as live. Relocating the card must not drop the guard that made it
     honest.
     """
     sec = _section(_health(), "battery-health")
-    assert sec["view"]["health"]["value"] == "HEALTHY"
+    assert sec["view"]["health"]["value"] == "GOOD"
     assert "last health check" in sec["view"]["health"]["detail"]
     assert "30 days ago" in sec["view"]["health"]["detail"]
 
@@ -369,7 +369,7 @@ def test_healthCardView_absentLightFileDoesNotBlankTheBatterySection():
     source) must also stay contained to its own section."""
     view = _health(light=None)
     assert _section(view, "light")["unavailable"] is True
-    assert _section(view, "battery-health")["view"]["health"]["value"] == "HEALTHY"
+    assert _section(view, "battery-health")["view"]["health"]["value"] == "GOOD"
 
 
 def test_healthCardView_absentSection_namesItsSilentInstrument():
@@ -459,7 +459,7 @@ def test_healthCardView_batteryAndLightAreNeverVehicleGated():
     view = _health(obdAvailable=False)
     assert _section(view, "battery-health")["gated"] is False
     assert _section(view, "light")["gated"] is False
-    assert _section(view, "battery-health")["view"]["health"]["value"] == "HEALTHY"
+    assert _section(view, "battery-health")["view"]["health"]["value"] == "GOOD"
 
 
 # ---------------------------------------------------------------------------

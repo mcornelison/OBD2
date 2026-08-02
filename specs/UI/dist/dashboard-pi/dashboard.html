@@ -34,7 +34,14 @@
     <span class="glyph" id="glyph-bt" data-state="neutral" title="Bluetooth">BT</span>
     <span class="glyph" id="glyph-sync" data-state="neutral" title="Sync">⇅</span>
     <span class="glyph" id="glyph-power" data-state="neutral" title="Power">⚡</span>
-    <span id="version-chip">V?.?.?</span>
+    <!-- US-501: the state server substitutes __DEPLOY_VERSION__ from
+         .deploy-version at serve time (the same _injectHtml seam as
+         __SPLASH_TOKEN__ below), re-read on EVERY serve because the deploy
+         stamps the version after restarting the server. An unreadable stamp
+         becomes the honest 'V?.?.?' sentinel -- never a stale build number.
+         The chip previously shipped that sentinel as a hard literal, so every
+         build on the panel looked identical. -->
+    <span id="version-chip">__DEPLOY_VERSION__</span>
     <!-- US-490: ships HIDDEN. Parked/idle reveals it (carousel.js
          updateMenuAccess); while driving -- or while the parked/live context is
          unreadable -- it stays hidden and the 5s long-press is the only way in. -->

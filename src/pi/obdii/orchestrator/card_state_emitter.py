@@ -28,6 +28,9 @@
 # ================================================================================
 # 2026-07-21    | Ralph (Rex)  | Initial -- US-480-a wire the F-092/097/111
 #               |              | emitters to RUN (orchestrator-invoked, Atlas Q-1).
+# 2026-08-02    | Ralph (Rex)  | US-518: re-anchor the derived altitude to the
+#               |              | home elevation from _recordSyncOutcome -- the
+#               |              | one seam both sync-success paths converge on.
 # ================================================================================
 ################################################################################
 
@@ -61,15 +64,17 @@ class CardStateEmitterMixin:
 
     Assumes the composing class (:class:`ApplicationOrchestrator`) provides:
     ``self._config``, ``self._connection``, ``self._driveDetector``,
-    ``self._powerMonitor``, ``self._hardwareManager``, and the US-480-a state
-    attributes set in ``__init__`` (``self._systemStatusEmitter`` etc.).
+    ``self._hardwareManager``, and the US-480-a state attributes set in
+    ``__init__`` (``self._systemStatusEmitter`` etc.). ``self.
+    _powerSourceProvider`` (the US-502 power-source SSOT) is read through
+    ``getattr`` because lifecycle only creates it once hardware starts, which
+    is AFTER this mixin's emitters are constructed.
     """
 
     # These are declared/initialized on the core class; typed here for mypy.
     _config: dict[str, Any]
     _connection: Any | None
     _driveDetector: Any | None
-    _powerMonitor: Any | None
     _hardwareManager: Any | None
     _systemStatusEmitter: Any | None
     _batteryHealthEmitter: Any | None
@@ -81,6 +86,9 @@ class CardStateEmitterMixin:
     _lastCardStateEmitTime: datetime | None
     _lastSyncOkTsIso: str | None
     _lastSyncRows: int
+    # US-518: built lazily by _getAltitudeAnchor, never in __init__ -- declared
+    # here for mypy only. Read through getattr so an absent attribute is fine.
+    _altitudeAnchor: Any | None
 
     # ------------------------------------------------------------------ setup
 
@@ -167,6 +175,60 @@ class CardStateEmitterMixin:
         """
         self._lastSyncOkTsIso = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
         self._lastSyncRows = int(rowsPushed)
+        # US-518 (WP-3, F-125): a reached server means the Pi is on the home
+        # network, i.e. the car is home -- the verified "at home" event that
+        # re-anchors the derived altitude. Hooked HERE rather than at the two
+        # call sites in core.py on purpose: this is the one place both the
+        # interval and drive-end paths converge, so a future third sync path
+        # cannot silently skip the re-anchor (the US-512 "missing call site (b)"
+        # failure mode).
+        self._reanchorDerivedAltitude()
+
+    # ------------------------------------------------------- US-518 altitude
+
+    def _getAltitudeAnchor(self) -> Any | None:
+        """Return the process-wide altitude accumulator, building it on demand.
+
+        Built LAZILY here rather than in :meth:`_initializeCardStateEmitters`
+        for two reasons: that method is gated on ``pi.dashboard.stateEmitEnabled``
+        (drift control must not depend on a display flag), and lazy construction
+        sidesteps the boot-order trap entirely -- there is no window in which a
+        captured reference is None.
+
+        Returns:
+            The cached :class:`AltitudeAnchor`, or None if it cannot be built.
+        """
+        anchor = getattr(self, "_altitudeAnchor", None)
+        if anchor is not None:
+            return anchor
+        try:
+            from pi.location.altitude_anchor import AltitudeAnchor
+
+            anchor = AltitudeAnchor.fromConfig(self._config)
+        except Exception as e:  # noqa: BLE001 -- never break the sync path
+            logger.debug("Altitude anchor unavailable: %s", e)
+            return None
+        self._altitudeAnchor = anchor
+        return anchor
+
+    def _reanchorDerivedAltitude(self) -> bool:
+        """Re-anchor the derived altitude to home after a successful sync.
+
+        Best-effort and fully exception-isolated: drift control is cosmetic,
+        the sync is not, so a failure here can never turn a successful push
+        into a reported failure (I-038 lesson).
+
+        Returns:
+            True when the altitude was re-anchored; False otherwise.
+        """
+        try:
+            anchor = self._getAltitudeAnchor()
+            if anchor is None:
+                return False
+            return bool(anchor.onSyncSuccess())
+        except Exception as e:  # noqa: BLE001 -- sync must never fail on this
+            logger.debug("Altitude re-anchor failed: %s", e)
+            return False
 
     # ------------------------------------------------------------- cadence
 
@@ -229,6 +291,7 @@ class CardStateEmitterMixin:
             powerSource=powerSource,
             driveState=driveState,
             driveId=driveId,
+            lastDrive=self._gatherLastDriveSummary(),
             obdAvailable=obdAvailable,
             obdUnavailableReason=None if obdAvailable else REASON_OBD_OFF,
         )
@@ -270,12 +333,12 @@ class CardStateEmitterMixin:
         return (OBD_DOWN, retries, totalConns > 0)
 
     def _gatherPowerState(self) -> tuple[str, str]:
-        """Return (powerMode, powerSource) from the SSOT providers.
+        """Return (powerMode, powerSource) from the two SSOT providers.
 
-        powerMode = deployment context (car/wall/unknown) from PowerModeProvider.
-        powerSource = external/battery from PowerMonitor.readPowerStatus (True=AC
-        -> external, False=battery, None/absent -> unknown; never a confident
-        wrong source).
+        Two different facts, two different providers (architecture.md §2):
+        powerMode = deployment context (car/wall/unknown) from PowerModeProvider
+        (static config); powerSource = AC-vs-battery from PowerSourceProvider
+        (X1209 GPIO6 PLD). Neither is ever inferred from the other.
         """
         powerMode = "unknown"
         provider = self._cardPowerModeProvider
@@ -285,18 +348,72 @@ class CardStateEmitterMixin:
             except Exception:  # noqa: BLE001 -- honest unknown on read failure
                 powerMode = "unknown"
 
-        powerSource = "unknown"
-        pm = self._powerMonitor
-        if pm is not None:
-            try:
-                onAc = pm.readPowerStatus()  # True=AC, False=battery, None=fail
-                if onAc is True:
-                    powerSource = "external"
-                elif onAc is False:
-                    powerSource = "battery"
-            except Exception:  # noqa: BLE001 -- honest unknown on read failure
-                powerSource = "unknown"
-        return (powerMode, powerSource)
+        return (powerMode, self._gatherPowerSource())
+
+    def _gatherPowerSource(self) -> str:
+        """Return external/battery/unknown from the power-source SSOT (US-502).
+
+        Reads ``PowerSourceProvider`` -- the ONE authoritative acquisition path
+        for the AC-vs-battery fact -- which ``lifecycle._subscribePowerMonitor
+        ToPowerSourceProvider`` builds over the X1209 GPIO6 PLD line. The tile
+        previously read ``PowerMonitor.readPowerStatus()``, whose reader is
+        never configured in the orchestrator: it returned None forever, so the
+        tile said "unavailable" and the header bolt stayed gray while the real
+        fact was already flowing to ``power_log``. PowerMonitor is NOT consulted
+        here -- a second path could disagree with GPIO6, which is exactly the
+        SSOT violation the design gate forbids.
+
+        LAZY on purpose: this mixin's emitters are built in
+        ``_initializeAllComponents``, but the provider does not exist until
+        ``_startHardwareManager`` runs later, so a reference captured at init
+        time would be None for the life of the process.
+
+        UI uncertainty policy: an UNREADABLE line resolves to ``unknown``, not
+        to the provider's non-bricking "treat as present" default -- a display
+        must never show a confident source it cannot actually read.
+        """
+        source = getattr(self, "_powerSourceProvider", None)
+        if source is None:
+            return "unknown"
+        try:
+            if not source.isAvailable:
+                return "unknown"
+            return "external" if source.isExternalPowerPresent() else "battery"
+        except Exception:  # noqa: BLE001 -- honest unknown on read failure
+            return "unknown"
+
+    def _gatherLastDriveSummary(self) -> dict[str, Any] | None:
+        """Read the most recent COMPLETED drive from Pi-local ``drive_summary``.
+
+        A DIFFERENT fact from ``_gatherDriveState``, which reports the ACTIVE
+        drive and is None whenever nothing is recording. That is precisely why
+        the idle card read "No recent drive" permanently rather than only until
+        the next drive: there was no producer for the completed-drive fact at
+        all (US-505).
+
+        The database is resolved through ``getattr`` AT USE TIME, never captured
+        when the emitters are constructed. This sprint has hit that boot-order
+        trap in US-501, US-502 and US-504b: the emitters are built in
+        ``_initializeAllComponents`` while their dependencies land later, so a
+        captured reference is None for the life of the process -- a permanently
+        empty tile with fully green unit tests. Re-reading per tick also means a
+        drive recorded while the orchestrator runs reaches the card without a
+        service restart.
+
+        Returns:
+            The ``{"driveId", "startedAtTs"}`` block, or None when no real drive
+            is on record / the log is unreadable (renders the honest
+            "No recent drive").
+        """
+        try:
+            from pi.obdii.last_drive_summary import readLastDriveSummary
+
+            return readLastDriveSummary(
+                database=getattr(self, "_database", None)
+            ).toStatePayload()
+        except Exception as e:  # noqa: BLE001 -- never block the emit loop
+            logger.debug("last-drive summary unavailable: %s", e)
+            return None
 
     def _gatherDriveState(self) -> tuple[str, int | None]:
         """Return (driveState, driveId): recording+id while a drive runs, else idle."""
@@ -346,6 +463,8 @@ class CardStateEmitterMixin:
             soc = int(ups.getBatteryPercentage())
             crate = ups.getChargeRatePercentPerHour()
         except Exception:  # noqa: BLE001 -- gauge unreadable -> typed NA
+            # The verdict's source is the drain LOG, not the gauge, so a dead
+            # MAX17048 must not blank a health history that is still real.
             emitter(**self._batteryHealthKwargs(upsAvailable=False))
             return
 
@@ -368,8 +487,42 @@ class CardStateEmitterMixin:
             )
         )
 
-    @staticmethod
+    def _gatherBatteryHealthVerdict(self) -> tuple[str, str | None, int | None]:
+        """Read the US-504 verdict + last-health-check from battery_health_log.
+
+        The database is resolved through ``getattr`` AT USE TIME, never captured
+        when the emitters are constructed: ``_database`` is built earlier in the
+        boot order today, but a captured reference is the exact trap US-501 and
+        US-502 both hit this sprint, and the log also has to be RE-read each
+        tick so a drain recorded while the orchestrator runs reaches the card
+        without a restart.
+
+        Returns:
+            ``(verdict, lastHealthCheckTs, medianRuntimeS)`` -- honest
+            ``("unknown", None, None)`` whenever the log is absent, unreadable,
+            too thin (< 3 qualifying drains) or stale (> 90 days).
+        """
+        try:
+            from pi.power.battery_health_verdict import (
+                VERDICT_UNKNOWN,
+                readBatteryHealthVerdict,
+            )
+
+            result = readBatteryHealthVerdict(
+                database=getattr(self, "_database", None),
+                nowIso=datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            )
+        except Exception as e:  # noqa: BLE001 -- never block the emit loop
+            logger.debug("battery-health verdict unavailable: %s", e)
+            return ("unknown", None, None)
+        return (
+            result.verdict or VERDICT_UNKNOWN,
+            result.lastHealthCheckTs,
+            result.medianRuntimeS,
+        )
+
     def _batteryHealthKwargs(
+        self,
         *,
         upsAvailable: bool,
         vcellV: float | None = None,
@@ -380,11 +533,18 @@ class CardStateEmitterMixin:
     ) -> dict[str, Any]:
         """Assemble the battery-health emit kwargs with HONEST unknown defaults.
 
-        Every field with no in-process producer is a conservative honest value:
-        no fabricated Spool verdict (health="unknown" -> neutral), no claimed
-        calibration, no claimed full-charge, no rested history, no ladder,
-        last-health-check "never". Only the live gauge reads carry real data.
+        ``health`` / ``lastHealthCheckTs`` / ``runtimeToCutoffS`` come from the
+        US-504 ``battery_health_log`` producer (Spool [EXACT] spec) and are
+        ``unknown`` / null whenever it has nothing real to say. Every remaining
+        field still has no in-process producer and stays a conservative honest
+        value: no claimed calibration, no claimed full-charge, no rested
+        history, no ladder. ``ambientTempC`` stays null by design -- the
+        MAX17048 has NO temperature register, so US-504 removed the TEMP tile
+        rather than invent a source; the column survives for a future BMP390.
         """
+        health, lastHealthCheckTs, medianRuntimeS = (
+            self._gatherBatteryHealthVerdict()
+        )
         return {
             "vcellV": vcellV,
             "soc": soc,
@@ -395,11 +555,11 @@ class CardStateEmitterMixin:
             "restedVcellV": None,
             "weakEvents30d": 0,
             "restedHistory": [],
-            "health": "unknown",
+            "health": health,
             "fullChargeReached": False,
-            "runtimeToCutoffS": None,
+            "runtimeToCutoffS": medianRuntimeS,
             "ambientTempC": None,
-            "lastHealthCheckTs": None,
+            "lastHealthCheckTs": lastHealthCheckTs,
             "ladder": None,
             "upsAvailable": upsAvailable,
         }

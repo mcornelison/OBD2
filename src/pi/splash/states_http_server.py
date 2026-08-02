@@ -22,6 +22,9 @@
 # 2026-06-30    | Ralph (Rex)  | US-403 [A-7]: one token-gated POST /service-control
 #               |              | action endpoint (delegates the allow-list gate to
 #               |              | service_control). GET stays read-only.
+# 2026-08-01    | Ralph (Rex)  | US-501: inject the deployed version into the
+#               |              | dashboard header chip from .deploy-version (read
+#               |              | PER REQUEST -- see _DEPLOY_VERSION_PLACEHOLDER).
 # ================================================================================
 ################################################################################
 
@@ -66,6 +69,24 @@ _DISPLAY_AUTODIM_PLACEHOLDER = '"__DISPLAY_AUTODIM__"'
 # different tuning cadences, and merging them would make an auto-dim edit able
 # to break carousel navigation.
 _DISPLAY_CAROUSEL_PLACEHOLDER = '"__DISPLAY_CAROUSEL__"'
+
+# US-501 (F-123): the dashboard header version chip. UNQUOTED -- this one is HTML
+# text content, not a JS value, so there is no quoted-preview trick to play.
+#
+# Unlike the two config placeholders above, this is resolved PER REQUEST rather
+# than once at handler construction. deploy-pi.sh restarts this unit in
+# step_install_state_server_units but writes .deploy-version LAST, in
+# step_write_deploy_version (deliberately, so a failed restart cannot bump the
+# stamp on a Pi still running old code -- US-354). A value cached at startup
+# would therefore be the PREVIOUS deploy's version on every deploy, which is the
+# stale literal the chip already suffered from. The read is one small JSON file
+# per HTML serve (the kiosk loads the page once), so per-request costs nothing.
+_DEPLOY_VERSION_PLACEHOLDER = "__DEPLOY_VERSION__"
+
+# Honest "the build could not be determined" sentinel. Deliberately the SAME
+# string the splash chip uses (boot-state-poll.js / deploy-pi.sh), so one glyph
+# means "unknown build" on both surfaces -- never a fabricated or stale version.
+_VERSION_UNKNOWN = "V?.?.?"
 
 # HTML entry points get the token injected; treated as the same-origin bootstrap.
 _INDEX_NAMES = frozenset({"", "index.html"})
@@ -124,6 +145,7 @@ def makeStatesHandler(
     clearRunner: Callable[[], object] | None = None,
     displayConfig: dict[str, Any] | None = None,
     carouselConfig: dict[str, Any] | None = None,
+    deployVersionPath: str | None = None,
 ) -> type[BaseHTTPRequestHandler]:
     """Build a request-handler class bound to one states dir + token + assets.
 
@@ -144,6 +166,11 @@ def makeStatesHandler(
     ``carouselConfig`` (US-506) is the ``pi.display.carousel`` sub-config -- the
     auto-rotate period, pause self-expiry and swipe velocity/travel thresholds --
     injected the same way, with the same ``None`` -> grounded-defaults fallback.
+
+    ``deployVersionPath`` (US-501) is the ``.deploy-version`` release record whose
+    ``version`` fills the dashboard header chip. ``None``, absent, unreadable or
+    malformed -> the honest ``V?.?.?`` sentinel; the placeholder is substituted
+    either way so a raw ``__DEPLOY_VERSION__`` can never reach the panel.
     """
     assetsDirs = _normalizeAssetsDirs(assetsDir)
     # Serialize once: the JSON object literal substituted for the quoted
@@ -330,13 +357,19 @@ def makeStatesHandler(
 
         def _injectHtml(self, html: str) -> str:
             # Same-origin injection at serve time: the token SSOT (US-393), the
-            # display auto-dim config (US-483-b) and the carousel navigation
-            # config (US-506). No placeholder value ever lands in an on-disk
-            # asset.
+            # display auto-dim config (US-483-b), the carousel navigation config
+            # (US-506) and the deployed version (US-501). No placeholder value
+            # ever lands in an on-disk asset.
+            #
+            # The version is read HERE, not closed over above: the deploy writes
+            # .deploy-version after restarting this unit, so anything cached at
+            # construction is a deploy behind (see _DEPLOY_VERSION_PLACEHOLDER).
+            version = readDeployVersion(deployVersionPath) or _VERSION_UNKNOWN
             return (
                 html.replace(_TOKEN_PLACEHOLDER, token)
                 .replace(_DISPLAY_AUTODIM_PLACEHOLDER, displayConfigJson)
                 .replace(_DISPLAY_CAROUSEL_PLACEHOLDER, carouselConfigJson)
+                .replace(_DEPLOY_VERSION_PLACEHOLDER, version)
             )
 
         def _serveIndex(self) -> None:
@@ -382,11 +415,18 @@ class StatesHttpServer:
         clearRunner: Callable[[], object] | None = None,
         displayConfig: dict[str, Any] | None = None,
         carouselConfig: dict[str, Any] | None = None,
+        deployVersionPath: str | None = None,
     ) -> None:
         self.host = host
         self.statesDir = statesDir
         handler = makeStatesHandler(
-            statesDir, token, assetsDir, clearRunner, displayConfig, carouselConfig
+            statesDir,
+            token,
+            assetsDir,
+            clearRunner,
+            displayConfig,
+            carouselConfig,
+            deployVersionPath,
         )
         # Bind eagerly so a port conflict fails loudly at construction (the unit
         # then exits non-zero -> the kiosk's fetch errors -> splash DEGRADED;
@@ -451,6 +491,41 @@ def loadDisplayCarouselConfig(configPath: str) -> dict[str, Any] | None:
     return _loadDisplaySection(configPath, "carousel")
 
 
+def readDeployVersion(versionPath: str | None) -> str | None:
+    """Read the ``version`` string from a ``.deploy-version`` record, fail-safe.
+
+    Same LIGHT raw ``json.load`` rationale as ``_loadDisplaySection``: the release
+    record is plain JSON with no ``${ENV}`` placeholders, so a full config load
+    would only add failure modes to a cosmetic header chip.
+
+    Returns ``None`` -- never a guess -- for every way this can go wrong (no path
+    configured, file absent/unreadable, malformed JSON, ``version`` key missing,
+    blank, or not a string). The caller renders the honest ``V?.?.?`` sentinel;
+    an unreadable stamp must never become a confident wrong build number.
+
+    Args:
+        versionPath: Path to the ``.deploy-version`` record (relative paths
+            resolve against the process CWD -- the unit's WorkingDirectory), or
+            ``None`` when no version source is configured.
+
+    Returns:
+        The stripped version string, or ``None`` when it cannot be determined.
+    """
+    if not versionPath:
+        return None
+    try:
+        with open(versionPath, encoding="utf-8") as fh:
+            record = json.load(fh)
+    except (OSError, ValueError):
+        return None
+    if not isinstance(record, dict):
+        return None
+    version = record.get("version")
+    if not isinstance(version, str):
+        return None
+    return version.strip() or None
+
+
 def main(argv: list[str] | None = None) -> int:
     """CLI entry point for eclipse-states-http.service.
 
@@ -475,6 +550,11 @@ def main(argv: list[str] | None = None) -> int:
     # default) supplies the pi.display.autoDim curve AND the pi.display.carousel
     # navigation model injected into the dashboard HTML.
     parser.add_argument("--config", default="config.json")
+    # US-501: the release record whose `version` fills the dashboard header chip.
+    # Same WorkingDirectory-relative default as --config, and the same place
+    # deploy-pi.sh stamps it (${PI_PATH}/.deploy-version) -- so the unit file
+    # needs no new argument. Unreadable -> the honest V?.?.? sentinel.
+    parser.add_argument("--deploy-version-path", default=".deploy-version")
     args = parser.parse_args(argv)
 
     assetsDirs = args.assets_dirs if args.assets_dirs else ["/opt/splash"]
@@ -489,6 +569,7 @@ def main(argv: list[str] | None = None) -> int:
         assetsDir=assetsDirs,
         displayConfig=loadDisplayAutoDimConfig(args.config),
         carouselConfig=loadDisplayCarouselConfig(args.config),
+        deployVersionPath=args.deploy_version_path,
     )
     server.serveForever()
     return 0

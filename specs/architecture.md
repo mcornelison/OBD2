@@ -262,6 +262,29 @@ any second power-source acquisition path (SSOT invariant; Atlas design gate).
 The retired method is retained in the codebase as a `NotImplementedError`
 tripwire so any future reintroduction fails loudly at the call site.
 
+**UI consumer wired (US-502, Sprint 69 / V0.29.24).** The "UI consumes this one
+provider" half of the design above was specified but never built: the System-
+Status power tile read `PowerMonitor.readPowerStatus()`, whose reader is never
+configured in the orchestrator, so `power.source` was permanently `unknown` —
+tile "unavailable", header bolt gray — while the real fact flowed to
+`power_log` through the B1 `_PowerSourceUiBridge`. `CardStateEmitterMixin.
+_gatherPowerSource` now reads `PowerSourceProvider` directly (one fact, one
+provider) and `PowerMonitor` is no longer consulted for it. Two load-bearing
+details:
+
+- **Policy split on uncertainty.** `PowerSourceProvider.isAvailable` (new)
+  exposes whether the PLD line is readable at all. The ShutdownSequencer keeps
+  the non-bricking direction (unreadable ⇒ treat as power present); the DISPLAY
+  must not, because that paints a confident `external` off a dead GPIO — it
+  resolves unreadable/raising ⇒ `unknown` ⇒ the tile's honest "unavailable"
+  branch. Same fact, one provider, two policies — the SSOT pattern, not a
+  second acquisition path.
+- **Lazy read, per emit.** The card emitters are constructed in
+  `_initializeAllComponents`; `_powerSourceProvider` does not exist until
+  `_startHardwareManager` runs later in `runLoop`. A reference captured at
+  emitter-init time is `None` for the life of the process (dead tile, green
+  tests), so the provider is fetched at emit time.
+
 ---
 
 ## 3. Component Architecture
@@ -1538,6 +1561,7 @@ Resolved at runtime from environment variables. Supports defaults: `${VAR:defaul
 | `pi.homeNetwork` | Pi home-network detection (SSID/subnet/ping) for B-043 auto-sync building block (US-188) |
 | `pi.network` | Pi infrastructure addresses (host, user, path, port, hostname, deviceId) — B-044 canonical source (US-201) |
 | `server.network` | Server infrastructure addresses (host, user, port, hostname, projectPath, baseUrl) — B-044 canonical source (US-201) |
+| `pi.location.home` | Home reference point (lat/lon + elevation ASL) — altitude anchor + future GPS home-geofence; PII, `.env`-only (US-517) |
 
 ### B-044: Config-Driven Infrastructure Addresses (US-201)
 
@@ -1624,6 +1648,90 @@ rejects non-positive `syncTimeoutSeconds`, `batchSize < 1`, non-list
 | `batchSize` | `500` | Rows per `/api/v1/sync` POST (integer >= 1) |
 | `retryMaxAttempts` | `3` | Retry budget on retryable failures (integer >= 0) |
 | `retryBackoffSeconds` | `[1, 2, 4, 8, 16]` | Exponential-backoff schedule in seconds (list) |
+
+#### `pi.location.home` — home reference point (US-517 / F-125)
+
+The Pi's home location: the anchor US-518 re-anchors derived altitude to on
+every successful server sync, and the reference point for the future GPS
+home-geofence (US-516, hardware not yet ordered).
+
+**This section is location PII and is the first config section whose VALUES
+may never be committed.** The real coordinates live only in the gitignored
+`.env`; `config.json` carries bare `${PI_HOME_LAT}` / `${PI_HOME_LON}` /
+`${PI_HOME_ELEVATION_M}` placeholders, and the validator DEFAULTS are `None`.
+The `${VAR:default}` inline-default form is deliberately NOT used — a fallback
+coordinate baked into source would be both committed PII and a fabricated
+anchor.
+
+| Key | Default | Purpose |
+|-----|---------|---------|
+| `lat` | `None` | Home latitude, decimal degrees WGS-84 (`[-90, 90]`) |
+| `lon` | `None` | Home longitude, decimal degrees WGS-84 (`[-180, 180]`) |
+| `elevationM` | `None` | Home elevation above sea level in metres (`[-500, 9000]`) |
+
+**Single read path:** `src.pi.location.HomeLocationProvider`
+(`getHomeElevationM()` / `getHomeCoordinates()` / `getHome()`). Consumers call
+the provider and never parse these keys themselves
+(`specs/ssot-design-pattern.md`).
+
+**No fail-fast validator sub-check, on purpose.** Unlike `pi.homeNetwork` and
+`pi.companionService`, a malformed value here does NOT raise
+`ConfigValidationError`. `validate()` runs on the Pi's boot path, so raising
+would refuse to start the orchestrator over a typo in an *optional* altitude
+anchor — trading a dead OBD capture for a cosmetic fault. The provider reports
+the honest unknown instead; same policy as `pi.power.mode` (US-421).
+
+**Honest-unknown surface.** The provider returns `None` for an absent key, a
+blank env var, an unresolved `${...}` placeholder, a non-numeric string, a
+NaN/infinity, a boolean, or a magnitude outside the physical band above. Two
+consequences worth knowing:
+
+- `elevationM` and the `(lat, lon)` pair are **separate facts**. US-518 needs
+  only the elevation, so it is not coupled to a GPS fix the project has no
+  hardware for. The coordinate pair is both-or-neither — half a fix is not a
+  partial location, it is a different one.
+- The provider **never logs a coordinate value**. `PIIMaskingFilter` (§8) masks
+  email/phone/SSN only, so a coordinate written to journald is PII on a surface
+  with no mask for it. Rejection warnings name the key and the reason only.
+
+**Operational note (owed, not codeable):** `deploy/deploy-pi.sh` excludes
+`.env` from the deploy payload, so the Pi keeps its own `.env`. The `PI_HOME_*`
+values therefore do **not** propagate from the dev checkout — until they are
+written into the Pi's `.env`, the placeholders stay unresolved and the provider
+correctly reports unknown on the box.
+
+#### Derived-altitude re-anchor on sync success (US-518 / F-125)
+
+`AltitudeAnchor` (`src/pi/location/altitude_anchor.py`) owns the derived-altitude
+**accumulator** and resets it to `pi.location.home.elevationM` on every successful
+server sync. A completed push to the companion service means the Pi reached the
+home network, so the car is home — a *verified* "at home" event. Re-anchoring
+there bounds integration error to a single drive between syncs (Spool's altitude
+ruling, 2026-08-01, item 4).
+
+**Seam.** The hook is `CardStateEmitterMixin._recordSyncOutcome`, which is the one
+point both sync-success paths (`_maybeTriggerIntervalSync` and
+`triggerDriveEndSync`) converge on, and which runs only *after* a push completed
+past the US-340 offline route gate. Hooking the convergence point rather than the
+two call sites means a future third sync path cannot silently skip the re-anchor.
+The powerwatch power-down `forcePush` runs in a **separate process**, so it has no
+in-memory accumulator to re-anchor and is deliberately not wired.
+
+**Scope — this owns the reset, not the integration.** The integrator that advances
+the value (`altitude = home + ∫ sin(pitch)·speed dt`) is US-519, deferred pending
+Spool's σ sizing on US-521's gyro-fused pitch; the display is US-520. Until then
+nothing calls `setDerivedAltitudeM` in production and `states/imu.altitude` stays a
+typed NULL with reason `no_source` (`imu_state_bridge`). Publishing
+home-elevation-forever as an altitude would be a confident wrong number — strictly
+worse than the honest "no source" shown today.
+
+**Honest-instrument rules.** The accumulator starts at `None`, never `0.0` (sea
+level is a 209 m error in Chicagoland). When the home elevation is unknown — the
+Pi's actual state today per the operational note above — the re-anchor is a
+**no-op**: it neither fabricates a value nor destroys the one the integrator owns,
+and `getLastAnchoredAtIso()` is stamped only on a re-anchor that actually fired.
+The whole path is exception-isolated: drift control is cosmetic, the sync is not,
+so it can never turn a successful push into a reported failure (I-038 lesson).
 
 ---
 
@@ -2797,17 +2905,18 @@ accel/gyro/mag stay on the bus and in the versioned `edr_imu_sample` store; this
 file is the *derived* view and holds no raw axes at all. **The reader computes,
 the display consumes** (Atlas DELTA-2) — the card never fuses.
 
-*Contract (Atlas Q-A, 2026-07-30).* `{available, ts, gLat, gLon, gMag,
-headingDeg, gradePct, altitude, reasons}`:
+*Contract (Atlas Q-A, 2026-07-30; `pitchDeg` added by US-521).* `{available, ts,
+gLat, gLon, gMag, headingDeg, pitchDeg, gradePct, altitude, reasons}`:
 
 | Field | Meaning | Notes |
 |---|---|---|
 | `gLat` / `gLon` / `gMag` | horizontal acceleration, **units = g** (`g_n` = 9.80665 m/s²) | `gLon` + = accelerating, − = braking; `gLat` + = **RIGHT** (automotive convention); `gMag` = hypot |
 | `headingDeg` | magnetic bearing of the vehicle nose, 0–359 | tilt-compensated; **magnetic, not true** (no declination in the contract) |
-| `gradePct` | `tan(pitch) × 100`, pitch from the gravity vector | + = climbing; `null` past `MAX_GRADE_PITCH_DEG` (85°), where `tan` runs away |
-| `altitude` | **always typed `null`** + `reasons.altitude = "no_source"` | the ICM-20948 has no barometer; a zeroed altitude renders as sea level — a confident lie. A future BMP280/GPS fills it, not this bridge |
+| `pitchDeg` | **gyro-fused, ZUPT-corrected** chassis pitch (US-521) | + = nose up; the single published attitude fact — US-519's altitude integrand and `gradePct` both read *this*, never a second derivation |
+| `gradePct` | `tan(pitchDeg) × 100` | + = climbing; `null` past `MAX_GRADE_PITCH_DEG` (85°), where `tan` runs away |
+| `altitude` | **always typed `null`** + `reasons.altitude = "no_source"` | the ICM-20948 has no barometer; a zeroed altitude renders as sea level — a confident lie. US-519 derives it from `pitchDeg`; a future GPS/baro supersedes that, not this bridge |
 | `available` / `ts` | freshness | absent/stale → the US-497 idle-card fallback |
-| `reasons` | per-field absence vocabulary | `sensor_absent`, `no_mag_reading`, `tilt_unresolved`, `pitch_out_of_range`, `no_source` |
+| `reasons` | per-field absence vocabulary | `sensor_absent`, `no_mag_reading`, `tilt_unresolved`, `pitch_out_of_range`, `pitch_unseeded`, `no_source` |
 
 *Honest-availability is PER FIELD.* A dead magnetometer grays `headingDeg` alone
 while the g fields stay live; an unwired sensor writes an **explicit**
@@ -2822,10 +2931,76 @@ Publishing the raw horizontal components would pin a permanent phantom **0.17 g*
 on the g-meter for a board bolted in at a 10° tilt. The slow estimate tracks
 mount tilt and road grade (which change over tens of seconds); the fast residual
 is the acceleration the g-meter exists to show. The **same** estimate defines the
-level frame for `gLat`/`gLon`, the pitch for `gradePct`, and the tilt
-compensation for `headingDeg` — one gravity fact, three consumers, no chance for
-three derivations to disagree. The default τ is a **Rex-derived filter constant
-flagged for Atlas/Spool confirmation against a real drive**, not a tuning value.
+level frame for `gLat`/`gLon` **and** the tilt compensation for `headingDeg` —
+one gravity fact, two consumers, no chance for two derivations to disagree. The
+default τ is a **Rex-derived filter constant flagged for Atlas/Spool confirmation
+against a real drive**, not a tuning value.
+
+##### Gyro-fused pitch + ZUPT (US-521 / F-125, Sprint 69 / V0.29.24)
+
+**Why the low-pass above was not enough for pitch.** An accelerometer cannot
+distinguish grade from acceleration — they are literally the same measurement
+(Spool, 2026-08-01). Specific force is `a_vehicle − g_vector`, so a 0.3 g pull on
+*flat* ground adds 0.3 g to the forward axis and any accel-derived tilt reads
+`atan(0.3)` = **16.7° of climb**. The 5 s gravity τ rejects a 1 s event but *not*
+a 10 s on-ramp (2 τ), so `gradePct` was structurally wrong under sustained
+acceleration — and it is the integrand US-519's interim altitude would have
+inherited, where a 0.5° sustained bias is 70 m of fake climb over a 10-minute
+drive against ±10–20 m of real Chicagoland relief.
+
+**`src/pi/sensors/pitch_fusion.py` (`PitchFusion`)** replaces that path. Pure and
+I/O-free — no bus, no device, no clock — so it is deterministically testable and
+US-519 reuses it unchanged. Three mechanisms, all Spool's:
+
+1. **Gyro integration** carries the short term (`raw.imu.gyro`, rad/s, already
+   published by the reader under the same burst `seq`; the bridge simply had
+   never subscribed). Sign is *derived*, not guessed: the frame is right-handed
+   `forward × left = up`, so `ω × forward = −ω_left · up` and a nose-up rate is a
+   **negative** left-axis rate. It must agree with the accel convention or the
+   two halves of the filter fight each other.
+2. **The accel corrects the gyro only near 1 g** (`accelTrustBand`, default
+   0.02 = 2%). This is what rejects the phantom: under 0.3 g the specific force is
+   1.044 g, a 4.4% excess, well outside the band. The band cannot be much tighter
+   or road vibration gates the accel off permanently, leaving pure gyro drift.
+3. **ZUPT** at every confirmed stop — OBD speed 0 across `[EXACT: 3] s` (Spool,
+   **load-bearing**). At zero velocity the accel reads *pure gravity*, so the
+   measured tilt is the true chassis pitch: the one uncontaminated fix the
+   estimator gets, applied as a **snap, not a blend**. One stop cannot separate
+   mount tilt from the slope you parked on, but the rolling mean over stops
+   converges on the **bias** — valid because this terrain is flat, so real road
+   slopes average ~0. City stoplights are the free calibration signal. Published
+   pitch is `fused − bias`.
+
+**`raw.obd.SPEED` is the ZUPT gate and the bridge stays a pure bus consumer.**
+The capture loop already publishes it onto the *same* `SampleBus`
+(`realtime._publishReading`), so this is one more subscription, not a second
+acquisition path — the bridge still opens no OBD connection and no I²C device.
+The value is used as a boolean "is it zero", **never as a magnitude**, so the
+reading's unit is irrelevant here by construction.
+
+*Honest-instrument, per branch.* The pitch starts `null` and is never a
+fabricated 0.0 (`reasons.pitchDeg = "pitch_unseeded"`, distinct from
+`tilt_unresolved` — the sensor is fine, the attitude is simply not known yet); it
+seeds **only** from an uncontaminated reading, because seeding mid-pull bakes the
+phantom in as the origin the gyro then integrates from; no bias is applied until
+`zuptMinStops` stops have been observed, since a bias claimed from one stop is a
+calibration nobody measured; the bias window is **rolling**, so a physical
+remount ages out rather than freezing on an old constant; and **an absent or
+stale OBD speed is never read as "stopped"**. That last one is the dangerous
+case, not a failed read: honouring a stale zero after a mid-stop link drop would
+keep hard-correcting the attitude to whatever the accelerometer says for the rest
+of the drive — snapping pitch to the 16.7° phantom on every on-ramp, with more
+confidence than the drift it was fixing. A stop therefore requires zero speed
+*observed across* the whole gate **and** still fresh (`zuptSpeedMaxAgeSec`,
+default 2 s, deliberately **below** the 3 s gate); elapsed time after one zero
+reading is evidence only that we stopped being told.
+
+*Config (`pi.sensors.imu.*`, all positive-checked in `_validateImuStateBridge`).*
+`pitchTauSec` (5.0), `accelTrustBand` (0.02), `zuptMinStopSec` (**3.0 — Spool
+`[EXACT]`, flag him before any drift**), `zuptSpeedMaxAgeSec` (2.0),
+`zuptMinStops` (5), `zuptWindowStops` (20). All but `zuptMinStopSec` are
+**Rex-derived and routed to Spool for σ_pitch sizing** (US-521 AC4) before
+US-519/US-520 build the altitude display on top.
 
 *Config (all under `pi.sensors.imu.*`, validated in `_validateImuStateBridge`).*
 `stateHz` (default 4) is the state-file write cadence, grounded to the
