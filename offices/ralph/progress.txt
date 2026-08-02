@@ -172,3 +172,60 @@ Task: Idle-card clock to 12-hour AM/PM
   text metrics, so crowding is undetectable from here -- do not pre-tighten
   the stylesheet on a guess; flag it for the panel read.
 ---
+
+## 2026-08-02 - US-505 (Agent 1 / Rex)
+Task: Build a last-drive-summary producer so the idle card shows real last-drive data
+
+### What was implemented:
+- New `pi/obdii/last_drive_summary.py`: reads Pi-LOCAL `drive_summary`
+  (US-206) for the newest `data_source='real'` drive and returns its id +
+  drive-start timestamp, or the honest unknown.
+- `card_state_emitter._gatherLastDriveSummary` feeds it into the system-status
+  emit; `buildSystemStatusState` carries a `drive.lastDrive` block.
+- `carousel.js idleLastDriveFact` renders "Drive 35 / 2 h ago"; new `agoText`
+  gives sub-day age resolution and hands off to the existing `ageText`.
+- AC2 SOURCE-CONFIRM resolved: `drive_summary` is the authoritative Pi-local
+  source. B-104 held -- identity + start wall-time ONLY, no re-derived
+  analytics (US-351 gave those to the server).
+
+### Files changed:
+- Created: `src/pi/obdii/last_drive_summary.py` (the producer)
+- Modified: `src/pi/obdii/orchestrator/card_state_emitter.py` (gather + pass)
+- Modified: `src/pi/splash/system_status_emitter.py` (`drive.lastDrive` key)
+- Modified: `specs/UI/dist/dashboard-pi/carousel.js` (`agoText` + tile render)
+- Created: `tests/pi/obdii/test_last_drive_summary.py`
+- Created: `tests/pi/orchestrator/test_card_last_drive_wiring.py`
+- Created: `tests/pi/splash/test_system_status_last_drive.py`
+- Created: `tests/ui/test_carousel_last_drive.py`
+
+### Learnings for future iterations:
+- **PROCESS, the load-bearing one**: this story was found already implemented
+  and green but UNCOMMITTED -- the TD-059 stall, and the SECOND CONSECUTIVE
+  story to hit it (US-504b was recovered identically one commit earlier). Two
+  in a row is a pattern: the work gets done, the synchronous gate + commit at
+  the END of the iteration is what gets dropped. If you boot into a dirty tree
+  whose untracked `src/` + `tests/` match the claimed `taskid`, that is this
+  stall -- re-run the gate, VERIFY, and commit. Do NOT re-implement.
+- **Gotcha (the defect class)**: "No recent drive" was not a missing DRIVE, it
+  was a missing PRODUCER. The card had only `drive.driveId`, which is the
+  ACTIVE drive and null at idle -- so the tile could never have self-corrected
+  after a drive. When a display shows an honest-looking absence forever, ask
+  whether anything actually produces the fact before assuming the fact is
+  merely unavailable right now.
+- **Pattern discovered**: pin a producer's SQL to the REAL schema by building
+  the fixture table from the production DDL constant (`SCHEMA_DRIVE_SUMMARY`),
+  never a hand-rolled CREATE TABLE. A column-name drift then fails LOUDLY;
+  against a fake DB it degrades silently to the exact permanent "unknown" the
+  story exists to delete, with every test green.
+- **Pattern discovered**: carry the TIMESTAMP, format the AGE at display time.
+  A pre-computed "2 h ago" is frozen at emit and ages visibly wrong on a kiosk
+  that emits every few seconds but is read minutes later.
+- **Gotcha**: a FUTURE timestamp is routine, not an error -- the Pi has no RTC
+  battery and boots before NTP settles, so guard the age formatter against
+  negative deltas ("just now"), not just against nulls.
+- **Gotcha**: filtering sim rows is correct but LOOKS like a regression on a
+  simulator-only bench (the tile reads "No recent drive"). Log that branch
+  distinguishably from "no rows at all" so the next person can tell them apart.
+- **Gotcha (4th sighting this sprint)**: boot order again -- resolve the
+  database via `getattr` at USE time. US-501/502/504b/505 have all now hit it.
+---
