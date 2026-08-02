@@ -52,3 +52,67 @@ Task: Wire the dashboard version chip to .deploy-version (stop showing 'V?.?.?')
   will trip on your own explanatory HTML comment discussing that literal. Strip
   comments and assert only on renderable markup.
 ---
+
+## 2026-08-01 - US-502 (Agent 1 / Rex)
+Task: Wire the real power source to the System-Status power tile + header bolt
+
+### What was implemented:
+- `CardStateEmitterMixin._gatherPowerSource` (new) reads the
+  `PowerSourceProvider` SSOT (X1209 GPIO6 PLD) directly. The tile previously
+  read `PowerMonitor.readPowerStatus()`, whose reader is never configured in
+  the orchestrator -> `source` was permanently "unknown" -> tile rendered its
+  "unavailable" branch + header bolt gray, while the real fact was already
+  reaching `power_log` through the B1 `_PowerSourceUiBridge`.
+- `PowerMonitor` is REMOVED from that path. A second acquisition path could
+  disagree with GPIO6 -- the SSOT violation the design gate forbids.
+- New `PowerSourceProvider.isAvailable` property (the ONLY contract change):
+  exposes whether the line is readable, so each consumer applies its own
+  uncertainty policy over the one fact. `isExternalPowerPresent` /
+  `isPowerLost` / `startupArmCheck` untouched -- shutdown path did not move.
+- The provider is read LAZILY, per emit, via `getattr`.
+- `specs/architecture.md` §2 gained "UI consumer wired (US-502)" (design gate).
+- A2AL seam-confirm note filed to Atlas for the `isAvailable` delta.
+
+### Files changed:
+- Modified: `src/pi/obdii/orchestrator/card_state_emitter.py` (tile source
+  re-pointed to the SSOT; PowerMonitor dropped from the path)
+- Modified: `src/pi/power/power_source_provider.py` (`isAvailable` property)
+- Modified: `specs/architecture.md` (§2 UI-consumer subsection)
+- Modified: `tests/pi/orchestrator/test_card_state_emitters.py` (fakes moved
+  from the dead PowerMonitor reader to the provider)
+- Modified: `tests/pi/power/test_power_source_provider.py` (+2 readability)
+- Created: `tests/pi/orchestrator/test_card_power_source_wiring.py` (10 tests)
+- Created: `tests/ui/test_carousel_power_source_wiring.py` (3 chain tests)
+- Created: `offices/architect/inbox/2026-08-01-from-ralph-us502-power-source-ui-seam.md`
+
+### Learnings for future iterations:
+- **Pattern discovered (the load-bearing one)**: when ONE fact has two
+  consumers with different consequences of being wrong, the SSOT exposes the
+  FACT and each consumer keeps its OWN uncertainty policy. Here the
+  ShutdownSequencer's safe direction is "unreadable => treat as power
+  present" (never self-brick on a dead signal) -- but reusing that on a
+  display paints a confident lit "external" off a DEAD GPIO, which is
+  strictly worse than the gray bolt the story exists to fix. Resist the
+  tempting shortcut of a display-shaped tri-state return: that puts policy
+  INSIDE the SSOT. Add the fact, keep the policies at the edges.
+- **Gotcha (2nd sighting this sprint, same shape as US-501's stale
+  `.deploy-version` cache)**: BOOT ORDER. The card emitters are constructed
+  in `_initializeAllComponents`, but `_powerSourceProvider` is not built
+  until `_startHardwareManager`, which `runLoop` calls LATER. A provider
+  reference captured at emitter-init time is `None` for the entire life of
+  the process = permanently dead tile with fully green unit tests. Read
+  late-bound dependencies AT USE TIME, and pin it with a test that attaches
+  the dependency AFTER init. Check the construction site's position in the
+  boot order before caching anything in this codebase.
+- **Gotcha**: two halves that are each individually correct can simply never
+  have been connected. `carousel.js` always rendered `battery`/`external`
+  correctly and the Pi always knew the real state -- nothing carried it
+  across, and a test on either half alone stays green through that. The
+  catch requires feeding the REAL emitted state file into the REAL renderer
+  (node). Same lesson as US-494/US-499.
+- **Gotcha (test fidelity)**: the fake PLD must reproduce the real
+  `PldSensor` contract that an UNREADABLE line returns
+  `isExternalPowerPresent() == True` (the safe direction), not the stored
+  value. A fake returning the stored value hides the exact lie the story is
+  about.
+---
