@@ -229,3 +229,64 @@ Task: Build a last-drive-summary producer so the idle card shows real last-drive
 - **Gotcha (4th sighting this sprint)**: boot order again -- resolve the
   database via `getattr` at USE time. US-501/502/504b/505 have all now hit it.
 ---
+
+## 2026-08-02 - US-512 (Agent 1 / Rex)
+Task: BT capture hardening: durable bond + reconnect-transport-reset
+
+### What was implemented:
+- `bluetooth_helper.resetRfcommBinding()` -- a FORCED release-then-bind, so a
+  recovery can never take `bindRfcomm`'s already-bound short-circuit.
+- `ObdConnection.resetTransport()` (Spool's disconnect -> releaseRfcomm ->
+  re-bind), used by `reconnect()`; plus a per-failed-attempt binding drop in
+  `_performConnect`, keyed on "the configured port is a MAC" rather than on
+  `_boundRfcomm`.
+- `BtResilienceMixin._resetTransport()` replaces the bare `_safeDisconnect()`
+  on the ADAPTER_UNREACHABLE path (falls back for duck-typed connections).
+- Runtime bond assurance: `BondState` / `parseBondState` / `isDurableBond` /
+  `readBondState` / `ensureTrusted`, called from `_resolvePort` before the bind.
+- `tests/pi/obdii/bt_stack_fake.py` -- ONE fake dongle (rfcomm + bluetoothctl
+  CLIs + an epoch-aware python-obd handle) shared by both test halves.
+
+### Files changed:
+- Modified: `src/pi/obdii/bluetooth_helper.py` (reset + bond state/trust)
+- Modified: `src/pi/obdii/obd_connection.py` (resetTransport, failed-attempt
+  binding drop, bond assurance, reconnect rewire)
+- Modified: `src/pi/obdii/orchestrator/bt_resilience.py` (reset, not teardown)
+- Created: `tests/pi/obdii/bt_stack_fake.py`
+- Created: `tests/pi/obdii/test_bluetooth_bond_and_reset.py` (24 tests)
+- Created: `tests/pi/obdii/test_obd_connection_transport_reset.py` (19 tests)
+- Created: `tests/pi/integration/test_bt_link_drop_transport_reset.py` (5 tests)
+- Created: `offices/pm/tech_debt/TD-072-durable-bond-defined-twice.md`
+
+### Learnings for future iterations:
+- **Gotcha (the load-bearing one)**: an `rfcomm bind` is a KERNEL TABLE ENTRY.
+  It outlives the ACL link AND it outlives the process. So (a) a dropped link
+  leaves a device node that opens and is dead, and (b) a SIGKILLed predecessor
+  leaves a binding the next process did not create -- which means any cleanup
+  keyed on "did WE bind it?" (`_boundRfcomm`) skips, and `systemctl restart`
+  does not clear the fault. When a resource lives in the kernel rather than in
+  the process, ownership bookkeeping is the WRONG key; the configured identity
+  is the right one.
+- **Pattern discovered**: an IDEMPOTENT helper is a liability on a recovery
+  path. `bindRfcomm`'s "already bound -> return the path" is correct for a
+  first connect and is precisely the bug during recovery. When one function
+  serves both first-acquisition and re-acquisition, give recovery its OWN
+  entry point rather than adding a flag -- the flag will be defaulted wrong.
+- **Gotcha (found by tracing, not by the AC)**: a teardown that destroys the
+  very thing its own wait-loop probes for. `_reactToAdapterUnreachable`
+  released the binding, then waited on `isRfcommReachable`, which requires the
+  binding to exist -- unsatisfiable by construction. Check what the wait
+  condition READS before choosing what the teardown DESTROYS.
+- **Gotcha (test fidelity, the reason the existing US-221 flap test never
+  caught any of this)**: it stubs the connection object, and the defect lives
+  BELOW that -- inside `bindRfcomm`. Fake at the layer BELOW the bug (here the
+  `subprocess` seam), never at the layer that contains it, or the test deletes
+  the thing it is supposed to prove.
+- **Pattern discovered**: bound a concurrency test through the SAME seam
+  production uses to abort (here the orchestrator's `_shutdownEvent`). The
+  first cut had no bound, so the RED run did not fail -- it HUNG the suite and
+  left a daemon thread spinning. A regression must fail fast, not wedge CI.
+- **Gotcha**: `waitForAdapter()` takes `maxIterations=None` in production
+  deliberately (retry forever). Any test that drives it needs an explicit
+  abort, and `sleepFn=lambda _: None` turns "forever" into a hot spin.
+---
