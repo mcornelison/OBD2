@@ -493,3 +493,77 @@ Task: WP-3 re-anchor derived altitude to home elevation on every successful serv
   US-505 (65de58d) while its exact-shape test was last touched two stories
   earlier (f929ed8) -- proof, not inference.
 ---
+
+## 2026-08-02 - US-521 (Agent 1 / Rex)
+Task: Gyro-fused pitch for states/imu (complementary + ZUPT) -- honest grade
+
+### What was implemented:
+- New `pi/sensors/pitch_fusion.py` (pure, I/O-free): gyro integration for the
+  short term, accel correcting it ONLY near 1 g (`accelTrustBand` 0.02), and
+  ZUPT at confirmed stops (OBD speed 0 across Spool's [EXACT:3] s gate) whose
+  ROLLING mean over stops converges the mount-tilt bias out. Published pitch
+  = `fused - bias`.
+- `imu_state_bridge` subscribes `raw.imu.gyro` + `raw.obd.SPEED` (both already
+  on the SAME bus -- no new acquisition path) and publishes `pitchDeg`.
+  `gradePct` is now `tan(pitchDeg)*100` with NO gravity fallback.
+- 6 new `pi.sensors.imu.*` config keys + validator positive-checks.
+- `architecture.md` 10.8: new "Gyro-fused pitch + ZUPT" subsection + the
+  contract table gained `pitchDeg` and the `pitch_unseeded` reason.
+- AC4 routed: rates + the trust-band arithmetic filed to Spool for sigma sizing.
+
+### Files changed:
+- Created: `src/pi/sensors/pitch_fusion.py` (the estimator)
+- Modified: `src/pi/sensors/imu_state_bridge.py` (gyro/speed topics + pitchDeg)
+- Modified: `src/common/config/validator.py` (6 DEFAULTS + `_IMU_POSITIVE_KEYS`)
+- Modified: `specs/architecture.md` (10.8 subsection + contract table)
+- Created: `tests/pi/sensors/test_pitch_fusion.py` (35 tests)
+- Modified: `tests/pi/sensors/test_imu_state_bridge.py` (13 new, 5 retired)
+- Created: `offices/tuner/inbox/2026-08-02-from-ralph-us521-...-sigma-sizing.md`
+
+### Learnings for future iterations:
+- **The load-bearing one -- MUTATION TESTING CAUGHT A BAD TEST, and the lesson
+  generalizes**: my "stale speed" and "elapsed vs observed span" rules BOTH
+  defend the same outcome (no false stop). The elapsed-time mutant SURVIVED
+  because the test written for it was actually being saved by the freshness
+  guard. When two guards defend one outcome, a test "for" either proves nothing
+  until you disable the other -- widen/disable the sibling guard inside the
+  test so only the rule under test can pass it.
+- **Gotcha (the AC understated the defect in BOTH directions)**: the pitch was
+  not raw accel-only -- US-478 low-passed the accel over 5 s. So a 1 s
+  acceleration IS rejected and no bench test ever showed the bug; a 10 s
+  on-ramp is 2 tau and propagates almost fully. A DELAYED defect is worse than
+  an obvious one: it appears only under exactly the sustained input nobody
+  reproduces at a desk. Read the filter constant, not just the formula.
+- **Pattern -- derive a sign, never guess it.** Gyro-integrated pitch must
+  agree with the accel tilt convention or the two halves of a complementary
+  filter fight and the estimate is worse than either alone. Right-handed
+  forward x left = up gives `omega x forward = -omega_left * up`, so nose-up is
+  a NEGATIVE left-axis rate. Mutation-proved (flip -> 3 red). Also: an angular
+  rate is a PSEUDOvector, so reusing a vector's mount-axis map is only valid
+  for a proper rotation (det +1) -- true of every physical remount, false of a
+  mirrored config typo. Documented rather than guarded.
+- **Pattern -- check what is already on the bus before building a source.**
+  `raw.imu.gyro` had been published since US-410 (same burst, same seq) with
+  zero subscribers, and `raw.obd.SPEED` rides the same bus under the same
+  `pi.bus.enabled` gate that builds this bridge. The whole ZUPT input was two
+  subscription strings. The story looked M-sized and was mostly wiring.
+- **Gotcha (the dangerous negative case, 2nd sprint sighting after US-518's
+  route gate)**: it is the STALE reading, not the failed one. A BT drop while
+  stopped at a light leaves "speed 0" as the last word; honouring it hard-snaps
+  the attitude to the contaminated accel for the rest of the drive -- MORE
+  confident than the drift it was fixing. Guard freshness BELOW the gate it
+  feeds, and require evidence OBSERVED ACROSS a window rather than time ELAPSED
+  since one reading (a slow poll otherwise manufactures stops).
+- **Pattern -- feed a filter at the SENSOR rate, not the display rate.** The
+  bridge writes at 10 Hz but bursts at 50 Hz; integrating only on written
+  frames would silently discard four fifths of the rotation.
+- **Gotcha -- a fallback is how a deleted defect comes back.** Leaving
+  `gradePct` able to fall back to the gravity vector when the fusion is
+  unseeded keeps every test green and quietly restores accel-only tilt.
+  Mutation-proved. One published fact, one producer, and an honest
+  `pitch_unseeded` null instead.
+- **Process (3rd consecutive story to report it)**: a scoped in-loop selection
+  cannot see the EXISTING guard for a contract it changes. I only avoided
+  I-041's shape by hunting the states/imu exact-shape guard on purpose. The
+  fix is mechanical -- run the existing tests for any contract you edit.
+---
