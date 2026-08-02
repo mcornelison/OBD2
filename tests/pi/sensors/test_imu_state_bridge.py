@@ -30,17 +30,21 @@ from pi.sensors.imu_state_bridge import (
     MAX_GRADE_PITCH_DEG,
     REASON_NO_MAG,
     REASON_NO_SOURCE,
+    REASON_PITCH_OUT_OF_RANGE,
+    REASON_PITCH_UNSEEDED,
     REASON_SENSOR_ABSENT,
     REASON_TILT_UNRESOLVED,
     STANDARD_GRAVITY_MS2,
+    TOPIC_IMU_GYRO,
+    TOPIC_OBD_SPEED,
     ImuStateBridge,
     buildImuState,
-    computeGradePct,
     computeHeadingDeg,
     computeHorizontalG,
     createImuStateBridgeFromConfig,
     resolveMountFrame,
 )
+from pi.sensors.pitch_fusion import PitchFusion
 
 G = STANDARD_GRAVITY_MS2
 
@@ -53,6 +57,7 @@ _EXPECTED_KEYS = {
     "gLon",
     "gMag",
     "headingDeg",
+    "pitchDeg",
     "gradePct",
     "altitude",
     "reasons",
@@ -165,53 +170,13 @@ def test_resolveMountFrame_remountedBoard_remapsAndSignsAxes():
     assert resolveMountFrame((1.0, 2.0, 3.0), mount) == (2.0, -1.0, 3.0)
 
 
-# --------------------------------------------------------------- computeGradePct
-
-
-def test_computeGradePct_levelBoard_isZeroNotNoise():
-    """
-    Given: gravity read by a level board
-    When: the grade is computed
-    Then: it is exactly 0.0 percent
-    """
-    assert computeGradePct(_level()) == 0.0
-
-
-def test_computeGradePct_noseUpTenDegrees_isTanPitchTimes100():
-    """
-    Given: the board pitched nose-up 10 degrees
-    When: the grade is computed
-    Then: it is tan(10 deg) * 100 = 17.6 percent, positive for a climb
-    """
-    assert computeGradePct(_pitched(10.0)) == round(math.tan(math.radians(10.0)) * 100, 1)
-
-
-def test_computeGradePct_noseDown_isNegative():
-    """
-    Given: the board pitched nose-DOWN
-    When: the grade is computed
-    Then: it is negative (a descent reads as a descent)
-    """
-    assert computeGradePct(_pitched(-8.0)) < 0
-
-
-def test_computeGradePct_pitchBeyondRange_isNullNotAnAbsurdNumber():
-    """
-    Given: a pitch past MAX_GRADE_PITCH_DEG (tan explodes toward infinity)
-    When: the grade is computed
-    Then: it is None -- an unreportable grade is NOT reported (never inf, never a
-          four-digit percent the display would render as fact)
-    """
-    assert computeGradePct(_pitched(MAX_GRADE_PITCH_DEG + 1.0)) is None
-
-
-def test_computeGradePct_degenerateGravity_isNull():
-    """
-    Given: a zero-magnitude gravity vector (unreadable / free-fall)
-    When: the grade is computed
-    Then: it is None, never 0.0 -- "no tilt reading" is not "level"
-    """
-    assert computeGradePct((0.0, 0.0, 0.0)) is None
+# NOTE (US-521): the pure grade math that used to be tested here as
+# computeGradePct(gravity) MOVED to pi.sensors.pitch_fusion, because grade is no
+# longer derived from the accel-only gravity vector -- it is derived from the
+# GYRO-FUSED pitch.  Its five cases (level, nose-up, nose-down, past-range,
+# degenerate) are covered one-for-one by tests/pi/sensors/test_pitch_fusion.py
+# against pitchRadFromAccel + gradePctFromPitchRad.  Nothing was dropped; the
+# fact simply has a different producer now.
 
 
 # -------------------------------------------------------------- computeHeadingDeg
@@ -370,6 +335,7 @@ def test_buildImuState_noMagReading_headingIsNullWithReason_othersStillLive():
         gravity=_pitched(5.0),
         linear=(0.0, 0.0, 0.0),
         mag=None,
+        pitchRad=math.radians(5.0),
     )
     assert state["headingDeg"] is None
     assert state["reasons"]["headingDeg"] == REASON_NO_MAG
@@ -423,8 +389,93 @@ def test_buildImuState_isJsonSerializable_withNoNonFiniteValues():
         gravity=_pitched(3.0),
         linear=(0.2 * G, -0.1 * G, 0.0),
         mag=(18.0, 4.0, -40.0),
+        pitchRad=math.radians(3.0),
     )
     assert json.loads(json.dumps(state, allow_nan=False)) == state
+
+
+# ---------------------------------------------- US-521 fused pitch in the payload
+
+
+def test_buildImuState_pitchDeg_isPublishedFromTheFusedEstimate():
+    """
+    Given: a fused pitch of 4.5 degrees (Atlas DELTA-2: the reader computes)
+    When: the payload is assembled
+    Then: pitchDeg carries it, so US-519 can integrate the same fact the card
+          renders rather than re-deriving its own
+    """
+    state = buildImuState(
+        tsUtc="2026-07-31T00:00:00Z",
+        gravity=_level(),
+        linear=(0.0, 0.0, 0.0),
+        mag=None,
+        pitchRad=math.radians(4.5),
+    )
+    assert state["pitchDeg"] == 4.5
+
+
+def test_buildImuState_unseededPitch_graysPitchAndGrade_notTheWholeCard():
+    """
+    Given: a live IMU whose fusion has NOT yet seeded (started mid-drive under
+           power, so no uncontaminated reading has arrived)
+    When: the payload is assembled
+    Then: pitchDeg and gradePct are null with the pitch_unseeded reason while
+          the g-meter and heading stay live -- and gradePct is NEVER 0.0, which
+          would render as a confident "flat road" the estimator cannot support
+    """
+    state = buildImuState(
+        tsUtc="2026-07-31T00:00:00Z",
+        gravity=_level(),
+        linear=(0.1 * G, 0.0, 0.0),
+        mag=(20.0, 0.0, 0.0),
+        pitchRad=None,
+    )
+    assert state["available"] is True
+    assert state["pitchDeg"] is None
+    assert state["gradePct"] is None
+    assert state["reasons"]["pitchDeg"] == REASON_PITCH_UNSEEDED
+    assert state["reasons"]["gradePct"] == REASON_PITCH_UNSEEDED
+    assert state["gLon"] is not None
+    assert state["headingDeg"] is not None
+
+
+def test_buildImuState_gradeIsNeverDerivedFromGravityAsAFallback():
+    """
+    Given: a strongly pitched GRAVITY vector but no fused pitch
+    When: the payload is assembled
+    Then: gradePct stays null -- a gravity fallback would silently restore the
+          accel-only tilt US-521 exists to delete, and give one published fact
+          two producers that can disagree
+    """
+    state = buildImuState(
+        tsUtc="2026-07-31T00:00:00Z",
+        gravity=_pitched(12.0),
+        linear=(0.0, 0.0, 0.0),
+        mag=None,
+        pitchRad=None,
+    )
+    assert state["gradePct"] is None
+    assert state["pitchDeg"] is None
+
+
+def test_buildImuState_pitchPastVertical_separatesOutOfRangeFromUnseeded():
+    """
+    Given: a fused pitch past MAX_GRADE_PITCH_DEG
+    When: the payload is assembled
+    Then: pitchDeg is still reported (the attitude IS known) but gradePct grays
+          with pitch_out_of_range -- "we do not know" and "tan() is meaningless
+          here" are different facts and must not share one reason
+    """
+    state = buildImuState(
+        tsUtc="2026-07-31T00:00:00Z",
+        gravity=_level(),
+        linear=(0.0, 0.0, 0.0),
+        mag=None,
+        pitchRad=math.radians(MAX_GRADE_PITCH_DEG + 2.0),
+    )
+    assert state["pitchDeg"] is not None
+    assert state["gradePct"] is None
+    assert state["reasons"]["gradePct"] == REASON_PITCH_OUT_OF_RANGE
 
 
 # ------------------------------------------------------------------ ImuStateBridge
@@ -692,6 +743,165 @@ def test_bridge_endToEnd_busPublishWritesStatesImu(tmp_path: Path):
     assert state["headingDeg"] == 0.0
 
 
+# ------------------------------------------- US-521 fused pitch through the bridge
+
+
+def _gyroSample(value, seq: int = 1, *, capture: float = 0.0) -> Sample:
+    """Build one raw.imu.gyro burst sample (rad/s 3-tuple)."""
+    return Sample(
+        topic=TOPIC_IMU_GYRO,
+        source="imu",
+        value=value,
+        unit="rad/s",
+        tsUtc="2026-07-31T00:00:00Z",
+        tsCapture=capture,
+        driveId=None,
+        dataSource="real",
+        seq=seq,
+    )
+
+
+def _speedSample(value, seq: int = 1, *, capture: float = 0.0) -> Sample:
+    """Build one raw.obd.SPEED sample (the ZUPT gate's only input)."""
+    return Sample(
+        topic=TOPIC_OBD_SPEED,
+        source="obd",
+        value=value,
+        unit="kph",
+        tsUtc="2026-07-31T00:00:00Z",
+        tsCapture=capture,
+        driveId=None,
+        dataSource="real",
+        seq=seq,
+    )
+
+
+def _feedBursts(bridge, accel, *, seconds: float, startAt: float, hz: float = 50.0) -> float:
+    """Drive the bridge with accel bursts (gyro zero) for ``seconds``."""
+    step = 1.0 / hz
+    capture = startAt
+    for i in range(int(round(seconds * hz))):
+        capture = startAt + i * step
+        bridge.handleSample(_gyroSample((0.0, 0.0, 0.0), seq=i + 1, capture=capture))
+        bridge.handleSample(_accel(accel, seq=i + 1, capture=capture))
+    return capture + step
+
+
+def test_handleSample_gyroTopic_isConsumedNotIgnored(tmp_path: Path):
+    """
+    Given: a bridge (US-521 subscribes to the gyro the reader has always published)
+    When: a raw.imu.gyro sample arrives
+    Then: it is claimed -- returning False here would mean the fusion never sees
+          a rate and silently degrades to the accel-only tilt it replaced
+    """
+    bridge = ImuStateBridge(None, str(tmp_path))
+    assert bridge.handleSample(_gyroSample((0.0, 0.0, 0.0))) is True
+
+
+def test_handleSample_speedTopic_isConsumedNotIgnored(tmp_path: Path):
+    """
+    Given: a bridge
+    When: a raw.obd.SPEED sample arrives (the ZUPT gate's only input)
+    Then: it is claimed, and claiming it writes NO state -- speed is not a
+          display field, it is a gate
+    """
+    bridge = ImuStateBridge(None, str(tmp_path))
+    assert bridge.handleSample(_speedSample(0.0)) is True
+    assert not (tmp_path / IMU_STATE_FILENAME).exists()
+
+
+def test_bridge_realChain_sustainedPointThreeG_doesNotRenderAsASeventeenPercentGrade(
+    tmp_path: Path,
+):
+    """
+    Given: a level, settled bridge -- the REAL bridge, REAL fusion, REAL payload
+    When: the car pulls a sustained 0.3 g on flat ground for 12 s (an on-ramp),
+          longer than the US-478 gravity filter's 5 s time constant so the
+          accel-only path would have fully absorbed it
+    Then: the published gradePct stays ~0, not the ~17.6% that atan(0.3) = 16.7
+          degrees produces. This is Spool's failure mode asserted end-to-end
+          through the file the card actually reads, not just on the estimator.
+    """
+    bridge = ImuStateBridge(None, str(tmp_path))
+    at = _feedBursts(bridge, _level(), seconds=1.0, startAt=0.0)
+    _feedBursts(bridge, (0.3 * G, 0.0, G), seconds=12.0, startAt=at)
+
+    state = _readState(tmp_path)
+    assert abs(state["gradePct"]) < 2.0, f"0.3 g rendered as {state['gradePct']}% grade"
+    assert abs(state["pitchDeg"]) < 1.0
+
+
+def test_bridge_realChain_zuptAtAConfirmedStop_correctsTheMountTilt(tmp_path: Path):
+    """
+    Given: the board bolted in 4 degrees nose-up, so every raw reading carries a
+           constant offset that is mount tilt and not road grade
+    When: the car makes enough confirmed stops (raw.obd.SPEED at 0 across
+          Spool's [EXACT:3] s gate) for the bias mean to converge
+    Then: the published grade at rest reads ~0 -- the whole point of ZUPT, wired
+          through the REAL bus topics rather than called on the estimator
+    """
+    bridge = ImuStateBridge(None, str(tmp_path), pitchFusion=PitchFusion(zuptMinStops=3))
+    tilt = _pitched(4.0)
+    at = 0.0
+    for stop in range(3):
+        bridge.handleSample(_speedSample(40.0, seq=stop, capture=at))
+        at = _feedBursts(bridge, tilt, seconds=2.0, startAt=at)
+        for sec in range(6):  # six 1 Hz zero readings = a 5 s observed span
+            bridge.handleSample(_speedSample(0.0, seq=stop, capture=at + sec))
+        at = _feedBursts(bridge, tilt, seconds=6.0, startAt=at)
+        bridge.handleSample(_speedSample(40.0, seq=stop, capture=at))
+
+    at = _feedBursts(bridge, tilt, seconds=0.1, startAt=at)
+    state = _readState(tmp_path)
+    assert abs(state["pitchDeg"]) < 0.2, f"mount tilt survived ZUPT: {state['pitchDeg']} deg"
+    assert abs(state["gradePct"]) < 0.5
+
+
+def test_bridge_unplugged_dropsTheAttitude_butKeepsTheZuptCalibration(tmp_path: Path):
+    """
+    Given: a bridge with a live fused pitch and a converged ZUPT bias
+    When: the sensor goes absent mid-session
+    Then: the attitude is dropped (a frozen pitch would render as a live grade)
+          while the bias survives -- how the board is BOLTED IN did not change
+          when the cable did, and re-converging costs another five stoplights
+    """
+    fusion = PitchFusion(zuptMinStops=1)
+    bridge = ImuStateBridge(None, str(tmp_path), pitchFusion=fusion)
+    tilt = _pitched(3.0)
+    at = 0.0
+    for sec in range(6):
+        bridge.handleSample(_speedSample(0.0, capture=at + sec))
+    at = _feedBursts(bridge, tilt, seconds=6.0, startAt=at)
+    bridge.handleSample(_speedSample(40.0, capture=at))
+    assert fusion.stopCount == 1
+
+    bridge.handleSample(_presence(False, capture=at + 1.0))
+
+    assert fusion.pitchRad is None
+    assert fusion.stopCount == 1
+    assert _readState(tmp_path)["pitchDeg"] is None
+
+
+def test_bridge_staleGyro_isNotIntegrated(tmp_path: Path):
+    """
+    Given: a gyro reading far older than the burst pairing window
+    When: accel bursts keep arriving on level ground
+    Then: the stale rate is NOT integrated -- a frozen gyro would manufacture
+          attitude out of an old reading, exactly the way a frozen compass
+          needle is worse than an absent one (the US-478 mag rule, carried over)
+    """
+    bridge = ImuStateBridge(None, str(tmp_path))
+    bridge.handleSample(_gyroSample((0.0, math.radians(30.0), 0.0), capture=0.0))
+    _feedBursts(bridge, _level(), seconds=0.02, startAt=0.0)
+    # Now let the gyro go stale, and feed a contaminated accel so nothing else
+    # can move the pitch. A live-but-stale rate would wind it up.
+    step = 1.0 / 50.0
+    for i in range(500):
+        bridge.handleSample(_accel((0.5 * G, 0.0, G), seq=i, capture=10.0 + i * step))
+
+    assert abs(_readState(tmp_path)["pitchDeg"]) < 1.0
+
+
 # ------------------------------------------------------------------------ factory
 
 
@@ -739,8 +949,42 @@ def test_factory_bothOn_buildsBridgeSubscribedToTheRealProducerTopics(tmp_path: 
     assert bridge is not None
     patterns = bridge._sub.topics  # noqa: SLF001 -- pinning the wiring
     assert sensor_reader.TOPIC_IMU_ACCEL in patterns
+    assert sensor_reader.TOPIC_IMU_GYRO in patterns
     assert sensor_reader.TOPIC_IMU_MAG in patterns
     assert sensor_reader.STATE_IMU in patterns
+    # US-521: the OBD speed the ZUPT gate needs is published onto this SAME bus
+    # by the capture loop, so the subscription is the whole acquisition path.
+    assert TOPIC_OBD_SPEED in patterns
+
+
+def test_factory_zuptSpeedTopic_matchesWhatTheCaptureLoopActuallyPublishes():
+    """
+    Given: realtime._publishReading emits f"raw.obd.{reading.parameterName}"
+    When: the bridge's ZUPT topic is compared against the configured PID name
+    Then: they are the same string -- a rename on either side would leave the
+          ZUPT gate subscribed to a topic nobody publishes, which fails SILENTLY
+          (the fusion simply never confirms a stop and never converges a bias)
+    """
+    assert TOPIC_OBD_SPEED == "raw.obd.SPEED"
+
+
+def test_factory_passesTheConfiguredPitchAndZuptSettingsThrough():
+    """
+    Given: a config carrying non-default pitch/ZUPT knobs
+    When: the factory builds the bridge
+    Then: they reach the estimator -- otherwise the config keys are decorative
+          and the shipped constants are unreachable magic numbers
+    """
+    config = _config()
+    config["pi"]["sensors"]["imu"].update(
+        {"pitchTauSec": 2.5, "accelTrustBand": 0.01, "zuptMinStops": 2}
+    )
+    bridge = createImuStateBridgeFromConfig(config, SampleBus())
+    assert bridge is not None
+    fusion = bridge._pitchFusion  # noqa: SLF001 -- pinning the wiring
+    assert fusion._tauS == 2.5  # noqa: SLF001
+    assert fusion._trustBand == 0.01  # noqa: SLF001
+    assert fusion._minStops == 2  # noqa: SLF001
 
 
 def test_bridgeTopics_matchTheProducerConstants():

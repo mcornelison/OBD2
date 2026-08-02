@@ -300,6 +300,20 @@ DEFAULTS: dict[str, Any] = {
     'pi.sensors.imu.mount.forward': '+x',
     'pi.sensors.imu.mount.left': '+y',
     'pi.sensors.imu.mount.up': '+z',
+    # US-521 (F-125) gyro-fused pitch + ZUPT.  An accelerometer cannot
+    # distinguish grade from acceleration, so a 0.3 g pull reads as a
+    # 16.7-degree climb; the gyro carries the short term and the accel corrects
+    # it ONLY near 1 g (accelTrustBand, a fraction of g -- must stay tighter
+    # than the 4.4% excess a 0.3 g pull produces or the phantom leaks back in).
+    # zuptMinStopSec is Spool's [EXACT: 3] s zero-velocity gate -- LOAD-BEARING,
+    # flag him before any drift.  The rest are Rex-derived and routed to Spool
+    # for sigma sizing with the sample rates (US-521 AC4).
+    'pi.sensors.imu.pitchTauSec': 5.0,
+    'pi.sensors.imu.accelTrustBand': 0.02,
+    'pi.sensors.imu.zuptMinStopSec': 3.0,
+    'pi.sensors.imu.zuptSpeedMaxAgeSec': 2.0,
+    'pi.sensors.imu.zuptMinStops': 5,
+    'pi.sensors.imu.zuptWindowStops': 20,
     'pi.sensors.light.enabled': False,
     'pi.sensors.light.sampleHz': 1,
     'pi.sensors.retentionDays': 7,
@@ -940,8 +954,24 @@ class ConfigValidator:
                 missingFields=['pi.display.autoDim.curve'],
             )
 
+    # Every IMU knob that must be a POSITIVE number.  A zero or negative one is
+    # not a slow filter or a lenient gate, it is a divide-by-zero or a
+    # permanently-open window -- and US-521's accelTrustBand at 0 would gate the
+    # accel correction off forever, leaving pure gyro drift with nothing to
+    # correct it (a silently-wrong instrument, which is what fails fast here).
+    _IMU_POSITIVE_KEYS = (
+        'pi.sensors.imu.stateHz',
+        'pi.sensors.imu.gravityTauSec',
+        'pi.sensors.imu.pitchTauSec',
+        'pi.sensors.imu.accelTrustBand',
+        'pi.sensors.imu.zuptMinStopSec',
+        'pi.sensors.imu.zuptSpeedMaxAgeSec',
+        'pi.sensors.imu.zuptMinStops',
+        'pi.sensors.imu.zuptWindowStops',
+    )
+
     def _validateImuStateBridge(self, config: dict[str, Any]) -> None:
-        """Validate pi.sensors.imu.{stateHz,gravityTauSec,mount} (US-478 / F-113).
+        """Validate pi.sensors.imu.{rates,mount,pitch,zupt} (US-478, US-521).
 
         Called after defaults are applied. The mount axis map is the one piece of
         IMU config that is a CALIBRATION fact rather than a rate, and a wrong one
@@ -958,7 +988,7 @@ class ConfigValidator:
             ConfigValidationError: If a rate is non-positive, or an axis spec is
                 not one of +/-x, +/-y, +/-z, or two axes name the same device axis.
         """
-        for key in ('pi.sensors.imu.stateHz', 'pi.sensors.imu.gravityTauSec'):
+        for key in self._IMU_POSITIVE_KEYS:
             val = self._getNestedValue(config, key)
             if val is not None and (
                 isinstance(val, bool) or not isinstance(val, (int, float)) or val <= 0

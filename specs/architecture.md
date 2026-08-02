@@ -2905,17 +2905,18 @@ accel/gyro/mag stay on the bus and in the versioned `edr_imu_sample` store; this
 file is the *derived* view and holds no raw axes at all. **The reader computes,
 the display consumes** (Atlas DELTA-2) — the card never fuses.
 
-*Contract (Atlas Q-A, 2026-07-30).* `{available, ts, gLat, gLon, gMag,
-headingDeg, gradePct, altitude, reasons}`:
+*Contract (Atlas Q-A, 2026-07-30; `pitchDeg` added by US-521).* `{available, ts,
+gLat, gLon, gMag, headingDeg, pitchDeg, gradePct, altitude, reasons}`:
 
 | Field | Meaning | Notes |
 |---|---|---|
 | `gLat` / `gLon` / `gMag` | horizontal acceleration, **units = g** (`g_n` = 9.80665 m/s²) | `gLon` + = accelerating, − = braking; `gLat` + = **RIGHT** (automotive convention); `gMag` = hypot |
 | `headingDeg` | magnetic bearing of the vehicle nose, 0–359 | tilt-compensated; **magnetic, not true** (no declination in the contract) |
-| `gradePct` | `tan(pitch) × 100`, pitch from the gravity vector | + = climbing; `null` past `MAX_GRADE_PITCH_DEG` (85°), where `tan` runs away |
-| `altitude` | **always typed `null`** + `reasons.altitude = "no_source"` | the ICM-20948 has no barometer; a zeroed altitude renders as sea level — a confident lie. A future BMP280/GPS fills it, not this bridge |
+| `pitchDeg` | **gyro-fused, ZUPT-corrected** chassis pitch (US-521) | + = nose up; the single published attitude fact — US-519's altitude integrand and `gradePct` both read *this*, never a second derivation |
+| `gradePct` | `tan(pitchDeg) × 100` | + = climbing; `null` past `MAX_GRADE_PITCH_DEG` (85°), where `tan` runs away |
+| `altitude` | **always typed `null`** + `reasons.altitude = "no_source"` | the ICM-20948 has no barometer; a zeroed altitude renders as sea level — a confident lie. US-519 derives it from `pitchDeg`; a future GPS/baro supersedes that, not this bridge |
 | `available` / `ts` | freshness | absent/stale → the US-497 idle-card fallback |
-| `reasons` | per-field absence vocabulary | `sensor_absent`, `no_mag_reading`, `tilt_unresolved`, `pitch_out_of_range`, `no_source` |
+| `reasons` | per-field absence vocabulary | `sensor_absent`, `no_mag_reading`, `tilt_unresolved`, `pitch_out_of_range`, `pitch_unseeded`, `no_source` |
 
 *Honest-availability is PER FIELD.* A dead magnetometer grays `headingDeg` alone
 while the g fields stay live; an unwired sensor writes an **explicit**
@@ -2930,10 +2931,76 @@ Publishing the raw horizontal components would pin a permanent phantom **0.17 g*
 on the g-meter for a board bolted in at a 10° tilt. The slow estimate tracks
 mount tilt and road grade (which change over tens of seconds); the fast residual
 is the acceleration the g-meter exists to show. The **same** estimate defines the
-level frame for `gLat`/`gLon`, the pitch for `gradePct`, and the tilt
-compensation for `headingDeg` — one gravity fact, three consumers, no chance for
-three derivations to disagree. The default τ is a **Rex-derived filter constant
-flagged for Atlas/Spool confirmation against a real drive**, not a tuning value.
+level frame for `gLat`/`gLon` **and** the tilt compensation for `headingDeg` —
+one gravity fact, two consumers, no chance for two derivations to disagree. The
+default τ is a **Rex-derived filter constant flagged for Atlas/Spool confirmation
+against a real drive**, not a tuning value.
+
+##### Gyro-fused pitch + ZUPT (US-521 / F-125, Sprint 69 / V0.29.24)
+
+**Why the low-pass above was not enough for pitch.** An accelerometer cannot
+distinguish grade from acceleration — they are literally the same measurement
+(Spool, 2026-08-01). Specific force is `a_vehicle − g_vector`, so a 0.3 g pull on
+*flat* ground adds 0.3 g to the forward axis and any accel-derived tilt reads
+`atan(0.3)` = **16.7° of climb**. The 5 s gravity τ rejects a 1 s event but *not*
+a 10 s on-ramp (2 τ), so `gradePct` was structurally wrong under sustained
+acceleration — and it is the integrand US-519's interim altitude would have
+inherited, where a 0.5° sustained bias is 70 m of fake climb over a 10-minute
+drive against ±10–20 m of real Chicagoland relief.
+
+**`src/pi/sensors/pitch_fusion.py` (`PitchFusion`)** replaces that path. Pure and
+I/O-free — no bus, no device, no clock — so it is deterministically testable and
+US-519 reuses it unchanged. Three mechanisms, all Spool's:
+
+1. **Gyro integration** carries the short term (`raw.imu.gyro`, rad/s, already
+   published by the reader under the same burst `seq`; the bridge simply had
+   never subscribed). Sign is *derived*, not guessed: the frame is right-handed
+   `forward × left = up`, so `ω × forward = −ω_left · up` and a nose-up rate is a
+   **negative** left-axis rate. It must agree with the accel convention or the
+   two halves of the filter fight each other.
+2. **The accel corrects the gyro only near 1 g** (`accelTrustBand`, default
+   0.02 = 2%). This is what rejects the phantom: under 0.3 g the specific force is
+   1.044 g, a 4.4% excess, well outside the band. The band cannot be much tighter
+   or road vibration gates the accel off permanently, leaving pure gyro drift.
+3. **ZUPT** at every confirmed stop — OBD speed 0 across `[EXACT: 3] s` (Spool,
+   **load-bearing**). At zero velocity the accel reads *pure gravity*, so the
+   measured tilt is the true chassis pitch: the one uncontaminated fix the
+   estimator gets, applied as a **snap, not a blend**. One stop cannot separate
+   mount tilt from the slope you parked on, but the rolling mean over stops
+   converges on the **bias** — valid because this terrain is flat, so real road
+   slopes average ~0. City stoplights are the free calibration signal. Published
+   pitch is `fused − bias`.
+
+**`raw.obd.SPEED` is the ZUPT gate and the bridge stays a pure bus consumer.**
+The capture loop already publishes it onto the *same* `SampleBus`
+(`realtime._publishReading`), so this is one more subscription, not a second
+acquisition path — the bridge still opens no OBD connection and no I²C device.
+The value is used as a boolean "is it zero", **never as a magnitude**, so the
+reading's unit is irrelevant here by construction.
+
+*Honest-instrument, per branch.* The pitch starts `null` and is never a
+fabricated 0.0 (`reasons.pitchDeg = "pitch_unseeded"`, distinct from
+`tilt_unresolved` — the sensor is fine, the attitude is simply not known yet); it
+seeds **only** from an uncontaminated reading, because seeding mid-pull bakes the
+phantom in as the origin the gyro then integrates from; no bias is applied until
+`zuptMinStops` stops have been observed, since a bias claimed from one stop is a
+calibration nobody measured; the bias window is **rolling**, so a physical
+remount ages out rather than freezing on an old constant; and **an absent or
+stale OBD speed is never read as "stopped"**. That last one is the dangerous
+case, not a failed read: honouring a stale zero after a mid-stop link drop would
+keep hard-correcting the attitude to whatever the accelerometer says for the rest
+of the drive — snapping pitch to the 16.7° phantom on every on-ramp, with more
+confidence than the drift it was fixing. A stop therefore requires zero speed
+*observed across* the whole gate **and** still fresh (`zuptSpeedMaxAgeSec`,
+default 2 s, deliberately **below** the 3 s gate); elapsed time after one zero
+reading is evidence only that we stopped being told.
+
+*Config (`pi.sensors.imu.*`, all positive-checked in `_validateImuStateBridge`).*
+`pitchTauSec` (5.0), `accelTrustBand` (0.02), `zuptMinStopSec` (**3.0 — Spool
+`[EXACT]`, flag him before any drift**), `zuptSpeedMaxAgeSec` (2.0),
+`zuptMinStops` (5), `zuptWindowStops` (20). All but `zuptMinStopSec` are
+**Rex-derived and routed to Spool for σ_pitch sizing** (US-521 AC4) before
+US-519/US-520 build the altitude display on top.
 
 *Config (all under `pi.sensors.imu.*`, validated in `_validateImuStateBridge`).*
 `stateHz` (default 4) is the state-file write cadence, grounded to the

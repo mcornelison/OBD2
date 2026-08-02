@@ -12,7 +12,8 @@
 #   contract published here is exactly:
 #     gLat / gLon / gMag  -- horizontal g (units = g, 1 g = 9.80665 m/s^2)
 #     headingDeg          -- 0..359, tilt-compensated magnetometer bearing
-#     gradePct            -- tan(pitch) * 100, pitch from the gravity vector
+#     pitchDeg            -- US-521 GYRO-FUSED, ZUPT-corrected chassis pitch
+#     gradePct            -- tan(pitchDeg) * 100 (reads pitchDeg, never gravity)
 #     altitude            -- typed NULL + reason "no_source" (no barometer)
 #     available + ts      -- freshness; absent/stale -> US-497 idle-card fallback
 #   RAW accel/gyro/mag stay on the bus + the versioned edr_imu_sample store (A-4);
@@ -30,7 +31,15 @@
 #   bolted in at a 10-degree tilt. So a slow low-pass tracks the gravity vector
 #   (mount tilt + road grade change over seconds), and the fast residual is the
 #   vehicle acceleration the g-meter exists to show. The SAME estimate feeds the
-#   grade and the heading tilt-compensation -- one gravity fact, three consumers.
+#   g-meter's level frame and the heading tilt-compensation -- one gravity fact,
+#   two consumers.
+#
+#   PITCH IS NOT ONE OF THOSE CONSUMERS ANY MORE (US-521). A 5 s low-pass rejects
+#   a 1 s acceleration but NOT a 10 s on-ramp, so the grade read off this vector
+#   was structurally wrong under sustained acceleration -- Spool's 16.7-degree
+#   phantom. pitchDeg/gradePct now come from pi.sensors.pitch_fusion (gyro
+#   integration + accel correction only near 1 g + ZUPT at confirmed stops), and
+#   there is deliberately NO gravity fallback: one published fact, one producer.
 #
 #   This module opens no I2C device and starts no OBD connection -- bus subscriber
 #   only, so it cannot re-introduce the A-17 second-connection race. Gated behind
@@ -48,6 +57,10 @@
 #               |              | derived bridge (gLat/gLon/gMag, headingDeg,
 #               |              | gradePct, typed-NULL altitude), gravity low-pass,
 #               |              | config mount frame, display-cadence decimation.
+# 2026-08-02    | Rex (US-521) | Subscribe raw.imu.gyro + raw.obd.SPEED; publish
+#               |              | gyro-fused pitchDeg and derive gradePct from it
+#               |              | (accel-only tilt removed from the grade path);
+#               |              | ZUPT gate fed from the bus speed topic.
 # ================================================================================
 ################################################################################
 
@@ -64,30 +77,54 @@ from typing import Any
 
 from common.time.helper import utcIsoNow
 
+# US-521: the pitch estimator owns the gravity/tilt constants US-478 defined
+# here; they are re-exported below so there is exactly ONE definition of each.
+from pi.sensors.pitch_fusion import (
+    DEFAULT_ACCEL_TRUST_BAND,
+    DEFAULT_PITCH_TAU_S,
+    DEFAULT_ZUPT_MIN_STOPS,
+    DEFAULT_ZUPT_SPEED_MAX_AGE_S,
+    DEFAULT_ZUPT_WINDOW_STOPS,
+    MAX_GRADE_PITCH_DEG,
+    MIN_GRAVITY_MS2,
+    STANDARD_GRAVITY_MS2,
+    ZUPT_MIN_STOP_S,
+    PitchFusion,
+    gradePctFromPitchRad,
+)
+
 # Reuse the boot-state primitives (one provisioning + atomic-write impl, no dup).
 from pi.splash.boot_state_emitter import ensureStatesDir, writeStateAtomic
 
 logger = logging.getLogger(__name__)
 
 __all__ = [
+    "DEFAULT_ACCEL_TRUST_BAND",
     "DEFAULT_GRAVITY_TAU_S",
     "DEFAULT_MOUNT",
+    "DEFAULT_PITCH_TAU_S",
     "DEFAULT_STATE_HZ",
+    "DEFAULT_ZUPT_MIN_STOPS",
+    "DEFAULT_ZUPT_SPEED_MAX_AGE_S",
+    "DEFAULT_ZUPT_WINDOW_STOPS",
     "IMU_STATE_FILENAME",
     "MAG_MAX_AGE_POLLS",
     "MAX_GRADE_PITCH_DEG",
     "REASON_NO_MAG",
     "REASON_NO_SOURCE",
     "REASON_PITCH_OUT_OF_RANGE",
+    "REASON_PITCH_UNSEEDED",
     "REASON_SENSOR_ABSENT",
     "REASON_TILT_UNRESOLVED",
     "STANDARD_GRAVITY_MS2",
     "STATE_IMU_PRESENCE",
     "TOPIC_IMU_ACCEL",
+    "TOPIC_IMU_GYRO",
     "TOPIC_IMU_MAG",
+    "TOPIC_OBD_SPEED",
+    "ZUPT_MIN_STOP_S",
     "ImuStateBridge",
     "buildImuState",
-    "computeGradePct",
     "computeHeadingDeg",
     "computeHorizontalG",
     "createImuStateBridgeFromConfig",
@@ -100,12 +137,17 @@ IMU_STATE_FILENAME = "imu"
 # The bus channels this bridge consumes. Kept in sync with sensor_reader (the
 # producer-side SSOT) -- a test pins them equal so the seam cannot drift.
 TOPIC_IMU_ACCEL = "raw.imu.accel"
+TOPIC_IMU_GYRO = "raw.imu.gyro"
 TOPIC_IMU_MAG = "raw.imu.mag"
 STATE_IMU_PRESENCE = "state.sensor.imu"
 
-# Standard gravity (BIPM/CODATA g_n = 9.80665 m/s^2 exactly) -- the divisor that
-# turns the reader's m/s^2 into the contract's g units (Atlas: 1 g = 9.81 m/s^2).
-STANDARD_GRAVITY_MS2 = 9.80665
+# US-521: the OBD vehicle-speed topic, consumed ONLY as the ZUPT zero-velocity
+# gate. This bridge stays a pure bus consumer -- it opens no OBD connection and
+# the topic is already published by the capture loop onto the same SampleBus
+# (realtime._publishReading), so this is one more subscription, not a second
+# acquisition path. The value is used as a boolean "is it zero", never as a
+# magnitude, so the reading's UNIT is deliberately irrelevant here.
+TOPIC_OBD_SPEED = "raw.obd.SPEED"
 
 # Default tmpfs states dir (matches boot_state_emitter + the states-http unit).
 _DEFAULT_STATES_DIR = "/run/eclipse-obd/states"
@@ -147,20 +189,15 @@ DEFAULT_IMU_SAMPLE_HZ = 50
 # freshest mag is at most one interval old; 5 is slack for scheduler jitter.
 MAG_MAX_AGE_POLLS = 5
 
-# Beyond this pitch, tan() runs away (tan(85 deg) = 1143%) and the reading is not
-# a road grade by any reading -- report unknown rather than an absurd number.
-MAX_GRADE_PITCH_DEG = 85.0
-
-# A gravity vector shorter than this is not a usable level reference (free-fall,
-# an unreadable burst, or garbage) -- every tilt-derived field grays.
-_MIN_GRAVITY_MS2 = 0.5
+# Local alias for the shared gravity floor (defined in pitch_fusion, one home).
+_MIN_GRAVITY_MS2 = MIN_GRAVITY_MS2
 
 # Display precision. The g fields are far coarser than the sensor (16-bit at
 # +/-2 g is ~0.00006 g); this is a DISPLAY view, and trailing noise digits are
 # not information the card can render.
 _G_DECIMALS = 3
 _HEADING_DECIMALS = 1
-_GRADE_DECIMALS = 1
+_PITCH_DECIMALS = 2
 
 # Named absence reasons (the honest-availability vocabulary the card renders).
 REASON_SENSOR_ABSENT = "sensor_absent"
@@ -168,9 +205,21 @@ REASON_NO_MAG = "no_mag_reading"
 REASON_TILT_UNRESOLVED = "tilt_unresolved"
 REASON_PITCH_OUT_OF_RANGE = "pitch_out_of_range"
 REASON_NO_SOURCE = "no_source"
+# US-521: the fusion has not yet seen an UNCONTAMINATED reading to seed from
+# (e.g. the process started mid-drive under power). Distinct from
+# tilt_unresolved -- the sensor is fine, the attitude is simply not yet known.
+REASON_PITCH_UNSEEDED = "pitch_unseeded"
 
 # The derived fields, in payload order (the reasons map is keyed by these).
-_DERIVED_FIELDS = ("gLat", "gLon", "gMag", "headingDeg", "gradePct", "altitude")
+_DERIVED_FIELDS = (
+    "gLat",
+    "gLon",
+    "gMag",
+    "headingDeg",
+    "pitchDeg",
+    "gradePct",
+    "altitude",
+)
 
 # Default mount frame: the board's +x points at the vehicle nose, +y out the left
 # flank, +z at the roof. A physical remount is a CONFIG edit (pi.sensors.imu.mount)
@@ -264,26 +313,6 @@ def _levelFrame(
     return horizontals[0], horizontals[1]
 
 
-def computeGradePct(gravity: tuple[float, float, float]) -> float | None:
-    """Road grade in percent from the gravity vector (Atlas: tan(pitch) * 100).
-
-    Args:
-        gravity: The gravity estimate in vehicle coordinates (forward, left, up).
-
-    Returns:
-        Signed grade percent (positive = climbing), or None when there is no
-        usable gravity reference or the pitch is past MAX_GRADE_PITCH_DEG (where
-        tan runs away and the number would be a lie dressed as precision).
-    """
-    if _norm(gravity) < _MIN_GRAVITY_MS2:
-        return None
-    fwd, left, up = gravity
-    pitchRad = math.atan2(fwd, math.hypot(left, up))
-    if abs(math.degrees(pitchRad)) > MAX_GRADE_PITCH_DEG:
-        return None
-    return round(math.tan(pitchRad) * 100.0, _GRADE_DECIMALS)
-
-
 def computeHeadingDeg(
     gravity: tuple[float, float, float], mag: tuple[float, float, float]
 ) -> float | None:
@@ -340,6 +369,7 @@ def buildImuState(
     gravity: tuple[float, float, float] | None = None,
     linear: tuple[float, float, float] | None = None,
     mag: tuple[float, float, float] | None = None,
+    pitchRad: float | None = None,
     unavailableReason: str | None = None,
 ) -> dict:
     """Assemble the states/imu payload (pure -- the Atlas Q-A contract).
@@ -351,15 +381,21 @@ def buildImuState(
         linear: The gravity-removed acceleration in vehicle coordinates, or None.
         mag: The magnetometer reading in vehicle coordinates, or None when no
             fresh reading is paired with this burst.
+        pitchRad: US-521's GYRO-FUSED, ZUPT-corrected chassis pitch in radians,
+            or None when the estimator has not seeded. This is the ONLY source
+            of ``pitchDeg`` and ``gradePct``: deriving either from ``gravity``
+            as a fallback would quietly restore the accel-only tilt the story
+            exists to delete, and give one fact two disagreeing producers.
         unavailableReason: When set, the whole instrument is reported absent with
             this reason (e.g. the sensor is not wired) and every derived field is
             null -- silence reported as silence.
 
     Returns:
-        ``{available, ts, gLat, gLon, gMag, headingDeg, gradePct, altitude,
-        reasons}``. ``altitude`` is ALWAYS null with reason ``"no_source"``: the
-        ICM-20948 has no barometer, and a zeroed altitude would render as sea
-        level -- a confident lie (a future BMP280/GPS fills it, not this bridge).
+        ``{available, ts, gLat, gLon, gMag, headingDeg, pitchDeg, gradePct,
+        altitude, reasons}``. ``altitude`` is ALWAYS null with reason
+        ``"no_source"``: the ICM-20948 has no barometer, and a zeroed altitude
+        would render as sea level -- a confident lie (US-519 derives it from
+        this pitch; a future GPS/baro supersedes that, not this bridge).
     """
     reasons: dict[str, str] = {"altitude": REASON_NO_SOURCE}
     state: dict[str, Any] = {
@@ -369,6 +405,7 @@ def buildImuState(
         "gLon": None,
         "gMag": None,
         "headingDeg": None,
+        "pitchDeg": None,
         "gradePct": None,
         "altitude": None,
         "reasons": reasons,
@@ -396,11 +433,20 @@ def buildImuState(
         state["gLat"] = gLat
         state["gMag"] = round(math.hypot(gLon, gLat), _G_DECIMALS)
 
-    grade = computeGradePct(gravity)
-    if grade is None:
-        reasons["gradePct"] = REASON_PITCH_OUT_OF_RANGE
+    # US-521: pitch + grade come from the FUSED estimate only. An unseeded
+    # estimator and a past-vertical attitude are different facts and are
+    # reported as such -- "the attitude is not known yet" must not read like
+    # "you are climbing a cliff".
+    grade = gradePctFromPitchRad(pitchRad)
+    if pitchRad is None:
+        reasons["pitchDeg"] = REASON_PITCH_UNSEEDED
+        reasons["gradePct"] = REASON_PITCH_UNSEEDED
     else:
-        state["gradePct"] = grade
+        state["pitchDeg"] = round(math.degrees(pitchRad), _PITCH_DECIMALS)
+        if grade is None:
+            reasons["gradePct"] = REASON_PITCH_OUT_OF_RANGE
+        else:
+            state["gradePct"] = grade
 
     heading = computeHeadingDeg(gravity, mag) if mag is not None else None
     if heading is None:
@@ -450,6 +496,7 @@ class ImuStateBridge:
         stateHz: float = DEFAULT_STATE_HZ,
         gravityTauSec: float = DEFAULT_GRAVITY_TAU_S,
         sampleHz: int = DEFAULT_IMU_SAMPLE_HZ,
+        pitchFusion: PitchFusion | None = None,
         nowIsoFn: Callable[[], str] | None = None,
     ) -> None:
         """Bind the bridge to its source subscription + states dir.
@@ -462,8 +509,12 @@ class ImuStateBridge:
             stateHz: State-file write cadence -- the DISPLAY's poll rate, not the
                 sensor's burst rate.
             gravityTauSec: Gravity low-pass time constant, seconds.
-            sampleHz: The reader's burst rate; the magnetometer pairing window is
-                derived from it (MAG_MAX_AGE_POLLS intervals).
+            sampleHz: The reader's burst rate; the magnetometer AND gyro pairing
+                windows are derived from it (MAG_MAX_AGE_POLLS intervals).
+            pitchFusion: US-521 gyro-fused pitch estimator. Defaults to one built
+                with the shipped constants; injectable so a caller can pass a
+                config-tuned estimator without this class growing six more
+                parameters that only pass through.
             nowIsoFn: Fallback clock for ``ts`` when a sample carries no tsUtc.
         """
         self._sub = subscription
@@ -475,6 +526,7 @@ class ImuStateBridge:
         rate = sampleHz if sampleHz and sampleHz > 0 else DEFAULT_IMU_SAMPLE_HZ
         self._magMaxAgeS = MAG_MAX_AGE_POLLS / float(rate)
         self._nowIsoFn = nowIsoFn if nowIsoFn is not None else utcIsoNow
+        self._pitchFusion = pitchFusion if pitchFusion is not None else PitchFusion()
         self._thread: threading.Thread | None = None
         self._stop = threading.Event()
         # Running state (single-threaded: only the drain thread touches these).
@@ -482,6 +534,8 @@ class ImuStateBridge:
         self._lastAccelCapture: float | None = None
         self._mag: tuple[float, float, float] | None = None
         self._magCapture: float | None = None
+        self._gyro: tuple[float, float, float] | None = None
+        self._gyroCapture: float | None = None
         self._lastWriteCapture: float | None = None
 
     # -- lifecycle -------------------------------------------------------------
@@ -518,9 +572,9 @@ class ImuStateBridge:
     def handleSample(self, sample: Any) -> bool:
         """Fold one bus sample into the states/imu view.
 
-        Returns True if the sample was one of this bridge's topics (accel, mag,
-        or the retained presence STATE); False for anything else, which is
-        ignored without a write.
+        Returns True if the sample was one of this bridge's topics (accel, gyro,
+        mag, OBD speed, or the retained presence STATE); False for anything
+        else, which is ignored without a write.
         """
         topic = getattr(sample, "topic", None)
         if topic == STATE_IMU_PRESENCE:
@@ -529,6 +583,19 @@ class ImuStateBridge:
         if topic == TOPIC_IMU_MAG:
             self._mag = _vec3(getattr(sample, "value", None))
             self._magCapture = float(getattr(sample, "tsCapture", 0.0))
+            return True
+        if topic == TOPIC_IMU_GYRO:
+            # Held like the magnetometer and paired with the accel by capture
+            # time: the reader bursts accel+gyro+mag under ONE seq, so the
+            # freshest gyro belongs to the accel arriving alongside it.
+            self._gyro = _vec3(getattr(sample, "value", None))
+            self._gyroCapture = float(getattr(sample, "tsCapture", 0.0))
+            return True
+        if topic == TOPIC_OBD_SPEED:
+            # US-521 ZUPT gate. Consumed as "is it zero", never as a magnitude.
+            self._pitchFusion.observeSpeed(
+                getattr(sample, "value", None), float(getattr(sample, "tsCapture", 0.0))
+            )
             return True
         if topic != TOPIC_IMU_ACCEL:
             return False
@@ -549,6 +616,13 @@ class ImuStateBridge:
         self._lastAccelCapture = None
         self._mag = None
         self._magCapture = None
+        self._gyro = None
+        self._gyroCapture = None
+        # Drop the attitude too -- a frozen pitch left over from before the
+        # unplug would render as a live grade. The ZUPT bias deliberately
+        # survives (see PitchFusion.reset): how the board is bolted in did not
+        # change, and re-converging it costs another five stoplights.
+        self._pitchFusion.reset()
         tsUtc = getattr(sample, "tsUtc", "") or self._nowIsoFn()
         self._writeState(buildImuState(tsUtc=tsUtc, unavailableReason=REASON_SENSOR_ABSENT))
         self._lastWriteCapture = None
@@ -561,6 +635,10 @@ class ImuStateBridge:
         accel = resolveMountFrame(raw, self._mount)
         capture = float(getattr(sample, "tsCapture", 0.0))
         self._updateGravity(accel, capture)
+        # US-521: the fusion is fed at the SENSOR rate, not the display rate.
+        # A gyro integrated only on the ~10 Hz frames that happen to be written
+        # would silently throw away four fifths of the rotation.
+        self._pitchFusion.update(accel, self._freshGyro(capture), capture)
         if not self._shouldWrite(capture):
             return
         gravity = self._gravity
@@ -569,7 +647,11 @@ class ImuStateBridge:
         tsUtc = getattr(sample, "tsUtc", "") or self._nowIsoFn()
         self._writeState(
             buildImuState(
-                tsUtc=tsUtc, gravity=gravity, linear=linear, mag=self._freshMag(capture)
+                tsUtc=tsUtc,
+                gravity=gravity,
+                linear=linear,
+                mag=self._freshMag(capture),
+                pitchRad=self._pitchFusion.pitchRad,
             )
         )
         self._lastWriteCapture = capture
@@ -611,6 +693,21 @@ class ImuStateBridge:
         if age < 0.0 or age > self._magMaxAgeS:
             return None
         return resolveMountFrame(self._mag, self._mount)
+
+    def _freshGyro(self, capture: float) -> tuple[float, float, float] | None:
+        """The angular rate paired with this burst, or None if stale/absent.
+
+        A stale gyro is worse than no gyro: the estimator would integrate a rate
+        the chassis is no longer turning at, manufacturing attitude out of an
+        old reading. None makes it hold and lean on the accel correction
+        instead, which is honest about what it actually knows.
+        """
+        if self._gyro is None or self._gyroCapture is None:
+            return None
+        age = capture - self._gyroCapture
+        if age < 0.0 or age > self._magMaxAgeS:
+            return None
+        return resolveMountFrame(self._gyro, self._mount)
 
     def _shouldWrite(self, capture: float) -> bool:
         """True when the display-cadence window has opened (or on first sample)."""
@@ -669,7 +766,15 @@ def createImuStateBridgeFromConfig(
 
     statesDir = pi.get("splash", {}).get("statesDir", _DEFAULT_STATES_DIR)
     subscription = bus.subscribe(
-        [TOPIC_IMU_ACCEL, TOPIC_IMU_MAG, STATE_IMU_PRESENCE], QoS.LOSSY, _SUB_NAME
+        [
+            TOPIC_IMU_ACCEL,
+            TOPIC_IMU_GYRO,
+            TOPIC_IMU_MAG,
+            TOPIC_OBD_SPEED,
+            STATE_IMU_PRESENCE,
+        ],
+        QoS.LOSSY,
+        _SUB_NAME,
     )
     return ImuStateBridge(
         subscription,
@@ -678,5 +783,13 @@ def createImuStateBridgeFromConfig(
         stateHz=imu.get("stateHz", DEFAULT_STATE_HZ),
         gravityTauSec=imu.get("gravityTauSec", DEFAULT_GRAVITY_TAU_S),
         sampleHz=imu.get("sampleHz", DEFAULT_IMU_SAMPLE_HZ),
+        pitchFusion=PitchFusion(
+            pitchTauSec=imu.get("pitchTauSec", DEFAULT_PITCH_TAU_S),
+            accelTrustBand=imu.get("accelTrustBand", DEFAULT_ACCEL_TRUST_BAND),
+            zuptMinStopSec=imu.get("zuptMinStopSec", ZUPT_MIN_STOP_S),
+            zuptSpeedMaxAgeSec=imu.get("zuptSpeedMaxAgeSec", DEFAULT_ZUPT_SPEED_MAX_AGE_S),
+            zuptMinStops=imu.get("zuptMinStops", DEFAULT_ZUPT_MIN_STOPS),
+            zuptWindowStops=imu.get("zuptWindowStops", DEFAULT_ZUPT_WINDOW_STOPS),
+        ),
         nowIsoFn=nowIsoFn,
     )
