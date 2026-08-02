@@ -161,6 +161,67 @@ def test_rfkillUnblockUnit_runsAfterTheServiceThatRestoresTheStaleBlock():
     )
 
 
+def _unitOrderingTokens(unitFileName: str, directive: str) -> set[str]:
+    """Collect every token from a repeated ``After=``/``Before=`` directive.
+
+    systemd merges repeated ordering directives rather than letting the last one
+    win, so the honest read is the UNION of all of them -- reading only the first
+    (or last) line would report a real ordering as absent.
+    """
+    path = REPO_ROOT / "deploy" / unitFileName
+    assert path.is_file(), f"{unitFileName} is missing from deploy/"
+    tokens: set[str] = set()
+    for line in path.read_text(encoding="utf-8").splitlines():
+        match = re.match(rf"^{directive}=(.+)$", line)
+        if match:
+            tokens.update(match.group(1).split())
+    return tokens
+
+
+#: Units that cannot do their job against a soft-blocked adapter. rfcomm-bind
+#: binds /dev/rfcomm0 to the dongle; eclipse-obd opens it and polls the ECU.
+RADIO_CONSUMER_UNITS = ("rfcomm-bind.service", "eclipse-obd.service")
+
+
+@pytest.mark.parametrize("consumer", RADIO_CONSUMER_UNITS)
+def test_rfkillUnblockUnit_ordersItselfBeforeTheUnitsThatNeedTheRadio(consumer: str):
+    """US-513: the safety net must be ordered before the units it protects.
+
+    `After=systemd-rfkill.service` fixes the PRODUCER half -- the unblock lands
+    after the stale `[1]` is replayed. Nothing ordered the CONSUMER half: neither
+    rfcomm-bind nor eclipse-obd declares any relationship to this unit, so systemd
+    is free to start all three concurrently, and on the Pi (boot of 2026-07-31)
+    rfcomm-bind and eclipse-rfkill-unblock both entered at 20:25:59 -- the same
+    second. That race is invisible while no block is saved and silently decides
+    capture on the one boot where a block IS saved: bind against a dark adapter,
+    then a green `is-active` on both units.
+
+    `Before=` (not `Wants=`) is deliberate: this orders the consumers if they are
+    already part of the boot transaction, and must never PULL them in.
+    """
+    before = _unitOrderingTokens(UNIT_NAME, "Before")
+    assert consumer in before, (
+        f"{UNIT_NAME} does not declare Before={consumer}. The radio unblock can "
+        f"therefore run concurrently with (or after) {consumer}, which needs an "
+        "unblocked adapter -- the BL-025 failure with a green-looking unit."
+    )
+
+
+def test_radioConsumers_declareNoConflictingOrderBeforeTheUnblock():
+    """Guard the other direction: no consumer may order itself BEFORE the unblock.
+
+    A `Before=eclipse-rfkill-unblock.service` on a consumer would either fight the
+    directive above or form an ordering cycle, which systemd resolves by silently
+    DROPPING one edge -- turning the fix back into the race it replaced, with no
+    error anyone would see.
+    """
+    for consumer in RADIO_CONSUMER_UNITS:
+        assert UNIT_NAME not in _unitOrderingTokens(consumer, "Before"), (
+            f"{consumer} declares Before={UNIT_NAME}, contradicting the unblock's "
+            "own ordering and risking a silently-dropped ordering edge"
+        )
+
+
 def test_rfkillUnblockUnit_isWantedByMultiUserTarget():
     """[Install] WantedBy=multi-user.target -- `enable` has to have a target."""
     text = _serviceText()
@@ -327,4 +388,38 @@ def test_unitManifest_ordersTheUnblockBeforeTheRfcommBind():
     order = list(unit_manifest.START_ORDER)
     assert order.index(UNIT_NAME) < order.index("rfcomm-bind.service"), (
         "the manifest starts rfcomm-bind before the radio unblock"
+    )
+
+
+@pytest.mark.parametrize("consumer", RADIO_CONSUMER_UNITS)
+def test_unitManifestOrdering_isBackedByARealSystemdDirective(consumer: str):
+    """US-513 anti-drift: the manifest may not claim an order systemd does not implement.
+
+    unit_manifest's own header states its ordering is "grounded in the units' own
+    declarations, NOT invented" -- and lists exactly the declarations it relies on
+    (`rfcomm-bind: Requires/After=bluetooth.service`, `eclipse-obd: After=network.
+    target bluetooth.target`). NONE of those mention the unblock unit, so the
+    manifest's unblock-first claim was the one ordering in the list with nothing
+    behind it, and `test_unitManifest_ordersTheUnblockBeforeTheRfcommBind` passed
+    on the strength of a hand-ordered Python tuple while the real boot raced.
+
+    That is this project's recurring two-correct-halves shape (US-494/499/502/503/
+    505): the manifest was right, the units were internally consistent, and nothing
+    carried the claim across. `obdctl` orders its OWN sequential start/stop by this
+    tuple, so the manifest is not decorative -- but it cannot order BOOT, and boot
+    is when a restored soft-block actually bites. This test makes the tuple's claim
+    falsifiable against the units it describes.
+    """
+    manifestOrder = list(unit_manifest.START_ORDER)
+    assert manifestOrder.index(UNIT_NAME) < manifestOrder.index(consumer), (
+        f"the manifest does not start {UNIT_NAME} before {consumer}"
+    )
+
+    unblockDeclaresBefore = consumer in _unitOrderingTokens(UNIT_NAME, "Before")
+    consumerDeclaresAfter = UNIT_NAME in _unitOrderingTokens(consumer, "After")
+    assert unblockDeclaresBefore or consumerDeclaresAfter, (
+        f"unit_manifest.START_ORDER claims {UNIT_NAME} starts before {consumer}, "
+        f"but NEITHER unit declares it: {UNIT_NAME} has no Before={consumer} and "
+        f"{consumer} has no After={UNIT_NAME}. At boot systemd orders by the unit "
+        "files alone, so the manifest's claim is unenforced and the two can race."
     )

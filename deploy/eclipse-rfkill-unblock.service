@@ -28,6 +28,18 @@
 # lets it re-block the radio afterwards -- a green-looking unit on a dark
 # adapter, which is the worst of both worlds.  We unblock AFTER the restore.
 #
+# ...but ordering after the producer is only HALF of it (US-513).  The original
+# unit declared no relationship to the two units that actually need an unblocked
+# adapter -- rfcomm-bind.service (binds /dev/rfcomm0 to the dongle) and
+# eclipse-obd.service (opens it and polls).  Neither declares one either, so
+# systemd was free to start all three concurrently, and on the Pi's 2026-07-31
+# boot rfcomm-bind and this unit both entered at 20:25:59 -- the same second.
+# The race is invisible while no block is saved and silently decides capture on
+# the one boot where a block IS saved: rfcomm binds against a dark adapter and
+# every unit still reads `active`.  `Before=` orders those consumers when they
+# are already in the boot transaction; it deliberately does NOT `Wants=` them,
+# so this unit orders them without ever pulling them in.
+#
 # `unblock all` rather than `unblock bluetooth`: the saved-block mechanism is
 # per-radio and the WiFi phy can acquire one exactly the same way.  Unblocking
 # one radio while leaving its sibling blocked would just move this outage to
@@ -54,11 +66,14 @@
 #   systemctl is-active  eclipse-rfkill-unblock   # -> active (RemainAfterExit)
 #   rfkill list                                   # -> Soft blocked: no  (BOTH)
 #   bluetoothctl show                             # -> Powered: yes
+#   systemctl show eclipse-rfkill-unblock -p Before   # -> lists rfcomm-bind +
+#                                                     #    eclipse-obd (US-513)
 # ==============================================================================
 
 [Unit]
 Description=Unblock all rfkill radios at boot (counter stale systemd-rfkill BT soft-block)
 After=systemd-rfkill.service bluetooth.service
+Before=rfcomm-bind.service eclipse-obd.service
 
 [Service]
 Type=oneshot
