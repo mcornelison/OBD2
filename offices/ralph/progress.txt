@@ -422,3 +422,74 @@ Task: WP-2 home-location config binding (pi.location.home.{lat,lon,elevationM})
   brace and broke the file. `python -c "import json; json.load(...)"` after
   every sprint.json edit, before committing.
 ---
+## 2026-08-02 - US-518 (Agent 1 / Rex)
+Task: WP-3 re-anchor derived altitude to home elevation on every successful server sync
+
+### What was implemented:
+- New `pi/location/altitude_anchor.py`: `AltitudeAnchor` owns the derived-
+  altitude ACCUMULATOR and resets it to `pi.location.home.elevationM`
+  whenever a server sync succeeds. Reads the US-517 home-elevation SSOT
+  lazily, per re-anchor.
+- Hooked at `CardStateEmitterMixin._recordSyncOutcome` -- the ONE point the
+  interval and drive-end sync paths converge on, reached only past the
+  US-340 offline route gate.
+- Publishes nothing: `states/imu.altitude` stays a typed NULL / `no_source`.
+  The integrator (US-519) and display (US-520) are deferred.
+- `specs/architecture.md` §6 gained the re-anchor subsection (design gate).
+- I-041 filed: US-505 left 2 `system_status_emitter` tests red on this branch.
+
+### Files changed:
+- Created: `src/pi/location/altitude_anchor.py` (accumulator + re-anchor)
+- Modified: `src/pi/obdii/orchestrator/card_state_emitter.py` (sync-success hook)
+- Modified: `specs/architecture.md` (§6 re-anchor subsection)
+- Created: `tests/pi/location/test_altitude_anchor.py` (36 tests)
+- Created: `tests/pi/orchestrator/test_sync_success_altitude_reanchor.py` (11 tests)
+- Created: `offices/pm/issues/I-041-us505-broke-system-status-exact-shape-tests.md`
+
+### Learnings for future iterations:
+- **The load-bearing one -- read the AC against the CODE before believing its
+  nouns**: AC1 says "reset the derived altitude accumulator", which reads as
+  though an accumulator exists. It does not, anywhere. US-519 (the integrator)
+  is deferred and `states/imu.altitude` is a typed NULL with reason
+  `no_source`. The right move was neither to blocker-stop nor to quietly build
+  the whole altitude feature, but to build the half the AC actually scopes
+  ("small utility on the sync-success seam") and SAY the accumulator did not
+  previously exist. A story whose subject is missing is not automatically
+  ambiguous -- check whether the AC's own scope line already resolves it.
+- **Pattern -- the honest-instrument line sits at PUBLISH, not at compute.**
+  The tempting extra step here was to feed the anchored value into
+  `states/imu`, which would have "finished" the feature. It would also render
+  home-elevation-forever the moment the car left the driveway: a confident
+  wrong number, strictly worse than the honest "no source" already shown.
+  Holding a value internally is free; publishing it makes a claim.
+- **Pattern -- hook the CONVERGENCE point, not the call sites.** Both sync
+  paths funnel through `_recordSyncOutcome`, so one hook there is
+  structurally immune to a future third sync path skipping the re-anchor --
+  the US-512 "missing call site (b)" failure, where the heartbeat path stayed
+  broken while every reconnect test was green. Cost: the hook lives on the
+  card-state mixin, a layering smell accepted deliberately. Verify the
+  convergence point is not gated by something unrelated -- I checked that
+  `_recordSyncOutcome` is NOT behind `pi.dashboard.stateEmitEnabled` (only
+  emitter CONSTRUCTION is) rather than assuming it.
+- **Gotcha -- the dangerous negative case was not the obvious one.** "Does not
+  fire on failed syncs" reads like the crash path, but the real hazard is the
+  US-340 route gate: mid-drive and miles from home, a tick bails before
+  pushing, and re-anchoring there would reset altitude to HOME while the car
+  is nowhere near it. When an AC says "only on success", ask what else in the
+  path can look like success, and test that first.
+- **Gotcha -- "no accumulator" also means no way to express the test.** The
+  validationCriteria says "after the derived altitude has DRIFTED", which is
+  unwritable unless something can set the value. That forced a narrow
+  `setDerivedAltitudeM` write seam (the future US-519 entry point) -- a case
+  where the acceptance test's own wording legitimately expands the API.
+- **Gotcha (bookkeeping, 5th sprint sighting of the TD-059 family)**: editing
+  `ralph_agents.json` with a partial-prefix match (`"note": "US-517 DONE`)
+  replaced the OPENING of the old note and left its entire tail after my
+  closing quote -- invalid JSON, ~4.4 KB of orphaned text. Anchor a note
+  replacement on the WHOLE string or truncate programmatically, and
+  `json.load` every state file after every edit, before committing.
+- **Process**: verify a red test's provenance with `git log -- <file>` per
+  file before claiming "not mine". Here it showed the emitter last changed by
+  US-505 (65de58d) while its exact-shape test was last touched two stories
+  earlier (f929ed8) -- proof, not inference.
+---
