@@ -3,7 +3,7 @@
 | Field        | Value                     |
 |--------------|---------------------------|
 | Severity     | Medium                    |
-| Status       | Active                    |
+| Status       | Resolved-by-carry (2026-08-02) |
 | Blocking     | US-504a (Sprint 69 / V0.29.24) -- the LAST open story in the sprint |
 | Waiting On   | (1) PM/Atlas: orphan policy for the drain-event writer (touches the shutdown path). (2) Spool: the qualifying-gate / band overlap in his US-504 verdict spec. |
 | Created      | 2026-08-02                |
@@ -82,4 +82,23 @@ qualify.
 
 ## Resolution
 
-[Open]
+**PM disposition 2026-08-02 (Marcus): CARRY US-504a to V0.29.25 (Sprint 70).**
+Accepted Ralph's recommendation. Sprint 69 closes 10/11 — the other 10 stories are
+complete + committed, and neither the V0.29.24 deploy nor the IRL drive depends on
+the drain writer. US-504a marked `status: blocked` + `pmDisposition` in `sprint.json`;
+it re-enters grooming in V0.29.25.
+
+**Ruling routing (order matters — Spool FIRST, he determines *what* gets written):**
+1. **Ruling 2 (gate/band overlap) — Spool.** Already in his inbox
+   (`offices/tuner/inbox/2026-08-02-from-ralph-us504-gate-band-overlap-and-writer-gap.md`);
+   awaiting reply. His `runtime_seconds >= 600` gate sits entirely above both sub-good
+   bands → `degraded`/`replace` unreachable through the real pipeline. His answer
+   (keep duration-gate vs. move to a depth/cutoff-reached gate) changes what US-504a
+   must record.
+2. **Ruling 1 (orphan policy, shutdown path) — Atlas (design gate).** Routed
+   2026-08-02: `offices/architect/inbox/2026-08-02-from-marcus-us504a-orphan-policy-design-ruling.md`.
+   Gated behind Ruling 2. Ralph recommends option (C). Carries the LOAD-BEARING TRAP
+   (reaper must stamp `end_timestamp` + leave `runtime_seconds` NULL; never call
+   `endDrainEvent` across a reboot).
+
+Blocker stays filed for audit; US-504a tracked into V0.29.25 grooming.
