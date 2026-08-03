@@ -1102,3 +1102,73 @@ Task: I-041 fix -- system_status_emitter exact-shape tests + pin lastDrive alway
   satisfiable in-loop. Unusual in this sprint; US-522/524/525/526/527 all still
   owe a PM deploy + drill.
 ---
+
+## 2026-08-03 - US-529 (Agent 1 / Rex, Session 57)
+Task: TD-073 fix -- ralph promise-tag contract (prompt.md vs ralph.sh)
+
+### What was implemented:
+- **Diagnosed TD-073's two opposite causes and it is (a): the gate was crying
+  wolf.** ralph.sh:243 ALREADY ends the sprint from the sprint.json tally
+  (`after_complete -ge total` then "PRD COMPLETE" then exit 0). So a
+  sprint-ending COMPLETE IS honored -- via the authoritative artifact, not the
+  model's claim, which is STRONGER than trusting the tag.
+- **REFUSED the AC's fallback branch.** A tag-driven grep on the COMPLETE tag
+  would let a model end a sprint by ASSERTING completion while stories are still
+  `passes:false` -- the exact failure the 2026-05-12 loop-control rewrite
+  removed. The absence is now pinned by a test so a future "fix TD-073" pass
+  cannot re-introduce it.
+- **Re-grounded the gate instead of loosening it** (net result is STRICTER): it
+  now parses REAL `grep` branches -- comments stripped FIRST, so prose that
+  merely mentions a tag cannot masquerade as a branch -- against explicit
+  `NOT_TAG_DRIVEN:` declarations in ralph.sh. Guards: no ghost branch, no ghost
+  declaration, no tag that is BOTH.
+- **Added the anti-rubber-stamp test**: pins the tally comparison, the "PRD
+  COMPLETE" announcement and the `exit 0`, so the declaration cannot become a
+  lie.
+- **Added a rationale requirement** so the declaration hatch cannot degrade into
+  a one-line silencer for any inconvenient tag.
+- **prompt.md honesty fix** (tag set unchanged, all 6 intact): the table implied
+  the TAG stops the loop. One blockquote now states continue/stop derives from
+  sprint.json, only HUMAN_INTERVENTION_REQUIRED and SPRINT_BLOCKED are honored
+  from the tag itself, COMPLETE is confirmatory-not-causal, and
+  PARTIAL_BLOCKED's "continue" is already the default.
+- Mutations A-D all caught, all reverted byte-identical.
+
+### Files changed:
+- Modified: `tests/lint/test_ralph_promise_tag_contract.py` (re-grounded parser;
+  +3 tests: completion mechanism, COMPLETE-is-not-a-branch, rationale required)
+- Modified: `offices/ralph/ralph.sh` (comment-only: NOT_TAG_DRIVEN declarations
+  for COMPLETE and PARTIAL_BLOCKED, each with its rationale)
+- Modified: `offices/ralph/prompt.md` (one blockquote: the tags are advisory)
+- Modified: `offices/pm/tech_debt/TD-073-ralph-promise-tag-contract-drift.md`
+  (RESOLVED + which of its two causes it was + why the branch was refused)
+
+### Learnings for future iterations:
+- **Pattern discovered**: when a contract is satisfiable by a **declaration**, a
+  second test must pin the **mechanism** that makes the declaration true.
+  Mutation B proved it -- I set the tally comparison to `if false` while leaving
+  the declaration in place and THE PARITY GATE STAYED GREEN; only the mechanism
+  test went red. A parity-only suite would ship a harness that can never end a
+  sprint while cheerfully documenting that it can. Third sighting this sprint
+  (US-527 SQL-vs-pure-function, US-528 two defaulted layers, now this).
+- **Gotcha**: a test asserting "X is handled" by string-matching a second file is
+  weak in BOTH directions -- it misses real handling written differently (here
+  ralph.sh's abbreviated closing-tag form, invisible to the test's regex) and IT
+  CAN BE SATISFIED BY A COMMENT. Check which side is wrong before editing
+  either; the parser is as likely to be the drift as the code.
+- **Gotcha**: when a story's only production artifact is a `.sh`, pytest CANNOT
+  see a syntax error in it. Run `bash -n` plus a real invocation. Use
+  `ralph.sh help` -- it returns BEFORE the agent-claim at :189, so it cannot
+  strand an agent mid-sprint (`status` invokes agent.py).
+- **Gotcha**: re-validate that `sprint.json` PARSES after appending a large
+  `completionNotes`. A malformed sprint.json makes `story_counts()` emit "0 0"
+  and silently breaks completion detection -- same class as the CRLF trap
+  documented at ralph.sh:99.
+- **Gotcha**: read pytest counts with `-rs`, never from dots. A first truncated
+  render here showed 22 dots for what was really 30 passed.
+- **Gotcha**: the Bash tool rejected a heredoc containing angle-bracketed tag
+  text (read as a zsh numeric-range glob). Write the block to a temp file with
+  the Write tool and `cat` it on instead of fighting the quoting.
+- **Note**: `tests/lint` takes ~188 s on this SMB share -- pass an explicit
+  timeout so it is not auto-backgrounded (TD-059).
+---
