@@ -144,7 +144,7 @@ h2{font-size:20px;margin:0;letter-spacing:-.01em;font-weight:640;}
     <div class="split">
       <figure style="margin:0"><div class="bezel"><div class="screen" id="s4"></div></div></figure>
       <div class="rail"><h3>The artificial horizon, for a car</h3>
-        <p class="lead">The classic aviation "gyro horizon," mapped to the Eclipse: aircraft <b>pitch → your road GRADE</b>, aircraft <b>bank → your body LEAN</b> in corners. A <b>round instrument face</b> (clipped + bezel), a gradient sky/ground horizon that rolls with lean and pitches with grade, a <b>pitch ladder</b>, a fixed <b>roll index + bank scale</b> (10/20/30/45/60°) with a rolling amber pointer, and an <b>Eclipse silhouette</b> (front/rear-view coupe) as your fixed reference — the car sits still while the horizon rolls behind it, so it visibly leans into corners.</p>
+        <p class="lead">The classic aviation "gyro horizon," mapped to the Eclipse: aircraft <b>pitch → your road GRADE</b>, aircraft <b>bank → your body LEAN</b> in corners. A <b>round instrument face</b> (clipped + bezel), a gradient sky/ground horizon that rolls with lean and pitches with grade, a <b>pitch ladder</b>, a fixed <b>roll index + bank scale</b> (10/20/30/45/60°) with a rolling amber pointer, and a <b>1998 Eclipse GST rear-view silhouette</b> (traced from your reference — rounded body, narrowing hatch, the signature raised GST wing, twin exhaust) as your fixed reference: the car sits still while the horizon rolls behind it, so it visibly leans into corners — the view you'd have of your own car ahead.</p>
         <p>Bottom of the face: the aviation <b>slip/skid ball</b>, repurposed as a <b>lateral-g meter</b> — it slides with cornering load, "step on the ball" for a car. All from confirmed IMU data.</p>
         <p><span class="datachip">IMU pitch → grade</span> <span class="datachip">IMU roll → lean</span> <span class="datachip">gyro yaw</span> — all confirmed on the IMU.</p>
         <p><b>Low priority + fun</b> (your call). Needs the gyro/roll+pitch exposed in <code>states/imu</code> (Atlas/Ralph — small). The pitch ladder + roll scale are exaggerated slightly so gentle grades/leans still read.</p>
@@ -278,23 +278,37 @@ function drawAI(cv, roll, pitchDeg, latG){
   var pa=-Math.PI/2 + roll*D, pr=Rf-14;
   x.save(); x.translate(cx+Math.cos(pa)*pr, cy+Math.sin(pa)*pr); x.rotate(pa+Math.PI/2);
   x.fillStyle="#FFC400"; x.beginPath(); x.moveTo(0,-8); x.lineTo(-5.5,2); x.lineTo(5.5,2); x.closePath(); x.fill(); x.restore();
-  // ---- fixed ECLIPSE silhouette (front/rear-view coupe) = the attitude reference ----
+  // ---- fixed 1998 Eclipse GST REAR VIEW = the attitude reference (per CIO ref photo) ----
   x.save(); x.translate(cx,cy);
-  x.fillStyle="#FFC400"; x.strokeStyle="rgba(0,0,0,.55)"; x.lineWidth=1.4; x.lineJoin="round";
-  x.beginPath();                                   // low-wide body + domed greenhouse (one outline)
-  x.moveTo(-48,9);
-  x.quadraticCurveTo(-51,1,-41,-1);                // left fender
-  x.quadraticCurveTo(-30,-3,-23,-4);               // hood → A-pillar base
-  x.quadraticCurveTo(-13,-17,0,-18);               // roof up to peak (2G low dome)
-  x.quadraticCurveTo(13,-17,23,-4);                // roof down
-  x.quadraticCurveTo(30,-3,41,-1);                 // hood → right fender
-  x.quadraticCurveTo(51,1,48,9);
+  // rear tires poking out at the bottom outer edges
+  x.fillStyle="#141414"; x.beginPath(); x.ellipse(-50,12,5.5,7,0,0,7); x.fill(); x.beginPath(); x.ellipse(50,12,5.5,7,0,0,7); x.fill();
+  // body — wide rounded 2G rear: low bumper, bulging hips, narrowing hatch/greenhouse
+  x.fillStyle="#FFC400"; x.strokeStyle="rgba(0,0,0,.5)"; x.lineWidth=1.3; x.lineJoin="round";
+  x.beginPath();
+  x.moveTo(-54,15);                                // bumper bottom-left
+  x.quadraticCurveTo(-57,6,-54,1);                 // left hip (widest)
+  x.quadraticCurveTo(-51,-7,-33,-8);               // shoulder in toward greenhouse
+  x.quadraticCurveTo(-27,-9,-23,-15);              // C-pillar up to roof
+  x.quadraticCurveTo(-19,-18,0,-18.5);             // roof (rounded, narrow)
+  x.quadraticCurveTo(19,-18,23,-15);               // roof right
+  x.quadraticCurveTo(27,-9,33,-8);                 // shoulder
+  x.quadraticCurveTo(51,-7,54,1);                  // right hip
+  x.quadraticCurveTo(57,6,54,15);                  // bumper bottom-right
+  x.quadraticCurveTo(0,18,-54,15);                 // bumper bottom
   x.closePath(); x.fill(); x.stroke();
-  x.fillStyle="rgba(0,0,0,.30)"; x.beginPath();    // windshield glass (reads the greenhouse)
-  x.moveTo(-17,-4); x.quadraticCurveTo(-10,-14,0,-14.5); x.quadraticCurveTo(10,-14,17,-4); x.closePath(); x.fill();
-  x.fillStyle="#141414"; x.strokeStyle="rgba(0,0,0,.4)";  // tires
-  x.beginPath(); x.ellipse(-33,11,7.5,4,0,0,7); x.fill();
-  x.beginPath(); x.ellipse(33,11,7.5,4,0,0,7); x.fill();
+  // GST rear wing — raised on two struts (the signature)
+  x.fillStyle="#FFC400"; x.strokeStyle="rgba(0,0,0,.5)"; x.lineWidth=1;
+  x.fillRect(-17,-24,3.5,8); x.fillRect(13.5,-24,3.5,8);        // struts
+  x.beginPath(); x.moveTo(-33,-27); x.quadraticCurveTo(0,-30,33,-27);
+  x.lineTo(33,-22); x.quadraticCurveTo(0,-25,-33,-22); x.closePath(); x.fill(); x.stroke();
+  // dark rear hatch glass (in the greenhouse)
+  x.fillStyle="rgba(0,0,0,.34)"; x.beginPath();
+  x.moveTo(-19,-9); x.quadraticCurveTo(-17,-15,0,-15.3); x.quadraticCurveTo(17,-15,19,-9); x.closePath(); x.fill();
+  // taillight band across the rear (dark red suggestion, with ECLIPSE gap)
+  x.fillStyle="rgba(90,20,24,.55)"; x.beginPath();
+  x.moveTo(-46,-3.5); x.lineTo(46,-3.5); x.quadraticCurveTo(50,-0.5,46,2.5); x.lineTo(-46,2.5); x.quadraticCurveTo(-50,-0.5,-46,-3.5); x.closePath(); x.fill();
+  // twin exhaust, lower-left (per photo)
+  x.fillStyle="#101010"; x.beginPath(); x.arc(-31,13,3,0,7); x.fill(); x.beginPath(); x.arc(-23,13,3,0,7); x.fill();
   x.restore();
   // ---- slip/skid ball = lateral-g meter (bottom of face) ----
   var by=cy+Rf*0.62, tubeW=64;
