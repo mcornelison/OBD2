@@ -1100,6 +1100,70 @@ step_install_orphan_cleanup_unit() {
     "
 }
 
+step_install_kiosk_watchdog_unit() {
+    # US-523 / F-124: idempotent sync-if-changed install of
+    # eclipse-kiosk-watchdog.service + .timer.  Same posture as
+    # step_install_orphan_cleanup_unit: cmp -s the rsynced source against the
+    # installed copy, daemon-reload only on real change, `enable --now` on every
+    # deploy so the timer recovers from an out-of-band `systemctl disable`.
+    #
+    # The watchdog restarts eclipse-dashboard when chromium's renderer wedges
+    # (GPU command-buffer hot-loop -- see the unit header + Atlas's RCA).  It is
+    # defense-in-depth behind US-522's `--disable-gpu`, so a restart appearing
+    # in its journal means that fix did NOT hold.
+    #
+    # No `install -d` here: the ledger dir is provisioned by the unit's own
+    # RuntimeDirectory= (deliberately its OWN dir, not /run/eclipse-obd, which a
+    # oneshot would delete on exit -- taking the live states/ with it).
+    #
+    # The restart itself rides the EXISTING polkit grant in
+    # deploy/polkit-rules/51-eclipse-service-control.rules (restart verb on
+    # eclipse-dashboard.service for the Pi user), so no new privilege is added.
+    echo "--- Step: Installing kiosk-watchdog systemd unit (US-523 / F-124, sync-if-changed) ---"
+    if $DRY_RUN; then
+        echo "DRY-RUN would: sudo cmp -s ${PI_PATH}/deploy/eclipse-kiosk-watchdog.service /etc/systemd/system/eclipse-kiosk-watchdog.service || (install + daemon-reload)"
+        echo "DRY-RUN would: sudo cmp -s ${PI_PATH}/deploy/eclipse-kiosk-watchdog.timer /etc/systemd/system/eclipse-kiosk-watchdog.timer || (install + daemon-reload)"
+        echo "DRY-RUN would: sudo systemctl enable --now eclipse-kiosk-watchdog.timer"
+        return 0
+    fi
+    remote "
+        set -e
+        SRC_SVC='${PI_PATH}/deploy/eclipse-kiosk-watchdog.service'
+        DST_SVC='/etc/systemd/system/eclipse-kiosk-watchdog.service'
+        SRC_TIM='${PI_PATH}/deploy/eclipse-kiosk-watchdog.timer'
+        DST_TIM='/etc/systemd/system/eclipse-kiosk-watchdog.timer'
+
+        if [ ! -f \"\$SRC_SVC\" ] || [ ! -f \"\$SRC_TIM\" ]; then
+            echo 'WARN: eclipse-kiosk-watchdog unit files not present in deploy/ on the Pi -- skipping install.' >&2
+            exit 0
+        fi
+
+        changed=false
+        if sudo test -f \"\$DST_SVC\" && sudo cmp -s \"\$SRC_SVC\" \"\$DST_SVC\"; then
+            echo 'eclipse-kiosk-watchdog.service already up-to-date.'
+        else
+            sudo install -m 644 \"\$SRC_SVC\" \"\$DST_SVC\"
+            echo 'eclipse-kiosk-watchdog.service installed.'
+            changed=true
+        fi
+        if sudo test -f \"\$DST_TIM\" && sudo cmp -s \"\$SRC_TIM\" \"\$DST_TIM\"; then
+            echo 'eclipse-kiosk-watchdog.timer already up-to-date.'
+        else
+            sudo install -m 644 \"\$SRC_TIM\" \"\$DST_TIM\"
+            echo 'eclipse-kiosk-watchdog.timer installed.'
+            changed=true
+        fi
+
+        if [ \"\$changed\" = true ]; then
+            sudo systemctl daemon-reload
+            echo 'systemd daemon-reload complete.'
+        fi
+
+        sudo systemctl enable --now eclipse-kiosk-watchdog.timer
+        echo 'eclipse-kiosk-watchdog.timer enabled + active.'
+    "
+}
+
 step_install_boot_progress_units() {
     # T11/T12: idempotent sync-if-changed install of boot-progress-finalize.service
     # + boot-progress-arm.service into /etc/systemd/system/.  Closes the ship gap
@@ -1955,6 +2019,10 @@ step_install_state_server_units
 # this the kiosk is never installed and the 3.5" screen stays blank (pygame sunset).
 # Runs after the state server is up so the served surface + backend are in place.
 step_install_ui_kiosk_units
+# US-523 (F-124): the kiosk WATCHDOG -- restarts eclipse-dashboard when
+# chromium's renderer wedges.  Installed AFTER the kiosk units it guards so the
+# unit it restarts already exists on the box when the timer's first tick lands.
+step_install_kiosk_watchdog_unit
 
 # US-354 reordering: restart first, then verify both long-running services
 # came back with start times AFTER DEPLOY_START_EPOCH, THEN bump

@@ -3361,7 +3361,49 @@ splash unit exits 0; systemd starts the dashboard. A **DEGRADED** boot keeps the
 splash up (no `window.close`), so the dashboard never starts on a sick boot
 (honest-instrument: the operator sees the amber-ring splash, not a dashboard
 pretending all is well). No watchdog/timer, no `pkill` -- the same JS-driven exit
-discipline as the splash (D-3).
+discipline as the splash (D-3). *(US-523 adds a watchdog that **restarts** an
+already-running kiosk; it never **starts** one, so this hand-off remains the sole
+path from splash to dashboard -- see the wedge-recovery subsection below.)*
+
+**Kiosk freeze class + wedge recovery (F-124: US-522 primary, US-523
+defense-in-depth).** The bench UI froze with chromium **alive**: its GPU
+command-buffer context died and the client hot-looped on the fatal
+`AllocateRingBuffer()` failure (Atlas measured 6,063,554 errors in one boot,
+~500/sec, renderer/GPU/main pegged 39/31/24% CPU, **no crash**) -- the Pi 5 v3d
+GPU on a 64 MiB CMA pool driving the animated carousel with GPU rasterization on.
+Because nothing crashed, the kiosk unit's `Restart=on-failure` never fired; the
+panel simply stopped updating while X stayed live. RCA:
+`offices/architect/findings/2026-08-02-pi-ui-freeze-chromium-gpu-command-buffer-hotloop.md`.
+
+- **US-522 (primary, removes the mechanism):** `--disable-gpu` in the
+  `eclipse-dashboard.service.{wayland,x11}` `ExecStart`. It is an **override, not
+  a deletion** -- `--enable-gpu-rasterization` is not in this repo; Debian/RPi-OS
+  exports it from `/etc/chromium.d/default-flags`, which the `/usr/bin/chromium`
+  wrapper sources before `exec`ing chromium with the caller's argv **last**. That
+  `/etc/chromium.d/` surface is OS-shipped and repo-unmanaged: a chromium package
+  upgrade can reintroduce GPU flags (noted at the deploy step, A-16 family).
+- **US-523 (defense-in-depth, recovers if it recurs):**
+  `deploy/eclipse-kiosk-watchdog.{service,timer}` +
+  `src/pi/display/kiosk_watchdog.py`. A 30 s `Type=oneshot` tick counts
+  `AllocateRingBuffer` markers in the kiosk's journal over a 60 s window and, at
+  ≥100, restarts `eclipse-dashboard.service` -- the mitigation Atlas proved live
+  (fresh GPU context, error count back to 0). It runs **unprivileged**, reusing
+  the existing polkit `restart` grant
+  (`deploy/polkit-rules/51-eclipse-service-control.rules`) and
+  `SupplementaryGroups=systemd-journal`.
+  **Honest-instrument bounds, all load-bearing:** it never restarts an *inactive*
+  kiosk (that would usurp the A-1 hand-off); an unreadable journal is *uncertain*,
+  never a wedge; the journal window never reaches back past the last restart; a
+  cooldown separates attempts; and an **hourly restart budget** caps the loop --
+  once spent the watchdog stops restarting, logs at ERROR and exits non-zero so
+  the unit reads FAILED. A restart appearing in its journal means **US-522 did not
+  hold**, which is the point: the watchdog surfaces a live freeze class instead of
+  masking it. The attempt is recorded to a tmpfs ledger **before** the restart
+  fires, so an unwritable ledger cancels the restart rather than silently
+  uncapping it. Only the command-buffer signature is detected; the "CPU-pegged
+  renderer with no repaint" variant is deliberately **not** implemented (repaint
+  is not observable outside the browser and software rendering has no measured CPU
+  baseline yet -- a threshold there would be fabricated, not grounded).
 
 **A-2 "full runtime" extension of `eclipse-states-http`.** The server already
 ran *continuously* (C-5: `WantedBy=multi-user.target`), so "boot-only → full
