@@ -23,6 +23,22 @@
 # prompt.md §Stop Condition — Ralph keeps emitting them, the harness just
 # stops trusting them for loop control.)
 #
+# ── Promise-tag accounting (TD-073 / US-529) ─────────────────────────────────
+# tests/lint/test_ralph_promise_tag_contract.py holds prompt.md and this file to
+# the same tag set. Two tags in prompt.md's Stop Condition table have no grep
+# branch here BY DESIGN (per the rewrite above), so they are declared explicitly
+# rather than left looking like a branch someone dropped:
+#
+# NOT_TAG_DRIVEN: <promise>COMPLETE</promise> -- sprint.json tally is the authority.
+#   Honoring the tag would let a model end the sprint by ASSERTING completion
+#   while stories are still passes:false -- exactly what the rewrite above
+#   removed. The tally check in step 1 is what actually stops the loop, and it
+#   is pinned by that test so this declaration cannot become a lie.
+# NOT_TAG_DRIVEN: <promise>PARTIAL_BLOCKED</promise> -- "continue" is already the default.
+#   prompt.md documents its behaviour as "continue to the next iteration", which
+#   IS this loop's fall-through, so a branch would be a no-op; step 5 already
+#   names it in the keep-going bucket.
+#
 # Robustness baked in here: each iteration runs under `timeout`; the assigned
 # agent is ALWAYS released via an EXIT trap (Ctrl-C included); claude's full
 # output is streamed live AND captured to offices/ralph/.last-iteration.log so

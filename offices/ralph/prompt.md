@@ -148,6 +148,8 @@ Emit at most ONE `<promise>` tag per iteration.
 | `<promise>ALL_BLOCKED</promise>` | No work YOU can pick up because all remaining unblocked stories are CLAIMED by other active agents | **MULTI-AGENT ONLY** | Stop this agent | 0 |
 | *(no tag)* | Work available + no blockers + sprint not complete | both | Start next iteration | — |
 
+> **How `ralph.sh` actually decides** (loop-control contract, 2026-05-12): continue/stop is derived from `sprint.json`; the tag is **advisory**. Only `HUMAN_INTERVENTION_REQUIRED` and `SPRINT_BLOCKED` are honored from the tag itself. `COMPLETE` is **confirmatory, not causal** — the loop ends because every story reads `passes: true`, so emitting it early does not end the sprint and omitting it does not prevent the stop. `PARTIAL_BLOCKED`'s "continue" is already the default. Emit them accurately anyway: they are the human-readable signal in the transcript.
+
 ### Single-agent decision tree (when you are the only `status != "unassigned"` agent)
 
 After completing your story, only THREE tag outcomes are valid:
