@@ -6899,12 +6899,17 @@
         "[Atlas RCA #1 -- CORRECTED PREMISE 2026-08-02, design-gate] --enable-gpu-rasterization is NOT in the repo or the eclipse-dashboard unit; it is a Debian/RPi-OS system default injected by the /usr/bin/chromium-browser wrapper from /etc/chromium.d/default-flags:7. FIX = ADD an override flag to the eclipse-dashboard unit ExecStart (deploy-pi.sh, repo-managed): --disable-gpu-rasterization (keep GL compositing) OR --disable-gpu (bulletproof software render, removes the whole GPU-command-buffer path). Atlas leans --disable-gpu (the Pi CPU trivially handles this 2D card UI; removes the entire failure class). Eliminates the chromium GPU command-buffer hot-loop (AllocateRingBuffer kFatalFailure, ~6M/boot) that froze the UI. RCA: offices/architect/findings/2026-08-02-pi-ui-freeze-chromium-gpu-command-buffer-hotloop.md",
         "[PRECEDENCE -- verify, do NOT assume] the Debian wrapper runs `chromium $CHROMIUM_FLAGS \"$@\"`, so the ExecStart override SHOULD win over the injected default -- but VERIFY on the Pi (a wrapper-ordering surprise = silent mocked-green / IRL-miss)",
         "[A-16 deploy-contract blind spot] chromium's base flags live in an OS-shipped /etc/chromium.d/ file the repo does not manage; add a one-line comment in deploy-pi.sh so a future chromium package upgrade re-introducing GPU raster is a known surface",
-        "installs via the existing cmp-guarded kiosk-unit step + daemon-reload; ruff/lint clean in-loop"
+        "installs via the existing cmp-guarded kiosk-unit step + daemon-reload; ruff/lint clean in-loop",
+        "[Atlas keyring fix 2026-08-03 -- SAME ExecStart as the GPU override] add --password-store=basic to the eclipse-dashboard kiosk ExecStart (both dashboard.service.x11 + .wayland). Root: the kiosk runs with no --password-store -> chromium uses the GNOME keyring for its Safe-Storage key; the password-protected Default keyring stays LOCKED under passwordless auto-login (pam_gnome_keyring never unlocks it), so chromium fires a repeating Authentication Required keyring popup. --password-store=basic keeps safe-storage in chromiums own wiped /tmp profile (no meaningful security downgrade for a kiosk that stores no real passwords). Atlas live-tested on the Pi; repo-unmanaged until this lands."
       ],
       "validationCriteria": [
         {
           "action": "post-deploy on the Pi, `pgrep -a chromium` to confirm the override wins over /etc/chromium.d, then sustained carousel navigation for several minutes + `journalctl -u eclipse-dashboard | grep -c AllocateRingBuffer`",
           "outcome": "the RUNNING chromium cmdline shows GPU rasterization effectively off (override present + winning), AllocateRingBuffer count stays ~0, chromium CPU low, display never freezes"
+        },
+        {
+          "action": "post-deploy on the Pi, pgrep -a chromium + check for a gcr-prompter/keyring-prompt process",
+          "outcome": "the running chromium cmdline shows BOTH --disable-gpu* (GPU fix) AND --password-store=basic effective, and no keyring-authentication popup / gcr-prompter process appears"
         }
       ],
       "conditionalOutcomes": [
@@ -6917,7 +6922,8 @@
         "offices/pm/inbox/2026-08-02-from-atlas-pi-ui-freeze-gpu-hotloop-fix-routing.md"
       ],
       "createdAt": "2026-08-02",
-      "updatedAt": "2026-08-02"
+      "updatedAt": "2026-08-03",
+      "passes": false
     },
     {
       "id": "US-523",
