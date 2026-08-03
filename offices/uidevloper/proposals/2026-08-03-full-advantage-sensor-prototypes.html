@@ -84,7 +84,9 @@ h2{font-size:20px;margin:0;letter-spacing:-.01em;font-weight:640;}
 .ai-title{position:absolute;top:6px;left:0;right:0;text-align:center;font-family:var(--display);font-size:11px;letter-spacing:.18em;color:#e9eef3;text-transform:uppercase;z-index:3;text-shadow:0 1px 3px #000;}
 .ai-ro{position:absolute;bottom:9px;font-family:var(--display);letter-spacing:.08em;color:#e9eef3;text-transform:uppercase;z-index:3;text-shadow:0 1px 3px #000;font-size:10px;}
 .ai-ro b{display:block;font-size:27px;line-height:1;font-weight:700;} .ai-left{left:14px;text-align:left;} .ai-right{right:14px;text-align:right;}
-.ai-yaw{position:absolute;bottom:11px;left:0;right:0;text-align:center;font-family:var(--mono);font-size:10px;color:#cdd6dd;z-index:3;text-shadow:0 1px 3px #000;}
+.ai-side{position:absolute;top:44%;transform:translateY(-50%);width:92px;text-align:center;font-family:var(--display);letter-spacing:.05em;color:#e9eef3;text-transform:uppercase;z-index:3;text-shadow:0 1px 3px #000;font-size:11px;}
+.ai-side b{display:block;font-size:23px;line-height:1.02;font-weight:700;}
+.ai-sl{left:4px;} .ai-sr{right:4px;}
 .datachip{display:inline-block;font-size:9px;padding:1px 6px;border-radius:8px;background:var(--dv-tile);color:var(--dv-green);border:1px solid var(--dv-line);}
 .datachip.warn{color:var(--dv-amber);}
 </style>
@@ -240,7 +242,8 @@ function p4(){
      '<div class="ai-title">Attitude · grade + lean</div>'+
      '<div class="ai-ro ai-left">Grade<b>'+(grade>=0?"+":"")+grade.toFixed(1)+'°</b></div>'+
      '<div class="ai-ro ai-right">Lean<b>'+Math.abs(roll).toFixed(0)+'° '+(LR!=="LEVEL"?LR[0]:"")+'</b></div>'+
-     '<div class="ai-yaw">'+Math.abs(latG).toFixed(2)+' g lateral · yaw '+(yaw>=0?"+":"")+yaw.toFixed(0)+'°/s</div>'+
+     '<div class="ai-side ai-sl">Lateral<b>'+Math.abs(latG).toFixed(2)+' g</b></div>'+
+     '<div class="ai-side ai-sr">Yaw<b>'+(yaw>=0?"+":"")+yaw.toFixed(0)+'°/s</b></div>'+
    '</div>';
   var cv=document.getElementById("p4ai"); if(cv) drawAI(cv, roll, grade, latG);
 }
