@@ -43,6 +43,30 @@
 #   URL on :0 for 12s: chromium stayed up, 0 AllocateRingBuffer, no GL init
 #   failure. (A software-GL gpu-process may still be present -- the claim is
 #   that the v3d/CMA exhaustion mechanism is gone, not that no GPU process runs.)
+#
+# US-522 (reopen 2026-08-03) -- `--password-store=basic`: a repeating
+#   "Authentication Required" keyring dialog was painting OVER the kiosk. With no
+#   `--password-store`, chromium auto-detects a Linux backend and picks the GNOME
+#   keyring for its OSCrypt "Safe Storage" key. This Pi's Default keyring is
+#   password-protected (~/.local/share/keyrings/Default_Keyring.keyring, 0600) and
+#   under PASSWORDLESS auto-login pam_gnome_keyring never unlocks it -- so the
+#   collection stays LOCKED, chromium's unlock request reaches gcr-prompter, and
+#   the dialog appears. `basic` keeps the safe-storage key in chromium's own
+#   profile instead. No meaningful security downgrade: that profile is the wiped
+#   /tmp/dashboard-chromium below and this kiosk stores no real password.
+#
+#   Atlas live-tested it on the Pi; grounded again from the journal, which is also
+#   what shows the fix belongs HERE and not on the splash unit: gcr-prompter
+#   PerformPrompt fired Aug 03 05:43:09 / 08:33:52 / 08:52:23 -- recurring, and
+#   every one ~9h AFTER splash-boot exited (Aug 02 20:20:21), with none in the
+#   splash's own 9.8s window. The prompts track the LONG-RUNNING dashboard
+#   chromium. Once applied, the effect is visible as
+#   `key_storage_linux.cc: Selected backend for OSCrypt: BASIC_TEXT`.
+#
+#   NOTE the live box's unit was hand-patched and ALSO carried
+#   `--enable-logging=stderr --remote-debugging-port=9222`. Those were test aids
+#   and are deliberately NOT adopted here -- an open DevTools port on a
+#   car-mounted kiosk is unauthenticated full-page control. A test fences it.
 # ==============================================================================
 
 [Unit]
@@ -61,6 +85,7 @@ ExecStart=__CHROMIUM_BIN__ \
   --noerrdialogs --disable-infobars --hide-scrollbars \
   --autoplay-policy=no-user-gesture-required \
   --check-for-update-interval=31536000 \
+  --password-store=basic \
   --user-data-dir=/tmp/dashboard-chromium \
   http://127.0.0.1:9899/dashboard.html
 Restart=on-failure

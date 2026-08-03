@@ -37,6 +37,17 @@
 #   fault is in the command buffer that COMPOSITING also uses, and because
 #   nothing in the injected set can contradict --disable-gpu -- so the fix is
 #   independent of flag order.
+#
+# US-522 (reopen 2026-08-03) -- `--password-store=basic`: see the full rationale
+#   in the .x11 sibling (the two variants must not drift). In short: with no
+#   `--password-store` chromium auto-picks the GNOME keyring for its OSCrypt
+#   safe-storage key, and this Pi's password-protected Default keyring is never
+#   unlocked under passwordless auto-login -- so gcr-prompter painted a recurring
+#   "Authentication Required" dialog over the kiosk. `basic` keeps the key in the
+#   wiped /tmp profile below (no meaningful downgrade -- no real password is
+#   stored). The live box's hand-patched unit also carried
+#   `--remote-debugging-port=9222`; that is deliberately NOT adopted (open
+#   DevTools on a car-mounted kiosk) and a test fences it.
 # ==============================================================================
 
 [Unit]
@@ -57,6 +68,7 @@ ExecStart=__CHROMIUM_BIN__ \
   --noerrdialogs --disable-infobars --hide-scrollbars \
   --autoplay-policy=no-user-gesture-required \
   --check-for-update-interval=31536000 \
+  --password-store=basic \
   --user-data-dir=/tmp/dashboard-chromium \
   http://127.0.0.1:9899/dashboard.html
 # The kiosk runs until Exit/Close (US-403) calls window.close() or systemd

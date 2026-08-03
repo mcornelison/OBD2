@@ -1643,3 +1643,116 @@ def test_deployPi_documentsChromiumDDeployBlindSpot_us522():
         "deploy-pi.sh must document the unmanaged /etc/chromium.d flag surface "
         "(A-16: the deploy contract silently depends on an OS-shipped file)"
     )
+
+
+# ---------------------------------------------------------------------------
+# US-522 (reopen 2026-08-03) -- kiosk keyring popup (Atlas live-tested).
+#
+# With no `--password-store`, chromium AUTO-DETECTS a Linux backend and picks the
+# GNOME keyring for its OSCrypt "Safe Storage" key. The Pi's Default keyring is
+# password-protected (`~/.local/share/keyrings/Default_Keyring.keyring`, 0600),
+# and under PASSWORDLESS auto-login `pam_gnome_keyring` never unlocks it -- so
+# the collection stays LOCKED, chromium's unlock request reaches `gcr-prompter`,
+# and an "Authentication Required" dialog is painted OVER the kiosk.
+#
+# GROUNDED LIVE on the Pi (10.27.27.100), and the timeline is what proves this
+# belongs to the DASHBOARD unit and not the splash:
+#   gcr-prompter PerformPrompt at Aug 03 05:43:09, 08:33:52, 08:52:23  -- i.e. it
+#   RECURS, and every one of them is ~9h AFTER splash-boot exited (Aug 02
+#   20:20:21). No prompt fired in the splash's own 9.8s window. The prompts track
+#   the long-running dashboard chromium, so the dashboard units are the right
+#   (and sufficient) place for the fix. The splash's latent exposure is filed as
+#   tech debt rather than silently fixed here -- it is a different unit template.
+#
+# The fix's EFFECT is also observable in the journal once applied (Atlas's live
+# run carried `--enable-logging=stderr`, which the repo deliberately does not):
+#   key_storage_linux.cc:116  Selected backend for OSCrypt: BASIC_TEXT
+# `basic` keeps the safe-storage key in chromium's own profile -- and this kiosk's
+# profile is a WIPED `/tmp/dashboard-chromium` that stores no real password, so
+# there is no meaningful security downgrade.
+# ---------------------------------------------------------------------------
+
+_PASSWORD_STORE_FLAG = "--password-store=basic"
+
+
+def _passwordStoreValues(unit: str) -> list[str]:
+    """Every `--password-store=<value>` VALUE on the unit's ExecStart.
+
+    Returning the values (not a boolean "is the flag there") is what makes the
+    guard able to fail in the direction that actually matters: `--password-store`
+    is a VALUED switch, so a prefix/substring check would happily accept
+    `--password-store=gnome` -- which is precisely the broken configuration this
+    story exists to eliminate, not a fix for it.
+    """
+    prefix = "--password-store="
+    return [t[len(prefix) :] for t in _execStartFlags(unit) if t.startswith(prefix)]
+
+
+def test_passwordStoreParser_selfTest_us522():
+    """The keyring guard's own parser, fed known-bad input (US-513 lesson: an
+    un-self-tested static guard reports 'clean' forever once its logic rots)."""
+    # The trap this helper exists for: the WRONG backend must not read as a fix.
+    assert _passwordStoreValues("ExecStart=/usr/bin/chromium --password-store=gnome http://h/\n") == [
+        "gnome"
+    ], "a valued switch must be compared by VALUE, not by prefix presence"
+    # A comment discussing the flag can never satisfy the guard.
+    assert _passwordStoreValues(
+        "# ExecStart=/bogus --password-store=basic\nExecStart=/usr/bin/chromium --kiosk http://h/\n"
+    ) == []
+    assert _passwordStoreValues(f"ExecStart=/usr/bin/chromium {_PASSWORD_STORE_FLAG} http://h/\n") == [
+        "basic"
+    ]
+
+
+def test_dashboardUnits_carryPasswordStoreBasic_us522():
+    """US-522 reopen: both kiosk variants must pin the OSCrypt backend to `basic`.
+
+    Without it chromium auto-selects the GNOME keyring, whose password-protected
+    Default collection is never unlocked under passwordless auto-login -> a
+    recurring gcr-prompter "Authentication Required" dialog over the kiosk.
+    """
+    for variant in _DASHBOARD_UNITS:
+        values = _passwordStoreValues(_read(KIT_DIR, variant))
+        assert values == ["basic"], (
+            f"{variant}: ExecStart must carry exactly {_PASSWORD_STORE_FLAG} "
+            f"(found {values!r}) -- an unset or keyring-backed password store "
+            "paints a keyring auth popup over the kiosk (Atlas, live-tested)"
+        )
+
+
+def test_dashboardUnits_neverSelectKeyringBackedPasswordStore_us522():
+    """US-522 reopen, the awkward direction: no variant may select a LOCKED
+    backend. `gnome`/`gnome-libsecret`/`kwallet*` all route through a collection
+    that passwordless auto-login leaves locked -- i.e. they re-open the defect
+    while still 'having a --password-store flag'."""
+    for variant in _DASHBOARD_UNITS:
+        for value in _passwordStoreValues(_read(KIT_DIR, variant)):
+            assert value == "basic", f"{variant}: --password-store={value} re-opens the keyring popup"
+
+
+def test_dashboardUnits_keyringFixCoexistsWithGpuOverride_us522():
+    """US-522 reopen regression fence: the keyring flag and the GPU override ride
+    the SAME ExecStart, so an edit to one must not drop the other. This mirrors
+    validationCriteria #2, which requires BOTH effective on the live cmdline."""
+    for variant in _DASHBOARD_UNITS:
+        flags = _execStartFlags(_read(KIT_DIR, variant))
+        assert _GPU_OVERRIDE_FLAG in flags, f"{variant}: lost the US-522 GPU override"
+        assert _PASSWORD_STORE_FLAG in flags, f"{variant}: lost the US-522 keyring fix"
+        # And the pre-existing kiosk contract still stands.
+        assert "--kiosk" in flags, variant
+        assert "http://127.0.0.1:9899/dashboard.html" in flags, variant
+
+
+def test_dashboardUnits_carryNoRemoteDebuggingPort_us522():
+    """US-522 reopen -- do NOT import the live box's debug flags along with the fix.
+
+    The hand-patched unit on the Pi carried `--enable-logging=stderr` and
+    `--remote-debugging-port=9222` beside Atlas's `--password-store=basic`. Those
+    were debugging aids for the live test; an open DevTools port on a
+    car-mounted kiosk is an unauthenticated full-page-control surface, and it
+    must not reach the repo just because it sat next to the flag being adopted.
+    """
+    for variant in _DASHBOARD_UNITS:
+        flags = _execStartFlags(_read(KIT_DIR, variant))
+        offenders = [f for f in flags if f.startswith("--remote-debugging-")]
+        assert offenders == [], f"{variant}: kiosk must not expose DevTools ({offenders!r})"
