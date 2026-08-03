@@ -23,6 +23,22 @@
 # prompt.md §Stop Condition — Ralph keeps emitting them, the harness just
 # stops trusting them for loop control.)
 #
+# ── Promise-tag accounting (TD-073 / US-529) ─────────────────────────────────
+# tests/lint/test_ralph_promise_tag_contract.py holds prompt.md and this file to
+# the same tag set. Two tags in prompt.md's Stop Condition table have no grep
+# branch here BY DESIGN (per the rewrite above), so they are declared explicitly
+# rather than left looking like a branch someone dropped:
+#
+# NOT_TAG_DRIVEN: <promise>COMPLETE</promise> -- sprint.json tally is the authority.
+#   Honoring the tag would let a model end the sprint by ASSERTING completion
+#   while stories are still passes:false -- exactly what the rewrite above
+#   removed. The tally check in step 1 is what actually stops the loop, and it
+#   is pinned by that test so this declaration cannot become a lie.
+# NOT_TAG_DRIVEN: <promise>PARTIAL_BLOCKED</promise> -- "continue" is already the default.
+#   prompt.md documents its behaviour as "continue to the next iteration", which
+#   IS this loop's fall-through, so a branch would be a no-op; step 5 already
+#   names it in the keep-going bucket.
+#
 # Robustness baked in here: each iteration runs under `timeout`; the assigned
 # agent is ALWAYS released via an EXIT trap (Ctrl-C included); claude's full
 # output is streamed live AND captured to offices/ralph/.last-iteration.log so
@@ -209,6 +225,16 @@ for ((i=1; i<=$1; i++)); do
   read -r before_complete total < <(story_counts)
   echo "Sprint progress: $before_complete / $total stories complete"
   echo "----------------------------------------------"
+
+  # Preflight (BL-029): proactively clear a VERIFIED-STALE .git/index.lock so a
+  # dead lock from a killed prior iteration can't stall the whole sprint. This
+  # runs in the CIO's shell (OUTSIDE the claude harness), which CAN touch .git/
+  # -- Ralph cannot (harness sensitive-path guard blocks him even though rm/mv
+  # are in his allowlist). The US-467 helper clears ONLY a lock that is 0-byte
+  # + aged past its threshold + owned by NO live git process; it REFUSES a
+  # non-empty/live lock (that rare case still escalates to a manual PM clear).
+  # Best-effort -- never aborts the loop.
+  python -m offices.pm.scripts.index_lock --repo "$PROJECT_ROOT" || true
 
   # Marker file: its mtime is "now", so `find -newer` afterwards finds any
   # BL-*.md this iteration filed (and ignores ones from earlier runs).

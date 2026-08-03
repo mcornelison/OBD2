@@ -563,6 +563,7 @@ def runSplash(
     markupPath: str | None = None,
     rounds: int = 80,
     emitIntervalMs: int = 500,
+    brandLoadMs: int | None = 0,
 ) -> dict[str, Any]:
     """Run the SHIPPED boot-state-poll.js against a boot-state sequence.
 
@@ -571,6 +572,11 @@ def runSplash(
     splash reads on its own 250 ms cadence -- so a poll sees the last-written
     entry, exactly as it would on the Pi. The final entry repeats. Returns the
     settled outcome plus the resulting DOM tree.
+
+    ``brandLoadMs`` (US-525) is the virtual ms at which the brand ``<object>``
+    fires its `load`. The mark is an async SVG document, so on a cold chromium
+    the poll script is already ticking while the brand is still blank; ``None``
+    models an SVG that never loads at all.
     """
     tree = parseMarkup(markupPath or os.path.join(SPLASH_DIR, "index.html"))
     return _runProbe(
@@ -581,6 +587,7 @@ def runSplash(
             "bootStates": bootStates,
             "rounds": rounds,
             "emitIntervalMs": emitIntervalMs,
+            "brandLoadMs": brandLoadMs,
         },
     )
 

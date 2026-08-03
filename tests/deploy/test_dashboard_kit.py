@@ -1496,3 +1496,263 @@ def test_powerTile_renderLogic_carWallUnknown_us421():
     )
     assert result.returncode == 0, result.stderr
     assert "US421_OK" in result.stdout
+
+
+# ---------------------------------------------------------------------------
+# US-522 -- kiosk GPU override (F-124; Atlas RCA
+# offices/architect/findings/2026-08-02-pi-ui-freeze-chromium-gpu-command-buffer-hotloop.md).
+#
+# The bench freeze was a chromium GPU command-buffer hot-loop (6M
+# `AllocateRingBuffer() kFatalFailure` in one boot, renderer+GPU CPU-pegged, no
+# crash) -- the v3d GPU on a 64 MiB CMA pool exhausted its context under the
+# animated carousel.
+#
+# THE PREMISE THAT NEEDED CORRECTING (Atlas, design-gate): the offending
+# `--enable-gpu-rasterization` is NOT in this repo. It is a Debian/RPi-OS system
+# default exported by `/etc/chromium.d/default-flags`, sourced by the
+# `/usr/bin/chromium` wrapper. So the fix ADDS an override to our ExecStart
+# rather than deleting a flag we never shipped -- which is why these guards
+# assert PRESENCE of the override and ABSENCE of any re-injection, and why the
+# repo can never assert the OS-side default at all (see the deploy-contract
+# guard below).
+#
+# PRECEDENCE, verified live on the Pi (10.27.27.100) rather than assumed, since
+# a wrapper-ordering surprise would be a silent mocked-green:
+#   /usr/bin/chromium:195   exec $LIBDIR/$APPNAME $CHROMIUM_FLAGS "$@"
+# so the OS-injected flags come FIRST and the unit's ExecStart args come LAST.
+# The live composed cmdline confirmed it exactly:
+#   ... --enable-gpu-rasterization ... --use-angle=gles --disable-gpu <url>
+# ---------------------------------------------------------------------------
+
+# The token that turns the whole hardware-GL path off. `--disable-gpu` is chosen
+# over the narrower `--disable-gpu-rasterization` on the RCA evidence: the error
+# is in the GPU COMMAND BUFFER, which compositing uses too, not only raster --
+# so disabling raster alone shrinks the pressure without removing the mechanism.
+# `--disable-gpu` also has no counterpart in the injected set (verified live:
+# --show-component-extension-options / --enable-gpu-rasterization /
+# --no-default-browser-check / --disable-pings / --media-router=0 /
+# --enable-remote-extensions / --use-angle=gles / --js-flags=...), so nothing in
+# /etc/chromium.d can contradict it and the fix does not depend on flag order.
+_GPU_OVERRIDE_FLAG = "--disable-gpu"
+_DASHBOARD_UNITS = ("dashboard.service.wayland", "dashboard.service.x11")
+
+
+def _execStartFlags(unit: str) -> list[str]:
+    """Tokenize a unit's ExecStart command: comments stripped, `\\` joined.
+
+    Returning TOKENS (not the raw text) is deliberate and is what makes the
+    US-522 guards mutation-proof in two ways a substring check is not:
+
+    1. `"--disable-gpu" in "--disable-gpu-rasterization"` is True as a
+       substring, so a text-level guard would accept the narrower flag as if it
+       were the chosen fix. List membership is exact.
+    2. A COMMENT that merely discusses the flag can never satisfy the guard --
+       the recurring trap from US-501/US-513, where a static check tripped on
+       (or was satisfied by) the prose documenting the very thing it guards.
+    """
+    tokens: list[str] = []
+    inExec = False
+    for raw in unit.splitlines():
+        line = raw.strip()
+        if line.startswith("#"):
+            continue
+        if line.startswith("ExecStart="):
+            inExec = True
+            line = line[len("ExecStart=") :]
+        elif not inExec:
+            continue
+        continues = line.endswith("\\")
+        if continues:
+            line = line[:-1].strip()
+        tokens.extend(line.split())
+        if not continues:
+            break
+    return tokens
+
+
+def test_execStartFlagParser_selfTest_us522():
+    """The guard's own parser, fed known-bad input (US-513 lesson: a static guard
+    without a self-test reports 'clean' forever once its logic rots)."""
+    # A commented-out ExecStart must not contribute tokens.
+    parsed = _execStartFlags(
+        "# ExecStart=/bogus --disable-gpu\n"
+        "[Service]\n"
+        "ExecStart=/usr/bin/chromium \\\n"
+        "  --kiosk \\\n"
+        "  http://127.0.0.1:9899/dashboard.html\n"
+        "Restart=on-failure\n"
+    )
+    assert parsed == ["/usr/bin/chromium", "--kiosk", "http://127.0.0.1:9899/dashboard.html"]
+    assert _GPU_OVERRIDE_FLAG not in parsed, "a comment must never satisfy the guard"
+    # The substring trap: the narrower raster-only flag is NOT the chosen fix.
+    assert _GPU_OVERRIDE_FLAG not in _execStartFlags(
+        "ExecStart=/usr/bin/chromium --disable-gpu-rasterization http://h/\n"
+    ), "--disable-gpu-rasterization must not read as --disable-gpu"
+    # Directives after the ExecStart block are not flags.
+    assert "Restart=on-failure" not in parsed
+
+
+def test_dashboardUnits_carryGpuOverrideInExecStart_us522():
+    """US-522: both kiosk variants pass the GPU override on the ExecStart itself.
+
+    This is the whole fix: the override rides on the unit's own argv, which the
+    Debian wrapper appends AFTER the `/etc/chromium.d` injected flags.
+    """
+    for variant in _DASHBOARD_UNITS:
+        flags = _execStartFlags(_read(KIT_DIR, variant))
+        assert _GPU_OVERRIDE_FLAG in flags, (
+            f"{variant}: ExecStart must carry {_GPU_OVERRIDE_FLAG} -- the OS injects "
+            "--enable-gpu-rasterization via /etc/chromium.d/default-flags and the "
+            "unit's argv is the only repo-managed place that can override it"
+        )
+
+
+def test_dashboardUnits_neverReinjectGpuRasterization_us522():
+    """US-522: our units must never (re-)assert GPU rasterization themselves.
+
+    The repo cannot delete the OS-shipped default, but it must not add a second
+    copy of it -- that would be arguing with our own override.
+    """
+    for variant in _DASHBOARD_UNITS:
+        flags = _execStartFlags(_read(KIT_DIR, variant))
+        assert "--enable-gpu-rasterization" not in flags, variant
+        assert "--enable-gpu" not in flags, variant
+
+
+def test_dashboardUnits_gpuOverrideDoesNotDisplacePriorFlags_us522():
+    """US-522 regression fence: adding the override must not drop what the kiosk
+    already needed (touch, kiosk mode, the same-origin dashboard URL)."""
+    for variant in _DASHBOARD_UNITS:
+        flags = _execStartFlags(_read(KIT_DIR, variant))
+        assert "--kiosk" in flags, variant
+        assert "--touch-events=enabled" in flags, variant
+        assert "http://127.0.0.1:9899/dashboard.html" in flags, variant
+        # The wayland variant keeps its ozone platform (a dropped ozone flag on
+        # Wayland is the D-3 black-screen class).
+        if variant.endswith(".wayland"):
+            assert "--ozone-platform=wayland" in flags, variant
+
+
+def test_deployPi_documentsChromiumDDeployBlindSpot_us522():
+    """US-522 / A-16 deploy-contract blind spot: chromium's base flags live in an
+    OS-shipped `/etc/chromium.d/` file the repo does NOT manage, so a chromium
+    package upgrade can re-introduce GPU raster (or add a new flag) with no repo
+    change at all. deploy-pi.sh must NAME that surface so it stays known."""
+    sh = _read(DEPLOY_DIR, "deploy-pi.sh")
+    assert "/etc/chromium.d" in sh, (
+        "deploy-pi.sh must document the unmanaged /etc/chromium.d flag surface "
+        "(A-16: the deploy contract silently depends on an OS-shipped file)"
+    )
+
+
+# ---------------------------------------------------------------------------
+# US-522 (reopen 2026-08-03) -- kiosk keyring popup (Atlas live-tested).
+#
+# With no `--password-store`, chromium AUTO-DETECTS a Linux backend and picks the
+# GNOME keyring for its OSCrypt "Safe Storage" key. The Pi's Default keyring is
+# password-protected (`~/.local/share/keyrings/Default_Keyring.keyring`, 0600),
+# and under PASSWORDLESS auto-login `pam_gnome_keyring` never unlocks it -- so
+# the collection stays LOCKED, chromium's unlock request reaches `gcr-prompter`,
+# and an "Authentication Required" dialog is painted OVER the kiosk.
+#
+# GROUNDED LIVE on the Pi (10.27.27.100), and the timeline is what proves this
+# belongs to the DASHBOARD unit and not the splash:
+#   gcr-prompter PerformPrompt at Aug 03 05:43:09, 08:33:52, 08:52:23  -- i.e. it
+#   RECURS, and every one of them is ~9h AFTER splash-boot exited (Aug 02
+#   20:20:21). No prompt fired in the splash's own 9.8s window. The prompts track
+#   the long-running dashboard chromium, so the dashboard units are the right
+#   (and sufficient) place for the fix. The splash's latent exposure is filed as
+#   tech debt rather than silently fixed here -- it is a different unit template.
+#
+# The fix's EFFECT is also observable in the journal once applied (Atlas's live
+# run carried `--enable-logging=stderr`, which the repo deliberately does not):
+#   key_storage_linux.cc:116  Selected backend for OSCrypt: BASIC_TEXT
+# `basic` keeps the safe-storage key in chromium's own profile -- and this kiosk's
+# profile is a WIPED `/tmp/dashboard-chromium` that stores no real password, so
+# there is no meaningful security downgrade.
+# ---------------------------------------------------------------------------
+
+_PASSWORD_STORE_FLAG = "--password-store=basic"
+
+
+def _passwordStoreValues(unit: str) -> list[str]:
+    """Every `--password-store=<value>` VALUE on the unit's ExecStart.
+
+    Returning the values (not a boolean "is the flag there") is what makes the
+    guard able to fail in the direction that actually matters: `--password-store`
+    is a VALUED switch, so a prefix/substring check would happily accept
+    `--password-store=gnome` -- which is precisely the broken configuration this
+    story exists to eliminate, not a fix for it.
+    """
+    prefix = "--password-store="
+    return [t[len(prefix) :] for t in _execStartFlags(unit) if t.startswith(prefix)]
+
+
+def test_passwordStoreParser_selfTest_us522():
+    """The keyring guard's own parser, fed known-bad input (US-513 lesson: an
+    un-self-tested static guard reports 'clean' forever once its logic rots)."""
+    # The trap this helper exists for: the WRONG backend must not read as a fix.
+    assert _passwordStoreValues("ExecStart=/usr/bin/chromium --password-store=gnome http://h/\n") == [
+        "gnome"
+    ], "a valued switch must be compared by VALUE, not by prefix presence"
+    # A comment discussing the flag can never satisfy the guard.
+    assert _passwordStoreValues(
+        "# ExecStart=/bogus --password-store=basic\nExecStart=/usr/bin/chromium --kiosk http://h/\n"
+    ) == []
+    assert _passwordStoreValues(f"ExecStart=/usr/bin/chromium {_PASSWORD_STORE_FLAG} http://h/\n") == [
+        "basic"
+    ]
+
+
+def test_dashboardUnits_carryPasswordStoreBasic_us522():
+    """US-522 reopen: both kiosk variants must pin the OSCrypt backend to `basic`.
+
+    Without it chromium auto-selects the GNOME keyring, whose password-protected
+    Default collection is never unlocked under passwordless auto-login -> a
+    recurring gcr-prompter "Authentication Required" dialog over the kiosk.
+    """
+    for variant in _DASHBOARD_UNITS:
+        values = _passwordStoreValues(_read(KIT_DIR, variant))
+        assert values == ["basic"], (
+            f"{variant}: ExecStart must carry exactly {_PASSWORD_STORE_FLAG} "
+            f"(found {values!r}) -- an unset or keyring-backed password store "
+            "paints a keyring auth popup over the kiosk (Atlas, live-tested)"
+        )
+
+
+def test_dashboardUnits_neverSelectKeyringBackedPasswordStore_us522():
+    """US-522 reopen, the awkward direction: no variant may select a LOCKED
+    backend. `gnome`/`gnome-libsecret`/`kwallet*` all route through a collection
+    that passwordless auto-login leaves locked -- i.e. they re-open the defect
+    while still 'having a --password-store flag'."""
+    for variant in _DASHBOARD_UNITS:
+        for value in _passwordStoreValues(_read(KIT_DIR, variant)):
+            assert value == "basic", f"{variant}: --password-store={value} re-opens the keyring popup"
+
+
+def test_dashboardUnits_keyringFixCoexistsWithGpuOverride_us522():
+    """US-522 reopen regression fence: the keyring flag and the GPU override ride
+    the SAME ExecStart, so an edit to one must not drop the other. This mirrors
+    validationCriteria #2, which requires BOTH effective on the live cmdline."""
+    for variant in _DASHBOARD_UNITS:
+        flags = _execStartFlags(_read(KIT_DIR, variant))
+        assert _GPU_OVERRIDE_FLAG in flags, f"{variant}: lost the US-522 GPU override"
+        assert _PASSWORD_STORE_FLAG in flags, f"{variant}: lost the US-522 keyring fix"
+        # And the pre-existing kiosk contract still stands.
+        assert "--kiosk" in flags, variant
+        assert "http://127.0.0.1:9899/dashboard.html" in flags, variant
+
+
+def test_dashboardUnits_carryNoRemoteDebuggingPort_us522():
+    """US-522 reopen -- do NOT import the live box's debug flags along with the fix.
+
+    The hand-patched unit on the Pi carried `--enable-logging=stderr` and
+    `--remote-debugging-port=9222` beside Atlas's `--password-store=basic`. Those
+    were debugging aids for the live test; an open DevTools port on a
+    car-mounted kiosk is an unauthenticated full-page-control surface, and it
+    must not reach the repo just because it sat next to the flag being adopted.
+    """
+    for variant in _DASHBOARD_UNITS:
+        flags = _execStartFlags(_read(KIT_DIR, variant))
+        offenders = [f for f in flags if f.startswith("--remote-debugging-")]
+        assert offenders == [], f"{variant}: kiosk must not expose DevTools ({offenders!r})"

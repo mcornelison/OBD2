@@ -1,11 +1,11 @@
 {
   "schemaVersion": "2.0.0",
-  "lastUpdated": "2026-07-31",
+  "lastUpdated": "2026-08-02",
   "updatedBy": "Marcus (PM)",
   "counters": {
     "epic": 7,
     "feature": 125,
-    "story": 521
+    "story": 529
   },
   "epics": [
     {
@@ -314,10 +314,10 @@
       "parent": "E-OPS",
       "title": "Migrate from camelCase to snake_case",
       "description": "",
-      "status": "active",
+      "status": "complete",
       "renamedFrom": "B-006",
       "createdAt": "2026-05-27",
-      "updatedAt": "2026-05-27"
+      "updatedAt": "2026-08-02"
     },
     {
       "id": "F-008",
@@ -492,7 +492,7 @@
     {
       "id": "F-042",
       "parent": "E-OPS",
-      "title": "Rename src/pi/obd/ \u00e2\u2020\u2019 src/pi/obdii/ (resolve I-014 name collision)",
+      "title": "Rename src/pi/obd/ â†’ src/pi/obdii/ (resolve I-014 name collision)",
       "description": "",
       "status": "complete",
       "renamedFrom": "B-042",
@@ -514,10 +514,10 @@
       "parent": "E-004",
       "title": "Config-Driven Infrastructure Addresses (Standing Rule)",
       "description": "",
-      "status": "active",
+      "status": "complete",
       "renamedFrom": "B-044",
       "createdAt": "2026-05-27",
-      "updatedAt": "2026-05-27"
+      "updatedAt": "2026-08-02"
     },
     {
       "id": "F-045",
@@ -553,8 +553,8 @@
     {
       "id": "F-049",
       "parent": "E-OPS",
-      "title": "drive_detect idle-poll gap \u2014 engine-on never detected in idle-poll",
-      "description": "drive_detect idle-poll gap \u2014 engine-on never detected in idle-poll",
+      "title": "drive_detect idle-poll gap — engine-on never detected in idle-poll",
+      "description": "drive_detect idle-poll gap — engine-on never detected in idle-poll",
       "status": "complete",
       "renamedFrom": "B-049",
       "createdAt": "2026-05-27",
@@ -564,8 +564,8 @@
     {
       "id": "F-050",
       "parent": "E-OPS",
-      "title": "PowerMonitor DB-write path activation \u2014 UpsMonitor \u2192 power_log \u2192 US-216",
-      "description": "PowerMonitor DB-write path activation \u2014 UpsMonitor \u2192 power_log \u2192 US-216",
+      "title": "PowerMonitor DB-write path activation — UpsMonitor → power_log → US-216",
+      "description": "PowerMonitor DB-write path activation — UpsMonitor → power_log → US-216",
       "status": "complete",
       "renamedFrom": "B-050",
       "createdAt": "2026-05-27",
@@ -841,8 +841,8 @@
     {
       "id": "F-082",
       "parent": "E-002",
-      "title": "Tester's V0.28+ data-profile findings \u2014 rollup (8 bugs + 8 design smells)",
-      "description": "Tester's V0.28+ data-profile findings \u2014 rollup (8 bugs + 8 design smells)",
+      "title": "Tester's V0.28+ data-profile findings — rollup (8 bugs + 8 design smells)",
+      "description": "Tester's V0.28+ data-profile findings — rollup (8 bugs + 8 design smells)",
       "status": "complete",
       "renamedFrom": "B-082",
       "createdAt": "2026-05-27",
@@ -882,8 +882,8 @@
     {
       "id": "F-086",
       "parent": "E-001",
-      "title": "GEM-1 \u2014 Warnings-first quiet UI on the 3.5\" display",
-      "description": "GEM-1 \u2014 Warnings-first quiet UI on the 3.5\" display",
+      "title": "GEM-1 — Warnings-first quiet UI on the 3.5\" display",
+      "description": "GEM-1 — Warnings-first quiet UI on the 3.5\" display",
       "status": "pending",
       "renamedFrom": "B-086",
       "createdAt": "2026-05-27",
@@ -892,8 +892,8 @@
     {
       "id": "F-087",
       "parent": "E-003",
-      "title": "GEM-2 \u2014 Deterministic anomaly + Ollama explanation pattern (mature US-326 + US-317 + ingest the brainstorm prompt pack)",
-      "description": "GEM-2 \u2014 Deterministic anomaly + Ollama explanation pattern (mature US-326 + US-317 + ingest the brainstorm prompt pack)",
+      "title": "GEM-2 — Deterministic anomaly + Ollama explanation pattern (mature US-326 + US-317 + ingest the brainstorm prompt pack)",
+      "description": "GEM-2 — Deterministic anomaly + Ollama explanation pattern (mature US-326 + US-317 + ingest the brainstorm prompt pack)",
       "status": "pending",
       "renamedFrom": "B-087",
       "createdAt": "2026-05-27",
@@ -902,8 +902,8 @@
     {
       "id": "F-088",
       "parent": "E-003",
-      "title": "GEM-3 \u2014 Knock-retard real-time alert with chime ladder",
-      "description": "GEM-3 \u2014 Knock-retard real-time alert with chime ladder",
+      "title": "GEM-3 — Knock-retard real-time alert with chime ladder",
+      "description": "GEM-3 — Knock-retard real-time alert with chime ladder",
       "status": "pending",
       "renamedFrom": "B-088",
       "createdAt": "2026-05-27",
@@ -912,8 +912,8 @@
     {
       "id": "F-089",
       "parent": "E-003",
-      "title": "GEM-4 \u2014 Spool engine grade per drive (A/B/C/D + 1-line reason)",
-      "description": "GEM-4 \u2014 Spool engine grade per drive (A/B/C/D + 1-line reason)",
+      "title": "GEM-4 — Spool engine grade per drive (A/B/C/D + 1-line reason)",
+      "description": "GEM-4 — Spool engine grade per drive (A/B/C/D + 1-line reason)",
       "status": "pending",
       "renamedFrom": "B-089",
       "createdAt": "2026-05-27",
@@ -922,8 +922,8 @@
     {
       "id": "F-090",
       "parent": "E-003",
-      "title": "GEM-5 \u2014 MARK EVENT button (bookmark plus/minus 60s window for later analysis)",
-      "description": "GEM-5 \u2014 MARK EVENT button (bookmark plus/minus 60s window for later analysis)",
+      "title": "GEM-5 — MARK EVENT button (bookmark plus/minus 60s window for later analysis)",
+      "description": "GEM-5 — MARK EVENT button (bookmark plus/minus 60s window for later analysis)",
       "status": "pending",
       "renamedFrom": "B-090",
       "createdAt": "2026-05-27",
@@ -932,8 +932,8 @@
     {
       "id": "F-091",
       "parent": "E-005",
-      "title": "GEM-6 \u2014 Audio drive reports via Android Auto",
-      "description": "GEM-6 \u2014 Audio drive reports via Android Auto",
+      "title": "GEM-6 — Audio drive reports via Android Auto",
+      "description": "GEM-6 — Audio drive reports via Android Auto",
       "status": "pending",
       "renamedFrom": "B-091",
       "createdAt": "2026-05-27",
@@ -942,19 +942,19 @@
     {
       "id": "F-092",
       "parent": "E-001",
-      "title": "GEM-7 \u2014 System status tile (BT link, last sync, Pi power mode, ladder stage)",
-      "description": "GEM-7 \u2014 System status tile (BT link, last sync, Pi power mode, ladder stage)",
-      "status": "active",
+      "title": "GEM-7 — System status tile (BT link, last sync, Pi power mode, ladder stage)",
+      "description": "GEM-7 — System status tile (BT link, last sync, Pi power mode, ladder stage)",
+      "status": "complete",
       "currentVersion": "V0.29.3",
       "renamedFrom": "B-092",
       "createdAt": "2026-05-27",
-      "updatedAt": "2026-05-27"
+      "updatedAt": "2026-08-02"
     },
     {
       "id": "F-093",
       "parent": "E-003",
-      "title": "GEM-8 \u2014 Baseline-relative anomaly detection (vs pre-mod shelf, not generic thresholds)",
-      "description": "GEM-8 \u2014 Baseline-relative anomaly detection (vs pre-mod shelf, not generic thresholds)",
+      "title": "GEM-8 — Baseline-relative anomaly detection (vs pre-mod shelf, not generic thresholds)",
+      "description": "GEM-8 — Baseline-relative anomaly detection (vs pre-mod shelf, not generic thresholds)",
       "status": "pending",
       "renamedFrom": "B-093",
       "createdAt": "2026-05-27",
@@ -963,8 +963,8 @@
     {
       "id": "F-094",
       "parent": "E-003",
-      "title": "GEM-9 \u2014 MrSpool digital twin: RAG over Spool knowledge + DSM references + mod/maintenance log",
-      "description": "GEM-9 \u2014 MrSpool digital twin: RAG over Spool knowledge + DSM references + mod/maintenance log",
+      "title": "GEM-9 — MrSpool digital twin: RAG over Spool knowledge + DSM references + mod/maintenance log",
+      "description": "GEM-9 — MrSpool digital twin: RAG over Spool knowledge + DSM references + mod/maintenance log",
       "status": "pending",
       "renamedFrom": "B-094",
       "createdAt": "2026-05-27",
@@ -973,8 +973,8 @@
     {
       "id": "F-095",
       "parent": "E-003",
-      "title": "S-1 \u2014 Heat soak recovery time PID (IAT-minus-ambient delta after cruise; intercooler degradation signal)",
-      "description": "S-1 \u2014 Heat soak recovery time PID (IAT-minus-ambient delta after cruise; intercooler degradation signal)",
+      "title": "S-1 — Heat soak recovery time PID (IAT-minus-ambient delta after cruise; intercooler degradation signal)",
+      "description": "S-1 — Heat soak recovery time PID (IAT-minus-ambient delta after cruise; intercooler degradation signal)",
       "status": "pending",
       "renamedFrom": "B-095",
       "createdAt": "2026-05-27",
@@ -983,8 +983,8 @@
     {
       "id": "F-096",
       "parent": "E-001",
-      "title": "S-2 \u2014 LTFT trend display (multi-drive, healthy migration toward 0)",
-      "description": "S-2 \u2014 LTFT trend display (multi-drive, healthy migration toward 0)",
+      "title": "S-2 — LTFT trend display (multi-drive, healthy migration toward 0)",
+      "description": "S-2 — LTFT trend display (multi-drive, healthy migration toward 0)",
       "status": "complete",
       "renamedFrom": "B-096",
       "createdAt": "2026-05-27",
@@ -996,17 +996,17 @@
       "parent": "E-001",
       "title": "Battery Health card (touch-dashboard; Pi power/battery health) -- PIVOTED 2026-06-05 from S-3 'Drain ladder state UI'",
       "description": "Battery Health card on the F-092/F-097 chromium touch-carousel. PIVOTED 2026-06-05 (Iris, CIO-approved): the key-off sequencer now prevents the Pi draining down the UPS ladder, so the old 'drain ladder state UI' framing is obsolete -- ladder demoted to a failsafe; this surface shows battery HEALTH (renamedFrom intent, same ID per Iris). Hard dep on F-103 (shared chromium kiosk + eclipse-states-http). Spec docs/superpowers/specs/2026-06-05-pi-touch-carousel-dashboard-f092-f097-design.md; groom-ready pending Atlas design-gate signoff.",
-      "status": "active",
+      "status": "complete",
       "currentVersion": "V0.29.3",
       "renamedFrom": "B-097",
       "createdAt": "2026-05-27",
-      "updatedAt": "2026-06-28"
+      "updatedAt": "2026-08-02"
     },
     {
       "id": "F-098",
       "parent": "E-OPS",
-      "title": "S-4 \u2014 Mode badge: in-car vs wall-power debug (small corner indicator)",
-      "description": "S-4 \u2014 Mode badge: in-car vs wall-power debug (small corner indicator)",
+      "title": "S-4 — Mode badge: in-car vs wall-power debug (small corner indicator)",
+      "description": "S-4 — Mode badge: in-car vs wall-power debug (small corner indicator)",
       "status": "complete",
       "renamedFrom": "B-098",
       "createdAt": "2026-05-27",
@@ -1016,8 +1016,8 @@
     {
       "id": "F-099",
       "parent": "E-OPS",
-      "title": "Telegram bot \u2014 bidirectional driver-context channel (CIO \u2194 system; LLM-mediated text\u2192DB ingestion)",
-      "description": "Telegram bot \u2014 bidirectional driver-context channel (CIO \u2194 system; LLM-mediated text\u2192DB ingestion)",
+      "title": "Telegram bot — bidirectional driver-context channel (CIO ↔ system; LLM-mediated text→DB ingestion)",
+      "description": "Telegram bot — bidirectional driver-context channel (CIO ↔ system; LLM-mediated text→DB ingestion)",
       "status": "pending",
       "renamedFrom": "B-099",
       "createdAt": "2026-05-27",
@@ -1026,8 +1026,8 @@
     {
       "id": "F-100",
       "parent": "E-002",
-      "title": "`drive_summary` writer broken \u2014 every server row is an empty shell + drives 6-10 missing entirely",
-      "description": "`drive_summary` writer broken \u2014 every server row is an empty shell + drives 6-10 missing entirely",
+      "title": "`drive_summary` writer broken — every server row is an empty shell + drives 6-10 missing entirely",
+      "description": "`drive_summary` writer broken — every server row is an empty shell + drives 6-10 missing entirely",
       "status": "superseded",
       "supersededBy": "B-104 server-authority rearchitecture (US-350/US-351) + US-437 N-8",
       "renamedFrom": "B-100",
@@ -1084,8 +1084,8 @@
     {
       "id": "F-105",
       "parent": "E-OPS",
-      "title": "architecture.md \u00a720 modification-history SS-T9 row backfill",
-      "description": "architecture.md \u00a720 modification-history SS-T9 row backfill",
+      "title": "architecture.md §20 modification-history SS-T9 row backfill",
+      "description": "architecture.md §20 modification-history SS-T9 row backfill",
       "status": "active",
       "renamedFrom": "B-105",
       "createdAt": "2026-05-27",
@@ -1094,8 +1094,8 @@
     {
       "id": "F-106",
       "parent": "E-002",
-      "title": "Derived Signals From Speed + Time \u2014 Acceleration + Estimated Odometer (with CIO Factual Recalibration)",
-      "description": "Derived Signals From Speed + Time \u2014 Acceleration + Estimated Odometer (with CIO Factual Recalibration)",
+      "title": "Derived Signals From Speed + Time — Acceleration + Estimated Odometer (with CIO Factual Recalibration)",
+      "description": "Derived Signals From Speed + Time — Acceleration + Estimated Odometer (with CIO Factual Recalibration)",
       "status": "complete",
       "renamedFrom": "B-106",
       "createdAt": "2026-05-27",
@@ -1117,10 +1117,10 @@
       "parent": "E-OPS",
       "title": "vehicle_info ECU + Calibration Signature Manual-Tracking Field",
       "description": "vehicle_info ECU + Calibration Signature Manual-Tracking Field",
-      "status": "active",
+      "status": "complete",
       "renamedFrom": "B-108",
       "createdAt": "2026-05-27",
-      "updatedAt": "2026-06-28"
+      "updatedAt": "2026-08-02"
     },
     {
       "id": "F-109",
@@ -1137,19 +1137,19 @@
       "parent": "E-001",
       "title": "On-Pi DTC / check-engine viewer + gated Mode-04 clear (Card 5 of the touch dashboard)",
       "description": "On-Pi DTC/check-engine viewer surface + safety-gated Mode-04 clear, with a KOEO read independent of DriveDetector. Card 5 (Alerts+DTC) of the F-092/F-097 carousel. Spec drafted + CIO-approved 2026-06-05 (post drive-27 MIL: P0443 EVAP read+cleared off the Pi); spec docs/superpowers/specs/2026-06-05-pi-dtc-check-engine-viewer-clear-design.md. STATUS: pending Atlas design-gate signoff (load-bearing net-new write-to-vehicle Mode-04 path) -- Iris files the formal groom-ready pointer on Atlas's nod. SEQUENCE (Atlas greenlight 2026-06-19): F-103 -> carousel shell -> System Status + Battery Health cards -> System Setup+polkit -> pygame sunset -> THIS (Card 5, LAST). BUILD CONDITIONS: C-2 KOEO capture path independent of DriveDetector (drive_id=NULL, or viewer is blank key-on); C-3 Mode 02 dead on MD326328 -> realtime_data fallback (see F-109). Rule-10 DoD: state-server extension + emitters + Mode-04 path + token each land with matching specs/architecture.md (+ specs/UI/) in-sprint. Iris story split (spec section 10 M-1): US-A dtc emitter + state-server endpoint + static-table loader/sync; US-B takeover + severity-styled ribbon; US-C Alerts card (hero+list) + detail (freeze-frame + severity-gated fix + trust badge); US-D Clear-DTC Mode-04 path + gate + confirm + re-read + session-lock (load-bearing, pairs w/ Atlas A-1); US-E freeze-frame capture-or-honest-fallback. Spool owns severity taxonomy + DSM P1xxx curation; safety semantics offices/tuner/dtc-display-clear-safety-advisory.md; reference code specs/examples/dtc_read_and_clear_koeo.py.",
-      "status": "active",
+      "status": "complete",
       "currentVersion": "V0.29.20",
       "createdAt": "2026-06-28",
-      "updatedAt": "2026-07-31"
+      "updatedAt": "2026-08-02"
     },
     {
       "id": "F-110",
       "title": "EDR Dedicated-Reader Internal Bus -- Slice 1",
       "description": "Slice 1 (gate #1) of the EDR epic: new src/pi/bus/ package (Sample envelope, QoS, SampleBus with STREAM + STATE retained topics + integrity-gap markers, Subscription with QoS overflow) + a PersistenceSubscriber that writes realtime_data by REUSING ObdDataLogger.logReading() (byte-identical golden master) + a publish seam in RealtimeDataLogger, all behind a pi.bus.enabled flag (default off). Ships DARK; stdlib only; hardware-independent. Spec: docs/superpowers/specs/2026-06-18-edr-dedicated-reader-bus-contract-design.md.",
       "parent": "E-006",
-      "status": "active",
+      "status": "complete",
       "createdAt": "2026-06-19",
-      "updatedAt": "2026-06-19",
+      "updatedAt": "2026-08-02",
       "deployStatus": "awaiting-validation",
       "currentVersion": "V0.29.0",
       "note": "EDR bus Slice 1 shipped Sprint 46 (6/6); deployed V0.29.0 ships-dark behind pi.bus.enabled=false. Awaiting post-merge Pi flag-flip + byte-identical realtime_data validation (separate deploy gate) before complete."
@@ -1263,29 +1263,29 @@
     {
       "id": "F-123",
       "parent": "E-001",
-      "status": "pending",
+      "status": "active",
       "title": "Pi dashboard truthfulness round 2 -- card wiring + new sources (CIO bench review 07-31)",
       "description": "Track A of the CIO 2026-07-31 UI-feedback round (triage SSOT: offices/pm/decisions/2026-07-31-ui-feedback-round2-triage.md). Design-independent wiring + source-build fixes to the shipped V0.29.21 carousel: version chip inject (#1), power-source reader wiring that fixes BOTH the grayed header bolt (#2) and the 'power unavailable' tile (#6) from one root, 12h clock (#3), Battery Health truthfulness (#8: remove the no-source TEMP tile + wire HEALTH verdict + last-health-check), and a new last-drive-summary producer (#4). CIO chose 'build both producers' for #4/#5. Runs parallel to BL-025; does not touch the capture path. Companion design work = F-124 (Iris).",
       "createdAt": "2026-07-31",
-      "updatedAt": "2026-07-31"
+      "updatedAt": "2026-08-02"
     },
     {
       "id": "F-124",
       "parent": "E-001",
-      "status": "pending",
+      "status": "active",
       "title": "Pi dashboard design-fidelity + interaction pass round 2 (Iris, design-before-build)",
       "description": "Track B of the CIO 2026-07-31 UI-feedback round (triage SSOT: offices/pm/decisions/2026-07-31-ui-feedback-round2-triage.md). Design-owned items requiring Iris design + CIO mockup review BEFORE dev stories are groomed: #14 look/feel fidelity vs the approved design (untokenized literals TD-065 + idle wordmark/footer copy drift + no brand display face), #9 Motion/IMU card redesign to match Iris's CIO-locked live-card spec (compass tape not needle-dial, GEAR readout, 0.6 g amber, home-slot swap) + screen placement, #12 carousel wrap (7<->1, reverses the intentional clamp), #13 auto-rotation + swipe-to-pause + hard-swipe-advance (CIO-chosen; needs a new slow/fast swipe distinction), #7 System-Status 'issue' drill-down detail view, #15 steadier 'parked' concept for the kebab visibility (today it flips with OBD availability). No stories authored until Iris's design lands + CIO approves the mockup (design-before-build pattern).",
       "createdAt": "2026-07-31",
-      "updatedAt": "2026-07-31"
+      "updatedAt": "2026-08-02"
     },
     {
       "id": "F-125",
       "parent": "E-006",
-      "status": "pending",
+      "status": "active",
       "title": "GPS source + honest altitude (real I2C GPS + interim derived) -- live-card upgrade",
       "description": "CIO 2026-08-01 (Iris consolidated work-package: offices/pm/inbox/2026-08-01-from-iris-gps-altitude-workpackage-for-grooming.md). states/imu has NO altitude source (no baro on ICM-20948, no GPS producer). Add honest altitude two ways: (a) REAL -- an Adafruit PA1010D I2C GPS (#4415 STEMMA QT) -> new states/gps source (DELTA-2 seam, Atlas contract) giving absolute altitude +-10-20m + true speed/heading/position (CIO ordering the part; Spool owns GPS-value trust); (b) INTERIM (CIO-greenlit to SHOW now, labeled approximate, NOT safety-critical) -- altitude = home-elevation + integral(sin(pitch)*speed dt) from IMU grade + OBD speed, home-anchored, re-anchored on every successful server sync (Spool owns the derivation math). Plus home-location config (pi.location.home.{lat,lon,elevationM}; location PII stays in .env). None of this touches the in-flight V0.29.23 F-124 work -- US-508 altimeter shows 'no source' meanwhile; GPS later swaps the feed + drops the approximate marker.",
       "createdAt": "2026-08-01",
-      "updatedAt": "2026-08-01"
+      "updatedAt": "2026-08-02"
     }
   ],
   "stories": [
@@ -1295,7 +1295,7 @@
       "title": "Backfill 2 ECU lineage rows (supersede placeholder; close MD346675 era + open MD326328 era) + join verification",
       "type": "normal",
       "size": "S",
-      "status": "sprint-ready",
+      "status": "complete",
       "goal": "As a server-side analytics consumer wanting per-drive ECU attribution, I want the historical ECU lineage backfilled into vehicle_info as exactly two real eras -- prior ECU (MD346675) active before the ~2026-05-22 swap + new modified-EPROM ECU (MD326328) active from the swap onward -- SUPERSEDING the degenerate PRE_TRACKING_UNKNOWN bootstrap placeholder, so any drive's start_time_utc resolves to the active ECU at that time (and the stuck June-5 dtc_freeze_frame orphan self-heals). Per Atlas 2026-06-28 ruling: 2 rows (option a), NOT 3.",
       "definitionOfDone": [
         "Supersede the degenerate PRE_TRACKING_UNKNOWN placeholder (zero-width install==removal==2026-05-01 11:53:45) -- it is a failed bootstrap, NOT lineage; do NOT retain it as a 3rd live row. Net post-backfill state = exactly 2 real ECU-era rows (Atlas ruling option a; a 3rd row would overlap the MD346675 window at the resolver's >1-window raise, sync.py:605)",
@@ -1368,7 +1368,7 @@
       ],
       "tasks": [],
       "createdAt": "2026-05-28",
-      "updatedAt": "2026-06-28"
+      "updatedAt": "2026-08-02"
     },
     {
       "id": "US-370",
@@ -1379,7 +1379,7 @@
       "status": "pending",
       "goal": "As a server-side analytics consumer aggregating SPEED PID for distance / gear-inference, I want a speed_pid_calibration table keyed by ecu_signature (FK to vehicle_info) carrying a multiplicative correction_factor so that the new modified-EPROM ECU's ~2x SPEED-reading drift gets corrected per-drive. NOTE: new-ECU seed correction_factor=0.5 is INITIAL ESTIMATE; Spool empirical refinement Q2 PENDING.",
       "definitionOfDone": [
-        "Alembic v0010 substep creates speed_pid_calibration table per F-076 V0.28 \u00a71 schema: id PK; ecu_signature FK -> vehicle_info; correction_factor DOUBLE; capture_method ENUM; captured_at_timestamp_utc; captured_by; provenance TEXT NOT NULL; notes",
+        "Alembic v0010 substep creates speed_pid_calibration table per F-076 V0.28 §1 schema: id PK; ecu_signature FK -> vehicle_info; correction_factor DOUBLE; capture_method ENUM; captured_at_timestamp_utc; captured_by; provenance TEXT NOT NULL; notes",
         "Seed 2 rows: prior ECU correction_factor=1.0, provenance='gear-math-drive-18-3rd-gear-fit' (Drive 18 gear math fit); new ECU correction_factor=0.5, provenance='rough-seed-drive-26-gear-math' (Drive 26 rough estimate)",
         "notes field documents initial estimate flag for new-ECU seed",
         "Ordering: US-365 substep runs BEFORE US-370 substep in v0010 (US-370 FKs to US-365's column); documented in migration docstring per Atlas Refinements row 16",
@@ -1395,7 +1395,7 @@
       "validationCriteria": [
         {
           "action": "DESCRIBE speed_pid_calibration post-migration",
-          "outcome": "Shows columns per F-076 V0.28 \u00a71 schema with FK to vehicle_info"
+          "outcome": "Shows columns per F-076 V0.28 §1 schema with FK to vehicle_info"
         },
         {
           "action": "SELECT correction_factor FROM speed_pid_calibration WHERE ecu_signature = '<prior-ECU-sig>'",
@@ -1455,7 +1455,7 @@
       "parent": "F-076",
       "type": "tech-debt",
       "size": "S",
-      "status": "sprint-ready",
+      "status": "complete",
       "goal": "As the test suite, the synthetic divergence fixture should declare its historical drive_statistics table with the current non-data_quality columns (summary_id PK + FK to drive_summary(id)), so the test once again provokes the intended data_quality-missing OperationalError and proves the harness catches the I-041 schema-vs-ORM seam -- rather than failing on a summary_id-missing artifact of the rename.",
       "definitionOfDone": [
         "Historical CREATE TABLE drive_statistics block in test_harnessTooling_canCatchSchemaVsOrmDivergence_synthetic uses summary_id (NOT NULL), PRIMARY KEY (summary_id, parameter_name), FOREIGN KEY (summary_id) REFERENCES drive_summary(id)",
@@ -1485,7 +1485,7 @@
         "US-371"
       ],
       "createdAt": "2026-06-05",
-      "updatedAt": "2026-06-19"
+      "updatedAt": "2026-08-02"
     },
     {
       "id": "US-380",
@@ -1493,7 +1493,7 @@
       "parent": "F-110",
       "type": "normal",
       "size": "M",
-      "status": "sprint-ready",
+      "status": "complete",
       "goal": "Create the src/pi/bus/ package foundation: the immutable Sample envelope, the QoS enum, the topic prefix-matcher, and Subscription (one bounded queue per consumer with a QoS-keyed overflow policy + observability stats). Pure data types + queue logic, no wiring.",
       "definitionOfDone": [
         "Sample is a frozen dataclass with fields: topic, source, value(float|tuple), unit, tsUtc, tsCapture, driveId, dataSource, seq",
@@ -1535,7 +1535,7 @@
         "edr-bus-slice1-draft-2026-06-18"
       ],
       "createdAt": "2026-06-19",
-      "updatedAt": "2026-06-19"
+      "updatedAt": "2026-08-02"
     },
     {
       "id": "US-381",
@@ -1543,7 +1543,7 @@
       "parent": "F-110",
       "type": "normal",
       "size": "S",
-      "status": "sprint-ready",
+      "status": "complete",
       "goal": "Add the SampleBus broker: subscribe() returns a Subscription; publish() fans a Sample out to every matching subscription synchronously and NEVER blocks (the queue buffer is the only async boundary). STREAM topics have no history.",
       "definitionOfDone": [
         "SampleBus.subscribe(topics, qos, name, maxQueue) returns a usable Subscription",
@@ -1579,7 +1579,7 @@
         "edr-bus-slice1-draft-2026-06-18"
       ],
       "createdAt": "2026-06-19",
-      "updatedAt": "2026-06-19"
+      "updatedAt": "2026-08-02"
     },
     {
       "id": "US-382",
@@ -1587,7 +1587,7 @@
       "parent": "F-110",
       "type": "normal",
       "size": "S",
-      "status": "sprint-ready",
+      "status": "complete",
       "goal": "Add retained STATE topics (publish(retain=True) -> last-value-cache, replayed to new subscribers) for slowly-changing data (VIN, calibration, state.config.*); and the honest-instrument integrity-gap marker -- a LOSSLESS overflow publishes event.integrity.gap rather than silently dropping.",
       "definitionOfDone": [
         "publish(sample, retain=True) stores the latest sample per topic",
@@ -1624,7 +1624,7 @@
         "edr-bus-slice1-draft-2026-06-18"
       ],
       "createdAt": "2026-06-19",
-      "updatedAt": "2026-06-19"
+      "updatedAt": "2026-08-02"
     },
     {
       "id": "US-383",
@@ -1632,7 +1632,7 @@
       "parent": "F-110",
       "type": "normal",
       "size": "M",
-      "status": "sprint-ready",
+      "status": "complete",
       "goal": "Add the subscriber that persists raw.obd.* samples to realtime_data by REUSING the existing ObdDataLogger.logReading() write path -- so the persisted rows are identical to today's inline path by construction. This is the 'one subscriber that saves data for the server' (B-104 raw emitter).",
       "definitionOfDone": [
         "PersistenceSubscriber(subscription, dataLogger) with start(), stop(), and handleSample(sample)",
@@ -1673,7 +1673,7 @@
         "edr-bus-slice1-draft-2026-06-18"
       ],
       "createdAt": "2026-06-19",
-      "updatedAt": "2026-06-19"
+      "updatedAt": "2026-08-02"
     },
     {
       "id": "US-384",
@@ -1681,7 +1681,7 @@
       "parent": "F-110",
       "type": "normal",
       "size": "M",
-      "status": "sprint-ready",
+      "status": "complete",
       "goal": "Give the OBD poll loop a producer role: when a SampleBus is injected, _logReadingSafe publishes a raw.obd.<param> Sample (per-producer monotonic seq) instead of writing the DB; when no bus, the existing write path is unchanged. Add the pi.bus.enabled config flag, default false.",
       "definitionOfDone": [
         "RealtimeDataLogger.__init__ gains optional bus=None and producerSource='obd'; adds a _seq counter",
@@ -1720,7 +1720,7 @@
         "edr-bus-slice1-draft-2026-06-18"
       ],
       "createdAt": "2026-06-19",
-      "updatedAt": "2026-06-19"
+      "updatedAt": "2026-08-02"
     },
     {
       "id": "US-385",
@@ -1728,7 +1728,7 @@
       "parent": "F-110",
       "type": "normal",
       "size": "M",
-      "status": "sprint-ready",
+      "status": "complete",
       "goal": "Wire the bus into the orchestrator: when pi.bus.enabled, build a SampleBus, start a PersistenceSubscriber on raw.obd.* (LOSSLESS) bound to the logger's ObdDataLogger, and inject the bus into the logger; when off, behavior is identical to today. Slice 1 ships dark.",
       "definitionOfDone": [
         "_initializeDataLogger builds a SampleBus + starts a PersistenceSubscriber on ['raw.obd.*'] LOSSLESS + passes the bus to createRealtimeLoggerFromConfig, ONLY when pi.bus.enabled is true",
@@ -1769,7 +1769,7 @@
         "edr-bus-slice1-draft-2026-06-18"
       ],
       "createdAt": "2026-06-19",
-      "updatedAt": "2026-06-19"
+      "updatedAt": "2026-08-02"
     },
     {
       "id": "US-386",
@@ -1810,7 +1810,7 @@
       "createdAt": "2026-06-28",
       "updatedAt": "2026-07-20",
       "passes": true,
-      "shippedNote": "SHIPPED Sprint 47 / V0.29.1 (commit 4bd8444, ancestor of dev; passes:true). Backlog status was stale (sprint-ready) -- corrected per Atlas PRD review 2026-07-20 (git ancestry + detector.py:710 _maybeCloseOnDeadline + architecture.md \u00a710.7.1.2 all confirm). The remaining A-9 closure is the IRL car re-gate (one clean drive: one drive_id, correct close, no absorption) -- NOT a rebuild sprint."
+      "shippedNote": "SHIPPED Sprint 47 / V0.29.1 (commit 4bd8444, ancestor of dev; passes:true). Backlog status was stale (sprint-ready) -- corrected per Atlas PRD review 2026-07-20 (git ancestry + detector.py:710 _maybeCloseOnDeadline + architecture.md §10.7.1.2 all confirm). The remaining A-9 closure is the IRL car re-gate (one clean drive: one drive_id, correct close, no absorption) -- NOT a rebuild sprint."
     },
     {
       "id": "US-387",
@@ -1851,7 +1851,7 @@
       "createdAt": "2026-06-28",
       "updatedAt": "2026-07-20",
       "passes": true,
-      "shippedNote": "SHIPPED Sprint 47 / V0.29.1 (commit f36b44d, ancestor of dev; passes:true). Backlog status was stale (sprint-ready) -- corrected per Atlas PRD review 2026-07-20 (git ancestry + detector.py:710 _maybeCloseOnDeadline + architecture.md \u00a710.7.1.2 all confirm). The remaining A-9 closure is the IRL car re-gate (one clean drive: one drive_id, correct close, no absorption) -- NOT a rebuild sprint."
+      "shippedNote": "SHIPPED Sprint 47 / V0.29.1 (commit f36b44d, ancestor of dev; passes:true). Backlog status was stale (sprint-ready) -- corrected per Atlas PRD review 2026-07-20 (git ancestry + detector.py:710 _maybeCloseOnDeadline + architecture.md §10.7.1.2 all confirm). The remaining A-9 closure is the IRL car re-gate (one clean drive: one drive_id, correct close, no absorption) -- NOT a rebuild sprint."
     },
     {
       "id": "US-388",
@@ -1897,7 +1897,7 @@
       "createdAt": "2026-06-28",
       "updatedAt": "2026-07-20",
       "passes": true,
-      "shippedNote": "SHIPPED Sprint 47 / V0.29.1 (commit 75384e6, ancestor of dev; passes:true). Backlog status was stale (sprint-ready) -- corrected per Atlas PRD review 2026-07-20 (git ancestry + detector.py:710 _maybeCloseOnDeadline + architecture.md \u00a710.7.1.2 all confirm). The remaining A-9 closure is the IRL car re-gate (one clean drive: one drive_id, correct close, no absorption) -- NOT a rebuild sprint."
+      "shippedNote": "SHIPPED Sprint 47 / V0.29.1 (commit 75384e6, ancestor of dev; passes:true). Backlog status was stale (sprint-ready) -- corrected per Atlas PRD review 2026-07-20 (git ancestry + detector.py:710 _maybeCloseOnDeadline + architecture.md §10.7.1.2 all confirm). The remaining A-9 closure is the IRL car re-gate (one clean drive: one drive_id, correct close, no absorption) -- NOT a rebuild sprint."
     },
     {
       "id": "US-389",
@@ -1949,7 +1949,7 @@
       "createdAt": "2026-06-28",
       "updatedAt": "2026-07-20",
       "passes": true,
-      "shippedNote": "SHIPPED Sprint 47 / V0.29.1 (commit d4d7d22, ancestor of dev; passes:true). Backlog status was stale (sprint-ready) -- corrected per Atlas PRD review 2026-07-20 (git ancestry + detector.py:710 _maybeCloseOnDeadline + architecture.md \u00a710.7.1.2 all confirm). The remaining A-9 closure is the IRL car re-gate (one clean drive: one drive_id, correct close, no absorption) -- NOT a rebuild sprint."
+      "shippedNote": "SHIPPED Sprint 47 / V0.29.1 (commit d4d7d22, ancestor of dev; passes:true). Backlog status was stale (sprint-ready) -- corrected per Atlas PRD review 2026-07-20 (git ancestry + detector.py:710 _maybeCloseOnDeadline + architecture.md §10.7.1.2 all confirm). The remaining A-9 closure is the IRL car re-gate (one clean drive: one drive_id, correct close, no absorption) -- NOT a rebuild sprint."
     },
     {
       "id": "US-390",
@@ -1986,7 +1986,7 @@
       "createdAt": "2026-06-28",
       "updatedAt": "2026-07-20",
       "passes": true,
-      "shippedNote": "SHIPPED Sprint 47 / V0.29.1 (commit 25fcc0d, ancestor of dev; passes:true). Backlog status was stale (sprint-ready) -- corrected per Atlas PRD review 2026-07-20 (git ancestry + detector.py:710 _maybeCloseOnDeadline + architecture.md \u00a710.7.1.2 all confirm). The remaining A-9 closure is the IRL car re-gate (one clean drive: one drive_id, correct close, no absorption) -- NOT a rebuild sprint."
+      "shippedNote": "SHIPPED Sprint 47 / V0.29.1 (commit 25fcc0d, ancestor of dev; passes:true). Backlog status was stale (sprint-ready) -- corrected per Atlas PRD review 2026-07-20 (git ancestry + detector.py:710 _maybeCloseOnDeadline + architecture.md §10.7.1.2 all confirm). The remaining A-9 closure is the IRL car re-gate (one clean drive: one drive_id, correct close, no absorption) -- NOT a rebuild sprint."
     },
     {
       "id": "US-391",
@@ -1994,7 +1994,7 @@
       "title": "dtc_freeze_frame sync: quarantine unresolvable cross-tier rows after N failures (stop silent infinite retry)",
       "type": "issue",
       "size": "S",
-      "status": "sprint-ready",
+      "status": "complete",
       "goal": "As the sync subsystem, I want a single unresolvable freeze-frame to stop retrying forever (it ran 27x/day for 3+ weeks with no dead-letter/quarantine/alert -- a silent infinite loop that would mask a REAL sync failure in the noise). 'Fail loudly, no silent re-resolve' is correct per-attempt but wrong at the queue level. After N consecutive identical resolution failures, quarantine the record (dead-letter table OR data_quality flag -- Atlas quick-read requested) and surface it ONCE. General safety net; US-367 self-heals the current specific orphan.",
       "definitionOfDone": [
         "Atlas invariant 1 -- after N consecutive identical cross-tier resolution failures on the same record, the sync loop quarantines it (dead-letter table or data_quality flag) and stops re-attempting every cycle",
@@ -2034,7 +2034,7 @@
       ],
       "tasks": [],
       "createdAt": "2026-06-28",
-      "updatedAt": "2026-06-28"
+      "updatedAt": "2026-08-02"
     },
     {
       "id": "US-392",
@@ -2042,7 +2042,7 @@
       "title": "De-dup the server address inside config.json (derive base URLs from serverHost:serverPort)",
       "type": "tech-debt",
       "size": "S",
-      "status": "sprint-ready",
+      "status": "complete",
       "goal": "As the infrastructure config, I want the A-15 structural gap behind the .10->.120 breakage closed: config.json holds the server address in multiple literals (serverBaseUrl / companionService.baseUrl) that nothing forces to agree. Derive them from serverHost:serverPort so the literal lives in ONE key -- a box move = one edit. Atlas's mirror-consistency lint already guards divergence; this removes the duplication it guards.",
       "definitionOfDone": [
         "config.json server/companion base URLs derive from serverHost:serverPort (single source key); no duplicated host literal",
@@ -2076,7 +2076,7 @@
       ],
       "tasks": [],
       "createdAt": "2026-06-28",
-      "updatedAt": "2026-06-28"
+      "updatedAt": "2026-08-02"
     },
     {
       "id": "US-393",
@@ -2084,7 +2084,7 @@
       "title": "F-103 boot splash -- chromium kiosk + localhost state server on the 3.5\" display",
       "type": "normal",
       "size": "M",
-      "status": "sprint-ready",
+      "status": "complete",
       "goal": "As the Pi at boot, I want a branded boot splash on the 3.5\" display backed by a chromium kiosk + a localhost state server, so the operator sees boot progress instead of a console/blank screen.",
       "definitionOfDone": [
         "chromium kiosk launches on boot rendering the splash on the 3.5\" display",
@@ -2121,7 +2121,7 @@
       ],
       "tasks": [],
       "createdAt": "2026-06-29",
-      "updatedAt": "2026-06-29"
+      "updatedAt": "2026-08-02"
     },
     {
       "id": "US-394",
@@ -2129,17 +2129,17 @@
       "title": "F-103 shutdown splash -- ShutdownSequencer phase-emit hook + architecture.md section 10.6",
       "type": "normal",
       "size": "M",
-      "status": "sprint-ready",
+      "status": "complete",
       "goal": "As the Pi during shutdown, I want a shutdown splash so the operator sees the staged shutdown instead of a frozen/blank screen.",
       "definitionOfDone": [
         "ShutdownSequencer emits phase events [A-2] and the splash renders",
         "shutdown splash shows the staged shutdown",
         "sequencer docstring documents the timing invariant [A-6]",
-        "specs/architecture.md \u00a710.6 updated in-sprint (load-bearing ShutdownSequencer change -- Atlas design-gate DoD; BLOCKs if the hook ships without the spec update, M-1a)",
+        "specs/architecture.md §10.6 updated in-sprint (load-bearing ShutdownSequencer change -- Atlas design-gate DoD; BLOCKs if the hook ships without the spec update, M-1a)",
         "[ATLAS C-5 shutdown-state survives eclipse-obd stop] shutdown-state must remain readable AFTER eclipse-obd.service has stopped: eclipse-obd's RuntimeDirectory=eclipse-obd is removed on stop, so if it exclusively owns /run/eclipse-obd the dir (and shutdown-state) vanish at the exact moment the shutdown splash needs them -- eclipse-states-http.service (and the states dir) must be ordered/ref-counted (shared RuntimeDirectory=eclipse-obd) to OUTLIVE eclipse-obd during the shutdown sequence"
       ],
       "conditionalOutcomes": [
-        "ShutdownSequencer IS load-bearing -> the \u00a710.6 update is mandatory in-sprint (not a follow-up)"
+        "ShutdownSequencer IS load-bearing -> the §10.6 update is mandatory in-sprint (not a follow-up)"
       ],
       "validationCriteria": [
         {
@@ -2151,7 +2151,7 @@
           "outcome": "shutdown splash still renders from shutdown-state (proves the dir/file survives the RuntimeDirectory cleanup, not just a warm path where eclipse-obd is still up)"
         },
         {
-          "action": "inspect specs/architecture.md \u00a710.6",
+          "action": "inspect specs/architecture.md §10.6",
           "outcome": "documents the phase-emit hook + timing invariant"
         }
       ],
@@ -2166,7 +2166,7 @@
       ],
       "tasks": [],
       "createdAt": "2026-06-29",
-      "updatedAt": "2026-06-29"
+      "updatedAt": "2026-08-02"
     },
     {
       "id": "US-395",
@@ -2174,7 +2174,7 @@
       "title": "F-103 deploy integration -- fold splash units into deploy-pi.sh + states-dir provisioning",
       "type": "normal",
       "size": "S",
-      "status": "sprint-ready",
+      "status": "complete",
       "goal": "As the deploy path, I want F-103's units folded into deploy-pi.sh so the splash ships with every Pi deploy.",
       "definitionOfDone": [
         "deploy-pi.sh installs + enables eclipse-boot-state.service + eclipse-states-http.service (sync-if-changed, mirroring the existing unit-install steps)",
@@ -2211,7 +2211,7 @@
       ],
       "tasks": [],
       "createdAt": "2026-06-29",
-      "updatedAt": "2026-06-29"
+      "updatedAt": "2026-08-02"
     },
     {
       "id": "US-396",
@@ -2219,7 +2219,7 @@
       "title": "F-103 defects + install-time checks (D-1/D-2/D-3 + V-1/V-2)",
       "type": "normal",
       "size": "S",
-      "status": "sprint-ready",
+      "status": "complete",
       "goal": "As the F-103 surface, I want the spec's known defects closed + the install-time checks passing.",
       "definitionOfDone": [
         "spec defects D-1/D-2/D-3 resolved",
@@ -2250,7 +2250,7 @@
       ],
       "tasks": [],
       "createdAt": "2026-06-29",
-      "updatedAt": "2026-06-29"
+      "updatedAt": "2026-08-02"
     },
     {
       "id": "US-397",
@@ -2258,7 +2258,7 @@
       "title": "Fix sync_now.py import break -- normalize Pi entry-point to pi.*-on-src convention",
       "type": "issue",
       "size": "S",
-      "status": "sprint-ready",
+      "status": "complete",
       "goal": "As the operator, I want python scripts/sync_now.py to run on the Pi so I can trigger a manual sync without a PYTHONPATH workaround.",
       "definitionOfDone": [
         "sync_now.py follows the project Pi-tier convention ([[feedback-path-convention-no-src-prefix]]): put src/ on sys.path + import pi.sync / pi.data (matching the services), NOT ROOT + src.pi.* (root cause: sync_now.py inserts repo ROOT on sys.path + imports src.pi.*, but src/pi/obdii/__init__.py:26 uses bare from pi.display import ... -> ModuleNotFoundError: No module named 'pi')",
@@ -2287,7 +2287,7 @@
       ],
       "tasks": [],
       "createdAt": "2026-06-29",
-      "updatedAt": "2026-06-29"
+      "updatedAt": "2026-08-02"
     },
     {
       "id": "US-398",
@@ -2295,7 +2295,7 @@
       "title": "Fix simulate duplicate (timestamp, parameter) rows -- test-fidelity vs data-quality ruling",
       "type": "issue",
       "size": "S",
-      "status": "sprint-ready",
+      "status": "complete",
       "goal": "As the simulate-mode test suite, I want test_noDuplicateTimestampParameterCombinations to pass deterministically, with the underlying data-quality question resolved.",
       "definitionOfDone": [
         "rule between (a) test-fidelity -- the 'no two rows share a (second-timestamp, parameter)' invariant is false at sub-second poll rates (realtime_data.timestamp is second-granularity ISO); the assertion should key on a higher-resolution timestamp or id; vs (b) real data-quality -- if production also writes sub-second-duplicate rows, second-bucketed analytics could double-count -> needs a finer timestamp or a uniqueness guard; then implement the corresponding fix (NOT investigation-only)",
@@ -2324,7 +2324,7 @@
       ],
       "tasks": [],
       "createdAt": "2026-06-29",
-      "updatedAt": "2026-06-29"
+      "updatedAt": "2026-08-02"
     },
     {
       "id": "US-399",
@@ -2332,7 +2332,7 @@
       "title": "Carousel shell -- chromium dashboard kiosk + swipe-nav + page dots + persistent top bar + eclipse-states-http full runtime",
       "type": "normal",
       "size": "M",
-      "status": "sprint-ready",
+      "status": "complete",
       "goal": "As the operator at the dash, I want a swipeable chromium dashboard with a persistent top bar so I can glance at system + battery state on the 3.5\" panel after boot.",
       "definitionOfDone": [
         "dashboard kiosk (Wayland/X11, F-103 launch-flag parity) starts on the splash HEALTHY_YIELD hand-off (A-1)",
@@ -2370,7 +2370,7 @@
       ],
       "tasks": [],
       "createdAt": "2026-06-30",
-      "updatedAt": "2026-06-30"
+      "updatedAt": "2026-08-02"
     },
     {
       "id": "US-400",
@@ -2378,7 +2378,7 @@
       "title": "System Status card + system-status emitter -- OBD-link/sync/power/drive tiles + I-033 BT-reconnect visibility",
       "type": "normal",
       "size": "M",
-      "status": "sprint-ready",
+      "status": "complete",
       "goal": "As the operator, I want OBD-link / sync / power / drive status at a glance, and to SEE when the BT link drops, so I'm not blind to a reconnect (I-033).",
       "definitionOfDone": [
         "new system-status emitter writes /run/eclipse-obd/states/system-status (schema per A-3)",
@@ -2420,7 +2420,7 @@
       ],
       "tasks": [],
       "createdAt": "2026-06-30",
-      "updatedAt": "2026-06-30"
+      "updatedAt": "2026-08-02"
     },
     {
       "id": "US-401",
@@ -2428,7 +2428,7 @@
       "title": "Battery Health card + battery-health emitter -- honest UPS LiPo view (voltage-is-not-percent + stale-green traps locked)",
       "type": "normal",
       "size": "M",
-      "status": "sprint-ready",
+      "status": "complete",
       "goal": "As the operator, I want an HONEST view of the Pi UPS battery's health (not the car battery), so I know it can shut down cleanly -- without being lied to by voltage-as-percent or stale-green.",
       "definitionOfDone": [
         "new battery-health emitter writes /run/eclipse-obd/states/battery-health (schema per A-3)",
@@ -2475,7 +2475,7 @@
       ],
       "tasks": [],
       "createdAt": "2026-06-30",
-      "updatedAt": "2026-06-30"
+      "updatedAt": "2026-08-02"
     },
     {
       "id": "US-402",
@@ -2483,7 +2483,7 @@
       "title": "Pygame sunset -- retire status_display.py/dashboard_layout.py once the HTML carousel reaches parity",
       "type": "normal",
       "size": "S",
-      "status": "sprint-ready",
+      "status": "complete",
       "goal": "As the Pi, I want exactly one dashboard surface, so retire pygame once the HTML reaches parity.",
       "definitionOfDone": [
         "status_display.py/dashboard_layout.py no longer launched (superseded; data republished via the emitters)",
@@ -2515,7 +2515,7 @@
       ],
       "tasks": [],
       "createdAt": "2026-06-30",
-      "updatedAt": "2026-06-30"
+      "updatedAt": "2026-08-02"
     },
     {
       "id": "US-403",
@@ -2523,7 +2523,7 @@
       "title": "System Setup menu + gated service control -- long-press/menu, install-fixed allow-list via A-7 privilege path, Exit/Close",
       "type": "normal",
       "size": "M",
-      "status": "sprint-ready",
+      "status": "complete",
       "goal": "As the operator, I want a deliberate, accident-proof menu to restart/stop services + exit the UI, without the kiosk running as root or letting me brick the safe-shutdown guard.",
       "definitionOfDone": [
         "long-press ~5s (ring fills; release <5s cancels) AND top-bar `:` both open the menu (D-6)",
@@ -2574,7 +2574,7 @@
       ],
       "tasks": [],
       "createdAt": "2026-06-30",
-      "updatedAt": "2026-06-30"
+      "updatedAt": "2026-08-02"
     },
     {
       "id": "US-404",
@@ -2582,7 +2582,7 @@
       "title": "DTC KOEO read + dtc emitter -- key-on Mode 03(+07) on the OBD connection-edge (no DriveDetector, drive_id=NULL explicit)",
       "type": "normal",
       "size": "M",
-      "status": "sprint-ready",
+      "status": "complete",
       "goal": "As the operator walking up to a lit MIL at key-on, I want the code(s) on the dashboard at the exact moment I ask \"why's my light on?\" -- a key-on read that doesn't depend on a drive being active.",
       "definitionOfDone": [
         "a key-on Mode 03(+07) read fires on the OBD connection-established edge (`event_router` `onConnectionRestored`), one-shot, gated on no active RUNNING drive, owned by the DTC capture path (`dtc_logger` connection-edge entrypoint reusing `dtc_client`) -- NOT DriveDetector (Atlas A-9 ruling)",
@@ -2621,7 +2621,7 @@
       ],
       "tasks": [],
       "createdAt": "2026-06-30",
-      "updatedAt": "2026-06-30"
+      "updatedAt": "2026-08-02"
     },
     {
       "id": "US-405",
@@ -2629,7 +2629,7 @@
       "title": "DTC takeover + ribbon -- full-screen severity takeover on a NEW code + persistent STOP-red ribbon on every card",
       "type": "normal",
       "size": "S",
-      "status": "sprint-ready",
+      "status": "complete",
       "goal": "As the operator, I want a NEW check-engine code to grab my attention, then stay visible -- without ever trapping me from seeing the road.",
       "definitionOfDone": [
         "full-screen takeover per-severity color + directive + dismiss controls (STOP has no plain dismiss; \"Acknowledge\" drops to ribbon -- driver keeps view control)",
@@ -2665,7 +2665,7 @@
       ],
       "tasks": [],
       "createdAt": "2026-06-30",
-      "updatedAt": "2026-06-30"
+      "updatedAt": "2026-08-02"
     },
     {
       "id": "US-406",
@@ -2673,7 +2673,7 @@
       "title": "DTC Alerts card (Card 5) + detail -- hero/worst-first list, freeze-frame-or-realtime fallback, severity-gated fix + trust badge",
       "type": "normal",
       "size": "M",
-      "status": "sprint-ready",
+      "status": "complete",
       "goal": "As the operator, I want an honest detail view per code -- severity, what to do, the freeze-frame context (or an honest fallback), and a fix ONLY when it's safe -- so I'm never misled into clearing a real fault or swapping the wrong part.",
       "definitionOfDone": [
         "Alerts card = Card 5 of the carousel; hero = highest-severity code + directive; tappable list sorted worst-first",
@@ -2724,7 +2724,7 @@
       ],
       "tasks": [],
       "createdAt": "2026-06-30",
-      "updatedAt": "2026-06-30"
+      "updatedAt": "2026-08-02"
     },
     {
       "id": "US-407",
@@ -2732,7 +2732,7 @@
       "title": "DTC Clear (Mode-04) path -- polkit-gated dtc_client.clear() + action-path gate re-check + hard confirm + re-read + session-lock",
       "type": "normal",
       "size": "M",
-      "status": "sprint-ready",
+      "status": "complete",
       "goal": "As the operator, I want to clear a MINOR code safely -- but ONLY when it's safe, fully logged, and proven cleared -- so I never erase a real fault's evidence or \"chase the light.\"",
       "definitionOfDone": [
         "renders against `offices/tuner/dtc-display-clear-safety-advisory.md` -- Spool SSOT, non-negotiable; this story does NOT redefine it",
@@ -2781,7 +2781,7 @@
       ],
       "tasks": [],
       "createdAt": "2026-06-30",
-      "updatedAt": "2026-06-30"
+      "updatedAt": "2026-08-02"
     },
     {
       "id": "US-408",
@@ -5308,7 +5308,7 @@
       "type": "normal",
       "size": "M",
       "title": "Idle-state home card -- calm honest parked view (pairs with US-480)",
-      "goal": "As the CIO parked with the engine off, I want a calm, honest home card instead of a wall of NA/unavailable tiles (which reads as broken and is the backdrop the phantom alarm appears against). Per Iris's CIO-locked spec (\u00a71): STANDBY (neutral grey, never green) + clock/date + last-drive + battery (stale-green 'checked Nd ago' guard) + honest faults line ('DTC not read since key-off' -- NOT 'No codes', NOT 'Check Engine'). The parked twin of the EDR-gated live home card (same home slot).",
+      "goal": "As the CIO parked with the engine off, I want a calm, honest home card instead of a wall of NA/unavailable tiles (which reads as broken and is the backdrop the phantom alarm appears against). Per Iris's CIO-locked spec (§1): STANDBY (neutral grey, never green) + clock/date + last-drive + battery (stale-green 'checked Nd ago' guard) + honest faults line ('DTC not read since key-off' -- NOT 'No codes', NOT 'Check Engine'). The parked twin of the EDR-gated live home card (same home slot).",
       "definitionOfDone": [
         "idle card renders per Iris spec 1.2: header (wordmark+clock+date), STANDBY hero (neutral grey) + 'engine off / OBD asleep' substate, 3-fact summary strip (last-drive / battery-with-age / honest-faults), footer",
         "ATLAS idle-SSOT (b): idle is read from the system-status emitter's explicit `idle: true|false` boolean (written by US-480-a) -- REPLACE the current display-derived logic (carousel.js:170 derives from the single d.state string); the display renders the emitted flag, it does not arbitrate it",
@@ -5357,7 +5357,7 @@
       "title": "Full-bleed LETTERBOX scaling -- fill the 1080p panel (own story, not blocked behind P0)",
       "goal": "As the CIO, I want the 480x320 UI to fill the whole panel instead of rendering in a corner, so it's legible on the real display. CIO-locked decision 2026-07-21 = LETTERBOX (uniform scale of the exact 480x320 layout, centered, black bars on the aspect mismatch). Presentation-only, no dashboard.css layout rewrite (the win: zero layout churn). Independent of the P0 data fix.",
       "definitionOfDone": [
-        "viewport meta changed from hard-coded width=480,height=320 to width=device-width,initial-scale=1 (Iris spec \u00a72 build strategy step 1)",
+        "viewport meta changed from hard-coded width=480,height=320 to width=device-width,initial-scale=1 (Iris spec §2 build strategy step 1)",
         "whole UI wrapped in a fixed #stage {480x320} design box; shipped dashboard.css layout UNCHANGED inside it",
         "#stage centered in a full-viewport flex container + scaled to fit: resize handler sets --scale = min(innerWidth/480, innerHeight/320); transform: scale(var(--scale)); transform-origin:center (JS handler = the safe path per spec)",
         "container background black so the letterbox strip reads as bezel, not a gap",
@@ -5514,27 +5514,27 @@
       "createdAt": "2026-07-26",
       "updatedAt": "2026-07-27",
       "passes": true,
-      "shippedNote": "SHIPPED V0.29.16 (F-121 complete). US-484-b = Spool \u00a76d multi-channel STOP safety treatment. Residual non-STOP alarm surfaces -> TD-067."
+      "shippedNote": "SHIPPED V0.29.16 (F-121 complete). US-484-b = Spool §6d multi-channel STOP safety treatment. Residual non-STOP alarm surfaces -> TD-067."
     },
     {
       "id": "US-484-b",
       "parent": "F-121",
       "type": "issue",
       "size": "M",
-      "title": "DTC STOP-tier SAFETY treatment -- repoint off brand-red + Spool \u00a76d multi-channel (color+area+motion+text+bg+brightness)",
-      "goal": "As engine-safety signal integrity, I want the DTC STOP/'PULL OVER' tier + takeover to stop rendering in BRAND red --red-light #F61D2D (the brand-vs-alarm collision) and instead carry the STOP signal by Spool's full multi-channel treatment. Per Spool 2026-07-25 (offices/tuner/dtc-display-clear-safety-advisory.md \u00a76d): the hex alone is INSUFFICIENT -- #D32F2F vs brand red differ mainly in saturation (weakest discriminator, worse on the narrow-gamut OSOYOO panel). Area+motion+text carry STOP; color is the third reinforcement. (Split from US-484; the safety half.)",
+      "title": "DTC STOP-tier SAFETY treatment -- repoint off brand-red + Spool §6d multi-channel (color+area+motion+text+bg+brightness)",
+      "goal": "As engine-safety signal integrity, I want the DTC STOP/'PULL OVER' tier + takeover to stop rendering in BRAND red --red-light #F61D2D (the brand-vs-alarm collision) and instead carry the STOP signal by Spool's full multi-channel treatment. Per Spool 2026-07-25 (offices/tuner/dtc-display-clear-safety-advisory.md §6d): the hex alone is INSUFFICIENT -- #D32F2F vs brand red differ mainly in saturation (weakest discriminator, worse on the narrow-gamut OSOYOO panel). Area+motion+text carry STOP; color is the third reinforcement. (Split from US-484; the safety half.)",
       "definitionOfDone": [
         "PREREQ: --critical-red #D32F2F added to specs/UI/tokens.css (Spool assigned the value 2026-07-25; Atlas owes the one-line token gate -- routed). Repoint against the token, not a hardcoded hex.",
         "repoint the DTC STOP tier + takeover OFF brand --red-light #F61D2D onto --critical-red #D32F2F (dashboard.css #dtc-ribbon[data-level=stop], .dtc-chip[stop], .dtc-hero[stop], #confirm-ok)",
-        "Spool \u00a76d ch.1 -- AREA+MOTION+TEXT carry STOP: STOP takeover is full-bleed/large-area + pulsing motion + explicit 'PULL OVER' text; the brand mark stays small + static. (color is the 3rd reinforcement, not the 1st)",
-        "Spool \u00a76d ch.2 -- STOP red renders on NEAR-BLACK (#000/#0a0a0a) with WHITE copy, never on brand chrome; text contrast >= WCAG-AA large-text",
-        "Spool \u00a76d ch.3 -- deeper-and-darker axis only; NO warmer/orange shift (would collide with amber WATCH #FFC400 and invert severity order). WATCH stays #FFC400, MINOR stays #35C46A -- unchanged",
-        "Spool \u00a76d ch.4 -- a STOP alarm is FULL BRIGHTNESS ALWAYS, independent of the US-483-b auto-dim (only ambient content dims; ties to the alarmFloorLevel guard -- STOP overrides even the floor to full)",
+        "Spool §6d ch.1 -- AREA+MOTION+TEXT carry STOP: STOP takeover is full-bleed/large-area + pulsing motion + explicit 'PULL OVER' text; the brand mark stays small + static. (color is the 3rd reinforcement, not the 1st)",
+        "Spool §6d ch.2 -- STOP red renders on NEAR-BLACK (#000/#0a0a0a) with WHITE copy, never on brand chrome; text contrast >= WCAG-AA large-text",
+        "Spool §6d ch.3 -- deeper-and-darker axis only; NO warmer/orange shift (would collide with amber WATCH #FFC400 and invert severity order). WATCH stays #FFC400, MINOR stays #35C46A -- unchanged",
+        "Spool §6d ch.4 -- a STOP alarm is FULL BRIGHTNESS ALWAYS, independent of the US-483-b auto-dim (only ambient content dims; ties to the alarmFloorLevel guard -- STOP overrides even the floor to full)",
         "grep confirms the STOP tier no longer references brand --red-light; UI/pi tests green incl. a test that STOP renders full-bleed + full-brightness on near-black"
       ],
       "conditionalOutcomes": [
         "if --critical-red is not yet in tokens.css at build time, STOP + ping PM/Atlas for the one-line gate (value is decided #D32F2F; do NOT hardcode the hex or pick your own)",
-        "the pulsing-motion treatment must respect the 'motion never implies a state that isn't real' rule (carousel spec \u00a74) -- pulse ONLY on a live STOP, never decoratively"
+        "the pulsing-motion treatment must respect the 'motion never implies a state that isn't real' rule (carousel spec §4) -- pulse ONLY on a live STOP, never decoratively"
       ],
       "validationCriteria": [
         {
@@ -5563,7 +5563,7 @@
       "createdAt": "2026-07-26",
       "updatedAt": "2026-07-27",
       "passes": true,
-      "shippedNote": "SHIPPED V0.29.16 (F-121 complete). US-484-b = Spool \u00a76d multi-channel STOP safety treatment. Residual non-STOP alarm surfaces -> TD-067."
+      "shippedNote": "SHIPPED V0.29.16 (F-121 complete). US-484-b = Spool §6d multi-channel STOP safety treatment. Residual non-STOP alarm surfaces -> TD-067."
     },
     {
       "id": "US-485",
@@ -5726,7 +5726,7 @@
       "title": "Polish P-1: System Status card -- summary line + 2x2 grid + per-tile status dots (glanceability)",
       "goal": "As the CIO glancing at the parked dashboard, I want System Status health readable in one glance, not by reading four stacked paragraphs. Per Iris's CIO-locked polish spec P-1: add a top summary line + a 2x2 tile grid + a per-tile status dot. Refinement of the SHIPPED card -- no new data, all current values/details preserved.",
       "definitionOfDone": [
-        "top SUMMARY line: 'SYSTEM \u00b7 OK' (green) ONLY when every source is genuinely good; else the worst state ('SYSTEM \u00b7 1 ISSUE' amber / 'RECONNECTING' amber) -- honest-instrument F-1 (never green unless all-green)",
+        "top SUMMARY line: 'SYSTEM · OK' (green) ONLY when every source is genuinely good; else the worst state ('SYSTEM · 1 ISSUE' amber / 'RECONNECTING' amber) -- honest-instrument F-1 (never green unless all-green)",
         "2x2 tile grid (F-092's original intent) replacing the 1-column stack; same 4 tiles (OBD/Sync/Power/Drive), all current value+detail preserved",
         "per-tile status DOT (green/amber/red/neutral) mirroring the existing per-tile level -- no new state/data",
         "presentation-only over existing state (no new data/contract); tokens from specs/UI/tokens.css; UI tests green"
@@ -5739,7 +5739,7 @@
         },
         {
           "action": "render with all sources good",
-          "outcome": "summary 'SYSTEM \u00b7 OK' green; 2x2 grid intact"
+          "outcome": "summary 'SYSTEM · OK' green; 2x2 grid intact"
         }
       ],
       "deps": [],
@@ -5760,25 +5760,25 @@
       "parent": "F-121",
       "type": "normal",
       "size": "S",
-      "title": "Polish P-2: context-aware system-setup menu access (\u22ee parked-only + long-press always)",
-      "goal": "As the CIO, I want the system-setup menu (service stop/restart, Exit-UI -- consequential) not reachable by a single accidental tap while driving. Per Iris's polish spec P-2, CIO-locked Option C (2026-07-27): the \u22ee shows ONLY on the parked/idle home card; hidden while driving; the 5s long-press stays always-available as the deliberate override.",
+      "title": "Polish P-2: context-aware system-setup menu access (⋮ parked-only + long-press always)",
+      "goal": "As the CIO, I want the system-setup menu (service stop/restart, Exit-UI -- consequential) not reachable by a single accidental tap while driving. Per Iris's polish spec P-2, CIO-locked Option C (2026-07-27): the ⋮ shows ONLY on the parked/idle home card; hidden while driving; the 5s long-press stays always-available as the deliberate override.",
       "definitionOfDone": [
-        "\u22ee menu button shows only on the parked/idle home card (idle state); HIDDEN while driving (live state) -- keys off the idle/live state the UI already consumes (pure UI, no new data/contract)",
+        "⋮ menu button shows only on the parked/idle home card (idle state); HIDDEN while driving (live state) -- keys off the idle/live state the UI already consumes (pure UI, no new data/contract)",
         "5s long-press-anywhere still opens the menu in any state (deliberate override, filling ring preserved)",
         "each destructive menu item still behind its existing confirm (unchanged)",
         "the menu is never reachable by a single tap while driving; UI tests green"
       ],
       "conditionalOutcomes": [
-        "Iris: confirm with Atlas only if the context-aware \u22ee touches the kiosk lifecycle (she reads it as pure UI, no gate expected) -- if it does, route before building"
+        "Iris: confirm with Atlas only if the context-aware ⋮ touches the kiosk lifecycle (she reads it as pure UI, no gate expected) -- if it does, route before building"
       ],
       "validationCriteria": [
         {
           "action": "parked/idle state",
-          "outcome": "\u22ee visible + opens the menu on tap; long-press also opens"
+          "outcome": "⋮ visible + opens the menu on tap; long-press also opens"
         },
         {
           "action": "driving/live state",
-          "outcome": "\u22ee hidden; only the 5s long-press opens the menu (no single-tap path)"
+          "outcome": "⋮ hidden; only the 5s long-press opens the menu (no single-tap path)"
         }
       ],
       "deps": [],
@@ -5799,11 +5799,11 @@
       "type": "normal",
       "size": "S",
       "title": "Polish P-3: DTC detail overlay hierarchy -- directive-first + carded sections + bigger Back",
-      "goal": "As the operator reading a DTC detail, I want the 'what do I do' to land first, not buried in a dense column. Per Iris's polish spec P-3: directive-first for \ud83d\udd34/\ud83d\udfe1, card the sections, consistent rhythm + a bigger Back. TYPOGRAPHIC/LAYOUT hierarchy ONLY -- zero change to severity gating, the fix-replacement safety rule (S-4), the trust badge, or the Mode-04 clear gate.",
+      "goal": "As the operator reading a DTC detail, I want the 'what do I do' to land first, not buried in a dense column. Per Iris's polish spec P-3: directive-first for 🔴/🟡, card the sections, consistent rhythm + a bigger Back. TYPOGRAPHIC/LAYOUT hierarchy ONLY -- zero change to severity gating, the fix-replacement safety rule (S-4), the trust badge, or the Mode-04 clear gate.",
       "definitionOfDone": [
-        "directive-first for \ud83d\udd34/\ud83d\udfe1: the action band (REDUCE LOAD\u00b7PULL OVER / GET DIAGNOSED) moves directly under the code+chip hero, larger (\ud83d\udfe2 keeps 'safe to clear once logged')",
+        "directive-first for 🔴/🟡: the action band (REDUCE LOAD·PULL OVER / GET DIAGNOSED) moves directly under the code+chip hero, larger (🟢 keeps 'safe to clear once logged')",
         "card the sections: freeze-frame/context, suggested-fix+trust-badge, and the Clear zone each become a bordered block with a small uppercase label",
-        "consistent spacing scale; the \u2039 Back target >= 40px with clear affordance",
+        "consistent spacing scale; the ‹ Back target >= 40px with clear affordance",
         "ZERO change to severity gating / S-4 fix-replacement rule / trust badge / Mode-04 clear gate -- presentation only; UI tests green"
       ],
       "conditionalOutcomes": [],
@@ -6213,7 +6213,7 @@
       "parent": "F-123",
       "type": "issue",
       "size": "S",
-      "status": "pending",
+      "status": "complete",
       "title": "Wire the dashboard version chip to .deploy-version (stop showing 'V?.?.?')",
       "goal": "As the operator, I want the header version chip to show the real deployed version, so I can tell at a glance which build is on the Pi instead of a literal 'V?.?.?'.",
       "definitionOfDone": [
@@ -6236,7 +6236,7 @@
         ".deploy-version"
       ],
       "createdAt": "2026-07-31",
-      "updatedAt": "2026-07-31",
+      "updatedAt": "2026-08-02",
       "tasks": []
     },
     {
@@ -6244,7 +6244,7 @@
       "parent": "F-123",
       "type": "issue",
       "size": "M",
-      "status": "pending",
+      "status": "complete",
       "title": "Wire the real power source to the System-Status power tile + header bolt (fixes both #2 grayed bolt and #6 'unavailable')",
       "goal": "As the operator, I want the header lightning bolt and the System-Status power tile to reflect the real AC/battery (car/wall) power state, so I stop seeing a grayed bolt + 'power unavailable' when the power source is actually known.",
       "definitionOfDone": [
@@ -6271,7 +6271,7 @@
         "carousel.js:248-265,294-299"
       ],
       "createdAt": "2026-07-31",
-      "updatedAt": "2026-07-31",
+      "updatedAt": "2026-08-02",
       "tasks": []
     },
     {
@@ -6279,7 +6279,7 @@
       "parent": "F-123",
       "type": "normal",
       "size": "S",
-      "status": "pending",
+      "status": "complete",
       "title": "Idle-card clock to 12-hour AM/PM",
       "goal": "As the operator, I want the idle-home clock in 12-hour AM/PM format instead of 24-hour, matching how I read time at a glance.",
       "definitionOfDone": [
@@ -6299,7 +6299,7 @@
         "carousel.js:1929,1951"
       ],
       "createdAt": "2026-07-31",
-      "updatedAt": "2026-07-31",
+      "updatedAt": "2026-08-02",
       "tasks": []
     },
     {
@@ -6307,7 +6307,7 @@
       "parent": "F-123",
       "type": "issue",
       "size": "L",
-      "status": "pending",
+      "status": "superseded",
       "title": "Battery Health truthfulness: remove no-source TEMP + writer-fix + HEALTH verdict + last-health-check (Spool spec)",
       "goal": "As the operator, I want every battery field on a real source (or absent), so the card is honest -- no 'no source' temp, and a HEALTH verdict grounded in real capacity data rather than a manufactured value or a hardcoded 'unknown'.",
       "definitionOfDone": [
@@ -6315,18 +6315,19 @@
         "[WRITER-FIX -- BLOCKING SUB-STORY, do FIRST] the producer gap is UPSTREAM: battery_health_log start_vcell_v/end_vcell_v/start_soc_pct/end_soc_pct are NULL on ALL 28 rows -- nothing populates them (Spool live re-query 2026-08-01). Fix the writer to populate vcell/soc; without this the verdict has nothing to consume. Do NOT compute a verdict from NULLs (that manufactures confidence = strictly worse than 'unknown').",
         "[HEALTH VERDICT PRODUCER -- Spool [EXACT] spec] source = battery_health_log (NOT a live MAX17048 spot read -- capacity fade needs runtime-to-cutoff). Qualifying row gate: end_timestamp NOT NULL AND load_class='production' AND runtime_seconds >= [EXACT:600]. RUNTIME_BASELINE_S=[EXACT:727]. States on median of last 3 qualifying drains: good >= [EXACT:80]% baseline (>=582s) | degraded 60-80% (436-582s) | replace < [EXACT:60]% (<436s) | unknown = default (< 3 qualifying in trailing [EXACT:180] days OR any required input NULL). median-of-3 (not last-1: single-drain scatter +-15%).",
         "[LAST-HEALTH-CHECK] = MAX(start_timestamp) over qualifying rows only (a partial/aborted drain is NOT a health check). If last check > [EXACT:90] days old, FORCE verdict to unknown regardless of numbers (stale health data is not health data).",
-        "[SEVERITY -- Spool] \ud83d\udfe2 INFORMATIONAL at every state incl 'replace' -- NEVER alarm-red, never owns the screen, never competes with coolant/DTC-STOP on a driving surface (UPS margin is ~12min vs <1min needed = 10x; 'replace' = data-integrity margin thinned, not a car risk).",
+        "[SEVERITY -- Spool] 🟢 INFORMATIONAL at every state incl 'replace' -- NEVER alarm-red, never owns the screen, never competes with coolant/DTC-STOP on a driving surface (UPS margin is ~12min vs <1min needed = 10x; 'replace' = data-integrity margin thinned, not a car risk).",
         "[HONEST END-STATE] accept the card legitimately reads 'unknown' + last-check '2026-05-16' until fresh qualifying drains exist -- THAT IS THE INSTRUMENT WORKING, not a bug. Test proves the qualifying-gate + median-of-3 + 90-day override + honest-unknown-on-NULL; ruff clean."
       ],
       "validationCriteria": [
         {
           "action": "with seeded battery_health_log rows (some qualifying, some partial, some NULL-input) view the Health card",
-          "outcome": "verdict computed only from qualifying rows via median-of-3 vs the 727s baseline; forces 'unknown' on <3 qualifying / any NULL / >90-day-stale; last-health-check ignores partial drains; renders \ud83d\udfe2 never red; no TEMP tile"
+          "outcome": "verdict computed only from qualifying rows via median-of-3 vs the 727s baseline; forces 'unknown' on <3 qualifying / any NULL / >90-day-stale; last-health-check ignores partial drains; renders 🟢 never red; no TEMP tile"
         }
       ],
       "conditionalOutcomes": [
         "the writer-fix is the blocking first sub-story; if it grows, carve it (US-504a writer / US-504b producer). Do NOT ship a computed verdict over NULL inputs -- keep honest 'unknown' until real vcell/soc data exists.",
-        "[EXACT:] values (600/727/80/60/180/90) are Spool load-bearing -- flag Spool before any drift"
+        "[EXACT:] values (600/727/80/60/180/90) are Spool load-bearing -- flag Spool before any drift",
+        "SUPERSEDED 2026-08-02: carved into US-526 (drain writer, carried to V0.29.25) + US-504b (verdict producer, shipped V0.29.24). Reconciliation."
       ],
       "sourceRefs": [
         "offices/pm/inbox/2026-08-01-from-spool-us504-battery-health-verdict-source.md",
@@ -6335,7 +6336,7 @@
         "carousel.js:529-534,553-582"
       ],
       "createdAt": "2026-07-31",
-      "updatedAt": "2026-07-31",
+      "updatedAt": "2026-08-02",
       "tasks": []
     },
     {
@@ -6343,7 +6344,7 @@
       "parent": "F-123",
       "type": "normal",
       "size": "M",
-      "status": "pending",
+      "status": "complete",
       "title": "Build a last-drive-summary producer so the idle card shows real last-drive data",
       "goal": "As the operator, I want the idle-home card to show my actual last drive instead of 'no recent drive', so I can see recent-drive context at a glance.",
       "definitionOfDone": [
@@ -6367,7 +6368,7 @@
         "card_state_emitter.py:301-319"
       ],
       "createdAt": "2026-07-31",
-      "updatedAt": "2026-07-31",
+      "updatedAt": "2026-08-02",
       "tasks": []
     },
     {
@@ -6375,7 +6376,7 @@
       "parent": "F-124",
       "type": "normal",
       "size": "L",
-      "status": "pending",
+      "status": "complete",
       "title": "Carousel navigation model: wrap (skip gated) + auto-rotate + velocity swipe-pause",
       "goal": "As the operator, I want the carousel to wrap around, auto-cycle when I'm not touching it, and pause when I settle on a screen, so it's hands-off but never traps me or fights my swipe.",
       "definitionOfDone": [
@@ -6398,7 +6399,7 @@
         "carousel.js:36-57,143-150,3168"
       ],
       "createdAt": "2026-07-31",
-      "updatedAt": "2026-07-31",
+      "updatedAt": "2026-08-02",
       "tasks": []
     },
     {
@@ -6406,7 +6407,7 @@
       "parent": "F-124",
       "type": "normal",
       "size": "M",
-      "status": "pending",
+      "status": "complete",
       "title": "Consolidate 6 cards to 4: merge Battery + Light + Fuel Trim into one 'Health' card",
       "goal": "As the operator, I want fewer screens -- Home, System Status, Health, Alerts -- so the reference readouts that share a glance live on one card instead of three separate swipes.",
       "definitionOfDone": [
@@ -6428,7 +6429,7 @@
         "offices/pm/decisions/2026-07-31-ui-feedback-round2-triage.md#11"
       ],
       "createdAt": "2026-07-31",
-      "updatedAt": "2026-07-31",
+      "updatedAt": "2026-08-02",
       "tasks": []
     },
     {
@@ -6436,7 +6437,7 @@
       "parent": "F-124",
       "type": "normal",
       "size": "L",
-      "status": "pending",
+      "status": "complete",
       "title": "Live/motion card re-issue to locked spec + home-slot idle-live swap",
       "goal": "As the driver, I want the home card to become the live instrument when I'm driving (and the calm idle card when parked), matching the design I approved, so the at-a-glance card shows real motion.",
       "definitionOfDone": [
@@ -6463,7 +6464,7 @@
         "offices/pm/decisions/2026-07-31-ui-feedback-round2-triage.md#9"
       ],
       "createdAt": "2026-07-31",
-      "updatedAt": "2026-07-31",
+      "updatedAt": "2026-08-02",
       "tasks": []
     },
     {
@@ -6471,9 +6472,9 @@
       "parent": "F-124",
       "type": "normal",
       "size": "M",
-      "status": "pending",
+      "status": "complete",
       "title": "System-Status 'N ISSUE' drill-down overlay",
-      "goal": "As the operator, I want to tap 'SYSTEM \u00c2\u00b7 N ISSUE' and see which sources are degraded and why, so the summary isn't a dead end.",
+      "goal": "As the operator, I want to tap 'SYSTEM Â· N ISSUE' and see which sources are degraded and why, so the summary isn't a dead end.",
       "definitionOfDone": [
         "make the SYSTEM summary line tappable -> a drill-down overlay listing the degraded source(s) WORST-FIRST: each row = source label + state chip (amber/red) + honest reason + freshness ('seen Ns ago'); one row per non-OK source",
         "a '<- Back' returns to the card (never traps); opening the overlay pauses auto-rotate (interaction)",
@@ -6492,7 +6493,7 @@
         "offices/pm/decisions/2026-07-31-ui-feedback-round2-triage.md#7"
       ],
       "createdAt": "2026-07-31",
-      "updatedAt": "2026-07-31",
+      "updatedAt": "2026-08-02",
       "tasks": []
     },
     {
@@ -6500,7 +6501,7 @@
       "parent": "F-124",
       "type": "normal",
       "size": "M",
-      "status": "pending",
+      "status": "complete",
       "title": "Fidelity pass: restore approved copy + brand display face + TD-065 tokenization",
       "goal": "As the CIO, I want the shipped UI to match the look & feel I approved, so it stops feeling generic -- correct wordmark/footer, a brand display face for brand moments, and no raw color literals.",
       "definitionOfDone": [
@@ -6527,7 +6528,7 @@
         "offices/pm/decisions/2026-07-31-ui-feedback-round2-triage.md#14"
       ],
       "createdAt": "2026-07-31",
-      "updatedAt": "2026-07-31",
+      "updatedAt": "2026-08-02",
       "tasks": []
     },
     {
@@ -6535,7 +6536,7 @@
       "parent": "F-124",
       "type": "normal",
       "size": "S",
-      "status": "pending",
+      "status": "complete",
       "title": "Debounced 'parked' signal for the kebab (stop the OBD-blip flicker)",
       "goal": "As the operator, I want the kebab to appear on a steady 'parked' concept, so it stops flickering every time OBD availability blips.",
       "definitionOfDone": [
@@ -6557,7 +6558,7 @@
         "carousel.js:743-748,876-878"
       ],
       "createdAt": "2026-07-31",
-      "updatedAt": "2026-07-31",
+      "updatedAt": "2026-08-02",
       "tasks": []
     },
     {
@@ -6565,7 +6566,7 @@
       "parent": "F-120",
       "type": "issue",
       "size": "M",
-      "status": "pending",
+      "status": "complete",
       "title": "BT capture hardening: durable bond + reconnect-transport-reset",
       "goal": "As the capture service, I want a reconnect after a dropped BT link to reset the transport instead of re-opening a dead tty, so capture recovers cleanly mid-session instead of retrying a stale rfcomm forever.",
       "definitionOfDone": [
@@ -6590,7 +6591,7 @@
         "src/pi/obdii/obd_connection.py"
       ],
       "createdAt": "2026-07-31",
-      "updatedAt": "2026-07-31",
+      "updatedAt": "2026-08-02",
       "tasks": []
     },
     {
@@ -6598,7 +6599,7 @@
       "parent": "F-120",
       "type": "research",
       "size": "S",
-      "status": "pending",
+      "status": "complete",
       "title": "RCA: why BT got soft-blocked ~07-03 (confirm origin so it can't recur)",
       "goal": "As the maintainer, I want to know WHY the BT rfkill soft-block got saved ~07-03, so we can prevent the origin, not just rely on the unblock safety net.",
       "definitionOfDone": [
@@ -6619,7 +6620,7 @@
         "offices/architect/inbox/2026-07-31-from-atlas-STATUS-bt-softblock-rootcause-fixed-plus-open-work.md"
       ],
       "createdAt": "2026-07-31",
-      "updatedAt": "2026-07-31",
+      "updatedAt": "2026-08-02",
       "tasks": []
     },
     {
@@ -6627,7 +6628,7 @@
       "parent": "F-120",
       "type": "issue",
       "size": "S",
-      "status": "pending",
+      "status": "complete",
       "title": "P0: bake the BT rfkill-unblock fix into deploy (make the live capture fix repo-managed + reflash-proof)",
       "goal": "As the deploy path, I want the eclipse-rfkill-unblock fix in the repo + deploy-pi.sh, so the capture fix (currently live-on-Pi-by-hand) survives a reflash / deploy --init and can't silently revert to the soft-block that killed capture since 07-03.",
       "definitionOfDone": [
@@ -6650,7 +6651,7 @@
         "offices/architect/inbox/2026-07-31-from-atlas-STATUS-bt-softblock-rootcause-fixed-plus-open-work.md"
       ],
       "createdAt": "2026-07-31",
-      "updatedAt": "2026-07-31",
+      "updatedAt": "2026-08-02",
       "tasks": []
     },
     {
@@ -6658,7 +6659,7 @@
       "parent": "F-120",
       "type": "issue",
       "size": "S",
-      "status": "pending",
+      "status": "complete",
       "title": "P0: fix scripts/pair_obdlink.sh (Trixie bluez prompt regex + display-capable agent) so a durable bond + trust is written",
       "goal": "As the pairing tool, I want pair_obdlink.sh to actually pair + trust + bond the OBDLink on Trixie bluez, so a durable bond survives reboot and re-pairing works instead of timing out.",
       "definitionOfDone": [
@@ -6682,7 +6683,7 @@
         "scripts/pair_obdlink.sh"
       ],
       "createdAt": "2026-07-31",
-      "updatedAt": "2026-07-31",
+      "updatedAt": "2026-08-02",
       "tasks": []
     },
     {
@@ -6728,7 +6729,7 @@
       "parent": "F-125",
       "type": "normal",
       "size": "S",
-      "status": "pending",
+      "status": "complete",
       "title": "WP-2: home-location config binding (pi.location.home.{lat,lon,elevationM})",
       "goal": "As the altitude anchor + GPS home-geofence, I want the home reference in config (from .env), so it's not a hardcoded literal and location PII stays uncommitted.",
       "definitionOfDone": [
@@ -6750,7 +6751,7 @@
         "offices/pm/inbox/2026-08-01-from-iris-home-reference-for-altitude-anchor.md"
       ],
       "createdAt": "2026-08-01",
-      "updatedAt": "2026-08-01",
+      "updatedAt": "2026-08-02",
       "tasks": []
     },
     {
@@ -6758,7 +6759,7 @@
       "parent": "F-125",
       "type": "normal",
       "size": "S",
-      "status": "pending",
+      "status": "complete",
       "title": "WP-3: re-anchor derived altitude to home elevation on every successful server sync",
       "goal": "As drift control, I want the derived altitude reset to home elevation on each successful sync, so error is bounded to a single drive between syncs.",
       "definitionOfDone": [
@@ -6781,7 +6782,7 @@
         "offices/pm/inbox/2026-08-01-from-iris-gps-altitude-workpackage-for-grooming.md#WP-3"
       ],
       "createdAt": "2026-08-01",
-      "updatedAt": "2026-08-01",
+      "updatedAt": "2026-08-02",
       "tasks": []
     },
     {
@@ -6857,7 +6858,7 @@
       "parent": "F-125",
       "type": "normal",
       "size": "M",
-      "status": "pending",
+      "status": "complete",
       "title": "Gyro-fused pitch for states/imu (complementary/Madgwick + ZUPT) -- honest grade + altitude foundation",
       "goal": "As the grade + (future) altitude signals, I want pitch from a gyro-accel fusion, not accel-only tilt, so a 0.3 g acceleration isn't misread as a 16.7-degree climb (Spool: an accelerometer cannot distinguish grade from acceleration -- they are the same measurement).",
       "definitionOfDone": [
@@ -6883,8 +6884,247 @@
         "US-508 (gradePct)"
       ],
       "createdAt": "2026-08-01",
-      "updatedAt": "2026-08-01",
+      "updatedAt": "2026-08-02",
       "tasks": []
+    },
+    {
+      "id": "US-522",
+      "parent": "F-124",
+      "type": "issue",
+      "size": "S",
+      "status": "sprint-ready",
+      "title": "Kiosk GPU-raster fix -- drop --enable-gpu-rasterization to kill the freeze class",
+      "goal": "As the operator, I want the Pi dashboard to never freeze under sustained use, so the display stays live during a drive instead of wedging silently.",
+      "definitionOfDone": [
+        "[Atlas RCA #1 -- CORRECTED PREMISE 2026-08-02, design-gate] --enable-gpu-rasterization is NOT in the repo or the eclipse-dashboard unit; it is a Debian/RPi-OS system default injected by the /usr/bin/chromium-browser wrapper from /etc/chromium.d/default-flags:7. FIX = ADD an override flag to the eclipse-dashboard unit ExecStart (deploy-pi.sh, repo-managed): --disable-gpu-rasterization (keep GL compositing) OR --disable-gpu (bulletproof software render, removes the whole GPU-command-buffer path). Atlas leans --disable-gpu (the Pi CPU trivially handles this 2D card UI; removes the entire failure class). Eliminates the chromium GPU command-buffer hot-loop (AllocateRingBuffer kFatalFailure, ~6M/boot) that froze the UI. RCA: offices/architect/findings/2026-08-02-pi-ui-freeze-chromium-gpu-command-buffer-hotloop.md",
+        "[PRECEDENCE -- verify, do NOT assume] the Debian wrapper runs `chromium $CHROMIUM_FLAGS \"$@\"`, so the ExecStart override SHOULD win over the injected default -- but VERIFY on the Pi (a wrapper-ordering surprise = silent mocked-green / IRL-miss)",
+        "[A-16 deploy-contract blind spot] chromium's base flags live in an OS-shipped /etc/chromium.d/ file the repo does not manage; add a one-line comment in deploy-pi.sh so a future chromium package upgrade re-introducing GPU raster is a known surface",
+        "installs via the existing cmp-guarded kiosk-unit step + daemon-reload; ruff/lint clean in-loop",
+        "[Atlas keyring fix 2026-08-03 -- SAME ExecStart as the GPU override] add --password-store=basic to the eclipse-dashboard kiosk ExecStart (both dashboard.service.x11 + .wayland). Root: the kiosk runs with no --password-store -> chromium uses the GNOME keyring for its Safe-Storage key; the password-protected Default keyring stays LOCKED under passwordless auto-login (pam_gnome_keyring never unlocks it), so chromium fires a repeating Authentication Required keyring popup. --password-store=basic keeps safe-storage in chromiums own wiped /tmp profile (no meaningful security downgrade for a kiosk that stores no real passwords). Atlas live-tested on the Pi; repo-unmanaged until this lands."
+      ],
+      "validationCriteria": [
+        {
+          "action": "post-deploy on the Pi, `pgrep -a chromium` to confirm the override wins over /etc/chromium.d, then sustained carousel navigation for several minutes + `journalctl -u eclipse-dashboard | grep -c AllocateRingBuffer`",
+          "outcome": "the RUNNING chromium cmdline shows GPU rasterization effectively off (override present + winning), AllocateRingBuffer count stays ~0, chromium CPU low, display never freezes"
+        },
+        {
+          "action": "post-deploy on the Pi, pgrep -a chromium + check for a gcr-prompter/keyring-prompt process",
+          "outcome": "the running chromium cmdline shows BOTH --disable-gpu* (GPU fix) AND --password-store=basic effective, and no keyring-authentication popup / gcr-prompter process appears"
+        }
+      ],
+      "conditionalOutcomes": [
+        "if the ExecStart override does NOT win over /etc/chromium.d/default-flags (wrapper-ordering surprise), STOP and escalate to Atlas -- do not assume precedence",
+        "if GPU-off alone does NOT eliminate the freeze, escalate -- fix-selection (disable-gpu vs disable-gpu-rasterization vs cma vs animations) is a hypothesis; do not stack blind changes"
+      ],
+      "sourceRefs": [
+        "offices/architect/findings/2026-08-02-pi-ui-freeze-chromium-gpu-command-buffer-hotloop.md",
+        "offices/pm/issues/I-042-v0.29.24-splash-not-rendering-plus-ui-freeze.md",
+        "offices/pm/inbox/2026-08-02-from-atlas-pi-ui-freeze-gpu-hotloop-fix-routing.md"
+      ],
+      "createdAt": "2026-08-02",
+      "updatedAt": "2026-08-03",
+      "passes": false
+    },
+    {
+      "id": "US-523",
+      "parent": "F-124",
+      "type": "normal",
+      "size": "M",
+      "status": "sprint-ready",
+      "title": "Kiosk watchdog -- auto-restart eclipse-dashboard when the renderer wedges",
+      "goal": "As the operator, I want the kiosk to recover itself if the renderer ever wedges, so the display never stays silently frozen (honest-instrument).",
+      "definitionOfDone": [
+        "[Atlas RCA #2] add a watchdog that detects a wedged renderer (e.g. AllocateRingBuffer error-rate spike, or a CPU-pegged chromium with no state-file-driven repaint) and restarts eclipse-dashboard to restore a fresh GPU context (the proven live mitigation)",
+        "conservative trigger: restart only on a genuine wedge, never flap under normal operation; log every restart so recurring wedges stay visible (defense-in-depth behind US-522, must not mask a still-present freeze class)",
+        "test proves the watchdog triggers a restart on a simulated wedge and no-ops under healthy operation; ruff clean in-loop"
+      ],
+      "validationCriteria": [
+        {
+          "action": "simulate/observe a renderer wedge on the Pi",
+          "outcome": "eclipse-dashboard is auto-restarted and the display recovers with no human intervention; the restart is logged"
+        }
+      ],
+      "conditionalOutcomes": [
+        "watchdog is defense-in-depth, NOT the primary fix (US-522). It must surface recurring wedges, not silence them."
+      ],
+      "sourceRefs": [
+        "offices/architect/findings/2026-08-02-pi-ui-freeze-chromium-gpu-command-buffer-hotloop.md"
+      ],
+      "createdAt": "2026-08-02",
+      "updatedAt": "2026-08-02"
+    },
+    {
+      "id": "US-524",
+      "parent": "F-124",
+      "type": "normal",
+      "size": "S",
+      "status": "sprint-ready",
+      "title": "Raise Pi GPU CMA to 256M -- headroom complementing the raster fix",
+      "goal": "As the operator, I want more GPU command-buffer headroom on the Pi, so the compositor has margin under sustained animated use.",
+      "definitionOfDone": [
+        "[Atlas RCA #4 -- optional headroom, complements US-522, NOT a standalone fix] raise the Pi CMA pool to cma=256M (boot cmdline/config). Box-config change: confirm the mechanism (config.txt/cmdline.txt on the Pi boot partition) and whether deploy-pi.sh can write it within scope",
+        "verify post-boot CmaTotal reflects the raise (was 65536 kB)"
+      ],
+      "validationCriteria": [
+        {
+          "action": "after applying + reboot, `grep CmaTotal /proc/meminfo`",
+          "outcome": "CmaTotal ~262144 kB (256 MiB), up from 65536 kB"
+        }
+      ],
+      "conditionalOutcomes": [
+        "if the boot-config change is outside Ralph's deploy write-scope (bootloader/ownership), emit a one-line CIO ops instruction instead of forcing it into the deploy script -- do not half-apply"
+      ],
+      "sourceRefs": [
+        "offices/architect/findings/2026-08-02-pi-ui-freeze-chromium-gpu-command-buffer-hotloop.md"
+      ],
+      "createdAt": "2026-08-02",
+      "updatedAt": "2026-08-02"
+    },
+    {
+      "id": "US-525",
+      "parent": "F-103",
+      "type": "issue",
+      "size": "M",
+      "status": "sprint-ready",
+      "title": "Splash render fix -- boot splash visibility + shutdown-splash 401 route",
+      "goal": "As the operator, I want to see the boot and shutdown splash, so the Pi shows an honest brand + boot/shutdown state instead of a blank hand-off.",
+      "definitionOfDone": [
+        "[Atlas READ 2026-08-02] the 401 on bare routes /boot /shutdown is BY-DESIGN: states_http_server routes index / (token-injected, 200), static assets by extension incl *.html (200), everything else -> token-gated state-file lookup -> 401 (:232-234). Bare /boot / /shutdown match no servable-page bucket. The token gate is CORRECT (US-393 SSOT) -- US-501's _injectHtml is EXONERATED (index path serves 200)",
+        "FIRST establish what actually requests /boot / /shutdown before assuming the 401 is even on the render path. Likely I-042 causes: (a) URL/route-contract mismatch -- a splash launcher requests a bare route the server serves only at / or *.html; (b) boot-splash visibility timing -- US-494 HEALTHY_YIELD self-close flashes sub-second before it can be seen",
+        "boot splash: if too-fast, add a minimum-visible-duration floor so the brand splash is actually seen; hand off to the dashboard after",
+        "shutdown splash: ensure the grace/launcher loads a SERVED route (/ or *.html with token injection), not a bare 401 route, so the reverse splash renders on a real shutdown",
+        "if the fix adds explicit served splash routes for /boot / /shutdown, they MUST serve the splash HTML with same-origin token injection (like the index path _serveIndex/_injectHtml) -- KEEP the gate, never bypass or weaken _tokenOk (that re-opens TD-067 and is an Atlas BLOCK)",
+        "honest-instrument: splash reflects real boot/shutdown state; test proves the routes the splash launcher requests return 200 with the token; ruff clean"
+      ],
+      "validationCriteria": [
+        {
+          "action": "reboot the Pi and observe the boot splash; then trigger a shutdown and observe the shutdown splash",
+          "outcome": "boot splash is visibly shown then hands off to the dashboard; shutdown reverse splash renders on shutdown"
+        }
+      ],
+      "conditionalOutcomes": [
+        "[Atlas condition -- not a block unless violated] any design that weakens _tokenOk on any route, or makes bare routes public, is an Atlas BLOCK (TD-067 destructive-token-gate). Flag before implementing"
+      ],
+      "sourceRefs": [
+        "offices/pm/issues/I-042-v0.29.24-splash-not-rendering-plus-ui-freeze.md",
+        "offices/architect/inbox/2026-08-02-from-marcus-v0.29.24-splash-freeze-diagnostics-handoff.md"
+      ],
+      "createdAt": "2026-08-02",
+      "updatedAt": "2026-08-02"
+    },
+    {
+      "id": "US-526",
+      "parent": "F-123",
+      "type": "issue",
+      "size": "M",
+      "status": "sprint-ready",
+      "title": "US-504a production drain-event writer (battery_health_log grows again)",
+      "goal": "As the operator, I want battery_health_log to gain real rows from actual drains, so the Health verdict can leave 'unknown' honestly.",
+      "definitionOfDone": [
+        "[CARRIED from Sprint 69 / BL-028] build the PRODUCTION drain-event writer. No production caller in src/ has written battery_health_log since US-216 auto-open was retired (US-442/TD-058). BatteryHealthRecorder.startDrainEvent/endDrainEvent already write the columns correctly -- wire a production caller",
+        "[SEAM] PowerMonitor.onTransition is the registration point; PowerMonitor already receives GPIO6 truth via the US-502 _PowerSourceUiBridge sink. Read the UPS LATE-BOUND at transition time, not captured at construction (US-501/502/503 boot-order trap)",
+        "on a real AC->BATTERY transition open a drain row with a REAL start_vcell_v + start_soc_pct from the MAX17048; on BATTERY->AC or cutoff shutdown close it with real end_vcell_v/end_soc_pct + runtime_seconds. Honest-instrument: an unreadable gauge writes NULL, never a guessed number (reuse readCalibratedRegisterSocPct + its cold-start window)",
+        "[ORPHAN POLICY -- Atlas RULING 2026-08-02: Option C CONFIRMED] open-at-loss + close-at-restore-or-shutdown, ShutdownSequencer close PRIMARY + boot reaper crash BACKSTOP. Spool's depth gate (end_vcell_v <= [EXACT:3.50] V + [EXACT:60] s floor) disqualifies option B (a memory-held row lost to a hard crash drops the run-to-cutoff drain the verdict needs) and demotes the reaper to hygiene-only",
+        "[LOAD-BEARING INVARIANT -- code-confirmed battery_health.py:84-85,100,118-120] endDrainEvent computes runtime_seconds from the start/end timestamp delta, so the boot reaper MUST NOT call endDrainEvent (across a reboot it would manufacture a multi-hour runtime). The reaper uses its OWN UPDATE stamping ONLY end_timestamp, leaving BOTH runtime_seconds NULL AND end_vcell_v NULL (honest-NA: an interrupted drain's depth is unknown, never fabricated -- a fabricated end_vcell_v <= 3.50 under the depth gate would be a worse trap than the runtime one; NULL on either field also fails the depth gate = double-safe). Reaper targets ONLY still-open rows (WHERE end_timestamp IS NULL), respecting first-close-wins (battery_health.py:123-125), never clobbering a legit ShutdownSequencer close",
+        "[Rule-10 -- shutdown path is load-bearing] update specs/architecture.md battery-health / drain-recorder + shutdown section IN-SPRINT (DoD, not a follow-up)",
+        "test proves: a production AC<->battery transition writes real vcell/soc; a cutoff-shutdown drain is closed by the ShutdownSequencer ON the shutdown path (not just a warm unit test); a reaped orphan is EXCLUDED by the depth-gate verdict (runtime_seconds NULL + end_vcell_v NULL -> not counted); ruff clean"
+      ],
+      "validationCriteria": [
+        {
+          "action": "on the Pi force an AC->battery->AC transition (or bench harness) and query battery_health_log",
+          "outcome": "a new row with real start/end vcell + soc + runtime_seconds; an interrupted drain leaves an orphan with runtime_seconds NULL, never a fabricated runtime"
+        }
+      ],
+      "conditionalOutcomes": [
+        "Atlas CONFIRMED Option C + the reaper-NULL invariant 2026-08-02 (offices/pm/inbox/2026-08-02-from-atlas-v0.29.25-prd-review.md). Depth-gate qualifying values ride US-527 (Spool [EXACT]). Live fold = the BL-025 engine-on drive"
+      ],
+      "sourceRefs": [
+        "offices/pm/blockers/BL-028-us504a-drain-writer-blocked-on-two-rulings.md",
+        "offices/pm/inbox/2026-08-02-from-ralph-us504-carved-504a-writer-504b-producer.md"
+      ],
+      "createdAt": "2026-08-02",
+      "updatedAt": "2026-08-02"
+    },
+    {
+      "id": "US-527",
+      "parent": "F-123",
+      "type": "tech-debt",
+      "size": "S",
+      "status": "sprint-ready",
+      "title": "US-504b verdict band-remap to the depth gate (degraded/replace reachable)",
+      "goal": "As the operator, I want the battery Health verdict to actually report degraded/replace, so it fails toward honesty instead of only ever showing good/unknown.",
+      "definitionOfDone": [
+        "[TD-074 / Spool depth-gate ruling c72677e + 429a3ed] US-504b shipped against the retired runtime_seconds>=600 gate, which sat above the 582s good/degraded boundary -> degraded/replace unreachable, verdict fails toward reassurance. Remap the qualifying gate + bands in verdictForMedianRuntime() to Spool's DEPTH gate: qualifying = end_vcell_v <= [EXACT:3.50] V AND a [EXACT:60] s minimum floor. Pull the exact good/degraded/replace depth-band thresholds from Spool's landed ruling (429a3ed)",
+        "[EXACT] values are load-bearing -- flag Spool before any drift (review-stories gate)",
+        "rides WITH US-526 (the writer that produces depth-gated rows). Latent today (no writer + 90-day staleness override -> card correctly reads unknown), so these must land together to avoid a verdict that silently cannot degrade",
+        "test proves degraded + replace are reachable through the pipeline with seeded depth-gated rows; ruff clean"
+      ],
+      "validationCriteria": [
+        {
+          "action": "seed battery_health_log rows spanning good/degraded/replace depth bands and read the verdict",
+          "outcome": "verdict correctly returns degraded and replace, not only good/unknown"
+        }
+      ],
+      "conditionalOutcomes": [
+        "confirm exact depth-band thresholds against Spool's ruling (offices/tuner ... us504 gate ruling / 429a3ed) before implementing -- [EXACT] values."
+      ],
+      "sourceRefs": [
+        "offices/pm/tech_debt/TD-074-us504b-verdict-band-remap-rides-us504a.md"
+      ],
+      "createdAt": "2026-08-02",
+      "updatedAt": "2026-08-02"
+    },
+    {
+      "id": "US-528",
+      "parent": "F-123",
+      "type": "issue",
+      "size": "S",
+      "status": "sprint-ready",
+      "title": "I-041 fix -- system_status_emitter exact-shape tests + pin lastDrive always-present",
+      "goal": "As a maintainer, I want the system-status exact-shape guard green and the lastDrive contract pinned, so the schema stays honest.",
+      "definitionOfDone": [
+        "[I-041] US-505 added drive.lastDrive to buildSystemStatusState but did not update tests/pi/splash/test_system_status_emitter.py -- 2 exact-shape tests red on the branch (test_buildSystemStatusState_a3Schema_hasExactShape, test_emitter_writesSystemStatusFile_andComputesStale). Add 'lastDrive': None to the two expected drive dicts (~lines 64, 295). Production behaviour is correct per US-505; only the expectations are stale",
+        "pin lastDrive as ALWAYS-PRESENT (US-505 makes it deliberately always a key, null when unknown, so a renderer cannot fall through to a wrong branch) -- assert presence explicitly, not just absorb the key",
+        "full tests/pi/splash green; ruff clean"
+      ],
+      "validationCriteria": [
+        {
+          "action": "run tests/pi/splash/test_system_status_emitter.py",
+          "outcome": "both previously-red exact-shape tests pass; lastDrive asserted always-present"
+        }
+      ],
+      "conditionalOutcomes": [],
+      "sourceRefs": [
+        "offices/pm/issues/I-041-us505-broke-system-status-exact-shape-tests.md"
+      ],
+      "createdAt": "2026-08-02",
+      "updatedAt": "2026-08-02"
+    },
+    {
+      "id": "US-529",
+      "parent": "F-119",
+      "type": "housekeeping",
+      "size": "S",
+      "status": "sprint-ready",
+      "title": "TD-073 fix -- ralph promise-tag contract (prompt.md <-> ralph.sh)",
+      "goal": "As a maintainer, I want prompt.md and ralph.sh to document the same promise tags, so the FAST lint suite stays green and sprint-close is not gated by drift.",
+      "definitionOfDone": [
+        "[TD-073] tests/lint/test_ralph_promise_tag_contract.py::test_promptMdAndRalphShDocumentSamePromiseTags fails: prompt.md documents COMPLETE + PARTIAL_BLOCKED but ralph.sh has no branches for them. Reconcile so both files document the same promise tags",
+        "COMPLETE is the sprint-ending tag -- verify ralph.sh actually branches on it (do not rubber-stamp the test into green); if a branch is genuinely missing, add it",
+        "lint suite green; ruff clean"
+      ],
+      "validationCriteria": [
+        {
+          "action": "run tests/lint/test_ralph_promise_tag_contract.py",
+          "outcome": "passes; prompt.md and ralph.sh document identical promise tags"
+        }
+      ],
+      "conditionalOutcomes": [],
+      "sourceRefs": [
+        "offices/pm/tech_debt/TD-073-ralph-promise-tag-contract-drift.md"
+      ],
+      "createdAt": "2026-08-02",
+      "updatedAt": "2026-08-02"
     }
   ]
 }

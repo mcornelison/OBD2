@@ -131,11 +131,27 @@ if str(_PROJECT_ROOT) not in sys.path:
 # the deeper pi code raises `src.common.errors.handler.ConfigurationError`, so
 # main() must catch that exact class object (the `common.*` form resolves to a
 # different, non-caught class).  Only the `pi.*` imports flip to the convention.
-from pi.hardware.ups_monitor import UpsMonitor, UpsMonitorError  # noqa: E402
+from pi.hardware.ups_monitor import UpsMonitor  # noqa: E402
 from pi.obdii.database import initializeDatabase  # noqa: E402
 from pi.power.battery_health import (  # noqa: E402
     LOAD_CLASS_VALUES,
     BatteryHealthRecorder,
+)
+
+# US-526: the cold-start-guarded register read moved to src/ so the PRODUCTION
+# drain writer (pi.power.drain_event_writer) reuses the SAME guard -- a src/
+# module must never import from scripts/.  These are re-bound at module level so
+# this CLI's public surface (and its tests) are unchanged: ONE implementation,
+# two callers, no copy that can drift.
+from pi.power.soc_calibration import (  # noqa: E402
+    COLD_START_CALIBRATION_WINDOW_SECONDS,
+    readCalibratedRegisterSocPct,
+)
+from pi.power.soc_calibration import (  # noqa: E402
+    readSystemUptimeSeconds as _readSystemUptimeSeconds,
+)
+from pi.power.soc_calibration import (  # noqa: E402
+    resolveColdStartWindowSeconds as _resolveColdStartWindowSeconds,
 )
 from src.common.config.secrets_loader import (  # noqa: E402
     loadConfigWithSecrets,
@@ -155,20 +171,6 @@ logger = logging.getLogger(__name__)
 # library-level LOAD_CLASS_DEFAULT stays 'production' -- that feeds US-216's
 # Power-Down Orchestrator auto-write path for real shutdowns.
 CLI_DEFAULT_LOAD_CLASS: str = 'test'
-
-# US-427 (BL-015 / US-234): the MAX17048 ModelGauge SoC register mis-reads by
-# 30-40 points for the first few minutes after a cold power-up (the reason the
-# shutdown ladder moved OFF SoC onto VCELL in US-234).  A register read taken
-# within this many seconds of power-up is treated as uncalibrated and recorded
-# as NULL rather than a garbage percent (Atlas BL-015 cold-start ruling,
-# CIO-ratified 2026-07-01; consistent with the US-264 SOC-uncalibrated rule).
-#
-# US-431 (F-048): this is now the fallback default only.  The live window is
-# read from config (pi.hardware.upsMonitor.socColdStartWindowSeconds) via
-# _resolveColdStartWindowSeconds, so the value measured by
-# scripts/calibrate_max17048.py on the rig feeds the guard directly -- real
-# data replacing this guessed constant.
-COLD_START_CALIBRATION_WINDOW_SECONDS: float = 180.0
 
 __all__ = [
     'CLI_DEFAULT_LOAD_CLASS',
@@ -286,87 +288,12 @@ def _loadConfig(configPath: str) -> dict[str, Any]:
 
 
 # ==============================================================================
-# Register SoC% + cold-start guard (US-427 / BL-015 / US-234)
+# Register SoC% + cold-start guard -- SHARED (US-526)
 # ==============================================================================
-
-
-def _readSystemUptimeSeconds() -> float | None:
-    """Return seconds since power-up from ``/proc/uptime``, or None.
-
-    The MAX17048 fuel gauge starts calibrating when the bench rig powers up,
-    so system uptime is the available proxy for "how long has the gauge had
-    to settle."  Returns ``None`` off-Linux or if the file is unreadable --
-    the caller treats an unknowable uptime as uncalibrated (no number).
-    """
-    try:
-        with open('/proc/uptime', encoding='utf-8') as fh:
-            return float(fh.readline().split()[0])
-    except (OSError, ValueError, IndexError):
-        return None
-
-
-def _resolveColdStartWindowSeconds(config: dict[str, Any]) -> float:
-    """Return the cold-start guard window from config, or the fallback constant.
-
-    US-431 (F-048): the window is measured on the UPS-drain rig by
-    ``scripts/calibrate_max17048.py`` and written to
-    ``pi.hardware.upsMonitor.socColdStartWindowSeconds``.  A missing or
-    malformed key falls back to :data:`COLD_START_CALIBRATION_WINDOW_SECONDS`
-    so an older config still guards conservatively rather than crashing.
-    """
-    try:
-        value = config['pi']['hardware']['upsMonitor']['socColdStartWindowSeconds']
-    except (KeyError, TypeError):
-        return COLD_START_CALIBRATION_WINDOW_SECONDS
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return COLD_START_CALIBRATION_WINDOW_SECONDS
-
-
-def readCalibratedRegisterSocPct(
-    monitor: Any,
-    *,
-    uptimeSeconds: float | None,
-    calibrationWindowSeconds: float = COLD_START_CALIBRATION_WINDOW_SECONDS,
-) -> int | None:
-    """Read the MAX17048 register SoC%%, guarded against the cold-start window.
-
-    Honest-instrument (US-234 / BL-015): if the gauge is still inside its
-    ~3-min calibration window -- or the uptime that would prove it is past
-    the window cannot be determined -- the register value is garbage, so this
-    returns ``None`` (records NULL) WITHOUT reading the register.  A read
-    failure (hardware absent / I2C error) also yields ``None`` rather than
-    propagating, so an operator drill on a dev box records NULL, not a crash.
-
-    Args:
-        monitor: A ``UpsMonitor``-like object exposing
-            ``getBatteryPercentage() -> int``.
-        uptimeSeconds: Seconds since power-up (see
-            :func:`_readSystemUptimeSeconds`), or ``None`` when unknowable.
-        calibrationWindowSeconds: The cold-start window; reads inside it are
-            suppressed.  Defaults to
-            :data:`COLD_START_CALIBRATION_WINDOW_SECONDS`.
-
-    Returns:
-        The register State-of-Charge percent (0-100), or ``None`` when the
-        gauge is (or may be) uncalibrated or the read fails.
-    """
-    if uptimeSeconds is None or uptimeSeconds < calibrationWindowSeconds:
-        logger.warning(
-            "register SoC%% suppressed -> NULL: fuel gauge within the "
-            "~%.0fs cold-start calibration window (uptime=%s); "
-            "honest-instrument, no garbage percent (US-234).",
-            calibrationWindowSeconds, uptimeSeconds,
-        )
-        return None
-    try:
-        return int(monitor.getBatteryPercentage())
-    except UpsMonitorError as exc:
-        logger.warning(
-            "register SoC%% read failed -> NULL: %s", exc,
-        )
-        return None
+# The implementation moved to src/pi/power/soc_calibration.py so the production
+# drain writer reuses the identical guard (imported at module top).  Nothing
+# lives here any more -- adding a local copy back would re-create the drift
+# this move removed.
 
 
 # ==============================================================================

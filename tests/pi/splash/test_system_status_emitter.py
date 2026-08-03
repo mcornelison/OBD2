@@ -65,7 +65,9 @@ def test_buildSystemStatusState_a3Schema_hasExactShape():
         "obdLink": {"state": "reconnecting", "retries": 3, "lastSeenS": 14},
         "sync": {"lastOkTs": _SYNC_OK, "rows": 1204, "pending": 0, "stale": False},
         "power": {"mode": "car", "source": "external"},
-        "drive": {"state": "recording", "driveId": 27},
+        # US-505 `lastDrive` is ALWAYS a key (null when unknown) -- see the
+        # always-present catalog below for why absence is the dangerous shape.
+        "drive": {"state": "recording", "driveId": 27, "lastDrive": None},
         # US-480-a idle-SSOT (b): recording -> never idle (a drive is active).
         "idle": False,
         "source": {"obd": {"available": True, "reason": None}},
@@ -101,6 +103,90 @@ def test_buildSystemStatusState_honestInstrument_downLinkIsVerbatim():
     # so this is NOT the calm parked/asleep state -- idle stays False even though
     # the drive is idle. Idle requires the OBD source to be ABSENT.
     assert state["idle"] is False
+
+
+# ---------------------------------------------------------------------------
+# US-505 `drive.lastDrive` -- the ALWAYS-PRESENT key (I-041 / US-528).
+# ---------------------------------------------------------------------------
+
+
+def test_buildSystemStatusState_lastDriveKey_isPresentInEveryShape():
+    """Given every call shape the emitter supports (arg omitted, explicit None,
+    a real summary, and idle-with-no-history),
+    When buildSystemStatusState assembles the payload,
+    Then `drive.lastDrive` is ALWAYS a key -- null when unknown, never absent.
+
+    This is the assertion I-041 was missing. An exact-shape equality check
+    proves the key exists for ONE call shape; a renderer breaks on the shape
+    where it goes missing. A sometimes-absent key is the failure mode US-505
+    designed against: `undefined` silently falls through to the wrong branch,
+    whereas an explicit null is a value the display can test against.
+    """
+    baseKwargs = {
+        "obdLinkState": OBD_LINKED,
+        "obdRetries": 0,
+        "obdLastSeenS": 1,
+        "syncLastOkTs": _SYNC_OK,
+        "syncRows": 1,
+        "syncPending": 0,
+        "syncStale": False,
+        "powerMode": "car",
+        "powerSource": "external",
+        "nowIso": _NOW,
+    }
+    shapes = {
+        # The kwarg omitted entirely -- the production default path.
+        "omitted": dict(baseKwargs, driveState="recording", driveId=27),
+        # Explicitly None -- a caller that has no drive on record.
+        "explicitNone": dict(
+            baseKwargs, driveState="recording", driveId=27, lastDrive=None
+        ),
+        # A real US-505 summary while a NEW drive is already recording.
+        "populated": dict(
+            baseKwargs,
+            driveState="recording",
+            driveId=28,
+            lastDrive={"driveId": 27, "startedAtTs": _SYNC_OK},
+        ),
+        # Parked with nothing on record -- the coldest branch.
+        "idleNoHistory": dict(baseKwargs, driveState="idle", driveId=None),
+    }
+
+    for shapeName, kwargs in shapes.items():
+        drive = buildSystemStatusState(**kwargs)["drive"]
+        assert "lastDrive" in drive, f"lastDrive key vanished in shape: {shapeName}"
+
+
+def test_buildSystemStatusState_lastDrive_isVerbatimAndDistinctFromDriveId():
+    """Given a parked Pi (idle, no active drive) that HAS a completed drive,
+    When the payload is assembled,
+    Then lastDrive is transported verbatim and driveId stays null.
+
+    `lastDrive` (last COMPLETED drive) and `driveId` (the ACTIVE drive) are
+    different facts. Merging them would make a parked Pi read as recording,
+    so this pins the separation as well as the no-reformat contract -- the
+    emitter transports the producer's fact, it never re-derives it.
+    """
+    summary = {"driveId": 27, "startedAtTs": _SYNC_OK}
+    state = buildSystemStatusState(
+        obdLinkState=OBD_DOWN,
+        obdRetries=0,
+        obdLastSeenS=None,
+        syncLastOkTs=_SYNC_OK,
+        syncRows=0,
+        syncPending=0,
+        syncStale=False,
+        powerMode="car",
+        powerSource="battery",
+        driveState="idle",
+        driveId=None,
+        nowIso=_NOW,
+        lastDrive=summary,
+    )
+
+    assert state["drive"]["lastDrive"] == summary  # verbatim, not reformatted
+    assert state["drive"]["driveId"] is None  # a completed drive is NOT active
+    assert state["drive"]["state"] == "idle"
 
 
 # ---------------------------------------------------------------------------
@@ -292,8 +378,51 @@ def test_emitter_writesSystemStatusFile_andComputesStale(tmp_path):
     assert written["obdLink"] == {"state": "reconnecting", "retries": 2, "lastSeenS": 8}
     assert written["sync"]["pending"] == 4
     assert written["sync"]["stale"] is True  # recording + 120s-old sync > 60s
-    assert written["drive"] == {"state": "recording", "driveId": 27}
+    assert written["drive"] == {
+        "state": "recording",
+        "driveId": 27,
+        "lastDrive": None,  # US-505: always a key, even when the caller omits it
+    }
     assert written["ts"] == _NOW
+
+
+def test_emitter_forwardsLastDrive_verbatimThroughTheJsonRoundTrip(tmp_path):
+    """Given a caller that supplies a real US-505 last-drive summary,
+    When the emit callable fires,
+    Then the written JSON carries it verbatim under drive.lastDrive.
+
+    This is the OTHER half of the always-present contract and it cannot be
+    proved at the builder. `emit` has its own `lastDrive=None` default, so if
+    the emit->build forwarding were dropped the builder default would still
+    supply the KEY and every presence assertion above would stay green while
+    the real value silently never reached the display. Only a populated value
+    observed on the far side of the file write pins the wiring.
+    """
+    statesDir = str(tmp_path / "states")
+    summary = {"driveId": 27, "startedAtTs": _SYNC_OK}
+    emit = makeSystemStatusEmitter(
+        statesDir, syncStaleThresholdS=60, nowIsoFn=lambda: _NOW
+    )
+
+    emit(
+        obdLinkState=OBD_LINKED,
+        obdRetries=0,
+        obdLastSeenS=1,
+        syncLastOkTs=_SYNC_OK,
+        syncRows=10,
+        syncPending=0,
+        powerMode="car",
+        powerSource="external",
+        driveState="idle",
+        driveId=None,
+        lastDrive=summary,
+    )
+
+    written = json.loads(
+        (tmp_path / "states" / SYSTEM_STATUS_FILENAME).read_text(encoding="utf-8")
+    )
+    assert written["drive"]["lastDrive"] == summary
+    assert written["drive"]["driveId"] is None
 
 
 def test_emitter_neverRaises_onWriteFailure(tmp_path):

@@ -19,6 +19,38 @@
   var token = window.SPLASH_TOKEN || "";
   var settled = false;      // true once HEALTHY_YIELD or DEGRADED is reached
 
+  // US-525 (I-042): the floor above is a MINIMUM VISIBLE duration, so it must be
+  // anchored to the brand actually being PAINTED -- not to this script parsing.
+  // The mark is an <object type="image/svg+xml">, i.e. a separate async document:
+  // on a cold chromium the poll loop is already ticking while the stage is still
+  // blank, so anchoring at parse let the splash satisfy its own 2.5 s floor
+  // having shown the brand for a fraction of it, then fade. Measured on the Pi
+  // (boot dc7a3848, 2026-08-02): the unit lived 9.8 s but chromium burned the
+  // first ~5.4 s on startup before the page existed at all.
+  //
+  // null => not painted yet (or never will be). Deliberately NOT initialised to
+  // 0: a brand that never loads must fall back to the parse anchor, never hold
+  // the hand-off open (see brandFloorMs).
+  var brandReadyMs = null;
+
+  function markBrandReady() {
+    if (brandReadyMs === null) brandReadyMs = elapsed();
+  }
+
+  /**
+   * Earliest elapsed() at which HEALTHY_YIELD may fire.
+   *
+   * Bounded by HARD_CAP_MS on purpose: a very slow brand must not be able to
+   * push the hand-off arbitrarily late, and must not tip a HEALTHY boot into the
+   * amber DEGRADED branch (which persists until reboot) -- that would be a
+   * dishonest instrument reading caused purely by a slow asset.
+   */
+  function brandFloorMs() {
+    if (brandReadyMs === null) return MIN_PLAY_MS;   // honest fallback
+    var floor = brandReadyMs + MIN_PLAY_MS;
+    return floor < HARD_CAP_MS ? floor : HARD_CAP_MS;
+  }
+
   // Retry-once on a transient IPC failure before treating boot-state as missing
   // (covers a single dropped poll / server not-yet-listening race).
   var consecutiveFailures = 0;
@@ -97,7 +129,7 @@
       enterDegraded(state.degradedReason);
       return;
     }
-    if (state.healthy === true && elapsed() >= MIN_PLAY_MS) {
+    if (state.healthy === true && elapsed() >= brandFloorMs()) {
       enterHealthyYield();
       return;
     }
@@ -111,6 +143,17 @@
   function schedule() {
     setTimeout(tick, POLL_MS);
   }
+
+  // Anchor the visible floor to the brand's own load event (US-525). If the
+  // event already fired before this listener attached, brandReadyMs stays null
+  // and brandFloorMs() degrades to the historical parse anchor -- the previous
+  // behaviour, never a stall.
+  (function watchBrand() {
+    var mark = document.getElementById("mark");
+    if (!mark) return;                  // no brand element -> parse anchor
+    mark.addEventListener("load", markBrandReady);
+    mark.addEventListener("error", markBrandReady);  // broken SVG: don't wait
+  })();
 
   loadVersionChip();
   schedule();

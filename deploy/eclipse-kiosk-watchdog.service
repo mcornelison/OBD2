@@ -1,0 +1,110 @@
+# ==============================================================================
+# File:    eclipse-kiosk-watchdog.service
+# Purpose: US-523 (F-124) -- restart the dashboard kiosk when its chromium
+#          renderer WEDGES, so the display never stays silently frozen.
+# Author:  Rex (Ralph Agent)
+# Created: 2026-08-03 -- Sprint 70 US-523
+#
+# Why
+# ---
+# The bench UI froze with chromium ALIVE: its GPU command-buffer context died
+# and the client hot-looped on the fatal `AllocateRingBuffer()` failure
+# (6,063,554 errors in one boot, ~500/sec, renderer/GPU/main pegged at
+# 39/31/24% CPU, NO crash).  Because nothing crashed, eclipse-dashboard's
+# `Restart=on-failure` never fired -- the panel just stopped updating while X
+# and the mouse stayed live.  Atlas's live mitigation was
+# `systemctl restart eclipse-dashboard`, which restored a fresh GPU context and
+# dropped the error count to 0.  This unit automates exactly that.
+#   RCA: offices/architect/findings/
+#        2026-08-02-pi-ui-freeze-chromium-gpu-command-buffer-hotloop.md
+#
+# DEFENSE IN DEPTH, NOT THE FIX.  US-522 removed the mechanism (`--disable-gpu`
+# in the kiosk ExecStart overrides the OS-injected --enable-gpu-rasterization).
+# If this watchdog ever restarts anything, US-522 did NOT hold: each restart
+# logs at WARNING and says so, and a recurring wedge escalates to ERROR plus a
+# non-zero exit (this unit then shows as FAILED) rather than hiding a live
+# freeze class behind an endless restart loop.
+#
+# Pairing / posture
+# -----------------
+# Driven by eclipse-kiosk-watchdog.timer (every 30s).  Type=oneshot: each fire
+# is a fresh interpreter that makes ONE decision and exits.  The only state
+# that crosses fires is the restart ledger below.
+#
+# Deliberately NO Requires=/Wants=/After= on eclipse-dashboard.service.  A
+# dependency would START the kiosk, and the dashboard is started ONLY by
+# splash-boot's `OnSuccess=` hand-off after HEALTHY_YIELD (dashboard.service.x11
+# A-1: no [Install] section, dependency-started by design).  The watchdog checks
+# `systemctl is-active` itself and leaves an inactive kiosk alone.
+#
+# Privileges
+# ----------
+# Runs UNPRIVILEGED as the Pi user.  Two grants make that work, and both are
+# load-bearing:
+#   1. restart  -- deploy/polkit-rules/51-eclipse-service-control.rules already
+#      allows this user the `restart` verb on eclipse-dashboard.service.
+#      tests/deploy/test_kiosk_watchdog_install.py pins that grant so a future
+#      polkit edit cannot silently revoke the recovery path.
+#   2. journal read -- SupplementaryGroups=systemd-journal, so reading another
+#      unit's journal does not depend on journald's per-uid file split.
+#
+# RuntimeDirectory note (a real foot-gun): this unit provisions its OWN
+# /run/eclipse-kiosk-watchdog and NOT /run/eclipse-obd.  Declaring
+# RuntimeDirectory=eclipse-obd here would make systemd DELETE that directory --
+# including the live states/ the emitters write and the state server reads --
+# when this oneshot exits.  RuntimeDirectoryPreserve=yes keeps our own dir (and
+# the ledger in it) alive between fires; tmpfs still clears it at boot, which is
+# correct: the restart budget is a per-uptime fault counter.
+#
+# Verify:
+#   systemctl list-timers eclipse-kiosk-watchdog.timer
+#   journalctl -u eclipse-kiosk-watchdog -n 20
+#   cat /run/eclipse-kiosk-watchdog/ledger.json   # {} of restart attempts
+# ==============================================================================
+
+[Unit]
+Description=Eclipse OBD dashboard kiosk watchdog (US-523)
+Documentation=file:///home/mcornelison/Projects/Eclipse-01/src/pi/display/kiosk_watchdog.py
+
+[Service]
+# One decision per fire; no daemon to keep alive.
+Type=oneshot
+
+User=mcornelison
+
+# Read eclipse-dashboard's journal without root.
+SupplementaryGroups=systemd-journal
+
+WorkingDirectory=/home/mcornelison/Projects/Eclipse-01
+
+# Dual PYTHONPATH (repo root + src) -- the `pi.` package import convention used
+# by eclipse-states-http.service / eclipse-powerwatch.service.  Do NOT
+# "simplify" to repo-root only.
+Environment=PYTHONPATH=/home/mcornelison/Projects/Eclipse-01:/home/mcornelison/Projects/Eclipse-01/src
+Environment=PYTHONUNBUFFERED=1
+
+# Our own tmpfs dir for the restart ledger. NOT eclipse-obd (see header).
+RuntimeDirectory=eclipse-kiosk-watchdog
+RuntimeDirectoryMode=0750
+RuntimeDirectoryPreserve=yes
+
+ExecStart=/home/mcornelison/obd2-venv/bin/python -m pi.display.kiosk_watchdog \
+    --unit eclipse-dashboard.service \
+    --state-path /run/eclipse-kiosk-watchdog/ledger.json
+
+# Exit 2 = the recovery path itself is broken or its budget is spent. Left as a
+# FAILURE on purpose: a recurring wedge must be visible in `systemctl status`,
+# not smoothed over. Only 0 counts as success.
+SuccessExitStatus=0
+
+# A watchdog must never compete with the thing it is watching -- the wedge
+# itself pegs the CPU, and that is exactly when this fires.
+MemoryMax=64M
+CPUQuota=15%
+Nice=10
+IOSchedulingClass=idle
+
+[Install]
+# Invoked by the .timer; `systemctl enable eclipse-kiosk-watchdog.timer` is the
+# install hook.
+WantedBy=multi-user.target

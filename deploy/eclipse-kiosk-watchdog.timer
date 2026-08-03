@@ -1,0 +1,42 @@
+# ==============================================================================
+# File:    eclipse-kiosk-watchdog.timer
+# Purpose: Drive eclipse-kiosk-watchdog.service every 30s (US-523)
+# Author:  Rex (Ralph Agent)
+# Created: 2026-08-03 -- Sprint 70 US-523
+#
+# Why these numbers
+# -----------------
+# OnUnitActiveSec=30s -- the watchdog's journal window is 60s, so a 30s cadence
+# means a wedge is seen within about one window and recovered inside ~1.5 min.
+# For scale: Atlas's frozen bench session ran 4:42 with the display dead.
+# Faster would not help (the window has to fill); slower leaves the panel
+# visibly frozen longer.
+#
+# OnBootSec=120s -- the dashboard does not exist yet during the boot storm; the
+# splash owns the screen until HEALTHY_YIELD and only then hands off via
+# `OnSuccess=eclipse-dashboard.service`.  Ticking earlier is harmless (an
+# inactive kiosk is a no-op by design) but pointless, and it keeps the watchdog
+# out of the way of rfcomm-bind / journald / eclipse-obd at boot.
+#
+# No Persistent= line: that setting only applies to OnCalendar timers, and a
+# missed monotonic tick needs no catch-up -- the next fire re-reads the journal
+# window from scratch.
+#
+# Installation: see eclipse-kiosk-watchdog.service header.
+# ==============================================================================
+
+[Unit]
+Description=Timer for the Eclipse OBD dashboard kiosk watchdog (US-523)
+Requires=eclipse-kiosk-watchdog.service
+
+[Timer]
+# Let the boot storm + splash-to-dashboard hand-off finish first.
+OnBootSec=120s
+# Half the watchdog's 60s journal window.
+OnUnitActiveSec=30s
+# The default 1min accuracy would swamp a 30s cadence.
+AccuracySec=5s
+# `Unit=` defaults to eclipse-kiosk-watchdog.service (matches the basename).
+
+[Install]
+WantedBy=timers.target

@@ -1360,6 +1360,122 @@ Power-Down Orchestrator drain-event consumer was **retired in the SS-T5 shutdown
 redesign** (its dead `batteryHealthRecorder` wiring was removed end-to-end in
 US-427 / TD-058). The live consumer is now the CIO's monthly bench drill via
 `scripts/record_drain_test.py`, which opens + closes one event per invocation.
+**As of US-526 (Sprint 70 / V0.29.25) it is no longer the only one — see the
+production drain-event writer below.**
+
+### Production drain-event writer (US-526 / F-123 / BL-028, Sprint 70 — Atlas Option C)
+
+`battery_health_log` had **no production writer** between the US-216 retirement
+and this story: `BatteryHealthRecorder` wrote its columns correctly but nothing
+in `src/` called it, so the F-123 battery-Health verdict had no rows and
+honestly reported `unknown`. `src/pi/power/drain_event_writer.DrainEventWriter`
+is that caller, in the shape Atlas ruled on 2026-08-02
+(`offices/pm/inbox/2026-08-02-from-atlas-v0.29.25-prd-review.md`).
+
+**The writer spans two PROCESSES, and that is the whole design constraint:**
+
+| Event | Process | Site |
+|---|---|---|
+| OPEN at wall-power loss (AC→BATTERY) | collector (`src/pi/main.py`) | `PowerMonitor.onTransition` ← US-502 `_PowerSourceUiBridge` (GPIO6 truth) |
+| CLOSE at restore (BATTERY→AC) | collector | same callback |
+| CLOSE at cutoff — **the PRIMARY close** | `eclipse-powerwatch` | `ShutdownSequencer(prePowerOffFn=…)` |
+| REAP still-open rows — crash BACKSTOP | collector, at boot | `LifecycleMixin._initializeDrainEventWriter` |
+
+Because the open and the cutoff close are in **different processes**, a
+`drain_event_id` held in memory is unavailable exactly where it matters most —
+so every close **re-finds its row by query**. This is why Atlas disqualified the
+memory-held option: under Spool's depth gate the run-to-cutoff drain is the only
+qualifying drain, and a hard crash would drop precisely that row.
+
+**`prePowerOffFn` fires on BOTH poweroff paths, and the fast path is the point.**
+The VCELL-floor backstop **skips the bounded pipeline** and goes straight to
+poweroff — which is exactly how a run-to-cutoff drain ends. A close implemented
+as a pipeline `ShutdownTask` would therefore miss every depth-gate-qualifying
+row. The hook is guarded like `phaseEmitFn` (§10.6): a close that raises can
+never delay poweroff, and it is **not** called on an abort (transient blip, or
+power returning mid-window) because an aborted shutdown is not a drain end.
+
+**Three honest-NA rules (load-bearing):**
+
+1. **An unreadable gauge writes NULL.** US-526 made `startDrainEvent(startSoc=…)`
+   and `endDrainEvent(endSoc=…)` accept `None`, so a dead MAX17048 at the loss
+   instant records NULL rather than a guessed voltage. The row still opens — the
+   drain *did* happen. VCELL is read unguarded (trustworthy at cold start);
+   SoC% routes through the shared US-234 cold-start guard, now at
+   `src/pi/power/soc_calibration.py` so the CLI and the production writer share
+   **one** implementation (a `src/` module must never import from `scripts/`).
+2. **The reaper NEVER calls `endDrainEvent`.** That method derives
+   `runtime_seconds` from the start/end timestamp delta, so across a reboot it
+   would manufacture a multi-hour runtime. The reaper issues its own UPDATE
+   stamping **`end_timestamp` only**, leaving `runtime_seconds` **and**
+   `end_vcell_v` NULL — an interrupted drain's duration and depth are both
+   unknown, and a fabricated `end_vcell_v ≤ 3.50 V` would falsely *pass* the
+   depth gate. A NULL on either field fails the gate, so a reaped orphan cannot
+   vote (double-safe). Its signature is queryable: `end_timestamp` NOT NULL with
+   `runtime_seconds` NULL and `end_vcell_v` NULL; every reap logs at WARNING.
+3. **Only rows the writer opened are ever touched.** Atlas's DoD says the reaper
+   targets `WHERE end_timestamp IS NULL`; the implementation **narrows** that to
+   still-open rows whose `notes` equal `DRAIN_OPEN_NOTE` (a stored ownership
+   marker, not a log string). A narrowing can only make the backstop more
+   conservative, and it is load-bearing: the four US-442 historical orphans
+   (`drain_event_id` 1/9/18/21) hold `end_timestamp IS NULL` **deliberately** —
+   there is no timing-truth source for them, and that NULL is what keeps
+   `scripts/annotate_orphan_production_drain_events.py` idempotent. Without the
+   narrowing, the first power-restore close would hand a months-old row to
+   `endDrainEvent` and mint a row with a multi-month `runtime_seconds` **and** a
+   real `end_vcell_v` — i.e. one that looks QUALIFYING to the verdict. That is
+   strictly worse than the reaper trap the ruling names.
+
+**Ordering invariant:** the reaper runs **before** `onTransition` is registered.
+Reversed, it would stamp this boot's live drain as interrupted. It also means a
+row later found open is necessarily *same-boot*, which is what makes every
+`runtime_seconds` the writer computes truthful.
+
+**Boot-order trap (US-501/502/503, sixth sighting):** the `UpsMonitor` is
+resolved **late**, at transition time, via a closure over
+`HardwareManager.upsMonitor`. It is built inside `HardwareManager.start()`, long
+after this wiring — a reference captured at wiring time would pin `None` and
+every drain would record NULL gauge values.
+
+**Enum identity:** power-source comparison is on `.value`, never on enum
+members. `pi.power.types` and `src.pi.power.types` are distinct module objects,
+so their `PowerSource` members are not `==` — comparing members would let a
+dual-imported enum make the writer silently inert (the cross-module
+enum-identity class that cost the 9-drain saga).
+
+**Import weight:** the powerwatch service builds its writer with
+`makeDrainEventWriterForPath`, a stdlib-sqlite3 `DatabaseLike` adapter, rather
+than `ObdDatabase` — importing `pi.obdii` would drag that whole package into a
+shutdown-critical process for the sake of a `connect()` (the V0.27.12-DOA import
+class). Its sqlite busy timeout is `pi.powerWatch.perTaskTimeoutSec` — the bound
+the shutdown path already defines for one unit of work — so a locked database
+cannot delay poweroff. No new config key.
+
+**Scope note:** gated on the same `pi.power.power_monitor.enabled` flag as
+`PowerMonitor` (no second flag for one fact) and soft-fail throughout —
+battery-health bookkeeping must never cost the drive capture beside it.
+**Qualifying-gate remap — LANDED US-527 / TD-074** (was "rides US-527" here).
+`battery_health_verdict` admits a row on **depth, not duration**:
+`end_vcell_v <= [EXACT:3.50] V AND runtime_seconds >= [EXACT:60] s`
+(Spool ruling `c72677e`). The retired `runtime_seconds >= 600` gate was Spool's
+own spec bug: 600 s sat **above** the 582 s good/degraded boundary, so every
+surviving row necessarily landed in `good` and `degraded`/`replace` were
+unreachable — the verdict failed toward *reassurance*, the one direction a health
+verdict must never fail.
+
+Note the vocabulary, because the phrase "depth bands" (used in the US-526-era
+note this replaces) does not describe anything real: **there is no depth band.**
+Only the *gate* is depth-based. The **bands are unchanged runtime bands** —
+`good` ≥582 s, `degraded` 436–582 s, `replace` <436 s on the 727 s baseline —
+and they are now fully reachable precisely because duration no longer filters
+admission. Depth answers *"did the pack reach its shutdown region?"*; runtime is
+still the capacity *measurement*.
+
+Consequence worth carrying: because `end_vcell_v ≤ 3.50 V` is reachable only by
+running down to cutoff, an AC→BATTERY→AC bench tap restored at ~3.8 V writes a
+perfectly good row that **correctly never qualifies**. A green drain-writer
+drill therefore does *not* demonstrate a working verdict — proving that
+end-to-end needs a real run-to-cutoff drain (Spool, 2026-08-02).
 
 **Use case — monthly drain drill (CIO)**:
 
@@ -2246,6 +2362,29 @@ belt-and-braces. The shutdown-state schema (`phase`, `tGraceStartedAt`,
 `tGraceTotalS`, `tRemainingS`, `reason`, `ts`) is written atomically to
 `/run/eclipse-obd/states/shutdown-state` (the `splash-grace.path` unit watches that
 file; the kiosk polls it at 250 ms).
+
+### 10.6.2 US-526 pre-poweroff hook — the PRIMARY drain-event close (Sprint 70 / V0.29.25)
+
+A second OPTIONAL constructor dependency, `prePowerOffFn`, runs immediately
+**before** `powerOffFn` on **every** path that actually powers off — the
+bounded-pipeline path *and* the VCELL-floor fast path. `__main__.py` wires it via
+`buildDrainCloseHook` to the production drain-event writer's close (§ *Production
+drain-event writer*, Atlas Option C 2026-08-02).
+
+**Why not a `ShutdownTask`:** the VCELL-floor fast path **skips the pipeline**,
+and that path is exactly how a run-to-cutoff drain ends. Under Spool's depth gate
+the run-to-cutoff drain is the *only* qualifying drain, so a task-based close
+would miss every row the battery-Health verdict needs.
+
+Ordering and guarantees mirror `phaseEmitFn` (§10.6.1): it runs **after**
+`powering_off` is emitted and **last** before poweroff (so the recorded depth is
+as deep as the drain actually got); a hook that raises is logged and **never**
+blocks poweroff — a bookkeeping row is not worth leaving the Pi up on a dying
+battery; and it is **not** called on either abort (transient blip, or power
+returning mid-window), because an aborted shutdown is not a drain end and the
+collector's BATTERY→AC transition owns that close. `None` (the default) runs the
+exact legacy path. A missed close is not data loss with a wrong value — the boot
+reaper marks that row interrupted (`runtime_seconds` + `end_vcell_v` NULL).
 
 **Timing invariant [Atlas A-6]** (owned by the `controller.py` module docstring;
 splash holds it by trust): the splash's 7.5 s animation budget fits inside the
@@ -3208,6 +3347,45 @@ partner test loads the **pre-US-494 emitter from git** and asserts the splash
 pins instead — the defect above is now reproducible on demand. See the
 render-regression backstop under F-092.
 
+**Launcher-URL ↔ served-route contract (US-525, Sprint 70 / V0.29.25 — I-042).**
+The server serves exactly three buckets: `/` (and `index.html`) → the *first*
+assets dir's index with placeholders injected; any name matching a file in an
+assets dir → that asset **by extension** (`*.html` also gets injection); and
+**everything else → a token-gated `states/` lookup**. So a *bare* route such as
+`/boot`, `/dashboard` or `/shutdown` is not a page at all — it falls through to
+the state bucket and answers **401 by design**. I-042 read those 401s as "a new
+gate on bare routes" and suspected US-501's `_injectHtml`; both were wrong. No
+launcher ever requests them: `splash-boot` loads `/`, `splash-grace` loads
+`/shutdown.html`, `dashboard` loads `/dashboard.html` — all 200 with the token
+injected. `_injectHtml` is **exonerated** (the index path serves 200).
+
+*Guarded by `tests/pi/splash/test_splash_launcher_route_contract.py`:* it parses
+the URL out of every real kiosk unit (both session variants) and drives it against
+the real server over the real shipped kits, so the units and the router cannot
+drift apart independently — the two-correct-halves class. The same file asserts
+the bare routes **stay 401**: opening them re-opens TD-067 and is an Atlas BLOCK.
+
+**Boot-splash minimum-VISIBLE floor (US-525).** `MIN_PLAY_MS` (2500 ms, spec §5)
+is now anchored to the brand `<object>`'s `load` event, not to script parse. The
+mark is a separate async SVG document, so on a cold chromium the poll loop ticks
+while the stage is still blank — the old anchor let the splash satisfy its own
+2.5 s floor having shown the brand for a fraction of it, then fade (I-042 cause
+b). Measured on the Pi (boot `dc7a3848`, 2026-08-02): `splash-boot` lived
+**9.806 s** but chromium's startup consumed the first ~5.4 s. The floor is
+**bounded by `HARD_CAP_MS`** and falls back to the parse anchor when the brand
+never loads — a cosmetic asset fault must never withhold the dashboard hand-off
+(that is the US-494 pin-until-reboot failure, re-entered through its own fix).
+
+**Shutdown splash fires only on a POWER-LOSS shutdown (US-525 finding, not a
+defect).** The sole production writer of `shutdown-state` is the powerwatch
+`ShutdownSequencer` grace path (`pi.power.power_watch.__main__` →
+`makeShutdownPhaseEmitter`). A manual `sudo reboot`/`poweroff` stops
+`eclipse-powerwatch.service` by SIGTERM without entering a grace sequence, so
+`shutdown-state` is never written, `splash-grace.path` never triggers, and **no
+reverse splash appears — correctly.** I-042's "shutdown splash did not appear"
+after a deploy+reboot is therefore expected behaviour, not the regression. Any
+future drill of the reverse splash must be a real AC-loss/grace event.
+
 **Token SSOT (US-393 DoD):** exactly one file — `/run/eclipse-obd/states/.http-token`
 (0600) — is the authority. `token.loadOrCreateToken` generates it once and never
 regenerates. The server loads it to validate the `X-Splash-Token` /
@@ -3361,7 +3539,49 @@ splash unit exits 0; systemd starts the dashboard. A **DEGRADED** boot keeps the
 splash up (no `window.close`), so the dashboard never starts on a sick boot
 (honest-instrument: the operator sees the amber-ring splash, not a dashboard
 pretending all is well). No watchdog/timer, no `pkill` -- the same JS-driven exit
-discipline as the splash (D-3).
+discipline as the splash (D-3). *(US-523 adds a watchdog that **restarts** an
+already-running kiosk; it never **starts** one, so this hand-off remains the sole
+path from splash to dashboard -- see the wedge-recovery subsection below.)*
+
+**Kiosk freeze class + wedge recovery (F-124: US-522 primary, US-523
+defense-in-depth).** The bench UI froze with chromium **alive**: its GPU
+command-buffer context died and the client hot-looped on the fatal
+`AllocateRingBuffer()` failure (Atlas measured 6,063,554 errors in one boot,
+~500/sec, renderer/GPU/main pegged 39/31/24% CPU, **no crash**) -- the Pi 5 v3d
+GPU on a 64 MiB CMA pool driving the animated carousel with GPU rasterization on.
+Because nothing crashed, the kiosk unit's `Restart=on-failure` never fired; the
+panel simply stopped updating while X stayed live. RCA:
+`offices/architect/findings/2026-08-02-pi-ui-freeze-chromium-gpu-command-buffer-hotloop.md`.
+
+- **US-522 (primary, removes the mechanism):** `--disable-gpu` in the
+  `eclipse-dashboard.service.{wayland,x11}` `ExecStart`. It is an **override, not
+  a deletion** -- `--enable-gpu-rasterization` is not in this repo; Debian/RPi-OS
+  exports it from `/etc/chromium.d/default-flags`, which the `/usr/bin/chromium`
+  wrapper sources before `exec`ing chromium with the caller's argv **last**. That
+  `/etc/chromium.d/` surface is OS-shipped and repo-unmanaged: a chromium package
+  upgrade can reintroduce GPU flags (noted at the deploy step, A-16 family).
+- **US-523 (defense-in-depth, recovers if it recurs):**
+  `deploy/eclipse-kiosk-watchdog.{service,timer}` +
+  `src/pi/display/kiosk_watchdog.py`. A 30 s `Type=oneshot` tick counts
+  `AllocateRingBuffer` markers in the kiosk's journal over a 60 s window and, at
+  ≥100, restarts `eclipse-dashboard.service` -- the mitigation Atlas proved live
+  (fresh GPU context, error count back to 0). It runs **unprivileged**, reusing
+  the existing polkit `restart` grant
+  (`deploy/polkit-rules/51-eclipse-service-control.rules`) and
+  `SupplementaryGroups=systemd-journal`.
+  **Honest-instrument bounds, all load-bearing:** it never restarts an *inactive*
+  kiosk (that would usurp the A-1 hand-off); an unreadable journal is *uncertain*,
+  never a wedge; the journal window never reaches back past the last restart; a
+  cooldown separates attempts; and an **hourly restart budget** caps the loop --
+  once spent the watchdog stops restarting, logs at ERROR and exits non-zero so
+  the unit reads FAILED. A restart appearing in its journal means **US-522 did not
+  hold**, which is the point: the watchdog surfaces a live freeze class instead of
+  masking it. The attempt is recorded to a tmpfs ledger **before** the restart
+  fires, so an unwritable ledger cancels the restart rather than silently
+  uncapping it. Only the command-buffer signature is detected; the "CPU-pegged
+  renderer with no repaint" variant is deliberately **not** implemented (repaint
+  is not observable outside the browser and software rendering has no measured CPU
+  baseline yet -- a threshold there would be fabricated, not grounded).
 
 **A-2 "full runtime" extension of `eclipse-states-http`.** The server already
 ran *continuously* (C-5: `WantedBy=multi-user.target`), so "boot-only → full

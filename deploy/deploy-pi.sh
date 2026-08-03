@@ -26,8 +26,10 @@
 #     1. rsync the working tree to PI_PATH on the Pi (excludes .git/, .venv/, data/, etc.)
 #     2. Install/refresh systemd-journald persistent-storage drop-in (US-210, idempotent)
 #     3. Enforce POWER_OFF_ON_HALT=0 in Pi 5 EEPROM (US-253, wake-on-power, idempotent)
-#     4. Update venv deps from requirements.txt + requirements-pi.txt at ~/obd2-venv
-#     5. Restart eclipse-obd systemd service if installed (warn-only if absent)
+#     4. Set GPU CMA to 256M in /boot/firmware/config.txt (US-524, idempotent,
+#        takes effect on next reboot)
+#     5. Update venv deps from requirements.txt + requirements-pi.txt at ~/obd2-venv
+#     6. Restart eclipse-obd systemd service if installed (warn-only if absent)
 #
 #   --init mode (additionally):
 #     1. Verify SSH gate (ssh PI_USER@PI_HOST hostname) before doing anything
@@ -783,6 +785,43 @@ step_enforce_eeprom_power_off_on_halt() {
     remote "sudo bash '${PI_PATH}/deploy/enforce-eeprom-power-off-on-halt.sh'"
 }
 
+step_set_gpu_cma() {
+    # US-524 / F-124: raise the GPU CMA pool from the Pi 5's 64 MiB device-tree
+    # default to 256 MiB, via the vc4-kms-v3d overlay's `cma-256` param in
+    # /boot/firmware/config.txt. Headroom that COMPLEMENTS US-522's
+    # --disable-gpu; explicitly not a standalone fix for the freeze class.
+    #
+    # Same posture as step_enforce_eeprom_power_off_on_halt above: a standalone
+    # idempotent script, run with sudo, re-asserted on EVERY deploy so a Pi
+    # rebuilt via --init (or a config.txt rewritten by an OS image update)
+    # lands back on the intended value instead of silently reverting to 64 MiB.
+    # Runs AFTER sync_tree so deploy/set-gpu-cma.sh exists on the Pi.
+    #
+    # NOT cmdline.txt: the live Pi's /proc/cmdline carries no `cma=` arg (the
+    # 64 MiB pool comes from the device tree), and a malformed cmdline.txt can
+    # break `root=` on a headless box, whereas a bad overlay param only makes
+    # the firmware skip the overlay -- dark display, SSH still reachable.
+    #
+    # BOOT-CONFIG SURFACE (deploy-contract blind spot, same class as the
+    # /etc/chromium.d note in US-522): /boot/firmware/config.txt is OS-shipped
+    # and can be rewritten out-of-band by `rpi-update`, an OS image upgrade, or
+    # raspi-config. The script is idempotent and re-run on every deploy
+    # precisely so that drift self-heals.
+    #
+    # The change takes effect on the NEXT BOOT only. This step deliberately
+    # does not reboot the Pi -- an unattended reboot mid-deploy would race the
+    # service restarts below. The script prints REBOOT REQUIRED; CmaTotal stays
+    # at the old value until then.
+    echo "--- Step: Setting GPU CMA to 256M in boot config (US-524 / F-124) ---"
+    if $DRY_RUN; then
+        echo "DRY-RUN would run: sudo bash ${PI_PATH}/deploy/set-gpu-cma.sh"
+        echo "DRY-RUN would verify: /boot/firmware/config.txt vc4-kms-v3d overlay carries cma-256"
+        echo "DRY-RUN note: takes effect on next reboot; confirm with grep CmaTotal /proc/meminfo"
+        return 0
+    fi
+    remote "sudo bash '${PI_PATH}/deploy/set-gpu-cma.sh'"
+}
+
 step_install_rfkill_unblock() {
     # BL-025 P0 (V0.29.22 hotfix, CIO-directed): make the boot-time radio
     # unblock REPO-MANAGED so a reflash or `--init` cannot lose it.
@@ -1097,6 +1136,70 @@ step_install_orphan_cleanup_unit() {
         # easiest way to recover from an out-of-band 'systemctl disable'.
         sudo systemctl enable --now orphan-cleanup.timer
         echo 'orphan-cleanup.timer enabled + active.'
+    "
+}
+
+step_install_kiosk_watchdog_unit() {
+    # US-523 / F-124: idempotent sync-if-changed install of
+    # eclipse-kiosk-watchdog.service + .timer.  Same posture as
+    # step_install_orphan_cleanup_unit: cmp -s the rsynced source against the
+    # installed copy, daemon-reload only on real change, `enable --now` on every
+    # deploy so the timer recovers from an out-of-band `systemctl disable`.
+    #
+    # The watchdog restarts eclipse-dashboard when chromium's renderer wedges
+    # (GPU command-buffer hot-loop -- see the unit header + Atlas's RCA).  It is
+    # defense-in-depth behind US-522's `--disable-gpu`, so a restart appearing
+    # in its journal means that fix did NOT hold.
+    #
+    # No `install -d` here: the ledger dir is provisioned by the unit's own
+    # RuntimeDirectory= (deliberately its OWN dir, not /run/eclipse-obd, which a
+    # oneshot would delete on exit -- taking the live states/ with it).
+    #
+    # The restart itself rides the EXISTING polkit grant in
+    # deploy/polkit-rules/51-eclipse-service-control.rules (restart verb on
+    # eclipse-dashboard.service for the Pi user), so no new privilege is added.
+    echo "--- Step: Installing kiosk-watchdog systemd unit (US-523 / F-124, sync-if-changed) ---"
+    if $DRY_RUN; then
+        echo "DRY-RUN would: sudo cmp -s ${PI_PATH}/deploy/eclipse-kiosk-watchdog.service /etc/systemd/system/eclipse-kiosk-watchdog.service || (install + daemon-reload)"
+        echo "DRY-RUN would: sudo cmp -s ${PI_PATH}/deploy/eclipse-kiosk-watchdog.timer /etc/systemd/system/eclipse-kiosk-watchdog.timer || (install + daemon-reload)"
+        echo "DRY-RUN would: sudo systemctl enable --now eclipse-kiosk-watchdog.timer"
+        return 0
+    fi
+    remote "
+        set -e
+        SRC_SVC='${PI_PATH}/deploy/eclipse-kiosk-watchdog.service'
+        DST_SVC='/etc/systemd/system/eclipse-kiosk-watchdog.service'
+        SRC_TIM='${PI_PATH}/deploy/eclipse-kiosk-watchdog.timer'
+        DST_TIM='/etc/systemd/system/eclipse-kiosk-watchdog.timer'
+
+        if [ ! -f \"\$SRC_SVC\" ] || [ ! -f \"\$SRC_TIM\" ]; then
+            echo 'WARN: eclipse-kiosk-watchdog unit files not present in deploy/ on the Pi -- skipping install.' >&2
+            exit 0
+        fi
+
+        changed=false
+        if sudo test -f \"\$DST_SVC\" && sudo cmp -s \"\$SRC_SVC\" \"\$DST_SVC\"; then
+            echo 'eclipse-kiosk-watchdog.service already up-to-date.'
+        else
+            sudo install -m 644 \"\$SRC_SVC\" \"\$DST_SVC\"
+            echo 'eclipse-kiosk-watchdog.service installed.'
+            changed=true
+        fi
+        if sudo test -f \"\$DST_TIM\" && sudo cmp -s \"\$SRC_TIM\" \"\$DST_TIM\"; then
+            echo 'eclipse-kiosk-watchdog.timer already up-to-date.'
+        else
+            sudo install -m 644 \"\$SRC_TIM\" \"\$DST_TIM\"
+            echo 'eclipse-kiosk-watchdog.timer installed.'
+            changed=true
+        fi
+
+        if [ \"\$changed\" = true ]; then
+            sudo systemctl daemon-reload
+            echo 'systemd daemon-reload complete.'
+        fi
+
+        sudo systemctl enable --now eclipse-kiosk-watchdog.timer
+        echo 'eclipse-kiosk-watchdog.timer enabled + active.'
     "
 }
 
@@ -1424,6 +1527,19 @@ step_install_ui_kiosk_units() {
     #      V-1 substitutes User=.  The old /usr/bin/chromium-browser symlink shim is
     #      RETIRED: an absent chromium now makes the installer fail loudly (its exit is
     #      wrapped WARN-not-BLOCK below, A-9), never a silent 203/EXEC unit.
+    #
+    # UNMANAGED FLAG SURFACE -- /etc/chromium.d/ (US-522, A-16 deploy-contract blind
+    #   spot).  chromium's BASE flags are NOT in this repo: the Debian/RPi-OS
+    #   `/usr/bin/chromium` wrapper sources every file in /etc/chromium.d/ into
+    #   $CHROMIUM_FLAGS and then runs `exec .../chromium $CHROMIUM_FLAGS "$@"`, so the
+    #   OS-shipped flags precede the unit's own argv.  That is where
+    #   `--enable-gpu-rasterization` came from -- the flag that froze the kiosk
+    #   (AllocateRingBuffer hot-loop; Atlas RCA 2026-08-02) and that a repo grep can
+    #   never find.  The dashboard unit now overrides it with `--disable-gpu` in
+    #   ExecStart (the only repo-managed lever), but the OS side stays UNMANAGED: a
+    #   chromium PACKAGE UPGRADE can re-introduce GPU raster or add new flags with no
+    #   repo change at all.  If the kiosk freeze class ever returns, diff
+    #   /etc/chromium.d/default-flags and the live `pgrep -a chromium` cmdline FIRST.
     #
     # Idempotent (the installers are idempotent; the V-3 chromium substitution is
     # deterministic).  A-9
@@ -1848,6 +1964,14 @@ step_install_nm_wifi_powersave
 # sync_tree so deploy/enforce-eeprom-power-off-on-halt.sh exists on the Pi.
 step_enforce_eeprom_power_off_on_halt
 
+# US-524 / F-124: GPU CMA headroom (64 MiB device-tree default -> 256 MiB via
+# the vc4-kms-v3d overlay's cma-256 param). Ordered directly after the EEPROM
+# step because both are idempotent BOX-level boot/firmware config re-asserted
+# on every deploy, and both must run AFTER sync_tree so their standalone
+# scripts exist on the Pi. Takes effect on the next reboot; the script says so
+# rather than letting the deploy imply the pool was raised immediately.
+step_set_gpu_cma
+
 # US-477 / F-120: re-assert the canonical OBDLink MAC into /etc/default/obdlink
 # on EVERY deploy so a drifted Pi (like the 2026-07-17 phantom that captured
 # zero rows) self-heals on the next routine re-deploy -- NOT gated behind
@@ -1942,6 +2066,10 @@ step_install_state_server_units
 # this the kiosk is never installed and the 3.5" screen stays blank (pygame sunset).
 # Runs after the state server is up so the served surface + backend are in place.
 step_install_ui_kiosk_units
+# US-523 (F-124): the kiosk WATCHDOG -- restarts eclipse-dashboard when
+# chromium's renderer wedges.  Installed AFTER the kiosk units it guards so the
+# unit it restarts already exists on the box when the timer's first tick lands.
+step_install_kiosk_watchdog_unit
 
 # US-354 reordering: restart first, then verify both long-running services
 # came back with start times AFTER DEPLOY_START_EPOCH, THEN bump

@@ -43,7 +43,17 @@ async function main() {
   const clock = new dom.Clock();
   let virtualMs = 0;
   let handoff = false;
+  let handoffAtMs = null;
   let polls = 0;
+
+  // US-525: the brand mark is an <object type="image/svg+xml"> -- it loads
+  // ASYNCHRONOUSLY, after the poll script has already parsed. `brandLoadMs` is
+  // the virtual ms at which that `load` fires, so a test can model a cold
+  // chromium where the script is running but the brand is not yet painted.
+  // null => never loads (a missing/broken splash.svg).
+  const brandLoadMs =
+    input.brandLoadMs === undefined ? 0 : input.brandLoadMs;
+  let brandDispatched = false;
 
   // The state file is indexed by TIME, not by poll count: the emitter writes on
   // its own cadence (eclipse-boot-state.service --poll-ms, 500 by default) while
@@ -63,6 +73,7 @@ async function main() {
     },
     close: function () {
       handoff = true;
+      if (handoffAtMs === null) handoffAtMs = virtualMs;
     },
     addEventListener: function () {},
   };
@@ -108,6 +119,13 @@ async function main() {
   require(path.resolve(input.pollJsPath));
 
   for (let i = 0; i < (input.rounds || 80); i++) {
+    // Fire the brand's `load` once virtual time reaches it -- BEFORE draining,
+    // so a listener registered by the poll script sees it on the right round.
+    if (!brandDispatched && brandLoadMs !== null && virtualMs >= brandLoadMs) {
+      brandDispatched = true;
+      const mark = doc.getElementById("mark");
+      if (mark) mark.dispatch("load", { type: "load" });
+    }
     await dom.drainMicrotasks();
     clock.flushRound();
     virtualMs += POLL_MS;
@@ -119,6 +137,8 @@ async function main() {
   process.stdout.write(
     JSON.stringify({
       handoff: handoff,
+      handoffAtMs: handoffAtMs,
+      brandLoadMs: brandLoadMs,
       degraded: doc.body.classList.contains("degraded"),
       degradedMsg: msg ? msg.textContent : "",
       polls: polls,

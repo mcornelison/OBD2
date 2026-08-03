@@ -15,6 +15,58 @@
 #   --assets-dir search path (deploy/eclipse-states-http.service, US-399 A-2).
 #
 # Type=simple [A-8]. __PI_USER__ substituted by install.sh at install time.
+#
+# US-522 (F-124) -- `--disable-gpu`: the bench UI froze because chromium's GPU
+#   command-buffer context died and then HOT-LOOPED on the fatal
+#   `AllocateRingBuffer()` failure (6M errors in one boot, renderer + GPU process
+#   CPU-pegged, no crash, display stale while X stayed live). Root: the Pi 5 v3d
+#   GPU on a 64 MiB CMA pool driving the animated carousel with GPU rasterization
+#   ON. Atlas RCA:
+#   offices/architect/findings/2026-08-02-pi-ui-freeze-chromium-gpu-command-buffer-hotloop.md
+#
+#   THE FLAG IS AN OVERRIDE, NOT A DELETION. `--enable-gpu-rasterization` is not
+#   in this repo -- Debian/RPi-OS exports it from /etc/chromium.d/default-flags,
+#   which the /usr/bin/chromium WRAPPER sources. The wrapper then runs
+#   `exec $LIBDIR/$APPNAME $CHROMIUM_FLAGS "$@"` (/usr/bin/chromium:195), so the
+#   OS flags land FIRST and this ExecStart's argv lands LAST. Verified live on
+#   the Pi rather than assumed -- the composed cmdline read
+#   `... --enable-gpu-rasterization ... --use-angle=gles --disable-gpu <url>`.
+#
+#   WHY `--disable-gpu` AND NOT `--disable-gpu-rasterization`: the failure is in
+#   the GPU COMMAND BUFFER, which compositing uses as well as raster -- so
+#   turning raster off alone reduces the pressure without removing the
+#   mechanism. `--disable-gpu` takes hardware GL/v3d out of the path entirely,
+#   and it has NO counterpart in the injected set, so nothing in /etc/chromium.d
+#   can contradict it and the fix does not depend on flag ORDER. This is a 2D
+#   card UI on a 480x320 panel; the Pi 5 CPU renders it without difficulty. A
+#   live probe on this Pi ran the composed flag set against the real dashboard
+#   URL on :0 for 12s: chromium stayed up, 0 AllocateRingBuffer, no GL init
+#   failure. (A software-GL gpu-process may still be present -- the claim is
+#   that the v3d/CMA exhaustion mechanism is gone, not that no GPU process runs.)
+#
+# US-522 (reopen 2026-08-03) -- `--password-store=basic`: a repeating
+#   "Authentication Required" keyring dialog was painting OVER the kiosk. With no
+#   `--password-store`, chromium auto-detects a Linux backend and picks the GNOME
+#   keyring for its OSCrypt "Safe Storage" key. This Pi's Default keyring is
+#   password-protected (~/.local/share/keyrings/Default_Keyring.keyring, 0600) and
+#   under PASSWORDLESS auto-login pam_gnome_keyring never unlocks it -- so the
+#   collection stays LOCKED, chromium's unlock request reaches gcr-prompter, and
+#   the dialog appears. `basic` keeps the safe-storage key in chromium's own
+#   profile instead. No meaningful security downgrade: that profile is the wiped
+#   /tmp/dashboard-chromium below and this kiosk stores no real password.
+#
+#   Atlas live-tested it on the Pi; grounded again from the journal, which is also
+#   what shows the fix belongs HERE and not on the splash unit: gcr-prompter
+#   PerformPrompt fired Aug 03 05:43:09 / 08:33:52 / 08:52:23 -- recurring, and
+#   every one ~9h AFTER splash-boot exited (Aug 02 20:20:21), with none in the
+#   splash's own 9.8s window. The prompts track the LONG-RUNNING dashboard
+#   chromium. Once applied, the effect is visible as
+#   `key_storage_linux.cc: Selected backend for OSCrypt: BASIC_TEXT`.
+#
+#   NOTE the live box's unit was hand-patched and ALSO carried
+#   `--enable-logging=stderr --remote-debugging-port=9222`. Those were test aids
+#   and are deliberately NOT adopted here -- an open DevTools port on a
+#   car-mounted kiosk is unauthenticated full-page control. A test fences it.
 # ==============================================================================
 
 [Unit]
@@ -28,10 +80,12 @@ User=__PI_USER__
 Environment=DISPLAY=:0
 ExecStart=__CHROMIUM_BIN__ \
   --kiosk \
+  --disable-gpu \
   --touch-events=enabled \
   --noerrdialogs --disable-infobars --hide-scrollbars \
   --autoplay-policy=no-user-gesture-required \
   --check-for-update-interval=31536000 \
+  --password-store=basic \
   --user-data-dir=/tmp/dashboard-chromium \
   http://127.0.0.1:9899/dashboard.html
 Restart=on-failure

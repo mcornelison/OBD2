@@ -11,6 +11,11 @@
 #   read: health is capacity FADE over time and a spot voltage cannot see it.
 #   Runtime under a known production load IS the capacity measurement.
 #
+#   US-527: which rows COUNT is gated on DEPTH (``end_vcell_v <= 3.50`` V), not
+#   duration -- the end voltage is what says the pack actually discharged to its
+#   shutdown region.  The runtime still supplies the MEASUREMENT (and its bands);
+#   it just no longer decides admission.
+#
 #   Honest-instrument, load-bearing: `unknown` is the DEFAULT, not a failure
 #   mode.  Fewer than 3 qualifying drains, any NULL required input, an
 #   unreadable log, an unparseable clock, or health data older than 90 days all
@@ -25,6 +30,11 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-08-01    | Ralph (Rex)  | Initial -- US-504 verdict + last-health-check.
+# 2026-08-03    | Ralph (Rex)  | US-527/TD-074 -- qualifying gate remapped from
+#                               the RETIRED runtime_seconds>=600 duration gate
+#                               to Spool's DEPTH gate (end_vcell_v <= 3.50 V
+#                               AND runtime_seconds >= 60).  Bands UNCHANGED
+#                               (Spool ruling c72677e) and now fully reachable.
 # ================================================================================
 ################################################################################
 
@@ -62,6 +72,7 @@ __all__ = [
     'GOOD_MIN_RUNTIME_S',
     'MEDIAN_SAMPLE_COUNT',
     'QUALIFYING_LOAD_CLASS',
+    'QUALIFYING_MAX_END_VCELL_V',
     'QUALIFYING_MIN_RUNTIME_S',
     'RUNTIME_BASELINE_S',
     'STALE_HEALTH_CHECK_DAYS',
@@ -96,15 +107,39 @@ VERDICT_VALUES: tuple[str, ...] = (
 # Spool [EXACT] constants -- flag Spool before ANY drift
 # ================================================================================
 # groundingRef: offices/pm/inbox/2026-08-01-from-spool-us504-battery-health-
-# verdict-source.md (Spool, Tuning SME).  Every number below is marked [EXACT]
-# in that ruling and is load-bearing.
+# verdict-source.md (Spool, Tuning SME) for the bands + windows, and
+# offices/ralph/inbox/2026-08-02-from-spool-us504-gate-ruling-and-us521-
+# ratification.md (commit c72677e) for the DEPTH gate that replaced the retired
+# duration gate.  Every number below is marked [EXACT] in one of those rulings
+# and is load-bearing.
 
 #: Only the real production drain measures the pack under its real load.
 QUALIFYING_LOAD_CLASS: str = 'production'
 
-#: [EXACT:600] Below this the pack never approached cutoff, so the run measured
-#: nothing about capacity (key-cycles + aborts sit under 150 s).
-QUALIFYING_MIN_RUNTIME_S: int = 600
+#: [EXACT:3.50] The DEPTH gate (US-527).  Duration was only ever a PROXY for
+#: "ran to cutoff"; end voltage answers that question directly where duration
+#: cannot.  A pack reaching cutoff in 400 s is a genuine and alarming capacity
+#: measurement that must vote; a key-cycle ending at 400 s with the pack at
+#: 4.0 V measured nothing.  Only depth separates those two.
+#:
+#: 3.50 V is not a round number picked for tidiness -- it is the gap between two
+#: measured values: the observed cutoff on this pack is 3.42-3.45 V (Spool
+#: Session-27, 28 drains) and the MAX17048 "low" alert threshold in use is
+#: 3.55 V.  So 3.50 sits ABOVE the observed cutoff with margin (a genuine
+#: run-to-shutdown at 3.45 qualifies) and BELOW the low warning (a drain that
+#: merely got low does not).
+QUALIFYING_MAX_END_VCELL_V: float = 3.50
+
+#: [EXACT:60] Sanity floor only -- it excludes absurd rows, it does NOT decide
+#: whether the drain measured capacity (that is the depth gate above).
+#:
+#: This RETIRES the [EXACT:600] duration gate, which was Spool's own spec bug
+#: (TD-074): 600 s sat ABOVE the 582 s good/degraded boundary, so every row that
+#: survived the gate necessarily landed in the `good` band and `degraded` /
+#: `replace` were unreachable -- the verdict failed toward REASSURANCE, the one
+#: direction a health verdict must never fail.  The floor now sits below both
+#: band boundaries, so the whole band range is reachable.
+QUALIFYING_MIN_RUNTIME_S: int = 60
 
 #: [EXACT:727] Measured mean of the 11 qualifying drains 2026-05-09 -> 05-16
 #: (range 617-831 s).  The reference point the bands are a fraction of.
@@ -132,6 +167,11 @@ MEDIAN_SAMPLE_COUNT: int = 3
 #: Spool states the bands both as percentages and as seconds (>=582 / 436-582 /
 #: <436).  Deriving the seconds from the percentages keeps ONE definition; the
 #: test suite pins that the derivation reproduces his stated seconds exactly.
+#:
+#: UNCHANGED by the US-527 depth-gate remap -- Spool's ruling moves the GATE and
+#: explicitly leaves the bands alone ("Bands UNCHANGED ... they're now fully
+#: reachable across their whole range because duration no longer filters").
+#: These stay RUNTIME bands; there is no such thing as a depth band here.
 GOOD_MIN_RUNTIME_S: int = round(RUNTIME_BASELINE_S * GOOD_BASELINE_FRACTION)
 DEGRADED_MIN_RUNTIME_S: int = round(
     RUNTIME_BASELINE_S * DEGRADED_BASELINE_FRACTION
@@ -141,12 +181,15 @@ DEGRADED_MIN_RUNTIME_S: int = round(
 _CANONICAL_ISO_FORMAT: str = '%Y-%m-%dT%H:%M:%SZ'
 
 _QUALIFYING_ROW_SQL: str = (
-    "SELECT start_timestamp, end_timestamp, runtime_seconds, load_class "
+    "SELECT start_timestamp, end_timestamp, runtime_seconds, load_class, "
+    "       end_vcell_v "
     "FROM battery_health_log "
     "WHERE end_timestamp IS NOT NULL "
     "  AND load_class = ? "
     "  AND runtime_seconds IS NOT NULL "
     "  AND runtime_seconds >= ? "
+    "  AND end_vcell_v IS NOT NULL "
+    "  AND end_vcell_v <= ? "
     "ORDER BY start_timestamp DESC"
 )
 
@@ -205,7 +248,8 @@ def computeBatteryHealthVerdict(
 
     Args:
         rows: Mappings with ``start_timestamp`` / ``end_timestamp`` /
-            ``runtime_seconds`` / ``load_class`` keys, in any order.
+            ``runtime_seconds`` / ``load_class`` / ``end_vcell_v`` keys, in any
+            order.
         nowIso: Canonical ISO-8601 UTC instant used for the trailing-window
             and staleness comparisons.  An unparseable value yields
             ``unknown`` -- a clock we cannot read cannot age-check the data.
@@ -287,7 +331,11 @@ def readBatteryHealthVerdict(
         with database.connect() as conn:
             fetched = conn.execute(
                 _QUALIFYING_ROW_SQL,
-                (QUALIFYING_LOAD_CLASS, QUALIFYING_MIN_RUNTIME_S),
+                (
+                    QUALIFYING_LOAD_CLASS,
+                    QUALIFYING_MIN_RUNTIME_S,
+                    QUALIFYING_MAX_END_VCELL_V,
+                ),
             ).fetchall()
     except Exception as exc:  # noqa: BLE001 -- unreadable log -> honest unknown
         logger.debug("battery-health verdict read failed (%s) -- unknown", exc)
@@ -299,6 +347,7 @@ def readBatteryHealthVerdict(
             'end_timestamp': row[1],
             'runtime_seconds': row[2],
             'load_class': row[3],
+            'end_vcell_v': row[4],
         }
         for row in fetched
     ]
@@ -313,18 +362,19 @@ def readBatteryHealthVerdict(
 def verdictForMedianRuntime(medianRuntimeS: int) -> str:
     """Map a median drain runtime to its Spool band.
 
-    OPEN SPEC ISSUE (filed to Spool 2026-08-02, ``offices/tuner/inbox/
-    2026-08-02-from-ralph-us504-gate-band-overlap-and-writer-gap.md``; NOT
-    drifted here): the
-    qualifying gate is ``runtime_seconds >= 600`` while the degraded band is
-    436-582 s and replace is < 436 s -- both entirely BELOW the gate.  Every
-    row that survives the gate therefore lands in the good band, so through the
-    real pipeline ``degraded`` and ``replace`` are unreachable and a pack that
-    genuinely dies at 500 s is filtered out as a "partial" drain rather than
-    reported as degraded.  Both numbers are [EXACT] Spool values, so this
-    module implements them verbatim; the bands live in this separate public
-    function so the mapping stays fully exercised and the day Spool rules on
-    the gate/band overlap, only the gate constant moves.
+    RESOLVED (US-527 / TD-074).  This function previously carried an OPEN SPEC
+    ISSUE: the qualifying gate was ``runtime_seconds >= 600`` while the degraded
+    band topped out at 582 s and replace at 435 s -- both entirely BELOW the
+    gate -- so every surviving row landed in ``good`` and a pack genuinely dying
+    at 500 s was discarded as "partial drain" noise rather than reported as
+    degraded.  Spool ruled it his own spec bug and gated on DEPTH instead
+    (``offices/ralph/inbox/2026-08-02-from-spool-us504-gate-ruling-and-us521-
+    ratification.md``, commit c72677e).
+
+    The prediction made when the issue was filed held exactly: **only the gate
+    constant moved.**  The bands here are byte-for-byte the ones Spool specified
+    on 2026-08-01 and the whole range is now reachable, which is why they were
+    kept in this separate public function rather than inlined into the gate.
     """
     if medianRuntimeS >= GOOD_MIN_RUNTIME_S:
         return VERDICT_GOOD
@@ -339,9 +389,15 @@ def _parseRow(
     """Return ``(startAt, runtimeSeconds, startTs)`` for a QUALIFYING row.
 
     None when the row fails the gate for any reason -- unclosed drain, wrong
-    load class, missing/short runtime, or an unparseable start timestamp.  A
-    NULL required input is never silently defaulted; the row simply does not
-    vote.
+    load class, missing/sub-floor runtime, a shallow or unknown end voltage, or
+    an unparseable start timestamp.  A NULL required input is never silently
+    defaulted; the row simply does not vote.
+
+    The depth check makes an INTERRUPTED drain fail honestly.  US-526's boot
+    reaper deliberately leaves ``runtime_seconds`` AND ``end_vcell_v`` NULL on a
+    reaped orphan (nothing knew the voltage at power-off), so such a row is
+    excluded twice over -- belt and braces on a value that feeds a health
+    verdict.
     """
     if row.get('end_timestamp') is None:
         return None
@@ -356,6 +412,16 @@ def _parseRow(
     except (TypeError, ValueError):
         return None
     if runtimeSeconds < QUALIFYING_MIN_RUNTIME_S:
+        return None
+
+    endVcell = row.get('end_vcell_v')
+    if endVcell is None:
+        return None
+    try:
+        endVcellV = float(endVcell)
+    except (TypeError, ValueError):
+        return None
+    if endVcellV > QUALIFYING_MAX_END_VCELL_V:
         return None
 
     startTs = row.get('start_timestamp')
