@@ -20,6 +20,23 @@
 #
 # Type=simple [A-8] -- matches the splash unit; Exit/Close (US-403) ends it.
 # __PI_USER__ is substituted by install.sh at install time (V-1).
+#
+# US-522 (F-124) -- `--disable-gpu`: see the full rationale in the .x11 sibling
+#   (the two variants must not drift). In short: the bench freeze was chromium's
+#   GPU command-buffer context dying and HOT-LOOPING on the fatal
+#   `AllocateRingBuffer()` failure (6M errors/boot, CPU-pegged, no crash, stale
+#   display) -- the Pi 5 v3d GPU on a 64 MiB CMA pool under the animated
+#   carousel. Atlas RCA:
+#   offices/architect/findings/2026-08-02-pi-ui-freeze-chromium-gpu-command-buffer-hotloop.md
+#
+#   The flag OVERRIDES an OS default rather than deleting a repo one:
+#   `--enable-gpu-rasterization` comes from /etc/chromium.d/default-flags via the
+#   /usr/bin/chromium wrapper, which runs `exec ... $CHROMIUM_FLAGS "$@"`, so the
+#   injected flags precede this unit's argv (verified live, not assumed).
+#   `--disable-gpu` (not the narrower --disable-gpu-rasterization) because the
+#   fault is in the command buffer that COMPOSITING also uses, and because
+#   nothing in the injected set can contradict --disable-gpu -- so the fix is
+#   independent of flag order.
 # ==============================================================================
 
 [Unit]
@@ -35,6 +52,7 @@ Environment=XDG_RUNTIME_DIR=/run/user/%U
 ExecStart=__CHROMIUM_BIN__ \
   --kiosk \
   --ozone-platform=wayland \
+  --disable-gpu \
   --touch-events=enabled \
   --noerrdialogs --disable-infobars --hide-scrollbars \
   --autoplay-policy=no-user-gesture-required \

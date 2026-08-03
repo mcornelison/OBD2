@@ -1496,3 +1496,150 @@ def test_powerTile_renderLogic_carWallUnknown_us421():
     )
     assert result.returncode == 0, result.stderr
     assert "US421_OK" in result.stdout
+
+
+# ---------------------------------------------------------------------------
+# US-522 -- kiosk GPU override (F-124; Atlas RCA
+# offices/architect/findings/2026-08-02-pi-ui-freeze-chromium-gpu-command-buffer-hotloop.md).
+#
+# The bench freeze was a chromium GPU command-buffer hot-loop (6M
+# `AllocateRingBuffer() kFatalFailure` in one boot, renderer+GPU CPU-pegged, no
+# crash) -- the v3d GPU on a 64 MiB CMA pool exhausted its context under the
+# animated carousel.
+#
+# THE PREMISE THAT NEEDED CORRECTING (Atlas, design-gate): the offending
+# `--enable-gpu-rasterization` is NOT in this repo. It is a Debian/RPi-OS system
+# default exported by `/etc/chromium.d/default-flags`, sourced by the
+# `/usr/bin/chromium` wrapper. So the fix ADDS an override to our ExecStart
+# rather than deleting a flag we never shipped -- which is why these guards
+# assert PRESENCE of the override and ABSENCE of any re-injection, and why the
+# repo can never assert the OS-side default at all (see the deploy-contract
+# guard below).
+#
+# PRECEDENCE, verified live on the Pi (10.27.27.100) rather than assumed, since
+# a wrapper-ordering surprise would be a silent mocked-green:
+#   /usr/bin/chromium:195   exec $LIBDIR/$APPNAME $CHROMIUM_FLAGS "$@"
+# so the OS-injected flags come FIRST and the unit's ExecStart args come LAST.
+# The live composed cmdline confirmed it exactly:
+#   ... --enable-gpu-rasterization ... --use-angle=gles --disable-gpu <url>
+# ---------------------------------------------------------------------------
+
+# The token that turns the whole hardware-GL path off. `--disable-gpu` is chosen
+# over the narrower `--disable-gpu-rasterization` on the RCA evidence: the error
+# is in the GPU COMMAND BUFFER, which compositing uses too, not only raster --
+# so disabling raster alone shrinks the pressure without removing the mechanism.
+# `--disable-gpu` also has no counterpart in the injected set (verified live:
+# --show-component-extension-options / --enable-gpu-rasterization /
+# --no-default-browser-check / --disable-pings / --media-router=0 /
+# --enable-remote-extensions / --use-angle=gles / --js-flags=...), so nothing in
+# /etc/chromium.d can contradict it and the fix does not depend on flag order.
+_GPU_OVERRIDE_FLAG = "--disable-gpu"
+_DASHBOARD_UNITS = ("dashboard.service.wayland", "dashboard.service.x11")
+
+
+def _execStartFlags(unit: str) -> list[str]:
+    """Tokenize a unit's ExecStart command: comments stripped, `\\` joined.
+
+    Returning TOKENS (not the raw text) is deliberate and is what makes the
+    US-522 guards mutation-proof in two ways a substring check is not:
+
+    1. `"--disable-gpu" in "--disable-gpu-rasterization"` is True as a
+       substring, so a text-level guard would accept the narrower flag as if it
+       were the chosen fix. List membership is exact.
+    2. A COMMENT that merely discusses the flag can never satisfy the guard --
+       the recurring trap from US-501/US-513, where a static check tripped on
+       (or was satisfied by) the prose documenting the very thing it guards.
+    """
+    tokens: list[str] = []
+    inExec = False
+    for raw in unit.splitlines():
+        line = raw.strip()
+        if line.startswith("#"):
+            continue
+        if line.startswith("ExecStart="):
+            inExec = True
+            line = line[len("ExecStart=") :]
+        elif not inExec:
+            continue
+        continues = line.endswith("\\")
+        if continues:
+            line = line[:-1].strip()
+        tokens.extend(line.split())
+        if not continues:
+            break
+    return tokens
+
+
+def test_execStartFlagParser_selfTest_us522():
+    """The guard's own parser, fed known-bad input (US-513 lesson: a static guard
+    without a self-test reports 'clean' forever once its logic rots)."""
+    # A commented-out ExecStart must not contribute tokens.
+    parsed = _execStartFlags(
+        "# ExecStart=/bogus --disable-gpu\n"
+        "[Service]\n"
+        "ExecStart=/usr/bin/chromium \\\n"
+        "  --kiosk \\\n"
+        "  http://127.0.0.1:9899/dashboard.html\n"
+        "Restart=on-failure\n"
+    )
+    assert parsed == ["/usr/bin/chromium", "--kiosk", "http://127.0.0.1:9899/dashboard.html"]
+    assert _GPU_OVERRIDE_FLAG not in parsed, "a comment must never satisfy the guard"
+    # The substring trap: the narrower raster-only flag is NOT the chosen fix.
+    assert _GPU_OVERRIDE_FLAG not in _execStartFlags(
+        "ExecStart=/usr/bin/chromium --disable-gpu-rasterization http://h/\n"
+    ), "--disable-gpu-rasterization must not read as --disable-gpu"
+    # Directives after the ExecStart block are not flags.
+    assert "Restart=on-failure" not in parsed
+
+
+def test_dashboardUnits_carryGpuOverrideInExecStart_us522():
+    """US-522: both kiosk variants pass the GPU override on the ExecStart itself.
+
+    This is the whole fix: the override rides on the unit's own argv, which the
+    Debian wrapper appends AFTER the `/etc/chromium.d` injected flags.
+    """
+    for variant in _DASHBOARD_UNITS:
+        flags = _execStartFlags(_read(KIT_DIR, variant))
+        assert _GPU_OVERRIDE_FLAG in flags, (
+            f"{variant}: ExecStart must carry {_GPU_OVERRIDE_FLAG} -- the OS injects "
+            "--enable-gpu-rasterization via /etc/chromium.d/default-flags and the "
+            "unit's argv is the only repo-managed place that can override it"
+        )
+
+
+def test_dashboardUnits_neverReinjectGpuRasterization_us522():
+    """US-522: our units must never (re-)assert GPU rasterization themselves.
+
+    The repo cannot delete the OS-shipped default, but it must not add a second
+    copy of it -- that would be arguing with our own override.
+    """
+    for variant in _DASHBOARD_UNITS:
+        flags = _execStartFlags(_read(KIT_DIR, variant))
+        assert "--enable-gpu-rasterization" not in flags, variant
+        assert "--enable-gpu" not in flags, variant
+
+
+def test_dashboardUnits_gpuOverrideDoesNotDisplacePriorFlags_us522():
+    """US-522 regression fence: adding the override must not drop what the kiosk
+    already needed (touch, kiosk mode, the same-origin dashboard URL)."""
+    for variant in _DASHBOARD_UNITS:
+        flags = _execStartFlags(_read(KIT_DIR, variant))
+        assert "--kiosk" in flags, variant
+        assert "--touch-events=enabled" in flags, variant
+        assert "http://127.0.0.1:9899/dashboard.html" in flags, variant
+        # The wayland variant keeps its ozone platform (a dropped ozone flag on
+        # Wayland is the D-3 black-screen class).
+        if variant.endswith(".wayland"):
+            assert "--ozone-platform=wayland" in flags, variant
+
+
+def test_deployPi_documentsChromiumDDeployBlindSpot_us522():
+    """US-522 / A-16 deploy-contract blind spot: chromium's base flags live in an
+    OS-shipped `/etc/chromium.d/` file the repo does NOT manage, so a chromium
+    package upgrade can re-introduce GPU raster (or add a new flag) with no repo
+    change at all. deploy-pi.sh must NAME that surface so it stays known."""
+    sh = _read(DEPLOY_DIR, "deploy-pi.sh")
+    assert "/etc/chromium.d" in sh, (
+        "deploy-pi.sh must document the unmanaged /etc/chromium.d flag surface "
+        "(A-16: the deploy contract silently depends on an OS-shipped file)"
+    )

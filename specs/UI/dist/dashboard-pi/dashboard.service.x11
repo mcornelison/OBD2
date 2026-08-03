@@ -15,6 +15,34 @@
 #   --assets-dir search path (deploy/eclipse-states-http.service, US-399 A-2).
 #
 # Type=simple [A-8]. __PI_USER__ substituted by install.sh at install time.
+#
+# US-522 (F-124) -- `--disable-gpu`: the bench UI froze because chromium's GPU
+#   command-buffer context died and then HOT-LOOPED on the fatal
+#   `AllocateRingBuffer()` failure (6M errors in one boot, renderer + GPU process
+#   CPU-pegged, no crash, display stale while X stayed live). Root: the Pi 5 v3d
+#   GPU on a 64 MiB CMA pool driving the animated carousel with GPU rasterization
+#   ON. Atlas RCA:
+#   offices/architect/findings/2026-08-02-pi-ui-freeze-chromium-gpu-command-buffer-hotloop.md
+#
+#   THE FLAG IS AN OVERRIDE, NOT A DELETION. `--enable-gpu-rasterization` is not
+#   in this repo -- Debian/RPi-OS exports it from /etc/chromium.d/default-flags,
+#   which the /usr/bin/chromium WRAPPER sources. The wrapper then runs
+#   `exec $LIBDIR/$APPNAME $CHROMIUM_FLAGS "$@"` (/usr/bin/chromium:195), so the
+#   OS flags land FIRST and this ExecStart's argv lands LAST. Verified live on
+#   the Pi rather than assumed -- the composed cmdline read
+#   `... --enable-gpu-rasterization ... --use-angle=gles --disable-gpu <url>`.
+#
+#   WHY `--disable-gpu` AND NOT `--disable-gpu-rasterization`: the failure is in
+#   the GPU COMMAND BUFFER, which compositing uses as well as raster -- so
+#   turning raster off alone reduces the pressure without removing the
+#   mechanism. `--disable-gpu` takes hardware GL/v3d out of the path entirely,
+#   and it has NO counterpart in the injected set, so nothing in /etc/chromium.d
+#   can contradict it and the fix does not depend on flag ORDER. This is a 2D
+#   card UI on a 480x320 panel; the Pi 5 CPU renders it without difficulty. A
+#   live probe on this Pi ran the composed flag set against the real dashboard
+#   URL on :0 for 12s: chromium stayed up, 0 AllocateRingBuffer, no GL init
+#   failure. (A software-GL gpu-process may still be present -- the claim is
+#   that the v3d/CMA exhaustion mechanism is gone, not that no GPU process runs.)
 # ==============================================================================
 
 [Unit]
@@ -28,6 +56,7 @@ User=__PI_USER__
 Environment=DISPLAY=:0
 ExecStart=__CHROMIUM_BIN__ \
   --kiosk \
+  --disable-gpu \
   --touch-events=enabled \
   --noerrdialogs --disable-infobars --hide-scrollbars \
   --autoplay-policy=no-user-gesture-required \

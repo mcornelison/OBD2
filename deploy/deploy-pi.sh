@@ -1425,6 +1425,19 @@ step_install_ui_kiosk_units() {
     #      RETIRED: an absent chromium now makes the installer fail loudly (its exit is
     #      wrapped WARN-not-BLOCK below, A-9), never a silent 203/EXEC unit.
     #
+    # UNMANAGED FLAG SURFACE -- /etc/chromium.d/ (US-522, A-16 deploy-contract blind
+    #   spot).  chromium's BASE flags are NOT in this repo: the Debian/RPi-OS
+    #   `/usr/bin/chromium` wrapper sources every file in /etc/chromium.d/ into
+    #   $CHROMIUM_FLAGS and then runs `exec .../chromium $CHROMIUM_FLAGS "$@"`, so the
+    #   OS-shipped flags precede the unit's own argv.  That is where
+    #   `--enable-gpu-rasterization` came from -- the flag that froze the kiosk
+    #   (AllocateRingBuffer hot-loop; Atlas RCA 2026-08-02) and that a repo grep can
+    #   never find.  The dashboard unit now overrides it with `--disable-gpu` in
+    #   ExecStart (the only repo-managed lever), but the OS side stays UNMANAGED: a
+    #   chromium PACKAGE UPGRADE can re-introduce GPU raster or add new flags with no
+    #   repo change at all.  If the kiosk freeze class ever returns, diff
+    #   /etc/chromium.d/default-flags and the live `pgrep -a chromium` cmdline FIRST.
+    #
     # Idempotent (the installers are idempotent; the V-3 chromium substitution is
     # deterministic).  A-9
     # posture: absent kit/installer -> WARN + skip, deploy continues.  This installs +
