@@ -941,3 +941,63 @@ Task: Kiosk keyring fix -- add --password-store=basic to both dashboard units
   shipped combination is not literally the tested one. Reading the box before
   claiming a fix is "already proven live" is what surfaced this.
 ---
+
+## 2026-08-03 - US-526 (Agent 1 / Rex)
+Task: US-504a production drain-event writer (battery_health_log grows again)
+
+### What was implemented:
+- Production drain-event writer in Atlas's Option C shape: OPEN at wall-power
+  loss via `PowerMonitor.onTransition`, CLOSE at power restore (orchestrator)
+  or on the shutdown path (powerwatch, the PRIMARY close), REAP still-open
+  rows at boot as a crash backstop.
+- Closes RE-FIND their row in the table instead of holding an id: the open
+  fires in the collector process and the cutoff close in eclipse-powerwatch,
+  so a memory-held id is unavailable exactly where it matters most.
+- Reaper stamps `end_timestamp` ONLY -- `runtime_seconds` AND `end_vcell_v`
+  stay NULL. It must never call `endDrainEvent`, which derives runtime from a
+  timestamp delta and would manufacture a multi-hour runtime across a reboot.
+- Cold-start SoC guard EXTRACTED to `src/pi/power/soc_calibration.py` so the
+  manual CLI and the production writer share ONE implementation (a `src/`
+  module must never import from `scripts/`).
+- `startDrainEvent`/`endDrainEvent` now accept None -> NULL: an unreadable
+  MAX17048 records NULL, never a guessed voltage.
+- TD-059 recovery: the tree already held this work UNCOMMITTED with all
+  bookkeeping missing. Re-ran the gate, VERIFIED rather than re-implemented,
+  and committed (dd3a4cf) BEFORE touching bookkeeping.
+
+### Files changed:
+- Created: `src/pi/power/drain_event_writer.py` (writer + boot reaper)
+- Created: `src/pi/power/soc_calibration.py` (shared cold-start SoC guard)
+- Modified: `src/pi/obdii/orchestrator/lifecycle.py` (wire to onTransition;
+  reap BEFORE registering; UPS resolved late)
+- Modified: `src/pi/power/battery_health.py` (nullable start/end voltages)
+- Modified: `src/pi/power/power_watch/__main__.py` (buildDrainCloseHook)
+- Modified: `src/pi/power/power_watch/controller.py` (prePowerOffFn on BOTH
+  poweroff paths)
+- Modified: `scripts/record_drain_test.py` (import the shared guard; ruff)
+- Modified: `specs/architecture.md` (Rule 10, in-sprint)
+- Created: 3 test files (50 tests); Modified: `tests/scripts/test_record_drain_test.py`
+
+### Learnings for future iterations:
+- **Pattern discovered**: verify the SEAM, not just the caller. Four seam
+  checks were cheap and one was critical -- `HardwareManager.upsMonitor` is a
+  public property over a private `_upsMonitor`. Had it been private-only, the
+  late resolver would return None forever and every drain would record NULL
+  vcell/soc while every unit test stayed green. That is the failure shape to
+  fear: not a crash, a permanently silent NULL.
+- **Gotcha**: never assert path identity by STRING on this shared checkout.
+  `inspect.getsourcefile()` returns whichever root the module was imported
+  under, and the same file is reachable as both `Z:\o\OBD2v2\...` and
+  `\chi-nas-01\PPS-Projects\O\OBD2v2\...`. Use `os.path.samefile()`, which
+  asks the filesystem (st_dev/st_ino) and still rejects a real drifted copy.
+- **Gotcha**: `ruff --fix` reporting "fixed 1 error" is not "clean". This
+  repo's isort uses `combine-as-imports=false`, so it split an aliased import
+  into separate statements WITHOUT carrying the `# noqa: E402` that the file's
+  `sys.path` bootstrap needs -- turning one I001 into two E402s. Always
+  re-run the check after a fix.
+- **Gotcha**: the VCELL-floor fast path SKIPS the pipeline, and that path is
+  exactly how a run-to-cutoff drain ends. A shutdown-path close built as a
+  `ShutdownTask` would miss every row the depth-gate verdict needs.
+- **Gotcha**: `make` is not on PATH here -- `make lint` exits 127, which reads
+  like a pass. Run `ruff check` directly.
+---
