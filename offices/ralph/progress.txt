@@ -718,3 +718,73 @@ Task: Kiosk watchdog -- auto-restart eclipse-dashboard when the renderer wedges
   not by choice. Pass an explicit long timeout so the gate stays in the
   foreground.
 ---
+
+## 2026-08-03 - US-524 (Agent 1 / Rex)
+Task: Raise Pi GPU CMA to 256M -- headroom complementing the raster fix
+
+### What was implemented:
+- **TD-059 stall RECOVERY, not a re-implementation**: the code was already
+  committed (e78c51e) with ALL bookkeeping missing. Re-ran the gate, added a
+  verification the original commit lacked, then closed the books.
+- `deploy/set-gpu-cma.sh`: idempotent, section-aware append of `cma-256` to the
+  `dtoverlay=vc4-kms-v3d` line in `/boot/firmware/config.txt`. Refuses
+  unsupported sizes BEFORE writing, backs up first-write-wins, writes via
+  tmp+rename, verifies by RE-READING the written file, never clobbers a
+  foreign `cma-*`, and announces REBOOT REQUIRED.
+- `deploy-pi.sh` gained `step_set_gpu_cma`, ordered right after the US-253
+  EEPROM step (same posture: standalone sudo'd idempotent script, re-asserted
+  every deploy, after `sync_tree`).
+- NEW this iteration: ran the script against a COPY of the live Pi's REAL
+  `config.txt`, not just synthetic fixtures.
+
+### Files changed:
+- Created: `deploy/set-gpu-cma.sh` (the boot-config writer)
+- Modified: `deploy/deploy-pi.sh` (`step_set_gpu_cma` + call site)
+- Created: `tests/deploy/test_set_gpu_cma.py` (8 pytest wrapper + wiring guards)
+- Created: `tests/deploy/test_set_gpu_cma.sh` (12 scenarios / 35 assertions)
+
+### Learnings for future iterations:
+- **The load-bearing one -- the AC named the wrong surface, and the box settled
+  it.** AC1 says "boot cmdline/config" and offers config.txt OR cmdline.txt. On
+  the live Pi `/proc/cmdline` carries NO `cma=` at all -- the 64 MiB pool is
+  DEVICE-TREE declared (`linux,cma` reserved-memory node) -- so a cmdline edit
+  would have been a plausible-looking no-op competing with the device tree.
+  The real mechanism is the overlay's own `cma-256` param. Second sprint
+  sighting of US-522's phantom-config shape: when a story is about a value the
+  BOX owns, read the box before believing the AC's nouns.
+- **Pattern -- when two mechanisms both work, pick the RECOVERABLE one.** A bad
+  overlay param makes the firmware skip the overlay: dark display, SSH still
+  up, fixable remotely. A malformed `cmdline.txt` can break `root=` and leave
+  an UNBOOTABLE HEADLESS box -- a car-mounted Pi with no keyboard. Equal-
+  correctness options are not equal-blast-radius options; a guard pins that
+  cmdline.txt is never touched.
+- **Gotcha -- `config.txt` is SECTION-SCOPED, and the real file proves it
+  matters.** A `[cm4]`/`[pi4]`/`[HDMI:0]` header makes every following line
+  conditional until the next header. The Pi's actual file has `[cm4]`, `[cm5]`
+  (with its own `dtoverlay=dwc2`) and `[all]` -- so a naive
+  `grep dtoverlay=vc4-kms-v3d` + append could land in a section the firmware
+  IGNORES on a Pi 5 and then report success. Only the implicit top-level,
+  `[all]` and `[pi5]` are valid targets.
+- **Pattern -- run the parser against the REAL artifact, not only fixtures you
+  authored.** Synthetic fixtures encode what you already believe the file looks
+  like; they cannot surprise you. Fetching the Pi's real `config.txt` and
+  applying the script to a COPY is what showed the `[cm5] dwc2` overlay sitting
+  right there -- i.e. proved the script doesn't spray `cma-` onto unrelated
+  overlays. Mutate a copy, never the box.
+- **Gotcha -- a skipped test can silently void an entire behavioural catalog.**
+  The 35 bash assertions reach pytest through ONE wrapper test gated on
+  `shutil.which("bash")`. On a box without bash that becomes a SKIP, and `-q`
+  renders it as an unremarkable `s` while the whole catalog quietly stops
+  running. Read the skip count, and run the `.sh` directly once to see the
+  scenario names.
+- **Gotcha -- state what a green story does NOT prove.** This is Atlas RCA #4,
+  OPTIONAL headroom; US-522 is the actual freeze fix. And the two interact:
+  with `--disable-gpu` the kiosk renders in SOFTWARE, so more CMA may show no
+  measurable chromium effect. Shipping the mechanism is the deliverable;
+  claiming a benefit nobody measured is not.
+- **Ops gotcha (this harness)**: `VAR=x cmd` env-prefixes and PowerShell
+  `$env:X=...` are BOTH blocked here, and `>` redirection outside the working
+  dir is blocked too. To exercise a script behind an env-var seam, write a
+  throwaway probe `.sh` that exports the var, run it, then delete + VERIFY the
+  deletion. Also: compound `&&` chains re-prompt -- one command per call.
+---
