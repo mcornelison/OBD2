@@ -6896,18 +6896,20 @@
       "title": "Kiosk GPU-raster fix -- drop --enable-gpu-rasterization to kill the freeze class",
       "goal": "As the operator, I want the Pi dashboard to never freeze under sustained use, so the display stays live during a drive instead of wedging silently.",
       "definitionOfDone": [
-        "[Atlas RCA #1 -- design-gate] in the eclipse-dashboard chromium ExecStart (deploy/deploy-pi.sh kiosk unit) remove --enable-gpu-rasterization and use software compositing (--disable-gpu-rasterization). The dashboard is a simple 2D card UI that does not need GPU rasterization; this removes the chromium GPU command-buffer hot-loop (AllocateRingBuffer kFatalFailure, ~6M errors/boot, ~500/sec, no crash/recovery) that froze the UI. RCA: offices/architect/findings/2026-08-02-pi-ui-freeze-chromium-gpu-command-buffer-hotloop.md",
-        "doubles as the hypothesis test: with GPU raster off, the freeze must NOT reproduce under sustained carousel navigation",
-        "the change installs via the existing cmp-guarded kiosk-unit step + daemon-reload; test/verification proves the deployed unit no longer passes --enable-gpu-rasterization; ruff/lint clean in-loop"
+        "[Atlas RCA #1 -- CORRECTED PREMISE 2026-08-02, design-gate] --enable-gpu-rasterization is NOT in the repo or the eclipse-dashboard unit; it is a Debian/RPi-OS system default injected by the /usr/bin/chromium-browser wrapper from /etc/chromium.d/default-flags:7. FIX = ADD an override flag to the eclipse-dashboard unit ExecStart (deploy-pi.sh, repo-managed): --disable-gpu-rasterization (keep GL compositing) OR --disable-gpu (bulletproof software render, removes the whole GPU-command-buffer path). Atlas leans --disable-gpu (the Pi CPU trivially handles this 2D card UI; removes the entire failure class). Eliminates the chromium GPU command-buffer hot-loop (AllocateRingBuffer kFatalFailure, ~6M/boot) that froze the UI. RCA: offices/architect/findings/2026-08-02-pi-ui-freeze-chromium-gpu-command-buffer-hotloop.md",
+        "[PRECEDENCE -- verify, do NOT assume] the Debian wrapper runs `chromium $CHROMIUM_FLAGS \"$@\"`, so the ExecStart override SHOULD win over the injected default -- but VERIFY on the Pi (a wrapper-ordering surprise = silent mocked-green / IRL-miss)",
+        "[A-16 deploy-contract blind spot] chromium's base flags live in an OS-shipped /etc/chromium.d/ file the repo does not manage; add a one-line comment in deploy-pi.sh so a future chromium package upgrade re-introducing GPU raster is a known surface",
+        "installs via the existing cmp-guarded kiosk-unit step + daemon-reload; ruff/lint clean in-loop"
       ],
       "validationCriteria": [
         {
-          "action": "on the Pi under sustained carousel navigation for several minutes, then `journalctl -u eclipse-dashboard | grep -c AllocateRingBuffer`",
-          "outcome": "count stays ~0, chromium CPU stays low, display never freezes"
+          "action": "post-deploy on the Pi, `pgrep -a chromium` to confirm the override wins over /etc/chromium.d, then sustained carousel navigation for several minutes + `journalctl -u eclipse-dashboard | grep -c AllocateRingBuffer`",
+          "outcome": "the RUNNING chromium cmdline shows GPU rasterization effectively off (override present + winning), AllocateRingBuffer count stays ~0, chromium CPU low, display never freezes"
         }
       ],
       "conditionalOutcomes": [
-        "if GPU-raster-off alone does NOT eliminate the freeze, STOP and escalate to Atlas -- fix-selection (raster vs cma vs animations) is a hypothesis; do not stack blind changes"
+        "if the ExecStart override does NOT win over /etc/chromium.d/default-flags (wrapper-ordering surprise), STOP and escalate to Atlas -- do not assume precedence",
+        "if GPU-off alone does NOT eliminate the freeze, escalate -- fix-selection (disable-gpu vs disable-gpu-rasterization vs cma vs animations) is a hypothesis; do not stack blind changes"
       ],
       "sourceRefs": [
         "offices/architect/findings/2026-08-02-pi-ui-freeze-chromium-gpu-command-buffer-hotloop.md",
@@ -6981,10 +6983,12 @@
       "title": "Splash render fix -- boot splash visibility + shutdown-splash 401 route",
       "goal": "As the operator, I want to see the boot and shutdown splash, so the Pi shows an honest brand + boot/shutdown state instead of a blank hand-off.",
       "definitionOfDone": [
-        "investigate + fix the CIO-reported missing boot AND shutdown splash on V0.29.24 (bench, post-reboot). PM evidence (curl 127.0.0.1:9899): 401 on bare routes /boot /boot.html /dashboard /shutdown but 200 on / and /shutdown.html. Determine what URL each splash unit loads and why the bare routes 401 -- US-501's _injectHtml change in states_http_server.py is the prime suspect; also check any SSOT-token gate",
-        "boot splash: confirm it renders visibly instead of flashing sub-second before its JS window.close() at HEALTHY_YIELD (US-494 Pi-core-up readiness may fire too fast). If too fast, add a minimum-visible-duration floor so the brand splash is actually seen",
-        "shutdown splash: ensure the grace unit loads a 200 route (/shutdown.html) not a 401 (/shutdown), so the reverse splash renders on a real shutdown",
-        "honest-instrument: the splash reflects real boot/shutdown state, never a fabricated 'ready'; test proves the routes the splash units load return 200; ruff clean"
+        "[Atlas READ 2026-08-02] the 401 on bare routes /boot /shutdown is BY-DESIGN: states_http_server routes index / (token-injected, 200), static assets by extension incl *.html (200), everything else -> token-gated state-file lookup -> 401 (:232-234). Bare /boot / /shutdown match no servable-page bucket. The token gate is CORRECT (US-393 SSOT) -- US-501's _injectHtml is EXONERATED (index path serves 200)",
+        "FIRST establish what actually requests /boot / /shutdown before assuming the 401 is even on the render path. Likely I-042 causes: (a) URL/route-contract mismatch -- a splash launcher requests a bare route the server serves only at / or *.html; (b) boot-splash visibility timing -- US-494 HEALTHY_YIELD self-close flashes sub-second before it can be seen",
+        "boot splash: if too-fast, add a minimum-visible-duration floor so the brand splash is actually seen; hand off to the dashboard after",
+        "shutdown splash: ensure the grace/launcher loads a SERVED route (/ or *.html with token injection), not a bare 401 route, so the reverse splash renders on a real shutdown",
+        "if the fix adds explicit served splash routes for /boot / /shutdown, they MUST serve the splash HTML with same-origin token injection (like the index path _serveIndex/_injectHtml) -- KEEP the gate, never bypass or weaken _tokenOk (that re-opens TD-067 and is an Atlas BLOCK)",
+        "honest-instrument: splash reflects real boot/shutdown state; test proves the routes the splash launcher requests return 200 with the token; ruff clean"
       ],
       "validationCriteria": [
         {
@@ -6993,7 +6997,7 @@
         }
       ],
       "conditionalOutcomes": [
-        "[Atlas read] if the 401 on bare routes is by-design (only *.html served) and both splash units already load *.html, the fix narrows to boot-splash visibility timing only -- confirm with Atlas before touching the route/auth layer"
+        "[Atlas condition -- not a block unless violated] any design that weakens _tokenOk on any route, or makes bare routes public, is an Atlas BLOCK (TD-067 destructive-token-gate). Flag before implementing"
       ],
       "sourceRefs": [
         "offices/pm/issues/I-042-v0.29.24-splash-not-rendering-plus-ui-freeze.md",
@@ -7014,9 +7018,10 @@
         "[CARRIED from Sprint 69 / BL-028] build the PRODUCTION drain-event writer. No production caller in src/ has written battery_health_log since US-216 auto-open was retired (US-442/TD-058). BatteryHealthRecorder.startDrainEvent/endDrainEvent already write the columns correctly -- wire a production caller",
         "[SEAM] PowerMonitor.onTransition is the registration point; PowerMonitor already receives GPIO6 truth via the US-502 _PowerSourceUiBridge sink. Read the UPS LATE-BOUND at transition time, not captured at construction (US-501/502/503 boot-order trap)",
         "on a real AC->BATTERY transition open a drain row with a REAL start_vcell_v + start_soc_pct from the MAX17048; on BATTERY->AC or cutoff shutdown close it with real end_vcell_v/end_soc_pct + runtime_seconds. Honest-instrument: an unreadable gauge writes NULL, never a guessed number (reuse readCalibratedRegisterSocPct + its cold-start window)",
-        "[ORPHAN POLICY -- Atlas ruling, option C] open-at-loss + close-at-restore-or-shutdown, ShutdownSequencer close PRIMARY + boot reaper BACKSTOP. Spool's depth gate disqualifies option B (single-INSERT-at-close loses the run-to-cutoff drain on a hard crash) and demotes the reaper to hygiene-only. CONFIRM A-vs-C with Atlas at PRD review",
-        "[LOAD-BEARING TRAP] the boot reaper MUST NOT close orphans via endDrainEvent (it computes runtime_seconds from the timestamp delta -> across a reboot manufactures a multi-hour runtime that clears the gate + poisons the median). The reaper stamps end_timestamp and leaves runtime_seconds NULL so the row can never qualify",
-        "test proves: a production AC<->battery transition writes real vcell/soc; a cutoff-shutdown drain is closed by the sequencer; an orphaned drain is reaped with runtime_seconds NULL; ruff clean"
+        "[ORPHAN POLICY -- Atlas RULING 2026-08-02: Option C CONFIRMED] open-at-loss + close-at-restore-or-shutdown, ShutdownSequencer close PRIMARY + boot reaper crash BACKSTOP. Spool's depth gate (end_vcell_v <= [EXACT:3.50] V + [EXACT:60] s floor) disqualifies option B (a memory-held row lost to a hard crash drops the run-to-cutoff drain the verdict needs) and demotes the reaper to hygiene-only",
+        "[LOAD-BEARING INVARIANT -- code-confirmed battery_health.py:84-85,100,118-120] endDrainEvent computes runtime_seconds from the start/end timestamp delta, so the boot reaper MUST NOT call endDrainEvent (across a reboot it would manufacture a multi-hour runtime). The reaper uses its OWN UPDATE stamping ONLY end_timestamp, leaving BOTH runtime_seconds NULL AND end_vcell_v NULL (honest-NA: an interrupted drain's depth is unknown, never fabricated -- a fabricated end_vcell_v <= 3.50 under the depth gate would be a worse trap than the runtime one; NULL on either field also fails the depth gate = double-safe). Reaper targets ONLY still-open rows (WHERE end_timestamp IS NULL), respecting first-close-wins (battery_health.py:123-125), never clobbering a legit ShutdownSequencer close",
+        "[Rule-10 -- shutdown path is load-bearing] update specs/architecture.md battery-health / drain-recorder + shutdown section IN-SPRINT (DoD, not a follow-up)",
+        "test proves: a production AC<->battery transition writes real vcell/soc; a cutoff-shutdown drain is closed by the ShutdownSequencer ON the shutdown path (not just a warm unit test); a reaped orphan is EXCLUDED by the depth-gate verdict (runtime_seconds NULL + end_vcell_v NULL -> not counted); ruff clean"
       ],
       "validationCriteria": [
         {
@@ -7025,7 +7030,7 @@
         }
       ],
       "conditionalOutcomes": [
-        "gated on Atlas's orphan-policy A-vs-C confirm (Spool's depth-gate ruling already landed, narrowing to A vs C; Ralph recommends C). The depth-gate qualifying values ride US-527."
+        "Atlas CONFIRMED Option C + the reaper-NULL invariant 2026-08-02 (offices/pm/inbox/2026-08-02-from-atlas-v0.29.25-prd-review.md). Depth-gate qualifying values ride US-527 (Spool [EXACT]). Live fold = the BL-025 engine-on drive"
       ],
       "sourceRefs": [
         "offices/pm/blockers/BL-028-us504a-drain-writer-blocked-on-two-rulings.md",
