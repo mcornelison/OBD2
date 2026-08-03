@@ -1049,3 +1049,56 @@ Task: US-504b verdict band-remap to the depth gate (degraded/replace reachable)
 - **Pattern**: parking a band mapping in a separate public function paid off
   exactly as US-504b predicted -- when the ruling landed, only the gate moved.
 ---
+
+## 2026-08-03 - US-528 (Agent 1 / Rex)
+Task: I-041 fix -- system_status_emitter exact-shape tests + pin lastDrive always-present
+
+### What was implemented:
+- Absorbed the stale `'lastDrive': None` into the two red exact-shape
+  expectations (the `assert state == {...}` builder literal and the
+  `assert written["drive"] == {...}` emitted-file equality). Both are full-dict
+  equalities, so both genuinely fail on an absent key.
+- AC1 verified rather than trusted: read `system_status_emitter.py:162`
+  (unconditional `"lastDrive": lastDrive`) + its always-present rationale at
+  :155-158 to confirm "production is correct, only expectations are stale"
+  BEFORE editing expectations. It holds -- zero production lines changed.
+- AC2 was the real work. `lastDrive` had ZERO occurrences in the test file
+  (grep-confirmed) -- completely uncovered. Added three guards:
+  presence catalog over all 4 call shapes (kwarg omitted / explicit None /
+  real summary beside a NEW active drive / idle-no-history); a
+  verbatim-and-distinct-from-driveId guard; an emitter JSON round-trip guard.
+
+### Files changed:
+- Modified: `tests/pi/splash/test_system_status_emitter.py` (2 stale
+  expectations absorbed + 3 new always-present/verbatim guards)
+
+### Learnings for future iterations:
+- **Pattern discovered**: when a value passes through TWO defaulted layers
+  (here `buildSystemStatusState(lastDrive=None)` at :91 and
+  `emit(lastDrive=None)` at :250, forwarded at :272), asserting the KEY EXISTS
+  tests neither layer. Mutation A deleted the emit->build forwarding and ONLY
+  the new far-seam round-trip test went red -- all 15 others, including every
+  presence assertion, stayed GREEN because the builder default still supplied
+  the key while the real value never reached the display. Assert a POPULATED
+  value at the FAR seam. This is US-527's "assert at the seam" lesson recurring
+  in a second module in the same sprint; treat it as a codebase-wide rule.
+- **Pattern discovered**: write a multi-shape presence check as a NAMED CATALOG
+  (dict of shapeName -> kwargs, shape name in the assert message). Mutation B
+  (key conditionally absent when None) reported the failing shape `omitted`
+  instead of an opaque dict diff.
+- **Gotcha**: "the suite is green" != "the contract is pinned". Adding the key
+  to the two dicts satisfies the letter of AC1 and turns everything green while
+  pinning the contract for exactly ONE call shape. AC2 existed precisely to
+  close that gap -- read a two-part AC as two deliverables.
+- **Gotcha**: the Bash tool is POSIX sh, NOT PowerShell. A PowerShell
+  here-string (`@'...'@`) used for a multi-line `git commit -m` is taken
+  literally and leaves a stray `@` in the subject; the commit still SUCCEEDS,
+  so it only shows in the commit-line echo. Use a real heredoc
+  (`git commit -F - <<'EOF'`) and read the echoed subject.
+- **Gotcha**: reverting a mutation cannot use `git checkout --` (outside
+  Ralph's allow-list). Revert by hand with Edit, then PROVE it with
+  `git diff -- <file>` being empty before claiming production is untouched.
+- **Note**: US-528 owes NO live Pi validation -- its validationCriteria is
+  satisfiable in-loop. Unusual in this sprint; US-522/524/525/526/527 all still
+  owe a PM deploy + drill.
+---
