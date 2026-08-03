@@ -6718,7 +6718,8 @@
         }
       ],
       "conditionalOutcomes": [
-        "if Atlas's contract shapes the fields differently, bind to the ruled contract"
+        "if Atlas's contract shapes the fields differently, bind to the ruled contract",
+        "PARKED per CIO 2026-08-03 (via Iris): hold GPS module + baro -- stabilize/validate what is built before adding hardware. Do NOT build the states/gps reader. Derived IMU+OBD altitude (US-517/518/519/520) is now THE altitude path, not interim-until-GPS. Moots the 746-vs-PA1010D module question."
       ],
       "deps": [
         "ATLAS-states-gps-contract"
@@ -6730,7 +6731,7 @@
         "states/imu (DELTA-2 seam precedent)"
       ],
       "createdAt": "2026-08-01",
-      "updatedAt": "2026-08-01",
+      "updatedAt": "2026-08-03",
       "tasks": []
     },
     {
