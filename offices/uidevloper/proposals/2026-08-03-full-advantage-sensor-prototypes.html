@@ -144,7 +144,7 @@ h2{font-size:20px;margin:0;letter-spacing:-.01em;font-weight:640;}
     <div class="split">
       <figure style="margin:0"><div class="bezel"><div class="screen" id="s4"></div></div></figure>
       <div class="rail"><h3>The artificial horizon, for a car</h3>
-        <p class="lead">The classic aviation "gyro horizon," mapped to the Eclipse: aircraft <b>pitch → your road GRADE</b>, aircraft <b>bank → your body LEAN</b> in corners. A <b>round instrument face</b> (clipped + bezel), a gradient sky/ground horizon that rolls with lean and pitches with grade, a <b>pitch ladder</b>, a fixed <b>roll index + bank scale</b> (10/20/30/45/60°) with a rolling amber pointer, and the amber <b>aircraft wings</b> as your fixed reference.</p>
+        <p class="lead">The classic aviation "gyro horizon," mapped to the Eclipse: aircraft <b>pitch → your road GRADE</b>, aircraft <b>bank → your body LEAN</b> in corners. A <b>round instrument face</b> (clipped + bezel), a gradient sky/ground horizon that rolls with lean and pitches with grade, a <b>pitch ladder</b>, a fixed <b>roll index + bank scale</b> (10/20/30/45/60°) with a rolling amber pointer, and an <b>Eclipse silhouette</b> (front/rear-view coupe) as your fixed reference — the car sits still while the horizon rolls behind it, so it visibly leans into corners.</p>
         <p>Bottom of the face: the aviation <b>slip/skid ball</b>, repurposed as a <b>lateral-g meter</b> — it slides with cornering load, "step on the ball" for a car. All from confirmed IMU data.</p>
         <p><span class="datachip">IMU pitch → grade</span> <span class="datachip">IMU roll → lean</span> <span class="datachip">gyro yaw</span> — all confirmed on the IMU.</p>
         <p><b>Low priority + fun</b> (your call). Needs the gyro/roll+pitch exposed in <code>states/imu</code> (Atlas/Ralph — small). The pitch ladder + roll scale are exaggerated slightly so gentle grades/leans still read.</p>
@@ -278,13 +278,24 @@ function drawAI(cv, roll, pitchDeg, latG){
   var pa=-Math.PI/2 + roll*D, pr=Rf-14;
   x.save(); x.translate(cx+Math.cos(pa)*pr, cy+Math.sin(pa)*pr); x.rotate(pa+Math.PI/2);
   x.fillStyle="#FFC400"; x.beginPath(); x.moveTo(0,-8); x.lineTo(-5.5,2); x.lineTo(5.5,2); x.closePath(); x.fill(); x.restore();
-  // ---- fixed aircraft wings (amber) ----
-  x.strokeStyle="#FFC400"; x.lineWidth=3.5; x.lineJoin="round"; x.lineCap="round";
-  x.beginPath();
-  x.moveTo(cx-52,cy); x.lineTo(cx-20,cy); x.lineTo(cx-20,cy+8);   // left wing + tip
-  x.moveTo(cx+52,cy); x.lineTo(cx+20,cy); x.lineTo(cx+20,cy+8);   // right wing + tip
-  x.stroke();
-  x.fillStyle="#FFC400"; x.beginPath(); x.arc(cx,cy,4,0,7); x.fill();  // hub
+  // ---- fixed ECLIPSE silhouette (front/rear-view coupe) = the attitude reference ----
+  x.save(); x.translate(cx,cy);
+  x.fillStyle="#FFC400"; x.strokeStyle="rgba(0,0,0,.55)"; x.lineWidth=1.4; x.lineJoin="round";
+  x.beginPath();                                   // low-wide body + domed greenhouse (one outline)
+  x.moveTo(-48,9);
+  x.quadraticCurveTo(-51,1,-41,-1);                // left fender
+  x.quadraticCurveTo(-30,-3,-23,-4);               // hood → A-pillar base
+  x.quadraticCurveTo(-13,-17,0,-18);               // roof up to peak (2G low dome)
+  x.quadraticCurveTo(13,-17,23,-4);                // roof down
+  x.quadraticCurveTo(30,-3,41,-1);                 // hood → right fender
+  x.quadraticCurveTo(51,1,48,9);
+  x.closePath(); x.fill(); x.stroke();
+  x.fillStyle="rgba(0,0,0,.30)"; x.beginPath();    // windshield glass (reads the greenhouse)
+  x.moveTo(-17,-4); x.quadraticCurveTo(-10,-14,0,-14.5); x.quadraticCurveTo(10,-14,17,-4); x.closePath(); x.fill();
+  x.fillStyle="#141414"; x.strokeStyle="rgba(0,0,0,.4)";  // tires
+  x.beginPath(); x.ellipse(-33,11,7.5,4,0,0,7); x.fill();
+  x.beginPath(); x.ellipse(33,11,7.5,4,0,0,7); x.fill();
+  x.restore();
   // ---- slip/skid ball = lateral-g meter (bottom of face) ----
   var by=cy+Rf*0.62, tubeW=64;
   x.strokeStyle="rgba(255,255,255,.35)"; x.lineWidth=1.4;

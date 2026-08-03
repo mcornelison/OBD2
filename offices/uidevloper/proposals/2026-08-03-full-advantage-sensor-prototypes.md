@@ -45,8 +45,10 @@ refine only the zero-point. Boost **bands** (what's normal/spirited/over) are Sp
   **g-force trace**, **corner-lean**, **grade profile** over the drive. Deepest value; server-tier build.
 - **P4 · Attitude indicator (LOW PRIORITY / FUN, CIO 2026-08-03)** — an **aircraft "gyro horizon" for
   the Eclipse**: aircraft pitch → road **grade** (IMU pitch), aircraft bank → body **lean** in corners
-  (IMU roll); sky/ground horizon that rolls + pitches, a pitch ladder, a roll/bank scale, amber Eclipse
-  "wings" as the fixed reference, + yaw-rate. IMU-only; needs pitch/roll/gyro exposed in `states/imu`.
+  (IMU roll); round instrument face + bezel, gradient sky/ground horizon that rolls + pitches, a pitch
+  ladder, a fixed roll index + bank scale (10/20/30/45/60°) with a rolling pointer, an **Eclipse
+  silhouette** (front/rear-view coupe) as the fixed reference, and the aviation **slip/skid ball
+  repurposed as a lateral-g corner-load meter**. IMU-only; needs pitch/roll/gyro exposed in `states/imu`.
 
 ## 2. Rules honored
 - **No dead displays:** every readout maps to a CONFIRMED signal; a signal that isn't available is
