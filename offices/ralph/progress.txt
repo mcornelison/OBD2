@@ -879,3 +879,65 @@ US-524's stalled work was at least committed; this was not.
   not a force. But do ALL the on-disk bookkeeping first -- sprint.json,
   agents, progress -- so the next actor commits rather than re-implements.
 ---
+
+## 2026-08-03 - US-522 REOPEN (Agent 1 / Rex)
+Task: Kiosk keyring fix -- add --password-store=basic to both dashboard units
+
+### What was implemented:
+- `--password-store=basic` on the ExecStart of BOTH kiosk variants (.x11 with the
+  full rationale, .wayland pointing at it so the two cannot drift).
+- 5 new value-based guards + a parser self-test, incl. a fence against
+  `--remote-debugging-*` (the live box's hand-patched unit carried
+  `--remote-debugging-port=9222` beside the flag being adopted).
+- `TD-076` filed for the splash units' latent exposure rather than widening scope.
+- **BL-029 is CLEARED** (PM commit 0f40705) -- the stale `.git/index.lock` is gone
+  and this work IS committed (2412227), unlike US-525's first pass.
+
+### Files changed:
+- Modified: `specs/UI/dist/dashboard-pi/dashboard.service.x11` (flag + rationale)
+- Modified: `specs/UI/dist/dashboard-pi/dashboard.service.wayland` (flag + pointer)
+- Modified: `tests/deploy/test_dashboard_kit.py` (US-522 keyring section, 5 tests)
+- Created: `offices/pm/tech_debt/TD-076-splash-kiosk-units-lack-password-store-basic.md`
+
+### Learnings for future iterations:
+- **The load-bearing one -- a VALUED switch needs a VALUE assertion, and this is
+  the same trap US-522's first pass hit one layer down.** That pass learned
+  `--disable-gpu` is a SUBSTRING of `--disable-gpu-rasterization`, so guards must
+  tokenize. Tokenizing is still not enough here: `--password-store` takes a value,
+  so `"--password-store" in flags` passes on `--password-store=gnome` -- the exact
+  broken configuration the story deletes. The guard must return the VALUE and
+  assert it is `basic`. Generalise: for `--flag=value` switches, presence is the
+  wrong question; parse the value. Mutation-proved on the real unit (basic->gnome
+  turned 3 guards red), not only in the synthetic self-test.
+- **Pattern -- let the TIMELINE answer a scope question instead of guessing.** The
+  splash units launch chromium through the same wrapper with no `--password-store`,
+  so "is a dashboard-only fix complete?" was a real question, not a formality. The
+  journal settled it: every `gcr-prompter` prompt (05:43:09 / 08:33:52 / 08:52:23)
+  is ~9 h AFTER splash-boot exited, and none fired inside its own 9.806 s window --
+  so the prompts track the LONG-RUNNING dashboard chromium. Scope confirmed by
+  evidence, and the leftover exposure filed rather than silently fixed.
+- **Gotcha (what the TD is actually for) -- "short-lived" was only true on the
+  HEALTHY path.** The splash escapes the popup by exiting in ~10 s, but per the A-1
+  contract a DEGRADED boot deliberately KEEPS THE SPLASH UP -- which is precisely
+  the long-running condition that produced the dashboard's popup. So the fault
+  hides on exactly the boot where the operator most needs to read the screen. When
+  a component is safe "because it doesn't live long", find the branch where it does.
+- **Gotcha -- do not import the debug flags that sit BESIDE the fix you are
+  adopting.** The hand-patched live unit carried `--password-store=basic` next to
+  `--enable-logging=stderr` and `--remote-debugging-port=9222`. Copying the line
+  wholesale would have shipped an unauthenticated DevTools port on a car-mounted
+  kiosk. Adopt the flag the story names, fence the rest with a test so it cannot
+  arrive later by copy-paste from the box. Trade-off stated: without
+  `--enable-logging` the OSCrypt confirmation line will NOT appear in the journal,
+  which is why the validation drill reads `pgrep -a chromium` + absence of a
+  gcr-prompter process rather than grepping a log line.
+- **Gotcha (for PM/deploy) -- the live unit is DRIFTED from the repo.** The
+  installed `eclipse-dashboard.service` is a PRE-US-522 copy (no US-522 header)
+  with flags hand-appended, and it uses `--disable-gpu-rasterization` where the
+  repo now says `--disable-gpu`. Two consequences: the deploy has not run since
+  US-522 landed (matching US-524's independent finding that `set-gpu-cma.sh` is not
+  on the box), and Atlas live-tested the keyring fix alongside the NARROWER GPU
+  flag -- the two are orthogonal (OSCrypt backend vs GPU command buffer), but the
+  shipped combination is not literally the tested one. Reading the box before
+  claiming a fix is "already proven live" is what surfaced this.
+---
