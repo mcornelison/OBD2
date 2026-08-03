@@ -642,3 +642,79 @@ Task: Kiosk GPU-raster fix -- kill the chromium command-buffer freeze class
   exits 127, which is easy to misread as a passing gate. Run `ruff check`
   directly and read the real exit code.
 ---
+
+## 2026-08-03 - US-523 (Agent 1 / Rex)
+Task: Kiosk watchdog -- auto-restart eclipse-dashboard when the renderer wedges
+
+### What was implemented:
+- `deploy/eclipse-kiosk-watchdog.{service,timer}`: a 30s `Type=oneshot` that
+  counts `AllocateRingBuffer` markers in eclipse-dashboard's journal over a 60s
+  window and, at >=100, restarts the unit -- the mitigation Atlas proved live
+  (fresh GPU context, marker count back to 0).
+- `src/pi/display/kiosk_watchdog.py`: a pure decision table plus injected
+  journal / systemctl / ledger seams and the CLI systemd invokes.
+- Unprivileged: rides the EXISTING polkit restart grant on
+  eclipse-dashboard.service, plus `SupplementaryGroups=systemd-journal`.
+- `deploy-pi.sh` gained a cmp-guarded `step_install_kiosk_watchdog_unit`, called
+  AFTER `step_install_ui_kiosk_units` (the unit it guards must exist first).
+- Rule 10: `architecture.md` gained "Kiosk freeze class + wedge recovery",
+  covering US-522 AND US-523 (US-522 shipped with no spec update).
+- Half of AC1 REFUSED on purpose -- the "CPU-pegged with no repaint" signal is
+  not groundable today (see Learnings).
+
+### Files changed:
+- Created: `src/pi/display/kiosk_watchdog.py` (detector + bounded recovery)
+- Created: `deploy/eclipse-kiosk-watchdog.service` / `.timer`
+- Modified: `deploy/deploy-pi.sh` (install step + call site)
+- Modified: `specs/architecture.md` (freeze-class / wedge-recovery subsection)
+- Created: `tests/pi/display/test_kiosk_watchdog.py` (43 tests)
+- Created: `tests/deploy/test_kiosk_watchdog_install.py` (18 guards)
+
+### Learnings for future iterations:
+- **The load-bearing one -- for a SELF-HEALING component the dangerous default
+  is "act", not "do nothing".** Every other story this sprint fights a display
+  showing too little; a watchdog fails by doing too much. Two concrete traps fell
+  out of that inversion. (a) `systemctl restart` on an INACTIVE unit *starts* it
+  -- so the obvious one-liner would have had the watchdog usurping the splash
+  `OnSuccess=` hand-off and lighting the dashboard on a DEGRADED boot, the exact
+  honest-instrument rule dashboard.service.x11's A-1 note exists to protect.
+  (b) An unreadable journal must be UNCERTAIN, never "wedged". Write the refusals
+  as named reasons with one test each; the restart path is the short half.
+- **A rate limit is only real if the action cannot outrun its own bookkeeping.**
+  The ledger write happens BEFORE the restart, so an unwritable ledger CANCELS
+  the restart. Written the other way round (restart, then record) every failed
+  write silently uncaps the cooldown AND the budget -- and the tests stay green,
+  because a fake ledger always writes. Order the effects, then assert the ORDER
+  (`trace.index(write) < trace.index(restart)`), not just that both happened.
+- **Gotcha (systemd; nearly cost the live states dir): a `RuntimeDirectory=` is
+  DELETED when its unit exits.** The ledger wanted a tmpfs home and
+  `/run/eclipse-obd` was the obvious one -- but a oneshot declaring
+  `RuntimeDirectory=eclipse-obd` would have deleted that directory, *including
+  the live `states/` every emitter writes*, every 30 seconds. The same
+  directive's other edge: without `RuntimeDirectoryPreserve=yes` a oneshot's own
+  dir is removed on every exit, so the ledger evaporates each fire, cooldown +
+  budget always read empty, and the watchdog restarts the kiosk on EVERY tick --
+  a flapper with a fully green unit suite. Both are guarded + mutation-proved.
+  Before reusing another unit's runtime dir, check whether your unit's LIFETIME
+  is shorter than the dir's contents need to live.
+- **Pattern -- refuse the ungroundable half of an AC, and say so in three
+  places.** AC1 offered marker-rate OR "CPU-pegged chromium with no
+  state-file-driven repaint". Repaint is not observable from outside the browser
+  (`states_http_server` silences per-request logging at :183, so there is no
+  access log to read a heartbeat from), and the CPU half has no post-US-522
+  baseline -- Atlas's 39/31/24%-vs-18/9/8% figures predate `--disable-gpu`, and
+  software rendering raises healthy CPU by an unmeasured amount. A threshold
+  there would be a fabricated number (Rule 2). Building the observable half and
+  stating the bound beats both inventing the number and blocking the story.
+- **Gotcha -- a watchdog can LAUNDER the bug it recovers from.** Infinite
+  restarts would make a live freeze class look like a healthy display. The hourly
+  budget converts recurrence into a persistent FAILED unit (exit 2 against
+  `SuccessExitStatus=0`), and the restart log line names US-522 so a reader knows
+  a restart means that fix did NOT hold. When adding recovery for a defect a
+  sibling story just "fixed", make the recovery's own firing legible as evidence
+  AGAINST the fix.
+- **Ops gotcha**: a broad `pytest tests/deploy tests/lint ...` on this SMB share
+  exceeds the 120s Bash default and is auto-BACKGROUNDED -- TD-059 by accident,
+  not by choice. Pass an explicit long timeout so the gate stays in the
+  foreground.
+---
