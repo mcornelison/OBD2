@@ -57,15 +57,15 @@ Fields separated by `; `. One line, ends at first newline. Optional fields: `aud
 - Upstream spec + library: https://github.com/mcornelison/A2AL
 - Each agent's local skill: `offices/<role>/.claude/skills/a2al/SKILL.md` + `offices/<role>/.claude/commands/a2al.md`
 
-## Shared-Checkout Discipline (Multi-Agent Concurrency) — CORE BOOTUP
+## Per-Agent-Clone Discipline (Multi-Agent Concurrency) — CORE BOOTUP
 
-All agents share ONE working checkout (`Z:\o\OBD2v2`) on the chi-nas-01 SMB share. Branch switches and concurrent commits **race** — edits, staging, and even committed work can be silently lost. Every agent follows this (ratified CIO 2026-06-01; full text `offices/handbook.md` §13):
+**Supersedes the shared-checkout model (CIO 2026-08-03).** Each agent now works in its OWN independent clone (own working tree + own `.git`) — there is no shared `.git/index` to collide on. (The old shared checkout collided on `.git/index.lock` under concurrent commits; that was lock contention between simultaneous writers, NOT a slow disk — the chi-nas-01 NAS is fast gigabit.) Full text + one-time setup: `offices/handbook.md` §13.
 
-1. **Commit-immediately, office-scoped** — `add`+`commit` your own `offices/<role>/**` in small commits right after each edit-set. Never leave work uncommitted across turns (that's what disappears on a branch switch).
-2. **Only the PM (Marcus) switches branches / merges / deploys** — no other agent runs `git checkout`/`switch`/`merge`/`rebase`. Stay on the live branch and commit there; the PM integrates.
-3. **PM announces + waits for a quiet window before switching branches.**
-4. **Retry-on-lock, never force** — a stale `.git/index.lock` from the slow share clears in seconds; wait + retry; never delete it while a `git` process is running.
-5. **"file modified since read"** in Edit = another agent is writing it → re-read + re-apply; prefer editing only your own office.
+1. **Commit AND push — both, every time.** `add`+`commit` your own `offices/<role>/**`, THEN `git push`. A commit that is never pushed is invisible to the team and lost if your clone is re-provisioned. **Durability = pushed, not merely committed.**
+2. **Pull before you push** — `git pull --rebase origin/<branch>` first; on a non-fast-forward rejection, `pull --rebase` and push again. Lane-scoped office work rebases cleanly.
+3. **You own your own clone's branches** — `checkout`/branch freely in your clone (affects no one else). But **only the PM (Marcus) merges into + owns `dev` + `main`, and runs deploys** (from the PM's clone — the deploy authority).
+4. **origin (GitHub) is the single source of truth** — the local filesystem no longer reflects peers' work; `git pull` to see it. Lane discipline unchanged: read only your own office.
+5. **Before the PM merges your work:** push it → `pull --rebase` to stay current → tell the PM which branch/commit is ready. **The PM merges what is ON ORIGIN — unpushed work is not merged.**
 
 ## Development Commands
 

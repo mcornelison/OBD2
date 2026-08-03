@@ -562,31 +562,51 @@ shape). Then invoke it.
 
 ---
 
-## 13. Shared-checkout discipline (concurrency)
+## 13. Per-agent-clone discipline (concurrency)
 
-All agents share ONE working checkout (`Z:\o\OBD2v2`) on the chi-nas-01 SMB
-share. Branch switches and concurrent commits **race** — edits, staging, and
-even already-committed work can be silently lost or land on the wrong branch.
-Ratified protocol (CIO 2026-06-01; PM owns the mechanics):
+**Supersedes the shared-checkout model (CIO 2026-08-03; PM owns the mechanics).**
+The old model put every agent on ONE working checkout + ONE `.git`; simultaneous
+`git` writes collided on `.git/index.lock`. That was **pure lock contention
+between concurrent committers — NOT a slow disk** (the chi-nas-01 NAS is fast
+gigabit). Each agent now works in their OWN independent clone, so there is no
+shared index to collide on and the whole race class is gone.
 
-1. **Commit-immediately, office-scoped.** `git add` + `git commit` your OWN
-   `offices/<role>/**` files in small commits right after each edit-set. Never
-   leave work uncommitted across turns — uncommitted work is what disappears on
-   a branch switch. (Sharpens the §12 closeout Phase-5 rule into an
-   every-edit-set habit.)
-2. **Only the PM switches branches / merges / deploys.** No other agent runs
-   `git checkout`, `git switch`, `git merge`, or `git rebase`. Stay on whatever
-   branch is live and commit there; the PM integrates.
-3. **PM announces + waits for a quiet window before any branch switch** — it
-   will not flip the tree while another agent is mid-edit; coordinate via the CIO.
-4. **Retry-on-lock, never force.** A `…/.git/index.lock: File exists` error is a
-   stale lock from the slow share — wait a few seconds and retry. NEVER delete
-   `index.lock` while any `git` process is running (corrupts the index).
-5. **"File modified since read"** in the Edit tool = another agent is writing
-   that file — re-read, re-apply, and prefer editing only your own office.
+**Setup (per agent, one-time — the CIO provisions):**
+- Each agent has its own clone (own working tree + own `.git`), e.g.
+  `…\OBD2v2-<role>\`; each agent's session runs from its own clone.
+- Each clone needs its own gitignored files copied in (`.env`,
+  `deploy/deploy.conf`, `.claude/settings.local.json`, `data/`) — not in git.
 
-Lost a finding or a gate sign-off? Tell the PM — don't silently re-do it; the
-PM checks the reflog/branches and recovers it.
+**Working rules:**
+1. **Commit AND push — both, every time.** Commit your OWN `offices/<role>/**`
+   in small commits, THEN `git push`. In the old model a local commit was enough
+   (it lived on the shared repo); now a commit that is never pushed is invisible
+   to the team and lost if your clone is re-provisioned. **Durability = pushed,
+   not merely committed.**
+2. **Pull before you push.** `git pull --rebase origin/<branch>` first so your
+   office commits sit cleanly on top; on a non-fast-forward rejection,
+   `pull --rebase` and push again. Office work is lane-scoped, so rebases are clean.
+3. **You own your own clone's branches.** You MAY `checkout`/branch freely in your
+   clone — it affects no one else (the old "only PM switches branches" rule was a
+   shared-tree constraint that no longer applies locally). But **only the PM
+   merges into and owns `dev` + `main`, and runs deploys.**
+4. **origin (GitHub) is the single source of truth.** The local filesystem no
+   longer reflects peers' work — `git pull` to see it. Lane discipline unchanged:
+   read only your own office.
+5. **Before the PM merges your work:** (a) **push** it to origin, (b)
+   `pull --rebase` so it's current, (c) tell the PM (inbox/A2AL) which
+   branch/commit is ready. **The PM merges what is ON ORIGIN — unpushed work is
+   not merged.**
+
+**Deploys** run from the **PM's clone** (the deploy authority) — never "whatever
+some shared tree happens to have." (This also closes the gitHash-drift where a
+server mount was the shared tree.)
+
+**Can you lose work?** *Less* than before — the entire "a branch switch nukes
+another agent's uncommitted work" class is GONE (no shared tree). The one NEW
+caveat: you must **push**, not just commit. Uncommitted working-tree edits are
+always at risk (true of any git workflow) — commit + push them. Lost something
+anyway? Tell the PM — the reflog/branches on origin recover it.
 
 ---
 
