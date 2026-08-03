@@ -47,9 +47,19 @@ the real IMU contract, the shipped tokens/chrome, and Spool's semantics.
     (IMU grade + OBD speed), **re-anchored to home elevation on every successful server sync**
     (drift bounded to one drive — CIO). Spool owns the derivation math/quality
     (`tuner/inbox/2026-08-01-...interim-grade-speed-altitude.md`); the display renders it.
-  - **Honest label:** show it as **`≈ NNN m`** (a leading `≈` / "derived" cue), never as a precise
-    fix — it's approximate and drifts. If the derivation is unavailable (no grade/speed), fall back
-    to **"— no source"**, never zeroed.
+  - **Honest label — Spool ruling 2026-08-01 (his lane on HOW it's shown):** show **Δ-from-home with
+    a widening uncertainty band**, NOT absolute ASL — `≈ +4 m from home · ±35 m`, never `≈ 312 m`
+    (a "specific-looking lie" on this flat terrain). Band = `σ_pitch(rad) × distance_travelled`
+    (grows with distance, not time; visibly widening = honestly losing confidence). GPS landing swaps
+    to real absolute altitude + the `±` disappears — design the card around that handoff.
+  - **Derivation conditions (Spool `[EXACT]`, load-bearing — gate the DISPLAY on them; without them
+    show "no source", not a confident wrong number):** pitch must be **gyro-fused** (complementary/
+    Madgwick), NOT accel-only tilt (accel can't tell grade from acceleration — 0.3 g reads as 16.7°);
+    **ZUPT** bias update at stops (speed 0 >3 s); **gate** integration to speed ≥ 5 km/h AND |dv/dt| <
+    0.15 g; **slew-clamp** |sin(pitch)| ≤ 0.15. These + the pitch-source question are Atlas/Ralph (the
+    `states/imu` reader owns fusion) — **flag: is the shipped grade pitch gyro-fused or accel-only? If
+    accel-only, the grade % readout itself is contaminated too, not just altitude.** If the derivation
+    is unavailable, fall back to **"— no source"**, never zeroed.
   - **Source later = GPS** (I2C Adafruit PA1010D #4415 → `states/gps`, Atlas contract): swaps the
     feed to absolute altitude (±10–20 m) and **drops the `≈`**; also brings **true speed / heading /
     position** (the speed answers the deferred "what else earns the glance"). The display is a pure
