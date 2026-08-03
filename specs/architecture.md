@@ -1360,6 +1360,102 @@ Power-Down Orchestrator drain-event consumer was **retired in the SS-T5 shutdown
 redesign** (its dead `batteryHealthRecorder` wiring was removed end-to-end in
 US-427 / TD-058). The live consumer is now the CIO's monthly bench drill via
 `scripts/record_drain_test.py`, which opens + closes one event per invocation.
+**As of US-526 (Sprint 70 / V0.29.25) it is no longer the only one — see the
+production drain-event writer below.**
+
+### Production drain-event writer (US-526 / F-123 / BL-028, Sprint 70 — Atlas Option C)
+
+`battery_health_log` had **no production writer** between the US-216 retirement
+and this story: `BatteryHealthRecorder` wrote its columns correctly but nothing
+in `src/` called it, so the F-123 battery-Health verdict had no rows and
+honestly reported `unknown`. `src/pi/power/drain_event_writer.DrainEventWriter`
+is that caller, in the shape Atlas ruled on 2026-08-02
+(`offices/pm/inbox/2026-08-02-from-atlas-v0.29.25-prd-review.md`).
+
+**The writer spans two PROCESSES, and that is the whole design constraint:**
+
+| Event | Process | Site |
+|---|---|---|
+| OPEN at wall-power loss (AC→BATTERY) | collector (`src/pi/main.py`) | `PowerMonitor.onTransition` ← US-502 `_PowerSourceUiBridge` (GPIO6 truth) |
+| CLOSE at restore (BATTERY→AC) | collector | same callback |
+| CLOSE at cutoff — **the PRIMARY close** | `eclipse-powerwatch` | `ShutdownSequencer(prePowerOffFn=…)` |
+| REAP still-open rows — crash BACKSTOP | collector, at boot | `LifecycleMixin._initializeDrainEventWriter` |
+
+Because the open and the cutoff close are in **different processes**, a
+`drain_event_id` held in memory is unavailable exactly where it matters most —
+so every close **re-finds its row by query**. This is why Atlas disqualified the
+memory-held option: under Spool's depth gate the run-to-cutoff drain is the only
+qualifying drain, and a hard crash would drop precisely that row.
+
+**`prePowerOffFn` fires on BOTH poweroff paths, and the fast path is the point.**
+The VCELL-floor backstop **skips the bounded pipeline** and goes straight to
+poweroff — which is exactly how a run-to-cutoff drain ends. A close implemented
+as a pipeline `ShutdownTask` would therefore miss every depth-gate-qualifying
+row. The hook is guarded like `phaseEmitFn` (§10.6): a close that raises can
+never delay poweroff, and it is **not** called on an abort (transient blip, or
+power returning mid-window) because an aborted shutdown is not a drain end.
+
+**Three honest-NA rules (load-bearing):**
+
+1. **An unreadable gauge writes NULL.** US-526 made `startDrainEvent(startSoc=…)`
+   and `endDrainEvent(endSoc=…)` accept `None`, so a dead MAX17048 at the loss
+   instant records NULL rather than a guessed voltage. The row still opens — the
+   drain *did* happen. VCELL is read unguarded (trustworthy at cold start);
+   SoC% routes through the shared US-234 cold-start guard, now at
+   `src/pi/power/soc_calibration.py` so the CLI and the production writer share
+   **one** implementation (a `src/` module must never import from `scripts/`).
+2. **The reaper NEVER calls `endDrainEvent`.** That method derives
+   `runtime_seconds` from the start/end timestamp delta, so across a reboot it
+   would manufacture a multi-hour runtime. The reaper issues its own UPDATE
+   stamping **`end_timestamp` only**, leaving `runtime_seconds` **and**
+   `end_vcell_v` NULL — an interrupted drain's duration and depth are both
+   unknown, and a fabricated `end_vcell_v ≤ 3.50 V` would falsely *pass* the
+   depth gate. A NULL on either field fails the gate, so a reaped orphan cannot
+   vote (double-safe). Its signature is queryable: `end_timestamp` NOT NULL with
+   `runtime_seconds` NULL and `end_vcell_v` NULL; every reap logs at WARNING.
+3. **Only rows the writer opened are ever touched.** Atlas's DoD says the reaper
+   targets `WHERE end_timestamp IS NULL`; the implementation **narrows** that to
+   still-open rows whose `notes` equal `DRAIN_OPEN_NOTE` (a stored ownership
+   marker, not a log string). A narrowing can only make the backstop more
+   conservative, and it is load-bearing: the four US-442 historical orphans
+   (`drain_event_id` 1/9/18/21) hold `end_timestamp IS NULL` **deliberately** —
+   there is no timing-truth source for them, and that NULL is what keeps
+   `scripts/annotate_orphan_production_drain_events.py` idempotent. Without the
+   narrowing, the first power-restore close would hand a months-old row to
+   `endDrainEvent` and mint a row with a multi-month `runtime_seconds` **and** a
+   real `end_vcell_v` — i.e. one that looks QUALIFYING to the verdict. That is
+   strictly worse than the reaper trap the ruling names.
+
+**Ordering invariant:** the reaper runs **before** `onTransition` is registered.
+Reversed, it would stamp this boot's live drain as interrupted. It also means a
+row later found open is necessarily *same-boot*, which is what makes every
+`runtime_seconds` the writer computes truthful.
+
+**Boot-order trap (US-501/502/503, sixth sighting):** the `UpsMonitor` is
+resolved **late**, at transition time, via a closure over
+`HardwareManager.upsMonitor`. It is built inside `HardwareManager.start()`, long
+after this wiring — a reference captured at wiring time would pin `None` and
+every drain would record NULL gauge values.
+
+**Enum identity:** power-source comparison is on `.value`, never on enum
+members. `pi.power.types` and `src.pi.power.types` are distinct module objects,
+so their `PowerSource` members are not `==` — comparing members would let a
+dual-imported enum make the writer silently inert (the cross-module
+enum-identity class that cost the 9-drain saga).
+
+**Import weight:** the powerwatch service builds its writer with
+`makeDrainEventWriterForPath`, a stdlib-sqlite3 `DatabaseLike` adapter, rather
+than `ObdDatabase` — importing `pi.obdii` would drag that whole package into a
+shutdown-critical process for the sake of a `connect()` (the V0.27.12-DOA import
+class). Its sqlite busy timeout is `pi.powerWatch.perTaskTimeoutSec` — the bound
+the shutdown path already defines for one unit of work — so a locked database
+cannot delay poweroff. No new config key.
+
+**Scope note:** gated on the same `pi.power.power_monitor.enabled` flag as
+`PowerMonitor` (no second flag for one fact) and soft-fail throughout —
+battery-health bookkeeping must never cost the drive capture beside it.
+**Not** in this story: the verdict's qualifying-gate remap to Spool's depth
+bands, which rides US-527.
 
 **Use case — monthly drain drill (CIO)**:
 
@@ -2246,6 +2342,29 @@ belt-and-braces. The shutdown-state schema (`phase`, `tGraceStartedAt`,
 `tGraceTotalS`, `tRemainingS`, `reason`, `ts`) is written atomically to
 `/run/eclipse-obd/states/shutdown-state` (the `splash-grace.path` unit watches that
 file; the kiosk polls it at 250 ms).
+
+### 10.6.2 US-526 pre-poweroff hook — the PRIMARY drain-event close (Sprint 70 / V0.29.25)
+
+A second OPTIONAL constructor dependency, `prePowerOffFn`, runs immediately
+**before** `powerOffFn` on **every** path that actually powers off — the
+bounded-pipeline path *and* the VCELL-floor fast path. `__main__.py` wires it via
+`buildDrainCloseHook` to the production drain-event writer's close (§ *Production
+drain-event writer*, Atlas Option C 2026-08-02).
+
+**Why not a `ShutdownTask`:** the VCELL-floor fast path **skips the pipeline**,
+and that path is exactly how a run-to-cutoff drain ends. Under Spool's depth gate
+the run-to-cutoff drain is the *only* qualifying drain, so a task-based close
+would miss every row the battery-Health verdict needs.
+
+Ordering and guarantees mirror `phaseEmitFn` (§10.6.1): it runs **after**
+`powering_off` is emitted and **last** before poweroff (so the recorded depth is
+as deep as the drain actually got); a hook that raises is logged and **never**
+blocks poweroff — a bookkeeping row is not worth leaving the Pi up on a dying
+battery; and it is **not** called on either abort (transient blip, or power
+returning mid-window), because an aborted shutdown is not a drain end and the
+collector's BATTERY→AC transition owns that close. `None` (the default) runs the
+exact legacy path. A missed close is not data loss with a wrong value — the boot
+reaper marks that row interrupted (`runtime_seconds` + `end_vcell_v` NULL).
 
 **Timing invariant [Atlas A-6]** (owned by the `controller.py` module docstring;
 splash holds it by trust): the splash's 7.5 s animation budget fits inside the

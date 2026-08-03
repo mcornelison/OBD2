@@ -124,6 +124,7 @@ class ShutdownSequencer:
         phaseEmitFn: Callable[..., None] | None = None,
         nowIsoFn: Callable[[], str] | None = None,
         shutdownReason: str = DEFAULT_SHUTDOWN_REASON,
+        prePowerOffFn: Callable[[], None] | None = None,
     ):
         """Args:
             isOnBattery: Zero-arg predicate, True while power is LOST (DI'd to
@@ -160,6 +161,25 @@ class ShutdownSequencer:
                 ``phaseEmitFn`` is wired.
             shutdownReason: The ``reason`` field for the shutdown-state payload
                 (v1 always ``ignition_off``; the splash never branches on it).
+            prePowerOffFn: OPTIONAL zero-arg hook run immediately BEFORE
+                ``powerOffFn`` on EVERY path that actually powers off -- both
+                the bounded-pipeline path and the VCELL-floor fast path.
+                US-526 wires it to the production drain-event close, which
+                Atlas ruled the PRIMARY close (Option C, 2026-08-02): under
+                Spool's depth gate the run-to-cutoff drain is the only
+                qualifying drain and it ends exactly here, so the close must be
+                guaranteed on this path. It is deliberately NOT a pipeline
+                ShutdownTask -- the floor fast-path SKIPS the pipeline, which
+                is precisely how a run-to-cutoff drain ends, so a task-based
+                close would miss every row the verdict needs.
+                Runs LAST before poweroff so a depth read is as deep as the
+                drain actually got. Best-effort and guarded exactly like
+                ``phaseEmitFn``: a hook that raises NEVER blocks poweroff
+                (bookkeeping is never worth leaving the Pi up on a dying
+                battery). NOT called on an abort (transient blip, or power
+                returning mid-window) -- an aborted shutdown is not a drain
+                end, and the collector's BATTERY->AC transition owns that
+                close. ``None`` (the default) runs the exact legacy path.
         """
         self._isOnBattery = isOnBattery
         self._vcell = vcell
@@ -172,6 +192,7 @@ class ShutdownSequencer:
         self._sleep = sleepFn if sleepFn is not None else time.sleep
         self._monotonic = monotonicFn if monotonicFn is not None else time.monotonic
         self._phaseEmitFn = phaseEmitFn
+        self._prePowerOffFn = prePowerOffFn
         self._shutdownReason = shutdownReason
         self._nowIso = nowIsoFn if nowIsoFn is not None else _defaultNowIso
         # Grace-window bookkeeping (set when the grace phase is emitted).
@@ -245,6 +266,9 @@ class ShutdownSequencer:
             # Floor backstop skips the pipeline -> no `flushing` phase happened;
             # emit `powering_off` directly (honest instrument).
             self._emitPhase(PHASE_POWERING_OFF)
+            # US-526: THE run-to-cutoff drain ends right here. This is the path
+            # a depth-gate-qualifying drain takes, so the close must fire on it.
+            self._runPrePowerOff()
             self._powerOff()
             return
         # F-103 [A-2]: smoothing confirmed + above floor -> the bounded pipeline
@@ -276,7 +300,32 @@ class ShutdownSequencer:
             "shutdown-sequencer: pre-shutdown window resolved -- graceful poweroff"
         )
         self._emitPhase(PHASE_POWERING_OFF)
+        self._runPrePowerOff()
         self._powerOff()
+
+    # ----- US-526 pre-poweroff hook (drain-event close, Atlas Option C) -------
+
+    def _runPrePowerOff(self) -> None:
+        """Run the pre-poweroff hook (best-effort, never raises).
+
+        A no-op when no ``prePowerOffFn`` is wired. Guarded so a failing drain
+        close can NEVER delay or prevent the poweroff it precedes -- same
+        contract as :meth:`_emitPhase`. The failure is logged loudly because a
+        missed close means the boot reaper will mark that drain interrupted
+        (runtime + depth NULL), i.e. one lost measurement rather than a silent
+        wrong one.
+        """
+        if self._prePowerOffFn is None:
+            return
+        try:
+            self._prePowerOffFn()
+        except Exception as exc:  # noqa: BLE001 -- best-effort, belt+braces
+            logger.error(
+                "shutdown-sequencer: pre-poweroff hook failed (%s) -- ignored, "
+                "poweroff proceeds. Any open drain row stays open and will be "
+                "marked interrupted by the boot reaper.",
+                exc,
+            )
 
     # ----- F-103 shutdown-splash phase-emit hook (US-394 / Atlas A-2) ---------
 

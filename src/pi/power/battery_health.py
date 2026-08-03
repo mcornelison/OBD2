@@ -508,7 +508,7 @@ class BatteryHealthRecorder:
     def startDrainEvent(
         self,
         *,
-        startSoc: float,
+        startSoc: float | None,
         loadClass: str = LOAD_CLASS_DEFAULT,
         notes: str | None = None,
         dataSource: str = 'real',
@@ -522,7 +522,11 @@ class BatteryHealthRecorder:
                 LiPo cell voltage and lands in ``start_vcell_v``.  When
                 ``startSocPct`` is omitted, the same value is also
                 written to the legacy ``start_soc`` column (US-289
-                dual-write contract).
+                dual-write contract).  ``None`` records NULL -- US-526:
+                the production writer opens a drain the instant wall power
+                is lost, and an unreadable MAX17048 at that instant must
+                write NULL rather than a guessed voltage (honest-instrument).
+                The drain itself DID happen, so the row still opens.
             loadClass: One of :data:`LOAD_CLASS_VALUES`.  Defaults to
                 ``'production'`` -- the real drain case.
             notes: Free-form text (drill context, weather, hardware
@@ -562,7 +566,9 @@ class BatteryHealthRecorder:
         # voltage from ``startSoc`` lands in start_vcell_v (its sole home); the
         # optional ``startSocPct`` register SoC% lands in the new start_soc_pct
         # column (NULL when omitted -- US-427 wires the real register read).
-        startVcell = float(startSoc)
+        startVcell: float | None = (
+            float(startSoc) if startSoc is not None else None
+        )
         startSocPctColumn: float | None = (
             float(startSocPct) if startSocPct is not None else None
         )
@@ -578,9 +584,10 @@ class BatteryHealthRecorder:
             drainEventId = int(cursor.lastrowid or 0)
 
         logger.info(
-            "drain event opened | id=%d | start_vcell_v=%.3f | "
+            "drain event opened | id=%d | start_vcell_v=%s | "
             "start_soc_pct=%s | load_class=%s",
-            drainEventId, startVcell, startSocPctColumn, loadClass,
+            drainEventId, _formatVolts(startVcell), startSocPctColumn,
+            loadClass,
         )
         return drainEventId
 
@@ -588,7 +595,7 @@ class BatteryHealthRecorder:
         self,
         *,
         drainEventId: int,
-        endSoc: float,
+        endSoc: float | None,
         ambientTempC: float | None = None,
         endSocPct: int | None = None,
     ) -> DrainEventCloseResult:
@@ -606,7 +613,12 @@ class BatteryHealthRecorder:
             endSoc: VCELL voltage at event end.  Mirrors the
                 :meth:`startDrainEvent` ``startSoc`` semantic -- lands
                 in ``end_vcell_v`` and (when ``endSocPct`` is omitted)
-                also in the legacy ``end_soc`` column.
+                also in the legacy ``end_soc`` column.  ``None`` records
+                NULL (US-526 honest-instrument: a gauge that died during
+                the drain leaves the depth unknown; the row is still
+                closed, so the DURATION survives even though the depth
+                does not, and a NULL ``end_vcell_v`` correctly fails
+                Spool's depth gate instead of faking it).
             ambientTempC: Optional ambient temperature (Celsius).
             endSocPct: BL-013 Option A Step 1 (US-309): optional actual
                 SOC % (0-100) at event end.  When provided, lands in
@@ -664,7 +676,9 @@ class BatteryHealthRecorder:
             # from ``endSoc`` lands in end_vcell_v (its sole home); the optional
             # ``endSocPct`` register SoC% lands in the new end_soc_pct column
             # (NULL when omitted -- US-427 wires the real register read).
-            endVcell = float(endSoc)
+            endVcell: float | None = (
+                float(endSoc) if endSoc is not None else None
+            )
             endSocPctColumn: float | None = (
                 float(endSocPct) if endSocPct is not None else None
             )
@@ -681,9 +695,10 @@ class BatteryHealthRecorder:
             )
 
         logger.info(
-            "drain event closed | id=%d | end_vcell_v=%.3f | "
+            "drain event closed | id=%d | end_vcell_v=%s | "
             "end_soc_pct=%s | runtime_s=%s",
-            int(drainEventId), endVcell, endSocPctColumn, runtimeSeconds,
+            int(drainEventId), _formatVolts(endVcell), endSocPctColumn,
+            runtimeSeconds,
         )
         return DrainEventCloseResult(
             drainEventId=int(drainEventId),
@@ -697,6 +712,16 @@ class BatteryHealthRecorder:
 # ================================================================================
 # Internal helpers
 # ================================================================================
+
+
+def _formatVolts(volts: float | None) -> str:
+    """Render a nullable VCELL for a log line.
+
+    ``'NULL'`` (not ``'None'``, not ``0.000``) so a log reader sees the same
+    word the column holds -- US-526 made both voltage arguments nullable, and a
+    ``%.3f`` on None raises inside a logging call on the power-loss path.
+    """
+    return 'NULL' if volts is None else f'{volts:.3f}'
 
 
 def _computeRuntimeSeconds(startTs: str, endTs: str) -> int | None:

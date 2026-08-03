@@ -555,3 +555,109 @@ class TestColdStartWindowConfig:
         startPct, endPct = _querySocPct(tmp_path)
         assert startPct == 66.0
         assert endPct == 66.0
+
+
+# ================================================================================
+# US-526: the cold-start guard is SHARED with the production writer, not copied
+# ================================================================================
+
+
+class TestSocCalibrationIsSharedNotCopied:
+    """One implementation, two callers (SSOT design directive).
+
+    US-526 moved the cold-start-guarded register read into
+    ``src/pi/power/soc_calibration.py`` so the PRODUCTION drain writer reuses
+    the identical guard (a ``src/`` module must never import from ``scripts/``).
+    These guards fail if someone re-adds a local copy here -- at which point the
+    CLI and the production writer could drift on the one rule that keeps a
+    garbage SoC%% out of the database.
+    """
+
+    def test_cliNamesAreTheSharedObjects(self) -> None:
+        """
+        Given: the CLI's public register-read surface.
+        When:  compared with pi.power.soc_calibration.
+        Then:  they are the SAME objects, not equal-looking copies.
+        """
+        from pi.power import soc_calibration
+
+        assert (
+            record_drain_test.readCalibratedRegisterSocPct
+            is soc_calibration.readCalibratedRegisterSocPct
+        )
+        assert (
+            record_drain_test._resolveColdStartWindowSeconds
+            is soc_calibration.resolveColdStartWindowSeconds
+        )
+        assert (
+            record_drain_test._readSystemUptimeSeconds
+            is soc_calibration.readSystemUptimeSeconds
+        )
+        assert (
+            record_drain_test.COLD_START_CALIBRATION_WINDOW_SECONDS
+            == soc_calibration.COLD_START_CALIBRATION_WINDOW_SECONDS
+        )
+
+    def test_productionWriterUsesTheSameGuard(self) -> None:
+        """
+        Given: the production drain writer.
+        When:  its gauge-read dependency is traced back to a source FILE.
+        Then:  it is the same file the CLI's guard comes from -- so the AC's
+               "reuse readCalibratedRegisterSocPct + its cold-start window" is
+               literally true, not approximately.
+
+        Compared by source file rather than by ``is``: the writer resolves the
+        helper through ``src.pi.power.*`` (the form its powerwatch caller uses)
+        while this test reaches it through ``pi.power.*``, and those are two
+        distinct module objects holding two distinct function objects for the
+        SAME source.  That is the dual-import identity trap itself -- which is
+        exactly why the writer compares power-source ENUMS by ``.value`` and the
+        shared guard catches ``Exception`` rather than a specific class.
+        A re-added local copy still fails this: it is a different file.
+
+        Compared with ``os.path.samefile`` and NOT string equality, because the
+        two import roots spell the same file differently on the shared checkout:
+        one resolves under the mapped drive (``Z:\\o\\OBD2v2\\...``) and the
+        other under its UNC target (``\\\\chi-nas-01\\PPS-Projects\\...``).
+        String equality reports "different implementation" for a file that IS
+        the same file -- a false alarm on the exact SSOT claim this guards.
+        ``samefile`` asks the filesystem (st_dev/st_ino) instead, so the guard
+        keeps its teeth against a real drifted copy while surviving the
+        drive-mapping aliasing.
+        """
+        import inspect
+        import os
+
+        from pi.power import drain_event_writer, soc_calibration
+
+        canonicalSource = inspect.getsourcefile(
+            soc_calibration.readCalibratedRegisterSocPct
+        )
+        assert canonicalSource is not None
+        for shared in (
+            drain_event_writer.readCalibratedRegisterSocPct,
+            record_drain_test.readCalibratedRegisterSocPct,
+        ):
+            sharedSource = inspect.getsourcefile(shared)
+            assert sharedSource is not None
+            assert os.path.samefile(sharedSource, canonicalSource)
+
+    def test_aNonUpsErrorAlsoRecordsNull(self) -> None:
+        """
+        Given: a gauge raising an OSError (not UpsMonitorError).
+        When:  the guarded read runs past the cold-start window.
+        Then:  NULL is recorded rather than the error propagating.
+
+        US-526 widened the catch deliberately: UpsMonitor is imported both as
+        ``pi.hardware.ups_monitor`` and ``src.pi.hardware.ups_monitor``, so
+        those are two distinct class objects and an ``except UpsMonitorError``
+        bound to one would not catch the other's instance.  On the shutdown path
+        that miss would propagate out of a gauge read.
+        """
+        class _RaisingUps:
+            def getBatteryPercentage(self) -> int:
+                raise OSError('i2c bus error')
+
+        assert record_drain_test.readCalibratedRegisterSocPct(
+            _RaisingUps(), uptimeSeconds=9999.0,
+        ) is None

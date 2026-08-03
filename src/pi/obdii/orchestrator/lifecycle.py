@@ -468,6 +468,7 @@ class LifecycleMixin:
     _profileSwitcher: Any | None
     _syncClient: Any | None
     _powerMonitor: Any | None
+    _drainEventWriter: Any | None
     _updateChecker: Any | None
     _updateApplier: Any | None
     _vehicleVin: str | None
@@ -564,6 +565,11 @@ class LifecycleMixin:
         # ensureDriveStatisticsRetired in database_schema.py).
         self._initializeSyncClient()
         self._initializePowerMonitor()
+        # US-526 (F-123): the PRODUCTION drain-event writer hangs off the
+        # PowerMonitor built immediately above, so it must follow it. It also
+        # runs the boot reaper, which is why it sits this early -- before any
+        # power transition can open a row.
+        self._initializeDrainEventWriter()
         # US-480-a: wire the carousel card-state emitters (F-092 system-status /
         # F-097 battery-health / F-111 dtc) LAST among the data components -- it
         # is a pure consumer of the connection / drive-detector / power-monitor /
@@ -1974,6 +1980,92 @@ class LifecycleMixin:
                 e, type(e).__name__,
             )
             self._powerMonitor = None
+
+    def _initializeDrainEventWriter(self) -> None:
+        """Wire the PRODUCTION drain-event writer (US-526 / F-123 / BL-028).
+
+        ``BatteryHealthRecorder`` has written ``battery_health_log`` correctly
+        since US-217, but no production caller has existed since the US-216
+        auto-open path was retired (US-442 / TD-058) -- so the battery Health
+        verdict has had no rows to read and has honestly reported ``unknown``.
+        This method is that caller, in Atlas's Option C shape (ruling
+        2026-08-02):
+
+        * OPEN at wall-power loss and CLOSE at restore, both driven by
+          ``PowerMonitor.onTransition`` -- which the US-502
+          ``_PowerSourceUiBridge`` feeds GPIO6 ground truth.
+        * The cutoff close is the ShutdownSequencer's (a different PROCESS --
+          ``eclipse-powerwatch``), which is why the writer re-finds its row in
+          the table instead of holding an id in memory.
+        * REAP first: a row still open at boot was orphaned by a crash, so it
+          is stamped closed with ``runtime_seconds`` AND ``end_vcell_v`` left
+          NULL (honest-NA). Reaping BEFORE ``onTransition`` is registered is
+          load-bearing -- reversed, the reaper would stamp THIS boot's live
+          drain as interrupted, and it also means any row later found open is
+          necessarily same-boot, which is what makes the close's computed
+          runtime truthful.
+
+        The UpsMonitor is resolved LATE, at transition time: it is created
+        inside ``HardwareManager.start()``, well after this wiring, so a
+        reference captured here would pin None forever and every drain would
+        record NULL gauge values (the US-501/502/503 boot-order trap).
+
+        Gated on the SAME ``pi.power.power_monitor.enabled`` flag as the
+        PowerMonitor itself (no second flag for one fact) plus a live database.
+        Soft-fail: any fault leaves ``_drainEventWriter`` None and boot
+        continues -- battery-health bookkeeping must never cost the drive
+        capture it sits beside.
+        """
+        self._drainEventWriter = None
+        if self._powerMonitor is None:
+            logger.info(
+                "drain-event writer skipped -- no PowerMonitor "
+                "(battery_health_log gains no production rows)"
+            )
+            return
+        if self._database is None:
+            logger.info(
+                "drain-event writer skipped -- database not initialized"
+            )
+            return
+
+        def _resolveUpsMonitor() -> Any | None:
+            """Resolve the live UpsMonitor at TRANSITION time, never earlier."""
+            hardwareManager = getattr(self, '_hardwareManager', None)
+            if hardwareManager is None:
+                return None
+            return getattr(hardwareManager, 'upsMonitor', None)
+
+        try:
+            from pi.power.drain_event_writer import DrainEventWriter
+            from pi.power.soc_calibration import resolveColdStartWindowSeconds
+
+            writer = DrainEventWriter(
+                database=self._database,
+                upsResolver=_resolveUpsMonitor,
+                coldStartWindowSeconds=resolveColdStartWindowSeconds(
+                    self._config
+                ),
+            )
+            # Backstop BEFORE the open path is live (see docstring).
+            reaped = writer.reapOpenDrainEvents()
+            self._powerMonitor.onTransition(writer.handlePowerTransition)
+            self._drainEventWriter = writer
+        except Exception as e:  # noqa: BLE001 -- bookkeeping must not fail boot
+            logger.warning(
+                "drain-event writer wiring failed, battery_health_log stays "
+                "empty: %s (type=%s)",
+                e, type(e).__name__,
+            )
+            self._drainEventWriter = None
+            return
+
+        logger.info(
+            "drain-event writer wired to PowerMonitor.onTransition "
+            "(US-526 production battery_health_log path active; "
+            "%d interrupted drain(s) reaped at boot)",
+            len(reaped),
+        )
 
     def _initializeUpdateChecker(self) -> None:
         """Initialize the Pi UpdateChecker (US-247 / B-047 US-C).

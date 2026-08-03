@@ -80,12 +80,20 @@ from src.common.config.validator import ConfigValidator  # noqa: E402
 from src.pi.hardware.pld_sensor import PldSensor  # noqa: E402
 from src.pi.hardware.ups_monitor import UpsMonitor  # noqa: E402
 from src.pi.network.home_detector import HomeNetworkDetector  # noqa: E402
+from src.pi.power.drain_event_writer import (  # noqa: E402
+    CLOSE_REASON_SHUTDOWN,
+    makeDrainEventWriterForPath,
+)
 from src.pi.power.power_source_provider import PowerSourceProvider  # noqa: E402
 from src.pi.power.power_watch.controller import ShutdownSequencer  # noqa: E402
 from src.pi.power.power_watch.outcome import writeOutcomeRecord  # noqa: E402
 from src.pi.power.power_watch.pipeline import runPipeline  # noqa: E402
 from src.pi.power.power_watch.tasks.sync_with_server import (  # noqa: E402
     SyncWithServerTask,
+)
+from src.pi.power.soc_calibration import (  # noqa: E402
+    readSystemUptimeSeconds,
+    resolveColdStartWindowSeconds,
 )
 from src.pi.splash.shutdown_state_emitter import (  # noqa: E402
     makeShutdownPhaseEmitter,
@@ -147,6 +155,68 @@ def buildV1Tasks(syncTask: SyncWithServerTask) -> list:
     (CIO directive: best-effort sync of the local drive log before poweroff).
     """
     return [syncTask]
+
+
+def buildDrainCloseHook(
+    *,
+    config: dict,
+    upsResolver,
+    uptimeReader=None,
+):
+    """Build the pre-poweroff drain-event close (US-526 PRIMARY close).
+
+    Atlas Option C ruling (2026-08-02): the ShutdownSequencer close is PRIMARY
+    because, under Spool's depth gate (``end_vcell_v <= 3.50`` V), the
+    run-to-cutoff drain is the only qualifying drain and it ends on this path.
+    The collector opens the row at wall-power loss; this closes it with the real
+    depth the pack actually reached.
+
+    Deliberately NOT built on ``ObdDatabase``: this service is
+    shutdown-critical and importing ``pi.obdii`` would drag that whole package
+    (display imports included) into its graph for the sake of a ``connect()``
+    -- the V0.27.12-DOA import class. ``makeDrainEventWriterForPath`` uses
+    stdlib sqlite3 only, and takes the sqlite busy timeout from
+    ``pi.powerWatch.perTaskTimeoutSec`` -- the bound the shutdown path already
+    defines for one unit of work -- so a locked database cannot delay poweroff.
+
+    Args:
+        config: Validated config. Needs ``pi.database.path``; reads
+            ``pi.powerWatch.perTaskTimeoutSec`` and the cold-start window.
+        upsResolver: Zero-arg callable returning the live ``UpsMonitor`` (or
+            None). Resolved at CLOSE time, never captured.
+        uptimeReader: Optional uptime reader for the SoC%% cold-start guard;
+            defaults to the real ``/proc/uptime`` reader.
+
+    Returns:
+        A zero-arg callable for ``ShutdownSequencer(prePowerOffFn=...)``, or
+        None when ``pi.database.path`` is absent (no path is ever guessed).
+    """
+    dbPath = config.get("pi", {}).get("database", {}).get("path")
+    if not dbPath:
+        logger.warning(
+            "powerwatch: pi.database.path absent -- drain-event close on the "
+            "shutdown path is DISABLED (a run-to-cutoff drain will be left "
+            "open and reaped as interrupted at next boot)"
+        )
+        return None
+
+    pwCfg = config.get("pi", {}).get("powerWatch", {}) or {}
+    busyTimeoutSec = float(pwCfg.get("perTaskTimeoutSec", 5.0))
+    writer = makeDrainEventWriterForPath(
+        dbPath=str(dbPath),
+        upsResolver=upsResolver,
+        busyTimeoutSec=busyTimeoutSec,
+        uptimeReader=uptimeReader or readSystemUptimeSeconds,
+        coldStartWindowSeconds=resolveColdStartWindowSeconds(config),
+    )
+
+    def _closeDrain() -> None:
+        # The writer swallows its own faults (it must never break a poweroff);
+        # the sequencer guards this call as well -- belt and braces on the one
+        # path where a raise would be worst.
+        writer.closeOpenDrainEvent(reason=CLOSE_REASON_SHUTDOWN)
+
+    return _closeDrain
 
 
 def _runOneShotForTest(
@@ -335,6 +405,14 @@ def main(argv: list[str] | None = None) -> int:
         statesDir = splashCfg.get("statesDir", "/run/eclipse-obd/states")
         phaseEmitFn = makeShutdownPhaseEmitter(statesDir)
 
+    # US-526 [Atlas Option C]: close the production drain row on the shutdown
+    # path -- the PRIMARY close. The collector opened it at wall-power loss; the
+    # depth recorded here (end_vcell_v) is what Spool's gate qualifies on. The
+    # UPS is resolved at close time, never captured.
+    prePowerOffFn = buildDrainCloseHook(
+        config=config, upsResolver=lambda: monitor,
+    )
+
     shutdownSequencer = ShutdownSequencer(
         isOnBattery=provider.isPowerLost,
         vcell=monitor.getVcell,
@@ -349,6 +427,7 @@ def main(argv: list[str] | None = None) -> int:
         smoothingSec=smoothingSec,
         smoothingPollSec=smoothingPollSec,
         phaseEmitFn=phaseEmitFn,
+        prePowerOffFn=prePowerOffFn,
     )
 
     # TRIGGER = the X1209 GPIO6 PLD hardware line via the PowerSourceProvider
