@@ -1,11 +1,11 @@
 {
   "schemaVersion": "2.0.0",
-  "lastUpdated": "2026-08-02",
+  "lastUpdated": "2026-08-03",
   "updatedBy": "Marcus (PM)",
   "counters": {
     "epic": 7,
-    "feature": 125,
-    "story": 529
+    "feature": 126,
+    "story": 535
   },
   "epics": [
     {
@@ -1286,6 +1286,15 @@
       "description": "CIO 2026-08-01 (Iris consolidated work-package: offices/pm/inbox/2026-08-01-from-iris-gps-altitude-workpackage-for-grooming.md). states/imu has NO altitude source (no baro on ICM-20948, no GPS producer). Add honest altitude two ways: (a) REAL -- an Adafruit PA1010D I2C GPS (#4415 STEMMA QT) -> new states/gps source (DELTA-2 seam, Atlas contract) giving absolute altitude +-10-20m + true speed/heading/position (CIO ordering the part; Spool owns GPS-value trust); (b) INTERIM (CIO-greenlit to SHOW now, labeled approximate, NOT safety-critical) -- altitude = home-elevation + integral(sin(pitch)*speed dt) from IMU grade + OBD speed, home-anchored, re-anchored on every successful server sync (Spool owns the derivation math). Plus home-location config (pi.location.home.{lat,lon,elevationM}; location PII stays in .env). None of this touches the in-flight V0.29.23 F-124 work -- US-508 altimeter shows 'no source' meanwhile; GPS later swaps the feed + drops the approximate marker.",
       "createdAt": "2026-08-01",
       "updatedAt": "2026-08-02"
+    },
+    {
+      "id": "F-126",
+      "parent": "E-001",
+      "status": "active",
+      "title": "Pi settings screen -- config-backed toggles via a Pi-local overlay",
+      "description": "A Settings card on the Pi carousel exposing user-facing config toggles, persisted to a Pi-local OVERLAY file (gitignored, deploy-preserved) that layers over config.json (config.json stays the read-only shipped default; deploy never clobbers user choices). First surface tying the dashboard to config as its data source. CIO 2026-08-03. Slice 1 = 5 config toggles + overlay. DEFERRED: Battery/Power Test action (Spool), System Settings/Updates (own epic).",
+      "createdAt": "2026-08-03",
+      "updatedAt": "2026-08-03"
     }
   ],
   "stories": [
@@ -7125,6 +7134,178 @@
       ],
       "createdAt": "2026-08-02",
       "updatedAt": "2026-08-02"
+    },
+    {
+      "id": "US-530",
+      "parent": "F-126",
+      "type": "normal",
+      "size": "M",
+      "status": "sprint-ready",
+      "title": "Config overlay persistence + layered read (config.json default <- Pi-local overlay override)",
+      "goal": "As the operator, I want my Pi settings to survive deploys, so a toggle I set on the Pi is not wiped the next time code ships.",
+      "definitionOfDone": [
+        "[ATLAS DESIGN-GATE -- load-bearing config/SSOT seam] introduce a Pi-local OVERLAY file (gitignored, added to deploy-pi.sh rsync excludes like .env so deploy never clobbers it) that layers OVER config.json: read path resolves effective value = overlay-override ELSE config.json default. config.json stays the read-only shipped default; nothing writes config.json at runtime. Atlas designs the overlay file shape + the overridable-key ALLOW-LIST (only the settings-screen keys may be overridden -- not arbitrary config)",
+        "the overridable-key allow-list for Slice 1 is exactly: pi.display.carousel.autoRotate, pi.power.mode, pi.alerts.audioAlerts, pi.calibration.mode, pi.analysis.triggerAfterDrive",
+        "honest-instrument: a malformed/absent overlay resolves to the config.json default, never a guessed value; an overlay key outside the allow-list is ignored + logged, never applied",
+        "add pi.display.carousel.autoRotate (bool, default true) to config.json defaults + validator; autoRotateS remains the interval",
+        "test proves: overlay override wins over default; absent overlay -> default; out-of-allow-list key rejected; deploy-exclude keeps the overlay across an rsync; ruff clean"
+      ],
+      "validationCriteria": [
+        {
+          "action": "set an overlay override for pi.display.carousel.autoRotate=false on the Pi, then run a deploy, then read the effective value",
+          "outcome": "effective value stays false after the deploy (overlay preserved + wins over the shipped default)"
+        }
+      ],
+      "conditionalOutcomes": [
+        "Atlas rules the overlay file shape + layering seam + allow-list mechanism before build; this is a load-bearing config/SSOT change (design gate)"
+      ],
+      "sourceRefs": [
+        "CIO 2026-08-03 settings-screen brainstorm"
+      ],
+      "createdAt": "2026-08-03",
+      "updatedAt": "2026-08-03"
+    },
+    {
+      "id": "US-531",
+      "parent": "F-126",
+      "type": "normal",
+      "size": "M",
+      "status": "sprint-ready",
+      "title": "Token-gated settings write endpoint on states_http_server (writes the overlay)",
+      "goal": "As the operator, I want the settings screen to save my toggles, so tapping a toggle persists it -- without opening any un-gated write surface on the Pi.",
+      "definitionOfDone": [
+        "[ATLAS SEAM] add a WRITE endpoint on states_http_server that accepts a setting change (allow-listed key + value) and writes it to the US-530 overlay. The kiosk is chromium JS + cannot write files, so the toggle POSTs here",
+        "[SECURITY -- Atlas US-525 ruling stands] the write endpoint is TOKEN-GATED with the same US-393 SSOT token as the served pages; NEVER weaken or bypass _tokenOk, never expose an un-authenticated write (weakening the gate = Atlas BLOCK / TD-067)",
+        "the endpoint validates the key against the US-530 allow-list + the value type (bool for toggles; car|wall|unknown for pi.power.mode); rejects anything else with an honest error, writes nothing on reject",
+        "honest-instrument: on a write failure the endpoint returns failure so the UI can reflect the REAL stored value, never an optimistic success",
+        "test proves: authenticated allow-listed write persists to the overlay; un-authenticated write is rejected; out-of-allow-list key/invalid value rejected with no write; ruff clean"
+      ],
+      "validationCriteria": [
+        {
+          "action": "POST an allow-listed setting change with the token, then without the token",
+          "outcome": "with token -> overlay updated + success; without token -> 401/reject + overlay unchanged"
+        }
+      ],
+      "conditionalOutcomes": [],
+      "sourceRefs": [
+        "offices/pm/inbox/2026-08-02-from-atlas-v0.29.25-prd-review.md (US-525 token-gate ruling)"
+      ],
+      "createdAt": "2026-08-03",
+      "updatedAt": "2026-08-03"
+    },
+    {
+      "id": "US-532",
+      "parent": "F-126",
+      "type": "normal",
+      "size": "M",
+      "status": "sprint-ready",
+      "title": "Settings carousel card UI (Iris) -- renders the 5 settings + current effective values",
+      "goal": "As the operator, I want a Settings screen on the dashboard where I can see and change my preferences at a glance.",
+      "definitionOfDone": [
+        "[IRIS UX] a new Settings card in the carousel (a swipe-to system screen, like System Status) rendering the 5 Slice-1 settings with their CURRENT EFFECTIVE values (read via the US-530 layered read, surfaced through the state server)",
+        "[IRIS] reconcile with the existing US-403 setup menu (the kebab/long-press service-control overlay) -- Iris decides whether Settings is a card, is reachable from the setup menu, or both; no duplicate/competing surfaces",
+        "each control shows the real current value (toggle position / car|wall|unknown selection) sourced from the effective config, not a hardcoded default",
+        "honest apply-state: where a setting applies live it reflects immediately; where it needs a service restart to take effect, the card says so plainly (never a silent no-op that looks applied)",
+        "styling matches the F-124 carousel design system (tokens, Oswald wordmark); test/probe proves the card renders the 5 controls with effective values; ruff/lint clean"
+      ],
+      "validationCriteria": [
+        {
+          "action": "on the Pi, swipe to (or open) the Settings screen and read the 5 controls",
+          "outcome": "each shows its real current effective value; the screen matches the carousel design system"
+        }
+      ],
+      "conditionalOutcomes": [
+        "Iris owns the screen shape + US-403 reconciliation; confirm the card-vs-menu presentation with the CIO in her design"
+      ],
+      "sourceRefs": [
+        "CIO 2026-08-03 settings-screen brainstorm"
+      ],
+      "createdAt": "2026-08-03",
+      "updatedAt": "2026-08-03"
+    },
+    {
+      "id": "US-533",
+      "parent": "F-126",
+      "type": "normal",
+      "size": "M",
+      "status": "sprint-ready",
+      "title": "Wire the 5 config settings end-to-end (read effective + write overlay + apply semantics)",
+      "goal": "As the operator, I want each Settings control to actually change behavior, so toggling it takes real effect (or honestly tells me when it will).",
+      "definitionOfDone": [
+        "wire each of the 5 controls: reads its effective value (US-530), writes changes via the token-gated endpoint (US-531), and takes effect per its consumer:",
+        "pi.display.carousel.autoRotate -> carousel auto-rotation on/off, applies LIVE (JS re-reads); pi.power.mode -> PowerModeProvider re-emits mode on next cycle (fixes the bench 'unknown' -> wall); pi.alerts.audioAlerts / pi.calibration.mode / pi.analysis.triggerAfterDrive -> read by their subsystems, apply live if the consumer re-reads, else the card states 'takes effect on next boot/restart'",
+        "honest-instrument: no control silently no-ops; if it needs a restart to apply, that is shown, not hidden",
+        "pi.power.mode is a 3-state selector (car|wall|unknown), not a boolean; unknown remains the honest default",
+        "test proves each of the 5 settings round-trips (render effective -> change -> overlay written -> effective value + behavior reflect it, or the restart-note shows); ruff clean"
+      ],
+      "validationCriteria": [
+        {
+          "action": "toggle carousel auto-rotate off on the Settings screen and watch the carousel; set power mode to wall and view the System-Status power tile",
+          "outcome": "auto-rotate stops live; power mode reads WALL (not unknown); both survive a reboot via the overlay"
+        }
+      ],
+      "conditionalOutcomes": [],
+      "sourceRefs": [
+        "CIO 2026-08-03 settings-screen brainstorm"
+      ],
+      "createdAt": "2026-08-03",
+      "updatedAt": "2026-08-03"
+    },
+    {
+      "id": "US-534",
+      "parent": "F-126",
+      "type": "normal",
+      "size": "L",
+      "status": "pending",
+      "title": "[DEFERRED -- Slice 2] Battery / Power Test action on a System screen",
+      "goal": "As the operator, I want to trigger a battery/UPS test from the Pi so I can measure pack health on demand.",
+      "definitionOfDone": [
+        "[DEFERRED -- needs Spool design] an action (on a future System settings screen) that runs a battery drain / UPS test. A drain test deliberately runs the pack toward cutoff to measure runtime-to-cutoff (the capacity signal) -- semantics, thresholds, and SAFETY are Spool's domain; Atlas gates the shutdown/power-path touch",
+        "produces a real battery_health_log qualifying row (ties to US-526 drain writer + US-527 depth-gate verdict)",
+        "NOT groomed for build -- placeholder pending Spool design + CIO scoping"
+      ],
+      "validationCriteria": [
+        {
+          "action": "[deferred]",
+          "outcome": "[deferred -- Spool designs the test semantics first]"
+        }
+      ],
+      "conditionalOutcomes": [
+        "DEFERRED Slice 2. Needs Spool (drain-test semantics/safety) + Atlas (power/shutdown path)."
+      ],
+      "sourceRefs": [
+        "CIO 2026-08-03 settings-screen brainstorm"
+      ],
+      "createdAt": "2026-08-03",
+      "updatedAt": "2026-08-03"
+    },
+    {
+      "id": "US-535",
+      "parent": "F-126",
+      "type": "normal",
+      "size": "L",
+      "status": "pending",
+      "title": "[DEFERRED -- Slice 3] System Settings > Updates screen (OS / library / OBD2-project)",
+      "goal": "As the operator, I want an Updates screen so I can apply OS, library, and OBD2-project updates from the Pi.",
+      "definitionOfDone": [
+        "[DEFERRED -- future epic] a System Settings sub-screen for Updates: OS, Python libraries, and OBD2-project updates. Builds on the EXISTING pi.update.* config (update.enabled, applyEnabled=false, rollbackEnabled) -- not greenfield",
+        "Slice 1 may ship a non-functional PLACEHOLDER card only; the real self-update engine is its own epic (design + safety + rollback)",
+        "NOT groomed for build -- placeholder pending its own grooming"
+      ],
+      "validationCriteria": [
+        {
+          "action": "[deferred]",
+          "outcome": "[deferred -- own epic]"
+        }
+      ],
+      "conditionalOutcomes": [
+        "DEFERRED Slice 3. Own epic building on pi.update.*; a placeholder screen is the only near-term piece."
+      ],
+      "sourceRefs": [
+        "CIO 2026-08-03 settings-screen brainstorm"
+      ],
+      "createdAt": "2026-08-03",
+      "updatedAt": "2026-08-03"
     }
   ]
 }
