@@ -4,7 +4,7 @@
 |---|---|
 | **Author** | Iris (UI/UX) |
 | **Date** | 2026-08-03 |
-| **Status** | DRAFT — 4 prototypes for CIO to pick priorities (design-before-build). GPS + baro sensor ON HOLD (CIO). |
+| **Status** | **CIO priorities set 2026-08-03: P2 (Engine card) + P3 (post-drive review) = PRIORITY; P4 = low-priority/fun, re-styled as an aircraft attitude indicator for the Eclipse; P1 folded into P2.** GPS + baro sensor ON HOLD. P2/P3 build gated on Spool's per-PID confirms + boost bands (+ Atlas for P3's server tier). |
 | **Directive** | CIO 2026-08-03: take full advantage of the sensor data we already have; **fact-check every readout against what the OBDLink actually returns; NO dead "no source" displays.** |
 | **Companion** | `proposals/2026-08-03-full-advantage-sensor-prototypes.html` + hosted artifact |
 | **Palette** | `specs/UI/tokens.css` |
@@ -43,8 +43,10 @@ refine only the zero-point. Boost **bands** (what's normal/spirited/over) are Sp
   throttle/load + STFT/LTFT + voltage. Richer, but adds a 5th card to the consolidated 4-card set.
 - **P3 · Post-drive review** — server-analytics surface from logged data: **boost/spool trace**,
   **g-force trace**, **corner-lean**, **grade profile** over the drive. Deepest value; server-tier build.
-- **P4 · IMU dynamics (gyro)** — the underused gyro: **lean/roll + yaw-rate** cornering readout and a
-  gyro-sharpened compass. IMU-only, small.
+- **P4 · Attitude indicator (LOW PRIORITY / FUN, CIO 2026-08-03)** — an **aircraft "gyro horizon" for
+  the Eclipse**: aircraft pitch → road **grade** (IMU pitch), aircraft bank → body **lean** in corners
+  (IMU roll); sky/ground horizon that rolls + pitches, a pitch ladder, a roll/bank scale, amber Eclipse
+  "wings" as the fixed reference, + yaw-rate. IMU-only; needs pitch/roll/gyro exposed in `states/imu`.
 
 ## 2. Rules honored
 - **No dead displays:** every readout maps to a CONFIRMED signal; a signal that isn't available is

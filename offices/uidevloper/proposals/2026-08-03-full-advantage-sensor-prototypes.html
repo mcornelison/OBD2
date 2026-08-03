@@ -79,15 +79,12 @@ h2{font-size:20px;margin:0;letter-spacing:-.01em;font-weight:640;}
 .pdcell .h{font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--dv-t3);margin-bottom:2px;}
 .pdcell svg{flex:1;width:100%;}
 .pdcell .pk{font-size:11px;color:var(--dv-t2);} .pdcell .pk b{color:#eef2f6;}
-/* imu dynamics */
-.imwrap{flex:1;display:flex;gap:8px;}
-.leancol{flex:1;background:var(--dv-tile);border:1px solid var(--dv-line);border-radius:7px;position:relative;overflow:hidden;}
-.leancol canvas{position:absolute;inset:0;width:100%;height:100%;}
-.leanlab{position:absolute;top:5px;left:0;right:0;text-align:center;font-size:9px;letter-spacing:.12em;color:var(--dv-t3);text-transform:uppercase;}
-.leanval{position:absolute;bottom:5px;left:0;right:0;text-align:center;font-size:12px;color:var(--dv-t2);}
-.rcol{flex:.9;display:flex;flex-direction:column;gap:8px;}
-.yaw{flex:1;background:var(--dv-tile);border:1px solid var(--dv-line);border-radius:7px;display:flex;flex-direction:column;align-items:center;justify-content:center;}
-.yaw .v{font-family:var(--display);font-size:30px;font-weight:700;color:#eef2f6;} .yaw .l{font-size:9px;letter-spacing:.1em;color:var(--dv-t3);text-transform:uppercase;}
+/* P4 attitude indicator (aircraft gyro, Eclipse-themed) — full-bleed canvas */
+.ai-cv{position:absolute;inset:0;width:100%;height:100%;display:block;}
+.ai-title{position:absolute;top:6px;left:0;right:0;text-align:center;font-family:var(--display);font-size:11px;letter-spacing:.18em;color:#e9eef3;text-transform:uppercase;z-index:3;text-shadow:0 1px 3px #000;}
+.ai-ro{position:absolute;bottom:9px;font-family:var(--display);letter-spacing:.08em;color:#e9eef3;text-transform:uppercase;z-index:3;text-shadow:0 1px 3px #000;font-size:10px;}
+.ai-ro b{display:block;font-size:27px;line-height:1;font-weight:700;} .ai-left{left:14px;text-align:left;} .ai-right{right:14px;text-align:right;}
+.ai-yaw{position:absolute;bottom:11px;left:0;right:0;text-align:center;font-family:var(--mono);font-size:10px;color:#cdd6dd;z-index:3;text-shadow:0 1px 3px #000;}
 .datachip{display:inline-block;font-size:9px;padding:1px 6px;border-radius:8px;background:var(--dv-tile);color:var(--dv-green);border:1px solid var(--dv-line);}
 .datachip.warn{color:var(--dv-amber);}
 </style>
@@ -106,7 +103,7 @@ h2{font-size:20px;margin:0;letter-spacing:-.01em;font-weight:640;}
   </header>
 
   <section>
-    <div class="sec-head"><span class="sec-num">P1</span><h2>Boost + vitals on the driving view</h2><span class="sec-sub">live · lowest lift</span></div>
+    <div class="sec-head"><span class="sec-num">P1</span><h2>Boost + vitals on the driving view</h2><span class="sec-sub">folded → P2</span></div>
     <div class="split">
       <figure style="margin:0"><div class="bezel"><div class="screen" id="s1"></div></div></figure>
       <div class="rail"><h3>What it adds</h3>
@@ -119,7 +116,7 @@ h2{font-size:20px;margin:0;letter-spacing:-.01em;font-weight:640;}
   </section>
 
   <section>
-    <div class="sec-head"><span class="sec-num">P2</span><h2>Dedicated "Engine" card</h2><span class="sec-sub">a 5th carousel screen</span></div>
+    <div class="sec-head"><span class="sec-num">P2</span><h2>Dedicated "Engine" card</h2><span class="sec-sub" style="color:var(--accent)">★ priority</span></div>
     <div class="split">
       <figure style="margin:0"><div class="bezel"><div class="screen" id="s2"></div></div></figure>
       <div class="rail"><h3>The full engine picture</h3>
@@ -131,7 +128,7 @@ h2{font-size:20px;margin:0;letter-spacing:-.01em;font-weight:640;}
   </section>
 
   <section>
-    <div class="sec-head"><span class="sec-num">P3</span><h2>Post-drive review</h2><span class="sec-sub">server analytics · deepest</span></div>
+    <div class="sec-head"><span class="sec-num">P3</span><h2>Post-drive review</h2><span class="sec-sub" style="color:var(--accent)">★ priority</span></div>
     <div class="split">
       <figure style="margin:0"><div class="bezel"><div class="screen" id="s3"></div></div></figure>
       <div class="rail"><h3>What the logged data unlocks</h3>
@@ -143,13 +140,13 @@ h2{font-size:20px;margin:0;letter-spacing:-.01em;font-weight:640;}
   </section>
 
   <section>
-    <div class="sec-head"><span class="sec-num">P4</span><h2>IMU dynamics — the gyro we're not using</h2><span class="sec-sub">IMU-only · small</span></div>
+    <div class="sec-head"><span class="sec-num">P4</span><h2>Attitude indicator — an aircraft gyro for the Eclipse</h2><span class="sec-sub">low priority · fun</span></div>
     <div class="split">
       <figure style="margin:0"><div class="bezel"><div class="screen" id="s4"></div></div></figure>
-      <div class="rail"><h3>Cornering feel from the gyro</h3>
-        <p class="lead">The ICM-20948's gyro (yaw/roll rate) is collected but unused. A <b>lean/roll horizon</b> + <b>yaw-rate</b> readout adds a driving-dynamics feel and sharpens the compass.</p>
-        <p><span class="datachip">gyro roll</span> <span class="datachip">gyro yaw</span> — confirmed on the IMU.</p>
-        <p><b>Needs:</b> the gyro exposed in <code>states/imu</code> (Atlas/Ralph — small). Fun, low-risk; pairs with the g-force already shown.</p>
+      <div class="rail"><h3>The artificial horizon, for a car</h3>
+        <p class="lead">The classic aviation "gyro horizon," mapped to the Eclipse: aircraft <b>pitch → your road GRADE</b>, aircraft <b>bank → your body LEAN</b> in corners. The sky/ground horizon rolls with lean and pitches with grade; the amber wings are your fixed reference.</p>
+        <p><span class="datachip">IMU pitch → grade</span> <span class="datachip">IMU roll → lean</span> <span class="datachip">gyro yaw</span> — all confirmed on the IMU.</p>
+        <p><b>Low priority + fun</b> (your call). Needs the gyro/roll+pitch exposed in <code>states/imu</code> (Atlas/Ralph — small). The pitch ladder + roll scale are exaggerated slightly so gentle grades/leans still read.</p>
       </div>
     </div>
   </section>
@@ -228,20 +225,52 @@ function p3(){
        '</svg><div class="pk">L/R balance <b>even</b></div></div>'+
    '</div></div>';
 }
-// ---- P4 IMU dynamics ----
+// ---- P4 attitude indicator (aircraft gyro, Eclipse-themed) ----
+// aircraft PITCH -> road GRADE (IMU pitch); aircraft BANK -> body LEAN in corners (IMU roll).
 function p4(){
-  var roll=18*Math.sin(pT*0.7), yaw=25*Math.sin(pT*0.9);
+  var roll = 22*Math.sin(pT*0.6) + 6*Math.sin(pT*1.7);       // body lean °, corners
+  var grade = 5.5*Math.sin(pT*0.33);                          // road grade °, hills
+  var yaw = 30*Math.sin(pT*0.6+0.3);                          // yaw rate °/s
+  var LR = roll>1?"RIGHT":roll<-1?"LEFT":"LEVEL";
   document.getElementById("s4").innerHTML=tb("BT ⇅ ⚡")+
-   '<div class="body"><div class="ct"><span class="rec"></span>DYNAMICS · gyro</div><div class="imwrap">'+
-     '<div class="leancol"><canvas id="p4h"></canvas><div class="leanlab">Lean / roll</div><div class="leanval">'+roll.toFixed(0)+'° '+(roll>1?"right":roll<-1?"left":"level")+'</div></div>'+
-     '<div class="rcol">'+
-       '<div class="yaw"><div class="v">'+(yaw>=0?"+":"")+yaw.toFixed(0)+'</div><div class="l">°/s yaw rate</div></div>'+
-       '<div class="yaw"><div class="v" style="font-size:24px">0.'+Math.abs(Math.round(yaw*3))%99+'</div><div class="l">turn · lat g</div></div>'+
-     '</div></div></div>';
-  var cv=document.getElementById("p4h");if(cv){var x=cv.getContext("2d"),w=cv.width=cv.offsetWidth,h=cv.height=cv.offsetHeight,cx=w/2,cy=h/2;
-    x.clearRect(0,0,w,h);x.save();x.translate(cx,cy);x.rotate(-roll*Math.PI/180);
-    x.fillStyle="#12303f";x.fillRect(-w,-2,2*w,h*2);x.strokeStyle="#5aa9d6";x.lineWidth=2;x.beginPath();x.moveTo(-w,0);x.lineTo(w,0);x.stroke();
-    x.restore();x.strokeStyle="#eef2f6";x.lineWidth=2;x.beginPath();x.moveTo(cx-16,cy);x.lineTo(cx-4,cy);x.moveTo(cx+4,cy);x.lineTo(cx+16,cy);x.stroke();}
+   '<div class="body" style="padding:0;position:absolute;top:26px;bottom:0;left:0;right:0">'+
+     '<canvas id="p4ai" class="ai-cv"></canvas>'+
+     '<div class="ai-title">Attitude · grade + lean</div>'+
+     '<div class="ai-ro ai-left">Grade<b>'+(grade>=0?"+":"")+grade.toFixed(1)+'°</b></div>'+
+     '<div class="ai-ro ai-right">Lean<b>'+Math.abs(roll).toFixed(0)+'° '+(LR!=="LEVEL"?LR[0]:"")+'</b></div>'+
+     '<div class="ai-yaw">yaw '+(yaw>=0?"+":"")+yaw.toFixed(0)+' °/s · '+LR+'</div>'+
+   '</div>';
+  var cv=document.getElementById("p4ai"); if(cv) drawAI(cv, roll, grade);
+}
+function drawAI(cv, roll, pitchDeg){
+  var x=cv.getContext("2d"), w=cv.width=cv.offsetWidth||454, h=cv.height=cv.offsetHeight||294, cx=w/2, cy=h/2;
+  var PPD=6;  // px per pitch degree (a touch exaggerated so grade reads)
+  x.clearRect(0,0,w,h);
+  x.save(); x.translate(cx,cy); x.rotate(-roll*Math.PI/180); x.translate(0, pitchDeg*PPD);
+  x.fillStyle="#2f74a8"; x.fillRect(-w*1.6,-h*3,w*3.2,h*3);          // sky
+  x.fillStyle="#6f5330"; x.fillRect(-w*1.6,0,w*3.2,h*3);            // ground
+  x.strokeStyle="#f3f6f8"; x.lineWidth=2.5; x.beginPath(); x.moveTo(-w*1.6,0); x.lineTo(w*1.6,0); x.stroke();  // horizon
+  x.strokeStyle="rgba(255,255,255,.75)"; x.fillStyle="rgba(255,255,255,.8)"; x.lineWidth=1.4;
+  x.font="600 10px "+"Oswald,sans-serif"; x.textAlign="center";
+  for(var d=-20; d<=20; d+=5){ if(d===0) continue; var y=-d*PPD; var len=(d%10===0)?54:28;
+    x.beginPath(); x.moveTo(-len/2,y); x.lineTo(len/2,y); x.stroke();
+    if(d%10===0){ x.fillText(Math.abs(d), -len/2-13, y+3); x.fillText(Math.abs(d), len/2+13, y+3); } }
+  x.restore();
+  // roll scale arc + bank ticks (fixed)
+  var R=Math.min(w,h)*0.42;
+  x.strokeStyle="rgba(255,255,255,.55)"; x.lineWidth=1.4;
+  x.beginPath(); x.arc(cx,cy,R,-Math.PI*0.75,-Math.PI*0.25); x.stroke();
+  for(var b=-30;b<=30;b+=10){ var a=-Math.PI/2 + b*Math.PI/180;
+    x.beginPath(); x.moveTo(cx+Math.cos(a)*R, cy+Math.sin(a)*R);
+    x.lineTo(cx+Math.cos(a)*(R-(b===0?11:6)), cy+Math.sin(a)*(R-(b===0?11:6))); x.stroke(); }
+  // rolling bank pointer
+  var pa=-Math.PI/2 + roll*Math.PI/180;
+  x.fillStyle="#FFC400"; x.beginPath(); x.arc(cx+Math.cos(pa)*(R-3), cy+Math.sin(pa)*(R-3), 4, 0, 7); x.fill();
+  // fixed Eclipse center mark (amber "wings" + hub)
+  x.strokeStyle="#FFC400"; x.lineWidth=3.5; x.lineCap="round"; x.beginPath();
+  x.moveTo(cx-46,cy); x.lineTo(cx-16,cy); x.lineTo(cx-16,cy+7);
+  x.moveTo(cx+46,cy); x.lineTo(cx+16,cy); x.lineTo(cx+16,cy+7); x.stroke();
+  x.fillStyle="#FFC400"; x.beginPath(); x.arc(cx,cy,3.5,0,7); x.fill();
 }
 var pT=0,raf=null;
 function frame(ts){if(t0===null)t0=ts;pT=(ts-t0)/1000;p1();p2();p4();raf=requestAnimationFrame(frame);}  // p3 is static (drawn once)
