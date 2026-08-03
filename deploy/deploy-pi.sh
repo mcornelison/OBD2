@@ -26,8 +26,10 @@
 #     1. rsync the working tree to PI_PATH on the Pi (excludes .git/, .venv/, data/, etc.)
 #     2. Install/refresh systemd-journald persistent-storage drop-in (US-210, idempotent)
 #     3. Enforce POWER_OFF_ON_HALT=0 in Pi 5 EEPROM (US-253, wake-on-power, idempotent)
-#     4. Update venv deps from requirements.txt + requirements-pi.txt at ~/obd2-venv
-#     5. Restart eclipse-obd systemd service if installed (warn-only if absent)
+#     4. Set GPU CMA to 256M in /boot/firmware/config.txt (US-524, idempotent,
+#        takes effect on next reboot)
+#     5. Update venv deps from requirements.txt + requirements-pi.txt at ~/obd2-venv
+#     6. Restart eclipse-obd systemd service if installed (warn-only if absent)
 #
 #   --init mode (additionally):
 #     1. Verify SSH gate (ssh PI_USER@PI_HOST hostname) before doing anything
@@ -781,6 +783,43 @@ step_enforce_eeprom_power_off_on_halt() {
         return 0
     fi
     remote "sudo bash '${PI_PATH}/deploy/enforce-eeprom-power-off-on-halt.sh'"
+}
+
+step_set_gpu_cma() {
+    # US-524 / F-124: raise the GPU CMA pool from the Pi 5's 64 MiB device-tree
+    # default to 256 MiB, via the vc4-kms-v3d overlay's `cma-256` param in
+    # /boot/firmware/config.txt. Headroom that COMPLEMENTS US-522's
+    # --disable-gpu; explicitly not a standalone fix for the freeze class.
+    #
+    # Same posture as step_enforce_eeprom_power_off_on_halt above: a standalone
+    # idempotent script, run with sudo, re-asserted on EVERY deploy so a Pi
+    # rebuilt via --init (or a config.txt rewritten by an OS image update)
+    # lands back on the intended value instead of silently reverting to 64 MiB.
+    # Runs AFTER sync_tree so deploy/set-gpu-cma.sh exists on the Pi.
+    #
+    # NOT cmdline.txt: the live Pi's /proc/cmdline carries no `cma=` arg (the
+    # 64 MiB pool comes from the device tree), and a malformed cmdline.txt can
+    # break `root=` on a headless box, whereas a bad overlay param only makes
+    # the firmware skip the overlay -- dark display, SSH still reachable.
+    #
+    # BOOT-CONFIG SURFACE (deploy-contract blind spot, same class as the
+    # /etc/chromium.d note in US-522): /boot/firmware/config.txt is OS-shipped
+    # and can be rewritten out-of-band by `rpi-update`, an OS image upgrade, or
+    # raspi-config. The script is idempotent and re-run on every deploy
+    # precisely so that drift self-heals.
+    #
+    # The change takes effect on the NEXT BOOT only. This step deliberately
+    # does not reboot the Pi -- an unattended reboot mid-deploy would race the
+    # service restarts below. The script prints REBOOT REQUIRED; CmaTotal stays
+    # at the old value until then.
+    echo "--- Step: Setting GPU CMA to 256M in boot config (US-524 / F-124) ---"
+    if $DRY_RUN; then
+        echo "DRY-RUN would run: sudo bash ${PI_PATH}/deploy/set-gpu-cma.sh"
+        echo "DRY-RUN would verify: /boot/firmware/config.txt vc4-kms-v3d overlay carries cma-256"
+        echo "DRY-RUN note: takes effect on next reboot; confirm with grep CmaTotal /proc/meminfo"
+        return 0
+    fi
+    remote "sudo bash '${PI_PATH}/deploy/set-gpu-cma.sh'"
 }
 
 step_install_rfkill_unblock() {
@@ -1924,6 +1963,14 @@ step_install_nm_wifi_powersave
 # standalone script is idempotent -- no-op when already correct. Runs AFTER
 # sync_tree so deploy/enforce-eeprom-power-off-on-halt.sh exists on the Pi.
 step_enforce_eeprom_power_off_on_halt
+
+# US-524 / F-124: GPU CMA headroom (64 MiB device-tree default -> 256 MiB via
+# the vc4-kms-v3d overlay's cma-256 param). Ordered directly after the EEPROM
+# step because both are idempotent BOX-level boot/firmware config re-asserted
+# on every deploy, and both must run AFTER sync_tree so their standalone
+# scripts exist on the Pi. Takes effect on the next reboot; the script says so
+# rather than letting the deploy imply the pool was raised immediately.
+step_set_gpu_cma
 
 # US-477 / F-120: re-assert the canonical OBDLink MAC into /etc/default/obdlink
 # on EVERY deploy so a drifted Pi (like the 2026-07-17 phantom that captured
