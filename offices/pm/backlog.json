@@ -314,10 +314,10 @@
       "parent": "E-OPS",
       "title": "Migrate from camelCase to snake_case",
       "description": "",
-      "status": "active",
+      "status": "complete",
       "renamedFrom": "B-006",
       "createdAt": "2026-05-27",
-      "updatedAt": "2026-05-27"
+      "updatedAt": "2026-08-02"
     },
     {
       "id": "F-008",
@@ -514,10 +514,10 @@
       "parent": "E-004",
       "title": "Config-Driven Infrastructure Addresses (Standing Rule)",
       "description": "",
-      "status": "active",
+      "status": "complete",
       "renamedFrom": "B-044",
       "createdAt": "2026-05-27",
-      "updatedAt": "2026-05-27"
+      "updatedAt": "2026-08-02"
     },
     {
       "id": "F-045",
@@ -944,11 +944,11 @@
       "parent": "E-001",
       "title": "GEM-7 — System status tile (BT link, last sync, Pi power mode, ladder stage)",
       "description": "GEM-7 — System status tile (BT link, last sync, Pi power mode, ladder stage)",
-      "status": "active",
+      "status": "complete",
       "currentVersion": "V0.29.3",
       "renamedFrom": "B-092",
       "createdAt": "2026-05-27",
-      "updatedAt": "2026-05-27"
+      "updatedAt": "2026-08-02"
     },
     {
       "id": "F-093",
@@ -996,11 +996,11 @@
       "parent": "E-001",
       "title": "Battery Health card (touch-dashboard; Pi power/battery health) -- PIVOTED 2026-06-05 from S-3 'Drain ladder state UI'",
       "description": "Battery Health card on the F-092/F-097 chromium touch-carousel. PIVOTED 2026-06-05 (Iris, CIO-approved): the key-off sequencer now prevents the Pi draining down the UPS ladder, so the old 'drain ladder state UI' framing is obsolete -- ladder demoted to a failsafe; this surface shows battery HEALTH (renamedFrom intent, same ID per Iris). Hard dep on F-103 (shared chromium kiosk + eclipse-states-http). Spec docs/superpowers/specs/2026-06-05-pi-touch-carousel-dashboard-f092-f097-design.md; groom-ready pending Atlas design-gate signoff.",
-      "status": "active",
+      "status": "complete",
       "currentVersion": "V0.29.3",
       "renamedFrom": "B-097",
       "createdAt": "2026-05-27",
-      "updatedAt": "2026-06-28"
+      "updatedAt": "2026-08-02"
     },
     {
       "id": "F-098",
@@ -1117,10 +1117,10 @@
       "parent": "E-OPS",
       "title": "vehicle_info ECU + Calibration Signature Manual-Tracking Field",
       "description": "vehicle_info ECU + Calibration Signature Manual-Tracking Field",
-      "status": "active",
+      "status": "complete",
       "renamedFrom": "B-108",
       "createdAt": "2026-05-27",
-      "updatedAt": "2026-06-28"
+      "updatedAt": "2026-08-02"
     },
     {
       "id": "F-109",
@@ -1137,19 +1137,19 @@
       "parent": "E-001",
       "title": "On-Pi DTC / check-engine viewer + gated Mode-04 clear (Card 5 of the touch dashboard)",
       "description": "On-Pi DTC/check-engine viewer surface + safety-gated Mode-04 clear, with a KOEO read independent of DriveDetector. Card 5 (Alerts+DTC) of the F-092/F-097 carousel. Spec drafted + CIO-approved 2026-06-05 (post drive-27 MIL: P0443 EVAP read+cleared off the Pi); spec docs/superpowers/specs/2026-06-05-pi-dtc-check-engine-viewer-clear-design.md. STATUS: pending Atlas design-gate signoff (load-bearing net-new write-to-vehicle Mode-04 path) -- Iris files the formal groom-ready pointer on Atlas's nod. SEQUENCE (Atlas greenlight 2026-06-19): F-103 -> carousel shell -> System Status + Battery Health cards -> System Setup+polkit -> pygame sunset -> THIS (Card 5, LAST). BUILD CONDITIONS: C-2 KOEO capture path independent of DriveDetector (drive_id=NULL, or viewer is blank key-on); C-3 Mode 02 dead on MD326328 -> realtime_data fallback (see F-109). Rule-10 DoD: state-server extension + emitters + Mode-04 path + token each land with matching specs/architecture.md (+ specs/UI/) in-sprint. Iris story split (spec section 10 M-1): US-A dtc emitter + state-server endpoint + static-table loader/sync; US-B takeover + severity-styled ribbon; US-C Alerts card (hero+list) + detail (freeze-frame + severity-gated fix + trust badge); US-D Clear-DTC Mode-04 path + gate + confirm + re-read + session-lock (load-bearing, pairs w/ Atlas A-1); US-E freeze-frame capture-or-honest-fallback. Spool owns severity taxonomy + DSM P1xxx curation; safety semantics offices/tuner/dtc-display-clear-safety-advisory.md; reference code specs/examples/dtc_read_and_clear_koeo.py.",
-      "status": "active",
+      "status": "complete",
       "currentVersion": "V0.29.20",
       "createdAt": "2026-06-28",
-      "updatedAt": "2026-07-31"
+      "updatedAt": "2026-08-02"
     },
     {
       "id": "F-110",
       "title": "EDR Dedicated-Reader Internal Bus -- Slice 1",
       "description": "Slice 1 (gate #1) of the EDR epic: new src/pi/bus/ package (Sample envelope, QoS, SampleBus with STREAM + STATE retained topics + integrity-gap markers, Subscription with QoS overflow) + a PersistenceSubscriber that writes realtime_data by REUSING ObdDataLogger.logReading() (byte-identical golden master) + a publish seam in RealtimeDataLogger, all behind a pi.bus.enabled flag (default off). Ships DARK; stdlib only; hardware-independent. Spec: docs/superpowers/specs/2026-06-18-edr-dedicated-reader-bus-contract-design.md.",
       "parent": "E-006",
-      "status": "active",
+      "status": "complete",
       "createdAt": "2026-06-19",
-      "updatedAt": "2026-06-19",
+      "updatedAt": "2026-08-02",
       "deployStatus": "awaiting-validation",
       "currentVersion": "V0.29.0",
       "note": "EDR bus Slice 1 shipped Sprint 46 (6/6); deployed V0.29.0 ships-dark behind pi.bus.enabled=false. Awaiting post-merge Pi flag-flip + byte-identical realtime_data validation (separate deploy gate) before complete."
@@ -1281,11 +1281,11 @@
     {
       "id": "F-125",
       "parent": "E-006",
-      "status": "pending",
+      "status": "active",
       "title": "GPS source + honest altitude (real I2C GPS + interim derived) -- live-card upgrade",
       "description": "CIO 2026-08-01 (Iris consolidated work-package: offices/pm/inbox/2026-08-01-from-iris-gps-altitude-workpackage-for-grooming.md). states/imu has NO altitude source (no baro on ICM-20948, no GPS producer). Add honest altitude two ways: (a) REAL -- an Adafruit PA1010D I2C GPS (#4415 STEMMA QT) -> new states/gps source (DELTA-2 seam, Atlas contract) giving absolute altitude +-10-20m + true speed/heading/position (CIO ordering the part; Spool owns GPS-value trust); (b) INTERIM (CIO-greenlit to SHOW now, labeled approximate, NOT safety-critical) -- altitude = home-elevation + integral(sin(pitch)*speed dt) from IMU grade + OBD speed, home-anchored, re-anchored on every successful server sync (Spool owns the derivation math). Plus home-location config (pi.location.home.{lat,lon,elevationM}; location PII stays in .env). None of this touches the in-flight V0.29.23 F-124 work -- US-508 altimeter shows 'no source' meanwhile; GPS later swaps the feed + drops the approximate marker.",
       "createdAt": "2026-08-01",
-      "updatedAt": "2026-08-01"
+      "updatedAt": "2026-08-02"
     }
   ],
   "stories": [
@@ -1295,7 +1295,7 @@
       "title": "Backfill 2 ECU lineage rows (supersede placeholder; close MD346675 era + open MD326328 era) + join verification",
       "type": "normal",
       "size": "S",
-      "status": "sprint-ready",
+      "status": "complete",
       "goal": "As a server-side analytics consumer wanting per-drive ECU attribution, I want the historical ECU lineage backfilled into vehicle_info as exactly two real eras -- prior ECU (MD346675) active before the ~2026-05-22 swap + new modified-EPROM ECU (MD326328) active from the swap onward -- SUPERSEDING the degenerate PRE_TRACKING_UNKNOWN bootstrap placeholder, so any drive's start_time_utc resolves to the active ECU at that time (and the stuck June-5 dtc_freeze_frame orphan self-heals). Per Atlas 2026-06-28 ruling: 2 rows (option a), NOT 3.",
       "definitionOfDone": [
         "Supersede the degenerate PRE_TRACKING_UNKNOWN placeholder (zero-width install==removal==2026-05-01 11:53:45) -- it is a failed bootstrap, NOT lineage; do NOT retain it as a 3rd live row. Net post-backfill state = exactly 2 real ECU-era rows (Atlas ruling option a; a 3rd row would overlap the MD346675 window at the resolver's >1-window raise, sync.py:605)",
@@ -1368,7 +1368,7 @@
       ],
       "tasks": [],
       "createdAt": "2026-05-28",
-      "updatedAt": "2026-06-28"
+      "updatedAt": "2026-08-02"
     },
     {
       "id": "US-370",
@@ -1455,7 +1455,7 @@
       "parent": "F-076",
       "type": "tech-debt",
       "size": "S",
-      "status": "sprint-ready",
+      "status": "complete",
       "goal": "As the test suite, the synthetic divergence fixture should declare its historical drive_statistics table with the current non-data_quality columns (summary_id PK + FK to drive_summary(id)), so the test once again provokes the intended data_quality-missing OperationalError and proves the harness catches the I-041 schema-vs-ORM seam -- rather than failing on a summary_id-missing artifact of the rename.",
       "definitionOfDone": [
         "Historical CREATE TABLE drive_statistics block in test_harnessTooling_canCatchSchemaVsOrmDivergence_synthetic uses summary_id (NOT NULL), PRIMARY KEY (summary_id, parameter_name), FOREIGN KEY (summary_id) REFERENCES drive_summary(id)",
@@ -1485,7 +1485,7 @@
         "US-371"
       ],
       "createdAt": "2026-06-05",
-      "updatedAt": "2026-06-19"
+      "updatedAt": "2026-08-02"
     },
     {
       "id": "US-380",
@@ -1493,7 +1493,7 @@
       "parent": "F-110",
       "type": "normal",
       "size": "M",
-      "status": "sprint-ready",
+      "status": "complete",
       "goal": "Create the src/pi/bus/ package foundation: the immutable Sample envelope, the QoS enum, the topic prefix-matcher, and Subscription (one bounded queue per consumer with a QoS-keyed overflow policy + observability stats). Pure data types + queue logic, no wiring.",
       "definitionOfDone": [
         "Sample is a frozen dataclass with fields: topic, source, value(float|tuple), unit, tsUtc, tsCapture, driveId, dataSource, seq",
@@ -1535,7 +1535,7 @@
         "edr-bus-slice1-draft-2026-06-18"
       ],
       "createdAt": "2026-06-19",
-      "updatedAt": "2026-06-19"
+      "updatedAt": "2026-08-02"
     },
     {
       "id": "US-381",
@@ -1543,7 +1543,7 @@
       "parent": "F-110",
       "type": "normal",
       "size": "S",
-      "status": "sprint-ready",
+      "status": "complete",
       "goal": "Add the SampleBus broker: subscribe() returns a Subscription; publish() fans a Sample out to every matching subscription synchronously and NEVER blocks (the queue buffer is the only async boundary). STREAM topics have no history.",
       "definitionOfDone": [
         "SampleBus.subscribe(topics, qos, name, maxQueue) returns a usable Subscription",
@@ -1579,7 +1579,7 @@
         "edr-bus-slice1-draft-2026-06-18"
       ],
       "createdAt": "2026-06-19",
-      "updatedAt": "2026-06-19"
+      "updatedAt": "2026-08-02"
     },
     {
       "id": "US-382",
@@ -1587,7 +1587,7 @@
       "parent": "F-110",
       "type": "normal",
       "size": "S",
-      "status": "sprint-ready",
+      "status": "complete",
       "goal": "Add retained STATE topics (publish(retain=True) -> last-value-cache, replayed to new subscribers) for slowly-changing data (VIN, calibration, state.config.*); and the honest-instrument integrity-gap marker -- a LOSSLESS overflow publishes event.integrity.gap rather than silently dropping.",
       "definitionOfDone": [
         "publish(sample, retain=True) stores the latest sample per topic",
@@ -1624,7 +1624,7 @@
         "edr-bus-slice1-draft-2026-06-18"
       ],
       "createdAt": "2026-06-19",
-      "updatedAt": "2026-06-19"
+      "updatedAt": "2026-08-02"
     },
     {
       "id": "US-383",
@@ -1632,7 +1632,7 @@
       "parent": "F-110",
       "type": "normal",
       "size": "M",
-      "status": "sprint-ready",
+      "status": "complete",
       "goal": "Add the subscriber that persists raw.obd.* samples to realtime_data by REUSING the existing ObdDataLogger.logReading() write path -- so the persisted rows are identical to today's inline path by construction. This is the 'one subscriber that saves data for the server' (B-104 raw emitter).",
       "definitionOfDone": [
         "PersistenceSubscriber(subscription, dataLogger) with start(), stop(), and handleSample(sample)",
@@ -1673,7 +1673,7 @@
         "edr-bus-slice1-draft-2026-06-18"
       ],
       "createdAt": "2026-06-19",
-      "updatedAt": "2026-06-19"
+      "updatedAt": "2026-08-02"
     },
     {
       "id": "US-384",
@@ -1681,7 +1681,7 @@
       "parent": "F-110",
       "type": "normal",
       "size": "M",
-      "status": "sprint-ready",
+      "status": "complete",
       "goal": "Give the OBD poll loop a producer role: when a SampleBus is injected, _logReadingSafe publishes a raw.obd.<param> Sample (per-producer monotonic seq) instead of writing the DB; when no bus, the existing write path is unchanged. Add the pi.bus.enabled config flag, default false.",
       "definitionOfDone": [
         "RealtimeDataLogger.__init__ gains optional bus=None and producerSource='obd'; adds a _seq counter",
@@ -1720,7 +1720,7 @@
         "edr-bus-slice1-draft-2026-06-18"
       ],
       "createdAt": "2026-06-19",
-      "updatedAt": "2026-06-19"
+      "updatedAt": "2026-08-02"
     },
     {
       "id": "US-385",
@@ -1728,7 +1728,7 @@
       "parent": "F-110",
       "type": "normal",
       "size": "M",
-      "status": "sprint-ready",
+      "status": "complete",
       "goal": "Wire the bus into the orchestrator: when pi.bus.enabled, build a SampleBus, start a PersistenceSubscriber on raw.obd.* (LOSSLESS) bound to the logger's ObdDataLogger, and inject the bus into the logger; when off, behavior is identical to today. Slice 1 ships dark.",
       "definitionOfDone": [
         "_initializeDataLogger builds a SampleBus + starts a PersistenceSubscriber on ['raw.obd.*'] LOSSLESS + passes the bus to createRealtimeLoggerFromConfig, ONLY when pi.bus.enabled is true",
@@ -1769,7 +1769,7 @@
         "edr-bus-slice1-draft-2026-06-18"
       ],
       "createdAt": "2026-06-19",
-      "updatedAt": "2026-06-19"
+      "updatedAt": "2026-08-02"
     },
     {
       "id": "US-386",
@@ -1994,7 +1994,7 @@
       "title": "dtc_freeze_frame sync: quarantine unresolvable cross-tier rows after N failures (stop silent infinite retry)",
       "type": "issue",
       "size": "S",
-      "status": "sprint-ready",
+      "status": "complete",
       "goal": "As the sync subsystem, I want a single unresolvable freeze-frame to stop retrying forever (it ran 27x/day for 3+ weeks with no dead-letter/quarantine/alert -- a silent infinite loop that would mask a REAL sync failure in the noise). 'Fail loudly, no silent re-resolve' is correct per-attempt but wrong at the queue level. After N consecutive identical resolution failures, quarantine the record (dead-letter table OR data_quality flag -- Atlas quick-read requested) and surface it ONCE. General safety net; US-367 self-heals the current specific orphan.",
       "definitionOfDone": [
         "Atlas invariant 1 -- after N consecutive identical cross-tier resolution failures on the same record, the sync loop quarantines it (dead-letter table or data_quality flag) and stops re-attempting every cycle",
@@ -2034,7 +2034,7 @@
       ],
       "tasks": [],
       "createdAt": "2026-06-28",
-      "updatedAt": "2026-06-28"
+      "updatedAt": "2026-08-02"
     },
     {
       "id": "US-392",
@@ -2042,7 +2042,7 @@
       "title": "De-dup the server address inside config.json (derive base URLs from serverHost:serverPort)",
       "type": "tech-debt",
       "size": "S",
-      "status": "sprint-ready",
+      "status": "complete",
       "goal": "As the infrastructure config, I want the A-15 structural gap behind the .10->.120 breakage closed: config.json holds the server address in multiple literals (serverBaseUrl / companionService.baseUrl) that nothing forces to agree. Derive them from serverHost:serverPort so the literal lives in ONE key -- a box move = one edit. Atlas's mirror-consistency lint already guards divergence; this removes the duplication it guards.",
       "definitionOfDone": [
         "config.json server/companion base URLs derive from serverHost:serverPort (single source key); no duplicated host literal",
@@ -2076,7 +2076,7 @@
       ],
       "tasks": [],
       "createdAt": "2026-06-28",
-      "updatedAt": "2026-06-28"
+      "updatedAt": "2026-08-02"
     },
     {
       "id": "US-393",
@@ -2084,7 +2084,7 @@
       "title": "F-103 boot splash -- chromium kiosk + localhost state server on the 3.5\" display",
       "type": "normal",
       "size": "M",
-      "status": "sprint-ready",
+      "status": "complete",
       "goal": "As the Pi at boot, I want a branded boot splash on the 3.5\" display backed by a chromium kiosk + a localhost state server, so the operator sees boot progress instead of a console/blank screen.",
       "definitionOfDone": [
         "chromium kiosk launches on boot rendering the splash on the 3.5\" display",
@@ -2121,7 +2121,7 @@
       ],
       "tasks": [],
       "createdAt": "2026-06-29",
-      "updatedAt": "2026-06-29"
+      "updatedAt": "2026-08-02"
     },
     {
       "id": "US-394",
@@ -2129,7 +2129,7 @@
       "title": "F-103 shutdown splash -- ShutdownSequencer phase-emit hook + architecture.md section 10.6",
       "type": "normal",
       "size": "M",
-      "status": "sprint-ready",
+      "status": "complete",
       "goal": "As the Pi during shutdown, I want a shutdown splash so the operator sees the staged shutdown instead of a frozen/blank screen.",
       "definitionOfDone": [
         "ShutdownSequencer emits phase events [A-2] and the splash renders",
@@ -2166,7 +2166,7 @@
       ],
       "tasks": [],
       "createdAt": "2026-06-29",
-      "updatedAt": "2026-06-29"
+      "updatedAt": "2026-08-02"
     },
     {
       "id": "US-395",
@@ -2174,7 +2174,7 @@
       "title": "F-103 deploy integration -- fold splash units into deploy-pi.sh + states-dir provisioning",
       "type": "normal",
       "size": "S",
-      "status": "sprint-ready",
+      "status": "complete",
       "goal": "As the deploy path, I want F-103's units folded into deploy-pi.sh so the splash ships with every Pi deploy.",
       "definitionOfDone": [
         "deploy-pi.sh installs + enables eclipse-boot-state.service + eclipse-states-http.service (sync-if-changed, mirroring the existing unit-install steps)",
@@ -2211,7 +2211,7 @@
       ],
       "tasks": [],
       "createdAt": "2026-06-29",
-      "updatedAt": "2026-06-29"
+      "updatedAt": "2026-08-02"
     },
     {
       "id": "US-396",
@@ -2219,7 +2219,7 @@
       "title": "F-103 defects + install-time checks (D-1/D-2/D-3 + V-1/V-2)",
       "type": "normal",
       "size": "S",
-      "status": "sprint-ready",
+      "status": "complete",
       "goal": "As the F-103 surface, I want the spec's known defects closed + the install-time checks passing.",
       "definitionOfDone": [
         "spec defects D-1/D-2/D-3 resolved",
@@ -2250,7 +2250,7 @@
       ],
       "tasks": [],
       "createdAt": "2026-06-29",
-      "updatedAt": "2026-06-29"
+      "updatedAt": "2026-08-02"
     },
     {
       "id": "US-397",
@@ -2258,7 +2258,7 @@
       "title": "Fix sync_now.py import break -- normalize Pi entry-point to pi.*-on-src convention",
       "type": "issue",
       "size": "S",
-      "status": "sprint-ready",
+      "status": "complete",
       "goal": "As the operator, I want python scripts/sync_now.py to run on the Pi so I can trigger a manual sync without a PYTHONPATH workaround.",
       "definitionOfDone": [
         "sync_now.py follows the project Pi-tier convention ([[feedback-path-convention-no-src-prefix]]): put src/ on sys.path + import pi.sync / pi.data (matching the services), NOT ROOT + src.pi.* (root cause: sync_now.py inserts repo ROOT on sys.path + imports src.pi.*, but src/pi/obdii/__init__.py:26 uses bare from pi.display import ... -> ModuleNotFoundError: No module named 'pi')",
@@ -2287,7 +2287,7 @@
       ],
       "tasks": [],
       "createdAt": "2026-06-29",
-      "updatedAt": "2026-06-29"
+      "updatedAt": "2026-08-02"
     },
     {
       "id": "US-398",
@@ -2295,7 +2295,7 @@
       "title": "Fix simulate duplicate (timestamp, parameter) rows -- test-fidelity vs data-quality ruling",
       "type": "issue",
       "size": "S",
-      "status": "sprint-ready",
+      "status": "complete",
       "goal": "As the simulate-mode test suite, I want test_noDuplicateTimestampParameterCombinations to pass deterministically, with the underlying data-quality question resolved.",
       "definitionOfDone": [
         "rule between (a) test-fidelity -- the 'no two rows share a (second-timestamp, parameter)' invariant is false at sub-second poll rates (realtime_data.timestamp is second-granularity ISO); the assertion should key on a higher-resolution timestamp or id; vs (b) real data-quality -- if production also writes sub-second-duplicate rows, second-bucketed analytics could double-count -> needs a finer timestamp or a uniqueness guard; then implement the corresponding fix (NOT investigation-only)",
@@ -2324,7 +2324,7 @@
       ],
       "tasks": [],
       "createdAt": "2026-06-29",
-      "updatedAt": "2026-06-29"
+      "updatedAt": "2026-08-02"
     },
     {
       "id": "US-399",
@@ -2332,7 +2332,7 @@
       "title": "Carousel shell -- chromium dashboard kiosk + swipe-nav + page dots + persistent top bar + eclipse-states-http full runtime",
       "type": "normal",
       "size": "M",
-      "status": "sprint-ready",
+      "status": "complete",
       "goal": "As the operator at the dash, I want a swipeable chromium dashboard with a persistent top bar so I can glance at system + battery state on the 3.5\" panel after boot.",
       "definitionOfDone": [
         "dashboard kiosk (Wayland/X11, F-103 launch-flag parity) starts on the splash HEALTHY_YIELD hand-off (A-1)",
@@ -2370,7 +2370,7 @@
       ],
       "tasks": [],
       "createdAt": "2026-06-30",
-      "updatedAt": "2026-06-30"
+      "updatedAt": "2026-08-02"
     },
     {
       "id": "US-400",
@@ -2378,7 +2378,7 @@
       "title": "System Status card + system-status emitter -- OBD-link/sync/power/drive tiles + I-033 BT-reconnect visibility",
       "type": "normal",
       "size": "M",
-      "status": "sprint-ready",
+      "status": "complete",
       "goal": "As the operator, I want OBD-link / sync / power / drive status at a glance, and to SEE when the BT link drops, so I'm not blind to a reconnect (I-033).",
       "definitionOfDone": [
         "new system-status emitter writes /run/eclipse-obd/states/system-status (schema per A-3)",
@@ -2420,7 +2420,7 @@
       ],
       "tasks": [],
       "createdAt": "2026-06-30",
-      "updatedAt": "2026-06-30"
+      "updatedAt": "2026-08-02"
     },
     {
       "id": "US-401",
@@ -2428,7 +2428,7 @@
       "title": "Battery Health card + battery-health emitter -- honest UPS LiPo view (voltage-is-not-percent + stale-green traps locked)",
       "type": "normal",
       "size": "M",
-      "status": "sprint-ready",
+      "status": "complete",
       "goal": "As the operator, I want an HONEST view of the Pi UPS battery's health (not the car battery), so I know it can shut down cleanly -- without being lied to by voltage-as-percent or stale-green.",
       "definitionOfDone": [
         "new battery-health emitter writes /run/eclipse-obd/states/battery-health (schema per A-3)",
@@ -2475,7 +2475,7 @@
       ],
       "tasks": [],
       "createdAt": "2026-06-30",
-      "updatedAt": "2026-06-30"
+      "updatedAt": "2026-08-02"
     },
     {
       "id": "US-402",
@@ -2483,7 +2483,7 @@
       "title": "Pygame sunset -- retire status_display.py/dashboard_layout.py once the HTML carousel reaches parity",
       "type": "normal",
       "size": "S",
-      "status": "sprint-ready",
+      "status": "complete",
       "goal": "As the Pi, I want exactly one dashboard surface, so retire pygame once the HTML reaches parity.",
       "definitionOfDone": [
         "status_display.py/dashboard_layout.py no longer launched (superseded; data republished via the emitters)",
@@ -2515,7 +2515,7 @@
       ],
       "tasks": [],
       "createdAt": "2026-06-30",
-      "updatedAt": "2026-06-30"
+      "updatedAt": "2026-08-02"
     },
     {
       "id": "US-403",
@@ -2523,7 +2523,7 @@
       "title": "System Setup menu + gated service control -- long-press/menu, install-fixed allow-list via A-7 privilege path, Exit/Close",
       "type": "normal",
       "size": "M",
-      "status": "sprint-ready",
+      "status": "complete",
       "goal": "As the operator, I want a deliberate, accident-proof menu to restart/stop services + exit the UI, without the kiosk running as root or letting me brick the safe-shutdown guard.",
       "definitionOfDone": [
         "long-press ~5s (ring fills; release <5s cancels) AND top-bar `:` both open the menu (D-6)",
@@ -2574,7 +2574,7 @@
       ],
       "tasks": [],
       "createdAt": "2026-06-30",
-      "updatedAt": "2026-06-30"
+      "updatedAt": "2026-08-02"
     },
     {
       "id": "US-404",
@@ -2582,7 +2582,7 @@
       "title": "DTC KOEO read + dtc emitter -- key-on Mode 03(+07) on the OBD connection-edge (no DriveDetector, drive_id=NULL explicit)",
       "type": "normal",
       "size": "M",
-      "status": "sprint-ready",
+      "status": "complete",
       "goal": "As the operator walking up to a lit MIL at key-on, I want the code(s) on the dashboard at the exact moment I ask \"why's my light on?\" -- a key-on read that doesn't depend on a drive being active.",
       "definitionOfDone": [
         "a key-on Mode 03(+07) read fires on the OBD connection-established edge (`event_router` `onConnectionRestored`), one-shot, gated on no active RUNNING drive, owned by the DTC capture path (`dtc_logger` connection-edge entrypoint reusing `dtc_client`) -- NOT DriveDetector (Atlas A-9 ruling)",
@@ -2621,7 +2621,7 @@
       ],
       "tasks": [],
       "createdAt": "2026-06-30",
-      "updatedAt": "2026-06-30"
+      "updatedAt": "2026-08-02"
     },
     {
       "id": "US-405",
@@ -2629,7 +2629,7 @@
       "title": "DTC takeover + ribbon -- full-screen severity takeover on a NEW code + persistent STOP-red ribbon on every card",
       "type": "normal",
       "size": "S",
-      "status": "sprint-ready",
+      "status": "complete",
       "goal": "As the operator, I want a NEW check-engine code to grab my attention, then stay visible -- without ever trapping me from seeing the road.",
       "definitionOfDone": [
         "full-screen takeover per-severity color + directive + dismiss controls (STOP has no plain dismiss; \"Acknowledge\" drops to ribbon -- driver keeps view control)",
@@ -2665,7 +2665,7 @@
       ],
       "tasks": [],
       "createdAt": "2026-06-30",
-      "updatedAt": "2026-06-30"
+      "updatedAt": "2026-08-02"
     },
     {
       "id": "US-406",
@@ -2673,7 +2673,7 @@
       "title": "DTC Alerts card (Card 5) + detail -- hero/worst-first list, freeze-frame-or-realtime fallback, severity-gated fix + trust badge",
       "type": "normal",
       "size": "M",
-      "status": "sprint-ready",
+      "status": "complete",
       "goal": "As the operator, I want an honest detail view per code -- severity, what to do, the freeze-frame context (or an honest fallback), and a fix ONLY when it's safe -- so I'm never misled into clearing a real fault or swapping the wrong part.",
       "definitionOfDone": [
         "Alerts card = Card 5 of the carousel; hero = highest-severity code + directive; tappable list sorted worst-first",
@@ -2724,7 +2724,7 @@
       ],
       "tasks": [],
       "createdAt": "2026-06-30",
-      "updatedAt": "2026-06-30"
+      "updatedAt": "2026-08-02"
     },
     {
       "id": "US-407",
@@ -2732,7 +2732,7 @@
       "title": "DTC Clear (Mode-04) path -- polkit-gated dtc_client.clear() + action-path gate re-check + hard confirm + re-read + session-lock",
       "type": "normal",
       "size": "M",
-      "status": "sprint-ready",
+      "status": "complete",
       "goal": "As the operator, I want to clear a MINOR code safely -- but ONLY when it's safe, fully logged, and proven cleared -- so I never erase a real fault's evidence or \"chase the light.\"",
       "definitionOfDone": [
         "renders against `offices/tuner/dtc-display-clear-safety-advisory.md` -- Spool SSOT, non-negotiable; this story does NOT redefine it",
@@ -2781,7 +2781,7 @@
       ],
       "tasks": [],
       "createdAt": "2026-06-30",
-      "updatedAt": "2026-06-30"
+      "updatedAt": "2026-08-02"
     },
     {
       "id": "US-408",
@@ -6213,7 +6213,7 @@
       "parent": "F-123",
       "type": "issue",
       "size": "S",
-      "status": "pending",
+      "status": "complete",
       "title": "Wire the dashboard version chip to .deploy-version (stop showing 'V?.?.?')",
       "goal": "As the operator, I want the header version chip to show the real deployed version, so I can tell at a glance which build is on the Pi instead of a literal 'V?.?.?'.",
       "definitionOfDone": [
@@ -6236,7 +6236,7 @@
         ".deploy-version"
       ],
       "createdAt": "2026-07-31",
-      "updatedAt": "2026-07-31",
+      "updatedAt": "2026-08-02",
       "tasks": []
     },
     {
@@ -6244,7 +6244,7 @@
       "parent": "F-123",
       "type": "issue",
       "size": "M",
-      "status": "pending",
+      "status": "complete",
       "title": "Wire the real power source to the System-Status power tile + header bolt (fixes both #2 grayed bolt and #6 'unavailable')",
       "goal": "As the operator, I want the header lightning bolt and the System-Status power tile to reflect the real AC/battery (car/wall) power state, so I stop seeing a grayed bolt + 'power unavailable' when the power source is actually known.",
       "definitionOfDone": [
@@ -6271,7 +6271,7 @@
         "carousel.js:248-265,294-299"
       ],
       "createdAt": "2026-07-31",
-      "updatedAt": "2026-07-31",
+      "updatedAt": "2026-08-02",
       "tasks": []
     },
     {
@@ -6279,7 +6279,7 @@
       "parent": "F-123",
       "type": "normal",
       "size": "S",
-      "status": "pending",
+      "status": "complete",
       "title": "Idle-card clock to 12-hour AM/PM",
       "goal": "As the operator, I want the idle-home clock in 12-hour AM/PM format instead of 24-hour, matching how I read time at a glance.",
       "definitionOfDone": [
@@ -6299,7 +6299,7 @@
         "carousel.js:1929,1951"
       ],
       "createdAt": "2026-07-31",
-      "updatedAt": "2026-07-31",
+      "updatedAt": "2026-08-02",
       "tasks": []
     },
     {
@@ -6307,7 +6307,7 @@
       "parent": "F-123",
       "type": "issue",
       "size": "L",
-      "status": "pending",
+      "status": "superseded",
       "title": "Battery Health truthfulness: remove no-source TEMP + writer-fix + HEALTH verdict + last-health-check (Spool spec)",
       "goal": "As the operator, I want every battery field on a real source (or absent), so the card is honest -- no 'no source' temp, and a HEALTH verdict grounded in real capacity data rather than a manufactured value or a hardcoded 'unknown'.",
       "definitionOfDone": [
@@ -6326,7 +6326,8 @@
       ],
       "conditionalOutcomes": [
         "the writer-fix is the blocking first sub-story; if it grows, carve it (US-504a writer / US-504b producer). Do NOT ship a computed verdict over NULL inputs -- keep honest 'unknown' until real vcell/soc data exists.",
-        "[EXACT:] values (600/727/80/60/180/90) are Spool load-bearing -- flag Spool before any drift"
+        "[EXACT:] values (600/727/80/60/180/90) are Spool load-bearing -- flag Spool before any drift",
+        "SUPERSEDED 2026-08-02: carved into US-526 (drain writer, carried to V0.29.25) + US-504b (verdict producer, shipped V0.29.24). Reconciliation."
       ],
       "sourceRefs": [
         "offices/pm/inbox/2026-08-01-from-spool-us504-battery-health-verdict-source.md",
@@ -6335,7 +6336,7 @@
         "carousel.js:529-534,553-582"
       ],
       "createdAt": "2026-07-31",
-      "updatedAt": "2026-07-31",
+      "updatedAt": "2026-08-02",
       "tasks": []
     },
     {
@@ -6343,7 +6344,7 @@
       "parent": "F-123",
       "type": "normal",
       "size": "M",
-      "status": "pending",
+      "status": "complete",
       "title": "Build a last-drive-summary producer so the idle card shows real last-drive data",
       "goal": "As the operator, I want the idle-home card to show my actual last drive instead of 'no recent drive', so I can see recent-drive context at a glance.",
       "definitionOfDone": [
@@ -6367,7 +6368,7 @@
         "card_state_emitter.py:301-319"
       ],
       "createdAt": "2026-07-31",
-      "updatedAt": "2026-07-31",
+      "updatedAt": "2026-08-02",
       "tasks": []
     },
     {
@@ -6375,7 +6376,7 @@
       "parent": "F-124",
       "type": "normal",
       "size": "L",
-      "status": "pending",
+      "status": "complete",
       "title": "Carousel navigation model: wrap (skip gated) + auto-rotate + velocity swipe-pause",
       "goal": "As the operator, I want the carousel to wrap around, auto-cycle when I'm not touching it, and pause when I settle on a screen, so it's hands-off but never traps me or fights my swipe.",
       "definitionOfDone": [
@@ -6398,7 +6399,7 @@
         "carousel.js:36-57,143-150,3168"
       ],
       "createdAt": "2026-07-31",
-      "updatedAt": "2026-07-31",
+      "updatedAt": "2026-08-02",
       "tasks": []
     },
     {
@@ -6406,7 +6407,7 @@
       "parent": "F-124",
       "type": "normal",
       "size": "M",
-      "status": "pending",
+      "status": "complete",
       "title": "Consolidate 6 cards to 4: merge Battery + Light + Fuel Trim into one 'Health' card",
       "goal": "As the operator, I want fewer screens -- Home, System Status, Health, Alerts -- so the reference readouts that share a glance live on one card instead of three separate swipes.",
       "definitionOfDone": [
@@ -6428,7 +6429,7 @@
         "offices/pm/decisions/2026-07-31-ui-feedback-round2-triage.md#11"
       ],
       "createdAt": "2026-07-31",
-      "updatedAt": "2026-07-31",
+      "updatedAt": "2026-08-02",
       "tasks": []
     },
     {
@@ -6436,7 +6437,7 @@
       "parent": "F-124",
       "type": "normal",
       "size": "L",
-      "status": "pending",
+      "status": "complete",
       "title": "Live/motion card re-issue to locked spec + home-slot idle-live swap",
       "goal": "As the driver, I want the home card to become the live instrument when I'm driving (and the calm idle card when parked), matching the design I approved, so the at-a-glance card shows real motion.",
       "definitionOfDone": [
@@ -6463,7 +6464,7 @@
         "offices/pm/decisions/2026-07-31-ui-feedback-round2-triage.md#9"
       ],
       "createdAt": "2026-07-31",
-      "updatedAt": "2026-07-31",
+      "updatedAt": "2026-08-02",
       "tasks": []
     },
     {
@@ -6471,7 +6472,7 @@
       "parent": "F-124",
       "type": "normal",
       "size": "M",
-      "status": "pending",
+      "status": "complete",
       "title": "System-Status 'N ISSUE' drill-down overlay",
       "goal": "As the operator, I want to tap 'SYSTEM Â· N ISSUE' and see which sources are degraded and why, so the summary isn't a dead end.",
       "definitionOfDone": [
@@ -6492,7 +6493,7 @@
         "offices/pm/decisions/2026-07-31-ui-feedback-round2-triage.md#7"
       ],
       "createdAt": "2026-07-31",
-      "updatedAt": "2026-07-31",
+      "updatedAt": "2026-08-02",
       "tasks": []
     },
     {
@@ -6500,7 +6501,7 @@
       "parent": "F-124",
       "type": "normal",
       "size": "M",
-      "status": "pending",
+      "status": "complete",
       "title": "Fidelity pass: restore approved copy + brand display face + TD-065 tokenization",
       "goal": "As the CIO, I want the shipped UI to match the look & feel I approved, so it stops feeling generic -- correct wordmark/footer, a brand display face for brand moments, and no raw color literals.",
       "definitionOfDone": [
@@ -6527,7 +6528,7 @@
         "offices/pm/decisions/2026-07-31-ui-feedback-round2-triage.md#14"
       ],
       "createdAt": "2026-07-31",
-      "updatedAt": "2026-07-31",
+      "updatedAt": "2026-08-02",
       "tasks": []
     },
     {
@@ -6535,7 +6536,7 @@
       "parent": "F-124",
       "type": "normal",
       "size": "S",
-      "status": "pending",
+      "status": "complete",
       "title": "Debounced 'parked' signal for the kebab (stop the OBD-blip flicker)",
       "goal": "As the operator, I want the kebab to appear on a steady 'parked' concept, so it stops flickering every time OBD availability blips.",
       "definitionOfDone": [
@@ -6557,7 +6558,7 @@
         "carousel.js:743-748,876-878"
       ],
       "createdAt": "2026-07-31",
-      "updatedAt": "2026-07-31",
+      "updatedAt": "2026-08-02",
       "tasks": []
     },
     {
@@ -6565,7 +6566,7 @@
       "parent": "F-120",
       "type": "issue",
       "size": "M",
-      "status": "pending",
+      "status": "complete",
       "title": "BT capture hardening: durable bond + reconnect-transport-reset",
       "goal": "As the capture service, I want a reconnect after a dropped BT link to reset the transport instead of re-opening a dead tty, so capture recovers cleanly mid-session instead of retrying a stale rfcomm forever.",
       "definitionOfDone": [
@@ -6590,7 +6591,7 @@
         "src/pi/obdii/obd_connection.py"
       ],
       "createdAt": "2026-07-31",
-      "updatedAt": "2026-07-31",
+      "updatedAt": "2026-08-02",
       "tasks": []
     },
     {
@@ -6598,7 +6599,7 @@
       "parent": "F-120",
       "type": "research",
       "size": "S",
-      "status": "pending",
+      "status": "complete",
       "title": "RCA: why BT got soft-blocked ~07-03 (confirm origin so it can't recur)",
       "goal": "As the maintainer, I want to know WHY the BT rfkill soft-block got saved ~07-03, so we can prevent the origin, not just rely on the unblock safety net.",
       "definitionOfDone": [
@@ -6619,7 +6620,7 @@
         "offices/architect/inbox/2026-07-31-from-atlas-STATUS-bt-softblock-rootcause-fixed-plus-open-work.md"
       ],
       "createdAt": "2026-07-31",
-      "updatedAt": "2026-07-31",
+      "updatedAt": "2026-08-02",
       "tasks": []
     },
     {
@@ -6627,7 +6628,7 @@
       "parent": "F-120",
       "type": "issue",
       "size": "S",
-      "status": "pending",
+      "status": "complete",
       "title": "P0: bake the BT rfkill-unblock fix into deploy (make the live capture fix repo-managed + reflash-proof)",
       "goal": "As the deploy path, I want the eclipse-rfkill-unblock fix in the repo + deploy-pi.sh, so the capture fix (currently live-on-Pi-by-hand) survives a reflash / deploy --init and can't silently revert to the soft-block that killed capture since 07-03.",
       "definitionOfDone": [
@@ -6650,7 +6651,7 @@
         "offices/architect/inbox/2026-07-31-from-atlas-STATUS-bt-softblock-rootcause-fixed-plus-open-work.md"
       ],
       "createdAt": "2026-07-31",
-      "updatedAt": "2026-07-31",
+      "updatedAt": "2026-08-02",
       "tasks": []
     },
     {
@@ -6658,7 +6659,7 @@
       "parent": "F-120",
       "type": "issue",
       "size": "S",
-      "status": "pending",
+      "status": "complete",
       "title": "P0: fix scripts/pair_obdlink.sh (Trixie bluez prompt regex + display-capable agent) so a durable bond + trust is written",
       "goal": "As the pairing tool, I want pair_obdlink.sh to actually pair + trust + bond the OBDLink on Trixie bluez, so a durable bond survives reboot and re-pairing works instead of timing out.",
       "definitionOfDone": [
@@ -6682,7 +6683,7 @@
         "scripts/pair_obdlink.sh"
       ],
       "createdAt": "2026-07-31",
-      "updatedAt": "2026-07-31",
+      "updatedAt": "2026-08-02",
       "tasks": []
     },
     {
@@ -6728,7 +6729,7 @@
       "parent": "F-125",
       "type": "normal",
       "size": "S",
-      "status": "pending",
+      "status": "complete",
       "title": "WP-2: home-location config binding (pi.location.home.{lat,lon,elevationM})",
       "goal": "As the altitude anchor + GPS home-geofence, I want the home reference in config (from .env), so it's not a hardcoded literal and location PII stays uncommitted.",
       "definitionOfDone": [
@@ -6750,7 +6751,7 @@
         "offices/pm/inbox/2026-08-01-from-iris-home-reference-for-altitude-anchor.md"
       ],
       "createdAt": "2026-08-01",
-      "updatedAt": "2026-08-01",
+      "updatedAt": "2026-08-02",
       "tasks": []
     },
     {
@@ -6758,7 +6759,7 @@
       "parent": "F-125",
       "type": "normal",
       "size": "S",
-      "status": "pending",
+      "status": "complete",
       "title": "WP-3: re-anchor derived altitude to home elevation on every successful server sync",
       "goal": "As drift control, I want the derived altitude reset to home elevation on each successful sync, so error is bounded to a single drive between syncs.",
       "definitionOfDone": [
@@ -6781,7 +6782,7 @@
         "offices/pm/inbox/2026-08-01-from-iris-gps-altitude-workpackage-for-grooming.md#WP-3"
       ],
       "createdAt": "2026-08-01",
-      "updatedAt": "2026-08-01",
+      "updatedAt": "2026-08-02",
       "tasks": []
     },
     {
@@ -6857,7 +6858,7 @@
       "parent": "F-125",
       "type": "normal",
       "size": "M",
-      "status": "pending",
+      "status": "complete",
       "title": "Gyro-fused pitch for states/imu (complementary/Madgwick + ZUPT) -- honest grade + altitude foundation",
       "goal": "As the grade + (future) altitude signals, I want pitch from a gyro-accel fusion, not accel-only tilt, so a 0.3 g acceleration isn't misread as a 16.7-degree climb (Spool: an accelerometer cannot distinguish grade from acceleration -- they are the same measurement).",
       "definitionOfDone": [
@@ -6883,7 +6884,7 @@
         "US-508 (gradePct)"
       ],
       "createdAt": "2026-08-01",
-      "updatedAt": "2026-08-01",
+      "updatedAt": "2026-08-02",
       "tasks": []
     },
     {
