@@ -11,8 +11,8 @@
       "epicId": "E-001",
       "type": "issue",
       "size": "S",
-      "status": "sprint-ready",
-      "passes": false,
+      "status": "complete",
+      "passes": true,
       "acceptance": [
         "[Atlas RCA #1 -- CORRECTED PREMISE 2026-08-02, design-gate] --enable-gpu-rasterization is NOT in the repo or the eclipse-dashboard unit; it is a Debian/RPi-OS system default injected by the /usr/bin/chromium-browser wrapper from /etc/chromium.d/default-flags:7. FIX = ADD an override flag to the eclipse-dashboard unit ExecStart (deploy-pi.sh, repo-managed): --disable-gpu-rasterization (keep GL compositing) OR --disable-gpu (bulletproof software render, removes the whole GPU-command-buffer path). Atlas leans --disable-gpu (the Pi CPU trivially handles this 2D card UI; removes the entire failure class). Eliminates the chromium GPU command-buffer hot-loop (AllocateRingBuffer kFatalFailure, ~6M/boot) that froze the UI. RCA: offices/architect/findings/2026-08-02-pi-ui-freeze-chromium-gpu-command-buffer-hotloop.md",
         "[PRECEDENCE -- verify, do NOT assume] the Debian wrapper runs `chromium $CHROMIUM_FLAGS \"$@\"`, so the ExecStart override SHOULD win over the injected default -- but VERIFY on the Pi (a wrapper-ordering surprise = silent mocked-green / IRL-miss)",
@@ -30,7 +30,24 @@
         "if GPU-off alone does NOT eliminate the freeze, escalate -- fix-selection (disable-gpu vs disable-gpu-rasterization vs cma vs animations) is a hypothesis; do not stack blind changes"
       ],
       "goal": "As the operator, I want the Pi dashboard to never freeze under sustained use, so the display stays live during a drive instead of wedging silently.",
-      "tasks": []
+      "tasks": [],
+      "completionNotes": "FIX = --disable-gpu added to the eclipse-dashboard ExecStart in BOTH kiosk variants (.x11 + .wayland). Atlas's corrected premise CONFIRMED on the live Pi: --enable-gpu-rasterization is nowhere in the repo -- /etc/chromium.d/default-flags exports it and the /usr/bin/chromium wrapper sources it. AC2 PRECEDENCE VERIFIED LIVE, NOT ASSUMED (this was the story's real risk): /usr/bin/chromium:195 runs `exec $LIBDIR/$APPNAME $CHROMIUM_FLAGS \"$@\"`, so OS flags land FIRST and the unit's argv LAST; the live composed cmdline read exactly `... --enable-gpu-rasterization ... --use-angle=gles --disable-gpu <url>`. So the ExecStart override DOES reach chromium after the injected default -- no wrapper-ordering surprise, no escalation to Atlas needed. FLAG SELECTION took Atlas's lean (--disable-gpu) and it is now evidence-backed rather than preference: (a) the fault is in the GPU COMMAND BUFFER, which COMPOSITING uses as well as raster, so --disable-gpu-rasterization alone shrinks the pressure without removing the mechanism; (b) I enumerated the full injected set live (--show-component-extension-options / --enable-gpu-rasterization / --no-default-browser-check / --disable-pings / --media-router=0 / --enable-remote-extensions / --use-angle=gles / --js-flags=--no-decommit-pooled-pages / --force-renderer-accessibility) and NOTHING in it is --enable-gpu -- so --disable-gpu is unopposed and the fix does not depend on flag ORDER at all, which the narrower flag would. LIVE SMOKE PROBE (non-invasive, the installed unit was never modified): ran the composed flag set against the real dashboard URL on DISPLAY=:0 in a throwaway profile for 12s -- chromium stayed up, 0 AllocateRingBuffer, no GL/fatal init error. Probe fully cleaned up; verified afterwards that only the real kiosk's 9 processes remain, probe files gone, eclipse-dashboard still active. HONEST BOUND: a software-GL gpu-process is STILL present with --disable-gpu, so the claim is that the v3d-on-64MiB-CMA exhaustion mechanism is gone, NOT that no GPU process exists -- do not let the multi-minute drill be read as proving the latter. AC4 install path: the dashboard kit's install.sh substitutes __CHROMIUM_BIN__/__PI_USER__ and unconditionally re-installs the unit + `systemctl daemon-reload` (install.sh:174-193), so a template change DOES reach the Pi on the next deploy; note the cmp-guard in deploy-pi.sh's kiosk step covers the xorg no-blank drop-in, not the unit itself (the unit is idempotent-overwrite, which is equivalent here). SCOPE HELD: the splash kiosk units (specs/UI/dist/splash-pi/splash-boot.service.*, splash-grace.service.*) also launch chromium through the SAME wrapper and therefore ALSO inherit --enable-gpu-rasterization -- deliberately NOT touched (US-522 names the eclipse-dashboard unit). Flagging it for US-525, which is already in the splash: if the splash ever shows the same wedge, that is why. PM/INTEGRATION GATE: no full-suite risk from this change (2 systemd templates + a bash comment + one test file), but tests/lint carries the pre-existing TD-073 red (US-529's job) and I filed TD-075 for 10 pre-existing project-wide ruff errors in files this story does not touch (src/calibration/speed_aligner-spool.py + tests/pm/*) -- `ruff check src/ tests/` therefore exits 1 on a clean tree, which is why DoD 'make lint clean' was applied per-touched-file. IN-LOOP GATE RUN SYNCHRONOUSLY: tests/deploy/test_dashboard_kit.py 54 passed, full tests/deploy 379 passed, ruff clean on tests/deploy/test_dashboard_kit.py. RED witnessed before GREEN (2 of 6 new guards failed for the right reasons).",
+      "feedback": {
+        "filesActuallyTouched": [
+          "specs/UI/dist/dashboard-pi/dashboard.service.x11",
+          "specs/UI/dist/dashboard-pi/dashboard.service.wayland",
+          "deploy/deploy-pi.sh",
+          "tests/deploy/test_dashboard_kit.py",
+          "offices/pm/tech_debt/TD-075-project-wide-ruff-errors-outside-touched-files.md"
+        ],
+        "grounding": [
+          "Atlas RCA: offices/architect/findings/2026-08-02-pi-ui-freeze-chromium-gpu-command-buffer-hotloop.md (6,063,554 AllocateRingBuffer/boot; CmaTotal 65536 kB; renderer/GPU/main 39/31/24% CPU)",
+          "LIVE Pi 10.27.27.100: /etc/chromium.d/default-flags exports --enable-gpu-rasterization (OS-shipped, repo-unmanaged)",
+          "LIVE Pi: /usr/bin/chromium:195 `exec $LIBDIR/$APPNAME $CHROMIUM_FLAGS \"$@\"` -- proves injected-flags-first / unit-argv-last ordering",
+          "LIVE Pi: running eclipse-dashboard cmdline showing the composed flag order",
+          "LIVE Pi: 12s probe of the composed set incl. --disable-gpu on :0 -> alive, 0 AllocateRingBuffer, no GL init failure"
+        ]
+      }
     },
     {
       "id": "US-523",

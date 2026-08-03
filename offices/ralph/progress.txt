@@ -567,3 +567,78 @@ Task: Gyro-fused pitch for states/imu (complementary + ZUPT) -- honest grade
   I-041's shape by hunting the states/imu exact-shape guard on purpose. The
   fix is mechanical -- run the existing tests for any contract you edit.
 ---
+
+# ---
+# Sprint 70 / V0.29.25 -- stabilize + drain writer. Branch: sprint/sprint70-V0.29.25
+# 8 stories: US-522 kiosk GPU fix . US-523 kiosk watchdog . US-524 CMA 256M .
+#   US-525 splash render/401 . US-526 drain-event writer . US-527 verdict band-remap .
+#   US-528 I-041 exact-shape . US-529 TD-073 promise-tag contract
+# Previous: Sprint 69 / V0.29.24 closed 10/11 (US-504a carried here as US-526).
+# ---
+
+## 2026-08-03 - US-522 (Agent 1 / Rex)
+Task: Kiosk GPU-raster fix -- kill the chromium command-buffer freeze class
+
+### What was implemented:
+- `--disable-gpu` added to the eclipse-dashboard ExecStart in BOTH kiosk
+  variants (.x11 + .wayland), with the full rationale in the .x11 header.
+- `deploy-pi.sh` now NAMES the unmanaged `/etc/chromium.d/` flag surface, so a
+  chromium package upgrade re-introducing GPU raster is a known surface (A-16).
+- 5 new guards + a parser self-test, tokenizing ExecStart rather than
+  substring-matching it.
+- TD-075 filed: `ruff check src/ tests/` has 10 pre-existing errors in files
+  this story does not touch, so DoD's literal "make lint clean" cannot pass
+  project-wide.
+
+### Files changed:
+- Modified: `specs/UI/dist/dashboard-pi/dashboard.service.x11` (flag + rationale)
+- Modified: `specs/UI/dist/dashboard-pi/dashboard.service.wayland` (flag + pointer)
+- Modified: `deploy/deploy-pi.sh` (the /etc/chromium.d blind-spot note)
+- Modified: `tests/deploy/test_dashboard_kit.py` (US-522 section, 6 tests)
+- Created: `offices/pm/tech_debt/TD-075-project-wide-ruff-errors-outside-touched-files.md`
+
+### Learnings for future iterations:
+- **The load-bearing one -- PHANTOM CONFIG: a flag can be live on the box and
+  absent from version control.** The RCA saw `--enable-gpu-rasterization` in the
+  running cmdline, which reads as "the repo passes this." It does not, anywhere.
+  Debian's `/usr/bin/chromium` is a WRAPPER that sources every file in
+  `/etc/chromium.d/` into `$CHROMIUM_FLAGS`, then execs chromium with those
+  flags FIRST and the caller's argv LAST. So `git grep` returns nothing while
+  the process undeniably has the flag, and the fix is an ADDITION (override)
+  rather than the deletion the story title assumed. When a defect points at a
+  process's arguments, read `pgrep -a` on the box BEFORE grepping the repo --
+  and when the two disagree, the gap is an OS-shipped file nobody owns.
+- **Pattern -- turn an ORDERING argument into a NO-CONFLICT argument when you
+  can.** The obvious fix (`--disable-gpu-rasterization`) requires believing a
+  later `--disable-*` beats an earlier `--enable-*` inside Chromium's switch
+  parsing -- true, but resting on internals I cannot verify from here. Choosing
+  `--disable-gpu` instead let me verify something directly readable: I
+  enumerated the entire injected flag set on the Pi and confirmed nothing in it
+  is `--enable-gpu`. Unopposed beats last-wins, because unopposed is checkable.
+  Prefer the fix whose correctness you can ground in evidence over the narrower
+  one whose argument needs a source-code claim.
+- **Gotcha (the mutation trap this story is built around): `--disable-gpu` is a
+  SUBSTRING of `--disable-gpu-rasterization`.** A guard written as
+  `assert "--disable-gpu" in unitText` passes on a unit carrying only the
+  narrower flag -- it cannot tell the chosen fix from the rejected one.
+  Tokenize the ExecStart (strip comments, join continuations, split) and assert
+  LIST membership. The same helper is what makes a comment unable to satisfy the
+  guard -- third sighting of that trap (US-501, US-513). Any guard over a
+  flag/CLI string wants tokens, not text.
+- **Pattern -- probe the fix live WITHOUT mutating the installed artifact.** I
+  ran the composed flag set against the real dashboard URL on `DISPLAY=:0` in a
+  throwaway `--user-data-dir` for 12s (alive, 0 AllocateRingBuffer, no GL init
+  failure). Editing the installed unit to test it is how A-18 became a
+  repo-unmanaged live fix that a reflash would silently lose. Probe BESIDE the
+  production artifact, never through it -- then verify the CLEANUP too. My first
+  cleanup attempt died with the ssh session and never ran; only re-checking
+  showed the probe files still there.
+- **Gotcha -- state the bound the evidence actually supports.** `--disable-gpu`
+  does NOT remove the gpu-process; a software-GL one remains. The honest claim
+  is "the v3d-on-64MiB-CMA exhaustion mechanism is gone," not "no GPU process
+  runs." The weaker true claim matters operationally: the validation drill must
+  read AllocateRingBuffer count + chromium CPU, not "is there a gpu-process."
+- **Gotcha (ops)**: `make` is NOT on PATH on this box (nor `black`) -- `make lint`
+  exits 127, which is easy to misread as a passing gate. Run `ruff check`
+  directly and read the real exit code.
+---
