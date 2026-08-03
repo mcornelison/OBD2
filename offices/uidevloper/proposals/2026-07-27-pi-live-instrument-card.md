@@ -47,19 +47,20 @@ the real IMU contract, the shipped tokens/chrome, and Spool's semantics.
     (IMU grade + OBD speed), **re-anchored to home elevation on every successful server sync**
     (drift bounded to one drive — CIO). Spool owns the derivation math/quality
     (`tuner/inbox/2026-08-01-...interim-grade-speed-altitude.md`); the display renders it.
-  - **Honest label — Spool ruling 2026-08-01 (his lane on HOW it's shown):** show **Δ-from-home with
-    a widening uncertainty band**, NOT absolute ASL — `≈ +4 m from home · ±35 m`, never `≈ 312 m`
-    (a "specific-looking lie" on this flat terrain). Band = `σ_pitch(rad) × distance_travelled`
-    (grows with distance, not time; visibly widening = honestly losing confidence). GPS landing swaps
-    to real absolute altitude + the `±` disappears — design the card around that handoff.
-  - **Derivation conditions (Spool `[EXACT]`, load-bearing — gate the DISPLAY on them; without them
-    show "no source", not a confident wrong number):** pitch must be **gyro-fused** (complementary/
-    Madgwick), NOT accel-only tilt (accel can't tell grade from acceleration — 0.3 g reads as 16.7°);
-    **ZUPT** bias update at stops (speed 0 >3 s); **gate** integration to speed ≥ 5 km/h AND |dv/dt| <
-    0.15 g; **slew-clamp** |sin(pitch)| ≤ 0.15. These + the pitch-source question are Atlas/Ralph (the
-    `states/imu` reader owns fusion) — **flag: is the shipped grade pitch gyro-fused or accel-only? If
-    accel-only, the grade % readout itself is contaminated too, not just altitude.** If the derivation
-    is unavailable, fall back to **"— no source"**, never zeroed.
+  - **Honest label — Spool REVISED ruling 2026-08-02 (supersedes his 08-01):** CIO descoped altitude
+    to a nice-to-have approximation, so show **`≈NNN m` absolute ASL** — **drop the Δ-from-home reframe
+    AND the ± uncertainty band** (both were Spool's, both out of scope now). The derived altimeter is
+    the **long-term** source (GPS deferred, part choice parked), so design it to read well as-is, not
+    as a placeholder.
+  - **Convergence guard (Spool `[EXACT]`, non-negotiable):** publish `altitude` as **typed-null →
+    "— no source"** with reason `pitch_bias_unconverged` **until the ZUPT bias has converged**
+    (`zuptMinStops = 5`). Before convergence the pitch carries the full mount tilt → the integral
+    ratchets upward and never returns; the first minutes of every drive (and each boot) show "no
+    source" rather than a confident wrong climb. Build is US-519 (Spool/Rex): `alt += sin(pitchDeg)·
+    speed·dt` (anchor 209 m; skip if |dv/dt|>0.15 g; clamp |sin(pitch)|≤0.15; re-anchor on server
+    sync + key-on-at-home). **Pitch is already gyro-fused + ZUPT-corrected (shipped `pitch_fusion.py`)
+    — so the grade % readout is clean, not contaminated.** Rides on OBD capture (no SPEED ⇒ no ZUPT ⇒
+    no altitude, by design — BL-025).
   - **Source later = GPS** (I2C Adafruit PA1010D #4415 → `states/gps`, Atlas contract): swaps the
     feed to absolute altitude (±10–20 m) and **drops the `≈`**; also brings **true speed / heading /
     position** (the speed answers the deferred "what else earns the glance"). The display is a pure
