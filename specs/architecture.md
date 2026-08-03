@@ -1454,8 +1454,28 @@ cannot delay poweroff. No new config key.
 **Scope note:** gated on the same `pi.power.power_monitor.enabled` flag as
 `PowerMonitor` (no second flag for one fact) and soft-fail throughout —
 battery-health bookkeeping must never cost the drive capture beside it.
-**Not** in this story: the verdict's qualifying-gate remap to Spool's depth
-bands, which rides US-527.
+**Qualifying-gate remap — LANDED US-527 / TD-074** (was "rides US-527" here).
+`battery_health_verdict` admits a row on **depth, not duration**:
+`end_vcell_v <= [EXACT:3.50] V AND runtime_seconds >= [EXACT:60] s`
+(Spool ruling `c72677e`). The retired `runtime_seconds >= 600` gate was Spool's
+own spec bug: 600 s sat **above** the 582 s good/degraded boundary, so every
+surviving row necessarily landed in `good` and `degraded`/`replace` were
+unreachable — the verdict failed toward *reassurance*, the one direction a health
+verdict must never fail.
+
+Note the vocabulary, because the phrase "depth bands" (used in the US-526-era
+note this replaces) does not describe anything real: **there is no depth band.**
+Only the *gate* is depth-based. The **bands are unchanged runtime bands** —
+`good` ≥582 s, `degraded` 436–582 s, `replace` <436 s on the 727 s baseline —
+and they are now fully reachable precisely because duration no longer filters
+admission. Depth answers *"did the pack reach its shutdown region?"*; runtime is
+still the capacity *measurement*.
+
+Consequence worth carrying: because `end_vcell_v ≤ 3.50 V` is reachable only by
+running down to cutoff, an AC→BATTERY→AC bench tap restored at ~3.8 V writes a
+perfectly good row that **correctly never qualifies**. A green drain-writer
+drill therefore does *not* demonstrate a working verdict — proving that
+end-to-end needs a real run-to-cutoff drain (Spool, 2026-08-02).
 
 **Use case — monthly drain drill (CIO)**:
 

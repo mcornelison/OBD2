@@ -20,10 +20,15 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-08-01    | Ralph (Rex)  | Initial -- US-504 verdict + last-health-check.
+# 2026-08-03    | Ralph (Rex)  | US-527/TD-074 -- qualifying gate remapped from
+#                               the retired runtime_seconds>=600 duration gate
+#                               to Spool's DEPTH gate (end_vcell_v <= 3.50 V +
+#                               60 s floor).  Bands UNCHANGED; degraded/replace
+#                               now reachable through the real pipeline.
 # ================================================================================
 ################################################################################
 
-"""US-504: the battery-health verdict producer (Spool [EXACT] spec)."""
+"""US-504 / US-527: the battery-health verdict producer (Spool [EXACT] spec)."""
 
 import sqlite3
 from contextlib import contextmanager
@@ -41,6 +46,7 @@ from pi.power.battery_health_verdict import (
     GOOD_MIN_RUNTIME_S,
     MEDIAN_SAMPLE_COUNT,
     QUALIFYING_LOAD_CLASS,
+    QUALIFYING_MAX_END_VCELL_V,
     QUALIFYING_MIN_RUNTIME_S,
     RUNTIME_BASELINE_S,
     STALE_HEALTH_CHECK_DAYS,
@@ -70,14 +76,22 @@ def _row(
     loadClass: str = "production",
     closed: bool = True,
     startTimestamp: str | None = None,
+    endVcellV: float | None = 3.45,
 ) -> dict:
-    """One battery_health_log row shaped as the reader hands it to the pure fn."""
+    """One battery_health_log row shaped as the reader hands it to the pure fn.
+
+    ``endVcellV`` defaults to 3.45 V -- the top of the MEASURED 3.42-3.45 V
+    cutoff range (Spool Session-27, 28 drains), i.e. a genuine run-to-shutdown
+    that PASSES the depth gate.  A test that wants a non-qualifying row states
+    its own shallower voltage rather than relying on the default.
+    """
     start = _iso(daysAgo) if startTimestamp is None else startTimestamp
     return {
         "start_timestamp": start,
         "end_timestamp": _iso(daysAgo - 0.01) if closed else None,
         "runtime_seconds": runtimeSeconds,
         "load_class": loadClass,
+        "end_vcell_v": endVcellV,
     }
 
 
@@ -91,8 +105,15 @@ def _verdict(rows, nowIso: str = _NOW_ISO):
 
 
 def test_constants_matchSpoolExactSpec():
-    """[EXACT] 600 / 727 / 80 / 60 / 180 / 90 -- Spool inbox note 2026-08-01."""
-    assert QUALIFYING_MIN_RUNTIME_S == 600
+    """[EXACT] 3.50 / 60 / 727 / 80 / 60 / 180 / 90.
+
+    The depth gate (3.50 V + 60 s floor) is Spool's ruling of 2026-08-02
+    (`offices/ralph/inbox/2026-08-02-from-spool-us504-gate-ruling-and-us521-
+    ratification.md`, commit c72677e); everything else is the 2026-08-01 note
+    and is UNCHANGED by the remap.
+    """
+    assert QUALIFYING_MAX_END_VCELL_V == 3.50
+    assert QUALIFYING_MIN_RUNTIME_S == 60
     assert RUNTIME_BASELINE_S == 727
     assert GOOD_BASELINE_FRACTION == 0.80
     assert DEGRADED_BASELINE_FRACTION == 0.60
@@ -132,16 +153,64 @@ def test_nonProductionLoadClass_doesNotQualify():
     assert result.verdict == VERDICT_UNKNOWN
 
 
-def test_shortRuntime_doesNotQualify():
-    """< [EXACT:600]s -- the pack never approached cutoff (key-cycle/abort)."""
-    rows = [_row(daysAgo=d, runtimeSeconds=599) for d in (1, 2, 3)]
+def test_shallowDrain_doesNotQualify_evenWithALongRuntime():
+    """DEPTH, not duration: a long drain that ended at 3.80 V never reached the
+    shutdown region, so it measured nothing about capacity.
+
+    This is the whole point of Spool's remap -- under the retired duration gate
+    these three 700 s rows would have qualified and voted `good`.
+    """
+    rows = [_row(daysAgo=d, runtimeSeconds=700, endVcellV=3.80) for d in (1, 2, 3)]
+    result = _verdict(rows)
+    assert result.qualifyingCount == 0
+    assert result.verdict == VERDICT_UNKNOWN
+
+
+def test_endVcellAtExactDepthCut_qualifies():
+    """The 3.50 V cut is inclusive, per Spool's `end_vcell_v <= [EXACT:3.50]`."""
+    rows = [_row(daysAgo=d, endVcellV=3.50) for d in (1, 2, 3)]
+    assert _verdict(rows).qualifyingCount == 3
+
+
+def test_endVcellOneCentivoltAboveTheCut_doesNotQualify():
+    """3.51 V is above the cut -- and below the 3.55 V MAX17048 'low' warning,
+    so this is exactly the 'got low but did not run to shutdown' case the gate
+    exists to reject."""
+    rows = [_row(daysAgo=d, endVcellV=3.51) for d in (1, 2, 3)]
     assert _verdict(rows).qualifyingCount == 0
 
 
-def test_runtimeAtExactCut_qualifies():
-    """The 600s cut is inclusive (>= 600), per Spool's `runtime_seconds >= 600`."""
-    rows = [_row(daysAgo=d, runtimeSeconds=600) for d in (1, 2, 3)]
+def test_measuredCutoffVoltages_qualify():
+    """The measured cutoff on this pack is 3.42-3.45 V (Spool Session-27, 28
+    drains).  3.50 V was chosen to sit ABOVE that range with margin, so a real
+    run-to-shutdown must qualify -- if it did not, the gate would reject the
+    only event it exists to accept."""
+    for volts in (3.42, 3.45):
+        rows = [_row(daysAgo=d, endVcellV=volts) for d in (1, 2, 3)]
+        assert _verdict(rows).qualifyingCount == 3, volts
+
+
+def test_nullEndVcell_doesNotQualify():
+    """A reaped orphan / unreadable gauge leaves end_vcell_v NULL.  The depth of
+    an interrupted drain is UNKNOWN and must never be treated as reached
+    (US-526 honest-NA; the reaper deliberately leaves this NULL)."""
+    rows = [_row(daysAgo=d, endVcellV=None) for d in (1, 2, 3)]
+    result = _verdict(rows)
+    assert result.qualifyingCount == 0
+    assert result.verdict == VERDICT_UNKNOWN
+
+
+def test_runtimeAtSanityFloor_qualifies():
+    """The floor is inclusive (>= [EXACT:60]), per Spool's `runtime_seconds >= 60`."""
+    rows = [_row(daysAgo=d, runtimeSeconds=60) for d in (1, 2, 3)]
     assert _verdict(rows).qualifyingCount == 3
+
+
+def test_runtimeUnderSanityFloor_doesNotQualify():
+    """< 60 s is an absurd row -- a pack cannot genuinely reach the shutdown
+    region that fast, so depth alone must not admit it."""
+    rows = [_row(daysAgo=d, runtimeSeconds=59) for d in (1, 2, 3)]
+    assert _verdict(rows).qualifyingCount == 0
 
 
 def test_nullRuntime_doesNotQualify():
@@ -251,21 +320,32 @@ def test_verdictBands(median, expected):
     assert verdictForMedianRuntime(median) == expected
 
 
-def test_degradedAndReplaceBandsSitBelowTheQualifyingGate():
-    """FLAGGED TO SPOOL 2026-08-01 -- an open [EXACT]-spec interaction, pinned
-    here so it stays visible instead of being silently "fixed" by drift.
+def test_qualifyingRuntimeFloorSitsBELOWBothBands():
+    """US-527/TD-074 -- the REGRESSION GUARD for the retired 600 s gate.
 
-    The qualifying gate is `runtime_seconds >= 600` but the degraded band tops
-    out at 582s and replace at 435s -- both entirely BELOW the gate. So every
-    row that survives the gate lands in the good band, and through the real
-    pipeline `degraded` / `replace` are unreachable: a pack that genuinely
-    dies at 500s is filtered out as a "partial" drain rather than reported as
-    degraded. Both numbers are Spool [EXACT] values, so US-504 implements them
-    verbatim and does NOT pick a side.
+    The Sprint-69 defect was a gate ABOVE the bands: `runtime_seconds >= 600`
+    with `good` starting at 582 s meant every surviving row was necessarily
+    `good`, so the verdict could not degrade -- it failed toward reassurance,
+    the one direction a health verdict must never fail.
+
+    Spool's remap fixes it by moving the GATE, not by re-tuning the bands: the
+    60 s floor now sits below BOTH band boundaries, so the whole band range is
+    reachable.  Asserting the ordering (rather than just the literal 60) is what
+    makes this a guard: re-introducing any floor at or above 436 s silently
+    re-breaks reachability, and this fails.
     """
-    assert QUALIFYING_MIN_RUNTIME_S > GOOD_MIN_RUNTIME_S > DEGRADED_MIN_RUNTIME_S
-    rows = [_row(daysAgo=d, runtimeSeconds=QUALIFYING_MIN_RUNTIME_S) for d in (1, 2, 3)]
-    assert _verdict(rows).verdict == VERDICT_GOOD
+    assert QUALIFYING_MIN_RUNTIME_S < DEGRADED_MIN_RUNTIME_S < GOOD_MIN_RUNTIME_S
+    assert QUALIFYING_MIN_RUNTIME_S != 600  # the retired duration gate
+
+
+def test_replaceBandRowStillQualifies_theEventTheOldGateDiscarded():
+    """Spool's worked example: 'a pack dying at 500 s would have been discarded
+    as partial-drain noise, which is precisely the event the verdict exists to
+    catch.'  Under the depth gate that row qualifies AND reports degraded."""
+    rows = [_row(daysAgo=d, runtimeSeconds=500) for d in (1, 2, 3)]
+    result = _verdict(rows)
+    assert result.qualifyingCount == 3
+    assert result.verdict == VERDICT_DEGRADED
 
 
 # ---------------------------------------------------------------------------
@@ -282,9 +362,12 @@ def test_partialDrainDoesNotBumpLastHealthCheck():
     """A partial/aborted drain is NOT a health check -- otherwise the card
     claims a recent check that measured nothing."""
     rows = [
-        _row(daysAgo=0.5, runtimeSeconds=120),   # key-cycle, under the 600s cut
+        # Spool's key-cycle example: ended at 4.00 V, so it measured nothing.
+        _row(daysAgo=0.5, runtimeSeconds=120, endVcellV=4.00),
+        _row(daysAgo=0.55, runtimeSeconds=30),   # under the 60s sanity floor
         _row(daysAgo=0.6, closed=False),         # never closed
         _row(daysAgo=0.7, loadClass="sim"),      # not a production load
+        _row(daysAgo=0.8, endVcellV=None),       # reaped orphan -- depth unknown
         _row(daysAgo=4),
         _row(daysAgo=5),
         _row(daysAgo=6),
@@ -353,11 +436,12 @@ class _FakeDatabase:
         for r in rows:
             self._conn.execute(
                 "INSERT INTO battery_health_log "
-                "(start_timestamp, end_timestamp, runtime_seconds, load_class) "
-                "VALUES (?, ?, ?, ?)",
+                "(start_timestamp, end_timestamp, runtime_seconds, load_class, "
+                " end_vcell_v) "
+                "VALUES (?, ?, ?, ?, ?)",
                 (
                     r["start_timestamp"], r["end_timestamp"],
-                    r["runtime_seconds"], r["load_class"],
+                    r["runtime_seconds"], r["load_class"], r["end_vcell_v"],
                 ),
             )
         self._conn.commit()
@@ -385,7 +469,7 @@ def test_readBatteryHealthVerdict_appliesTheGateInSql():
     """The non-qualifying rows must not reach the pure function at all."""
     db = _FakeDatabase(
         [
-            _row(daysAgo=0.5, runtimeSeconds=120),
+            _row(daysAgo=0.5, runtimeSeconds=30),
             _row(daysAgo=0.6, closed=False),
             _row(daysAgo=1, runtimeSeconds=700),
             _row(daysAgo=2, runtimeSeconds=700),
@@ -395,6 +479,91 @@ def test_readBatteryHealthVerdict_appliesTheGateInSql():
     result = readBatteryHealthVerdict(database=db, nowIso=_NOW_ISO)
     assert result.qualifyingCount == 3
     assert result.lastHealthCheckTs == _iso(1)
+
+
+def test_readBatteryHealthVerdict_appliesTheDEPTHGateInSql(monkeypatch):
+    """The SQL gate must exclude non-qualifying rows ITSELF.
+
+    MUTATION-PROVED necessary.  The gate is applied TWICE -- once in SQL, once
+    in the pure function -- so asserting only on the returned verdict cannot
+    tell the two halves apart: neutralising the SQL depth predicate leaves the
+    verdict, `qualifyingCount` and `lastHealthCheckTs` all correct, because the
+    pure function silently covers for it.  I verified that: with
+    `end_vcell_v <= ?` disabled in SQL, all 44 tests in this module still
+    passed.
+
+    So this test asserts at the READ BOUNDARY -- it captures exactly which rows
+    SQL handed over.  That is the assertion the sibling
+    `..._appliesTheGateInSql` above only claims in its docstring.
+    """
+    import pi.power.battery_health_verdict as verdictModule
+
+    captured: list[dict] = []
+    realCompute = verdictModule.computeBatteryHealthVerdict
+
+    def _spy(*, rows, nowIso):
+        materialised = list(rows)
+        captured.extend(materialised)
+        return realCompute(rows=materialised, nowIso=nowIso)
+
+    monkeypatch.setattr(verdictModule, 'computeBatteryHealthVerdict', _spy)
+
+    db = _FakeDatabase(
+        [
+            _row(daysAgo=0.4, runtimeSeconds=900, endVcellV=3.80),  # long+shallow
+            _row(daysAgo=0.5, endVcellV=None),                # reaped orphan
+            _row(daysAgo=0.6, runtimeSeconds=30),             # under the 60s floor
+            _row(daysAgo=0.7, closed=False),                  # never closed
+            _row(daysAgo=0.8, loadClass="sim"),               # not production
+            _row(daysAgo=1, runtimeSeconds=700),
+            _row(daysAgo=2, runtimeSeconds=700),
+            _row(daysAgo=3, runtimeSeconds=700),
+        ]
+    )
+    result = readBatteryHealthVerdict(database=db, nowIso=_NOW_ISO)
+
+    # Only the three genuine run-to-cutoff drains crossed the read boundary.
+    assert len(captured) == 3
+    assert [r["start_timestamp"] for r in captured] == [_iso(1), _iso(2), _iso(3)]
+    for row in captured:
+        assert row["end_vcell_v"] is not None
+        assert row["end_vcell_v"] <= QUALIFYING_MAX_END_VCELL_V
+        assert row["runtime_seconds"] >= QUALIFYING_MIN_RUNTIME_S
+        assert row["load_class"] == QUALIFYING_LOAD_CLASS
+        assert row["end_timestamp"] is not None
+
+    assert result.qualifyingCount == 3
+    assert result.lastHealthCheckTs == _iso(1)
+
+
+# ---------------------------------------------------------------------------
+# US-527 AC4 -- degraded + replace reachable THROUGH THE REAL PIPELINE.
+# Seeded depth-gated rows, read through readBatteryHealthVerdict (real SQL gate
+# + real pure function), not through verdictForMedianRuntime() in isolation.
+# The old gate made both of these verdicts impossible to reach this way.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "runtimeSeconds,expected",
+    [
+        (700, VERDICT_GOOD),      # healthy run-to-cutoff
+        (500, VERDICT_DEGRADED),  # 436-582 band -- UNREACHABLE before US-527
+        (300, VERDICT_REPLACE),   # < 436 band  -- UNREACHABLE before US-527
+    ],
+)
+def test_everyBandIsReachableThroughTheRealPipeline(runtimeSeconds, expected):
+    """Seed 3 depth-gated drains and read the verdict end-to-end."""
+    db = _FakeDatabase(
+        [
+            _row(daysAgo=d, runtimeSeconds=runtimeSeconds, endVcellV=3.44)
+            for d in (1, 2, 3)
+        ]
+    )
+    result = readBatteryHealthVerdict(database=db, nowIso=_NOW_ISO)
+    assert result.qualifyingCount == 3
+    assert result.medianRuntimeS == runtimeSeconds
+    assert result.verdict == expected
 
 
 def test_readBatteryHealthVerdict_emptyTableIsUnknown():
