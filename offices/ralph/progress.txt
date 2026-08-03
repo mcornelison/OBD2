@@ -1001,3 +1001,51 @@ Task: US-504a production drain-event writer (battery_health_log grows again)
 - **Gotcha**: `make` is not on PATH here -- `make lint` exits 127, which reads
   like a pass. Run `ruff check` directly.
 ---
+
+## 2026-08-03 - US-527 (Agent 1 / Rex)
+Task: US-504b verdict band-remap to the depth gate (degraded/replace reachable)
+
+### What was implemented:
+- Remapped `battery_health_verdict`'s qualifying gate from the RETIRED
+  `runtime_seconds >= 600` duration gate to Spool's DEPTH gate (ruling c72677e):
+  `end_vcell_v <= [EXACT:3.50] V AND runtime_seconds >= [EXACT:60] s`.
+- Added `QUALIFYING_MAX_END_VCELL_V`; `QUALIFYING_MIN_RUNTIME_S` 600 -> 60
+  (now a sanity floor, no longer an admission test). Gate applied in BOTH halves
+  (read SQL + `_parseRow`); `end_vcell_v` is SELECTed and carried across the read
+  boundary so the pure function can re-apply the gate on an unfiltered table.
+- BANDS UNCHANGED (good >=582 / degraded 436-582 / replace <436 on the 727 s
+  baseline) -- Spool's ruling explicitly leaves them alone. Reachability is
+  restored by moving the GATE below the bands, not by re-tuning thresholds.
+- specs/architecture.md: replaced US-526's stale "rides US-527" forward
+  reference with the landed gate + the retired-gate rationale (Rule 10).
+- Filed TD-077 (Spool's [EXACT:30]s open-row checkpointing never built by US-526;
+  the depth gate puts it on the critical path).
+
+### Files changed:
+- Modified: `src/pi/power/battery_health_verdict.py` (depth gate, both halves)
+- Modified: `tests/pi/power/test_battery_health_verdict.py` (+11 tests, fixtures
+  carry end_vcell_v, read-boundary assertion, reachability proofs)
+- Modified: `specs/architecture.md` (Rule 10 -- landed gate documented)
+- Created: `offices/pm/tech_debt/TD-077-drain-open-row-not-checkpointed-loses-the-only-qualifying-drain.md`
+
+### Learnings for future iterations:
+- **Gotcha (the big one)**: when a rule is enforced in TWO places, a test that
+  asserts only on the RESULT tests NEITHER half. I neutralised the SQL depth
+  predicate (`AND (end_vcell_v <= ? OR 1=1)`, param count preserved) and all 44
+  tests still passed -- the pure function silently covered for it. Fix: assert at
+  the SEAM (monkeypatch the downstream function, capture what actually crossed
+  the boundary). The pre-existing sibling test has the same blind spot.
+- **Pattern discovered**: pin reachability invariants by ORDERING, not literals.
+  `QUALIFYING_MIN_RUNTIME_S < DEGRADED_MIN_RUNTIME_S < GOOD_MIN_RUNTIME_S` catches
+  any future floor that re-breaks reachability; `== 60` alone would not.
+- **Gotcha**: when an AC paraphrases an SME ruling, READ THE RULING. AC1 asked for
+  "depth-band thresholds" that do not exist -- Spool ruled "Bands UNCHANGED".
+  Implementing the paraphrase would have fabricated numbers (Rule 2) and traded a
+  reachability bug for a wrong-classification bug.
+- **Gotcha**: a multi-suite pytest run on this SMB share exceeds the 120 s default
+  and gets AUTO-BACKGROUNDED = the TD-059 stall (result lost, iteration stalls
+  complete-but-uncommitted). Run per-suite, foreground, explicit timeout,
+  `-p no:cacheprovider`.
+- **Pattern**: parking a band mapping in a separate public function paid off
+  exactly as US-504b predicted -- when the ruling landed, only the gate moved.
+---
