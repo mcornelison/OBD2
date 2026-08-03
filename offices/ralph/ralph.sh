@@ -210,6 +210,16 @@ for ((i=1; i<=$1; i++)); do
   echo "Sprint progress: $before_complete / $total stories complete"
   echo "----------------------------------------------"
 
+  # Preflight (BL-029): proactively clear a VERIFIED-STALE .git/index.lock so a
+  # dead lock from a killed prior iteration can't stall the whole sprint. This
+  # runs in the CIO's shell (OUTSIDE the claude harness), which CAN touch .git/
+  # -- Ralph cannot (harness sensitive-path guard blocks him even though rm/mv
+  # are in his allowlist). The US-467 helper clears ONLY a lock that is 0-byte
+  # + aged past its threshold + owned by NO live git process; it REFUSES a
+  # non-empty/live lock (that rare case still escalates to a manual PM clear).
+  # Best-effort -- never aborts the loop.
+  python -m offices.pm.scripts.index_lock --repo "$PROJECT_ROOT" || true
+
   # Marker file: its mtime is "now", so `find -newer` afterwards finds any
   # BL-*.md this iteration filed (and ignores ones from earlier runs).
   marker="$(mktemp)"
