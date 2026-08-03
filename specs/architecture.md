@@ -3208,6 +3208,45 @@ partner test loads the **pre-US-494 emitter from git** and asserts the splash
 pins instead — the defect above is now reproducible on demand. See the
 render-regression backstop under F-092.
 
+**Launcher-URL ↔ served-route contract (US-525, Sprint 70 / V0.29.25 — I-042).**
+The server serves exactly three buckets: `/` (and `index.html`) → the *first*
+assets dir's index with placeholders injected; any name matching a file in an
+assets dir → that asset **by extension** (`*.html` also gets injection); and
+**everything else → a token-gated `states/` lookup**. So a *bare* route such as
+`/boot`, `/dashboard` or `/shutdown` is not a page at all — it falls through to
+the state bucket and answers **401 by design**. I-042 read those 401s as "a new
+gate on bare routes" and suspected US-501's `_injectHtml`; both were wrong. No
+launcher ever requests them: `splash-boot` loads `/`, `splash-grace` loads
+`/shutdown.html`, `dashboard` loads `/dashboard.html` — all 200 with the token
+injected. `_injectHtml` is **exonerated** (the index path serves 200).
+
+*Guarded by `tests/pi/splash/test_splash_launcher_route_contract.py`:* it parses
+the URL out of every real kiosk unit (both session variants) and drives it against
+the real server over the real shipped kits, so the units and the router cannot
+drift apart independently — the two-correct-halves class. The same file asserts
+the bare routes **stay 401**: opening them re-opens TD-067 and is an Atlas BLOCK.
+
+**Boot-splash minimum-VISIBLE floor (US-525).** `MIN_PLAY_MS` (2500 ms, spec §5)
+is now anchored to the brand `<object>`'s `load` event, not to script parse. The
+mark is a separate async SVG document, so on a cold chromium the poll loop ticks
+while the stage is still blank — the old anchor let the splash satisfy its own
+2.5 s floor having shown the brand for a fraction of it, then fade (I-042 cause
+b). Measured on the Pi (boot `dc7a3848`, 2026-08-02): `splash-boot` lived
+**9.806 s** but chromium's startup consumed the first ~5.4 s. The floor is
+**bounded by `HARD_CAP_MS`** and falls back to the parse anchor when the brand
+never loads — a cosmetic asset fault must never withhold the dashboard hand-off
+(that is the US-494 pin-until-reboot failure, re-entered through its own fix).
+
+**Shutdown splash fires only on a POWER-LOSS shutdown (US-525 finding, not a
+defect).** The sole production writer of `shutdown-state` is the powerwatch
+`ShutdownSequencer` grace path (`pi.power.power_watch.__main__` →
+`makeShutdownPhaseEmitter`). A manual `sudo reboot`/`poweroff` stops
+`eclipse-powerwatch.service` by SIGTERM without entering a grace sequence, so
+`shutdown-state` is never written, `splash-grace.path` never triggers, and **no
+reverse splash appears — correctly.** I-042's "shutdown splash did not appear"
+after a deploy+reboot is therefore expected behaviour, not the regression. Any
+future drill of the reverse splash must be a real AC-loss/grace event.
+
 **Token SSOT (US-393 DoD):** exactly one file — `/run/eclipse-obd/states/.http-token`
 (0600) — is the authority. `token.loadOrCreateToken` generates it once and never
 regenerates. The server loads it to validate the `X-Splash-Token` /

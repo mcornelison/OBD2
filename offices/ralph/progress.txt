@@ -788,3 +788,94 @@ Task: Raise Pi GPU CMA to 256M -- headroom complementing the raster fix
   throwaway probe `.sh` that exports the var, run it, then delete + VERIFY the
   deletion. Also: compound `&&` chains re-prompt -- one command per call.
 ---
+
+## 2026-08-03 - US-525 (Agent 1 / Rex)
+Task: Splash render fix -- boot splash visibility + shutdown-splash 401 route
+
+### ⚠️ COMMIT BLOCKED -- BL-029
+The work below is COMPLETE and GATE-GREEN but sits UNCOMMITTED. A stale 0-byte
+`.git/index.lock` (08:26, still present 13+ min later) fails every `git add`.
+I retried 4x, then refused to force it: handbook §13 rule 4 forbids removing the
+lock while a git process runs, and `ps -W` / `tasklist` / `Get-Process` are all
+permission-blocked here so I could not prove none is. The reversible move-aside
+is blocked too (`.git/index.lock` is a sensitive path). Filed `BL-029` with the
+exact fileset. **Sprint-wide: US-526-529 will hit the same wall. Do not switch
+branches until it clears.** TD-059's 7th sighting, and the dangerous variant --
+US-524's stalled work was at least committed; this was not.
+
+### What was implemented:
+- `boot-state-poll.js`: the 2500 ms visible floor is re-anchored from SCRIPT
+  PARSE to the brand `<object>`'s own `load` event, bounded by `HARD_CAP_MS`,
+  degrading to the parse anchor when the brand never loads.
+- `splash_probe.js` + `render_harness.py`: a `brandLoadMs` seam so a test can
+  model a cold chromium where the script ticks while the stage is still blank,
+  plus `handoffAtMs` so the floor is measurable rather than inferred.
+- `test_splash_launcher_route_contract.py` (22 tests): parses the URL out of all
+  SIX real kiosk units and drives it against the REAL server over the REAL kits.
+- `test_splash_min_visible_floor.py` (6 tests): the floor, its two bounds, and a
+  guard that no NEW floor constant may appear.
+- `architecture.md`: route contract + floor re-anchor + the power-loss-only
+  shutdown-splash finding.
+- Filed `I-043` (shutdown splash terminal reason unobservable) and `I-044`
+  (`%U` → `/run/user/0` in every kiosk unit).
+
+### Files changed:
+- Modified: `specs/UI/dist/splash-pi/boot-state-poll.js` (brand-anchored floor)
+- Modified: `tests/ui/splash_probe.js` (brand `load` dispatch + `handoffAtMs`)
+- Modified: `tests/ui/render_harness.py` (`brandLoadMs` param)
+- Modified: `specs/architecture.md` (3 subsections -- Rule 10, in-sprint)
+- Created: `tests/pi/splash/test_splash_launcher_route_contract.py`
+- Created: `tests/ui/test_splash_min_visible_floor.py`
+- Created: `offices/pm/issues/I-043-...md`, `offices/pm/issues/I-044-...md`
+- Created: `offices/pm/blockers/BL-029-...md`
+
+### Learnings for future iterations:
+- **The load-bearing one -- VERIFY THE EVIDENCE IS ON THE FAILURE PATH BEFORE
+  TREATING IT AS THE CAUSE.** I-042's loudest signal was a route auth anomaly
+  (`GET /boot` = 401). It is real, by-design, and completely irrelevant: NO
+  launcher requests those paths -- `splash-boot` loads `/`, `splash-grace`
+  `/shutdown.html`, `dashboard` `/dashboard.html`, all 200 with the token. The
+  AC was right to make "find what actually requests them" job #1; chasing the
+  401 would have consumed the story and "fixed" a non-defect. A striking
+  observation attached to a bug report is not automatically upstream of it.
+- **Pattern -- a duration bug can be a WRONG-ANCHOR bug.** `MIN_PLAY_MS=2500`
+  already existed and was never violated; it was measured from script parse
+  while the brand is a separate async SVG document that paints later. So the
+  "minimum play" window silently *included* the brand's load time and the splash
+  satisfied its own floor having shown the brand for a fraction of it. The fix
+  introduces NO new number -- same 2500 ms, correct anchor. When a timing floor
+  demonstrably isn't producing the visible effect it names, suspect the START
+  event before lengthening the interval.
+- **Gotcha -- adding a WAIT to a boot path: ask what happens if the awaited
+  thing never arrives.** `brandReadyMs` starts `null`, never `0`, so an
+  unloadable `splash.svg` falls back to the parse anchor. Initialised to 0 (or
+  left un-bounded by `HARD_CAP_MS`) a cosmetic asset fault would pin the splash
+  until reboot -- the exact US-494 failure mode, re-entered through its own fix.
+  A slow brand also must not tip a HEALTHY boot into the amber DEGRADED branch
+  that persists until reboot: that would be a dishonest reading caused purely
+  by a slow asset. Both bounds are tested.
+- **Pattern -- the best answer to an AC is sometimes a finding, not a patch.**
+  AC4 ("ensure the grace launcher loads a SERVED route") needed no code: it
+  already does. The reason nobody saw a reverse splash is that the ONLY writer
+  of `shutdown-state` is the powerwatch grace path, so a manual `sudo reboot`
+  SIGTERMs powerwatch without a grace sequence and **no reverse splash on a
+  bench reboot is CORRECT**. Writing that down is worth more than a patch, and
+  it retargets the whole validation drill (it needs a real AC-loss event).
+- **Gotcha -- enforce a "do not weaken" AC in the awkward direction.** AC5 says
+  keep the token gate. The test therefore asserts the bare routes STAY 401
+  rather than repairing them -- it exists to stop a well-meaning future fix from
+  making them public to "resolve I-042" (TD-067, an Atlas BLOCK). An invariant
+  nobody has written a test for reads as an oversight to the next person.
+- **Gotcha (I-044's own lesson) -- assert against RESOLVED state, not unit
+  text.** `XDG_RUNTIME_DIR=/run/user/%U` looks correct in the file and resolves
+  to `/run/user/0` regardless of `User=`. Only `systemctl show -p Environment`
+  shows it. Any guard over a systemd specifier must read systemd's view.
+- **Ops**: `pytest -q` prints NO summary line on this box -- 28 dots and
+  nothing else. Run without `-q` to actually read "N passed", and read the SKIP
+  count deliberately (US-524's lesson: the node-gated floor tests would skip
+  silently and void the whole timing catalog).
+- **Process**: when a shared-checkout lock blocks you and the guardrails block
+  the workaround, the honest move is a blocker file + an explicit escalation,
+  not a force. But do ALL the on-disk bookkeeping first -- sprint.json,
+  agents, progress -- so the next actor commits rather than re-implements.
+---
