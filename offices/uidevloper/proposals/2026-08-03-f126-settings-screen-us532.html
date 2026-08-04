@@ -46,10 +46,19 @@ code{font-family:var(--mono);font-size:.85em;background:var(--accent-soft);color
 .tb{position:absolute;top:0;left:0;right:0;height:26px;display:flex;align-items:center;gap:9px;padding:0 10px;background:var(--dv-surface);font-size:12px;z-index:5;}
 .tb .wm{font-family:var(--display);font-weight:600;letter-spacing:.1em;color:var(--dv-t2);text-transform:uppercase;font-size:12px;}
 .tb .sp{margin-left:auto;} .tb .g{color:var(--dv-t2);} .tb .vc{color:var(--dv-t3);font-size:9px;} .tb .kb{color:var(--dv-t2);font-size:18px;}
-.body{position:absolute;top:26px;bottom:20px;left:0;right:0;padding:9px 12px;display:flex;flex-direction:column;}
-.ct{font-family:var(--display);font-size:14px;font-weight:600;letter-spacing:.1em;color:var(--dv-t2);text-transform:uppercase;margin:0 0 6px;}
-.dots{position:absolute;bottom:0;left:0;right:0;height:20px;display:flex;justify-content:center;align-items:center;gap:7px;}
-.dot{width:7px;height:7px;border-radius:50%;background:var(--dv-t3);} .dot.on{background:var(--dv-t1);}
+/* the setup-menu OVERLAY (option B) — covers the dash, scrolls */
+.body{position:absolute;top:26px;bottom:0;left:0;right:0;padding:8px 12px 10px;overflow-y:auto;background:rgba(0,0,0,.94);}
+.mhead{display:flex;align-items:center;height:28px;border-bottom:1px solid var(--dv-surface);margin-bottom:6px;}
+.mtitle{font-family:var(--display);font-size:14px;font-weight:600;letter-spacing:.08em;color:var(--dv-t1);text-transform:uppercase;}
+.mx{margin-left:auto;color:var(--dv-t2);font-size:16px;}
+.msect{font-size:9.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--dv-t3);margin:9px 0 2px;padding-top:6px;border-top:1px solid var(--dv-surface);}
+.msect.first{border-top:0;padding-top:0;margin-top:2px;}
+.svc-row{display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid var(--dv-surface);}
+.svc-nm{flex:1;font-size:11.5px;color:var(--dv-t1);} .svc-nm .s{color:var(--dv-t3);font-size:9px;}
+.svc-btn{font-family:var(--mono);font-size:10px;padding:4px 9px;border-radius:5px;background:var(--dv-tile);color:var(--dv-t1);border:1px solid var(--dv-t3);cursor:pointer;}
+.svc-btn.stop{border-color:var(--dv-red);color:var(--dv-red);} .svc-btn:disabled{opacity:.4;border-color:var(--dv-line);color:var(--dv-t3);cursor:not-allowed;}
+.menu-wide{width:100%;font-family:var(--mono);font-size:12px;padding:8px;border-radius:6px;background:var(--dv-tile);color:var(--dv-t1);border:1px solid var(--dv-t3);cursor:pointer;margin-top:3px;}
+.persist{font-size:9px;color:var(--dv-t3);text-align:center;margin-top:8px;}
 /* rows */
 .srow{display:flex;align-items:center;gap:9px;padding:6px 0;border-bottom:1px solid var(--dv-surface);}
 .srow:last-of-type{border-bottom:0;}
@@ -70,10 +79,6 @@ code{font-family:var(--mono);font-size:.85em;background:var(--accent-soft);color
 .seg{display:flex;border:1px solid var(--dv-line);border-radius:7px;overflow:hidden;flex:0 0 auto;}
 .seg button{font-family:var(--mono);font-size:10px;letter-spacing:.04em;padding:4px 8px;background:transparent;color:var(--dv-t2);border:0;border-right:1px solid var(--dv-line);cursor:pointer;text-transform:uppercase;}
 .seg button:last-child{border-right:0;} .seg button.act{background:var(--dv-green);color:#04140b;font-weight:700;}
-/* footer link */
-.sfoot{margin-top:auto;display:flex;align-items:center;justify-content:space-between;padding-top:6px;}
-.sfoot .persist{font-size:9px;color:var(--dv-t3);}
-.sfoot .svc{font-size:11px;color:var(--dv-t2);cursor:pointer;}
 </style>
 </head>
 <body>
@@ -81,16 +86,17 @@ code{font-family:var(--mono);font-size:.85em;background:var(--accent-soft);color
   <header class="masthead">
     <p class="eyebrow">Eclipse OBD-II · UI/UX · F-126 · US-532</p>
     <h1>A Settings screen the operator can trust</h1>
-    <p class="dek">Five config-backed controls on a swipe-to <b>Settings card</b> — each showing its <b>real
-      effective value</b> (overlay override else config default), with an <b>honest save flow</b> (saving → confirmed
-      from a re-read, or snapped back on a rejected write) and a plain <b>apply-state</b> per row. Toggle things in
-      the device; hit "Demo: write fails" to see the honest failure.</p>
+    <p class="dek">Five config-backed controls — <b>CIO chose to put them in the ⋮ System Setup menu</b> (a
+      Settings band above the existing service controls), not a separate card. Each shows its <b>real effective
+      value</b> (overlay override else config default), with an <b>honest save flow</b> (saving → confirmed from a
+      re-read, or snapped back on a rejected write) and a plain <b>apply-state</b> per row. Toggle things in the
+      device; hit "Demo: write fails" to see the honest failure.</p>
     <div class="meta"><span><b>Author</b> Iris</span><span><b>Date</b> 2026-08-03</span>
       <span><b>Shape</b> card (rec) — confirm vs menu</span><span><b>System</b> F-124 tokens · Oswald</span></div>
   </header>
 
   <section>
-    <div class="sec-head"><span class="sec-num">▶</span><h2>Settings card</h2><span class="sec-sub">480×320 · interactive</span></div>
+    <div class="sec-head"><span class="sec-num">▶</span><h2>System Setup menu — Settings band + services</h2><span class="sec-sub">480×320 · interactive · scrolls</span></div>
     <div class="controls">
       <button class="ctl" id="fail">Demo: write fails</button>
       <span class="lbl">— then toggle any setting to see the honest snap-back</span>
@@ -105,17 +111,17 @@ code{font-family:var(--mono);font-size:.85em;background:var(--accent-soft);color
         <p><b>Auto-rotate / Power / Audio → live</b>; <b>Auto-analyze → next drive</b>; <b>Calibration → restart needed</b>. A setting that isn't instant says so — no silent no-op that looks applied. (Exact per-setting timing comes from the US-533 wiring; the card shows what it reports.)</p>
         <h3>Power mode = 3-state</h3>
         <p>CAR / WALL / <b>UNKNOWN</b> (not a toggle). Setting WALL fixes the bench "unknown" — the System-Status power tile then reads WALL.</p>
-        <h3>Reconciled with the setup menu</h3>
-        <p>Settings (safe prefs) = this card. Destructive <b>service control + Exit</b> stay in the US-403 long-press menu — reachable via the <b>Service &amp; Exit ›</b> row; the menu gets a <b>⚙ Settings</b> row back. No competing surfaces.</p>
+        <h3>One menu, two bands (B)</h3>
+        <p><b>Settings</b> on top, <b>OBD-II Services + Exit</b> below (kept confirm-gated, powerwatch-no-Stop). Opens via the <b>⋮ / long-press</b> (parked-only). Scrolls. A divider + section labels keep "flip a preference" clearly distinct from "stop a service".</p>
       </div>
     </div>
   </section>
 
   <section>
-    <div class="sec-head"><span class="sec-num">◆</span><h2>Confirm with you</h2><span class="sec-sub">your call</span></div>
+    <div class="sec-head"><span class="sec-num">◆</span><h2>Decided + what's left</h2><span class="sec-sub">CIO 2026-08-03</span></div>
     <ul style="list-style:none;padding:0;margin:0;display:grid;gap:11px;">
-      <li style="background:var(--card);border:1px solid var(--line);border-left:3px solid var(--accent);border-radius:8px;padding:12px 15px;font-size:13.5px;color:var(--ink-2)"><b style="color:var(--ink)">Shape (Marcus's ask):</b> my rec is <b>A — Settings as a card</b> + the setup menu stays for service/Exit, cross-linked. Alternatives: B (toggles inside the setup menu) or C (one unified card with service-stop). Your call.</li>
-      <li style="background:var(--card);border:1px solid var(--line);border-left:3px solid var(--accent);border-radius:8px;padding:12px 15px;font-size:13.5px;color:var(--ink-2)"><b style="color:var(--ink)">Card position:</b> I put Settings <b>last</b> (Home · System · Health · Alerts · Settings) — a destination, not a glance card. Move it if you prefer.</li>
+      <li style="background:var(--card);border:1px solid var(--line);border-left:3px solid var(--accent);border-radius:8px;padding:12px 15px;font-size:13.5px;color:var(--ink-2)"><b style="color:var(--ink)">Shape = B (CIO):</b> settings live in the <b>⋮ System Setup menu</b> (shown) — a Settings band above the service controls. Destructive Stop/Exit keep their confirms + powerwatch-no-Stop; the settings toggles don't confirm. One overlay, two visually-separated bands.</li>
+      <li style="background:var(--card);border:1px solid var(--line);border-left:3px solid var(--accent);border-radius:8px;padding:12px 15px;font-size:13.5px;color:var(--ink-2)"><b style="color:var(--ink)">Still needs Atlas (not my build):</b> US-530 overlay contract + US-531 token-gated write; and confirm the effective-value read exposes each key's <b>apply-state</b> so the live/next-drive/restart tag is real, not guessed.</li>
     </ul>
   </section>
 
@@ -145,19 +151,31 @@ function row(id,name,control,applyKey){
     '<span class="sub">'+tag(applyKey)+srcHtml(st[id].src)+'</span></div>'+
     saveHtml(id)+control+'</div>';
 }
+function svcRow(nm,sub,canStop){
+  return '<div class="svc-row"><span class="svc-nm">'+nm+' <span class="s">· '+sub+'</span></span>'+
+    '<button class="svc-btn">Restart</button><button class="svc-btn stop"'+(canStop?"":" disabled")+'>Stop</button></div>';
+}
 function render(){
   var seg='<div class="seg" data-seg="power">'+["car","wall","unknown"].map(function(v){
     return '<button data-val="'+v+'" class="'+(st.power.val===v?"act":"")+'">'+v+'</button>';}).join("")+'</div>';
   document.getElementById("s").innerHTML=
    '<div class="tb"><span class="wm">Eclipse OBD-II</span><span class="sp"></span><span class="g">BT</span><span class="g">⇅</span><span class="g">⚡</span><span class="vc">V0.29.26</span><span class="kb">⋮</span></div>'+
-   '<div class="body"><div class="ct">Settings</div>'+
-     row("autorotate","Carousel auto-rotate", togHtml("autorotate",st.autorotate.on), "live")+
-     '<div class="srow"><div class="slabel"><span class="nm">Power mode</span><span class="sub">'+tag("live")+srcHtml(st.power.src)+'</span></div>'+saveHtml("power")+seg+'</div>'+
-     row("audio","Audio alerts", togHtml("audio",st.audio.on), "live")+
-     row("calib","Calibration mode", togHtml("calib",st.calib.on), "restart")+
-     row("analyze","Auto-analyze after drive", togHtml("analyze",st.analyze.on), "next")+
-     '<div class="sfoot"><span class="persist">saved on the Pi · survives deploys &amp; reboots</span><span class="svc">Service &amp; Exit ›</span></div>'+
-   '</div><div class="dots"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="dot on"></span></div>';
+   '<div class="body">'+
+     '<div class="mhead"><span class="mtitle">System Setup</span><span class="mx">✕</span></div>'+
+     '<div class="msect first">Settings</div>'+
+       row("autorotate","Carousel auto-rotate", togHtml("autorotate",st.autorotate.on), "live")+
+       '<div class="srow"><div class="slabel"><span class="nm">Power mode</span><span class="sub">'+tag("live")+srcHtml(st.power.src)+'</span></div>'+saveHtml("power")+seg+'</div>'+
+       row("audio","Audio alerts", togHtml("audio",st.audio.on), "live")+
+       row("calib","Calibration mode", togHtml("calib",st.calib.on), "restart")+
+       row("analyze","Auto-analyze after drive", togHtml("analyze",st.analyze.on), "next")+
+     '<div class="msect">OBD-II Services</div>'+
+       svcRow("eclipse-obd","data capture",true)+
+       svcRow("eclipse-sync","server upload",true)+
+       svcRow("eclipse-powerwatch","safe-shutdown guard",false)+
+     '<div class="msect">Display</div>'+
+       '<button class="menu-wide">Exit / Close UI</button>'+
+     '<div class="persist">Settings saved on the Pi · survive deploys &amp; reboots · Stop/Exit confirm first</div>'+
+   '</div>';
   wire();
 }
 function wire(){

@@ -4,12 +4,23 @@
 |---|---|
 | **Author** | Iris (UI/UX) |
 | **Date** | 2026-08-03 |
-| **Status** | DRAFT — design-before-build; **card-vs-menu shape to confirm with CIO** (Marcus's ask) |
+| **Status** | **CIO CHOSE B (2026-08-03): settings live INSIDE the US-403 ⋮ setup-menu overlay** (a Settings section above the service controls), NOT a separate card. Redesigned accordingly. |
 | **Story** | US-532 (F-126 / V0.29.26 / Sprint 71) — PRD `offices/pm/prds/prd-V0.29.26-settings-screen.md` |
 | **Companion** | `proposals/2026-08-03-f126-settings-screen-us532.html` + hosted artifact |
 | **Design system** | F-124 carousel (tokens, Oswald `--font-display`) |
 
-## 1. Shape — RECOMMENDATION: Settings = a carousel card; setup menu stays separate (cross-linked)
+## 1. Shape — DECISION: B (CIO 2026-08-03) — settings INSIDE the ⋮ setup-menu overlay
+
+**CIO chose B.** No separate carousel card. The existing US-403 setup-menu overlay (opened by the 5 s
+long-press / `⋮`, parked-only) gains a **Settings section** at the top — the 5 config toggles — **above**
+its existing **Service control** section (OBD stop/restart, powerwatch restart-only, Exit-UI). One overlay,
+two clearly-separated bands: **Settings (safe, persistent prefs)** on top, **Service & Exit (destructive,
+confirm-gated)** below. The 5 controls, honest save flow, apply-state, and effective-value rules in §2–§3
+are unchanged — only the container is the menu, not a card. Consequences: no 5th carousel card; the menu
+scrolls (settings + services exceed one screen); the destructive service rows keep their confirms + the
+powerwatch-no-stop rule. *(The A/B/C analysis below is kept as the record of the decision.)*
+
+### (Superseded) recommendation — Settings = a carousel card; setup menu stays separate
 
 Marcus asked me to reconcile with the existing **US-403 setup menu** (kebab/long-press overlay). They're
 **different concerns**, so keep them distinct — no competing surfaces:
@@ -59,17 +70,20 @@ Layout: a titled `SETTINGS` card, one row per setting = **label · effective val
 - **Persistence is stated:** a small footer — "saved on the Pi · survives deploys & reboots" (the overlay is
   deploy-preserved) — so the operator trusts a toggle sticks.
 
-## 4. Placement + reconciliation
-- Card order (current 4 + this): **Home · System Status · Health · Alerts · Settings** (Settings last — a
-  destination, not a glance card). Reachable by swipe + from the setup menu's new `⚙ Settings` row.
-- `Service & Exit ›` footer row on the card opens the US-403 setup menu (service control lives there, unchanged).
+## 4. Placement (B) — one setup-menu overlay, two bands
+- **No new carousel card.** The `⋮`/long-press opens the setup-menu overlay, which now reads top-to-bottom:
+  **① Settings** (the 5 config controls) → **② OBD-II Services** (eclipse-obd/-sync Restart·Stop,
+  eclipse-powerwatch Restart-only) → **③ Display** (Exit / Close UI). The overlay scrolls.
+- **Safety unchanged:** the service + Exit rows keep their confirm modals (F-6) and the powerwatch-no-Stop
+  rule (F-7); the new Settings toggles are non-destructive and don't confirm. Visual separation (a divider +
+  section labels) keeps "flip a preference" clearly distinct from "stop a service".
 
 ## 5. Acceptance criteria (Argus-style)
 1. Every control renders its **real effective value** (overlay-override else config default), never a hardcoded default. ✅/❌
 2. Toggling shows `saving…` then confirms from a **re-read** (`saved`); a rejected/failed write snaps back to the real value with `couldn't save` — never an optimistic on. ✅/❌
 3. Power mode is a **3-state** CAR/WALL/UNKNOWN selector; setting WALL makes the System-Status power tile read WALL. ✅/❌
 4. Each row shows an honest **apply-state** (live / next drive / restart); a restart-needed setting says so. ✅/❌
-5. Settings is a **card**; destructive service control stays in the US-403 menu; the two are cross-linked, not duplicated. ✅/❌
+5. Settings is a **section at the top of the setup-menu overlay**, above the service controls (one overlay, visually separated bands); the destructive service/Exit rows keep their confirms + powerwatch-no-Stop. ✅/❌
 
 ## 6. Routing
 - **CIO:** confirm the shape (A card / B menu / C unified) — my rec is **A**.
