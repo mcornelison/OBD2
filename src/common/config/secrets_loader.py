@@ -10,6 +10,9 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-01-21    | M. Cornelison | Initial implementation
+# 2026-08-07    | Rex (US-530) | Apply the F-126 Pi-local config overlay through
+#               |              | the shared resolver (config.json stays the
+#               |              | read-only shipped default).
 # ================================================================================
 ################################################################################
 
@@ -34,6 +37,8 @@ import os
 import re
 from pathlib import Path
 from typing import Any
+
+from common.config.overlay import applyConfigOverlay
 
 logger = logging.getLogger(__name__)
 
@@ -188,6 +193,12 @@ def loadConfigWithSecrets(
 
     # Resolve secret placeholders
     config = resolveSecrets(config)
+
+    # US-530: layer the Pi-local overlay over the shipped defaults through the
+    # SHARED resolver -- the same seam the state server uses, so every consumer
+    # sees one effective config (Atlas A-4). Secrets resolve FIRST: the overlay
+    # is operator-set plain values and must never carry a ${ENV} placeholder.
+    config = applyConfigOverlay(config, configPath)
 
     logger.info("Configuration loaded and secrets resolved")
     return config

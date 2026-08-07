@@ -48,6 +48,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import unquote, urlsplit
 
+from common.config.overlay import applyConfigOverlay
 from pi.splash import dtc_clear, service_control
 
 # Placeholder substituted with the live token when the kiosk HTML is served.
@@ -447,7 +448,7 @@ class StatesHttpServer:
 
 
 def _loadDisplaySection(configPath: str, name: str) -> dict[str, Any] | None:
-    """Read one ``pi.display.<name>`` sub-config from config.json, fail-safe.
+    """Read one effective ``pi.display.<name>`` sub-config, fail-safe.
 
     A LIGHT raw ``json.load`` (no secrets loader / validator) -- these display
     values are plain numbers with no ``${ENV}`` placeholders, so a full config
@@ -455,6 +456,11 @@ def _loadDisplaySection(configPath: str, name: str) -> dict[str, Any] | None:
     (missing file, unreadable, malformed, section absent) returns ``None`` so the
     server still serves the dashboard and the carousel falls back to its built-in
     grounded defaults (honest -- never crash the kiosk over a config read).
+
+    US-530: the raw read is then resolved through the shared config-overlay seam
+    (``common.config.overlay``, itself stdlib-only, so this server keeps its
+    no-third-party posture) so an operator setting written on the Pi is honoured
+    here exactly as the orchestrator honours it.
 
     Args:
         configPath: Path to config.json (relative paths resolve against the
@@ -467,6 +473,10 @@ def _loadDisplaySection(configPath: str, name: str) -> dict[str, Any] | None:
     try:
         with open(configPath, encoding="utf-8") as fh:
             config = json.load(fh)
+        # US-530: resolve through the SHARED overlay seam, not a local merge --
+        # this reader and the orchestrator's loadConfigWithSecrets must return
+        # the identical effective value or the A-4 divergence returns.
+        config = applyConfigOverlay(config, configPath)
         section = config.get("pi", {}).get("display", {}).get(name)
         return section if isinstance(section, dict) else None
     except (OSError, ValueError):

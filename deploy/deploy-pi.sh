@@ -190,6 +190,7 @@ sync_tree() {
             --exclude='exports/' \
             --exclude='logs/' \
             --exclude='.env' \
+            --exclude='config.local.json' \
             --exclude='deploy/deploy.conf' \
             -e "ssh -p ${PI_PORT}" \
             "$REPO_ROOT/" "${PI_USER}@${PI_HOST}:${PI_PATH}/"
@@ -198,7 +199,10 @@ sync_tree() {
         echo "      Install rsync for faster incremental sync (see deploy/README.md)."
         # Stream a gzipped tarball of the source tree over SSH, then on the Pi:
         # wipe top-level contents except runtime state dirs (data, exports, logs,
-        # .env), then extract the tar. Mirrors rsync --delete but at tar granularity.
+        # .env, config.local.json), then extract the tar. Mirrors rsync --delete
+        # but at tar granularity. NOTE: excluding a file from the TARBALL alone is
+        # not enough -- the wipe runs first, so every preserved path needs a
+        # matching `! -name` below or the operator's settings are deleted (US-530).
         ( cd "$REPO_ROOT" && tar -cz \
             --exclude='./.git' \
             --exclude='./.venv' \
@@ -217,6 +221,7 @@ sync_tree() {
             --exclude='./exports' \
             --exclude='./logs' \
             --exclude='./.env' \
+            --exclude='./config.local.json' \
             --exclude='./deploy/deploy.conf' \
             -f - . ) | \
           ssh -p "${PI_PORT}" "${PI_USER}@${PI_HOST}" "
@@ -225,6 +230,7 @@ sync_tree() {
             cd '${PI_PATH}'
             find . -mindepth 1 -maxdepth 1 \
                 ! -name 'data' ! -name 'exports' ! -name 'logs' ! -name '.env' \
+                ! -name 'config.local.json' \
                 -exec rm -rf {} +
             tar -xzf -
           "
