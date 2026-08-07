@@ -172,3 +172,60 @@ Task: Settings UI -- Option B settings band inside the setup-menu overlay
   Writes outside the repo working dir are blocked, so an ad-hoc smoke script has
   to run via a heredoc rather than a temp file.
 ---
+
+## 2026-08-07 - US-533 (Agent 1 / Rex) -- BLOCKED, no code written
+Task: Wire the 5 config settings end-to-end (read effective + write overlay + apply semantics)
+
+### What was implemented:
+- NOTHING. Two of the five controls cannot be wired as their ACs are written.
+  Filed `offices/pm/blockers/BL-030-us533-states-http-bounce-unauthorized-and-audioalerts-has-no-consumer.md`
+  and stopped before touching a source file.
+- **B1 (CRITICAL)** AC-2's `eclipse-states-http` bounce is DENIED by PolicyKit.
+  The state server runs `User=mcornelison` (eclipse-states-http.service:43) and
+  the manage-units grant covers exactly four units -- powerwatch / obd / sync /
+  dashboard -- with states-http absent and an explicit default-deny tail
+  (51-eclipse-service-control.rules:52-68). unit_manifest.py:131-135 gives it no
+  kioskVerbs either. So the auto-rotate toggle would be a SILENT NO-OP: the exact
+  failure AC-4 forbids. And the withholding is DELIBERATE (unit_manifest.py:18-20
+  names the state server as something a compromised kiosk must not reach), so
+  AC-2 contradicts a different Atlas ruling -> Atlas owns the tie-break.
+- **B2 (HIGH)** `pi.alerts.audioAlerts` has ZERO consumers. It exists only as a
+  default (loader.py:142) + a validator (overlay.py:121); AlertManager takes
+  visualAlerts + logAlerts only (alert/manager.py:96-97); and no audio playback
+  code exists anywhere in src/ (grepped mixer / aplay / playsound / winsound /
+  espeak / paplay / beep -- zero hits). No restart can ever make that row do
+  anything, so "no control silently no-ops" is unachievable BY WIRING.
+
+### Files changed:
+- Created: `offices/pm/blockers/BL-030-...md` (evidence + 3-path trade-off table)
+- Modified: `offices/ralph/sprint.json` (US-533 conditionalOutcomes + notes)
+- Modified: `offices/ralph/ralph_agents.json`, `offices/ralph/progress.txt`
+- NO source file touched.
+
+### Learnings for future iterations:
+- **Pattern discovered**: A CAPABILITY THE TEST KIT CANNOT SEE IS STILL A
+  CAPABILITY. Every prior F-126 story closed on dev-box proof -- real HTTP
+  server, real config.json, real 401s. None of that can observe a PolicyKit
+  denial, because polkit does not exist on the dev box. An AC that depends on a
+  Pi-side PRIVILEGE must be validated by reading the grant chain (unit `User=` ->
+  polkit rule -> app allow-list), never by running the suite. Same family as
+  US-530's "a log line is a DECLARATION, not a mechanism": the code would have
+  LOOKED like it restarts the service and every test would have agreed with it.
+- **Pattern discovered**: trace the authorization chain BEFORE implementing, not
+  after. Finding this first cost one iteration of reading; finding it second
+  would have cost a green suite over a dead toggle, deployed to the Pi.
+- **Gotcha**: when two rulings from the same authority conflict, that is a
+  blocker, not a judgment call to make quietly. AC-2 asks for a privilege that
+  unit_manifest.py:18-20 deliberately withholds. Picking either side silently is
+  exactly the architecture drift the design gate exists to catch (PM Rule 10).
+- **Gotcha**: the best fix can be the one that DELETES the constraint rather than
+  authorizing it. `carouselConfig` is the last resolve-at-construction value left
+  in `_injectHtml`; the two beside it (US-501 `__DEPLOY_VERSION__`, US-532
+  `__DISPLAY_SETTINGS__`) already moved to per-request WITH comments explaining
+  the same staleness bug. Making it per-request removes the need for any service
+  restart -- no privilege, no unit change, no downtime, no start-limit hazard.
+  Recommended it in BL-030 rather than adopting it, because overriding Atlas's
+  stated GAP 1 remedy is his call, not mine.
+- **Gotcha**: ripgrep/Glob over the whole tree TIMES OUT on this SMB share.
+  Scope greps to `src/` or a subdir, or list dirs with `ls` via Bash.
+---
