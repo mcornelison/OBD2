@@ -2,3 +2,52 @@
 
 Fresh sprint. 6 stories US-530/531/532/533/536/537, all pending.
 Start with US-530 (overlay + shared resolveEffectiveConfig SSOT) -- the foundation.
+
+## 2026-08-07 - US-530 (Rex / Session 1)
+Task: Config overlay persistence + layered read (config.json default <- Pi-local overlay override)
+
+### What was implemented:
+- A Pi-local OVERLAY (`config.local.json`, beside config.json): a FLAT dot-path
+  map (`{"pi.power.mode": "wall"}`) that layers OVER the shipped config.json.
+  config.json stays read-only; nothing writes it at runtime.
+- `resolveEffectiveConfig(base, overlay, allowlist)` as the ONE merge seam, plus
+  `applyConfigOverlay` / `loadOverlay` / `overlayPathFor` / `validateOverlayValue`.
+- BOTH config readers wired to that seam (Gap 2 / Atlas A-4): the orchestrator's
+  `loadConfigWithSecrets` and the state server's `_loadDisplaySection`.
+- Slice-1 allow-list (5 keys) enforced at the read gate; `validateOverlayValue`
+  is exported so US-531's write gate reuses it rather than re-implementing it.
+- Gap 3a honoured: NO new `autoRotate` bool. `autoRotateS` (0=off, >0=on) stays
+  the one truth; both directions round-trip.
+- Honest-instrument: absent/malformed overlay, out-of-allow-list key, or a
+  wrong-typed value -> the shipped default, logged, and no invented config
+  branch. Invalid `pi.power.mode` coerces to `unknown`, never a wrong mode.
+- Durability: `.gitignore` + deploy-pi.sh rsync exclude + tar-fallback exclude
+  + the tar-fallback WIPE PRESERVE entry.
+
+### Files changed:
+- Created: `src/common/config/overlay.py` (the overlay + shared resolver)
+- Created: `tests/common/test_config_overlay.py` (42 tests)
+- Modified: `src/common/config/secrets_loader.py` (orchestrator read path -> seam)
+- Modified: `src/pi/splash/states_http_server.py` (state-server read path -> seam)
+- Modified: `.gitignore` (config.local.json)
+- Modified: `deploy/deploy-pi.sh` (rsync exclude, tar exclude, wipe preserve)
+
+### Learnings for future iterations:
+- **Pattern discovered**: when N consumers must agree on ONE fact, assert the
+  AGREEMENT, not each consumer separately. Dropping the seam from one reader left
+  the other reader's own test green -- a per-reader suite ships the divergence.
+  And pick a fixture value that DIFFERS from the default: my parity test is
+  parametrized [0, 8, 20] because 8 IS the shipped default, so a parity test
+  using only 8 passes against a completely broken reader.
+- **Gotcha**: deploy-pi.sh has TWO sync paths, and the tar fallback WIPES the
+  remote tree before extracting. Excluding a file from the tarball is NOT the
+  same guarantee as surviving the delete -- the preserve `find` needed its own
+  `! -name` entry or every rsync-less deploy would silently erase operator
+  settings. Re-prove a durability guarantee in the fallback path, not just the
+  primary one.
+- **Gotcha**: a log line is a DECLARATION, not a mechanism. With the power-mode
+  coercion removed, the WARNING still read "resolving to unknown" while the code
+  no longer did. Only the assertion pins the behaviour.
+- **Gotcha**: `bash -n` any .sh you touch -- pytest cannot see a shell syntax
+  error. `make` is not on PATH here (exits 127, which reads like a pass).
+---
