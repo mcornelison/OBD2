@@ -103,3 +103,72 @@ Task: Token-gated settings write endpoint on states_http_server (writes the over
   payloads with dict() instead. `make` is still not on PATH (exits 127, which
   reads like a pass); use `python -m ruff check` per touched file.
 ---
+
+## 2026-08-07 - US-532 (Agent 1 / Rex)
+Task: Settings UI -- Option B settings band inside the setup-menu overlay
+
+### What was implemented:
+- Iris Option B: a Settings BAND at the TOP of the EXISTING US-403 setup-menu
+  overlay, above OBD-II Services and Display/Exit. No 5th carousel card.
+- READ: the state server injects the 5 effective values as
+  `window.DISPLAY_SETTINGS` through the same quoted-placeholder seam as
+  `__DISPLAY_CAROUSEL__`, resolved via the US-530 shared resolver and keyed by
+  the overlay's own flat dot-paths -- the injected keys ARE the POST body keys,
+  so there is no display-side mapping table to drift from the write gate.
+- Resolved PER REQUEST (the US-501 `__DEPLOY_VERSION__` pattern), not cached at
+  construction (the US-506 pattern).
+- WRITE: each control POSTs the US-531 token-gated route and repaints from the
+  server's RE-READ. No GET counterpart (US-531 ruling). No confirm modal --
+  these are reversible preferences.
+- One segmented-control mechanism for both kinds (2-choice toggle, 3-choice
+  power mode); an unknown setting selects NOTHING rather than defaulting to Off.
+- Apply-state labels ship CONSERVATIVE on all 5 rows ("applies on restart").
+
+### Files changed:
+- Modified: `src/pi/splash/states_http_server.py` (loadEffectiveSettings +
+  the per-request `__DISPLAY_SETTINGS__` injection)
+- Modified: `specs/UI/dist/dashboard-pi/carousel.js` (pure settings logic +
+  exports + the band's DOM wiring inside setupMenu)
+- Modified: `specs/UI/dist/dashboard-pi/dashboard.html` (Settings section above
+  OBD-II Services + the quoted placeholder)
+- Modified: `specs/UI/dist/dashboard-pi/dashboard.css` (band styles, tokens only)
+- Created: `tests/pi/splash/test_states_http_settings_inject.py` (17 tests)
+- Created: `tests/ui/test_carousel_settings_band.py` (47 tests)
+
+### Learnings for future iterations:
+- **Pattern discovered**: when a codebase already contains TWO patterns for
+  "when do I resolve this value?", they are not interchangeable styles -- one of
+  them usually carries a comment explaining the bug that moved it. Here
+  `carouselConfig` resolves at construction (US-506) while `__DEPLOY_VERSION__`
+  resolves per request (US-501, "a value cached at startup would be the PREVIOUS
+  deploy's version"). The settings band had US-501's exact failure mode, so it
+  had to follow US-501. Read the comment before picking the pattern.
+- **Gotcha (the one I nearly got backwards)**: US-530 taught "when N consumers
+  must agree on one fact, assert the AGREEMENT" -- so my reflex was a parity test
+  between `DISPLAY_SETTINGS.autoRotateS` and `DISPLAY_CAROUSEL.autoRotateS`. That
+  would have been WRONG: they are not the same fact. One is what is STORED, the
+  other what is RUNNING (cached at states-http startup). Forcing parity would
+  have made the band report the stale running value, i.e. HIDE the gap the
+  "applies on restart" label exists to disclose. Check that two values are the
+  same FACT before pinning them to each other.
+- **Gotcha**: an apply-state label is a CLAIM ABOUT A CONSUMER. Shipping the
+  design's "applies now" for consumers this story never wired would have been an
+  over-promise, and the over-promise is the dangerous direction -- it is exactly
+  the silent no-op the band exists to prevent. Under-promising ("applies on
+  restart", which a restart always satisfies) costs only a needless restart.
+- **Honest bound**: the optimistic-echo mutation was caught by SOURCE INSPECTION
+  ONLY -- every pure non-echo test stayed green, because they exercise the
+  reducer in isolation and the DOM is free to ignore its answer. There is no DOM
+  harness in this kit (the node probe has no `document`), so every "the wiring
+  applies the policy" guard here is a source-text assertion. That is a ceiling of
+  the harness, not something a better test could close inside this story.
+- **Gotcha**: a cross-language SSOT copy (JS mirroring a Python allow-list) can
+  be pinned harder than a same-language one -- the JS list is asserted equal to
+  `overlay.OVERRIDABLE_KEYS` in both directions, which is the DRIFT guard US-531
+  could not build when its copy was same-process and currently identical.
+- **Gotcha**: `tests/ui/` + `tests/pi/splash/` together exceed the Bash tool's
+  120s default on this SMB share and get backgrounded -- the TD-059 trap. Pass an
+  explicit timeout, or read the completed output file within the SAME iteration.
+  Writes outside the repo working dir are blocked, so an ad-hoc smoke script has
+  to run via a heredoc rather than a temp file.
+---
