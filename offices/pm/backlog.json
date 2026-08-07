@@ -5,7 +5,7 @@
   "counters": {
     "epic": 7,
     "feature": 126,
-    "story": 535
+    "story": 537
   },
   "epics": [
     {
@@ -7145,20 +7145,21 @@
       "title": "Config overlay persistence + layered read (config.json default <- Pi-local overlay override)",
       "goal": "As the operator, I want my Pi settings to survive deploys, so a toggle I set on the Pi is not wiped the next time code ships.",
       "definitionOfDone": [
-        "[ATLAS DESIGN-GATE -- load-bearing config/SSOT seam] introduce a Pi-local OVERLAY file (gitignored, added to deploy-pi.sh rsync excludes like .env so deploy never clobbers it) that layers OVER config.json: read path resolves effective value = overlay-override ELSE config.json default. config.json stays the read-only shipped default; nothing writes config.json at runtime. Atlas designs the overlay file shape + the overridable-key ALLOW-LIST (only the settings-screen keys may be overridden -- not arbitrary config)",
-        "the overridable-key allow-list for Slice 1 is exactly: pi.display.carousel.autoRotate, pi.power.mode, pi.alerts.audioAlerts, pi.calibration.mode, pi.analysis.triggerAfterDrive",
-        "honest-instrument: a malformed/absent overlay resolves to the config.json default, never a guessed value; an overlay key outside the allow-list is ignored + logged, never applied",
-        "add pi.display.carousel.autoRotate (bool, default true) to config.json defaults + validator; autoRotateS remains the interval",
-        "test proves: overlay override wins over default; absent overlay -> default; out-of-allow-list key rejected; deploy-exclude keeps the overlay across an rsync; ruff clean"
+        "[ATLAS DESIGN-GATE -- load-bearing config/SSOT seam] introduce a Pi-local OVERLAY file (gitignored, added to deploy-pi.sh rsync excludes like .env so deploy never clobbers it) that layers OVER config.json: effective = overlay-override ELSE config.json default. config.json stays read-only shipped default; nothing writes config.json at runtime",
+        "[GAP 2 -- A-4 SSOT, Atlas] the overlay merge is ONE shared utility in src/common/config/ (e.g. resolveEffectiveConfig(base, overlay, allowlist)) that BOTH config readers call -- the orchestrator loadConfigWithSecrets AND states_http_server._loadDisplaySection (which reads config.json directly). Effective config MUST be identical for every consumer (avoids the A-4 divergence). Allow-list enforced at BOTH read (overlay keys outside the allow-list ignored + logged) AND write (US-531 endpoint) = defense-in-depth",
+        "[GAP 3a -- one key one truth, Atlas] do NOT mint a new pi.display.carousel.autoRotate bool. The overlay stores the EXISTING pi.display.carousel.autoRotateS (seconds; 0=off, >0=on). The UI toggle derives on/off from autoRotateS>0 (off writes 0, on writes the shipped interval)",
+        "overridable-key allow-list (Slice 1): pi.display.carousel.autoRotateS, pi.power.mode, pi.alerts.audioAlerts, pi.calibration.mode, pi.analysis.triggerAfterDrive. pi.power.mode overlay value MUST validate to {car,wall,unknown} -- invalid -> unknown (honest-unknown contract), never a confident wrong mode",
+        "honest-instrument: malformed/absent overlay -> config.json default, never a guessed value; out-of-allow-list key ignored + logged",
+        "test proves: overlay override wins over default via the SHARED resolver for BOTH read paths; absent overlay -> default; out-of-allow-list key rejected; autoRotateS 0<->interval round-trips; deploy-exclude keeps the overlay across an rsync; ruff clean"
       ],
       "validationCriteria": [
         {
-          "action": "set an overlay override for pi.display.carousel.autoRotate=false on the Pi, then run a deploy, then read the effective value",
-          "outcome": "effective value stays false after the deploy (overlay preserved + wins over the shipped default)"
+          "action": "set an overlay override autoRotateS=0 on the Pi, run a deploy, then read the effective value via BOTH the orchestrator and the state server",
+          "outcome": "both readers return 0 after the deploy (overlay preserved + wins for every consumer -- no divergence)"
         }
       ],
       "conditionalOutcomes": [
-        "Atlas rules the overlay file shape + layering seam + allow-list mechanism before build; this is a load-bearing config/SSOT change (design gate)"
+        "Atlas ruled the overlay contract sound 2026-08-03 (3 gaps folded). resolveEffectiveConfig is the single seam; do not merge the overlay per-reader."
       ],
       "sourceRefs": [
         "CIO 2026-08-03 settings-screen brainstorm"
@@ -7175,16 +7176,16 @@
       "title": "Token-gated settings write endpoint on states_http_server (writes the overlay)",
       "goal": "As the operator, I want the settings screen to save my toggles, so tapping a toggle persists it -- without opening any un-gated write surface on the Pi.",
       "definitionOfDone": [
-        "[ATLAS SEAM] add a WRITE endpoint on states_http_server that accepts a setting change (allow-listed key + value) and writes it to the US-530 overlay. The kiosk is chromium JS + cannot write files, so the toggle POSTs here",
-        "[SECURITY -- Atlas US-525 ruling stands] the write endpoint is TOKEN-GATED with the same US-393 SSOT token as the served pages; NEVER weaken or bypass _tokenOk, never expose an un-authenticated write (weakening the gate = Atlas BLOCK / TD-067)",
-        "the endpoint validates the key against the US-530 allow-list + the value type (bool for toggles; car|wall|unknown for pi.power.mode); rejects anything else with an honest error, writes nothing on reject",
-        "honest-instrument: on a write failure the endpoint returns failure so the UI can reflect the REAL stored value, never an optimistic success",
-        "test proves: authenticated allow-listed write persists to the overlay; un-authenticated write is rejected; out-of-allow-list key/invalid value rejected with no write; ruff clean"
+        "[ATLAS SEAM -- CONFIRMED] add a THIRD token-gated POST route on states_http_server following the existing US-403/US-407 pattern exactly (if not self._tokenOk(): 401). The kiosk is chromium JS + cannot write files, so a toggle POSTs here to write the US-530 overlay",
+        "[SECURITY -- Atlas US-525 ruling] token-gated with the US-393 SSOT token; NEVER weaken/bypass _tokenOk, no un-authenticated write surface (= TD-067 / Atlas BLOCK)",
+        "validates the key against the US-530 allow-list + the value type (numeric for autoRotateS; bool for the 3 toggles; {car,wall,unknown} for pi.power.mode); out-of-allow-list/invalid -> 4xx, NO write",
+        "atomic overlay write (temp + rename); honest response -- return the REAL stored effective value, never optimistic success",
+        "test proves: authenticated allow-listed write persists to the overlay; un-authenticated write rejected; out-of-allow-list/invalid rejected with no write; ruff clean"
       ],
       "validationCriteria": [
         {
           "action": "POST an allow-listed setting change with the token, then without the token",
-          "outcome": "with token -> overlay updated + success; without token -> 401/reject + overlay unchanged"
+          "outcome": "with token -> overlay updated + real effective value returned; without token -> 401 + overlay unchanged"
         }
       ],
       "conditionalOutcomes": [],
@@ -7200,23 +7201,22 @@
       "type": "normal",
       "size": "M",
       "status": "sprint-ready",
-      "title": "Settings carousel card UI (Iris) -- renders the 5 settings + current effective values",
+      "title": "Settings UI -- Option B settings band inside the setup-menu overlay (Iris design)",
       "goal": "As the operator, I want a Settings screen on the dashboard where I can see and change my preferences at a glance.",
       "definitionOfDone": [
-        "[IRIS UX] a new Settings card in the carousel (a swipe-to system screen, like System Status) rendering the 5 Slice-1 settings with their CURRENT EFFECTIVE values (read via the US-530 layered read, surfaced through the state server)",
-        "[IRIS] reconcile with the existing US-403 setup menu (the kebab/long-press service-control overlay) -- Iris decides whether Settings is a card, is reachable from the setup menu, or both; no duplicate/competing surfaces",
-        "each control shows the real current value (toggle position / car|wall|unknown selection) sourced from the effective config, not a hardcoded default",
-        "honest apply-state: where a setting applies live it reflects immediately; where it needs a service restart to take effect, the card says so plainly (never a silent no-op that looks applied)",
-        "styling matches the F-124 carousel design system (tokens, Oswald wordmark); test/probe proves the card renders the 5 controls with effective values; ruff/lint clean"
+        "[IRIS DESIGN -- Option B, CIO-refined] implement Iris's delivered design (offices/uidevloper/proposals/2026-08-03-f126-settings-screen-us532.md (+ .html)): a Settings BAND inside the EXISTING US-403 setup-menu overlay (NOT a separate carousel card), with the honest save flow + setup-menu reconciliation she specified",
+        "renders the 5 Slice-1 settings with their CURRENT EFFECTIVE values (read via the US-530 shared resolver, surfaced through the state server): auto-rotate (derived from autoRotateS>0), power mode (car/wall/unknown), audio alerts, calibration mode, auto-analyze after drive",
+        "honest save flow (per Iris): each control writes via the US-531 token-gated endpoint; on write failure the control reflects the REAL stored value, never an optimistic success; where a change needs a service restart to apply it is labeled plainly (NOT a silent no-op)",
+        "matches the F-124 carousel design system (tokens, Oswald wordmark); test/probe proves the band renders the 5 controls with effective values inside the setup-menu overlay; ruff/lint clean"
       ],
       "validationCriteria": [
         {
-          "action": "on the Pi, swipe to (or open) the Settings screen and read the 5 controls",
-          "outcome": "each shows its real current effective value; the screen matches the carousel design system"
+          "action": "open the setup-menu overlay on the Pi and view the Settings band",
+          "outcome": "the band shows the 5 controls with real effective values, matching Iris's Option-B design + the honest save flow"
         }
       ],
       "conditionalOutcomes": [
-        "Iris owns the screen shape + US-403 reconciliation; confirm the card-vs-menu presentation with the CIO in her design"
+        "Iris design delivered 2026-08-03 (Option B, CIO-refined). Build to her deliverable; route any UX ambiguity back to Iris."
       ],
       "sourceRefs": [
         "CIO 2026-08-03 settings-screen brainstorm"
@@ -7233,16 +7233,16 @@
       "title": "Wire the 5 config settings end-to-end (read effective + write overlay + apply semantics)",
       "goal": "As the operator, I want each Settings control to actually change behavior, so toggling it takes real effect (or honestly tells me when it will).",
       "definitionOfDone": [
-        "wire each of the 5 controls: reads its effective value (US-530), writes changes via the token-gated endpoint (US-531), and takes effect per its consumer:",
-        "pi.display.carousel.autoRotate -> carousel auto-rotation on/off, applies LIVE (JS re-reads); pi.power.mode -> PowerModeProvider re-emits mode on next cycle (fixes the bench 'unknown' -> wall); pi.alerts.audioAlerts / pi.calibration.mode / pi.analysis.triggerAfterDrive -> read by their subsystems, apply live if the consumer re-reads, else the card states 'takes effect on next boot/restart'",
-        "honest-instrument: no control silently no-ops; if it needs a restart to apply, that is shown, not hidden",
-        "pi.power.mode is a 3-state selector (car|wall|unknown), not a boolean; unknown remains the honest default",
-        "test proves each of the 5 settings round-trips (render effective -> change -> overlay written -> effective value + behavior reflect it, or the restart-note shows); ruff clean"
+        "wire each of the 5 controls: reads its effective value (US-530 shared resolver), writes via the token-gated endpoint (US-531), and applies per its consumer",
+        "[GAP 1 -- Atlas: 'applies LIVE' is FALSE for auto-rotate] states_http_server reads pi.display.carousel ONCE at startup and injects it cached (window.DISPLAY_CAROUSEL). Changing autoRotateS needs an eclipse-states-http BOUNCE + page reload -- NOT a dashboard/chromium restart. So the auto-rotate toggle: the write endpoint bounces eclipse-states-http + triggers a reload, and the UI honestly labels 'applies on restart'. Do NOT claim live",
+        "pi.power.mode -> PowerModeProvider re-emits mode on its next cycle (fixes bench unknown -> wall); pi.alerts.audioAlerts / pi.calibration.mode / pi.analysis.triggerAfterDrive -> apply live if the consumer re-reads, else the band states 'takes effect on next boot/restart'",
+        "honest-instrument: no control silently no-ops; pi.power.mode is a 3-state selector (car|wall|unknown), unknown remains the honest default",
+        "test proves each of the 5 settings round-trips (render effective -> change -> overlay written -> effective value/behavior reflects it, or the honest restart-label shows); ruff clean"
       ],
       "validationCriteria": [
         {
-          "action": "toggle carousel auto-rotate off on the Settings screen and watch the carousel; set power mode to wall and view the System-Status power tile",
-          "outcome": "auto-rotate stops live; power mode reads WALL (not unknown); both survive a reboot via the overlay"
+          "action": "set auto-rotate on in the band (states-http bounces), then set power mode to wall",
+          "outcome": "auto-rotate resumes after the states-http bounce (labeled honestly, not claimed live); power tile reads WALL; both survive a reboot via the overlay"
         }
       ],
       "conditionalOutcomes": [],
@@ -7304,6 +7304,65 @@
       ],
       "sourceRefs": [
         "CIO 2026-08-03 settings-screen brainstorm"
+      ],
+      "createdAt": "2026-08-03",
+      "updatedAt": "2026-08-03"
+    },
+    {
+      "id": "US-536",
+      "parent": "F-124",
+      "type": "issue",
+      "size": "S",
+      "status": "sprint-ready",
+      "title": "Freeze disposition-B: revert US-522 --disable-gpu + land autoRotateS:0 default",
+      "goal": "As the operator, I want the durable freeze fix to be auto-rotate-off (GPU left on), matching the CIO's disposition-B decision, so we are not shipping a GPU workaround on trusted hardware.",
+      "definitionOfDone": [
+        "[CIO disposition-B 2026-08-03, via Atlas] REVERT US-522's --disable-gpu from the eclipse-dashboard kiosk ExecStart (both dashboard.service.x11 + .wayland) -- keep the GPU ON. KEEP --password-store=basic (keyring fix stays)",
+        "land pi.display.carousel.autoRotateS: 0 as the shipped default in repo config.json (this is the actual freeze fix: auto-rotate off). Atlas applied it live as a bench stopgap; the deploy is the durable path",
+        "[DEPLOY NOTE] changing pi.display.carousel.* requires restarting eclipse-states-http (config injected + cached at its startup) -- fold a states-http bounce into the deploy for carousel-config changes",
+        "US-524 cma=256M stays as shipped (benign headroom, no revert -- Atlas)",
+        "verification greps the running chromium cmdline: --disable-gpu GONE, --password-store=basic present; autoRotateS effective 0; ruff/lint clean"
+      ],
+      "validationCriteria": [
+        {
+          "action": "after deploy + states-http restart, pgrep -a chromium + read the injected DISPLAY_CAROUSEL",
+          "outcome": "chromium no longer carries --disable-gpu but keeps --password-store=basic; autoRotateS=0 (carousel does not auto-advance); no freeze"
+        }
+      ],
+      "conditionalOutcomes": [
+        "with GPU back on + auto-rotate off-by-default, the freeze is prevented by auto-rotate being off -- so US-537 (animation-gating) is the safety mechanism for when the F-126 toggle turns it back on"
+      ],
+      "sourceRefs": [
+        "offices/pm/inbox/2026-08-03-from-atlas-reply-freeze-disposition-B-gpu-on-autorotate-off.md"
+      ],
+      "createdAt": "2026-08-03",
+      "updatedAt": "2026-08-03"
+    },
+    {
+      "id": "US-537",
+      "parent": "F-124",
+      "type": "normal",
+      "size": "S",
+      "status": "sprint-ready",
+      "title": "Animation-gating (Atlas RCA #3) -- toggle-safety prerequisite for auto-rotate",
+      "goal": "As the operator, I want turning auto-rotate back on to be safe, so re-enabling it via the F-126 settings toggle cannot re-arm the GPU freeze.",
+      "definitionOfDone": [
+        "[Atlas RCA #3 -- now a toggle-safety PREREQUISITE for F-126 auto-rotate] gate the two always-on infinite CSS animations (dashboard.css ribbon-pulse, stop-alarm-pulse) to run ONLY when the ribbon/alarm is actually active; drop unneeded will-change: transform on the carousel track. Reduces the sustained compositing pressure that, combined with auto-rotate, exhausted the GPU command buffer",
+        "with GPU on (disposition B) + this gating, auto-rotate ON must NOT reproduce the freeze under sustained carousel navigation (this is what makes the F-126 auto-rotate toggle safe to turn on)",
+        "acceptance: with auto-rotate ON, journalctl -u eclipse-dashboard grep -c AllocateRingBuffer stays ~0 + chromium CPU low over a multi-minute session; ruff/lint clean"
+      ],
+      "validationCriteria": [
+        {
+          "action": "with animation-gating landed + GPU on, turn auto-rotate ON and sustain carousel navigation for several minutes",
+          "outcome": "AllocateRingBuffer count stays ~0, chromium CPU low, no freeze -- the auto-rotate toggle is safe"
+        }
+      ],
+      "conditionalOutcomes": [
+        "gates the F-126 auto-rotate toggle: US-533's auto-rotate toggle is only fully safe once this lands. If it slips, the toggle ships default-OFF with a known caveat."
+      ],
+      "sourceRefs": [
+        "offices/architect/findings/2026-08-02-pi-ui-freeze-chromium-gpu-command-buffer-hotloop.md",
+        "offices/pm/inbox/2026-08-03-from-atlas-reply-freeze-disposition-B-gpu-on-autorotate-off.md"
       ],
       "createdAt": "2026-08-03",
       "updatedAt": "2026-08-03"
