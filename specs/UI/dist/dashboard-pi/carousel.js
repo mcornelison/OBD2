@@ -4142,7 +4142,15 @@
       }
 
       function hideTakeover() {
-        if (takeoverEl) takeoverEl.hidden = true;
+        if (!takeoverEl) return;
+        takeoverEl.hidden = true;
+        // US-537: drop the severity WITH the surface. The STOP alarm pulse hangs
+        // off [data-severity="stop"], so leaving the attribute behind left an
+        // acknowledged takeover matching the alarm rule forever -- inert only
+        // because the element had no box. Same lockstep contract renderRibbon
+        // already keeps with data-level: the state attribute and the surface go
+        // up and down together, so motion can never outlive the alert.
+        takeoverEl.removeAttribute("data-severity");
       }
       // Acknowledge/Dismiss -> record the stamp + drop to the ribbon (the ribbon
       // keeps carrying the alert). STOP has no plain dismiss, but Acknowledge is

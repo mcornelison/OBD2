@@ -22,6 +22,32 @@ retired with it**, so they now fail on the sprint branch.
 
 Both key off `_GPU_OVERRIDE_FLAG = "--disable-gpu"` (line 1536).
 
+### UPDATE 2026-08-07 (Ralph/Rex, during US-537) — a THIRD stale guard, from the OTHER half of US-536
+
+US-536 landed two changes. This issue originally recorded only the fallout from
+the `--disable-gpu` revert; the `autoRotateS: 0` default has its own stale guard,
+found by the US-537 regression sweep:
+
+- `tests/ui/test_carousel_nav_model.py::test_configJson_carriesTheCarouselSection`
+  (line 346) — `assert carousel["autoRotateS"] == _AUTO_ROTATE_S` → **`assert 0 == 8`**
+
+`_AUTO_ROTATE_S = 8` is the pre-US-536 shipped interval. `config.json` now ships
+`0` **deliberately** (US-536 AC-2: auto-rotate off IS the durable freeze fix), so
+this is the same inversion as the two above — a guard protecting a value the
+sprint intentionally changed.
+
+**Suggested disposition (same shape as 1/2 above):** repoint `_AUTO_ROTATE_S` to
+`0` and rename the constant to say it is the SHIPPED DEFAULT, not the interval.
+Do **not** delete the assertion — F-126's toggle writes this key through the
+US-530 overlay, so "what does the repo ship as the default" is exactly the fact
+that must stay pinned. Worth checking whether the same constant feeds other
+assertions in that file that should now read "off by default" rather than "8s".
+
+**Not mine, verified rather than assumed:** `git log -1 -- config.json` returns
+`3e67e5d` (US-536), and US-537's diff touches only `dashboard.css`, `carousel.js`
+and the new `tests/ui/test_dashboard_animation_gating.py` — it never opens
+`config.json`. All three reds share one owner and one root cause.
+
 ```
 E  AssertionError: dashboard.service.wayland: lost the US-522 GPU override
 E  assert '--disable-gpu' in ['__CHROMIUM_BIN__', '--kiosk',

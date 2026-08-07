@@ -229,3 +229,57 @@ Task: Wire the 5 config settings end-to-end (read effective + write overlay + ap
 - **Gotcha**: ripgrep/Glob over the whole tree TIMES OUT on this SMB share.
   Scope greps to `src/` or a subdir, or list dirs with `ls` via Bash.
 ---
+
+## 2026-08-07 - US-537 (Agent 1 / Rex)
+Task: Animation-gating (Atlas RCA #3) -- toggle-safety prerequisite for auto-rotate
+
+### What was implemented:
+- Dropped `will-change: transform` from `#track`. This was the ONLY
+  unconditionally always-on GPU cost in the sheet: #track is a flex ROW holding
+  every card side by side, so the hint promoted a full-width compositor layer and
+  held its backing store for the whole session -- and auto-rotate's transform
+  transition landed on top of it. The 0.25s transition stays; the browser
+  promotes for the duration it actually runs, then releases.
+- Moved `ribbon-pulse` off the BASE `#dtc-ribbon` rule onto `#dtc-ribbon[data-level]`.
+- `hideTakeover()` now clears `data-severity` in lockstep with `hidden`, so the
+  STOP alarm rule stops matching an ACKNOWLEDGED takeover.
+- NEW tests/ui/test_dashboard_animation_gating.py (16) -- resolved through the
+  REAL cascade over the REAL post-JS DOM via the US-499 render harness.
+
+### Files changed:
+- Modified: `specs/UI/dist/dashboard-pi/dashboard.css` (will-change; ribbon gate)
+- Modified: `specs/UI/dist/dashboard-pi/carousel.js` (hideTakeover lockstep)
+- Created: `tests/ui/test_dashboard_animation_gating.py` (16 tests)
+- Modified: `offices/pm/issues/I-us536-...md` (appended a THIRD stale guard)
+
+### Learnings for future iterations:
+- **PREMISE CORRECTION (the headline)**: the AC called both animations
+  "always-on". They were not -- both surfaces ship `hidden`, US-495's
+  `[hidden] { display: none !important }` removes the box, and a display:none
+  element runs NO animations. So neither pulse burned a frame at idle and neither
+  caused the freeze. The gating is real HARDENING (the old gate was the PAINT
+  cascade -- the exact race US-495 already lost once), but `will-change` was the
+  only genuinely always-on cost. Check whether a stated premise is TRUE before
+  building to it; the fix can be right while its stated reason is wrong.
+- **Gotcha (the hole I found by mutating)**: when you TIGHTEN a gate, the fixture
+  must cover the whole domain the gate used to admit. My first ribbon guard used
+  a single `stop` code -- and gating on `[data-level="stop"]` instead of
+  `[data-level]` passed it, while stranding WATCH/MINOR/UNKNOWN ribbons STATIC.
+  Parametrizing over all four severities: 3 red, `stop` green. Same family as
+  US-530's "never let the fixture value equal the default".
+- **Pattern**: assert animation-declared IFF painted, across real lifecycle
+  states, rather than "the animation is gated" and "the surface is hidden"
+  separately -- two separate facts can drift apart; an agreement cannot. It also
+  covers the opposite failure (gating so hard a live alert renders static).
+- **Correction to a prior note**: US-532 recorded "there is no DOM harness in this
+  kit". True of `carousel_probe.js` (pure exports, no `document`), NOT of the kit
+  -- `dom_probe.js` + `render_harness.py` boot the SHIPPED JS over the SHIPPED
+  markup and resolve the SHIPPED stylesheet over the result. That turns US-532's
+  stated source-inspection ceiling into a real mechanism assertion; worth
+  revisiting the settings-band guards with it.
+- **Gotcha**: this repo's pytest config suppresses the `N passed` summary line, so
+  `| tail` on a run can LOOK clean when it is not. Counts came from
+  `--collect-only` + the FAILED list. (698 collected, 695 passed, 3 failed --
+  all 3 pre-existing US-536 stale guards, verified via `git log -1 --` on the
+  files their assertions read, not assumed.)
+---
