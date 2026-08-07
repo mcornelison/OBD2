@@ -7313,7 +7313,7 @@
       "parent": "F-124",
       "type": "issue",
       "size": "S",
-      "status": "sprint-ready",
+      "status": "passed",
       "title": "Freeze disposition-B: revert US-522 --disable-gpu + land autoRotateS:0 default",
       "goal": "As the operator, I want the durable freeze fix to be auto-rotate-off (GPU left on), matching the CIO's disposition-B decision, so we are not shipping a GPU workaround on trusted hardware.",
       "definitionOfDone": [
@@ -7330,13 +7330,15 @@
         }
       ],
       "conditionalOutcomes": [
-        "with GPU back on + auto-rotate off-by-default, the freeze is prevented by auto-rotate being off -- so US-537 (animation-gating) is the safety mechanism for when the F-126 toggle turns it back on"
+        "with GPU back on + auto-rotate off-by-default, the freeze is prevented by auto-rotate being off -- so US-537 (animation-gating) is the safety mechanism for when the F-126 toggle turns it back on",
+        "LANDED by PM 2026-08-07 (CIO-directed urgent, Atlas-specified/proven): --disable-gpu removed from dashboard.service.{x11,wayland} (kept --password-store=basic); autoRotateS:0 in config.json. Fixes the error:5 renderer crash on deployed V0.29.25."
       ],
       "sourceRefs": [
         "offices/pm/inbox/2026-08-03-from-atlas-reply-freeze-disposition-B-gpu-on-autorotate-off.md"
       ],
       "createdAt": "2026-08-03",
-      "updatedAt": "2026-08-03"
+      "updatedAt": "2026-08-07",
+      "passes": true
     },
     {
       "id": "US-537",

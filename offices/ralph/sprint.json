@@ -150,8 +150,8 @@
       "epicId": "E-001",
       "type": "issue",
       "size": "S",
-      "status": "sprint-ready",
-      "passes": false,
+      "status": "passed",
+      "passes": true,
       "acceptance": [
         "[CIO disposition-B 2026-08-03, via Atlas] REVERT US-522's --disable-gpu from the eclipse-dashboard kiosk ExecStart (both dashboard.service.x11 + .wayland) -- keep the GPU ON. KEEP --password-store=basic (keyring fix stays)",
         "land pi.display.carousel.autoRotateS: 0 as the shipped default in repo config.json (this is the actual freeze fix: auto-rotate off). Atlas applied it live as a bench stopgap; the deploy is the durable path",
@@ -166,10 +166,12 @@
         }
       ],
       "conditionalOutcomes": [
-        "with GPU back on + auto-rotate off-by-default, the freeze is prevented by auto-rotate being off -- so US-537 (animation-gating) is the safety mechanism for when the F-126 toggle turns it back on"
+        "with GPU back on + auto-rotate off-by-default, the freeze is prevented by auto-rotate being off -- so US-537 (animation-gating) is the safety mechanism for when the F-126 toggle turns it back on",
+        "LANDED by PM 2026-08-07 (CIO-directed urgent, Atlas-specified/proven): --disable-gpu removed from dashboard.service.{x11,wayland} (kept --password-store=basic); autoRotateS:0 in config.json. Fixes the error:5 renderer crash on deployed V0.29.25."
       ],
       "goal": "As the operator, I want the durable freeze fix to be auto-rotate-off (GPU left on), matching the CIO's disposition-B decision, so we are not shipping a GPU workaround on trusted hardware.",
-      "tasks": []
+      "tasks": [],
+      "updatedAt": "2026-08-07"
     },
     {
       "id": "US-537",

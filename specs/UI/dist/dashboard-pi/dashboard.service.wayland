@@ -63,7 +63,6 @@ Environment=XDG_RUNTIME_DIR=/run/user/%U
 ExecStart=__CHROMIUM_BIN__ \
   --kiosk \
   --ozone-platform=wayland \
-  --disable-gpu \
   --touch-events=enabled \
   --noerrdialogs --disable-infobars --hide-scrollbars \
   --autoplay-policy=no-user-gesture-required \
