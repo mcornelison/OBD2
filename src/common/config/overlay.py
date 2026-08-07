@@ -18,6 +18,10 @@
 # ================================================================================
 # 2026-08-07    | Rex (US-530) | Initial -- flat dot-path overlay, Slice-1
 #               |              | allow-list, shared resolveEffectiveConfig.
+# 2026-08-07    | Rex (US-531) | Write side: atomic writeOverlayValue (temp +
+#               |              | os.replace) + readEffectiveValue/getDotPath, so
+#               |              | the settings endpoint reports the REAL stored
+#               |              | value and reuses the ONE allow-list gate.
 # ================================================================================
 ################################################################################
 
@@ -55,6 +59,16 @@ Auto-rotate has ONE truth
 -------------------------
 There is deliberately no ``autoRotate`` boolean. ``autoRotateS`` (seconds; 0=off,
 >0=on) is the single key; the UI derives the toggle state from ``> 0``.
+
+Writing (US-531)
+----------------
+:func:`writeOverlayValue` is the ONLY writer. It runs the SAME
+:func:`validateOverlayValue` gate the read seam runs -- so a value that cannot be
+honoured can never be stored, and vice versa -- then lands the file atomically
+(temp + :func:`os.replace`) so a failed save leaves the operator's prior settings
+byte-intact rather than truncating them. :func:`readEffectiveValue` re-reads from
+disk through :func:`applyConfigOverlay`, which is how a caller reports what the
+readers will ACTUALLY see instead of echoing back what was requested.
 """
 
 from __future__ import annotations
@@ -62,6 +76,7 @@ from __future__ import annotations
 import copy
 import json
 import logging
+import os
 from collections.abc import Iterable, Sequence
 from pathlib import Path
 from typing import Any
@@ -249,3 +264,112 @@ def applyConfigOverlay(config: dict[str, Any], configPath: str) -> dict[str, Any
         The effective config (a new dict; ``config`` is not mutated).
     """
     return resolveEffectiveConfig(config, loadOverlay(overlayPathFor(configPath)))
+
+
+def getDotPath(config: dict[str, Any], key: str) -> tuple[bool, Any]:
+    """Read the value at a dot-path, reporting absence rather than guessing.
+
+    Args:
+        config: Any config mapping (typically an effective config).
+        key: Dot-path key, e.g. ``pi.power.mode``.
+
+    Returns:
+        ``(True, value)`` when every segment resolves, else ``(False, None)``.
+        A non-dict intermediate is absence, not an error -- callers on the HTTP
+        path must never take a TypeError from a hand-edited config file.
+    """
+    cursor: Any = config
+    for part in key.split("."):
+        if not isinstance(cursor, dict) or part not in cursor:
+            return False, None
+        cursor = cursor[part]
+    return True, cursor
+
+
+def readEffectiveValue(configPath: str, key: str) -> tuple[bool, Any]:
+    """Re-read ONE effective value from disk, through the shared seam.
+
+    The honest read-back behind the US-531 settings endpoint: it reloads
+    config.json AND the overlay and resolves them with
+    :func:`resolveEffectiveConfig`, so what it reports is what every other
+    consumer will resolve -- including the ``pi.power.mode`` coercion. An
+    endpoint that echoed its request instead would show the operator a setting
+    that was never stored.
+
+    Args:
+        configPath: Path to config.json.
+        key: Dot-path key to read.
+
+    Returns:
+        ``(True, value)``, or ``(False, None)`` when the config or the key
+        cannot be resolved. Never a fabricated value.
+    """
+    try:
+        with open(configPath, encoding="utf-8") as fh:
+            config = json.load(fh)
+    except (OSError, ValueError):
+        return False, None
+    if not isinstance(config, dict):
+        return False, None
+    return getDotPath(applyConfigOverlay(config, configPath), key)
+
+
+def _writeOverlayAtomic(overlayPath: str, overlay: dict[str, Any]) -> bool:
+    """Land the overlay atomically: write a sibling temp, fsync, then replace.
+
+    The overlay holds settings the operator set by hand on the Pi; a truncating
+    in-place write that dies midway would destroy them. ``os.replace`` is atomic
+    on POSIX and Windows alike, so a reader sees either the whole old file or
+    the whole new one -- never a half-written one.
+
+    Returns:
+        True on success. False on ANY OS error, with the temp cleaned up and the
+        previous file untouched.
+    """
+    path = Path(overlayPath)
+    tempPath = path.with_name(path.name + ".tmp")
+    try:
+        with open(tempPath, "w", encoding="utf-8") as fh:
+            json.dump(overlay, fh, indent=2, sort_keys=True)
+            fh.write("\n")
+            fh.flush()
+            # Durability: the Pi loses power with the ignition, so a settings
+            # save must reach the medium, not just the page cache.
+            os.fsync(fh.fileno())
+        os.replace(tempPath, overlayPath)
+    except OSError:
+        logger.warning("Overlay write failed, prior settings left intact: %s", overlayPath)
+        try:
+            tempPath.unlink()
+        except OSError:
+            pass
+        return False
+    return True
+
+
+def writeOverlayValue(overlayPath: str, key: str, value: Any) -> bool:
+    """Persist ONE allow-listed override into the overlay, atomically.
+
+    Re-runs :func:`validateOverlayValue` -- the same gate the read seam runs and
+    the same gate the HTTP endpoint runs before calling here (defense in depth,
+    one implementation). Existing overrides are preserved: a save merges into
+    the current overlay so toggling one control cannot reset another.
+
+    Args:
+        overlayPath: Path to the overlay file (see :func:`overlayPathFor`).
+        key: Dot-path config key; must be on the allow-list.
+        value: Proposed value; must satisfy the key's type rule.
+
+    Returns:
+        True when the value is now stored. False when the entry was refused by
+        the gate, or when the write could not be completed -- in both cases
+        nothing on disk changed. Callers MUST NOT report success on False.
+    """
+    isValid, stored = validateOverlayValue(key, value)
+    if not isValid:
+        logger.warning("Refusing overlay write, not overridable/invalid: %s=%r", key, value)
+        return False
+
+    overlay = loadOverlay(overlayPath)
+    overlay[key] = stored
+    return _writeOverlayAtomic(overlayPath, overlay)
