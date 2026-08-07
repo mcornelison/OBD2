@@ -1077,6 +1077,183 @@
     return { unit: unit, verb: verb, confirm: requiresConfirm(verb) };
   }
 
+  // --- US-532 (F-126) Settings band ----------------------------------------
+  //
+  // Iris Option B (CIO 2026-08-03): the 5 Slice-1 settings render as a band at
+  // the TOP of this same setup-menu overlay, ABOVE the service rows -- safe
+  // persistent preferences on top, destructive service/Exit below.
+  //
+  // The keys are the overlay's own FLAT dot-paths, verbatim: they are what the
+  // state server injects them under (window.DISPLAY_SETTINGS) AND what POST
+  // /settings takes as its body `key`. A prettified display key would need a
+  // mapping table, and that table is precisely the thing that drifts from the
+  // write gate's allow-list.
+  var SETTINGS_APPLY_NOTES = {
+    live: "applies now",
+    restart: "applies on restart",
+    "next-drive": "applies next drive",
+  };
+
+  // The apply-state is a CLAIM ABOUT A CONSUMER, so US-532 ships the
+  // CONSERVATIVE one on every row. A restart always applies an overlay value
+  // (every consumer re-reads config at process start), so "applies on restart"
+  // can never be a lie; "applies now" would be an over-promise until US-533
+  // wires and PROVES each consumer's re-read path -- and the over-promise is the
+  // dangerous direction, because it is exactly the silent no-op this band exists
+  // to prevent. Under-promising only ever costs a needless restart.
+  //
+  // Auto-rotate is structurally restart-only regardless (Atlas GAP 1): the state
+  // server reads pi.display.carousel ONCE at startup and injects it cached, so a
+  // new period needs an eclipse-states-http bounce + a page reload.
+  //
+  // US-533: relax `apply` per key as each consumer is proven.
+  var SETTINGS_SPECS = [
+    { key: "pi.display.carousel.autoRotateS", label: "Auto-rotate",
+      kind: "seconds", apply: "restart" },
+    { key: "pi.power.mode", label: "Power mode", kind: "mode", apply: "restart" },
+    { key: "pi.alerts.audioAlerts", label: "Audio alerts",
+      kind: "bool", apply: "restart" },
+    { key: "pi.calibration.mode", label: "Calibration mode",
+      kind: "bool", apply: "restart" },
+    { key: "pi.analysis.triggerAfterDrive", label: "Auto-analyze after drive",
+      kind: "bool", apply: "restart" },
+  ];
+
+  // Mirrors common.config.overlay.POWER_MODES. `unknown` is a LEGAL stored value
+  // (the honest "no deployment context"), not an error state -- which is why the
+  // row view keeps it distinct from "we could not read a value at all".
+  var SETTINGS_POWER_MODES = ["car", "wall", "unknown"];
+
+  var SETTINGS_PENDING_NOTE = "saving…";
+
+  function settingsModeChoices() {
+    return SETTINGS_POWER_MODES.slice();
+  }
+
+  function settingsPendingNote() {
+    return SETTINGS_PENDING_NOTE;
+  }
+
+  function settingsSpecs() {
+    var out = [];
+    for (var i = 0; i < SETTINGS_SPECS.length; i++) {
+      var spec = SETTINGS_SPECS[i];
+      out.push({
+        key: spec.key,
+        label: spec.label,
+        kind: spec.kind,
+        apply: spec.apply,
+        // Derived from one mapping, never written per row: a future `apply` flip
+        // then cannot leave a stale note contradicting it.
+        applyNote: SETTINGS_APPLY_NOTES[spec.apply],
+      });
+    }
+    return out;
+  }
+
+  // The choices offered for one setting. A toggle is a 2-choice segmented
+  // control and power mode a 3-choice one, so BOTH render through one mechanism
+  // -- and "unknown" is expressible as *no* choice selected, which is how an
+  // unreadable setting shows itself instead of defaulting to a confident Off.
+  function settingsChoices(spec) {
+    if (spec && spec.kind === "mode") {
+      return [
+        { value: "car", label: "CAR" },
+        { value: "wall", label: "WALL" },
+        { value: "unknown", label: "UNKNOWN" },
+      ];
+    }
+    return [
+      { value: false, label: "Off" },
+      { value: true, label: "On" },
+    ];
+  }
+
+  // Render one settings row from its EFFECTIVE value. `known:false` means the
+  // server could not resolve a value -- rendered Unknown, never Off: "Off" is a
+  // claim about stored state, and we were told there isn't one (honest
+  // instrument). GAP 3a: auto-rotate is DERIVED from autoRotateS > 0; no
+  // separate autoRotate bool exists on this side either.
+  function settingsRowView(spec, value) {
+    var kind = spec ? spec.kind : null;
+    var known = false;
+    var on = null;
+    var mode = null;
+    var display = "Unknown";
+    if (kind === "seconds") {
+      known = typeof value === "number" && isFinite(value);
+      if (known) {
+        on = value > 0;
+        display = on ? "On" : "Off";
+      }
+    } else if (kind === "bool") {
+      known = typeof value === "boolean";
+      if (known) {
+        on = value;
+        display = on ? "On" : "Off";
+      }
+    } else if (kind === "mode") {
+      known =
+        typeof value === "string" && SETTINGS_POWER_MODES.indexOf(value) !== -1;
+      if (known) {
+        mode = value;
+        display = value.toUpperCase();
+      }
+    }
+    return {
+      key: spec ? spec.key : null,
+      label: spec ? spec.label : "",
+      kind: kind,
+      apply: spec ? spec.apply : null,
+      applyNote: spec ? SETTINGS_APPLY_NOTES[spec.apply] : "",
+      known: known,
+      value: known ? value : null,
+      on: on,
+      mode: mode,
+      display: display,
+    };
+  }
+
+  // Is this choice the one currently stored? An unknown row selects NOTHING --
+  // highlighting a choice would assert a stored value we do not have.
+  function settingsChoiceActive(view, choiceValue) {
+    if (!view || !view.known) return false;
+    if (view.kind === "mode") return view.mode === choiceValue;
+    return view.on === choiceValue;
+  }
+
+  // The value to PERSIST for a chosen control state. GAP 3a: auto-rotate off
+  // writes 0 and on writes the shipped interval, so both directions round-trip
+  // through the one autoRotateS key. Booleans are coerced to REAL booleans --
+  // the overlay's validator takes bool only, so a truthy string would 400.
+  function settingsWriteValue(spec, desired) {
+    if (!spec) return null;
+    if (spec.kind === "seconds") {
+      return desired ? CAROUSEL_DEFAULTS.autoRotateS : 0;
+    }
+    if (spec.kind === "mode") {
+      return SETTINGS_POWER_MODES.indexOf(desired) !== -1 ? desired : "unknown";
+    }
+    return !!desired;
+  }
+
+  // Read a POST /settings response HONESTLY (Iris §3). The value a row repaints
+  // with comes from the server's RE-READ (`res.value`), NEVER from what was
+  // requested -- an optimistic repaint would show an "on" the Pi never stored.
+  // A body with no `value` at all (401, network failure, non-JSON) yields null,
+  // i.e. Unknown, because we genuinely do not know what is stored.
+  function settingsSaveResult(res) {
+    var obj = !!res && typeof res === "object";
+    var has =
+      obj && Object.prototype.hasOwnProperty.call(res, "value");
+    var ok = obj && res.ok === true;
+    return {
+      ok: ok,
+      note: ok ? "saved" : "couldn't save",
+      value: has ? res.value : null,
+    };
+  }
+
   // Long-press ring fill fraction 0..1 (clamped). holdMs defaults to the full
   // open threshold.
   function longPressProgress(elapsedMs, holdMs) {
@@ -2558,6 +2735,14 @@
     healthSectionView: healthSectionView,
     healthCardView: healthCardView,
     serviceMenuItems: serviceMenuItems,
+    settingsSpecs: settingsSpecs,
+    settingsModeChoices: settingsModeChoices,
+    settingsChoices: settingsChoices,
+    settingsRowView: settingsRowView,
+    settingsChoiceActive: settingsChoiceActive,
+    settingsWriteValue: settingsWriteValue,
+    settingsSaveResult: settingsSaveResult,
+    settingsPendingNote: settingsPendingNote,
     requiresConfirm: requiresConfirm,
     actionRequest: actionRequest,
     longPressProgress: longPressProgress,
@@ -2633,6 +2818,17 @@
         ? global.DISPLAY_CAROUSEL
         : null
     );
+
+    // US-532: the 5 Slice-1 settings at their EFFECTIVE values (US-530 shared
+    // resolver), injected the same way and resolved by the server PER REQUEST --
+    // so a reload after a save shows what was actually stored. Anything that is
+    // not an object (unsubstituted preview / null when the server has no config)
+    // -> every row renders Unknown, which is honest: without the injection we do
+    // not know what is stored, and a display-side default would be a fabrication.
+    var settingsSource =
+      global.DISPLAY_SETTINGS && typeof global.DISPLAY_SETTINGS === "object"
+        ? global.DISPLAY_SETTINGS
+        : null;
 
     // Apply the computed 0..1 brightness as a CSS var on the screen frame (a
     // software dim -- the browser kiosk can't drive the panel backlight). Setting
@@ -3577,6 +3773,7 @@
       var menuBtn = document.getElementById("menu-btn");
       var closeBtn = document.getElementById("menu-close");
       var list = document.getElementById("svc-list");
+      var settingsList = document.getElementById("settings-list");
       var statusEl = document.getElementById("menu-status");
       var exitBtn = document.getElementById("menu-exit");
       var ring = document.getElementById("longpress-ring");
@@ -3590,6 +3787,9 @@
       }
       function openMenu() {
         buildList();
+        // US-532: rebuilt on every open, not once at boot -- a save made in a
+        // previous open must not leave a stale value sitting behind the ⋮.
+        buildSettings();
         menu.hidden = false;
       }
       function closeMenu() {
@@ -3659,6 +3859,97 @@
             row.appendChild(stop);
             list.appendChild(row);
           })(items[i]);
+        }
+      }
+
+      // --- US-532 (F-126) Settings band --------------------------------------
+
+      // Persist ONE setting through the US-531 token-gated route -- the only
+      // write path there is; the kiosk is sandboxed and cannot touch the
+      // filesystem itself. `render` is the SAME closure that painted the row on
+      // open, so the value shown after a save and the value shown after a page
+      // reload can never come from different code.
+      //
+      // Deliberately NO confirm: these are non-destructive preferences, and
+      // borrowing the service-control confirm would train the operator to
+      // dismiss the modal that guards a service stop (Iris §4).
+      function postSetting(spec, desired, render, currentValue) {
+        // The pending paint keeps the value we already know is stored -- it must
+        // not show the REQUESTED one, which is the optimistic success Iris ruled
+        // out wearing a nicer label.
+        render(currentValue, settingsPendingNote());
+        var headers = { "Content-Type": "application/json" };
+        if (token) headers["X-Splash-Token"] = token;
+        fetch("/settings", {
+          method: "POST",
+          headers: headers,
+          body: JSON.stringify({
+            key: spec.key,
+            value: settingsWriteValue(spec, desired),
+          }),
+        })
+          .then(function (r) {
+            return r.json().then(null, function () { return null; });
+          })
+          .then(function (res) {
+            var out = settingsSaveResult(res);
+            render(out.value, out.note);
+          })
+          .then(null, function () {
+            // A rejected fetch tells us nothing about what is stored -> Unknown.
+            render(null, settingsSaveResult(null).note);
+          });
+      }
+
+      function buildSettings() {
+        if (!settingsList) return;
+        settingsList.textContent = "";
+        var specs = settingsSpecs();
+        for (var i = 0; i < specs.length; i++) {
+          (function (spec) {
+            var row = document.createElement("div");
+            row.className = "set-row";
+            var name = document.createElement("span");
+            name.className = "set-name";
+            name.textContent = spec.label;
+            row.appendChild(name);
+            var note = document.createElement("span");
+            note.className = "set-apply";
+            row.appendChild(note);
+            var controls = document.createElement("div");
+            controls.className = "set-controls";
+            row.appendChild(controls);
+
+            var choices = settingsChoices(spec);
+
+            // The ONE paint path for this row. Built with textContent (no
+            // innerHTML) so a config value can never become markup.
+            function render(value, statusNote) {
+              var view = settingsRowView(spec, value);
+              note.textContent = statusNote
+                ? view.applyNote + " · " + statusNote
+                : view.applyNote;
+              controls.textContent = "";
+              for (var c = 0; c < choices.length; c++) {
+                (function (choice) {
+                  var btn = document.createElement("button");
+                  btn.className = "set-btn tap-target";
+                  btn.textContent = choice.label;
+                  btn.setAttribute(
+                    "aria-pressed",
+                    String(settingsChoiceActive(view, choice.value))
+                  );
+                  btn.addEventListener("click", function () {
+                    postSetting(spec, choice.value, render, view.value);
+                  });
+                  controls.appendChild(btn);
+                })(choices[c]);
+              }
+            }
+
+            render(settingsSource ? settingsSource[spec.key] : null, "");
+            settingsList.appendChild(row);
+          })(specs[i]);
         }
       }
 

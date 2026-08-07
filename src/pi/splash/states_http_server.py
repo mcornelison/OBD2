@@ -78,6 +78,17 @@ _DISPLAY_AUTODIM_PLACEHOLDER = '"__DISPLAY_AUTODIM__"'
 # to break carousel navigation.
 _DISPLAY_CAROUSEL_PLACEHOLDER = '"__DISPLAY_CAROUSEL__"'
 
+# US-532 (F-126): the same quoted-placeholder seam for the 5 Slice-1 operator
+# settings at their CURRENT EFFECTIVE values, keyed by the overlay's own flat
+# dot-paths. Deliberately NOT a GET route: the effective values already reach the
+# dashboard through this injection, so a read endpoint would be a SECOND source
+# for the same fact and the two could disagree (US-531 ruling).
+#
+# Resolved PER REQUEST, like _DEPLOY_VERSION_PLACEHOLDER and unlike the two
+# config placeholders above -- see _effectiveSettingsJson for why a value cached
+# at handler construction would make this band lie.
+_DISPLAY_SETTINGS_PLACEHOLDER = '"__DISPLAY_SETTINGS__"'
+
 # US-501 (F-123): the dashboard header version chip. UNQUOTED -- this one is HTML
 # text content, not a JS value, so there is no quoted-preview trick to play.
 #
@@ -462,10 +473,17 @@ def makeStatesHandler(
             # .deploy-version after restarting this unit, so anything cached at
             # construction is a deploy behind (see _DEPLOY_VERSION_PLACEHOLDER).
             version = readDeployVersion(deployVersionPath) or _VERSION_UNKNOWN
+            # US-532: likewise resolved HERE rather than closed over -- the POST
+            # /settings route writes the overlay this reads, so a value cached at
+            # construction would render the PRE-SAVE setting on every page reload
+            # that is not preceded by a unit bounce. The band exists to report
+            # what is actually stored; a stale blob would make it lie.
+            settingsJson = json.dumps(loadEffectiveSettings(configPath))
             return (
                 html.replace(_TOKEN_PLACEHOLDER, token)
                 .replace(_DISPLAY_AUTODIM_PLACEHOLDER, displayConfigJson)
                 .replace(_DISPLAY_CAROUSEL_PLACEHOLDER, carouselConfigJson)
+                .replace(_DISPLAY_SETTINGS_PLACEHOLDER, settingsJson)
                 .replace(_DEPLOY_VERSION_PLACEHOLDER, version)
             )
 
@@ -597,6 +615,44 @@ def loadDisplayCarouselConfig(configPath: str) -> dict[str, Any] | None:
     rejects malformed values.
     """
     return _loadDisplaySection(configPath, "carousel")
+
+
+def loadEffectiveSettings(configPath: str | None) -> dict[str, Any] | None:
+    """Read the Slice-1 operator settings at their effective values (US-532).
+
+    The read half of the F-126 settings band. Every key in the overlay's
+    allow-list is resolved through ``overlay.readEffectiveValue`` -- the SAME
+    seam the POST /settings route re-reads through after a write -- so the value
+    the band renders at page load and the value it renders after a save come from
+    one resolver, not two.
+
+    Iterating ``OVERRIDABLE_KEYS`` rather than a local list is deliberate: a
+    Slice-2 key added to the SSOT reaches the band with no edit here, and cannot
+    be surfaced under a name that has drifted from the one the write route
+    accepts (the injected keys ARE the POST body keys).
+
+    Honest-instrument: a key that cannot be resolved -- absent, or blocked by a
+    non-dict parent branch -- maps to ``None`` (rendered "unknown"), never to a
+    fabricated default. An unreadable config.json yields every key ``None``
+    rather than raising, so a bad config degrades one band instead of taking the
+    whole kiosk page down.
+
+    Args:
+        configPath: Path to config.json (relative paths resolve against the
+            process CWD -- the unit's WorkingDirectory), or ``None`` when this
+            server has no config wired.
+
+    Returns:
+        A flat dot-path -> effective-value map, or ``None`` when no config path
+        is configured (the band then renders every row as unknown).
+    """
+    if configPath is None:
+        return None
+    settings: dict[str, Any] = {}
+    for key in overlay.OVERRIDABLE_KEYS:
+        found, value = overlay.readEffectiveValue(configPath, key)
+        settings[key] = value if found else None
+    return settings
 
 
 def readDeployVersion(versionPath: str | None) -> str | None:
