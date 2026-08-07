@@ -124,7 +124,7 @@
       "epicId": "E-001",
       "type": "normal",
       "size": "M",
-      "status": "sprint-ready",
+      "status": "blocked",
       "passes": false,
       "acceptance": [
         "wire each of the 5 controls: reads its effective value (US-530 shared resolver), writes via the token-gated endpoint (US-531), and applies per its consumer",
@@ -146,7 +146,8 @@
       ],
       "goal": "As the operator, I want each Settings control to actually change behavior, so toggling it takes real effect (or honestly tells me when it will).",
       "tasks": [],
-      "completionNotes": "NOT STARTED -- BLOCKED BEFORE ANY CODE WAS WRITTEN (BL-030). No source file was touched this iteration; the block was found by tracing the authorization chain end to end, which is cheaper to do before implementing than after. See conditionalOutcomes for the two rulings needed and the recommendations, and BL-030 for the full evidence + trade-off table."
+      "completionNotes": "NOT STARTED -- BLOCKED BEFORE ANY CODE WAS WRITTEN (BL-030). No source file was touched this iteration; the block was found by tracing the authorization chain end to end, which is cheaper to do before implementing than after. See conditionalOutcomes for the two rulings needed and the recommendations, and BL-030 for the full evidence + trade-off table.",
+      "updatedAt": "2026-08-07"
     },
     {
       "id": "US-536",

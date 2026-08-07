@@ -7229,7 +7229,7 @@
       "parent": "F-126",
       "type": "normal",
       "size": "M",
-      "status": "sprint-ready",
+      "status": "blocked",
       "title": "Wire the 5 config settings end-to-end (read effective + write overlay + apply semantics)",
       "goal": "As the operator, I want each Settings control to actually change behavior, so toggling it takes real effect (or honestly tells me when it will).",
       "definitionOfDone": [
@@ -7250,7 +7250,7 @@
         "CIO 2026-08-03 settings-screen brainstorm"
       ],
       "createdAt": "2026-08-03",
-      "updatedAt": "2026-08-03"
+      "updatedAt": "2026-08-07"
     },
     {
       "id": "US-534",

@@ -172,3 +172,11 @@ judgment needed on any of it):
 ## Resolution
 
 _[unresolved]_
+
+## Resolution / routing (PM 2026-08-07)
+
+- **B1 → Atlas** (architecture/security tie-break): `offices/architect/inbox/2026-08-07-from-marcus-BL-030-B1-states-http-bounce-ruling.md`. PM endorses Ralph's **#3 (per-request resolution)** — cleanest, matches the US-501/US-532 per-request pattern in the same function, no privilege/unit/deploy change, keeps the honesty label. Awaiting Atlas.
+- **B2 → CIO** (product call): audioAlerts has no consumer + no audio path on the Pi. Options (a) drop from Slice-1 allow-list, (b) keep with an honest "not implemented" state, (c) scope audio as real work. Awaiting CIO.
+- **US-533 marked `blocked`**; **US-537 (animation-gating) remains available** — Ralph proceeds there on re-dispatch. On both rulings → re-groom US-533 AC-2 (B1) + AC-3 (B2) and Ralph finishes it.
+
+Status → routed (Atlas + CIO); US-533 blocked, sprint continues on US-537.
