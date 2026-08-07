@@ -47,11 +47,11 @@ h2{font-size:20px;margin:0;letter-spacing:-.01em;font-weight:640;}
 .body{position:absolute;top:26px;bottom:0;left:0;right:0;padding:10px 13px;display:flex;flex-direction:column;}
 .ct{font-family:var(--display);font-size:13px;font-weight:600;letter-spacing:.1em;color:var(--dv-t2);text-transform:uppercase;margin:0 0 8px;display:flex;gap:8px;align-items:center;}
 .ct .rec{width:8px;height:8px;border-radius:50%;background:var(--dv-red);}
-/* boost bar */
-.boostwrap{margin-bottom:9px;}
-.boostrow{display:flex;align-items:baseline;gap:8px;}
-.boostval{font-family:var(--display);font-size:42px;font-weight:700;line-height:.9;color:#eef2f6;}
-.boostunit{font-size:13px;color:var(--dv-t3);} .boostlab{font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--dv-t3);margin-left:auto;}
+/* airflow bar */
+.flowwrap{margin-bottom:9px;}
+.flowrow{display:flex;align-items:baseline;gap:8px;}
+.flowval{font-family:var(--display);font-size:42px;font-weight:700;line-height:.9;color:#eef2f6;}
+.flowunit{font-size:13px;color:var(--dv-t3);} .flowlab{font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--dv-t3);margin-left:auto;}
 .bbar{position:relative;height:16px;border-radius:8px;margin-top:6px;overflow:hidden;
   background:linear-gradient(90deg,#20536e 0%,#20536e 38%,#1a1e24 38%,#1a1e24 40%,#123a24 40%,#123a24 78%,#3a2f00 78%,#3a2f00 100%);border:1px solid var(--dv-line);}
 .bfill{position:absolute;top:0;bottom:0;left:0;background:rgba(255,255,255,.14);border-right:2px solid #fff;transition:width .12s;}
@@ -97,22 +97,30 @@ h2{font-size:20px;margin:0;letter-spacing:-.01em;font-weight:640;}
     <p class="eyebrow">Eclipse OBD-II · UI/UX · sensor prototypes</p>
     <h1>Getting the most out of the sensors we already have</h1>
     <p class="dek">Four prototypes, no new hardware (GPS + baro on hold). <b>Every readout is fact-checked
-      against what the OBDLink actually returns on your DSM (MD326328)</b> — confident signals only; the
-      suspect ones (MAF, OBD-baro, O2, timing) are held out until Spool confirms, and nothing shows a dead
-      "no source" tile. Pick the ones you want and I take them to build-ready.</p>
-    <div class="meta"><span><b>Author</b> Iris</span><span><b>Date</b> 2026-08-03</span>
-      <span><b>Confirmed data</b> RPM·SPEED·MAP→boost·COOLANT·IAT·THROTTLE·LOAD·VOLTAGE·STFT·LTFT·IMU</span></div>
+      against what the OBDLink actually returns on your DSM (MD326328)</b> — and as of Spool's 08-07 probe
+      ruling, <b>BOOST IS OUT</b>: MAP (0x0B) is probe-dead on this ECU <i>and</i> is wired to the EGR
+      differential sensor, so it was never boost to begin with. <b>MAF replaces it</b> — the 2G 4G63 is
+      MAF-based (Karman-vortex), so airflow is the real "how hard is it breathing" signal and the actual
+      fuel-metering input. Nothing here shows a dead "no source" tile.</p>
+    <div class="meta"><span><b>Author</b> Iris</span><span><b>Date</b> 2026-08-03 · rev 08-07 (Spool PID ruling)</span>
+      <span><b>Confirmed data</b> RPM·SPEED·<b>MAF</b>·COOLANT·IAT·THROTTLE·LOAD·STFT/LTFT·BARO·FUEL-SYS·voltage(ATRV)·IMU</span></div>
+    <p class="dek" style="margin-top:10px;border-left:3px solid #D32F2F;padding-left:10px">
+      <b>Killed by the 08-07 ruling —</b> boost/MAP gauge (0x0B dead + wrong quantity), <code>CONTROL_MODULE_VOLTAGE</code>
+      0x42 (dead — voltage still shown, sourced from adapter <code>ATRV</code>), O2 gauge (narrowband slams
+      0.1–0.9 V by design — not AFR), timing gauge (base timing swings ±10–15°; reads as a knock gauge and
+      isn't one). <b>Boost is not displayable by any software fix</b> — it needs a GM 3-bar + ECMLink, both
+      behind the sensor freeze.</p>
   </header>
 
   <section>
-    <div class="sec-head"><span class="sec-num">P1</span><h2>Boost + vitals on the driving view</h2><span class="sec-sub">folded → P2</span></div>
+    <div class="sec-head"><span class="sec-num">P1</span><h2>Airflow + vitals on the driving view</h2><span class="sec-sub">folded → P2</span></div>
     <div class="split">
       <figure style="margin:0"><div class="bezel"><div class="screen" id="s1"></div></div></figure>
       <div class="rail"><h3>What it adds</h3>
-        <p class="lead">A <b>boost bar</b> (from MAP) + a compact vitals row on the existing live card — the number a turbo driver watches, plus temps/RPM/throttle at a glance.</p>
-        <p><span class="datachip">MAP→boost</span> <span class="datachip">coolant</span> <span class="datachip">IAT</span> <span class="datachip">RPM</span> <span class="datachip">throttle</span> — all confirmed.</p>
-        <p><b>Boost is MAP − assumed-atmospheric</b> (baro on hold) → a small "atm≈14.7 psi assumed" caveat keeps it honest. Bands (spirited/over) are Spool's.</p>
-        <p>Lowest complexity — pure consumer of OBD state we already collect.</p>
+        <p class="lead">An <b>airflow bar</b> (MAF g/s) + a compact vitals row on the existing live card — the closest honest analogue to boost feel, plus temps/RPM/throttle at a glance.</p>
+        <p><span class="datachip">MAF g/s</span> <span class="datachip">coolant</span> <span class="datachip">IAT</span> <span class="datachip">RPM</span> <span class="datachip">throttle</span> — all Spool-confirmed GREEN.</p>
+        <p><b>Was a boost bar.</b> MAP is dead + is the EGR differential sensor, so there is no boost term to render. MAF is the primary fuel-metering input on this engine — it rises with exactly the effort a driver is feeling.</p>
+        <p><b>IAT is labelled "INTAKE AIR", never "charge temp"</b> — the 2G sensor sits in the AFM housing, pre-turbo and pre-intercooler. Advisory amber ~≥60 °C only; <b>never red</b> (IAT alone doesn't kill an engine, and we have neither boost nor knock to pair it with).</p>
       </div>
     </div>
   </section>
@@ -122,9 +130,12 @@ h2{font-size:20px;margin:0;letter-spacing:-.01em;font-weight:640;}
     <div class="split">
       <figure style="margin:0"><div class="bezel"><div class="screen" id="s2"></div></div></figure>
       <div class="rail"><h3>The full engine picture</h3>
-        <p class="lead">A boost <b>arc gauge</b> + RPM, coolant/IAT, throttle/load, fuel trims (STFT/LTFT), voltage — one screen for the whole engine state.</p>
+        <p class="lead">A <b>MAF arc gauge</b> + RPM, coolant/IAT, throttle/load, fuel trims (STFT/LTFT), fuel-system state, voltage — one screen for the whole engine state.</p>
         <p><b>Trade-off:</b> adds a 5th card to the 4 you just consolidated. Good if you want engine depth on its own screen vs. folded into the driving view (P1).</p>
-        <p>Fuel trims + voltage overlap the Health card — I'd move them here if this ships. All confirmed signals.</p>
+        <p><b>Closed/Open Loop</b> (<code>FUEL_SYSTEM_STATUS</code> 0x03) takes the tile O2 would have had — stable and honest, where a narrowband needle would just slam rail-to-rail.</p>
+        <p class="lead" style="border-left:3px solid #FFC400;padding-left:9px"><b>Two constraints that shape this card, not decorate it:</b><br>
+        <b>1 · No smooth needles.</b> The whole K-line budget is ~6.3 samples/sec across <i>all</i> PIDs — about <b>one update per PID every 2.5 s</b>, with no "turn up the Hz" knob. Animating between samples would fabricate values the ECU never sent. Everything here <b>steps</b>, and stale values show their age. Anything that must feel live comes off the IMU (100 Hz) or <code>ATRV</code>.<br>
+        <b>2 · LTFT is not coloured at idle.</b> This engine sits at a characteristic <b>−6.25 % LTFT lock at warm idle</b> — that's its normal. Banded naively, every stoplight paints amber, and a gauge that cries wolf at every light gets ignored the one time it's real.</p>
       </div>
     </div>
   </section>
@@ -134,7 +145,8 @@ h2{font-size:20px;margin:0;letter-spacing:-.01em;font-weight:640;}
     <div class="split">
       <figure style="margin:0"><div class="bezel"><div class="screen" id="s3"></div></div></figure>
       <div class="rail"><h3>What the logged data unlocks</h3>
-        <p class="lead">Every sensor is already logged to the server. This is the drive-summary: <b>boost/spool trace</b>, <b>g-force trace</b>, <b>corner-lean</b>, <b>grade profile</b> — the "how did that drive go" view.</p>
+        <p class="lead">Every sensor is already logged to the server. This is the drive-summary: <b>airflow/effort trace</b>, <b>g-force trace</b>, <b>corner-lean</b>, <b>grade profile</b> — the "how did that drive go" view.</p>
+        <p><b>The 2.5 s sample rate doesn't hurt here.</b> Post-drive is where the slow K-line stops mattering — a trace over 22 minutes reads fine at 0.4 Hz, and the IMU channels (g, lean, grade) are 100 Hz regardless. This surface gets more out of the existing sensors than any live gauge can.</p>
         <p><b>Biggest build:</b> server-tier surface (Atlas contract), not a Pi card — but the highest analytical value, and it's all data we already have.</p>
         <p>Could live on the server dashboard or as an end-of-drive summary on the Pi.</p>
       </div>
@@ -156,7 +168,8 @@ h2{font-size:20px;margin:0;letter-spacing:-.01em;font-weight:640;}
 
   <div class="footer">
     Design of record — offices/uidevloper/proposals/2026-08-03-full-advantage-sensor-prototypes.md<br>
-    Fact-checked against config.json poll list + DSM/MD326328 ECU facts · SUSPECT signals (MAF/baro/O2/timing) held for Spool confirm · no dead displays
+    Rev 2026-08-07 — every readout re-derived from Spool's <b>capability probe</b>, not the config poll list
+    (config membership was never evidence of PID support) · boost/MAP + 0x42 + O2-gauge + timing-gauge removed · no dead displays
   </div>
 </div>
 
@@ -165,28 +178,33 @@ var reduce=window.matchMedia&&window.matchMedia("(prefers-reduced-motion: reduce
 function tb(t){return '<div class="tb"><span class="wm">Eclipse OBD-II</span><span class="sp"></span><span class="g">'+t+'</span><span class="vc">V0.29.24</span></div>';}
 // shared sim clock
 var t0=null;
-function simMAP(t){ // kPa: idle vacuum ~32, cruise ~55, WOT boost ~168
+// MAF g/s -- 2G 4G63 Karman-vortex airflow meter: idle ~4, cruise ~25, hard pull ~110.
+// (MAP/boost removed 2026-08-07 -- 0x0B probe-dead AND wired to the EGR differential sensor.)
+function simMAF(t){
   var w=0.5+0.5*Math.sin(t*0.35); var spike=Math.max(0,Math.sin(t*0.9))*Math.max(0,Math.sin(t*0.23));
-  return 32 + w*70 + spike*80;
+  return 4 + w*30 + spike*80;
 }
-function boostPsi(map){return (map-101.3)*0.145;}
 function simRPM(t){return 1500+2600*(0.5+0.5*Math.sin(t*0.4))+400*Math.max(0,Math.sin(t*0.9));}
+// K-line delivers ~0.4 Hz per PID. Hold each OBD value for a full 2.5 s step so the mockup
+// shows the real cadence -- never a value the ECU didn't actually report.
+var OBD_STEP=2.5;
+function stepped(t,f){return f(Math.floor(t/OBD_STEP)*OBD_STEP);}
 
-// ---- P1 boost + vitals ----
+// ---- P1 airflow + vitals ----
 function p1(){
-  var map=simMAP(pT), psi=boostPsi(map), rpm=simRPM(pT), thr=Math.min(100,Math.max(4,(map-30)*0.8)), cool=92, iat=41+ (psi>3?6:0);
-  var fillPct = Math.max(0,Math.min(100,(map-20)/(180-20)*100));
+  var maf=stepped(pT,simMAF), rpm=stepped(pT,simRPM), thr=Math.min(100,Math.max(4,maf*0.9)), cool=92, iat=41+(maf>60?6:0);
+  var fillPct = Math.max(0,Math.min(100,maf/120*100));
   document.getElementById("s1").innerHTML=tb("BT ⇅ ⚡")+
    '<div class="body"><div class="ct"><span class="rec"></span>LIVE · DRIVE 37</div>'+
-   '<div class="boostwrap"><div class="boostrow"><span class="boostval">'+(psi>=0?"+":"")+psi.toFixed(1)+'</span><span class="boostunit">psi boost</span><span class="boostlab">MAP '+map.toFixed(0)+' kPa</span></div>'+
-     '<div class="bbar"><div class="bzero"></div><div class="bfill" style="width:'+fillPct+'%"></div></div>'+
-     '<div class="bticks"><span>−vac</span><span>0</span><span>boost+</span></div></div>'+
+   '<div class="flowwrap"><div class="flowrow"><span class="flowval">'+maf.toFixed(0)+'</span><span class="flowunit">g/s airflow</span><span class="flowlab">MAF</span></div>'+
+     '<div class="bbar"><div class="bfill" style="width:'+fillPct+'%"></div></div>'+
+     '<div class="bticks"><span>idle</span><span>cruise</span><span>hard</span></div></div>'+
    '<div class="vitals">'+
      '<div class="vt"><div class="l">Coolant</div><div class="v ok">'+cool+'<span class="u">°C</span></div></div>'+
-     '<div class="vt"><div class="l">IAT</div><div class="v'+(iat>45?" am":"")+'">'+iat.toFixed(0)+'<span class="u">°C</span></div></div>'+
+     '<div class="vt"><div class="l">Intake air</div><div class="v'+(iat>=60?" am":"")+'">'+iat.toFixed(0)+'<span class="u">°C</span></div></div>'+
      '<div class="vt"><div class="l">RPM</div><div class="v">'+(rpm/1000).toFixed(1)+'<span class="u">k</span></div></div>'+
      '<div class="vt"><div class="l">Throttle</div><div class="v">'+thr.toFixed(0)+'<span class="u">%</span></div></div>'+
-   '</div><div class="caveat">boost = MAP − assumed 101 kPa atm (baro on hold) · bands pending Spool</div></div>';
+   '</div><div class="caveat">MAF = fuel-metering airflow (no boost signal on this ECU) · values step at the ~2.5 s K-line rate</div></div>';
 }
 // ---- P2 engine card ----
 function drawArc(cv,frac,hot){var x=cv.getContext("2d"),w=cv.width=300,h=cv.height=192,cx=w/2,cy=h*0.92,R=w*0.42;
@@ -194,19 +212,22 @@ function drawArc(cv,frac,hot){var x=cv.getContext("2d"),w=cv.width=300,h=cv.heig
   x.strokeStyle="rgba(255,255,255,.10)";x.beginPath();x.arc(cx,cy,R,Math.PI,2*Math.PI);x.stroke();
   x.strokeStyle=hot?"#FFC400":"#35C46A";x.beginPath();x.arc(cx,cy,R,Math.PI,Math.PI+Math.PI*Math.max(0,Math.min(1,frac)));x.stroke();}
 function p2(){
-  var map=simMAP(pT),psi=boostPsi(map),rpm=simRPM(pT);
+  var maf=stepped(pT,simMAF),rpm=stepped(pT,simRPM);
+  var idling = rpm<1300 || maf<8;   // LTFT is deliberately NOT coloured at idle (-6.25% lock is this engine's normal)
   document.getElementById("s2").innerHTML=tb("BT ⇅ ⚡")+
    '<div class="body"><div class="ct">Engine</div><div class="eg">'+
-     '<div class="gaugecell"><canvas id="p2arc"></canvas><div class="gauge-v">'+(psi>=0?"+":"")+psi.toFixed(1)+'</div><div class="gauge-l">psi boost · MAP '+map.toFixed(0)+'</div></div>'+
+     '<div class="gaugecell"><canvas id="p2arc"></canvas><div class="gauge-v">'+maf.toFixed(0)+'</div><div class="gauge-l">g/s airflow · MAF</div></div>'+
      '<div class="erows">'+
        '<div class="erow"><span class="l">RPM</span><span class="v">'+rpm.toFixed(0)+'</span></div>'+
        '<div class="erow"><span class="l">Coolant</span><span class="v">92<span class="u">°C</span></span></div>'+
-       '<div class="erow"><span class="l">IAT</span><span class="v'+(psi>3?" am":"")+'">'+(41+(psi>3?6:0)).toFixed(0)+'<span class="u">°C</span></span></div>'+
-       '<div class="erow"><span class="l">Load</span><span class="v">'+Math.min(99,(map-25)*0.75).toFixed(0)+'<span class="u">%</span></span></div>'+
-       '<div class="erow"><span class="l">Trim S/L</span><span class="v">+2 / +3<span class="u">%</span></span></div>'+
+       '<div class="erow"><span class="l">Intake air</span><span class="v'+(maf>60?" am":"")+'">'+(41+(maf>60?6:0)).toFixed(0)+'<span class="u">°C</span></span></div>'+
+       '<div class="erow"><span class="l">Load</span><span class="v">'+Math.min(99,maf*0.85).toFixed(0)+'<span class="u">%</span></span></div>'+
+       '<div class="erow"><span class="l">Fuel sys</span><span class="v" style="font-size:15px">'+(idling?"Closed loop":"Open loop")+'</span></div>'+
+       '<div class="erow"><span class="l">Trim S/L</span><span class="v">'+(idling?'+2 / <span style="color:var(--dv-t3)">−6.3</span>':"+2 / +3")+'<span class="u">%</span></span></div>'+
        '<div class="erow"><span class="l">Voltage</span><span class="v">13.9<span class="u">V</span></span></div>'+
-     '</div></div></div>';
-  var cv=document.getElementById("p2arc");if(cv)drawArc(cv,(map-20)/(180-20),psi>7);
+     '</div></div>'+
+     '<div class="caveat">voltage via adapter ATRV (0x42 is dead) · LTFT uncoloured at idle — −6.3% is this engine’s normal · values step at ~2.5 s</div></div>';
+  var cv=document.getElementById("p2arc");if(cv)drawArc(cv,maf/120,maf>90);
 }
 // ---- P3 post-drive review (static traces) ----
 function spark(pts,w,h,pad,color,fill){var d="",a="";for(var i=0;i<pts.length;i++){var x=pad+i/(pts.length-1)*(w-2*pad);var y=h-pad-pts[i]*(h-2*pad);d+=(i?"L":"M")+x.toFixed(1)+","+y.toFixed(1)+" ";}
@@ -214,12 +235,12 @@ function spark(pts,w,h,pad,color,fill){var d="",a="";for(var i=0;i<pts.length;i+
   return (fill?'<path d="'+a+'" fill="'+color+'22"/>':'')+'<polyline points="'+pts.map(function(v,i){return (pad+i/(pts.length-1)*(w-2*pad)).toFixed(1)+","+(h-pad-v*(h-2*pad)).toFixed(1);}).join(" ")+'" fill="none" stroke="'+color+'" stroke-width="1.6"/>';}
 function series(n,f){var a=[];for(var i=0;i<n;i++)a.push(f(i/(n-1)));return a;}
 function p3(){
-  var boost=series(40,function(u){return Math.max(0,0.3+0.6*Math.sin(u*9)*Math.max(0,Math.sin(u*3))+0.1*Math.sin(u*20));});
+  var airflow=series(40,function(u){return Math.max(0,0.3+0.6*Math.sin(u*9)*Math.max(0,Math.sin(u*3))+0.1*Math.sin(u*20));});
   var g=series(40,function(u){return 0.5+0.4*Math.sin(u*13);});
   var grade=series(40,function(u){return 0.45+0.35*Math.sin(u*4+1);});
   document.getElementById("s3").innerHTML=tb("⇅ synced")+
    '<div class="body"><div class="ct">Drive 37 · review · 22 min · 14.2 mi</div><div class="pdgrid">'+
-     '<div class="pdcell"><div class="h">Boost / spool</div><svg viewBox="0 0 200 70" preserveAspectRatio="none">'+spark(boost,200,70,6,"#35C46A",1)+'</svg><div class="pk">peak <b>9.1 psi</b></div></div>'+
+     '<div class="pdcell"><div class="h">Airflow / effort</div><svg viewBox="0 0 200 70" preserveAspectRatio="none">'+spark(airflow,200,70,6,"#35C46A",1)+'</svg><div class="pk">peak <b>112 g/s</b></div></div>'+
      '<div class="pdcell"><div class="h">G-force</div><svg viewBox="0 0 200 70" preserveAspectRatio="none">'+spark(g,200,70,6,"#FFC400",0)+'</svg><div class="pk">max lat <b>0.62 g</b></div></div>'+
      '<div class="pdcell"><div class="h">Grade profile (Δ-from-home)</div><svg viewBox="0 0 200 70" preserveAspectRatio="none">'+spark(grade,200,70,6,"#5aa9d6",0)+'</svg><div class="pk">range <b>+18 / −6 m</b></div></div>'+
      '<div class="pdcell"><div class="h">Corner lean</div><svg viewBox="0 0 200 70">'+
