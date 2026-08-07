@@ -180,3 +180,6 @@ _[unresolved]_
 - **US-533 marked `blocked`**; **US-537 (animation-gating) remains available** — Ralph proceeds there on re-dispatch. On both rulings → re-groom US-533 AC-2 (B1) + AC-3 (B2) and Ralph finishes it.
 
 Status → routed (Atlas + CIO); US-533 blocked, sprint continues on US-537.
+
+### B2 RESOLVED (CIO 2026-08-07): DROP audioAlerts from v1
+CIO chose (a) — drop `pi.alerts.audioAlerts` from the Slice-1 allow-list (no consumer + no audio path on the Pi). Settings screen ships **4** working toggles (auto-rotate, power mode, calibration mode, auto-analyze). US-533 DoD updated to remove it from `overlay.OVERRIDABLE_KEYS` (row disappears everywhere by design). Future audio filed as **US-538** (pending — needs a speaker/playback path first). **US-533 now waits only on B1 (Atlas).**

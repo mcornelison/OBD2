@@ -5,7 +5,7 @@
   "counters": {
     "epic": 7,
     "feature": 126,
-    "story": 537
+    "story": 538
   },
   "epics": [
     {
@@ -7205,9 +7205,9 @@
       "goal": "As the operator, I want a Settings screen on the dashboard where I can see and change my preferences at a glance.",
       "definitionOfDone": [
         "[IRIS DESIGN -- Option B, CIO-refined] implement Iris's delivered design (offices/uidevloper/proposals/2026-08-03-f126-settings-screen-us532.md (+ .html)): a Settings BAND inside the EXISTING US-403 setup-menu overlay (NOT a separate carousel card), with the honest save flow + setup-menu reconciliation she specified",
-        "renders the 5 Slice-1 settings with their CURRENT EFFECTIVE values (read via the US-530 shared resolver, surfaced through the state server): auto-rotate (derived from autoRotateS>0), power mode (car/wall/unknown), audio alerts, calibration mode, auto-analyze after drive",
+        "renders the 4 Slice-1 settings (audioAlerts dropped per CIO B2) with their CURRENT EFFECTIVE values (read via the US-530 shared resolver, surfaced through the state server): auto-rotate (derived from autoRotateS>0), power mode (car/wall/unknown), audio alerts, calibration mode, auto-analyze after drive",
         "honest save flow (per Iris): each control writes via the US-531 token-gated endpoint; on write failure the control reflects the REAL stored value, never an optimistic success; where a change needs a service restart to apply it is labeled plainly (NOT a silent no-op)",
-        "matches the F-124 carousel design system (tokens, Oswald wordmark); test/probe proves the band renders the 5 controls with effective values inside the setup-menu overlay; ruff/lint clean"
+        "matches the F-124 carousel design system (tokens, Oswald wordmark); test/probe proves the band renders the 4 controls with effective values inside the setup-menu overlay; ruff/lint clean"
       ],
       "validationCriteria": [
         {
@@ -7222,7 +7222,7 @@
         "CIO 2026-08-03 settings-screen brainstorm"
       ],
       "createdAt": "2026-08-03",
-      "updatedAt": "2026-08-03"
+      "updatedAt": "2026-08-07"
     },
     {
       "id": "US-533",
@@ -7237,7 +7237,8 @@
         "[GAP 1 -- Atlas: 'applies LIVE' is FALSE for auto-rotate] states_http_server reads pi.display.carousel ONCE at startup and injects it cached (window.DISPLAY_CAROUSEL). Changing autoRotateS needs an eclipse-states-http BOUNCE + page reload -- NOT a dashboard/chromium restart. So the auto-rotate toggle: the write endpoint bounces eclipse-states-http + triggers a reload, and the UI honestly labels 'applies on restart'. Do NOT claim live",
         "pi.power.mode -> PowerModeProvider re-emits mode on its next cycle (fixes bench unknown -> wall); pi.alerts.audioAlerts / pi.calibration.mode / pi.analysis.triggerAfterDrive -> apply live if the consumer re-reads, else the band states 'takes effect on next boot/restart'",
         "honest-instrument: no control silently no-ops; pi.power.mode is a 3-state selector (car|wall|unknown), unknown remains the honest default",
-        "test proves each of the 5 settings round-trips (render effective -> change -> overlay written -> effective value/behavior reflects it, or the honest restart-label shows); ruff clean"
+        "test proves each of the 5 settings round-trips (render effective -> change -> overlay written -> effective value/behavior reflects it, or the honest restart-label shows); ruff clean",
+        "[B2 RESOLVED -- CIO 2026-08-07 DROP audioAlerts] remove pi.alerts.audioAlerts from overlay.OVERRIDABLE_KEYS (it has NO consumer + no audio path on the Pi). The band/write-gate/injected-read all derive from that list, so the row disappears everywhere with no other edit. Wire the remaining 4 settings (auto-rotate, power mode, calibration mode, auto-analyze)."
       ],
       "validationCriteria": [
         {
@@ -7368,6 +7369,34 @@
       ],
       "createdAt": "2026-08-03",
       "updatedAt": "2026-08-03"
+    },
+    {
+      "id": "US-538",
+      "parent": "F-126",
+      "type": "normal",
+      "size": "M",
+      "status": "pending",
+      "title": "[FUTURE] Audio alerts -- needs a Pi speaker + playback path first",
+      "goal": "As the operator, I want audible alerts on the Pi so I hear a warning without watching the screen.",
+      "definitionOfDone": [
+        "[DEFERRED -- dropped from F-126 Slice 1 per CIO 2026-08-07 (BL-030 B2): pi.alerts.audioAlerts had no consumer + no audio/speaker code exists on the Pi]",
+        "real work: add an audio playback path (speaker/HDMI-audio + a play helper), wire AlertManager to emit on audio-worthy alerts, THEN re-add audioAlerts to the settings allow-list as a working toggle",
+        "NOT groomed -- placeholder; needs hardware/audio-path scoping"
+      ],
+      "validationCriteria": [
+        {
+          "action": "[deferred]",
+          "outcome": "[deferred -- needs audio path first]"
+        }
+      ],
+      "conditionalOutcomes": [
+        "Dropped from F-126 v1; re-scope when audio output on the Pi is wanted."
+      ],
+      "sourceRefs": [
+        "offices/pm/blockers/BL-030-us533-states-http-bounce-unauthorized-and-audioalerts-has-no-consumer.md"
+      ],
+      "createdAt": "2026-08-07",
+      "updatedAt": "2026-08-07"
     }
   ]
 }
