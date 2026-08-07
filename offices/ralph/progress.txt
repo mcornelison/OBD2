@@ -51,3 +51,55 @@ Task: Config overlay persistence + layered read (config.json default <- Pi-local
 - **Gotcha**: `bash -n` any .sh you touch -- pytest cannot see a shell syntax
   error. `make` is not on PATH here (exits 127, which reads like a pass).
 ---
+
+## 2026-08-07 - US-531 (Agent 1 / Rex)
+Task: Token-gated settings write endpoint on states_http_server (writes the overlay)
+
+### What was implemented:
+- POST /settings -- the THIRD token-gated write route on states_http_server,
+  built to the US-403/US-407 pattern (_tokenOk first; gate delegated to a SSOT
+  module, never re-implemented). The kiosk is sandboxed chromium JS and cannot
+  write files, so a settings toggle POSTs here and this process writes the
+  US-530 Pi-local overlay.
+- common.config.overlay gained the WRITE side: writeOverlayValue (same
+  validateOverlayValue gate as the read seam, then temp + os.replace + fsync),
+  readEffectiveValue and getDotPath for the honest read-back.
+- Response is a RE-READ through the shared seam, not an echo, so the endpoint
+  can never report a setting that was not actually stored.
+- Status contract: 401 no/wrong token, 503 no config wired, 400 malformed body
+  or invalid value, 403 key not overridable, 500 write failure (carrying the
+  REAL effective value), 200 success. NO write on any rejection path.
+- configPath threaded through makeStatesHandler / StatesHttpServer / main, so
+  the settings route and the injected display config read the same file and the
+  existing systemd unit needs no new argument.
+
+### Files changed:
+- Modified: `src/common/config/overlay.py` (write side + effective-value read-back)
+- Modified: `src/pi/splash/states_http_server.py` (third POST route + configPath)
+- Created: `tests/common/test_config_overlay_write.py` (24 tests)
+- Created: `tests/pi/splash/test_states_http_settings_write.py` (29 tests)
+
+### Learnings for future iterations:
+- **Pattern discovered**: A HAPPY PATH CANNOT PROVE A RE-READ. When a response
+  is specified as "return the real stored value, never an optimistic echo", the
+  success path cannot distinguish the two implementations -- the stored value
+  equals the effective value there. You must construct a case where they
+  DISAGREE (here: a config.json whose parent branch is a string, so the write
+  succeeds but the override cannot resolve, and the honest answer is null).
+  Same family as US-530's "never let the expected value equal the default".
+- **Pattern discovered**: parametrizing a test over the SSOT's exported
+  allow-list (OVERRIDABLE_KEYS) catches DRIFT but not DUPLICATION -- a local
+  copy that is currently identical still passes. It fails the moment the
+  allow-list grows, which is the real risk. Pair it with an assertion that the
+  test's own fixture map covers the SSOT exactly.
+- **Gotcha**: atomicity must be pinned as a MECHANISM. A truncating open() of
+  the live path passes every behavioural write test; only spying os.replace
+  (destination IS the real path, source is NOT) actually pins temp+rename.
+- **Gotcha**: declaration-vs-mechanism struck a third sprint running -- under
+  the echo mutation the WARNING log correctly said "blocked by a non-dict
+  branch" while the response returned the requested value. A log is not a test.
+- **Gotcha**: the Bash tool rejects heredocs containing brace-with-quote (JSON
+  object literals inside inline python) as "expansion obfuscation" -- build
+  payloads with dict() instead. `make` is still not on PATH (exits 127, which
+  reads like a pass); use `python -m ruff check` per touched file.
+---
