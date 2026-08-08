@@ -205,7 +205,6 @@ class TestResolveEffectiveConfig:
             ("pi.display.carousel.autoRotateS", "8"),
             ("pi.display.carousel.autoRotateS", -1),
             ("pi.display.carousel.autoRotateS", True),
-            ("pi.alerts.audioAlerts", "true"),
             ("pi.calibration.mode", 1),
             ("pi.analysis.triggerAfterDrive", "yes"),
         ],
@@ -261,16 +260,20 @@ class TestResolveEffectiveConfig:
 class TestSliceOneAllowList:
     """The Slice-1 overridable-key allow-list is itself the contract."""
 
-    def test_overridableKeys_carriesExactlyTheFiveSliceOneKeys(self):
+    def test_overridableKeys_carriesExactlyTheFourSliceOneKeys(self):
         """
-        Given: the US-530 Slice-1 allow-list
+        Given: the Slice-1 allow-list (US-530, narrowed by US-533 B2)
         When: it is read
-        Then: it is exactly the 5 agreed keys -- no silent widening
+        Then: it is exactly the 4 agreed keys -- no silent widening
+
+        pi.alerts.audioAlerts was DROPPED by CIO ruling 2026-08-07: it had no
+        consumer anywhere in src/, so the control could only ever no-op. This
+        assertion is a set, so it fails just as loudly on a re-add (which is
+        US-538's job, alongside an actual audio path) as on a further drop.
         """
         assert set(OVERRIDABLE_KEYS) == {
             "pi.display.carousel.autoRotateS",
             "pi.power.mode",
-            "pi.alerts.audioAlerts",
             "pi.calibration.mode",
             "pi.analysis.triggerAfterDrive",
         }

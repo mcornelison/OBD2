@@ -126,14 +126,13 @@ def test_loadEffectiveSettings_returnsShippedDefaultsWhenNoOverlay(tmp_path):
     settings = loadEffectiveSettings(_writeConfig(tmp_path))
     assert settings["pi.display.carousel.autoRotateS"] == 8
     assert settings["pi.power.mode"] == "car"
-    assert settings["pi.alerts.audioAlerts"] is True
     assert settings["pi.calibration.mode"] is False
     assert settings["pi.analysis.triggerAfterDrive"] is True
 
 
 def test_loadEffectiveSettings_overlayOverrideWins(tmp_path):
     """Every override value here DIFFERS from the base config's, so a reader that
-    ignored the overlay entirely would fail on all five (US-530's lesson: never
+    ignored the overlay entirely would fail on all four (US-530's lesson: never
     let the expected value equal the default)."""
     configPath = _writeConfig(tmp_path)
     _writeOverlay(
@@ -141,7 +140,6 @@ def test_loadEffectiveSettings_overlayOverrideWins(tmp_path):
         {
             "pi.display.carousel.autoRotateS": 0,
             "pi.power.mode": "wall",
-            "pi.alerts.audioAlerts": False,
             "pi.calibration.mode": True,
             "pi.analysis.triggerAfterDrive": False,
         },
@@ -149,7 +147,6 @@ def test_loadEffectiveSettings_overlayOverrideWins(tmp_path):
     settings = loadEffectiveSettings(configPath)
     assert settings["pi.display.carousel.autoRotateS"] == 0
     assert settings["pi.power.mode"] == "wall"
-    assert settings["pi.alerts.audioAlerts"] is False
     assert settings["pi.calibration.mode"] is True
     assert settings["pi.analysis.triggerAfterDrive"] is False
 
@@ -182,8 +179,8 @@ def test_loadEffectiveSettings_invalidOverlayValue_fallsBackNotForward(tmp_path)
     """A wrong-typed override is ignored by the shared resolver, so the band
     shows the shipped default -- not the junk the overlay carried."""
     configPath = _writeConfig(tmp_path)
-    _writeOverlay(configPath, {"pi.alerts.audioAlerts": "yes-please"})
-    assert loadEffectiveSettings(configPath)["pi.alerts.audioAlerts"] is True
+    _writeOverlay(configPath, {"pi.calibration.mode": "yes-please"})
+    assert loadEffectiveSettings(configPath)["pi.calibration.mode"] is False
 
 
 def test_loadEffectiveSettings_invalidPowerMode_coercesToUnknown(tmp_path):

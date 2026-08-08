@@ -175,16 +175,27 @@ class ApplicationOrchestrator(  # type: ignore[misc]
     # Construction
     # ================================================================================
 
-    def __init__(self, config: dict[str, Any], simulate: bool = False):
+    def __init__(
+        self,
+        config: dict[str, Any],
+        simulate: bool = False,
+        configPath: str | None = None,
+    ):
         """
         Initialize the application orchestrator.
 
         Args:
             config: Configuration dictionary with all component settings
             simulate: If True, use simulated OBD-II connection instead of real hardware
+            configPath: Path config was loaded from (US-533). Lets components
+                that must follow an operator's live setting change RE-READ the
+                effective value instead of closing over this boot-time snapshot
+                -- today the card-state power-mode provider. ``None`` (the test
+                / embedded call sites) keeps the snapshot behaviour.
         """
         self._config = config
         self._simulate = simulate
+        self._configPath = configPath
         self._running = False
 
         # Component references - all start as None
@@ -1498,7 +1509,8 @@ class ApplicationOrchestrator(  # type: ignore[misc]
 
 def createOrchestratorFromConfig(
     config: dict[str, Any],
-    simulate: bool = False
+    simulate: bool = False,
+    configPath: str | None = None
 ) -> ApplicationOrchestrator:
     """
     Create an ApplicationOrchestrator from configuration.
@@ -1506,6 +1518,8 @@ def createOrchestratorFromConfig(
     Args:
         config: Configuration dictionary
         simulate: If True, use simulated OBD-II connection
+        configPath: Path config was loaded from (US-533); see
+            :class:`ApplicationOrchestrator`.
 
     Returns:
         Configured ApplicationOrchestrator instance
@@ -1515,7 +1529,9 @@ def createOrchestratorFromConfig(
         orchestrator = createOrchestratorFromConfig(config, simulate=True)
         orchestrator.start()
     """
-    return ApplicationOrchestrator(config=config, simulate=simulate)
+    return ApplicationOrchestrator(
+        config=config, simulate=simulate, configPath=configPath
+    )
 
 
 __all__ = [

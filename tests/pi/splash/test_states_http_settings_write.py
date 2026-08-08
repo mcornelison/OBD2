@@ -66,7 +66,6 @@ _BASE_CONFIG = {
 _VALID_VALUES = {
     _AUTO_ROTATE_KEY: 0,
     _POWER_KEY: "wall",
-    "pi.alerts.audioAlerts": True,
     "pi.calibration.mode": True,
     "pi.analysis.triggerAfterDrive": True,
 }

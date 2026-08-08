@@ -248,7 +248,12 @@
          above the destructive service/Exit rows, so scrolling for a toggle
          never puts a Stop under the thumb. JS fills the rows from the injected
          effective values; the toggles carry no confirm (they are reversible),
-         while the service rows below keep theirs (F-6/F-7). -->
+         while the service rows below keep theirs (F-6/F-7).
+         US-533: FOUR rows -- audio alerts was dropped (no consumer exists on
+         the Pi, so the control could only ever no-op). Each row now states the
+         apply-state its consumer actually earned; auto-rotate reloads the page
+         itself, because the states-http restart it would otherwise need is
+         polkit-denied. -->
     <section class="menu-section">
       <h3 class="menu-section-title">Settings</h3>
       <div id="settings-list"><!-- JS fills setting rows (effective values) --></div>
@@ -297,7 +302,7 @@
     // un-substituted it stays a valid JS string, which carousel.js ignores in
     // favour of its built-in grounded defaults.
     window.DISPLAY_CAROUSEL = "__DISPLAY_CAROUSEL__";
-    // US-532: the 5 Slice-1 operator settings at their EFFECTIVE values (the
+    // US-532: the Slice-1 operator settings at their EFFECTIVE values (the
     // US-530 shared resolver), keyed by the overlay's own flat dot-paths -- the
     // same keys POST /settings takes. Same quoted-placeholder trick; resolved
     // PER REQUEST by the state server, so a reload after a save renders what is

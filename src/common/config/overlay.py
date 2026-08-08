@@ -22,6 +22,8 @@
 #               |              | os.replace) + readEffectiveValue/getDotPath, so
 #               |              | the settings endpoint reports the REAL stored
 #               |              | value and reuses the ONE allow-list gate.
+# 2026-08-08    | Rex (US-533) | B2: dropped pi.alerts.audioAlerts -- no consumer
+#               |              | exists, so the row could only ever no-op.
 # ================================================================================
 ################################################################################
 
@@ -115,10 +117,18 @@ def _isPowerMode(value: Any) -> bool:
 # Slice-1 overridable keys. Adding a key here is the ONLY way to make a setting
 # operator-writable -- both the read gate and the US-531 write gate consult this
 # one table, so a key cannot become writable without also becoming readable.
+#
+# US-533 B2 (CIO 2026-08-07): pi.alerts.audioAlerts was REMOVED from this table.
+# It had no consumer anywhere in src/ -- AlertManager takes visualAlerts +
+# logAlerts only, and there is no audio playback code on the Pi at all -- so no
+# restart could ever have made that control do anything. A permanently dead
+# toggle is the silent no-op the band exists to prevent, wearing a nicer label.
+# Removing it here deletes the row from the band, the injected read AND the write
+# gate at once, because all three derive from this list. Audio is future work
+# (US-538); re-adding the key here is step one of that story, not this one.
 _VALIDATORS = {
     "pi.display.carousel.autoRotateS": _isNonNegativeNumber,
     POWER_MODE_KEY: _isPowerMode,
-    "pi.alerts.audioAlerts": _isBool,
     "pi.calibration.mode": _isBool,
     "pi.analysis.triggerAfterDrive": _isBool,
 }

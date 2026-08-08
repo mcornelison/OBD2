@@ -80,6 +80,11 @@ class CardStateEmitterMixin:
     _batteryHealthEmitter: Any | None
     _dtcEmitter: Any | None
     _cardPowerModeProvider: Any | None
+    # US-533: config.json's path, when the composer knows it. A CLASS default of
+    # None (rather than a getattr) so every composer -- including the standalone
+    # ones that never had a path -- keeps working while the orchestrator sets a
+    # real value; see _initializeCardStateEmitters for what it buys.
+    _configPath: str | None = None
     _cardStateEmitEnabled: bool
     _cardStateEmitInterval: float
     _cardSyncStaleThresholdS: float
@@ -132,7 +137,20 @@ class CardStateEmitterMixin:
                 statesDir, severityTable=severityTable
             )
             # Deployment-context provider (car/wall/unknown) for the power tile.
-            self._cardPowerModeProvider = PowerModeProvider.fromConfig(self._config)
+            #
+            # US-533: prefer the LIVE source when we know where config.json is.
+            # fromConfig() closes over the boot-time snapshot, so an operator
+            # switching the F-126 power-mode control saw nothing change until
+            # this service restarted -- and the band now labels that row
+            # "applies now", which is only true because of this branch.
+            # No path (standalone composers) -> the US-421 snapshot source:
+            # degrade to stale, never to no power tile at all.
+            if self._configPath:
+                self._cardPowerModeProvider = PowerModeProvider.fromConfigPath(
+                    self._configPath
+                )
+            else:
+                self._cardPowerModeProvider = PowerModeProvider.fromConfig(self._config)
             # AC5: write an HONEST initial `dtc` state at boot so a parked-from-
             # boot Pi (no KOEO read yet) renders "DTC not read since key-off"
             # instead of starving -- kills the phantom-Check-Engine backdrop.

@@ -1079,7 +1079,7 @@
 
   // --- US-532 (F-126) Settings band ----------------------------------------
   //
-  // Iris Option B (CIO 2026-08-03): the 5 Slice-1 settings render as a band at
+  // Iris Option B (CIO 2026-08-03): the Slice-1 settings render as a band at
   // the TOP of this same setup-menu overlay, ABOVE the service rows -- safe
   // persistent preferences on top, destructive service/Exit below.
   //
@@ -1088,35 +1088,44 @@
   // /settings takes as its body `key`. A prettified display key would need a
   // mapping table, and that table is precisely the thing that drifts from the
   // write gate's allow-list.
+  // US-533: an apply-state is a CLAIM ABOUT A CONSUMER, and each of these has
+  // now been wired and proven, so the conservative US-532 placeholder
+  // ("applies on restart" on every row) is gone. Only states an actual consumer
+  // earned appear here -- an unused entry is a label nobody has verified, and
+  // the next story will reach for it as if someone had.
   var SETTINGS_APPLY_NOTES = {
     live: "applies now",
-    restart: "applies on restart",
-    "next-drive": "applies next drive",
+    reload: "applies on reload",
+    "capture-restart": "applies on capture restart",
   };
 
-  // The apply-state is a CLAIM ABOUT A CONSUMER, so US-532 ships the
-  // CONSERVATIVE one on every row. A restart always applies an overlay value
-  // (every consumer re-reads config at process start), so "applies on restart"
-  // can never be a lie; "applies now" would be an over-promise until US-533
-  // wires and PROVES each consumer's re-read path -- and the over-promise is the
-  // dangerous direction, because it is exactly the silent no-op this band exists
-  // to prevent. Under-promising only ever costs a needless restart.
+  // AUTO-ROTATE is "reload", NOT "restart" -- and the difference is load-bearing.
+  // Atlas's original GAP 1 remedy was an eclipse-states-http bounce, but that
+  // unit runs User=mcornelison and polkit's manage-units grant deliberately
+  // excludes the state server (BL-030 B1), so the bounce is DENIED on the Pi: a
+  // "restart" label would have sent the operator to an action they cannot take,
+  // and a self-restart attempt would have been a silent no-op. The CIO ratified
+  // the alternative that deletes the constraint instead of authorising it
+  // (2026-08-08): the server resolves pi.display.carousel PER REQUEST, so the
+  // new period lands on the next page load -- which this band triggers itself.
   //
-  // Auto-rotate is structurally restart-only regardless (Atlas GAP 1): the state
-  // server reads pi.display.carousel ONCE at startup and injects it cached, so a
-  // new period needs an eclipse-states-http bounce + a page reload.
+  // POWER MODE is "live": the card-state emitter's PowerModeProvider re-reads
+  // the effective key on every cycle (OverlayConfigPowerModeSource), so the
+  // power tile follows within one emit interval.
   //
-  // US-533: relax `apply` per key as each consumer is proven.
+  // CALIBRATION / AUTO-ANALYZE are "capture-restart": both are read ONCE into a
+  // constructor at orchestrator start, so "live" would be a lie -- and the bare
+  // "restart" US-532 shipped was true but useless, because the unit the operator
+  // would reach for (states-http, the only one this band talks to) is the wrong
+  // one. Name the service or the label does not help anybody.
   var SETTINGS_SPECS = [
     { key: "pi.display.carousel.autoRotateS", label: "Auto-rotate",
-      kind: "seconds", apply: "restart" },
-    { key: "pi.power.mode", label: "Power mode", kind: "mode", apply: "restart" },
-    { key: "pi.alerts.audioAlerts", label: "Audio alerts",
-      kind: "bool", apply: "restart" },
+      kind: "seconds", apply: "reload" },
+    { key: "pi.power.mode", label: "Power mode", kind: "mode", apply: "live" },
     { key: "pi.calibration.mode", label: "Calibration mode",
-      kind: "bool", apply: "restart" },
+      kind: "bool", apply: "capture-restart" },
     { key: "pi.analysis.triggerAfterDrive", label: "Auto-analyze after drive",
-      kind: "bool", apply: "restart" },
+      kind: "bool", apply: "capture-restart" },
   ];
 
   // Mirrors common.config.overlay.POWER_MODES. `unknown` is a LEGAL stored value
@@ -1125,6 +1134,12 @@
   var SETTINGS_POWER_MODES = ["car", "wall", "unknown"];
 
   var SETTINGS_PENDING_NOTE = "saving…";
+
+  // US-533 B1: how long the "saved" note stays on screen before the reload that
+  // actually applies an auto-rotate change. Long enough that the operator sees
+  // the save was accepted, short enough that the reload reads as part of the
+  // same tap rather than as the panel spontaneously restarting.
+  var SETTINGS_RELOAD_DELAY_MS = 700;
 
   function settingsModeChoices() {
     return SETTINGS_POWER_MODES.slice();
@@ -1149,6 +1164,31 @@
       });
     }
     return out;
+  }
+
+  // Every apply-state the band DECLARES. Exported so a test can prove the set
+  // matches the set the rows actually use -- a note with no row behind it has
+  // never been checked against a consumer.
+  function settingsApplyStates() {
+    var out = [];
+    for (var k in SETTINGS_APPLY_NOTES) {
+      if (Object.prototype.hasOwnProperty.call(SETTINGS_APPLY_NOTES, k)) out.push(k);
+    }
+    return out;
+  }
+
+  // Does this save need the page reloaded to take effect? (US-533 B1.)
+  //
+  // True ONLY for an apply:"reload" row whose write actually SUCCEEDED. Both
+  // halves matter: reloading after a rejected write would wipe the "couldn't
+  // save" note off the screen and repaint the unchanged value, which reads as
+  // success -- and reloading a row that applies live or on a service restart is
+  // a disruption the operator did not ask for (it closes the menu and restarts
+  // every poll). The argument is the settingsSaveResult OUTPUT, not the raw
+  // response, so the same non-echo discipline that governs the repaint governs
+  // this: a body that merely looks successful cannot trigger a reload.
+  function settingsReloadNeeded(spec, res) {
+    return !!spec && spec.apply === "reload" && settingsSaveResult(res).ok;
   }
 
   // The choices offered for one setting. A toggle is a 2-choice segmented
@@ -2736,6 +2776,8 @@
     healthCardView: healthCardView,
     serviceMenuItems: serviceMenuItems,
     settingsSpecs: settingsSpecs,
+    settingsApplyStates: settingsApplyStates,
+    settingsReloadNeeded: settingsReloadNeeded,
     settingsModeChoices: settingsModeChoices,
     settingsChoices: settingsChoices,
     settingsRowView: settingsRowView,
@@ -3893,7 +3935,19 @@
           })
           .then(function (res) {
             var out = settingsSaveResult(res);
+            // Repaint FIRST, unconditionally: the operator must see the REAL
+            // stored value even if the reload below is slow, blocked, or never
+            // due -- the truth must not depend on the apply mechanism firing.
             render(out.value, out.note);
+            // US-533 B1: the row said "applies on reload", so this is where the
+            // band keeps that promise. The server resolves pi.display.carousel
+            // per request, so the reloaded page picks the new period up with NO
+            // eclipse-states-http restart (which polkit denies anyway).
+            if (settingsReloadNeeded(spec, res)) {
+              setTimeout(function () {
+                location.reload();
+              }, SETTINGS_RELOAD_DELAY_MS);
+            }
           })
           .then(null, function () {
             // A rejected fetch tells us nothing about what is stored -> Unknown.

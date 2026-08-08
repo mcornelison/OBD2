@@ -76,6 +76,18 @@ _DISPLAY_AUTODIM_PLACEHOLDER = '"__DISPLAY_AUTODIM__"'
 # widening the auto-dim one: the two sub-configs have different owners and
 # different tuning cadences, and merging them would make an auto-dim edit able
 # to break carousel navigation.
+#
+# US-533 B1 (CIO-ratified 2026-08-08): resolved PER REQUEST whenever a
+# ``configPath`` is wired, joining _DEPLOY_VERSION_PLACEHOLDER and
+# _DISPLAY_SETTINGS_PLACEHOLDER. This was the LAST resolved-at-construction value
+# in _injectHtml and it had the same staleness bug they were each moved to fix:
+# the F-126 settings band writes pi.display.carousel.autoRotateS, and a cached
+# blob meant the new period could only reach the kiosk via an
+# eclipse-states-http restart -- which polkit DENIES by design (the unit runs
+# User=mcornelison and the manage-units grant deliberately excludes the state
+# server, BL-030 B1). Resolving here DELETES the privilege requirement instead of
+# asking for it: the toggle writes the overlay, the UI reloads itself, and the
+# reload picks the new value up.
 _DISPLAY_CAROUSEL_PLACEHOLDER = '"__DISPLAY_CAROUSEL__"'
 
 # US-532 (F-126): the same quoted-placeholder seam for the 5 Slice-1 operator
@@ -193,6 +205,10 @@ def makeStatesHandler(
     ``carouselConfig`` (US-506) is the ``pi.display.carousel`` sub-config -- the
     auto-rotate period, pause self-expiry and swipe velocity/travel thresholds --
     injected the same way, with the same ``None`` -> grounded-defaults fallback.
+    US-533 B1: when ``configPath`` is supplied this section is RE-READ per
+    request and this argument is only the fallback for config-less servers; the
+    two are the same file, so the re-read is the fresher answer, never a
+    different one.
 
     ``deployVersionPath`` (US-501) is the ``.deploy-version`` release record whose
     ``version`` fills the dashboard header chip. ``None``, absent, unreadable or
@@ -207,8 +223,13 @@ def makeStatesHandler(
     assetsDirs = _normalizeAssetsDirs(assetsDir)
     # Serialize once: the JSON object literal substituted for the quoted
     # placeholder (json.dumps(None) -> "null", the honest no-config fallback).
+    #
+    # ONLY auto-dim is cached here. The carousel section deliberately is NOT
+    # (US-533 B1) -- see _DISPLAY_CAROUSEL_PLACEHOLDER; ``carouselConfig`` is
+    # kept as the fallback for servers constructed WITHOUT a configPath, where
+    # there is no file to re-read and the caller-supplied section is the only
+    # truth available.
     displayConfigJson = json.dumps(displayConfig)
-    carouselConfigJson = json.dumps(carouselConfig)
 
     class _StatesHandler(BaseHTTPRequestHandler):
         # Silence default stderr request logging -- the journal captures stdout.
@@ -479,10 +500,20 @@ def makeStatesHandler(
             # that is not preceded by a unit bounce. The band exists to report
             # what is actually stored; a stale blob would make it lie.
             settingsJson = json.dumps(loadEffectiveSettings(configPath))
+            # US-533 B1: and likewise the carousel navigation section, so a
+            # toggled autoRotateS applies on the reload the UI triggers itself
+            # instead of on a unit restart the kiosk is not authorised to make.
+            # With no configPath there is nothing to re-read -- the section the
+            # caller supplied at construction stands (US-506 behaviour intact).
+            carouselJson = json.dumps(
+                carouselConfig
+                if configPath is None
+                else loadDisplayCarouselConfig(configPath)
+            )
             return (
                 html.replace(_TOKEN_PLACEHOLDER, token)
                 .replace(_DISPLAY_AUTODIM_PLACEHOLDER, displayConfigJson)
-                .replace(_DISPLAY_CAROUSEL_PLACEHOLDER, carouselConfigJson)
+                .replace(_DISPLAY_CAROUSEL_PLACEHOLDER, carouselJson)
                 .replace(_DISPLAY_SETTINGS_PLACEHOLDER, settingsJson)
                 .replace(_DEPLOY_VERSION_PLACEHOLDER, version)
             )

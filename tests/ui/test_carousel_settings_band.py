@@ -204,7 +204,7 @@ def test_powerMode_illegalValueIsUnknown_neverAConfidentWrongMode():
 @_NODE_TESTS
 @pytest.mark.parametrize(
     "key",
-    ["pi.alerts.audioAlerts", "pi.calibration.mode", "pi.analysis.triggerAfterDrive"],
+    ["pi.calibration.mode", "pi.analysis.triggerAfterDrive"],
 )
 def test_boolRows_renderBothStatesAndFailToUnknown(key):
     assert _row(key, True)["on"] is True
@@ -218,7 +218,7 @@ def test_boolRows_renderBothStatesAndFailToUnknown(key):
 @_NODE_TESTS
 @pytest.mark.parametrize(
     "key",
-    ["pi.alerts.audioAlerts", "pi.calibration.mode", "pi.analysis.triggerAfterDrive"],
+    ["pi.calibration.mode", "pi.analysis.triggerAfterDrive"],
 )
 def test_boolRows_writeRealBooleans(key):
     """The overlay's validator takes bool only -- a truthy string would 400."""
@@ -294,32 +294,29 @@ def test_savePending_isNotAnOptimisticSuccess():
 
 
 @_NODE_TESTS
-def test_autoRotate_isLabelledRestart_neverClaimedLive():
-    """Atlas GAP 1: states_http_server reads pi.display.carousel ONCE at startup
-    and injects it cached, so a new autoRotateS needs a unit bounce + reload.
-    Claiming 'live' here would be the exact silent no-op this band exists to
-    prevent."""
-    spec = _spec(_AUTO_ROTATE)
-    assert spec["apply"] == "restart"
-    assert "restart" in spec["applyNote"].lower()
+def test_noRowOverPromisesAnApplyItsConsumerCannotHonour():
+    """US-532 shipped the CONSERVATIVE label on every row ("applies on restart")
+    and told US-533 to relax each one as it wired + PROVED that consumer. That
+    handshake completed 2026-08-08, so the two assertions US-532 left here --
+    "every row says restart" and "auto-rotate says restart" -- were deliberately
+    retired: they now assert the OPPOSITE of the truth. Their replacements live
+    in test_carousel_settings_apply.py, pinned per key to the consumer each one
+    earned.
 
-
-@_NODE_TESTS
-def test_noRowClaimsLiveUntilItsConsumerIsWired():
-    """US-532 ships the CONSERVATIVE label on every row and US-533 relaxes each
-    one as it wires + proves that consumer.
-
-    A restart always applies an overlay value (every consumer re-reads config at
-    process start), so 'applies on restart' can never be a lie. 'applies now' is
-    a claim about a re-read path that US-532 has not built -- and an over-promise
-    is the dangerous direction: the operator taps, the label says it took effect,
-    and nothing changed. Under-promising only costs a needless restart.
-
-    US-533: flip `apply` per key here as each consumer is proven, and re-red this
-    test deliberately.
+    What survives here is the invariant that outlives any particular wiring: a
+    row may only claim an apply-state the band DECLARES, and only "live" is an
+    over-promise risk -- so the count of rows claiming it is pinned, and a new
+    row cannot quietly join them.
     """
-    for spec in _view("settingsSpecs"):
-        assert spec["apply"] == "restart", spec["key"]
+    specs = _view("settingsSpecs")
+    declared = set(_view("settingsApplyStates"))
+    for spec in specs:
+        assert spec["apply"] in declared, spec["key"]
+    live = [s["key"] for s in specs if s["apply"] == "live"]
+    assert live == ["pi.power.mode"], (
+        "a row claims 'applies now' -- that is a claim about a consumer that "
+        "re-reads on every cycle; wire and prove it, or label it honestly"
+    )
 
 
 @_NODE_TESTS
