@@ -332,3 +332,79 @@ Task: none available. US-533 is the sole remaining story and is still gated on B
   polkit/unit-file change in the deploy). The other three controls are
   unaffected by which path wins.
 ---
+## 2026-08-08 - US-533 (Agent 1 / Rex) -- SPRINT 71 COMPLETE (6/6)
+Task: Wire the 4 config settings end-to-end (read effective + write overlay + apply semantics)
+
+### What was implemented:
+- *** PROVENANCE FIRST: I did not write most of this. *** A PRIOR ITERATION
+  implemented US-533 and DIED BEFORE COMMITTING. I found 16 files of
+  uncommitted work in the tree at session start, verified it, fixed the one
+  lint error, mutation-proved the tests, and landed it (commit 9206878).
+- B1 (CIO-ratified path #3): `pi.display.carousel` is now resolved PER REQUEST
+  in `_injectHtml`, joining `__DEPLOY_VERSION__` (US-501) and
+  `__DISPLAY_SETTINGS__` (US-532). It was the LAST resolved-at-construction
+  value in that method. This DELETES the eclipse-states-http restart
+  requirement rather than authorising it -- that bounce is polkit-denied BY
+  DESIGN (BL-030 B1). The band reloads the page itself; the row says
+  "applies on reload", never "live".
+- B2: `pi.alerts.audioAlerts` removed from the allow-list. ONE deletion, and
+  the row vanished from the band, the injected read AND the write gate --
+  the exact payoff US-530/531/532 were built to deliver.
+- Power mode genuinely LIVE: `OverlayConfigPowerModeSource` re-reads the
+  effective key each `acquire()`, wired via `PowerModeProvider.fromConfigPath`
+  and a `configPath` threaded main -> orchestrator -> card-state emitter.
+  No path -> the US-421 snapshot source: degrade to STALE, never to no tile.
+- Calibration / auto-analyze say "applies on CAPTURE restart" -- naming the
+  service, because US-532's bare "restart" was true but pointed at the wrong
+  unit (states-http is the only one the band talks to).
+
+### Files changed:
+- Modified: `src/common/config/overlay.py` (B2 -- audioAlerts dropped)
+- Modified: `src/pi/power/power_mode_provider.py` (live source + fromConfigPath)
+- Modified: `src/pi/obdii/orchestrator/card_state_emitter.py` (live provider)
+- Modified: `src/pi/obdii/orchestrator/core.py`, `src/pi/main.py` (configPath)
+- Modified: `src/pi/splash/states_http_server.py` (B1 per-request carousel)
+- Modified: `specs/UI/dist/dashboard-pi/carousel.js` + `dashboard.html`
+- Created: `tests/pi/power/test_power_mode_live_reread.py`,
+  `tests/pi/orchestrator/test_card_power_mode_live_wiring.py`,
+  `tests/pi/splash/test_states_http_carousel_per_request.py`,
+  `tests/ui/test_carousel_settings_apply.py`
+- Modified: 4 existing test files (4-key allow-list + earned apply-states)
+
+### Learnings for future iterations:
+- **Pattern (the one that saved the iteration)**: LOOK AT THE TREE BEFORE
+  LOOKING AT THE STORY. `git status` was the first thing I ran, and it showed
+  16 modified/untracked files from an iteration that died before committing.
+  Starting from the story card instead would have duplicated or clobbered a
+  full story's worth of good work. This is feedback-subagent-died-check-head-
+  first, and it is worth making the literal first action of every iteration.
+- **Pattern**: when you inherit code you did not write, you CANNOT claim
+  RED-first -- you never saw it fail against absent source. Say so, and
+  substitute MUTATION testing, which is stronger for this purpose anyway:
+  RED-first proves a test *could* fail; mutation proves it fails for the
+  RIGHT REASON. Three mutations here: (A) emitter always snapshot -> 2 red,
+  one BEHAVIOURAL not just isinstance; (B) carousel back to cached -> 5 red,
+  headed by the story test; (C) drop the `ok` conjunct from
+  settingsReloadNeeded -> 2 red. Reverted by hand, reverts confirmed
+  byte-exact with `git diff --numstat` BEFORE committing.
+- **Gotcha (new, cost me an amend)**: the Bash tool is POSIX sh, so PowerShell
+  here-string syntax `@'...'@` in `git commit -m` does NOT delimit anything --
+  the stray `@` became part of the commit subject. Use a real heredoc with
+  `git commit -F -`. Two shells are available and they are NOT interchangeable.
+- **Honest bound worth carrying**: the power-mode chain is proven behaviourally
+  at the EMITTER end but the LAST HOP is a SOURCE-TEXT assertion --
+  `assert "configPath=args.config" in source` plus signature checks, driving a
+  `_FakeOrch` rather than a real ApplicationOrchestrator. Declaration-vs-
+  mechanism, five sprints running. If the power tile reads stale on the Pi,
+  look there FIRST.
+- **Pattern**: US-532's deliberate under-promise handshake WORKED. It shipped
+  conservative labels and left a test to go RED ON PURPOSE when consumers
+  landed; it did. There is now also a test forbidding DEAD apply-states in the
+  mapping -- an unused label is one nobody has verified against a consumer,
+  and the next story will reach for it as if someone had.
+- **Blast radius note**: unlike US-532 (0 deletions, purely additive), this
+  story MODIFIES base modules -- three call signatures on the Pi's hot path
+  gained a parameter. Backward-compatible via `configPath=None`, which is why
+  ~80 orchestrator test files still pass -- but "the default preserves
+  behaviour" is exactly the claim a full suite exists to check. PM: run it.
+---
