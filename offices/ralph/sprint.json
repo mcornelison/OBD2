@@ -125,32 +125,29 @@
       "epicId": "E-001",
       "type": "normal",
       "size": "M",
-      "status": "blocked",
+      "status": "sprint-ready",
       "passes": false,
       "acceptance": [
-        "wire each of the 5 controls: reads its effective value (US-530 shared resolver), writes via the token-gated endpoint (US-531), and applies per its consumer",
-        "[GAP 1 -- Atlas: 'applies LIVE' is FALSE for auto-rotate] states_http_server reads pi.display.carousel ONCE at startup and injects it cached (window.DISPLAY_CAROUSEL). Changing autoRotateS needs an eclipse-states-http BOUNCE + page reload -- NOT a dashboard/chromium restart. So the auto-rotate toggle: the write endpoint bounces eclipse-states-http + triggers a reload, and the UI honestly labels 'applies on restart'. Do NOT claim live",
-        "pi.power.mode -> PowerModeProvider re-emits mode on its next cycle (fixes bench unknown -> wall); pi.alerts.audioAlerts / pi.calibration.mode / pi.analysis.triggerAfterDrive -> apply live if the consumer re-reads, else the band states 'takes effect on next boot/restart'",
-        "honest-instrument: no control silently no-ops; pi.power.mode is a 3-state selector (car|wall|unknown), unknown remains the honest default",
-        "test proves each of the 5 settings round-trips (render effective -> change -> overlay written -> effective value/behavior reflects it, or the honest restart-label shows); ruff clean",
-        "[B2 RESOLVED -- CIO 2026-08-07 DROP audioAlerts] remove pi.alerts.audioAlerts from overlay.OVERRIDABLE_KEYS (it has NO consumer + no audio path on the Pi). The band/write-gate/injected-read all derive from that list, so the row disappears everywhere with no other edit. Wire the remaining 4 settings (auto-rotate, power mode, calibration mode, auto-analyze)."
+        "wire each of the 4 controls (auto-rotate, power mode, calibration mode, auto-analyze): reads its effective value via the US-530 shared resolveEffectiveConfig, writes via the US-531 token-gated endpoint, applies per its consumer",
+        "[B1 -- CIO-RATIFIED path #3, 2026-08-08] AUTO-ROTATE applies via PER-REQUEST resolution, NOT a states-http restart: resolve carouselConfig per request in states_http_server (~:466-488), exactly like US-501 __DEPLOY_VERSION__ + US-532 __DISPLAY_SETTINGS__ already do (carouselConfig/US-506 is the last resolved-at-construction value in that method). The toggle writes the overlay, the UI self-triggers a page reload, the new autoRotateS takes effect on that reload. NO eclipse-states-http restart (polkit-denied by design; supersedes the earlier GAP-1 bounce remedy). Label honestly 'applies on reload' -- never claim live, never a silent no-op",
+        "[B2 -- audioAlerts DROPPED, CIO 2026-08-07] remove pi.alerts.audioAlerts from overlay.OVERRIDABLE_KEYS (no consumer + no audio path on the Pi); the band/write-gate/injected-read all derive from that list, so the row disappears everywhere. 4 settings remain",
+        "power mode -> PowerModeProvider re-emits on its next cycle (fixes bench unknown->wall); calibration mode + auto-analyze -> apply live if the consumer re-reads, else the band states 'takes effect on next boot/restart'. pi.power.mode is a 3-state selector (car|wall|unknown), unknown = honest default",
+        "honest-instrument: no control silently no-ops; on a write failure the control reflects the REAL stored value, never optimistic success",
+        "test proves each of the 4 settings round-trips (render effective -> change -> overlay written -> effective value/behavior reflects it, or the honest reload/restart label shows); auto-rotate specifically: per-request resolution returns the new autoRotateS after a reload with NO states-http restart; ruff clean"
       ],
       "validationCriteria": [
         {
-          "action": "set auto-rotate on in the band (states-http bounces), then set power mode to wall",
-          "outcome": "auto-rotate resumes after the states-http bounce (labeled honestly, not claimed live); power tile reads WALL; both survive a reboot via the overlay"
+          "action": "toggle auto-rotate in the settings band, let the UI reload, then watch the carousel; set power mode to wall",
+          "outcome": "auto-rotate takes effect on the reload (no states-http restart, honestly labeled); power tile reads WALL; both survive a reboot via the overlay"
         }
       ],
       "conditionalOutcomes": [
-        "BLOCKED 2026-08-07 (Ralph/Rex) -- BL-030. TWO ACs are not implementable as written; both need a ruling. (B1/CRITICAL) AC-2's eclipse-states-http bounce is DENIED by PolicyKit: the unit runs User=mcornelison (deploy/eclipse-states-http.service:43) and the 51- rule grants manage-units on only 4 units, states-http NOT among them (51-eclipse-service-control.rules:52-68) -- so the auto-rotate toggle would be a SILENT NO-OP, the exact failure AC-4 forbids. The withholding is DELIBERATE (unit_manifest.py:18-20: a compromised kiosk must not reach 'the state server'), so this is Atlas-vs-Atlas and Atlas owns the tie-break. Three paths in BL-030; Ralph recommends #3 (resolve carouselConfig PER REQUEST, deleting the cache instead of authorizing a restart -- the US-501/US-532 pattern already used twice in that same method). (B2/HIGH) pi.alerts.audioAlerts has ZERO consumers: it appears only as a default (loader.py:142) + a validator (overlay.py:121); AlertManager takes visualAlerts+logAlerts only (alert/manager.py:96-97); and NO audio playback code exists anywhere in src/ (grep for mixer|aplay|playsound|winsound|espeak|paplay|beep = 0 hits). No restart can ever make that row do anything, so 'no control silently no-ops' is unachievable by wiring -- product call needed (Ralph recommends an honest 4th apply-state, 'no effect -- not implemented').",
-        "NO HONESTY REGRESSION WHILE THIS SITS: US-532 shipped all 5 rows labeled 'applies on restart', which a restart always satisfies, so the deployed band is truthful today. That under-promise was built for exactly this -- waiting costs only time.",
-        "READY TO BUILD THE MOMENT THE RULINGS LAND (verified this iteration, no judgment left in any of it): pi.power.mode -> genuinely LIVE via a drop-in on the US-421 seam (today PowerModeProvider.fromConfig(self._config) at card_state_emitter.py:135 closes over the orchestrator's STARTUP config snapshot, so an overlay write never reaches the power tile; a PowerModeSource that re-reads the effective value per acquire fixes it with zero provider/consumer change). pi.calibration.mode + pi.analysis.triggerAfterDrive -> honestly 'applies on capture restart' (both read once into a constructor at orchestrator start: calibration/manager.py:116-117, drive/detector.py:336-339). And the apply-state should become a PYTHON SSOT pinned to the JS mirror in both directions -- the same cross-language drift guard US-532 built for the key list -- so a future consumer change cannot leave a stale label behind.",
-        "RE-CHECKED 2026-08-07 (Ralph/Rex, no-work iteration -- no code written): B2 is RESOLVED (CIO dropped audioAlerts; folded into AC-6 above, F-126 ships 4 settings, future audio = US-538). B1 is STILL OPEN -- BL-030 Status remains Active, offices/ralph/inbox/ has no Atlas reply (newest 2026-08-03), and Marcus's B1 routing note + PING are both sitting in the architect inbox (commits 1891428 / 575a749). US-533 is the sole passes:false story, so the sprint is SPRINT_BLOCKED on ONE decision: Atlas picking #1/#2/#3. I deliberately did NOT pre-build the 4 unblocked controls -- PM's plan is to re-groom AC-2/AC-3 once the ruling lands, AC-2 stays unmet either way so passes stays false regardless, and a half-wired band on the branch through a deploy window is the worse trade. The follow-up iteration is small under ANY of the three rulings, because only the auto-rotate row's apply mechanism/label differs between them."
+        "B1 resolved: CIO ratified per-request resolution (#3) 2026-08-08; B2 resolved: audioAlerts dropped 2026-08-07. BL-030 cleared."
       ],
       "goal": "As the operator, I want each Settings control to actually change behavior, so toggling it takes real effect (or honestly tells me when it will).",
       "tasks": [],
       "completionNotes": "NOT STARTED -- BLOCKED BEFORE ANY CODE WAS WRITTEN (BL-030). No source file was touched this iteration; the block was found by tracing the authorization chain end to end, which is cheaper to do before implementing than after. See conditionalOutcomes for the two rulings needed and the recommendations, and BL-030 for the full evidence + trade-off table.",
-      "updatedAt": "2026-08-07"
+      "updatedAt": "2026-08-08"
     },
     {
       "id": "US-536",

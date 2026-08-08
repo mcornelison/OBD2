@@ -7229,29 +7229,32 @@
       "parent": "F-126",
       "type": "normal",
       "size": "M",
-      "status": "blocked",
+      "status": "sprint-ready",
       "title": "Wire the 5 config settings end-to-end (read effective + write overlay + apply semantics)",
       "goal": "As the operator, I want each Settings control to actually change behavior, so toggling it takes real effect (or honestly tells me when it will).",
       "definitionOfDone": [
-        "wire each of the 5 controls: reads its effective value (US-530 shared resolver), writes via the token-gated endpoint (US-531), and applies per its consumer",
-        "[GAP 1 -- Atlas: 'applies LIVE' is FALSE for auto-rotate] states_http_server reads pi.display.carousel ONCE at startup and injects it cached (window.DISPLAY_CAROUSEL). Changing autoRotateS needs an eclipse-states-http BOUNCE + page reload -- NOT a dashboard/chromium restart. So the auto-rotate toggle: the write endpoint bounces eclipse-states-http + triggers a reload, and the UI honestly labels 'applies on restart'. Do NOT claim live",
-        "pi.power.mode -> PowerModeProvider re-emits mode on its next cycle (fixes bench unknown -> wall); pi.alerts.audioAlerts / pi.calibration.mode / pi.analysis.triggerAfterDrive -> apply live if the consumer re-reads, else the band states 'takes effect on next boot/restart'",
-        "honest-instrument: no control silently no-ops; pi.power.mode is a 3-state selector (car|wall|unknown), unknown remains the honest default",
-        "test proves each of the 5 settings round-trips (render effective -> change -> overlay written -> effective value/behavior reflects it, or the honest restart-label shows); ruff clean",
-        "[B2 RESOLVED -- CIO 2026-08-07 DROP audioAlerts] remove pi.alerts.audioAlerts from overlay.OVERRIDABLE_KEYS (it has NO consumer + no audio path on the Pi). The band/write-gate/injected-read all derive from that list, so the row disappears everywhere with no other edit. Wire the remaining 4 settings (auto-rotate, power mode, calibration mode, auto-analyze)."
+        "wire each of the 4 controls (auto-rotate, power mode, calibration mode, auto-analyze): reads its effective value via the US-530 shared resolveEffectiveConfig, writes via the US-531 token-gated endpoint, applies per its consumer",
+        "[B1 -- CIO-RATIFIED path #3, 2026-08-08] AUTO-ROTATE applies via PER-REQUEST resolution, NOT a states-http restart: resolve carouselConfig per request in states_http_server (~:466-488), exactly like US-501 __DEPLOY_VERSION__ + US-532 __DISPLAY_SETTINGS__ already do (carouselConfig/US-506 is the last resolved-at-construction value in that method). The toggle writes the overlay, the UI self-triggers a page reload, the new autoRotateS takes effect on that reload. NO eclipse-states-http restart (polkit-denied by design; supersedes the earlier GAP-1 bounce remedy). Label honestly 'applies on reload' -- never claim live, never a silent no-op",
+        "[B2 -- audioAlerts DROPPED, CIO 2026-08-07] remove pi.alerts.audioAlerts from overlay.OVERRIDABLE_KEYS (no consumer + no audio path on the Pi); the band/write-gate/injected-read all derive from that list, so the row disappears everywhere. 4 settings remain",
+        "power mode -> PowerModeProvider re-emits on its next cycle (fixes bench unknown->wall); calibration mode + auto-analyze -> apply live if the consumer re-reads, else the band states 'takes effect on next boot/restart'. pi.power.mode is a 3-state selector (car|wall|unknown), unknown = honest default",
+        "honest-instrument: no control silently no-ops; on a write failure the control reflects the REAL stored value, never optimistic success",
+        "test proves each of the 4 settings round-trips (render effective -> change -> overlay written -> effective value/behavior reflects it, or the honest reload/restart label shows); auto-rotate specifically: per-request resolution returns the new autoRotateS after a reload with NO states-http restart; ruff clean"
       ],
       "validationCriteria": [
         {
-          "action": "set auto-rotate on in the band (states-http bounces), then set power mode to wall",
-          "outcome": "auto-rotate resumes after the states-http bounce (labeled honestly, not claimed live); power tile reads WALL; both survive a reboot via the overlay"
+          "action": "toggle auto-rotate in the settings band, let the UI reload, then watch the carousel; set power mode to wall",
+          "outcome": "auto-rotate takes effect on the reload (no states-http restart, honestly labeled); power tile reads WALL; both survive a reboot via the overlay"
         }
       ],
-      "conditionalOutcomes": [],
+      "conditionalOutcomes": [
+        "B1 resolved: CIO ratified per-request resolution (#3) 2026-08-08; B2 resolved: audioAlerts dropped 2026-08-07. BL-030 cleared."
+      ],
       "sourceRefs": [
         "CIO 2026-08-03 settings-screen brainstorm"
       ],
       "createdAt": "2026-08-03",
-      "updatedAt": "2026-08-07"
+      "updatedAt": "2026-08-08",
+      "passes": false
     },
     {
       "id": "US-534",

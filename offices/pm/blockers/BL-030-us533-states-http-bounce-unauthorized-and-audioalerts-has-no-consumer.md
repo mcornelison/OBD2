@@ -183,3 +183,9 @@ Status → routed (Atlas + CIO); US-533 blocked, sprint continues on US-537.
 
 ### B2 RESOLVED (CIO 2026-08-07): DROP audioAlerts from v1
 CIO chose (a) — drop `pi.alerts.audioAlerts` from the Slice-1 allow-list (no consumer + no audio path on the Pi). Settings screen ships **4** working toggles (auto-rotate, power mode, calibration mode, auto-analyze). US-533 DoD updated to remove it from `overlay.OVERRIDABLE_KEYS` (row disappears everywhere by design). Future audio filed as **US-538** (pending — needs a speaker/playback path first). **US-533 now waits only on B1 (Atlas).**
+
+## RESOLVED 2026-08-08
+- **B1: CIO RATIFIED path #3** (per-request `carouselConfig` resolution; no states-http restart). Design-gate cleared by CIO (PM Rule 10: PM/CIO clears explicitly) -- did not wait on a separate Atlas ruling; Atlas acked. US-533 AC-2 re-groomed accordingly.
+- **B2: audioAlerts DROPPED** (CIO 2026-08-07); F-126 = 4 settings; US-538 filed for future audio.
+- **US-533 re-groomed → sprint-ready**; Sprint 71 = 5/6 done, US-533 the last. Ready for `ralph.sh`.
+Status → **Resolved**.
