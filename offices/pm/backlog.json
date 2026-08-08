@@ -1,11 +1,11 @@
 {
   "schemaVersion": "2.0.0",
-  "lastUpdated": "2026-08-03",
+  "lastUpdated": "2026-08-08",
   "updatedBy": "Marcus (PM)",
   "counters": {
     "epic": 7,
-    "feature": 126,
-    "story": 538
+    "feature": 127,
+    "story": 542
   },
   "epics": [
     {
@@ -1295,6 +1295,15 @@
       "description": "A Settings card on the Pi carousel exposing user-facing config toggles, persisted to a Pi-local OVERLAY file (gitignored, deploy-preserved) that layers over config.json (config.json stays the read-only shipped default; deploy never clobbers user choices). First surface tying the dashboard to config as its data source. CIO 2026-08-03. Slice 1 = 5 config toggles + overlay. DEFERRED: Battery/Power Test action (Spool), System Settings/Updates (own epic).",
       "createdAt": "2026-08-03",
       "updatedAt": "2026-08-03"
+    },
+    {
+      "id": "F-127",
+      "parent": "E-001",
+      "status": "active",
+      "title": "Pi 3.5in legibility + card-set overhaul",
+      "description": "CIO: fonts on the 3.5in panel are 2-4x too small to read at arm's length in the car (Iris arithmetic: ~165 PPI, glance floor ~34px; shipped values 13-15px). Fix = a type SCALE (tokens) + larger tiles + fewer facts/card, which pushes the card set back UP (partly reverses US-507/508's 6->4 consolidation -- legibility outranks screen count on a 3.5in panel). Iris-designed 2026-08-07/08 (CIO-reviewed); Atlas design-gates the structural parts (screen-count, US-482 stage, cross-card content moves, IMU-always-on).",
+      "createdAt": "2026-08-08",
+      "updatedAt": "2026-08-08"
     }
   ],
   "stories": [
@@ -7400,6 +7409,132 @@
       ],
       "createdAt": "2026-08-07",
       "updatedAt": "2026-08-07"
+    },
+    {
+      "id": "US-539",
+      "parent": "F-127",
+      "type": "normal",
+      "size": "M",
+      "status": "sprint-ready",
+      "title": "Extract the type scale into tokens.css (closes W-3) -- pure refactor",
+      "goal": "As a maintainer, I want font sizes to come from a small set of tokens so the legibility fix is one scale change, not 83 scattered edits that drift back.",
+      "definitionOfDone": [
+        "add a type scale to specs/UI/tokens.css: --fs-hero / --fs-primary / --fs-secondary / --fs-label / --fs-meta (values SET in US-540; this story just establishes the tokens + wiring)",
+        "replace the ~83 hardcoded `font-size: Npx` in dashboard.css with token refs; DoD: NO bare `font-size: Npx` left in dashboard.css (a grep gate)",
+        "PURE REFACTOR -- no visual change vs the current shipped sizes (map each existing px to the nearest token, values unchanged here); ships + verifies independently of US-540",
+        "ruff/lint clean; a probe/test confirms zero bare px font-sizes remain"
+      ],
+      "validationCriteria": [
+        {
+          "action": "grep dashboard.css for `font-size:` with a px literal after the refactor",
+          "outcome": "zero hardcoded px font-sizes; all reference the tokens.css scale; dashboard renders visually identical to before"
+        }
+      ],
+      "conditionalOutcomes": [
+        "US-539 is the HARD prerequisite for US-540 (Iris: without tokenizing first, US-540 becomes 83 edits that drift). No design gate -- pure refactor."
+      ],
+      "sourceRefs": [
+        "offices/uidevloper/proposals/2026-08-07-pi-3p5in-legibility-and-layout.md (+ .html)",
+        "offices/pm/inbox/2026-08-08-from-iris-3p5in-legibility-bundle-for-groom.md",
+        "offices/pm/inbox/2026-08-07-from-atlas-3p5in-legibility-font-size-more-screens.md"
+      ],
+      "createdAt": "2026-08-08",
+      "updatedAt": "2026-08-08"
+    },
+    {
+      "id": "US-540",
+      "parent": "F-127",
+      "type": "normal",
+      "size": "L",
+      "status": "sprint-ready",
+      "title": "Set the legibility scale + re-lay the card set (the actual fix; 4 -> 6 cards)",
+      "goal": "As the operator, I want to read the dashboard at arm's length in the car, so the values and labels are large enough to act on while driving.",
+      "definitionOfDone": [
+        "set the type-scale token values (Iris): hero 44 / primary 34 / secondary 26 / label 20 / meta 15 (px on the 480x320 design stage)",
+        "[FLOOR RULE -- acceptance] anything the driver must READ TO ACT is >= [EXACT:34] px; anything < 26 px must be non-critical only. Capacity that falls out: ~3 facts per card (4 in a 2x2 ceiling)",
+        "[CARD SET 4 -> 6, Iris] Home(live) . Alerts . System Status . Battery . Fuel Trim . Light. 'Health' RETIRES as a card (a container of 3 unrelated facts the scale can't afford); its facts redistribute. Sub-floor detail lines move to the existing System drill-down (read parked)",
+        "[ATLAS DESIGN-GATE] screen-count + US-482 letterbox-stage interaction + the retirement of the Health card. This partly REVERSES US-507/508's 6->4 consolidation -- intended, not drift (legibility > screen-count on 3.5in). Atlas gates the count + stage",
+        "[ACCEPTANCE IS IN-CAR, not bench] 'read it at arm's length in the car, seated normally.' CAVEAT (unverified, do NOT claim values final before a hardware check): the Pi outputs 1080p into a 480x320 native panel -- if it downsamples, small text is resampled AND small, pushing the floor UP. Routed to Atlas/Rex; it can only move the floor higher",
+        "carousel handles N cards already (goTo / page-dots / hidden-card); no nav rework. ruff/lint clean; probe confirms the scale + card set"
+      ],
+      "validationCriteria": [
+        {
+          "action": "in the car, seated normally, read each card (compass heading, %-values, g-force, the CHECK-ENGINE line)",
+          "outcome": "all driver-must-read elements are legible at arm's length (>=34px effective); the 6-card set renders + navigates correctly"
+        }
+      ],
+      "conditionalOutcomes": [
+        "Gated: US-539 first (hard); Atlas screen-count + US-482 ruling before build. If the panel downsamples, the 44/34/26/20/15 values may need to rise -- re-verify on hardware, don't bake as final."
+      ],
+      "sourceRefs": [
+        "offices/uidevloper/proposals/2026-08-07-pi-3p5in-legibility-and-layout.md (+ .html)",
+        "offices/pm/inbox/2026-08-08-from-iris-3p5in-legibility-bundle-for-groom.md",
+        "offices/pm/inbox/2026-08-07-from-atlas-3p5in-legibility-font-size-more-screens.md"
+      ],
+      "createdAt": "2026-08-08",
+      "updatedAt": "2026-08-08"
+    },
+    {
+      "id": "US-541",
+      "parent": "F-127",
+      "type": "normal",
+      "size": "M",
+      "status": "sprint-ready",
+      "title": "Atlas's 3 UI change requests -- IMU-always-on, card reorder, auto-rotate-off verify",
+      "goal": "As the operator, I want the live IMU instrument always visible, alerts second, and no auto-rotate, matching how I actually use the dashboard.",
+      "definitionOfDone": [
+        "(1) [Atlas design-gate] IMU/heading ALWAYS-ON: the live IMU instrument is the permanent Home face (IMU is Pi-local, always-live). OBD-dependent bits (gear, altitude) render typed-NA/greyed via the honest-availability pattern (same as Battery/Light already do) -- never fabricated. Pairs with US-542 idle-face retirement",
+        "(2) reorder the carousel -> Home . Alerts . System Status . … (Alerts to 2nd). Pure dashboard.html markup order; the carousel finds the DTC index dynamically, so drill-down/takeover are unaffected",
+        "(3) auto-rotate OFF -- autoRotateS:0 (ALREADY landed via US-536/disposition-B); this story just VERIFIES it holds in the final card set",
+        "ruff/lint clean; probe confirms order + IMU-always-on + autoRotateS:0"
+      ],
+      "validationCriteria": [
+        {
+          "action": "on the Pi, view the Home face parked (engine off) + swipe the carousel",
+          "outcome": "Home shows the live IMU instrument (heading/g real, OBD bits greyed-NA); order is Home.Alerts.System...; carousel does not auto-advance"
+        }
+      ],
+      "conditionalOutcomes": [
+        "IMU-always-on is Atlas-gated (touches the US-508 idle/live face). Reorder + auto-rotate-verify are independent/small."
+      ],
+      "sourceRefs": [
+        "offices/uidevloper/proposals/2026-08-07-pi-3p5in-legibility-and-layout.md (+ .html)",
+        "offices/pm/inbox/2026-08-08-from-iris-3p5in-legibility-bundle-for-groom.md",
+        "offices/pm/inbox/2026-08-07-from-atlas-3p5in-legibility-font-size-more-screens.md",
+        "offices/pm/inbox/2026-08-03-from-atlas-ui-change-requests-carousel-order-imu-autorotate.md"
+      ],
+      "createdAt": "2026-08-08",
+      "updatedAt": "2026-08-08"
+    },
+    {
+      "id": "US-542",
+      "parent": "F-127",
+      "type": "normal",
+      "size": "S",
+      "status": "sprint-ready",
+      "title": "Idle-face retirement -- STANDBY removed, DTC-since-key-off moves to Alerts",
+      "goal": "As the operator, I don't want a redundant STANDBY face -- parked, the live IMU card already shows the true state, so the idle face adds nothing.",
+      "definitionOfDone": [
+        "[Atlas design-gate -- carries the only cross-card content move] retire the idle/standby face: parked, the IMU is CORRECT not unavailable (true heading, true 0.0 g), so the live Home card (US-541#1) covers it. Delete the STANDBY hero; move the clock to the top bar",
+        "move 'DTC not read since key-off' to the ALERTS card -- it was always an Alerts fact, borrowed by the idle face. No honest content lost",
+        "ruff/lint clean; probe confirms STANDBY gone + the DTC-since-key-off line lives on Alerts"
+      ],
+      "validationCriteria": [
+        {
+          "action": "park the Pi (engine off) and view Home + Alerts",
+          "outcome": "no STANDBY face (live IMU card is Home); clock in the top bar; 'DTC not read since key-off' shows on the Alerts card"
+        }
+      ],
+      "conditionalOutcomes": [
+        "Pairs with US-541#1 (IMU-always-on). Atlas gates the cross-card content move."
+      ],
+      "sourceRefs": [
+        "offices/uidevloper/proposals/2026-08-07-pi-3p5in-legibility-and-layout.md (+ .html)",
+        "offices/pm/inbox/2026-08-08-from-iris-3p5in-legibility-bundle-for-groom.md",
+        "offices/pm/inbox/2026-08-07-from-atlas-3p5in-legibility-font-size-more-screens.md"
+      ],
+      "createdAt": "2026-08-08",
+      "updatedAt": "2026-08-08"
     }
   ]
 }
