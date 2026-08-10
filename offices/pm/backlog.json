@@ -1,11 +1,11 @@
 {
   "schemaVersion": "2.0.0",
-  "lastUpdated": "2026-08-08",
+  "lastUpdated": "2026-08-10",
   "updatedBy": "Marcus (PM)",
   "counters": {
     "epic": 7,
-    "feature": 127,
-    "story": 542
+    "feature": 128,
+    "story": 547
   },
   "epics": [
     {
@@ -1304,6 +1304,15 @@
       "description": "CIO: fonts on the 3.5in panel are 2-4x too small to read at arm's length in the car (Iris arithmetic: ~165 PPI, glance floor ~34px; shipped values 13-15px). Fix = a type SCALE (tokens) + larger tiles + fewer facts/card, which pushes the card set back UP (partly reverses US-507/508's 6->4 consolidation -- legibility outranks screen count on a 3.5in panel). Iris-designed 2026-08-07/08 (CIO-reviewed); Atlas design-gates the structural parts (screen-count, US-482 stage, cross-card content moves, IMU-always-on).",
       "createdAt": "2026-08-08",
       "updatedAt": "2026-08-08"
+    },
+    {
+      "id": "F-128",
+      "parent": "E-002",
+      "status": "active",
+      "title": "Server-side drive re-segmentation authority (A-9 recovery)",
+      "description": "Move drive-boundary segmentation authority server-side so a DriveDetector regression is RECOVERED (re-derived from raw realtime_data), not just flagged by the detect_overlapping_drives tripwire. B-104-aligned. Atlas 2026-08-10 backlog-review addition.",
+      "createdAt": "2026-08-10",
+      "updatedAt": "2026-08-10"
     }
   ],
   "stories": [
@@ -1464,8 +1473,11 @@
       ],
       "tasks": [],
       "createdAt": "2026-05-28",
-      "updatedAt": "2026-06-19",
-      "deferredNote": "Deferred from Sprint 43 (passes=False). Option-(c) code preserved at tag us-370-option-c-preserved; frozen-criterion-conflict -> patch-sprint unfreeze path."
+      "updatedAt": "2026-08-10",
+      "deferredNote": "Deferred from Sprint 43 (passes=False). Option-(c) code preserved at tag us-370-option-c-preserved; frozen-criterion-conflict -> patch-sprint unfreeze path.",
+      "priority": "P2",
+      "tier": "server",
+      "gate": "groom-ready"
     },
     {
       "id": "US-379",
@@ -4076,13 +4088,16 @@
       "conditionalOutcomes": [],
       "tasks": [],
       "createdAt": "2026-07-03",
-      "updatedAt": "2026-07-03",
+      "updatedAt": "2026-08-10",
       "metaBackfill": {
         "backfilledAt": "2026-07-13",
         "statusSource": "preserved-existing",
         "dateSource": "proxy:git-first-appearance",
         "note": "US-465 metadata-drift repair; dates proxy-derived, not exact."
-      }
+      },
+      "priority": "P2",
+      "tier": "pi",
+      "gate": "deferred (F-104 gate)"
     },
     {
       "id": "US-447",
@@ -4927,7 +4942,10 @@
       "tasks": [],
       "status": "sprint-ready",
       "createdAt": "2026-07-15",
-      "updatedAt": "2026-07-15"
+      "updatedAt": "2026-08-10",
+      "priority": "P2",
+      "tier": "infra",
+      "gate": "groom-ready"
     },
     {
       "id": "US-473",
@@ -4961,7 +4979,10 @@
       "tasks": [],
       "status": "sprint-ready",
       "createdAt": "2026-07-15",
-      "updatedAt": "2026-07-15"
+      "updatedAt": "2026-08-10",
+      "priority": "P1",
+      "tier": "pi",
+      "gate": "after OS rename (B-102 static-IP; CIO wants)"
     },
     {
       "id": "US-474",
@@ -5083,8 +5104,11 @@
       "tasks": [],
       "status": "pending",
       "createdAt": "2026-07-19",
-      "updatedAt": "2026-07-20",
-      "shelveNote": "SHELVED per CIO 2026-07-20: the OBDLink BT adapter works fine; the dongle-catatonia / pair-script-dead 'errors' were architect hallucinations. Archaeology confirms the BT LINK code was never the regression (US-441/A-17/US-432 changed nothing in connect/rfcomm/pairing; a raw read got 6/6 live RPM on the same MAC). The bond persists across reboots (Session 23) so re-pairing is rarely needed. Revisit ONLY if a real re-pair failure is observed on the Pi."
+      "updatedAt": "2026-08-10",
+      "shelveNote": "SHELVED per CIO 2026-07-20: the OBDLink BT adapter works fine; the dongle-catatonia / pair-script-dead 'errors' were architect hallucinations. Archaeology confirms the BT LINK code was never the regression (US-441/A-17/US-432 changed nothing in connect/rfcomm/pairing; a raw read got 6/6 live RPM on the same MAC). The bond persists across reboots (Session 23) so re-pairing is rarely needed. Revisit ONLY if a real re-pair failure is observed on the Pi.",
+      "priority": "P2",
+      "tier": "pi",
+      "gate": "groom-ready"
     },
     {
       "id": "US-477",
@@ -6740,8 +6764,11 @@
         "states/imu (DELTA-2 seam precedent)"
       ],
       "createdAt": "2026-08-01",
-      "updatedAt": "2026-08-03",
-      "tasks": []
+      "updatedAt": "2026-08-10",
+      "tasks": [],
+      "priority": "P4",
+      "tier": "pi",
+      "gate": "HARDWARE parked (GPS not ordered)"
     },
     {
       "id": "US-517",
@@ -6836,8 +6863,11 @@
         "Spool interim-grade-speed-altitude ruling"
       ],
       "createdAt": "2026-08-01",
-      "updatedAt": "2026-08-01",
-      "tasks": []
+      "updatedAt": "2026-08-10",
+      "tasks": [],
+      "priority": "P3",
+      "tier": "pi",
+      "gate": "Spool sigma-sizing"
     },
     {
       "id": "US-520",
@@ -6869,8 +6899,11 @@
         "F-124"
       ],
       "createdAt": "2026-08-01",
-      "updatedAt": "2026-08-01",
-      "tasks": []
+      "updatedAt": "2026-08-10",
+      "tasks": [],
+      "priority": "P3",
+      "tier": "pi",
+      "gate": "US-519 first"
     },
     {
       "id": "US-521",
@@ -6911,7 +6944,7 @@
       "parent": "F-124",
       "type": "issue",
       "size": "S",
-      "status": "sprint-ready",
+      "status": "complete",
       "title": "Kiosk GPU-raster fix -- drop --enable-gpu-rasterization to kill the freeze class",
       "goal": "As the operator, I want the Pi dashboard to never freeze under sustained use, so the display stays live during a drive instead of wedging silently.",
       "definitionOfDone": [
@@ -6941,7 +6974,7 @@
         "offices/pm/inbox/2026-08-02-from-atlas-pi-ui-freeze-gpu-hotloop-fix-routing.md"
       ],
       "createdAt": "2026-08-02",
-      "updatedAt": "2026-08-03",
+      "updatedAt": "2026-08-10",
       "passes": false
     },
     {
@@ -6949,7 +6982,7 @@
       "parent": "F-124",
       "type": "normal",
       "size": "M",
-      "status": "sprint-ready",
+      "status": "complete",
       "title": "Kiosk watchdog -- auto-restart eclipse-dashboard when the renderer wedges",
       "goal": "As the operator, I want the kiosk to recover itself if the renderer ever wedges, so the display never stays silently frozen (honest-instrument).",
       "definitionOfDone": [
@@ -6970,14 +7003,14 @@
         "offices/architect/findings/2026-08-02-pi-ui-freeze-chromium-gpu-command-buffer-hotloop.md"
       ],
       "createdAt": "2026-08-02",
-      "updatedAt": "2026-08-02"
+      "updatedAt": "2026-08-10"
     },
     {
       "id": "US-524",
       "parent": "F-124",
       "type": "normal",
       "size": "S",
-      "status": "sprint-ready",
+      "status": "complete",
       "title": "Raise Pi GPU CMA to 256M -- headroom complementing the raster fix",
       "goal": "As the operator, I want more GPU command-buffer headroom on the Pi, so the compositor has margin under sustained animated use.",
       "definitionOfDone": [
@@ -6997,14 +7030,14 @@
         "offices/architect/findings/2026-08-02-pi-ui-freeze-chromium-gpu-command-buffer-hotloop.md"
       ],
       "createdAt": "2026-08-02",
-      "updatedAt": "2026-08-02"
+      "updatedAt": "2026-08-10"
     },
     {
       "id": "US-525",
       "parent": "F-103",
       "type": "issue",
       "size": "M",
-      "status": "sprint-ready",
+      "status": "complete",
       "title": "Splash render fix -- boot splash visibility + shutdown-splash 401 route",
       "goal": "As the operator, I want to see the boot and shutdown splash, so the Pi shows an honest brand + boot/shutdown state instead of a blank hand-off.",
       "definitionOfDone": [
@@ -7029,14 +7062,14 @@
         "offices/architect/inbox/2026-08-02-from-marcus-v0.29.24-splash-freeze-diagnostics-handoff.md"
       ],
       "createdAt": "2026-08-02",
-      "updatedAt": "2026-08-02"
+      "updatedAt": "2026-08-10"
     },
     {
       "id": "US-526",
       "parent": "F-123",
       "type": "issue",
       "size": "M",
-      "status": "sprint-ready",
+      "status": "complete",
       "title": "US-504a production drain-event writer (battery_health_log grows again)",
       "goal": "As the operator, I want battery_health_log to gain real rows from actual drains, so the Health verdict can leave 'unknown' honestly.",
       "definitionOfDone": [
@@ -7062,14 +7095,14 @@
         "offices/pm/inbox/2026-08-02-from-ralph-us504-carved-504a-writer-504b-producer.md"
       ],
       "createdAt": "2026-08-02",
-      "updatedAt": "2026-08-02"
+      "updatedAt": "2026-08-10"
     },
     {
       "id": "US-527",
       "parent": "F-123",
       "type": "tech-debt",
       "size": "S",
-      "status": "sprint-ready",
+      "status": "complete",
       "title": "US-504b verdict band-remap to the depth gate (degraded/replace reachable)",
       "goal": "As the operator, I want the battery Health verdict to actually report degraded/replace, so it fails toward honesty instead of only ever showing good/unknown.",
       "definitionOfDone": [
@@ -7091,14 +7124,14 @@
         "offices/pm/tech_debt/TD-074-us504b-verdict-band-remap-rides-us504a.md"
       ],
       "createdAt": "2026-08-02",
-      "updatedAt": "2026-08-02"
+      "updatedAt": "2026-08-10"
     },
     {
       "id": "US-528",
       "parent": "F-123",
       "type": "issue",
       "size": "S",
-      "status": "sprint-ready",
+      "status": "complete",
       "title": "I-041 fix -- system_status_emitter exact-shape tests + pin lastDrive always-present",
       "goal": "As a maintainer, I want the system-status exact-shape guard green and the lastDrive contract pinned, so the schema stays honest.",
       "definitionOfDone": [
@@ -7117,14 +7150,14 @@
         "offices/pm/issues/I-041-us505-broke-system-status-exact-shape-tests.md"
       ],
       "createdAt": "2026-08-02",
-      "updatedAt": "2026-08-02"
+      "updatedAt": "2026-08-10"
     },
     {
       "id": "US-529",
       "parent": "F-119",
       "type": "housekeeping",
       "size": "S",
-      "status": "sprint-ready",
+      "status": "complete",
       "title": "TD-073 fix -- ralph promise-tag contract (prompt.md <-> ralph.sh)",
       "goal": "As a maintainer, I want prompt.md and ralph.sh to document the same promise tags, so the FAST lint suite stays green and sprint-close is not gated by drift.",
       "definitionOfDone": [
@@ -7143,14 +7176,14 @@
         "offices/pm/tech_debt/TD-073-ralph-promise-tag-contract-drift.md"
       ],
       "createdAt": "2026-08-02",
-      "updatedAt": "2026-08-02"
+      "updatedAt": "2026-08-10"
     },
     {
       "id": "US-530",
       "parent": "F-126",
       "type": "normal",
       "size": "M",
-      "status": "sprint-ready",
+      "status": "passed",
       "title": "Config overlay persistence + layered read (config.json default <- Pi-local overlay override)",
       "goal": "As the operator, I want my Pi settings to survive deploys, so a toggle I set on the Pi is not wiped the next time code ships.",
       "definitionOfDone": [
@@ -7174,14 +7207,14 @@
         "CIO 2026-08-03 settings-screen brainstorm"
       ],
       "createdAt": "2026-08-03",
-      "updatedAt": "2026-08-03"
+      "updatedAt": "2026-08-10"
     },
     {
       "id": "US-531",
       "parent": "F-126",
       "type": "normal",
       "size": "M",
-      "status": "sprint-ready",
+      "status": "passed",
       "title": "Token-gated settings write endpoint on states_http_server (writes the overlay)",
       "goal": "As the operator, I want the settings screen to save my toggles, so tapping a toggle persists it -- without opening any un-gated write surface on the Pi.",
       "definitionOfDone": [
@@ -7202,14 +7235,14 @@
         "offices/pm/inbox/2026-08-02-from-atlas-v0.29.25-prd-review.md (US-525 token-gate ruling)"
       ],
       "createdAt": "2026-08-03",
-      "updatedAt": "2026-08-03"
+      "updatedAt": "2026-08-10"
     },
     {
       "id": "US-532",
       "parent": "F-126",
       "type": "normal",
       "size": "M",
-      "status": "sprint-ready",
+      "status": "passed",
       "title": "Settings UI -- Option B settings band inside the setup-menu overlay (Iris design)",
       "goal": "As the operator, I want a Settings screen on the dashboard where I can see and change my preferences at a glance.",
       "definitionOfDone": [
@@ -7231,14 +7264,14 @@
         "CIO 2026-08-03 settings-screen brainstorm"
       ],
       "createdAt": "2026-08-03",
-      "updatedAt": "2026-08-07"
+      "updatedAt": "2026-08-10"
     },
     {
       "id": "US-533",
       "parent": "F-126",
       "type": "normal",
       "size": "M",
-      "status": "sprint-ready",
+      "status": "passed",
       "title": "Wire the 5 config settings end-to-end (read effective + write overlay + apply semantics)",
       "goal": "As the operator, I want each Settings control to actually change behavior, so toggling it takes real effect (or honestly tells me when it will).",
       "definitionOfDone": [
@@ -7262,7 +7295,7 @@
         "CIO 2026-08-03 settings-screen brainstorm"
       ],
       "createdAt": "2026-08-03",
-      "updatedAt": "2026-08-08",
+      "updatedAt": "2026-08-10",
       "passes": false
     },
     {
@@ -7291,7 +7324,10 @@
         "CIO 2026-08-03 settings-screen brainstorm"
       ],
       "createdAt": "2026-08-03",
-      "updatedAt": "2026-08-03"
+      "updatedAt": "2026-08-10",
+      "priority": "P3",
+      "tier": "pi",
+      "gate": "needs Spool design (drain test)"
     },
     {
       "id": "US-535",
@@ -7319,7 +7355,10 @@
         "CIO 2026-08-03 settings-screen brainstorm"
       ],
       "createdAt": "2026-08-03",
-      "updatedAt": "2026-08-03"
+      "updatedAt": "2026-08-10",
+      "priority": "P4",
+      "tier": "pi",
+      "gate": "own epic (self-update)"
     },
     {
       "id": "US-536",
@@ -7358,7 +7397,7 @@
       "parent": "F-124",
       "type": "normal",
       "size": "S",
-      "status": "sprint-ready",
+      "status": "passed",
       "title": "Animation-gating (Atlas RCA #3) -- toggle-safety prerequisite for auto-rotate",
       "goal": "As the operator, I want turning auto-rotate back on to be safe, so re-enabling it via the F-126 settings toggle cannot re-arm the GPU freeze.",
       "definitionOfDone": [
@@ -7380,7 +7419,7 @@
         "offices/pm/inbox/2026-08-03-from-atlas-reply-freeze-disposition-B-gpu-on-autorotate-off.md"
       ],
       "createdAt": "2026-08-03",
-      "updatedAt": "2026-08-03"
+      "updatedAt": "2026-08-10"
     },
     {
       "id": "US-538",
@@ -7408,7 +7447,10 @@
         "offices/pm/blockers/BL-030-us533-states-http-bounce-unauthorized-and-audioalerts-has-no-consumer.md"
       ],
       "createdAt": "2026-08-07",
-      "updatedAt": "2026-08-07"
+      "updatedAt": "2026-08-10",
+      "priority": "P4",
+      "tier": "pi",
+      "gate": "needs Pi audio path"
     },
     {
       "id": "US-539",
@@ -7439,7 +7481,10 @@
         "offices/pm/inbox/2026-08-07-from-atlas-3p5in-legibility-font-size-more-screens.md"
       ],
       "createdAt": "2026-08-08",
-      "updatedAt": "2026-08-08"
+      "updatedAt": "2026-08-10",
+      "priority": "P1",
+      "tier": "pi",
+      "gate": "groom-ready (Sprint 72 queued)"
     },
     {
       "id": "US-540",
@@ -7472,7 +7517,10 @@
         "offices/pm/inbox/2026-08-07-from-atlas-3p5in-legibility-font-size-more-screens.md"
       ],
       "createdAt": "2026-08-08",
-      "updatedAt": "2026-08-08"
+      "updatedAt": "2026-08-10",
+      "priority": "P1",
+      "tier": "pi",
+      "gate": "Atlas: screen-count 4->6 + US-482 stage"
     },
     {
       "id": "US-541",
@@ -7504,7 +7552,10 @@
         "offices/pm/inbox/2026-08-03-from-atlas-ui-change-requests-carousel-order-imu-autorotate.md"
       ],
       "createdAt": "2026-08-08",
-      "updatedAt": "2026-08-08"
+      "updatedAt": "2026-08-10",
+      "priority": "P1",
+      "tier": "pi",
+      "gate": "Atlas: IMU-always-on"
     },
     {
       "id": "US-542",
@@ -7534,7 +7585,150 @@
         "offices/pm/inbox/2026-08-07-from-atlas-3p5in-legibility-font-size-more-screens.md"
       ],
       "createdAt": "2026-08-08",
-      "updatedAt": "2026-08-08"
+      "updatedAt": "2026-08-10",
+      "priority": "P1",
+      "tier": "pi",
+      "gate": "Atlas: cross-card move"
+    },
+    {
+      "id": "US-543",
+      "parent": "F-119",
+      "type": "normal",
+      "size": "M",
+      "priority": "P2",
+      "tier": "both",
+      "gate": "groom-ready",
+      "title": "Pi<->server schema/contract PARITY GUARD (A-4) -- standing CI test",
+      "goal": "As a maintainer, I want CI to fail when Pi(obd.db) and server(obd2db) drift on shared contracts, so the recurring A-4 divergence is caught before deploy.",
+      "definitionOfDone": [
+        "[Atlas addition A-4] a standing CI test asserting Pi + server agree on the shared contracts: data_source/data_quality enums, shared-table column shapes, and that Pi has a schema_migrations equivalent. Same pattern as scripts/audit_address_mirrors.py (A-15). DISTINCT from F-076 (which normalizes; this GUARDS against future drift). Atlas owns the contract list."
+      ],
+      "validationCriteria": [
+        {
+          "action": "introduce a deliberate Pi/server shared-contract mismatch",
+          "outcome": "the parity CI test fails before deploy"
+        }
+      ],
+      "status": "pending",
+      "passes": null,
+      "conditionalOutcomes": [],
+      "sourceRefs": [
+        "offices/pm/inbox/2026-08-10-from-atlas-backlog-review-ordering-plus-5-additions.md"
+      ],
+      "createdAt": "2026-08-10",
+      "updatedAt": "2026-08-10"
+    },
+    {
+      "id": "US-544",
+      "parent": "F-119",
+      "type": "normal",
+      "size": "M",
+      "priority": "P2",
+      "tier": "infra",
+      "gate": "Atlas design",
+      "title": "On-hardware RENDER + CAPTURE bench-validation gate (A-16)",
+      "goal": "As the team, I want a gate proving the UI renders + capture writes rows on the real Pi, so 'CI-green != works-on-Pi' failures (error:5, blank splash, carousel starvation) are caught before they ship.",
+      "definitionOfDone": [
+        "[Atlas addition A-16] a gate in /sprint-deploy-pm or /chain-validated that proves ON THE REAL PI: UI renders end-to-end + a capture smoke-test writes rows. F-119 CI-green is necessary, not sufficient. Fold the chromium base-flags management note (/etc/chromium.d/* is OS-shipped, repo-unmanaged). Atlas design-gate."
+      ],
+      "validationCriteria": [
+        {
+          "action": "run the gate against a build with a known render/capture break that CI passes",
+          "outcome": "the gate fails on the Pi even though CI is green"
+        }
+      ],
+      "status": "pending",
+      "passes": null,
+      "conditionalOutcomes": [],
+      "sourceRefs": [
+        "offices/pm/inbox/2026-08-10-from-atlas-backlog-review-ordering-plus-5-additions.md"
+      ],
+      "createdAt": "2026-08-10",
+      "updatedAt": "2026-08-10"
+    },
+    {
+      "id": "US-545",
+      "parent": "F-120",
+      "type": "normal",
+      "size": "M",
+      "priority": "P2",
+      "tier": "pi",
+      "gate": "groom-ready",
+      "title": "OBD BT bond self-heal + boot verify (A-18 follow-on)",
+      "goal": "As the operator, I want the Pi to detect + auto-recover a lost BT bond instead of silently dying on capture, so the month-long bond outage cannot recur unnoticed.",
+      "definitionOfDone": [
+        "[Atlas addition A-18] on boot / on repeated connect-fail, detect a lost-or-de-bonded state (bonded=no) and auto-run the re-pair path (or loudly surface it) -- never silent capture-death. Include the BT-stack-wedge reset (power off/on + longer scan) that was needed 2026-08-07. verify_bt_pair.sh exists -- wire it into the reconnect path."
+      ],
+      "validationCriteria": [
+        {
+          "action": "clear the bond on the Pi, then boot / attempt capture",
+          "outcome": "the Pi detects bonded=no and auto-re-pairs (or loudly surfaces it); capture recovers rather than silently dying"
+        }
+      ],
+      "status": "pending",
+      "passes": null,
+      "conditionalOutcomes": [],
+      "sourceRefs": [
+        "offices/pm/inbox/2026-08-10-from-atlas-backlog-review-ordering-plus-5-additions.md"
+      ],
+      "createdAt": "2026-08-10",
+      "updatedAt": "2026-08-10"
+    },
+    {
+      "id": "US-546",
+      "parent": "F-128",
+      "type": "normal",
+      "size": "L",
+      "priority": "P3",
+      "tier": "server",
+      "gate": "Atlas design",
+      "title": "A-9 server-side drive RE-SEGMENTER -- boundary authority server-side",
+      "goal": "As the data owner, I want the server to re-derive drive boundaries from raw realtime_data so a DriveDetector regression is RECOVERED, not just flagged.",
+      "definitionOfDone": [
+        "[Atlas addition A-9 robustness] move drive-boundary SEGMENTATION authority server-side: re-derive boundaries from raw realtime_data; demote Pi drive_id to advisory source_drive_id. Today the server only DETECTS overlaps (detect_overlapping_drives tripwire) but cannot RECOVER them. B-104-aligned. Atlas owns the design gate. Separate from the A-9 capture resolution."
+      ],
+      "validationCriteria": [
+        {
+          "action": "feed the server a drive with a bad Pi drive_id boundary",
+          "outcome": "the server re-derives correct boundaries from raw data; Pi drive_id demoted to advisory"
+        }
+      ],
+      "status": "pending",
+      "passes": null,
+      "conditionalOutcomes": [],
+      "sourceRefs": [
+        "offices/pm/inbox/2026-08-10-from-atlas-backlog-review-ordering-plus-5-additions.md"
+      ],
+      "createdAt": "2026-08-10",
+      "updatedAt": "2026-08-10"
+    },
+    {
+      "id": "US-547",
+      "parent": "F-126",
+      "type": "normal",
+      "size": "S",
+      "priority": "P4",
+      "tier": "pi",
+      "gate": "groom-ready",
+      "title": "Config-overlay placeholder-verbatim lint (secrets_loader honesty)",
+      "goal": "As a maintainer, I want a lint that flags ${VAR}-bound keys read without NA-normalization, so an unresolved placeholder cannot become a truthy string sentinel.",
+      "definitionOfDone": [
+        "[Atlas addition] a lint flagging ${VAR}-bound config keys read without NA-normalization (an unresolved ${VAR} is a truthy string). Corollary of the honest-availability pattern already in specs/ssot-design-pattern.md. Small."
+      ],
+      "validationCriteria": [
+        {
+          "action": "read a ${VAR}-bound key that is unresolved without NA-normalization",
+          "outcome": "the lint flags it"
+        }
+      ],
+      "status": "pending",
+      "passes": null,
+      "conditionalOutcomes": [],
+      "sourceRefs": [
+        "offices/pm/inbox/2026-08-10-from-atlas-backlog-review-ordering-plus-5-additions.md"
+      ],
+      "createdAt": "2026-08-10",
+      "updatedAt": "2026-08-10"
     }
   ]
 }
