@@ -4,8 +4,8 @@
   "updatedBy": "Marcus (PM)",
   "counters": {
     "epic": 7,
-    "feature": 128,
-    "story": 547
+    "feature": 131,
+    "story": 551
   },
   "epics": [
     {
@@ -1311,6 +1311,39 @@
       "status": "active",
       "title": "Server-side drive re-segmentation authority (A-9 recovery)",
       "description": "Move drive-boundary segmentation authority server-side so a DriveDetector regression is RECOVERED (re-derived from raw realtime_data), not just flagged by the detect_overlapping_drives tripwire. B-104-aligned. Atlas 2026-08-10 backlog-review addition.",
+      "createdAt": "2026-08-10",
+      "updatedAt": "2026-08-10"
+    },
+    {
+      "id": "F-129",
+      "parent": "E-001",
+      "status": "pending",
+      "title": "Engine card -- MAF centerpiece + live vitals (W-16 P2)",
+      "description": "Dedicated Engine dashboard card: MAF arc gauge (the 4G63 is MAF-based -- MAF replaces the dead boost/MAP) + RPM/coolant/intake-air/throttle/load + STFT/LTFT + closed/open-loop + voltage(ATRV). Display-only consumer of existing OBD state; Spool gate CLEARED. Bake the ~2.5s-per-PID step (no animated needles) + the LTFT-idle no-colour rule into acceptance. V0.30 lead feature.",
+      "priority": "P2",
+      "tier": "pi",
+      "createdAt": "2026-08-10",
+      "updatedAt": "2026-08-10"
+    },
+    {
+      "id": "F-130",
+      "parent": "E-002",
+      "status": "pending",
+      "title": "Post-drive review -- server-analytics drive summary (W-16 P3)",
+      "description": "Server-tier post-drive summary from already-logged data: airflow/effort trace, g-trace, corner-lean, grade profile. Slow K-line irrelevant here (a 22-min trace reads fine at 0.4Hz; IMU 100Hz). Needs an Atlas analytics-surface contract. The deliberate ON-RAMP to E-003 Tuning Intelligence (V0.31).",
+      "priority": "P3",
+      "tier": "server",
+      "createdAt": "2026-08-10",
+      "updatedAt": "2026-08-10"
+    },
+    {
+      "id": "F-131",
+      "parent": "E-001",
+      "status": "pending",
+      "title": "Eclipse attitude indicator card (W-16 P4)",
+      "description": "Aircraft gyro-horizon mapped to the car: pitch->road grade, bank->body lean; round bezel, pitch ladder, bank scale, 2G GST rear-view silhouette reference, slip/skid ball as a lateral-g meter. Design-done + CIO-iterated. Gate: expose roll + yawRate in states/imu (small; gradePct/pitch already in Atlas's contract). Fun/low priority.",
+      "priority": "P4",
+      "tier": "pi",
       "createdAt": "2026-08-10",
       "updatedAt": "2026-08-10"
     }
@@ -7613,7 +7646,7 @@
           "outcome": "the parity CI test fails before deploy"
         }
       ],
-      "status": "pending",
+      "status": "sprint-ready",
       "passes": null,
       "conditionalOutcomes": [],
       "sourceRefs": [
@@ -7669,7 +7702,7 @@
           "outcome": "the Pi detects bonded=no and auto-re-pairs (or loudly surfaces it); capture recovers rather than silently dying"
         }
       ],
-      "status": "pending",
+      "status": "sprint-ready",
       "passes": null,
       "conditionalOutcomes": [],
       "sourceRefs": [
@@ -8053,6 +8086,119 @@
           "outcome": "the engine fetches/verifies/applies it with rollback available; OS + library sources present too"
         }
       ]
+    },
+    {
+      "id": "US-548",
+      "parent": "F-124",
+      "type": "issue",
+      "size": "S",
+      "status": "sprint-ready",
+      "passes": null,
+      "priority": "P1",
+      "tier": "pi",
+      "gate": "DEPLOY-GATE for V0.29.26",
+      "title": "Retire the 3 US-536-fallout RED tests (guard tests assert the removed --disable-gpu)",
+      "goal": "As a maintainer, I want the US-522 guard tests to match disposition-B so the V0.29.26 deploy gate is green.",
+      "definitionOfDone": [
+        "[I-us536 -- BLOCKS /sprint-deploy-pm for V0.29.26] US-536 removed --disable-gpu (disposition B); the 3 pre-existing US-522 guard tests still assert the flag is present -> RED. Update them to assert the disposition-B state (no --disable-gpu; --password-store=basic present; autoRotateS default 0). Full suite green.",
+        "add the A-16 note: never full --disable-gpu on Pi chromium (--disable-gpu-rasterization if ever needed); ruff clean"
+      ],
+      "validationCriteria": [
+        {
+          "action": "run the US-522 kiosk-unit guard tests + full suite",
+          "outcome": "all green; tests assert the disposition-B ExecStart (no --disable-gpu, keyring flag present)"
+        }
+      ],
+      "conditionalOutcomes": [],
+      "sourceRefs": [
+        "offices/pm/issues/US-548"
+      ],
+      "createdAt": "2026-08-10",
+      "updatedAt": "2026-08-10"
+    },
+    {
+      "id": "US-549",
+      "parent": "F-103",
+      "type": "issue",
+      "size": "S",
+      "status": "sprint-ready",
+      "passes": null,
+      "priority": "P2",
+      "tier": "pi",
+      "gate": "",
+      "title": "I-043 -- shutdown-splash terminal reason not observable",
+      "goal": "As the operator, I want the shutdown splash to show why the Pi is going down, honestly.",
+      "definitionOfDone": [
+        "[I-043] the shutdown splash cannot observe/render the terminal reason (clean shutdown vs cutoff). Wire the ShutdownSequencer terminal reason to the shutdown splash so it renders honestly; never a fabricated reason. ruff clean"
+      ],
+      "validationCriteria": [
+        {
+          "action": "trigger a clean shutdown and a simulated cutoff",
+          "outcome": "the shutdown splash shows the correct terminal reason each time"
+        }
+      ],
+      "conditionalOutcomes": [],
+      "sourceRefs": [
+        "offices/pm/issues/US-549"
+      ],
+      "createdAt": "2026-08-10",
+      "updatedAt": "2026-08-10"
+    },
+    {
+      "id": "US-550",
+      "parent": "F-103",
+      "type": "issue",
+      "size": "S",
+      "status": "sprint-ready",
+      "passes": null,
+      "priority": "P2",
+      "tier": "pi",
+      "gate": "",
+      "title": "I-044 -- kiosk XDG_RUNTIME_DIR %U expands to 0 (root) in the splash/dashboard units",
+      "goal": "As a maintainer, I want the kiosk units to use the real user's runtime dir so dconf/dbus stop erroring.",
+      "definitionOfDone": [
+        "[I-044] the kiosk systemd units' XDG_RUNTIME_DIR uses %U which expands to 0 (root) -> /run/user/0 permission errors (dconf/dbus). Set it to the real autologin user's runtime dir (/run/user/<uid>). ruff clean; no /run/user/0 permission errors in the journal"
+      ],
+      "validationCriteria": [
+        {
+          "action": "boot the Pi + read the kiosk journal",
+          "outcome": "no '/run/user/0 permission denied' dconf/dbus errors; XDG_RUNTIME_DIR points at the real user"
+        }
+      ],
+      "conditionalOutcomes": [],
+      "sourceRefs": [
+        "offices/pm/issues/US-550"
+      ],
+      "createdAt": "2026-08-10",
+      "updatedAt": "2026-08-10"
+    },
+    {
+      "id": "US-551",
+      "parent": "F-103",
+      "type": "issue",
+      "size": "S",
+      "status": "sprint-ready",
+      "passes": null,
+      "priority": "P2",
+      "tier": "pi",
+      "gate": "CIO bench eyeball",
+      "title": "I-042 -- splash VISUAL verify (boot pixels + shutdown reverse splash)",
+      "goal": "As the operator, I want to confirm the boot + shutdown splashes actually render correctly on the panel.",
+      "definitionOfDone": [
+        "[I-042 visual half] CIO bench eyeball: confirm the boot splash renders correctly (not just that the service ran ~9s) + trigger one shutdown to see the reverse splash. On green, fold into /sprint-validated. This is a VALIDATION story (in-person), not a code change"
+      ],
+      "validationCriteria": [
+        {
+          "action": "reboot the Pi (boot splash) + trigger a shutdown (reverse splash), CIO watching",
+          "outcome": "both splashes render correctly on the panel"
+        }
+      ],
+      "conditionalOutcomes": [],
+      "sourceRefs": [
+        "offices/pm/issues/US-551"
+      ],
+      "createdAt": "2026-08-10",
+      "updatedAt": "2026-08-10"
     }
   ]
 }
