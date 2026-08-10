@@ -10,7 +10,7 @@ sprintJsonPath: offices/ralph/sprint.json
 epics: E-001 (UI/UX Polish) + E-OPS (F-119/F-120 hygiene)
 features: F-124 (kiosk), F-103 (splash), F-119 (CI/parity), F-120 (BT reliability)
 theme: "V0.29 CHAIN CLOSEOUT + hardening -- the final push to /chain-validated. Retire the V0.29.26 deploy-gate RED tests (I-us536), clear the last Pi-display debt (I-043/044), and land the A-4 parity guard + A-18 BT self-heal so the chain closes HARDENED, not just green. Pi-off-friendly: all 5 build + unit-test without the Pi; deploy + validate when the Pi is on."
-atlasReview: "PENDING (light). US-543 A-4 parity guard (Atlas owns the contract list) + US-545 A-18 BT self-heal are Atlas 2026-08-10 additions. US-548/549/550 are debt cleanup, no gate."
+atlasReview: "PASS 2026-08-10 (SOUND, no BLOCK). US-543 6-assertion parity-contract list delivered + folded (enum / applied-schema-not-python-tuple / synced-column / PK-rename / Pi-ensure-schema-coverage / timestamp parity; sync_log.PK_COLUMN as the table set; assert #2 vs the US-470 testcontainer + Pi SQLite DDL). US-545 +3 refinements folded (serialize re-pair vs the port, bounded not a loop, loud-surface when not discoverable). US-548/549/550 clear."
 ---
 
 # PRD: V0.29.28 -- V0.29 chain closeout + hardening

@@ -4,13 +4,13 @@ version: V0.29.27
 status: draft
 createdAt: 2026-08-08
 createdBy: Marcus (PM)
-selectedStories: [US-539, US-540-a, US-540-b, US-541, US-542]
+selectedStories: [US-539, US-540-a, US-540-b, US-541, US-542, US-552]
 forksFrom: dev @ (recorded at prd_to_sprint.py conversion; forks from dev AFTER V0.29.26)
 sprintJsonPath: offices/ralph/sprint.json
 epics: E-001 (UI/UX Polish)
 features: F-127 (Pi 3.5in legibility + card-set overhaul)
 theme: "3.5in legibility pass. CIO: dashboard fonts are 2-4x too small to read at arm's length in the car. Fix = a type SCALE (tokens) + larger tiles + fewer facts/card, pushing the card set 4->6 (partly reverses US-507/508 -- legibility outranks screen-count on a 3.5in panel). Iris-designed + CIO-reviewed; Atlas design-gates the structural parts."
-atlasReview: "PENDING (structural design-gate). Iris filed the gate request 2026-08-08 (architect/inbox). Gate items: (a) US-540 screen-count 4->6 + US-482 letterbox-stage interaction + Health-card retirement; (b) US-541 IMU-always-on (touches US-508 idle/live face); (c) US-542 cross-card content move (DTC-since-key-off -> Alerts). Panel-downsampling question (1080p->480x320 native) routed to Atlas/Rex -- can only raise the floor."
+atlasReview: "PASS 2026-08-10 (SOUND, no BLOCK). 3 structural items APPROVED: (a) screen-count 4->6 (7 w/Engine) -- carousel verified count-agnostic; (b) US-482 stage/scale confirmed font-independent (computeStageScale pure geometry); (c) idle-face retirement SSOT-correct (DTC-since-key-off -> Alerts; IMU-parked renders REAL, OBD bits typed-NA). Downsampling RULED: deploy pins NO output mode -> likely 1080p->480x320 downsample softens glyphs -> added US-552 (pin KMS output to native) as a distinct legibility lever; US-540-a re-verifies values AFTER mode confirmed. DoDs pinned (no CSS card-count cap; parked-logic reads system-status not data-face)."
 irisReview: "DELIVERED 2026-08-07/08 (CIO-reviewed). Spec + interactive mockup: offices/uidevloper/proposals/2026-08-07-pi-3p5in-legibility-and-layout.{md,html}. Build to it."
 ---
 

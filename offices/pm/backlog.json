@@ -5,7 +5,7 @@
   "counters": {
     "epic": 7,
     "feature": 131,
-    "story": 551
+    "story": 552
   },
   "epics": [
     {
@@ -7605,7 +7605,8 @@
       "definitionOfDone": [
         "[Atlas design-gate -- carries the only cross-card content move] retire the idle/standby face: parked, the IMU is CORRECT not unavailable (true heading, true 0.0 g), so the live Home card (US-541#1) covers it. Delete the STANDBY hero; move the clock to the top bar",
         "move 'DTC not read since key-off' to the ALERTS card -- it was always an Alerts fact, borrowed by the idle face. No honest content lost",
-        "ruff/lint clean; probe confirms STANDBY gone + the DTC-since-key-off line lives on Alerts"
+        "ruff/lint clean; probe confirms STANDBY gone + the DTC-since-key-off line lives on Alerts",
+        "[Atlas gate DoD] pin a test that the parked / auto-rotate-pause logic (carouselIdle/parkedNext) reads system-status, NOT the removed data-face -- so a future edit cannot re-couple them (the retirement is display-only, verified)"
       ],
       "validationCriteria": [
         {
@@ -7638,7 +7639,14 @@
       "title": "Pi<->server schema/contract PARITY GUARD (A-4) -- standing CI test",
       "goal": "As a maintainer, I want CI to fail when Pi(obd.db) and server(obd2db) drift on shared contracts, so the recurring A-4 divergence is caught before deploy.",
       "definitionOfDone": [
-        "[Atlas addition A-4] a standing CI test asserting Pi + server agree on the shared contracts: data_source/data_quality enums, shared-table column shapes, and that Pi has a schema_migrations equivalent. Same pattern as scripts/audit_address_mirrors.py (A-15). DISTINCT from F-076 (which normalizes; this GUARDS against future drift). Atlas owns the contract list."
+        "[Atlas A-4 contract list 2026-08-10] a standing CI test (pattern of scripts/audit_address_mirrors.py) asserting Pi<->server agree on the shared contract -- 6 assertions:",
+        "1. ENUM PARITY: data_source AND data_quality value-sets IDENTICAL Pi<->server (set-equality both ways). Source of the A-10 saga (Pi got 'foreign', server didn't)",
+        "2. APPLIED-SCHEMA NOT PYTHON-TUPLE (US-459 lesson, LOAD-BEARING): assert the APPLIED schema -- server via the real-MariaDB testcontainer (US-464/470), Pi via the SQLite DDL after ensure-schema runs -- NOT the Python constants. A tuple-only test ships green over a broken DB (the drift this guards)",
+        "3. SYNCED-TABLE SHARED-COLUMN PARITY: for every table in sync_log.PK_COLUMN, the sync-payload columns exist on BOTH tiers with compatible types. Tier-LOCAL columns (server source_device/source_id, Pi bookkeeping) exempt -- assert the SYNCED surface only",
+        "4. PK-RENAME MAPPING PARITY: every synced table's Pi-PK -> server-id rename (sync client map; e.g. battery_health_log drain_event_id->id) is DECLARED + consistent -- catches a new synced table added without its mapping",
+        "5. Pi ENSURE-SCHEMA COVERAGE (not a schema_migrations table): every shared/synced column the server declares has a corresponding Pi ensureXSchema helper/DDL column. Pi's ensureXSchema IS its migration equivalent; guard it stays in sync with the server's shared surface",
+        "6. TIMESTAMP/FORMAT PARITY: synced timestamp columns use canonical ISO-8601 UTC on both tiers (TD-027/US-202); the sync does no coercion beyond the PK rename, so a format divergence corrupts silently",
+        "DoD: name sync_log.PK_COLUMN as the table set (complete-by-construction -- a future synced table auto-covered); run assertion #2 against the US-470 testcontainer + the Pi SQLite DDL. This GUARDS (F-076 normalizes; this keeps it normalized). ruff clean"
       ],
       "validationCriteria": [
         {
@@ -7694,7 +7702,10 @@
       "title": "OBD BT bond self-heal + boot verify (A-18 follow-on)",
       "goal": "As the operator, I want the Pi to detect + auto-recover a lost BT bond instead of silently dying on capture, so the month-long bond outage cannot recur unnoticed.",
       "definitionOfDone": [
-        "[Atlas addition A-18] on boot / on repeated connect-fail, detect a lost-or-de-bonded state (bonded=no) and auto-run the re-pair path (or loudly surface it) -- never silent capture-death. Include the BT-stack-wedge reset (power off/on + longer scan) that was needed 2026-08-07. verify_bt_pair.sh exists -- wire it into the reconnect path."
+        "[Atlas addition A-18] on boot / on repeated connect-fail, detect a lost-or-de-bonded state (bonded=no) and auto-run the re-pair path (or loudly surface it) -- never silent capture-death. Include the BT-stack-wedge reset (power off/on + longer scan) that was needed 2026-08-07. verify_bt_pair.sh exists -- wire it into the reconnect path.",
+        "[Atlas refinement -- serialize re-pair vs the port] auto-re-pair MUST stop/hold eclipse-obd's connection first (systemctl stop eclipse-obd before pairing) -- never pair while the logger contends on the port ('multiple access' hazard from 2026-08-07)",
+        "[Atlas refinement -- bounded, not a loop] cap auto-re-pair (once per boot / backoff) -- never re-pair on EVERY connect-fail (hammers the radio)",
+        "[Atlas refinement -- loud-surface when not discoverable] unattended auto-re-pair only works if the dongle is discoverable+unbonded; if discovery does not find it, do NOT silently retry -- surface it (state/log) so the operator power-cycles the dongle (honest-instrument)"
       ],
       "validationCriteria": [
         {
@@ -7790,7 +7801,8 @@
       "title": "Set the type-scale token VALUES for 3.5in legibility (44/34/26/20/15)",
       "goal": "As the operator, I want the primary values large enough to read at arm's length in the car.",
       "definitionOfDone": [
-        "set the type-scale token values (Iris): hero 44 / primary 34 / secondary 26 / label 20 / meta 15 (px on the 480x320 stage). [FLOOR RULE] driver-must-read >= [EXACT:34]px; anything <26px non-critical only. Depends US-539 (tokens exist). Acceptance IN-CAR (arm's length, seated). CAVEAT: unverified panel downsampling may raise the floor -- re-verify on hardware, do NOT call values final. ruff clean"
+        "set the type-scale token values (Iris): hero 44 / primary 34 / secondary 26 / label 20 / meta 15 (px on the 480x320 stage). [FLOOR RULE] driver-must-read >= [EXACT:34]px; anything <26px non-critical only. Depends US-539 (tokens exist). Acceptance IN-CAR (arm's length, seated). CAVEAT: unverified panel downsampling may raise the floor -- re-verify on hardware, do NOT call values final. ruff clean",
+        "[Atlas display-pipeline finding] the deploy pins NO HDMI/KMS output mode -> the Pi likely outputs 1080p into a 480x320-native panel -> lossy scale-up-then-downsample softens every glyph (raises the floor). Acceptance: confirm output mode == panel native (or pin it -- see US-552) BEFORE calling the 44/34/26/20/15 values final. Re-verify the values AFTER the mode is confirmed"
       ],
       "validationCriteria": [
         {
@@ -7820,7 +7832,8 @@
       "title": "Re-lay the card set 4->6 for the legibility scale (Health card retires)",
       "goal": "As the operator, I want fewer facts per card so each one is legible at a glance.",
       "definitionOfDone": [
-        "with US-540-a's scale, capacity is ~3 facts/card (4 in a 2x2 ceiling). Card set 4->6: Home(live) . Alerts . System Status . Battery . Fuel Trim . Light. 'Health' RETIRES as a card (a container of 3 unrelated facts the scale can't afford) -- redistribute its facts. Sub-floor detail -> System drill-down (read parked). Partly reverses US-507/508 (intended). [ATLAS GATE] screen-count + US-482 letterbox-stage. Carousel handles N cards (no nav rework). ruff clean; probe confirms the 6-card set"
+        "with US-540-a's scale, capacity is ~3 facts/card (4 in a 2x2 ceiling). Card set 4->6: Home(live) . Alerts . System Status . Battery . Fuel Trim . Light. 'Health' RETIRES as a card (a container of 3 unrelated facts the scale can't afford) -- redistribute its facts. Sub-floor detail -> System drill-down (read parked). Partly reverses US-507/508 (intended). [ATLAS GATE] screen-count + US-482 letterbox-stage. Carousel handles N cards (no nav rework). ruff clean; probe confirms the 6-card set",
+        "[Atlas gate DoD] the carousel JS scales to N cards (verified count-agnostic); confirm no CSS #track / card-count cap assumes 4 (Iris presentation lane)"
       ],
       "validationCriteria": [
         {
@@ -8196,6 +8209,36 @@
       "conditionalOutcomes": [],
       "sourceRefs": [
         "offices/pm/issues/US-551"
+      ],
+      "createdAt": "2026-08-10",
+      "updatedAt": "2026-08-10"
+    },
+    {
+      "id": "US-552",
+      "parent": "F-127",
+      "type": "normal",
+      "size": "S",
+      "status": "sprint-ready",
+      "priority": "P1",
+      "tier": "pi",
+      "gate": "confirm mode on Pi (when on)",
+      "title": "Pin Pi HDMI/KMS output to the panel-native 480x320 (kill downsampling)",
+      "goal": "As the operator, I want the Pi to render at the panel's native resolution so glyphs are 1:1 sharp, not softened by a 1080p->480x320 downsample.",
+      "definitionOfDone": [
+        "[Atlas A-16 display-pipeline fidelity] on the Pi (when on) read the actual output mode (kmsprint / xrandr). If it is NOT the panel's native 480x320, PIN the output to native in the deploy (KMS/HDMI mode). Eliminates the scale-up-then-downsample resampling AND renders the US-540 type scale 1:1 -- a distinct legibility lever alongside the font work",
+        "DoD: deploy sets the output mode; post-deploy the Pi reports the native mode; the type scale renders without resample-softening. ruff clean"
+      ],
+      "validationCriteria": [
+        {
+          "action": "on the Pi after deploy, read the active output mode + view a card",
+          "outcome": "output is the panel-native 480x320 (no 1080p downsample); glyphs render 1:1 sharp"
+        }
+      ],
+      "conditionalOutcomes": [
+        "Complements US-540 (fonts). If the mode is already native, this is a no-op verification. Pairs with US-540-a's re-verify-values-after-mode acceptance"
+      ],
+      "sourceRefs": [
+        "offices/pm/inbox/2026-08-10-from-atlas-v0.29.27-legibility-structural-gate.md"
       ],
       "createdAt": "2026-08-10",
       "updatedAt": "2026-08-10"
