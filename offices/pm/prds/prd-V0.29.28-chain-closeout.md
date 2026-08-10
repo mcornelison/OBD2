@@ -5,7 +5,7 @@ status: draft
 createdAt: 2026-08-10
 createdBy: Marcus (PM)
 selectedStories: [US-548, US-549, US-550, US-543, US-545]
-forksFrom: dev @ (recorded at prd_to_sprint.py conversion; forks from dev)
+forksFrom: sprint/sprint71-V0.29.26 tip (NOT dev -- V0.29.26 is not on dev yet; the Pi is off so it hasn't deployed. US-548 fixes the RED tests US-536 created, which only exist on the sprint-71 branch. When the Pi is on: merge sprint71->dev then sprint73->dev, deploy the accumulated V0.29.26 + V0.29.28.)
 sprintJsonPath: offices/ralph/sprint.json
 epics: E-001 (UI/UX Polish) + E-OPS (F-119/F-120 hygiene)
 features: F-124 (kiosk), F-103 (splash), F-119 (CI/parity), F-120 (BT reliability)
