@@ -6733,7 +6733,7 @@
       "parent": "F-125",
       "type": "normal",
       "size": "L",
-      "status": "pending",
+      "status": "superseded",
       "title": "WP-1: GPS reader -> states/gps source (real altitude/speed/heading) -- HARDWARE TBD (not ordered)",
       "goal": "As the live card, I want a real GPS source publishing states/gps, so altitude/speed/heading come from an absolute sensor instead of a derived estimate.",
       "definitionOfDone": [
@@ -6752,7 +6752,8 @@
       ],
       "conditionalOutcomes": [
         "if Atlas's contract shapes the fields differently, bind to the ruled contract",
-        "PARKED per CIO 2026-08-03 (via Iris): hold GPS module + baro -- stabilize/validate what is built before adding hardware. Do NOT build the states/gps reader. Derived IMU+OBD altitude (US-517/518/519/520) is now THE altitude path, not interim-until-GPS. Moots the 746-vs-PA1010D module question."
+        "PARKED per CIO 2026-08-03 (via Iris): hold GPS module + baro -- stabilize/validate what is built before adding hardware. Do NOT build the states/gps reader. Derived IMU+OBD altitude (US-517/518/519/520) is now THE altitude path, not interim-until-GPS. Moots the 746-vs-PA1010D module question.",
+        "SUPERSEDED 2026-08-10: split into smaller items (US-516-a/-b...) per CIO 'no large items'."
       ],
       "deps": [
         "ATLAS-states-gps-contract"
@@ -7303,7 +7304,7 @@
       "parent": "F-126",
       "type": "normal",
       "size": "L",
-      "status": "pending",
+      "status": "superseded",
       "title": "[DEFERRED -- Slice 2] Battery / Power Test action on a System screen",
       "goal": "As the operator, I want to trigger a battery/UPS test from the Pi so I can measure pack health on demand.",
       "definitionOfDone": [
@@ -7318,7 +7319,8 @@
         }
       ],
       "conditionalOutcomes": [
-        "DEFERRED Slice 2. Needs Spool (drain-test semantics/safety) + Atlas (power/shutdown path)."
+        "DEFERRED Slice 2. Needs Spool (drain-test semantics/safety) + Atlas (power/shutdown path).",
+        "SUPERSEDED 2026-08-10: split into smaller items (US-534-a/-b...) per CIO 'no large items'."
       ],
       "sourceRefs": [
         "CIO 2026-08-03 settings-screen brainstorm"
@@ -7334,7 +7336,7 @@
       "parent": "F-126",
       "type": "normal",
       "size": "L",
-      "status": "pending",
+      "status": "superseded",
       "title": "[DEFERRED -- Slice 3] System Settings > Updates screen (OS / library / OBD2-project)",
       "goal": "As the operator, I want an Updates screen so I can apply OS, library, and OBD2-project updates from the Pi.",
       "definitionOfDone": [
@@ -7349,7 +7351,8 @@
         }
       ],
       "conditionalOutcomes": [
-        "DEFERRED Slice 3. Own epic building on pi.update.*; a placeholder screen is the only near-term piece."
+        "DEFERRED Slice 3. Own epic building on pi.update.*; a placeholder screen is the only near-term piece.",
+        "SUPERSEDED 2026-08-10: split into smaller items (US-535-a/-b...) per CIO 'no large items'."
       ],
       "sourceRefs": [
         "CIO 2026-08-03 settings-screen brainstorm"
@@ -7491,7 +7494,7 @@
       "parent": "F-127",
       "type": "normal",
       "size": "L",
-      "status": "sprint-ready",
+      "status": "superseded",
       "title": "Set the legibility scale + re-lay the card set (the actual fix; 4 -> 6 cards)",
       "goal": "As the operator, I want to read the dashboard at arm's length in the car, so the values and labels are large enough to act on while driving.",
       "definitionOfDone": [
@@ -7509,7 +7512,8 @@
         }
       ],
       "conditionalOutcomes": [
-        "Gated: US-539 first (hard); Atlas screen-count + US-482 ruling before build. If the panel downsamples, the 44/34/26/20/15 values may need to rise -- re-verify on hardware, don't bake as final."
+        "Gated: US-539 first (hard); Atlas screen-count + US-482 ruling before build. If the panel downsamples, the 44/34/26/20/15 values may need to rise -- re-verify on hardware, don't bake as final.",
+        "SUPERSEDED 2026-08-10: split into smaller items (US-540-a/-b...) per CIO 'no large items'."
       ],
       "sourceRefs": [
         "offices/uidevloper/proposals/2026-08-07-pi-3p5in-legibility-and-layout.md (+ .html)",
@@ -7693,9 +7697,11 @@
           "outcome": "the server re-derives correct boundaries from raw data; Pi drive_id demoted to advisory"
         }
       ],
-      "status": "pending",
+      "status": "superseded",
       "passes": null,
-      "conditionalOutcomes": [],
+      "conditionalOutcomes": [
+        "SUPERSEDED 2026-08-10: split into smaller items (US-546-a/-b...) per CIO 'no large items'."
+      ],
       "sourceRefs": [
         "offices/pm/inbox/2026-08-10-from-atlas-backlog-review-ordering-plus-5-additions.md"
       ],
@@ -7729,6 +7735,324 @@
       ],
       "createdAt": "2026-08-10",
       "updatedAt": "2026-08-10"
+    },
+    {
+      "parent": "F-127",
+      "type": "normal",
+      "status": "sprint-ready",
+      "passes": null,
+      "conditionalOutcomes": [],
+      "sourceRefs": [
+        "offices/uidevloper/proposals/2026-08-07-pi-3p5in-legibility-and-layout.md (+ .html)",
+        "offices/pm/inbox/2026-08-08-from-iris-3p5in-legibility-bundle-for-groom.md",
+        "offices/pm/inbox/2026-08-07-from-atlas-3p5in-legibility-font-size-more-screens.md"
+      ],
+      "createdAt": "2026-08-10",
+      "updatedAt": "2026-08-10",
+      "id": "US-540-a",
+      "size": "M",
+      "priority": "P1",
+      "tier": "pi",
+      "gate": "US-539 first",
+      "title": "Set the type-scale token VALUES for 3.5in legibility (44/34/26/20/15)",
+      "goal": "As the operator, I want the primary values large enough to read at arm's length in the car.",
+      "definitionOfDone": [
+        "set the type-scale token values (Iris): hero 44 / primary 34 / secondary 26 / label 20 / meta 15 (px on the 480x320 stage). [FLOOR RULE] driver-must-read >= [EXACT:34]px; anything <26px non-critical only. Depends US-539 (tokens exist). Acceptance IN-CAR (arm's length, seated). CAVEAT: unverified panel downsampling may raise the floor -- re-verify on hardware, do NOT call values final. ruff clean"
+      ],
+      "validationCriteria": [
+        {
+          "action": "in the car, seated normally, read the primary values on a card",
+          "outcome": "legible at arm's length; driver-must-read elements >=34px effective"
+        }
+      ]
+    },
+    {
+      "parent": "F-127",
+      "type": "normal",
+      "status": "sprint-ready",
+      "passes": null,
+      "conditionalOutcomes": [],
+      "sourceRefs": [
+        "offices/uidevloper/proposals/2026-08-07-pi-3p5in-legibility-and-layout.md (+ .html)",
+        "offices/pm/inbox/2026-08-08-from-iris-3p5in-legibility-bundle-for-groom.md",
+        "offices/pm/inbox/2026-08-07-from-atlas-3p5in-legibility-font-size-more-screens.md"
+      ],
+      "createdAt": "2026-08-10",
+      "updatedAt": "2026-08-10",
+      "id": "US-540-b",
+      "size": "M",
+      "priority": "P1",
+      "tier": "pi",
+      "gate": "Atlas: screen-count + US-482",
+      "title": "Re-lay the card set 4->6 for the legibility scale (Health card retires)",
+      "goal": "As the operator, I want fewer facts per card so each one is legible at a glance.",
+      "definitionOfDone": [
+        "with US-540-a's scale, capacity is ~3 facts/card (4 in a 2x2 ceiling). Card set 4->6: Home(live) . Alerts . System Status . Battery . Fuel Trim . Light. 'Health' RETIRES as a card (a container of 3 unrelated facts the scale can't afford) -- redistribute its facts. Sub-floor detail -> System drill-down (read parked). Partly reverses US-507/508 (intended). [ATLAS GATE] screen-count + US-482 letterbox-stage. Carousel handles N cards (no nav rework). ruff clean; probe confirms the 6-card set"
+      ],
+      "validationCriteria": [
+        {
+          "action": "swipe the carousel",
+          "outcome": "6 cards render (Health gone, facts redistributed); <=3-4 facts/card, all legible"
+        }
+      ]
+    },
+    {
+      "parent": "F-126",
+      "type": "normal",
+      "status": "pending",
+      "passes": null,
+      "conditionalOutcomes": [],
+      "sourceRefs": [
+        "CIO 2026-08-03 settings-screen brainstorm"
+      ],
+      "createdAt": "2026-08-10",
+      "updatedAt": "2026-08-10",
+      "id": "US-534-a",
+      "size": "M",
+      "priority": "P3",
+      "tier": "pi",
+      "gate": "needs Spool design",
+      "title": "Battery/Power-Test TRIGGER action (System screen)",
+      "goal": "As the operator, I want to start a battery/UPS test from the Pi.",
+      "definitionOfDone": [
+        "[DEFERRED -- needs Spool design] a control on a System settings screen that KICKS OFF a drain/UPS test (the trigger + confirm UX + safety gating). Does NOT run the test logic (that is US-534-b)"
+      ],
+      "validationCriteria": [
+        {
+          "action": "[deferred]",
+          "outcome": "[deferred -- Spool designs the test semantics first]"
+        }
+      ]
+    },
+    {
+      "parent": "F-126",
+      "type": "normal",
+      "status": "pending",
+      "passes": null,
+      "conditionalOutcomes": [],
+      "sourceRefs": [
+        "CIO 2026-08-03 settings-screen brainstorm"
+      ],
+      "createdAt": "2026-08-10",
+      "updatedAt": "2026-08-10",
+      "id": "US-534-b",
+      "size": "M",
+      "priority": "P3",
+      "tier": "pi",
+      "gate": "needs Spool design",
+      "title": "Battery/Power-Test EXECUTION + battery_health_log recording",
+      "goal": "As the data owner, I want the test to run and record a qualifying capacity measurement.",
+      "definitionOfDone": [
+        "[DEFERRED -- needs Spool design] run the drain/UPS test and write a qualifying battery_health_log row (ties to the US-526 production writer + US-527 depth-gate verdict). Spool owns the depth-gate/safety semantics"
+      ],
+      "validationCriteria": [
+        {
+          "action": "[deferred]",
+          "outcome": "[deferred -- ties to US-526/527]"
+        }
+      ]
+    },
+    {
+      "parent": "F-128",
+      "type": "normal",
+      "status": "pending",
+      "passes": null,
+      "conditionalOutcomes": [],
+      "sourceRefs": [
+        "offices/pm/inbox/2026-08-10-from-atlas-backlog-review-ordering-plus-5-additions.md"
+      ],
+      "createdAt": "2026-08-10",
+      "updatedAt": "2026-08-10",
+      "id": "US-546-a",
+      "size": "M",
+      "priority": "P3",
+      "tier": "server",
+      "gate": "Atlas design",
+      "title": "Server re-derives drive boundaries from raw realtime_data (segmentation algorithm)",
+      "goal": "As the data owner, I want the server to compute drive boundaries independently of the Pi drive_id.",
+      "definitionOfDone": [
+        "[Atlas design gate] the segmentation algorithm: re-derive drive start/end boundaries server-side from raw realtime_data (RPM/SPEED/time gaps). Produces authoritative boundaries; does NOT yet change the schema (that is US-546-b)"
+      ],
+      "validationCriteria": [
+        {
+          "action": "feed the server raw realtime_data for a known multi-drive window",
+          "outcome": "it re-derives the correct drive boundaries independent of Pi drive_id"
+        }
+      ]
+    },
+    {
+      "parent": "F-128",
+      "type": "normal",
+      "status": "pending",
+      "passes": null,
+      "conditionalOutcomes": [],
+      "sourceRefs": [
+        "offices/pm/inbox/2026-08-10-from-atlas-backlog-review-ordering-plus-5-additions.md"
+      ],
+      "createdAt": "2026-08-10",
+      "updatedAt": "2026-08-10",
+      "id": "US-546-b",
+      "size": "M",
+      "priority": "P3",
+      "tier": "server",
+      "gate": "US-546-a first",
+      "title": "Demote Pi drive_id to advisory source_drive_id + wire the recovery path",
+      "goal": "As the data owner, I want a DriveDetector regression recovered, not just flagged.",
+      "definitionOfDone": [
+        "[Atlas design gate] schema + integration: demote Pi drive_id to advisory source_drive_id; make the US-546-a server-derived boundaries authoritative; wire the recovery so an overlap the tripwire flags is re-segmented, not just reported. B-104-aligned"
+      ],
+      "validationCriteria": [
+        {
+          "action": "feed the server a drive with a bad Pi drive_id boundary",
+          "outcome": "server recovers correct boundaries; Pi drive_id demoted to advisory source_drive_id"
+        }
+      ]
+    },
+    {
+      "parent": "F-125",
+      "type": "normal",
+      "status": "pending",
+      "passes": null,
+      "conditionalOutcomes": [],
+      "sourceRefs": [
+        "offices/pm/inbox/2026-08-01-from-iris-gps-altitude-workpackage-for-grooming.md#WP-1",
+        "F-125",
+        "states/gps",
+        "states/imu (DELTA-2 seam precedent)"
+      ],
+      "createdAt": "2026-08-10",
+      "updatedAt": "2026-08-10",
+      "id": "US-516-a",
+      "size": "M",
+      "priority": "P3",
+      "tier": "pi",
+      "gate": "Atlas states/gps contract",
+      "title": "states/gps contract + reader interface seam (buildable WITHOUT hardware)",
+      "goal": "As a maintainer, I want the states/gps seam defined so altitude/speed/heading consumers can build ahead of the GPS hardware.",
+      "definitionOfDone": [
+        "build the states/gps contract + reader INTERFACE/seam (honest-NA when no source), per Atlas's states/gps contract. No hardware needed -- a stub/absent source emits typed-NA. Lets consumers (altitude display) wire against the seam"
+      ],
+      "validationCriteria": [
+        {
+          "action": "read states/gps with no GPS source present",
+          "outcome": "emits typed-NA (never fabricated); the seam matches Atlas's contract"
+        }
+      ]
+    },
+    {
+      "parent": "F-125",
+      "type": "normal",
+      "status": "pending",
+      "passes": null,
+      "conditionalOutcomes": [],
+      "sourceRefs": [
+        "offices/pm/inbox/2026-08-01-from-iris-gps-altitude-workpackage-for-grooming.md#WP-1",
+        "F-125",
+        "states/gps",
+        "states/imu (DELTA-2 seam precedent)"
+      ],
+      "createdAt": "2026-08-10",
+      "updatedAt": "2026-08-10",
+      "id": "US-516-b",
+      "size": "M",
+      "priority": "P4",
+      "tier": "pi",
+      "gate": "HARDWARE parked (GPS not ordered)",
+      "title": "GPS hardware reader -> real altitude/speed/heading into states/gps",
+      "goal": "As the operator, I want real GPS altitude/speed/heading once the hardware is installed.",
+      "definitionOfDone": [
+        "[HARDWARE PARKED -- GPS module not ordered] the actual GPS reader (I2C PA1010D or UART per the parked module choice) feeding real altitude/speed/heading into the US-516-a states/gps seam"
+      ],
+      "validationCriteria": [
+        {
+          "action": "[parked -- needs GPS hardware]",
+          "outcome": "[parked]"
+        }
+      ]
+    },
+    {
+      "parent": "F-126",
+      "type": "normal",
+      "status": "pending",
+      "passes": null,
+      "conditionalOutcomes": [],
+      "sourceRefs": [
+        "CIO 2026-08-03 settings-screen brainstorm"
+      ],
+      "createdAt": "2026-08-10",
+      "updatedAt": "2026-08-10",
+      "id": "US-535-a",
+      "size": "S",
+      "priority": "P4",
+      "tier": "pi",
+      "gate": "groom-ready (placeholder)",
+      "title": "Updates screen PLACEHOLDER (System Settings sub-screen, UI shell only)",
+      "goal": "As the operator, I want an Updates screen slot so the capability is visible even before it works.",
+      "definitionOfDone": [
+        "a placeholder System Settings > Updates sub-screen (UI shell): lists OS / library / OBD2-project as future update targets, honestly labeled 'not yet available'. No update logic. Holds the slot"
+      ],
+      "validationCriteria": [
+        {
+          "action": "open System Settings > Updates",
+          "outcome": "the placeholder screen renders with the 3 targets labeled 'not yet available'"
+        }
+      ]
+    },
+    {
+      "parent": "F-126",
+      "type": "normal",
+      "status": "pending",
+      "passes": null,
+      "conditionalOutcomes": [],
+      "sourceRefs": [
+        "CIO 2026-08-03 settings-screen brainstorm"
+      ],
+      "createdAt": "2026-08-10",
+      "updatedAt": "2026-08-10",
+      "id": "US-535-b",
+      "size": "M",
+      "priority": "P4",
+      "tier": "pi",
+      "gate": "own-epic design",
+      "title": "Self-update engine core -- fetch / verify / apply / rollback framework",
+      "goal": "As the operator, I want a safe self-update mechanism with rollback.",
+      "definitionOfDone": [
+        "[own epic -- design first] the update engine core: fetch, verify, apply, and ROLLBACK a package, building on the existing pi.update.* config (update.enabled, applyEnabled=false, rollbackEnabled). Source-agnostic; sources wired in US-535-c"
+      ],
+      "validationCriteria": [
+        {
+          "action": "apply then roll back a test package via the engine",
+          "outcome": "apply + rollback both succeed safely; applyEnabled gate honored"
+        }
+      ]
+    },
+    {
+      "parent": "F-126",
+      "type": "normal",
+      "status": "pending",
+      "passes": null,
+      "conditionalOutcomes": [],
+      "sourceRefs": [
+        "CIO 2026-08-03 settings-screen brainstorm"
+      ],
+      "createdAt": "2026-08-10",
+      "updatedAt": "2026-08-10",
+      "id": "US-535-c",
+      "size": "M",
+      "priority": "P4",
+      "tier": "pi",
+      "gate": "US-535-b first",
+      "title": "Wire the 3 update sources -- OS / Python library / OBD2-project",
+      "goal": "As the operator, I want to update the OS, libraries, and the project from the Updates screen.",
+      "definitionOfDone": [
+        "wire OS (apt), Python library (pip/requirements), and OBD2-project (git) update sources to the US-535-b engine; surface each on the US-535-a screen with real status. Each source respects the engine's verify/apply/rollback"
+      ],
+      "validationCriteria": [
+        {
+          "action": "trigger an OBD2-project update from the Updates screen",
+          "outcome": "the engine fetches/verifies/applies it with rollback available; OS + library sources present too"
+        }
+      ]
     }
   ]
 }

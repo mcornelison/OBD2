@@ -4,7 +4,7 @@ version: V0.29.27
 status: draft
 createdAt: 2026-08-08
 createdBy: Marcus (PM)
-selectedStories: [US-539, US-540, US-541, US-542]
+selectedStories: [US-539, US-540-a, US-540-b, US-541, US-542]
 forksFrom: dev @ (recorded at prd_to_sprint.py conversion; forks from dev AFTER V0.29.26)
 sprintJsonPath: offices/ralph/sprint.json
 epics: E-001 (UI/UX Polish)
