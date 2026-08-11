@@ -72,6 +72,34 @@
   --font-mono:      ui-monospace, Menlo, Consolas, monospace;  /* SSOT --font-mono */
   --font-display:   "Oswald", "Arial Narrow", system-ui, sans-serif;
                                              /* SSOT --font-display */
+  /* --- Type scale -- US-539 (F-127). SSOT block: tokens.css "Type scale".
+     Before this story every size on this surface was a bare px: 82 of them
+     over 15 distinct values, so the legibility fix F-127 exists to make would
+     have been 82 scattered edits, each free to drift back. Now it is five.
+
+     THE COLLAPSE IS THE POINT, and it is not lossless -- 15 values do not fit
+     in 5 slots. Each rule was placed by what the element IS (see the SSOT
+     block for the tier definitions), and every off-scale size rounds UP to its
+     tier, never down: nothing on this panel got SMALLER in this refactor.
+     What moved, all of it upward:
+       34/30/22 -> hero 40   (STANDBY hero, takeover code, STOP directive)
+       18/17/15 -> primary 20 (menu close, detail + takeover directives,
+                              summary verdict, DTC hero code, tile values)
+       13       -> secondary 14 (21 rules: top bar, card titles, buttons, copy)
+       11       -> label 12     (14 rules: tile detail, chips, meta lines)
+       9/8      -> meta 10      (IMU tape + gear furniture)
+     The remaining 35 rules already sat on a scale value and did not move.
+
+     Values here are the PRE-F-127 shipped scale and MUST equal tokens.css --
+     US-539 ships + verifies independently of the legibility bump. US-540-a
+     sets 44/34/26/20/15 by editing the SSOT and this mirror together; nothing
+     below this :root changes again. Pinned by
+     tests/ui/test_dashboard_type_scale.py. */
+  --fs-hero:        40px;      /* SSOT --fs-hero */
+  --fs-primary:     20px;      /* SSOT --fs-primary */
+  --fs-secondary:   14px;      /* SSOT --fs-secondary */
+  --fs-label:       12px;      /* SSOT --fs-label */
+  --fs-meta:        10px;      /* SSOT --fs-meta */
   /* --- Base surfaces -- promoted into the SSOT by US-510 (Atlas Rule-10
      2026-07-31). These two were dist-only literals; the values are UNCHANGED,
      so the promotion moved no pixels (that was Atlas's explicit DoD gate). */
@@ -167,7 +195,7 @@ html, body {
   position: fixed; top: 0; left: 0; right: 0; height: 28px;
   display: flex; align-items: center; gap: 10px;
   padding: 0 10px; box-sizing: border-box;
-  background: var(--surface); font-size: 13px;
+  background: var(--surface); font-size: var(--fs-secondary);
   z-index: 10;
 }
 #topbar .glyph { color: var(--text-secondary); letter-spacing: 0.04em; }
@@ -180,12 +208,12 @@ html, body {
 #topbar .glyph[data-state="down"]  { color: var(--amber-warn); }
 #version-chip {
   margin-left: auto; color: var(--text-tertiary);
-  font-size: 10px; letter-spacing: 0.06em;
+  font-size: var(--fs-meta); letter-spacing: 0.06em;
 }
 #menu-btn {
   min-width: var(--tap-min); min-height: var(--tap-min);
   background: transparent; border: 0; color: var(--text-secondary);
-  font-size: 20px; line-height: 1; cursor: pointer;
+  font-size: var(--fs-primary); line-height: 1; cursor: pointer;
 }
 /* US-490: the ⋮ is parked-only. Stated explicitly rather than leaning on the
    UA [hidden] rule -- #topbar is a flex container, so any future `display`
@@ -219,11 +247,11 @@ html, body {
    card BODY is untouched and stays mono -- the title labels the instrument, the
    body IS the instrument, and only the label gets the brand face. */
 .card-title {
-  margin: 0 0 8px 0; font-size: 13px; font-weight: 600;
+  margin: 0 0 8px 0; font-size: var(--fs-secondary); font-weight: 600;
   color: var(--text-secondary); text-transform: uppercase;
   letter-spacing: 0.08em; font-family: var(--font-display);
 }
-.card-body { flex: 1; font-size: 14px; color: var(--text-primary); }
+.card-body { flex: 1; font-size: var(--fs-secondary); color: var(--text-primary); }
 /* Honest-instrument: a missing/malformed state file reads `unavailable`,
    never a fabricated value and never green. */
 .card.unavailable .card-body,
@@ -248,7 +276,7 @@ html, body {
 }
 .idle-header {
   display: flex; align-items: baseline; gap: 8px;
-  font-size: 11px; color: var(--text-secondary);
+  font-size: var(--fs-label); color: var(--text-secondary);
   letter-spacing: 0.06em;
 }
 /* US-510 A-3: the `ECLIPSE OBD-II` wordmark is THE brand moment on this
@@ -260,7 +288,7 @@ html, body {
 .idle-wordmark {
   font-weight: 600; letter-spacing: 0.14em; font-family: var(--font-display);
 }
-.idle-clock { margin-left: auto; font-size: 13px; color: var(--text-primary); }
+.idle-clock { margin-left: auto; font-size: var(--fs-secondary); color: var(--text-primary); }
 .idle-date { color: var(--text-tertiary); }
 /* STANDBY hero -- deliberately un-alarming neutral grey, never green (F-1). */
 .idle-hero {
@@ -268,13 +296,13 @@ html, body {
   align-items: center; justify-content: center; gap: 4px;
 }
 .idle-hero-title {
-  font-size: 34px; font-weight: 700; letter-spacing: 0.10em;
+  font-size: var(--fs-hero); font-weight: 700; letter-spacing: 0.10em;
   color: var(--text-secondary);
 }
-.idle-hero-sub { font-size: 12px; color: var(--text-tertiary); letter-spacing: 0.04em; }
+.idle-hero-sub { font-size: var(--fs-label); color: var(--text-tertiary); letter-spacing: 0.04em; }
 .idle-facts { display: flex; flex-direction: column; }
 .idle-footer {
-  font-size: 10px; color: var(--text-tertiary);
+  font-size: var(--fs-meta); color: var(--text-tertiary);
   text-align: center; letter-spacing: 0.04em; padding-top: 2px;
 }
 .idle-boot { color: var(--text-tertiary); font-style: italic; }
@@ -289,11 +317,11 @@ html, body {
 }
 .tile:last-child { border-bottom: 0; }
 .tile-label {
-  font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase;
+  font-size: var(--fs-meta); letter-spacing: 0.08em; text-transform: uppercase;
   color: var(--text-secondary);
 }
-.tile-value { font-size: 15px; font-weight: 600; color: var(--text-primary); }
-.tile-detail { font-size: 11px; color: var(--text-tertiary); }
+.tile-value { font-size: var(--fs-primary); font-weight: 600; color: var(--text-primary); }
+.tile-detail { font-size: var(--fs-label); color: var(--text-tertiary); }
 .tile[data-level="ok"]    .tile-value { color: var(--green-ok); }
 .tile[data-level="amber"] .tile-value { color: var(--amber-warn); }
 /* US-488: a degraded tile is WATCH, never the pull-over red (TD-067). */
@@ -368,7 +396,7 @@ html, body {
 .imu-tick { stroke: var(--text-tertiary); stroke-width: 1; }
 .imu-tick-major { stroke: var(--text-secondary); stroke-width: 1.5; }
 .imu-tape-label {
-  fill: var(--text-secondary); font-size: 8px; font-weight: 600;
+  fill: var(--text-secondary); font-size: var(--fs-meta); font-weight: 600;
   letter-spacing: 0.06em;
 }
 
@@ -376,14 +404,14 @@ html, body {
    reason line beneath keeps "--" from being a bare shrug (no producer wired vs
    the producer honestly refusing to guess are different facts). */
 .imu-gear-label {
-  font-size: 9px; letter-spacing: 0.10em; color: var(--text-secondary);
+  font-size: var(--fs-meta); letter-spacing: 0.10em; color: var(--text-secondary);
 }
-.imu-gear { font-size: 40px; font-weight: 700; color: var(--text-primary); }
+.imu-gear { font-size: var(--fs-hero); font-weight: 700; color: var(--text-primary); }
 .imu-gear[data-level="unavailable"] {
   color: var(--text-tertiary); font-weight: 400;
 }
 .imu-gear-detail {
-  font-size: 8px; color: var(--text-tertiary); text-align: center;
+  font-size: var(--fs-meta); color: var(--text-tertiary); text-align: center;
   line-height: 1.1;
 }
 
@@ -413,11 +441,11 @@ html, body {
 }
 /* Neutral base: an unrecognised level inherits no severity it has not earned. */
 .sys-summary-text {
-  font-size: 17px; font-weight: 700; letter-spacing: 0.06em;
+  font-size: var(--fs-primary); font-weight: 700; letter-spacing: 0.06em;
   color: var(--text-primary);
 }
 .sys-summary-detail {
-  margin-left: auto; font-size: 11px; color: var(--text-tertiary);
+  margin-left: auto; font-size: var(--fs-label); color: var(--text-tertiary);
 }
 .sys-summary[data-level="ok"] .sys-summary-text { color: var(--green-ok); }
 .sys-summary[data-level="amber"] .sys-summary-text { color: var(--amber-warn); }
@@ -456,7 +484,7 @@ html, body {
   background: rgba(255, 196, 0, 0.06);
 }
 .ladder-banner {
-  font-size: 13px; font-weight: 700; letter-spacing: 0.06em;
+  font-size: var(--fs-secondary); font-weight: 700; letter-spacing: 0.06em;
   color: var(--amber-warn);
 }
 /* US-488: TRIGGER is the ladder's TERMINAL stage -- the failsafe is about to
@@ -466,7 +494,7 @@ html, body {
    (carousel.js), never the DTC tier's "PULL OVER". */
 .ladder[data-stage="TRIGGER"] { border-color: var(--critical-red); }
 .ladder[data-stage="TRIGGER"] .ladder-banner { color: var(--critical-red); }
-.ladder-runtime { font-size: 11px; color: var(--text-secondary); }
+.ladder-runtime { font-size: var(--fs-label); color: var(--text-secondary); }
 
 /* --- US-420 fuel-trim trend (F-096; the "Fuel Trim" section since US-507) --- */
 /* An insufficient trend renders a muted, plainly non-green headline (honest-
@@ -486,8 +514,8 @@ html, body {
   padding: 6px 4px; border-radius: 4px;
   border: 1px solid var(--surface);
 }
-.ltft-bar-value { font-size: 13px; font-weight: 600; color: var(--text-primary); }
-.ltft-bar-drive { font-size: 10px; color: var(--text-tertiary); }
+.ltft-bar-value { font-size: var(--fs-secondary); font-weight: 600; color: var(--text-primary); }
+.ltft-bar-drive { font-size: var(--fs-meta); color: var(--text-tertiary); }
 .ltft-bar[data-level="ok"]    .ltft-bar-value { color: var(--green-ok); }
 .ltft-bar[data-level="amber"] .ltft-bar-value { color: var(--amber-warn); }
 /* US-488: a drive beyond +/-10% LTFT is a fuel-trim drift worth investigating
@@ -521,13 +549,13 @@ html, body {
 }
 .health-section:first-child { padding-top: 0; border-top: 0; }
 .health-section-title {
-  margin: 0 0 2px 0; font-size: 10px; font-weight: 600;
+  margin: 0 0 2px 0; font-size: var(--fs-meta); font-weight: 600;
   color: var(--text-secondary); text-transform: uppercase;
   letter-spacing: 0.08em;
 }
-.health-section-body { font-size: 13px; color: var(--text-primary); }
+.health-section-body { font-size: var(--fs-secondary); color: var(--text-primary); }
 .health-section .tile { padding: 2px 0; border-bottom: 0; }
-.health-section .tile-value { font-size: 13px; }
+.health-section .tile-value { font-size: var(--fs-secondary); }
 .health-section .ladder { margin-top: 4px; padding: 4px 8px; }
 .health-section .ltft-bars { margin-top: 4px; }
 .health-section .ltft-bar { min-width: 38px; padding: 4px 3px; }
@@ -578,14 +606,14 @@ html, body {
   position: fixed; left: 0; right: 0; top: 28px; min-height: 22px;
   display: flex; align-items: center; gap: 6px;
   padding: 2px 10px; box-sizing: border-box;
-  font-size: 12px; font-weight: 700; letter-spacing: 0.03em;
+  font-size: var(--fs-label); font-weight: 700; letter-spacing: 0.03em;
   color: #fff; z-index: 9;
 }
 #dtc-ribbon[data-level="stop"]    { background: var(--critical-red); color: #fff; }
 #dtc-ribbon[data-level="watch"]   { background: var(--amber-warn); color: #000; }
 #dtc-ribbon[data-level="minor"]   { background: var(--green-ok); color: #000; }
 #dtc-ribbon[data-level="unknown"] { background: var(--amber-warn); color: #000; }
-.ribbon-glyph { font-size: 13px; line-height: 1; flex: 0 0 auto; }
+.ribbon-glyph { font-size: var(--fs-secondary); line-height: 1; flex: 0 0 auto; }
 .ribbon-text {
   flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
@@ -644,7 +672,7 @@ html, body {
 #dtc-takeover[data-severity="stop"] .takeover-directive {
   margin-top: 6px; padding: 5px 14px; border-radius: 3px;
   background: var(--critical-red); color: #fff;
-  font-size: 22px; letter-spacing: 0.08em;
+  font-size: var(--fs-hero); letter-spacing: 0.08em;
 }
 #dtc-takeover[data-severity="stop"] .takeover-icon { color: var(--critical-red); }
 /* Deeper-and-darker pulse: the frame drops toward its own near-black field.
@@ -673,23 +701,23 @@ html, body {
   display: flex; flex-direction: column; align-items: center; gap: 5px;
   padding: 0 18px; max-width: 92%;
 }
-.takeover-icon { font-size: 40px; line-height: 1; }
-.takeover-head { font-size: 12px; letter-spacing: 0.14em; font-weight: 700; }
+.takeover-icon { font-size: var(--fs-hero); line-height: 1; }
+.takeover-head { font-size: var(--fs-label); letter-spacing: 0.14em; font-weight: 700; }
 .takeover-chip {
-  font-size: 11px; font-weight: 700; letter-spacing: 0.08em;
+  font-size: var(--fs-label); font-weight: 700; letter-spacing: 0.08em;
   padding: 1px 8px; border-radius: 10px; text-transform: uppercase;
   border: 1px solid currentColor;
 }
-.takeover-code { font-size: 30px; font-weight: 800; letter-spacing: 0.04em; }
-.takeover-desc { font-size: 13px; opacity: 0.9; }
+.takeover-code { font-size: var(--fs-hero); font-weight: 800; letter-spacing: 0.04em; }
+.takeover-desc { font-size: var(--fs-secondary); opacity: 0.9; }
 .takeover-directive {
-  font-size: 15px; font-weight: 700; letter-spacing: 0.04em; margin-top: 2px;
+  font-size: var(--fs-primary); font-weight: 700; letter-spacing: 0.04em; margin-top: 2px;
 }
-.takeover-more { font-size: 11px; opacity: 0.85; }
+.takeover-more { font-size: var(--fs-label); opacity: 0.85; }
 .takeover-actions { display: flex; gap: 10px; margin-top: 12px; }
 .takeover-actions button {
   min-width: var(--tap-min); min-height: var(--tap-min);
-  padding: 0 16px; font-size: 13px; font-weight: 700; cursor: pointer;
+  padding: 0 16px; font-size: var(--fs-secondary); font-weight: 700; cursor: pointer;
   border-radius: 4px; border: 1px solid currentColor;
   background: rgba(0, 0, 0, 0.28); color: inherit;
 }
@@ -720,28 +748,28 @@ html, body {
   border-bottom: 1px solid var(--surface);
 }
 .menu-title {
-  font-size: 14px; font-weight: 700; letter-spacing: 0.06em;
+  font-size: var(--fs-secondary); font-weight: 700; letter-spacing: 0.06em;
   text-transform: uppercase; color: var(--text-primary);
 }
 #menu-close {
   margin-left: auto;
   min-width: var(--tap-min); min-height: var(--tap-min);
   background: transparent; border: 0; color: var(--text-secondary);
-  font-size: 18px; cursor: pointer;
+  font-size: var(--fs-primary); cursor: pointer;
 }
 .menu-section { display: flex; flex-direction: column; gap: 4px; }
 .menu-section-title {
-  margin: 4px 0 0; font-size: 10px; letter-spacing: 0.08em;
+  margin: 4px 0 0; font-size: var(--fs-meta); letter-spacing: 0.08em;
   text-transform: uppercase; color: var(--text-secondary);
 }
 .svc-row {
   display: flex; align-items: center; gap: 6px;
   padding: 2px 0; border-bottom: 1px solid var(--surface);
 }
-.svc-name { flex: 1; font-size: 12px; color: var(--text-primary); }
+.svc-name { flex: 1; font-size: var(--fs-label); color: var(--text-primary); }
 .svc-btn {
   min-width: var(--tap-min); min-height: var(--tap-min);
-  padding: 0 10px; font-size: 12px; cursor: pointer;
+  padding: 0 10px; font-size: var(--fs-label); cursor: pointer;
   background: var(--surface); color: var(--text-primary);
   border: 1px solid var(--text-tertiary); border-radius: 4px;
 }
@@ -753,12 +781,12 @@ html, body {
 }
 .menu-wide {
   min-height: var(--tap-min); width: 100%;
-  font-size: 13px; cursor: pointer;
+  font-size: var(--fs-secondary); cursor: pointer;
   background: var(--surface); color: var(--text-primary);
   border: 1px solid var(--text-tertiary); border-radius: 4px;
 }
 .menu-status {
-  margin-top: auto; font-size: 11px; color: var(--text-secondary);
+  margin-top: auto; font-size: var(--fs-label); color: var(--text-secondary);
   min-height: 14px;
 }
 
@@ -771,14 +799,14 @@ html, body {
   display: flex; align-items: center; flex-wrap: wrap; gap: 2px 6px;
   padding: 2px 0; border-bottom: 1px solid var(--surface);
 }
-.set-name { flex: 1 1 100%; font-size: 12px; color: var(--text-primary); }
+.set-name { flex: 1 1 100%; font-size: var(--fs-label); color: var(--text-primary); }
 /* The honest apply-state ("applies on restart") + the transient save note. Kept
    on its own line so a long note can never squeeze the controls off-screen. */
-.set-apply { flex: 1 1 auto; font-size: 10px; color: var(--text-secondary); }
+.set-apply { flex: 1 1 auto; font-size: var(--fs-meta); color: var(--text-secondary); }
 .set-controls { display: flex; gap: 4px; margin-left: auto; }
 .set-btn {
   min-width: var(--tap-min); min-height: var(--tap-min);
-  padding: 0 8px; font-size: 11px; cursor: pointer;
+  padding: 0 8px; font-size: var(--fs-label); cursor: pointer;
   background: var(--surface); color: var(--text-secondary);
   border: 1px solid var(--surface); border-radius: 4px;
 }
@@ -790,7 +818,7 @@ html, body {
   border: 1px solid var(--green-ok);
 }
 .settings-foot {
-  margin: 2px 0 0; font-size: 10px; color: var(--text-tertiary);
+  margin: 2px 0 0; font-size: var(--fs-meta); color: var(--text-tertiary);
 }
 
 /* --- US-403 confirm modal (F-6 confirm-before-consequential) ---------------- */
@@ -803,11 +831,11 @@ html, body {
   background: var(--surface); border: 1px solid var(--amber-warn);
   border-radius: 6px; padding: 14px 16px; max-width: 88%;
 }
-.confirm-box p { margin: 0 0 12px; font-size: 13px; color: var(--text-primary); }
+.confirm-box p { margin: 0 0 12px; font-size: var(--fs-secondary); color: var(--text-primary); }
 .confirm-actions { display: flex; gap: 10px; justify-content: flex-end; }
 .confirm-actions button {
   min-width: var(--tap-min); min-height: var(--tap-min);
-  padding: 0 14px; font-size: 13px; cursor: pointer; border-radius: 4px;
+  padding: 0 14px; font-size: var(--fs-secondary); cursor: pointer; border-radius: 4px;
   background: var(--surface); color: var(--text-primary);
   border: 1px solid var(--text-tertiary);
 }
@@ -822,14 +850,14 @@ html, body {
    share one source. `na` (auto-trans on this manual car) + `unknown` (uncurated)
    are deliberately un-alarming (neutral surface), never green (honest F-1). */
 .dtc-count {
-  font-size: 11px; color: var(--text-secondary);
+  font-size: var(--fs-label); color: var(--text-secondary);
   letter-spacing: 0.04em; margin-bottom: 4px;
 }
-.dtc-noalert { color: var(--text-tertiary); font-style: italic; font-size: 13px; }
+.dtc-noalert { color: var(--text-tertiary); font-style: italic; font-size: var(--fs-secondary); }
 
 .dtc-chip {
   display: inline-block; flex: 0 0 auto;
-  font-size: 10px; font-weight: 700; letter-spacing: 0.06em;
+  font-size: var(--fs-meta); font-weight: 700; letter-spacing: 0.06em;
   padding: 1px 6px; border-radius: 8px; text-transform: uppercase;
 }
 .dtc-chip[data-level="stop"]    { background: var(--critical-red); color: #fff; }
@@ -849,10 +877,10 @@ html, body {
 }
 .dtc-hero[data-level="stop"]  { border-color: var(--critical-red); }
 .dtc-hero[data-level="watch"] { border-color: var(--amber-warn); }
-.dtc-hero-code { font-size: 17px; font-weight: 800; letter-spacing: 0.04em; }
-.dtc-hero-short { font-size: 12px; color: var(--text-secondary); flex: 1 1 100%; }
+.dtc-hero-code { font-size: var(--fs-primary); font-weight: 800; letter-spacing: 0.04em; }
+.dtc-hero-short { font-size: var(--fs-label); color: var(--text-secondary); flex: 1 1 100%; }
 .dtc-hero-directive {
-  font-size: 12px; font-weight: 700; letter-spacing: 0.03em;
+  font-size: var(--fs-label); font-weight: 700; letter-spacing: 0.03em;
   flex: 1 1 100%; color: var(--text-primary);
 }
 
@@ -864,12 +892,12 @@ html, body {
   border: 0; border-bottom: 1px solid var(--surface);
   background: transparent; color: var(--text-primary);
 }
-.dtc-row-code { font-size: 13px; font-weight: 700; flex: 0 0 auto; }
+.dtc-row-code { font-size: var(--fs-secondary); font-weight: 700; flex: 0 0 auto; }
 .dtc-row-short {
-  flex: 1; font-size: 12px; color: var(--text-secondary);
+  flex: 1; font-size: var(--fs-label); color: var(--text-secondary);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.dtc-row-status { font-size: 10px; color: var(--text-tertiary); flex: 0 0 auto; }
+.dtc-row-status { font-size: var(--fs-meta); color: var(--text-tertiary); flex: 0 0 auto; }
 
 /* Per-code detail overlay: a fixed skeleton that scrolls on the panel. A ‹ Back
    is always present so the operator is never trapped. */
@@ -901,10 +929,10 @@ html, body {
   padding: 0 12px; box-sizing: border-box;
   background: var(--surface); border: 1px solid var(--text-tertiary);
   border-radius: 6px; color: var(--text-primary);
-  font-size: 14px; font-weight: 700; cursor: pointer;
+  font-size: var(--fs-secondary); font-weight: 700; cursor: pointer;
 }
 .detail-code-head {
-  font-size: 14px; font-weight: 700; letter-spacing: 0.06em;
+  font-size: var(--fs-secondary); font-weight: 700; letter-spacing: 0.06em;
   color: var(--text-primary);
 }
 .detail-body {
@@ -912,8 +940,8 @@ html, body {
   gap: var(--detail-gap); padding-top: var(--detail-gap);
 }
 .detail-hero { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
-.detail-code { font-size: 20px; font-weight: 800; letter-spacing: 0.04em; }
-.detail-short { font-size: 13px; color: var(--text-secondary); flex: 1 1 100%; }
+.detail-code { font-size: var(--fs-primary); font-weight: 800; letter-spacing: 0.04em; }
+.detail-short { font-size: var(--fs-secondary); color: var(--text-secondary); flex: 1 1 100%; }
 /* US-488 (TD-067): the directive band is TIER-DRIVEN, not one blanket red for
    every severity. It used to paint brand red on EVERY code, which inverted the
    ramp twice over: a WATCH code's directive read REDDER than the --critical-red
@@ -928,7 +956,7 @@ html, body {
    edge means the tier rules below still set exactly ONE property (color) and
    the accent can never disagree with the text it sits beside. */
 .detail-directive {
-  font-size: 18px; font-weight: 800; letter-spacing: 0.03em;
+  font-size: var(--fs-primary); font-weight: 800; letter-spacing: 0.03em;
   color: var(--text-primary);
   padding: var(--detail-pad);
   border-left: 4px solid currentColor; border-radius: 4px;
@@ -940,8 +968,8 @@ html, body {
 /* An uncurated code is honestly "get diagnosed" -- amber, never green and never
    the pull-over red (honest-instrument F-1). */
 .detail-directive[data-level="unknown"] { color: var(--amber-warn); }
-.detail-caveat { font-size: 12px; color: var(--amber-warn); }
-.detail-meta { font-size: 11px; color: var(--text-tertiary); letter-spacing: 0.03em; }
+.detail-caveat { font-size: var(--fs-label); color: var(--amber-warn); }
+.detail-meta { font-size: var(--fs-label); color: var(--text-tertiary); letter-spacing: 0.03em; }
 /* US-491 (AC2): the ONE section shell. Freeze-frame/context, suggested-fix and
    the Clear zone are all `.detail-card` -- three near-identical boxes drift the
    first time one of them is edited, and the drift is exactly what AC3's
@@ -951,11 +979,11 @@ html, body {
   padding: var(--detail-pad);
   border: 1px solid var(--text-tertiary); border-radius: 4px;
 }
-.detail-ff-cell { display: flex; gap: 8px; font-size: 12px; }
+.detail-ff-cell { display: flex; gap: 8px; font-size: var(--fs-label); }
 .detail-ff-cell .detail-label { min-width: 70px; }
-.detail-ff-fallback { font-size: 12px; color: var(--text-secondary); font-style: italic; }
+.detail-ff-fallback { font-size: var(--fs-label); color: var(--text-secondary); font-style: italic; }
 .detail-label {
-  font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase;
+  font-size: var(--fs-meta); letter-spacing: 0.08em; text-transform: uppercase;
   color: var(--text-secondary);
 }
 /* US-491 -- THE LOAD-BEARING FIX. detailLine() wraps EVERY row's text in this
@@ -966,17 +994,17 @@ html, body {
    whole tier ramp US-488 built for .detail-directive one story ago painted
    nothing at all. Inheriting is what lets a row class mean what it says. */
 .detail-value { font-size: inherit; color: inherit; }
-.detail-fix-text { font-size: 13px; color: var(--text-primary); }
+.detail-fix-text { font-size: var(--fs-secondary); color: var(--text-primary); }
 /* The fix slot REPLACED by a diagnose directive for a 🔴/🟡 code (never a raw
    internet fix on a dangerous code -- F-1/S-4). */
 .dtc-fix-directive {
-  font-size: 13px; font-weight: 700; color: var(--amber-warn); letter-spacing: 0.02em;
+  font-size: var(--fs-secondary); font-weight: 700; color: var(--amber-warn); letter-spacing: 0.02em;
 }
 .detail-fix[data-mode="directive"] { border-color: var(--amber-warn); }
 /* 3-state trust badge: verified reads authoritative; community is muted/dashed;
    offline is a neutral "arrives on next sync". */
 .dtc-trust-badge {
-  align-self: flex-start; font-size: 11px; font-weight: 700;
+  align-self: flex-start; font-size: var(--fs-label); font-weight: 700;
   padding: 1px 8px; border-radius: 8px;
 }
 /* The tint is the SSOT green at 18% alpha -- rgb(53,196,106) IS #35C46A. Kept as
@@ -987,7 +1015,7 @@ html, body {
   border: 1px dashed var(--text-secondary); color: var(--text-secondary);
 }
 .dtc-trust-badge[data-kind="offline"]   { color: var(--text-tertiary); }
-.detail-footer { font-size: 11px; color: var(--text-secondary); margin-top: 2px; }
+.detail-footer { font-size: var(--fs-label); color: var(--text-secondary); margin-top: 2px; }
 
 /* --- US-509 System-Status drill-down overlay -------------------------------- */
 /* Deliberately inherits the per-code detail overlay's shell (`.detail-head`,
@@ -1010,25 +1038,25 @@ html, body {
   padding: 0 12px; box-sizing: border-box;
   background: var(--surface); border: 1px solid var(--text-tertiary);
   border-radius: 6px; color: var(--text-primary);
-  font-size: 14px; font-weight: 700; cursor: pointer;
+  font-size: var(--fs-secondary); font-weight: 700; cursor: pointer;
 }
 .sys-issue-head { display: flex; align-items: baseline; gap: 8px; }
 .sys-issue-label {
-  font-size: 13px; font-weight: 700; letter-spacing: 0.06em;
+  font-size: var(--fs-secondary); font-weight: 700; letter-spacing: 0.06em;
   color: var(--text-primary);
 }
 /* The chip carries the severity. It takes NO colour of its own -- the row's
    [data-level] drives it, so the chip can never disagree with the row it sits
    in, and the ramp is declared exactly once below. */
 .sys-issue-chip {
-  margin-left: auto; font-size: 11px; font-weight: 700;
+  margin-left: auto; font-size: var(--fs-label); font-weight: 700;
   letter-spacing: 0.06em; padding: 1px 6px; border-radius: 3px;
   border: 1px solid currentColor;
 }
-.sys-issue-reason { font-size: 12px; color: var(--text-secondary); }
-.sys-issue-freshness { font-size: 11px; color: var(--text-tertiary); }
+.sys-issue-reason { font-size: var(--fs-label); color: var(--text-secondary); }
+.sys-issue-freshness { font-size: var(--fs-label); color: var(--text-tertiary); }
 .sys-issue-none {
-  font-size: 13px; color: var(--text-tertiary); font-style: italic;
+  font-size: var(--fs-secondary); color: var(--text-tertiary); font-style: italic;
   padding: var(--detail-pad);
 }
 /* TD-067 holds here too: a degraded source is WATCH amber, never the pull-over
@@ -1042,7 +1070,7 @@ html, body {
 }
 /* US-509: the summary line only LOOKS like a control when it is one. */
 .sys-summary-tappable { cursor: pointer; }
-.sys-summary-chevron { font-size: 14px; color: var(--text-tertiary); }
+.sys-summary-chevron { font-size: var(--fs-secondary); color: var(--text-tertiary); }
 .sys-summary-tappable .sys-summary-detail { margin-left: auto; }
 
 /* --- US-407 DTC Clear (Mode-04) surface ------------------------------------ */
@@ -1059,7 +1087,7 @@ html, body {
 #dtc-clear-zone[hidden] { display: none; }
 #dtc-clear-btn {
   min-height: var(--tap-min); padding: 0 14px; align-self: flex-start;
-  font-size: 13px; font-weight: 700; cursor: pointer; border-radius: 4px;
+  font-size: var(--fs-secondary); font-weight: 700; cursor: pointer; border-radius: 4px;
   background: var(--surface); color: var(--green-ok);
   border: 1px solid var(--green-ok);
 }
@@ -1067,7 +1095,7 @@ html, body {
   cursor: not-allowed; color: var(--text-tertiary);
   border-color: var(--surface); font-weight: 400;
 }
-#dtc-clear-result { font-size: 12px; color: var(--text-secondary); }
+#dtc-clear-result { font-size: var(--fs-label); color: var(--text-secondary); }
 #dtc-clear-result[data-level="cleared"] { color: var(--green-ok); }
 /* US-488: a code that RE-SET after a clear is a hard fault (§4d) and stays
    BOLD, but the honest directive is "get diagnosed", not "pull over" -- the

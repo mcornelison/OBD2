@@ -62,6 +62,44 @@
      every test stayed green. The embedded face is the one face. */
   --font-display: "Oswald", "Arial Narrow", system-ui, sans-serif;
 
+  /* --- Type scale (US-539 / F-127) ----------------------------------------
+     THE five sizes this project has. Every `font-size` on every surface binds
+     one of these; a bare `px` in a stylesheet is drift, and 83 of them across
+     dashboard.css -- 15 distinct values, no scale, no rule about which to use
+     -- are how the 3.5" panel drifted illegible in the first place (F-127).
+     The tier is chosen by WHAT THE ELEMENT IS, never by what looked right in
+     one rule at one moment:
+
+       --fs-hero       the one glyph read mid-corner at a glance: the GEAR, the
+                       takeover code/icon, the STOP "PULL OVER" directive
+       --fs-primary    driver-must-read values + action bands: tile values, the
+                       DTC code, the detail directive, the summary verdict
+       --fs-secondary  body copy, card titles, buttons -- READ, not glanced
+       --fs-label      sub-labels, descriptions, chips, per-row detail
+       --fs-meta       de-emphasised micro-copy, honest to read PARKED only:
+                       version chip, uppercase field labels, axis furniture
+
+     VALUES BELOW ARE THE PRE-F-127 SHIPPED SCALE, not the legibility target.
+     US-539 is a PURE REFACTOR: it establishes the tokens + the wiring so the
+     legibility fix is ONE edit here instead of 83 scattered ones that drift
+     back. US-540-a sets the in-car values (hero 44 / primary 34 / secondary 26
+     / label 20 / meta 15) under the [EXACT:34]px driver-must-read floor --
+     do NOT set them here.
+
+     THE SCALE IS DESCENDING AND MUST STAY SO. Two safety hierarchies rest on
+     it: the STOP takeover directive is hero and outranks the base directive
+     (primary), and the DTC detail directive (primary) outranks its base copy
+     (secondary). Pinned by tests/ui/test_dashboard_type_scale.py, which also
+     compares these five values across BOTH files (the dist sheet MIRRORS this
+     block by hand -- dashboard.html links only that one sheet, and no rule may
+     pull a second stylesheet in: the kiosk is offline in the car, so the fetch
+     would fail in the one place that matters. See dashboard.css:54). */
+  --fs-hero:        40px;
+  --fs-primary:     20px;
+  --fs-secondary:   14px;
+  --fs-label:       12px;
+  --fs-meta:        10px;
+
   /* --- Base surfaces ------------------------------------------------------ */
   /* Atlas Rule-10 ruling 2026-07-31 (US-510/TD-065): PROMOTED from the
      dashboard.css:27-28 literals. Pure consolidation -- the values ARE the
