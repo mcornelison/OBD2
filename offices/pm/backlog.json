@@ -1,11 +1,11 @@
 {
   "schemaVersion": "2.0.0",
-  "lastUpdated": "2026-08-10",
+  "lastUpdated": "2026-08-11",
   "updatedBy": "Marcus (PM)",
   "counters": {
     "epic": 7,
     "feature": 131,
-    "story": 552
+    "story": 553
   },
   "epics": [
     {
@@ -8244,6 +8244,35 @@
       ],
       "createdAt": "2026-08-10",
       "updatedAt": "2026-08-10"
+    },
+    {
+      "id": "US-553",
+      "parent": "F-119",
+      "type": "issue",
+      "size": "S",
+      "status": "sprint-ready",
+      "priority": "P1",
+      "tier": "both",
+      "gate": "groom-ready",
+      "title": "Harden against the overlay-import P0: deploy clears stale .pyc + guard absolute self-imports",
+      "goal": "As a maintainer, I want the deploy to clear stale bytecode and a lint to catch absolute self-imports, so the class of P0 that took the server down (US-530 from common.config.overlay + a stale .pyc masking the fix) cannot recur.",
+      "definitionOfDone": [
+        "[from the 2026-08-11 P0: obd-server crash-loop, ModuleNotFoundError: No module named 'common'] deploy-server.sh (and deploy-pi.sh) clear stale __pycache__/.pyc on the target after rsync, so a fixed .py is never masked by old bytecode (this factor made the first redeploy of the fix still fail).",
+        "a lint/guard flags ABSOLUTE self-imports inside src/common -- an intra-package import written as 'from common.X import Y' (with the common. prefix) instead of relative 'from .X import Y'. The server runs PYTHONPATH=repo-root importing the package as src.common, so a bare top-level 'common' is not importable and the import dies at startup. Pairs with US-547 (placeholder lint) / US-543 (parity guard).",
+        "ruff clean"
+      ],
+      "validationCriteria": [
+        {
+          "action": "deploy a .py fix over a stale .pyc; and add an absolute  self-import",
+          "outcome": "the deploy clears the .pyc (fix takes effect); the lint flags the absolute self-import"
+        }
+      ],
+      "conditionalOutcomes": [],
+      "sourceRefs": [
+        "2026-08-11 P0 secrets_loader overlay import server outage"
+      ],
+      "createdAt": "2026-08-11",
+      "updatedAt": "2026-08-11"
     }
   ]
 }

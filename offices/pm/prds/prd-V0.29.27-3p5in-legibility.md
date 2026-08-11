@@ -1,6 +1,6 @@
 ---
-sprint: 72
-version: V0.29.27
+sprint: 74
+version: V0.29.29  # renumbered from V0.29.27 (deploys after V0.29.28); filename kept
 status: draft
 createdAt: 2026-08-08
 createdBy: Marcus (PM)
