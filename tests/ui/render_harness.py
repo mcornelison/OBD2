@@ -592,6 +592,39 @@ def runSplash(
     )
 
 
+def runShutdownSplash(
+    shutdownStates: list[Any],
+    pollJsPath: str | None = None,
+    markupPath: str | None = None,
+    rounds: int = 80,
+    emitIntervalMs: int = 500,
+) -> dict[str, Any]:
+    """Run the SHIPPED shutdown-state-poll.js against a shutdown-state sequence.
+
+    ``shutdownStates`` is the succession of payloads the ShutdownSequencer's
+    emit hook WRITES, one every ``emitIntervalMs``, while the closeout splash
+    reads on its own 250 ms cadence -- so a poll sees the last-written entry,
+    exactly as it would on the Pi. The final entry repeats. A ``None`` entry
+    models the state file being ABSENT, which is a materially different outcome
+    from a ``cancelled`` phase and is the pair I-043 could not tell apart.
+
+    Returns the settled outcome including ``terminalCause`` /
+    ``terminalRecord`` (the US-549 report) and the raw ``consoleLines``, which
+    are the same bytes that reach ``journalctl -u splash-grace.service``.
+    """
+    tree = parseMarkup(markupPath or os.path.join(SPLASH_DIR, "shutdown.html"))
+    return _runProbe(
+        "shutdown_probe.js",
+        {
+            "pollJsPath": pollJsPath or os.path.join(SPLASH_DIR, "shutdown-state-poll.js"),
+            "tree": bodyChildren(tree),
+            "shutdownStates": shutdownStates,
+            "rounds": rounds,
+            "emitIntervalMs": emitIntervalMs,
+        },
+    )
+
+
 def dashboardSurface(
     domTree: dict[str, Any],
     cssPath: str | None = None,

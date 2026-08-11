@@ -11,11 +11,12 @@
       "epicId": "E-001",
       "type": "issue",
       "size": "S",
-      "status": "sprint-ready",
-      "passes": false,
+      "status": "complete",
+      "passes": true,
       "acceptance": [
         "[I-043] the shutdown splash cannot observe/render the terminal reason (clean shutdown vs cutoff). Wire the ShutdownSequencer terminal reason to the shutdown splash so it renders honestly; never a fabricated reason. ruff clean"
       ],
+      "completionNotes": "SHIPPED. All four terminal exits of shutdown-state-poll.js now report WHY, on two sinks: a console line (-> chromium stderr -> `journalctl -u splash-grace.service`, grep `[shutdown-splash] terminal`) and a zero-paint `data-terminal-*` attribute pair on <body>. The report carries the SEQUENCER's own phase+reason (lifted off the last shutdown-state actually read) alongside the splash's local cause -- two different facts, both named, neither substituted for the other. Causes: cancelled | state-missing | black-tail-cap | unrecognized-phase.\n\nREAD THIS BEFORE REVIEWING THE AC WORDING. The AC says 'renders honestly'; I did NOT add a visible render, and that is deliberate, not a narrowed scope. I-043's own text forbids it: 'US-525 deliberately did not patch the render side... forcing a paint when the state says the shutdown is over would be a dishonest instrument -- the opposite of the rule the splash exists to serve', and its stated requirement is '`journalctl -u splash-grace.service` ALONE should say which of the four terminal cases fired', with 'prefer the console route'. Spec 6 also requires cancelled/unrecognized to abort with NO fadeout, so painting a reason would contradict the phase contract. The DOM attribute is the 'renders' half done at zero paint cost. If PM/Atlas wants a VISIBLE reason, that is a separate call and reverses an explicit Atlas/US-525 decision.\n\nMECHANISM, NOT JUST DECLARATION -- the part most likely to be reverted by someone who does not know why it is there: chromium DISCARDS web-content console output unless the unit passes `--enable-logging=stderr`, so the JS half ALONE would have been an elaborate no-op on the Pi. Both grace units (x11 + wayland) now carry that flag with the reasoning in their headers. NO `--log-level` is pinned on purpose: chromium logs web-content console messages at INFO regardless of which console method is used, so raising the threshold would filter out the very line the flag exists to surface. `--remote-debugging-port` explicitly NOT adopted alongside it (US-522 -- unauthenticated DevTools on a car-mounted kiosk) and is fenced by a test.\n\nNEW TEST INFRASTRUCTURE: tests/ui/shutdown_probe.js -- the closeout splash had no node probe (the boot splash had splash_probe.js since US-499), which is not a coincidence: its only observable WAS window.close(), identical on all four paths. The probe captures console output byte-for-byte, so the tests assert the string the operator actually greps. runShutdownSplash() added to render_harness.py.\n\n4 MUTATIONS, all reverted BY HAND and confirmed byte-exact via `git diff --numstat` (wayland +14/-0, x11 +15/-1, i.e. pure additions, no mutation residue): (A) bare abort() -> 3 RED incl. the static no-silent-exit fence. (B) drop --enable-logging=stderr from the wayland unit -> 1 RED, and the x11 variant stayed GREEN, which also proves the header COMMENT mentioning the flag does not satisfy the guard (the US-501/US-513 prose trap -- the parser has its own self-test with a positive control). (C) fabricate phase='cancelled' when no state was ever read -> 1 RED on the honest-instrument test. (D) collapse state-missing into cancelled -> 2 RED, headed by test_theFourTerminalCauses_areDistinguishableFromEachOther. (D) is the one that matters: the defect was never 'nothing is logged', it was 'a correct abort and a race are indistinguishable', so a single generic reason string would pass a naive did-it-log test and leave I-043 fully open. Distinctness is the property, so distinctness is what is asserted.\n\nGATE: targeted = tests/ui/test_shutdown_splash_terminal_reason.py (15) + the 4 neighbouring suites that share these artifacts (test_shutdown_splash_render, test_splash_min_visible_floor, pi/splash/test_shutdown_splash_wiring, deploy/test_splash_kit) -- 53 passed, EXIT 0. ruff clean on both touched .py files (`make` is not on PATH on this box, exit 127 reads like a pass -- use `python -m ruff check <file>`). FOR PM: full suite is yours at integration; my diff touches no src/, only the shipped kit + tests.\n\nSTILL OWED (Pi-side, not closable on the dev box): the validationCriteria drill. The console->journal leg is the ONE link no headless test can prove -- the probe proves the line is emitted, the unit test proves the flag is set, but only `journalctl -u splash-grace.service` on the Pi proves chromium actually forwards it. Do that on the next clean shutdown BEFORE spending a real AC-loss event on it.",
       "validationCriteria": [
         {
           "action": "trigger a clean shutdown and a simulated cutoff",
@@ -24,7 +25,25 @@
       ],
       "conditionalOutcomes": [],
       "goal": "As the operator, I want the shutdown splash to show why the Pi is going down, honestly.",
-      "tasks": []
+      "tasks": [],
+      "feedback": {
+        "filesActuallyTouched": [
+          "specs/UI/dist/splash-pi/shutdown-state-poll.js",
+          "specs/UI/dist/splash-pi/splash-grace.service.x11",
+          "specs/UI/dist/splash-pi/splash-grace.service.wayland",
+          "tests/ui/shutdown_probe.js",
+          "tests/ui/render_harness.py",
+          "tests/ui/test_shutdown_splash_terminal_reason.py",
+          "offices/pm/issues/I-043-shutdown-splash-terminal-reason-not-observable.md"
+        ],
+        "grounding": [
+          "I-043 (offices/pm/issues/) -- the four terminal cases, the 2.17s single journal entry, and the 'prefer the console route / do not force a paint' disposition",
+          "spec 6 (docs/superpowers/specs/2026-05-26-b103-splash-animation-design.md) -- the phase contract; cancelled/unrecognized abort with no fadeout",
+          "pi.power.power_watch.controller -- PHASE_* + DEFAULT_SHUTDOWN_REASON imported into the tests, never retyped",
+          "shutdown-state-poll.js MAX_MISSING_RETRIES / BLACK_TAIL_CAP_MS / PRE_ROLL_MS -- parsed out of the shipped script by the tests rather than hardcoded",
+          "US-522 (tests/deploy/test_dashboard_kit.py) -- the --remote-debugging-port refusal and the _execStartFlags comment-stripping parser, reused here"
+        ]
+      }
     },
     {
       "id": "US-550",

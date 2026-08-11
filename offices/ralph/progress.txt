@@ -2,3 +2,55 @@
 
 Fresh sprint. 4 stories: US-549 I-043 shutdown-splash reason, US-550 I-044 XDG_RUNTIME_DIR,
 US-543 A-4 parity guard (6-assertion contract), US-545 A-18 BT bond self-heal (+3 refinements).
+
+## 2026-08-10 - US-549 (Agent 1 / Session 1)
+Task: I-043 -- shutdown-splash terminal reason not observable
+
+### What was implemented:
+- All four terminal exits of the closeout splash now report WHY before
+  `window.close()`. They previously shared one silent `exitKiosk()`, so a
+  correct abort (power returned) and a cold-start race left identical journals.
+- Report = `{cause, phase, reason, painted, elapsedMs, polls}` on two sinks:
+  a console line (`[shutdown-splash] terminal <json>`) that reaches
+  `journalctl -u splash-grace.service`, and `data-terminal-cause` /
+  `data-terminal-record` attributes on `<body>` (zero paint -- an attribute,
+  not a node).
+- `cause` is one of `cancelled` / `state-missing` / `black-tail-cap` /
+  `unrecognized-phase` (why the RENDER stopped); `phase` + `reason` are lifted
+  verbatim off the last shutdown-state read (why the PI is going down). Never
+  read one? Both are `null`, not a plausible default.
+- Both grace units (x11 + wayland) now pass `--enable-logging=stderr`, without
+  which chromium discards the console line entirely.
+- No visible render added -- I-043 and spec §6 both forbid painting on the
+  abort paths. Reasoning recorded in sprint.json completionNotes.
+
+### Files changed:
+- Modified: `specs/UI/dist/splash-pi/shutdown-state-poll.js` (terminal-reason report; `abort(cause)`)
+- Modified: `specs/UI/dist/splash-pi/splash-grace.service.x11` (`--enable-logging=stderr` + why)
+- Modified: `specs/UI/dist/splash-pi/splash-grace.service.wayland` (same)
+- Created: `tests/ui/shutdown_probe.js` (node probe for the closeout splash; captures console)
+- Modified: `tests/ui/render_harness.py` (`runShutdownSplash()`)
+- Created: `tests/ui/test_shutdown_splash_terminal_reason.py` (15 tests)
+- Modified: `offices/pm/issues/I-043-...md` (Resolution: code-fixed, Pi leg owed)
+
+### Learnings for future iterations:
+- **Gotcha (the big one)**: a log line is not an observable until something
+  carries it. Chromium DISCARDS web-content console output unless the unit
+  passes `--enable-logging=stderr`. The JS half alone would have been a
+  perfect, fully-tested, completely inert fix. And the trap inside the trap:
+  do NOT pin `--log-level`. Chromium logs page-script console messages at INFO
+  regardless of the console method used, so `--log-level=2` looks like tasteful
+  noise reduction and silently filters out the only line you added the flag for.
+- **Pattern discovered**: when the defect is "N outcomes are indistinguishable",
+  assert DISTINCTNESS (a set of size N over N end-to-end scenarios), not
+  presence. A single generic reason string passes every did-it-log test while
+  leaving the issue completely open -- mutation (D) proved it.
+- **Pattern discovered**: a static guard whose flag also appears in the file's
+  own explanatory COMMENTS must parse, not substring-match -- and needs a
+  self-test with a positive control. Reused `_execStartFlags` from
+  test_dashboard_kit.py rather than writing a fourth copy.
+- **Gotcha**: `Glob` over this repo's root times out (20 s) on the SMB share;
+  `git ls-files | grep <pattern>` is instant and complete.
+- **Gotcha**: Bash tool rejects `${PIPESTATUS[0]}` ("Contains expansion") --
+  run the plain command and read the tool's own exit reporting.
+---

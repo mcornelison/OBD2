@@ -13,6 +13,17 @@
 #   asset) so the state server injects the token same-origin -- it never lands on
 #   disk. Requires eclipse-states-http.service. __PI_USER__ substituted by
 #   install.sh at install time (V-1).
+#
+# US-549 (I-043) -- `--enable-logging=stderr` is LOAD-BEARING, not a debug leftover.
+#   shutdown-state-poll.js logs its terminal reason to the console on every exit;
+#   chromium DISCARDS console output unless this flag is set, so without it the
+#   splash still exits silently and I-043 is unfixed. No `--log-level` is pinned:
+#   chromium logs web-content console messages at INFO regardless of the console
+#   method used, so raising the threshold would filter out the very line this
+#   unit exists to surface. The noise budget is a few seconds once per shutdown,
+#   unlike the long-running dashboard kiosk, which deliberately carries no
+#   logging flag. NOT adopted alongside it: `--remote-debugging-port` (US-522 --
+#   an unauthenticated page-control surface on a car-mounted kiosk).
 # ==============================================================================
 
 [Unit]
@@ -31,7 +42,10 @@ ExecStart=__CHROMIUM_BIN__ \
   --noerrdialogs --disable-infobars --hide-scrollbars \
   --autoplay-policy=no-user-gesture-required \
   --check-for-update-interval=31536000 \
+  --enable-logging=stderr \
   --user-data-dir=/tmp/splash-chromium-shutdown \
   http://127.0.0.1:9899/shutdown.html
 # Splash exits via its own JS calling window.close() on cancelled / poweroff /
 # the BLACK_TAIL 60s safety cap. No hardcoded sleep or external kill (D-3 lesson).
+# WHICH of those fired is logged -- grep `journalctl -u splash-grace.service` for
+# `[shutdown-splash] terminal` (US-549 / I-043).
