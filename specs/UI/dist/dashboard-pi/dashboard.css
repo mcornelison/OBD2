@@ -198,10 +198,17 @@ html, body {
   position: absolute; top: 28px; bottom: 24px; left: 0; right: 0;
   overflow: hidden;
 }
+/* US-537 (Atlas RCA #3): NO `will-change: transform` here. The track is a flex
+   row holding EVERY card side by side, so the hint promoted a full-width layer
+   to the compositor and held that backing store for the whole session -- idle,
+   parked, screen untouched. It was the one unconditionally always-on GPU cost in
+   this sheet, and auto-rotate's transform transition landed straight on top of
+   it (AllocateRingBuffer exhaustion -> the US-522 freeze). The transition below
+   still gets a compositor layer for the 0.25s it actually runs; that promotion
+   is the browser's to make and to release. */
 #track {
   display: flex; height: 100%;
   transition: transform 0.25s ease-out;
-  will-change: transform;
 }
 .card {
   flex: 0 0 100%; width: 100%; height: 100%;
@@ -573,7 +580,6 @@ html, body {
   padding: 2px 10px; box-sizing: border-box;
   font-size: 12px; font-weight: 700; letter-spacing: 0.03em;
   color: #fff; z-index: 9;
-  animation: ribbon-pulse 2s ease-in-out infinite;
 }
 #dtc-ribbon[data-level="stop"]    { background: var(--critical-red); color: #fff; }
 #dtc-ribbon[data-level="watch"]   { background: var(--amber-warn); color: #000; }
@@ -582,6 +588,16 @@ html, body {
 .ribbon-glyph { font-size: 13px; line-height: 1; flex: 0 0 auto; }
 .ribbon-text {
   flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* US-537: the pulse hangs off `[data-level]`, NOT off the base #dtc-ribbon rule.
+   carousel.js sets data-level and clears `hidden` together, and removes both
+   together (renderRibbon), so this runs exactly while a code is real. Before, the
+   animation was declared unconditionally and silenced only by the US-495
+   `[hidden] { display: none !important }` guard -- i.e. by the PAINT cascade, the
+   very race that let five overlays paint at once. Gate on the state, not on the
+   side effect of the state. */
+#dtc-ribbon[data-level] {
+  animation: ribbon-pulse 2s ease-in-out infinite;
 }
 /* Subtle pulse so a persistent alert never fades into chrome. */
 @keyframes ribbon-pulse {
@@ -744,6 +760,37 @@ html, body {
 .menu-status {
   margin-top: auto; font-size: 11px; color: var(--text-secondary);
   min-height: 14px;
+}
+
+/* --- US-532 Settings band (F-126, Iris Option B) ----------------------------
+   The band sits above .svc-row and is deliberately styled as its QUIETER
+   sibling: same row rhythm and the same tokens, but the controls carry no
+   destructive weight -- a preference toggle must not read like a service Stop.
+   Colours are tokens only (no literals), per the US-484-a token SSOT. */
+.set-row {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 2px 6px;
+  padding: 2px 0; border-bottom: 1px solid var(--surface);
+}
+.set-name { flex: 1 1 100%; font-size: 12px; color: var(--text-primary); }
+/* The honest apply-state ("applies on restart") + the transient save note. Kept
+   on its own line so a long note can never squeeze the controls off-screen. */
+.set-apply { flex: 1 1 auto; font-size: 10px; color: var(--text-secondary); }
+.set-controls { display: flex; gap: 4px; margin-left: auto; }
+.set-btn {
+  min-width: var(--tap-min); min-height: var(--tap-min);
+  padding: 0 8px; font-size: 11px; cursor: pointer;
+  background: var(--surface); color: var(--text-secondary);
+  border: 1px solid var(--surface); border-radius: 4px;
+}
+/* The stored choice. Signalled by BORDER + WEIGHT as well as colour: this panel
+   is read at a glance in daylight, and an UNKNOWN setting selects nothing at
+   all -- so "which one is on?" must not rest on a hue alone. */
+.set-btn[aria-pressed="true"] {
+  color: var(--text-primary); font-weight: 700;
+  border: 1px solid var(--green-ok);
+}
+.settings-foot {
+  margin: 2px 0 0; font-size: 10px; color: var(--text-tertiary);
 }
 
 /* --- US-403 confirm modal (F-6 confirm-before-consequential) ---------------- */

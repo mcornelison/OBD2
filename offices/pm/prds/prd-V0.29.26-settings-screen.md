@@ -4,14 +4,14 @@ version: V0.29.26
 status: draft
 createdAt: 2026-08-03
 createdBy: Marcus (PM)
-selectedStories: [US-530, US-531, US-532, US-533]
+selectedStories: [US-530, US-531, US-532, US-533, US-536, US-537]
 forksFrom: dev @ (recorded at prd_to_sprint.py conversion; forks from dev AFTER V0.29.25)
 sprintJsonPath: offices/ralph/sprint.json
 epics: E-001 (UI/UX Polish)
 features: F-126 (Pi settings screen -- config-backed toggles via a Pi-local overlay)
 theme: "Pi Settings screen -- Slice 1. First surface that ties the dashboard to config as its data source: 5 user-facing toggles persisted to a Pi-local OVERLAY (config.json stays the read-only shipped default; deploy-preserved so toggles survive deploys). CIO-designed 2026-08-03. DEFERRED (backlog, pending): Battery/Power Test action (Spool), System Settings/Updates (own epic)."
-atlasReview: "PENDING. Design-gate items: (1) US-530 overlay contract -- the Pi-local overlay file shape + layered read (config.json default <- overlay override) + the overridable-key ALLOW-LIST; this is a load-bearing config/SSOT seam. (2) US-531 write-endpoint seam on states_http_server -- MUST stay token-gated (US-393 SSOT token; US-525 ruling: never weaken _tokenOk / TD-067)."
-irisReview: "PENDING. US-532 screen UX -- Settings card presentation + reconciliation with the existing US-403 setup menu (card vs menu-reachable vs both; confirm with CIO)."
+atlasReview: "PASS 2026-08-03 (design gate). Foundation sound; 3 US-530 gaps FOLDED: (1) drop 'applies LIVE' -- auto-rotate needs an eclipse-states-http bounce, labeled honestly (US-533); (2) ONE shared resolveEffectiveConfig SSOT utility both readers call (A-4); (3) use existing autoRotateS not a new bool + default OFF per disposition-B. US-531 token-gate CONFIRMED. Freeze disposition B ruled: keep GPU, revert US-522 --disable-gpu, autoRotateS:0 default (US-536); animation-gating = toggle-safety prereq (US-537)."
+irisReview: "DELIVERED 2026-08-03. Option B (CIO-refined): a Settings BAND inside the existing US-403 setup-menu overlay (not a separate carousel card) + honest save flow. Design: offices/uidevloper/proposals/2026-08-03-f126-settings-screen-us532.{md,html}. Folded into US-532."
 ---
 
 # PRD: V0.29.26 -- Pi Settings screen (Slice 1)

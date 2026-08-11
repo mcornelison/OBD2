@@ -59,11 +59,24 @@ _CONFIG = os.path.join(os.path.dirname(__file__), "..", "..", "config.json")
 # The grounded defaults (config.json pi.display.carousel -- mirrored by
 # CAROUSEL_DEFAULTS in carousel.js). Named here so a test that changes meaning
 # when a threshold is retuned fails on the VALUE, not silently on the feel.
+#
+# US-548: `_AUTO_ROTATE_S` used to carry THREE different facts at once, and
+# US-536 split them apart by changing exactly one. It is (a) carousel.js's
+# CAROUSEL_DEFAULTS fallback, (b) an arbitrary sample interval for the
+# shouldAutoAdvance/rotateProgress model tests, and (c) the value config.json
+# ships. Only (c) moved -- to 0, i.e. auto-rotate OFF by default (US-536 AC-2,
+# the durable freeze fix). Repointing the one constant would have broken the
+# six model assertions, where a non-positive interval means "disabled" and
+# cannot stand in for a sample period. So the shipped default gets its own name.
 _AUTO_ROTATE_S = 8
 _RESUME_IDLE_S = 45
 _SWIPE_MIN_PX = 40
 _FAST_V_PX_PER_MS = 0.6
 _FAST_TRAVEL_FRAC = 0.55
+
+# Fact (c): what config.json SHIPS for autoRotateS, as distinct from the
+# carousel.js fallback above. 0 = auto-rotate off out of the box (US-536).
+_SHIPPED_AUTO_ROTATE_S = 0
 
 # The design-box card width the travel fraction is measured against (STAGE_W).
 _CARD_W = 480
@@ -339,11 +352,22 @@ def test_resolveCarouselConfig_ignoresUnknownKeys():
 
 def test_configJson_carriesTheCarouselSection():
     """The tuning SSOT: the values the display resolves must exist in config.json,
-    or 'it is a config parameter' is a claim with nothing behind it."""
+    or 'it is a config parameter' is a claim with nothing behind it.
+
+    US-548 -- READ THIS BEFORE TRUSTING THE GREEN. `autoRotateS` is asserted here
+    against `_SHIPPED_AUTO_ROTATE_S` (0) rather than the carousel.js fallback,
+    because US-536 AC-2 ships auto-rotate OFF. This test pins WHAT CONFIG.JSON
+    CONTAINS. It does NOT prove the display honours it, and right now the display
+    does not: `resolveCarouselConfig` accepts an injected override only when
+    `v > 0` (carousel.js:218), so the shipped 0 is rejected as unusable and falls
+    back to CAROUSEL_DEFAULTS.autoRotateS = 8. Filed as
+    offices/pm/issues/I-us536-shipped-autorotates-zero-is-rejected-by-resolver.md
+    -- do not "fix" that by relaxing this assertion.
+    """
     with open(_CONFIG, encoding="utf-8") as fh:
         config = json.load(fh)
     carousel = config["pi"]["display"]["carousel"]
-    assert carousel["autoRotateS"] == _AUTO_ROTATE_S
+    assert carousel["autoRotateS"] == _SHIPPED_AUTO_ROTATE_S
     assert carousel["resumeIdleS"] == _RESUME_IDLE_S
     assert carousel["swipeMinPx"] == _SWIPE_MIN_PX
     assert carousel["swipeFastVelocityPxPerMs"] == _FAST_V_PX_PER_MS

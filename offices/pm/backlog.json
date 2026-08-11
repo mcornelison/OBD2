@@ -1,11 +1,11 @@
 {
   "schemaVersion": "2.0.0",
-  "lastUpdated": "2026-08-03",
+  "lastUpdated": "2026-08-10",
   "updatedBy": "Marcus (PM)",
   "counters": {
     "epic": 7,
-    "feature": 126,
-    "story": 535
+    "feature": 131,
+    "story": 552
   },
   "epics": [
     {
@@ -1295,6 +1295,57 @@
       "description": "A Settings card on the Pi carousel exposing user-facing config toggles, persisted to a Pi-local OVERLAY file (gitignored, deploy-preserved) that layers over config.json (config.json stays the read-only shipped default; deploy never clobbers user choices). First surface tying the dashboard to config as its data source. CIO 2026-08-03. Slice 1 = 5 config toggles + overlay. DEFERRED: Battery/Power Test action (Spool), System Settings/Updates (own epic).",
       "createdAt": "2026-08-03",
       "updatedAt": "2026-08-03"
+    },
+    {
+      "id": "F-127",
+      "parent": "E-001",
+      "status": "active",
+      "title": "Pi 3.5in legibility + card-set overhaul",
+      "description": "CIO: fonts on the 3.5in panel are 2-4x too small to read at arm's length in the car (Iris arithmetic: ~165 PPI, glance floor ~34px; shipped values 13-15px). Fix = a type SCALE (tokens) + larger tiles + fewer facts/card, which pushes the card set back UP (partly reverses US-507/508's 6->4 consolidation -- legibility outranks screen count on a 3.5in panel). Iris-designed 2026-08-07/08 (CIO-reviewed); Atlas design-gates the structural parts (screen-count, US-482 stage, cross-card content moves, IMU-always-on).",
+      "createdAt": "2026-08-08",
+      "updatedAt": "2026-08-08"
+    },
+    {
+      "id": "F-128",
+      "parent": "E-002",
+      "status": "active",
+      "title": "Server-side drive re-segmentation authority (A-9 recovery)",
+      "description": "Move drive-boundary segmentation authority server-side so a DriveDetector regression is RECOVERED (re-derived from raw realtime_data), not just flagged by the detect_overlapping_drives tripwire. B-104-aligned. Atlas 2026-08-10 backlog-review addition.",
+      "createdAt": "2026-08-10",
+      "updatedAt": "2026-08-10"
+    },
+    {
+      "id": "F-129",
+      "parent": "E-001",
+      "status": "pending",
+      "title": "Engine card -- MAF centerpiece + live vitals (W-16 P2)",
+      "description": "Dedicated Engine dashboard card: MAF arc gauge (the 4G63 is MAF-based -- MAF replaces the dead boost/MAP) + RPM/coolant/intake-air/throttle/load + STFT/LTFT + closed/open-loop + voltage(ATRV). Display-only consumer of existing OBD state; Spool gate CLEARED. Bake the ~2.5s-per-PID step (no animated needles) + the LTFT-idle no-colour rule into acceptance. V0.30 lead feature.",
+      "priority": "P2",
+      "tier": "pi",
+      "createdAt": "2026-08-10",
+      "updatedAt": "2026-08-10"
+    },
+    {
+      "id": "F-130",
+      "parent": "E-002",
+      "status": "pending",
+      "title": "Post-drive review -- server-analytics drive summary (W-16 P3)",
+      "description": "Server-tier post-drive summary from already-logged data: airflow/effort trace, g-trace, corner-lean, grade profile. Slow K-line irrelevant here (a 22-min trace reads fine at 0.4Hz; IMU 100Hz). Needs an Atlas analytics-surface contract. The deliberate ON-RAMP to E-003 Tuning Intelligence (V0.31).",
+      "priority": "P3",
+      "tier": "server",
+      "createdAt": "2026-08-10",
+      "updatedAt": "2026-08-10"
+    },
+    {
+      "id": "F-131",
+      "parent": "E-001",
+      "status": "pending",
+      "title": "Eclipse attitude indicator card (W-16 P4)",
+      "description": "Aircraft gyro-horizon mapped to the car: pitch->road grade, bank->body lean; round bezel, pitch ladder, bank scale, 2G GST rear-view silhouette reference, slip/skid ball as a lateral-g meter. Design-done + CIO-iterated. Gate: expose roll + yawRate in states/imu (small; gradePct/pitch already in Atlas's contract). Fun/low priority.",
+      "priority": "P4",
+      "tier": "pi",
+      "createdAt": "2026-08-10",
+      "updatedAt": "2026-08-10"
     }
   ],
   "stories": [
@@ -1455,8 +1506,11 @@
       ],
       "tasks": [],
       "createdAt": "2026-05-28",
-      "updatedAt": "2026-06-19",
-      "deferredNote": "Deferred from Sprint 43 (passes=False). Option-(c) code preserved at tag us-370-option-c-preserved; frozen-criterion-conflict -> patch-sprint unfreeze path."
+      "updatedAt": "2026-08-10",
+      "deferredNote": "Deferred from Sprint 43 (passes=False). Option-(c) code preserved at tag us-370-option-c-preserved; frozen-criterion-conflict -> patch-sprint unfreeze path.",
+      "priority": "P2",
+      "tier": "server",
+      "gate": "groom-ready"
     },
     {
       "id": "US-379",
@@ -4067,13 +4121,16 @@
       "conditionalOutcomes": [],
       "tasks": [],
       "createdAt": "2026-07-03",
-      "updatedAt": "2026-07-03",
+      "updatedAt": "2026-08-10",
       "metaBackfill": {
         "backfilledAt": "2026-07-13",
         "statusSource": "preserved-existing",
         "dateSource": "proxy:git-first-appearance",
         "note": "US-465 metadata-drift repair; dates proxy-derived, not exact."
-      }
+      },
+      "priority": "P2",
+      "tier": "pi",
+      "gate": "deferred (F-104 gate)"
     },
     {
       "id": "US-447",
@@ -4918,7 +4975,10 @@
       "tasks": [],
       "status": "sprint-ready",
       "createdAt": "2026-07-15",
-      "updatedAt": "2026-07-15"
+      "updatedAt": "2026-08-10",
+      "priority": "P2",
+      "tier": "infra",
+      "gate": "groom-ready"
     },
     {
       "id": "US-473",
@@ -4952,7 +5012,10 @@
       "tasks": [],
       "status": "sprint-ready",
       "createdAt": "2026-07-15",
-      "updatedAt": "2026-07-15"
+      "updatedAt": "2026-08-10",
+      "priority": "P1",
+      "tier": "pi",
+      "gate": "after OS rename (B-102 static-IP; CIO wants)"
     },
     {
       "id": "US-474",
@@ -5074,8 +5137,11 @@
       "tasks": [],
       "status": "pending",
       "createdAt": "2026-07-19",
-      "updatedAt": "2026-07-20",
-      "shelveNote": "SHELVED per CIO 2026-07-20: the OBDLink BT adapter works fine; the dongle-catatonia / pair-script-dead 'errors' were architect hallucinations. Archaeology confirms the BT LINK code was never the regression (US-441/A-17/US-432 changed nothing in connect/rfcomm/pairing; a raw read got 6/6 live RPM on the same MAC). The bond persists across reboots (Session 23) so re-pairing is rarely needed. Revisit ONLY if a real re-pair failure is observed on the Pi."
+      "updatedAt": "2026-08-10",
+      "shelveNote": "SHELVED per CIO 2026-07-20: the OBDLink BT adapter works fine; the dongle-catatonia / pair-script-dead 'errors' were architect hallucinations. Archaeology confirms the BT LINK code was never the regression (US-441/A-17/US-432 changed nothing in connect/rfcomm/pairing; a raw read got 6/6 live RPM on the same MAC). The bond persists across reboots (Session 23) so re-pairing is rarely needed. Revisit ONLY if a real re-pair failure is observed on the Pi.",
+      "priority": "P2",
+      "tier": "pi",
+      "gate": "groom-ready"
     },
     {
       "id": "US-477",
@@ -6700,7 +6766,7 @@
       "parent": "F-125",
       "type": "normal",
       "size": "L",
-      "status": "pending",
+      "status": "superseded",
       "title": "WP-1: GPS reader -> states/gps source (real altitude/speed/heading) -- HARDWARE TBD (not ordered)",
       "goal": "As the live card, I want a real GPS source publishing states/gps, so altitude/speed/heading come from an absolute sensor instead of a derived estimate.",
       "definitionOfDone": [
@@ -6719,7 +6785,8 @@
       ],
       "conditionalOutcomes": [
         "if Atlas's contract shapes the fields differently, bind to the ruled contract",
-        "PARKED per CIO 2026-08-03 (via Iris): hold GPS module + baro -- stabilize/validate what is built before adding hardware. Do NOT build the states/gps reader. Derived IMU+OBD altitude (US-517/518/519/520) is now THE altitude path, not interim-until-GPS. Moots the 746-vs-PA1010D module question."
+        "PARKED per CIO 2026-08-03 (via Iris): hold GPS module + baro -- stabilize/validate what is built before adding hardware. Do NOT build the states/gps reader. Derived IMU+OBD altitude (US-517/518/519/520) is now THE altitude path, not interim-until-GPS. Moots the 746-vs-PA1010D module question.",
+        "SUPERSEDED 2026-08-10: split into smaller items (US-516-a/-b...) per CIO 'no large items'."
       ],
       "deps": [
         "ATLAS-states-gps-contract"
@@ -6731,8 +6798,11 @@
         "states/imu (DELTA-2 seam precedent)"
       ],
       "createdAt": "2026-08-01",
-      "updatedAt": "2026-08-03",
-      "tasks": []
+      "updatedAt": "2026-08-10",
+      "tasks": [],
+      "priority": "P4",
+      "tier": "pi",
+      "gate": "HARDWARE parked (GPS not ordered)"
     },
     {
       "id": "US-517",
@@ -6827,8 +6897,11 @@
         "Spool interim-grade-speed-altitude ruling"
       ],
       "createdAt": "2026-08-01",
-      "updatedAt": "2026-08-01",
-      "tasks": []
+      "updatedAt": "2026-08-10",
+      "tasks": [],
+      "priority": "P3",
+      "tier": "pi",
+      "gate": "Spool sigma-sizing"
     },
     {
       "id": "US-520",
@@ -6860,8 +6933,11 @@
         "F-124"
       ],
       "createdAt": "2026-08-01",
-      "updatedAt": "2026-08-01",
-      "tasks": []
+      "updatedAt": "2026-08-10",
+      "tasks": [],
+      "priority": "P3",
+      "tier": "pi",
+      "gate": "US-519 first"
     },
     {
       "id": "US-521",
@@ -6902,7 +6978,7 @@
       "parent": "F-124",
       "type": "issue",
       "size": "S",
-      "status": "sprint-ready",
+      "status": "complete",
       "title": "Kiosk GPU-raster fix -- drop --enable-gpu-rasterization to kill the freeze class",
       "goal": "As the operator, I want the Pi dashboard to never freeze under sustained use, so the display stays live during a drive instead of wedging silently.",
       "definitionOfDone": [
@@ -6932,7 +7008,7 @@
         "offices/pm/inbox/2026-08-02-from-atlas-pi-ui-freeze-gpu-hotloop-fix-routing.md"
       ],
       "createdAt": "2026-08-02",
-      "updatedAt": "2026-08-03",
+      "updatedAt": "2026-08-10",
       "passes": false
     },
     {
@@ -6940,7 +7016,7 @@
       "parent": "F-124",
       "type": "normal",
       "size": "M",
-      "status": "sprint-ready",
+      "status": "complete",
       "title": "Kiosk watchdog -- auto-restart eclipse-dashboard when the renderer wedges",
       "goal": "As the operator, I want the kiosk to recover itself if the renderer ever wedges, so the display never stays silently frozen (honest-instrument).",
       "definitionOfDone": [
@@ -6961,14 +7037,14 @@
         "offices/architect/findings/2026-08-02-pi-ui-freeze-chromium-gpu-command-buffer-hotloop.md"
       ],
       "createdAt": "2026-08-02",
-      "updatedAt": "2026-08-02"
+      "updatedAt": "2026-08-10"
     },
     {
       "id": "US-524",
       "parent": "F-124",
       "type": "normal",
       "size": "S",
-      "status": "sprint-ready",
+      "status": "complete",
       "title": "Raise Pi GPU CMA to 256M -- headroom complementing the raster fix",
       "goal": "As the operator, I want more GPU command-buffer headroom on the Pi, so the compositor has margin under sustained animated use.",
       "definitionOfDone": [
@@ -6988,14 +7064,14 @@
         "offices/architect/findings/2026-08-02-pi-ui-freeze-chromium-gpu-command-buffer-hotloop.md"
       ],
       "createdAt": "2026-08-02",
-      "updatedAt": "2026-08-02"
+      "updatedAt": "2026-08-10"
     },
     {
       "id": "US-525",
       "parent": "F-103",
       "type": "issue",
       "size": "M",
-      "status": "sprint-ready",
+      "status": "complete",
       "title": "Splash render fix -- boot splash visibility + shutdown-splash 401 route",
       "goal": "As the operator, I want to see the boot and shutdown splash, so the Pi shows an honest brand + boot/shutdown state instead of a blank hand-off.",
       "definitionOfDone": [
@@ -7020,14 +7096,14 @@
         "offices/architect/inbox/2026-08-02-from-marcus-v0.29.24-splash-freeze-diagnostics-handoff.md"
       ],
       "createdAt": "2026-08-02",
-      "updatedAt": "2026-08-02"
+      "updatedAt": "2026-08-10"
     },
     {
       "id": "US-526",
       "parent": "F-123",
       "type": "issue",
       "size": "M",
-      "status": "sprint-ready",
+      "status": "complete",
       "title": "US-504a production drain-event writer (battery_health_log grows again)",
       "goal": "As the operator, I want battery_health_log to gain real rows from actual drains, so the Health verdict can leave 'unknown' honestly.",
       "definitionOfDone": [
@@ -7053,14 +7129,14 @@
         "offices/pm/inbox/2026-08-02-from-ralph-us504-carved-504a-writer-504b-producer.md"
       ],
       "createdAt": "2026-08-02",
-      "updatedAt": "2026-08-02"
+      "updatedAt": "2026-08-10"
     },
     {
       "id": "US-527",
       "parent": "F-123",
       "type": "tech-debt",
       "size": "S",
-      "status": "sprint-ready",
+      "status": "complete",
       "title": "US-504b verdict band-remap to the depth gate (degraded/replace reachable)",
       "goal": "As the operator, I want the battery Health verdict to actually report degraded/replace, so it fails toward honesty instead of only ever showing good/unknown.",
       "definitionOfDone": [
@@ -7082,14 +7158,14 @@
         "offices/pm/tech_debt/TD-074-us504b-verdict-band-remap-rides-us504a.md"
       ],
       "createdAt": "2026-08-02",
-      "updatedAt": "2026-08-02"
+      "updatedAt": "2026-08-10"
     },
     {
       "id": "US-528",
       "parent": "F-123",
       "type": "issue",
       "size": "S",
-      "status": "sprint-ready",
+      "status": "complete",
       "title": "I-041 fix -- system_status_emitter exact-shape tests + pin lastDrive always-present",
       "goal": "As a maintainer, I want the system-status exact-shape guard green and the lastDrive contract pinned, so the schema stays honest.",
       "definitionOfDone": [
@@ -7108,14 +7184,14 @@
         "offices/pm/issues/I-041-us505-broke-system-status-exact-shape-tests.md"
       ],
       "createdAt": "2026-08-02",
-      "updatedAt": "2026-08-02"
+      "updatedAt": "2026-08-10"
     },
     {
       "id": "US-529",
       "parent": "F-119",
       "type": "housekeeping",
       "size": "S",
-      "status": "sprint-ready",
+      "status": "complete",
       "title": "TD-073 fix -- ralph promise-tag contract (prompt.md <-> ralph.sh)",
       "goal": "As a maintainer, I want prompt.md and ralph.sh to document the same promise tags, so the FAST lint suite stays green and sprint-close is not gated by drift.",
       "definitionOfDone": [
@@ -7134,57 +7210,58 @@
         "offices/pm/tech_debt/TD-073-ralph-promise-tag-contract-drift.md"
       ],
       "createdAt": "2026-08-02",
-      "updatedAt": "2026-08-02"
+      "updatedAt": "2026-08-10"
     },
     {
       "id": "US-530",
       "parent": "F-126",
       "type": "normal",
       "size": "M",
-      "status": "sprint-ready",
+      "status": "passed",
       "title": "Config overlay persistence + layered read (config.json default <- Pi-local overlay override)",
       "goal": "As the operator, I want my Pi settings to survive deploys, so a toggle I set on the Pi is not wiped the next time code ships.",
       "definitionOfDone": [
-        "[ATLAS DESIGN-GATE -- load-bearing config/SSOT seam] introduce a Pi-local OVERLAY file (gitignored, added to deploy-pi.sh rsync excludes like .env so deploy never clobbers it) that layers OVER config.json: read path resolves effective value = overlay-override ELSE config.json default. config.json stays the read-only shipped default; nothing writes config.json at runtime. Atlas designs the overlay file shape + the overridable-key ALLOW-LIST (only the settings-screen keys may be overridden -- not arbitrary config)",
-        "the overridable-key allow-list for Slice 1 is exactly: pi.display.carousel.autoRotate, pi.power.mode, pi.alerts.audioAlerts, pi.calibration.mode, pi.analysis.triggerAfterDrive",
-        "honest-instrument: a malformed/absent overlay resolves to the config.json default, never a guessed value; an overlay key outside the allow-list is ignored + logged, never applied",
-        "add pi.display.carousel.autoRotate (bool, default true) to config.json defaults + validator; autoRotateS remains the interval",
-        "test proves: overlay override wins over default; absent overlay -> default; out-of-allow-list key rejected; deploy-exclude keeps the overlay across an rsync; ruff clean"
+        "[ATLAS DESIGN-GATE -- load-bearing config/SSOT seam] introduce a Pi-local OVERLAY file (gitignored, added to deploy-pi.sh rsync excludes like .env so deploy never clobbers it) that layers OVER config.json: effective = overlay-override ELSE config.json default. config.json stays read-only shipped default; nothing writes config.json at runtime",
+        "[GAP 2 -- A-4 SSOT, Atlas] the overlay merge is ONE shared utility in src/common/config/ (e.g. resolveEffectiveConfig(base, overlay, allowlist)) that BOTH config readers call -- the orchestrator loadConfigWithSecrets AND states_http_server._loadDisplaySection (which reads config.json directly). Effective config MUST be identical for every consumer (avoids the A-4 divergence). Allow-list enforced at BOTH read (overlay keys outside the allow-list ignored + logged) AND write (US-531 endpoint) = defense-in-depth",
+        "[GAP 3a -- one key one truth, Atlas] do NOT mint a new pi.display.carousel.autoRotate bool. The overlay stores the EXISTING pi.display.carousel.autoRotateS (seconds; 0=off, >0=on). The UI toggle derives on/off from autoRotateS>0 (off writes 0, on writes the shipped interval)",
+        "overridable-key allow-list (Slice 1): pi.display.carousel.autoRotateS, pi.power.mode, pi.alerts.audioAlerts, pi.calibration.mode, pi.analysis.triggerAfterDrive. pi.power.mode overlay value MUST validate to {car,wall,unknown} -- invalid -> unknown (honest-unknown contract), never a confident wrong mode",
+        "honest-instrument: malformed/absent overlay -> config.json default, never a guessed value; out-of-allow-list key ignored + logged",
+        "test proves: overlay override wins over default via the SHARED resolver for BOTH read paths; absent overlay -> default; out-of-allow-list key rejected; autoRotateS 0<->interval round-trips; deploy-exclude keeps the overlay across an rsync; ruff clean"
       ],
       "validationCriteria": [
         {
-          "action": "set an overlay override for pi.display.carousel.autoRotate=false on the Pi, then run a deploy, then read the effective value",
-          "outcome": "effective value stays false after the deploy (overlay preserved + wins over the shipped default)"
+          "action": "set an overlay override autoRotateS=0 on the Pi, run a deploy, then read the effective value via BOTH the orchestrator and the state server",
+          "outcome": "both readers return 0 after the deploy (overlay preserved + wins for every consumer -- no divergence)"
         }
       ],
       "conditionalOutcomes": [
-        "Atlas rules the overlay file shape + layering seam + allow-list mechanism before build; this is a load-bearing config/SSOT change (design gate)"
+        "Atlas ruled the overlay contract sound 2026-08-03 (3 gaps folded). resolveEffectiveConfig is the single seam; do not merge the overlay per-reader."
       ],
       "sourceRefs": [
         "CIO 2026-08-03 settings-screen brainstorm"
       ],
       "createdAt": "2026-08-03",
-      "updatedAt": "2026-08-03"
+      "updatedAt": "2026-08-10"
     },
     {
       "id": "US-531",
       "parent": "F-126",
       "type": "normal",
       "size": "M",
-      "status": "sprint-ready",
+      "status": "passed",
       "title": "Token-gated settings write endpoint on states_http_server (writes the overlay)",
       "goal": "As the operator, I want the settings screen to save my toggles, so tapping a toggle persists it -- without opening any un-gated write surface on the Pi.",
       "definitionOfDone": [
-        "[ATLAS SEAM] add a WRITE endpoint on states_http_server that accepts a setting change (allow-listed key + value) and writes it to the US-530 overlay. The kiosk is chromium JS + cannot write files, so the toggle POSTs here",
-        "[SECURITY -- Atlas US-525 ruling stands] the write endpoint is TOKEN-GATED with the same US-393 SSOT token as the served pages; NEVER weaken or bypass _tokenOk, never expose an un-authenticated write (weakening the gate = Atlas BLOCK / TD-067)",
-        "the endpoint validates the key against the US-530 allow-list + the value type (bool for toggles; car|wall|unknown for pi.power.mode); rejects anything else with an honest error, writes nothing on reject",
-        "honest-instrument: on a write failure the endpoint returns failure so the UI can reflect the REAL stored value, never an optimistic success",
-        "test proves: authenticated allow-listed write persists to the overlay; un-authenticated write is rejected; out-of-allow-list key/invalid value rejected with no write; ruff clean"
+        "[ATLAS SEAM -- CONFIRMED] add a THIRD token-gated POST route on states_http_server following the existing US-403/US-407 pattern exactly (if not self._tokenOk(): 401). The kiosk is chromium JS + cannot write files, so a toggle POSTs here to write the US-530 overlay",
+        "[SECURITY -- Atlas US-525 ruling] token-gated with the US-393 SSOT token; NEVER weaken/bypass _tokenOk, no un-authenticated write surface (= TD-067 / Atlas BLOCK)",
+        "validates the key against the US-530 allow-list + the value type (numeric for autoRotateS; bool for the 3 toggles; {car,wall,unknown} for pi.power.mode); out-of-allow-list/invalid -> 4xx, NO write",
+        "atomic overlay write (temp + rename); honest response -- return the REAL stored effective value, never optimistic success",
+        "test proves: authenticated allow-listed write persists to the overlay; un-authenticated write rejected; out-of-allow-list/invalid rejected with no write; ruff clean"
       ],
       "validationCriteria": [
         {
           "action": "POST an allow-listed setting change with the token, then without the token",
-          "outcome": "with token -> overlay updated + success; without token -> 401/reject + overlay unchanged"
+          "outcome": "with token -> overlay updated + real effective value returned; without token -> 401 + overlay unchanged"
         }
       ],
       "conditionalOutcomes": [],
@@ -7192,72 +7269,75 @@
         "offices/pm/inbox/2026-08-02-from-atlas-v0.29.25-prd-review.md (US-525 token-gate ruling)"
       ],
       "createdAt": "2026-08-03",
-      "updatedAt": "2026-08-03"
+      "updatedAt": "2026-08-10"
     },
     {
       "id": "US-532",
       "parent": "F-126",
       "type": "normal",
       "size": "M",
-      "status": "sprint-ready",
-      "title": "Settings carousel card UI (Iris) -- renders the 5 settings + current effective values",
+      "status": "passed",
+      "title": "Settings UI -- Option B settings band inside the setup-menu overlay (Iris design)",
       "goal": "As the operator, I want a Settings screen on the dashboard where I can see and change my preferences at a glance.",
       "definitionOfDone": [
-        "[IRIS UX] a new Settings card in the carousel (a swipe-to system screen, like System Status) rendering the 5 Slice-1 settings with their CURRENT EFFECTIVE values (read via the US-530 layered read, surfaced through the state server)",
-        "[IRIS] reconcile with the existing US-403 setup menu (the kebab/long-press service-control overlay) -- Iris decides whether Settings is a card, is reachable from the setup menu, or both; no duplicate/competing surfaces",
-        "each control shows the real current value (toggle position / car|wall|unknown selection) sourced from the effective config, not a hardcoded default",
-        "honest apply-state: where a setting applies live it reflects immediately; where it needs a service restart to take effect, the card says so plainly (never a silent no-op that looks applied)",
-        "styling matches the F-124 carousel design system (tokens, Oswald wordmark); test/probe proves the card renders the 5 controls with effective values; ruff/lint clean"
+        "[IRIS DESIGN -- Option B, CIO-refined] implement Iris's delivered design (offices/uidevloper/proposals/2026-08-03-f126-settings-screen-us532.md (+ .html)): a Settings BAND inside the EXISTING US-403 setup-menu overlay (NOT a separate carousel card), with the honest save flow + setup-menu reconciliation she specified",
+        "renders the 4 Slice-1 settings (audioAlerts dropped per CIO B2) with their CURRENT EFFECTIVE values (read via the US-530 shared resolver, surfaced through the state server): auto-rotate (derived from autoRotateS>0), power mode (car/wall/unknown), audio alerts, calibration mode, auto-analyze after drive",
+        "honest save flow (per Iris): each control writes via the US-531 token-gated endpoint; on write failure the control reflects the REAL stored value, never an optimistic success; where a change needs a service restart to apply it is labeled plainly (NOT a silent no-op)",
+        "matches the F-124 carousel design system (tokens, Oswald wordmark); test/probe proves the band renders the 4 controls with effective values inside the setup-menu overlay; ruff/lint clean"
       ],
       "validationCriteria": [
         {
-          "action": "on the Pi, swipe to (or open) the Settings screen and read the 5 controls",
-          "outcome": "each shows its real current effective value; the screen matches the carousel design system"
+          "action": "open the setup-menu overlay on the Pi and view the Settings band",
+          "outcome": "the band shows the 5 controls with real effective values, matching Iris's Option-B design + the honest save flow"
         }
       ],
       "conditionalOutcomes": [
-        "Iris owns the screen shape + US-403 reconciliation; confirm the card-vs-menu presentation with the CIO in her design"
+        "Iris design delivered 2026-08-03 (Option B, CIO-refined). Build to her deliverable; route any UX ambiguity back to Iris."
       ],
       "sourceRefs": [
         "CIO 2026-08-03 settings-screen brainstorm"
       ],
       "createdAt": "2026-08-03",
-      "updatedAt": "2026-08-03"
+      "updatedAt": "2026-08-10"
     },
     {
       "id": "US-533",
       "parent": "F-126",
       "type": "normal",
       "size": "M",
-      "status": "sprint-ready",
+      "status": "passed",
       "title": "Wire the 5 config settings end-to-end (read effective + write overlay + apply semantics)",
       "goal": "As the operator, I want each Settings control to actually change behavior, so toggling it takes real effect (or honestly tells me when it will).",
       "definitionOfDone": [
-        "wire each of the 5 controls: reads its effective value (US-530), writes changes via the token-gated endpoint (US-531), and takes effect per its consumer:",
-        "pi.display.carousel.autoRotate -> carousel auto-rotation on/off, applies LIVE (JS re-reads); pi.power.mode -> PowerModeProvider re-emits mode on next cycle (fixes the bench 'unknown' -> wall); pi.alerts.audioAlerts / pi.calibration.mode / pi.analysis.triggerAfterDrive -> read by their subsystems, apply live if the consumer re-reads, else the card states 'takes effect on next boot/restart'",
-        "honest-instrument: no control silently no-ops; if it needs a restart to apply, that is shown, not hidden",
-        "pi.power.mode is a 3-state selector (car|wall|unknown), not a boolean; unknown remains the honest default",
-        "test proves each of the 5 settings round-trips (render effective -> change -> overlay written -> effective value + behavior reflect it, or the restart-note shows); ruff clean"
+        "wire each of the 4 controls (auto-rotate, power mode, calibration mode, auto-analyze): reads its effective value via the US-530 shared resolveEffectiveConfig, writes via the US-531 token-gated endpoint, applies per its consumer",
+        "[B1 -- CIO-RATIFIED path #3, 2026-08-08] AUTO-ROTATE applies via PER-REQUEST resolution, NOT a states-http restart: resolve carouselConfig per request in states_http_server (~:466-488), exactly like US-501 __DEPLOY_VERSION__ + US-532 __DISPLAY_SETTINGS__ already do (carouselConfig/US-506 is the last resolved-at-construction value in that method). The toggle writes the overlay, the UI self-triggers a page reload, the new autoRotateS takes effect on that reload. NO eclipse-states-http restart (polkit-denied by design; supersedes the earlier GAP-1 bounce remedy). Label honestly 'applies on reload' -- never claim live, never a silent no-op",
+        "[B2 -- audioAlerts DROPPED, CIO 2026-08-07] remove pi.alerts.audioAlerts from overlay.OVERRIDABLE_KEYS (no consumer + no audio path on the Pi); the band/write-gate/injected-read all derive from that list, so the row disappears everywhere. 4 settings remain",
+        "power mode -> PowerModeProvider re-emits on its next cycle (fixes bench unknown->wall); calibration mode + auto-analyze -> apply live if the consumer re-reads, else the band states 'takes effect on next boot/restart'. pi.power.mode is a 3-state selector (car|wall|unknown), unknown = honest default",
+        "honest-instrument: no control silently no-ops; on a write failure the control reflects the REAL stored value, never optimistic success",
+        "test proves each of the 4 settings round-trips (render effective -> change -> overlay written -> effective value/behavior reflects it, or the honest reload/restart label shows); auto-rotate specifically: per-request resolution returns the new autoRotateS after a reload with NO states-http restart; ruff clean"
       ],
       "validationCriteria": [
         {
-          "action": "toggle carousel auto-rotate off on the Settings screen and watch the carousel; set power mode to wall and view the System-Status power tile",
-          "outcome": "auto-rotate stops live; power mode reads WALL (not unknown); both survive a reboot via the overlay"
+          "action": "toggle auto-rotate in the settings band, let the UI reload, then watch the carousel; set power mode to wall",
+          "outcome": "auto-rotate takes effect on the reload (no states-http restart, honestly labeled); power tile reads WALL; both survive a reboot via the overlay"
         }
       ],
-      "conditionalOutcomes": [],
+      "conditionalOutcomes": [
+        "B1 resolved: CIO ratified per-request resolution (#3) 2026-08-08; B2 resolved: audioAlerts dropped 2026-08-07. BL-030 cleared."
+      ],
       "sourceRefs": [
         "CIO 2026-08-03 settings-screen brainstorm"
       ],
       "createdAt": "2026-08-03",
-      "updatedAt": "2026-08-03"
+      "updatedAt": "2026-08-10",
+      "passes": false
     },
     {
       "id": "US-534",
       "parent": "F-126",
       "type": "normal",
       "size": "L",
-      "status": "pending",
+      "status": "superseded",
       "title": "[DEFERRED -- Slice 2] Battery / Power Test action on a System screen",
       "goal": "As the operator, I want to trigger a battery/UPS test from the Pi so I can measure pack health on demand.",
       "definitionOfDone": [
@@ -7272,20 +7352,24 @@
         }
       ],
       "conditionalOutcomes": [
-        "DEFERRED Slice 2. Needs Spool (drain-test semantics/safety) + Atlas (power/shutdown path)."
+        "DEFERRED Slice 2. Needs Spool (drain-test semantics/safety) + Atlas (power/shutdown path).",
+        "SUPERSEDED 2026-08-10: split into smaller items (US-534-a/-b...) per CIO 'no large items'."
       ],
       "sourceRefs": [
         "CIO 2026-08-03 settings-screen brainstorm"
       ],
       "createdAt": "2026-08-03",
-      "updatedAt": "2026-08-03"
+      "updatedAt": "2026-08-10",
+      "priority": "P3",
+      "tier": "pi",
+      "gate": "needs Spool design (drain test)"
     },
     {
       "id": "US-535",
       "parent": "F-126",
       "type": "normal",
       "size": "L",
-      "status": "pending",
+      "status": "superseded",
       "title": "[DEFERRED -- Slice 3] System Settings > Updates screen (OS / library / OBD2-project)",
       "goal": "As the operator, I want an Updates screen so I can apply OS, library, and OBD2-project updates from the Pi.",
       "definitionOfDone": [
@@ -7300,13 +7384,866 @@
         }
       ],
       "conditionalOutcomes": [
-        "DEFERRED Slice 3. Own epic building on pi.update.*; a placeholder screen is the only near-term piece."
+        "DEFERRED Slice 3. Own epic building on pi.update.*; a placeholder screen is the only near-term piece.",
+        "SUPERSEDED 2026-08-10: split into smaller items (US-535-a/-b...) per CIO 'no large items'."
       ],
       "sourceRefs": [
         "CIO 2026-08-03 settings-screen brainstorm"
       ],
       "createdAt": "2026-08-03",
-      "updatedAt": "2026-08-03"
+      "updatedAt": "2026-08-10",
+      "priority": "P4",
+      "tier": "pi",
+      "gate": "own epic (self-update)"
+    },
+    {
+      "id": "US-536",
+      "parent": "F-124",
+      "type": "issue",
+      "size": "S",
+      "status": "passed",
+      "title": "Freeze disposition-B: revert US-522 --disable-gpu + land autoRotateS:0 default",
+      "goal": "As the operator, I want the durable freeze fix to be auto-rotate-off (GPU left on), matching the CIO's disposition-B decision, so we are not shipping a GPU workaround on trusted hardware.",
+      "definitionOfDone": [
+        "[CIO disposition-B 2026-08-03, via Atlas] REVERT US-522's --disable-gpu from the eclipse-dashboard kiosk ExecStart (both dashboard.service.x11 + .wayland) -- keep the GPU ON. KEEP --password-store=basic (keyring fix stays)",
+        "land pi.display.carousel.autoRotateS: 0 as the shipped default in repo config.json (this is the actual freeze fix: auto-rotate off). Atlas applied it live as a bench stopgap; the deploy is the durable path",
+        "[DEPLOY NOTE] changing pi.display.carousel.* requires restarting eclipse-states-http (config injected + cached at its startup) -- fold a states-http bounce into the deploy for carousel-config changes",
+        "US-524 cma=256M stays as shipped (benign headroom, no revert -- Atlas)",
+        "verification greps the running chromium cmdline: --disable-gpu GONE, --password-store=basic present; autoRotateS effective 0; ruff/lint clean"
+      ],
+      "validationCriteria": [
+        {
+          "action": "after deploy + states-http restart, pgrep -a chromium + read the injected DISPLAY_CAROUSEL",
+          "outcome": "chromium no longer carries --disable-gpu but keeps --password-store=basic; autoRotateS=0 (carousel does not auto-advance); no freeze"
+        }
+      ],
+      "conditionalOutcomes": [
+        "with GPU back on + auto-rotate off-by-default, the freeze is prevented by auto-rotate being off -- so US-537 (animation-gating) is the safety mechanism for when the F-126 toggle turns it back on",
+        "LANDED by PM 2026-08-07 (CIO-directed urgent, Atlas-specified/proven): --disable-gpu removed from dashboard.service.{x11,wayland} (kept --password-store=basic); autoRotateS:0 in config.json. Fixes the error:5 renderer crash on deployed V0.29.25."
+      ],
+      "sourceRefs": [
+        "offices/pm/inbox/2026-08-03-from-atlas-reply-freeze-disposition-B-gpu-on-autorotate-off.md"
+      ],
+      "createdAt": "2026-08-03",
+      "updatedAt": "2026-08-07",
+      "passes": true
+    },
+    {
+      "id": "US-537",
+      "parent": "F-124",
+      "type": "normal",
+      "size": "S",
+      "status": "passed",
+      "title": "Animation-gating (Atlas RCA #3) -- toggle-safety prerequisite for auto-rotate",
+      "goal": "As the operator, I want turning auto-rotate back on to be safe, so re-enabling it via the F-126 settings toggle cannot re-arm the GPU freeze.",
+      "definitionOfDone": [
+        "[Atlas RCA #3 -- now a toggle-safety PREREQUISITE for F-126 auto-rotate] gate the two always-on infinite CSS animations (dashboard.css ribbon-pulse, stop-alarm-pulse) to run ONLY when the ribbon/alarm is actually active; drop unneeded will-change: transform on the carousel track. Reduces the sustained compositing pressure that, combined with auto-rotate, exhausted the GPU command buffer",
+        "with GPU on (disposition B) + this gating, auto-rotate ON must NOT reproduce the freeze under sustained carousel navigation (this is what makes the F-126 auto-rotate toggle safe to turn on)",
+        "acceptance: with auto-rotate ON, journalctl -u eclipse-dashboard grep -c AllocateRingBuffer stays ~0 + chromium CPU low over a multi-minute session; ruff/lint clean"
+      ],
+      "validationCriteria": [
+        {
+          "action": "with animation-gating landed + GPU on, turn auto-rotate ON and sustain carousel navigation for several minutes",
+          "outcome": "AllocateRingBuffer count stays ~0, chromium CPU low, no freeze -- the auto-rotate toggle is safe"
+        }
+      ],
+      "conditionalOutcomes": [
+        "gates the F-126 auto-rotate toggle: US-533's auto-rotate toggle is only fully safe once this lands. If it slips, the toggle ships default-OFF with a known caveat."
+      ],
+      "sourceRefs": [
+        "offices/architect/findings/2026-08-02-pi-ui-freeze-chromium-gpu-command-buffer-hotloop.md",
+        "offices/pm/inbox/2026-08-03-from-atlas-reply-freeze-disposition-B-gpu-on-autorotate-off.md"
+      ],
+      "createdAt": "2026-08-03",
+      "updatedAt": "2026-08-10"
+    },
+    {
+      "id": "US-538",
+      "parent": "F-126",
+      "type": "normal",
+      "size": "M",
+      "status": "pending",
+      "title": "[FUTURE] Audio alerts -- needs a Pi speaker + playback path first",
+      "goal": "As the operator, I want audible alerts on the Pi so I hear a warning without watching the screen.",
+      "definitionOfDone": [
+        "[DEFERRED -- dropped from F-126 Slice 1 per CIO 2026-08-07 (BL-030 B2): pi.alerts.audioAlerts had no consumer + no audio/speaker code exists on the Pi]",
+        "real work: add an audio playback path (speaker/HDMI-audio + a play helper), wire AlertManager to emit on audio-worthy alerts, THEN re-add audioAlerts to the settings allow-list as a working toggle",
+        "NOT groomed -- placeholder; needs hardware/audio-path scoping"
+      ],
+      "validationCriteria": [
+        {
+          "action": "[deferred]",
+          "outcome": "[deferred -- needs audio path first]"
+        }
+      ],
+      "conditionalOutcomes": [
+        "Dropped from F-126 v1; re-scope when audio output on the Pi is wanted."
+      ],
+      "sourceRefs": [
+        "offices/pm/blockers/BL-030-us533-states-http-bounce-unauthorized-and-audioalerts-has-no-consumer.md"
+      ],
+      "createdAt": "2026-08-07",
+      "updatedAt": "2026-08-10",
+      "priority": "P4",
+      "tier": "pi",
+      "gate": "needs Pi audio path"
+    },
+    {
+      "id": "US-539",
+      "parent": "F-127",
+      "type": "normal",
+      "size": "M",
+      "status": "sprint-ready",
+      "title": "Extract the type scale into tokens.css (closes W-3) -- pure refactor",
+      "goal": "As a maintainer, I want font sizes to come from a small set of tokens so the legibility fix is one scale change, not 83 scattered edits that drift back.",
+      "definitionOfDone": [
+        "add a type scale to specs/UI/tokens.css: --fs-hero / --fs-primary / --fs-secondary / --fs-label / --fs-meta (values SET in US-540; this story just establishes the tokens + wiring)",
+        "replace the ~83 hardcoded `font-size: Npx` in dashboard.css with token refs; DoD: NO bare `font-size: Npx` left in dashboard.css (a grep gate)",
+        "PURE REFACTOR -- no visual change vs the current shipped sizes (map each existing px to the nearest token, values unchanged here); ships + verifies independently of US-540",
+        "ruff/lint clean; a probe/test confirms zero bare px font-sizes remain"
+      ],
+      "validationCriteria": [
+        {
+          "action": "grep dashboard.css for `font-size:` with a px literal after the refactor",
+          "outcome": "zero hardcoded px font-sizes; all reference the tokens.css scale; dashboard renders visually identical to before"
+        }
+      ],
+      "conditionalOutcomes": [
+        "US-539 is the HARD prerequisite for US-540 (Iris: without tokenizing first, US-540 becomes 83 edits that drift). No design gate -- pure refactor."
+      ],
+      "sourceRefs": [
+        "offices/uidevloper/proposals/2026-08-07-pi-3p5in-legibility-and-layout.md (+ .html)",
+        "offices/pm/inbox/2026-08-08-from-iris-3p5in-legibility-bundle-for-groom.md",
+        "offices/pm/inbox/2026-08-07-from-atlas-3p5in-legibility-font-size-more-screens.md"
+      ],
+      "createdAt": "2026-08-08",
+      "updatedAt": "2026-08-10",
+      "priority": "P1",
+      "tier": "pi",
+      "gate": "groom-ready (Sprint 72 queued)"
+    },
+    {
+      "id": "US-540",
+      "parent": "F-127",
+      "type": "normal",
+      "size": "L",
+      "status": "superseded",
+      "title": "Set the legibility scale + re-lay the card set (the actual fix; 4 -> 6 cards)",
+      "goal": "As the operator, I want to read the dashboard at arm's length in the car, so the values and labels are large enough to act on while driving.",
+      "definitionOfDone": [
+        "set the type-scale token values (Iris): hero 44 / primary 34 / secondary 26 / label 20 / meta 15 (px on the 480x320 design stage)",
+        "[FLOOR RULE -- acceptance] anything the driver must READ TO ACT is >= [EXACT:34] px; anything < 26 px must be non-critical only. Capacity that falls out: ~3 facts per card (4 in a 2x2 ceiling)",
+        "[CARD SET 4 -> 6, Iris] Home(live) . Alerts . System Status . Battery . Fuel Trim . Light. 'Health' RETIRES as a card (a container of 3 unrelated facts the scale can't afford); its facts redistribute. Sub-floor detail lines move to the existing System drill-down (read parked)",
+        "[ATLAS DESIGN-GATE] screen-count + US-482 letterbox-stage interaction + the retirement of the Health card. This partly REVERSES US-507/508's 6->4 consolidation -- intended, not drift (legibility > screen-count on 3.5in). Atlas gates the count + stage",
+        "[ACCEPTANCE IS IN-CAR, not bench] 'read it at arm's length in the car, seated normally.' CAVEAT (unverified, do NOT claim values final before a hardware check): the Pi outputs 1080p into a 480x320 native panel -- if it downsamples, small text is resampled AND small, pushing the floor UP. Routed to Atlas/Rex; it can only move the floor higher",
+        "carousel handles N cards already (goTo / page-dots / hidden-card); no nav rework. ruff/lint clean; probe confirms the scale + card set"
+      ],
+      "validationCriteria": [
+        {
+          "action": "in the car, seated normally, read each card (compass heading, %-values, g-force, the CHECK-ENGINE line)",
+          "outcome": "all driver-must-read elements are legible at arm's length (>=34px effective); the 6-card set renders + navigates correctly"
+        }
+      ],
+      "conditionalOutcomes": [
+        "Gated: US-539 first (hard); Atlas screen-count + US-482 ruling before build. If the panel downsamples, the 44/34/26/20/15 values may need to rise -- re-verify on hardware, don't bake as final.",
+        "SUPERSEDED 2026-08-10: split into smaller items (US-540-a/-b...) per CIO 'no large items'."
+      ],
+      "sourceRefs": [
+        "offices/uidevloper/proposals/2026-08-07-pi-3p5in-legibility-and-layout.md (+ .html)",
+        "offices/pm/inbox/2026-08-08-from-iris-3p5in-legibility-bundle-for-groom.md",
+        "offices/pm/inbox/2026-08-07-from-atlas-3p5in-legibility-font-size-more-screens.md"
+      ],
+      "createdAt": "2026-08-08",
+      "updatedAt": "2026-08-10",
+      "priority": "P1",
+      "tier": "pi",
+      "gate": "Atlas: screen-count 4->6 + US-482 stage"
+    },
+    {
+      "id": "US-541",
+      "parent": "F-127",
+      "type": "normal",
+      "size": "M",
+      "status": "sprint-ready",
+      "title": "Atlas's 3 UI change requests -- IMU-always-on, card reorder, auto-rotate-off verify",
+      "goal": "As the operator, I want the live IMU instrument always visible, alerts second, and no auto-rotate, matching how I actually use the dashboard.",
+      "definitionOfDone": [
+        "(1) [Atlas design-gate] IMU/heading ALWAYS-ON: the live IMU instrument is the permanent Home face (IMU is Pi-local, always-live). OBD-dependent bits (gear, altitude) render typed-NA/greyed via the honest-availability pattern (same as Battery/Light already do) -- never fabricated. Pairs with US-542 idle-face retirement",
+        "(2) reorder the carousel -> Home . Alerts . System Status . … (Alerts to 2nd). Pure dashboard.html markup order; the carousel finds the DTC index dynamically, so drill-down/takeover are unaffected",
+        "(3) auto-rotate OFF -- autoRotateS:0 (ALREADY landed via US-536/disposition-B); this story just VERIFIES it holds in the final card set",
+        "ruff/lint clean; probe confirms order + IMU-always-on + autoRotateS:0"
+      ],
+      "validationCriteria": [
+        {
+          "action": "on the Pi, view the Home face parked (engine off) + swipe the carousel",
+          "outcome": "Home shows the live IMU instrument (heading/g real, OBD bits greyed-NA); order is Home.Alerts.System...; carousel does not auto-advance"
+        }
+      ],
+      "conditionalOutcomes": [
+        "IMU-always-on is Atlas-gated (touches the US-508 idle/live face). Reorder + auto-rotate-verify are independent/small."
+      ],
+      "sourceRefs": [
+        "offices/uidevloper/proposals/2026-08-07-pi-3p5in-legibility-and-layout.md (+ .html)",
+        "offices/pm/inbox/2026-08-08-from-iris-3p5in-legibility-bundle-for-groom.md",
+        "offices/pm/inbox/2026-08-07-from-atlas-3p5in-legibility-font-size-more-screens.md",
+        "offices/pm/inbox/2026-08-03-from-atlas-ui-change-requests-carousel-order-imu-autorotate.md"
+      ],
+      "createdAt": "2026-08-08",
+      "updatedAt": "2026-08-10",
+      "priority": "P1",
+      "tier": "pi",
+      "gate": "Atlas: IMU-always-on"
+    },
+    {
+      "id": "US-542",
+      "parent": "F-127",
+      "type": "normal",
+      "size": "S",
+      "status": "sprint-ready",
+      "title": "Idle-face retirement -- STANDBY removed, DTC-since-key-off moves to Alerts",
+      "goal": "As the operator, I don't want a redundant STANDBY face -- parked, the live IMU card already shows the true state, so the idle face adds nothing.",
+      "definitionOfDone": [
+        "[Atlas design-gate -- carries the only cross-card content move] retire the idle/standby face: parked, the IMU is CORRECT not unavailable (true heading, true 0.0 g), so the live Home card (US-541#1) covers it. Delete the STANDBY hero; move the clock to the top bar",
+        "move 'DTC not read since key-off' to the ALERTS card -- it was always an Alerts fact, borrowed by the idle face. No honest content lost",
+        "ruff/lint clean; probe confirms STANDBY gone + the DTC-since-key-off line lives on Alerts",
+        "[Atlas gate DoD] pin a test that the parked / auto-rotate-pause logic (carouselIdle/parkedNext) reads system-status, NOT the removed data-face -- so a future edit cannot re-couple them (the retirement is display-only, verified)"
+      ],
+      "validationCriteria": [
+        {
+          "action": "park the Pi (engine off) and view Home + Alerts",
+          "outcome": "no STANDBY face (live IMU card is Home); clock in the top bar; 'DTC not read since key-off' shows on the Alerts card"
+        }
+      ],
+      "conditionalOutcomes": [
+        "Pairs with US-541#1 (IMU-always-on). Atlas gates the cross-card content move."
+      ],
+      "sourceRefs": [
+        "offices/uidevloper/proposals/2026-08-07-pi-3p5in-legibility-and-layout.md (+ .html)",
+        "offices/pm/inbox/2026-08-08-from-iris-3p5in-legibility-bundle-for-groom.md",
+        "offices/pm/inbox/2026-08-07-from-atlas-3p5in-legibility-font-size-more-screens.md"
+      ],
+      "createdAt": "2026-08-08",
+      "updatedAt": "2026-08-10",
+      "priority": "P1",
+      "tier": "pi",
+      "gate": "Atlas: cross-card move"
+    },
+    {
+      "id": "US-543",
+      "parent": "F-119",
+      "type": "normal",
+      "size": "M",
+      "priority": "P2",
+      "tier": "both",
+      "gate": "groom-ready",
+      "title": "Pi<->server schema/contract PARITY GUARD (A-4) -- standing CI test",
+      "goal": "As a maintainer, I want CI to fail when Pi(obd.db) and server(obd2db) drift on shared contracts, so the recurring A-4 divergence is caught before deploy.",
+      "definitionOfDone": [
+        "[Atlas A-4 contract list 2026-08-10] a standing CI test (pattern of scripts/audit_address_mirrors.py) asserting Pi<->server agree on the shared contract -- 6 assertions:",
+        "1. ENUM PARITY: data_source AND data_quality value-sets IDENTICAL Pi<->server (set-equality both ways). Source of the A-10 saga (Pi got 'foreign', server didn't)",
+        "2. APPLIED-SCHEMA NOT PYTHON-TUPLE (US-459 lesson, LOAD-BEARING): assert the APPLIED schema -- server via the real-MariaDB testcontainer (US-464/470), Pi via the SQLite DDL after ensure-schema runs -- NOT the Python constants. A tuple-only test ships green over a broken DB (the drift this guards)",
+        "3. SYNCED-TABLE SHARED-COLUMN PARITY: for every table in sync_log.PK_COLUMN, the sync-payload columns exist on BOTH tiers with compatible types. Tier-LOCAL columns (server source_device/source_id, Pi bookkeeping) exempt -- assert the SYNCED surface only",
+        "4. PK-RENAME MAPPING PARITY: every synced table's Pi-PK -> server-id rename (sync client map; e.g. battery_health_log drain_event_id->id) is DECLARED + consistent -- catches a new synced table added without its mapping",
+        "5. Pi ENSURE-SCHEMA COVERAGE (not a schema_migrations table): every shared/synced column the server declares has a corresponding Pi ensureXSchema helper/DDL column. Pi's ensureXSchema IS its migration equivalent; guard it stays in sync with the server's shared surface",
+        "6. TIMESTAMP/FORMAT PARITY: synced timestamp columns use canonical ISO-8601 UTC on both tiers (TD-027/US-202); the sync does no coercion beyond the PK rename, so a format divergence corrupts silently",
+        "DoD: name sync_log.PK_COLUMN as the table set (complete-by-construction -- a future synced table auto-covered); run assertion #2 against the US-470 testcontainer + the Pi SQLite DDL. This GUARDS (F-076 normalizes; this keeps it normalized). ruff clean"
+      ],
+      "validationCriteria": [
+        {
+          "action": "introduce a deliberate Pi/server shared-contract mismatch",
+          "outcome": "the parity CI test fails before deploy"
+        }
+      ],
+      "status": "sprint-ready",
+      "passes": null,
+      "conditionalOutcomes": [],
+      "sourceRefs": [
+        "offices/pm/inbox/2026-08-10-from-atlas-backlog-review-ordering-plus-5-additions.md"
+      ],
+      "createdAt": "2026-08-10",
+      "updatedAt": "2026-08-10"
+    },
+    {
+      "id": "US-544",
+      "parent": "F-119",
+      "type": "normal",
+      "size": "M",
+      "priority": "P2",
+      "tier": "infra",
+      "gate": "Atlas design",
+      "title": "On-hardware RENDER + CAPTURE bench-validation gate (A-16)",
+      "goal": "As the team, I want a gate proving the UI renders + capture writes rows on the real Pi, so 'CI-green != works-on-Pi' failures (error:5, blank splash, carousel starvation) are caught before they ship.",
+      "definitionOfDone": [
+        "[Atlas addition A-16] a gate in /sprint-deploy-pm or /chain-validated that proves ON THE REAL PI: UI renders end-to-end + a capture smoke-test writes rows. F-119 CI-green is necessary, not sufficient. Fold the chromium base-flags management note (/etc/chromium.d/* is OS-shipped, repo-unmanaged). Atlas design-gate."
+      ],
+      "validationCriteria": [
+        {
+          "action": "run the gate against a build with a known render/capture break that CI passes",
+          "outcome": "the gate fails on the Pi even though CI is green"
+        }
+      ],
+      "status": "pending",
+      "passes": null,
+      "conditionalOutcomes": [],
+      "sourceRefs": [
+        "offices/pm/inbox/2026-08-10-from-atlas-backlog-review-ordering-plus-5-additions.md"
+      ],
+      "createdAt": "2026-08-10",
+      "updatedAt": "2026-08-10"
+    },
+    {
+      "id": "US-545",
+      "parent": "F-120",
+      "type": "normal",
+      "size": "M",
+      "priority": "P2",
+      "tier": "pi",
+      "gate": "groom-ready",
+      "title": "OBD BT bond self-heal + boot verify (A-18 follow-on)",
+      "goal": "As the operator, I want the Pi to detect + auto-recover a lost BT bond instead of silently dying on capture, so the month-long bond outage cannot recur unnoticed.",
+      "definitionOfDone": [
+        "[Atlas addition A-18] on boot / on repeated connect-fail, detect a lost-or-de-bonded state (bonded=no) and auto-run the re-pair path (or loudly surface it) -- never silent capture-death. Include the BT-stack-wedge reset (power off/on + longer scan) that was needed 2026-08-07. verify_bt_pair.sh exists -- wire it into the reconnect path.",
+        "[Atlas refinement -- serialize re-pair vs the port] auto-re-pair MUST stop/hold eclipse-obd's connection first (systemctl stop eclipse-obd before pairing) -- never pair while the logger contends on the port ('multiple access' hazard from 2026-08-07)",
+        "[Atlas refinement -- bounded, not a loop] cap auto-re-pair (once per boot / backoff) -- never re-pair on EVERY connect-fail (hammers the radio)",
+        "[Atlas refinement -- loud-surface when not discoverable] unattended auto-re-pair only works if the dongle is discoverable+unbonded; if discovery does not find it, do NOT silently retry -- surface it (state/log) so the operator power-cycles the dongle (honest-instrument)"
+      ],
+      "validationCriteria": [
+        {
+          "action": "clear the bond on the Pi, then boot / attempt capture",
+          "outcome": "the Pi detects bonded=no and auto-re-pairs (or loudly surfaces it); capture recovers rather than silently dying"
+        }
+      ],
+      "status": "sprint-ready",
+      "passes": null,
+      "conditionalOutcomes": [],
+      "sourceRefs": [
+        "offices/pm/inbox/2026-08-10-from-atlas-backlog-review-ordering-plus-5-additions.md"
+      ],
+      "createdAt": "2026-08-10",
+      "updatedAt": "2026-08-10"
+    },
+    {
+      "id": "US-546",
+      "parent": "F-128",
+      "type": "normal",
+      "size": "L",
+      "priority": "P3",
+      "tier": "server",
+      "gate": "Atlas design",
+      "title": "A-9 server-side drive RE-SEGMENTER -- boundary authority server-side",
+      "goal": "As the data owner, I want the server to re-derive drive boundaries from raw realtime_data so a DriveDetector regression is RECOVERED, not just flagged.",
+      "definitionOfDone": [
+        "[Atlas addition A-9 robustness] move drive-boundary SEGMENTATION authority server-side: re-derive boundaries from raw realtime_data; demote Pi drive_id to advisory source_drive_id. Today the server only DETECTS overlaps (detect_overlapping_drives tripwire) but cannot RECOVER them. B-104-aligned. Atlas owns the design gate. Separate from the A-9 capture resolution."
+      ],
+      "validationCriteria": [
+        {
+          "action": "feed the server a drive with a bad Pi drive_id boundary",
+          "outcome": "the server re-derives correct boundaries from raw data; Pi drive_id demoted to advisory"
+        }
+      ],
+      "status": "superseded",
+      "passes": null,
+      "conditionalOutcomes": [
+        "SUPERSEDED 2026-08-10: split into smaller items (US-546-a/-b...) per CIO 'no large items'."
+      ],
+      "sourceRefs": [
+        "offices/pm/inbox/2026-08-10-from-atlas-backlog-review-ordering-plus-5-additions.md"
+      ],
+      "createdAt": "2026-08-10",
+      "updatedAt": "2026-08-10"
+    },
+    {
+      "id": "US-547",
+      "parent": "F-126",
+      "type": "normal",
+      "size": "S",
+      "priority": "P4",
+      "tier": "pi",
+      "gate": "groom-ready",
+      "title": "Config-overlay placeholder-verbatim lint (secrets_loader honesty)",
+      "goal": "As a maintainer, I want a lint that flags ${VAR}-bound keys read without NA-normalization, so an unresolved placeholder cannot become a truthy string sentinel.",
+      "definitionOfDone": [
+        "[Atlas addition] a lint flagging ${VAR}-bound config keys read without NA-normalization (an unresolved ${VAR} is a truthy string). Corollary of the honest-availability pattern already in specs/ssot-design-pattern.md. Small."
+      ],
+      "validationCriteria": [
+        {
+          "action": "read a ${VAR}-bound key that is unresolved without NA-normalization",
+          "outcome": "the lint flags it"
+        }
+      ],
+      "status": "pending",
+      "passes": null,
+      "conditionalOutcomes": [],
+      "sourceRefs": [
+        "offices/pm/inbox/2026-08-10-from-atlas-backlog-review-ordering-plus-5-additions.md"
+      ],
+      "createdAt": "2026-08-10",
+      "updatedAt": "2026-08-10"
+    },
+    {
+      "parent": "F-127",
+      "type": "normal",
+      "status": "sprint-ready",
+      "passes": null,
+      "conditionalOutcomes": [],
+      "sourceRefs": [
+        "offices/uidevloper/proposals/2026-08-07-pi-3p5in-legibility-and-layout.md (+ .html)",
+        "offices/pm/inbox/2026-08-08-from-iris-3p5in-legibility-bundle-for-groom.md",
+        "offices/pm/inbox/2026-08-07-from-atlas-3p5in-legibility-font-size-more-screens.md"
+      ],
+      "createdAt": "2026-08-10",
+      "updatedAt": "2026-08-10",
+      "id": "US-540-a",
+      "size": "M",
+      "priority": "P1",
+      "tier": "pi",
+      "gate": "US-539 first",
+      "title": "Set the type-scale token VALUES for 3.5in legibility (44/34/26/20/15)",
+      "goal": "As the operator, I want the primary values large enough to read at arm's length in the car.",
+      "definitionOfDone": [
+        "set the type-scale token values (Iris): hero 44 / primary 34 / secondary 26 / label 20 / meta 15 (px on the 480x320 stage). [FLOOR RULE] driver-must-read >= [EXACT:34]px; anything <26px non-critical only. Depends US-539 (tokens exist). Acceptance IN-CAR (arm's length, seated). CAVEAT: unverified panel downsampling may raise the floor -- re-verify on hardware, do NOT call values final. ruff clean",
+        "[Atlas display-pipeline finding] the deploy pins NO HDMI/KMS output mode -> the Pi likely outputs 1080p into a 480x320-native panel -> lossy scale-up-then-downsample softens every glyph (raises the floor). Acceptance: confirm output mode == panel native (or pin it -- see US-552) BEFORE calling the 44/34/26/20/15 values final. Re-verify the values AFTER the mode is confirmed"
+      ],
+      "validationCriteria": [
+        {
+          "action": "in the car, seated normally, read the primary values on a card",
+          "outcome": "legible at arm's length; driver-must-read elements >=34px effective"
+        }
+      ]
+    },
+    {
+      "parent": "F-127",
+      "type": "normal",
+      "status": "sprint-ready",
+      "passes": null,
+      "conditionalOutcomes": [],
+      "sourceRefs": [
+        "offices/uidevloper/proposals/2026-08-07-pi-3p5in-legibility-and-layout.md (+ .html)",
+        "offices/pm/inbox/2026-08-08-from-iris-3p5in-legibility-bundle-for-groom.md",
+        "offices/pm/inbox/2026-08-07-from-atlas-3p5in-legibility-font-size-more-screens.md"
+      ],
+      "createdAt": "2026-08-10",
+      "updatedAt": "2026-08-10",
+      "id": "US-540-b",
+      "size": "M",
+      "priority": "P1",
+      "tier": "pi",
+      "gate": "Atlas: screen-count + US-482",
+      "title": "Re-lay the card set 4->6 for the legibility scale (Health card retires)",
+      "goal": "As the operator, I want fewer facts per card so each one is legible at a glance.",
+      "definitionOfDone": [
+        "with US-540-a's scale, capacity is ~3 facts/card (4 in a 2x2 ceiling). Card set 4->6: Home(live) . Alerts . System Status . Battery . Fuel Trim . Light. 'Health' RETIRES as a card (a container of 3 unrelated facts the scale can't afford) -- redistribute its facts. Sub-floor detail -> System drill-down (read parked). Partly reverses US-507/508 (intended). [ATLAS GATE] screen-count + US-482 letterbox-stage. Carousel handles N cards (no nav rework). ruff clean; probe confirms the 6-card set",
+        "[Atlas gate DoD] the carousel JS scales to N cards (verified count-agnostic); confirm no CSS #track / card-count cap assumes 4 (Iris presentation lane)"
+      ],
+      "validationCriteria": [
+        {
+          "action": "swipe the carousel",
+          "outcome": "6 cards render (Health gone, facts redistributed); <=3-4 facts/card, all legible"
+        }
+      ]
+    },
+    {
+      "parent": "F-126",
+      "type": "normal",
+      "status": "pending",
+      "passes": null,
+      "conditionalOutcomes": [],
+      "sourceRefs": [
+        "CIO 2026-08-03 settings-screen brainstorm"
+      ],
+      "createdAt": "2026-08-10",
+      "updatedAt": "2026-08-10",
+      "id": "US-534-a",
+      "size": "M",
+      "priority": "P3",
+      "tier": "pi",
+      "gate": "needs Spool design",
+      "title": "Battery/Power-Test TRIGGER action (System screen)",
+      "goal": "As the operator, I want to start a battery/UPS test from the Pi.",
+      "definitionOfDone": [
+        "[DEFERRED -- needs Spool design] a control on a System settings screen that KICKS OFF a drain/UPS test (the trigger + confirm UX + safety gating). Does NOT run the test logic (that is US-534-b)"
+      ],
+      "validationCriteria": [
+        {
+          "action": "[deferred]",
+          "outcome": "[deferred -- Spool designs the test semantics first]"
+        }
+      ]
+    },
+    {
+      "parent": "F-126",
+      "type": "normal",
+      "status": "pending",
+      "passes": null,
+      "conditionalOutcomes": [],
+      "sourceRefs": [
+        "CIO 2026-08-03 settings-screen brainstorm"
+      ],
+      "createdAt": "2026-08-10",
+      "updatedAt": "2026-08-10",
+      "id": "US-534-b",
+      "size": "M",
+      "priority": "P3",
+      "tier": "pi",
+      "gate": "needs Spool design",
+      "title": "Battery/Power-Test EXECUTION + battery_health_log recording",
+      "goal": "As the data owner, I want the test to run and record a qualifying capacity measurement.",
+      "definitionOfDone": [
+        "[DEFERRED -- needs Spool design] run the drain/UPS test and write a qualifying battery_health_log row (ties to the US-526 production writer + US-527 depth-gate verdict). Spool owns the depth-gate/safety semantics"
+      ],
+      "validationCriteria": [
+        {
+          "action": "[deferred]",
+          "outcome": "[deferred -- ties to US-526/527]"
+        }
+      ]
+    },
+    {
+      "parent": "F-128",
+      "type": "normal",
+      "status": "pending",
+      "passes": null,
+      "conditionalOutcomes": [],
+      "sourceRefs": [
+        "offices/pm/inbox/2026-08-10-from-atlas-backlog-review-ordering-plus-5-additions.md"
+      ],
+      "createdAt": "2026-08-10",
+      "updatedAt": "2026-08-10",
+      "id": "US-546-a",
+      "size": "M",
+      "priority": "P3",
+      "tier": "server",
+      "gate": "Atlas design",
+      "title": "Server re-derives drive boundaries from raw realtime_data (segmentation algorithm)",
+      "goal": "As the data owner, I want the server to compute drive boundaries independently of the Pi drive_id.",
+      "definitionOfDone": [
+        "[Atlas design gate] the segmentation algorithm: re-derive drive start/end boundaries server-side from raw realtime_data (RPM/SPEED/time gaps). Produces authoritative boundaries; does NOT yet change the schema (that is US-546-b)"
+      ],
+      "validationCriteria": [
+        {
+          "action": "feed the server raw realtime_data for a known multi-drive window",
+          "outcome": "it re-derives the correct drive boundaries independent of Pi drive_id"
+        }
+      ]
+    },
+    {
+      "parent": "F-128",
+      "type": "normal",
+      "status": "pending",
+      "passes": null,
+      "conditionalOutcomes": [],
+      "sourceRefs": [
+        "offices/pm/inbox/2026-08-10-from-atlas-backlog-review-ordering-plus-5-additions.md"
+      ],
+      "createdAt": "2026-08-10",
+      "updatedAt": "2026-08-10",
+      "id": "US-546-b",
+      "size": "M",
+      "priority": "P3",
+      "tier": "server",
+      "gate": "US-546-a first",
+      "title": "Demote Pi drive_id to advisory source_drive_id + wire the recovery path",
+      "goal": "As the data owner, I want a DriveDetector regression recovered, not just flagged.",
+      "definitionOfDone": [
+        "[Atlas design gate] schema + integration: demote Pi drive_id to advisory source_drive_id; make the US-546-a server-derived boundaries authoritative; wire the recovery so an overlap the tripwire flags is re-segmented, not just reported. B-104-aligned"
+      ],
+      "validationCriteria": [
+        {
+          "action": "feed the server a drive with a bad Pi drive_id boundary",
+          "outcome": "server recovers correct boundaries; Pi drive_id demoted to advisory source_drive_id"
+        }
+      ]
+    },
+    {
+      "parent": "F-125",
+      "type": "normal",
+      "status": "pending",
+      "passes": null,
+      "conditionalOutcomes": [],
+      "sourceRefs": [
+        "offices/pm/inbox/2026-08-01-from-iris-gps-altitude-workpackage-for-grooming.md#WP-1",
+        "F-125",
+        "states/gps",
+        "states/imu (DELTA-2 seam precedent)"
+      ],
+      "createdAt": "2026-08-10",
+      "updatedAt": "2026-08-10",
+      "id": "US-516-a",
+      "size": "M",
+      "priority": "P3",
+      "tier": "pi",
+      "gate": "Atlas states/gps contract",
+      "title": "states/gps contract + reader interface seam (buildable WITHOUT hardware)",
+      "goal": "As a maintainer, I want the states/gps seam defined so altitude/speed/heading consumers can build ahead of the GPS hardware.",
+      "definitionOfDone": [
+        "build the states/gps contract + reader INTERFACE/seam (honest-NA when no source), per Atlas's states/gps contract. No hardware needed -- a stub/absent source emits typed-NA. Lets consumers (altitude display) wire against the seam"
+      ],
+      "validationCriteria": [
+        {
+          "action": "read states/gps with no GPS source present",
+          "outcome": "emits typed-NA (never fabricated); the seam matches Atlas's contract"
+        }
+      ]
+    },
+    {
+      "parent": "F-125",
+      "type": "normal",
+      "status": "pending",
+      "passes": null,
+      "conditionalOutcomes": [],
+      "sourceRefs": [
+        "offices/pm/inbox/2026-08-01-from-iris-gps-altitude-workpackage-for-grooming.md#WP-1",
+        "F-125",
+        "states/gps",
+        "states/imu (DELTA-2 seam precedent)"
+      ],
+      "createdAt": "2026-08-10",
+      "updatedAt": "2026-08-10",
+      "id": "US-516-b",
+      "size": "M",
+      "priority": "P4",
+      "tier": "pi",
+      "gate": "HARDWARE parked (GPS not ordered)",
+      "title": "GPS hardware reader -> real altitude/speed/heading into states/gps",
+      "goal": "As the operator, I want real GPS altitude/speed/heading once the hardware is installed.",
+      "definitionOfDone": [
+        "[HARDWARE PARKED -- GPS module not ordered] the actual GPS reader (I2C PA1010D or UART per the parked module choice) feeding real altitude/speed/heading into the US-516-a states/gps seam"
+      ],
+      "validationCriteria": [
+        {
+          "action": "[parked -- needs GPS hardware]",
+          "outcome": "[parked]"
+        }
+      ]
+    },
+    {
+      "parent": "F-126",
+      "type": "normal",
+      "status": "pending",
+      "passes": null,
+      "conditionalOutcomes": [],
+      "sourceRefs": [
+        "CIO 2026-08-03 settings-screen brainstorm"
+      ],
+      "createdAt": "2026-08-10",
+      "updatedAt": "2026-08-10",
+      "id": "US-535-a",
+      "size": "S",
+      "priority": "P4",
+      "tier": "pi",
+      "gate": "groom-ready (placeholder)",
+      "title": "Updates screen PLACEHOLDER (System Settings sub-screen, UI shell only)",
+      "goal": "As the operator, I want an Updates screen slot so the capability is visible even before it works.",
+      "definitionOfDone": [
+        "a placeholder System Settings > Updates sub-screen (UI shell): lists OS / library / OBD2-project as future update targets, honestly labeled 'not yet available'. No update logic. Holds the slot"
+      ],
+      "validationCriteria": [
+        {
+          "action": "open System Settings > Updates",
+          "outcome": "the placeholder screen renders with the 3 targets labeled 'not yet available'"
+        }
+      ]
+    },
+    {
+      "parent": "F-126",
+      "type": "normal",
+      "status": "pending",
+      "passes": null,
+      "conditionalOutcomes": [],
+      "sourceRefs": [
+        "CIO 2026-08-03 settings-screen brainstorm"
+      ],
+      "createdAt": "2026-08-10",
+      "updatedAt": "2026-08-10",
+      "id": "US-535-b",
+      "size": "M",
+      "priority": "P4",
+      "tier": "pi",
+      "gate": "own-epic design",
+      "title": "Self-update engine core -- fetch / verify / apply / rollback framework",
+      "goal": "As the operator, I want a safe self-update mechanism with rollback.",
+      "definitionOfDone": [
+        "[own epic -- design first] the update engine core: fetch, verify, apply, and ROLLBACK a package, building on the existing pi.update.* config (update.enabled, applyEnabled=false, rollbackEnabled). Source-agnostic; sources wired in US-535-c"
+      ],
+      "validationCriteria": [
+        {
+          "action": "apply then roll back a test package via the engine",
+          "outcome": "apply + rollback both succeed safely; applyEnabled gate honored"
+        }
+      ]
+    },
+    {
+      "parent": "F-126",
+      "type": "normal",
+      "status": "pending",
+      "passes": null,
+      "conditionalOutcomes": [],
+      "sourceRefs": [
+        "CIO 2026-08-03 settings-screen brainstorm"
+      ],
+      "createdAt": "2026-08-10",
+      "updatedAt": "2026-08-10",
+      "id": "US-535-c",
+      "size": "M",
+      "priority": "P4",
+      "tier": "pi",
+      "gate": "US-535-b first",
+      "title": "Wire the 3 update sources -- OS / Python library / OBD2-project",
+      "goal": "As the operator, I want to update the OS, libraries, and the project from the Updates screen.",
+      "definitionOfDone": [
+        "wire OS (apt), Python library (pip/requirements), and OBD2-project (git) update sources to the US-535-b engine; surface each on the US-535-a screen with real status. Each source respects the engine's verify/apply/rollback"
+      ],
+      "validationCriteria": [
+        {
+          "action": "trigger an OBD2-project update from the Updates screen",
+          "outcome": "the engine fetches/verifies/applies it with rollback available; OS + library sources present too"
+        }
+      ]
+    },
+    {
+      "id": "US-548",
+      "parent": "F-124",
+      "type": "issue",
+      "size": "S",
+      "status": "sprint-ready",
+      "passes": null,
+      "priority": "P1",
+      "tier": "pi",
+      "gate": "the V0.29.26 deploy-gate -- Ralph fixes on the sprint71 branch",
+      "title": "Retire the 3 US-536-fallout RED tests (guard tests assert the removed --disable-gpu)",
+      "goal": "As a maintainer, I want the US-522 guard tests to match disposition-B so the V0.29.26 deploy gate is green.",
+      "definitionOfDone": [
+        "[I-us536 -- V0.29.26 DEPLOY-GATE] disposition B (US-536) REMOVED --disable-gpu; the US-522 guard tests in tests/deploy/test_dashboard_kit.py still assert it is PRESENT -> RED. INVERT the guards to the disposition-B contract, preserving their mutation-proof design (token parser + self-tests + substring-trap defenses -- do NOT weaken them to substring checks)",
+        "SPECIFIC: test_dashboardUnits_carryGpuOverrideInExecStart_us522 asserts _GPU_OVERRIDE_FLAG (--disable-gpu) IN flags -> flip to assert --disable-gpu is NOT in the ExecStart flags of BOTH dashboard.service.{x11,wayland} (GPU stays ON per disposition B). Rename/re-doc to reflect the new intent. Find ALL red US-522 tests (run tests/deploy/test_dashboard_kit.py) and invert only those asserting the old --disable-gpu-present premise",
+        "KEEP GREEN (do not touch): the keyring guards (--password-store=basic PRESENT, by VALUE not substring), test_dashboardUnits_neverReinjectGpuRasterization (--enable-gpu-rasterization absent -- still valid), the /etc/chromium.d A-16 blind-spot doc guard, and the prior-flags fence (--kiosk/--touch/URL/ozone). autoRotateS default 0 stays.",
+        "do NOT gut coverage -- the guards must still fail if a future edit re-adds --disable-gpu OR drops --password-store=basic. FULL SUITE green (this is the V0.29.26 deploy-gate). ruff clean"
+      ],
+      "validationCriteria": [
+        {
+          "action": "run tests/deploy/test_dashboard_kit.py + the full suite",
+          "outcome": "all green; guards assert the disposition-B ExecStart (--disable-gpu ABSENT, --password-store=basic PRESENT) and still fail if either regresses"
+        }
+      ],
+      "conditionalOutcomes": [],
+      "sourceRefs": [
+        "offices/pm/issues/US-548"
+      ],
+      "createdAt": "2026-08-10",
+      "updatedAt": "2026-08-10"
+    },
+    {
+      "id": "US-549",
+      "parent": "F-103",
+      "type": "issue",
+      "size": "S",
+      "status": "sprint-ready",
+      "passes": null,
+      "priority": "P2",
+      "tier": "pi",
+      "gate": "",
+      "title": "I-043 -- shutdown-splash terminal reason not observable",
+      "goal": "As the operator, I want the shutdown splash to show why the Pi is going down, honestly.",
+      "definitionOfDone": [
+        "[I-043] the shutdown splash cannot observe/render the terminal reason (clean shutdown vs cutoff). Wire the ShutdownSequencer terminal reason to the shutdown splash so it renders honestly; never a fabricated reason. ruff clean"
+      ],
+      "validationCriteria": [
+        {
+          "action": "trigger a clean shutdown and a simulated cutoff",
+          "outcome": "the shutdown splash shows the correct terminal reason each time"
+        }
+      ],
+      "conditionalOutcomes": [],
+      "sourceRefs": [
+        "offices/pm/issues/US-549"
+      ],
+      "createdAt": "2026-08-10",
+      "updatedAt": "2026-08-10"
+    },
+    {
+      "id": "US-550",
+      "parent": "F-103",
+      "type": "issue",
+      "size": "S",
+      "status": "sprint-ready",
+      "passes": null,
+      "priority": "P2",
+      "tier": "pi",
+      "gate": "",
+      "title": "I-044 -- kiosk XDG_RUNTIME_DIR %U expands to 0 (root) in the splash/dashboard units",
+      "goal": "As a maintainer, I want the kiosk units to use the real user's runtime dir so dconf/dbus stop erroring.",
+      "definitionOfDone": [
+        "[I-044] the kiosk systemd units' XDG_RUNTIME_DIR uses %U which expands to 0 (root) -> /run/user/0 permission errors (dconf/dbus). Set it to the real autologin user's runtime dir (/run/user/<uid>). ruff clean; no /run/user/0 permission errors in the journal"
+      ],
+      "validationCriteria": [
+        {
+          "action": "boot the Pi + read the kiosk journal",
+          "outcome": "no '/run/user/0 permission denied' dconf/dbus errors; XDG_RUNTIME_DIR points at the real user"
+        }
+      ],
+      "conditionalOutcomes": [],
+      "sourceRefs": [
+        "offices/pm/issues/US-550"
+      ],
+      "createdAt": "2026-08-10",
+      "updatedAt": "2026-08-10"
+    },
+    {
+      "id": "US-551",
+      "parent": "F-103",
+      "type": "issue",
+      "size": "S",
+      "status": "sprint-ready",
+      "passes": null,
+      "priority": "P2",
+      "tier": "pi",
+      "gate": "CIO bench eyeball",
+      "title": "I-042 -- splash VISUAL verify (boot pixels + shutdown reverse splash)",
+      "goal": "As the operator, I want to confirm the boot + shutdown splashes actually render correctly on the panel.",
+      "definitionOfDone": [
+        "[I-042 visual half] CIO bench eyeball: confirm the boot splash renders correctly (not just that the service ran ~9s) + trigger one shutdown to see the reverse splash. On green, fold into /sprint-validated. This is a VALIDATION story (in-person), not a code change"
+      ],
+      "validationCriteria": [
+        {
+          "action": "reboot the Pi (boot splash) + trigger a shutdown (reverse splash), CIO watching",
+          "outcome": "both splashes render correctly on the panel"
+        }
+      ],
+      "conditionalOutcomes": [],
+      "sourceRefs": [
+        "offices/pm/issues/US-551"
+      ],
+      "createdAt": "2026-08-10",
+      "updatedAt": "2026-08-10"
+    },
+    {
+      "id": "US-552",
+      "parent": "F-127",
+      "type": "normal",
+      "size": "S",
+      "status": "sprint-ready",
+      "priority": "P1",
+      "tier": "pi",
+      "gate": "confirm mode on Pi (when on)",
+      "title": "Pin Pi HDMI/KMS output to the panel-native 480x320 (kill downsampling)",
+      "goal": "As the operator, I want the Pi to render at the panel's native resolution so glyphs are 1:1 sharp, not softened by a 1080p->480x320 downsample.",
+      "definitionOfDone": [
+        "[Atlas A-16 display-pipeline fidelity] on the Pi (when on) read the actual output mode (kmsprint / xrandr). If it is NOT the panel's native 480x320, PIN the output to native in the deploy (KMS/HDMI mode). Eliminates the scale-up-then-downsample resampling AND renders the US-540 type scale 1:1 -- a distinct legibility lever alongside the font work",
+        "DoD: deploy sets the output mode; post-deploy the Pi reports the native mode; the type scale renders without resample-softening. ruff clean"
+      ],
+      "validationCriteria": [
+        {
+          "action": "on the Pi after deploy, read the active output mode + view a card",
+          "outcome": "output is the panel-native 480x320 (no 1080p downsample); glyphs render 1:1 sharp"
+        }
+      ],
+      "conditionalOutcomes": [
+        "Complements US-540 (fonts). If the mode is already native, this is a no-op verification. Pairs with US-540-a's re-verify-values-after-mode acceptance"
+      ],
+      "sourceRefs": [
+        "offices/pm/inbox/2026-08-10-from-atlas-v0.29.27-legibility-structural-gate.md"
+      ],
+      "createdAt": "2026-08-10",
+      "updatedAt": "2026-08-10"
     }
   ]
 }

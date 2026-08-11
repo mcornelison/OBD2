@@ -1499,41 +1499,45 @@ def test_powerTile_renderLogic_carWallUnknown_us421():
 
 
 # ---------------------------------------------------------------------------
-# US-522 -- kiosk GPU override (F-124; Atlas RCA
-# offices/architect/findings/2026-08-02-pi-ui-freeze-chromium-gpu-command-buffer-hotloop.md).
+# US-536 (disposition B) -- the kiosk keeps the GPU ON. These guards were built
+# for US-522, which shipped `--disable-gpu`; US-548 INVERTED them when the CIO
+# ruled disposition B and US-536 (commit 3e67e5d) removed the flag from both
+# units. The guards are inverted rather than deleted, because deleting them
+# would leave NOTHING pinning "the GPU flag did not come back" -- which is the
+# regression US-537's animation-gating work cares about.
 #
-# The bench freeze was a chromium GPU command-buffer hot-loop (6M
+# THE HISTORY IS KEPT DELIBERATELY, because it is what makes the new assertion
+# legible. The bench freeze was a chromium GPU command-buffer hot-loop (6M
 # `AllocateRingBuffer() kFatalFailure` in one boot, renderer+GPU CPU-pegged, no
 # crash) -- the v3d GPU on a 64 MiB CMA pool exhausted its context under the
-# animated carousel.
+# animated carousel. Atlas RCA:
+# offices/architect/findings/2026-08-02-pi-ui-freeze-chromium-gpu-command-buffer-hotloop.md
 #
-# THE PREMISE THAT NEEDED CORRECTING (Atlas, design-gate): the offending
+# US-522 answered that by DISABLING the GPU. Disposition B rejected that trade:
+# `--disable-gpu` is a workaround on trusted hardware, and the durable fix is to
+# stop the sustained compositing pressure instead -- auto-rotate off by default
+# (US-536 AC-2) plus the US-537 animation gating. So the GPU stays on and the
+# repo must now prove the workaround is ABSENT.
+#
+# WHAT THE REPO STILL CANNOT ASSERT, unchanged by disposition B: the offending
 # `--enable-gpu-rasterization` is NOT in this repo. It is a Debian/RPi-OS system
 # default exported by `/etc/chromium.d/default-flags`, sourced by the
-# `/usr/bin/chromium` wrapper. So the fix ADDS an override to our ExecStart
-# rather than deleting a flag we never shipped -- which is why these guards
-# assert PRESENCE of the override and ABSENCE of any re-injection, and why the
-# repo can never assert the OS-side default at all (see the deploy-contract
-# guard below).
-#
-# PRECEDENCE, verified live on the Pi (10.27.27.100) rather than assumed, since
-# a wrapper-ordering surprise would be a silent mocked-green:
-#   /usr/bin/chromium:195   exec $LIBDIR/$APPNAME $CHROMIUM_FLAGS "$@"
-# so the OS-injected flags come FIRST and the unit's ExecStart args come LAST.
-# The live composed cmdline confirmed it exactly:
-#   ... --enable-gpu-rasterization ... --use-angle=gles --disable-gpu <url>
+# `/usr/bin/chromium` wrapper (`exec ... $CHROMIUM_FLAGS "$@"`, verified live on
+# the Pi at 10.27.27.100), so the OS flags land FIRST and our argv lands LAST.
+# We can only guard OUR argv -- see the deploy-contract blind-spot guard below.
 # ---------------------------------------------------------------------------
 
-# The token that turns the whole hardware-GL path off. `--disable-gpu` is chosen
-# over the narrower `--disable-gpu-rasterization` on the RCA evidence: the error
-# is in the GPU COMMAND BUFFER, which compositing uses too, not only raster --
-# so disabling raster alone shrinks the pressure without removing the mechanism.
-# `--disable-gpu` also has no counterpart in the injected set (verified live:
-# --show-component-extension-options / --enable-gpu-rasterization /
-# --no-default-browser-check / --disable-pings / --media-router=0 /
-# --enable-remote-extensions / --use-angle=gles / --js-flags=...), so nothing in
-# /etc/chromium.d can contradict it and the fix does not depend on flag order.
-_GPU_OVERRIDE_FLAG = "--disable-gpu"
+# The token US-522 shipped and disposition B removed: it takes the whole
+# hardware-GL path out. Under US-548 this names the flag that must NOT appear on
+# either unit's ExecStart. It is still compared as a TOKEN, never a substring --
+# and note the substring trap INVERTS with the guard. Under US-522's PRESENCE
+# check, `"--disable-gpu" in text` would have accepted the narrower
+# `--disable-gpu-rasterization` as if it were the chosen fix (a false NEGATIVE).
+# Under this ABSENCE check, the same naive text search would REJECT a unit that
+# legitimately carried `--disable-gpu-rasterization` (a false POSITIVE). Exact
+# list membership is correct in both directions; that is why the token parser
+# below is preserved rather than simplified.
+_GPU_DISABLE_FLAG = "--disable-gpu"
 _DASHBOARD_UNITS = ("dashboard.service.wayland", "dashboard.service.x11")
 
 
@@ -1572,7 +1576,15 @@ def _execStartFlags(unit: str) -> list[str]:
 
 def test_execStartFlagParser_selfTest_us522():
     """The guard's own parser, fed known-bad input (US-513 lesson: a static guard
-    without a self-test reports 'clean' forever once its logic rots)."""
+    without a self-test reports 'clean' forever once its logic rots).
+
+    US-548 raised the stakes on this self-test. While the GPU guard asserted
+    PRESENCE, a broken parser failed LOUDLY -- an empty token list could not
+    contain the flag. Now that the same guard asserts ABSENCE, a parser that
+    returns nothing passes it VACUOUSLY, and so would a parser that silently
+    stopped finding the ExecStart at all. The positive control below is what
+    replaces the safety net that inverting the guard removed.
+    """
     # A commented-out ExecStart must not contribute tokens.
     parsed = _execStartFlags(
         "# ExecStart=/bogus --disable-gpu\n"
@@ -1583,27 +1595,40 @@ def test_execStartFlagParser_selfTest_us522():
         "Restart=on-failure\n"
     )
     assert parsed == ["/usr/bin/chromium", "--kiosk", "http://127.0.0.1:9899/dashboard.html"]
-    assert _GPU_OVERRIDE_FLAG not in parsed, "a comment must never satisfy the guard"
-    # The substring trap: the narrower raster-only flag is NOT the chosen fix.
-    assert _GPU_OVERRIDE_FLAG not in _execStartFlags(
+    # Inverted meaning under disposition B: a COMMENT that merely discusses the
+    # flag must not TRIP the absence guard. This is live, not hypothetical --
+    # both shipped units still carry the US-522 rationale in their headers.
+    assert _GPU_DISABLE_FLAG not in parsed, "a comment must never trip the guard"
+    # POSITIVE CONTROL (US-548): the parser must still FIND the flag when it is
+    # genuinely on the ExecStart. Without this, `_GPU_DISABLE_FLAG not in flags`
+    # would hold for a parser that had rotted into returning [].
+    assert _GPU_DISABLE_FLAG in _execStartFlags(
+        f"ExecStart=/usr/bin/chromium {_GPU_DISABLE_FLAG} http://h/\n"
+    ), "the absence guard is vacuous unless the parser can still detect the flag"
+    # The substring trap, which INVERTS with the guard: under an absence check a
+    # naive text search would read the legitimate narrower flag as a violation.
+    assert _GPU_DISABLE_FLAG not in _execStartFlags(
         "ExecStart=/usr/bin/chromium --disable-gpu-rasterization http://h/\n"
     ), "--disable-gpu-rasterization must not read as --disable-gpu"
     # Directives after the ExecStart block are not flags.
     assert "Restart=on-failure" not in parsed
 
 
-def test_dashboardUnits_carryGpuOverrideInExecStart_us522():
-    """US-522: both kiosk variants pass the GPU override on the ExecStart itself.
+def test_dashboardUnits_keepTheGpuOn_us536():
+    """US-536 disposition B: NEITHER kiosk variant may disable the GPU.
 
-    This is the whole fix: the override rides on the unit's own argv, which the
-    Debian wrapper appends AFTER the `/etc/chromium.d` injected flags.
+    The inversion of US-522's guard. `--disable-gpu` was a workaround on trusted
+    hardware; the CIO ruled it out in favour of removing the compositing
+    pressure itself (auto-rotate off by default + US-537's animation gating).
+    This guard is what stops the workaround silently returning the next time
+    someone chases a freeze -- the reason the test was inverted, not deleted.
     """
     for variant in _DASHBOARD_UNITS:
         flags = _execStartFlags(_read(KIT_DIR, variant))
-        assert _GPU_OVERRIDE_FLAG in flags, (
-            f"{variant}: ExecStart must carry {_GPU_OVERRIDE_FLAG} -- the OS injects "
-            "--enable-gpu-rasterization via /etc/chromium.d/default-flags and the "
-            "unit's argv is the only repo-managed place that can override it"
+        assert _GPU_DISABLE_FLAG not in flags, (
+            f"{variant}: ExecStart must NOT carry {_GPU_DISABLE_FLAG} -- disposition B "
+            "(US-536) keeps the GPU ON and fixes the freeze by removing the sustained "
+            "compositing load instead. Re-adding it reopens a settled architecture call."
         )
 
 
@@ -1730,14 +1755,22 @@ def test_dashboardUnits_neverSelectKeyringBackedPasswordStore_us522():
             assert value == "basic", f"{variant}: --password-store={value} re-opens the keyring popup"
 
 
-def test_dashboardUnits_keyringFixCoexistsWithGpuOverride_us522():
-    """US-522 reopen regression fence: the keyring flag and the GPU override ride
-    the SAME ExecStart, so an edit to one must not drop the other. This mirrors
-    validationCriteria #2, which requires BOTH effective on the live cmdline."""
+def test_dashboardUnits_keyringFixSurvivedTheGpuRevert_us536():
+    """The half of the old coexistence fence that DISPOSITION B DID NOT CHANGE.
+
+    US-522 shipped two flags on one ExecStart and this guard held them together.
+    US-536 removed one of them, and the risk it leaves behind is precisely that
+    a revert aimed at the GPU flag takes the keyring fix with it -- they are
+    adjacent lines in the same continuation block. So the fence stays, with the
+    GPU half inverted: keyring PRESENT, GPU-disable ABSENT, both on one pass.
+    """
     for variant in _DASHBOARD_UNITS:
         flags = _execStartFlags(_read(KIT_DIR, variant))
-        assert _GPU_OVERRIDE_FLAG in flags, f"{variant}: lost the US-522 GPU override"
-        assert _PASSWORD_STORE_FLAG in flags, f"{variant}: lost the US-522 keyring fix"
+        assert _PASSWORD_STORE_FLAG in flags, (
+            f"{variant}: lost the US-522 keyring fix -- it explicitly STAYS under "
+            "disposition B (US-536 AC-1); only the GPU flag was reverted"
+        )
+        assert _GPU_DISABLE_FLAG not in flags, f"{variant}: the GPU workaround came back"
         # And the pre-existing kiosk contract still stands.
         assert "--kiosk" in flags, variant
         assert "http://127.0.0.1:9899/dashboard.html" in flags, variant

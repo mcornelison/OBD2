@@ -25,16 +25,23 @@
 # 2026-08-01    | Ralph (Rex)  | US-501: inject the deployed version into the
 #               |              | dashboard header chip from .deploy-version (read
 #               |              | PER REQUEST -- see _DEPLOY_VERSION_PLACEHOLDER).
+# 2026-08-07    | Ralph (Rex)  | US-531 [F-126]: THIRD token-gated POST route
+#               |              | /settings -- persists the US-530 Pi-local config
+#               |              | overlay (the kiosk is sandboxed JS and cannot
+#               |              | write files). Gate delegated to the overlay SSOT.
 # ================================================================================
 ################################################################################
 
-"""Localhost-only, token-gated state server (read-only GET + the US-403 action).
+"""Localhost-only, token-gated state server (read-only GET + three write routes).
 
-GET is read-only (states + same-origin assets). US-403 adds exactly ONE write
-route -- POST /service-control -- so the unprivileged chromium kiosk can request
-a `systemctl restart/stop` on the install-fixed allow-list. The endpoint is a
-thin transport: the allow-list gate is the ``service_control`` SSOT and the real
-privilege is the 51- polkit rule; the kiosk never runs as root.
+GET is read-only (states + same-origin assets). Writes are an explicit, closed
+set of POST routes -- US-403 ``/service-control``, US-407 ``/dtc-clear`` and
+US-531 ``/settings`` -- each token-gated by the same ``_tokenOk``, each a thin
+transport that delegates its gate to a SSOT module rather than carrying its own
+copy of an allow-list. For ``/service-control`` that SSOT is ``service_control``
+(the real privilege is the 51- polkit rule; the kiosk never runs as root); for
+``/settings`` it is ``common.config.overlay`` (US-530), whose allow-list is
+consulted at BOTH read and write so the two can never disagree.
 """
 
 from __future__ import annotations
@@ -48,6 +55,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import unquote, urlsplit
 
+from common.config import overlay
 from pi.splash import dtc_clear, service_control
 
 # Placeholder substituted with the live token when the kiosk HTML is served.
@@ -68,7 +76,30 @@ _DISPLAY_AUTODIM_PLACEHOLDER = '"__DISPLAY_AUTODIM__"'
 # widening the auto-dim one: the two sub-configs have different owners and
 # different tuning cadences, and merging them would make an auto-dim edit able
 # to break carousel navigation.
+#
+# US-533 B1 (CIO-ratified 2026-08-08): resolved PER REQUEST whenever a
+# ``configPath`` is wired, joining _DEPLOY_VERSION_PLACEHOLDER and
+# _DISPLAY_SETTINGS_PLACEHOLDER. This was the LAST resolved-at-construction value
+# in _injectHtml and it had the same staleness bug they were each moved to fix:
+# the F-126 settings band writes pi.display.carousel.autoRotateS, and a cached
+# blob meant the new period could only reach the kiosk via an
+# eclipse-states-http restart -- which polkit DENIES by design (the unit runs
+# User=mcornelison and the manage-units grant deliberately excludes the state
+# server, BL-030 B1). Resolving here DELETES the privilege requirement instead of
+# asking for it: the toggle writes the overlay, the UI reloads itself, and the
+# reload picks the new value up.
 _DISPLAY_CAROUSEL_PLACEHOLDER = '"__DISPLAY_CAROUSEL__"'
+
+# US-532 (F-126): the same quoted-placeholder seam for the 5 Slice-1 operator
+# settings at their CURRENT EFFECTIVE values, keyed by the overlay's own flat
+# dot-paths. Deliberately NOT a GET route: the effective values already reach the
+# dashboard through this injection, so a read endpoint would be a SECOND source
+# for the same fact and the two could disagree (US-531 ruling).
+#
+# Resolved PER REQUEST, like _DEPLOY_VERSION_PLACEHOLDER and unlike the two
+# config placeholders above -- see _effectiveSettingsJson for why a value cached
+# at handler construction would make this band lie.
+_DISPLAY_SETTINGS_PLACEHOLDER = '"__DISPLAY_SETTINGS__"'
 
 # US-501 (F-123): the dashboard header version chip. UNQUOTED -- this one is HTML
 # text content, not a JS value, so there is no quoted-preview trick to play.
@@ -98,6 +129,13 @@ _ACTION_PATH = "/service-control"
 # from the server's own `dtc` state (never the request body) before the injected
 # clear runner is ever invoked -- a tampered/stale UI can't force a clear.
 _CLEAR_PATH = "/dtc-clear"
+
+# US-531 [F-126]: the settings write route. The kiosk is sandboxed chromium JS
+# and cannot touch the filesystem, so a settings toggle POSTs here and THIS
+# process writes the Pi-local overlay. Deliberately NOT paired with a GET: the
+# effective values already reach the dashboard through the injected config, so
+# adding a read surface here would create a second source for the same fact.
+_SETTINGS_PATH = "/settings"
 
 # The `dtc` state file the clear gate re-check reads (matches dtc_emitter).
 _DTC_STATE_FILENAME = "dtc"
@@ -146,6 +184,7 @@ def makeStatesHandler(
     displayConfig: dict[str, Any] | None = None,
     carouselConfig: dict[str, Any] | None = None,
     deployVersionPath: str | None = None,
+    configPath: str | None = None,
 ) -> type[BaseHTTPRequestHandler]:
     """Build a request-handler class bound to one states dir + token + assets.
 
@@ -166,17 +205,31 @@ def makeStatesHandler(
     ``carouselConfig`` (US-506) is the ``pi.display.carousel`` sub-config -- the
     auto-rotate period, pause self-expiry and swipe velocity/travel thresholds --
     injected the same way, with the same ``None`` -> grounded-defaults fallback.
+    US-533 B1: when ``configPath`` is supplied this section is RE-READ per
+    request and this argument is only the fallback for config-less servers; the
+    two are the same file, so the re-read is the fresher answer, never a
+    different one.
 
     ``deployVersionPath`` (US-501) is the ``.deploy-version`` release record whose
     ``version`` fills the dashboard header chip. ``None``, absent, unreadable or
     malformed -> the honest ``V?.?.?`` sentinel; the placeholder is substituted
     either way so a raw ``__DEPLOY_VERSION__`` can never reach the panel.
+
+    ``configPath`` (US-531) is config.json, whose sibling overlay the POST
+    /settings route writes. ``None`` -> that route returns an honest 503 (this
+    server has no config to overlay) rather than reporting a save that no reader
+    would ever see -- the same posture as ``clearRunner``.
     """
     assetsDirs = _normalizeAssetsDirs(assetsDir)
     # Serialize once: the JSON object literal substituted for the quoted
     # placeholder (json.dumps(None) -> "null", the honest no-config fallback).
+    #
+    # ONLY auto-dim is cached here. The carousel section deliberately is NOT
+    # (US-533 B1) -- see _DISPLAY_CAROUSEL_PLACEHOLDER; ``carouselConfig`` is
+    # kept as the fallback for servers constructed WITHOUT a configPath, where
+    # there is no file to re-read and the caller-supplied section is the only
+    # truth available.
     displayConfigJson = json.dumps(displayConfig)
-    carouselConfigJson = json.dumps(carouselConfig)
 
     class _StatesHandler(BaseHTTPRequestHandler):
         # Silence default stderr request logging -- the journal captures stdout.
@@ -253,14 +306,18 @@ def makeStatesHandler(
                 length = 0
             rawBody = self.rfile.read(length) if 0 < length <= _MAX_ACTION_BODY else b""
 
-            # Exactly two write routes (US-403 service-control, US-407 dtc-clear).
-            # Everything else is 404 (the server is otherwise read-only).
+            # Exactly three write routes (US-403 service-control, US-407
+            # dtc-clear, US-531 settings). Everything else is 404 -- the server
+            # is otherwise read-only and must not grow a catch-all writer.
             rawPath = unquote(urlsplit(self.path).path)
             if rawPath == _ACTION_PATH:
                 self._handleServiceControl(rawBody)
                 return
             if rawPath == _CLEAR_PATH:
                 self._handleDtcClear()
+                return
+            if rawPath == _SETTINGS_PATH:
+                self._handleSettingsWrite(rawBody)
                 return
             self._send(404, b'{"error":"not found"}', "application/json")
 
@@ -355,6 +412,78 @@ def makeStatesHandler(
                 return
             self._send(200, body, "application/json")
 
+        def _handleSettingsWrite(self, rawBody: bytes) -> None:
+            # US-531: persist ONE operator setting into the US-530 Pi-local
+            # overlay. The kiosk cannot write files, so this process does it.
+            #
+            # NOTE the gate below is `overlay`'s, not a local copy. US-530 made
+            # the overlay a FLAT dot-path map precisely so "is this writable?"
+            # is a literal key comparison here -- two allow-lists that can drift
+            # would be worse than one, because they LOOK like defense in depth.
+            if not self._tokenOk():
+                self._send(401, b'{"error":"unauthorized"}', "application/json")
+                return
+            # Honest unavailability: with no config.json wired there is nothing
+            # to overlay, and a "saved" reply would describe a value no reader
+            # could ever resolve.
+            if configPath is None:
+                self._send(
+                    503,
+                    b'{"ok":false,"error":"no config path configured on this server"}',
+                    "application/json",
+                )
+                return
+
+            try:
+                payload = json.loads(rawBody.decode("utf-8"))
+                if not isinstance(payload, dict):
+                    raise TypeError("settings payload must be an object")
+                key = payload["key"]
+                value = payload["value"]
+            except (ValueError, KeyError, TypeError, UnicodeDecodeError):
+                self._send(400, b'{"error":"bad request"}', "application/json")
+                return
+
+            # Key gate (403 = "not yours to write") and value gate (400 = "that
+            # is not a legal value") are split so the UI can tell an operator
+            # mistake from an unsupported setting. Both reject BEFORE any write.
+            if key not in overlay.OVERRIDABLE_KEYS:
+                self._send(
+                    403,
+                    b'{"ok":false,"error":"key is not operator-overridable"}',
+                    "application/json",
+                )
+                return
+            isValid, stored = overlay.validateOverlayValue(key, value)
+            if not isValid:
+                self._send(
+                    400,
+                    b'{"ok":false,"error":"invalid value for this setting"}',
+                    "application/json",
+                )
+                return
+
+            wrote = overlay.writeOverlayValue(
+                overlay.overlayPathFor(configPath), key, stored
+            )
+            # Re-READ from disk through the shared seam rather than echoing the
+            # request. If the write failed, or the resolver coerces the stored
+            # value (pi.power.mode), this is the value the carousel and the
+            # orchestrator will actually see -- so the UI cannot show a setting
+            # that is not really stored.
+            found, effective = overlay.readEffectiveValue(configPath, key)
+            body = json.dumps(
+                {
+                    "ok": wrote,
+                    "key": key,
+                    "value": effective if found else None,
+                }
+            ).encode("utf-8")
+            if not wrote:
+                self._send(500, body, "application/json")
+                return
+            self._send(200, body, "application/json")
+
         def _injectHtml(self, html: str) -> str:
             # Same-origin injection at serve time: the token SSOT (US-393), the
             # display auto-dim config (US-483-b), the carousel navigation config
@@ -365,10 +494,27 @@ def makeStatesHandler(
             # .deploy-version after restarting this unit, so anything cached at
             # construction is a deploy behind (see _DEPLOY_VERSION_PLACEHOLDER).
             version = readDeployVersion(deployVersionPath) or _VERSION_UNKNOWN
+            # US-532: likewise resolved HERE rather than closed over -- the POST
+            # /settings route writes the overlay this reads, so a value cached at
+            # construction would render the PRE-SAVE setting on every page reload
+            # that is not preceded by a unit bounce. The band exists to report
+            # what is actually stored; a stale blob would make it lie.
+            settingsJson = json.dumps(loadEffectiveSettings(configPath))
+            # US-533 B1: and likewise the carousel navigation section, so a
+            # toggled autoRotateS applies on the reload the UI triggers itself
+            # instead of on a unit restart the kiosk is not authorised to make.
+            # With no configPath there is nothing to re-read -- the section the
+            # caller supplied at construction stands (US-506 behaviour intact).
+            carouselJson = json.dumps(
+                carouselConfig
+                if configPath is None
+                else loadDisplayCarouselConfig(configPath)
+            )
             return (
                 html.replace(_TOKEN_PLACEHOLDER, token)
                 .replace(_DISPLAY_AUTODIM_PLACEHOLDER, displayConfigJson)
-                .replace(_DISPLAY_CAROUSEL_PLACEHOLDER, carouselConfigJson)
+                .replace(_DISPLAY_CAROUSEL_PLACEHOLDER, carouselJson)
+                .replace(_DISPLAY_SETTINGS_PLACEHOLDER, settingsJson)
                 .replace(_DEPLOY_VERSION_PLACEHOLDER, version)
             )
 
@@ -416,6 +562,7 @@ class StatesHttpServer:
         displayConfig: dict[str, Any] | None = None,
         carouselConfig: dict[str, Any] | None = None,
         deployVersionPath: str | None = None,
+        configPath: str | None = None,
     ) -> None:
         self.host = host
         self.statesDir = statesDir
@@ -427,6 +574,7 @@ class StatesHttpServer:
             displayConfig,
             carouselConfig,
             deployVersionPath,
+            configPath,
         )
         # Bind eagerly so a port conflict fails loudly at construction (the unit
         # then exits non-zero -> the kiosk's fetch errors -> splash DEGRADED;
@@ -447,7 +595,7 @@ class StatesHttpServer:
 
 
 def _loadDisplaySection(configPath: str, name: str) -> dict[str, Any] | None:
-    """Read one ``pi.display.<name>`` sub-config from config.json, fail-safe.
+    """Read one effective ``pi.display.<name>`` sub-config, fail-safe.
 
     A LIGHT raw ``json.load`` (no secrets loader / validator) -- these display
     values are plain numbers with no ``${ENV}`` placeholders, so a full config
@@ -455,6 +603,11 @@ def _loadDisplaySection(configPath: str, name: str) -> dict[str, Any] | None:
     (missing file, unreadable, malformed, section absent) returns ``None`` so the
     server still serves the dashboard and the carousel falls back to its built-in
     grounded defaults (honest -- never crash the kiosk over a config read).
+
+    US-530: the raw read is then resolved through the shared config-overlay seam
+    (``common.config.overlay``, itself stdlib-only, so this server keeps its
+    no-third-party posture) so an operator setting written on the Pi is honoured
+    here exactly as the orchestrator honours it.
 
     Args:
         configPath: Path to config.json (relative paths resolve against the
@@ -467,6 +620,10 @@ def _loadDisplaySection(configPath: str, name: str) -> dict[str, Any] | None:
     try:
         with open(configPath, encoding="utf-8") as fh:
             config = json.load(fh)
+        # US-530: resolve through the SHARED overlay seam, not a local merge --
+        # this reader and the orchestrator's loadConfigWithSecrets must return
+        # the identical effective value or the A-4 divergence returns.
+        config = overlay.applyConfigOverlay(config, configPath)
         section = config.get("pi", {}).get("display", {}).get(name)
         return section if isinstance(section, dict) else None
     except (OSError, ValueError):
@@ -489,6 +646,44 @@ def loadDisplayCarouselConfig(configPath: str) -> dict[str, Any] | None:
     rejects malformed values.
     """
     return _loadDisplaySection(configPath, "carousel")
+
+
+def loadEffectiveSettings(configPath: str | None) -> dict[str, Any] | None:
+    """Read the Slice-1 operator settings at their effective values (US-532).
+
+    The read half of the F-126 settings band. Every key in the overlay's
+    allow-list is resolved through ``overlay.readEffectiveValue`` -- the SAME
+    seam the POST /settings route re-reads through after a write -- so the value
+    the band renders at page load and the value it renders after a save come from
+    one resolver, not two.
+
+    Iterating ``OVERRIDABLE_KEYS`` rather than a local list is deliberate: a
+    Slice-2 key added to the SSOT reaches the band with no edit here, and cannot
+    be surfaced under a name that has drifted from the one the write route
+    accepts (the injected keys ARE the POST body keys).
+
+    Honest-instrument: a key that cannot be resolved -- absent, or blocked by a
+    non-dict parent branch -- maps to ``None`` (rendered "unknown"), never to a
+    fabricated default. An unreadable config.json yields every key ``None``
+    rather than raising, so a bad config degrades one band instead of taking the
+    whole kiosk page down.
+
+    Args:
+        configPath: Path to config.json (relative paths resolve against the
+            process CWD -- the unit's WorkingDirectory), or ``None`` when this
+            server has no config wired.
+
+    Returns:
+        A flat dot-path -> effective-value map, or ``None`` when no config path
+        is configured (the band then renders every row as unknown).
+    """
+    if configPath is None:
+        return None
+    settings: dict[str, Any] = {}
+    for key in overlay.OVERRIDABLE_KEYS:
+        found, value = overlay.readEffectiveValue(configPath, key)
+        settings[key] = value if found else None
+    return settings
 
 
 def readDeployVersion(versionPath: str | None) -> str | None:
@@ -570,6 +765,10 @@ def main(argv: list[str] | None = None) -> int:
         displayConfig=loadDisplayAutoDimConfig(args.config),
         carouselConfig=loadDisplayCarouselConfig(args.config),
         deployVersionPath=args.deploy_version_path,
+        # US-531: the same config.json the display sections are read from is the
+        # one whose sibling overlay the settings route writes -- so a saved
+        # toggle and the injected config can never point at different files.
+        configPath=args.config,
     )
     server.serveForever()
     return 0

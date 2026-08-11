@@ -104,6 +104,13 @@ credentials.json
 *.key
 
 # --------------------------------------------------------------------------------
+# Pi-local config overlay (US-530 / F-126)
+# --------------------------------------------------------------------------------
+# Operator settings written on the Pi by the settings screen. Layers OVER the
+# shipped config.json; deploy-excluded like .env so a deploy never clobbers it.
+config.local.json
+
+# --------------------------------------------------------------------------------
 # OS Generated
 # --------------------------------------------------------------------------------
 .DS_Store

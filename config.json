@@ -65,7 +65,7 @@
         "mode": "auto"
       },
       "carousel": {
-        "autoRotateS": 8,
+        "autoRotateS": 0,
         "resumeIdleS": 45,
         "swipeMinPx": 40,
         "swipeFastVelocityPxPerMs": 0.6,
@@ -77,8 +77,8 @@
         "luxMin": 3.0,
         "luxFull": 1000.0,
         "minLevel": 0.15,
-        "defaultLevel": 0.70,
-        "alarmFloorLevel": 0.40,
+        "defaultLevel": 0.7,
+        "alarmFloorLevel": 0.4,
         "luxStaleSec": 10,
         "curve": "logarithmic"
       }
@@ -443,8 +443,8 @@
       "cleanupTimeHour": 3
     },
     "powerWatch": {
- 	  "smoothingSec": 7,
-	  "smoothingPollSec": 1
+      "smoothingSec": 7,
+      "smoothingPollSec": 1
     },
     "powerMonitoring": {
       "enabled": false,

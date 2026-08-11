@@ -1,0 +1,500 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>3.5″ Legibility + Layout Pass — Eclipse OBD-II</title>
+<style>
+/* ============================================================================
+   Page palette. Light is the bare :root; dark redefines TOKENS ONLY.
+   Device-screen palette (.panel) is deliberately fixed to the product's real
+   dark tokens -- it simulates hardware, so it must not follow the page theme.
+   ========================================================================== */
+:root{
+  --paper:#EEF1F3; --surface:#FFFFFF; --sunk:#E4E8EC;
+  --ink:#13171C; --ink-2:#4A545E; --ink-3:#7C8791;
+  --rule:#D3DAE0; --rule-2:#BFC8D0;
+  --accent:#9A6B06; --accent-soft:#FFC40022;
+  --pass:#1E7F45; --fail:#B3261E;
+  --shadow:0 1px 2px rgba(19,23,28,.06), 0 8px 24px rgba(19,23,28,.07);
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#0E1216; --surface:#171C22; --sunk:#10151A;
+    --ink:#E8EDF1; --ink-2:#A3AFB9; --ink-3:#6D7883;
+    --rule:#262E36; --rule-2:#333D47;
+    --accent:#FFC400; --accent-soft:#FFC4001c;
+    --pass:#35C46A; --fail:#EF5350;
+    --shadow:0 1px 2px rgba(0,0,0,.5), 0 8px 28px rgba(0,0,0,.45);
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#0E1216; --surface:#171C22; --sunk:#10151A;
+  --ink:#E8EDF1; --ink-2:#A3AFB9; --ink-3:#6D7883;
+  --rule:#262E36; --rule-2:#333D47;
+  --accent:#FFC400; --accent-soft:#FFC4001c;
+  --pass:#35C46A; --fail:#EF5350;
+  --shadow:0 1px 2px rgba(0,0,0,.5), 0 8px 28px rgba(0,0,0,.45);
+}
+
+*{box-sizing:border-box;}
+body{
+  margin:0; background:var(--paper); color:var(--ink);
+  font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  font-size:16px; line-height:1.6; -webkit-font-smoothing:antialiased;
+}
+.wrap{max-width:1080px; margin:0 auto; padding:40px 24px 72px;}
+
+/* ---- type ---- */
+h1,h2,h3{text-wrap:balance; margin:0;}
+h1{font-size:34px; font-weight:800; letter-spacing:-.022em; line-height:1.12;}
+h2{font-size:21px; font-weight:750; letter-spacing:-.012em;}
+h3{font-size:15px; font-weight:700;}
+p{margin:0; max-width:68ch;}
+.mono{font-family:ui-monospace,Menlo,Consolas,monospace; font-variant-numeric:tabular-nums;}
+.eyebrow{
+  font-family:ui-monospace,Menlo,Consolas,monospace; font-size:11px;
+  letter-spacing:.18em; text-transform:uppercase; color:var(--accent);
+}
+.dek{color:var(--ink-2); font-size:17px; max-width:64ch;}
+.note{color:var(--ink-3); font-size:13.5px; max-width:70ch;}
+
+header.top{
+  display:flex; flex-direction:column; gap:12px;
+  padding-bottom:26px; border-bottom:2px solid var(--ink); margin-bottom:34px;
+}
+.metarow{
+  display:flex; flex-wrap:wrap; gap:8px 22px; font-size:12.5px; color:var(--ink-3);
+  font-family:ui-monospace,Menlo,Consolas,monospace;
+}
+.metarow b{color:var(--ink-2); font-weight:600;}
+
+section{margin-bottom:52px; display:flex; flex-direction:column; gap:16px;}
+.sechead{display:flex; align-items:baseline; gap:14px; flex-wrap:wrap;}
+.sechead .tag{
+  font-family:ui-monospace,Menlo,Consolas,monospace; font-size:12px; color:var(--ink-3);
+  border:1px solid var(--rule-2); border-radius:2px; padding:2px 7px;
+}
+
+/* ---- callout ---- */
+.callout{
+  background:var(--surface); border-left:3px solid var(--accent);
+  padding:18px 20px; display:flex; flex-direction:column; gap:8px;
+  box-shadow:var(--shadow);
+}
+.callout.hard{border-left-color:var(--fail);}
+.callout h3{font-size:14px; letter-spacing:.02em;}
+
+/* ---- data table ---- */
+.tablewrap{overflow-x:auto;}
+table{border-collapse:collapse; width:100%; font-size:14px; min-width:520px;}
+th,td{text-align:left; padding:9px 14px 9px 0; border-bottom:1px solid var(--rule);}
+th{
+  font-family:ui-monospace,Menlo,Consolas,monospace; font-size:11px;
+  letter-spacing:.12em; text-transform:uppercase; color:var(--ink-3); font-weight:600;
+}
+td.num{font-family:ui-monospace,Menlo,Consolas,monospace; font-variant-numeric:tabular-nums;}
+
+/* ---- verdict chips ---- */
+.chip{
+  display:inline-block; font-family:ui-monospace,Menlo,Consolas,monospace;
+  font-size:10.5px; letter-spacing:.09em; text-transform:uppercase;
+  padding:2px 7px; border-radius:2px; white-space:nowrap; font-weight:600;
+}
+.chip.ok{color:var(--pass); border:1px solid var(--pass);}
+.chip.no{color:var(--fail); border:1px solid var(--fail);}
+.chip.mid{color:var(--accent); border:1px solid var(--accent);}
+
+/* ============================ THE RAMP ==================================== */
+.ramp{
+  background:var(--surface); box-shadow:var(--shadow);
+  display:flex; flex-direction:column; position:relative;
+}
+.ramprow{
+  display:grid; grid-template-columns:66px 1fr 78px 108px;
+  align-items:center; gap:16px; padding:9px 18px;
+  border-bottom:1px solid var(--rule);
+}
+.ramprow:last-child{border-bottom:none;}
+.ramprow.shipped{background:var(--sunk);}
+.rsize{
+  font-family:ui-monospace,Menlo,Consolas,monospace; font-size:12px;
+  color:var(--ink-3); font-variant-numeric:tabular-nums; text-align:right;
+}
+.rsample{color:var(--ink); font-weight:600; line-height:1.05; overflow:hidden; white-space:nowrap;}
+.rarc{
+  font-family:ui-monospace,Menlo,Consolas,monospace; font-size:12.5px;
+  color:var(--ink-2); font-variant-numeric:tabular-nums; text-align:right;
+}
+.rrole{font-size:12px; color:var(--ink-3);}
+.threshold{
+  display:flex; align-items:center; gap:12px; padding:7px 18px;
+  background:var(--accent-soft); border-top:2px dashed var(--accent);
+  border-bottom:2px dashed var(--accent);
+  font-family:ui-monospace,Menlo,Consolas,monospace; font-size:11.5px;
+  letter-spacing:.08em; text-transform:uppercase; color:var(--accent); font-weight:700;
+}
+
+/* ======================= DEVICE / PANEL RENDERS =========================== */
+.devicerow{display:flex; flex-wrap:wrap; gap:34px; align-items:flex-start;}
+.devicecol{display:flex; flex-direction:column; gap:10px;}
+.devicecap{
+  font-family:ui-monospace,Menlo,Consolas,monospace; font-size:11px;
+  letter-spacing:.1em; text-transform:uppercase; color:var(--ink-3);
+  display:flex; align-items:center; gap:9px;
+}
+.bezel{
+  background:#000; padding:9px; border-radius:5px; width:max-content;
+  box-shadow:var(--shadow); transform-origin:top left;
+}
+/* the simulated device screen -- product tokens, intentionally theme-fixed */
+.panel{
+  --p-bg:#0A0C0E; --p-surface:#15181C; --p-t1:#F2F4F6; --p-t2:#98A2AC; --p-t3:#67707A;
+  --p-amber:#FFC400; --p-green:#35C46A; --p-red:#D32F2F; --p-rule:#22262B;
+  width:480px; height:320px; background:var(--p-bg); color:var(--p-t1);
+  font-family:ui-monospace,Menlo,Consolas,monospace;
+  display:flex; flex-direction:column; overflow:hidden; position:relative;
+}
+.p-top{
+  display:flex; align-items:center; gap:8px; padding:0 12px; height:30px;
+  border-bottom:1px solid var(--p-rule); flex:0 0 auto;
+}
+.p-wm{font-size:11px; letter-spacing:.14em; color:var(--p-t2); font-weight:600;}
+.p-sp{flex:1;}
+.p-chip{font-size:10px; color:var(--p-t3);}
+.p-body{flex:1; padding:12px; display:flex; flex-direction:column; min-height:0;}
+.p-dots{display:flex; gap:5px; justify-content:center; padding-bottom:7px; flex:0 0 auto;}
+.p-dot{width:5px; height:5px; border-radius:50%; background:#333A41;}
+.p-dot.on{background:var(--p-t2);}
+.p-title{font-size:13px; font-weight:600; margin-bottom:8px; color:var(--p-t1);}
+
+/* BEFORE tiles -- shipped sizes, verbatim from dashboard.css */
+.b-summary{font-size:11px; color:var(--p-t2); margin-bottom:8px;}
+.b-grid{display:grid; grid-template-columns:1fr 1fr; gap:9px;}
+.b-tile{background:var(--p-surface); padding:8px 9px;}
+.b-label{font-size:10px; letter-spacing:.08em; text-transform:uppercase; color:var(--p-t3);}
+.b-value{font-size:15px; font-weight:600; color:var(--p-t1);}
+.b-detail{font-size:11px; color:var(--p-t3);}
+
+/* AFTER tiles -- proposed scale */
+.a-grid{display:grid; grid-template-columns:1fr 1fr; gap:10px; flex:1;}
+.a-tile{
+  background:var(--p-surface); padding:9px 11px;
+  display:flex; flex-direction:column; justify-content:center; gap:2px;
+}
+.a-label{font-size:20px; letter-spacing:.02em; color:var(--p-t2); line-height:1.05;}
+.a-value{font-size:34px; font-weight:700; color:var(--p-t1); line-height:1.05;}
+.a-value.ok{color:var(--p-green);} .a-value.warn{color:var(--p-amber);}
+.dotmark{display:inline-block; width:9px; height:9px; border-radius:50%; vertical-align:middle;}
+
+/* scale toggle */
+.togglebar{display:flex; align-items:center; gap:14px; flex-wrap:wrap;}
+button.tg{
+  font-family:ui-monospace,Menlo,Consolas,monospace; font-size:12px;
+  padding:8px 14px; border:1px solid var(--rule-2); background:var(--surface);
+  color:var(--ink); cursor:pointer; border-radius:2px; letter-spacing:.04em;
+}
+button.tg[aria-pressed="true"]{background:var(--ink); color:var(--paper); border-color:var(--ink);}
+button.tg:focus-visible{outline:2px solid var(--accent); outline-offset:2px;}
+/* scale() does not reclaim layout space, so pull the leftover box back in:
+   bezel is 338px tall (320 + 2x9 padding); at .582 it occupies ~197px. */
+.scaled .bezel{transform:scale(.582);}
+.scaled .devicecol{margin-bottom:-141px;}
+
+/* ---- card-set list ---- */
+.cardset{display:flex; flex-direction:column; background:var(--surface); box-shadow:var(--shadow);}
+.csrow{
+  display:grid; grid-template-columns:34px 1fr 190px 96px; gap:14px; align-items:center;
+  padding:12px 18px; border-bottom:1px solid var(--rule);
+}
+.csrow:last-child{border-bottom:none;}
+.csrow.future{opacity:.6;}
+.csn{
+  font-family:ui-monospace,Menlo,Consolas,monospace; font-size:13px;
+  color:var(--paper); background:var(--ink); width:24px; height:24px;
+  display:grid; place-items:center; border-radius:2px; font-weight:700;
+}
+.csname{font-weight:650; font-size:15px;}
+.csfacts{font-size:13px; color:var(--ink-2); font-family:ui-monospace,Menlo,Consolas,monospace;}
+.csorigin{font-size:11.5px; color:var(--ink-3);}
+
+.footer{
+  border-top:2px solid var(--ink); padding-top:18px; margin-top:8px;
+  font-size:12.5px; color:var(--ink-3); font-family:ui-monospace,Menlo,Consolas,monospace;
+  line-height:1.7;
+}
+@media (max-width:720px){
+  h1{font-size:27px;}
+  .ramprow{grid-template-columns:56px 1fr 66px; }
+  .ramprow .rrole{display:none;}
+  .csrow{grid-template-columns:28px 1fr; }
+  .csrow .csfacts,.csrow .csorigin{display:none;}
+}
+@media (prefers-reduced-motion:reduce){*{transition:none !important; animation:none !important;}}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="top">
+    <span class="eyebrow">Eclipse OBD-II · UI/UX · design spec</span>
+    <h1>The panel is 2.9 inches wide. Almost nothing on it is large enough to read.</h1>
+    <p class="dek">You reported the fonts as illegible at arm's length. Measured against the panel's
+      actual pixel pitch, the shipped type is <b>2–4× under the legibility floor</b> — and the two
+      elements you did <i>not</i> complain about are the only two already above it. This pass fixes
+      the type scale, and accepts the screen count that follows from it.</p>
+    <div class="metarow">
+      <span><b>Author</b> Iris</span>
+      <span><b>Date</b> 2026-08-07</span>
+      <span><b>Status</b> draft — for your review</span>
+      <span><b>Gate</b> Atlas (screen count + stage)</span>
+    </div>
+  </header>
+
+  <!-- ================= 1. MEASUREMENT ================= -->
+  <section>
+    <div class="sechead"><h2>1 · The measurement</h2><span class="tag">why 34 px, not "bigger"</span></div>
+    <p>Legibility is an <b>angular</b> requirement, not a pixel one — it depends on how far away you sit.
+      The panel is 3.5″ diagonal at 480×320, which is <b class="mono">~165 PPI</b>, so one design pixel is
+      <b class="mono">~0.154 mm</b>. At a normal in-car glance distance of <b class="mono">~650 mm</b>:</p>
+
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Requirement</th><th>Cap height</th><th>Design px</th><th>Font-size</th></tr></thead>
+        <tbody>
+          <tr><td>Comfort target — 20 arcmin</td><td class="num">3.8 mm</td><td class="num">~24.5 px</td><td class="num"><b>~34 px</b></td></tr>
+          <tr><td>Practical floor — 16 arcmin</td><td class="num">3.0 mm</td><td class="num">~20 px</td><td class="num"><b>~28 px</b></td></tr>
+          <tr><td>Shipped primary values</td><td class="num">1.4–1.7 mm</td><td class="num">9–11 px</td><td class="num">13–15 px <span class="chip no">under</span></td></tr>
+          <tr><td>Shipped tile labels</td><td class="num">0.9–1.2 mm</td><td class="num">6–8 px</td><td class="num">8–11 px <span class="chip no">far under</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="callout">
+      <h3>Your report and the arithmetic agree — independently</h3>
+      <p>You flagged the compass heading, the %-values, the g-force and the CHECK ENGINE line. Every one
+        of those is <b class="mono">≤22 px</b>. You did <b>not</b> flag the gear readout or the standby
+        hero — and those are the <b>only two elements on the whole UI at ≥34 px</b>
+        (<span class="mono">.imu-gear</span> 40 px, <span class="mono">.idle-hero</span> 34 px).</p>
+      <p class="note">Two different methods landing on the same boundary is what makes 34 px a
+        measured floor rather than my preference. It is your own eyes, in the car.</p>
+    </div>
+
+    <div class="callout hard">
+      <h3>Type is an instrument too</h3>
+      <p>A value rendered too small to read is not a <i>degraded</i> instrument — it is a <b>silent</b>
+        one. It occupies the space of a working readout while telling you nothing, which is worse than an
+        honest "no source", because it never announces its own failure.</p>
+    </div>
+  </section>
+
+  <!-- ================= 2. THE RAMP ================= -->
+  <section>
+    <div class="sechead"><h2>2 · Every size, at its real size</h2><span class="tag">grey rows = shipped today</span></div>
+    <p>Each row below is rendered at its actual design-pixel size, with the visual angle it subtends at
+      650 mm. The dashed band is the legibility floor.</p>
+
+    <div class="ramp">
+      <div class="ramprow"><span class="rsize">44 px</span><span class="rsample" style="font-size:44px">14.2 psi</span><span class="rarc">25.8′</span><span class="rrole">--fs-hero</span></div>
+      <div class="ramprow shipped"><span class="rsize">40 px</span><span class="rsample" style="font-size:40px">3rd gear</span><span class="rarc">23.5′</span><span class="rrole">shipped .imu-gear <span class="chip ok">ok</span></span></div>
+      <div class="ramprow"><span class="rsize">34 px</span><span class="rsample" style="font-size:34px">92 °C coolant</span><span class="rarc">19.9′</span><span class="rrole">--fs-primary</span></div>
+
+      <div class="threshold"><span>▲ above — readable at arm's length</span><span class="p-sp" style="flex:1"></span><span>20′ comfort · 16′ floor</span></div>
+
+      <div class="ramprow"><span class="rsize">28 px</span><span class="rsample" style="font-size:28px">practical floor</span><span class="rarc">16.4′</span><span class="rrole">hard minimum for values</span></div>
+      <div class="ramprow"><span class="rsize">26 px</span><span class="rsample" style="font-size:26px">parked reading only</span><span class="rarc">15.2′</span><span class="rrole">--fs-secondary</span></div>
+      <div class="ramprow"><span class="rsize">20 px</span><span class="rsample" style="font-size:20px">COOLANT · recognised, not read</span><span class="rarc">11.7′</span><span class="rrole">--fs-label</span></div>
+      <div class="ramprow shipped"><span class="rsize">15 px</span><span class="rsample" style="font-size:15px">shipped tile value — 15 px</span><span class="rarc">8.8′</span><span class="rrole">shipped <span class="chip no">under</span></span></div>
+      <div class="ramprow shipped"><span class="rsize">13 px</span><span class="rsample" style="font-size:13px">shipped card title / body — 13 px</span><span class="rarc">7.6′</span><span class="rrole">shipped <span class="chip no">under</span></span></div>
+      <div class="ramprow shipped"><span class="rsize">11 px</span><span class="rsample" style="font-size:11px">shipped tile detail — 11 px</span><span class="rarc">6.5′</span><span class="rrole">shipped <span class="chip no">under</span></span></div>
+      <div class="ramprow shipped"><span class="rsize">8 px</span><span class="rsample" style="font-size:8px">shipped compass tape label — 8 px</span><span class="rarc">4.7′</span><span class="rrole">shipped <span class="chip no">far under</span></span></div>
+    </div>
+    <p class="note">On your monitor these all look readable, because your monitor is roughly 96 PPI and
+      you are sitting ~60 cm away. On the panel each of these is <b>less than half</b> the physical size
+      you see here. Judge by the arcminute column, not by your screen — that gap is exactly the
+      renders-on-desktop / survives-the-Pi trap.</p>
+  </section>
+
+  <!-- ================= 3. BEFORE / AFTER ================= -->
+  <section id="devices">
+    <div class="sechead"><h2>3 · The same card, both scales</h2><span class="tag">System Status · true 480×320</span></div>
+    <div class="togglebar">
+      <button class="tg" id="btn1x" aria-pressed="true">Design box · 480×320</button>
+      <button class="tg" id="btnphys" aria-pressed="false">Actual physical size ≈ 2.9″ wide</button>
+      <span class="note" style="margin:0">Physical mode approximates the real panel on a typical ~96 PPI monitor.</span>
+    </div>
+
+    <div class="devicerow" id="devrow">
+      <div class="devicecol">
+        <span class="devicecap">Before — shipped <span class="chip no">4 facts + 4 details + summary</span></span>
+        <div class="bezel"><div class="panel">
+          <div class="p-top"><span class="p-wm">ECLIPSE OBD-II</span><span class="p-sp"></span><span class="p-chip">⇅ 14:32</span></div>
+          <div class="p-body">
+            <div class="p-title">System Status</div>
+            <div class="b-summary">All systems nominal · last check 14:31</div>
+            <div class="b-grid">
+              <div class="b-tile"><div class="b-label">OBD LINK</div><div class="b-value">Connected</div><div class="b-detail">ISO 9141-2 · 6.3 s⁻¹</div></div>
+              <div class="b-tile"><div class="b-label">BLUETOOTH</div><div class="b-value">Paired</div><div class="b-detail">OBDLink LX · bonded</div></div>
+              <div class="b-tile"><div class="b-label">SERVER SYNC</div><div class="b-value">Synced</div><div class="b-detail">14:28 · 4 min ago</div></div>
+              <div class="b-tile"><div class="b-label">STORAGE</div><div class="b-value">18% used</div><div class="b-detail">7.4 GB free</div></div>
+            </div>
+          </div>
+          <div class="p-dots"><span class="p-dot"></span><span class="p-dot on"></span><span class="p-dot"></span><span class="p-dot"></span></div>
+        </div></div>
+      </div>
+
+      <div class="devicecol">
+        <span class="devicecap">After — proposed <span class="chip ok">4 facts, each readable</span></span>
+        <div class="bezel"><div class="panel">
+          <div class="p-top"><span class="p-wm">ECLIPSE OBD-II</span><span class="p-sp"></span><span class="p-chip">14:32</span></div>
+          <div class="p-body">
+            <div class="a-grid">
+              <div class="a-tile"><div class="a-label">OBD</div><div class="a-value ok">Linked</div></div>
+              <div class="a-tile"><div class="a-label">Bluetooth</div><div class="a-value ok">Paired</div></div>
+              <div class="a-tile"><div class="a-label">Server</div><div class="a-value ok">Synced</div></div>
+              <div class="a-tile"><div class="a-label">Storage</div><div class="a-value">18<span style="font-size:20px">%</span></div></div>
+            </div>
+          </div>
+          <div class="p-dots"><span class="p-dot"></span><span class="p-dot on"></span><span class="p-dot"></span><span class="p-dot"></span><span class="p-dot"></span><span class="p-dot"></span></div>
+        </div></div>
+      </div>
+    </div>
+
+    <div class="callout">
+      <h3>What the "after" gave up, and where it went</h3>
+      <p>The four <b>detail lines</b> (11 px) and the <b>summary line</b> are gone from the face. They
+        were below the floor, so on the panel they were never read — they were consuming the space that
+        made everything else too small. They move to the <b>System drill-down</b>, which already exists
+        and is read parked, where 26 px is fine.</p>
+      <p>The card title also goes. With four tiles that each name themselves, "System Status" was
+        labelling a screen you can already identify from its page dot.</p>
+    </div>
+  </section>
+
+  <!-- ================= 4. CAPACITY / CARD SET ================= -->
+  <section>
+    <div class="sechead"><h2>4 · What the scale costs</h2><span class="tag">and the screens it buys</span></div>
+    <p>Of the 320 px stage, the top bar (~30) and page dots (~16) leave <b class="mono">~258 px</b> of card
+      body. One label + value row at the new scale is <b class="mono">20 + 34 + gap ≈ 72 px</b>. So:</p>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Layout</th><th>Facts per card</th><th>Verdict</th></tr></thead>
+        <tbody>
+          <tr><td>Single column</td><td class="num">3</td><td><span class="chip ok">comfortable</span></td></tr>
+          <tr><td>2 × 2 grid</td><td class="num">4</td><td><span class="chip mid">the ceiling</span></td></tr>
+          <tr><td>Anything denser</td><td class="num">5+</td><td><span class="chip no">back under the floor</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="callout hard">
+      <h3>This partly reverses the 6→4 consolidation — and it should</h3>
+      <p>I designed that consolidation (F-124) at your request, and it was right for what you asked:
+        too many screens to page through. But it is what packed the density that now costs legibility.
+        <b>On a 3.5″ panel, legibility outranks screen count</b> — so the number goes back up.</p>
+      <p>Turning <b>auto-rotate off</b> (your disposition-B) makes that cheap: cards no longer advance
+        under you, so paging is deliberate and a longer set costs you nothing but a swipe.</p>
+    </div>
+
+    <h3 style="margin-top:8px">Proposed set — 6 now, 7 when the Engine card lands</h3>
+    <div class="cardset">
+      <div class="csrow"><span class="csn">1</span><span class="csname">Home — Live instrument</span><span class="csfacts">compass · g · gear · grade</span><span class="csorigin">always-on (§5)</span></div>
+      <div class="csrow"><span class="csn">2</span><span class="csname">Alerts</span><span class="csfacts">hero + DTC state</span><span class="csorigin">moved to 2nd</span></div>
+      <div class="csrow"><span class="csn">3</span><span class="csname">System Status</span><span class="csfacts">4 tiles, 2×2</span><span class="csorigin">at the ceiling</span></div>
+      <div class="csrow"><span class="csn">4</span><span class="csname">Battery</span><span class="csfacts">verdict · cell V · runtime</span><span class="csorigin">was Health §</span></div>
+      <div class="csrow"><span class="csn">5</span><span class="csname">Fuel Trim</span><span class="csfacts">STFT · LTFT · loop state</span><span class="csorigin">was Health §</span></div>
+      <div class="csrow"><span class="csn">6</span><span class="csname">Light / Ambient</span><span class="csfacts">lux · auto-dim state</span><span class="csorigin">was Health §</span></div>
+      <div class="csrow future"><span class="csn">7</span><span class="csname">Engine</span><span class="csfacts">MAF · coolant · intake air · throttle</span><span class="csorigin">W-16 P2, when groomed</span></div>
+    </div>
+    <p class="note"><b>"Health" retires as a card.</b> It was a container holding three unrelated facts —
+      battery, ambient light, fuel trim — and a container is precisely what the new scale cannot afford.
+      Each of its sections becomes the card it always was.</p>
+  </section>
+
+  <!-- ================= 5. IDLE FACE ================= -->
+  <section>
+    <div class="sechead"><h2>5 · Atlas asked what happens to the standby face</h2><span class="tag">design-gate answer</span></div>
+    <p>He wants the live IMU instrument to be the Home face <b>always</b>, so that on the bench with the
+      engine off you still see your compass and g-meter. His question back to me: what, if anything,
+      remains of the idle/standby face?</p>
+
+    <div class="callout">
+      <h3>It retires as a face, and survives as a state</h3>
+      <p><b>Parked, the IMU is not unavailable — it is correct.</b> The compass reads a true heading and
+        the g-meter reads a true 0.0 g when you are stationary. Showing that parked isn't fabrication;
+        it's the instrument working. There was never a good reason to hide it behind the word "standby".</p>
+      <p>What is genuinely absent parked is the <b>OBD-dependent</b> content — gear, and the speed-gated
+        altitude integration. Those get typed-NA and greyed, which is the same honest-availability
+        pattern Battery and Light already use.</p>
+    </div>
+
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Idle face carried</th><th>Where it goes</th><th>Why</th></tr></thead>
+        <tbody>
+          <tr><td>STANDBY hero</td><td>Deleted</td><td>Replaced by a live instrument showing a true parked reading. A real heading beats the word "standby".</td></tr>
+          <tr><td>Clock</td><td>Top bar</td><td>It is chrome, not a card fact.</td></tr>
+          <tr><td><b>"DTC not read since key-off"</b></td><td><b>Alerts card</b></td><td>Load-bearing honesty, and it was always Alerts' fact — idle was borrowing it. Alerts is now adjacent at position 2.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="note">Net: no honest content is lost, one SSOT borrow is returned to its owner, and you get
+      your compass on the bench.</p>
+  </section>
+
+  <!-- ================= 6. SETTINGS KNOCK-ON ================= -->
+  <section>
+    <div class="sechead"><h2>6 · Knock-on to the Settings screen</h2><span class="tag">F-126 · US-532</span></div>
+    <p>Atlas's F-126 design-gate ruling lands two changes on the Settings design I drew on 08-03:</p>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Ruling</th><th>What my design does now</th></tr></thead>
+        <tbody>
+          <tr><td><b>One key, not two.</b> No new <span class="mono">autoRotate</span> bool alongside the existing <span class="mono">autoRotateS</span>.</td><td>The toggle derives on/off from <span class="mono">autoRotateS &gt; 0</span>; off writes <span class="mono">0</span>, on writes the shipped default. <b>Default is now OFF</b> per your disposition-B.</td></tr>
+          <tr><td><b>Auto-rotate does not apply live</b> — the config is read once at server startup and cached.</td><td>That control is labelled <b>"applies on restart"</b>. A silent no-op that looks applied is the one outcome the screen must never produce.</td></tr>
+          <tr><td>Power mode validates to <span class="mono">{car, wall, unknown}</span>.</td><td>Anything else resolves to <b>unknown</b> — never a confident wrong mode.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="note">The type scale reaches this surface too — Settings labels and values obey the §2 floor
+      like everything else, which will shorten the list per screen.</p>
+  </section>
+
+  <!-- ================= 7. VALIDATE ================= -->
+  <section>
+    <div class="sechead"><h2>7 · Before these values lock</h2><span class="tag">on the panel, not the bench</span></div>
+    <p>The scale is <i>derived</i>, so it has to be confirmed against the real display at real distance.
+      Two specific things to check:</p>
+    <div class="tablewrap">
+      <table>
+        <tbody>
+          <tr><td style="width:34px" class="num">1</td><td><b>Read the set at arm's length in the car</b>, seated normally — not leaning in at a desk. Desk-legible and car-legible are different tests, and only one of them counts.</td></tr>
+          <tr><td class="num">2</td><td><b>Check whether small text is also being resampled.</b> The stage is authored at 480×320 and scaled up, with the Pi outputting 1080p into a 480×320 native panel. If the panel downsamples, small glyphs may be <i>blurred</i> as well as small — which would make the shipped 8–11 px worse than the arithmetic predicts. <b>I have not confirmed this</b>; it needs a look at the real hardware.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <div class="footer">
+    Design of record — offices/uidevloper/proposals/2026-08-07-pi-3p5in-legibility-and-layout.md<br>
+    Bundles Atlas 2026-08-07 (legibility) + Atlas 2026-08-03 (IMU-always-on · Alerts-to-2nd · auto-rotate-off)<br>
+    Structural pieces — screen count, US-482 stage/scale, idle-face retirement — route to Atlas for design-gate.
+  </div>
+</div>
+
+<script>
+(function(){
+  var row=document.getElementById("devrow"),
+      b1=document.getElementById("btn1x"),
+      bp=document.getElementById("btnphys");
+  function set(phys){
+    row.classList.toggle("scaled",phys);
+    b1.setAttribute("aria-pressed",String(!phys));
+    bp.setAttribute("aria-pressed",String(phys));
+  }
+  b1.addEventListener("click",function(){set(false);});
+  bp.addEventListener("click",function(){set(true);});
+})();
+</script>
+</body>
+</html>

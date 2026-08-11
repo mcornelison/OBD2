@@ -80,7 +80,6 @@ User=__PI_USER__
 Environment=DISPLAY=:0
 ExecStart=__CHROMIUM_BIN__ \
   --kiosk \
-  --disable-gpu \
   --touch-events=enabled \
   --noerrdialogs --disable-infobars --hide-scrollbars \
   --autoplay-policy=no-user-gesture-required \

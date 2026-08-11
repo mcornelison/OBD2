@@ -200,7 +200,8 @@ def loadConfiguration(
 def runWorkflow(
     config: dict,
     dryRun: bool = False,
-    simulate: bool = False
+    simulate: bool = False,
+    configPath: str | None = None
 ) -> int:
     """
     Execute the main application workflow using the ApplicationOrchestrator.
@@ -212,6 +213,9 @@ def runWorkflow(
         config: Validated configuration dictionary
         dryRun: If True, validate config but don't start orchestrator
         simulate: If True, use simulated OBD-II connection
+        configPath: Path `config` was loaded from (US-533), passed through so
+            components that must follow a live operator setting change can
+            re-read it rather than closing over this snapshot.
 
     Returns:
         Exit code: 0 for clean shutdown, non-zero for errors
@@ -228,7 +232,9 @@ def runWorkflow(
     logger.info("Starting workflow...")
 
     # Create orchestrator
-    orchestrator = createOrchestratorFromConfig(config, simulate=simulate)
+    orchestrator = createOrchestratorFromConfig(
+        config, simulate=simulate, configPath=configPath
+    )
 
     # Register signal handlers BEFORE starting orchestrator
     logger.debug("Registering signal handlers...")
@@ -301,7 +307,10 @@ def main() -> int:
         exitCode = runWorkflow(
             config,
             dryRun=args.dry_run,
-            simulate=args.simulate
+            simulate=args.simulate,
+            # The SAME path loadConfiguration just read, so a live re-read can
+            # never point at a different file than the one we validated.
+            configPath=args.config
         )
 
         if exitCode == EXIT_SUCCESS:

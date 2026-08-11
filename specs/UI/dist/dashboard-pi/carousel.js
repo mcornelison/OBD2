@@ -1077,6 +1077,223 @@
     return { unit: unit, verb: verb, confirm: requiresConfirm(verb) };
   }
 
+  // --- US-532 (F-126) Settings band ----------------------------------------
+  //
+  // Iris Option B (CIO 2026-08-03): the Slice-1 settings render as a band at
+  // the TOP of this same setup-menu overlay, ABOVE the service rows -- safe
+  // persistent preferences on top, destructive service/Exit below.
+  //
+  // The keys are the overlay's own FLAT dot-paths, verbatim: they are what the
+  // state server injects them under (window.DISPLAY_SETTINGS) AND what POST
+  // /settings takes as its body `key`. A prettified display key would need a
+  // mapping table, and that table is precisely the thing that drifts from the
+  // write gate's allow-list.
+  // US-533: an apply-state is a CLAIM ABOUT A CONSUMER, and each of these has
+  // now been wired and proven, so the conservative US-532 placeholder
+  // ("applies on restart" on every row) is gone. Only states an actual consumer
+  // earned appear here -- an unused entry is a label nobody has verified, and
+  // the next story will reach for it as if someone had.
+  var SETTINGS_APPLY_NOTES = {
+    live: "applies now",
+    reload: "applies on reload",
+    "capture-restart": "applies on capture restart",
+  };
+
+  // AUTO-ROTATE is "reload", NOT "restart" -- and the difference is load-bearing.
+  // Atlas's original GAP 1 remedy was an eclipse-states-http bounce, but that
+  // unit runs User=mcornelison and polkit's manage-units grant deliberately
+  // excludes the state server (BL-030 B1), so the bounce is DENIED on the Pi: a
+  // "restart" label would have sent the operator to an action they cannot take,
+  // and a self-restart attempt would have been a silent no-op. The CIO ratified
+  // the alternative that deletes the constraint instead of authorising it
+  // (2026-08-08): the server resolves pi.display.carousel PER REQUEST, so the
+  // new period lands on the next page load -- which this band triggers itself.
+  //
+  // POWER MODE is "live": the card-state emitter's PowerModeProvider re-reads
+  // the effective key on every cycle (OverlayConfigPowerModeSource), so the
+  // power tile follows within one emit interval.
+  //
+  // CALIBRATION / AUTO-ANALYZE are "capture-restart": both are read ONCE into a
+  // constructor at orchestrator start, so "live" would be a lie -- and the bare
+  // "restart" US-532 shipped was true but useless, because the unit the operator
+  // would reach for (states-http, the only one this band talks to) is the wrong
+  // one. Name the service or the label does not help anybody.
+  var SETTINGS_SPECS = [
+    { key: "pi.display.carousel.autoRotateS", label: "Auto-rotate",
+      kind: "seconds", apply: "reload" },
+    { key: "pi.power.mode", label: "Power mode", kind: "mode", apply: "live" },
+    { key: "pi.calibration.mode", label: "Calibration mode",
+      kind: "bool", apply: "capture-restart" },
+    { key: "pi.analysis.triggerAfterDrive", label: "Auto-analyze after drive",
+      kind: "bool", apply: "capture-restart" },
+  ];
+
+  // Mirrors common.config.overlay.POWER_MODES. `unknown` is a LEGAL stored value
+  // (the honest "no deployment context"), not an error state -- which is why the
+  // row view keeps it distinct from "we could not read a value at all".
+  var SETTINGS_POWER_MODES = ["car", "wall", "unknown"];
+
+  var SETTINGS_PENDING_NOTE = "saving…";
+
+  // US-533 B1: how long the "saved" note stays on screen before the reload that
+  // actually applies an auto-rotate change. Long enough that the operator sees
+  // the save was accepted, short enough that the reload reads as part of the
+  // same tap rather than as the panel spontaneously restarting.
+  var SETTINGS_RELOAD_DELAY_MS = 700;
+
+  function settingsModeChoices() {
+    return SETTINGS_POWER_MODES.slice();
+  }
+
+  function settingsPendingNote() {
+    return SETTINGS_PENDING_NOTE;
+  }
+
+  function settingsSpecs() {
+    var out = [];
+    for (var i = 0; i < SETTINGS_SPECS.length; i++) {
+      var spec = SETTINGS_SPECS[i];
+      out.push({
+        key: spec.key,
+        label: spec.label,
+        kind: spec.kind,
+        apply: spec.apply,
+        // Derived from one mapping, never written per row: a future `apply` flip
+        // then cannot leave a stale note contradicting it.
+        applyNote: SETTINGS_APPLY_NOTES[spec.apply],
+      });
+    }
+    return out;
+  }
+
+  // Every apply-state the band DECLARES. Exported so a test can prove the set
+  // matches the set the rows actually use -- a note with no row behind it has
+  // never been checked against a consumer.
+  function settingsApplyStates() {
+    var out = [];
+    for (var k in SETTINGS_APPLY_NOTES) {
+      if (Object.prototype.hasOwnProperty.call(SETTINGS_APPLY_NOTES, k)) out.push(k);
+    }
+    return out;
+  }
+
+  // Does this save need the page reloaded to take effect? (US-533 B1.)
+  //
+  // True ONLY for an apply:"reload" row whose write actually SUCCEEDED. Both
+  // halves matter: reloading after a rejected write would wipe the "couldn't
+  // save" note off the screen and repaint the unchanged value, which reads as
+  // success -- and reloading a row that applies live or on a service restart is
+  // a disruption the operator did not ask for (it closes the menu and restarts
+  // every poll). The argument is the settingsSaveResult OUTPUT, not the raw
+  // response, so the same non-echo discipline that governs the repaint governs
+  // this: a body that merely looks successful cannot trigger a reload.
+  function settingsReloadNeeded(spec, res) {
+    return !!spec && spec.apply === "reload" && settingsSaveResult(res).ok;
+  }
+
+  // The choices offered for one setting. A toggle is a 2-choice segmented
+  // control and power mode a 3-choice one, so BOTH render through one mechanism
+  // -- and "unknown" is expressible as *no* choice selected, which is how an
+  // unreadable setting shows itself instead of defaulting to a confident Off.
+  function settingsChoices(spec) {
+    if (spec && spec.kind === "mode") {
+      return [
+        { value: "car", label: "CAR" },
+        { value: "wall", label: "WALL" },
+        { value: "unknown", label: "UNKNOWN" },
+      ];
+    }
+    return [
+      { value: false, label: "Off" },
+      { value: true, label: "On" },
+    ];
+  }
+
+  // Render one settings row from its EFFECTIVE value. `known:false` means the
+  // server could not resolve a value -- rendered Unknown, never Off: "Off" is a
+  // claim about stored state, and we were told there isn't one (honest
+  // instrument). GAP 3a: auto-rotate is DERIVED from autoRotateS > 0; no
+  // separate autoRotate bool exists on this side either.
+  function settingsRowView(spec, value) {
+    var kind = spec ? spec.kind : null;
+    var known = false;
+    var on = null;
+    var mode = null;
+    var display = "Unknown";
+    if (kind === "seconds") {
+      known = typeof value === "number" && isFinite(value);
+      if (known) {
+        on = value > 0;
+        display = on ? "On" : "Off";
+      }
+    } else if (kind === "bool") {
+      known = typeof value === "boolean";
+      if (known) {
+        on = value;
+        display = on ? "On" : "Off";
+      }
+    } else if (kind === "mode") {
+      known =
+        typeof value === "string" && SETTINGS_POWER_MODES.indexOf(value) !== -1;
+      if (known) {
+        mode = value;
+        display = value.toUpperCase();
+      }
+    }
+    return {
+      key: spec ? spec.key : null,
+      label: spec ? spec.label : "",
+      kind: kind,
+      apply: spec ? spec.apply : null,
+      applyNote: spec ? SETTINGS_APPLY_NOTES[spec.apply] : "",
+      known: known,
+      value: known ? value : null,
+      on: on,
+      mode: mode,
+      display: display,
+    };
+  }
+
+  // Is this choice the one currently stored? An unknown row selects NOTHING --
+  // highlighting a choice would assert a stored value we do not have.
+  function settingsChoiceActive(view, choiceValue) {
+    if (!view || !view.known) return false;
+    if (view.kind === "mode") return view.mode === choiceValue;
+    return view.on === choiceValue;
+  }
+
+  // The value to PERSIST for a chosen control state. GAP 3a: auto-rotate off
+  // writes 0 and on writes the shipped interval, so both directions round-trip
+  // through the one autoRotateS key. Booleans are coerced to REAL booleans --
+  // the overlay's validator takes bool only, so a truthy string would 400.
+  function settingsWriteValue(spec, desired) {
+    if (!spec) return null;
+    if (spec.kind === "seconds") {
+      return desired ? CAROUSEL_DEFAULTS.autoRotateS : 0;
+    }
+    if (spec.kind === "mode") {
+      return SETTINGS_POWER_MODES.indexOf(desired) !== -1 ? desired : "unknown";
+    }
+    return !!desired;
+  }
+
+  // Read a POST /settings response HONESTLY (Iris §3). The value a row repaints
+  // with comes from the server's RE-READ (`res.value`), NEVER from what was
+  // requested -- an optimistic repaint would show an "on" the Pi never stored.
+  // A body with no `value` at all (401, network failure, non-JSON) yields null,
+  // i.e. Unknown, because we genuinely do not know what is stored.
+  function settingsSaveResult(res) {
+    var obj = !!res && typeof res === "object";
+    var has =
+      obj && Object.prototype.hasOwnProperty.call(res, "value");
+    var ok = obj && res.ok === true;
+    return {
+      ok: ok,
+      note: ok ? "saved" : "couldn't save",
+      value: has ? res.value : null,
+    };
+  }
+
   // Long-press ring fill fraction 0..1 (clamped). holdMs defaults to the full
   // open threshold.
   function longPressProgress(elapsedMs, holdMs) {
@@ -2558,6 +2775,16 @@
     healthSectionView: healthSectionView,
     healthCardView: healthCardView,
     serviceMenuItems: serviceMenuItems,
+    settingsSpecs: settingsSpecs,
+    settingsApplyStates: settingsApplyStates,
+    settingsReloadNeeded: settingsReloadNeeded,
+    settingsModeChoices: settingsModeChoices,
+    settingsChoices: settingsChoices,
+    settingsRowView: settingsRowView,
+    settingsChoiceActive: settingsChoiceActive,
+    settingsWriteValue: settingsWriteValue,
+    settingsSaveResult: settingsSaveResult,
+    settingsPendingNote: settingsPendingNote,
     requiresConfirm: requiresConfirm,
     actionRequest: actionRequest,
     longPressProgress: longPressProgress,
@@ -2633,6 +2860,17 @@
         ? global.DISPLAY_CAROUSEL
         : null
     );
+
+    // US-532: the 5 Slice-1 settings at their EFFECTIVE values (US-530 shared
+    // resolver), injected the same way and resolved by the server PER REQUEST --
+    // so a reload after a save shows what was actually stored. Anything that is
+    // not an object (unsubstituted preview / null when the server has no config)
+    // -> every row renders Unknown, which is honest: without the injection we do
+    // not know what is stored, and a display-side default would be a fabrication.
+    var settingsSource =
+      global.DISPLAY_SETTINGS && typeof global.DISPLAY_SETTINGS === "object"
+        ? global.DISPLAY_SETTINGS
+        : null;
 
     // Apply the computed 0..1 brightness as a CSS var on the screen frame (a
     // software dim -- the browser kiosk can't drive the panel backlight). Setting
@@ -3577,6 +3815,7 @@
       var menuBtn = document.getElementById("menu-btn");
       var closeBtn = document.getElementById("menu-close");
       var list = document.getElementById("svc-list");
+      var settingsList = document.getElementById("settings-list");
       var statusEl = document.getElementById("menu-status");
       var exitBtn = document.getElementById("menu-exit");
       var ring = document.getElementById("longpress-ring");
@@ -3590,6 +3829,9 @@
       }
       function openMenu() {
         buildList();
+        // US-532: rebuilt on every open, not once at boot -- a save made in a
+        // previous open must not leave a stale value sitting behind the ⋮.
+        buildSettings();
         menu.hidden = false;
       }
       function closeMenu() {
@@ -3659,6 +3901,109 @@
             row.appendChild(stop);
             list.appendChild(row);
           })(items[i]);
+        }
+      }
+
+      // --- US-532 (F-126) Settings band --------------------------------------
+
+      // Persist ONE setting through the US-531 token-gated route -- the only
+      // write path there is; the kiosk is sandboxed and cannot touch the
+      // filesystem itself. `render` is the SAME closure that painted the row on
+      // open, so the value shown after a save and the value shown after a page
+      // reload can never come from different code.
+      //
+      // Deliberately NO confirm: these are non-destructive preferences, and
+      // borrowing the service-control confirm would train the operator to
+      // dismiss the modal that guards a service stop (Iris §4).
+      function postSetting(spec, desired, render, currentValue) {
+        // The pending paint keeps the value we already know is stored -- it must
+        // not show the REQUESTED one, which is the optimistic success Iris ruled
+        // out wearing a nicer label.
+        render(currentValue, settingsPendingNote());
+        var headers = { "Content-Type": "application/json" };
+        if (token) headers["X-Splash-Token"] = token;
+        fetch("/settings", {
+          method: "POST",
+          headers: headers,
+          body: JSON.stringify({
+            key: spec.key,
+            value: settingsWriteValue(spec, desired),
+          }),
+        })
+          .then(function (r) {
+            return r.json().then(null, function () { return null; });
+          })
+          .then(function (res) {
+            var out = settingsSaveResult(res);
+            // Repaint FIRST, unconditionally: the operator must see the REAL
+            // stored value even if the reload below is slow, blocked, or never
+            // due -- the truth must not depend on the apply mechanism firing.
+            render(out.value, out.note);
+            // US-533 B1: the row said "applies on reload", so this is where the
+            // band keeps that promise. The server resolves pi.display.carousel
+            // per request, so the reloaded page picks the new period up with NO
+            // eclipse-states-http restart (which polkit denies anyway).
+            if (settingsReloadNeeded(spec, res)) {
+              setTimeout(function () {
+                location.reload();
+              }, SETTINGS_RELOAD_DELAY_MS);
+            }
+          })
+          .then(null, function () {
+            // A rejected fetch tells us nothing about what is stored -> Unknown.
+            render(null, settingsSaveResult(null).note);
+          });
+      }
+
+      function buildSettings() {
+        if (!settingsList) return;
+        settingsList.textContent = "";
+        var specs = settingsSpecs();
+        for (var i = 0; i < specs.length; i++) {
+          (function (spec) {
+            var row = document.createElement("div");
+            row.className = "set-row";
+            var name = document.createElement("span");
+            name.className = "set-name";
+            name.textContent = spec.label;
+            row.appendChild(name);
+            var note = document.createElement("span");
+            note.className = "set-apply";
+            row.appendChild(note);
+            var controls = document.createElement("div");
+            controls.className = "set-controls";
+            row.appendChild(controls);
+
+            var choices = settingsChoices(spec);
+
+            // The ONE paint path for this row. Built with textContent (no
+            // innerHTML) so a config value can never become markup.
+            function render(value, statusNote) {
+              var view = settingsRowView(spec, value);
+              note.textContent = statusNote
+                ? view.applyNote + " · " + statusNote
+                : view.applyNote;
+              controls.textContent = "";
+              for (var c = 0; c < choices.length; c++) {
+                (function (choice) {
+                  var btn = document.createElement("button");
+                  btn.className = "set-btn tap-target";
+                  btn.textContent = choice.label;
+                  btn.setAttribute(
+                    "aria-pressed",
+                    String(settingsChoiceActive(view, choice.value))
+                  );
+                  btn.addEventListener("click", function () {
+                    postSetting(spec, choice.value, render, view.value);
+                  });
+                  controls.appendChild(btn);
+                })(choices[c]);
+              }
+            }
+
+            render(settingsSource ? settingsSource[spec.key] : null, "");
+            settingsList.appendChild(row);
+          })(specs[i]);
         }
       }
 
@@ -3851,7 +4196,15 @@
       }
 
       function hideTakeover() {
-        if (takeoverEl) takeoverEl.hidden = true;
+        if (!takeoverEl) return;
+        takeoverEl.hidden = true;
+        // US-537: drop the severity WITH the surface. The STOP alarm pulse hangs
+        // off [data-severity="stop"], so leaving the attribute behind left an
+        // acknowledged takeover matching the alarm rule forever -- inert only
+        // because the element had no box. Same lockstep contract renderRibbon
+        // already keeps with data-level: the state attribute and the surface go
+        // up and down together, so motion can never outlive the alert.
+        takeoverEl.removeAttribute("data-severity");
       }
       // Acknowledge/Dismiss -> record the stamp + drop to the ribbon (the ribbon
       // keeps carrying the alert). STOP has no plain dismiss, but Acknowledge is

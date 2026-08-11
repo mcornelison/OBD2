@@ -73,3 +73,9 @@ Adapter/ECU/BT hardware (raw `obd.OBD(fast=False)` got live RPM on this MAC ~07-
 
 ## Resolution
 [Fill in when a fix ships + a real drive captures rows.]
+
+## CLOSED 2026-08-07 (Spool SME sign-off, CIO concurs)
+Close condition met in full (Atlas live-verified, car running): pair → bond-survives-reboot → `realtime_data` grows (143,722→145,272; drive_id=37; RPM sustained; VIN; sync failedTables=0; clean single attribution). The durable-bond blocker (open since 07-03) is resolved.
+**Movement drive re-homed** (NOT BL-025): the still-owed moving-vehicle drive serves A-9 (attribution re-gate), US-526 (drain-writer shutdown validation), and Spool's WiFi/BT coexistence check -- booked there, not here.
+**Caveat:** BL-025 closed = link proven; it does NOT restore monitoring -- still zero moving-vehicle data since 07-03 (~35 days); Spool's engine monitoring stays DEGRADED until a real drive.
+Status → **Closed**.
