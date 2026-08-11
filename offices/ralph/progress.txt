@@ -3,3 +3,47 @@
 6 stories: US-539 tokenize FIRST (hard prereq), US-540-a set scale values, US-540-b re-lay 6 cards,
 US-541 IMU-always-on+reorder+auto-rotate-off, US-542 idle-face retirement, US-552 pin KMS output native.
 Atlas PASS. Acceptance is IN-CAR (arms length), not bench.
+
+## 2026-08-11 - US-539 (Rex / Session 1)
+Task: Extract the type scale into tokens.css (closes W-3) -- pure refactor
+
+### What was implemented:
+- Five-step type scale `--fs-hero / --fs-primary / --fs-secondary / --fs-label / --fs-meta`
+  declared in the visual SSOT `specs/UI/tokens.css` and mirrored into `dashboard.css :root`
+  (dashboard.html links ONLY dashboard.css -- an SSOT-only drop leaves the panel unsized
+  with a fully green suite; that is BL-027's lesson, same file, one token family later).
+- All 82 bare `font-size: Npx` in dashboard.css replaced with token refs. Zero bare px
+  remain (the AC2 grep gate). Values are the PRE-F-127 shipped scale 40/20/14/12/10 --
+  US-540-a sets 44/34/26/20/15 by editing two :root blocks and nothing else.
+- New gate `tests/ui/test_dashboard_type_scale.py` (17 tests) + shared resolver
+  `tests/ui/css_type_scale.py`; the two pre-existing SAFETY guards that parsed raw px
+  re-pointed onto the resolver so tokenization did not blind them.
+- Deviation filed: `offices/pm/issues/I-us539-type-scale-collapse-is-not-pixel-identical.md`.
+
+### Files changed:
+- Modified: `specs/UI/tokens.css` (type-scale token block + tier semantics)
+- Modified: `specs/UI/dist/dashboard-pi/dashboard.css` (mirror block + 82 declarations)
+- Created: `tests/ui/css_type_scale.py` (var(--fs-*) resolver + line-anchored ruleBlock)
+- Created: `tests/ui/test_dashboard_type_scale.py` (the US-539 gate)
+- Modified: `tests/ui/test_dashboard_stop_tier_safety.py` (STOP-directive size guard)
+- Modified: `tests/ui/test_dtc_detail_hierarchy.py` (detail-directive size guard)
+- Created: `offices/pm/issues/I-us539-type-scale-collapse-is-not-pixel-identical.md`
+
+### Learnings for future iterations:
+- **Pattern discovered**: when two acceptance clauses genuinely conflict, pick by WHICH
+  READING LETS THE NEXT STORY BE BUILT AS WRITTEN. Here "5 tokens" vs "pixel identical"
+  was unresolvable on its own terms (15 shipped sizes, 5 slots); the tiebreak was that a
+  lossless design would have left US-540-a setting 5 of 15 values. File the deviation,
+  do not block the sprint's prereq story on it.
+- **Pattern discovered**: a refactor that changes how a value is SPELLED must first find
+  every test that PARSES the old spelling. `grep -rn 'font-size' tests/` took ten seconds
+  and found two safety guards that would have silently gone blind rather than red.
+- **Gotcha**: `ruleBlock()` must be line-anchored. A substring search for
+  `.takeover-directive {` finds the STOP OVERRIDE first (declared earlier in the sheet),
+  so a guard comparing an override to its base compares it to itself and passes at 40>40.
+- **Gotcha**: a COMMENT containing the literal `@import` fails two offline-kiosk font
+  guards that scan raw file text. Reword the comment; never weaken the guard.
+- **Gotcha**: the Bash tool is bash -- PowerShell here-strings (`@'...'@`) leak a literal
+  `@` into the commit subject. Use a real heredoc or `git commit -F <file>`. `/tmp` and
+  `.git/` are both blocked for writes; stage scratch files inside the repo.
+---
