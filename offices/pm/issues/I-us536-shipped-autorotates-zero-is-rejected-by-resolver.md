@@ -117,3 +117,7 @@ pins the MECHANISM.
 Not fixed inline. `carousel.js`'s resolver is US-506/US-536 territory, US-548's
 fence is the three RED guard tests, and the fix requires choosing between two
 deliberate Atlas-era invariants. Filed per "report, do not silently work around".
+
+---
+
+**RESOLUTION 2026-08-11:** escalated to BL-031 (US-541 AC-3 depended on it), CIO ratified Option 1, folded into Sprint 74/V0.29.29 as **US-541-a** (per-key resolver relaxation). Close this issue when US-541-a lands.

@@ -7,7 +7,7 @@
 | **Blocks** | US-541 AC-3 only (AC-1 IMU-always-on and AC-2 reorder are DONE and committed) |
 | **Severity** | **HIGH** — the CIO-chosen freeze fix and the F-126 operator toggle are both inert on the panel |
 | **Owner** | PM (Marcus) → **Atlas** (the tie-break is an architecture call) |
-| **Status** | Open |
+| **Status** | **RESOLVED 2026-08-11** — Option 1 ratified by CIO; folded into Sprint 74/V0.29.29 as **US-541-a** (per-key relaxation: resolver admits `autoRotateS == 0`, keeps `> 0` for other keys; delete the xfail marker). Ralph completes it inside this sprint; US-541 flips `passes:true` when US-541-a lands. |
 | **Refs** | `offices/pm/issues/I-us536-shipped-autorotates-zero-is-rejected-by-resolver.md` (filed 2026-08-10, still open) |
 
 ## What US-541 AC-3 asked for
