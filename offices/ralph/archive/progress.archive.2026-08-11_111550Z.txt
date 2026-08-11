@@ -1,0 +1,247 @@
+# Ralph progress -- Sprint 73 / V0.29.28 (V0.29 chain closeout)
+
+Fresh sprint. 4 stories: US-549 I-043 shutdown-splash reason, US-550 I-044 XDG_RUNTIME_DIR,
+US-543 A-4 parity guard (6-assertion contract), US-545 A-18 BT bond self-heal (+3 refinements).
+
+## 2026-08-10 - US-549 (Agent 1 / Session 1)
+Task: I-043 -- shutdown-splash terminal reason not observable
+
+### What was implemented:
+- All four terminal exits of the closeout splash now report WHY before
+  `window.close()`. They previously shared one silent `exitKiosk()`, so a
+  correct abort (power returned) and a cold-start race left identical journals.
+- Report = `{cause, phase, reason, painted, elapsedMs, polls}` on two sinks:
+  a console line (`[shutdown-splash] terminal <json>`) that reaches
+  `journalctl -u splash-grace.service`, and `data-terminal-cause` /
+  `data-terminal-record` attributes on `<body>` (zero paint -- an attribute,
+  not a node).
+- `cause` is one of `cancelled` / `state-missing` / `black-tail-cap` /
+  `unrecognized-phase` (why the RENDER stopped); `phase` + `reason` are lifted
+  verbatim off the last shutdown-state read (why the PI is going down). Never
+  read one? Both are `null`, not a plausible default.
+- Both grace units (x11 + wayland) now pass `--enable-logging=stderr`, without
+  which chromium discards the console line entirely.
+- No visible render added -- I-043 and spec §6 both forbid painting on the
+  abort paths. Reasoning recorded in sprint.json completionNotes.
+
+### Files changed:
+- Modified: `specs/UI/dist/splash-pi/shutdown-state-poll.js` (terminal-reason report; `abort(cause)`)
+- Modified: `specs/UI/dist/splash-pi/splash-grace.service.x11` (`--enable-logging=stderr` + why)
+- Modified: `specs/UI/dist/splash-pi/splash-grace.service.wayland` (same)
+- Created: `tests/ui/shutdown_probe.js` (node probe for the closeout splash; captures console)
+- Modified: `tests/ui/render_harness.py` (`runShutdownSplash()`)
+- Created: `tests/ui/test_shutdown_splash_terminal_reason.py` (15 tests)
+- Modified: `offices/pm/issues/I-043-...md` (Resolution: code-fixed, Pi leg owed)
+
+### Learnings for future iterations:
+- **Gotcha (the big one)**: a log line is not an observable until something
+  carries it. Chromium DISCARDS web-content console output unless the unit
+  passes `--enable-logging=stderr`. The JS half alone would have been a
+  perfect, fully-tested, completely inert fix. And the trap inside the trap:
+  do NOT pin `--log-level`. Chromium logs page-script console messages at INFO
+  regardless of the console method used, so `--log-level=2` looks like tasteful
+  noise reduction and silently filters out the only line you added the flag for.
+- **Pattern discovered**: when the defect is "N outcomes are indistinguishable",
+  assert DISTINCTNESS (a set of size N over N end-to-end scenarios), not
+  presence. A single generic reason string passes every did-it-log test while
+  leaving the issue completely open -- mutation (D) proved it.
+- **Pattern discovered**: a static guard whose flag also appears in the file's
+  own explanatory COMMENTS must parse, not substring-match -- and needs a
+  self-test with a positive control. Reused `_execStartFlags` from
+  test_dashboard_kit.py rather than writing a fourth copy.
+- **Gotcha**: `Glob` over this repo's root times out (20 s) on the SMB share;
+  `git ls-files | grep <pattern>` is instant and complete.
+- **Gotcha**: Bash tool rejects `${PIPESTATUS[0]}` ("Contains expansion") --
+  run the plain command and read the tool's own exit reporting.
+---
+
+## 2026-08-10 - US-550 (Agent 1 / Session 2)
+Task: I-044 -- kiosk XDG_RUNTIME_DIR %U expands to 0 (root)
+
+### What was implemented:
+- `%U` -> `__PI_UID__` on the 5 kiosk units that declare XDG_RUNTIME_DIR
+  (4 splash variants + dashboard.service.wayland). The 6th unit named in
+  I-044, dashboard.service.x11, never declared one -- X11 needs only DISPLAY.
+- New V-4 install-time probe in both kit installers: `id -u "$PI_USER"`,
+  substituted like __PI_USER__ (V-1) and __CHROMIUM_BIN__ (V-3). An
+  unresolvable uid ABORTS; it never falls back to 0, which would reinstate
+  I-044 silently (the unit installs and chromium still starts).
+- V-4 runs LAST of the four probes so V-1/V-2/V-3 keep their abort precedence.
+- Both installers' three sed sites folded into one `render_unit()`, shared by
+  the dry-run preview and the real install.
+- `--dry-run` now prints the RESOLVED runtime dir (`/run/user/1000`), the only
+  off-Pi evidence that the substitution reaches the template.
+- New guard tests/deploy/test_kiosk_runtime_dir.py (16): units discovered by
+  glob, not listed; Environment= parsed, not substring-matched.
+
+### Files changed:
+- Modified: `specs/UI/dist/splash-pi/splash-boot.service.{x11,wayland}` (__PI_UID__ + why)
+- Modified: `specs/UI/dist/splash-pi/splash-grace.service.{x11,wayland}` (same)
+- Modified: `specs/UI/dist/dashboard-pi/dashboard.service.wayland` (same)
+- Modified: `specs/UI/dist/splash-pi/install.sh` (V-4 probe, render_unit, preview)
+- Modified: `specs/UI/dist/dashboard-pi/install.sh` (same)
+- Created: `tests/deploy/test_kiosk_runtime_dir.py` (I-044 guard, 16 tests)
+- Modified: `tests/deploy/test_kiosk_install.py` (_runInstaller forces FORCE_UID)
+- Modified: `tests/deploy/test_splash_kit.py` (FORCE_UID setdefault)
+- Modified: `tests/deploy/test_dashboard_kit.py` (FORCE_UID setdefault)
+- Modified: `offices/pm/issues/I-044-...md` (Resolution: code-fixed, Pi leg owed)
+
+### Learnings for future iterations:
+- **Gotcha (the big one)**: the **Grep tool cannot see `specs/UI/dist/`** --
+  it is gitignored-but-TRACKED, and ripgrep honours .gitignore. A repo-wide
+  sweep for `%U` returned ZERO hits while all five defect sites were present,
+  which reads exactly like "already fixed". `git grep` found them instantly.
+  An empty search result is evidence ONLY once you know the tool can see the
+  files.
+- **Pattern discovered**: a forced-override test proves the override works and
+  says nothing about the real path. Mutating the probe to `id -u ... || echo 0`
+  -- the exact silent fallback the story forbids -- stayed GREEN, because the
+  fail-loud test set FORCE_UID empty and short-circuited before `id -u` ever
+  ran. It tested the mock. The fix: a second test that UNSETS the override and
+  names a user that cannot exist, so the genuine probe genuinely fails.
+- **Gotcha**: adding a mandatory install-time probe breaks every off-Pi test
+  harness whose forced user doesn't exist locally. Three sibling suites needed
+  the same `env.setdefault(*_FORCE_UID, ...)` line that V-3 got when it landed.
+- **Pattern discovered**: the US-522 substring lesson INVERTS when the fix
+  documents the defect. These units now explain `%U` in their headers on
+  purpose, so `"%U" not in text` fails on a CORRECT file -- a false positive,
+  where US-522's was a false negative. Parse the directive; assert on the value.
+---
+
+## 2026-08-10 - US-543 (Agent 1 / Session 3)
+Task: A-4 Pi<->server schema/contract PARITY GUARD -- standing CI test
+
+### What was implemented:
+- `scripts/audit_sync_contract_parity.py`: pure check functions + CLI in the
+  `audit_address_mirrors.py` pattern; `tests/lint/test_pi_server_contract_parity.py`
+  (71 tests) drives them as the standing gate. All 6 AC assertions land as A1-A6.
+- Table set = `sync_log.PK_COLUMN` UNION `snapshot_registry.SNAPSHOT_SYNC`,
+  computed per call. Complete-by-construction, pinned by a test that registers
+  a new table by monkeypatch and asserts it is covered with no edit to the guard.
+  SNAPSHOT_SYNC is unioned in beyond the DoD's named PK_COLUMN because US-416
+  added a SECOND wire path -- watching one would report parity over a table set
+  that is not the synced set.
+- Pi side is the APPLIED schema: a real `ObdDatabase.initialize()` (every
+  ensureX helper) read back via PRAGMA. Server applied side rides the US-464/470
+  real-MariaDB harness and skips honestly on the bench.
+- Found 3 real divergences on the FIRST run: drive_summary's PK rename was
+  undeclared (fixed), and 2 dtc_freeze_frame columns that turned out to be my
+  incomplete model of the wire -- that table has a bespoke cross-tier resolver,
+  now declared as `CROSS_TIER_RESOLVED_COLUMNS` and self-policed from both sides.
+- One deliberate AC deviation, flagged for Atlas (not silently narrowed):
+  `data_quality` parity is asserted CONDITIONALLY, because the column is
+  wire-stripped and the two tiers' vocabularies are different facts.
+
+### Files changed:
+- Created: `scripts/audit_sync_contract_parity.py` (the 6-assertion audit + CLI)
+- Modified: `scripts/schema_diff.py` (+14/-0: declare the drive_summary PK rename)
+- Created: `tests/lint/test_pi_server_contract_parity.py` (71 tests, standing gate)
+- Created: `offices/pm/inbox/2026-08-10-from-ralph-us543-data-quality-...md`
+- Created: `offices/pm/tech_debt/TD-079-schema-diff-ddl-registry-blind-...md`
+
+### Learnings for future iterations:
+- **Pattern discovered**: when a guard's own AC names a fact that is NOT
+  actually shared, assert the CONDITION rather than the fact. `data_quality`
+  is wire-stripped, so the guard asserts the strip and flips to full
+  set-equality the day the strip is removed. Mutating the strip away took it
+  5 RED -- a conditional check nobody has watched fire is a disabled check.
+- **Gotcha (mine, and it cost a red test)**: I walked into the SAME
+  substring-vs-token trap my last two stories warned about. The design guard
+  `'create_all' not in source` failed because the module DOCUMENTS the
+  create_all trap in its header. Third sprint running, same lesson, opposite
+  direction each time. Fixed with an `ast` walk over Name/Attribute/alias nodes
+  plus a positive AND negative control.
+- **Pattern discovered**: prove the expensive loader earns its cost. The
+  applied Pi loader is only justified if it sees something the cheap DDL-constant
+  loader cannot -- so that difference is ASSERTED (`dtc_freeze_frame` is
+  invisible to the constants registry), and the test fails if they ever agree,
+  telling the next person to re-justify rather than silently keeping it.
+- **Gotcha**: a first-run guard that comes up green is suspicious; a first-run
+  guard that comes up RED needs each finding classified as real-defect vs
+  incomplete-model BEFORE fixing. 1 of my 3 was a real declaration gap, 2 were
+  my model missing a third wire transform. Widening the exemption until the
+  noise stops would have hidden the first kind forever.
+- **Gotcha**: the full targeted run exceeded the 120s Bash timeout and got
+  backgrounded (TD-059 territory). Split it into 3 synchronous batches instead
+  of trusting the backgrounded result.
+---
+
+## 2026-08-11 - US-545 (Agent 1 / Session 4)
+Task: A-18 OBD BT bond self-heal + boot verify
+
+### What was implemented:
+- RESUMED a cut-off iteration. The implementation was already on disk,
+  uncommitted, and **the gate had never been run**. Running it found two real
+  defects that no committed test covered. Both are now fixed and guarded.
+- `src/pi/obdii/bond_self_heal.py`: bounded, serialised self-heal. Reads the
+  bond, classifies it against an ADAPTER reading (a de-bonded device and an
+  unreadable bluez produce the identical all-False `BondState`, so without the
+  adapter reading a slow-booting bluez gets "healed" in response to our own
+  blindness), then stops capture -> releases rfcomm -> cycles the adapter ->
+  gates on a 20s discovery scan -> pairs -> re-reads the flags.
+- 8 distinct outcomes, one per remedy (NOT_DISCOVERABLE / ABORTED_PORT_BUSY /
+  SKIPPED_BUDGET / SKIPPED_UNKNOWN / REPAIR_FAILED / ...). AC4's loud-surface is
+  a distinct outcome + `operatorAction`, never a generic failure.
+- Serialisation (AC2) is why this is a standalone unit, not a method: the heal
+  must `systemctl stop eclipse-obd` first, so an in-process heal would be a
+  process asking to be killed mid-call. The logger only ever *requests* it via
+  `requestBondSelfHeal` -> `systemctl start --no-block`.
+- Bounded (AC3): one re-pair per boot, consumed BEFORE the work so a heal that
+  dies mid-way cannot leave a budget for the next connect-fail.
+- Radio + capture restoration both live in a `finally`; `_ensureRadioPowered`
+  VERIFIES rather than assumes.
+
+### Defects found by running the gate (neither was covered before):
+1. **BL-025 radio-disable guard went RED** on `bluetoothctl power off` in the
+   wedge reset. Correct catch -- the guard refuses any shipped radio disable.
+   AC1 explicitly requires this reset, so it takes the guard's own documented
+   escape hatch (`radio-guard-exempt`), with the justification *tested*, not
+   asserted: the two early-return paths between the power-off and the `finally`
+   have tests that assert the adapter ends POWERED.
+2. **The unit was DOA.** `eclipse-bond-selfheal.service` declared no
+   `PYTHONPATH`, so `-m src.pi.obdii.bond_self_heal` died at
+   `ModuleNotFoundError: No module named 'pi'` (src/pi/obdii/__init__.py opens
+   with `from pi.display import ...`). It would have installed, enabled, and
+   been silently inert on every boot -- the exact failure US-545 exists to end.
+
+### Files changed:
+- Created: `src/pi/obdii/bond_self_heal.py` (the healer + request seam + CLI)
+- Created: `deploy/eclipse-bond-selfheal.service` (+ the dual-PYTHONPATH fix)
+- Created: `tests/pi/obdii/test_bond_self_heal.py` (51 tests)
+- Created: `tests/deploy/test_bond_selfheal_deploy.py` (19; +3 mechanism tests)
+- Modified: `src/pi/obdii/obd_connection.py` (verdict-gated self-heal request)
+- Modified: `src/pi/obdii/bluetooth_helper.py` (public `defaultSubprocessRunner`)
+- Modified: `src/pi/ops/unit_manifest.py` + its test (10th canonical unit)
+- Modified: `deploy/deploy-pi.sh` (`step_install_bond_selfheal_unit`)
+- Modified: `deploy/polkit-rules/51-eclipse-service-control.rules` (start-only)
+- Modified: `tests/pi/obdii/bt_stack_fake.py` (state-machine BT fake)
+
+### Learnings for future iterations:
+- **Gotcha (the big one, and it is the note's own warning coming true)**: the
+  handoff note said "a mock-driven test says nothing about the path that runs on
+  the Pi" -- and the unit was DOA for exactly that reason. 51 green tests
+  exercised the healer through a fake; ZERO ran the ExecStart. The deploy test
+  asserted `'bond_self_heal' in execStart`, which passes over BOTH
+  `-m pi.obdii.X` and `-m src.pi.obdii.X`, and this repo genuinely ships both
+  conventions. **The fix is cheap and should be standard for every new unit:**
+  actually `subprocess.run` the ExecStart module with the unit's own PYTHONPATH
+  and assert it reaches its usage exit -- plus a negative control with
+  PYTHONPATH unset that must fail, proving the directive is load-bearing.
+- **Pattern discovered**: derive the thing under test FROM the artifact (parse
+  the `-m` token and the PYTHONPATH out of the unit) rather than restating it.
+  A rename then moves the test with the code instead of leaving it asserting
+  about a module nobody runs.
+- **Gotcha**: systemd spells it `Environment=PYTHONPATH=...`, so a parsed-unit
+  dict keys it under `Environment`. My first cut read `directives['PYTHONPATH']`
+  and got `[]` -- which, in a PRESENCE check, failed loudly and got caught, but
+  in an ABSENCE check would have passed over anything. Same empty-result trap as
+  US-550's Grep blindspot, one layer down.
+- **Pattern discovered**: when a safety guard blocks something a story genuinely
+  requires, take its named escape hatch AND make the exemption's justification
+  falsifiable. "It's restored in a finally" is a claim; the two tests that drive
+  the early-return paths and assert `radioPowered is True` are the evidence.
+  The exemption then silences the static guard, not the behaviour it protects.
+- **Gotcha**: a cut-off iteration leaves work that LOOKS finished -- 2377 lines,
+  polished docstrings, uncommitted. The gate is what was missing, and it is
+  exactly what would have caught both defects. Never infer green from polish.
+---
