@@ -578,6 +578,15 @@ def _defaultRunner(cmd: list[str], **kwargs: Any) -> subprocess.CompletedProcess
     return subprocess.run(cmd, **kwargs)  # noqa: S603 — command list is vetted
 
 
+#: US-545: the same default runner, under a public name.  Siblings that drive
+#: OTHER CLIs (``systemctl``, the pair script) need the identical
+#: no-shell/capture/never-check posture, and a second private copy would be a
+#: second place for that posture to drift.  Deliberately an alias, not a
+#: wrapper: :mod:`bond_self_heal` passes it back INTO this module's functions,
+#: so the fake a test injects must be the exact object those functions see.
+defaultSubprocessRunner = _defaultRunner
+
+
 def _formatCommand(cmd: list[str]) -> str:
     """Render a command list back to a human-readable string for error messages."""
     return " ".join(cmd)

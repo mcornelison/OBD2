@@ -65,5 +65,25 @@ polkit.addRule(function(action, subject) {
         }
     }
 
+    // US-545 (A-18) -- NOT part of the kiosk mirror above.  eclipse-obd itself
+    // runs as this user; when its connect path finds a de-bonded dongle it asks
+    // systemd to run the bond self-heal (bond_self_heal.requestBondSelfHeal ->
+    // `systemctl start --no-block`).  It cannot do the heal in-process because
+    // the heal must STOP eclipse-obd first.
+    //
+    // START ONLY.  There is no kiosk button for this and none is intended --
+    // the grant exists for the capture service, and polkit keys on the USER, so
+    // it is reachable by any process of that user regardless.  That is not a new
+    // exposure: `stop eclipse-obd.service` is ALREADY granted above, so anything
+    // that could abuse this could already stop capture outright, more directly.
+    // The self-heal is additionally self-limiting -- one re-pair per process,
+    // and it restarts capture in a `finally` plus the unit's ExecStopPost.
+    if (unit == "eclipse-bond-selfheal.service") {
+        if (verb == "start") {
+            return polkit.Result.YES;
+        }
+        return polkit.Result.NO;
+    }
+
     // Any other unit, or a verb outside a unit's set -> no decision (default deny).
 });

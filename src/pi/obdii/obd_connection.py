@@ -118,7 +118,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Any
 
-from . import bluetooth_helper
+from . import bluetooth_helper, bond_self_heal
 
 logger = logging.getLogger(__name__)
 
@@ -943,6 +943,13 @@ class ObdConnection:
         here; pairing is not, so an absent bond record is reported loudly with
         the actual remedy rather than papered over.
 
+        US-545 (A-18): a bond bluez has actually DROPPED is no longer just a
+        warning.  This runs on every connect -- so it is also the reconnect
+        path -- and now delegates to the bounded self-heal.  It delegates
+        rather than heals in-place because the heal must stop this very
+        service first (never pair while the logger holds the port); see
+        :mod:`~src.pi.obdii.bond_self_heal`.
+
         Best-effort by construction: never raises, and a failure here must
         never fail a connect attempt that would otherwise have worked.
 
@@ -955,19 +962,47 @@ class ObdConnection:
             logger.debug("Bond assurance skipped (%s)", exc)
             return
 
-        if not bluetooth_helper.isDurableBond(state):
-            logger.warning(
-                "Bond for %s is NOT durable (known=%s paired=%s bonded=%s "
-                "trusted=%s) -- bluez will not reconnect it unattended. Run "
-                "scripts/pair_obdlink.sh %s with the dongle powered (engine "
-                "on) and in pair mode.",
-                macAddress,
-                state.known,
-                state.paired,
-                state.bonded,
-                state.trusted,
+        if bluetooth_helper.isDurableBond(state):
+            return
+
+        # US-545: an unreadable bluez produces the SAME all-False state as a
+        # genuinely cleared bond.  Classify against the adapter reading before
+        # acting, or a slow-to-start bluetooth.service would have us stopping
+        # capture and re-pairing the dongle in response to our own blindness.
+        try:
+            healer = bond_self_heal.BondSelfHealer(macAddress)
+            verdict = bond_self_heal.classifyBond(
+                state, adapterPresent=healer.readAdapterPowered() is not None
+            )
+        except Exception as exc:  # noqa: BLE001 -- advisory check only
+            logger.debug("Bond verdict unavailable (%s)", exc)
+            return
+
+        if verdict is bond_self_heal.BondVerdict.UNKNOWN:
+            logger.debug(
+                "Bond for %s could not be classified (bluez unreadable) -- "
+                "not requesting a self-heal off a blind reading",
                 macAddress,
             )
+            return
+
+        logger.warning(
+            "Bond for %s is NOT durable (known=%s paired=%s bonded=%s "
+            "trusted=%s) -- bluez will not reconnect it unattended. Run "
+            "scripts/pair_obdlink.sh %s with the dongle powered (engine "
+            "on) and in pair mode.",
+            macAddress,
+            state.known,
+            state.paired,
+            state.bonded,
+            state.trusted,
+            macAddress,
+        )
+
+        try:
+            bond_self_heal.requestBondSelfHeal(macAddress)
+        except Exception as exc:  # noqa: BLE001 -- must never fail a connect
+            logger.debug("Self-heal request failed (%s)", exc)
 
     def _resolvePort(self) -> str | None:
         """

@@ -35,13 +35,17 @@ import pytest
 
 from pi.ops import unit_manifest as manifest
 
-# The 9 deploy-installed units. The first 8 were verified on the Pi 2026-07-27
+# The 10 deploy-installed units. The first 8 were verified on the Pi 2026-07-27
 # (US-492 AC-2 grounding); eclipse-rfkill-unblock joined 2026-07-31 with the
-# BL-025 P0 hotfix (verified live on the Pi by Atlas, then made repo-managed).
+# BL-025 P0 hotfix (verified live on the Pi by Atlas, then made repo-managed);
+# eclipse-bond-selfheal joined 2026-08-10 with US-545 (A-18) -- its Pi-side
+# verification is still owed, and it is listed here because deploy-pi.sh
+# installs it, which is what CANONICAL_UNITS means.
 # This literal is the ONE place the expectation is restated -- it is the fixture
 # the SSOT is measured against, not a second production list.
 EXPECTED_CANONICAL = {
     "eclipse-rfkill-unblock.service",
+    "eclipse-bond-selfheal.service",
     "eclipse-obd.service",
     "eclipse-powerwatch.service",
     "eclipse-states-http.service",

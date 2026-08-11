@@ -165,3 +165,83 @@ Task: A-4 Pi<->server schema/contract PARITY GUARD -- standing CI test
   backgrounded (TD-059 territory). Split it into 3 synchronous batches instead
   of trusting the backgrounded result.
 ---
+
+## 2026-08-11 - US-545 (Agent 1 / Session 4)
+Task: A-18 OBD BT bond self-heal + boot verify
+
+### What was implemented:
+- RESUMED a cut-off iteration. The implementation was already on disk,
+  uncommitted, and **the gate had never been run**. Running it found two real
+  defects that no committed test covered. Both are now fixed and guarded.
+- `src/pi/obdii/bond_self_heal.py`: bounded, serialised self-heal. Reads the
+  bond, classifies it against an ADAPTER reading (a de-bonded device and an
+  unreadable bluez produce the identical all-False `BondState`, so without the
+  adapter reading a slow-booting bluez gets "healed" in response to our own
+  blindness), then stops capture -> releases rfcomm -> cycles the adapter ->
+  gates on a 20s discovery scan -> pairs -> re-reads the flags.
+- 8 distinct outcomes, one per remedy (NOT_DISCOVERABLE / ABORTED_PORT_BUSY /
+  SKIPPED_BUDGET / SKIPPED_UNKNOWN / REPAIR_FAILED / ...). AC4's loud-surface is
+  a distinct outcome + `operatorAction`, never a generic failure.
+- Serialisation (AC2) is why this is a standalone unit, not a method: the heal
+  must `systemctl stop eclipse-obd` first, so an in-process heal would be a
+  process asking to be killed mid-call. The logger only ever *requests* it via
+  `requestBondSelfHeal` -> `systemctl start --no-block`.
+- Bounded (AC3): one re-pair per boot, consumed BEFORE the work so a heal that
+  dies mid-way cannot leave a budget for the next connect-fail.
+- Radio + capture restoration both live in a `finally`; `_ensureRadioPowered`
+  VERIFIES rather than assumes.
+
+### Defects found by running the gate (neither was covered before):
+1. **BL-025 radio-disable guard went RED** on `bluetoothctl power off` in the
+   wedge reset. Correct catch -- the guard refuses any shipped radio disable.
+   AC1 explicitly requires this reset, so it takes the guard's own documented
+   escape hatch (`radio-guard-exempt`), with the justification *tested*, not
+   asserted: the two early-return paths between the power-off and the `finally`
+   have tests that assert the adapter ends POWERED.
+2. **The unit was DOA.** `eclipse-bond-selfheal.service` declared no
+   `PYTHONPATH`, so `-m src.pi.obdii.bond_self_heal` died at
+   `ModuleNotFoundError: No module named 'pi'` (src/pi/obdii/__init__.py opens
+   with `from pi.display import ...`). It would have installed, enabled, and
+   been silently inert on every boot -- the exact failure US-545 exists to end.
+
+### Files changed:
+- Created: `src/pi/obdii/bond_self_heal.py` (the healer + request seam + CLI)
+- Created: `deploy/eclipse-bond-selfheal.service` (+ the dual-PYTHONPATH fix)
+- Created: `tests/pi/obdii/test_bond_self_heal.py` (51 tests)
+- Created: `tests/deploy/test_bond_selfheal_deploy.py` (19; +3 mechanism tests)
+- Modified: `src/pi/obdii/obd_connection.py` (verdict-gated self-heal request)
+- Modified: `src/pi/obdii/bluetooth_helper.py` (public `defaultSubprocessRunner`)
+- Modified: `src/pi/ops/unit_manifest.py` + its test (10th canonical unit)
+- Modified: `deploy/deploy-pi.sh` (`step_install_bond_selfheal_unit`)
+- Modified: `deploy/polkit-rules/51-eclipse-service-control.rules` (start-only)
+- Modified: `tests/pi/obdii/bt_stack_fake.py` (state-machine BT fake)
+
+### Learnings for future iterations:
+- **Gotcha (the big one, and it is the note's own warning coming true)**: the
+  handoff note said "a mock-driven test says nothing about the path that runs on
+  the Pi" -- and the unit was DOA for exactly that reason. 51 green tests
+  exercised the healer through a fake; ZERO ran the ExecStart. The deploy test
+  asserted `'bond_self_heal' in execStart`, which passes over BOTH
+  `-m pi.obdii.X` and `-m src.pi.obdii.X`, and this repo genuinely ships both
+  conventions. **The fix is cheap and should be standard for every new unit:**
+  actually `subprocess.run` the ExecStart module with the unit's own PYTHONPATH
+  and assert it reaches its usage exit -- plus a negative control with
+  PYTHONPATH unset that must fail, proving the directive is load-bearing.
+- **Pattern discovered**: derive the thing under test FROM the artifact (parse
+  the `-m` token and the PYTHONPATH out of the unit) rather than restating it.
+  A rename then moves the test with the code instead of leaving it asserting
+  about a module nobody runs.
+- **Gotcha**: systemd spells it `Environment=PYTHONPATH=...`, so a parsed-unit
+  dict keys it under `Environment`. My first cut read `directives['PYTHONPATH']`
+  and got `[]` -- which, in a PRESENCE check, failed loudly and got caught, but
+  in an ABSENCE check would have passed over anything. Same empty-result trap as
+  US-550's Grep blindspot, one layer down.
+- **Pattern discovered**: when a safety guard blocks something a story genuinely
+  requires, take its named escape hatch AND make the exemption's justification
+  falsifiable. "It's restored in a finally" is a claim; the two tests that drive
+  the early-return paths and assert `radioPowered is True` are the evidence.
+  The exemption then silences the static guard, not the behaviour it protects.
+- **Gotcha**: a cut-off iteration leaves work that LOOKS finished -- 2377 lines,
+  polished docstrings, uncommitted. The gate is what was missing, and it is
+  exactly what would have caught both defects. Never infer green from polish.
+---
