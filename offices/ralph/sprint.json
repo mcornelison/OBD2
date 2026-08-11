@@ -153,13 +153,14 @@
     {
       "id": "US-541-a",
       "parent": "F-127",
+      "epicId": "E-001",
       "type": "normal",
       "size": "S",
       "status": "sprint-ready",
-      "passes": null,
+      "passes": false,
       "title": "Resolver honours autoRotateS:0 as a real OFF value (unblocks US-541 AC-3 / BL-031)",
       "goal": "As the operator, I want auto-rotate OFF to actually stay off, so the CIO freeze fix and the F-126 Settings 'Off' toggle are not silent no-ops.",
-      "definitionOfDone": [
+      "acceptance": [
         "[Atlas Option-1, ratified by CIO 2026-08-11 -- resolves BL-031 / I-us536] resolveCarouselConfig (specs/UI/dist/dashboard-pi/carousel.js:218) admits autoRotateS == 0 as a real value. Keep the strict `> 0` guard for the OTHER keys (resumeIdleS et al.) -- this is a PER-KEY relaxation, NOT a blanket `>= 0`. Rationale: 0 = off / >0 = on is the same GAP-3a contract US-530/531/532/533 already encode, and shouldAutoAdvance already treats 0 as never-advance.",
         "the US-506 misconfig-guard intent is preserved for every key except autoRotateS: a non-number / NaN / Infinity / negative autoRotateS still falls back to the default (only a clean 0 is admitted).",
         "delete the @pytest.mark.xfail(strict=True) marker on tests/ui/test_carousel_imu_always_on.py::test_resolveCarouselConfig_honoursTheShippedOffValue -- with the fix it XPASSes; remove the marker so it is a normal green assertion (per BL-031 'delete the marker, not the test').",
@@ -175,15 +176,9 @@
       "conditionalOutcomes": [
         "Per-key relaxation only. If a future key legitimately needs 0-as-value, it opts in the same way -- do NOT widen the shared guard."
       ],
-      "sourceRefs": [
-        "offices/pm/blockers/BL-031-us541-ac3-autorotate-off-is-inert-resolver-rejects-zero.md",
-        "offices/pm/issues/I-us536-shipped-autorotates-zero-is-rejected-by-resolver.md"
-      ],
-      "createdAt": "2026-08-11",
-      "updatedAt": "2026-08-11",
-      "priority": "P1",
-      "tier": "pi",
-      "gate": "none (Atlas Option-1 ratified)"
+      "tasks": [],
+      "completionNotes": "",
+      "feedback": ""
     },
     {
       "id": "US-542",

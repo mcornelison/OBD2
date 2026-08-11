@@ -7600,7 +7600,7 @@
       "type": "normal",
       "size": "S",
       "status": "sprint-ready",
-      "passes": null,
+      "passes": false,
       "title": "Resolver honours autoRotateS:0 as a real OFF value (unblocks US-541 AC-3 / BL-031)",
       "goal": "As the operator, I want auto-rotate OFF to actually stay off, so the CIO freeze fix and the F-126 Settings 'Off' toggle are not silent no-ops.",
       "definitionOfDone": [
