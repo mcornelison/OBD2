@@ -4,8 +4,8 @@ version: V0.29.28
 status: draft
 createdAt: 2026-08-10
 createdBy: Marcus (PM)
-selectedStories: [US-548, US-549, US-550, US-543, US-545]
-forksFrom: sprint/sprint71-V0.29.26 tip (NOT dev -- V0.29.26 is not on dev yet; the Pi is off so it hasn't deployed. US-548 fixes the RED tests US-536 created, which only exist on the sprint-71 branch. When the Pi is on: merge sprint71->dev then sprint73->dev, deploy the accumulated V0.29.26 + V0.29.28.)
+selectedStories: [US-549, US-550, US-543, US-545]
+forksFrom: "dev (after V0.29.26 deploys). US-548 moved into the V0.29.26 sprint as its pre-deploy gate; V0.29.28 = the remaining 4 (US-549/550/543/545)."
 sprintJsonPath: offices/ralph/sprint.json
 epics: E-001 (UI/UX Polish) + E-OPS (F-119/F-120 hygiene)
 features: F-124 (kiosk), F-103 (splash), F-119 (CI/parity), F-120 (BT reliability)

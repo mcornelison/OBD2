@@ -8109,17 +8109,19 @@
       "passes": null,
       "priority": "P1",
       "tier": "pi",
-      "gate": "DEPLOY-GATE for V0.29.26",
+      "gate": "the V0.29.26 deploy-gate -- Ralph fixes on the sprint71 branch",
       "title": "Retire the 3 US-536-fallout RED tests (guard tests assert the removed --disable-gpu)",
       "goal": "As a maintainer, I want the US-522 guard tests to match disposition-B so the V0.29.26 deploy gate is green.",
       "definitionOfDone": [
-        "[I-us536 -- BLOCKS /sprint-deploy-pm for V0.29.26] US-536 removed --disable-gpu (disposition B); the 3 pre-existing US-522 guard tests still assert the flag is present -> RED. Update them to assert the disposition-B state (no --disable-gpu; --password-store=basic present; autoRotateS default 0). Full suite green.",
-        "add the A-16 note: never full --disable-gpu on Pi chromium (--disable-gpu-rasterization if ever needed); ruff clean"
+        "[I-us536 -- V0.29.26 DEPLOY-GATE] disposition B (US-536) REMOVED --disable-gpu; the US-522 guard tests in tests/deploy/test_dashboard_kit.py still assert it is PRESENT -> RED. INVERT the guards to the disposition-B contract, preserving their mutation-proof design (token parser + self-tests + substring-trap defenses -- do NOT weaken them to substring checks)",
+        "SPECIFIC: test_dashboardUnits_carryGpuOverrideInExecStart_us522 asserts _GPU_OVERRIDE_FLAG (--disable-gpu) IN flags -> flip to assert --disable-gpu is NOT in the ExecStart flags of BOTH dashboard.service.{x11,wayland} (GPU stays ON per disposition B). Rename/re-doc to reflect the new intent. Find ALL red US-522 tests (run tests/deploy/test_dashboard_kit.py) and invert only those asserting the old --disable-gpu-present premise",
+        "KEEP GREEN (do not touch): the keyring guards (--password-store=basic PRESENT, by VALUE not substring), test_dashboardUnits_neverReinjectGpuRasterization (--enable-gpu-rasterization absent -- still valid), the /etc/chromium.d A-16 blind-spot doc guard, and the prior-flags fence (--kiosk/--touch/URL/ozone). autoRotateS default 0 stays.",
+        "do NOT gut coverage -- the guards must still fail if a future edit re-adds --disable-gpu OR drops --password-store=basic. FULL SUITE green (this is the V0.29.26 deploy-gate). ruff clean"
       ],
       "validationCriteria": [
         {
-          "action": "run the US-522 kiosk-unit guard tests + full suite",
-          "outcome": "all green; tests assert the disposition-B ExecStart (no --disable-gpu, keyring flag present)"
+          "action": "run tests/deploy/test_dashboard_kit.py + the full suite",
+          "outcome": "all green; guards assert the disposition-B ExecStart (--disable-gpu ABSENT, --password-store=basic PRESENT) and still fail if either regresses"
         }
       ],
       "conditionalOutcomes": [],
