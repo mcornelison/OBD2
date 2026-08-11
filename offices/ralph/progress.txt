@@ -148,3 +148,64 @@ Task: Re-lay the card set 4->6 for the legibility scale (Health card retires)
   then `echo $?` AND `grep -cE '^(FAILED|ERROR)'`; for a total, sum the
   `--collect-only -q` per-file counts with awk.
 ---
+
+## 2026-08-11 - US-541 (Rex / Session 4)
+Task: Atlas's 3 UI change requests -- IMU-always-on, card reorder, auto-rotate-off verify
+Result: PARTIAL -- passes:false ON AC-3 ALONE. AC-1 + AC-2 delivered and gated.
+
+### What was implemented:
+- **AC-1 IMU-ALWAYS-ON.** `homeFace(imuData, sysData, nowMs)` -> `homeFace(imuData,
+  nowMs)`. US-508 let `parked` WIN OUTRIGHT, hiding the one instrument that is
+  Pi-local and always-live at exactly the moment its readings are both true and
+  worth reading. DROPPING THE PARAMETER IS THE GUARD: a function that cannot SEE
+  system-status cannot re-couple the home face to it. `carouselIdle` keeps its
+  other consumers (auto-rotate pause, home-nav edge) untouched.
+- **The half that could have shipped a lie.** `renderHome` passed
+  `face.parked ? null : face.reason` so the calm STANDBY hero could show when
+  parked. With parked no longer a route to the idle face that ternary is ALWAYS
+  FALSE -- it would have handed a DEAD SENSOR the "engine off - OBD asleep" hero.
+  The reason is now passed unconditionally and `homeFace` returns no `parked`
+  field at all, so no renderer can branch on a verdict nothing computes.
+- **AC-2 VERIFIED, not re-done** (the order landed with US-540-b) -- pinned as an
+  ORDERED PREFIX, since a membership check goes green on a carousel opening on Light.
+- **AC-3 BLOCKED, and the story's own premise is false.** `autoRotateS:0` did NOT
+  land: `resolveCarouselConfig` (carousel.js:218) admits only `v > 0`, so the
+  shipped 0 is discarded and the default restores 8s. Filed
+  `offices/pm/blockers/BL-031-...md`; the pre-existing issue
+  `I-us536-shipped-autorotates-zero-is-rejected-by-resolver.md` is 1 day old.
+- New gate `tests/ui/test_carousel_imu_always_on.py` (17 tests, 1 strict xfail).
+
+### Files changed:
+- Modified: `specs/UI/dist/dashboard-pi/carousel.js` (homeFace signature + body, renderHome)
+- Created: `tests/ui/test_carousel_imu_always_on.py` (the US-541 gate)
+- Modified: `tests/ui/test_carousel_live_home_card.py` (six US-508 homeFace tests repointed)
+- Created: `offices/pm/blockers/BL-031-us541-ac3-autorotate-off-is-inert-resolver-rejects-zero.md`
+
+### Learnings for future iterations:
+- **Gotcha (the one that nearly slipped)**: DROPPING A PARAMETER SILENTLY
+  MIS-BINDS EVERY STALE CALL SITE. Four of the six US-508 `homeFace` tests went
+  red; the other TWO went green FOR THE WRONG REASON -- `_view("homeFace", imu,
+  sys, ts)` now binds `sys` as `nowMs`, so they passed with a dict for a clock.
+  Only the test that actually USES the clock (stale-feed) went red to tell me.
+  After a signature change, repoint EVERY call site, not just the red ones.
+- **Pattern discovered**: when a story's AC asks you to VERIFY something and the
+  verification FAILS against an invariant you yourself escalated last sprint,
+  the deliverable is the finding, not the fix. Overruling your own open
+  escalation because it is inconvenient this week is the drift the refusal rules
+  exist to prevent. Assert the DESIRED behaviour under `xfail(strict=True)`, not
+  the broken value: a green pin on the bug turns the eventual fix into a red
+  test reading "the bug is expected", while a strict xfail XPASSes on the fix and
+  says "remove the marker".
+- **Pattern discovered**: a behaviour becomes newly REACHABLE without any code
+  changing. Gear/altitude typed-NA and the greyed `[data-level="unavailable"]` CSS
+  were already correct -- but the parked LIVE face was an unreachable state before
+  this story, so nothing had ever exercised them there. Gate the states a change
+  newly opens, not just the lines it edits.
+- **Gotcha**: ship measured-zero and absence as a PAIR. "0.0 g draws a dot at the
+  origin" is also satisfied by a card that draws an origin dot for a DEAD
+  accelerometer -- the two look identical on the glass unless both directions are
+  pinned. This is the fact US-542's whole retirement argument rests on.
+- **Gotcha**: `_fnBody` must be INDENT-AWARE. `renderHome` is nested six spaces
+  deep; the existing two-space probe would swallow the rest of the file and make
+  every absence assertion in that body vacuous.
+---

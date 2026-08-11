@@ -2679,27 +2679,29 @@
   // that decides which -- a second arbiter would put two rules in charge of one
   // fact, which is exactly why US-497 declined to build the swap at all.
   //
-  // Order matters. PARKED WINS OUTRIGHT: the CIO-locked design is "parked -> the
-  // calm idle card", so a bench IMU reading zero g does not make a stationary
-  // car show a live instrument. Otherwise the live face requires a live AND
-  // fresh feed, and everything else -- no file, unwired sensor, undated payload,
-  // stale reading -- falls back (AC-3: never a frozen motion display).
+  // US-541 IMU-ALWAYS-ON (Atlas): the decision now reads THE MOTION FEED ONLY.
+  // US-508 let `parked` win outright, which hid the one instrument that is
+  // Pi-local and always-live at precisely the moment its readings are both true
+  // and worth looking at -- parked, the IMU is CORRECT (real heading, a real
+  // 0.0 g), not unavailable. The vehicle state is deliberately NOT a parameter:
+  // a function that cannot see system-status cannot re-couple the home face to
+  // it, so a future re-coupling has to widen the signature first, which is a
+  // visible act rather than a condition slipped into the body. `carouselIdle`
+  // keeps its OTHER consumers (the auto-rotate pause, the home nav edge).
   //
-  // `parked` rides along because the fallback needs it: an idle face shown
-  // because the car is parked and an idle face shown because the motion feed
-  // died are DIFFERENT FACTS, and the second one must not claim "engine off".
-  function homeFace(imuData, sysData, nowMs) {
-    if (carouselIdle(sysData)) {
-      return { face: "idle", parked: true, reason: null };
-    }
+  // The idle face survives as the honest fallback and NOTHING ELSE: no file,
+  // unwired sensor, undated payload or stale reading (AC-3 -- never a frozen
+  // motion display). It therefore always carries a reason; there is no longer a
+  // disposition where the fallback fires with nothing to say.
+  function homeFace(imuData, nowMs) {
     var view = imuView(imuData, nowMs);
     if (view === null) {
-      return { face: "idle", parked: false, reason: "no motion feed" };
+      return { face: "idle", reason: "no motion feed" };
     }
     if (view.idle) {
-      return { face: "idle", parked: false, reason: view.reason };
+      return { face: "idle", reason: view.reason };
     }
-    return { face: "live", parked: false, reason: null };
+    return { face: "live", reason: null };
   }
 
   // US-503 idle-card wall clock. PURE -- the caller supplies the Date, so this
@@ -4586,7 +4588,7 @@
       // card invites, and the reason `homeFace` is the only arbiter.
       function renderHome(nowMs) {
         if (!homeCard) return;
-        var face = homeFace(lastImu, lastSys, nowMs);
+        var face = homeFace(lastImu, nowMs);
         if (face.face === "live") {
           var live = liveCardView(lastImu, lastGear, nowMs);
           if (live && !live.idle) {
@@ -4612,13 +4614,16 @@
         // and a grade history it never climbed.
         gTrail = [];
         gradeTrend = [];
-        // `face.parked` is what keeps the fallback honest. Parked -> the shipped
-        // STANDBY hero. NOT parked (the feed died while moving) -> a hero that
-        // names the dead instrument, because "engine off - OBD asleep" would be
-        // a confident claim about the vehicle manufactured out of a sensor fault.
+        // US-541: the reason is passed UNCONDITIONALLY. Under IMU-always-on the
+        // idle face fires only because the motion feed died, so the hero must
+        // always name the dead instrument. US-508 suppressed the reason when
+        // parked so the calm STANDBY hero could show; leaving that ternary here
+        // would hand a DEAD SENSOR the "engine off - OBD asleep" hero -- a
+        // confident claim about the vehicle manufactured out of a sensor fault,
+        // arriving through a condition that is now always false.
         renderHomeCard(
           homeCard, face, null,
-          idleCardView(lastSys, lastBattery, lastDtc, face.parked ? null : face.reason),
+          idleCardView(lastSys, lastBattery, lastDtc, face.reason),
           null, null, new Date(nowMs)
         );
       }

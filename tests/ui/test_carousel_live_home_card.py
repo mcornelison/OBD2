@@ -4,13 +4,21 @@
 #   re-issued to the CIO-locked spec and MOVES INTO THE HOME SLOT as one slot
 #   with two faces (parked -> idle, driving -> live). Six groups:
 #     1. The home-slot swap. ONE slot decides its face; `homeFace` is that one
-#        decision. Parked (the emitter's `idle` SSOT) wins outright; otherwise a
-#        LIVE + FRESH states/imu shows the instrument and anything else falls
-#        back -- never a frozen motion display (AC-2/AC-3).
+#        decision. A LIVE + FRESH states/imu shows the instrument and anything
+#        else falls back -- never a frozen motion display (AC-2/AC-3).
+#        SUPERSEDED IN PART BY US-541 (F-127): "parked wins outright" is GONE.
+#        The live IMU instrument is now the PERMANENT home face, so the decision
+#        reads the motion feed only and no longer takes system-status at all.
+#        The always-on contract itself lives in test_carousel_imu_always_on.py;
+#        what stays here is the freshness/absence fallback US-508 built.
 #     2. The fallback must not FABRICATE A PARKED STATE. The shipped idle hero
 #        reads "STANDBY / engine off - OBD asleep". Rendering that while the car
 #        is moving because the IMU feed died would be a confident lie about the
 #        vehicle, so the idle FACE carries two dispositions, not one.
+#        US-541 makes the PARKED disposition unreachable through the renderer
+#        (the reason is now always passed), and US-542 retires the STANDBY hero
+#        outright. `idleCardView` is still a live pure function until then, so
+#        these pins stay green and stay honest about what they cover.
 #     3. The compass TAPE (replaces the built rotating needle). The load-bearing
 #        property is DIRECTION: a tape that scrolls the wrong way is a plausible
 #        instrument that is exactly backwards, and it wraps across north.
@@ -112,74 +120,68 @@ def _sys(idle: bool) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def test_homeFace_parkedWithLiveImu_showsIdleFace():
+def test_homeFace_liveImu_showsLiveFace():
     """
-    Given: the emitter says idle (parked) AND the IMU feed is perfectly live
-    When: the home slot resolves its face
-    Then: it shows the calm idle face -- parked is the CIO-locked home view
-    """
-    face = _view("homeFace", _imu(), _sys(True), _TS_MS)
-    assert face["face"] == "idle"
-    assert face["parked"] is True
-
-
-def test_homeFace_drivingWithLiveImu_showsLiveFace():
-    """
-    Given: the emitter says NOT idle and states/imu is fresh + available
+    Given: states/imu is fresh + available
     When: the home slot resolves its face
     Then: the home slot IS the live instrument (the US-508 swap)
+
+    US-541 note: the `_sys` fixture no longer reaches this decision at all --
+    the vehicle state was dropped from the signature so the face cannot be
+    re-coupled to it. The parked-shows-live contract is pinned in
+    test_carousel_imu_always_on.py.
     """
-    face = _view("homeFace", _imu(), _sys(False), _TS_MS)
+    face = _view("homeFace", _imu(), _TS_MS)
     assert face["face"] == "live"
-    assert face["parked"] is False
 
 
-def test_homeFace_drivingWithStaleImu_fallsBackToIdleFace():
+def test_homeFace_staleImu_fallsBackToIdleFace():
     """
-    Given: the vehicle is driving but the last IMU write is older than the window
+    Given: the last IMU write is older than the freshness window
     When: the home slot resolves its face
     Then: it falls back to the idle face -- never a frozen motion display (AC-3)
     """
     stale_ms = _TS_MS + int((_STALE_SEC + 1.0) * 1000)
-    face = _view("homeFace", _imu(), _sys(False), stale_ms)
+    face = _view("homeFace", _imu(), stale_ms)
     assert face["face"] == "idle"
-    assert face["parked"] is False
     assert "stale" in face["reason"]
 
 
-def test_homeFace_drivingWithAbsentImuFile_fallsBackToIdleFace():
+def test_homeFace_absentImuFile_fallsBackToIdleFace():
     """
     Given: there is no states/imu file at all (null payload)
     When: the home slot resolves its face
     Then: idle face with an honest reason -- absence is not a motion reading
     """
-    face = _view("homeFace", None, _sys(False), _TS_MS)
+    face = _view("homeFace", None, _TS_MS)
     assert face["face"] == "idle"
     assert face["reason"]
 
 
-def test_homeFace_drivingWithUnwiredSensor_fallsBackToIdleFace():
+def test_homeFace_unwiredSensor_fallsBackToIdleFace():
     """
     Given: the bridge writes available:false (the sensor is not wired)
     When: the home slot resolves its face
     Then: idle face carrying the bridge's own reason, not a generic word
     """
     payload = _imu(available=False, reasons={"gLat": "sensor_absent"})
-    face = _view("homeFace", payload, _sys(False), _TS_MS)
+    face = _view("homeFace", payload, _TS_MS)
     assert face["face"] == "idle"
     assert face["reason"] == "sensor not detected"
 
 
-def test_homeFace_unreadableSystemStatus_stillHonoursTheImuFeed():
+def test_homeFace_carriesNoParkedVerdictForTheRendererToActOn():
     """
-    Given: system-status is absent (parked/driving is genuinely unknown)
-    When: the IMU feed is live
-    Then: the live face shows -- carouselIdle fails closed to NOT-parked, so an
-          unreadable vehicle state can never assert a calm parked view
+    Given: US-541 removed system-status from the face decision
+    When: the face resolves
+    Then: there is no `parked` field on it.
+
+    US-508 shipped one so the renderer could suppress the motion reason and show
+    the calm STANDBY hero instead. Leaving the field behind would let a renderer
+    read `face.parked` -- always falsy now -- and branch on a verdict nothing
+    computes: a dead field is how the retired coupling would grow back.
     """
-    face = _view("homeFace", _imu(), None, _TS_MS)
-    assert face["face"] == "live"
-    assert face["parked"] is False
+    assert "parked" not in _view("homeFace", _imu(), _TS_MS)
 
 
 # ---------------------------------------------------------------------------
