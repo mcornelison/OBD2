@@ -38,7 +38,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from common.config.overlay import applyConfigOverlay
+from .overlay import applyConfigOverlay
 
 logger = logging.getLogger(__name__)
 
