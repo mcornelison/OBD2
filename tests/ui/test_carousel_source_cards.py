@@ -1,26 +1,39 @@
 ################################################################################
-# File Name: test_carousel_health_card.py
-# Purpose/Description: US-507 (F-124) tests -- the merged "Health" card. The
-#   Battery Health + Light + LTFT-Trend cards are consolidated into ONE card so
-#   the carousel is fewer screens (CIO 2026-07-31). This is a RELOCATION, not a
-#   redesign, so the tests are written to prove exactly that:
-#     1. Composition -- three sections in the locked order (Battery, Light,
-#        Fuel Trim) inside one card, with "LTFT Trend" retitled to the plain
-#        "Fuel Trim" and Spool's LTFT SEMANTICS untouched.
-#     2. Section INDEPENDENCE -- a dead UPS grays the Battery section alone and
-#        never blanks the live Light reading beside it. Merging three cards must
-#        not merge their failures; that would be a new (and dishonest) coupling.
-#     3. Every honest-instrument state of all three sources survives the move:
-#        the battery F-9 stale-green data-age guard, the light null/stale
-#        individual graying, the fuel-trim insufficient-never-green rule.
-#     4. The fuel-trim VEHICLE GATE, whose vocabulary necessarily changes with
-#        the merge. As a standalone card the gate HID it ("does not apply right
-#        now"). A section inside an always-visible card cannot vanish without
-#        leaving a hole, so it renders the honest words "no engine data" --
-#        never a fabricated 0%, and never confused with "the feed is broken".
+# File Name: test_carousel_source_cards.py
+# Purpose/Description: Tests for the three SOURCE CARDS -- Battery, Light and
+#   Fuel Trim. These three were standalone cards, became sections of the US-507
+#   merged "Health" card (6 -> 4 screens, CIO 2026-07-31), and are cards again
+#   under US-540-b (4 -> 6) because the US-540-a legibility scale leaves a card
+#   affording ~3 facts and Health was carrying six.
+#
+#   The file survives all three arrangements because its subject never changed:
+#   the per-source HONEST-INSTRUMENT rules, which have travelled through every
+#   layout because each source is read through the SAME view function each time.
+#   That is why the coverage below is worth porting rather than deleting with
+#   the card -- the arrangement was never what it was testing.
+#     1. Composition -- three source cards in the locked order (Battery, Light,
+#        Fuel Trim), with "LTFT Trend" retitled to the plain "Fuel Trim" and
+#        Spool's LTFT SEMANTICS untouched.
+#     2. INDEPENDENCE -- a dead UPS grays Battery alone and never blanks the
+#        live Light reading. This was the merge's hardest property to keep; the
+#        split makes it structural, and these tests are what prove it did not
+#        get lost in the other direction (one card's fault speaking for its
+#        neighbours) while the code was moving.
+#     3. Every honest-instrument state of all three sources: the battery F-9
+#        stale-green data-age guard, the light null/stale individual graying,
+#        the fuel-trim insufficient-never-green rule.
+#     4. The fuel-trim VEHICLE GATE. As a pre-US-507 standalone card the gate
+#        HID it ("does not apply right now"). US-507 had to make it SPEAK ("no
+#        engine data") because a section cannot vanish without leaving a hole,
+#        and US-540-b KEEPS the speaking version even though a card could hide
+#        again -- six cards are locked, and a card that disappears on a bench
+#        breaks the set where the panel is read most days. Never a fabricated
+#        0%, and never confused with "the feed is broken".
 #   Pure logic runs through the shared node probe (tests/ui/carousel_probe.js);
 #   the browser-only DOM wiring is pinned by reading the shipped artifacts, since
 #   a correct routine the tick never calls renders nothing (US-494/US-495).
+#   The card SET itself (which cards, in what order, how many) is US-540-b's
+#   own gate -- tests/ui/test_carousel_card_set.py.
 # Author: Ralph Agent (Rex)
 # Creation Date: 2026-07-31
 # Copyright: (c) 2026 Eclipse OBD-II Project. All rights reserved.
@@ -30,10 +43,13 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-07-31    | Ralph (Rex)  | Initial -- US-507 merged Health card (6 -> 4).
+# 2026-08-11    | Ralph (Rex)  | US-540-b: Health retires; renamed from
+#               |              | test_carousel_health_card.py and retargeted
+#               |              | onto sourceCardView (one card per source).
 # ================================================================================
 ################################################################################
 
-"""US-507 tests for the merged Health card (Battery + Light + Fuel Trim)."""
+"""Tests for the Battery / Light / Fuel Trim source cards."""
 
 import json
 import os
@@ -191,7 +207,7 @@ def _sys(*, obdAvailable: bool) -> dict:
     }
 
 
-def _health(
+def _cards(
     *,
     battery: object = "default",
     light: object = "default",
@@ -199,64 +215,87 @@ def _health(
     obdAvailable: bool = True,
     sysData: object = "default",
 ) -> dict:
-    """Run healthCardView over the three state files + system-status."""
-    states = {
+    """Run sourceCardView for EACH source -> {stateName: view}.
+
+    Deliberately one probe call per card, mirroring the tick: the tick renders
+    one card at a time, so a helper that composed all three in a single call
+    would be testing a seam the shipped code no longer has.
+    """
+    payloads = {
         "battery-health": _battery() if battery == "default" else battery,
         "light": _light() if light == "default" else light,
         "ltft-trend": _ltft() if ltft == "default" else ltft,
     }
     sys_ = _sys(obdAvailable=obdAvailable) if sysData == "default" else sysData
-    return _view("healthCardView", states, sys_, None, _TS_MS)  # type: ignore[return-value]
+    specs = _view("sourceCardSpecs")
+    return {
+        spec["key"]: _view("sourceCardView", spec, payloads[spec["key"]], sys_, None, _TS_MS)
+        for spec in specs  # type: ignore[union-attr]
+    }
 
 
-def _section(view: dict, key: str) -> dict:
-    for sec in view["sections"]:
-        if sec["key"] == key:
-            return sec
-    raise AssertionError(f"no {key} section in {[s['key'] for s in view['sections']]}")
+def _section(cards: dict, key: str) -> dict:
+    if key not in cards:
+        raise AssertionError(f"no {key} card in {sorted(cards)}")
+    return cards[key]
 
 
 # ---------------------------------------------------------------------------
-# AC-1 / AC-3 -- three sources, one card, in the locked order.
+# Composition -- three sources, one card each, in the locked order.
 # ---------------------------------------------------------------------------
 
 
-def test_healthCardView_mergesThreeSourcesInTheLockedOrder():
+def test_sourceCardSpecs_carriesTheThreeSourcesInTheLockedOrder():
     """
-    Given: all three state files readable and a vehicle connected
-    Then: ONE view carries exactly three sections, Battery then Light then
-          Fuel Trim
+    Given: the shipped source-card table
+    Then: exactly three specs, Battery then Light then Fuel Trim
 
     The order is the CIO-locked reading order (the two Pi-local always-available
-    readouts first, the vehicle-dependent one last), not an accident of which
-    card happened to be declared first in the old markup.
+    readouts first, the vehicle-dependent one last). Under US-540-b it is also
+    the CAROUSEL order, so the table and the markup have to agree -- which
+    tests/ui/test_carousel_card_set.py pins from the markup side.
     """
-    view = _health()
-    assert [s["key"] for s in view["sections"]] == [
+    specs = _view("sourceCardSpecs")
+    assert [s["key"] for s in specs] == [  # type: ignore[union-attr]
         "battery-health",
         "light",
         "ltft-trend",
     ]
 
 
-def test_healthCardView_fuelTrimSectionIsPlainEnglish_notJargon():
+def test_sourceCardSpec_resolvesAStateNameAndRejectsAnUnknownOne():
     """
-    Given: the merged card
-    Then: the fuel-trim section is titled "Fuel Trim", never "LTFT Trend"
+    Given: the lookup the tick uses to decide "is this a source card?"
+    Then: a known state resolves; an unknown one returns null
 
-    AC-2 is a LABEL change only. The jargon leaves the title; Spool's LTFT
-    semantics stay exactly where they were (proved by the sufficiency +
-    drift tests below, which are the old card's rules unchanged).
+    The tick routes on this. If it resolved anything truthy for an unknown
+    state, every remaining card (System Status, Alerts) would be dragged onto
+    the source-card path and render a typed NA instead of its own body.
     """
-    sec = _section(_health(), "ltft-trend")
+    assert _view("sourceCardSpec", "ltft-trend")["title"] == "Fuel Trim"  # type: ignore[index]
+    assert _view("sourceCardSpec", "system-status") is None
+    assert _view("sourceCardSpec", "dtc") is None
+
+
+def test_sourceCardView_fuelTrimSectionIsPlainEnglish_notJargon():
+    """
+    Given: the fuel-trim source card
+    Then: it is titled "Fuel Trim", never "LTFT Trend"
+
+    A LABEL change only (US-507 AC-2). The jargon leaves the title; Spool's
+    LTFT semantics stay exactly where they were (proved by the sufficiency +
+    drift tests below, which are the original card's rules unchanged).
+    """
+    sec = _section(_cards(), "ltft-trend")
     assert sec["title"] == "Fuel Trim"
     assert "LTFT Trend" not in sec["title"]
 
 
-def test_healthCardView_sectionTitlesNameTheirInstrument():
-    """Each section is self-labelling -- with three readouts stacked on one card
-    an unlabelled block is ambiguous in a way a whole card never was."""
-    view = _health()
+def test_sourceCardView_sectionTitlesNameTheirInstrument():
+    """Each card is self-labelling. The title is carried in the VIEW, not only
+    in the markup, because it is also the word a typed-NA body has to be
+    readable beside."""
+    view = _cards()
     assert _section(view, "battery-health")["title"] == "Battery"
     assert _section(view, "light")["title"] == "Light"
 
@@ -266,7 +305,7 @@ def test_healthCardView_sectionTitlesNameTheirInstrument():
 # ---------------------------------------------------------------------------
 
 
-def test_healthCardView_batterySection_keepsTheStaleGreenGuard():
+def test_sourceCardView_batterySection_keepsTheStaleGreenGuard():
     """
     Given: a GOOD battery verdict whose last health check is a month old
     Then: the section still carries the "last health check ... (N days ago)"
@@ -276,37 +315,37 @@ def test_healthCardView_batterySection_keepsTheStaleGreenGuard():
     read as live. Relocating the card must not drop the guard that made it
     honest.
     """
-    sec = _section(_health(), "battery-health")
+    sec = _section(_cards(), "battery-health")
     assert sec["view"]["health"]["value"] == "GOOD"
     assert "last health check" in sec["view"]["health"]["detail"]
     assert "30 days ago" in sec["view"]["health"]["detail"]
 
 
-def test_healthCardView_batterySection_keepsVoltsNeverPercent():
+def test_sourceCardView_batterySection_keepsVoltsNeverPercent():
     """F-8: a null SoC omits the percent and shows volts. A voltage rendered as
     a percent is the render-breaking trap Spool named for this source."""
-    sec = _section(_health(battery=_battery(soc=None)), "battery-health")
+    sec = _section(_cards(battery=_battery(soc=None)), "battery-health")
     assert sec["view"]["vcell"]["value"] == "4.02 V"
     assert sec["view"]["soc"]["shown"] is False
 
 
-def test_healthCardView_batterySection_keepsTheDrainLadder():
+def test_sourceCardView_batterySection_keepsTheDrainLadder():
     """F-2/A-6: the failsafe ladder exists ONLY while actually draining -- it
     rides along with the section rather than being lost in the merge."""
-    sec = _section(_health(battery=_battery(draining=True)), "battery-health")
+    sec = _section(_cards(battery=_battery(draining=True)), "battery-health")
     assert sec["view"]["ladder"] is not None
 
 
-def test_healthCardView_lightSection_rendersTheRealLux():
+def test_sourceCardView_lightSection_rendersTheRealLux():
     """The light section is still a pure consumer of the SAME states/light file
     that drives the auto-dim, so the number can never disagree with the screen
     it explains."""
-    sec = _section(_health(), "light")
+    sec = _section(_cards(), "light")
     assert sec["view"]["ambient"]["value"] == "412 lx"
     assert sec["view"]["band"]["value"] != "NA"
 
 
-def test_healthCardView_lightSection_nullLuxGraysWithinTheSection():
+def test_sourceCardView_lightSection_nullLuxGraysWithinTheSection():
     """
     Given: a null lux (the bridge's honest saturated/unreadable marker)
     Then: the AMBIENT + CONDITION fields gray INDIVIDUALLY -- the section is
@@ -315,26 +354,26 @@ def test_healthCardView_lightSection_nullLuxGraysWithinTheSection():
     The old card grayed fields, not itself. Escalating that to a section-level
     NA in the merge would LOSE information (which of the two fields is dead).
     """
-    sec = _section(_health(light=_light(None)), "light")
+    sec = _section(_cards(light=_light(None)), "light")
     assert sec["unavailable"] is False
     assert sec["view"]["ambient"]["value"] == "NA"
     assert sec["view"]["band"]["value"] == "NA"
 
 
-def test_healthCardView_fuelTrimSection_insufficientIsNeverGreen():
+def test_sourceCardView_fuelTrimSection_insufficientIsNeverGreen():
     """The insufficient-window guard is Spool's, and it survives the retitle: too
     little data can never paint a confident healthy verdict."""
     ltft = _ltft(sufficient=False, points=[], current=None)
-    sec = _section(_health(ltft=ltft), "ltft-trend")
+    sec = _section(_cards(ltft=ltft), "ltft-trend")
     assert sec["view"]["headline"]["level"] == "insufficient"
     assert sec["view"]["headline"]["value"] == "insufficient data"
 
 
-def test_healthCardView_fuelTrimSection_driftRendersItsOwnLevel():
+def test_sourceCardView_fuelTrimSection_driftRendersItsOwnLevel():
     """A drive beyond +/-10% keeps its own non-green level -- the semantics the
     emitter classifies, which this view only maps."""
     ltft = _ltft(level="down", points=[{"driveId": 32, "ltftAvg": 12.5, "level": "down"}])
-    sec = _section(_health(ltft=ltft), "ltft-trend")
+    sec = _section(_cards(ltft=ltft), "ltft-trend")
     assert sec["view"]["headline"]["level"] == "down"
     assert sec["view"]["points"][0]["value"] == "+12.50%"
 
@@ -345,7 +384,7 @@ def test_healthCardView_fuelTrimSection_driftRendersItsOwnLevel():
 # ---------------------------------------------------------------------------
 
 
-def test_healthCardView_deadUpsDoesNotBlankTheLiveLightReading():
+def test_sourceCardView_deadUpsDoesNotBlankTheLiveLightReading():
     """
     Given: the UPS source is unavailable but the light feed is live
     Then: the Battery section reports its own NA and the Light section still
@@ -357,22 +396,22 @@ def test_healthCardView_deadUpsDoesNotBlankTheLiveLightReading():
     a fabricated "nothing is readable" built out of one real fault.
     """
     dead = {"source": {"ups": {"available": False, "reason": "UPS: I2C read failed"}}}
-    view = _health(battery=dead)
+    view = _cards(battery=dead)
     battery = _section(view, "battery-health")
     light = _section(view, "light")
     assert battery["view"]["unavailable"] is True
     assert light["view"]["ambient"]["value"] == "412 lx"
 
 
-def test_healthCardView_absentLightFileDoesNotBlankTheBatterySection():
+def test_sourceCardView_absentLightFileDoesNotBlankTheBatterySection():
     """The inverse direction -- an ABSENT state file (not merely a degraded
     source) must also stay contained to its own section."""
-    view = _health(light=None)
+    view = _cards(light=None)
     assert _section(view, "light")["unavailable"] is True
     assert _section(view, "battery-health")["view"]["health"]["value"] == "GOOD"
 
 
-def test_healthCardView_absentSection_namesItsSilentInstrument():
+def test_sourceCardView_absentSection_namesItsSilentInstrument():
     """
     Given: an absent state file
     Then: the section says WHICH instrument is silent
@@ -380,7 +419,7 @@ def test_healthCardView_absentSection_namesItsSilentInstrument():
     On a standalone card the card title supplied that context. Stacked three
     deep, a bare "unavailable" no longer says which of three readouts died.
     """
-    view = _health(battery=None, light=None)
+    view = _cards(battery=None, light=None)
     assert _section(view, "battery-health")["na"]["reason"].lower().startswith("no data")
     assert "no data" in _section(view, "light")["na"]["reason"].lower()
 
@@ -390,7 +429,7 @@ def test_healthCardView_absentSection_namesItsSilentInstrument():
 # ---------------------------------------------------------------------------
 
 
-def test_healthCardView_benchNoVehicle_fuelTrimReadsNoEngineData():
+def test_sourceCardView_benchNoVehicle_fuelTrimReadsNoEngineData():
     """
     Given: a bench Pi -- system-status reports source.obd.available false
     Then: the Fuel Trim section reads the honest "no engine data"
@@ -400,12 +439,12 @@ def test_healthCardView_benchNoVehicle_fuelTrimReadsNoEngineData():
     inside an always-visible card cannot vanish without leaving a hole, so the
     same fact is spoken instead of shown.
     """
-    sec = _section(_health(obdAvailable=False), "ltft-trend")
+    sec = _section(_cards(obdAvailable=False), "ltft-trend")
     assert sec["gated"] is True
     assert sec["na"]["reason"] == "no engine data"
 
 
-def test_healthCardView_benchNoVehicle_fuelTrimLeaksNoValueEvenWithAState():
+def test_sourceCardView_benchNoVehicle_fuelTrimLeaksNoValueEvenWithAState():
     """
     Given: NO vehicle, but a complete and perfectly readable ltft-trend file
     Then: the section still renders the gate, carrying NO trim value at all
@@ -415,29 +454,29 @@ def test_healthCardView_benchNoVehicle_fuelTrimLeaksNoValueEvenWithAState():
     trim for an engine that is not running. The gate must beat the data, not
     lose to it -- so the view carries no reading to leak.
     """
-    sec = _section(_health(obdAvailable=False, ltft=_ltft()), "ltft-trend")
+    sec = _section(_cards(obdAvailable=False, ltft=_ltft()), "ltft-trend")
     assert sec["gated"] is True
     assert sec["view"] is None
     assert "-2.50%" not in json.dumps(sec)
 
 
-def test_healthCardView_vehicleConnected_fuelTrimRendersTheRealTrend():
+def test_sourceCardView_vehicleConnected_fuelTrimRendersTheRealTrend():
     """The inverse -- without it "always gate" would pass. A connected vehicle
     reveals the real trend, which is the whole point of keeping the section."""
-    sec = _section(_health(obdAvailable=True), "ltft-trend")
+    sec = _section(_cards(obdAvailable=True), "ltft-trend")
     assert sec["gated"] is False
     assert sec["view"]["headline"]["value"] == "-2.50%"
 
 
-def test_healthCardView_absentSystemStatus_failsClosedToGated():
+def test_sourceCardView_absentSystemStatus_failsClosedToGated():
     """No readable system-status -> "is a car connected?" is UNKNOWN, and an
     unknown must never render as a state -> fail closed to the gate, exactly as
     the card-level gate did (US-496)."""
-    sec = _section(_health(sysData=None), "ltft-trend")
+    sec = _section(_cards(sysData=None), "ltft-trend")
     assert sec["gated"] is True
 
 
-def test_healthCardView_gatedAndBrokenAreDistinctStates():
+def test_sourceCardView_gatedAndBrokenAreDistinctStates():
     """
     Given: a vehicle IS connected but the ltft-trend file is absent
     Then: the section reads a no-data fault, NOT the "no engine data" gate
@@ -446,17 +485,17 @@ def test_healthCardView_gatedAndBrokenAreDistinctStates():
     broken". Collapsing them would tell an operator with a running engine that
     there is no engine.
     """
-    sec = _section(_health(obdAvailable=True, ltft=None), "ltft-trend")
+    sec = _section(_cards(obdAvailable=True, ltft=None), "ltft-trend")
     assert sec["gated"] is False
     assert sec["unavailable"] is True
     assert sec["na"]["reason"] != "no engine data"
 
 
-def test_healthCardView_batteryAndLightAreNeverVehicleGated():
+def test_sourceCardView_batteryAndLightAreNeverVehicleGated():
     """AC-2: Battery + Light stay available regardless of a vehicle -- they are
     PI-LOCAL sensors that read on a bench with no car. Gating them would blank a
     working instrument, the exact bench-validatability US-496 fought for."""
-    view = _health(obdAvailable=False)
+    view = _cards(obdAvailable=False)
     assert _section(view, "battery-health")["gated"] is False
     assert _section(view, "light")["gated"] is False
     assert _section(view, "battery-health")["view"]["health"]["value"] == "GOOD"
@@ -467,86 +506,95 @@ def test_healthCardView_batteryAndLightAreNeverVehicleGated():
 # ---------------------------------------------------------------------------
 
 
-def test_dashboardHtml_shipsOneHealthCardWithThreeSectionSlots():
-    """AC-1: the merged card exists in the markup with a slot per source. The
-    tick discovers cards from the markup, so no slot = no section, whatever the
-    JS says (US-494)."""
+def test_dashboardHtml_shipsOneCardPerSource():
+    """US-540-b: each source owns a card again, declaring its OWN state file.
+    The tick discovers cards from the markup, so no card = no readout, whatever
+    the JS says (US-494)."""
     html = _read(_HTML)
-    assert 'aria-label="Health"' in html
-    # Count section ROOTS only -- `health-section-title` / `-body` share the
-    # prefix, so a prefix count would read 9 and pass for the wrong reason.
-    roots = re.findall(r'class="health-section [\w-]+"', html)
-    assert len(roots) == 3, f"expected 3 section roots, found {roots}"
-    for cls in ("health-battery", "health-light", "health-fueltrim"):
-        assert cls in html, f"missing the {cls} section slot"
+    for label, state in (
+        ("Battery", "battery-health"),
+        ("Light", "light"),
+        ("Fuel Trim", "ltft-trend"),
+    ):
+        match = re.search(r'<section[^>]*aria-label="' + label + r'"[^>]*>', html, re.S)
+        assert match is not None, f"no {label} card in the markup"
+        assert 'data-state="' + state + '"' in match.group(0), (
+            f"the {label} card does not consume states/{state}"
+        )
 
 
-def test_dashboardHtml_dropsTheTwoNowMergedStandaloneCards():
-    """AC-3: the three merged sources no longer own standalone cards. Leaving a
-    duplicate card behind would render the same reading twice and let the two
-    copies disagree."""
+def test_dashboardHtml_shipsNoMergedHealthCard():
+    """The merged card is gone, and so is the multi-source declaration that only
+    ever existed to serve it. Leaving a Health card behind beside the three new
+    ones would render every reading twice and let the copies disagree."""
     html = _read(_HTML)
-    assert 'data-state="battery-health"' not in html
-    assert 'data-state="light"' not in html
-    assert 'data-state="ltft-trend"' not in html
+    assert 'aria-label="Health"' not in html
+    assert "data-states" not in html
+    assert "health-section" not in html
 
 
-def test_dashboardHtml_healthCardDeclaresItsThreeSourceStates():
-    """The merged card is a MULTI-SOURCE card: it names every state file it
-    consumes so the tick fetches all three (a section whose state is never
-    fetched renders a permanent no-data)."""
+def test_dashboardHtml_fuelTrimShipsGatedClosed():
+    """The pre-first-poll window -- nothing read yet, "is a car connected?"
+    genuinely unknown -- must fail CLOSED to the gate. Shipping `data-gated`
+    absent would leave that window looking ungated, which is a claim about the
+    vehicle made before anything was read."""
     html = _read(_HTML)
-    match = re.search(r'<section[^>]*aria-label="Health"[^>]*>', html, re.S)
+    match = re.search(r'<section[^>]*aria-label="Fuel Trim"[^>]*>', html, re.S)
     assert match is not None
-    decl = match.group(0)
-    for name in ("battery-health", "light", "ltft-trend"):
-        assert name in decl, f"the Health card does not declare the {name} state"
+    assert 'data-gated="true"' in match.group(0)
 
 
-def test_dashboardHtml_cardOrderIsSystemStatusThenHealthThenAlerts():
-    """AC-3: the reading order the CIO locked -- the diagnostics card, then the
-    reference readouts, then the alerts."""
-    html = _read(_HTML)
-    order = [
-        html.index('aria-label="System Status"'),
-        html.index('aria-label="Health"'),
-        html.index('aria-label="Alerts"'),
-    ]
-    assert order == sorted(order), "the carousel order drifted from the locked one"
-
-
-def test_carouselJs_tickRendersTheHealthCard():
-    """The merged card is wired into the poll -- a view function nothing calls
+def test_carouselJs_tickRendersTheSourceCards():
+    """The source cards are wired into the poll -- a view function nothing calls
     renders nothing (the US-494 default-argument lesson, one story after it cost
     a whole story)."""
     tick = _fnBody(_read(_JS), "tick")
-    assert "healthCardView" in tick
-    assert "renderHealthCard" in tick
+    assert "sourceCardView" in tick
+    assert "renderSourceCard" in tick
 
 
-def test_carouselJs_healthCardGateReadsTheSameSystemStatus():
+def test_carouselJs_sourceCardGateReadsTheSameSystemStatus():
     """The fuel-trim gate resolves against the system-status the tick already
     fetched -- a second independent read could disagree with the vehicle state
-    the rest of the card was rendered against."""
+    the rest of the panel was rendered against."""
     tick = _fnBody(_read(_JS), "tick")
     assert re.search(r'stateOnce\(\s*"system-status"\s*\)', tick), (
-        "the health path must resolve its gate from the shared per-tick state"
+        "the source-card path must resolve its gate from the shared per-tick state"
     )
 
 
-def test_carouselJs_healthSectionsReuseTheTokenizedTile():
-    """The merged sections render through the shared `.tile` component, already
-    bound to specs/UI/tokens.css. A bespoke health-card palette is exactly the
-    drift the SSOT rule exists to prevent."""
-    render = _fnBody(_read(_JS), "renderHealthCard")
-    assert "renderHealthSection" in render
+def test_carouselJs_sourceCardsRouteBeforeTheGenericAvailabilityPath():
+    """
+    Given: the tick's per-card loop
+    Then: the source-card branch is reached BEFORE the generic
+          `cardAvailability` handling
+
+    Order is load-bearing for exactly one of the three. The generic path reads
+    the DATA first and renders a typed NA on a bad read; fuel trim's gate has to
+    be evaluated BEFORE its data, or a bench with a stale ltft-trend file paints
+    a trim for an engine that is not running.
+    """
+    tick = _fnBody(_read(_JS), "tick")
+    assert tick.index("sourceCardSpec(") < tick.index("cardAvailability("), (
+        "the generic availability path now runs before the gate"
+    )
 
 
-def test_carouselJs_gatedSectionMarksItselfInTheDom():
+def test_carouselJs_sourceCardsReuseTheTokenizedTile():
+    """The cards render through the shared `.tile` component, already bound to
+    specs/UI/tokens.css. A bespoke per-card palette is exactly the drift the
+    SSOT rule exists to prevent."""
+    render = _fnBody(_read(_JS), "renderSourceCard")
+    for body in ("renderBatteryHealthBody", "renderLightBody", "renderLtftTrendBody"):
+        assert body in render, f"{body} is not reachable from the card renderer"
+    assert "renderNaBody" in render
+
+
+def test_carouselJs_gatedCardMarksItselfInTheDom():
     """The gate is readable off the rendered DOM, so the render-regression
-    backstop can prove the gated section painted the gate rather than the
-    data -- the check no pure-function test can make."""
-    render = _fnBody(_read(_JS), "renderHealthSection")
+    backstop can prove the gated card painted the gate rather than the data --
+    the check no pure-function test can make."""
+    render = _fnBody(_read(_JS), "renderSourceCard")
     assert "data-gated" in render
 
 
@@ -583,7 +631,7 @@ def test_stripJsComments_keepsCodeAndCommentLookalikeStrings():
     line-comment strip would truncate.
     """
     src = _stripJsComments(_read(_JS))
-    assert "function renderHealthCard(" in src
+    assert "function renderSourceCard(" in src
     assert "function renderLtftTrendBody(" in src
     assert "http://www.w3.org/2000/svg" in src
     # ...and prose genuinely goes (this sentence exists only in a comment).

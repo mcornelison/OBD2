@@ -655,23 +655,32 @@ def test_htmlStripper_keepsMarkupAndDropsProse():
     """
     stripped = _strip_html_comments(_read(_HTML))
     assert 'id="home-card"' in stripped
-    assert 'data-states="battery-health light ltft-trend"' in stripped
+    assert 'data-state="ltft-trend"' in stripped
     assert "<!--" not in stripped
     assert "US-482 letterbox scaling" not in stripped
 
 
-def test_html_landsTheLockedFourCardCarousel():
+def test_html_landsExactlyOneHomeSlot():
     """
-    Given: the CIO-locked round-2 set (Home / System Status / Health / Alerts)
-    When: the card sections are counted
-    Then: exactly four. US-507 left five by design (it owns the Health merge, not
-          the Motion absorption); US-508 is the story that reaches the locked
-          number, so this pin is the joint discharge of both.
+    Given: the CIO-locked "one slot, two faces" home design
+    When: the card sections are scanned
+    Then: exactly ONE `data-idle-home` slot, and no standalone Motion card
+
+    NARROWED BY US-540-b, which is what this test was always about. It used to
+    assert a card COUNT of four, which conflated two different facts: US-508's
+    home absorption (this story's subject, and permanent) and the card set of
+    the day (which US-540-b just moved to six, and which a later story may move
+    again). The count now lives with the set it describes, in
+    tests/ui/test_carousel_card_set.py; what stays here is the invariant --
+    the live instrument is a FACE of the home slot, never a screen of its own,
+    so it can never be polled and painted twice.
     """
-    html = _read(_HTML)
-    assert len(re.findall(r'<section class="card"', html)) == 4
-    for label in ("Home", "System Status", "Health", "Alerts"):
-        assert f'aria-label="{label}"' in html
+    # Comment-stripped, like the two markup pins above: the home slot's own
+    # comment block NAMES `data-idle-home` while explaining it, so a raw count
+    # reads 2 and fails on prose rather than on markup.
+    html = _strip_html_comments(_read(_HTML))
+    assert len(re.findall(r"data-idle-home", html)) == 1
+    assert 'aria-label="Motion"' not in html
 
 
 def test_js_pollsTheLiveFeedAtAboutTenHertz():

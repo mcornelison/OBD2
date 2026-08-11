@@ -323,10 +323,18 @@ class TestVehicleGateRender:
         return sum(1 for path in surface.pathsByClass("dot") if surface.rendered(path))
 
     def _gatedFlag(self, surface: rh.Surface) -> str | None:
-        """The rendered `data-gated` of the fuel-trim section, or None if the
-        section did not paint at all."""
-        for path in surface.pathsByClass("health-fueltrim"):
-            if surface.rendered(path):
+        """The rendered `data-gated` of the fuel-trim surface, or None if it did
+        not paint at all.
+
+        US-540-b: that surface is a CARD again (the merged Health card retired),
+        so it is located by its aria-label rather than the section class the
+        merge gave it. The flag itself is unchanged -- it is the one thing a
+        pure-function test cannot see, which is why it is read here.
+        """
+        for path in surface.pathsByClass("card"):
+            if not surface.rendered(path):
+                continue
+            if path[-1]["attrs"].get("aria-label") == "Fuel Trim":
                 return path[-1]["attrs"].get("data-gated")
         return None
 
@@ -358,20 +366,22 @@ class TestVehicleGateRender:
         REPLACES the old "the LTFT card does not paint" assertion, which US-507
         made vacuous: with no card by that name, `"LTFT Trend" not in cards` is
         true for the wrong reason and would keep passing if the gate broke
-        entirely. The gate now has to be asserted POSITIVELY, on the surface
-        that actually carries it.
+        entirely. The gate has to be asserted POSITIVELY, on the surface that
+        actually carries it -- which US-540-b made a card again.
         """
         dom = rh.runDashboard(routes=_cleanRoutes(obdAvailable=False))
         surface = rh.dashboardSurface(dom["tree"])
-        assert "Health" in self._visibleCards(surface), "the Health card did not paint"
+        assert "Fuel Trim" in self._visibleCards(surface), (
+            "the Fuel Trim card did not paint"
+        )
         assert self._gatedFlag(surface) == "true", (
             "a bench with no vehicle must paint the fuel-trim GATE, not a trim"
         )
 
-    def test_vehicleConnected_opensTheFuelTrimSection(self):
+    def test_vehicleConnected_opensTheFuelTrimCard(self):
         """
         Given: system-status reports an available OBD source (a car is plugged in)
-        Then: the fuel-trim section is no longer gated
+        Then: the fuel-trim card is no longer gated
 
         The inverse of the test above -- without it, "always gate" would pass.
         This is the on-Pi check the story owes, done headless.

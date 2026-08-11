@@ -112,66 +112,64 @@
                aria-label="Home">
         <div class="card-body"><span class="idle-boot">standby …</span></div>
       </section>
+      <!-- US-406 Alerts card (F-111): hero (worst code + directive) + a
+           tappable list sorted worst-first (na last). JS fills the body from
+           the polled `dtc` state; a missing/malformed file -> `unavailable`.
+
+           US-540-b moves it to SECOND. Pure markup order -- the carousel finds
+           the Alerts index dynamically (`dtcCardIndex`), so the ribbon tap,
+           the takeover "View detail" and the drill-down all keep working
+           without a nav change. -->
+      <section class="card" data-state="dtc" aria-label="Alerts">
+        <h2 class="card-title">Alerts</h2>
+        <div class="card-body">unavailable</div>
+      </section>
       <section class="card" data-state="system-status" aria-label="System Status">
         <h2 class="card-title">System Status</h2>
         <div class="card-body">unavailable</div>
       </section>
-      <!-- US-507 Health card (F-124): the CIO called six screens too many, so
-           the three slow-moving reference readouts that share a glance became
-           ONE card (6 -> 4) -- Battery (Pi UPS LiPo, F-9 stale-green guard),
-           Light (TSL2591 lux + the dim state it drives) and Fuel Trim (the
-           card formerly titled "LTFT Trend"; plain English, Spool's LTFT
-           semantics unchanged).
+      <!-- US-540-b (F-127): the US-507 merged "Health" card RETIRES and its
+           three readouts become cards again (4 -> 6). US-507 merged them
+           because the CIO called six screens too many; the US-540-a legibility
+           scale changes the arithmetic under that call -- at secondary 26px a
+           card affords ~3 facts, and Health was carrying six. A container of
+           three unrelated facts is the one thing the scale cannot pay for, so
+           the screen count is the cheaper thing to spend.
 
-           RELOCATION ONLY. Each section still consumes its OWN state file
-           through the SAME view function it used as a standalone card, and
-           `data-states` names all three so the tick fetches every one of them.
+           Each card consumes its OWN state file through the SAME view function
+           it used as a section (and as a standalone card before that), so this
+           is a RELOCATION in the opposite direction, not a redesign. The
+           per-source independence the merge had to fight for is now free: a
+           dead UPS cannot reach the Light card at all.
 
-           The sections resolve INDEPENDENTLY: a dead UPS grays the Battery
-           section alone and never blanks the live Light reading beside it. A
-           merged card must not merge the failures too.
-
-           Fuel Trim stays vehicle-gated, but the gate's VOCABULARY changes
-           with the merge. A standalone card could be HIDDEN ("does not apply
-           right now"); a section inside an always-visible card cannot vanish
-           without leaving a hole, so it speaks the fact instead -- an honest
-           "no engine data", never a fabricated 0%. The section carries no
-           reading at all while gated, so a stale ltft-trend file left from the
-           last drive cannot paint a trim for an engine that is not running. -->
-      <section class="card" data-states="battery-health light ltft-trend"
-               aria-label="Health">
-        <h2 class="card-title">Health</h2>
-        <div class="card-body health-body">
-          <section class="health-section health-battery">
-            <h3 class="health-section-title">Battery</h3>
-            <div class="health-section-body">unavailable</div>
-          </section>
-          <section class="health-section health-light">
-            <h3 class="health-section-title">Light</h3>
-            <div class="health-section-body">unavailable</div>
-          </section>
-          <!-- Ships data-gated="true" so the pre-first-poll window -- when
-               nothing has been read and "is a car connected?" is genuinely
-               unknown -- fails CLOSED to the gate, the same shape the gated
-               card got from shipping `hidden` (US-496). The body still reads
-               `unavailable` until the first poll: no read has happened yet,
-               which is a different fact from the gate itself. -->
-          <section class="health-section health-fueltrim" data-gated="true">
-            <h3 class="health-section-title">Fuel Trim</h3>
-            <div class="health-section-body">unavailable</div>
-          </section>
-        </div>
+           US-508: the standalone Motion card stays gone -- the US-497 live
+           instrument is a FACE of the home slot, not a screen of its own. -->
+      <section class="card" data-state="battery-health" aria-label="Battery">
+        <h2 class="card-title">Battery</h2>
+        <div class="card-body">unavailable</div>
       </section>
-      <!-- US-508: the standalone Motion card is GONE. The US-497 live
-           instrument it carried now renders on the home slot above as its
-           driving face (the CIO-locked "one slot, two faces"), which is what
-           takes the carousel to the locked four screens: Home · System Status ·
-           Health · Alerts. -->
-      <!-- US-406 Alerts card (Card 5, F-111): hero (worst code + directive) +
-           a tappable list sorted worst-first (na last). JS fills the body from
-           the polled `dtc` state; a missing/malformed file -> `unavailable`. -->
-      <section class="card" data-state="dtc" aria-label="Alerts">
-        <h2 class="card-title">Alerts</h2>
+      <!-- Fuel Trim (formerly "LTFT Trend"; plain English, Spool's LTFT
+           semantics unchanged) stays VEHICLE-GATED, and keeps the SPEAKING
+           vocabulary US-507 gave it rather than reverting to the pre-US-507
+           hide. Two reasons, and neither is inertia: this story locks SIX
+           cards, and a card that vanishes on a bench breaks the set in exactly
+           the place the CIO reads the panel most days; and "does not apply
+           right now" is a fact worth stating on a screen the operator swiped
+           to deliberately. So the card renders the honest "no engine data" --
+           never a fabricated 0%.
+
+           Ships data-gated="true" so the pre-first-poll window -- when nothing
+           has been read and "is a car connected?" is genuinely unknown -- fails
+           CLOSED to the gate. The body still reads `unavailable` until the
+           first poll: no read has happened yet, which is a different fact from
+           the gate itself. -->
+      <section class="card" data-state="ltft-trend" data-gated="true"
+               aria-label="Fuel Trim">
+        <h2 class="card-title">Fuel Trim</h2>
+        <div class="card-body">unavailable</div>
+      </section>
+      <section class="card" data-state="light" aria-label="Light">
+        <h2 class="card-title">Light</h2>
         <div class="card-body">unavailable</div>
       </section>
     </div>

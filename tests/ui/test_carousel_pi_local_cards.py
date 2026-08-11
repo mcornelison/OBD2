@@ -335,13 +335,17 @@ def test_dashboardHtml_shipsTheLightSlot():
     """AC-1: the always-present light readout exists in the markup (the tick
     renders from the DOM, so no slot = no readout, whatever the JS says).
 
-    RELOCATED BY US-507: it is now the Light SECTION of the merged Health card
-    rather than a standalone card. Still always-present, still a pure consumer
-    of the same states/light file that drives the auto-dim.
+    RELOCATED TWICE: US-507 made it the Light SECTION of the merged Health
+    card; US-540-b made it a standalone card again (the US-540-a scale left a
+    card affording ~3 facts, and Health carried six). Through both moves it is
+    still always-present and still a pure consumer of the same states/light
+    file that drives the auto-dim -- which is why this test keeps its subject
+    and only changes where it looks.
     """
     html = _read(_HTML)
-    assert "health-light" in html
-    assert 'data-states="battery-health light ltft-trend"' in html
+    match = re.search(r'<section[^>]*aria-label="Light"[^>]*>', html)
+    assert match is not None, "no Light card in the markup"
+    assert 'data-state="light"' in match.group(0)
 
 
 def test_dashboardHtml_vehicleGatedSurfaceFailsClosed():
@@ -349,18 +353,21 @@ def test_dashboardHtml_vehicleGatedSurfaceFailsClosed():
     when nothing has been read and "is a car connected?" is genuinely unknown.
     Same shape as the US-490 `⋮` button.
 
-    SUPERSEDED IN FORM BY US-507, not in substance. The gated surface used to be
-    a whole CARD, which failed closed by shipping `hidden`. It is now a SECTION
-    of an always-visible card, which cannot vanish without leaving a hole -- so
-    it fails closed by shipping `data-gated="true"` and speaking the gate
-    instead. The property under test is identical: no vehicle reading is shown
-    until a vehicle is positively confirmed.
+    SUPERSEDED IN FORM BY US-507, not in substance, and US-540-b keeps that
+    form. The gated surface used to be a whole CARD that failed closed by
+    shipping `hidden`. US-507 made it a SECTION, which cannot vanish without
+    leaving a hole, so it failed closed by shipping `data-gated="true"` and
+    speaking the gate. It is a card again now and KEEPS the speaking version:
+    US-540-b locks six cards, and one that disappears on a bench breaks the set
+    where the panel is read most days. The property under test is identical
+    across all three: no vehicle reading is shown until a vehicle is positively
+    confirmed.
     """
     html = _read(_HTML)
-    match = re.search(r'<section[^>]*class="health-section health-fueltrim"[^>]*>', html)
-    assert match is not None, "no fuel-trim section in the markup"
+    match = re.search(r'<section[^>]*aria-label="Fuel Trim"[^>]*>', html)
+    assert match is not None, "no fuel-trim card in the markup"
     assert 'data-gated="true"' in match.group(0), (
-        "the vehicle-gated section must ship gated, not open"
+        "the vehicle-gated surface must ship gated, not open"
     )
 
 
@@ -368,27 +375,27 @@ def test_dashboardHtml_fuelTrimIsTheVehicleGatedSurface():
     """Fuel trim is the vehicle-dependent readout in this generation (its
     emitter is orphaned -- Slice 2 revisits it with Spool). Gating it is what
     takes it out of the always-available set without faking or deleting it --
-    and, per US-507, the Battery + Light sections beside it are NOT gated,
-    because they are Pi-local sensors that read on a bench with no car."""
+    and the Battery + Light cards beside it are NOT gated, because they are
+    Pi-local sensors that read on a bench with no car."""
     html = _read(_HTML)
     gated = re.findall(r'<section[^>]*data-gated="true"[^>]*>', html)
     assert len(gated) == 1, f"exactly one surface should ship gated, found {gated}"
-    assert "health-fueltrim" in gated[0]
+    assert 'aria-label="Fuel Trim"' in gated[0]
 
 
 def test_carouselJs_tickRendersTheLightReadout():
     """The light readout is wired into the poll -- a view function nothing calls
     renders nothing (the US-494 default-argument lesson).
 
-    US-507: the tick now reaches it through the merged Health card, so the
+    US-540-b: the tick reaches it through the shared source-card route, so the
     wiring pin follows the call chain that actually runs.
     """
     js = _read(_JS)
     tick = _fnBody(js, "tick")
-    assert "healthCardView" in tick
-    assert "renderHealthCard" in tick
-    section = _fnBody(js, "renderHealthSection")
-    assert "renderLightBody" in section
+    assert "sourceCardView" in tick
+    assert "renderSourceCard" in tick
+    render = _fnBody(js, "renderSourceCard")
+    assert "renderLightBody" in render
 
 
 def test_carouselJs_tickAppliesTheVehicleGate():

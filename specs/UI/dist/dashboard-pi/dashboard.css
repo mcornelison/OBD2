@@ -527,41 +527,20 @@ html, body {
 .ltft-bar[data-level="down"]  .ltft-bar-value { color: var(--amber-warn); }
 .ltft-bar[data-level="down"]  { border-color: var(--amber-warn); }
 
-/* --- US-507 merged Health card (F-124) -------------------------------------- */
-/* Three sources stacked on one 480x320 card, so the section chrome has to be
-   cheap: a small uppercase label + a hairline rule, no boxes-inside-boxes. Every
-   colour is a var(--token) from specs/UI/tokens.css -- the merged card forks no
-   palette, it only re-hosts three existing ones.
+/* --- US-540-b: the US-507 merged Health card is RETIRED ---------------------- */
+/* Its whole rule block goes with it. That block existed to make three sources
+   fit one 480x320 card: a hairline section chrome, a scrolling body, and -- the
+   part that matters here -- tile overrides that made the tiles DENSER than a
+   standalone card's (`padding: 2px 0`, and a `.tile-value` pinned down to
+   --fs-secondary).
 
-   The body SCROLLS rather than compressing: three readouts plus the drain
-   ladder (which appears only while actually draining) can genuinely exceed the
-   card, and squeezing them would either clip a reading or shrink it below
-   glance legibility. Scrolling keeps every value at its honest size.
-
-   The tiles are DENSER here than on a standalone card (tighter padding, smaller
-   value type) -- the same components, re-tuned for a card carrying 3x the
-   content. Values keep the tabular mono face; only the spacing moves. */
-.health-body {
-  display: flex; flex-direction: column; gap: 8px;
-  overflow-y: auto;
-}
-.health-section {
-  display: flex; flex-direction: column;
-  padding-top: 6px;
-  border-top: 1px solid var(--surface);
-}
-.health-section:first-child { padding-top: 0; border-top: 0; }
-.health-section-title {
-  margin: 0 0 2px 0; font-size: var(--fs-meta); font-weight: 600;
-  color: var(--text-secondary); text-transform: uppercase;
-  letter-spacing: 0.08em;
-}
-.health-section-body { font-size: var(--fs-secondary); color: var(--text-primary); }
-.health-section .tile { padding: 2px 0; border-bottom: 0; }
-.health-section .tile-value { font-size: var(--fs-secondary); }
-.health-section .ladder { margin-top: 4px; padding: 4px 8px; }
-.health-section .ltft-bars { margin-top: 4px; }
-.health-section .ltft-bar { min-width: 38px; padding: 4px 3px; }
+   Those overrides are exactly what US-540-a's scale was raised to undo, so
+   leaving them behind as dead selectors would be worse than untidy: the moment
+   anything re-used a `health-section` class name the new scale would be
+   silently shrunk back on that surface, which is F-127 travelling backwards.
+   Battery / Fuel Trim / Light now each take a whole card and inherit the shared
+   `.card-body` + `.tile` sizing unmodified -- one set of tile rules for every
+   card, which is what makes the scale mean the same thing everywhere. */
 
 /* --- page dots (>=40px touch target, 10px visual) --------------------------- */
 #dots {

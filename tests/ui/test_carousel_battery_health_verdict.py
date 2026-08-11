@@ -211,30 +211,25 @@ def test_noHealthCheckEver_readsNeverNotToday():
 
 
 # ---------------------------------------------------------------------------
-# The merged Health card carries all of the above (the section, not just the
-# view -- a correct view the card never asks for renders nothing).
+# The Battery CARD carries all of the above (the card view, not just the source
+# view -- a correct view the card never asks for renders nothing). US-540-b
+# retired the merged Health card these two used to reach through; the seam they
+# actually need is unchanged, so they now go through sourceCardView directly.
 # ---------------------------------------------------------------------------
 
 
-def _healthCard(battery: dict) -> dict:
-    states = {"battery-health": battery, "light": None, "ltft-trend": None}
+def _batteryCard(battery: dict) -> dict:
+    spec = _view("sourceCardSpec", "battery-health")
     sysData = {"ts": _TS, "obd": {"connected": False}}
-    return _view("healthCardView", states, sysData, {}, 0)
+    return _view("sourceCardView", spec, battery, sysData, {}, 0)
 
 
-def _batterySection(view: dict) -> dict:
-    for section in view["sections"]:
-        if section["key"] == "battery-health":
-            return section
-    raise AssertionError("no battery-health section in the Health card")
+def test_batteryCard_carriesTheVerdictWord():
+    card = _batteryCard(_battery(health="replace"))
+    assert card["view"]["health"]["value"] == "REPLACE"
+    assert card["view"]["health"]["level"] != _ALARM_LEVEL
 
 
-def test_healthCard_batterySection_carriesTheVerdictWord():
-    section = _batterySection(_healthCard(_battery(health="replace")))
-    assert section["view"]["health"]["value"] == "REPLACE"
-    assert section["view"]["health"]["level"] != _ALARM_LEVEL
-
-
-def test_healthCard_batterySection_hasNoTempTile():
-    section = _batterySection(_healthCard(_battery()))
-    assert "temp" not in section["view"]
+def test_batteryCard_hasNoTempTile():
+    card = _batteryCard(_battery())
+    assert "temp" not in card["view"]

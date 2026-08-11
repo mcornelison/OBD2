@@ -45,7 +45,7 @@ import pytest
 # Reuse the sibling suite's comment-stripper rather than re-implementing it: an
 # absence assertion that greps a name fires on its own documentation (US-507),
 # and that stripper is itself pinned by tests before anything trusts it.
-from tests.ui.test_carousel_health_card import _stripJsComments
+from tests.ui.test_carousel_source_cards import _stripJsComments
 
 _NODE = shutil.which("node")
 _PROBE = os.path.join(os.path.dirname(__file__), "carousel_probe.js")
