@@ -18,13 +18,22 @@
 #        is found. This retires the deploy-side /usr/bin/chromium-browser symlink
 #        shim -- a hardcoded ExecStart=/usr/bin/chromium-browser dies 203/EXEC on
 #        Trixie (US-428 / Bug 2).
+#   V-4  resolve the Pi user's NUMERIC UID (`id -u`) and substitute it into the
+#        units' XDG_RUNTIME_DIR; fail loudly if it can't be resolved. I-044: the
+#        templates used systemd's %U specifier, which did NOT resolve from User=
+#        on the live Pi -- `systemctl show splash-boot.service -p Environment`
+#        reported /run/user/0 (root's) under User=mcornelison (uid 1000), giving
+#        "unable to create directory '/run/user/0/dconf': Permission denied" and
+#        a run of dbus "Could not parse server address". Never falls back to 0:
+#        that IS the defect, and it installs silently.
 #
-#   --dry-run  report the user + session-type + chromium + variants it WOULD
-#              pick (and the resolved ExecStart) and exit WITHOUT installing
-#              (runs unprivileged; spec §9 S-4).
+#   --dry-run  report the user + uid + session-type + chromium + variants it
+#              WOULD pick (and the resolved ExecStart + runtime dir) and exit
+#              WITHOUT installing (runs unprivileged; spec §9 S-4).
 #
 # Detection is overridable for off-Pi CI/testing:
 #   SPLASH_FORCE_USER       force the Pi user (empty => simulate "can't tell")
+#   SPLASH_FORCE_UID        force the numeric uid (empty => simulate "can't tell")
 #   SPLASH_FORCE_SESSION    force wayland|x11 (other => simulate "unknown")
 #   SPLASH_FORCE_CHROMIUM   force the chromium path (empty => simulate "none")
 #   SPLASH_USER_HOME_GLOB   override the /home/* probe glob
@@ -70,6 +79,18 @@ detect_pi_user() {
     printf '%s' "${found[0]}"
   fi
   # 0 or >1 matches => print nothing => caller treats as indeterminate.
+}
+
+# --- V-4: resolve the Pi user's numeric UID (I-044) ---------------------------
+detect_pi_uid() {
+  local pi_user="$1"
+  if [[ -n "${SPLASH_FORCE_UID+x}" ]]; then
+    printf '%s' "$SPLASH_FORCE_UID"   # forced (may be empty => indeterminate)
+    return 0
+  fi
+  # Unknown user => id fails => print nothing => caller aborts loudly. NEVER
+  # substitute a default here: /run/user/0 is exactly the I-044 breakage.
+  id -u "$pi_user" 2>/dev/null || true
 }
 
 # --- V-2: detect the session type (wayland|x11) -------------------------------
@@ -141,11 +162,37 @@ if [[ -z "$CHROMIUM_BIN" ]]; then
   exit 1
 fi
 
+# V-4 runs LAST of the four probes on purpose: V-1/V-2/V-3 are about whether an
+# install is possible at all, and their abort messages are the ones an operator
+# needs first. This one is about rendering a correct unit.
+PI_UID="$(detect_pi_uid "$PI_USER")"
+if [[ ! "$PI_UID" =~ ^[0-9]+$ ]]; then
+  echo "ERROR: cannot resolve a numeric UID for user '$PI_USER' (got" >&2
+  echo "       '${PI_UID:-<empty>}'). Set SPLASH_FORCE_UID to override." >&2
+  echo "       Aborting rather than defaulting -- XDG_RUNTIME_DIR=/run/user/0" >&2
+  echo "       is root's runtime dir, installs silently, and is I-044 itself." >&2
+  exit 1
+fi
+
 BOOT_VARIANT="splash-boot.service.${SESSION_TYPE}"
 GRACE_VARIANT="splash-grace.service.${SESSION_TYPE}"
 
+# Render a unit template to stdout with every install-time placeholder resolved:
+# __PI_USER__ (V-1), __CHROMIUM_BIN__ (V-3) and __PI_UID__ (V-4). ONE definition
+# of the substitution set, shared by the dry-run preview and the real install --
+# a second copy is how a placeholder gets added to one path and not the other,
+# and an unsubstituted __PI_UID__ ships a literal /run/user/__PI_UID__.
+# The chromium path uses a '#' sed delimiter since it contains '/'.
+render_unit() {
+  sed -e "s/__PI_USER__/${PI_USER}/g" \
+      -e "s/__PI_UID__/${PI_UID}/g" \
+      -e "s#__CHROMIUM_BIN__#${CHROMIUM_BIN}#g" \
+      "$SCRIPT_DIR/$1"
+}
+
 echo "==> F-103 splash kit"
 echo "    Detected Pi user:      $PI_USER"
+echo "    Resolved user UID:     $PI_UID  (V-4 -> XDG_RUNTIME_DIR; I-044)"
 echo "    Detected session type: $SESSION_TYPE"
 echo "    Chromium binary:       $CHROMIUM_BIN  (V-3 -> ExecStart)"
 echo "    Boot variant:          $BOOT_VARIANT  -> $SYSTEMD_DIR/splash-boot.service"
@@ -154,12 +201,16 @@ echo "    Path unit:             splash-grace.path"
 
 if [[ "$DRY_RUN" -eq 1 ]]; then
   echo "==> DRY RUN -- no changes made. Would copy assets to $INSTALL_DIR,"
-  echo "    substitute User=$PI_USER + chromium=$CHROMIUM_BIN into the unit"
-  echo "    templates, install the units, daemon-reload, and enable:"
+  echo "    substitute User=$PI_USER + uid=$PI_UID + chromium=$CHROMIUM_BIN into"
+  echo "    the unit templates, install the units, daemon-reload, and enable:"
   echo "    splash-boot.service splash-grace.path"
   echo "    Resolved ExecStart (boot unit):"
-  sed -e "s/__PI_USER__/${PI_USER}/g" -e "s#__CHROMIUM_BIN__#${CHROMIUM_BIN}#g" \
-      "$SCRIPT_DIR/$BOOT_VARIANT" | grep -m1 '^ExecStart=' | sed 's/^/      /' || true
+  render_unit "$BOOT_VARIANT" | grep -m1 '^ExecStart=' | sed 's/^/      /' || true
+  # I-044: print the RESOLVED runtime dir, not just the uid we detected -- the
+  # only off-Pi evidence that the substitution actually reaches the template.
+  # (The x11 dashboard variant sets none; an absent line is not an error.)
+  echo "    Resolved XDG_RUNTIME_DIR (boot unit):"
+  render_unit "$BOOT_VARIANT" | grep -m1 '^Environment=XDG_RUNTIME_DIR=' | sed 's/^/      /' || true
   exit 0
 fi
 
@@ -169,14 +220,10 @@ if [[ $EUID -ne 0 ]]; then
   exit 1
 fi
 
-# Substitute __PI_USER__ (V-1) and __CHROMIUM_BIN__ (V-3) into a template and
-# write the destination unit. The chromium path uses a '#' sed delimiter since
-# it contains '/'.
+# Write a rendered template (see render_unit) to the destination unit path.
 install_unit() {
   local src="$1" dest="$2"
-  sed -e "s/__PI_USER__/${PI_USER}/g" \
-      -e "s#__CHROMIUM_BIN__#${CHROMIUM_BIN}#g" \
-      "$SCRIPT_DIR/$src" > "$dest"
+  render_unit "$src" > "$dest"
   chmod 0644 "$dest"
 }
 

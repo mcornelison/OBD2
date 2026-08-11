@@ -90,13 +90,20 @@ def _stepBody(text: str, stepName: str) -> str:
 def _runInstaller(script: Path, kitEnvPrefix: str, *, chromium: str | None) -> subprocess.CompletedProcess:
     """Run a kit install.sh --dry-run off-Pi with all FORCE_* overrides set.
 
-    Forcing user + session + chromium short-circuits every hardware probe, so
-    the installer reaches its V-3 render preview on a plain workstation. When
+    Forcing user + uid + session + chromium short-circuits every hardware probe,
+    so the installer reaches its V-3 render preview on a plain workstation. When
     `chromium` is None the FORCE_CHROMIUM var is set EMPTY (simulating "can't
     find a chromium binary") to exercise the fail-loud path.
+
+    FORCE_UID is set here for the same reason FORCE_CHROMIUM is: US-550 added a
+    V-4 probe that resolves the Pi user's numeric uid with `id -u` (I-044), and
+    the forced user "pi" does not exist on a dev workstation, so the installer
+    would abort on the uid before reaching anything this file asserts. The V-4
+    fail-loud path itself is covered in test_kiosk_runtime_dir.py.
     """
     env = dict(os.environ)
     env[f"{kitEnvPrefix}_FORCE_USER"] = "pi"
+    env[f"{kitEnvPrefix}_FORCE_UID"] = "1000"
     env[f"{kitEnvPrefix}_FORCE_SESSION"] = "x11"
     env[f"{kitEnvPrefix}_FORCE_CHROMIUM"] = "" if chromium is None else chromium
     return subprocess.run(

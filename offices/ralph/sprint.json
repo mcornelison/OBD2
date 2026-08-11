@@ -52,11 +52,12 @@
       "epicId": "E-001",
       "type": "issue",
       "size": "S",
-      "status": "sprint-ready",
-      "passes": false,
+      "status": "complete",
+      "passes": true,
       "acceptance": [
         "[I-044] the kiosk systemd units' XDG_RUNTIME_DIR uses %U which expands to 0 (root) -> /run/user/0 permission errors (dconf/dbus). Set it to the real autologin user's runtime dir (/run/user/<uid>). ruff clean; no /run/user/0 permission errors in the journal"
       ],
+      "completionNotes": "SHIPPED. `%U` -> `__PI_UID__` on all 5 kiosk units that declare XDG_RUNTIME_DIR, substituted at install time by a new V-4 probe (`id -u $PI_USER`) in both kit installers, alongside the existing __PI_USER__ (V-1) and __CHROMIUM_BIN__ (V-3) seams. Dry-run now renders the resolved runtime dir: `/run/user/1000` for mcornelison, which is exactly what `ls -d /run/user/*` reports on the box.\n\nTHE SET IS 5, NOT THE 6 I-044 LISTED -- dashboard.service.x11 never declared XDG_RUNTIME_DIR (X11 needs only DISPLAY). The issue's own 'confirm the set, do not assume this list is complete' caveat was right. So the guard DISCOVERS units by globbing both kit dirs rather than reading a list, and pins the discovered count -- a unit added later is covered the day it lands, and a glob that silently stops matching fails loudly instead of passing an absence check over an empty list.\n\n*** TOOL BLINDSPOT WORTH MORE THAN THIS STORY: the Grep tool found ZERO of the five defect sites. *** specs/UI/dist/ is gitignored-but-tracked, and ripgrep honours .gitignore, so a completeness sweep for `%U` via Grep returns clean over a repo where every single instance is present. I would have concluded 'already fixed' on the strength of an empty result. `git grep` searches tracked files and found all five instantly. Any audit of specs/UI/dist/ (the entire shipped UI kit) MUST use git grep. This generalises: an empty search result is only evidence if you know the tool can see the files.\n\nFAIL-LOUD, NEVER 0: an unresolvable uid ABORTS the install. A fallback would re-create I-044 silently -- the unit installs, chromium starts, and only the journal knows. V-4 deliberately runs LAST of the four probes so V-1/V-2/V-3's aborts keep their precedence (they answer 'can we install at all'; V-4 answers 'can we render it correctly'), which also left the sibling kits' unknown-session tests asserting the message they were written for.\n\n4 MUTATIONS, all reverted BY HAND, byte-exact per `git diff --numstat` (every unit file reads +N/-1 = the one Environment line plus header, no residue). (A) one unit back to %U -> 2 RED naming the file. (B) drop the __PI_UID__ sed from render_unit -> 1 RED, and it is the instructive one: the installer still PRINTED 'Resolved user UID: 4242' while shipping a literal `/run/user/__PI_UID__`, and my static test (placeholder + `id -u` + FORCE_UID all appear in the file) stayed GREEN, because those strings survive in comments. Declaration vs mechanism again -- the end-to-end dry-run render is the only assertion that means anything. (D) parser returns {} -> 3 RED headed by the positive control.\n\n*** (C) IS THE ONE THAT MATTERS: IT PASSED, AND THAT WAS A REAL GAP IN MY OWN TEST. *** I mutated the probe to `id -u ... || echo 0` -- the exact silent-fallback the story exists to forbid -- and the suite stayed GREEN. Cause: my fail-loud test forced FORCE_UID empty, which short-circuits at the override branch and never runs `id -u` at all. It tested the mock, not the mechanism. Added test_installer_failsLoudWhenIdUItselfFails, which unsets FORCE_UID and names a user that cannot exist, so the REAL probe runs and really fails -- the actual production mode. Under mutation C it goes RED and prints `XDG_RUNTIME_DIR=/run/user/0`, i.e. reproduces I-044. A forced-override test proves the override works; it says nothing about the path that runs on the Pi.\n\nTOKENIZED, NOT SUBSTRING (US-522 lesson, false-POSITIVE direction this time): the fixed units now explain %U in their headers on purpose, so `'%U' not in text` would FAIL on a correct file. The guard parses Environment= assignments (comments stripped first, continuations joined) and asserts on the VALUE. Since the headline assertion is an ABSENCE, the parser carries a positive control (must still FIND /run/user/%U when planted) plus a negative one (a commented-out directive must NOT parse as live) -- mutation D proves both earn their keep.\n\nCOLLATERAL, FLAGGED NOT HIDDEN: 3 existing test files needed the same one-line treatment V-3 got when it landed -- V-4 is a new mandatory install-time probe and the forced users in those suites ('pi', 'tunerbox') do not exist on a dev box, so `id -u` fails and the installer aborts before reaching what they assert. test_splash_kit/test_dashboard_kit got `env.setdefault(*_FORCE_UID, '1000')` next to the existing FORCE_CHROMIUM setdefault; test_kiosk_install's _runInstaller sets it explicitly. No assertion was weakened. Also de-duplicated the substitution set into one `render_unit()` per installer -- it was about to become a third copy of the same sed, which is how a placeholder gets added to the install path and not the dry-run path.\n\nGATE: targeted = tests/deploy/test_kiosk_runtime_dir.py (16) + the 4 suites that share these artifacts (test_kiosk_install, test_splash_kit, test_dashboard_kit, test_deploy_pi) -- 140 passed, EXIT 0, re-run green after all reverts. ruff clean on all 4 touched .py files (`make` is not on PATH -- exit 127 READS LIKE A PASS; use `python -m ruff check <file>`). FOR PM: full suite is yours at integration; my diff touches no src/, only the shipped UI kit + tests.\n\nSTILL OWED (Pi-side, uncloseable here, and it is the whole point of I-044): this repo can prove the installer RENDERS /run/user/1000; only the box can prove systemd RESOLVES it. After deploy+boot: `systemctl show splash-boot.service -p Environment -p User` (expect /run/user/1000, not /run/user/0) and `journalctl -u splash-boot.service` clean of dconf/'Could not parse server address'. Assert against `systemctl show`, NOT the unit text -- trusting the unit text is why this issue existed.",
       "validationCriteria": [
         {
           "action": "boot the Pi + read the kiosk journal",
@@ -65,7 +66,30 @@
       ],
       "conditionalOutcomes": [],
       "goal": "As a maintainer, I want the kiosk units to use the real user's runtime dir so dconf/dbus stop erroring.",
-      "tasks": []
+      "tasks": [],
+      "feedback": {
+        "filesActuallyTouched": [
+          "specs/UI/dist/splash-pi/splash-boot.service.x11",
+          "specs/UI/dist/splash-pi/splash-boot.service.wayland",
+          "specs/UI/dist/splash-pi/splash-grace.service.x11",
+          "specs/UI/dist/splash-pi/splash-grace.service.wayland",
+          "specs/UI/dist/dashboard-pi/dashboard.service.wayland",
+          "specs/UI/dist/splash-pi/install.sh",
+          "specs/UI/dist/dashboard-pi/install.sh",
+          "tests/deploy/test_kiosk_runtime_dir.py",
+          "tests/deploy/test_kiosk_install.py",
+          "tests/deploy/test_splash_kit.py",
+          "tests/deploy/test_dashboard_kit.py",
+          "offices/pm/issues/I-044-kiosk-units-xdg-runtime-dir-percent-U-expands-to-zero.md"
+        ],
+        "grounding": [
+          "I-044 (offices/pm/issues/) -- the live-Pi measurement this whole story rests on: `id -u mcornelison`=1000 vs `systemctl show splash-boot.service -p Environment`=/run/user/0 vs `ls -d /run/user/*`=/run/user/1000, plus the boot dc7a3848 journal lines (dconf Permission denied x3, dbus 'Could not parse server address')",
+          "I-044 suggested fix -- __PI_UID__ resolved at install time via `id -u $PI_USER`; caveat 1 (verify against `systemctl show`, not unit text) and caveat 2 (consider dropping it under X11) both addressed explicitly in the issue's Resolution",
+          "specs/UI/dist/*/install.sh V-1/V-2/V-3 -- the existing detect/fail-loud/FORCE_* override pattern that V-4 copies rather than reinvents",
+          "tests/deploy/test_kiosk_install.py + test_splash_kit.py + test_dashboard_kit.py -- the established off-Pi harness convention (FORCE_* setdefault) that a new mandatory probe must join",
+          "US-522 (tests/deploy/test_dashboard_kit.py) -- the substring-vs-token lesson, applied here in its false-positive direction since the fixed units document %U in their headers"
+        ]
+      }
     },
     {
       "id": "US-543",

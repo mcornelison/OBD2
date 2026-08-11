@@ -54,3 +54,56 @@ Task: I-043 -- shutdown-splash terminal reason not observable
 - **Gotcha**: Bash tool rejects `${PIPESTATUS[0]}` ("Contains expansion") --
   run the plain command and read the tool's own exit reporting.
 ---
+
+## 2026-08-10 - US-550 (Agent 1 / Session 2)
+Task: I-044 -- kiosk XDG_RUNTIME_DIR %U expands to 0 (root)
+
+### What was implemented:
+- `%U` -> `__PI_UID__` on the 5 kiosk units that declare XDG_RUNTIME_DIR
+  (4 splash variants + dashboard.service.wayland). The 6th unit named in
+  I-044, dashboard.service.x11, never declared one -- X11 needs only DISPLAY.
+- New V-4 install-time probe in both kit installers: `id -u "$PI_USER"`,
+  substituted like __PI_USER__ (V-1) and __CHROMIUM_BIN__ (V-3). An
+  unresolvable uid ABORTS; it never falls back to 0, which would reinstate
+  I-044 silently (the unit installs and chromium still starts).
+- V-4 runs LAST of the four probes so V-1/V-2/V-3 keep their abort precedence.
+- Both installers' three sed sites folded into one `render_unit()`, shared by
+  the dry-run preview and the real install.
+- `--dry-run` now prints the RESOLVED runtime dir (`/run/user/1000`), the only
+  off-Pi evidence that the substitution reaches the template.
+- New guard tests/deploy/test_kiosk_runtime_dir.py (16): units discovered by
+  glob, not listed; Environment= parsed, not substring-matched.
+
+### Files changed:
+- Modified: `specs/UI/dist/splash-pi/splash-boot.service.{x11,wayland}` (__PI_UID__ + why)
+- Modified: `specs/UI/dist/splash-pi/splash-grace.service.{x11,wayland}` (same)
+- Modified: `specs/UI/dist/dashboard-pi/dashboard.service.wayland` (same)
+- Modified: `specs/UI/dist/splash-pi/install.sh` (V-4 probe, render_unit, preview)
+- Modified: `specs/UI/dist/dashboard-pi/install.sh` (same)
+- Created: `tests/deploy/test_kiosk_runtime_dir.py` (I-044 guard, 16 tests)
+- Modified: `tests/deploy/test_kiosk_install.py` (_runInstaller forces FORCE_UID)
+- Modified: `tests/deploy/test_splash_kit.py` (FORCE_UID setdefault)
+- Modified: `tests/deploy/test_dashboard_kit.py` (FORCE_UID setdefault)
+- Modified: `offices/pm/issues/I-044-...md` (Resolution: code-fixed, Pi leg owed)
+
+### Learnings for future iterations:
+- **Gotcha (the big one)**: the **Grep tool cannot see `specs/UI/dist/`** --
+  it is gitignored-but-TRACKED, and ripgrep honours .gitignore. A repo-wide
+  sweep for `%U` returned ZERO hits while all five defect sites were present,
+  which reads exactly like "already fixed". `git grep` found them instantly.
+  An empty search result is evidence ONLY once you know the tool can see the
+  files.
+- **Pattern discovered**: a forced-override test proves the override works and
+  says nothing about the real path. Mutating the probe to `id -u ... || echo 0`
+  -- the exact silent fallback the story forbids -- stayed GREEN, because the
+  fail-loud test set FORCE_UID empty and short-circuited before `id -u` ever
+  ran. It tested the mock. The fix: a second test that UNSETS the override and
+  names a user that cannot exist, so the genuine probe genuinely fails.
+- **Gotcha**: adding a mandatory install-time probe breaks every off-Pi test
+  harness whose forced user doesn't exist locally. Three sibling suites needed
+  the same `env.setdefault(*_FORCE_UID, ...)` line that V-3 got when it landed.
+- **Pattern discovered**: the US-522 substring lesson INVERTS when the fix
+  documents the defect. These units now explain `%U` in their headers on
+  purpose, so `"%U" not in text` fails on a CORRECT file -- a false positive,
+  where US-522's was a false negative. Parse the directive; assert on the value.
+---

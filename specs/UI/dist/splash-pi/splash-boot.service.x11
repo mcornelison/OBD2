@@ -11,6 +11,17 @@
 # Token SSOT: chromium loads http://127.0.0.1:9899/ so the token is injected
 #   same-origin and never lands on disk. Requires eclipse-states-http.
 # Type=simple [A-8]. __PI_USER__ substituted by install.sh (V-1).
+#
+# I-044 (US-550) -- XDG_RUNTIME_DIR is __PI_UID__, NOT the %U specifier. Measured
+#   on the live Pi: with User=mcornelison (id -u = 1000), `systemctl show
+#   splash-boot.service -p Environment` reported XDG_RUNTIME_DIR=/run/user/0 --
+#   root's dir, which this unit's user cannot write and which does not exist
+#   (`ls -d /run/user/*` -> /run/user/1000). Consequence in the boot dc7a3848
+#   journal: "unable to create directory '/run/user/0/dconf': Permission denied"
+#   x3 plus a run of dbus "Could not parse server address". So the uid is
+#   resolved at INSTALL time by install.sh (V-4, `id -u $PI_USER`) and
+#   substituted here, exactly like __PI_USER__ and __CHROMIUM_BIN__. Do not
+#   "simplify" it back to %U -- it looks correct in the file and is not.
 # ==============================================================================
 
 [Unit]
@@ -26,7 +37,7 @@ OnSuccess=eclipse-dashboard.service
 Type=simple
 User=__PI_USER__
 Environment=DISPLAY=:0
-Environment=XDG_RUNTIME_DIR=/run/user/%U
+Environment=XDG_RUNTIME_DIR=/run/user/__PI_UID__
 ExecStart=__CHROMIUM_BIN__ \
   --kiosk \
   --noerrdialogs --disable-infobars --hide-scrollbars \
