@@ -154,9 +154,23 @@ SERVER_MIRROR_COLUMNS: frozenset[str] = frozenset({
 # These are NOT TD-039 silent-data-loss drift -- they're documented
 # rename pairs.  Filtered out of the gate-trip list so the script can
 # be wired into pre-commit without firing on by-design rename pairs.
+# US-543 (A-4 parity guard): this map MUST agree, both directions, with the
+# non-'id' entries of ``src.pi.data.sync_log.PK_COLUMN`` -- the registry the
+# sync client actually derives the rename from (``pkColumn != 'id'`` ->
+# ``_renamePkToId``).  ``drive_summary`` was missing here for four sprints:
+# its rename shipped and worked (the client never reads this map), but the
+# DECLARATION was stale, which is the "new synced table added without its
+# mapping" gap.  ``tests/lint/test_pi_server_contract_parity.py`` now pins it.
 PI_PK_RENAMED_TO_ID: dict[str, str] = {
     'battery_health_log': 'drain_event_id',
     'calibration_sessions': 'session_id',
+    # US-206 / US-194: drive_summary's PK IS drive_id (the per-drive natural
+    # monotonic cursor); the client renames it to ``id`` on the outbound
+    # payload so the server's ``id -> source_id`` rule applies uniformly.  The
+    # server ALSO carries its own ``drive_id`` column, mirrored from source_id
+    # by the US-372 chk_drive_id_source_id invariant -- a different fact from
+    # the Pi's PK, which is why both names appear on the server side.
+    'drive_summary': 'drive_id',
 }
 
 _PROJECT_ROOT: Path = Path(__file__).resolve().parents[1]

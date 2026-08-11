@@ -107,3 +107,61 @@ Task: I-044 -- kiosk XDG_RUNTIME_DIR %U expands to 0 (root)
   purpose, so `"%U" not in text` fails on a CORRECT file -- a false positive,
   where US-522's was a false negative. Parse the directive; assert on the value.
 ---
+
+## 2026-08-10 - US-543 (Agent 1 / Session 3)
+Task: A-4 Pi<->server schema/contract PARITY GUARD -- standing CI test
+
+### What was implemented:
+- `scripts/audit_sync_contract_parity.py`: pure check functions + CLI in the
+  `audit_address_mirrors.py` pattern; `tests/lint/test_pi_server_contract_parity.py`
+  (71 tests) drives them as the standing gate. All 6 AC assertions land as A1-A6.
+- Table set = `sync_log.PK_COLUMN` UNION `snapshot_registry.SNAPSHOT_SYNC`,
+  computed per call. Complete-by-construction, pinned by a test that registers
+  a new table by monkeypatch and asserts it is covered with no edit to the guard.
+  SNAPSHOT_SYNC is unioned in beyond the DoD's named PK_COLUMN because US-416
+  added a SECOND wire path -- watching one would report parity over a table set
+  that is not the synced set.
+- Pi side is the APPLIED schema: a real `ObdDatabase.initialize()` (every
+  ensureX helper) read back via PRAGMA. Server applied side rides the US-464/470
+  real-MariaDB harness and skips honestly on the bench.
+- Found 3 real divergences on the FIRST run: drive_summary's PK rename was
+  undeclared (fixed), and 2 dtc_freeze_frame columns that turned out to be my
+  incomplete model of the wire -- that table has a bespoke cross-tier resolver,
+  now declared as `CROSS_TIER_RESOLVED_COLUMNS` and self-policed from both sides.
+- One deliberate AC deviation, flagged for Atlas (not silently narrowed):
+  `data_quality` parity is asserted CONDITIONALLY, because the column is
+  wire-stripped and the two tiers' vocabularies are different facts.
+
+### Files changed:
+- Created: `scripts/audit_sync_contract_parity.py` (the 6-assertion audit + CLI)
+- Modified: `scripts/schema_diff.py` (+14/-0: declare the drive_summary PK rename)
+- Created: `tests/lint/test_pi_server_contract_parity.py` (71 tests, standing gate)
+- Created: `offices/pm/inbox/2026-08-10-from-ralph-us543-data-quality-...md`
+- Created: `offices/pm/tech_debt/TD-079-schema-diff-ddl-registry-blind-...md`
+
+### Learnings for future iterations:
+- **Pattern discovered**: when a guard's own AC names a fact that is NOT
+  actually shared, assert the CONDITION rather than the fact. `data_quality`
+  is wire-stripped, so the guard asserts the strip and flips to full
+  set-equality the day the strip is removed. Mutating the strip away took it
+  5 RED -- a conditional check nobody has watched fire is a disabled check.
+- **Gotcha (mine, and it cost a red test)**: I walked into the SAME
+  substring-vs-token trap my last two stories warned about. The design guard
+  `'create_all' not in source` failed because the module DOCUMENTS the
+  create_all trap in its header. Third sprint running, same lesson, opposite
+  direction each time. Fixed with an `ast` walk over Name/Attribute/alias nodes
+  plus a positive AND negative control.
+- **Pattern discovered**: prove the expensive loader earns its cost. The
+  applied Pi loader is only justified if it sees something the cheap DDL-constant
+  loader cannot -- so that difference is ASSERTED (`dtc_freeze_frame` is
+  invisible to the constants registry), and the test fails if they ever agree,
+  telling the next person to re-justify rather than silently keeping it.
+- **Gotcha**: a first-run guard that comes up green is suspicious; a first-run
+  guard that comes up RED needs each finding classified as real-defect vs
+  incomplete-model BEFORE fixing. 1 of my 3 was a real declaration gap, 2 were
+  my model missing a third wire transform. Widening the exemption until the
+  noise stops would have hidden the first kind forever.
+- **Gotcha**: the full targeted run exceeded the 120s Bash timeout and got
+  backgrounded (TD-059 territory). Split it into 3 synchronous batches instead
+  of trusting the backgrounded result.
+---
