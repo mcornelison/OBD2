@@ -47,3 +47,40 @@ Task: Extract the type scale into tokens.css (closes W-3) -- pure refactor
   `@` into the commit subject. Use a real heredoc or `git commit -F <file>`. `/tmp` and
   `.git/` are both blocked for writes; stage scratch files inside the repo.
 ---
+
+## 2026-08-11 - US-540-a (Rex / Session 2)
+Task: Set the type-scale token VALUES for 3.5in legibility (44/34/26/20/15)
+
+### What was implemented:
+- Type scale set to Iris's in-car values -- hero 44 / primary 34 / secondary 26 /
+  label 20 / meta 15 -- in the SSOT `specs/UI/tokens.css` and the hand-mirror in
+  `dashboard.css :root`. Ten value lines and two comment blocks; NOTHING below
+  `:root` changed. That is US-539 paying off as scoped (it would have been 82 edits).
+- New gate `tests/ui/test_dashboard_type_scale_values.py` (8 tests): the five values
+  PINNED, plus the intent asserted separately so it survives a future value edit --
+  driver-must-read tiers >= [EXACT:34]px, label/meta under the 26px non-critical
+  ceiling, no tier below its pre-F-127 size. Two tests resolve tokens THROUGH a real
+  rule (`.tile-value`, the STOP directive), not just `:root`.
+- NOT ACCEPTED YET, by the story's own AC2: the output mode must be confirmed
+  panel-native (US-552) BEFORE these numbers are called final, then read in-car.
+
+### Files changed:
+- Modified: `specs/UI/tokens.css` (scale values + the floor rule / not-final caveat)
+- Modified: `specs/UI/dist/dashboard-pi/dashboard.css` (mirror values + same caveat)
+- Created: `tests/ui/test_dashboard_type_scale_values.py` (the US-540-a gate)
+
+### Learnings for future iterations:
+- **Pattern discovered**: PIN values, don't BOUND them, when the values ARE the
+  deliverable. A floor test (`primary >= 34`) is the AC's own wording, but it would
+  have passed BEFORE this story ran (old hero 40 clears any hero floor) and would
+  still pass at hero 90px overflowing every card. A bound cannot witness a value.
+  Pin the numbers AND assert the intent separately.
+- **Pattern discovered**: assert a token through a REAL RULE, not only `:root`.
+  Reading `:root` alone goes green on the SSOT-only drop (panel unsized, suite green).
+- **Gotcha**: `pytest -q ... | tail` printed NO summary line on this tree, twice.
+  Redirect to a file and read the tail + `echo $?`, or you are guessing about your
+  own gate. (Prior note's "tests/ui = 720" was wrong; the honest count is 695 + my 8.)
+- **Gotcha**: the biggest proportional jump is secondary 14->26 (+86%). Overflow seen
+  on hardware is US-540-b's card re-lay to fix -- shrinking the scale back is F-127
+  travelling backwards.
+---

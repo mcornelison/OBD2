@@ -79,12 +79,21 @@
        --fs-meta       de-emphasised micro-copy, honest to read PARKED only:
                        version chip, uppercase field labels, axis furniture
 
-     VALUES BELOW ARE THE PRE-F-127 SHIPPED SCALE, not the legibility target.
-     US-539 is a PURE REFACTOR: it establishes the tokens + the wiring so the
-     legibility fix is ONE edit here instead of 83 scattered ones that drift
-     back. US-540-a sets the in-car values (hero 44 / primary 34 / secondary 26
-     / label 20 / meta 15) under the [EXACT:34]px driver-must-read floor --
-     do NOT set them here.
+     VALUES BELOW ARE THE F-127 IN-CAR LEGIBILITY SCALE (Iris, US-540-a), set
+     over the pre-F-127 shipped 40/20/14/12/10. The rule they encode:
+     [FLOOR RULE] anything the driver MUST read while moving is >= [EXACT:34]px
+     -- hero and primary both clear it -- and a tier under 26px carries
+     NON-CRITICAL copy only (label, meta: read parked or glanced past). Nothing
+     driver-critical may be styled into label/meta; that is the whole reason the
+     tiers have names instead of numbers.
+
+     THEY ARE NOT FINAL UNTIL READ IN THE CAR. Acceptance is seated at arm's
+     length, not on a dev-box browser, and the Atlas display-pipeline finding
+     (US-552: the deploy pins no HDMI/KMS mode, so the Pi likely renders 1080p
+     into a 480x320-native panel and downsamples) SOFTENS EVERY GLYPH and can
+     raise the floor. Confirm the output mode is panel-native FIRST, then
+     re-verify these five numbers -- do not call them final before that.
+     Pinned by tests/ui/test_dashboard_type_scale_values.py.
 
      THE SCALE IS DESCENDING AND MUST STAY SO. Two safety hierarchies rest on
      it: the STOP takeover directive is hero and outranks the base directive
@@ -94,11 +103,11 @@
      block by hand -- dashboard.html links only that one sheet, and no rule may
      pull a second stylesheet in: the kiosk is offline in the car, so the fetch
      would fail in the one place that matters. See dashboard.css:54). */
-  --fs-hero:        40px;
-  --fs-primary:     20px;
-  --fs-secondary:   14px;
-  --fs-label:       12px;
-  --fs-meta:        10px;
+  --fs-hero:        44px;
+  --fs-primary:     34px;
+  --fs-secondary:   26px;
+  --fs-label:       20px;
+  --fs-meta:        15px;
 
   /* --- Base surfaces ------------------------------------------------------ */
   /* Atlas Rule-10 ruling 2026-07-31 (US-510/TD-065): PROMOTED from the

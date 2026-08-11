@@ -90,16 +90,19 @@
        9/8      -> meta 10      (IMU tape + gear furniture)
      The remaining 35 rules already sat on a scale value and did not move.
 
-     Values here are the PRE-F-127 shipped scale and MUST equal tokens.css --
-     US-539 ships + verifies independently of the legibility bump. US-540-a
-     sets 44/34/26/20/15 by editing the SSOT and this mirror together; nothing
-     below this :root changes again. Pinned by
-     tests/ui/test_dashboard_type_scale.py. */
-  --fs-hero:        40px;      /* SSOT --fs-hero */
-  --fs-primary:     20px;      /* SSOT --fs-primary */
-  --fs-secondary:   14px;      /* SSOT --fs-secondary */
-  --fs-label:       12px;      /* SSOT --fs-label */
-  --fs-meta:        10px;      /* SSOT --fs-meta */
+     US-540-a SET THE VALUES (Iris): 44/34/26/20/15, up from the pre-F-127
+     40/20/14/12/10 listed above -- the whole F-127 legibility bump, and NO rule
+     below this :root changed to get it. Driver-must-read tiers (hero, primary)
+     clear the [EXACT:34]px floor; label/meta sit under 26px and carry
+     non-critical copy only. These MUST equal tokens.css, and they are NOT final
+     until read in the car with the output mode confirmed panel-native (US-552 --
+     a 1080p->480x320 downsample softens every glyph and raises the floor).
+     Pinned by tests/ui/test_dashboard_type_scale_values.py. */
+  --fs-hero:        44px;      /* SSOT --fs-hero */
+  --fs-primary:     34px;      /* SSOT --fs-primary */
+  --fs-secondary:   26px;      /* SSOT --fs-secondary */
+  --fs-label:       20px;      /* SSOT --fs-label */
+  --fs-meta:        15px;      /* SSOT --fs-meta */
   /* --- Base surfaces -- promoted into the SSOT by US-510 (Atlas Rule-10
      2026-07-31). These two were dist-only literals; the values are UNCHANGED,
      so the promotion moved no pixels (that was Atlas's explicit DoD gate). */
