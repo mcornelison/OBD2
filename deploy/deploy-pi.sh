@@ -896,6 +896,46 @@ step_install_rfkill_unblock() {
     "
 }
 
+step_install_bond_selfheal_unit() {
+    # US-545 / A-18: install eclipse-bond-selfheal.service -- the BT bond
+    # self-heal. Same sync-if-changed posture as the sibling unit steps.
+    #
+    # `enable` WITHOUT `--now`, deliberately. `--now` would run a full self-heal
+    # in the middle of a deploy: stop capture, cycle the radio and try to pair,
+    # on a box the operator is actively deploying to, for a bond that is
+    # probably fine. The unit's job is the NEXT boot (it is ordered
+    # Before=eclipse-obd.service); a deploy-time heal is the operator's explicit
+    # call -- `systemctl start eclipse-bond-selfheal` with the engine on.
+    echo "--- Step: Installing eclipse-bond-selfheal systemd unit (US-545, sync-if-changed) ---"
+    if $DRY_RUN; then
+        echo "DRY-RUN would: sudo cmp -s ${PI_PATH}/deploy/eclipse-bond-selfheal.service /etc/systemd/system/eclipse-bond-selfheal.service || (install + daemon-reload)"
+        echo "DRY-RUN would: sudo systemctl enable eclipse-bond-selfheal.service"
+        return 0
+    fi
+    remote "
+        set -e
+        SRC='${PI_PATH}/deploy/eclipse-bond-selfheal.service'
+        DST='/etc/systemd/system/eclipse-bond-selfheal.service'
+
+        if [ ! -f \"\$SRC\" ]; then
+            echo 'WARN: eclipse-bond-selfheal.service not present in deploy/ on the Pi -- skipping install.' >&2
+            exit 0
+        fi
+
+        if sudo test -f \"\$DST\" && sudo cmp -s \"\$SRC\" \"\$DST\"; then
+            echo 'eclipse-bond-selfheal.service already up-to-date.'
+        else
+            sudo install -m 644 \"\$SRC\" \"\$DST\"
+            sudo systemctl daemon-reload
+            echo 'eclipse-bond-selfheal.service installed + daemon-reload complete.'
+        fi
+
+        sudo systemctl enable eclipse-bond-selfheal.service \
+            && echo 'eclipse-bond-selfheal.service enabled (runs on the NEXT boot, before eclipse-obd).' \
+            || echo 'WARN: failed to enable eclipse-bond-selfheal.service -- a lost BT bond will NOT self-heal at boot.' >&2
+    "
+}
+
 step_install_rfcomm_bind() {
     # US-196: install rfcomm-bind.service so /dev/rfcomm0 is re-bound on every
     # boot. Idempotent — re-running re-writes /etc/default/obdlink with the
@@ -1995,6 +2035,13 @@ step_reassert_obd_mac
 # adapter is precisely the failure this unit exists to prevent. Runs AFTER
 # sync_tree so deploy/eclipse-rfkill-unblock.service exists on the Pi.
 step_install_rfkill_unblock
+
+# US-545 / A-18: bond self-heal. Ordered right after the rfkill unblock for the
+# same reason the UNIT declares After=eclipse-rfkill-unblock.service -- a bond
+# check on a soft-blocked adapter reports "dongle not discoverable", which is a
+# confident wrong answer that sends the operator after the wrong fault. Runs
+# AFTER sync_tree so deploy/eclipse-bond-selfheal.service exists on the Pi.
+step_install_bond_selfheal_unit
 
 # US-196: rfcomm-bind.service install needs to run AFTER sync_tree so
 # deploy/install-rfcomm-bind.sh and deploy/rfcomm-bind.service exist on the

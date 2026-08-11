@@ -92,4 +92,33 @@ it adds no new write path to a shutdown-critical unit.
 
 ## Resolution
 
-[Open]
+**Code-fixed 2026-08-10 (US-549, Sprint 73 / V0.29.28) — awaiting the Pi-side leg.**
+
+The console route was taken, as recommended. `shutdown-state-poll.js` now reports
+every terminal exit on two sinks before `window.close()`:
+
+- `console.log("[shutdown-splash] terminal " + JSON.stringify(record))` — the
+  journal line, and the documented grep string.
+- `data-terminal-cause` / `data-terminal-record` attributes on `<body>` — zero
+  paint (an attribute, not a node), for DevTools/harness inspection.
+
+`record` = `{cause, phase, reason, painted, elapsedMs, polls}`, where `cause` is
+one of `cancelled` / `state-missing` / `black-tail-cap` / `unrecognized-phase`
+(this script's own four exits) and `phase`/`reason` are lifted verbatim off the
+last `shutdown-state` actually read. A run that never read one reports
+`phase: null` — that null is what separates case 1 from case 2, so it is never
+defaulted. `painted` answers the specific question the 2.17 s entry could not.
+
+**No visible render was added**, per this issue's own disposition and spec §6's
+no-fadeout requirement on the abort paths.
+
+Second half of the fix, easy to revert by accident: chromium discards
+web-content console output unless the unit asks for it, so both
+`splash-grace.service.{x11,wayland}` now carry `--enable-logging=stderr`
+(reasoning in their headers; no `--log-level`, which would filter the line out).
+`--remote-debugging-port` deliberately not adopted alongside it (US-522).
+
+**Still open on the Pi:** the console → journal hop is the one link no headless
+test can prove. Confirm on the next clean shutdown with
+`journalctl -u splash-grace.service | grep '\[shutdown-splash\] terminal'`
+*before* spending a real AC-loss event on the reverse-splash drill.

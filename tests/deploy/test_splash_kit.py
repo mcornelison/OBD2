@@ -168,6 +168,11 @@ def _runInstall(*args: str, env_extra: dict[str, str] | None = None) -> subproce
     # no chromium -- default it so the preview reaches the report, unless a test
     # overrides SPLASH_FORCE_CHROMIUM explicitly (e.g. to simulate "none").
     env.setdefault("SPLASH_FORCE_CHROMIUM", "/usr/bin/chromium")
+    # V-4 (US-550 / I-044): the installer also resolves the Pi user's numeric uid
+    # via `id -u` for XDG_RUNTIME_DIR, and aborts if it can't. The forced users
+    # here ("tunerbox") do not exist on a dev box, so default it for the same
+    # reason as the chromium path above -- unless a test overrides it explicitly.
+    env.setdefault("SPLASH_FORCE_UID", "1000")
     return subprocess.run(
         ["bash", str(INSTALL_SH), *args],
         capture_output=True,

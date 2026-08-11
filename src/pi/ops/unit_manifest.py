@@ -109,6 +109,21 @@ UNIT_MANIFEST: tuple[UnitSpec, ...] = (
         aliases=("rfkill", "unblock"),
         description="Unblocks all rfkill radios at boot (counters stale saved BT soft-block)",
     ),
+    # US-545 / A-18: second, for the same reason the unit itself declares
+    # After=eclipse-rfkill-unblock -- a bond check on a soft-blocked adapter
+    # reports "dongle not discoverable", which is a confident WRONG answer.
+    # inactiveIsNormal: a oneshot with NO RemainAfterExit (deliberate -- its
+    # ExecStopPost is the net that brings capture back if the heal is killed),
+    # so `inactive (dead)` is the correct resting state and obdctl must not
+    # imply it is broken. NO kioskVerbs: the kiosk has no button for this and
+    # none is intended; the 51- polkit `start` grant exists for eclipse-obd's
+    # own request path, which is why that clause sits OUTSIDE this mirror.
+    UnitSpec(
+        unit="eclipse-bond-selfheal.service",
+        aliases=("bond", "selfheal", "bond-selfheal"),
+        description="Detects a lost BT bond and re-pairs it (oneshot; boot + on-request)",
+        inactiveIsNormal=True,
+    ),
     UnitSpec(
         unit="rfcomm-bind.service",
         aliases=("rfcomm", "bt"),

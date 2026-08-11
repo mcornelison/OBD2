@@ -48,6 +48,20 @@
 #   stored). The live box's hand-patched unit also carried
 #   `--remote-debugging-port=9222`; that is deliberately NOT adopted (open
 #   DevTools on a car-mounted kiosk) and a test fences it.
+#
+# I-044 (US-550) -- XDG_RUNTIME_DIR is __PI_UID__, NOT the %U specifier. Measured
+#   on the live Pi: with User=mcornelison (id -u = 1000), `systemctl show
+#   splash-boot.service -p Environment` reported XDG_RUNTIME_DIR=/run/user/0 --
+#   root's dir, which this unit's user cannot write and which does not exist
+#   (`ls -d /run/user/*` -> /run/user/1000). Consequence in the boot dc7a3848
+#   journal: "unable to create directory '/run/user/0/dconf': Permission denied"
+#   plus a run of dbus "Could not parse server address". The uid is resolved at
+#   INSTALL time by install.sh (V-4, `id -u $PI_USER`) and substituted here,
+#   exactly like __PI_USER__ and __CHROMIUM_BIN__. LOAD-BEARING on Wayland: the
+#   compositor socket is $XDG_RUNTIME_DIR/wayland-0. The .x11 sibling sets no
+#   XDG_RUNTIME_DIR at all and is deliberately left that way -- X11 needs only
+#   DISPLAY, and adding a runtime dir there is not this issue's business.
+#   Do not "simplify" it back to %U -- it looks correct in the file and is not.
 # ==============================================================================
 
 [Unit]
@@ -59,7 +73,7 @@ Wants=eclipse-states-http.service
 Type=simple
 User=__PI_USER__
 Environment=WAYLAND_DISPLAY=wayland-0
-Environment=XDG_RUNTIME_DIR=/run/user/%U
+Environment=XDG_RUNTIME_DIR=/run/user/__PI_UID__
 ExecStart=__CHROMIUM_BIN__ \
   --kiosk \
   --ozone-platform=wayland \

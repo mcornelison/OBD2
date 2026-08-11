@@ -1,0 +1,138 @@
+# ==============================================================================
+# File:    eclipse-bond-selfheal.service
+# Purpose: Detect a lost / de-bonded OBDLink BT bond and either auto-re-pair it
+#          or surface it loudly.  US-545 (Atlas A-18 follow-on).
+# Author:  Rex (Ralph Agent)
+# Created: 2026-08-10
+#
+# Why
+# ---
+# OBD capture was dead from ~2026-07-03 to 2026-08-07.  The rfkill soft-block
+# (BL-025 P0, eclipse-rfkill-unblock.service) was one half; the other was that
+# once the bond was gone NOTHING in the stack recovered it, and nothing said so
+# in a way the operator would see.  US-512 added the runtime bond READ and
+# could repair the `Trusted` flag; a bond bluez has actually dropped needed a
+# human at the car with the engine running.  This unit is the recovery half.
+#
+# Two entry points, one implementation (src/pi/obdii/bond_self_heal.py):
+#
+#   1. BOOT      -- `Before=eclipse-obd.service`: check the bond before the
+#                   logger ever opens the port.
+#   2. RUNTIME   -- eclipse-obd observes a non-durable bond on a connect
+#                   attempt and does `systemctl start --no-block` on this unit
+#                   (requestBondSelfHeal).  It cannot heal in-process: the heal
+#                   must STOP eclipse-obd first, so an in-process heal would be
+#                   a process asking to be killed mid-call.
+#
+# Ordering is the fix, again
+# --------------------------
+# After=eclipse-rfkill-unblock.service is load-bearing, not decoration.
+# Scanning for a dongle on a soft-blocked adapter finds nothing, and the healer
+# would honestly report "not discoverable" -- a confident, WRONG, and very
+# plausible answer that sends the operator out to power-cycle a dongle that was
+# never the problem.  We check the bond only after the radio is known unblocked.
+#
+# `Before=` orders eclipse-obd when it is already in the boot transaction; it
+# deliberately does NOT `Wants=` it, so this unit never decides that capture
+# starts.  Same distinction eclipse-rfkill-unblock.service makes.
+#
+# NO RemainAfterExit (deliberate, and the opposite of the sibling unit)
+# ---------------------------------------------------------------------
+# eclipse-rfkill-unblock sets RemainAfterExit=yes so `is-active` answers "did it
+# run this boot".  Here that would be actively harmful: ExecStopPost is the
+# safety net that brings capture back if the healer is KILLED mid-heal, and with
+# RemainAfterExit the unit never leaves active on its own, so ExecStopPost would
+# not fire until someone stopped it -- leaving the car logging nothing.  Read
+# the outcome from the journal instead:
+#
+#   journalctl -u eclipse-bond-selfheal | grep 'BOND SELF-HEAL'
+#
+# ExecStopPost is a safety net, not the normal path
+# -------------------------------------------------
+# The healer restarts eclipse-obd itself, in a `finally`.  That `finally` cannot
+# run if the process is SIGKILLed (OOM, TimeoutStartSec, a `systemctl kill`), and
+# the one thing this story must never do is leave capture down silently.  The
+# leading `-` makes a failure here non-fatal, and `start` (not `restart`) is a
+# no-op when capture is already running.  At boot it starts a unit systemd was
+# about to start anyway.
+#
+# User=mcornelison, matching eclipse-obd.service
+# ----------------------------------------------
+# The heal runs `systemctl stop eclipse-obd`, authorized by
+# deploy/polkit-rules/51-eclipse-service-control.rules, which keys on the USER.
+# Running as anyone else means every re-pair aborts with ABORTED_PORT_BUSY --
+# correctly reported, and never actually fixed.  It is also the user whose bluez
+# session the dongle was paired under.
+#
+# NEVER rfkill
+# ------------
+# The healer's wedge reset cycles the adapter with `bluetoothctl power off/on` --
+# a runtime D-Bus property.  systemd-rfkill PERSISTS rfkill soft-blocks across
+# reboots; that is how the 07-03 outage became sticky.  A recovery path that
+# reaches for rfkill can re-arm the exact failure it is recovering from, on the
+# next boot, invisibly.
+#
+# Installation: deploy/deploy-pi.sh step_install_bond_selfheal_unit
+# (sync-if-changed install + daemon-reload-on-change + `enable`, NOT
+# `enable --now` -- a deploy-time heal would stop capture and cycle the radio on
+# a box the operator is actively deploying to, for a bond that is probably fine).
+#
+# Verify (after a deploy + reboot):
+#   systemctl is-enabled eclipse-bond-selfheal          # -> enabled
+#   systemctl show eclipse-bond-selfheal -p Before      # -> lists eclipse-obd
+#   journalctl -u eclipse-bond-selfheal | grep 'BOND SELF-HEAL'
+#
+# Run it by hand (the operator path, engine on):
+#   sudo -u mcornelison systemctl start eclipse-bond-selfheal
+# ==============================================================================
+
+[Unit]
+Description=Detect and self-heal a lost OBDLink Bluetooth bond (A-18)
+Documentation=file:///home/mcornelison/Projects/Eclipse-01/src/pi/obdii/bond_self_heal.py
+After=bluetooth.service eclipse-rfkill-unblock.service
+Before=rfcomm-bind.service eclipse-obd.service
+
+[Service]
+Type=oneshot
+User=mcornelison
+
+# $OBD_BT_MAC -- the repo-canonical dongle MAC (SSOT deploy/addresses.sh),
+# written here by deploy/reassert-obd-mac.sh.  The leading `-` keeps the unit
+# startable on a box that has not been through a full deploy; bond_self_heal
+# then exits 2 with a clear message rather than acting on a guessed MAC.
+EnvironmentFile=-/etc/default/obdlink
+
+WorkingDirectory=/home/mcornelison/Projects/Eclipse-01
+Environment=PATH=/home/mcornelison/obd2-venv/bin:/usr/bin:/bin
+Environment=PYTHONUNBUFFERED=1
+
+# DUAL PYTHONPATH -- BOTH ENTRIES ARE REQUIRED.  This is the V0.27.12-DOA
+# hotfix rule (boot-progress-arm.service, eclipse-powerwatch.service, and every
+# other `-m src.pi.X` unit carry the identical pair); do NOT "simplify" it to
+# the repo root, and do not drop it because WorkingDirectory looks sufficient.
+#
+#   /Eclipse-01      -> resolves `-m src.pi.obdii.bond_self_heal` itself
+#   /Eclipse-01/src  -> resolves the `pi.*` absolute imports the package does
+#                       INTERNALLY.  src/pi/obdii/__init__.py opens with
+#                       `from pi.display import ...`, so importing this module
+#                       at all requires src/ on sys.path.
+#
+# Verified, not assumed: with PYTHONPATH unset this ExecStart dies at
+# `ModuleNotFoundError: No module named 'pi'` before main() is ever reached --
+# the unit would install, enable, and be silently inert on every boot, which is
+# the precise failure mode this story exists to end.  Guarded off-Pi by
+# tests/deploy/test_bond_selfheal_deploy.py::test_unit_execStart_actuallyImports.
+Environment=PYTHONPATH=/home/mcornelison/Projects/Eclipse-01:/home/mcornelison/Projects/Eclipse-01/src
+
+ExecStart=/home/mcornelison/obd2-venv/bin/python -m src.pi.obdii.bond_self_heal
+
+# Safety net -- see the header.  `-` = never fail the unit on this.
+ExecStopPost=-/usr/bin/systemctl start eclipse-obd.service
+
+# Budget: a 20s discovery scan + the pair script's own scan + a 60s pair
+# handshake, with headroom.  A wedged bluez must never park capture forever;
+# TimeoutStartSec kills the heal and ExecStopPost brings capture back.
+TimeoutStartSec=300
+
+[Install]
+WantedBy=multi-user.target
