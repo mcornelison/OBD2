@@ -84,3 +84,67 @@ Task: Set the type-scale token VALUES for 3.5in legibility (44/34/26/20/15)
   on hardware is US-540-b's card re-lay to fix -- shrinking the scale back is F-127
   travelling backwards.
 ---
+
+## 2026-08-11 - US-540-b (Rex / Session 3)
+Task: Re-lay the card set 4->6 for the legibility scale (Health card retires)
+
+### What was implemented:
+- Card set is now Home . Alerts . System Status . Battery . Fuel Trim . Light.
+  The US-507 merged "Health" card RETIRES: US-540-a's scale changed the
+  arithmetic the merge was decided on (at secondary 26px a card affords ~3 facts
+  and Health carried six), so a screen is the cheaper thing to spend than a
+  container of three unrelated readouts.
+- `carousel.js`: HEALTH_SECTIONS -> SOURCE_CARDS + a `sourceCardSpec()` lookup in
+  the tick. `healthCardView()`, `renderHealthCard()` and the whole `data-states`
+  GROUP BRANCH are DELETED, not left unreachable (US-500). The view layer is
+  untouched across both moves -- each card consumes its own state file through
+  the same view function it has used in every arrangement.
+- `dashboard.css`: the `.health-*` block goes with the card. It carried tile
+  overrides (`padding: 2px 0`, `.tile-value` pinned to `--fs-secondary`) that are
+  exactly what US-540-a's scale was raised to undo.
+- Fuel trim keeps the US-507 SPEAKING vocabulary rather than reverting to the
+  pre-US-507 hide: six cards are locked, and a card that vanishes on a bench
+  breaks the set where the CIO reads the panel most days.
+- New gate `tests/ui/test_carousel_card_set.py` (19 tests). Fixed two ALREADY-RED
+  assertions in `tests/deploy/test_dashboard_kit.py` and removed a dead
+  `data-vehicle-speaks` attribute nothing read.
+- Filed `offices/pm/issues/I-us540b-architecture-md-still-documents-the-retired-health-card.md`
+  (specs/ is read-only for Ralph; design-gate DoD for Atlas/PM).
+
+### Files changed:
+- Modified: `specs/UI/dist/dashboard-pi/dashboard.html` (6-card track, Alerts 2nd)
+- Modified: `specs/UI/dist/dashboard-pi/carousel.js` (SOURCE_CARDS, group branch out)
+- Modified: `specs/UI/dist/dashboard-pi/dashboard.css` (`.health-*` block retired)
+- Created: `tests/ui/test_carousel_card_set.py` (the US-540-b gate)
+- Renamed: `tests/ui/test_carousel_health_card.py` -> `test_carousel_source_cards.py`
+- Modified: `tests/ui/test_carousel_battery_health_verdict.py`,
+  `test_carousel_live_home_card.py`, `test_carousel_pi_local_cards.py`,
+  `test_carousel_system_drilldown.py`, `test_render_regression.py`
+- Modified: `tests/deploy/test_dashboard_kit.py` (ordered slot inventory, 4 -> 6)
+- Created: `offices/pm/issues/I-us540b-architecture-md-...-health-card.md`
+
+### Learnings for future iterations:
+- **Gotcha (cost the previous iteration its commit)**: A SCOPED GATE IS ONLY A
+  GATE OVER WHAT IT COLLECTS. A prior iteration reached green on `tests/ui` and
+  died before committing -- while `tests/deploy/test_dashboard_kit.py` was
+  already RED on that same tree, pinning the 4-card count and the `data-states`
+  binding. `tests/ui` is the wrong fence for a change to the SHIPPED MARKUP.
+  When touching `specs/UI/dist/**`, run tests/ui AND tests/deploy/test_dashboard_kit.py,
+  and `git grep -l '<the markup token you changed>' -- tests/` before trusting green.
+- **Pattern discovered**: an orphan-check written against ONE layer does not
+  cover the other. This story's own `TestNoOrphanedHealthCode` was built to catch
+  ghosts and caught the JS half, while a dead `data-vehicle-speaks` attribute sat
+  in the markup unread. Assert absence on BOTH sides of a markup/renderer pair.
+- **Pattern discovered**: prove count-agnosticism by BOOTING a different count,
+  never by grepping for the old literal -- a hard-coded 4 could live in the CSS,
+  the dot loop or the translate math. Paired with pinning `clampIndex` (CLAMPS)
+  and `nextVisibleIndex` (WRAPS) separately: asserting one contract for both
+  hides a real break in whichever helper is not being described.
+- **Gotcha**: an inventory assertion must be an ORDERED list once order is part
+  of the deliverable. The deploy-kit docstring already warned a bare count was
+  vacuous; a set-or-count assertion still goes green on a carousel opening on Light.
+- **Gotcha**: the Bash tool refuses a `for f in ...` loop outright ("contains
+  simple_expansion"). `pytest -q` prints no summary line on this tree -- redirect,
+  then `echo $?` AND `grep -cE '^(FAILED|ERROR)'`; for a total, sum the
+  `--collect-only -q` per-file counts with awk.
+---
