@@ -6,7 +6,36 @@
 | **Date** | 2026-08-07 |
 | **Severity** | Medium — the sprint branch has a RED suite; blocks a clean full-suite gate at integration |
 | **Owner** | PM (Marcus) — US-536 is PM-landed, outside Ralph's scope fence |
-| **Status** | Open |
+| **Status** | **RESOLVED** by US-548 (Ralph/Rex, 2026-08-10) — all 3 reds retired |
+
+## RESOLUTION 2026-08-10 (US-548)
+
+All three guards retired; `tests/deploy/` + `tests/ui/` both exit 0.
+
+1. `test_dashboardUnits_carryGpuOverrideInExecStart_us522` → **inverted** and
+   renamed `test_dashboardUnits_keepTheGpuOn_us536` (asserts `--disable-gpu`
+   ABSENT from both variants).
+2. `test_dashboardUnits_keyringFixCoexistsWithGpuOverride_us522` → **kept**, GPU
+   half inverted, renamed `test_dashboardUnits_keyringFixSurvivedTheGpuRevert_us536`.
+   The keyring half stays exactly as specified in US-536 AC-1.
+3. `test_configJson_carriesTheCarouselSection` → repointed to a **new**
+   `_SHIPPED_AUTO_ROTATE_S = 0` constant.
+
+**The suggested disposition for #3 above was NOT adopted, and should not be.**
+Repointing `_AUTO_ROTATE_S` itself would have been wrong in 8 of its 9 uses: that
+one constant carried three different facts — carousel.js's `CAROUSEL_DEFAULTS`
+fallback (still 8), an arbitrary sample interval for six `shouldAutoAdvance` /
+`rotateProgress` model assertions (where a non-positive value means "disabled"
+and cannot stand in for a period), and config.json's shipped default (now 0).
+Only the third moved. The issue's own "worth checking whether the same constant
+feeds other assertions" caveat was the right instinct — it does.
+
+**⚠️ AND THE THIRD RED WAS HIDING A REAL DEFECT.** Making it green revealed that
+the shipped `autoRotateS: 0` is *rejected* by `resolveCarouselConfig`
+(carousel.js:218 admits only `v > 0`) and silently falls back to 8 — so US-536's
+durable freeze fix and US-533's auto-rotate OFF toggle are both inert. Filed
+separately as **I-us536-shipped-autorotates-zero-is-rejected-by-resolver.md**
+(HIGH). That issue is NOT closed by US-548 and bears on the V0.29.26 deploy.
 
 ## Summary
 

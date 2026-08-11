@@ -408,3 +408,75 @@ Task: Wire the 4 config settings end-to-end (read effective + write overlay + ap
   ~80 orchestrator test files still pass -- but "the default preserves
   behaviour" is exactly the claim a full suite exists to check. PM: run it.
 ---
+## 2026-08-10 - US-548 (Agent 1 / Rex) -- SPRINT 71 COMPLETE (7/7)
+Task: Retire the 3 US-536-fallout RED tests (guard tests assert the removed --disable-gpu)
+
+### What was implemented:
+- INVERTED the two US-522 GPU guards to the disposition-B contract, preserving
+  the token-parser + self-test + substring-trap design (AC-1 said do not weaken
+  them to substring checks):
+  `test_dashboardUnits_carryGpuOverrideInExecStart_us522`
+    -> `test_dashboardUnits_keepTheGpuOn_us536` (--disable-gpu ABSENT, both variants)
+  `test_dashboardUnits_keyringFixCoexistsWithGpuOverride_us522`
+    -> `test_dashboardUnits_keyringFixSurvivedTheGpuRevert_us536` (keyring half
+       untouched per AC-3; GPU half inverted).
+  `_GPU_OVERRIDE_FLAG` -> `_GPU_DISABLE_FLAG`. US-522's RCA history kept in the
+  header comment (it is what makes the inverted assertion legible), with
+  disposition B's reasoning added.
+- ADDED a POSITIVE CONTROL to the parser self-test -- see the headline learning.
+- Third red: added a SEPARATE `_SHIPPED_AUTO_ROTATE_S = 0` rather than repointing
+  `_AUTO_ROTATE_S`, and documented in the test's own docstring that it pins what
+  config.json CONTAINS, not what the display honours.
+- FILED (not fixed): a HIGH-severity defect the third red was hiding, plus TD-078.
+
+### Files changed:
+- Modified: `tests/deploy/test_dashboard_kit.py` (2 guards inverted + renamed,
+  constant renamed, self-test positive control)
+- Modified: `tests/ui/test_carousel_nav_model.py` (new shipped-default constant)
+- Created: `offices/pm/issues/I-us536-shipped-autorotates-zero-is-rejected-by-resolver.md`
+- Created: `offices/pm/tech_debt/TD-078-dashboard-units-still-document-the-removed-disable-gpu-flag.md`
+- Modified: `offices/pm/issues/I-us536-gpu-revert-leaves-us522-guard-tests-red.md` (RESOLVED)
+
+### Learnings for future iterations:
+- **THE HEADLINE -- INVERTING A GUARD DESTROYS ITS SAFETY NET.** While a guard
+  asserts PRESENCE, a rotted parser fails LOUDLY: an empty token list cannot
+  contain the flag. Flip it to ABSENCE and the identical rotted parser passes
+  VACUOUSLY. Proven, not theorised: Mutation C (`_execStartFlags` returns `[]`)
+  -> 5 RED, and the story's own headline guard STAYED GREEN. So an inverted
+  guard needs a POSITIVE CONTROL -- the parser must still FIND the flag when it
+  genuinely is present. Any future presence->absence flip needs the same.
+- **The substring trap inverts too.** Under a PRESENCE check, naive
+  `"--disable-gpu" in text` accepts the narrower `--disable-gpu-rasterization`
+  as the fix (false NEGATIVE). Under an ABSENCE check the same search REJECTS a
+  unit legitimately carrying it (false POSITIVE). Verified on the REAL unit
+  (Mutation B), not just the fixture. Same helper, opposite failure directions.
+- **A handed-down disposition is a HYPOTHESIS, not an instruction.** I-us536
+  suggested repointing `_AUTO_ROTATE_S` to 0. Checking that instead of applying
+  it is what surfaced the whole defect below: the constant carried THREE facts
+  (carousel.js fallback / a sample interval for six model assertions / the
+  config.json shipped default) and US-536 moved only the third. The suggestion
+  was wrong in 8 of its 9 uses -- and would have shipped a green suite over a
+  dead freeze fix.
+- **A red test can be BOTH stale AND hiding a live defect.** The third red was
+  correctly diagnosed as a stale guard; retiring it revealed that the shipped
+  `autoRotateS: 0` is REJECTED by `resolveCarouselConfig` (carousel.js:218 admits
+  only `v > 0`) and falls back to 8. So US-536's freeze fix and US-533's
+  auto-rotate toggle are both INERT -- the operator taps Off, the overlay stores
+  0, the endpoint honestly re-reads 0, the band repaints Off, and the carousel
+  keeps rotating. The silent no-op the F-126 band exists to prevent, and it got
+  through because every layer was individually honest and only the CONSUMER
+  disagreed. Root cause is two deliberate designs colliding: US-506 rejects 0 so
+  a MISCONFIG cannot kill the carousel; US-536 uses 0 to DELIBERATELY kill it.
+- **Gotcha**: this repo's pytest config suppresses the `N passed` line, so
+  grepping for "passed" returns NOTHING on a CLEAN run. Confirm via exit code --
+  an empty grep is not evidence of success.
+- **Gotcha (TD-059, survived)**: `tests/deploy/ tests/ui/` together exceed even a
+  600s Bash timeout on this SMB share and got backgrounded. Recovered by reading
+  the completed output file IN-ITERATION (exit 0). Prefer the targeted per-file
+  gate; the directory run is a bonus, not the in-loop gate.
+- **Gotcha**: three tool-syntax refusals in one session -- PowerShell rejected an
+  expandable string carrying `$LASTEXITCODE` AND `$()` subexpressions; Bash
+  rejected a `for f in ...; do` loop, multi-operation `&&` chains, and a python
+  heredoc containing quotes. When both shells refuse, run one plain command and
+  use the tool's own exit reporting, or use the Write tool.
+---
