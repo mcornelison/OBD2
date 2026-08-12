@@ -1303,7 +1303,8 @@
       "title": "Pi 3.5in legibility + card-set overhaul",
       "description": "CIO: fonts on the 3.5in panel are 2-4x too small to read at arm's length in the car (Iris arithmetic: ~165 PPI, glance floor ~34px; shipped values 13-15px). Fix = a type SCALE (tokens) + larger tiles + fewer facts/card, which pushes the card set back UP (partly reverses US-507/508's 6->4 consolidation -- legibility outranks screen count on a 3.5in panel). Iris-designed 2026-08-07/08 (CIO-reviewed); Atlas design-gates the structural parts (screen-count, US-482 stage, cross-card content moves, IMU-always-on).",
       "createdAt": "2026-08-08",
-      "updatedAt": "2026-08-08"
+      "updatedAt": "2026-08-08",
+      "currentVersion": "V0.29.29"
     },
     {
       "id": "F-128",
@@ -7493,7 +7494,7 @@
       "parent": "F-127",
       "type": "normal",
       "size": "M",
-      "status": "sprint-ready",
+      "status": "passed",
       "title": "Extract the type scale into tokens.css (closes W-3) -- pure refactor",
       "goal": "As a maintainer, I want font sizes to come from a small set of tokens so the legibility fix is one scale change, not 83 scattered edits that drift back.",
       "definitionOfDone": [
@@ -7517,10 +7518,11 @@
         "offices/pm/inbox/2026-08-07-from-atlas-3p5in-legibility-font-size-more-screens.md"
       ],
       "createdAt": "2026-08-08",
-      "updatedAt": "2026-08-10",
+      "updatedAt": "2026-08-12",
       "priority": "P1",
       "tier": "pi",
-      "gate": "groom-ready (Sprint 72 queued)"
+      "gate": "groom-ready (Sprint 72 queued)",
+      "passes": true
     },
     {
       "id": "US-540",
@@ -7564,7 +7566,7 @@
       "parent": "F-127",
       "type": "normal",
       "size": "M",
-      "status": "sprint-ready",
+      "status": "passed",
       "title": "Atlas's 3 UI change requests -- IMU-always-on, card reorder, auto-rotate-off verify",
       "goal": "As the operator, I want the live IMU instrument always visible, alerts second, and no auto-rotate, matching how I actually use the dashboard.",
       "definitionOfDone": [
@@ -7589,18 +7591,19 @@
         "offices/pm/inbox/2026-08-03-from-atlas-ui-change-requests-carousel-order-imu-autorotate.md"
       ],
       "createdAt": "2026-08-08",
-      "updatedAt": "2026-08-10",
+      "updatedAt": "2026-08-12",
       "priority": "P1",
       "tier": "pi",
-      "gate": "Atlas: IMU-always-on"
+      "gate": "Atlas: IMU-always-on",
+      "passes": true
     },
     {
       "id": "US-541-a",
       "parent": "F-127",
       "type": "normal",
       "size": "S",
-      "status": "sprint-ready",
-      "passes": false,
+      "status": "passed",
+      "passes": true,
       "title": "Resolver honours autoRotateS:0 as a real OFF value (unblocks US-541 AC-3 / BL-031)",
       "goal": "As the operator, I want auto-rotate OFF to actually stay off, so the CIO freeze fix and the F-126 Settings 'Off' toggle are not silent no-ops.",
       "definitionOfDone": [
@@ -7624,7 +7627,7 @@
         "offices/pm/issues/I-us536-shipped-autorotates-zero-is-rejected-by-resolver.md"
       ],
       "createdAt": "2026-08-11",
-      "updatedAt": "2026-08-11",
+      "updatedAt": "2026-08-12",
       "priority": "P1",
       "tier": "pi",
       "gate": "none (Atlas Option-1 ratified)"
@@ -7634,7 +7637,7 @@
       "parent": "F-127",
       "type": "normal",
       "size": "S",
-      "status": "sprint-ready",
+      "status": "passed",
       "title": "Idle-face retirement -- STANDBY removed, DTC-since-key-off moves to Alerts",
       "goal": "As the operator, I don't want a redundant STANDBY face -- parked, the live IMU card already shows the true state, so the idle face adds nothing.",
       "definitionOfDone": [
@@ -7658,10 +7661,11 @@
         "offices/pm/inbox/2026-08-07-from-atlas-3p5in-legibility-font-size-more-screens.md"
       ],
       "createdAt": "2026-08-08",
-      "updatedAt": "2026-08-10",
+      "updatedAt": "2026-08-12",
       "priority": "P1",
       "tier": "pi",
-      "gate": "Atlas: cross-card move"
+      "gate": "Atlas: cross-card move",
+      "passes": true
     },
     {
       "id": "US-543",
@@ -7818,8 +7822,8 @@
     {
       "parent": "F-127",
       "type": "normal",
-      "status": "sprint-ready",
-      "passes": null,
+      "status": "passed",
+      "passes": true,
       "conditionalOutcomes": [],
       "sourceRefs": [
         "offices/uidevloper/proposals/2026-08-07-pi-3p5in-legibility-and-layout.md (+ .html)",
@@ -7827,7 +7831,7 @@
         "offices/pm/inbox/2026-08-07-from-atlas-3p5in-legibility-font-size-more-screens.md"
       ],
       "createdAt": "2026-08-10",
-      "updatedAt": "2026-08-10",
+      "updatedAt": "2026-08-12",
       "id": "US-540-a",
       "size": "M",
       "priority": "P1",
@@ -7849,8 +7853,8 @@
     {
       "parent": "F-127",
       "type": "normal",
-      "status": "sprint-ready",
-      "passes": null,
+      "status": "passed",
+      "passes": true,
       "conditionalOutcomes": [],
       "sourceRefs": [
         "offices/uidevloper/proposals/2026-08-07-pi-3p5in-legibility-and-layout.md (+ .html)",
@@ -7858,7 +7862,7 @@
         "offices/pm/inbox/2026-08-07-from-atlas-3p5in-legibility-font-size-more-screens.md"
       ],
       "createdAt": "2026-08-10",
-      "updatedAt": "2026-08-10",
+      "updatedAt": "2026-08-12",
       "id": "US-540-b",
       "size": "M",
       "priority": "P1",
@@ -8255,7 +8259,7 @@
       "parent": "F-127",
       "type": "normal",
       "size": "S",
-      "status": "sprint-ready",
+      "status": "passed",
       "priority": "P1",
       "tier": "pi",
       "gate": "confirm mode on Pi (when on)",
@@ -8278,7 +8282,8 @@
         "offices/pm/inbox/2026-08-10-from-atlas-v0.29.27-legibility-structural-gate.md"
       ],
       "createdAt": "2026-08-10",
-      "updatedAt": "2026-08-10"
+      "updatedAt": "2026-08-12",
+      "passes": true
     },
     {
       "id": "US-553",
@@ -8314,8 +8319,8 @@
       "parent": "F-118",
       "type": "normal",
       "size": "S",
-      "status": "sprint-ready",
-      "passes": null,
+      "status": "passed",
+      "passes": true,
       "title": "index_lock preflight clears a STABILITY-VERIFIED non-empty stale lock (BL-032 self-heal)",
       "goal": "As the loop, I want the ralph.sh preflight to self-heal the crashed-mid-write lock (a full index copy left behind), so a non-empty stale lock stops halting the sprint and needing a manual PM clear.",
       "definitionOfDone": [
@@ -8341,7 +8346,7 @@
         "offices/ralph/ralph.sh (preflight line ~237)"
       ],
       "createdAt": "2026-08-11",
-      "updatedAt": "2026-08-11",
+      "updatedAt": "2026-08-12",
       "priority": "P1",
       "tier": "infra",
       "gate": "none"
