@@ -398,31 +398,24 @@ def test_shouldAutoAdvance_aZeroPeriodNeverAdvances():
     assert _view("rotateProgress", 60_000, _AUTO_ROTATE_OFF) == 0
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "OPEN DEFECT -- BL-031 / I-us536-shipped-autorotates-zero-is-rejected-by-"
-        "resolver: resolveCarouselConfig admits only v > 0, so the shipped "
-        "autoRotateS:0 is discarded and CAROUSEL_DEFAULTS restores 8s. US-541 "
-        "AC-3 CANNOT be verified until PM/Atlas rules on the US-506 vs US-536 "
-        "collision. When the resolver is fixed this test XPASSes -- delete the "
-        "marker, do not delete the test."
-    ),
-)
 def test_resolveCarouselConfig_honoursTheShippedOffValue():
     """
     Given: the dashboard is served the config's `autoRotateS: 0`
     When: the injected config is resolved against the grounded defaults
     Then: the resolved period is 0 -- auto-rotate is OFF on the panel.
 
-          THE MECHANISM half of AC-3, and it fails today. `0` means "broken,
-          ignore me" to the US-506 resolver and "off, obey me" to US-536 and to
-          the US-533 operator toggle, which writes exactly the value the
-          resolver discards. Every layer reports success; only the consumer
-          quietly disagrees. Asserted as the DESIRED behaviour under a strict
-          xfail rather than pinned to the broken value, so the day the resolver
-          is fixed this file says "remove the marker" instead of "the bug is
-          expected".
+          THE MECHANISM half of AC-3. This shipped as a strict xfail while the
+          defect was open (BL-031 / I-us536): `0` meant "broken, ignore me" to
+          the US-506 resolver and "off, obey me" to US-536 and to the US-533
+          operator toggle, which writes exactly the value the resolver dropped.
+          Every layer reported success; only the consumer quietly disagreed.
+
+          US-541-a (Atlas Option-1, CIO-ratified 2026-08-11) relaxed the guard
+          FOR THIS KEY ONLY, so the assertion below now stands on its own and
+          the marker is gone -- which is the whole reason it was written as the
+          DESIRED behaviour rather than pinned to the broken value. The
+          per-key-ness of that relaxation is pinned next door, in
+          test_carousel_nav_model.py's resolver section.
     """
     resolved = _view("resolveCarouselConfig", {"autoRotateS": _AUTO_ROTATE_OFF})
     assert resolved["autoRotateS"] == _AUTO_ROTATE_OFF

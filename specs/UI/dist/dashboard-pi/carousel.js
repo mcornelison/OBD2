@@ -197,12 +197,28 @@
   // here reads a timer of its own.
   // -------------------------------------------------------------------------
 
+  // US-541-a (Atlas Option-1, CIO-ratified 2026-08-11 -- resolves BL-031 /
+  // I-us536): the keys for which 0 is a REAL VALUE the operator chose, not a
+  // misconfiguration to be discarded. This is a PER-KEY opt-in, deliberately
+  // not a blanket `>= 0`: for every other key 0 still means "unusable", which
+  // is what keeps a permanent freeze inexpressible in config (a `resumeIdleS: 0`
+  // must never reach shouldAutoResume and disable the self-unpause).
+  //
+  // autoRotateS earns it because 0/off vs >0/on is the SAME contract the GAP-3a
+  // settings band already encodes end to end -- settingsWriteValue WRITES 0 for
+  // off and shouldAutoAdvance/rotateProgress already READ 0 as never-advance.
+  // The resolver was the one layer that disagreed, so the operator's Off toggle
+  // and US-536's disposition-B freeze fix were both silent no-ops.
+  //
+  // A future key opts in HERE, one line, on its own argument. Do not widen the
+  // guard below instead.
+  var ZERO_IS_A_VALUE = { autoRotateS: true };
+
   // Resolve the injected carousel config over the grounded defaults. Only
-  // well-typed, FINITE, POSITIVE overrides win -- rejecting <= 0 here is what
-  // makes a permanent freeze inexpressible in config: a `resumeIdleS: 0` can
-  // never reach shouldAutoResume to disable the self-unpause. A malformed or
-  // absent global leaves every default in place (never a zeroed config, which
-  // would silently read as a dead feature).
+  // well-typed, FINITE overrides win, and only if POSITIVE -- or exactly zero
+  // on a key that opts in above. A malformed or absent global leaves every
+  // default in place (never a zeroed config, which would silently read as a
+  // dead feature).
   function resolveCarouselConfig(cfg) {
     var out = {};
     for (var k in CAROUSEL_DEFAULTS) {
@@ -215,7 +231,13 @@
         if (!Object.prototype.hasOwnProperty.call(CAROUSEL_DEFAULTS, key)) continue;
         if (!Object.prototype.hasOwnProperty.call(cfg, key)) continue;
         var v = cfg[key];
-        if (typeof v === "number" && isFinite(v) && v > 0) out[key] = v;
+        // NaN and Infinity are rejected for EVERY key, opt-in or not: a NaN
+        // period makes `sinceMs >= autoRotateS * 1000` permanently false, i.e.
+        // the same silent freeze from a value nobody chose. Only a clean 0 is
+        // admitted, and only where 0 was given a meaning.
+        if (typeof v !== "number" || !isFinite(v)) continue;
+        var zeroOk = Object.prototype.hasOwnProperty.call(ZERO_IS_A_VALUE, key);
+        if (v > 0 || (v === 0 && zeroOk)) out[key] = v;
       }
     }
     return out;

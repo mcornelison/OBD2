@@ -6,7 +6,7 @@
 | **Date** | 2026-08-10 |
 | **Severity** | **HIGH** — US-536's durable freeze fix and US-533's auto-rotate OFF toggle both look applied and are not |
 | **Owner** | PM (Marcus) → likely Atlas (two deliberate designs collide; the tie-break is an architecture call) |
-| **Status** | Open |
+| **Status** | **RESOLVED 2026-08-11** — Atlas Option-1 (CIO-ratified) shipped as **US-541-a**, Sprint 74 / V0.29.29. `resolveCarouselConfig` admits `autoRotateS == 0` via a named per-key allow-list (`ZERO_IS_A_VALUE`); every other key still rejects 0, and NaN/Infinity/negative are still rejected for every key. The strict xfail is deleted and green. Full detail + the gate run in `offices/pm/blockers/BL-031-...md` § "Landed". **Still owed: the on-Pi confirmation that the carousel does not auto-advance.** |
 
 ## Summary
 

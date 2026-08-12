@@ -88,3 +88,37 @@ correct instruction. Delete the marker, not the test.
 - US-533's Settings toggle writes `0` for "Off", so **the operator-facing control
   is a silent no-op** until this lands. That is the failure mode the whole settings
   band was built to make impossible.
+
+## Landed — 2026-08-11 (US-541-a, Ralph/Rex)
+
+Option 1 implemented as a **named per-key allow-list**, not a loosened
+comparison: `var ZERO_IS_A_VALUE = { autoRotateS: true }` gates the one key that
+opts in; every other key still rejects `0`, and NaN/Infinity/negative/non-number
+are still rejected for **every** key including `autoRotateS`. A future key opts
+in by adding a line there, which is a visible act — the AC's "NOT a blanket
+`>= 0`" made structural rather than promised in prose.
+
+The strict `xfail` on
+`tests/ui/test_carousel_imu_always_on.py::test_resolveCarouselConfig_honoursTheShippedOffValue`
+is **deleted** (the marker, not the test) and it is now a normal green
+assertion — which is exactly what writing it as the DESIRED behaviour bought.
+
+Three new guards in `tests/ui/test_carousel_nav_model.py` bound the carve-out:
+the admit itself (with a sibling key in the same object proving it did not leak
+per-call), a loop asserting `0` is still refused for every OTHER key
+**enumerated from the shipped `CAROUSEL_DEFAULTS`** so a key added tomorrow is
+covered the day it exists, and a structural pin that the allow-list holds only
+`autoRotateS`.
+
+Confirmed while checking for a second offending layer: the **Python side was
+already right** — `src/common/config/overlay.py` validates this key with
+`_isNonNegativeNumber`, and `states_http_server` passes the section through
+untouched. The resolver really was the only layer that disagreed, which is what
+made Option 1 a one-line contract change rather than a redesign.
+
+Gate: `tests/ui` + `tests/deploy/test_dashboard_kit.py` = 811 collected, 811
+passed, exit 0, zero F/E, zero xfail (baseline 807 = 806 + 1 xfail). ruff clean.
+
+**Still owed on hardware** — the blocker's own knock-on: on the Pi, confirm the
+carousel does not auto-advance. Batch it with the US-540/US-541/US-542 parked
+reads after US-552 pins the output mode.

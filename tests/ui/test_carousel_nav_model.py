@@ -109,6 +109,39 @@ def _fnBody(js: str, name: str) -> str:
     return js[start : min(ends)] if ends else js[start:]
 
 
+def _fnTopLevelBody(js: str, name: str) -> str:
+    """The source of one TWO-SPACE `function <name>(` up to the next one.
+
+    `_fnBody` above probes 4- and 6-space nesting only, so on a function
+    declared at the IIFE's own level it silently returns the rest of the file
+    and every absence assertion over it becomes over-broad while every presence
+    assertion becomes vacuous. See TD-080.
+    """
+    start = js.index("  function " + name + "(")
+    nxt = js.find("\n  function ", start + 1)
+    return js[start:nxt] if nxt != -1 else js[start:]
+
+
+def _defaultKeys(js: str) -> list:
+    """Every key declared in the shipped `CAROUSEL_DEFAULTS` object literal.
+
+    Read from the source rather than mirrored into a constant here so a key
+    added to carousel.js is covered by the per-key guards without anyone
+    remembering to update this file.
+    """
+    start = js.index("var CAROUSEL_DEFAULTS = {")
+    block = js[start : js.index("\n  };", start)]
+    keys = []
+    for line in block.splitlines()[1:]:
+        stripped = line.strip()
+        if stripped.startswith("//") or ":" not in stripped:
+            continue
+        name = stripped.split(":", 1)[0].strip()
+        if name.isidentifier():
+            keys.append(name)
+    return keys
+
+
 def _gesture(dx: float, dtMs: float, *, dy: float = 0, width: float = _CARD_W) -> dict:
     """One pointer-up gesture through the velocity model (default config)."""
     return _view("swipeGesture", dx, dy, dtMs, width, None)
@@ -332,8 +365,13 @@ def test_resolveCarouselConfig_wellTypedOverridesWin():
 
 def test_resolveCarouselConfig_rejectsUnusableValues():
     """Non-numeric, non-finite and NON-POSITIVE values fall back to the default.
-    Rejecting <= 0 here is what makes `resumeIdleS: 0` unable to reach the
-    resume predicate at all -- the config cannot express a permanent freeze."""
+    Rejecting <= 0 is what makes `resumeIdleS: 0` unable to reach the resume
+    predicate at all -- the config cannot express a permanent freeze.
+
+    US-541-a carved out exactly ONE exception (`autoRotateS`, where 0 is the
+    operator's OFF); every other key still reads 0 as a misconfiguration. The
+    fixture below therefore keeps a non-autoRotateS zero, and the carve-out is
+    bounded by the two tests after it."""
     cfg = _view(
         "resolveCarouselConfig",
         {"autoRotateS": "8", "resumeIdleS": 0, "swipeMinPx": -1},
@@ -341,6 +379,92 @@ def test_resolveCarouselConfig_rejectsUnusableValues():
     assert cfg["autoRotateS"] == _AUTO_ROTATE_S
     assert cfg["resumeIdleS"] == _RESUME_IDLE_S
     assert cfg["swipeMinPx"] == _SWIPE_MIN_PX
+
+
+def test_resolveCarouselConfig_admitsAutoRotateZeroAsARealOffValue():
+    """US-541-a / BL-031: `autoRotateS: 0` is the OFF value, not a broken one.
+
+    The same GAP-3a contract US-530..533 encode and `settingsWriteValue` writes
+    (0 = off, >0 = on), and `shouldAutoAdvance`/`rotateProgress` already treat 0
+    as never-advance -- so the resolver discarding it was the one layer that
+    disagreed with every other. Asserted through the resolver rather than at
+    the predicate, because the predicate never sees a value the resolver drops.
+    """
+    cfg = _view("resolveCarouselConfig", {"autoRotateS": _SHIPPED_AUTO_ROTATE_S})
+    assert cfg["autoRotateS"] == _SHIPPED_AUTO_ROTATE_S
+    # The relaxation is per-KEY, not per-CALL: a sibling key in the same object
+    # must still fall back, or "0 means off" has leaked across the whole config.
+    assert cfg["resumeIdleS"] == _RESUME_IDLE_S
+
+
+def test_resolveCarouselConfig_zeroIsStillRejectedForEveryOtherKey():
+    """The carve-out is bounded to autoRotateS -- enumerated from the SHIPPED
+    defaults, not from a hand-written list here.
+
+    A hand-written list is a second copy of the key set: add `parkedOffS: 0`
+    handling tomorrow and a literal list goes green without ever testing the new
+    key. Parsing CAROUSEL_DEFAULTS means a key added to carousel.js is covered
+    the moment it exists -- which is the failure mode the AC's "NOT a blanket
+    `>= 0`" clause is guarding against.
+    """
+    keys = _defaultKeys(_read(_JS))
+    # Guard the guard: an empty/blown parse would make every assertion below
+    # vacuous (US-552's "18 vacuous passes" lesson, one file over). The other
+    # half of the non-vacuity is the test above -- it proves this exact call
+    # path CAN return a 0, so a 0 not coming back here is a refusal, not a
+    # lookup that cannot see the thing.
+    assert "autoRotateS" in keys and len(keys) >= 7, keys
+    for key in keys:
+        if key == "autoRotateS":
+            continue
+        cfg = _view("resolveCarouselConfig", {key: 0})
+        assert cfg[key] != 0, key
+
+
+def test_resolveCarouselConfig_theZeroCarveOutIsANamedPerKeyAllowList():
+    """The relaxation is spelled as a named allow-list, not as a loosened
+    comparison -- the AC's "NOT a blanket `>= 0`" made structural.
+
+    Behaviour alone cannot tell the two implementations apart TODAY (there is
+    one opt-in key, so `>= 0` and the allow-list agree on autoRotateS). They
+    diverge on the NEXT key added to CAROUSEL_DEFAULTS: under `>= 0` it silently
+    inherits 0-as-value, under the allow-list it does not. Pinning the shape is
+    how that divergence is prevented before the key exists to catch it with.
+    """
+    js = _read(_JS)
+    # NOT _fnBody: its indent probe only knows 4- and 6-space nesting, and
+    # `resolveCarouselConfig` is declared at TWO spaces (top level inside the
+    # IIFE), so _fnBody returns the rest of the FILE. The absence assertion
+    # below found that in one run -- `>= 0` lives in nextVisibleIndex, hundreds
+    # of lines away. Filed as a TD; sliced correctly here.
+    body = _fnTopLevelBody(js, "resolveCarouselConfig")
+    assert "ZERO_IS_A_VALUE" in body
+    assert ">= 0" not in body
+    # ...and the allow-list holds only the ratified key. A second entry is a
+    # deliberate act (US-541-a conditionalOutcomes) and must arrive as a red
+    # test asking for that decision, not as a line nobody reviewed.
+    start = js.index("var ZERO_IS_A_VALUE = {")
+    literal = js[start : js.index("}", start)]
+    assert [k for k in _defaultKeys(_read(_JS)) if k in literal] == ["autoRotateS"]
+
+
+def test_resolveCarouselConfig_autoRotateStillRejectsMalformedValues():
+    """The US-506 misconfig-guard survives for autoRotateS itself: only a CLEAN
+    zero is admitted.
+
+    NaN/Infinity/negative/non-number are still nonsense whatever the key, and
+    they must not ride in on the carve-out -- a NaN period would make
+    `sinceMs >= autoRotateS * 1000` permanently false, i.e. the same silent
+    freeze from a value nobody chose, which is exactly what US-506 refused.
+    """
+    for bad in (-1, "0", None, True, [], {}):
+        cfg = _view("resolveCarouselConfig", {"autoRotateS": bad})
+        assert cfg["autoRotateS"] == _AUTO_ROTATE_S, bad
+    # NaN / Infinity have no JSON literal, so they arrive via the arithmetic the
+    # probe evaluates on the other side (JSON.parse of the fixture cannot carry
+    # them). Asserted through the shipped isFinite guard in the resolver body.
+    body = _fnTopLevelBody(_read(_JS), "resolveCarouselConfig")
+    assert "isFinite(v)" in body
 
 
 def test_resolveCarouselConfig_ignoresUnknownKeys():
@@ -357,12 +481,14 @@ def test_configJson_carriesTheCarouselSection():
     US-548 -- READ THIS BEFORE TRUSTING THE GREEN. `autoRotateS` is asserted here
     against `_SHIPPED_AUTO_ROTATE_S` (0) rather than the carousel.js fallback,
     because US-536 AC-2 ships auto-rotate OFF. This test pins WHAT CONFIG.JSON
-    CONTAINS. It does NOT prove the display honours it, and right now the display
-    does not: `resolveCarouselConfig` accepts an injected override only when
-    `v > 0` (carousel.js:218), so the shipped 0 is rejected as unusable and falls
-    back to CAROUSEL_DEFAULTS.autoRotateS = 8. Filed as
-    offices/pm/issues/I-us536-shipped-autorotates-zero-is-rejected-by-resolver.md
-    -- do not "fix" that by relaxing this assertion.
+    CONTAINS, and that is ALL it pins -- a declaration cannot witness its
+    consumer. For eleven days it was green while the display ignored the value
+    entirely (`resolveCarouselConfig` admitted an override only when `v > 0`, so
+    the shipped 0 fell back to 8s -- I-us536 / BL-031). US-541-a fixed the
+    resolver; the fact that the display now HONOURS this value is pinned
+    separately, by test_resolveCarouselConfig_admitsAutoRotateZeroAsARealOffValue
+    above. Keep both: this one moves when config.json moves, that one moves when
+    the resolver does.
     """
     with open(_CONFIG, encoding="utf-8") as fh:
         config = json.load(fh)

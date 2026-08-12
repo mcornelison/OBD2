@@ -351,3 +351,53 @@ HUMAN_INTERVENTION_REQUIRED rather than bank a third uncommitted story.
   nothing was lost, but pass `timeout` explicitly on any suite run -- TD-059 is
   about exactly this, and the auto-background is silent.
 ---
+
+## 2026-08-11 - US-541-a (Rex / Session 7)
+Task: Resolver honours autoRotateS:0 as a real OFF value (unblocks US-541 AC-3 / BL-031)
+
+### What was implemented:
+- `resolveCarouselConfig` admits `autoRotateS == 0` as a REAL value. Spelled as a
+  NAMED PER-KEY ALLOW-LIST (`var ZERO_IS_A_VALUE = { autoRotateS: true }`), never
+  a loosened comparison: NaN / Infinity / negative / non-number are still rejected
+  for EVERY key including autoRotateS, and 0 is still "unusable" for every key
+  that has not opted in. A `resumeIdleS: 0` still cannot express a permanent
+  freeze -- the US-506 invariant survives intact everywhere it was meant to.
+- The strict `xfail` on `test_resolveCarouselConfig_honoursTheShippedOffValue`
+  is DELETED (the marker, not the test) -- it XPASSes into a normal green.
+- Four new guards in `tests/ui/test_carousel_nav_model.py` bound the carve-out:
+  the admit (with a sibling key proving the relaxation is per-KEY not per-CALL);
+  0-still-refused for every OTHER key, iterated from the keys PARSED OUT OF the
+  shipped `CAROUSEL_DEFAULTS`; malformed autoRotateS values; and a STRUCTURAL pin
+  that the allow-list holds only `autoRotateS` and the body carries no `>= 0`.
+- AC-5: US-541 flipped to `passes: true`; BL-031 + I-us536 stamped resolved.
+- Filed `TD-080` (`_fnBody` is duplicated 8x and indent-blind) -- found by a red.
+
+### Files changed:
+- Modified: `specs/UI/dist/dashboard-pi/carousel.js` (ZERO_IS_A_VALUE + the guard)
+- Modified: `tests/ui/test_carousel_nav_model.py` (4 new gates, `_fnTopLevelBody`,
+  two stale-prose docstrings)
+- Modified: `tests/ui/test_carousel_imu_always_on.py` (xfail marker deleted)
+- Created: `offices/pm/tech_debt/TD-080-fnbody-test-helper-is-duplicated-and-indent-blind.md`
+- Modified: `offices/pm/blockers/BL-031-...md`, `offices/pm/issues/I-us536-...md`
+
+### Learnings for future iterations:
+- **Pattern discovered**: when an AC forbids a SHAPE ("per-key relaxation, NOT a
+  blanket `>= 0`"), behaviour cannot pin it -- with one opt-in key the two
+  implementations agree on every input that exists today. They diverge on the
+  NEXT key added. Pin the shape STRUCTURALLY, or the constraint is only prose.
+- **Pattern discovered**: enumerate a "not for the others" guard from the SHIPPED
+  source, not from a list retyped in the test. A literal list is a second copy of
+  the key set and goes green on a key added tomorrow without ever testing it.
+- **Pattern discovered**: a strict `xfail` left by an earlier story is the
+  cheapest possible handoff. It went red the instant the marker came off, so the
+  fix had a failing test before a line of JS changed -- TDD with no test to write.
+- **Gotcha**: before calling a defect one-line, LOOK FOR THE SECOND OFFENDING
+  LAYER. Here `src/common/config/overlay.py` was already correct
+  (`_isNonNegativeNumber`), which is the fact that makes "the resolver was the
+  only layer that disagreed" a checked claim rather than a hopeful one.
+- **Gotcha (found by a red, filed as TD-080)**: `_fnBody` probes 4- and 6-space
+  nesting, but carousel.js declares many functions at TWO spaces, so for those it
+  returns the REST OF THE FILE. Absence assertions over it are over-broad;
+  PRESENCE assertions are VACUOUS. Eight independent copies exist across tests/ui.
+- **Gotcha**: `git grep -n -B3 -A12 <pat> -- <paths>` was REFUSED by the harness;
+  the Grep tool with `-C` worked on `src/` (it still cannot see `specs/UI/dist/`).
