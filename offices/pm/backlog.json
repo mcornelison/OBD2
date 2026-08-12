@@ -8308,6 +8308,43 @@
       ],
       "createdAt": "2026-08-11",
       "updatedAt": "2026-08-11"
+    },
+    {
+      "id": "US-554",
+      "parent": "F-118",
+      "type": "normal",
+      "size": "S",
+      "status": "sprint-ready",
+      "passes": null,
+      "title": "index_lock preflight clears a STABILITY-VERIFIED non-empty stale lock (BL-032 self-heal)",
+      "goal": "As the loop, I want the ralph.sh preflight to self-heal the crashed-mid-write lock (a full index copy left behind), so a non-empty stale lock stops halting the sprint and needing a manual PM clear.",
+      "definitionOfDone": [
+        "[BL-032 root cause] offices/pm/scripts/index_lock.py refuses ONLY 0-byte locks today (DEFAULT_MAX_STALE_SIZE_BYTES=0, REFUSED_NONEMPTY). BL-032's lock was 376467 bytes -- a crashed `git` wrote the whole index into index.lock then died before the atomic rename -> a non-empty ORPHAN the preflight cannot clear. Add a two-sample STABILITY probe: sample (st_size, st_mtime_ns) twice separated by a short settle interval; a non-empty lock is admitted as orphaned ONLY when BOTH samples are byte-identical AND age > threshold AND no live git process. Rationale: a real mid-write index changes size/mtime between samples in well under 1s; a lock stable across the interval is not being written.",
+        "the existing fail-safes stay intact and FIRST: live-git-process gate unchanged (refuse), too-fresh gate unchanged (refuse), probe-failure => assume-live => refuse. A non-empty lock whose two samples DIFFER stays REFUSED_NONEMPTY (still mid-write). Only a *stable* non-empty lock becomes clearable.",
+        "new LockDecision path + message distinguishes 'cleared: verified-stale EMPTY' from 'cleared: verified-stale STABLE non-empty (2 samples identical, age Ns, no git)'. --check dry-run reports the same verdict without deleting.",
+        "settle interval + require-stability are parameters (injectable for tests, sane default ~1.5-2s); wire the CLI/preflight to enable stability-clearing so `python -m offices.pm.scripts.index_lock --repo <root>` in ralph.sh:237 now heals this case.",
+        "TDD: tests cover (a) stable non-empty aged no-git => CLEARED; (b) non-empty but size/mtime changes between samples => REFUSED_NONEMPTY; (c) live git => REFUSED_GIT_LIVE even if stable; (d) too-fresh => REFUSED_TOO_FRESH; (e) empty aged => CLEARED (regression, unchanged). ruff/mypy clean, coverage holds."
+      ],
+      "validationCriteria": [
+        {
+          "action": "simulate BL-032: a 376467-byte index.lock, mtime 80min old, no git process, size stable across two samples; run the preflight",
+          "outcome": "preflight CLEARS it and reports the stable-non-empty path; a lock whose size changes between samples is still refused"
+        }
+      ],
+      "conditionalOutcomes": [
+        "Standing risk (BL-032): Ralph's clone still lives on the shared NAS path -- this self-heal removes the STOP condition but not the contention. The durable fix (finish Ralph's clone move off the NAS) stays open, routed to CIO."
+      ],
+      "sourceRefs": [
+        "offices/pm/blockers/BL-032-stale-git-index-lock-blocks-ralph-commits.md",
+        "offices/pm/blockers/BL-029-stale-git-index-lock-blocks-all-ralph-commits.md",
+        "offices/pm/scripts/index_lock.py",
+        "offices/ralph/ralph.sh (preflight line ~237)"
+      ],
+      "createdAt": "2026-08-11",
+      "updatedAt": "2026-08-11",
+      "priority": "P1",
+      "tier": "infra",
+      "gate": "none"
     }
   ]
 }

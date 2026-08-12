@@ -7,7 +7,7 @@
 | **Blocks** | Committing ANY work from this clone — **now TWO stories**: US-542's nine files and US-552's four, all complete, green and unstaged |
 | **Severity** | **HIGH → the loop cannot make durable progress at all.** Two consecutive iterations have now finished green and been unable to commit |
 | **Owner** | PM (Marcus) / CIO |
-| **Status** | **RESOLVED 2026-08-11** — PM cleared the lock and landed both stories from the shared checkout: US-542 `792784c`, US-552 `b0dc3bb` (both green, path-separable as noted). Standing risk below is the open item → routed to CIO (finish Ralph's clone move off the NAS path, and/or allow `rm .git/*.lock` on Ralph's permission list). |
+| **Status** | **RESOLVED 2026-08-11** — PM cleared the lock and landed both stories from the shared checkout: US-542 `792784c`, US-552 `b0dc3bb` (both green, path-separable as noted). **Durable self-heal filed as US-554** (Sprint 74): the BL-029 preflight refuses only 0-byte locks; US-554 adds a two-sample stability probe so a crashed-mid-write *non-empty* orphan (like this 376467-byte one) is cleared automatically. NB: a literal `rm .git/*.lock` allow-list entry does NOT work — the harness sensitive-path guard sits above the allow-list (Ralph already has `rm:*`), which is why the fix lives in the CIO-shell preflight, not Ralph's permissions. Standing risk (Ralph's clone still on the shared NAS path) stays open → routed to CIO. |
 
 ## What happened
 
