@@ -7,10 +7,15 @@
 #     1. `fmtClock` itself, through idle_clock_probe.js -- including the two
 #        edges a naive `getHours() % 12` gets wrong (midnight -> 12 AM, noon ->
 #        12 PM) and the padding asymmetry (hour bare, minute zero-padded).
-#     2. The rendered `.idle-clock` element, through the real dashboard boot --
-#        because a formatter that is individually correct proves nothing if the
-#        DOM layer still calls a different one (the US-494/US-499/US-502
+#     2. The rendered clock element, through the real dashboard boot -- because
+#        a formatter that is individually correct proves nothing if the DOM
+#        layer still calls a different one (the US-494/US-499/US-502
 #        two-correct-halves-never-connected failure).
+#   AMENDED BY US-542 (F-127): the clock MOVED from the retired parked idle face
+#   (`.idle-clock`) to the persistent top bar (`#topbar-clock`), so group 2 now
+#   reads it there -- and reads it a second time with a LIVE motion feed, which
+#   is the state that had no clock at all before the move. `fmtClock` itself is
+#   untouched: the move re-hosts the one formatter, it does not add a second.
 #   Skipped when node is not on PATH (a node-less CI box).
 # Author: Ralph Agent (Rex)
 # Creation Date: 2026-08-01
@@ -127,23 +132,50 @@ def test_fmtClock_everyHourOfTheDay_rendersATwelveHourFace():
 # ---------------------------------------------------------------------------
 
 
-def _idleClockText(tree: dict) -> str | None:
-    """Pull the `.idle-clock` text out of a booted dashboard DOM tree."""
+def _topbarClockText(tree: dict) -> str | None:
+    """Pull the `#topbar-clock` text out of a booted dashboard DOM tree.
+
+    US-542 moved the clock off the retired parked face into the top bar; it used
+    to be read from `.idle-clock`. Reading it by ID is the point of the move --
+    the bar is painted on EVERY card, so this no longer depends on which face
+    the home slot happened to choose."""
     surface = rh.dashboardSurface(tree)
-    paths = surface.pathsByClass("idle-clock")
-    if not paths:
+    path = surface.pathById("topbar-clock")
+    if not path:
         return None
-    node = paths[0][-1]
+    node = path[-1]
     return "".join(c.get("text", "") for c in node.get("children", []))
 
 
-def test_idleCard_renderedClock_readsTwelveHourNotTwentyFour():
-    """Boot the SHIPPED carousel.js over the SHIPPED markup with no state files
-    (-> the honest idle face) and read the clock element the operator sees. The
-    time is the harness's real wall clock, so this asserts the FACE, not a
-    value: a DOM layer still holding its own 24-hour formatter fails here while
-    every fmtClock test above stays green."""
+def test_topbar_renderedClock_readsTwelveHourNotTwentyFour():
+    """Boot the SHIPPED carousel.js over the SHIPPED markup and read the clock
+    element the operator sees. The time is the harness's real wall clock, so
+    this asserts the FACE, not a value: a DOM layer still holding its own
+    24-hour formatter fails here while every fmtClock test above stays green."""
     tree = rh.runDashboard(routes={})["tree"]
-    rendered = _idleClockText(tree)
-    assert rendered is not None, "idle card did not render a clock element"
-    assert TWELVE_HOUR.match(rendered), f"idle clock rendered {rendered!r}"
+    rendered = _topbarClockText(tree)
+    assert rendered is not None, "the top bar did not render a clock element"
+    assert TWELVE_HOUR.match(rendered), f"top-bar clock rendered {rendered!r}"
+
+
+def test_topbar_clockIsChromeNotAFaceOfTheHomeCard():
+    """US-542's whole reason for the move, asserted STRUCTURALLY rather than by
+    sampling one face: the clock must live outside the home slot, so no face
+    decision can take it away.
+
+    Sampling would have been the obvious test -- boot with a live IMU and look
+    for the clock -- but the freshness window is 2s wide, so that test would
+    assert "the clock is chrome" only for as long as node boots in under two
+    seconds, and would start passing for the wrong reason (the stale fallback)
+    the day it does not. The ancestry is the fact; the face is a symptom."""
+    tree = rh.runDashboard(routes={})["tree"]
+    surface = rh.dashboardSurface(tree)
+    path = surface.pathById("topbar-clock")
+    assert path, "the top bar did not render a clock element"
+    ancestors = path[:-1]
+    assert any(node.get("attrs", {}).get("id") == "topbar" for node in ancestors), (
+        "the clock must be in the persistent top bar"
+    )
+    assert not any("card" in (node.get("attrs", {}).get("class") or "") for node in ancestors), (
+        "the clock is inside a card -- a face decision can still take it away"
+    )

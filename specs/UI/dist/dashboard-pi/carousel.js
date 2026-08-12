@@ -197,12 +197,28 @@
   // here reads a timer of its own.
   // -------------------------------------------------------------------------
 
+  // US-541-a (Atlas Option-1, CIO-ratified 2026-08-11 -- resolves BL-031 /
+  // I-us536): the keys for which 0 is a REAL VALUE the operator chose, not a
+  // misconfiguration to be discarded. This is a PER-KEY opt-in, deliberately
+  // not a blanket `>= 0`: for every other key 0 still means "unusable", which
+  // is what keeps a permanent freeze inexpressible in config (a `resumeIdleS: 0`
+  // must never reach shouldAutoResume and disable the self-unpause).
+  //
+  // autoRotateS earns it because 0/off vs >0/on is the SAME contract the GAP-3a
+  // settings band already encodes end to end -- settingsWriteValue WRITES 0 for
+  // off and shouldAutoAdvance/rotateProgress already READ 0 as never-advance.
+  // The resolver was the one layer that disagreed, so the operator's Off toggle
+  // and US-536's disposition-B freeze fix were both silent no-ops.
+  //
+  // A future key opts in HERE, one line, on its own argument. Do not widen the
+  // guard below instead.
+  var ZERO_IS_A_VALUE = { autoRotateS: true };
+
   // Resolve the injected carousel config over the grounded defaults. Only
-  // well-typed, FINITE, POSITIVE overrides win -- rejecting <= 0 here is what
-  // makes a permanent freeze inexpressible in config: a `resumeIdleS: 0` can
-  // never reach shouldAutoResume to disable the self-unpause. A malformed or
-  // absent global leaves every default in place (never a zeroed config, which
-  // would silently read as a dead feature).
+  // well-typed, FINITE overrides win, and only if POSITIVE -- or exactly zero
+  // on a key that opts in above. A malformed or absent global leaves every
+  // default in place (never a zeroed config, which would silently read as a
+  // dead feature).
   function resolveCarouselConfig(cfg) {
     var out = {};
     for (var k in CAROUSEL_DEFAULTS) {
@@ -215,7 +231,13 @@
         if (!Object.prototype.hasOwnProperty.call(CAROUSEL_DEFAULTS, key)) continue;
         if (!Object.prototype.hasOwnProperty.call(cfg, key)) continue;
         var v = cfg[key];
-        if (typeof v === "number" && isFinite(v) && v > 0) out[key] = v;
+        // NaN and Infinity are rejected for EVERY key, opt-in or not: a NaN
+        // period makes `sinceMs >= autoRotateS * 1000` permanently false, i.e.
+        // the same silent freeze from a value nobody chose. Only a clean 0 is
+        // admitted, and only where 0 was given a meaning.
+        if (typeof v !== "number" || !isFinite(v)) continue;
+        var zeroOk = Object.prototype.hasOwnProperty.call(ZERO_IS_A_VALUE, key);
+        if (v > 0 || (v === 0 && zeroOk)) out[key] = v;
       }
     }
     return out;
@@ -911,30 +933,35 @@
   }
 
   // -------------------------------------------------------------------------
-  // US-507 Health card (F-124) -- the MERGED Battery + Light + Fuel Trim card.
-  // The CIO called six screens too many, so the three slow-moving reference
-  // readouts that share a glance became one card (6 -> 4). This is a pure
-  // RELOCATION: each section still consumes its OWN state file through the SAME
-  // view function it used as a standalone card, so every honest-instrument
-  // state moves with it (battery F-9 stale-green guard, light null/stale
-  // individual graying, fuel-trim insufficient-never-green).
+  // US-540-b SOURCE CARDS (F-127) -- Battery, Fuel Trim and Light, one card
+  // each. These three were standalone cards, were merged into the US-507
+  // "Health" card when the CIO called six screens too many, and are cards again
+  // now: the US-540-a legibility scale changes the arithmetic that call was made
+  // on. At secondary 26px a card affords roughly three facts, and Health was
+  // carrying six -- a container of three unrelated readouts is precisely the
+  // thing the scale cannot pay for, and a screen is the cheaper thing to spend.
   //
-  // Two properties are load-bearing, and both are things the merge could
-  // plausibly have broken:
+  // The VIEW layer is unchanged across both moves, which is the point: each card
+  // consumes its OWN state file through the SAME view function it has used in
+  // every arrangement, so every honest-instrument state travels with it
+  // (battery F-9 stale-green guard, light null/stale individual graying,
+  // fuel-trim insufficient-never-green).
   //
-  //   INDEPENDENCE -- availability is resolved PER SECTION, never per card. On
-  //   separate cards a dead UPS could only blank its own card; routed through
-  //   one card-level check it would blank two live instruments beside it, which
-  //   is a fabricated "nothing is readable" built out of one real fault.
+  // Two properties stay load-bearing:
   //
-  //   THE GATE SPEAKS INSTEAD OF HIDING -- fuel trim stays vehicle-gated, but a
-  //   standalone card could be HIDDEN ("does not apply right now") whereas a
-  //   section inside an always-visible card cannot vanish without leaving a
-  //   hole. So the same fact is rendered in words: "no engine data". The gate
-  //   is evaluated BEFORE the data, and a gated section carries no view at all
-  //   -- a stale ltft-trend file left on disk from the last drive is exactly
-  //   the input that would otherwise let a bench paint a confident fuel trim
-  //   for an engine that is not running.
+  //   INDEPENDENCE -- availability is resolved PER SOURCE. The merge had to
+  //   fight for this (one card-level check would have blanked two live
+  //   instruments from one real fault); split back out it is structural, and
+  //   this table is what keeps it so rather than a card-level branch.
+  //
+  //   THE GATE SPEAKS INSTEAD OF HIDING -- fuel trim stays vehicle-gated, and
+  //   keeps the US-507 wording rather than reverting to the pre-US-507 hide.
+  //   US-540-b locks SIX cards, and a card that vanishes on a bench breaks the
+  //   set exactly where the CIO reads the panel most days. The gate is
+  //   evaluated BEFORE the data, and a gated card carries no view at all -- a
+  //   stale ltft-trend file left on disk from the last drive is exactly the
+  //   input that would otherwise let a bench paint a confident fuel trim for an
+  //   engine that is not running.
   // -------------------------------------------------------------------------
 
   // The gated wording. Deliberately NOT the no-data vocabulary: "does not apply"
@@ -942,35 +969,42 @@
   // engine that there is no engine is the worse of the two mistakes.
   var FUEL_TRIM_GATED_REASON = "no engine data";
 
-  // The section table IS the card's order + vocabulary (one place, so a retitle
-  // or a re-order cannot land in the markup and the renderer out of step).
-  // `noData` is the section-scoped fallback for a source with no entry in
-  // NO_DATA_VIEWS -- stacked three deep, a bare "unavailable" no longer says
-  // WHICH of three readouts went silent (the card title used to supply that).
-  var HEALTH_SECTIONS = [
+  // The table IS the vocabulary (one place, so a retitle cannot land in the
+  // markup and the renderer out of step). `noData` is the per-source fallback
+  // for a source with no entry in NO_DATA_VIEWS -- a bare "unavailable" does not
+  // say WHICH instrument went silent, and the card title is not a substitute
+  // (it is still painted when the body is a typed NA).
+  var SOURCE_CARDS = [
     {
-      key: "battery-health", title: "Battery", cls: "health-battery",
+      key: "battery-health", title: "Battery",
       noData: { label: "BATTERY", reason: "no data -- UPS feed absent" },
     },
     {
-      key: "light", title: "Light", cls: "health-light",
+      key: "light", title: "Light",
       noData: { label: "AMBIENT", reason: "no data -- light feed absent" },
     },
     {
-      key: "ltft-trend", title: "Fuel Trim", cls: "health-fueltrim",
+      key: "ltft-trend", title: "Fuel Trim",
       vehicleGated: true,
       noData: { label: "FUEL TRIM", reason: "no data -- trend not computed" },
     },
   ];
 
-  function healthSectionSpecs() {
-    return HEALTH_SECTIONS;
+  function sourceCardSpecs() {
+    return SOURCE_CARDS;
+  }
+
+  function sourceCardSpec(key) {
+    for (var i = 0; i < SOURCE_CARDS.length; i++) {
+      if (SOURCE_CARDS[i].key === key) return SOURCE_CARDS[i];
+    }
+    return null;
   }
 
   // Build the per-source view. Kept as a switch on the key rather than a
   // function reference in the table so the three signatures (which genuinely
   // differ -- only the light view needs the dim config + a clock) stay explicit.
-  function healthSourceView(key, data, cfg, nowMs) {
+  function sourceView(key, data, cfg, nowMs) {
     if (cardAvailability(data) !== "available") return null;
     if (key === "battery-health") return batteryHealthView(data);
     if (key === "light") return lightView(data, cfg, nowMs);
@@ -978,11 +1012,11 @@
     return null;
   }
 
-  function healthSectionView(spec, data, sysData, cfg, nowMs) {
-    var base = { key: spec.key, title: spec.title, cls: spec.cls };
-    // The gate is checked FIRST and short-circuits: a gated section must carry
-    // no reading, not a suppressed one (nothing downstream can leak what was
-    // never derived).
+  function sourceCardView(spec, data, sysData, cfg, nowMs) {
+    var base = { key: spec.key, title: spec.title };
+    // The gate is checked FIRST and short-circuits: a gated card must carry no
+    // reading, not a suppressed one (nothing downstream can leak what was never
+    // derived).
     if (spec.vehicleGated && !vehicleConnected(sysData)) {
       base.gated = true;
       base.unavailable = false;
@@ -990,7 +1024,7 @@
       base.view = null;
       return base;
     }
-    var view = healthSourceView(spec.key, data, cfg, nowMs);
+    var view = sourceView(spec.key, data, cfg, nowMs);
     base.gated = false;
     if (view === null) {
       base.unavailable = true;
@@ -1004,21 +1038,6 @@
     base.na = null;
     base.view = view;
     return base;
-  }
-
-  // `states` is the per-tick map of state name -> payload. Each section resolves
-  // independently, so a section is never blanked by a sibling's fault.
-  function healthCardView(states, sysData, cfg, nowMs) {
-    var src = isObj(states) ? states : {};
-    var sections = [];
-    for (var i = 0; i < HEALTH_SECTIONS.length; i++) {
-      var spec = HEALTH_SECTIONS[i];
-      var data = Object.prototype.hasOwnProperty.call(src, spec.key)
-        ? src[spec.key]
-        : null;
-      sections.push(healthSectionView(spec, data, sysData, cfg, nowMs));
-    }
-    return { sections: sections };
   }
 
   // -------------------------------------------------------------------------
@@ -1537,19 +1556,29 @@
   }
 
   // -------------------------------------------------------------------------
-  // US-481 idle-state home card (F-121) -- pure, node-testable logic. The calm,
-  // honest PARKED view: engine off / OBD asleep. It is a PURE CONSUMER of the
-  // SAME three state files the live cards read (system-status / battery-health /
-  // dtc) -- it fabricates nothing. Honest-instrument (Iris spec 1.3), locked in
-  // the pure builders so a buggy DOM layer can't violate them:
-  //   - NO green "OK" at idle EXCEPT the battery line (and that line always
-  //     carries its data-age, F-9) -- the STANDBY hero is always neutral.
-  //   - NO amber/red at idle UNLESS a REAL stored STOP/WATCH code exists; a
-  //     MINOR/unknown code and a clean read stay neutral.
-  //   - absence != clean and != fault: an unread DTC source is "DTC not read
-  //     since key-off", never "No codes" (a false all-clear) and never a phantom
-  //     Check Engine. The persistent ribbon/takeover still fire on top of this
-  //     card, so idle never SUPPRESSES a genuine fault (Iris AC-5).
+  // US-481 idle home card (F-121) -> US-542 MOTION-FAULT FALLBACK (F-127).
+  //
+  // This was the calm PARKED view: a STANDBY hero over three borrowed facts.
+  // US-541 made the live IMU the permanent home face, which removed the ONLY
+  // route to that hero -- parked, the IMU is CORRECT (a true heading, a true
+  // 0.0 g), so there is nothing for a "STANDBY / engine off" screen to say that
+  // the live instrument does not say better. US-542 therefore RETIRES the
+  // parked disposition rather than leaving it as copy nothing can reach.
+  //
+  // What survives is the ONE disposition US-508 added and US-541 made the whole
+  // point of the face: the motion feed is DOWN and the operator is owed the
+  // reason. It is not "idle" in the carouselIdle sense and never was -- the two
+  // meanings of that word are why AC-4 pins them apart.
+  //
+  // TWO THINGS LEFT WITH THE PARKED SCREEN, and neither is lost:
+  //   - the wall clock moved to the TOP BAR, where it is readable on every card
+  //     instead of only the one the operator saw with the engine off;
+  //   - "DTC not read · since key-off" moved to the ALERTS card. It was always
+  //     an Alerts fact (absence of a READ is neither a clean all-clear nor a
+  //     fault) and was only ever HERE because this happened to be the screen a
+  //     parked operator was looking at.
+  // The persistent ribbon/takeover still fire over every card, so retiring this
+  // screen cannot suppress a genuine fault (Iris AC-5 survives the retirement).
   // -------------------------------------------------------------------------
 
   // idle is the emitter's SSOT (system-status `idle` boolean, US-480-a / Atlas
@@ -1622,69 +1651,46 @@
     };
   }
 
-  // Honest-faults fact. An unavailable DTC source (no key-on read) -> "DTC not
-  // read · since key-off" NEUTRAL. A real STOP/WATCH stored code surfaces at its
-  // tier (down/amber); a MINOR/unknown code stays neutral (never amber/red at
-  // idle); a clean read is "No stored codes" NEUTRAL (never green). Reuses the
-  // same alertableCodes classifier the ribbon/takeover use (Spool severity).
-  function idleFaultsFact(dtcData) {
-    var label = "FAULTS";
-    if (!isObj(dtcData) || sourceUnavailable(dtcData, "dtc")) {
-      return { label: label, value: "DTC not read", detail: "since key-off", level: "neutral" };
-    }
-    var alertable = alertableCodes(dtcData.codes);
-    if (alertable.length === 0) {
-      return { label: label, value: "No stored codes", detail: "key-on read", level: "neutral" };
-    }
-    var hero = alertable[0];
-    var level = hero.severity === "stop" ? "down"
-      : hero.severity === "watch" ? "amber"
-      : "neutral"; // minor/unknown are real but never amber/red at idle
-    var more = alertable.length > 1 ? " · +" + (alertable.length - 1) + " more" : "";
-    var desc = (hero.short && String(hero.short).trim()) || "";
-    return { label: label, value: hero.code, detail: desc + more, level: level };
-  }
-
-  // The assembled idle card view consumed by the DOM renderer + the node tests.
-  // The STANDBY hero is ALWAYS neutral (never a green "OK" backdrop).
+  // The assembled fallback view consumed by the DOM renderer + the node tests.
   //
-  // US-508 gave this view a SECOND DISPOSITION, and it is the honesty trap of
-  // the whole home-slot swap. The idle card is now also the fallback when the
-  // motion feed dies -- and the shipped hero reads "STANDBY / engine off · OBD
-  // asleep". Reusing that verbatim while the car is MOVING would state a
-  // confident fact about the vehicle that was manufactured out of a sensor
-  // fault: the single most plausible fabrication in this story. So a
-  // `motionReason` means "not parked, the instrument is down", and the hero says
-  // that instead. Same layout, same real facts below it, a different claim.
+  // US-542: ONE disposition. The `motionless` ternary is gone with the STANDBY
+  // hero it selected -- not because the branch was wrong, but because US-541
+  // left it permanently false, and a condition that cannot be false is a claim
+  // waiting to be made by accident. The hero now states the only fact this
+  // screen exists to state: the motion instrument is down, and here is why.
   //
-  // The footer is a VIEW field rather than a renderer literal for the same
-  // reason: the two dispositions need two different lines, and copy no test can
-  // reach is copy that drifts.
-  function idleCardView(systemStatusData, batteryData, dtcData, motionReason) {
-    var motionless = typeof motionReason === "string" && motionReason !== "";
+  // `dtcData` is GONE FROM THE SIGNATURE, and that is the guard, not a tidy-up
+  // (the US-541 pattern). A view that cannot SEE the dtc payload cannot re-
+  // borrow the Alerts fact that just moved off it; a future re-borrow has to
+  // widen the signature first, which is a visible act rather than a line added
+  // to a facts object.
+  //
+  // The footer stays a VIEW field rather than a renderer literal even now that
+  // there is one of them: copy no test can reach is copy that drifts, which is
+  // exactly what US-510 had to come back and repair on this very surface.
+  function idleCardView(systemStatusData, batteryData, motionReason) {
     return {
-      // US-510 A-1: the LOCKED strings, restored verbatim from Iris's idle spec
+      // US-510 A-1: the LOCKED wordmark, verbatim from Iris's idle spec
       // (2026-07-21-pi-idle-state-and-full-bleed.md §1.2). The build had
-      // paraphrased both -- "ECLIPSE" for the full wordmark, and a STATUS line
-      // where the spec puts a NAVIGATION HINT. Nothing pinned them, which is
-      // exactly why they drifted; tests/ui/test_dashboard_fidelity_pass.py now
-      // asserts them by equality.
+      // paraphrased it to "ECLIPSE"; nothing pinned it, which is exactly why it
+      // drifted. It is BRANDING, not status, so it survives the retirement --
+      // the LOCKED FOOTER did not: it was a parked-screen navigation hint, and
+      // the screen it taught is gone. The ⋮ it named is still in the top bar.
       wordmark: "ECLIPSE OBD-II",
-      hero: motionless
-        ? { title: "NO MOTION DATA", substate: motionReason, level: "neutral" }
-        : { title: "STANDBY", substate: "engine off · OBD asleep", level: "neutral" },
-      // Only the PARKED footer takes the locked hint. The motionless
-      // disposition is US-508's, and it states a FAULT the operator otherwise
-      // has no explanation for (the live card just vanished) -- overwriting it
-      // with a navigation hint would re-merge the two dispositions that story
-      // deliberately split, and lose a real instrument fact to do it.
-      footer: motionless
-        ? "live instrument resumes when the motion feed returns"
-        : "swipe for details · hold or ⋮ for setup",
+      hero: {
+        title: "NO MOTION DATA",
+        // Never fabricated: `homeFace` reaches this view only WITH a reason, so
+        // the empty string here is an un-taken defensive floor, not a second
+        // disposition wearing a default sentence.
+        substate: typeof motionReason === "string" ? motionReason : "",
+        level: "neutral",
+      },
+      footer: "live instrument resumes when the motion feed returns",
+      // TWO facts, not three. `faults` left with the Alerts card (AC-2); what
+      // remains is what a dead motion feed does not make unreadable.
       facts: {
         lastDrive: idleLastDriveFact(systemStatusData),
         battery: idleBatteryFact(batteryData),
-        faults: idleFaultsFact(dtcData),
       },
     };
   }
@@ -1767,6 +1773,31 @@
     };
   }
 
+  // US-542 AC-2: the fact that MOVED here from the retired idle face. It was
+  // always an Alerts fact -- "no read has happened" is a statement about the
+  // codes, not about the parked screen that happened to be showing it -- and
+  // the Alerts card could not otherwise say it: US-429 already refuses to print
+  // "No stored codes" over an unread source, but a bare typed NA states only
+  // that the instrument is silent, not that the silence dates from key-off.
+  //
+  // Level stays `unavailable`, NOT the idle face's `neutral`. On a card of
+  // mixed tiles neutral read as "calm"; alone on the Alerts card it would read
+  // as a completed read with nothing to report -- the exact false all-clear
+  // US-429 exists to prevent. Grey is the whole dashboard's word for "no read".
+  //
+  // The emitter's own reason rides ALONGSIDE the moved line rather than being
+  // replaced by it: "since key-off" is when, the reason is why, and dropping
+  // either to make room for the other loses a real fact.
+  function dtcNotReadTile(reason) {
+    var why = reason == null ? "" : String(reason).trim();
+    return {
+      label: "ALERTS",
+      value: "DTC not read",
+      detail: why ? "since key-off · " + why : "since key-off",
+      level: "unavailable",
+    };
+  }
+
   // The Alerts card view: hero (worst ALERT-eligible code + its directive; `na`
   // and unrecognized severities are never a hero) + the full list (worst-first,
   // na last) + stored/pending counts. Non-object payload -> null (the shell
@@ -1776,7 +1807,8 @@
     // US-429: an unavailable DTC source (no read happened) is a typed NA -- NOT
     // "No stored codes" (which would falsely imply a clean all-clear read).
     if (sourceUnavailable(data, "dtc")) {
-      return { unavailable: true, reason: sourceReason(data, "dtc") };
+      var why = sourceReason(data, "dtc");
+      return { unavailable: true, reason: why, notRead: dtcNotReadTile(why) };
     }
     var codes = Array.isArray(data.codes) ? data.codes.filter(isObj) : [];
     var alertable = alertableCodes(codes); // drops na + unrecognized (never a hero)
@@ -2682,27 +2714,29 @@
   // that decides which -- a second arbiter would put two rules in charge of one
   // fact, which is exactly why US-497 declined to build the swap at all.
   //
-  // Order matters. PARKED WINS OUTRIGHT: the CIO-locked design is "parked -> the
-  // calm idle card", so a bench IMU reading zero g does not make a stationary
-  // car show a live instrument. Otherwise the live face requires a live AND
-  // fresh feed, and everything else -- no file, unwired sensor, undated payload,
-  // stale reading -- falls back (AC-3: never a frozen motion display).
+  // US-541 IMU-ALWAYS-ON (Atlas): the decision now reads THE MOTION FEED ONLY.
+  // US-508 let `parked` win outright, which hid the one instrument that is
+  // Pi-local and always-live at precisely the moment its readings are both true
+  // and worth looking at -- parked, the IMU is CORRECT (real heading, a real
+  // 0.0 g), not unavailable. The vehicle state is deliberately NOT a parameter:
+  // a function that cannot see system-status cannot re-couple the home face to
+  // it, so a future re-coupling has to widen the signature first, which is a
+  // visible act rather than a condition slipped into the body. `carouselIdle`
+  // keeps its OTHER consumers (the auto-rotate pause, the home nav edge).
   //
-  // `parked` rides along because the fallback needs it: an idle face shown
-  // because the car is parked and an idle face shown because the motion feed
-  // died are DIFFERENT FACTS, and the second one must not claim "engine off".
-  function homeFace(imuData, sysData, nowMs) {
-    if (carouselIdle(sysData)) {
-      return { face: "idle", parked: true, reason: null };
-    }
+  // The idle face survives as the honest fallback and NOTHING ELSE: no file,
+  // unwired sensor, undated payload or stale reading (AC-3 -- never a frozen
+  // motion display). It therefore always carries a reason; there is no longer a
+  // disposition where the fallback fires with nothing to say.
+  function homeFace(imuData, nowMs) {
     var view = imuView(imuData, nowMs);
     if (view === null) {
-      return { face: "idle", parked: false, reason: "no motion feed" };
+      return { face: "idle", reason: "no motion feed" };
     }
     if (view.idle) {
-      return { face: "idle", parked: false, reason: view.reason };
+      return { face: "idle", reason: view.reason };
     }
-    return { face: "live", parked: false, reason: null };
+    return { face: "live", reason: null };
   }
 
   // US-503 idle-card wall clock. PURE -- the caller supplies the Date, so this
@@ -2771,9 +2805,9 @@
     batteryHealthView: batteryHealthView,
     fmtLtftPct: fmtLtftPct,
     ltftTrendView: ltftTrendView,
-    healthSectionSpecs: healthSectionSpecs,
-    healthSectionView: healthSectionView,
-    healthCardView: healthCardView,
+    sourceCardSpecs: sourceCardSpecs,
+    sourceCardSpec: sourceCardSpec,
+    sourceCardView: sourceCardView,
     serviceMenuItems: serviceMenuItems,
     settingsSpecs: settingsSpecs,
     settingsApplyStates: settingsApplyStates,
@@ -2807,7 +2841,7 @@
     agoText: agoText,
     idleLastDriveFact: idleLastDriveFact,
     idleBatteryFact: idleBatteryFact,
-    idleFaultsFact: idleFaultsFact,
+    dtcNotReadTile: dtcNotReadTile,
     idleCardView: idleCardView,
     dtcRow: dtcRow,
     alertsCardView: alertsCardView,
@@ -3068,52 +3102,46 @@
       if (glyphEls.power) glyphEls.power.setAttribute("data-state", "neutral");
     }
 
-    // --- US-481 idle-state home card DOM render (browser only) --------------
+    // --- US-542 motion-fault fallback DOM render (browser only) -------------
 
-    // Local wall-clock formatters for the parked header. Local (not UTC) is the
-    // right zone for a kiosk showing the driver the time; the pure view logic
-    // stays clock-free (deterministic tests), so these live in the DOM layer.
-    // The CLOCK half is the exception -- US-503 moved `fmtClock` up to the pure
-    // section (it only ever formatted the Date it was handed) so the 12-hour
-    // face the operator reads is pinned by a test. There is exactly ONE clock
-    // formatter; this block calls it, it does not own one.
-    var IDLE_DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-    var IDLE_MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
-                       "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-    function fmtDate(d) {
-      return IDLE_DAYS[d.getDay()] + " " + d.getDate() + " " + IDLE_MONTHS[d.getMonth()];
-    }
+    // US-542: `fmtDate` and its month/day tables are DELETED, not left for a
+    // future caller. The parked header was their only consumer, and the date is
+    // the one piece of that header this story does NOT relocate: the top bar is
+    // 480px wide and already carries three glyphs, a version chip and the ⋮ at
+    // the US-540-a scale, where a clock fits and a clock-plus-date does not. A
+    // deliberate, named loss -- flagged for Iris in the story notes rather than
+    // absorbed silently. (`fmtClock` stays: it moved to the pure section in
+    // US-503 and now feeds the top bar, so there is still exactly ONE clock
+    // formatter and it is still the one a test can reach.)
 
-    // Render the idle card from the assembled view. Built with textContent (no
-    // innerHTML) so emitter values render verbatim, never as markup. The 3 fact
-    // tiles reuse the shared `.tile[data-level]` styling, so green is bound to
-    // the SSOT token exactly once (US-484) -- the idle card holds no hex literal.
+    // Render the fallback card from the assembled view. Built with textContent
+    // (no innerHTML) so emitter values render verbatim, never as markup. The
+    // fact tiles reuse the shared `.tile[data-level]` styling, so green is bound
+    // to the SSOT token exactly once (US-484) -- this card holds no hex literal.
     // US-508: takes a BODY, not a card -- the same move US-507 made for the
     // three Health renderers, and for the same reason. Reaching for its own
     // `.card-body` assumed this renderer owned the whole card, which is the
     // assumption the two-faced home slot overturns.
-    function renderIdleBody(body, view, now) {
+    // US-542: the `now` parameter is GONE with the clock it fed. Same guard as
+    // the `dtcData` drop above -- a renderer with no clock in its signature
+    // cannot grow a second one behind the top bar's back.
+    function renderIdleBody(body, view) {
       if (!body || !view) return;
       body.textContent = "";
 
-      // Header: wordmark + live clock + date (Iris 1.2).
+      // Header: the wordmark. US-542 moved the CLOCK to the top bar, where it
+      // is readable on every card rather than only on the one screen a parked
+      // operator happened to be looking at -- and where it survives this face
+      // being reachable only when the motion feed dies.
       var header = document.createElement("div");
       header.className = "idle-header";
       var wm = document.createElement("span");
       wm.className = "idle-wordmark";
       wm.textContent = view.wordmark;
-      var clock = document.createElement("span");
-      clock.className = "idle-clock";
-      clock.textContent = fmtClock(now);
-      var date = document.createElement("span");
-      date.className = "idle-date";
-      date.textContent = fmtDate(now);
       header.appendChild(wm);
-      header.appendChild(clock);
-      header.appendChild(date);
       body.appendChild(header);
 
-      // STANDBY hero (neutral grey, never green) + substate.
+      // The NO MOTION DATA hero (neutral grey, never green) + the reason.
       var hero = document.createElement("div");
       hero.className = "idle-hero";
       hero.setAttribute("data-level", view.hero.level);
@@ -3127,20 +3155,18 @@
       hero.appendChild(heroSub);
       body.appendChild(hero);
 
-      // 3-fact summary strip: last-drive / battery-with-age / honest-faults.
+      // 2-fact summary strip: last-drive / battery-with-age. The faults tile
+      // left with US-542 -- it is on the Alerts card, one swipe away, and the
+      // ribbon still carries a REAL fault over this screen like any other.
       var strip = document.createElement("div");
       strip.className = "idle-facts";
       appendTile(strip, view.facts.lastDrive);
       appendTile(strip, view.facts.battery);
-      appendTile(strip, view.facts.faults);
       body.appendChild(strip);
 
-      // Footer: US-508 reads it from the VIEW rather than a literal here. The
-      // two idle dispositions need two different lines (a parked navigation
-      // hint is not the right thing to say when the engine is already running
-      // and it is the MOTION FEED that is down), and copy no test can reach is
-      // copy that drifts from the spec -- which is precisely what US-510 then
-      // had to come back and restore.
+      // Footer: read from the VIEW rather than a literal here. Copy no test can
+      // reach is copy that drifts from the spec -- which is precisely what
+      // US-510 had to come back and restore on this surface.
       var footer = document.createElement("div");
       footer.className = "idle-footer";
       footer.textContent = view.footer;
@@ -3467,7 +3493,7 @@
     // REPLACE each other wholesale on a change -- leaving a stale <svg> under an
     // idle message is precisely the frozen instrument AC-3 forbids, and it is
     // the exact failure the swap makes possible for the first time.
-    function renderHomeCard(card, face, liveView, idleView, trail, trend, now) {
+    function renderHomeCard(card, face, liveView, idleView, trail, trend) {
       if (!card || !face) return;
       var body = card.querySelector(".card-body");
       if (!body) return;
@@ -3479,7 +3505,7 @@
         if (liveView && !liveView.idle) renderLiveBody(body, liveView, trail, trend);
         return;
       }
-      if (idleView) renderIdleBody(body, idleView, now);
+      if (idleView) renderIdleBody(body, idleView);
     }
 
     // --- US-420 LTFT Trend DOM render (browser only) ------------------------
@@ -3518,36 +3544,31 @@
       if (view.points.length > 0) appendLtftBars(body, view.points);
     }
 
-    // --- US-507 merged Health card DOM render (browser only) ----------------
+    // --- US-540-b source card DOM render (browser only) ---------------------
 
-    // One section. The gate + the fault BOTH render the shared typed-NA tile,
-    // but they carry different words and are told apart in the DOM by
+    // One source card. The gate + the fault BOTH render the shared typed-NA
+    // tile, but they carry different words and are told apart in the DOM by
     // `data-gated` -- so the render backstop can prove a bench painted the GATE
     // rather than a fabricated trim, which is the one thing a pure-function
-    // test can never see.
-    function renderHealthSection(root, sec) {
-      if (!root || !sec) return;
-      var body = root.querySelector(".health-section-body");
+    // test can never see. The flag is written on EVERY paint, including the
+    // ungated one: left write-only-when-true it would latch, and a card that
+    // says "gated" after the engine started is a stale claim about the vehicle.
+    function renderSourceCard(card, view) {
+      if (!card || !view) return;
+      var body = card.querySelector(".card-body");
       if (!body) return;
-      root.setAttribute("data-gated", sec.gated ? "true" : "false");
-      if (sec.gated || sec.unavailable) {
-        renderNaBody(body, sec.na.label, sec.na.reason);
+      card.setAttribute("data-gated", view.gated ? "true" : "false");
+      // The typed NA is the card's whole body here, so the shipped
+      // `.unavailable` italic-gray must not also apply -- the tile carries its
+      // own honest styling and the two together read as a doubly-dead card.
+      card.classList.toggle("unavailable", false);
+      if (view.gated || view.unavailable) {
+        renderNaBody(body, view.na.label, view.na.reason);
         return;
       }
-      if (sec.key === "battery-health") renderBatteryHealthBody(body, sec.view);
-      else if (sec.key === "light") renderLightBody(body, sec.view);
-      else if (sec.key === "ltft-trend") renderLtftTrendBody(body, sec.view);
-    }
-
-    // Each section is located by its OWN class, never by a shared attribute
-    // selector: three sections carry the same attribute name, so an
-    // attribute-presence match would resolve all three to the first one.
-    function renderHealthCard(card, view) {
-      if (!card || !view || !view.sections) return;
-      for (var s = 0; s < view.sections.length; s++) {
-        var sec = view.sections[s];
-        renderHealthSection(card.querySelector("." + sec.cls), sec);
-      }
+      if (view.key === "battery-health") renderBatteryHealthBody(body, view.view);
+      else if (view.key === "light") renderLightBody(body, view.view);
+      else if (view.key === "ltft-trend") renderLtftTrendBody(body, view.view);
     }
 
     // US-482 letterbox: uniformly scale the fixed 480x320 #stage design box to
@@ -3559,6 +3580,38 @@
       if (!stage) return;
       var scale = computeStageScale(window.innerWidth, window.innerHeight);
       stage.style.setProperty("--scale", String(scale));
+    }
+
+    // US-542 AC-1: the wall clock, moved off the retired parked face into the
+    // PERSISTENT top bar. The clock was never a parked-state fact -- it was
+    // only ever on that screen because that screen was what a parked operator
+    // saw. In the bar it is readable from every card, including the live IMU
+    // face that replaced the one it used to live on.
+    //
+    // It reuses `fmtClock` (US-503, pure + pinned) rather than formatting here:
+    // two formatters is how the 12-hour face drifts back to 24-hour on one
+    // surface while every test of the other stays green.
+    //
+    // BLOCK SCOPE, not setup's, and that is not a style choice: the 4 Hz tick
+    // lives inside `startAvailabilityPoll`, which setup CALLS rather than
+    // encloses -- a painter declared in setup is invisible from there, and the
+    // first tick throws a ReferenceError that kills the whole poll loop.
+    var clockEl = null;
+    var lastClockText = null;
+    function renderTopbarClock(now) {
+      // Resolved lazily + cached: this block is evaluated before DOMContentLoaded
+      // on the slow path, where an eager lookup would cache a permanent null.
+      if (!clockEl) clockEl = document.getElementById("topbar-clock");
+      if (!clockEl) return;
+      var text = fmtClock(now);
+      // Write only on a real change. The caller ticks at 4 Hz and the face moves
+      // once a minute, so an unguarded write is ~240 pointless DOM mutations per
+      // minute on the one surface that is ALWAYS painted -- and needless
+      // always-on repaint work on this panel has a history (US-537: the
+      // always-on compositor layer behind the US-522 freeze).
+      if (text === lastClockText) return;
+      lastClockText = text;
+      clockEl.textContent = text;
     }
 
     var setup = function () {
@@ -3577,6 +3630,12 @@
         sync: document.getElementById("glyph-sync"),
         power: document.getElementById("glyph-power"),
       };
+
+      // US-542: paint the top-bar clock once at boot so the slot is never blank
+      // for the length of the first poll. The painter itself lives at block
+      // scope -- see renderTopbarClock -- because the 4 Hz tick that keeps it
+      // current runs inside startAvailabilityPoll, which is NOT nested here.
+      renderTopbarClock(new Date());
 
       // Build one page dot per card (>=40px touch target via .tap-target CSS).
       var dots = [];
@@ -4485,8 +4544,14 @@
         if (!body || !view) return;
         // US-429 / Bug-3b: DTC source unavailable -> a typed NA, NOT "No stored
         // codes" (a false all-clear) and NOT a mis-fired takeover.
+        // US-542 AC-2: that NA now carries the line the retired idle face used
+        // to hold -- "DTC not read · since key-off · <why>". Rendered from the
+        // VIEW's tile, so the words are pinned by a pure test rather than
+        // living as a renderer literal (`renderNaBody` composes "NA" here,
+        // which would have swallowed the moved fact).
         if (view.unavailable) {
-          renderNaBody(body, "ALERTS", view.reason);
+          body.textContent = "";
+          appendTile(body, view.notRead);
           return;
         }
         body.textContent = "";
@@ -4594,7 +4659,7 @@
       // card invites, and the reason `homeFace` is the only arbiter.
       function renderHome(nowMs) {
         if (!homeCard) return;
-        var face = homeFace(lastImu, lastSys, nowMs);
+        var face = homeFace(lastImu, nowMs);
         if (face.face === "live") {
           var live = liveCardView(lastImu, lastGear, nowMs);
           if (live && !live.idle) {
@@ -4611,7 +4676,7 @@
               live.grade.available ? live.grade.pct : null,
               nowMs, GRADE_TREND_WINDOW_SEC, GRADE_TREND_BUCKET_MS
             );
-            renderHomeCard(homeCard, face, live, null, gTrail, gradeTrend, null);
+            renderHomeCard(homeCard, face, live, null, gTrail, gradeTrend);
             return;
           }
         }
@@ -4620,14 +4685,20 @@
         // and a grade history it never climbed.
         gTrail = [];
         gradeTrend = [];
-        // `face.parked` is what keeps the fallback honest. Parked -> the shipped
-        // STANDBY hero. NOT parked (the feed died while moving) -> a hero that
-        // names the dead instrument, because "engine off - OBD asleep" would be
-        // a confident claim about the vehicle manufactured out of a sensor fault.
+        // US-541: the reason is passed UNCONDITIONALLY. Under IMU-always-on the
+        // idle face fires only because the motion feed died, so the hero must
+        // always name the dead instrument. US-508 suppressed the reason when
+        // parked so the calm STANDBY hero could show; leaving that ternary here
+        // would hand a DEAD SENSOR the "engine off - OBD asleep" hero -- a
+        // confident claim about the vehicle manufactured out of a sensor fault,
+        // arriving through a condition that is now always false.
+        // US-542: `lastDtc` is no longer handed to this view -- the faults tile
+        // it fed is on the Alerts card now -- and neither is a Date: the clock
+        // lives in the top bar, painted by its own tick.
         renderHomeCard(
           homeCard, face, null,
-          idleCardView(lastSys, lastBattery, lastDtc, face.parked ? null : face.reason),
-          null, null, new Date(nowMs)
+          idleCardView(lastSys, lastBattery, face.reason),
+          null, null
         );
       }
 
@@ -4653,6 +4724,11 @@
         // verdict and the brightness the screen is actually set to are resolved
         // against the same instant -- the card can never contradict the surface.
         var nowMs = Date.now();
+        // US-542: repaint the top-bar clock from the SAME tick clock everything
+        // else on this pass is resolved against (US-496's one-clock rule), so
+        // the time the operator reads and the freshness verdicts beside it can
+        // never be resolved against two different instants.
+        renderTopbarClock(new Date(nowMs));
         // US-507: ONE fetch per state name per tick, however many surfaces
         // consume it. states/light now feeds BOTH the Health card and the
         // auto-dim; fetching it twice could resolve the printed reading and the
@@ -4676,30 +4752,29 @@
           // US-496: a gated-off card is not rendered and not fetched. It is
           // display:none -- polling it 4x/s would be a read nobody can see.
           if (card.hidden) continue;
-          // US-507: a MULTI-SOURCE card declares every state file it consumes.
-          // Its availability is resolved PER SECTION below, deliberately NOT
-          // through the card-level path -- one dead feed must not blank the two
-          // live instruments beside it.
-          var group = card.getAttribute("data-states");
-          if (group) {
-            var names = group.split(/\s+/).filter(Boolean);
-            var states = {};
-            for (var n = 0; n < names.length; n++) {
-              states[names[n]] = await stateOnce(names[n]);
-            }
+          var name = card.getAttribute("data-state");
+          if (!name) continue;
+          var data = await stateOnce(name);
+          // US-540-b: the three source cards route through their OWN view,
+          // deliberately BEFORE the generic availability path below. Two of
+          // them (battery, light) would survive that path; fuel trim would not
+          // -- its gate has to be evaluated before its data, and the generic
+          // path reads the data first. One route for all three keeps the rule
+          // "which card is this?" in exactly one place.
+          var spec = sourceCardSpec(name);
+          if (spec) {
             // The gate resolves against the SAME system-status the rest of the
             // tick uses (cached -- free when another card already read it), so
             // the fuel-trim gate can never disagree with the vehicle state the
             // top bar and the idle-home card were rendered against.
-            renderHealthCard(
+            renderSourceCard(
               card,
-              healthCardView(states, await stateOnce("system-status"), displayAutoDim, nowMs)
+              sourceCardView(
+                spec, data, await stateOnce("system-status"), displayAutoDim, nowMs
+              )
             );
             continue;
           }
-          var name = card.getAttribute("data-state");
-          if (!name) continue;
-          var data = await stateOnce(name);
           var avail = cardAvailability(data);
           card.classList.toggle("unavailable", avail === "unavailable");
           if (avail === "unavailable") {

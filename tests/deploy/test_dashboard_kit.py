@@ -71,36 +71,43 @@ def _nodeAvailable() -> bool:
 def test_dashboardHtml_hasBothCardSlots_s1():
     """S-1: every card the carousel ships has a slot in the markup.
 
-    REVISED BY US-507 (F-124). The count was 6; the CIO called that too many
-    screens, so Battery Health + Light + LTFT Trend merged into ONE Health card
-    (-2 slots). The invariant this test has always guarded is unchanged and is
-    what is re-asserted: the slot inventory in the markup matches the cards the
-    carousel actually ships, since the tick discovers cards from the DOM and a
-    card with no slot does not exist whatever the JS says.
+    REVISED BY US-540-b (F-127), and the history is the point of the docstring.
+    The count was 6; US-507 merged Battery + Light + Fuel Trim into ONE Health
+    card because the CIO called six screens too many (-2 slots). US-540-a then
+    changed the arithmetic that call rested on -- at secondary 26px a card
+    affords ~3 facts and Health carried six -- so the merge is REVERSED here and
+    the count returns to 6, Health retiring as a container.
 
-    The three merged sources are NOT gone -- they are sections of the Health
-    card, declared on it via `data-states` (pinned by the dedicated suite,
-    tests/ui/test_carousel_health_card.py).
+    The invariant this test has always guarded is unchanged across all three
+    arrangements, and is the only reason the test exists: the slot inventory in
+    the markup matches the cards the carousel actually ships, since the tick
+    discovers cards from the DOM and a card with no slot does not exist whatever
+    the JS says.
 
-    US-508 THEN FOLDED MOTION INTO THE HOME SLOT, which is what reaches the
-    CIO-locked four: Home . System Status . Health . Alerts. Note the count
-    stayed 4 across that change for a DIFFERENT REASON, which is exactly the
-    kind of coincidence that makes a bare count vacuous -- before, the idle card
-    wore `class="card idle-card"` and was not counted at all; now the home slot
-    is a plain `.card` and IS. So the inventory below names every slot rather
-    than trusting the number.
+    US-508 FOLDED MOTION INTO THE HOME SLOT, and note the count stayed 4 across
+    that change for a DIFFERENT REASON -- before it, the idle card wore
+    `class="card idle-card"` and was not counted at all; after, the home slot is
+    a plain `.card` and IS. That coincidence is exactly what makes a bare count
+    vacuous, so the inventory below NAMES every slot rather than trusting the
+    number, and it is asserted as an ORDERED list: US-540-b moves Alerts to
+    second, and a set-or-count assertion goes green on a carousel that opens on
+    Light.
     """
     html = _read(KIT_DIR, "dashboard.html")
-    assert html.count('class="card"') == 4
+    assert html.count('class="card"') == 6
+    labels = re.findall(r'<section class="card"[^>]*?aria-label="([^"]+)"', html, re.S)
+    assert labels == ["Home", "Alerts", "System Status", "Battery", "Fuel Trim", "Light"]
     assert 'data-state="system-status"' in html
     assert 'data-state="dtc"' in html
-    assert 'aria-label="Home"' in html
-    assert 'aria-label="Health"' in html
     # The live instrument is a FACE of the home slot, not a slot of its own.
     assert 'data-state="imu"' not in html
-    # The merged sources moved rather than vanished: the Health card declares
-    # all three state files it consumes.
-    assert 'data-states="battery-health light ltft-trend"' in html
+    # The retirement is only honest if the facts SURVIVED it: each formerly
+    # merged source binds its own state file again. "Health is gone" is
+    # trivially true if the three readouts left with it.
+    assert "Health" not in labels
+    assert 'data-states=' not in html, "a multi-source card outlived the retirement"
+    for state in ("battery-health", "ltft-trend", "light"):
+        assert f'data-state="{state}"' in html, f"{state} lost its slot"
 
 
 def test_dashboardHtml_hasPersistentTopBarGlyphs_d3():
@@ -1401,15 +1408,18 @@ def test_dashboardHtml_hasFuelTrimSlot_us420_us507():
     """US-420: the fuel-trim surface is present and bound to the `ltft-trend`
     state.
 
-    RETITLED + RELOCATED BY US-507: it is now the "Fuel Trim" SECTION of the
-    merged Health card, not a standalone "LTFT Trend" card. The jargon left the
-    title; Spool's LTFT semantics did not move at all (the view function and its
-    insufficient/drift rules are untouched). The old title is asserted GONE
-    rather than merely unasserted -- leaving it in the markup alongside the new
-    one is how a half-applied retitle ships.
+    RETITLED by US-507, RELOCATED TWICE: standalone "LTFT Trend" card -> "Fuel
+    Trim" section of the merged Health card -> standalone "Fuel Trim" card again
+    (US-540-b retires the container). The jargon left the title at the first
+    move; Spool's LTFT semantics have not moved across any of them -- the view
+    function and its insufficient/drift rules are untouched throughout, which is
+    why this test only ever asserts the BINDING and the TITLE.
+
+    The old title is asserted GONE rather than merely unasserted -- leaving it in
+    the markup alongside the new one is how a half-applied retitle ships.
     """
     html = _read(KIT_DIR, "dashboard.html")
-    assert 'data-states="battery-health light ltft-trend"' in html, (
+    assert 'data-state="ltft-trend"' in html, (
         "the fuel-trim surface is no longer bound to its state file"
     )
     assert "Fuel Trim" in html

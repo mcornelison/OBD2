@@ -42,6 +42,8 @@ import subprocess
 
 import pytest
 
+from tests.ui.css_type_scale import resolveFontPx
+
 _UI = os.path.join(os.path.dirname(__file__), "..", "..", "specs", "UI")
 _TOKENS = os.path.join(_UI, "tokens.css")
 _DIST = os.path.join(_UI, "dist", "dashboard-pi")
@@ -295,12 +297,19 @@ def test_stopTakeover_directiveSaysPullOver():
 
 def test_stopTakeover_directiveIsLargerThanBaseCopy():
     """AREA channel again: on a STOP the directive is the biggest thing on the
-    panel, so the signal survives a glance at arm's length."""
+    panel, so the signal survives a glance at arm's length.
+
+    US-539: both sizes are now `var(--fs-*)` refs, so this resolves them through
+    the type scale instead of reading a literal. The old regex would have found
+    no px at all and died on a None match -- a safety guard that cannot see its
+    own subject, which is the failure mode the resolver exists to prevent."""
     css = _read(_CSS)
-    base = _ruleBlock(css, ".takeover-directive {")
-    baseSize = float(re.search(r"font-size:\s*([0-9.]+)px", base).group(1))
-    stop = _stopTakeoverCss(css)
-    stopSize = float(re.search(r"font-size:\s*([0-9.]+)px", stop).group(1))
+    baseSize = resolveFontPx(css, _ruleBlock(css, ".takeover-directive {"))
+    stopSize = resolveFontPx(css, _stopTakeoverCss(css))
+    assert baseSize > 0 and stopSize > 0, (
+        f"a takeover directive size is unreadable (base {baseSize}, stop {stopSize})"
+        " -- re-point this guard before trusting it"
+    )
     assert stopSize > baseSize, f"STOP directive {stopSize}px <= base {baseSize}px"
 
 

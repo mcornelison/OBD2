@@ -1,11 +1,11 @@
 {
   "schemaVersion": "2.0.0",
-  "lastUpdated": "2026-08-10",
+  "lastUpdated": "2026-08-11",
   "updatedBy": "Marcus (PM)",
   "counters": {
     "epic": 7,
     "feature": 131,
-    "story": 552
+    "story": 553
   },
   "epics": [
     {
@@ -1303,7 +1303,8 @@
       "title": "Pi 3.5in legibility + card-set overhaul",
       "description": "CIO: fonts on the 3.5in panel are 2-4x too small to read at arm's length in the car (Iris arithmetic: ~165 PPI, glance floor ~34px; shipped values 13-15px). Fix = a type SCALE (tokens) + larger tiles + fewer facts/card, which pushes the card set back UP (partly reverses US-507/508's 6->4 consolidation -- legibility outranks screen count on a 3.5in panel). Iris-designed 2026-08-07/08 (CIO-reviewed); Atlas design-gates the structural parts (screen-count, US-482 stage, cross-card content moves, IMU-always-on).",
       "createdAt": "2026-08-08",
-      "updatedAt": "2026-08-08"
+      "updatedAt": "2026-08-08",
+      "currentVersion": "V0.29.29"
     },
     {
       "id": "F-128",
@@ -7493,7 +7494,7 @@
       "parent": "F-127",
       "type": "normal",
       "size": "M",
-      "status": "sprint-ready",
+      "status": "passed",
       "title": "Extract the type scale into tokens.css (closes W-3) -- pure refactor",
       "goal": "As a maintainer, I want font sizes to come from a small set of tokens so the legibility fix is one scale change, not 83 scattered edits that drift back.",
       "definitionOfDone": [
@@ -7517,10 +7518,11 @@
         "offices/pm/inbox/2026-08-07-from-atlas-3p5in-legibility-font-size-more-screens.md"
       ],
       "createdAt": "2026-08-08",
-      "updatedAt": "2026-08-10",
+      "updatedAt": "2026-08-12",
       "priority": "P1",
       "tier": "pi",
-      "gate": "groom-ready (Sprint 72 queued)"
+      "gate": "groom-ready (Sprint 72 queued)",
+      "passes": true
     },
     {
       "id": "US-540",
@@ -7564,7 +7566,7 @@
       "parent": "F-127",
       "type": "normal",
       "size": "M",
-      "status": "sprint-ready",
+      "status": "passed",
       "title": "Atlas's 3 UI change requests -- IMU-always-on, card reorder, auto-rotate-off verify",
       "goal": "As the operator, I want the live IMU instrument always visible, alerts second, and no auto-rotate, matching how I actually use the dashboard.",
       "definitionOfDone": [
@@ -7589,17 +7591,53 @@
         "offices/pm/inbox/2026-08-03-from-atlas-ui-change-requests-carousel-order-imu-autorotate.md"
       ],
       "createdAt": "2026-08-08",
-      "updatedAt": "2026-08-10",
+      "updatedAt": "2026-08-12",
       "priority": "P1",
       "tier": "pi",
-      "gate": "Atlas: IMU-always-on"
+      "gate": "Atlas: IMU-always-on",
+      "passes": true
+    },
+    {
+      "id": "US-541-a",
+      "parent": "F-127",
+      "type": "normal",
+      "size": "S",
+      "status": "passed",
+      "passes": true,
+      "title": "Resolver honours autoRotateS:0 as a real OFF value (unblocks US-541 AC-3 / BL-031)",
+      "goal": "As the operator, I want auto-rotate OFF to actually stay off, so the CIO freeze fix and the F-126 Settings 'Off' toggle are not silent no-ops.",
+      "definitionOfDone": [
+        "[Atlas Option-1, ratified by CIO 2026-08-11 -- resolves BL-031 / I-us536] resolveCarouselConfig (specs/UI/dist/dashboard-pi/carousel.js:218) admits autoRotateS == 0 as a real value. Keep the strict `> 0` guard for the OTHER keys (resumeIdleS et al.) -- this is a PER-KEY relaxation, NOT a blanket `>= 0`. Rationale: 0 = off / >0 = on is the same GAP-3a contract US-530/531/532/533 already encode, and shouldAutoAdvance already treats 0 as never-advance.",
+        "the US-506 misconfig-guard intent is preserved for every key except autoRotateS: a non-number / NaN / Infinity / negative autoRotateS still falls back to the default (only a clean 0 is admitted).",
+        "delete the @pytest.mark.xfail(strict=True) marker on tests/ui/test_carousel_imu_always_on.py::test_resolveCarouselConfig_honoursTheShippedOffValue -- with the fix it XPASSes; remove the marker so it is a normal green assertion (per BL-031 'delete the marker, not the test').",
+        "node tests/ui/carousel_probe.js resolveCarouselConfig '{\"autoRotateS\":0}' -> autoRotateS: 0 (was 8). ruff/lint clean.",
+        "US-541 AC-3 now verifiable -> set US-541 passes:true once this lands (the two ship together this sprint)."
+      ],
+      "validationCriteria": [
+        {
+          "action": "on the Pi (or via carousel_probe), ship autoRotateS:0 and observe the carousel",
+          "outcome": "carousel does NOT auto-advance; resolver returns 0 not 8; F-126 Settings 'Off' toggle is honoured"
+        }
+      ],
+      "conditionalOutcomes": [
+        "Per-key relaxation only. If a future key legitimately needs 0-as-value, it opts in the same way -- do NOT widen the shared guard."
+      ],
+      "sourceRefs": [
+        "offices/pm/blockers/BL-031-us541-ac3-autorotate-off-is-inert-resolver-rejects-zero.md",
+        "offices/pm/issues/I-us536-shipped-autorotates-zero-is-rejected-by-resolver.md"
+      ],
+      "createdAt": "2026-08-11",
+      "updatedAt": "2026-08-12",
+      "priority": "P1",
+      "tier": "pi",
+      "gate": "none (Atlas Option-1 ratified)"
     },
     {
       "id": "US-542",
       "parent": "F-127",
       "type": "normal",
       "size": "S",
-      "status": "sprint-ready",
+      "status": "passed",
       "title": "Idle-face retirement -- STANDBY removed, DTC-since-key-off moves to Alerts",
       "goal": "As the operator, I don't want a redundant STANDBY face -- parked, the live IMU card already shows the true state, so the idle face adds nothing.",
       "definitionOfDone": [
@@ -7623,10 +7661,11 @@
         "offices/pm/inbox/2026-08-07-from-atlas-3p5in-legibility-font-size-more-screens.md"
       ],
       "createdAt": "2026-08-08",
-      "updatedAt": "2026-08-10",
+      "updatedAt": "2026-08-12",
       "priority": "P1",
       "tier": "pi",
-      "gate": "Atlas: cross-card move"
+      "gate": "Atlas: cross-card move",
+      "passes": true
     },
     {
       "id": "US-543",
@@ -7783,8 +7822,8 @@
     {
       "parent": "F-127",
       "type": "normal",
-      "status": "sprint-ready",
-      "passes": null,
+      "status": "passed",
+      "passes": true,
       "conditionalOutcomes": [],
       "sourceRefs": [
         "offices/uidevloper/proposals/2026-08-07-pi-3p5in-legibility-and-layout.md (+ .html)",
@@ -7792,7 +7831,7 @@
         "offices/pm/inbox/2026-08-07-from-atlas-3p5in-legibility-font-size-more-screens.md"
       ],
       "createdAt": "2026-08-10",
-      "updatedAt": "2026-08-10",
+      "updatedAt": "2026-08-12",
       "id": "US-540-a",
       "size": "M",
       "priority": "P1",
@@ -7814,8 +7853,8 @@
     {
       "parent": "F-127",
       "type": "normal",
-      "status": "sprint-ready",
-      "passes": null,
+      "status": "passed",
+      "passes": true,
       "conditionalOutcomes": [],
       "sourceRefs": [
         "offices/uidevloper/proposals/2026-08-07-pi-3p5in-legibility-and-layout.md (+ .html)",
@@ -7823,7 +7862,7 @@
         "offices/pm/inbox/2026-08-07-from-atlas-3p5in-legibility-font-size-more-screens.md"
       ],
       "createdAt": "2026-08-10",
-      "updatedAt": "2026-08-10",
+      "updatedAt": "2026-08-12",
       "id": "US-540-b",
       "size": "M",
       "priority": "P1",
@@ -8220,7 +8259,7 @@
       "parent": "F-127",
       "type": "normal",
       "size": "S",
-      "status": "sprint-ready",
+      "status": "passed",
       "priority": "P1",
       "tier": "pi",
       "gate": "confirm mode on Pi (when on)",
@@ -8243,7 +8282,74 @@
         "offices/pm/inbox/2026-08-10-from-atlas-v0.29.27-legibility-structural-gate.md"
       ],
       "createdAt": "2026-08-10",
-      "updatedAt": "2026-08-10"
+      "updatedAt": "2026-08-12",
+      "passes": true
+    },
+    {
+      "id": "US-553",
+      "parent": "F-119",
+      "type": "issue",
+      "size": "S",
+      "status": "sprint-ready",
+      "priority": "P1",
+      "tier": "both",
+      "gate": "groom-ready",
+      "title": "Harden against the overlay-import P0: deploy clears stale .pyc + guard absolute self-imports",
+      "goal": "As a maintainer, I want the deploy to clear stale bytecode and a lint to catch absolute self-imports, so the class of P0 that took the server down (US-530 from common.config.overlay + a stale .pyc masking the fix) cannot recur.",
+      "definitionOfDone": [
+        "[from the 2026-08-11 P0: obd-server crash-loop, ModuleNotFoundError: No module named 'common'] deploy-server.sh (and deploy-pi.sh) clear stale __pycache__/.pyc on the target after rsync, so a fixed .py is never masked by old bytecode (this factor made the first redeploy of the fix still fail).",
+        "a lint/guard flags ABSOLUTE self-imports inside src/common -- an intra-package import written as 'from common.X import Y' (with the common. prefix) instead of relative 'from .X import Y'. The server runs PYTHONPATH=repo-root importing the package as src.common, so a bare top-level 'common' is not importable and the import dies at startup. Pairs with US-547 (placeholder lint) / US-543 (parity guard).",
+        "ruff clean"
+      ],
+      "validationCriteria": [
+        {
+          "action": "deploy a .py fix over a stale .pyc; and add an absolute  self-import",
+          "outcome": "the deploy clears the .pyc (fix takes effect); the lint flags the absolute self-import"
+        }
+      ],
+      "conditionalOutcomes": [],
+      "sourceRefs": [
+        "2026-08-11 P0 secrets_loader overlay import server outage"
+      ],
+      "createdAt": "2026-08-11",
+      "updatedAt": "2026-08-11"
+    },
+    {
+      "id": "US-554",
+      "parent": "F-118",
+      "type": "normal",
+      "size": "S",
+      "status": "passed",
+      "passes": true,
+      "title": "index_lock preflight clears a STABILITY-VERIFIED non-empty stale lock (BL-032 self-heal)",
+      "goal": "As the loop, I want the ralph.sh preflight to self-heal the crashed-mid-write lock (a full index copy left behind), so a non-empty stale lock stops halting the sprint and needing a manual PM clear.",
+      "definitionOfDone": [
+        "[BL-032 root cause] offices/pm/scripts/index_lock.py refuses ONLY 0-byte locks today (DEFAULT_MAX_STALE_SIZE_BYTES=0, REFUSED_NONEMPTY). BL-032's lock was 376467 bytes -- a crashed `git` wrote the whole index into index.lock then died before the atomic rename -> a non-empty ORPHAN the preflight cannot clear. Add a two-sample STABILITY probe: sample (st_size, st_mtime_ns) twice separated by a short settle interval; a non-empty lock is admitted as orphaned ONLY when BOTH samples are byte-identical AND age > threshold AND no live git process. Rationale: a real mid-write index changes size/mtime between samples in well under 1s; a lock stable across the interval is not being written.",
+        "the existing fail-safes stay intact and FIRST: live-git-process gate unchanged (refuse), too-fresh gate unchanged (refuse), probe-failure => assume-live => refuse. A non-empty lock whose two samples DIFFER stays REFUSED_NONEMPTY (still mid-write). Only a *stable* non-empty lock becomes clearable.",
+        "new LockDecision path + message distinguishes 'cleared: verified-stale EMPTY' from 'cleared: verified-stale STABLE non-empty (2 samples identical, age Ns, no git)'. --check dry-run reports the same verdict without deleting.",
+        "settle interval + require-stability are parameters (injectable for tests, sane default ~1.5-2s); wire the CLI/preflight to enable stability-clearing so `python -m offices.pm.scripts.index_lock --repo <root>` in ralph.sh:237 now heals this case.",
+        "TDD: tests cover (a) stable non-empty aged no-git => CLEARED; (b) non-empty but size/mtime changes between samples => REFUSED_NONEMPTY; (c) live git => REFUSED_GIT_LIVE even if stable; (d) too-fresh => REFUSED_TOO_FRESH; (e) empty aged => CLEARED (regression, unchanged). ruff/mypy clean, coverage holds."
+      ],
+      "validationCriteria": [
+        {
+          "action": "simulate BL-032: a 376467-byte index.lock, mtime 80min old, no git process, size stable across two samples; run the preflight",
+          "outcome": "preflight CLEARS it and reports the stable-non-empty path; a lock whose size changes between samples is still refused"
+        }
+      ],
+      "conditionalOutcomes": [
+        "Standing risk (BL-032): Ralph's clone still lives on the shared NAS path -- this self-heal removes the STOP condition but not the contention. The durable fix (finish Ralph's clone move off the NAS) stays open, routed to CIO."
+      ],
+      "sourceRefs": [
+        "offices/pm/blockers/BL-032-stale-git-index-lock-blocks-ralph-commits.md",
+        "offices/pm/blockers/BL-029-stale-git-index-lock-blocks-all-ralph-commits.md",
+        "offices/pm/scripts/index_lock.py",
+        "offices/ralph/ralph.sh (preflight line ~237)"
+      ],
+      "createdAt": "2026-08-11",
+      "updatedAt": "2026-08-12",
+      "priority": "P1",
+      "tier": "infra",
+      "gate": "none"
     }
   ]
 }

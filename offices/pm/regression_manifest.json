@@ -732,6 +732,18 @@
       "affectedBySprints": [
         68
       ]
+    },
+    {
+      "id": "F-127",
+      "name": "Pi 3.5in legibility + card-set overhaul",
+      "category": "lifecycle",
+      "lastValidated": null,
+      "validatedBy": null,
+      "validationMethod": "manual_attestation",
+      "staleThresholdDays": 30,
+      "affectedBySprints": [
+        68
+      ]
     }
   ]
 }

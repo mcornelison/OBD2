@@ -4,13 +4,20 @@
 #   re-issued to the CIO-locked spec and MOVES INTO THE HOME SLOT as one slot
 #   with two faces (parked -> idle, driving -> live). Six groups:
 #     1. The home-slot swap. ONE slot decides its face; `homeFace` is that one
-#        decision. Parked (the emitter's `idle` SSOT) wins outright; otherwise a
-#        LIVE + FRESH states/imu shows the instrument and anything else falls
-#        back -- never a frozen motion display (AC-2/AC-3).
+#        decision. A LIVE + FRESH states/imu shows the instrument and anything
+#        else falls back -- never a frozen motion display (AC-2/AC-3).
+#        SUPERSEDED IN PART BY US-541 (F-127): "parked wins outright" is GONE.
+#        The live IMU instrument is now the PERMANENT home face, so the decision
+#        reads the motion feed only and no longer takes system-status at all.
+#        The always-on contract itself lives in test_carousel_imu_always_on.py;
+#        what stays here is the freshness/absence fallback US-508 built.
 #     2. The fallback must not FABRICATE A PARKED STATE. The shipped idle hero
-#        reads "STANDBY / engine off - OBD asleep". Rendering that while the car
+#        read "STANDBY / engine off - OBD asleep". Rendering that while the car
 #        is moving because the IMU feed died would be a confident lie about the
-#        vehicle, so the idle FACE carries two dispositions, not one.
+#        vehicle, so the idle FACE carried two dispositions, not one.
+#        DONE BY DELETION IN US-542: the STANDBY hero is retired, the face has
+#        ONE disposition, and no sentence claiming "engine off" survives in the
+#        file. The pins here are re-expressed against that single disposition.
 #     3. The compass TAPE (replaces the built rotating needle). The load-bearing
 #        property is DIRECTION: a tape that scrolls the wrong way is a plausible
 #        instrument that is exactly backwards, and it wraps across north.
@@ -112,128 +119,124 @@ def _sys(idle: bool) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def test_homeFace_parkedWithLiveImu_showsIdleFace():
+def test_homeFace_liveImu_showsLiveFace():
     """
-    Given: the emitter says idle (parked) AND the IMU feed is perfectly live
-    When: the home slot resolves its face
-    Then: it shows the calm idle face -- parked is the CIO-locked home view
-    """
-    face = _view("homeFace", _imu(), _sys(True), _TS_MS)
-    assert face["face"] == "idle"
-    assert face["parked"] is True
-
-
-def test_homeFace_drivingWithLiveImu_showsLiveFace():
-    """
-    Given: the emitter says NOT idle and states/imu is fresh + available
+    Given: states/imu is fresh + available
     When: the home slot resolves its face
     Then: the home slot IS the live instrument (the US-508 swap)
+
+    US-541 note: the `_sys` fixture no longer reaches this decision at all --
+    the vehicle state was dropped from the signature so the face cannot be
+    re-coupled to it. The parked-shows-live contract is pinned in
+    test_carousel_imu_always_on.py.
     """
-    face = _view("homeFace", _imu(), _sys(False), _TS_MS)
+    face = _view("homeFace", _imu(), _TS_MS)
     assert face["face"] == "live"
-    assert face["parked"] is False
 
 
-def test_homeFace_drivingWithStaleImu_fallsBackToIdleFace():
+def test_homeFace_staleImu_fallsBackToIdleFace():
     """
-    Given: the vehicle is driving but the last IMU write is older than the window
+    Given: the last IMU write is older than the freshness window
     When: the home slot resolves its face
     Then: it falls back to the idle face -- never a frozen motion display (AC-3)
     """
     stale_ms = _TS_MS + int((_STALE_SEC + 1.0) * 1000)
-    face = _view("homeFace", _imu(), _sys(False), stale_ms)
+    face = _view("homeFace", _imu(), stale_ms)
     assert face["face"] == "idle"
-    assert face["parked"] is False
     assert "stale" in face["reason"]
 
 
-def test_homeFace_drivingWithAbsentImuFile_fallsBackToIdleFace():
+def test_homeFace_absentImuFile_fallsBackToIdleFace():
     """
     Given: there is no states/imu file at all (null payload)
     When: the home slot resolves its face
     Then: idle face with an honest reason -- absence is not a motion reading
     """
-    face = _view("homeFace", None, _sys(False), _TS_MS)
+    face = _view("homeFace", None, _TS_MS)
     assert face["face"] == "idle"
     assert face["reason"]
 
 
-def test_homeFace_drivingWithUnwiredSensor_fallsBackToIdleFace():
+def test_homeFace_unwiredSensor_fallsBackToIdleFace():
     """
     Given: the bridge writes available:false (the sensor is not wired)
     When: the home slot resolves its face
     Then: idle face carrying the bridge's own reason, not a generic word
     """
     payload = _imu(available=False, reasons={"gLat": "sensor_absent"})
-    face = _view("homeFace", payload, _sys(False), _TS_MS)
+    face = _view("homeFace", payload, _TS_MS)
     assert face["face"] == "idle"
     assert face["reason"] == "sensor not detected"
 
 
-def test_homeFace_unreadableSystemStatus_stillHonoursTheImuFeed():
+def test_homeFace_carriesNoParkedVerdictForTheRendererToActOn():
     """
-    Given: system-status is absent (parked/driving is genuinely unknown)
-    When: the IMU feed is live
-    Then: the live face shows -- carouselIdle fails closed to NOT-parked, so an
-          unreadable vehicle state can never assert a calm parked view
+    Given: US-541 removed system-status from the face decision
+    When: the face resolves
+    Then: there is no `parked` field on it.
+
+    US-508 shipped one so the renderer could suppress the motion reason and show
+    the calm STANDBY hero instead. Leaving the field behind would let a renderer
+    read `face.parked` -- always falsy now -- and branch on a verdict nothing
+    computes: a dead field is how the retired coupling would grow back.
     """
-    face = _view("homeFace", _imu(), None, _TS_MS)
-    assert face["face"] == "live"
-    assert face["parked"] is False
+    assert "parked" not in _view("homeFace", _imu(), _TS_MS)
 
 
 # ---------------------------------------------------------------------------
-# 2. The idle FACE must not fabricate a parked state (the honesty trap)
+# 2. The fallback FACE must not fabricate a parked state (the honesty trap)
+#
+# US-542 CLOSED THIS TRAP BY DELETION rather than by a better condition: with
+# the STANDBY hero retired there is no longer a sentence in the file that claims
+# "engine off", so no code path can reach one. What stays here is the pin that
+# the claim has not grown back, re-expressed against the surviving single
+# disposition. The two tests that asserted the PARKED half (its hero, and its
+# footer differing from the motionless one) are gone with the half they
+# described -- see tests/ui/test_carousel_idle_face_retirement.py, which pins
+# the retirement itself.
 # ---------------------------------------------------------------------------
 
 
-def test_idleCardView_parked_keepsTheShippedStandbyHero():
+def test_idleCardView_deadFeed_neverClaimsEngineOff():
     """
-    Given: the home slot is idle because the car is genuinely parked
-    When: the idle view is assembled with no motion reason
-    Then: the shipped STANDBY hero is unchanged (US-481 relocation, not a redesign)
-    """
-    view = _view("idleCardView", _sys(True), None, None, None)
-    assert view["hero"]["title"] == "STANDBY"
-    assert view["hero"]["level"] == "neutral"
-
-
-def test_idleCardView_drivingWithDeadFeed_neverClaimsEngineOff():
-    """
-    Given: the car is MOVING but the motion feed is down, so the idle face shows
-    When: the idle view is assembled with the motion reason
+    Given: the motion feed is down, so the fallback face shows
+    When: the view is assembled with the motion reason
     Then: the hero says the FEED is missing -- it never says "engine off", which
           would be a confident lie about the vehicle built out of a sensor fault
     """
-    view = _view("idleCardView", _sys(False), None, None, "sensor not detected")
+    view = _view("idleCardView", _sys(False), None, "sensor not detected")
     assert view["hero"]["title"] != "STANDBY"
     assert "engine off" not in view["hero"]["substate"]
     assert "sensor not detected" in view["hero"]["substate"]
 
 
-def test_idleCardView_drivingWithDeadFeed_keepsTheRealFacts():
+def test_idleCardView_deadFeed_keepsTheRealFacts():
     """
-    Given: the motion-absent idle face
+    Given: the motion-absent fallback face
     When: the view is assembled
-    Then: the three fact tiles are still the real ones -- one dead instrument
-          does not blank the readouts that are still true
+    Then: the surviving fact tiles are still the real ones -- one dead
+          instrument does not blank the readouts that are still true.
+
+          Two, not three: `faults` moved to the Alerts card in US-542. The
+          set-equality is the pin -- it fails both if a tile is lost and if one
+          is quietly re-borrowed.
     """
-    view = _view("idleCardView", _sys(False), None, None, "no compass reading")
-    assert set(view["facts"]) == {"lastDrive", "battery", "faults"}
+    view = _view("idleCardView", _sys(False), None, "no compass reading")
+    assert set(view["facts"]) == {"lastDrive", "battery"}
 
 
 def test_idleCardView_footerIsPartOfTheViewNotAHiddenDomLiteral():
     """
-    Given: the two idle dispositions need two different footers
-    When: the view is assembled either way
+    Given: one disposition now, but the same drift risk US-510 had to repair
+    When: the view is assembled
     Then: the footer is a VIEW field, so the copy is pinnable rather than buried
-          in the renderer where no test can reach it
+          in the renderer where no test can reach it. The `!= parked footer`
+          half of this pin retired with the parked footer; what remains is that
+          the field exists and carries the fault, not a navigation hint.
     """
-    parked = _view("idleCardView", _sys(True), None, None, None)
-    motionless = _view("idleCardView", _sys(False), None, None, "sensor not detected")
-    assert parked["footer"]
-    assert motionless["footer"]
-    assert parked["footer"] != motionless["footer"]
+    view = _view("idleCardView", _sys(False), None, "sensor not detected")
+    assert view["footer"]
+    assert "swipe" not in view["footer"]
 
 
 # ---------------------------------------------------------------------------
@@ -655,23 +658,32 @@ def test_htmlStripper_keepsMarkupAndDropsProse():
     """
     stripped = _strip_html_comments(_read(_HTML))
     assert 'id="home-card"' in stripped
-    assert 'data-states="battery-health light ltft-trend"' in stripped
+    assert 'data-state="ltft-trend"' in stripped
     assert "<!--" not in stripped
     assert "US-482 letterbox scaling" not in stripped
 
 
-def test_html_landsTheLockedFourCardCarousel():
+def test_html_landsExactlyOneHomeSlot():
     """
-    Given: the CIO-locked round-2 set (Home / System Status / Health / Alerts)
-    When: the card sections are counted
-    Then: exactly four. US-507 left five by design (it owns the Health merge, not
-          the Motion absorption); US-508 is the story that reaches the locked
-          number, so this pin is the joint discharge of both.
+    Given: the CIO-locked "one slot, two faces" home design
+    When: the card sections are scanned
+    Then: exactly ONE `data-idle-home` slot, and no standalone Motion card
+
+    NARROWED BY US-540-b, which is what this test was always about. It used to
+    assert a card COUNT of four, which conflated two different facts: US-508's
+    home absorption (this story's subject, and permanent) and the card set of
+    the day (which US-540-b just moved to six, and which a later story may move
+    again). The count now lives with the set it describes, in
+    tests/ui/test_carousel_card_set.py; what stays here is the invariant --
+    the live instrument is a FACE of the home slot, never a screen of its own,
+    so it can never be polled and painted twice.
     """
-    html = _read(_HTML)
-    assert len(re.findall(r'<section class="card"', html)) == 4
-    for label in ("Home", "System Status", "Health", "Alerts"):
-        assert f'aria-label="{label}"' in html
+    # Comment-stripped, like the two markup pins above: the home slot's own
+    # comment block NAMES `data-idle-home` while explaining it, so a raw count
+    # reads 2 and fails on prose rather than on markup.
+    html = _strip_html_comments(_read(_HTML))
+    assert len(re.findall(r"data-idle-home", html)) == 1
+    assert 'aria-label="Motion"' not in html
 
 
 def test_js_pollsTheLiveFeedAtAboutTenHertz():

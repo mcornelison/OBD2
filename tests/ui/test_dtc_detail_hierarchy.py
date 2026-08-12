@@ -44,6 +44,8 @@ import subprocess
 
 import pytest
 
+from tests.ui.css_type_scale import resolveFontPx
+
 # Reuse the canonical parsers rather than re-implementing them: `_ruleBlock` is
 # line-anchored, so a DESCENDANT rule can never be mistaken for the base rule it
 # overrides -- which is the exact distinction this story turns on.
@@ -96,7 +98,13 @@ def _code(severity: str = "stop", **over: object) -> dict:
 
 
 def _px(block: str, prop: str) -> int:
-    """The px magnitude of a declaration in a rule body ( -1 when absent)."""
+    """The px magnitude of a LITERAL declaration in a rule body (-1 when absent).
+
+    Still correct for the box metrics below (`height`/`min-height` are literals
+    and stay literals). `font-size` moved onto the US-539 type scale, so those
+    call sites use `resolveFontPx` instead -- this helper would report -1 for a
+    `var(--fs-*)` ref, i.e. "absent" for a size that is plainly declared.
+    """
     match = re.search(rf"(?<![-\w]){re.escape(prop)}:\s*(\d+)px", block)
     return int(match.group(1)) if match else -1
 
@@ -139,8 +147,8 @@ def test_directiveBand_isLargerThanTheDetailBodyBaseCopy():
     must read from arm's length in a moving car, so a token 1px bump is not the
     hierarchy step the story asks for -- a full step off the base copy is."""
     css = _read(_CSS)
-    band = _px(_ruleBlock(css, ".detail-directive {"), "font-size")
-    base = _px(_ruleBlock(css, ".detail-fix-text"), "font-size")
+    band = resolveFontPx(css, _ruleBlock(css, ".detail-directive {"))
+    base = resolveFontPx(css, _ruleBlock(css, ".detail-fix-text"))
     assert base > 0, "base copy size moved -- re-point this guard"
     assert band >= base + 4, f"directive {band}px is not a step above base copy {base}px"
 
@@ -155,7 +163,7 @@ def test_directiveValueSpan_inheritsTheBandsTypographyAndTier():
     assert "var(--text-primary)" not in block, (
         ".detail-value still clobbers its row's colour -- the tier ramp is inert"
     )
-    assert _px(block, "font-size") < 0, (
+    assert resolveFontPx(_read(_CSS), block) < 0, (
         ".detail-value still clobbers its row's size -- the band cannot be larger"
     )
     assert "inherit" in block

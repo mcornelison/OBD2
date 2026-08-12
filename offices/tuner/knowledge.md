@@ -291,7 +291,7 @@ This is the fundamental constraint of our system. More PIDs = slower updates per
 | 0x0C | Engine RPM | rpm | HIGH — fundamental reference axis | ✅ supported |
 | 0x0D | Vehicle Speed | km/h | Context — gear detection, load state | ✅ supported |
 | 0x0E | Timing Advance | deg BTDC | HIGH — knock indicator (ECU pulls timing when it detects knock) | ✅ supported |
-| 0x0F | Intake Air Temperature | C | Medium — heat soak detection, intercooler efficiency | ✅ supported |
+| 0x0F | Intake Air Temperature | C | Medium — underhood heat-soak detection. **NOT intercooler efficiency** — see caveat below | ✅ supported |
 | 0x10 | MAF Air Flow Rate | g/s | HIGH — airflow measurement, MAF saturation detection | ✅ supported |
 | 0x11 | Throttle Position | % | HIGH — driver input, WOT detection | ✅ supported |
 | 0x14 | O2 Sensor B1S1 (upstream) | V | **LIMITED** — narrowband, only rich/lean toggle at stoich | ✅ supported |
@@ -318,6 +318,18 @@ Because PID 0x42 is unsupported on the 2G ECU, battery voltage for the primary d
 - **Not subject to OBD-II bandwidth constraints** — adapter-local measurement, responds instantly
 
 Sprint 14 US-199 adds this to the Pi poll set as the battery voltage source.
+
+### CAVEAT: PID 0x0F (Intake Air Temp) is PRE-TURBO — not charge temp
+
+**Corrected 2026-08-07.** This row previously claimed IAT gives "intercooler efficiency." It does not, and the error would have shipped to the dashboard as a mislabelled tile.
+
+On the 2G the IAT sensor is integrated into the **AFM / air-filter housing** — i.e. **upstream of the turbo and the intercooler**. It reads inlet/underhood air temperature, **not charge-air temperature**. Consequences:
+
+- **Label it "INTAKE AIR" — never "CHARGE TEMP" or "IC OUT".** A turbo audience reads a "charge temp" readout as post-intercooler; this is not that.
+- **Cannot measure intercooler efficiency.** That needs a second sensor in the post-IC charge pipe.
+- **Informational only, no 🔴 band.** IAT alone doesn't hurt an engine — IAT + boost + knock does, and neither boost nor knock is readable on this car. Advisory amber ~≥60 °C = heat soak (expect the ECU pulling timing/power).
+
+**Supporting observation (soft, not proof)**: drives 37/38 (2026-08-07, parked warm idle, no airflow) — IAT climbed **43 → 53 °C** between consecutive idles, the classic underhood heat-soak signature. **Confirming test**: a sharp IAT rise tracking *throttle/boost* within seconds would indicate a post-IC location and this caveat would need revising. Untested — no moving-vehicle data since drive 34.
 
 ### CRITICAL CAVEAT: PID 0x0B (Manifold Pressure)
 
