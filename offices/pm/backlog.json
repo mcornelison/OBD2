@@ -5013,10 +5013,13 @@
       "tasks": [],
       "status": "sprint-ready",
       "createdAt": "2026-07-15",
-      "updatedAt": "2026-08-10",
+      "updatedAt": "2026-08-12",
       "priority": "P1",
       "tier": "pi",
-      "gate": "after OS rename (B-102 static-IP; CIO wants)"
+      "gate": "after OS rename (B-102 static-IP; CIO wants)",
+      "notes": [
+        "2026-08-12: Pi pinned to 10.27.27.27 (wlan0 MAC 88:a2:9e:84:46:1c). deploy.conf + addresses.sh + config.json canonicalized to .27. Router-side DHCP reservation (MAC->.27) owed on the DeathstarWifi router (10.27.27.1) to make it survive OS/DHCP changes."
+      ]
     },
     {
       "id": "US-474",

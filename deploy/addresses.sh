@@ -27,7 +27,7 @@
 # ----------------------------------------------------------------------------
 # Pi tier (chi-eclipse-01) -- mirrors config.json pi.network.*
 # ----------------------------------------------------------------------------
-PI_HOST="${PI_HOST:-10.27.27.28}"
+PI_HOST="${PI_HOST:-10.27.27.27}"   # static reservation (B-102/US-473): wlan0 MAC 88:a2:9e:84:46:1c -> .27. CIO 2026-08-12.
 PI_USER="${PI_USER:-mcornelison}"
 PI_PATH="${PI_PATH:-/home/mcornelison/Projects/Eclipse-01}"
 PI_PORT="${PI_PORT:-22}"

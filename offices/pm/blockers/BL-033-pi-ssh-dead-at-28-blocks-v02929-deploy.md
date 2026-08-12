@@ -7,7 +7,7 @@
 | **Blocks** | The Pi tier of the **V0.29.29** deploy (Phase 6–7). Also blocks the on-Pi legibility validation (`/sprint-validated`) and, downstream, `/chain-validated` (V0.29 → main). |
 | **Severity** | **HIGH** — the sprint is merged + versioned on `dev` but cannot reach the hardware; the whole sprint is Pi-side. |
 | **Owner** | **CIO** (physical diagnostics — moving the Pi to the inside office bench). |
-| **Status** | Open — CIO diagnosing on the bench. |
+| **Status** | **RESOLVED 2026-08-12** — CIO moved the Pi to the office bench; it came up reachable at **`.27`** (SSH open, confirmed Chi-Eclips-01, wlan0 MAC `88:a2:9e:84:46:1c`). V0.29.29 deployed to Pi `.27` + server (`46bb187`), both verified. Pi canonicalized to `.27` as the static reservation (deploy.conf + addresses.sh + config.json). **Follow-up owed:** router-side DHCP reservation MAC→`.27` on the DeathstarWifi router (`10.27.27.1`) so `.27` survives DHCP/OS changes (B-102/US-473). Root SSH-refused-at-`.28` cause not fully RCA'd — likely a stale `.28` lease on a different device; the `.27` pin sidesteps it. |
 
 ## Symptom
 
