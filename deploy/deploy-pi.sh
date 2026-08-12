@@ -828,6 +828,46 @@ step_set_gpu_cma() {
     remote "sudo bash '${PI_PATH}/deploy/set-gpu-cma.sh'"
 }
 
+step_set_display_mode() {
+    # US-552 / F-127 (Atlas A-16 display-pipeline fidelity): pin the KMS output
+    # mode to the panel's native 480x320 via a `video=<connector>:480x320` token
+    # in /boot/firmware/cmdline.txt. Unpinned, the Pi scans out whatever EDID
+    # negotiation lands on -- likely 1080p, which the 3.5" panel then
+    # downsamples, softening every glyph and raising the legibility floor the
+    # US-540 type scale was set against.
+    #
+    # Same posture as step_set_gpu_cma above: an idempotent standalone script,
+    # run with sudo, re-asserted on EVERY deploy so a Pi rebuilt via --init (or
+    # a cmdline.txt rewritten by an OS image update) lands back on the intended
+    # mode. Runs AFTER sync_tree so deploy/set-display-mode.sh exists on the Pi.
+    #
+    # YES, cmdline.txt -- the surface step_set_gpu_cma deliberately refuses. On a
+    # Pi 5 there is no alternative: the legacy config.txt hdmi_group/hdmi_mode
+    # settings are a Pi 4-and-earlier firmware path. The script bounds the risk
+    # instead: it discovers the connector from /sys/class/drm rather than
+    # assuming one, writes NOTHING unless exactly one connector is connected and
+    # the panel itself advertises the target mode, and verifies the composed
+    # line (one line, root= and every original token intact) before installing
+    # it -- restoring the pristine backup if the post-write read disagrees.
+    #
+    # It exits 0 on every "did not pin" path (no panel on a bench deploy, an
+    # ambiguous two-panel setup, an operator-set video= left alone) so a bench
+    # deploy cannot be halted by a display that is not plugged in. Non-zero
+    # means a genuinely malformed boot cmdline or a failed write -- both of
+    # which MUST stop the deploy before anyone reboots this Pi.
+    #
+    # The change takes effect on the NEXT BOOT only; the script says so rather
+    # than letting the deploy imply the panel is already rendering 1:1.
+    echo "--- Step: Pinning HDMI/KMS output to the panel-native mode (US-552 / F-127) ---"
+    if $DRY_RUN; then
+        echo "DRY-RUN would run: sudo bash ${PI_PATH}/deploy/set-display-mode.sh"
+        echo "DRY-RUN would verify: /boot/firmware/cmdline.txt carries video=<connector>:480x320"
+        echo "DRY-RUN note: takes effect on next reboot; confirm with cat /sys/class/graphics/fb0/virtual_size"
+        return 0
+    fi
+    remote "sudo bash '${PI_PATH}/deploy/set-display-mode.sh'"
+}
+
 step_install_rfkill_unblock() {
     # BL-025 P0 (V0.29.22 hotfix, CIO-directed): make the boot-time radio
     # unblock REPO-MANAGED so a reflash or `--init` cannot lose it.
@@ -2017,6 +2057,14 @@ step_enforce_eeprom_power_off_on_halt
 # scripts exist on the Pi. Takes effect on the next reboot; the script says so
 # rather than letting the deploy imply the pool was raised immediately.
 step_set_gpu_cma
+
+# US-552 / F-127: pin the HDMI/KMS output mode to the panel-native 480x320.
+# Ordered directly after step_set_gpu_cma because it is the same class of step
+# -- an idempotent BOX-level boot-config re-assertion that needs sync_tree to
+# have put its standalone script on the Pi, and that takes effect on the next
+# reboot. Both touch the display pipeline, so keeping them adjacent keeps the
+# "what did the deploy change about the screen" answer in one place.
+step_set_display_mode
 
 # US-477 / F-120: re-assert the canonical OBDLink MAC into /etc/default/obdlink
 # on EVERY deploy so a drifted Pi (like the 2026-07-17 phantom that captured
