@@ -12,9 +12,19 @@ safe to remove ONLY when it is definitively orphaned, i.e. ALL of --
    handbook §13 Rule-4: never force a lock while a git process is running).
 2. **Aged past a threshold** -- a fresh lock may belong to a commit still
    finishing on the slow share.
-3. **Empty (0 bytes)** -- a live commit writes the new index *into* index.lock
-   before the atomic rename, so 0 bytes means nothing was pending; a non-empty
-   lock is treated as a possible mid-write and refused (fail safe).
+3. **Not being written** -- a live commit writes the new index *into* index.lock
+   before the atomic rename. An empty (0-byte) lock is self-evidently not
+   mid-write. A NON-empty lock is admitted only when a two-sample stability
+   probe -- `(st_size, st_mtime_ns)` read twice across a short settle interval
+   -- comes back byte-identical; if it changed, a live write is in progress and
+   the lock is refused (fail safe).
+
+   US-554 added that probe because condition 3 used to be "empty, full stop",
+   and BL-032 was a **376467-byte** orphan: a crashed `git` wrote the whole
+   index into index.lock and died before the rename. Size cannot tell that
+   apart from a live mid-write -- only *change over time* can -- so a size-only
+   rule had to refuse it, and the refusal cost a sprint two uncommitted
+   stories and a manual PM clear.
 
 `clearStaleIndexLock` is the single-shot decision; `clearStaleIndexLockWithBackoff`
 retries with the project backoff schedule so a genuinely-live commit is waited
@@ -28,8 +38,8 @@ Usage (CLI -- a safe one-command clear that replaces a manual forensic + `rm`):
     python -m offices.pm.scripts.index_lock --repo . --check # dry-run, decide only
 
 Exit code 0 = safe to proceed (no lock, or the lock was cleared); non-zero = the
-guard refused (a live process, a too-fresh lock, or a non-empty lock) and the
-situation needs a human. Intended to be wired ahead of PM commit rituals and
+guard refused (a live process, a too-fresh lock, or a lock still being written)
+and the situation needs a human. Intended to be wired ahead of PM commit rituals and
 Ralph's lock-blocked commit retry (see the TD-057 pay-down note to PM).
 """
 
@@ -51,8 +61,15 @@ INDEX_LOCK_RELPATH = ".git/index.lock"
 # healthy commit releases the lock in well under a second even on the share.
 DEFAULT_STALE_AGE_SECONDS = 120.0
 
-# Only an empty lock is treated as orphaned (see module docstring, condition 3).
+# Only an empty lock is treated as orphaned WITHOUT further evidence (see module
+# docstring, condition 3). A non-empty lock needs the stability probe below.
 DEFAULT_MAX_STALE_SIZE_BYTES = 0
+
+# Gap between the two stability samples (US-554 / BL-032). A real mid-write
+# index changes size or mtime in well under a second, so ~1.5s is ample to tell
+# a live writer from a crashed one -- while staying short enough that the
+# ralph.sh preflight pays it only on the rare non-empty-lock path.
+DEFAULT_SETTLE_INTERVAL_SECONDS = 1.5
 
 # Backoff schedule (seconds) for waiting out a live/fresh lock -- the project
 # standard [1, 2, 4, 8, 16] retry ladder.
@@ -67,7 +84,8 @@ class LockDecision(Enum):
     """The outcome of a guarded stale-lock evaluation."""
 
     ABSENT = "absent"  # no lock present -- safe to proceed
-    CLEARED = "cleared"  # verified-stale lock removed (or would-remove on dry-run)
+    CLEARED = "cleared"  # verified-stale EMPTY lock removed (or would-remove on dry-run)
+    CLEARED_STABLE_NONEMPTY = "cleared_stable_nonempty"  # stability-verified orphan removed
     REFUSED_GIT_LIVE = "refused_git_live"  # a live git process may own it
     REFUSED_TOO_FRESH = "refused_too_fresh"  # younger than the age threshold
     REFUSED_NONEMPTY = "refused_nonempty"  # non-zero -- possible mid-write
@@ -99,7 +117,11 @@ class LockCheckResult:
     @property
     def safeToProceed(self) -> bool:
         """True when there is no blocking lock (absent or successfully cleared)."""
-        return self.decision in (LockDecision.ABSENT, LockDecision.CLEARED)
+        return self.decision in (
+            LockDecision.ABSENT,
+            LockDecision.CLEARED,
+            LockDecision.CLEARED_STABLE_NONEMPTY,
+        )
 
 
 def lockPath(repoRoot: Path | str) -> Path:
@@ -163,11 +185,35 @@ def _defaultGitProcessRunning() -> bool:
         return True  # cannot determine -> assume live -> refuse to delete
 
 
+def _stabilitySample(lockFile: Path) -> tuple[int, int] | None:
+    """Sample the lock's (size, mtime_ns) pair for the stability comparison.
+
+    The PAIR is deliberate: a writer that rewrites the same number of bytes
+    would slip past a size-only comparison, and a filesystem with coarse mtime
+    granularity can hide a same-second change that the size reveals.
+
+    Args:
+        lockFile: The `.git/index.lock` path to sample.
+
+    Returns:
+        `(st_size, st_mtime_ns)`, or None if the lock no longer exists (a
+        finishing git renamed it away between samples).
+    """
+    try:
+        stat = lockFile.stat()
+    except FileNotFoundError:
+        return None
+    return (stat.st_size, stat.st_mtime_ns)
+
+
 def clearStaleIndexLock(
     repoRoot: Path | str,
     *,
     ageThresholdSeconds: float = DEFAULT_STALE_AGE_SECONDS,
     maxStaleSizeBytes: int = DEFAULT_MAX_STALE_SIZE_BYTES,
+    allowStableNonEmpty: bool = True,
+    settleIntervalSeconds: float = DEFAULT_SETTLE_INTERVAL_SECONDS,
+    settleSleep=time.sleep,
     now: float | None = None,
     gitProcessRunning=None,
     remove: bool = True,
@@ -181,8 +227,17 @@ def clearStaleIndexLock(
     Args:
         repoRoot: Working-tree root containing `.git`.
         ageThresholdSeconds: Minimum lock mtime age to consider it stale.
-        maxStaleSizeBytes: Maximum lock size (bytes) to consider it orphaned;
-            defaults to 0 (only an empty lock qualifies).
+        maxStaleSizeBytes: Maximum lock size (bytes) that qualifies as orphaned
+            WITHOUT the stability probe; defaults to 0 (only an empty lock).
+        allowStableNonEmpty: When True (default), a LARGER lock may still be
+            cleared if the two-sample stability probe proves nothing is writing
+            it (US-554 / BL-032). When False, any non-empty lock is refused --
+            the conservative pre-US-554 posture, kept reachable for a caller
+            that wants it (CLI `--no-stable-nonempty`).
+        settleIntervalSeconds: Gap between the two stability samples.
+        settleSleep: Sleep callable for that gap (injectable for tests).
+            Distinct from `clearStaleIndexLockWithBackoff`'s `sleep`, which is
+            the retry ladder.
         now: Current epoch seconds (injectable for tests); defaults to `time.time()`.
         gitProcessRunning: Zero-arg callable returning whether a live git process
             is present; defaults to the platform detector (fail-safe on error).
@@ -222,14 +277,66 @@ def clearStaleIndexLock(
             ageSeconds,
             f"refused: lock age {ageSeconds:.0f}s < threshold {ageThresholdSeconds:.0f}s",
         )
-    # 3) A non-empty lock may be a mid-write index -- fail safe.
+    # 3) A non-empty lock may be a mid-write index. Size alone cannot tell a
+    #    live writer from a crashed one (BL-032: a whole 376kB index copy left
+    #    behind), so ask the question size cannot answer -- is it still
+    #    CHANGING? -- with a two-sample stability probe.
     if sizeBytes > maxStaleSizeBytes:
+        if not allowStableNonEmpty:
+            return LockCheckResult(
+                LockDecision.REFUSED_NONEMPTY,
+                lockFile,
+                sizeBytes,
+                ageSeconds,
+                f"refused: lock is {sizeBytes} bytes (> {maxStaleSizeBytes}); possible mid-write",
+            )
+
+        firstSample = (sizeBytes, stat.st_mtime_ns)
+        settleSleep(settleIntervalSeconds)
+        secondSample = _stabilitySample(lockFile)
+
+        # The happy version of mid-write: a finishing git renamed the lock away
+        # while we waited. Nothing to clear, and nothing was deleted by us.
+        if secondSample is None:
+            return LockCheckResult(
+                LockDecision.ABSENT,
+                lockFile,
+                sizeBytes,
+                ageSeconds,
+                "index.lock disappeared during the settle interval (a git finished)",
+            )
+        # The settle interval OPENS A WINDOW the pre-US-554 guard never had: a
+        # git process can start inside it. Re-assert the invariant before the
+        # unlink, or we delete a lock under a process that is live right now.
+        if (gitProcessRunning or _defaultGitProcessRunning)():
+            return LockCheckResult(
+                LockDecision.REFUSED_GIT_LIVE,
+                lockFile,
+                sizeBytes,
+                ageSeconds,
+                "refused: a git process appeared during the settle interval",
+            )
+        if secondSample != firstSample:
+            return LockCheckResult(
+                LockDecision.REFUSED_NONEMPTY,
+                lockFile,
+                sizeBytes,
+                ageSeconds,
+                f"refused: lock changed during the {settleIntervalSeconds:.1f}s settle "
+                f"({firstSample} -> {secondSample}); a live write is in progress",
+            )
+
+        verb = "would clear (dry-run)" if not remove else "cleared"
+        if remove:
+            lockFile.unlink(missing_ok=True)
         return LockCheckResult(
-            LockDecision.REFUSED_NONEMPTY,
+            LockDecision.CLEARED_STABLE_NONEMPTY,
             lockFile,
             sizeBytes,
             ageSeconds,
-            f"refused: lock is {sizeBytes} bytes (> {maxStaleSizeBytes}); possible mid-write",
+            f"{verb} verified-stale STABLE non-empty index.lock "
+            f"({sizeBytes} bytes, 2 samples identical over "
+            f"{settleIntervalSeconds:.1f}s, age {ageSeconds:.0f}s, no git process)",
         )
 
     # Verified orphaned: empty, aged, no live git process.
@@ -255,8 +362,10 @@ def clearStaleIndexLockWithBackoff(
     """Clear a stale lock, waiting out a live/fresh lock with backoff first.
 
     Retries only on outcomes that waiting could change (a live commit finishing,
-    or a borderline-fresh lock aging out). A non-empty lock is terminal -- it
-    won't cure by waiting -- so it returns immediately for escalation. The
+    or a borderline-fresh lock aging out). REFUSED_NONEMPTY is terminal: since
+    US-554 it means "a write is actively in progress", which the caller's next
+    preflight will re-evaluate from scratch -- and an in-progress write is the
+    one case a human should see rather than have spun on. The
     discipline invariant holds across every retry: a persistently-live lock is
     refused (never deleted) after the schedule is exhausted.
 
@@ -306,6 +415,20 @@ def main(argv: list[str] | None = None) -> int:
         help="number of backoff retries to wait out a live/fresh lock (default: full schedule)",
     )
     parser.add_argument(
+        "--settle-interval",
+        type=float,
+        default=DEFAULT_SETTLE_INTERVAL_SECONDS,
+        help=(
+            "seconds between the two stability samples of a non-empty lock "
+            f"(default: {DEFAULT_SETTLE_INTERVAL_SECONDS})"
+        ),
+    )
+    parser.add_argument(
+        "--no-stable-nonempty",
+        action="store_true",
+        help="refuse EVERY non-empty lock (pre-US-554 posture; skips the stability probe)",
+    )
+    parser.add_argument(
         "--check",
         action="store_true",
         help="dry-run: decide only, never delete",
@@ -317,6 +440,8 @@ def main(argv: list[str] | None = None) -> int:
         args.repo,
         retrySchedule=schedule,
         ageThresholdSeconds=args.age_threshold,
+        allowStableNonEmpty=not args.no_stable_nonempty,
+        settleIntervalSeconds=args.settle_interval,
         remove=not args.check,
     )
     print(f"[index_lock] {result.decision.value}: {result.message}")

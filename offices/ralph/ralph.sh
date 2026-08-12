@@ -230,9 +230,11 @@ for ((i=1; i<=$1; i++)); do
   # dead lock from a killed prior iteration can't stall the whole sprint. This
   # runs in the CIO's shell (OUTSIDE the claude harness), which CAN touch .git/
   # -- Ralph cannot (harness sensitive-path guard blocks him even though rm/mv
-  # are in his allowlist). The US-467 helper clears ONLY a lock that is 0-byte
-  # + aged past its threshold + owned by NO live git process; it REFUSES a
-  # non-empty/live lock (that rare case still escalates to a manual PM clear).
+  # are in his allowlist). The US-467 helper clears a lock only when it is aged
+  # past its threshold AND owned by NO live git process AND provably not being
+  # written -- either 0-byte, or (US-554/BL-032) non-empty but byte-identical
+  # across two samples taken ~1.5s apart. It still REFUSES a live/changing lock
+  # (that rare case escalates to a manual PM clear).
   # Best-effort -- never aborts the loop.
   python -m offices.pm.scripts.index_lock --repo "$PROJECT_ROOT" || true
 

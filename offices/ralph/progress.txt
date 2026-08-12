@@ -401,3 +401,68 @@ Task: Resolver honours autoRotateS:0 as a real OFF value (unblocks US-541 AC-3 /
   PRESENCE assertions are VACUOUS. Eight independent copies exist across tests/ui.
 - **Gotcha**: `git grep -n -B3 -A12 <pat> -- <paths>` was REFUSED by the harness;
   the Grep tool with `-C` worked on `src/` (it still cannot see `specs/UI/dist/`).
+---
+
+## 2026-08-11 - US-554 (Rex / Session 8)
+Task: index_lock preflight clears a STABILITY-VERIFIED non-empty stale lock (BL-032 self-heal)
+
+### What was implemented:
+- A **two-sample stability probe** in `offices/pm/scripts/index_lock.py`. Size
+  cannot tell BL-032's 376467-byte crashed orphan from a live mid-write index --
+  both are big -- so the guard now asks what size cannot answer: *is it still
+  CHANGING?* Sample `(st_size, st_mtime_ns)`, wait the settle interval, sample
+  again. Identical => orphan => clearable. Different => live writer =>
+  `REFUSED_NONEMPTY`, as before.
+- **The live-git gate is re-asserted AFTER the settle** -- not in the AC, and the
+  story would have opened a hole without it (see Learnings).
+- New `LockDecision.CLEARED_STABLE_NONEMPTY` (in `safeToProceed`, not in
+  `_WAITABLE`) with a message carrying its own evidence, so a PM reading the
+  preflight line knows whether a 0-byte nothing or a 376kB index copy was removed.
+- Params `allowStableNonEmpty` (default True) + `settleIntervalSeconds` (1.5) +
+  injected `settleSleep`; CLI gains `--settle-interval` / `--no-stable-nonempty`.
+  The bare `--repo` preflight at `ralph.sh:237` now heals BL-032 with no new flags.
+- 15 new tests (34 in the file) + a **wiring guard** that `ralph.sh` still calls
+  the module. Two existing tests REPOINTED (static non-empty -> growing).
+- Filed `TD-081` (two pre-existing reds in `tests/pm/test_prd_to_sprint.py`).
+
+### Files changed:
+- Modified: `offices/pm/scripts/index_lock.py` (probe, new decision, CLI flags,
+  docstring condition 3)
+- Modified: `tests/pm/test_index_lock.py` (+15 tests, 2 repointed)
+- Modified: `offices/ralph/ralph.sh` (preflight comment -- it still described
+  "clears ONLY a lock that is 0-byte")
+- Created: `offices/pm/tech_debt/TD-081-...-retired-freeze-fields.md`
+
+### Learnings for future iterations:
+- **Pattern discovered (the guard the AC did not ask for)**: ADDING A WAIT
+  BETWEEN A CHECK AND THE ACTION IT AUTHORIZES CREATES A TOCTOU GAP. The old
+  guard probed git and deleted immediately; the settle interval puts ~1.5s
+  between them, so a git process can start inside the window and be live at the
+  unlink. AC-2 said the live-git gate was "unchanged" -- and unchanged code
+  would have been a regression, because what it guards moved. The re-probe test
+  asserts `probes == 2`, so it cannot pass by never re-probing.
+- **Pattern discovered**: pin gate ORDER by asserting the expensive step was
+  NEVER ENTERED (`settled == []`), not just by asserting the outcome. A
+  rearrangement that let a too-fresh lock reach the probe still returns
+  `REFUSED_TOO_FRESH` -- outcome-only assertions go green while a fresh lock
+  now sits on a code path that can delete.
+- **Pattern discovered**: when a story FLIPS a pinned behaviour, MOVE THE PIN
+  and say so. Two tests asserted "any non-empty lock is refused" -- exactly what
+  this story removes. Repointed to a *growing* lock so the refusal survives on
+  its new grounds. Deleting them would have erased the record of what changed.
+- **Gotcha**: an ImportError red masks every per-test reason. Landing ONLY the
+  skeleton (constant + enum member + inert params) turned one useless red into 9
+  behavioural ones, each failing because the probe was missing rather than
+  because a name was.
+- **Gotcha**: compare the `(size, mtime_ns)` PAIR. A rewrite of the same byte
+  count slips past size-only; coarse mtime granularity hides a same-second move
+  that size catches. Set mtime explicitly with `os.utime` in the test rather
+  than touching the file, or the test depends on the share's clock resolution.
+- **Gotcha**: `clearStaleIndexLockWithBackoff` already owns `sleep` for its
+  retry ladder and does NOT forward it -- the settle sleep needed a distinct
+  name (`settleSleep`) or it would have silently bound to the backoff.
+- **Gotcha**: `mypy` is NOT installed here (`No module named mypy`), same class
+  as `make` not being on PATH. Do not report a tool clean you could not run.
+- **Gotcha**: `tests/pm` carries TWO standing reds (TD-081, from the retired
+  freeze mechanic, commit `22f65a8`). Budget a step to prove they are not yours
+  -- and note that a standing red trains agents to read red as normal.
