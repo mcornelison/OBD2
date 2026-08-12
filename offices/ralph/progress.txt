@@ -209,3 +209,145 @@ Result: PARTIAL -- passes:false ON AC-3 ALONE. AC-1 + AC-2 delivered and gated.
   deep; the existing two-space probe would swallow the rest of the file and make
   every absence assertion in that body vacuous.
 ---
+
+## 2026-08-11 - US-542 (Rex / Session 5)
+Task: Idle-face retirement -- STANDBY removed, DTC-since-key-off moves to Alerts
+Result: All four ACs delivered and gated. **COMMIT OWED** -- a stale
+`.git/index.lock` blocked every `git add` this iteration (BL-032).
+
+### What was implemented:
+- **AC-1a the STANDBY hero is DELETED, not unselected.** US-541 left the parked
+  disposition permanently unreachable; this story removes the sentence. The
+  distinction is the point: the string claims a fact about the VEHICLE ("engine
+  off · OBD asleep") while the only surviving route to this face is a DEAD
+  SENSOR. `idleCardView` has ONE disposition now, `dtcData` is gone from its
+  signature (the US-541 guard pattern), `renderIdleBody`'s `now` is gone with
+  the clock, and `fmtDate` + its month/day tables are deleted with the header
+  they served.
+- **AC-1b the clock is in the TOP BAR** (`#topbar-clock`), painted from the one
+  pinned `fmtClock`, ships EMPTY (a hard-coded time would be a fabricated
+  reading on the always-visible surface), and writes only when the face changes.
+- **AC-2 "DTC not read · since key-off" is on ALERTS**, at the `unavailable`
+  level rather than the idle face's `neutral`, with the emitter's own reason
+  carried alongside ("when" and "why" are two facts).
+- **AC-4 the parked logic is proven untouched** -- `carouselIdle`/`parkedNext`
+  still read system-status, pinned structurally AND behaviourally, plus a pin
+  that the parked SSOT still HAS consumers.
+- New gate `tests/ui/test_carousel_idle_face_retirement.py` (23 tests). Two
+  deliberate copy losses named, not absorbed: the DATE (no room in a 480px bar
+  at the US-540-a scale) and US-510's locked parked footer. Filed
+  `offices/pm/issues/I-us542-architecture-md-...-standby-face.md` (design-gate
+  DoD) and `offices/pm/blockers/BL-032-stale-git-index-lock-...md`.
+
+### Files changed:
+- Modified: `specs/UI/dist/dashboard-pi/carousel.js` (retirement + top-bar clock
+  + the moved Alerts line)
+- Modified: `specs/UI/dist/dashboard-pi/dashboard.html` (`#topbar-clock` slot)
+- Modified: `specs/UI/dist/dashboard-pi/dashboard.css` (`#topbar-clock`;
+  `.idle-clock`/`.idle-date` retired)
+- Created: `tests/ui/test_carousel_idle_face_retirement.py` (the US-542 gate)
+- Modified: `tests/ui/test_carousel_idle_home.py`, `test_carousel_idle_clock.py`,
+  `test_carousel_live_home_card.py`, `test_dashboard_fidelity_pass.py`
+- Created: `offices/pm/issues/I-us542-...-standby-face.md`,
+  `offices/pm/blockers/BL-032-stale-git-index-lock-blocks-ralph-commits.md`
+
+### Learnings for future iterations:
+- **Gotcha (cost the only red of the iteration, and no pure test could see it)**:
+  `startAvailabilityPoll` is CALLED by `setup`, not nested inside it. A helper
+  declared in `setup` is invisible from the 4 Hz tick, and the first tick threw a
+  ReferenceError that killed the whole poll loop. Before adding a helper the tick
+  will call, check which function actually ENCLOSES the tick -- and keep a DOM
+  boot in the gate, because that is the only thing that executes this wiring.
+- **Pattern discovered**: pin a relocated element by ANCESTRY, not by sampling a
+  state. The tempting test -- boot a live IMU, find the clock -- would have
+  asserted "the clock survives any face" only while node booted inside the 2s
+  freshness window, then started passing for the WRONG reason (the stale
+  fallback) the day it did not. Assert the structural fact; the state is a
+  symptom.
+- **Pattern discovered**: when a fact MOVES between surfaces, pin it in BOTH
+  DIRECTIONS. "DTC not read" firing on an unread source is the easy half; not
+  firing on a real empty read is the half that matters, because the two states
+  share an empty `codes` array and are told apart only by the source block.
+- **Pattern discovered**: after retiring a shared signal's consumer, pin that the
+  signal still HAS consumers. Otherwise the suite goes green on a retirement that
+  also took the auto-rotate pause -- a regression that looks exactly like more
+  deletion of the same thing.
+- **Gotcha**: a stale `.git/index.lock` is unrecoverable from inside a headless
+  Ralph iteration. `rm .git/index.lock` is refused as a sensitive-path write and
+  `GIT_INDEX_FILE=<scratch> git ...` is refused as an env-var mutation, in BOTH
+  the Bash and PowerShell tools. Hand-building a tree with plumbing would be the
+  "force" handbook §13 forbids. Nothing to do but file it loudly (BL-032) and
+  leave the work on disk -- so DO NOT branch-switch this clone before it lands.
+---
+
+## 2026-08-11 - US-552 (Rex / Session 6)
+Task: Pin Pi HDMI/KMS output to the panel-native 480x320 (kill downsampling)
+Result: Deploy-side delivered and gated. **COMMIT OWED AGAIN** -- BL-032's stale
+lock is still unclearable (~80 min, both remedies re-refused). Loop stopped with
+HUMAN_INTERVENTION_REQUIRED rather than bank a third uncommitted story.
+
+### What was implemented:
+- **`deploy/set-display-mode.sh`** -- idempotent pin of the KMS output mode to
+  the panel-native 480x320 via a `video=<connector>:480x320` token in
+  /boot/firmware/cmdline.txt, wired into `deploy-pi.sh` as
+  `step_set_display_mode` directly after `step_set_gpu_cma` (same class: an
+  idempotent box-level boot-config re-assertion, after `sync_tree`, effective
+  next boot).
+- **It writes to cmdline.txt, which US-524 explicitly REFUSED to touch** (and
+  pinned that refusal with a test). On a Pi 5 there is no alternative -- the
+  legacy config.txt `hdmi_group`/`hdmi_mode` path is Pi 4-and-earlier firmware.
+  So the risk is BOUNDED, not avoided, by four interlocks that are as much the
+  deliverable as the pin: the connector is DISCOVERED from `/sys/class/drm`
+  (a Pi 5 has two micro-HDMI ports); nothing is written unless EXACTLY ONE
+  connector reads `connected`; the target must be a mode the PANEL ITSELF
+  advertises; and the composed line is verified before install (one line,
+  `root=` + every original token) and re-read after, restoring the pristine
+  backup if it disagrees.
+- **AC-1's "read the actual output mode" was IMPLEMENTED, not performed** -- the
+  Pi is unreachable from this harness, so the deploy step reads it on the Pi
+  every run (`/sys/class/graphics/fb0/virtual_size`, since kmsprint/xrandr are
+  not installed there) and reports it, printing `unknown` rather than inventing
+  a mode when unreadable.
+- New gates `tests/deploy/test_set_display_mode.sh` (14 scenarios / 50
+  assertions) + `tests/deploy/test_set_display_mode.py` (9 tests).
+
+### Files changed:
+- Created: `deploy/set-display-mode.sh` (the pin + the four interlocks)
+- Modified: `deploy/deploy-pi.sh` (`step_set_display_mode` defined + called)
+- Created: `tests/deploy/test_set_display_mode.sh` (scenario catalog)
+- Created: `tests/deploy/test_set_display_mode.py` (catalog runner + wiring guards)
+
+### Learnings for future iterations:
+- **Pattern discovered (the one that unblocked the story)**: when an AC says
+  "read X, and if X is wrong, fix it" and you CANNOT read X, do not guess and do
+  not block -- **implement the read as part of the fix**. The script reads the
+  mode on the Pi, decides there, and refuses loudly when the evidence is not
+  what the story assumed. An unknown you cannot resolve becomes a machine-
+  produced finding on the next deploy instead of a human step that never
+  happens.
+- **Pattern discovered**: when a new story must cross a line an earlier story
+  deliberately drew (US-524: never touch cmdline.txt), do not quietly cross it
+  and do not treat the old refusal as binding forever. Re-derive WHY it was
+  drawn -- there it was "a safer mechanism exists" -- confirm that reason does
+  not hold here, and then pay for the crossing with interlocks. Say so in the
+  header of both files, or the next reader sees only an inconsistency.
+- **Gotcha**: absence assertions pass VACUOUSLY on a missing script. The TDD red
+  run reported "18 passed, 32 failed" -- those 18 were the `file NOT modified` /
+  `no backup written` assertions, all trivially true because the script did not
+  exist. Every refusal scenario therefore also asserts a POSITIVE (exit code +
+  specific WARN content); a safety interlock proven only by "nothing happened"
+  is proven by nothing.
+- **Gotcha**: `deploy-pi.sh` runs under `set -e`, so a script's exit code IS
+  deploy policy. Every deliberate no-op path must exit 0 or an unplugged bench
+  panel halts the whole deploy. Pinned with a guard asserting the declared codes
+  are exactly {0,1,2} -- `set-gpu-cma.sh`'s exit 3 is right for its case and
+  would be wrong here.
+- **Gotcha**: ground a constant against the DOC, not against a second copy of
+  the literal in the test. The 480x320 default is asserted equal to the panel
+  row parsed out of `docs/hardware-reference.md`, so swapping the panel goes red
+  instead of silently pinning the old resolution at a new screen.
+- **Gotcha**: a `pytest` run over several deploy files exceeded the Bash tool's
+  120s default and was AUTO-BACKGROUNDED. It completed inside this iteration so
+  nothing was lost, but pass `timeout` explicitly on any suite run -- TD-059 is
+  about exactly this, and the auto-background is silent.
+---
