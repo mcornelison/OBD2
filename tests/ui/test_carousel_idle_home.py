@@ -6,10 +6,13 @@
 #   view/logic exports through the tiny node subprocess (carousel_probe.js) and
 #   assert the JSON result. Covers the load-bearing honest-instrument invariants
 #   (Iris spec 1.3): idle is the emitter's SSOT boolean (never re-derived from
-#   the drive-state string); the STANDBY hero is NEVER green; the faults line is
-#   NEVER amber/red unless a REAL stored STOP/WATCH code exists; an absent DTC
-#   read reads "DTC not read since key-off" (absence != clean, != fault); green
-#   appears ONLY on the battery line and only carrying its data-age.
+#   the drive-state string); the hero is NEVER green; green appears ONLY on the
+#   battery line and only carrying its data-age.
+#   SUPERSEDED IN PART BY US-542 (F-127): the STANDBY hero and the faults line
+#   are RETIRED -- the live IMU is the permanent home face, and "DTC not read
+#   since key-off" is an Alerts fact now. `carouselIdle` is untouched by that
+#   and is still the parked SSOT for the auto-rotate pause, which is exactly
+#   the distinction tests/ui/test_carousel_idle_face_retirement.py pins.
 #   Skipped when node is not on PATH (a node-less CI box).
 # Author: Ralph Agent (Rex)
 # Creation Date: 2026-07-22
@@ -109,66 +112,22 @@ def test_carouselIdle_neverDerivesFromDriveState():
 
 
 # ---------------------------------------------------------------------------
-# idleFaultsFact -- honest faults line (Iris 1.3): never amber/red unless a REAL
-# stored STOP/WATCH code; absent read = "DTC not read since key-off"; never green.
+# idleFaultsFact -- DELETED BY US-542, and the tests went with the code.
+#
+# The faults line was never an idle fact: "no read has happened" is a statement
+# about the CODES, and it lived here only because this was the screen a parked
+# operator was looking at. US-542 moves it to the Alerts card, so its one
+# irreplaceable assertion -- absence reads "DTC not read · since key-off",
+# neither a clean all-clear nor a fault -- is re-asserted THERE, in
+# tests/ui/test_carousel_idle_face_retirement.py, against `alertsCardView`.
+#
+# The severity-tier assertions (stop -> down, watch -> amber, minor -> neutral)
+# are NOT relocated, and that is not a coverage loss: they pinned this tile's
+# private level vocabulary, and the tile is gone. The Alerts card has always
+# carried its own tier mapping and its own tests (test_carousel_dtc_alerts.py).
+# A test kept alive past the behaviour it described is worse than no test: it
+# reads as coverage of a surface that no longer exists.
 # ---------------------------------------------------------------------------
-
-
-def test_idleFaultsFact_notRead_saysKeyOff():
-    """DTC source unavailable (no key-on read) -> "DTC not read · since key-off"
-    at a NEUTRAL level -- absence is neither a clean all-clear nor a fault."""
-    fact = _view("idleFaultsFact", {"codes": [], "source": _unavailable("dtc", "not read yet")})
-    assert fact["value"] == "DTC not read"
-    assert fact["detail"] == "since key-off"
-    assert fact["level"] == "neutral"
-
-
-def test_idleFaultsFact_availableEmpty_neutralNotGreen():
-    """A real empty read -> "No stored codes" but NEUTRAL, never green (honest-
-    instrument 1.3: no green OK at idle except the battery line)."""
-    fact = _view("idleFaultsFact", {"codes": [], "mil": False, "source": _available("dtc")})
-    assert fact["value"] == "No stored codes"
-    assert fact["level"] == "neutral"
-
-
-def test_idleFaultsFact_storedStopCode_isDownRed():
-    """A REAL stored STOP code -> the faults line goes red (down) -- idle never
-    suppresses a genuine fault (AC-5)."""
-    fact = _view(
-        "idleFaultsFact",
-        {
-            "codes": [{"code": "P0301", "severity": "stop", "short": "Misfire"}],
-            "source": _available("dtc"),
-        },
-    )
-    assert fact["value"] == "P0301"
-    assert fact["level"] == "down"
-
-
-def test_idleFaultsFact_watchCode_isAmber():
-    """A stored WATCH code -> amber (a real STOP/WATCH is the ONLY thing that
-    tints the faults line at idle)."""
-    fact = _view(
-        "idleFaultsFact",
-        {
-            "codes": [{"code": "P0420", "severity": "watch", "short": "Cat efficiency"}],
-            "source": _available("dtc"),
-        },
-    )
-    assert fact["level"] == "amber"
-
-
-def test_idleFaultsFact_minorCode_staysNeutral():
-    """A MINOR code is real but NOT a STOP/WATCH -> stays neutral at idle (never
-    amber/red for a minor, and never green)."""
-    fact = _view(
-        "idleFaultsFact",
-        {
-            "codes": [{"code": "P0455", "severity": "minor", "short": "EVAP leak"}],
-            "source": _available("dtc"),
-        },
-    )
-    assert fact["level"] == "neutral"
 
 
 # ---------------------------------------------------------------------------
@@ -246,12 +205,20 @@ def test_idleLastDriveFact_absentBlock_unavailable():
 
 
 # ---------------------------------------------------------------------------
-# idleCardView -- the assembled card. Hero is STANDBY and NEVER green.
+# idleCardView -- the assembled card. US-542 retired the STANDBY hero, so what
+# is asserted here is what SURVIVED the retirement: the two facts a dead motion
+# feed does not make unreadable, and the never-green rule over the hero that
+# replaced it. The retirement itself is gated in
+# tests/ui/test_carousel_idle_face_retirement.py.
 # ---------------------------------------------------------------------------
 
 
-def test_idleCardView_assemblesStandbyHeroAndThreeFacts():
-    """The card = a STANDBY hero (neutral, never green) + the 3-fact strip."""
+def test_idleCardView_assemblesTheHeroAndTheTwoSurvivingFacts():
+    """The card = a neutral (never green) hero + the last-drive/battery strip.
+
+    The faults tile is deliberately absent: US-542 moved it to Alerts. Asserting
+    the key SET rather than only the two members is what makes that a real pin --
+    a membership check goes green on a view that quietly grew the tile back."""
     view = _view(
         "idleCardView",
         _sys(True),
@@ -264,19 +231,18 @@ def test_idleCardView_assemblesStandbyHeroAndThreeFacts():
             "source": _available("ups"),
             "ts": "2026-07-22T00:00:00Z",
         },
-        {"codes": [], "source": _unavailable("dtc", "not read yet")},
+        "no motion feed",
     )
-    assert view["hero"]["title"] == "STANDBY"
     assert view["hero"]["level"] == "neutral"
     assert view["hero"]["level"] != "ok"  # never green
-    assert set(view["facts"].keys()) == {"lastDrive", "battery", "faults"}
-    assert view["facts"]["faults"]["value"] == "DTC not read"
+    assert set(view["facts"].keys()) == {"lastDrive", "battery"}
     assert view["facts"]["battery"]["level"] == "ok"  # the one allowed green
 
 
 def test_idleCardView_heroNeverGreenEvenWhenAllHealthy():
-    """Honest-instrument 1.3: even with a healthy battery + clean read, the
-    STANDBY hero stays neutral -- the parked screen never paints a green "OK"."""
+    """Honest-instrument 1.3, carried across the retirement: even with a healthy
+    battery, the hero stays neutral. It reports a DEAD INSTRUMENT -- a green
+    backdrop over that is the one colour it must never take."""
     view = _view(
         "idleCardView",
         _sys(True),
@@ -288,7 +254,7 @@ def test_idleCardView_heroNeverGreenEvenWhenAllHealthy():
             "source": _available("ups"),
             "ts": "2026-07-22T00:00:00Z",
         },
-        {"codes": [], "mil": False, "source": _available("dtc")},
+        "compass reading absent",
     )
     assert view["hero"]["level"] == "neutral"
-    assert view["facts"]["faults"]["level"] == "neutral"  # clean read is NOT green
+    assert view["facts"]["battery"]["level"] == "ok"

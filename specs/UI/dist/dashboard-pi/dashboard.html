@@ -34,6 +34,13 @@
     <span class="glyph" id="glyph-bt" data-state="neutral" title="Bluetooth">BT</span>
     <span class="glyph" id="glyph-sync" data-state="neutral" title="Sync">⇅</span>
     <span class="glyph" id="glyph-power" data-state="neutral" title="Power">⚡</span>
+    <!-- US-542 (F-127): the wall clock, relocated from the retired parked idle
+         face. It is PERSISTENT chrome now -- readable from every card, not just
+         the one screen the operator saw with the engine off. Ships EMPTY, not
+         with a placeholder time: a hard-coded "12:00" would be a fabricated
+         reading for the frame before the first paint, on the one surface that
+         is always visible. carousel.js fills it from `fmtClock` (US-503). -->
+    <span id="topbar-clock"></span>
     <!-- US-501: the state server substitutes __DEPLOY_VERSION__ from
          .deploy-version at serve time (the same _injectHtml seam as
          __SPLASH_TOKEN__ below), re-read on EVERY serve because the deploy
@@ -87,11 +94,16 @@
 
   <main id="carousel" aria-roledescription="carousel">
     <div id="track">
-      <!-- US-508 HOME SLOT (F-124): ONE slot, TWO FACES (CIO-locked round-2
-           design). Parked -> the US-481 calm STANDBY idle view; driving -> the
-           live motion instrument. NOT two cards: a live card sitting beside an
-           always-present idle card would poll and paint the same feed twice and
-           put two rules in charge of the home slot.
+      <!-- US-508 HOME SLOT (F-124): ONE slot, TWO FACES. NOT two cards: a live
+           card sitting beside an always-present fallback card would poll and
+           paint the same feed twice and put two rules in charge of the slot.
+
+           US-541 + US-542 (F-127) settle WHICH two. The live IMU instrument is
+           the PERMANENT face -- parked, the IMU is correct (a true heading, a
+           true 0.0 g), so the US-481 STANDBY view had nothing to say that the
+           instrument does not say better, and it is RETIRED. The second face is
+           now the honest fallback and nothing else: the motion feed is down and
+           the operator is owed the reason.
 
            `data-face` is the switch, set by carousel.js from ONE decision
            (`homeFace`) and read by the stylesheet, so the logical face and the
@@ -101,13 +113,8 @@
 
            Still `data-idle-home` with NO `data-state`: the generic availability
            poll must not reach this slot. Its absence story is not "unavailable"
-           -- an absent/stale states/imu falls back to the idle face (AC-3),
-           never a frozen or zeroed motion display.
-
-           The idle face carries TWO dispositions of its own: genuinely parked
-           ("STANDBY · engine off") and driving-with-a-dead-feed ("NO MOTION
-           DATA"). Saying "engine off" while the car is moving would be a
-           confident lie about the vehicle built out of a sensor fault. -->
+           -- an absent/stale states/imu falls back to the fallback face (AC-3),
+           never a frozen or zeroed motion display. -->
       <section class="card" data-idle-home data-face="idle" id="home-card"
                aria-label="Home">
         <div class="card-body"><span class="idle-boot">standby …</span></div>

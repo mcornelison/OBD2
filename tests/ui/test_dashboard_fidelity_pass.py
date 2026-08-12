@@ -6,9 +6,13 @@
 #         ("ECLIPSE" for "ECLIPSE OBD-II"; a status line where a navigation hint
 #         belongs). Nothing pinned them, which is precisely why they drifted --
 #         so the restore ships with the pins that make the drift impossible to
-#         repeat. The US-508 motionless disposition keeps its OWN footer: the
-#         locked hint is the PARKED line, and collapsing the two would re-merge
-#         the honesty split that story deliberately made.
+#         repeat.
+#         AMENDED BY US-542 (F-127, Atlas design-gate): the parked face is
+#         RETIRED, so the LOCKED FOOTER -- a parked-screen navigation hint -- is
+#         retired with the screen it taught, and is now pinned as an ABSENCE.
+#         The wordmark stays (branding, not status) and the surviving
+#         motion-fault footer keeps stating its fault. A copy loss, deliberate
+#         and named; the setup affordance it described is untouched.
 #     A-2 TOKENIZATION (TD-065/TD-067). Every colour literal Iris enumerated is
 #         repointed at a token. Two are Atlas Rule-10 rulings (2026-07-31):
 #         --bg/--surface are PROMOTED into the SSOT at their CURRENT values (a
@@ -107,10 +111,15 @@ def _view(fn: str, *args: object) -> object:
     return json.loads(proc.stdout)
 
 
-def _idleView(motionReason: object = None) -> dict:
-    """The assembled idle-card view. Only the copy fields matter here, and they
-    do not depend on the three state fixtures."""
-    return _view("idleCardView", None, None, None, motionReason)
+def _idleView(motionReason: object = "sensor not detected") -> dict:
+    """The assembled fallback-card view. Only the copy fields matter here, and
+    they do not depend on the state fixtures.
+
+    US-542 dropped `dtcData` from the signature, so this helper is THREE args
+    now. That drop is why it has to be repointed rather than left alone: a stale
+    4-arg call still runs, it just binds the motion reason to a parameter that
+    no longer exists -- green, and testing nothing (the US-541 lesson)."""
+    return _view("idleCardView", None, None, motionReason)
 
 
 def _tokenValue(css: str, name: str) -> str:
@@ -217,38 +226,40 @@ def test_idleWordmark_isTheLockedEclipseObdIiString():
 
 
 @_needsNode
-def test_idleWordmark_isTheSameOnBothIdleDispositions():
-    """The wordmark is BRANDING, not status -- a dead motion feed does not
-    re-brand the product. (The footer is the field that differs; see below.)"""
-    assert _idleView()["wordmark"] == _idleView("sensor not detected")["wordmark"]
+def test_idleWordmark_survivesTheUs542Retirement():
+    """The wordmark is BRANDING, not status. US-542 retired the parked screen
+    around it and the LOCKED FOOTER with that screen -- this string stays,
+    because a dead motion feed does not re-brand the product and the wordmark
+    was never teaching the operator anything about being parked."""
+    assert _idleView("no motion feed")["wordmark"] == _LOCKED_WORDMARK
 
 
 @_needsNode
-def test_parkedFooter_isTheLockedNavigationHint():
-    """The locked footer teaches the two ways in (swipe, hold/kebab). The build
-    shipped a STATUS line instead -- a different kind of sentence entirely."""
-    assert _idleView()["footer"] == _LOCKED_FOOTER
+def test_theLockedNavigationHintRetiredWithTheScreenItTaught():
+    """US-542 (Atlas design-gate) retires the parked face, and the locked footer
+    was a PARKED-screen navigation hint. It is not relocated: the hint taught
+    the two ways into setup on a screen that no longer exists, and re-hosting it
+    on the motion-fault fallback would print a tutorial over an instrument
+    fault. Pinned as an ABSENCE from anything executable, the same shape as
+    _DRIFTED_FOOTER below -- otherwise it comes back as dead copy nobody reads.
+
+    The AFFORDANCE it named is untouched, which is why the loss is a copy loss
+    and not a capability loss: the ⋮ is still in the top bar (US-490 reveals it
+    parked) and the 5s long-press still opens the menu from anywhere."""
+    assert _LOCKED_FOOTER not in _stripJsComments(_read(_JS))
+    assert "⋮" in _read(_HTML), "the setup affordance itself must still be there"
 
 
 @_needsNode
-def test_parkedFooter_carriesBothAffordancesTheOperatorNeeds():
-    """Non-vacuous read of the string above: the hint is worthless if it names
-    only one way in. The kebab glyph is the SAME ⋮ the top bar renders."""
-    footer = _idleView()["footer"]
-    assert "swipe" in footer
-    assert "⋮" in footer
-    assert "⋮" in _read(_HTML), "the footer promises a glyph the top bar must show"
-
-
-@_needsNode
-def test_motionlessFooter_isNotOverwrittenByTheNavigationHint():
-    """US-510 restores the PARKED line. US-508 gave the idle face a SECOND
-    disposition (driving, motion feed dead) whose footer states that fault --
-    replacing it with a navigation hint would delete a real instrument fact and
-    leave the operator no clue why the live card vanished."""
-    motionless = _idleView("sensor not detected")["footer"]
-    assert motionless != _LOCKED_FOOTER
-    assert motionless, "the motionless disposition still needs a footer"
+def test_theSurvivingFooterStatesTheFaultNotANavigationHint():
+    """The one remaining disposition (motion feed dead) keeps its OWN footer: it
+    states the fault the operator otherwise has no explanation for -- the live
+    card just vanished. Replacing it with a navigation hint would delete a real
+    instrument fact to make room for a tutorial."""
+    footer = _idleView("sensor not detected")["footer"]
+    assert footer, "the fallback disposition still needs a footer"
+    assert footer != _LOCKED_FOOTER
+    assert "motion feed" in footer
 
 
 def test_theDriftedStatusLineIsGoneFromTheSource():

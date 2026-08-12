@@ -12,13 +12,12 @@
 #        The always-on contract itself lives in test_carousel_imu_always_on.py;
 #        what stays here is the freshness/absence fallback US-508 built.
 #     2. The fallback must not FABRICATE A PARKED STATE. The shipped idle hero
-#        reads "STANDBY / engine off - OBD asleep". Rendering that while the car
+#        read "STANDBY / engine off - OBD asleep". Rendering that while the car
 #        is moving because the IMU feed died would be a confident lie about the
-#        vehicle, so the idle FACE carries two dispositions, not one.
-#        US-541 makes the PARKED disposition unreachable through the renderer
-#        (the reason is now always passed), and US-542 retires the STANDBY hero
-#        outright. `idleCardView` is still a live pure function until then, so
-#        these pins stay green and stay honest about what they cover.
+#        vehicle, so the idle FACE carried two dispositions, not one.
+#        DONE BY DELETION IN US-542: the STANDBY hero is retired, the face has
+#        ONE disposition, and no sentence claiming "engine off" survives in the
+#        file. The pins here are re-expressed against that single disposition.
 #     3. The compass TAPE (replaces the built rotating needle). The load-bearing
 #        property is DIRECTION: a tape that scrolls the wrong way is a plausible
 #        instrument that is exactly backwards, and it wraps across north.
@@ -185,57 +184,59 @@ def test_homeFace_carriesNoParkedVerdictForTheRendererToActOn():
 
 
 # ---------------------------------------------------------------------------
-# 2. The idle FACE must not fabricate a parked state (the honesty trap)
+# 2. The fallback FACE must not fabricate a parked state (the honesty trap)
+#
+# US-542 CLOSED THIS TRAP BY DELETION rather than by a better condition: with
+# the STANDBY hero retired there is no longer a sentence in the file that claims
+# "engine off", so no code path can reach one. What stays here is the pin that
+# the claim has not grown back, re-expressed against the surviving single
+# disposition. The two tests that asserted the PARKED half (its hero, and its
+# footer differing from the motionless one) are gone with the half they
+# described -- see tests/ui/test_carousel_idle_face_retirement.py, which pins
+# the retirement itself.
 # ---------------------------------------------------------------------------
 
 
-def test_idleCardView_parked_keepsTheShippedStandbyHero():
+def test_idleCardView_deadFeed_neverClaimsEngineOff():
     """
-    Given: the home slot is idle because the car is genuinely parked
-    When: the idle view is assembled with no motion reason
-    Then: the shipped STANDBY hero is unchanged (US-481 relocation, not a redesign)
-    """
-    view = _view("idleCardView", _sys(True), None, None, None)
-    assert view["hero"]["title"] == "STANDBY"
-    assert view["hero"]["level"] == "neutral"
-
-
-def test_idleCardView_drivingWithDeadFeed_neverClaimsEngineOff():
-    """
-    Given: the car is MOVING but the motion feed is down, so the idle face shows
-    When: the idle view is assembled with the motion reason
+    Given: the motion feed is down, so the fallback face shows
+    When: the view is assembled with the motion reason
     Then: the hero says the FEED is missing -- it never says "engine off", which
           would be a confident lie about the vehicle built out of a sensor fault
     """
-    view = _view("idleCardView", _sys(False), None, None, "sensor not detected")
+    view = _view("idleCardView", _sys(False), None, "sensor not detected")
     assert view["hero"]["title"] != "STANDBY"
     assert "engine off" not in view["hero"]["substate"]
     assert "sensor not detected" in view["hero"]["substate"]
 
 
-def test_idleCardView_drivingWithDeadFeed_keepsTheRealFacts():
+def test_idleCardView_deadFeed_keepsTheRealFacts():
     """
-    Given: the motion-absent idle face
+    Given: the motion-absent fallback face
     When: the view is assembled
-    Then: the three fact tiles are still the real ones -- one dead instrument
-          does not blank the readouts that are still true
+    Then: the surviving fact tiles are still the real ones -- one dead
+          instrument does not blank the readouts that are still true.
+
+          Two, not three: `faults` moved to the Alerts card in US-542. The
+          set-equality is the pin -- it fails both if a tile is lost and if one
+          is quietly re-borrowed.
     """
-    view = _view("idleCardView", _sys(False), None, None, "no compass reading")
-    assert set(view["facts"]) == {"lastDrive", "battery", "faults"}
+    view = _view("idleCardView", _sys(False), None, "no compass reading")
+    assert set(view["facts"]) == {"lastDrive", "battery"}
 
 
 def test_idleCardView_footerIsPartOfTheViewNotAHiddenDomLiteral():
     """
-    Given: the two idle dispositions need two different footers
-    When: the view is assembled either way
+    Given: one disposition now, but the same drift risk US-510 had to repair
+    When: the view is assembled
     Then: the footer is a VIEW field, so the copy is pinnable rather than buried
-          in the renderer where no test can reach it
+          in the renderer where no test can reach it. The `!= parked footer`
+          half of this pin retired with the parked footer; what remains is that
+          the field exists and carries the fault, not a navigation hint.
     """
-    parked = _view("idleCardView", _sys(True), None, None, None)
-    motionless = _view("idleCardView", _sys(False), None, None, "sensor not detected")
-    assert parked["footer"]
-    assert motionless["footer"]
-    assert parked["footer"] != motionless["footer"]
+    view = _view("idleCardView", _sys(False), None, "sensor not detected")
+    assert view["footer"]
+    assert "swipe" not in view["footer"]
 
 
 # ---------------------------------------------------------------------------

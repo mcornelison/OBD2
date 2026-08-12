@@ -209,6 +209,18 @@ html, body {
    (and, from US-489, the per-tile dot) carries which source is unhappy, and
    inventing a second alarm-red to separate them is what Spool ruled against. */
 #topbar .glyph[data-state="down"]  { color: var(--amber-warn); }
+/* US-542: the wall clock, relocated from the retired parked idle face. Sits
+   with the glyphs on the LEFT rather than taking `margin-left: auto` -- the
+   version chip already owns the right cluster, and two auto margins in one flex
+   row split the free space between them, which would let the clock's position
+   drift with the length of the version string. Pinned to --fs-label, NOT the
+   bar's inherited --fs-secondary: at the US-540-a scale a 26px "12:45 PM" is
+   ~125px of a 480px bar that already carries three glyphs, a version chip and
+   the ⋮. Label tier still clears the 3.5in floor for a parked-read glance. */
+#topbar-clock {
+  font-size: var(--fs-label); color: var(--text-primary);
+  letter-spacing: 0.04em;
+}
 #version-chip {
   margin-left: auto; color: var(--text-tertiary);
   font-size: var(--fs-meta); letter-spacing: 0.06em;
@@ -262,12 +274,16 @@ html, body {
   color: var(--text-tertiary); font-style: italic;
 }
 
-/* --- US-481 idle-state home card (F-121) ------------------------------------ */
-/* The calm, honest PARKED view. Every colour is a token reference (no hex
-   literal here; the tokens themselves were reconciled to the SSOT in US-484-a),
-   the STANDBY hero is neutral
-   grey (never green), and the 3 fact tiles reuse the shared `.tile[data-level]`
-   rules above so green is bound to the SSOT green in exactly one place. */
+/* --- US-542 motion-fault fallback face (F-127, was the US-481 idle card) ---- */
+/* The calm, honest "the motion feed is down" view. US-542 retired the PARKED
+   disposition these rules were written for (the live IMU is the permanent home
+   face now), so what they dress is the fallback. Every colour is a token
+   reference (no hex literal here; the tokens themselves were reconciled to the
+   SSOT in US-484-a), the hero is neutral grey (never green), and the fact tiles
+   reuse the shared `.tile[data-level]` rules above so green is bound to the
+   SSOT green in exactly one place. The `.idle-*` class names are kept: they are
+   the contract between this sheet and the renderer, and renaming them would be
+   a second, larger diff whose only product is a word. */
 /* US-508: the selector moved from a fixed `.idle-card` CLASS to the `data-face`
    ATTRIBUTE the JS sets, because the home slot is no longer permanently idle --
    it has two faces. The JS and the stylesheet now switch on ONE shared value, so
@@ -291,9 +307,13 @@ html, body {
 .idle-wordmark {
   font-weight: 600; letter-spacing: 0.14em; font-family: var(--font-display);
 }
-.idle-clock { margin-left: auto; font-size: var(--fs-secondary); color: var(--text-primary); }
-.idle-date { color: var(--text-tertiary); }
-/* STANDBY hero -- deliberately un-alarming neutral grey, never green (F-1). */
+/* US-542: `.idle-clock` / `.idle-date` are GONE. The clock is `#topbar-clock`
+   above; the date is not relocated (see the carousel.js note at fmtDate's
+   deletion -- a named loss, not an oversight). Dead selectors are not untidy
+   here, they are loaded: the first reuse of a retired class name silently
+   inherits the retired card's overrides (US-540-b, `.health-*`, same sheet). */
+/* NO MOTION DATA hero -- deliberately un-alarming neutral grey, never green
+   (F-1). It states an instrument fault, which is not an alarm about the car. */
 .idle-hero {
   flex: 1; display: flex; flex-direction: column;
   align-items: center; justify-content: center; gap: 4px;
