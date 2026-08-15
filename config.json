@@ -10,12 +10,13 @@
   },
   "pi": {
     "network": {
-      "piHost": "10.27.27.27",
+      "piHost": "10.27.27.124",
       "piUser": "mcornelison",
       "piPath": "/home/mcornelison/Projects/Eclipse-01",
       "piPort": 22,
       "piHostname": "chi-eclipse-01",
-      "piDeviceId": "chi-eclipse-01"
+      "piDeviceId": "chi-eclipse-01",
+      "piHostEth": "10.27.27.123"
     },
     "application": {
       "name": "Eclipse OBD-II Performance Monitor",
