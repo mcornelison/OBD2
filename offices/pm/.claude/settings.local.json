@@ -1,12 +1,5 @@
 {
   "permissions": {
-    "additionalDirectories": [
-      "Z:/o/OBD2v2",
-      "/z/o/OBD2v2",
-      "//z/o/OBD2v2",
-      "//chi-nas-01/PPS-Projects/O/OBD2v2",
-      "C:/Users/mcorn/.claude/projects/Z--o-OBD2v2"
-    ],
     "allow": [
       "Read(Z:/o/OBD2v2/**)",
       "Read(Z:/O/OBD2v2/**)",
@@ -132,7 +125,11 @@
       "Bash(until:*)",
       "Bash(for:*)",
       "Bash(while:*)",
-      "Bash(if:*)"
+      "Bash(if:*)",
+      "Bash(powershell.exe -NoProfile -Command \"Get-DnsClientCache -Name 'chi-eclipse-01*' -ErrorAction SilentlyContinue | Select-Object Entry,Data,RecordType | Format-Table -AutoSize\")",
+      "Bash(powershell.exe -NoProfile -Command '\\(Get-DnsClientServerAddress -AddressFamily IPv4 | Where-Object {$_.ServerAddresses}\\).ServerAddresses')",
+      "Bash(powershell.exe -NoProfile -Command \"Resolve-DnsName -Name chi-eclipse-01 -Server 10.27.27.120 -Type A -DnsOnly -ErrorAction SilentlyContinue | Select-Object Name,IPAddress | Format-Table -AutoSize\")",
+      "Bash(powershell.exe -NoProfile -Command \"Resolve-DnsName -Name chi-eclipse-01 -Type A -ErrorAction SilentlyContinue | Select-Object Name,IPAddress | Format-Table -AutoSize\")"
     ],
     "deny": [
       "Bash(rm -rf /:*)",
@@ -152,7 +149,14 @@
       "Edit(C:/Users/mcorn/.claude/hooks/**)",
       "Write(C:/Users/mcorn/.claude/hooks/**)"
     ],
-    "ask": []
+    "ask": [],
+    "additionalDirectories": [
+      "Z:/o/OBD2v2",
+      "/z/o/OBD2v2",
+      "//z/o/OBD2v2",
+      "//chi-nas-01/PPS-Projects/O/OBD2v2",
+      "C:/Users/mcorn/.claude/projects/Z--o-OBD2v2"
+    ]
   },
   "_comment_policy": "PM (Marcus) access policy 2026-06-05 (CIO directive: full project access + minimize prompts). FULL Read + Edit/Write + Bash across the entire OBD2v2 project tree, with additionalDirectories registering the project root + per-drive aliases + the project memory dir so the recurring 'allow reading from OBD2v2' directory-trust prompt no longer fires. Mirrors the architect office's security-reviewed pattern (commit 1989e6b). The prior offices-sibling-inbox-only Edit/Write fence was LIFTED by CIO 2026-06-05 to stop y/n friction; shared-checkout concurrency discipline (handbook section 13 + CLAUDE.md core-bootup) still applies as a behavioral norm even though the hard permission fence is gone. Safety denies retained: ~/.ssh + ~/.aws (read+write), .git/hooks, the global ~/.claude/settings.json + hooks (no self-config-write / sandbox-escape), and rm -rf / + force-push."
 }

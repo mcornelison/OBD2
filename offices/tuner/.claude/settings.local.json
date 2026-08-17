@@ -124,7 +124,11 @@
       "Bash('/c/Program Files/MariaDB 12.2/bin/mysql.exe' *)",
       "Bash(\"C:\\\\Program Files\\\\MariaDB 12.2\\\\bin\\\\mysql.exe\" *)",
       "WebFetch(domain:roadraceengineering.com)",
-      "WebFetch(domain:www.troublecodes.net)"
+      "WebFetch(domain:www.troublecodes.net)",
+      "Bash(getent hosts *)",
+      "Bash(nslookup chi-eclipse-01 *)",
+      "Bash(chi-eclipse-01)",
+      "Bash(audit_config_literals.py)"
     ],
     "deny": [
       "Bash(rm -rf /)",
