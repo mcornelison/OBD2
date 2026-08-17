@@ -135,7 +135,7 @@ h2{font-size:20px;margin:0;letter-spacing:-.01em;font-weight:640;}
         <p><b>Closed/Open Loop</b> (<code>FUEL_SYSTEM_STATUS</code> 0x03) takes the tile O2 would have had — stable and honest, where a narrowband needle would just slam rail-to-rail.</p>
         <p class="lead" style="border-left:3px solid #FFC400;padding-left:9px"><b>Two constraints that shape this card, not decorate it:</b><br>
         <b>1 · No smooth needles.</b> The whole K-line budget is ~6.3 samples/sec across <i>all</i> PIDs — about <b>one update per PID every 2.5 s</b>, with no "turn up the Hz" knob. Animating between samples would fabricate values the ECU never sent. Everything here <b>steps</b>, and stale values show their age. Anything that must feel live comes off the IMU (100 Hz) or <code>ATRV</code>.<br>
-        <b>2 · LTFT is not coloured at idle.</b> This engine sits at a characteristic <b>−6.25 % LTFT lock at warm idle</b> — that's its normal. Banded naively, every stoplight paints amber, and a gauge that cries wolf at every light gets ignored the one time it's real.</p>
+        <b>2 · Fuel trims are banded straight — no idle special-case.</b> An earlier ruling had me suppress LTFT colour at idle, on a characteristic <b>−6.25 % warm-idle lock</b>. <b>Spool withdrew that the same day:</b> the figure came from the <i>old</i> ECU. Re-baselined against the current one (drives 25–38, n≈2,700) LTFT runs <b>−3.9 % to +3.1 %</b>, warm idle <b>−2.6 %</b> — inside the ±5 % green band, including the exact case the warning was about. No offset, no suppression, no branch.</p>
       </div>
     </div>
   </section>
@@ -213,7 +213,9 @@ function drawArc(cv,frac,hot){var x=cv.getContext("2d"),w=cv.width=300,h=cv.heig
   x.strokeStyle=hot?"#FFC400":"#35C46A";x.beginPath();x.arc(cx,cy,R,Math.PI,Math.PI+Math.PI*Math.max(0,Math.min(1,frac)));x.stroke();}
 function p2(){
   var maf=stepped(pT,simMAF),rpm=stepped(pT,simRPM);
-  var idling = rpm<1300 || maf<8;   // LTFT is deliberately NOT coloured at idle (-6.25% lock is this engine's normal)
+  var idling = rpm<1300 || maf<8;   // idle drives the Closed/Open-loop tile ONLY. Fuel trims are
+                                    // banded STRAIGHT -- Spool withdrew the idle-offset rule
+                                    // 2026-08-07 (the -6.25% lock was the OLD ECU, not this one).
   document.getElementById("s2").innerHTML=tb("BT ⇅ ⚡")+
    '<div class="body"><div class="ct">Engine</div><div class="eg">'+
      '<div class="gaugecell"><canvas id="p2arc"></canvas><div class="gauge-v">'+maf.toFixed(0)+'</div><div class="gauge-l">g/s airflow · MAF</div></div>'+
@@ -226,7 +228,7 @@ function p2(){
        '<div class="erow"><span class="l">Trim S/L</span><span class="v">'+(idling?'+2 / <span style="color:var(--dv-t3)">−6.3</span>':"+2 / +3")+'<span class="u">%</span></span></div>'+
        '<div class="erow"><span class="l">Voltage</span><span class="v">13.9<span class="u">V</span></span></div>'+
      '</div></div>'+
-     '<div class="caveat">voltage via adapter ATRV (0x42 is dead) · LTFT uncoloured at idle — −6.3% is this engine’s normal · values step at ~2.5 s</div></div>';
+     '<div class="caveat">voltage via adapter ATRV (0x42 is dead) · fuel trims banded straight, no idle special-case · values step at ~2.5 s</div></div>';
   var cv=document.getElementById("p2arc");if(cv)drawArc(cv,maf/120,maf>90);
 }
 // ---- P3 post-drive review (static traces) ----

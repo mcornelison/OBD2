@@ -5,7 +5,8 @@
 | **Author** | Iris (UI/UX) |
 | **Date** | 2026-08-03 · **rev 2026-08-07 (Spool PID ruling folded)** |
 | **Status** | **CIO priorities set 2026-08-03: P2 (Engine card) + P3 (post-drive review) = PRIORITY; P4 = low-priority/fun, re-styled as an aircraft attitude indicator for the Eclipse; P1 folded into P2.** GPS + baro sensor ON HOLD. **Spool's data gate is now CLEARED (2026-08-07) — P2 is unblocked, with the boost gauge removed.** P3 still needs an Atlas server-tier contract. |
-| **Rev 08-07** | Spool's probe rulings (`inbox/2026-08-07-from-spool-pid-return-rulings-kill-boost-tile.md`) folded: **boost tile killed** (MAP 0x0B probe-dead *and* the wrong quantity), **MAF promoted** to the centrepiece, 0x42 → `ATRV`, O2 → `FUEL_SYSTEM_STATUS` + trims, timing stays off, **~2.5 s/PID sample-rate rule** and the **LTFT idle caveat** added as design constraints. |
+| **Rev 08-07** | Spool's probe rulings (`inbox/2026-08-07-from-spool-pid-return-rulings-kill-boost-tile.md`) folded: **boost tile killed** (MAP 0x0B probe-dead *and* the wrong quantity), **MAF promoted** to the centrepiece, 0x42 → `ATRV`, O2 → `FUEL_SYSTEM_STATUS` + trims, timing stays off, **~2.5 s/PID sample-rate rule** added as a design constraint. |
+| **Rev 08-07b** | Spool **CORRECTION** (`inbox/2026-08-07-from-spool-CORRECTION-ltft-idle-band.md`): the **LTFT idle-offset caveat is WITHDRAWN** — the −6.25 % figure was **old-ECU** (MD346675). Fuel trims are banded **straight**, no idle special-case. Everything else in his ruling stands. |
 | **Directive** | CIO 2026-08-03: take full advantage of the sensor data we already have; **fact-check every readout against what the OBDLink actually returns; NO dead "no source" displays.** |
 | **Companion** | `proposals/2026-08-03-full-advantage-sensor-prototypes.html` + hosted artifact |
 | **Palette** | `specs/UI/tokens.css` |
@@ -25,7 +26,7 @@ support** — Tier 4 polls two dead PIDs and eats NO_DATA every 30th cycle (his 
 | COOLANT_TEMP 0x05 | ✅ **GREEN** | 🔴-capable (see bands) |
 | INTAKE_TEMP 0x0F | ✅ **GREEN** | **label "INTAKE AIR", never "charge temp"** — see below |
 | **MAF 0x10** | ✅ **GREEN — my premise was backwards** | the 2G 4G63 is **MAF-based** (Karman-vortex), not speed-density. *That is why MAF lives and MAP is dead:* this engine meters fuel on measured airflow and needs no manifold-pressure sensor for fuelling. **Primary fuel-metering input → the centrepiece.** |
-| STFT 0x06 · LTFT 0x07 | ✅ **GREEN** | bands below — **read the idle caveat** |
+| STFT 0x06 · LTFT 0x07 | ✅ **GREEN** | bands below — band them **straight**; the idle-offset caveat was **withdrawn** by Spool 08-07 |
 | BAROMETRIC 0x33 | ✅ **GREEN** | supported after all; gives ambient/altitude context — but **nothing toward boost** |
 | FUEL_SYSTEM_STATUS 0x03 | ✅ **GREEN** | → "Closed loop / Open loop" — takes the tile O2 would have had |
 | g-force · heading · grade · **gyro** | IMU | ✅ **GREEN** | 100 Hz — the only source that can feel live |
@@ -46,10 +47,18 @@ freeze. Spool's bands are recorded here as documentation only, **not to render**
 - **Coolant** (alert-layer SSOT, unchanged): 🟢 ≤99 · 🟡 100–103 · 🔴 **≥104 °C** (head-bolt stretch /
   MLS clamp loss on a 4G63).
 - **Fuel trims:** STFT 🟢 −5…+5 % · 🟡 ±5–10 % · 🔴 >±15 %. LTFT 🟢 −5…+5 % · 🟡 ±5–8 % · 🔴 >±10 %.
-  🔴 **This-car caveat — it bites the UI directly:** this engine shows a characteristic
-  **LTFT ≈ −6.25 % lock at warm idle** (drives 3/5/6). That is *this engine's normal*, not a fault.
-  Banded naively, **every stoplight paints amber** — so LTFT is **offset or uncoloured at idle**.
-  A gauge that cries wolf at every light trains the driver to ignore the one time it's real.
+  **Band both STRAIGHT — no idle offset, no idle suppression, no special-case branch.**
+  ⚠️ **Superseded (Spool CORRECTION 2026-08-07):** his earlier note in the same day warned of a
+  characteristic **LTFT ≈ −6.25 % lock at warm idle** requiring an idle offset. **That figure is
+  from the OLD ECU** (MD346675, drives 3/5/6); the car has run **MD326328** since 2026-05-22, and
+  he re-baselined against it (drives 25–38, n≈2,700): per-drive averages **−2.6 % to +1.5 %**, full
+  range **−3.9 % to +3.1 %**, warm parked idle **−2.6 % / −2.4 %**. All inside the ±5 % 🟢 band,
+  **including the idle case he warned about** — a naive band does *not* false-alarm on this car.
+  The special-case is therefore **not built**. See [[pattern-verify-value-provenance-before-building-a-special-case]].
+- **Fixture warning (Spool, unresolved):** do **not** use drives **35/36** as a "healthy idle"
+  reference in any mock or fixture — they report LTFT **exactly 0.00 across all 232 samples, zero
+  variance**, which is either a genuine adaptive-memory reset or a decode artifact of the same class
+  as the Session-27 freeze-frame floor-decode bug. He is not calling it yet.
 - **IAT — informational only, NO red.** Advisory amber ~≥60 °C (heat soak). Two reasons it never
   goes red: (1) the 2G sensor lives in the **AFM/air-filter housing — pre-turbo, pre-intercooler**,
   so it reads inlet air, not charge temp (a turbo audience reads "charge temp" as post-IC; it isn't).
@@ -95,7 +104,7 @@ never reported — the same honest-instrument violation as an over-confident der
   evidence of support.
 - **Layout mine, semantics Spool's:** coolant/IAT thresholds, fuel-trim meaning, what earns a gauge → Spool.
 - **No fabricated motion:** OBD tiles step at the true ~2.5 s cadence; only IMU/`ATRV` sources animate.
-- **No alarm fatigue:** LTFT uncoloured at idle; IAT never red; no timing or O2 gauge.
+- **No alarm fatigue:** IAT never red; no timing or O2 gauge. (LTFT idle-suppression was withdrawn — it solved a problem the current ECU does not have.)
 
 ## 3. Routing
 - **Spool — ANSWERED 2026-08-07** (`inbox/2026-08-07-from-spool-pid-return-rulings-kill-boost-tile.md`):

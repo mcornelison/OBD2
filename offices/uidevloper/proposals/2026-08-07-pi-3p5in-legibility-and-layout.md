@@ -88,7 +88,7 @@ Order per Atlas #2 (**Alerts to 2nd**):
 | 2 | **Alerts** | hero + DTC state | + the DTC-freshness line inherited from idle (§4) |
 | 3 | **System Status** | 4 tiles (2×2) | at the ceiling; no more tiles here |
 | 4 | **Battery** | verdict · cell V · runtime | was a Health section |
-| 5 | **Fuel Trim** | STFT · LTFT · loop state | was a Health section; **LTFT uncoloured at idle** (Spool) |
+| 5 | **Fuel Trim** | STFT · LTFT · loop state | was a Health section; bands applied **straight** (Spool withdrew the idle-offset 08-07) |
 | 6 | **Light / Ambient** | lux · auto-dim state | was a Health section |
 | (7) | **Engine** | MAF · coolant · intake air · throttle | W-16 P2, when groomed — the slot exists |
 
@@ -150,4 +150,4 @@ The scale values are derived, so they must be confirmed against the real display
 - **CIO:** review the scale + the card count (6, or 7 with Engine). The count is yours and mine; the values are mine.
 - **Atlas:** design-gate the **structural** pieces — screen-count change + the US-482 stage/scale interaction + the idle-face retirement (§4 answers his question).
 - **Marcus:** groom as a bundle — (a) tokenize the type scale, (b) set values + re-lay cards, (c) reorder + auto-rotate-off, (d) idle-face retirement.
-- **Spool:** no new value semantics requested; the LTFT-idle rule from his 08-07 ruling is carried into the Fuel Trim card.
+- **Spool:** no new value semantics requested. NOTE his **08-07 CORRECTION** — the LTFT idle-offset rule is **withdrawn** (the −6.25 % figure was old-ECU); the Fuel Trim card bands STFT/LTFT **straight**, no idle special-case.
