@@ -212,6 +212,59 @@ derive attitude from a sub-threshold gravity vector (`_norm(gravity) < _MIN_GRAV
 `available:false` + `reasons: {... "tilt_unresolved"}` — verified in the live `states/imu`. The *display*
 is honest; only the *persistence* path fabricates. That asymmetry is the finding.
 
+### 5b. HARDWARE RESOLVED (2026-08-17 20:29Z) — software defect STANDS
+
+The CIO re-seated the IMU (he had just moved it into its enclosure) and the service was restarted
+cleanly. The sensor now produces real data:
+
+```
+ts_utc                accel_x  accel_y  accel_z    |g|
+2026-08-17T20:29:18Z   4.827   -3.373    8.097   10.012
+2026-08-17T20:29:17Z   4.741   -3.340    8.071    9.938
+```
+
+`|g| ~= 9.98 m/s^2` = gravity, correctly scaled. `states/imu` flipped to `available:true` with
+`gLat`/`gLon` ~= 0.004 g (correct for a stationary vehicle). `temp_c` is NULL — **correct**, the genuine
+Adafruit board does not expose that attribute and US-500 made it an honest null.
+
+**Root cause: physical.** Re-seating the connector plus a genuine power-cycle of the sensor cleared it.
+I cannot cleanly separate "loose connection disturbed by the enclosure move" from "chip latched in a bad
+state"; both fit. The enclosure move dates it, the re-seat fixed it. Stated as such — not resolved
+further.
+
+**Operational fact (belongs in the runbook): the IMU cannot be hot-plugged.** The driver initialises the
+chip ONLY at the startup probe, so a re-seat without a service restart leaves it asleep in its `0x41`
+power-on default and reads fail (`Errno 121`) or return zeros. Always restart `eclipse-obd` after
+touching the sensor. This also produced a near-miss in this session: a first restart silently did not
+execute (`NRestarts=0`, unchanged `ActiveEnterTimestamp`) and the resulting zeros looked exactly like
+the hardware fault — a false negative that would have condemned good hardware. **Verify a restart
+actually happened before interpreting sensor output.**
+
+**The software defect (§5a) is NOT closed by this.** The plausibility gate is still owed, and this
+episode is its strongest justification: had it existed, the failure would have surfaced the moment it
+began ("sensor mute") instead of 43,203 silent false rows later. Urgency drops from "actively writing
+bad rows" to "uncovered path, will recur on the next sensor fault" — still P1+, no longer emergency.
+
+### 5c. NEW (deferred by CIO) — mount frame is unconfigured, so pitch/grade are confidently wrong
+
+With the sensor live and the car parked, `states/imu` reports `pitchDeg: 23.29`, `gradePct: 43.0`. A 43%
+grade on a parked car is wrong. Not a sensor fault: gravity is spread across all three axes
+(4.8 / -3.4 / 8.1), i.e. the board sits tilted in its enclosure, while `pi.sensors.imu.mount` still holds
+the DEFAULT identity map `{"forward":"+x","left":"+y","up":"+z"}` — which assumes flat + nose-forward.
+
+This is the **axis-orientation decision flagged to Spool 2026-06-28**, now live and material. The design
+anticipated it correctly: it is a pure CONFIG edit, never a code edit (`imu_state_bridge.py:227`).
+
+**Note the honesty gap:** the system publishes `available:true` on a value derived through an assumption
+it has no evidence for. Gravity's magnitude IS measurable at rest, so "is my mount frame plausible?" is
+an answerable question the transform tier currently never asks — the same class as §5a.
+
+**CIO decision 2026-08-17: DEFERRED.** He will physically mount + level the unit in the car first, then
+zero/calibrate. Calibrating against a temporary bench position would bake in a value to be discarded.
+**Correct call — do NOT groom a mount-config story yet.** Owed to Atlas when the physical install is
+done: derive the mount axis map (or a zero-offset calibration) from a captured level-reference gravity
+vector.
+
 **Two separable problems — do not conflate them:**
 
 1. **Hardware (CIO, physical).** The MEMS/analog core is not converting though the digital die is fine.
