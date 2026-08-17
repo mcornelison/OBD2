@@ -193,7 +193,7 @@ Server deploy is unattended via `/etc/sudoers.d/obd2-deploy` (Sprint 22 fix). Wa
 ## Phase 7 -- Verify both targets running new version
 
 ```bash
-ssh mcornelison@10.27.27.28 "cat /home/mcornelison/Projects/Eclipse-01/.deploy-version"
+ssh mcornelison@chi-eclipse-01 "cat /home/mcornelison/Projects/Eclipse-01/.deploy-version"
 ssh mcornelison@chi-srv-01 "cat /mnt/projects/O/OBD2v2/.deploy-version && systemctl is-active obd-server.service"
 ```
 

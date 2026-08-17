@@ -43,7 +43,7 @@ Exempt by extension: *.md anywhere (documentation).
 Inline pragma:
     Lines matching `b044-exempt` (any case) are skipped. Use with a
     one-line reason, e.g.
-        DEFAULT = "10.27.27.10"  # b044-exempt: validator default registry
+        DEFAULT = "10.27.27.120"  # b044-exempt: validator default registry
 
 CLI (via scripts/audit_config_literals.sh or directly):
     python scripts/audit_config_literals.py                # reports, exits 0 on clean

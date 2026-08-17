@@ -208,7 +208,7 @@ def seedServerCache(
     explicit push is the canonical way to make the row visible server-side.
 
     Args:
-        serverBaseUrl: e.g., 'http://10.27.27.10:8000'
+        serverBaseUrl: e.g., 'http://10.27.27.120:8000'
         apiKey: X-API-Key header value (matches Pi's config + server's middleware)
         deviceId: source_device value (defaults to Pi's chi-eclipse-01)
         sourceId: source_id (the Pi-side rowid; defaults to 1, since the
@@ -331,7 +331,7 @@ def main() -> int:
     )
     parser.add_argument(
         "--server-url",
-        default=os.environ.get("SERVER_BASE_URL", "http://10.27.27.10:8000"),  # b044-exempt: argparse default; production chi-srv-01 fallback for one-off Eclipse seeder
+        default=os.environ.get("SERVER_BASE_URL", "http://10.27.27.120:8000"),  # b044-exempt: argparse default; production chi-srv-01 fallback for one-off Eclipse seeder (.10 was dead from 2026-06-18, corrected 2026-08-17)
         help="Server base URL (default: production chi-srv-01).",  # b044-exempt: argparse help prose
     )
     parser.add_argument(
