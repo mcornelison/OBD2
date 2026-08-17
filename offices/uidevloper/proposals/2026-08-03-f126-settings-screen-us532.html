@@ -108,7 +108,7 @@ code{font-family:var(--mono);font-size:.85em;background:var(--accent-soft);color
         <p class="lead">Every control reads the <b>effective</b> value from the state server (US-530), not a hardcoded default. A subtle <code>set</code> vs <code>default</code> marker shows whether it's an operator override or the shipped default.</p>
         <p>On tap: <b>saving…</b> → confirmed from a re-read (<b>saved</b>), or on a rejected/failed write it <b>snaps back to the real value</b> + <b>couldn't save</b> — never an optimistic "on". The write is token-gated (US-531).</p>
         <h3>Apply-state per row</h3>
-        <p><b>Auto-rotate / Power / Audio → live</b>; <b>Auto-analyze → next drive</b>; <b>Calibration → restart needed</b>. A setting that isn't instant says so — no silent no-op that looks applied. (Exact per-setting timing comes from the US-533 wiring; the card shows what it reports.)</p>
+        <p><b>Power → live</b>; <b>Auto-analyze → next drive</b>; <b>Calibration → restart needed</b>; <b>Auto-rotate → RESTART, not live</b> — the state server reads <code>pi.display.carousel</code> once at startup and serves it cached (Atlas verified this on the Pi), so "applies live" would have been a lie. A setting that isn't instant says so — a silent no-op that looks applied is the one thing this surface must never do.</p>
         <h3>Power mode = 3-state</h3>
         <p>CAR / WALL / <b>UNKNOWN</b> (not a toggle). Setting WALL fixes the bench "unknown" — the System-Status power tile then reads WALL.</p>
         <h3>One menu, two bands (B)</h3>
@@ -133,11 +133,16 @@ code{font-family:var(--mono);font-size:.85em;background:var(--accent-soft);color
 
 <script>
 var failMode=false;
+// the shipped "on" value for autoRotateS, in seconds (F-124 set 8s; disposition-B
+// then made 0/OFF the shipped DEFAULT, so ON means restoring this value).
+var AUTOROTATE_DEFAULT_S=8;
 // effective state (overlay override else config default). src: 'set' (override) | 'default'
 var st={
-  autorotate:{on:true, src:"default", apply:"live"},
+  // Atlas F-126 gate: ONE key -- autoRotateS (seconds, 0=off). The toggle DERIVES
+  // on/off from autoRotateS>0; there is no parallel bool. Shipped default is 0 (OFF)
+  // per the CIO disposition-B freeze fix, and it needs a states-http RESTART, not live.
+  autorotate:{secs:0, on:false, src:"default", apply:"restart"},
   power:{val:"wall", src:"set", apply:"live"},          // operator overrode unknown->wall
-  audio:{on:false, src:"default", apply:"live"},
   calib:{on:false, src:"default", apply:"restart"},
   analyze:{on:true, src:"default", apply:"next"}
 };
@@ -163,9 +168,8 @@ function render(){
    '<div class="body">'+
      '<div class="mhead"><span class="mtitle">System Setup</span><span class="mx">✕</span></div>'+
      '<div class="msect first">Settings</div>'+
-       row("autorotate","Carousel auto-rotate", togHtml("autorotate",st.autorotate.on), "live")+
+       row("autorotate","Carousel auto-rotate", togHtml("autorotate",st.autorotate.on), "restart")+
        '<div class="srow"><div class="slabel"><span class="nm">Power mode</span><span class="sub">'+tag("live")+srcHtml(st.power.src)+'</span></div>'+saveHtml("power")+seg+'</div>'+
-       row("audio","Audio alerts", togHtml("audio",st.audio.on), "live")+
        row("calib","Calibration mode", togHtml("calib",st.calib.on), "restart")+
        row("analyze","Auto-analyze after drive", togHtml("analyze",st.analyze.on), "next")+
      '<div class="msect">OBD-II Services</div>'+
@@ -186,6 +190,12 @@ function commit(id,kind,val){
   // optimistic-OFF: apply visually as "saving", confirm from re-read or snap back
   var prev = kind==="seg" ? st.power.val : st[id].on;
   if(kind==="seg"){ st.power.val=val; } else { st[id].on=!st[id].on; }
+  // Auto-rotate is NOT a bool on the wire: the overlay stores autoRotateS (seconds,
+  // 0 = off) and the toggle DERIVES from autoRotateS > 0. Modelled here so the mockup
+  // demonstrates the real contract rather than quietly implying a parallel bool --
+  // which is precisely the SSOT conflict Atlas's GAP-3 ruled out.
+  if(id==="autorotate"){ st.autorotate.secs = st.autorotate.on ? AUTOROTATE_DEFAULT_S : 0;
+                         st.autorotate.on   = st.autorotate.secs > 0; }
   saveState[id]={txt:"saving…",cls:"ing"}; render();
   setTimeout(function(){
     if(failMode){                       // honest failure: snap back to the real stored value
