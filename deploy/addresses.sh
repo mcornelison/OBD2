@@ -27,8 +27,9 @@
 # ----------------------------------------------------------------------------
 # Pi tier (chi-eclipse-01) -- mirrors config.json pi.network.*
 # ----------------------------------------------------------------------------
-PI_HOST="${PI_HOST:-10.27.27.124}"   # STATIC fixed IP (B-102/US-473, Atlas-designed 2026-08-15): WiFi=.124 (primary, wlan0 MAC 88:a2:9e:84:46:1c), eth0=.123, hostname=chi-eclipse-01. Ends the DHCP flap.
-PI_HOST_ETH="${PI_HOST_ETH:-10.27.27.123}"   # ethernet static (eth0, usually unplugged; headless runs on WiFi)
+PI_HOST="${PI_HOST:-chi-eclipse-01}"   # CANONICAL BY HOSTNAME (CIO/Spool 2026-08-17: address the Pi by name, never a hardcoded IP; ~/.ssh/config resolves it to WiFi .124). B-102/US-473.
+PI_HOST_WIFI="${PI_HOST_WIFI:-10.27.27.124}"   # wlan0 static (primary/operational, MAC 88:a2:9e:84:46:1c)
+PI_HOST_ETH="${PI_HOST_ETH:-10.27.27.123}"   # eth0 static (usually unplugged; ssh alias chi-eclipse-01-eth)
 PI_USER="${PI_USER:-mcornelison}"
 PI_PATH="${PI_PATH:-/home/mcornelison/Projects/Eclipse-01}"
 PI_PORT="${PI_PORT:-22}"
