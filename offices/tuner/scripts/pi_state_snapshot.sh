@@ -26,13 +26,20 @@
 #   ./pi_state_snapshot.sh --power --drive          # filter
 #   ./pi_state_snapshot.sh --fingerprint            # latest drive only
 #   ./pi_state_snapshot.sh --fingerprint --drive-id 3
-#   ./pi_state_snapshot.sh --host chi-eclipse-01    # explicit host
+#   ./pi_state_snapshot.sh --host chi-eclipse-01-eth  # explicit host (eth0)
 ################################################################################
 
 set -euo pipefail
 
 # Defaults
-PI_HOST="chi-eclipse-01"
+# Host is the `chi-eclipse-01` ssh alias — hostname is the SSOT, NOT a hardcoded IP
+# (CIO directive 2026-08-17). ~/.ssh/config supplies HostName + User, so a future IP
+# change is one edit there and every tool follows. Static IPs assigned 2026-08-15
+# (ends the DHCP flap, B-102/US-473): wlan0 .124 primary · eth0 .123 usually unplugged.
+# History: this alias pointed at the dead 10.27.27.28 until 2026-08-17 — that stale
+# ssh-config value (NOT DNS) is what silently failed this probe on 2026-08-07.
+# On ethernet: --host chi-eclipse-01-eth
+PI_HOST="${PI_HOST:-chi-eclipse-01}"
 DRIVE_ID=""             # blank = use latest
 SECTIONS=""             # blank = all sections
 

@@ -390,6 +390,39 @@ CIO swapped from the stock ECU (MD346675) to the ECMLink-flash-modified ECU (MD3
 - Manufacturer: OBD Solutions LLC (AT@1)
 - ATRV reports battery voltage at OBD port pin 16 (independent of K-line bandwidth)
 
+### 2026-08-17 — EMPIRICALLY CONFIRMED LIVE CAPTURE SET (16 params, server `realtime_data`)
+
+**This is the authoritative "what actually lands in the database" list. Prefer it over the probe tables above and over any config/allocation document when answering "can we display X?"** Measured on drives 37+38 (2026-08-07, warm parked idle), server `obd2db.realtime_data`:
+
+| Parameter | n | observed range | unit |
+|---|---|---|---|
+| `RPM` | 179 | 712–800 | rpm |
+| `SPEED` | 180 | 0.0–0.0 | km/h |
+| `COOLANT_TEMP` | 180 | 93–101 | °C |
+| `INTAKE_TEMP` | 178 | 43–53 | °C |
+| `ENGINE_LOAD` | 179 | 18.8–20.4 | % |
+| `THROTTLE_POS` | 179 | 1.2–1.2 | % |
+| `MAF` | 178 | **3.1–3.4** | g/s |
+| `TIMING_ADVANCE` | 178 | 2.5–8.5 | ° |
+| `SHORT_FUEL_TRIM_1` | 178 | −1.6–+2.3 | % |
+| `LONG_FUEL_TRIM_1` | 178 | −3.9–−1.6 | % |
+| `O2_B1S1` | 178 | 0.1–0.9 | V |
+| `O2_B1S2` | 178 | 0.1–0.8 | V |
+| `FUEL_SYSTEM_STATUS` | 178 | 2.0 (**CL** = closed loop) | enum |
+| `BATTERY_V` | 185 | 12.7–14.0 | V |
+| `MIL_ON` | 178 | 1.0 | bool |
+| `DTC_COUNT` | 178 | 1.0 | count |
+
+**🔴 `BAROMETRIC` (0x33) is NOT in the live set — there is NO baro data. `RUNTIME_SEC` is absent too.**
+
+Correction of my own error (2026-08-17): I green-lit `BAROMETRIC` to Iris as "supported." That was **unfounded inference**. The 2026-05-22 probe reported "16 Mode-01 PIDs supported" without enumerating which 16; the Tier-2 table above lists 0x33 as *"Likely Supported (Lower Confidence — not yet probed)"* with a Sprint-14 test that never confirmed it; and `edr-pid-priority-allocation.md` places `BAROMETRIC_KPA` in Tier 4 as a **proposed** allocation, not a live one. I read a proposal as a capability.
+
+**This is the same error class I flagged in Iris's work an hour earlier** — deriving PID support from a config/allocation document instead of from confirmed returning data. The rule applies to me identically: **only the live capture set proves a PID returns.**
+
+Not yet distinguished: baro absent because **unsupported** vs. **not polled**. Practically irrelevant for display (no source either way); relevant for the EDR allocation, since Tier 4 assumes it. **Resolve with `probe_obd_capabilities.sh` next engine-on** — it enumerates supported Mode-01 PIDs by name.
+
+Also confirmed by this pull: `drive_summary.baro` is blank on all drives 34–38 (consistent), and `battery_health_log` remains frozen at 28 rows / 2026-05-16 (the US-504a writer gap, now 93 days stale — unfixed).
+
 ### ✅ RESOLVED — new-ECU SPEED PID reads TRUE (factor ≈ 1.00, GPS-confirmed Drive 27, 2026-06-05)
 
 **The "~2× drift" was a phantom — a gear-math artifact, NOT a real calibration error. GPS truth proves the new-ECU SPEED PID reads correct ground speed.** This supersedes the Session-19→24 "divide by 2 / factor 0.5" narrative in full. Do NOT divide SPEED by anything.

@@ -7,6 +7,45 @@
 
 ---
 
+## Session 36 — 2026-08-17 (short: tool fix → caught my own bad green-light on BAROMETRIC)
+
+**Context**: CIO asked for a closeout. Session 35 was already closed and merged, inbox had nothing new, and no new drives had landed — so there was nothing to record. Fixing one stale tool default turned into catching a wrong ruling I'd given Iris. No new drives, no moving data.
+
+### What Happened
+- **Verified state before recording anything.** Session 35 (`df4f299`) confirmed merged to `origin/dev`. Inbox unchanged since the 08-07 Atlas note. **No new drives — still only 37/38.** Declined to fabricate a session entry for zero work; the real work below is what earned this one.
+- **Fixed the Pi host path — and corrected my own diagnosis mid-stream.** First blamed DNS ("hostname doesn't resolve"). Wrong: `~/.ssh/config` mapped `Host chi-eclipse-01 → HostName 10.27.27.28`, which is **dead**. *That* stale entry is what failed my probe in Session 35, not DNS. Pinning a bare IP in the script then failed on user (`mcorn` vs `mcornelison`) because the alias had been supplying `User`.
+- **CIO directed the right fix: hostname as SSOT.** Rather than hardcoding an IP in my tool, fixed `~/.ssh/config` (`chi-eclipse-01 → 10.27.27.124`, added a `chi-eclipse-01-eth` alias for `.123`) and pointed `scripts/pi_state_snapshot.sh` back at the bare alias. **A future IP change is now one edit in ssh config and every tool follows** — consistent with the project's standing SSOT design pattern, and it fixes the stale path for all agents' tooling, not just mine. Verified end-to-end: alias resolves to `.124`, `hostname -I` confirms, script runs on its default. Original instinct (hardcode `user@IP` in my own script to avoid touching shared config) was the wrong call — it would have left the stale entry to bite the next agent.
+- **🔴 Caught my own bad green-light: `BAROMETRIC` (0x33) has NO source.** The working script's output showed `drive_summary.baro` blank on every drive 34–38. Pulled the full parameter inventory: **16 params land in `realtime_data` and baro is not among them** (`RUNTIME_SEC` absent too). I had told Iris on 08-07 it was "GREEN — supported" and that it would give boost a real atmospheric reference.
+- **Root cause of my error, stated plainly: I read a proposal as a capability.** The 05-22 probe said "16 Mode-01 supported" without enumerating which 16; my own knowledge base lists 0x33 as *"Likely Supported — not yet probed"*; and my `edr-pid-priority-allocation.md` places baro in Tier 4 as a **proposed** allocation. **This is the identical error class I had criticised in Iris's work an hour earlier** — deriving PID support from a config/allocation doc instead of from confirmed returning data. The rule binds me the same way. Sent correction #2 to her inbox owning it.
+- **Recorded the empirically-confirmed live capture set in `knowledge.md`** — the first authoritative "what actually lands in the DB" list (16 params + observed ranges). Supersedes the probe tables and every allocation doc for answering "can we display X?"
+- **The two substitutes I gave Iris are confirmed live with real values** — `MAF` 3.1–3.4 g/s and `FUEL_SYSTEM_STATUS` = 2.0 (CL, closed loop). So the boost-tile replacement holds; only baro drops out. Her prototypes don't break.
+
+### Key Decisions
+- **`BAROMETRIC` → NO SOURCE, do not display.** Unsupported vs. not-polled is undistinguished and irrelevant for display; resolve with `probe_obd_capabilities.sh` next engine-on (it matters for the EDR Tier-4 allocation, which assumes baro).
+- **Standing evidentiary rule, now applied to myself:** only the **live capture set** proves a PID returns. Config poll lists, allocation proposals, and un-enumerated probe counts are all inference, not evidence.
+- **Address the Pi by hostname, never a hardcoded IP** (CIO 2026-08-17). `~/.ssh/config` is the single acquisition point for HostName + User; tools reference the `chi-eclipse-01` alias only. My first instinct — hardcode `user@IP` in my own script to avoid touching shared config — was wrong: it fixes one tool and leaves the stale entry to fail the next agent silently. Same reasoning as the project's no-hardcoded-addresses rule.
+
+### Current Vehicle State
+- **Unchanged mechanically.** 1998 GST 4G63, stock TD04-13G, ECU MD326328 (ECMLink), 93 octane. `MIL_ON=1`, `DTC_COUNT=1` — **P0443 still present**, drive-safe; purge-solenoid connector reseat still pending, **do not clear until done.**
+- **Pi live and reachable at the new static `10.27.27.124`** (Atlas 2026-08-15 ended the DHCP flap). **`sync_log` all tables `ok`**, `connection_log` synced within a minute of checking — sync healthy.
+- **`dtc_freeze_frame` sync is FIXED** — 22 rows, status `ok`. This is the table that failed 27×/day from ~06-05; my Session-28 root cause (broken ECU-lineage spine, US-367) evidently landed and the orphan self-resolved as predicted.
+- **MONITORING STILL DEGRADED for engine analysis** — zero moving-vehicle data since drive 34 (2026-07-03) = **45 days**. Capture/sync are healthy; only the drive is missing.
+
+### Open Items
+- **Movement drive (mine, unchanged top item, needs the car):** SPEED>0 key-on→drive→key-off. Serves A-9 attribution re-gate + US-526 drain writer + the 2.4 GHz coexistence hypothesis. Also gates the whole V0.29 chain's `/chain-validated`.
+- **Baro probe** — settle unsupported-vs-unpolled next engine-on; feeds back into the EDR Tier-4 allocation.
+- **🟡 `battery_health_log` writer gap STILL unfixed** — frozen at 28 rows / 2026-05-16 = **93 days stale**. US-504a was carved for this in Session 34; my verdict spec stays inert until rows arrive.
+- **~~Stale `~/.ssh/config`~~ — FIXED this session** (`chi-eclipse-01 → .124`, `+chi-eclipse-01-eth → .123`). It had been missed when `deploy.conf`/`addresses.sh`/`config.json` were moved to `.124`. Worth a sweep for other tools still holding `.28`/`.100`/`.27` — not mine to audit, flagging for whoever owns the address centralizer.
+- Carry-forwards unchanged: drives 35/36 zero-variance LTFT (unresolved, don't baseline on them); IAT pre-turbo location (empirical confirm still owed — drive-start IAT 60–61 °C on 07-31 vs 39–47 °C otherwise is further heat-soak-consistent evidence); F-116 drive-33 re-tag (still gated on US-458, Atlas still owes the ping — 4 sessions); oil pressure; GM 3-bar MAP; wideband; E85; EGT.
+- **Stale skill** `closeout-session-tuner` still says "do NOT run git commands" — superseded by per-agent-clone discipline. Flagged, unedited. Carry-forward.
+
+### Safety Advisories
+- **No acute engine conditions.** No new data to analyse — no captures since 08-07, and those were parked idles already graded healthy.
+- **One honesty ruling, against myself:** withdrew a GREEN display green-light on discovering the signal has no source. An instrument fed from a PID that never returns is the fabricated-tile failure mode I've refused three times in others' work; refusing it in my own costs nothing but a note.
+- **Primary risk remains loss of monitoring for engine analysis** — 45 days without moving-vehicle data. Plumbing is fixed; the gap closes only when the car moves.
+
+---
+
 ## Session 35 — 2026-08-07 (capture GREEN → BL-025 closed; Iris PID rulings; two self-corrections)
 
 **Context**: Init (`/init-tuner`). Atlas's 08-07 note landed the morning of boot: the durable-BT-bond blocker that killed capture for a month was **resolved and live-verified**. Session became three threads — (1) rule on Iris's PID fact-check before her sensor prototypes reached dev, (2) adjudicate whether BL-025 actually still needed my movement drive, (3) validate Pi↔server sync on the CIO's direct ask. No moving-vehicle datalogs (still none since drive 34). Closeout run 2026-08-12.
