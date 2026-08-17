@@ -45,6 +45,35 @@ Related: [[pattern-ui-as-ssot-consumer]] (I render the SSOT, I don't redefine it
 rendering it faithfully includes rendering the *right version* of it) ·
 [[pattern-ground-in-existing-implementation]] · [[pattern-defects-first-existing-artifact-review]]
 
-**The general form:** config membership is not evidence of PID support; a card tagged
-`both` is not evidence of both. Both errors this month were the same shape — **a label
-asserting scope, believed without checking the underlying observation.**
+## The general form — now 3 for 3
+
+Every data error on this line in August 2026 was the same shape: **a document asserting a
+fact, believed without checking the observation underneath it.**
+
+| # | The artifact believed | What it actually was | Whose error |
+|---|---|---|---|
+| 1 | `config.json` **poll list** membership | a *request* to poll, not proof of support (2 dead PIDs in Tier 4, eating NO_DATA) | mine |
+| 2 | a tuning card tagged **`ecu: both`** | an old-ECU observation, mislabelled | Spool's |
+| 3 | a probe reporting **"16 PIDs supported"** + a Tier-4 **allocation** doc | a count without an enumeration, and a *proposal* — he "read a proposal as a capability", his words | Spool's |
+
+#3 is the instructive one: **the SME caught himself making the identical error he had just
+corrected in me**, one week later, in his own SSOT. This is not a competence problem — it is
+what happens when planning documents and evidence documents look alike. Neither of us is
+immune, so the defence has to be structural, not vigilance.
+
+## The structural defence
+
+**For a display readout, the only acceptable evidence is the parameter observed returning a
+real value in `realtime_data`.** Rank the artifacts and never promote one:
+
+```
+evidence   : observed in realtime_data / live capture   <- the ONLY thing that earns a tile
+weaker     : a probe COUNT without an enumeration
+weaker     : a tier / priority ALLOCATION doc
+weaker     : config.json poll-list membership
+weakest    : a scope label on a card (`ecu: both`)
+```
+
+When a peer hands over a green-light, ask **"observed where?"** — and if the answer is a
+document rather than a capture, treat it as a plan. Cheap to ask; the alternative is a tile
+that renders nothing, or a branch defending against a condition that no longer occurs.

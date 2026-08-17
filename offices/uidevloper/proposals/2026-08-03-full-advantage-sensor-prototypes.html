@@ -96,14 +96,15 @@ h2{font-size:20px;margin:0;letter-spacing:-.01em;font-weight:640;}
   <header class="masthead">
     <p class="eyebrow">Eclipse OBD-II · UI/UX · sensor prototypes</p>
     <h1>Getting the most out of the sensors we already have</h1>
-    <p class="dek">Four prototypes, no new hardware (GPS + baro on hold). <b>Every readout is fact-checked
+    <p class="dek">Four prototypes, no new hardware (GPS + baro sensors on hold — and OBD baro turns out to have no source either). <b>Every readout is fact-checked
       against what the OBDLink actually returns on your DSM (MD326328)</b> — and as of Spool's 08-07 probe
       ruling, <b>BOOST IS OUT</b>: MAP (0x0B) is probe-dead on this ECU <i>and</i> is wired to the EGR
       differential sensor, so it was never boost to begin with. <b>MAF replaces it</b> — the 2G 4G63 is
       MAF-based (Karman-vortex), so airflow is the real "how hard is it breathing" signal and the actual
       fuel-metering input. Nothing here shows a dead "no source" tile.</p>
     <div class="meta"><span><b>Author</b> Iris</span><span><b>Date</b> 2026-08-03 · rev 08-07 (Spool PID ruling)</span>
-      <span><b>Confirmed data</b> RPM·SPEED·<b>MAF</b>·COOLANT·IAT·THROTTLE·LOAD·STFT/LTFT·BARO·FUEL-SYS·voltage(ATRV)·IMU</span></div>
+      <span><b>Confirmed live</b> (drives 37/38) RPM·SPEED·<b>MAF</b>·COOLANT·IAT·THROTTLE·LOAD·STFT/LTFT·FUEL-SYS·voltage(ATRV)·IMU</span>
+      <span><b>No source</b> MAP/boost · 0x42 · <b>baro</b></span></div>
     <p class="dek" style="margin-top:10px;border-left:3px solid #D32F2F;padding-left:10px">
       <b>Killed by the 08-07 ruling —</b> boost/MAP gauge (0x0B dead + wrong quantity), <code>CONTROL_MODULE_VOLTAGE</code>
       0x42 (dead — voltage still shown, sourced from adapter <code>ATRV</code>), O2 gauge (narrowband slams

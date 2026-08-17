@@ -3,9 +3,10 @@
 | | |
 |---|---|
 | **Author** | Iris (UI/UX) |
-| **Date** | 2026-08-03 · **rev 2026-08-07 (Spool PID ruling folded)** |
+| **Date** | 2026-08-03 · **rev 2026-08-17 (Spool CORRECTION 2 — baro has no source)** |
 | **Status** | **CIO priorities set 2026-08-03: P2 (Engine card) + P3 (post-drive review) = PRIORITY; P4 = low-priority/fun, re-styled as an aircraft attitude indicator for the Eclipse; P1 folded into P2.** GPS + baro sensor ON HOLD. **Spool's data gate is now CLEARED (2026-08-07) — P2 is unblocked, with the boost gauge removed.** P3 still needs an Atlas server-tier contract. |
 | **Rev 08-07** | Spool's probe rulings (`inbox/2026-08-07-from-spool-pid-return-rulings-kill-boost-tile.md`) folded: **boost tile killed** (MAP 0x0B probe-dead *and* the wrong quantity), **MAF promoted** to the centrepiece, 0x42 → `ATRV`, O2 → `FUEL_SYSTEM_STATUS` + trims, timing stays off, **~2.5 s/PID sample-rate rule** added as a design constraint. |
+| **Rev 08-17** | Spool **CORRECTION 2** (`inbox/2026-08-17-from-spool-CORRECTION-baro-has-no-source.md`): **BAROMETRIC has NO SOURCE** — absent from the live capture; do not display. Basis of §0 switched to the **confirmed-live capture set** (drives 37/38). **MAF + `FUEL_SYSTEM_STATUS` both CONFIRMED LIVE with real values** (MAF 3.1–3.4 g/s idle) — the two substitutes for boost and the O2 tile are real. Nothing in the design breaks. |
 | **Rev 08-07b** | Spool **CORRECTION** (`inbox/2026-08-07-from-spool-CORRECTION-ltft-idle-band.md`): the **LTFT idle-offset caveat is WITHDRAWN** — the −6.25 % figure was **old-ECU** (MD346675). Fuel trims are banded **straight**, no idle special-case. Everything else in his ruling stands. |
 | **Directive** | CIO 2026-08-03: take full advantage of the sensor data we already have; **fact-check every readout against what the OBDLink actually returns; NO dead "no source" displays.** |
 | **Companion** | `proposals/2026-08-03-full-advantage-sensor-prototypes.html` + hosted artifact |
@@ -13,11 +14,24 @@
 
 ## 0. Fact-check — what data is actually available (the "no dead displays" gate)
 
-**Superseded 2026-08-07 — re-derived from Spool's capability probe (2026-05-22, 16 Mode-01 PIDs,
-unchanged by the ECMLink flash), NOT the `config.json` poll list.** My first pass sourced "confident
-YES" off the poll list; Spool's correction is that **config membership is not evidence of PID
-support** — Tier 4 polls two dead PIDs and eats NO_DATA every 30th cycle (his filed defect,
-`edr-pid-priority-allocation.md` §2b). Only GREEN may drive a live readout.
+**Basis, rev 2026-08-17: the CONFIRMED-LIVE CAPTURE SET — measured in `realtime_data` on drives
+37/38 — not a probe count, not a poll list, not an allocation doc.** Only a parameter observed
+returning real values may drive a readout.
+
+That basis moved twice, and both moves were the same error made by two different people:
+
+1. **08-07** — my first pass derived "confident YES" from the **`config.json` poll list**. Spool's
+   correction: **config membership is not evidence of PID support** (Tier 4 polls two dead PIDs and
+   eats NO_DATA every 30th cycle — his filed defect, `edr-pid-priority-allocation.md` §2b).
+2. **08-17** — Spool then self-corrected: he had green-lit **BAROMETRIC** off a probe that reported
+   *"16 PIDs supported"* **without enumerating which 16**, plus his own doc listing baro as a
+   **proposed** Tier-4 allocation. He **read a proposal as a capability** — his words — and the rule
+   binds him identically. Baro is **absent from the live capture**.
+
+**The durable rule for this surface: a readout requires a parameter seen returning a real value in
+`realtime_data`.** Everything weaker — a poll list, a supported-count, a tier allocation, a card
+tagged `both` — is a plan, not evidence. See
+[[pattern-verify-value-provenance-before-building-a-special-case]].
 
 | Signal | Ruling | Notes |
 |---|---|---|
@@ -27,7 +41,7 @@ support** — Tier 4 polls two dead PIDs and eats NO_DATA every 30th cycle (his 
 | INTAKE_TEMP 0x0F | ✅ **GREEN** | **label "INTAKE AIR", never "charge temp"** — see below |
 | **MAF 0x10** | ✅ **GREEN — my premise was backwards** | the 2G 4G63 is **MAF-based** (Karman-vortex), not speed-density. *That is why MAF lives and MAP is dead:* this engine meters fuel on measured airflow and needs no manifold-pressure sensor for fuelling. **Primary fuel-metering input → the centrepiece.** |
 | STFT 0x06 · LTFT 0x07 | ✅ **GREEN** | bands below — band them **straight**; the idle-offset caveat was **withdrawn** by Spool 08-07 |
-| BAROMETRIC 0x33 | ✅ **GREEN** | supported after all; gives ambient/altitude context — but **nothing toward boost** |
+| ~~BAROMETRIC 0x33~~ | ❌ **NO SOURCE — do not display** | **Corrected 2026-08-17 (Spool CORRECTION 2).** He green-lit it on 08-07; it is **absent from the live capture** (drives 37/38 land 16 params, baro is not one; `drive_summary.baro` blank on drives 34–38). Unsupported-vs-not-polled is unsettled, but there is **no source either way**. Nothing of mine breaks — boost was already dead and baro was only ever an atmospheric *reference*. |
 | FUEL_SYSTEM_STATUS 0x03 | ✅ **GREEN** | → "Closed loop / Open loop" — takes the tile O2 would have had |
 | g-force · heading · grade · **gyro** | IMU | ✅ **GREEN** | 100 Hz — the only source that can feel live |
 | **INTAKE_PRESSURE 0x0B (MAP)** | ❌ **DEAD — double-dead** | probe-unsupported **and** the wrong quantity: on the 2G it's wired to the **MDP sensor** (EGR-system monitor), not manifold boost. Standing rule: **never source a boost readout or alert off 0x0B on this vehicle.** |
@@ -37,8 +51,8 @@ support** — Tier 4 polls two dead PIDs and eats NO_DATA every 30th cycle (his 
 
 ### Boost is not displayable — by any software fix
 
-My boost math (`psi = (MAP − baro) × 0.145`) was correct; **there is simply no MAP term to feed
-it.** Boost on this car requires a **GM 3-bar sensor + ECMLink** — both behind the CIO's sensor
+My boost math (`psi = (MAP − baro) × 0.145`) was correct; **there is no MAP term to feed it — and
+as of 08-17 no baro term either.** Both sides of the subtraction are missing. Boost on this car requires a **GM 3-bar sensor + ECMLink** — both behind the CIO's sensor
 freeze. Spool's bands are recorded here as documentation only, **not to render**: stock TD04-13G
 🟢 10–12 psi · 🟡 13–14 · 🔴 >15.
 

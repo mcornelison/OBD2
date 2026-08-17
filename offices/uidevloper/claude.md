@@ -203,7 +203,39 @@ Open UI/UX/enclosure items I am tracking. Seeded at onboarding 2026-05-22.
 
 | W-17 | **3.5″ legibility + layout pass (F-127)** — the type-scale SSOT + the card re-lay it forces | **DESIGNED 2026-08-07 → routed to Atlas (gate) + Marcus → GROOMED as V0.29.27 / F-127, US-539–542 (Marcus ack 2026-08-08). Awaiting Atlas's structural gate; sits behind V0.29.26.** | **The finding:** panel is 480×320 @3.5″ = **~165 PPI = 0.154 mm/px**; at ~650 mm glance distance the 20′ comfort target is **~34 px** and the 16′ floor **~28 px**. Shipped type was **13–15 px values / 8–11 px labels** = 2–4× under. **Independent corroboration:** the CIO flagged compass/%-values/g-force/CHECK-ENGINE (all ≤22 px) and did NOT flag `.imu-gear` (40) or `.idle-hero` (34) — **the only two elements ≥34 px.** Scale: `--fs-hero 44 / primary 34 / secondary 26 / label 20 / meta 15`; **floor rule = anything the driver must read to act is ≥34 px, anything <26 px must be non-critical; when it doesn't fit, cut facts not size.** **Atlas's "one scaling change" lever did not exist** — `tokens.css` had font families but **no type scale**, and `dashboard.css` carried **83 hardcoded px** → tokenize FIRST (closes W-3) or it's 83 edits that drift back. **Capacity:** ~258 px body / ~72 px row = **3 facts/card, 4 in a 2×2 = the ceiling** → card set **4→6** (7 with W-16 P2); **"Health" retires** as a container of three unrelated facts. **This partly reverses my own F-124 6→4 consolidation** — right then, but it packed the density that costs legibility; auto-rotate OFF makes the longer set cheap. **Answered Atlas's design question:** the idle/standby face **retires as a face, survives as a state** — parked the IMU is *correct* not unavailable (true heading, true 0.0 g), only OBD-dependent bits go typed-NA; STANDBY hero deleted, clock→top bar, and **"DTC not read since key-off" returns to the Alerts card that always owned it** (idle was borrowing it). Spec+mockup `proposals/2026-08-07-pi-3p5in-legibility-and-layout.{md,html}` (commit 7ef6f12) = **the build spec the F-127 stories point at**. **UNVERIFIED, flagged everywhere:** the stage is authored 480×320 and scaled up with the Pi outputting 1080p into a 480×320 native panel — **if the panel downsamples, small text is resampled as well as small.** Can only move the floor UP, so it gates nothing; routed to Atlas/Rex. Acceptance = **read at arm's length in the car, seated normally** — not a bench check. |
 
+| W-18 | **F-126 Settings surface (US-532)** — the Pi's first user-editable config screen | **DESIGNED + CIO-LOCKED (shape B) → spec corrected 2026-08-17 → ON ORIGIN, branch `iris/us532-settings-4-settings` (`d7f1b03`), told Marcus, awaiting his merge.** Sprint 71 / V0.29.26. | **Shape: CIO chose B** — settings live **inside the US-403 `⋮` setup-menu overlay** as a Settings band **above** the service controls, NOT a separate carousel card. One overlay, two visually-separated bands (safe prefs on top / destructive service+Exit below, confirms + powerwatch-no-Stop unchanged). **Slice 1 = 4 settings** (auto-rotate · power mode · calibration · auto-analyze); **`audioAlerts` DROPPED** by CIO 08-02 → **deferred US-538, not cancelled**; the band takes a 5th row back without re-layout. **Atlas's F-126 design-gate folded 08-17 — and I had wrongly reported this done on 08-08 without editing the spec:** (a) **GAP 3** — no parallel `autoRotate` bool; the overlay stores the **existing `autoRotateS`** (seconds, 0=off) and the toggle **derives** on/off from `>0`, **default OFF** per disposition-B; (b) **GAP 1** — auto-rotate is **NOT live** (`states_http_server` reads `pi.display.carousel` once at startup, cached) → tagged **RESTART NEEDED**; Slice 1 keeps that shape *only because it is honestly labelled*; (c) `pi.power.mode` validates to `{car, wall, unknown}` → else **unknown**. **Honest-instrument core:** every control renders the **real effective value** (overlay-override else config default, never a hardcoded default); on tap `saving…` → confirm **from the re-read**, or snap back to the stored value + `couldn't save` on a rejected/failed write — **never optimistic success**; per-row apply-state tag (live / next drive / restart). The mockup models the **derive-from-seconds** rule in its own logic, so the companion can't teach a build the bool the gate ruled out. Spec+mockup `proposals/2026-08-03-f126-settings-screen-us532.{md,html}`; 9 acceptance criteria (4 added 08-17). Seams are Atlas/Ralph's: US-530 overlay, US-531 token-gated write, US-533 wiring. |
+
 ## 9. Session Log
+
+### 2026-08-17 (cont.) — post-closeout delta: Spool CORRECTION 2 (baro) + US-532 spec fixed + branch handed to Marcus
+
+Work after the first closeout of this session. Three things, all corrections rather than new design.
+
+- **Spool CORRECTION 2 — BAROMETRIC has NO SOURCE** (`inbox/2026-08-17-from-spool-CORRECTION-baro-has-no-source.md`).
+  He green-lit baro on 08-07; it is **absent from the live capture** (drives 37/38 land 16 params,
+  baro not among them; `drive_summary.baro` blank 34–38). Folded: baro struck from the GREEN table,
+  removed from the mockup's "Confirmed data" line (**I had added it there myself**), and **§0's basis
+  switched from the probe to the CONFIRMED-LIVE CAPTURE SET.** **Nothing in the design breaks** —
+  boost was already dead, and **MAF (3.1–3.4 g/s idle) + `FUEL_SYSTEM_STATUS` are both confirmed live
+  with real values**, which is the part that mattered: my two substitutes are real. Acked him.
+- **US-532 Settings → 4 settings + Atlas's gate actually folded.** CIO asked for the audio drop; while
+  in the same table I found the **two gate items I had told Atlas and Marcus were already folded and
+  were not** (the `autoRotate` bool; the false "live" tag). Fixed, plus modelled derive-from-seconds
+  in the mockup. **New W-18** — this surface had never been on the watch list at all.
+- **Branch handed to Marcus.** Pushed to **`iris/us532-settings-4-settings`** (`d7f1b03`) instead of
+  `dev`, because dev is his lane and last time my work reached origin only because his push happened
+  to carry it. Verified 0-behind / clean fast-forward before asserting it to him — my first check said
+  "not a fast-forward", but that was a **bad test** (I queried a local branch name that doesn't exist,
+  so the ref resolved to nothing and produced a false negative). Measured properly, it fast-forwards.
+
+**The session's throughline:** 3 data corrections, all the same root cause — **a document asserting a
+fact, believed without checking the observation under it** (poll list → support; `ecu: both` → both;
+"16 PIDs supported" + a tier allocation → capability). Two were Spool's, one mine; he caught himself
+making the identical error he'd corrected in me a week earlier. Knowledge file now ranks the artifacts
+and fixes the rule: **for a readout, the only evidence is observed-in-`realtime_data`.**
+**Incoming:** Spool CORRECTION 2. **Outgoing:** Marcus ×2 (LTFT correction · US-532 branch), Spool ack.
+**Commits:** d7f1b03 (US-532) · 074164a (branch note) · + this delta closeout, all on
+`iris/us532-settings-4-settings`.
 
 ### 2026-08-07→17 — W-16 fold + hand-off · 3.5″ legibility pass (F-127) · enclosure #3 mounting tabs
 
