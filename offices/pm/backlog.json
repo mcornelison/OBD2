@@ -1320,11 +1320,11 @@
       "parent": "E-001",
       "status": "pending",
       "title": "Engine card -- MAF centerpiece + live vitals (W-16 P2)",
-      "description": "Dedicated Engine dashboard card: MAF arc gauge (the 4G63 is MAF-based -- MAF replaces the dead boost/MAP) + RPM/coolant/intake-air/throttle/load + STFT/LTFT + closed/open-loop + voltage(ATRV). Display-only consumer of existing OBD state; Spool gate CLEARED. Bake the ~2.5s-per-PID step (no animated needles) + the LTFT-idle no-colour rule into acceptance. V0.30 lead feature.",
+      "description": "Dedicated Engine dashboard card: MAF arc gauge (the 4G63 is MAF-based -- MAF replaces the dead boost/MAP) + RPM/coolant/intake-air/throttle/load + STFT/LTFT + closed/open-loop + voltage(ATRV). Display-only consumer of existing OBD state; Spool gate CLEARED. Bake the ~2.5s-per-PID step (no animated needles) into acceptance. FUEL TRIMS BANDED STRAIGHT -- no idle offset / no idle-suppression / no special-case branch (Iris CORRECTION 2026-08-17, refs offices/pm/inbox/2026-08-17-from-iris-CORRECTION-ltft-idle-rule-withdrawn.md: the -6.25% idle figure was the OLD ECU MD346675; Spool re-baselined on MD326328 drives 25-38 n~2700 -> -3.9%..+3.1% incl warm idle, all inside +/-5% GREEN, so a naive band does not false-alarm). FIXTURE CAUTION: do NOT use drives 35/36 as a healthy-idle reference (LTFT flat 0.00 across 232 samples, zero variance -- unresolved ECU-reset-vs-decode-artifact, Spool not calling it). V0.30 lead feature.",
       "priority": "P2",
       "tier": "pi",
       "createdAt": "2026-08-10",
-      "updatedAt": "2026-08-10"
+      "updatedAt": "2026-08-17"
     },
     {
       "id": "F-130",
@@ -7305,7 +7305,10 @@
         "CIO 2026-08-03 settings-screen brainstorm"
       ],
       "createdAt": "2026-08-03",
-      "updatedAt": "2026-08-10"
+      "updatedAt": "2026-08-17",
+      "notes": [
+        "2026-08-17 Iris gate-fold reconciliation (spec proposals/2026-08-03-f126-settings-screen-us532.{md,html} now edited to reflect Atlas's F-126 gate). 4 authoritative ACs for the record: [Iris gate-fold 2026-08-17, spec-of-record] AC1: auto-rotate binds to pi.display.carousel.autoRotateS ONLY -- no parallel autoRotate bool anywhere; on/off state DERIVED from autoRotateS > 0 (a companion bool re-mints the exact SSOT conflict Atlas's F-126 gate ruled out). | AC2: auto-rotate renders OFF by default (disposition-B: OFF writes 0, ON writes the shipped default seconds) and is tagged RESTART NEEDED, not 'live' -- states_http_server reads pi.display.carousel once at startup and serves it cached, so a change needs an eclipse-states-http restart + page reload. (Honest-label: a silent no-op that looks applied is the one failure this surface cannot have.) | AC3: Slice 1 shows EXACTLY 4 settings -- no Audio-alerts row (audioAlerts deferred to US-538, not cancelled; band designed to take the 5th row back without re-layout). | AC4: an out-of-range pi.power.mode overlay value resolves to unknown ({car, wall, unknown} only)."
+      ]
     },
     {
       "id": "US-533",
@@ -7336,8 +7339,12 @@
         "CIO 2026-08-03 settings-screen brainstorm"
       ],
       "createdAt": "2026-08-03",
-      "updatedAt": "2026-08-10",
-      "passes": false
+      "updatedAt": "2026-08-17",
+      "passes": false,
+      "notes": [
+        "2026-08-17 Iris gate-fold reconciliation (spec proposals/2026-08-03-f126-settings-screen-us532.{md,html} now edited to reflect Atlas's F-126 gate). 4 authoritative ACs for the record: [Iris gate-fold 2026-08-17, spec-of-record] AC1: auto-rotate binds to pi.display.carousel.autoRotateS ONLY -- no parallel autoRotate bool anywhere; on/off state DERIVED from autoRotateS > 0 (a companion bool re-mints the exact SSOT conflict Atlas's F-126 gate ruled out). | AC2: auto-rotate renders OFF by default (disposition-B: OFF writes 0, ON writes the shipped default seconds) and is tagged RESTART NEEDED, not 'live' -- states_http_server reads pi.display.carousel once at startup and serves it cached, so a change needs an eclipse-states-http restart + page reload. (Honest-label: a silent no-op that looks applied is the one failure this surface cannot have.) | AC3: Slice 1 shows EXACTLY 4 settings -- no Audio-alerts row (audioAlerts deferred to US-538, not cancelled; band designed to take the 5th row back without re-layout). | AC4: an out-of-range pi.power.mode overlay value resolves to unknown ({car, wall, unknown} only).",
+        "VERIFY IN-CAR: US-533 DoD[1] shipped auto-rotate via PER-REQUEST carousel resolution (path #3, CIO 2026-08-08) + US-541-a resolver now honours autoRotateS:0 -- so the CAROUSEL applies auto-rotate-off live, while the Settings BAND reflects config that states_http_server serves cached (Iris AC2 RESTART-needed). Two different consumers; confirm the operator-facing toggle behaviour matches the honest RESTART label during the in-car F-126 check."
+      ]
     },
     {
       "id": "US-534",
