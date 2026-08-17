@@ -7,7 +7,7 @@
 
 ---
 
-## Session 36 — 2026-08-17 (short: tool fix → caught my own bad green-light on BAROMETRIC)
+## Session 36 — 2026-08-17 (BAROMETRIC self-correction + CIO-directed stale-address sweep)
 
 **Context**: CIO asked for a closeout. Session 35 was already closed and merged, inbox had nothing new, and no new drives had landed — so there was nothing to record. Fixing one stale tool default turned into catching a wrong ruling I'd given Iris. No new drives, no moving data.
 
@@ -43,6 +43,34 @@
 - **No acute engine conditions.** No new data to analyse — no captures since 08-07, and those were parked idles already graded healthy.
 - **One honesty ruling, against myself:** withdrew a GREEN display green-light on discovering the signal has no source. An instrument fed from a PID that never returns is the fabricated-tile failure mode I've refused three times in others' work; refusing it in my own costs nothing but a note.
 - **Primary risk remains loss of monitoring for engine analysis** — 45 days without moving-vehicle data. Plumbing is fixed; the gap closes only when the car moves.
+
+### Second Half — CIO-directed stale-address sweep (same session)
+
+**Context**: the `~/.ssh/config` fix surfaced that the Pi's address move to static `.124` had been applied to `deploy.conf`/`addresses.sh`/`config.json` but missed elsewhere. CIO directed a full sweep, then authorized the fixes.
+
+- **Swept the repo for every superseded address** (Pi `.28`/`.100`/`.9`/`.27`, server `.10`). **Key finding: the centralizer was already correct** (`deploy/addresses.sh` → `.124`/`.123`/`.120`) and **`src/` was completely clean — zero hits.** `deploy-pi.sh` sources the centralizer at line 65, so the deploy path itself always worked.
+- **🔴 Root cause is the lint's blind spot, not a broken centralizer.** `tests/lint/test_no_hardcoded_addresses.py` documents its exemptions: `*.md` anywhere, `offices/`, `specs/`, `docs/`, canonical config, and `b044-exempt` inline pragmas. **Every single stale reference lived in exactly those blind spots.** The lint works perfectly within its scope; the scope is the gap.
+- **Fixed 4 executable paths** (`0d2c0b2`): (1) `.claude/commands/sprint-deploy-pm.md:196` ssh'd to the dead `.28` **inside Phase 7, the deploy-verification step** — so every sprint deploy's verification silently failed; now `chi-eclipse-01`, and **proven working** (returns live `V0.29.29`/`46bb187`). (2) `deploy/deploy.conf.example` `PI_HOST=.28` would **poison every newly-provisioned per-agent clone** — a risk that grows as clones are added. (3) `scripts/seed_eclipse_vin.py:334` argparse default `http://10.27.27.10:8000` — a real executable fallback, invisible behind a `b044-exempt` pragma. (4) `scripts/audit_config_literals.py:46` docstring pragma example.
+- **Fixed Ralph's knowledge files** (`65da015`, CIO-scoped to `offices/ralph/knowledge/` only) and **Ralph's boot context** (`56c9e26`, CIO-authorized, 3 lines in `offices/ralph/CLAUDE.md`). Worst item found: `session-learnings.md:64` asserted *"Chi-Srv-01 real IP is `.10`, NOT `.120` as in architecture.md"* — **a confidently-wrong "correction" telling Ralph the spec was mistaken when the spec was right**, sitting one line below the file's own "use hostnames, not IPs" rule. Self-contradicting boot knowledge is worse than missing knowledge.
+- **Sweep complete: zero dead addresses remain in any executable path or agent boot/knowledge file.** Deliberately left: header comments/docs, ~35 test fixtures that pass addresses explicitly (inert), and append-only history (`archive/`, all `inbox/`, captured `.txt`/`.json` artifacts) — rewriting those would falsify the record.
+- **Two self-corrections during the sweep.** (a) I reported `audit_config_literals.py:46` as "the validator's default registry is authoritatively wrong"; it is a line **inside the module docstring** illustrating `b044-exempt` syntax — I read the exempt comment as describing live behaviour. Cosmetic, not a break. (b) I first set `deploy.conf.example` to the **IP** `.124`, then found the live gitignored `deploy.conf` had been independently switched to the **hostname** the same day under the same CIO directive — my example would have handed new clones a divergent convention, so I re-aligned it to the hostname.
+- **Handled a 25-min `index.lock` correctly, and it produced durable knowledge.** `tasklist` showed a live `git.exe` (handbook §13's hard stop) while `index_lock.py --check` said none. Resolved the disagreement instead of trusting either: the **PID changed between samples** and the command was `ls-files --others --exclude-standard` — **read-only, never takes the index write lock** = an editor/file-watcher poller, not the owner. Lock was byte-identical across 25 min. Cleared via the sanctioned `offices/pm/scripts/index_lock.py` (US-554/BL-032), never `rm`. Written up as `knowledge/index-lock-reader-vs-writer.md`.
+- **Ops lesson**: backticks in a `git commit -m` body get **shell-expanded** — three words vanished from `0d2c0b2`'s message. Switched to `git commit -F -` with a quoted heredoc for every later commit. Did **not** amend/force-push, because `dev` is shared and PM-owned; three cosmetic words are not worth a force-push.
+
+### Added to Knowledge This Session
+- `knowledge.md` — **empirically confirmed live capture set** (16 params + ranges) as the authoritative answer to "can we display X?"; PID 0x0F IAT pre-turbo caveat.
+- `cards/safe-range-fuel-trims.md` — LTFT idle-lock split by ECU; drives 35/36 zero-variance watch item.
+- `knowledge/index-lock-reader-vs-writer.md` — **new**; reader-vs-writer lock diagnosis, more important under per-agent clones where a `git.exe` may belong to another clone entirely.
+
+### Handoff — Next Session Starts Here
+1. **THE MOVEMENT DRIVE (mine, needs the car).** Everything else is staged. SPEED>0 key-on→drive→key-off. Closes A-9 attribution re-gate, validates US-526 drain writer, tests the 2.4 GHz coexistence hypothesis, and unblocks the whole V0.29 chain's `/chain-validated`. **45 days without moving data.**
+2. **Baro probe** next engine-on (`probe_obd_capabilities.sh`) — settle unsupported-vs-unpolled; feeds the EDR Tier-4 allocation which currently assumes baro exists.
+3. **Awaiting Iris** — acceptance of the boost kill + both corrections (LTFT banding, baro).
+4. **Route to Atlas**: extend the B-044 lint to `.claude/commands/` + `*.example` (the two exempt categories that actually execute), and audit `b044-exempt` tags — `seed_eclipse_vin.py` proved an exemption outlives its reason invisibly.
+5. **Not mine but flagged**: Atlas reported **4 unpushed local `dev` commits** as a durability risk (incl. Iris's US-532); `battery_health_log` writer gap (US-504a) now **93 days** stale. *(Pi-hole DNS A-record — I listed this as owed; it is **COMPLETE**. B-102/US-473 closed, `dig @.120`→`.124` verified authoritative. Only residual: the dev box can't reach Pi-hole `.120`, so it resolves via mDNS `.local` + ssh-config — non-blocking.)*
+8. **MEMORY.md over its compaction target**: 18.8KB vs a 17.1KB target (read limit is 24.4KB, so nothing breaks yet). I cut 2.1KB — compressed all four Spool entries to pointers, removed a literally duplicated clause in the PM `Active:` line, retired the superseded shared-checkout entry that still told agents "only PM switches branches", and moved Pi-5 flap history to `[[reference-pi-network-rebuild]]`. The remaining ~1.7KB requires pruning PM/Ralph/Tester entries whose load-bearing status I can't judge — **left for PM/CIO.**
+6. **Unchanged carry-forwards**: P0443 — **do not clear until the purge-solenoid connector is reseated**; drives 35/36 LTFT zero-variance unresolved (don't baseline on them); IAT pre-turbo empirical confirm; F-116 drive-33 re-tag (gated on US-458, Atlas owes the ping — 4 sessions now); oil pressure (#1 unmonitored kill mechanism); GM 3-bar MAP; wideband Pin 75/92; E85; EGT.
+7. **Stale skill**: `closeout-session-tuner` still says "do NOT run git commands — that's PM's job", superseded by per-agent-clone discipline. Flagged, deliberately unedited.
 
 ---
 
