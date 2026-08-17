@@ -61,7 +61,8 @@ Accumulated gotchas, patterns, and CIO feedback. Load on-demand when working, no
 
 ## Infrastructure
 - **SSH**: `ssh chi-srv-01` and `ssh chi-eclipse-01` both work passwordless. Use hostnames, not IPs. BatchMode=yes works on both.
-- **Chi-Srv-01 real IP**: `10.27.27.10`, NOT `.120` as in architecture.md. CIO aware, network admin task.
+- **Chi-Srv-01 IP**: `10.27.27.120`. **`10.27.27.10` is DEAD** (server relocated 2026-06-18). ⚠️ This bullet previously claimed the reverse — "real IP is `.10`, NOT `.120` as in architecture.md" — which was stale and contradicted the "use hostnames, not IPs" line directly above it. `architecture.md` was right. Corrected 2026-08-17.
+- **Pi IP**: `chi-eclipse-01` → `10.27.27.124` (WiFi, primary) · `chi-eclipse-01-eth` → `10.27.27.123` (eth0). Static since 2026-08-15 (B-102/US-473). `10.27.27.28`/`.100`/`.9`/`.27` are all DEAD. Per the line above: **use the hostname.**
 - **Pi legacy code**: `/home/mcornelison/Projects/EclipseTuner` at `a28fa1e` (Jan 31). Pre-reorg, ~60 commits behind. Safe `git pull`.
 - **CRLF**: `.gitattributes` with `eol=lf` + `core.autocrlf=input`. Never use `autocrlf=true` — it adds CRLF on checkout.
 - **Server isolation**: rsync deploy boundary (`/mnt/projects/` → `/opt/obd2-server/`). Never run production from NAS mount. Spec at `docs/superpowers/specs/2026-04-15-server-isolation-pattern.md`.

@@ -6,11 +6,11 @@ Load on demand when working on Pi hardware layer (I2C, GPIO, UPS, display, pygam
 
 **Target deployment environment:**
 - Hostname: chi-eclipse-01 (renamed from chi-eclipse-tuner Sprint 13 US-176; reboot persistence unconfirmed as of 2026-04-20)
-- User: mcornelison, IP: 10.27.27.28
+- User: mcornelison — **address the Pi by hostname `chi-eclipse-01`, never a hardcoded IP** (CIO directive 2026-08-17; `~/.ssh/config` is the single HostName+User acquisition point). Static IPs behind the aliases since 2026-08-15 (B-102/US-473, ends the DHCP flap): `chi-eclipse-01` → `10.27.27.124` (WiFi/wlan0, primary headless interface) · `chi-eclipse-01-eth` → `10.27.27.123` (eth0, usually unplugged). **`10.27.27.28` is DEAD** (as are the interim `.100`/`.9`/`.27`) — corrected 2026-08-17.
 - Path: /home/mcornelison/Projects/Eclipse-01 (renamed from EclipseTuner during Sprint 13)
 - Python 3.11+ in venv at ~/obd2-venv (NOT in project tree; survives project-tree wipes — see patterns-python-systems.md §systemd)
 - Display: OSOYOO 3.5" HDMI (480x320) -- NOT GPIO/SPI
-- Ollama: Remote on Chi-Srv-01 (10.27.27.10:11434), NEVER local on Pi
+- Ollama: Remote on Chi-Srv-01 (`10.27.27.120:11434` — relocated from the now-DEAD `.10` on 2026-06-18; corrected 2026-08-17), NEVER local on Pi
 - WiFi: DeathStarWiFi (10.27.27.0/24 subnet)
 - Bluetooth: OBDLink LX MAC 00:04:3E:85:0D:FB paired/bonded/trusted (see `scripts/pair_obdlink.sh` + `deploy/rfcomm-bind.service` from Sprint 14 US-196)
 
