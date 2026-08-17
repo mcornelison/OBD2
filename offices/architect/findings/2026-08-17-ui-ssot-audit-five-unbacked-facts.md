@@ -178,9 +178,28 @@ logs it verbatim:
 
 > `light sensor absent (No I2C device at address: 0x29) -- publishing silence (state=absent), no fabricated samples`
 
-The IMU path has no equivalent. Its probe gate only distinguishes *device absent* from *device present*;
-it cannot detect **present-but-returning-nothing**, so it publishes zeros as real readings. 43,203
-fabricated rows today alone, at 25 Hz, growing.
+### 5a. SCOPE NARROWED by a live unplug test (2026-08-17 20:10Z) — the hole is ONE path, not three
+
+The CIO unplugged the IMU mid-session (he had moved it into its enclosure — which also dates the
+hardware change to exactly the good-data/zero-data boundary). That gave a free controlled test of the
+absence path. Result:
+
+| Reader path | Behaviour | Verdict |
+|---|---|---|
+| Device absent at startup probe | `imu sensor present/absent` gate; publishes silence | **honest** |
+| Read raises (device pulled mid-run) | `imu read failed (seq=N, [Errno 121] Remote I/O error) -- no sample this poll`; **writes nothing** | **honest (proven live)** |
+| **Read SUCCEEDS returning all-zero values** | **writes the frame as `data_source='real'`** | **THE DEFECT** |
+
+Proof writes actually stopped: total rows `3,188,805` at `20:10:21Z` and still `3,188,805` at `20:11:26Z`
+(65 s later, zero growth), while the journal logged read failures at 50 Hz throughout.
+
+**This materially narrows the fix.** My original framing ("the probe gate only distinguishes absent from
+present") was too broad — the error path is already correct. The driver returns `0.0` *without raising*,
+so the reader receives an apparently-successful read and has no signal that anything is wrong. The fix
+is therefore a **plausibility gate on the SUCCESS path only** — no rework of absence or error handling,
+both of which are already sound.
+
+43,203 fabricated rows today, all from the one uncovered path.
 
 **Containment (verified, and it limits the blast radius):** `edr_imu_sample` is **NOT** in the sync
 table set — the live sync log lists 12 tables, none EDR, and `edr_imu_sample` appears only in
