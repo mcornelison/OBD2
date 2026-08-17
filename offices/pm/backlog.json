@@ -5013,14 +5013,15 @@
       "tasks": [],
       "status": "sprint-ready",
       "createdAt": "2026-07-15",
-      "updatedAt": "2026-08-16",
+      "updatedAt": "2026-08-17",
       "priority": "P1",
       "tier": "pi",
       "gate": "after OS rename (B-102 static-IP; CIO wants)",
       "notes": [
         "2026-08-12: Pi pinned to 10.27.27.27 (wlan0 MAC 88:a2:9e:84:46:1c). deploy.conf + addresses.sh + config.json canonicalized to .27. Router-side DHCP reservation (MAC->.27) owed on the DeathstarWifi router (10.27.27.1) to make it survive OS/DHCP changes.",
         "2026-08-15: RESOLVED via Atlas-designed fixed IP (supersedes the router-reservation approach). Pi set to static -- eth0=10.27.27.123, wlan0=10.27.27.124, hostname chi-eclipse-01. Ends the .100/.9/.28/.27 DHCP flap. Project canonicalized: deploy.conf + addresses.sh + config.json -> .124 primary (WiFi), .123 eth alt.",
-        "2026-08-16: OS hostname renamed Chi-Eclips-01 -> chi-eclipse-01 (hostnamectl + /etc/hosts cleaned, stale Chi-Eclips-Tuner alias dropped; backups .bak.20260816). chi-eclipse-01 now RESOLVES + pings .124 from the dev box -- F-102 hostname convergence COMPLETE. Repo already expected chi-eclipse-01 (piHostname/deviceId), so OS now matches; no code change."
+        "2026-08-16: OS hostname renamed Chi-Eclips-01 -> chi-eclipse-01 (hostnamectl + /etc/hosts cleaned, stale Chi-Eclips-Tuner alias dropped; backups .bak.20260816). chi-eclipse-01 now RESOLVES + pings .124 from the dev box -- F-102 hostname convergence COMPLETE. Repo already expected chi-eclipse-01 (piHostname/deviceId), so OS now matches; no code change.",
+        "2026-08-17: DONE. Canonical PI_HOST switched to hostname chi-eclipse-01 (deploy.conf+addresses.sh+config.json; commit 2ed9358); deploy-path ssh-by-name proven -> .124. Pi-hole v6 Local-DNS record chi-eclipse-01->10.27.27.124 added (CIO) + VERIFIED authoritative on chi-srv-01 (dig @10.27.27.120 -> .124 rc=0). B-102/US-473 COMPLETE. Residual (separate, non-blocking): the Windows dev box cannot query Pi-hole .120 over the network (times out for any name, e.g. google.com) -> it resolves the Pi via mDNS .local + ssh-config, not Pi-hole unicast DNS. Likely a chi-srv-01 firewall on :53 or Pi-hole Settings->DNS->Permit-all-origins. Optional cleanup, filed as follow-up."
       ]
     },
     {
