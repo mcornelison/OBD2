@@ -104,12 +104,12 @@ don't duplicate them here:
 | Coding standards / methodology / anti-patterns | `specs/standards.md`, `methodology.md`, `anti-patterns.md` |
 | Shared cross-agent memory index | `MEMORY.md` (loaded each session) |
 
-**One-line system state (re-verify every session — last refreshed 2026-08-01):**
-**main = V0.28.2 stable** (origin/main `48e5567`; the V0.29 chain is NOT yet `/chain-validated`).
-**`dev` past V0.29.21** (US-500 IMU temp hotfix). In flight: **V0.29.22** capture-hotfix (rfkill-unblock deploy-bake + `pair_obdlink` fix — `hotfix/V0.29.22-capture-fixes`, Ralph); **V0.29.23** Sprint-A UI round-2 **SHIPPED 6/6** (US-506-511); **V0.29.24** Sprint-B dispatched (`sprint/sprint69-V0.29.24`: US-501-505 wiring + US-512/513 capture).
-**⚠️ CAPTURE ROOT CAUSE FOUND + FIXED (A-18): a stale `systemd-rfkill` saved state soft-blocked BLUETOOTH at EVERY boot** (`/var/lib/systemd/rfkill/…:bluetooth=[1]`) → BT dead every boot since ~07-03 → 0 capture. Fixed LIVE + persistent (`eclipse-rfkill-unblock.service`, verified across 2 reboots). **My US-441 bisect was WRONG** — Spool + a 7-agent Opus RCA refute it: the connect code works when BT is up; the blocker was the radio-block + bond-less pairing, NOT the code. A+B fix (`78f6bc8`) is valid hardening, not the fix.
-**Pi is REACHABLE at `10.27.27.100`** (wifi, bench, home network — SSH works from my host now; `.28` dead, `.9` was temp ethernet).
-**Owed by Atlas (on-demand):** the **engine-on capture re-gate** (Spool verifies on the drive — ONE drive closes A-17/A-18/A-9/A-16-Bug3/BL-016/BL-025); `state.alerts` DELTA-1 schema when it grooms. All current PRDs design-gated (V0.29.22/23/24 PASS'd; F-125 GPS contract ruled). **BL-025 #1 (bake rfkill-unblock into deploy) is load-bearing — my live Pi fix is repo-unmanaged; a `--init`/reflash loses it until Ralph lands V0.29.22.**
+**One-line system state (re-verify every session — last refreshed 2026-08-17):**
+**main = V0.28.2 stable** (the V0.29 chain is NOT yet `/chain-validated`). **`dev` deployed V0.29.25**; V0.29 closeout in flight: **V0.29.26** (F-126 Settings, US-530+ done), **V0.29.27** (F-127 3.5″ legibility — groomed, my structural gate PASS'd), **V0.29.28** (chain closeout — groomed, my gate PASS'd + US-543 parity-contract delivered). Both 27/28 gates SOUND.
+**⚡ CAPTURE WORKS + reboot-survives (A-17/A-18/BL-025 technically CLOSED).** The last blocker was the durable BT bond; fixed `pair_obdlink.sh` bonded it (2026-08-07), live-verified rows+RPM+VIN+sync, bond persists + auto-reconnects across reboot. **Spool owns the formal MOVEMENT drive** (idle/parked so far) for the A-9 attribution re-gate + US-526 drain validation.
+**Freeze RCA = auto-rotate spin (NOT GPU); error:5 crash = the `--disable-gpu` workaround itself.** Both fixed via CIO disposition-B (US-536: autoRotateS=0 default; `--disable-gpu` reverted; keep `--password-store=basic` keyring fix). ⚠️ **Deployed V0.29.25 still crashes ~4min until Marcus lands disposition-B redeploy.**
+**Pi is STATIC (2026-08-15): `chi-eclips-01.local` = wlan0 `10.27.27.124` / eth0 `10.27.27.123`; mDNS live. STOP probing .100/.9/.28 (dead). New-IP SSH needs `-o StrictHostKeyChecking=accept-new -o BatchMode=yes`.**
+**Owed by Atlas (on-demand):** the **V0.30 F-130 post-drive analytics contract** when it grooms (the one real owed item). Chain-to-main gates on Spool's movement drive + Marcus's disposition-B redeploy + `/chain-validated`. My 5 backlog additions are groomed (US-543 A-4 parity + US-545 A-18 self-heal into V0.29.28; A-9 re-segmenter + A-16 render-gate + overlay-lint pending). Inbox clear.
 
 ## 5. Operating Model
 
@@ -243,6 +243,7 @@ CIO-directed: pin the Pi to fixed IPs outside the DHCP pool + use hostname vs IP
 - **Constraints owned honestly:** I can't touch the CIO's router (no reservation/DNS from me — mDNS covers hostname; CIO adds a reservation if he wants, MACs given: eth `88:a2:9e:84:46:1b`, wlan `88:a2:9e:84:46:1c`). DHCP-range = the one fact only the router knows → I asked the CIO to confirm .123/.124 outside-pool before writing (he did).
 - **Routed to Marcus (F-102 repo-side):** move `deploy/addresses.sh` `PI_HOST` off the raw IP to `chi-eclips-01.local`; **HOSTNAME SPELLING BUG** — deploy uses `chi-eclipse-01` (with 'e'), actual is `chi-eclips-01` (no 'e') → won't resolve, reconcile first; update stale MEMORY.md ("flaps .100/.9/.28"). Note `2026-08-15-from-atlas-pi-static-ip-done-move-deploy-to-hostname`.
 - **SSH gotcha:** a new IP (.124) has no known_hosts entry → a non-`BatchMode` ssh HANGS on the host-key prompt (looks like a 120s timeout). Use `-o StrictHostKeyChecking=accept-new -o BatchMode=yes` on first connect to a new Pi IP. **Pi is now static `.124` / `chi-eclips-01.local` — stop probing .100/.9/.28.**
+- **Notified the network engineer** (`offices/network/inbox/` — new; the network-eng is the CIO's ad-hoc home-network Claude session, no standing inbox → CIO must point it at the note). Honest framing: static ≠ a brcmfmac-blackout fix (that host-driver fault is unchanged/their lane); it just gives them a stable target so a blackout is unambiguously link-down. Flagged to CIO whether to formalize `network/inbox/`.
 
 ### 2026-08-10→12 — Backlog review (5 architect additions) + V0.29.28 + V0.29.27 design-gates
 
