@@ -245,6 +245,52 @@ episode is its strongest justification: had it existed, the failure would have s
 began ("sensor mute") instead of 43,203 silent false rows later. Urgency drops from "actively writing
 bad rows" to "uncovered path, will recur on the next sensor fault" — still P1+, no longer emergency.
 
+### 5b-i. OPERATIONAL HAZARD — **never `i2cdetect` a live bus** (my error, 2026-08-17 15:45Z)
+
+**I wedged the Pi's I²C bus with a diagnostic command, then misattributed it to the CIO's wiring.**
+Recording it because the failure mode is expensive and non-obvious.
+
+Timeline, from the Pi itself:
+
+```
+15:40:39  boot
+15:43:00  "imu sensor present -- reader armed"   <- bus healthy
+          (CIO independently confirms live sensor data ON SCREEN)
+15:45:39  FIRST "i2c_designware 1f00074000.i2c: controller timed out"  <- my i2cdetect
+          271 timeouts follow; both 0x69 and 0x36 unreachable
+```
+
+`i2cdetect -y 1` probes every address 0x03-0x77. Run against a bus `eclipse-obd` was already driving
+at 50 Hz (IMU) plus the 5 s UPS poll, it collided with in-flight transactions and locked the controller.
+**Soft lockup — a power cycle clears it, no damage.** Collateral: the MAX17048 UPS shares the bus, so
+battery telemetry went blind too.
+
+**The error beneath the error:** I had explicitly avoided *writing* to the IMU on A-17 grounds
+(concurrent access to a device the service owns) and then ran a bus-wide scan — the same hazard.
+**A read-only command is not automatically a safe command when the resource is shared.**
+
+**It also produced a false accusation.** I told the CIO the connector was likely seated one pin off or
+shorted and to pull it for inspection. His cold re-plug had in fact worked perfectly; his own
+observation of on-screen data was the more reliable reading. This is the "condemn good hardware"
+failure I had warned him about an hour earlier, committed by me.
+
+**AMENDMENT 2026-08-20 — attribution corrected, rule UNCHANGED.** On 2026-08-20 the same
+`i2c_designware ... controller timed out` / `SDA stuck at low` wedge occurred **spontaneously**, ~3 s
+after the IMU reader started, with **no `i2cdetect` and no involvement from me** (324 timeouts). So the
+bus on this Pi can lock up under a marginal sensor connection alone, and my 08-17 self-attribution was
+**over-corrected** — a scan may have been the trigger on an already-fragile bus rather than the cause.
+(That instance cleared after the CIO re-seated the IMU; on 2026-08-20 both sensors ran a full 2-leg
+drive with a clean bus.) **The standing rule below stands regardless**: a bus-wide scan against a live
+50 Hz reader is an unnecessary risk on hardware whose controller does not self-recover.
+
+**Standing rule (Atlas):** never scan the I²C bus while `eclipse-obd` runs. **The state files
+(`/run/eclipse-obd/states/*`) and `edr_imu_sample` ARE the sanctioned read path** — written by the
+single owner of the hardware, free to read, and sufficient to answer "is it converting / is gravity
+real / is the state honest." Reaching past the provider to the device is an SSOT violation with a
+physical cost. Direct register reads are justified ONLY when the state file genuinely cannot
+discriminate (e.g. distinguishing "asleep" from "dead" during the mute window) and preferably with the
+service stopped.
+
 ### 5c. NEW (deferred by CIO) — mount frame is unconfigured, so pitch/grade are confidently wrong
 
 With the sensor live and the car parked, `states/imu` reports `pitchDeg: 23.29`, `gradePct: 43.0`. A 43%

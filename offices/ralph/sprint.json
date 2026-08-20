@@ -1,323 +1,269 @@
 {
   "schemaVersion": "2.0.0",
-  "sprint": 74,
-  "version": "V0.29.29",
-  "createdFromPRD": "offices/pm/prds/prd-V0.29.27-3p5in-legibility.md",
+  "sprint": 75,
+  "version": "V0.29.30",
+  "theme": "F-132 Pi dashboard chrome -- top bar, band budget, overlays, sync stamp",
+  "createdFromPRD": "offices/uidevloper/proposals/2026-08-20-pi-topbar-and-chrome-polish.md",
+  "createdBy": "Marcus (PM)",
+  "createdAt": "2026-08-20",
+  "capacity": {
+    "groomedNow": 5,
+    "reservedSlots": "4-6",
+    "reservedFor": "DELIBERATELY UNDER-FILLED (CIO 2026-08-20). The movement drive happens within the hour; Spool (A-9 attribution / US-526 drain writer / BT-OBD coexistence) and Atlas (V0.29.29 AllocateRingBuffer freeze reported LIVE on bench in 004c316, 4 watchdog defects, unpinned libs) will both file findings off it. Those land in THIS sprint. Do NOT fill these slots with backlog convenience work.",
+    "note": "5 groomed + 4-6 reserved = one modest sprint. All 5 current stories are S/M."
+  },
   "stories": [
     {
-      "id": "US-539",
-      "title": "Extract the type scale into tokens.css (closes W-3) -- pure refactor",
-      "parent": "F-127",
+      "id": "US-555",
+      "title": "Top bar -> 3-column grid: clock CENTRE, glyphs left, version right",
+      "parent": "F-132",
       "epicId": "E-001",
       "type": "normal",
       "size": "M",
       "status": "sprint-ready",
-      "passes": true,
-      "feedback": {
-        "filesActuallyTouched": [
-          "specs/UI/tokens.css",
-          "specs/UI/dist/dashboard-pi/dashboard.css",
-          "tests/ui/css_type_scale.py",
-          "tests/ui/test_dashboard_type_scale.py",
-          "tests/ui/test_dashboard_stop_tier_safety.py",
-          "tests/ui/test_dtc_detail_hierarchy.py",
-          "offices/pm/issues/I-us539-type-scale-collapse-is-not-pixel-identical.md"
-        ]
-      },
-      "completionNotes": "DONE (commit f48b3c6). 82 bare `font-size: Npx` in dashboard.css -> 5 scale tokens declared in tokens.css and mirrored into dashboard.css :root (the mirror is the established pattern -- dashboard.html links ONLY dashboard.css, so an SSOT-only drop would leave the panel unsized with a green suite; BL-027 lesson). Values are the PRE-F-127 shipped scale: hero 40 / primary 20 / secondary 14 / label 12 / meta 10. US-540-a sets 44/34/26/20/15 by editing the SSOT + the mirror -- nothing below :root changes again.\n\n*** ONE DEVIATION, RATIFY BEFORE CLOSING THE SPRINT -- filed as offices/pm/issues/I-us539-type-scale-collapse-is-not-pixel-identical.md. AC3 asks for BOTH five tokens AND 'renders visually identical'. The file shipped 15 DISTINCT sizes (8/9/10/11/12/13/14/15/17/18/20/22/30/34/40); 15 values do not fit in 5 slots, so the two clauses are mutually exclusive on this file. I took the COLLAPSE, because the pixel-identical alternative (5 tokens + ~10 extra tokens holding the off-scale sizes) BREAKS US-540-a: that story is specified as setting FIVE values, and would leave ten stale -- the 'edits that drift' problem, just smaller. Every off-scale rule rounds UP to its tier, so NOTHING on the panel got smaller. Moves: 34/30/22->hero(3 rules), 18/17/15->primary(6), 13->secondary(21), 11->label(14), 9/8->meta(3); the other 35 rules already sat on a scale value. The one call worth Iris's eye: the STOP takeover directive goes 22->40 -- forced, because Spool 6d requires it outrank its base rule (.takeover-directive, which landed on primary), and a collapse onto one tier would have turned a SAFETY guard red. 'PULL OVER NOW' at 40px mono is ~340px of the 442px available; fits on paper, EYEBALL IT ON THE PI when US-540-a re-verifies (which raises hero to 44). ***\n\nTWO PRE-EXISTING SAFETY GUARDS read font sizes with a raw-px regex (test_dashboard_stop_tier_safety::test_stopTakeover_directiveIsLargerThanBaseCopy, test_dtc_detail_hierarchy::test_directiveBand_isLargerThanTheDetailBodyBaseCopy). Tokenizing would have left them reading 'size absent' -- one dies on a None match, the other silently compares -1. A refactor that blinds a safety guard is worse than the drift it fixed. Both now resolve var(--fs-*) through the scale via ONE shared helper, tests/ui/css_type_scale.py, which also carries the LINE-ANCHORED ruleBlock(): a plain substring search for '.takeover-directive {' finds the STOP OVERRIDE first (declared earlier in the sheet), so a naive guard compares the override against ITSELF and reports a hierarchy that does not exist. My first cut had exactly that bug and the new test caught it (40 <= 40) -- the pre-existing suite had already solved it, which is why only my new test went red.\n\nNEW GATE tests/ui/test_dashboard_type_scale.py (17 tests). Every assertion is an ABSENCE check, so it ships with a NEGATIVE CONTROL: the bare-px detector is driven against a stylesheet that DOES carry drift and must report it, and against a `--fs-hero: 40px` declaration it must NOT. Without the pair, a typo in the pattern reads as a green gate over a file full of literals. Also gated: font-size right-hand sides are ONLY a scale token or the deliberate `inherit` on .detail-value (US-491 load-bearing -- binding a token there re-breaks the tier ramp and looks tidier doing it); no SIXTH --fs-* token (sprawl comes back one token at a time); scale strictly descending (survives US-540-a by asserting ORDER not numbers).\n\nGATE RUN SYNCHRONOUSLY: tests/ui/ ALL 720 passed. ruff clean on 4 touched .py. PM: this touches a SHARED stylesheet + 2 existing test files, so tests/ui/ is worth the integration re-run; no src/ or Python runtime code touched, so the wider suite is low-risk. GOTCHA FOR THE NEXT AGENT: a comment containing the literal string '@import' fails test_dashboard_brand_font_payload + test_dashboard_fidelity_pass -- both scan the raw text for it (offline-kiosk guard, correctly). I reworded the comment; do NOT weaken the guard.",
+      "passes": false,
+      "groundingRefs": [
+        "offices/uidevloper/proposals/2026-08-20-pi-topbar-and-chrome-polish.md (+ .html) -- SSOT",
+        "offices/pm/inbox/2026-08-20-from-iris-topbar-chrome-polish-groom-ready.md",
+        "offices/pm/inbox/2026-08-20-from-iris-CIO-directed-backlog-and-sprint-placement.md"
+      ],
       "acceptance": [
-        "add a type scale to specs/UI/tokens.css: --fs-hero / --fs-primary / --fs-secondary / --fs-label / --fs-meta (values SET in US-540; this story just establishes the tokens + wiring)",
-        "replace the ~83 hardcoded `font-size: Npx` in dashboard.css with token refs; DoD: NO bare `font-size: Npx` left in dashboard.css (a grep gate)",
-        "PURE REFACTOR -- no visual change vs the current shipped sizes (map each existing px to the nearest token, values unchanged here); ships + verifies independently of US-540",
-        "ruff/lint clean; a probe/test confirms zero bare px font-sizes remain"
+        "#topbar -> grid-template-columns: 1fr auto 1fr; drop margin-left:auto from #version-chip",
+        "clock stays centred regardless of version-string length (structural, not auto-margin)",
+        "the existing US-542 comment arguing against centring is UPDATED, not deleted -- it is right about auto-margins, wrong that this rules out centring",
+        "width-checked at 480px: ~328/460px used; leaves room for the gated WiFi glyph with zero re-layout",
+        "ruff/lint clean"
       ],
       "validationCriteria": [
         {
-          "action": "grep dashboard.css for `font-size:` with a px literal after the refactor",
-          "outcome": "zero hardcoded px font-sizes; all reference the tokens.css scale; dashboard renders visually identical to before"
+          "action": "view the top bar on the Pi with a short and a long version string",
+          "outcome": "clock stays centred in both; glyphs left, version+kebab right"
+        },
+        {
+          "action": "IN-CAR, seated normally, arm's length -- not a bench check",
+          "outcome": "the surface reads correctly at a glance; no clipped content"
         }
       ],
       "conditionalOutcomes": [
-        "US-539 is the HARD prerequisite for US-540 (Iris: without tokenizing first, US-540 becomes 83 edits that drift). No design gate -- pure refactor."
+        "GROUP CONSTRAINT (spec 5.1): US-555/556/557 MUST ship in the SAME sprint. US-557 changes the top-bar height that US-555 restructures and US-556 is measured against; split across sprints the later story silently invalidates the earlier one's acceptance -- the same value-changed-here / measurement-left-behind shape as the defect itself.",
+        "P-6 WiFi glyph drops into this grid later with no re-layout -- do NOT add it here, it is Atlas-gated."
       ],
-      "goal": "As a maintainer, I want font sizes to come from a small set of tokens so the legibility fix is one scale change, not 83 scattered edits that drift back.",
-      "tasks": []
-    },
-    {
-      "id": "US-540-a",
-      "title": "Set the type-scale token VALUES for 3.5in legibility (44/34/26/20/15)",
-      "parent": "F-127",
-      "epicId": "E-001",
-      "type": "normal",
-      "size": "M",
-      "status": "sprint-ready",
-      "passes": true,
-      "feedback": {
-        "filesActuallyTouched": [
-          "specs/UI/tokens.css",
-          "specs/UI/dist/dashboard-pi/dashboard.css",
-          "tests/ui/test_dashboard_type_scale_values.py"
-        ]
-      },
-      "completionNotes": "DONE code-side. The scale is set to Iris's 44/34/26/20/15 in the SSOT (specs/UI/tokens.css) and the hand-mirror in dashboard.css :root -- TEN LINES OF VALUES AND TWO COMMENT BLOCKS, nothing below :root touched. That is US-539 paying off exactly as scoped: the pre-F-127 panel would have needed 82 edits for this.\n\n*** THE VALUES ARE NOT FINAL AND THE STORY SAYS SO -- DO NOT LET THE GREEN SUITE READ AS ACCEPTANCE. Two things are still owed, NEITHER closable on the dev box: (1) acceptance is IN-CAR, seated, at arm's length; (2) AC2 (Atlas display-pipeline) requires the output mode be confirmed PANEL-NATIVE **BEFORE** the values are called final -- if the Pi is rendering 1080p into a 480x320 panel, every glyph is scale-up-then-downsampled soft and the floor is HIGHER than 34. That confirmation is US-552, still open in this sprint. ORDER MATTERS: land US-552, THEN read the panel, THEN ratify or move these five numbers. A dev-box browser cannot see the defect this AC exists to catch. ***\n\nWHAT TO EYEBALL FIRST, in order: (a) the STOP takeover directive 'PULL OVER NOW' -- 40px mono was already ~340px of the 442px available after US-539's forced 22->40 move, and hero is now 44, so this is the line most likely to wrap or clip, and it is a SAFETY surface; (b) any card carrying 4 facts -- secondary 14->26 is the biggest proportional jump in the scale (+86%) and card capacity is what US-540-b re-lays to ~3 facts/card, so overflow seen NOW is US-540-b's problem, not a reason to shrink the scale back; (c) the version chip / IMU tape furniture at meta 15 (was 10) -- the one tier where growth costs layout and buys little, since it is parked-read micro-copy.\n\nNEW GATE tests/ui/test_dashboard_type_scale_values.py (8 tests). The five values are PINNED, not bounded, and the header says why: a pure '>= 34' floor test would have passed BEFORE this story ran (the old hero was 40) and would still pass if a later edit pushed hero to 90 and overflowed every card. Pinned means the next deliberate change edits one line and declares itself. Alongside the pin, the INTENT is asserted separately so it survives a value edit: driver-must-read tiers (hero/primary) >= the [EXACT:34] floor; label/meta strictly under the 26px non-critical ceiling; no tier smaller than its pre-F-127 value (F-127 travelling backwards is a real failure mode -- an overflow fix under deadline is exactly how a tier gets quietly shrunk). Two tests resolve the tokens THROUGH a real rule (.tile-value, and the STOP directive) rather than only reading :root, because a value that never reaches the surface is the failure the mirror exists to prevent -- reading :root alone would have gone green on the SSOT-only drop that US-539's notes warn about.\n\nGATE RUN SYNCHRONOUSLY IN-LOOP: full tests/ui/ = 695 passed, exit 0 (283s); the focused 5-file gate (new values + US-539 scale + both safety guards + token SSOT) = 85 passed. ruff clean on the new test. NOTE FOR PM: my Sprint-73 note said 'tests/ui = 720'; the honest count on this tree is 695 BEFORE my +8. I have not chased the discrepancy (older number, different collection, not re-derived) -- treat 695+8=703 as the current baseline and disregard the 720. No src/ or Python runtime code touched; nothing outside the two stylesheets + one new test file changed, so wider-suite risk is low.",
-      "acceptance": [
-        "set the type-scale token values (Iris): hero 44 / primary 34 / secondary 26 / label 20 / meta 15 (px on the 480x320 stage). [FLOOR RULE] driver-must-read >= [EXACT:34]px; anything <26px non-critical only. Depends US-539 (tokens exist). Acceptance IN-CAR (arm's length, seated). CAVEAT: unverified panel downsampling may raise the floor -- re-verify on hardware, do NOT call values final. ruff clean",
-        "[Atlas display-pipeline finding] the deploy pins NO HDMI/KMS output mode -> the Pi likely outputs 1080p into a 480x320-native panel -> lossy scale-up-then-downsample softens every glyph (raises the floor). Acceptance: confirm output mode == panel native (or pin it -- see US-552) BEFORE calling the 44/34/26/20/15 values final. Re-verify the values AFTER the mode is confirmed"
-      ],
-      "validationCriteria": [
-        {
-          "action": "in the car, seated normally, read the primary values on a card",
-          "outcome": "legible at arm's length; driver-must-read elements >=34px effective"
-        }
-      ],
-      "conditionalOutcomes": [],
-      "goal": "As the operator, I want the primary values large enough to read at arm's length in the car.",
-      "tasks": []
-    },
-    {
-      "id": "US-540-b",
-      "title": "Re-lay the card set 4->6 for the legibility scale (Health card retires)",
-      "parent": "F-127",
-      "epicId": "E-001",
-      "type": "normal",
-      "size": "M",
-      "status": "sprint-ready",
-      "passes": true,
-      "feedback": {
-        "filesActuallyTouched": [
-          "specs/UI/dist/dashboard-pi/dashboard.html",
-          "specs/UI/dist/dashboard-pi/carousel.js",
-          "specs/UI/dist/dashboard-pi/dashboard.css",
-          "tests/ui/test_carousel_card_set.py",
-          "tests/ui/test_carousel_health_card.py -> tests/ui/test_carousel_source_cards.py",
-          "tests/ui/test_carousel_battery_health_verdict.py",
-          "tests/ui/test_carousel_live_home_card.py",
-          "tests/ui/test_carousel_pi_local_cards.py",
-          "tests/ui/test_carousel_system_drilldown.py",
-          "tests/ui/test_render_regression.py",
-          "tests/deploy/test_dashboard_kit.py",
-          "offices/pm/issues/I-us540b-architecture-md-still-documents-the-retired-health-card.md"
-        ]
-      },
-      "completionNotes": "DONE (commit a1903b1). Card set is Home . Alerts . System Status . Battery . Fuel Trim . Light. carousel.js HEALTH_SECTIONS -> SOURCE_CARDS + a sourceCardSpec() lookup in the tick; healthCardView() / renderHealthCard() / the whole data-states GROUP BRANCH are DELETED, not left unreachable (US-500: nothing executes dead code, so nothing proves it still resolves). The .health-* CSS block went with the card -- it carried tile overrides (padding 2px 0, .tile-value pinned to --fs-secondary) that are exactly what US-540-a's scale was raised to undo, so leaving them as dead selectors means the first reuse of the class name silently shrinks the scale back on that surface.\n\n*** PARTIAL OVERLAP WITH US-541 -- READ BEFORE STARTING IT. AC2 of US-541 ('reorder the carousel, Alerts to 2nd') IS ALREADY LANDED, because the 6-card order had to be authored in one pass and the ordered-list assertions in both new gates pin it. US-541 should VERIFY that clause rather than re-do it, and its remaining real work is (1) IMU-always-on and (3) the autoRotateS:0 re-verify. ***\n\nWHAT WAS ALREADY IN THE TREE AND WHAT I ADDED: a prior iteration died after reaching green on tests/ui but BEFORE committing. Its work was sound and I kept it. What its scoped run could not see: tests/deploy/test_dashboard_kit.py still pinned `html.count('class=\"card\"') == 4` and `data-states=\"battery-health light ltft-trend\"`, and BOTH were already failing on the tree. A tests/ui-only gate is not a gate over a change to the SHIPPED MARKUP -- the deploy-kit contract test reads the same dashboard.html from a different tree. I also removed a dead `data-vehicle-speaks` attribute the markup carried and nothing read (the gate is driven by SOURCE_CARDS[].vehicleGated) -- a ghost attribute is the exact failure mode this story's own TestNoOrphanedHealthCode exists to catch, and the suite watched the JS half while missing the HTML half.\n\nTHE DEPLOY-KIT INVENTORY IS NOW AN ORDERED LIST, not a count plus a bag of names. Its own docstring already warned that a bare count is vacuous (the count stayed 4 across US-508 for an unrelated reason); Alerts moving to second is the same shape of blind spot one level up, invisible to a set-or-count assertion.\n\nNEW GATE tests/ui/test_carousel_card_set.py (19 tests), written around the four ways this could go wrong: (1) RETIREMENT LEAVING A GHOST -- both halves asserted absent AND the three facts asserted PRESENT on their own cards, because 'Health is gone' is trivially true if the readouts left with it; (2) THE FUEL-TRIM GATE regressing to a hide or, worse, a rendered 0% -- asserted positively via data-gated on the surface, plus a stale-but-fresh-enough ltft-trend payload proving nothing leaks past the gate; (3) A CARD-COUNT ASSUMPTION -- proven by BOOTING the shipped carousel over markup with a different count (a grep for '4' cannot witness geometry), plus the nav helpers at 4/6/7/9 where clampIndex CLAMPS and nextVisibleIndex WRAPS, both pinned because asserting one contract for both would hide a real break in whichever helper was not being described; (4) CAPACITY GROWING BACK -- a ceiling on the RENDERED tile count, since without it the split is cosmetic and a later story re-stacks a card with a green suite the whole way.\n\nSTILL OWED, NOT CLOSABLE ON THE DEV BOX: the AC's acceptance is a SWIPE ON THE PI -- '6 cards render, <=3-4 facts/card, all legible'. The fact ceiling is pinned against the rendered tile count, which is a proxy for legibility, not legibility itself. Read it in-car AFTER US-552 pins the output mode (per US-540-a's AC2 ordering). Watch the Battery card first: it is the densest of the three splits.\n\nDESIGN-GATE DoD: specs/architecture.md lines ~3713 / ~3716-3721 / ~3723-3747 / ~4546-4548 still document the Health card AND name healthCardView()/renderHealthCard(), both DELETED this story. specs/ is read-only for Ralph, so filed with the exact edit as offices/pm/issues/I-us540b-architecture-md-still-documents-the-retired-health-card.md -- Atlas/PM to apply. Stale architecture naming deleted symbols is worse than silence: it reads as authoritative and points at the design this story removed.\n\nGATE RUN SYNCHRONOUSLY IN-LOOP: tests/ui + tests/deploy/test_dashboard_kit.py = 774 collected, 774 passed, exit 0, zero F/E. ruff clean on all 8 touched .py (one UP031 percent-format fixed in the new gate). PM: this changes the SHIPPED dashboard markup + carousel.js, so the wider suite is worth an integration re-run even though no src/ Python changed -- the deploy-kit break proves UI-adjacent contracts live outside tests/ui.",
-      "acceptance": [
-        "with US-540-a's scale, capacity is ~3 facts/card (4 in a 2x2 ceiling). Card set 4->6: Home(live) . Alerts . System Status . Battery . Fuel Trim . Light. 'Health' RETIRES as a card (a container of 3 unrelated facts the scale can't afford) -- redistribute its facts. Sub-floor detail -> System drill-down (read parked). Partly reverses US-507/508 (intended). [ATLAS GATE] screen-count + US-482 letterbox-stage. Carousel handles N cards (no nav rework). ruff clean; probe confirms the 6-card set",
-        "[Atlas gate DoD] the carousel JS scales to N cards (verified count-agnostic); confirm no CSS #track / card-count cap assumes 4 (Iris presentation lane)"
-      ],
-      "validationCriteria": [
-        {
-          "action": "swipe the carousel",
-          "outcome": "6 cards render (Health gone, facts redistributed); <=3-4 facts/card, all legible"
-        }
-      ],
-      "conditionalOutcomes": [],
-      "goal": "As the operator, I want fewer facts per card so each one is legible at a glance.",
-      "tasks": []
-    },
-    {
-      "id": "US-541",
-      "title": "Atlas's 3 UI change requests -- IMU-always-on, card reorder, auto-rotate-off verify",
-      "parent": "F-127",
-      "epicId": "E-001",
-      "type": "normal",
-      "size": "M",
-      "status": "sprint-ready",
-      "passes": true,
-      "feedback": {
-        "filesActuallyTouched": [
-          "specs/UI/dist/dashboard-pi/carousel.js",
-          "tests/ui/test_carousel_imu_always_on.py",
-          "tests/ui/test_carousel_live_home_card.py",
-          "offices/pm/blockers/BL-031-us541-ac3-autorotate-off-is-inert-resolver-rejects-zero.md"
-        ]
-      },
-      "completionNotes": "*** CLOSED 2026-08-11 BY US-541-a -- passes flipped false -> true. Everything below was written when AC-3 was blocked and is preserved as the record; read it as history, not as current state. AC-3's resolver defect (BL-031 / I-us536) is FIXED: Atlas Option-1 was ratified by the CIO, built as US-541-a in this same sprint, and the strict xfail this story left behind (test_resolveCarouselConfig_honoursTheShippedOffValue) is now a normal green assertion with the marker deleted -- exactly the signal it was written to give. autoRotateS:0 now survives resolveCarouselConfig, so the shipped OFF value reaches the panel. THE FINDING BELOW WAS THE RIGHT DELIVERABLE: refusing to overrule my own open escalation is what got the tie-break made by the role that owns it, one sprint later and one line long. The ONE thing this story still owes is its own in-car read (parked Home face + 'carousel does not auto-advance'), batched with the rest of the sprint's hardware reads after US-552. ***\n\n--- ORIGINAL NOTES (written while AC-3 was blocked) ---\n\nPARTIAL -- passes:false ON AC-3 ALONE. AC-1 (IMU-always-on) and AC-2 (reorder) are DONE, gated and committed; AC-3 ran its verification and the verification FAILED against a pre-existing open defect that needs an Atlas ruling. Filed offices/pm/blockers/BL-031-us541-ac3-autorotate-off-is-inert-resolver-rejects-zero.md.\n\n*** AC-3 IS THE WHOLE BLOCK, AND THE STORY'S OWN PREMISE IS FALSE. The AC says autoRotateS:0 'ALREADY landed via US-536/disposition-B; this story just VERIFIES it holds.' IT DID NOT LAND. config.json ships 0; resolveCarouselConfig (carousel.js:218) admits an override only when `v > 0`, so 0 is DISCARDED and CAROUSEL_DEFAULTS restores 8s. The carousel still rotates every 8 seconds on the panel, US-533's operator toggle writes exactly the value the resolver drops (a silent no-op in the band built to make silent no-ops impossible), and US-536's disposition-B freeze fix is inert while the GPU flag it was chosen INSTEAD OF is gone. Already filed 2026-08-10 as I-us536-shipped-autorotates-zero-is-rejected-by-resolver.md; US-541 is the first story whose ACCEPTANCE depends on it, hence the escalation to a blocker. I did NOT fix it: the one-line fix inverts a deliberate US-506 invariant (the guard exists so a misconfiguration cannot silently kill the carousel) against a deliberate US-536 choice (0 = kill it on purpose) -- same value, opposite meanings, both intentional, so the tie-break is Atlas's per the role boundary. Filing an escalation last sprint and overruling it this sprint because it is inconvenient is the exact drift the refusal rules exist to prevent. Option 1 in the issue is still right and is now cheaper than it reads: I pinned GREEN that shouldAutoAdvance + rotateProgress ALREADY treat 0 as OFF, so it really is one line at the resolver with nothing downstream to follow. ***\n\nAC-1 AS BUILT: homeFace(imuData, sysData, nowMs) -> homeFace(imuData, nowMs). US-508 let parked WIN OUTRIGHT, which hid the one instrument that is Pi-local and always-live at precisely the moment its readings are both true and worth looking at. DROPPING THE PARAMETER IS THE GUARD, not a tidy-up: a function that cannot SEE system-status cannot re-couple the home face to it, so a future re-coupling has to widen the signature first -- a visible act rather than a condition slipped into the body. carouselIdle keeps its OTHER consumers (auto-rotate pause, home-nav edge) untouched, which is also what US-542's AC-4 will want to pin.\n\nTHE SUBTLE HALF, AND IT IS THE PART THAT COULD HAVE SHIPPED A LIE: renderHome passed `face.parked ? null : face.reason` into idleCardView so the calm STANDBY hero could show when parked. With parked no longer a route to the idle face, that ternary is ALWAYS FALSE -- so it would have quietly handed a DEAD SENSOR the 'engine off - OBD asleep' hero. That is precisely the fabrication US-508's own section-2 tests were written to prevent, arriving through the back door of a condition that no longer means anything. The reason is now passed unconditionally, and homeFace returns NO `parked` field at all (pinned) so no renderer can branch on a verdict nothing computes.\n\nAC-1's typed-NA half needed NO new code -- gear (level 'unavailable', value '--', reason beside it) and altitude (naTile -> 'NA') were already honest, and dashboard.css already greys [data-level=\"unavailable\"] (lines 332/413). What CHANGED is that those tiles are now reachable on a PARKED bench, which was previously an unreachable state, so I gated them there. Gated with them, and this is the fact US-542's whole retirement argument rests on: a TRUE 0.0 g renders as a MEASURED zero (available, dot at the origin) while an ABSENT g renders as unavailable with NO dot -- shipped as a pair, because 'zero draws a dot at the origin' is also satisfied by a card that draws an origin dot for a dead accelerometer, and then absence and measured-zero look identical on the glass.\n\nAC-2 VERIFIED, NOT RE-DONE (as my Sprint-74 handoff said): the order landed with US-540-b's 6-card pass. Pinned here as an ORDERED PREFIX (Home . Alerts . System Status) rather than a membership check -- a set-or-count assertion goes green on a carousel that opens on Light.\n\nWATCH THIS IN THE REGRESSION: FOUR of the six US-508 homeFace tests went red, and the OTHER TWO went green FOR THE WRONG REASON -- with the middle argument dropped, `_view('homeFace', imu, sys, ts)` binds sys as nowMs, so those two passed with a dict for a clock. I repointed all six, not just the red four. A dropped parameter turns every stale 3-arg call site into a silently mis-bound one, and only the tests that actually USE the clock (the stale-feed one) go red to tell you.\n\nGATE RUN SYNCHRONOUSLY IN-LOOP: tests/ui + tests/deploy/test_dashboard_kit.py = 790 collected, 790 passed (789 + 1 xfail), exit 0, zero F/E. That fence, not tests/ui alone -- US-540-b's lesson, since this touches shipped dist/ code. Baseline was 774; +17 new, -1 net from the six-into-five homeFace repoint. ruff clean on both touched .py. No src/ or Python runtime code touched.\n\nSTILL OWED ON HARDWARE (AC-1's own validationCriteria, not closable on the dev box): park the Pi engine-off and confirm the Home face shows the LIVE IMU instrument -- real heading, a real 0.0 g -- with gear/altitude greyed-NA. Read it AFTER US-552 pins the output mode, with the US-540 in-car reads.",
-      "acceptance": [
-        "(1) [Atlas design-gate] IMU/heading ALWAYS-ON: the live IMU instrument is the permanent Home face (IMU is Pi-local, always-live). OBD-dependent bits (gear, altitude) render typed-NA/greyed via the honest-availability pattern (same as Battery/Light already do) -- never fabricated. Pairs with US-542 idle-face retirement",
-        "(2) reorder the carousel -> Home . Alerts . System Status . … (Alerts to 2nd). Pure dashboard.html markup order; the carousel finds the DTC index dynamically, so drill-down/takeover are unaffected",
-        "(3) auto-rotate OFF -- autoRotateS:0 (ALREADY landed via US-536/disposition-B); this story just VERIFIES it holds in the final card set",
-        "ruff/lint clean; probe confirms order + IMU-always-on + autoRotateS:0"
-      ],
-      "validationCriteria": [
-        {
-          "action": "on the Pi, view the Home face parked (engine off) + swipe the carousel",
-          "outcome": "Home shows the live IMU instrument (heading/g real, OBD bits greyed-NA); order is Home.Alerts.System...; carousel does not auto-advance"
-        }
-      ],
-      "conditionalOutcomes": [
-        "IMU-always-on is Atlas-gated (touches the US-508 idle/live face). Reorder + auto-rotate-verify are independent/small."
-      ],
-      "goal": "As the operator, I want the live IMU instrument always visible, alerts second, and no auto-rotate, matching how I actually use the dashboard.",
-      "tasks": []
-    },
-    {
-      "id": "US-541-a",
-      "parent": "F-127",
-      "epicId": "E-001",
-      "type": "normal",
-      "size": "S",
-      "status": "sprint-ready",
-      "passes": true,
-      "title": "Resolver honours autoRotateS:0 as a real OFF value (unblocks US-541 AC-3 / BL-031)",
-      "goal": "As the operator, I want auto-rotate OFF to actually stay off, so the CIO freeze fix and the F-126 Settings 'Off' toggle are not silent no-ops.",
-      "acceptance": [
-        "[Atlas Option-1, ratified by CIO 2026-08-11 -- resolves BL-031 / I-us536] resolveCarouselConfig (specs/UI/dist/dashboard-pi/carousel.js:218) admits autoRotateS == 0 as a real value. Keep the strict `> 0` guard for the OTHER keys (resumeIdleS et al.) -- this is a PER-KEY relaxation, NOT a blanket `>= 0`. Rationale: 0 = off / >0 = on is the same GAP-3a contract US-530/531/532/533 already encode, and shouldAutoAdvance already treats 0 as never-advance.",
-        "the US-506 misconfig-guard intent is preserved for every key except autoRotateS: a non-number / NaN / Infinity / negative autoRotateS still falls back to the default (only a clean 0 is admitted).",
-        "delete the @pytest.mark.xfail(strict=True) marker on tests/ui/test_carousel_imu_always_on.py::test_resolveCarouselConfig_honoursTheShippedOffValue -- with the fix it XPASSes; remove the marker so it is a normal green assertion (per BL-031 'delete the marker, not the test').",
-        "node tests/ui/carousel_probe.js resolveCarouselConfig '{\"autoRotateS\":0}' -> autoRotateS: 0 (was 8). ruff/lint clean.",
-        "US-541 AC-3 now verifiable -> set US-541 passes:true once this lands (the two ship together this sprint)."
-      ],
-      "validationCriteria": [
-        {
-          "action": "on the Pi (or via carousel_probe), ship autoRotateS:0 and observe the carousel",
-          "outcome": "carousel does NOT auto-advance; resolver returns 0 not 8; F-126 Settings 'Off' toggle is honoured"
-        }
-      ],
-      "conditionalOutcomes": [
-        "Per-key relaxation only. If a future key legitimately needs 0-as-value, it opts in the same way -- do NOT widen the shared guard."
-      ],
+      "goal": "As the driver, I want the clock centred and stable so it does not drift as the version string changes length.",
       "tasks": [],
-      "completionNotes": "DONE, all five ACs. The relaxation is a NAMED PER-KEY ALLOW-LIST, not a loosened comparison: `var ZERO_IS_A_VALUE = { autoRotateS: true }` sits above resolveCarouselConfig and gates the one ratified key; the guard is now `if (typeof v !== 'number' || !isFinite(v)) continue;` then `if (v > 0 || (v === 0 && zeroOk)) out[key] = v;`. NaN / Infinity / negative / non-number are still rejected for EVERY key INCLUDING autoRotateS -- a NaN period makes `sinceMs >= autoRotateS * 1000` permanently false, i.e. the same silent freeze from a value nobody chose, which is precisely what US-506 refused. Only a CLEAN 0, only where 0 was given a meaning.\n\n*** WHY THE ALLOW-LIST AND NOT `>= 0` ON autoRotateS, SINCE THE TWO ARE INDISTINGUISHABLE TODAY: with one opt-in key they agree on every input that exists right now. They diverge on the NEXT key added to CAROUSEL_DEFAULTS -- under a relaxed comparison it silently inherits 0-as-value; under the allow-list it does not. The AC's 'per-key relaxation, NOT a blanket >= 0' is therefore unfalsifiable behaviourally at the moment it is written, so I pinned it STRUCTURALLY (the resolver body must reference ZERO_IS_A_VALUE and must not contain `>= 0`; the literal must hold only autoRotateS). conditionalOutcomes says a future key opts in the same way -- that now arrives as a RED test asking for the decision rather than a line nobody reviewed. ***\n\nTDD RED FIRST and the red was exactly two assertions, both describing the fix: the un-markered xfail test and the new admit test, `assert 8 == 0` on each. The other two new gates were GREEN BEFORE AND AFTER on purpose -- they are the BOUND on the change, not a description of it, and a bound that was never red is still doing work as long as its mechanism is proven live (see below).\n\nNEW GATES in tests/ui/test_carousel_nav_model.py, the resolver's own home rather than the IMU file, so the resolver contract stays in one place (4 tests): (1) THE ADMIT, with a sibling key in the SAME injected object asserted to still fall back -- otherwise a per-CALL relaxation ('this object came from config, trust all of it') passes as a per-KEY one; (2) 0 STILL REFUSED FOR EVERY OTHER KEY, iterating keys PARSED OUT OF THE SHIPPED CAROUSEL_DEFAULTS rather than a list retyped in the test -- a hand-written list is a second copy of the key set, and a key added tomorrow would go green having never been tested. NON-VACUITY IS EXPLICIT AND HAS TWO HALVES: the parse is asserted to have found autoRotateS + >=7 keys, and the test above it proves this exact call path CAN return a 0 -- so a 0 not coming back is a refusal, not a lookup that cannot see the thing (US-552's 18-vacuous-passes lesson); (3) MALFORMED VALUES on autoRotateS itself (-1, '0', null, true, [], {}) -- NaN/Infinity have no JSON literal so the probe cannot carry them, which the test says out loud and covers via the isFinite guard in the body rather than pretending; (4) the STRUCTURAL pin above.\n\nAC-3 SATISFIED: the strict xfail marker on test_resolveCarouselConfig_honoursTheShippedOffValue is DELETED, the test kept, and its docstring rewritten to record that it shipped as a strict xfail and why that shape paid off -- it XPASSed into a normal green instead of a red reading 'the bug is expected'. Zero xfail remains in the fence (verified: no 'x' anywhere in the progress output).\n\nAC-4 SATISFIED THROUGH pytest, not a bare `node` call (a bare probe invocation needs harness approval): _view() drives tests/ui/carousel_probe.js resolveCarouselConfig '{\"autoRotateS\":0}' and it now returns 0, was 8.\n\n*** I CHECKED FOR A SECOND OFFENDING LAYER BEFORE CALLING IT ONE LINE, AND THE PYTHON SIDE WAS ALREADY RIGHT: src/common/config/overlay.py validates pi.display.carousel.autoRotateS with _isNonNegativeNumber (0 admitted, and its module docstring already states '0=off, >0=on' as the single-key contract), and states_http_server passes the resolved section through untouched. So the resolver really was the ONE layer that disagreed with every other -- which is what makes Atlas's Option 1 a contract fix rather than a redesign, and is worth knowing before anyone hunts for a second bug when the Pi read happens. NO src/ FILE NEEDED TO CHANGE. ***\n\nTWO STALE-PROSE FIXES, no assertions moved: test_resolveCarouselConfig_rejectsUnusableValues' docstring now names the carve-out (its fixture deliberately keeps a non-autoRotateS zero), and test_configJson_carriesTheCarouselSection' docstring said 'right now the display does not [honour it]' -- true for eleven days, false the moment this landed, and it is the exact prose a future agent would trust. It now points at the new admit test as the consumer-side pin and keeps both, since one moves when config.json moves and the other when the resolver does.\n\nDRIFT FOUND AND FILED, NOT FIXED -- TD-080 (offices/pm/tech_debt/TD-080-fnbody-test-helper-is-duplicated-and-indent-blind.md). My structural absence assertion went red on `if (back >= 0 && !hidden[back])` from nextVisibleIndex, ~200 lines away: the `_fnBody` helper probes 4- and 6-space nesting only, and carousel.js declares MANY functions at TWO spaces (top level inside the IIFE), so for those it returns the rest of the FILE. Absence assertions over it are over-broad (annoying); PRESENCE assertions are VACUOUS (dangerous) -- `assert 'renderHome(' in _fnBody(js, 'imuTick')` passes on the string appearing anywhere below. There are EIGHT independent copies of the helper across tests/ui, so they cannot drift into agreement. US-541's notes record one copy being fixed in isolation while the other seven learned nothing. I added a locally-correct _fnTopLevelBody in the one file I own and left the other seven alone: repointing them will legitimately turn some currently-green presence assertions RED, and triaging those is a story, not a side effect of a config fix.\n\nAC-5 DISCHARGED: US-541 flipped to passes:true -- its AC-3 is now verifiable and verified code-side. Its own completionNotes carry the pointer.\n\nGATE RUN SYNCHRONOUSLY IN-LOOP: tests/ui + tests/deploy/test_dashboard_kit.py = 811 collected, 811 passed, exit 0, zero F/E, ZERO xfail. That fence and not tests/ui alone -- US-540-b's lesson, since this edits shipped dist/ code. Baseline was 807 (806 + 1 xfail): +4 new, and the xfail became a normal pass. ruff clean on both touched .py. No src/ or Python runtime code touched.\n\nSTILL OWED ON HARDWARE (not closable on the dev box, and it is BL-031's own knock-on): on the Pi, confirm the carousel DOES NOT AUTO-ADVANCE, and that the F-126 Settings 'Off' toggle now sticks. Batch it with the US-540/US-541/US-542 parked reads AFTER US-552 pins the output mode -- a carousel advancing every 8s makes the in-car type-scale read harder, so this landing helps that visit.",
       "feedback": {
-        "filesActuallyTouched": [
-          "specs/UI/dist/dashboard-pi/carousel.js",
-          "tests/ui/test_carousel_nav_model.py",
-          "tests/ui/test_carousel_imu_always_on.py",
-          "offices/pm/tech_debt/TD-080-fnbody-test-helper-is-duplicated-and-indent-blind.md",
-          "offices/pm/blockers/BL-031-us541-ac3-autorotate-off-is-inert-resolver-rejects-zero.md",
-          "offices/pm/issues/I-us536-shipped-autorotates-zero-is-rejected-by-resolver.md"
-        ]
-      }
-    },
-    {
-      "id": "US-542",
-      "title": "Idle-face retirement -- STANDBY removed, DTC-since-key-off moves to Alerts",
-      "parent": "F-127",
-      "epicId": "E-001",
-      "type": "normal",
-      "size": "S",
-      "status": "sprint-ready",
-      "passes": true,
-      "feedback": {
-        "filesActuallyTouched": [
-          "specs/UI/dist/dashboard-pi/carousel.js",
-          "specs/UI/dist/dashboard-pi/dashboard.html",
-          "specs/UI/dist/dashboard-pi/dashboard.css",
-          "tests/ui/test_carousel_idle_face_retirement.py",
-          "tests/ui/test_carousel_idle_home.py",
-          "tests/ui/test_carousel_idle_clock.py",
-          "tests/ui/test_carousel_live_home_card.py",
-          "tests/ui/test_dashboard_fidelity_pass.py",
-          "offices/pm/issues/I-us542-architecture-md-still-documents-the-retired-standby-face.md"
-        ]
+        "filesActuallyTouched": [],
+        "grounding": []
       },
-      "completionNotes": "DONE, all four ACs. *** READ THE GIT NOTE FIRST: the tree was UNCOMMITTABLE for this iteration -- a STALE .git/index.lock (mtime 10:54, size unchanged over 30 min, predating my first git command) blocks every `git add`, and BOTH remedies are refused by the harness permission layer: `rm .git/index.lock` is a sensitive-path write, and `GIT_INDEX_FILE=<scratch> git ...` is refused as an env-var mutation (bash AND PowerShell). Per handbook 13 the rule on a lock is RETRY, NEVER FORCE, so I did not go around it by hand-building a tree with plumbing on a shared checkout. The work is COMPLETE, GREEN and ON DISK; the commit is OWED. PM/next iteration: clear the stale lock, then `git add` the nine files listed above and commit as `feat: [US-542] Retire the idle/STANDBY face; clock to top bar; DTC-since-key-off to Alerts`. Filed as offices/pm/blockers/BL-032. ***\n\nAC-1a THE STANDBY HERO IS DELETED, NOT UNSELECTED. US-541 left the parked disposition permanently unreachable (renderHome now always passes a reason); this story removes the sentence. That distinction is the whole point: the string claims a fact about the VEHICLE ('engine off - OBD asleep') while the only surviving route to this face is a DEAD SENSOR, so any future edit that revives a selecting condition makes the display state engine-off on the evidence of a broken accelerometer. A condition that cannot be false is a claim waiting to be made by accident. idleCardView now has ONE disposition and its hero names the dead instrument. `dtcData` is GONE FROM THE SIGNATURE (US-541's guard pattern -- a view that cannot SEE the payload cannot re-borrow the fact that just left it), and so is renderIdleBody's `now` (a renderer with no clock cannot grow a second one behind the top bar's back). `fmtDate` + its month/day tables are DELETED with the header they served.\n\nAC-1b THE CLOCK IS IN THE TOP BAR, and the pin is ANCESTRY, not a sampled face. The obvious test -- boot with a live IMU, look for a clock -- would have asserted 'the clock is chrome' only for as long as node boots inside the 2s IMU freshness window, and would have started passing for the WRONG reason (the stale fallback) the day it did not. GOTCHA THAT COST A RED: the 4 Hz tick lives in `startAvailabilityPoll`, which setup CALLS rather than encloses, so a painter declared in setup is invisible there -- the first tick threw a ReferenceError that killed the entire poll loop. The DOM gate caught it; no pure test could have. The painter is at block scope now, resolves its element lazily (this block evaluates before DOMContentLoaded on the slow path, where an eager lookup caches a permanent null) and writes ONLY on a real change -- unguarded it is ~240 needless DOM mutations a minute on the one always-visible surface, and always-on repaint cost on this panel is what US-537's RCA pinned behind the US-522 freeze.\n\nAC-2 THE DTC LINE IS ON ALERTS, pinned in BOTH directions, and the second direction is the one that matters. 'DTC not read' over a genuine clean read tells the operator to go read codes that were already read -- and the two states share an EMPTY `codes` array, told apart only by the source block, so one slipped character collapses them. Level is `unavailable`, NOT the idle face's `neutral`: neutral read as 'calm' beside a battery tile, but alone on the Alerts card it reads as a completed read with nothing to report, which is the exact false all-clear US-429 exists to prevent. The emitter's reason rides ALONGSIDE the moved line ('since key-off - <why>'): when and why are two facts and dropping either for the other loses one. Also gated on the RENDERED card, because the old path composed its own 'NA' via renderNaBody and would have swallowed the moved fact whole with every pure test green.\n\nAC-4 THE PARKED LOGIC IS PROVEN UNTOUCHED. carouselIdle/parkedNext still read system-status; both bodies are pinned free of idleCardView/homeFace/imuView, parkedNext's debounce is pinned BEHAVIOURALLY (a structural pin alone stays green over a reducer gutted to `return prev`), and -- the test I would not have thought to write from the AC alone -- the parked SSOT is pinned to still HAVE consumers. Without that, the suite goes green on a retirement that quietly took the auto-rotate pause and the home-nav edge with it, because that regression looks exactly like more deletion of the same thing. Two different things in this file are spelled 'idle' (the parked SSOT and the retired face); that collision is the whole hazard AC-4 names.\n\nTWO DELIBERATE, NAMED COPY LOSSES -- NOT OVERSIGHTS, BOTH OWED AN IRIS RATIFY (in the filed issue): (1) the DATE is not relocated -- the 480px top bar at the US-540-a scale affords a clock, not a clock and a date; (2) US-510's LOCKED parked footer ('swipe for details - hold or the kebab for setup') retires with the screen it taught. Both are now pinned as ABSENCES so neither re-enters quietly. The AFFORDANCE is untouched: the kebab is still in the top bar (US-490 reveals it parked) and the 5s long-press still works -- a copy loss, not a capability loss.\n\nDESIGN-GATE DoD FILED, NOT FIXED: specs/architecture.md ~3807-3834 still documents 'parked wins outright', the STANDBY disposition AND the pre-US-541 `homeFace(imuData, sysData, nowMs)` signature -- i.e. it names a parameter US-541 deliberately deleted. specs/ is read-only for Ralph, so the exact replacement prose is in offices/pm/issues/I-us542-architecture-md-still-documents-the-retired-standby-face.md. It sits in the same section as US-540-b's still-open architecture issue; apply both in one pass.\n\nGATE RUN SYNCHRONOUSLY IN-LOOP: tests/ui + tests/deploy/test_dashboard_kit.py = 807 collected, 807 passed (806 + 1 xfail), exit 0, zero F/E. That fence and not tests/ui alone -- US-540-b's lesson, since this changes shipped markup. Baseline was 790: +23 new gate, -6 retired with the behaviour they described (5 idleFaultsFact severity-tier tests, 1 parked-hero test). ruff clean on all 5 touched .py. No src/ or Python runtime code touched.\n\nSTILL OWED ON HARDWARE (not closable on the dev box): the AC's own read -- park the Pi engine-off, confirm NO standby face (the live IMU card is Home), the clock is in the top bar, and 'DTC not read since key-off' shows on Alerts. Do it AFTER US-552 pins the output mode, with the US-540/US-541 in-car reads. WATCH: the top bar is 28px tall carrying --fs-secondary (26px) glyphs and a --fs-primary (34px) kebab since US-540-a; the clock is pinned to --fs-label (20px) to fit, but the BAR ITSELF is the crowded surface to eyeball first.",
-      "acceptance": [
-        "[Atlas design-gate -- carries the only cross-card content move] retire the idle/standby face: parked, the IMU is CORRECT not unavailable (true heading, true 0.0 g), so the live Home card (US-541#1) covers it. Delete the STANDBY hero; move the clock to the top bar",
-        "move 'DTC not read since key-off' to the ALERTS card -- it was always an Alerts fact, borrowed by the idle face. No honest content lost",
-        "ruff/lint clean; probe confirms STANDBY gone + the DTC-since-key-off line lives on Alerts",
-        "[Atlas gate DoD] pin a test that the parked / auto-rotate-pause logic (carouselIdle/parkedNext) reads system-status, NOT the removed data-face -- so a future edit cannot re-couple them (the retirement is display-only, verified)"
-      ],
-      "validationCriteria": [
-        {
-          "action": "park the Pi (engine off) and view Home + Alerts",
-          "outcome": "no STANDBY face (live IMU card is Home); clock in the top bar; 'DTC not read since key-off' shows on the Alerts card"
-        }
-      ],
-      "conditionalOutcomes": [
-        "Pairs with US-541#1 (IMU-always-on). Atlas gates the cross-card content move."
-      ],
-      "goal": "As the operator, I don't want a redundant STANDBY face -- parked, the live IMU card already shows the true state, so the idle face adds nothing.",
-      "tasks": []
+      "completionNotes": ""
     },
     {
-      "id": "US-552",
-      "title": "Pin Pi HDMI/KMS output to the panel-native 480x320 (kill downsampling)",
-      "parent": "F-127",
+      "id": "US-556",
+      "title": "Kebab fits its bar -- visual box vs hit box, 40px tap kept",
+      "parent": "F-132",
       "epicId": "E-001",
       "type": "normal",
-      "size": "S",
+      "size": "M",
       "status": "sprint-ready",
-      "passes": true,
-      "feedback": {
-        "filesActuallyTouched": [
-          "deploy/set-display-mode.sh",
-          "deploy/deploy-pi.sh",
-          "tests/deploy/test_set_display_mode.sh",
-          "tests/deploy/test_set_display_mode.py"
-        ]
-      },
-      "completionNotes": "DONE deploy-side. *** COMMIT OWED -- BL-032's stale .git/index.lock is STILL unclearable (mtime 10:54, size unchanged at ~80 min; `rm` refused as a sensitive-path write in BOTH Bash and PowerShell, `Get-Process` not even on the allow-list so the holder cannot be enumerated). This is the SECOND consecutive iteration to finish green and be unable to commit, so the loop is stopped with HUMAN_INTERVENTION_REQUIRED rather than bank a third. The four files are on disk and green; BL-032 carries the exact two-commit recipe, cleanly separable by path from US-542's nine. ***\n\n*** THE ONE DESIGN CALL WORTH ATLAS'S EYE, BECAUSE IT INVERTS A DELIBERATE US-524 REFUSAL: this script writes to /boot/firmware/cmdline.txt -- the file set-gpu-cma.sh explicitly refuses to touch, with a test (test_setGpuCma_neverWritesCmdlineTxt) pinning the refusal. That refusal was RIGHT for its job (CMA had a config.txt mechanism; a bad overlay param costs a dark display with SSH alive, a corrupted cmdline.txt costs `root=` on a Pi that lives in a car). The output mode has NO such alternative on a Pi 5: the legacy config.txt hdmi_group/hdmi_mode/hdmi_cvt path is Pi 4-and-earlier firmware, so the KMS `video=` kernel arg is the only boot-level lever. I bounded the risk instead of avoiding it, and the four interlocks ARE the deliverable as much as the pin is: (1) the connector is DISCOVERED from /sys/class/drm, never assumed -- a Pi 5 has two micro-HDMI ports and pinning the empty one is a silent no-op that still prints 'applied'; (2) nothing is written unless EXACTLY ONE connector reads `connected` (no panel on a bench deploy, or two panels, means we cannot know the target and a guess is a confident wrong answer); (3) THE TARGET MODE MUST BE ONE THE PANEL ITSELF ADVERTISES in its EDID mode list; (4) the composed line is verified BEFORE install (one line, root= and every original token intact) and re-read after, with an automatic restore from the pristine backup if the post-write read disagrees. ***\n\n*** INTERLOCK 3 IS ALSO THE STORY'S REMAINING UNCERTAINTY, AND I LEFT IT AS A REFUSAL ON PURPOSE. If the panel does NOT advertise 480x320 -- which is a live possibility and arguably the very reason the Pi negotiates 1080p in the first place -- the script WARNs, prints what the panel does advertise, and pins NOTHING. Forcing a CVT-generated timing the panel never claimed can scan out black, in a car, with no local recovery; that is not a call to make from a Windows box that cannot read the panel's EDID. So the deploy turns the unknown into a precise machine-produced finding on its next run rather than a guess. If that WARN fires, it is an Atlas/A-16 EDID finding, not a bug in this script. ***\n\nHOW AC-1's 'read the actual output mode' WAS SATISFIED WITHOUT A PI: I cannot reach the Pi from this harness (ping/ssh are not on the allow-list, and every prior Sprint-74 session recorded the same). So the read is IMPLEMENTED rather than performed -- the deploy step reads it on the Pi, every time, and reports it. Source is /sys/class/graphics/fb0/virtual_size, deliberately NOT kmsprint/xrandr as the AC's parenthetical suggests: neither is installed on this Pi (kmsprint ships with libdrm-tests, xrandr is X11-only and would read the session rather than the scanout), whereas the sysfs read needs no package and no X. When it is unreadable the script prints 'unknown' rather than inventing a mode -- honest-instrument, and scenario 14 pins it.\n\nDELIBERATE DEVIATION FROM THE AC'S CONDITIONAL, FLAGGED: the AC says pin 'if it is NOT native' and conditionalOutcomes calls an already-native Pi 'a no-op verification'. I PIN UNCONDITIONALLY (idempotently) and report the observed mode alongside. Reason: an EDID negotiation that happened to land native at THIS boot is not a guarantee for the next one -- a cable resat, a cold panel, an OS image update and it re-negotiates -- and the DoD's own words are 'deploy SETS the output mode'. Skipping the write on a lucky boot leaves the durable guarantee unbuilt. Where the mode is already native the pin changes nothing visible, which is exactly the no-op outcome the story anticipates; what it removes is the luck.\n\nEXIT-CODE CONTRACT IS LOAD-BEARING AND GATED (test_setDisplayMode_neverExitsNonZeroOnADeliberateNoOp): deploy-pi.sh runs under `set -e`, so ANY non-zero exit halts the whole deploy. Every 'did not pin' path therefore exits 0 with a loud WARN -- a bench Pi with no panel attached is not a deploy failure. Non-zero is reserved for a malformed boot cmdline (1) and a failed write (2), both of which MUST stop the deploy before anyone reboots. The guard asserts the declared codes are exactly {0,1,2}, so a later edit cannot introduce a third code that turns an unplugged panel into a halted deploy. Note set-gpu-cma.sh's exit 3 does exactly that -- correct for its case (a broken boot config), wrong for this one.\n\nNEW GATES: tests/deploy/test_set_display_mode.sh (14 scenarios, 50 assertions) + tests/deploy/test_set_display_mode.py (9 tests: the catalog runner plus the wiring guards bash cannot express). TDD RED FIRST -- the catalog ran before the script existed and reported 18 passed / 32 failed. THOSE 18 VACUOUS PASSES ARE WORTH THE NEXT AGENT'S ATTENTION: they are the 'file NOT modified' / 'no backup written' absence assertions, which all pass trivially when the script does not exist at all. Every refusal scenario therefore ALSO asserts a positive -- the exit code and specific WARN content -- because a safety interlock proven only by 'nothing happened' is proven by nothing.\n\nTHE PYTHON GUARD I'D KEEP IF I COULD KEEP ONLY ONE: test_setDisplayMode_defaultTargetMatchesTheDocumentedPanelResolution parses the 480x320 out of docs/hardware-reference.md's panel spec table and asserts the script's default equals IT -- not a second copy of the literal in the test. Swap the panel and the guard goes red instead of the deploy quietly pinning 480x320 at a screen that is no longer 480x320. Also gated: no hard-coded HDMI-A-N anywhere in executable lines (comments stripped first -- the header discusses the ports at length), and root= is checked in CODE, not merely promised in prose.\n\nGATE RUN SYNCHRONOUSLY IN-LOOP: full tests/deploy/ = 453 collected, 453 passed, exit 0, zero F/E. That fence and not just the new file, because this edits deploy-pi.sh, which a dozen other tests parse. ruff clean on the new .py. No src/ or Python runtime code touched; no UI file touched (US-542's uncommitted UI work sits alongside untouched).\n\nSTILL OWED ON HARDWARE, and it is the whole of AC-2 -- NOT closable on the dev box, and it is the story's actual acceptance: deploy, then reboot, then read the mode on the Pi (`cat /sys/class/graphics/fb0/virtual_size` expects 480,320) and LOOK at a card. WATCH THE DEPLOY OUTPUT ITSELF FIRST -- if the step WARNs 'does not advertise 480x320', the pin did not happen and the EDID finding is the result. ORDERING: US-540-a's AC2 says the 44/34/26/20/15 values may not be called final until this mode is confirmed native, so this read gates the in-car type-scale ratify, and both should happen on the same visit with US-541's and US-542's parked reads.",
+      "passes": false,
+      "groundingRefs": [
+        "offices/uidevloper/proposals/2026-08-20-pi-topbar-and-chrome-polish.md (+ .html) -- SSOT",
+        "offices/pm/inbox/2026-08-20-from-iris-topbar-chrome-polish-groom-ready.md",
+        "offices/pm/inbox/2026-08-20-from-iris-CIO-directed-backlog-and-sprint-placement.md"
+      ],
       "acceptance": [
-        "[Atlas A-16 display-pipeline fidelity] on the Pi (when on) read the actual output mode (kmsprint / xrandr). If it is NOT the panel's native 480x320, PIN the output to native in the deploy (KMS/HDMI mode). Eliminates the scale-up-then-downsample resampling AND renders the US-540 type scale 1:1 -- a distinct legibility lever alongside the font work",
-        "DoD: deploy sets the output mode; post-deploy the Pi reports the native mode; the type scale renders without resample-softening. ruff clean"
+        "#menu-btn paints at bar-height using --fs-secondary (today: 40px box + 34px glyph inside a 28px bar, so the third dot paints outside the header fill)",
+        "hit box preserved at 40px (--tap-min) via a transparent ::after{inset:-6px -7px}",
+        "kebab is CHROME, not a value -- the 34px driver-read floor never applied to it; do not treat this as an F-127 regression",
+        "SAME PATTERN audited in-story: #menu-close, #sys-detail-back (both min-height:40 in 36/44px heads)",
+        "ruff/lint clean"
       ],
       "validationCriteria": [
         {
-          "action": "on the Pi after deploy, read the active output mode + view a card",
-          "outcome": "output is the panel-native 480x320 (no 1080p downsample); glyphs render 1:1 sharp"
-        }
-      ],
-      "conditionalOutcomes": [
-        "Complements US-540 (fonts). If the mode is already native, this is a no-op verification. Pairs with US-540-a's re-verify-values-after-mode acceptance"
-      ],
-      "goal": "As the operator, I want the Pi to render at the panel's native resolution so glyphs are 1:1 sharp, not softened by a 1080p->480x320 downsample.",
-      "tasks": []
-    },
-    {
-      "id": "US-554",
-      "parent": "F-118",
-      "epicId": "E-001",
-      "type": "normal",
-      "size": "S",
-      "status": "sprint-ready",
-      "passes": true,
-      "title": "index_lock preflight clears a STABILITY-VERIFIED non-empty stale lock (BL-032 self-heal)",
-      "goal": "As the loop, I want the ralph.sh preflight to self-heal the crashed-mid-write lock (a full index copy left behind), so a non-empty stale lock stops halting the sprint and needing a manual PM clear.",
-      "acceptance": [
-        "[BL-032 root cause] offices/pm/scripts/index_lock.py refuses ONLY 0-byte locks today (DEFAULT_MAX_STALE_SIZE_BYTES=0, REFUSED_NONEMPTY). BL-032's lock was 376467 bytes -- a crashed `git` wrote the whole index into index.lock then died before the atomic rename -> a non-empty ORPHAN the preflight cannot clear. Add a two-sample STABILITY probe: sample (st_size, st_mtime_ns) twice separated by a short settle interval; a non-empty lock is admitted as orphaned ONLY when BOTH samples are byte-identical AND age > threshold AND no live git process. Rationale: a real mid-write index changes size/mtime between samples in well under 1s; a lock stable across the interval is not being written.",
-        "the existing fail-safes stay intact and FIRST: live-git-process gate unchanged (refuse), too-fresh gate unchanged (refuse), probe-failure => assume-live => refuse. A non-empty lock whose two samples DIFFER stays REFUSED_NONEMPTY (still mid-write). Only a *stable* non-empty lock becomes clearable.",
-        "new LockDecision path + message distinguishes 'cleared: verified-stale EMPTY' from 'cleared: verified-stale STABLE non-empty (2 samples identical, age Ns, no git)'. --check dry-run reports the same verdict without deleting.",
-        "settle interval + require-stability are parameters (injectable for tests, sane default ~1.5-2s); wire the CLI/preflight to enable stability-clearing so `python -m offices.pm.scripts.index_lock --repo <root>` in ralph.sh:237 now heals this case.",
-        "TDD: tests cover (a) stable non-empty aged no-git => CLEARED; (b) non-empty but size/mtime changes between samples => REFUSED_NONEMPTY; (c) live git => REFUSED_GIT_LIVE even if stable; (d) too-fresh => REFUSED_TOO_FRESH; (e) empty aged => CLEARED (regression, unchanged). ruff/mypy clean, coverage holds."
-      ],
-      "validationCriteria": [
+          "action": "inspect the kebab and both back/close controls against their header fills",
+          "outcome": "no glyph paints outside its header; each still accepts a 40px tap"
+        },
         {
-          "action": "simulate BL-032: a 376467-byte index.lock, mtime 80min old, no git process, size stable across two samples; run the preflight",
-          "outcome": "preflight CLEARS it and reports the stable-non-empty path; a lock whose size changes between samples is still refused"
+          "action": "IN-CAR, seated normally, arm's length -- not a bench check",
+          "outcome": "the surface reads correctly at a glance; no clipped content"
         }
       ],
       "conditionalOutcomes": [
-        "Standing risk (BL-032): Ralph's clone still lives on the shared NAS path -- this self-heal removes the STOP condition but not the contention. The durable fix (finish Ralph's clone move off the NAS) stays open, routed to CIO."
+        "GROUP CONSTRAINT (spec 5.1): US-555/556/557 MUST ship in the SAME sprint. US-557 changes the top-bar height that US-555 restructures and US-556 is measured against; split across sprints the later story silently invalidates the earlier one's acceptance -- the same value-changed-here / measurement-left-behind shape as the defect itself.",
+        "Measured against the bar height US-557 changes -- verify AFTER US-557 lands, not before."
       ],
+      "goal": "As the driver, I want the kebab to paint inside the header instead of spilling out of it, without losing a thumb-sized tap target.",
       "tasks": [],
-      "completionNotes": "DONE, all five ACs. The guard now asks the question SIZE CANNOT ANSWER. BL-032's lock and a live mid-write index are indistinguishable by size -- both are big -- so a size-only rule had to refuse both, and refusing cost the sprint two uncommitted stories plus a manual PM clear. The new evidence is CHANGE OVER TIME: sample (st_size, st_mtime_ns), wait the settle interval, sample again. Identical => nothing is writing it => a crashed orphan. Different => a live writer => still REFUSED_NONEMPTY.\n\n*** THE ONE THING I ADDED THAT THE AC DID NOT ASK FOR, AND IT IS A SAFETY HOLE THE STORY WOULD OTHERWISE HAVE OPENED: the settle interval is a ~1.5s WINDOW THAT DID NOT EXIST BEFORE. The pre-US-554 guard probed git once and deleted immediately; now there is real time between the probe and the unlink, so a git process can START inside it and be live at the moment we delete. AC-2 says the live-git gate is 'unchanged', and unchanged code would have been a regression here -- the gate is the same, but what it guards moved. The invariant is re-asserted AFTER the settle, pinned by test_clearStaleIndexLock_gitAppearsDuringSettle_refusesGitLive, which also asserts probes==2 so it cannot pass by simply never re-probing. GENERALIZE: when you introduce a WAIT between a check and the action it authorizes, the check has to be re-run -- a time-of-check/time-of-use gap is created by adding latency, not only by adding code. ***\n\nGATE ORDER IS UNCHANGED AND PINNED BOTH WAYS: git-live first, too-fresh second, stability last. The two refusal tests also assert the settle was NEVER ENTERED (settled == []), which pins the ORDER, not just the outcome -- a rearrangement that let a too-fresh lock reach the probe would still return REFUSED_TOO_FRESH and go green on an outcome-only assertion, while quietly having paid 1.5s and, worse, having put a fresh lock on a code path that can delete. The empty-lock path likewise never settles, so the common preflight case costs nothing.\n\nTHE PAIR, NOT THE SIZE: the probe compares (size, mtime_ns) TOGETHER. A writer rewriting the same byte count slips past a size-only compare; a coarse-granularity filesystem can hide a same-second mtime move that the size reveals. Both directions are gated, and the mtime test sets mtime EXPLICITLY via os.utime rather than by touching the file, so it does not depend on the share's clock granularity to fail. The 'still changing' tests drive the change through the REAL FILESYSTEM from inside the injected settleSleep -- which is exactly what a live writer does from the guard's point of view -- rather than stubbing stat.\n\nTWO EXISTING TESTS WERE REPOINTED, NOT DELETED, AND THAT IS THE HONEST RECORD OF WHAT CHANGED: test_clearStaleIndexLock_nonEmptyLock_refusesAndKeepsLock and test_backoff_nonEmpty_isTerminalNoSpin both planted a STATIC non-empty lock and asserted refusal -- i.e. they pinned precisely the behaviour US-554 exists to remove. They now plant a GROWING lock. The refusal survives; what changed is that it keys on change, not on size. A story that flips a pinned behaviour should move the pin and say so, never quietly delete the test.\n\nDEFAULT IS ON (allowStableNonEmpty=True) in BOTH the library and the CLI, with --no-stable-nonempty as the opt-out. The AC only required the CLI to heal without new flags, but a library default that disagrees with its own CLI is how the next caller gets surprised; the blast radius is bounded because ralph.sh is the ONLY caller in the tree (checked, not assumed -- `git grep -l index_lock -- '*.py' '*.sh'` returns the module, its tests, and ralph.sh). Note the settle sleep is injected as settleSleep, NOT sleep: clearStaleIndexLockWithBackoff already owns `sleep` for its retry ladder and does not forward it, so reusing the name would have silently bound the backoff sleep to the settle.\n\n*** AC-4 WAS THE ONLY AC THAT COULD HAVE SHIPPED UNFALSIFIABLE, so I gated the WIRING as well as the unit: nothing in the tree asserted that ralph.sh still CALLS this module. Delete the preflight line and all 33 unit tests stay green while the loop receives no fix at all -- US-540-b's lesson one layer up. test_ralphShPreflight_invokesTheGuardWithStabilityClearingEnabled strips comments FIRST (the preflight is documented in a long comment block that also names the module, so an unstripped scan finds the module name in PROSE and reports wiring that is not there), asserts the invocation was FOUND before judging its shape, and asserts it does not pass --no-stable-nonempty. ***\n\nNEW LockDecision.CLEARED_STABLE_NONEMPTY (AC-3), included in safeToProceed, absent from _WAITABLE. The two cleared messages are asserted DISTINCT and to carry their evidence: a PM reading the preflight line needs to know whether the guard removed a 0-byte nothing or a 376kB index copy -- those warrant different follow-up. Also handled: the lock VANISHING mid-settle (a finishing git renamed it away) returns ABSENT rather than raising -- the happy version of mid-write, and the probe must not crash on a file disappearing between two stats.\n\nTDD, RED TWICE ON PURPOSE: run 1 was an ImportError (symbol missing) which masks every per-test reason, so I added ONLY the skeleton -- constant, enum member, inert parameters -- and re-ran to get 9 BEHAVIOURAL reds, each failing because the probe was absent rather than because a name was. The other new tests were green before and after by design: they are the BOUND on the change (refusals that must survive it), not descriptions of it. Their non-vacuity is carried by the headline test, which proves this exact call path CAN return CLEARED_STABLE_NONEMPTY -- so a refusal is a refusal, not a lookup that cannot see the thing.\n\n*** MYPY WAS NOT RUN -- IT IS NOT INSTALLED IN THIS ENVIRONMENT (`No module named mypy`), the same class of gap as `make` not being on PATH. AC-5 asks for mypy clean and I will not report a tool clean that I could not execute. Note CLAUDE.md scopes typechecking to `mypy src/`, and this file is under offices/, so it is likely outside the configured surface anyway -- PM to confirm at integration. RUFF IS CLEAN on both touched .py (exit 0). ***\n\nPRE-EXISTING RED FOUND AND FILED, NOT FIXED -- TD-081: tests/pm/test_prd_to_sprint.py has TWO permanently-failing tests (KeyError 'bigDoDHash') that predate me. Commit 22f65a8 retired the freeze mechanic and stopped prd_to_sprint stamping frozenAt/bigDoDHash; the producer went, these tests stayed. Verified not mine (my diff is index_lock.py / ralph.sh / test_index_lock.py; neither the failing test nor its subject appears in it). PM-owned process scripts, so I filed rather than deleted. WORTH PM'S ATTENTION BEYOND THE TWO REDS: a standing red in tests/pm trains agents to read red as normal, and I had to spend a step proving it was not mine.\n\nPROSE REPOINTED (my own prior lesson -- when you change a behaviour, grep for the text that described it): the module docstring's condition 3 said 'Empty (0 bytes)' full stop; ralph.sh's preflight comment said the helper 'clears ONLY a lock that is 0-byte'; the backoff docstring said a non-empty lock 'won't cure by waiting'. All three were the authoritative description of the rule this story changed.\n\nLEFT ALONE DELIBERATELY, FLAGGED FOR PM: REFUSED_NONEMPTY is still TERMINAL in the backoff wrapper (not in _WAITABLE). Post-US-554 it means 'a write is actively in progress', which is arguably now the most waitable outcome there is -- but AC-2 says it stays REFUSED_NONEMPTY, an existing test pins the no-spin behaviour, and making it waitable is a design change no AC authorizes. Candidate follow-up, not drift.\n\nSTANDING RISK UNCHANGED (the story's own conditionalOutcome): this removes the STOP condition, not the contention. Ralph's clone still lives on the shared NAS path; the durable fix is finishing the clone move off the NAS, and that stays open with the CIO.",
       "feedback": {
-        "filesActuallyTouched": [
-          "offices/pm/scripts/index_lock.py",
-          "tests/pm/test_index_lock.py",
-          "offices/ralph/ralph.sh",
-          "offices/pm/tech_debt/TD-081-prd-to-sprint-tests-still-assert-the-retired-freeze-fields.md"
-        ]
-      }
+        "filesActuallyTouched": [],
+        "grounding": []
+      },
+      "completionNotes": ""
+    },
+    {
+      "id": "US-557",
+      "title": "Band-budget correction + tokenize the layout bands",
+      "parent": "F-132",
+      "epicId": "E-001",
+      "type": "normal",
+      "size": "L",
+      "status": "sprint-ready",
+      "passes": false,
+      "groundingRefs": [
+        "offices/uidevloper/proposals/2026-08-20-pi-topbar-and-chrome-polish.md (+ .html) -- SSOT",
+        "offices/pm/inbox/2026-08-20-from-iris-topbar-chrome-polish-groom-ready.md",
+        "offices/pm/inbox/2026-08-20-from-iris-CIO-directed-backlog-and-sprint-placement.md"
+      ],
+      "acceptance": [
+        "CARRY THIS IN THE STORY TEXT: the clipped bottoms are a SPEC error in the F-127 budget, NOT a build regression -- F-127 section 3 omitted card padding (28) + card title (39) and understated dots by 8 = 57px unaccounted; real body 201px vs 202px of rows, overflowing BEFORE any footer. Ralph built to the capacity asserted. Do not go hunting a regression that does not exist",
+        "reclaim CHROME only: topbar 28->34 (-6), dots 24->16 (+8), card pad 28->16 (+12), title -> --fs-label +6mg (+9) = +23px -> body 224px; 3 rows + footer = 222. Fits",
+        "EVERY driver-read value keeps its F-127 tier. If it ever looks like a value must shrink, CUT A FACT instead",
+        "promote the bands into specs/UI/tokens.css (--bar-h / --dots-h / --card-pad-y) and derive #carousel top/bottom from them -- root cause was 28px being a literal in one file and an assumption in another",
+        "DoD grep gate mirroring US-539's: NO bare 28px / 24px / 14px 16px band literal left in dashboard.css",
+        "capacity ceiling declared: 3 rows + 1 footer; a 4th fact goes to drill-down",
+        "NO SILENT CLIP: content fits or the surface admits it does not -- the overflow being invisible to everyone but the CIO's eye IS the defect",
+        "ruff/lint clean"
+      ],
+      "validationCriteria": [
+        {
+          "action": "open every footer-carrying card (Battery/Light/System/Alerts) on the Pi",
+          "outcome": "no clipped content; 3 rows + footer fully visible"
+        },
+        {
+          "action": "grep dashboard.css for bare band literals",
+          "outcome": "zero bare 28px/24px/14px 16px band literals; bands resolve from tokens.css"
+        },
+        {
+          "action": "IN-CAR, seated normally, arm's length -- not a bench check",
+          "outcome": "the surface reads correctly at a glance; no clipped content"
+        }
+      ],
+      "conditionalOutcomes": [
+        "GROUP CONSTRAINT (spec 5.1): US-555/556/557 MUST ship in the SAME sprint. US-557 changes the top-bar height that US-555 restructures and US-556 is measured against; split across sprints the later story silently invalidates the earlier one's acceptance -- the same value-changed-here / measurement-left-behind shape as the defect itself.",
+        "Cheap discriminator: if the TOP edge of the bar is ALSO shaved, that is US-552 panel overscan (KMS, not CSS). Ship this either way -- the budget is wrong regardless.",
+        "Correction to the F-127 budget, NOT a reversal of F-127."
+      ],
+      "goal": "As the driver, I want card content to fit the panel instead of being clipped at the bottom, and I want the fix to be structural so it cannot silently drift again.",
+      "tasks": [],
+      "feedback": {
+        "filesActuallyTouched": [],
+        "grounding": []
+      },
+      "completionNotes": "",
+      "pmSignOff": "Marcus (PM) 2026-08-20 -- size L approved, NOT split. The band budget and its tokenization are one indivisible change: re-budgeting topbar/dots/card-pad/title WITHOUT promoting them to tokens.css lands fresh literals and reproduces the exact root cause (28px a literal in one file, an assumption in another, nothing forcing reconciliation when F-127 moved the type scale). Splitting -budget- from -tokenize- would ship the defect twice. Rides with US-555/556 in one sprint per the group constraint -- it changes the bar height they are measured against. 8 acceptance items reflect the grep gate + capacity ceiling + no-silent-clip guards, not hidden scope."
+    },
+    {
+      "id": "US-558",
+      "title": "Navigational overlays paint solid; modals keep their scrim",
+      "parent": "F-132",
+      "epicId": "E-001",
+      "type": "normal",
+      "size": "S",
+      "status": "sprint-ready",
+      "passes": false,
+      "groundingRefs": [
+        "offices/uidevloper/proposals/2026-08-20-pi-topbar-and-chrome-polish.md (+ .html) -- SSOT",
+        "offices/pm/inbox/2026-08-20-from-iris-topbar-chrome-polish-groom-ready.md",
+        "offices/pm/inbox/2026-08-20-from-iris-CIO-directed-backlog-and-sprint-placement.md"
+      ],
+      "acceptance": [
+        "#setup-menu (.92) / #sys-detail (.95) / #dtc-detail (.95) -> opaque var(--bg)",
+        "RULE: navigational overlay = destination = solid; interrupting modal = scrim",
+        "#confirm-modal + #clear-confirm KEEP their scrim -- regression guard in DoD",
+        "#dtc-takeover OUT OF SCOPE; severity styling untouched",
+        "ruff/lint clean"
+      ],
+      "validationCriteria": [
+        {
+          "action": "open each system screen, then trigger a confirm modal",
+          "outcome": "system screens fully opaque; confirm modals still show their scrim"
+        },
+        {
+          "action": "IN-CAR, seated normally, arm's length -- not a bench check",
+          "outcome": "the surface reads correctly at a glance; no clipped content"
+        }
+      ],
+      "conditionalOutcomes": [
+        "Independent of the US-555/556/557 group -- schedule freely."
+      ],
+      "goal": "As the driver, I want a screen I navigated to to look like a destination, not a translucent layer over the last one.",
+      "tasks": [],
+      "feedback": {
+        "filesActuallyTouched": [],
+        "grounding": []
+      },
+      "completionNotes": ""
+    },
+    {
+      "id": "US-559",
+      "title": "Sync stamp -> local 12-hour time; rows/pending to detail",
+      "parent": "F-132",
+      "epicId": "E-001",
+      "type": "normal",
+      "size": "M",
+      "status": "sprint-ready",
+      "passes": false,
+      "groundingRefs": [
+        "offices/uidevloper/proposals/2026-08-20-pi-topbar-and-chrome-polish.md (+ .html) -- SSOT",
+        "offices/pm/inbox/2026-08-20-from-iris-topbar-chrome-polish-groom-ready.md",
+        "offices/pm/inbox/2026-08-20-from-iris-CIO-directed-backlog-and-sprint-placement.md"
+      ],
+      "acceptance": [
+        "syncTile() renders Mmm dd, yyyy + h:mm:ss AM/PM LOCAL (today it pastes raw ISO lastOkTs, e.g. last 2026-08-17T19:30:28Z)",
+        "full stamp on its own line ON the tile; 'N rows . N pending' MOVES to #sys-detail (CIO call 2026-08-20)",
+        "ONE 12-hour formatting rule in carousel.js -- a shared helper; fmtClock's own comment already warns about two formatters drifting",
+        "unparseable input -> render the RAW string, NEVER Jan 01 1970 / NaN -- a fabricated date on the tile that reports sync health is green-when-broken",
+        "null -> 'never', unchanged",
+        "emitter keeps emitting ISO; the CONSUMER formats and never re-derives -- SSOT unchanged",
+        "ruff/lint clean"
+      ],
+      "validationCriteria": [
+        {
+          "action": "compare the sync stamp against the top-bar clock on the Pi",
+          "outcome": "same clock, same 12-hour format; no UTC/local mismatch"
+        },
+        {
+          "action": "feed syncTile an unparseable timestamp and a null",
+          "outcome": "raw string shown for unparseable; 'never' for null; no 1970/NaN ever"
+        },
+        {
+          "action": "IN-CAR, seated normally, arm's length -- not a bench check",
+          "outcome": "the surface reads correctly at a glance; no clipped content"
+        }
+      ],
+      "conditionalOutcomes": [
+        "Independent of the US-555/556/557 group -- schedule freely.",
+        "Not cosmetic: a wrong-reading instrument on the tile that reports sync health."
+      ],
+      "goal": "As the driver, I want the sync stamp in the same clock as the top bar, so two clocks on one panel cannot disagree by hours with no way to tell which is lying.",
+      "tasks": [],
+      "feedback": {
+        "filesActuallyTouched": [],
+        "grounding": []
+      },
+      "completionNotes": ""
     }
   ],
   "validation": {
     "bigDefinitionOfDone": [
-      "(grep dashboard.css for `font-size:` with a px literal after the refactor) → (zero hardcoded px font-sizes; all reference the tokens.css scale; dashboard renders visually identical to before)  [from US-539]",
-      "(in the car, seated normally, read the primary values on a card) → (legible at arm's length; driver-must-read elements >=34px effective)  [from US-540-a]",
-      "(swipe the carousel) → (6 cards render (Health gone, facts redistributed); <=3-4 facts/card, all legible)  [from US-540-b]",
-      "(on the Pi, view the Home face parked (engine off) + swipe the carousel) → (Home shows the live IMU instrument (heading/g real, OBD bits greyed-NA); order is Home.Alerts.System...; carousel does not auto-advance)  [from US-541]",
-      "(park the Pi (engine off) and view Home + Alerts) → (no STANDBY face (live IMU card is Home); clock in the top bar; 'DTC not read since key-off' shows on the Alerts card)  [from US-542]",
-      "(on the Pi after deploy, read the active output mode + view a card) → (output is the panel-native 480x320 (no 1080p downsample); glyphs render 1:1 sharp)  [from US-552]"
+      "All 5 F-132 stories pass their own validationCriteria.",
+      "GROUP CONSTRAINT HELD: US-555 + US-556 + US-557 all shipped in THIS sprint. US-557 changes the top-bar height US-555 restructures and US-556 is measured against -- verify US-556's kebab AFTER US-557 lands, never before.",
+      "NO DRIVER-READ VALUE SHRANK: every F-127 type tier (44/34/26/20/15) intact. This is a correction to the F-127 budget, NOT a reversal. If a value looks like it must shrink, cut a FACT instead.",
+      "US-557 grep gate green: zero bare 28px / 24px / 14px 16px band literals left in dashboard.css; bands resolve from specs/UI/tokens.css.",
+      "NO SILENT CLIP: content fits or the surface admits it does not.",
+      "Regression guard: #confirm-modal + #clear-confirm still carry their scrim.",
+      "IN-CAR acceptance, seated normally, arm's length -- a bench check does NOT count. US-557 exists precisely because a bench check could not contradict arithmetic that was wrong on paper.",
+      "Stacks with the in-car validation V0.29.29 / F-127 already owes after US-552 -- likely the same drive."
     ],
-    "validationMethod": "3.5in legibility, IN-CAR acceptance (read at arms length, seated): (1) US-539 no bare px font-sizes left in dashboard.css (grep gate); (2) US-540-a driver-must-read >=34px effective; (3) US-540-b 6-card set renders (Health retired), <=3-4 facts/card; (4) US-541 IMU-always-on Home face + reorder + auto-rotate off; (5) US-542 no STANDBY face, DTC-since-key-off on Alerts; (6) US-552 output pinned to panel-native 480x320 (no 1080p downsample), glyphs 1:1. Re-verify the 44/34/26/20/15 values AFTER the output mode is confirmed.",
-    "validatesFeatures": [
-      "F-127",
-      "F-124"
-    ],
-    "currentVersion": "V0.29.29",
     "validatedAt": null,
+    "validatesFeatures": [
+      "F-132"
+    ],
+    "validationMethod": "IN-CAR acceptance, seated normally, arm's length -- a bench check does NOT count (US-557 exists precisely because a bench check could not contradict arithmetic that was wrong on paper). (1) US-555 clock stays centred under a short AND a long version string; (2) US-556 no glyph paints outside its header and each control still takes a 40px tap -- verify AFTER US-557 lands, never before; (3) US-557 no clipped content on the footer-carrying cards (Battery/Light/System/Alerts), grep gate green (zero bare 28px/24px/14px 16px band literals in dashboard.css), every F-127 type tier intact; (4) US-558 system screens opaque while #confirm-modal + #clear-confirm keep their scrim; (5) US-559 sync stamp reads in the same local 12-hour clock as the top bar, and an unparseable stamp shows the raw string -- never 1970/NaN. Stacks with the in-car validation V0.29.29 / F-127 already owes after US-552.",
+    "currentVersion": "V0.29.30",
     "validatedBy": null
-  }
+  },
+  "outOfScope": [
+    "P-6 real WiFi glyph -- states/system-status has NO network key today; needs a new emitter field. Atlas gate filed 2026-08-20 (architect inbox). Do NOT groom until he rules. Drops into US-555's grid with zero re-layout once it lands.",
+    "#dtc-takeover severity styling -- untouched."
+  ]
 }

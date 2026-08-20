@@ -1,14 +1,42 @@
-# Finding — AllocateRingBuffer UI freeze is LIVE in V0.29.29 (bench/1080p only) + 4 watchdog defects + unpinned library constraints
+# Finding — AllocateRingBuffer UI freeze is LIVE in V0.29.29 (**CONFIRMED IN-CAR 2026-08-20**) + 4 watchdog defects + unpinned library constraints
 
 **Author:** Atlas (Architect)
 **Date:** 2026-08-17
 **Task:** CIO reported "V0.29.29 UI freezes right after 1 minute, sometimes closes and resets, not consistently."
 **Target:** LIVE Pi `10.27.27.124` (`chi-eclipse-01`), V0.29.29 / `46bb187`.
-**Severity:** Med-High on the freeze (**scope-limited — see §0**); Med on the watchdog; Med on library pinning.
+**Severity:** **HIGH** on the freeze (**reproduces in-car, wedges mid-drive — see §0-A; the §0 scope limit is SUPERSEDED**); Med on the watchdog; Med on library pinning.
 
 ---
 
-## 0. SCOPE LIMIT — READ THIS BEFORE GROOMING
+## 0-A. SCOPE LIMIT **LIFTED** 2026-08-20 — IT REPRODUCES IN THE CAR
+
+**The §0 scope limit below is SUPERSEDED. Do not rely on it.**
+
+CIO drove a 2-leg drive 2026-08-20 with the 3.5in panel connected (`HDMI-A-1`, desk monitor
+unplugged). Result:
+
+```
+AllocateRingBuffer markers, drive boot : 22,548
+kiosk-watchdog WEDGED events           : 2   (12:20:15, 12:25:46 -- both during leg 2)
+eclipse-dashboard starts               : 3   (initial + 2 watchdog restarts)
+restart budget                         : 2 of 5 -- not exhausted
+```
+
+**This is NOT a bench/1080p artifact. It follows to the car and it wedges mid-drive.** Severity rises
+accordingly: the operator loses the display while driving, twice in an 8-minute leg. Leg 1 (24 min) was
+clean, so it is intermittent, not deterministic.
+
+**HOWEVER, the resolution variable is STILL untested.** The panel negotiated **1280x720**, not its
+native 480x320 -- `/sys/class/graphics/fb0/virtual_size = 1280,720`. US-552's mode pin has still never
+been applied, so this reproduction is at **6x the native pixel count**, not at the shipping
+configuration. A 480x320 test remains genuinely unrun.
+
+**Groom the watchdog defects (§3) and the mode pin FIRST** -- they are independent, and the mode pin is
+also the last untested lever on the freeze itself.
+
+---
+
+## 0. SCOPE LIMIT (SUPERSEDED — see §0-A) — READ THIS BEFORE GROOMING
 
 **The freeze was observed ONLY on the bench, at 1920×1080, on a desktop monitor.
 It has NEVER been observed on the 3.5″ panel, because V0.29.29 has never run on it.**
