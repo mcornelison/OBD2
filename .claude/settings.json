@@ -18,7 +18,6 @@
       "Bash(systemctl list-units *)",
       "Bash(iw dev *)",
       "Bash(i2cget *)",
-      "Bash(i2cdetect *)",
       "Bash(dmesg)",
       "Bash(dmesg -T *)",
       "Bash(ip neigh *)",
