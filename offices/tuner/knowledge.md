@@ -762,6 +762,114 @@ This is the FIRST observation on the new ECU. Anchors below are PROVISIONAL — 
 - **Mid-range knock-retard window** (3,500-5,000 RPM) — Drive 26 only sampled one tip-in; need to characterize the knock-retard frequency-of-fire across multiple acceleration events.
 - **SPEED PID calibration verification** — see OBD-II section caveat. Need GPS correlation.
 
+### Drives 39/40/41 — 2026-08-20 — NEW-ECU PART-THROTTLE BASELINE + IAT SENSOR CHARACTERIZATION (55 min total, 24,342 rows, drive_id=39/40/41)
+
+**Context**: First moving-vehicle data since Drive 34 (2026-07-03) — a **48-day monitoring gap**. CIO idled the car in the garage (drive 39), took a meeting, then ran two short city loops (drives 40 + 41). Fuel [EXACT: 93 octane — DO NOT CHANGE]. ECU MD326328. All three drives captured clean; Pi-side and server-side row counts match **exactly** (10,594 / 10,286 / 3,462), 16 parameters each.
+
+| drive | type | duration | rows (rows/min) | max speed | max RPM | max load / TPS | coolant | IAT |
+|---:|---|---|---|---|---|---|---|---|
+| 39 | parked idle, near-cold to warm | 24 min | 10,594 (426) | 0 | 952 | 21% / 1% | 54-101 °C | 24-31 °C |
+| 40 | city loop | 23 min | 10,286 (430) | 59 km/h (37 mph) | 3,964 | 50% / 25% | 88-101 °C | 29-42 °C |
+| 41 | city loop (heat-soaked start) | 8 min | 3,462 (422) | 56 km/h (35 mph) | 3,736 | 56% / 29% | 93-101 °C | 37-51 °C |
+
+> **⚠️ ENVELOPE CAVEAT — READ BEFORE USING THIS ENTRY.** Peak throttle across both driving captures was **29%**, and exactly **one** 5-second bin exceeded 50% load. These drives **cannot** assess knock behaviour, high-load fuelling, or boost. They do **NOT** extend the under-load baseline shelf (Drive 7 / Drive 26 remain authoritative there). What they DO establish is a **part-throttle + idle** reference for the new ECU. Do not read "healthy" here as "cleared for spirited driving."
+
+#### Timing advance — clean, monotonic, NO knock retard (drives 40+41, 5-second bins)
+
+| RPM band | n | avg | min | max | avg load |
+|---|---:|---:|---:|---:|---:|
+| <1200 (idle) | 242 | 6.7° | 3.5 | 21.8 | 19% |
+| 1200-2000 | 24 | 21.6° | 10.0 | 30.5 | 21% |
+| 2000-2500 | 23 | 27.0° | 18.8 | 32.8 | 17% |
+| 2500-3000 | 32 | 29.8° | 13.5 | 33.5 | 19% |
+| 3000-3500 | 32 | 32.8° | 28.3 | 33.5 | 16% |
+| 3500+ | 24 | 33.3° | 30.8 | 33.5 | 16% |
+
+**`33.5°` is the max-advance ceiling** — it is the exact `max` in every band above 2,000 RPM. At the light loads sampled, the ECU ran max advance and **never pulled timing**. Zero knock-retard events in 31 minutes of driving. Contrast Drive 26, which fired an ~18° retard on a tip-in to ~35% throttle: these drives never opened the throttle far enough to trigger the mechanism. **Absence of knock here is evidence about the load, not about the tune.**
+
+#### Fuel trims — healthy, with a load-direction worth watching
+
+| load band | n | STFT avg | LTFT avg |
+|---|---:|---:|---:|
+| <20% | 325 | −0.34% | −1.05% |
+| 20-30% | 44 | +1.14% | −1.18% |
+| 30-40% | 7 | +2.23% | −0.95% |
+| 50%+ | 1 | +5.47% | −1.56% |
+
+**LTFT is rock-steady at −0.95% to −1.18% across every load band** — tight, consistent, healthy adaptive trim. **STFT rises monotonically with load** (−0.34 to +5.47), i.e. the mixture runs progressively leaner of target and the ECU adds fuel to compensate.
+
+**This is NOT a fault** — ±5% is normal, the investigate line is ±10%. But log the *direction*: on this car (aftermarket FPR, modified fuel lines, **stock pump, no wideband**) lean-with-load is the precursor signature to a melted #4. At 29% throttle it is a footnote; at WOT it would not be. This is the strongest data-grounded argument yet for **wideband + ECMLink as the next instruments** (already #1 on the Modification Priority Path — this reinforces it, does not change it).
+
+Peak-load moment (drive 41, 17:22:55 UTC): load 53%, RPM 1,760, 17 km/h, TPS 27%, **timing 18.3°**, MAF 35.5 g/s, O2 0.42 V, STFT +5.47%, coolant 96 °C, IAT 45 °C. *Note:* Drive 26's anchor "timing below 18° at sustained peak load = defensive retard" does **not** apply here — that anchor is calibrated at ~96% load; this is 53%. Adjacent, not comparable.
+
+#### 🔴 IAT IS NOT AMBIENT AIR — sensor is heat-soak dominated (EMPIRICALLY CONFIRMED)
+
+Long-standing carry-forward ("IAT pre-turbo location — empirical confirm owed") now has moving-vehicle evidence. **Drive 41 is the clean test** — it began already heat-soaked from drive 40 and cooled monotonically with airflow:
+
+| speed band | drive 41 IAT avg | drive 40 IAT avg |
+|---|---:|---:|
+| stopped | 48.1 °C | 31.1 °C |
+| <20 km/h | 45.5 °C | 36.9 °C |
+| 20-40 km/h | 43.9 °C | 36.9 °C |
+| 40+ km/h | **40.6 °C** | 34.1 °C |
+
+Airflow cools it — but **it never approaches the ~24-27 °C actual ambient**, sitting 14-24 °C above outside air at all times. At 6-29% throttle the turbo is barely working, so this elevation is **radiant/conductive engine-bay heat soak, not compressor heating**. (Drive 40's curve is confounded — the engine was still warming through it; use drive 41.)
+
+**Rulings that follow:**
+- **Never use IAT as ambient temperature** on this car, in analysis or on any display.
+- Confirms the standing display guidance to Iris: label **INTAKE AIR**, informational, **no red band**.
+- **`drive_summary.ambient_temp_at_start_c` is fed from IAT and is therefore mislabeled** — drive 41 recorded "ambient" of **47 °C (117 °F)**, which is not a Chicago August afternoon. Any analysis keyed on that column is working with a heat-soaked intake reading, not weather. Filed to Marcus 2026-08-20.
+
+#### Drive 39 — new-ECU idle anchors (REFINES the provisional Drive 26 anchors)
+
+Drive 39 is a 24-minute continuous near-cold-to-warm idle and **partially closes** the Drive 26 gap "cold-start on new ECU." *Partially:* the Pi boots at key-on and takes ~30-60 s to begin capturing, so the first coolant sample is already **54 °C** — true ambient-cold coolant was not sampled. A genuine cold-start curve is still owed.
+
+- **Warm idle RPM** 771-804 (Drive 26 provisional said ~830 — revise **down**; this is a 24-min settled observation, not a warm continuation).
+- **Warm idle timing** 5.2-6.6° BTDC; cold idle starts ~10° and falls as coolant rises.
+- **Warm idle ENGINE_LOAD** 18-21% (confirms Drive 26's 20-21%, slightly elevated vs OEM 15-18%).
+- **Warm idle MAF** 3.17-3.40 g/s — matches the confirmed-live capture-set range exactly.
+- **Idle O2_B1S1** sweeps the full 0.0-0.9 V, avg 0.38 — healthy switching, closed loop (`FUEL_SYSTEM_STATUS` = 2.0 throughout).
+- **Battery/charging** 13.4-14.4 V, alternator healthy.
+- **Coolant equilibrium is a FAN CYCLE, not a plateau**: 98.5 to **94.3** to 97.9 °C across three consecutive minutes = fan engaging, pulling ~4 °C, disengaging. **Peak of the cycle is 101 °C on every capture from drive 34 onward.** Thermostat + fan both confirmed working.
+
+> **⚠️ THRESHOLD DEFECT (mine).** The coolant alert band I issued to Iris — 🟡100 / 🔴104 °C — **trips on the normal fan-cycle peak** and would have fired on **6 of the last 7 captures**, all healthy. A threshold that alarms on every idle is noise. **Do not implement 🟡100 as-is.** Re-derivation owed against fan-cycle data; until then treat 101 °C as the observed normal ceiling.
+
+#### LTFT idle-freeze — observed and explained (supersedes the drives 35/36 "zero-variance" watch item)
+
+Drive 39 held LTFT at **exactly −1.56% for six minutes**, then began adapting (−0.93 to −2.73) as coolant crossed ~83 °C and STFT settled near zero. That is LTFT's normal slow update cadence, **not** a fault.
+
+**This is NOT the same phenomenon as drives 35/36.** Cross-drive comparison kills the duration explanation:
+
+| drive | duration | LTFT distinct values | LTFT range | coolant |
+|---:|---|---:|---|---|
+| 35 | 1 min | 1 | **0.0 — 0.0** | 95-101 (fully warm) |
+| 36 | 7 min | 1 | **0.0 — 0.0** | 95-101 (fully warm) |
+| 37 | 1 min | 3 | −3.13 … −1.56 | 93-101 |
+| 38 | 5 min | 4 | −3.91 … −1.56 | 93-101 |
+| 39 | 20 min | 5 | −3.13 … 0.0 | 54-101 |
+
+Drive 37 moved through 3 values in **one minute**, so duration is not the driver; and 35/36 were **fully warm**, so warm-up is not either. The discriminator is the **value**: 35 and 36 sit at *exactly* 0.0 and nothing else does. **LTFT pinned at precisely zero with no movement is the signature of reset adaptive fuel memory** — battery disconnect, ECU power interruption, or a code clear. Both drives are 2026-07-31, three minutes apart; by drive 37 (08-07) the ECU had relearned to −3.13…−1.56.
+
+**Benign** — nothing was broken, the ECU simply relearned. **Open**: CIO confirmation of a battery disconnect / fuse pull / code clear around 2026-07-31 would close this outright. **Do not baseline on drives 35/36** — their trims are a reset artifact.
+
+### Drives 39/40/41 — Interpretation Anchors (NEW-ECU PART-THROTTLE + IDLE)
+
+- **Max advance ceiling 33.5°** — if a future light-load capture shows timing capped below ~30° at 3,000+ RPM, the ECU is defensively retarding; investigate fuel quality, carbon, IAT trend.
+- **Light-load timing curve** 6.7° (idle) to 21.6° to 27.0° to 29.8° to 32.8° to 33.3° by RPM band. A future part-throttle drive should reproduce this within a few degrees.
+- **LTFT settled band −0.95% to −1.18%** at part throttle. Drift beyond ±5% = investigate.
+- **STFT-vs-load slope**: roughly 0% at light load rising to ~+5% at 50% load. **If a future capture shows STFT >+10% at the same loads, fuel delivery is degrading** (pump, filter, FPR, injectors) — escalate before any WOT.
+- **Coolant fan-cycle band 93-101 °C** at idle and part throttle in summer. Sustained >102 °C, or loss of the cycling pattern, = investigate fan relay / CTS / thermostat.
+- **IAT reads 14-24 °C above ambient at all times**; cools with airflow, never reaches ambient. Treat as intake-tract temperature only.
+
+### Drives 39/40/41 — Diagnostic Gaps Still Outstanding
+
+- **HIGH-LOAD CAPTURE ON THE NEW ECU IS THE #1 GAP.** Peak 29% throttle here. Need third-gear pulls to ~4,500 RPM to characterize knock-retard frequency-of-fire and confirm whether the STFT lean-slope continues past 56% load. **Watch this live, not in review.**
+- **True ambient-cold start** — capture begins ~30-60 s after key-on, so the first coolant sample was already 54 °C.
+- **`BAROMETRIC` (0x33) unresolved** — 75 real rows exist, all on drive 33, all exactly 99.0 kPa. Flat is *expected* at 1 kPa resolution over 143 s, so flatness neither proves nor disproves liveness. Settle via `probe_obd_capabilities.sh` on a bench session (NOT with capture running — single serial channel), or by comparing 99.0 kPa against Chicago station pressure for 2026-07-01 02:23 UTC.
+- **`CONTROL_MODULE_VOLTAGE` (0x42) is LIVE — correction owed to shared memory.** Drive 33 holds **76 real samples across 29 distinct values, 12.975-14.451 V** — a textbook charging curve. The MEMORY note recording 0x42 as "probe-dead on MD326328" is **wrong**. (`RUNTIME_SEC` likewise live: 75 rows, 75 distinct, monotonic 53 to 196.)
+- **Wideband AFR** — narrowband cannot quantify the lean-with-load slope. Unchanged #1 instrument gap.
+- Carry-forwards unchanged: oil pressure, GM 3-bar MAP, E85, EGT.
+
 ### Session 23 — 2026-04-19 — First Real OBD Data (Warm Idle, ~23s captured across 2 windows) [HISTORICAL]
 
 **Context**: Cold-start → warm idle → shutdown wall-clock ~10 min, but real OBD-connected data capture was ~23 seconds due to TD-023 connection churn. Engine was already warm in the captured window. No warmup curve, no load, no drive. **Superseded by Drive 5 above as authoritative baseline; preserved here for historical comparison.**
