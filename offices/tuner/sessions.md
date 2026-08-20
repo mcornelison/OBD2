@@ -7,6 +7,88 @@
 
 ---
 
+## Session 37 — 2026-08-20 (THE MOVEMENT DRIVE — 48-day gap closed; 3 carry-forwards retired; 2 defects filed; 2 self-corrections)
+
+**Context**: The session I'd been waiting 48 days for. CIO idled the Eclipse in the garage (drive 39), took a 30-min meeting, then ran two short city loops (drives 40 + 41). First moving-vehicle data since drive 34 (2026-07-03). Opened with a permission-settings cleanup, closed with three long-standing carry-forwards retired.
+
+### What Happened
+
+- **Ran `/fewer-permission-prompts` and concluded: add nothing.** Scanned 50 recent transcripts, 2,667 Bash calls. Every real prompt driver was either auto-allowed by Claude Code or already granted by the root `settings.local.json`. **Declined to write `.claude/settings.json`** — it is tracked, would push my grants onto 5 teammates' clones, and per Marcus's 08-17 finding a *tracked* settings file holds its rules until the workspace-trust dialog is accepted, i.e. it could re-introduce the exact prompt the team just eliminated. Zero-value change at real cost.
+- **Cleaned the shared root `settings.local.json`** (CIO-directed): 131→126 allow rules, 6→5 directories. Removed only provably dead/duplicate entries. **Deliberately did NOT remove the ~48 zero-hit rules** (`pytest`, `rsync`, `mysql`, `systemctl`…) — unused ≠ redundant; they are load-bearing for deploy/test/DB work that simply didn't occur in the sample window. **Also kept the ~25 rules duplicating CC's built-in read-only auto-allow** — auto-allow does *not* cover output redirection, so `Bash(head:*)` is what keeps `head -5 f > out.txt` prompt-free, and this workflow redirects constantly. Reasoning appended to `_comment_policy` so nobody re-litigates it.
+- **⚠️ Flagged CO risk before anything else** — CIO had a 4G63 idling in a garage. He confirmed the door was open. Nothing below would have been worth a hospital trip.
+- **Drive 39 — 24-min continuous idle, near-cold→warm, 10,594 rows.** Watched the warm-up live: coolant 54→101 °C, STFT +3.91→0.0, LTFT frozen at −1.56 for six minutes then adapting to −2.73.
+- **Drives 40 + 41 — city loops, 13,748 rows combined.** Max 59 km/h (37 mph), 3,964 RPM, 56% load, **29% throttle**. Gentle. **SPEED>0 confirmed on both — the gate is cleared.**
+- **Deliberately did NOT run `probe_obd_capabilities.sh` before the drive.** The OBDLink LX is a single serial channel owned by `eclipse-obd`; a second connection could have killed the capture. **The drive was worth more than the baro question.** Correct call — the drive happened cleanly.
+- **Full engine analysis delivered**: timing by RPM/load band, trims by load band, IAT-vs-speed, thermal, top-12 load moments, sync verification.
+- **Wrote the `knowledge.md` baseline entry, filed 2 defects to Marcus, 1 correction to Iris, closed the LTFT item.** Six commits, all pushed.
+
+### Key Decisions
+
+- **Engine graded HEALTHY — with the envelope caveat stated up front, in the knowledge entry itself.** Peak 29% throttle and exactly one 5-second bin above 50% load. These drives **cannot** assess knock or high-load fuelling and do **NOT** extend the under-load shelf (Drive 7 / Drive 26 stand). "Healthy" here does not mean "cleared for spirited driving" — I still haven't seen this engine work.
+- **Timing: zero knock retard, clean monotonic curve, max-advance ceiling 33.5°.** Explicitly recorded that *absence of knock here is evidence about the load, not about the tune* — drive 26 fired an 18° retard on a tip-in to ~35% throttle, and we never opened the throttle that far.
+- **STFT rises with load (−0.34% → +5.47%). Not a fault; direction logged.** ±5% is normal. But lean-with-load is the #4-piston precursor signature on this hardware (stock pump, aftermarket FPR, no wideband). Strongest data-grounded argument yet for wideband as the next instrument.
+- **🔴 IAT IS NOT AMBIENT — closes a long-standing carry-forward.** Drive 41 is the clean test (started heat-soaked, cooled with airflow): 48.1 → 45.5 → 43.9 → 40.6 °C by speed band, **never approaching the ~24-27 °C real ambient**. At 6-29% throttle the turbo is barely working, so this is radiant engine-bay soak, not compressor heating. Ruling: never use IAT as ambient, in analysis or on any display.
+- **Coolant "equilibrium" is a FAN CYCLE, not a plateau** — 98.5 → 94.3 → 97.9 across three minutes. Thermostat and fan both confirmed working. 101 °C is the ceiling on every capture from drive 34 onward.
+- **Drives 35/36 zero-variance LTFT — CLOSED.** Not duration (drive 37 moved through 3 values in one minute), not warm-up (35/36 were fully warm at 95-101 °C). They sit at *exactly 0.0* = **reset adaptive memory**. CIO confirmed: **battery went flat from disuse**, taking ECU keep-alive with it. Second instance of a documented phenomenon (April 2026 jump-start reset, prior ECU, closed at Drive 6).
+- **New-ECU natural LTFT baseline established** by that same natural experiment: MD326328 ≈ **−1% to −3%** (a band), vs prior MD346675's **−6.25%** (a single notch). Do not carry the old figure forward.
+
+### Self-Corrections (2)
+
+- **❌ "24 rows never synced" — WITHDRAWN.** I reported a Pi-vs-server row gap as a "fingerprint of abrupt termination." It was a snapshot of sync mid-catch-up; counts now match **exactly** on all three drives. No data was lost. I built a conclusion on a transient state without waiting to see whether it settled. The UPS finding survives, but on **one** line of evidence, not two.
+- **❌ "The Pi died before the drive-end roll-up" — WRONG DIAGNOSIS.** Pi-side `drive_summary` has no `end_time`/`duration`/`row_count` columns *at all* — the roll-up is **server-side by design** (BL-015 Option C / US-326). The empty shells have nothing to do with Pi power. Corrected before filing so the story wouldn't be mis-scoped to the Pi.
+
+### 🔴 Threshold Defect — Mine
+
+The coolant band I issued to Iris (🟡100 / 🔴104 °C) **trips on the normal fan-cycle peak** — it would have fired on **6 of the last 7 captures, all healthy**. Root cause was a *design* error, not an arithmetic one: **I set a bare threshold inside the normal oscillation band of a cycling signal.** Any fixed threshold on an oscillating signal has this failure mode.
+
+Replacement filed to Iris — **threshold + dwell**, which also matches the physics (an MLS gasket fails from sustained soak, not from touching 101 °C for five seconds): normal ≤101 · 🟡 ≥104 for ≥60 s · 🔴 ≥110 any duration, or ≥104 for ≥180 s. **Confidence split explicitly**: "do not use 100" is firm on 8 drives of evidence; the dwell seconds are provisional (Pi went off-network before I could measure real dwell).
+
+Worth recording the counterintuitive part: **raising the yellow is a safety improvement, not a relaxation.** An alarm that fires on every normal idle trains the driver to ignore it.
+
+### Current Vehicle State
+
+- **Mechanically unchanged.** 1998 GST 4G63, stock TD04-13G, ECU MD326328, 93 octane. `MIL_ON=1`, `DTC_COUNT=1` — **P0443 still present**, drive-safe, purge-solenoid reseat still pending, **do not clear until done.**
+- **🟡 BATTERY IS A NEW VEHICLE ITEM.** Went flat from disuse (~2026-07-31), CIO charged it 08-18/19. Corroborated independently by charging voltage: drives 35/36 avg **13.42/13.48 V — the lowest of all 16 captured drives** — vs a normal 14.1-14.4. Today's drive 39 back to 14.09 avg = charging system healthy. **But**: a battery that dies from sitting is either end-of-life or has a parasitic draw, and **this project added hardware to the car** (B-063 buck converter). By design it's on a switched circuit, but buck converters commonly have quiescent draw and this must be **ruled out, not assumed**. Deep discharge also causes permanent sulfation capacity loss — that battery is weaker than it was in June.
+- **Monitoring RESTORED.** 24,342 rows across three drives, 16 parameters, Pi and server counts matching exactly. Sync is flawless.
+- **⚠️ Pi off-network at session end** despite CIO reporting it on wall power. No data at risk (fully synced). Same symptom class as the key-off behaviour — possible second data point for Atlas's P0.
+
+### Safety Advisories
+
+- **CO risk flagged first** (garage idle) — CIO confirmed door open.
+- **No acute engine conditions.** No knock, no thermal concern, trims healthy, charging healthy.
+- **Standing caution unchanged**: no sustained WOT until wideband + ECMLink. Today's STFT lean-with-load direction reinforces it rather than changing it.
+
+### Added to Knowledge This Session
+
+- `knowledge.md` — **"Drives 39/40/41"** full section (baseline + anchors + gaps), inserted after Drive 26.
+- `knowledge.md` — drives 35/36 LTFT item **CLOSED** with mechanism, second-signal corroboration, April precedent link, new-ECU LTFT baseline table, and a vehicle-health follow-up on the battery.
+
+### Filed This Session
+
+- **Marcus** — `ambient_temp_at_start_c` mislabeled (fed from IAT; drive 41 logged **47 °C / 117 °F** as "ambient"). Recommend **RENAME**; no ambient source exists on this vehicle, so the alternative is fabrication.
+- **Marcus** — server-side `drive_summary` roll-up regression: drives 39/40/41 all empty shells, 37/38 populated → regressed between 08-07 and 08-20. Plus an **addendum** routing the UPS/no-`battery_power` observation to **Atlas's P0 `8e726b1`** (`no graceful shutdown — GPIO6 PLD constructed in TWO processes`) rather than opening a parallel thread. I read the commit subject only, not the finding — not my lane.
+- **Iris** — coolant threshold correction (above).
+
+### Open Items
+
+1. **HIGH-LOAD CAPTURE IS NOW THE #1 GAP.** Everything today was ≤29% throttle. Need third-gear pulls to ~4,500 RPM to characterize knock-retard frequency-of-fire and see whether the STFT lean-slope continues past 56% load. **Watch live, not in review.**
+2. **Parasitic-draw test** (CIO, multimeter, <50 mA expected) + battery tender between weekend drives.
+3. **Coolant dwell measurement** to firm the provisional 60 s / 180 s values sent to Iris.
+4. **Baro (0x33) still genuinely unresolved** — 75 real rows, all drive 33, all exactly 99.0 kPa. Flat is *expected* at 1 kPa resolution over 143 s, so flatness proves nothing either way. Needs a bench probe with capture stopped. Note: 99.0 kPa is very close to Chicago's ~99.2 kPa station pressure at ~180 m elevation, which is suggestive of a live reading but not proof.
+5. **`CONTROL_MODULE_VOLTAGE` (0x42) is LIVE** — 76 real samples, 29 distinct values, 12.975-14.451 V. Shared MEMORY records it "probe-dead"; **corrected this session.**
+6. **`baselines` still 0 rows** despite 30 drives flagged `is_real=1` — calibration has produced nothing since May. Not new, not mine, but three months stale.
+7. Carry-forwards unchanged: oil pressure, GM 3-bar MAP, wideband, E85, EGT. F-116 drive-33 re-tag still gated on Atlas (6 sessions).
+8. **Stale skill** `closeout-session-tuner` still says "do NOT run git commands" — superseded by per-agent-clone discipline (CIO 2026-08-03). Flagged in Session 36, still unedited, followed current discipline instead. **Third time flagging; worth fixing or deleting the line.**
+
+### Handoff — Next Session Starts Here
+
+1. **The high-load capture.** Everything else is analysis; this is the only thing that advances the tuning picture. Ask for it when the car and a clear road are both available.
+2. **Check whether Marcus merged `sprint/sprint75-V0.29.30`** — all six of this session's commits live there, not on `dev`.
+3. **Confirm or kill the UPS/no-graceful-shutdown observation** *only after* reading where Atlas's P0 landed — do not duplicate his work.
+4. **Ask CIO for the parasitic-draw result.** If the Pi rig is implicated, that is our problem to fix, not the battery's fault.
+
+---
+
 ## Session 36 — 2026-08-17 (BAROMETRIC self-correction + CIO-directed stale-address sweep)
 
 **Context**: CIO asked for a closeout. Session 35 was already closed and merged, inbox had nothing new, and no new drives had landed — so there was nothing to record. Fixing one stale tool default turned into catching a wrong ruling I'd given Iris. No new drives, no moving data.
