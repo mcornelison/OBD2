@@ -17,6 +17,57 @@ reframe; prototyped in the Shutdown Sequencer (V0.27.15); **carry project-wide**
   was inferring *"am I on external power?"* (source) from *"how much charge is
   left?"* (a VCELL charge *trend*). Different facts → different providers.
 
+## The rule, extended (CIO directive, 2026-08-20)
+
+Two further clauses, stated by the CIO after a day in which BOTH were found violated in production.
+**Normative, project-wide.**
+
+### A. Land what you read
+
+**If we read any data, we land it.** Every acquisition is persisted — not only sensor and vehicle data
+but **metadata and log data too**. An unlanded read is unreproducible: it cannot be audited, diagnosed,
+or re-derived, and it evaporates the moment the surface that displayed it repaints.
+
+**Worked example, 2026-08-20 — this rule is what made a diagnosis possible.** The ICM-20948
+magnetometer was found latched (one value re-served forever). It was provable ONLY because 29,148
+samples had been landed in `edr_imu_sample`: "1 distinct value across 29,148 rows" is a statement you
+can only make about data that was *kept*. Had the magnetometer merely been published to the UI, each
+reading would have overwritten the last and the defect would have been invisible — exactly as it was
+invisible on screen, where a frozen compass looks like a stationary one.
+
+**Corollary — landing must not manufacture a reading.** "Land everything" means *never let acquired
+data evaporate*; it does NOT mean *write a row regardless*. If a read failed, or returned an implausible
+or invariant value, no value was acquired — land the **typed absence and its reason**, never a
+fabricated measurement. The three 2026-08-20 fabrications (`syncPending=0`, all-zero IMU frames, the
+latched magnetometer) are what this corollary forbids. See *Honest availability* below.
+
+### B. Read once → persist → publish → subscribe
+
+**Never read the same source twice, and never acquire it separately for two display locations.**
+The pipeline is one-directional:
+
+```
+   ONE reader  →  persist  →  publish  →  N subscribers (UI, sync, triggers, analytics)
+```
+
+Two surfaces needing the same fact is **not** a reason for two acquisitions. It is the reason the
+published topic exists.
+
+**Worked example 1 — the sharpest one this project has produced.** `PldSensor` (the X1209 GPIO6
+power-present line) was constructed in **two separate processes**: `lifecycle.py:2342` (`eclipse-obd`)
+and `power_watch/__main__.py:376` (`eclipse-powerwatch`). A GPIO line is an **exclusive OS resource**, so
+the second process to start received `GPIO busy` and silently degraded to a fallback — every boot.
+
+Note what distinguishes this from ordinary drift: **a duplicated *config* read merely diverges; a
+duplicated *exclusive-hardware* read fails by construction.** The operating system enforced the contract
+the software did not. Most SSOT violations are quiet; this one could not be.
+
+**Worked example 2.** The version chip is served from **two providers** — the dashboard reads
+`.deploy-version`, while splash and shutdown read `version.txt`. Both derive from `RELEASE_VERSION`, but
+at different deploy steps with a failure gate between them, so a failed restart-verification leaves the
+two surfaces displaying **different versions** — in precisely the scenario where knowing the true
+running version matters most.
+
 ## Why
 
 The V0.27.2–.15 power rabbit hole + near-bricking traced largely to **three
