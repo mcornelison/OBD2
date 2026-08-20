@@ -1,11 +1,11 @@
 {
   "schemaVersion": "2.0.0",
-  "lastUpdated": "2026-08-11",
+  "lastUpdated": "2026-08-20",
   "updatedBy": "Marcus (PM)",
   "counters": {
     "epic": 7,
-    "feature": 131,
-    "story": 553
+    "feature": 132,
+    "story": 559
   },
   "epics": [
     {
@@ -1347,6 +1347,16 @@
       "tier": "pi",
       "createdAt": "2026-08-10",
       "updatedAt": "2026-08-10"
+    },
+    {
+      "id": "F-132",
+      "parent": "E-001",
+      "status": "active",
+      "title": "Pi dashboard chrome -- top bar, band budget, overlay opacity, sync stamp",
+      "description": "CIO bench review of deployed V0.29.29 produced 6 items; 5 are presentation-only (this feature), the 6th (real WiFi glyph) needs a new emitter field and is gated to Atlas. Correction + continuation of F-127, NOT a reversal: every driver-read value keeps its F-127 tier, only CHROME gives ground. Root cause of the clipped cards is an arithmetic error in the F-127 budget (Iris's own, self-reported): section 3 omitted card padding (28) + title (39) and understated dots by 8 = 57px unaccounted, so 3 rows overflowed before any footer. Ralph built to the capacity asserted. Iris-designed 2026-08-20, CIO-reviewed visually.",
+      "createdAt": "2026-08-20",
+      "updatedAt": "2026-08-20",
+      "currentVersion": "V0.29.30"
     }
   ],
   "stories": [
@@ -8363,6 +8373,214 @@
       "priority": "P1",
       "tier": "infra",
       "gate": "none"
+    },
+    {
+      "id": "US-555",
+      "parent": "F-132",
+      "type": "normal",
+      "size": "M",
+      "status": "sprint-ready",
+      "title": "Top bar -> 3-column grid: clock CENTRE, glyphs left, version right",
+      "goal": "As the driver, I want the clock centred and stable so it does not drift as the version string changes length.",
+      "definitionOfDone": [
+        "#topbar -> grid-template-columns: 1fr auto 1fr; drop margin-left:auto from #version-chip",
+        "clock stays centred regardless of version-string length (structural, not auto-margin)",
+        "the existing US-542 comment arguing against centring is UPDATED, not deleted -- it is right about auto-margins, wrong that this rules out centring",
+        "width-checked at 480px: ~328/460px used; leaves room for the gated WiFi glyph with zero re-layout",
+        "ruff/lint clean"
+      ],
+      "conditionalOutcomes": [
+        "GROUP CONSTRAINT (spec 5.1): US-555/556/557 MUST ship in the SAME sprint. US-557 changes the top-bar height that US-555 restructures and US-556 is measured against; split across sprints the later story silently invalidates the earlier one's acceptance -- the same value-changed-here / measurement-left-behind shape as the defect itself.",
+        "P-6 WiFi glyph drops into this grid later with no re-layout -- do NOT add it here, it is Atlas-gated."
+      ],
+      "validationCriteria": [
+        {
+          "action": "view the top bar on the Pi with a short and a long version string",
+          "outcome": "clock stays centred in both; glyphs left, version+kebab right"
+        },
+        {
+          "action": "IN-CAR, seated normally, arm's length -- not a bench check",
+          "outcome": "the surface reads correctly at a glance; no clipped content"
+        }
+      ],
+      "deps": [],
+      "sourceRefs": [
+        "offices/uidevloper/proposals/2026-08-20-pi-topbar-and-chrome-polish.md (+ .html) -- SSOT",
+        "offices/pm/inbox/2026-08-20-from-iris-topbar-chrome-polish-groom-ready.md",
+        "offices/pm/inbox/2026-08-20-from-iris-CIO-directed-backlog-and-sprint-placement.md"
+      ],
+      "tasks": [],
+      "createdAt": "2026-08-20",
+      "updatedAt": "2026-08-20"
+    },
+    {
+      "id": "US-556",
+      "parent": "F-132",
+      "type": "normal",
+      "size": "M",
+      "status": "sprint-ready",
+      "title": "Kebab fits its bar -- visual box vs hit box, 40px tap kept",
+      "goal": "As the driver, I want the kebab to paint inside the header instead of spilling out of it, without losing a thumb-sized tap target.",
+      "definitionOfDone": [
+        "#menu-btn paints at bar-height using --fs-secondary (today: 40px box + 34px glyph inside a 28px bar, so the third dot paints outside the header fill)",
+        "hit box preserved at 40px (--tap-min) via a transparent ::after{inset:-6px -7px}",
+        "kebab is CHROME, not a value -- the 34px driver-read floor never applied to it; do not treat this as an F-127 regression",
+        "SAME PATTERN audited in-story: #menu-close, #sys-detail-back (both min-height:40 in 36/44px heads)",
+        "ruff/lint clean"
+      ],
+      "conditionalOutcomes": [
+        "GROUP CONSTRAINT (spec 5.1): US-555/556/557 MUST ship in the SAME sprint. US-557 changes the top-bar height that US-555 restructures and US-556 is measured against; split across sprints the later story silently invalidates the earlier one's acceptance -- the same value-changed-here / measurement-left-behind shape as the defect itself.",
+        "Measured against the bar height US-557 changes -- verify AFTER US-557 lands, not before."
+      ],
+      "validationCriteria": [
+        {
+          "action": "inspect the kebab and both back/close controls against their header fills",
+          "outcome": "no glyph paints outside its header; each still accepts a 40px tap"
+        },
+        {
+          "action": "IN-CAR, seated normally, arm's length -- not a bench check",
+          "outcome": "the surface reads correctly at a glance; no clipped content"
+        }
+      ],
+      "deps": [],
+      "sourceRefs": [
+        "offices/uidevloper/proposals/2026-08-20-pi-topbar-and-chrome-polish.md (+ .html) -- SSOT",
+        "offices/pm/inbox/2026-08-20-from-iris-topbar-chrome-polish-groom-ready.md",
+        "offices/pm/inbox/2026-08-20-from-iris-CIO-directed-backlog-and-sprint-placement.md"
+      ],
+      "tasks": [],
+      "createdAt": "2026-08-20",
+      "updatedAt": "2026-08-20"
+    },
+    {
+      "id": "US-557",
+      "parent": "F-132",
+      "type": "normal",
+      "size": "L",
+      "status": "sprint-ready",
+      "title": "Band-budget correction + tokenize the layout bands",
+      "goal": "As the driver, I want card content to fit the panel instead of being clipped at the bottom, and I want the fix to be structural so it cannot silently drift again.",
+      "definitionOfDone": [
+        "CARRY THIS IN THE STORY TEXT: the clipped bottoms are a SPEC error in the F-127 budget, NOT a build regression -- F-127 section 3 omitted card padding (28) + card title (39) and understated dots by 8 = 57px unaccounted; real body 201px vs 202px of rows, overflowing BEFORE any footer. Ralph built to the capacity asserted. Do not go hunting a regression that does not exist",
+        "reclaim CHROME only: topbar 28->34 (-6), dots 24->16 (+8), card pad 28->16 (+12), title -> --fs-label +6mg (+9) = +23px -> body 224px; 3 rows + footer = 222. Fits",
+        "EVERY driver-read value keeps its F-127 tier. If it ever looks like a value must shrink, CUT A FACT instead",
+        "promote the bands into specs/UI/tokens.css (--bar-h / --dots-h / --card-pad-y) and derive #carousel top/bottom from them -- root cause was 28px being a literal in one file and an assumption in another",
+        "DoD grep gate mirroring US-539's: NO bare 28px / 24px / 14px 16px band literal left in dashboard.css",
+        "capacity ceiling declared: 3 rows + 1 footer; a 4th fact goes to drill-down",
+        "NO SILENT CLIP: content fits or the surface admits it does not -- the overflow being invisible to everyone but the CIO's eye IS the defect",
+        "ruff/lint clean"
+      ],
+      "conditionalOutcomes": [
+        "GROUP CONSTRAINT (spec 5.1): US-555/556/557 MUST ship in the SAME sprint. US-557 changes the top-bar height that US-555 restructures and US-556 is measured against; split across sprints the later story silently invalidates the earlier one's acceptance -- the same value-changed-here / measurement-left-behind shape as the defect itself.",
+        "Cheap discriminator: if the TOP edge of the bar is ALSO shaved, that is US-552 panel overscan (KMS, not CSS). Ship this either way -- the budget is wrong regardless.",
+        "Correction to the F-127 budget, NOT a reversal of F-127."
+      ],
+      "validationCriteria": [
+        {
+          "action": "open every footer-carrying card (Battery/Light/System/Alerts) on the Pi",
+          "outcome": "no clipped content; 3 rows + footer fully visible"
+        },
+        {
+          "action": "grep dashboard.css for bare band literals",
+          "outcome": "zero bare 28px/24px/14px 16px band literals; bands resolve from tokens.css"
+        },
+        {
+          "action": "IN-CAR, seated normally, arm's length -- not a bench check",
+          "outcome": "the surface reads correctly at a glance; no clipped content"
+        }
+      ],
+      "deps": [],
+      "sourceRefs": [
+        "offices/uidevloper/proposals/2026-08-20-pi-topbar-and-chrome-polish.md (+ .html) -- SSOT",
+        "offices/pm/inbox/2026-08-20-from-iris-topbar-chrome-polish-groom-ready.md",
+        "offices/pm/inbox/2026-08-20-from-iris-CIO-directed-backlog-and-sprint-placement.md"
+      ],
+      "tasks": [],
+      "createdAt": "2026-08-20",
+      "updatedAt": "2026-08-20"
+    },
+    {
+      "id": "US-558",
+      "parent": "F-132",
+      "type": "normal",
+      "size": "S",
+      "status": "sprint-ready",
+      "title": "Navigational overlays paint solid; modals keep their scrim",
+      "goal": "As the driver, I want a screen I navigated to to look like a destination, not a translucent layer over the last one.",
+      "definitionOfDone": [
+        "#setup-menu (.92) / #sys-detail (.95) / #dtc-detail (.95) -> opaque var(--bg)",
+        "RULE: navigational overlay = destination = solid; interrupting modal = scrim",
+        "#confirm-modal + #clear-confirm KEEP their scrim -- regression guard in DoD",
+        "#dtc-takeover OUT OF SCOPE; severity styling untouched",
+        "ruff/lint clean"
+      ],
+      "conditionalOutcomes": [
+        "Independent of the US-555/556/557 group -- schedule freely."
+      ],
+      "validationCriteria": [
+        {
+          "action": "open each system screen, then trigger a confirm modal",
+          "outcome": "system screens fully opaque; confirm modals still show their scrim"
+        },
+        {
+          "action": "IN-CAR, seated normally, arm's length -- not a bench check",
+          "outcome": "the surface reads correctly at a glance; no clipped content"
+        }
+      ],
+      "deps": [],
+      "sourceRefs": [
+        "offices/uidevloper/proposals/2026-08-20-pi-topbar-and-chrome-polish.md (+ .html) -- SSOT",
+        "offices/pm/inbox/2026-08-20-from-iris-topbar-chrome-polish-groom-ready.md",
+        "offices/pm/inbox/2026-08-20-from-iris-CIO-directed-backlog-and-sprint-placement.md"
+      ],
+      "tasks": [],
+      "createdAt": "2026-08-20",
+      "updatedAt": "2026-08-20"
+    },
+    {
+      "id": "US-559",
+      "parent": "F-132",
+      "type": "normal",
+      "size": "M",
+      "status": "sprint-ready",
+      "title": "Sync stamp -> local 12-hour time; rows/pending to detail",
+      "goal": "As the driver, I want the sync stamp in the same clock as the top bar, so two clocks on one panel cannot disagree by hours with no way to tell which is lying.",
+      "definitionOfDone": [
+        "syncTile() renders Mmm dd, yyyy + h:mm:ss AM/PM LOCAL (today it pastes raw ISO lastOkTs, e.g. last 2026-08-17T19:30:28Z)",
+        "full stamp on its own line ON the tile; 'N rows . N pending' MOVES to #sys-detail (CIO call 2026-08-20)",
+        "ONE 12-hour formatting rule in carousel.js -- a shared helper; fmtClock's own comment already warns about two formatters drifting",
+        "unparseable input -> render the RAW string, NEVER Jan 01 1970 / NaN -- a fabricated date on the tile that reports sync health is green-when-broken",
+        "null -> 'never', unchanged",
+        "emitter keeps emitting ISO; the CONSUMER formats and never re-derives -- SSOT unchanged",
+        "ruff/lint clean"
+      ],
+      "conditionalOutcomes": [
+        "Independent of the US-555/556/557 group -- schedule freely.",
+        "Not cosmetic: a wrong-reading instrument on the tile that reports sync health."
+      ],
+      "validationCriteria": [
+        {
+          "action": "compare the sync stamp against the top-bar clock on the Pi",
+          "outcome": "same clock, same 12-hour format; no UTC/local mismatch"
+        },
+        {
+          "action": "feed syncTile an unparseable timestamp and a null",
+          "outcome": "raw string shown for unparseable; 'never' for null; no 1970/NaN ever"
+        },
+        {
+          "action": "IN-CAR, seated normally, arm's length -- not a bench check",
+          "outcome": "the surface reads correctly at a glance; no clipped content"
+        }
+      ],
+      "deps": [],
+      "sourceRefs": [
+        "offices/uidevloper/proposals/2026-08-20-pi-topbar-and-chrome-polish.md (+ .html) -- SSOT",
+        "offices/pm/inbox/2026-08-20-from-iris-topbar-chrome-polish-groom-ready.md",
+        "offices/pm/inbox/2026-08-20-from-iris-CIO-directed-backlog-and-sprint-placement.md"
+      ],
+      "tasks": [],
+      "createdAt": "2026-08-20",
+      "updatedAt": "2026-08-20"
     }
   ]
 }
