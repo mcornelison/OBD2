@@ -51,6 +51,8 @@ Story, P2. Bisect 08-07..08-20 on the server analytics writer. Acceptance should
 
 Caveats, deliberately: I originally offered a second proof (24 unsynced rows) and **withdrew it** -- that was sync mid-catch-up, counts now match exactly, no data lost. So this rests on the missing power events alone. Competing explanation (WiFi drops at key-off, UPS fine) fits equally well. **Do not groom a story on this yet** -- needs `prior_boot_clean` across a few more key-offs. I will confirm or kill it.
 
+**ADDENDUM (same day, post-filing):** commit `8e726b1` subject reads `finding(architect): P0 no graceful shutdown -- GPIO6 PLD constructed in TWO processes`. I have read the subject line only, not the finding (not my lane). If that P0 is what it sounds like, **Atlas already owns the root cause and my observation above is a downstream symptom of it, not a separate item.** Route there first; do not open a parallel thread on the missing `battery_power` events. Withdraw my "I will confirm or kill it" -- Atlas is ahead of me.
+
 Detail: `offices/tuner/knowledge.md` -> "Drives 39/40/41".
 
 -- Spool
