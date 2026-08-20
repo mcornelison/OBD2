@@ -85,39 +85,54 @@ If nothing pending, say so.
 
 ---
 
-## Phase 5: Hand off to the PM — do NOT commit
+## Phase 5: Commit my own work, then hand off to the PM
 
-**CIO 2026-08-17: the PM handles ALL git work.** Do not run `git add`, `commit`, `push`,
-`branch`, `merge`, or `git mv` — not for my office, not for peer inboxes, not at closeout.
-(This supersedes the previous "commit only `offices/uidevloper/**`" phase and the
-per-agent-clone push rule.)
+**CIO 2026-08-20 — supersedes the 2026-08-17 "PM handles ALL git" phase.**
 
-**What replaces it:** file a hand-off note in `../pm/inbox/` naming **every path** I
-changed, added, or moved this session, so Marcus can stage it in one pass.
+**I MAY:** `git add`, `git commit`, and read-only git (`status`, `log`, `diff`, `show`).
+**I MUST NEVER:** `push`, `pull`, `fetch`, `merge`, `rebase`, `branch`, `checkout`, `git mv`.
+Those stay Marcus's, and so do dev/main and every deploy.
+
+### 5a. Commit
+
+Scope is strict — **`offices/uidevloper/**` plus peer `inbox/` notes I wrote myself.**
+Never a peer's own files, never `.deploy-version`, never a peer's `settings.local.json`
+(the CIO auto-normalises those; sweeping them into my commit misattributes his work).
+
+Check what's actually in scope first, and read the list before staging:
+
+```bash
+git status -s -- offices/uidevloper/ offices/pm/inbox/ offices/architect/inbox/ \
+                 offices/tuner/inbox/ offices/tester/inbox/ offices/ralph/inbox/
+```
+
+Stage **by explicit path**, never `git add -A` / `git add .` — a broad add is how a peer's
+in-flight work gets swept into my commit under my message (it happened to my A2ALs in
+`dd2e123`, in the other direction).
+
+Archive sweeps surface as delete+add pairs. Say so in the commit message so the diff
+doesn't read as data loss.
+
+### 5b. Hand off — still mandatory
+
+**Committing is NOT delivery.** Only Marcus pushes, and **origin is the source of truth**,
+so my commits are invisible to the team and unsafe against a re-provisioned clone until he
+does. File the note in `../pm/inbox/`:
 
 ```
 YYYY-MM-DD-from-iris-git-handoff-<slug>.md
 ```
 
-Get the path list from a **read-only** status check (reading git state is fine — writing is not):
+List the **commit SHAs** and what each carries, plus anything needing his merge or deploy.
 
-```bash
-git status -s -- offices/uidevloper/ offices/pm/inbox/ offices/architect/inbox/                  offices/tuner/inbox/ offices/tester/inbox/ offices/ralph/inbox/
-```
-
-Group them in the note as **modified / added / moved** — archive sweeps show up as
-delete+add pairs, and saying "these 16 are moves, not deletions" saves him a scare.
-
-**The rule that makes this matter: my work is NOT durable until Marcus commits it.**
-Unpushed *and* uncommitted is worse than the old failure mode — an uncommitted file looks
-finished, is invisible to everyone else, and **goes stale while the facts move underneath
-it** (see `knowledge/pattern-written-is-not-sent-uncommitted-work-rots.md` — that near-miss
-would have shipped a dead boost gauge). So:
-
-- The hand-off note is **the delivery step**, not a courtesy. Never assume he'll notice new files.
-- If work is **urgent** (a correction to something already groomed, a spec a story points at),
-  say so in the note with `urgency=high` and name the story it affects.
-- **Report honestly in Phase 6** that the work is *pending commit by the PM*, not "committed".
+- If work is **urgent** (a correction to something already groomed, a spec a story points
+  at), mark it `urgency=high` and name the story it affects.
+- **Report honestly in Phase 6:** "committed locally, pending Marcus's push" — never
+  "pushed", and never "delivered". Do not verify delivery by checking a local branch;
+  that reads my own machine, not origin.
+- Stale-work risk is unchanged in kind, only reduced: see
+  `knowledge/pattern-written-is-not-sent-uncommitted-work-rots.md` — that near-miss would
+  have shipped a dead boost gauge. A committed-but-unpushed file still rots.
 
 Hard NOs:
 - Any git write command, including at closeout
@@ -153,7 +168,7 @@ Present this report to the CIO. Be specific — counts and pointers, not vague c
 Phases 1-5 still run; most will return "no change." Phase 6 summary is honest about it. Do NOT fabricate accomplishments to justify the closeout.
 
 ### Nothing changed this session
-Phase 5 still files the hand-off note if ANY path changed. If `git status -- offices/uidevloper/` shows nothing at all, say "no changes — nothing to hand off" and skip the note. Never commit either way.
+Phase 5 still commits + files the hand-off note if ANY path changed. If `git status -- offices/uidevloper/` shows nothing at all, say "no changes — nothing to commit or hand off" and skip both. Never push either way.
 
 ### Urgent inbox item I cannot resolve
 If Phase 1 finds an urgent item I cannot address now (e.g., needs CIO input), surface it explicitly in Phase 6 under "Open for next session" so the CIO knows it's pending.

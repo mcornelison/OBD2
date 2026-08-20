@@ -125,7 +125,7 @@ Atlas server-tier contract; P4 needs `roll`/`yawRate` in `states/imu`.
 | **Tooling** | Open to CIO direction. Default toolchain TBD (likely: Figma-style mockups as committed artwork files, OpenSCAD or FreeCAD for case parametrics, STL/3MF as ship artifacts). |
 | **Human in the loop** | CIO communicates directly + ratifies. |
 | **Cadence** | None standing. Per explicit task only. |
-| **Git — I DON'T** | **CIO 2026-08-17: the PM handles ALL git work. I do not `add`, `commit`, `push`, branch, or merge — at all, including at closeout.** I write files in my lane and **tell Marcus what is ready**; he stages, commits, pushes, and merges. **Consequence I must respect: my work is not durable until Marcus commits it**, so every session ends with an inbox note to him listing the changed paths — that note *is* the hand-off. Do not silently rely on someone else noticing new files. (Supersedes the commit-immediately rule and the per-agent-clone push rule for my office; those were written when I did my own git.) |
+| **Git — COMMIT ONLY** | **CIO 2026-08-20 (supersedes the 08-17 "I don't touch git" rule): I may `add` + `commit`. I must NEVER `pull`, `push`, `merge`, `rebase`, `branch`, `checkout`, `fetch`, or `git mv`.** Commit scope is unchanged and still strict: **`offices/uidevloper/**` plus the peer `inbox/` notes I authored myself** — never a peer's own files, never `.deploy-version`, never a peer's `settings.local.json`. **The consequence to respect has MOVED, not disappeared:** committing makes my work durable *locally*, but **origin is the source of truth and only Marcus pushes**, so my work still is not visible to the team — or safe against a re-provisioned clone — until he does. So the hand-off note to Marcus is still MANDATORY at closeout; it now lists **commit SHAs** rather than dirty paths. I never verify my own work "reached" anyone by checking a local branch — that is a read of my own machine, not of origin. |
 | **Concurrency** | Now largely moot for me — with the PM owning git I can't collide on the index. Still applies: **office-scoped edits only** (`offices/uidevloper/**` + peer `inbox/`), and **"file modified since read" = re-read + re-apply** (the `//chi-nas-01` share serves stale snapshots; reconcile against git ground-truth, not the harness reminder). |
 
 ## 6. Workflow
@@ -150,9 +150,13 @@ Atlas server-tier contract; P4 needs `roll`/`yawRate` in `states/imu`.
 2. File any A2AL hand-offs for proposals ready for review.
 3. **Sweep the inbox** — move closed-line notes to `inbox/archive/YYYY-MM/`
    per `inbox/archive/README.md` (never archive a note an open §8 item cites).
-4. **File the git hand-off note to Marcus** — list every changed/added/moved
-   path. **I do not commit** (CIO 2026-08-17, §5); nothing is durable until he
-   does, so this note is not a courtesy, it is the delivery step.
+4. **Commit my own work** (CIO 2026-08-20, §5) — `add` + `commit` scoped to
+   `offices/uidevloper/**` + the peer inbox notes I wrote. **Never** push, pull,
+   merge, rebase, branch or checkout.
+5. **File the git hand-off note to Marcus** — list the **commit SHAs** plus what
+   each carries, and name anything that still needs his merge/deploy. Committing
+   is not delivery: **only Marcus pushes, and origin is the source of truth**, so
+   my work stays invisible to the team until he does. This note is the delivery step.
 
 ## 7. Communication Paths
 
@@ -270,13 +274,32 @@ and the bug was mine.
   into tokens with a US-539-style grep gate, since the root cause was `28px` living as a
   literal in one file and an assumption in another.
 
-**Incoming:** none. **Outgoing:** Marcus ×2 (groom-ready P-1…P-5 + git hand-off; CIO-directed
-backlog+sprint placement), Atlas (P-6 gate).
-**Commits:** NONE BY ME. **6 paths this session + the 20 still pending from 08-17.**
+- **CIO changed the git rule mid-session: I commit again, but never pull/push/merge/branch.**
+  Encoded in three places so a fresh context can't drift back — §5 (row retitled **"Git —
+  COMMIT ONLY"** with the forbidden verbs listed), §6 (commit step restored *before* the
+  hand-off), and closeout skill Phase 5 (rewritten to 5a commit / 5b hand off, plus the
+  edge-case line that still said "never commit either way"). Grepped for surviving
+  no-commit instructions; only the historical session-log mentions remain, which is correct.
+  **The consequence MOVED rather than disappeared, and that is the part to hold onto:**
+  committing makes work durable *locally*, but **origin is the source of truth and only
+  Marcus pushes** — so the hand-off note is still mandatory, now listing SHAs.
+- **A stale-fact slip of my own, worth the entry.** Both notes to Marcus asserted the 08-17
+  20-path hand-off was still uncommitted. It was true when I measured it at session start;
+  it stopped being true when **`75bd5ad`** landed mid-session, and I repeated the claim in a
+  note written hours later **without re-running the check**. Marcus corrected it in his own
+  commit message. This is the exact failure I catalogued three times on 2026-08-17 — *a
+  document asserting a fact, believed without re-checking the observation under it* — with
+  me as the author this time. **Rule: a git claim in an outgoing note gets re-measured at
+  the moment of writing, not inherited from earlier in the session.** Git state is the
+  fastest-moving fact I touch.
+
+**Incoming:** none. **Outgoing:** Marcus ×3 (groom-ready P-1…P-5; CIO-directed backlog+sprint
+placement; git-state correction), Atlas (P-6 gate).
+**Commits:** Marcus took today's work in **`5fec11c`** (spec + 3 notes + charter) and the
+08-17 backlog in **`75bd5ad`**. Mine under the new rule: the git-rule encoding + this entry.
 **Open for next session:**
-- **Did Marcus commit?** As of this session's check the 08-17 paths were still dirty — including
-  the charter edit that encodes the rule that he owns my git. `dev` is 0/0 with origin and the
-  US-532 branch IS contained in dev, so only the working-tree files are at risk.
+- **Marcus owes the feature ID + sprint placement** for S-1…S-5, and the S-1/S-2/S-3
+  one-sprint grouping must survive grooming. Atlas owes the P-6 WiFi contract.
 - **IN-CAR legibility validation** of V0.29.29 — still owed, still the only acceptance that counts,
   still must happen after US-552. P-3 exists because a bench check couldn't contradict bad arithmetic.
 - W-16 P2 Engine card · W-12 awaits Atlas's `state.alerts` schema · enclosure fit-checks.
