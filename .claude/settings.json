@@ -10,7 +10,6 @@
       "Bash(python offices/pm/scripts/verify_release_version.py *)",
       "Bash(python scripts/audit_*)",
       "Bash(python offices/pm/scripts/index_lock.py --check)",
-
       "Bash(journalctl *)",
       "Bash(ping *)",
       "Bash(systemctl is-active *)",
@@ -31,7 +30,8 @@
       "Bash(crontab -l)",
       "Bash(nmcli device status *)",
       "Bash(nmcli connection show *)",
-      "Bash(vcgencmd *)"
+      "Bash(vcgencmd *)",
+      "Bash(ssh:*)"
     ]
   }
 }
