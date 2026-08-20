@@ -78,6 +78,56 @@ enables the ICM's I²C-master cyclic sampling. Cross-ref the unpinned-dependency
 MAJOR-version jump; aux-master behaviour is exactly the kind of thing that changes across such a
 boundary.
 
+## 4a. MECHANISM CONFIRMED LIVE (2026-08-20, service stopped, CIO-authorized)
+
+The hypothesis in §4 is now **directly observed**, not inferred. `eclipse-obd` stopped (bus quiet), a
+FRESH `adafruit_icm20x.ICM20948` instance, device stationary:
+
+```
+(-11.25, 37.35, 13.65)   <- real
+(-10.35, 37.65, 14.25)   <- real
+(-11.85, 37.95, 13.80)
+(-11.85, 37.95, 13.80)   <- LATCHED, and never moves again
+```
+
+**~3 genuine conversions, then permanent freeze.** That is the AK09916 in **single-measurement mode**:
+one conversion, return to power-down, and `EXT_SLV_SENS_DATA` holds the last value indefinitely because
+nothing re-triggers it.
+
+**This rules out dead hardware, dead wiring and magnetic shielding in one shot** -- the sensor
+demonstrably measures; it is simply never told to keep measuring. It also dates the failure to
+immediately post-init, matching the latch-per-session signature in §2.
+
+Mode-register lever confirmed (fresh init per trial, 8 stationary samples each):
+
+| `MagDataRate` | distinct / 8 |
+|---|---|
+| default (production) | **1** (latched) |
+| `RATE_10HZ` | 1 (latched) |
+| `RATE_100HZ` | 1 — **all zeros** |
+| `RATE_50HZ` | **3** — partially updating |
+
+Changing the rate changes the behaviour, so **CNTL2 is the correct control surface**. **A COMPLETE FIX
+IS NOT ESTABLISHED** -- 50 Hz improves but does not yield clean continuous data in a short probe.
+Getting aux-master cyclic polling actually right is implementation work, not a diagnostic probe.
+
+### Library defect (contributing, and why nobody caught this)
+
+`adafruit_icm20x.py`:
+
+```python
+@property
+def magnetometer_data_rate(self):
+    # read mag DR register
+    self._read_mag_register(_AK09916_CNTL2)     # <- NO RETURN STATEMENT
+```
+
+**The getter discards the value and returns `None`.** The single accessor that would have revealed the
+mode is itself broken -- confirmed live (`magnetometer_data_rate: None`). Report upstream; do not rely
+on it for verification.
+
+`eclipse-obd` was restarted and confirmed `active` after the probe.
+
 ## 5. The honest-instrument violation
 
 `states/imu` currently publishes:
