@@ -1,0 +1,698 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Pi dashboard — top bar & chrome polish</title>
+</head>
+<body>
+<style>
+/* ─── document tokens: cool steel neutrals, biased toward the panel's own
+       instrument palette. Complete light set on bare :root. ─────────────── */
+:root{
+  --ground:#EEF1F3; --sheet:#FFFFFF; --sheet-2:#F6F8F9;
+  --ink:#10161A; --ink-2:#48555C; --ink-3:#78868D;
+  --rule:#D3DBDF; --rule-2:#E5EAEC;
+  --mark:#8A6A00;            /* amber, darkened to hold on paper */
+  --mark-pure:#FFC400;       /* the panel's real --amber-warn, for rules/marks */
+  --defect:#B3261E; --fixed:#12794A;
+  --defect-wash:#FBEAE9; --fixed-wash:#E6F4ED;
+  --shadow:0 1px 2px rgba(16,22,26,.06), 0 8px 24px rgba(16,22,26,.06);
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --ground:#0D1013; --sheet:#161B1F; --sheet-2:#1C2226;
+    --ink:#E2E8EB; --ink-2:#9DAAB1; --ink-3:#6E7C83;
+    --rule:#2A3238; --rule-2:#222A2F;
+    --mark:#FFC400;
+    --defect:#F2665C; --fixed:#48D68C;
+    --defect-wash:#2A1614; --fixed-wash:#0F2419;
+    --shadow:0 1px 2px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.35);
+  }
+}
+:root[data-theme="dark"]{
+  --ground:#0D1013; --sheet:#161B1F; --sheet-2:#1C2226;
+  --ink:#E2E8EB; --ink-2:#9DAAB1; --ink-3:#6E7C83;
+  --rule:#2A3238; --rule-2:#222A2F;
+  --mark:#FFC400;
+  --defect:#F2665C; --fixed:#48D68C;
+  --defect-wash:#2A1614; --fixed-wash:#0F2419;
+  --shadow:0 1px 2px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.35);
+}
+
+/* ─── panel tokens: verbatim from specs/UI/tokens.css. The panel is a single
+       visual world (an always-dark instrument), so these are fixed literals
+       on purpose and never follow the document theme. ────────────────────── */
+.panel{
+  --p-bg:#000; --p-surface:#111;
+  --p-text:#DDD; --p-text2:#888; --p-text3:#666;
+  --p-amber:#FFC400; --p-green:#35C46A; --p-red:#D32F2F;
+  --p-mono:ui-monospace,Menlo,Consolas,monospace;
+}
+
+*{box-sizing:border-box}
+body{
+  margin:0; background:var(--ground); color:var(--ink);
+  font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;
+  font-size:16px; line-height:1.6;
+  -webkit-font-smoothing:antialiased;
+}
+.wrap{max-width:1080px; margin:0 auto; padding:56px 28px 96px;
+      display:flex; flex-direction:column; gap:52px}
+
+/* masthead */
+.mast{display:flex; flex-direction:column; gap:14px;
+      padding-bottom:26px; border-bottom:2px solid var(--ink)}
+.eyebrow{font-family:ui-monospace,monospace; font-size:11px; font-weight:600;
+         letter-spacing:.18em; text-transform:uppercase; color:var(--ink-3)}
+h1{margin:0; font-size:clamp(30px,4.4vw,46px); line-height:1.04;
+   letter-spacing:-.028em; font-weight:680; text-wrap:balance}
+.standfirst{margin:0; max-width:62ch; font-size:17px; color:var(--ink-2)}
+.meta{display:flex; flex-wrap:wrap; gap:8px 22px; font-family:ui-monospace,monospace;
+      font-size:12px; color:var(--ink-3); letter-spacing:.02em}
+.meta b{color:var(--ink-2); font-weight:600}
+
+/* the finding */
+.finding{background:var(--sheet); border:1px solid var(--rule);
+         border-left:3px solid var(--mark-pure); border-radius:3px;
+         padding:26px 28px; display:flex; flex-direction:column; gap:14px;
+         box-shadow:var(--shadow)}
+.finding h2{margin:0; font-size:22px; letter-spacing:-.018em; font-weight:660;
+            text-wrap:balance}
+.finding p{margin:0; max-width:66ch; color:var(--ink-2)}
+.finding strong{color:var(--ink); font-weight:640}
+
+/* item block */
+.item{display:flex; flex-direction:column; gap:20px}
+.item-head{display:flex; align-items:baseline; gap:14px; flex-wrap:wrap;
+           padding-bottom:12px; border-bottom:1px solid var(--rule)}
+.tag{font-family:ui-monospace,monospace; font-size:12px; font-weight:700;
+     letter-spacing:.08em; padding:4px 9px; border-radius:3px;
+     background:var(--ink); color:var(--sheet); white-space:nowrap}
+.tag.gated{background:var(--mark-pure); color:#151515}
+.item-head h2{margin:0; font-size:25px; letter-spacing:-.02em; font-weight:660;
+              flex:1; min-width:12ch; text-wrap:balance}
+.said{font-family:ui-monospace,monospace; font-size:12px; color:var(--ink-3);
+      letter-spacing:.02em}
+.lede{margin:0; max-width:70ch; color:var(--ink-2)}
+.lede + .lede{margin-top:-8px}
+.lede strong{color:var(--ink); font-weight:640}
+code{font-family:ui-monospace,monospace; font-size:.88em;
+     background:var(--sheet-2); border:1px solid var(--rule-2);
+     border-radius:3px; padding:1px 5px; color:var(--ink)}
+
+/* before / after rail */
+.rail{display:grid; grid-template-columns:repeat(auto-fit,minmax(300px,1fr));
+      gap:22px; align-items:start}
+.shot{display:flex; flex-direction:column; gap:9px; min-width:0}
+.shot-cap{display:flex; align-items:center; gap:8px;
+          font-family:ui-monospace,monospace; font-size:11px; font-weight:700;
+          letter-spacing:.13em; text-transform:uppercase}
+.dot{width:7px; height:7px; border-radius:50%; flex:none}
+.is-before .dot{background:var(--defect)} .is-before .shot-cap{color:var(--defect)}
+.is-after  .dot{background:var(--fixed)}  .is-after  .shot-cap{color:var(--fixed)}
+.note{font-family:ui-monospace,monospace; font-size:11.5px; line-height:1.55;
+      color:var(--ink-3)}
+.frame{overflow-x:auto; padding-bottom:2px}
+
+/* ─── the 480x320 panel render ───────────────────────────────────────────── */
+.panel{
+  width:480px; height:320px; flex:none; position:relative;
+  background:var(--p-bg); color:var(--p-text);
+  font-family:var(--p-mono); overflow:hidden;
+  border:1px solid var(--rule);
+}
+.panel.bar-only{height:76px}
+.pbar{
+  position:absolute; top:0; left:0; right:0; height:28px;
+  background:var(--p-surface); padding:0 10px; font-size:26px;
+  display:flex; align-items:center; gap:10px; z-index:5;
+}
+.pbar.tall{height:34px}
+.pbar .g{color:var(--p-text2); letter-spacing:.04em}
+.pbar .g.ok{color:var(--p-green)}
+.pbar .g.amber{color:var(--p-amber)}
+.pclock{font-size:20px; color:var(--p-text); letter-spacing:.04em}
+.pver{font-size:15px; color:var(--p-text3); letter-spacing:.06em}
+/* the defect: 40px box, 34px glyph, in a 28px bar */
+.pkebab.bad{
+  height:40px; width:40px; font-size:34px; line-height:1;
+  display:flex; align-items:center; justify-content:center;
+  color:var(--p-text2); background:transparent;
+}
+.pkebab.good{
+  height:100%; width:28px; font-size:26px; line-height:1;
+  display:flex; align-items:center; justify-content:center; color:var(--p-text2);
+}
+/* layout variants */
+.pbar.flexed .pver{margin-left:auto}
+.pbar.gridded{display:grid; grid-template-columns:1fr auto 1fr; gap:0}
+.pbar.gridded .left{display:flex; align-items:center; gap:10px}
+.pbar.gridded .pclock{justify-self:center}
+.pbar.gridded .right{display:flex; align-items:center; justify-content:flex-end; gap:8px}
+
+/* card body */
+.pcard{position:absolute; left:0; right:0; top:28px; bottom:24px;
+       padding:14px 16px; display:flex; flex-direction:column; overflow:hidden}
+.pcard.tuned{top:34px; bottom:16px; padding:8px 16px}
+.ptitle{font-size:26px; font-weight:600; color:var(--p-text2);
+        text-transform:uppercase; letter-spacing:.08em; margin:0 0 8px}
+.pcard.tuned .ptitle{font-size:20px; margin:0 0 6px}
+.prow{display:flex; flex-direction:column; margin-bottom:14px}
+.prow .l{font-size:20px; color:var(--p-text2); letter-spacing:.04em}
+.prow .v{font-size:34px; color:var(--p-text); line-height:1.05}
+.prow .v.ok{color:var(--p-green)}
+.pfoot{font-size:20px; color:var(--p-text3); margin-top:auto}
+.pdots{position:absolute; bottom:0; left:0; right:0; height:24px;
+       display:flex; justify-content:center; align-items:center; gap:6px}
+.pdots.slim{height:16px}
+.pdots i{width:7px; height:7px; border-radius:50%; background:var(--p-text3)}
+.pdots i.on{background:var(--p-text)}
+
+/* clipping marker */
+.cliprule{position:absolute; left:0; right:0; height:0;
+          border-top:1px dashed var(--p-red); z-index:8}
+.cliptag{position:absolute; right:4px; font-family:ui-monospace,monospace;
+         font-size:10px; color:var(--p-red); background:rgba(0,0,0,.85);
+         padding:1px 4px; z-index:9; letter-spacing:.04em}
+
+/* overlay demo */
+.povl{position:absolute; inset:0; z-index:20; padding:6px 12px 10px;
+      display:flex; flex-direction:column; gap:6px}
+.povl.ghost{background:rgba(0,0,0,.92)}
+.povl.solid{background:#000}
+.povl-head{display:flex; align-items:center; height:36px;
+           border-bottom:1px solid var(--p-surface)}
+.povl-head span{font-size:26px; font-weight:700; letter-spacing:.06em;
+                text-transform:uppercase; color:var(--p-text)}
+.povl-head b{margin-left:auto; font-size:26px; color:var(--p-text2); font-weight:400}
+.povl-sec{font-size:15px; letter-spacing:.08em; text-transform:uppercase;
+          color:var(--p-text2); margin-top:4px}
+.povl-row{display:flex; align-items:center; gap:6px; padding:3px 0;
+          border-bottom:1px solid var(--p-surface); font-size:20px}
+.povl-row b{flex:1; font-weight:400; color:var(--p-text)}
+.povl-row em{font-style:normal; font-size:15px; color:var(--p-text3)}
+
+/* sync tile */
+.ptiles{display:grid; grid-template-columns:1fr 1fr; gap:8px}
+.ptile{background:var(--p-surface); padding:7px 9px; min-height:76px;
+       display:flex; flex-direction:column; gap:2px}
+.ptile .tl{font-size:15px; color:var(--p-text2); letter-spacing:.08em;
+           display:flex; justify-content:space-between; align-items:baseline}
+.ptile .tv{font-size:26px; color:var(--p-green)}
+.ptile .td{font-size:15px; color:var(--p-text3); line-height:1.3;
+           word-break:break-all}
+.ptile .td.stamp{color:var(--p-text2); word-break:normal}
+
+/* ─── the chrome budget diagram ──────────────────────────────────────────── */
+.budget{display:grid; grid-template-columns:repeat(auto-fit,minmax(250px,1fr));
+        gap:30px; align-items:end}
+.col{display:flex; flex-direction:column; gap:10px}
+.col-cap{font-family:ui-monospace,monospace; font-size:11px; font-weight:700;
+         letter-spacing:.13em; text-transform:uppercase; color:var(--ink-3)}
+.stack{height:320px; width:100%; display:flex; flex-direction:column;
+       border:1px solid var(--rule); background:var(--sheet)}
+.band{display:flex; align-items:center; justify-content:space-between;
+      padding:0 9px; font-family:ui-monospace,monospace; font-size:11px;
+      color:var(--ink-2); border-bottom:1px solid var(--rule-2); overflow:hidden;
+      white-space:nowrap; letter-spacing:.02em}
+.band b{font-weight:700; color:var(--ink); font-variant-numeric:tabular-nums}
+.band.chrome{background:var(--sheet-2)}
+.band.body{background:var(--fixed-wash); color:var(--fixed); flex:none}
+.band.body b{color:var(--fixed)}
+.band.over{background:var(--defect-wash); color:var(--defect)}
+.band.over b{color:var(--defect)}
+
+/* tables */
+.tbl{overflow-x:auto; border:1px solid var(--rule); border-radius:3px;
+     background:var(--sheet)}
+table{border-collapse:collapse; width:100%; font-size:14px; min-width:440px}
+th,td{padding:9px 14px; text-align:left; border-bottom:1px solid var(--rule-2)}
+th{font-family:ui-monospace,monospace; font-size:10.5px; font-weight:700;
+   letter-spacing:.13em; text-transform:uppercase; color:var(--ink-3);
+   background:var(--sheet-2)}
+tr:last-child td{border-bottom:0}
+td.n{font-family:ui-monospace,monospace; text-align:right;
+     font-variant-numeric:tabular-nums; white-space:nowrap}
+td.n.neg{color:var(--defect)} td.n.pos{color:var(--fixed)}
+tr.total td{font-weight:700; background:var(--sheet-2); border-top:2px solid var(--rule)}
+tr.total td.n{color:var(--fixed)}
+
+/* callout */
+.own{background:var(--defect-wash); border:1px solid var(--defect);
+     border-radius:3px; padding:18px 22px; display:flex; flex-direction:column; gap:8px}
+.own .k{font-family:ui-monospace,monospace; font-size:10.5px; font-weight:700;
+        letter-spacing:.15em; text-transform:uppercase; color:var(--defect)}
+.own p{margin:0; color:var(--ink); max-width:68ch}
+
+.gate{background:var(--sheet-2); border:1px dashed var(--mark);
+      border-radius:3px; padding:16px 20px; display:flex; flex-direction:column; gap:7px}
+.gate .k{font-family:ui-monospace,monospace; font-size:10.5px; font-weight:700;
+         letter-spacing:.15em; text-transform:uppercase; color:var(--mark)}
+.gate p{margin:0; color:var(--ink-2); max-width:68ch}
+
+ul.tight{margin:0; padding-left:20px; color:var(--ink-2);
+         display:flex; flex-direction:column; gap:6px; max-width:68ch}
+ul.tight strong{color:var(--ink); font-weight:640}
+
+.foot{border-top:2px solid var(--ink); padding-top:22px;
+      display:flex; flex-direction:column; gap:10px}
+.foot p{margin:0; color:var(--ink-2); max-width:70ch}
+:focus-visible{outline:2px solid var(--mark-pure); outline-offset:2px}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
+
+<div class="wrap">
+
+  <header class="mast">
+    <div class="eyebrow">Iris · UI/UX · design review</div>
+    <h1>Top bar, chrome budget, overlay opacity, sync stamp</h1>
+    <p class="standfirst">Six bench-review items against the deployed V0.29.29 panel. Five are
+      presentation-only and can ship together. One needs a data contract and is split out so it
+      can't hold up the rest.</p>
+    <div class="meta">
+      <span><b>Panel</b> 480×320 @ 3.5″ · ~165 PPI</span>
+      <span><b>Measured from</b> the shipped CSS, not the mockup</span>
+      <span><b>Date</b> 2026-08-20</span>
+    </div>
+  </header>
+
+  <section class="finding">
+    <h2>Two of your items are the same bug</h2>
+    <p>The ⋮ hanging below the header and the text clipped off the bottom of the cards look
+      unrelated. They aren't. <strong>F-127 raised the type scale and left every chrome band at
+      its old height.</strong> The bars never grew to fit the type they now carry, and the card
+      body never shrank on paper to match the space it actually lost.</p>
+    <p>The top bar is <strong>28 px tall and holds 26 px glyphs</strong> plus a ⋮ set at 34 px
+      inside a 40 px button. That is the first symptom. The second is arithmetic — below.</p>
+  </section>
+
+  <!-- ─── P-1 + P-2 ─────────────────────────────────────────────────────── -->
+  <section class="item">
+    <div class="item-head">
+      <span class="tag">P-1 · P-2</span>
+      <h2>The top bar</h2>
+      <span class="said">your items 1 &amp; 2</span>
+    </div>
+
+    <p class="lede">Two changes in one band. The clock moves to the true centre, and the ⋮ stops
+      falling out of the header.</p>
+
+    <div class="rail">
+      <div class="shot is-before">
+        <div class="shot-cap"><i class="dot"></i>Shipped V0.29.29</div>
+        <div class="frame"><div class="panel bar-only">
+          <div class="pbar flexed">
+            <span class="g ok">BT</span><span class="g ok">⇅</span><span class="g">⚡</span>
+            <span class="pclock">7:42 PM</span>
+            <span class="pver">V0.29.29</span>
+            <span class="pkebab bad">⋮</span>
+          </div>
+        </div></div>
+        <p class="note">Clock sits in the left cluster. The ⋮ is a 40 px box holding a 34 px
+          glyph in a 28 px bar — the third dot lands outside the header fill.</p>
+      </div>
+
+      <div class="shot is-after">
+        <div class="shot-cap"><i class="dot"></i>Proposed</div>
+        <div class="frame"><div class="panel bar-only">
+          <div class="pbar gridded tall">
+            <span class="left">
+              <span class="g ok">BT</span><span class="g ok">⇅</span><span class="g">⚡</span>
+            </span>
+            <span class="pclock">7:42 PM</span>
+            <span class="right">
+              <span class="pver">V0.29.29</span><span class="pkebab good">⋮</span>
+            </span>
+          </div>
+        </div></div>
+        <p class="note">Three-column grid: glyphs left, clock centred on the bar, version + ⋮
+          right. Bar 28 → 34 px. ⋮ paints 28×28 and stays touchable at 42×40.</p>
+      </div>
+    </div>
+
+    <p class="lede"><strong>Why a grid and not two auto-margins.</strong> The existing code
+      comment argues against centring the clock, and its reasoning is right as far as it goes —
+      two <code>auto</code> margins in one flex row split the free space <em>between</em> them,
+      so the clock would drift as the version string changed length. That's an objection to
+      centring with auto-margins, not to centring. <code>1fr auto 1fr</code> puts the clock at
+      the bar's midpoint whether the chip reads <code>V0.29.29</code>,
+      <code>V0.29.100</code> or the honest <code>V?.?.?</code> sentinel. The drift becomes
+      structurally impossible instead of merely avoided.</p>
+
+    <p class="lede"><strong>Why the ⋮ can shrink but the tap target can't.</strong> S-2 requires
+      a ≥40 px touch target and the bar is smaller than that minimum, so the visual box and the
+      hit box have to separate: the button paints at bar height, and a transparent
+      pseudo-element extends the hit area past it. The glyph drops to the 26 px tier because a
+      ⋮ is <strong>chrome, not a value</strong> — the 34 px driver-must-read floor was never
+      meant to apply to it.</p>
+
+    <div class="gate">
+      <div class="k">Same pattern, worth auditing in the same pass</div>
+      <p>Any control in a band shorter than the 40 px tap minimum needs this treatment.
+        <code>#menu-close</code> and <code>#sys-detail-back</code> both carry
+        <code>min-height:40px</code> inside 36 / 44 px headers.</p>
+    </div>
+  </section>
+
+  <!-- ─── P-3 ───────────────────────────────────────────────────────────── -->
+  <section class="item">
+    <div class="item-head">
+      <span class="tag">P-3</span>
+      <h2>The bottom 5% — where it went</h2>
+      <span class="said">your item 3</span>
+    </div>
+
+    <div class="own">
+      <div class="k">This one is my arithmetic, not Ralph's build</div>
+      <p>My F-127 spec budgeted <b>~258 px</b> of usable card body. It counted the top bar and
+        the page dots — and left out the card's own padding (28 px) and its title (39 px)
+        entirely, while understating the dots band by 8 px. <b>57 px unaccounted for.</b>
+        The cards were built to the capacity the spec asserted. The number was wrong.</p>
+    </div>
+
+    <div class="budget">
+      <div class="col">
+        <div class="col-cap">Shipped · 320 px stage</div>
+        <div class="stack">
+          <div class="band chrome" style="height:28px">top bar <b>28</b></div>
+          <div class="band chrome" style="height:28px">card padding <b>28</b></div>
+          <div class="band chrome" style="height:39px">card title <b>39</b></div>
+          <div class="band body" style="height:201px">card body <b>201</b></div>
+          <div class="band chrome" style="height:24px">page dots <b>24</b></div>
+        </div>
+      </div>
+      <div class="col">
+        <div class="col-cap">What 3 rows + a footer needs</div>
+        <div class="stack">
+          <div class="band chrome" style="height:28px">top bar <b>28</b></div>
+          <div class="band chrome" style="height:28px">card padding <b>28</b></div>
+          <div class="band chrome" style="height:39px">card title <b>39</b></div>
+          <div class="band body" style="height:201px">fits <b>201</b></div>
+          <div class="band over" style="height:21px">clipped <b>21</b></div>
+          <div class="band chrome" style="height:24px">page dots <b>24</b></div>
+        </div>
+      </div>
+      <div class="col">
+        <div class="col-cap">Proposed · same 320 px</div>
+        <div class="stack">
+          <div class="band chrome" style="height:34px">top bar <b>34</b></div>
+          <div class="band chrome" style="height:16px">card padding <b>16</b></div>
+          <div class="band chrome" style="height:30px">card title <b>30</b></div>
+          <div class="band body" style="height:224px">card body <b>224</b></div>
+          <div class="band chrome" style="height:16px">page dots <b>16</b></div>
+        </div>
+      </div>
+    </div>
+
+    <p class="lede">Three rows come to 202 px by my own row math. Against a real body of
+      201 px that already overflows <em>before any footer</em>. Add the "last checked" line
+      several cards carry and it's <strong>16–21 px past the edge — 5–7% of the stage</strong>,
+      clipped silently by <code>overflow:hidden</code>. That's your "about 5%", and it's "many
+      of the screens" because it's precisely the cards with a footer under three rows: Battery,
+      Light, System Status, Alerts.</p>
+
+    <div class="rail">
+      <div class="shot is-before">
+        <div class="shot-cap"><i class="dot"></i>Shipped — footer clipped</div>
+        <div class="frame"><div class="panel">
+          <div class="pbar flexed">
+            <span class="g ok">BT</span><span class="g ok">⇅</span><span class="g">⚡</span>
+            <span class="pclock">7:42 PM</span><span class="pver">V0.29.29</span>
+            <span class="pkebab bad">⋮</span>
+          </div>
+          <div class="pcard">
+            <h3 class="ptitle">Battery</h3>
+            <div class="prow"><span class="l">CHARGE</span><span class="v ok">96%</span></div>
+            <div class="prow"><span class="l">CELL</span><span class="v">4.16 V</span></div>
+            <div class="prow"><span class="l">RUNTIME</span><span class="v">12 min</span></div>
+            <div class="pfoot">Checked Jul 14</div>
+          </div>
+          <div class="cliprule" style="top:296px"></div>
+          <div class="cliptag" style="top:280px">↓ 21px lost</div>
+          <div class="pdots"><i></i><i class="on"></i><i></i><i></i><i></i><i></i></div>
+        </div></div>
+        <p class="note">"Checked Jul 14" is the fact that tells you whether the green above it
+          is current. It's the one that falls off.</p>
+      </div>
+
+      <div class="shot is-after">
+        <div class="shot-cap"><i class="dot"></i>Proposed — chrome trimmed</div>
+        <div class="frame"><div class="panel">
+          <div class="pbar gridded tall">
+            <span class="left">
+              <span class="g ok">BT</span><span class="g ok">⇅</span><span class="g">⚡</span>
+            </span>
+            <span class="pclock">7:42 PM</span>
+            <span class="right"><span class="pver">V0.29.29</span>
+              <span class="pkebab good">⋮</span></span>
+          </div>
+          <div class="pcard tuned">
+            <h3 class="ptitle">Battery</h3>
+            <div class="prow"><span class="l">CHARGE</span><span class="v ok">96%</span></div>
+            <div class="prow"><span class="l">CELL</span><span class="v">4.16 V</span></div>
+            <div class="prow"><span class="l">RUNTIME</span><span class="v">12 min</span></div>
+            <div class="pfoot">Checked Jul 14</div>
+          </div>
+          <div class="pdots slim"><i></i><i class="on"></i><i></i><i></i><i></i><i></i></div>
+        </div></div>
+        <p class="note">Every value stays at its F-127 tier — 34 px. Only chrome gave ground.</p>
+      </div>
+    </div>
+
+    <div class="tbl">
+      <table>
+        <thead><tr><th>Band</th><th>Now</th><th>Proposed</th><th>Δ body</th><th>Why it's safe</th></tr></thead>
+        <tbody>
+          <tr><td>Top bar</td><td class="n">28</td><td class="n">34</td><td class="n neg">−6</td>
+              <td>It's the one band genuinely too small for its own contents</td></tr>
+          <tr><td>Page dots</td><td class="n">24</td><td class="n">16</td><td class="n pos">+8</td>
+              <td>Dots paint ~8 px; taps use the invisible hit area</td></tr>
+          <tr><td>Card padding</td><td class="n">28</td><td class="n">16</td><td class="n pos">+12</td>
+              <td>Vertical only — side padding unchanged</td></tr>
+          <tr><td>Card title</td><td class="n">39</td><td class="n">30</td><td class="n pos">+9</td>
+              <td>A title is a label, not a value — non-critical by the F-127 rule</td></tr>
+          <tr class="total"><td>Card body</td><td class="n">201</td><td class="n">224</td>
+              <td class="n">+23</td><td>3 rows + a footer = 222. Fits.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <ul class="tight">
+      <li><strong>Ceiling, stated so it can't be blown silently again:</strong> a card holds
+        3 rows plus at most one footer line. A fourth fact goes to a drill-down.</li>
+      <li><strong>No silent clipping.</strong> The real problem is that the overflow was
+        invisible to everyone but your eye — the surface clipped and said nothing. Whatever the
+        budget, either the content fits or the surface admits it doesn't.</li>
+      <li><strong>Worth ruling out in two seconds:</strong> if the <em>top</em> edge of the top
+        bar is also shaved, that's panel overscan from the US-552 mode change, not this. If the
+        top bar is whole and only card bottoms clip, it's this. Fix P-3 either way — the budget
+        is wrong regardless.</li>
+    </ul>
+  </section>
+
+  <!-- ─── P-4 ───────────────────────────────────────────────────────────── -->
+  <section class="item">
+    <div class="item-head">
+      <span class="tag">P-4</span>
+      <h2>System screens go solid</h2>
+      <span class="said">your item 4</span>
+    </div>
+
+    <p class="lede">Three full-screen overlays paint over the live carousel with translucent
+      black, so cards ghost through: <code>#setup-menu</code> at 92%,
+      <code>#sys-detail</code> and <code>#dtc-detail</code> at 95%.</p>
+
+    <div class="rail">
+      <div class="shot is-before">
+        <div class="shot-cap"><i class="dot"></i>Shipped — 8% bleed</div>
+        <div class="frame"><div class="panel">
+          <div class="pcard">
+            <h3 class="ptitle">Battery</h3>
+            <div class="prow"><span class="l">CHARGE</span><span class="v ok">96%</span></div>
+            <div class="prow"><span class="l">CELL</span><span class="v">4.16 V</span></div>
+          </div>
+          <div class="povl ghost">
+            <div class="povl-head"><span>System Setup</span><b>✕</b></div>
+            <div class="povl-sec">Settings</div>
+            <div class="povl-row"><b>Auto-rotate</b><em>off</em></div>
+            <div class="povl-row"><b>Power mode</b><em>car</em></div>
+            <div class="povl-sec">OBD-II Services</div>
+            <div class="povl-row"><b>eclipse-obd</b><em>restart</em></div>
+          </div>
+        </div></div>
+        <p class="note">The card behind reads through the settings rows.</p>
+      </div>
+
+      <div class="shot is-after">
+        <div class="shot-cap"><i class="dot"></i>Proposed — solid</div>
+        <div class="frame"><div class="panel">
+          <div class="pcard">
+            <h3 class="ptitle">Battery</h3>
+            <div class="prow"><span class="l">CHARGE</span><span class="v ok">96%</span></div>
+            <div class="prow"><span class="l">CELL</span><span class="v">4.16 V</span></div>
+          </div>
+          <div class="povl solid">
+            <div class="povl-head"><span>System Setup</span><b>✕</b></div>
+            <div class="povl-sec">Settings</div>
+            <div class="povl-row"><b>Auto-rotate</b><em>off</em></div>
+            <div class="povl-row"><b>Power mode</b><em>car</em></div>
+            <div class="povl-sec">OBD-II Services</div>
+            <div class="povl-row"><b>eclipse-obd</b><em>restart</em></div>
+          </div>
+        </div></div>
+        <p class="note">Opaque <code>--bg</code>. Nothing behind it.</p>
+      </div>
+    </div>
+
+    <p class="lede"><strong>The rule underneath, which is the part worth keeping:</strong> an
+      overlay you <em>navigate to</em> is a destination and paints solid. An overlay that
+      <em>interrupts</em> you is a modal and keeps its scrim — the translucency is doing real
+      work there, saying <em>what you were doing is still underneath and Cancel returns you to
+      it.</em> So Setup, System detail and Code detail go solid; the two confirm dialogs keep
+      their scrim unchanged. This also settles which screen you meant — both candidates are on
+      the list.</p>
+  </section>
+
+  <!-- ─── P-5 ───────────────────────────────────────────────────────────── -->
+  <section class="item">
+    <div class="item-head">
+      <span class="tag">P-5</span>
+      <h2>The sync stamp</h2>
+      <span class="said">your item 5</span>
+    </div>
+
+    <p class="lede">The emitter publishes <code>lastOkTs</code> as a raw ISO string and the tile
+      pastes it straight in.</p>
+
+    <div class="rail">
+      <div class="shot is-before">
+        <div class="shot-cap"><i class="dot"></i>Shipped</div>
+        <div class="frame"><div class="panel" style="height:200px">
+          <div class="pcard" style="bottom:0">
+            <div class="ptiles">
+              <div class="ptile">
+                <span class="tl">SYNC <b style="color:var(--p-green)">OK</b></span>
+                <span class="td">last 2026-08-17T19:30:28Z · 412 rows · 0 pending</span>
+              </div>
+              <div class="ptile">
+                <span class="tl">POWER <b style="color:var(--p-green)">CAR</b></span>
+                <span class="td">external</span>
+              </div>
+            </div>
+          </div>
+        </div></div>
+        <p class="note">Unreadable — and it's <em>UTC</em>, while the clock two bands up is
+          local.</p>
+      </div>
+
+      <div class="shot is-after">
+        <div class="shot-cap"><i class="dot"></i>Proposed</div>
+        <div class="frame"><div class="panel" style="height:200px">
+          <div class="pcard" style="bottom:0">
+            <div class="ptiles">
+              <div class="ptile">
+                <span class="tl">SYNC <b style="color:var(--p-green)">OK</b></span>
+                <span class="td stamp">Aug 17, 2026<br>7:30:28 PM</span>
+              </div>
+              <div class="ptile">
+                <span class="tl">POWER <b style="color:var(--p-green)">CAR</b></span>
+                <span class="td">external</span>
+              </div>
+            </div>
+          </div>
+        </div></div>
+        <p class="note">Local time, own line. <code>412 rows · 0 pending</code> moves to the
+          System drill-down — your call, 2026-08-20.</p>
+      </div>
+    </div>
+
+    <p class="lede"><strong>This is more than cosmetic.</strong> The top-bar clock renders local
+      time; the sync stamp renders UTC. Side by side on one 3.5″ panel they can differ by hours
+      and you have no way to tell which is lying. Formatting fixes the reading; converting to
+      local fixes the contradiction.</p>
+
+    <ul class="tight">
+      <li><strong>One 12-hour rule, not two.</strong> The existing <code>fmtClock</code> comment
+        already warns that two formatters is how one surface drifts back to 24-hour while every
+        test of the other stays green. So both formatters call one shared helper.</li>
+      <li><strong>A bad timestamp must not become a confident date.</strong> If the value won't
+        parse, render the raw string — never <code>Jan 01, 1970</code>, never
+        <code>NaN</code>. A fabricated date on the one tile whose job is to report whether the
+        upload really happened is the green-when-broken failure exactly.</li>
+      <li><strong>Absent stays</strong> <code>never</code>. Unchanged, and already right.</li>
+    </ul>
+  </section>
+
+  <!-- ─── P-6 ───────────────────────────────────────────────────────────── -->
+  <section class="item">
+    <div class="item-head">
+      <span class="tag gated">P-6 · gated</span>
+      <h2>A real WiFi indicator</h2>
+      <span class="said">your item 1, second half</span>
+    </div>
+
+    <p class="lede">You asked for a genuine WiFi glyph rather than relabelling the ⇅ sync arrow.
+      <strong>The state file can't supply one today</strong> — <code>system-status</code>
+      publishes exactly <code>obdLink · sync · power · drive · idle · source · ts</code>. No
+      network key. That's a new emitter field, which is a data contract, which routes through
+      Atlas before it can be built. Split out so it doesn't hold up the other five.</p>
+
+    <div class="rail">
+      <div class="shot is-after">
+        <div class="shot-cap"><i class="dot"></i>Once the contract lands</div>
+        <div class="frame"><div class="panel bar-only">
+          <div class="pbar gridded tall">
+            <span class="left">
+              <span class="g ok">BT</span><span class="g ok">ᯤ</span>
+              <span class="g ok">⇅</span><span class="g">⚡</span>
+            </span>
+            <span class="pclock">7:42 PM</span>
+            <span class="right"><span class="pver">V0.29.29</span>
+              <span class="pkebab good">⋮</span></span>
+          </div>
+        </div></div>
+        <p class="note">P-1's grid absorbs the fourth glyph with no re-layout — the width check
+          leaves ~132 px of slack against a 26 px glyph plus a gap.</p>
+      </div>
+      <div class="shot">
+        <div class="shot-cap" style="color:var(--ink-3)"><i class="dot"
+          style="background:var(--ink-3)"></i>Two findings for Atlas</div>
+        <ul class="tight" style="font-size:15px">
+          <li><strong>It's a restoration, not an invention.</strong> The retired pygame screen
+            already rendered WiFi status and SSID. The HTML migration dropped it — this is
+            recovering a regression.</li>
+          <li><strong>Don't conflate two facts.</strong> <code>HomeNetworkDetector</code>
+            already exists, but it answers <em>"is the Pi on the</em> home <em>WiFi"</em> — not
+            <em>"is wlan0 associated."</em> A glyph fed from home-detection would read DOWN
+            every time the car is away from the house with a perfectly good link.</li>
+          <li>States <code>up / weak / down / unknown</code>. Absent or stale resolves to
+            <strong>unknown, never a confident up</strong> — same rule the power tile follows.
+            Existing tokens only; no new colour.</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <footer class="foot">
+    <div class="eyebrow">What happens next</div>
+    <p><strong>P-1 through P-5 need no design gate</strong> — nothing changes shape in a state
+      file, no emitter learns a new fact, no safety gate is touched. They're with Marcus to put
+      in the backlog and schedule, as five stories.
+      <strong>P-6 goes to Atlas first.</strong></p>
+    <p><strong>One constraint on the scheduling:</strong> P-1, P-2 and P-3 have to land in the
+      same sprint. All three change the top bar or a band measured off it, and P-3 moves the
+      bar height itself — so if they're split, a later story quietly invalidates an earlier
+      one's sign-off. That's the same failure as the bug being fixed: a value changed in one
+      place, a dependent measurement left behind. P-3 also promotes the band heights into
+      tokens, because the root cause was <code>28px</code> living as a literal in one file and
+      an assumption in another.</p>
+    <p>The acceptance that counts is the same one F-127 still owes: <strong>read it in the car,
+      at arm's length, seated normally.</strong> Item 3 shipped through a bench check because
+      the arithmetic was wrong on paper and nothing on the bench contradicted it.</p>
+  </footer>
+
+</div>
+
+</body>
+</html>

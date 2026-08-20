@@ -222,7 +222,64 @@ Open UI/UX/enclosure items I am tracking. Seeded at onboarding 2026-05-22.
 
 | W-18 | **F-126 Settings surface (US-532)** — the Pi's first user-editable config screen | **✅ SHIPPED V0.29.26 (Sprint 71, 7/7); my corrected spec merged.** **BL-031 → US-541-a** then landed the seam my spec + Atlas's gate both called for: the resolver now honours **`autoRotateS: 0` as a real OFF value** — one key, derived from `> 0`, no parallel bool. Sprint 71 / V0.29.26. | **Shape: CIO chose B** — settings live **inside the US-403 `⋮` setup-menu overlay** as a Settings band **above** the service controls, NOT a separate carousel card. One overlay, two visually-separated bands (safe prefs on top / destructive service+Exit below, confirms + powerwatch-no-Stop unchanged). **Slice 1 = 4 settings** (auto-rotate · power mode · calibration · auto-analyze); **`audioAlerts` DROPPED** by CIO 08-02 → **deferred US-538, not cancelled**; the band takes a 5th row back without re-layout. **Atlas's F-126 design-gate folded 08-17 — and I had wrongly reported this done on 08-08 without editing the spec:** (a) **GAP 3** — no parallel `autoRotate` bool; the overlay stores the **existing `autoRotateS`** (seconds, 0=off) and the toggle **derives** on/off from `>0`, **default OFF** per disposition-B; (b) **GAP 1** — auto-rotate is **NOT live** (`states_http_server` reads `pi.display.carousel` once at startup, cached) → tagged **RESTART NEEDED**; Slice 1 keeps that shape *only because it is honestly labelled*; (c) `pi.power.mode` validates to `{car, wall, unknown}` → else **unknown**. **Honest-instrument core:** every control renders the **real effective value** (overlay-override else config default, never a hardcoded default); on tap `saving…` → confirm **from the re-read**, or snap back to the stored value + `couldn't save` on a rejected/failed write — **never optimistic success**; per-row apply-state tag (live / next drive / restart). The mockup models the **derive-from-seconds** rule in its own logic, so the companion can't teach a build the bool the gate ruled out. Spec+mockup `proposals/2026-08-03-f126-settings-screen-us532.{md,html}`; 9 acceptance criteria (4 added 08-17). Seams are Atlas/Ralph's: US-530 overlay, US-531 token-gated write, US-533 wiring. |
 
+| W-19 | **Top bar · chrome budget · overlay opacity · sync stamp (V0.29.29 bench review)** | **DESIGNED 2026-08-20, spec + before/after mockup filed. P-1…P-5 GROOM-READY to Marcus, no gate; CIO-directed follow-up filed to land them in the backlog + get them SCHEDULED (proposed S-1…S-5 shape). P-6 (WiFi glyph) routed to Atlas — new emitter key. AWAITING: Marcus's feature ID + sprint placement.** **Spec §5 (added on the follow-up) carries the orchestration trap: S-1/S-2/S-3 MUST ship in one sprint** — all three change the top bar or a band measured off it, and S-3 moves the bar height itself, so a split silently invalidates the earlier stories' acceptance (*the same failure shape as the original defect*). §5.2: S-3 tokenizes the bands (`--bar-h`/`--dots-h`/`--card-pad-y`) with a US-539-style grep gate, because the root cause was `28px` being a literal in one file and an assumption in another. | **The finding that matters: two of the CIO's items are one bug — F-127 raised the type scale and left every chrome band at its pre-F-127 height.** **P-2** `#menu-btn` is a **40px** (`--tap-min`) box holding a **34px** (`--fs-primary`) glyph inside a **28px** `#topbar` → the third dot paints outside the header fill. Fix = split visual box from hit box (paints bar-height at `--fs-secondary`; transparent `::after` keeps the S-2 40px target) — a kebab is CHROME, so the 34px driver-read floor never applied. **P-3 is MY ARITHMETIC ERROR, and I own it in the spec so nobody hunts a regression:** the F-127 §3 budget of ~258px card body **omitted the card's own padding (28px) and title (39px)** and understated dots by 8px = **57px unaccounted**; real body is **201px**, and 3 rows by my own row math is **202px** — overflowing *before any footer*. Add the footer several cards carry → **16–21px clipped ≈ 5–7%** = the CIO's "about 5%", on exactly the footer-carrying cards (Battery/Light/System/Alerts). Fix reclaims **chrome, not type**: topbar 28→34 (−6), dots 24→16 (+8), card pad 28→16 (+12), title→`--fs-label` (+9) = **+23px → 224px body**; 3 rows + footer = 222. **Every driver-read value keeps its F-127 tier** — a correction to the budget, NOT a reversal of F-127. +2 new rules: **capacity ceiling = 3 rows + 1 footer** (4th fact → drill-down), and **no silent clip** (the real defect was that the overflow was invisible to everyone but the CIO's eye). Letterbox exonerated — `Math.min` fits both axes by construction, so a scaler can shrink but never crop; **overscan discriminator** left in the spec (top edge of the bar also shaved ⇒ US-552 KMS, not CSS). **P-1** clock→centre via `grid-template-columns: 1fr auto 1fr` — the existing US-542 comment is right that two auto-margins drift with version-string length, wrong that this rules out centring; grid makes the drift structurally impossible. **P-4** rule: *navigational overlay = destination = solid; interrupting modal = keeps scrim* → `#setup-menu`/`#sys-detail`/`#dtc-detail` opaque, the two confirms unchanged (covers both readings of "the system screen"). **P-5** `syncTile()` pastes raw ISO — and the top-bar clock is LOCAL while the stamp is UTC, so two clocks on one panel can disagree by hours with no way to tell which lies; formatting fixes the reading, local fixes the contradiction. CIO chose full stamp on its own tile line, `rows·pending`→drill-down. Musts: ONE 12-hour rule (shared helper), unparseable→raw string never `1970`/`NaN`. **P-6** WiFi: verified `system-status` has **no network key**; it's a **restoration** (retired pygame `system_detail.py` rendered it) and Atlas must not fuse `HomeNetworkDetector`'s *"on the HOME wifi"* with *"wlan0 associated"* — home-detection would read DOWN whenever the car is away from the house. Spec+mockup `proposals/2026-08-20-pi-topbar-and-chrome-polish.{md,html}`; artifact published for CIO review. |
+
 ## 9. Session Log
+
+### 2026-08-20 — V0.29.29 bench review: top bar · chrome budget · overlays · sync stamp (W-19)
+
+CIO gave six items off the deployed panel, framed as "minor updates." Two of them were one bug,
+and the bug was mine.
+
+- **The unifying finding: F-127 raised the type scale and left every chrome band at its
+  pre-F-127 height.** The ⋮ hanging out of the header and the clipped card bottoms are the same
+  cause. `#topbar` is 28px carrying 26px glyphs and a 34px ⋮ in a 40px button. Nothing was wrong
+  with tokenizing the ⋮ in US-539 — it just tied the glyph to a tier F-127 then raised, and the
+  bar was never re-budgeted alongside it.
+- **P-3 is my arithmetic error and I said so in the spec, the PM note and the Atlas note.** The
+  F-127 §3 budget (~258px of card body) **omitted the card's own padding and title** — 57px
+  unaccounted. Real body 201px; my own row math needs 202px for three rows *before* a footer.
+  Ralph built to the capacity I asserted. Writing that down explicitly matters: without it, the
+  next person reads clipped cards as a build regression and goes hunting for one.
+- **The fix is chrome, not type** — +23px reclaimed from four bands, every driver-read value
+  keeps its F-127 tier. My own F-127 rule was "cut facts not size"; this pass adds the third and
+  cheapest option, *cut chrome*, plus a stated ceiling (3 rows + 1 footer) so the budget can't be
+  blown silently again.
+- **Two things I proved rather than assumed, and both changed the answer.** The letterbox scaler
+  is exonerated by construction (`Math.min` fits both axes — a scaler can shrink, never crop), so
+  I left an **overscan discriminator** in the spec instead of a guess. And `states/system-status`
+  genuinely has **no network key**, which turned "add a wifi glyph" from a CSS change into an
+  Atlas gate — the difference between one sprint and two.
+- **Asked two questions instead of assuming, and both mattered.** "BT, wifi, power" — there *is*
+  no wifi glyph, only `⇅` sync; CIO wants a real one. And the full timestamp doesn't fit beside
+  `rows · pending`, so where it goes was his call, not mine.
+- **P-4 produced a rule worth keeping:** navigational overlay = destination = solid; interrupting
+  modal = keeps its scrim. It also resolves the ambiguity in "the system screen" — both candidates
+  are on the list, so the answer is the same either way.
+- **P-5 turned out not to be cosmetic.** The top-bar clock is local and the sync stamp is UTC.
+  Two clocks on one 3.5″ panel that can disagree by hours, with no way to tell which is lying.
+
+- **CIO then asked me to make sure these actually reach the backlog and get scheduled** — a
+  groom-ready pointer is not placement. Filed a second, CIO-backed note with a proposed
+  S-1…S-5 backlog shape, priority read and sizing, so it costs Marcus little to action. Writing
+  it surfaced a trap I had missed in my own first split: **S-1/S-2/S-3 cannot go in different
+  sprints.** All three change the top bar or a band measured off it, and S-3 moves the bar
+  height itself — so a split would let a later story silently invalidate an earlier one's
+  acceptance. *That is the same failure shape as the defect I was fixing:* a value changed in
+  one place, a dependent measurement left behind. Added as spec §5, and §5.2 puts the bands
+  into tokens with a US-539-style grep gate, since the root cause was `28px` living as a
+  literal in one file and an assumption in another.
+
+**Incoming:** none. **Outgoing:** Marcus ×2 (groom-ready P-1…P-5 + git hand-off; CIO-directed
+backlog+sprint placement), Atlas (P-6 gate).
+**Commits:** NONE BY ME. **6 paths this session + the 20 still pending from 08-17.**
+**Open for next session:**
+- **Did Marcus commit?** As of this session's check the 08-17 paths were still dirty — including
+  the charter edit that encodes the rule that he owns my git. `dev` is 0/0 with origin and the
+  US-532 branch IS contained in dev, so only the working-tree files are at risk.
+- **IN-CAR legibility validation** of V0.29.29 — still owed, still the only acceptance that counts,
+  still must happen after US-552. P-3 exists because a bench check couldn't contradict bad arithmetic.
+- W-16 P2 Engine card · W-12 awaits Atlas's `state.alerts` schema · enclosure fit-checks.
 
 ### 2026-08-17 (cont. 2) — inbox archive established · PM takes over my git · F-127 confirmed SHIPPED
 
