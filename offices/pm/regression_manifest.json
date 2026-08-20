@@ -756,6 +756,42 @@
       "affectedBySprints": [
         75
       ]
+    },
+    {
+      "id": "F-133",
+      "name": "Pi display reliability -- output mode, watchdog honesty, freeze",
+      "category": "lifecycle",
+      "lastValidated": null,
+      "validatedBy": null,
+      "validationMethod": "manual_attestation",
+      "staleThresholdDays": 30,
+      "affectedBySprints": [
+        75
+      ]
+    },
+    {
+      "id": "F-134",
+      "name": "drive_summary truthfulness -- roll-up, defaults, labels",
+      "category": "lifecycle",
+      "lastValidated": null,
+      "validatedBy": null,
+      "validationMethod": "manual_attestation",
+      "staleThresholdDays": 30,
+      "affectedBySprints": [
+        75
+      ]
+    },
+    {
+      "id": "F-135",
+      "name": "Sensor honesty gate -- bit-identity plausibility + magnetometer",
+      "category": "lifecycle",
+      "lastValidated": null,
+      "validatedBy": null,
+      "validationMethod": "manual_attestation",
+      "staleThresholdDays": 30,
+      "affectedBySprints": [
+        75
+      ]
     }
   ]
 }

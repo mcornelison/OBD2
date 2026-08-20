@@ -2,17 +2,316 @@
   "schemaVersion": "2.0.0",
   "sprint": 75,
   "version": "V0.29.30",
-  "theme": "F-132 Pi dashboard chrome -- top bar, band budget, overlays, sync stamp",
+  "theme": "V0.29 CLOSEOUT -- display reliability + drive_summary truth + sensor honesty, then F-132 dashboard chrome",
   "createdFromPRD": "offices/uidevloper/proposals/2026-08-20-pi-topbar-and-chrome-polish.md",
   "createdBy": "Marcus (PM)",
   "createdAt": "2026-08-20",
   "capacity": {
-    "groomedNow": 5,
-    "reservedSlots": "4-6",
-    "reservedFor": "DELIBERATELY UNDER-FILLED (CIO 2026-08-20). The movement drive happens within the hour; Spool (A-9 attribution / US-526 drain writer / BT-OBD coexistence) and Atlas (V0.29.29 AllocateRingBuffer freeze reported LIVE on bench in 004c316, 4 watchdog defects, unpinned libs) will both file findings off it. Those land in THIS sprint. Do NOT fill these slots with backlog convenience work.",
-    "note": "5 groomed + 4-6 reserved = one modest sprint. All 5 current stories are S/M."
+    "groomed": 11,
+    "reservedSlots": 0,
+    "note": "Reserved slots are now FILLED, by the findings they were held for. US-560..565 came from the 2026-08-20 movement drive (Atlas x4 notes + Spool x2). 11 stories is LARGE for one sprint -- see splitRecommendation.",
+    "splitRecommendation": "PM recommends splitting: 75a = US-560..565 (V0.29 closeout, gates /chain-validated) and 75b = US-555..559 (F-132 chrome, cosmetic). The chrome work is CIO-directed and groomed, but nothing in the V0.29 chain waits on it, whereas US-560 gates the F-127 legibility read and US-562 gates drive-level reporting. CIO's call; both are cut and ready either way."
   },
   "stories": [
+    {
+      "id": "US-560",
+      "title": "APPLY the US-552 mode pin on the live Pi + verify native 480x320",
+      "parent": "F-133",
+      "epicId": "E-001",
+      "type": "normal",
+      "size": "M",
+      "status": "sprint-ready",
+      "passes": false,
+      "groundingRefs": [
+        "offices/pm/inbox/2026-08-20-from-atlas-ESCALATION-freeze-confirmed-in-car-plus-movement-drive-landed.md",
+        "offices/pm/inbox/2026-08-20-from-atlas-FIX-SPECS-ready-to-groom-next-sprint.md",
+        "offices/architect/reports/2026-08-20-fix-specs-variance-gate-gpio6-ownership-mode-pin.md",
+        "offices/pm/inbox/2026-08-20-from-atlas-data-quality-defaults-to-full-open-question.md",
+        "offices/pm/inbox/2026-08-20-from-atlas-magnetometer-latched-third-fabrication-this-week.md",
+        "offices/pm/inbox/2026-08-20-from-spool-drive-summary-rollup-regression.md",
+        "offices/pm/inbox/2026-08-20-from-spool-ambient-temp-column-mislabeled.md"
+      ],
+      "acceptance": [
+        "GROOM-FIRST per Atlas: cheap, owed anyway for the F-127 in-car legibility check, AND the last untested lever on the freeze",
+        "US-552 shipped the code in Sprint 74 and is marked passed, but the pin has NEVER been applied to this Pi -- measured 2026-08-20 with the panel attached: /sys/class/graphics/fb0/virtual_size = 1280,720",
+        "pin the connector that actually reports `connected` AT THE TIME -- NEVER an assumed one (HDMI-A-1 today, but verify, do not hardcode from this note)",
+        "after reboot, fb0 virtual_size reads 480,320",
+        "re-verify the F-127 44/34/26/20/15 type scale AT NATIVE RESOLUTION -- the values were set against an unverified downsample and may read differently 1:1",
+        "this DISCHARGES the F-127 in-car legibility gate once the read is taken at native res",
+        "ruff/lint clean"
+      ],
+      "validationCriteria": [
+        {
+          "action": "cat /sys/class/graphics/fb0/virtual_size after the pin + a reboot, panel attached",
+          "outcome": "480,320 -- not 1280,720, not 1920,1080"
+        },
+        {
+          "action": "read the cards in the car at arm's length at native resolution",
+          "outcome": "driver-must-read values >=34px effective and legible; F-127 gate discharged"
+        },
+        {
+          "action": "IN-CAR, seated normally, arm's length -- not a bench check",
+          "outcome": "behaviour holds on the real vehicle"
+        }
+      ],
+      "conditionalOutcomes": [
+        "Atlas ordered this FIRST of five and said he feels strongly about it.",
+        "Does NOT scope the freeze itself -- re-measure the freeze only after this lands (F-133 description)."
+      ],
+      "goal": "As the operator, I want the panel actually running at its native 480x320 so the legibility check measures the shipping configuration and the freeze loses its last untested variable.",
+      "tasks": [],
+      "feedback": {
+        "filesActuallyTouched": [],
+        "grounding": []
+      },
+      "completionNotes": ""
+    },
+    {
+      "id": "US-561",
+      "title": "Watchdog must not report healthy while the display is frozen",
+      "parent": "F-133",
+      "epicId": "E-001",
+      "type": "normal",
+      "size": "M",
+      "status": "sprint-ready",
+      "passes": false,
+      "groundingRefs": [
+        "offices/pm/inbox/2026-08-20-from-atlas-ESCALATION-freeze-confirmed-in-car-plus-movement-drive-landed.md",
+        "offices/pm/inbox/2026-08-20-from-atlas-FIX-SPECS-ready-to-groom-next-sprint.md",
+        "offices/architect/reports/2026-08-20-fix-specs-variance-gate-gpio6-ownership-mode-pin.md",
+        "offices/pm/inbox/2026-08-20-from-atlas-data-quality-defaults-to-full-open-question.md",
+        "offices/pm/inbox/2026-08-20-from-atlas-magnetometer-latched-third-fabrication-this-week.md",
+        "offices/pm/inbox/2026-08-20-from-spool-drive-summary-rollup-regression.md",
+        "offices/pm/inbox/2026-08-20-from-spool-ambient-temp-column-mislabeled.md"
+      ],
+      "acceptance": [
+        "LIVE PROOF 2026-08-20: `WEDGED -- 101 markers` at one tick and `healthy; markers=84` at the next. The threshold (100) sits INSIDE the observed band (84-101), so the watchdog's verdict is a coin-flip on a wedged display",
+        "an absolute marker COUNT threshold inside the signal's own operating band cannot separate wedged from healthy -- the detector needs a discriminator that does (rate/delta/stall-time), not a retuned constant. Same lesson as Spool's coolant band: a bare threshold set inside a cycling signal's oscillation range always misfires",
+        "ENUMERATE AND ADDRESS ALL FOUR watchdog defects from section 3 of Atlas's 08-17 finding -- read the finding, list all four in completionNotes, and state the disposition of each. Do not fix one and close the story",
+        "resolution-INDEPENDENT: ships regardless of US-560's outcome (Atlas explicitly)",
+        "restart budget must be observable (2 of 5 consumed on 2026-08-20 went unsurfaced)",
+        "ruff/lint clean"
+      ],
+      "validationCriteria": [
+        {
+          "action": "wedge the display deliberately and watch the watchdog verdict across several ticks",
+          "outcome": "reports WEDGED every tick while wedged; never healthy; restart budget visible"
+        },
+        {
+          "action": "list all 4 defects from Atlas's 08-17 finding section 3 with dispositions",
+          "outcome": "all four addressed or explicitly deferred with cause in completionNotes"
+        }
+      ],
+      "conditionalOutcomes": [
+        "Resolution-independent -- do NOT block on US-560.",
+        "The freeze ITSELF is out of scope this sprint; this story only makes the instrument honest about it."
+      ],
+      "goal": "As the operator, I want the kiosk watchdog to detect a wedged display, because today it reports healthy while the screen is frozen in front of me.",
+      "tasks": [],
+      "feedback": {
+        "filesActuallyTouched": [],
+        "grounding": []
+      },
+      "completionNotes": ""
+    },
+    {
+      "id": "US-562",
+      "title": "Server drive_summary roll-up regression -- 39/40/41 are empty shells",
+      "parent": "F-134",
+      "epicId": "E-002",
+      "type": "normal",
+      "size": "M",
+      "status": "sprint-ready",
+      "passes": false,
+      "groundingRefs": [
+        "offices/pm/inbox/2026-08-20-from-atlas-ESCALATION-freeze-confirmed-in-car-plus-movement-drive-landed.md",
+        "offices/pm/inbox/2026-08-20-from-atlas-FIX-SPECS-ready-to-groom-next-sprint.md",
+        "offices/architect/reports/2026-08-20-fix-specs-variance-gate-gpio6-ownership-mode-pin.md",
+        "offices/pm/inbox/2026-08-20-from-atlas-data-quality-defaults-to-full-open-question.md",
+        "offices/pm/inbox/2026-08-20-from-atlas-magnetometer-latched-third-fabrication-this-week.md",
+        "offices/pm/inbox/2026-08-20-from-spool-drive-summary-rollup-regression.md",
+        "offices/pm/inbox/2026-08-20-from-spool-ambient-temp-column-mislabeled.md"
+      ],
+      "acceptance": [
+        "drives 39/40/41 have start_time/end_time/duration_seconds NULL, row_count 0, is_real 0 -- shells INSERTed at drive-start and never updated. Drives 37/38 (08-07) are fully populated. REGRESSED between 2026-08-07 and 2026-08-20 -- bisect that window on the server analytics writer",
+        "SCOPED TO SERVER, NOT Pi. The Pi-side drive_summary schema has no end/duration/row_count columns at all; the roll-up is server-side by design (BL-015 Option C / US-326 chain). Spool self-corrected on this mid-session -- do not mis-scope to Pi power-loss at key-off",
+        "DO NOT CONFLATE with telemetry: realtime_data sync is PERFECT for all three drives (39: 10594==10594, 40: 10286==10286, 41: 3462==3462, 16 params). Raw capture and sync are healthy; only the derived roll-up is broken",
+        "acceptance asserts on a REAL drive, NOT a fixture -- shells look valid until you check the nullable columns",
+        "check whether the drive_statistics chain is blocked downstream (depends on US-326)",
+        "ruff/lint clean"
+      ],
+      "validationCriteria": [
+        {
+          "action": "query drive_summary for drives 39/40/41 after the fix + backfill",
+          "outcome": "start_time, end_time, duration_seconds, row_count all populated; not shells"
+        },
+        {
+          "action": "run a NEW real drive end-to-end and re-query",
+          "outcome": "roll-up fires without manual intervention"
+        }
+      ],
+      "conditionalOutcomes": [
+        "Blocks drive-level reporting for the V0.29 chain.",
+        "is_real=0 on all three interacts with US-563 -- Atlas could not confirm whether is_real=0 is a schema default or a compute result. Do NOT groom that half as settled."
+      ],
+      "goal": "As the tuner, I want the server roll-up to populate drive_summary, because the first moving-vehicle data in 48 days is currently invisible to calibration.",
+      "tasks": [],
+      "feedback": {
+        "filesActuallyTouched": [],
+        "grounding": []
+      },
+      "completionNotes": ""
+    },
+    {
+      "id": "US-563",
+      "title": "drive_summary must not default to the best verdict, and must not mislabel",
+      "parent": "F-134",
+      "epicId": "E-002",
+      "type": "normal",
+      "size": "M",
+      "status": "sprint-ready",
+      "passes": false,
+      "groundingRefs": [
+        "offices/pm/inbox/2026-08-20-from-atlas-ESCALATION-freeze-confirmed-in-car-plus-movement-drive-landed.md",
+        "offices/pm/inbox/2026-08-20-from-atlas-FIX-SPECS-ready-to-groom-next-sprint.md",
+        "offices/architect/reports/2026-08-20-fix-specs-variance-gate-gpio6-ownership-mode-pin.md",
+        "offices/pm/inbox/2026-08-20-from-atlas-data-quality-defaults-to-full-open-question.md",
+        "offices/pm/inbox/2026-08-20-from-atlas-magnetometer-latched-third-fabrication-this-week.md",
+        "offices/pm/inbox/2026-08-20-from-spool-drive-summary-rollup-regression.md",
+        "offices/pm/inbox/2026-08-20-from-spool-ambient-temp-column-mislabeled.md"
+      ],
+      "acceptance": [
+        "data_quality is `varchar(20) NOT NULL DEFAULT 'full'` on prod (verified via information_schema) -- a quality VERDICT column whose default is the BEST verdict. Add an explicit `unassessed`/`not_computed` value and default to THAT, or drop the default entirely",
+        "is_real `tinyint(1) NULL DEFAULT 0` -> DEFAULT NULL. The column is already nullable and _deriveIsReal deliberately writes None for ungraded; its own docstring warns that coercing NULL to 0 is the exact failure that masked ungraded drives in earlier revisions",
+        "RENAME ambient_temp_at_start_c -- it is fed from IAT and is NOT ambient. Drive 41 logged 47C/117F as ambient; IAT ran 48.1->40.6C by speed band, cooling with airflow, never nearing the 24-27C real ambient. NO ambient source exists on this car, so inventing one would be fabrication -- rename to what it actually is (intake air) rather than sourcing a fake ambient",
+        "A-10 CLASS DURABLE FIX: extend the applied-schema guard (US-459/US-462 pattern) to assert DEFAULTS, not just column presence and type. Today it passes this cleanly. The same guard family has caught four drift instances and would have caught this one had it looked at defaults",
+        "any UI surface reading the renamed column shows INTAKE AIR, informational, no red band",
+        "ruff/lint clean"
+      ],
+      "validationCriteria": [
+        {
+          "action": "inspect the applied prod schema after migration",
+          "outcome": "data_quality does not default to 'full'; is_real defaults to NULL; column renamed"
+        },
+        {
+          "action": "run the applied-schema guard against a deliberately wrong DEFAULT",
+          "outcome": "guard FAILS -- it now asserts defaults, not just presence/type"
+        }
+      ],
+      "conditionalOutcomes": [
+        "Schema-layer defect: no code review would catch it. The code is innocent.",
+        "Does not affect the 2026-08-20 drive conclusions -- those were read from realtime_data directly, and the A-9 result stands."
+      ],
+      "goal": "As anyone reading drive_summary, I want an unassessed drive to be distinguishable from an assessed-good one, and I want column names that mean what they say.",
+      "tasks": [],
+      "feedback": {
+        "filesActuallyTouched": [],
+        "grounding": []
+      },
+      "completionNotes": ""
+    },
+    {
+      "id": "US-564",
+      "title": "Plausibility gate -- a non-measurement must never wear data_source=real",
+      "parent": "F-135",
+      "epicId": "E-002",
+      "type": "normal",
+      "size": "L",
+      "status": "sprint-ready",
+      "passes": false,
+      "groundingRefs": [
+        "offices/pm/inbox/2026-08-20-from-atlas-ESCALATION-freeze-confirmed-in-car-plus-movement-drive-landed.md",
+        "offices/pm/inbox/2026-08-20-from-atlas-FIX-SPECS-ready-to-groom-next-sprint.md",
+        "offices/architect/reports/2026-08-20-fix-specs-variance-gate-gpio6-ownership-mode-pin.md",
+        "offices/pm/inbox/2026-08-20-from-atlas-data-quality-defaults-to-full-open-question.md",
+        "offices/pm/inbox/2026-08-20-from-atlas-magnetometer-latched-third-fabrication-this-week.md",
+        "offices/pm/inbox/2026-08-20-from-spool-drive-summary-rollup-regression.md",
+        "offices/pm/inbox/2026-08-20-from-spool-ambient-temp-column-mislabeled.md"
+      ],
+      "acceptance": [
+        "ONE story, not three: syncPending=0, the IMU all-zero frames and the latched magnetometer are the SAME defect -- a non-measurement wearing data_source='real'",
+        "TEST BIT-IDENTITY, NOT LOW VARIANCE (load-bearing). Every real sensor dithers +/-1 LSB even in a constant field, so N consecutive BIT-IDENTICAL samples cannot occur naturally. This needs NO magic threshold and CANNOT false-positive on a genuinely stationary vehicle. Proven 2026-08-20: stationary accel gave 743 distinct values in 90s; the magnetometer gave 1. A `variance < threshold` test would need a tuned number AND would false-positive when parked",
+        "route detections into the EXISTING failed-poll path (already proven honest) -- do NOT build a new silence mechanism",
+        "new reasons `sensor_mute` / `sensor_stale`, DISTINCT from `sensor_absent` -- the chip is enumerated and responding, which is a different fact",
+        "derived fields go typed-NA WITH their input: headingDeg is derived from the magnetometer, so a latched magnetometer must take headingDeg to NA -- today the F-127 Home face renders a fabricated heading on the primary card",
+        "syncPending must be fixed on BOTH layers -- the emitter emits null AND syncTile stops coercing null to 0 -- or it ships green and still reads `0 pending`",
+        "ruff/lint clean"
+      ],
+      "validationCriteria": [
+        {
+          "action": "feed the gate N consecutive bit-identical samples from a live-but-stuck channel",
+          "outcome": "channel goes sensor_mute/sensor_stale; dependent derived fields go typed-NA; nothing renders a stale value as live"
+        },
+        {
+          "action": "run the gate against a genuinely stationary vehicle for 90s",
+          "outcome": "NO false positive -- real sensors dither, so bit-identity does not trigger"
+        },
+        {
+          "action": "read the sync tile with the emitter returning null",
+          "outcome": "shows unknown/NA, never `0 pending`"
+        }
+      ],
+      "conditionalOutcomes": [
+        "The gate must stand ALONE to catch the NEXT sensor fault -- do NOT fold the magnetometer fix (US-565) into it.",
+        "Third fabrication surfaced in one week; this is the general guard, not a one-off patch."
+      ],
+      "goal": "As the operator, I want a stuck sensor to declare itself unavailable rather than publish a frozen value that looks live.",
+      "tasks": [],
+      "feedback": {
+        "filesActuallyTouched": [],
+        "grounding": []
+      },
+      "completionNotes": "",
+      "pmSignOff": "Marcus (PM) 2026-08-20 -- size L approved, NOT split. syncPending=0, the IMU all-zero frames and the latched magnetometer are ONE defect (a non-measurement wearing data_source='real'), and Atlas specified them as one story for that reason. Splitting by symptom would produce three narrow patches and no general guard -- and the guard is the point: it must catch the NEXT sensor fault, not these three. syncPending's two-layer fix (emitter emits null AND syncTile stops coercing to 0) is inseparable for the same reason -- either half alone ships green and still reads '0 pending'."
+    },
+    {
+      "id": "US-565",
+      "title": "Magnetometer acquisition -- make the channel actually vary",
+      "parent": "F-135",
+      "epicId": "E-002",
+      "type": "normal",
+      "size": "M",
+      "status": "sprint-ready",
+      "passes": false,
+      "groundingRefs": [
+        "offices/pm/inbox/2026-08-20-from-atlas-ESCALATION-freeze-confirmed-in-car-plus-movement-drive-landed.md",
+        "offices/pm/inbox/2026-08-20-from-atlas-FIX-SPECS-ready-to-groom-next-sprint.md",
+        "offices/architect/reports/2026-08-20-fix-specs-variance-gate-gpio6-ownership-mode-pin.md",
+        "offices/pm/inbox/2026-08-20-from-atlas-data-quality-defaults-to-full-open-question.md",
+        "offices/pm/inbox/2026-08-20-from-atlas-magnetometer-latched-third-fabrication-this-week.md",
+        "offices/pm/inbox/2026-08-20-from-spool-drive-summary-rollup-regression.md",
+        "offices/pm/inbox/2026-08-20-from-spool-ambient-temp-column-mislabeled.md"
+      ],
+      "acceptance": [
+        "SEPARATE from US-564 by design -- the gate must stand alone; this story fixes the specific chip",
+        "the fix is NOT characterized: the lever is CNTL2 but the correct setting is unknown -- 100Hz gives zeros, 10Hz still latches, 50Hz works partially. This needs empirical characterization, NOT a guessed config value in a subsystem where plausible-looking values have lied three times this week",
+        "acceptance is `N distinct values across a rotation`, NOT `it changed once`",
+        "DO NOT use `adafruit_icm20x.magnetometer_data_rate` getter to verify -- it has no `return` statement. Read the register directly",
+        "until this lands, headingDeg must render NA via US-564's gate rather than a latched number",
+        "ruff/lint clean"
+      ],
+      "validationCriteria": [
+        {
+          "action": "rotate the vehicle/board through a full turn and sample the magnetometer",
+          "outcome": "N distinct values across the rotation; not bit-identical"
+        },
+        {
+          "action": "read the data-rate register directly (not via the broken getter)",
+          "outcome": "register reports the configured rate"
+        }
+      ],
+      "conditionalOutcomes": [
+        "Compass CALIBRATION is meaningless before this lands -- explicitly out of scope.",
+        "Atlas deliberately did NOT code this: guessing a config value here is how the last three fabrications happened."
+      ],
+      "goal": "As the operator, I want a real heading or an honest NA, not a latched value that never changes.",
+      "tasks": [],
+      "feedback": {
+        "filesActuallyTouched": [],
+        "grounding": []
+      },
+      "completionNotes": ""
+    },
     {
       "id": "US-555",
       "title": "Top bar -> 3-column grid: clock CENTRE, glyphs left, version right",
@@ -256,14 +555,24 @@
     ],
     "validatedAt": null,
     "validatesFeatures": [
-      "F-132"
+      "F-132",
+      "F-133",
+      "F-134",
+      "F-135",
+      "F-127"
     ],
-    "validationMethod": "IN-CAR acceptance, seated normally, arm's length -- a bench check does NOT count (US-557 exists precisely because a bench check could not contradict arithmetic that was wrong on paper). (1) US-555 clock stays centred under a short AND a long version string; (2) US-556 no glyph paints outside its header and each control still takes a 40px tap -- verify AFTER US-557 lands, never before; (3) US-557 no clipped content on the footer-carrying cards (Battery/Light/System/Alerts), grep gate green (zero bare 28px/24px/14px 16px band literals in dashboard.css), every F-127 type tier intact; (4) US-558 system screens opaque while #confirm-modal + #clear-confirm keep their scrim; (5) US-559 sync stamp reads in the same local 12-hour clock as the top bar, and an unparseable stamp shows the raw string -- never 1970/NaN. Stacks with the in-car validation V0.29.29 / F-127 already owes after US-552.",
+    "validationMethod": "V0.29 CLOSEOUT ORDER (Atlas, and he feels strongly about item 1): (1) US-560 apply the US-552 mode pin and verify fb0 = 480,320 -- it is cheap, it is owed anyway for F-127's in-car legibility check, and it is the LAST UNTESTED LEVER on the freeze; every freeze observation to date is at 720p/1080p, so the shipping configuration has never been tested. (2) US-561 watchdog defects -- resolution-independent, ship regardless. (3) US-562/563 drive_summary roll-up + schema defaults. (4) US-564 plausibility gate, then (5) US-565 magnetometer. THEN F-132 chrome (US-555..559), whose own acceptance is IN-CAR, seated, arm's length. The freeze ITSELF is deliberately NOT scoped here -- re-measure only after the mode pin lands.",
     "currentVersion": "V0.29.30",
     "validatedBy": null
   },
   "outOfScope": [
-    "P-6 real WiFi glyph -- states/system-status has NO network key today; needs a new emitter field. Atlas gate filed 2026-08-20 (architect inbox). Do NOT groom until he rules. Drops into US-555's grid with zero re-layout once it lands.",
-    "#dtc-takeover severity styling -- untouched."
+    "THE FREEZE ITSELF -- re-measure after US-560 pins the mode. Every observation so far is at ~6x the shipping pixel count; scoping it now would chase a variable we can eliminate for one command plus a reboot.",
+    "GPIO6 single ownership (Atlas SPEC 2) -- DEFERRED WITH FLAG. Real safety gap (the operator has no way to know safe-shutdown protection is off, and powerwatch emits zero application lines so we are blind to whether it armed), but Atlas ordered it 4th of 5 and it explicitly does NOT fix the instant key-off death. Raised to the CIO as a judgment call, not silently dropped.",
+    "X1209 hold-up path / instant key-off death (P0 finding 8e726b1) -- CIO hardware domain, not a software story.",
+    "Boot latency ~3.5min UI cold start (rfcomm-bind gates graphical.target, ~1m41s recoverable) -- real, not a V0.29 blocker.",
+    "Kiosk modal-prompt gap (an automotive appliance must never show a WiFi dialog) -- filed, not a V0.29 blocker.",
+    "Compass calibration -- meaningless before US-565 lands.",
+    "The ~11s start-side attribution gap before drive 41 armed -- routed to Spool as a POLICY call (accept vs retro-assign on confirm). NOT a bug. Do not groom until he rules.",
+    "P-6 real WiFi glyph -- no network key in states/system-status; Atlas gate still open."
   ]
 }
