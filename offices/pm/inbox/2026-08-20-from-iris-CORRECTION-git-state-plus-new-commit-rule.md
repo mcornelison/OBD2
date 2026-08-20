@@ -37,7 +37,7 @@ Phase 5 (split 5a commit / 5b hand off). Grepped for surviving "do not commit" i
 only historical session-log entries remain, which is correct.
 
 ## 3. COMMITTED BY ME UNDER THE NEW RULE
-  <SHA below -- see the closeout summary>
+  **eb828f4**  chore(iris): adopt COMMIT-ONLY git rule + correct a stale git claim
   offices/uidevloper/claude.md                                  (§5 + §6 git rule, session log)
   offices/uidevloper/.claude/skills/closeout-session-iris/SKILL.md (Phase 5 rewrite)
   offices/pm/inbox/2026-08-20-from-iris-CORRECTION-git-state-plus-new-commit-rule.md (this)
