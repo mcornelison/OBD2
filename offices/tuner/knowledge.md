@@ -850,7 +850,22 @@ Drive 39 held LTFT at **exactly −1.56% for six minutes**, then began adapting 
 
 Drive 37 moved through 3 values in **one minute**, so duration is not the driver; and 35/36 were **fully warm**, so warm-up is not either. The discriminator is the **value**: 35 and 36 sit at *exactly* 0.0 and nothing else does. **LTFT pinned at precisely zero with no movement is the signature of reset adaptive fuel memory** — battery disconnect, ECU power interruption, or a code clear. Both drives are 2026-07-31, three minutes apart; by drive 37 (08-07) the ECU had relearned to −3.13…−1.56.
 
-**Benign** — nothing was broken, the ECU simply relearned. **Open**: CIO confirmation of a battery disconnect / fuse pull / code clear around 2026-07-31 would close this outright. **Do not baseline on drives 35/36** — their trims are a reset artifact.
+**✅ CONFIRMED + CLOSED 2026-08-20 (CIO).** Cause was **not** a disconnect or a code clear: **the battery went flat from disuse** (weekend summer car, sat unused), taking ECU keep-alive voltage with it. CIO put it on a charger 2026-08-18/19. Same physical mechanism as a jump-start reset, arrived at passively.
+
+**Independent corroboration from a second signal.** `BATTERY_V` across all 16 captured drives (26-41) shows drives **35/36 with the lowest system voltage on record** — avg **13.42 / 13.48 V**, max 13.6 / 13.7 — versus a normal 14.1-14.4 V. That is an alternator working into a deeply discharged battery and being pulled down. **Two unrelated signals (LTFT pinned at 0.0; depressed charging voltage) independently date the same event.** Drives 37/38 (08-07) still read 13.68-13.73 avg = battery still recovering.
+
+**This is the SECOND instance of a documented phenomenon.** See *LTFT post-jump-start adaptation observation (2026-04-29)* above — prior ECU MD346675, CIO jump-started another car off the Eclipse, LTFT reset and relearned, tracking closed at Drive 6 when it re-locked to −6.25%. Identical mechanism, different ECU, same resolution shape.
+
+**New-ECU natural LTFT baseline established by the same natural experiment**: reset to 0.0 (drives 35/36) → relearned −3.13…−1.56 (drives 37/38) → settled **−0.95 to −2.73%** (drives 39/40/41). So:
+
+| ECU | natural settled LTFT baseline |
+|---|---|
+| MD346675 (prior, stock flash) | **−6.25%** (single notch, re-confirmed post-jump at Drive 6) |
+| **MD326328 (current, ECMLink)** | **≈ −1% to −3%** (band, not a single notch) |
+
+Do **not** carry the −6.25% figure forward to the current ECU — different tune, different baseline. Do **not** baseline on drives 35/36 themselves; their trims are a reset artifact and their charging voltage is depressed.
+
+**🟡 VEHICLE-HEALTH FOLLOW-UP (not a data issue — a car issue).** A battery that goes flat from sitting is either at end of life or has a parasitic draw. **This project added hardware to the car** (B-063 fuse-box buck converter feeding the Pi). By design it is on a *switched* circuit — ON only with key in ACC/ON — so it should draw nothing at rest, but buck converters commonly have quiescent draw and this must be **ruled out, not assumed**. Also note: a lead-acid battery that has been fully discharged suffers permanent sulfation capacity loss, so this battery is weaker than before regardless of cause. Recommended: parasitic-draw test (multimeter in series, everything off, key out — expect < ~50 mA) and a battery tender between weekend drives.
 
 ### Drives 39/40/41 — Interpretation Anchors (NEW-ECU PART-THROTTLE + IDLE)
 
