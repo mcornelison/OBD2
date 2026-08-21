@@ -26,6 +26,11 @@
 # 2026-06-30    | Rex (US-409) | Initial -- IMU + light readers, additive bus
 #               |              | topics, burst-poll shared seq, graceful-absence,
 #               |              | presence STATE, saturation->None, config factory.
+# 2026-08-21    | Rex (US-565) | IMU magnetometer acquired DIRECTLY at 0x0C over
+#               |              | I2C bypass instead of through the ICM's aux-I2C
+#               |              | shadow, which was measured performing a single
+#               |              | transfer and then stopping. Mag-only fault is
+#               |              | non-fatal; accel/gyro unchanged.
 # 2026-08-21    | Rex (US-564) | Plausibility/invariance gate on the SUCCESS path:
 #               |              | an implausible or bit-identical read is routed
 #               |              | into the EXISTING failed-poll path (no new
@@ -658,10 +663,60 @@ def _makeI2c() -> Any:  # pragma: no cover -- real-hardware glue (Pi only)
 
 
 def _makeIcm20948() -> Any:  # pragma: no cover -- real-hardware glue (Pi only)
-    """Construct the ICM-20948 IMU handle (@0x69). Raises when absent/non-Pi."""
+    """Construct the ICM-20948 IMU handle (@0x69). Raises when absent/non-Pi.
+
+    US-565: the magnetometer is read DIRECTLY at 0x0C rather than through the
+    ICM's auxiliary-I2C shadow. MEASURED 2026-08-21 -- the shadow's cyclic slave0
+    readout performs one transfer and then stops, which is what froze
+    ``headingDeg`` at a single value for entire drives; the chip itself was
+    converting correctly the whole time. Accel and gyro still come from the ICM
+    at 0x69 and are unaffected by bypass.
+
+    A magnetometer that cannot be identified or verified is NOT fatal: the IMU's
+    accel and gyro are healthy and load-bearing (gMag, pitch, grade, g-trail), so
+    a mag-only fault degrades to the ICM's own magnetometer property, which the
+    US-564 invariance gate then refuses as ``sensor_stale``. Losing the whole IMU
+    over one channel would throw away valid data to punish a broken one.
+    """
     import adafruit_icm20x  # local import: optional on dev hosts
 
-    return adafruit_icm20x.ICM20948(_makeI2c(), address=ADDR_IMU)
+    i2cBus = _makeI2c()
+    icm = adafruit_icm20x.ICM20948(i2cBus, address=ADDR_IMU)
+    return _attachDirectMagnetometer(icm, i2cBus)
+
+
+def _attachDirectMagnetometer(
+    icm: Any, i2cBus: Any, bypassFactory: Callable[[Any, Any], Any] | None = None
+) -> Any:
+    """Wrap an ICM with a direct magnetometer, degrading to accel/gyro on failure.
+
+    Split out of :func:`_makeIcm20948` so the degrade path is REACHABLE BY TEST.
+    "A magnetometer fault must not cost accel and gyro" is a behavioural claim,
+    and a claim that only exists as a try/except inside hardware-only glue is a
+    claim nothing enforces.
+
+    Args:
+        icm: The constructed ICM-20948.
+        i2cBus: The primary I2C bus it was constructed on.
+        bypassFactory: Injection seam for tests; defaults to the real factory.
+
+    Returns:
+        The wrapped device on success, or the bare ICM when the magnetometer
+        cannot be identified or verified.
+    """
+    from pi.sensors.ak09916_bypass import MagnetometerConfigError, makeBypassMagnetometer
+
+    factory = bypassFactory or makeBypassMagnetometer
+    try:
+        return factory(icm, i2cBus)
+    except (MagnetometerConfigError, OSError, ValueError) as exc:
+        logger.warning(
+            "IMU magnetometer bypass unavailable (%s) -- accel/gyro continue; the "
+            "mag channel falls back to the ICM shadow and the US-564 gate will "
+            "refuse it as stale rather than publish a latched heading",
+            exc,
+        )
+        return icm
 
 
 def _makeTsl2591() -> Any:  # pragma: no cover -- real-hardware glue (Pi only)
