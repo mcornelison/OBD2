@@ -407,8 +407,13 @@
     if (!isObj(s)) {
       return { label: "SYNC", value: "—", detail: "unavailable", level: "unavailable" };
     }
-    var pending = s.pending == null ? 0 : s.pending;
-    var detail = (s.rows == null ? 0 : s.rows) + " rows · " + pending + " pending";
+    // US-564: a null count renders as an em-dash, NEVER as 0. Both halves of this
+    // had to change together -- the emitter stopped inventing `syncPending=0`
+    // and this line stopped re-inventing it -- because either coercion alone
+    // ships green and the panel still reads "0 pending", which is an all-clear
+    // on whether the drive is backed up that nobody ever measured.
+    var pending = s.pending == null ? "—" : s.pending;
+    var detail = (s.rows == null ? "—" : s.rows) + " rows · " + pending + " pending";
     if (s.stale === true) {
       return { label: "SYNC", value: "STALE", detail: detail, level: "amber" };
     }

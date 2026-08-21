@@ -301,10 +301,14 @@ class CardStateEmitterMixin:
             obdLastSeenS=None,
             syncLastOkTs=self._lastSyncOkTsIso,
             syncRows=self._lastSyncRows,
-            # Pending-row count is not separately tracked here; the load-bearing
-            # un-backed-up-data signal is the stale-while-driving amber flag the
-            # emitter computes from syncLastOkTs vs now (TD: exact pending count).
-            syncPending=0,
+            # US-564: NOT MEASURED HERE -> None, never 0. A pending-row count is
+            # not tracked at this layer, and `0` is the single most reassuring
+            # value this field can take -- "everything is backed up" -- so
+            # emitting it was a confident claim about data safety that nobody
+            # had checked. The load-bearing un-backed-up signal remains the
+            # stale-while-driving amber flag the emitter derives from
+            # syncLastOkTs. (TD: acquire a real pending count.)
+            syncPending=None,
             powerMode=powerMode,
             powerSource=powerSource,
             driveState=driveState,

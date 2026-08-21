@@ -61,6 +61,10 @@
 #               |              | gyro-fused pitchDeg and derive gradePct from it
 #               |              | (accel-only tilt removed from the grade path);
 #               |              | ZUPT gate fed from the bus speed topic.
+# 2026-08-21    | Rex (US-564) | Subscribe the retained per-channel gate STATE:
+#               |              | a derived field goes typed-NA WITH ITS INPUT,
+#               |              | carrying the gate's own reason (sensor_mute /
+#               |              | sensor_stale) rather than a generic absence.
 # ================================================================================
 ################################################################################
 
@@ -93,12 +97,19 @@ from pi.sensors.pitch_fusion import (
     gradePctFromPitchRad,
 )
 
+# US-564: the gate-state topic derivation, imported rather than re-spelled so
+# producer and consumer cannot bind to two different names for one channel.
+from pi.sensors.plausibility_gate import channelStateTopic
+
 # Reuse the boot-state primitives (one provisioning + atomic-write impl, no dup).
 from pi.splash.boot_state_emitter import ensureStatesDir, writeStateAtomic
 
 logger = logging.getLogger(__name__)
 
 __all__ = [
+    "CHANNEL_STATE_ACCEL",
+    "CHANNEL_STATE_GYRO",
+    "CHANNEL_STATE_MAG",
     "DEFAULT_ACCEL_TRUST_BAND",
     "DEFAULT_GRAVITY_TAU_S",
     "DEFAULT_MOUNT",
@@ -148,6 +159,34 @@ STATE_IMU_PRESENCE = "state.sensor.imu"
 # acquisition path. The value is used as a boolean "is it zero", never as a
 # magnitude, so the reading's UNIT is deliberately irrelevant here.
 TOPIC_OBD_SPEED = "raw.obd.SPEED"
+
+# US-564: the retained per-channel gate STATE topics the reader publishes when a
+# channel starts (or stops) failing the plausibility/invariance gate. Derived
+# from the raw topics rather than hand-typed, so this subscriber cannot bind to
+# a second spelling of a channel it already names above.
+CHANNEL_STATE_ACCEL = channelStateTopic(TOPIC_IMU_ACCEL)
+CHANNEL_STATE_GYRO = channelStateTopic(TOPIC_IMU_GYRO)
+CHANNEL_STATE_MAG = channelStateTopic(TOPIC_IMU_MAG)
+
+# state topic -> the raw channel it describes.
+_GATE_STATE_TOPICS = {
+    CHANNEL_STATE_ACCEL: TOPIC_IMU_ACCEL,
+    CHANNEL_STATE_GYRO: TOPIC_IMU_GYRO,
+    CHANNEL_STATE_MAG: TOPIC_IMU_MAG,
+}
+
+# Which published fields DIE WITH which source channel. This map is the whole
+# "derived fields go typed-NA with their input" rule, written down once: a
+# heading is not a reading of the compass, it is a reading of the magnetometer
+# re-expressed, so a latched magnetometer must take headingDeg with it rather
+# than let the card print `236.9` to a tenth of a degree off a frozen vector.
+# Accel is absent from this map deliberately -- it is not the input to SOME
+# fields, it is the gravity reference under all of them, so its gate blanks the
+# whole instrument (see _handleChannelGate).
+_CHANNEL_DERIVED_FIELDS = {
+    TOPIC_IMU_GYRO: ("pitchDeg", "gradePct"),
+    TOPIC_IMU_MAG: ("headingDeg",),
+}
 
 # Default tmpfs states dir (matches boot_state_emitter + the states-http unit).
 _DEFAULT_STATES_DIR = "/run/eclipse-obd/states"
@@ -371,6 +410,7 @@ def buildImuState(
     mag: tuple[float, float, float] | None = None,
     pitchRad: float | None = None,
     unavailableReason: str | None = None,
+    fieldReasons: dict[str, str] | None = None,
 ) -> dict:
     """Assemble the states/imu payload (pure -- the Atlas Q-A contract).
 
@@ -389,6 +429,11 @@ def buildImuState(
         unavailableReason: When set, the whole instrument is reported absent with
             this reason (e.g. the sensor is not wired) and every derived field is
             null -- silence reported as silence.
+        fieldReasons: US-564 per-field gate overrides ``{field: reason}``. Applied
+            LAST, so a gated source always beats a computed value: the caller may
+            still be holding a perfectly derivable number from a channel that has
+            since been proven not to be measuring, and the arithmetic working is
+            not evidence that the input was real.
 
     Returns:
         ``{available, ts, gLat, gLon, gMag, headingDeg, pitchDeg, gradePct,
@@ -418,6 +463,7 @@ def buildImuState(
         for field in _DERIVED_FIELDS:
             reasons.setdefault(field, blanketReason)
         reasons["altitude"] = REASON_NO_SOURCE
+        _applyFieldReasons(state, reasons, fieldReasons)
         return state
 
     assert gravity is not None  # narrowed by the blanket check above
@@ -453,7 +499,23 @@ def buildImuState(
         reasons["headingDeg"] = REASON_NO_MAG
     else:
         state["headingDeg"] = heading
+    _applyFieldReasons(state, reasons, fieldReasons)
     return state
+
+
+def _applyFieldReasons(
+    state: dict[str, Any], reasons: dict[str, str], fieldReasons: dict[str, str] | None
+) -> None:
+    """Null out gated fields and stamp the gate's reason (US-564, applied LAST).
+
+    Unknown field names are ignored rather than raising: this runs on the display
+    path inside a sensor thread, and a typo in a caller's map must not take the
+    whole instrument down. The fields themselves are pinned by test.
+    """
+    for field, reason in (fieldReasons or {}).items():
+        if field in _DERIVED_FIELDS:
+            state[field] = None
+            reasons[field] = reason
 
 
 def _vec3(value: Any) -> tuple[float, float, float] | None:
@@ -537,6 +599,8 @@ class ImuStateBridge:
         self._gyro: tuple[float, float, float] | None = None
         self._gyroCapture: float | None = None
         self._lastWriteCapture: float | None = None
+        # US-564: raw channel topic -> the gate reason currently refusing it.
+        self._gatedChannels: dict[str, str] = {}
 
     # -- lifecycle -------------------------------------------------------------
     def start(self) -> None:
@@ -573,12 +637,15 @@ class ImuStateBridge:
         """Fold one bus sample into the states/imu view.
 
         Returns True if the sample was one of this bridge's topics (accel, gyro,
-        mag, OBD speed, or the retained presence STATE); False for anything
-        else, which is ignored without a write.
+        mag, OBD speed, a per-channel gate STATE, or the retained presence
+        STATE); False for anything else, which is ignored without a write.
         """
         topic = getattr(sample, "topic", None)
         if topic == STATE_IMU_PRESENCE:
             self._handlePresence(sample)
+            return True
+        if topic in _GATE_STATE_TOPICS:
+            self._handleChannelGate(sample, _GATE_STATE_TOPICS[topic])
             return True
         if topic == TOPIC_IMU_MAG:
             self._mag = _vec3(getattr(sample, "value", None))
@@ -618,6 +685,10 @@ class ImuStateBridge:
         self._magCapture = None
         self._gyro = None
         self._gyroCapture = None
+        # An unplug supersedes any per-channel gate verdict: `sensor_absent` is
+        # the more fundamental fact, and a stale `sensor_stale` marker left
+        # behind would out-rank it on the next re-plug.
+        self._gatedChannels.clear()
         # Drop the attitude too -- a frozen pitch left over from before the
         # unplug would render as a live grade. The ZUPT bias deliberately
         # survives (see PitchFusion.reset): how the board is bolted in did not
@@ -626,6 +697,57 @@ class ImuStateBridge:
         tsUtc = getattr(sample, "tsUtc", "") or self._nowIsoFn()
         self._writeState(buildImuState(tsUtc=tsUtc, unavailableReason=REASON_SENSOR_ABSENT))
         self._lastWriteCapture = None
+
+    def _handleChannelGate(self, sample: Any, rawTopic: str) -> None:
+        """Record (or clear) a channel's gate refusal and react to it.
+
+        The reader has already stopped publishing the gated channel; this makes
+        the DISPLAY say why. Without it the card would show the generic
+        ``no_mag_reading`` -- true, but it loses the distinction between "the
+        pairing window lapsed" and "this chip is answering with a value it has
+        not measured since boot", which is exactly the fact the operator needs.
+        """
+        gated = not bool(getattr(sample, "value", 0.0))
+        if not gated:
+            self._gatedChannels.pop(rawTopic, None)
+            return
+        reason = getattr(sample, "unit", "") or REASON_SENSOR_ABSENT
+        self._gatedChannels[rawTopic] = reason
+        if rawTopic == TOPIC_IMU_MAG:
+            # Drop the held reading outright. Leaving it would let the pairing
+            # window carry a value the gate has just PROVEN is not a measurement
+            # into one last heading -- a fabricated bearing with a fresh
+            # timestamp on it.
+            self._mag = None
+            self._magCapture = None
+            return
+        if rawTopic == TOPIC_IMU_GYRO:
+            self._gyro = None
+            self._gyroCapture = None
+            return
+        # Accel is the gravity reference under every derived field, so its
+        # refusal blanks the whole instrument -- and it writes IMMEDIATELY,
+        # bypassing the display-cadence window, for the same reason an unplug
+        # does: the alternative is the last live g reading sitting on the card
+        # looking current while nothing behind it is reading.
+        self._gravity = None
+        self._lastAccelCapture = None
+        self._mag = None
+        self._magCapture = None
+        self._gyro = None
+        self._gyroCapture = None
+        self._pitchFusion.reset()
+        tsUtc = getattr(sample, "tsUtc", "") or self._nowIsoFn()
+        self._writeState(buildImuState(tsUtc=tsUtc, unavailableReason=reason))
+        self._lastWriteCapture = None
+
+    def _fieldReasons(self) -> dict[str, str]:
+        """Map the currently-gated channels onto the fields derived from them."""
+        out: dict[str, str] = {}
+        for rawTopic, reason in self._gatedChannels.items():
+            for field in _CHANNEL_DERIVED_FIELDS.get(rawTopic, ()):
+                out[field] = reason
+        return out
 
     def _handleAccel(self, sample: Any) -> None:
         """Update the gravity estimate and (at the display cadence) write."""
@@ -652,6 +774,7 @@ class ImuStateBridge:
                 linear=linear,
                 mag=self._freshMag(capture),
                 pitchRad=self._pitchFusion.pitchRad,
+                fieldReasons=self._fieldReasons(),
             )
         )
         self._lastWriteCapture = capture
@@ -772,6 +895,11 @@ def createImuStateBridgeFromConfig(
             TOPIC_IMU_MAG,
             TOPIC_OBD_SPEED,
             STATE_IMU_PRESENCE,
+            # US-564: without these the reader would silence a gated channel and
+            # the card would still be able to publish a field derived from it.
+            CHANNEL_STATE_ACCEL,
+            CHANNEL_STATE_GYRO,
+            CHANNEL_STATE_MAG,
         ],
         QoS.LOSSY,
         _SUB_NAME,
