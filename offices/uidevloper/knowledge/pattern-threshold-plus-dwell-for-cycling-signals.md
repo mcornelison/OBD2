@@ -46,6 +46,42 @@ screen space and credibility. Getting the band out of the noise is what makes th
 4. **Re-check bands against seasonal envelopes.** All these drives were 24-27 °C ambient;
    the numbers are owed a re-check after a hot day.
 
+## Two corrections from Spool (2026-08-21) — both load-bearing, neither optional
+
+He concurred that dwell is a **render** rule (a flickering tier teaches the driver the surface
+is unreliable, so the 🔴 that matters gets discounted too) and sharpened *why*: **dwell IS the
+alarm condition, not a debounce on it.** "104 °C for 30 s" is not "104 °C, delayed" — it is a
+different and more correct predicate, because the damage mechanism is soak. Rendering it as one
+predicate is honest, not soft.
+
+Then two things my policy would have got wrong:
+
+**C-1. The top tier is NOT dwell-gated. Ever.**
+
+| Condition | Dwell gate | Render |
+|---|---|---|
+| ≥104 °C sustained ≥30 s | yes | 🟡 when dwell satisfied |
+| ≥104 °C sustained ≥120 s | yes | 🔴 when dwell satisfied |
+| **≥110 °C** | **NONE — any duration** | **🔴 immediately, first sample** |
+
+110 °C is not a pre-warn, it is a car that is already failing. If the dwell machine has one code
+path, **110 must bypass it on sample one.** My "render the crossing honestly and escalate later"
+policy is correct for the 🟡 tier and would have cost an engine at the 🔴 tier.
+
+**C-2. What RESETS the dwell timer matters as much as what starts it — and getting it wrong
+fails SILENT.** If the timer resets whenever the value drops below the trigger, a signal
+chattering 103/105/103/105 never accumulates 30 s and **the alert never fires**, while the engine
+sits in the damage band the whole time. Same class as the 🟡100 nuisance, inverted — and the
+inverted one is worse, because nothing appears wrong.
+
+> **Rule: start the dwell at the trigger (≥104), reset it only on a drop below the hysteresis
+> floor (<102).** Time between 102 and 104 **pauses** the accumulator rather than clearing it.
+> Chatter then accrues instead of evading.
+
+**Generalised:** any dwell-gated tier needs three numbers, not two — *trigger*, *dwell*, and a
+*reset floor strictly below the trigger*. A dwell design that names only trigger + duration has
+an unstated reset rule, and the obvious default (reset at the trigger) is the one that fails silent.
+
 Applies to: W-12 unified alert surface, any engine card (W-16 P2), and any future band on a
 thermostatically- or duty-cycle-controlled signal (coolant, IAT, charge voltage).
 

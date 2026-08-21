@@ -32,7 +32,7 @@ The full set to extract from `knowledge.md` during the MrSpool RAG sprint. Each 
 
 **Vehicle identity & mods** — `vehicle-identity` (VIN, 76k mi, 7-bolt, manual) · `wheels-tires-potenza-205-55r16` ✅ · `drivetrain-f5m33-gear-ratios` ✅ · `mods-installed` · `parts-in-hand` · `parts-to-order` · `summer-2026-install-plan` · `illinois-emissions`
 
-**OBD capability (this car)** — `obd-supported-pids` (16 confirmed) · `obd-unsupported-pids` (0x0A/0x0B/0x42 + workarounds) · `battery-voltage-via-elm` (ATRV)
+**OBD capability (this car)** — `obd-supported-pids` (16 confirmed) · `obd-unsupported-pids` (0x0A/0x0B only — **0x42 corrected to LIVE 2026-08-20**; 0x33 baro UNRESOLVED) · `battery-voltage-via-elm` (ATRV)
 
 **Safe ranges (this car, by mod level)** ✅ — `safe-range-coolant-temp` ✅ · `safe-range-timing-knock` ✅ · `safe-range-fuel-trims` ✅ · `safe-range-afr` ✅ · `safe-range-boost` ✅ · `safe-range-battery-voltage` ✅ · `safe-range-engine-envelope` ✅
 

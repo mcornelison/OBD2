@@ -18,15 +18,47 @@ All live engine events use the existing DTC taxonomy: **🔴 STOP / 🟡 WATCH /
 
 | Band | Range | Render |
 |---|---|---|
-| 🟢 Normal | **≤ 99 °C (210 °F)** | green — includes hot-day, fan-on idle (99 °C measured benign) |
-| 🟡 WATCH | **100–103 °C (212–219 °F)** | amber pre-warn — reduce load, check fan/coolant level/water pump |
-| 🔴 STOP | **≥ 104 °C (220 °F)** | red takeover — pull over |
+> **⚠️ SUPERSEDED 2026-08-20 (Spool self-correction, Session 37). The 🟡 100–103 °C band below was WRONG and is WITHDRAWN.**
+> It sits *inside this car's normal fan-cycle oscillation band* and would have fired on **6 of the last 7 healthy
+> captures**. Iris ACKed the withdrawal 2026-08-20; nothing was built on it. **Do not implement 🟡 100.**
+> The rationale sentence that justified it was doubly bad: it cited a "46 °C-ambient day" — that was an **IAT**
+> reading, and IAT is **not ambient** on this car (proven drive 41). There has never been a 46 °C Chicago day.
 
-**This answers your binary-vs-graduated question: graduated, with a real amber pre-warn — NOT green→red.** The amber band exists because we've measured this car hit **101 °C** in normal city driving on a 46 °C-ambient day (Drive 27) — that's the top of normal, so amber must start at 100, above observed-normal, giving the driver a genuine heads-up before the danger ceiling.
+**CURRENT BAND — threshold + dwell (measured, not provisional):**
 
-**Why 104 °C is the 🔴 line (absolute, not rate-based):** on the 4G63, sustained coolant ≥104 °C is the head-gasket-failure band — head bolts stretch, the MLS gasket loses clamp load, and coolant enters #4 (the rear cylinder, runs hottest). This is a hard physical limit, established SSOT.
+| Band | Condition | Render |
+|---|---|---|
+| 🟢 Normal | **≤ 101 °C** | green — this includes the fan-cycle peak. 101 °C is the all-time max across 10,349 samples. |
+| 🟡 WATCH | **≥ 104 °C sustained ≥ 30 s** | amber — reduce load, check fan / coolant level / water pump |
+| 🔴 STOP | **≥ 110 °C any duration**, OR **≥ 104 °C sustained ≥ 120 s** | red takeover — pull over |
 
-**Hysteresis (anti-flicker):** clear 🟡→🟢 only after dropping **below 98 °C** (2 °C deadband), so a reading hovering at the boundary doesn't strobe.
+**Why dwell, not a bare threshold:** head-gasket damage on the 4G63 is thermal **soak**, not a momentary touch.
+Head bolts stretch and the MLS gasket loses clamp load under sustained heat; coolant then enters #4 (rear
+cylinder, runs hottest). Five seconds at 104 °C does not do that — two minutes does. The alert should model
+the damage mechanism, not the instantaneous reading.
+
+**Why the dwell numbers are these numbers (empirical, drives 33–41):**
+
+```
+all-time max coolant:        101.0 °C
+samples >= 102:              0   (of 10,349)
+samples >= 104:              0   (of 10,349)
+longest excursion >= 100:    22 s  (typical 2-14 s)
+```
+
+30 s clears **every** observed healthy excursion with 8 s of margin, and halves detection latency versus the
+60 s I originally sent as provisional. On a real thermal event, 30 seconds of earlier warning is worth having.
+
+**Counter-intuitive but load-bearing: moving 🟡 UP strengthens the alarm.** One that fires on every normal
+idle trains the driver to ignore it, and then it is decoration.
+
+**Hysteresis (anti-flicker):** clear 🟡→🟢 only after dropping **below 102 °C** and holding 10 s.
+
+**⚠️ Re-check owed:** drives 39/40/41 were all **24–27 °C ambient**. These bands are unvalidated for a ~35 °C
+day. Do not treat them as final-for-all-conditions until a hot-day capture exists.
+
+**Lesson (generalize this):** a bare threshold set inside a cycling signal's oscillation band **always**
+nuisance-fires. Applies to any thermostatically- or duty-cycle-controlled signal — coolant, IAT, charge voltage.
 
 ### 1.2 Knock — **NEEDS ECMLink** (does not exist on OBD)
 
@@ -45,7 +77,7 @@ Context: 10–15° of retard *that recovers above 5000 RPM* is the ECU correctly
 
 ### 1.3 System voltage — **HAVE today** (ELM327 `ATRV`, 🔴-capable)
 
-Source is the adapter's `ATRV` (PID 0x42 is unsupported on this ECU), engine-running ≈ charging-system output. See `cards/safe-range-battery-voltage.md` for the SSOT card.
+Source is the adapter's `ATRV`, engine-running ≈ charging-system output. *(Correction 2026-08-20: PID 0x42 **is** live on this ECU — 76 rows / 29 distinct / 12.975–14.451 V on drive 33. The earlier "unsupported" claim here was wrong. `ATRV` stays the production path because it is adapter-local and independent of K-line bandwidth, but it is now a **choice**, not a workaround forced by a dead PID.)* See `cards/safe-range-battery-voltage.md` for the SSOT card.
 
 | Band | Range (engine running) |
 |---|---|
@@ -122,7 +154,7 @@ This isn't a preference — it's a safety requirement. An alert the driver can't
 | Your question | Spool's answer |
 |---|---|
 | Coolant 🔴 threshold | ✅ ≥ 104 °C / 220 °F (absolute) |
-| Coolant 🟡 pre-warn | ✅ YES — 100–103 °C amber (graduated, not binary) |
+| Coolant 🟡 pre-warn | ✅ YES, but **dwell-gated** — 🟡 ≥104 °C sustained ≥30 s (the old 100–103 °C absolute band is **WITHDRAWN**, see §1.1). 🔴 ≥110 °C is NOT dwell-gated. |
 | Knock 🔴 always vs gated | Gated (≥~15–18° non-recovering / knock-sum spike); **ECMLink-only — no alert without it** |
 | Voltage / lean tiers + escalation | Tiers above; escalate on low-V **+ boost** (injector-lean) and O2-lean **+ high-load** |
 | Other screen-owners | Today: coolant + voltage only. Oil-pressure would be top-🔴 but **no sensor exists** |

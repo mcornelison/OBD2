@@ -29,5 +29,5 @@ edge (where connectors mount). The two datums are always ~2.3 mm apart on this p
 - Err long (more connector room), never short.
 
 See also: [[pattern-hardware-measurement-frame-and-datasheet-authority]] (Lesson 6 —
-"the gap is wrong" = datum disagreement), [[reference-osoyoo-v3-display-dimensions]],
+"the gap is wrong" = datum disagreement), `enclosure1/datasheets/2024009100-extracted-facts.md`,
 [[project-display-case-design-decisions]], [[feedback-cio-clarifying-questions-always-welcome]].

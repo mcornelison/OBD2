@@ -65,9 +65,9 @@ slice — those three are the ones that bite.
 - CLI transform flags (`--rotate-x 180 --ensure-on-bed`) are unreliable for
   re-orienting — they didn't reliably flip a lid. Better to model the print
   orientation in OpenSCAD (a dedicated `part=N`) and slice that. See
-  [[pattern-flat-base-and-print-orientation]].
+  `docs/3d-printing/design-flat-base-and-orientation.md`.
 - Always tell the CIO to **preview each gcode** (PrusaGCodeViewer / drag into
   PrusaSlicer) before printing — CLI slicing is legit but he feeds it to hardware.
 
-Related: [[pattern-openscad-cli-numeric-part-selector]] (the SCAD->STL half of the
-toolchain), [[reference-mk3s-plus-first-print-guide]], [[reference-cio-3d-printing-setup]].
+Related: `docs/3d-printing/openscad-cli.md` (the SCAD->STL half of the
+toolchain), `docs/3d-printing/first-print-guide.md`, `docs/3d-printing/printer-and-materials.md`.

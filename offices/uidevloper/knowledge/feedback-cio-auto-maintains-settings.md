@@ -18,4 +18,4 @@ Observed behaviour (2026-05-22 settings-optimization session): I wrote a large (
 4. Trust the system to grow the allowlist organically as I demonstrably use new operations. The harness auto-adds new perms on first use (with CIO approval), then they stick.
 5. Treat `.claude/settings.local.json` resets as **operational housekeeping**, not as a request for me to redo the work. Per the system reminder, the user knows and doesn't want acknowledgment of the reset.
 
-Related: [[pattern-verify-peer-templates-before-copy]] — same "verify before asserting" discipline applied to file contents that change under you.
+Related: [[pattern-the-artifact-is-not-the-fact]] — same "verify before asserting" discipline applied to file contents that change under you.

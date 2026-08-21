@@ -22,4 +22,4 @@ When the CIO directs me to upgrade a tool I own (a skill, a command, a settings 
 
 **First instance (2026-05-22):** CIO direct quote: "use the newest version. as I am the developer, the chanages are minor, but you can suggest to your team mates that there is a new version available." Applied to A2AL v0.4.0 → v0.4.1 upgrade. Marcus note included the project root `/CLAUDE.md` A2AL-block suggestion per v0.4.1's `examples/ClaudeCode/CLAUDE-sample.md`.
 
-Related: [[pattern-verify-peer-templates-before-copy]] — also applied this session.
+Related: [[pattern-the-artifact-is-not-the-fact]] — also applied this session.

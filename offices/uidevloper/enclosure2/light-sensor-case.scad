@@ -79,7 +79,7 @@ cable_h  = 3.5;         // rounded slot height
 // FLAT (no VHB recess): the whole footprint contacts the bed for adhesion,
 // and VHB tape sticks fine to a plain flat face. The recess was dropped after
 // it caused perimeter-only bed contact -> repeated print release. See
-// knowledge/pattern-flat-base-and-print-orientation.md.
+// knowledge/docs/3d-printing/design-flat-base-and-orientation.md.
 
 // ---- Air vents (thin rounded-end vertical slots) ------------------------
 vent_w      = 1.3;      // slot width (the thin dimension)

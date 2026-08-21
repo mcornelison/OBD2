@@ -31,7 +31,7 @@ That basis moved twice, and both moves were the same error made by two different
 **The durable rule for this surface: a readout requires a parameter seen returning a real value in
 `realtime_data`.** Everything weaker — a poll list, a supported-count, a tier allocation, a card
 tagged `both` — is a plan, not evidence. See
-[[pattern-verify-value-provenance-before-building-a-special-case]].
+[[pattern-the-artifact-is-not-the-fact]].
 
 | Signal | Ruling | Notes |
 |---|---|---|
@@ -68,7 +68,7 @@ freeze. Spool's bands are recorded here as documentation only, **not to render**
   he re-baselined against it (drives 25–38, n≈2,700): per-drive averages **−2.6 % to +1.5 %**, full
   range **−3.9 % to +3.1 %**, warm parked idle **−2.6 % / −2.4 %**. All inside the ±5 % 🟢 band,
   **including the idle case he warned about** — a naive band does *not* false-alarm on this car.
-  The special-case is therefore **not built**. See [[pattern-verify-value-provenance-before-building-a-special-case]].
+  The special-case is therefore **not built**. See [[pattern-the-artifact-is-not-the-fact]].
 - **Fixture warning (Spool, unresolved):** do **not** use drives **35/36** as a "healthy idle"
   reference in any mock or fixture — they report LTFT **exactly 0.00 across all 232 samples, zero
   variance**, which is either a genuine adaptive-memory reset or a decode artifact of the same class

@@ -1,6 +1,6 @@
 ---
 name: debug-mk3s-plus-xyz-calibration-failures
-description: Diagnostic ladder for MK3S+ "calibration failed - check the axes" error during XYZ Calibration wizard. Captures the failure-mode order most likely on a brand-new first-time setup, what each cause looks like, and the manual section references. Companion to reference-mk3s-plus-first-print-guide.md.
+description: Diagnostic ladder for MK3S+ "calibration failed - check the axes" error during XYZ Calibration wizard. Captures the failure-mode order most likely on a brand-new first-time setup, what each cause looks like, and the manual section references. Companion to docs/3d-printing/first-print-guide.md.
 metadata:
   type: reference
 ---

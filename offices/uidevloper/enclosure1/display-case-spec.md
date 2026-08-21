@@ -425,7 +425,7 @@ Assembly preview: `enclosures/renders/assembly.png`.
 
 ## 12. Companion files
 
-- `offices/uidevloper/knowledge/reference-osoyoo-v3-display-dimensions.md` — every datasheet number with annotations and the source link
+- `offices/uidevloper/knowledge/enclosure1/datasheets/2024009100-extracted-facts.md` — every datasheet number with annotations and the source link
 - `offices/uidevloper/knowledge/project-display-case-design-decisions.md` — the decision history with *why* for each locked decision
 - `offices/uidevloper/knowledge/feedback-cio-clarifying-questions-always-welcome.md` — CIO interaction norm: ask on load-bearing ambiguity
 - OSOYOO datasheet PDF (1.6 MB binary): cached at `C:\Users\mcorn\.claude\projects\Z--o-OBD2v2-offices-uidevloper\b1bd785c-8e41-4c59-9796-fe3980a9b695\tool-results\webfetch-1779497247647-jmet9t.pdf` (re-fetch from https://osoyoo.com/picture/3.5hdmi_screen/2024009100/datasheet.pdf if cache evicted)

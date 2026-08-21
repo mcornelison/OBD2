@@ -38,7 +38,7 @@ Escalation: mouse-ear corner tabs, draft shield.
   bridge the whole opening → PrusaSlicer warns "long bridging extrusions."
 - Model the print orientation explicitly as its own `part=N` in the SCAD (e.g. lid
   rotated 180° about X, dropped onto the bed) rather than relying on slicer rotate
-  flags — see [[pattern-prusaslicer-cli-slicing]].
+  flags — see `docs/3d-printing/slicing-cli.md`.
 
 ## 4. Delete the trap file — a recurring "wrong print" is a file problem
 On the light-sensor case the CIO failed **6 prints in a row** even after I'd built a
@@ -61,5 +61,5 @@ problem — a flat part contacts its whole footprint. That single observation sa
 vertices and check the lowest distinct Z — a flat bottom reads `[0.0, <floor_top>, …]`
 with **no** thin intermediate layer (e.g. `0.5`) that would be the recess floor.
 
-Related: [[reference-mk3s-plus-first-print-guide]], [[reference-cio-3d-printing-setup]],
-[[pattern-openscad-cli-numeric-part-selector]], [[pattern-prusaslicer-cli-slicing]].
+Related: `docs/3d-printing/first-print-guide.md`, `docs/3d-printing/printer-and-materials.md`,
+`docs/3d-printing/openscad-cli.md`, `docs/3d-printing/slicing-cli.md`.

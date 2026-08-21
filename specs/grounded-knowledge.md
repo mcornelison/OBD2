@@ -72,7 +72,7 @@ Source: DSMTuners community consensus, compiled in `specs/obd2-research.md` Sect
 
 | Parameter | Safe Range | Alert Threshold | Notes |
 |-----------|-----------|-----------------|-------|
-| Coolant Temp | 190-210°F | >220°F | Stock thermostat opens at 190°F |
+| Coolant Temp | ≤101 °C (214°F) | 🟡 ≥104 °C **sustained ≥30 s** · 🔴 ≥110 °C any duration, or ≥104 °C ≥120 s | **CORRECTED 2026-08-20 (Spool, measured).** Threshold+dwell, NOT a bare threshold — 101 °C is this car's normal **fan-cycle ceiling**. A bare 🟡 inside a cycling signal's oscillation band nuisance-fires (a bare 100 °C would have fired on 6 of the last 7 *healthy* captures). Derivation: `offices/tuner/knowledge.md` §Cooling. |
 | Boost (stock turbo) | ~12 psi | >15 psi on stock | Stock wastegate actuator limit |
 | AFR at WOT | 11.0-11.8:1 | >12.5:1 under boost (lean danger) | Rich is safe, lean kills engines |
 | Knock count | 0 | >0 sustained | Any knock is bad; transient single counts can be noise |
@@ -105,6 +105,14 @@ Authoritative empirical observations from this specific Eclipse. These values wi
 | 0x10 | MAF Air Flow Rate | Session 23 live capture |
 | 0x11 | Throttle Position | Session 23 live capture |
 | 0x14 | O2 Sensor B1S1 (upstream narrowband) | Session 23 live capture |
+| 0x42 | Control Module Voltage | **Drive 33 live capture (2026-08-20)** — 76 rows / 29 distinct / 12.975–14.451 V. Supersedes the Session-23 "unsupported" verdict. |
+| 0x1F | Run Time Since Engine Start | Drive 33 live capture — 75 rows, 75 distinct, monotonic 53→196 s |
+
+**Live capture set = 16 parameters** (drives 39/40/41, 24,342 rows, 2026-08-20). The 11 rows above are the
+Session-23 subset, not the ceiling. **A PID is "supported" only when it appears in a live capture** — the
+config poll list proves nothing (this is how both the 0x42 and the 0x33 errors were made). Full 16-param
+table with per-PID row counts: `offices/tuner/knowledge.md` §"OBD-II on the 2G DSM".
+
 
 **Confirmed UNSUPPORTED** on this 2G ECU (did not respond or returned no-data):
 
@@ -112,11 +120,25 @@ Authoritative empirical observations from this specific Eclipse. These values wi
 |-----|------|-----------|
 | 0x0A | Fuel Pressure | None via OBD-II. ECMLink or aftermarket sensor in future phases. |
 | 0x0B | Intake Manifold Pressure (MAP) | None via OBD-II. Aftermarket 3-bar MAP (GM) or ECMLink in Phase 2. |
-| 0x42 | Control Module Voltage | **Use ELM327 `ATRV` / python-obd `ELM_VOLTAGE`** — adapter-level query, not a PID. See note below. |
+| _(0x42 moved — see correction below)_ | | |
+
+> **⚠️ CORRECTION 2026-08-20 (Spool, Session 37): PID `0x42` CONTROL_MODULE_VOLTAGE IS LIVE on this ECU.**
+> The Session-23 "confirmed unsupported" verdict above is **WRONG** and is retained only for the diagnostic trail.
+> Drive 33 holds **76 real samples across 29 distinct values, 12.975–14.451 V** — a textbook charging curve, not a
+> stuck or defaulted value. The `ATRV` path (below) still works and remains in production; the *claim of
+> unsupported* is what was false. Do not re-derive "0x42 is dead" from the Session-23 row.
+>
+> **`0x33` BAROMETRIC remains genuinely UNRESOLVED** — 75 real rows exist, all on drive 33, all exactly 99.0 kPa.
+> Flatness is *expected* at 1 kPa resolution over 143 s, so it neither proves nor disproves liveness. Settle with
+> `offices/tuner/scripts/probe_obd_capabilities.sh` on a bench session **with capture stopped** (single serial
+> channel). Until then: **do not render baro, and do not derive altitude from it.**
+>
+> **Method rule that produced both errors:** a config poll list is NOT a capability list. Only the live capture
+> set proves a PID returns. Probe, or say unknown.
 
 ### Battery Voltage — NOT a PID on this car
 
-PID 0x42 is unsupported on this 2G ECU. The battery voltage source for the primary display and all voltage alerts is the **ELM327 adapter's `ATRV` command** (accessed in python-obd as `obd.commands.ELM_VOLTAGE`). This is an adapter function, not an OBD-II Mode 01 PID — it measures voltage directly at the OBD-II port's pin 16 and is independent of ECU bandwidth. All code and tests that reference battery voltage must use this path.
+*(Heading retained for the link trail. **PID 0x42 is LIVE** — see the correction above.)* The battery voltage source for the primary display and all voltage alerts remains the **ELM327 adapter's `ATRV` command** — by choice, because it is adapter-local and free of the K-line budget (accessed in python-obd as `obd.commands.ELM_VOLTAGE`). This is an adapter function, not an OBD-II Mode 01 PID — it measures voltage directly at the OBD-II port's pin 16 and is independent of ECU bandwidth. All code and tests that reference battery voltage must use this path.
 
 ### Battery Voltage via ELM_VOLTAGE (2G workaround) — Thresholds
 
@@ -242,7 +264,29 @@ NOT auto-update from this document.
 
 ---
 
-## Ambient Temperature Proxy via IAT at Key-On (US-206)
+## Ambient Temperature Proxy via IAT at Key-On (US-206) — 🔴 DISPROVEN 2026-08-20
+
+> **🔴 THIS SECTION'S PREMISE IS DEAD. IAT IS NOT AMBIENT ON THIS CAR — NOT EVEN AT KEY-ON.**
+> Spool, Session 37, moving-vehicle proof (drive 41): IAT ran **48.1 → 40.6 °C banded by road speed** — it
+> *cools with airflow* and **never approaches the 24–27 °C real ambient**, sitting **14–24 °C high at all times**.
+> The sensor is radiant engine-bay heat-soak dominated. The "cold-soaked intake ≈ ambient" assumption below
+> does not survive contact with the data.
+>
+> **Consequences (binding):**
+> - **Never use IAT as ambient anywhere** — not for display, not for IAT-caution interpretation, not for
+>   density/grade correction, not for AI grounding.
+> - **`drive_summary.ambient_temp_at_start_c` is MISLABELED.** Drive 41 logged **47 °C (117 °F)** into that
+>   column as "ambient" on a Chicago August afternoon. Rename owed (filed to Marcus 2026-08-20). Any analysis
+>   keyed on that column is reading a heat-soaked intake, not weather.
+> - **There is no ambient source on this vehicle.** PID 0x46 is unsupported and no external sensor is fitted.
+>   The honest-instrument answer is **"ambient unknown"** — the alternative is fabrication, so nothing here
+>   gets a substitute proxy.
+> - **Display rule:** label the value **INTAKE AIR**, informational only, no red tier.
+>
+> The `fromState` capture rule below is retained **only** as the record of what US-206 shipped. It is not a
+> recommendation and must not be cited as one.
+
+### Superseded rationale (record only — do not implement)
 
 The 2G Eclipse does not support PID 0x46 (ambient air temperature). Spool's Phase 1 spec references ambient for IAT-caution interpretation (e.g., "IAT > 131°F = caution IF ambient was cold; 90°F ambient means heat-soaked IAT > 130°F is less alarming"). The workaround is to capture IAT (PID 0x0F) at drive-start and store it as `drive_summary.ambient_temp_at_start_c` — but only when the engine was genuinely off beforehand.
 

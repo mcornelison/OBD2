@@ -7,6 +7,94 @@
 
 ---
 
+## Session 38 — 2026-08-21 (OFFICE CONSOLIDATION — one version of the truth; 4 stale facts swept out of shared spec; 4th self-correction)
+
+**Context**: CIO directive — update CLAUDE.md, knowledge.md and all *shared* team knowledge; optimize for
+redundancy; push project-shared facts into shared locations so there is ONE version of the truth; leave the
+office ready for a clean next session.
+
+### What Happened
+
+**Found the real problem before touching anything: the same safety threshold existed in four files with two
+different values.** The coolant band was stated in `knowledge.md`'s header (superseded 60 s/180 s dwell), in
+`knowledge.md`'s body ("re-derivation owed"), in `MEMORY.md` (correct 30 s/120 s), and in the advisory Iris
+renders from (the fully withdrawn 🟡100 °C absolute band). The version with the *most* authority — the render
+authority — was the *most* wrong. That is the failure mode of append-only knowledge: corrections land where
+they were discovered, not where they are consumed.
+
+- **Shared spec `specs/grounded-knowledge.md` corrected on 4 counts** (it is PM Rule 7's source, read by
+  Ralph/Argus/Atlas/Marcus):
+  1. `0x42 CONTROL_MODULE_VOLTAGE` moved from "confirmed unsupported" → **LIVE** (drive 33: 76 rows,
+     29 distinct, 12.975–14.451 V). Session-23 verdict retained as diagnostic trail only.
+  2. **IAT-as-ambient (US-206) marked DISPROVEN** with the drive-41 speed-banded proof; the shipped
+     `fromState` rule demoted to "record only — do not implement".
+  3. Coolant row replaced with **threshold + dwell**.
+  4. Supported-PID table extended (0x42, 0x1F) + the standing method rule added: *a config poll list is
+     not a capability list; only the live capture set proves a PID returns.*
+- **`edr-alert-live-instrument-thresholds-advisory.md` §1.1 corrected** — the withdrawn 🟡100 band kept
+  visible as a struck record (so nobody re-derives it), replaced by the measured dwell band with the
+  10,349-sample derivation inline. Also killed its 0x42 claim.
+- **`knowledge.md` header collapsed 11,775 chars → ~1,900** — a single-line rolling changelog that
+  duplicated `sessions.md` *and* carried the superseded dwell. Archived verbatim to
+  `knowledge/knowledge-header-changelog-archive.md` (explicitly zero authority). Replaced with a
+  current-state table that points at body sections instead of restating them.
+- **`knowledge.md` internal contradictions resolved** — 0x42 line said "confirmed unsupported" 500 lines
+  above the finding that it is live; coolant note said "re-derivation owed" when the derivation was done.
+- **`CLAUDE.md` rebuilt**: retired shared-checkout section replaced with per-agent-clone discipline
+  (commit **AND push**); vehicle block collapsed from a full mods/parts/install-plan duplicate to a
+  boot-minimum identity table + pointer to `cards/`; added a **"One Version of the Truth" map** naming the
+  single home for each class of fact; folder structure corrected (`cards/` was entirely missing).
+- **Inbox cleared** — replies to Iris (dwell render rule) and Atlas (4.1 g correction, US-562), withdrawal
+  to Marcus.
+
+### Key Decisions
+
+- **🔴 ≥110 °C is NOT dwell-gated — carve-out issued to Iris.** Her render policy (no tier colour until
+  dwell satisfied) is correct and I concurred, but 110 °C is a car already failing; it must paint red on
+  sample one, bypassing the dwell machine entirely.
+- **Dwell reset rule issued (new, caught this session):** the dwell timer starts at ≥104 °C but resets only
+  on a drop **below 102 °C**, not below 104. A naive reset-at-104 lets a signal chattering 103/105/103/105
+  sit in the damage band and **never fire** — same class as the 🟡100 nuisance bug, but failing *silent*,
+  which is worse.
+- **`specs/grounded-knowledge.md` is the shared surface for team-consumed tuning facts**; `cards/` stays the
+  atomic SSOT for this-car facts; `knowledge.md` keeps general craft only. Recorded as a table in CLAUDE.md
+  so the next session inherits the rule instead of re-deciding it.
+- **Correction protocol adopted:** fix the SSOT **and sweep every consumer copy in the same session**. This
+  session existed because that was not done on 2026-08-20.
+
+### Self-Correction (4th)
+
+**US-562 roll-up regression WITHDRAWN — it was never real.** The empty `drive_summary` shells were the
+nightly 03:30 batch not having run yet; it ran clean at `Aug 21 03:30:07` and row counts now match exactly.
+Atlas reached the same wrong conclusion independently, which is what makes the underlying schema default
+(`data_quality='full'`, `is_real=0` on an unassessed drive) the real finding — a confident verdict where
+NULL belonged. **Second instance of the same species as the drives 35/36 LTFT call: reading a snapshot as a
+steady state.** New discipline: before filing a regression, establish when the producing job last ran.
+
+Also accepted Atlas's correction that my 4.1 g axis elimination does not hold — it assumed a rigid mount,
+and the IMU is loose on the passenger floor, so tyre grip constrains nothing.
+
+### Current Vehicle State
+
+Unchanged — no new drives. 1998 Eclipse GST, 4G63, stock TD04-13G, ECU MD326328, 93 octane. Engine grade **A**
+across the sampled envelope. Coolant all-time max 101.0 °C. Last capture drives 39/40/41 (2026-08-20).
+IMU still **not secured** — no IMU baseline may be taken at or below drive 41.
+
+### Open Items
+
+1. **HIGH-LOAD CAPTURE — #1 gap, unchanged.** 3rd-gear pulls to ~4,500 RPM. Peak throttle so far is 29%;
+   nothing about knock or high-load fuelling is known on this ECU beyond drives 7/11/26.
+2. **Coolant bands owed a re-check after a ~35 °C day** — all source drives were 24–27 °C ambient.
+3. **`0x33` BAROMETRIC unresolved** — bench probe with capture STOPPED (single serial channel).
+4. **Parasitic-draw test owed** (<50 mA expected); this project's B-063 buck converter must be **ruled out,
+   not assumed**.
+5. **True cold-start curve still owed** — capture begins 30–60 s after key-on, first sample already 54 °C.
+6. **IMU mount + orientation calibration** — must be redone *after* physical mounting; first secured drive
+   is the true baseline. >3 g transient counting is not measurable before then.
+7. Awaiting Iris confirmation that 🔴110 bypasses the dwell machine on sample one.
+
+---
+
 ## Session 37 — 2026-08-20 (THE MOVEMENT DRIVE — 48-day gap closed; 3 carry-forwards retired; 2 defects filed; A-9 re-gate GREEN; 3 self-corrections)
 
 **Context**: The session I'd been waiting 48 days for. CIO idled the Eclipse in the garage (drive 39), took a 30-min meeting, then ran two short city loops (drives 40 + 41). First moving-vehicle data since drive 34 (2026-07-03). Opened with a permission-settings cleanup, closed with three long-standing carry-forwards retired.
