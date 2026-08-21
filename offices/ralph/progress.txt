@@ -721,3 +721,88 @@ Task: drive_summary must not read as assessed before it is assessed
   LINES when used in a Bash `git commit -m` -- it produced a commit whose
   subject was `@`. Use `git commit -F -` with a `<<'EOF'` heredoc.
 ---
+
+## 2026-08-21 - US-566 (Agent 1 / Session 3)
+Task: powerwatch must log its arm decision -- we cannot tell if safety armed
+
+### What was implemented:
+- **THE PREMISE WAS TOO BROAD AND ONE journalctl NARROWED IT.** AC-1 says the
+  service "emits ZERO application log lines today". It does not: the journal
+  carries the GPIO6 power-LOST trigger, the boot-grace "ignoring" lines and
+  UpsMonitor I2C warnings, all from the same pids. What it carries ZERO of,
+  across 8 service starts, is the arm-SUCCESS line.
+- **Real mechanism: this module never configured logging at all.** With no
+  root handler Python falls back to `logging.lastResort` (level WARNING,
+  stderr), so the whole INFO tier was discarded. The success line was
+  `logger.info` (never seen); the failure line is `logger.error` (visible --
+  it has simply never fired). AC-1 is right that both are unconditional; the
+  defect is in what is NOT there, which is why no code review caught it.
+- **Why that distinction is load-bearing:** silence meant EITHER "armed fine"
+  OR "the instrument is broken", with nothing to tell them apart -- the same
+  false-healthy shape US-561 removed from the kiosk watchdog one story earlier
+  in this sprint.
+- **Three fixes.** (1) `main()` installs the project logging config before
+  anything reports a decision -- level only, deliberately no logFile (a
+  shutdown-critical service must not open a second writer on the OBD app's log
+  file). (2) `emitArmDecision()` fires unconditionally on BOTH branches at
+  WARNING/ERROR behind one greppable `ARM DECISION` prefix. (3) The disarmed
+  branch re-states its cause on an interval instead of sitting on a bare
+  `threading.Event().wait()` forever.
+- Fixed a small SSOT leak inside the lines being replaced: the old ERROR read
+  its diagnostics from raw `pld.*` while the decision came from
+  `provider.startupArmCheck()`. Evidence now reads through the provider.
+- New gate `test_arm_decision_logging.py` (24 tests incl. a 6-way MOVED-pin
+  parametrisation) + 2 mechanism assertions added to the systemd-parity
+  subprocess. 71 passed, exit 0; ruff clean on all 3 files.
+
+### Files changed:
+- Modified: `src/pi/power/power_watch/__main__.py` (setupLogging, arm-decision
+  surface, re-stating disarmed hold)
+- Created: `tests/pi/power/power_watch/test_arm_decision_logging.py` (the gate)
+- Modified: `tests/pi/power/power_watch/test_systemd_parity.py` (logging
+  mechanism guard in the real-invocation subprocess)
+
+### Learnings for future iterations:
+- **Pattern discovered (the whole story)**: A PREMISE THAT IS TOO BROAD COSTS
+  AS MUCH AS ONE THAT IS WRONG. "Emits zero log lines" would have sent me
+  hunting for missing log calls -- there are none. When a story says "X never
+  happens", ask WHICH X and check the NEIGHBOURS: the neighbours working
+  (WARNING+ came through fine) is the clue that points at the level filter
+  rather than the call sites. Four sprints running that re-measuring changed
+  the build -- US-560 refuted, US-561 + US-563 confirmed-and-widened, US-566
+  confirmed-but-narrowed.
+- **Pattern discovered**: SILENCE THAT MEANS TWO THINGS IS NOT AN INSTRUMENT.
+  Whenever the good-news path is silent by design, the bad-news path cannot be
+  trusted either -- absence is no longer evidence. The fix is to make the GOOD
+  news explicit, not to add more failure logging.
+- **Pattern discovered**: DO NOT PIN A SAFETY FACT TO A TIER A CONFIG CHANGE
+  CAN SILENCE. The decision goes out at WARNING/ERROR, not INFO, and the test
+  pins the FLOOR (`levelno >= WARNING`) rather than the exact level. It fires
+  once per service start, so severity costs no journal volume. Defence in
+  depth BEHIND the setupLogging fix, not instead of it.
+- **Pattern discovered**: VERIFY YOUR DISCRIMINATOR IS NOT VACUOUS. My unit
+  tests would only have gone red pre-change in the useless ImportError way, so
+  the load-bearing guard lives in the systemd-parity SUBPROCESS (the only test
+  running real `main()` wiring). A 10-second scratch probe proved it genuinely
+  red: with no handlers, lastResort emits a BARE message -- no level name, no
+  logger name -- and drops INFO entirely. So "logger name present" == "a
+  configured handler, not lastResort" is a real discriminator, and it
+  corroborated the live-Pi journal independently.
+- **Pattern discovered**: WHEN YOU REWRITE THE ONLY DIAGNOSTIC LINE ON A PATH,
+  PIN WHAT IT USED TO CARRY. The old ERROR carried 6 remediation facts; a
+  parametrised MOVED-pin test asserts all 6 survive. Adding a prefix while
+  quietly dropping the remediation would have passed every other test I wrote.
+- **Gotcha**: a disarmed powerwatch is `systemctl is-active` == active and
+  otherwise silent -- it looks exactly like a protected one. Any "refuse and
+  stay up" branch needs a heartbeat, or the one line explaining why ages out
+  of the journal and the operator is left with a green-looking unit.
+- **Gotcha (harness, corrects a standing note)**: the Bash tool's
+  compound-command refusal applies to the LOCAL command line only -- a
+  `;`-separated compound INSIDE a quoted `ssh` argument runs fine. Also,
+  output redirection is confined to the working dirs: `> _file.txt` from the
+  default cwd works, an absolute `/z/o/...` path is REFUSED. And `python -m
+  pytest <dir>` WITHOUT `-q` prints the "N passed" summary, so the
+  redirect-then-tail dance is unnecessary. A `cat >> file <<'EOF'` heredoc was
+  REFUSED by the parser ("skipped input between top-level statements") -- use
+  the Edit tool to append to a log file instead.
+---
