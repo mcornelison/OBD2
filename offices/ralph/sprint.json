@@ -10,7 +10,8 @@
     "groomed": 11,
     "reservedSlots": 0,
     "cioDecision": "CIO 2026-08-20: PROCEED WITH 11 STORIES -- do NOT split into 75a/75b. The PM split recommendation (closeout vs chrome) was raised and declined. Both lines ship in one sprint.",
-    "note": "11 stories is large. Sizes: 1 L (US-564), 8 M, 2 S. The 5 chrome stories (US-555..559) are small and share one surface; the 6 closeout stories (US-560..565) are the V0.29 gate. Execution order is fixed in validationMethod -- US-560 FIRST, chrome LAST -- so if the sprint runs long, the tail that slips is cosmetic, not the chain gate."
+    "note": "11 stories is large. Sizes: 1 L (US-564), 8 M, 2 S. The 5 chrome stories (US-555..559) are small and share one surface; the 6 closeout stories (US-560..565) are the V0.29 gate. Execution order is fixed in validationMethod -- US-560 FIRST, chrome LAST -- so if the sprint runs long, the tail that slips is cosmetic, not the chain gate.",
+    "atlasGate": "Atlas gate 2026-08-20: SOUND except US-562, whose premise he REFUTED on live evidence (the roll-up is a nightly 03:30 batch that runs correctly; both he and Spool read pending rows inside the ~12h deferral window). US-562 removed from the sprint and folded into US-563. He also pulled powerwatch arm-logging in from the otherwise-deferred SPEC 2 (US-566), concurred on US-564 staying L, and confirmed is_real=0 was a schema default with NO compute defect. Still 11 stories."
   },
   "stories": [
     {
@@ -115,60 +116,12 @@
       "completionNotes": ""
     },
     {
-      "id": "US-562",
-      "title": "Server drive_summary roll-up regression -- 39/40/41 are empty shells",
-      "parent": "F-134",
-      "epicId": "E-002",
-      "type": "normal",
-      "size": "M",
-      "status": "sprint-ready",
-      "passes": false,
-      "groundingRefs": [
-        "offices/pm/inbox/2026-08-20-from-atlas-ESCALATION-freeze-confirmed-in-car-plus-movement-drive-landed.md",
-        "offices/pm/inbox/2026-08-20-from-atlas-FIX-SPECS-ready-to-groom-next-sprint.md",
-        "offices/architect/reports/2026-08-20-fix-specs-variance-gate-gpio6-ownership-mode-pin.md",
-        "offices/pm/inbox/2026-08-20-from-atlas-data-quality-defaults-to-full-open-question.md",
-        "offices/pm/inbox/2026-08-20-from-atlas-magnetometer-latched-third-fabrication-this-week.md",
-        "offices/pm/inbox/2026-08-20-from-spool-drive-summary-rollup-regression.md",
-        "offices/pm/inbox/2026-08-20-from-spool-ambient-temp-column-mislabeled.md"
-      ],
-      "acceptance": [
-        "drives 39/40/41 have start_time/end_time/duration_seconds NULL, row_count 0, is_real 0 -- shells INSERTed at drive-start and never updated. Drives 37/38 (08-07) are fully populated. REGRESSED between 2026-08-07 and 2026-08-20 -- bisect that window on the server analytics writer",
-        "SCOPED TO SERVER, NOT Pi. The Pi-side drive_summary schema has no end/duration/row_count columns at all; the roll-up is server-side by design (BL-015 Option C / US-326 chain). Spool self-corrected on this mid-session -- do not mis-scope to Pi power-loss at key-off",
-        "DO NOT CONFLATE with telemetry: realtime_data sync is PERFECT for all three drives (39: 10594==10594, 40: 10286==10286, 41: 3462==3462, 16 params). Raw capture and sync are healthy; only the derived roll-up is broken",
-        "acceptance asserts on a REAL drive, NOT a fixture -- shells look valid until you check the nullable columns",
-        "check whether the drive_statistics chain is blocked downstream (depends on US-326)",
-        "ruff/lint clean"
-      ],
-      "validationCriteria": [
-        {
-          "action": "query drive_summary for drives 39/40/41 after the fix + backfill",
-          "outcome": "start_time, end_time, duration_seconds, row_count all populated; not shells"
-        },
-        {
-          "action": "run a NEW real drive end-to-end and re-query",
-          "outcome": "roll-up fires without manual intervention"
-        }
-      ],
-      "conditionalOutcomes": [
-        "Blocks drive-level reporting for the V0.29 chain.",
-        "is_real=0 on all three interacts with US-563 -- Atlas could not confirm whether is_real=0 is a schema default or a compute result. Do NOT groom that half as settled."
-      ],
-      "goal": "As the tuner, I want the server roll-up to populate drive_summary, because the first moving-vehicle data in 48 days is currently invisible to calibration.",
-      "tasks": [],
-      "feedback": {
-        "filesActuallyTouched": [],
-        "grounding": []
-      },
-      "completionNotes": ""
-    },
-    {
       "id": "US-563",
-      "title": "drive_summary must not default to the best verdict, and must not mislabel",
+      "title": "drive_summary must not read as assessed before it is assessed",
       "parent": "F-134",
       "epicId": "E-002",
       "type": "normal",
-      "size": "M",
+      "size": "L",
       "status": "sprint-ready",
       "passes": false,
       "groundingRefs": [
@@ -178,31 +131,81 @@
         "offices/pm/inbox/2026-08-20-from-atlas-data-quality-defaults-to-full-open-question.md",
         "offices/pm/inbox/2026-08-20-from-atlas-magnetometer-latched-third-fabrication-this-week.md",
         "offices/pm/inbox/2026-08-20-from-spool-drive-summary-rollup-regression.md",
-        "offices/pm/inbox/2026-08-20-from-spool-ambient-temp-column-mislabeled.md"
+        "offices/pm/inbox/2026-08-20-from-spool-ambient-temp-column-mislabeled.md",
+        "offices/pm/inbox/2026-08-20-from-atlas-SPRINT75-GATE-us562-premise-refuted.md"
       ],
       "acceptance": [
-        "data_quality is `varchar(20) NOT NULL DEFAULT 'full'` on prod (verified via information_schema) -- a quality VERDICT column whose default is the BEST verdict. Add an explicit `unassessed`/`not_computed` value and default to THAT, or drop the default entirely",
-        "is_real `tinyint(1) NULL DEFAULT 0` -> DEFAULT NULL. The column is already nullable and _deriveIsReal deliberately writes None for ungraded; its own docstring warns that coercing NULL to 0 is the exact failure that masked ungraded drives in earlier revisions",
-        "RENAME ambient_temp_at_start_c -- it is fed from IAT and is NOT ambient. Drive 41 logged 47C/117F as ambient; IAT ran 48.1->40.6C by speed band, cooling with airflow, never nearing the 24-27C real ambient. NO ambient source exists on this car, so inventing one would be fabrication -- rename to what it actually is (intake air) rather than sourcing a fake ambient",
-        "A-10 CLASS DURABLE FIX: extend the applied-schema guard (US-459/US-462 pattern) to assert DEFAULTS, not just column presence and type. Today it passes this cleanly. The same guard family has caught four drift instances and would have caught this one had it looked at defaults",
+        "PENDING MUST NOT READ AS ASSESSED (absorbed from US-562, whose regression premise Atlas refuted): between a drive ending and the nightly 03:30 batch, drive_summary rows must NOT present a confident verdict. Not hypothetical -- on 2026-08-20 those rows read data_quality='full', is_real=0 and misled BOTH Spool and Atlas into filing a phantom regression story. Demonstrated in production, at the cost of a sprint story.",
+        "data_quality is varchar(20) NOT NULL DEFAULT 'full' on prod (verified via information_schema) -- a quality VERDICT column whose default is the BEST verdict. Add an explicit unassessed/not_computed value and default to THAT, or drop the default entirely.",
+        "is_real tinyint(1) NULL DEFAULT 0 -> DEFAULT NULL. Atlas CONFIRMED 2026-08-20 that the observed is_real=0 was the SCHEMA DEFAULT, not a compute result -- the batch later wrote is_real=True correctly. _deriveIsReal works as designed; there is NO compute defect. Do not go looking for one.",
+        "OWN ACCEPTANCE LINE, OWN TEST (Atlas, explicit -- do NOT let this become prose inside the 3-way merge): the applied-schema guard (US-459/US-462 pattern) asserts COLUMN DEFAULTS, not only column presence and type. A data_quality column defaulting to ANY assessed value FAILS the guard. This is the durable A-10-class fix -- it stops the NEXT column defaulting to a verdict. Folded in as prose it gets built as 'change two defaults' and the guard quietly does not happen.",
+        "RENAME ambient_temp_at_start_c -- fed from IAT, NOT ambient. Drive 41 logged 47C/117F; IAT ran 48.1->40.6C by speed band, cooling with airflow, never nearing the 24-27C real ambient. NO ambient source exists on this car, so inventing one would be fabrication -- rename to what it actually is (intake air).",
         "any UI surface reading the renamed column shows INTAKE AIR, informational, no red band",
         "ruff/lint clean"
       ],
       "validationCriteria": [
         {
           "action": "inspect the applied prod schema after migration",
-          "outcome": "data_quality does not default to 'full'; is_real defaults to NULL; column renamed"
+          "outcome": "data_quality does not default to any assessed value; is_real defaults to NULL; column renamed"
         },
         {
-          "action": "run the applied-schema guard against a deliberately wrong DEFAULT",
-          "outcome": "guard FAILS -- it now asserts defaults, not just presence/type"
+          "action": "point the applied-schema guard at a column with a deliberately wrong DEFAULT",
+          "outcome": "guard FAILS -- it asserts defaults, not just presence and type"
+        },
+        {
+          "action": "read drive_summary for a drive that has ended but not yet hit the 03:30 batch",
+          "outcome": "row does not present a confident verdict; unassessed is distinguishable from assessed-good"
         }
       ],
       "conditionalOutcomes": [
         "Schema-layer defect: no code review would catch it. The code is innocent.",
-        "Does not affect the 2026-08-20 drive conclusions -- those were read from realtime_data directly, and the A-9 result stands."
+        "Absorbs US-562 (superseded). There is NO roll-up regression to bisect -- the roll-up is a nightly batch and it runs correctly.",
+        "Does not affect the 2026-08-20 drive conclusions -- those were read from realtime_data directly. The A-9 result stands."
       ],
       "goal": "As anyone reading drive_summary, I want an unassessed drive to be distinguishable from an assessed-good one, and I want column names that mean what they say.",
+      "tasks": [],
+      "feedback": {
+        "filesActuallyTouched": [],
+        "grounding": []
+      },
+      "completionNotes": "",
+      "pmSignOff": "Marcus (PM) 2026-08-20 -- size L approved. US-563 absorbed US-562 at Atlas's gate (their premises turned out to be the SAME defect), and he required the applied-schema guard to carry its own acceptance line and its own test rather than ride as prose. Three schema truths plus a guard is genuinely L. Splitting the guard back out is the one thing Atlas explicitly warned against: as prose it gets built as 'change two defaults' and quietly does not happen."
+    },
+    {
+      "id": "US-566",
+      "title": "powerwatch must log its arm decision -- we cannot tell if safety armed",
+      "parent": "F-133",
+      "epicId": "E-001",
+      "type": "normal",
+      "size": "S",
+      "status": "sprint-ready",
+      "passes": false,
+      "groundingRefs": [
+        "offices/pm/inbox/2026-08-20-from-atlas-SPRINT75-GATE-us562-premise-refuted.md",
+        "offices/architect/reports/2026-08-20-fix-specs-variance-gate-gpio6-ownership-mode-pin.md"
+      ],
+      "acceptance": [
+        "eclipse-powerwatch emits ZERO application log lines today -- neither the success INFO nor the failure ERROR, and BOTH are unconditional on their branches (power_watch/__main__.py:439-456). We cannot currently tell whether the safety service armed.",
+        "emit the arm decision unconditionally: armed / not-armed, with cause on the failure branch",
+        "PREREQUISITE FOR THE HARDWARE INVESTIGATION: without this the CIO's X1209 hold-up diagnosis is blind too -- he cannot separate 'safety never armed' from 'safety armed and the hold-up path failed'",
+        "OBSERVABILITY ONLY. This is NOT the GPIO6 single-ownership refactor (Atlas SPEC 2, deferred) and it does NOT fix the instant key-off death (X1209 hold-up, CIO hardware)",
+        "ruff/lint clean"
+      ],
+      "validationCriteria": [
+        {
+          "action": "boot the Pi and read the powerwatch journal",
+          "outcome": "an explicit arm decision line appears -- armed or not-armed with cause; never silence"
+        },
+        {
+          "action": "force the failure branch",
+          "outcome": "ERROR line with cause, not silence"
+        }
+      ],
+      "conditionalOutcomes": [
+        "Atlas ACCEPTED the SPEC 2 deferral but pulled THIS piece in -- small, purely observability, and a prerequisite for diagnosing the hold-up at all.",
+        "Rest of SPEC 2 (GPIO6 single ownership) stays deferred."
+      ],
+      "goal": "As the operator, I want to know whether the safe-shutdown service actually armed, because today nothing in the log says either way.",
       "tasks": [],
       "feedback": {
         "filesActuallyTouched": [],
@@ -561,7 +564,7 @@
       "F-135",
       "F-127"
     ],
-    "validationMethod": "V0.29 CLOSEOUT ORDER (Atlas, and he feels strongly about item 1): (1) US-560 apply the US-552 mode pin and verify fb0 = 480,320 -- it is cheap, it is owed anyway for F-127's in-car legibility check, and it is the LAST UNTESTED LEVER on the freeze; every freeze observation to date is at 720p/1080p, so the shipping configuration has never been tested. (2) US-561 watchdog defects -- resolution-independent, ship regardless. (3) US-562/563 drive_summary roll-up + schema defaults. (4) US-564 plausibility gate, then (5) US-565 magnetometer. THEN F-132 chrome (US-555..559), whose own acceptance is IN-CAR, seated, arm's length. The freeze ITSELF is deliberately NOT scoped here -- re-measure only after the mode pin lands.",
+    "validationMethod": "V0.29 CLOSEOUT ORDER (Atlas, and he feels strongly about item 1): (1) US-560 apply the US-552 mode pin and verify fb0 = 480,320 -- it is cheap, it is owed anyway for F-127's in-car legibility check, and it is the LAST UNTESTED LEVER on the freeze; every freeze observation to date is at 720p/1080p, so the shipping configuration has never been tested. (2) US-561 watchdog defects -- resolution-independent, ship regardless. (3) US-563 drive_summary must not read as assessed before it is assessed (US-562 folded in -- there is NO roll-up regression), then US-566 powerwatch arm logging. (4) US-564 plausibility gate, then (5) US-565 magnetometer. THEN F-132 chrome (US-555..559), whose own acceptance is IN-CAR, seated, arm's length. The freeze ITSELF is deliberately NOT scoped here -- re-measure only after the mode pin lands.",
     "currentVersion": "V0.29.30",
     "validatedBy": null
   },
