@@ -103,6 +103,20 @@
   --fs-secondary:   26px;      /* SSOT --fs-secondary */
   --fs-label:       20px;      /* SSOT --fs-label */
   --fs-meta:        15px;      /* SSOT --fs-meta */
+  /* --- Layout bands -- US-557 (F-132). SSOT block: tokens.css "Layout bands".
+     The stripes that spend the stage's HEIGHT. Before this story `28px` lived
+     as FOUR independent literals (#topbar height, #carousel top,
+     #rotate-progress top, #dtc-ribbon top) and `24px` as two (#dots height,
+     #carousel bottom) -- one fact, six copies, nothing forcing them to agree.
+     That is why F-127's type-scale bump could raise the type and leave every
+     band at its pre-F-127 height without anything going red.
+     VALUES ARE IRIS'S P-3 RECLAIM: +23px of chrome back to the card body,
+     landing it at 224px. A CORRECTION to the F-127 budget, not a reversal --
+     no driver-read value shrank. These MUST equal tokens.css.
+     Pinned by tests/ui/test_card_band_budget.py. */
+  --bar-h:          34px;      /* SSOT --bar-h */
+  --dots-h:         16px;      /* SSOT --dots-h */
+  --card-pad-y:      8px;      /* SSOT --card-pad-y */
   /* --- Base surfaces -- promoted into the SSOT by US-510 (Atlas Rule-10
      2026-07-31). These two were dist-only literals; the values are UNCHANGED,
      so the promotion moved no pixels (that was Atlas's explicit DoD gate). */
@@ -207,8 +221,14 @@ html, body {
    with the Atlas-gated P-6 WiFi glyph added to the left cluster -- by
    tests/ui/test_topbar_three_column_grid.py, which is also what makes "P-6
    drops in with no re-layout" a checked claim instead of a hope. */
+/* US-557: the height is --bar-h, and it GREW 28 -> 34. This bar was the one
+   band genuinely under-sized for its own contents -- 26px glyphs and a 40px
+   kebab button in a 28px stripe -- which is what pushed the ⋮ outside the
+   header fill. Three other rules position themselves against this height
+   (#carousel, #rotate-progress, #dtc-ribbon) and each used to repeat it as its
+   own literal; they now read the same token. */
 #topbar {
-  position: fixed; top: 0; left: 0; right: 0; height: 28px;
+  position: fixed; top: 0; left: 0; right: 0; height: var(--bar-h);
   display: grid; grid-template-columns: 1fr auto 1fr;
   align-items: center; gap: 10px;
   padding: 0 10px; box-sizing: border-box;
@@ -216,8 +236,10 @@ html, body {
   z-index: 10;
 }
 /* The clusters exist so the bar has exactly THREE grid children: five children
-   in a three-column template wrap into an implicit second row, which on a 28px
-   bar clips rather than reflows. They are flex rows because a grid child
+   in a three-column template wrap into an implicit second row, which on a bar
+   only --bar-h tall clips rather than reflows (US-557 moved that height off a
+   literal; the argument holds at any bar height the budget can afford, which is
+   the point of not restating the number here). They are flex rows because a grid child
    defaults to `display: block` -- without these two rules the glyphs would
    stack vertically inside the bar. Named `topbar-*` rather than the design
    note's bare `.left`/`.right`: this is one shared sheet, and a generic class
@@ -271,8 +293,15 @@ html, body {
 #menu-btn[hidden] { display: none; }
 
 /* --- swipe carousel --------------------------------------------------------- */
+/* US-557 (F-132): top/bottom DERIVE from the two tokens that define the bars,
+   rather than repeating their magnitudes. This is the root cause of the whole
+   story in one rule -- `top: 28px` here and `height: 28px` on #topbar were one
+   fact written twice, so F-127 could move the type scale and leave the carousel
+   sized against a bar that no longer existed. The `overflow: hidden` stays: it
+   is the letterbox's clip, and what US-557 removes is the SILENCE of the clip,
+   not the clip (see the no-silent-clip guard on .card-body). */
 #carousel {
-  position: absolute; top: 28px; bottom: 24px; left: 0; right: 0;
+  position: absolute; top: var(--bar-h); bottom: var(--dots-h); left: 0; right: 0;
   overflow: hidden;
 }
 /* US-537 (Atlas RCA #3): NO `will-change: transform` here. The track is a flex
@@ -287,20 +316,71 @@ html, body {
   display: flex; height: 100%;
   transition: transform 0.25s ease-out;
 }
+/* US-557: the VERTICAL padding is a band (14 -> 8, +12px back to the body) and
+   is a token; the HORIZONTAL padding is not a band -- it spends no stage height
+   -- so it deliberately stays a literal rather than joining the band
+   vocabulary. Keeping the distinction is what lets the US-557 grep gate charge
+   only what actually costs height. */
 .card {
   flex: 0 0 100%; width: 100%; height: 100%;
-  box-sizing: border-box; padding: 14px 16px;
+  box-sizing: border-box; padding: var(--card-pad-y) 16px;
   display: flex; flex-direction: column;
 }
 /* US-510 A-3: a card TITLE is a brand moment, so it takes --font-display. The
    card BODY is untouched and stays mono -- the title labels the instrument, the
    body IS the instrument, and only the label gets the brand face. */
+/* US-557 (F-132): the title drops --fs-secondary -> --fs-label and 8px -> 6px of
+   margin, +9px back to the card body. THIS IS NOT A VALUE SHRINKING and the
+   distinction is the whole of AC-3: a card title NAMES the instrument you
+   deliberately swiped to, so it is a LABEL. Every value under it keeps its
+   F-127 tier -- .tile-value is still --fs-primary, and Iris's floor rule
+   ("anything the driver must read to act is >= 34px; anything < 26px must be
+   non-critical") puts a title squarely in the non-critical half. If this ever
+   looks like it must take a VALUE down with it, cut a FACT instead. */
 .card-title {
-  margin: 0 0 8px 0; font-size: var(--fs-secondary); font-weight: 600;
+  margin: 0 0 6px 0; font-size: var(--fs-label); font-weight: 600;
   color: var(--text-secondary); text-transform: uppercase;
   letter-spacing: 0.08em; font-family: var(--font-display);
 }
-.card-body { flex: 1; font-size: var(--fs-secondary); color: var(--text-primary); }
+/* --- US-557 NO-SILENT-CLIP GUARD (F-132) ------------------------------------
+   The defect F-127's budget produced was not merely that cards overflowed -- it
+   was that the overflow was INVISIBLE TO EVERYONE BUT THE CIO'S EYE. The card
+   clipped and said nothing, which is the honest-instrument rule broken at the
+   layout layer: either the content fits, or the surface has to admit it does
+   not. Two declarations do the work, and neither is decoration:
+
+   `min-height: 0` is the load-bearing half and the least obvious. A COLUMN flex
+   item defaults to `min-height: auto`, which refuses to shrink below its
+   content -- so an over-full body pushed `.card` past 100% height and
+   `#carousel { overflow: hidden }` ate the remainder OUTSIDE the card, where
+   nothing could signal it. Without this line the overflow rule below is inert:
+   the body never overflows, the card does.
+
+   The two background layers are the ADMISSION, and the trick is that they need
+   no measurement and so cannot go stale:
+     - layer 1, a --bg cover pinned to the bottom of the CONTENT (`local`), so
+       it rides the scroll;
+     - layer 2, a --text-tertiary rule pinned to the bottom of the BOX
+       (`scroll`), so it stays put.
+   Reach the end and the cover lands on the rule and hides it; while anything is
+   still below, the rule shows. TWO layers, not the usual four: this sheet
+   already caused the US-522 freeze through compositor pressure (US-537), and
+   #track paints every card side by side, so each layer here is paid six times
+   over. Top-edge shadows are dropped for that reason -- content is clipped at
+   the BOTTOM, which is the edge worth paying for.
+
+   The cue borrows --text-tertiary deliberately. A clipped card is a LAYOUT
+   fact, not a vehicle fault; dressing it amber or red would put a layout
+   condition into the alert vocabulary US-488 spent a whole story making mean
+   exactly one thing each. Pinned by tests/ui/test_card_band_budget.py. */
+.card-body {
+  flex: 1; min-height: 0;
+  overflow-y: auto; overscroll-behavior: contain;
+  font-size: var(--fs-secondary); color: var(--text-primary);
+  background:
+    linear-gradient(rgba(0, 0, 0, 0), var(--bg) 70%) bottom / 100% 12px no-repeat local,
+    linear-gradient(rgba(0, 0, 0, 0), var(--text-tertiary)) bottom / 100% 3px no-repeat scroll;
+}
 /* Honest-instrument: a missing/malformed state file reads `unavailable`,
    never a fabricated value and never green. */
 .card.unavailable .card-body,
@@ -597,8 +677,13 @@ html, body {
    card, which is what makes the scale mean the same thing everywhere. */
 
 /* --- page dots (>=40px touch target, 10px visual) --------------------------- */
+/* US-557: --dots-h, and it SHRANK 24 -> 16, restoring the figure the F-127
+   budget had already assumed. The dots themselves paint 8px, and the >=40px
+   touch target rides `.dot`'s own min-height rather than the band -- so the
+   band can give 8px back to the card body without costing a single px of tap
+   area. #carousel's `bottom` reads this same token. */
 #dots {
-  position: absolute; bottom: 0; left: 0; right: 0; height: 24px;
+  position: absolute; bottom: 0; left: 0; right: 0; height: var(--dots-h);
   display: flex; justify-content: center; align-items: center; gap: 4px;
 }
 .dot {
@@ -621,8 +706,11 @@ html, body {
    would be a fourth thing claiming to mean "healthy"/"degraded" while actually
    meaning "seconds until the next card". Removed entirely while paused (the
    `hidden` attribute -> the global [hidden] guard, US-495). */
+/* US-557: `top` is --bar-h. This rule and #dtc-ribbon below share the band
+   directly under the top bar, and each used to carry its own copy of the bar's
+   height -- so a bar that grew would have left both of them overlapping it. */
 #rotate-progress {
-  position: fixed; left: 0; right: 0; top: 28px; height: 2px;
+  position: fixed; left: 0; right: 0; top: var(--bar-h); height: 2px;
   background: transparent; z-index: 8;
   pointer-events: none;   /* chrome, never a tap target */
 }
@@ -638,8 +726,10 @@ html, body {
    STATE-ALARM --critical-red (never a brand red) + a leading ⚠ glyph + a subtle
    pulse, so it reads as an alarm and never as decoration or as branding. Level
    is set by JS from `dtc`. */
+/* US-557: `top` is --bar-h -- the ribbon rides UNDER the bar, so it must move
+   with it. `min-height` is the ribbon's own content floor, not a stage band. */
 #dtc-ribbon {
-  position: fixed; left: 0; right: 0; top: 28px; min-height: 22px;
+  position: fixed; left: 0; right: 0; top: var(--bar-h); min-height: 22px;
   display: flex; align-items: center; gap: 6px;
   padding: 2px 10px; box-sizing: border-box;
   font-size: var(--fs-label); font-weight: 700; letter-spacing: 0.03em;

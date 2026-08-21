@@ -298,7 +298,15 @@ def test_glyphsSitLeft_versionAndKebabSitRight():
 def test_clusters_areFlexRows_soTheirContentsStillSitInline():
     """The wrappers must not change how the glyphs read. Grid children default
     to `display: block`, which would stack BT / sync / power vertically inside a
-    28px bar -- a silent, total regression that no id-based test would see."""
+    bar one `--bar-h` tall -- a silent, total regression that no id-based test
+    would see.
+
+    MOVED PIN (US-557): this used to say "a 28px bar". The assertions are
+    unchanged and still pass; only the stated reason had gone stale, because
+    US-557 moved the bar height off a literal and up to 34px. A guard whose
+    stated reason is false is the next reader's wrong turn -- and leaving a
+    dependent measurement behind after a value moved is the exact defect US-557
+    exists to remove, so it would have been a poor place to make an exception."""
     css = readCss(_CSS_PATH)
     left = ruleBlock(css, "#topbar .topbar-left")
     right = ruleBlock(css, "#topbar .topbar-right")
