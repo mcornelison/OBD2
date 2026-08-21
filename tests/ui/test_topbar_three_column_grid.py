@@ -127,6 +127,28 @@ def _cssVarPx(css: str, name: str) -> float:
     return float(match.group(1))
 
 
+def _declaredVarName(css: str, selector: str, prop: str) -> str:
+    """The custom property a declaration resolves through, without its `--`.
+
+    US-556 needs this so the bar's width model can charge the kebab whatever the
+    sheet actually gives it, rather than a magnitude restated here. Asserting the
+    declaration IS a `var()` is the point: a bare literal would silently produce
+    a plausible number and re-create the drift the model exists to catch.
+
+    Args:
+        css: the full stylesheet.
+        selector: the exact selector.
+        prop: the property to read.
+
+    Returns:
+        The token name without its leading `--`.
+    """
+    block = ruleBlock(css, selector)
+    match = re.search(rf"(?<![-\w]){re.escape(prop)}:\s*var\(--([a-zA-Z0-9-]+)\)", block)
+    assert match is not None, f"{selector} does not bind `{prop}` to a token"
+    return match.group(1)
+
+
 def _shorthandPx(block: str, prop: str, index: int) -> float:
     """The Nth px magnitude of a shorthand declaration inside a rule block."""
     match = re.search(rf"(?<![-\w]){re.escape(prop)}:\s*([^;]+);", block)
@@ -153,7 +175,7 @@ class _BarModel:
     """The bar's width budget, derived from the SHIPPED values only.
 
     Every magnitude is read out of the real stylesheet -- token values, the
-    bar's own padding and gap, the kebab's `--tap-min` floor. Nothing here is a
+    bar's own padding and gap, the kebab's declared width. Nothing here is a
     literal copied from the design note, so a token change moves the check.
     """
 
@@ -164,7 +186,15 @@ class _BarModel:
         self.glyphSize = _cssVarPx(css, "--fs-secondary")
         self.clockSize = _cssVarPx(css, "--fs-label")
         self.chipSize = _cssVarPx(css, "--fs-meta")
-        self.tapMin = _cssVarPx(css, "--tap-min")
+        # MOVED PIN (US-556). This read `--tap-min`, because the kebab's PAINTED
+        # box was `min-height/min-width: var(--tap-min)`. US-556 split the visual
+        # box from the hit box: the button now paints at `--bar-h` and reaches
+        # the tap minimum through an ABSOLUTELY POSITIONED `::after`, which takes
+        # no space in the bar's grid. Charging `--tap-min` here would keep the
+        # model green while measuring a box that no longer exists -- a stale
+        # measurement is exactly what F-132 is closing, so the width is read from
+        # the declaration instead of restated.
+        self.kebabWidth = _cssVarPx(css, "--" + _declaredVarName(css, "#menu-btn", "width"))
         clusterGap = ruleBlock(css, "#topbar .topbar-right")
         self.clusterGap = _shorthandPx(clusterGap, "gap", 0)
         leftCluster = ruleBlock(css, "#topbar .topbar-left")
@@ -189,7 +219,7 @@ class _BarModel:
 
     def rightClusterWidth(self, version: str = LONGEST_VERSION_TEXT) -> float:
         chip = _textWidthPx(version, self.chipSize, self.chipSpacing)
-        return chip + self.clusterGap + self.tapMin
+        return chip + self.clusterGap + self.kebabWidth
 
     def sideTrackShare(self, text: str = LONGEST_CLOCK_TEXT) -> float:
         """Free space each `1fr` side track is guaranteed.

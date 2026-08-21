@@ -281,15 +281,76 @@ html, body {
   color: var(--text-tertiary);
   font-size: var(--fs-meta); letter-spacing: 0.06em;
 }
+/* US-556 (F-132): the VISUAL box and the HIT box are two different boxes, and
+   conflating them is what put the third dot outside the header fill. This button
+   shipped `min-height: var(--tap-min)` -- a 40px box -- inside a bar that was
+   28px and, after US-557, is 34px. Either way the box is taller than the band,
+   and #topbar's `--surface` fill only paints the band.
+
+   THE PREMISE, RE-READ AGAINST THE BAR US-557 ACTUALLY LANDED. The story
+   describes "a 40px box + 34px glyph inside a 28px bar". Measured against 34,
+   that splits: the GLYPH half is already gone (--fs-primary is 34px, so at the
+   new band it exactly FILLS rather than spills -- though with zero margin, and
+   ink is not bound by a `line-height: 1` box), while the BOX half survived
+   untouched. This rule removes the box overflow and buys the glyph real
+   headroom; it is not re-fixing something US-557 already fixed.
+
+   The tension is real and does not go away: S-2 requires a >=40px touch target
+   and the bar cannot afford to BE 40px -- US-557's budget already pays 6px for
+   34 and takes 29px back from three other bands, so another 6 comes straight off
+   the card body that story just reclaimed. So the painted box shrinks to the
+   band and the TARGET is extended by a transparent pseudo-element below.
+
+   `--fs-secondary` rather than `--fs-primary` is the honest tier: the ⋮ is a
+   CHROME AFFORDANCE, not a driver-must-read value, so F-127's 34px value floor
+   never applied to it. Nothing was wrong with US-539 tokenizing the glyph -- it
+   simply bound chrome to a tier F-127 then raised. 26px still clears Iris's
+   non-critical floor, and the control is `hidden` while driving (US-490), so
+   the read is a deliberate parked tap rather than a glance at speed.
+
+   BOTH MAGNITUDES DERIVE. `width`/`height` are --bar-h, so the box IS the band
+   by construction. Iris's note specifies `28px` and `inset: -6px -7px`; those
+   were arithmetic against the pre-US-557 28px bar, and re-landing them here
+   would ship the exact value-changed-here / measurement-left-behind defect this
+   sprint exists to close. Pinned by tests/ui/test_topbar_kebab_fit.py. */
 #menu-btn {
-  min-width: var(--tap-min); min-height: var(--tap-min);
+  min-width: 0; min-height: 0;
+  width: var(--bar-h); height: var(--bar-h);
+  display: flex; align-items: center; justify-content: center;
+  position: relative;
   background: transparent; border: 0; color: var(--text-secondary);
-  font-size: var(--fs-primary); line-height: 1; cursor: pointer;
+  font-size: var(--fs-secondary); line-height: 1; cursor: pointer;
+}
+/* The S-2 tap minimum, preserved WITHOUT touching layout or paint. The inset is
+   HALF THE SHORTFALL, SIGNED: `(--bar-h - --tap-min) / 2` is negative while the
+   band is smaller than the minimum, so the target grows outward by exactly the
+   missing pixels and measures --tap-min on both axes. Should a future band ever
+   exceed --tap-min the value turns positive, the pseudo shrinks back inside, and
+   the button itself already carries a target over the minimum -- self-correcting
+   in both directions, which a pair of literals cannot be.
+
+   `position: relative` above is load-bearing and is the quiet way this breaks:
+   without it the pseudo anchors to the nearest positioned ancestor -- #topbar,
+   which IS positioned -- and the hit area silently lands somewhere else.
+
+   HONEST BOUND, because the claim is "the hit box measures --tap-min", not
+   "40px of glass": the bar sits at y=0, so the upper half of the extension lies
+   at or above the panel's top edge, where `html, body { overflow: hidden }`
+   clips it. That costs nothing REACHABLE -- the bezel backstops the finger, so a
+   target on the screen edge cannot be overshot upward -- but it is a bound, not
+   a non-issue. The lower half is on the glass and does overlay the top ~3px of
+   #carousel; #menu-btn is `display: none` while driving (US-490), so it can only
+   ever intercept a parked tap, never a swipe at speed. */
+#menu-btn::after {
+  content: ""; position: absolute;
+  inset: calc((var(--bar-h) - var(--tap-min)) / 2);
 }
 /* US-490: the ⋮ is parked-only. Stated explicitly rather than leaning on the
-   UA [hidden] rule -- #topbar is a flex container, so any future `display`
-   declaration on #menu-btn would outrank the UA sheet and hand back a
-   clickable target while driving. Removed from flow, not merely faded. */
+   UA [hidden] rule -- #menu-btn now declares `display: flex` above (US-556), so
+   an author `display` DOES outrank the UA sheet here; before US-556 that was a
+   hypothetical about future edits and it is now the shipped cascade. Without
+   this rule the button would hand back a clickable target while driving.
+   Removed from flow, not merely faded. */
 #menu-btn[hidden] { display: none; }
 
 /* --- swipe carousel --------------------------------------------------------- */
@@ -869,8 +930,21 @@ html, body {
   display: flex; flex-direction: column; gap: 6px;
   padding: 6px 12px 10px; box-sizing: border-box; overflow-y: auto;
 }
+/* US-556 (F-132): was a FIXED `height: 36px` around a 40px (--tap-min)
+   #menu-close, so the one control that dismisses this overlay overflowed its own
+   header -- the SAME visual-box-vs-band defect as the kebab, and the second time
+   this head shape has produced it (US-491 fixed `.detail-head` for exactly this
+   reason and the fix did not generalise).
+
+   Resolved the OPPOSITE way to the kebab, and that is deliberate rather than
+   inconsistent: #topbar cannot afford to grow, so there the control shrinks to
+   the band. A full-screen overlay head has no stage budget to defend, so here
+   the BAND grows to the control -- which is both cheaper and keeps the two
+   overlays speaking one interaction language. Derived from --tap-min rather than
+   re-landed as a literal, so the head cannot drift back under the minimum it
+   exists to contain. */
 .menu-head {
-  display: flex; align-items: center; height: 36px;
+  display: flex; align-items: center; min-height: var(--tap-min);
   border-bottom: 1px solid var(--surface);
 }
 .menu-title {
