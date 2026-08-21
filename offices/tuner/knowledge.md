@@ -1,6 +1,9 @@
 # Spool's Tuning Knowledge Base
 
-> This is the single source of truth for all engine tuning knowledge in the Eclipse OBD-II project.
+> **Scope:** general 4G63 / DSM / turbo tuning craft — how to read PIDs, knock theory, fuel-trim trees,
+> failure modes, ECMLink capability, glossary. It is **not** the SSOT for THIS car's atomic facts (those
+> are `cards/`) nor for team-consumed thresholds (`specs/grounded-knowledge.md`). Map: `CLAUDE.md`
+> §"One Version of the Truth".
 > **Maintained by Spool (Tuning SME).** General 4G63 / DSM / tuning craft lives here. THIS-car atomic
 > facts are SSOT in `cards/` (indexed by `vehicle.md`). Per-session history is `sessions.md` — **not**
 > this header. Header changelog through 2026-08-20 archived to
