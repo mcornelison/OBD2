@@ -1089,3 +1089,66 @@ Task: Band-budget correction + tokenize the layout bands
   The kebab itself is untouched by this story, and the group constraint is now
   satisfied in the right direction (557 landed, so 556 is verified AFTER it).
 ---
+
+## 2026-08-21 - US-556 (Agent 1 / Rex)
+Task: Kebab fits its bar -- visual box vs hit box, 40px tap kept
+
+### What was implemented:
+- **#menu-btn painted box now DERIVES from --bar-h** (width + height), with the
+  `min-width`/`min-height: var(--tap-min)` floors removed. The 40px box in a
+  34px band was what put the third dot outside the header fill.
+- **Glyph re-tiered --fs-primary -> --fs-secondary.** The kebab is a CHROME
+  affordance, so F-127's 34px driver-read floor never applied to it. Guarded
+  in BOTH directions: the value tier itself is asserted untouched (lowering
+  --fs-primary would have "fixed" this by shrinking every number on the panel),
+  and the kebab is asserted NOT shrunk below --fs-secondary (shrinking type to
+  fit a band is the fix F-127 ruled out).
+- **S-2 tap minimum moved to a transparent `::after`** with
+  `inset: calc((var(--bar-h) - var(--tap-min)) / 2)` -- half the SIGNED
+  shortfall, so the hit box measures --tap-min at any band height and
+  self-corrects if the band ever exceeds it.
+- **`.menu-head` fixed** -- it declared `height: 36px` around a 40px
+  #menu-close. Now `min-height: var(--tap-min)`. Opposite fix to the kebab on
+  purpose: an overlay head has no stage budget to defend.
+- **`#sys-detail-back` audited, NOT changed** -- `.detail-head` is already
+  `min-height: 44px` (US-491). Guarded instead.
+- **MOVED PIN**: US-555's bar-width model charged the kebab at --tap-min; it
+  now reads the declared width, so it measures the box that actually exists.
+
+### Files changed:
+- Modified: `specs/UI/dist/dashboard-pi/dashboard.css` (#menu-btn split into
+  visual + hit box, new #menu-btn::after, .menu-head band derives from
+  --tap-min, US-490 comment corrected -- it warned about a `display`
+  declaration this story then added, and still called #topbar a flex row)
+- Modified: `tests/ui/test_topbar_three_column_grid.py` (moved pin +
+  `_declaredVarName` helper that asserts the declaration is a `var()`)
+- Created: `tests/ui/test_topbar_kebab_fit.py` (21 tests: visual box, chrome
+  tier, hit box, the 3-control audit, the `.dot` precedent, 3 negative
+  self-tests)
+
+### Learnings for future iterations:
+- **Pattern discovered**: derive the SIGNED SHORTFALL rather than landing two
+  literals. `calc((var(--band) - var(--min)) / 2)` as an `inset` grows a hit
+  area outward by exactly the missing pixels and shrinks harmlessly back
+  inside once the band outgrows the minimum. When a spec hands you two
+  magnitudes, ask what they are the difference between.
+- **Pattern discovered**: audit by what a control PAINTS, not by the box it
+  reserves. `.dot` is a 40px box in a 16px band and is correct -- transparent
+  box, 8px `::before` mark. It was the precedent this whole fix rests on and
+  it was already in the sheet.
+- **Gotcha**: a stale number in an AC can hide a SPLIT premise. Re-deriving
+  AC-1 against the bar US-557 landed showed the glyph half was already cured
+  and only the box half survived. Found because a negative self-test went red
+  in a direction I had not predicted -- and the model was right, not the AC.
+- **Gotcha**: "exactly flush" is not "safely inside". 34px of line box in a
+  34px band has zero margin and glyph ink escapes a `line-height: 1` box.
+  Assert `<`, not `<=`, on a paint bound.
+- **Gotcha**: a PASSING test can be a stale measurement. An over-estimate never
+  goes red. Green is not evidence a model still measures its subject.
+- **Gotcha**: `position: relative` is the silent failure mode of any `::after`
+  hit-area extension -- without it the pseudo anchors to the nearest positioned
+  ancestor and the target lands elsewhere while every other test passes.
+- **Gotcha**: pytest prints no summary line in this repo -- gate on exit code
+  plus "no F/E in the progress dots". A PostToolUse hook flags `eval()`; use an
+  `ast.parse` walk with a node whitelist instead.
+---
