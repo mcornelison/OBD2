@@ -636,3 +636,88 @@ Result: passes:true. All FOUR of Atlas's section-3 defects dispositioned (AC-3
   Bash tool refuses `cd X && cmd > file` outright. Redirect from the default
   cwd, then `echo $?` AND `grep -cE '^(FAILED|ERROR)'`.
 ---
+
+## 2026-08-21 - US-563 (Agent 1 / Session 2)
+Task: drive_summary must not read as assessed before it is assessed
+
+### What was implemented:
+- Migration **v0024** lands three schema truths, forward-only, each substep
+  idempotent with a post-condition probe:
+  1. every `data_quality` column DEFAULTs to the NON-verdict `'unassessed'`
+     (CHECK enums widened first), 2. `drive_summary.is_real` DEFAULTs NULL,
+  3. `ambient_temp_at_start_c` -> `intake_air_temp_at_start_c`.
+- **I RE-MEASURED THE PREMISE ON LIVE PROD INSTEAD OF INHERITING IT, AND THE
+  MEASUREMENT WIDENED THE STORY.** A read-only information_schema probe
+  returned `drives`, `drive_statistics` AND `drive_summary` ALL defaulting
+  `data_quality='full'`. AC-2 names only drive_summary. Building to the story
+  text would have fixed the one column that had already embarrassed us and
+  left two loaded in exactly the same way. All three re-defaulted.
+- Refused the tempting carve-out ("drives/drive_statistics are always written
+  explicitly, leave them"): **"the writer always sets it" is a claim about
+  INTENT, never about ENFORCEMENT** -- the inert-guard anti-pattern, and the
+  same reasoning that let the original default sit unnoticed.
+- **The durable half is the applied-schema guard** (Atlas required its own AC
+  + own test). It asserts COLUMN DEFAULTS not just presence/type, is
+  DISCOVERY-DRIVEN (asks information_schema which tables carry the column, so
+  a table added tomorrow is covered with no edit), and has a NEGATIVE
+  SELF-TEST parametrised over every assessed verdict, a not-yet-existing
+  table, and is_real=0 AND =1.
+- Split the constant that made the defect unsayable: one
+  `*_DATA_QUALITY_DEFAULT` was both "the column default" and "the clean
+  verdict" -> `*_FULL` / `*_ASSESSED_*_VALUES` / `*_VALUES` /
+  `*_COLUMN_DEFAULT`, each named for its layer.
+- `sync.py` maps the legacy Pi key so a not-yet-deployed Pi still LANDS its
+  value -- no flag day, no deploy coupling.
+- Gate: 70 passed, 2 skipped (deploy-time live probe, opt-in + printed
+  reason). ruff clean on all 29 touched files (caught one real F541 in my own
+  new test). Filed TD-082 + TD-083.
+
+### Files changed:
+- Created: `src/server/migrations/versions/v0024_us563_unassessed_defaults_and_intake_rename.py`
+- Created: `tests/server/test_applied_schema_column_defaults.py` (the durable guard)
+- Created: `tests/server/test_drive_summary_unassessed_and_intake_air.py`
+- Created: `tests/server/test_migration_0024_unassessed_defaults_and_intake_rename.py`
+- Modified: `src/server/db/models.py` (constant split, defaults, rename)
+- Modified: `src/server/api/sync.py` (legacy-key rename seam)
+- Modified: `src/server/migrations/__init__.py` (+ 5 earlier migrations, 15 test files) -- symbol re-pointing
+- Created: `offices/pm/tech_debt/TD-082-...md`, `TD-083-...md`
+
+### Learnings for future iterations:
+- **Pattern discovered (the big one)**: RE-MEASURING A STORY'S SCHEMA PREMISE
+  IS THE SAME ACT AS CHECKING ITS SCOPE. The probe that confirms "yes, the
+  default is 'full'" also tells you WHICH TABLES have it -- and here that
+  turned a 1-column story into a 3-column one for ~5 seconds of work. Third
+  sprint running that re-measuring beat inheriting (US-560 fabricated
+  fixture, US-561 journalctl RC, now this).
+- **Pattern discovered**: `bash offices/pm/scripts/prod_db_query.sh "<SELECT>"`
+  works from this harness for READ-ONLY prod SQL, no creds needed, ~5s. It
+  makes "what does the deployed schema actually say" a cheap question. Do not
+  mutate prod from here -- deploy is PM's.
+- **Pattern discovered**: a defect that "should have been obvious" is often a
+  VOCABULARY problem. There was no name for "not yet assessed" because the
+  default WAS a verdict, so nobody could state the bug in the codebase's own
+  terms. Check whether the words existed before blaming the reviewers.
+- **Pattern discovered**: a guard that has never been SEEN to fail is not
+  known to be a guard. Ship the negative self-test in the same story --
+  validationCriteria #2 asked for exactly this, and it is the difference
+  between a guard and a comment.
+- **Gotcha (nearly took three failures that were not mine)**: VERIFY "my
+  change broke this" before believing it. `git show HEAD:<file>` answers
+  "was this red before me" cheaply and NON-DESTRUCTIVELY -- `git stash` is
+  not on Ralph's allow-list and would have risked a large uncommitted tree.
+  Two failures were stale tail pins (already TD-062); the third looked
+  genuinely mine because I edited `sync.py`, and only the HEAD diff proved
+  `pi_state` predated me by a whole story.
+- **Gotcha**: in a migration, widen the CHECK BEFORE moving the DEFAULT.
+  Setting a default the CHECK forbids does NOT fail at ALTER time -- it fails
+  on the next INSERT that omits the column, i.e. on the next Pi sync, in the
+  car.
+- **Gotcha**: a DEFAULT change must NOT be back-filled onto existing rows.
+  The migration cannot tell a genuine batch `'full'` from a pre-computed
+  default, so rewriting them would MANUFACTURE a reading.
+- **Gotcha (harness)**: `grep -rn` over this repo TIMES OUT at 120s on the SMB
+  share -- use the Grep tool (ripgrep) instead, it returns instantly.
+- **Gotcha (harness)**: PowerShell `@'...'@` here-strings LEAK LITERAL `@`
+  LINES when used in a Bash `git commit -m` -- it produced a commit whose
+  subject was `@`. Use `git commit -F -` with a `<<'EOF'` heredoc.
+---
