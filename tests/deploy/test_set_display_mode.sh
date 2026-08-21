@@ -161,12 +161,41 @@ write_drm_fixture() {
     printf '%s' "$5" > "$dir/card1-HDMI-A-2/modes"
 }
 
-# The panel's advertised mode list as a 3.5" 480x320 HDMI panel reports it:
-# a preferred 480x320 alongside the fallback timings such a panel also claims.
+# A SYNTHETIC panel that DOES advertise the target mode. It exercises the
+# script's WRITE path and nothing more.
+#
+# ** IT IS NOT WHAT THE SHIPPING PANEL REPORTS. ** Until US-560 the comment here
+# claimed it was ("as a 3.5\" 480x320 HDMI panel reports it"), which is how a
+# fixture came to manufacture the very fact that made US-552 look applicable:
+# nobody had read the panel's EDID, so the suite could only ever go green.
+# Grounding a hardware claim in a fixture is the fabrication Refusal Rule 2
+# exists to stop. The measured list is below; scenario 15 pins it.
 PANEL_MODES='1920x1080
 1280x720
 640x480
 480x320
+'
+
+# The SHIPPING panel's REAL advertised list -- MEASURED 2026-08-21 on
+# chi-eclipse-01 (US-560) via `cat /sys/class/drm/card1-HDMI-A-1/modes`, with
+# the EDID identifying mfg=OSY model=HDMI35 and a PREFERRED detailed timing of
+# 1280x720. There is NO 480x320 anywhere in it.
+#
+# The 3.5" GLASS is 480x320 (docs/hardware-reference.md), but the panel is a
+# SCALER: it accepts standard HDMI timings and downsamples to the glass in
+# hardware. Glass resolution and signal timing are two different quantities --
+# conflating them is what put a 480x320 KMS target on a panel that never
+# offered one.
+OSOYOO_HDMI35_MEASURED_MODES='1280x720
+1920x1080
+1280x1024
+1440x900
+1280x800
+1024x768
+800x600
+720x480
+640x480
+720x400
 '
 NO_PANEL_MODES=''
 
@@ -174,6 +203,9 @@ FB_1080P="$WORK/fb-1080p"
 printf '1920,1080\n' > "$FB_1080P"
 FB_NATIVE="$WORK/fb-native"
 printf '480,320\n' > "$FB_NATIVE"
+# What the live Pi actually scans out today (measured 2026-08-21, US-560).
+FB_720P="$WORK/fb-720p"
+printf '1280,720\n' > "$FB_720P"
 
 echo "=== deploy/set-display-mode.sh — US-552 scenario catalog ==="
 
@@ -362,6 +394,36 @@ out=$(PI_DRM_DIR="$DRM14" PI_CMDLINE_TXT="$CMD14" PI_FB_SIZE_FILE="$WORK/nope/fb
 assert_exit "still pins (the observed mode is informational)" 0 "$rc"
 assert_file_contains "pin applied" "video=HDMI-A-1:480x320" "$CMD14"
 assert_contains "says the observation is unavailable rather than inventing one" "unknown" "$out"
+
+# ---- 15. the SHIPPING panel, as measured: 480x320 is UNREACHABLE ----
+#
+# US-560 set out to APPLY the US-552 pin to the live Pi and could not: the
+# OSOYOO HDMI35 advertises no 480x320 timing at all, so interlock 5 refused --
+# correctly, and without writing a byte. That refusal is the story's finding.
+#
+# This scenario pins the MEASURED hardware against the real script so the fact
+# survives as a tested contract instead of being rediscovered from a car seat.
+# It is deliberately disposition-INDEPENDENT: it asserts what the panel offers
+# and that we do not force a timing it never claimed. It does not encode any
+# particular ruling on what to pin INSTEAD -- that call is Atlas's (BL-034).
+echo "--- Scenario 15: real OSOYOO HDMI35 EDID -> 480x320 is not advertised ---"
+DRM15="$WORK/s15-drm"
+CMD15="$WORK/s15-cmdline.txt"
+write_drm_fixture "$DRM15" "connected" "$OSOYOO_HDMI35_MEASURED_MODES" "disconnected" "$NO_PANEL_MODES"
+write_cmdline_fixture "$CMD15"
+cp "$CMD15" "$WORK/s15-original.txt"
+out=$(PI_DRM_DIR="$DRM15" PI_CMDLINE_TXT="$CMD15" PI_FB_SIZE_FILE="$FB_720P" \
+      bash "$SCRIPT" 2>&1); rc=$?
+assert_exit "refuses on the REAL panel, deploy stays healthy" 0 "$rc"
+assert_files_identical "the boot cmdline was NOT touched" "$CMD15" "$WORK/s15-original.txt"
+assert_contains "names the unadvertised target" "does not advertise 480x320" "$out"
+assert_contains "routes the disposition to Atlas rather than forcing it" "EDID finding for Atlas" "$out"
+assert_contains "reports the observed 720p rather than inventing a mode" "1280x720" "$out"
+# 720x480 is the ONLY advertised mode that shares the glass's 3:2 aspect
+# (480/320 = 720/480 = 1.5); every other entry is 16:9, 4:3, 16:10 or 5:4.
+# Asserted so the alternative Atlas is asked to rule on stays grounded in the
+# measured list rather than being invented later from memory.
+assert_contains "surfaces the real advertised list for the ruling" "720x480" "$out"
 
 # ---- summary ----
 echo

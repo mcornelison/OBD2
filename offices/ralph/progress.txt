@@ -466,3 +466,84 @@ Task: index_lock preflight clears a STABILITY-VERIFIED non-empty stale lock (BL-
 - **Gotcha**: `tests/pm` carries TWO standing reds (TD-081, from the retired
   freeze mechanic, commit `22f65a8`). Budget a step to prove they are not yours
   -- and note that a standing red trains agents to read red as normal.
+
+# ============================================================================
+# Ralph progress -- Sprint 75 / V0.29.30 (V0.29 closeout + F-132 chrome)
+# 11 stories. Order fixed by validationMethod: US-560 FIRST, chrome LAST.
+# ============================================================================
+
+## 2026-08-21 - US-560 (Rex / Session 1)
+Task: APPLY the US-552 mode pin on the live Pi + verify native 480x320
+Result: passes:false -- PREMISE REFUTED BY THE HARDWARE. BL-034 filed.
+        NOT a sprint blocker (US-561 is resolution-independent).
+
+### What was implemented:
+- **The Pi IS reachable from this harness** -- the Sprint 74 note said otherwise,
+  so this story was executable rather than deferred. Re-confirmed the premise
+  live (`fb0 virtual_size` = 1280,720), discovered the connector from sysfs
+  (HDMI-A-1 connected, HDMI-A-2 disconnected -- exactly one, so interlock 2 is
+  satisfied), and RAN `deploy/set-display-mode.sh` on the Pi.
+- **It refused at interlock 5 and wrote nothing.** The OSOYOO panel does not
+  advertise 480x320 in its EDID mode list. EDID says mfg=OSY, model=HDMI35,
+  PREFERRED detailed timing 1280x720; the advertised list runs 1280x720 /
+  1920x1080 / 1280x1024 / 1440x900 / 1280x800 / 1024x768 / 800x600 / 720x480 /
+  640x480 / 720x400. No 480x320 anywhere. There is nothing to pin.
+- **Not a script bug**: `tests/deploy/test_set_display_mode.py` 9 passed /
+  0 failed. The script did exactly what it was built to do, and its own refusal
+  text routes this case to Atlas as an EDID finding. BL-034 is that finding.
+- **Root cause of the false premise is a FABRICATED FIXTURE.** US-552's catalog
+  carried `# The panel's advertised mode list as a 3.5" 480x320 HDMI panel
+  reports it: PANEL_MODES='...480x320'`. Nobody had read the EDID -- the fixture
+  ASSERTED the hardware fact that made the pin look applicable, so the suite
+  could only ever go green. Secondary cause is a UNIT CONFLATION: the doc row
+  `Resolution | 480 x 320 pixels` is the GLASS, and the script consumes it as a
+  KMS SIGNAL TIMING. The HDMI35 is a SCALER panel -- 480x320 glass behind a chip
+  that accepts standard HDMI timings and downsamples in hardware.
+- **Changed test-only, and deliberately disposition-independent** (the target
+  mode is Atlas's call; I did not pre-empt it): relabelled PANEL_MODES as the
+  SYNTHETIC write-path fixture it actually is, added
+  OSOYOO_HDMI35_MEASURED_MODES with the command + date measured, and added
+  Scenario 15 pinning that the REAL panel makes the script refuse with the boot
+  cmdline untouched. Catalog 50 -> 56 assertions.
+
+### Files changed:
+- Modified: `tests/deploy/test_set_display_mode.sh` (honest fixture label,
+  measured mode list, Scenario 15)
+- Modified: `tests/deploy/test_set_display_mode.py` (docstring 14 -> 15, history)
+- Created: `offices/pm/blockers/BL-034-us560-panel-does-not-advertise-480x320-edid-finding.md`
+
+### Learnings for future iterations:
+- **Pattern discovered (the whole story)**: A TEST FIXTURE THAT ASSERTS A
+  HARDWARE FACT IS A FABRICATION, AND IT MAKES ITS OWN SUITE UNFALSIFIABLE.
+  US-552 could not have gone red on the real panel -- the fixture guaranteed the
+  happy path existed. When a fixture stands in for hardware nobody has read,
+  label it SYNTHETIC and say what it is for; the moment a comment says "as the
+  panel reports it", it has become a measurement that was never taken.
+- **Pattern discovered**: GROUND A CONSTANT AGAINST THE DOC *AND CHECK THE DOC
+  MEANS THE SAME QUANTITY*. US-552 correctly refused to ground 480x320 against a
+  second copy of the literal, and grounded it against
+  `docs/hardware-reference.md` instead -- but that row is the GLASS resolution
+  and the script needed a SIGNAL TIMING. Right discipline, wrong quantity. Same
+  shape as IAT-as-ambient. Pin the UNIT, not just the source.
+- **Gotcha**: "the Pi is unreachable from this harness" was stale. It cost
+  Sprint 74 a deferral. **Re-test an environmental claim before inheriting it**
+  -- one `ssh` settled it in seconds and turned a deferred story into a finding.
+- **Pattern discovered**: when the verification refutes the premise, the
+  deliverable is the FINDING plus a guard that stops the premise recurring --
+  not a fix, and not a bare blocker. Scenario 15 pins the measured hardware
+  while encoding NO ruling on what to pin instead, so it stays valid whichever
+  way BL-034 goes. A blocker rots; a test does not.
+- **Gotcha (flagged to PM, affects US-555/556/557 THIS sprint)**: the chromium
+  kiosk runs with NO `--window-size` and NO `--force-device-scale-factor`, so it
+  fills the X screen and renders into a **1280x720 CSS-px viewport** -- while
+  US-557's band budget ("body 224px; 3 rows + footer = 222") is ~320-canvas
+  arithmetic. Budgeted against one canvas, rendered on another. Build+validate
+  the chrome stories at 720p and settling BL-034 afterwards invalidates all
+  three.
+- **Gotcha**: the compound-bash refusal is real here (`cmd; cmd` and `a && b`
+  both got refused). Run ONE command per Bash call. `/tmp` is not writable --
+  scratch files go inside the repo and get removed before committing.
+- **Gotcha**: `xxd` and `edid-decode` are NOT installed on the Pi; `python3` is.
+  Parse the EDID with a python3 one-liner over
+  `/sys/class/drm/<connector>/edid` rather than assuming a tool exists.
+---
