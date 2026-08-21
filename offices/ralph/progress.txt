@@ -1207,3 +1207,59 @@ Task: Navigational overlays paint solid; modals keep their scrim
 - **Gotcha**: `Glob` on `specs/UI/**/*.css` times out on this share;
   `git ls-files | grep` answers the same question instantly.
 ---
+
+## 2026-08-21 - US-559 (Rex / Agent 1)
+Task: Sync stamp -> local 12-hour time; rows/pending to detail
+
+### What was implemented:
+- `fmtStamp(ts)` renders the SYNC tile's `lastOkTs` as `Mmm dd, yyyy h:mm:ss AM/PM`
+  in LOCAL time. It used to be pasted raw, so the panel carried TWO clocks -- the
+  top-bar face local, the sync stamp UTC -- differing by hours with no way to tell
+  which was lying.
+- The 12-hour rule now lives in ONE place: `fmtTimeOfDay(d, withSeconds)`.
+  `fmtClock` delegates and keeps no arithmetic of its own. `fmtClock`'s own comment
+  had warned that two formatters is how a 12-hour face drifts back to 24-hour --
+  this story would otherwise have BEEN that second formatter.
+- Only a ZONE-QUALIFIED ISO-8601 instant is formatted; anything else is echoed
+  verbatim. `new Date("412")` is the year 412 and a zoneless stamp is read as
+  local -- neither is an Invalid Date, so both would pass a literal isNaN check.
+- `N rows . N pending` moved off the tile into the System drill-down as a
+  `diagnostics` section (CIO placement call 2026-08-20). Still derived once by
+  `syncTile`; the overlay only presents it.
+- `drill.tappable` widened from "there is a fault" to "there is something behind
+  this line" -- US-509's invariant verbatim, with a new content input.
+
+### Files changed:
+- Modified: `specs/UI/dist/dashboard-pi/carousel.js` (fmtTimeOfDay/fmtStamp,
+  syncTile detail+counts, systemDiagnostics, renderSysDiagnostics, exports)
+- Modified: `specs/UI/dist/dashboard-pi/dashboard.css` (.sys-diag-* rows, quieter
+  than an issue row on purpose)
+- Created: `tests/ui/test_carousel_sync_stamp.py` (33 tests)
+- Modified: `tests/ui/test_carousel_sync_pending_na.py` (US-564 pins re-pointed
+  detail -> counts)
+- Modified: `tests/ui/test_carousel_system_drilldown.py` (US-509 tappable pin split
+  into three assertions)
+
+### Learnings for future iterations:
+- **Pattern discovered**: a VERB in an acceptance criterion can be the whole story.
+  "MOVES to #sys-detail" is a claim about REACHABILITY -- the destination's open
+  condition is part of the acceptance. Built literally, the counts would have
+  landed on a surface a healthy sync can never open, and every AC would still have
+  read as met. Check who can reach the new home before building the move.
+- **Pattern discovered**: widen an invariant's INPUT, never the invariant. US-509's
+  rule was "tappable only when something is behind it", not "only when something is
+  BROKEN". Say in the code which one you moved.
+- **Pattern discovered**: when a compound pin's subject moves, SPLIT it, don't
+  invert it. One assertion about two things became three that fail for three
+  reasons -- including "neither rows nor diagnostics => NOT tappable", without
+  which the widened gate could be hard-coded true.
+- **Gotcha**: `isNaN(new Date(x))` is not the whole guard against a fabricated
+  date. The dangerous inputs are the ones that parse SUCCESSFULLY into the wrong
+  instant. Accept by pattern; echo the rest.
+- **Gotcha**: a timezone assertion is vacuous on a UTC runner. Pair the
+  local-conversion comparison with a structural pin (`getUTCHours` absent) that
+  holds everywhere. This runner is UTC-5, so both bite here; CI may not.
+- **Gotcha**: count a rule in the source with COMMENTS STRIPPED -- this codebase
+  comments heavily and every comment quoting the rule inflates the count. Pair the
+  count with a delegation check, since a count of 1 is also satisfied by deletion.
+---
