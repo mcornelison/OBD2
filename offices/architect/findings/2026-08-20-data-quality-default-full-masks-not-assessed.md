@@ -52,7 +52,37 @@ The function's own docstring names this exact hazard:
 
 **The code preserves NULL correctly. Something downstream does not.**
 
-## 3. OPEN QUESTION — not resolved before session end
+## 2a. OPEN QUESTION RESOLVED (2026-08-20, later same day) — hypothesis CONFIRMED, and §1 is ELEVATED
+
+Re-queried after the Pi came back online. `drive_summary.id` -> `drive_id` mapping obtained:
+
+```
+summary_id 45 -> drive 38   data_quality=full   is_real=1
+summary_id 46 -> drive 39   data_quality=full   is_real=1
+summary_id 47 -> drive 40   data_quality=full   is_real=1     (was is_real=0 hours earlier)
+summary_id 48 -> drive 41   data_quality=full   is_real=1     (was is_real=0 hours earlier)
+```
+
+**The analytics batch ran between the two queries.** `_deriveIsReal` works exactly as designed and set
+`is_real=1` from `data_source='real'`. **There is NO compute defect** — §2's anomaly is fully explained.
+
+**But this CONFIRMS the §1 hypothesis and makes §1 the more serious finding, exactly as predicted.**
+The values I observed hours earlier were **pre-compute schema defaults**. Which means:
+
+**Between row creation and analytics compute, EVERY drive reads `data_quality='full'` — a full-quality
+verdict on a drive nobody has assessed yet.** That window is real, it is silent, and I walked straight
+into it: I read `full` on drives 40/41 shortly after the drive and would have believed it had I not
+checked the applied schema on a hunch.
+
+The defect is therefore not hypothetical and not rare — **it is guaranteed to occur for every drive,
+every time, for the duration of the compute lag.** Any consumer that queries before the batch runs gets
+a confident false verdict.
+
+**§4's fix stands unchanged and is now higher priority:** a verdict column must not default to the best
+verdict. Add an explicit `unassessed`/`not_computed` value and default to THAT, so the pre-compute
+window is *visibly* pre-compute.
+
+## 3. ORIGINAL OPEN QUESTION (now resolved above — retained for the record) — not resolved before session end
 
 **Leading hypothesis:** the analytics compute has NOT run for drives 39/40/41, and both values are
 simply **schema defaults** (`'full'` and `0`) from row creation. That explains both observations at once
