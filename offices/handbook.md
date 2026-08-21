@@ -571,6 +571,29 @@ between concurrent committers — NOT a slow disk** (the chi-nas-01 NAS is fast
 gigabit). Each agent now works in their OWN independent clone, so there is no
 shared index to collide on and the whole race class is gone.
 
+**PROVISIONED 2026-08-21 (PM).** The clones below now EXIST. Section 13 was adopted
+2026-08-03 but never provisioned — for 18 days every agent kept working in the one
+shared tree the section supersedes, which is what actually produced the collisions
+(two PM commits absorbed into other agents' `git add -A`; an `index.lock` block; a
+tuner session split across two branches mid-work).
+
+| agent | clone |
+|---|---|
+| Marcus (PM) | `Z:\o\OBD2v2` — canonical tree + deploy authority |
+| Atlas | `Z:\o\OBD2v2-architect` |
+| Spool | `Z:\o\OBD2v2-tuner` |
+| Argus | `Z:\o\OBD2v2-tester` |
+| Ralph | `Z:\o\OBD2v2-ralph` |
+| Iris | `Z:\o\OBD2v2-uidevloper` |
+
+**Provisioning a directory does not move a session into it.** Each agent's session
+must be LAUNCHED with its cwd inside its own clone — a CIO action. Until that
+happens the agent is still in the shared tree and nothing has changed for it.
+
+**Session-start check (every agent, every session):** `git rev-parse --show-toplevel`.
+If it returns `Z:/o/OBD2v2` and you are not the PM, you are in the shared tree —
+say so and do not commit.
+
 **Setup (per agent, one-time — the CIO provisions):**
 - Each agent has its own clone (own working tree + own `.git`), e.g.
   `…\OBD2v2-<role>\`; each agent's session runs from its own clone.
