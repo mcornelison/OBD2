@@ -1152,3 +1152,58 @@ Task: Kebab fits its bar -- visual box vs hit box, 40px tap kept
   plus "no F/E in the progress dots". A PostToolUse hook flags `eval()`; use an
   `ast.parse` walk with a node whitelist instead.
 ---
+
+## 2026-08-21 - US-558 (Agent 1 / Session 10)
+Task: Navigational overlays paint solid; modals keep their scrim
+
+### What was implemented:
+- Iris's P-4 rule, applied and then made STRUCTURAL: an overlay you NAVIGATE TO
+  is a destination and paints solid; an overlay that INTERRUPTS you is a modal
+  and keeps its scrim.
+- #setup-menu (was rgba(0,0,0,0.92)), #dtc-detail and #sys-detail (both .95) now
+  bind `var(--bg)` -- the same field token #screen's letterbox frame and the STOP
+  takeover already use, rather than a fourth literal black.
+- #confirm-modal + #clear-confirm keep their 0.6 scrim, with the reason now
+  written AT the rule: the translucency says the thing you were doing is still
+  underneath and Cancel returns you to it.
+- #dtc-takeover untouched per AC-4 -- and pinned as an ABSENCE (its base rule
+  declares no background; the field is per-severity).
+- New guard DISCOVERS every stacked full-screen layer out of the stylesheet
+  (position:fixed + inset:0 + z-index) and fails until each carries a role, in
+  both directions. 26 assertions, incl. negative self-tests against the real
+  values removed here.
+- Filed TD-084 on US-509's no-raw-colour guard (reads comments/selectors as hex).
+
+### Files changed:
+- Modified: `specs/UI/dist/dashboard-pi/dashboard.css` (3 fields -> var(--bg);
+  scrim rationale recorded at both modals; the rule stated once)
+- Created: `tests/ui/test_overlay_opacity_model.py` (discovery + alpha model)
+- Created: `offices/pm/tech_debt/TD-084-drilldown-colour-guard-reads-comments-and-selectors-as-hex.md`
+
+### Learnings for future iterations:
+- **Pattern discovered**: when a test DISCOVERS its own subjects, the WALK needs
+  its own tests, separate from the model that consumes them. A model can only be
+  wrong about what it was handed; a walk is wrong about what it never handed over
+  -- and that failure reports SUCCESS.
+- **Pattern discovered**: classify, don't enumerate. Three alphas is a fix that
+  holds until the next overlay; a classification every new layer must answer to
+  is the durable version. ~20 extra lines. Same shape as US-563's schema guard.
+- **Pattern discovered**: exclude a boundary case on a REAL distinction, never by
+  name, and give the exclusion its own test. #screen is fixed+inset:0 and paints
+  var(--bg) -- a laxer predicate sweeps it in and it passes for the wrong reason.
+- **Gotcha**: a CSS comment contains no braces, so an un-stripped `/* ... */`
+  reads as part of the next rule's SELECTOR and that rule silently leaves the
+  walk. Nearly every rule in this sheet is commented -- the normal case.
+- **Gotcha**: `@keyframes` closes with `}` at column 0. A selector pattern whose
+  first-char class admits `}` swallows the following selector. #dtc-takeover
+  follows a keyframes block, so the takeover itself disappeared.
+- **Gotcha**: a mechanical sweep ("every overlay gets var(--bg)") would have put
+  a field into #dtc-takeover's BASE rule, under the severity gradients, weakening
+  the AREA channel the STOP tier's safety treatment is built on.
+- **Gotcha**: US-509's drill-down colour guard slices 1800 raw chars from
+  `#sys-detail` and bans `#`, so it reads a COMMENT as a hex literal. It went red
+  on a commit that removed a raw literal -- then again on the note explaining the
+  workaround. Do not write a bare hash in a comment near that selector. TD-084.
+- **Gotcha**: `Glob` on `specs/UI/**/*.css` times out on this share;
+  `git ls-files | grep` answers the same question instantly.
+---
