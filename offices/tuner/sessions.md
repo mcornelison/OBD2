@@ -91,7 +91,14 @@ IMU still **not secured** — no IMU baseline may be taken at or below drive 41.
 5. **True cold-start curve still owed** — capture begins 30–60 s after key-on, first sample already 54 °C.
 6. **IMU mount + orientation calibration** — must be redone *after* physical mounting; first secured drive
    is the true baseline. >3 g transient counting is not measurable before then.
-7. Awaiting Iris confirmation that 🔴110 bypasses the dwell machine on sample one.
+7. ~~Awaiting Iris confirmation on 🔴110~~ — **CLOSED same session.** Iris confirmed 110 °C is a
+   **separate branch evaluated before the dwell path**, so no config value can ever put a delay in front
+   of it, and adopted the reset-floor rule. Both landed as W-12 acceptance criteria before first code —
+   including an explicit **never-fires regression test** (a 103/105 chatter spanning ≥30 s above 102 must
+   raise 🟡). She generalised it further than I did: **any dwell-gated tier needs THREE numbers — trigger,
+   dwell, and a reset floor strictly below the trigger.** A spec naming only trigger + duration has an
+   unstated reset rule, and the intuitive default is the failing-silent one. That is a better statement of
+   the defect than mine and it applies to every band I issue from here on.
 
 ---
 
