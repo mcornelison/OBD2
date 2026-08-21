@@ -137,7 +137,7 @@ def _newPreV0006Engine():
             ' synced_at DATETIME,'
             ' sync_batch_id INTEGER,'
             ' drive_start_timestamp DATETIME,'
-            ' ambient_temp_at_start_c FLOAT,'
+            ' intake_air_temp_at_start_c FLOAT,'
             ' starting_battery_v FLOAT,'
             ' barometric_kpa_at_start FLOAT,'
             ' drive_id INTEGER,'
@@ -265,7 +265,7 @@ class TestPreV0006FailureMode:
                 ' synced_at DATETIME,'
                 ' sync_batch_id INTEGER,'
                 ' drive_start_timestamp DATETIME,'
-                ' ambient_temp_at_start_c FLOAT,'
+                ' intake_air_temp_at_start_c FLOAT,'
                 ' starting_battery_v FLOAT,'
                 ' barometric_kpa_at_start FLOAT,'
                 ' drive_id INTEGER,'
@@ -343,7 +343,7 @@ class TestPostV0006Modernized:
             assert row.device_id is None
             assert row.start_time is None
             # Pi-populated cold-start metadata round-trips correctly.
-            assert row.ambient_temp_at_start_c == pytest.approx(18.5)
+            assert row.intake_air_temp_at_start_c == pytest.approx(18.5)
             assert row.starting_battery_v == pytest.approx(12.7)
             assert row.barometric_kpa_at_start == pytest.approx(100.2)
         finally:

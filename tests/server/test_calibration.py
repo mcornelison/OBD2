@@ -129,12 +129,41 @@ class TestDriveSummaryIsRealFlag:
         cols = {c.name for c in DriveSummary.__table__.columns}
         assert "is_real" in cols
 
-    def test_defaultsToFalseOnInsert(self, engine):
+    def test_defaultsToNullOnInsert(self, engine):
+        """US-563 MOVED this pin: it used to assert ``is_real is False``.
+
+        FALSE is a COMPUTED verdict -- "analytics looked at this drive and it is
+        not real".  A row nobody has assessed must not claim it.  The F-134 read
+        on 2026-08-20 was exactly this default surfacing as a conclusion, so the
+        old assertion was pinning the defect as correct behaviour.  NULL is
+        "nobody has looked", which is what an un-analysed insert actually means;
+        analysis.py already relies on that TRUE/FALSE/NULL distinction for
+        Spool's grading queries.
+        """
         with Session(engine) as session:
             drive = DriveSummary(
                 device_id=_DEVICE,
                 start_time=datetime(2026, 4, 10, 8, 0),
                 end_time=datetime(2026, 4, 10, 8, 30),
+            )
+            session.add(drive)
+            session.commit()
+            session.refresh(drive)
+            assert drive.is_real is None
+
+    def test_explicitFalseStillPersists(self, engine):
+        """The counter-direction: FALSE is still writable and still means FALSE.
+
+        Without this, "defaults to NULL" is satisfiable by a column that can
+        never hold a negative verdict -- which would silently break calibration
+        filtering on genuinely-simulated drives.
+        """
+        with Session(engine) as session:
+            drive = DriveSummary(
+                device_id=_DEVICE,
+                start_time=datetime(2026, 4, 10, 9, 0),
+                end_time=datetime(2026, 4, 10, 9, 30),
+                is_real=False,
             )
             session.add(drive)
             session.commit()

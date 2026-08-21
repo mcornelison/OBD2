@@ -77,7 +77,7 @@ def _insertPiSyncRow(
         source_id=driveId,
         drive_id=driveId,
         drive_start_timestamp=driveStartTs,
-        ambient_temp_at_start_c=20.0,
+        intake_air_temp_at_start_c=20.0,
         starting_battery_v=12.5,
         barometric_kpa_at_start=99.1,
         data_source="real",
@@ -145,4 +145,4 @@ class TestReportSingleRowPerDrive:
         # Spec 3: start_time = MIN(realtime.timestamp); end_time = MAX.
         assert row.start_time == driveStart
         assert row.end_time == driveStart + timedelta(seconds=109)
-        assert row.ambient_temp_at_start_c == 20.0
+        assert row.intake_air_temp_at_start_c == 20.0

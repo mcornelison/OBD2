@@ -58,7 +58,7 @@ from scripts.apply_server_migrations import (
     serverTableExists,
 )
 from src.server.db.models import (
-    DRIVES_DATA_QUALITY_DEFAULT,
+    DRIVES_DATA_QUALITY_COLUMN_DEFAULT,
     DRIVES_DATA_QUALITY_VALUES,
     DRIVES_SOURCE_UNIQUE_CONSTRAINT,
     DRIVES_TABLE,
@@ -98,7 +98,7 @@ CREATE_DRIVES_DDL: str = (
     '    end_time        DATETIME NULL,'
     "    data_source     VARCHAR(16) DEFAULT 'real',"
     '    data_quality    VARCHAR(20) NOT NULL '
-    f"        DEFAULT '{DRIVES_DATA_QUALITY_DEFAULT}',"
+    f"        DEFAULT '{DRIVES_DATA_QUALITY_COLUMN_DEFAULT}',"
     f'    CONSTRAINT {DRIVES_SOURCE_UNIQUE_CONSTRAINT}'
     '        UNIQUE (source_device, source_drive_id),'
     f'    CONSTRAINT ck_drives_data_quality CHECK ({_DATA_QUALITY_CHECK})'

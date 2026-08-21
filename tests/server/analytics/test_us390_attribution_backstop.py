@@ -67,7 +67,7 @@ from src.server.analytics.drive_summary_compute import (  # noqa: E402
 from src.server.analytics.overlap import detect_overlapping_drives  # noqa: E402
 from src.server.db.models import (  # noqa: E402
     DATA_QUALITY_ATTRIBUTION_ANOMALY,
-    DRIVE_SUMMARY_DATA_QUALITY_DEFAULT,
+    DRIVE_SUMMARY_DATA_QUALITY_FULL,
     Base,
     DriveSummary,
     RealtimeData,
@@ -195,7 +195,13 @@ class TestResidual2829ServerBackstop:
             assert detect_overlapping_drives(session, _CLEAN_DRIVE) == []
             assert compute_drive_summary(session, _CLEAN_DRIVE) == sid
             session.commit()
+            # US-563 repointed this constant, and the repoint MATTERS here: the
+            # assertion is that compute stamped the clean VERDICT, and it used
+            # to be spelled with a constant named "..._DEFAULT".  Under the new
+            # split that name means the non-verdict 'unassessed', so leaving it
+            # would have turned this into "compute left the row untouched" --
+            # green for the wrong reason on a drive it had just assessed.
             assert (
                 session.get(DriveSummary, sid).data_quality
-                == DRIVE_SUMMARY_DATA_QUALITY_DEFAULT
+                == DRIVE_SUMMARY_DATA_QUALITY_FULL
             )
