@@ -399,17 +399,58 @@ def test_systemStatusView_carriesTheDrillDownAlongsideTheSummary():
 
 
 @_NODE_TESTS
-def test_systemStatusView_allGood_summaryIsNotATapTarget():
+def test_systemStatusView_allGood_listsNoIssueRows():
     """
     Given: every source is good
     When: the card view is built
-    Then: the summary is not tappable -- an affordance that opens an empty list
-          is a misleading tap target
+    Then: the issue list is EMPTY -- a green source in a fault list is a
+          fabricated fault, and that half of US-509 is untouched.
+
+          THIS PIN MOVED, IT WAS NOT DELETED. It used to assert
+          `tappable is False` here as well, on the reasoning that "an
+          affordance that opens an empty list is misleading". That invariant
+          still holds and is still enforced (see the two tests below) -- but
+          US-559 put the SYNC counts behind this line on the CIO's 2026-08-20
+          placement call, so on a healthy card the list is no longer empty and
+          the affordance is no longer a promise the card cannot keep. What was
+          one assertion about two things is now two assertions that fail for
+          two different reasons.
     """
     view = _view("systemStatusView", _sysState())
 
-    assert view["drill"]["tappable"] is False
     assert view["drill"]["rows"] == []
+
+
+@_NODE_TESTS
+def test_systemStatusView_allGood_isStillReachableForItsDiagnostics():
+    """
+    Given: every source is good -- the COMMON case
+    When: the card view is built
+    Then: the summary IS tappable, because the sync counts live behind it.
+          Had the gate stayed on faults alone, a non-zero pending backlog on an
+          otherwise-OK sync would have been unreachable and US-559's "counts
+          move to the drill-down" would have meant "counts deleted".
+    """
+    view = _view("systemStatusView", _sysState())
+
+    assert view["drill"]["tappable"] is True
+    assert view["drill"]["diagnostics"]
+
+
+@_NODE_TESTS
+def test_systemDrill_nothingBehindTheLine_isStillNotATapTarget():
+    """
+    Given: neither issue rows nor diagnostics
+    When: the drill is built
+    Then: NOT tappable. US-509's actual guarantee, preserved verbatim through
+          the content change: without this the widened gate could be hard-coded
+          true and every assertion above would still pass.
+    """
+    drill = _view("systemDrill", {}, {})
+
+    assert drill["rows"] == []
+    assert drill["diagnostics"] == []
+    assert drill["tappable"] is False
 
 
 @_NODE_TESTS

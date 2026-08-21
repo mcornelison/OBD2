@@ -1305,6 +1305,21 @@ html, body {
 .sys-issue-row[data-level="unavailable"] .sys-issue-chip {
   color: var(--text-tertiary);
 }
+/* US-559: the SYNC counts, moved off the tile so the stamp could have its own
+   line. Reference facts, NOT faults -- so they are deliberately QUIETER than an
+   issue row: no severity chip, no border, tertiary text. Reading like a fault
+   is how a diagnostics line trains the operator to ignore the real ones. */
+.sys-diag-row {
+  display: flex; align-items: baseline; gap: 8px;
+  padding: var(--detail-pad);
+}
+.sys-diag-label {
+  font-size: var(--fs-label); font-weight: 700; letter-spacing: 0.06em;
+  color: var(--text-tertiary);
+}
+.sys-diag-text {
+  margin-left: auto; font-size: var(--fs-label); color: var(--text-secondary);
+}
 /* US-509: the summary line only LOOKS like a control when it is one. */
 .sys-summary-tappable { cursor: pointer; }
 .sys-summary-chevron { font-size: var(--fs-secondary); color: var(--text-tertiary); }

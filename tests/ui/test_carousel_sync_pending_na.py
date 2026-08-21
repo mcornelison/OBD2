@@ -9,6 +9,14 @@
 #   Both directions are pinned: null renders as an em-dash AND a real count still
 #   renders as a number. A tile that showed "—" unconditionally would satisfy the
 #   first assertion and be just as useless as the one it replaced.
+#
+#   US-559 MOVED THE SUBJECT, NOT THE RULE. The counts left the tile's detail
+#   line (which now carries the sync stamp alone, CIO 2026-08-20) for the tile's
+#   own `counts` field, which the System drill-down renders. Every assertion
+#   below therefore reads `counts` where it used to read `detail`. The
+#   null-honesty contract US-564 established is completely unchanged -- deleting
+#   these pins because their field was renamed would have quietly retired the
+#   guard on the defect they exist for.
 # Author: Rex (US-564)
 # Creation Date: 2026-08-21
 # Copyright: (c) 2026 Eclipse OBD-II Project. All rights reserved.
@@ -18,6 +26,8 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-08-21    | Rex (US-564) | Initial -- null -> NA, measured counts unchanged.
+# 2026-08-21    | Rex (US-559) | Re-point detail -> counts; the counts moved to
+#               |              | the drill-down. Same rule, new field.
 # ================================================================================
 ################################################################################
 
@@ -75,12 +85,12 @@ class TestNullPendingNeverRendersAsZero:
         """
         Given: the emitter reporting no measured pending count
         When: the sync tile renders
-        Then: the detail line says "— pending", never "0 pending"
+        Then: the counts line says "— pending", never "0 pending"
         """
         tile = _view("syncTile", _sync(pending=None))
 
-        assert EM_DASH + " pending" in tile["detail"]
-        assert "0 pending" not in tile["detail"]
+        assert EM_DASH + " pending" in tile["counts"]
+        assert "0 pending" not in tile["counts"]
 
     def test_syncTile_missingPendingKey_alsoRendersAnEmDash(self):
         """
@@ -94,7 +104,7 @@ class TestNullPendingNeverRendersAsZero:
         payload.pop("pending")
         tile = _view("syncTile", payload)
 
-        assert EM_DASH + " pending" in tile["detail"]
+        assert EM_DASH + " pending" in tile["counts"]
 
     def test_syncTile_measuredCount_stillRendersTheNumber(self):
         """
@@ -105,7 +115,7 @@ class TestNullPendingNeverRendersAsZero:
         """
         tile = _view("syncTile", _sync(pending=7))
 
-        assert "7 pending" in tile["detail"]
+        assert "7 pending" in tile["counts"]
 
     def test_syncTile_measuredZero_stillRendersZero(self):
         """
@@ -116,7 +126,7 @@ class TestNullPendingNeverRendersAsZero:
         """
         tile = _view("syncTile", _sync(pending=0))
 
-        assert "0 pending" in tile["detail"]
+        assert "0 pending" in tile["counts"]
 
     def test_syncTile_nullRows_alsoRendersAnEmDash(self):
         """
@@ -127,7 +137,7 @@ class TestNullPendingNeverRendersAsZero:
         """
         tile = _view("syncTile", _sync(rows=None))
 
-        assert EM_DASH + " rows" in tile["detail"]
+        assert EM_DASH + " rows" in tile["counts"]
 
 
 class TestTileStructureIsUnchanged:
