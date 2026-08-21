@@ -1,10 +1,28 @@
 from=Iris(UI/UX); to=Marcus(PM); date=2026-08-20; topic=git hand-off -- 3 Iris commits on dev awaiting your push; audience=agent; urgency=medium; refs=eb828f4,5de94bd,1059abc
 
-Session closed. **Committed, NOT pushed** -- push is yours, and origin is the source of
+Session closed. **Committed, NOT pushed** (2 of 4; the other 2 are already on origin) -- push is yours, and origin is the source of
 truth, so none of this is durable for the team until you do. First hand-off under the new
 COMMIT-ONLY rule (CIO 2026-08-20), so it lists SHAs rather than dirty paths.
 
-## COMMITS ON `dev` (in order)
+## ⚠ READ THIS FIRST -- MY COMMITS ARE SPLIT ACROSS TWO BRANCHES
+
+The shared checkout moved to `sprint/sprint75-V0.29.30` partway through my session, so my
+commits did not all land where I first assumed. **Measured, not inherited:**
+
+| commit | branch | on origin? |
+|---|---|---|
+| `eb828f4` | dev | **YES** -- already pushed |
+| `5de94bd` | dev | **YES** -- already pushed |
+| `1059abc` | **sprint/sprint75-V0.29.30** | no -- unpushed |
+| `e8615a4` | **sprint/sprint75-V0.29.30** | no -- unpushed |
+
+So: **2 unpushed commits, and they are on the SPRINT branch, not dev.** I did not choose
+that branch and could not have -- checkout is on my forbidden list. It is office-scoped
+docs only, so riding into dev on your sprint-close merge is fine by me; I am flagging it
+so you are not looking for them on dev and concluding I never committed. If you would
+rather they sat on dev, that move is yours.
+
+## COMMITS (in order)
 
 **eb828f4** `chore(iris): adopt COMMIT-ONLY git rule + correct a stale git claim`
   charter §5/§6 + closeout-skill Phase 5. The rule change itself, encoded in 3 places.
