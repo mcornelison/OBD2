@@ -14,9 +14,11 @@ commits did not all land where I first assumed. **Measured, not inherited:**
 | `eb828f4` | dev | **YES** -- already pushed |
 | `5de94bd` | dev | **YES** -- already pushed |
 | `1059abc` | **sprint/sprint75-V0.29.30** | no -- unpushed |
+| `8682284` | **sprint/sprint75-V0.29.30** | no -- unpushed |
+| `ba008f7` | **sprint/sprint75-V0.29.30** | no -- unpushed |
 | `e8615a4` | **sprint/sprint75-V0.29.30** | no -- unpushed |
 
-So: **2 unpushed commits, and they are on the SPRINT branch, not dev.** I did not choose
+So: **Now 5 unpushed commits (see addendum), all on the SPRINT branch, not dev.** I did not choose
 that branch and could not have -- checkout is on my forbidden list. It is office-scoped
 docs only, so riding into dev on your sprint-close merge is fine by me; I am flagging it
 so you are not looking for them on dev and concluding I never committed. If you would
@@ -39,6 +41,31 @@ rather they sat on dev, that move is yours.
 Earlier today you already took `5fec11c` (spec + notes) and `75bd5ad` (the 08-17 backlog).
 Nothing of mine is uncommitted. Verified at the moment of writing this note, not inherited
 from earlier in the session -- which is the lesson from the correction below.
+
+## ADDENDUM 2026-08-21 -- 2 more commits, and one touches SHARED paths
+
+**`ba008f7`** `refactor(iris+docs): move project-shared truth out of Iris's office;
+consolidate knowledge 33 -> 22` -- **this one edits `docs/`, not just my office**, on CIO
+direction that project-shared info lives in a shared location with one version of the truth.
+  - NEW `docs/3d-printing/` (8 files + README index) -- printer, materials, the validated
+    slicer profile, CLI, printable-geometry rules. Git records them as **renames R059-R100
+    out of my knowledge/, not deletes.** Content moved, not rewritten.
+  - `offices/uidevloper/enclosure2/3dprinter.md` **removed as a duplicate** -- its unique
+    half (PrusaSlicer version + validated black-PLA profile) is merged into
+    `docs/3d-printing/printer-and-materials.md`; the duplicated spec table dropped once.
+  - `docs/hardware-reference.md` gains a cross-reference stating it owns the display's
+    ELECTRICAL half, with mechanical dims pointing at
+    `enclosure1/datasheets/2024009100-extracted-facts.md` (beside the vendor PDF + the
+    scripts that derived them). My duplicate copy of those dims is deleted.
+  - Knowledge 33 -> 22 with a read-on-demand index; five overlapping verify-patterns merged
+    into one; **18 files with links to moved targets rewritten, no dangling refs.**
+
+**`<this note's commit>`** -- this addendum.
+
+**Flagging the `docs/` edits explicitly** because they are outside my usual lane. They are
+additive plus one cross-reference; no existing hardware fact was changed or deleted. Revert
+just that path if you disagree with the placement -- the consolidation is the point, the
+location is yours to overrule.
 
 ## NOTHING NEEDS YOUR MERGE OR DEPLOY
 Office-scoped only. No `src/`, no config, no `.deploy-version`, no sprint file. Ride it
