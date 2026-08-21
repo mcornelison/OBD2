@@ -9,8 +9,8 @@
   "capacity": {
     "groomed": 11,
     "reservedSlots": 0,
-    "note": "Reserved slots are now FILLED, by the findings they were held for. US-560..565 came from the 2026-08-20 movement drive (Atlas x4 notes + Spool x2). 11 stories is LARGE for one sprint -- see splitRecommendation.",
-    "splitRecommendation": "PM recommends splitting: 75a = US-560..565 (V0.29 closeout, gates /chain-validated) and 75b = US-555..559 (F-132 chrome, cosmetic). The chrome work is CIO-directed and groomed, but nothing in the V0.29 chain waits on it, whereas US-560 gates the F-127 legibility read and US-562 gates drive-level reporting. CIO's call; both are cut and ready either way."
+    "cioDecision": "CIO 2026-08-20: PROCEED WITH 11 STORIES -- do NOT split into 75a/75b. The PM split recommendation (closeout vs chrome) was raised and declined. Both lines ship in one sprint.",
+    "note": "11 stories is large. Sizes: 1 L (US-564), 8 M, 2 S. The 5 chrome stories (US-555..559) are small and share one surface; the 6 closeout stories (US-560..565) are the V0.29 gate. Execution order is fixed in validationMethod -- US-560 FIRST, chrome LAST -- so if the sprint runs long, the tail that slips is cosmetic, not the chain gate."
   },
   "stories": [
     {
