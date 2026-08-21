@@ -924,9 +924,28 @@ html, body {
 }
 
 /* --- US-403 System Setup menu (D-6/D-7/A-7) --------------------------------- */
+/* US-558 (F-132) THE OVERLAY OPACITY RULE, declared once here and cited by the
+   other five full-screen layers:
+
+     An overlay you NAVIGATE TO is a destination and paints solid.
+     An overlay that INTERRUPTS you is a modal and keeps its scrim.
+
+   This one shipped at `rgba(0,0,0,0.92)` -- 8% of the live carousel bleeding
+   through the surface where the operator reads settings and service controls.
+   On a 480x320 panel on a sunlit windscreen that is not a depth cue, it is
+   noise. The scrim was never carrying meaning here: nothing is waiting
+   underneath a screen you deliberately went to.
+
+   `var(--bg)` rather than a fresh `#000`: #screen's letterbox frame and the STOP
+   takeover's field already bind that token, and four literals only look
+   identical until one of them moves. The two confirm modals KEEP their scrim on
+   purpose -- see #confirm-modal. Classification enforced by
+   tests/ui/test_overlay_opacity_model.py, which DISCOVERS the full-screen layers
+   out of this sheet, so a new overlay fails until somebody says which kind it
+   is. */
 #setup-menu {
   position: fixed; inset: 0; z-index: 40;
-  background: rgba(0, 0, 0, 0.92);
+  background: var(--bg);
   display: flex; flex-direction: column; gap: 6px;
   padding: 6px 12px 10px; box-sizing: border-box; overflow-y: auto;
 }
@@ -1022,6 +1041,14 @@ html, body {
 }
 
 /* --- US-403 confirm modal (F-6 confirm-before-consequential) ---------------- */
+/* US-558 (F-132): THE SCRIM STAYS, and this is the half of the overlay rule most
+   easily lost -- a sweep that reads "make the overlays opaque" takes the two
+   confirms with it. The translucency is doing real work here: it says the thing
+   you were doing is still underneath and Cancel returns you to it. This is an
+   INTERRUPTION, not a destination. Both confirms scrim at the same strength on
+   purpose -- two dialogs dimming the panel by different amounts would imply one
+   interruption is more real than the other. Guarded by
+   tests/ui/test_overlay_opacity_model.py. */
 #confirm-modal {
   position: fixed; inset: 0; z-index: 50;
   display: flex; align-items: center; justify-content: center;
@@ -1110,7 +1137,9 @@ html, body {
   --detail-gap-tight: 4px;      /* within a section */
   --detail-pad:       8px 10px; /* every section card */
   position: fixed; inset: 0; z-index: 45;
-  background: rgba(0, 0, 0, 0.95);
+  /* US-558: DESTINATION -- you tapped a code in the Alerts list to get here. Was
+     `rgba(0,0,0,0.95)`; see the rule at #setup-menu. */
+  background: var(--bg);
   display: flex; flex-direction: column;
   padding: 4px 12px 10px; box-sizing: border-box; overflow-y: auto;
 }
@@ -1228,7 +1257,15 @@ html, body {
   --detail-gap-tight: 4px;      /* within a row */
   --detail-pad:       8px 10px; /* every row card */
   position: fixed; inset: 0; z-index: 45;
-  background: rgba(0, 0, 0, 0.95);
+  /* US-558: DESTINATION -- you tapped through from the System Status card. Was
+     `rgba(0,0,0,0.95)`; the rule is stated at the setup-menu block. It inherits
+     the per-code overlay's shell, so it takes the same field for the same
+     reason -- two drill-downs that look different teach two interactions for one
+     idea. (The cross-reference above omits its leading hash DELIBERATELY:
+     US-509's no-raw-colour guard scans a fixed character window from this
+     selector and reads a bare hash anywhere in it, comment or not, as a hex
+     literal. Do not "fix" the spelling -- it goes red. See TD-084.) */
+  background: var(--bg);
   display: flex; flex-direction: column;
   padding: 4px 12px 10px; box-sizing: border-box; overflow-y: auto;
 }
@@ -1317,6 +1354,7 @@ html, body {
    The BOX takes the border token and the destructive BUTTON takes the action
    fill; Cancel stays unstyled so the easy default is visually the quiet one.
    Pinned by tests/ui/test_dashboard_fidelity_pass.py. */
+/* US-558: INTERRUPTION -- keeps its scrim, same strength as #confirm-modal. */
 #clear-confirm {
   position: fixed; inset: 0; z-index: 55;
   display: flex; align-items: center; justify-content: center;
