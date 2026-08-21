@@ -7,7 +7,7 @@
 
 ---
 
-## Session 37 — 2026-08-20 (THE MOVEMENT DRIVE — 48-day gap closed; 3 carry-forwards retired; 2 defects filed; 2 self-corrections)
+## Session 37 — 2026-08-20 (THE MOVEMENT DRIVE — 48-day gap closed; 3 carry-forwards retired; 2 defects filed; A-9 re-gate GREEN; 3 self-corrections)
 
 **Context**: The session I'd been waiting 48 days for. CIO idled the Eclipse in the garage (drive 39), took a 30-min meeting, then ran two short city loops (drives 40 + 41). First moving-vehicle data since drive 34 (2026-07-03). Opened with a permission-settings cleanup, closed with three long-standing carry-forwards retired.
 
@@ -86,6 +86,79 @@ Worth recording the counterintuitive part: **raising the yellow is a safety impr
 2. **Check whether Marcus merged `sprint/sprint75-V0.29.30`** — all six of this session's commits live there, not on `dev`.
 3. **Confirm or kill the UPS/no-graceful-shutdown observation** *only after* reading where Atlas's P0 landed — do not duplicate his work.
 4. **Ask CIO for the parasitic-draw result.** If the Pi rig is implicated, that is our problem to fix, not the battery's fault.
+
+### Session 37 — ADDENDUM (post-closeout work, same day)
+
+Session continued after the formal closeout. Recording it here rather than opening a Session 38 — same day, same thread of work.
+
+**Branch split RESOLVED.** CIO directed the merge; Marcus landed `sprint/sprint75-V0.29.30` → `dev` (`b0fcc85`). Verified properly rather than trusting a commit count: Atlas's note, all three of my `knowledge.md` sections, and the header stamp are all on `dev`. The `knowledge.md` keep-both conflict I predicted resolved cleanly. Marcus then groomed V0.29 closeout on top — Sprint 75 is 11 stories, no 75a/75b split.
+
+**Read Atlas's A-9 re-gate note (was sitting in my inbox on the sprint branch; read the blob via `git show <ref>:<path>` rather than switching branches — Spool never switches).**
+
+- **A-9 Root 1 (dual attribution): DOES NOT RECUR.** Drive 40 ends 17:15:13, drive 41 starts 17:18:04 — 2m51s clean gap. Back-to-back legs are exactly the shape that produced overlapping drives 28/29, so this was the ideal test. Server parity exact on all four row groups.
+- **New START-side gap**, bounded: ~11 s of real moving rows (SPEED 33-34) unattributed before drive 41 armed. Atlas correctly framed it as **cost, not corruption** — rows honest and correctly timestamped, just unassigned because a drive had not yet confirmed. He deliberately did not rule, because it is a question about what a drive record has to MEAN. Mine.
+
+**RULING issued to Atlas: RETRO-ASSIGN, bounded.** Rationale: retro-assignment fabricates nothing (attribution was *deferred*, not unknown); a drive record must be complete to be a valid unit of analysis; and **the loss is systematic, not random** — every drive loses its opening in the same direction, which biases max-speed / first-throttle / open-loop→closed-loop transition on every drive and corrupts cross-drive comparison, which is what the baseline shelf is built on.
+
+**The constraint mattered more than the ruling**: a careless retro-assign is A-9 Root 1 with extra steps — Root 1 was *over*-attribution, this is *under*-attribution, opposite directions. Four hard bounds, whichever fires FIRST wins: (1) `drive_id IS NULL` only, never re-assign; (2) stop at previous drive's `end_time`; (3) stop at any intervening power event; (4) 60 s max window. **If ambiguous at runtime, assign nothing** — an unattributed row is a known gap, a mis-attributed row is a lie that survives into the baseline.
+
+Also told him not to let the two share a ticket — conflating them is how a fix for one re-opens the other.
+
+**Coolant dwell MEASURED — the provisional numbers to Iris are now firm, and FASTER.**
+
+```
+all-time max coolant:      101.0 °C
+samples >= 102:            0
+samples >= 104:            0          (of 10,349 samples)
+longest excursion >=100:   22 s       (typical 2-14 s)
+```
+
+The engine has **never exceeded 101 °C** in the entire capture history, so 🟡 at 104 is a genuine exception marker — it would not have fired once. That also means my 60 s dwell was over-cautious: the longest healthy excursion above 100 °C is **22 s**, so **30 s clears every observed healthy excursion with margin and halves detection latency.** Revised: 🟡 **≥104 °C sustained ≥30 s** · 🔴 ≥110 °C any duration, or ≥104 °C ≥120 s. On a real thermal event 30 seconds of earlier warning is worth having.
+
+> **Honest limit:** all 8 drives are ~24-27 °C ambient days. A 35 °C day pushes the fan-cycle ceiling up. The 3 °C headroom at 104 should absorb it, but **re-check after a hot-weather drive.**
+
+### 🔴 IMU 4.1 g — NOT a pothole. Third self-correction of the session.
+
+Correlated the 40.43 m/s² peak against SPEED as promised. It kills both readings:
+
+```
+17:13:38   SPEED 0.0   RPM 748     <- the moment of the peak
+```
+
+**The car was stationary at idle.** Verified mounting orientation from 30,300 resting samples — **z carries gravity (9.92 m/s²)**, so z is vertical, and the peak is **y-dominated at −36.75 m/s², i.e. horizontal.**
+
+**My error was reasoning, not a slip.** I told Atlas street tyres cannot make 4 g laterally or longitudinally, therefore it had to be vertical. **Grip limits SUSTAINED acceleration; they do not limit IMPACT transients** — impact loading is structural, not frictional, so 3.75 g horizontal was always possible. The physics I cited was real but did not apply. And I never checked whether the car was moving. **Second time in one session that the cheap fact would have beaten the clever inference.**
+
+**Mechanism (CIO confirmed):** stopped, door shut, Pi untouched, **sensor assembly deliberately NOT secured** — CIO wanted the data path proven before fabricating a mount, which is the correct order of operations. Signature fits: three large samples across three consecutive seconds in *different* axes (z 20.7 / y −36.8 / x −16.9) — a body being knocked about, not a glitch.
+
+**Label it correctly — NOT a sensor error.** An unsecured IMU does not measure the car, **it measures itself**; a loose board jolted by a door slam genuinely sees several g while the vehicle sees ~0.05 g. The reading is TRUE, it is just not a measurement of the vehicle. **Valid sensor, invalid mounting.** Wording matters: "sensor error" sends someone chasing a hardware fault that does not exist, or adds filtering that later swallows a real transient. Sensor health is not in question — 30,300 resting samples, stable gravity vector, magnitude 9.96 vs 9.81 expected.
+
+**🔴 Consequence bigger than the anomaly: DO NOT BASELINE IMU ON DRIVES ≤41.** Every IMU sample from 39/40/41 is vehicle motion + sensor motion, inseparably mixed. Touches **US-521 pitch fusion, grade correction, derived altitude** — all in flight. Treat those drives as a **plumbing test**, which is what they were, and they passed (30,300 / 29,148 / 10,041 samples, sane gravity vector, bus healthy).
+
+Two follow-ons once secured: (1) **the resting gravity vector WILL change** — `ax 0.13 / ay −0.92 / az 9.92` is obsolete the moment it is bolted down, so orientation calibration happens **after** mounting, never before; any spec hard-coding an axis map needs a re-derive step gated on the mount. (2) **The first secured drive is the true IMU baseline.**
+
+**Amended my own earlier ask to Atlas**: withdrew "vertical" from the >3 g transient counter — make it **magnitude-based** (`sqrt(x²+y²+z²)`), since my axis reasoning was precisely what was wrong. Reframed its purpose: post-mount it is a road/chassis metric; **until then it is a mount-integrity canary** — after securing, a door slam should NOT produce 3.75 g, and if it still does the mount is inadequate. The thing that exposed the problem becomes the test that the fix worked.
+
+**Light sensor — corrected my stale copy.** Atlas: TSL2591 re-connected and reading real varying lux. My "intentionally unplugged" line was wrong; shared MEMORY fixed.
+
+### Addendum — Filed
+
+- **Atlas** — `RULING-retro-assign-drive-start-rows` (with the four A-9-protecting bounds)
+- **Atlas** — `CORRECTION-4g-transient-was-not-a-pothole` (`27a1d43`)
+- **Marcus** — `CIO-DIRECTIVE-merge-sprint75-into-dev` + `BRANCH-SPLIT-session37-work-across-two-branches`
+
+### Addendum — Process note (third flag, now with a fix)
+
+The working tree switched branches **three times** during this session and the shell cwd reset once, which is what produced the morning's split-brain. **On this shared tree, branch is a per-commit fact, not a per-session one.** Adopted for the rest of the session and recommended standing: verify `git rev-parse --abbrev-ref HEAD` immediately before every commit, and use explicit `git -C /z/o/OBD2v2` rather than relying on cwd. Every commit after adopting this landed where intended.
+
+### Addendum — Still Open
+
+1. **High-load capture remains #1** — everything captured today was ≤29% throttle.
+2. **First SECURED-IMU drive** — new priority; the true IMU baseline, and the mount-integrity test.
+3. **US-526 drain validation** — still blocked behind Atlas's P0 `8e726b1` (no graceful shutdown / GPIO6 PLD in two processes); not opening a parallel thread.
+4. **Coolant band re-check after a hot-weather (~35 °C) drive.**
+5. **Parasitic-draw test** (CIO) — B-063 buck converter must be ruled out, not assumed.
+6. Baro (0x33) unresolved; bench probe with capture stopped.
 
 ---
 
