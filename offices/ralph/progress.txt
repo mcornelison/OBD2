@@ -1021,3 +1021,71 @@ Task: Top bar -> 3-column grid: clock CENTRE, glyphs left, version right
   repeated independently in `#carousel { top: 28px }` -- the exact
   literal-in-one-file / assumption-in-another root cause s5.2 exists to tokenize.
 ---
+
+## 2026-08-21 - US-557 (Agent 1 / Rex)
+Task: Band-budget correction + tokenize the layout bands
+
+### What was implemented:
+- Promoted the three layout bands into `specs/UI/tokens.css` -- `--bar-h: 34px`,
+  `--dots-h: 16px`, `--card-pad-y: 8px` -- and mirrored them in the dist sheet.
+  Six band sites now read one token each: `#topbar{height}`, `#carousel{top}`,
+  `#carousel{bottom}`, `#rotate-progress{top}`, `#dtc-ribbon{top}`,
+  `#dots{height}`, plus `.card{padding}`'s vertical slot.
+- Shipped Iris's P-3 chrome reclaim in full (topbar 28->34, dots 24->16, card pad
+  14->8, title `--fs-secondary`/8mg -> `--fs-label`/6mg). MEASURED result: chrome
+  96.0 of 320 -> card body **exactly 224.0px**, +23.2 vs the pre-story 200.8.
+- AC-7 no-silent-clip on `.card-body`: `min-height: 0` + `overflow-y: auto` +
+  a two-layer CSS-only cue (a `--bg` cover anchored to the CONTENT via `local`,
+  a `--text-tertiary` rule anchored to the BOX via `scroll`), so a bottom rule
+  shows exactly while content remains below.
+- New gate `tests/ui/test_card_band_budget.py` (49 tests with the topbar file):
+  the budget model, the tokenization identities, the vertical-scoped grep gate,
+  and negative self-tests for both the budget and the gate.
+- Filed `offices/pm/issues/I-us557-f127-row-model-omits-the-tile-detail-line.md`.
+
+### Files changed:
+- Modified: `specs/UI/tokens.css` (three band tokens + the FLOOR/CEILING rationale)
+- Modified: `specs/UI/dist/dashboard-pi/dashboard.css` (bands tokenized; reclaim; no-silent-clip guard)
+- Modified: `tests/ui/test_topbar_three_column_grid.py` (one MOVED pin: "28px bar" -> `--bar-h`)
+- Created: `tests/ui/test_card_band_budget.py` (budget + tokenization + grep gate)
+- Created: `offices/pm/issues/I-us557-f127-row-model-omits-the-tile-detail-line.md`
+
+### Learnings for future iterations:
+- **Pattern discovered**: RE-DERIVE a number the spec already gives you. AC-2
+  handed me "body 224px; 3 rows + footer = 222. Fits". The body reproduced
+  exactly; the ROW figure did not -- F-127 modelled a two-line row, but
+  `appendTile` appends `.tile-detail` UNCONDITIONALLY (44 of 45 `detail:` keys
+  non-empty) and `.tile` is a column flex container, so the shipped row is 91.8px
+  not 67.8px, and three tiles demand 274.4 into 224. The story was groomed to fix
+  ONE measurement-left-behind in that budget; there were TWO. Agreement costs one
+  test; disagreement is the finding.
+- **Pattern discovered**: show your finding survives your model's own assumption.
+  The only unreadable input was `line-height: normal` (~1.2). Re-ran at 1.0 --
+  the most generous case physically available, since a line box cannot be shorter
+  than its font size -- and the overflow persists. State the assumption, then
+  show the conclusion does not rest on it.
+- **Gotcha**: `min-height: 0` is the entire "no silent clip" fix and it is
+  invisible. A column flex item defaults to `min-height: auto` and refuses to
+  shrink below its content, so the body never overflows -- the CARD does, and
+  `#carousel{overflow:hidden}` eats it where nothing can signal it. Shipping
+  `overflow-y: auto` without it is an INERT guard that tests green.
+- **Gotcha**: assert an identity only after proving both sides are real. My
+  "does `#carousel{top}` read the same token as `#topbar{height}`" helper returns
+  `""` for a bare literal -- so two bare literals give `"" == ""`, a GREEN test
+  over the exact defect being removed. Guard truthiness first.
+- **Gotcha**: scope a grep gate by what the magnitude COSTS, not by the string.
+  `padding: 0 14px`, a `circle 28px` mask radius and modal-box padding spend zero
+  stage height; charging them forces false exemptions, and a fat allowlist is
+  where a real offender hides. Also test that no exemption has gone DEAD.
+- **Gotcha**: before making a child of a gesture surface scrollable, read the
+  gesture contract. `touch-action: pan-y` (dashboard.css:207) and carousel.js:3765
+  already said "so the panel can still scroll a card" -- the capability was
+  documented and nothing was scrollable. Two greps turned "seemed fine" into a
+  claim.
+- **Gotcha**: pin a known-bad MEASURED fact as a passing assertion, never `xfail`
+  -- an xfail goes green when the defect disappears and the finding evaporates.
+- **For US-556**: the bar is **34px** now. US-556's AC-1 says "...inside a 28px
+  bar"; that 28 is STALE and its arithmetic must be re-read against `--bar-h`.
+  The kebab itself is untouched by this story, and the group constraint is now
+  satisfied in the right direction (557 landed, so 556 is verified AFTER it).
+---
