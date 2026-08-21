@@ -31,9 +31,18 @@
        system-status; the shell renders them in a neutral state. The ⋮ button is
        the System Setup menu affordance -- US-403 wires its behaviour. -->
   <header id="topbar">
-    <span class="glyph" id="glyph-bt" data-state="neutral" title="Bluetooth">BT</span>
-    <span class="glyph" id="glyph-sync" data-state="neutral" title="Sync">⇅</span>
-    <span class="glyph" id="glyph-power" data-state="neutral" title="Power">⚡</span>
+    <!-- US-555 (F-132): the bar is a `1fr auto 1fr` grid and must have EXACTLY
+         THREE children -- left cluster, clock, right cluster. The clusters are
+         not decoration: five children in a three-column template wrap into an
+         implicit second row that a 28px bar clips. The P-6 WiFi glyph, when
+         Atlas's contract lands, joins the LEFT cluster and needs no re-layout;
+         the width bound that makes that true is asserted in
+         tests/ui/test_topbar_three_column_grid.py. -->
+    <div class="topbar-left">
+      <span class="glyph" id="glyph-bt" data-state="neutral" title="Bluetooth">BT</span>
+      <span class="glyph" id="glyph-sync" data-state="neutral" title="Sync">⇅</span>
+      <span class="glyph" id="glyph-power" data-state="neutral" title="Power">⚡</span>
+    </div>
     <!-- US-542 (F-127): the wall clock, relocated from the retired parked idle
          face. It is PERSISTENT chrome now -- readable from every card, not just
          the one screen the operator saw with the engine off. Ships EMPTY, not
@@ -41,18 +50,21 @@
          reading for the frame before the first paint, on the one surface that
          is always visible. carousel.js fills it from `fmtClock` (US-503). -->
     <span id="topbar-clock"></span>
-    <!-- US-501: the state server substitutes __DEPLOY_VERSION__ from
-         .deploy-version at serve time (the same _injectHtml seam as
-         __SPLASH_TOKEN__ below), re-read on EVERY serve because the deploy
-         stamps the version after restarting the server. An unreadable stamp
-         becomes the honest 'V?.?.?' sentinel -- never a stale build number.
-         The chip previously shipped that sentinel as a hard literal, so every
-         build on the panel looked identical. -->
-    <span id="version-chip">__DEPLOY_VERSION__</span>
-    <!-- US-490: ships HIDDEN. Parked/idle reveals it (carousel.js
-         updateMenuAccess); while driving -- or while the parked/live context is
-         unreadable -- it stays hidden and the 5s long-press is the only way in. -->
-    <button id="menu-btn" class="tap-target" aria-label="System Setup" hidden>⋮</button>
+    <div class="topbar-right">
+      <!-- US-501: the state server substitutes __DEPLOY_VERSION__ from
+           .deploy-version at serve time (the same _injectHtml seam as
+           __SPLASH_TOKEN__ below), re-read on EVERY serve because the deploy
+           stamps the version after restarting the server. An unreadable stamp
+           becomes the honest 'V?.?.?' sentinel -- never a stale build number.
+           The chip previously shipped that sentinel as a hard literal, so every
+           build on the panel looked identical. -->
+      <span id="version-chip">__DEPLOY_VERSION__</span>
+      <!-- US-490: ships HIDDEN. Parked/idle reveals it (carousel.js
+           updateMenuAccess); while driving -- or while the parked/live context
+           is unreadable -- it stays hidden and the 5s long-press is the only
+           way in. -->
+      <button id="menu-btn" class="tap-target" aria-label="System Setup" hidden>⋮</button>
+    </div>
   </header>
 
   <!-- US-506 auto-rotate progress (F-124): a calm THIN time-to-next bar under

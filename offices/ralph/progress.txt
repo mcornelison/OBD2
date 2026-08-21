@@ -962,3 +962,62 @@ Task: Magnetometer acquisition -- make the channel actually vary
   bank-switched; concurrent access corrupts both readers) and ALWAYS restart it
   under a shell `trap ... EXIT` so a crash cannot leave capture down.
 ---
+
+## 2026-08-21 - US-555 (Agent 1 / Rex)
+Task: Top bar -> 3-column grid: clock CENTRE, glyphs left, version right
+
+### What was implemented:
+- `#topbar` flex row -> `display: grid; grid-template-columns: 1fr auto 1fr`,
+  and `margin-left: auto` DELETED (not zeroed) from `#version-chip`.
+- Markup restructured to EXACTLY THREE grid children: `.topbar-left` (BT / sync
+  / power glyphs), `#topbar-clock`, `.topbar-right` (version chip + kebab).
+  Both clusters are flex rows -- a grid child defaults to `display: block`,
+  which would have stacked the glyphs vertically inside a 28px bar.
+- `#topbar-clock` gains `justify-self: center`.
+- The US-542 comment AMENDED, not deleted: its auto-margin reasoning is correct
+  and is the record of why the obvious fix is wrong. Rewritten to "that rules
+  out centring WITH AUTO MARGINS, not centring", and it now names US-555.
+- New gate `tests/ui/test_topbar_three_column_grid.py` (15 tests): structure,
+  an auto-margin SWEEP across every rule touching the bar, the amended-comment
+  pin, and a computed width budget with a negative self-test.
+
+### Files changed:
+- Modified: `specs/UI/dist/dashboard-pi/dashboard.css` (grid + clusters +
+  justify-self + amended US-542 comment + auto margin removed)
+- Modified: `specs/UI/dist/dashboard-pi/dashboard.html` (three grid children)
+- Modified: `tests/ui/test_carousel_menu_access.py` (MOVED PIN -- docstring said
+  "#topbar is a flex container"; the container moved, the hazard did not)
+- Created: `tests/ui/test_topbar_three_column_grid.py` (the US-555 gate)
+
+### Learnings for future iterations:
+- **THE 1280x720 CANVAS FLAG IS REFUTED -- stood down, do not carry it into
+  US-556/557.** It claimed the layout is "budgeted against a 320 canvas and
+  rendered on a 1280x720 one". The observation (no `--window-size` on the kiosk)
+  is true; the inference is not. US-482 authors everything inside `#stage`, a
+  FIXED 480x320 box grown by `transform: scale()`, so the CSS layout canvas is
+  480x320 at EVERY panel resolution -- the viewport only moves `--scale`. US-557's
+  ~320 arithmetic is correct; BL-034 cannot invalidate 555/556/557. What survives
+  from BL-034 is a DIFFERENT claim (34px on 320px of glass ~= 13-15 physical px),
+  which is legibility-vs-downscaling, not layout arithmetic.
+- **Pattern discovered**: `1fr` is `minmax(auto, 1fr)` -- it has an AUTO MINIMUM.
+  So "the grid makes drift structurally impossible" is true only while each side
+  cluster fits its share. Ship the literal spec, then MEASURE the bound and pin
+  it. Generalised: when an AC says a property holds "regardless of X", find the
+  X at which it stops and make that the test.
+- **Pattern discovered**: when the harness cannot measure the outcome (the render
+  harness resolves the CASCADE but explicitly NOT LAYOUT), guard the STRUCTURE
+  that produces it and state the limit. Here: `justify-self`, exactly-three grid
+  children, and an auto-margin SWEEP -- the sweep matters because a test naming
+  only `#version-chip` stays green while a future rule puts an auto margin on the
+  kebab and re-creates the identical drift.
+- **Gotcha**: a budget/threshold check needs a NEGATIVE SELF-TEST, and its inputs
+  should be UPPER bounds (0.6em mono = the widest face `--font-mono` names; 1.0em
+  for non-ASCII pictographs, which leave the mono face). A conservative model
+  reporting a LARGER number than the design note is agreement, not conflict.
+- **Gotcha**: never ship a bare `.left`/`.right` into this single shared sheet --
+  `dashboard.css` documents the US-540-b class-reuse trap twice. Scoped to
+  `.topbar-left`/`.topbar-right` and flagged the deviation for Iris.
+- **For US-557**: the bar height is the literal `28px` in `#topbar` AND is
+  repeated independently in `#carousel { top: 28px }` -- the exact
+  literal-in-one-file / assumption-in-another root cause s5.2 exists to tokenize.
+---

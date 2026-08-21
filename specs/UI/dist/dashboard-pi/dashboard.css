@@ -194,13 +194,37 @@ html, body {
 }
 
 /* --- persistent top bar (D-3) ------------------------------------------------ */
+/* US-555 (F-132): a THREE-COLUMN GRID, not a flex row. The two `1fr` side
+   tracks are the same track definition, so the `auto` middle track lands on the
+   BAR's midpoint -- the clock is centred on the bar rather than on whatever
+   space the other two clusters happened to leave. See the US-542 note below for
+   why the obvious flex answer (a second `auto` margin) was correctly rejected.
+
+   THE ONE BOUND, stated because `1fr` hides it: `1fr` is `minmax(auto, 1fr)`,
+   so a side track whose CONTENT is wider than its share of the free space grows
+   past `1fr` and pushes the centre track off centre. Centring is structural up
+   to that bound, not unconditionally. The bound is measured -- and re-measured
+   with the Atlas-gated P-6 WiFi glyph added to the left cluster -- by
+   tests/ui/test_topbar_three_column_grid.py, which is also what makes "P-6
+   drops in with no re-layout" a checked claim instead of a hope. */
 #topbar {
   position: fixed; top: 0; left: 0; right: 0; height: 28px;
-  display: flex; align-items: center; gap: 10px;
+  display: grid; grid-template-columns: 1fr auto 1fr;
+  align-items: center; gap: 10px;
   padding: 0 10px; box-sizing: border-box;
   background: var(--surface); font-size: var(--fs-secondary);
   z-index: 10;
 }
+/* The clusters exist so the bar has exactly THREE grid children: five children
+   in a three-column template wrap into an implicit second row, which on a 28px
+   bar clips rather than reflows. They are flex rows because a grid child
+   defaults to `display: block` -- without these two rules the glyphs would
+   stack vertically inside the bar. Named `topbar-*` rather than the design
+   note's bare `.left`/`.right`: this is one shared sheet, and a generic class
+   name is the US-540-b trap (the first reuse silently inherits these rules). */
+#topbar .topbar-left  { display: flex; align-items: center; gap: 10px; }
+#topbar .topbar-right { display: flex; align-items: center;
+                        justify-content: flex-end; gap: 8px; }
 #topbar .glyph { color: var(--text-secondary); letter-spacing: 0.04em; }
 #topbar .glyph[data-state="amber"] { color: var(--amber-warn); }
 #topbar .glyph[data-state="ok"]    { color: var(--green-ok); }
@@ -209,20 +233,30 @@ html, body {
    (and, from US-489, the per-tile dot) carries which source is unhappy, and
    inventing a second alarm-red to separate them is what Spool ruled against. */
 #topbar .glyph[data-state="down"]  { color: var(--amber-warn); }
-/* US-542: the wall clock, relocated from the retired parked idle face. Sits
-   with the glyphs on the LEFT rather than taking `margin-left: auto` -- the
-   version chip already owns the right cluster, and two auto margins in one flex
-   row split the free space between them, which would let the clock's position
-   drift with the length of the version string. Pinned to --fs-label, NOT the
-   bar's inherited --fs-secondary: at the US-540-a scale a 26px "12:45 PM" is
-   ~125px of a 480px bar that already carries three glyphs, a version chip and
-   the ⋮. Label tier still clears the 3.5in floor for a parked-read glance. */
+/* US-542: the wall clock, relocated from the retired parked idle face. It USED
+   to sit with the glyphs on the LEFT, and the reasoning for that is still
+   correct and is kept here on purpose: two auto margins in one flex row split
+   the free space BETWEEN them, so `margin-left: auto` on the clock would have
+   let its position drift with the length of the version string. What that
+   argument actually rules out is centring WITH AUTO MARGINS -- not centring.
+   US-555 (F-132) centres the clock in the `1fr auto 1fr` grid above instead, so
+   the drift is structurally impossible rather than merely avoided, and no auto
+   margin survives anywhere in the bar (pinned as a sweep, not per-element).
+   Pinned to --fs-label, NOT the bar's inherited --fs-secondary: at the US-540-a
+   scale a 26px "12:45 PM" is ~125px of a 480px bar that already carries three
+   glyphs, a version chip and the ⋮. Label tier still clears the 3.5in floor for
+   a parked-read glance. */
 #topbar-clock {
+  justify-self: center;   /* the geometric centre of the bar, not of the track */
   font-size: var(--fs-label); color: var(--text-primary);
   letter-spacing: 0.04em;
 }
+/* US-555: `margin-left: auto` is GONE, not zeroed -- the right TRACK packs the
+   chip against the bar's edge now (`justify-content: flex-end` on the cluster),
+   and an auto margin here would be exactly the drift mechanism the note above
+   rejects. */
 #version-chip {
-  margin-left: auto; color: var(--text-tertiary);
+  color: var(--text-tertiary);
   font-size: var(--fs-meta); letter-spacing: 0.06em;
 }
 #menu-btn {
