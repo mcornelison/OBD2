@@ -806,3 +806,92 @@ Task: powerwatch must log its arm decision -- we cannot tell if safety armed
   REFUSED by the parser ("skipped input between top-level statements") -- use
   the Edit tool to append to a log file instead.
 ---
+
+## 2026-08-21 - US-564 (Agent 1 / Session 4)
+Task: Plausibility gate -- a non-measurement must never wear data_source=real
+
+### What was implemented:
+- **INHERITED A NEARLY-COMPLETE UNCOMMITTED TREE.** A prior iteration had built
+  the whole gate + 5 test files and died before committing. Running the targeted
+  suite FIRST (91 passed) answered "how complete is this" in one command. But a
+  green suite is not a finished story -- walking all 7 ACs against the diff is
+  what surfaced the real gap.
+- **THE GAP: A 236 KB REAL-HARDWARE FIXTURE THAT NO TEST READ.**
+  `tests/fixtures/imu_stationary_90s_2026-08-21.csv` -- 1845 genuinely captured
+  parked-car rows off chi-eclipse-01 -- was ORPHANED. Meanwhile
+  `test_check_stationaryDither_neverStale` claimed "REAL stationary-vehicle
+  behaviour" while feeding `math.nextafter` output. **That test could not fail:**
+  synthetic +/-1-ULP dither never repeats BY CONSTRUCTION, so it would have
+  passed even if the chip were latched. validationCriteria #2 was being
+  "discharged" by a test that proved nothing about hardware -- the EXACT shape of
+  US-560's fabricated PANEL_MODES, one sprint after we named it.
+- **WIRED THE REAL CAPTURE IN (4 new tests).** ONE capture proves BOTH
+  directions: on the SAME rows through the SAME gate, accel (1821/1845 distinct)
+  and gyro (1845/1845) are never refused while mag (1/1845) IS refused, at
+  exactly the run limit. The fixture is SELF-VERIFYING -- a provenance test
+  re-derives the row count and distinct counts FROM THE DATA and asserts they
+  match the CSV's own header. A missing fixture FAILS, deliberately not skips.
+- Kept the synthetic ULP test as an explicit BOUNDARY pin, renamed
+  `test_check_syntheticUlpDither_neverStale`, docstring now stating it CANNOT
+  witness the hardware claim and pointing at the real-data class.
+- Verified the inherited work against all 7 ACs (all met, incl. the two-layer
+  syncPending fix and headingDeg typed-NA), then committed the whole story.
+- Filed TD-086: `config.json` carries DOUBLE-ENCODED MOJIBAKE and the OBD
+  poll-set test reads it locale-decoded -- 18 pre-existing ERRORs, PROVEN not
+  mine (`git status --porcelain` empty for both files).
+
+### Files changed:
+- Created: `src/pi/sensors/plausibility_gate.py` (the gate: magnitude + bit-identity)
+- Modified: `src/pi/sensors/sensor_reader.py` (GatedReadingError into the existing
+  failed-poll path, per-channel policies, retained gate STATE, fault-log rate limit)
+- Modified: `src/pi/sensors/imu_state_bridge.py` (derived fields die with their input)
+- Modified: `src/pi/splash/system_status_emitter.py`,
+  `src/pi/obdii/orchestrator/card_state_emitter.py` (syncPending None, never 0)
+- Modified: `specs/UI/dist/dashboard-pi/carousel.js` (syncTile stops coercing null to 0)
+- Modified: `src/common/config/validator.py` (invariantDwellSeconds + range check)
+- Created: `tests/fixtures/imu_stationary_90s_2026-08-21.csv` (the real capture)
+- Created: `tests/pi/sensors/test_plausibility_gate.py` (+ the 4 real-data tests),
+  `test_sensor_reader_plausibility_gate.py`, `test_imu_gated_channel_na.py`,
+  `tests/pi/splash/test_sync_pending_unmeasured.py`,
+  `tests/ui/test_carousel_sync_pending_na.py`
+- Created: `offices/pm/tech_debt/TD-084`, `TD-085`, `TD-086`
+
+### Learnings for future iterations:
+- **Pattern discovered (the whole story)**: GREP FOR YOUR FIXTURES. A fixture
+  that nothing imports is either dead weight or -- far worse -- evidence you
+  believe you have and do not. Here 1845 rows of real hardware data sat unread
+  while a synthetic test wearing a "REAL" docstring stood in for it. The suite
+  was green, the AC looked discharged, and the load-bearing empirical claim was
+  untested. **A green suite tells you the tests pass, never that they are the
+  right tests.**
+- **Pattern discovered**: ONE REAL CAPTURE CAN PROVE BOTH DIRECTIONS, which is
+  what makes it evidence rather than illustration. A gate that fired on nothing
+  passes the accel half; a gate that fired on everything passes the mag half;
+  only a working discriminator passes both -- from a single file, with no
+  hand-written vectors to be wrong about.
+- **Pattern discovered**: MAKE A FIXTURE SELF-VERIFYING or its header will drift
+  from its bytes. Re-derive the documented counts FROM the data and assert they
+  match. Rounding would have been especially fatal here -- it would MANUFACTURE
+  the very bit-identity the gate exists to detect.
+- **Pattern discovered**: A MISSING FIXTURE MUST FAIL, NOT SKIP. A skip quietly
+  restores the unfalsifiable state the test exists to end, and does it while the
+  suite still reads green. Skips are for genuinely optional environments (a live
+  DB probe), never for the only evidence a design rests on.
+- **Pattern discovered**: keep synthetic data, but LABEL it. Synthetic data is
+  fine; synthetic data wearing a "REAL" label is the defect. The ULP test is a
+  genuine boundary pin -- it just could never have been the hardware evidence.
+- **Gotcha**: THIRD INSTANCE OF ONE ROOT CAUSE IN ONE ITERATION -- on Windows,
+  any `open()` or `subprocess(text=True)` without explicit `encoding=` is a
+  latent locale bug that stays invisible exactly as long as the data stays
+  ASCII. TD-084 (tests/ui node probe), TD-086 (config.json), TD-080 (the
+  duplicate-helper shape). Enable ruff `PLW1514` and the class dies permanently.
+- **Gotcha**: verify a red is not yours BEFORE believing it --
+  `git status --porcelain <file>` returning EMPTY proves the file matches HEAD,
+  so the failure reproduces on a fresh clone. Two files, two seconds, 18 errors
+  correctly attributed.
+- **Gotcha (cost a JSON break)**: editing a long single-line JSON value with the
+  Edit tool, my `old_string` ended mid-`pmSignOff` and silently DROPPED that key.
+  ALWAYS `python -c "import json; json.load(...)"` after editing sprint.json.
+- **Gotcha**: the full targeted + regression sweep is ~15 min wall-clock on the
+  SMB share (tests/ui alone is 8 min). Budget for it; do not background it.
+---
