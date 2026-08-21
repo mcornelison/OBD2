@@ -265,6 +265,50 @@ real value after the link dropped; a numeric NA sentinel in a table/analytic; a
 takeover/alert firing on an empty/absent state (an absent DTC source must read
 `unavailable`, not "no codes → all-clear" and not a mis-fired alert).
 
+### Detecting it — a non-measurement can look perfectly valid, so test for VARIANCE
+
+Honest availability says *what to publish* when a source is unavailable. This is *how to notice*, because
+the hard cases do not announce themselves.
+
+**Two checks, both on the SUCCESS path** (the absence and error paths are usually already honest — a read
+that raises is easy):
+
+1. **Implausible magnitude.** A value outside what physics permits is not a reading. A resting
+   accelerometer must read ~9.81 m/s²; an all-zero frame is not a quiet measurement, it is no measurement.
+2. **Invariance.** A channel returning **N consecutive BIT-IDENTICAL samples** is not reading.
+
+#### Test bit-identity, NOT "low variance" — this distinction is the whole rule
+
+The intuitive implementation is *"flag a channel whose variance falls below threshold X."* **That is
+wrong twice over:** it needs a tuned magic number, and it **will** false-positive on a legitimately
+stationary system, whose readings really are nearly constant.
+
+**Bit-identity has neither problem.** Every real sensor dithers ±1 LSB from thermal noise and ADC
+quantization **even in a perfectly constant field**. So N consecutive bit-identical samples cannot occur
+naturally, at any threshold, in any environment. The test needs no calibration and cannot cry wolf.
+
+**Measured proof (2026-08-20).** A device held stationary, then hand-rotated, sampled 90 s:
+
+```
+accelerometer : 743 distinct values      <- dithering normally, tracking motion
+magnetometer  :   1 distinct value       <- latched; bit-identical throughout
+```
+
+Same die, same instant, same physical motion. **The noise floor IS the detector.**
+
+#### The property may live ACROSS samples, not IN one
+
+This is why per-sample validation is insufficient. The magnetometer's `-26.7 µT` was **fresh, finite and
+physically plausible** — every individual sample passed inspection. The defect existed only in the
+*sequence*. A gate that asks only *"is this value possible?"* will pass a latched channel forever; it must
+also ask *"is this channel actually varying?"*
+
+#### Corollary — derived fields go NA with their input
+
+Never derive a precise value from a stale one. A heading printed to 0.1° from a frozen magnetic vector is
+maximum apparent precision over zero information. When a source channel is gated, every field derived from
+it publishes typed NULL + reason.
+
 ### Config-time corollary — an unresolved `${VAR}` placeholder is a string sentinel
 
 > **STATUS: NORMATIVE (Atlas ruling 2026-08-02, verified in code).** The
