@@ -547,3 +547,92 @@ Result: passes:false -- PREMISE REFUTED BY THE HARDWARE. BL-034 filed.
   Parse the EDID with a python3 one-liner over
   `/sys/class/drm/<connector>/edid` rather than assuming a tool exists.
 ---
+
+## 2026-08-21 - US-561 (Rex / Session 2)
+Task: Watchdog must not report healthy while the display is frozen
+Result: passes:true. All FOUR of Atlas's section-3 defects dispositioned (AC-3
+        forbids fixing one and closing). 3 fixed, 1 documented as an honest bound.
+
+### What was implemented:
+- **3a THE THRESHOLD IS GONE AS A VERDICT.** `DEFAULT_ERROR_THRESHOLD=100` was
+  calibrated against a ~30,000/window catastrophic wedge; the regime the CIO
+  drove into runs 84-101, so the constant sat INSIDE the signal's own band and
+  one continuous freeze logged `WEDGED -- 101` then `healthy; markers=84`.
+  The AC forbids a re-tuned constant, and rightly: that only moves the
+  coin-flip to the next regime. Shipped PRESENCE + DWELL instead. Healthy was
+  MEASURED as exactly zero, so zero is the BOUNDARY of the band rather than a
+  point inside it -- which is why presence needs no tuned magnitude and cannot
+  be mis-calibrated against a rate nobody has measured yet. Any marker at all
+  = the class is live; sustained UNBROKEN for 60s (two timer ticks) = wedged.
+  Threshold+dwell, the shape Spool reached independently on the coolant ceiling.
+- `100` survives ONLY as `DEFAULT_MARKER_READ_CAP` -- what it always genuinely
+  was, an I/O bound. A STRUCTURAL test forbids it re-entering `decideAction`.
+- New `REASON_WEDGE_SUSPECTED` (markers present, dwell not yet met): not a
+  restart, and pointedly not "healthy". New `wedged` flag is True on cooldown
+  and budget_exhausted too -- declining to act is not a claim of wellness.
+- **3b `journalctl --grep` exits 1 on ZERO MATCHES**, so every healthy tick was
+  reported "unreadable" -- the exact inverse of the docstring's promise. Fix
+  MEASURES readability (`journalIsReadable()`, one unfiltered `--lines=1`)
+  instead of inferring it from an exit code. Probe runs on the failure path
+  only. **Both halves re-measured LIVE on the Pi** rather than inherited.
+- **3c ~3min detection lag: NOT FIXED, deferred with cause + the false claim
+  it produced was corrected in place.** Markers are lagging by construction;
+  closing it needs a repaint heartbeat published BY the page (a dashboard
+  story). The timer header literally claimed "a wedge is seen within about one
+  window" -- corrected. Detection did get ~50s EARLIER anyway: Atlas's dismissed
+  1-marker sample at 16:16:39 now STARTS the clock.
+- **3d budget: policy unchanged (Atlas called it correct); OBSERVABILITY fixed**
+  per AC-5. "N of M restarts this hour (K left)" on EVERY tick, at WARNING once
+  any is consumed, INFO while untouched (both directions pinned).
+- Gate 41 -> 78 tests. Three pins MOVED, not deleted, each saying what it used
+  to assert.
+
+### Files changed:
+- Modified: `src/pi/display/kiosk_watchdog.py` (discriminator, probe, ledger,
+  budget logging, header)
+- Modified: `tests/pi/display/test_kiosk_watchdog.py` (the US-561 gate)
+- Modified: `deploy/eclipse-kiosk-watchdog.timer` (the false latency claim)
+- Modified: `deploy/eclipse-kiosk-watchdog.service` (ledger contents comment)
+
+### Learnings for future iterations:
+- **Pattern discovered (the whole story)**: A THRESHOLD SET INSIDE A SIGNAL'S
+  OWN OPERATING BAND IS NOT A DETECTOR, AND THE FIX IS NEVER A BIGGER NUMBER.
+  The tell is that two samples of the SAME state disagree. Ask what was
+  MEASURED for the healthy case -- here exactly zero -- and if that value is
+  the boundary rather than a point inside the band, presence+dwell replaces
+  magnitude entirely and there is no constant left to mis-calibrate. This is
+  now the third independent arrival at threshold+dwell on this project.
+- **Pattern discovered**: when an AC forbids a SHAPE ("not a retuned constant"),
+  behaviour cannot pin it -- a threshold of 10 passes every behavioural test I
+  wrote while re-creating the defect at the next regime shift. Assert the shape
+  STRUCTURALLY. (Same lesson as US-541-a; it keeps being the only way.)
+- **Pattern discovered**: MEASURE READABILITY, DON'T INFER IT FROM AN EXIT CODE.
+  `--grep` overloads exit 1 to mean "no matches", so the instrument could not
+  report its own good news and a broken journal was indistinguishable from a
+  clean one. One extra cheap command on the failure path turns a guess into a
+  measurement -- and re-measuring the premise on the real Pi (RC=1 empty vs
+  probe RC=0) took one ssh, exactly the US-560 lesson paying off again.
+- **Gotcha (caught by my own gate, in my TEST not the code)**: `runOnce`
+  reports the OUTCOME (`wedge_restarted`), `decideAction` reports the DECISION
+  (`wedge_detected`). Asserting the decision reason on a runOnce result would
+  have gone green ONLY IF THE RESTART FAILED. Check which layer's vocabulary
+  you are asserting in.
+- **Gotcha**: adding state to a detector adds a failure mode to the DETECTOR.
+  The dwell lives in the ledger, so an unwritable ledger means the watchdog has
+  lost its memory -- and the old code's "no restart, carry on" would have
+  logged `healthy` from a detector that could no longer detect. Any new
+  persisted state needs its own not-healthy path.
+- **Gotcha**: a corrupt clock is worse than no clock. JSON `true` floats to 1.0
+  and reads as a 56-year dwell, restarting the panel on the next single marker
+  (the US-517 trap again). Coerce-or-None, never coerce-or-hope.
+- **Gotcha**: an ImportError/collection error masks every per-test reason --
+  landing the NAME skeleton first (constants, dataclass fields, inert stubs)
+  turned one useless red into 24 behavioural ones. Same trick as US-554, and
+  it is worth the extra run every time.
+- **Gotcha**: two of my new tests went GREEN against the skeleton for the wrong
+  reason (the old threshold happened to route them the same way). Check the red
+  list for tests that SHOULD be failing and are not, before implementing.
+- **Gotcha**: `pytest -q` still prints no summary line on this tree, and the
+  Bash tool refuses `cd X && cmd > file` outright. Redirect from the default
+  cwd, then `echo $?` AND `grep -cE '^(FAILED|ERROR)'`.
+---

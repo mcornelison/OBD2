@@ -59,7 +59,8 @@
 # Verify:
 #   systemctl list-timers eclipse-kiosk-watchdog.timer
 #   journalctl -u eclipse-kiosk-watchdog -n 20
-#   cat /run/eclipse-kiosk-watchdog/ledger.json   # {} of restart attempts
+#   cat /run/eclipse-kiosk-watchdog/ledger.json   # restart attempts + the
+#                                                 # US-561 marker-presence clock
 # ==============================================================================
 
 [Unit]
