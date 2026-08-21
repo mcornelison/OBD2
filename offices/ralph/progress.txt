@@ -895,3 +895,70 @@ Task: Plausibility gate -- a non-measurement must never wear data_source=real
 - **Gotcha**: the full targeted + regression sweep is ~15 min wall-clock on the
   SMB share (tests/ui alone is 8 min). Budget for it; do not background it.
 ---
+
+## 2026-08-21 - US-565 (Rex / Session 7)
+Task: Magnetometer acquisition -- make the channel actually vary
+
+### What was implemented:
+- **The story's premise was REFUTED by measurement, not confirmed.** US-565 said
+  "the lever is CNTL2". It is not. CNTL2 already read back 0x08 (continuous
+  100 Hz) BEFORE any change, and a VERIFIED write of 10 Hz (readback 0x02)
+  changed the latch not at all.
+- Built a reproducible characterization harness and swept the levers on the real
+  chip. Three findings, in order: (1) CNTL2 was already correct; (2) verified
+  rate changes did nothing; (3) polled directly over slave4 with the shadow
+  quiesced, the AK09916 was CONVERTING AND DITHERING -- 6 distinct raw X values
+  across 11 passes with DRDY set -- while `dev.magnetic` was frozen.
+- Diagnosis: the ICM-20948's cyclic slave0 shadow readout performs ONE transfer
+  and then stops. Over a 12 s window mag changed exactly once, at sample index 1,
+  then held for 270 more samples while accel changed 265 times on the same die.
+- Fix: disable the aux master, set INT_PIN_CFG.BYPASS_EN, read the AK09916 as
+  its own I2C device at 0x0C. Accel/gyro still come from the ICM at 0x69.
+- Measured on the SHIPPING code path against the real chip: 350 distinct
+  3-vectors in 500 stationary samples, longest bit-identical run 2, CNTL2 read
+  directly = 0x08. Before the fix: 1 distinct value in 20,000 samples.
+- Config is verified by READBACK (WHO_AM_I + CNTL2), never assumed. A mag fault
+  degrades to accel/gyro rather than losing the whole IMU, and that claim is
+  extracted out of hardware-only glue so it is reachable by test.
+
+### Files changed:
+- Created: `src/pi/sensors/ak09916_bypass.py` (direct acquisition, verified
+  config, ST1..ST2 burst, overflow refusal, ICM wrapper)
+- Modified: `src/pi/sensors/sensor_reader.py` (device factory + testable degrade)
+- Created: `tests/pi/sensors/test_ak09916_bypass.py` (23 tests)
+- Created: `tests/fixtures/mag_bypass_90s_2026-08-21.csv` (90 s real capture)
+- Created: `offices/ralph/scripts/characterize_magnetometer.py` (the probe)
+- Created: `offices/pm/tech_debt/TD-087-...` (heading real but uncalibrated)
+- Created: `offices/pm/issues/I-us565-...` (specs + memory + upstream report)
+
+### Learnings for future iterations:
+- **Pattern discovered**: when a story names a lever, MEASURE THE LEVER'S
+  CURRENT STATE FIRST. One read of CNTL2 before touching anything would have
+  redirected the entire investigation, and it is the cheapest measurement
+  available.
+- **Pattern discovered**: two candidate faults that look identical from the
+  consumer side ("stopped converting" vs "transfer stopped") are separated by
+  reading the source over a DIFFERENT data path. Ask the source directly rather
+  than theorising about the pipe.
+- **Pattern discovered**: record change INDICES, not just distinct counts. "2
+  distinct" means something different if both changes land in the first second.
+  That is what turned an ambiguous count into the actual diagnosis.
+- **Pattern discovered**: make the test fake model the FAILURE MODE, not just
+  the interface. The fake honours the chip's ST2 data-latch rule, so shortening
+  the burst makes the suite go red -- verified, not assumed (9-byte frame -> 8
+  distinct of 8; 6-byte frame -> 1 of 8).
+- **Gotcha**: MY OWN FIRST PROBE RUN WAS INVALID. Eight CNTL2 levers, a
+  clean-looking table, all garbage -- slave4 does not complete while the cyclic
+  slave0 readout is running, so none of the writes landed. Caught only because I
+  printed the readback column. **Atlas's earlier rate sweep has the same defect
+  and is noise, not evidence.** A probe that cannot report its own failure is
+  not a measurement.
+- **Gotcha**: the PowerShell tool does NOT support heredocs (`<<'PY'` is a
+  parser error) -- this CORRECTS a prior session note. Write multi-line python
+  to a temp file, run it, delete it.
+- **Gotcha**: the Pi DB is locked by the running service. Use python's sqlite3
+  with `file:...?mode=ro`; the sqlite3 CLI rejects the nolock URI.
+- **Gotcha**: ALWAYS stop `eclipse-obd` before touching I2C (the ICM is
+  bank-switched; concurrent access corrupts both readers) and ALWAYS restart it
+  under a shell `trap ... EXIT` so a crash cannot leave capture down.
+---
