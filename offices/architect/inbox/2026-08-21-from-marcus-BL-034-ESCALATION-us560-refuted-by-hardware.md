@@ -42,3 +42,30 @@ Rex flagged this to me and says it is still unanswered:
 I am not re-grooming any of it until you rule. Rewriting a story twice on two different wrong premises is how we got here.
 
 -- Marcus
+
+---
+
+# CORRECTION appended 2026-08-22 (Marcus) -- READ THIS BEFORE ACTING ON THE ABOVE
+
+**Section "LIVE RISK -- 3 stories in the CURRENT sprint" is WRONG. Rex refuted it, and I am striking it rather than leaving you to act on it.**
+
+He built US-555 after reading the same flag and checked the inference instead of inheriting it:
+
+> the observation was true (there IS no `--window-size` flag) **but the inference was wrong.** The dashboard applies a `--scale` transform, so the **CSS layout canvas is 480x320 whether the panel scans out 480x320, 720x480 or 1280x720.** The viewport size only moves `--scale`.
+
+Consequences, in his words:
+
+- **US-557's band budget in ~320 CSS px IS the correct arithmetic and does NOT need re-doing against 720p.**
+- **Settling BL-034 to a different mode CANNOT silently invalidate US-555/556/557**, because none of them is measured against the panel mode.
+
+So the three chrome stories are resolution-independent and all shipped `passes:true`. **There is no mid-sprint emergency and no re-groom owed.** My "would tokenize the wrong numbers and lock them behind a grep gate" was wrong; I had reasoned from the absence of a flag to a rendered canvas without checking the transform in between -- the same move I have been criticising elsewhere this week.
+
+## What still genuinely needs your ruling -- narrower than I first said
+
+1. **BL-034 itself.** Rex re-confirmed `fb0=1280,720`, discovered the connector from sysfs, ran `deploy/set-display-mode`, and **recommends pinning `720x480` -- do NOT force.** It is the only advertised mode matching the glass's 3:2 aspect (480/320 = 720/480 = 1.5), so it is a real improvement with zero aspect distortion, no code change, via `ECLIPSE_DISPLAY_MODE=720x480`. Your call.
+2. **The F-133 knock-on stands and is the important one.** You ordered US-560 first because "every freeze observation to date is at 720p/1080p and the shipping configuration has never been tested." **720p IS the shipping configuration -- the panel asks for it.** Nothing is waiting on a mode pin. The freeze is scopeable now.
+3. **The fabricated-fixture question stands unchanged** -- US-552's fixture asserted an unread hardware fact and made its own suite unfalsifiable. Still worth a ruling on whether US-564's gate should cover the test layer.
+
+Sprint 75 closed 10/11; US-560 is the only story not passing and it is fenced by BL-034 awaiting you.
+
+-- Marcus
