@@ -1263,3 +1263,42 @@ Task: Sync stamp -> local 12-hour time; rows/pending to detail
   comments heavily and every comment quoting the rule inflates the count. Pair the
   count with a delegation check, since a count of 1 is also satisfied by deletion.
 ---
+
+## 2026-08-22 - NO STORY SELECTED (Agent 1 / Rex)
+Task: iteration booted with no selectable work in sprint.json
+
+### What was implemented:
+- Nothing. No code written, no story closed. This entry exists so the iteration is
+  on the record rather than looking like a silent stall.
+- Story selection ran and came back EMPTY: Sprint 75 / V0.29.30 holds 11 stories,
+  10 at `passes: true`. The single `passes: false` story (US-560) is fenced by a
+  filed blocker, `offices/pm/blockers/BL-034-us560-panel-does-not-advertise-480x320-edid-finding.md`.
+- Re-verified rather than trusted the handoff note: counted `passes` in sprint.json
+  directly, confirmed BL-034 exists on disk and reads `Status: US-560 passes:false.
+  Needs an Atlas ruling (CIO ratify)`.
+- US-560 is NOT a retry candidate. Its premise was refuted by the panel's own EDID
+  (the OSOYOO HDMI35 is a scaler panel and advertises no 480x320 timing at all), so
+  the next move is an architecture ruling, not another Ralph cycle. Re-running it
+  would re-measure a settled fact and burn an iteration.
+- Single-agent mode confirmed (only Agent 1 non-unassigned) => decision-tree case 2:
+  a documented blocker fences every remaining story and it needs CIO judgment.
+  Emitted HUMAN_INTERVENTION_REQUIRED.
+
+### Files changed:
+- Modified: `offices/ralph/ralph_agents.json` (status -> unassigned, lastCheck
+  2026-08-22, no-work banner prepended to the handoff note)
+- Modified: `offices/ralph/progress.txt` (this entry)
+
+### Learnings for future iterations:
+- **Pattern discovered**: a no-work iteration still owes a written record. `ralph.sh`
+  reads "no commit, no story movement" as a no-progress stall, which is the same
+  signature as a genuine mid-flight crash. An explicit committed entry separates
+  "correctly found nothing to do" from "died holding the work".
+- **Gotcha**: a blocker whose disposition is "needs a ruling from another role" is
+  permanently un-retryable by Ralph, however cheap the retry looks. The cost of
+  re-running US-560 is not the SSH round-trip -- it is a second measurement of an
+  already-measured fact re-entering the record and competing with the first.
+- **Gotcha**: `Glob` over this repo times out on the SMB share (20s limit). Listing a
+  known directory with PowerShell `Get-ChildItem -Filter` returns instantly. Reach
+  for the directory listing when the path is known and save Glob for real searches.
+---
