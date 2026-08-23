@@ -1,6 +1,6 @@
 {
   "schemaVersion": "2.0.0",
-  "lastUpdated": "2026-08-20",
+  "lastUpdated": "2026-08-22",
   "updatedBy": "Marcus (PM)",
   "counters": {
     "epic": 7,
@@ -1351,41 +1351,41 @@
     {
       "id": "F-132",
       "parent": "E-001",
-      "status": "active",
+      "status": "awaiting-validation",
       "title": "Pi dashboard chrome -- top bar, band budget, overlay opacity, sync stamp",
       "description": "CIO bench review of deployed V0.29.29 produced 6 items; 5 are presentation-only (this feature), the 6th (real WiFi glyph) needs a new emitter field and is gated to Atlas. Correction + continuation of F-127, NOT a reversal: every driver-read value keeps its F-127 tier, only CHROME gives ground. Root cause of the clipped cards is an arithmetic error in the F-127 budget (Iris's own, self-reported): section 3 omitted card padding (28) + title (39) and understated dots by 8 = 57px unaccounted, so 3 rows overflowed before any footer. Ralph built to the capacity asserted. Iris-designed 2026-08-20, CIO-reviewed visually.",
       "createdAt": "2026-08-20",
-      "updatedAt": "2026-08-20",
+      "updatedAt": "2026-08-22",
       "currentVersion": "V0.29.30"
     },
     {
       "id": "F-133",
       "parent": "E-001",
-      "status": "active",
+      "status": "awaiting-validation",
       "title": "Pi display reliability -- output mode, watchdog honesty, freeze",
       "description": "V0.29 CLOSEOUT BLOCKER. Atlas 2026-08-20: the AllocateRingBuffer freeze REPRODUCES IN-CAR -- the operator lost the display TWICE inside an 8-minute leg while driving (2 kiosk-watchdog WEDGED events, 3 dashboard starts, restart budget 2/5). His 08-17 bench-only scope limit is LIFTED. BUT the panel negotiated 1280x720, NOT its native 480x320 -- US-552's mode pin has never actually been applied to this Pi, so every freeze observation to date is at ~6x the shipping pixel count and the shipping configuration remains UNTESTED. Pin the mode first, then re-measure. The freeze itself is deliberately NOT scoped here.",
       "createdAt": "2026-08-20",
-      "updatedAt": "2026-08-20",
+      "updatedAt": "2026-08-22",
       "currentVersion": "V0.29.30"
     },
     {
       "id": "F-134",
       "parent": "E-002",
-      "status": "active",
+      "status": "awaiting-validation",
       "title": "drive_summary truthfulness -- server roll-up, schema defaults, column labels",
       "description": "Three defects surfaced in the SAME table on 2026-08-20 (Spool x2, Atlas x1); groomed as one cluster per Spool. (1) server-side roll-up REGRESSED between 08-07 and 08-20 -- drives 39/40/41 are empty shells, so the first moving-vehicle data in 48 days may be invisible to calibration. (2) data_quality is NOT NULL DEFAULT 'full' -- a quality VERDICT column defaulting to the BEST verdict, so not-assessed and assessed-good are the same stored value. (3) ambient_temp_at_start_c is fed from IAT and is NOT ambient (drive 41 logged 47C/117F) -- no ambient source exists on this car.",
       "createdAt": "2026-08-20",
-      "updatedAt": "2026-08-20",
+      "updatedAt": "2026-08-22",
       "currentVersion": "V0.29.30"
     },
     {
       "id": "F-135",
       "parent": "E-002",
-      "status": "active",
+      "status": "awaiting-validation",
       "title": "Sensor honesty gate -- bit-identity plausibility + magnetometer acquisition",
       "description": "Atlas 2026-08-20: syncPending=0, the IMU all-zero frames and the LATCHED magnetometer are ONE defect -- a non-measurement wearing data_source='real'. Third fabrication surfaced in a single week. headingDeg is DERIVED from the latched magnetometer, so the F-127 IMU-always-on Home face is currently rendering a fabricated heading on the primary card. Load-bearing design point: test BIT-IDENTITY, not low variance -- every real sensor dithers +/-1 LSB, so N consecutive bit-identical samples cannot occur naturally; no magic threshold, and it CANNOT false-positive on a genuinely stationary vehicle (proven: stationary accel gave 743 distinct values in 90s, the magnetometer gave 1).",
       "createdAt": "2026-08-20",
-      "updatedAt": "2026-08-20",
+      "updatedAt": "2026-08-22",
       "currentVersion": "V0.29.30"
     }
   ],
