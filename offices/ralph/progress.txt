@@ -1341,3 +1341,78 @@ Task: none available -- sprint 75 is 10/11 closed and the 11th is fenced by BL-0
   "active"` at boot -- the harness marks the agent active before a story is picked.
   Reset it to `unassigned` on the way out or the next reader sees a phantom claim.
 ---
+
+## 2026-08-23 - US-568 (Rex / Session 76)
+Task: v0024 migration fails on real MariaDB -- unknown column data_quality in CHECK
+
+### What was implemented:
+- **Reproduced first, on real MariaDB 11.8.6** (AC-1): 2 failed / 18 passed, both
+  failures the verbatim CI signature `(1054, "Unknown column 'data_quality' in
+  'CHECK'")` from v0024:534 -> :389. No SQLite run was offered as evidence (AC-2).
+- **RCA inverted the story's framing: the migration is innocent, the FIXTURE lied.**
+  The harness seeds `drive_summary` as a 3-column skeleton (id, source_device,
+  source_id) and then calls `markMigrationsAppliedStatements(0001..0021)`. v0010
+  (US-363) is what CREATES `drive_summary.data_quality` + its CHECK + index. So the
+  seed implemented v0010's PRE-state while the ledger asserted its POST-state.
+  Invisible for a sprint because v0022/v0023 -- the only migrations this harness was
+  written for -- never look past `drive_summary(id)`.
+- **No earlier migration moved/dropped/renamed the column** (the literal AC-3
+  question): it was never created. v0018/v0022/v0023 checked, none touch it.
+  v0024's CHECK-before-DEFAULT ordering assumption is correct and unchanged.
+- **Proved it against production before touching anything**: a read-only
+  information_schema probe of the deployed obd2db shows all three tables carry
+  data_quality WITH their CHECKs, is_real DEFAULT 0, ambient_temp_at_start_c
+  present, ledger at 0023 => v0024 would have applied cleanly to prod.
+- Fixed the seeds to implement the ledger they claim; added `_requireColumn`
+  preconditions to v0024 (raises, never swallows); +6 tests.
+
+### Files changed:
+- Modified: `tests/server/_mariadb_chain_harness.py` (both seeders now carry the
+  post-0021 drive_summary shape, MEASURED from prod and pinned as literals;
+  LEDGER_PROMISED_COLUMNS; docstring section on the defect class)
+- Modified: `src/server/migrations/versions/v0024_us563_unassessed_defaults_and_intake_rename.py`
+  (`_requireColumn` on all three substeps -- diagnoses ledger-vs-schema instead of
+  surfacing a bare 1054, and closes a silent-success hole on is_real)
+- Modified: `tests/server/test_migration_chain_real_mariadb.py` (+6 tests;
+  discovery-driven `_assertV0024Landed` post-condition; forbidden-swallow guard)
+
+### Learnings for future iterations:
+- **Pattern discovered**: **a fixture's SETUP and its CLAIM are two artifacts that
+  can disagree, and nothing compares them unless you write that check.** A seed
+  paired with `markMigrationsAppliedStatements(...)` is asserting a schema state;
+  if it does not build what those migrations build, the suite is green over a lie.
+  This is US-560's `PANEL_MODES` exactly one story later -- a fixture that STATES a
+  precondition instead of ESTABLISHING it is not a test, it is a claim wearing a
+  test's clothes. Now enforced by `test_seeds_implement_the_ledger_they_claim`.
+- **Gotcha**: **do NOT import the ORM enum into a migration-test seed**, however
+  much define-once argues for it. `DRIVE_SUMMARY_DATA_QUALITY_VALUES` already
+  contains 'unassessed', so the seed would pre-satisfy v0024, v0024 would widen
+  nothing, and both chain tests would pass having exercised ZERO of the code under
+  test -- the US-459 theater-trap in a new costume. A migration-test seed must be
+  pinned to the DEPLOYED pre-migration shape and deliberately allowed to lag the ORM.
+- **Gotcha**: **'column does not exist' and 'column has no default' are the SAME
+  value through `information_schema.COLUMN_DEFAULT`.** `_appliedDefault` returns
+  None for both, so `_redefaultIsRealToNull` would have read a MISSING `is_real` as
+  "already NULL-defaulted" and reported success having changed nothing -- a silent
+  no-op inside the migration written to eliminate non-measurements. Any probe whose
+  "absent" and "satisfied" answers coincide needs an existence check in front of it.
+- **Pattern discovered**: **measure prod before believing a CI failure is a code
+  defect.** One read-only probe was the difference between fixing the fixture and
+  damaging a correct migration to satisfy a broken one.
+- **Pattern discovered**: **mutation-test any guard you write against a "forbidden
+  fix".** Re-added the swallow the AC banned, confirmed the new test FAILS, reverted,
+  then grepped the diff for residue. A guard you never saw fail is a guess.
+- **Gotcha**: **real MariaDB IS reachable from this bench -- the suite need not
+  honest-skip.** No docker, no testcontainers, no local mysql client, and
+  chi-srv-01's MariaDB binds localhost-only, but `ssh -N -L 13306:127.0.0.1:3306
+  chi-srv-01` (Bash tool, run_in_background; TaskStop to close) + pymysql gets you
+  11.8.6, the exact pinned prod major. There is a pre-existing EMPTY `obd2db_test`
+  DB the obd2 user owns -- **that is the scratch target; obd2 CANNOT create
+  databases (1044).** NEVER point `OBD2_MARIADB_TEST_DSN` at `obd2db`:
+  `resetSchemaStatements()` DROPs drive_summary/drives/drive_statistics. Hard-refuse
+  the prod DB name in the runner, read the password from .env in-process (PowerShell
+  has no heredoc -- Write a temp .py), and check prod's table count before AND after.
+- **Gotcha**: a CI **honest-skip is not a pass**. If the runner has no MariaDB
+  service, `acquireMariaDb` raises and pytest skips green. AC-6 (a SUCCESS run for
+  the pushed HEAD SHA) is PM's to observe -- Ralph cannot push.
+---
