@@ -1416,3 +1416,39 @@ Task: v0024 migration fails on real MariaDB -- unknown column data_quality in CH
   service, `acquireMariaDb` raises and pytest skips green. AC-6 (a SUCCESS run for
   the pushed HEAD SHA) is PM's to observe -- Ralph cannot push.
 ---
+
+## 2026-08-23 - NO STORY SELECTED (Agent 1 / no-work iteration #3)
+Task: story selection found zero selectable work
+
+### What was implemented:
+- Nothing. No code written, no story closed. This entry exists so the no-op is on
+  the record rather than looking like a crashed iteration.
+- Re-counted `sprint.json` directly (not from the prior note): **11 of 12
+  `passes: true`**. The single `passes: false` is **US-560**, `status: blocked`,
+  `blockedBy: BL-034`.
+- Re-read `offices/pm/blockers/BL-034-...md` end-to-end on disk. It still ends at
+  its four-option decision table (section 7). **No Resolution section. No ruling.**
+- Checked `offices/ralph/inbox/` -- newest item is still
+  `2026-08-21-from-marcus-per-agent-clones-provisioned.md`. Nothing from Atlas.
+- Checked `git log` -- HEAD is `99058fe`, my own US-568 closeout. No Atlas commit
+  after it.
+
+### Files changed:
+- Modified: `offices/ralph/ralph_agents.json` (status -> unassigned, note refreshed)
+- Modified: `offices/ralph/progress.txt` (this entry)
+
+### Learnings for future iterations:
+- **Pattern discovered**: the one thing that CHANGED since no-work iteration #2 is
+  that the *deploy blocker* cleared -- US-568 closed. But `b38f7cb` is **committed
+  and unpushed** (Ralph does not push), so US-568's AC-6 CI gate on PR #16 cannot
+  have been observed. A cleared blocker is not a discharged gate; distinguish "the
+  work is done" from "the gate has been read".
+- **Gotcha**: BL-034 needs an **Atlas ruling + CIO ratify**, which no Ralph
+  iteration can produce. Re-running `ralph.sh` will regenerate this exact entry
+  indefinitely. The loop is not stalled on a defect -- it is correctly parked on a
+  human decision.
+- **Gotcha**: verify the fence on disk each iteration rather than trusting the
+  previous note. The prior note's claim happened to still be true today, but a
+  ruling arriving between iterations is exactly the event that note cannot know
+  about.
+---
