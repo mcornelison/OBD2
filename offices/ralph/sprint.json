@@ -7,13 +7,68 @@
   "createdBy": "Marcus (PM)",
   "createdAt": "2026-08-20",
   "capacity": {
-    "groomed": 11,
+    "groomed": 12,
     "reservedSlots": 0,
     "cioDecision": "CIO 2026-08-20: PROCEED WITH 11 STORIES -- do NOT split into 75a/75b. The PM split recommendation (closeout vs chrome) was raised and declined. Both lines ship in one sprint.",
     "note": "11 stories is large. Sizes: 1 L (US-564), 8 M, 2 S. The 5 chrome stories (US-555..559) are small and share one surface; the 6 closeout stories (US-560..565) are the V0.29 gate. Execution order is fixed in validationMethod -- US-560 FIRST, chrome LAST -- so if the sprint runs long, the tail that slips is cosmetic, not the chain gate.",
-    "atlasGate": "Atlas gate 2026-08-20: SOUND except US-562, whose premise he REFUTED on live evidence (the roll-up is a nightly 03:30 batch that runs correctly; both he and Spool read pending rows inside the ~12h deferral window). US-562 removed from the sprint and folded into US-563. He also pulled powerwatch arm-logging in from the otherwise-deferred SPEC 2 (US-566), concurred on US-564 staying L, and confirmed is_real=0 was a schema default with NO compute defect. Still 11 stories."
+    "atlasGate": "Atlas gate 2026-08-20: SOUND except US-562, whose premise he REFUTED on live evidence (the roll-up is a nightly 03:30 batch that runs correctly; both he and Spool read pending rows inside the ~12h deferral window). US-562 removed from the sprint and folded into US-563. He also pulled powerwatch arm-logging in from the otherwise-deferred SPEC 2 (US-566), concurred on US-564 staying L, and confirmed is_real=0 was a schema default with NO compute defect. Still 11 stories.",
+    "deployBlocker": "US-568 added 2026-08-23 and ordered FIRST. The V0.29.30 sprint-deploy HALTED at the Phase 3.5c CI gate: v0024 (from US-563) fails the real-MariaDB migration chain on both paths. PR #16 is open and red; dev/Pi/server untouched on V0.29.29. Deploy resumes when the gate is green for the pushed HEAD SHA."
   },
   "stories": [
+    {
+      "id": "US-568",
+      "title": "v0024 migration fails on real MariaDB -- unknown column data_quality in CHECK",
+      "parent": "F-134",
+      "epicId": "E-002",
+      "type": "issue",
+      "size": "S",
+      "status": "sprint-ready",
+      "passes": false,
+      "groundingRefs": [
+        "CI run: https://github.com/mcornelison/OBD2/actions/runs/32617736557 (PR #16, real-mariadb-migration-chain, 2 failed / 2 passed)",
+        "src/server/migrations/versions/v0024_us563_unassessed_defaults_and_intake_rename.py:389 (_widenCheckWithUnassessed) and :534 (apply)",
+        "tests/server/test_migration_chain_real_mariadb.py:355 + :383"
+      ],
+      "acceptance": [
+        "REPRODUCE FIRST, AGAINST REAL MariaDB. The exact failure, on BOTH chain paths: MigrationError: add CHECK 'ck_drive_summary_data_quality' on 'drive_summary' failed: (1054, \"Unknown column 'data_quality' in 'CHECK'\") -- raised from v0024...py:389 (_widenCheckWithUnassessed), called from :534 (apply). Failing tests: test_full_pending_chain_resume_fixes_both_classes (line 355) AND test_clean_schema_chain_applies_and_passes (line 383).",
+        "SQLITE WILL NOT REPRODUCE THIS -- that is why it shipped. Use the real-MariaDB harness (tests/server/test_migration_chain_real_mariadb.py -m integration) or the DSN-manual gate: OBD2_MARIADB_TEST_DSN=mysql+pymysql://user:pass@host:3306/db. A green SQLite run is not evidence here.",
+        "RCA the ORDERING ASSUMPTION, do not patch the symptom. apply() runs the CHECK widen FIRST for all of _CHECK_TARGETS, and its own docstring says the ordering is load-bearing ('every CHECK is widened BEFORE any DEFAULT moves, so there is no window in which the column's own default would be rejected by its own constraint'). MariaDB says drive_summary has no data_quality column at that point in the chain. Establish which is true: does the column exist on drive_summary at v0024's position, and if not, which earlier migration moved/dropped/renamed it? v0018_us448_canonical_drives, v0022_us451_drive_identity_collapse and v0023_us458_drop_stale_data_source_check all touch this area.",
+        "FORBIDDEN FIX -- do NOT widen the error swallow. _widenCheckWithUnassessed already swallows 'duplicate'/'already exists' on the ADD CONSTRAINT path. Adding 'unknown column' to that swallow, or wrapping the widen in a try/except, would make the migration report success while the CHECK it promises does not exist. That is the exact fabrication class F-135 and US-563 were written to eliminate -- a non-measurement wearing the appearance of a measurement. If the column legitimately does not exist on a table, that must be an explicit, tested, table-by-table decision, not a caught exception.",
+        "The SchemaProbeError verify-after-rebuild at :394 must survive the fix -- do not delete the post-condition to make the path green.",
+        "GREEN IS DEFINED BY THE GATE, NOT BY LOCAL TESTS (run-not-trust, US-469): a SUCCESS real-mariadb-migration-chain run must exist for the exact HEAD SHA of the pushed fix. PR #16 re-runs the check on push.",
+        "ruff/lint clean"
+      ],
+      "validationCriteria": [
+        {
+          "action": "run the real-MariaDB migration chain on a CLEAN schema",
+          "outcome": "test_clean_schema_chain_applies_and_passes passes; v0024 applies without MigrationError"
+        },
+        {
+          "action": "run the real-MariaDB migration chain on a PENDING/resume schema",
+          "outcome": "test_full_pending_chain_resume_fixes_both_classes passes"
+        },
+        {
+          "action": "inspect the applied schema after v0024 on real MariaDB",
+          "outcome": "each table that carries data_quality has the widened CHECK including the unassessed value; no table silently skipped"
+        },
+        {
+          "action": "check the migration-drift CI run for the pushed HEAD SHA on PR #16",
+          "outcome": "conclusion=success for that exact SHA -- not a green on a different SHA"
+        }
+      ],
+      "conditionalOutcomes": [
+        "US-563 is otherwise complete and correct -- this is its migration failing on real MariaDB only. Do not re-open or re-litigate the US-563 design (unassessed default, is_real NULL, intake-air rename).",
+        "BLOCKS THE V0.29.30 DEPLOY. PR #16 is open and red; dev, Pi and server are all untouched on V0.29.29 until this is green.",
+        "This is the migration-drift CI gate (US-470/US-471) working as designed -- it caught on CI what the BL-019/020/021 saga let reach a deploy attempt. Do not bypass it."
+      ],
+      "goal": "As the maintainer, I want v0024 to apply cleanly on real MariaDB, because it currently fails on both chain paths and blocks the V0.29.30 deploy.",
+      "tasks": [],
+      "feedback": {
+        "filesActuallyTouched": [],
+        "grounding": []
+      },
+      "completionNotes": ""
+    },
     {
       "id": "US-560",
       "title": "APPLY the US-552 mode pin on the live Pi + verify native 480x320",
