@@ -22,6 +22,11 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-08-21    | Rex (US-563) | Initial -- Sprint 75 F-134.
+# 2026-08-23    | Rex (US-568) | Add _requireColumn preconditions so a missing
+#               |              | target column fails with a diagnosis instead of
+#               |              | a bare MariaDB 1054 -- and so a missing is_real
+#               |              | can no longer read as "already NULL-defaulted".
+#               |              | No behaviour change on a correct schema.
 # ================================================================================
 ################################################################################
 
@@ -337,6 +342,45 @@ def _requireTable(ctx: RunnerContext, tableName: str) -> None:
         )
 
 
+def _requireColumn(
+    ctx: RunnerContext, tableName: str, columnName: str, substep: str,
+) -> None:
+    """Fail LOUDLY, with a diagnosis, when a table lacks a column v0024 needs.
+
+    US-568.  Every table in :data:`_CHECK_TARGETS` / :data:`_DATA_QUALITY_TABLES`
+    MUST carry the column -- that is an explicit, tested, table-by-table
+    decision, not a caught exception.  There are NO carve-outs: the deployed
+    obd2db carries ``data_quality`` on all three tables and ``is_real`` on
+    ``drive_summary`` (measured 2026-08-23 via information_schema), so a missing
+    column is never "this table legitimately opts out" -- it is always a broken
+    schema, and the migration must stop.
+
+    Why this exists rather than the raw engine error: without it MariaDB reports
+    ``(1054, "Unknown column 'data_quality' in 'CHECK'")`` from inside the
+    ADD CONSTRAINT, which names the symptom and hides the cause.  The cause is
+    always the same -- the schema does not match the ledger that claims which
+    migrations have been applied -- and that is what an operator needs told.
+
+    It also closes a genuine silent-success hole in substep 2: ``_appliedDefault``
+    returns ``None`` both for "column has no default" AND for "column does not
+    exist", so ``_redefaultIsRealToNull`` would have read a MISSING ``is_real``
+    as "already defaulting to NULL" and returned success having changed nothing.
+    A non-measurement wearing the appearance of a measurement is the exact class
+    F-135 / US-563 exist to eliminate.
+    """
+    if not _columnExists(ctx, tableName, columnName):
+        raise MigrationError(
+            f'{tableName}.{columnName} does not exist, so v0024 cannot '
+            f'{substep}.  v0024 has no carve-out for a missing column: the '
+            f'deployed schema carries it on every target table, so this is a '
+            f'BROKEN SCHEMA, not an opt-out.  Almost always this means the '
+            f'schema_migrations ledger claims an earlier migration ran when it '
+            f'did not -- {tableName}.{columnName} is created by an earlier '
+            f'migration in this registry.  Reconcile the ledger against the '
+            f'actual schema before re-running; do NOT skip the table.',
+        )
+
+
 # ================================================================================
 # Substep 1 -- widen the CHECK enums so 'unassessed' is a legal value
 # ================================================================================
@@ -359,6 +403,10 @@ def _widenCheckWithUnassessed(
     the column, i.e. on the next Pi sync, in the car.
     """
     _requireTable(ctx, tableName)
+    _requireColumn(
+        ctx, tableName, DATA_QUALITY_COLUMN,
+        f'widen the {checkName!r} CHECK enum with {UNASSESSED_VALUE!r}',
+    )
 
     clause = _checkClause(ctx, checkName)
     if clause is not None and UNASSESSED_VALUE in clause:
@@ -411,6 +459,10 @@ def _redefaultDataQuality(ctx: RunnerContext, tableName: str) -> None:
     Idempotent: a column already defaulting to ``'unassessed'`` is a no-op.
     """
     _requireTable(ctx, tableName)
+    _requireColumn(
+        ctx, tableName, DATA_QUALITY_COLUMN,
+        f're-default it to {UNASSESSED_VALUE!r}',
+    )
 
     if _appliedDefault(ctx, tableName, DATA_QUALITY_COLUMN) == UNASSESSED_VALUE:
         return
@@ -437,6 +489,11 @@ def _redefaultDataQuality(ctx: RunnerContext, tableName: str) -> None:
 def _redefaultIsRealToNull(ctx: RunnerContext) -> None:
     """Drop ``drive_summary.is_real``'s DEFAULT 0 so it defaults to NULL."""
     _requireTable(ctx, DRIVE_SUMMARY_TABLE)
+    # MUST precede the _appliedDefault read: that probe cannot tell "no default"
+    # from "no column", so without this a missing is_real would report success.
+    _requireColumn(
+        ctx, DRIVE_SUMMARY_TABLE, IS_REAL_COLUMN, 'drop its DEFAULT 0',
+    )
 
     if _appliedDefault(ctx, DRIVE_SUMMARY_TABLE, IS_REAL_COLUMN) is None:
         return
