@@ -154,7 +154,7 @@ while `pcb_shift_x` moves the *mounts* to register the real (off-center) glass o
 that window so the lid snaps. The CIO's "center the screen" and "shift posts 4 mm"
 were two different knobs, not a conflict.
 
-See also: `knowledge/pattern-openscad-cli-numeric-part-selector.md`,
+See also: `knowledge/docs/3d-printing/openscad-cli.md`,
 `knowledge/feedback-cio-architectural-paths-belong-to-atlas.md`,
 `knowledge/feedback-cio-measures-clearance-from-glass-edge.md`,
 `knowledge/project-display-case-design-decisions.md`.

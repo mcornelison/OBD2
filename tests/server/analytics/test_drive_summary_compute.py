@@ -109,7 +109,7 @@ def _seedPiSyncedDriveSummary(
         source_id=driveId,
         drive_id=driveId,
         drive_start_timestamp=driveStartTimestamp,
-        ambient_temp_at_start_c=ambientTemp,
+        intake_air_temp_at_start_c=ambientTemp,
         starting_battery_v=startingBatteryV,
         data_source=dataSource if dataSource is not None else "real",
         # Analytics fields explicitly left NULL.
@@ -241,7 +241,7 @@ class TestComputeDriveSummaryCore:
             session.commit()
 
             row = session.get(DriveSummary, summaryId)
-            assert row.ambient_temp_at_start_c == 22.5
+            assert row.intake_air_temp_at_start_c == 22.5
             assert row.starting_battery_v == 13.9
             assert row.data_source == "real"
             assert row.drive_start_timestamp == startTime

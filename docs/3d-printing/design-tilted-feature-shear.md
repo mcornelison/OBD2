@@ -32,5 +32,5 @@ naively in the tilted frame — the shear moves them out of the wall.
   standoff sitting coplanar on the floor, makes the result non-manifold. Shrink the
   inner cut ~0.1 mm to overlap the void, and sink posts ~0.5 mm into the floor.
 
-Related: [[pattern-verify-feature-not-manifold-and-git-truth]],
+Related: [[pattern-the-artifact-is-not-the-fact]],
 [[pattern-hardware-measurement-frame-and-datasheet-authority]].

@@ -103,6 +103,20 @@
   --fs-secondary:   26px;      /* SSOT --fs-secondary */
   --fs-label:       20px;      /* SSOT --fs-label */
   --fs-meta:        15px;      /* SSOT --fs-meta */
+  /* --- Layout bands -- US-557 (F-132). SSOT block: tokens.css "Layout bands".
+     The stripes that spend the stage's HEIGHT. Before this story `28px` lived
+     as FOUR independent literals (#topbar height, #carousel top,
+     #rotate-progress top, #dtc-ribbon top) and `24px` as two (#dots height,
+     #carousel bottom) -- one fact, six copies, nothing forcing them to agree.
+     That is why F-127's type-scale bump could raise the type and leave every
+     band at its pre-F-127 height without anything going red.
+     VALUES ARE IRIS'S P-3 RECLAIM: +23px of chrome back to the card body,
+     landing it at 224px. A CORRECTION to the F-127 budget, not a reversal --
+     no driver-read value shrank. These MUST equal tokens.css.
+     Pinned by tests/ui/test_card_band_budget.py. */
+  --bar-h:          34px;      /* SSOT --bar-h */
+  --dots-h:         16px;      /* SSOT --dots-h */
+  --card-pad-y:      8px;      /* SSOT --card-pad-y */
   /* --- Base surfaces -- promoted into the SSOT by US-510 (Atlas Rule-10
      2026-07-31). These two were dist-only literals; the values are UNCHANGED,
      so the promotion moved no pixels (that was Atlas's explicit DoD gate). */
@@ -194,13 +208,45 @@ html, body {
 }
 
 /* --- persistent top bar (D-3) ------------------------------------------------ */
+/* US-555 (F-132): a THREE-COLUMN GRID, not a flex row. The two `1fr` side
+   tracks are the same track definition, so the `auto` middle track lands on the
+   BAR's midpoint -- the clock is centred on the bar rather than on whatever
+   space the other two clusters happened to leave. See the US-542 note below for
+   why the obvious flex answer (a second `auto` margin) was correctly rejected.
+
+   THE ONE BOUND, stated because `1fr` hides it: `1fr` is `minmax(auto, 1fr)`,
+   so a side track whose CONTENT is wider than its share of the free space grows
+   past `1fr` and pushes the centre track off centre. Centring is structural up
+   to that bound, not unconditionally. The bound is measured -- and re-measured
+   with the Atlas-gated P-6 WiFi glyph added to the left cluster -- by
+   tests/ui/test_topbar_three_column_grid.py, which is also what makes "P-6
+   drops in with no re-layout" a checked claim instead of a hope. */
+/* US-557: the height is --bar-h, and it GREW 28 -> 34. This bar was the one
+   band genuinely under-sized for its own contents -- 26px glyphs and a 40px
+   kebab button in a 28px stripe -- which is what pushed the ⋮ outside the
+   header fill. Three other rules position themselves against this height
+   (#carousel, #rotate-progress, #dtc-ribbon) and each used to repeat it as its
+   own literal; they now read the same token. */
 #topbar {
-  position: fixed; top: 0; left: 0; right: 0; height: 28px;
-  display: flex; align-items: center; gap: 10px;
+  position: fixed; top: 0; left: 0; right: 0; height: var(--bar-h);
+  display: grid; grid-template-columns: 1fr auto 1fr;
+  align-items: center; gap: 10px;
   padding: 0 10px; box-sizing: border-box;
   background: var(--surface); font-size: var(--fs-secondary);
   z-index: 10;
 }
+/* The clusters exist so the bar has exactly THREE grid children: five children
+   in a three-column template wrap into an implicit second row, which on a bar
+   only --bar-h tall clips rather than reflows (US-557 moved that height off a
+   literal; the argument holds at any bar height the budget can afford, which is
+   the point of not restating the number here). They are flex rows because a grid child
+   defaults to `display: block` -- without these two rules the glyphs would
+   stack vertically inside the bar. Named `topbar-*` rather than the design
+   note's bare `.left`/`.right`: this is one shared sheet, and a generic class
+   name is the US-540-b trap (the first reuse silently inherits these rules). */
+#topbar .topbar-left  { display: flex; align-items: center; gap: 10px; }
+#topbar .topbar-right { display: flex; align-items: center;
+                        justify-content: flex-end; gap: 8px; }
 #topbar .glyph { color: var(--text-secondary); letter-spacing: 0.04em; }
 #topbar .glyph[data-state="amber"] { color: var(--amber-warn); }
 #topbar .glyph[data-state="ok"]    { color: var(--green-ok); }
@@ -209,36 +255,114 @@ html, body {
    (and, from US-489, the per-tile dot) carries which source is unhappy, and
    inventing a second alarm-red to separate them is what Spool ruled against. */
 #topbar .glyph[data-state="down"]  { color: var(--amber-warn); }
-/* US-542: the wall clock, relocated from the retired parked idle face. Sits
-   with the glyphs on the LEFT rather than taking `margin-left: auto` -- the
-   version chip already owns the right cluster, and two auto margins in one flex
-   row split the free space between them, which would let the clock's position
-   drift with the length of the version string. Pinned to --fs-label, NOT the
-   bar's inherited --fs-secondary: at the US-540-a scale a 26px "12:45 PM" is
-   ~125px of a 480px bar that already carries three glyphs, a version chip and
-   the ⋮. Label tier still clears the 3.5in floor for a parked-read glance. */
+/* US-542: the wall clock, relocated from the retired parked idle face. It USED
+   to sit with the glyphs on the LEFT, and the reasoning for that is still
+   correct and is kept here on purpose: two auto margins in one flex row split
+   the free space BETWEEN them, so `margin-left: auto` on the clock would have
+   let its position drift with the length of the version string. What that
+   argument actually rules out is centring WITH AUTO MARGINS -- not centring.
+   US-555 (F-132) centres the clock in the `1fr auto 1fr` grid above instead, so
+   the drift is structurally impossible rather than merely avoided, and no auto
+   margin survives anywhere in the bar (pinned as a sweep, not per-element).
+   Pinned to --fs-label, NOT the bar's inherited --fs-secondary: at the US-540-a
+   scale a 26px "12:45 PM" is ~125px of a 480px bar that already carries three
+   glyphs, a version chip and the ⋮. Label tier still clears the 3.5in floor for
+   a parked-read glance. */
 #topbar-clock {
+  justify-self: center;   /* the geometric centre of the bar, not of the track */
   font-size: var(--fs-label); color: var(--text-primary);
   letter-spacing: 0.04em;
 }
+/* US-555: `margin-left: auto` is GONE, not zeroed -- the right TRACK packs the
+   chip against the bar's edge now (`justify-content: flex-end` on the cluster),
+   and an auto margin here would be exactly the drift mechanism the note above
+   rejects. */
 #version-chip {
-  margin-left: auto; color: var(--text-tertiary);
+  color: var(--text-tertiary);
   font-size: var(--fs-meta); letter-spacing: 0.06em;
 }
+/* US-556 (F-132): the VISUAL box and the HIT box are two different boxes, and
+   conflating them is what put the third dot outside the header fill. This button
+   shipped `min-height: var(--tap-min)` -- a 40px box -- inside a bar that was
+   28px and, after US-557, is 34px. Either way the box is taller than the band,
+   and #topbar's `--surface` fill only paints the band.
+
+   THE PREMISE, RE-READ AGAINST THE BAR US-557 ACTUALLY LANDED. The story
+   describes "a 40px box + 34px glyph inside a 28px bar". Measured against 34,
+   that splits: the GLYPH half is already gone (--fs-primary is 34px, so at the
+   new band it exactly FILLS rather than spills -- though with zero margin, and
+   ink is not bound by a `line-height: 1` box), while the BOX half survived
+   untouched. This rule removes the box overflow and buys the glyph real
+   headroom; it is not re-fixing something US-557 already fixed.
+
+   The tension is real and does not go away: S-2 requires a >=40px touch target
+   and the bar cannot afford to BE 40px -- US-557's budget already pays 6px for
+   34 and takes 29px back from three other bands, so another 6 comes straight off
+   the card body that story just reclaimed. So the painted box shrinks to the
+   band and the TARGET is extended by a transparent pseudo-element below.
+
+   `--fs-secondary` rather than `--fs-primary` is the honest tier: the ⋮ is a
+   CHROME AFFORDANCE, not a driver-must-read value, so F-127's 34px value floor
+   never applied to it. Nothing was wrong with US-539 tokenizing the glyph -- it
+   simply bound chrome to a tier F-127 then raised. 26px still clears Iris's
+   non-critical floor, and the control is `hidden` while driving (US-490), so
+   the read is a deliberate parked tap rather than a glance at speed.
+
+   BOTH MAGNITUDES DERIVE. `width`/`height` are --bar-h, so the box IS the band
+   by construction. Iris's note specifies `28px` and `inset: -6px -7px`; those
+   were arithmetic against the pre-US-557 28px bar, and re-landing them here
+   would ship the exact value-changed-here / measurement-left-behind defect this
+   sprint exists to close. Pinned by tests/ui/test_topbar_kebab_fit.py. */
 #menu-btn {
-  min-width: var(--tap-min); min-height: var(--tap-min);
+  min-width: 0; min-height: 0;
+  width: var(--bar-h); height: var(--bar-h);
+  display: flex; align-items: center; justify-content: center;
+  position: relative;
   background: transparent; border: 0; color: var(--text-secondary);
-  font-size: var(--fs-primary); line-height: 1; cursor: pointer;
+  font-size: var(--fs-secondary); line-height: 1; cursor: pointer;
+}
+/* The S-2 tap minimum, preserved WITHOUT touching layout or paint. The inset is
+   HALF THE SHORTFALL, SIGNED: `(--bar-h - --tap-min) / 2` is negative while the
+   band is smaller than the minimum, so the target grows outward by exactly the
+   missing pixels and measures --tap-min on both axes. Should a future band ever
+   exceed --tap-min the value turns positive, the pseudo shrinks back inside, and
+   the button itself already carries a target over the minimum -- self-correcting
+   in both directions, which a pair of literals cannot be.
+
+   `position: relative` above is load-bearing and is the quiet way this breaks:
+   without it the pseudo anchors to the nearest positioned ancestor -- #topbar,
+   which IS positioned -- and the hit area silently lands somewhere else.
+
+   HONEST BOUND, because the claim is "the hit box measures --tap-min", not
+   "40px of glass": the bar sits at y=0, so the upper half of the extension lies
+   at or above the panel's top edge, where `html, body { overflow: hidden }`
+   clips it. That costs nothing REACHABLE -- the bezel backstops the finger, so a
+   target on the screen edge cannot be overshot upward -- but it is a bound, not
+   a non-issue. The lower half is on the glass and does overlay the top ~3px of
+   #carousel; #menu-btn is `display: none` while driving (US-490), so it can only
+   ever intercept a parked tap, never a swipe at speed. */
+#menu-btn::after {
+  content: ""; position: absolute;
+  inset: calc((var(--bar-h) - var(--tap-min)) / 2);
 }
 /* US-490: the ⋮ is parked-only. Stated explicitly rather than leaning on the
-   UA [hidden] rule -- #topbar is a flex container, so any future `display`
-   declaration on #menu-btn would outrank the UA sheet and hand back a
-   clickable target while driving. Removed from flow, not merely faded. */
+   UA [hidden] rule -- #menu-btn now declares `display: flex` above (US-556), so
+   an author `display` DOES outrank the UA sheet here; before US-556 that was a
+   hypothetical about future edits and it is now the shipped cascade. Without
+   this rule the button would hand back a clickable target while driving.
+   Removed from flow, not merely faded. */
 #menu-btn[hidden] { display: none; }
 
 /* --- swipe carousel --------------------------------------------------------- */
+/* US-557 (F-132): top/bottom DERIVE from the two tokens that define the bars,
+   rather than repeating their magnitudes. This is the root cause of the whole
+   story in one rule -- `top: 28px` here and `height: 28px` on #topbar were one
+   fact written twice, so F-127 could move the type scale and leave the carousel
+   sized against a bar that no longer existed. The `overflow: hidden` stays: it
+   is the letterbox's clip, and what US-557 removes is the SILENCE of the clip,
+   not the clip (see the no-silent-clip guard on .card-body). */
 #carousel {
-  position: absolute; top: 28px; bottom: 24px; left: 0; right: 0;
+  position: absolute; top: var(--bar-h); bottom: var(--dots-h); left: 0; right: 0;
   overflow: hidden;
 }
 /* US-537 (Atlas RCA #3): NO `will-change: transform` here. The track is a flex
@@ -253,20 +377,71 @@ html, body {
   display: flex; height: 100%;
   transition: transform 0.25s ease-out;
 }
+/* US-557: the VERTICAL padding is a band (14 -> 8, +12px back to the body) and
+   is a token; the HORIZONTAL padding is not a band -- it spends no stage height
+   -- so it deliberately stays a literal rather than joining the band
+   vocabulary. Keeping the distinction is what lets the US-557 grep gate charge
+   only what actually costs height. */
 .card {
   flex: 0 0 100%; width: 100%; height: 100%;
-  box-sizing: border-box; padding: 14px 16px;
+  box-sizing: border-box; padding: var(--card-pad-y) 16px;
   display: flex; flex-direction: column;
 }
 /* US-510 A-3: a card TITLE is a brand moment, so it takes --font-display. The
    card BODY is untouched and stays mono -- the title labels the instrument, the
    body IS the instrument, and only the label gets the brand face. */
+/* US-557 (F-132): the title drops --fs-secondary -> --fs-label and 8px -> 6px of
+   margin, +9px back to the card body. THIS IS NOT A VALUE SHRINKING and the
+   distinction is the whole of AC-3: a card title NAMES the instrument you
+   deliberately swiped to, so it is a LABEL. Every value under it keeps its
+   F-127 tier -- .tile-value is still --fs-primary, and Iris's floor rule
+   ("anything the driver must read to act is >= 34px; anything < 26px must be
+   non-critical") puts a title squarely in the non-critical half. If this ever
+   looks like it must take a VALUE down with it, cut a FACT instead. */
 .card-title {
-  margin: 0 0 8px 0; font-size: var(--fs-secondary); font-weight: 600;
+  margin: 0 0 6px 0; font-size: var(--fs-label); font-weight: 600;
   color: var(--text-secondary); text-transform: uppercase;
   letter-spacing: 0.08em; font-family: var(--font-display);
 }
-.card-body { flex: 1; font-size: var(--fs-secondary); color: var(--text-primary); }
+/* --- US-557 NO-SILENT-CLIP GUARD (F-132) ------------------------------------
+   The defect F-127's budget produced was not merely that cards overflowed -- it
+   was that the overflow was INVISIBLE TO EVERYONE BUT THE CIO'S EYE. The card
+   clipped and said nothing, which is the honest-instrument rule broken at the
+   layout layer: either the content fits, or the surface has to admit it does
+   not. Two declarations do the work, and neither is decoration:
+
+   `min-height: 0` is the load-bearing half and the least obvious. A COLUMN flex
+   item defaults to `min-height: auto`, which refuses to shrink below its
+   content -- so an over-full body pushed `.card` past 100% height and
+   `#carousel { overflow: hidden }` ate the remainder OUTSIDE the card, where
+   nothing could signal it. Without this line the overflow rule below is inert:
+   the body never overflows, the card does.
+
+   The two background layers are the ADMISSION, and the trick is that they need
+   no measurement and so cannot go stale:
+     - layer 1, a --bg cover pinned to the bottom of the CONTENT (`local`), so
+       it rides the scroll;
+     - layer 2, a --text-tertiary rule pinned to the bottom of the BOX
+       (`scroll`), so it stays put.
+   Reach the end and the cover lands on the rule and hides it; while anything is
+   still below, the rule shows. TWO layers, not the usual four: this sheet
+   already caused the US-522 freeze through compositor pressure (US-537), and
+   #track paints every card side by side, so each layer here is paid six times
+   over. Top-edge shadows are dropped for that reason -- content is clipped at
+   the BOTTOM, which is the edge worth paying for.
+
+   The cue borrows --text-tertiary deliberately. A clipped card is a LAYOUT
+   fact, not a vehicle fault; dressing it amber or red would put a layout
+   condition into the alert vocabulary US-488 spent a whole story making mean
+   exactly one thing each. Pinned by tests/ui/test_card_band_budget.py. */
+.card-body {
+  flex: 1; min-height: 0;
+  overflow-y: auto; overscroll-behavior: contain;
+  font-size: var(--fs-secondary); color: var(--text-primary);
+  background:
+    linear-gradient(rgba(0, 0, 0, 0), var(--bg) 70%) bottom / 100% 12px no-repeat local,
+    linear-gradient(rgba(0, 0, 0, 0), var(--text-tertiary)) bottom / 100% 3px no-repeat scroll;
+}
 /* Honest-instrument: a missing/malformed state file reads `unavailable`,
    never a fabricated value and never green. */
 .card.unavailable .card-body,
@@ -563,8 +738,13 @@ html, body {
    card, which is what makes the scale mean the same thing everywhere. */
 
 /* --- page dots (>=40px touch target, 10px visual) --------------------------- */
+/* US-557: --dots-h, and it SHRANK 24 -> 16, restoring the figure the F-127
+   budget had already assumed. The dots themselves paint 8px, and the >=40px
+   touch target rides `.dot`'s own min-height rather than the band -- so the
+   band can give 8px back to the card body without costing a single px of tap
+   area. #carousel's `bottom` reads this same token. */
 #dots {
-  position: absolute; bottom: 0; left: 0; right: 0; height: 24px;
+  position: absolute; bottom: 0; left: 0; right: 0; height: var(--dots-h);
   display: flex; justify-content: center; align-items: center; gap: 4px;
 }
 .dot {
@@ -587,8 +767,11 @@ html, body {
    would be a fourth thing claiming to mean "healthy"/"degraded" while actually
    meaning "seconds until the next card". Removed entirely while paused (the
    `hidden` attribute -> the global [hidden] guard, US-495). */
+/* US-557: `top` is --bar-h. This rule and #dtc-ribbon below share the band
+   directly under the top bar, and each used to carry its own copy of the bar's
+   height -- so a bar that grew would have left both of them overlapping it. */
 #rotate-progress {
-  position: fixed; left: 0; right: 0; top: 28px; height: 2px;
+  position: fixed; left: 0; right: 0; top: var(--bar-h); height: 2px;
   background: transparent; z-index: 8;
   pointer-events: none;   /* chrome, never a tap target */
 }
@@ -604,8 +787,10 @@ html, body {
    STATE-ALARM --critical-red (never a brand red) + a leading ⚠ glyph + a subtle
    pulse, so it reads as an alarm and never as decoration or as branding. Level
    is set by JS from `dtc`. */
+/* US-557: `top` is --bar-h -- the ribbon rides UNDER the bar, so it must move
+   with it. `min-height` is the ribbon's own content floor, not a stage band. */
 #dtc-ribbon {
-  position: fixed; left: 0; right: 0; top: 28px; min-height: 22px;
+  position: fixed; left: 0; right: 0; top: var(--bar-h); min-height: 22px;
   display: flex; align-items: center; gap: 6px;
   padding: 2px 10px; box-sizing: border-box;
   font-size: var(--fs-label); font-weight: 700; letter-spacing: 0.03em;
@@ -739,14 +924,46 @@ html, body {
 }
 
 /* --- US-403 System Setup menu (D-6/D-7/A-7) --------------------------------- */
+/* US-558 (F-132) THE OVERLAY OPACITY RULE, declared once here and cited by the
+   other five full-screen layers:
+
+     An overlay you NAVIGATE TO is a destination and paints solid.
+     An overlay that INTERRUPTS you is a modal and keeps its scrim.
+
+   This one shipped at `rgba(0,0,0,0.92)` -- 8% of the live carousel bleeding
+   through the surface where the operator reads settings and service controls.
+   On a 480x320 panel on a sunlit windscreen that is not a depth cue, it is
+   noise. The scrim was never carrying meaning here: nothing is waiting
+   underneath a screen you deliberately went to.
+
+   `var(--bg)` rather than a fresh `#000`: #screen's letterbox frame and the STOP
+   takeover's field already bind that token, and four literals only look
+   identical until one of them moves. The two confirm modals KEEP their scrim on
+   purpose -- see #confirm-modal. Classification enforced by
+   tests/ui/test_overlay_opacity_model.py, which DISCOVERS the full-screen layers
+   out of this sheet, so a new overlay fails until somebody says which kind it
+   is. */
 #setup-menu {
   position: fixed; inset: 0; z-index: 40;
-  background: rgba(0, 0, 0, 0.92);
+  background: var(--bg);
   display: flex; flex-direction: column; gap: 6px;
   padding: 6px 12px 10px; box-sizing: border-box; overflow-y: auto;
 }
+/* US-556 (F-132): was a FIXED `height: 36px` around a 40px (--tap-min)
+   #menu-close, so the one control that dismisses this overlay overflowed its own
+   header -- the SAME visual-box-vs-band defect as the kebab, and the second time
+   this head shape has produced it (US-491 fixed `.detail-head` for exactly this
+   reason and the fix did not generalise).
+
+   Resolved the OPPOSITE way to the kebab, and that is deliberate rather than
+   inconsistent: #topbar cannot afford to grow, so there the control shrinks to
+   the band. A full-screen overlay head has no stage budget to defend, so here
+   the BAND grows to the control -- which is both cheaper and keeps the two
+   overlays speaking one interaction language. Derived from --tap-min rather than
+   re-landed as a literal, so the head cannot drift back under the minimum it
+   exists to contain. */
 .menu-head {
-  display: flex; align-items: center; height: 36px;
+  display: flex; align-items: center; min-height: var(--tap-min);
   border-bottom: 1px solid var(--surface);
 }
 .menu-title {
@@ -824,6 +1041,14 @@ html, body {
 }
 
 /* --- US-403 confirm modal (F-6 confirm-before-consequential) ---------------- */
+/* US-558 (F-132): THE SCRIM STAYS, and this is the half of the overlay rule most
+   easily lost -- a sweep that reads "make the overlays opaque" takes the two
+   confirms with it. The translucency is doing real work here: it says the thing
+   you were doing is still underneath and Cancel returns you to it. This is an
+   INTERRUPTION, not a destination. Both confirms scrim at the same strength on
+   purpose -- two dialogs dimming the panel by different amounts would imply one
+   interruption is more real than the other. Guarded by
+   tests/ui/test_overlay_opacity_model.py. */
 #confirm-modal {
   position: fixed; inset: 0; z-index: 50;
   display: flex; align-items: center; justify-content: center;
@@ -912,7 +1137,9 @@ html, body {
   --detail-gap-tight: 4px;      /* within a section */
   --detail-pad:       8px 10px; /* every section card */
   position: fixed; inset: 0; z-index: 45;
-  background: rgba(0, 0, 0, 0.95);
+  /* US-558: DESTINATION -- you tapped a code in the Alerts list to get here. Was
+     `rgba(0,0,0,0.95)`; see the rule at #setup-menu. */
+  background: var(--bg);
   display: flex; flex-direction: column;
   padding: 4px 12px 10px; box-sizing: border-box; overflow-y: auto;
 }
@@ -1030,7 +1257,15 @@ html, body {
   --detail-gap-tight: 4px;      /* within a row */
   --detail-pad:       8px 10px; /* every row card */
   position: fixed; inset: 0; z-index: 45;
-  background: rgba(0, 0, 0, 0.95);
+  /* US-558: DESTINATION -- you tapped through from the System Status card. Was
+     `rgba(0,0,0,0.95)`; the rule is stated at the setup-menu block. It inherits
+     the per-code overlay's shell, so it takes the same field for the same
+     reason -- two drill-downs that look different teach two interactions for one
+     idea. (The cross-reference above omits its leading hash DELIBERATELY:
+     US-509's no-raw-colour guard scans a fixed character window from this
+     selector and reads a bare hash anywhere in it, comment or not, as a hex
+     literal. Do not "fix" the spelling -- it goes red. See TD-084.) */
+  background: var(--bg);
   display: flex; flex-direction: column;
   padding: 4px 12px 10px; box-sizing: border-box; overflow-y: auto;
 }
@@ -1069,6 +1304,21 @@ html, body {
 .sys-issue-row[data-level="down"]  .sys-issue-chip { color: var(--amber-warn); }
 .sys-issue-row[data-level="unavailable"] .sys-issue-chip {
   color: var(--text-tertiary);
+}
+/* US-559: the SYNC counts, moved off the tile so the stamp could have its own
+   line. Reference facts, NOT faults -- so they are deliberately QUIETER than an
+   issue row: no severity chip, no border, tertiary text. Reading like a fault
+   is how a diagnostics line trains the operator to ignore the real ones. */
+.sys-diag-row {
+  display: flex; align-items: baseline; gap: 8px;
+  padding: var(--detail-pad);
+}
+.sys-diag-label {
+  font-size: var(--fs-label); font-weight: 700; letter-spacing: 0.06em;
+  color: var(--text-tertiary);
+}
+.sys-diag-text {
+  margin-left: auto; font-size: var(--fs-label); color: var(--text-secondary);
 }
 /* US-509: the summary line only LOOKS like a control when it is one. */
 .sys-summary-tappable { cursor: pointer; }
@@ -1119,6 +1369,7 @@ html, body {
    The BOX takes the border token and the destructive BUTTON takes the action
    fill; Cancel stays unstyled so the easy default is visually the quiet one.
    Pinned by tests/ui/test_dashboard_fidelity_pass.py. */
+/* US-558: INTERRUPTION -- keeps its scrim, same strength as #confirm-modal. */
 #clear-confirm {
   position: fixed; inset: 0; z-index: 55;
   display: flex; align-items: center; justify-content: center;

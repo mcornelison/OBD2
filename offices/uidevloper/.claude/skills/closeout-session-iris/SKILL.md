@@ -5,7 +5,7 @@ description: End-of-session ritual for Iris (UI/UX Designer). Sweeps inbox, upda
 
 # Iris — Session Closeout
 
-End-of-session ritual for the UI/UX Designer office. Structured, sequential — execute phases in order. Use `TaskCreate` to add a task for each phase, mark `in_progress` when starting, `completed` when done. Be honest — if a phase finds nothing, say so. Do not fabricate work.
+End-of-session ritual for the UI/UX Designer office. Structured, sequential — execute phases in order. Track them with whatever todo mechanism the session has; if none is available, just work the phases in order. Be honest — if a phase finds nothing, say so. Do not fabricate work.
 
 ---
 
@@ -56,6 +56,12 @@ Scan the session for material that belongs in `offices/uidevloper/knowledge/`. P
 | CIO corrected or confirmed an approach | `knowledge/feedback-<slug>.md` |
 | A design or process pattern worked | `knowledge/pattern-<slug>.md` |
 | CIO pointed at an external reference / asset / dimension | `knowledge/reference-<slug>.md` |
+
+**Before writing, ask: is this MINE or the PROJECT's?** Facts any agent might need — hardware
+specs, printer/toolchain behaviour, vendor dimensions — are **project-shared** and belong in a
+shared location with one version of the truth (`docs/`, `specs/`), not in my office. Knowledge
+here is *how I work*: the CIO's preferences toward me, my design-process lessons, my traps.
+Consolidated 2026-08-20 on CIO direction — see `docs/3d-printing/README.md` for the pattern.
 
 For each candidate:
 1. Check existing knowledge files first — no duplicates. Update an existing file if the lesson is a refinement.
@@ -131,13 +137,15 @@ List the **commit SHAs** and what each carries, plus anything needing his merge 
   "pushed", and never "delivered". Do not verify delivery by checking a local branch;
   that reads my own machine, not origin.
 - Stale-work risk is unchanged in kind, only reduced: see
-  `knowledge/pattern-written-is-not-sent-uncommitted-work-rots.md` — that near-miss would
+  `knowledge/pattern-the-artifact-is-not-the-fact.md` — that near-miss would
   have shipped a dead boost gauge. A committed-but-unpushed file still rots.
 
 Hard NOs:
-- Any git write command, including at closeout
+- `push` / `pull` / `fetch` / `merge` / `rebase` / `branch` / `checkout` / `git mv` — ever
+- `git add -A` / `git add .` — stage by explicit path only
+- Staging a peer's own file, `.deploy-version`, or a peer's `settings.local.json`
 - Editing peer office files (inbox-only, unchanged)
-- Assuming a file is delivered because it exists on disk
+- Assuming a file is delivered because it is committed — origin is the source of truth
 
 ## Phase 6: Session summary
 
@@ -151,8 +159,9 @@ Present this report to the CIO. Be specific — counts and pointers, not vague c
 **Charter §9 session log**: appended ("<short title>")
 **Knowledge captured**: [N feedback / N pattern / N reference / none new]
 **A2ALs filed**: [peer/slug, peer/slug, … / none pending]
-**Handed to PM for commit**: [N paths in `pm/inbox/<handoff-note>` — modified/added/moved / nothing changed]
-**NOT committed by me** (PM owns git, CIO 2026-08-17) — state plainly that it is pending
+**Committed**: [SHAs + one line each / nothing to commit]
+**Handed to PM**: [`pm/inbox/<handoff-note>` — SHAs listed, branch named]
+**Pending Marcus's push** — say this plainly; committed is NOT delivered
 
 **Open for next session**:
 - [item]

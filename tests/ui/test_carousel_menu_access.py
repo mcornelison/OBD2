@@ -239,8 +239,11 @@ def test_menuButtonShipsHidden_soBootIsFailClosed():
 
 
 def test_hiddenMenuButtonIsRemoved_notMerelyTransparent():
-    """#topbar is a flex container: a future `display:flex` on #menu-btn would
-    silently beat the UA [hidden] rule and hand back a clickable target."""
+    """The kebab's parent is a flex container -- `#topbar .topbar-right` since
+    US-555 moved it out of the bar itself, which is now a grid. Either way a
+    future `display:flex` on #menu-btn would silently beat the UA [hidden] rule
+    and hand back a clickable target while driving. MOVED PIN: this used to say
+    "#topbar is a flex container"; the container changed, the hazard did not."""
     block = _ruleBlock(_read(_CSS), "#menu-btn[hidden]")
     assert "display: none" in block
 

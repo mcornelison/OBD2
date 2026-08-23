@@ -136,7 +136,7 @@ cable_z  = 3.0;       // center Z above floor; lowered so the slot drops into th
 // FLAT (no VHB recess): full first-layer bed contact for reliable MK3S+
 // adhesion. A recessed bottom only contacts on a thin lip-ring (~24% area) and
 // releases mid-print. VHB tape sticks fine to a plain flat face.
-// See knowledge/pattern-flat-base-and-print-orientation.md.
+// See knowledge/docs/3d-printing/design-flat-base-and-orientation.md.
 
 // ---- Derived ------------------------------------------------------------
 x0 = wall + clr;                       // board origin (world) X

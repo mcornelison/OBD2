@@ -6,10 +6,20 @@
 #
 # Why these numbers
 # -----------------
-# OnUnitActiveSec=30s -- the watchdog's journal window is 60s, so a 30s cadence
-# means a wedge is seen within about one window and recovered inside ~1.5 min.
-# For scale: Atlas's frozen bench session ran 4:42 with the display dead.
-# Faster would not help (the window has to fill); slower leaves the panel
+# OnUnitActiveSec=30s -- LOAD-BEARING for the US-561 discriminator, not just a
+# polling taste.  The watchdog calls a kiosk wedged when markers are present
+# CONTINUOUSLY for a 60s dwell, so this cadence is what makes "sustained" mean
+# two independent observations rather than one sample.  Change this and
+# DEFAULT_WEDGE_DWELL_SECONDS must be re-checked against it -- a test asserts
+# the dwell still spans >= 2 ticks (kiosk_watchdog.TIMER_CADENCE_SECONDS
+# mirrors this number for exactly that reason).
+#
+# Recovery latency is therefore ~dwell + one tick, i.e. ~1.5 min after the
+# MARKERS start.  It is NOT 1.5 min after the freeze: the markers themselves
+# lag the freeze (Atlas: froze ~16:15, burst 16:18:32 -- US-561 defect 3c,
+# documented as an honest bound in kiosk_watchdog.py, not fixed).  For scale,
+# his frozen bench session ran 4:42 with the display dead.
+# Faster would not help (the dwell has to elapse); slower leaves the panel
 # visibly frozen longer.
 #
 # OnBootSec=120s -- the dashboard does not exist yet during the boot storm; the

@@ -314,6 +314,14 @@ DEFAULTS: dict[str, Any] = {
     'pi.sensors.imu.zuptSpeedMaxAgeSec': 2.0,
     'pi.sensors.imu.zuptMinStops': 5,
     'pi.sensors.imu.zuptWindowStops': 20,
+    # US-564 (F-135) plausibility gate: how long a channel must stay BIT-
+    # IDENTICAL before it is reported sensor_stale.  A DWELL, not a physical
+    # threshold -- bit-identity is a proof (real sensors dither +/-1 LSB, so a
+    # stationary car gave 743 distinct accel values in 90 s while the latched
+    # magnetometer gave 1), and this margin only guards against a scheduler
+    # hiccup re-serving one buffered frame.  Seconds, not samples, so a 50 Hz
+    # and a 1 Hz channel wait the same wall-clock time.
+    'pi.sensors.imu.invariantDwellSeconds': 2.0,
     'pi.sensors.light.enabled': False,
     'pi.sensors.light.sampleHz': 1,
     'pi.sensors.retentionDays': 7,
@@ -968,6 +976,10 @@ class ConfigValidator:
         'pi.sensors.imu.zuptSpeedMaxAgeSec',
         'pi.sensors.imu.zuptMinStops',
         'pi.sensors.imu.zuptWindowStops',
+        # US-564: a zero or negative dwell would make the run limit collapse to
+        # its floor, gating a channel on two identical samples -- fast enough to
+        # fire on a real scheduler hiccup. Fail fast rather than silently.
+        'pi.sensors.imu.invariantDwellSeconds',
     )
 
     def _validateImuStateBridge(self, config: dict[str, Any]) -> None:

@@ -46,7 +46,9 @@ import pytest
 from scripts import apply_server_migrations as asm
 from src.server.db.models import (
     DATA_QUALITY_COLUMN_LENGTH,
+    DRIVE_STATISTICS_DATA_QUALITY_COLUMN_DEFAULT,
     DRIVE_STATISTICS_DATA_QUALITY_VALUES,
+    DRIVE_SUMMARY_DATA_QUALITY_COLUMN_DEFAULT,
     DRIVE_SUMMARY_DATA_QUALITY_VALUES,
     Base,
     DriveStatistic,
@@ -327,9 +329,25 @@ class TestModifyDdl:
         assert 'NOT NULL' in m0012.MODIFY_DRIVE_SUMMARY_DATA_QUALITY_DDL
         assert 'NOT NULL' in m0012.MODIFY_DRIVE_STATISTICS_DATA_QUALITY_DDL
 
-    def test_modifyDdlPreservesDefaultFull(self) -> None:
-        assert "DEFAULT 'full'" in m0012.MODIFY_DRIVE_SUMMARY_DATA_QUALITY_DDL
-        assert "DEFAULT 'full'" in m0012.MODIFY_DRIVE_STATISTICS_DATA_QUALITY_DDL
+    def test_modifyDdlPreservesTheOrmDefault(self) -> None:
+        """US-563 MOVED this pin (it was ``..._PreservesDefaultFull``).
+
+        What this test is actually for is that a widening ``MODIFY`` does not
+        silently DROP the DEFAULT -- v0012 exists because a bare ``MODIFY ...
+        VARCHAR(20)`` loses both NOT NULL and the default.  That property is
+        unchanged.  It used to be spelled by asserting the literal ``'full'``,
+        which pinned a quality VERDICT column defaulting to the BEST verdict as
+        correct; the DDL now follows the ORM's non-verdict column default.
+        """
+        expected = f"DEFAULT '{DRIVE_SUMMARY_DATA_QUALITY_COLUMN_DEFAULT}'"
+        assert expected in m0012.MODIFY_DRIVE_SUMMARY_DATA_QUALITY_DDL
+        assert (
+            f"DEFAULT '{DRIVE_STATISTICS_DATA_QUALITY_COLUMN_DEFAULT}'"
+            in m0012.MODIFY_DRIVE_STATISTICS_DATA_QUALITY_DDL
+        )
+        # Non-vacuous: the DDL carries A default, and it is not a verdict.
+        assert 'DEFAULT' in m0012.MODIFY_DRIVE_SUMMARY_DATA_QUALITY_DDL
+        assert "DEFAULT 'full'" not in m0012.MODIFY_DRIVE_SUMMARY_DATA_QUALITY_DDL
 
     def test_targetWidthFitsAttributionAnomaly(self) -> None:
         assert m0012.TARGET_WIDTH >= len('attribution_anomaly')

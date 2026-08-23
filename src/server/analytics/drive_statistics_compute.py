@@ -98,8 +98,9 @@ from src.server.analytics.overlap import detect_overlapping_drives
 from src.server.db.models import (
     DATA_QUALITY_ATTRIBUTION_ANOMALY,
     DATA_QUALITY_FOREIGN_VEHICLE,
+    DATA_QUALITY_UNASSESSED,
     DATA_SOURCE_DEFAULT,
-    DRIVE_STATISTICS_DATA_QUALITY_VALUES,
+    DRIVE_STATISTICS_ASSESSED_DATA_QUALITY_VALUES,
     DriveStatistic,
     DriveSummary,
     RealtimeData,
@@ -136,7 +137,16 @@ DATA_QUALITY_ANOMALY = DATA_QUALITY_ATTRIBUTION_ANOMALY
 DATA_QUALITY_FOREIGN = DATA_QUALITY_FOREIGN_VEHICLE
 
 # Sanity-check at import time -- the model module owns the canonical enum.
-assert set(DRIVE_STATISTICS_DATA_QUALITY_VALUES) == {
+#
+# US-563 MOVED this pin (it did not weaken it): it used to compare against
+# DRIVE_STATISTICS_DATA_QUALITY_VALUES, the whole CHECK enum.  That enum now
+# also carries the non-verdict 'unassessed' -- the COLUMN DEFAULT, which means
+# "this row has not been assessed".  A classifier by definition never emits it:
+# reaching this module at all means an assessment ran.  So the guard is pointed
+# at the ASSESSED subset, which is exactly the set a classifier may produce, and
+# it still goes red the moment a verdict is added to the model without a
+# classifier constant here (or vice versa).
+assert set(DRIVE_STATISTICS_ASSESSED_DATA_QUALITY_VALUES) == {
     DATA_QUALITY_BELOW_THRESHOLD,
     DATA_QUALITY_SPARSE,
     DATA_QUALITY_FULL,
@@ -144,8 +154,25 @@ assert set(DRIVE_STATISTICS_DATA_QUALITY_VALUES) == {
     DATA_QUALITY_FOREIGN,
 }, (
     "data_quality classifiers diverged from the model enum -- update both "
-    "together (src/server/db/models.py:DRIVE_STATISTICS_DATA_QUALITY_VALUES "
+    "together (src/server/db/models.py:"
+    "DRIVE_STATISTICS_ASSESSED_DATA_QUALITY_VALUES "
     "+ src/server/analytics/drive_statistics_compute.py constants)"
+)
+
+# The classifier must never be able to emit the non-verdict.  Without this, a
+# future edit could add 'unassessed' to a classifier branch and the guard above
+# would simply follow it -- turning "not yet assessed" into a thing analytics
+# claims about a drive it just finished assessing.
+assert DATA_QUALITY_UNASSESSED not in {
+    DATA_QUALITY_BELOW_THRESHOLD,
+    DATA_QUALITY_SPARSE,
+    DATA_QUALITY_FULL,
+    DATA_QUALITY_ANOMALY,
+    DATA_QUALITY_FOREIGN,
+}, (
+    "a data_quality CLASSIFIER emits verdicts only; 'unassessed' is the "
+    "absence of an assessment and belongs to the column DEFAULT, not to a "
+    "compute path (src/server/db/models.py:DATA_QUALITY_UNASSESSED)"
 )
 
 DATA_QUALITY_SPARSE_MIN = 10

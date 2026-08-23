@@ -116,7 +116,7 @@ These correspond to sensors physically wired to the ECU and required by OBD-II r
 | 0x1F | Run time since engine start | seconds | Warmup tracking; anchors rows to drive time | ✅ polled (US-199 — exposes RUNTIME_SEC) |
 | 0x20 | Supported PIDs [21-40] | Bitmap | Check for extended PIDs | probed implicitly by python-obd support-scan |
 | 0x33 | Barometric pressure | kPa | From baro sensor in air filter housing | ✅ polled (US-199 — exposes BAROMETRIC_KPA) |
-| 0x42 | Control module voltage | V | 13.5-14.5V running | ❌ **confirmed unsupported** — use ELM_VOLTAGE (see note below) |
+| 0x42 | Control module voltage | V | 13.5-14.5V running | ✅ **LIVE — corrected 2026-08-20** (drive 33: 76 rows, 29 distinct, 12.975–14.451 V). The earlier "confirmed unsupported" was a probe artifact. Production still uses `ELM_VOLTAGE`/`ATRV` **by choice** (adapter-local, off the K-line budget), not because 0x42 is dead. |
 
 ### Critical Caveat: PID 0x0B (Manifold Pressure)
 
@@ -150,7 +150,7 @@ This is the battery voltage source for the Pi collector going forward (Sprint 14
 | DTC_COUNT | 0x01 | Mode 01 | Tier 2 (~0.3 Hz) | integer 0-127 as float; unit = 'count' |
 | O2_BANK1_SENSOR2_V | 0x15 | Mode 01 | Tier 2 (~0.3 Hz) | voltage float; unit = 'V'. **Probe-gated** — silently skipped if ECU bitmap excludes 0x15. STFT field of response tuple ignored this sprint (future Spool call). |
 | RUNTIME_SEC | 0x1F | Mode 01 | Tier 3 (~0.1 Hz) | seconds float; unit = 's'. uint16 rollover at ~18hr (non-issue). |
-| BATTERY_V | (ATRV) | ELM327 adapter | Tier 3 (~0.1 Hz) | volts float; unit = 'V'. **Not a Mode 01 PID** — bypasses the supported-PID probe. This is the voltage source on 2G because PID 0x42 is confirmed unsupported. |
+| BATTERY_V | (ATRV) | ELM327 adapter | Tier 3 (~0.1 Hz) | volts float; unit = 'V'. **Not a Mode 01 PID** — bypasses the supported-PID probe. This is the voltage source on 2G **by choice**: it is adapter-local at pin 16 and costs nothing against the K-line budget. *(0x42 is LIVE — corrected 2026-08-20 — but would consume a poll slot for a value already free.)* |
 | BAROMETRIC_KPA | 0x33 | Mode 01 | Tier 4 (~0.03 Hz) | kPa float; unit = 'kPa'. |
 
 **Supported-PID probe** runs once at connection-open time via `src/pi/obdii/pid_probe.py` and consults python-obd's auto-probed `supported_commands`. The result caches on `ObdConnection.supportedPids` and gates `ObdDataLogger.queryParameter` so unsupported Mode 01 PIDs raise `ParameterNotSupportedError` *before* dispatching a K-line query. Adapter-level commands (pidCode=None) bypass the gate. Probe failures fall back to "always supported" — null-response silent-skip remains the downstream safety net.

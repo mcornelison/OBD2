@@ -1015,16 +1015,48 @@ DATA_QUALITY_FOREIGN_VEHICLE: str = "foreign_vehicle"
 DATA_QUALITY_COLUMN_LENGTH: int = 20
 
 
+# US-563 / F-134: the NON-verdict.  Every data_quality column DEFAULTs to this
+# so an untouched row says "nobody has looked" instead of handing itself the
+# best available verdict.
+#
+# This exists because on 2026-08-20 a drive that had ended but had not yet
+# reached the nightly 03:30 analytics batch read back as data_quality='full',
+# is_real=0 -- a confident full-quality verdict on a drive nobody had assessed.
+# It misled BOTH Spool and Atlas into filing a phantom "roll-up regression"
+# story.  The roll-up is a nightly batch and it runs correctly; the defect was
+# entirely that a quality VERDICT column defaulted to the BEST verdict.
+#
+# 'unassessed' is deliberately NOT a quality bucket: it is the absence of an
+# assessment, and it is excluded from every *_ASSESSED_* tuple below so a
+# consumer filtering on assessed values simply does not see pending rows.
+# 10 chars -- fits DATA_QUALITY_COLUMN_LENGTH (20) with headroom.
+DATA_QUALITY_UNASSESSED: str = "unassessed"
+
+
 # drive_summary.data_quality enum: the server compute path writes only 'full'
 # (clean) or 'attribution_anomaly' (overlap detected).  drive_summary carries
 # no sample-count notion, so the sparse / below_threshold buckets that apply to
 # drive_statistics are deliberately NOT allowed here.
-DRIVE_SUMMARY_DATA_QUALITY_DEFAULT: str = "full"
-DRIVE_SUMMARY_DATA_QUALITY_VALUES: tuple[str, ...] = (
-    DRIVE_SUMMARY_DATA_QUALITY_DEFAULT,
+#
+# US-563 splits what used to be ONE constant (DRIVE_SUMMARY_DATA_QUALITY_DEFAULT)
+# doing double duty as both "the column default" and "the clean verdict".  That
+# conflation is what made the defect unsayable in code: there was no name for
+# "not yet assessed" because the default WAS a verdict.
+DRIVE_SUMMARY_DATA_QUALITY_FULL: str = "full"
+# The verdicts -- values that mean an assessment RAN and reached a conclusion.
+DRIVE_SUMMARY_ASSESSED_DATA_QUALITY_VALUES: tuple[str, ...] = (
+    DRIVE_SUMMARY_DATA_QUALITY_FULL,
     DATA_QUALITY_ATTRIBUTION_ANOMALY,
     DATA_QUALITY_FOREIGN_VEHICLE,
 )
+# The full CHECK enum = the verdicts PLUS the non-verdict starting state.
+DRIVE_SUMMARY_DATA_QUALITY_VALUES: tuple[str, ...] = (
+    DATA_QUALITY_UNASSESSED,
+    *DRIVE_SUMMARY_ASSESSED_DATA_QUALITY_VALUES,
+)
+# What the COLUMN defaults to -- never a verdict.  Named for the layer it
+# belongs to so a compute path cannot reach for it by accident.
+DRIVE_SUMMARY_DATA_QUALITY_COLUMN_DEFAULT: str = DATA_QUALITY_UNASSESSED
 
 
 # US-372 / F-076: the drive_summary.drive_id <-> source_id invariant.  The
@@ -1084,11 +1116,26 @@ DRIVES_SOURCE_UNIQUE_CONSTRAINT: str = "uq_drives_source_device_source_drive_id"
 # drive_statistics keep their own (narrower) enums.  The forward-only CHECK-widen
 # is v0022 (same idiom as v0009/v0010/v0012/v0015).  17 chars fits VARCHAR(20).
 DRIVES_DATA_QUALITY_UNMAPPABLE_LEGACY: str = "unmappable_legacy"
-DRIVES_DATA_QUALITY_DEFAULT: str = DRIVE_SUMMARY_DATA_QUALITY_DEFAULT
-DRIVES_DATA_QUALITY_VALUES: tuple[str, ...] = (
-    *DRIVE_SUMMARY_DATA_QUALITY_VALUES,
+# The value the identity minter stamps on a clean drive.  US-563 renamed this
+# from DRIVES_DATA_QUALITY_DEFAULT: it is a VERDICT the minter writes, not a
+# column default, and the old name invited exactly the confusion that shipped
+# the F-134 defect on drive_summary.  The COLUMN default is
+# DRIVES_DATA_QUALITY_COLUMN_DEFAULT below.
+DRIVES_DATA_QUALITY_FULL: str = DRIVE_SUMMARY_DATA_QUALITY_FULL
+DRIVES_ASSESSED_DATA_QUALITY_VALUES: tuple[str, ...] = (
+    *DRIVE_SUMMARY_ASSESSED_DATA_QUALITY_VALUES,
     DRIVES_DATA_QUALITY_UNMAPPABLE_LEGACY,
 )
+DRIVES_DATA_QUALITY_VALUES: tuple[str, ...] = (
+    DATA_QUALITY_UNASSESSED,
+    *DRIVES_ASSESSED_DATA_QUALITY_VALUES,
+)
+# US-563 / F-134: the column default is the non-verdict on EVERY data_quality
+# column, not only the one that shipped the misleading read.  Every writer of
+# ``drives`` passes data_quality explicitly, so this changes no behaviour -- but
+# "the writer always sets it" is a claim about intent, never about enforcement,
+# and the applied-schema guard makes no carve-outs.
+DRIVES_DATA_QUALITY_COLUMN_DEFAULT: str = DATA_QUALITY_UNASSESSED
 
 
 class Drive(Base):
@@ -1147,7 +1194,7 @@ class Drive(Base):
     data_quality: Mapped[str] = mapped_column(
         String(DATA_QUALITY_COLUMN_LENGTH),
         nullable=False,
-        server_default=DRIVES_DATA_QUALITY_DEFAULT,
+        server_default=DRIVES_DATA_QUALITY_COLUMN_DEFAULT,
     )
 
 
@@ -1232,9 +1279,18 @@ class DriveSummary(Base):
     duration_seconds: Mapped[int | None] = mapped_column(Integer)
     profile_id: Mapped[str | None] = mapped_column(String(64))
     row_count: Mapped[int | None] = mapped_column(Integer, default=0)
-    is_real: Mapped[bool | None] = mapped_column(
-        Boolean, server_default="0",
-    )
+    # US-563 / F-134: NO server_default -- the column DEFAULTs to NULL.
+    #
+    # It used to be server_default="0", so every Pi-sync row landed claiming
+    # is_real=0 before analytics had looked at it.  0 is a COMPUTED verdict
+    # ("tested, and this drive is not real"); NULL is "nobody has looked".
+    # analysis.py already treats that distinction as load-bearing for Spool's
+    # grading queries (SPEC3_MIN_ROWS_FOR_IS_REAL leaves is_real NULL rather
+    # than FALSE on insufficient data) -- the schema default was quietly
+    # overriding it on every row.  Atlas CONFIRMED 2026-08-20 that the observed
+    # is_real=0 was this default, NOT a compute result: _deriveIsReal works as
+    # designed and there is NO compute defect here.
+    is_real: Mapped[bool | None] = mapped_column(Boolean)
     created_at: Mapped[datetime | None] = mapped_column(
         DateTime, server_default=func.now(),
     )
@@ -1259,7 +1315,15 @@ class DriveSummary(Base):
 
     # Pi-captured metadata (one snapshot per drive at CRANKING entry).
     drive_start_timestamp: Mapped[datetime | None] = mapped_column(DateTime)
-    ambient_temp_at_start_c: Mapped[float | None] = mapped_column(Float)
+    # US-563 / F-134: renamed from ``ambient_temp_at_start_c``.  The column is
+    # fed from IAT (PID 0x0F) at drive-start and is NOT ambient: drive 41 logged
+    # 47 C / 117 F into it while the real ambient was 24-27 C, and IAT ran
+    # 48.1 -> 40.6 C across speed bands (it cools with airflow and never nears
+    # ambient).  NO ambient source exists on this vehicle -- the 2G 4G63 does
+    # not support PID 0x46 -- so inventing one would be fabrication.  The column
+    # is named for what it actually measures.  Surfaces label it INTAKE AIR,
+    # informational, no alert band.
+    intake_air_temp_at_start_c: Mapped[float | None] = mapped_column(Float)
     starting_battery_v: Mapped[float | None] = mapped_column(Float)
     barometric_kpa_at_start: Mapped[float | None] = mapped_column(Float)
 
@@ -1274,18 +1338,31 @@ class DriveSummary(Base):
     # dual-emission pattern), else 'full'.  The Pi never sends this column, so
     # the payload-only sync upsert (sync.py, server-only columns untouched)
     # leaves an analytics-written value intact across re-syncs.
+    #
+    # US-563 / F-134: the DEFAULT is the NON-verdict 'unassessed', not 'full'.
+    # A Pi-sync row exists for hours before the 03:30 batch assesses it; while
+    # it is pending it must be distinguishable from an assessed-clean drive.
     data_quality: Mapped[str] = mapped_column(
         String(DATA_QUALITY_COLUMN_LENGTH),
         nullable=False,
-        server_default=DRIVE_SUMMARY_DATA_QUALITY_DEFAULT,
+        server_default=DRIVE_SUMMARY_DATA_QUALITY_COLUMN_DEFAULT,
     )
 
 
-DRIVE_STATISTICS_DATA_QUALITY_VALUES: tuple[str, ...] = (
+DRIVE_STATISTICS_ASSESSED_DATA_QUALITY_VALUES: tuple[str, ...] = (
     "full", "sparse", "below_threshold", DATA_QUALITY_ATTRIBUTION_ANOMALY,
     DATA_QUALITY_FOREIGN_VEHICLE,
 )
-DRIVE_STATISTICS_DATA_QUALITY_DEFAULT: str = "full"
+DRIVE_STATISTICS_DATA_QUALITY_VALUES: tuple[str, ...] = (
+    DATA_QUALITY_UNASSESSED,
+    *DRIVE_STATISTICS_ASSESSED_DATA_QUALITY_VALUES,
+)
+# The clean VERDICT the compute path writes at sample_count >= 100.  Renamed
+# from DRIVE_STATISTICS_DATA_QUALITY_DEFAULT by US-563 for the same reason as
+# drive_summary's: one name cannot mean both "the column default" and "the
+# verdict", and the column default is now the non-verdict below.
+DRIVE_STATISTICS_DATA_QUALITY_FULL: str = "full"
+DRIVE_STATISTICS_DATA_QUALITY_COLUMN_DEFAULT: str = DATA_QUALITY_UNASSESSED
 
 
 class DriveStatistic(Base):
@@ -1356,7 +1433,7 @@ class DriveStatistic(Base):
     data_quality: Mapped[str] = mapped_column(
         String(DATA_QUALITY_COLUMN_LENGTH),
         nullable=False,
-        server_default=DRIVE_STATISTICS_DATA_QUALITY_DEFAULT,
+        server_default=DRIVE_STATISTICS_DATA_QUALITY_COLUMN_DEFAULT,
     )
     computed_at: Mapped[datetime | None] = mapped_column(
         DateTime, server_default=func.now(), onupdate=func.now(),
@@ -1655,14 +1732,26 @@ __all__ = [
     "Drive",
     "DRIVES_TABLE",
     "DRIVES_SOURCE_UNIQUE_CONSTRAINT",
-    "DRIVES_DATA_QUALITY_DEFAULT",
+    # US-563 split "the column default" from "the verdict" on every
+    # data_quality column; the old *_DATA_QUALITY_DEFAULT names meant both and
+    # are deliberately NOT re-exported under an alias.
+    "DRIVES_DATA_QUALITY_FULL",
+    "DRIVES_DATA_QUALITY_COLUMN_DEFAULT",
+    "DRIVES_ASSESSED_DATA_QUALITY_VALUES",
     "DRIVES_DATA_QUALITY_VALUES",
     "DRIVES_DATA_QUALITY_UNMAPPABLE_LEGACY",
     "DriveSummary",
     "DriveStatistic",
     "DriveDerivedSignal",
+    "DRIVE_SUMMARY_DATA_QUALITY_FULL",
+    "DRIVE_SUMMARY_DATA_QUALITY_COLUMN_DEFAULT",
+    "DRIVE_SUMMARY_ASSESSED_DATA_QUALITY_VALUES",
+    "DRIVE_SUMMARY_DATA_QUALITY_VALUES",
     "DRIVE_STATISTICS_DATA_QUALITY_VALUES",
-    "DRIVE_STATISTICS_DATA_QUALITY_DEFAULT",
+    "DRIVE_STATISTICS_ASSESSED_DATA_QUALITY_VALUES",
+    "DRIVE_STATISTICS_DATA_QUALITY_FULL",
+    "DRIVE_STATISTICS_DATA_QUALITY_COLUMN_DEFAULT",
+    "DATA_QUALITY_UNASSESSED",
     "DATA_QUALITY_FOREIGN_VEHICLE",
     "DATA_QUALITY_COLUMN_LENGTH",
     "TrendSnapshot",

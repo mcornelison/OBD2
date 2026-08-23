@@ -75,7 +75,7 @@ from src.server.analytics.overlap import detect_overlapping_drives
 from src.server.db.models import (
     DATA_QUALITY_ATTRIBUTION_ANOMALY,
     DATA_SOURCE_DEFAULT,
-    DRIVE_SUMMARY_DATA_QUALITY_DEFAULT,
+    DRIVE_SUMMARY_DATA_QUALITY_FULL,
     DriveSummary,
     RealtimeData,
 )
@@ -190,7 +190,7 @@ def compute_drive_summary(session: Session, driveId: int) -> int | None:
     overlappingDriveIds = detect_overlapping_drives(session, driveId)
     dataQuality = (
         DATA_QUALITY_ATTRIBUTION_ANOMALY if overlappingDriveIds
-        else DRIVE_SUMMARY_DATA_QUALITY_DEFAULT
+        else DRIVE_SUMMARY_DATA_QUALITY_FULL
     )
     if overlappingDriveIds:
         logger.warning(

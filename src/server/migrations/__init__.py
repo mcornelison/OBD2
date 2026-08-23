@@ -84,6 +84,11 @@
 #               |              | stale live data_source CHECK US-424 never
 #               |              | ALTERed away; discovery-driven schema-wide;
 #               |              | F-116/BL-019 A'/A-10/TD-055).  Forward-only.
+# 2026-08-21    | Rex (US-563) | Sprint 75 V0.29.30 -- registered v0024 (F-134:
+#               |              | data_quality columns DEFAULT to the non-verdict
+#               |              | 'unassessed'; drive_summary.is_real DEFAULTs
+#               |              | NULL; ambient_temp_at_start_c renamed to
+#               |              | intake_air_temp_at_start_c).  Forward-only.
 # ================================================================================
 ################################################################################
 
@@ -182,6 +187,9 @@ from src.server.migrations.versions.v0022_us451_drive_identity_collapse import (
 from src.server.migrations.versions.v0023_us458_drop_stale_data_source_check import (
     MIGRATION as _V0023,
 )
+from src.server.migrations.versions.v0024_us563_unassessed_defaults_and_intake_rename import (  # noqa: E501
+    MIGRATION as _V0024,
+)
 
 # ================================================================================
 # Registry -- append new migrations to the end, in ascending version order
@@ -211,6 +219,7 @@ ALL_MIGRATIONS: tuple[Migration, ...] = (
     _V0021,
     _V0022,
     _V0023,
+    _V0024,
 )
 
 

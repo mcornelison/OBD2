@@ -50,5 +50,5 @@ write, because a 60-min-old lock is provably not mid-write.
 Most locks ARE transient on the slow share — wait + retry a handful of times first. Only
 reach for the staleness test when retries keep failing AND the mtime proves it's frozen.
 This refines the shared-checkout discipline ([[root CLAUDE.md §concurrency]]); pairs with
-[[pattern-verify-feature-not-manifold-and-git-truth]] (reconcile against git ground-truth,
+[[pattern-the-artifact-is-not-the-fact]] (reconcile against git ground-truth,
 not the harness's cached "file modified" reminder, on this share).

@@ -54,7 +54,7 @@ from sqlalchemy.orm import Session
 
 from src.server.db.models import (
     DATA_SOURCE_DEFAULT,
-    DRIVES_DATA_QUALITY_DEFAULT,
+    DRIVES_DATA_QUALITY_FULL,
     Drive,
 )
 
@@ -73,7 +73,7 @@ def upsert_drive(
     start_time: datetime | None = None,
     end_time: datetime | None = None,
     data_source: str = DATA_SOURCE_DEFAULT,
-    data_quality: str = DRIVES_DATA_QUALITY_DEFAULT,
+    data_quality: str = DRIVES_DATA_QUALITY_FULL,
 ) -> int:
     """Mint (or re-use) the canonical ``drive_id`` for a Pi-advisory drive.
 

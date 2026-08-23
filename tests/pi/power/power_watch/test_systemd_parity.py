@@ -32,6 +32,13 @@
 #                              record evidence; stdout/stderr in assertion
 #                              messages; Windows-reliable). Consolidation,
 #                              not duplication. No production edits.
+# 2026-08-21    | US-566  | Added the logging-mechanism guard: the real
+#                              invocation must show a CONFIGURED handler
+#                              (logger name present in the output, not
+#                              lastResort's bare message) and must admit INFO.
+#                              This subprocess is the only place that
+#                              exercises the real main() wiring, so it is the
+#                              only place that can witness the fix end-to-end.
 # ================================================================================
 ################################################################################
 """SS-T7: systemd-parity orchestration-proof (the DOA tripwire)."""
@@ -121,3 +128,25 @@ def test_entrypoint_runs_exactly_as_systemd_invokes_it(tmp_path):
     # The bounded controller reached the (stubbed) poweroff exactly once.
     assert marker.exists(), blob
     assert marker.read_text(encoding="utf-8") == "poweroff-invoked"
+
+    # US-566 mechanism guard: a REAL log handler is installed in the real
+    # invocation. Before US-566 this module never configured logging, so
+    # logging.lastResort (level WARNING, stderr, BARE message -- no level, no
+    # logger name) was the only sink and the whole INFO tier was discarded.
+    # Measured on chi-eclipse-01 2026-08-21: zero "powerwatch service up"
+    # lines across 8 service starts.
+    #
+    # Two things are asserted, and each fails for a different reason:
+    #   * the structured format is present -> the record went through a
+    #     configured handler, NOT lastResort (which emits the bare message)
+    #   * an INFO record escaped at all -> the level filter admits INFO
+    # Note this config deliberately carries NO "logging" section, so it also
+    # pins that an absent section resolves to a working default rather than
+    # crashing the safety service.
+    assert "src.pi.power.power_watch" in blob, (
+        "log output carries no logger name -- records are going through "
+        f"logging.lastResort, not a configured handler:\n{blob}"
+    )
+    assert "| INFO" in blob, (
+        f"no INFO record reached stdout; the INFO tier is still on the floor:\n{blob}"
+    )

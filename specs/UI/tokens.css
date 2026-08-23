@@ -109,6 +109,45 @@
   --fs-label:       20px;
   --fs-meta:        15px;
 
+  /* --- Layout bands (US-557 / F-132) --------------------------------------
+     THE horizontal stripes that spend the 480x320 stage's HEIGHT before a
+     single fact is drawn. They are here for the same reason the type scale is:
+     `28px` was a literal in `#topbar` AND an independent literal in
+     `#carousel { top }`, `#rotate-progress { top }` and `#dtc-ribbon { top }`
+     -- four copies of one fact with nothing forcing them to reconcile. When
+     F-127 raised the type scale, the bars did not grow to fit the type they now
+     carry and the card body did not shrink on paper to match the space it had
+     actually lost, so the cards overflowed and `#carousel { overflow: hidden }`
+     ate the difference in silence. Tokenizing is what stops the next scale
+     change reopening that gap. This is the identical argument US-539 made for
+     the type scale (W-3), applied to the layout bands.
+
+     VALUES ARE IRIS'S P-3 TABLE (proposals/2026-08-20-pi-topbar-and-chrome-
+     polish.md), a CORRECTION to the F-127 budget and NOT a reversal of it:
+     every driver-read value keeps its F-127 tier and the reclaim is CHROME
+     only. topbar 28->34 (-6) + dots 24->16 (+8) + card pad 28->16 (+12) +
+     title 26px/8mg -> --fs-label/6mg (+9) = +23px, landing a 224px card body.
+
+     [FLOOR] --bar-h GREW on purpose. It is the one band genuinely under-sized
+     for its own contents (26px glyphs in a 28px bar), which is what made the
+     kebab paint outside the header fill. A bar that clips its own glyphs is the
+     defect; paying 6px here and taking 29px back from three other bands is the
+     trade.
+
+     [CEILING] A card holds 3 rows plus at most ONE footer line. A fourth fact
+     goes to a drill-down, not onto the card. Stated so the budget cannot be
+     exceeded silently again -- and see the US-557 note in dashboard.css for the
+     MEASURED caveat on what a "row" costs as the surface actually builds one.
+
+     The vertical card padding is a band; the HORIZONTAL padding is not, and is
+     deliberately left as a literal -- it spends no stage height, so promoting
+     it would put a non-band in the band vocabulary.
+     Pinned by tests/ui/test_card_band_budget.py. */
+  --bar-h:          34px;      /* #topbar height -- read by #carousel top,
+                                  #rotate-progress top, #dtc-ribbon top       */
+  --dots-h:         16px;      /* #dots height -- read by #carousel bottom    */
+  --card-pad-y:      8px;      /* .card vertical padding                      */
+
   /* --- Base surfaces ------------------------------------------------------ */
   /* Atlas Rule-10 ruling 2026-07-31 (US-510/TD-065): PROMOTED from the
      dashboard.css:27-28 literals. Pure consolidation -- the values ARE the

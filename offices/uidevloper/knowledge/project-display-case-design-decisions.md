@@ -8,7 +8,7 @@ metadata:
 # 3D-Printed Display Case — Locked Decisions
 
 Project started 2026-05-22 (CIO direction). Display unit: OSOYOO 3.5" HDMI
-Capacitive Touch Screen v3.0, Model 2024009100 — see [[reference-osoyoo-v3-display-dimensions]]
+Capacitive Touch Screen v3.0, Model 2024009100 — see `enclosure1/datasheets/2024009100-extracted-facts.md`
 for all dimensions.
 
 ## Scope

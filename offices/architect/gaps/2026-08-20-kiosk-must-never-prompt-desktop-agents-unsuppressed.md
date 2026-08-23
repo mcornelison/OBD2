@@ -80,6 +80,38 @@ ps -ef | grep -iE 'nm-applet|polkit.*agent'
 **Do not fix blind** — confirm which agent raises the window before suppressing, or the next one will
 simply take its place.
 
+## 4a. DIAGNOSTICS RUN (2026-08-20, Pi back online) — class CONFIRMED and BROADER than reported
+
+`ls /etc/xdg/autostart/` on the live Pi:
+
+```
+autotouch.desktop            env-display.desktop          gnome-keyring-pkcs11.desktop
+gnome-keyring-secrets.desktop gnome-keyring-ssh.desktop   lxpolkit.desktop
+polkit-mate-authentication-agent-1.desktop                pprompt.desktop
+pwrkey.desktop               vnc_xrandr.desktop           xcompmgr.desktop
+xdg-user-dirs.desktop
+```
+
+**Three findings beyond the reported WiFi dialog:**
+
+1. **The US-522 keyring fix was confirmed a POINT SOLUTION.** All three
+   `gnome-keyring-{pkcs11,secrets,ssh}` agents **still autostart**. US-522 only stopped *chromium* from
+   asking them (`--password-store=basic`); the agents themselves were never touched and remain able to
+   raise windows.
+2. **TWO polkit authentication agents autostart simultaneously** — `lxpolkit` AND
+   `polkit-mate-authentication-agent-1`. Two competing auth agents on one session is a defect in its own
+   right, independent of the modal problem.
+3. **`pprompt.desktop` = *"Prompt to change default password if ssh enabled"*** — a Raspberry Pi OS
+   security nag. **Another unwanted modal on an automotive appliance**, unrelated to networking, and
+   nobody knew it was there.
+
+**The WiFi dialog source is narrowed but NOT confirmed.** `nm-applet` / `network-manager-gnome` are NOT
+installed, so it is not the classic GNOME applet. Leading candidate is the Raspberry Pi OS panel network
+plugin (`pplug-netman`, schema pkg 1.11 present); a polkit agent prompting for a network privilege is
+the alternative. **Still do not fix blind** — but note that suppressing by allowlist (§3.1) fixes all
+four of these at once WITHOUT needing to identify each, which is the argument for deny-by-default over
+another point solution.
+
 ## 5. Interaction with other open items
 
 - **Compounds the AllocateRingBuffer freeze.** A dialog stealing focus over an already-fragile kiosk is

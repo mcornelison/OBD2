@@ -194,7 +194,7 @@ class TestPostReconcilePiShapeSync:
             row = session.query(DriveSummary).one()
             assert row.source_id == 4
             assert row.source_device == 'chi-eclipse-01'
-            assert row.ambient_temp_at_start_c == pytest.approx(15.0)
+            assert row.intake_air_temp_at_start_c == pytest.approx(15.0)
             assert row.starting_battery_v == pytest.approx(12.6)
             assert row.barometric_kpa_at_start == pytest.approx(101.3)
             assert row.sync_batch_id == 42
@@ -229,7 +229,7 @@ class TestPostReconcilePiShapeSync:
             landedIds = {r.source_id for r in session.query(DriveSummary).all()}
             assert landedIds == {3, 4, 5}
             allNullsPreserved = session.query(DriveSummary).filter(
-                DriveSummary.ambient_temp_at_start_c.is_(None),
+                DriveSummary.intake_air_temp_at_start_c.is_(None),
                 DriveSummary.starting_battery_v.is_(None),
                 DriveSummary.barometric_kpa_at_start.is_(None),
             ).count()

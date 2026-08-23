@@ -708,6 +708,50 @@ class Orchestrator:
 
 ---
 
+## Guard / Verification Anti-Patterns
+
+### The inert guard — a check that is syntactically present and semantically does nothing
+
+**The pattern.** A guard exists, reads correctly, passes review, and enforces nothing. It is worse than
+having no guard at all, because its presence stops anyone looking.
+
+**Five real instances, all found 2026-08-17..20:**
+
+| Guard | Why it was inert |
+|---|---|
+| `Write(path)` permission rules | Path-scoped file rules are `Edit(path)` ONLY; `Write(path)` matches nothing. A `Write(**/.ssh/**)` **deny** guarded nothing while reading as protection. |
+| `.gitignore` for office settings files | The rule was correct and 3 months old — but `.gitignore` does **not untrack already-tracked files**, so the files it "covered" stayed committed. |
+| Kiosk watchdog threshold | Set to 100 markers/60 s, calibrated against a ~30,000/window catastrophic wedge. The observed regime was 84–101 — **inside the signal's own band**, so it reported `healthy; markers=84` while the display was frozen. |
+| `drive_summary.data_quality` | `NOT NULL DEFAULT 'full'` — a verdict column defaulting to the **best verdict**, so "never assessed" and "assessed and complete" are the same stored value. |
+| `journalctl --grep` exit code | Exits 1 on **zero matches**; the caller treated non-zero as "journal unreadable", so a perfectly healthy system was reported as an honest-unknown — the inverse of the documented intent. |
+
+**Why they survive review.** Each is *locally* reasonable. The code is innocent; the failure lives at a
+boundary — a matcher's syntax, a tool's exit convention, a schema default, a threshold's relationship to
+the noise it sits in. Reading the guard tells you what its author *meant*.
+
+**The rule:**
+
+> **The presence of a check is evidence about intent, never about enforcement. The only way to know a
+> guard works is to make it fail on purpose.**
+
+**How to apply it.** For every guard you write or inherit:
+
+1. **Mutate the thing it guards and prove it goes RED.** (This is exactly how the `data_quality` parity
+   guard was validated — dropping a column from the strip set produced 5 RED, which is what confirmed the
+   teeth were real.)
+2. **Check the threshold against the signal's actual noise band**, not against the catastrophic case it
+   was calibrated on. A threshold inside the oscillation band nuisance-fires or silently never fires.
+3. **Verify the APPLIED state, not the declared one** — schema defaults, effective permissions, the
+   deployed unit file. Declared config and effective config are two different facts. *(See the A-10
+   applied-schema-drift family: the guard family that caught four drift instances would have missed the
+   `data_quality` default, because it asserted column presence and type but never DEFAULTS.)*
+4. **Make a guard's failure message name the RIGHT remedy.** It fires exactly when someone is already
+   confused; a message offering the harmful fix converts a correct detection into a wrong change.
+
+**Related:** the *honest availability* + *variance detection* sections of
+`specs/ssot-design-pattern.md` — an inert guard and a fabricated reading are the same disease
+(something that looks like information and is not) at two different layers.
+
 ## Adding New Anti-Patterns
 
 When you encounter a new anti-pattern:

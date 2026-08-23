@@ -24,15 +24,20 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-08-11    | Rex          | Initial implementation (Sprint 74 US-552)
+# 2026-08-21    | Rex          | Sprint 75 US-560: scenario 15 pins the MEASURED
+#               |              | OSOYOO HDMI35 EDID (no 480x320 advertised)
+
 # ================================================================================
 ################################################################################
 
 """pytest wrapper around tests/deploy/test_set_display_mode.sh + wiring guards.
 
-The .sh script is the canonical assertion catalog (14 scenarios over synthetic
+The .sh script is the canonical assertion catalog (15 scenarios over synthetic
 sysfs / cmdline.txt fixtures: the live shape, idempotent re-run, a foreign
 video= token, the three safety interlocks that write nothing, a malformed boot
-cmdline, connector discovery, pristine-backup semantics, mode parameterisation).
+cmdline, connector discovery, pristine-backup semantics, mode parameterisation,
+and -- scenario 15, US-560 -- the MEASURED EDID of the panel this project
+actually ships, which advertises no 480x320 and so refuses the pin).
 
 The Python guards here cover the other half, which the bash catalog structurally
 cannot: a byte-perfect set-display-mode.sh that deploy-pi.sh never invokes ships

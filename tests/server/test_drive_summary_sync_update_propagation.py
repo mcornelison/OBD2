@@ -38,7 +38,7 @@ Pi-sync pushed the ``drive_summary`` row to the server (``id=15``,
     id=15, source_id=11, drive_id=NULL,
     start_time=NULL, end_time=NULL, duration_seconds=NULL,
     row_count=0, is_real=0,
-    data_source='real', ambient_temp_at_start_c=18, starting_battery_v=14.5
+    data_source='real', intake_air_temp_at_start_c=18, starting_battery_v=14.5
 
 Pre-flight (code archaeology -- server journalctl is a CIO/PM follow-up)
 ruled out the "sync UPDATE not extended to drive_summary" hypothesis:
@@ -236,7 +236,7 @@ class TestEnsureDriveSummaryReconcilesPiSyncRow:
             assert row.data_source == "real"
             assert row.device_id == _DEVICE
             # Pi-sync columns 9-12 untouched.
-            assert row.ambient_temp_at_start_c == pytest.approx(18.0)
+            assert row.intake_air_temp_at_start_c == pytest.approx(18.0)
             assert row.starting_battery_v == pytest.approx(14.5)
             assert row.barometric_kpa_at_start == pytest.approx(100.0)
 
@@ -292,7 +292,7 @@ class TestAnalyticsFirstThenPiSyncUpsert:
             assert rows[0].source_id == _DRIVE_ID
             assert rows[0].drive_id == _DRIVE_ID
             assert rows[0].start_time == _DRIVE_START
-            assert rows[0].ambient_temp_at_start_c is None  # not synced yet
+            assert rows[0].intake_air_temp_at_start_c is None  # not synced yet
 
         # Now the Pi-sync drive_summary row lands -- upserts onto the same row
         # via UNIQUE(source_device, source_id); analytics fields untouched.
@@ -317,5 +317,5 @@ class TestAnalyticsFirstThenPiSyncUpsert:
             assert row.is_real is True
             assert row.drive_id == _DRIVE_ID
             # Pi metadata now populated.
-            assert row.ambient_temp_at_start_c == pytest.approx(18.0)
+            assert row.intake_air_temp_at_start_c == pytest.approx(18.0)
             assert row.starting_battery_v == pytest.approx(14.5)

@@ -405,15 +405,38 @@
   // owns the stale DECISION (no green-when-broken); the tile renders it.
   function syncTile(s) {
     if (!isObj(s)) {
-      return { label: "SYNC", value: "—", detail: "unavailable", level: "unavailable" };
+      // No counts to carry: nothing was measured and nothing was even offered.
+      // An em-dash pair here would invent a diagnostics line for a source that
+      // never reported (the fabrication one layer up from US-564's zero).
+      return {
+        label: "SYNC", value: "—", detail: "unavailable",
+        level: "unavailable", counts: "",
+      };
     }
-    var pending = s.pending == null ? 0 : s.pending;
-    var detail = (s.rows == null ? 0 : s.rows) + " rows · " + pending + " pending";
+    // US-564: a null count renders as an em-dash, NEVER as 0. Both halves of this
+    // had to change together -- the emitter stopped inventing `syncPending=0`
+    // and this line stopped re-inventing it -- because either coercion alone
+    // ships green and the panel still reads "0 pending", which is an all-clear
+    // on whether the drive is backed up that nobody ever measured.
+    var pending = s.pending == null ? "—" : s.pending;
+    var counts = (s.rows == null ? "—" : s.rows) + " rows · " + pending + " pending";
+    // US-559 (CIO placement call, 2026-08-20): the STAMP is what gets read at a
+    // glance, so it takes the tile's one detail line to itself; the counts are
+    // diagnostics you go looking for and move to the System drill-down. They are
+    // still derived HERE, once, and the overlay merely presents `counts` -- a
+    // drill-down that re-derived them could disagree with the card behind it.
+    //
+    // No "last " prefix: the tile is already labelled SYNC, and the prefix cost
+    // characters on a band P-3 had just re-budgeted. `never` stays bare and
+    // unformatted -- an absent sync is the one place a date would be the worst
+    // possible fabrication.
+    var last = s.lastOkTs == null ? "never" : fmtStamp(s.lastOkTs);
     if (s.stale === true) {
-      return { label: "SYNC", value: "STALE", detail: detail, level: "amber" };
+      // The stamp is MORE load-bearing on this branch, not less: it is the
+      // answer to "how stale?".
+      return { label: "SYNC", value: "STALE", detail: last, level: "amber", counts: counts };
     }
-    var last = s.lastOkTs == null ? "never" : "last " + s.lastOkTs;
-    return { label: "SYNC", value: "OK", detail: last + " · " + detail, level: "ok" };
+    return { label: "SYNC", value: "OK", detail: last, level: "ok", counts: counts };
   }
 
   // Power tile: running on battery (UPS backup) -> amber; external -> ok.
@@ -629,11 +652,41 @@
     return rows;
   }
 
+  // US-559: the SYNC counts moved off the tile (CIO 2026-08-20) and land here.
+  // Reference facts, NOT faults -- so they are a section of their own rather
+  // than a row in the issue list, where a healthy source would read as a
+  // fabricated fault (the US-509 floor above still holds, untouched).
+  //
+  // Taken VERBATIM off the tile the grid renders. The overlay presents a fact
+  // the card already computed; it never re-derives one, so the two cannot
+  // disagree -- the same rule the issue rows follow.
+  function systemDiagnostics(tiles) {
+    var diags = [];
+    if (!isObj(tiles)) return diags;
+    var sync = tiles.sync;
+    if (isObj(sync) && typeof sync.counts === "string" && sync.counts !== "") {
+      diags.push({ key: "sync", label: sync.label, text: sync.counts });
+    }
+    return diags;
+  }
+
   // The summary line is a tap target ONLY when something is behind it -- an
   // affordance that opens an empty list is a misleading control.
+  //
+  // US-559 widened WHAT counts as "something", and deliberately not the rule
+  // itself: US-509 gated this on faults because faults were all the overlay
+  // held. Now the counts live here too, so a healthy card is tappable. Left
+  // gated on faults, a non-zero PENDING backlog on an otherwise-OK sync would
+  // have been unreachable and "moved to the drill-down" would have meant
+  // deleted. The gate still reads real content -- it is not pinned open.
   function systemDrill(tiles, data) {
     var rows = systemIssueRows(tiles, data);
-    return { rows: rows, tappable: rows.length > 0 };
+    var diagnostics = systemDiagnostics(tiles);
+    return {
+      rows: rows,
+      diagnostics: diagnostics,
+      tappable: rows.length > 0 || diagnostics.length > 0,
+    };
   }
 
   // The full structured view consumed by the DOM renderer + the node tests.
@@ -2745,13 +2798,62 @@
   // where block-scoped function declarations put it out of reach of every test).
   //
   // A 12-hour AM/PM face is how the operator reads a dashboard at a glance.
+  function two(n) { return (n < 10 ? "0" : "") + n; }
+
+  // THE 12-hour rule for this whole surface -- written ONCE, on purpose.
+  // US-503's note here used to warn that two formatters is how a 12-hour face
+  // drifts back to 24-hour on one panel; US-559 is that warning coming true, so
+  // the rule is now SHARED by the top-bar clock and the sync stamp rather than
+  // copied into a second place.
+  //
   // Mod-12 ALONE is wrong twice a day -- it renders both midnight and noon as
   // hour 0 -- so the 12 is restored explicitly. The padding is asymmetric on
-  // purpose: a bare hour ("2:05 PM", never "02:05 PM") and a padded minute.
-  function two(n) { return (n < 10 ? "0" : "") + n; }
-  function fmtClock(d) {
+  // purpose: a bare hour ("2:05 PM", never "02:05 PM"), a padded minute, and a
+  // padded second on the surfaces that ask for one.
+  function fmtTimeOfDay(d, withSeconds) {
     var h = d.getHours();
-    return (h % 12 || 12) + ":" + two(d.getMinutes()) + " " + (h < 12 ? "AM" : "PM");
+    var sec = withSeconds ? ":" + two(d.getSeconds()) : "";
+    return (h % 12 || 12) + ":" + two(d.getMinutes()) + sec + " " + (h < 12 ? "AM" : "PM");
+  }
+
+  // US-503 top-bar / idle face. Seconds are deliberately absent: a ticking
+  // seconds field on a glanceable clock is motion the driver has to ignore.
+  function fmtClock(d) {
+    return fmtTimeOfDay(d, false);
+  }
+
+  // US-559 (F-132 P-5). The sync stamp arrives as an ISO-8601 instant and used
+  // to be pasted RAW onto the tile, so the panel carried TWO clocks -- the
+  // top-bar face in local time, the sync stamp in UTC -- that can differ by
+  // hours with no way to tell which one is lying. Formatting fixed the reading;
+  // rendering it in LOCAL time (`fmtTimeOfDay` reads `getHours`) fixes the
+  // contradiction. The day is padded so the stamp holds a FIXED width and the
+  // tile does not reflow between the 9th and the 10th.
+  var STAMP_MONTHS = [
+    "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+    "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+  ];
+
+  // Only a ZONE-QUALIFIED ISO-8601 instant is formatted. The zone is not
+  // pedantry: JS reads a zoneless timestamp as LOCAL, so a stamp the emitter
+  // sends in UTC would render silently hours wrong -- re-creating the exact
+  // contradiction this function exists to remove. And `new Date` is far too
+  // willing: it reads "412" as the year 412 and would put a confident wrong
+  // date on the one tile whose whole job is to report sync health. Anything
+  // this pattern does not admit is handed back VERBATIM.
+  var ISO_INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:?\d{2})$/;
+
+  function fmtStamp(ts) {
+    // Echoed rather than formatted, never coerced through `new Date`: a
+    // fabricated Jan 01 1970 is the green-when-broken failure here.
+    if (typeof ts !== "string") return String(ts);
+    if (!ISO_INSTANT.test(ts)) return ts;
+    var d = new Date(ts);
+    if (isNaN(d.getTime())) return ts;
+    return (
+      STAMP_MONTHS[d.getMonth()] + " " + two(d.getDate()) + ", " +
+      d.getFullYear() + " " + fmtTimeOfDay(d, true)
+    );
   }
 
   var api = {
@@ -2796,6 +2898,7 @@
     systemSummary: systemSummary,
     sysRowFreshness: sysRowFreshness,
     systemIssueRows: systemIssueRows,
+    systemDiagnostics: systemDiagnostics,
     systemDrill: systemDrill,
     systemStatusView: systemStatusView,
     healthCheckLine: healthCheckLine,
@@ -2837,6 +2940,7 @@
     brightnessAlarmActive: brightnessAlarmActive,
     resolveAutoDimConfig: resolveAutoDimConfig,
     fmtClock: fmtClock,
+    fmtStamp: fmtStamp,
     carouselIdle: carouselIdle,
     agoText: agoText,
     idleLastDriveFact: idleLastDriveFact,
@@ -3033,14 +3137,15 @@
       if (head) head.textContent = view && view.summary ? view.summary.text : "";
       var rows = view && view.drill ? view.drill.rows : [];
       if (!rows.length) {
-        // Reachable while the overlay is OPEN and the last fault clears. Saying
-        // so is the honest move; an empty box reads as a broken overlay, and
-        // closing it would yank the surface out from under the operator.
+        // Reachable while the overlay is OPEN and the last fault clears, and --
+        // since US-559 -- the NORMAL state of a healthy card, which is now
+        // reachable for its diagnostics. Saying so is the honest move; an empty
+        // box reads as a broken overlay, and closing it would yank the surface
+        // out from under the operator.
         var none = document.createElement("div");
         none.className = "sys-issue-none";
         none.textContent = "all sources OK";
         bodyEl.appendChild(none);
-        return;
       }
       for (var i = 0; i < rows.length; i++) {
         var row = rows[i];
@@ -3071,6 +3176,27 @@
         fresh.className = "sys-issue-freshness";
         fresh.textContent = row.freshness;
         el.appendChild(fresh);
+        bodyEl.appendChild(el);
+      }
+      renderSysDiagnostics(bodyEl, view && view.drill ? view.drill.diagnostics : []);
+    }
+
+    // US-559: the reference facts, below the faults. Built with textContent (no
+    // innerHTML) like every other row here, so emitter values render verbatim
+    // and never as markup.
+    function renderSysDiagnostics(bodyEl, diags) {
+      if (!diags || !diags.length) return;
+      for (var i = 0; i < diags.length; i++) {
+        var el = document.createElement("div");
+        el.className = "detail-card sys-diag-row";
+        var label = document.createElement("span");
+        label.className = "sys-diag-label";
+        label.textContent = diags[i].label;
+        var text = document.createElement("span");
+        text.className = "sys-diag-text";
+        text.textContent = diags[i].text;
+        el.appendChild(label);
+        el.appendChild(text);
         bodyEl.appendChild(el);
       }
     }

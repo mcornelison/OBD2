@@ -196,7 +196,20 @@ _TABLE_REGISTRY: dict[str, tuple[type, tuple[tuple[str, str], ...]]] = {
     # model is shared with analytics but the Pi-sync natural key is
     # (source_device, source_id); see DriveSummary docstring for the
     # dual-writer contract.
-    "drive_summary": (DriveSummary, ()),
+    #
+    # US-563 / F-134 rename seam: the Pi's drive-start IAT snapshot was
+    # historically called ``ambient_temp_at_start_c`` on BOTH tiers.  It is fed
+    # from IAT (PID 0x0F) and is not ambient, so the server column is now
+    # ``intake_air_temp_at_start_c``.  The Pi's own queue can hold rows captured
+    # before its half of the rename lands, and a Pi that has not yet been
+    # deployed still sends the legacy key -- mapping it here LANDS WHAT WAS READ
+    # rather than dropping a real measurement because its label changed.
+    # Post-rename Pi rows arrive already spelled the new way and pass through
+    # this seam untouched.
+    "drive_summary": (
+        DriveSummary,
+        (("ambient_temp_at_start_c", "intake_air_temp_at_start_c"),),
+    ),
     # US-217: battery_health_log capture table.  drain_event_id is the
     # Pi-side PK -> renamed to 'id' on the wire by the sync client
     # -> mapped to source_id by runSyncUpsert, matching every other

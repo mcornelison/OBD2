@@ -28,6 +28,12 @@
 # ================================================================================
 # 2026-07-13    | Rex (US-464) | Initial -- Sprint 57 US-464 (TD-055 graduates to
 #               |              | funded; Atlas ruling + TIGHTEN-2 version pin).
+# 2026-08-23    | Rex (US-568) | Seeds now IMPLEMENT the ledger they claim: the
+#               |              | drive_summary skeleton carried none of the
+#               |              | columns migrations 0001-0021 create, so v0024
+#               |              | (the first migration to touch one) fatalled on
+#               |              | real MariaDB with 1054. Shapes measured from the
+#               |              | deployed obd2db, pinned as literals on purpose.
 # ================================================================================
 ################################################################################
 
@@ -60,6 +66,34 @@ against a real MariaDB 11.x (pinned to the prod major, 11.8.6 -- Atlas
 TIGHTEN-2: a wrong-version container can green-pass a prod-failing migration)
 seeded with the exact drifted historical shape, and asserts the chain fixes the
 drift or fails **loudly** -- never green over a broken DB.
+
+A seed must IMPLEMENT the ledger it claims (US-568)
+---------------------------------------------------
+
+Both seeders are paired with :func:`markMigrationsAppliedStatements`, which
+tells the runner that migrations 0001-0021 have already been applied.  That is a
+CLAIM ABOUT THE SCHEMA, and the seed has to honour it: whatever those migrations
+create must actually be present.
+
+It was not.  ``drive_summary`` was seeded as a three-column skeleton
+(``id``, ``source_device``, ``source_id``) because v0022 and v0023 -- the only
+migrations this harness was written for -- never look past ``drive_summary(id)``.
+So the fixture asserted v0010's POST-state in the ledger while seeding v0010's
+PRE-state in SQL, and nothing noticed for a full sprint.  v0024 became the first
+migration to touch a column v0010 creates and fatalled on real MariaDB with
+``(1054, "Unknown column 'data_quality' in 'CHECK'")``, halting the V0.29.30
+deploy at the CI gate.
+
+The gate was right and the migration was innocent: the deployed obd2db carries
+every column v0024 needs.  The FIXTURE was the defect -- the same shape as
+US-560's ``PANEL_MODES``, where a fixture asserted a hardware fact nobody had
+measured and the suite could therefore only ever go green.  A fixture that
+states a precondition instead of establishing it is not a test; it is a claim
+wearing a test's clothes.
+
+Rule this leaves behind: **when you add a migration that touches a column, check
+that both seeders declare it.**  ``LEDGER_PROMISED_COLUMNS`` +
+``test_seeds_implement_the_ledger_they_claim`` enforce it mechanically.
 
 Acquisition + honest skip
 -------------------------
@@ -105,9 +139,13 @@ if TYPE_CHECKING:
 
 __all__ = [
     'DATA_SOURCE_CHECK_TABLES',
+    'LEDGER_PROMISED_COLUMNS',
     'MARIADB_MAJOR',
     'MARIADB_TEST_DSN_ENV',
     'MARIADB_TEST_IMAGE',
+    'PROD_DRIVE_STATISTICS_DATA_QUALITY_SQL',
+    'PROD_DRIVE_SUMMARY_DATA_QUALITY_SQL',
+    'PROD_DRIVE_SUMMARY_V0024_COLUMNS_DDL',
     'TD055_LINEAGE',
     'MariaDbCommandRunner',
     'MariaDbUnavailable',
@@ -366,6 +404,71 @@ def inlineDataSourceCheckTableDdl(tableName: str) -> str:
     )
 
 
+# ================================================================================
+# US-568 -- the post-0021 drive_summary shape, MEASURED from the deployed obd2db
+# ================================================================================
+#
+# WHY THESE ARE LITERALS AND NOT IMPORTS FROM models.py
+# -----------------------------------------------------
+# Both seeders below hand the runner a ledger saying migrations 0001-0021 are
+# already applied.  The seeded schema must therefore be what those migrations
+# ACTUALLY LEAVE BEHIND -- i.e. the pre-0022 shape -- not what the current ORM
+# declares.  Importing the live ``DRIVE_SUMMARY_DATA_QUALITY_VALUES`` here would
+# seed an enum that ALREADY contains 'unassessed', so v0024 would find nothing to
+# widen, no-op, and the test would go green having exercised nothing.  That is
+# the US-459 theater-trap in a new costume, and it is precisely the failure mode
+# this harness exists to prevent.  These values are pinned to the deployed
+# database and are deliberately allowed to fall behind the ORM.
+#
+# MEASURED 2026-08-23 against chi-srv-01 obd2db (MariaDB 11.8.6), read-only via
+# information_schema, with the ledger standing at 0023:
+#   drive_summary.data_quality              varchar(20) NOT NULL DEFAULT 'full'
+#   drive_summary.is_real                   tinyint(1)  NULL     DEFAULT 0
+#   drive_summary.ambient_temp_at_start_c   float       NULL     DEFAULT NULL
+#   ck_drive_summary_data_quality     ('full','attribution_anomaly',
+#                                      'foreign_vehicle')
+#   ck_drive_statistics_data_quality  ('full','sparse','below_threshold',
+#                                      'attribution_anomaly','foreign_vehicle')
+#   drive_statistics.data_quality           varchar(20) NOT NULL DEFAULT 'full'
+#   drives.data_quality                     varchar(20) NOT NULL DEFAULT 'full'
+#
+# The command that produced them is recorded in the US-568 completionNotes.
+
+# Pre-0024 enum on drive_summary -- no 'unassessed' yet (that IS v0024's work).
+PROD_DRIVE_SUMMARY_DATA_QUALITY_SQL: str = (
+    "'full','attribution_anomaly','foreign_vehicle'"
+)
+# Pre-0024 enum on drive_statistics -- carries the sample-count buckets too.
+PROD_DRIVE_STATISTICS_DATA_QUALITY_SQL: str = (
+    "'full','sparse','below_threshold','attribution_anomaly','foreign_vehicle'"
+)
+
+# The drive_summary columns v0024 operates on, in the deployed pre-0024 shape.
+# v0010 (US-363) creates data_quality + ck_drive_summary_data_quality + the
+# index; v0012 (US-377) widens it to VARCHAR(20); v0004 (US-237) supplies the
+# drive-start temperature column.  A seed that claims 0001-0021 applied and then
+# omits these is asserting a ledger state it does not implement -- the US-568
+# defect.
+PROD_DRIVE_SUMMARY_V0024_COLUMNS_DDL: str = (
+    "  data_quality VARCHAR(20) NOT NULL DEFAULT 'full',"
+    '  is_real TINYINT(1) NULL DEFAULT 0,'
+    '  ambient_temp_at_start_c FLOAT NULL,'
+    '  CONSTRAINT ck_drive_summary_data_quality CHECK '
+    f'    (data_quality IN ({PROD_DRIVE_SUMMARY_DATA_QUALITY_SQL})),'
+)
+
+# Every (table, column) pair the post-0021 ledger promises exists.  The hermetic
+# guard test asserts BOTH seeders declare all of them, so the next migration to
+# touch one of these columns cannot be ambushed the way v0024 was.
+LEDGER_PROMISED_COLUMNS: tuple[tuple[str, str], ...] = (
+    ('drive_summary', 'data_quality'),
+    ('drive_summary', 'is_real'),
+    ('drive_summary', 'ambient_temp_at_start_c'),
+    ('drive_statistics', 'data_quality'),
+    ('drives', 'data_quality'),
+)
+
+
 def driftedDriveIdentityStatements() -> list[str]:
     """Seed the BL-020 drifted drive-identity shape (v0022's pre-migration state).
 
@@ -383,20 +486,24 @@ def driftedDriveIdentityStatements() -> list[str]:
     return [
         'CREATE TABLE drive_summary ('
         '  id INT AUTO_INCREMENT PRIMARY KEY,'
-        '  source_device VARCHAR(64), source_id INT'
+        '  source_device VARCHAR(64), source_id INT,'
+        f'{PROD_DRIVE_SUMMARY_V0024_COLUMNS_DDL}'
+        '  KEY idx_drive_summary_data_quality (data_quality)'
         ') ENGINE=InnoDB;',
         'CREATE TABLE drives ('
         '  drive_id INT AUTO_INCREMENT PRIMARY KEY,'
         '  source_device VARCHAR(64), source_drive_id INT NULL,'
         '  start_time DATETIME NULL, end_time DATETIME NULL,'
         "  data_source VARCHAR(16) DEFAULT 'real',"
-        "  data_quality VARCHAR(32) NOT NULL DEFAULT 'full',"
+        "  data_quality VARCHAR(20) NOT NULL DEFAULT 'full',"
         "  CONSTRAINT ck_drives_data_quality CHECK (data_quality IN ('full'))"
         ') ENGINE=InnoDB;',
         'CREATE TABLE drive_statistics ('
         '  summary_id INT NOT NULL, parameter_name VARCHAR(64) NOT NULL,'
         '  sample_count INT NOT NULL DEFAULT 0,'
-        "  data_quality VARCHAR(32) NOT NULL DEFAULT 'full',"
+        "  data_quality VARCHAR(20) NOT NULL DEFAULT 'full',"
+        '  CONSTRAINT ck_drive_statistics_data_quality CHECK '
+        f'    (data_quality IN ({PROD_DRIVE_STATISTICS_DATA_QUALITY_SQL})),'
         '  PRIMARY KEY (summary_id, parameter_name)'
         ') ENGINE=InnoDB;',
         'CREATE TABLE drive_derived_signals ('
@@ -427,21 +534,25 @@ def cleanDriveIdentityStatements() -> list[str]:
     return [
         'CREATE TABLE drive_summary ('
         '  id INT AUTO_INCREMENT PRIMARY KEY,'
-        '  source_device VARCHAR(64), source_id INT'
+        '  source_device VARCHAR(64), source_id INT,'
+        f'{PROD_DRIVE_SUMMARY_V0024_COLUMNS_DDL}'
+        '  KEY idx_drive_summary_data_quality (data_quality)'
         ') ENGINE=InnoDB;',
         'CREATE TABLE drives ('
         '  drive_id INT AUTO_INCREMENT PRIMARY KEY,'
         '  source_device VARCHAR(64), source_drive_id INT NULL,'
         '  start_time DATETIME NULL, end_time DATETIME NULL,'
         "  data_source VARCHAR(16) DEFAULT 'real',"
-        "  data_quality VARCHAR(32) NOT NULL DEFAULT 'full',"
+        "  data_quality VARCHAR(20) NOT NULL DEFAULT 'full',"
         '  CONSTRAINT ck_drives_data_quality CHECK '
         "    (data_quality IN ('full','unmappable_legacy'))"
         ') ENGINE=InnoDB;',
         'CREATE TABLE drive_statistics ('
         '  summary_id INT NOT NULL, parameter_name VARCHAR(64) NOT NULL,'
         '  sample_count INT NOT NULL DEFAULT 0,'
-        "  data_quality VARCHAR(32) NOT NULL DEFAULT 'full',"
+        "  data_quality VARCHAR(20) NOT NULL DEFAULT 'full',"
+        '  CONSTRAINT ck_drive_statistics_data_quality CHECK '
+        f'    (data_quality IN ({PROD_DRIVE_STATISTICS_DATA_QUALITY_SQL})),'
         '  PRIMARY KEY (summary_id, parameter_name),'
         '  CONSTRAINT fk_drive_statistics_drives'
         '    FOREIGN KEY (summary_id) REFERENCES drives(drive_id) ON DELETE CASCADE'

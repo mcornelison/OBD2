@@ -1,11 +1,11 @@
 {
   "schemaVersion": "2.0.0",
-  "lastUpdated": "2026-08-20",
+  "lastUpdated": "2026-08-23",
   "updatedBy": "Marcus (PM)",
   "counters": {
     "epic": 7,
     "feature": 135,
-    "story": 565
+    "story": 568
   },
   "epics": [
     {
@@ -1351,41 +1351,41 @@
     {
       "id": "F-132",
       "parent": "E-001",
-      "status": "active",
+      "status": "awaiting-validation",
       "title": "Pi dashboard chrome -- top bar, band budget, overlay opacity, sync stamp",
       "description": "CIO bench review of deployed V0.29.29 produced 6 items; 5 are presentation-only (this feature), the 6th (real WiFi glyph) needs a new emitter field and is gated to Atlas. Correction + continuation of F-127, NOT a reversal: every driver-read value keeps its F-127 tier, only CHROME gives ground. Root cause of the clipped cards is an arithmetic error in the F-127 budget (Iris's own, self-reported): section 3 omitted card padding (28) + title (39) and understated dots by 8 = 57px unaccounted, so 3 rows overflowed before any footer. Ralph built to the capacity asserted. Iris-designed 2026-08-20, CIO-reviewed visually.",
       "createdAt": "2026-08-20",
-      "updatedAt": "2026-08-20",
+      "updatedAt": "2026-08-22",
       "currentVersion": "V0.29.30"
     },
     {
       "id": "F-133",
       "parent": "E-001",
-      "status": "active",
+      "status": "awaiting-validation",
       "title": "Pi display reliability -- output mode, watchdog honesty, freeze",
       "description": "V0.29 CLOSEOUT BLOCKER. Atlas 2026-08-20: the AllocateRingBuffer freeze REPRODUCES IN-CAR -- the operator lost the display TWICE inside an 8-minute leg while driving (2 kiosk-watchdog WEDGED events, 3 dashboard starts, restart budget 2/5). His 08-17 bench-only scope limit is LIFTED. BUT the panel negotiated 1280x720, NOT its native 480x320 -- US-552's mode pin has never actually been applied to this Pi, so every freeze observation to date is at ~6x the shipping pixel count and the shipping configuration remains UNTESTED. Pin the mode first, then re-measure. The freeze itself is deliberately NOT scoped here.",
       "createdAt": "2026-08-20",
-      "updatedAt": "2026-08-20",
+      "updatedAt": "2026-08-22",
       "currentVersion": "V0.29.30"
     },
     {
       "id": "F-134",
       "parent": "E-002",
-      "status": "active",
+      "status": "awaiting-validation",
       "title": "drive_summary truthfulness -- server roll-up, schema defaults, column labels",
       "description": "Three defects surfaced in the SAME table on 2026-08-20 (Spool x2, Atlas x1); groomed as one cluster per Spool. (1) server-side roll-up REGRESSED between 08-07 and 08-20 -- drives 39/40/41 are empty shells, so the first moving-vehicle data in 48 days may be invisible to calibration. (2) data_quality is NOT NULL DEFAULT 'full' -- a quality VERDICT column defaulting to the BEST verdict, so not-assessed and assessed-good are the same stored value. (3) ambient_temp_at_start_c is fed from IAT and is NOT ambient (drive 41 logged 47C/117F) -- no ambient source exists on this car.",
       "createdAt": "2026-08-20",
-      "updatedAt": "2026-08-20",
+      "updatedAt": "2026-08-22",
       "currentVersion": "V0.29.30"
     },
     {
       "id": "F-135",
       "parent": "E-002",
-      "status": "active",
+      "status": "awaiting-validation",
       "title": "Sensor honesty gate -- bit-identity plausibility + magnetometer acquisition",
       "description": "Atlas 2026-08-20: syncPending=0, the IMU all-zero frames and the LATCHED magnetometer are ONE defect -- a non-measurement wearing data_source='real'. Third fabrication surfaced in a single week. headingDeg is DERIVED from the latched magnetometer, so the F-127 IMU-always-on Home face is currently rendering a fabricated heading on the primary card. Load-bearing design point: test BIT-IDENTITY, not low variance -- every real sensor dithers +/-1 LSB, so N consecutive bit-identical samples cannot occur naturally; no magic threshold, and it CANNOT false-positive on a genuinely stationary vehicle (proven: stationary accel gave 743 distinct values in 90s, the magnetometer gave 1).",
       "createdAt": "2026-08-20",
-      "updatedAt": "2026-08-20",
+      "updatedAt": "2026-08-22",
       "currentVersion": "V0.29.30"
     }
   ],
@@ -8710,16 +8710,15 @@
       "parent": "F-134",
       "type": "normal",
       "size": "M",
-      "status": "sprint-ready",
-      "title": "Server drive_summary roll-up regression -- 39/40/41 are empty shells",
+      "status": "superseded",
+      "title": "[SUPERSEDED -> US-563] drive_summary roll-up regression -- premise refuted",
       "goal": "As the tuner, I want the server roll-up to populate drive_summary, because the first moving-vehicle data in 48 days is currently invisible to calibration.",
       "definitionOfDone": [
-        "drives 39/40/41 have start_time/end_time/duration_seconds NULL, row_count 0, is_real 0 -- shells INSERTed at drive-start and never updated. Drives 37/38 (08-07) are fully populated. REGRESSED between 2026-08-07 and 2026-08-20 -- bisect that window on the server analytics writer",
-        "SCOPED TO SERVER, NOT Pi. The Pi-side drive_summary schema has no end/duration/row_count columns at all; the roll-up is server-side by design (BL-015 Option C / US-326 chain). Spool self-corrected on this mid-session -- do not mis-scope to Pi power-loss at key-off",
-        "DO NOT CONFLATE with telemetry: realtime_data sync is PERFECT for all three drives (39: 10594==10594, 40: 10286==10286, 41: 3462==3462, 16 params). Raw capture and sync are healthy; only the derived roll-up is broken",
-        "acceptance asserts on a REAL drive, NOT a fixture -- shells look valid until you check the nullable columns",
-        "check whether the drive_statistics chain is blocked downstream (depends on US-326)",
-        "ruff/lint clean"
+        "SUPERSEDED by Atlas's Sprint-75 gate 2026-08-20. THERE IS NO REGRESSION. He queried the live server: drives 39/40/41 are fully populated (duration 1491/1434/492; row_count 10594/10286/3462 matching realtime_data EXACTLY; is_real=1; data_quality=full).",
+        "The roll-up is a NIGHTLY BATCH -- server-analytics-batch.service, timer active (waiting) since 2026-05-21, fires 03:30. Journal shows it ran automatically: success=3, skipped=0, failed=0, attribution_anomalies=0.",
+        "Spool and Atlas both observed the pre-batch rows inside the ~12h window between the drive ending (17:26) and the batch running (03:30), and filed a phantom regression -- because those pending rows read data_quality='full', is_real=0.",
+        "That misreading IS the defect, and it now lives in US-563: the roll-up must not leave rows that READ AS ASSESSED while still pending.",
+        "Kept in the backlog as a record rather than deleted -- the phantom is the evidence."
       ],
       "conditionalOutcomes": [
         "Blocks drive-level reporting for the V0.29 chain.",
@@ -8743,7 +8742,8 @@
         "offices/pm/inbox/2026-08-20-from-atlas-data-quality-defaults-to-full-open-question.md",
         "offices/pm/inbox/2026-08-20-from-atlas-magnetometer-latched-third-fabrication-this-week.md",
         "offices/pm/inbox/2026-08-20-from-spool-drive-summary-rollup-regression.md",
-        "offices/pm/inbox/2026-08-20-from-spool-ambient-temp-column-mislabeled.md"
+        "offices/pm/inbox/2026-08-20-from-spool-ambient-temp-column-mislabeled.md",
+        "offices/pm/inbox/2026-08-20-from-atlas-SPRINT75-GATE-us562-premise-refuted.md"
       ],
       "tasks": [],
       "createdAt": "2026-08-20",
@@ -8753,30 +8753,36 @@
       "id": "US-563",
       "parent": "F-134",
       "type": "normal",
-      "size": "M",
+      "size": "L",
       "status": "sprint-ready",
-      "title": "drive_summary must not default to the best verdict, and must not mislabel",
+      "title": "drive_summary must not read as assessed before it is assessed",
       "goal": "As anyone reading drive_summary, I want an unassessed drive to be distinguishable from an assessed-good one, and I want column names that mean what they say.",
       "definitionOfDone": [
-        "data_quality is `varchar(20) NOT NULL DEFAULT 'full'` on prod (verified via information_schema) -- a quality VERDICT column whose default is the BEST verdict. Add an explicit `unassessed`/`not_computed` value and default to THAT, or drop the default entirely",
-        "is_real `tinyint(1) NULL DEFAULT 0` -> DEFAULT NULL. The column is already nullable and _deriveIsReal deliberately writes None for ungraded; its own docstring warns that coercing NULL to 0 is the exact failure that masked ungraded drives in earlier revisions",
-        "RENAME ambient_temp_at_start_c -- it is fed from IAT and is NOT ambient. Drive 41 logged 47C/117F as ambient; IAT ran 48.1->40.6C by speed band, cooling with airflow, never nearing the 24-27C real ambient. NO ambient source exists on this car, so inventing one would be fabrication -- rename to what it actually is (intake air) rather than sourcing a fake ambient",
-        "A-10 CLASS DURABLE FIX: extend the applied-schema guard (US-459/US-462 pattern) to assert DEFAULTS, not just column presence and type. Today it passes this cleanly. The same guard family has caught four drift instances and would have caught this one had it looked at defaults",
+        "PENDING MUST NOT READ AS ASSESSED (absorbed from US-562, whose regression premise Atlas refuted): between a drive ending and the nightly 03:30 batch, drive_summary rows must NOT present a confident verdict. Not hypothetical -- on 2026-08-20 those rows read data_quality='full', is_real=0 and misled BOTH Spool and Atlas into filing a phantom regression story. Demonstrated in production, at the cost of a sprint story.",
+        "data_quality is varchar(20) NOT NULL DEFAULT 'full' on prod (verified via information_schema) -- a quality VERDICT column whose default is the BEST verdict. Add an explicit unassessed/not_computed value and default to THAT, or drop the default entirely.",
+        "is_real tinyint(1) NULL DEFAULT 0 -> DEFAULT NULL. Atlas CONFIRMED 2026-08-20 that the observed is_real=0 was the SCHEMA DEFAULT, not a compute result -- the batch later wrote is_real=True correctly. _deriveIsReal works as designed; there is NO compute defect. Do not go looking for one.",
+        "OWN ACCEPTANCE LINE, OWN TEST (Atlas, explicit -- do NOT let this become prose inside the 3-way merge): the applied-schema guard (US-459/US-462 pattern) asserts COLUMN DEFAULTS, not only column presence and type. A data_quality column defaulting to ANY assessed value FAILS the guard. This is the durable A-10-class fix -- it stops the NEXT column defaulting to a verdict. Folded in as prose it gets built as 'change two defaults' and the guard quietly does not happen.",
+        "RENAME ambient_temp_at_start_c -- fed from IAT, NOT ambient. Drive 41 logged 47C/117F; IAT ran 48.1->40.6C by speed band, cooling with airflow, never nearing the 24-27C real ambient. NO ambient source exists on this car, so inventing one would be fabrication -- rename to what it actually is (intake air).",
         "any UI surface reading the renamed column shows INTAKE AIR, informational, no red band",
         "ruff/lint clean"
       ],
       "conditionalOutcomes": [
         "Schema-layer defect: no code review would catch it. The code is innocent.",
-        "Does not affect the 2026-08-20 drive conclusions -- those were read from realtime_data directly, and the A-9 result stands."
+        "Absorbs US-562 (superseded). There is NO roll-up regression to bisect -- the roll-up is a nightly batch and it runs correctly.",
+        "Does not affect the 2026-08-20 drive conclusions -- those were read from realtime_data directly. The A-9 result stands."
       ],
       "validationCriteria": [
         {
           "action": "inspect the applied prod schema after migration",
-          "outcome": "data_quality does not default to 'full'; is_real defaults to NULL; column renamed"
+          "outcome": "data_quality does not default to any assessed value; is_real defaults to NULL; column renamed"
         },
         {
-          "action": "run the applied-schema guard against a deliberately wrong DEFAULT",
-          "outcome": "guard FAILS -- it now asserts defaults, not just presence/type"
+          "action": "point the applied-schema guard at a column with a deliberately wrong DEFAULT",
+          "outcome": "guard FAILS -- it asserts defaults, not just presence and type"
+        },
+        {
+          "action": "read drive_summary for a drive that has ended but not yet hit the 03:30 batch",
+          "outcome": "row does not present a confident verdict; unassessed is distinguishable from assessed-good"
         }
       ],
       "deps": [],
@@ -8787,7 +8793,8 @@
         "offices/pm/inbox/2026-08-20-from-atlas-data-quality-defaults-to-full-open-question.md",
         "offices/pm/inbox/2026-08-20-from-atlas-magnetometer-latched-third-fabrication-this-week.md",
         "offices/pm/inbox/2026-08-20-from-spool-drive-summary-rollup-regression.md",
-        "offices/pm/inbox/2026-08-20-from-spool-ambient-temp-column-mislabeled.md"
+        "offices/pm/inbox/2026-08-20-from-spool-ambient-temp-column-mislabeled.md",
+        "offices/pm/inbox/2026-08-20-from-atlas-SPRINT75-GATE-us562-premise-refuted.md"
       ],
       "tasks": [],
       "createdAt": "2026-08-20",
@@ -8885,6 +8892,131 @@
       "tasks": [],
       "createdAt": "2026-08-20",
       "updatedAt": "2026-08-20"
+    },
+    {
+      "id": "US-566",
+      "parent": "F-133",
+      "type": "normal",
+      "size": "S",
+      "status": "sprint-ready",
+      "title": "powerwatch must log its arm decision -- we cannot tell if safety armed",
+      "goal": "As the operator, I want to know whether the safe-shutdown service actually armed, because today nothing in the log says either way.",
+      "definitionOfDone": [
+        "eclipse-powerwatch emits ZERO application log lines today -- neither the success INFO nor the failure ERROR, and BOTH are unconditional on their branches (power_watch/__main__.py:439-456). We cannot currently tell whether the safety service armed.",
+        "emit the arm decision unconditionally: armed / not-armed, with cause on the failure branch",
+        "PREREQUISITE FOR THE HARDWARE INVESTIGATION: without this the CIO's X1209 hold-up diagnosis is blind too -- he cannot separate 'safety never armed' from 'safety armed and the hold-up path failed'",
+        "OBSERVABILITY ONLY. This is NOT the GPIO6 single-ownership refactor (Atlas SPEC 2, deferred) and it does NOT fix the instant key-off death (X1209 hold-up, CIO hardware)",
+        "ruff/lint clean"
+      ],
+      "validationCriteria": [
+        {
+          "action": "boot the Pi and read the powerwatch journal",
+          "outcome": "an explicit arm decision line appears -- armed or not-armed with cause; never silence"
+        },
+        {
+          "action": "force the failure branch",
+          "outcome": "ERROR line with cause, not silence"
+        }
+      ],
+      "conditionalOutcomes": [
+        "Atlas ACCEPTED the SPEC 2 deferral but pulled THIS piece in -- small, purely observability, and a prerequisite for diagnosing the hold-up at all.",
+        "Rest of SPEC 2 (GPIO6 single ownership) stays deferred."
+      ],
+      "deps": [],
+      "sourceRefs": [
+        "offices/pm/inbox/2026-08-20-from-atlas-SPRINT75-GATE-us562-premise-refuted.md",
+        "offices/architect/reports/2026-08-20-fix-specs-variance-gate-gpio6-ownership-mode-pin.md"
+      ],
+      "tasks": [],
+      "createdAt": "2026-08-20",
+      "updatedAt": "2026-08-20"
+    },
+    {
+      "id": "US-567",
+      "parent": "F-128",
+      "type": "normal",
+      "size": "M",
+      "status": "groomed",
+      "title": "Retro-assign drive-start rows -- Spool's ruling, four hard bounds",
+      "goal": "As the tuner, I want the movement before a drive arms attributed to that drive, without ever inventing an attribution.",
+      "definitionOfDone": [
+        "NOT SPRINT 75 -- Atlas: the data is honest today, merely incomplete; no corruption is accruing. Groom into the next sprint.",
+        "Spool RULED retro-assign with FOUR HARD BOUNDS -- these are the whole safety of the change, copy verbatim into the build: (1) NULL drive_id rows ONLY; (2) stop at the previous drive's end_time; (3) stop at ANY power event; (4) 60 s maximum. FIRST BOUND TO FIRE WINS. Ambiguous -> assign NOTHING.",
+        "MUST NEVER SHARE A TICKET WITH A-9 ROOT 1 (Atlas, load-bearing): the start-side gap is UNDER-attribution; A-9 Root 1 was OVER-attribution. Opposite failure directions, opposite fixes -- a fix for one re-opens the other if they are combined.",
+        "grounding: ~11 s / 4 SPEED samples (33->19) unattributed before drive 41 armed on 2026-08-20"
+      ],
+      "validationCriteria": [
+        {
+          "action": "run the retro-assign against drive 41's start window",
+          "outcome": "the 4 pre-arm SPEED samples attach to drive 41; nothing outside the four bounds is touched"
+        },
+        {
+          "action": "construct an ambiguous case with two candidate drives",
+          "outcome": "assigns NOTHING -- never guesses"
+        }
+      ],
+      "conditionalOutcomes": [
+        "Spool owns what a drive record means; this implements his ruling, it does not re-litigate it."
+      ],
+      "deps": [],
+      "sourceRefs": [
+        "offices/pm/inbox/2026-08-20-from-atlas-SPRINT75-GATE-us562-premise-refuted.md",
+        "offices/architect/inbox/2026-08-20-from-spool-RULING-retro-assign-drive-start-rows.md"
+      ],
+      "tasks": [],
+      "createdAt": "2026-08-20",
+      "updatedAt": "2026-08-20"
+    },
+    {
+      "id": "US-568",
+      "parent": "F-134",
+      "type": "issue",
+      "size": "S",
+      "status": "sprint-ready",
+      "passes": false,
+      "title": "v0024 migration fails on real MariaDB -- unknown column data_quality in CHECK",
+      "goal": "As the maintainer, I want v0024 to apply cleanly on real MariaDB, because it currently fails on both chain paths and blocks the V0.29.30 deploy.",
+      "definitionOfDone": [
+        "REPRODUCE FIRST, AGAINST REAL MariaDB. The exact failure, on BOTH chain paths: MigrationError: add CHECK 'ck_drive_summary_data_quality' on 'drive_summary' failed: (1054, \"Unknown column 'data_quality' in 'CHECK'\") -- raised from v0024...py:389 (_widenCheckWithUnassessed), called from :534 (apply). Failing tests: test_full_pending_chain_resume_fixes_both_classes (line 355) AND test_clean_schema_chain_applies_and_passes (line 383).",
+        "SQLITE WILL NOT REPRODUCE THIS -- that is why it shipped. Use the real-MariaDB harness (tests/server/test_migration_chain_real_mariadb.py -m integration) or the DSN-manual gate: OBD2_MARIADB_TEST_DSN=mysql+pymysql://user:pass@host:3306/db. A green SQLite run is not evidence here.",
+        "RCA the ORDERING ASSUMPTION, do not patch the symptom. apply() runs the CHECK widen FIRST for all of _CHECK_TARGETS, and its own docstring says the ordering is load-bearing ('every CHECK is widened BEFORE any DEFAULT moves, so there is no window in which the column's own default would be rejected by its own constraint'). MariaDB says drive_summary has no data_quality column at that point in the chain. Establish which is true: does the column exist on drive_summary at v0024's position, and if not, which earlier migration moved/dropped/renamed it? v0018_us448_canonical_drives, v0022_us451_drive_identity_collapse and v0023_us458_drop_stale_data_source_check all touch this area.",
+        "FORBIDDEN FIX -- do NOT widen the error swallow. _widenCheckWithUnassessed already swallows 'duplicate'/'already exists' on the ADD CONSTRAINT path. Adding 'unknown column' to that swallow, or wrapping the widen in a try/except, would make the migration report success while the CHECK it promises does not exist. That is the exact fabrication class F-135 and US-563 were written to eliminate -- a non-measurement wearing the appearance of a measurement. If the column legitimately does not exist on a table, that must be an explicit, tested, table-by-table decision, not a caught exception.",
+        "The SchemaProbeError verify-after-rebuild at :394 must survive the fix -- do not delete the post-condition to make the path green.",
+        "GREEN IS DEFINED BY THE GATE, NOT BY LOCAL TESTS (run-not-trust, US-469): a SUCCESS real-mariadb-migration-chain run must exist for the exact HEAD SHA of the pushed fix. PR #16 re-runs the check on push.",
+        "ruff/lint clean"
+      ],
+      "validationCriteria": [
+        {
+          "action": "run the real-MariaDB migration chain on a CLEAN schema",
+          "outcome": "test_clean_schema_chain_applies_and_passes passes; v0024 applies without MigrationError"
+        },
+        {
+          "action": "run the real-MariaDB migration chain on a PENDING/resume schema",
+          "outcome": "test_full_pending_chain_resume_fixes_both_classes passes"
+        },
+        {
+          "action": "inspect the applied schema after v0024 on real MariaDB",
+          "outcome": "each table that carries data_quality has the widened CHECK including the unassessed value; no table silently skipped"
+        },
+        {
+          "action": "check the migration-drift CI run for the pushed HEAD SHA on PR #16",
+          "outcome": "conclusion=success for that exact SHA -- not a green on a different SHA"
+        }
+      ],
+      "conditionalOutcomes": [
+        "US-563 is otherwise complete and correct -- this is its migration failing on real MariaDB only. Do not re-open or re-litigate the US-563 design (unassessed default, is_real NULL, intake-air rename).",
+        "BLOCKS THE V0.29.30 DEPLOY. PR #16 is open and red; dev, Pi and server are all untouched on V0.29.29 until this is green.",
+        "This is the migration-drift CI gate (US-470/US-471) working as designed -- it caught on CI what the BL-019/020/021 saga let reach a deploy attempt. Do not bypass it."
+      ],
+      "deps": [],
+      "sourceRefs": [
+        "CI run: https://github.com/mcornelison/OBD2/actions/runs/32617736557 (PR #16, real-mariadb-migration-chain, 2 failed / 2 passed)",
+        "src/server/migrations/versions/v0024_us563_unassessed_defaults_and_intake_rename.py:389 (_widenCheckWithUnassessed) and :534 (apply)",
+        "tests/server/test_migration_chain_real_mariadb.py:355 + :383"
+      ],
+      "tasks": [],
+      "createdAt": "2026-08-23",
+      "updatedAt": "2026-08-23"
     }
   ]
 }

@@ -50,7 +50,7 @@ class TestDriveSummaryModelContract:
         cols = {c.name for c in DriveSummary.__table__.columns}
         us206 = {
             'source_id', 'source_device', 'synced_at', 'sync_batch_id',
-            'drive_start_timestamp', 'ambient_temp_at_start_c',
+            'drive_start_timestamp', 'intake_air_temp_at_start_c',
             'starting_battery_v', 'barometric_kpa_at_start', 'drive_id',
         }
         assert us206.issubset(cols), f"missing US-206 cols: {us206 - cols}"
@@ -130,7 +130,7 @@ class TestRunSyncUpsertDriveSummary:
         serverRow = session.query(DriveSummary).one()
         assert serverRow.source_id == 7
         assert serverRow.source_device == "chi-eclipse-01"
-        assert serverRow.ambient_temp_at_start_c == 18.5
+        assert serverRow.intake_air_temp_at_start_c == 18.5
         assert serverRow.starting_battery_v == 12.4
         assert serverRow.barometric_kpa_at_start == 101.2
         assert serverRow.data_source == "real"
@@ -183,7 +183,7 @@ class TestRunSyncUpsertDriveSummary:
         )
 
         row = session.query(DriveSummary).one()
-        assert row.ambient_temp_at_start_c is None
+        assert row.intake_air_temp_at_start_c is None
         assert row.starting_battery_v == 13.6
 
     def test_separateDevicesGetSeparateRows(self) -> None:

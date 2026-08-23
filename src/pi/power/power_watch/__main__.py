@@ -44,6 +44,30 @@
 #                              acquisition + boot-grace duration + EEPROM
 #                              POWER_OFF_ON_HALT=1 are all unchanged. See
 #                              offices/architect/findings/2026-05-20-shutdown-sequencer-boot-grace-latch-bug.md.
+# 2026-08-21    | US-566  | Sprint 75 / V0.29.30 arm-decision observability.
+#                           MEASURED on chi-eclipse-01 2026-08-21: across 8
+#                           service starts the journal holds ZERO
+#                           "powerwatch service up" lines, while WARNING lines
+#                           from the SAME pids are present throughout. The
+#                           story's premise ("emits zero application log
+#                           lines") is therefore too broad -- WARNING+ has
+#                           always worked. The real defect: this module never
+#                           configured logging, so logging.lastResort (level
+#                           WARNING, stderr) was the only sink and the ENTIRE
+#                           INFO TIER was discarded. The arm-success line was
+#                           INFO, so it never appeared; the arm-failure line
+#                           is ERROR, so it would have appeared -- it has just
+#                           never fired. Absence of the ERROR was thus
+#                           indistinguishable from "logging is broken", which
+#                           is exactly why nobody could tell whether safety
+#                           armed. Fixes: (1) main() installs the project
+#                           logging config, (2) the arm decision is emitted
+#                           unconditionally on BOTH branches at WARNING/ERROR
+#                           behind one greppable prefix, (3) the disarmed hold
+#                           re-states its cause instead of falling silent
+#                           forever. OBSERVABILITY ONLY -- not the GPIO6
+#                           single-ownership refactor (Atlas SPEC 2, deferred)
+#                           and not the X1209 hold-up path (CIO hardware).
 # ================================================================================
 ################################################################################
 """Phase-2 power-watch service entrypoint."""
@@ -77,6 +101,7 @@ from src.common.config.secrets_loader import (  # noqa: E402
     loadConfigWithSecrets,
 )
 from src.common.config.validator import ConfigValidator  # noqa: E402
+from src.common.logging.setup import setupLogging  # noqa: E402
 from src.pi.hardware.pld_sensor import PldSensor  # noqa: E402
 from src.pi.hardware.ups_monitor import UpsMonitor  # noqa: E402
 from src.pi.network.home_detector import HomeNetworkDetector  # noqa: E402
@@ -101,6 +126,154 @@ from src.pi.splash.shutdown_state_emitter import (  # noqa: E402
 from src.pi.sync.client import SyncClient  # noqa: E402
 
 logger = logging.getLogger(__name__)
+
+# --- Arm-decision observability (US-566) -------------------------------------
+# The arm decision is the single most load-bearing fact this service reports:
+# "is safe-shutdown protection ON or OFF?". Until US-566 it was UNFINDABLE, and
+# the mechanism was NOT a missing log call -- both branches were already
+# unconditional on their branches. This module never configured logging, so
+# Python's logging.lastResort handler (level WARNING, stderr) was the only sink
+# and the entire INFO tier went on the floor. The success line was INFO
+# (invisible); the failure line is ERROR (visible, but it has never fired). So
+# silence meant either "armed fine" or "the instrument is broken" and there was
+# no way to tell them apart -- the same false-healthy shape US-561 removed from
+# the kiosk watchdog one story earlier in this sprint.
+#
+# Both branches are emitted at WARNING (armed) / ERROR (not-armed), NOT INFO.
+# The decision fires EXACTLY ONCE per service start, so severity costs no
+# journal volume -- and pinning a safety fact to a tier that a config change
+# can silence is precisely how it went missing. Defence in depth: the line
+# survives even if logging configuration regresses to lastResort again.
+#
+# Both branches carry ARM_DECISION_PREFIX, so ONE grep answers the question:
+#   journalctl -u eclipse-powerwatch.service --grep='ARM DECISION'
+ARM_DECISION_PREFIX = "powerwatch: ARM DECISION ="
+ARM_DECISION_ARMED = "ARMED"
+ARM_DECISION_NOT_ARMED = "NOT-ARMED"
+
+# A disarmed service is `systemctl is-active` == active and otherwise silent --
+# indistinguishable from a healthy armed one. Announcing the refusal once at
+# boot is not enough: that line ages out of the journal and leaves a
+# green-looking unit that will never power anything off. Re-state on an
+# interval instead. 300s is a named constant rather than a config key because
+# it is a log cadence on a path that should never be taken, not a tunable.
+DISARMED_RESTATE_SEC = 300.0
+
+
+def buildArmDecisionMessage(
+    *,
+    armed: bool,
+    pldGpioPin: int,
+    pldAvailable: bool,
+    readsPowerPresent: bool,
+) -> str:
+    """Compose the one arm-decision line for either branch.
+
+    A SINGLE formatting site for both dispositions, so the two can never drift
+    apart in wording or in the evidence they carry. Each line states what was
+    MEASURED (pin, line readability, the actual reading), not just the verdict:
+    a bare "NOT-ARMED" cannot be diagnosed, and a bare "ARMED" is an assertion
+    rather than an instrument reading.
+
+    Args:
+        armed: The startupArmCheck() result.
+        pldGpioPin: The configured X1209 PLD pin (pi.powerWatch.pldGpioPin).
+        pldAvailable: Whether the PLD line is readable at all.
+        readsPowerPresent: The instantaneous power-present reading.
+
+    Returns:
+        The exact line to log -- prefixed with ARM_DECISION_PREFIX on both
+        branches so one grep finds either.
+    """
+    evidence = (
+        f"gpio={pldGpioPin} pld.available={pldAvailable} "
+        f"reads-power-present={readsPowerPresent}"
+    )
+    if armed:
+        return (
+            f"{ARM_DECISION_PREFIX} {ARM_DECISION_ARMED} -- safe-shutdown "
+            f"protection is ON. GPIO{pldGpioPin} PLD SSOT arm self-check "
+            f"PASSED ({evidence}). A sustained external-power loss will run "
+            f"the bounded pre-shutdown pipeline and then poweroff."
+        )
+    return (
+        f"{ARM_DECISION_PREFIX} {ARM_DECISION_NOT_ARMED} -- safe-shutdown "
+        f"protection is OFF. CAUSE: GPIO{pldGpioPin} PLD SSOT arm self-check "
+        f"FAILED ({evidence}). The Pi booted on a live feed so GPIO"
+        f"{pldGpioPin} must read power-present at startup; it does not (wrong "
+        f"pin/polarity, or the line is unreadable). REFUSING to arm -- service "
+        f"stays up disarmed, OBD collector unaffected, NOTHING will be powered "
+        f"off. Fix pi.powerWatch.pldGpioPin / pldPowerPresentHigh and redeploy."
+    )
+
+
+def emitArmDecision(
+    *,
+    armed: bool,
+    pldGpioPin: int,
+    pldAvailable: bool,
+    readsPowerPresent: bool,
+) -> str:
+    """Emit the arm decision UNCONDITIONALLY, on whichever branch was taken.
+
+    Never silent: there is no input for which this logs nothing. The level is
+    chosen by disposition -- WARNING for armed (a once-per-start operational
+    fact this module already uses WARNING for elsewhere, e.g. the power-loss
+    trigger), ERROR for not-armed (a refusal). Both clear lastResort's WARNING
+    floor, so the decision reaches the journal even with no logging
+    configuration installed at all.
+
+    Args:
+        armed: The startupArmCheck() result.
+        pldGpioPin: The configured X1209 PLD pin.
+        pldAvailable: Whether the PLD line is readable at all.
+        readsPowerPresent: The instantaneous power-present reading.
+
+    Returns:
+        The exact line logged, so the caller can re-state it verbatim without
+        recomposing it (and without re-reading the hardware to do so).
+    """
+    message = buildArmDecisionMessage(
+        armed=armed,
+        pldGpioPin=pldGpioPin,
+        pldAvailable=pldAvailable,
+        readsPowerPresent=readsPowerPresent,
+    )
+    if armed:
+        logger.warning(message)
+    else:
+        logger.error(message)
+    return message
+
+
+def runDisarmedHold(
+    *,
+    message: str,
+    waitFn,
+    restateSec: float = DISARMED_RESTATE_SEC,
+) -> int:
+    """Hold the process alive DISARMED, re-stating the cause on an interval.
+
+    Replaces a bare ``threading.Event().wait()``, which announced the refusal
+    once and then went quiet forever -- leaving an `active` unit that looks
+    exactly like a healthy armed one. Declining to arm is not a claim that the
+    shutdown path is well, so the instrument must keep saying so.
+
+    Args:
+        message: The not-armed decision line, re-stated verbatim (never
+            recomposed -- one formatting site).
+        waitFn: One-arg callable ``(timeoutSec) -> bool``. Production passes
+            ``threading.Event().wait``, which never returns True, so the hold
+            is permanent. Tests pass a bounded stub.
+        restateSec: Seconds between re-statements.
+
+    Returns:
+        0 -- reached only if waitFn returns True, which no production caller
+        does.
+    """
+    while not waitFn(restateSec):
+        logger.error("%s [STILL NOT-ARMED]", message)
+    return 0
 
 
 def _parseArgs(argv: list[str] | None = None) -> argparse.Namespace:
@@ -340,6 +513,18 @@ def main(argv: list[str] | None = None) -> int:
     config = loadConfigWithSecrets(args.config, args.env_file)
     config = ConfigValidator().validate(config)
 
+    # US-566: configure logging BEFORE anything reports a decision. Without a
+    # root handler Python falls back to logging.lastResort (level WARNING,
+    # stderr) and SILENTLY DISCARDS the whole INFO tier -- measured on
+    # chi-eclipse-01 2026-08-21 as zero "powerwatch service up" lines across 8
+    # service starts, while WARNING lines from the same pids came through.
+    # Level only, deliberately NO logFile: this service is shutdown-critical
+    # and must not open a second writer on the OBD app's log file. stdout IS
+    # the journal (unit: StandardOutput=journal) and StreamHandler flushes per
+    # record, so block-buffering cannot strand a line. An absent logging
+    # section resolves to INFO rather than crashing the safety service.
+    setupLogging(level=str((config.get("logging") or {}).get("level") or "INFO"))
+
     pw_cfg = config["pi"]["powerWatch"]
     perTaskTimeoutSec = float(pw_cfg["perTaskTimeoutSec"])
     totalWindowCapSec = float(pw_cfg["totalWindowCapSec"])
@@ -439,18 +624,23 @@ def main(argv: list[str] | None = None) -> int:
     # (wrong pin/polarity, or unreadable), REFUSE to arm -- stay up disarmed,
     # never poweroff. Fails to "do not shut down", the deliberate inverse of
     # the old "uncertain -> poweroff" mistake.
-    if not provider.startupArmCheck():
-        logger.error(
-            "powerwatch: PowerSourceProvider GPIO%d arm self-check FAILED "
-            "(pld.available=%s, reads-power-present=%s). The Pi booted on a "
-            "live feed so GPIO%d must read power-present at startup; it does "
-            "not. REFUSING to arm -- service stays up, OBD collector "
-            "unaffected, NOTHING will be powered off. Fix "
-            "pi.powerWatch.pldGpioPin / pldPowerPresentHigh and redeploy.",
-            pldGpioPin, pld.isAvailable, pld.isExternalPowerPresent(), pldGpioPin,
+    # US-566: the decision is now reported on BOTH branches, and it is the
+    # first thing this service says. Evidence is read through the PROVIDER,
+    # not the raw PldSensor -- the pre-US-566 message reached around the SSOT
+    # to `pld.*` for its own diagnostics, which is the one place a second
+    # acquisition site could disagree with the decision it is explaining.
+    armed = provider.startupArmCheck()
+    decisionLine = emitArmDecision(
+        armed=armed,
+        pldGpioPin=pldGpioPin,
+        pldAvailable=provider.isAvailable,
+        readsPowerPresent=provider.isExternalPowerPresent(),
+    )
+    if not armed:
+        # Stay alive, disarmed -- and keep saying so.
+        return runDisarmedHold(
+            message=decisionLine, waitFn=threading.Event().wait
         )
-        threading.Event().wait()  # stay alive, disarmed
-        return 0
 
     monitor.startPolling()  # vcell-backstop telemetry only; NOT the trigger
     logger.info(

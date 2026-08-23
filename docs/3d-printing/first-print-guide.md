@@ -11,7 +11,7 @@ metadata:
 v3.18, 2023-01-26). Section/page numbers below cite the manual directly.
 **Captured:** 2026-05-25 (Iris).
 **Use case:** First-time print on the OBD2 display case. Companion to
-`reference-cio-3d-printing-setup.md`.
+`docs/3d-printing/printer-and-materials.md`.
 
 ---
 

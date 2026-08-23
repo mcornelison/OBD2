@@ -79,7 +79,7 @@ def buildSystemStatusState(
     obdLastSeenS: int | None,
     syncLastOkTs: str | None,
     syncRows: int,
-    syncPending: int,
+    syncPending: int | None,
     syncStale: bool,
     powerMode: str,
     powerSource: str,
@@ -98,7 +98,11 @@ def buildSystemStatusState(
         obdLastSeenS: Seconds since the last successful OBD read (None if never).
         syncLastOkTs: ISO-8601 instant of the last successful Pi->server sync.
         syncRows: Rows synced in the last successful batch.
-        syncPending: Rows captured but not yet synced.
+        syncPending: Rows captured but not yet synced, or None when no caller
+            actually measures it (US-564). None is carried through to the display
+            as a typed NA -- it must never be coerced to 0 here or below, because
+            "0 pending" is an all-clear on data safety and an unmeasured
+            all-clear is the exact defect class this project keeps finding.
         syncStale: Whether the last sync is stale-while-driving (caller policy;
             see ``isSyncStaleWhileDriving``). The display renders amber when True.
         powerMode: ``car`` (in-car) or ``wall`` (bench/debug).
@@ -240,7 +244,7 @@ def makeSystemStatusEmitter(
         obdLastSeenS: int | None,
         syncLastOkTs: str | None,
         syncRows: int,
-        syncPending: int,
+        syncPending: int | None,
         powerMode: str,
         powerSource: str,
         driveState: str,

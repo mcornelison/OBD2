@@ -21,27 +21,61 @@
 #                      the ONE signature used is the GPU command-buffer
 #                      hot-loop -- `AllocateRingBuffer` fatal errors in
 #                      eclipse-dashboard's journal.  Atlas measured 6,063,554
-#                      in a single boot (~500/sec, 2,500 per 5s window) while
-#                      frozen, and exactly 0 after the restart that unfroze it,
-#                      so the marker separates wedged from healthy with orders
-#                      of magnitude to spare.  The AC's other candidate signal
-#                      -- "a CPU-pegged chromium with no state-file-driven
-#                      repaint" -- is NOT implemented, on purpose: repaint is
-#                      not observable from outside the browser, and the CPU half
-#                      alone has no post-US-522 baseline to threshold against
-#                      (software rendering raises healthy CPU by an unmeasured
-#                      amount, and Atlas's 39/31/24%-wedged vs 18/9/8%-healthy
-#                      figures predate `--disable-gpu`).  Guessing that number
+#                      in a single boot (~500/sec) while frozen, and exactly 0
+#                      after the restart that unfroze it.  The AC's other
+#                      candidate signal -- "a CPU-pegged chromium with no
+#                      state-file-driven repaint" -- is NOT implemented, on
+#                      purpose: repaint is not observable from outside the
+#                      browser, and the CPU half alone has no post-US-522
+#                      baseline to threshold against.  Guessing that number
 #                      would be a fabricated threshold, so the honest bound is:
 #                      a wedge with a DIFFERENT signature is not detected here.
 #                      See offices/architect/findings/
 #                      2026-08-02-pi-ui-freeze-chromium-gpu-command-buffer-hotloop.md
 #
+#                      HOW WEDGED IS TOLD FROM HEALTHY -- PRESENCE + DWELL, NOT
+#                      A COUNT (US-561, and this is the load-bearing part).
+#                      US-523 asked `markers >= 100`, calibrated against the
+#                      ~30,000-per-window catastrophic wedge.  The regime the
+#                      CIO actually drove into runs 84-101 per window, so the
+#                      constant sat INSIDE the signal's own operating band and
+#                      two consecutive ticks of ONE continuous freeze logged
+#                      "WEDGED -- 101 markers" then "healthy; markers=84".  A
+#                      threshold inside a band is a coin-flip, not a detector --
+#                      the identical lesson Spool reached on the coolant
+#                      fan-cycle ceiling, arrived at from the opposite side.
+#                      The fix is NOT a re-tuned constant (that only moves the
+#                      coin-flip to the next regime).  Healthy was MEASURED as
+#                      exactly zero, so:
+#                        * ANY marker at all  -> the failure class is live;
+#                        * sustained for a DWELL (60s, two timer ticks) without
+#                          a single clean tick in between -> wedged.
+#                      That needs no magnitude, so it cannot be mis-calibrated
+#                      against a rate nobody has measured yet.  `100` survives
+#                      only as `DEFAULT_MARKER_READ_CAP`, an I/O bound.
+#
+#                      HONEST BOUND ON LATENCY (US-561 defect 3c, NOT fixed and
+#                      not fixable from here): the markers are a LAGGING
+#                      indicator.  They appear when an allocation is finally
+#                      attempted, not when painting stops -- Atlas saw the
+#                      display freeze at ~16:15 and the burst arrive at
+#                      16:18:32.  So this watchdog CANNOT claim "detected within
+#                      60s of the freeze"; it detects within ~a dwell of the
+#                      markers, and the markers themselves may trail the freeze
+#                      by minutes.  Closing that gap needs a signal that leads
+#                      rather than lags (a repaint heartbeat published BY the
+#                      page), which is a dashboard change, not a watchdog one.
+#                      Detection did get EARLIER anyway: presence is observable
+#                      long before a count reaches 100 -- Atlas measured 1
+#                      marker at 16:16:39 and dismissed it, and that same
+#                      sample now starts the dwell clock.
+#
 #                      NEVER-FLAP RULES (each pinned by its own test):
 #                        1. an inactive kiosk is left alone -- `systemctl
 #                           restart` would START it, stealing the hand-off that
 #                           belongs to splash-boot's OnSuccess (A-1);
-#                        2. an unreadable journal is UNCERTAIN, never a wedge;
+#                        2. an unreadable journal is UNCERTAIN, never a wedge --
+#                           and never "healthy" either;
 #                        3. the journal window never reaches back past the last
 #                           restart, so pre-restart errors cannot re-trigger;
 #                        4. a cooldown separates consecutive restarts;
@@ -49,7 +83,11 @@
 #                           the watchdog stops restarting and starts shouting;
 #                        6. the attempt is recorded BEFORE the restart, so an
 #                           unwritable ledger disables the restart rather than
-#                           silently disabling rules 3-5.
+#                           silently disabling rules 3-5;
+#                        7. (US-561) the dwell requires UNBROKEN presence -- one
+#                           measured-zero tick clears the clock, so an isolated
+#                           GL complaint can never combine with another minutes
+#                           later to fake a sustained wedge.
 # Author: Rex (Ralph Agent)
 # Creation Date: 2026-08-03
 # Copyright: (c) 2026 Eclipse OBD-II Project. All rights reserved.
@@ -59,6 +97,13 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-08-03    | Rex          | Initial implementation (Sprint 70 US-523)
+# 2026-08-21    | Rex          | US-561: Atlas's four 08-17 watchdog defects.
+#               |              | 3a presence+dwell replaces the in-band count
+#               |              | threshold; 3b a readability PROBE stops a
+#               |              | zero-match grep exit-1 reading as "unreadable";
+#               |              | 3c documented above as an honest bound, not
+#               |              | fixed; 3d the restart budget is now stated on
+#               |              | every tick as "N of M (K left)".
 # ================================================================================
 ################################################################################
 
@@ -95,10 +140,23 @@ WEDGE_MARKER = "AllocateRingBuffer"
 #: during the wedge, so any 60s slice of a live wedge yields ~30,000.
 DEFAULT_WINDOW_SECONDS = 60
 
-#: Markers-in-window that mean "wedged".  Healthy is 0 (measured, post-restart);
-#: wedged is ~30,000 per window.  100 sits ~300x below the wedge rate and above
-#: zero, so neither a clean kiosk nor a couple of startup GL complaints trip it.
-DEFAULT_ERROR_THRESHOLD = 100
+#: Maximum journal lines pulled per tick.  This is an I/O BOUND, NOT A VERDICT.
+#: US-523 shipped the same number as `DEFAULT_ERROR_THRESHOLD`, a wedged/healthy
+#: decision constant -- and US-561 removed it in that role (see the header).  It
+#: survives only as what it always genuinely was: a cap that stops an uncapped
+#: read pulling megabytes per tick off a Pi the wedge has already pegged.
+DEFAULT_MARKER_READ_CAP = 100
+
+#: How long markers must be CONTINUOUSLY present before the tick calls it a
+#: wedge.  Threshold(>0) + dwell, deliberately -- the discriminator is
+#: PERSISTENCE, not magnitude.  60s spans two 30s timer ticks, so "sustained"
+#: means more than one observation, and it is well inside the 180s cooldown.
+DEFAULT_WEDGE_DWELL_SECONDS = 60
+
+#: The timer cadence declared in eclipse-kiosk-watchdog.timer, mirrored here so
+#: the dwell can be checked against it.  Not a knob -- change the timer and this
+#: must follow, which a test asserts.
+TIMER_CADENCE_SECONDS = 30
 
 #: Minimum gap between restart attempts.  Longer than the window (so a tick can
 #: never see a pre-restart error) and long enough for chromium to relaunch, load
@@ -120,6 +178,7 @@ RESTART_BUDGET_WINDOW_SECONDS = 3600
 DEFAULT_STATE_PATH = "/run/eclipse-kiosk-watchdog/ledger.json"
 
 _LEDGER_KEY = "restartAttempts"
+_LEDGER_PRESENCE_KEY = "markerPresentSince"
 
 # Decision actions.
 ACTION_RESTART = "restart"
@@ -129,6 +188,7 @@ ACTION_NOOP = "noop"
 REASON_KIOSK_INACTIVE = "kiosk_inactive"
 REASON_JOURNAL_UNREADABLE = "journal_unreadable"
 REASON_HEALTHY = "healthy"
+REASON_WEDGE_SUSPECTED = "wedge_suspected"
 REASON_COOLDOWN = "cooldown"
 REASON_BUDGET_EXHAUSTED = "restart_budget_exhausted"
 REASON_WEDGE_DETECTED = "wedge_detected"
@@ -155,9 +215,28 @@ class WatchdogPolicy:
     """The tunable half of the watchdog. Every field is CLI-overridable."""
 
     windowSeconds: int
-    errorThreshold: int
+    markerReadCap: int
+    wedgeDwellSeconds: int
     cooldownSeconds: int
     maxRestartsPerHour: int
+
+
+@dataclass(frozen=True)
+class LedgerState:
+    """The whole of what one tick remembers for the next one.
+
+    Two facts, one file, one write: the restart attempts that bound recovery,
+    and the instant markers were FIRST seen in the current unbroken run of
+    marker-present ticks (None when the last readable tick measured zero).
+    """
+
+    restartAttempts: list[float]
+    markerPresentSince: float | None
+
+    @classmethod
+    def empty(cls) -> LedgerState:
+        """The state of a watchdog that remembers nothing (fresh tmpfs boot)."""
+        return cls(restartAttempts=[], markerPresentSince=None)
 
 
 @dataclass(frozen=True)
@@ -168,6 +247,8 @@ class WatchdogDecision:
     reason: str
     errorCount: int | None
     restartsInWindow: int
+    wedged: bool = False
+    dwellSeconds: float | None = None
 
 
 @dataclass(frozen=True)
@@ -178,6 +259,9 @@ class WatchdogOutcome:
     restarted: bool
     errorCount: int | None
     restartsInWindow: int
+    maxRestartsPerHour: int = 0
+    wedged: bool = False
+    dwellSeconds: float | None = None
 
 
 # ----------------------------------------------------------------------------
@@ -211,6 +295,7 @@ def decideAction(
     now: float,
     restartHistory: Sequence[float],
     policy: WatchdogPolicy,
+    markerPresentSince: float | None = None,
 ) -> WatchdogDecision:
     """Decide whether this tick should restart the kiosk.
 
@@ -231,12 +316,16 @@ def decideAction(
     recent = pruneRestartHistory(restartHistory, now)
     restartsInWindow = len(recent)
 
-    def noop(reason: str) -> WatchdogDecision:
+    def noop(
+        reason: str, *, wedged: bool = False, dwellSeconds: float | None = None
+    ) -> WatchdogDecision:
         return WatchdogDecision(
             action=ACTION_NOOP,
             reason=reason,
             errorCount=errorCount,
             restartsInWindow=restartsInWindow,
+            wedged=wedged,
+            dwellSeconds=dwellSeconds,
         )
 
     # Rule 1: never touch a kiosk that is not running. `systemctl restart` on
@@ -249,25 +338,78 @@ def decideAction(
     if errorCount is None:
         return noop(REASON_JOURNAL_UNREADABLE)
 
-    if errorCount < policy.errorThreshold:
+    # Rule 7 (US-561): MEASURED ZERO is the only healthy verdict.
+    #
+    # US-523 asked `errorCount < 100`, a number calibrated against a
+    # ~30,000-per-window catastrophic wedge. The regime the CIO actually drove
+    # into runs 84-101 per window, so the threshold sat INSIDE the signal's own
+    # band and consecutive ticks of ONE continuous freeze read
+    # "WEDGED -- 101 markers" then "healthy; markers=84". A constant inside a
+    # band is a coin-flip, not a discriminator -- the same lesson Spool reached
+    # on the coolant fan-cycle ceiling from the opposite direction. Atlas
+    # measured healthy as EXACTLY zero after the restart that unfroze it, so
+    # zero is the boundary of the band rather than a point inside it, and
+    # presence needs no tuned magnitude at all.
+    if errorCount <= 0:
         return noop(REASON_HEALTHY)
 
+    # ...and DWELL is what separates a live wedge from a startup hiccup, since
+    # magnitude no longer can. Presence must be UNBROKEN: runOnce clears the
+    # clock on any tick that measures a clean zero.
+    dwellSeconds = 0.0 if markerPresentSince is None else max(0.0, now - markerPresentSince)
+    if dwellSeconds < policy.wedgeDwellSeconds:
+        return noop(REASON_WEDGE_SUSPECTED, dwellSeconds=dwellSeconds)
+
     # --- from here the kiosk IS wedged; the only question is whether we are
-    # --- still allowed to act on it.
+    # --- still allowed to act on it. Every branch below carries wedged=True:
+    # --- declining to act is not a claim that the display is well.
 
     # Rule 5 before rule 4: when both apply, report the louder fault.
     if restartsInWindow >= policy.maxRestartsPerHour:
-        return noop(REASON_BUDGET_EXHAUSTED)
+        return noop(REASON_BUDGET_EXHAUSTED, wedged=True, dwellSeconds=dwellSeconds)
 
     if recent and (now - recent[-1]) < policy.cooldownSeconds:
-        return noop(REASON_COOLDOWN)
+        return noop(REASON_COOLDOWN, wedged=True, dwellSeconds=dwellSeconds)
 
     return WatchdogDecision(
         action=ACTION_RESTART,
         reason=REASON_WEDGE_DETECTED,
         errorCount=errorCount,
         restartsInWindow=restartsInWindow,
+        wedged=True,
+        dwellSeconds=dwellSeconds,
     )
+
+
+def updatedPresenceClock(
+    previous: float | None, errorCount: int | None, now: float
+) -> float | None:
+    """Advance the marker-presence clock for one tick's observation.
+
+    Three cases, and the middle one is the whole point of the clock:
+
+    * journal UNREADABLE -> leave it alone. Absence of evidence must not
+      forgive an accruing wedge, or a journalctl hiccup silently restarts the
+      dwell from scratch every time.
+    * measured ZERO -> clear it. Dwell means CONTINUOUS presence, so one clean
+      tick breaks the run and an isolated GL complaint can never combine with
+      another minutes later to fake a sustained wedge.
+    * markers present -> stamp it if unset, otherwise KEEP the original stamp.
+      Re-stamping each tick would reset the dwell forever.
+
+    Args:
+        previous: The clock as the ledger last recorded it.
+        errorCount: This tick's marker count, or None if unreadable.
+        now: Current epoch seconds.
+
+    Returns:
+        The clock to persist for the next tick.
+    """
+    if errorCount is None:
+        return previous
+    if errorCount <= 0:
+        return None
+    return now if previous is None else previous
 
 
 def journalWindowStart(now: float, restartHistory: Sequence[float], windowSeconds: int) -> float:
@@ -344,14 +486,26 @@ def countWedgeMarkers(
         logger.warning("kiosk-watchdog: journal unreadable (%s: %s)", type(exc).__name__, exc)
         return None
 
+    stdout = completed.stdout or ""
+
     if completed.returncode != 0:
+        # US-561 defect 3b. `journalctl --grep=` exits 1 when NOTHING MATCHED,
+        # which on a healthy kiosk is every single tick. US-523 read any
+        # non-zero exit as "unreadable" and so reported a clean kiosk as an
+        # honest-unknown -- the exact inverse of this function's own docstring,
+        # and it made a genuinely broken journal indistinguishable from a
+        # working one. The fix MEASURES readability instead of inferring it
+        # from an exit code: if the journal reads fine and the grep printed
+        # nothing, the zero is real.
+        if not stdout.strip() and journalIsReadable(runFn=runFn):
+            return 0
         logger.warning(
-            "kiosk-watchdog: journalctl exited %s -- treating the journal as unreadable",
+            "kiosk-watchdog: journalctl exited %s and the journal does not read -- "
+            "treating the count as unreadable (not as a clean zero)",
             completed.returncode,
         )
         return None
 
-    stdout = completed.stdout or ""
     return sum(1 for line in stdout.splitlines() if line.strip())
 
 
@@ -427,66 +581,119 @@ def restartUnit(
     return True
 
 
-def readRestartHistory(statePath: str | Path) -> list[float]:
-    """Read the restart ledger, degrading to "no known restarts".
+def journalIsReadable(
+    runFn: Callable[..., subprocess.CompletedProcess] = subprocess.run,
+) -> bool:
+    """Probe whether this process can read the journal AT ALL.
+
+    Deliberately UNFILTERED -- no ``-u``, no ``--grep``. The question is "does
+    the journal read", and a unit-scoped probe would answer it wrongly for a
+    unit that simply has no entries yet. One line is enough to settle it.
+
+    Only ever called on ``countWedgeMarkers``' failure path, so a healthy tick
+    still costs exactly one journalctl.
+
+    Args:
+        runFn: Injection seam for subprocess.run.
+
+    Returns:
+        Whether journalctl returned a line.
+    """
+    argv = ["journalctl", "--lines=1", "--no-pager", "--output=cat"]
+    try:
+        completed = runFn(
+            argv,
+            capture_output=True,
+            text=True,
+            timeout=_COMMAND_TIMEOUT_SECONDS,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        logger.warning("kiosk-watchdog: journal readability probe failed (%s)", exc)
+        return False
+    return completed.returncode == 0
+
+
+def _asEpoch(value: object) -> float | None:
+    """Coerce a ledger value to an epoch, or None if it is not one.
+
+    bool is a subclass of int, so a JSON ``true`` would otherwise become 1.0 --
+    a plausible-looking 1970 timestamp (the float(True) trap from US-517). For
+    the presence clock that is worse than having no clock at all: ``now - 1.0``
+    is a 56-year dwell, so the very next tick carrying one marker would restart
+    the panel.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return float(value)
+
+
+def readLedger(statePath: str | Path) -> LedgerState:
+    """Read the watchdog ledger, degrading to "remembers nothing".
 
     A missing file is normal (the ledger lives on tmpfs and clears at boot). A
     corrupt or wrong-shaped file must not crash the tick either -- but note the
     caller still refuses to restart when the ledger cannot be WRITTEN, so a
     permanently broken ledger cannot turn into an unbounded restart loop.
 
+    A pre-US-561 file (no presence key) reads as attempts + no clock, so the
+    single tick that straddles a deploy keeps its restart budget.
+
     Args:
         statePath: Ledger path.
 
     Returns:
-        Recorded attempt epochs; empty when unknown.
+        The recorded state; ``LedgerState.empty()`` when unknown.
     """
     path = Path(statePath)
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError:
-        return []
+        return LedgerState.empty()
     except (OSError, ValueError) as exc:
-        logger.warning("kiosk-watchdog: ledger unreadable (%s) -- assuming no restarts", exc)
-        return []
+        logger.warning("kiosk-watchdog: ledger unreadable (%s) -- assuming no history", exc)
+        return LedgerState.empty()
 
     if not isinstance(raw, dict):
-        logger.warning("kiosk-watchdog: ledger has unexpected shape -- assuming no restarts")
-        return []
+        logger.warning("kiosk-watchdog: ledger has unexpected shape -- assuming no history")
+        return LedgerState.empty()
 
     attempts = raw.get(_LEDGER_KEY)
-    if not isinstance(attempts, list):
-        return []
+    recorded = attempts if isinstance(attempts, list) else []
+    epochs = [epoch for epoch in (_asEpoch(value) for value in recorded) if epoch is not None]
 
-    # bool is a subclass of int: a JSON `true` would otherwise become 1.0 and
-    # read as a plausible 1970 timestamp (the float(True) trap from US-517).
-    return [
-        float(value)
-        for value in attempts
-        if isinstance(value, (int, float)) and not isinstance(value, bool)
-    ]
+    return LedgerState(
+        restartAttempts=epochs,
+        markerPresentSince=_asEpoch(raw.get(_LEDGER_PRESENCE_KEY)),
+    )
 
 
-def writeRestartHistory(statePath: str | Path, history: Sequence[float]) -> bool:
-    """Persist the restart ledger atomically.
+def writeLedger(statePath: str | Path, state: LedgerState) -> bool:
+    """Persist the watchdog ledger atomically.
 
     Args:
         statePath: Ledger path.
-        history: Attempt epochs to record.
+        state: The state to record.
 
     Returns:
         True on success; False (never an exception) when the ledger cannot be
-        written -- the caller treats that as "do not restart".
+        written -- the caller treats that as "do not restart, and do not call
+        this healthy".
     """
     path = Path(statePath)
-    payload = json.dumps({_LEDGER_KEY: list(history)})
+    payload = json.dumps(
+        {
+            _LEDGER_KEY: list(state.restartAttempts),
+            _LEDGER_PRESENCE_KEY: state.markerPresentSince,
+        }
+    )
     tmpPath = path.with_name(path.name + ".tmp")
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         tmpPath.write_text(payload, encoding="utf-8")
         os.replace(tmpPath, path)
     except OSError as exc:
-        logger.error("kiosk-watchdog: cannot persist the restart ledger at %s (%s)", path, exc)
+        logger.error("kiosk-watchdog: cannot persist the watchdog ledger at %s (%s)", path, exc)
         return False
     return True
 
@@ -503,8 +710,8 @@ def runOnce(
     isActiveFn: Callable[[str], bool],
     errorCountFn: Callable[[str, float], int | None],
     restartFn: Callable[[str], bool],
-    readHistoryFn: Callable[[], list[float]],
-    writeHistoryFn: Callable[[list[float]], bool],
+    readLedgerFn: Callable[[], LedgerState],
+    writeLedgerFn: Callable[[LedgerState], bool],
     clockFn: Callable[[], float] = time.time,
 ) -> WatchdogOutcome:
     """Run one watchdog tick: observe, decide, and act at most once.
@@ -525,110 +732,182 @@ def runOnce(
     now = clockFn()
     active = isActiveFn(unitName)
 
-    history: list[float] = []
+    ledger = LedgerState.empty()
     errorCount: int | None = None
     if active:
-        history = readHistoryFn()
-        sinceEpoch = journalWindowStart(now, history, policy.windowSeconds)
+        ledger = readLedgerFn()
+        sinceEpoch = journalWindowStart(now, ledger.restartAttempts, policy.windowSeconds)
         errorCount = errorCountFn(unitName, sinceEpoch)
+
+    history = ledger.restartAttempts
+    markerPresentSince = updatedPresenceClock(ledger.markerPresentSince, errorCount, now)
 
     decision = decideAction(
         unitActive=active,
         errorCount=errorCount,
         now=now,
         restartHistory=history,
+        markerPresentSince=markerPresentSince,
         policy=policy,
     )
 
-    if decision.action != ACTION_RESTART:
-        _logNoop(decision, unitName, policy)
+    def outcomeOf(reason: str, *, restarted: bool, restartsInWindow: int) -> WatchdogOutcome:
         return WatchdogOutcome(
-            reason=decision.reason,
-            restarted=False,
+            reason=reason,
+            restarted=restarted,
             errorCount=decision.errorCount,
-            restartsInWindow=decision.restartsInWindow,
+            restartsInWindow=restartsInWindow,
+            maxRestartsPerHour=policy.maxRestartsPerHour,
+            wedged=decision.wedged,
+            dwellSeconds=decision.dwellSeconds,
+        )
+
+    if decision.action != ACTION_RESTART:
+        # The dwell lives in the ledger, so a clock change has to survive the
+        # tick or the discriminator has no memory. Persist ONLY on a change --
+        # a quiet tick still leaves no footprint.
+        if markerPresentSince != ledger.markerPresentSince and not writeLedgerFn(
+            LedgerState(restartAttempts=history, markerPresentSince=markerPresentSince)
+        ):
+            logger.error(
+                "kiosk-watchdog: %s reported %s '%s' markers but the ledger is unwritable -- "
+                "the wedge clock cannot advance, so this tick is UNCERTAIN, not healthy",
+                unitName,
+                decision.errorCount,
+                WEDGE_MARKER,
+            )
+            return outcomeOf(
+                REASON_LEDGER_UNWRITABLE,
+                restarted=False,
+                restartsInWindow=decision.restartsInWindow,
+            )
+
+        _logNoop(decision, unitName, policy)
+        return outcomeOf(
+            decision.reason, restarted=False, restartsInWindow=decision.restartsInWindow
         )
 
     # Rule 6: record the attempt FIRST. The cooldown + budget only bound
     # anything if no restart can happen without its bookkeeping landing, so an
     # unwritable ledger cancels the restart instead of quietly uncapping it.
+    # The presence clock is CLEARED with the restart: the fresh chromium
+    # generation must earn its own dwell. Inheriting the dead one's clock would
+    # restart the new kiosk on its very first marker.
     updated = pruneRestartHistory(history, now) + [now]
-    if not writeHistoryFn(updated):
+    if not writeLedgerFn(LedgerState(restartAttempts=updated, markerPresentSince=None)):
         logger.error(
-            "kiosk-watchdog: kiosk %s looks WEDGED (%s '%s' in %ss) but the restart "
-            "ledger is unwritable -- refusing to restart, because an unrecorded "
+            "kiosk-watchdog: kiosk %s looks WEDGED (%s '%s' sustained %.0fs) but the "
+            "restart ledger is unwritable -- refusing to restart, because an unrecorded "
             "restart cannot be rate-limited",
             unitName,
             decision.errorCount,
             WEDGE_MARKER,
-            policy.windowSeconds,
+            decision.dwellSeconds or 0.0,
         )
-        return WatchdogOutcome(
-            reason=REASON_LEDGER_UNWRITABLE,
+        return outcomeOf(
+            REASON_LEDGER_UNWRITABLE,
             restarted=False,
-            errorCount=decision.errorCount,
             restartsInWindow=decision.restartsInWindow,
         )
 
     restartsInWindow = len(updated)
     logger.warning(
-        "kiosk-watchdog: kiosk %s WEDGED -- %s '%s' errors within %ss; restarting "
-        "(attempt %s of %s this hour). US-522 was supposed to remove this failure "
+        "kiosk-watchdog: kiosk %s WEDGED -- %s '%s' errors sustained for %.0fs; restarting "
+        "(attempt %s of %s this hour, %s left). US-522 was supposed to remove this failure "
         "class: a restart here means it is still live.",
         unitName,
         decision.errorCount,
         WEDGE_MARKER,
-        policy.windowSeconds,
+        decision.dwellSeconds or 0.0,
         restartsInWindow,
         policy.maxRestartsPerHour,
+        max(0, policy.maxRestartsPerHour - restartsInWindow),
     )
 
     if not restartFn(unitName):
-        return WatchdogOutcome(
-            reason=REASON_RESTART_FAILED,
-            restarted=False,
-            errorCount=decision.errorCount,
-            restartsInWindow=restartsInWindow,
+        return outcomeOf(
+            REASON_RESTART_FAILED, restarted=False, restartsInWindow=restartsInWindow
         )
 
     logger.warning("kiosk-watchdog: %s restarted; display should be live again", unitName)
-    return WatchdogOutcome(
-        reason=REASON_WEDGE_RESTARTED,
-        restarted=True,
-        errorCount=decision.errorCount,
-        restartsInWindow=restartsInWindow,
+    return outcomeOf(
+        REASON_WEDGE_RESTARTED, restarted=True, restartsInWindow=restartsInWindow
+    )
+
+
+def _budgetPhrase(decision: WatchdogDecision, policy: WatchdogPolicy) -> str:
+    """"N of M restarts this hour (K left)" -- the observable form.
+
+    US-561 defect 3d: on 2026-08-20 two of five restarts were consumed mid-drive
+    and nothing surfaced it. "2 restarts" is not observable; "2 of 5" is.
+    """
+    remaining = max(0, policy.maxRestartsPerHour - decision.restartsInWindow)
+    return (
+        f"{decision.restartsInWindow} of {policy.maxRestartsPerHour} restarts this hour "
+        f"({remaining} left)"
     )
 
 
 def _logNoop(decision: WatchdogDecision, unitName: str, policy: WatchdogPolicy) -> None:
     """Log a no-op tick at the level its reason deserves."""
+    budget = _budgetPhrase(decision, policy)
+
     if decision.reason == REASON_BUDGET_EXHAUSTED:
         logger.error(
-            "kiosk-watchdog: %s is WEDGED AGAIN (%s '%s' in %ss) and the restart budget "
-            "is spent (%s in the last hour) -- NOT restarting. The freeze class is live; "
-            "this needs a human, not another restart.",
+            "kiosk-watchdog: %s is WEDGED AGAIN (%s '%s' sustained %.0fs) and the restart "
+            "budget is spent (%s) -- NOT restarting. The freeze class is live; this needs "
+            "a human, not another restart.",
             unitName,
             decision.errorCount,
             WEDGE_MARKER,
-            policy.windowSeconds,
-            decision.restartsInWindow,
+            decision.dwellSeconds or 0.0,
+            budget,
         )
         return
     if decision.reason == REASON_COOLDOWN:
         logger.warning(
-            "kiosk-watchdog: %s still reporting %s '%s' errors but the %ss cooldown from "
-            "the last restart has not elapsed -- holding off",
+            "kiosk-watchdog: %s is WEDGED (%s '%s' sustained %.0fs) but the %ss cooldown "
+            "from the last restart has not elapsed -- holding off; %s",
             unitName,
             decision.errorCount,
             WEDGE_MARKER,
+            decision.dwellSeconds or 0.0,
             policy.cooldownSeconds,
+            budget,
+        )
+        return
+    if decision.reason == REASON_WEDGE_SUSPECTED:
+        # NOT healthy, and it must not read as healthy. Markers are present;
+        # the only open question is whether they persist.
+        logger.warning(
+            "kiosk-watchdog: %s is NOT healthy -- %s '%s' markers present for %.0fs of the "
+            "%ss needed to call it wedged. Healthy is measured ZERO; this is not zero. %s",
+            unitName,
+            decision.errorCount,
+            WEDGE_MARKER,
+            decision.dwellSeconds or 0.0,
+            policy.wedgeDwellSeconds,
+            budget,
+        )
+        return
+
+    # Routine tick. A partly-spent budget is a standing fact about the
+    # display's health, so it is stated every tick until it ages out -- rather
+    # than only in the one WARNING line emitted at the moment of the restart.
+    if decision.restartsInWindow > 0:
+        logger.warning(
+            "kiosk-watchdog: no action (%s; markers=%s) but the display has already "
+            "self-healed this hour -- %s",
+            decision.reason,
+            decision.errorCount,
+            budget,
         )
         return
     logger.info(
-        "kiosk-watchdog: no action (%s; markers=%s, restarts this hour=%s)",
+        "kiosk-watchdog: no action (%s; markers=%s, %s)",
         decision.reason,
         decision.errorCount,
-        decision.restartsInWindow,
+        budget,
     )
 
 
@@ -646,10 +925,16 @@ def _buildParser() -> argparse.ArgumentParser:
         "--window-seconds", type=int, default=DEFAULT_WINDOW_SECONDS, help="journal look-back"
     )
     parser.add_argument(
-        "--error-threshold",
+        "--marker-read-cap",
         type=int,
-        default=DEFAULT_ERROR_THRESHOLD,
-        help=f"'{WEDGE_MARKER}' errors within the window that mean wedged",
+        default=DEFAULT_MARKER_READ_CAP,
+        help=f"max '{WEDGE_MARKER}' journal lines read per tick (an I/O bound, NOT a verdict)",
+    )
+    parser.add_argument(
+        "--wedge-dwell-seconds",
+        type=int,
+        default=DEFAULT_WEDGE_DWELL_SECONDS,
+        help="how long markers must be CONTINUOUSLY present before it counts as wedged",
     )
     parser.add_argument(
         "--cooldown-seconds",
@@ -690,25 +975,23 @@ def main(
 
     policy = WatchdogPolicy(
         windowSeconds=args.window_seconds,
-        errorThreshold=args.error_threshold,
+        markerReadCap=args.marker_read_cap,
+        wedgeDwellSeconds=args.wedge_dwell_seconds,
         cooldownSeconds=args.cooldown_seconds,
         maxRestartsPerHour=args.max_restarts_per_hour,
     )
     statePath = Path(args.state_path)
-    # Cap the journal read one line past the threshold: the decision only needs
-    # "at or above", and a live wedge would otherwise return ~30,000 lines.
-    markerCap = policy.errorThreshold + 1
 
     outcome = runOnceFn(
         policy=policy,
         unitName=args.unit,
         isActiveFn=unitIsActive,
         errorCountFn=lambda unit, since: countWedgeMarkers(
-            unit, sinceEpoch=since, cap=markerCap
+            unit, sinceEpoch=since, cap=policy.markerReadCap
         ),
         restartFn=restartUnit,
-        readHistoryFn=lambda: readRestartHistory(statePath),
-        writeHistoryFn=lambda history: writeRestartHistory(statePath, history),
+        readLedgerFn=lambda: readLedger(statePath),
+        writeLedgerFn=lambda state: writeLedger(statePath, state),
         clockFn=time.time,
     )
     return EXIT_RUNTIME if outcome.reason in _FAULT_REASONS else EXIT_OK

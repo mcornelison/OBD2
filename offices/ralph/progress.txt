@@ -466,3 +466,989 @@ Task: index_lock preflight clears a STABILITY-VERIFIED non-empty stale lock (BL-
 - **Gotcha**: `tests/pm` carries TWO standing reds (TD-081, from the retired
   freeze mechanic, commit `22f65a8`). Budget a step to prove they are not yours
   -- and note that a standing red trains agents to read red as normal.
+
+# ============================================================================
+# Ralph progress -- Sprint 75 / V0.29.30 (V0.29 closeout + F-132 chrome)
+# 11 stories. Order fixed by validationMethod: US-560 FIRST, chrome LAST.
+# ============================================================================
+
+## 2026-08-21 - US-560 (Rex / Session 1)
+Task: APPLY the US-552 mode pin on the live Pi + verify native 480x320
+Result: passes:false -- PREMISE REFUTED BY THE HARDWARE. BL-034 filed.
+        NOT a sprint blocker (US-561 is resolution-independent).
+
+### What was implemented:
+- **The Pi IS reachable from this harness** -- the Sprint 74 note said otherwise,
+  so this story was executable rather than deferred. Re-confirmed the premise
+  live (`fb0 virtual_size` = 1280,720), discovered the connector from sysfs
+  (HDMI-A-1 connected, HDMI-A-2 disconnected -- exactly one, so interlock 2 is
+  satisfied), and RAN `deploy/set-display-mode.sh` on the Pi.
+- **It refused at interlock 5 and wrote nothing.** The OSOYOO panel does not
+  advertise 480x320 in its EDID mode list. EDID says mfg=OSY, model=HDMI35,
+  PREFERRED detailed timing 1280x720; the advertised list runs 1280x720 /
+  1920x1080 / 1280x1024 / 1440x900 / 1280x800 / 1024x768 / 800x600 / 720x480 /
+  640x480 / 720x400. No 480x320 anywhere. There is nothing to pin.
+- **Not a script bug**: `tests/deploy/test_set_display_mode.py` 9 passed /
+  0 failed. The script did exactly what it was built to do, and its own refusal
+  text routes this case to Atlas as an EDID finding. BL-034 is that finding.
+- **Root cause of the false premise is a FABRICATED FIXTURE.** US-552's catalog
+  carried `# The panel's advertised mode list as a 3.5" 480x320 HDMI panel
+  reports it: PANEL_MODES='...480x320'`. Nobody had read the EDID -- the fixture
+  ASSERTED the hardware fact that made the pin look applicable, so the suite
+  could only ever go green. Secondary cause is a UNIT CONFLATION: the doc row
+  `Resolution | 480 x 320 pixels` is the GLASS, and the script consumes it as a
+  KMS SIGNAL TIMING. The HDMI35 is a SCALER panel -- 480x320 glass behind a chip
+  that accepts standard HDMI timings and downsamples in hardware.
+- **Changed test-only, and deliberately disposition-independent** (the target
+  mode is Atlas's call; I did not pre-empt it): relabelled PANEL_MODES as the
+  SYNTHETIC write-path fixture it actually is, added
+  OSOYOO_HDMI35_MEASURED_MODES with the command + date measured, and added
+  Scenario 15 pinning that the REAL panel makes the script refuse with the boot
+  cmdline untouched. Catalog 50 -> 56 assertions.
+
+### Files changed:
+- Modified: `tests/deploy/test_set_display_mode.sh` (honest fixture label,
+  measured mode list, Scenario 15)
+- Modified: `tests/deploy/test_set_display_mode.py` (docstring 14 -> 15, history)
+- Created: `offices/pm/blockers/BL-034-us560-panel-does-not-advertise-480x320-edid-finding.md`
+
+### Learnings for future iterations:
+- **Pattern discovered (the whole story)**: A TEST FIXTURE THAT ASSERTS A
+  HARDWARE FACT IS A FABRICATION, AND IT MAKES ITS OWN SUITE UNFALSIFIABLE.
+  US-552 could not have gone red on the real panel -- the fixture guaranteed the
+  happy path existed. When a fixture stands in for hardware nobody has read,
+  label it SYNTHETIC and say what it is for; the moment a comment says "as the
+  panel reports it", it has become a measurement that was never taken.
+- **Pattern discovered**: GROUND A CONSTANT AGAINST THE DOC *AND CHECK THE DOC
+  MEANS THE SAME QUANTITY*. US-552 correctly refused to ground 480x320 against a
+  second copy of the literal, and grounded it against
+  `docs/hardware-reference.md` instead -- but that row is the GLASS resolution
+  and the script needed a SIGNAL TIMING. Right discipline, wrong quantity. Same
+  shape as IAT-as-ambient. Pin the UNIT, not just the source.
+- **Gotcha**: "the Pi is unreachable from this harness" was stale. It cost
+  Sprint 74 a deferral. **Re-test an environmental claim before inheriting it**
+  -- one `ssh` settled it in seconds and turned a deferred story into a finding.
+- **Pattern discovered**: when the verification refutes the premise, the
+  deliverable is the FINDING plus a guard that stops the premise recurring --
+  not a fix, and not a bare blocker. Scenario 15 pins the measured hardware
+  while encoding NO ruling on what to pin instead, so it stays valid whichever
+  way BL-034 goes. A blocker rots; a test does not.
+- **Gotcha (flagged to PM, affects US-555/556/557 THIS sprint)**: the chromium
+  kiosk runs with NO `--window-size` and NO `--force-device-scale-factor`, so it
+  fills the X screen and renders into a **1280x720 CSS-px viewport** -- while
+  US-557's band budget ("body 224px; 3 rows + footer = 222") is ~320-canvas
+  arithmetic. Budgeted against one canvas, rendered on another. Build+validate
+  the chrome stories at 720p and settling BL-034 afterwards invalidates all
+  three.
+- **Gotcha**: the compound-bash refusal is real here (`cmd; cmd` and `a && b`
+  both got refused). Run ONE command per Bash call. `/tmp` is not writable --
+  scratch files go inside the repo and get removed before committing.
+- **Gotcha**: `xxd` and `edid-decode` are NOT installed on the Pi; `python3` is.
+  Parse the EDID with a python3 one-liner over
+  `/sys/class/drm/<connector>/edid` rather than assuming a tool exists.
+---
+
+## 2026-08-21 - US-561 (Rex / Session 2)
+Task: Watchdog must not report healthy while the display is frozen
+Result: passes:true. All FOUR of Atlas's section-3 defects dispositioned (AC-3
+        forbids fixing one and closing). 3 fixed, 1 documented as an honest bound.
+
+### What was implemented:
+- **3a THE THRESHOLD IS GONE AS A VERDICT.** `DEFAULT_ERROR_THRESHOLD=100` was
+  calibrated against a ~30,000/window catastrophic wedge; the regime the CIO
+  drove into runs 84-101, so the constant sat INSIDE the signal's own band and
+  one continuous freeze logged `WEDGED -- 101` then `healthy; markers=84`.
+  The AC forbids a re-tuned constant, and rightly: that only moves the
+  coin-flip to the next regime. Shipped PRESENCE + DWELL instead. Healthy was
+  MEASURED as exactly zero, so zero is the BOUNDARY of the band rather than a
+  point inside it -- which is why presence needs no tuned magnitude and cannot
+  be mis-calibrated against a rate nobody has measured yet. Any marker at all
+  = the class is live; sustained UNBROKEN for 60s (two timer ticks) = wedged.
+  Threshold+dwell, the shape Spool reached independently on the coolant ceiling.
+- `100` survives ONLY as `DEFAULT_MARKER_READ_CAP` -- what it always genuinely
+  was, an I/O bound. A STRUCTURAL test forbids it re-entering `decideAction`.
+- New `REASON_WEDGE_SUSPECTED` (markers present, dwell not yet met): not a
+  restart, and pointedly not "healthy". New `wedged` flag is True on cooldown
+  and budget_exhausted too -- declining to act is not a claim of wellness.
+- **3b `journalctl --grep` exits 1 on ZERO MATCHES**, so every healthy tick was
+  reported "unreadable" -- the exact inverse of the docstring's promise. Fix
+  MEASURES readability (`journalIsReadable()`, one unfiltered `--lines=1`)
+  instead of inferring it from an exit code. Probe runs on the failure path
+  only. **Both halves re-measured LIVE on the Pi** rather than inherited.
+- **3c ~3min detection lag: NOT FIXED, deferred with cause + the false claim
+  it produced was corrected in place.** Markers are lagging by construction;
+  closing it needs a repaint heartbeat published BY the page (a dashboard
+  story). The timer header literally claimed "a wedge is seen within about one
+  window" -- corrected. Detection did get ~50s EARLIER anyway: Atlas's dismissed
+  1-marker sample at 16:16:39 now STARTS the clock.
+- **3d budget: policy unchanged (Atlas called it correct); OBSERVABILITY fixed**
+  per AC-5. "N of M restarts this hour (K left)" on EVERY tick, at WARNING once
+  any is consumed, INFO while untouched (both directions pinned).
+- Gate 41 -> 78 tests. Three pins MOVED, not deleted, each saying what it used
+  to assert.
+
+### Files changed:
+- Modified: `src/pi/display/kiosk_watchdog.py` (discriminator, probe, ledger,
+  budget logging, header)
+- Modified: `tests/pi/display/test_kiosk_watchdog.py` (the US-561 gate)
+- Modified: `deploy/eclipse-kiosk-watchdog.timer` (the false latency claim)
+- Modified: `deploy/eclipse-kiosk-watchdog.service` (ledger contents comment)
+
+### Learnings for future iterations:
+- **Pattern discovered (the whole story)**: A THRESHOLD SET INSIDE A SIGNAL'S
+  OWN OPERATING BAND IS NOT A DETECTOR, AND THE FIX IS NEVER A BIGGER NUMBER.
+  The tell is that two samples of the SAME state disagree. Ask what was
+  MEASURED for the healthy case -- here exactly zero -- and if that value is
+  the boundary rather than a point inside the band, presence+dwell replaces
+  magnitude entirely and there is no constant left to mis-calibrate. This is
+  now the third independent arrival at threshold+dwell on this project.
+- **Pattern discovered**: when an AC forbids a SHAPE ("not a retuned constant"),
+  behaviour cannot pin it -- a threshold of 10 passes every behavioural test I
+  wrote while re-creating the defect at the next regime shift. Assert the shape
+  STRUCTURALLY. (Same lesson as US-541-a; it keeps being the only way.)
+- **Pattern discovered**: MEASURE READABILITY, DON'T INFER IT FROM AN EXIT CODE.
+  `--grep` overloads exit 1 to mean "no matches", so the instrument could not
+  report its own good news and a broken journal was indistinguishable from a
+  clean one. One extra cheap command on the failure path turns a guess into a
+  measurement -- and re-measuring the premise on the real Pi (RC=1 empty vs
+  probe RC=0) took one ssh, exactly the US-560 lesson paying off again.
+- **Gotcha (caught by my own gate, in my TEST not the code)**: `runOnce`
+  reports the OUTCOME (`wedge_restarted`), `decideAction` reports the DECISION
+  (`wedge_detected`). Asserting the decision reason on a runOnce result would
+  have gone green ONLY IF THE RESTART FAILED. Check which layer's vocabulary
+  you are asserting in.
+- **Gotcha**: adding state to a detector adds a failure mode to the DETECTOR.
+  The dwell lives in the ledger, so an unwritable ledger means the watchdog has
+  lost its memory -- and the old code's "no restart, carry on" would have
+  logged `healthy` from a detector that could no longer detect. Any new
+  persisted state needs its own not-healthy path.
+- **Gotcha**: a corrupt clock is worse than no clock. JSON `true` floats to 1.0
+  and reads as a 56-year dwell, restarting the panel on the next single marker
+  (the US-517 trap again). Coerce-or-None, never coerce-or-hope.
+- **Gotcha**: an ImportError/collection error masks every per-test reason --
+  landing the NAME skeleton first (constants, dataclass fields, inert stubs)
+  turned one useless red into 24 behavioural ones. Same trick as US-554, and
+  it is worth the extra run every time.
+- **Gotcha**: two of my new tests went GREEN against the skeleton for the wrong
+  reason (the old threshold happened to route them the same way). Check the red
+  list for tests that SHOULD be failing and are not, before implementing.
+- **Gotcha**: `pytest -q` still prints no summary line on this tree, and the
+  Bash tool refuses `cd X && cmd > file` outright. Redirect from the default
+  cwd, then `echo $?` AND `grep -cE '^(FAILED|ERROR)'`.
+---
+
+## 2026-08-21 - US-563 (Agent 1 / Session 2)
+Task: drive_summary must not read as assessed before it is assessed
+
+### What was implemented:
+- Migration **v0024** lands three schema truths, forward-only, each substep
+  idempotent with a post-condition probe:
+  1. every `data_quality` column DEFAULTs to the NON-verdict `'unassessed'`
+     (CHECK enums widened first), 2. `drive_summary.is_real` DEFAULTs NULL,
+  3. `ambient_temp_at_start_c` -> `intake_air_temp_at_start_c`.
+- **I RE-MEASURED THE PREMISE ON LIVE PROD INSTEAD OF INHERITING IT, AND THE
+  MEASUREMENT WIDENED THE STORY.** A read-only information_schema probe
+  returned `drives`, `drive_statistics` AND `drive_summary` ALL defaulting
+  `data_quality='full'`. AC-2 names only drive_summary. Building to the story
+  text would have fixed the one column that had already embarrassed us and
+  left two loaded in exactly the same way. All three re-defaulted.
+- Refused the tempting carve-out ("drives/drive_statistics are always written
+  explicitly, leave them"): **"the writer always sets it" is a claim about
+  INTENT, never about ENFORCEMENT** -- the inert-guard anti-pattern, and the
+  same reasoning that let the original default sit unnoticed.
+- **The durable half is the applied-schema guard** (Atlas required its own AC
+  + own test). It asserts COLUMN DEFAULTS not just presence/type, is
+  DISCOVERY-DRIVEN (asks information_schema which tables carry the column, so
+  a table added tomorrow is covered with no edit), and has a NEGATIVE
+  SELF-TEST parametrised over every assessed verdict, a not-yet-existing
+  table, and is_real=0 AND =1.
+- Split the constant that made the defect unsayable: one
+  `*_DATA_QUALITY_DEFAULT` was both "the column default" and "the clean
+  verdict" -> `*_FULL` / `*_ASSESSED_*_VALUES` / `*_VALUES` /
+  `*_COLUMN_DEFAULT`, each named for its layer.
+- `sync.py` maps the legacy Pi key so a not-yet-deployed Pi still LANDS its
+  value -- no flag day, no deploy coupling.
+- Gate: 70 passed, 2 skipped (deploy-time live probe, opt-in + printed
+  reason). ruff clean on all 29 touched files (caught one real F541 in my own
+  new test). Filed TD-082 + TD-083.
+
+### Files changed:
+- Created: `src/server/migrations/versions/v0024_us563_unassessed_defaults_and_intake_rename.py`
+- Created: `tests/server/test_applied_schema_column_defaults.py` (the durable guard)
+- Created: `tests/server/test_drive_summary_unassessed_and_intake_air.py`
+- Created: `tests/server/test_migration_0024_unassessed_defaults_and_intake_rename.py`
+- Modified: `src/server/db/models.py` (constant split, defaults, rename)
+- Modified: `src/server/api/sync.py` (legacy-key rename seam)
+- Modified: `src/server/migrations/__init__.py` (+ 5 earlier migrations, 15 test files) -- symbol re-pointing
+- Created: `offices/pm/tech_debt/TD-082-...md`, `TD-083-...md`
+
+### Learnings for future iterations:
+- **Pattern discovered (the big one)**: RE-MEASURING A STORY'S SCHEMA PREMISE
+  IS THE SAME ACT AS CHECKING ITS SCOPE. The probe that confirms "yes, the
+  default is 'full'" also tells you WHICH TABLES have it -- and here that
+  turned a 1-column story into a 3-column one for ~5 seconds of work. Third
+  sprint running that re-measuring beat inheriting (US-560 fabricated
+  fixture, US-561 journalctl RC, now this).
+- **Pattern discovered**: `bash offices/pm/scripts/prod_db_query.sh "<SELECT>"`
+  works from this harness for READ-ONLY prod SQL, no creds needed, ~5s. It
+  makes "what does the deployed schema actually say" a cheap question. Do not
+  mutate prod from here -- deploy is PM's.
+- **Pattern discovered**: a defect that "should have been obvious" is often a
+  VOCABULARY problem. There was no name for "not yet assessed" because the
+  default WAS a verdict, so nobody could state the bug in the codebase's own
+  terms. Check whether the words existed before blaming the reviewers.
+- **Pattern discovered**: a guard that has never been SEEN to fail is not
+  known to be a guard. Ship the negative self-test in the same story --
+  validationCriteria #2 asked for exactly this, and it is the difference
+  between a guard and a comment.
+- **Gotcha (nearly took three failures that were not mine)**: VERIFY "my
+  change broke this" before believing it. `git show HEAD:<file>` answers
+  "was this red before me" cheaply and NON-DESTRUCTIVELY -- `git stash` is
+  not on Ralph's allow-list and would have risked a large uncommitted tree.
+  Two failures were stale tail pins (already TD-062); the third looked
+  genuinely mine because I edited `sync.py`, and only the HEAD diff proved
+  `pi_state` predated me by a whole story.
+- **Gotcha**: in a migration, widen the CHECK BEFORE moving the DEFAULT.
+  Setting a default the CHECK forbids does NOT fail at ALTER time -- it fails
+  on the next INSERT that omits the column, i.e. on the next Pi sync, in the
+  car.
+- **Gotcha**: a DEFAULT change must NOT be back-filled onto existing rows.
+  The migration cannot tell a genuine batch `'full'` from a pre-computed
+  default, so rewriting them would MANUFACTURE a reading.
+- **Gotcha (harness)**: `grep -rn` over this repo TIMES OUT at 120s on the SMB
+  share -- use the Grep tool (ripgrep) instead, it returns instantly.
+- **Gotcha (harness)**: PowerShell `@'...'@` here-strings LEAK LITERAL `@`
+  LINES when used in a Bash `git commit -m` -- it produced a commit whose
+  subject was `@`. Use `git commit -F -` with a `<<'EOF'` heredoc.
+---
+
+## 2026-08-21 - US-566 (Agent 1 / Session 3)
+Task: powerwatch must log its arm decision -- we cannot tell if safety armed
+
+### What was implemented:
+- **THE PREMISE WAS TOO BROAD AND ONE journalctl NARROWED IT.** AC-1 says the
+  service "emits ZERO application log lines today". It does not: the journal
+  carries the GPIO6 power-LOST trigger, the boot-grace "ignoring" lines and
+  UpsMonitor I2C warnings, all from the same pids. What it carries ZERO of,
+  across 8 service starts, is the arm-SUCCESS line.
+- **Real mechanism: this module never configured logging at all.** With no
+  root handler Python falls back to `logging.lastResort` (level WARNING,
+  stderr), so the whole INFO tier was discarded. The success line was
+  `logger.info` (never seen); the failure line is `logger.error` (visible --
+  it has simply never fired). AC-1 is right that both are unconditional; the
+  defect is in what is NOT there, which is why no code review caught it.
+- **Why that distinction is load-bearing:** silence meant EITHER "armed fine"
+  OR "the instrument is broken", with nothing to tell them apart -- the same
+  false-healthy shape US-561 removed from the kiosk watchdog one story earlier
+  in this sprint.
+- **Three fixes.** (1) `main()` installs the project logging config before
+  anything reports a decision -- level only, deliberately no logFile (a
+  shutdown-critical service must not open a second writer on the OBD app's log
+  file). (2) `emitArmDecision()` fires unconditionally on BOTH branches at
+  WARNING/ERROR behind one greppable `ARM DECISION` prefix. (3) The disarmed
+  branch re-states its cause on an interval instead of sitting on a bare
+  `threading.Event().wait()` forever.
+- Fixed a small SSOT leak inside the lines being replaced: the old ERROR read
+  its diagnostics from raw `pld.*` while the decision came from
+  `provider.startupArmCheck()`. Evidence now reads through the provider.
+- New gate `test_arm_decision_logging.py` (24 tests incl. a 6-way MOVED-pin
+  parametrisation) + 2 mechanism assertions added to the systemd-parity
+  subprocess. 71 passed, exit 0; ruff clean on all 3 files.
+
+### Files changed:
+- Modified: `src/pi/power/power_watch/__main__.py` (setupLogging, arm-decision
+  surface, re-stating disarmed hold)
+- Created: `tests/pi/power/power_watch/test_arm_decision_logging.py` (the gate)
+- Modified: `tests/pi/power/power_watch/test_systemd_parity.py` (logging
+  mechanism guard in the real-invocation subprocess)
+
+### Learnings for future iterations:
+- **Pattern discovered (the whole story)**: A PREMISE THAT IS TOO BROAD COSTS
+  AS MUCH AS ONE THAT IS WRONG. "Emits zero log lines" would have sent me
+  hunting for missing log calls -- there are none. When a story says "X never
+  happens", ask WHICH X and check the NEIGHBOURS: the neighbours working
+  (WARNING+ came through fine) is the clue that points at the level filter
+  rather than the call sites. Four sprints running that re-measuring changed
+  the build -- US-560 refuted, US-561 + US-563 confirmed-and-widened, US-566
+  confirmed-but-narrowed.
+- **Pattern discovered**: SILENCE THAT MEANS TWO THINGS IS NOT AN INSTRUMENT.
+  Whenever the good-news path is silent by design, the bad-news path cannot be
+  trusted either -- absence is no longer evidence. The fix is to make the GOOD
+  news explicit, not to add more failure logging.
+- **Pattern discovered**: DO NOT PIN A SAFETY FACT TO A TIER A CONFIG CHANGE
+  CAN SILENCE. The decision goes out at WARNING/ERROR, not INFO, and the test
+  pins the FLOOR (`levelno >= WARNING`) rather than the exact level. It fires
+  once per service start, so severity costs no journal volume. Defence in
+  depth BEHIND the setupLogging fix, not instead of it.
+- **Pattern discovered**: VERIFY YOUR DISCRIMINATOR IS NOT VACUOUS. My unit
+  tests would only have gone red pre-change in the useless ImportError way, so
+  the load-bearing guard lives in the systemd-parity SUBPROCESS (the only test
+  running real `main()` wiring). A 10-second scratch probe proved it genuinely
+  red: with no handlers, lastResort emits a BARE message -- no level name, no
+  logger name -- and drops INFO entirely. So "logger name present" == "a
+  configured handler, not lastResort" is a real discriminator, and it
+  corroborated the live-Pi journal independently.
+- **Pattern discovered**: WHEN YOU REWRITE THE ONLY DIAGNOSTIC LINE ON A PATH,
+  PIN WHAT IT USED TO CARRY. The old ERROR carried 6 remediation facts; a
+  parametrised MOVED-pin test asserts all 6 survive. Adding a prefix while
+  quietly dropping the remediation would have passed every other test I wrote.
+- **Gotcha**: a disarmed powerwatch is `systemctl is-active` == active and
+  otherwise silent -- it looks exactly like a protected one. Any "refuse and
+  stay up" branch needs a heartbeat, or the one line explaining why ages out
+  of the journal and the operator is left with a green-looking unit.
+- **Gotcha (harness, corrects a standing note)**: the Bash tool's
+  compound-command refusal applies to the LOCAL command line only -- a
+  `;`-separated compound INSIDE a quoted `ssh` argument runs fine. Also,
+  output redirection is confined to the working dirs: `> _file.txt` from the
+  default cwd works, an absolute `/z/o/...` path is REFUSED. And `python -m
+  pytest <dir>` WITHOUT `-q` prints the "N passed" summary, so the
+  redirect-then-tail dance is unnecessary. A `cat >> file <<'EOF'` heredoc was
+  REFUSED by the parser ("skipped input between top-level statements") -- use
+  the Edit tool to append to a log file instead.
+---
+
+## 2026-08-21 - US-564 (Agent 1 / Session 4)
+Task: Plausibility gate -- a non-measurement must never wear data_source=real
+
+### What was implemented:
+- **INHERITED A NEARLY-COMPLETE UNCOMMITTED TREE.** A prior iteration had built
+  the whole gate + 5 test files and died before committing. Running the targeted
+  suite FIRST (91 passed) answered "how complete is this" in one command. But a
+  green suite is not a finished story -- walking all 7 ACs against the diff is
+  what surfaced the real gap.
+- **THE GAP: A 236 KB REAL-HARDWARE FIXTURE THAT NO TEST READ.**
+  `tests/fixtures/imu_stationary_90s_2026-08-21.csv` -- 1845 genuinely captured
+  parked-car rows off chi-eclipse-01 -- was ORPHANED. Meanwhile
+  `test_check_stationaryDither_neverStale` claimed "REAL stationary-vehicle
+  behaviour" while feeding `math.nextafter` output. **That test could not fail:**
+  synthetic +/-1-ULP dither never repeats BY CONSTRUCTION, so it would have
+  passed even if the chip were latched. validationCriteria #2 was being
+  "discharged" by a test that proved nothing about hardware -- the EXACT shape of
+  US-560's fabricated PANEL_MODES, one sprint after we named it.
+- **WIRED THE REAL CAPTURE IN (4 new tests).** ONE capture proves BOTH
+  directions: on the SAME rows through the SAME gate, accel (1821/1845 distinct)
+  and gyro (1845/1845) are never refused while mag (1/1845) IS refused, at
+  exactly the run limit. The fixture is SELF-VERIFYING -- a provenance test
+  re-derives the row count and distinct counts FROM THE DATA and asserts they
+  match the CSV's own header. A missing fixture FAILS, deliberately not skips.
+- Kept the synthetic ULP test as an explicit BOUNDARY pin, renamed
+  `test_check_syntheticUlpDither_neverStale`, docstring now stating it CANNOT
+  witness the hardware claim and pointing at the real-data class.
+- Verified the inherited work against all 7 ACs (all met, incl. the two-layer
+  syncPending fix and headingDeg typed-NA), then committed the whole story.
+- Filed TD-086: `config.json` carries DOUBLE-ENCODED MOJIBAKE and the OBD
+  poll-set test reads it locale-decoded -- 18 pre-existing ERRORs, PROVEN not
+  mine (`git status --porcelain` empty for both files).
+
+### Files changed:
+- Created: `src/pi/sensors/plausibility_gate.py` (the gate: magnitude + bit-identity)
+- Modified: `src/pi/sensors/sensor_reader.py` (GatedReadingError into the existing
+  failed-poll path, per-channel policies, retained gate STATE, fault-log rate limit)
+- Modified: `src/pi/sensors/imu_state_bridge.py` (derived fields die with their input)
+- Modified: `src/pi/splash/system_status_emitter.py`,
+  `src/pi/obdii/orchestrator/card_state_emitter.py` (syncPending None, never 0)
+- Modified: `specs/UI/dist/dashboard-pi/carousel.js` (syncTile stops coercing null to 0)
+- Modified: `src/common/config/validator.py` (invariantDwellSeconds + range check)
+- Created: `tests/fixtures/imu_stationary_90s_2026-08-21.csv` (the real capture)
+- Created: `tests/pi/sensors/test_plausibility_gate.py` (+ the 4 real-data tests),
+  `test_sensor_reader_plausibility_gate.py`, `test_imu_gated_channel_na.py`,
+  `tests/pi/splash/test_sync_pending_unmeasured.py`,
+  `tests/ui/test_carousel_sync_pending_na.py`
+- Created: `offices/pm/tech_debt/TD-084`, `TD-085`, `TD-086`
+
+### Learnings for future iterations:
+- **Pattern discovered (the whole story)**: GREP FOR YOUR FIXTURES. A fixture
+  that nothing imports is either dead weight or -- far worse -- evidence you
+  believe you have and do not. Here 1845 rows of real hardware data sat unread
+  while a synthetic test wearing a "REAL" docstring stood in for it. The suite
+  was green, the AC looked discharged, and the load-bearing empirical claim was
+  untested. **A green suite tells you the tests pass, never that they are the
+  right tests.**
+- **Pattern discovered**: ONE REAL CAPTURE CAN PROVE BOTH DIRECTIONS, which is
+  what makes it evidence rather than illustration. A gate that fired on nothing
+  passes the accel half; a gate that fired on everything passes the mag half;
+  only a working discriminator passes both -- from a single file, with no
+  hand-written vectors to be wrong about.
+- **Pattern discovered**: MAKE A FIXTURE SELF-VERIFYING or its header will drift
+  from its bytes. Re-derive the documented counts FROM the data and assert they
+  match. Rounding would have been especially fatal here -- it would MANUFACTURE
+  the very bit-identity the gate exists to detect.
+- **Pattern discovered**: A MISSING FIXTURE MUST FAIL, NOT SKIP. A skip quietly
+  restores the unfalsifiable state the test exists to end, and does it while the
+  suite still reads green. Skips are for genuinely optional environments (a live
+  DB probe), never for the only evidence a design rests on.
+- **Pattern discovered**: keep synthetic data, but LABEL it. Synthetic data is
+  fine; synthetic data wearing a "REAL" label is the defect. The ULP test is a
+  genuine boundary pin -- it just could never have been the hardware evidence.
+- **Gotcha**: THIRD INSTANCE OF ONE ROOT CAUSE IN ONE ITERATION -- on Windows,
+  any `open()` or `subprocess(text=True)` without explicit `encoding=` is a
+  latent locale bug that stays invisible exactly as long as the data stays
+  ASCII. TD-084 (tests/ui node probe), TD-086 (config.json), TD-080 (the
+  duplicate-helper shape). Enable ruff `PLW1514` and the class dies permanently.
+- **Gotcha**: verify a red is not yours BEFORE believing it --
+  `git status --porcelain <file>` returning EMPTY proves the file matches HEAD,
+  so the failure reproduces on a fresh clone. Two files, two seconds, 18 errors
+  correctly attributed.
+- **Gotcha (cost a JSON break)**: editing a long single-line JSON value with the
+  Edit tool, my `old_string` ended mid-`pmSignOff` and silently DROPPED that key.
+  ALWAYS `python -c "import json; json.load(...)"` after editing sprint.json.
+- **Gotcha**: the full targeted + regression sweep is ~15 min wall-clock on the
+  SMB share (tests/ui alone is 8 min). Budget for it; do not background it.
+---
+
+## 2026-08-21 - US-565 (Rex / Session 7)
+Task: Magnetometer acquisition -- make the channel actually vary
+
+### What was implemented:
+- **The story's premise was REFUTED by measurement, not confirmed.** US-565 said
+  "the lever is CNTL2". It is not. CNTL2 already read back 0x08 (continuous
+  100 Hz) BEFORE any change, and a VERIFIED write of 10 Hz (readback 0x02)
+  changed the latch not at all.
+- Built a reproducible characterization harness and swept the levers on the real
+  chip. Three findings, in order: (1) CNTL2 was already correct; (2) verified
+  rate changes did nothing; (3) polled directly over slave4 with the shadow
+  quiesced, the AK09916 was CONVERTING AND DITHERING -- 6 distinct raw X values
+  across 11 passes with DRDY set -- while `dev.magnetic` was frozen.
+- Diagnosis: the ICM-20948's cyclic slave0 shadow readout performs ONE transfer
+  and then stops. Over a 12 s window mag changed exactly once, at sample index 1,
+  then held for 270 more samples while accel changed 265 times on the same die.
+- Fix: disable the aux master, set INT_PIN_CFG.BYPASS_EN, read the AK09916 as
+  its own I2C device at 0x0C. Accel/gyro still come from the ICM at 0x69.
+- Measured on the SHIPPING code path against the real chip: 350 distinct
+  3-vectors in 500 stationary samples, longest bit-identical run 2, CNTL2 read
+  directly = 0x08. Before the fix: 1 distinct value in 20,000 samples.
+- Config is verified by READBACK (WHO_AM_I + CNTL2), never assumed. A mag fault
+  degrades to accel/gyro rather than losing the whole IMU, and that claim is
+  extracted out of hardware-only glue so it is reachable by test.
+
+### Files changed:
+- Created: `src/pi/sensors/ak09916_bypass.py` (direct acquisition, verified
+  config, ST1..ST2 burst, overflow refusal, ICM wrapper)
+- Modified: `src/pi/sensors/sensor_reader.py` (device factory + testable degrade)
+- Created: `tests/pi/sensors/test_ak09916_bypass.py` (23 tests)
+- Created: `tests/fixtures/mag_bypass_90s_2026-08-21.csv` (90 s real capture)
+- Created: `offices/ralph/scripts/characterize_magnetometer.py` (the probe)
+- Created: `offices/pm/tech_debt/TD-087-...` (heading real but uncalibrated)
+- Created: `offices/pm/issues/I-us565-...` (specs + memory + upstream report)
+
+### Learnings for future iterations:
+- **Pattern discovered**: when a story names a lever, MEASURE THE LEVER'S
+  CURRENT STATE FIRST. One read of CNTL2 before touching anything would have
+  redirected the entire investigation, and it is the cheapest measurement
+  available.
+- **Pattern discovered**: two candidate faults that look identical from the
+  consumer side ("stopped converting" vs "transfer stopped") are separated by
+  reading the source over a DIFFERENT data path. Ask the source directly rather
+  than theorising about the pipe.
+- **Pattern discovered**: record change INDICES, not just distinct counts. "2
+  distinct" means something different if both changes land in the first second.
+  That is what turned an ambiguous count into the actual diagnosis.
+- **Pattern discovered**: make the test fake model the FAILURE MODE, not just
+  the interface. The fake honours the chip's ST2 data-latch rule, so shortening
+  the burst makes the suite go red -- verified, not assumed (9-byte frame -> 8
+  distinct of 8; 6-byte frame -> 1 of 8).
+- **Gotcha**: MY OWN FIRST PROBE RUN WAS INVALID. Eight CNTL2 levers, a
+  clean-looking table, all garbage -- slave4 does not complete while the cyclic
+  slave0 readout is running, so none of the writes landed. Caught only because I
+  printed the readback column. **Atlas's earlier rate sweep has the same defect
+  and is noise, not evidence.** A probe that cannot report its own failure is
+  not a measurement.
+- **Gotcha**: the PowerShell tool does NOT support heredocs (`<<'PY'` is a
+  parser error) -- this CORRECTS a prior session note. Write multi-line python
+  to a temp file, run it, delete it.
+- **Gotcha**: the Pi DB is locked by the running service. Use python's sqlite3
+  with `file:...?mode=ro`; the sqlite3 CLI rejects the nolock URI.
+- **Gotcha**: ALWAYS stop `eclipse-obd` before touching I2C (the ICM is
+  bank-switched; concurrent access corrupts both readers) and ALWAYS restart it
+  under a shell `trap ... EXIT` so a crash cannot leave capture down.
+---
+
+## 2026-08-21 - US-555 (Agent 1 / Rex)
+Task: Top bar -> 3-column grid: clock CENTRE, glyphs left, version right
+
+### What was implemented:
+- `#topbar` flex row -> `display: grid; grid-template-columns: 1fr auto 1fr`,
+  and `margin-left: auto` DELETED (not zeroed) from `#version-chip`.
+- Markup restructured to EXACTLY THREE grid children: `.topbar-left` (BT / sync
+  / power glyphs), `#topbar-clock`, `.topbar-right` (version chip + kebab).
+  Both clusters are flex rows -- a grid child defaults to `display: block`,
+  which would have stacked the glyphs vertically inside a 28px bar.
+- `#topbar-clock` gains `justify-self: center`.
+- The US-542 comment AMENDED, not deleted: its auto-margin reasoning is correct
+  and is the record of why the obvious fix is wrong. Rewritten to "that rules
+  out centring WITH AUTO MARGINS, not centring", and it now names US-555.
+- New gate `tests/ui/test_topbar_three_column_grid.py` (15 tests): structure,
+  an auto-margin SWEEP across every rule touching the bar, the amended-comment
+  pin, and a computed width budget with a negative self-test.
+
+### Files changed:
+- Modified: `specs/UI/dist/dashboard-pi/dashboard.css` (grid + clusters +
+  justify-self + amended US-542 comment + auto margin removed)
+- Modified: `specs/UI/dist/dashboard-pi/dashboard.html` (three grid children)
+- Modified: `tests/ui/test_carousel_menu_access.py` (MOVED PIN -- docstring said
+  "#topbar is a flex container"; the container moved, the hazard did not)
+- Created: `tests/ui/test_topbar_three_column_grid.py` (the US-555 gate)
+
+### Learnings for future iterations:
+- **THE 1280x720 CANVAS FLAG IS REFUTED -- stood down, do not carry it into
+  US-556/557.** It claimed the layout is "budgeted against a 320 canvas and
+  rendered on a 1280x720 one". The observation (no `--window-size` on the kiosk)
+  is true; the inference is not. US-482 authors everything inside `#stage`, a
+  FIXED 480x320 box grown by `transform: scale()`, so the CSS layout canvas is
+  480x320 at EVERY panel resolution -- the viewport only moves `--scale`. US-557's
+  ~320 arithmetic is correct; BL-034 cannot invalidate 555/556/557. What survives
+  from BL-034 is a DIFFERENT claim (34px on 320px of glass ~= 13-15 physical px),
+  which is legibility-vs-downscaling, not layout arithmetic.
+- **Pattern discovered**: `1fr` is `minmax(auto, 1fr)` -- it has an AUTO MINIMUM.
+  So "the grid makes drift structurally impossible" is true only while each side
+  cluster fits its share. Ship the literal spec, then MEASURE the bound and pin
+  it. Generalised: when an AC says a property holds "regardless of X", find the
+  X at which it stops and make that the test.
+- **Pattern discovered**: when the harness cannot measure the outcome (the render
+  harness resolves the CASCADE but explicitly NOT LAYOUT), guard the STRUCTURE
+  that produces it and state the limit. Here: `justify-self`, exactly-three grid
+  children, and an auto-margin SWEEP -- the sweep matters because a test naming
+  only `#version-chip` stays green while a future rule puts an auto margin on the
+  kebab and re-creates the identical drift.
+- **Gotcha**: a budget/threshold check needs a NEGATIVE SELF-TEST, and its inputs
+  should be UPPER bounds (0.6em mono = the widest face `--font-mono` names; 1.0em
+  for non-ASCII pictographs, which leave the mono face). A conservative model
+  reporting a LARGER number than the design note is agreement, not conflict.
+- **Gotcha**: never ship a bare `.left`/`.right` into this single shared sheet --
+  `dashboard.css` documents the US-540-b class-reuse trap twice. Scoped to
+  `.topbar-left`/`.topbar-right` and flagged the deviation for Iris.
+- **For US-557**: the bar height is the literal `28px` in `#topbar` AND is
+  repeated independently in `#carousel { top: 28px }` -- the exact
+  literal-in-one-file / assumption-in-another root cause s5.2 exists to tokenize.
+---
+
+## 2026-08-21 - US-557 (Agent 1 / Rex)
+Task: Band-budget correction + tokenize the layout bands
+
+### What was implemented:
+- Promoted the three layout bands into `specs/UI/tokens.css` -- `--bar-h: 34px`,
+  `--dots-h: 16px`, `--card-pad-y: 8px` -- and mirrored them in the dist sheet.
+  Six band sites now read one token each: `#topbar{height}`, `#carousel{top}`,
+  `#carousel{bottom}`, `#rotate-progress{top}`, `#dtc-ribbon{top}`,
+  `#dots{height}`, plus `.card{padding}`'s vertical slot.
+- Shipped Iris's P-3 chrome reclaim in full (topbar 28->34, dots 24->16, card pad
+  14->8, title `--fs-secondary`/8mg -> `--fs-label`/6mg). MEASURED result: chrome
+  96.0 of 320 -> card body **exactly 224.0px**, +23.2 vs the pre-story 200.8.
+- AC-7 no-silent-clip on `.card-body`: `min-height: 0` + `overflow-y: auto` +
+  a two-layer CSS-only cue (a `--bg` cover anchored to the CONTENT via `local`,
+  a `--text-tertiary` rule anchored to the BOX via `scroll`), so a bottom rule
+  shows exactly while content remains below.
+- New gate `tests/ui/test_card_band_budget.py` (49 tests with the topbar file):
+  the budget model, the tokenization identities, the vertical-scoped grep gate,
+  and negative self-tests for both the budget and the gate.
+- Filed `offices/pm/issues/I-us557-f127-row-model-omits-the-tile-detail-line.md`.
+
+### Files changed:
+- Modified: `specs/UI/tokens.css` (three band tokens + the FLOOR/CEILING rationale)
+- Modified: `specs/UI/dist/dashboard-pi/dashboard.css` (bands tokenized; reclaim; no-silent-clip guard)
+- Modified: `tests/ui/test_topbar_three_column_grid.py` (one MOVED pin: "28px bar" -> `--bar-h`)
+- Created: `tests/ui/test_card_band_budget.py` (budget + tokenization + grep gate)
+- Created: `offices/pm/issues/I-us557-f127-row-model-omits-the-tile-detail-line.md`
+
+### Learnings for future iterations:
+- **Pattern discovered**: RE-DERIVE a number the spec already gives you. AC-2
+  handed me "body 224px; 3 rows + footer = 222. Fits". The body reproduced
+  exactly; the ROW figure did not -- F-127 modelled a two-line row, but
+  `appendTile` appends `.tile-detail` UNCONDITIONALLY (44 of 45 `detail:` keys
+  non-empty) and `.tile` is a column flex container, so the shipped row is 91.8px
+  not 67.8px, and three tiles demand 274.4 into 224. The story was groomed to fix
+  ONE measurement-left-behind in that budget; there were TWO. Agreement costs one
+  test; disagreement is the finding.
+- **Pattern discovered**: show your finding survives your model's own assumption.
+  The only unreadable input was `line-height: normal` (~1.2). Re-ran at 1.0 --
+  the most generous case physically available, since a line box cannot be shorter
+  than its font size -- and the overflow persists. State the assumption, then
+  show the conclusion does not rest on it.
+- **Gotcha**: `min-height: 0` is the entire "no silent clip" fix and it is
+  invisible. A column flex item defaults to `min-height: auto` and refuses to
+  shrink below its content, so the body never overflows -- the CARD does, and
+  `#carousel{overflow:hidden}` eats it where nothing can signal it. Shipping
+  `overflow-y: auto` without it is an INERT guard that tests green.
+- **Gotcha**: assert an identity only after proving both sides are real. My
+  "does `#carousel{top}` read the same token as `#topbar{height}`" helper returns
+  `""` for a bare literal -- so two bare literals give `"" == ""`, a GREEN test
+  over the exact defect being removed. Guard truthiness first.
+- **Gotcha**: scope a grep gate by what the magnitude COSTS, not by the string.
+  `padding: 0 14px`, a `circle 28px` mask radius and modal-box padding spend zero
+  stage height; charging them forces false exemptions, and a fat allowlist is
+  where a real offender hides. Also test that no exemption has gone DEAD.
+- **Gotcha**: before making a child of a gesture surface scrollable, read the
+  gesture contract. `touch-action: pan-y` (dashboard.css:207) and carousel.js:3765
+  already said "so the panel can still scroll a card" -- the capability was
+  documented and nothing was scrollable. Two greps turned "seemed fine" into a
+  claim.
+- **Gotcha**: pin a known-bad MEASURED fact as a passing assertion, never `xfail`
+  -- an xfail goes green when the defect disappears and the finding evaporates.
+- **For US-556**: the bar is **34px** now. US-556's AC-1 says "...inside a 28px
+  bar"; that 28 is STALE and its arithmetic must be re-read against `--bar-h`.
+  The kebab itself is untouched by this story, and the group constraint is now
+  satisfied in the right direction (557 landed, so 556 is verified AFTER it).
+---
+
+## 2026-08-21 - US-556 (Agent 1 / Rex)
+Task: Kebab fits its bar -- visual box vs hit box, 40px tap kept
+
+### What was implemented:
+- **#menu-btn painted box now DERIVES from --bar-h** (width + height), with the
+  `min-width`/`min-height: var(--tap-min)` floors removed. The 40px box in a
+  34px band was what put the third dot outside the header fill.
+- **Glyph re-tiered --fs-primary -> --fs-secondary.** The kebab is a CHROME
+  affordance, so F-127's 34px driver-read floor never applied to it. Guarded
+  in BOTH directions: the value tier itself is asserted untouched (lowering
+  --fs-primary would have "fixed" this by shrinking every number on the panel),
+  and the kebab is asserted NOT shrunk below --fs-secondary (shrinking type to
+  fit a band is the fix F-127 ruled out).
+- **S-2 tap minimum moved to a transparent `::after`** with
+  `inset: calc((var(--bar-h) - var(--tap-min)) / 2)` -- half the SIGNED
+  shortfall, so the hit box measures --tap-min at any band height and
+  self-corrects if the band ever exceeds it.
+- **`.menu-head` fixed** -- it declared `height: 36px` around a 40px
+  #menu-close. Now `min-height: var(--tap-min)`. Opposite fix to the kebab on
+  purpose: an overlay head has no stage budget to defend.
+- **`#sys-detail-back` audited, NOT changed** -- `.detail-head` is already
+  `min-height: 44px` (US-491). Guarded instead.
+- **MOVED PIN**: US-555's bar-width model charged the kebab at --tap-min; it
+  now reads the declared width, so it measures the box that actually exists.
+
+### Files changed:
+- Modified: `specs/UI/dist/dashboard-pi/dashboard.css` (#menu-btn split into
+  visual + hit box, new #menu-btn::after, .menu-head band derives from
+  --tap-min, US-490 comment corrected -- it warned about a `display`
+  declaration this story then added, and still called #topbar a flex row)
+- Modified: `tests/ui/test_topbar_three_column_grid.py` (moved pin +
+  `_declaredVarName` helper that asserts the declaration is a `var()`)
+- Created: `tests/ui/test_topbar_kebab_fit.py` (21 tests: visual box, chrome
+  tier, hit box, the 3-control audit, the `.dot` precedent, 3 negative
+  self-tests)
+
+### Learnings for future iterations:
+- **Pattern discovered**: derive the SIGNED SHORTFALL rather than landing two
+  literals. `calc((var(--band) - var(--min)) / 2)` as an `inset` grows a hit
+  area outward by exactly the missing pixels and shrinks harmlessly back
+  inside once the band outgrows the minimum. When a spec hands you two
+  magnitudes, ask what they are the difference between.
+- **Pattern discovered**: audit by what a control PAINTS, not by the box it
+  reserves. `.dot` is a 40px box in a 16px band and is correct -- transparent
+  box, 8px `::before` mark. It was the precedent this whole fix rests on and
+  it was already in the sheet.
+- **Gotcha**: a stale number in an AC can hide a SPLIT premise. Re-deriving
+  AC-1 against the bar US-557 landed showed the glyph half was already cured
+  and only the box half survived. Found because a negative self-test went red
+  in a direction I had not predicted -- and the model was right, not the AC.
+- **Gotcha**: "exactly flush" is not "safely inside". 34px of line box in a
+  34px band has zero margin and glyph ink escapes a `line-height: 1` box.
+  Assert `<`, not `<=`, on a paint bound.
+- **Gotcha**: a PASSING test can be a stale measurement. An over-estimate never
+  goes red. Green is not evidence a model still measures its subject.
+- **Gotcha**: `position: relative` is the silent failure mode of any `::after`
+  hit-area extension -- without it the pseudo anchors to the nearest positioned
+  ancestor and the target lands elsewhere while every other test passes.
+- **Gotcha**: pytest prints no summary line in this repo -- gate on exit code
+  plus "no F/E in the progress dots". A PostToolUse hook flags `eval()`; use an
+  `ast.parse` walk with a node whitelist instead.
+---
+
+## 2026-08-21 - US-558 (Agent 1 / Session 10)
+Task: Navigational overlays paint solid; modals keep their scrim
+
+### What was implemented:
+- Iris's P-4 rule, applied and then made STRUCTURAL: an overlay you NAVIGATE TO
+  is a destination and paints solid; an overlay that INTERRUPTS you is a modal
+  and keeps its scrim.
+- #setup-menu (was rgba(0,0,0,0.92)), #dtc-detail and #sys-detail (both .95) now
+  bind `var(--bg)` -- the same field token #screen's letterbox frame and the STOP
+  takeover already use, rather than a fourth literal black.
+- #confirm-modal + #clear-confirm keep their 0.6 scrim, with the reason now
+  written AT the rule: the translucency says the thing you were doing is still
+  underneath and Cancel returns you to it.
+- #dtc-takeover untouched per AC-4 -- and pinned as an ABSENCE (its base rule
+  declares no background; the field is per-severity).
+- New guard DISCOVERS every stacked full-screen layer out of the stylesheet
+  (position:fixed + inset:0 + z-index) and fails until each carries a role, in
+  both directions. 26 assertions, incl. negative self-tests against the real
+  values removed here.
+- Filed TD-084 on US-509's no-raw-colour guard (reads comments/selectors as hex).
+
+### Files changed:
+- Modified: `specs/UI/dist/dashboard-pi/dashboard.css` (3 fields -> var(--bg);
+  scrim rationale recorded at both modals; the rule stated once)
+- Created: `tests/ui/test_overlay_opacity_model.py` (discovery + alpha model)
+- Created: `offices/pm/tech_debt/TD-084-drilldown-colour-guard-reads-comments-and-selectors-as-hex.md`
+
+### Learnings for future iterations:
+- **Pattern discovered**: when a test DISCOVERS its own subjects, the WALK needs
+  its own tests, separate from the model that consumes them. A model can only be
+  wrong about what it was handed; a walk is wrong about what it never handed over
+  -- and that failure reports SUCCESS.
+- **Pattern discovered**: classify, don't enumerate. Three alphas is a fix that
+  holds until the next overlay; a classification every new layer must answer to
+  is the durable version. ~20 extra lines. Same shape as US-563's schema guard.
+- **Pattern discovered**: exclude a boundary case on a REAL distinction, never by
+  name, and give the exclusion its own test. #screen is fixed+inset:0 and paints
+  var(--bg) -- a laxer predicate sweeps it in and it passes for the wrong reason.
+- **Gotcha**: a CSS comment contains no braces, so an un-stripped `/* ... */`
+  reads as part of the next rule's SELECTOR and that rule silently leaves the
+  walk. Nearly every rule in this sheet is commented -- the normal case.
+- **Gotcha**: `@keyframes` closes with `}` at column 0. A selector pattern whose
+  first-char class admits `}` swallows the following selector. #dtc-takeover
+  follows a keyframes block, so the takeover itself disappeared.
+- **Gotcha**: a mechanical sweep ("every overlay gets var(--bg)") would have put
+  a field into #dtc-takeover's BASE rule, under the severity gradients, weakening
+  the AREA channel the STOP tier's safety treatment is built on.
+- **Gotcha**: US-509's drill-down colour guard slices 1800 raw chars from
+  `#sys-detail` and bans `#`, so it reads a COMMENT as a hex literal. It went red
+  on a commit that removed a raw literal -- then again on the note explaining the
+  workaround. Do not write a bare hash in a comment near that selector. TD-084.
+- **Gotcha**: `Glob` on `specs/UI/**/*.css` times out on this share;
+  `git ls-files | grep` answers the same question instantly.
+---
+
+## 2026-08-21 - US-559 (Rex / Agent 1)
+Task: Sync stamp -> local 12-hour time; rows/pending to detail
+
+### What was implemented:
+- `fmtStamp(ts)` renders the SYNC tile's `lastOkTs` as `Mmm dd, yyyy h:mm:ss AM/PM`
+  in LOCAL time. It used to be pasted raw, so the panel carried TWO clocks -- the
+  top-bar face local, the sync stamp UTC -- differing by hours with no way to tell
+  which was lying.
+- The 12-hour rule now lives in ONE place: `fmtTimeOfDay(d, withSeconds)`.
+  `fmtClock` delegates and keeps no arithmetic of its own. `fmtClock`'s own comment
+  had warned that two formatters is how a 12-hour face drifts back to 24-hour --
+  this story would otherwise have BEEN that second formatter.
+- Only a ZONE-QUALIFIED ISO-8601 instant is formatted; anything else is echoed
+  verbatim. `new Date("412")` is the year 412 and a zoneless stamp is read as
+  local -- neither is an Invalid Date, so both would pass a literal isNaN check.
+- `N rows . N pending` moved off the tile into the System drill-down as a
+  `diagnostics` section (CIO placement call 2026-08-20). Still derived once by
+  `syncTile`; the overlay only presents it.
+- `drill.tappable` widened from "there is a fault" to "there is something behind
+  this line" -- US-509's invariant verbatim, with a new content input.
+
+### Files changed:
+- Modified: `specs/UI/dist/dashboard-pi/carousel.js` (fmtTimeOfDay/fmtStamp,
+  syncTile detail+counts, systemDiagnostics, renderSysDiagnostics, exports)
+- Modified: `specs/UI/dist/dashboard-pi/dashboard.css` (.sys-diag-* rows, quieter
+  than an issue row on purpose)
+- Created: `tests/ui/test_carousel_sync_stamp.py` (33 tests)
+- Modified: `tests/ui/test_carousel_sync_pending_na.py` (US-564 pins re-pointed
+  detail -> counts)
+- Modified: `tests/ui/test_carousel_system_drilldown.py` (US-509 tappable pin split
+  into three assertions)
+
+### Learnings for future iterations:
+- **Pattern discovered**: a VERB in an acceptance criterion can be the whole story.
+  "MOVES to #sys-detail" is a claim about REACHABILITY -- the destination's open
+  condition is part of the acceptance. Built literally, the counts would have
+  landed on a surface a healthy sync can never open, and every AC would still have
+  read as met. Check who can reach the new home before building the move.
+- **Pattern discovered**: widen an invariant's INPUT, never the invariant. US-509's
+  rule was "tappable only when something is behind it", not "only when something is
+  BROKEN". Say in the code which one you moved.
+- **Pattern discovered**: when a compound pin's subject moves, SPLIT it, don't
+  invert it. One assertion about two things became three that fail for three
+  reasons -- including "neither rows nor diagnostics => NOT tappable", without
+  which the widened gate could be hard-coded true.
+- **Gotcha**: `isNaN(new Date(x))` is not the whole guard against a fabricated
+  date. The dangerous inputs are the ones that parse SUCCESSFULLY into the wrong
+  instant. Accept by pattern; echo the rest.
+- **Gotcha**: a timezone assertion is vacuous on a UTC runner. Pair the
+  local-conversion comparison with a structural pin (`getUTCHours` absent) that
+  holds everywhere. This runner is UTC-5, so both bite here; CI may not.
+- **Gotcha**: count a rule in the source with COMMENTS STRIPPED -- this codebase
+  comments heavily and every comment quoting the rule inflates the count. Pair the
+  count with a delegation check, since a count of 1 is also satisfied by deletion.
+---
+
+## 2026-08-22 - NO STORY SELECTED (Agent 1 / Rex)
+Task: iteration booted with no selectable work in sprint.json
+
+### What was implemented:
+- Nothing. No code written, no story closed. This entry exists so the iteration is
+  on the record rather than looking like a silent stall.
+- Story selection ran and came back EMPTY: Sprint 75 / V0.29.30 holds 11 stories,
+  10 at `passes: true`. The single `passes: false` story (US-560) is fenced by a
+  filed blocker, `offices/pm/blockers/BL-034-us560-panel-does-not-advertise-480x320-edid-finding.md`.
+- Re-verified rather than trusted the handoff note: counted `passes` in sprint.json
+  directly, confirmed BL-034 exists on disk and reads `Status: US-560 passes:false.
+  Needs an Atlas ruling (CIO ratify)`.
+- US-560 is NOT a retry candidate. Its premise was refuted by the panel's own EDID
+  (the OSOYOO HDMI35 is a scaler panel and advertises no 480x320 timing at all), so
+  the next move is an architecture ruling, not another Ralph cycle. Re-running it
+  would re-measure a settled fact and burn an iteration.
+- Single-agent mode confirmed (only Agent 1 non-unassigned) => decision-tree case 2:
+  a documented blocker fences every remaining story and it needs CIO judgment.
+  Emitted HUMAN_INTERVENTION_REQUIRED.
+
+### Files changed:
+- Modified: `offices/ralph/ralph_agents.json` (status -> unassigned, lastCheck
+  2026-08-22, no-work banner prepended to the handoff note)
+- Modified: `offices/ralph/progress.txt` (this entry)
+
+### Learnings for future iterations:
+- **Pattern discovered**: a no-work iteration still owes a written record. `ralph.sh`
+  reads "no commit, no story movement" as a no-progress stall, which is the same
+  signature as a genuine mid-flight crash. An explicit committed entry separates
+  "correctly found nothing to do" from "died holding the work".
+- **Gotcha**: a blocker whose disposition is "needs a ruling from another role" is
+  permanently un-retryable by Ralph, however cheap the retry looks. The cost of
+  re-running US-560 is not the SSH round-trip -- it is a second measurement of an
+  already-measured fact re-entering the record and competing with the first.
+- **Gotcha**: `Glob` over this repo times out on the SMB share (20s limit). Listing a
+  known directory with PowerShell `Get-ChildItem -Filter` returns instantly. Reach
+  for the directory listing when the path is known and save Glob for real searches.
+---
+
+## 2026-08-22 - NO STORY SELECTED (Agent 1 / Rex) -- second consecutive no-work iteration
+Task: none available -- sprint 75 is 10/11 closed and the 11th is fenced by BL-034
+
+### What was implemented:
+- Nothing. No code written, no story closed. This entry exists so the iteration is
+  distinguishable from a stall; the full reasoning is in the entry above and is not
+  repeated here.
+- Re-derived the state from source rather than trusting my own previous handoff note:
+  counted `passes` in sprint.json (10 true / 1 false), and US-560 still carries
+  `blockedBy: BL-034`.
+- Read BL-034 to its end looking specifically for a ruling. There is none -- the file
+  still terminates at its four-option decision table (A pin 720x480 / B accept
+  1280x720 / C force 480x320 / D re-source the panel) with no Resolution section.
+- Checked `offices/ralph/inbox/` for an unblocking message. Newest item is
+  2026-08-21-from-marcus-per-agent-clones-provisioned.md -- nothing about BL-034.
+  Commit 84a837f shows Marcus escalated to Atlas; no reply has landed.
+- Conclusion: the input that would change my behaviour has not arrived, so the
+  correct output is byte-for-byte the same as last iteration.
+  Single-agent decision-tree case 2 => HUMAN_INTERVENTION_REQUIRED again.
+
+### Files changed:
+- Modified: `offices/ralph/ralph_agents.json` (status active -> unassigned; no-work
+  banner #2 prepended, marking the state as unchanged)
+- Modified: `offices/ralph/progress.txt` (this entry)
+
+### Learnings for future iterations:
+- **Pattern discovered**: on a repeat no-work iteration, re-derive the blocking fact
+  from disk instead of citing your own prior note. The check is cheap and it is the
+  only thing that distinguishes "still blocked" from "was unblocked and I did not
+  notice" -- a note that quotes itself can never report the second case.
+- **Gotcha**: an idempotent iteration is a signal about the HARNESS, not just the
+  sprint. Two identical passes mean the loop has no path to self-clear, so the note
+  must say so out loud -- otherwise re-running ralph.sh looks like a reasonable next
+  move and it is not.
+- **Gotcha**: `git status` showed ralph_agents.json already dirty with `status:
+  "active"` at boot -- the harness marks the agent active before a story is picked.
+  Reset it to `unassigned` on the way out or the next reader sees a phantom claim.
+---
+
+## 2026-08-23 - US-568 (Rex / Session 76)
+Task: v0024 migration fails on real MariaDB -- unknown column data_quality in CHECK
+
+### What was implemented:
+- **Reproduced first, on real MariaDB 11.8.6** (AC-1): 2 failed / 18 passed, both
+  failures the verbatim CI signature `(1054, "Unknown column 'data_quality' in
+  'CHECK'")` from v0024:534 -> :389. No SQLite run was offered as evidence (AC-2).
+- **RCA inverted the story's framing: the migration is innocent, the FIXTURE lied.**
+  The harness seeds `drive_summary` as a 3-column skeleton (id, source_device,
+  source_id) and then calls `markMigrationsAppliedStatements(0001..0021)`. v0010
+  (US-363) is what CREATES `drive_summary.data_quality` + its CHECK + index. So the
+  seed implemented v0010's PRE-state while the ledger asserted its POST-state.
+  Invisible for a sprint because v0022/v0023 -- the only migrations this harness was
+  written for -- never look past `drive_summary(id)`.
+- **No earlier migration moved/dropped/renamed the column** (the literal AC-3
+  question): it was never created. v0018/v0022/v0023 checked, none touch it.
+  v0024's CHECK-before-DEFAULT ordering assumption is correct and unchanged.
+- **Proved it against production before touching anything**: a read-only
+  information_schema probe of the deployed obd2db shows all three tables carry
+  data_quality WITH their CHECKs, is_real DEFAULT 0, ambient_temp_at_start_c
+  present, ledger at 0023 => v0024 would have applied cleanly to prod.
+- Fixed the seeds to implement the ledger they claim; added `_requireColumn`
+  preconditions to v0024 (raises, never swallows); +6 tests.
+
+### Files changed:
+- Modified: `tests/server/_mariadb_chain_harness.py` (both seeders now carry the
+  post-0021 drive_summary shape, MEASURED from prod and pinned as literals;
+  LEDGER_PROMISED_COLUMNS; docstring section on the defect class)
+- Modified: `src/server/migrations/versions/v0024_us563_unassessed_defaults_and_intake_rename.py`
+  (`_requireColumn` on all three substeps -- diagnoses ledger-vs-schema instead of
+  surfacing a bare 1054, and closes a silent-success hole on is_real)
+- Modified: `tests/server/test_migration_chain_real_mariadb.py` (+6 tests;
+  discovery-driven `_assertV0024Landed` post-condition; forbidden-swallow guard)
+
+### Learnings for future iterations:
+- **Pattern discovered**: **a fixture's SETUP and its CLAIM are two artifacts that
+  can disagree, and nothing compares them unless you write that check.** A seed
+  paired with `markMigrationsAppliedStatements(...)` is asserting a schema state;
+  if it does not build what those migrations build, the suite is green over a lie.
+  This is US-560's `PANEL_MODES` exactly one story later -- a fixture that STATES a
+  precondition instead of ESTABLISHING it is not a test, it is a claim wearing a
+  test's clothes. Now enforced by `test_seeds_implement_the_ledger_they_claim`.
+- **Gotcha**: **do NOT import the ORM enum into a migration-test seed**, however
+  much define-once argues for it. `DRIVE_SUMMARY_DATA_QUALITY_VALUES` already
+  contains 'unassessed', so the seed would pre-satisfy v0024, v0024 would widen
+  nothing, and both chain tests would pass having exercised ZERO of the code under
+  test -- the US-459 theater-trap in a new costume. A migration-test seed must be
+  pinned to the DEPLOYED pre-migration shape and deliberately allowed to lag the ORM.
+- **Gotcha**: **'column does not exist' and 'column has no default' are the SAME
+  value through `information_schema.COLUMN_DEFAULT`.** `_appliedDefault` returns
+  None for both, so `_redefaultIsRealToNull` would have read a MISSING `is_real` as
+  "already NULL-defaulted" and reported success having changed nothing -- a silent
+  no-op inside the migration written to eliminate non-measurements. Any probe whose
+  "absent" and "satisfied" answers coincide needs an existence check in front of it.
+- **Pattern discovered**: **measure prod before believing a CI failure is a code
+  defect.** One read-only probe was the difference between fixing the fixture and
+  damaging a correct migration to satisfy a broken one.
+- **Pattern discovered**: **mutation-test any guard you write against a "forbidden
+  fix".** Re-added the swallow the AC banned, confirmed the new test FAILS, reverted,
+  then grepped the diff for residue. A guard you never saw fail is a guess.
+- **Gotcha**: **real MariaDB IS reachable from this bench -- the suite need not
+  honest-skip.** No docker, no testcontainers, no local mysql client, and
+  chi-srv-01's MariaDB binds localhost-only, but `ssh -N -L 13306:127.0.0.1:3306
+  chi-srv-01` (Bash tool, run_in_background; TaskStop to close) + pymysql gets you
+  11.8.6, the exact pinned prod major. There is a pre-existing EMPTY `obd2db_test`
+  DB the obd2 user owns -- **that is the scratch target; obd2 CANNOT create
+  databases (1044).** NEVER point `OBD2_MARIADB_TEST_DSN` at `obd2db`:
+  `resetSchemaStatements()` DROPs drive_summary/drives/drive_statistics. Hard-refuse
+  the prod DB name in the runner, read the password from .env in-process (PowerShell
+  has no heredoc -- Write a temp .py), and check prod's table count before AND after.
+- **Gotcha**: a CI **honest-skip is not a pass**. If the runner has no MariaDB
+  service, `acquireMariaDb` raises and pytest skips green. AC-6 (a SUCCESS run for
+  the pushed HEAD SHA) is PM's to observe -- Ralph cannot push.
+---
+
+## 2026-08-23 - NO STORY SELECTED (Agent 1 / no-work iteration #3)
+Task: story selection found zero selectable work
+
+### What was implemented:
+- Nothing. No code written, no story closed. This entry exists so the no-op is on
+  the record rather than looking like a crashed iteration.
+- Re-counted `sprint.json` directly (not from the prior note): **11 of 12
+  `passes: true`**. The single `passes: false` is **US-560**, `status: blocked`,
+  `blockedBy: BL-034`.
+- Re-read `offices/pm/blockers/BL-034-...md` end-to-end on disk. It still ends at
+  its four-option decision table (section 7). **No Resolution section. No ruling.**
+- Checked `offices/ralph/inbox/` -- newest item is still
+  `2026-08-21-from-marcus-per-agent-clones-provisioned.md`. Nothing from Atlas.
+- Checked `git log` -- HEAD is `99058fe`, my own US-568 closeout. No Atlas commit
+  after it.
+
+### Files changed:
+- Modified: `offices/ralph/ralph_agents.json` (status -> unassigned, note refreshed)
+- Modified: `offices/ralph/progress.txt` (this entry)
+
+### Learnings for future iterations:
+- **Pattern discovered**: the one thing that CHANGED since no-work iteration #2 is
+  that the *deploy blocker* cleared -- US-568 closed. But `b38f7cb` is **committed
+  and unpushed** (Ralph does not push), so US-568's AC-6 CI gate on PR #16 cannot
+  have been observed. A cleared blocker is not a discharged gate; distinguish "the
+  work is done" from "the gate has been read".
+- **Gotcha**: BL-034 needs an **Atlas ruling + CIO ratify**, which no Ralph
+  iteration can produce. Re-running `ralph.sh` will regenerate this exact entry
+  indefinitely. The loop is not stalled on a defect -- it is correctly parked on a
+  human decision.
+- **Gotcha**: verify the fence on disk each iteration rather than trusting the
+  previous note. The prior note's claim happened to still be true today, but a
+  ruling arriving between iterations is exactly the event that note cannot know
+  about.
+---

@@ -20,7 +20,9 @@
 
 **2a. Move voltage to the free channel.** The adapter answers `ATRV` (battery voltage at OBD pin 16) **independent of the K-line** — it's an ELM327 AT command, not an ECU K-line transaction. Voltage monitoring therefore costs **~0** of the 6.3/s budget and can sample as fast as we want. `BATTERY_V` already uses this. Voltage 🔴 alerting (my advisory bands) is effectively free — exploit it.
 
-**2b. Delete confirmed dead queries.** The 2026-05-22 probe confirmed **3 standard PIDs UNSUPPORTED** on MD326328 (unchanged by the ECMLink flash): `FUEL_PRESSURE` (0x0A), `INTAKE_PRESSURE` (0x0B / MAP), `CONTROL_MODULE_VOLTAGE` (0x42). The current `pi.pollingTiers` **Tier 4 still polls `INTAKE_PRESSURE` and `CONTROL_MODULE_VOLTAGE`** → they return NO_DATA every 30th cycle, burning slots for nothing. **Drop all three from the rotation.**
+**2b. Delete confirmed dead queries.** ⚠️ **CORRECTED 2026-08-20 — this item said 3 PIDs; it is 2.** `CONTROL_MODULE_VOLTAGE` (0x42) is **LIVE**, not dead (drive 33: 76 rows, 29 distinct, 12.975–14.451 V). My "drop all three" instruction would have deleted a working query. Genuinely dead: `FUEL_PRESSURE` (0x0A) and `INTAKE_PRESSURE` (0x0B / MAP — double-dead, it reads the MDP/EGR monitor so it is the wrong quantity even where it answers). **Drop those two from the rotation.**
+
+**0x42 disposition — still drop it from the rotation, but for a different reason.** It answers, so it is not burning a slot on NO_DATA; it is burning a slot on a value we already get for free. `ATRV` reads the same voltage adapter-locally at pin 16, off the K-line, at zero cost against the ~6.3 samples/s budget. Keep `ATRV` as the production path and free the poll slot — a capacity decision, not a capability one. **Do not record 0x42 as unsupported anywhere.**
 - Note for the upgrade path: `INTAKE_PRESSURE`/MAP being unsupported = **boost/manifold pressure is NOT OBD-reachable on this car**. Boost logging needs the GM 3-bar MAP sensor + ECMLink (already in my upgrade plan) — not a polling-tier fix.
 
 ## 3. The allocation (re-grounded tiers)
