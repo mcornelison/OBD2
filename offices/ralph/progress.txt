@@ -1302,3 +1302,42 @@ Task: iteration booted with no selectable work in sprint.json
   known directory with PowerShell `Get-ChildItem -Filter` returns instantly. Reach
   for the directory listing when the path is known and save Glob for real searches.
 ---
+
+## 2026-08-22 - NO STORY SELECTED (Agent 1 / Rex) -- second consecutive no-work iteration
+Task: none available -- sprint 75 is 10/11 closed and the 11th is fenced by BL-034
+
+### What was implemented:
+- Nothing. No code written, no story closed. This entry exists so the iteration is
+  distinguishable from a stall; the full reasoning is in the entry above and is not
+  repeated here.
+- Re-derived the state from source rather than trusting my own previous handoff note:
+  counted `passes` in sprint.json (10 true / 1 false), and US-560 still carries
+  `blockedBy: BL-034`.
+- Read BL-034 to its end looking specifically for a ruling. There is none -- the file
+  still terminates at its four-option decision table (A pin 720x480 / B accept
+  1280x720 / C force 480x320 / D re-source the panel) with no Resolution section.
+- Checked `offices/ralph/inbox/` for an unblocking message. Newest item is
+  2026-08-21-from-marcus-per-agent-clones-provisioned.md -- nothing about BL-034.
+  Commit 84a837f shows Marcus escalated to Atlas; no reply has landed.
+- Conclusion: the input that would change my behaviour has not arrived, so the
+  correct output is byte-for-byte the same as last iteration.
+  Single-agent decision-tree case 2 => HUMAN_INTERVENTION_REQUIRED again.
+
+### Files changed:
+- Modified: `offices/ralph/ralph_agents.json` (status active -> unassigned; no-work
+  banner #2 prepended, marking the state as unchanged)
+- Modified: `offices/ralph/progress.txt` (this entry)
+
+### Learnings for future iterations:
+- **Pattern discovered**: on a repeat no-work iteration, re-derive the blocking fact
+  from disk instead of citing your own prior note. The check is cheap and it is the
+  only thing that distinguishes "still blocked" from "was unblocked and I did not
+  notice" -- a note that quotes itself can never report the second case.
+- **Gotcha**: an idempotent iteration is a signal about the HARNESS, not just the
+  sprint. Two identical passes mean the loop has no path to self-clear, so the note
+  must say so out loud -- otherwise re-running ralph.sh looks like a reasonable next
+  move and it is not.
+- **Gotcha**: `git status` showed ralph_agents.json already dirty with `status:
+  "active"` at boot -- the harness marks the agent active before a story is picked.
+  Reset it to `unassigned` on the way out or the next reader sees a phantom claim.
+---
