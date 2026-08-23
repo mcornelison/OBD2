@@ -1,1 +1,5 @@
-{"version": "V0.29.29", "theme": "F-127 Pi 3.5in legibility", "description": "Sprint 74, 8/8. US-539 tokenize type-scale; US-540-a values 44/34/26/20/15; US-540-b cards 4->6 (Health retires); US-541 IMU-always-on + Alerts 2nd; US-541-a resolver honours autoRotateS:0 (BL-031); US-542 idle-face retired; US-552 pin KMS to native 480x320; US-554 index_lock clears non-empty stale lock (BL-032). In-car legibility owed."}
+{
+  "version": "V0.29.30",
+  "theme": "F-132 chrome + F-133/134/135 V0.29 closeout",
+  "description": "Sprint 75, 11/12. Closeout: US-561 watchdog presence+dwell; US-563 drive_summary unassessed defaults + intake-air rename; US-564 bit-identity gate; US-565 magnetometer; US-566 powerwatch arm logging; US-568 v0024 real-MariaDB fix. Chrome F-132: US-555..559. US-560 fenced by BL-034."
+}
