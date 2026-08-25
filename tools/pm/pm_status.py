@@ -35,6 +35,7 @@ if hasattr(sys.stdout, "reconfigure"):
 
 # Roots come from the _paths SSOT -- depth-independent by construction.
 from tools.pm._paths import SHARE_ROOT
+
 SPRINT_PATH = SHARE_ROOT / "ralph" / "sprint.json"
 BACKLOG_PATH = SHARE_ROOT / "pm" / "backlog.json"
 COUNTER_PATH = SHARE_ROOT / "pm" / "story_counter.json"

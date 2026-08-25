@@ -68,6 +68,7 @@ if hasattr(sys.stdout, "reconfigure"):
 
 # Roots come from the _paths SSOT -- depth-independent by construction.
 from tools.pm._paths import REPO_ROOT, SHARE_ROOT
+
 BACKLOG_PATH = SHARE_ROOT / "pm" / "backlog.json"
 ARCHIVE_DIR = SHARE_ROOT / "ralph" / "archive"
 
@@ -312,7 +313,22 @@ def _gitFirstAppearanceResolver(repoRoot: Path) -> Callable[[str], str | None]:
     git failure so the caller falls back to the run date. Used only for the rare
     story with no archived-sprint appearance (one pickaxe, not 94).
     """
+    # THE EVICTION BOUNDARY.
+    #
+    # backlog.json was tracked at offices/pm/backlog.json until 2026-08-24, when
+    # offices/ was evicted from the repo and moved to the fleet share. This
+    # pickaxe therefore still works -- but ONLY for stories that first appeared
+    # on or before that date. Every commit touching the backlog after it is on
+    # the share, which is not version controlled at all, so git has nothing to
+    # search.
+    #
+    # That distinction has to be VISIBLE. Before this constant existed the
+    # resolver returned None for a post-boundary story exactly as it does for a
+    # git failure, and the caller silently substituted the run date -- a
+    # confident, wrong first-appearance date with no indication it was invented.
+    # A post-boundary miss is now reported as a KNOWN, EXPLAINED gap.
     backlogRel = "offices/pm/backlog.json"
+    evictionBoundary = "2026-08-24"
 
     def resolver(storyId: str) -> str | None:
         try:
@@ -324,7 +340,18 @@ def _gitFirstAppearanceResolver(repoRoot: Path) -> Callable[[str], str | None]:
         except (subprocess.CalledProcessError, FileNotFoundError):
             return None
         lines = [ln.strip() for ln in result.stdout.splitlines() if ln.strip()]
-        return lines[0] if lines else None
+        if lines:
+            return lines[0]
+        # No pre-boundary commit touches this story. Say why rather than let the
+        # caller fall back to today's date as if it had measured something.
+        print(
+            f"  {storyId}: no first-appearance date available -- backlog.json "
+            f"left version control on {evictionBoundary} (offices/ eviction), so "
+            f"git history cannot date a story introduced after it. Falling back "
+            f"to the run date; treat that value as UNKNOWN, not measured.",
+            file=sys.stderr,
+        )
+        return None
 
     return resolver
 

@@ -132,6 +132,13 @@ output/
 temp/
 tmp/
 
+# Agent-fleet offices -- EVICTED from version control 2026-08-24.
+# This tree now lives on the fleet share (Z:\O\OBD2v3\offices, $FLEET_SHARE)
+# and is NOT version controlled. It stays on disk here in the trunk worktree as
+# a transitional convenience; nothing in the repo may depend on it. Recovery for
+# these 1836 files is Synology snapshot + Hyper Backup, not git.
+offices/
+
 # Downloaded tools (SQLite CLI, etc.). NOTE: `tools/*` not `tools/` so git can
 # descend and the negation below works -- tools/pm/ is first-party source (the
 # PM tool cluster, moved out of offices/pm/scripts/ in the offices decouple).

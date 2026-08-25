@@ -1,6 +1,0 @@
-# Ralph Progress Log
-# Project: adMonitor (CSV Output Configuration)
-# Branch: ralph/csv-output-config
-# Started: 2026-01-21
-
-## Codebase Patterns
