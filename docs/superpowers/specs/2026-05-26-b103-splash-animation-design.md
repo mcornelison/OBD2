@@ -9,7 +9,7 @@
 | Author | Iris (UI/UX Designer) — v1 + v1.2; Atlas (Architect) — v1.1 gate amendments |
 | Date | 2026-05-26 (v1 + v1.1 same day, post-gate); 2026-06-03 (v1.2 groom-ready pass) |
 | Status | **GROOM-READY — Atlas-gated, Spool-advised; awaiting Marcus sprint scoping + (advisory) Argus methodology sign-off** |
-| Supersedes | Existing kit at `specs/UI/dist/splash-pi/` (replaced, not extended) |
+| Supersedes | Existing kit at `src/pi/ui/splash/` (replaced, not extended) |
 | Target sprint | V0.28+ (post-V0.27 chain merge — done 2026-05-23) |
 | Design-gate | Atlas Rule-10 PASS w/ amendments (`offices/architect/inbox/2026-05-26-from-iris-b103-splash-design-gate-request.md` + Atlas reply same date); **Iris acked 2026-06-03** |
 
@@ -51,13 +51,13 @@ Iris's v1 design shapes are correct; gate verdict was **4 PASS / 6 CHANGES REQUE
 
 ## 1. Executive Summary
 
-A status-aware boot/shutdown splash for the OSOYOO 3.5" Pi display, replacing the existing static kit at `specs/UI/dist/splash-pi/`. The brand spine — a Mitsubishi-inspired 3-rhombus animation — is preserved. An honest-instrument layer consumes two SSOTs (`/var/run/eclipse-obd/states/boot-state` from a new `eclipse-boot-state.service` emitter, `/var/run/eclipse-obd/states/shutdown-state` from a new ShutdownSequencer emit hook) to escalate to a 2-state degraded surface when critical services fail. Boot timing is dynamic: minimum 2.5s, yield on healthy, hard cap 12s. Shutdown fires when ShutdownSequencer enters smoothing-begun phase (`phase=grace`): 1s pre-roll + 6.5s reverse animation + BLACK_TAIL until poweroff or 60s safety cap. The splash carries a top wordmark `ECLIPSE OBD-II` and a bottom version chip `V<x> · <sha>` read from `.deploy-version`. Three correctness defects in the existing kit are fixed in scope. Deploy folds into `deploy/deploy-pi.sh` so the version chip is perpetually accurate. **[ATLAS v1.1: path + emitter names pinned; see §0.]**
+A status-aware boot/shutdown splash for the OSOYOO 3.5" Pi display, replacing the existing static kit at `src/pi/ui/splash/`. The brand spine — a Mitsubishi-inspired 3-rhombus animation — is preserved. An honest-instrument layer consumes two SSOTs (`/var/run/eclipse-obd/states/boot-state` from a new `eclipse-boot-state.service` emitter, `/var/run/eclipse-obd/states/shutdown-state` from a new ShutdownSequencer emit hook) to escalate to a 2-state degraded surface when critical services fail. Boot timing is dynamic: minimum 2.5s, yield on healthy, hard cap 12s. Shutdown fires when ShutdownSequencer enters smoothing-begun phase (`phase=grace`): 1s pre-roll + 6.5s reverse animation + BLACK_TAIL until poweroff or 60s safety cap. The splash carries a top wordmark `ECLIPSE OBD-II` and a bottom version chip `V<x> · <sha>` read from `.deploy-version`. Three correctness defects in the existing kit are fixed in scope. Deploy folds into `deploy/deploy-pi.sh` so the version chip is perpetually accurate. **[ATLAS v1.1: path + emitter names pinned; see §0.]**
 
 ## 2. Context & Motivation
 
 ### What exists today
 
-CIO authored a complete splash kit at `specs/UI/dist/splash-pi/`:
+CIO authored a complete splash kit at `src/pi/ui/splash/`:
 - `splash.svg` — 6.5s boot animation (bloom → 3× spin with staged brightness 0.25→1.00 → throb pulses → fade)
 - `splash-shutdown.svg` — same SVG with `animation-direction: reverse`
 - `index.html` / `shutdown.html` — chromium kiosk wrappers

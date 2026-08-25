@@ -51,8 +51,8 @@ from pi.splash.states_http_server import StatesHttpServer
 _TOKEN = "us525-token-abcdefghijklmnopqrstuvwxyz12"
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
-_SPLASH_KIT = _REPO_ROOT / "specs" / "UI" / "dist" / "splash-pi"
-_DASHBOARD_KIT = _REPO_ROOT / "specs" / "UI" / "dist" / "dashboard-pi"
+_SPLASH_KIT = _REPO_ROOT / "src" / "pi" / "ui" / "splash"
+_DASHBOARD_KIT = _REPO_ROOT / "src" / "pi" / "ui" / "dashboard"
 
 # Every unit that launches a chromium kiosk against the localhost state server.
 # Both session variants ship, install.sh picks one (V-2) -- so BOTH must be

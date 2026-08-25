@@ -3310,7 +3310,7 @@ cooperating processes communicate via a tmpfs directory.
 |------|-----------------|------|
 | `eclipse-boot-state.service` | `deploy/eclipse-boot-state.service` | [A-1] Boot-state emitter (`python -m pi.splash.boot_state_emitter`). Polls `systemctl is-active` for the **CORE-readiness** set + checks the dashboard assets are installed, writes `boot-state` JSON @ 500ms. The authority for `healthy`/`degraded`. The eclipse-obd tier is sampled + reported but **does not gate** (US-494, below). |
 | `eclipse-states-http.service` | `deploy/eclipse-states-http.service` | [A-4] Localhost state server (`python -m pi.splash.states_http_server`). Binds **127.0.0.1:9899 only**, serves the read-only `states/*` JSON, **token-gated** (token SSOT), path-traversal-guarded, `Cache-Control: no-store`. The only IPC chromium can `fetch()`. |
-| `splash-boot.service.{wayland,x11}` | `specs/UI/dist/splash-pi/` | [A-8] Chromium kiosk. Loads `http://127.0.0.1:9899/` (same-origin, token injected) and runs the `boot-state-poll.js` state machine. |
+| `splash-boot.service.{wayland,x11}` | `src/pi/ui/splash/` | [A-8] Chromium kiosk. Loads `http://127.0.0.1:9899/` (same-origin, token injected) and runs the `boot-state-poll.js` state machine. |
 
 **Code:** `src/pi/splash/` — `boot_state_emitter.py` (honest-instrument verdict
 logic: CORE-readiness gate, dashboard-asset gate, informational 3-tier
@@ -3430,7 +3430,7 @@ idempotent):
    (the boot-durable provisioning mechanism AC#4 requires — **not** `install -d`
    alone).
 2. `step_install_splash_assets` installs the served kit from
-   `specs/UI/dist/splash-pi/` into `/opt/splash` and writes
+   `src/pi/ui/splash/` into `/opt/splash` and writes
    `/opt/splash/version.txt` (the bare SemVer string the kiosk version chip
    fetches; derived from `deploy/RELEASE_VERSION`, `V?.?.?` fallback). The
    manifest covers **both** surfaces — boot (`index.html`, `styles.css`,
@@ -3492,7 +3492,7 @@ hardened US-428).** The asset + state-server steps above install what
 `eclipse-states-http` *serves*; a separate deploy step installs the chromium kiosk
 **units** that actually draw it (without it the backend serves 127.0.0.1:9899 with
 no browser and the 3.5″ panel stays blank, pygame being sunset). It runs the kits'
-own session-aware `install.sh` (`specs/UI/dist/{splash-pi,dashboard-pi}/`) after the
+own session-aware `install.sh` (`src/pi/ui/{splash-pi,dashboard-pi}/`) after the
 state server is up. Three install-contract gaps are closed:
 
 - **Bug-1 (units never installed):** deploy invokes both kit installers every deploy
@@ -3529,8 +3529,8 @@ Battery Health card bodies + emitters are US-400 / US-401; the DTC card (Card 5)
 
 | Piece | Source | Role |
 |------|--------|------|
-| Dashboard kit | `specs/UI/dist/dashboard-pi/` | `dashboard.html` (top bar + card slots + page dots -- see the card model below), `dashboard.css` (≥40px tap targets), `carousel.js` (swipe-nav + dots + honest-instrument availability poll). Served at `/dashboard.html`. |
-| `eclipse-dashboard.service.{wayland,x11}` | `specs/UI/dist/dashboard-pi/` | [A-5] Chromium **touch** kiosk (`--touch-events=enabled`). Loads `http://127.0.0.1:9899/dashboard.html` same-origin (token injected). **No `[Install]`** -- started by the splash hand-off, not enabled. |
+| Dashboard kit | `src/pi/ui/dashboard/` | `dashboard.html` (top bar + card slots + page dots -- see the card model below), `dashboard.css` (≥40px tap targets), `carousel.js` (swipe-nav + dots + honest-instrument availability poll). Served at `/dashboard.html`. |
+| `eclipse-dashboard.service.{wayland,x11}` | `src/pi/ui/dashboard/` | [A-5] Chromium **touch** kiosk (`--touch-events=enabled`). Loads `http://127.0.0.1:9899/dashboard.html` same-origin (token injected). **No `[Install]`** -- started by the splash hand-off, not enabled. |
 
 **A-1 splash → dashboard hand-off.** `splash-boot.service.{wayland,x11}` carries
 `OnSuccess=eclipse-dashboard.service`. When the boot splash reaches
@@ -4555,7 +4555,7 @@ site yet), matching the shipped cards.
 
 #### Visual token SSOT + the two-file mirror (US-510, Sprint 68 / V0.29.23) [Atlas Rule-10 2026-07-31]
 
-`specs/UI/tokens.css` is the **visual SSOT** (Iris owns values; Atlas gates
+`src/pi/ui/tokens.css` is the **visual SSOT** (Iris owns values; Atlas gates
 additions under Rule-10). `dashboard.html` links **only `dashboard.css`**, so the
 dist `:root` is a **runtime MIRROR** of the SSOT, not a second source: every
 token is declared in both files and `tests/ui/test_dashboard_token_ssot.py` +

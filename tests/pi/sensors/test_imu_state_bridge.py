@@ -580,7 +580,7 @@ def test_defaultStateRate_sitsInsideAtlasRuledTransportBand():
           Writing slower than the reader polls does not slow the poll; it makes
           the reader re-read a file that has not changed and animate nothing.
     """
-    js = Path(__file__).resolve().parents[3] / "specs/UI/dist/dashboard-pi/carousel.js"
+    js = Path(__file__).resolve().parents[3] / "src/pi/ui/dashboard/carousel.js"
     m = re.search(r"IMU_POLL_MS\s*=\s*(\d+)", js.read_text(encoding="utf-8"))
     assert m, "carousel.js no longer declares IMU_POLL_MS -- re-ground this pin"
     cardPollHz = 1000.0 / float(m.group(1))

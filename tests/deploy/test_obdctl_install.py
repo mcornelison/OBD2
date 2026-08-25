@@ -48,8 +48,8 @@ OBDCTL_SOURCE = REPO_ROOT / "src" / "pi" / "ops" / "obdctl.py"
 # the SSOT: the unit list was previously spread across these three files.
 INSTALLING_SCRIPTS = (
     DEPLOY_SCRIPT,
-    REPO_ROOT / "specs" / "UI" / "dist" / "splash-pi" / "install.sh",
-    REPO_ROOT / "specs" / "UI" / "dist" / "dashboard-pi" / "install.sh",
+    REPO_ROOT / "src" / "pi" / "ui" / "splash" / "install.sh",
+    REPO_ROOT / "src" / "pi" / "ui" / "dashboard" / "install.sh",
 )
 
 INSTALL_STEP = "step_install_obdctl"

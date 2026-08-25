@@ -52,9 +52,9 @@ from tests.ui.test_dashboard_stop_tier_safety import _read, _ruleBlock, _tokenVa
 
 _NODE = shutil.which("node")
 _PROBE = os.path.join(os.path.dirname(__file__), "carousel_probe.js")
-_UI = os.path.join(os.path.dirname(__file__), "..", "..", "specs", "UI")
+_UI = os.path.join(os.path.dirname(__file__), "..", "..", "src", "pi", "ui")
 _TOKENS = os.path.join(_UI, "tokens.css")
-_DIST = os.path.join(_UI, "dist", "dashboard-pi")
+_DIST = os.path.join(_UI, "dashboard")
 _CSS = os.path.join(_DIST, "dashboard.css")
 _JS = os.path.join(_DIST, "carousel.js")
 

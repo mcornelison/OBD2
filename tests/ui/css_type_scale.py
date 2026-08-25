@@ -28,9 +28,9 @@ from __future__ import annotations
 import os
 import re
 
-_UI = os.path.join(os.path.dirname(__file__), "..", "..", "specs", "UI")
+_UI = os.path.join(os.path.dirname(__file__), "..", "..", "src", "pi", "ui")
 TOKENS_CSS = os.path.join(_UI, "tokens.css")
-DASHBOARD_CSS = os.path.join(_UI, "dist", "dashboard-pi", "dashboard.css")
+DASHBOARD_CSS = os.path.join(_UI, "dashboard", "dashboard.css")
 
 # The whole scale, largest first. The ORDER is load-bearing: two safety
 # hierarchies (see the module docstring) are expressed as "a higher tier than",

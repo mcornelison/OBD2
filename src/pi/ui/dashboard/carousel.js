@@ -3353,7 +3353,7 @@
     // --- US-496 Light card DOM render (browser only) ------------------------
 
     // Two tiles through the SHARED `.tile` component, which is already bound to
-    // specs/UI/tokens.css -- the Light card introduces no palette of its own
+    // src/pi/ui/tokens.css -- the Light card introduces no palette of its own
     // (AC-4: a bespoke local colour is exactly the drift the SSOT prevents).
     function renderLightBody(body, view) {
       if (!body || !view) return;

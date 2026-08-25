@@ -1,7 +1,7 @@
 ################################################################################
 # File Name: test_carousel_parked_debounce.py
 # Purpose/Description: US-511 tests for the DEBOUNCED `parked` signal that gates
-#   the context-aware `⋮` kebab (specs/UI/dist/dashboard-pi/carousel.js). US-490
+#   the context-aware `⋮` kebab (src/pi/ui/dashboard/carousel.js). US-490
 #   keyed the affordance off the raw system-status `idle` SSOT boolean, so every
 #   brief OBD-availability blip flipped the button in and out of existence. This
 #   story inserts a hysteresis debounce between the emitter's flag and the menu
@@ -37,7 +37,7 @@ import pytest
 _NODE = shutil.which("node")
 _PROBE = os.path.join(os.path.dirname(__file__), "carousel_probe.js")
 _DIST = os.path.join(
-    os.path.dirname(__file__), "..", "..", "specs", "UI", "dist", "dashboard-pi"
+    os.path.dirname(__file__), "..", "..", "src", "pi", "ui", "dashboard"
 )
 _JS = os.path.join(_DIST, "carousel.js")
 _CONFIG = os.path.join(os.path.dirname(__file__), "..", "..", "config.json")

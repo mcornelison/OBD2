@@ -18,7 +18,7 @@
 #   is asserted too (the same cross-file trap US-484-a/b hit twice).
 #
 #   Colours are compared as PARSED token references, never as hardcoded hexes,
-#   so a drift in specs/UI/tokens.css or in the dist re-reds these tests.
+#   so a drift in src/pi/ui/tokens.css or in the dist re-reds these tests.
 #   The on-panel render stays a PI-RUNTIME gate (story validationCriteria).
 # Author: Ralph Agent (Rex)
 # Creation Date: 2026-07-27
@@ -44,9 +44,9 @@ import re
 # subtly weaker matcher here would silently under-assert.
 from tests.ui.test_dashboard_stop_tier_safety import _read, _ruleBlock, _tokenValue
 
-_UI = os.path.join(os.path.dirname(__file__), "..", "..", "specs", "UI")
+_UI = os.path.join(os.path.dirname(__file__), "..", "..", "src", "pi", "ui")
 _TOKENS = os.path.join(_UI, "tokens.css")
-_DIST = os.path.join(_UI, "dist", "dashboard-pi")
+_DIST = os.path.join(_UI, "dashboard")
 _CSS = os.path.join(_DIST, "dashboard.css")
 _JS = os.path.join(_DIST, "carousel.js")
 

@@ -239,7 +239,7 @@ class TestOverlayGuardIsRed:
         The DOM is produced by the CURRENT carousel.js on purpose -- the JS was
         never wrong, and holding it fixed isolates the stylesheet as the defect.
         """
-        css = _gitShow(f"{_US495_FIX_COMMIT}^:specs/UI/dist/dashboard-pi/dashboard.css")
+        css = _gitShow(f"{_US495_FIX_COMMIT}^:src/pi/ui/dashboard/dashboard.css")
         if css is None:
             pytest.skip(
                 f"pre-fix blob {_US495_FIX_COMMIT}^ unreachable (shallow clone?) -- "

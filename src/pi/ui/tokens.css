@@ -26,7 +26,7 @@
    and CSP-fenced, so a font CDN would fail in the ONE place that matters and
    nowhere else; there is no external font reference anywhere in this kit.
 
-   Licence: SIL Open Font License 1.1 -- specs/UI/dist/dashboard-pi/OFL.txt,
+   Licence: SIL Open Font License 1.1 -- src/pi/ui/dashboard/OFL.txt,
    which ships with the kit (the face travels INSIDE the stylesheet, so the
    licence has to travel with the stylesheet). Oswald carries no Reserved Font
    Name, so the family name "Oswald" is compliant (Iris, confirmed 2026-08-01).

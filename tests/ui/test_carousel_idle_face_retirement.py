@@ -58,7 +58,7 @@ import render_harness as rh  # noqa: E402
 _NODE = shutil.which("node")
 _PROBE = os.path.join(os.path.dirname(__file__), "carousel_probe.js")
 _DIST = os.path.join(
-    os.path.dirname(__file__), "..", "..", "specs", "UI", "dist", "dashboard-pi"
+    os.path.dirname(__file__), "..", "..", "src", "pi", "ui", "dashboard"
 )
 _JS = os.path.join(_DIST, "carousel.js")
 _HTML = os.path.join(_DIST, "dashboard.html")

@@ -1,7 +1,7 @@
 ################################################################################
 # File Name: test_carousel_idle_clock.py
 # Purpose/Description: US-503 tests for the idle-home card wall clock in
-#   specs/UI/dist/dashboard-pi/carousel.js. The clock rendered 24-hour time
+#   src/pi/ui/dashboard/carousel.js. The clock rendered 24-hour time
 #   ("14:05"); the operator reads a 12-hour AM/PM face ("2:05 PM"). These tests
 #   pin the format contract at both levels:
 #     1. `fmtClock` itself, through idle_clock_probe.js -- including the two

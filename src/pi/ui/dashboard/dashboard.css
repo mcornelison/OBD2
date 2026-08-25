@@ -9,7 +9,7 @@
  * Author:  Ralph Agent (Rex)
  * Created: 2026-06-30 -- Sprint 49 US-399 (carousel shell)
  * Updated: 2026-07-26 -- US-484-a: the :root palette below is reconciled with the
- *          visual SSOT specs/UI/tokens.css for the tokens Atlas has gated
+ *          visual SSOT src/pi/ui/tokens.css for the tokens Atlas has gated
  *          (--green-ok, --text-primary). Do NOT re-fork a value here: if a
  *          surface needs a colour, add it to tokens.css first (Rule-10 / Atlas;
  *          tuning-semantics colours via Spool). Enforced by
@@ -29,7 +29,7 @@
    and CSP-fenced, so a font CDN would fail in the ONE place that matters and
    nowhere else; there is no external font reference anywhere in this kit.
 
-   Licence: SIL Open Font License 1.1 -- specs/UI/dist/dashboard-pi/OFL.txt,
+   Licence: SIL Open Font License 1.1 -- src/pi/ui/dashboard/OFL.txt,
    which ships with the kit (the face travels INSIDE the stylesheet, so the
    licence has to travel with the stylesheet). Oswald carries no Reserved Font
    Name, so the family name "Oswald" is compliant (Iris, confirmed 2026-08-01).
@@ -530,7 +530,7 @@ html, body {
 
 /* --- US-497 IMU live-instrument card (S4-card, F-113) ----------------------- */
 /* The g-meter + compass sit side by side above the tile stack. EVERY colour is
-   a var(--token) from specs/UI/tokens.css -- this card forks no palette (AC-4;
+   a var(--token) from src/pi/ui/tokens.css -- this card forks no palette (AC-4;
    a bespoke local hex is exactly the drift the SSOT exists to prevent).
    `currentColor`/`stroke: none` is deliberate on the SVG furniture: it inherits
    the card's text colour, so the .card.unavailable gray sweeps the instrument

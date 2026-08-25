@@ -37,10 +37,10 @@ _DIST = os.path.join(
     os.path.dirname(__file__),
     "..",
     "..",
-    "specs",
-    "UI",
-    "dist",
-    "dashboard-pi",
+    "src",
+    "pi",
+    "ui",
+    "dashboard",
 )
 _HTML = os.path.join(_DIST, "dashboard.html")
 _CSS = os.path.join(_DIST, "dashboard.css")

@@ -53,8 +53,8 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
-SPLASH_KIT = REPO_ROOT / "specs" / "UI" / "dist" / "splash-pi"
-DASH_KIT = REPO_ROOT / "specs" / "UI" / "dist" / "dashboard-pi"
+SPLASH_KIT = REPO_ROOT / "src" / "pi" / "ui" / "splash"
+DASH_KIT = REPO_ROOT / "src" / "pi" / "ui" / "dashboard"
 SPLASH_INSTALL = SPLASH_KIT / "install.sh"
 DASH_INSTALL = DASH_KIT / "install.sh"
 

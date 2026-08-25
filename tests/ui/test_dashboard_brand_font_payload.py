@@ -46,9 +46,9 @@ import re
 
 _HERE = os.path.dirname(__file__)
 _ROOT = os.path.join(_HERE, "..", "..")
-_UI = os.path.join(_ROOT, "specs", "UI")
+_UI = os.path.join(_ROOT, "src", "pi", "ui")
 _TOKENS = os.path.join(_UI, "tokens.css")
-_DIST = os.path.join(_UI, "dist", "dashboard-pi")
+_DIST = os.path.join(_UI, "dashboard")
 _CSS = os.path.join(_DIST, "dashboard.css")
 _JS = os.path.join(_DIST, "carousel.js")
 _HTML = os.path.join(_DIST, "dashboard.html")
@@ -62,7 +62,7 @@ _DEPLOY_PI = os.path.join(_ROOT, "deploy", "deploy-pi.sh")
 # the repo is what makes the payload verifiable rather than a 3,864-character
 # string nobody can check.
 _SOURCE_WOFF2 = os.path.join(
-    _ROOT, "specs", "UI", "assets", "fonts", "oswald-brand.woff2"
+    _ROOT, "src", "pi", "ui", "assets", "fonts", "oswald-brand.woff2"
 )
 
 # Grounded in the same dispatch: "subset: A-Z / 0-9 / space / hyphen, weight 600".
@@ -289,7 +289,7 @@ def test_theLicenceIsVouchedForDeploymentNotSilentlyPruned():
     reported the splash list's contents as the dashboard's.
     """
     script = _read(_DEPLOY_PI)
-    start = script.index('assetSrc="$REPO_ROOT/specs/UI/dist/dashboard-pi"')
+    start = script.index('assetSrc="$REPO_ROOT/src/pi/ui/dashboard"')
     match = re.search(r'local assets="([^"]+)"', script[start:])
     assert match is not None, "the dashboard asset list moved"
     assert "OFL.txt" in match.group(1).split(), match.group(1)

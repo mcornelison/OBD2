@@ -45,10 +45,10 @@ _HEALTHY = {"healthy": True, "degraded": False}
 
 _POLL_JS = (
     Path(__file__).resolve().parents[2]
-    / "specs"
-    / "UI"
-    / "dist"
-    / "splash-pi"
+    / "src"
+    / "pi"
+    / "ui"
+    / "splash"
     / "boot-state-poll.js"
 )
 

@@ -55,8 +55,8 @@ from typing import Any
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _REPO = os.path.abspath(os.path.join(_HERE, "..", ".."))
-DASHBOARD_DIR = os.path.join(_REPO, "specs", "UI", "dist", "dashboard-pi")
-SPLASH_DIR = os.path.join(_REPO, "specs", "UI", "dist", "splash-pi")
+DASHBOARD_DIR = os.path.join(_REPO, "src", "pi", "ui", "dashboard")
+SPLASH_DIR = os.path.join(_REPO, "src", "pi", "ui", "splash")
 
 # Elements the HTML spec renders as `display: none` with no stylesheet at all.
 _UA_NOT_RENDERED_TAGS = frozenset({"script", "style", "head", "meta", "link", "title"})

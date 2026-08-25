@@ -13,12 +13,12 @@ __pycache__/
 build/
 develop-eggs/
 dist/
-# The generic Python `dist/` rule above also matched specs/UI/dist/ -- the splash
-# UI deliverable kit (NOT Python build output). Un-ignore it so the F-103 splash
-# assets are version-controlled + deployable (US-393 Rule-10: specs/UI/ updates
-# must land in-sprint). specs/UI/dist is a hand-authored design deliverable.
-!specs/UI/dist/
-!specs/UI/dist/**
+# NOTE (2026-08-24): the two `!specs/UI/dist/` negations that used to live here
+# are GONE, and deliberately so. The generic `dist/` rule above matched
+# specs/UI/dist/ -- the hand-authored Pi web root -- so the only thing keeping
+# the deployed dashboard in version control was a pair of un-ignore rules
+# fighting a wildcard. That tree now lives at src/pi/ui/ with no `dist` segment
+# in its path, so it is tracked by default and nothing has to fight for it.
 downloads/
 eggs/
 .eggs/

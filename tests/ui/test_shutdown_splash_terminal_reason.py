@@ -65,7 +65,7 @@ from tests.deploy.test_dashboard_kit import _execStartFlags
 from tests.ui.render_harness import ProbeError, runShutdownSplash
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-KIT_DIR = REPO_ROOT / "specs" / "UI" / "dist" / "splash-pi"
+KIT_DIR = REPO_ROOT / "src" / "pi" / "ui" / "splash"
 POLL_JS = KIT_DIR / "shutdown-state-poll.js"
 
 GRACE_UNITS = ("splash-grace.service.x11", "splash-grace.service.wayland")

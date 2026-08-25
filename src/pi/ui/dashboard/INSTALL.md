@@ -74,4 +74,4 @@ sudo ./uninstall.sh
   full sprint deploys US-399…402 together, so the shipped artifact has exactly
   one surface.
 - **Display orientation / black-screen troubleshooting:** identical to the
-  splash kit — see `specs/UI/dist/splash-pi/INSTALL.md`.
+  splash kit — see `src/pi/ui/splash/INSTALL.md`.

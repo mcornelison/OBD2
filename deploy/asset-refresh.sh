@@ -49,7 +49,7 @@
 
 # refresh_asset_dir SRC DST MANIFEST [KEEP]
 #
-#   SRC      source kit dir (on the Pi: ${PI_PATH}/specs/UI/dist/<kit>)
+#   SRC      source kit dir (on the Pi: ${PI_PATH}/src/pi/ui/<kit>)
 #   DST      installed dir  (/opt/splash | /opt/dashboard)
 #   MANIFEST space-separated basenames this step installs + owns
 #   KEEP     space-separated basenames another installer owns -- never pruned,

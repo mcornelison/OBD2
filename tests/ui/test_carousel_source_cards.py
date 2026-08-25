@@ -63,7 +63,7 @@ import pytest
 _NODE = shutil.which("node")
 _PROBE = os.path.join(os.path.dirname(__file__), "carousel_probe.js")
 _DIST = os.path.join(
-    os.path.dirname(__file__), "..", "..", "specs", "UI", "dist", "dashboard-pi"
+    os.path.dirname(__file__), "..", "..", "src", "pi", "ui", "dashboard"
 )
 _HTML = os.path.join(_DIST, "dashboard.html")
 _JS = os.path.join(_DIST, "carousel.js")
@@ -582,7 +582,7 @@ def test_carouselJs_sourceCardsRouteBeforeTheGenericAvailabilityPath():
 
 def test_carouselJs_sourceCardsReuseTheTokenizedTile():
     """The cards render through the shared `.tile` component, already bound to
-    specs/UI/tokens.css. A bespoke per-card palette is exactly the drift the
+    src/pi/ui/tokens.css. A bespoke per-card palette is exactly the drift the
     SSOT rule exists to prevent."""
     render = _fnBody(_read(_JS), "renderSourceCard")
     for body in ("renderBatteryHealthBody", "renderLightBody", "renderLtftTrendBody"):

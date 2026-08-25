@@ -44,7 +44,7 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
-KIT_DIR = REPO_ROOT / "specs" / "UI" / "dist" / "splash-pi"
+KIT_DIR = REPO_ROOT / "src" / "pi" / "ui" / "splash"
 CONFIG_PATH = REPO_ROOT / "config.json"
 
 # The PRE_ROLL no-paint window shutdown-state-poll.js enforces before it reveals

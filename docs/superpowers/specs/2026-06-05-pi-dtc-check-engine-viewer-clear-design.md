@@ -126,7 +126,7 @@ The severity value is **read from the `dtc` state**, classified upstream from Sp
 
 ## 5. Surfaces — Visual Spec
 
-Visual SSOT = F-103 tokens (mono type; `--text-secondary #888`, `--text-tertiary #666`; brand reds; `--amber-warn #FFC400`). One **new** token: `--green-ok #35C46A` for the MINOR / OK / "linked" state (§7 — needs adding to `specs/UI/`). No web fonts.
+Visual SSOT = F-103 tokens (mono type; `--text-secondary #888`, `--text-tertiary #666`; brand reds; `--amber-warn #FFC400`). One **new** token: `--green-ok #35C46A` for the MINOR / OK / "linked" state (§7 — needs adding to `src/pi/ui/`). No web fonts.
 
 ### 5.1 Takeover alert (D-1, D-2)
 Full-bleed overlay above the dashboard, fired on a new code. Skeleton: icon · "CHECK ENGINE" · severity chip + hero code + short desc · directive line · "+N more codes" (if >1) · action buttons.
@@ -202,7 +202,7 @@ The button's enabled state is UI convenience only. The **actual Mode 04 issuance
 
 | Token | Value | Use | Status |
 |---|---|---|---|
-| `--green-ok` | `#35C46A` | MINOR tier, OK/linked/verified states | **NEW — propose adding to `specs/UI/` SSOT** (W-3). Routes through Atlas as the SSOT-pattern owner. |
+| `--green-ok` | `#35C46A` | MINOR tier, OK/linked/verified states | **NEW — propose adding to `src/pi/ui/` SSOT** (W-3). Routes through Atlas as the SSOT-pattern owner. |
 | `--red`/`--red-light`/`--red-dark` | `#E60012`/`#F61D2D`/`#BF000F` | STOP tier | exists (F-103) |
 | `--amber-warn`/`--amber-soft` | `#FFC400`/`#FFC40033` | WATCH tier | exists (F-103) |
 
@@ -311,9 +311,9 @@ Reuses the F-092 carousel touch enablement; takeover buttons + list rows ≥40×
 | A-5 | **Capture-before-clear sync-ack signal** — where "server acked this code" originates + how the gate reads it | PENDING |
 | A-6 | Takeover lifecycle over the kiosk (auto-surface overlay vs carousel; escalation re-fire; ribbon) | PENDING |
 | A-7 | `suggested_fix` server-side enrichment + sync into the `dtc` state (web + Ollama; advisory §6a) — server architecture | PENDING |
-| A-8 | **NEW token `--green-ok #35C46A`** into `specs/UI/` SSOT (Atlas owns the SSOT-design-pattern; W-3) | CONDITIONAL PASS — add once to `specs/UI/` (Rule-10 DoD in-sprint) |
+| A-8 | **NEW token `--green-ok #35C46A`** into `src/pi/ui/` SSOT (Atlas owns the SSOT-design-pattern; W-3) | CONDITIONAL PASS — add once to `src/pi/ui/` (Rule-10 DoD in-sprint) |
 | A-9 | **NEW (C-2 / DTC-A9, hard) — key-on Mode 03(+07) read** independent of DriveDetector, `drive_id = NULL`. Ownership/trigger: which unit fires the KOEO read + when (key-on edge), reusing `dtc_client`; `dtc_log` NULL-`drive_id` confirmed allowed | RAISED by Atlas (gate condition) — folded; **ownership/trigger PENDING Atlas** |
-| A-* | **Standing conditions (Atlas):** C-1 F-103 first (kiosk/state-server unbuilt); DTC-A1 clear-gate re-checked at the action path against `dtc_log` + sync-ack (never trust the UI button); DTC-A1 uses the **I-036 polkit precedent** (no new privileged helper); Rule-10 DoD = emitter + Mode-04 path + `--green-ok` land with `architecture.md` + `specs/UI/` updates in-sprint | NOTED |
+| A-* | **Standing conditions (Atlas):** C-1 F-103 first (kiosk/state-server unbuilt); DTC-A1 clear-gate re-checked at the action path against `dtc_log` + sync-ack (never trust the UI button); DTC-A1 uses the **I-036 polkit precedent** (no new privileged helper); Rule-10 DoD = emitter + Mode-04 path + `--green-ok` land with `architecture.md` + `src/pi/ui/` updates in-sprint | NOTED |
 
 ### Spool (semantics — he owns these; this spec renders them)
 | # | Item |
@@ -335,7 +335,7 @@ Reuses the F-092 carousel touch enablement; takeover buttons + list rows ≥40×
 |---|---|
 | M-1 | Proposed split: **US-A** key-on (KOEO) Mode 03(+07) read (C-2/DTC-A9, `drive_id=NULL`) + `dtc` emitter + state-server endpoint + static-table loader/sync (incl. Spool's P1xxx table) · **US-B** takeover + ribbon (severity-styled, frequency rules) · **US-C** Alerts card (hero+list) + detail view (freeze-frame + severity-gated fix + trust badge + **condition-dependent `severityCaveat`** + **auto-trans `N/A`** quiet disposition) · **US-D** Clear-DTC Mode 04 path + gate + confirm + re-read + session-lock (load-bearing — pairs with Atlas A-1) · **US-E** detail-view realtime_data fallback render (Mode 02 unsupported on current ECU — no capture path; lands with US-C) |
 | M-2 | **Depends on** the F-092/F-097 carousel shell (Card 5 slot) + F-103 kiosk/state-server — sequence after/with them |
-| M-3 | Rule-10 DoD: the emitter + Mode 04 path + token land matching `specs/architecture.md` + `specs/UI/` updates in-sprint (A-1/A-2/A-8) |
+| M-3 | Rule-10 DoD: the emitter + Mode 04 path + token land matching `specs/architecture.md` + `src/pi/ui/` updates in-sprint (A-1/A-2/A-8) |
 
 ## 11. Open Questions
 - ~~Mode 02 support on MD326328~~ — **RESOLVED 2026-06-05**: confirmed unsupported (Spool live probe). Detail view uses the realtime_data context fallback as the default; no capture path built for this ECU.

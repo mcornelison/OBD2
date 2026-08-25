@@ -49,10 +49,10 @@ _NODE = shutil.which("node")
 _PROBE = os.path.join(os.path.dirname(__file__), "carousel_probe.js")
 _JS = os.path.join(
     os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-    "specs",
-    "UI",
-    "dist",
-    "dashboard-pi",
+    "src",
+    "pi",
+    "ui",
+    "dashboard",
     "carousel.js",
 )
 

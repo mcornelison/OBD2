@@ -67,7 +67,7 @@ NON_CRITICAL_CEILING_PX = 26
 
 def test_ssot_carriesTheLegibilityScaleValues():
     """
-    Given: specs/UI/tokens.css is the visual SSOT for the type scale
+    Given: src/pi/ui/tokens.css is the visual SSOT for the type scale
     When: the F-127 legibility values are set
     Then: all five tokens read Iris's numbers
     """
