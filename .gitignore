@@ -164,3 +164,11 @@ data/boot_progress
 data/boot_progress.tmp
 data/spool/
 
+
+# Per-bench provisioning (New-Bench.ps1). Stamped into every leased worktree,
+# never part of the project. A bench must start with a clean status: untracked
+# noise is how an agent talks itself into blanket staging, and the surface
+# check at merge depends on status being meaningful.
+CLAUDE.local.md
+.fleet/
+bench.ps1
