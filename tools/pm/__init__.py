@@ -24,6 +24,19 @@
 
 from __future__ import annotations
 
-from tools.pm._paths import REPO_ROOT, SHARE_ROOT, findRepoRoot, resolveShareRoot
+# NOTE: SHARE_ROOT is deliberately NOT re-exported here.
+#
+# Resolving it requires $FLEET_SHARE and raises without it (by design -- see
+# _paths.resolveShareRoot). If this package's __init__ imported it eagerly, then
+# importing ANY tool would require the variable, including the ones that never
+# touch share data at all: index_lock (operates on .git/index.lock),
+# verify_release_version (reads deploy/RELEASE_VERSION), deploy_preflight_gate,
+# backlog_schema, _encoding, _freeze. Their tests would fail at COLLECTION with
+# a configuration error about data they do not read.
+#
+# So the requirement is scoped to the tools that actually need the share: they
+# import SHARE_ROOT from tools.pm._paths themselves. Callers wanting it here can
+# use resolveShareRoot(), which raises at call time rather than import time.
+from tools.pm._paths import REPO_ROOT, findRepoRoot, resolveShareRoot
 
-__all__ = ["REPO_ROOT", "SHARE_ROOT", "findRepoRoot", "resolveShareRoot"]
+__all__ = ["REPO_ROOT", "findRepoRoot", "resolveShareRoot"]

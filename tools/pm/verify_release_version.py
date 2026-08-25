@@ -29,6 +29,7 @@ from pathlib import Path
 
 # Roots come from the _paths SSOT -- depth-independent by construction.
 from tools.pm._paths import REPO_ROOT
+
 DEFAULT_RELEASE_PATH = REPO_ROOT / "deploy" / "RELEASE_VERSION"
 
 VERSION_PATTERN = re.compile(r"^V\d+\.\d+\.\d+$")

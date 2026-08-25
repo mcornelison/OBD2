@@ -51,21 +51,30 @@ from pathlib import Path
 
 import pytest
 
-from tools.pm._paths import SHARE_ROOT
+# $FLEET_SHARE is REQUIRED and raises when unset (no fallback -- see
+# tools.pm._paths.resolveShareRoot). Catch that here so an unconfigured share
+# SKIPS these tests instead of erroring at collection: "the share is not
+# mounted" is a legitimate local state, and a config error about data this file
+# reads should not look like a broken test suite.
+try:
+    from tools.pm._paths import SHARE_ROOT
+except RuntimeError:
+    SHARE_ROOT = None
 
 # ralph.sh and prompt.md are AGENT-FLEET artifacts, not product source: they
 # live under the fleet share, which is offices/ pre-eviction and $FLEET_SHARE
 # after. Resolved through the _paths SSOT so this file has no idea which of the
 # two it is reading.
-PROMPT_PATH = SHARE_ROOT / "ralph" / "prompt.md"
-RALPH_SH_PATH = SHARE_ROOT / "ralph" / "ralph.sh"
+PROMPT_PATH = (SHARE_ROOT / "ralph" / "prompt.md") if SHARE_ROOT else None
+RALPH_SH_PATH = (SHARE_ROOT / "ralph" / "ralph.sh") if SHARE_ROOT else None
 
 # Skip -- never silently pass -- when the share is not mounted. A contract test
 # whose inputs are absent must not report success: that would assert nothing
 # while looking green.
 requiresShare = pytest.mark.skipif(
-    not (PROMPT_PATH.exists() and RALPH_SH_PATH.exists()),
-    reason="share not mounted (need $FLEET_SHARE/ralph/{prompt.md,ralph.sh})",
+    SHARE_ROOT is None
+    or not (PROMPT_PATH.exists() and RALPH_SH_PATH.exists()),
+    reason="share not mounted (set $FLEET_SHARE; need ralph/{prompt.md,ralph.sh})",
 )
 
 PROMISE_RE = re.compile(r"<promise>([A-Z_]+)</promise>")

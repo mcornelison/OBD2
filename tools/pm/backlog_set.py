@@ -42,6 +42,7 @@ from typing import Any
 
 # Roots come from the _paths SSOT -- depth-independent by construction.
 from tools.pm._paths import SHARE_ROOT
+
 BACKLOG_PATH = SHARE_ROOT / "pm" / "backlog.json"
 
 # Proposed-change lines echo user-supplied notes/field values that may carry

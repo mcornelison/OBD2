@@ -43,6 +43,7 @@ from pathlib import Path
 
 # Roots come from the _paths SSOT -- depth-independent by construction.
 from tools.pm._paths import SHARE_ROOT
+
 DEFAULT_MANIFEST_PATH = SHARE_ROOT / "pm" / "regression_manifest.json"
 
 

@@ -12,6 +12,10 @@
 # and nothing raised -- the tools simply resolved non-existent paths and read
 # nothing. So the assertions here are about RESOLUTION BEHAVIOUR, especially
 # the failure branch: absence must raise, never degrade quietly.
+#
+# Updated 2026-08-24: the transitional in-repo offices/ fallback was REMOVED.
+# $FLEET_SHARE is now required unconditionally, so resolveShareRoot has exactly
+# two outcomes and takes no arguments.
 # ==============================================================================
 
 from __future__ import annotations
@@ -70,7 +74,7 @@ def test_findRepoRoot_noMarkerAnywhere_raises(tmp_path: Path) -> None:
 
 
 # ==============================================================================
-# SHARE_ROOT -- branch 1: $FLEET_SHARE wins
+# SHARE_ROOT -- $FLEET_SHARE is the ONLY source (two outcomes: use it, or raise)
 # ==============================================================================
 def test_resolveShareRoot_envSet_usesIt(tmp_path: Path, monkeypatch) -> None:
     """
@@ -82,62 +86,54 @@ def test_resolveShareRoot_envSet_usesIt(tmp_path: Path, monkeypatch) -> None:
     share.mkdir()
     monkeypatch.setenv(_SHARE_ENV, str(share))
 
-    assert resolveShareRoot(tmp_path) == share
+    assert resolveShareRoot() == share
 
 
-def test_resolveShareRoot_envWinsOverInRepoOffices(tmp_path: Path, monkeypatch) -> None:
+def test_resolveShareRoot_envSet_ignoresAnyInRepoOffices(
+    tmp_path: Path, monkeypatch
+) -> None:
     """
-    Given: BOTH $FLEET_SHARE and a transitional in-repo offices/ exist
+    Given: BOTH $FLEET_SHARE and an in-repo offices/ exist
     When:  the share root is resolved
-    Then:  the env var wins
-
-    Ordering matters: post-eviction an operator may still have a stale
-    offices/ lying around, and the explicitly configured share must take
-    precedence over it.
+    Then:  the env var wins; the local directory is never consulted
     """
     share = tmp_path / "fleet"
     share.mkdir()
     (tmp_path / "offices").mkdir()
     monkeypatch.setenv(_SHARE_ENV, str(share))
 
-    assert resolveShareRoot(tmp_path) == share
+    assert resolveShareRoot() == share
 
 
 # ==============================================================================
-# SHARE_ROOT -- branch 2: transitional in-repo offices/
+# THE INVERSION -- there is NO in-repo fallback any more
 # ==============================================================================
-def test_resolveShareRoot_envUnset_fallsBackToInRepoOffices(
+def test_resolveShareRoot_unset_doesNotFallBackToInRepoOffices(
     tmp_path: Path, monkeypatch
 ) -> None:
     """
-    Given: $FLEET_SHARE unset but <repo>/offices/ still present
+    Given: $FLEET_SHARE unset, but an in-repo offices/ directory DOES exist
     When:  the share root is resolved
-    Then:  the in-repo offices/ is used (the pre-eviction state)
+    Then:  it raises anyway -- the directory is not a fallback
+
+    This is the regression guard for the 2026-08-24 inversion. The fallback
+    existed while offices/ was tracked; afterwards it survived only in the TRUNK
+    worktree (kept on disk deliberately) and never in a fresh bench. Identical
+    code with an identical (unset) environment therefore behaved differently
+    depending on which worktree it ran in -- and the quiet path read a stale
+    copy that drifts from the share. Restoring the fallback would restore both
+    faults, so this test asserts its absence directly rather than trusting the
+    surrounding prose.
     """
     monkeypatch.delenv(_SHARE_ENV, raising=False)
-    offices = tmp_path / "offices"
-    offices.mkdir()
+    (tmp_path / "offices").mkdir()
 
-    assert resolveShareRoot(tmp_path) == offices
-
-
-def test_resolveShareRoot_officesAsFile_doesNotCount(
-    tmp_path: Path, monkeypatch
-) -> None:
-    """
-    Given: $FLEET_SHARE unset and 'offices' exists but is a FILE
-    When:  the share root is resolved
-    Then:  it raises -- the fallback requires a directory, not just a name
-    """
-    monkeypatch.delenv(_SHARE_ENV, raising=False)
-    (tmp_path / "offices").write_text("not a directory", encoding="utf-8")
-
-    with pytest.raises(RuntimeError):
-        resolveShareRoot(tmp_path)
+    with pytest.raises(RuntimeError, match=_SHARE_ENV):
+        resolveShareRoot()
 
 
 # ==============================================================================
-# SHARE_ROOT -- branch 3: absence is LOUD
+# ABSENCE IS LOUD
 # ==============================================================================
 def test_resolveShareRoot_unsetAndMissing_raises(tmp_path: Path, monkeypatch) -> None:
     """
@@ -152,13 +148,14 @@ def test_resolveShareRoot_unsetAndMissing_raises(tmp_path: Path, monkeypatch) ->
     monkeypatch.delenv(_SHARE_ENV, raising=False)
 
     with pytest.raises(RuntimeError) as excinfo:
-        resolveShareRoot(tmp_path)
+        resolveShareRoot()
 
     message = str(excinfo.value)
-    # The operator must be told what to set and what it is for.
+    # The operator must be told what to set, what it is for, and where it is
+    # already configured -- not merely that something is missing.
     assert _SHARE_ENV in message
     assert "offices" in message
-    assert str(tmp_path / "offices") in message
+    assert "fleet.json" in message
 
 
 def test_resolveShareRoot_emptyEnvString_isTreatedAsUnset(
@@ -176,4 +173,4 @@ def test_resolveShareRoot_emptyEnvString_isTreatedAsUnset(
     monkeypatch.setenv(_SHARE_ENV, "")
 
     with pytest.raises(RuntimeError):
-        resolveShareRoot(tmp_path)
+        resolveShareRoot()

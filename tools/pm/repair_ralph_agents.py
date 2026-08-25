@@ -33,6 +33,7 @@ from pathlib import Path
 
 # Roots come from the _paths SSOT -- depth-independent by construction.
 from tools.pm._paths import SHARE_ROOT
+
 DEFAULT_AGENTS_PATH = SHARE_ROOT / "ralph" / "ralph_agents.json"
 
 DEFAULT_REX_NOTE = (

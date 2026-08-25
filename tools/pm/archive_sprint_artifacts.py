@@ -30,6 +30,7 @@ from pathlib import Path
 
 # Roots come from the _paths SSOT -- depth-independent by construction.
 from tools.pm._paths import SHARE_ROOT
+
 SPRINT_PATH = SHARE_ROOT / "ralph" / "sprint.json"
 PROGRESS_PATH = SHARE_ROOT / "ralph" / "progress.txt"
 ARCHIVE_DIR = SHARE_ROOT / "ralph" / "archive"

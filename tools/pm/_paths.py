@@ -21,9 +21,10 @@
 # ---------
 # The PM tools operate on agent-fleet DATA (backlog.json, sprint.json,
 # story_counter.json, regression_manifest.json, ralph_agents.json, ...), which
-# lives under ``offices/`` today and moves to the fleet share when offices/ is
-# evicted.  The tool code stays in the repo; its data does not.  SHARE_ROOT is
-# that seam.
+# lives on the fleet share -- it was evicted from this repo on 2026-08-24. The
+# tool code stays in the repo; its data does not. SHARE_ROOT is that seam, and
+# it is resolved from $FLEET_SHARE with NO fallback: see resolveShareRoot for
+# why the transitional in-repo fallback had to go.
 #
 # Resolution is deliberately LOUD when it fails.  A silent fallback here would
 # reproduce exactly the failure mode this module exists to prevent -- a tool
@@ -35,7 +36,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-__all__ = ["REPO_ROOT", "SHARE_ROOT", "findRepoRoot", "resolveShareRoot"]
+__all__ = ["REPO_ROOT", "SHARE_ROOT", "findRepoRoot", "resolveShareRoot"]  # noqa: F822 -- SHARE_ROOT is served lazily by __getattr__ (PEP 562)
 
 # Marker that identifies the repo root. pyproject.toml sits at the top of this
 # project and nowhere else in it, so it is an unambiguous sentinel.
@@ -76,45 +77,77 @@ def findRepoRoot(start: Path | None = None) -> Path:
     )
 
 
-def resolveShareRoot(repoRoot: Path | None = None) -> Path:
-    """Resolve the agent-fleet share root.
+def resolveShareRoot() -> Path:
+    """Resolve the agent-fleet share root from ``$FLEET_SHARE``.
 
-    Order:
-      1. ``$FLEET_SHARE`` when set (authoritative -- this is the post-eviction
-         configuration, and it wins even if a stale in-repo offices/ exists).
-      2. ``<repo>/offices`` while it is still present (pre-eviction).
-      3. Raise. There is no third option on purpose.
+    ``$FLEET_SHARE`` is REQUIRED. There is no fallback -- not even to a
+    transitional in-repo ``offices/``.
 
-    Args:
-        repoRoot: Repo root to probe for the transitional in-repo offices/.
-            Defaults to :data:`REPO_ROOT`.
+    Why the fallback was removed
+    ----------------------------
+    Until 2026-08-24 this function fell back to ``<repo>/offices`` when the
+    variable was unset, which was correct while offices/ was tracked. After the
+    eviction that directory still exists in the TRUNK worktree (deliberately --
+    it is kept on disk until the snapshot restore is proven) but does NOT exist
+    in a freshly created bench worktree.
+
+    That made the fallback actively harmful: identical code, run with the same
+    (unset) environment, silently read a stale local copy in trunk and raised in
+    a bench. Worse, the trunk copy drifts from the share the moment anyone edits
+    either one, so the quiet path was also the wrong-data path. A configuration
+    error must not depend on which worktree you happen to be standing in.
 
     Returns:
-        Directory that contains ``pm/``, ``ralph/``, etc.
+        The directory named by ``$FLEET_SHARE`` (``~`` expanded).
 
     Raises:
-        RuntimeError: If ``$FLEET_SHARE`` is unset and no in-repo ``offices/``
-            exists. Named explicitly so the operator is told what to set and
-            why, rather than getting an empty read from a tool that appears to
-            have succeeded.
+        RuntimeError: If ``$FLEET_SHARE`` is unset or empty. An empty string is
+            treated as unset: ``export FLEET_SHARE=`` is a common shell
+            accident, and ``Path("")`` resolves to the process CWD -- a
+            silently wrong share root.
     """
     fromEnv = os.environ.get(_SHARE_ENV)
-    if fromEnv:
-        return Path(fromEnv).expanduser()
-
-    root = repoRoot if repoRoot is not None else REPO_ROOT
-    inRepo = root / "offices"
-    if inRepo.is_dir():
-        return inRepo
-
-    raise RuntimeError(
-        f"Cannot resolve the agent-fleet share root. Set ${_SHARE_ENV} to the "
-        f"directory holding the agent offices (pm/, ralph/, tuner/, ...) -- the "
-        f"PM tools read their backlog, sprint, counter and manifest data from "
-        f"there. Checked ${_SHARE_ENV} (unset) and the transitional in-repo "
-        f"path {inRepo} (absent)."
-    )
+    if not fromEnv:
+        raise RuntimeError(
+            f"${_SHARE_ENV} is not set. It must name the agent-fleet share "
+            f"root -- the directory holding the agent offices (pm/, ralph/, "
+            f"tuner/, ...) -- because the PM tools read their backlog, sprint, "
+            f"counter and manifest data from there, and it no longer lives in "
+            f"this repo." + "\n"
+            f"    {_SHARE_ENV}=Z:/O/OBD2v3/offices python -m tools.pm.pm_status"
+            + "\n"
+            "It is also registered under the 'env' key in fleet.json. There "
+            "is NO fallback, on purpose: an in-repo offices/ may still exist "
+            "in the trunk worktree but not in a bench, so falling back to it "
+            "would make the same command behave differently depending on "
+            "which worktree it ran in -- and would read a stale copy."
+        )
+    return Path(fromEnv).expanduser()
 
 
 REPO_ROOT: Path = findRepoRoot()
-SHARE_ROOT: Path = resolveShareRoot(REPO_ROOT)
+
+# SHARE_ROOT is resolved LAZILY, via PEP 562 module __getattr__.
+#
+# It cannot be a module-level constant: resolving it raises when $FLEET_SHARE is
+# unset, so a plain assignment would make merely IMPORTING this module a
+# configuration error -- and this module is imported for REPO_ROOT by tools that
+# never read share data (index_lock, verify_release_version, deploy_preflight_gate).
+# Their tests would then fail at COLLECTION, complaining about data they do not
+# touch.
+#
+# With __getattr__, the cost lands exactly where the dependency is:
+#   import tools.pm._paths                        -> no resolution, never raises
+#   from tools.pm._paths import REPO_ROOT         -> no resolution
+#   from tools.pm._paths import SHARE_ROOT        -> resolves; raises if unset
+#
+# So `python -m tools.pm.index_lock --check` works with no share configured,
+# while `python -m tools.pm.pm_status` fails loudly and immediately. That is the
+# distinction the eager constant could not express.
+
+
+def __getattr__(name: str) -> Path:
+    """Resolve ``SHARE_ROOT`` on first access (PEP 562)."""
+    if name == "SHARE_ROOT":
+        return resolveShareRoot()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

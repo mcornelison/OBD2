@@ -31,7 +31,6 @@ from pathlib import Path
 import pytest
 
 from tools.pm import index_lock
-from tools.pm._paths import SHARE_ROOT
 from tools.pm.index_lock import (
     DEFAULT_SETTLE_INTERVAL_SECONDS,
     DEFAULT_STALE_AGE_SECONDS,
@@ -45,14 +44,24 @@ from tools.pm.index_lock import (
 # ralph.sh is an AGENT-FLEET artifact, not product source -- it lives on the
 # fleet share (offices/ pre-eviction, $FLEET_SHARE after), resolved via the
 # _paths SSOT.
-_RALPH_SH = SHARE_ROOT / "ralph" / "ralph.sh"
+# $FLEET_SHARE is REQUIRED and raises when unset (no fallback -- see
+# tools.pm._paths.resolveShareRoot). Catch that here so an unconfigured share
+# SKIPS these tests instead of erroring at collection: "the share is not
+# mounted" is a legitimate local state, and a config error about data this file
+# reads should not look like a broken test suite.
+try:
+    from tools.pm._paths import SHARE_ROOT
+except RuntimeError:
+    SHARE_ROOT = None
+
+_RALPH_SH = (SHARE_ROOT / "ralph" / "ralph.sh") if SHARE_ROOT else None
 
 # Skip, never silently pass, when the share is absent. This test's whole job is
 # to prove the preflight wiring EXISTS; with no ralph.sh to read it would
 # otherwise assert nothing while reporting green.
 requiresShare = pytest.mark.skipif(
-    not _RALPH_SH.exists(),
-    reason="share not mounted (need $FLEET_SHARE/ralph/ralph.sh)",
+    _RALPH_SH is None or not _RALPH_SH.exists(),
+    reason="share not mounted (set $FLEET_SHARE; need ralph/ralph.sh)",
 )
 
 
