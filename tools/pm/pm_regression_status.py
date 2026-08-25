@@ -8,18 +8,18 @@ the real-hardware drill cadence Mike defined 2026-05-08:
 until real-hardware drill validates affected features."
 
 Usage:
-  python offices/pm/scripts/pm_regression_status.py             # full status report
-  python offices/pm/scripts/pm_regression_status.py --json      # machine-readable
-  python offices/pm/scripts/pm_regression_status.py --stale     # only show stale + never
-  python offices/pm/scripts/pm_regression_status.py --by-sprint 27  # which features sprint 27 touched
-  python offices/pm/scripts/pm_regression_status.py --next      # next validation triggers (Drive N? Drain N?)
+  python -m tools.pm.pm_regression_status             # full status report
+  python -m tools.pm.pm_regression_status --json      # machine-readable
+  python -m tools.pm.pm_regression_status --stale     # only show stale + never
+  python -m tools.pm.pm_regression_status --by-sprint 27  # which features sprint 27 touched
+  python -m tools.pm.pm_regression_status --next      # next validation triggers (Drive N? Drain N?)
 
 Exit codes:
   0  manifest valid + report generated
   1  manifest has stale or never-validated features (use in CI gate)
   2  manifest file missing or invalid
 
-Stdlib-only Python (matches offices/pm/scripts/ convention).
+Stdlib-only Python (matches tools/pm/ convention).
 """
 from __future__ import annotations
 
@@ -29,8 +29,9 @@ import sys
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
-DEFAULT_MANIFEST_PATH = REPO_ROOT / "offices" / "pm" / "regression_manifest.json"
+# Roots come from the _paths SSOT -- depth-independent by construction.
+from tools.pm._paths import SHARE_ROOT
+DEFAULT_MANIFEST_PATH = SHARE_ROOT / "pm" / "regression_manifest.json"
 
 
 def loadManifest(path: Path) -> dict:

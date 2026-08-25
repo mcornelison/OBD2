@@ -47,8 +47,8 @@ Idempotent: a story that already carries every required field (and a list
 ``tasks``) is skipped, so a re-run is a no-op.
 
 Usage:
-  python offices/pm/scripts/backfill_story_metadata.py            # apply + write
-  python offices/pm/scripts/backfill_story_metadata.py --dry-run  # report only
+  python -m tools.pm.backfill_story_metadata            # apply + write
+  python -m tools.pm.backfill_story_metadata --dry-run  # report only
 """
 from __future__ import annotations
 
@@ -66,9 +66,10 @@ from pathlib import Path
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
-BACKLOG_PATH = REPO_ROOT / "offices" / "pm" / "backlog.json"
-ARCHIVE_DIR = REPO_ROOT / "offices" / "ralph" / "archive"
+# Roots come from the _paths SSOT -- depth-independent by construction.
+from tools.pm._paths import REPO_ROOT, SHARE_ROOT
+BACKLOG_PATH = SHARE_ROOT / "pm" / "backlog.json"
+ARCHIVE_DIR = SHARE_ROOT / "ralph" / "archive"
 
 # Required story fields per backlog_schema.REQUIRED_STORY_FIELDS. Kept as a
 # local constant so this tool has no import-time dependency ordering with the

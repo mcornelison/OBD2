@@ -34,8 +34,8 @@ the lock is orphaned, it refuses and the caller escalates.
 
 Usage (CLI -- a safe one-command clear that replaces a manual forensic + `rm`):
 
-    python -m offices.pm.scripts.index_lock --repo .        # clear if verified-stale
-    python -m offices.pm.scripts.index_lock --repo . --check # dry-run, decide only
+    python -m tools.pm.index_lock --repo .        # clear if verified-stale
+    python -m tools.pm.index_lock --repo . --check # dry-run, decide only
 
 Exit code 0 = safe to proceed (no lock, or the lock was cleared); non-zero = the
 guard refused (a live process, a too-fresh lock, or a lock still being written)

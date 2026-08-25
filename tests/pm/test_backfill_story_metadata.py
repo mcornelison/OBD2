@@ -20,8 +20,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from offices.pm.scripts import backfill_story_metadata as bf
-from offices.pm.scripts.backlog_schema import validateBacklog
+from tools.pm import backfill_story_metadata as bf
+from tools.pm.backlog_schema import validateBacklog
 
 # ---------------------------------------------------------------------------
 # helpers

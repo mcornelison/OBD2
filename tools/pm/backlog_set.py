@@ -13,19 +13,19 @@ Stdlib-only. Idempotent: re-running with the same args is safe.
 
 Usage examples:
   # At session start, bump the lastUpdated field:
-  python offices/pm/scripts/backlog_set.py --updated-by "Marcus (PM, Session 24)"
+  python -m tools.pm.backlog_set --updated-by "Marcus (PM, Session 24)"
 
   # Flip a feature status:
-  python offices/pm/scripts/backlog_set.py --feature B-044 --status in_sprint \
+  python -m tools.pm.backlog_set --feature B-044 --status in_sprint \
       --field inSprint="Sprint 14 (US-201)"
 
   # Record completion:
-  python offices/pm/scripts/backlog_set.py --feature B-042 --status complete \
+  python -m tools.pm.backlog_set --feature B-042 --status complete \
       --completed-date 2026-04-18 \
       --completed-by "Ralph (US-187, Sprint 12)"
 
   # Add a phase record to B-037 (or any feature with phases[]):
-  python offices/pm/scripts/backlog_set.py --feature B-037 --add-phase harden \
+  python -m tools.pm.backlog_set --feature B-037 --add-phase harden \
       --phase-status in_progress \
       --phase-sprint "Sprint 14" \
       --phase-branch sprint/pi-harden \
@@ -38,11 +38,11 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from pathlib import Path
 from typing import Any
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
-BACKLOG_PATH = REPO_ROOT / "offices" / "pm" / "backlog.json"
+# Roots come from the _paths SSOT -- depth-independent by construction.
+from tools.pm._paths import SHARE_ROOT
+BACKLOG_PATH = SHARE_ROOT / "pm" / "backlog.json"
 
 # Proposed-change lines echo user-supplied notes/field values that may carry
 # Unicode (e.g. the '->' rendered as U+2192, em-dashes), so harden stdout+stderr

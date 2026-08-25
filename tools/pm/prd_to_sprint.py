@@ -16,7 +16,7 @@
 ################################################################################
 
 """
-File: offices/pm/scripts/prd_to_sprint.py
+File: tools/pm/prd_to_sprint.py
 Purpose: Convert a PRD MD file (YAML frontmatter + markdown body) into
          a Ralph-readable sprint.json contract. Snapshots Story.md content
          at conversion time (sprint.json is frozen; later Story.md edits
@@ -29,15 +29,20 @@ from typing import Any
 
 import frontmatter
 
+# Roots come from the _paths SSOT -- depth-independent by construction.
+from tools.pm._paths import SHARE_ROOT, resolveShareRoot
 
-def convertPrdToSprint(prdPath: Path, outPath: Path, repoRoot: Path) -> None:
+
+def convertPrdToSprint(
+    prdPath: Path, outPath: Path, shareRoot: Path | None = None
+) -> None:
     """Read PRD MD at prdPath, write generated sprint.json to outPath.
 
     Args:
         prdPath: Path to a PRD markdown file with YAML frontmatter containing
                  sprint / version / selectedStories.
         outPath: Path where the generated sprint.json should be written.
-        repoRoot: Path containing offices/pm/backlog.json and
+        shareRoot: Fleet-share root containing pm/backlog.json and
                   offices/pm/backlog/US-*.md files.
 
     Raises:
@@ -62,7 +67,9 @@ def convertPrdToSprint(prdPath: Path, outPath: Path, repoRoot: Path) -> None:
             f"PRD {prdPath.name}: missing required frontmatter field 'version'"
         )
 
-    backlogPath = repoRoot / "offices" / "pm" / "backlog.json"
+    if shareRoot is None:
+        shareRoot = resolveShareRoot()
+    backlogPath = shareRoot / "pm" / "backlog.json"
     backlog = json.loads(backlogPath.read_text(encoding="utf-8"))
 
     epicsById: dict[str, Any] = {e["id"]: e for e in backlog["epics"]}
@@ -119,7 +126,7 @@ def convertPrdToSprint(prdPath: Path, outPath: Path, repoRoot: Path) -> None:
         "schemaVersion": "2.0.0",
         "sprint": meta["sprint"],
         "version": meta["version"],
-        "createdFromPRD": str(prdPath.relative_to(repoRoot)).replace("\\", "/"),
+        "createdFromPRD": str(prdPath.relative_to(shareRoot)).replace("\\", "/"),
         "stories": sprintStories,
         "validation": {
             "bigDefinitionOfDone": bigDoD,
@@ -134,6 +141,5 @@ if __name__ == "__main__":
     if len(sys.argv) < 3:
         print("Usage: prd_to_sprint.py <prd-md> <sprint-json>", file=sys.stderr)
         sys.exit(1)
-    repoRoot = Path(__file__).resolve().parents[3]
-    convertPrdToSprint(Path(sys.argv[1]), Path(sys.argv[2]), repoRoot)
+    convertPrdToSprint(Path(sys.argv[1]), Path(sys.argv[2]), SHARE_ROOT)
     print(f"Wrote {sys.argv[2]}")

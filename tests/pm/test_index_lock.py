@@ -1,6 +1,6 @@
 ################################################################################
 # File Name: test_index_lock.py
-# Purpose/Description: Tests for offices.pm.scripts.index_lock -- the guarded
+# Purpose/Description: Tests for tools.pm.index_lock -- the guarded
 #                      stale .git/index.lock clearer (TD-057 / US-467 / F-118).
 #                      Proves the discipline invariant: NEVER delete a lock a
 #                      live git process may own; only clear a verified-orphaned
@@ -20,7 +20,7 @@
 # ================================================================================
 ################################################################################
 
-"""Tests for offices.pm.scripts.index_lock (TD-057 stale index.lock guard)."""
+"""Tests for tools.pm.index_lock (TD-057 stale index.lock guard)."""
 from __future__ import annotations
 
 import os
@@ -30,8 +30,9 @@ from pathlib import Path
 
 import pytest
 
-from offices.pm.scripts import index_lock
-from offices.pm.scripts.index_lock import (
+from tools.pm import index_lock
+from tools.pm._paths import SHARE_ROOT
+from tools.pm.index_lock import (
     DEFAULT_SETTLE_INTERVAL_SECONDS,
     DEFAULT_STALE_AGE_SECONDS,
     LockDecision,
@@ -40,6 +41,20 @@ from offices.pm.scripts.index_lock import (
     lockPath,
     main,
 )
+
+# ralph.sh is an AGENT-FLEET artifact, not product source -- it lives on the
+# fleet share (offices/ pre-eviction, $FLEET_SHARE after), resolved via the
+# _paths SSOT.
+_RALPH_SH = SHARE_ROOT / "ralph" / "ralph.sh"
+
+# Skip, never silently pass, when the share is absent. This test's whole job is
+# to prove the preflight wiring EXISTS; with no ralph.sh to read it would
+# otherwise assert nothing while reporting green.
+requiresShare = pytest.mark.skipif(
+    not _RALPH_SH.exists(),
+    reason="share not mounted (need $FLEET_SHARE/ralph/ralph.sh)",
+)
+
 
 # ---------------------------------------------------------------------------
 # helpers
@@ -668,6 +683,7 @@ def test_main_checkOnStableNonEmpty_reportsSameVerdictWithoutDeleting(tmp_path, 
 # AC-4 wiring -- the preflight in ralph.sh must actually reach this module
 # ---------------------------------------------------------------------------
 
+@requiresShare
 def test_ralphShPreflight_invokesTheGuardWithStabilityClearingEnabled():
     """
     Given: ralph.sh's per-iteration preflight
@@ -680,12 +696,12 @@ def test_ralphShPreflight_invokesTheGuardWithStabilityClearingEnabled():
     block that also names the module, so an unstripped scan would find the
     module name in prose and call the wiring present when it is not.
     """
-    ralphSh = Path(__file__).resolve().parents[2] / "offices" / "ralph" / "ralph.sh"
+    ralphSh = _RALPH_SH
     executable = [
         line for line in ralphSh.read_text(encoding="utf-8").splitlines()
         if line.strip() and not line.strip().startswith("#")
     ]
-    invocations = [line for line in executable if "offices.pm.scripts.index_lock" in line]
+    invocations = [line for line in executable if "tools.pm.index_lock" in line]
 
     # Non-vacuity: the scan must have FOUND the wiring before its shape is judged.
     assert invocations, (

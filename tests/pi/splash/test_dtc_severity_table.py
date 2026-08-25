@@ -2,7 +2,7 @@
 # File Name: test_dtc_severity_table.py
 # Purpose/Description: US-404 (F-111) tests for the static P1xxx severity-table
 #   loader. Verifies the loader parses Spool's SSOT markdown
-#   (offices/tuner/dsm-p1xxx-severity-table.md) into the {code -> enrichment}
+#   (src/pi/resources/dsm-p1xxx-severity-table.md) into the {code -> enrichment}
 #   map the dtc emitter merges -- engine P1xxx -> watch, condition-dependent
 #   codes carry a severityCaveat (never auto-upgraded), auto-trans P1xxx -> na.
 #   The Pi never decides severity; it loads Spool's classification verbatim.
@@ -35,8 +35,9 @@ from pi.splash.dtc_severity_table import (
 # The Spool SSOT this loader exists to consume (repo-relative).
 _SSOT_PATH = (
     Path(__file__).resolve().parents[3]
-    / "offices"
-    / "tuner"
+    / "src"
+    / "pi"
+    / "resources"
     / "dsm-p1xxx-severity-table.md"
 )
 

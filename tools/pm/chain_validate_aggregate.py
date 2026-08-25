@@ -16,27 +16,27 @@ gate the /chain-validated slash command runs before touching git history.
 Usage:
   # Auto-discover: glob offices/ralph/archive/sprint.archive.*.json plus
   # the current offices/ralph/sprint.json; filter by --chain prefix.
-  python offices/pm/scripts/chain_validate_aggregate.py --chain V0.27
+  python -m tools.pm.chain_validate_aggregate --chain V0.27
 
   # Explicit paths (test harness + ad-hoc inspection):
-  python offices/pm/scripts/chain_validate_aggregate.py \\
+  python -m tools.pm.chain_validate_aggregate \\
       --chain V0.27 \\
       --paths offices/ralph/archive/sprint.archive.X.json \\
               offices/ralph/sprint.json
 
   # Machine-readable for downstream tooling (e.g. the slash command's
   # phase 2 summary table):
-  python offices/pm/scripts/chain_validate_aggregate.py --chain V0.27 --json
+  python -m tools.pm.chain_validate_aggregate --chain V0.27 --json
 
   # CI gate: exit 1 if chainStatus != READY.
-  python offices/pm/scripts/chain_validate_aggregate.py --chain V0.27 --strict
+  python -m tools.pm.chain_validate_aggregate --chain V0.27 --strict
 
 Exit codes:
   0  chain READY OR --strict not set (report mode)
   1  --strict + chainStatus = INCOMPLETE (gate failed)
   2  file/parse error
 
-Stdlib-only (matches offices/pm/scripts/ convention).
+Stdlib-only (matches tools/pm/ convention).
 """
 from __future__ import annotations
 
@@ -46,7 +46,8 @@ import json
 import sys
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
+# Roots come from the _paths SSOT -- depth-independent by construction.
+from tools.pm._paths import SHARE_ROOT
 
 # Aggregated bigDefinitionOfDone clauses carry Unicode (e.g. the '->' rendered
 # as U+2192); the human report prints them, so harden stdout+stderr to UTF-8
@@ -57,8 +58,8 @@ if hasattr(sys.stdout, "reconfigure"):
 if hasattr(sys.stderr, "reconfigure"):
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
-DEFAULT_ARCHIVE_GLOB = REPO_ROOT / "offices" / "ralph" / "archive" / "sprint.archive.*.json"
-DEFAULT_CURRENT_SPRINT = REPO_ROOT / "offices" / "ralph" / "sprint.json"
+DEFAULT_ARCHIVE_GLOB = SHARE_ROOT / "ralph" / "archive" / "sprint.archive.*.json"
+DEFAULT_CURRENT_SPRINT = SHARE_ROOT / "ralph" / "sprint.json"
 
 
 def discoverChainPaths(chainPrefix: str) -> list[Path]:

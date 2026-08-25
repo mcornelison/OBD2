@@ -15,10 +15,10 @@ Used at session start by Marcus (PM) to orient before any planning work.
 Stdlib-only; runs on Windows git-bash or Linux.
 
 Usage:
-  python offices/pm/scripts/pm_status.py              # full snapshot
-  python offices/pm/scripts/pm_status.py --sprint     # sprint only
-  python offices/pm/scripts/pm_status.py --backlog    # backlog only
-  python offices/pm/scripts/pm_status.py --counter    # counter only
+  python -m tools.pm.pm_status              # full snapshot
+  python -m tools.pm.pm_status --sprint     # sprint only
+  python -m tools.pm.pm_status --backlog    # backlog only
+  python -m tools.pm.pm_status --counter    # counter only
 """
 from __future__ import annotations
 
@@ -33,10 +33,11 @@ from pathlib import Path
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
-SPRINT_PATH = REPO_ROOT / "offices" / "ralph" / "sprint.json"
-BACKLOG_PATH = REPO_ROOT / "offices" / "pm" / "backlog.json"
-COUNTER_PATH = REPO_ROOT / "offices" / "pm" / "story_counter.json"
+# Roots come from the _paths SSOT -- depth-independent by construction.
+from tools.pm._paths import SHARE_ROOT
+SPRINT_PATH = SHARE_ROOT / "ralph" / "sprint.json"
+BACKLOG_PATH = SHARE_ROOT / "pm" / "backlog.json"
+COUNTER_PATH = SHARE_ROOT / "pm" / "story_counter.json"
 
 
 # ---------------------------------------------------------------------------
@@ -289,7 +290,7 @@ def _renderSprintFromJson(sprintPath: Path) -> None:
 
 def _renderPrdsAndSprint() -> None:
     """Render active PRDs + current sprint.json (v2 view). Minimal MVP."""
-    prdsDir = REPO_ROOT / "offices" / "pm" / "prds"
+    prdsDir = SHARE_ROOT / "pm" / "prds"
     activePrds = [p for p in prdsDir.glob("prd-V*.md")] if prdsDir.exists() else []
     if activePrds:
         print("=== ACTIVE PRDs ===")
@@ -379,7 +380,20 @@ def main(argv: list[str]) -> int:
         if not anyFlag or args.backlog:
             data = computeRollups(data)
             # persist rolled-up statuses back to disk (cache writeback)
-            BACKLOG_PATH.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+            # ensure_ascii=False is REQUIRED, not cosmetic: the backlog is full of
+            # em-dashes and arrows in story titles, and the default (True) escapes
+            # every one to \uXXXX. That turned a read-only-LOOKING `pm_status`
+            # run into an 84-line rewrite of live backlog data. Matches
+            # backlog_set / graduate_story / bump_passed_statuses, which all
+            # already pass ensure_ascii=False.
+            # newline= is the second half of the same bug: without it,
+            # write_text on Windows translates every LF to CRLF, so a
+            # 9,022-line file is rewritten end to end on each run.
+            BACKLOG_PATH.write_text(
+                json.dumps(data, indent=2, ensure_ascii=False) + "\n",
+                encoding="utf-8",
+                newline="\n",
+            )
             # Show dev + main branch tips at the top of v2 output (spec 2026-05-28)
             if not anyFlag:
                 printBranchSummary()

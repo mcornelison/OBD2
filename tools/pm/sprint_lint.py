@@ -25,11 +25,11 @@ Backlog (--backlog mode):
 Exit code: 0 = clean, non-zero = violations found.
 
 Usage:
-  python offices/pm/scripts/sprint_lint.py             # default sprint.json path
-  python offices/pm/scripts/sprint_lint.py --strict    # fail on warnings too
-  python offices/pm/scripts/sprint_lint.py --story US-195   # audit one story
-  python offices/pm/scripts/sprint_lint.py --check-feedback # commit-vs-claim verifier
-  python offices/pm/scripts/sprint_lint.py --backlog   # lint backlog.json v2.0.0
+  python -m tools.pm.sprint_lint             # default sprint.json path
+  python -m tools.pm.sprint_lint --strict    # fail on warnings too
+  python -m tools.pm.sprint_lint --story US-195   # audit one story
+  python -m tools.pm.sprint_lint --check-feedback # commit-vs-claim verifier
+  python -m tools.pm.sprint_lint --backlog   # lint backlog.json v2.0.0
 """
 from __future__ import annotations
 
@@ -42,23 +42,24 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
+# Roots come from the _paths SSOT -- depth-independent by construction.
+from tools.pm._paths import REPO_ROOT, SHARE_ROOT
 
-# Ensure repo root is on sys.path so `offices.*` imports work when this
-# module is run directly as a script (python offices/pm/scripts/sprint_lint.py).
+# Ensure repo root is on sys.path so `tools.*` imports work when this
+# module is run directly as a script (python -m tools.pm.sprint_lint).
 # When imported via pytest or package import, REPO_ROOT is already on sys.path.
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from offices.pm.scripts._encoding import forceUtf8Stdio  # noqa: E402
-from offices.pm.scripts._freeze import canonicalizeBigDoD  # noqa: E402
+from tools.pm._encoding import forceUtf8Stdio  # noqa: E402
+from tools.pm._freeze import canonicalizeBigDoD  # noqa: E402
 
 # Backlog/sprint titles + bigDefinitionOfDone clauses carry Unicode (e.g. the
 # '->' rendered as U+2192); lint error/warning lines echo that text, so harden
 # stdout+stderr to UTF-8 before any print (Windows cp1252 crash guard, US-466).
 forceUtf8Stdio()
 
-SPRINT_PATH = REPO_ROOT / "offices" / "ralph" / "sprint.json"
+SPRINT_PATH = SHARE_ROOT / "ralph" / "sprint.json"
 
 # Per Sprint Contract v1.0
 SIZE_CAPS = {
@@ -345,7 +346,7 @@ def lintStory(
     return errs, warns
 
 
-def lintSprintValidation(sprintData: dict, repoRoot: Path) -> list[str]:
+def lintSprintValidation(sprintData: dict, shareRoot: Path) -> list[str]:
     """Validate the sprint-level ``validation`` block per Mike 2026-05-08 workflow.
 
     Required fields (per `/sprint-deploy-pm` + `/sprint-validated` contract):
@@ -397,7 +398,7 @@ def lintSprintValidation(sprintData: dict, repoRoot: Path) -> list[str]:
         errs.append("validation.validatedBy missing (null until validated)")
 
     # Cross-check: validatesFeatures ids exist in manifest
-    manifestPath = repoRoot / "offices" / "pm" / "regression_manifest.json"
+    manifestPath = shareRoot / "pm" / "regression_manifest.json"
     if isinstance(vf, list) and manifestPath.exists():
         try:
             manifest = json.loads(manifestPath.read_text(encoding="utf-8"))
@@ -483,8 +484,8 @@ def lintBacklog(path: Path) -> tuple[list[LintError], list[LintWarning]]:
     Returns:
         Tuple of (errors, warnings) lists of LintError / LintWarning.
     """
-    from offices.pm.scripts.backlog_schema import BacklogValidationError, validateBacklog
-    from offices.pm.scripts.pm_status import computeRollups
+    from tools.pm.backlog_schema import BacklogValidationError, validateBacklog
+    from tools.pm.pm_status import computeRollups
 
     data = json.loads(path.read_text(encoding="utf-8"))
     errors: list[LintError] = []
@@ -555,7 +556,7 @@ def main(argv: list[str]) -> int:
 
     # --backlog mode: delegates entirely to lintBacklog(), then exits.
     if args.backlog:
-        backlogPath = REPO_ROOT / "offices" / "pm" / "backlog.json"
+        backlogPath = SHARE_ROOT / "pm" / "backlog.json"
         if not backlogPath.exists():
             print(f"ERROR: {backlogPath} not found", file=sys.stderr)
             return 2
@@ -585,7 +586,7 @@ def main(argv: list[str]) -> int:
 
     # Sprint-level validation block (Mike 2026-05-08 workflow); skipped when --story selects a single story
     if not args.story:
-        validationErrs = lintSprintValidation(d, REPO_ROOT)
+        validationErrs = lintSprintValidation(d, SHARE_ROOT)
         if validationErrs:
             print("  SPRINT-LEVEL")
             for e in validationErrs:

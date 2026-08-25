@@ -12,9 +12,9 @@ Note: sprint-ready -> in-progress is a start-of-work transition (passes:false),
 not handled here. 'complete' is set by graduate_story.py, not here.
 
 Usage:
-  python offices/pm/scripts/bump_passed_statuses.py             # default sprint.json path
-  python offices/pm/scripts/bump_passed_statuses.py --dry-run   # preview without writing
-  python offices/pm/scripts/bump_passed_statuses.py --path <override>
+  python -m tools.pm.bump_passed_statuses             # default sprint.json path
+  python -m tools.pm.bump_passed_statuses --dry-run   # preview without writing
+  python -m tools.pm.bump_passed_statuses --path <override>
 
 Exit code: 0 on success (regardless of count bumped), 1 on parse error.
 
@@ -28,8 +28,9 @@ import json
 import sys
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
-DEFAULT_SPRINT_PATH = REPO_ROOT / "offices" / "ralph" / "sprint.json"
+# Roots come from the _paths SSOT -- depth-independent by construction.
+from tools.pm._paths import SHARE_ROOT
+DEFAULT_SPRINT_PATH = SHARE_ROOT / "ralph" / "sprint.json"
 
 # v1 legacy states + v2 in-progress: all bump to 'passed' when passes:true
 TERMINAL_NON_PASSED = ("pending", "complete", "completed", "in-progress")

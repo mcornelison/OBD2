@@ -24,7 +24,7 @@ git branch --show-current                    # MUST be `dev` (sprint already mer
                                              # If on main: abort -- sprint-validated runs from dev
 python -c "
 import json
-d = json.load(open('offices/ralph/sprint.json', encoding='utf-8'))
+d = json.load(open(os.environ['FLEET_SHARE'] + '/ralph/sprint.json', encoding='utf-8'))
 v = d.get('validation', {})
 if not v:
     raise SystemExit('ERROR: sprint.json has no validation block (Sprint 27+ required field)')
@@ -53,7 +53,7 @@ If running interactively, prompt for confirmation. If running via slash command 
 ```bash
 python -c "
 import json
-v = json.load(open('offices/ralph/sprint.json', encoding='utf-8'))['validation']
+v = json.load(open(os.environ['FLEET_SHARE'] + '/ralph/sprint.json', encoding='utf-8'))['validation']
 print('=== bigDefinitionOfDone (Mike confirmed observed?) ===')
 for i, clause in enumerate(v['bigDefinitionOfDone'], 1):
     print(f'  [{i}] {clause}')
@@ -70,7 +70,7 @@ for i, clause in enumerate(v['bigDefinitionOfDone'], 1):
 # Mark validated:
 import json
 from datetime import datetime, timezone
-p = 'offices/ralph/sprint.json'
+p = os.environ['FLEET_SHARE'] + '/ralph/sprint.json'
 d = json.load(open(p, encoding='utf-8'))
 d['validation']['validatedAt'] = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
 d['validation']['validatedBy'] = "Mike (CIO confirmed) + drill: <Drive N / Drain Test N>"
@@ -89,8 +89,8 @@ For each feature in sprint's `validation.validatesFeatures`, bump `lastValidated
 import json
 from datetime import date
 
-sprintP = 'offices/ralph/sprint.json'
-manifestP = 'offices/pm/regression_manifest.json'
+sprintP = os.environ['FLEET_SHARE'] + '/ralph/sprint.json'
+manifestP = os.environ['FLEET_SHARE'] + '/pm/regression_manifest.json'
 
 sprintData = json.load(open(sprintP, encoding='utf-8'))
 manifest = json.load(open(manifestP, encoding='utf-8'))
@@ -141,8 +141,17 @@ Last Updated header + Current Phase: "Sprint X validated by <drill>; merged to m
 
 ## Phase 5 -- Commit validation marker on dev
 
+> **Post-eviction:** the `offices/` artifacts below live on the fleet share and
+> are NOT version controlled -- they cannot be staged. Only repo files are
+> committed here; the share's durability comes from snapshots. Edits to
+> `$FLEET_SHARE/pm/*` need no git step at all.
+
 ```bash
-git add offices/ralph/sprint.json offices/pm/regression_manifest.json offices/pm/backlog.json offices/pm/projectManager.md
+# Nothing under $FLEET_SHARE is staged -- sprint.json, regression_manifest.json,
+# backlog.json and projectManager.md all live on the share now. If this sprint
+# touched no repo files, there is no commit to make; say so rather than
+# fabricating an empty one.
+git add -- ':!offices'
 git commit -m "chore(validate): Sprint N validated by <drill> -- ready for chain merge"
 git push origin dev
 ```
@@ -176,7 +185,7 @@ Print to CIO:
 Plus regression manifest status:
 
 ```bash
-python offices/pm/scripts/pm_regression_status.py --stale
+python -m tools.pm.pm_regression_status --stale
 ```
 
 Show what's still STALE / NEVER-validated -> next sprint candidates.

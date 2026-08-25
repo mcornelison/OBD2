@@ -1,5 +1,5 @@
 """
-File: offices/pm/scripts/graduate_story.py
+File: tools/pm/graduate_story.py
 Purpose: Move a completed Story/Feature/Epic out of the active backlog
          into offices/pm/archive/completed-work-products/. Removes from
          backlog.json. Refuses if status != 'complete'.
@@ -13,6 +13,9 @@ active/archive separation stays tight.
 """
 import json
 from pathlib import Path
+
+# Roots come from the _paths SSOT -- depth-independent by construction.
+from tools.pm._paths import SHARE_ROOT, resolveShareRoot
 
 
 def _synthesizeArchiveMd(story: dict) -> str:
@@ -53,13 +56,17 @@ def _synthesizeArchiveMd(story: dict) -> str:
     return "\n".join(lines)
 
 
-def graduateStory(storyId: str, repoRoot: Path, dryRun: bool = False) -> None:
+def graduateStory(
+    storyId: str, shareRoot: Path | None = None, dryRun: bool = False
+) -> None:
     """
     Graduate a completed Story from the active backlog to the archive.
 
     Args:
         storyId: ID like 'US-359'.
-        repoRoot: Path containing offices/pm/backlog.json and offices/pm/backlog/.
+        shareRoot: Fleet-share root containing pm/backlog.json and pm/backlog/.
+            Defaults to resolving $FLEET_SHARE at call time, so callers
+            (and tests) exercise the real resolution path.
         dryRun: If True, print intended actions without executing.
 
     Raises:
@@ -67,7 +74,9 @@ def graduateStory(storyId: str, repoRoot: Path, dryRun: bool = False) -> None:
                     A missing Story.md is NOT fatal -- an archive record is
                     synthesized from the JSON entry.
     """
-    backlogPath = repoRoot / "offices/pm/backlog.json"
+    if shareRoot is None:
+        shareRoot = resolveShareRoot()
+    backlogPath = shareRoot / "pm/backlog.json"
     data = json.loads(backlogPath.read_text(encoding="utf-8"))
     story = next((s for s in data["stories"] if s["id"] == storyId), None)
     if not story:
@@ -78,7 +87,7 @@ def graduateStory(storyId: str, repoRoot: Path, dryRun: bool = False) -> None:
         )
 
     # Match both naming forms: "US-377.md" (bare) and "US-377-some-slug.md".
-    backlogDir = repoRoot / "offices/pm/backlog"
+    backlogDir = shareRoot / "pm/backlog"
     mdPath = next(
         (
             p
@@ -87,7 +96,7 @@ def graduateStory(storyId: str, repoRoot: Path, dryRun: bool = False) -> None:
         ),
         None,
     )
-    archiveDir = repoRoot / "offices/pm/archive/completed-work-products"
+    archiveDir = shareRoot / "pm/archive/completed-work-products"
 
     if dryRun:
         if mdPath:
@@ -119,6 +128,5 @@ if __name__ == "__main__":
         print("Usage: graduate_story.py <US-id> [--dry-run]", file=sys.stderr)
         sys.exit(1)
     dryRun = "--dry-run" in sys.argv
-    repoRoot = Path(__file__).resolve().parents[3]
-    graduateStory(sys.argv[1], repoRoot=repoRoot, dryRun=dryRun)
+    graduateStory(sys.argv[1], shareRoot=SHARE_ROOT, dryRun=dryRun)
     print("Graduation complete.")

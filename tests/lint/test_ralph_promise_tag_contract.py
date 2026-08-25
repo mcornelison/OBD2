@@ -49,9 +49,24 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-PROMPT_PATH = PROJECT_ROOT / "offices" / "ralph" / "prompt.md"
-RALPH_SH_PATH = PROJECT_ROOT / "offices" / "ralph" / "ralph.sh"
+import pytest
+
+from tools.pm._paths import SHARE_ROOT
+
+# ralph.sh and prompt.md are AGENT-FLEET artifacts, not product source: they
+# live under the fleet share, which is offices/ pre-eviction and $FLEET_SHARE
+# after. Resolved through the _paths SSOT so this file has no idea which of the
+# two it is reading.
+PROMPT_PATH = SHARE_ROOT / "ralph" / "prompt.md"
+RALPH_SH_PATH = SHARE_ROOT / "ralph" / "ralph.sh"
+
+# Skip -- never silently pass -- when the share is not mounted. A contract test
+# whose inputs are absent must not report success: that would assert nothing
+# while looking green.
+requiresShare = pytest.mark.skipif(
+    not (PROMPT_PATH.exists() and RALPH_SH_PATH.exists()),
+    reason="share not mounted (need $FLEET_SHARE/ralph/{prompt.md,ralph.sh})",
+)
 
 PROMISE_RE = re.compile(r"<promise>([A-Z_]+)</promise>")
 # `NOT_TAG_DRIVEN: <promise>X</promise> -- <why>` in a ralph.sh comment.
@@ -101,6 +116,7 @@ def _extractShellNotTagDriven() -> dict[str, str]:
     return declared
 
 
+@requiresShare
 def test_promptMdAndRalphShDocumentSamePromiseTags():
     """
     Given: prompt.md §Stop Condition lists the agent-emittable tags, and
@@ -144,6 +160,7 @@ def test_promptMdAndRalphShDocumentSamePromiseTags():
     )
 
 
+@requiresShare
 def test_promptMdDocumentsAtLeastTheCoreTags():
     """Regression: the core tags must exist so Ralph knows which tokens to emit."""
     promptTags = _extractTags(PROMPT_PATH)
@@ -152,6 +169,7 @@ def test_promptMdDocumentsAtLeastTheCoreTags():
     assert not missing, f"prompt.md is missing core promise tags: {sorted(missing)}"
 
 
+@requiresShare
 def test_ralphShEndsTheSprintFromTheSprintJsonTally_notFromTheTag():
     """
     Given: COMPLETE is the sprint-ENDING signal, and TD-073 asked whether
@@ -187,6 +205,7 @@ def test_ralphShEndsTheSprintFromTheSprintJsonTally_notFromTheTag():
     )
 
 
+@requiresShare
 def test_completeTagIsNotAGrepBranch_soAModelCannotEndASprintByAssertingIt():
     """
     Given: the 2026-05-12 loop-control rewrite made the tag advisory and
@@ -213,6 +232,7 @@ def test_completeTagIsNotAGrepBranch_soAModelCannotEndASprintByAssertingIt():
     )
 
 
+@requiresShare
 def test_notTagDrivenDeclarationsCarryARationale():
     """
     Given: NOT_TAG_DRIVEN is the escape hatch that satisfies the parity gate.

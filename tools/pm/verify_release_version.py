@@ -13,8 +13,8 @@ Caps validated:
   description: <= 400 chars
 
 Usage:
-  python offices/pm/scripts/verify_release_version.py             # default deploy/RELEASE_VERSION
-  python offices/pm/scripts/verify_release_version.py --path <override>
+  python -m tools.pm.verify_release_version             # default deploy/RELEASE_VERSION
+  python -m tools.pm.verify_release_version --path <override>
 
 Exit code: 0 on all checks pass; 1 on cap violation (caller should fix
 file before deploy); 2 on file/parse error.
@@ -27,7 +27,8 @@ import re
 import sys
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
+# Roots come from the _paths SSOT -- depth-independent by construction.
+from tools.pm._paths import REPO_ROOT
 DEFAULT_RELEASE_PATH = REPO_ROOT / "deploy" / "RELEASE_VERSION"
 
 VERSION_PATTERN = re.compile(r"^V\d+\.\d+\.\d+$")

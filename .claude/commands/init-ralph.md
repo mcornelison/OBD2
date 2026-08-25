@@ -43,7 +43,7 @@ Read `offices/ralph/prompt.md` — the per-iteration headless contract. Covers:
 **Inbox** — scan `offices/ralph/inbox/` for any unread notes from teammates (Spool, Marcus, Tester). Read any that exist. These may contain pre-sprint context, review feedback, or architectural guidance.
 
 **Sprint state** — read the active sprint file:
-- `offices/ralph/sprint.json` (new contract format), OR
+- `$FLEET_SHARE/ralph/sprint.json` (new contract format), OR
 - `offices/ralph/stories.json` (legacy format)
 
 Whichever exists. Report: how many stories total, how many passed, how many pending, how many blocked.

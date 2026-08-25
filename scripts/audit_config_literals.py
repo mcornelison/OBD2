@@ -27,7 +27,7 @@ Patterns detected (exact set chosen from B-044 groundingRefs):
     - MAC:       00:04:3E:85:0D:FB      (OBDLink LX -- case-insensitive)
 
 Exempt paths (path-prefix, relative to repo root, forward-slashed):
-    specs/, docs/, offices/                        (documentation / PM)
+    specs/, docs/, offices/ (transitional)         (documentation / PM)
     .git/, .venv/, __pycache__/, htmlcov/          (tool caches)
     .pytest_cache/, .mypy_cache/, .ruff_cache/
     data/regression/, data/smoke_test_results.json (test artifacts)
@@ -78,6 +78,14 @@ DEFAULT_EXEMPT_PREFIXES: tuple[str, ...] = (
     # Documentation + PM artifacts (category B + D per B-044)
     "specs/",
     "docs/",
+    # TRANSITIONAL -- remove at Step 5, once offices/ is evicted from the repo.
+    # This exemption is NOT inert while offices/ is still in the tree: dropping
+    # it surfaces 273 findings there and reds the standing B-044 gate for a
+    # directory that is leaving anyway. It is also the lint's own blind spot --
+    # removing it exposed 3 real violations in the PM tools that had been hidden
+    # for the cluster's entire life, one of them a long-dead Pi address. When
+    # offices/ goes, delete this line rather than letting it rot into a rule
+    # that silently matches nothing.
     "offices/",
     # Tool caches + build artifacts (never relevant)
     ".git/",

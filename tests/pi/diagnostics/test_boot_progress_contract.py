@@ -71,7 +71,7 @@ def test_cli_finalize_invokedAsTheUnitInvokesIt(tmp_path):
 
 def test_auditScript_usesSharedSuccessConstant():
     spec = importlib.util.spec_from_file_location(
-        "audit", "offices/pm/scripts/audit_historical_drain_canary.py")
+        "audit", "tools/pm/audit_historical_drain_canary.py")
     mod = importlib.util.module_from_spec(spec)
     # Register before exec so @dataclass(slots=True) can resolve the
     # module via sys.modules on Python 3.13 (else AttributeError).

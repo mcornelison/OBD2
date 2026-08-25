@@ -29,9 +29,9 @@ git branch --show-current                            # MUST be the sprint/* bran
 git fetch origin dev                                 # refresh dev ref
 test "$(git merge-base HEAD origin/dev)" = "$(git rev-parse origin/dev)" \
   || echo "WARN: sprint branched off stale dev tip"
-python offices/pm/scripts/pm_status.py | head -25    # confirm stories all passes:true
-python offices/pm/scripts/sprint_lint.py             # MUST be 0 errors
-python offices/pm/scripts/repair_ralph_agents.py --check   # ralph_agents.json valid
+python -m tools.pm.pm_status | head -25    # confirm stories all passes:true
+python -m tools.pm.sprint_lint             # MUST be 0 errors
+python -m tools.pm.repair_ralph_agents --check   # ralph_agents.json valid
 ```
 
 **Stop conditions** -- abort + report to CIO if:
@@ -46,8 +46,8 @@ python offices/pm/scripts/repair_ralph_agents.py --check   # ralph_agents.json v
 ## Phase 1 -- Status field hygiene
 
 ```bash
-python offices/pm/scripts/bump_passed_statuses.py
-python offices/pm/scripts/sprint_lint.py    # re-verify 0 errors
+python -m tools.pm.bump_passed_statuses
+python -m tools.pm.sprint_lint    # re-verify 0 errors
 ```
 
 ---
@@ -55,7 +55,7 @@ python offices/pm/scripts/sprint_lint.py    # re-verify 0 errors
 ## Phase 2 -- Archive sprint.json + progress.txt
 
 ```bash
-python offices/pm/scripts/archive_sprint_artifacts.py
+python -m tools.pm.archive_sprint_artifacts
 ```
 
 Stop condition: exit 2 means timestamp collision (re-run within 1 sec); abort + investigate.
@@ -99,8 +99,10 @@ Last Updated header + Current Phase descriptor. Insert Session narrative.
 Stage all relevant files on the sprint branch BEFORE integrating, so the sprint-close commit body carries the PM artifacts (sprint-close exception to PM Rule 8 dev-only-domain):
 
 ```bash
-git add -A -- offices/ src/ tests/ scripts/ deploy/ specs/
-git reset HEAD -- offices/pm/.claude/ offices/ralph/.claude/ offices/tuner/.claude/   # drop drift
+# Post-eviction: offices/ is on the share and NOT version controlled, so it is
+# neither added nor reset here. The old `git reset HEAD -- offices/*/.claude/`
+# drift-drop is gone with it -- there is no index entry left to drop.
+git add -A -- src/ tests/ scripts/ deploy/ specs/ tools/
 git commit -m "feat(sprint-N): <Sprint Name> SHIPPED N/N -- code-complete on sprint branch"
 git push origin sprint/sprintN-<phase-name>
 ```
@@ -168,7 +170,7 @@ Phase 3.5 above absorbs the sprint-deploy commit semantics via the merge to `dev
 # - First sprint of a chain: V0.(X+1).0 (minor bump from main's last-validated version)
 # - Patch sprint within current chain: V0.X.(Y+1) (patch bump from prior dev tip)
 
-python offices/pm/scripts/verify_release_version.py    # validates SemVer + theme<=50 + description<=400
+python -m tools.pm.verify_release_version    # validates SemVer + theme<=50 + description<=400
 git add deploy/RELEASE_VERSION
 git commit -m "chore(release): bump V0.X.Y -> V0.(X+1).0 (Sprint N on dev)"   # or V0.X.(Y+1) for patch
 git push origin dev
@@ -266,4 +268,4 @@ Per CIO 2026-05-23 directive #1 + spec 2026-05-28: the V0.27 chain demonstrated 
 - `pm_regression_status.py` -- reports which features are STALE/NEVER-validated; suggests next drill triggers.
 - `regression_manifest.json` -- the project's user-facing feature list with last_validated dates.
 - `feedback_pm_semver_convention.md` -- patch-version-on-sprint-branch rule (V0.X.Y -> V0.X.(Y+1) until validated).
-- `.github/workflows/migration-drift.yml` -- the real-MariaDB migration-drift CI job (US-470) that Phase 3.5c gates on; scope = migration-touching paths only (CIO 2026-07-15). Enablement + rationale: `offices/pm/decisions/2026-07-13-ci-green-deploy-gate-recommendation.md`.
+- `.github/workflows/migration-drift.yml` -- the real-MariaDB migration-drift CI job (US-470) that Phase 3.5c gates on; scope = migration-touching paths only (CIO 2026-07-15). Enablement + rationale: `$FLEET_SHARE/pm/decisions/2026-07-13-ci-green-deploy-gate-recommendation.md`.

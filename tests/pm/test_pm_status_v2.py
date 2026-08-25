@@ -6,7 +6,7 @@ import subprocess
 from pathlib import Path
 from unittest.mock import patch
 
-from offices.pm.scripts.pm_status import renderTree, computeRollups
+from tools.pm.pm_status import renderTree, computeRollups
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -122,7 +122,7 @@ def test_formatBranchTips_bothBranches_returnsTwoLineBlock():
     Then: output is a "=== BRANCHES ===" block listing both
     """
     # Arrange + Act
-    from offices.pm.scripts.pm_status import formatBranchTips
+    from tools.pm.pm_status import formatBranchTips
     result = formatBranchTips(
         mainHash="abc1234",
         mainVersion="V0.27.19",
@@ -142,7 +142,7 @@ def test_formatBranchTips_devMissing_returnsNotBootstrappedMarker():
     Then: output shows main details + "dev: not yet bootstrapped"
     """
     # Arrange + Act
-    from offices.pm.scripts.pm_status import formatBranchTips
+    from tools.pm.pm_status import formatBranchTips
     result = formatBranchTips(
         mainHash="abc1234",
         mainVersion="V0.27.19",
@@ -161,7 +161,7 @@ def test_formatBranchTips_devAtMain_marksConverged():
     Then: dev line is annotated "(= main; ready for next chain)"
     """
     # Arrange + Act
-    from offices.pm.scripts.pm_status import formatBranchTips
+    from tools.pm.pm_status import formatBranchTips
     result = formatBranchTips(
         mainHash="abc1234",
         mainVersion="V0.27.19",
@@ -183,8 +183,8 @@ def test_getBranchTip_existingBranch_returnsHashAndVersion():
     Then: returns (short-hash, version) tuple
     """
     # Arrange
-    from offices.pm.scripts.pm_status import getBranchTip
-    with patch("offices.pm.scripts.pm_status.subprocess.run") as mockRun:
+    from tools.pm.pm_status import getBranchTip
+    with patch("tools.pm.pm_status.subprocess.run") as mockRun:
         mockRun.side_effect = [
             subprocess.CompletedProcess(args=[], returncode=0, stdout="abc1234\n"),
             subprocess.CompletedProcess(
@@ -206,8 +206,8 @@ def test_getBranchTip_missingBranch_returnsNoneTuple():
     Then: returns (None, None)
     """
     # Arrange
-    from offices.pm.scripts.pm_status import getBranchTip
-    with patch("offices.pm.scripts.pm_status.subprocess.run") as mockRun:
+    from tools.pm.pm_status import getBranchTip
+    with patch("tools.pm.pm_status.subprocess.run") as mockRun:
         mockRun.return_value = subprocess.CompletedProcess(
             args=[], returncode=128, stdout="", stderr="unknown revision\n",
         )

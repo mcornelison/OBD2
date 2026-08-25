@@ -18,7 +18,7 @@
 ################################################################################
 
 """
-File: offices/pm/scripts/backlog_schema.py
+File: tools/pm/backlog_schema.py
 Purpose: Schema types + validator for backlog.json v2.0.0.
          Enforces 4-tier hierarchy invariants: no orphans, valid types,
          required fields per tier, validationCriteria shape.

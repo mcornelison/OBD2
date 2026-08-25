@@ -13,17 +13,17 @@ manifest-side companion to /sprint-validated's per-sprint phase 3 bump.
 
 Usage:
   # Mutate in-place against the default manifest:
-  python offices/pm/scripts/chain_validate_manifest_bump.py \\
+  python -m tools.pm.chain_validate_manifest_bump \\
       --features F-005 F-007 \\
       --label "by chain merge V0.27.5" \\
       --date 2026-05-15
 
   # Preview (no write):
-  python offices/pm/scripts/chain_validate_manifest_bump.py \\
+  python -m tools.pm.chain_validate_manifest_bump \\
       --features F-005 F-007 --label "..." --date 2026-05-15 --dry-run
 
   # Manifest path override (test harness):
-  python offices/pm/scripts/chain_validate_manifest_bump.py \\
+  python -m tools.pm.chain_validate_manifest_bump \\
       --path /tmp/manifest.json --features F-001 --label "..." --date 2026-06-01
 
 Exit codes:
@@ -31,7 +31,7 @@ Exit codes:
   1  unknown feature IDs (none of the supplied IDs matched the manifest)
   2  file/parse error
 
-Stdlib-only (matches offices/pm/scripts/ convention).
+Stdlib-only (matches tools/pm/ convention).
 """
 from __future__ import annotations
 
@@ -41,8 +41,9 @@ import sys
 from datetime import date
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
-DEFAULT_MANIFEST_PATH = REPO_ROOT / "offices" / "pm" / "regression_manifest.json"
+# Roots come from the _paths SSOT -- depth-independent by construction.
+from tools.pm._paths import SHARE_ROOT
+DEFAULT_MANIFEST_PATH = SHARE_ROOT / "pm" / "regression_manifest.json"
 
 
 def bumpManifestForChain(

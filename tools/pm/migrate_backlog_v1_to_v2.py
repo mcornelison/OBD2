@@ -1,5 +1,5 @@
 """
-File: offices/pm/scripts/migrate_backlog_v1_to_v2.py
+File: tools/pm/migrate_backlog_v1_to_v2.py
 Author: Marcus (PM)
 Created: 2026-05-27
 Purpose: One-time helper to convert v1 backlog.json (deeply-nested

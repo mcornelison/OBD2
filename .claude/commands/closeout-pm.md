@@ -11,12 +11,12 @@ End-of-session ritual for Marcus (PM). Captures the workflow refined Session 24 
 
 ## Prerequisites
 
-Run these PM tools (built Sessions 23-24, lives in `offices/pm/scripts/`) at session boundaries:
-- `python offices/pm/scripts/pm_status.py` — sprint + backlog + counter snapshot
-- `python offices/pm/scripts/backlog_set.py` — backlog mutation CLI
-- `python offices/pm/scripts/sprint_lint.py` — Sprint Contract v1.0 audit
+Run these PM tools (built Sessions 23-24, lives in `tools/pm/`) at session boundaries:
+- `python -m tools.pm.pm_status` — sprint + backlog + counter snapshot
+- `python -m tools.pm.backlog_set` — backlog mutation CLI
+- `python -m tools.pm.sprint_lint` — Sprint Contract v1.0 audit
 
-If any are missing, build them per `offices/pm/scripts/README.md`.
+If any are missing, build them per `tools/pm/README.md`.
 
 ---
 
@@ -26,10 +26,10 @@ PM owns decisions; closeout makes sure no decisions are floating.
 
 1. List inbox by recency:
    ```bash
-   ls -lt offices/pm/inbox/ | head -10
+   ls -lt $FLEET_SHARE/pm/inbox/ | head -10
    ```
-2. Identify any unread / unanswered notes (no corresponding response in `offices/<recipient>/inbox/`).
-3. For each, decide + reply via inbox note `offices/<recipient>/inbox/<date>-from-marcus-<topic>.md`.
+2. Identify any unread / unanswered notes (no corresponding response in `$FLEET_SHARE/<recipient>/inbox/`).
+3. For each, decide + reply via inbox note `$FLEET_SHARE/<recipient>/inbox/<date>-from-marcus-<topic>.md`.
 4. Decisions can include: fold a TD into the current sprint as a new story, defer to Sprint N+1 with a story_counter reservation, or waive with explicit rationale.
 5. If a decision adds/changes a sprint story, follow Phase 3 (sprint hygiene) before commit.
 
@@ -50,8 +50,8 @@ Spool may have updated `specs/grounded-knowledge.md` or `specs/obd2-research.md`
 
 Make sure the sprint contract is clean before committing.
 
-1. `python offices/pm/scripts/pm_status.py --sprint` — confirm story states.
-2. `python offices/pm/scripts/sprint_lint.py` — catch schema violations:
+1. `python -m tools.pm.pm_status --sprint` — confirm story states.
+2. `python -m tools.pm.sprint_lint` — catch schema violations:
    - Missing `feedback: {filesActuallyTouched: null, grounding: null}` scaffold
    - `passes: null` instead of `passes: false`
    - Banned phrases (`etc.`, `handle edge cases`, `tests pass` without command)
@@ -115,7 +115,7 @@ This is the PM-only deep-history file (1500+ lines is fine).
 
 If Phase 1 added stories or reservations:
 - `story_counter.json` — bump nextId, add reservation lines.
-- `backlog.json` — use `python offices/pm/scripts/backlog_set.py --feature B-XXX --add-phase ... --updated-by "Marcus (PM, Session N — short)"` to update phase records + lastUpdated atomically.
+- `backlog.json` — use `python -m tools.pm.backlog_set --feature B-XXX --add-phase ... --updated-by "Marcus (PM, Session N — short)"` to update phase records + lastUpdated atomically.
 
 ---
 
@@ -124,24 +124,24 @@ If Phase 1 added stories or reservations:
 **Critical Rule 8:** PM commits only PM-domain files mid-sprint. Sprint-close commits everything else.
 
 ### Stage these (PM-domain):
-- `offices/ralph/sprint.json` — sprint contract changes I made
-- `offices/pm/story_counter.json`
-- `offices/pm/backlog.json`
-- `offices/pm/projectManager.md`
-- `offices/pm/scripts/*.py` + `README.md` — new tools / updates
-- `offices/pm/inbox/<date>-from-*-*.md` — inbox notes received this session
-- `offices/<recipient>/inbox/<date>-from-marcus-*.md` — inbox notes I sent
-- `offices/pm/tech_debt/TD-*.md` — only if PM filed (not Ralph-filed annotated)
-- `offices/pm/blockers/BL-*.md` — only if PM filed
-- `offices/pm/prds/prd-*.md` — only if PM filed
+- `$FLEET_SHARE/ralph/sprint.json` — sprint contract changes I made
+- `$FLEET_SHARE/pm/story_counter.json`
+- `$FLEET_SHARE/pm/backlog.json`
+- `$FLEET_SHARE/pm/projectManager.md`
+- `tools/pm/*.py` + `README.md` — new tools / updates
+- `$FLEET_SHARE/pm/inbox/<date>-from-*-*.md` — inbox notes received this session
+- `$FLEET_SHARE/<recipient>/inbox/<date>-from-marcus-*.md` — inbox notes I sent
+- `$FLEET_SHARE/pm/tech_debt/TD-*.md` — only if PM filed (not Ralph-filed annotated)
+- `$FLEET_SHARE/pm/blockers/BL-*.md` — only if PM filed
+- `$FLEET_SHARE/pm/prds/prd-*.md` — only if PM filed
 
 ### DO NOT stage:
 - `src/**` — Ralph's domain (sprint-close)
 - `tests/**` — Ralph's domain (sprint-close)
 - `specs/**` — Spool's domain (Spool commits separately)
-- `offices/ralph/{progress.txt,session-handoff.md,ralph_agents.json}` — Ralph's session tracking (sprint-close)
-- `offices/ralph/knowledge/*` — Ralph's domain
-- `offices/tuner/**` (except inbox notes I sent) — Spool's domain
+- `$FLEET_SHARE/ralph/{progress.txt,session-handoff.md,ralph_agents.json}` — Ralph's session tracking (sprint-close)
+- `$FLEET_SHARE/ralph/knowledge/*` — Ralph's domain
+- `$FLEET_SHARE/tuner/**` (except inbox notes I sent) — Spool's domain
 - `.claude/commands/*` — only if I explicitly created/modified a slash command (verify intentional)
 - `.claude/settings.local.json` — persistent local drift, NEVER commit
 - `data/*.db-shm`, `data/*.db-wal` — SQLite ephemera

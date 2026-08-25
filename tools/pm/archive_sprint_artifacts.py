@@ -11,8 +11,8 @@ trailing Z for UTC marker):
   progress.archive.YYYY-MM-DD_HHMMSSZ.txt
 
 Usage:
-  python offices/pm/scripts/archive_sprint_artifacts.py
-  python offices/pm/scripts/archive_sprint_artifacts.py --dry-run
+  python -m tools.pm.archive_sprint_artifacts
+  python -m tools.pm.archive_sprint_artifacts --dry-run
 
 Exit code: 0 on success; 1 on missing source files; 2 on archive
 collision (re-run within 1 sec; abort + investigate).
@@ -28,10 +28,11 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
-SPRINT_PATH = REPO_ROOT / "offices" / "ralph" / "sprint.json"
-PROGRESS_PATH = REPO_ROOT / "offices" / "ralph" / "progress.txt"
-ARCHIVE_DIR = REPO_ROOT / "offices" / "ralph" / "archive"
+# Roots come from the _paths SSOT -- depth-independent by construction.
+from tools.pm._paths import SHARE_ROOT
+SPRINT_PATH = SHARE_ROOT / "ralph" / "sprint.json"
+PROGRESS_PATH = SHARE_ROOT / "ralph" / "progress.txt"
+ARCHIVE_DIR = SHARE_ROOT / "ralph" / "archive"
 
 
 def archiveArtifacts(timestamp: str | None = None, dryRun: bool = False) -> tuple[Path, Path]:
@@ -71,8 +72,8 @@ def archiveArtifacts(timestamp: str | None = None, dryRun: bool = False) -> tupl
     shutil.copy(SPRINT_PATH, sprintArchive)
     shutil.copy(PROGRESS_PATH, progressArchive)
 
-    print(f"Archived sprint.json   -> {sprintArchive.relative_to(REPO_ROOT)}")
-    print(f"Archived progress.txt  -> {progressArchive.relative_to(REPO_ROOT)}")
+    print(f"Archived sprint.json   -> {sprintArchive.relative_to(SHARE_ROOT)}")
+    print(f"Archived progress.txt  -> {progressArchive.relative_to(SHARE_ROOT)}")
     return sprintArchive, progressArchive
 
 

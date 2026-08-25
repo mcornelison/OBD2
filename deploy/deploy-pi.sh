@@ -175,6 +175,7 @@ sync_tree() {
             --delete \
             --exclude='.git/' \
             --exclude='.venv/' \
+            --exclude='offices/' \
             --exclude='__pycache__/' \
             --exclude='*.pyc' \
             --exclude='.pytest_cache/' \
@@ -206,6 +207,7 @@ sync_tree() {
         ( cd "$REPO_ROOT" && tar -cz \
             --exclude='./.git' \
             --exclude='./.venv' \
+            --exclude='./offices' \
             --exclude='./__pycache__' \
             --exclude='*.pyc' \
             --exclude='./.pytest_cache' \

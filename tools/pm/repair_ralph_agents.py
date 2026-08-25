@@ -16,9 +16,9 @@ Repair strategy:
   file should stay minimal. Preserves agents 2/3/4 untouched.
 
 Usage:
-  python offices/pm/scripts/repair_ralph_agents.py             # repair if corrupt; no-op if clean
-  python offices/pm/scripts/repair_ralph_agents.py --dry-run   # detect + describe; don't write
-  python offices/pm/scripts/repair_ralph_agents.py --check     # just exit 0/1 based on JSON validity
+  python -m tools.pm.repair_ralph_agents             # repair if corrupt; no-op if clean
+  python -m tools.pm.repair_ralph_agents --dry-run   # detect + describe; don't write
+  python -m tools.pm.repair_ralph_agents --check     # just exit 0/1 based on JSON validity
 
 Exit code: 0 on clean OR successful repair; 1 on irreparable corruption
 (agents 2-4 not parseable); 2 on missing file.
@@ -31,8 +31,9 @@ import re
 import sys
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
-DEFAULT_AGENTS_PATH = REPO_ROOT / "offices" / "ralph" / "ralph_agents.json"
+# Roots come from the _paths SSOT -- depth-independent by construction.
+from tools.pm._paths import SHARE_ROOT
+DEFAULT_AGENTS_PATH = SHARE_ROOT / "ralph" / "ralph_agents.json"
 
 DEFAULT_REX_NOTE = (
     "Note repaired by repair_ralph_agents.py (unescaped quote in long note "

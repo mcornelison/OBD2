@@ -15,7 +15,7 @@ The recipe has two layers (documented in
    one-off invocation of a script that has not (yet) been wired.
 
 Companion to `_freeze.py`: a small underscore-prefixed shared helper imported by
-the scripts that already depend on the `offices.pm.scripts` package (e.g.
+the scripts that already depend on the `tools.pm` package (e.g.
 `sprint_lint.py`). Scripts that advertise "Stdlib-only" self-containment inline
 the same guard rather than importing this module -- both forms are behaviourally
 identical; see the knowledge doc.

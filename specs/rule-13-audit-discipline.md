@@ -38,7 +38,7 @@ s = json.loads(pathlib.Path(path).read_text(encoding='utf-8'))
 
 **The script does it right** (`Path.read_text(encoding='utf-8')`) — only my ad-hoc Python audits got bitten. Lesson: when freeze-hash recompute mismatches but `sprint_lint` reports clean, suspect the auditor's encoding before suspecting freeze drift. Always recompute via the project's own `canonicalizeBigDoD` helper, never re-implement the recipe in an audit harness.
 
-**File**: `offices/pm/scripts/_freeze.py` is the canonical recipe.
+**File**: `tools/pm/_freeze.py` is the canonical recipe.
 
 ---
 
@@ -96,14 +96,14 @@ If any of these are unclear in the Story, CHANGES-REQUEST it.
 Marcus's Rule 13 reroute note will summarize what's in the package. **Verify against the artifacts, not the summary.** Specifically:
 
 ```python
-import json
-with open('offices/ralph/sprint.json', encoding='utf-8') as f:
+import json, os
+with open(os.environ['FLEET_SHARE'] + '/ralph/sprint.json', encoding='utf-8') as f:
     s = json.load(f)
 # Per-story count + content
 for st in s['stories']:
     print(st['id'], len(st['validationCriteria']), len(st['acceptance']), bool(st.get('goal')))
 # Hash recompute via project's own canonicalize
-from offices.pm.scripts._freeze import canonicalizeBigDoD
+from tools.pm._freeze import canonicalizeBigDoD
 import hashlib
 canonical = canonicalizeBigDoD(s['validation']['bigDefinitionOfDone'])
 recomputed = hashlib.sha256(canonical.encode('utf-8')).hexdigest()
@@ -111,7 +111,7 @@ assert recomputed == s['validation']['bigDoDHash'], "FREEZE DRIFT"
 # Story-file existence check
 import pathlib
 for st in s['stories']:
-    p = pathlib.Path(f"offices/pm/backlog/{st['id']}.md")
+    p = pathlib.Path(os.environ["FLEET_SHARE"]) / "pm" / "backlog" / f"{st['id']}.md"
     assert p.exists(), f"missing Story.md: {st['id']}"
 ```
 

@@ -22,7 +22,7 @@ authorize a deploy (mirrors the retry-defaults-to-uncertain discipline).
 
 Usage (CLI -- wired as the first HALT-early gate of /sprint-deploy-pm Phase 0):
 
-    python -m offices.pm.scripts.deploy_preflight_gate --repo .
+    python -m tools.pm.deploy_preflight_gate --repo .
 
 Exit code 0 = suite green, deploy may proceed; non-zero (HALT_EXIT_CODE) = a red
 gate or an un-launchable pytest -- HALT the deploy and investigate. `--marker`

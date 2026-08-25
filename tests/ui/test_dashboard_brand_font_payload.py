@@ -55,12 +55,14 @@ _HTML = os.path.join(_DIST, "dashboard.html")
 _KIT_OFL = os.path.join(_DIST, "OFL.txt")
 _DEPLOY_PI = os.path.join(_ROOT, "deploy", "deploy-pi.sh")
 
-# Iris's delivered asset (Marcus dispatch 2026-08-01-from-marcus-us510-oswald-
-# font-drop-close-bl027.md). The .woff2 is the ORIGINAL; the CSS carries its
-# base64. Keeping the binary in the repo is what makes the payload verifiable
-# rather than a 3,864-character string nobody can check.
+# The source-of-record brand face (originally delivered by Iris, Marcus
+# dispatch 2026-08-01-from-marcus-us510-oswald-font-drop-close-bl027.md, and
+# promoted out of offices/ into the product tree during the offices decouple).
+# The .woff2 is the ORIGINAL; the CSS carries its base64. Keeping the binary in
+# the repo is what makes the payload verifiable rather than a 3,864-character
+# string nobody can check.
 _SOURCE_WOFF2 = os.path.join(
-    _ROOT, "offices", "uidevloper", "assets", "fonts", "oswald-brand.woff2"
+    _ROOT, "specs", "UI", "assets", "fonts", "oswald-brand.woff2"
 )
 
 # Grounded in the same dispatch: "subset: A-Z / 0-9 / space / hyphen, weight 600".

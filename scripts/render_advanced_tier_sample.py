@@ -18,7 +18,7 @@ Render a sample advanced-tier primary screen to a PNG.
 
 Used for the Spool Gate 2 review packet: produces an offscreen 480x320
 pygame surface with representative simulator data, and dumps it to
-``offices/tuner/inbox/us165-gate2/advanced_tier_sample.png`` (or the path
+``$FLEET_SHARE/tuner/inbox/us165-gate2/advanced_tier_sample.png`` (or the path
 passed via ``--out``).
 
 Usage (Windows dev)::
@@ -61,9 +61,14 @@ from pi.display.screens.primary_screen_advanced import (  # noqa: E402
     computeAdvancedTierLayout,
 )
 
+from tools.pm._paths import SHARE_ROOT
+
+# This script WRITES its sample into a tuner inbox -- an agent-fleet location,
+# not product output. Resolve it through the _paths SSOT so the destination
+# follows the share ($FLEET_SHARE post-eviction, offices/ before it) rather
+# than assuming offices/ sits inside the repo.
 _DEFAULT_OUT = (
-    Path(__file__).resolve().parent.parent
-    / "offices"
+    SHARE_ROOT
     / "tuner"
     / "inbox"
     / "us165-gate2"

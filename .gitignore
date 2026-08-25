@@ -132,14 +132,15 @@ output/
 temp/
 tmp/
 
-# Downloaded tools (SQLite CLI, etc.)
-tools/
+# Downloaded tools (SQLite CLI, etc.). NOTE: `tools/*` not `tools/` so git can
+# descend and the negation below works -- tools/pm/ is first-party source (the
+# PM tool cluster, moved out of offices/pm/scripts/ in the offices decouple).
+tools/*
+!tools/pm/
 
-# Claude settings (local only) -- root + per-agent offices/<agent>/.claude/
+# Claude settings (local only)
 .claude/settings.local.json
-offices/*/.claude/settings.local.json
 .claude/scheduled_tasks.lock
-offices/*/.claude/scheduled_tasks.lock
 
 # Test results (keep committed test specs, ignore outputs)
 tests/*_output.txt
@@ -148,8 +149,6 @@ tests/test_results_*.txt
 # Deploy configuration (contains real Pi connection details)
 deploy/deploy.conf
 
-# Ralph supervisor: last headless-iteration transcript (post-mortem only)
-offices/ralph/.last-iteration.log
 
 # Honest boot-progress instrument runtime artifacts (Sprint 38 / V0.27.12).
 # The breadcrumb trail + its atomic-replace temp are Pi-side runtime state,
@@ -158,7 +157,3 @@ data/boot_progress
 data/boot_progress.tmp
 data/spool/
 
-# V0.28 backlog-v2 migration safety nets (local only)
-offices/pm/backlog.v1-backup.json
-offices/pm/backlog.v1-backup/
-offices/pm/story_counter.v1-backup.json
