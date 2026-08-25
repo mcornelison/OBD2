@@ -176,6 +176,8 @@ sync_tree() {
             --exclude='.git/' \
             --exclude='.venv/' \
             --exclude='offices/' \
+            --exclude='specs/' \
+            --exclude='docs/' \
             --exclude='__pycache__/' \
             --exclude='*.pyc' \
             --exclude='.pytest_cache/' \
@@ -208,6 +210,8 @@ sync_tree() {
             --exclude='./.git' \
             --exclude='./.venv' \
             --exclude='./offices' \
+            --exclude='./specs' \
+            --exclude='./docs' \
             --exclude='./__pycache__' \
             --exclude='*.pyc' \
             --exclude='./.pytest_cache' \
