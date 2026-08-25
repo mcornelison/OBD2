@@ -12,8 +12,8 @@
  * through Atlas under Rule-10; tuning-semantics colors through Spool).
  *
  * Provenance of every value below is a shipped/gated spec — nothing invented:
- *   - F-103 splash spec  docs/superpowers/specs/2026-05-26-b103-splash-animation-design.md §4
- *   - DTC viewer spec    docs/superpowers/specs/2026-06-05-pi-dtc-check-engine-viewer-clear-design.md §7
+ *   - F-103 splash spec  $FLEET_SHARE/knowledge/superpowers/specs/2026-05-26-b103-splash-animation-design.md §4
+ *   - DTC viewer spec    $FLEET_SHARE/knowledge/superpowers/specs/2026-06-05-pi-dtc-check-engine-viewer-clear-design.md §7
  *   - Atlas gate A-8 (2026-06-05 + 2026-06-19): add `--green-ok` once, here.
  *
  * Target panel: OSOYOO 3.5" 480x320 (narrow gamut) — values chosen to read at

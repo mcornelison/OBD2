@@ -1,7 +1,7 @@
 # src/ — OBD2v2 Source Tree
 
 This tree is organized by deployment tier. See
-`docs/superpowers/specs/2026-04-12-reorg-design.md` for the architectural
+`$FLEET_SHARE/knowledge/superpowers/specs/2026-04-12-reorg-design.md` for the architectural
 rationale.
 
 ## Top-level structure

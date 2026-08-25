@@ -9,7 +9,7 @@
 #   instrument by contract: a down/reconnecting link is reported verbatim, never
 #   fabricated as `linked`, and the stale-while-driving policy (I-033 / I-4) is
 #   computed here so a stale sync surfaces amber instead of green-when-broken.
-#   Schema pinned in docs/superpowers/specs/2026-06-05-pi-touch-carousel-
+#   Schema pinned in $FLEET_SHARE/knowledge/superpowers/specs/2026-06-05-pi-touch-carousel-
 #   dashboard-f092-f097-design.md §7 (state file shapes).
 # Author: Ralph Agent (Rex)
 # Creation Date: 2026-06-30

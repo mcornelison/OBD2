@@ -5,7 +5,7 @@ description: "Sprint-deploy ritual for Marcus (PM). Validates sprint complete; a
 
 # Sprint Deploy (PM-driven, dev/main workflow per spec 2026-05-28)
 
-End-of-sprint deployment ritual for Marcus (PM). **Replaces the prior sprint-branch-deploy pattern.** Per spec `docs/superpowers/specs/2026-05-28-dev-main-branching-workflow-design.md`: main = fully validated stable (untouched between chain merges); `dev` = integration branch carrying the active V0.X.Y chain. Sprint branches merge into `dev` on code-complete; deploy + IRL validation target `dev`. `/chain-validated` merges `dev` → `main` at chain end.
+End-of-sprint deployment ritual for Marcus (PM). **Replaces the prior sprint-branch-deploy pattern.** Per spec `$FLEET_SHARE/knowledge/superpowers/specs/2026-05-28-dev-main-branching-workflow-design.md`: main = fully validated stable (untouched between chain merges); `dev` = integration branch carrying the active V0.X.Y chain. Sprint branches merge into `dev` on code-complete; deploy + IRL validation target `dev`. `/chain-validated` merges `dev` → `main` at chain end.
 
 **WHEN to run**: CIO explicitly directs sprint-deploy after Ralph finishes a sprint (all stories `passes:true`).
 

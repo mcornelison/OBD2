@@ -79,7 +79,7 @@ faithfully captures the failure mode: drive_summary computed fields stay
 NULL, drive_statistics has zero rows.  Companion procedure for an
 out-of-tree retroactive run against the actual V0.27.16 commit
 (``c04d36e``) is documented in
-``docs/superpowers/specs/2026-05-21-deploy-context-drive-simulator.md``.
+``$FLEET_SHARE/knowledge/superpowers/specs/2026-05-21-deploy-context-drive-simulator.md``.
 
 Test discipline (post-I-040)
 ----------------------------

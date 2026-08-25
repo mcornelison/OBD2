@@ -1,7 +1,7 @@
 ################################################################################
 # File Name: sample.py
 # Purpose/Description: Immutable Sample envelope + QoS enum -- the unit of data
-#     published on the SampleBus. See docs/superpowers/specs/
+#     published on the SampleBus. See $FLEET_SHARE/knowledge/superpowers/specs/
 #     2026-06-18-edr-dedicated-reader-bus-contract-design.md (4.1).
 # Author: Ralph Agent (Rex)
 # Creation Date: 2026-06-19

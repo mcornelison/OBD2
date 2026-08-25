@@ -10,7 +10,7 @@
 #   §6 / A-6). `makeShutdownPhaseEmitter` builds that callable, wired in
 #   src/pi/power/power_watch/__main__.py. The splash renders what this file
 #   says; it never decides (specs/ssot-design-pattern.md). Schema is pinned in
-#   docs/superpowers/specs/2026-05-26-b103-splash-animation-design.md §6.
+#   $FLEET_SHARE/knowledge/superpowers/specs/2026-05-26-b103-splash-animation-design.md §6.
 # Author: Ralph Agent (Rex)
 # Creation Date: 2026-06-29
 # Copyright: (c) 2026 Eclipse OBD-II Project. All rights reserved.

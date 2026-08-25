@@ -3,7 +3,7 @@
 # Purpose/Description: SampleBus core tests (EDR slice 1, US-381): subscribe()
 #     returns a usable Subscription; publish() fans out to matching subscribers
 #     only; STREAM topics have no history (late subscriber misses prior sample);
-#     publish() never blocks on an undrained subscriber. See docs/superpowers/
+#     publish() never blocks on an undrained subscriber. See $FLEET_SHARE/knowledge/superpowers/
 #     plans/2026-06-18-edr-bus-slice1-dedicated-reader.md Task 3.
 # Author: Ralph Agent (Rex)
 # Creation Date: 2026-06-19

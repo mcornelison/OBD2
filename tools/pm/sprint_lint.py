@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 sprint_lint.py -- Audit offices/ralph/sprint.json against the Sprint Contract
-v1.0 spec at docs/superpowers/specs/2026-04-14-sprint-contract-design.md.
+v1.0 spec at $FLEET_SHARE/knowledge/superpowers/specs/2026-04-14-sprint-contract-design.md.
 
 Also validates offices/pm/backlog.json v2.0.0 via --backlog mode.
 

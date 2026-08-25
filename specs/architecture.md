@@ -2993,7 +2993,7 @@ drop-oldest for display so a producer never blocks), and a `PersistenceSubscribe
 that drains `raw.obd.*` to `realtime_data`. It **ships dark** behind
 `pi.bus.enabled` (default `false`); enabling it must reproduce the byte-identical
 `realtime_data` golden master. Contract:
-`docs/superpowers/specs/2026-06-18-edr-dedicated-reader-bus-contract-design.md`.
+`$FLEET_SHARE/knowledge/superpowers/specs/2026-06-18-edr-dedicated-reader-bus-contract-design.md`.
 
 ### 10.8.2 EDR sensor reader + raw-sensor persistence (Sprint 50 / V0.29.4)
 
@@ -3194,7 +3194,7 @@ graceful-absent reader stays silent, isolating the live light feed).
 
 *Gate-ratification note: §10.8 added per the 2026-05-18 design-gate governance
 rule (PM Rule 10 / C-4 DoD, in-sprint) from Atlas's 2026-06-30 EDR ADR
-(`docs/superpowers/specs/2026-06-30-edr-sensor-reader-schema-bus-adr.md` §5).
+(`$FLEET_SHARE/knowledge/superpowers/specs/2026-06-30-edr-sensor-reader-schema-bus-adr.md` §5).
 BENCH-validated (US-411 golden-master + absent-path); live IRL acceptance —
 `i2cdetect` 0x29/0x69 + connect-when-wired — pending the first V0.29.4 Pi
 deploy.*
@@ -3702,7 +3702,7 @@ that static sweep cannot: JS-created elements, and the surface *after* the real
 ##### Card model: always-present vs vehicle-gated (US-496, F-121)
 
 Per the CIO-locked card model (Atlas,
-`docs/superpowers/specs/2026-07-28-pi-ui-carousel-ssot-wiring-design.md` §4) the
+`$FLEET_SHARE/knowledge/superpowers/specs/2026-07-28-pi-ui-carousel-ssot-wiring-design.md` §4) the
 carousel has **two tiers**, and the difference is *availability semantics*, not
 styling:
 

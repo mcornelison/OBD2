@@ -6,7 +6,7 @@
 #   splash kiosk consumes. The splash NEVER decides system condition -- this
 #   emitter is the authority; the splash renders the `healthy`/`degraded`
 #   booleans verbatim (specs/ssot-design-pattern.md). Honest-instrument rules per
-#   spec docs/superpowers/specs/2026-05-26-b103-splash-animation-design.md §5.
+#   spec $FLEET_SHARE/knowledge/superpowers/specs/2026-05-26-b103-splash-animation-design.md §5.
 #
 #   READINESS MEANS "Pi core / UI is up", NOT "a vehicle is connected"
 #   (US-494 / design 2026-07-28-pi-ui-carousel-ssot-wiring-design.md §2). The

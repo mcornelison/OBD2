@@ -4,7 +4,7 @@ Reference code examples — distilled from real, working runs, kept as a referen
 for feature implementation. **Not deployed code.** Ralph/Atlas lift the mechanics
 and integrate properly into `src/`; these files are not imported by the app.
 
-(Distinct from `specs/samples/`, which holds brainstorming docs, mockups, and
+(Distinct from `$FLEET_SHARE/knowledge/samples/`, which holds brainstorming docs, mockups, and
 research artifacts — not runnable code.)
 
 | File | What it demonstrates | Author | Origin |

@@ -6,7 +6,7 @@ This document provides complete hardware specifications for the Eclipse OBD-II R
 
 **Last Updated**: 2026-06-27 (added EDR sensors: TSL2591 light + ICM-20948 9-DoF IMU)
 
-For detailed specifications and developer guidance, see [specs/samples/piSpecs.md](../specs/samples/piSpecs.md).
+For detailed specifications and developer guidance, see [$FLEET_SHARE/knowledge/samples/piSpecs.md](../$FLEET_SHARE/knowledge/samples/piSpecs.md).
 
 ---
 
@@ -225,7 +225,7 @@ status_led.on()  # Indicate system running
 
 ## Display: OSOYOO 3.5" HDMI Touch Screen
 
-> **Mechanical dimensions live elsewhere.** This section owns the display's *electrical* and interface facts. Precise mechanical figures for enclosure work — PCB 85 x 56 mm, glass 93.44 x 60 mm, and the mount holes as a **rectangle** (h c-c 58, v c-c 49) — are in `offices/uidevloper/enclosure1/datasheets/2024009100-extracted-facts.md`, kept beside the vendor PDF and the scripts that extracted them so any figure can be re-derived. 3D-printing toolchain and materials: `docs/3d-printing/`.
+> **Mechanical dimensions live elsewhere.** This section owns the display's *electrical* and interface facts. Precise mechanical figures for enclosure work — PCB 85 x 56 mm, glass 93.44 x 60 mm, and the mount holes as a **rectangle** (h c-c 58, v c-c 49) — are in `offices/uidevloper/enclosure1/datasheets/2024009100-extracted-facts.md`, kept beside the vendor PDF and the scripts that extracted them so any figure can be re-derived. 3D-printing toolchain and materials: `$FLEET_SHARE/knowledge/3d-printing/`.
 
 ### Specifications
 

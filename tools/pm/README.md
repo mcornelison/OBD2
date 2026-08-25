@@ -198,7 +198,7 @@ Strategy: truncate Rex's bloated note to a short pointer; preserve agents 2/3/4 
 ## sprint_lint.py
 
 Audits `offices/ralph/sprint.json` against the Sprint Contract v1.0 spec at
-`docs/superpowers/specs/2026-04-14-sprint-contract-design.md`. Run before
+`$FLEET_SHARE/knowledge/superpowers/specs/2026-04-14-sprint-contract-design.md`. Run before
 committing a new sprint or after grooming changes to catch:
 
 - Missing required fields (`feedback` scaffold, `passes: false-not-null`, etc.)
