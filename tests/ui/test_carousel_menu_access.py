@@ -1,7 +1,7 @@
 ################################################################################
 # File Name: test_carousel_menu_access.py
 # Purpose/Description: US-490 fixture tests for context-aware system-setup menu
-#   access (specs/UI/dist/dashboard-pi/carousel.js + dashboard.css +
+#   access (src/pi/ui/dashboard/carousel.js + dashboard.css +
 #   dashboard.html). Iris polish P-2, CIO-locked Option C: the top-bar `⋮` is a
 #   SINGLE-TAP path into consequential actions (service stop, Exit UI), so it is
 #   offered ONLY while the emitter says parked/idle, and is hidden while driving.
@@ -39,7 +39,7 @@ from tests.ui.test_dashboard_stop_tier_safety import _read, _ruleBlock
 
 _NODE = shutil.which("node")
 _PROBE = os.path.join(os.path.dirname(__file__), "carousel_probe.js")
-_DIST = os.path.join(os.path.dirname(__file__), "..", "..", "specs", "UI", "dist", "dashboard-pi")
+_DIST = os.path.join(os.path.dirname(__file__), "..", "..", "src", "pi", "ui", "dashboard")
 _CSS = os.path.join(_DIST, "dashboard.css")
 _JS = os.path.join(_DIST, "carousel.js")
 _HTML = os.path.join(_DIST, "dashboard.html")

@@ -19,20 +19,35 @@ import re
 import shutil
 from pathlib import Path
 
-from offices.pm.scripts.prd_to_sprint import convertPrdToSprint
+import pytest
+
+from tools.pm.prd_to_sprint import convertPrdToSprint
 
 FIXTURES = Path(__file__).parent / "fixtures"
+
+@pytest.fixture(autouse=True)
+def _fleetShare(tmp_path, monkeypatch):
+    """Point $FLEET_SHARE at this test's tmp tree.
+
+    The tools resolve their share root through
+    :func:`tools.pm._paths.resolveShareRoot`, so setting the env var exercises
+    the REAL resolution path rather than injecting a root that production
+    callers never inject.
+    """
+    monkeypatch.setenv("FLEET_SHARE", str(tmp_path))
+    return tmp_path
+
 
 
 def _setupFakeRepo(tmpRoot: Path):
     """Build a minimal repo layout that convertPrdToSprint can read."""
-    (tmpRoot / "offices/pm/backlog").mkdir(parents=True)
-    (tmpRoot / "offices/pm/prds").mkdir(parents=True)
-    (tmpRoot / "offices/ralph").mkdir(parents=True)
+    (tmpRoot / "pm/backlog").mkdir(parents=True)
+    (tmpRoot / "pm/prds").mkdir(parents=True)
+    (tmpRoot / "ralph").mkdir(parents=True)
     shutil.copy(FIXTURES / "v2_backlog_sample.json",
-                tmpRoot / "offices/pm/backlog.json")
+                tmpRoot / "pm/backlog.json")
     shutil.copy(FIXTURES / "prd_sample.md",
-                tmpRoot / "offices/pm/prds/prd-V0.28.0-sprint-43.md")
+                tmpRoot / "pm/prds/prd-V0.28.0-sprint-43.md")
     # also need a Story.md for US-359 with full content
     storyMd = """---
 id: US-359
@@ -61,14 +76,14 @@ As CIO, I want a boot splash so I know when the Pi is ready.
 |---|---|---|
 | V-1 | Boot Pi cold | Splash within 3s |
 """
-    (tmpRoot / "offices/pm/backlog/US-359-boot-splash.md").write_text(storyMd, encoding="utf-8")
+    (tmpRoot / "pm/backlog/US-359-boot-splash.md").write_text(storyMd, encoding="utf-8")
 
 
 def test_convertPrdToSprint_basicConversion(tmp_path):
     _setupFakeRepo(tmp_path)
-    prdPath = tmp_path / "offices/pm/prds/prd-V0.28.0-sprint-43.md"
-    outPath = tmp_path / "offices/ralph/sprint.json"
-    convertPrdToSprint(prdPath, outPath, repoRoot=tmp_path)
+    prdPath = tmp_path / "pm/prds/prd-V0.28.0-sprint-43.md"
+    outPath = tmp_path / "ralph/sprint.json"
+    convertPrdToSprint(prdPath, outPath)
     assert outPath.exists()
     sprint = json.loads(outPath.read_text())
     assert sprint["version"] == "V0.28.0"
@@ -103,9 +118,9 @@ def test_convertPrdToSprint_writesFreezeFields(tmp_path):
     Then: sprint.json validation block carries frozenAt (ISO format) + bigDoDHash (64 char hex)
     """
     _setupFakeRepo(tmp_path)
-    prdPath = tmp_path / "offices/pm/prds/prd-V0.28.0-sprint-43.md"
-    outPath = tmp_path / "offices/ralph/sprint.json"
-    convertPrdToSprint(prdPath, outPath, repoRoot=tmp_path)
+    prdPath = tmp_path / "pm/prds/prd-V0.28.0-sprint-43.md"
+    outPath = tmp_path / "ralph/sprint.json"
+    convertPrdToSprint(prdPath, outPath)
     data = json.loads(outPath.read_text(encoding="utf-8"))
     v = data["validation"]
     # ISO 8601 'Z' suffix
@@ -121,11 +136,11 @@ def test_convertPrdToSprint_freezeHash_deterministic(tmp_path):
     Then: bigDoDHash is identical (deterministic over canonical bigDoD content)
     """
     _setupFakeRepo(tmp_path)
-    prdPath = tmp_path / "offices/pm/prds/prd-V0.28.0-sprint-43.md"
+    prdPath = tmp_path / "pm/prds/prd-V0.28.0-sprint-43.md"
     outA = tmp_path / "a.json"
     outB = tmp_path / "b.json"
-    convertPrdToSprint(prdPath, outA, repoRoot=tmp_path)
-    convertPrdToSprint(prdPath, outB, repoRoot=tmp_path)
+    convertPrdToSprint(prdPath, outA)
+    convertPrdToSprint(prdPath, outB)
     dataA = json.loads(outA.read_text(encoding="utf-8"))
     dataB = json.loads(outB.read_text(encoding="utf-8"))
     assert dataA["validation"]["bigDoDHash"] == dataB["validation"]["bigDoDHash"]

@@ -44,8 +44,8 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
-KIT_DIR = REPO_ROOT / "specs" / "UI" / "dist" / "dashboard-pi"
-SPLASH_KIT = REPO_ROOT / "specs" / "UI" / "dist" / "splash-pi"
+KIT_DIR = REPO_ROOT / "src" / "pi" / "ui" / "dashboard"
+SPLASH_KIT = REPO_ROOT / "src" / "pi" / "ui" / "splash"
 DEPLOY_DIR = REPO_ROOT / "deploy"
 INSTALL_SH = KIT_DIR / "install.sh"
 UNINSTALL_SH = KIT_DIR / "uninstall.sh"

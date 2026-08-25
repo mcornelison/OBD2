@@ -53,7 +53,7 @@ git log --oneline @{u}..HEAD
 
 ```bash
 # Confirm the chain-end-merge rule is the right ritual for this state
-python offices/pm/scripts/pm_regression_status.py --stale
+python -m tools.pm.pm_regression_status --stale
 ```
 
 If many features still STALE / NEVER -- chain probably isn't ready;
@@ -69,7 +69,7 @@ validation state + aggregated validatesFeatures + chain-wide bigDoD checklist.
 
 ```bash
 # Replace V0.27 with the chain epoch being merged
-python offices/pm/scripts/chain_validate_aggregate.py --chain V0.27
+python -m tools.pm.chain_validate_aggregate --chain V0.27
 ```
 
 **Stop conditions**:
@@ -89,7 +89,7 @@ as the green light. If running interactively: prompt for confirmation.
 
 ```bash
 # Strict gate -- exit 1 if any sprint lacks validatedAt
-python offices/pm/scripts/chain_validate_aggregate.py --chain V0.27 --strict
+python -m tools.pm.chain_validate_aggregate --chain V0.27 --strict
 ```
 
 **Stop conditions**: strict exit 1 -> abort; sprint(s) still need
@@ -110,13 +110,13 @@ validatedBy with the chain-merge label.
 
 ```bash
 # Capture aggregated feature IDs from Phase 1's JSON output
-python offices/pm/scripts/chain_validate_aggregate.py --chain V0.27 --json \
+python -m tools.pm.chain_validate_aggregate --chain V0.27 --json \
     > /tmp/chain-agg.json
 python -c "import json; print(' '.join(json.load(open('/tmp/chain-agg.json'))['aggregateValidatesFeatures']))"
 # Example output: F-005 F-007
 
 # Bump those features chain-wide
-python offices/pm/scripts/chain_validate_manifest_bump.py \
+python -m tools.pm.chain_validate_manifest_bump \
     --features F-005 F-007 \
     --label "by chain merge V0.27.5" \
     --date $(date -u +%Y-%m-%d)
@@ -125,7 +125,7 @@ python offices/pm/scripts/chain_validate_manifest_bump.py \
 Verify the manifest now shows all chain-touched features OK:
 
 ```bash
-python offices/pm/scripts/pm_regression_status.py
+python -m tools.pm.pm_regression_status
 ```
 
 ---
@@ -189,8 +189,13 @@ git push origin --delete sprint/sprint29-...
 
 Stage + commit + push the PM artifacts on main:
 
+> **Post-eviction:** the `offices/` artifacts below live on the fleet share and
+> are NOT version controlled -- they cannot be staged. Only repo files are
+> committed here; the share's durability comes from snapshots. Edits to
+> `$FLEET_SHARE/pm/*` need no git step at all.
+
 ```bash
-git add MEMORY.md offices/pm/projectManager.md offices/pm/regression_manifest.json
+git add MEMORY.md
 git commit -m "chore(chain-validated): V0.X chain merged to main -- new stable V0.X.N"
 git push origin main
 ```
@@ -237,7 +242,7 @@ Print to CIO:
 Plus regression manifest snapshot:
 
 ```bash
-python offices/pm/scripts/pm_regression_status.py
+python -m tools.pm.pm_regression_status
 ```
 
 Show what's still STALE / NEVER-validated for the next chain.
@@ -285,6 +290,6 @@ V0.(X+1).0 chain branches from a clean dev = main base.
 - `chain_validate_manifest_bump.py` -- Phase 3 (manifest bump chain-wide)
 - `pm_regression_status.py` -- pre + post status report
 - `regression_manifest.json` -- the project's user-facing feature list
-- B-067 backlog item (`offices/pm/backlog/B-067-chain-validated-slash-command.md`)
+- B-067 backlog item (`$FLEET_SHARE/pm/backlog/B-067-chain-validated-slash-command.md`)
 - CIO 2026-05-10 chain-end-merge rule
   (`feedback_pm_main_merges_at_chain_end_only.md`)

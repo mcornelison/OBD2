@@ -5,9 +5,9 @@
 #     write path -- guaranteeing the persisted rows are byte-identical to the
 #     pre-bus inline path. Runs its own daemon thread so a stuck write can never
 #     stall the producer (subscriber isolation). EDR slice 1, US-383.
-#     See docs/superpowers/specs/
+#     See $FLEET_SHARE/knowledge/superpowers/specs/
 #     2026-06-18-edr-dedicated-reader-bus-contract-design.md and
-#     docs/superpowers/plans/2026-06-18-edr-bus-slice1-dedicated-reader.md Task 6.
+#     $FLEET_SHARE/knowledge/superpowers/plans/2026-06-18-edr-bus-slice1-dedicated-reader.md Task 6.
 # Author: Ralph Agent (Rex)
 # Creation Date: 2026-06-19
 # Copyright: (c) 2026 Eclipse OBD-II Project. All rights reserved.

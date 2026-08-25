@@ -15,7 +15,7 @@
 # ================================================================================
 ################################################################################
 
-"""Tests for offices.pm.scripts._encoding.forceUtf8Stdio (US-466 cp1252 harden)."""
+"""Tests for tools.pm._encoding.forceUtf8Stdio (US-466 cp1252 harden)."""
 from __future__ import annotations
 
 import io
@@ -23,7 +23,7 @@ import sys
 
 import pytest
 
-from offices.pm.scripts._encoding import forceUtf8Stdio
+from tools.pm._encoding import forceUtf8Stdio
 
 # The exact glyph that broke pm_status --backlog: U+2192 RIGHTWARDS ARROW,
 # present in migrated v1 backlog titles + aggregated bigDefinitionOfDone clauses.

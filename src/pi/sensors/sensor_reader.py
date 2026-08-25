@@ -13,7 +13,7 @@
 #                      consumer could mistake for a real zero-g / zero-lux reading.
 #                      Light saturation publishes lux=None (never inf). Ships dark
 #                      behind pi.sensors.{imu,light}.enabled under pi.bus.enabled.
-#                      ADR: docs/superpowers/specs/
+#                      ADR: $FLEET_SHARE/knowledge/superpowers/specs/
 #                      2026-06-30-edr-sensor-reader-schema-bus-adr.md sections 1/3.
 # Author: Rex (US-409)
 # Creation Date: 2026-06-30

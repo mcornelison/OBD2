@@ -1,7 +1,7 @@
 ################################################################################
 # File Name: test_dashboard_animation_gating.py
 # Purpose/Description: US-537 (F-124, Atlas RCA #3) guard tests for MOTION and
-#   COMPOSITOR pressure on the Pi dashboard surface (specs/UI/dist/dashboard-pi/).
+#   COMPOSITOR pressure on the Pi dashboard surface (src/pi/ui/dashboard/).
 #
 #   WHAT THE STORY IS ACTUALLY FIXING. Two things sit permanently in the
 #   stylesheet and cost the Pi's GPU command buffer:

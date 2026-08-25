@@ -44,7 +44,7 @@ import pytest
 from tests.ui.css_type_scale import readCss, ruleBlock
 
 _DIST = os.path.join(
-    os.path.dirname(__file__), "..", "..", "specs", "UI", "dist", "dashboard-pi"
+    os.path.dirname(__file__), "..", "..", "src", "pi", "ui", "dashboard"
 )
 _HTML_PATH = os.path.join(_DIST, "dashboard.html")
 _CSS_PATH = os.path.join(_DIST, "dashboard.css")

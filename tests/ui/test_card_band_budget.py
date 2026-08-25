@@ -9,7 +9,7 @@
 #        so a token change moves the check instead of staling a comment. It has
 #        a NEGATIVE SELF-TEST: a check never seen to fail is not known to be a
 #        check.
-#     2. THE TOKENIZATION (AC-4) -- the bands resolve from specs/UI/tokens.css,
+#     2. THE TOKENIZATION (AC-4) -- the bands resolve from src/pi/ui/tokens.css,
 #        and `#carousel`'s top/bottom derive from the same two values that define
 #        the bars. The root cause was `28px` being a literal in one file and an
 #        assumption in another, with nothing forcing the two to reconcile.

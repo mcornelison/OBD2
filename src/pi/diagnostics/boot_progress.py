@@ -7,7 +7,7 @@
 #                      derives a positive-proof-only verdict. Only the systemd
 #                      shutdown-finalizer writes CLEAN_COMPLETE, so a hard crash
 #                      can never forge 'clean'. See
-#                      docs/superpowers/specs/2026-05-15-honest-boot-progress-instrument-design.md.
+#                      $FLEET_SHARE/knowledge/superpowers/specs/2026-05-15-honest-boot-progress-instrument-design.md.
 # Author: (implementation plan 2026-05-15)
 # Creation Date: 2026-05-15
 # Copyright: (c) 2026 Eclipse OBD-II Project. All rights reserved.

@@ -52,7 +52,7 @@ from pi.splash.shutdown_state_emitter import (
 from pi.splash.states_http_server import StatesHttpServer
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
-KIT_DIR = REPO_ROOT / "specs" / "UI" / "dist" / "splash-pi"
+KIT_DIR = REPO_ROOT / "src" / "pi" / "ui" / "splash"
 CONFIG_PATH = REPO_ROOT / "config.json"
 
 _TOKEN = "test-token-abcdefghijklmnopqrstuvwxyz123456"

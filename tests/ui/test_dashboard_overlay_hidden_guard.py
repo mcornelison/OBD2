@@ -1,7 +1,7 @@
 ################################################################################
 # File Name: test_dashboard_overlay_hidden_guard.py
 # Purpose/Description: US-495 (S2, F-111) guard tests for the `hidden` attribute
-#   on the dashboard surface (specs/UI/dist/dashboard-pi/). Root cause (Atlas):
+#   on the dashboard surface (src/pi/ui/dashboard/). Root cause (Atlas):
 #   the five full-screen overlays declare `display: flex` through ID selectors,
 #   and an AUTHOR declaration always outranks the user-agent `[hidden]{display:
 #   none}` rule -- so the `hidden` property carousel.js sets was inert and every
@@ -38,7 +38,7 @@ from html.parser import HTMLParser
 
 import pytest
 
-_DIST = os.path.join(os.path.dirname(__file__), "..", "..", "specs", "UI", "dist", "dashboard-pi")
+_DIST = os.path.join(os.path.dirname(__file__), "..", "..", "src", "pi", "ui", "dashboard")
 _CSS = os.path.join(_DIST, "dashboard.css")
 _HTML = os.path.join(_DIST, "dashboard.html")
 

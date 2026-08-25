@@ -44,7 +44,7 @@ import pytest
 _NODE = shutil.which("node")
 _PROBE = os.path.join(os.path.dirname(__file__), "carousel_probe.js")
 _DIST = os.path.join(
-    os.path.dirname(__file__), "..", "..", "specs", "UI", "dist", "dashboard-pi"
+    os.path.dirname(__file__), "..", "..", "src", "pi", "ui", "dashboard"
 )
 _HTML = os.path.join(_DIST, "dashboard.html")
 _JS = os.path.join(_DIST, "carousel.js")
@@ -426,7 +426,7 @@ def test_carouselJs_moveUsesNextVisibleIndex():
 
 def test_carouselJs_lightReadoutReusesTheTokenizedTile():
     """AC-4: the light readout renders through the shared `.tile` component,
-    which is already bound to specs/UI/tokens.css. A bespoke light palette is
+    which is already bound to src/pi/ui/tokens.css. A bespoke light palette is
     exactly the drift the SSOT rule exists to prevent -- and it survives the
     US-507 merge: the renderer took a BODY element instead of a card, it did not
     grow a palette of its own."""

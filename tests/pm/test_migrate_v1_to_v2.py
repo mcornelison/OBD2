@@ -2,7 +2,7 @@
 import json
 import shutil
 from pathlib import Path
-from offices.pm.scripts.migrate_backlog_v1_to_v2 import migrate
+from tools.pm.migrate_backlog_v1_to_v2 import migrate
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -93,7 +93,7 @@ def test_migrate_preservesDeclinedStatus(tmp_path):
 
 def test_suggestEpicParent_doesNotFalseMatchUiInRequirements():
     """'ui' as substring of 'requirements' must NOT pull item to E-001 UI/UX."""
-    from offices.pm.scripts.migrate_backlog_v1_to_v2 import _suggestEpicParent
+    from tools.pm.migrate_backlog_v1_to_v2 import _suggestEpicParent
     # title with only non-Epic-matching words but containing the substring 'ui'
     result = _suggestEpicParent("OBD2 Patterns and Requirements Reference", "b-011")
     assert result == "E-OPS", "word-boundary match must not catch 'ui' inside 'requirements'"

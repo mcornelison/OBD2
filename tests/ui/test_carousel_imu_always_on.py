@@ -44,7 +44,7 @@ import pytest
 _NODE = shutil.which("node")
 _PROBE = os.path.join(os.path.dirname(__file__), "carousel_probe.js")
 _ROOT = os.path.join(os.path.dirname(__file__), "..", "..")
-_DIST = os.path.join(_ROOT, "specs", "UI", "dist", "dashboard-pi")
+_DIST = os.path.join(_ROOT, "src", "pi", "ui", "dashboard")
 _HTML = os.path.join(_DIST, "dashboard.html")
 _JS = os.path.join(_DIST, "carousel.js")
 _CONFIG = os.path.join(_ROOT, "config.json")

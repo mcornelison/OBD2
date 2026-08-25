@@ -1,7 +1,7 @@
 ################################################################################
 # File Name: dtc_severity_table.py
 # Purpose/Description: F-111 static P1xxx severity-table loader [US-404]. Parses
-#   Spool's SSOT markdown (offices/tuner/dsm-p1xxx-severity-table.md) into the
+#   Spool's SSOT markdown (src/pi/resources/dsm-p1xxx-severity-table.md) into the
 #   {code -> enrichment} map the `dtc` emitter merges into each captured code.
 #   The Pi NEVER decides severity -- it loads Spool's classification verbatim
 #   (severity tier, condition-dependent caveat, clear-eligibility, mfr short

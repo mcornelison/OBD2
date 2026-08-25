@@ -13,7 +13,7 @@
 #     (4) a saturating TSL2591 read persists lux=NULL + raw counts, never inf.
 #     No hardware required -- this is the CIO connect-when-wired bench acceptance
 #     (companion doc: docs/edr-connect-when-wired-drill.md).
-#     ADR: docs/superpowers/specs/
+#     ADR: $FLEET_SHARE/knowledge/superpowers/specs/
 #     2026-06-30-edr-sensor-reader-schema-bus-adr.md sections 1/2/3.
 # Author: Rex (US-411)
 # Creation Date: 2026-07-01

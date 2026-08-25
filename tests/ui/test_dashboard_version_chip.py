@@ -4,7 +4,7 @@
 #   chip. The shipped markup must carry the __DEPLOY_VERSION__ substitution
 #   placeholder -- NOT a baked version string and no longer the dead "V?.?.?"
 #   literal that made every build on the Pi look identical. The end-to-end test
-#   serves the REAL specs/UI/dist/dashboard-pi/dashboard.html through the REAL
+#   serves the REAL src/pi/ui/dashboard/dashboard.html through the REAL
 #   states server: the markup half and the server half must agree, which a pair
 #   of independently-green half-tests does not prove (US-494/US-499 lesson).
 # Author: Ralph Agent (Rex)
@@ -30,7 +30,7 @@ import urllib.request
 from pi.splash.states_http_server import StatesHttpServer
 
 _DIST = os.path.join(
-    os.path.dirname(__file__), "..", "..", "specs", "UI", "dist", "dashboard-pi"
+    os.path.dirname(__file__), "..", "..", "src", "pi", "ui", "dashboard"
 )
 _HTML = os.path.join(_DIST, "dashboard.html")
 

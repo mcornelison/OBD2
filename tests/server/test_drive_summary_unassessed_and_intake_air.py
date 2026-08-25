@@ -328,7 +328,7 @@ class TestIntakeAirNotAmbient:
         """
         repoRoot = Path(__file__).resolve().parents[2]
         surfaces = [
-            repoRoot / 'specs' / 'UI' / 'dist' / 'dashboard-pi' / 'carousel.js',
+            repoRoot / 'src' / 'pi' / 'ui' / 'dashboard' / 'carousel.js',
             repoRoot / 'src' / 'server' / 'reports' / 'drive_report.py',
         ]
         for surface in surfaces:

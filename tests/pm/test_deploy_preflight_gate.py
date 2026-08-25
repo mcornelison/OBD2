@@ -19,7 +19,7 @@ from pathlib import Path
 
 import pytest
 
-from offices.pm.scripts import deploy_preflight_gate as gate
+from tools.pm import deploy_preflight_gate as gate
 
 
 class _RecordingRunner:

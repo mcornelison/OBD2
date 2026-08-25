@@ -18,8 +18,13 @@ This folder contains the project's coding standards, architecture reference, and
 
 | Folder | Description |
 |--------|-------------|
-| [samples/](samples/) | Reference documents and hardware specs |
 | [user-stories/](user-stories/) | Ralph agent user story format and token budgeting |
+
+**Moved off-repo 2026-08-24:** `samples/` (brainstorming docs, AI mock-up PNGs,
+an unadopted font) now lives on the fleet share at
+`$FLEET_SHARE/knowledge/samples/`. It had no code reader and no product role --
+it is provenance, not specification. `UI/` moved the other way, into the product
+tree at `src/pi/ui/`, because it is the Pi's deployed web root.
 
 ## How to Use
 

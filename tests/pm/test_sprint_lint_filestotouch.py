@@ -55,15 +55,15 @@ from pathlib import Path
 import pytest
 
 # ================================================================================
-# Module loader (offices/pm/scripts/ is not a package; mirrors test_schema_diff)
+# Module loader (tools/pm/ is not a package; mirrors test_schema_diff)
 # ================================================================================
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
-_SCRIPT_PATH = _PROJECT_ROOT / "offices" / "pm" / "scripts" / "sprint_lint.py"
+_SCRIPT_PATH = _PROJECT_ROOT / "tools" / "pm" / "sprint_lint.py"
 
 
 def _loadSprintLint():  # noqa: ANN202 -- test helper
-    """Load offices/pm/scripts/sprint_lint.py as a module.
+    """Load tools/pm/sprint_lint.py as a module.
 
     The script lives outside the importable ``src/`` tree so we use
     importlib.util to load it by absolute path -- same pattern as

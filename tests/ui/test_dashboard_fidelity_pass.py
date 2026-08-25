@@ -54,9 +54,9 @@ from tests.ui.render_harness import parseCss
 
 _HERE = os.path.dirname(__file__)
 _PROBE = os.path.join(_HERE, "carousel_probe.js")
-_UI = os.path.join(_HERE, "..", "..", "specs", "UI")
+_UI = os.path.join(_HERE, "..", "..", "src", "pi", "ui")
 _TOKENS = os.path.join(_UI, "tokens.css")
-_DIST = os.path.join(_UI, "dist", "dashboard-pi")
+_DIST = os.path.join(_UI, "dashboard")
 _CSS = os.path.join(_DIST, "dashboard.css")
 _JS = os.path.join(_DIST, "carousel.js")
 _HTML = os.path.join(_DIST, "dashboard.html")

@@ -13,12 +13,12 @@ __pycache__/
 build/
 develop-eggs/
 dist/
-# The generic Python `dist/` rule above also matched specs/UI/dist/ -- the splash
-# UI deliverable kit (NOT Python build output). Un-ignore it so the F-103 splash
-# assets are version-controlled + deployable (US-393 Rule-10: specs/UI/ updates
-# must land in-sprint). specs/UI/dist is a hand-authored design deliverable.
-!specs/UI/dist/
-!specs/UI/dist/**
+# NOTE (2026-08-24): the two `!specs/UI/dist/` negations that used to live here
+# are GONE, and deliberately so. The generic `dist/` rule above matched
+# specs/UI/dist/ -- the hand-authored Pi web root -- so the only thing keeping
+# the deployed dashboard in version control was a pair of un-ignore rules
+# fighting a wildcard. That tree now lives at src/pi/ui/ with no `dist` segment
+# in its path, so it is tracked by default and nothing has to fight for it.
 downloads/
 eggs/
 .eggs/
@@ -132,14 +132,22 @@ output/
 temp/
 tmp/
 
-# Downloaded tools (SQLite CLI, etc.)
-tools/
+# Agent-fleet offices -- EVICTED from version control 2026-08-24.
+# This tree now lives on the fleet share (Z:\O\OBD2v3\offices, $FLEET_SHARE)
+# and is NOT version controlled. It stays on disk here in the trunk worktree as
+# a transitional convenience; nothing in the repo may depend on it. Recovery for
+# these 1836 files is Synology snapshot + Hyper Backup, not git.
+offices/
 
-# Claude settings (local only) -- root + per-agent offices/<agent>/.claude/
+# Downloaded tools (SQLite CLI, etc.). NOTE: `tools/*` not `tools/` so git can
+# descend and the negation below works -- tools/pm/ is first-party source (the
+# PM tool cluster, moved out of offices/pm/scripts/ in the offices decouple).
+tools/*
+!tools/pm/
+
+# Claude settings (local only)
 .claude/settings.local.json
-offices/*/.claude/settings.local.json
 .claude/scheduled_tasks.lock
-offices/*/.claude/scheduled_tasks.lock
 
 # Test results (keep committed test specs, ignore outputs)
 tests/*_output.txt
@@ -148,8 +156,6 @@ tests/test_results_*.txt
 # Deploy configuration (contains real Pi connection details)
 deploy/deploy.conf
 
-# Ralph supervisor: last headless-iteration transcript (post-mortem only)
-offices/ralph/.last-iteration.log
 
 # Honest boot-progress instrument runtime artifacts (Sprint 38 / V0.27.12).
 # The breadcrumb trail + its atomic-replace temp are Pi-side runtime state,
@@ -158,7 +164,3 @@ data/boot_progress
 data/boot_progress.tmp
 data/spool/
 
-# V0.28 backlog-v2 migration safety nets (local only)
-offices/pm/backlog.v1-backup.json
-offices/pm/backlog.v1-backup/
-offices/pm/story_counter.v1-backup.json

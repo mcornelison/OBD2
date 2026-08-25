@@ -16,7 +16,7 @@
 #     ch.4  a STOP alarm is FULL BRIGHTNESS ALWAYS -- it overrides the US-483-b
 #           auto-dim curve AND its alarmFloorLevel guard; only ambient dims.
 #   Colour + contrast are computed from the PARSED token values (both files), so
-#   a drift in specs/UI/tokens.css OR in the shipped dist re-reds these tests.
+#   a drift in src/pi/ui/tokens.css OR in the shipped dist re-reds these tests.
 #   The on-panel render ("does a driver read it in a glance") stays a PI-RUNTIME
 #   gate -- see the story's validationCriteria.
 #   Node-probe tests skip when node is not on PATH.
@@ -44,9 +44,9 @@ import pytest
 
 from tests.ui.css_type_scale import resolveFontPx
 
-_UI = os.path.join(os.path.dirname(__file__), "..", "..", "specs", "UI")
+_UI = os.path.join(os.path.dirname(__file__), "..", "..", "src", "pi", "ui")
 _TOKENS = os.path.join(_UI, "tokens.css")
-_DIST = os.path.join(_UI, "dist", "dashboard-pi")
+_DIST = os.path.join(_UI, "dashboard")
 _CSS = os.path.join(_DIST, "dashboard.css")
 _JS = os.path.join(_DIST, "carousel.js")
 

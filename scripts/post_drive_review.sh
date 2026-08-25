@@ -6,7 +6,7 @@
 #
 #   1. Numeric drive report         (scripts/report.py --drive-id N)
 #   2. Spool AI prompt invocation   (scripts/spool_prompt_invoke.py)
-#   3. Drive review checklist       (offices/tuner/drive-review-checklist.md)
+#   3. Drive review checklist       ($FLEET_SHARE/tuner/drive-review-checklist.md)
 #   4. "Where to log findings" pointer
 #
 # This script WIRES already-shipped pieces -- it does not implement analysis
@@ -43,7 +43,7 @@ server database:
 
   1. Numeric drive report (scripts/report.py --drive-id N)
   2. Spool AI prompt + Ollama response (scripts/spool_prompt_invoke.py)
-  3. Drive review checklist (offices/tuner/drive-review-checklist.md)
+  3. Drive review checklist ($FLEET_SHARE/tuner/drive-review-checklist.md)
   4. "Where to record findings" pointer
 
 Flags:
@@ -97,7 +97,12 @@ else
     PYTHON_BIN="${POST_DRIVE_REVIEW_PYTHON:-python}"
 fi
 
-CHECKLIST_PATH="$REPO_ROOT/offices/tuner/drive-review-checklist.md"
+# Fleet-share root for agent-office artifacts. The drive-review checklist is
+# Spool's human-judgment methodology (agent artifact), NOT product content, so
+# it lives on the share rather than in this repo. Override FLEET_SHARE to point
+# at a different fleet root, or DRIVE_REVIEW_CHECKLIST for a one-off file.
+FLEET_SHARE="${FLEET_SHARE:-/z/O/OBD2v3/offices}"
+CHECKLIST_PATH="${DRIVE_REVIEW_CHECKLIST:-$FLEET_SHARE/tuner/drive-review-checklist.md}"
 
 print_header() {
     local num="$1" title="$2"
@@ -134,7 +139,8 @@ if [[ -f "$CHECKLIST_PATH" ]]; then
     cat "$CHECKLIST_PATH"
 else
     echo "  Checklist not found at $CHECKLIST_PATH"
-    echo "  Inbox Spool at offices/tuner/inbox/ to provide one."
+    echo "  Set FLEET_SHARE (or DRIVE_REVIEW_CHECKLIST) to the fleet share,"
+    echo "  or inbox Spool at \$FLEET_SHARE/tuner/inbox/ to provide one."
 fi
 
 # ---- Step 4: where to record findings ----------------------------------------
@@ -143,10 +149,10 @@ print_header 4 "Record your findings"
 cat <<EOF
 
   Spool review note (recommended):
-    offices/tuner/reviews/drive-${DRIVE_ID}-review.md
+    ${FLEET_SHARE}/tuner/reviews/drive-${DRIVE_ID}-review.md
 
   OR send findings to Marcus via inbox note:
-    offices/pm/inbox/${TODAY}-from-spool-drive-${DRIVE_ID}-review.md
+    ${FLEET_SHARE}/pm/inbox/${TODAY}-from-spool-drive-${DRIVE_ID}-review.md
 
   Template for the inbox note is the Section G format in the checklist
   above (overall grade / pipeline / idle / warmup / drive / red flags /

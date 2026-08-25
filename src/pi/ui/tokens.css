@@ -1,0 +1,245 @@
+/* ============================================================================
+ * Eclipse OBD-II — Visual SSOT: design tokens
+ * ----------------------------------------------------------------------------
+ * Owner: Iris (UI/UX). SSOT-design-pattern owner: Atlas (specs/ssot-design-pattern.md).
+ * This is the single source of truth for color + type tokens across every
+ * human-facing surface: F-103 boot/shutdown splash, the F-092/F-097 touch
+ * carousel dashboard, the DTC viewer (Card 5), and future tuning gauges.
+ *
+ * RULE (the whole point of this file): consumers render against these tokens,
+ * NEVER against literal hex/px values. A new literal in a surface = drift.
+ * If a surface needs a value not here, add it HERE first (route token additions
+ * through Atlas under Rule-10; tuning-semantics colors through Spool).
+ *
+ * Provenance of every value below is a shipped/gated spec — nothing invented:
+ *   - F-103 splash spec  $FLEET_SHARE/knowledge/superpowers/specs/2026-05-26-b103-splash-animation-design.md §4
+ *   - DTC viewer spec    $FLEET_SHARE/knowledge/superpowers/specs/2026-06-05-pi-dtc-check-engine-viewer-clear-design.md §7
+ *   - Atlas gate A-8 (2026-06-05 + 2026-06-19): add `--green-ok` once, here.
+ *
+ * Target panel: OSOYOO 3.5" 480x320 (narrow gamut) — values chosen to read at
+ * small sizes on this display. System mono only; no web fonts / no font CDN.
+ * ============================================================================ */
+
+/* --- Brand face (BL-027, the US-510 A-3 payload) -----------------------------
+   Oswald SemiBold 600, subset to A-Z / 0-9 / space / hyphen (2,896 B) -- cut by
+   Iris 2026-08-01 and INLINED as a data: URI. The kiosk is offline in the car
+   and CSP-fenced, so a font CDN would fail in the ONE place that matters and
+   nowhere else; there is no external font reference anywhere in this kit.
+
+   Licence: SIL Open Font License 1.1 -- src/pi/ui/dashboard/OFL.txt,
+   which ships with the kit (the face travels INSIDE the stylesheet, so the
+   licence has to travel with the stylesheet). Oswald carries no Reserved Font
+   Name, so the family name "Oswald" is compliant (Iris, confirmed 2026-08-01).
+
+   Why this arrives as a fast-follow: US-510 shipped the token + the bindings
+   and left the payload open because the previously-locked face (Bahnschrift)
+   is Microsoft-proprietary, absent from Pi OS and not redistributable -- so
+   naming it never put it on the panel. Oswald is the open-licence replacement.
+
+   The weight is 600 and ONLY 600: every rule that binds --font-display asks
+   for 600, because a request for 700 against a single-weight subset gets a
+   SYNTHESISED bold, which on a condensed face reads as a rendering fault.
+   Pinned by tests/ui/test_dashboard_brand_font_payload.py. */
+@font-face {
+  font-family: "Oswald";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url(data:font/woff2;base64,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) format("woff2");
+}
+
+:root {
+  /* --- Type --------------------------------------------------------------- */
+  --font-mono: ui-monospace, Menlo, Consolas, monospace;  /* DATA + values     */
+  /* BRAND MOMENTS ONLY -- the `ECLIPSE OBD-II` wordmark + card titles (Iris
+     A-3, US-510). Everything that carries a READING stays --font-mono: the
+     tabular mono IS the instrument vernacular and is deliberately unchanged.
+     BL-027 CLOSED (2026-08-01): the lead face is now the EMBEDDED Oswald
+     subset declared above, so this stack no longer depends on what the host
+     happens to have installed. Bahnschrift and DIN Condensed have LEFT the
+     stack deliberately -- both are host-only faces, so leading with them meant
+     a Windows dev box and the Pi rendering two different "brand" faces while
+     every test stayed green. The embedded face is the one face. */
+  --font-display: "Oswald", "Arial Narrow", system-ui, sans-serif;
+
+  /* --- Type scale (US-539 / F-127) ----------------------------------------
+     THE five sizes this project has. Every `font-size` on every surface binds
+     one of these; a bare `px` in a stylesheet is drift, and 83 of them across
+     dashboard.css -- 15 distinct values, no scale, no rule about which to use
+     -- are how the 3.5" panel drifted illegible in the first place (F-127).
+     The tier is chosen by WHAT THE ELEMENT IS, never by what looked right in
+     one rule at one moment:
+
+       --fs-hero       the one glyph read mid-corner at a glance: the GEAR, the
+                       takeover code/icon, the STOP "PULL OVER" directive
+       --fs-primary    driver-must-read values + action bands: tile values, the
+                       DTC code, the detail directive, the summary verdict
+       --fs-secondary  body copy, card titles, buttons -- READ, not glanced
+       --fs-label      sub-labels, descriptions, chips, per-row detail
+       --fs-meta       de-emphasised micro-copy, honest to read PARKED only:
+                       version chip, uppercase field labels, axis furniture
+
+     VALUES BELOW ARE THE F-127 IN-CAR LEGIBILITY SCALE (Iris, US-540-a), set
+     over the pre-F-127 shipped 40/20/14/12/10. The rule they encode:
+     [FLOOR RULE] anything the driver MUST read while moving is >= [EXACT:34]px
+     -- hero and primary both clear it -- and a tier under 26px carries
+     NON-CRITICAL copy only (label, meta: read parked or glanced past). Nothing
+     driver-critical may be styled into label/meta; that is the whole reason the
+     tiers have names instead of numbers.
+
+     THEY ARE NOT FINAL UNTIL READ IN THE CAR. Acceptance is seated at arm's
+     length, not on a dev-box browser, and the Atlas display-pipeline finding
+     (US-552: the deploy pins no HDMI/KMS mode, so the Pi likely renders 1080p
+     into a 480x320-native panel and downsamples) SOFTENS EVERY GLYPH and can
+     raise the floor. Confirm the output mode is panel-native FIRST, then
+     re-verify these five numbers -- do not call them final before that.
+     Pinned by tests/ui/test_dashboard_type_scale_values.py.
+
+     THE SCALE IS DESCENDING AND MUST STAY SO. Two safety hierarchies rest on
+     it: the STOP takeover directive is hero and outranks the base directive
+     (primary), and the DTC detail directive (primary) outranks its base copy
+     (secondary). Pinned by tests/ui/test_dashboard_type_scale.py, which also
+     compares these five values across BOTH files (the dist sheet MIRRORS this
+     block by hand -- dashboard.html links only that one sheet, and no rule may
+     pull a second stylesheet in: the kiosk is offline in the car, so the fetch
+     would fail in the one place that matters. See dashboard.css:54). */
+  --fs-hero:        44px;
+  --fs-primary:     34px;
+  --fs-secondary:   26px;
+  --fs-label:       20px;
+  --fs-meta:        15px;
+
+  /* --- Layout bands (US-557 / F-132) --------------------------------------
+     THE horizontal stripes that spend the 480x320 stage's HEIGHT before a
+     single fact is drawn. They are here for the same reason the type scale is:
+     `28px` was a literal in `#topbar` AND an independent literal in
+     `#carousel { top }`, `#rotate-progress { top }` and `#dtc-ribbon { top }`
+     -- four copies of one fact with nothing forcing them to reconcile. When
+     F-127 raised the type scale, the bars did not grow to fit the type they now
+     carry and the card body did not shrink on paper to match the space it had
+     actually lost, so the cards overflowed and `#carousel { overflow: hidden }`
+     ate the difference in silence. Tokenizing is what stops the next scale
+     change reopening that gap. This is the identical argument US-539 made for
+     the type scale (W-3), applied to the layout bands.
+
+     VALUES ARE IRIS'S P-3 TABLE (proposals/2026-08-20-pi-topbar-and-chrome-
+     polish.md), a CORRECTION to the F-127 budget and NOT a reversal of it:
+     every driver-read value keeps its F-127 tier and the reclaim is CHROME
+     only. topbar 28->34 (-6) + dots 24->16 (+8) + card pad 28->16 (+12) +
+     title 26px/8mg -> --fs-label/6mg (+9) = +23px, landing a 224px card body.
+
+     [FLOOR] --bar-h GREW on purpose. It is the one band genuinely under-sized
+     for its own contents (26px glyphs in a 28px bar), which is what made the
+     kebab paint outside the header fill. A bar that clips its own glyphs is the
+     defect; paying 6px here and taking 29px back from three other bands is the
+     trade.
+
+     [CEILING] A card holds 3 rows plus at most ONE footer line. A fourth fact
+     goes to a drill-down, not onto the card. Stated so the budget cannot be
+     exceeded silently again -- and see the US-557 note in dashboard.css for the
+     MEASURED caveat on what a "row" costs as the surface actually builds one.
+
+     The vertical card padding is a band; the HORIZONTAL padding is not, and is
+     deliberately left as a literal -- it spends no stage height, so promoting
+     it would put a non-band in the band vocabulary.
+     Pinned by tests/ui/test_card_band_budget.py. */
+  --bar-h:          34px;      /* #topbar height -- read by #carousel top,
+                                  #rotate-progress top, #dtc-ribbon top       */
+  --dots-h:         16px;      /* #dots height -- read by #carousel bottom    */
+  --card-pad-y:      8px;      /* .card vertical padding                      */
+
+  /* --- Base surfaces ------------------------------------------------------ */
+  /* Atlas Rule-10 ruling 2026-07-31 (US-510/TD-065): PROMOTED from the
+     dashboard.css:27-28 literals. Pure consolidation -- the values ARE the
+     shipped ones, so the promotion is zero-visual-change by construction. */
+  --bg:             #000000;   /* base background (splash + dashboard field)  */
+  --surface:        #111111;   /* raised chrome: top bar, rules, seams        */
+
+  /* --- Neutral text ------------------------------------------------------- */
+  --text-primary:   #DDDDDD;   /* primary / high-emphasis dashboard text.
+                                  Atlas gate (Rule-10, 2026-07-25, US-484/BL-024):
+                                  value grounded by Iris's CIO-locked Pi dashboard
+                                  design (9da4af5) + ~15:1 contrast on the dark
+                                  panel (WCAG AAA); brightest of the text tier,
+                                  above --text-secondary.                       */
+  --text-secondary: #888888;   /* wordmark; secondary readable label          */
+  --text-tertiary:  #666666;   /* version chip; de-emphasized meta           */
+
+  /* --- Warn (project-wide) ------------------------------------------------ */
+  --amber-warn:     #FFC400;   /* WATCH tier / degraded escalation; tuning
+                                  gauges inherit this (Spool S-2 concurs)     */
+  --amber-soft:     #FFC40033; /* ~20% alpha amber for soft backdrops        */
+
+  /* --- OK / MINOR / linked ------------------------------------------------ */
+  --green-ok:       #35C46A;   /* MINOR DTC tier, OK/healthy, "linked",
+                                  trust-badge verified. Added per Atlas A-8.  */
+
+  /* --- Neutral chip ------------------------------------------------------- */
+  --neutral-chip-bg: #2a2f37;  /* "no description yet" + "N/A this vehicle"
+                                  chips — deliberately un-alarming            */
+
+  /* --- BRAND identity reds — RESERVED, brand mark ONLY -------------------- */
+  /* Spool S-2 (load-bearing): these are the 3-rhombus brand mark's colors.   */
+  /* They MUST NOT be reused as a state-alarm ("PULL OVER") red — if the      */
+  /* permanent brand mark is red AND a critical alarm is also red, the driver */
+  /* cannot tell "brand" from "danger". Alarm red is --critical-red (below).  */
+  --red:       #E60012;        /* brand mark base                             */
+  --red-light: #F61D2D;        /* brand mark highlight                        */
+  --red-dark:  #BF000F;        /* brand mark shadow                          */
+
+  /* --- STATE-ALARM red — "PULL OVER NOW" (NOT a brand red) ---------------- */
+  /* Spool set value+semantics 2026-07-25 (§6d); Atlas gate (Rule-10,          */
+  /* 2026-07-26, US-484-b/BL-024). The HEX IS THE 3RD REINFORCEMENT ONLY —     */
+  /* STOP integrity is load-bearing (engine-safety) and REQUIRES the non-color */
+  /* channels: full-bleed/large area + pulsing motion + "PULL OVER" text +     */
+  /* near-black (#000/#0a0a0a) bg + white copy >= WCAG-AA large-text + FULL    */
+  /* brightness ALWAYS (independent of auto-dim). Axis vs brand red is         */
+  /* DEEPER-DARKER, never a warm/orange shift (that would collide with         */
+  /* --amber-warn WATCH and invert severity). See US-484-b +                   */
+  /* offices/tuner/dtc-display-clear-safety-advisory.md §6d.                    */
+  --critical-red: #D32F2F;
+
+  /* --- DESTRUCTIVE ACTION reds — a DIFFERENT AXIS from the alarm tiers ----- */
+  /* Atlas Rule-10 ruling 2026-07-31 (US-510, closing TD-065/TD-067). These
+     dress the Mode-04 clear-codes hard-confirm: a button the OPERATOR presses,
+     not a condition of the VEHICLE. Three constraints, all load-bearing:
+       - NOT a brand red (--red/--red-light) — brand ≠ danger (Spool S-2);
+       - NOT --amber-warn — that means WATCH, a live degraded state;
+       - MUST stay DISTINCT from --critical-red (#D32F2F) — if a destructive
+         ACTION reads as an alarm STATE, the driver cannot tell "you are about
+         to erase your codes" from "pull over". That conflation is the whole
+         reason this pair exists rather than an alias.
+     Iris applies which surface takes which; the reds are UI affordance, not
+     engine safety, so a Spool ratify is optional (Atlas), not blocking. */
+  --destructive:        #C62828;   /* destructive-action fill                 */
+  --destructive-border: #7F1D1D;   /* confirm-box border / secondary surface  */
+}
+
+/* ============================================================================
+ * RESERVED — declared so the SSOT is scoped holistically, not retrofitted
+ * under deadline pressure. Values TBD; surfaces MUST NOT render these until
+ * a value is set (route through Spool for semantics + Atlas for the token).
+ *
+ *   (--critical-red was set 2026-07-25/26 — Spool value #D32F2F + §6d, Atlas
+ *    gate; it now lives in :root above with its multi-channel STOP contract.)
+ *   --neutral-blue:  TBD;  normal-state tuning readouts, ~#7B9CAE.
+ *
+ * Not yet tokenized (intentionally — no grounded value exists yet):
+ *   (the base background + raised surface were tokenized 2026-07-31 — Atlas
+ *    Rule-10, US-510/TD-065; --bg #000000 / --surface #111111 now live in
+ *    :root above, promoted at their shipped values so nothing re-rendered.)
+ *   (--text-primary was tokenized 2026-07-25 — Atlas gate, US-484/BL-024;
+ *    grounded value #DDDDDD now lives in :root above.)
+ *   (--destructive / --destructive-border were set 2026-07-31 — Atlas Rule-10,
+ *    US-510; they close the TD-067 deferral that left the two clear-confirm
+ *    surfaces on the brand reds.)
+ * ============================================================================ */
+
+/* ----------------------------------------------------------------------------
+ * RESOLVED 2026-07-26 (flagged 2026-06-19): --critical-red now has a value
+ * (#D32F2F — Spool §6d + Atlas gate, in :root above). The DTC viewer's STOP
+ * tier + ribbon MUST be repointed off the BRAND reds (--red / --red-light) onto
+ * --critical-red — that repoint + Spool's multi-channel STOP treatment ships in
+ * US-484-b (V0.29.16). Until US-484-b lands, any surface still painting STOP
+ * with a brand red is the KNOWN-open half, not the SSOT intent.
+ * -------------------------------------------------------------------------- */

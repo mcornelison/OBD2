@@ -647,9 +647,9 @@ def test_us395_splashAssets_warnsNotBlocksOnMissing():
     deploy without the splash kit still completes.
     """
     body = _stepBody(_scriptText(), "step_install_splash_assets")
-    assert "specs/UI/dist/splash-pi" in body, (
+    assert "src/pi/ui/splash" in body, (
         "step_install_splash_assets must source the splash kit from "
-        "specs/UI/dist/splash-pi"
+        "src/pi/ui/splash"
     )
     assert "WARN" in body, "missing assets must emit a WARN"
     # The whole point of A-9: the step must not contain a hard non-zero exit for

@@ -3,7 +3,7 @@
 # Purpose/Description: In-process publish/subscribe SampleBus + Subscription for
 #     the Pi data pipeline (EDR slice 1). US-380 adds topicMatches() + the
 #     Subscription bounded-queue/QoS-overflow core; SampleBus (US-381+) appends
-#     here later. See docs/superpowers/specs/
+#     here later. See $FLEET_SHARE/knowledge/superpowers/specs/
 #     2026-06-18-edr-dedicated-reader-bus-contract-design.md (4-5).
 # Author: Ralph Agent (Rex)
 # Creation Date: 2026-06-19

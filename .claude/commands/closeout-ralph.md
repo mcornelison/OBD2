@@ -11,7 +11,7 @@ End-of-session ritual for Ralph (autonomous dev agent). Saves all session knowle
 
 ## The Job
 
-Perform these steps in order. **Do NOT run any git commands.** Leave all modified files unstaged — the CIO reviews and commits. If anything needs merging, tagging, pushing, or branch reshaping, send a note to `offices/pm/inbox/` and let the CIO handle it.
+Perform these steps in order. **Do NOT run any git commands.** Leave all modified files unstaged — the CIO reviews and commits. If anything needs merging, tagging, pushing, or branch reshaping, send a note to `$FLEET_SHARE/pm/inbox/` and let the CIO handle it.
 
 ---
 
@@ -23,8 +23,8 @@ Before writing anything, collect:
 - What's blocked or unfinished
 - Key learnings that would help the next Ralph instance
 - Current test baseline (`pytest tests/ --collect-only | tail -1` for fast suite count)
-- Current sprint state (read `offices/ralph/sprint.json` or `offices/ralph/stories.json`)
-- Agent assignment state (read `offices/ralph/ralph_agents.json`)
+- Current sprint state (read `$FLEET_SHARE/ralph/sprint.json` or `$FLEET_SHARE/ralph/stories.json`)
+- Agent assignment state (read `$FLEET_SHARE/ralph/ralph_agents.json`)
 
 ---
 
@@ -36,7 +36,7 @@ The richest session-handoff signal lives in each agent's `note` field. Update th
 - `status` → `unassigned` (session is over)
 - `taskid` → `""`
 
-The next Ralph reads this via `python offices/ralph/agent.py list` (and `/init-ralph` surfaces it in its status report).
+The next Ralph reads this via `python $FLEET_SHARE/ralph/agent.py list` (and `/init-ralph` surfaces it in its status report).
 
 If the note balloons past ~10 lines, anchor it to a longer artifact (PM inbox note or a dated knowledge entry) and reference that artifact from the note.
 
@@ -61,7 +61,7 @@ Task: [Brief description of session work]
 ---
 ```
 
-**Rolling-archive rule:** if `progress.txt` grows past ~30 KB, roll older entries into `offices/ralph/archive/progress.archive.YYYY-MM-DD.txt` and reset `progress.txt` to the most-recent few sessions. Per-iteration prompt size depends on this — don't let it grow unbounded.
+**Rolling-archive rule:** if `progress.txt` grows past ~30 KB, roll older entries into `$FLEET_SHARE/ralph/archive/progress.archive.YYYY-MM-DD.txt` and reset `progress.txt` to the most-recent few sessions. Per-iteration prompt size depends on this — don't let it grow unbounded.
 
 ---
 
@@ -90,7 +90,7 @@ Update ONLY the cross-agent facts that all agents need:
 
 ## Step 5: Branch Management via PM (if needed)
 
-Ralph does NOT merge, push, tag, or reshape branches. If this session's work needs branch management (e.g., a sprint branch is ready to merge to main, a feature branch needs tagging, an old branch should be deleted), write a note to `offices/pm/inbox/` describing what and why. The CIO reviews and performs the git operation.
+Ralph does NOT merge, push, tag, or reshape branches. If this session's work needs branch management (e.g., a sprint branch is ready to merge to main, a feature branch needs tagging, an old branch should be deleted), write a note to `$FLEET_SHARE/pm/inbox/` describing what and why. The CIO reviews and performs the git operation.
 
 ---
 

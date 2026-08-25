@@ -52,18 +52,18 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
-SPLASH_INSTALL = REPO_ROOT / "specs" / "UI" / "dist" / "splash-pi" / "install.sh"
-DASH_INSTALL = REPO_ROOT / "specs" / "UI" / "dist" / "dashboard-pi" / "install.sh"
+SPLASH_INSTALL = REPO_ROOT / "src" / "pi" / "ui" / "splash" / "install.sh"
+DASH_INSTALL = REPO_ROOT / "src" / "pi" / "ui" / "dashboard" / "install.sh"
 DEPLOY_SCRIPT = REPO_ROOT / "deploy" / "deploy-pi.sh"
 
 # The 6 chromium kiosk unit templates (both session variants of all three units).
 UNIT_TEMPLATES = [
-    REPO_ROOT / "specs" / "UI" / "dist" / "splash-pi" / "splash-boot.service.x11",
-    REPO_ROOT / "specs" / "UI" / "dist" / "splash-pi" / "splash-boot.service.wayland",
-    REPO_ROOT / "specs" / "UI" / "dist" / "splash-pi" / "splash-grace.service.x11",
-    REPO_ROOT / "specs" / "UI" / "dist" / "splash-pi" / "splash-grace.service.wayland",
-    REPO_ROOT / "specs" / "UI" / "dist" / "dashboard-pi" / "dashboard.service.x11",
-    REPO_ROOT / "specs" / "UI" / "dist" / "dashboard-pi" / "dashboard.service.wayland",
+    REPO_ROOT / "src" / "pi" / "ui" / "splash" / "splash-boot.service.x11",
+    REPO_ROOT / "src" / "pi" / "ui" / "splash" / "splash-boot.service.wayland",
+    REPO_ROOT / "src" / "pi" / "ui" / "splash" / "splash-grace.service.x11",
+    REPO_ROOT / "src" / "pi" / "ui" / "splash" / "splash-grace.service.wayland",
+    REPO_ROOT / "src" / "pi" / "ui" / "dashboard" / "dashboard.service.x11",
+    REPO_ROOT / "src" / "pi" / "ui" / "dashboard" / "dashboard.service.wayland",
 ]
 
 

@@ -53,12 +53,18 @@ import sys
 from pathlib import Path
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
-_SCRIPT_PATH = _PROJECT_ROOT / "offices" / "pm" / "scripts" / "chain_validate_aggregate.py"
-_BUMP_SCRIPT_PATH = _PROJECT_ROOT / "offices" / "pm" / "scripts" / "chain_validate_manifest_bump.py"
+_SCRIPT_PATH = _PROJECT_ROOT / "tools" / "pm" / "chain_validate_aggregate.py"
+_BUMP_SCRIPT_PATH = _PROJECT_ROOT / "tools" / "pm" / "chain_validate_manifest_bump.py"
+
+# Dotted module names for CLI invocation. These tools are no longer runnable as
+# bare scripts: `python tools/pm/<tool>.py` puts tools/pm on sys.path[0] and
+# leaves `tools` unimportable, so every entry point is `-m` now.
+_SCRIPT_MODULE = "tools.pm.chain_validate_aggregate"
+_BUMP_SCRIPT_MODULE = "tools.pm.chain_validate_manifest_bump"
 
 
 def _loadAggregate():  # noqa: ANN202 -- test helper
-    """Load offices/pm/scripts/chain_validate_aggregate.py as a module.
+    """Load tools/pm/chain_validate_aggregate.py as a module.
 
     Mirrors tests/pm/test_sprint_lint_filestotouch.py's pattern for loading
     a script that lives outside the importable ``src/`` tree.
@@ -74,7 +80,7 @@ def _loadAggregate():  # noqa: ANN202 -- test helper
 
 
 def _loadBump():  # noqa: ANN202 -- test helper
-    """Load offices/pm/scripts/chain_validate_manifest_bump.py as a module."""
+    """Load tools/pm/chain_validate_manifest_bump.py as a module."""
     spec = importlib.util.spec_from_file_location("chain_validate_manifest_bump", _BUMP_SCRIPT_PATH)
     assert spec is not None and spec.loader is not None, (
         f"chain_validate_manifest_bump.py not found at {_BUMP_SCRIPT_PATH} -- US-318 ships this script"
@@ -329,7 +335,8 @@ class TestCliJsonOutput:
         result = subprocess.run(
             [
                 sys.executable,
-                str(_SCRIPT_PATH),
+                "-m",
+                _SCRIPT_MODULE,
                 "--chain",
                 "V0.99",
                 "--paths",
@@ -339,6 +346,10 @@ class TestCliJsonOutput:
             capture_output=True,
             text=True,
             check=False,
+            # cwd matters: the tools are invoked as `-m tools.pm.<mod>` now (the
+            # bare-script form stopped working when the dual-import shim was
+            # removed), so `tools` must be importable from the working dir.
+            cwd=str(_PROJECT_ROOT),
         )
 
         # Exit code may be 0 (READY) or 1 (INCOMPLETE) -- either OK; we care
@@ -374,7 +385,8 @@ class TestCliStrictExitCode:
         result = subprocess.run(
             [
                 sys.executable,
-                str(_SCRIPT_PATH),
+                "-m",
+                _SCRIPT_MODULE,
                 "--chain",
                 "V0.99",
                 "--paths",
@@ -384,6 +396,10 @@ class TestCliStrictExitCode:
             capture_output=True,
             text=True,
             check=False,
+            # cwd matters: the tools are invoked as `-m tools.pm.<mod>` now (the
+            # bare-script form stopped working when the dual-import shim was
+            # removed), so `tools` must be importable from the working dir.
+            cwd=str(_PROJECT_ROOT),
         )
         assert result.returncode == 1, (
             f"expected exit 1 (INCOMPLETE+strict), got {result.returncode}: {result.stdout}"
@@ -401,7 +417,8 @@ class TestCliStrictExitCode:
         result = subprocess.run(
             [
                 sys.executable,
-                str(_SCRIPT_PATH),
+                "-m",
+                _SCRIPT_MODULE,
                 "--chain",
                 "V0.99",
                 "--paths",
@@ -411,6 +428,10 @@ class TestCliStrictExitCode:
             capture_output=True,
             text=True,
             check=False,
+            # cwd matters: the tools are invoked as `-m tools.pm.<mod>` now (the
+            # bare-script form stopped working when the dual-import shim was
+            # removed), so `tools` must be importable from the working dir.
+            cwd=str(_PROJECT_ROOT),
         )
         assert result.returncode == 0, (
             f"expected exit 0 (READY+strict), got {result.returncode}: {result.stderr}"

@@ -14,7 +14,7 @@
 #   caveat NEVER silently upgrades the tier (R-1). Mirrors the F-103 /
 #   system-status / battery-health emitter seam; reuses ensureStatesDir +
 #   writeStateAtomic so there is one provisioning + atomic-write impl (C-5).
-#   Schema pinned in docs/superpowers/specs/2026-06-05-pi-dtc-check-engine-
+#   Schema pinned in $FLEET_SHARE/knowledge/superpowers/specs/2026-06-05-pi-dtc-check-engine-
 #   viewer-clear-design.md §8.
 # Author: Ralph Agent (Rex)
 # Creation Date: 2026-06-30

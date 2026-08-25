@@ -217,8 +217,8 @@ def test_refreshAssetDir_failsLoudWhenTheWriteDidNotTake(tmp_path, kit):
 @pytest.mark.parametrize(
     "step, kitDir",
     [
-        ("step_install_splash_assets", "splash-pi"),
-        ("step_install_dashboard_assets", "dashboard-pi"),
+        ("step_install_splash_assets", "ui/splash"),
+        ("step_install_dashboard_assets", "ui/dashboard"),
     ],
 )
 def test_deployPiSh_assetStep_callsTheRefreshGuard(step, kitDir):
@@ -254,7 +254,7 @@ def splashRefreshArgs() -> tuple[set[str], set[str]]:
     )
     assert result.returncode == 0, result.stderr
     match = re.search(
-        r"refresh_asset_dir \S*splash-pi \S+ '([^']*)' '([^']*)'", result.stdout
+        r"refresh_asset_dir \S*ui/splash \S+ '([^']*)' '([^']*)'", result.stdout
     )
     assert match, "no splash refresh_asset_dir preview in the dry-run output"
     return set(match.group(1).split()), set(match.group(2).split())
@@ -292,7 +292,7 @@ def test_deployPiSh_splashStep_accountsForEveryAssetTheKitShips(splashRefreshArg
     asset the deploy does not own is never verified. Data-driven from install.sh
     so a new asset added to the kit lands in this test the day it is added.
     """
-    installSh = (REPO_ROOT / "specs" / "UI" / "dist" / "splash-pi" / "install.sh").read_text(
+    installSh = (REPO_ROOT / "src" / "pi" / "ui" / "splash" / "install.sh").read_text(
         encoding="utf-8"
     )
     loop = re.search(r"for asset in (.*?); do", installSh, flags=re.DOTALL)

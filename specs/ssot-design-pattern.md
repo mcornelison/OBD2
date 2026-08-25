@@ -95,8 +95,8 @@ applies as good practice but isn't gate-enforced.
 line). See:
 
 - `specs/architecture.md` §2 (power-source detection — SSOT narrative)
-- `docs/superpowers/specs/2026-05-18-pi-shutdown-sequencer-design.md` §2
-- `docs/superpowers/plans/2026-05-18-pi-shutdown-sequencer.md` T3/T4
+- `$FLEET_SHARE/knowledge/superpowers/specs/2026-05-18-pi-shutdown-sequencer-design.md` §2
+- `$FLEET_SHARE/knowledge/superpowers/plans/2026-05-18-pi-shutdown-sequencer.md` T3/T4
 - The retired heuristic is retained as a **`NotImplementedError` tripwire** so
   any future reintroduction fails loudly at the call site. That's the SSOT
   enforcement mechanism: when there's one provider, there's also one loud
@@ -142,7 +142,7 @@ against re-divergence).
    applied *ahead* of the consumers for a cross-tier schema — one source, both
    tiers reference. Built Sprint 50 / V0.29.4 (US-408). See `specs/architecture.md`
    §10.8.2 and the ADR
-   `docs/superpowers/specs/2026-06-30-edr-sensor-reader-schema-bus-adr.md` §2.
+   `$FLEET_SHARE/knowledge/superpowers/specs/2026-06-30-edr-sensor-reader-schema-bus-adr.md` §2.
 
 4. **Server-analytics authority — the *derived-data* boundary (server tier, F-104).**
    Drive identity had fragmented into an id-family — the Pi-minted `drive_id`, the
@@ -178,7 +178,7 @@ against re-divergence).
 > here so the direction is visible and consistent with the rule above; do **not**
 > treat the bus specifics below as gate-enforced until the CIO firms it. Owning
 > gate: Atlas A-14 #4. Sources: `offices/architect/reports/2026-06-16-edr-vs-b104-architecture-ruling.md`;
-> `docs/superpowers/specs/2026-06-18-edr-dedicated-reader-bus-contract-design.md`.
+> `$FLEET_SHARE/knowledge/superpowers/specs/2026-06-18-edr-dedicated-reader-bus-contract-design.md`.
 
 The EDR epic generalizes SSOT from *raw* facts to *derived* ones. The shape:
 

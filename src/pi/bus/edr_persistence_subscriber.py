@@ -11,7 +11,7 @@
 #     drive is RUNNING, else explicit NULL (the A-9 / DTC-KOEO latch -- never
 #     inherit a stale _currentDriveId). A rolling-window purge (retentionDays)
 #     piggybacks on this subscriber's own drain thread (no new daemon).
-#     ADR: docs/superpowers/specs/
+#     ADR: $FLEET_SHARE/knowledge/superpowers/specs/
 #     2026-06-30-edr-sensor-reader-schema-bus-adr.md sections 2.3/2.4/2.6.
 # Author: Rex (US-410)
 # Creation Date: 2026-06-30

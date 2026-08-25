@@ -1,7 +1,7 @@
 ################################################################################
 # File Name: test_carousel_honest_availability.py
 # Purpose/Description: US-429 fixture/DOM tests for the carousel display's honest-
-#   availability logic (specs/UI/dist/dashboard-pi/carousel.js). carousel.js is a
+#   availability logic (src/pi/ui/dashboard/carousel.js). carousel.js is a
 #   browser module that also exports its pure view/logic functions for node unit
 #   testing; there is no JS test framework in-repo, so these tests drive the pure
 #   functions through a tiny node subprocess (carousel_probe.js) against fixtures

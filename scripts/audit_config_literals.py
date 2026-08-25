@@ -27,7 +27,7 @@ Patterns detected (exact set chosen from B-044 groundingRefs):
     - MAC:       00:04:3E:85:0D:FB      (OBDLink LX -- case-insensitive)
 
 Exempt paths (path-prefix, relative to repo root, forward-slashed):
-    specs/, docs/, offices/                        (documentation / PM)
+    specs/, docs/                                  (documentation)
     .git/, .venv/, __pycache__/, htmlcov/          (tool caches)
     .pytest_cache/, .mypy_cache/, .ruff_cache/
     data/regression/, data/smoke_test_results.json (test artifacts)
@@ -56,6 +56,7 @@ from __future__ import annotations
 import argparse
 import os
 import re
+import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -78,7 +79,6 @@ DEFAULT_EXEMPT_PREFIXES: tuple[str, ...] = (
     # Documentation + PM artifacts (category B + D per B-044)
     "specs/",
     "docs/",
-    "offices/",
     # Tool caches + build artifacts (never relevant)
     ".git/",
     ".venv/",
@@ -203,6 +203,37 @@ def _scanGenericFile(path: Path, relPath: str) -> list[AddressFinding]:
     return findings
 
 
+def _gitIgnoredPrefixes(repoRoot: Path) -> tuple[str, ...]:
+    """Return the git-ignored top-level paths under ``repoRoot``.
+
+    Why this exists: the audit walks the FILESYSTEM, not the git index, so a
+    directory that has been evicted from version control but still sits on disk
+    is still scanned. ``offices/`` is exactly that case -- 1836 agent files,
+    gitignored, physically present in the trunk worktree, and full of addresses
+    that are not the product's problem.
+
+    Deriving the skip set from .gitignore instead of a hand-maintained prefix
+    tuple means the rule cannot rot: whatever the repo declares as not-its-code
+    is automatically out of scope, and nobody has to remember to delete a
+    literal "offices/" entry that would otherwise sit there matching nothing.
+
+    Degrades to an empty tuple when ``repoRoot`` is not a git work tree (the
+    tmp_path-based tests), so behaviour outside a repo is unchanged.
+    """
+    try:
+        result = subprocess.run(  # noqa: S603 -- fixed argv, repoRoot from caller
+            ["git", "ls-files", "--others", "--ignored", "--exclude-standard",
+             "--directory"],
+            cwd=str(repoRoot), capture_output=True, text=True, check=True,
+            timeout=60,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return ()
+    return tuple(
+        line.strip() for line in result.stdout.splitlines() if line.strip()
+    )
+
+
 def auditRepository(
     repoRoot: Path,
     extraExempt: list[str] | None = None,
@@ -220,7 +251,11 @@ def auditRepository(
     Returns:
         List of AddressFinding -- empty iff the repo is clean.
     """
-    exemptPrefixes = DEFAULT_EXEMPT_PREFIXES + tuple(extraExempt or ())
+    exemptPrefixes = (
+        DEFAULT_EXEMPT_PREFIXES
+        + tuple(extraExempt or ())
+        + _gitIgnoredPrefixes(repoRoot)
+    )
     findings: list[AddressFinding] = []
     rootStr = str(repoRoot)
 

@@ -17,7 +17,7 @@
 from pathlib import Path
 import json
 import pytest
-from offices.pm.scripts.backlog_schema import validateBacklog, BacklogValidationError
+from tools.pm.backlog_schema import validateBacklog, BacklogValidationError
 
 FIXTURES = Path(__file__).parent / "fixtures"
 

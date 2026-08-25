@@ -23,10 +23,10 @@ const carousel = require(
     __dirname,
     "..",
     "..",
-    "specs",
-    "UI",
-    "dist",
-    "dashboard-pi",
+    "src",
+    "pi",
+    "ui",
+    "dashboard",
     "carousel.js"
   )
 );

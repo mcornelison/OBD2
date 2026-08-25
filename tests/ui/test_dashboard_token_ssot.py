@@ -1,7 +1,7 @@
 ################################################################################
 # File Name: test_dashboard_token_ssot.py
 # Purpose/Description: US-484-a tests -- the shipped Pi dashboard renders against
-#   the visual SSOT (specs/UI/tokens.css), not a forked local palette. This slice
+#   the visual SSOT (src/pi/ui/tokens.css), not a forked local palette. This slice
 #   reconciles the two tokens Atlas has already gated: the OK/MINOR green
 #   (dist `--ok-green #2ECC71` -> SSOT `--green-ok #35C46A`, name AND value) and
 #   `--text-primary` (#DDDDDD, tokenized 2026-07-25 under Rule-10). Both files are
@@ -23,14 +23,14 @@
 # ================================================================================
 ################################################################################
 
-"""US-484-a tests for dashboard.css <-> specs/UI/tokens.css token reconciliation."""
+"""US-484-a tests for dashboard.css <-> src/pi/ui/tokens.css token reconciliation."""
 
 import os
 import re
 
-_UI = os.path.join(os.path.dirname(__file__), "..", "..", "specs", "UI")
+_UI = os.path.join(os.path.dirname(__file__), "..", "..", "src", "pi", "ui")
 _TOKENS = os.path.join(_UI, "tokens.css")
-_DIST = os.path.join(_UI, "dist", "dashboard-pi")
+_DIST = os.path.join(_UI, "dashboard")
 _CSS = os.path.join(_DIST, "dashboard.css")
 _JS = os.path.join(_DIST, "carousel.js")
 

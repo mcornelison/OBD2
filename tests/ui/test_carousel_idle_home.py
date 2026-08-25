@@ -1,7 +1,7 @@
 ################################################################################
 # File Name: test_carousel_idle_home.py
 # Purpose/Description: US-481 fixture tests for the carousel's idle-state home
-#   card (specs/UI/dist/dashboard-pi/carousel.js). The idle card is the calm,
+#   card (src/pi/ui/dashboard/carousel.js). The idle card is the calm,
 #   honest PARKED view (engine off / OBD asleep). These tests drive the pure
 #   view/logic exports through the tiny node subprocess (carousel_probe.js) and
 #   assert the JSON result. Covers the load-bearing honest-instrument invariants

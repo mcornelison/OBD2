@@ -2,7 +2,7 @@
 
 **Feature:** F-113 / F-114 (EDR sensor reader + Pi-local raw-sensor persistence)
 **Ships:** V0.29.4 (Sprint 50), **dark** behind per-sensor flags.
-**ADR:** `docs/superpowers/specs/2026-06-30-edr-sensor-reader-schema-bus-adr.md`
+**ADR:** `$FLEET_SHARE/knowledge/superpowers/specs/2026-06-30-edr-sensor-reader-schema-bus-adr.md`
 **Wiring:** `docs/edr-sensors-wiring-reference.md`
 **Story:** US-411 (bench harness + golden-master regression + this drill)
 

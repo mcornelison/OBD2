@@ -45,14 +45,16 @@ from typing import Any
 
 logger = logging.getLogger("pi.obdii.orchestrator")
 
-# Repo-root-anchored default path to Spool's P1xxx severity SSOT markdown.
+# Package-relative default path to the P1xxx severity SSOT markdown.
 # This module lives at <repo>/src/pi/obdii/orchestrator/card_state_emitter.py,
-# so parents[4] is the repo root.  loadP1xxxSeverityTable degrades to {} (never
-# raises) when the file is absent -- un-tabled codes then show `unknown`
-# severity, an honest degradation (deploy-install of the table is US-480-b).
+# so parents[2] is the `pi` package root and the table ships INSIDE the tier
+# it serves.  Previously this anchored on parents[4] (the repo root) and
+# reached into offices/tuner/ -- an agent workspace that is not part of the
+# deployed product, so the table was only present by accident of the deploy
+# rsync copying the whole tree.
 _DEFAULT_SEVERITY_TABLE_PATH = str(
-    Path(__file__).resolve().parents[4]
-    / "offices" / "tuner" / "dsm-p1xxx-severity-table.md"
+    Path(__file__).resolve().parents[2]
+    / "resources" / "dsm-p1xxx-severity-table.md"
 )
 
 # Default tmpfs states dir (matches boot_state_emitter + the states-http unit).
@@ -133,6 +135,18 @@ class CardStateEmitterMixin:
             )
             self._batteryHealthEmitter = makeBatteryHealthEmitter(statesDir)
             severityTable = loadP1xxxSeverityTable(severityTablePath)
+            if not severityTable:
+                # The table now ships inside src/pi/resources/, so an empty
+                # parse is a broken deploy, not the expected "not installed
+                # yet" state it was when this lived under offices/.  Still
+                # fail soft -- a missing table must never take the display
+                # down mid-drive, and un-tabled codes render an honest
+                # `unknown` -- but say so LOUDLY instead of silently.
+                logger.error(
+                    "P1xxx severity table empty/missing at %s -- DTC severities "
+                    "will render `unknown`; check the deploy",
+                    severityTablePath,
+                )
             self._dtcEmitter = makeDtcEmitter(
                 statesDir, severityTable=severityTable
             )

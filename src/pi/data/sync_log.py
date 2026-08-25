@@ -95,7 +95,7 @@ module (per the PM scope on US-148; sync bookkeeping lives next to, not
 inside, the OBD DB).  Callers pass in a ``sqlite3.Connection``; this module
 does no connection management.
 
-Scope tables (per docs/superpowers/specs/2026-04-15-pi-crawl-walk-run-sprint-design.md
+Scope tables (per $FLEET_SHARE/knowledge/superpowers/specs/2026-04-15-pi-crawl-walk-run-sprint-design.md
 section 2.1):
 
 - Included: ``realtime_data``, ``statistics``, ``profiles``, ``vehicle_info``,

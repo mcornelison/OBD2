@@ -228,14 +228,23 @@ class TestDryRunFlow:
         assert "Dry run" in result.stdout
         assert "Raw Ollama response" not in result.stdout
 
-    def test_step3_printsChecklistContent(self, populatedDbUrl) -> None:
-        """Step 3 must include the Spool checklist's canonical heading."""
+    def test_step3_printsChecklistContent(self, populatedDbUrl, tmp_path) -> None:
+        """Step 3 cats the checklist the fleet share provides.
+
+        The checklist is an agent artifact that lives on the fleet share, not
+        in this repo, so the test supplies its own share root and asserts the
+        MECHANISM (resolve FLEET_SHARE -> read -> print).  Asserting the prose
+        of Spool's methodology doc would couple the product suite to a
+        document that evolves on the office's cadence, not the product's.
+        """
+        checklist = tmp_path / "tuner" / "drive-review-checklist.md"
+        checklist.parent.mkdir(parents=True)
+        checklist.write_text("Section A — Pipeline Integrity" + chr(10), encoding="utf-8")
         result = _runDriver(
             ["--drive-id", "1", "--dry-run"],
-            env={"DATABASE_URL": populatedDbUrl},
+            env={"DATABASE_URL": populatedDbUrl, "FLEET_SHARE": str(tmp_path)},
         )
         assert result.returncode == 0
-        # Content from offices/tuner/drive-review-checklist.md
         assert "Section A — Pipeline Integrity" in result.stdout
 
     def test_step4_includesReviewNotePointer(self, populatedDbUrl) -> None:
@@ -244,8 +253,8 @@ class TestDryRunFlow:
             env={"DATABASE_URL": populatedDbUrl},
         )
         assert result.returncode == 0
-        assert "offices/tuner/reviews/drive-1-review.md" in result.stdout
-        assert "offices/pm/inbox/" in result.stdout
+        assert "/tuner/reviews/drive-1-review.md" in result.stdout
+        assert "/pm/inbox/" in result.stdout
 
     def test_latestDefault_whenNoDriveIdProvided(self, populatedDbUrl) -> None:
         """Absent ``--drive-id`` resolves to 'latest' and still runs clean."""
@@ -255,7 +264,7 @@ class TestDryRunFlow:
         )
         assert result.returncode == 0
         # Pointer uses the literal 'latest' token when that's what was passed.
-        assert "offices/tuner/reviews/drive-latest-review.md" in result.stdout
+        assert "/tuner/reviews/drive-latest-review.md" in result.stdout
 
 
 # ==============================================================================

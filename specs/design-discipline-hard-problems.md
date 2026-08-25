@@ -29,9 +29,9 @@ the **regular workflow keeps producing more rabbit hole**.
     └─→ Atlas runs a retrospective (sprint-by-sprint, evidence-grounded)
         └─→ brainstorming skill: explore intent, propose 2–3 approaches
             └─→ CIO chooses options at the architecture level
-                └─→ Atlas writes the SPEC (docs/superpowers/specs/)
+                └─→ Atlas writes the SPEC ($FLEET_SHARE/knowledge/superpowers/specs/)
                     └─→ CIO reviews + approves spec
-                        └─→ Atlas writes the PLAN (docs/superpowers/plans/)
+                        └─→ Atlas writes the PLAN ($FLEET_SHARE/knowledge/superpowers/plans/)
                             └─→ Bite-sized TDD tasks, each
                                 with a pre-registered gate
                             └─→ Marcus lands spec + plan; sprints it

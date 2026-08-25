@@ -1,7 +1,7 @@
 ################################################################################
 # File Name: __init__.py
 # Purpose/Description: Pi in-process publish/subscribe bus package (EDR slice 1).
-#     See docs/superpowers/specs/
+#     See $FLEET_SHARE/knowledge/superpowers/specs/
 #     2026-06-18-edr-dedicated-reader-bus-contract-design.md.
 # Author: Ralph Agent (Rex)
 # Creation Date: 2026-06-19

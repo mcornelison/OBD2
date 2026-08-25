@@ -239,7 +239,21 @@ class TestOverlayGuardIsRed:
         The DOM is produced by the CURRENT carousel.js on purpose -- the JS was
         never wrong, and holding it fixed isolates the stylesheet as the defect.
         """
-        css = _gitShow(f"{_US495_FIX_COMMIT}^:specs/UI/dist/dashboard-pi/dashboard.css")
+        # A historical blob must be addressed by the path it had AT THAT COMMIT.
+        # dashboard.css lived at specs/UI/dist/dashboard-pi/ until the
+        # 2026-08-24 promotion into src/pi/ui/dashboard/, so pointing this
+        # lookup at the CURRENT path makes it return None and the test SKIP --
+        # silently asserting nothing, which is the one outcome a red-guard test
+        # must never have. Try the historical path first, then the current one,
+        # so this keeps working across the move in either direction.
+        css = None
+        for _rel in (
+            "specs/UI/dist/dashboard-pi/dashboard.css",  # pre-2026-08-24
+            "src/pi/ui/dashboard/dashboard.css",         # current
+        ):
+            css = _gitShow(f"{_US495_FIX_COMMIT}^:{_rel}")
+            if css is not None:
+                break
         if css is None:
             pytest.skip(
                 f"pre-fix blob {_US495_FIX_COMMIT}^ unreachable (shallow clone?) -- "

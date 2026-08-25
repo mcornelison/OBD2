@@ -21,7 +21,7 @@
 #       instrument trap). The live runtime-remaining + ladder thresholds are
 #       Spool-owned (S-2, failsafe-only) and arrive inside the caller's `ladder`
 #       dict; this module never fabricates them.
-#   Schema pinned in docs/superpowers/specs/2026-06-05-pi-touch-carousel-
+#   Schema pinned in $FLEET_SHARE/knowledge/superpowers/specs/2026-06-05-pi-touch-carousel-
 #   dashboard-f092-f097-design.md §7 (state file shapes).
 # Author: Ralph Agent (Rex)
 # Creation Date: 2026-06-30

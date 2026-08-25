@@ -175,6 +175,9 @@ sync_tree() {
             --delete \
             --exclude='.git/' \
             --exclude='.venv/' \
+            --exclude='offices/' \
+            --exclude='specs/' \
+            --exclude='docs/' \
             --exclude='__pycache__/' \
             --exclude='*.pyc' \
             --exclude='.pytest_cache/' \
@@ -206,6 +209,9 @@ sync_tree() {
         ( cd "$REPO_ROOT" && tar -cz \
             --exclude='./.git' \
             --exclude='./.venv' \
+            --exclude='./offices' \
+            --exclude='./specs' \
+            --exclude='./docs' \
             --exclude='./__pycache__' \
             --exclude='*.pyc' \
             --exclude='./.pytest_cache' \
@@ -1473,7 +1479,7 @@ step_install_states_tmpfiles() {
 step_install_splash_assets() {
     # US-395 (F-103, AC#2 + AC#3/A-9): install the splash kit assets the
     # eclipse-states-http.service serves to the chromium kiosk
-    # (specs/UI/dist/splash-pi/) into /opt/splash, and write
+    # (src/pi/ui/splash/) into /opt/splash, and write
     # /opt/splash/version.txt (the version chip boot-state-poll.js fetches as a
     # public static asset; malformed/absent -> the JS 'V?.?.?' fallback).
     #
@@ -1504,9 +1510,9 @@ step_install_splash_assets() {
     # deploy/RELEASE_VERSION below (not a kit file), so the refresh must not
     # prune it in the window before it is rewritten.
     #
-    # Runs AFTER sync_tree so ${PI_PATH}/specs/UI/dist/splash-pi/ exists on the Pi.
+    # Runs AFTER sync_tree so ${PI_PATH}/src/pi/ui/splash/ exists on the Pi.
     echo "--- Step: Installing F-103 splash assets + version.txt to /opt/splash (US-395) ---"
-    local assetSrc="$REPO_ROOT/specs/UI/dist/splash-pi"
+    local assetSrc="$REPO_ROOT/src/pi/ui/splash"
     local installDir="/opt/splash"
     local assets="index.html styles.css boot-state-poll.js shutdown.html shutdown-state-poll.js splash.svg splash-shutdown.svg"
     local keepAssets="version.txt"
@@ -1524,7 +1530,7 @@ step_install_splash_assets() {
     fi
     if $DRY_RUN; then
         echo "DRY-RUN would: source ${PI_PATH}/deploy/asset-refresh.sh"
-        echo "DRY-RUN would: refresh_asset_dir ${PI_PATH}/specs/UI/dist/splash-pi ${installDir} '${assets}' '${keepAssets}'"
+        echo "DRY-RUN would: refresh_asset_dir ${PI_PATH}/src/pi/ui/splash ${installDir} '${assets}' '${keepAssets}'"
         echo "DRY-RUN would:   (install + PRUNE unvouched files + verify bytes)"
         echo "DRY-RUN would: write ${installDir}/version.txt = ${splashVersion}"
         return 0
@@ -1532,7 +1538,7 @@ step_install_splash_assets() {
     remote "
         set -e
         . '${PI_PATH}/deploy/asset-refresh.sh'
-        refresh_asset_dir '${PI_PATH}/specs/UI/dist/splash-pi' '${installDir}' \
+        refresh_asset_dir '${PI_PATH}/src/pi/ui/splash' '${installDir}' \
                           '${assets}' '${keepAssets}'
         printf '%s\n' '${splashVersion}' | sudo tee '${installDir}/version.txt' >/dev/null
         echo 'wrote ${installDir}/version.txt = ${splashVersion}'
@@ -1542,7 +1548,7 @@ step_install_splash_assets() {
 step_install_dashboard_assets() {
     # US-399 (F-092, A-1/A-2): install the carousel dashboard kit assets the
     # eclipse-states-http.service serves to the chromium dashboard kiosk
-    # (specs/UI/dist/dashboard-pi/) into /opt/dashboard. The server's
+    # (src/pi/ui/dashboard/) into /opt/dashboard. The server's
     # --assets-dir search path lists /opt/splash then /opt/dashboard, so the
     # dashboard is reached at /dashboard.html same-origin (token injected).
     #
@@ -1561,9 +1567,9 @@ step_install_dashboard_assets() {
     # installer (this step and the kit's install.sh ship the identical three
     # files), so anything else in there is a retired generation and gets pruned.
     #
-    # Runs AFTER sync_tree so ${PI_PATH}/specs/UI/dist/dashboard-pi/ exists.
+    # Runs AFTER sync_tree so ${PI_PATH}/src/pi/ui/dashboard/ exists.
     echo "--- Step: Installing carousel dashboard assets to /opt/dashboard (US-399) ---"
-    local assetSrc="$REPO_ROOT/specs/UI/dist/dashboard-pi"
+    local assetSrc="$REPO_ROOT/src/pi/ui/dashboard"
     local installDir="/opt/dashboard"
     # OFL.txt (BL-027): the Oswald brand face ships INSIDE dashboard.css as an
     # inlined data: URI, and SIL OFL 1.1 requires the licence to travel with the
@@ -1577,14 +1583,14 @@ step_install_dashboard_assets() {
     fi
     if $DRY_RUN; then
         echo "DRY-RUN would: source ${PI_PATH}/deploy/asset-refresh.sh"
-        echo "DRY-RUN would: refresh_asset_dir ${PI_PATH}/specs/UI/dist/dashboard-pi ${installDir} '${assets}'"
+        echo "DRY-RUN would: refresh_asset_dir ${PI_PATH}/src/pi/ui/dashboard ${installDir} '${assets}'"
         echo "DRY-RUN would:   (install + PRUNE unvouched files + verify bytes)"
         return 0
     fi
     remote "
         set -e
         . '${PI_PATH}/deploy/asset-refresh.sh'
-        refresh_asset_dir '${PI_PATH}/specs/UI/dist/dashboard-pi' '${installDir}' '${assets}'
+        refresh_asset_dir '${PI_PATH}/src/pi/ui/dashboard' '${installDir}' '${assets}'
     "
 }
 
@@ -1596,8 +1602,8 @@ step_install_ui_kiosk_units() {
     # deploy left the backend serving to 127.0.0.1:9899 with no browser drawing it,
     # and pygame is sunset (statusDisplay.enabled=false) -> a blank 3.5" screen.
     # This step closes that seam by running the kit's own session-aware installers:
-    #   specs/UI/dist/splash-pi/install.sh     -> splash-boot + splash-grace units
-    #   specs/UI/dist/dashboard-pi/install.sh  -> eclipse-dashboard unit
+    #   src/pi/ui/splash/install.sh     -> splash-boot + splash-grace units
+    #   src/pi/ui/dashboard/install.sh  -> eclipse-dashboard unit
     #
     # Two things the first on-hardware run proved necessary (do NOT drop them):
     #  (1) SESSION DETECTION over SSH.  The installers' own V-2 check reads the
@@ -1634,10 +1640,10 @@ step_install_ui_kiosk_units() {
     # so the step does not thrash the live screen mid-deploy.  Runs AFTER the asset +
     # state-server steps so the served assets + backend are already in place.
     echo "--- Step: Installing F-103/F-092 chromium kiosk units (splash + dashboard) ---"
-    local splashKit="specs/UI/dist/splash-pi/install.sh"
-    local dashKit="specs/UI/dist/dashboard-pi/install.sh"
+    local splashKit="src/pi/ui/splash/install.sh"
+    local dashKit="src/pi/ui/dashboard/install.sh"
     if [ ! -f "$REPO_ROOT/$splashKit" ] && [ ! -f "$REPO_ROOT/$dashKit" ]; then
-        echo "WARN: UI kit installers not found under $REPO_ROOT/specs/UI/dist -- skipping kiosk-unit install (A-9)." >&2
+        echo "WARN: UI kit installers not found under $REPO_ROOT/src/pi/ui -- skipping kiosk-unit install (A-9)." >&2
         return 0
     fi
     if $DRY_RUN; then
@@ -2151,7 +2157,7 @@ step_install_power_watch_unit
 #      absent -- A-9 / AC#2-3),
 #   3. the two state-server units (enable + restart; AC#1).
 # All three run AFTER sync_tree so deploy/*.service, deploy/eclipse-obd-states.conf,
-# and specs/UI/dist/splash-pi/ exist on the Pi.  Same sync-if-changed posture as
+# and src/pi/ui/splash/ exist on the Pi.  Same sync-if-changed posture as
 # the other unit installers; the two state units are long-running Type=simple so
 # they also restart every deploy (US-354).
 step_install_states_tmpfiles
