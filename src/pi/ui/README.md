@@ -67,12 +67,14 @@ the two in sync is `tests/ui/css_type_scale.py` and
 for a build step. **Change a token in both places, and let those tests confirm
 it.**
 
-## Known duplication
+## Removed duplication (2026-08-24)
 
-`splash.svg.txt` and `splash-shutdown.svg.txt` are copies of the matching
-`.svg` files. Neither is deployed or read by anything. `splash.svg.txt` is still
-byte-identical to its `.svg`; **`splash-shutdown.svg.txt` has already drifted**
-from its `.svg`. Slated for deletion.
+`splash.svg.txt` and `splash-shutdown.svg.txt` were copies of the matching
+`.svg` files -- neither deployed nor read by anything. `splash.svg.txt` was
+still byte-identical to its `.svg`; **`splash-shutdown.svg.txt` had already
+drifted**, which is what duplication of this kind reliably produces. Both are
+deleted. If a plain-text rendering of an SVG is ever needed again, read the
+`.svg` -- it is already text.
 
 ## Editing
 
