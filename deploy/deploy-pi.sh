@@ -170,31 +170,52 @@ sync_tree() {
         return 0
     fi
     if command -v rsync >/dev/null 2>&1; then
+        # WHITELIST, not a blacklist (2026-08-25). The Pi is a production
+        # appliance: it carries the code that runs the car and nothing else.
+        # Everything else in this repo -- tests, specs, docs, tools, the server
+        # tier, CI config, agent slash commands -- is WORKSHOP. It stays in git
+        # (tests are gates and must be version-locked to the commit they
+        # validate) but it does not ship.
+        #
+        # An include-list is used deliberately: with a blacklist, every new
+        # top-level directory silently ships until somebody notices. That is how
+        # a 17.7 MB 3D-printer manual ended up on the car.
+        #
+        # rsync include rules: parent dirs must be included before their
+        # contents, and the final --exclude=* drops everything not named.
         rsync \
             -az \
             --delete \
-            --exclude='.git/' \
-            --exclude='.venv/' \
-            --exclude='offices/' \
-            --exclude='specs/' \
-            --exclude='docs/' \
-            --exclude='__pycache__/' \
-            --exclude='*.pyc' \
-            --exclude='.pytest_cache/' \
-            --exclude='.mypy_cache/' \
-            --exclude='.ruff_cache/' \
-            --exclude='htmlcov/' \
-            --exclude='.coverage' \
-            --exclude='node_modules/' \
-            --exclude='data/obd.db' \
-            --exclude='data/obd.db-shm' \
-            --exclude='data/obd.db-wal' \
-            --exclude='data/regression/' \
-            --exclude='exports/' \
-            --exclude='logs/' \
-            --exclude='.env' \
-            --exclude='config.local.json' \
-            --exclude='deploy/deploy.conf' \
+            --prune-empty-dirs \
+            --exclude=__pycache__/ \
+            --exclude=*.pyc \
+            --include=config.json \
+            --include=requirements.txt \
+            --include=requirements-pi.txt \
+            --include=.deploy-version \
+            --include=src/ \
+            --include=src/__init__.py \
+            --include=src/pi/*** \
+            --include=src/common/*** \
+            --include=deploy/ \
+            --include=deploy/*.sh \
+            --include=deploy/boot-progress-*.service \
+            --include=deploy/drain-forensics.* \
+            --include=deploy/eclipse-*.service \
+            --include=deploy/eclipse-*.timer \
+            --include=deploy/eclipse-*.conf \
+            --include=deploy/orphan-cleanup.* \
+            --include=deploy/rfcomm-bind.service \
+            --include=deploy/journald-persistent.conf \
+            --include=deploy/nm-disable-wifi-powersave.conf \
+            --include=deploy/RELEASE_VERSION \
+            --include=deploy/polkit-rules/ \
+            --include=deploy/polkit-rules/*.rules \
+            --exclude=deploy/obd-server.service \
+            --exclude=deploy/obd2-server.service \
+            --exclude=deploy/server-analytics-batch.* \
+            --exclude=deploy/deploy.conf \
+            --exclude=* \
             -e "ssh -p ${PI_PORT}" \
             "$REPO_ROOT/" "${PI_USER}@${PI_HOST}:${PI_PATH}/"
     else
@@ -206,30 +227,23 @@ sync_tree() {
         # but at tar granularity. NOTE: excluding a file from the TARBALL alone is
         # not enough -- the wipe runs first, so every preserved path needs a
         # matching `! -name` below or the operator's settings are deleted (US-530).
+        # tar path: an explicit FILE LIST, mirroring the rsync whitelist above.
+        # Both paths must ship the SAME tree -- if they diverge, which one ran
+        # (rsync present or not) silently changes what is on the car.
         ( cd "$REPO_ROOT" && tar -cz \
-            --exclude='./.git' \
-            --exclude='./.venv' \
-            --exclude='./offices' \
-            --exclude='./specs' \
-            --exclude='./docs' \
-            --exclude='./__pycache__' \
-            --exclude='*.pyc' \
-            --exclude='./.pytest_cache' \
-            --exclude='./.mypy_cache' \
-            --exclude='./.ruff_cache' \
-            --exclude='./htmlcov' \
-            --exclude='./.coverage' \
-            --exclude='./node_modules' \
-            --exclude='./data/obd.db' \
-            --exclude='./data/obd.db-shm' \
-            --exclude='./data/obd.db-wal' \
-            --exclude='./data/regression' \
-            --exclude='./exports' \
-            --exclude='./logs' \
-            --exclude='./.env' \
-            --exclude='./config.local.json' \
-            --exclude='./deploy/deploy.conf' \
-            -f - . ) | \
+            --exclude="__pycache__" \
+            --exclude="*.pyc" \
+            --exclude="./deploy/deploy.conf" \
+            --exclude="./deploy/obd-server.service" \
+            --exclude="./deploy/obd2-server.service" \
+            --exclude="./deploy/server-analytics-batch.service" \
+            --exclude="./deploy/server-analytics-batch.timer" \
+            --exclude="./deploy/README.md" \
+            --exclude="./deploy/deploy.conf.example" \
+            --exclude="./deploy/sudoers.d" \
+            -f - \
+            ./config.json ./requirements.txt ./requirements-pi.txt ./.deploy-version \
+            ./src/__init__.py ./src/pi ./src/common ./deploy ) | \
           ssh -p "${PI_PORT}" "${PI_USER}@${PI_HOST}" "
             set -e
             mkdir -p '${PI_PATH}'

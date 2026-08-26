@@ -72,7 +72,7 @@ Source: DSMTuners community consensus, compiled in `specs/obd2-research.md` Sect
 
 | Parameter | Safe Range | Alert Threshold | Notes |
 |-----------|-----------|-----------------|-------|
-| Coolant Temp | ≤101 °C (214°F) | 🟡 ≥104 °C **sustained ≥30 s** · 🔴 ≥110 °C any duration, or ≥104 °C ≥120 s | **CORRECTED 2026-08-20 (Spool, measured).** Threshold+dwell, NOT a bare threshold — 101 °C is this car's normal **fan-cycle ceiling**. A bare 🟡 inside a cycling signal's oscillation band nuisance-fires (a bare 100 °C would have fired on 6 of the last 7 *healthy* captures). Derivation: `offices/tuner/knowledge.md` §Cooling. |
+| Coolant Temp | ≤101 °C (214°F) | 🟡 ≥104 °C **sustained ≥30 s** · 🔴 ≥110 °C any duration, or ≥104 °C ≥120 s | **CORRECTED 2026-08-20 (Spool, measured).** Threshold+dwell, NOT a bare threshold — 101 °C is this car's normal **fan-cycle ceiling**. A bare 🟡 inside a cycling signal's oscillation band nuisance-fires (a bare 100 °C would have fired on 6 of the last 7 *healthy* captures). Derivation: `$FLEET_SHARE/tuner/knowledge/knowledge.md` §Cooling. |
 | Boost (stock turbo) | ~12 psi | >15 psi on stock | Stock wastegate actuator limit |
 | AFR at WOT | 11.0-11.8:1 | >12.5:1 under boost (lean danger) | Rich is safe, lean kills engines |
 | Knock count | 0 | >0 sustained | Any knock is bad; transient single counts can be noise |
@@ -80,7 +80,7 @@ Source: DSMTuners community consensus, compiled in `specs/obd2-research.md` Sect
 
 **Important**: These ranges are community-sourced baselines for a stock-turbo 2G DSM. The refinement with real vehicle data has begun — see **Real Vehicle Data** section below (Session 23 first-light capture, 2026-04-19).
 
-**Pi-side power-management** (data-collection device, separate from vehicle engine ranges): Pi 5 UPS HAT (MAX17048-managed LiPo cell) — buck-converter dropout knee at VCELL ≈ 3.30 V; ~16-min runtime under typical load (Drain Test 7, 2026-05-02 empirical). Authoritative writeup with full empirical baseline + operational implications: `offices/tuner/knowledge.md` § "UPS HAT Dropout Characteristics (Drain 7 baseline)".
+**Pi-side power-management** (data-collection device, separate from vehicle engine ranges): Pi 5 UPS HAT (MAX17048-managed LiPo cell) — buck-converter dropout knee at VCELL ≈ 3.30 V; ~16-min runtime under typical load (Drain Test 7, 2026-05-02 empirical). Authoritative writeup with full empirical baseline + operational implications: `$FLEET_SHARE/tuner/knowledge/knowledge.md` § "UPS HAT Dropout Characteristics (Drain 7 baseline)".
 
 ---
 
@@ -111,7 +111,7 @@ Authoritative empirical observations from this specific Eclipse. These values wi
 **Live capture set = 16 parameters** (drives 39/40/41, 24,342 rows, 2026-08-20). The 11 rows above are the
 Session-23 subset, not the ceiling. **A PID is "supported" only when it appears in a live capture** — the
 config poll list proves nothing (this is how both the 0x42 and the 0x33 errors were made). Full 16-param
-table with per-PID row counts: `offices/tuner/knowledge.md` §"OBD-II on the 2G DSM".
+table with per-PID row counts: `$FLEET_SHARE/tuner/knowledge/knowledge.md` §"OBD-II on the 2G DSM".
 
 
 **Confirmed UNSUPPORTED** on this 2G ECU (did not respond or returned no-data):
@@ -204,7 +204,7 @@ Observed on this specific vehicle, 2026-04-19, ~23 seconds captured across 2 win
 **Sources for this section**:
 - Raw data: `chi-eclipse-01:~/Projects/Eclipse-01/data/obd.db` (synced to `chi-srv-01:obd2db`)
 - Review note: `offices/pm/inbox/2026-04-19-from-spool-real-data-review.md`
-- Deep interpretation: `offices/tuner/knowledge.md` section "This Car's Empirical Baseline"
+- Deep interpretation: `$FLEET_SHARE/tuner/knowledge/knowledge.md` section "This Car's Empirical Baseline"
 
 ### Measured Eclipse 4G63 Idle Values (2026-04-19) — checked-in regression fixture
 

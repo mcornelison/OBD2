@@ -21,7 +21,7 @@ When sending A2AL messages, sign as `<Name>/<role>` or `<Name>(<role>)` in the r
 | Argus | QA / Tester | `offices/tester/` |
 | Spool | Tuning SME | `offices/tuner/` |
 | Ralph (Rex) | Dev | `offices/ralph/` |
-| Iris | UI/UX | `offices/uidevloper/` |
+| Iris | UI/UX | `offices/uideveloper/` |
 
 ### When to use A2AL (audience rule, normative — v0.4.1 §2.1)
 

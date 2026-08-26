@@ -3,7 +3,7 @@
 # Purpose/Description: US-505 tests for the idle-home card's LAST DRIVE tile --
 #   the display half of the last-drive producer, plus the END-TO-END chain.
 #
-#   Iris's idle spec (offices/uidevloper/proposals/2026-07-21-pi-idle-state-and-
+#   Iris's idle spec (offices/uideveloper/proposals/2026-07-21-pi-idle-state-and-
 #   full-bleed.md, "Last drive") pins the shape: `Drive 35 · 2 h ago`, with
 #   `no drive recorded` when unknown -- "never a guess".
 #

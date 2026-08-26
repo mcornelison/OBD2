@@ -29,7 +29,7 @@ Spool sends specs → PM creates stories → THIS REVIEW → PM loads sprint →
 Read these files:
 1. **The original spec** — find the most recent Spool note in `offices/pm/inbox/` that the stories were based on
 2. **The stories** — read `offices/ralph/stories.json` or the specific backlog items in `offices/pm/backlog/`
-3. **Spool's knowledge base** — `offices/tuner/knowledge.md` for authoritative threshold values
+3. **Spool's knowledge base** — `$FLEET_SHARE/tuner/knowledge/knowledge.md` for authoritative threshold values
 4. **Any related PRDs** — check `offices/pm/prds/` if the PM created a PRD from the specs
 
 ---
@@ -154,7 +154,7 @@ match the original spec. Stories are ready for sprint.
 
 ## Step 4: Log The Review
 
-Add a brief entry to `offices/tuner/sessions.md` under the current session:
+Add a brief entry to `$FLEET_SHARE/tuner/knowledge/sessions.md` under the current session:
 ```
 ### Story Reviews
 - Reviewed [N] stories from [backlog item/sprint]

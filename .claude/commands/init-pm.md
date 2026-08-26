@@ -1,8 +1,8 @@
 ---
 name: init-pm
-description: "Initialize the Project Manager by loading pm/projectManager.md"
+description: "Initialize the Project Manager (Marcus) by loading pm/claude.md"
 ---
 
-Read and follow the instructions in `pm/projectManager.md`.
+Read and follow the instructions in `$FLEET_SHARE/pm/claude.md`.
 
 $ARGUMENTS

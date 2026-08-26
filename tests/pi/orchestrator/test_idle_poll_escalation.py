@@ -38,7 +38,7 @@ Trace from the 2026-04-29 inverted-power drill (Drive 5 baseline):
 
 13.8V threshold sustained 3 samples = unmistakable alternator-active
 signature.  See ``offices/pm/backlog/B-049-drive-detect-idle-poll-gap.md``
-and ``offices/tuner/knowledge.md`` for grounding.
+and ``$FLEET_SHARE/tuner/knowledge/knowledge.md`` for grounding.
 """
 
 from __future__ import annotations

@@ -156,7 +156,7 @@ _INIT_CHAIN_WATCHDOG_SEC: float = _TEST_INITIAL_CONNECT_TIMEOUT_SEC * 4
 
 # Spool's spec: feed RPM=750 samples (well above the 500 RPM
 # driveStartRpmThreshold; matches a typical Eclipse warm-idle baseline
-# per offices/tuner/knowledge.md Drive 5).
+# per $FLEET_SHARE/tuner/knowledge/knowledge.md Drive 5).
 _RPM_ENGINE_ON: float = 750.0
 
 

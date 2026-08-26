@@ -115,7 +115,7 @@ from src.pi.obdii.drive.types import DriveState
 from src.pi.obdii.drive_id import clearCurrentDriveId, getCurrentDriveId
 from src.pi.obdii.drive_summary import DRIVE_SUMMARY_TABLE, SummaryRecorder
 
-# Eclipse warm-idle baseline (per offices/tuner/knowledge.md Drive 5).
+# Eclipse warm-idle baseline (per $FLEET_SHARE/tuner/knowledge/knowledge.md Drive 5).
 _RPM_ENGINE_ON: float = 750.0
 
 # Test-side compressed defer-INSERT window.  Production is 60 sec; the

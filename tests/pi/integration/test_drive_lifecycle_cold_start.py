@@ -83,7 +83,7 @@ Mocks live at the same boundaries the unit tests use:
   boundary; the test asserts the drive-end trigger fires the push
   exactly once and the result reports OK.
 
-Trace shape (Drive 5 baseline -- see ``offices/tuner/knowledge.md``):
+Trace shape (Drive 5 baseline -- see ``$FLEET_SHARE/tuner/knowledge/knowledge.md``):
 
 * Idle BATTERY_V: 12.7V, 12.7V (engine off, key on).
 * Cranking dip: 11.4V (single sample, ECU silent).

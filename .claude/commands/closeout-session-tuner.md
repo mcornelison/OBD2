@@ -17,13 +17,13 @@ Perform these steps in order. Each step updates a specific file. Commit at the e
 
 ## Step 1: Determine Session Number and Date
 
-- Read `offices/tuner/sessions.md` to find the last session number
+- Read `$FLEET_SHARE/tuner/knowledge/sessions.md` to find the last session number
 - Increment by 1 for this session
 - Use today's date
 
 ---
 
-## Step 2: Update Session Log (`offices/tuner/sessions.md`)
+## Step 2: Update Session Log (`$FLEET_SHARE/tuner/knowledge/sessions.md`)
 
 Add a new session entry with:
 
@@ -54,7 +54,7 @@ Add a new session entry with:
 
 ---
 
-## Step 3: Update Knowledge Base (`offices/tuner/knowledge.md`) — If Needed
+## Step 3: Update Knowledge Base (`$FLEET_SHARE/tuner/knowledge/knowledge.md`) — If Needed
 
 Only update if new tuning knowledge was learned this session:
 - New safe operating ranges discovered or refined

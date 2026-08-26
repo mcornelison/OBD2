@@ -50,7 +50,7 @@ system message across calls, which saves tokens and keeps the model's
   existed. The system message fights this — hard — but watch for leaks.
 - **2G DSM specifics.** The model has seen SOME DSM forum content, but
   not enough to be an authority. If it volunteers an exact value for a
-  4G63 spec, verify it against `offices/tuner/knowledge.md`.
+  4G63 spec, verify it against `$FLEET_SHARE/tuner/knowledge/knowledge.md`.
 
 ## Quality gates Ralph should watch for during review
 
