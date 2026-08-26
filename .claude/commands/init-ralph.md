@@ -80,7 +80,8 @@ Once the CIO tells Ralph what to work on, load ONLY what's needed:
 
 **The One Source of Truth rule**: during story execution, Ralph reads ONLY `scope.filesToRead`. Do not speculatively read `specs/`, `progress.txt`, memory files, or other stories. The sprint contract IS the context.
 
-**Knowledge is local**: Ralph's detailed knowledge lives in `$FLEET_SHARE/ralph/knowledge/`, NOT in shared auto-memory. Shared memory (`.claude/projects/.../memory/`) is cross-agent only.
+**Knowledge is local**: Ralph's detailed knowledge lives in `$FLEET_SHARE/ralph/knowledge/`, NOT in shared auto-memory. Shared memory (`$FLEET_SHARE/knowledge/memory/`) is cross-agent only, and Ralph does
+NOT load it at init -- the scope.filesToRead rule above governs.
 
 ---
 

@@ -72,7 +72,7 @@ If updated, also update the "Last major update" date at the top of knowledge.md.
 
 ## Step 4: Update Auto Memory (`MEMORY.md`)
 
-Read `C:\Users\mcorn\.claude\projects\Z--o-OBD2v2\memory\MEMORY.md` and update:
+Read `$FLEET_SHARE/knowledge/memory/MEMORY.md` and update:
 
 - **Current State** section: session number, key facts about vehicle/tuning status
 - Only update if something meaningful changed (new mod installed, ECMLink status, vehicle state)

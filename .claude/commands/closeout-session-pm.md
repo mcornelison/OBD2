@@ -81,7 +81,7 @@ Rename the existing "Last Session Summary" to "Previous Session Summary" and cre
 
 ## Step 5: Update Auto Memory (`MEMORY.md`)
 
-Read `C:\Users\mcorn\.claude\projects\Z--o-OBD2v2\memory\MEMORY.md` and update:
+Read `$FLEET_SHARE/knowledge/memory/MEMORY.md` and update:
 
 - **Current State** section: session number, date, key facts about where the project stands
 - **Key Infrastructure** section: only if hardware changed (new GPU, new server, etc.)

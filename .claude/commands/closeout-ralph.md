@@ -78,7 +78,7 @@ This is Ralph's primary knowledge store. Update these files:
 
 Create new knowledge files if a topic is substantial enough to warrant its own file. Index them in the README.
 
-### Shared auto-memory (`C:\Users\mcorn\.claude\projects\Z--o-OBD2v2\memory\MEMORY.md`)
+### Shared auto-memory (`$FLEET_SHARE/knowledge/memory/MEMORY.md`)
 
 Update ONLY the cross-agent facts that all agents need:
 - **Current State** — session number, test baseline, sprint state, commits ahead of origin
