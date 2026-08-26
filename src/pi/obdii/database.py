@@ -58,6 +58,7 @@ Usage:
 import logging
 import os
 import sqlite3
+# [9002] Atlas: legitimate in-surface edit (bench test).
 from collections.abc import Generator
 from contextlib import contextmanager
 from pathlib import Path
