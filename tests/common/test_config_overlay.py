@@ -453,28 +453,71 @@ class TestBothReadPathsUseTheSharedResolver:
         )
 
 
+def _commandBlock(text: str, startMarker: str, endMarker: str) -> str:
+    """Slice one shell command out of deploy-pi.sh by literal markers.
+
+    Splitting on a bare word ("else", "! -name") picks up the PROSE above the
+    code -- deploy-pi.sh comments quote its own flags. Anchor on the command
+    itself instead.
+    """
+    i = text.index(startMarker)
+    j = text.index(endMarker, i)
+    return text[i : j + len(endMarker)]
+
+
 class TestOverlayDurability:
     """The overlay must survive a deploy and never reach git."""
 
-    def test_deployPiSh_rsyncExcludesTheOverlay(self):
+    def test_deployPiSh_rsyncCannotDeleteTheOverlay(self):
         """
-        Given: the rsync sync path in deploy-pi.sh
-        When: its --exclude list is read
-        Then: the overlay is excluded, exactly like .env
+        Given: the rsync sync path runs --delete against a WHITELIST (2026-08-25)
+        When: its filter rules are read
+        Then: the overlay is not named by any --include, and the catch-all
+              --exclude=* therefore excludes it -- and rsync's --delete spares
+              excluded files, so the operator's settings survive.
+
+        This replaces an assertion on --exclude='config.local.json'. That literal
+        rule is gone because the blacklist is gone; the PROTECTION is not gone,
+        it moved to the catch-all. Verified empirically before this test was
+        rewritten: a real rsync -a --delete with these filters left .env,
+        config.local.json and data/ untouched while still deleting a stale
+        shipped module.
+        """
+        text = DEPLOY_PI_SH.read_text(encoding="utf-8")
+        rsyncBlock = _commandBlock(text, "        rsync \\", '"${PI_USER}@${PI_HOST}:${PI_PATH}/"')
+
+        assert "--include=config.local.json" not in rsyncBlock
+        assert "--exclude=*" in rsyncBlock
+
+    def test_deployPiSh_rsyncDoesNotUseDeleteExcluded(self):
+        """
+        Given: the overlay survives only because --delete spares EXCLUDED files
+        When: the rsync flags are read
+        Then: --delete-excluded is absent.
+
+        This is the whole load-bearing guard. --delete-excluded is a one-word
+        addition that reverses the exclusion's protective meaning and would wipe
+        config.local.json, .env and data/ off the car on the next deploy, with
+        nothing in the output to say so. Under the old blacklist this flag was
+        equally fatal and equally unguarded.
         """
         text = DEPLOY_PI_SH.read_text(encoding="utf-8")
 
-        assert "--exclude='config.local.json'" in text
+        assert "--delete-excluded" not in text
 
-    def test_deployPiSh_tarFallbackExcludesTheOverlay(self):
+    def test_deployPiSh_tarFallbackDoesNotShipTheOverlay(self):
         """
-        Given: the tar-over-ssh fallback (used when rsync is absent locally)
-        When: its --exclude list is read
-        Then: the overlay is excluded there too -- both paths or neither
+        Given: the tar fallback ships an explicit FILE LIST (2026-08-25)
+        When: that list is read
+        Then: the overlay is not in it -- so it is never overwritten by the
+              tarball. (The wipe that runs first is guarded separately, by
+              test_deployPiSh_tarFallbackWipePreservesTheOverlay below, which is
+              the assertion that actually keeps the file alive.)
         """
         text = DEPLOY_PI_SH.read_text(encoding="utf-8")
+        tarFileList = _commandBlock(text, '( cd "$REPO_ROOT" && tar -cz', "./deploy )")
 
-        assert "--exclude='./config.local.json'" in text
+        assert "config.local.json" not in tarFileList
 
     def test_deployPiSh_tarFallbackWipePreservesTheOverlay(self):
         """
