@@ -58,7 +58,6 @@ Usage:
 import logging
 import os
 import sqlite3
-# [9002] Atlas: legitimate in-surface edit (bench test).
 from collections.abc import Generator
 from contextlib import contextmanager
 from pathlib import Path
@@ -577,5 +576,3 @@ def initializeDatabase(config: dict[str, Any]) -> ObdDatabase:
     db = createDatabaseFromConfig(config)
     db.initialize()
     return db
-
-# bench 9003: in-surface edit proving the integrator merge path
