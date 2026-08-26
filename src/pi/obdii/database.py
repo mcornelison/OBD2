@@ -577,3 +577,5 @@ def initializeDatabase(config: dict[str, Any]) -> ObdDatabase:
     db = createDatabaseFromConfig(config)
     db.initialize()
     return db
+
+# bench 9003: in-surface edit proving the integrator merge path
