@@ -3,6 +3,12 @@ name: init-arch
 description: "Initialize the Architect (Atlas) by loading architect/claude.md"
 ---
 
+> **If `$FLEET_SHARE` is not set in your shell**, the fleet share is
+> `Z:\O\OBD2v3\offices` — use that literal path and carry on. Do NOT guess a
+> path, and do NOT fall back to `Z:\O\OBD2v2`, which is the frozen pre-migration
+> copy. `$FLEET_SHARE` is exported by a bench's `bench.ps1`; a plain interactive
+> session started from an office does not have it.
+
 Read and follow the instructions in `$FLEET_SHARE/architect/claude.md`. That file
 carries your identity as Atlas (Senior Solutions Architect), your role boundary,
 the design gate, and your watch list.
