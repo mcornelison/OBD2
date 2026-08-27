@@ -187,13 +187,32 @@ DEFAULTS: dict[str, Any] = {
     'pi.power.mode': 'unknown',
     # Honest boot-progress instrument (spec 2026-05-15). filePath is
     # relative to the Pi project root (systemd WorkingDirectory);
-    # nasArchiveDir is the home-only NAS mount; maxTrailBytes bounds the
-    # file against a restart loop. poweroffTimeoutSeconds replaces the
-    # previously hardcoded subprocess.run(timeout=...) literal in
+    # maxTrailBytes bounds the file against a restart loop.
+    # poweroffTimeoutSeconds replaces the previously hardcoded
+    # subprocess.run(timeout=...) literal in
     # src/pi/hardware/shutdown_handler.py (wired in a later task).
+    #
+    # THE PI REACHES NO NETWORK STORAGE (CIO 2026-08-26). It talks to the server
+    # only during a data sync -- never to the NAS, never to any other host. These
+    # two keys previously defaulted to ENABLED pointing at a NAS path
+    # (/mnt/projects/O/OBD2v2/boot-progress), and config.json carries no
+    # bootProgress section, so the default was live on the car.
+    #
+    # That default could not work and could not be seen failing. archivePriorTrail
+    # calls os.makedirs(..., exist_ok=True), which CREATES PARENTS: on a Pi with
+    # no NAS mount it either builds a phantom /mnt/projects/... tree on the SD
+    # card and copies a trail into it every boot (unbounded, read by nobody), or
+    # raises PermissionError into a best-effort `except` that only logs a warning.
+    # Silent either way.
+    #
+    # The archive is redundant regardless: the canonical one-per-boot record is
+    # the startup_log DB row written just above it, which is what syncs to the
+    # server. So the copy is OFF by default, and the path is Pi-LOCAL so that
+    # enabling it cannot reach off-box. The key keeps its historical name;
+    # renaming a published config key is a separate change.
     'pi.bootProgress.filePath': 'data/boot_progress',
-    'pi.bootProgress.nasArchiveDir': '/mnt/projects/O/OBD2v2/boot-progress',
-    'pi.bootProgress.nasArchiveEnabled': True,
+    'pi.bootProgress.nasArchiveDir': 'data/boot_progress_archive',
+    'pi.bootProgress.nasArchiveEnabled': False,
     'pi.bootProgress.maxTrailBytes': 65536,
     'pi.shutdown.poweroffTimeoutSeconds': 30,
     # Phase-2 power-watch (spec 2026-05-17). CONSERVATIVE INTERIM values --

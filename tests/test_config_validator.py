@@ -885,7 +885,14 @@ def test_bootProgress_defaultsApplied():
     cfg = ConfigValidator().validate(_baseCfg())
     bp = cfg["pi"]["bootProgress"]
     assert bp["filePath"] == "data/boot_progress"
-    assert bp["nasArchiveEnabled"] is True
+    # The Pi is standalone (CIO 2026-08-26): it reaches only the OBD2 server, at
+    # sync. This assertion used to read `is True`, pinning an archive that
+    # defaulted ON and wrote to a NAS path -- so the unsafe default was not
+    # merely unguarded, it was LOCKED IN by this line.
+    assert bp["nasArchiveEnabled"] is False
+    # The path was never asserted here at all, which is how it stayed
+    # /mnt/projects/O/OBD2v2/boot-progress. Relative = resolves on the Pi.
+    assert bp["nasArchiveDir"] == "data/boot_progress_archive"
     assert bp["maxTrailBytes"] == 65536
     assert cfg["pi"]["shutdown"]["poweroffTimeoutSeconds"] == 30
 
