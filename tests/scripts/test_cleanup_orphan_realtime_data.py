@@ -345,3 +345,92 @@ def _countOrphans(path: Path) -> int:
         return int(conn.execute(
             'SELECT COUNT(*) FROM realtime_data WHERE drive_id IS NULL',
         ).fetchone()[0])
+
+
+# ================================================================================
+# Backup retention (2026-08-26) -- the nightly timer was unbounded
+# ================================================================================
+
+
+class TestBackupRetention:
+    """orphan-cleanup.timer fires nightly with Persistent=true, and every run
+    copied the whole DB to <name>.bak-us322-<ts> with nothing ever deleting it.
+    On the car that is 2.2 GB per night: 5 backups and 11 GB had accumulated,
+    and the SD card had ~5 weeks left. The copy is a real safety net, so the fix
+    is retention, not removal.
+    """
+
+    def _makeDb(self, tmp_path, name="obd.db", content=b"x" * 64):
+        db = tmp_path / name
+        db.write_bytes(content)
+        return db
+
+    def test_backupDatabase_keepsTheBackupItJustMade(self, tmp_path):
+        """
+        Given: a DB with no existing backups
+        When: backupDatabase runs
+        Then: the new backup exists and is a faithful copy
+
+        Retention must never eat the backup being created -- that would turn a
+        safety net into a no-op while still costing the copy.
+        """
+        db = self._makeDb(tmp_path)
+
+        backup = coc.backupDatabase(db)
+
+        assert backup.exists()
+        assert backup.read_bytes() == db.read_bytes()
+
+    def test_backupDatabase_prunesOlderBackupsBeyondTheKeepCount(self, tmp_path):
+        """
+        Given: several existing backups
+        When: backupDatabase runs with keep=2
+        Then: exactly 2 remain, and they are the NEWEST two
+
+        Sorting is by the timestamp in the filename, not mtime: a restore or a
+        file copy rewrites mtimes (the share migration did exactly that), which
+        would make mtime ordering silently wrong.
+        """
+        db = self._makeDb(tmp_path)
+        for ts in ("20260101T000000Z", "20260102T000000Z", "20260103T000000Z"):
+            (tmp_path / f"obd.db.bak-us322-{ts}").write_bytes(b"old")
+
+        coc.backupDatabase(db, keep=2)
+
+        remaining = sorted(p.name for p in tmp_path.glob("obd.db.bak-us322-*"))
+        assert len(remaining) == 2, remaining
+        # the just-made one is newest, so the 01-01 and 01-02 stamps must be gone
+        assert not any("20260101" in n or "20260102" in n for n in remaining), remaining
+
+    def test_backupDatabase_doesNotTouchOtherDatabasesBackups(self, tmp_path):
+        """
+        Given: backups belonging to a DIFFERENT db file in the same directory
+        When: backupDatabase prunes
+        Then: they are untouched
+
+        The glob must be anchored to this db's name. data/ holds more than one
+        database, and a greedy glob would delete another one's safety net.
+        """
+        db = self._makeDb(tmp_path)
+        other = tmp_path / "other.db.bak-us322-20260101T000000Z"
+        other.write_bytes(b"keep me")
+        for ts in ("20260101T000000Z", "20260102T000000Z"):
+            (tmp_path / f"obd.db.bak-us322-{ts}").write_bytes(b"old")
+
+        coc.backupDatabase(db, keep=1)
+
+        assert other.exists(), "pruned a different database's backup"
+
+    def test_backupDatabase_keepCountIsBoundedBelow(self, tmp_path):
+        """
+        Given: keep=0
+        When: backupDatabase runs
+        Then: it raises rather than deleting the backup it just made
+
+        keep=0 is nonsense that reads as valid config. Refuse loudly instead of
+        performing an expensive copy and then deleting it.
+        """
+        db = self._makeDb(tmp_path)
+
+        with pytest.raises(ValueError):
+            coc.backupDatabase(db, keep=0)

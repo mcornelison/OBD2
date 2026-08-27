@@ -131,9 +131,22 @@ class TestParsers:
         assert facts["serverPort"] == "8000"
 
     def test_parseAddressesSh_realFile_extractsDefaults(self) -> None:
+        """PI_HOST is a HOSTNAME, not an IP (CIO/Spool 2026-08-17, B-102/US-473).
+
+        This assertion read `== "10.27.27.28"` and had been failing ever since
+        that decision landed -- the code was right and the test pinned the dead
+        address, so the failure looked like an address bug and sat in the
+        baseline instead of being fixed. Same shape as
+        test_bootProgress_defaultsApplied pinning nasArchiveEnabled is True.
+
+        Asserting the NAME also keeps this test correct across the next
+        re-address: the whole point of B-102 was that ssh config is the single
+        acquisition point, so an IP here would re-introduce the coupling the
+        hostname removed.
+        """
         facts = parseAddressesSh(REPO_ROOT / "deploy" / "addresses.sh")
         assert facts["SERVER_HOST"] == "10.27.27.120"
-        assert facts["PI_HOST"] == "10.27.27.28"
+        assert facts["PI_HOST"] == "chi-eclipse-01"
 
     def test_parseValidatorDefaults_realFile_extractsServerHostPort(self) -> None:
         facts = parseValidatorDefaults(

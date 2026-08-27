@@ -89,7 +89,7 @@ EnvironmentFile=/home/mcornelison/obd2-server/.env
 Environment=PYTHONPATH=/home/mcornelison/obd2-server
 Environment=PYTHONUNBUFFERED=1
 
-# uvicorn bound to 0.0.0.0:8000 -- Pi at 10.27.27.28 reaches it via
+# uvicorn bound to 0.0.0.0:8000 -- the Pi (chi-eclipse-01) reaches it via
 # http://chi-srv-01:8000/api/v1/sync/...
 ExecStart=/home/mcornelison/obd2-server-venv/bin/uvicorn src.server.main:app --host 0.0.0.0 --port 8000
 

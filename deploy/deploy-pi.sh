@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 ################################################################################
-# deploy-pi.sh — Deploy/update the OBD2v2 Pi tier on chi-eclipse-01 (10.27.27.28)
+# deploy-pi.sh — Deploy/update the Pi tier on chi-eclipse-01 (addressed BY HOSTNAME;
+#                 wlan0 is 10.27.27.124 -- see deploy/addresses.sh, the SSOT)
 #
 # Usage:
 #   bash deploy/deploy-pi.sh                # Default: rsync code + venv deps + restart service
@@ -11,13 +12,13 @@
 #   bash deploy/deploy-pi.sh --help         # Show this usage
 #
 # Configuration (deploy/deploy.conf overrides defaults — gitignored, copy from .example):
-#   PI_HOST  - Pi IP or hostname               (default: 10.27.27.28)
+#   PI_HOST  - Pi IP or hostname               (default: chi-eclipse-01, by NAME)
 #   PI_USER  - SSH user on the Pi              (default: mcornelison)
 #   PI_PATH  - Project path on the Pi          (default: /home/mcornelison/Projects/Eclipse-01)
 #   PI_PORT  - SSH port                        (default: 22)
 #
 # Prerequisites:
-#   - Key-based SSH from this Windows git-bash to mcornelison@10.27.27.28 already works
+#   - Key-based SSH from this Windows git-bash to mcornelison@chi-eclipse-01 already works
 #   - rsync available in git-bash AND on the Pi (rsync ships with Raspberry Pi OS)
 #   - Local Windows tree at the project root is the source of truth
 #
@@ -2197,6 +2198,86 @@ step_install_ui_kiosk_units
 # unit it restarts already exists on the box when the timer's first tick lands.
 step_install_kiosk_watchdog_unit
 
+# ================================================================================
+# Post-deploy prune (2026-08-26) -- the Pi is an appliance, not a workshop
+# ================================================================================
+#
+# Runs ONLY after every deploy step above has succeeded, because it deletes: a
+# half-finished deploy plus a prune is the one combination that could remove
+# something the deploy had not yet replaced.
+#
+# Two jobs:
+#
+# 1. DB backups. cleanup_orphan_realtime_data.py copies the whole DB to
+#    <name>.bak-us322-<ts> before --execute, and orphan-cleanup.timer fires
+#    NIGHTLY with Persistent=true. Nothing pruned them: 5 copies / 11 GB had
+#    accumulated on the car with roughly five weeks of SD card left. The script
+#    now retains 2 itself; this step also clears any pre-existing pile-up, and
+#    keeps working if an older script is ever on the box.
+#
+# 2. The workshop. The rsync whitelist stops NEW workshop files shipping, but
+#    --delete deliberately spares excluded files -- that is exactly why data/ and
+#    .env survive a deploy. The consequence is that offices/, specs/, tests/ and
+#    tools/ (~119 MB) stay forever once present. Removing them takes an explicit
+#    delete.
+#
+# SAFETY: this is an explicit REMOVE list, not "delete anything not in a keep
+# list". A keep-list omission would delete drive data; a remove-list omission
+# only leaves clutter. Anything unrecognised is REPORTED, never deleted -- so a
+# new top-level directory gets a loud line in the deploy log instead of a
+# surprise deletion.
+step_prune_pi_workshop() {
+    echo "--- Step: Pruning workshop + old DB backups on the Pi ---"
+
+    if $DRY_RUN; then
+        echo "DRY-RUN would prune workshop dirs and DB backups beyond 2 on ${PI_HOST}"
+        return 0
+    fi
+
+    ssh -p "${PI_PORT}" "${PI_USER}@${PI_HOST}" "
+        set -e
+        cd '${PI_PATH}' || exit 0
+
+        # --- 1. DB backups: keep the 2 newest, sorted by the stamp in the NAME.
+        # Not mtime: a restore or file copy rewrites mtimes and would select the
+        # wrong victims.
+        for db in data/*.db; do
+            [ -e \"\$db\" ] || continue
+            n=\$(ls -1 \"\$db\".bak-us322-* 2>/dev/null | wc -l)
+            if [ \"\$n\" -gt 2 ]; then
+                ls -1 \"\$db\".bak-us322-* | sort | head -n -2 | while read -r old; do
+                    echo \"  pruning old backup: \$(basename \"\$old\")\"
+                    rm -f \"\$old\"
+                done
+            fi
+        done
+
+        # --- 2. Workshop: explicit list only.
+        for w in offices specs tests tools docs .claude .github .superpowers \
+                 CLAUDE.md README.md Makefile pyproject.toml validate_config.py \
+                 .gitattributes .env.example .env.production.example \
+                 requirements-dev.txt requirements-server.txt; do
+            if [ -e \"\$w\" ]; then
+                echo \"  removing workshop: \$w\"
+                rm -rf \"\$w\"
+            fi
+        done
+
+        # --- 3. Report anything unrecognised. Never delete it.
+        for e in \$(ls -A); do
+            case \"\$e\" in
+                data|src|scripts|deploy|config.json|config.local.json|.env|.venv|\
+logs|exports|.deploy-version|requirements.txt|requirements-pi.txt|.gitignore|\
+.backfill-*|.lgd-*) ;;
+                *) echo \"  NOTE: unrecognised top-level entry left in place: \$e\" ;;
+            esac
+        done
+
+        echo \"  Pi tree now: \$(du -sh . 2>/dev/null | cut -f1)\"
+    "
+    echo ""
+}
+
 # US-354 reordering: restart first, then verify both long-running services
 # came back with start times AFTER DEPLOY_START_EPOCH, THEN bump
 # .deploy-version. The prior order wrote .deploy-version before the
@@ -2207,6 +2288,7 @@ step_install_kiosk_watchdog_unit
 step_restart_service
 step_verify_service_restarts
 step_write_deploy_version
+step_prune_pi_workshop
 
 echo ""
 echo "Deploy OK: $(date -Iseconds) to ${PI_USER}@${PI_HOST}"

@@ -21,7 +21,7 @@ and the home analysis server (chi-srv-01).
 ## Pi Tier — `deploy-pi.sh`
 
 Single script that runs from a Windows git-bash shell, SSHes to
-`mcornelison@10.27.27.28`, mirrors the working tree to the Pi, updates the
+`mcornelison@chi-eclipse-01`, mirrors the working tree to the Pi, updates the
 Python venv, and restarts the systemd service.
 
 ### Modes
@@ -39,7 +39,7 @@ Python venv, and restarts the systemd service.
 ```bash
 # 1. Make a local override of the Pi connection details (gitignored)
 cp deploy/deploy.conf.example deploy/deploy.conf
-# (edit deploy.conf if your Pi is not at 10.27.27.28)
+# (edit deploy.conf if your Pi is not reachable as chi-eclipse-01)
 
 # 2. First-time Pi bootstrap (wipes legacy ~/Projects, sets hostname, etc.)
 bash deploy/deploy-pi.sh --init
@@ -64,7 +64,7 @@ mtimes on extract, so a second default-mode run converges to the same state).
 
 ### Prerequisites
 
-- **Local (Windows git-bash):** key-based SSH to `mcornelison@10.27.27.28` already
+- **Local (Windows git-bash):** key-based SSH to `mcornelison@chi-eclipse-01` already
   works. The script prefers `rsync` for incremental sync; if `rsync` isn't
   installed, it automatically falls back to a `tar -cz | ssh … | tar -xz`
   pipe (no extra install needed — `tar` and `ssh` ship with git-bash).

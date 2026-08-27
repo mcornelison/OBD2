@@ -330,15 +330,57 @@ def runRecentOrphanSweep(
     )
 
 
-def backupDatabase(dbPath: Path) -> Path:
-    """Copy ``dbPath`` to ``<dbPath>.bak-us322-<ts>`` and return the path.
+#: How many ``.bak-us322-*`` copies to retain, newest first. orphan-cleanup.timer
+#: fires NIGHTLY with Persistent=true, so an unbounded backup is 2.2 GB per night
+#: on the car -- 5 copies and 11 GB had accumulated before anyone looked, with
+#: roughly five weeks of SD card left. Two is enough to survive a bad run plus
+#: the run before it; the DB itself is synced to the server.
+DEFAULT_BACKUP_KEEP = 2
+
+
+def backupDatabase(dbPath: Path, keep: int = DEFAULT_BACKUP_KEEP) -> Path:
+    """Copy ``dbPath`` to ``<dbPath>.bak-us322-<ts>``, prune old copies, return it.
 
     Best-effort safety net before --execute touches the DB.  No locking
     is needed -- shutil.copy2 reads the file directly.
+
+    Args:
+        dbPath: The database to back up.
+        keep: How many backups to retain including the one just made.
+
+    Returns:
+        Path to the backup that was created.
+
+    Raises:
+        ValueError: If ``keep`` is below 1. keep=0 would perform an expensive
+            full-file copy and then delete it -- nonsense that reads as valid
+            config, so it is refused rather than honoured.
     """
+    if keep < 1:
+        raise ValueError(
+            f'keep must be >= 1 (got {keep}); keep=0 would delete the backup '
+            f'it just made, leaving the copy cost with none of the safety',
+        )
+
     ts = _dt.datetime.now(_dt.UTC).strftime('%Y%m%dT%H%M%SZ')
     backup = dbPath.with_name(f'{dbPath.name}.bak-us322-{ts}')
     shutil.copy2(dbPath, backup)
+
+    # Prune by the TIMESTAMP IN THE NAME, not by mtime. A restore or a bulk file
+    # copy rewrites mtimes -- the 2026-08-25 share migration did exactly that to
+    # 79 files -- which would make mtime ordering silently select the wrong
+    # victims. The name is immutable; the stamp is sortable as a string.
+    # The glob is anchored to THIS db's name: data/ holds more than one database
+    # and a greedy pattern would delete another one's safety net.
+    pattern = f'{dbPath.name}.bak-us322-*'
+    existing = sorted(dbPath.parent.glob(pattern), key=lambda p: p.name)
+    for stale in existing[:-keep] if keep < len(existing) else []:
+        try:
+            stale.unlink()
+            logger.info('pruned old DB backup: %s', stale.name)
+        except OSError as exc:  # noqa: PERF203 -- one failure must not abort the rest
+            logger.warning('could not prune %s: %s', stale.name, exc)
+
     return backup
 
 
