@@ -57,15 +57,48 @@ Fields separated by `; `. One line, ends at first newline. Optional fields: `aud
 - Upstream spec + library: https://github.com/mcornelison/A2AL
 - Each agent's local skill: `offices/<role>/.claude/skills/a2al/SKILL.md` + `offices/<role>/.claude/commands/a2al.md`
 
-## Per-Agent-Clone Discipline (Multi-Agent Concurrency) — CORE BOOTUP
+## Bench Discipline (Multi-Agent Concurrency) — CORE BOOTUP
 
-**Supersedes the shared-checkout model (CIO 2026-08-03).** Each agent now works in its OWN independent clone (own working tree + own `.git`) — there is no shared `.git/index` to collide on. (The old shared checkout collided on `.git/index.lock` under concurrent commits; that was lock contention between simultaneous writers, NOT a slow disk — the chi-nas-01 NAS is fast gigabit.) Full text + one-time setup: `offices/handbook.md` §13.
+**Supersedes the per-agent-clone model (CIO 2026-08-26).** Per-agent clones fixed
+the `.git/index.lock` collisions but gave every agent a full independent copy and
+no way to stop two agents editing the same file. The fleet now runs ONE object
+store with per-ticket worktrees ("benches").
 
-1. **Commit AND push — both, every time.** `add`+`commit` your own `offices/<role>/**`, THEN `git push`. A commit that is never pushed is invisible to the team and lost if your clone is re-provisioned. **Durability = pushed, not merely committed.**
-2. **Pull before you push** — `git pull --rebase origin/<branch>` first; on a non-fast-forward rejection, `pull --rebase` and push again. Lane-scoped office work rebases cleanly.
-3. **You own your own clone's branches** — `checkout`/branch freely in your clone (affects no one else). But **only the PM (Marcus) merges into + owns `dev` + `main`, and runs deploys** (from the PM's clone — the deploy authority).
-4. **origin (GitHub) is the single source of truth** — the local filesystem no longer reflects peers' work; `git pull` to see it. Lane discipline unchanged: read only your own office.
-5. **Before the PM merges your work:** push it → `pull --rebase` to stay current → tell the PM which branch/commit is ready. **The PM merges what is ON ORIGIN — unpushed work is not merged.**
+```
+C:\agents\OBD2v3\
+  repo.git\   bare object store (origin = github.com/mcornelison/OBD2)
+  trunk\      worktree on `dev` -- INTEGRATOR ONLY, do not edit here
+  wt\         your bench lives here: <role>-<ticket>-<slug>
+  fleet.json  layout + env (the SSOT for all of the above)
+```
+
+The agent offices are **not in this repo**. They live on the fleet share at
+`Z:\O\OBD2v3\offices` (`$FLEET_SHARE`), which is not version controlled.
+
+1. **Work only in your own bench.** `New-Bench.ps1 -Role <role> -Ticket <n>
+   -Slug <slug> -Surface <globs>` leases one. Run `.\bench.ps1` first — it exports
+   `PYTHONUTF8`, `FLEET_SHARE` and `OBD2_REPO_ROOT`. Never edit `trunk\`.
+
+2. **Your ticket declares a file SURFACE, and it is enforced.** Edit outside your
+   declared globs and the integrator REJECTS the whole ticket — it does not merge
+   the in-surface part. Declare what you will touch, or ask for the surface to be
+   widened before you start.
+
+3. **Full git inside your bench: yes.** `add`, `commit`, `branch`, `checkout` on
+   your own branch are all yours. Push your branch to origin for durability.
+
+4. **Merging to `dev` is NOT yours.** `Invoke-FleetMerge.ps1` is the only thing
+   that writes trunk. It takes the merge lock, checks your surface, merges
+   `--no-ff` as one revertible bubble, runs the gate, then reclaims your bench and
+   deletes your branch. Never `git merge` into `dev` yourself.
+
+5. **To submit:** commit on your branch, then move your ticket into
+   `$FLEET_SHARE\board\review\`. Rejected tickets go to `board\wip\` with the
+   reason appended, and your bench STAYS leased so you can fix and resubmit.
+
+6. **`Z:\O\OBD2v2` is the frozen pre-migration tree.** It still contains a full set
+   of offices and a working repo, so an agent that wanders there boots
+   successfully on four-month-old content. Never read or write it.
 
 ## Development Commands
 
