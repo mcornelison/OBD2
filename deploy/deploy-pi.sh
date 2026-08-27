@@ -197,6 +197,7 @@ sync_tree() {
             --include=src/__init__.py \
             --include=src/pi/*** \
             --include=src/common/*** \
+            --include=scripts/*** \
             --include=deploy/ \
             --include=deploy/*.sh \
             --include=deploy/boot-progress-*.service \
@@ -243,7 +244,7 @@ sync_tree() {
             --exclude="./deploy/sudoers.d" \
             -f - \
             ./config.json ./requirements.txt ./requirements-pi.txt ./.deploy-version \
-            ./src/__init__.py ./src/pi ./src/common ./deploy ) | \
+            ./src/__init__.py ./src/pi ./src/common ./scripts ./deploy ) | \
           ssh -p "${PI_PORT}" "${PI_USER}@${PI_HOST}" "
             set -e
             mkdir -p '${PI_PATH}'
