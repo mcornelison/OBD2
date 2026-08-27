@@ -103,7 +103,7 @@ configure_sparse_checkout() {
     echo "--- Step 0.9: Narrowing server checkout (sparse-checkout) ---"
 
     # git 2.25+ for cone mode; 2.47 is on chi-srv-01. Refuse rather than guess.
-    if ! ssh $HOST "cd $PROJECT && git sparse-checkout set --cone src/server src/common deploy 2>&1"; then
+    if ! ssh $HOST "cd $PROJECT && git sparse-checkout set --cone src/server src/common deploy scripts 2>&1"; then
         echo "ERROR: sparse-checkout failed on the server." >&2
         echo "  The clone is unchanged; nothing was removed. Check git version (needs 2.25+):" >&2
         echo "    ssh $HOST 'git --version'" >&2
@@ -113,12 +113,15 @@ configure_sparse_checkout() {
     # Absence must be loud. A too-narrow cone removes files the service imports,
     # and uvicorn would fail at import time with a traceback that looks like a
     # code bug rather than a deploy-scope bug. Verify before moving on.
-    local required="src/__init__.py src/server/main.py src/common config.json requirements.txt requirements-server.txt deploy/obd-server.service"
-    local missing
-    missing=$(ssh $HOST "cd $PROJECT && for f in $required; do [ -e \"\$f\" ] || echo \"\$f\"; done")
-    if [ -n "$missing" ]; then
-        echo "ERROR: sparse-checkout removed files the server needs:" >&2
-        echo "$missing" | sed 's/^/    /' >&2
+    # Verify by IMPORTING THE APP, not by listing paths. A hand-written path list
+    # is only as good as its author's guess: the first version of this check named
+    # 7 paths derived from the unit files and this script, and missed scripts/ --
+    # which src/server/services/release_reader.py imports at module load. The cone
+    # looked verified and uvicorn died on ModuleNotFoundError at restart.
+    # The import exercises every real dependency, including ones nobody remembered.
+    if ! ssh $HOST "cd $PROJECT && PYTHONPATH=$PROJECT $REMOTE_VENV/bin/python -c 'import src.server.main'" ; then
+        echo "ERROR: the narrowed checkout cannot import src.server.main." >&2
+        echo "  The cone is missing something the app imports (see the traceback above)." >&2
         echo "  Restore the full tree with: ssh $HOST 'cd $PROJECT && git sparse-checkout disable'" >&2
         exit 1
     fi
