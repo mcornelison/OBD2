@@ -144,6 +144,13 @@ offices/
 # PM tool cluster, moved out of offices/pm/scripts/ in the offices decouple).
 tools/*
 !tools/pm/
+# tools/fleet/ is first-party too: New-Bench.ps1 and Invoke-FleetMerge.ps1.
+# They lived at C:gents\_fleet\scripts -- outside the repo, outside the
+# share, unversioned, and named by CLAUDE.md's Bench Discipline section
+# without ANY file telling an agent where they were. Spool went to lease a
+# bench on 2026-08-27 and correctly reported the documented procedure had no
+# implementation on disk. In the repo they are versioned and reachable.
+!tools/fleet/
 
 # Claude settings (local only)
 .claude/settings.local.json

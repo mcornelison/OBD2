@@ -75,9 +75,23 @@ C:\agents\OBD2v3\
 The agent offices are **not in this repo**. They live on the fleet share at
 `Z:\O\OBD2v3\offices` (`$FLEET_SHARE`), which is not version controlled.
 
-1. **Work only in your own bench.** `New-Bench.ps1 -Role <role> -Ticket <n>
-   -Slug <slug> -Surface <globs>` leases one. Run `.\bench.ps1` first — it exports
-   `PYTHONUTF8`, `FLEET_SHARE` and `OBD2_REPO_ROOT`. Never edit `trunk\`.
+1. **Work only in your own bench.** Lease one with the tooling in this repo at
+   `tools/fleet/` — it is versioned here precisely so the procedure below always
+   has an implementation you can reach:
+
+   ```powershell
+   powershell -File C:\agents\OBD2v3\trunk\tools\fleet\New-Bench.ps1 `
+       -Role <role> -Ticket <n> -Slug <slug> -Surface "src/pi/**","tests/pi/**"
+   ```
+
+   Then `cd` to the path it prints, run `.\bench.ps1` first — it exports
+   `PYTHONUTF8`, `FLEET_SHARE` and `OBD2_REPO_ROOT` — then start your session.
+   **Never edit `trunk\`.**
+
+   `-Ticket` is a **lease label**, not a user story number. It names the bench
+   directory and branch. Do NOT mint one from `pm/story_counter.json` — that
+   counter is the PM's and is for US- stories. Use the story/blocker id you were
+   given if you have one, or ask the PM for a label.
 
 2. **Your ticket declares a file SURFACE, and it is enforced.** Edit outside your
    declared globs and the integrator REJECTS the whole ticket — it does not merge

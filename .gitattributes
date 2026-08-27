@@ -52,3 +52,10 @@
 *.tar.gz binary
 *.gz binary
 *.exe binary
+
+# PowerShell scripts keep CRLF. Not cosmetic: Windows PowerShell 5.1 parses
+# these files as ANSI when the BOM/encoding is disturbed, and an em-dash then
+# becomes three cp1252 chars -- which broke quoting inside a double-quoted
+# string in Invoke-FleetMerge.ps1 on 2026-08-25 and produced a bogus
+# "missing Catch or Finally" parse error. Keep the bytes as authored.
+*.ps1 text eol=crlf
