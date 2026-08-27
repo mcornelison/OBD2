@@ -3236,7 +3236,7 @@ Tier-specific differences:
 | Concern | Pi (eclipse-obd) | Server (obd-server) |
 |---------|------------------|---------------------|
 | `After=` deps | `network.target bluetooth.target` | `network.target mariadb.service` |
-| Working directory | `/home/mcornelison/Projects/Eclipse-01` | `/mnt/projects/O/OBD2v2` |
+| Working directory | `/home/mcornelison/Projects/Eclipse-01` | `/home/mcornelison/obd2-server` |
 | Venv | `/home/mcornelison/obd2-venv` | `/home/mcornelison/obd2-server-venv` |
 | ExecStart | `python src/pi/main.py` | `uvicorn src.server.main:app --host 0.0.0.0 --port 8000` |
 | Display env | DISPLAY/XAUTHORITY/SDL_VIDEODRIVER (US-192) | n/a (headless) |
@@ -3288,9 +3288,9 @@ StartLimitBurst=10
 [Service]
 Type=simple
 User=mcornelison
-WorkingDirectory=/mnt/projects/O/OBD2v2
-EnvironmentFile=/mnt/projects/O/OBD2v2/.env
-Environment=PYTHONPATH=/mnt/projects/O/OBD2v2
+WorkingDirectory=/home/mcornelison/obd2-server
+EnvironmentFile=/home/mcornelison/obd2-server/.env
+Environment=PYTHONPATH=/home/mcornelison/obd2-server
 Environment=PYTHONUNBUFFERED=1
 ExecStart=/home/mcornelison/obd2-server-venv/bin/uvicorn src.server.main:app --host 0.0.0.0 --port 8000
 Restart=always
@@ -4662,7 +4662,7 @@ stamps a JSON record onto the deployed tier:
 | Tier | Path |
 |------|------|
 | Pi   | `/home/mcornelison/Projects/Eclipse-01/.deploy-version` |
-| Server | `/mnt/projects/O/OBD2v2/.deploy-version` |
+| Server | `/home/mcornelison/obd2-server/.deploy-version` |
 
 Record shape: `{version, releasedAt, gitHash, description}`. `releasedAt` is
 UTC ISO-8601 with `T` separator + `Z` suffix (e.g.,

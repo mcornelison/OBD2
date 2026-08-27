@@ -294,7 +294,7 @@ bash deploy/deploy-server.sh --init
 
 # 2. Capture the server-side key so you can paste it into the Pi.
 #    (One-time; this is the only time the key appears on stdout.)
-ssh mcornelison@chi-srv-01 "grep '^API_KEY=' /mnt/projects/O/OBD2v2/.env"
+ssh mcornelison@chi-srv-01 "grep '^API_KEY=' /home/mcornelison/obd2-server/.env"
 
 # 3. Initialize the Pi.
 bash deploy/deploy-pi.sh --init
@@ -2452,7 +2452,7 @@ root:
 | Tier | Path |
 |------|------|
 | Pi   | `/home/mcornelison/Projects/Eclipse-01/.deploy-version` |
-| Server | `/mnt/projects/O/OBD2v2/.deploy-version` |
+| Server | `/home/mcornelison/obd2-server/.deploy-version` |
 
 Read it directly (returns one JSON object on a single line):
 
@@ -2462,7 +2462,7 @@ ssh chi-eclipse-01 'cat /home/mcornelison/Projects/Eclipse-01/.deploy-version'
 # {"version": "V0.18.0", "releasedAt": "2026-04-30T14:32:00Z", "gitHash": "abc1234", "description": "..."}
 
 # Server
-ssh chi-srv-01 'cat /mnt/projects/O/OBD2v2/.deploy-version'
+ssh chi-srv-01 'cat /home/mcornelison/obd2-server/.deploy-version'
 ```
 
 Or programmatically from any Python context (validates shape; returns `None`

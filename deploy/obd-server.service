@@ -30,7 +30,7 @@
 #                                    deploy/obd2-server.service used the wrong
 #                                    name; TD-037 flagged for cleanup).
 #   * User=mcornelison            -- never root. Mirrors Pi tier.
-#   * EnvironmentFile=/mnt/projects/O/OBD2v2/.env
+#   * EnvironmentFile=/home/mcornelison/obd2-server/.env
 #                                 -- secrets stay in the .env (DATABASE_URL,
 #                                    API_KEY); the unit references the file but
 #                                    holds no inlined secrets.
@@ -76,17 +76,17 @@ Type=simple
 
 User=mcornelison
 
-WorkingDirectory=/mnt/projects/O/OBD2v2
+WorkingDirectory=/home/mcornelison/obd2-server
 
 # Environment from the .env (DATABASE_URL, API_KEY). The .env is owned by
 # mcornelison with chmod 600; systemd reads it as the User= principal at
 # service start time. Any rotation of secrets is a .env edit + systemctl
 # restart away -- the unit itself never changes for that.
-EnvironmentFile=/mnt/projects/O/OBD2v2/.env
+EnvironmentFile=/home/mcornelison/obd2-server/.env
 
 # PYTHONPATH lets uvicorn import src.* from the WorkingDirectory. PYTHONUNBUFFERED
 # keeps stdout/stderr line-flushed so journalctl tails are usable.
-Environment=PYTHONPATH=/mnt/projects/O/OBD2v2
+Environment=PYTHONPATH=/home/mcornelison/obd2-server
 Environment=PYTHONUNBUFFERED=1
 
 # uvicorn bound to 0.0.0.0:8000 -- Pi at 10.27.27.28 reaches it via

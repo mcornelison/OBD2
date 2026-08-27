@@ -25,7 +25,7 @@ set -euo pipefail
 # b044-exempt: operator default only; PROD_DB_HOST overrides. Hostname (not
 # IP) so ssh config remains the acquisition point.
 HOST="${PROD_DB_HOST:-mcornelison@chi-srv-01}"  # b044-exempt: operator default; env overrides
-PROJECT="${PROD_DB_PROJECT:-/mnt/projects/O/OBD2v2}"
+PROJECT="${PROD_DB_PROJECT:-/home/mcornelison/obd2-server}"
 VENV="${PROD_DB_VENV:-/home/mcornelison/obd2-server-venv}"
 
 if [[ "${1:-}" == "--file" ]]; then

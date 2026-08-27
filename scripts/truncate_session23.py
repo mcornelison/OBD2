@@ -277,7 +277,7 @@ def loadServerCreds(
     # Read the project .env on the server; DATABASE_URL follows the
     # SQLAlchemy aiomysql form: mysql+aiomysql://USER:PASS@HOST/DB.
     script = (
-        "grep '^DATABASE_URL=' /mnt/projects/O/OBD2v2/.env | "
+        "grep '^DATABASE_URL=' /home/mcornelison/obd2-server/.env | "
         "head -1 | cut -d= -f2-"
     )
     result = runner(['ssh', remote, script])

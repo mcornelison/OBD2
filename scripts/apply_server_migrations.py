@@ -53,7 +53,7 @@ Run from the project root:
     python scripts/apply_server_migrations.py --execute
 
 Both modes require SSH reachability to ``SERVER_HOST`` (chi-srv-01).  The
-server DSN is read from ``/mnt/projects/O/OBD2v2/.env`` over SSH so the
+server DSN is read from ``/home/mcornelison/obd2-server/.env`` over SSH so the
 MariaDB password never leaves the server host.
 
 Intent: after this lands, US-205 --execute runs clean (data_source filters
@@ -463,7 +463,7 @@ def loadServerCreds(
 
     remote = f'{addrs.serverUser}@{addrs.serverHost}'
     script = (
-        "grep '^DATABASE_URL=' /mnt/projects/O/OBD2v2/.env | "
+        "grep '^DATABASE_URL=' /home/mcornelison/obd2-server/.env | "
         "head -1 | cut -d= -f2-"
     )
     result = runner(['ssh', remote, script])

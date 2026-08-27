@@ -608,7 +608,7 @@
       "serverUser": "mcornelison",
       "serverPort": 8000,
       "serverHostname": "chi-srv-01",
-      "serverProjectPath": "/mnt/projects/O/OBD2v2"
+      "serverProjectPath": "/home/mcornelison/obd2-server"
     },
     "ai": {
       "enabled": false,

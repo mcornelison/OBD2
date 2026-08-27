@@ -196,7 +196,7 @@ Server deploy is unattended via `/etc/sudoers.d/obd2-deploy` (Sprint 22 fix). Wa
 
 ```bash
 ssh mcornelison@chi-eclipse-01 "cat /home/mcornelison/Projects/Eclipse-01/.deploy-version"
-ssh mcornelison@chi-srv-01 "cat /mnt/projects/O/OBD2v2/.deploy-version && systemctl is-active obd-server.service"
+ssh mcornelison@chi-srv-01 "cat /home/mcornelison/obd2-server/.deploy-version && systemctl is-active obd-server.service"
 ```
 
 Both should show new V0.X.Y + new gitHash (matching `git rev-parse dev`) + service active.

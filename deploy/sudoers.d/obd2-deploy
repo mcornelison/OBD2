@@ -11,7 +11,7 @@
 # still requires interactive sudo password. To grant a new command,
 # add the absolute path here in lock-step with the deploy script change.
 
-mcornelison ALL=(root) NOPASSWD: /usr/bin/install -m 644 /mnt/projects/O/OBD2v2/deploy/obd-server.service /etc/systemd/system/obd-server.service
+mcornelison ALL=(root) NOPASSWD: /usr/bin/install -m 644 /home/mcornelison/obd2-server/deploy/obd-server.service /etc/systemd/system/obd-server.service
 mcornelison ALL=(root) NOPASSWD: /usr/bin/systemctl daemon-reload
 mcornelison ALL=(root) NOPASSWD: /usr/bin/systemctl enable obd-server.service
 mcornelison ALL=(root) NOPASSWD: /usr/bin/systemctl restart obd-server.service

@@ -33,7 +33,7 @@
 
 [Unit]
 Description=OBD2v2 server-side drive analytics recompute (US-350 / B-104 Step 1a)
-Documentation=file:///mnt/projects/O/OBD2v2/src/server/cli/recompute_drive_analytics.py
+Documentation=file:///home/mcornelison/obd2-server/src/server/cli/recompute_drive_analytics.py
 After=network.target mariadb.service obd-server.service
 Wants=mariadb.service
 
@@ -47,13 +47,13 @@ Type=oneshot
 
 User=mcornelison
 
-WorkingDirectory=/mnt/projects/O/OBD2v2
+WorkingDirectory=/home/mcornelison/obd2-server
 
 # Environment from the .env (DATABASE_URL).  Same EnvironmentFile the
 # main obd-server.service reads from; keeps secret rotation in one place.
-EnvironmentFile=/mnt/projects/O/OBD2v2/.env
+EnvironmentFile=/home/mcornelison/obd2-server/.env
 
-Environment=PYTHONPATH=/mnt/projects/O/OBD2v2
+Environment=PYTHONPATH=/home/mcornelison/obd2-server
 Environment=PYTHONUNBUFFERED=1
 
 ExecStart=/home/mcornelison/obd2-server-venv/bin/python -m src.server.cli.recompute_drive_analytics --all-stale

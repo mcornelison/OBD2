@@ -4,7 +4,7 @@
 #                      US-231 (Sprint 18) creates the chi-srv-01 systemd unit
 #                      mirroring eclipse-obd.service: Restart=always, RestartSec=5,
 #                      After=network.target mariadb.service, User=mcornelison,
-#                      EnvironmentFile=/mnt/projects/O/OBD2v2/.env, ExecStart with
+#                      EnvironmentFile=/home/mcornelison/obd2-server/.env, ExecStart with
 #                      the absolute server-venv uvicorn path. These tests pin the
 #                      invariants so a future edit cannot silently regress (e.g.,
 #                      drop Restart=always, hardcode secrets, lose the EnvironmentFile,
@@ -83,7 +83,7 @@ def test_obdServerService_workingDirectoryMatchesServerPath():
     wd = re.search(r"^WorkingDirectory=(.+)$", text, re.MULTILINE)
     assert wd is not None, "Missing WorkingDirectory= directive"
     # Pinned to the SERVER_PROJECT_PATH default in deploy/addresses.sh.
-    assert wd.group(1).strip() == "/mnt/projects/O/OBD2v2", (
+    assert wd.group(1).strip() == "/home/mcornelison/obd2-server", (
         f"WorkingDirectory must match SERVER_PROJECT_PATH: {wd.group(1)!r}"
     )
 
@@ -93,7 +93,7 @@ def test_obdServerService_environmentFileSetToServerEnv():
     text = _serviceText()
     envFile = re.search(r"^EnvironmentFile=(.+)$", text, re.MULTILINE)
     assert envFile is not None, "Missing EnvironmentFile= directive"
-    assert envFile.group(1).strip() == "/mnt/projects/O/OBD2v2/.env", (
+    assert envFile.group(1).strip() == "/home/mcornelison/obd2-server/.env", (
         f"EnvironmentFile must reference the server .env: {envFile.group(1)!r}"
     )
 

@@ -9,8 +9,8 @@
 #
 # Prerequisites:
 #   - SSH access to chi-srv-01 as mcornelison
-#   - Project cloned at /mnt/projects/O/OBD2v2
-#   - .env file configured at /mnt/projects/O/OBD2v2/.env
+#   - Project cloned at /home/mcornelison/obd2-server
+#   - .env file configured at /home/mcornelison/obd2-server/.env
 #   - MariaDB running with obd2db database and obd2 user created
 #
 # What this script does:

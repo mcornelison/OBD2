@@ -43,7 +43,7 @@ SERVER_HOST="${SERVER_HOST:-10.27.27.120}"
 SERVER_USER="${SERVER_USER:-mcornelison}"
 SERVER_PORT="${SERVER_PORT:-8000}"
 SERVER_HOSTNAME="${SERVER_HOSTNAME:-chi-srv-01}"
-SERVER_PROJECT_PATH="${SERVER_PROJECT_PATH:-/mnt/projects/O/OBD2v2}"
+SERVER_PROJECT_PATH="${SERVER_PROJECT_PATH:-/home/mcornelison/obd2-server}"
 SERVER_BASE_URL="${SERVER_BASE_URL:-http://${SERVER_HOST}:${SERVER_PORT}}"
 
 # ----------------------------------------------------------------------------
