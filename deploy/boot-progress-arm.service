@@ -46,6 +46,11 @@ Before=eclipse-obd.service
 
 [Service]
 Type=oneshot
+# systemd defaults TimeoutStartSec to INFINITY for Type=oneshot, so an
+# unbounded hang holds a start job forever and blocks every unit ordered
+# After= this one. Ceiling: reads the DB + writes one trail file; sub-second healthy, but it touches I2C via the arm path.
+# (2026-08-27: drain-forensics.service hung ~4h this way and hung the deploy.)
+TimeoutStartSec=60s
 RemainAfterExit=yes
 User=mcornelison
 WorkingDirectory=/home/mcornelison/Projects/Eclipse-01

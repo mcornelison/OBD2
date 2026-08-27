@@ -51,6 +51,12 @@ ConditionPathExists=/etc/default/obdlink
 
 [Service]
 Type=oneshot
+# systemd defaults TimeoutStartSec to INFINITY for Type=oneshot, so an
+# unbounded hang holds a start job forever and blocks every unit ordered
+# After= this one. 120s because binding an rfcomm channel to the OBDLink over
+# Bluetooth is genuinely slow AND genuinely hangs when the dongle is asleep.
+# (2026-08-27: drain-forensics.service hung ~4h unbounded and hung the deploy.)
+TimeoutStartSec=120s
 RemainAfterExit=yes
 
 # Source MAC / channel from an operator-managed env file. Rebooting the Pi

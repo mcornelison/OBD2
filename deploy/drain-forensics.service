@@ -53,6 +53,16 @@ After=network.target
 [Service]
 # Type=oneshot: the script writes one row + exits.  No long-running daemon.
 Type=oneshot
+# TimeoutStartSec is MANDATORY here. systemd's default start timeout for
+# Type=oneshot is INFINITY, so a single hung invocation holds a `start` job
+# forever -- and anything ordered After=drain-forensics.service then waits
+# forever too. That is not theoretical: on 2026-08-27 this unit hung for ~4
+# hours after the UPS HAT's fuel gauge (0x36) stopped answering on wall power.
+# It blocked boot-progress-finalize.service, which blocked
+# `systemctl enable --now` in deploy-pi.sh, which hung the DEPLOY. The timer
+# fires every 5s, so a healthy run finishes in well under a second; 30s is a
+# generous ceiling that still converts a hang into a loud failed unit.
+TimeoutStartSec=30s
 
 # Run as the same user as the main eclipse-obd service so file ownership of
 # /var/log/eclipse-obd/drain-forensics-*.csv is consistent with the rest of

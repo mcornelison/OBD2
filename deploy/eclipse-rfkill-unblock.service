@@ -77,6 +77,11 @@ Before=rfcomm-bind.service eclipse-obd.service
 
 [Service]
 Type=oneshot
+# systemd defaults TimeoutStartSec to INFINITY for Type=oneshot, so an
+# unbounded hang holds a start job forever and blocks every unit ordered
+# After= this one. Ceiling: a couple of rfkill calls; anything slower means the radio stack is wedged.
+# (2026-08-27: drain-forensics.service hung ~4h this way and hung the deploy.)
+TimeoutStartSec=30s
 ExecStart=/usr/sbin/rfkill unblock all
 RemainAfterExit=yes
 

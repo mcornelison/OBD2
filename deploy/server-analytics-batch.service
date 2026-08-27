@@ -45,6 +45,11 @@ StartLimitBurst=3
 [Service]
 Type=oneshot
 
+# systemd defaults TimeoutStartSec to INFINITY for Type=oneshot, so an
+# unbounded hang holds a start job forever and blocks every unit ordered
+# After= this one. Ceiling: recomputes analytics across every stale drive; long by design.
+# (2026-08-27: drain-forensics.service hung ~4h this way and hung the deploy.)
+TimeoutStartSec=45min
 User=mcornelison
 
 WorkingDirectory=/home/mcornelison/obd2-server

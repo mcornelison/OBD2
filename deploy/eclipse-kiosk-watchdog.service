@@ -71,6 +71,11 @@ Documentation=file:///home/mcornelison/Projects/Eclipse-01/src/pi/display/kiosk_
 # One decision per fire; no daemon to keep alive.
 Type=oneshot
 
+# systemd defaults TimeoutStartSec to INFINITY for Type=oneshot, so an
+# unbounded hang holds a start job forever and blocks every unit ordered
+# After= this one. Ceiling: probes chromium and may restart eclipse-dashboard; a wedged restart must not pin a start job.
+# (2026-08-27: drain-forensics.service hung ~4h this way and hung the deploy.)
+TimeoutStartSec=60s
 User=mcornelison
 
 # Read eclipse-dashboard's journal without root.
