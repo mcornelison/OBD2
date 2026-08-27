@@ -471,7 +471,9 @@ echo ""
 # gitHash overwrites with a refreshed releasedAt.
 echo "--- Step 5.5: Writing .deploy-version on server (US-241) ---"
 LOCAL_REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-if [ -d "$LOCAL_REPO_ROOT/.git" ]; then
+# NOT `[ -d .git ]`: a git WORKTREE has .git as a FILE, not a directory. See the
+# matching note in deploy-pi.sh -- same silent "unknown" gitHash.
+if git -C "$LOCAL_REPO_ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
     GIT_HASH=$(git -C "$LOCAL_REPO_ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)
 else
     GIT_HASH="unknown"

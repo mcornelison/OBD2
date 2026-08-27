@@ -3,11 +3,13 @@ name: init-ralph
 description: "Use at start of a Ralph development session to load project context, session handoff, and agent instructions. Loads minimum context first, then on-demand."
 ---
 
-> **If `$FLEET_SHARE` is not set in your shell**, the fleet share is
-> `Z:\O\OBD2v3\offices` — use that literal path and carry on. Do NOT guess a
-> path, and do NOT fall back to `Z:\O\OBD2v2`, which is the frozen pre-migration
-> copy. `$FLEET_SHARE` is exported by a bench's `bench.ps1`; a plain interactive
-> session started from an office does not have it.
+> **Paths — read `..\fleet.md` first** (one level up from your office). It is the
+> single source for where the repo, board, memory and fact index live, and it is
+> GENERATED from `fleet.json`, so it cannot drift from the real layout. It needs
+> no environment variable: `$FLEET_SHARE` is exported only by a bench's
+> `bench.ps1`, so an interactive office session will not have it and does not
+> need it. Never fall back to `Z:\O\OBD2v2` — that is the frozen pre-migration
+> tree, and it boots successfully on months-old content.
 
 # Ralph Session Startup
 

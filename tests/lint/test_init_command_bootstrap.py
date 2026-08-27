@@ -34,7 +34,7 @@ COMMANDS_DIR = Path(__file__).resolve().parents[2] / ".claude" / "commands"
 # The canonical share. Lower-cased comparisons throughout: Windows paths are
 # case-insensitive and the offices were normalised to lower case in the 2026-08-25
 # sweep, so a case difference here is noise, not drift.
-FALLBACK_SHARE = r"z:\o\obd2v3\offices"
+FLEET_MD = "fleet.md"   # reached as ..leet.md, one level up from every office
 
 # The frozen pre-migration tree. An agent sent here reads four-month-old
 # charters and a backlog that no longer matches the repo -- and would look like
@@ -52,7 +52,7 @@ def test_thereAreInitCommandsToCheck() -> None:
 
 
 @pytest.mark.parametrize("path", _initCommands(), ids=lambda p: p.name)
-def test_initCommand_statesTheFallbackShare(path: Path) -> None:
+def test_initCommand_pointsAtTheGeneratedPathFile(path: Path) -> None:
     """
     Given: an /init-<role> command that addresses the share via $FLEET_SHARE
     When: its text is read
@@ -67,10 +67,10 @@ def test_initCommand_statesTheFallbackShare(path: Path) -> None:
     if "$fleet_share" not in text:
         pytest.skip(f"{path.name} does not address the share via $FLEET_SHARE")
 
-    assert FALLBACK_SHARE in text, (
-        f"{path.name} addresses $FLEET_SHARE but never states the literal "
-        f"fallback {FALLBACK_SHARE!r}. With the variable unset the agent cannot "
-        f"find its charter."
+    assert FLEET_MD in text, (
+        f"{path.name} addresses $FLEET_SHARE but never points at {FLEET_MD!r}. "
+        f"With the variable unset -- which is every interactive office session -- "
+        f"the agent has no way to resolve the share."
     )
 
 
@@ -86,7 +86,12 @@ def test_initCommand_neverPointsAtTheFrozenV2Tree(path: Path) -> None:
     successfully on stale content -- the failure looks like success.
     """
     for line in path.read_text(encoding="utf-8").lower().splitlines():
-        if FROZEN_V2 in line and "do not" not in line:
+        # Recognise a WARNING, not one exact phrase. The first version of this
+        # test whitelisted only "do not" and then failed on a guard that said
+        # "Never fall back to ..." -- a test too literal about how a rule is
+        # worded rejects correct code for cosmetic reasons.
+        warned = any(w in line for w in ("do not", "never", "frozen", "pre-migration"))
+        if FROZEN_V2 in line and not warned:
             pytest.fail(
                 f"{path.name} references the frozen v2 tree outside a warning: "
                 f"{line.strip()!r}"

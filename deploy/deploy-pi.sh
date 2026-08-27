@@ -1845,7 +1845,11 @@ step_write_deploy_version() {
         return 0
     fi
     local gitHash
-    if [ -d "$REPO_ROOT/.git" ]; then
+    # NOT `[ -d .git ]`: trunk\ is a git WORKTREE, where .git is a FILE holding
+    # "gitdir: ...", not a directory. That check silently failed after the v3
+    # move and every deploy since has stamped gitHash "unknown" -- so nobody
+    # could tell what code was on the car. rev-parse works in both layouts.
+    if git -C "$REPO_ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
         gitHash=$(git -C "$REPO_ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)
     else
         gitHash="unknown"
