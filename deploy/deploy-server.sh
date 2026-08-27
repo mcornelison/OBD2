@@ -83,6 +83,55 @@ echo "Host: ${SERVER_USER}@${SERVER_HOST} (${SERVER_HOSTNAME})"
 echo "Project: $PROJECT"
 echo ""
 
+# Step 0.9: Narrow the server checkout to what the server actually RUNS.
+#
+# The server is an appliance, not a workshop. Before this, its clone carried the
+# whole repo -- 275 MB of working tree, of which 75 MB was offices/, 39 MB tests,
+# 21 MB specs, 18 MB tools. None of it is imported by src.server.main, and none
+# of it is read at runtime. Tests stay VERSION-LOCKED in git (they are gates and
+# must match the commit they validate); they simply do not need to be ON the box.
+#
+# cone mode is used deliberately: it keeps every file in the ROOT (config.json,
+# requirements*.txt, .deploy-version) and every file in the parent dirs of the
+# listed paths (so src/__init__.py survives), which is exactly the set the unit
+# files and this script read. src/server/migrations rides along under src/server.
+#
+# Untracked files are NOT touched by sparse-checkout, so .env stays put.
+#
+# Idempotent: re-running reapplies the same set. Safe to run before every pull.
+configure_sparse_checkout() {
+    echo "--- Step 0.9: Narrowing server checkout (sparse-checkout) ---"
+
+    # git 2.25+ for cone mode; 2.47 is on chi-srv-01. Refuse rather than guess.
+    if ! ssh $HOST "cd $PROJECT && git sparse-checkout set --cone src/server src/common deploy 2>&1"; then
+        echo "ERROR: sparse-checkout failed on the server." >&2
+        echo "  The clone is unchanged; nothing was removed. Check git version (needs 2.25+):" >&2
+        echo "    ssh $HOST 'git --version'" >&2
+        exit 1
+    fi
+
+    # Absence must be loud. A too-narrow cone removes files the service imports,
+    # and uvicorn would fail at import time with a traceback that looks like a
+    # code bug rather than a deploy-scope bug. Verify before moving on.
+    local required="src/__init__.py src/server/main.py src/common config.json requirements.txt requirements-server.txt deploy/obd-server.service"
+    local missing
+    missing=$(ssh $HOST "cd $PROJECT && for f in $required; do [ -e \"\$f\" ] || echo \"\$f\"; done")
+    if [ -n "$missing" ]; then
+        echo "ERROR: sparse-checkout removed files the server needs:" >&2
+        echo "$missing" | sed 's/^/    /' >&2
+        echo "  Restore the full tree with: ssh $HOST 'cd $PROJECT && git sparse-checkout disable'" >&2
+        exit 1
+    fi
+
+    echo "Server checkout narrowed; all required paths present."
+    ssh $HOST "cd $PROJECT && du -sh --exclude=.git . 2>/dev/null | sed 's/^/  working tree now: /'"
+    echo ""
+}
+
+if [ "$RESTART_ONLY" = false ]; then
+    configure_sparse_checkout
+fi
+
 # Step 1: Pull latest code
 if [ "$RESTART_ONLY" = false ]; then
     echo "--- Step 1: Pulling latest code ---"
