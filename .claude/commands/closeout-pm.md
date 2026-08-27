@@ -162,7 +162,7 @@ NOT committed (per Rule 8, sprint-close commits these):
 
 ### Push
 ```bash
-git -C /z/o/OBD2v2 push origin sprint/<current-sprint-branch>
+git -C /c/agents/OBD2v3/trunk push origin sprint/<current-sprint-branch>
 ```
 
 ### **NEVER MERGE TO MAIN MID-SPRINT**

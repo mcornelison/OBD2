@@ -108,7 +108,7 @@ def fixtureConn() -> sqlite3.Connection:
         )
     posix = FIXTURE_PATH.as_posix()
     if not posix.startswith('/'):
-        # Windows absolute path: Z:/o/OBD2v2/... -- prefix a slash so the
+        # Windows absolute path: C:/agents/OBD2v3/... -- prefix a slash so the
         # URI becomes file:///Z:/... (empty authority).  Without this the
         # URI parser treats "Z:" as authority and rejects it.
         posix = '/' + posix

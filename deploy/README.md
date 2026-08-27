@@ -54,7 +54,7 @@ bash deploy/deploy-pi.sh --restart
 ### Re-deploy in 30 seconds (operator quick-card)
 
 ```bash
-cd /z/o/OBD2v2          # or wherever your local clone lives
+cd /c/agents/OBD2v3/trunk   # the trunk worktree (see fleet.json)
 bash deploy/deploy-pi.sh
 ```
 
