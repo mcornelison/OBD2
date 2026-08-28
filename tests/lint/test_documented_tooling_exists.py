@@ -32,7 +32,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 CLAUDE_MD = REPO_ROOT / "CLAUDE.md"
 FLEET_TOOLS = REPO_ROOT / "tools" / "fleet"
 
-REQUIRED_SCRIPTS = ["New-Bench.ps1", "Invoke-FleetMerge.ps1"]
+REQUIRED_SCRIPTS = ["fleet.ps1", "New-Bench.ps1", "Invoke-FleetMerge.ps1"]
 
 
 @pytest.mark.parametrize("name", REQUIRED_SCRIPTS)

@@ -80,8 +80,12 @@ The agent offices are **not in this repo**. They live on the fleet share at
    has an implementation you can reach:
 
    ```powershell
-   powershell -File C:\agents\OBD2v3\trunk\tools\fleet\New-Bench.ps1 `
-       -Role <role> -Ticket <n> -Slug <slug> -Surface "src/pi/**","tests/pi/**"
+   # ONE entry point. Run it with no arguments for help.
+   .\tools\fleet\fleet.ps1 bench -Role <role> -Ticket <label> -Slug <slug> `
+       -Surface "src/pi/**","tests/pi/**"
+
+   .\tools\fleet\fleet.ps1 doctor    # is my environment sane? run this FIRST
+   .\tools\fleet\fleet.ps1 status    # what is leased, what is on the board
    ```
 
    Then `cd` to the path it prints, run `.\bench.ps1` first — it exports
