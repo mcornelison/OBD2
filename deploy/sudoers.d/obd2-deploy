@@ -1,6 +1,6 @@
 # /etc/sudoers.d/obd2-deploy
-# NOPASSWD sudo for OBD2v2 server deploy commands. Source-controlled at
-# deploy/sudoers.d/obd2-deploy in the OBD2v2 repo.
+# NOPASSWD sudo for OBD2 server deploy commands. Source-controlled at
+# deploy/sudoers.d/obd2-deploy in the OBD2 repo.
 #
 # Install once on chi-srv-01 (CIO live-prompt for password):
 #
@@ -10,6 +10,15 @@
 # Scope: only the commands deploy/deploy-server.sh runs. Anything else
 # still requires interactive sudo password. To grant a new command,
 # add the absolute path here in lock-step with the deploy script change.
+#
+# THESE RULES ARE PATH-EXACT. sudo matches the full command line, so moving the
+# source tree silently invalidates every `install` rule below and the deploy
+# falls back to a password prompt it cannot answer. That is exactly what
+# happened on 2026-08-27: c6953e57 moved the server deployment off the NAS
+# (/mnt/projects/O/OBD2v2/...) to local disk (/home/mcornelison/obd2-server/...),
+# the repo copy was updated to match, but the file installed on the box was not
+# -- and Step 4.8 stopped dead. If you move PROJECT, update every absolute path
+# here AND re-install this file on the server in the same change.
 
 mcornelison ALL=(root) NOPASSWD: /usr/bin/install -m 644 /home/mcornelison/obd2-server/deploy/obd-server.service /etc/systemd/system/obd-server.service
 mcornelison ALL=(root) NOPASSWD: /usr/bin/systemctl daemon-reload
@@ -17,3 +26,12 @@ mcornelison ALL=(root) NOPASSWD: /usr/bin/systemctl enable obd-server.service
 mcornelison ALL=(root) NOPASSWD: /usr/bin/systemctl restart obd-server.service
 mcornelison ALL=(root) NOPASSWD: /usr/bin/systemctl is-active obd-server.service
 mcornelison ALL=(root) NOPASSWD: /usr/bin/journalctl -u obd-server.service *
+
+# Step 4.8 -- server-analytics-batch unit + timer (US-350 / B-104 Step 1a).
+# Added to the REPO copy 2026-08-27. These three were previously hand-added
+# directly on chi-srv-01 during Session 42 and never source-controlled, so they
+# existed only on that one box, still carried the dead NAS path, and vanished
+# from the deploy's reach the moment PROJECT moved. Source-controlled now.
+mcornelison ALL=(root) NOPASSWD: /usr/bin/install -m 644 /home/mcornelison/obd2-server/deploy/server-analytics-batch.service /etc/systemd/system/server-analytics-batch.service
+mcornelison ALL=(root) NOPASSWD: /usr/bin/install -m 644 /home/mcornelison/obd2-server/deploy/server-analytics-batch.timer /etc/systemd/system/server-analytics-batch.timer
+mcornelison ALL=(root) NOPASSWD: /usr/bin/systemctl enable --now server-analytics-batch.timer
