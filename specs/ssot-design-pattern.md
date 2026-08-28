@@ -35,6 +35,11 @@ can only make about data that was *kept*. Had the magnetometer merely been publi
 reading would have overwritten the last and the defect would have been invisible — exactly as it was
 invisible on screen, where a frozen compass looks like a stationary one.
 
+> *Status of the example, 2026-08-28 (US-571).* **That acquisition defect was fixed by US-565** and the
+> channel now varies on the shipping code path. The example is retained because the rule it demonstrates
+> is what made the diagnosis possible — not as a statement about the magnetometer's present state.
+> Current status → `specs/grounded-knowledge.md` §Magnetic Heading (real, but uncalibrated).
+
 **Corollary — landing must not manufacture a reading.** "Land everything" means *never let acquired
 data evaporate*; it does NOT mean *write a row regardless*. If a read failed, or returned an implausible
 or invariant value, no value was acquired — land the **typed absence and its reason**, never a
@@ -295,6 +300,10 @@ magnetometer  :   1 distinct value       <- latched; bit-identical throughout
 ```
 
 Same die, same instant, same physical motion. **The noise floor IS the detector.**
+
+*(That 2026-08-20 capture is the evidence for the detector, not the channel's current state — US-565
+fixed the acquisition and the same test now reads 27 distinct mag_x values in 2,108 samples. The gate
+stays: it is what would catch a silent return of the defect.)*
 
 #### The property may live ACROSS samples, not IN one
 

@@ -351,6 +351,91 @@ The 2G Eclipse does not support PID 0x46 (ambient air temperature). Spool's Phas
 
 ---
 
+## Magnetic Heading (`headingDeg`) — REAL since US-565, but UNCALIBRATED
+
+> **Status 2026-08-28 (US-571).** This entry supersedes the 2026-08-20
+> fabricated-compass fact, which was correct when written and is no longer the
+> channel's current state. Both halves matter and neither survives alone: the
+> acquisition defect is **fixed**, and the bearing is **still uncalibrated**.
+
+### What US-565 fixed — acquisition
+
+The ICM-20948's AK09916 magnetometer is no longer read through the ICM's
+auxiliary-I²C shadow. It is read as its own I²C device at **0x0C** on the primary
+bus, with the aux master disabled and `INT_PIN_CFG.BYPASS_EN` set. The burst runs
+**ST1..ST2 inclusive**: the AK09916 loads a new measurement only once the previous
+one is released by a read extending through ST2, so a "tidier" 6-byte data-only
+read silently re-creates the original defect. That extent is pinned by test.
+
+**The channel varies now**, measured on the shipping code path (chi-eclipse-01,
+2026-08-21, 90 s stationary on the bench):
+
+```
+mag_x       :    27 distinct / 2,108 samples, 1,942 changes, DRDY set 2,108/2,108
+mag vectors :   350 distinct 3-vectors / 500 samples, longest bit-identical run 2
+old path    :     1 distinct / 20,000 samples        <- same chip, same day
+```
+
+Accel and gyro were never affected and are untouched — still read from the ICM at
+0x69, and bypass does not disturb them.
+
+### What is still NOT true — the bearing is uncalibrated
+
+From the same bench run:
+
+```
+mag = (-59.25, 67.95, -0.3) uT   ->   |B| ~= 90.2 uT
+Earth's total field at this latitude ~= 52 uT
+```
+
+The excess is a **hard-iron offset roughly the size of the field being measured** —
+expected, with the sensor sitting beside a display, a buck converter and vehicle
+steel. An offset that size does not shift a bearing by a few degrees; it can swing
+it by **tens of degrees**, and because the error is direction-dependent it does
+**not average out**. **No hard/soft-iron calibration has been performed** — owed,
+tracked as TD-087 → US-616.
+
+Two further limits, both by contract rather than by defect:
+
+* **Magnetic, not true.** No declination correction is applied; `headingDeg` is a
+  magnetic bearing (Atlas Q-A contract).
+* **Rendered to more precision than it has.** `imu_state_bridge` publishes
+  `headingDeg` rounded to **0.1°** (`_HEADING_DECIMALS = 1`) and the card renders
+  it that way. A tenth of a degree is a precision claim this measurement cannot
+  support: a bearing accurate to "roughly north-east" should not read `43.7`.
+
+**Trust the direction as an indication, not as an instrument.** Do not use
+`headingDeg` where an accurate absolute bearing is required until calibration
+lands.
+
+### Historical — drives ≤ 41 (this half of the old fact is STILL TRUE)
+
+Drives **≤ 41** were captured before the fix and carry a fabricated bearing.
+Discard `headingDeg`, the compass tape and the direction ribbon for all of them.
+Drive 40 alone held 29,148 samples at **1 distinct** magnetometer value while
+accel showed 1,292 distinct and `gyro_z` reached 7.5 rad/s — the car was turning
+and the compass was not. Nothing retroactively repairs those drives. The fixed
+acquisition reached the car with the **V0.29.30** Pi deploy, verified 2026-08-23.
+
+### Two things this entry does NOT license
+
+1. **Do not re-suppress `headingDeg`.** It is a real reading now, and hiding a real
+   measurement is the opposite failure to the one US-565 fixed. The open question
+   is how precisely to state the bearing, not whether to state it (TD-087).
+2. **Do not relax the bit-identity plausibility gate** on the magnetometer channel.
+   That gate is what would catch a silent return of the 2026-08-20 defect, and it
+   is why a channel that froze again would go typed-NA instead of onto the glass.
+
+**Provenance:** `src/pi/sensors/ak09916_bypass.py` module header (the full
+measurement trail) · `tests/fixtures/mag_bypass_90s_2026-08-21.csv` +
+`tests/fixtures/imu_stationary_90s_2026-08-21.csv` (both captures, each with its
+own provenance header) · `offices/ralph/scripts/characterize_magnetometer.py`
+(reproducible probe) · TD-087 (the calibration debt) ·
+`offices/architect/findings/2026-08-20-magnetometer-latched-heading-fabricated.md`
+(the original defect — superseded as current state, retained as the record).
+
+---
+
 ## Usage Rules
 
 1. **Never fabricate values.** If a threshold or range is not in this document or `specs/obd2-research.md`, the story is `blocked` until data is provided.
