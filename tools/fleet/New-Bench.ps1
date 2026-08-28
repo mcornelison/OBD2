@@ -26,6 +26,25 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+# --- normalise the surface -------------------------------------------------
+# The documented invocation is `powershell -File New-Bench.ps1 ... -Surface
+# "specs/**","docs/**"`. Under -File, arguments arrive as plain strings with NO
+# PowerShell array parsing, so a multi-glob surface collapses into ONE element:
+#   '"specs/**","docs/**"'
+# That element is then written verbatim to lease.json, and at merge time
+# Test-Surface compiles it to a regex that matches NOTHING -- so every changed
+# file reads as "outside surface" and the ENTIRE ticket is rejected. It fails
+# safe (rejects rather than admits) but the message is baffling: the agent is
+# told it edited outside a surface that visibly contains the file it edited.
+# Splitting on commas is safe -- a path glob never legitimately contains one.
+$Surface = @(
+  $Surface |
+    ForEach-Object { $_ -split ',' } |
+    ForEach-Object { $_.Trim().Trim('"').Trim("'").Trim() } |
+    Where-Object { $_ }
+)
+if (-not $Surface) { $Surface = @('**') }
+
 # Every office now uses claude.md (normalised 2026-08-25 -- previously a mix of
 # claude.md / CLAUDE.md / projectManager.md / tester.md, which was invisible on
 # case-insensitive Windows and would have broken on the share or any
@@ -78,7 +97,11 @@ foreach ($f in @('.env','deploy\deploy.conf')) {
 `$env:PYTHONUTF8 = '1'
 `$env:FLEET_SHARE = '$($cfg.share)\offices'
 `$env:OBD2_REPO_ROOT = '$wt'
-. '$wt\.venv\Scripts\Activate.ps1'
+if (Test-Path '$wt\.venv\Scripts\Activate.ps1') {
+  . '$wt\.venv\Scripts\Activate.ps1'
+} else {
+  Write-Warning 'No venv in this bench (leased with -SkipVenv). Python tooling and pytest will not work here.'
+}
 Set-Location '$wt'
 Write-Host 'Bench $name  |  branch $branch' -ForegroundColor Green
 Write-Host 'Surface: $($Surface -join ", ")' -ForegroundColor DarkGray
@@ -86,9 +109,20 @@ Write-Host 'Surface: $($Surface -join ", ")' -ForegroundColor DarkGray
 
 # --- 4. venv ---------------------------------------------------------------
 # Per-bench, not shared: ~6s warm, and sharing couples benches together.
-# NOTE: bare `uv venv` grabs CPython 3.14.7 and dies; --python 3.13 fails the
-# same way; the WindowsApps shim gives ModuleNotFoundError. Use the exact
-# invocation recorded in fleet.json.uvVenvCommand.
+# NOTE: bare `uv venv` grabs CPython 3.14.7 and dies; the WindowsApps shim gives
+# ModuleNotFoundError. Use the exact invocation recorded in
+# fleet.json.uvVenvCommand -- currently `uv venv --python 3.13`, verified working
+# 2026-08-27 by a live lease.
+#
+# This comment previously said "--python 3.13 fails the same way", which
+# contradicted fleet.json, where `uv venv --python 3.13` IS the recorded command.
+# Per fleet.json.uvVenvNotes that form failed ONLY while uv's managed python store
+# was corrupt ("Missing expected target directory for Python minor version link");
+# with the store deleted it resolves cleanly to the system interpreter. The stale
+# warning pointed the reader at the SSOT and then told them the SSOT was wrong --
+# an invitation to "fix" fleet.json and break the thing that works.
+# If it fails again: delete %APPDATA%\uv\python and re-run. Do NOT pin an absolute
+# interpreter path -- that is what broke here before.
 if (-not $SkipVenv) {
   Push-Location $wt
   try {
@@ -129,12 +163,40 @@ if ($Role -ne 'Integrator') {
   $imports += $ctx
 }
 # handbook.md is NOT auto-imported -- see the note in CLAUDE.local.md.
+# The board card is written HERE, once, with the full template. It used to be
+# written twice: a 3-line stub at this point (so the @import below was not
+# dangling), then the real template near the end of the script guarded by
+# `if (-not (Test-Path $wip))` on the SAME path. The stub always won, so the
+# template block was unreachable in every code path and every auto-created card
+# was three uninformative lines. No safety impact -- the surface is authoritative
+# in .fleet\lease.json and Invoke-FleetMerge reads it from there, not from this
+# markdown -- but the operator reviewing board\review\ got nothing to review.
+#
+# KEEP THE EMITTED TEMPLATE ASCII-ONLY. This file has no BOM, and the documented
+# invocation is `powershell -File` = Windows PowerShell 5.1, which reads a
+# BOM-less .ps1 as cp1252. The em-dash that used to be on the "# $Ticket" line
+# came out as "â€”" in the board card. It had never been seen because the block
+# was dead code -- making it reachable is what exposed it.
 $wipTicket = "$($cfg.share)\board\wip\$Ticket.md"
 if (-not (Test-Path $wipTicket)) {
-  Write-Warning "No ticket file at $wipTicket -- creating a stub so the import is not dangling."
+  Write-Warning "No ticket file at $wipTicket -- creating one from the lease so the import is not dangling."
   New-Item -ItemType Directory -Path (Split-Path $wipTicket) -Force | Out-Null
-  "# Ticket $Ticket`n`n(stub created at lease time -- no board item existed.)`n" |
-    Set-Content $wipTicket -Encoding UTF8
+@"
+# $Ticket - $Slug
+
+- role:     $Role
+- branch:   $branch
+- worktree: $wt
+- surface:
+$( ($Surface | ForEach-Object { "  - $_" }) -join "`n" )
+
+> Created at lease time -- no board item existed. The surface above is a copy for
+> humans; the authoritative copy is ``.fleet\lease.json`` in the bench.
+
+## Goal
+
+## Done when
+"@ | Set-Content $wipTicket -Encoding UTF8
 }
 $imports += $wipTicket
 foreach ($i in $imports) { if (-not (Test-Path $i)) { throw "Import target missing: $i" } }
@@ -185,23 +247,8 @@ try {
   }
 } finally { Pop-Location }
 
-$wip = Join-Path $cfg.share "board\wip\$Ticket.md"
-if (-not (Test-Path $wip)) {
-  New-Item -ItemType Directory -Path (Split-Path $wip) -Force | Out-Null
-@"
-# $Ticket — $Slug
-
-- role:     $Role
-- branch:   $branch
-- worktree: $wt
-- surface:
-$( ($Surface | ForEach-Object { "  - $_" }) -join "`n" )
-
-## Goal
-
-## Done when
-"@ | Set-Content $wip -Encoding UTF8
-}
+# (The board card is created earlier, at the import-resolution step, with this
+# same template. It is not written twice -- see the note there.)
 
 Write-Host "`nLeased $wt" -ForegroundColor Green
 Write-Host "  branch  : $branch"
