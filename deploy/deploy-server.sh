@@ -131,6 +131,49 @@ configure_sparse_checkout() {
     echo ""
 }
 
+# Purge stale Python bytecode on the server (US-553).
+#
+# This is the server half of the 2026-08-11 P0 (obd-server crash-loop,
+# ModuleNotFoundError: No module named 'common'). `git pull` updates tracked
+# .py files and NEVER removes untracked bytecode, so __pycache__ on the server
+# is only ever added to.
+#
+# Two mechanisms let stale bytecode outlive a fix -- both MEASURED 2026-08-28,
+# not assumed. An ordinary edit changes mtime or size and IS invalidated
+# correctly, so the folklore "a stale .pyc masks any fix" is false; these are
+# the two cases that actually bite:
+#   1. GHOST MODULE. A bare `foo.pyc` sitting where `foo.py` used to be is
+#      importable with NO source present -- CPython still registers
+#      SourcelessFileLoader for .pyc on the path hooks. This is the SERVER'S
+#      sharpest edge: Step 0.9 narrows the checkout with sparse-checkout, and
+#      sparse-checkout deliberately does not touch untracked files. The very
+#      property that keeps .env safe also strands every __pycache__ under a
+#      path that just left the cone.
+#   2. (mtime, size) COLLISION. __pycache__ entries are validated against the
+#      source's (mtime, size) PAIR, not a hash; an edit preserving both runs
+#      the old bytecode off the new file.
+#
+# Scoped to the two directories carrying shipped Python. The venv lives at
+# $REMOTE_VENV (/home/<user>/obd2-server-venv), OUTSIDE $PROJECT, so
+# site-packages bytecode is untouched and dependency import cost is unchanged.
+# Reports a count -- a silent purge is an unverifiable one.
+purge_stale_bytecode() {
+    echo "--- Step 1.5: Purging stale bytecode (US-553) ---"
+    ssh $HOST "
+        set -e
+        purged=0
+        for d in '$PROJECT/src' '$PROJECT/scripts'; do
+            [ -d \"\$d\" ] || continue
+            n=\$(find \"\$d\" \\( -type d -name '__pycache__' -o -type f -name '*.pyc' \\) -print | wc -l)
+            purged=\$((purged + n))
+            find \"\$d\" -type d -name '__pycache__' -prune -exec rm -rf {} +
+            find \"\$d\" -type f -name '*.pyc' -delete
+        done
+        echo \"Stale bytecode purged: \$purged path(s) removed under src/ + scripts/.\"
+    "
+    echo ""
+}
+
 if [ "$RESTART_ONLY" = false ]; then
     configure_sparse_checkout
 fi
@@ -140,6 +183,13 @@ if [ "$RESTART_ONLY" = false ]; then
     echo "--- Step 1: Pulling latest code ---"
     ssh $HOST "cd $PROJECT && git pull 2>&1"
     echo ""
+fi
+
+# Step 1.5 (US-553): purge stale bytecode AFTER the pull and long before the
+# Step 6 restart. Rationale on the function definition above. Skipped on
+# --restart, which ships no new code.
+if [ "$RESTART_ONLY" = false ]; then
+    purge_stale_bytecode
 fi
 
 # Step 2: Create venv if needed (--init or first run)
