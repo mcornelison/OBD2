@@ -132,7 +132,7 @@ class TestBackfillFillsNullColumns:
         assert result.complete is True
         with freshDb.connect() as conn:
             row = conn.execute(
-                f"SELECT ambient_temp_at_start_c, starting_battery_v, "
+                f"SELECT intake_air_temp_at_start_c, starting_battery_v, "
                 f"barometric_kpa_at_start FROM {DRIVE_SUMMARY_TABLE} "
                 f"WHERE drive_id = 3"
             ).fetchone()
@@ -161,7 +161,7 @@ class TestBackfillFillsNullColumns:
         assert result.complete is False  # ambient + baro still NULL
         with freshDb.connect() as conn:
             row = conn.execute(
-                f"SELECT ambient_temp_at_start_c, starting_battery_v, "
+                f"SELECT intake_air_temp_at_start_c, starting_battery_v, "
                 f"barometric_kpa_at_start FROM {DRIVE_SUMMARY_TABLE} "
                 f"WHERE drive_id = 4"
             ).fetchone()
@@ -198,7 +198,7 @@ class TestBackfillFillsNullColumns:
         assert result.complete is True
         with freshDb.connect() as conn:
             row = conn.execute(
-                f"SELECT ambient_temp_at_start_c, starting_battery_v, "
+                f"SELECT intake_air_temp_at_start_c, starting_battery_v, "
                 f"barometric_kpa_at_start FROM {DRIVE_SUMMARY_TABLE} "
                 f"WHERE drive_id = 5"
             ).fetchone()
@@ -247,7 +247,7 @@ class TestBackfillWarmRestartRule:
         assert result.complete is True
         with freshDb.connect() as conn:
             row = conn.execute(
-                f"SELECT ambient_temp_at_start_c, starting_battery_v, "
+                f"SELECT intake_air_temp_at_start_c, starting_battery_v, "
                 f"barometric_kpa_at_start FROM {DRIVE_SUMMARY_TABLE} "
                 f"WHERE drive_id = 6"
             ).fetchone()

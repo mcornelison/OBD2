@@ -41,7 +41,7 @@ At the moment the Pi collector promotes a drive from cranking to
 ``RUNNING``, three values are captured once and stamped against the
 drive:
 
-* ``ambient_temp_at_start_c`` -- IAT (PID 0x0F) at drive-start.
+* ``intake_air_temp_at_start_c`` -- IAT (PID 0x0F) at drive-start.
   Valid proxy for ambient ONLY on cold starts -- an engine that was
   already warm when the drive began leaves the intake heat-soaked and
   the reading is worthless.  The recorder takes ``fromState`` as an
@@ -162,11 +162,17 @@ CREATE TABLE IF NOT EXISTS drive_summary (
     drive_start_timestamp DATETIME NOT NULL
         DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
 
-    -- Ambient temperature proxy -- IAT at cold-start only.  NULL on
-    -- warm restarts is semantically important: Spool analytics treat
-    -- NULL as "ambient unknown" and skip the IAT-caution interpretation
-    -- that depends on it.
-    ambient_temp_at_start_c REAL,
+    -- Intake air temperature (PID 0x0F) at drive-start.  NOT ambient --
+    -- Spool DISPROVED the US-206 ambient proxy on 2026-08-20 with
+    -- moving-vehicle data: drive 41 ran 48.1 -> 40.6 C banded by road
+    -- speed, so it cools with airflow and never nears the 24-27 C real
+    -- ambient.  There is no ambient source on this car; the honest
+    -- answer is "unknown", not a proxy.  Renamed from
+    -- ``ambient_temp_at_start_c`` to match the server (US-563 / F-134)
+    -- and close the A-4 parity gap -- see _migrateIntakeAirColumn.
+    -- NULL on warm restarts stays semantically important: analytics
+    -- treat NULL as "not measured" and skip the interpretation.
+    intake_air_temp_at_start_c REAL,
 
     -- Battery voltage via ELM_VOLTAGE (ATRV) at key-on, pre-cranking.
     -- Nullable because the ELM may return a null response on the
@@ -213,7 +219,7 @@ class DriveSummary:
 
     driveId: int
     driveStartTimestamp: str | None = None
-    ambientTempAtStartC: float | None = None
+    intakeAirTempAtStartC: float | None = None
     startingBatteryV: float | None = None
     barometricKpaAtStart: float | None = None
     dataSource: str = 'real'
@@ -337,7 +343,7 @@ def buildSummaryFromSnapshot(
     return DriveSummary(
         driveId=driveId,
         driveStartTimestamp=None,  # DB default supplies canonical ISO UTC
-        ambientTempAtStartC=ambient,
+        intakeAirTempAtStartC=ambient,
         startingBatteryV=_readFloat(snap, _PARAM_BATTERY_V),
         barometricKpaAtStart=_readFloat(snap, _PARAM_BAROMETRIC_KPA),
         dataSource=dataSource,
@@ -386,7 +392,7 @@ def _hasRelevantPayload(summary: DriveSummary) -> bool:
     (the IAT gets filtered out in :func:`buildSummaryFromSnapshot`).
     """
     return (
-        summary.ambientTempAtStartC is not None
+        summary.intakeAirTempAtStartC is not None
         or summary.startingBatteryV is not None
         or summary.barometricKpaAtStart is not None
     )
@@ -405,15 +411,97 @@ def _tableExists(conn: sqlite3.Connection, tableName: str) -> bool:
     return row is not None
 
 
+#: Pre-rename spelling of the intake-air column.  Kept as a constant because
+#: the migration must recognise it on a live database forever -- a Pi restored
+#: from an old backup still arrives in this shape.
+LEGACY_INTAKE_AIR_COLUMN: str = 'ambient_temp_at_start_c'
+
+#: Post-rename spelling.  Matches the server column (US-563 / F-134) so the
+#: Pi's wire surface and the server's schema agree -- which is what the A3
+#: assertion in ``scripts/audit_sync_contract_parity.py`` requires.
+INTAKE_AIR_COLUMN: str = 'intake_air_temp_at_start_c'
+
+
+def _appliedColumns(conn: sqlite3.Connection, tableName: str) -> list[str]:
+    """Column names as the DATABASE reports them.
+
+    Deliberately reads ``PRAGMA table_info`` rather than trusting
+    :data:`SCHEMA_DRIVE_SUMMARY`.  The constant describes what we WANT;
+    only the pragma knows what is actually there, and the gap between
+    those two is the entire A-10 bug class (BL-019/020/021, US-459).
+    """
+    return [
+        row[1]
+        for row in conn.execute(f'PRAGMA table_info({tableName})').fetchall()
+    ]
+
+
+def _migrateIntakeAirColumn(conn: sqlite3.Connection) -> bool:
+    """Rename ``ambient_temp_at_start_c`` -> ``intake_air_temp_at_start_c``.
+
+    Returns ``True`` if a rename was performed, ``False`` if there was
+    nothing to do.  Caller owns commit.
+
+    WHY THIS EXISTS
+    ---------------
+    :func:`ensureDriveSummaryTable` issues ``CREATE TABLE IF NOT EXISTS``,
+    which is a **silent no-op** on a database where the table already
+    exists.  So renaming the column in the schema constant alone would
+    leave every live Pi behind: the table keeps the old column, and the
+    renamed INSERT/SELECT/UPDATE raise ``no such column`` -- drive-summary
+    capture dies on the car while every fresh-DB unit test stays green.
+    Verified on the live Pi 2026-08-27: ``PRAGMA table_info`` reported
+    ``ambient_temp_at_start_c`` over 38 real rows.
+
+    ``ALTER TABLE ... RENAME COLUMN`` needs SQLite >= 3.25; the Pi runs
+    3.46.1 (verified live).  RENAME preserves values, including NULLs,
+    which matters -- NULL here means "not measured on a warm restart" and
+    an ADD+COPY+DROP that turned it into 0.0 would manufacture a reading.
+
+    Idempotent by construction: it branches on the APPLIED schema, so a
+    second call is a no-op rather than an error.  That is load-bearing --
+    this runs on every boot, and a migration that throws the second time
+    turns every reboot after the first into a crash-loop.
+    """
+    applied = _appliedColumns(conn, DRIVE_SUMMARY_TABLE)
+
+    if INTAKE_AIR_COLUMN in applied:
+        # Already migrated (or created fresh in the new shape).
+        return False
+
+    if LEGACY_INTAKE_AIR_COLUMN not in applied:
+        # Neither spelling present.  Do NOT invent a column here -- that
+        # would paper over a genuinely unexpected schema and hand the
+        # caller a confident wrong answer.  The CREATE TABLE path owns
+        # table creation; this function only ever renames.
+        return False
+
+    conn.execute(
+        f'ALTER TABLE {DRIVE_SUMMARY_TABLE} '
+        f'RENAME COLUMN {LEGACY_INTAKE_AIR_COLUMN} TO {INTAKE_AIR_COLUMN}'
+    )
+    logger.info(
+        "drive_summary | migrated %s -> %s (A-4 parity, US-563/F-134)",
+        LEGACY_INTAKE_AIR_COLUMN, INTAKE_AIR_COLUMN,
+    )
+    return True
+
+
 def ensureDriveSummaryTable(conn: sqlite3.Connection) -> bool:
-    """Create the ``drive_summary`` table if missing.
+    """Create the ``drive_summary`` table if missing, then migrate it.
 
     Idempotent -- returns ``False`` if the table already existed.
     Always re-issues the CREATE TABLE IF NOT EXISTS, which is a no-op
     on a live table.  Caller owns commit.
+
+    The migration runs AFTER the create so that both paths converge on
+    one shape: a fresh database is created already-renamed and the
+    migration no-ops; an existing database is left alone by the create
+    and renamed by the migration.
     """
     created = not _tableExists(conn, DRIVE_SUMMARY_TABLE)
     conn.execute(SCHEMA_DRIVE_SUMMARY)
+    _migrateIntakeAirColumn(conn)
     return created
 
 
@@ -530,7 +618,7 @@ class SummaryRecorder:
             fromState=fromState,
             dataSource=dataSource,
         )
-        coldStart = summary.ambientTempAtStartC is not None or _isColdStart(
+        coldStart = summary.intakeAirTempAtStartC is not None or _isColdStart(
             fromState
         )
 
@@ -569,7 +657,7 @@ class SummaryRecorder:
                     "ambient=%s | battery=%s | baro=%s | reason=%s",
                     summary.driveId,
                     coldStart,
-                    summary.ambientTempAtStartC,
+                    summary.intakeAirTempAtStartC,
                     summary.startingBatteryV,
                     summary.barometricKpaAtStart,
                     reason,
@@ -589,7 +677,7 @@ class SummaryRecorder:
                 "ambient=%s | battery=%s | baro=%s",
                 summary.driveId,
                 coldStart,
-                summary.ambientTempAtStartC,
+                summary.intakeAirTempAtStartC,
                 summary.startingBatteryV,
                 summary.barometricKpaAtStart,
             )
@@ -616,12 +704,12 @@ class SummaryRecorder:
         """
         conn.execute(
             f"INSERT INTO {DRIVE_SUMMARY_TABLE} "
-            "(drive_id, ambient_temp_at_start_c, starting_battery_v, "
+            "(drive_id, intake_air_temp_at_start_c, starting_battery_v, "
             " barometric_kpa_at_start, data_source) "
             "VALUES (?, ?, ?, ?, ?)",
             (
                 int(summary.driveId),
-                summary.ambientTempAtStartC,
+                summary.intakeAirTempAtStartC,
                 summary.startingBatteryV,
                 summary.barometricKpaAtStart,
                 summary.dataSource,
@@ -644,13 +732,13 @@ class SummaryRecorder:
         """
         conn.execute(
             f"UPDATE {DRIVE_SUMMARY_TABLE} SET "
-            "ambient_temp_at_start_c = ?, "
+            "intake_air_temp_at_start_c = ?, "
             "starting_battery_v = ?, "
             "barometric_kpa_at_start = ?, "
             "data_source = ? "
             "WHERE drive_id = ?",
             (
-                summary.ambientTempAtStartC,
+                summary.intakeAirTempAtStartC,
                 summary.startingBatteryV,
                 summary.barometricKpaAtStart,
                 summary.dataSource,
@@ -715,7 +803,7 @@ class SummaryRecorder:
 
         with self._database.connect() as conn:
             row = conn.execute(
-                f"SELECT ambient_temp_at_start_c, starting_battery_v, "
+                f"SELECT intake_air_temp_at_start_c, starting_battery_v, "
                 f"barometric_kpa_at_start FROM {DRIVE_SUMMARY_TABLE} "
                 f"WHERE drive_id = ?",
                 (int(driveId),),
@@ -734,8 +822,8 @@ class SummaryRecorder:
             filled: set[str] = set()
 
             newAmbient = storedAmbient
-            if storedAmbient is None and candidate.ambientTempAtStartC is not None:
-                newAmbient = candidate.ambientTempAtStartC
+            if storedAmbient is None and candidate.intakeAirTempAtStartC is not None:
+                newAmbient = candidate.intakeAirTempAtStartC
                 filled.add('ambient')
 
             newBattery = storedBattery
@@ -751,7 +839,7 @@ class SummaryRecorder:
             if filled:
                 conn.execute(
                     f"UPDATE {DRIVE_SUMMARY_TABLE} SET "
-                    "ambient_temp_at_start_c = ?, "
+                    "intake_air_temp_at_start_c = ?, "
                     "starting_battery_v = ?, "
                     "barometric_kpa_at_start = ? "
                     "WHERE drive_id = ?",

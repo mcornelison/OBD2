@@ -84,7 +84,7 @@ Pre-fix RED / post-fix GREEN behavior
   hasattr probe returns False).
 * **Class 2**: full drive_start -> realtime data -> drive_end pipeline
   asserts ``drive_summary`` has a row for the minted ``drive_id`` with
-  ``ambient_temp_at_start_c IS NOT NULL`` AND ``starting_battery_v IS
+  ``intake_air_temp_at_start_c IS NOT NULL`` AND ``starting_battery_v IS
   NOT NULL`` AND ``barometric_kpa_at_start IS NOT NULL`` within 30s.
   Pre-fix the row never appears (RED -- the snapshot source is None;
   defer-INSERT short-circuits with ``_driveSummaryBackfillComplete=True``
@@ -191,7 +191,7 @@ def _readSummaryRow(
 ) -> tuple[Any, Any, Any] | None:
     with db.connect() as conn:
         row = conn.execute(
-            f"SELECT ambient_temp_at_start_c, starting_battery_v, "
+            f"SELECT intake_air_temp_at_start_c, starting_battery_v, "
             f"barometric_kpa_at_start FROM {DRIVE_SUMMARY_TABLE} "
             f"WHERE drive_id = ?",
             (driveId,),
@@ -391,7 +391,7 @@ class TestDriveSummaryWriterEndToEnd:
         )
         ambient, battery, baro = rowAfterMetadata
         assert ambient == 25.0, (
-            f"Phase 5 ambient_temp_at_start_c expected 25.0; got {ambient!r}.  "
+            f"Phase 5 intake_air_temp_at_start_c expected 25.0; got {ambient!r}.  "
             "Cold-start rule: first drive since Pi boot has fromState=UNKNOWN; "
             "IAT is captured into the ambient column."
         )

@@ -174,7 +174,7 @@ def _createAllInScopeStubs(conn: sqlite3.Connection) -> None:
     conn.execute(
         "CREATE TABLE drive_summary ("
         "drive_id INTEGER PRIMARY KEY, "
-        "ambient_temp_at_start_c REAL, "
+        "intake_air_temp_at_start_c REAL, "
         "starting_battery_v REAL, "
         "barometric_kpa_at_start REAL, "
         "data_source TEXT NOT NULL DEFAULT 'real')"
