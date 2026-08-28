@@ -218,6 +218,52 @@ class TestUnitShape:
         assert OBD_SERVICE_UNIT in stopPost
         assert 'start' in stopPost
 
+    def test_unit_stopPostDoesNotBlockOnTheUnitItIsOrderedBefore(
+        self, directives: dict[str, list[str]]
+    ) -> None:
+        """
+        Given: the unit declares ``Before=eclipse-obd.service``
+        When: ExecStopPost runs ``systemctl start eclipse-obd.service``
+        Then: it MUST pass --no-block, or the two deadlock
+
+        Atlas 2026-08-27.  A blocking ``systemctl start`` waits for the job to
+        complete; ``Before=eclipse-obd.service`` says that job may not run
+        until this unit's transaction has finished -- and this unit is sitting
+        in stop-post waiting on it.  Circular wait.
+
+        Measured on the live Pi: ExecStart did its real work in 12.8s and
+        returned verdict=durable / outcome=healthy / attempts=0/1, then
+        stop-post blocked the full 90s TimeoutStopUSec and systemd killed the
+        unit.  12.8 + 90 = 102.8s, matching `systemd-analyze blame` at
+        1min 43.008s exactly.
+
+        That 103s is paid on EVERY boot, including boots where the bond is
+        healthy and the healer correctly does nothing, and capture is held
+        down for all of it -- which is why a cold-engine reading was not
+        merely unrecorded but UNRECORDABLE (boot-to-first-row measured in-car
+        at 2m45s-2m50s, coolant already 89-93C at the first sample).
+
+        The `-` prefix does NOT cover this: it ignores the command's exit
+        STATUS, not whether it blocks.  Note the runtime entry point in this
+        same design already uses --no-block correctly; the flag was missing on
+        precisely the one call sitting inside an ordering cycle.
+        """
+        stopPost = ' '.join(directives.get('ExecStopPost', []))
+        orderedBefore = ' '.join(directives.get('Before', []))
+
+        if OBD_SERVICE_UNIT not in orderedBefore:
+            pytest.skip(
+                'unit no longer orders itself Before the capture service -- '
+                'the deadlock this guards is structurally impossible'
+            )
+
+        assert '--no-block' in stopPost, (
+            'ExecStopPost starts a unit this one is ordered Before, without '
+            '--no-block: systemd deadlocks in stop-post for the full '
+            'TimeoutStopUSec (90s) on every boot, holding capture down with '
+            'it. Add --no-block; the safety-net intent is unchanged.'
+        )
+
     def test_unit_neverInvokesRfkill(self, directives: dict[str, list[str]]) -> None:
         """
         Given: every executable directive in the unit

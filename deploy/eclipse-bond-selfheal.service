@@ -127,7 +127,29 @@ Environment=PYTHONPATH=/home/mcornelison/Projects/Eclipse-01:/home/mcornelison/P
 ExecStart=/home/mcornelison/obd2-venv/bin/python -m src.pi.obdii.bond_self_heal
 
 # Safety net -- see the header.  `-` = never fail the unit on this.
-ExecStopPost=-/usr/bin/systemctl start eclipse-obd.service
+#
+# --no-block IS LOAD-BEARING (Atlas 2026-08-27).  This unit declares
+# `Before=eclipse-obd.service`, so eclipse-obd's start job may not run until
+# this unit's transaction has finished.  A BLOCKING `systemctl start` waits for
+# that job -- from inside stop-post, which is part of the very transaction the
+# job is waiting on.  Circular wait.
+#
+# Measured live before the fix: ExecStart returned verdict=durable /
+# outcome=healthy / attempts=0/1 in 12.8s -- the healer did its job correctly --
+# and then stop-post blocked the full 90s TimeoutStopUSec until systemd killed
+# it.  12.8 + 90 = 102.8s, matching `systemd-analyze blame` at 1min 43.008s.
+# That was paid on EVERY boot, healthy bond included, with capture held down
+# for all of it (boot-to-first-row in-car: 2m45s-2m50s, coolant already 89-93C
+# at the first sample -- a cold-engine reading was not merely unrecorded, it
+# was unrecordable).  It also left the unit `failed` on every boot, so
+# `systemctl status` reported a Bluetooth fault that had not occurred.
+#
+# `-` does NOT cover this: it ignores the exit STATUS, not the blocking.  The
+# runtime entry point in the header already uses --no-block correctly; it was
+# missing on precisely the one call sitting inside an ordering cycle.
+# Guarded by tests/deploy/test_bond_selfheal_deploy.py::
+#   test_unit_stopPostDoesNotBlockOnTheUnitItIsOrderedBefore
+ExecStopPost=-/usr/bin/systemctl start --no-block eclipse-obd.service
 
 # Budget: a 20s discovery scan + the pair script's own scan + a 60s pair
 # handshake, with headroom.  A wedged bluez must never park capture forever;
