@@ -60,7 +60,7 @@ class TestBuildSummaryFromSnapshotColdStartRule:
             },
             fromState=EngineState.UNKNOWN,
         )
-        assert summary.ambientTempAtStartC == 18.5
+        assert summary.intakeAirTempAtStartC == 18.5
         assert summary.startingBatteryV == 12.4
         assert summary.barometricKpaAtStart == 101.2
 
@@ -70,7 +70,7 @@ class TestBuildSummaryFromSnapshotColdStartRule:
             snapshot={'INTAKE_TEMP': 22.0},
             fromState=EngineState.KEY_OFF,
         )
-        assert summary.ambientTempAtStartC == 22.0
+        assert summary.intakeAirTempAtStartC == 22.0
 
     def test_warmRestartFromRunning_nullsAmbient(self) -> None:
         """Invariant #2: warm restart (fromState=RUNNING) must NULL ambient."""
@@ -83,7 +83,7 @@ class TestBuildSummaryFromSnapshotColdStartRule:
             },
             fromState=EngineState.RUNNING,
         )
-        assert summary.ambientTempAtStartC is None
+        assert summary.intakeAirTempAtStartC is None
         # battery + baro still captured (warm-restart NULL rule is ambient-only)
         assert summary.startingBatteryV == 13.7
         assert summary.barometricKpaAtStart == 100.4
@@ -95,7 +95,7 @@ class TestBuildSummaryFromSnapshotColdStartRule:
             snapshot={'INTAKE_TEMP': 25.0},
             fromState=EngineState.CRANKING,
         )
-        assert summary.ambientTempAtStartC is None
+        assert summary.intakeAirTempAtStartC is None
 
     def test_fromStateNone_treatedAsWarmRestart(self) -> None:
         """None is conservative -- warm restart semantics."""
@@ -104,7 +104,7 @@ class TestBuildSummaryFromSnapshotColdStartRule:
             snapshot={'INTAKE_TEMP': 30.0},
             fromState=None,
         )
-        assert summary.ambientTempAtStartC is None
+        assert summary.intakeAirTempAtStartC is None
 
     def test_fromStateAsStringUnknown_capturesAmbient(self) -> None:
         """String form should be coerced to EngineState."""
@@ -113,7 +113,7 @@ class TestBuildSummaryFromSnapshotColdStartRule:
             snapshot={'INTAKE_TEMP': 10.0},
             fromState='unknown',
         )
-        assert summary.ambientTempAtStartC == 10.0
+        assert summary.intakeAirTempAtStartC == 10.0
 
     def test_fromStateAsUnrecognizedString_nullsAmbient(self) -> None:
         """An unrecognized string value falls back to warm semantics."""
@@ -122,7 +122,7 @@ class TestBuildSummaryFromSnapshotColdStartRule:
             snapshot={'INTAKE_TEMP': 10.0},
             fromState='bogus',
         )
-        assert summary.ambientTempAtStartC is None
+        assert summary.intakeAirTempAtStartC is None
 
 
 class TestBuildSummaryFromSnapshotMissingValues:
@@ -134,7 +134,7 @@ class TestBuildSummaryFromSnapshotMissingValues:
             snapshot={},
             fromState=EngineState.UNKNOWN,
         )
-        assert summary.ambientTempAtStartC is None
+        assert summary.intakeAirTempAtStartC is None
         assert summary.startingBatteryV is None
         assert summary.barometricKpaAtStart is None
 
@@ -142,7 +142,7 @@ class TestBuildSummaryFromSnapshotMissingValues:
         summary = buildSummaryFromSnapshot(
             driveId=1, snapshot=None, fromState=EngineState.KEY_OFF,
         )
-        assert summary.ambientTempAtStartC is None
+        assert summary.intakeAirTempAtStartC is None
 
     def test_nanValuesAreFilteredToNull(self) -> None:
         summary = buildSummaryFromSnapshot(
@@ -150,7 +150,7 @@ class TestBuildSummaryFromSnapshotMissingValues:
             snapshot={'INTAKE_TEMP': math.nan, 'BATTERY_V': 12.0},
             fromState=EngineState.UNKNOWN,
         )
-        assert summary.ambientTempAtStartC is None
+        assert summary.intakeAirTempAtStartC is None
         assert summary.startingBatteryV == 12.0
 
     def test_nonNumericValuesAreFilteredToNull(self) -> None:
@@ -159,7 +159,7 @@ class TestBuildSummaryFromSnapshotMissingValues:
             snapshot={'INTAKE_TEMP': 'garbage', 'BATTERY_V': 12.0},
             fromState=EngineState.UNKNOWN,
         )
-        assert summary.ambientTempAtStartC is None
+        assert summary.intakeAirTempAtStartC is None
         assert summary.startingBatteryV == 12.0
 
 
@@ -187,7 +187,7 @@ class TestSummaryRecorderCapture:
         assert result.driveId == 7
         with freshDb.connect() as conn:
             row = conn.execute(
-                f"SELECT ambient_temp_at_start_c, starting_battery_v, "
+                f"SELECT intake_air_temp_at_start_c, starting_battery_v, "
                 f"barometric_kpa_at_start, data_source "
                 f"FROM {DRIVE_SUMMARY_TABLE} WHERE drive_id = 7"
             ).fetchone()
@@ -211,7 +211,7 @@ class TestSummaryRecorderCapture:
         )
         with freshDb.connect() as conn:
             row = conn.execute(
-                f"SELECT ambient_temp_at_start_c, starting_battery_v, "
+                f"SELECT intake_air_temp_at_start_c, starting_battery_v, "
                 f"barometric_kpa_at_start "
                 f"FROM {DRIVE_SUMMARY_TABLE} WHERE drive_id = 8"
             ).fetchone()
@@ -311,7 +311,7 @@ class TestDriveSummaryDataclass:
 
     def test_defaultsAreNullExceptDataSource(self) -> None:
         summary = DriveSummary(driveId=1)
-        assert summary.ambientTempAtStartC is None
+        assert summary.intakeAirTempAtStartC is None
         assert summary.startingBatteryV is None
         assert summary.barometricKpaAtStart is None
         assert summary.dataSource == 'real'

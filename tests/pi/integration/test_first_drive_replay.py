@@ -155,7 +155,7 @@ def _buildSyntheticDriveFixture(
                     drive_id INTEGER PRIMARY KEY,
                     drive_start_timestamp DATETIME NOT NULL
                         DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
-                    ambient_temp_at_start_c REAL,
+                    intake_air_temp_at_start_c REAL,
                     starting_battery_v REAL,
                     barometric_kpa_at_start REAL,
                     data_source TEXT NOT NULL DEFAULT 'real'
@@ -166,7 +166,7 @@ def _buildSyntheticDriveFixture(
             conn.execute(
                 """
                 INSERT OR REPLACE INTO drive_summary (
-                    drive_id, ambient_temp_at_start_c,
+                    drive_id, intake_air_temp_at_start_c,
                     starting_battery_v, barometric_kpa_at_start,
                     data_source
                 ) VALUES (?, 21.0, 12.6, 101.3, 'real')
@@ -552,12 +552,12 @@ class TestValidatorQueriesAgainstFixture:
         # Force ambient to NULL to simulate a warm-restart drive.
         with sqlite3.connect(db) as conn:
             conn.execute(
-                "UPDATE drive_summary SET ambient_temp_at_start_c = NULL "
+                "UPDATE drive_summary SET intake_air_temp_at_start_c = NULL "
                 "WHERE drive_id = ?", (1,),
             )
             conn.commit()
             ambient = conn.execute(
-                "SELECT ambient_temp_at_start_c FROM drive_summary "
+                "SELECT intake_air_temp_at_start_c FROM drive_summary "
                 "WHERE drive_id = ?", (1,),
             ).fetchone()[0]
         assert ambient is None

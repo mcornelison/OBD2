@@ -617,7 +617,7 @@ class TestEngineTelemetryCapturePostInitFullPath:
 
         with lifecycleDb.connect() as conn:
             postIatAmbient = conn.execute(
-                "SELECT ambient_temp_at_start_c FROM "
+                "SELECT intake_air_temp_at_start_c FROM "
                 f"{DRIVE_SUMMARY_TABLE} WHERE drive_id = ?",
                 (driveId,),
             ).fetchone()

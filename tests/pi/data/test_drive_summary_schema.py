@@ -50,7 +50,7 @@ class TestFreshSchema:
         expected = {
             'drive_id',
             'drive_start_timestamp',
-            'ambient_temp_at_start_c',
+            'intake_air_temp_at_start_c',
             'starting_battery_v',
             'barometric_kpa_at_start',
             'data_source',
@@ -63,7 +63,7 @@ class TestFreshSchema:
 
     def test_metadataColumnsAreNullable(self, freshDb: ObdDatabase) -> None:
         cols = {c['name']: c for c in freshDb.getTableInfo(DRIVE_SUMMARY_TABLE)}
-        for name in ('ambient_temp_at_start_c', 'starting_battery_v',
+        for name in ('intake_air_temp_at_start_c', 'starting_battery_v',
                      'barometric_kpa_at_start'):
             assert cols[name]['notnull'] == 0, (
                 f"{name} must be nullable to honor cold-start NULL rule"
@@ -175,6 +175,6 @@ class TestSchemaStringContents:
         assert "drive_id INTEGER PRIMARY KEY" in SCHEMA_DRIVE_SUMMARY
 
     def test_schemaListsAllThreeMetadataColumns(self) -> None:
-        assert "ambient_temp_at_start_c REAL" in SCHEMA_DRIVE_SUMMARY
+        assert "intake_air_temp_at_start_c REAL" in SCHEMA_DRIVE_SUMMARY
         assert "starting_battery_v REAL" in SCHEMA_DRIVE_SUMMARY
         assert "barometric_kpa_at_start REAL" in SCHEMA_DRIVE_SUMMARY

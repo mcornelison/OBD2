@@ -52,7 +52,7 @@ Drive         Mode                 Duration   fromState      Final row
 ============  ===================  =========  =============  =========
 
 Across 3 drives spanning 38 minutes of real-OBD wall time, every
-drive_summary row landed with ``ambient_temp_at_start_c``,
+drive_summary row landed with ``intake_air_temp_at_start_c``,
 ``starting_battery_v``, and ``barometric_kpa_at_start`` all NULL.
 Drives 4 and 5 ran AFTER US-228 deployed -- the backfill UPDATE had
 the entire drive duration to fire and never did.
@@ -249,12 +249,12 @@ class _PreSprint19InsertImmediatelyRecorder:
         with self._database.connect() as conn:
             conn.execute(
                 f"INSERT OR IGNORE INTO {DRIVE_SUMMARY_TABLE} "
-                f"(drive_id, ambient_temp_at_start_c, starting_battery_v, "
+                f"(drive_id, intake_air_temp_at_start_c, starting_battery_v, "
                 f"barometric_kpa_at_start, data_source) "
                 f"VALUES (?, ?, ?, ?, ?)",
                 (
                     summary.driveId,
-                    summary.ambientTempAtStartC,
+                    summary.intakeAirTempAtStartC,
                     summary.startingBatteryV,
                     summary.barometricKpaAtStart,
                     summary.dataSource,
@@ -300,7 +300,7 @@ def _readSummaryRow(
 ) -> tuple[Any, ...] | None:
     with db.connect() as conn:
         row = conn.execute(
-            f"SELECT ambient_temp_at_start_c, starting_battery_v, "
+            f"SELECT intake_air_temp_at_start_c, starting_battery_v, "
             f"barometric_kpa_at_start FROM {DRIVE_SUMMARY_TABLE} "
             f"WHERE drive_id = ?",
             (driveId,),

@@ -1289,7 +1289,7 @@ class DriveDetector:
             summary = result.summary
             cold = result.coldStart
             ambientComplete = (
-                summary.ambientTempAtStartC is not None or not cold
+                summary.intakeAirTempAtStartC is not None or not cold
             )
             if (
                 ambientComplete

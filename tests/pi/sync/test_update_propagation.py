@@ -160,7 +160,7 @@ def _setupDriveSummaryTable(conn: sqlite3.Connection) -> None:
     conn.execute("""
         CREATE TABLE drive_summary (
             drive_id INTEGER PRIMARY KEY,
-            ambient_temp_at_start_c REAL,
+            intake_air_temp_at_start_c REAL,
             starting_battery_v REAL,
             barometric_kpa_at_start REAL,
             data_source TEXT NOT NULL DEFAULT 'real'
@@ -336,7 +336,7 @@ class TestUpdatePropagation:
             # cold-start NULL bug US-228 / drive_summary.py:605).
             conn.execute(
                 "INSERT INTO drive_summary "
-                "(drive_id, ambient_temp_at_start_c, "
+                "(drive_id, intake_air_temp_at_start_c, "
                 " starting_battery_v, barometric_kpa_at_start) "
                 "VALUES (?, ?, ?, ?)",
                 (11, None, None, None),
@@ -355,7 +355,7 @@ class TestUpdatePropagation:
         with sqlite3.connect(piDb) as conn:
             conn.execute(
                 "UPDATE drive_summary SET "
-                "ambient_temp_at_start_c = ?, "
+                "intake_air_temp_at_start_c = ?, "
                 "starting_battery_v = ?, "
                 "barometric_kpa_at_start = ? "
                 "WHERE drive_id = ?",
@@ -371,7 +371,7 @@ class TestUpdatePropagation:
         assert r2.rowsPushed == 1
         secondRows = opener.requests[-1]["tables"]["drive_summary"]["rows"]
         assert len(secondRows) == 1
-        assert secondRows[0]["ambient_temp_at_start_c"] == 24.5
+        assert secondRows[0]["intake_air_temp_at_start_c"] == 24.5
         assert secondRows[0]["starting_battery_v"] == 12.4
         assert secondRows[0]["barometric_kpa_at_start"] == 100.8
 

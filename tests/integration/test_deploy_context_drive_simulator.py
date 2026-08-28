@@ -268,7 +268,7 @@ def _simulateSequencerTerminatedDrive(
             INSERT INTO drive_summary (
                 drive_id,
                 drive_start_timestamp,
-                ambient_temp_at_start_c,
+                intake_air_temp_at_start_c,
                 starting_battery_v,
                 barometric_kpa_at_start,
                 data_source
@@ -374,7 +374,7 @@ def _syncPiToServer(
                     drive_start_timestamp=_parseSqliteTimestamp(
                         row["drive_start_timestamp"],
                     ),
-                    ambient_temp_at_start_c=row["ambient_temp_at_start_c"],
+                    intake_air_temp_at_start_c=row["intake_air_temp_at_start_c"],
                     starting_battery_v=row["starting_battery_v"],
                     barometric_kpa_at_start=row["barometric_kpa_at_start"],
                     data_source=row["data_source"],
