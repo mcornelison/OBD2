@@ -105,7 +105,16 @@ Exit 0 on all checks pass; 1 on cap violation (caller fixes file before deploy);
 sprint.json files belonging to a V0.X minor-version chain (e.g. V0.27 =
 V0.27.2 + V0.27.3 + V0.27.4 + V0.27.5 stacked sprint branches awaiting
 chain-end merge to main), aggregates each sprint's validation block, and
-reports whether the chain is READY (all sprints validated) or INCOMPLETE.
+reports whether the chain is READY (the CHAIN-TIP sprint carries a
+`validatedAt` stamp) or INCOMPLETE (the tip does not, or no sprint matched the
+`--chain` prefix -- `chainTipVersion` tells those two apart).
+
+**The gate is the chain TIP alone** (`chain_validate_aggregate.py:238`). Earlier
+patches in the chain keep `validatedAt: null` under the CIO 2026-05-23
+chain-end-merge rule -- superseded by the next patch, never individually
+re-validated -- so null is the EXPECTED state, not a debt. `unvalidatedSprints`
+lists them as context only (`:188`). Corrected under US-618, which was groomed
+after this claim's stale form cost a sprint.
 
 Per CIO 2026-05-10 chain-end-merge rule: main = "fully functional working
 system"; sprint branches stay deployed-but-pre-merge until the WHOLE chain
@@ -119,7 +128,7 @@ python offices/pm/scripts/chain_validate_aggregate.py --chain V0.27
 # Machine-readable for downstream piping:
 python offices/pm/scripts/chain_validate_aggregate.py --chain V0.27 --json
 
-# CI gate -- exit 1 if any sprint in chain lacks validatedAt:
+# CI gate -- exit 1 if the CHAIN TIP lacks validatedAt (or the chain is empty):
 python offices/pm/scripts/chain_validate_aggregate.py --chain V0.27 --strict
 
 # Explicit paths (test harness + ad-hoc inspection):

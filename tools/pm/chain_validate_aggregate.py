@@ -5,8 +5,8 @@ chain_validate_aggregate.py -- /chain-validated Phase 1+2 support.
 Enumerates sprint.json files belonging to a V0.X minor-version chain
 (e.g. V0.27 = V0.27.2 + V0.27.3 + V0.27.4 + V0.27.5 stacked sprint
 branches awaiting chain-end merge to main), aggregates each sprint's
-validation block, and reports whether the chain is READY (all sprints
-validated) or INCOMPLETE (one+ sprint's validatedAt still null).
+validation block, and reports READY / INCOMPLETE. THE GATE IS THE CHAIN
+TIP ALONE (:238); an earlier patch's null stamp is EXPECTED (US-618).
 
 Per CIO 2026-05-10 chain-end-merge rule: main = "fully functional working
 system"; sprint branches stay deployed-but-pre-merge until the whole
