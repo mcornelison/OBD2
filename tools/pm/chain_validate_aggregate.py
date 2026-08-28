@@ -248,6 +248,152 @@ def aggregateChain(paths: list[Path], chainPrefix: str) -> dict:
     }
 
 
+# ------------------------------------------------------------------------------
+# bigDoD clause retirement (US-619)
+# ------------------------------------------------------------------------------
+# A chain bigDefinitionOfDone clause can be invalidated by a finding that lands
+# AFTER the sprint that wrote it -- the V0.29.29/US-552 "output is the panel-
+# native 480x320" clause is the founding case: BL-034 measured the panel's EDID
+# and it advertises no such mode, so the clause cannot be discharged truthfully,
+# ever.  Any sweep reaching it has exactly two outs -- fail the chain, or write
+# evidence for something that did not happen.  That is the fabricated-fixture
+# defect at chain scale, so the retire route has to be a MECHANISM.
+#
+# The route is ADDITIVE.  Archive snapshots are testimony and are never edited:
+# a clause is retired by adding a record to tools/pm/bigdod_retirements.json,
+# which this module reads and overlays.  Nothing rewrites the sprint that made
+# the claim, so the original record survives alongside the retirement.
+#
+# NOTE ON PLACEMENT: this layer deliberately sits OUTSIDE aggregateChain rather
+# than inside it.  The docs (and this sprint's own bigDoD) cite the chain-tip
+# gate at chain_validate_aggregate.py:238 BY LINE NUMBER, and US-618's lint pins
+# it (_CITED_GATE_LINE).  Inserting anything above that line silently rots every
+# one of those citations -- including two .claude/commands/ docs that are still
+# write-blocked pending us618_apply_command_doc_fix.py.  Retirement is also a
+# strictly separate concern from the gate: it annotates the clause LIST and does
+# not touch chainStatus, which remains chain-tip-only (CIO 2026-05-23).
+DEFAULT_RETIREMENTS_PATH = Path(__file__).resolve().parent / "bigdod_retirements.json"
+
+# Fields a retirement record carries onto the clause it retires.
+_RETIREMENT_FIELDS = ("retiredAt", "retiredBy", "authority", "reason", "supersededStory")
+
+
+def loadRetirements(path: Path | None = None) -> list[dict]:
+    """Load the bigDoD retirement ledger.
+
+    Args:
+        path: ledger to read; default = ``tools/pm/bigdod_retirements.json``.
+
+    Returns:
+        The ``retirements`` list, or ``[]`` when the DEFAULT ledger is absent
+        (a repo that has retired nothing yet is a valid state).
+
+    Raises:
+        FileNotFoundError: an EXPLICITLY supplied path does not exist.  A typo'd
+            ``--retirements`` must not degrade into "no retirements", which
+            would silently un-retire every clause in the ledger.
+        ValueError: the ledger exists but is malformed.
+    """
+    explicit = path is not None
+    ledgerPath = Path(path) if explicit else DEFAULT_RETIREMENTS_PATH
+
+    if not ledgerPath.exists():
+        if explicit:
+            raise FileNotFoundError(f"retirement ledger not found: {ledgerPath}")
+        return []
+
+    try:
+        data = json.loads(ledgerPath.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"retirement ledger is not valid JSON: {ledgerPath}: {exc}") from exc
+
+    retirements = data.get("retirements")
+    if not isinstance(retirements, list):
+        raise ValueError(f"retirement ledger has no 'retirements' list: {ledgerPath}")
+
+    for i, record in enumerate(retirements):
+        missing = [k for k in ("currentVersion", "clause", "retiredBy", "authority")
+                   if not (isinstance(record, dict) and record.get(k))]
+        if missing:
+            raise ValueError(
+                f"{ledgerPath}: retirements[{i}] is missing required field(s): "
+                f"{', '.join(missing)}. A retirement with no cited authority is "
+                "exactly the unsourced claim this mechanism exists to prevent."
+            )
+
+    return retirements
+
+
+def annotateRetirements(result: dict, retirements: list[dict] | None = None) -> dict:
+    """Overlay the retirement ledger onto an :func:`aggregateChain` result.
+
+    Marks each retired clause in ``aggregateBigDoD`` in place -- the clause is
+    never dropped.  Removing it would delete the record of a claim the project
+    once made; the point is that a reader sees the clause AND sees that it was
+    retired and by whose authority.
+
+    MATCHING IS EXACT on the ``(currentVersion, clause)`` pair, never substring.
+    That is load-bearing rather than fastidious: the V0.29.29/US-552 clause being
+    retired and the V0.29.15/US-482 clause that must NOT be retired both contain
+    the string "480x320", and the US-482 one describes the shipping arrangement
+    exactly.  A substring rule would retire a correct clause by association.
+
+    A record whose ``currentVersion`` is not in the aggregated chain is simply
+    not applicable (wrong chain, or filtered out) and is silent.  A record whose
+    version IS in the chain but matches no clause is STALE -- an inert
+    retirement, reported via ``staleRetirements`` so it cannot rot unnoticed.
+
+    Args:
+        result: an :func:`aggregateChain` return value (mutated and returned).
+        retirements: ledger records; default = load the shipped ledger.
+
+    Returns:
+        ``result``, with these keys added:
+            retiredBigDoD: list of the retired ``aggregateBigDoD`` entries
+            staleRetirements: list of records that matched nothing in-chain
+    """
+    if retirements is None:
+        retirements = loadRetirements()
+
+    index = {(r["currentVersion"], r["clause"]): r for r in retirements}
+    chainVersions = {s["currentVersion"] for s in result["sprintsInChain"]}
+    matched: set[tuple] = set()
+    retiredEntries: list[dict] = []
+
+    for entry in result["aggregateBigDoD"]:
+        key = (entry["currentVersion"], entry["clause"])
+        record = index.get(key)
+        if record is None:
+            entry["retired"] = False
+            continue
+        entry["retired"] = True
+        for field in _RETIREMENT_FIELDS:
+            if record.get(field):
+                entry[field] = record[field]
+        matched.add(key)
+        retiredEntries.append(entry)
+
+    stale = [
+        {
+            "currentVersion": r["currentVersion"],
+            "clause": r["clause"],
+            "why": (
+                f"{r['currentVersion']} IS in this chain but carries no clause with "
+                "this exact text -- the ledger entry matches nothing and retires "
+                "nothing. Re-copy the clause verbatim from the aggregate, or drop "
+                "the record."
+            ),
+        }
+        for r in retirements
+        if r["currentVersion"] in chainVersions
+        and (r["currentVersion"], r["clause"]) not in matched
+    ]
+
+    result["retiredBigDoD"] = retiredEntries
+    result["staleRetirements"] = stale
+    return result
+
+
 def renderHumanReport(result: dict) -> str:
     """Build a human-readable summary of the aggregate result."""
     lines: list[str] = []
@@ -268,10 +414,36 @@ def renderHumanReport(result: dict) -> str:
     for f in result["aggregateValidatesFeatures"]:
         lines.append(f"  {f}")
     lines.append("")
-    lines.append(f"Aggregate bigDefinitionOfDone clauses ({len(result['aggregateBigDoD'])}):")
+    retired = result.get("retiredBigDoD") or []
+    live = len(result["aggregateBigDoD"]) - len(retired)
+    header = f"Aggregate bigDefinitionOfDone clauses ({len(result['aggregateBigDoD'])}"
+    if retired:
+        header += f"; {live} live, {len(retired)} RETIRED"
+    lines.append(header + "):")
     for entry in result["aggregateBigDoD"]:
-        lines.append(f"  [{entry['currentVersion']}] {entry['clause']}")
+        if not entry.get("retired"):
+            lines.append(f"  [{entry['currentVersion']}] {entry['clause']}")
+            continue
+        # A retired clause is shown, not hidden -- the reader needs to see both
+        # the claim and the authority that withdrew it. The marker leads so the
+        # line cannot be skim-read as still-owed work.
+        lines.append(f"  [{entry['currentVersion']}] [RETIRED] {entry['clause']}")
+        lines.append(f"      retired {entry.get('retiredAt', '(no date)')} "
+                     f"by {entry.get('retiredBy', '(no authority)')}")
+        lines.append(f"      authority: {entry.get('authority', '(none cited)')}")
+        if entry.get("reason"):
+            lines.append(f"      reason: {entry['reason']}")
+        lines.append("      -> do NOT attempt to discharge this clause; do NOT write "
+                     "evidence for it.")
     lines.append("")
+
+    stale = result.get("staleRetirements") or []
+    if stale:
+        lines.append(f"STALE RETIREMENTS ({len(stale)}) -- ledger entries that retire nothing:")
+        for s in stale:
+            lines.append(f"  [{s['currentVersion']}] {s['clause']}")
+            lines.append(f"      {s['why']}")
+        lines.append("")
     lines.append(f"chainStatus: {result['chainStatus']}")
     if chainTipVersion:
         lines.append(f"chainTipVersion: {chainTipVersion} (gate -- chain-end-merge rule)")
@@ -312,6 +484,11 @@ def main(argv: list[str]) -> int:
         action="store_true",
         help="Exit 1 if chainStatus != READY (CI gate for slash command pre-flight)",
     )
+    parser.add_argument(
+        "--retirements",
+        default=None,
+        help="bigDoD retirement ledger (US-619); default = tools/pm/bigdod_retirements.json",
+    )
     args = parser.parse_args(argv)
 
     if args.paths is not None:
@@ -321,12 +498,32 @@ def main(argv: list[str]) -> int:
 
     result = aggregateChain(candidatePaths, args.chain)
 
+    try:
+        retirements = loadRetirements(Path(args.retirements) if args.retirements else None)
+    except (FileNotFoundError, ValueError) as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 2
+    result = annotateRetirements(result, retirements)
+
     if args.json:
         print(json.dumps(result, indent=2))
     else:
         print(renderHumanReport(result))
 
     if args.strict and result["chainStatus"] != "READY":
+        return 1
+    # A stale ledger entry retires nothing while reporting that it does, so the
+    # sweep it was written to protect walks straight back into the clause. Under
+    # --strict -- the pre-flight for an operation that rewrites git history --
+    # that is a stop. chainStatus is NOT touched: it stays chain-tip-only, and
+    # the message says which of the two failures this is.
+    if args.strict and result["staleRetirements"]:
+        print(
+            f"ERROR: {len(result['staleRetirements'])} stale retirement(s) -- chainStatus "
+            f"is {result['chainStatus']}, but the retirement ledger no longer matches the "
+            "chain. See STALE RETIREMENTS above.",
+            file=sys.stderr,
+        )
         return 1
     return 0
 
