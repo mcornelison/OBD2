@@ -365,3 +365,59 @@ def pytest_collection_modifyitems(
     for item in items:
         if 'pi_only' in item.keywords:
             item.add_marker(skipMarker)
+
+
+# ==============================================================================
+# Deterministic `bash` (2026-08-27)
+# ==============================================================================
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _deterministicBash() -> Generator[None, None, None]:
+    r"""Make bare ``bash`` resolve to a REAL bash for the whole session.
+
+    27 test files shell out to ``['bash', ...]`` with no shared helper, so which
+    binary answers is decided by PATH order. On this machine PATH carries two:
+
+        C:\Program Files\Git\usr\bin\bash.exe   -- git-bash, works
+        C:\Windows\System32\bash.exe              -- WSL launcher
+
+    With no WSL distribution installed the second is a STUB: it prints "Windows
+    Subsystem for Linux has no installed distributions... visit the Microsoft
+    Store" and exits 1. Every test that shelled out then failed on
+    ``assert returncode == 0`` with a store advert in stdout.
+
+    That is what 54 of this repo's "known baseline failures" actually were --
+    an environment accident, not defects. They passed or failed depending on
+    which shell launched pytest, and were recorded as permanent.
+
+    This prepends a working bash so the answer is the same every run. If none is
+    found we FAIL LOUDLY rather than let the suite quietly re-enter that state:
+    a silent 54-test regression is exactly what took weeks to notice.
+    """
+    candidates = [
+        Path(r"C:\Program Files\Git\usr\bin\bash.exe"),
+        Path(r"C:\Program Files\Git\bin\bash.exe"),
+        Path(r"C:\Program Files (x86)\Git\bin\bash.exe"),
+    ]
+
+    if sys.platform != "win32":
+        yield
+        return
+
+    real = next((c for c in candidates if c.is_file()), None)
+    if real is None:
+        pytest.exit(
+            "No git-bash found. Bare 'bash' would resolve to the WSL stub, which "
+            "exits 1 with a Microsoft Store advert and fails ~54 deploy tests for "
+            "reasons that have nothing to do with the code. Install Git for "
+            "Windows or fix PATH.",
+            returncode=1,
+        )
+
+    original = os.environ.get("PATH", "")
+    os.environ["PATH"] = f"{real.parent}{os.pathsep}{original}"
+    try:
+        yield
+    finally:
+        os.environ["PATH"] = original
