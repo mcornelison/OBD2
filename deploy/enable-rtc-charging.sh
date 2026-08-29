@@ -126,7 +126,7 @@ fi
 if [ "$vchgNumeric" -gt "$MEASURED_CHARGING_VOLTAGE_MAX_UV" ]; then
     echo "ERROR: rtc_bbat_vchg=${VCHG_UV} uV exceeds this hardware's own stated" >&2
     echo "       maximum of ${MEASURED_CHARGING_VOLTAGE_MAX_UV} uV" >&2
-    echo "       (/sys/class/rtc/rtc0/charging_voltage_max, chi-eclipse-01)." >&2
+    echo "       (/sys/class/rtc/rtc0/charging_voltage_max, chi-eclipse-01)." >&2  # b044-exempt: provenance citation for the MEASURED ceiling in operator output, not an address this script dials
     echo "       Nothing was written." >&2
     exit 1
 fi
