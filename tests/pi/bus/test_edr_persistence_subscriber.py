@@ -56,7 +56,12 @@ def _imu(field: str, value, seq: int, *, ts: str = "2026-06-30T00:00:00Z",
 
 
 def _light(field: str, value, seq: int, *, ts: str = "2026-06-30T00:00:00Z") -> Sample:
-    """Build one raw.light.<field> sample (field in lux/raw)."""
+    """Build one raw.light.<field> sample (field in lux/raw/range).
+
+    ARCH-009 added `range` -- the gain + integration context the reading was
+    taken under -- as a THIRD field on the same burst, so a complete light burst
+    is now three samples, not two.
+    """
     return Sample(
         topic=f"raw.light.{field}",
         source="light",
@@ -228,6 +233,7 @@ class TestLightPersistence:
         sub = _noDecimation(freshDb)
         sub.handleSample(_light("lux", 123.4, 1))
         sub.handleSample(_light("raw", (10, 20, 30), 1))
+        sub.handleSample(_light("range", (0x10, 100), 1))
         (row,) = _lightRows(freshDb)
         assert row[1] == 1            # seq
         assert row[2] == 123.4        # lux
@@ -237,6 +243,7 @@ class TestLightPersistence:
         sub = _noDecimation(freshDb)
         sub.handleSample(_light("lux", None, 1))  # saturated
         sub.handleSample(_light("raw", (65535, 65535, 65535), 1))
+        sub.handleSample(_light("range", (0x20, 200), 1))
         (row,) = _lightRows(freshDb)
         assert row[2] is None                        # lux NULL, never inf
         assert row[3:6] == (65535, 65535, 65535)     # raw counts still recorded
@@ -246,6 +253,7 @@ class TestLightPersistence:
         for seq in (1, 2, 3):
             sub.handleSample(_light("lux", float(seq), seq))
             sub.handleSample(_light("raw", (seq, seq, seq), seq))
+            sub.handleSample(_light("range", (0x00, 100), seq))
         assert [r[1] for r in _lightRows(freshDb)] == [1, 2, 3]
 
 

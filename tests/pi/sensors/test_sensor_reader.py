@@ -28,6 +28,7 @@ from pi.sensors.sensor_reader import (
     TOPIC_IMU_MAG,
     TOPIC_IMU_TEMP,
     TOPIC_LIGHT_LUX,
+    TOPIC_LIGHT_RANGE,
     TOPIC_LIGHT_RAW,
     ImuReader,
     LightReader,
@@ -244,7 +245,11 @@ def test_light_present_publishesLuxAndRawWithSharedSeq():
 
     samples = _drain(sub)
     byTopic = {s.topic: s for s in samples}
-    assert set(byTopic) == {TOPIC_LIGHT_LUX, TOPIC_LIGHT_RAW}
+    # ARCH-009: the range context (gain + integration time) rides the SAME burst,
+    # so a light burst is three topics. It is published together with the reading
+    # on purpose -- a diagnostic must never be able to delay or block the sample
+    # it describes.
+    assert set(byTopic) == {TOPIC_LIGHT_LUX, TOPIC_LIGHT_RAW, TOPIC_LIGHT_RANGE}
     assert len({s.seq for s in samples}) == 1  # shared seq for the light poll
     assert byTopic[TOPIC_LIGHT_LUX].value == 123.4
     assert byTopic[TOPIC_LIGHT_LUX].unit == "lux"

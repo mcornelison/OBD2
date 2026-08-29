@@ -86,6 +86,7 @@ __all__ = [
     "TOPIC_IMU_MAG",
     "TOPIC_IMU_TEMP",
     "TOPIC_LIGHT_LUX",
+    "TOPIC_LIGHT_RANGE",
     "TOPIC_LIGHT_RAW",
 ]
 
@@ -96,6 +97,12 @@ TOPIC_IMU_MAG = "raw.imu.mag"
 TOPIC_IMU_TEMP = "raw.imu.temp"
 TOPIC_LIGHT_LUX = "raw.light.lux"
 TOPIC_LIGHT_RAW = "raw.light.raw"
+# ARCH-009 -- the RANGE CONTEXT a reading was taken under (gain code,
+# integration ms). Rule A: the driver must set both to read the chip at all, so
+# they are observed and accessible; landing the lux without them stores a number
+# whose meaning cannot be reconstructed. They are also the two values that
+# separate "mis-ranged sensor" from "IR-subtraction limit" on a negative lux.
+TOPIC_LIGHT_RANGE = "raw.light.range"
 
 # Retained presence STATE topics (ADR section 3). STATE = last-value cache.
 STATE_IMU = "state.sensor.imu"
@@ -115,6 +122,7 @@ UNIT_MAG = "uT"
 UNIT_TEMP = "degC"
 UNIT_LUX = "lux"
 UNIT_COUNT = "count"
+UNIT_RANGE = "gain/ms"
 
 # I2C addresses (ADR: ICM-20948 @0x69, TSL2591 @0x29).
 ADDR_IMU = 0x69
@@ -618,13 +626,35 @@ class LightReader(_BaseSensorReader):
         infrared = int(dev.infrared)
         full = int(dev.full_spectrum)
         # Honest instrument: lux may be None (saturation), raw counts always go.
+        # ARCH-009: read the range context from the device that just produced the
+        # sample. Published on THIS burst, not separately, so either all three
+        # fields arrive or none do -- a diagnostic must never be able to delay
+        # or block the reading it describes.
+        gainCode = getattr(dev, "gain", None)
+        integrationMs = _integrationMs(getattr(dev, "integration_time", None))
         self._publishBurst(
             (
                 (TOPIC_LIGHT_LUX, lux, UNIT_LUX),
                 (TOPIC_LIGHT_RAW, (visible, infrared, full), UNIT_COUNT),
+                (TOPIC_LIGHT_RANGE, (gainCode, integrationMs), UNIT_RANGE),
             ),
             seq,
         )
+
+
+def _integrationMs(index: Any) -> int | None:
+    """TSL2591 integration-time INDEX -> milliseconds.
+
+    The Adafruit driver exposes an index (0..5), not a duration; the chip steps
+    in 100 ms from 100 ms. Returning the INDEX would land a number that reads
+    like milliseconds and is not -- the mislabelling class this project keeps
+    finding. An unrecognised value is None, never a guess.
+    """
+    if not isinstance(index, int) or isinstance(index, bool):
+        return None
+    if 0 <= index <= 5:
+        return (index + 1) * 100
+    return None
 
 
 def _vec3(v: Any) -> tuple[float, float, float]:
