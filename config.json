@@ -77,7 +77,7 @@
       },
       "autoDim": {
         "luxMin": 3.0,
-        "luxFull": 1000.0,
+        "luxFull": 100.0,
         "minLevel": 0.5,
         "defaultLevel": 0.7,
         "alarmFloorLevel": 0.4,
