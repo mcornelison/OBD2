@@ -38,6 +38,7 @@ Note:
 import logging
 import time
 
+from .i2c_health import I2cEvent, I2cHealthRecorder
 from .platform_utils import isRaspberryPi
 
 logger = logging.getLogger(__name__)
@@ -134,7 +135,8 @@ class I2cClient:
         bus: int = DEFAULT_BUS,
         maxRetries: int = DEFAULT_MAX_RETRIES,
         initialDelay: float = DEFAULT_INITIAL_DELAY,
-        backoffMultiplier: float = DEFAULT_BACKOFF_MULTIPLIER
+        backoffMultiplier: float = DEFAULT_BACKOFF_MULTIPLIER,
+        recorder: I2cHealthRecorder | None = None
     ):
         """
         Initialize I2C client.
@@ -144,6 +146,9 @@ class I2cClient:
             maxRetries: Maximum number of retry attempts on error
             initialDelay: Initial delay in seconds before first retry
             backoffMultiplier: Multiplier for exponential backoff
+            recorder: ARCH-003 transaction-health record. Defaults to the shared
+                on-disk record; pass an explicit instance to redirect it, or any
+                object with a ``record()`` method to stub it out.
 
         Raises:
             I2cNotAvailableError: If I2C is not available on this system
@@ -153,6 +158,10 @@ class I2cClient:
         self._initialDelay = initialDelay
         self._backoffMultiplier = backoffMultiplier
         self._smbus: object | None = None
+        # ARCH-003: several independent processes read this bus (drain-forensics
+        # respawns every 5s), so health must be recorded somewhere that outlives
+        # any one of them.
+        self._recorder = recorder if recorder is not None else I2cHealthRecorder()
 
         # Initialize the SMBus connection
         self._initializeBus()
@@ -187,6 +196,22 @@ class I2cClient:
                 f"Failed to open I2C bus {self._bus}: {e}"
             ) from e
 
+    def _record(self, event: "I2cEvent", operation: str, address: int,
+                register: int | None, attempts: int, errno: int | None) -> None:
+        """Best-effort health record. NEVER allowed to fail a bus read.
+
+        The recorder swallows its own errors, but a caller could still inject a
+        stub that raises -- and an instrument that can take down the thing it
+        measures is worse than no instrument. So this is belt AND braces.
+        """
+        try:
+            recorder = getattr(self, "_recorder", None)
+            if recorder is not None:
+                recorder.record(event, address=address, register=register,
+                                operation=operation, attempts=attempts, errno=errno)
+        except Exception as exc:  # noqa: BLE001 -- deliberate; see docstring
+            logger.debug("i2c health record dropped: %s", exc)
+
     def _executeWithRetry(self, operation: str, address: int, register: int,
                           func: callable, *args) -> int:
         """
@@ -216,6 +241,13 @@ class I2cClient:
                     logger.info(
                         f"I2C {operation} succeeded on attempt {attempt + 1}"
                     )
+                    # ARCH-003: a retry that SUCCEEDED is the early-warning
+                    # signal -- a bus degrading but still answering. A
+                    # failures-only record would never show contention building
+                    # before it swallows a UPS read. The first-attempt success
+                    # path records nothing, so the file stays signal.
+                    self._record(I2cEvent.RECOVERED, operation, address,
+                                 register, attempt + 1, getattr(lastError, 'errno', None))
                 return result
 
             except OSError as e:
@@ -224,6 +256,10 @@ class I2cClient:
 
                 # Check for device not found (ENODEV = 19, ENXIO = 6)
                 if errorCode in (6, 19, 121):
+                    # Recorded DISTINCTLY from a bus fault: nothing being at the
+                    # address is an absent device, not the bus misbehaving.
+                    self._record(I2cEvent.DEVICE_MISSING, operation, address,
+                                 register, attempt + 1, errorCode)
                     raise I2cDeviceNotFoundError(
                         f"No I2C device found at address 0x{address:02x}",
                         address=address,
@@ -236,12 +272,16 @@ class I2cClient:
                         f"I2C {operation} failed (attempt {attempt + 1}/{self._maxRetries + 1}), "
                         f"retrying in {delay}s | error={e}"
                     )
+                    self._record(I2cEvent.RETRIED, operation, address,
+                                 register, attempt + 1, errorCode)
                     time.sleep(delay)
                     delay *= self._backoffMultiplier
                 else:
                     logger.error(
                         f"I2C {operation} failed after {self._maxRetries + 1} attempts"
                     )
+                    self._record(I2cEvent.FAILED, operation, address,
+                                 register, attempt + 1, errorCode)
 
             except Exception as e:
                 # Unexpected error - don't retry
