@@ -83,7 +83,7 @@
         "luxMin": 3.0,
         "luxFull": 1000.0,
         "minLevel": 0.75,
-        "defaultLevel": 0.7,
+        "defaultLevel": 1.0,
         "alarmFloorLevel": 0.4,
         "luxStaleSec": 10,
         "curve": "logarithmic"
