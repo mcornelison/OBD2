@@ -850,6 +850,41 @@ step_set_gpu_cma() {
     remote "sudo bash '${PI_PATH}/deploy/set-gpu-cma.sh'"
 }
 
+step_set_network_authorization() {
+    # ARCH-004: which networks this Pi may join.
+    #
+    # THE DEFECT, measured on the live Pi 2026-08-28: the home profile and a
+    # saved profile for the car's Pioneer head unit were BOTH autoconnect with
+    # BOTH at priority 0. Pulling into the garage, both APs are in range and
+    # which one wins is not deterministic -- so garage sync was unreliable, and
+    # 35 minutes of a drive sat unsynced on the Pi through a CLEAN shutdown.
+    #
+    # THE FIX IS NOT "disable autoconnect" -- the CIO caught that before it was
+    # built, and he was right. NetworkManager never roams onto unknown APs; it
+    # only joins networks it holds a saved profile for, so the allowlist already
+    # existed and the stereo was simply ON it. The script instead makes home
+    # OUTRANK everything (positive control, survives future profiles), drops
+    # profiles not on the allowlist, and marks every secret system-owned so no
+    # credential dialog can ever cover the driver's instrument.
+    #
+    # Re-asserted on EVERY deploy on purpose: tapping an SSID from the desktop
+    # re-authorizes a network, and an OS upgrade can regenerate netplan output.
+    # This step is how that drift self-heals.
+    #
+    # Takes effect on the NEXT ASSOCIATION, not the next reboot -- unlike the
+    # two boot-config steps above. The script says so rather than letting the
+    # deploy imply the Pi has already moved to the new policy.
+    echo "--- Step: Re-asserting network authorization (ARCH-004) ---"
+    if $DRY_RUN; then
+        echo "DRY-RUN would run: sudo bash ${PI_PATH}/deploy/set-network-authorization.sh"
+        echo "DRY-RUN would verify: home profile carries connection.autoconnect-priority"
+        echo "DRY-RUN would verify: no wifi profile outside the allowlist remains"
+        echo "DRY-RUN note: takes effect on next association; confirm with nmcli con show"
+        return 0
+    fi
+    remote "sudo bash '${PI_PATH}/deploy/set-network-authorization.sh'"
+}
+
 step_set_display_mode() {
     # US-552 / F-127 (Atlas A-16 display-pipeline fidelity): pin the KMS output
     # mode to the panel's native 480x320 via a `video=<connector>:480x320` token
@@ -2091,6 +2126,16 @@ step_set_gpu_cma
 # reboot. Both touch the display pipeline, so keeping them adjacent keeps the
 # "what did the deploy change about the screen" answer in one place.
 step_set_display_mode
+
+# ARCH-004: re-assert WHICH NETWORKS this Pi may join. Same class as the two
+# steps above -- an idempotent BOX-level re-assertion that needs sync_tree to
+# have put its standalone script on the Pi -- but NOT a boot-config step: it
+# takes effect on the next association, not the next reboot.
+#
+# Ordered last in this block because it is the member of the family most likely
+# to drift: tapping an SSID from the desktop is enough to re-authorize a
+# network, and an OS upgrade can regenerate netplan output.
+step_set_network_authorization
 
 # US-477 / F-120: re-assert the canonical OBDLink MAC into /etc/default/obdlink
 # on EVERY deploy so a drifted Pi (like the 2026-07-17 phantom that captured
