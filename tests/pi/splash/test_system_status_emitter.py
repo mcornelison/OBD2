@@ -70,7 +70,14 @@ def test_buildSystemStatusState_a3Schema_hasExactShape():
         "drive": {"state": "recording", "driveId": 27, "lastDrive": None},
         # US-480-a idle-SSOT (b): recording -> never idle (a drive is active).
         "idle": False,
-        "source": {"obd": {"available": True, "reason": None}},
+        # ARCH-007: `wifi` joins the A-3 schema per the Atlas contract ruling
+        # of 2026-08-20. It defaults to UNAVAILABLE, never to a fabricated link:
+        # a caller that has not wired the provider must not publish one.
+        "wifi": {"state": None, "ssid": None, "rssiDbm": None},
+        "source": {
+            "obd": {"available": True, "reason": None},
+            "wifi": {"available": False, "reason": "wifi: not read"},
+        },
         "ts": _NOW,
     }
 

@@ -17,7 +17,11 @@
       "piHostname": "chi-eclipse-01",
       "piDeviceId": "chi-eclipse-01",
       "piHostEth": "10.27.27.123",
-      "piHostWifi": "10.27.27.124"
+      "piHostWifi": "10.27.27.124",
+      "wifi": {
+        "weakRssiDbm": -70,
+        "downRssiDbm": -90
+      }
     },
     "application": {
       "name": "Eclipse OBD-II Performance Monitor",

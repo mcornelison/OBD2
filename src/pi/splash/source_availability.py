@@ -35,6 +35,7 @@ __all__ = [
     "REASON_UPS_UNREADABLE",
     "SOURCE_DTC",
     "SOURCE_OBD",
+    "SOURCE_WIFI",
     "SOURCE_UPS",
     "buildSourceState",
 ]
@@ -42,6 +43,9 @@ __all__ = [
 # The three carousel sources (one availability truth apiece). These are the
 # `<x>` in the spec's retained `state.source.<x>` STATE topic.
 SOURCE_OBD = "obd"
+# ARCH-007: the wlan0 link, published as a first-class source so the glyph can
+# distinguish "no link" from "could not look" (Atlas ruling 2026-08-20 s2.3).
+SOURCE_WIFI = "wifi"
 SOURCE_UPS = "ups"
 SOURCE_DTC = "dtc"
 

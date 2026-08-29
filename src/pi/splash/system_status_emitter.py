@@ -41,6 +41,7 @@ from pi.splash.boot_state_emitter import ensureStatesDir, writeStateAtomic
 from pi.splash.source_availability import (
     REASON_OBD_OFF,
     SOURCE_OBD,
+    SOURCE_WIFI,
     buildSourceState,
 )
 
@@ -72,6 +73,49 @@ __all__ = [
 ]
 
 
+# ARCH-007 -- WiFi band thresholds. Defaults MIRROR pi.network.wifi.* in
+# config.json (the tuning SSOT); they are parameters, never magic numbers, per
+# the Atlas ruling 2026-08-20 section 2.2.
+DEFAULT_WEAK_RSSI_DBM: int = -70
+DEFAULT_DOWN_RSSI_DBM: int = -90
+
+REASON_WIFI_UNKNOWN = "wifi: not read"
+
+
+def deriveWifiState(
+    *,
+    associated: bool | None,
+    rssiDbm: int | None,
+    weakRssiDbm: int = DEFAULT_WEAK_RSSI_DBM,
+    downRssiDbm: int = DEFAULT_DOWN_RSSI_DBM,
+) -> str | None:
+    """Derive the WiFi band ONCE, here (Atlas ruling 2026-08-20 section 2.1).
+
+    The glyph renders this verdict and applies no threshold of its own. Two
+    rules for one fact disagree the first time either moves.
+
+    Returns ``"up"`` / ``"weak"`` / ``"down"``, or ``None`` when the link cannot
+    be READ.
+
+    That last distinction is the whole point of the ruling (section 2.3):
+    **``down`` is a MEASUREMENT** -- we looked, and there is no usable link.
+    An unreadable interface is ``None``, never ``down``. Painting "no signal"
+    when the truth is "we could not look" is a fabricated reading, and it is the
+    exact defect class this project keeps finding.
+    """
+    if associated is None:
+        return None            # could not read the interface at all
+    if not associated:
+        return "down"          # we looked: there is no link. A real measurement.
+    if rssiDbm is None:
+        return None            # associated, but ungradeable -- not "down"
+    if rssiDbm <= downRssiDbm:
+        return "down"
+    if rssiDbm <= weakRssiDbm:
+        return "weak"
+    return "up"
+
+
 def buildSystemStatusState(
     *,
     obdLinkState: str,
@@ -89,6 +133,12 @@ def buildSystemStatusState(
     obdAvailable: bool = True,
     obdUnavailableReason: str | None = None,
     lastDrive: dict | None = None,
+    wifiAvailable: bool = False,
+    wifiUnavailableReason: str | None = None,
+    wifiSsid: str | None = None,
+    wifiRssiDbm: int | None = None,
+    wifiWeakRssiDbm: int = DEFAULT_WEAK_RSSI_DBM,
+    wifiDownRssiDbm: int = DEFAULT_DOWN_RSSI_DBM,
 ) -> dict:
     """Assemble the system-status payload (pure; spec §7 pinned A-3 schema).
 
@@ -156,6 +206,24 @@ def buildSystemStatusState(
             "stale": syncStale,
         },
         "power": {"mode": powerMode, "source": powerSource},
+        # ARCH-007 (Atlas ruling 2026-08-20). Defaults to UNAVAILABLE, not to a
+        # cheerful "up": a caller that has not wired the provider must not
+        # publish a link it never observed. And when unavailable, ssid/rssi are
+        # forced null -- carrying the last-seen SSID would be a fabricated fact
+        # about a link we cannot currently read.
+        "wifi": {
+            # DERIVED HERE, never passed in (ruling s2.1): one rule for one
+            # fact. Association is inferred from the SSID -- if we have a
+            # network name we are on a network.
+            "state": deriveWifiState(
+                associated=(wifiSsid is not None) if wifiAvailable else None,
+                rssiDbm=wifiRssiDbm,
+                weakRssiDbm=wifiWeakRssiDbm,
+                downRssiDbm=wifiDownRssiDbm,
+            ) if wifiAvailable else None,
+            "ssid": wifiSsid if wifiAvailable else None,
+            "rssiDbm": wifiRssiDbm if wifiAvailable else None,
+        },
         # `lastDrive` is ALWAYS present as a key (null when unknown) rather than
         # sometimes-absent: an intermittently-missing key is the shape that lets
         # a renderer quietly fall through to the wrong branch, and a stable
@@ -169,7 +237,10 @@ def buildSystemStatusState(
         "source": {
             SOURCE_OBD: buildSourceState(
                 obdAvailable, obdUnavailableReason or REASON_OBD_OFF
-            )
+            ),
+            SOURCE_WIFI: buildSourceState(
+                wifiAvailable, wifiUnavailableReason or REASON_WIFI_UNKNOWN
+            ),
         },
         "ts": nowIso,
     }
