@@ -103,6 +103,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import json
 import logging
 import os
 import re
@@ -162,6 +163,17 @@ DEFAULT_LOG_DIR: Path = Path('/var/log/eclipse-obd')
 DEFAULT_ORCHESTRATOR_STATE_FILE: Path = Path(
     '/var/run/eclipse-obd/orchestrator-state.json',
 )
+
+# ARCH-006. The MAX17048 reading is PUBLISHED here by powerwatch, which already
+# owns the bus. This script subscribes to it instead of opening its own client.
+DEFAULT_BATTERY_HEALTH_STATE_FILE: Path = Path(
+    '/run/eclipse-obd/states/battery-health',
+)
+
+# How old a published reading may be and still be reported as current. The timer
+# fires every 5s and powerwatch republishes far faster, so 30s is generous; past
+# it the reading is DROPPED rather than aged into the CSV as though it were now.
+DEFAULT_UPS_STATE_MAX_AGE_SECONDS: float = 30.0
 
 # Rotation invariant: if newest CSV's mtime is older than this many
 # seconds, the next BATTERY tick treats this as a fresh AC->BATTERY
@@ -468,8 +480,87 @@ def _readPowerSourceFromVcell(vcell: float | None) -> str:
     return 'external'
 
 
+_UPS_UNAVAILABLE: dict = {
+    'vcell_v': None, 'soc_pct': None, 'crate_pct_per_hr': None,
+}
+
+
+def _readUpsTelemetryFromState(
+    statePath: Path = DEFAULT_BATTERY_HEALTH_STATE_FILE,
+    maxAgeSec: float = DEFAULT_UPS_STATE_MAX_AGE_SECONDS,
+) -> dict:
+    """SUBSCRIBE to the MAX17048 reading powerwatch already publishes.
+
+    ARCH-006 / SSOT rule B (CIO 2026-08-20): *read once -> persist -> publish ->
+    subscribe; never two acquisitions of one source.*
+
+    This replaces :func:`_readUpsTelemetry`, which opened its own I2C client.
+    Because ``drain-forensics.timer`` runs ``OnUnitActiveSec=5s`` in a FRESH
+    process, and because both the telemetry provider and the power-source
+    provider called it, that was **two bus opens every five seconds, forever**,
+    alongside powerwatch and the sensor emitters on the same bus.
+
+    ``states/battery-health`` already carries exactly the three registers this
+    script wants -- ``vcellV`` / ``soc`` / ``crate``. The reading existed; this
+    script simply was not subscribing to it.
+
+    **There is deliberately NO I2C fallback.** A "use the bus if the file is
+    missing" branch would re-create the second acquisition, and it would fire at
+    precisely the worst moment: when the publisher is already unhealthy and the
+    bus is the component under suspicion. An unavailable reading is recorded as
+    unavailable -- honest-availability, which is the point.
+
+    Returns ``None`` for every field, never raising, when the file is absent,
+    malformed, undated or stale. A forensic row that says "unknown" is useful;
+    one that says "4.1 V" about ten minutes ago is not.
+    """
+    try:
+        raw = statePath.read_text(encoding='utf-8')
+    except (OSError, UnicodeDecodeError):
+        return dict(_UPS_UNAVAILABLE)
+
+    try:
+        state = json.loads(raw)
+    except (ValueError, TypeError):
+        return dict(_UPS_UNAVAILABLE)
+    if not isinstance(state, dict):
+        return dict(_UPS_UNAVAILABLE)
+
+    # An undated reading cannot be aged, so it cannot be trusted. Treating it as
+    # fresh would be the same fabrication this whole change is about.
+    ts = state.get('ts')
+    if not isinstance(ts, str):
+        return dict(_UPS_UNAVAILABLE)
+    try:
+        published = datetime.strptime(ts, '%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=UTC)
+    except (ValueError, TypeError):
+        return dict(_UPS_UNAVAILABLE)
+
+    ageSec = (datetime.now(UTC) - published).total_seconds()
+    if ageSec > maxAgeSec:
+        logger.debug(
+            'battery-health reading is %.0fs old (max %.0fs); reporting unavailable',
+            ageSec, maxAgeSec,
+        )
+        return dict(_UPS_UNAVAILABLE)
+
+    return {
+        'vcell_v': state.get('vcellV'),
+        'soc_pct': state.get('soc'),
+        # A null crate is a real state on this Pi -- it must stay null, never 0.
+        'crate_pct_per_hr': state.get('crate'),
+    }
+
+
 def _readUpsTelemetry() -> dict:
     """Read MAX17048 VCELL/SOC/CRATE on the deployed Pi.
+
+    .. deprecated:: ARCH-006
+       **No longer wired into production.** Superseded by
+       :func:`_readUpsTelemetryFromState`, which subscribes to the reading
+       powerwatch publishes rather than opening a second I2C client. Kept only
+       so a diagnostic can still take a direct reading DELIBERATELY, with the
+       bus contention understood -- it must not be re-wired into the 5s timer.
 
     Imports lazily so non-Pi test hosts (Windows dev) can collect the
     test module without pulling smbus2.  Errors return ``None`` for the
@@ -619,11 +710,24 @@ def buildProductionContext(
     logDir: Path = DEFAULT_LOG_DIR,
     rotationGapSeconds: float = DEFAULT_ROTATION_GAP_SECONDS,
     orchestratorStateFile: Path = DEFAULT_ORCHESTRATOR_STATE_FILE,
+    batteryHealthStateFile: Path = DEFAULT_BATTERY_HEALTH_STATE_FILE,
 ) -> ForensicsContext:
-    """Wire the production providers (real I2C / vcgencmd / files)."""
+    """Wire the production providers.
+
+    ARCH-006: the UPS reading is now SUBSCRIBED from the published
+    ``battery-health`` state, not acquired. This function no longer opens the
+    I2C bus at all -- see :func:`_readUpsTelemetryFromState` for why there is
+    deliberately no hardware fallback.
+    """
+
+    def _upsTelemetryProvider() -> dict:
+        return _readUpsTelemetryFromState(batteryHealthStateFile)
 
     def _powerSourceProvider() -> str:
-        ups = _readUpsTelemetry()
+        # Derived from the SAME subscribed reading. It used to call the
+        # acquiring function a second time, so each 5s fire opened the bus
+        # TWICE -- 24 opens a minute for one value.
+        ups = _upsTelemetryProvider()
         return _readPowerSourceFromVcell(ups['vcell_v'])
 
     def _orchestratorStateProvider() -> dict:
@@ -632,7 +736,7 @@ def buildProductionContext(
     return ForensicsContext(
         logDir=logDir,
         powerSourceProvider=_powerSourceProvider,
-        upsTelemetryProvider=_readUpsTelemetry,
+        upsTelemetryProvider=_upsTelemetryProvider,
         vcgencmdProvider=_readVcgencmd,
         loadAvgProvider=_readLoadAvg,
         orchestratorStateProvider=_orchestratorStateProvider,
