@@ -2021,6 +2021,36 @@ step_write_deploy_version() {
     echo "Wrote ${PI_PATH}/.deploy-version: ${versionJson}"
 }
 
+# US-573 / F-136: prove every Pi runtime entry point IMPORTS on the target
+# before any service is restarted.
+#
+# The Pi sync is a WHITELIST (f2c80b4f, patched by accfa853 and da5008cd), and a
+# whitelist omission fails by SILENCE: the file is simply absent on the car, the
+# deploy reports success, and the unit dies at its next start with a
+# ModuleNotFoundError that reads like a code bug. deploy-server.sh:116-122
+# already carries the server half of this check; the Pi had none.
+#
+# Ordered AFTER the unit installs (the entry points are derived from the units
+# systemd actually loaded, so they must exist) and BEFORE step_restart_service,
+# so a missing module fails the deploy instead of bouncing services into a
+# crash loop. `set -e` means a failure here also stops .deploy-version being
+# bumped -- the Pi is never marked as carrying a release it cannot import.
+step_verify_pi_imports() {
+    echo "--- Step: Verifying Pi runtime entry points import (US-573 / F-136) ---"
+    if $DRY_RUN; then
+        echo "DRY-RUN would import every Python entry point derived from the"
+        echo "DRY-RUN   installed systemd units, using each unit's own"
+        echo "DRY-RUN   WorkingDirectory and PYTHONPATH, and FAIL the deploy on"
+        echo "DRY-RUN   any ModuleNotFoundError or on discovering none at all."
+        return 0
+    fi
+    remote "
+        cd '${PI_PATH}'
+        PI_PROJECT_ROOT='${PI_PATH}' bash deploy/verify-pi-imports.sh
+    "
+    echo ""
+}
+
 step_restart_service() {
     echo "--- Step: Restarting ${SERVICE_NAME} systemd service ---"
     # US-389 + US-354 deploy-hygiene class: STOP before START (not a bare
@@ -2433,6 +2463,12 @@ logs|exports|.deploy-version|requirements.txt|requirements-pi.txt|.gitignore|\
     "
     echo ""
 }
+
+# US-573 / F-136: the whitelist-omission gate. Runs after every unit install
+# above (it derives the entry points from those units) and BEFORE the restart
+# below, so a module the whitelist failed to ship fails the deploy loudly
+# instead of surfacing as a service that will not start.
+step_verify_pi_imports
 
 # US-354 reordering: restart first, then verify both long-running services
 # came back with start times AFTER DEPLOY_START_EPOCH, THEN bump
