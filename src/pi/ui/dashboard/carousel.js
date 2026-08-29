@@ -2210,6 +2210,13 @@
     if (!lightData || typeof lightData !== "object") return null;
     var lux = lightData.lux;
     if (typeof lux !== "number" || !isFinite(lux)) return null;
+    // ARCH-010, defence in depth. A negative lux is a computation failure, not
+    // a dark reading -- and it is FINITE, so isFinite() waved it through. It
+    // then hit `lux <= luxMin -> 0` below and drove the panel to minLevel, so
+    // the brighter the sun the dimmer the screen. The producer now publishes
+    // null for this, but the consumer must not depend on that being deployed:
+    // this slipped past three type checks once already.
+    if (lux < 0) return null;
     var ts = lightData.ts;
     if (typeof ts !== "string") return null;
     var t = Date.parse(ts);

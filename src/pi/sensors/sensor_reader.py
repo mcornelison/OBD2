@@ -651,6 +651,22 @@ def _readLux(dev: Any) -> float | None:
         return None
     if not math.isfinite(luxF):  # never inf/nan
         return None
+    # ARCH-010: a NEGATIVE lux is a computation failure, not a dark reading.
+    # The TSL2591 lux equation subtracts a multiple of the IR channel, so an
+    # IR-dominated sample -- low sun through a windscreen -- computes negative.
+    # Measured: 452 such samples on 2026-08-28, worst -721.4, at 83% infrared.
+    #
+    # Published as None, NOT clamped to 0. Clamping is the convenient answer and
+    # the wrong one: 0 lux reads as darkness, so the display would still dim in
+    # bright sun -- which is the defect. None is the honest answer (we could not
+    # compute a lux) and it routes to the fixed default, i.e. full brightness.
+    # The honest answer and the correct behaviour are the same answer.
+    #
+    # ZERO is deliberately NOT rejected: a photon-counting sensor in real
+    # darkness can return a bit-exact zero (US-564 says so about this device),
+    # and rejecting it would delete a real measurement.
+    if luxF < 0:
+        return None
     return luxF
 
 
