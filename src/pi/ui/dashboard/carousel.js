@@ -691,6 +691,24 @@
 
   // The full structured view consumed by the DOM renderer + the node tests.
   // Non-object payload -> null (the shell renders `unavailable`).
+  // ARCH-007 (Atlas ruling 2026-08-20 s2.1/s2.3). The emitter has ALREADY
+  // derived the band; this maps its verdict to a glyph state and applies NO
+  // threshold of its own.
+  //
+  // The load-bearing line is the last one: an unreadable link renders NEUTRAL,
+  // never amber. `down` is a MEASUREMENT -- we looked and there is no link.
+  // Painting "no signal" when the truth is "we could not look" is a fabricated
+  // reading, which is the defect class this contract exists to prevent.
+  function wifiGlyphState(data) {
+    var src = data && data.source && data.source.wifi;
+    if (!src || src.available !== true) return "neutral";
+    var wifi = data.wifi || {};
+    if (wifi.state === "up") return "ok";
+    if (wifi.state === "weak") return "amber";
+    if (wifi.state === "down") return "down";
+    return "neutral";   // available but ungradeable -- still not a claim
+  }
+
   function systemStatusView(data) {
     if (!isObj(data)) return null;
     // US-429: the OBD source owns the OBD-link tile + glyph. When the source is
@@ -719,6 +737,7 @@
         bt: obdOff ? "neutral" : btGlyphState(data.obdLink),
         sync: syncGlyphState(data.sync),
         power: powerGlyphState(data.power),
+        wifi: wifiGlyphState(data),
       },
       ts: typeof data.ts === "string" ? data.ts : null,
     };
@@ -3110,6 +3129,10 @@
       if (glyphEls.bt) glyphEls.bt.setAttribute("data-state", view.glyphs.bt);
       if (glyphEls.sync) glyphEls.sync.setAttribute("data-state", view.glyphs.sync);
       if (glyphEls.power) glyphEls.power.setAttribute("data-state", view.glyphs.power);
+      // ARCH-007: render the emitter's verdict. The display applies NO
+      // threshold of its own (ruling s2.1) -- two rules for one fact disagree
+      // the first time either moves.
+      if (glyphEls.wifi) glyphEls.wifi.setAttribute("data-state", view.glyphs.wifi);
     }
 
     // --- US-509 System-Status drill-down overlay (browser only) -------------
@@ -3226,6 +3249,7 @@
       if (glyphEls.bt) glyphEls.bt.setAttribute("data-state", "neutral");
       if (glyphEls.sync) glyphEls.sync.setAttribute("data-state", "neutral");
       if (glyphEls.power) glyphEls.power.setAttribute("data-state", "neutral");
+      if (glyphEls.wifi) glyphEls.wifi.setAttribute("data-state", "neutral");
     }
 
     // --- US-542 motion-fault fallback DOM render (browser only) -------------
@@ -3755,6 +3779,7 @@
         bt: document.getElementById("glyph-bt"),
         sync: document.getElementById("glyph-sync"),
         power: document.getElementById("glyph-power"),
+        wifi: document.getElementById("glyph-wifi"),
       };
 
       // US-542: paint the top-bar clock once at boot so the slot is never blank
