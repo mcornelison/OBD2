@@ -1,5 +1,5 @@
 {
-  "version": "V0.29.32",
-  "theme": "Sprint 76 -- V0.29 closeout, 7/7",
-  "description": "US-569 archived-sprint backfill tool, --evidence mandatory. US-570 architecture.md drops the retired Health card + STANDBY face. US-571 compass real post-US-565, caveat kept. US-472 CI pinned to Node24. US-553 deploy clears stale .pyc on target. US-618 chain docs now describe chain-TIP gating; tool unchanged. US-619 bigDoD retire route. Docs + tooling only; no reboot needed."
+  "version": "V0.29.33",
+  "theme": "Bench tickets: ARCH-003..007, TUNER-003, auto-dim",
+  "description": "ARCH-003 I2C failure instrumentation. ARCH-004 network authorization by allowlist; home wins the garage. ARCH-005 auto-dim floor 0.15->0.5. ARCH-006 drain_forensics subscribes to the published UPS reading. ARCH-007 WiFi glyph. TUNER-003 grounded-knowledge refreshed vs the drive-51 WOT corpus. Config: auto-dim minLevel 0.75, defaultLevel 1.0 (CIO). Reboot to take effect."
 }
