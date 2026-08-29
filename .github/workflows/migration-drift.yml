@@ -23,6 +23,23 @@
 # 11.8.6). A wrong-version container can green-pass a prod-failing migration;
 # the harness (_mariadb_chain_harness.py::_assertMariaDbMajor) also refuses a
 # non-11.x engine.
+#
+# ACTION RUNTIME (US-472, 2026-08-28): every `uses:` below is pinned to a major
+# whose action.yml declares `runs.using: node24`, clearing the Node20 runtime
+# deprecation. Each was read from the action's own action.yml at the tag, NOT
+# from its release notes -- see tests/lint/test_workflow_action_pins_run_node24.py,
+# which fails if any pin regresses to a Node20-era major.
+#   NOTE, and it is the reason that lint exists: US-472 named
+#   actions/upload-artifact@v5 as the Node24 target. It is NOT one. @v5.0.0's
+#   notes announce "supports Node v24.x" while its action.yml still says
+#   `using: 'node20'`; @v6.0.0's notes confirm it -- "v5 had preliminary support
+#   for Node.js 24, however this action was by default still running on Node.js
+#   20." So this pin takes the story's documented fallback (hold at the newest
+#   Node24-compatible major) and uses @v7. Its `name:`/`path:` inputs are
+#   unchanged from v4; v7's new `archive:` input is opt-in and left unset, which
+#   preserves v4 zip-with-name behaviour.
+# All three node24 majors require Actions Runner >= v2.327.1; this job is
+# `runs-on: ubuntu-latest` (GitHub-hosted, always current), so that is met.
 # =============================================================================
 name: migration-drift-real-mariadb
 
@@ -70,10 +87,10 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up Python 3.11
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.11"
 
@@ -122,7 +139,7 @@ jobs:
 
       - name: Upload test report
         if: ${{ always() }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: migration-drift-report
           path: migration-drift-report.xml

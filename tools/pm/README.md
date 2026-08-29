@@ -105,7 +105,16 @@ Exit 0 on all checks pass; 1 on cap violation (caller fixes file before deploy);
 sprint.json files belonging to a V0.X minor-version chain (e.g. V0.27 =
 V0.27.2 + V0.27.3 + V0.27.4 + V0.27.5 stacked sprint branches awaiting
 chain-end merge to main), aggregates each sprint's validation block, and
-reports whether the chain is READY (all sprints validated) or INCOMPLETE.
+reports whether the chain is READY (the CHAIN-TIP sprint carries a
+`validatedAt` stamp) or INCOMPLETE (the tip does not, or no sprint matched the
+`--chain` prefix -- `chainTipVersion` tells those two apart).
+
+**The gate is the chain TIP alone** (`chain_validate_aggregate.py:238`). Earlier
+patches in the chain keep `validatedAt: null` under the CIO 2026-05-23
+chain-end-merge rule -- superseded by the next patch, never individually
+re-validated -- so null is the EXPECTED state, not a debt. `unvalidatedSprints`
+lists them as context only (`:188`). Corrected under US-618, which was groomed
+after this claim's stale form cost a sprint.
 
 Per CIO 2026-05-10 chain-end-merge rule: main = "fully functional working
 system"; sprint branches stay deployed-but-pre-merge until the WHOLE chain
@@ -119,7 +128,7 @@ python offices/pm/scripts/chain_validate_aggregate.py --chain V0.27
 # Machine-readable for downstream piping:
 python offices/pm/scripts/chain_validate_aggregate.py --chain V0.27 --json
 
-# CI gate -- exit 1 if any sprint in chain lacks validatedAt:
+# CI gate -- exit 1 if the CHAIN TIP lacks validatedAt (or the chain is empty):
 python offices/pm/scripts/chain_validate_aggregate.py --chain V0.27 --strict
 
 # Explicit paths (test harness + ad-hoc inspection):
@@ -129,11 +138,80 @@ python offices/pm/scripts/chain_validate_aggregate.py \
 
 Output fields (`--json`): `chainPrefix`, `sprintsInChain` (per-sprint
 records ordered by `currentVersion`), `aggregateValidatesFeatures` (sorted
-unique union), `aggregateBigDoD` (chain-wide clauses), `unvalidatedSprints`,
-`chainStatus` ('READY' / 'INCOMPLETE').
+unique union), `aggregateBigDoD` (chain-wide clauses, each carrying a
+`retired` boolean), `unvalidatedSprints`, `chainTipVersion`, `chainStatus`
+('READY' / 'INCOMPLETE'), `retiredBigDoD`, `staleRetirements`.
 
 Exit codes: 0 if chain READY (or report mode), 1 if `--strict` +
-INCOMPLETE, 2 on file/parse error.
+INCOMPLETE **or `--strict` + a stale retirement**, 2 on file/parse error
+(including a `--retirements` path that does not exist).
+
+### Retiring a bigDoD clause (US-619)
+
+Sometimes a chain bigDefinitionOfDone clause is invalidated by a finding that
+lands *after* the sprint that wrote it. The founding case: V0.29.29 carries
+`(output is the panel-native 480x320 ...) [from US-552]`, and BL-034 later
+measured the panel's EDID -- the OSOYOO HDMI35 is a **scaler** panel that
+advertises no 480x320 mode at all. 720p IS the shipping configuration, so the
+clause can never be discharged truthfully.
+
+**Why this needs a route rather than a judgement call.** Anyone sweeping that
+clause has exactly two outs: fail the chain, or write evidence for something
+that did not happen. The second is the fabricated-fixture defect at chain
+scale, and this project has shipped that defect before. The retire route exists
+so the sweep operator is never forced to choose.
+
+**The route is ADDITIVE. Archive snapshots are testimony and are never
+edited.** A clause is retired by adding a record to
+`tools/pm/bigdod_retirements.json`, which the aggregator overlays at read time.
+The sprint that made the claim keeps its original text, so a reader sees both
+the claim and the authority that withdrew it.
+
+```jsonc
+{
+  "schemaVersion": "1.0.0",
+  "retirements": [
+    {
+      "currentVersion": "V0.29.29",       // required
+      "clause": "<VERBATIM clause text>", // required -- copy from the aggregate
+      "retiredAt": "2026-08-28",
+      "retiredBy": "Atlas(Architect) BL-034 ruling R1, CIO-ratified 2026-08-27",
+      "authority": "offices/pm/.../BL-034-....md",  // required -- a document
+      "reason": "why it can never be discharged",
+      "supersededStory": "US-560"
+    }
+  ]
+}
+```
+
+Rules the tool enforces, and the reason each one is there:
+
+- **`authority` is required.** A retirement withdraws a project commitment. One
+  with no cited source is the same defect class as a fixture asserting an
+  unmeasured fact.
+- **Matching is EXACT on the `(currentVersion, clause)` pair -- never
+  substring.** This is load-bearing, not fastidious. The V0.29.15 clause
+  `(480x320 UI scales up centered ...) [from US-482]` *also* contains
+  "480x320", and it describes the shipping arrangement **exactly** -- it must
+  survive. A substring rule retires a correct clause by association. Clause text
+  also repeats across sprints, which is why the sprint version is half the key.
+- **Copy the clause verbatim from the aggregate output, do not retype it.** The
+  real text carries `→` (U+2192), not `->`. A mistyped clause produces an
+  *inert* retirement that reports success and retires nothing.
+- **A record whose version is in the chain but matches no clause is STALE** and
+  is reported in `staleRetirements`; `--strict` then exits 1 with a message
+  distinguishing it from a gate failure. A record for a sprint outside the
+  aggregated chain is simply not applicable and stays silent.
+- **Retirement never touches `chainStatus`.** The gate stays chain-tip-only
+  (`:238`, CIO 2026-05-23). Retirement annotates the clause list.
+
+```bash
+# See the retirements applied to a chain:
+python -m tools.pm.chain_validate_aggregate --chain V0.29
+
+# Alternate ledger (test harness):
+python -m tools.pm.chain_validate_aggregate --chain V0.29 --retirements path/to/ledger.json
+```
 
 ## chain_validate_manifest_bump.py
 

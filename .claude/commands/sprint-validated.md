@@ -5,7 +5,7 @@ description: "Sprint-validated ritual for Marcus (PM) -- stamps per-sprint valid
 
 # Sprint Validated (PM-driven, dev/main workflow per spec 2026-05-28)
 
-Per-sprint validation ritual for Marcus (PM). Companion to `/sprint-deploy-pm` (Phase 3.5 merged sprint → dev; deploy ran from dev). Per spec `$FLEET_SHARE/knowledge/superpowers/specs/2026-05-28-dev-main-branching-workflow-design.md`: validation drills target `dev`; this command stamps the per-sprint validation block + bumps `regression_manifest` for the sprint's `validatesFeatures`. **It does NOT merge to main.** `/chain-validated` does that at chain end (after every sprint in the V0.X chain has its own `/sprint-validated` stamp AND CIO confirms whole-chain green).
+Per-sprint validation ritual for Marcus (PM). Companion to `/sprint-deploy-pm` (Phase 3.5 merged sprint → dev; deploy ran from dev). Per spec `$FLEET_SHARE/knowledge/superpowers/specs/2026-05-28-dev-main-branching-workflow-design.md`: validation drills target `dev`; this command stamps the per-sprint validation block + bumps `regression_manifest` for the sprint's `validatesFeatures`. **It does NOT merge to main.** `/chain-validated` does that at chain end (after the CHAIN-TIP sprint has its `/sprint-validated` stamp AND CIO confirms whole-chain green -- earlier patches keep `validatedAt: null` and that is expected; `chain_validate_aggregate.py:238` gates on the tip alone).
 
 **WHEN to run**: after a real-hardware drill successfully exercises the sprint's `validation.bigDefinitionOfDone` clauses AND CIO confirms green light.
 
@@ -160,7 +160,7 @@ git push origin dev
 
 ## Phase 6 -- (RETIRED under dev/main workflow)
 
-Per spec 2026-05-28, the merge to `main` no longer happens at per-sprint validation. The chain merge runs once at chain end via `/chain-validated` after every sprint in the V0.X chain has its own `/sprint-validated` stamp AND CIO confirms whole-chain green. Sprint validation now only stamps the per-sprint records on `dev`.
+Per spec 2026-05-28, the merge to `main` no longer happens at per-sprint validation. The chain merge runs once at chain end via `/chain-validated` after the CHAIN-TIP sprint has its `/sprint-validated` stamp AND CIO confirms whole-chain green. Earlier patches in the chain keep `validatedAt: null` and that is the expected state, not a debt (`chain_validate_aggregate.py:238` gates on the tip alone). Sprint validation now only stamps the per-sprint records on `dev`.
 
 ---
 
@@ -208,7 +208,7 @@ Show what's still STALE / NEVER-validated -> next sprint candidates.
 
 ## Why this exists
 
-Per Mike 2026-05-08: main = "fully validated stable." Sprint deployment + sprint validation are decoupled. Per CIO 2026-05-23 directive #1 + spec 2026-05-28: under dev/main two-tier workflow, this command no longer performs the merge to main. Instead it stamps the per-sprint validation on `dev` (which carries the active V0.X chain). The chain merge to main happens via `/chain-validated` once every sprint in the chain has its own stamp AND CIO confirms whole-chain green. The three-step gate (deploy → per-sprint validate → chain merge) prevents the Sprint 22 hidden-bug-pattern, the Sprint 25 sibling-bug pattern, and the never-validated-in-real-life class of features.
+Per Mike 2026-05-08: main = "fully validated stable." Sprint deployment + sprint validation are decoupled. Per CIO 2026-05-23 directive #1 + spec 2026-05-28: under dev/main two-tier workflow, this command no longer performs the merge to main. Instead it stamps the per-sprint validation on `dev` (which carries the active V0.X chain). The chain merge to main happens via `/chain-validated` once the CHAIN-TIP sprint has its stamp AND CIO confirms whole-chain green (earlier patches' `validatedAt: null` is expected -- see `chain_validate_aggregate.py:238`). The three-step gate (deploy → per-sprint validate → chain merge) prevents the Sprint 22 hidden-bug-pattern, the Sprint 25 sibling-bug pattern, and the never-validated-in-real-life class of features.
 
 ## Related
 

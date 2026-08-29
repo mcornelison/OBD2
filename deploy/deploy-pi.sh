@@ -259,6 +259,56 @@ sync_tree() {
     fi
 }
 
+# Purge stale Python bytecode on the Pi (US-553).
+#
+# WHY THE --exclude RULES ABOVE ARE NOT THIS FIX. Excluding __pycache__/ and
+# *.pyc stops stale bytecode being SENT; it does nothing about what is already
+# ON the car. Worse: rsync PROTECTS excluded files from --delete. Measured
+# 2026-08-28 -- a --delete run that correctly removed a module deleted upstream
+# left BOTH `pkg/__pycache__/mod.cpython-311.pyc` AND a bare `pkg/ghost.pyc`
+# in place. Orphaned bytecode therefore accumulates on the Pi forever.
+#
+# WHY THAT IS DANGEROUS -- the two cases that actually bite, both measured
+# rather than assumed (an ordinary edit, which changes mtime or size, is
+# invalidated correctly; the folklore "stale .pyc masks any fix" is FALSE):
+#   1. GHOST MODULE. A bare `foo.pyc` sitting where `foo.py` used to be is
+#      importable with NO source present -- CPython still registers
+#      SourcelessFileLoader for .pyc on the path hooks. Delete a module
+#      upstream and the Pi can keep importing last month's copy indefinitely.
+#   2. (mtime, size) COLLISION. __pycache__ entries are validated against the
+#      source's (mtime, size) PAIR, not a hash. An edit preserving both is
+#      masked -- the fixed .py is on disk and the old bytecode still executes.
+#      rsync -a and the tar fallback BOTH preserve mtime, so the deploy itself
+#      is what makes this reachable.
+# This is the factor that made the first redeploy of the 2026-08-11 P0 fix
+# (`from common.config.overlay` -> relative, commit d6517429) still come up on
+# the old code.
+#
+# WHY NOT `--delete-excluded`, the obvious one-flag fix: the whitelist above
+# ends in `--exclude=*`, so --delete-excluded would treat EVERY non-whitelisted
+# path on the Pi as deletable -- data/, logs/, exports/, .env,
+# config.local.json. That is the car's recorded drive history. Never add it.
+#
+# Scoped to the two directories that carry shipped Python. The venv lives at
+# $HOME/obd2-venv, OUTSIDE PI_PATH, so site-packages bytecode is untouched and
+# dependency import cost is unchanged. Reports a count: a silent purge is an
+# unverifiable one.
+step_purge_stale_bytecode() {
+    echo "--- Step: Purging stale bytecode under ${PI_PATH} ---"
+    remote "
+        set -e
+        purged=0
+        for d in '${PI_PATH}/src' '${PI_PATH}/scripts'; do
+            [ -d \"\$d\" ] || continue
+            n=\$(find \"\$d\" \\( -type d -name '__pycache__' -o -type f -name '*.pyc' \\) -print | wc -l)
+            purged=\$((purged + n))
+            find \"\$d\" -type d -name '__pycache__' -prune -exec rm -rf {} +
+            find \"\$d\" -type f -name '*.pyc' -delete
+        done
+        echo \"Stale bytecode purged: \$purged path(s) removed under src/ + scripts/.\"
+    "
+}
+
 # Verify we have SOME way to sync. rsync is preferred; tar+ssh is the fallback.
 require_sync_tool() {
     if ! command -v rsync >/dev/null 2>&1 && ! command -v tar >/dev/null 2>&1; then
@@ -2037,6 +2087,12 @@ fi
 # Default-mode body (also runs after --init):
 echo "--- Step: Syncing tree to ${PI_PATH} ---"
 sync_tree
+
+# US-553: clear stale bytecode IMMEDIATELY after the sync and long before the
+# service restart, so the interpreter that starts at the end of this deploy can
+# only load bytecode compiled from the source this deploy just shipped. Must
+# run AFTER sync_tree -- purging first would just be re-orphaned by the sync.
+step_purge_stale_bytecode
 
 # US-210: journald persistent-storage drop-in install. Runs under --init AND
 # default flow because a) it's idempotent (no-op when already current) and

@@ -3708,43 +3708,67 @@ styling:
 
 | Card | `data-state` | Tier | Absence renders |
 |---|---|---|---|
-| **Home** (US-508) | *(none -- `data-idle-home`)* | always-present | **the idle face, see below** |
-| System Status (Pi Health) | `system-status` | always-present | `unavailable` |
-| **Health** (US-507) | *(multi -- `data-states`)* | always-present | **per SECTION, see below** |
+| **Home** (US-508) | *(none -- `data-idle-home`)* | always-present | **the fallback face, see below** |
 | Alerts (DTC) | `dtc` | always-present | **"no data -- codes not read"** |
+| System Status (Pi Health) | `system-status` | always-present | `unavailable` |
+| Battery | `battery-health` | always-present | "no data -- UPS feed absent" |
+| Fuel Trim | `ltft-trend` | **vehicle-gated** | *gated:* **"no engine data"** / *ungated but silent:* "no data -- trend not computed" |
+| Light | `light` | always-present | "no data -- light feed absent" |
 
-The carousel is **four cards** as of V0.29.23 (US-507 merged three reference
-readouts into Health; US-508 folded the standalone Motion card into the home
-slot). Note the `class="card"` count stayed 4 across US-508 for a *different
-reason* -- the pre-US-508 idle card wore `class="card idle-card"` and was not
-counted at all, while the home slot is a plain `.card` and is. The deploy-kit
-inventory test therefore names every slot rather than trusting the number.
+The carousel is **six cards** as of V0.29.29, **in the order above**. US-507 had
+merged the three slow-moving reference readouts into one *Health* card because
+the CIO called six screens too many; **US-540-b split them back out** once
+US-540-a's legibility scale changed the arithmetic that call rested on -- at
+secondary 26px a card affords about three facts, and Health was carrying six, so
+a screen became the cheaper thing to spend than a container of three unrelated
+facts. The same markup moved **Alerts to second**.
 
-##### The Health card is MULTI-SOURCE (US-507 / F-124)
+The bare count remains a **vacuous** assertion and the warning still earns its
+place, for a reason US-508 already demonstrated: the `class="card"` count stayed
+4 across US-508 while the set changed underneath it, because the pre-US-508 idle
+card wore `class="card idle-card"` and was not counted at all. The deploy-kit
+inventory test therefore names every slot -- and, as of US-540-b, asserts them as
+an **ordered** list, because Alerts moving to second is invisible to a
+set-or-count assertion.
 
-The CIO called six screens too many, so the three slow-moving reference
-readouts merged into one card. `data-states` (plural) names every state file the
-card consumes; `tick()` fetches each through a per-tick cache and renders a
-**section** per source:
+##### The three source cards (US-540-b / F-127)
 
-| Section | state | Gated? | Absence renders |
+Battery, Light and Fuel Trim are **three standalone cards** driven from one
+table, `SOURCE_CARDS` in `carousel.js`, looked up per tick by
+`sourceCardSpec(key)` and rendered through `sourceCardView()` /
+`renderSourceCard()`. The table **is** the vocabulary -- one place, so a retitle
+cannot land in the markup and the renderer out of step:
+
+| Card | state | Gated? | Absence renders |
 |---|---|---|---|
 | Battery | `battery-health` | no | "no data -- UPS feed absent" |
 | Light | `light` | no | "no data -- light feed absent" |
-| Fuel Trim (was "LTFT Trend") | `ltft-trend` | **vehicle-gated** | **"no engine data"** |
+| Fuel Trim (was "LTFT Trend") | `ltft-trend` | **vehicle-gated** | *gated:* **"no engine data"** / *ungated but silent:* "no data -- trend not computed" |
 
-Two properties are load-bearing and are pinned by test:
+> **The US-507 merged *Health* card is RETIRED.** It no longer exists, and
+> neither do `data-states` (plural), `healthCardView()` or `renderHealthCard()`
+> -- all deleted by US-540-b rather than left unreachable (US-500). A reader
+> looking for a multi-source dispatch path will not find one, and the *plausible*
+> wrong conclusion -- that fuel trim is still special-cased through it -- is
+> precisely the design US-540-b removed.
 
-- **Availability is resolved PER SECTION, never per card.** On separate cards a
-  dead UPS could only blank its own card. Routed through one card-level check it
-  would blank the two live instruments beside it -- a fabricated *"nothing is
-  readable"* built out of one real fault.
-- **The gate SPEAKS instead of hiding.** A standalone card could be `hidden`; a
-  section inside an always-visible card cannot vanish without leaving a hole, so
-  the same fact is rendered in words. A gated section carries **no view at
-  all**, so a stale `ltft-trend` file left from the last drive cannot paint a
-  confident trim for an engine that is not running. It ships
-  `data-gated="true"` to fail closed before the first poll.
+Two properties are load-bearing and are pinned by test. Both **survived** the
+split, but their justification inverted:
+
+- **Availability is resolved PER SOURCE, never once for the group.** As a merged
+  card this had to be *fought for*: one card-level check would have blanked two
+  live instruments out of one real fault -- a fabricated *"nothing is
+  readable."* Split back out it is **structural**: a dead UPS cannot reach the
+  Light card at all. `SOURCE_CARDS` is what keeps this a per-source route rather
+  than a group-level branch.
+- **The gate SPEAKS instead of hiding.** Fuel trim keeps the US-507 *wording*
+  rather than reverting to the pre-US-507 `hidden`, but for a new reason: the set
+  is now locked at **six**, so a card that vanishes on a bench breaks the set
+  exactly where the CIO reads the panel most days. The gate is still evaluated
+  **before** the data and short-circuits, so a gated card carries **no view at
+  all** and a stale `ltft-trend` file left from the last drive cannot paint a
+  confident trim for an engine that is not running. It ships `data-gated="true"`
+  to fail closed before the first poll.
 
 Note the vocabulary now has **three** dispositions, not two: *gated* ("does not
 apply"), *no-data* ("the instrument is broken"), and a live reading. Collapsing
@@ -3804,34 +3828,52 @@ alarm holds the surface at full regardless of lux (US-484-b ch.4), so a
 lux-derived percent would contradict the actual screen exactly when it matters
 most.
 
-##### The HOME SLOT is two-faced -- idle twin / live instrument (US-508 / F-124)
+##### The HOME SLOT is two-faced -- live instrument / honest fallback (US-508, US-541/US-542 / F-124, F-127)
 
-The CIO-locked round-2 design puts the live instrument on the **home slot**:
-parked → the US-481 calm STANDBY card, driving → the live motion instrument.
-**One slot, two faces**, not two cards. A separate always-present motion card
-beside a live home slot would poll and paint the same feed twice and put two
+The CIO-locked round-2 design puts the live instrument on the **home slot**.
+**US-541/US-542 (F-127) settle which two faces**: the live motion instrument is
+the **permanent** face, and the second face is the honest fallback and nothing
+else. **One slot, two faces**, not two cards -- a separate always-present motion
+card beside a live home slot would poll and paint the same feed twice and put two
 rules in charge of what the driver lands on.
 
-`homeFace(imuData, sysData, nowMs)` is **the only arbiter** (a second one would
-be two rules owning one fact -- exactly why US-497 declined to build the swap):
+`homeFace(imuData, nowMs)` is **the only arbiter** (a second one would be two
+rules owning one fact -- exactly why US-497 declined to build the swap). It reads
+**the motion feed only**; the vehicle state is deliberately **not** a parameter,
+so a function that cannot see `system-status` cannot be re-coupled to it without
+a visible signature change:
 
-1. **Parked wins outright.** `carouselIdle` (the emitter's `idle` SSOT) → the
-   idle face, so a bench IMU reading 0 g does not put a live instrument on a
-   stationary car.
-2. Otherwise a **live and fresh** `states/imu` → the live face.
-3. Everything else -- no file, `available:false`, undated payload, reading older
-   than `IMU_STALE_SEC` -- falls back to the idle face (AC-3: never a frozen
+1. A **live and fresh** `states/imu` → the live face. This holds **parked**: the
+   IMU is Pi-local and always-live, so parked is exactly when its readings are
+   both true and worth reading (a true heading, a true 0.0 g). US-508's *"parked
+   wins outright"* is **reversed** -- it spent the one always-on instrument on
+   the one state where nothing else is readable.
+2. Everything else -- no file, `available:false`, undated payload, reading older
+   than `IMU_STALE_SEC` -- falls back to the fallback face (AC-3: never a frozen
    motion display).
 
-**The fallback must not fabricate a parked state.** This is the honesty trap the
-swap creates and it is pinned by test. The shipped idle hero reads *"STANDBY ·
-engine off · OBD asleep"*; rendering that verbatim because the IMU died while
-the car is MOVING would state a confident fact about the vehicle manufactured
-out of a sensor fault. So the idle face carries **two dispositions** -- genuinely
-parked keeps the STANDBY hero, while not-parked-with-a-dead-feed renders **"NO
-MOTION DATA"** plus the bridge's own reason. Same layout, same real facts
-beneath it, a different claim. (Third instance of the pattern: US-507's Health
-gate needed three dispositions for the same reason.)
+**The fallback must not fabricate a parked state**, and US-542 closes that trap
+by **deletion** rather than by a better condition. The old idle hero read
+*"STANDBY · engine off · OBD asleep"*; with the fallback now reachable only from
+a dead sensor, rendering it would state a confident fact about the vehicle
+manufactured out of a sensor fault. The **STANDBY hero is retired** -- no
+sentence claiming "engine off" survives on the surface -- and the single
+surviving disposition renders **"NO MOTION DATA"** plus the bridge's own reason.
+
+Two things left with the retired parked screen and neither is lost: the **wall
+clock moved to the top bar** (`#topbar-clock`), where it is readable from every
+card, and **"DTC not read · since key-off" moved to the Alerts card**, where it
+was always an Alerts fact. The **date** was **not** relocated -- the 480px top
+bar at the US-540-a scale affords a clock, not a clock and a date. That is a
+deliberate, named copy loss, alongside US-510's locked parked-screen navigation
+footer (the ⋮ affordance it taught is untouched and still in the top bar).
+
+The retirement is **display-only**: `carouselIdle` / `parkedNext` remain the
+parked SSOT for the auto-rotate pause and the ⋮ reveal, and
+`tests/ui/test_carousel_idle_face_retirement.py` pins that separation so a future
+edit cannot re-couple them. (Two different things in `carousel.js` are spelled
+*idle* -- the parked SSOT and the retired face -- which is precisely why the
+split is asserted rather than assumed.)
 
 Navigation was **retargeted, not dropped**. US-481 sent the operator to System
 Status when `idle` flipped false, because the home card was a parked-only view.
@@ -3893,7 +3935,7 @@ distinguishable from *"the producer is refusing to guess right now"*.
 
 | Constant | Value | Grounding |
 |---|---|---|
-| `IMU_STALE_SEC` | 2.0 s | **Re-grounded by US-508**: at the new 10 Hz `stateHz` this is *20* missed writes, not the 8 it was at 4 Hz. Deliberately NOT retightened in proportion -- this feed now drives the HOME slot, and a slot that flips to the idle face on a brief scheduling stall is its own defect. Still far tighter than the light card's 10 s (a 10 s-old lux is roughly true; a 10 s-old g-vector is meaningless). *Rex-derived; flagged for Atlas/Spool against a real drive.* |
+| `IMU_STALE_SEC` | 2.0 s | **Re-grounded by US-508**: at the new 10 Hz `stateHz` this is *20* missed writes, not the 8 it was at 4 Hz. Deliberately NOT retightened in proportion -- this feed now drives the HOME slot, and a slot that flips to the fallback face on a brief scheduling stall is its own defect. Still far tighter than the light card's 10 s (a 10 s-old lux is roughly true; a 10 s-old g-vector is meaningless). *Rex-derived; flagged for Atlas/Spool against a real drive.* |
 | `G_FULL_SCALE` | 1.0 g | outer ring. A street-tired car tops out near 0.9 g lateral, so 1 g frames real driving without compressing it. *Rex-derived DISPLAY scale, not a vehicle limit -- flagged for Spool.* |
 | `G_AMBER_G` | 0.6 g | **Spool** (Iris locked spec, quoted verbatim in the US-508 AC). A **different fact** from the full scale above, and conflating them is what the built card got wrong: it only coloured at the 1.0 g *clamp*, so a hard 0.8 g corner painted identically to a gentle one. Advisory, never an alarm -- alarms ride the unified alert layer. |
 | `G_TRAIL_WINDOW_SEC` | 35 s | Iris live-instrument spec. ~350 points at the 10 Hz live poll. |
@@ -4543,9 +4585,11 @@ failures logged, never raised).
 
 **Render (`carousel.js`).** `ltftTrendView()` (pure) + `renderLtftTrendBody()`
 paint a multi-drive bar row, each bar coloured by its **own** drift level so a
->±10% drive is visibly not-green. **US-507 relocated the surface**: it is now
-the **"Fuel Trim"** section of the merged Health card, reached through
-`healthCardView()`/`renderHealthCard()` rather than a `data-state` dispatch. The
+>±10% drive is visibly not-green. US-507 relocated the surface into the merged
+Health card; **US-540-b returned it to a standalone "Fuel Trim" card**, reached
+by the normal `data-state` dispatch through `sourceCardSpec()` /
+`sourceCardView()` / `renderSourceCard()`. `healthCardView()` and
+`renderHealthCard()` **no longer exist**. Across all three arrangements the
 retitle is a LABEL change only -- the emitter, the thresholds, the classifier
 and the insufficient guard are all untouched, so Spool's LTFT semantics are
 preserved exactly. Defense-in-depth: the view re-forces `'insufficient'`
