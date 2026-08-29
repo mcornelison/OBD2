@@ -434,7 +434,8 @@ def test_liveCardView_hardCorner_carriesAmberOnTheGTile():
     """
     view = _view("liveCardView", _imu(gLat=0.70, gLon=0.17, gMag=0.72), None, _TS_MS)
     assert view["g"]["level"] == "amber"
-    assert "0.72" in view["g"]["value"]
+    # ARCH-011: one decimal. 0.72 g -> "0.7 g".
+    assert "0.7" in view["g"]["value"]
 
 
 def test_liveCardView_clampFlagSurvivesTheAmberRule():
@@ -447,7 +448,11 @@ def test_liveCardView_clampFlagSurvivesTheAmberRule():
     view = _view("liveCardView", _imu(gLat=0.0, gLon=-1.4, gMag=1.4), None, _TS_MS)
     assert view["g"]["dot"]["clamped"] is True
     assert view["g"]["level"] == "amber"
-    assert "1.40" in view["g"]["value"]
+    # ARCH-011: g renders to ONE decimal (CIO 2026-08-29). 1.4 g is a hard
+    # corner -- and at 1.4 g the accelerometer's measured +1.62% scale error is
+    # +/-0.023 g, so the second decimal was never supported at the magnitude
+    # this test exercises.
+    assert "1.4" in view["g"]["value"]
 
 
 # ---------------------------------------------------------------------------
