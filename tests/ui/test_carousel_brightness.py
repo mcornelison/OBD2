@@ -5,7 +5,8 @@
 #   US-483-a writes ({lux, ts}); it drives an auto-dim curve whose values are
 #   GROUNDED CONFIG PARAMETERS (never hardcoded), with a load-bearing alarm
 #   override (US-484-b / Spool 6d ch.4: a real STOP alert is FULL brightness
-#   always -- this SUPERSEDES the original alarmFloorLevel floor) and an honest
+#   always -- this SUPERSEDED the original alarmFloorLevel floor so completely
+#   that US-595 retired that config key) and an honest
 #   fallback
 #   (an absent/stale feed holds a fixed default -- no fake "auto" behavior). Two
 #   layers are covered on the bench: (1) the pure brightnessCurve / brightnessLevel
@@ -92,7 +93,8 @@ _CFG = {
     "luxFull": 1000.0,
     "minLevel": 0.15,
     "defaultLevel": 0.70,
-    "alarmFloorLevel": 0.40,
+    # US-595: alarmFloorLevel retired -- this fixture mirrors config.json, and
+    # config.json no longer carries it.
     "luxStaleSec": 10,
     "curve": "logarithmic",
 }

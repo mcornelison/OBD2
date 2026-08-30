@@ -439,7 +439,11 @@ DEFAULTS: dict[str, Any] = {
     'pi.display.autoDim.luxFull': 1000.0,
     'pi.display.autoDim.minLevel': 0.15,
     'pi.display.autoDim.defaultLevel': 0.70,
-    'pi.display.autoDim.alarmFloorLevel': 0.40,
+    # US-595: alarmFloorLevel is RETIRED, not omitted by accident. US-484-b made
+    # a live STOP alarm full brightness always, so the only condition that ever
+    # consumed the floor is now the condition that short-circuits to 1.0. A
+    # deployed config.json may still carry the key; it resolves to nothing and is
+    # ignored by both tiers (guarded by tests/test_alarm_floor_level_retired.py).
     'pi.display.autoDim.luxStaleSec': 10,
     'pi.display.autoDim.curve': 'logarithmic',
     # US-290 / TD-007: generateTimeoutSeconds closes the lone holdout from
@@ -917,13 +921,19 @@ class ConfigValidator:
         """Validate pi.display.autoDim.* (US-483-b carousel auto-dim curve).
 
         Called after defaults are applied. The brightness LEVELS (minLevel,
-        defaultLevel, alarmFloorLevel) must each be a fraction in [0, 1] -- an
-        out-of-band value would either blank the screen or, for the alarmFloor,
-        fail to keep a STOP alert legible (the load-bearing safety floor). The lux
+        defaultLevel) must each be a fraction in [0, 1] -- an out-of-band value
+        would blank the screen or wash it out. The lux
         anchors must be positive with ``luxFull > luxMin`` so the curve has a real
         (non-degenerate) range, and ``luxStaleSec`` must be positive. These are
         Iris-tunable via config; the validator only rejects values that are unsafe
         or nonsensical by construction, it does not pin the grounded defaults.
+
+        US-595 REMOVED ``alarmFloorLevel`` from this loop. It was not merely
+        unused: US-484-b (Spool 6d ch.4) short-circuits ``brightnessLevel()`` to
+        full brightness while a STOP alert is live, so the alarm floor could
+        never be reached by the one condition it existed for. Validating it kept
+        a dead tunable looking adjustable. An old config.json still carrying the
+        key now passes through unvalidated and unread, by design (AC-6).
 
         US-627 adds ONE cross-field rule: ``defaultLevel >= minLevel``. The
         carousel's ``brightnessLevel()`` clamps its CURVE branch to ``minLevel``
@@ -942,7 +952,6 @@ class ConfigValidator:
         for key in (
             'pi.display.autoDim.minLevel',
             'pi.display.autoDim.defaultLevel',
-            'pi.display.autoDim.alarmFloorLevel',
         ):
             val = self._getNestedValue(config, key)
             if val is not None and (

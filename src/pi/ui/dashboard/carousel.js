@@ -2160,11 +2160,14 @@
                           // below minLevel -- validate_config enforces
                           // defaultLevel >= minLevel (US-627); it is deliberately
                           // NOT clamped here.
-    alarmFloorLevel: 0.40, // SUPERSEDED by STOP_ALARM_LEVEL (US-484-b ch.4):
-                           // a STOP now goes to FULL, overriding this floor.
-                           // Kept so an existing config.json that still carries
-                           // pi.display.autoDim.alarmFloorLevel resolves cleanly
-                           // (removal is a Spool/Atlas call -- see TD-066).
+    // US-595 -- alarmFloorLevel was HERE and is RETIRED. It was superseded by
+    // STOP_ALARM_LEVEL above (US-484-b ch.4: a STOP goes to FULL), which left it
+    // resolvable but unreachable -- a tunable that looked adjustable and changed
+    // nothing. Removing it here is SAFE, and specifically because the merge
+    // below iterates BRIGHTNESS_DEFAULTS rather than the injected object: a
+    // deployed config.json still carrying the key is ignored BY CONSTRUCTION,
+    // not by a rule anyone has to remember. Do not re-add it to restore
+    // compatibility -- there is nothing to be compatible with.
     luxStaleSec: 10,      // a reading older than this -> fallback
     curve: "logarithmic", // perceptual mapping between luxMin..luxFull
   };
@@ -2242,8 +2245,10 @@
   //
   // US-484-b / Spool 6d ch.4 -- the load-bearing safety short-circuit: while a
   // real STOP is active the surface is FULL, before any ambient math runs. It
-  // overrides the curve, the fixed default AND the alarmFloorLevel guard, so a
-  // dark cabin (or a dead light sensor) can never dim a PULL-OVER alarm.
+  // overrides the curve and the fixed default, so a dark cabin (or a dead light
+  // sensor) can never dim a PULL-OVER alarm. It also SUPERSEDED the old
+  // alarmFloorLevel config key outright -- full brightness is stronger than any
+  // floor -- which is why US-595 could retire that key entirely.
   //
   // US-627 -- THE TWO BRANCHES ARE DELIBERATELY ASYMMETRIC, AND THAT IS WHY THE
   // FLOOR IS ENFORCED AT CONFIG TIME. The curve branch clamps to c.minLevel; the

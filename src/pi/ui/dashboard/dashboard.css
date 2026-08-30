@@ -845,7 +845,9 @@ html, body {
                floor (white/critical-red 5.0:1, white/black 21:1);
      LIGHT  -- carousel.js holds the whole surface at FULL brightness while a
                STOP is live (ch.4) -- it overrides the US-483-b auto-dim curve
-               AND its alarmFloorLevel. Only ambient content dims.
+               and its fixed fallback. Only ambient content dims. (Full is
+               stronger than any floor, which is why the old alarmFloorLevel
+               config key was retired outright -- US-595.)
    Enforced by tests/ui/test_dashboard_stop_tier_safety.py. -------------------*/
 #dtc-takeover[data-severity="stop"] {
   background: var(--bg);                    /* near-black field (ch.2) */
