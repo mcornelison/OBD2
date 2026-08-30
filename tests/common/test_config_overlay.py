@@ -19,6 +19,10 @@
 # ================================================================================
 # 2026-08-07    | Rex (US-530) | Initial -- overlay resolver, allow-list gate,
 #               |              | both-reader parity, deploy-exclude durability.
+# 2026-08-29    | Rex (US-572) | Comment-strip the --delete-excluded guard. It
+#               |              | scanned RAW file text, so the US-553 comment
+#               |              | that DOCUMENTS the ban in order to forbid it
+#               |              | made the guard red on a correct script.
 # ================================================================================
 ################################################################################
 
@@ -465,6 +469,18 @@ def _commandBlock(text: str, startMarker: str, endMarker: str) -> str:
     return text[i : j + len(endMarker)]
 
 
+def _withoutComments(text: str) -> str:
+    """Blank out whole-line bash comments, preserving line structure.
+
+    Same reason as _commandBlock above, in the other direction: deploy-pi.sh
+    DOCUMENTS `--delete-excluded` in order to ban it (US-553), so a raw substring
+    scan is satisfied -- or, as here, defeated -- by the prose that explains the
+    rule. Match the code. Mirrors the sibling guard in
+    tests/deploy/test_stale_bytecode_purge.py, which is comment-stripped.
+    """
+    return "\n".join("" if ln.lstrip().startswith("#") else ln for ln in text.splitlines())
+
+
 class TestOverlayDurability:
     """The overlay must survive a deploy and never reach git."""
 
@@ -501,9 +517,9 @@ class TestOverlayDurability:
         nothing in the output to say so. Under the old blacklist this flag was
         equally fatal and equally unguarded.
         """
-        text = DEPLOY_PI_SH.read_text(encoding="utf-8")
+        code = _withoutComments(DEPLOY_PI_SH.read_text(encoding="utf-8"))
 
-        assert "--delete-excluded" not in text
+        assert "--delete-excluded" not in code
 
     def test_deployPiSh_tarFallbackDoesNotShipTheOverlay(self):
         """

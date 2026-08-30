@@ -2150,13 +2150,24 @@
   var BRIGHTNESS_DEFAULTS = {
     luxMin: 3.0,          // lux <= this -> min (grounded: civil-twilight dark)
     luxFull: 1000.0,      // lux >= this -> full (grounded: overcast daylight)
-    minLevel: 0.15,       // calm-screen dim floor (fraction 0..1)
-    defaultLevel: 0.70,   // fixed fallback when the feed is absent/stale
-    alarmFloorLevel: 0.40, // SUPERSEDED by STOP_ALARM_LEVEL (US-484-b ch.4):
-                           // a STOP now goes to FULL, overriding this floor.
-                           // Kept so an existing config.json that still carries
-                           // pi.display.autoDim.alarmFloorLevel resolves cleanly
-                           // (removal is a Spool/Atlas call -- see TD-066).
+    minLevel: 0.15,       // US-627 -- READ THE NAME CAREFULLY: this is the floor
+                          // on the CURVE branch, NOT a floor on displayed
+                          // brightness. The absent/stale-feed branch of
+                          // brightnessLevel() returns defaultLevel UNCLAMPED and
+                          // never consults this value.
+    defaultLevel: 0.70,   // fixed fallback when the feed is absent/stale/
+                          // saturated. Returned UNCLAMPED, so it must never sit
+                          // below minLevel -- validate_config enforces
+                          // defaultLevel >= minLevel (US-627); it is deliberately
+                          // NOT clamped here.
+    // US-595 -- alarmFloorLevel was HERE and is RETIRED. It was superseded by
+    // STOP_ALARM_LEVEL above (US-484-b ch.4: a STOP goes to FULL), which left it
+    // resolvable but unreachable -- a tunable that looked adjustable and changed
+    // nothing. Removing it here is SAFE, and specifically because the merge
+    // below iterates BRIGHTNESS_DEFAULTS rather than the injected object: a
+    // deployed config.json still carrying the key is ignored BY CONSTRUCTION,
+    // not by a rule anyone has to remember. Do not re-add it to restore
+    // compatibility -- there is nothing to be compatible with.
     luxStaleSec: 10,      // a reading older than this -> fallback
     curve: "logarithmic", // perceptual mapping between luxMin..luxFull
   };
@@ -2241,15 +2252,35 @@
   //
   // US-484-b / Spool 6d ch.4 -- the load-bearing safety short-circuit: while a
   // real STOP is active the surface is FULL, before any ambient math runs. It
-  // overrides the curve, the fixed default AND the alarmFloorLevel guard, so a
-  // dark cabin (or a dead light sensor) can never dim a PULL-OVER alarm.
+  // overrides the curve and the fixed default, so a dark cabin (or a dead light
+  // sensor) can never dim a PULL-OVER alarm. It also SUPERSEDED the old
+  // alarmFloorLevel config key outright -- full brightness is stronger than any
+  // floor -- which is why US-595 could retire that key entirely.
+  //
+  // US-627 -- THE TWO BRANCHES ARE DELIBERATELY ASYMMETRIC, AND THAT IS WHY THE
+  // FLOOR IS ENFORCED AT CONFIG TIME. The curve branch clamps to c.minLevel; the
+  // lux === null branch returns c.defaultLevel UNCLAMPED. So c.minLevel bounds
+  // the CURVE, never displayed brightness -- a defaultLevel beneath it would
+  // render below the floor exactly when the light sensor has failed (FOUND
+  // 2026-08-29: minLevel was raised 0.5 -> 0.75 for a dark garage while
+  // defaultLevel sat at 0.70).
+  //
+  // The fix is a validator rule -- pi.display.autoDim.defaultLevel must be >=
+  // minLevel, rejected loudly by validate_config. It is NOT clamped here ON
+  // PURPOSE: clamping would silently repair a bad config and leave the operator
+  // believing a value that never takes effect, which is the inert-guard shape
+  // this project has catalogued repeatedly. A bad config must fail at the gate,
+  // not be quietly corrected on the panel.
   function brightnessLevel(lightData, cfg, nowMs, alarmActive) {
     if (alarmActive) return STOP_ALARM_LEVEL;
     var c = resolveAutoDimConfig(cfg);
     var lux = freshLux(lightData, c.luxStaleSec, nowMs);
     var level;
     if (lux === null) {
-      level = c.defaultLevel; // absent/stale/saturated -> fixed default
+      // absent/stale/saturated -> fixed default. Intentionally NOT floored to
+      // c.minLevel: validate_config guarantees defaultLevel >= minLevel, so a
+      // clamp here could only ever mask a config that failed that gate (US-627).
+      level = c.defaultLevel;
     } else {
       var curved = brightnessCurve(lux, c.luxMin, c.luxFull, c.curve);
       level = Math.min(Math.max(curved, c.minLevel), 1.0);

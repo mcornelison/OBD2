@@ -101,6 +101,11 @@
 #                               story; server-side compute path
 #                               (src/server/analytics/drive_statistics_compute)
 #                               is the sole writer authority.
+# 2026-08-29    | Rex (US-626) | Added observed_by + observer_state TEXT to
+#                               SCHEMA_POWER_LOG: which instrument witnessed a
+#                               power transition, and its honest three-state
+#                               read.  Idempotent ALTER in
+#                               ensurePowerLogObserverColumns (power_db.py).
 # ================================================================================
 ################################################################################
 
@@ -549,7 +554,20 @@ CREATE TABLE IF NOT EXISTS power_log (
     -- the row's timestamp is trustworthy; 'clock_unsynced' when written
     -- pre-NTP-sync (dead-RTC reset).  Pi-LOCAL forensic flag -- stripped from
     -- the sync wire (server computes its own data_quality).  NULL on legacy rows.
-    data_quality TEXT
+    data_quality TEXT,
+
+    -- US-626: WHICH instrument witnessed this row (e.g. 'pld_gpio6').  A
+    -- disagreement between two observers is only visible if each row says who
+    -- saw it.  Pi-LOCAL, stripped from the sync wire.  NULL on legacy rows.
+    observed_by TEXT,
+
+    -- US-626: the observer's HONEST three-state read at that instant --
+    -- 'present' / 'lost' / 'unknown'.  PldSensor resolves an unreadable line
+    -- to power-present (the correct non-bricking direction for the SHUTDOWN
+    -- path, a confident lie in a forensic log), so without this column a dead
+    -- or contended GPIO6 is indistinguishable from real AC power -- which is
+    -- how ten power losses were logged as healthy.  Pi-LOCAL, wire-stripped.
+    observer_state TEXT
 );
 """
 

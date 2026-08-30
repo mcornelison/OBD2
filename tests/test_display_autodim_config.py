@@ -30,12 +30,16 @@ import pytest
 from common.config.validator import ConfigValidationError, ConfigValidator
 
 # The grounded defaults the validator must apply (mirrors config.json).
+#
+# US-595: alarmFloorLevel was here (0.40) and is RETIRED -- US-484-b made a live
+# STOP alarm full brightness always, so the floor became unreachable. Its
+# ABSENCE is asserted in tests/test_alarm_floor_level_retired.py; do not restore
+# the entry below to "fix" a failure there.
 _EXPECTED_DEFAULTS = {
     "pi.display.autoDim.luxMin": 3.0,
     "pi.display.autoDim.luxFull": 1000.0,
     "pi.display.autoDim.minLevel": 0.15,
     "pi.display.autoDim.defaultLevel": 0.70,
-    "pi.display.autoDim.alarmFloorLevel": 0.40,
     "pi.display.autoDim.luxStaleSec": 10,
     "pi.display.autoDim.curve": "logarithmic",
 }
@@ -89,8 +93,10 @@ class TestDisplayAutoDimValidation:
         [
             ("pi.display.autoDim.minLevel", 1.5),
             ("pi.display.autoDim.defaultLevel", -0.1),
-            ("pi.display.autoDim.alarmFloorLevel", 2.0),
-            ("pi.display.autoDim.alarmFloorLevel", "high"),
+            # US-595: the two alarmFloorLevel cases were retired with the key.
+            # The INVERSE is now asserted -- that an out-of-range alarmFloorLevel
+            # is IGNORED rather than rejected -- in
+            # tests/test_alarm_floor_level_retired.py::test_noLongerRangeValidated.
         ],
     )
     def test_levelOutOfUnitInterval_rejected(self, key, bad):

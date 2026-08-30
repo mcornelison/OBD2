@@ -14,7 +14,8 @@
 #     ch.3  deeper-and-darker axis only -- no warmer/orange shift (that would
 #           collide with amber WATCH and invert the severity order).
 #     ch.4  a STOP alarm is FULL BRIGHTNESS ALWAYS -- it overrides the US-483-b
-#           auto-dim curve AND its alarmFloorLevel guard; only ambient dims.
+#           auto-dim curve and its fixed fallback; only ambient dims. (Being
+#           stronger than any floor is what let US-595 retire alarmFloorLevel.)
 #   Colour + contrast are computed from the PARSED token values (both files), so
 #   a drift in src/pi/ui/tokens.css OR in the shipped dist re-reds these tests.
 #   The on-panel render ("does a driver read it in a glance") stays a PI-RUNTIME
@@ -66,17 +67,22 @@ _WCAG_AA_LARGE = 3.0
 _NEAR_BLACK = {"#000000", "#000", "#0A0A0A"}
 
 # A grounded auto-dim config (mirrors config.json pi.display.autoDim) used by the
-# ch.4 brightness probes. alarmFloorLevel is deliberately present + non-full: the
-# point of ch.4 is that a STOP overrides even this floor, straight to 1.0.
+# ch.4 brightness probes. US-595 retired alarmFloorLevel, so it is no longer here
+# -- this fixture tracks what config.json actually ships.
 _CFG = {
     "luxMin": 3.0,
     "luxFull": 1000.0,
     "minLevel": 0.15,
     "defaultLevel": 0.70,
-    "alarmFloorLevel": 0.40,
     "luxStaleSec": 10,
     "curve": "logarithmic",
 }
+
+# An ALREADY-DEPLOYED overlay: a Pi imaged before US-595 still carries the
+# retired key. Kept deliberately, and ONLY for the stale-overlay probe below --
+# the point is no longer "a STOP beats this floor" (there is no floor) but "a
+# stale key on a fielded Pi cannot dim a PULL-OVER alarm".
+_CFG_PRE_US595 = dict(_CFG, alarmFloorLevel=0.40)
 _TS = "2026-07-22T12:00:00+00:00"
 _TS_MS = 1784721600000  # Date.parse(_TS) -- pinned so freshness math is fixed
 
@@ -411,11 +417,15 @@ def test_brightnessLevel_stopAlarmInTheDark_isFullBrightness():
 
 
 @nodeless
-def test_brightnessLevel_stopAlarm_overridesTheAlarmFloor():
-    """ch.4 is stronger than the US-483-b floor: a STOP goes to FULL, not to
-    alarmFloorLevel (0.40 here)."""
+def test_brightnessLevel_stopAlarm_ignoresARetiredAlarmFloorOnAStaleOverlay():
+    """US-595: ch.4 SUPERSEDED the US-483-b alarm floor, so the key was retired.
+
+    A Pi imaged before that removal still ships alarmFloorLevel=0.40 in its
+    config.json. This pins the field consequence: the stale key is ignored and a
+    live PULL-OVER alarm is still FULL, never dimmed to 0.40.
+    """
     light = {"lux": 1.0, "ts": _TS}
-    assert _probe("brightnessLevel", light, _CFG, _TS_MS + 5000, True) == 1.0
+    assert _probe("brightnessLevel", light, _CFG_PRE_US595, _TS_MS + 5000, True) == 1.0
 
 
 @nodeless

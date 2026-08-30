@@ -975,6 +975,51 @@ step_set_display_mode() {
     remote "sudo bash '${PI_PATH}/deploy/set-display-mode.sh'"
 }
 
+step_enable_rtc_charging() {
+    # US-620 / F-138: enable the Pi 5 RTC backup-battery trickle charger via
+    # `dtparam=rtc_bbat_vchg=3000000` in /boot/firmware/config.txt, so the RTC
+    # keeps real time across a power-off and in-car rows are stamped by a
+    # correct clock.
+    #
+    # Measured on chi-eclipse-01 2026-08-28: battery_voltage 0,
+    # charging_voltage 0, charging_voltage_max 4400000, and NO rtc/bbat line in
+    # config.txt -- the kernel announces "setting system clock to
+    # 1970-01-01T00:00:13 UTC" on every boot. The Pi 5 ships with RTC charging
+    # DISABLED and takes a RECHARGEABLE cell, so a battery that is fitted and
+    # was new still reads 0: it was never charged.
+    #
+    # IT LANDS HERE RATHER THAN BEING TYPED ON THE PI, and that is the point of
+    # the story. A-18: the live eclipse-rfkill-unblock fix was repo-unmanaged
+    # and a reflash would have lost it. A hand-typed RTC line has the same fate.
+    #
+    # Same posture as step_set_gpu_cma / step_set_display_mode above: an
+    # idempotent standalone script, run with sudo, re-asserted on EVERY deploy
+    # (NOT gated behind --init) so a Pi whose config.txt was rewritten by an OS
+    # image update, rpi-update or raspi-config lands back on the intended value.
+    # That every-deploy re-assertion is AC6. Runs AFTER sync_tree so
+    # deploy/enable-rtc-charging.sh exists on the Pi.
+    #
+    # Ordered directly after the two boot-config steps above because it is the
+    # same class -- an idempotent BOX-level config.txt re-assertion that takes
+    # effect on the NEXT BOOT only. It shares set-gpu-cma.sh's
+    # `${TARGET}.eclipse-bak` first-write-wins backup deliberately: both edit
+    # the same file, so one shared pristine original is the correct artifact.
+    #
+    # The script never reboots and never claims the charger is on -- reading
+    # back charging_voltage is the operator's step after a reboot, and the real
+    # proof is a power-cycle with NO network (a networked reboot lets NTP hide
+    # the defect entirely).
+    echo "--- Step: Enabling RTC backup-battery charging in boot config (US-620 / F-138) ---"
+    if $DRY_RUN; then
+        echo "DRY-RUN would run: sudo bash ${PI_PATH}/deploy/enable-rtc-charging.sh"
+        echo "DRY-RUN would verify: /boot/firmware/config.txt carries an effective dtparam=rtc_bbat_vchg=3000000"
+        echo "DRY-RUN note: takes effect on next reboot; confirm with cat /sys/class/rtc/rtc0/charging_voltage"
+        echo "DRY-RUN note: the decisive test is a power-cycle with NO network, then check the clock"
+        return 0
+    fi
+    remote "sudo bash '${PI_PATH}/deploy/enable-rtc-charging.sh'"
+}
+
 step_install_rfkill_unblock() {
     # BL-025 P0 (V0.29.22 hotfix, CIO-directed): make the boot-time radio
     # unblock REPO-MANAGED so a reflash or `--init` cannot lose it.
@@ -1976,6 +2021,36 @@ step_write_deploy_version() {
     echo "Wrote ${PI_PATH}/.deploy-version: ${versionJson}"
 }
 
+# US-573 / F-136: prove every Pi runtime entry point IMPORTS on the target
+# before any service is restarted.
+#
+# The Pi sync is a WHITELIST (f2c80b4f, patched by accfa853 and da5008cd), and a
+# whitelist omission fails by SILENCE: the file is simply absent on the car, the
+# deploy reports success, and the unit dies at its next start with a
+# ModuleNotFoundError that reads like a code bug. deploy-server.sh:116-122
+# already carries the server half of this check; the Pi had none.
+#
+# Ordered AFTER the unit installs (the entry points are derived from the units
+# systemd actually loaded, so they must exist) and BEFORE step_restart_service,
+# so a missing module fails the deploy instead of bouncing services into a
+# crash loop. `set -e` means a failure here also stops .deploy-version being
+# bumped -- the Pi is never marked as carrying a release it cannot import.
+step_verify_pi_imports() {
+    echo "--- Step: Verifying Pi runtime entry points import (US-573 / F-136) ---"
+    if $DRY_RUN; then
+        echo "DRY-RUN would import every Python entry point derived from the"
+        echo "DRY-RUN   installed systemd units, using each unit's own"
+        echo "DRY-RUN   WorkingDirectory and PYTHONPATH, and FAIL the deploy on"
+        echo "DRY-RUN   any ModuleNotFoundError or on discovering none at all."
+        return 0
+    fi
+    remote "
+        cd '${PI_PATH}'
+        PI_PROJECT_ROOT='${PI_PATH}' bash deploy/verify-pi-imports.sh
+    "
+    echo ""
+}
+
 step_restart_service() {
     echo "--- Step: Restarting ${SERVICE_NAME} systemd service ---"
     # US-389 + US-354 deploy-hygiene class: STOP before START (not a bare
@@ -2183,6 +2258,16 @@ step_set_gpu_cma
 # "what did the deploy change about the screen" answer in one place.
 step_set_display_mode
 
+# US-620 / F-138: enable the Pi 5 RTC backup-battery trickle charger so in-car
+# timestamps are stamped by a real clock instead of the 1970 epoch. Ordered
+# directly after the two boot-config steps above because it is the same class of
+# step -- an idempotent BOX-level config.txt re-assertion that needs sync_tree to
+# have put its standalone script on the Pi, and that takes effect on the next
+# reboot. Deliberately NOT gated behind --init (AC6): config.txt is OS-shipped
+# and can be rewritten out-of-band, so the routine re-deploy is what has to
+# self-heal it.
+step_enable_rtc_charging
+
 # ARCH-004: re-assert WHICH NETWORKS this Pi may join. Same class as the two
 # steps above -- an idempotent BOX-level re-assertion that needs sync_tree to
 # have put its standalone script on the Pi -- but NOT a boot-config step: it
@@ -2378,6 +2463,12 @@ logs|exports|.deploy-version|requirements.txt|requirements-pi.txt|.gitignore|\
     "
     echo ""
 }
+
+# US-573 / F-136: the whitelist-omission gate. Runs after every unit install
+# above (it derives the entry points from those units) and BEFORE the restart
+# below, so a module the whitelist failed to ship fails the deploy loudly
+# instead of surfacing as a service that will not start.
+step_verify_pi_imports
 
 # US-354 reordering: restart first, then verify both long-running services
 # came back with start times AFTER DEPLOY_START_EPOCH, THEN bump

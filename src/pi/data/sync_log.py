@@ -11,6 +11,17 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-04-18    | Rex          | Initial implementation for US-148
+# 2026-08-29    | Rex (US-621) | Extracted the delta WHERE clause into
+#                               _deltaPredicate and added countDeltaRows, the
+#                               UNBOUNDED companion to getDeltaRows behind the
+#                               pre-poweroff sync-custody record.  Both now run
+#                               ONE predicate, so "N rows outstanding" can never
+#                               disagree with what a push would actually send --
+#                               a backlog count with its own logic would be a
+#                               confident wrong number, and the custody record
+#                               exists precisely to stop the operator being told
+#                               a confident wrong thing.  getDeltaRows behaviour
+#                               is unchanged (both cursor branches preserved).
 # 2026-04-19    | Rex (US-202) | Route _utcIsoTimestamp through shared
 #                               src.common.time.helper.utcIsoNow (TD-027 fix)
 # 2026-04-19    | Rex (US-194) | TD-025 + TD-026 fix: per-table PK registry
@@ -76,6 +87,10 @@
 #                               US-417.  Distinct from SNAPSHOT_TABLES (the
 #                               profiles/vehicle_info reject-list) -- opposite
 #                               role, see that constant's docstring.
+# 2026-08-29    | Rex (US-626) | Added observed_by + observer_state to
+#                               _WIRE_STRIPPED_COLUMNS -- Pi-local power_log
+#                               forensic columns, per the US-419 data_quality
+#                               precedent (the server has no such columns).
 # ================================================================================
 ################################################################################
 
@@ -138,6 +153,7 @@ __all__ = [
     'SYNC_UPDATE_TABLES_PK',
     'VALID_STATUSES',
     'clearQuarantine',
+    'countDeltaRows',
     'ensureQuarantineSchema',
     'ensureSnapshotSyncSchema',
     'ensureSyncModifiedAtSchema',
@@ -324,8 +340,13 @@ SYNC_MODIFIED_AT_COLUMN: str = '_sync_modified_at'
 #     on startup_log / power_log.  The server computes its OWN data_quality at
 #     ingest (Pi = emitter, server = authority), so a Pi data_quality value is
 #     never sent upstream.  Harmless no-op strip for tables that lack the column.
+#   observed_by / observer_state (US-626) -- Pi-local power_log forensics: which
+#     instrument witnessed a power transition and its honest three-state read
+#     ('present'/'lost'/'unknown').  The server has no such columns; following
+#     the data_quality precedent keeps this a Pi-side change rather than a
+#     server migration.
 _WIRE_STRIPPED_COLUMNS: frozenset[str] = frozenset(
-    {SYNC_MODIFIED_AT_COLUMN, 'data_quality'}
+    {SYNC_MODIFIED_AT_COLUMN, 'data_quality', 'observed_by', 'observer_state'}
 )
 
 
@@ -450,6 +471,110 @@ def initDb(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+def _deltaPredicate(
+    conn: sqlite3.Connection,
+    tableName: str,
+    lastId: int,
+    lastModifiedAt: str | None,
+) -> tuple[str, tuple[Any, ...]]:
+    """Build THE delta WHERE clause: "which rows has the server not got yet?".
+
+    Extracted in US-621 so :func:`getDeltaRows` (which SENDS the rows) and
+    :func:`countDeltaRows` (which COUNTS them for the shutdown custody record)
+    are driven by one predicate rather than two that agree by inspection. A
+    backlog count that could disagree with what a push would actually send is
+    a confident wrong number, and the shutdown record exists precisely to stop
+    the operator being told a confident wrong thing about custody.
+
+    US-315: only run the combined cursor when (a) the table is opt-in AND
+    (b) the ``_sync_modified_at`` column actually exists.  Pre-migration
+    callers (e.g., tests that seed dtc_log via ObdDatabase.initialize WITHOUT
+    first running ensureSyncModifiedAtSchema) fall through to the legacy
+    pk-only query so they don't trip "no such column".  The SyncClient always
+    runs the migration before calling this helper, so production paths get the
+    combined-cursor branch.
+
+    Args:
+        conn: Open sqlite3 connection (used to probe for the opt-in column).
+        tableName: An already-validated delta table.
+        lastId: Last successfully-synced PK value.
+        lastModifiedAt: Last synced modified_at cursor, or None.
+
+    Returns:
+        ``(whereSql, params)`` -- the WHERE body without the ``WHERE`` keyword,
+        and its bound parameters in order.
+    """
+    pkColumn = PK_COLUMN[tableName]
+    useCombinedCursor = (
+        tableName in SYNC_UPDATE_TABLES_PK
+        and _hasModifiedAtColumn(conn, tableName)
+    )
+    if useCombinedCursor:
+        # Combined cursor for opt-in tables: pk > lastId catches new
+        # INSERTs; _sync_modified_at > lastModifiedAt catches UPDATEs to
+        # already-pushed rows.  ``or ''`` on lastModifiedAt makes the
+        # "no prior modified-at sync" case (NULL high-water mark) compare
+        # cleanly without a Python-side branch.
+        return (
+            f"{pkColumn} > ? "
+            f"   OR ({SYNC_MODIFIED_AT_COLUMN} IS NOT NULL "
+            f"       AND {SYNC_MODIFIED_AT_COLUMN} > ?)",
+            (int(lastId), lastModifiedAt or ''),
+        )
+    # Legacy pk-only path (unchanged for back-compat per US-315 doNotTouch
+    # on INSERT-side delta logic).
+    return (f"{pkColumn} > ?", (int(lastId),))
+
+
+def countDeltaRows(
+    conn: sqlite3.Connection,
+    tableName: str,
+    lastId: int,
+    lastModifiedAt: str | None = None,
+) -> int:
+    """Count every row ``tableName`` still owes the server (US-621).
+
+    The UNBOUNDED companion to :func:`getDeltaRows`. Both route through
+    :func:`_deltaPredicate`, so this answers exactly "how many rows would a
+    push eventually have to send?" rather than a second opinion about it.
+
+    Deliberately takes NO ``limit``. :meth:`SyncClient.forcePush` moves at most
+    ``pi.companionService.batchSize`` (500) rows PER TABLE PER CALL, and that
+    cap is a TRANSPORT decision, not a statement about the queue. Inheriting it
+    here would report "500 outstanding" against a backlog of any size -- the
+    shutdown would then record a bounded-looking number for an unbounded
+    problem, which is the failure this story exists to end.
+
+    Args:
+        conn: Open sqlite3 connection.
+        tableName: Must be a member of :data:`DELTA_SYNC_TABLES`. Snapshot
+            tables raise, exactly as they do in :func:`getDeltaRows` -- they
+            have no monotonic cursor to be "behind" on.
+        lastId: Last successfully-synced PK value (from
+            :func:`getHighWaterMark`). ``0`` means nothing has synced yet.
+        lastModifiedAt: Last synced modified_at cursor for opt-in tables
+            (from :func:`getModifiedHighWaterMark`). ``None`` counts every
+            modified row.
+
+    Returns:
+        The number of outstanding rows. ``0`` means the table is fully
+        delivered -- an explicit fact, not an absence of one.
+
+    Raises:
+        ValueError: If ``tableName`` is not a delta table.
+    """
+    _validateDeltaTable(tableName)
+    whereSql, whereParams = _deltaPredicate(
+        conn, tableName, lastId, lastModifiedAt
+    )
+    row = conn.execute(
+        f"SELECT COUNT(*) FROM {tableName} "  # noqa: S608 -- whitelisted identifiers
+        f"WHERE {whereSql}",
+        whereParams,
+    ).fetchone()
+    return int(row[0])
+
+
 def getDeltaRows(
     conn: sqlite3.Connection,
     tableName: str,
@@ -503,41 +628,15 @@ def getDeltaRows(
     """
     _validateDeltaTable(tableName)
     pkColumn = PK_COLUMN[tableName]
-
-    # US-315: only run the combined cursor when (a) the table is opt-in
-    # AND (b) the _sync_modified_at column actually exists.  Pre-migration
-    # callers (e.g., tests that seed dtc_log via ObdDatabase.initialize
-    # WITHOUT first running ensureSyncModifiedAtSchema) fall through to
-    # the legacy pk-only query so they don't trip "no such column".  The
-    # SyncClient always runs the migration before calling this helper, so
-    # production paths get the combined-cursor branch.
-    useCombinedCursor = (
-        tableName in SYNC_UPDATE_TABLES_PK
-        and _hasModifiedAtColumn(conn, tableName)
+    whereSql, whereParams = _deltaPredicate(
+        conn, tableName, lastId, lastModifiedAt
     )
-    if useCombinedCursor:
-        # Combined cursor for opt-in tables: pk > lastId catches new
-        # INSERTs; _sync_modified_at > lastModifiedAt catches UPDATEs to
-        # already-pushed rows.  ``or ''`` on lastModifiedAt makes the
-        # "no prior modified-at sync" case (NULL high-water mark) compare
-        # cleanly without a Python-side branch.
-        modifiedFloor = lastModifiedAt or ''
-        cursor = conn.execute(
-            f"SELECT * FROM {tableName} "  # noqa: S608 -- whitelisted identifiers
-            f"WHERE {pkColumn} > ? "
-            f"   OR ({SYNC_MODIFIED_AT_COLUMN} IS NOT NULL "
-            f"       AND {SYNC_MODIFIED_AT_COLUMN} > ?) "
-            f"ORDER BY {pkColumn} ASC LIMIT ?",
-            (int(lastId), modifiedFloor, int(limit)),
-        )
-    else:
-        # Legacy pk-only path (unchanged for back-compat per US-315
-        # doNotTouch on INSERT-side delta logic).
-        cursor = conn.execute(
-            f"SELECT * FROM {tableName} "  # noqa: S608 -- whitelisted identifiers
-            f"WHERE {pkColumn} > ? ORDER BY {pkColumn} ASC LIMIT ?",
-            (int(lastId), int(limit)),
-        )
+    cursor = conn.execute(
+        f"SELECT * FROM {tableName} "  # noqa: S608 -- whitelisted identifiers
+        f"WHERE {whereSql} "
+        f"ORDER BY {pkColumn} ASC LIMIT ?",
+        (*whereParams, int(limit)),
+    )
     columns = [desc[0] for desc in cursor.description]
     rows = [dict(zip(columns, row, strict=True)) for row in cursor.fetchall()]
     # Strip Pi-only columns from the wire payload.  Server models have no

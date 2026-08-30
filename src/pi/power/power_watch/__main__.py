@@ -68,6 +68,31 @@
 #                           forever. OBSERVABILITY ONLY -- not the GPIO6
 #                           single-ownership refactor (Atlas SPEC 2, deferred)
 #                           and not the X1209 hold-up path (CIO hardware).
+# 2026-08-29    | US-621  | Sprint 77 / V0.29.34 shutdown sync CUSTODY.
+#                           PREMISE CORRECTION, MEASURED: the story states "no
+#                           shutdown stage attempts a final drain", citing a
+#                           NON-RECURSIVE grep of src/pi/power/*.py. A drain
+#                           does exist -- SyncWithServerTask -> forcePush, one
+#                           directory down and wired here since P2-T6. The real
+#                           defect is narrower and worse: forcePush moves at
+#                           most pi.companionService.batchSize (500) rows PER
+#                           TABLE PER CALL, so ONE pass against the observed
+#                           ~15,000-row backlog returned OK -- "sync succeeded"
+#                           -- with ~14,500 rows still on the Pi. A confident
+#                           wrong answer, not a missing one.
+#                           Fixes: (1) _buildRunSync drains in repeated passes,
+#                           bounded by MEASURED pass duration against the
+#                           existing perTaskTimeoutSec (no new tunable), always
+#                           making at least one pass so it cannot regress below
+#                           the previous behaviour; (2) a pre-poweroff custody
+#                           record states DELIVERED / OUTSTANDING / UNKNOWN on
+#                           EVERY poweroff path -- including the VCELL-floor
+#                           fast path that skips the pipeline entirely, which is
+#                           why it is a prePowerOffFn hook and not a
+#                           ShutdownTask (the US-526 Option C argument, applied
+#                           to sync custody); (3) composePrePowerOffHooks
+#                           isolates each hook so a failing US-526 drain close
+#                           cannot silently delete the custody record.
 # ================================================================================
 ################################################################################
 """Phase-2 power-watch service entrypoint."""
@@ -113,6 +138,10 @@ from src.pi.power.power_source_provider import PowerSourceProvider  # noqa: E402
 from src.pi.power.power_watch.controller import ShutdownSequencer  # noqa: E402
 from src.pi.power.power_watch.outcome import writeOutcomeRecord  # noqa: E402
 from src.pi.power.power_watch.pipeline import runPipeline  # noqa: E402
+from src.pi.power.power_watch.sync_custody import (  # noqa: E402
+    CUSTODY_RECORD_FILENAME,
+    makeSyncCustodyHook,
+)
 from src.pi.power.power_watch.tasks.sync_with_server import (  # noqa: E402
     SyncWithServerTask,
 )
@@ -123,6 +152,7 @@ from src.pi.power.soc_calibration import (  # noqa: E402
 from src.pi.splash.shutdown_state_emitter import (  # noqa: E402
     makeShutdownPhaseEmitter,
 )
+from src.pi.sync.backlog import countOutstandingRows  # noqa: E402
 from src.pi.sync.client import SyncClient  # noqa: E402
 
 logger = logging.getLogger(__name__)
@@ -285,7 +315,13 @@ def _parseArgs(argv: list[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def _buildRunSync(syncClient: SyncClient):
+def _buildRunSync(
+    syncClient: SyncClient,
+    *,
+    backlogReader=None,
+    budgetSec: float = 0.0,
+    monotonicFn=time.monotonic,
+):
     """Adapt SyncClient.forcePush() to the SyncWithServerTask runSync contract.
 
     forcePush() is the documented pre-`systemctl poweroff` flush (US-216): it
@@ -299,19 +335,125 @@ def _buildRunSync(syncClient: SyncClient):
     A non-transport fault (e.g. ConfigurationError, sqlite corruption) raises
     out of forcePush as a non-RuntimeError and propagates -- the task then
     classifies it REAL_ERROR. We deliberately do NOT catch those here.
+
+    US-621 -- MULTI-PASS, AND WHY. One forcePush() is NOT a drained queue: it
+    moves at most ``pi.companionService.batchSize`` (500) rows PER TABLE PER
+    CALL. Measured against the 2026-08-28 incident, a ~15,000-row backlog needs
+    ~30 passes, so the single-pass drain returned OK -- "sync succeeded" -- with
+    ~14,500 rows still on the Pi. A confident wrong answer, not merely a
+    missing one. This now keeps pushing while rows remain.
+
+    THE BOUND IS MEASURED, NOT INVENTED. An unbounded drain would fight the
+    power budget the sequencer exists to respect (conditionalOutcome 1), so a
+    further pass only starts when the budget still has room for one that lasts
+    as long as the LAST one did. That derives the bound from the observed link
+    speed and ``perTaskTimeoutSec`` -- both already grounded -- rather than
+    inventing a new tunable or a pass count. A slow link self-limits; a fast
+    one drains fully.
+
+    The first pass ALWAYS runs, so the behaviour can never regress below the
+    single-pass drain this replaced.
+
+    Args:
+        syncClient: The live SyncClient.
+        backlogReader: Zero-arg reader returning a
+            :class:`~src.pi.sync.backlog.SyncBacklog`. ``None`` disables
+            multi-pass entirely (exactly one pass -- the legacy path).
+        budgetSec: Wall-clock budget for the whole drain. Production passes the
+            shutdown path's own ``perTaskTimeoutSec``.
+        monotonicFn: DI monotonic clock.
     """
 
     def runSync() -> None:
-        summary = syncClient.forcePush()
-        if summary.disabled:
-            logger.info("powerwatch sync: companion service disabled -- no-op")
-            return
-        if summary.tablesFailed > 0:
-            raise RuntimeError(
-                f"{summary.tablesFailed} table(s) failed to sync after retries"
-            )
+        # The clock is read exactly ONCE per pass: `now` is both the end of the
+        # pass just finished and the start of the next one, so `passElapsed` is
+        # real push time and never accumulates bookkeeping reads.
+        now = monotonicFn()
+        deadline = now + budgetSec
+        passes = 0
+        while True:
+            passStart = now
+            summary = syncClient.forcePush()
+            passes += 1
+            if summary.disabled:
+                logger.info("powerwatch sync: companion service disabled -- no-op")
+                return
+            if summary.tablesFailed > 0:
+                raise RuntimeError(
+                    f"{summary.tablesFailed} table(s) failed to sync after retries"
+                )
+            if backlogReader is None:
+                return
+            backlog = backlogReader()
+            if backlog.total <= 0:
+                # Either fully delivered, or unreadable -- neither is a reason
+                # to keep pushing. UNKNOWN is not "empty", but it is also not
+                # evidence that another pass would help.
+                logger.info(
+                    "powerwatch sync: drain finished after %d pass(es) -- %s",
+                    passes,
+                    backlog.describe(),
+                )
+                return
+            if summary.rowsPushed <= 0:
+                # The queue is not shrinking (quarantined/skipped table). Do
+                # not burn the rest of the shutdown window on a no-op.
+                logger.warning(
+                    "powerwatch sync: drain made NO progress on pass %d with "
+                    "%d row(s) outstanding -- stopping rather than spinning",
+                    passes,
+                    backlog.total,
+                )
+                return
+            now = monotonicFn()
+            passElapsed = now - passStart
+            if now + passElapsed > deadline:
+                logger.warning(
+                    "powerwatch sync: drain BOUNDED after %d pass(es) with "
+                    "%d row(s) still outstanding -- another pass (~%.1fs) does "
+                    "not fit the remaining shutdown budget",
+                    passes,
+                    backlog.total,
+                    passElapsed,
+                )
+                return
 
     return runSync
+
+
+def composePrePowerOffHooks(*hooks):
+    """Compose several pre-poweroff hooks into the sequencer's single slot.
+
+    ``ShutdownSequencer`` guards ``prePowerOffFn`` as ONE unit, so a naive
+    ``lambda: (a(), b())`` would let a failing US-526 drain close silently
+    delete the US-621 custody record -- one shutdown bug quietly disabling
+    another's fix. Each hook is therefore isolated here as well.
+
+    Args:
+        *hooks: Zero-arg callables, or ``None`` for an unwired one.
+
+    Returns:
+        A single zero-arg callable running every wired hook in order, or
+        ``None`` when none are wired (so the sequencer keeps its exact legacy
+        path).
+    """
+    wired = [h for h in hooks if h is not None]
+    if not wired:
+        return None
+
+    def _runAll() -> None:
+        for hook in wired:
+            try:
+                hook()
+            except Exception as exc:  # noqa: BLE001 -- one hook must not eat another
+                logger.error(
+                    "powerwatch: pre-poweroff hook %r failed (%s) -- ignored, "
+                    "remaining hooks still run",
+                    getattr(hook, "__name__", hook),
+                    exc,
+                )
+
+    return _runAll
 
 
 def buildV1Tasks(syncTask: SyncWithServerTask) -> list:
@@ -573,9 +715,20 @@ def main(argv: list[str] | None = None) -> int:
             outcomePath, kind, detail=str(detail), task="sync_with_server"
         )
 
+    # US-621: ONE backlog reader, shared by the drain (to decide whether
+    # another pass is worth making) and by the custody record (to state what
+    # remains). Two readers could disagree, and a shutdown that pushed until
+    # "empty" then recorded a different number would be worse than either.
+    def readSyncBacklog():
+        return countOutstandingRows(dbPath, busyTimeoutSec=perTaskTimeoutSec)
+
     syncTask = SyncWithServerTask(
         serverReachable=detector.isServerReachable,
-        runSync=_buildRunSync(syncClient),
+        runSync=_buildRunSync(
+            syncClient,
+            backlogReader=readSyncBacklog,
+            budgetSec=perTaskTimeoutSec,
+        ),
         writeRecord=writeRecord,
     )
 
@@ -594,9 +747,26 @@ def main(argv: list[str] | None = None) -> int:
     # path -- the PRIMARY close. The collector opened it at wall-power loss; the
     # depth recorded here (end_vcell_v) is what Spool's gate qualifies on. The
     # UPS is resolved at close time, never captured.
-    prePowerOffFn = buildDrainCloseHook(
+    drainCloseFn = buildDrainCloseHook(
         config=config, upsResolver=lambda: monitor,
     )
+
+    # US-621 [same placement argument as US-526 Option C]: the custody record
+    # is a PRE-POWEROFF hook, NOT a pipeline ShutdownTask. Two reasons, both
+    # measured. (1) The VCELL-floor fast path SKIPS the pipeline entirely
+    # (controller.py) -- and that run-to-cutoff shutdown is exactly the one
+    # carrying the most undelivered rows, so a task-based record would miss
+    # every case that matters most. (2) runPipeline ABANDONS a task that
+    # exceeds perTaskTimeoutSec, and an abandoned thread writes nothing; a
+    # custody record that disappears precisely when the queue is too big to
+    # drain would be silent in its own failure mode.
+    custodyFn = makeSyncCustodyHook(
+        recordPath=os.path.join(
+            os.path.dirname(dbPath), CUSTODY_RECORD_FILENAME
+        ),
+        backlogReader=readSyncBacklog,
+    )
+    prePowerOffFn = composePrePowerOffHooks(drainCloseFn, custodyFn)
 
     shutdownSequencer = ShutdownSequencer(
         isOnBattery=provider.isPowerLost,

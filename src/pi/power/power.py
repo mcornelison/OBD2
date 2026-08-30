@@ -29,6 +29,13 @@
 #                              | start/stop/checkPowerStatus/getStats/
 #                              | resetStats are leaf acquirers; only
 #                              | getStatus composed a nested acquire.
+# 2026-08-29    | Rex (US-626) | checkPowerStatus now commits
+#                              | _currentPowerSource BEFORE _handleTransition.
+#                              | Every power_log row written from inside that
+#                              | method read the field, so a power LOSS was
+#                              | persisted as power_source='ac_power' /
+#                              | on_ac_power=1 -- the source being left, not
+#                              | the one entered.  MEASURED by probe.
 # ================================================================================
 ################################################################################
 """
@@ -444,13 +451,20 @@ class PowerMonitor:
                 timestamp=now
             )
 
-            # Check for power transition
+            # US-626: the current source is committed BEFORE the transition is
+            # handled, not after.  Every power_log row written from inside
+            # _handleTransition (both transition_* rows and both power_saving_*
+            # rows) reads self._currentPowerSource, so with the old ordering a
+            # power LOSS was persisted as power_source='ac_power',
+            # on_ac_power=1 -- the source being LEFT rather than the one being
+            # entered.  That is why a query for on_ac_power = 0 found none of
+            # the ten observed losses.  _handleTransition takes fromSource and
+            # toSource explicitly, so it loses nothing by the reorder.
             previousSource = self._currentPowerSource
+            self._currentPowerSource = newPowerSource
+
             if previousSource != PowerSource.UNKNOWN and previousSource != newPowerSource:
                 self._handleTransition(previousSource, newPowerSource, now)
-
-            # Update current power source
-            self._currentPowerSource = newPowerSource
 
             # Update statistics
             self._updateStats(reading)
