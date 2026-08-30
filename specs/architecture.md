@@ -2405,6 +2405,73 @@ Together these keep `/run/eclipse-obd/states/shutdown-state` readable across
 the **F-103 Splash Subsystem** section below (US-393); this section is the
 shutdown-state half of that contract.
 
+### 10.6.3 Sync custody at poweroff (US-621, Sprint 77 / V0.29.34) [Atlas Rule 10]
+
+**The defect this closes.** On 2026-08-28 the CIO drove off-WiFi, returned, and the Pi ran a full
+graceful shutdown -- `systemd-poweroff`, filesystems synced, journal closed. Every signal said the
+system had shut down correctly. **~35 minutes of capture, on the order of 15,000 rows, had never
+left the Pi.**
+
+The shutdown sequencer was correct about the thing it was built for -- the local DB is `fsync`'d and
+crash-safe -- and simply had **no concept of the upload queue**. Verified at the time: `grep -i sync`
+over `src/pi/power/` returned only SQLite-durability references.
+
+**Why that is a defect and not a limitation.** Nothing was lost; the backlog drains on the next boot
+in range. The defect is that **the operator could not tell.** "Clean shutdown" is precisely the
+signal a human uses to decide the data is safe, and it was silent about the half that was not. That
+is the same species as `power_log` recording only the healthy state and `data_quality` reading
+`full` over a 751 s gap: *a system reporting a confidence it has not earned.*
+
+**Shape: record first, drain second.** The recording half is cheap, needs no network, and closes the
+*silent* defect on its own. A bounded drain is the optimisation. **Shipping only the drain would
+have left the same false confidence every time the bound was hit.**
+
+⚠️ **Wired on the PRE-POWEROFF path, NOT as a pipeline `ShutdownTask`** -- and the reason is
+load-bearing. The **VCELL floor fast-path SKIPS the pipeline**, and that is precisely the
+run-to-cutoff shutdown carrying the most undelivered data. A custody record that is absent from the
+worst case is not a custody record. (Same reasoning as the US-526 drain close, §10.6.2.)
+
+**Invariants:** never raises, and **never delays a poweroff.** The record is a diagnostic; a
+diagnostic that can hold a dying machine open is worse than no diagnostic.
+
+**Explicit non-goal:** a *guaranteed* full drain. On a UPS budget that is not achievable, and
+promising it would be the same over-claim this section exists to remove.
+
+### 10.6.4 The open drain row is checkpointed every 30 s (US-605, Sprint 77 / V0.29.34) [Atlas Rule 10]
+
+An in-progress drain event was written once, at close. A power loss before that close lost the whole
+event -- the exact scenario a drain log exists to describe.
+
+The row is now checkpointed at **30 s** (Spool `[EXACT: 30]`), which converts a lost write from
+*"the drain never happened"* into *"the drain is known up to its last checkpoint."*
+
+⚠️ **The reaper can now close ONTO a checkpoint**, which is what the cadence buys. And an
+**un-checkpointed reaped row is identifiable by its signature** -- so the record distinguishes
+*"ended here"* from *"we stopped knowing here."* That distinction is the whole value: without it a
+truncated drain and a completed one are indistinguishable rows.
+
+### 10.6.5 `power_log` records transitions, not only the healthy state (US-626, Sprint 77 / V0.29.34) [Atlas Rule 10]
+
+**The defect.** Across ten Pi boots on 2026-08-28, `power_log` held **14 rows, every one
+`ac_power`.** Zero `battery_power`, zero `transition_to_battery`; `battery_power` last written
+2026-08-17, `transition_to_battery` last written 2026-05-20. **A power monitor that cannot record
+power loss is not a monitor** -- it reads "healthy" through every outage.
+
+**Two structural additions:**
+
+- **`PowerObservation` -- an honest THREE-STATE read.** The power source is *present*, *absent*, or
+  *unknown*. Collapsing unknown into either of the other two is what let an unread sensor look like
+  mains.
+- **Which instrument witnessed a row is recorded.** A row now carries its observer, so "no
+  transitions occurred" becomes a *positive statement* rather than an inference from an empty log.
+  **An empty log and a dead writer were previously the same evidence.**
+
+⚠️ **What this does NOT fix:** an in-process logger still cannot witness its own machine's death.
+On a hard rail collapse there is no poll interval left and no time to reach SQLite. The structural
+answer -- reconstructing the loss at next boot from a last-known-good heartbeat -- remains **open**
+(A-22). This section documents a monitor that now records what it *can* see; it does not claim
+coverage of the case where the observer dies with the observed.
+
 ## 10.7 Data Pipeline Architecture (B-104 Step 1, Sprint 41 / V0.27.17)
 
 **Architectural principle (CIO 2026-05-21).** Pi = telemetry emitter +
@@ -2787,6 +2854,46 @@ governance rule (PM Rule 10) + Atlas's Sprint-43 PM Rule 13 validation-block
 PASS. Mechanism B's keep-dark production-enable disposition is the Atlas
 Rule 10 ruling of 2026-05-29 (CIO-ratified), recorded here + in §20.*
 
+### 10.7.1.3 Root 2 bounded-idle close — a finished drive stops claiming rows (US-625, Sprint 77 / V0.29.34) [Atlas Rule 10]
+
+**Root 2 was never closed.** §10.7.1.2 shipped the *guaranteed close*, and it holds for the paths it
+covers. It did not cover a drive whose session ends without any close signal ever firing.
+
+**The evidence, measured on the server 2026-08-29.** Drive 51's real leg ran
+`22:09:43 → 22:49:48`, 17,539 rows at a healthy 438 rows/min. Then **24 rows at
+`23:42:15-23:42:24` — 52 minutes after the leg ended — still stamped `drive_id=51`.** The detector
+never closed 51 and never opened 52.
+
+The damage is not the 24 rows. It is that **drive 51 then reads as 189 rows/min when its real leg
+ran 438** — so the row-rate cross-check, which is our best coarse quality signal, flags the drive
+correctly while pointing at the wrong diagnosis. **Mis-attribution, not loss.**
+
+**Two mechanisms, both fixed:**
+
+- **`STOPPING` now counts as active.** It previously did not — so a context in `STOPPING` read as
+  IDLE, `evaluateTimeouts` early-returned forever, and `stop()` was never reached. The state that
+  exists to end a drive was invisible to the thing that ends drives.
+- **A bounded idle clock, armed per context.** A `drive_id` with no session left to close still has
+  to be closed, and the same activity signal that keeps a drive alive extends its bound. So the
+  bound expires on *silence*, not on wall-clock alone.
+
+⚠️ **DIRECTIONAL FENCE — this must never share a ticket with the start-side gap (US-567).** Root 2
+is **OVER-attribution**: a dead drive claiming rows that are not its own. US-567 is
+**UNDER-attribution**: live rows carrying no `drive_id` at all. **Opposite directions, opposite
+fixes — and a fix for one re-opens the other if they are built together.** Spool's ruling of
+2026-08-20, upheld.
+
+⚠️ **AND: drives 45/46 are NOT evidence for Root 1.** They were filed as Root 1 regressing
+(concurrent capture). **Ruled 2026-08-29: they are the A-23 clock artifact** — the two drives sit in
+different boots whose *recorded windows themselves overlap*, and their `source_id` blocks are
+disjoint and contiguous, which concurrent writers on one autoincrement cannot produce. **Root 1
+stays CLOSED. Do not re-open it on that evidence.**
+
+**What closes Root 2 for good is still owed:** the acceptance test must include the shape that
+produced it — a drive whose session ends with no close signal — because *absence of reproduction is
+not evidence of repair.* That criticism (Spool, 2026-08-28) is upheld: Root 1 was closed on one
+clean pair, and that was too narrow.
+
 ### 10.7.2 Derived motion signals + cross-drive comparison (F-106 / F-069, Sprint 53 / V0.29.7)
 
 **Derived motion signals (US-436, F-106).** A third server-side per-drive
@@ -3160,16 +3267,44 @@ pure, node-tested logic in `carousel.js`: `brightnessLevel(lightData, cfg, nowMs
 alarmActive)` = `clamp(minLevel, brightnessCurve(lux), 1.0)` when the feed is
 fresh, else a fixed `defaultLevel` (honest fallback — an absent/stale/`null`
 reading never fabricates an "auto" behavior), then raised to at least
-`alarmFloorLevel` while a **real active STOP** alert is present
+**FULL brightness** while a **real active STOP** alert is present
 (`brightnessAlarmActive` — the load-bearing safety guard: the PULL-OVER alarm is
-never dimmed below legible, regardless of lux). Applied as a CSS var
+never dimmed, regardless of lux). US-484-b made the alarm go to FULL, which is
+stronger than any floor, and **US-595 therefore RETIRED `alarmFloorLevel`
+entirely** — a floor beneath a value that is already the maximum is unreachable
+config. Applied as a CSS var
 (`--display-brightness`) `filter: brightness()` on the `#screen` frame (the black
 letterbox bars stay black; `#stage`'s own transform remains the containing block
 for its descendants, so US-482 scaling is untouched). The curve values are
 **GROUNDED CONFIG PARAMETERS** under `pi.display.autoDim.*` (`luxMin` 3.0 /
-`luxFull` 1000.0 — standard illuminance anchors; `minLevel` 0.15 / `defaultLevel`
-0.70 / `alarmFloorLevel` 0.40 — Iris-tunable levels; `luxStaleSec` 10; `curve`
-`logarithmic`), **NOT** `pi.display.brightness` (the distinct live 0–100
+`luxFull` **300.0**; `minLevel` **0.75** / `defaultLevel` **1.0**; `luxStaleSec`
+10; `curve` `logarithmic`)
+
+> ⚠️ **These four values all moved on 2026-08-29/30 and this paragraph described
+> the old ones.** Recorded because the drift was mine: `luxFull` was documented
+> as a *"standard illuminance anchor"* of 1000 and had never been measured on
+> this car — **measured overcast daylight through the windscreen is ~209 lux**,
+> ~4.8x below it, so the panel sat at its floor through real daylight
+> (ARCH-008). `minLevel` 0.15 → 0.5 → **0.75** and `defaultLevel` 0.70 → **1.0**
+> are the CIO's, from a dark-garage check; `defaultLevel` is deliberately NOT
+> matched to `minLevel` because the same fallback serves absent, stale **and
+> saturated**, and saturated is bright sun where 0.75 is unreadable.
+> `alarmFloorLevel` is retired (US-595).
+>
+> ⚠️ **`minLevel` at 0.75 makes the floor dominate until ~234 lux at
+> `luxFull` 1000, ~42 lux at 300.** Auto-dim therefore has a deliberately narrow
+> working range. That is a CHOICE, not a defect — do not "fix" it back.
+
+**A NEGATIVE lux is not a dark reading (ARCH-010).** The TSL2591 lux equation
+subtracts a multiple of the infrared channel, so an IR-dominated sample — low sun
+through a windscreen — computes negative; 452 such samples were recorded on
+2026-08-28, worst −721.4 at 83% IR. `freshLux` rejected non-finite values but not
+negatives, and a negative **is** finite, so it passed every type check and hit
+`lux <= luxMin -> 0`: **the brighter the sun, the dimmer the panel.** It is now
+published as `null` at the producer and rejected again at the consumer.
+⚠️ **Published as `null`, never CLAMPED to 0** — 0 lux reads as darkness and would
+still dim. `null` routes to `defaultLevel`, i.e. full. The honest answer and the
+correct behaviour are the same answer here, **NOT** `pi.display.brightness` (the distinct live 0–100
 hardware-backlight scalar). Tuning is a **config change, not code** (CIO
 2026-07-22): `eclipse-states-http` injects the `pi.display.autoDim` object into
 the served `dashboard.html` at serve time — the same same-origin seam as the
