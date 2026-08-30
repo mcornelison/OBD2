@@ -25,6 +25,26 @@
 #   LOAD-BEARING on Wayland specifically: the compositor socket is
 #   $XDG_RUNTIME_DIR/wayland-0, so a wrong value is not merely noisy here.
 #   Do not "simplify" it back to %U -- it looks correct in the file and is not.
+#
+# US-604 -- `--password-store=basic`: adopted from the DASHBOARD units, which
+#   carry it for a live-tested reason (US-522 reopen). With no `--password-store`
+#   chromium auto-detects a Linux backend and picks the GNOME keyring for its
+#   OSCrypt "Safe Storage" key; this Pi's Default keyring is password-protected
+#   and under PASSWORDLESS auto-login pam_gnome_keyring never unlocks it, so the
+#   collection stays LOCKED, chromium's unlock request reaches gcr-prompter, and
+#   an "Authentication Required" dialog paints OVER the kiosk. `basic` keeps the
+#   key in chromium's own profile -- here the /tmp/splash-chromium-boot below,
+#   which stores no real password, so there is no security downgrade.
+#
+#   THE EXPOSURE HERE IS LATENT, and saying so is the point rather than
+#   overselling the fix: gcr-prompter fired 05:43:09 / 08:33:52 / 08:52:23 on
+#   2026-08-03, every one ~9h AFTER this unit exited, and NONE inside its own
+#   9.806s window. A HEALTHY splash exits too fast to be prompted. It is a
+#   DEGRADED boot -- where this splash deliberately STAYS UP because the JS never
+#   calls window.close() and the dashboard hand-off never happens -- that leaves
+#   chromium alive long enough to be asked, i.e. exactly when an operator is
+#   reading a fault report off the panel. NOT adopted alongside it:
+#   `--remote-debugging-port` (unauthenticated full-page control on a car kiosk).
 # ==============================================================================
 
 [Unit]
@@ -47,6 +67,7 @@ ExecStart=__CHROMIUM_BIN__ \
   --noerrdialogs --disable-infobars --hide-scrollbars \
   --autoplay-policy=no-user-gesture-required \
   --check-for-update-interval=31536000 \
+  --password-store=basic \
   --user-data-dir=/tmp/splash-chromium-boot \
   http://127.0.0.1:9899/
 # Splash exits via its own JS calling window.close() once the state machine

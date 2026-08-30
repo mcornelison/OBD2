@@ -18,6 +18,9 @@
 # ================================================================================
 # 2026-06-29    | Rex (US-396) | Initial implementation (F-103 render-side
 #               |              | defects D-1/D-2/D-3 + V-1/V-2 install checks).
+# 2026-08-29    | Rex (US-604) | Keyring guards: the four splash kiosk units must
+#               |              | pin --password-store=basic like the dashboard
+#               |              | units, without losing the US-549 stderr flag.
 # ================================================================================
 ################################################################################
 
@@ -31,8 +34,18 @@ from pathlib import Path
 
 import pytest
 
+# ONE definition of "a flag on this unit's ExecStart", shared with the dashboard
+# suite rather than re-implemented here. US-604's contract is that the splash
+# units MATCH the dashboard units, so both sides must be read by the same
+# tokenizer -- two parsers would let "matching" mean two different things, the
+# failure shape US-572 recorded ("if two guards enforce one rule, they must read
+# the file the same way"). Established precedent: tests/ui/
+# test_shutdown_splash_terminal_reason.py already imports this same helper.
+from tests.deploy.test_dashboard_kit import _execStartFlags, _passwordStoreValues
+
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 KIT_DIR = REPO_ROOT / "src" / "pi" / "ui" / "splash"
+DASHBOARD_DIR = REPO_ROOT / "src" / "pi" / "ui" / "dashboard"
 INSTALL_SH = KIT_DIR / "install.sh"
 UNINSTALL_SH = KIT_DIR / "uninstall.sh"
 
@@ -254,3 +267,157 @@ def test_uninstall_removesGraceAndLegacyUnits():
     assert "splash-grace.path" in sh
     # Legacy units are still swept so an upgrade-in-place leaves nothing behind.
     assert "splash-shutdown.service" in sh
+
+
+# ---------------------------------------------------------------------------
+# US-604 -- the splash kiosks must pin the OSCrypt backend, like the dashboard.
+#
+# US-522 (reopen) added `--password-store=basic` to the DASHBOARD kiosk units to
+# stop a recurring gcr-prompter "Authentication Required" dialog painting over
+# the kiosk. With no `--password-store`, chromium auto-detects a Linux backend
+# and picks the GNOME keyring for its OSCrypt "Safe Storage" key; this Pi's
+# Default keyring is password-protected and under PASSWORDLESS auto-login
+# `pam_gnome_keyring` never unlocks it, so the collection stays LOCKED and the
+# unlock request reaches gcr-prompter. The four SPLASH units launch chromium
+# through the SAME Debian wrapper and carried no such flag.
+#
+# BE HONEST ABOUT THE EXPOSURE -- it is LATENT, not active, and that is what
+# sized this story an S rather than a defect fix. gcr-prompter fired
+# 05:43:09 / 08:33:52 / 08:52:23 on 2026-08-03, every one ~9h AFTER splash-boot
+# exited, and NONE inside the splash's own 9.806s window. The HEALTHY splash
+# does not prompt because it exits too fast. It becomes reachable on a DEGRADED
+# boot, where the splash deliberately STAYS UP (no window.close hand-off to the
+# dashboard) -- i.e. precisely when an operator is trying to read a fault report
+# off the panel, and precisely when an auth dialog over it costs the most.
+# ---------------------------------------------------------------------------
+
+_PASSWORD_STORE_FLAG = "--password-store=basic"
+_STDERR_LOGGING_FLAG = "--enable-logging=stderr"
+_DASHBOARD_UNITS = ("dashboard.service.wayland", "dashboard.service.x11")
+_GRACE_UNITS = ("splash-grace.service.wayland", "splash-grace.service.x11")
+_EXPECTED_SPLASH_KIOSK_UNITS = [
+    "splash-boot.service.wayland",
+    "splash-boot.service.x11",
+    "splash-grace.service.wayland",
+    "splash-grace.service.x11",
+]
+
+
+def _splashKioskUnits() -> list[str]:
+    """Every splash chromium unit template, DISCOVERED rather than hardcoded.
+
+    Derived from the kit directory so a splash variant added next sprint is
+    covered the day it lands. US-573 recorded the opposite shape as a
+    self-renewing debt: a hardcoded inventory silently stops covering the newest
+    unit, and under-verification looks exactly like success.
+    """
+    return sorted(p.name for p in KIT_DIR.glob("splash-*.service.*"))
+
+
+def test_splashKioskUnitDiscovery_isNotVacuous_us604():
+    """The guard's own INPUT, asserted before anything loops over it.
+
+    Every US-604 assertion below is a `for unit in _splashKioskUnits()` loop, so
+    a glob that silently returned nothing would make all of them pass while
+    verifying NOTHING -- the inert-guard shape this project has catalogued
+    repeatedly. Pinning the names (not merely a count) also makes a NEW variant
+    an explicit acknowledgement rather than a silent expansion.
+    """
+    assert _splashKioskUnits() == _EXPECTED_SPLASH_KIOSK_UNITS, (
+        "splash kiosk unit inventory changed. A NEW variant is already covered "
+        "by the guards below -- add it here to acknowledge it. A MISSING one "
+        "means those guards verify less than they claim to."
+    )
+
+
+def test_splashUnits_carryPasswordStoreBasic_us604():
+    """AC-5 / VC-1: all four splash variants pin the OSCrypt backend to `basic`.
+
+    Compared by VALUE, not by flag presence: `--password-store` is a valued
+    switch, so a substring check would happily accept `--password-store=gnome`
+    -- which is the broken configuration this story exists to prevent, not a fix.
+    """
+    for unit in _splashKioskUnits():
+        values = _passwordStoreValues(_read(unit))
+        assert values == ["basic"], (
+            f"{unit}: ExecStart must carry exactly {_PASSWORD_STORE_FLAG} "
+            f"(found {values!r}) -- an unset password store lets chromium pick "
+            "the locked GNOME keyring and paint an auth dialog over a splash "
+            "that a DEGRADED boot leaves on screen"
+        )
+
+
+def test_splashUnits_matchTheDashboardKeyringBackend_us604():
+    """VC-1 says "matching the dashboard units", so assert the RELATIONSHIP
+    rather than re-hardcoding the literal on this side too.
+
+    Derived from the dashboard units at run time: if US-522's backend choice is
+    ever revised there, the splash units either follow or this goes red. Two
+    independently hardcoded copies of one decision are free to drift into
+    silently disagreeing about the same OSCrypt question.
+    """
+    dashboardValues = {
+        value
+        for unit in _DASHBOARD_UNITS
+        for value in _passwordStoreValues((DASHBOARD_DIR / unit).read_text(encoding="utf-8"))
+    }
+    # Premise check: this test is only meaningful while the dashboard still
+    # carries the fix it is being compared against (US-522 must not have
+    # regressed out from under it).
+    assert dashboardValues, "no --password-store on the dashboard units -- US-522 regressed"
+    assert len(dashboardValues) == 1, f"dashboard variants disagree: {dashboardValues!r}"
+    expected = dashboardValues.pop()
+    for unit in _splashKioskUnits():
+        assert _passwordStoreValues(_read(unit)) == [expected], (
+            f"{unit}: splash must match the dashboard OSCrypt backend "
+            f"({expected!r}); they launch the same chromium through the same wrapper"
+        )
+
+
+def test_splashUnits_neverSelectKeyringBackedPasswordStore_us604():
+    """The awkward direction: no variant may select a LOCKED backend.
+
+    `gnome` / `gnome-libsecret` / `kwallet*` all route through a collection that
+    passwordless auto-login leaves locked -- i.e. they re-open the defect while
+    still technically "having a --password-store flag".
+    """
+    for unit in _splashKioskUnits():
+        for value in _passwordStoreValues(_read(unit)):
+            assert value == "basic", f"{unit}: --password-store={value} re-opens the keyring popup"
+
+
+def test_splashGraceUnits_keepLoadBearingStderrLogging_us604():
+    """The adjacent-line hazard, and why "match the dashboard units" must NOT be
+    read as "make the two flag sets identical".
+
+    The grace units carry `--enable-logging=stderr`, which US-549 (I-043) makes
+    LOAD-BEARING: shutdown-state-poll.js logs its terminal reason to the console
+    on every exit, and chromium DISCARDS console output without that flag. The
+    long-running dashboard kiosk deliberately carries NO logging flag. So the
+    two units legitimately DIFFER here, the new flag lands directly beside the
+    difference, and a well-meaning "make them match" sweep would delete the very
+    line that fixes I-043. Both halves are asserted on one pass so a revert
+    aimed at either cannot quietly take the other with it (the US-536 lesson).
+    """
+    for unit in _GRACE_UNITS:
+        flags = _execStartFlags(_read(unit))
+        assert _STDERR_LOGGING_FLAG in flags, (
+            f"{unit}: lost the US-549/I-043 terminal-reason logging -- it is "
+            "load-bearing on the grace units and is NOT a debug leftover to be "
+            "tidied away while aligning them with the dashboard"
+        )
+        assert _PASSWORD_STORE_FLAG in flags, f"{unit}: lost the US-604 keyring fix"
+
+
+def test_splashUnits_carryNoRemoteDebuggingPort_us604():
+    """Do not import the live box's OTHER debug flags along with the fix.
+
+    The hand-patched unit on the Pi carried `--remote-debugging-port=9222` right
+    beside Atlas's `--password-store=basic`. An open DevTools port on a
+    car-mounted kiosk is unauthenticated full-page control. Both splash unit
+    headers already refuse it in prose (US-522); this asserts the refusal, since
+    prose is not a guard. The dashboard suite fences the same flag.
+    """
+    for unit in _splashKioskUnits():
+        offenders = [f for f in _execStartFlags(_read(unit)) if f.startswith("--remote-debugging-")]
+        assert offenders == [], f"{unit}: kiosk must not expose DevTools ({offenders!r})"

@@ -37,6 +37,28 @@
 #   $XDG_RUNTIME_DIR/wayland-0. It also keeps the dbus noise out of the same
 #   short window as the US-549 terminal-reason line an operator greps for.
 #   Do not "simplify" it back to %U -- it looks correct in the file and is not.
+#
+# US-604 -- `--password-store=basic`: adopted from the DASHBOARD units, which
+#   carry it for a live-tested reason (US-522 reopen). With no `--password-store`
+#   chromium auto-detects a Linux backend and picks the GNOME keyring for its
+#   OSCrypt "Safe Storage" key; this Pi's Default keyring is password-protected
+#   and under PASSWORDLESS auto-login pam_gnome_keyring never unlocks it, so the
+#   collection stays LOCKED, chromium's unlock request reaches gcr-prompter, and
+#   an "Authentication Required" dialog paints OVER the kiosk. `basic` keeps the
+#   key in chromium's own profile -- here /tmp/splash-chromium-shutdown below.
+#
+#   THE EXPOSURE HERE IS LATENT, and saying so is the point rather than
+#   overselling the fix: the measured gcr-prompter prompts (2026-08-03 05:43:09 /
+#   08:33:52 / 08:52:23) all tracked the long-running DASHBOARD chromium, none a
+#   splash. This unit's window is the shutdown grace period, capped by BLACK_TAIL
+#   at 60s, so it is normally far too short to be prompted -- but a dialog
+#   painted over THIS splash would obscure the cancel/poweroff state the operator
+#   is watching for, and the flag costs nothing.
+#
+#   DO NOT let "match the dashboard units" delete `--enable-logging=stderr`
+#   below. The two units legitimately DIFFER there (US-549 above): the dashboard
+#   deliberately carries no logging flag, this one needs it. A test asserts both
+#   flags on one pass so a revert aimed at either cannot take the other with it.
 # ==============================================================================
 
 [Unit]
@@ -56,6 +78,7 @@ ExecStart=__CHROMIUM_BIN__ \
   --autoplay-policy=no-user-gesture-required \
   --check-for-update-interval=31536000 \
   --enable-logging=stderr \
+  --password-store=basic \
   --user-data-dir=/tmp/splash-chromium-shutdown \
   http://127.0.0.1:9899/shutdown.html
 # Splash exits via its own JS calling window.close() on cancelled / poweroff /
