@@ -73,6 +73,14 @@
 #                                + _validatePowerWatch (the stated alias death
 #                                date now that __main__/controller consume the
 #                                canonical smoothing* names).
+# 2026-08-29    | Rex (US-627) | Add the pi.display.autoDim FLOOR COUPLING to
+#                                _validateDisplayAutoDim: defaultLevel must be
+#                                >= minLevel. brightnessLevel() clamps only its
+#                                CURVE branch, so the absent/stale-feed fallback
+#                                could render BELOW a floor just raised for
+#                                legibility. Checked on EFFECTIVE values (raising
+#                                minLevel alone is the 2026-08-29 case) and
+#                                REJECTED, never clamped at runtime.
 # ================================================================================
 ################################################################################
 
@@ -917,6 +925,13 @@ class ConfigValidator:
         Iris-tunable via config; the validator only rejects values that are unsafe
         or nonsensical by construction, it does not pin the grounded defaults.
 
+        US-627 adds ONE cross-field rule: ``defaultLevel >= minLevel``. The
+        carousel's ``brightnessLevel()`` clamps its CURVE branch to ``minLevel``
+        but returns ``defaultLevel`` UNCLAMPED when the light feed is absent,
+        stale or saturated -- so ``minLevel`` is a floor on the curve, never on
+        displayed brightness. A ``defaultLevel`` beneath it renders below the
+        floor precisely when the sensor has failed.
+
         Args:
             config: Validated configuration (post-default-application).
 
@@ -939,6 +954,39 @@ class ConfigValidator:
                     f"{key} must be a number in [0.0, 1.0] (got {val!r})",
                     missingFields=[key],
                 )
+
+        # US-627 -- THE FLOOR COUPLING. Deliberately AFTER the per-key loop, so a
+        # badly typed level always reports its own range error rather than
+        # exploding on this comparison.
+        #
+        # Compared on the EFFECTIVE (post-default) values because that is what
+        # the panel resolves: raising minLevel ALONE leaves defaultLevel on its
+        # grounded default, which IS the 2026-08-29 incident (minLevel 0.5 ->
+        # 0.75 against a defaultLevel still on 0.70). A rule reading only the
+        # explicitly-set keys would miss the very case it exists for.
+        #
+        # Rejected here rather than clamped in brightnessLevel() (US-627 AC-4): a
+        # runtime clamp would HIDE a bad config instead of reporting it, which is
+        # the inert-guard shape this project has catalogued repeatedly.
+        minLevel = self._getNestedValue(config, 'pi.display.autoDim.minLevel')
+        defaultLevel = self._getNestedValue(
+            config, 'pi.display.autoDim.defaultLevel'
+        )
+        if (
+            isinstance(minLevel, (int, float))
+            and not isinstance(minLevel, bool)
+            and isinstance(defaultLevel, (int, float))
+            and not isinstance(defaultLevel, bool)
+            and defaultLevel < minLevel
+        ):
+            raise ConfigValidationError(
+                f"pi.display.autoDim.defaultLevel ({defaultLevel!r}) must be >= "
+                f"pi.display.autoDim.minLevel ({minLevel!r}) -- the fallback used "
+                f"when the light feed is absent/stale/saturated is NOT clamped to "
+                f"the curve floor, so a lower default renders BELOW the floor "
+                f"exactly when the light sensor has failed",
+                missingFields=['pi.display.autoDim.defaultLevel'],
+            )
 
         luxMin = self._getNestedValue(config, 'pi.display.autoDim.luxMin')
         luxFull = self._getNestedValue(config, 'pi.display.autoDim.luxFull')

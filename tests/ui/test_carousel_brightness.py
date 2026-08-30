@@ -23,6 +23,14 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-07-22    | Ralph (Rex)  | Initial -- US-483-b display-brightness consumer.
+# 2026-08-29    | Ralph (Rex)  | US-627: pin the TWO-BRANCH ASYMMETRY -- the
+#                                curve branch clamps to minLevel, the
+#                                absent/stale-feed branch returns defaultLevel
+#                                UNCLAMPED. Both halves measured, plus a
+#                                call-site documentation guard (VC-3). The floor
+#                                is enforced at config time, never at runtime
+#                                (AC-4), so these tests keep a future clamp from
+#                                silently retiring that loud failure.
 # ================================================================================
 ################################################################################
 
@@ -275,3 +283,65 @@ def test_html_injectsDisplayAutodimConfigGlobal():
     (quoted so an un-substituted preview stays valid JS -> JS uses defaults)."""
     html = _read(_HTML)
     assert 'window.DISPLAY_AUTODIM = "__DISPLAY_AUTODIM__";' in html
+
+
+# ---------------------------------------------------------------------------
+# US-627 -- the two-branch asymmetry. minLevel floors the CURVE branch only; the
+# absent/stale-feed branch returns defaultLevel UNCLAMPED. That is enforced at
+# CONFIG time (validator rule, tests/test_display_autodim_floor_rule.py) and
+# deliberately NOT clamped here -- AC-4: a runtime clamp hides a bad config
+# instead of rejecting it. These two tests pin that deliberate decision, so a
+# well-meaning future "fix" that adds the clamp goes red instead of silently
+# retiring the loud config-time failure.
+# ---------------------------------------------------------------------------
+
+
+@nodeless
+def test_brightnessLevel_fallbackBranch_isNotClampedToMinLevel():
+    """
+    Given: a (config-invalid) defaultLevel BELOW minLevel and a dead light feed
+    When: brightnessLevel resolves the absent-feed branch
+    Then: it returns defaultLevel verbatim -- the curve floor is NOT applied
+
+    MEASURES the asymmetry US-627 documents rather than asserting it from the
+    source. Such a config can no longer pass validate_config; if one reaches the
+    panel anyway, the panel must keep reporting it honestly instead of masking it.
+    """
+    cfg = dict(_CFG, minLevel=0.75, defaultLevel=0.30)
+
+    assert _probe("brightnessLevel", None, cfg, _fresh(), False) == 0.30
+
+
+@nodeless
+def test_brightnessLevel_curveBranch_isStillClampedToMinLevel():
+    """
+    Given: the same config, but a FRESH dark reading
+    When: brightnessLevel resolves the curve branch
+    Then: it clamps up to minLevel
+
+    The other half of the asymmetry, measured in the same breath -- together
+    these two show minLevel bounds the curve and not the fallback, which is the
+    whole premise of the story.
+    """
+    cfg = dict(_CFG, minLevel=0.75, defaultLevel=0.30)
+    light = {"lux": 1.0, "ts": _TS}
+
+    assert _probe("brightnessLevel", light, cfg, _fresh(), False) == 0.75
+
+
+def test_js_brightnessLevel_documentsTheUnclampedFallback():
+    """US-627 VC-3: the asymmetry is documented AT THE CALL SITE.
+
+    Asserts the anchors a reader needs (both key names, the unclamped fact, and
+    where the rule actually lives), not the exact prose -- rewording stays green,
+    deleting the explanation goes red.
+    """
+    js = _read(_JS)
+    start = js.index("function brightnessLevel(")
+    # The explanation block sits immediately above the function.
+    block = js[max(0, start - 1600):js.index("var curved", start)]
+
+    assert "minLevel" in block
+    assert "defaultLevel" in block
+    assert "NOT clamped" in block or "UNCLAMPED" in block
+    assert "validate_config" in block
