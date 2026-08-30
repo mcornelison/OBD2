@@ -235,7 +235,27 @@ _MIN_GRAVITY_MS2 = MIN_GRAVITY_MS2
 # +/-2 g is ~0.00006 g); this is a DISPLAY view, and trailing noise digits are
 # not information the card can render.
 _G_DECIMALS = 3
-_HEADING_DECIMALS = 1
+# ARCH-012 -- WHOLE DEGREES, not tenths. CIO 2026-08-30.
+#
+# Measured on the live Pi, 10 samples over 20s from a sensor that NEVER MOVED
+# (car parked, engine off): 77.4 .. 89.2 deg -- an 11.8 deg range, sigma 3.33.
+# That independently reproduces Spool's +/-3.2 deg scatter finding.
+#
+# Publishing 0.1 deg resolved the bearing 118x finer than the sensor moves while
+# standing still. That is not precision, it is a claim about the measurement
+# that the measurement does not make.
+#
+# HONEST BOUND, stated because this fix does NOT reach it: whole degrees is
+# still ~12x finer than the observed scatter. The scatter only fits inside one
+# bucket at ~10 deg. Two things would actually close that and neither is here:
+#   * SMOOTHING -- a rolling mean would REDUCE the jitter; rounding only hides
+#     it, and a value that jumps between coarse buckets reads worse than a
+#     smoothed fine one.
+#   * CALIBRATION (TD-087) -- hard/soft-iron error is a SYSTEMATIC offset, and
+#     no amount of precision or smoothing corrects a bearing that is simply
+#     pointing wrong.
+# This change removes a false claim; it does not make the heading trustworthy.
+_HEADING_DECIMALS = 0
 _PITCH_DECIMALS = 2
 
 # Named absence reasons (the honest-availability vocabulary the card renders).
@@ -375,7 +395,14 @@ def computeHeadingDeg(
         return None
     fwdH, leftH = frame
     bearing = math.degrees(math.atan2(_dot(mag, leftH), _dot(mag, fwdH)))
-    return round(bearing % 360.0, _HEADING_DECIMALS)
+    # Modulo AFTER rounding, not before. Rounding can push a bearing UP through
+    # the wrap -- 359.7 -> 360.0 -- which is outside this function's documented
+    # 0..359 range and would render as a bearing that does not exist.
+    #
+    # The bug pre-dates ARCH-012 (at 0.1 deg it needed a bearing within 0.05 of
+    # 360) but coarsening to whole degrees widened the window 10x, so the change
+    # that exposed it also had to fix it.
+    return round(bearing % 360.0, _HEADING_DECIMALS) % 360.0
 
 
 def computeHorizontalG(
