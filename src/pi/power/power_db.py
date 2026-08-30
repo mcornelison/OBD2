@@ -27,6 +27,13 @@
 #                               ERROR + RE-RAISES instead of silently
 #                               swallowing the exception.  Closes Spool's
 #                               Sprint 22 Drain-7 truth-table hypothesis C.
+# 2026-08-29    | Rex (US-626) | Added logPowerObservation writer +
+#                               ensurePowerLogObserverColumns migration for the
+#                               observed_by / observer_state forensic columns.
+#                               A transition row now derives its source from
+#                               the OBSERVATION rather than from monitor state,
+#                               which is what made every power-LOSS row read
+#                               power_source='ac_power'.
 # ================================================================================
 ################################################################################
 
@@ -48,7 +55,7 @@ from typing import Any
 from src.common.time.helper import utcIsoNow
 from src.pi.diagnostics.clock_sync import classifyClockQuality
 
-from .types import PowerReading, PowerSource
+from .types import PowerObservation, PowerReading, PowerSource
 
 logger = logging.getLogger(__name__)
 
@@ -308,6 +315,109 @@ def logShutdownStage(
             "Error logging shutdown stage to database: %s", e, exc_info=True
         )
         raise
+
+
+def logPowerObservation(
+    database: Any | None,
+    eventType: str,
+    observation: PowerObservation,
+    clockQuality: Callable[[str], str] = classifyClockQuality,
+) -> None:
+    """Write one observer-stamped ``power_log`` row (US-626).
+
+    The difference from :func:`logPowerTransition` is that the source written
+    here is derived from the OBSERVATION rather than from monitor state.  That
+    matters: the pre-US-626 transition writer read
+    ``PowerMonitor._currentPowerSource``, which ``checkPowerStatus`` had not
+    yet updated, so every power-LOSS row was stamped ``ac_power`` /
+    ``on_ac_power=1``.  An observation cannot disagree with itself.
+
+    ``observer_state`` records the honest three-state read, so a row written
+    off an unreadable GPIO line says ``unknown`` instead of painting a
+    confident ``ac_power`` (US-502 honest-instrument, applied to the forensic
+    log rather than only to the display).
+
+    Args:
+        database: ObdDatabase instance (or None for no-op).
+        eventType: power_log event_type for this row.
+        observation: The reading to persist.
+        clockQuality: US-419 clock-drift verdict -> data_quality.
+
+    Note:
+        Never raises.  This is a forensic writer on a status path; a failed
+        write is logged at ERROR and swallowed so it cannot take down the
+        bridge thread that produced it.
+    """
+    if database is None:
+        return
+
+    try:
+        with database.connect() as conn:
+            cursor = conn.cursor()
+            # TD-027 / US-203: canonical ISO-8601 UTC at the write boundary.
+            ts = utcIsoNow()
+            cursor.execute(
+                """
+                INSERT INTO power_log
+                (timestamp, event_type, power_source, on_ac_power,
+                 data_quality, observed_by, observer_state)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    ts,
+                    eventType,
+                    observation.powerSource.value,
+                    1 if observation.onAcPower else 0,
+                    clockQuality(ts),
+                    observation.observedBy,
+                    observation.state,
+                ),
+            )
+            conn.commit()
+            logger.debug(
+                "Logged power observation | type=%s observer=%s state=%s",
+                eventType, observation.observedBy, observation.state,
+            )
+    except Exception as e:
+        logger.error("Error logging power observation to database: %s", e)
+
+
+def ensurePowerLogObserverColumns(conn: sqlite3.Connection) -> bool:
+    """Add ``observed_by`` + ``observer_state`` to ``power_log`` (US-626).
+
+    Idempotent, PRAGMA-guarded -- mirrors :func:`ensurePowerLogVcellColumn`.
+    Both columns are nullable so legacy rows (every row written before this
+    story, including the ten boots' worth of ``ac_power`` rows that motivated
+    it) stay valid with NULL.  The caller owns commit semantics, matching the
+    ``ObdDatabase.initialize`` transaction scope.
+
+    These are Pi-LOCAL forensic columns and are stripped from the sync wire by
+    ``src.pi.data.sync_log._WIRE_STRIPPED_COLUMNS`` -- the US-419
+    ``data_quality`` precedent.  That is deliberate: the server has no such
+    columns and its bulk insert errors on an unmapped key, so following the
+    precedent keeps this a Pi-side change instead of a server migration.
+
+    Args:
+        conn: Open sqlite3 connection.
+
+    Returns:
+        True if any ALTER TABLE ran, False if both columns were already
+        present or the table did not exist.
+    """
+    tableExists = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+        ('power_log',),
+    ).fetchone() is not None
+    if not tableExists:
+        return False
+
+    existing = {row[1] for row in conn.execute("PRAGMA table_info(power_log)")}
+    added = False
+    for column in ('observed_by', 'observer_state'):
+        if column not in existing:
+            conn.execute(f"ALTER TABLE power_log ADD COLUMN {column} TEXT")
+            added = True
+    return added
 
 
 def ensurePowerLogVcellColumn(conn: sqlite3.Connection) -> bool:

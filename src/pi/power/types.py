@@ -24,6 +24,12 @@
 # 2026-05-18    | Plan (P2-T9) | Relocated PowerLogWriter type alias here from
 #                               the deleted power/orchestrator.py so the kept
 #                               power_log writer path keeps its type surface.
+# 2026-08-29    | Rex (US-626) | Added PowerObservation (the honest three-state
+#                               power-source reading), POWER_OBSERVER_PLD_GPIO6,
+#                               OBSERVER_STATE_PRESENT/_LOST/_UNKNOWN and
+#                               POWER_LOG_EVENT_OBSERVER_SESSION_START, so a
+#                               power_log row records WHICH instrument saw it
+#                               and whether that instrument could see at all.
 # ================================================================================
 ################################################################################
 """
@@ -75,6 +81,29 @@ POWER_LOG_EVENT_POWER_SAVING_DISABLED = "power_saving_disabled"
 POWER_LOG_EVENT_STAGE_WARNING = "stage_warning"
 POWER_LOG_EVENT_STAGE_IMMINENT = "stage_imminent"
 POWER_LOG_EVENT_STAGE_TRIGGER = "stage_trigger"
+
+# US-626: the observer opened a watch on the power-source fact.  Written once
+# per bridge start.  Its ONLY job is to make a quiet log legible: with it, "no
+# transitions occurred" is a positive statement; without it, an empty log and
+# a never-started observer are the same result -- which is how ten power
+# losses went unrecorded across ten boots.
+POWER_LOG_EVENT_OBSERVER_SESSION_START = "observer_session_start"
+
+# US-626: which instrument witnessed a row.  power_log rows are written from
+# more than one domain, and a disagreement between observers is only visible
+# if each row says who saw it.
+POWER_OBSERVER_PLD_GPIO6 = "pld_gpio6"
+
+# US-626: the HONEST three-state power-source read.  PldSensor deliberately
+# collapses "unreadable" into "power present" -- the correct non-bricking
+# direction for the SHUTDOWN path, and a confident lie in a FORENSIC log.
+# PowerSourceProvider.isAvailable already documents that a display consumer
+# must not take that collapse at face value (US-502); power_log is such a
+# consumer.  These three keep "the line said AC" distinct from "the line said
+# nothing and we defaulted to AC".
+OBSERVER_STATE_PRESENT = "present"
+OBSERVER_STATE_LOST = "lost"
+OBSERVER_STATE_UNKNOWN = "unknown"
 
 
 # ================================================================================
@@ -161,6 +190,87 @@ class PowerReading:
             'onAcPower': self.onAcPower,
             'timestamp': self.timestamp.isoformat() if self.timestamp else None,
         }
+
+
+@dataclass(frozen=True)
+class PowerObservation:
+    """US-626: one honest reading of the power-source fact.
+
+    Carries BOTH renderings of the same read, deliberately:
+
+    * ``state`` -- the three-state forensic truth (present / lost / unknown).
+      This is what a power_log row records, so an unreadable instrument can
+      never be written down as a confident "AC power".
+    * ``onAcPower`` -- the two-state bool the status surface consumes.
+      ``unknown`` resolves here to True, preserving the existing
+      "uncertain => do NOT shut down" safe direction.  Changing that bool is
+      a different failure domain (the T5 smoothing loop) and explicitly not
+      this story's business.
+
+    Attributes:
+        observedBy: Identity of the instrument that took the reading (e.g.
+            ``POWER_OBSERVER_PLD_GPIO6``), so a disagreement between two
+            observers is visible in the log rather than inferred.
+        state: One of OBSERVER_STATE_PRESENT / _LOST / _UNKNOWN.
+        onAcPower: The safe-direction bool for status consumers.
+    """
+
+    observedBy: str
+    state: str
+    onAcPower: bool
+
+    @classmethod
+    def fromProvider(cls, provider: Any, *, observedBy: str) -> "PowerObservation":
+        """Take one honest reading from a PowerSourceProvider-shaped object.
+
+        Readability is consulted FIRST and independently of presence.  The
+        underlying ``PldSensor.isExternalPowerPresent()`` returns True both
+        for "the line says power is present" and for "the line could not be
+        read at all"; asking ``isAvailable`` separately is the only way to
+        tell those apart, and conflating them is the defect that let a dead
+        or contended GPIO6 report AC power across ten boots.
+
+        A provider that does not implement ``isAvailable`` at all is treated as
+        READABLE, and that default is deliberate.  The minimal provider shape
+        the bridge documents is ``isExternalPowerPresent()`` alone;
+        ``isAvailable`` is an enhancement.  Defaulting a non-reporting object
+        to blind would make it permanently UNKNOWN, suppressing every
+        transition record -- the exact opposite of AC-5 ("a power loss with no
+        corresponding row must be impossible by construction").  Note this is
+        the OPPOSITE default to ``PowerSourceProvider.isAvailable``, which
+        resolves a non-reporting *PldSensor* to False: that sits at the
+        hardware boundary where "unknown beats assumed-good" governs a
+        SHUTDOWN decision.  Here we are one layer up, choosing between
+        recording a transition and recording nothing at all.
+
+        Args:
+            provider: Object exposing ``isExternalPowerPresent()`` and,
+                optionally, ``isAvailable``.
+            observedBy: Identity to stamp on the reading.
+
+        Returns:
+            A PowerObservation.  Never raises: a provider that blows up is an
+            UNKNOWN reading, which is a fact worth recording, not an error to
+            propagate into a status surface.
+        """
+        try:
+            available = bool(getattr(provider, "isAvailable", True))
+            if not available:
+                return cls(observedBy, OBSERVER_STATE_UNKNOWN, True)
+            present = bool(provider.isExternalPowerPresent())
+        except Exception:  # noqa: BLE001 -- an unreadable instrument is a fact
+            return cls(observedBy, OBSERVER_STATE_UNKNOWN, True)
+
+        return cls(
+            observedBy,
+            OBSERVER_STATE_PRESENT if present else OBSERVER_STATE_LOST,
+            present,
+        )
+
+    @property
+    def powerSource(self) -> PowerSource:
+        """The PowerSource this reading implies for the row's own columns."""
+        return PowerSource.AC_POWER if self.onAcPower else PowerSource.BATTERY
 
 
 @dataclass

@@ -22,6 +22,9 @@
 #                               pre-US-289 databases gain start_vcell_v +
 #                               end_vcell_v columns on next boot.  Spool
 #                               Sprint 26 Story 6 column rename.
+# 2026-08-29    | Rex (US-626) | Wired ensurePowerLogObserverColumns idempotent
+#                               migration into initialize() so existing Pi
+#                               databases gain observed_by + observer_state.
 # ================================================================================
 ################################################################################
 
@@ -70,6 +73,7 @@ from src.pi.power.battery_health import (
 )
 from src.pi.power.power_db import (
     ensurePowerLogDataQuality,
+    ensurePowerLogObserverColumns,
     ensurePowerLogVcellColumn,
 )
 
@@ -371,6 +375,17 @@ class ObdDatabase:
                 # disturbing existing rows.
                 if ensurePowerLogDataQuality(conn):
                     logger.info("Added data_quality column to power_log (US-419)")
+
+                # US-626 idempotent migration: add ``observed_by`` +
+                # ``observer_state`` to power_log so a power transition
+                # records WHICH instrument saw it and whether that
+                # instrument could actually see.  Pre-US-626 databases
+                # gain the columns here without disturbing existing rows.
+                if ensurePowerLogObserverColumns(conn):
+                    logger.info(
+                        "Added observed_by/observer_state columns to "
+                        "power_log (US-626)"
+                    )
 
                 # US-351 retirement migration: drop the legacy Pi-side
                 # ``drive_statistics`` table on first boot post-V0.27.17.

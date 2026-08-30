@@ -87,6 +87,10 @@
 #                               US-417.  Distinct from SNAPSHOT_TABLES (the
 #                               profiles/vehicle_info reject-list) -- opposite
 #                               role, see that constant's docstring.
+# 2026-08-29    | Rex (US-626) | Added observed_by + observer_state to
+#                               _WIRE_STRIPPED_COLUMNS -- Pi-local power_log
+#                               forensic columns, per the US-419 data_quality
+#                               precedent (the server has no such columns).
 # ================================================================================
 ################################################################################
 
@@ -336,8 +340,13 @@ SYNC_MODIFIED_AT_COLUMN: str = '_sync_modified_at'
 #     on startup_log / power_log.  The server computes its OWN data_quality at
 #     ingest (Pi = emitter, server = authority), so a Pi data_quality value is
 #     never sent upstream.  Harmless no-op strip for tables that lack the column.
+#   observed_by / observer_state (US-626) -- Pi-local power_log forensics: which
+#     instrument witnessed a power transition and its honest three-state read
+#     ('present'/'lost'/'unknown').  The server has no such columns; following
+#     the data_quality precedent keeps this a Pi-side change rather than a
+#     server migration.
 _WIRE_STRIPPED_COLUMNS: frozenset[str] = frozenset(
-    {SYNC_MODIFIED_AT_COLUMN, 'data_quality'}
+    {SYNC_MODIFIED_AT_COLUMN, 'data_quality', 'observed_by', 'observer_state'}
 )
 
 

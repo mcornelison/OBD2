@@ -250,6 +250,15 @@
 #               |              | drive-end signal doesn't fire on
 #               |              | sequencer-driven termination) is moot:
 #               |              | server reads raw realtime_data directly.
+# 2026-08-29    | Rex (US-626) | _PowerSourceUiBridge now detects change on the
+#               |              | HONEST three-state reading rather than the
+#               |              | bool (an unreadable line collapses to
+#               |              | power-present, so a blind GPIO6 read as
+#               |              | permanent AC and no transition was ever
+#               |              | observed), and RECORDS the observation before
+#               |              | -- and independently of -- the sink, whose
+#               |              | swallowed faults previously discarded the only
+#               |              | record of a power loss.
 # ================================================================================
 ################################################################################
 
@@ -380,6 +389,7 @@ class _PowerSourceUiBridge:
         provider: Any,
         sink: Callable[[bool], Any],
         pollSec: float,
+        recorder: Callable[[Any], Any] | None = None,
     ) -> None:
         """Args:
             provider: PowerSourceProvider-shaped (``isExternalPowerPresent()``).
@@ -387,29 +397,64 @@ class _PowerSourceUiBridge:
                 (typically ``PowerMonitor.checkPowerStatus``).
             pollSec: Poll cadence (seconds) -- a validated config value,
                 never a literal.
+            recorder: US-626. Called ``recorder(observation)`` with the honest
+                three-state :class:`PowerObservation` on every state change,
+                BEFORE the sink and independently of it. Optional so existing
+                construction sites keep working.
         """
         self._provider = provider
         self._sink = sink
         self._pollSec = float(pollSec)
+        self._recorder = recorder
+        self._lastState: str | None = None
         self._lastPresent: bool | None = None
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
 
     def pollOnce(self) -> bool:
-        """Read the provider once; on the first read or a present<->lost
-        transition, feed the sink. Returns True iff the sink fired this
-        call. Never raises out -- a provider or sink fault is logged and
-        swallowed so the bridge thread (a status surface) cannot die."""
-        try:
-            present = bool(self._provider.isExternalPowerPresent())
-        except Exception as e:  # noqa: BLE001 -- status surface must not die
-            logger.error("PowerSourceUiBridge provider read failed: %s", e)
+        """Read the provider once; on the first read or any change in the
+        observed state, record it and feed the sink. Returns True iff the
+        sink fired this call. Never raises out -- a provider, recorder or
+        sink fault is logged and swallowed so the bridge thread (a status
+        surface) cannot die.
+
+        US-626 changes two things here.
+
+        1. The change is detected on the HONEST THREE-STATE reading, not on
+           the bool. ``PldSensor`` resolves an unreadable line to
+           power-present, so on the bool alone a GPIO that goes blind while
+           on battery reads as a RESTORE that never happened, and a line
+           dead from boot reads as permanent AC -- no transition is ever
+           observed. That is the measured ten-boot symptom.
+        2. The observation is RECORDED BEFORE the sink runs, and the two are
+           isolated from each other. Previously the persistence of a
+           transition hung off ``sink`` -> ``PowerMonitor.checkPowerStatus``,
+           whose exceptions this method swallows by design -- so a sink fault
+           discarded the only record of a power loss, leaving a log line.
+           AC-5: a power loss with no corresponding row must be impossible by
+           construction. (US-621's composePrePowerOffHooks lesson: two
+           independent consumers of one event must not be able to silently
+           disable one another.)
+        """
+        from src.pi.power.types import POWER_OBSERVER_PLD_GPIO6, PowerObservation
+
+        observation = PowerObservation.fromProvider(
+            self._provider, observedBy=POWER_OBSERVER_PLD_GPIO6
+        )
+        if self._lastState is not None and observation.state == self._lastState:
             return False
-        if self._lastPresent is not None and present == self._lastPresent:
-            return False
-        self._lastPresent = present
+        self._lastState = observation.state
+        self._lastPresent = observation.onAcPower
+
+        # Record FIRST, and never let a recorder fault suppress the sink.
+        if self._recorder is not None:
+            try:
+                self._recorder(observation)
+            except Exception as e:  # noqa: BLE001 -- status surface must not die
+                logger.error("PowerSourceUiBridge recorder failed: %s", e)
+
         try:
-            self._sink(present)
+            self._sink(observation.onAcPower)
         except Exception as e:  # noqa: BLE001 -- ditto
             logger.error("PowerSourceUiBridge sink failed: %s", e)
             return False
@@ -2354,10 +2399,39 @@ class LifecycleMixin:
                     e, type(e).__name__,
                 )
 
+        # US-626: persist every observed power transition independently of the
+        # sink.  The FIRST observation of a session lands as an
+        # observer_session_start row, which is what makes a quiet log legible:
+        # with it, "no transitions occurred" is a positive statement; without
+        # it, an empty power_log and an observer that never ran are the same
+        # result.  It also records the observer's readability, so a session
+        # opened against a dead GPIO6 says 'unknown' rather than painting a
+        # confident 'ac_power' -- the reading that hid ten losses.
+        from src.pi.power.power_db import logPowerObservation
+        from src.pi.power.types import (
+            POWER_LOG_EVENT_OBSERVER_SESSION_START,
+            POWER_LOG_EVENT_TRANSITION_TO_AC,
+            POWER_LOG_EVENT_TRANSITION_TO_BATTERY,
+        )
+
+        database = self._database
+        firstObservation = [True]
+
+        def _recorder(observation: Any) -> None:
+            if firstObservation[0]:
+                firstObservation[0] = False
+                eventType = POWER_LOG_EVENT_OBSERVER_SESSION_START
+            elif observation.onAcPower:
+                eventType = POWER_LOG_EVENT_TRANSITION_TO_AC
+            else:
+                eventType = POWER_LOG_EVENT_TRANSITION_TO_BATTERY
+            logPowerObservation(database, eventType, observation)
+
         bridge = _PowerSourceUiBridge(
             provider=self._powerSourceProvider,
             sink=_sink,
             pollSec=uiPollSec,
+            recorder=_recorder,
         )
         bridge.start()
         self._powerSourceUiBridge = bridge
