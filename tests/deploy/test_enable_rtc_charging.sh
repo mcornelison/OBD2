@@ -77,6 +77,19 @@ assert_contains() {
     fi
 }
 
+assert_not_contains() {
+    local desc="$1" needle="$2" haystack="$3"
+    if echo "$haystack" | grep -qF -- "$needle"; then
+        echo "  FAIL: $desc"
+        echo "         did NOT expect to find: $needle"
+        echo "         in: $haystack"
+        FAIL=$((FAIL + 1))
+    else
+        echo "  PASS: $desc"
+        PASS=$((PASS + 1))
+    fi
+}
+
 assert_file_contains() {
     local desc="$1" needle="$2" file="$3"
     if grep -qF -- "$needle" "$file" 2>/dev/null; then
@@ -334,6 +347,53 @@ assert_exit "applies cleanly" 0 "$rc"
 assert_effective_value "rtc param applied" "3000000" "$CFG14"
 assert_file_contains "the earlier pristine backup is kept" "PRISTINE-FROM-SET-GPU-CMA" "$CFG14.eclipse-bak"
 assert_file_contains "the cma param set by the sibling step is untouched" "cma-256" "$CFG14"
+
+# ---- 15. the post-write verification actually fires (US-620 VC-3, mutation M11) ----
+#
+# WHY THIS EXISTS. The script's honesty rests on verifying by RE-READING the
+# file it just wrote rather than trusting the variable it meant to write. Every
+# other scenario exercises a write that succeeds, so nothing could distinguish
+# "verification works" from "verification can never fail" -- a mutation that
+# made the check unfalsifiable passed the whole catalog green. That is the inert
+# guard shape this project keeps cataloguing, and it sat on the one check that
+# stands between a silent bad write and the script announcing "Applied".
+#
+# The failure it guards is real on a boot partition: a vfat /boot/firmware that
+# accepts a write and does not persist it. Nothing in the script's own inputs
+# can produce that, so the condition is injected from OUTSIDE with a PATH shim
+# on awk that makes the COMPOSE step silently drop the param line. No
+# production seam is added for testability -- the script is unmodified.
+echo "--- Scenario 15: the composed file silently loses the param ---"
+CFG15="$WORK/s15-config.txt"
+printf 'dtparam=audio=on\n' > "$CFG15"
+
+REAL_AWK="$(command -v awk)"
+SHIM_BIN="$WORK/shim-bin"
+mkdir -p "$SHIM_BIN"
+# Delegates every awk call to the real awk EXCEPT the composer (identified by
+# its `-v param=` argument), which is made to emit the input unchanged.
+{
+    printf '#!/usr/bin/env bash\n'
+    printf 'for a in "$@"; do\n'
+    printf '  case "$a" in\n'
+    printf '    param=*) exec %s "{ print }" "${@: -1}" ;;\n' "$REAL_AWK"
+    printf '  esac\n'
+    printf 'done\n'
+    printf 'exec %s "$@"\n' "$REAL_AWK"
+} > "$SHIM_BIN/awk"
+chmod +x "$SHIM_BIN/awk"
+
+out=$(PATH="$SHIM_BIN:$PATH" PI_CONFIG_TXT="$CFG15" bash "$SCRIPT" 2>&1); rc=$?
+
+# PREMISE CHECK FIRST: prove the bad write really happened. Without this the
+# scenario could pass for the wrong reason (e.g. the shim never engaged) and
+# would assert nothing at all.
+assert_effective_value "PREMISE: the write really did lose the param" "" "$CFG15"
+assert_exit "post-write verification refuses to claim success (exit 2)" 2 "$rc"
+assert_contains "says verification failed, not 'Applied'" "verification failed" "$out"
+assert_not_contains "does NOT announce success or a reboot" "REBOOT REQUIRED" "$out"
+assert_not_contains "does NOT claim the param was applied" "Applied dtparam" "$out"
+assert_contains "points the operator at the pristine backup" ".eclipse-bak" "$out"
 
 # ---- summary ----
 echo
