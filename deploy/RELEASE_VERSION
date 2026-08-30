@@ -1,5 +1,5 @@
 {
-  "version": "V0.29.33",
-  "theme": "Bench tickets: ARCH-003..007, TUNER-003, auto-dim",
-  "description": "ARCH-003 I2C failure instrumentation. ARCH-004 network authorization by allowlist; home wins the garage. ARCH-005 auto-dim floor 0.15->0.5. ARCH-006 drain_forensics subscribes to the published UPS reading. ARCH-007 WiFi glyph. TUNER-003 grounded-knowledge refreshed vs the drive-51 WOT corpus. Config: auto-dim minLevel 0.75, defaultLevel 1.0 (CIO). Reboot to take effect."
+  "version": "V0.29.34",
+  "theme": "Sprint 77 -- V0.29 completeness, infrastructure",
+  "description": "11/11. US-620 RTC trickle-charger enabled at deploy. US-621 shutdown states sync custody + bounded drain. US-625 finished drives stop claiming rows (A-9 Root 2). US-626 power_log records transitions honestly. US-627 auto-dim floor at the config gate. US-595 alarmFloorLevel retired. US-604 splash OSCrypt backend. US-605 drain checkpointed. US-573 deploy import gate. Reboot to take effect."
 }
