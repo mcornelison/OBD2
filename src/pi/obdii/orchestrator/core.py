@@ -847,6 +847,14 @@ class ApplicationOrchestrator(  # type: ignore[misc]
                             self._logDataLoggingRate()
                             self._lastDataRateLogTime = now
 
+                    # US-605 (Spool US-504a "Consequence 2"): checkpoint the
+                    # OPEN drain row every 30 s while draining, so a lost
+                    # shutdown write degrades the measurement instead of
+                    # discarding it.  Cheap fast-path -- the writer is its own
+                    # cadence gate and short-circuits when not due or when no
+                    # drain is open (the overwhelmingly common case).
+                    self._maybeTriggerDrainCheckpoint()
+
                     # US-226: interval-based Pi->server sync trigger.
                     # Cheap to call every loop pass -- the method is its
                     # own cadence gate and short-circuits when not due.
@@ -902,6 +910,41 @@ class ApplicationOrchestrator(  # type: ignore[misc]
             if self._startTime is not None:
                 uptime = (datetime.now() - self._startTime).total_seconds()
                 logger.info(f"Main loop exited | uptime={uptime:.1f}s")
+
+    # ================================================================================
+    # US-605: 30 s checkpoint of the OPEN drain row
+    # ================================================================================
+
+    def _maybeTriggerDrainCheckpoint(self) -> bool:
+        """Checkpoint the open ``battery_health_log`` drain row (US-605).
+
+        Called once per :meth:`runLoop` pass.  The cadence gate lives inside
+        :meth:`DrainEventWriter.checkpointOpenDrainEvent` rather than here, so
+        this method holds no state and the 30 s interval is a property of the
+        MECHANISM -- not of whichever caller happens to drive it.  Spool's
+        US-504a ruling pins that interval at [EXACT: 30].
+
+        Why this belongs on the run loop: it is the only periodic tick in the
+        process that OPENS the drain and owns the ``UpsMonitor``.  A starved
+        loop checkpoints LATE, which is a degraded record rather than a false
+        one -- every value written was read at the moment it was written.
+
+        **Exception isolation:** the writer swallows its own faults and this
+        adds a second guard, because the loop it shares also drives OBD
+        capture.  Battery bookkeeping must never cost a drive.
+
+        Returns:
+            True when a checkpoint was actually written; False when gated (no
+            writer, not yet due, or no drain open).
+        """
+        writer = getattr(self, '_drainEventWriter', None)
+        if writer is None:
+            return False
+        try:
+            return writer.checkpointOpenDrainEvent() is not None
+        except Exception as e:  # noqa: BLE001 -- must never crash the loop
+            logger.debug(f"Drain checkpoint failed: {e}")
+            return False
 
     # ================================================================================
     # US-226: Interval-based Pi->server sync trigger
