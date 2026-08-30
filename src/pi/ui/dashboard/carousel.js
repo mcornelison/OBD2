@@ -2651,8 +2651,30 @@
     return out;
   }
 
+  // ARCH-011 -- ONE decimal, not two. CIO 2026-08-29 from the driver's seat:
+  // "I did see actual g force values, although 2 decimal places is not needed
+  // and just noise."
+  //
+  // The measurement argument, stated honestly because it is narrower than it
+  // first looks: Spool measured this accelerometer's SCALE error at +1.62%
+  // (|g| = 9.9659 vs 9.80665, 3,224 samples at rest). A scale error is
+  // PROPORTIONAL, so the second decimal is defensible below ~0.6 g and only
+  // becomes unsupported above it:
+  //
+  //     0.10 g -> +/-0.0016 g   2nd decimal supported
+  //     0.50 g -> +/-0.0081 g   2nd decimal supported
+  //     1.00 g -> +/-0.0162 g   2nd decimal NOT supported
+  //
+  // So the digit is least trustworthy exactly when the reading matters most --
+  // hard cornering and braking. Below that it is supported and meaningless: it
+  // flickers continuously at cruise and carries nothing a driver can act on.
+  //
+  // One decimal is honest at every magnitude AND readable at a glance, which is
+  // the only way this value is ever read.
+  var _G_DECIMALS = 1;
+
   function fmtG(g) {
-    return g.toFixed(2) + " g";
+    return g.toFixed(_G_DECIMALS) + " g";
   }
 
   // Spell the two components out in words. This puts the SIGN CONTRACT on the
@@ -2660,9 +2682,9 @@
   // ("0.30 brake" while accelerating) instead of a silently mirrored dot.
   function gAxisDetail(gLat, gLon) {
     return (
-      Math.abs(gLat).toFixed(2) + " " + (gLat >= 0 ? "right" : "left") +
+      Math.abs(gLat).toFixed(_G_DECIMALS) + " " + (gLat >= 0 ? "right" : "left") +
       " · " +
-      Math.abs(gLon).toFixed(2) + " " + (gLon >= 0 ? "accel" : "brake")
+      Math.abs(gLon).toFixed(_G_DECIMALS) + " " + (gLon >= 0 ? "accel" : "brake")
     );
   }
 
