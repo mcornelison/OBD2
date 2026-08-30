@@ -46,6 +46,58 @@ or invariant value, no value was acquired — land the **typed absence and its r
 fabricated measurement. The three 2026-08-20 fabrications (`syncPending=0`, all-zero IMU frames, the
 latched magnetometer) are what this corollary forbids. See *Honest availability* below.
 
+### A′. The rule extended on three axes (CIO directive, 2026-08-29)
+
+> **"If we read, touch, or have access to any data we must land it, time and date stamp it and save
+> it to the server database."**
+
+This is **not** a restatement of A. It strengthens it on three distinct axes, and each has teeth:
+
+| | rule A (2026-08-20) | extension (2026-08-29) |
+|---|---|---|
+| **Trigger** | "if we **read** any data" | **"read, touch, or have access to"** |
+| **Stamp** | not stated | **date + time stamp MANDATORY** |
+| **Destination** | "persisted" — tier unspecified | **the SERVER database**, named |
+
+**1. Trigger — "have access to" is the sharp one.** It catches values a component *holds* without
+ever treating them as data. Worked example, ARCH-009: `edr_light_sample` carried `gain` and
+`integration_ms` columns **since it was designed** — schema comments and all — populated in **0 of
+235,795 rows**. The driver *must* set both to read the TSL2591 at all, so they were in hand at every
+read and discarded at every write. Under "read" that is arguable; under **"have access to"** it is
+not. ⚠️ **The reading without its conditions is a number whose meaning cannot be reconstructed** —
+and those two values were exactly what separated *"mis-ranged sensor"* from *"IR-subtraction limit"*
+when the negative-lux defect appeared (ARCH-010). The diagnosis was impossible because the answer
+had been thrown away.
+
+**2. Stamp — and a caveat that is now precise.** Every landed row carries a date + time stamp.
+⚠️ **On this Pi the stamp is only as good as the clock, and the clock has a narrow, known defect:**
+the RTC has no charged backup cell, so **every boot starts at 1970** and NTP repairs it within
+seconds *wherever a network is reachable*. At home the repair is invisible. **In the car there is no
+network and nothing repairs it, so a wrong time stands for the whole drive** (A-23 / US-620).
+Therefore: **land a monotonic reading alongside the wall clock, and land whether the clock was
+disciplined when the row was written.** ARCH-003 does exactly this for I2C health records
+(`monotonic` + `clockSynced`). A stamp that might be wrong and does not say so is a fabricated
+timestamp, which rule A's corollary already forbids.
+
+**3. Destination — "the server database" makes Pi-local landing non-compliant.** Measured
+2026-08-29: `edr_light_sample` (235,794 rows) and `edr_imu_sample` (4,874,847 rows) are landed on
+the Pi and there are **ZERO EDR tables on the server** — **5.1 million rows single-copy on an SD
+card**, in a device that power-cycled ten times on 2026-08-28. Under rule A that was a defensible
+phase decision (raw Pi-local, server sync deferred to F-115). **Under A′ it is non-compliance.**
+
+⚠️ **Landing to the server is a NEW instance of the A-4 Pi↔server divergence risk** and must go
+under versioned `src/common/` contract discipline. It is also a different sync problem in kind:
+4.9M rows in seven days is not shaped like `realtime_data`, and **capture must outrank forensics** —
+a raw-sample sync that starves the capture path has traded a real loss for a diagnostic.
+
+**The §A corollary is UNCHANGED and still governs all three axes.** Landing must not MANUFACTURE a
+reading. "Land everything" is not "write a row regardless": a failed, implausible or uncomputable
+read lands a **typed absence and its reason**. Worked example under the new rule — ARCH-010: an
+IR-dominated lux computation is published as `null`, **not clamped to 0**, because 0 lux is a
+*reading* that says "dark" and would have dimmed the panel in bright sun. **The corollary is what
+stops A′ becoming a fabrication mandate**, and it is the half most likely to be dropped when
+somebody is trying to satisfy the letter of "land everything".
+
 ### B. Read once → persist → publish → subscribe
 
 **Never read the same source twice, and never acquire it separately for two display locations.**
