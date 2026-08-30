@@ -55,11 +55,24 @@ __all__ = [
 _IMU_PREFIX = "raw.imu."
 _LIGHT_PREFIX = "raw.light."
 
+# ARCH-009. edr_light_sample.gain stores a LABEL ('low'|'med'|'high'|'max');
+# the chip reports a register code. An unrecognised code maps to None -- it is
+# not evidence of a gain setting, and inventing one would be a fabricated
+# context, which is the defect class this story exists to close.
+_GAIN_LABELS = {0x00: "low", 0x10: "med", 0x20: "high", 0x30: "max"}
+
+
+def _gainLabel(code):
+    """TSL2591 gain register code -> the schema's text label, or None."""
+    if not isinstance(code, int) or isinstance(code, bool):
+        return None
+    return _GAIN_LABELS.get(code)
+
 # The fields that make up one assembled row per seq. A burst is "complete" when
 # all of a table's fields have arrived under the same seq (the reader publishes
 # them atomically); an incomplete burst still flushes on the next-seq boundary.
 _IMU_FIELDS = ("accel", "gyro", "mag", "temp")
-_LIGHT_FIELDS = ("lux", "raw")
+_LIGHT_FIELDS = ("lux", "raw", "range")
 
 # How long the drain loop blocks waiting for a sample before re-checking _stop.
 _DRAIN_TIMEOUT_S = 0.5
@@ -318,15 +331,22 @@ class EdrPersistenceSubscriber:
         fields = buf["fields"]
         lux = _scalar(fields.get("lux"))  # None when saturated -> NULL, never inf
         visible, infrared, full = _xyzInt(fields.get("raw"))
+        # ARCH-009: the range context this reading was taken under. Absent is
+        # NULL -- an honest gap. The context is diagnostic and its absence must
+        # never cost us the READING.
+        rng = fields.get("range") or (None, None)
+        gain = _gainLabel(rng[0] if len(rng) > 0 else None)
+        integrationMs = rng[1] if len(rng) > 1 and isinstance(rng[1], int) else None
         with self._database.connect() as conn:
             conn.execute(
                 "INSERT INTO edr_light_sample "
                 "(ts_utc, ts_capture, seq, lux, visible, infrared, full_spectrum, "
-                "drive_id, data_source, schema_version) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "gain, integration_ms, drive_id, data_source, schema_version) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     buf["tsUtc"], buf["tsCapture"], buf["seq"],
                     lux, visible, infrared, full,
+                    gain, integrationMs,
                     driveId, buf["dataSource"], SCHEMA_VERSION,
                 ),
             )
