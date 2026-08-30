@@ -3,6 +3,15 @@
 # verify-pi-imports.sh — assert every Pi runtime entry point actually IMPORTS
 #                        (US-573 / F-136)
 #
+# History:
+#   2026-08-29  Created for US-573.
+#   2026-08-30  US-573 VC-2: the script-form probe never registered its module
+#               in sys.modules, so any entry point using postponed annotations
+#               + @dataclass died on import. That is BOTH shipped scripts/
+#               entry points, i.e. this gate would have failed every Pi deploy
+#               under `set -e`. Found by running the script against the real
+#               local checkout; the fixture suite could not see it.
+#
 # Runs ON the Pi, after the tree sync + venv deps + unit installs and BEFORE the
 # services are restarted. Discovers each Python entry point from the systemd
 # units systemd has actually loaded, then imports it under that unit's OWN
@@ -108,12 +117,24 @@ MODULE_PROBE = 'import importlib, sys; importlib.import_module(sys.argv[1])'
 # `python -c` puts the cwd there instead, so the probe restores the script form
 # before loading -- otherwise a script that imports a sibling module would fail
 # here while working perfectly under its unit.
+#
+# The module is registered in sys.modules BEFORE exec_module, and that line is
+# load-bearing rather than tidy. `@dataclass` resolves its annotations through
+# `sys.modules.get(cls.__module__).__dict__` (dataclasses._is_type); for a
+# module that was never registered that get() returns None and the import dies
+# with `AttributeError: 'NoneType' object has no attribute '__dict__'`. The
+# trigger is `from __future__ import annotations`, which makes every annotation
+# a string and so forces the lookup -- and BOTH real script-form entry points
+# (scripts/drain_forensics.py, scripts/cleanup_orphan_realtime_data.py) open
+# with exactly that line. Without this, the gate fails every deploy under
+# `set -e` and blames the rsync whitelist for a defect in itself.
 SCRIPT_PROBE = '\n'.join([
     'import importlib.util, os, sys',
     'scriptPath = os.path.abspath(sys.argv[1])',
     'sys.path[0] = os.path.dirname(scriptPath)',
     "spec = importlib.util.spec_from_file_location('_eclipseImportProbe', scriptPath)",
     'mod = importlib.util.module_from_spec(spec)',
+    'sys.modules[spec.name] = mod',
     'spec.loader.exec_module(mod)',
 ])
 

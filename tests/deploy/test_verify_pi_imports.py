@@ -10,6 +10,13 @@ History:
                tree exercise the script behind its PI_UNIT_DIR /
                PI_PROJECT_ROOT seams; separate guards pin the deploy wiring
                that the behavioural half cannot see.
+  2026-08-30 - US-573 VC-2. Running the script against the REAL local checkout
+               (not just fixtures) showed BOTH shipped script-form entry points
+               failing to import. The fixture's scripts/drain_forensics.py was
+               a trivial `VALUE = 1`, so no test ever exercised the
+               `from __future__ import annotations` + @dataclass shape the real
+               files have. Fixture made faithful, and the mechanism pinned by
+               test_verifyPiImports_scriptFormPostponedAnnotations_imports.
 
 WHY THIS IS A pytest FILE AND NOT A bash CATALOG (unlike its US-620 sibling).
 The behaviour under test is Python IMPORT RESOLUTION under four different
@@ -135,7 +142,20 @@ def _buildProjectTree(root: Path) -> None:
     (root / "src/pi/splash/states_http_server.py").write_text(
         "VALUE = 'states-http'\n", encoding="utf-8"
     )
+    # POSTPONED ANNOTATIONS + @dataclass, because that is what the REAL
+    # scripts/drain_forensics.py and scripts/cleanup_orphan_realtime_data.py
+    # both do (each opens with `from __future__ import annotations` and defines
+    # dataclasses). A trivial `VALUE = 1` fixture is a lie about the file it
+    # stands in for, and it hid a defect that failed BOTH real script entry
+    # points: see test_verifyPiImports_scriptFormPostponedAnnotations_imports.
     (root / "scripts/drain_forensics.py").write_text(
+        "from __future__ import annotations\n"
+        "from dataclasses import dataclass\n"
+        "\n"
+        "@dataclass\n"
+        "class DrainRow:\n"
+        "    label: str\n"
+        "\n"
         "VALUE = 'drain'\n"
         "if __name__ == '__main__':\n"
         "    raise SystemExit('MAIN BLOCK RAN')\n",
@@ -354,6 +374,62 @@ def test_verifyPiImports_scriptFormUsesScriptDirAsSysPathZero(piLike) -> None:
     broken = _runVerifier(unitDir, root)
     assert broken.returncode == 1, "sibling removal must be detected"
     assert "FAIL  src/pi/main.py" in broken.stdout, broken.stdout
+
+
+@requiresShell
+def test_verifyPiImports_scriptFormPostponedAnnotations_imports(piLike) -> None:
+    """
+    Given: a script-form entry point using `from __future__ import annotations`
+           together with @dataclass -- the shape BOTH real scripts/ entry points
+           have
+    When: the verifier imports it
+    Then: it passes
+
+    THE DEFECT THIS PINS. The script-form probe builds its module with
+    module_from_spec() and calls exec_module() on it. If that module is not
+    registered in sys.modules FIRST, `@dataclass` blows up resolving its string
+    annotations -- dataclasses._is_type does
+    `sys.modules.get(cls.__module__).__dict__`, and for an unregistered module
+    that get() returns None:
+
+        AttributeError: 'NoneType' object has no attribute '__dict__'
+
+    Postponed annotations are the trigger: they make every annotation a string,
+    which is what forces that module lookup. src/pi/main.py has no
+    `from __future__ import annotations`, which is exactly why it passed while
+    both scripts/ entry points failed.
+
+    This is NOT platform-specific -- dataclasses._is_type is pure Python. The
+    gate runs under `set -e` at deploy-pi.sh:2471, so an unregistered probe
+    module fails EVERY Pi deploy, and does it with a message telling the
+    operator to patch the rsync whitelist: the wrong cause entirely.
+    """
+    root, unitDir = piLike
+
+    # Premise check: the fixture must really carry the shape, or this test
+    # passes while proving nothing.
+    fixtureSource = (root / "scripts/drain_forensics.py").read_text(encoding="utf-8")
+    assert "from __future__ import annotations" in fixtureSource, fixtureSource
+    assert "@dataclass" in fixtureSource, fixtureSource
+
+    # And the shape must be REAL, not hypothetical: if no shipped script-form
+    # entry point still uses it, this guard has quietly become a museum piece.
+    realScripts = [
+        REPO_ROOT / "scripts" / "drain_forensics.py",
+        REPO_ROOT / "scripts" / "cleanup_orphan_realtime_data.py",
+    ]
+    assert any(
+        "from __future__ import annotations" in path.read_text(encoding="utf-8")
+        for path in realScripts
+        if path.exists()
+    ), "no shipped script-form entry point uses postponed annotations any more"
+
+    result = _runVerifier(unitDir, root)
+    assert result.returncode == 0, (
+        "script-form probe cannot import a postponed-annotations dataclass:\n"
+        f"{result.stdout}\n{result.stderr}"
+    )
+    assert "OK    scripts/drain_forensics.py" in result.stdout, result.stdout
 
 
 @requiresShell
