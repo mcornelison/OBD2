@@ -156,10 +156,18 @@ class Reading:
 class GearBand:
     """One measured engine-speed / road-speed band that identifies a gear.
 
+    HALF-OPEN, ``[ratioMin, ratioMax)``, as Atlas published the measured table:
+    "low INCLUSIVE, high EXCLUSIVE".  This is not a taste: the measured bands
+    are CONTIGUOUS -- 5th ends at 29.5 and 4th begins at 29.5 -- so an inclusive
+    upper bound makes all four shared edges match TWO bands, and the derivation
+    correctly reports ``ambiguous`` at exactly the ratios a shift passes
+    through.  Left-open rather than right-open so 5th keeps its own 0.0 and no
+    hole opens at the bottom of the table.
+
     Args:
         gear: The gear this band identifies (1-5).
         ratioMin: Inclusive lower bound, rpm per km/h.
-        ratioMax: Inclusive upper bound, rpm per km/h.
+        ratioMax: EXCLUSIVE upper bound, rpm per km/h.
     """
 
     gear: int
@@ -167,8 +175,8 @@ class GearBand:
     ratioMax: float
 
     def contains(self, ratio: float) -> bool:
-        """Whether ``ratio`` (rpm per km/h) falls inside this band."""
-        return self.ratioMin <= ratio <= self.ratioMax
+        """Whether ``ratio`` (rpm per km/h) falls inside this half-open band."""
+        return self.ratioMin <= ratio < self.ratioMax
 
 
 @dataclass(frozen=True)

@@ -474,6 +474,20 @@
     "driveSummary": {
       "enabled": true
     },
+    "gear": {
+      "enabled": true,
+      "bands": [
+        { "gear": 5, "ratioMin": 0.0, "ratioMax": 29.5 },
+        { "gear": 4, "ratioMin": 29.5, "ratioMax": 37.8 },
+        { "gear": 3, "ratioMin": 37.8, "ratioMax": 54.3 },
+        { "gear": 2, "ratioMin": 54.3, "ratioMax": 86.7 },
+        { "gear": 1, "ratioMin": 86.7, "ratioMax": 999.0 }
+      ],
+      "minSpeedKph": 5.0,
+      "minRpm": 900,
+      "debounceSec": 2.0,
+      "maxAgeSec": 2.0
+    },
     "companionService": {
       "enabled": true,
       "apiKeyEnv": "COMPANION_API_KEY",

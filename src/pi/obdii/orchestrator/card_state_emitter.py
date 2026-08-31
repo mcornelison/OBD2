@@ -105,6 +105,18 @@ class CardStateEmitterMixin:
     # transitions rather than one line per emit tick. A CLASS default (not an
     # __init__ assignment) so every existing composer keeps working unchanged.
     _lastBatteryHealthReason: Any = _REASON_UNSET
+    # US-630: the derived-gear producer. CLASS defaults (not __init__
+    # assignments) so every existing composer -- including the standalone ones
+    # in tests/ -- keeps working unchanged and simply never derives a gear.
+    _gearDeriver: Any = None
+    _gearStateEmitter: Any = None
+    _lastSpeedReading: Any = None
+    _lastRpmReading: Any = None
+    # Injectable monotonic clock for the gear freshness/debounce windows. A
+    # seam rather than an ambient time.monotonic() because those two windows are
+    # the whole substance of the derivation, and a test that had to sleep 2 s to
+    # exercise them would be a test nobody runs.
+    _gearClock: Any = None
 
     # ------------------------------------------------------------------ setup
 
@@ -128,6 +140,7 @@ class CardStateEmitterMixin:
                 "statesDir", _DEFAULT_STATES_DIR
             )
         )
+        self._initializeGearProducer(statesDir)
         severityTablePath = dtcConfig.get(
             "severityTablePath", _DEFAULT_SEVERITY_TABLE_PATH
         )
@@ -192,6 +205,105 @@ class CardStateEmitterMixin:
             self._batteryHealthEmitter = None
             self._dtcEmitter = None
             self._cardPowerModeProvider = None
+
+    # -------------------------------------------------------- derived gear
+    #
+    # US-630 (punch-list 1.4). This car exposes no gear PID, so the GEAR tile
+    # read `-- / no source` permanently. Gear is DERIVED here, once, from the
+    # realtime SPEED/RPM SSOT and published to states/gear -- never recomputed
+    # per consumer (ssot-design-pattern rule B).
+    #
+    # Constructed in its OWN try/except, deliberately outside the block that
+    # builds the three splash emitters: the two failure modes are unrelated, and
+    # a missing severity table must not also take the gear tile down (nor a bad
+    # band table the DTC card).
+
+    def _initializeGearProducer(self, statesDir: str) -> None:
+        """Build the gear deriver + its states/gear emitter, or stay dark."""
+        try:
+            from pi.obdii.gear_derivation import createGearDeriverFromConfig
+            from pi.obdii.gear_state_emitter import makeGearStateEmitter
+
+            deriver = createGearDeriverFromConfig(self._config)
+            if deriver is None:
+                # pi.gear.enabled false -> NO producer and NO file. An absent
+                # states/gear is what the carousel already renders as an honest
+                # "-- / no source"; a file saying available:false would be a
+                # producer claiming to have looked when it never ran.
+                logger.info("Gear derivation dark (pi.gear.enabled=false)")
+                return
+            self._gearDeriver = deriver
+            self._gearStateEmitter = makeGearStateEmitter(statesDir)
+            logger.info(
+                "Gear derivation wired (%d measured bands); states_dir=%s",
+                len(deriver._bands), statesDir,
+            )
+        except Exception as e:  # noqa: BLE001 -- dashboard wiring must not fail boot
+            logger.warning(
+                "Gear producer init skipped: %s (type=%s)", e, type(e).__name__
+            )
+            self._gearDeriver = None
+            self._gearStateEmitter = None
+
+    def _gearNowS(self) -> float:
+        """Monotonic seconds for the gear freshness + debounce windows."""
+        clock = self._gearClock
+        if clock is not None:
+            return float(clock())
+        import time
+
+        return time.monotonic()
+
+    def observeGearInput(self, paramName: str, value: Any) -> None:
+        """Route one realtime reading into the gear derivation.
+
+        Called from the orchestrator's reading callback for every parameter;
+        returns immediately for the ones gear does not consume.
+
+        WHY THE READING SEAM AND NOT THE 2 s CARD CADENCE: the freshness window
+        is 2 s, so derived on the card tick the newest sample would routinely be
+        as old as the window itself and a perfectly healthy cruise would flicker
+        to `stale`. The ratio is two floats and a table walk, so deriving it at
+        the ~4-5 PID/s poll rate is cheaper than the state-file write it feeds.
+
+        Args:
+            paramName: The realtime parameter's name (e.g. ``SPEED``).
+            value: Its latest value, in the units realtime_data stores.
+        """
+        if self._gearDeriver is None:
+            return
+        if paramName not in ("SPEED", "RPM"):
+            return
+        from pi.obdii.gear_derivation import Reading
+
+        reading = Reading(value=None if value is None else float(value),
+                          tsS=self._gearNowS())
+        if paramName == "SPEED":
+            self._lastSpeedReading = reading
+        else:
+            self._lastRpmReading = reading
+        self._emitGearState()
+
+    def _emitGearState(self) -> None:
+        """Derive the gear from the latest inputs and publish it.
+
+        Also invoked from the card-state tick, which is what makes a DEAD feed
+        honest: with no readings arriving nothing would rewrite the file, and
+        the panel would hold the last real gear indefinitely -- the one outcome
+        the story forbids. The tick re-derives against a moving clock, so the
+        stored readings age out and the tile drops to a typed `stale`.
+        """
+        deriver = self._gearDeriver
+        emitter = self._gearStateEmitter
+        if deriver is None or emitter is None:
+            return
+        emitter(
+            deriver.update(
+                speed=self._lastSpeedReading,
+                rpm=self._lastRpmReading,
+                nowS=self._gearNowS(),
+            )
+        )
 
     def _emitInitialDtcState(self) -> None:
         """Write the boot-time honest `dtc` state (dtcAvailable=False).
@@ -302,6 +414,14 @@ class CardStateEmitterMixin:
             self._emitBatteryHealthState()
         except Exception as e:  # noqa: BLE001 -- never crash the loop
             logger.debug("battery-health card emit failed: %s", e)
+        try:
+            # US-630: re-publish the gear against a MOVED clock even when no
+            # reading has arrived. This is the only thing that decays a stopped
+            # OBD feed to a typed `stale` -- without it the last real gear would
+            # sit on the panel for as long as the pipe stayed quiet.
+            self._emitGearState()
+        except Exception as e:  # noqa: BLE001 -- never crash the loop
+            logger.debug("gear card emit failed: %s", e)
         return True
 
     # -------------------------------------------------------- system-status

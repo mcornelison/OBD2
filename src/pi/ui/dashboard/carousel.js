@@ -4598,10 +4598,14 @@
       var gradeTrend = [];
       // US-508: the live feed is polled on its OWN faster loop, so its payload
       // and the slow tick's payloads meet here rather than in one function's
-      // arguments. `lastGear` is permanently null today and that is the honest
-      // state -- gear is Spool's OBD derivation from a producer that does not
-      // exist yet (Atlas ruled it out of states/imu), so the glyph reads "--"
-      // rather than polling a state file nobody writes.
+      // arguments.
+      // US-630: `lastGear` is no longer permanently null. Gear IS Spool's OBD
+      // derivation from a separate producer (Atlas ruled it out of states/imu),
+      // and that producer now exists: the orchestrator derives it from the
+      // realtime SPEED/RPM against the measured drives-50/51 bands and publishes
+      // states/gear. The slow tick assigns it below. With the producer dark
+      // (`pi.gear.enabled` false) no such file exists, the fetch 404s, and this
+      // stays null -- the pre-US-630 behaviour, unchanged.
       var lastImu = null;
       var lastSys = null;
       var lastBattery = null;
@@ -5217,6 +5221,14 @@
         // is already honest the instant the feed drops.
         lastSys = sysData;
         lastBattery = batteryData;
+        // US-630: the derived gear. Read on THIS tick rather than the ~10 Hz
+        // motion loop -- the producer debounces for >= 2 s before it will name a
+        // gear, so a gear cannot change faster than the 4 Hz card tick can see
+        // it, and polling it at 10 Hz would be 6 reads a second of a file that
+        // had not moved. A missing/404 state leaves this null, which gearView
+        // already renders as the honest "-- / no source": the tile falls back to
+        // exactly the state it held before this story, never to a stale gear.
+        lastGear = await stateOnce("gear");
         renderHome(nowMs);
         updateHomeNav(sysData);
         // US-490: track the parked/live context every tick from the SAME fetched
