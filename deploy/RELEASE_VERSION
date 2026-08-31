@@ -1,5 +1,5 @@
 {
-  "version": "V0.29.36",
-  "theme": "US-653 -- a poll tick that never settles",
-  "description": "Closes the class-A2 HANG that ARCH-014 did not cover: makeResilientLoop now handles four outcomes (resolve, reject, sync throw, NEVER SETTLING) behind one finish() latch, plus AbortSignal.timeout(2000) on fetchState. NON-CLAIM: this makes the A2 hang survivable and VISIBLE; it does NOT prove a hang caused any observed freeze. The running page is deliberately untouched -- the next reboot is Boot B."
+  "version": "V0.29.37",
+  "theme": "Sprint 78 -- display stability, batch 1",
+  "description": "5/5. US-644-a bounds the watchdog journal probe and stops collapsing 'timed out' into 'unreadable'. US-644-b scopes its marker query to the CURRENT boot and stops printing a capped count as a magnitude. US-647 declines GPU rasterization on the X11 kiosk -- effect UNVERIFIED by design. US-648 stops units asserting flags they do not carry. US-654 observes panel liveness. Reboot to take effect."
 }
