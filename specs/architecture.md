@@ -1982,6 +1982,34 @@ checks the deploy post-check runs).
 
 ## 10. Display Architecture
 
+### Display Failure Contract (ARCH-014, 2026-08-30)
+
+**A render loop must reschedule itself on a path an exception cannot skip, and a
+failure that costs a frame must be visible.**
+
+This section exists because there was no home for the invariant. Both live loops
+(`tick` at 4 Hz, `imuTick` at 10 Hz in `carousel.js`) booked the next tick on the
+LAST line of an `async` body, so any throw skipped the reschedule and ended the
+loop permanently. Nothing awaited the returned promise, so the failure was an
+unhandled rejection -- silent by construction, with no log written anywhere.
+Measured on the car 2026-08-30: the renderer sat at flat cumulative CPU in state
+`Sl` while every state file kept updating. **Zero CPU was the tell -- the loop was
+not stuck, it had ceased to exist**, and touch died with it because a
+deterministic throw in the render path also kills the touch-driven redraw.
+
+The contract is enforced by `makeResilientLoop`, which books the next tick exactly
+once whether the body returns, throws, or rejects, and by a level-gated reporter
+whose **error level is never gated** -- the absence of error reporting is what hid
+this defect for weeks, so making errors configurable would rebuild that blindness.
+`setInterval` is NOT the remedy despite surviving a throw for free: it stacks when a
+read outruns its period, which is why US-508 chose `setTimeout` in the first place.
+
+⚠️ **This is a failure contract, not a scheduling implementation.** It binds any
+future display stack, including the Ozone/DRM kiosk migration -- a rewritten render
+loop inherits the obligation, and the reason this is written down is that the
+invariant is precisely the kind of fact that gets silently re-broken by someone
+tidying an async body.
+
 ### Display Layout (480x320)
 
 ```
