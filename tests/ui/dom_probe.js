@@ -18,9 +18,9 @@
  *          test, and the half that shipped the bug.
  *
  *          Invoked as:  node dom_probe.js <inputJsonPath>
- *          Input:  {carouselPath, tree, routes, token, autoDim, steps}
+ *          Input:  {carouselPath, tree, routes, token, autoDim, nowMs, steps}
  *          Steps:  {flush} {click:<id>} {clickNth:{selector,index}}
- *                  {setRoutes} {key}
+ *                  {setRoutes} {key} {advanceMs}
  *          Output: {tree, fetches} on stdout
  * Author:  Ralph Agent (Rex)
  * Created: 2026-07-29 -- Sprint 66 US-499 (S6 render-regression backstop)
@@ -46,6 +46,31 @@ async function main() {
 
   const clock = new dom.Clock();
   const fetches = [];
+
+  // US-641: an OPTIONAL virtual WALL clock, distinct from the `clock` above --
+  // that one owns "which timer callbacks are due", this one owns "what time does
+  // the page think it is". Absent (the default) nothing is patched and every
+  // pre-existing probe run is byte-for-byte unchanged.
+  //
+  // WHY IT EXISTS: a freshness window can only be crossed two ways -- move the
+  // reading's `ts` back, or move `now` forward. The first REWRITES the state
+  // file, which models "the producer wrote an old reading". The behaviour the
+  // panel actually has to survive is the other one: the producer STOPPED, so the
+  // file is frozen byte-identical and the clock walks past it. Only this makes
+  // that testable, and it is the difference between a cold boot that happens to
+  // read stale and a live reading going stale UNDER the operator.
+  //
+  // Only Date.now() is patched, not the `Date` constructor: every freshness
+  // verdict in carousel.js resolves from the tick's `nowMs = Date.now()`, so
+  // this covers the path under test exactly while leaving `new Date()` (the
+  // top-bar clock's boot paint) on real time.
+  let virtualNowMs = null;
+  if (typeof input.nowMs === "number" && isFinite(input.nowMs)) {
+    virtualNowMs = input.nowMs;
+    Date.now = function () {
+      return virtualNowMs;
+    };
+  }
 
   const win = {
     innerWidth: input.viewport ? input.viewport[0] : 1920,
@@ -82,6 +107,17 @@ async function main() {
   require(path.resolve(input.carouselPath));
 
   for (const step of input.steps || [{ flush: 4 }]) {
+    // US-641: walk the virtual wall clock forward. Handled BEFORE {flush} so a
+    // single {advanceMs, flush} step reads in the order it happens -- time
+    // passes, THEN the panel repaints. Refuses rather than silently no-ops when
+    // no virtual clock was installed: a staleness test whose clock never moved
+    // would still pass on a cold-boot reading and prove nothing.
+    if (typeof step.advanceMs === "number") {
+      if (virtualNowMs === null) {
+        throw new Error("advanceMs requires input.nowMs (no virtual clock installed)");
+      }
+      virtualNowMs += step.advanceMs;
+    }
     if (step.flush) {
       for (let i = 0; i < step.flush; i++) {
         await dom.drainMicrotasks();
