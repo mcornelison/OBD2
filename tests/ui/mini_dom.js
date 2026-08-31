@@ -31,6 +31,8 @@
  *          poll loop (carousel.js `tick`) terminates instead of hanging.
  * Author:  Ralph Agent (Rex)
  * Created: 2026-07-29 -- Sprint 66 US-499 (S6 render-regression backstop)
+ * Updated: 2026-08-31 -- US-638: createElementNS, so the LIVE home face renders
+ *          instead of throwing. Additive; no existing behaviour changed.
  * ==========================================================================*/
 "use strict";
 
@@ -270,6 +272,23 @@ Document.prototype._indexTree = function (el) {
 };
 Document.prototype.createElement = function (tagName) {
   return new Element(tagName, this);
+};
+// US-638. An SVG element differs from an HTML one only in the namespace it
+// carries, and nothing downstream of this harness resolves namespaced CSS -- so
+// it is an ordinary Element that REMEMBERS its namespace.
+//
+// WHY IT IS NOT OPTIONAL. `svgEl` (carousel.js) is the FIRST call
+// `renderLiveBody` makes, so without this the LIVE home face does not merely
+// render imperfectly, it THROWS -- and the crash leaves an empty card body.
+// Every "X is not on the live face" assertion would then pass by way of the
+// harness failing, which is the lenient-test failure render_harness.py's own
+// header warns about. Measured before adding it: the live face rendered NOTHING
+// at all, and a characterisation test for a real finding was reading that
+// emptiness as evidence.
+Document.prototype.createElementNS = function (namespaceURI, tagName) {
+  var el = new Element(tagName, this);
+  el.namespaceURI = namespaceURI;
+  return el;
 };
 Document.prototype.getElementById = function (id) {
   return this._byId[id] || null;
