@@ -282,3 +282,138 @@ def test_global_error_reporting_is_installed():
         "the panel stays invisible"
     )
     assert re.search(r"addEventListener\(\s*\"error\"", source), "no window error handler"
+
+
+# ---------------------------------------------------------------------------
+# US-653 -- the A2 HANG. ARCH-014 covered a SETTLED promise; it did not cover an
+# UNSETTLED one, and that is the failure that was actually on the panel.
+#
+# Measured 2026-08-31, current boot: 7.4 h uptime, ONE chromium start, chromium
+# cumulative CPU 00:00:35 and FLAT, panel frozen, ZERO markers, ZERO captured
+# exceptions -- with the ARCH-014 build confirmed live in the served asset.
+# `fetchState` awaited a browser `fetch()` with no timeout and no AbortController;
+# a request that is accepted and never completes hangs that await forever. A HANG
+# IS NOT AN ERROR, so `catch` never runs, the body never returns, and
+# makeResilientLoop never sees resolve OR reject -- so it never books the next
+# tick. Zero CPU, no log, permanent.
+#
+# Two layers, deliberately: the fetch deadline stops the common cause, and the
+# loop deadline stops ANY non-settling body including causes we have not met.
+# ---------------------------------------------------------------------------
+
+
+def test_loop_reschedules_when_the_body_NEVER_SETTLES(tmp_path):
+    """The A2 case. A body that neither resolves nor rejects must not end the loop.
+
+    This is the test that would have failed against ARCH-014 as shipped.
+    """
+    result = runJs(
+        tmp_path,
+        """
+        var scheduled = [];
+        var reported = [];
+        var run = carousel.makeResilientLoop({
+          name: "tick",
+          delayMs: 250,
+          deadlineMs: 10000,
+          body: function () { return new Promise(function () { /* never settles */ }); },
+          schedule: function (fn, ms) { scheduled.push({ ms: ms, fn: fn }); },
+          report: function (name, err) { reported.push(name + ":" + err.message); }
+        });
+        run();
+        // Nothing has settled: the ONLY thing booked so far is the deadline timer.
+        var deadline = scheduled.filter(function (s) { return s.ms === 10000; });
+        deadline.forEach(function (s) { s.fn(); });
+        emit({
+          deadlineBooked: deadline.length,
+          rescheduled: scheduled.filter(function (s) { return s.ms === 250; }).length,
+          reported: reported
+        });
+        """,
+    )
+    assert result["deadlineBooked"] == 1, "no deadline was armed -- a hang is unbounded"
+    assert result["rescheduled"] == 1, (
+        "a non-settling body did not reschedule -- the loop is dead, which IS the A2 bug"
+    )
+    assert len(result["reported"]) == 1
+    assert "never settled" in result["reported"][0], (
+        "the hang must be REPORTED, not silently recovered -- a silent recovery hides "
+        "the very failure this exists to surface"
+    )
+
+
+def test_a_late_settlement_after_the_deadline_does_not_double_fire(tmp_path):
+    """A hung request that finally returns must not book a second tick.
+
+    Without this the loop rate doubles every time a slow request recovers, which
+    turns a display stall into a CPU burn.
+    """
+    result = runJs(
+        tmp_path,
+        """
+        var scheduled = [];
+        var reported = [];
+        var settle;
+        var run = carousel.makeResilientLoop({
+          name: "tick",
+          delayMs: 250,
+          deadlineMs: 10000,
+          body: function () { return new Promise(function (res) { settle = res; }); },
+          schedule: function (fn, ms) { scheduled.push({ ms: ms, fn: fn }); },
+          report: function (name, err) { reported.push(err.message); }
+        });
+        run();
+        scheduled.filter(function (s) { return s.ms === 10000; })[0].fn();  // deadline fires
+        settle("late");                                                     // then it returns
+        Promise.resolve().then(function () {
+          emit({
+            rescheduled: scheduled.filter(function (s) { return s.ms === 250; }).length,
+            reportCount: reported.length
+          });
+        });
+        """,
+    )
+    assert result["rescheduled"] == 1, "a late settlement booked a SECOND tick"
+    assert result["reportCount"] == 1, "the same tick was reported twice"
+
+
+def test_no_deadline_configured_keeps_the_old_behaviour(tmp_path):
+    """Omitting deadlineMs must not arm a timer -- the guarantee stays opt-in.
+
+    Pins that ARCH-014's contract is unchanged for callers that do not ask for a
+    deadline, so this cannot silently alter an unrelated loop.
+    """
+    result = runJs(
+        tmp_path,
+        """
+        var scheduled = [];
+        var run = carousel.makeResilientLoop({
+          name: "tick",
+          delayMs: 250,
+          body: function () { return Promise.resolve(); },
+          schedule: function (fn, ms) { scheduled.push(ms); },
+          report: function () { }
+        });
+        Promise.resolve(run()).then(function () {
+          emit({ all: scheduled });
+        });
+        """,
+    )
+    assert result["all"] == [250], "an unrequested deadline timer was armed"
+
+
+def test_fetchState_carries_a_request_deadline():
+    """The common cause, pinned at the call site.
+
+    A browser fetch has NO default timeout. Without an abort signal the await is
+    unbounded, and the loop deadline above becomes the only thing standing between
+    one stalled request and a dead panel. Defence in depth means BOTH.
+    """
+    source = CAROUSEL_JS.read_text(encoding="utf-8")
+    code = "\n".join(
+        line for line in source.splitlines() if not line.lstrip().startswith(("//", "*", "/*"))
+    )
+    assert "AbortSignal.timeout" in code, (
+        "fetchState has no request deadline -- an accepted-but-never-completed "
+        "request hangs the tick forever, and a hang is not an error"
+    )
