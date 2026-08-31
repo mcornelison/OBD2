@@ -96,6 +96,7 @@
 # ================================================================================
 ################################################################################
 """Phase-2 power-watch service entrypoint."""
+
 from __future__ import annotations
 
 import argparse
@@ -138,6 +139,7 @@ from src.pi.power.power_source_provider import PowerSourceProvider  # noqa: E402
 from src.pi.power.power_watch.controller import ShutdownSequencer  # noqa: E402
 from src.pi.power.power_watch.outcome import writeOutcomeRecord  # noqa: E402
 from src.pi.power.power_watch.pipeline import runPipeline  # noqa: E402
+from src.pi.power.power_watch.pld_witness import readWitness  # noqa: E402
 from src.pi.power.power_watch.sync_custody import (  # noqa: E402
     CUSTODY_RECORD_FILENAME,
     makeSyncCustodyHook,
@@ -196,6 +198,7 @@ def buildArmDecisionMessage(
     pldGpioPin: int,
     pldAvailable: bool,
     readsPowerPresent: bool,
+    lastTransitionUtc: str | None = None,
 ) -> str:
     """Compose the one arm-decision line for either branch.
 
@@ -210,21 +213,38 @@ def buildArmDecisionMessage(
         pldGpioPin: The configured X1209 PLD pin (pi.powerWatch.pldGpioPin).
         pldAvailable: Whether the PLD line is readable at all.
         readsPowerPresent: The instantaneous power-present reading.
+        lastTransitionUtc: When a PLD transition was last OBSERVED, or None if
+            one never has been. ARCH-019: the arm check reads the pin once and
+            proves it is READABLE. It does not prove the pin CHANGES, and a
+            signal that reads but has never been seen to move is
+            indistinguishable from a wire that is not connected. So the ARMED
+            line only PREDICTS what a power loss will do once a real transition
+            has been witnessed; until then it states what it actually verified.
 
     Returns:
         The exact line to log -- prefixed with ARM_DECISION_PREFIX on both
         branches so one grep finds either.
     """
     evidence = (
-        f"gpio={pldGpioPin} pld.available={pldAvailable} "
-        f"reads-power-present={readsPowerPresent}"
+        f"gpio={pldGpioPin} pld.available={pldAvailable} reads-power-present={readsPowerPresent}"
     )
+    if armed and lastTransitionUtc:
+        return (
+            f"{ARM_DECISION_PREFIX} {ARM_DECISION_ARMED} (PROVEN) -- safe-shutdown "
+            f"protection is ON and its detection path has been OBSERVED to fire "
+            f"(last transition {lastTransitionUtc}). GPIO{pldGpioPin} PLD SSOT "
+            f"arm self-check PASSED ({evidence}). A sustained external-power "
+            f"loss will run the bounded pre-shutdown pipeline and then poweroff."
+        )
     if armed:
         return (
-            f"{ARM_DECISION_PREFIX} {ARM_DECISION_ARMED} -- safe-shutdown "
-            f"protection is ON. GPIO{pldGpioPin} PLD SSOT arm self-check "
-            f"PASSED ({evidence}). A sustained external-power loss will run "
-            f"the bounded pre-shutdown pipeline and then poweroff."
+            f"{ARM_DECISION_PREFIX} {ARM_DECISION_ARMED} (UNPROVEN) -- safe-shutdown "
+            f"protection is ON, but its detection path has NEVER been observed to "
+            f"fire. GPIO{pldGpioPin} PLD SSOT arm self-check PASSED ({evidence}) "
+            f"-- that proves the pin READS, not that it CHANGES. No power-loss "
+            f"transition has ever been witnessed on this install, and a pin that "
+            f"reads but has never been seen to move is indistinguishable from a "
+            f"wire that is not connected."
         )
     return (
         f"{ARM_DECISION_PREFIX} {ARM_DECISION_NOT_ARMED} -- safe-shutdown "
@@ -243,6 +263,7 @@ def emitArmDecision(
     pldGpioPin: int,
     pldAvailable: bool,
     readsPowerPresent: bool,
+    lastTransitionUtc: str | None = None,
 ) -> str:
     """Emit the arm decision UNCONDITIONALLY, on whichever branch was taken.
 
@@ -268,6 +289,7 @@ def emitArmDecision(
         pldGpioPin=pldGpioPin,
         pldAvailable=pldAvailable,
         readsPowerPresent=readsPowerPresent,
+        lastTransitionUtc=lastTransitionUtc,
     )
     if armed:
         logger.warning(message)
@@ -379,9 +401,7 @@ def _buildRunSync(
                 logger.info("powerwatch sync: companion service disabled -- no-op")
                 return
             if summary.tablesFailed > 0:
-                raise RuntimeError(
-                    f"{summary.tablesFailed} table(s) failed to sync after retries"
-                )
+                raise RuntimeError(f"{summary.tablesFailed} table(s) failed to sync after retries")
             if backlogReader is None:
                 return
             backlog = backlogReader()
@@ -560,9 +580,7 @@ def _runOneShotForTest(
 
     def _writeRecord(kindDetail: object) -> None:
         kind, detail = kindDetail  # type: ignore[misc]
-        writeOutcomeRecord(
-            outcomePath, kind, detail=str(detail), task="sync_with_server"
-        )
+        writeOutcomeRecord(outcomePath, kind, detail=str(detail), task="sync_with_server")
 
     def _stubPoweroff() -> None:
         marker = os.environ["PW_TEST_POWEROFF_MARKER"]
@@ -632,15 +650,17 @@ def _runPldWatchLoop(
         if graceElapsed < bootGraceSec:
             if lost and not prevLost:
                 logger.warning(
-                    "powerwatch: PLD power-loss %.0fs into boot-grace "
-                    "(%.0fs) -- ignoring", graceElapsed, bootGraceSec,
+                    "powerwatch: PLD power-loss %.0fs into boot-grace (%.0fs) -- ignoring",
+                    graceElapsed,
+                    bootGraceSec,
                 )
         elif lost and not firedAlready:
             if handleLock.acquire(blocking=False):
                 try:
                     logger.warning(
                         "powerwatch: GPIO%d PLD => external power LOST -- "
-                        "entering bounded pre-shutdown window", pldGpioPin,
+                        "entering bounded pre-shutdown window",
+                        pldGpioPin,
                     )
                     shutdownSequencer.handleOnBattery()
                     firedAlready = True
@@ -682,9 +702,7 @@ def main(argv: list[str] | None = None) -> int:
     # Outcome record sits next to the SQLite db (the existing data/ dir) --
     # reuse pi.database.path rather than hardcode or add an un-specced key.
     dbPath = config["pi"]["database"]["path"]
-    outcomePath = os.path.join(
-        os.path.dirname(dbPath), "powerwatch_outcome.json"
-    )
+    outcomePath = os.path.join(os.path.dirname(dbPath), "powerwatch_outcome.json")
 
     # Real-invocation guard hook (T8). Active ONLY when the env var is set;
     # the production path below is untouched.
@@ -711,9 +729,7 @@ def main(argv: list[str] | None = None) -> int:
 
     def writeRecord(kindDetail: object) -> None:
         kind, detail = kindDetail  # type: ignore[misc]
-        writeOutcomeRecord(
-            outcomePath, kind, detail=str(detail), task="sync_with_server"
-        )
+        writeOutcomeRecord(outcomePath, kind, detail=str(detail), task="sync_with_server")
 
     # US-621: ONE backlog reader, shared by the drain (to decide whether
     # another pass is worth making) and by the custody record (to state what
@@ -748,7 +764,8 @@ def main(argv: list[str] | None = None) -> int:
     # depth recorded here (end_vcell_v) is what Spool's gate qualifies on. The
     # UPS is resolved at close time, never captured.
     drainCloseFn = buildDrainCloseHook(
-        config=config, upsResolver=lambda: monitor,
+        config=config,
+        upsResolver=lambda: monitor,
     )
 
     # US-621 [same placement argument as US-526 Option C]: the custody record
@@ -761,9 +778,7 @@ def main(argv: list[str] | None = None) -> int:
     # custody record that disappears precisely when the queue is too big to
     # drain would be silent in its own failure mode.
     custodyFn = makeSyncCustodyHook(
-        recordPath=os.path.join(
-            os.path.dirname(dbPath), CUSTODY_RECORD_FILENAME
-        ),
+        recordPath=os.path.join(os.path.dirname(dbPath), CUSTODY_RECORD_FILENAME),
         backlogReader=readSyncBacklog,
     )
     prePowerOffFn = composePrePowerOffHooks(drainCloseFn, custodyFn)
@@ -800,24 +815,30 @@ def main(argv: list[str] | None = None) -> int:
     # to `pld.*` for its own diagnostics, which is the one place a second
     # acquisition site could disagree with the decision it is explaining.
     armed = provider.startupArmCheck()
+    # ARCH-019: the arm line may only PREDICT what a power loss will do once a
+    # real PLD transition has been witnessed. Until then it states what the
+    # self-check actually established -- that the pin READS.
     decisionLine = emitArmDecision(
         armed=armed,
         pldGpioPin=pldGpioPin,
         pldAvailable=provider.isAvailable,
         readsPowerPresent=provider.isExternalPowerPresent(),
+        lastTransitionUtc=readWitness(),
     )
     if not armed:
         # Stay alive, disarmed -- and keep saying so.
-        return runDisarmedHold(
-            message=decisionLine, waitFn=threading.Event().wait
-        )
+        return runDisarmedHold(message=decisionLine, waitFn=threading.Event().wait)
 
     monitor.startPolling()  # vcell-backstop telemetry only; NOT the trigger
     logger.info(
         "powerwatch service up (GPIO%d PLD SSOT trigger): perTask=%.0fs "
         "totalCap=%.0fs vcellFloor=%.2fV smoothing=%.0fs bootGrace=%.0fs",
-        pldGpioPin, perTaskTimeoutSec, totalWindowCapSec, vcellFloorVolts,
-        smoothingSec, bootGraceSec,
+        pldGpioPin,
+        perTaskTimeoutSec,
+        totalWindowCapSec,
+        vcellFloorVolts,
+        smoothingSec,
+        bootGraceSec,
     )
 
     handleLock = threading.Lock()
