@@ -710,6 +710,16 @@ class Orchestrator:
 
 ## Guard / Verification Anti-Patterns
 
+> **The family, in one line: EVIDENCE THAT CANNOT DO THE JOB IT IS CITED FOR.**
+>
+> - *the inert guard* — a check that cannot fail is not evidence of correctness
+> - *the census as acceptance* — a count is not evidence of completeness
+> - *ask the instrument a question it can answer* — a proxy that reads the same in the healthy
+>   case and the failure case is not evidence of anything
+>
+> All three pass review, because in all three something **looks like information and is not.**
+
+
 ### The inert guard — a check that is syntactically present and semantically does nothing
 
 **The pattern.** A guard exists, reads correctly, passes review, and enforces nothing. It is worse than
@@ -817,6 +827,77 @@ acceptance.
 
 **Related:** *the inert guard*, above — both are cases of something that **looks like information
 and is not.** A census in a DoD looks like verification; it is a snapshot of someone else's morning.
+
+### Ask the instrument a question it can answer
+
+**The pattern.** A measurement is taken with a working instrument, and the reading is used to
+answer a question that instrument cannot distinguish. Nothing errors. The number is real. The
+conclusion is unsupported.
+
+This is the hardest of the three to catch, because **the instrument is not broken.** There is no
+failure to notice — only a silent mismatch between what was measured and what was claimed.
+
+**Seven real instances, 2026-08-29..31, across two agents and one program:**
+
+| # | The proxy | The question it was asked | Why it could not answer |
+|---|---|---|---|
+| 1 | `markers=0` from the kiosk watchdog | *is the kiosk wedged?* | its own `journalctl` had **timed out**. "I could not look" was reported as "nothing there" |
+| 2 | A photograph of the panel | *is the Bluetooth glyph correct?* | **the panel was frozen.** A display that has stopped repainting cannot testify about any live value |
+| 3 | `ls` sorted by **mtime** | *which inbox notes are recent?* | the share migration **restamped every file**. Three same-day notes were missed, one carrying an assignment |
+| 4 | `grep -c '\n'` | *did a literal escape survive the edit?* | the shell ate the backslash; it counted every line containing the letter **n** |
+| 5 | ESTABLISHED socket count | *is the page still polling?* | the polls are short. A **healthy** page reads 0 as often as a dead one |
+| 6 | Elapsed uptime | *did this boot accumulate less damage?* | the panel was **frozen for most of it**. 7.4 hours of doing nothing is not 7.4 hours of running |
+| 7 | `ps -o time=` (1-second granularity) | *is this process frozen or working?* | a healthy ~3% process accrues **0.24 s in 8 s** and displays as FLAT. **So does a frozen one** |
+
+#### ⚠️ Instance 7 is the one to read twice
+
+The first proposed fix for #7 was *"sample over 30 seconds instead of 8."* **It has the same
+defect** — 3% of 30 s is 0.9 s, still below the 1-second granularity, still FLAT in both cases.
+
+**The seventh instance appeared inside the correction for the first six, written by someone who
+had just articulated the rule.** That is the evidence that this failure is *structural, not
+careless*: a proxy **feels** like evidence, and the feeling survives knowing better.
+
+#### The test
+
+> **Ask what the proxy would read in the FAILURE case and in the HEALTHY case.
+> If both produce the same reading, it is not evidence.**
+
+One line, and it catches instances 1, 2, 4, 5, 6 and 7 — including the correction that failed.
+
+#### The fix is usually RESOLUTION, not patience
+
+A longer window is the instinctive repair and it is often the wrong one, because it requires
+guessing the healthy rate in advance — the very thing you do not know. Prefer a higher-resolution
+source:
+
+```bash
+# NOT: ps -o time=   (1-second granularity — cannot see a 3% process at all)
+awk '{print $14+$15}' /proc/<pid>/stat   # utime+stime in JIFFIES, 100/s
+# a healthy 3% process = ~24 jiffies in 8 s, unmistakable against a frozen 0
+# verified on chi-eclipse-01 2026-08-31: 37 jiffies in 8 s = 4.6%
+```
+
+#### Fields that ARE trustworthy on this project
+
+Learned the hard way, each one replacing a proxy above:
+
+| To establish | Use | Never |
+|---|---|---|
+| A process is alive/working | `/proc/<pid>/stat` jiffies | `ps -o time=` over a short window |
+| An asset actually deployed | `md5sum` against the source | `grep` for a string the code builds at runtime |
+| Code is **running**, not merely present | process start time **vs** asset mtime | "the file is on disk" |
+| Which boot an event belongs to | `journalctl -b` | `--since=@<epoch>` — a **time** filter cannot isolate a boot on a box whose clock steps |
+| A recent file | the **filename date** | `mtime`, on a share that has been migrated |
+
+#### Scope
+
+Any diagnosis, any RCA, any acceptance that rests on a measurement. **Especially when the
+measurement confirms what you already believe** — six of the seven above did.
+
+**Related:** *the inert guard* and *the census as acceptance*, above. Same family: something that
+looks like information and is not. The inert guard fails at enforcement, the census at
+completeness, this one at **discrimination.**
 
 ## Adding New Anti-Patterns
 
