@@ -19,6 +19,8 @@
  *
  *          Invoked as:  node dom_probe.js <inputJsonPath>
  *          Input:  {carouselPath, tree, routes, token, autoDim, steps}
+ *          Steps:  {flush} {click:<id>} {clickNth:{selector,index}}
+ *                  {setRoutes} {key}
  *          Output: {tree, fetches} on stdout
  * Author:  Ralph Agent (Rex)
  * Created: 2026-07-29 -- Sprint 66 US-499 (S6 render-regression backstop)
@@ -90,6 +92,29 @@ async function main() {
     if (step.click) {
       const el = doc.getElementById(step.click);
       if (!el) throw new Error("no such element to click: #" + step.click);
+      el.click();
+      await dom.drainMicrotasks();
+    }
+    // US-635: click the Nth element matching a selector. The page dots are
+    // BUILT BY carousel.js and carry no id, so `step.click` (getElementById)
+    // cannot reach them -- and the dot->card mapping is precisely what the dot
+    // count alone cannot witness. Indexed over ALL matches, hidden included, so
+    // a test can also dispatch at a dot the gate has taken away and prove the
+    // navigation guard refuses it.
+    if (step.clickNth) {
+      const all = doc.querySelectorAll(step.clickNth.selector);
+      const el = all[step.clickNth.index];
+      if (!el) {
+        throw new Error(
+          "no " +
+            step.clickNth.selector +
+            "[" +
+            step.clickNth.index +
+            "] to click (" +
+            all.length +
+            " matched)"
+        );
+      }
       el.click();
       await dom.drainMicrotasks();
     }
