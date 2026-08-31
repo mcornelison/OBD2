@@ -1,0 +1,139 @@
+# ==============================================================================
+# File:    eclipse-panel-liveness.service
+# Purpose: US-654 (F-139) -- observe whether the dashboard panel is actually
+#          RENDERING, and report when it is not.
+# Author:  Rex (Ralph Agent)
+# Created: 2026-08-31 -- Sprint 78 US-654
+#
+# Why
+# ---
+# On 2026-08-31 the panel was frozen for 7 h 27 m and NOTHING REPORTED IT. The
+# kiosk watchdog (eclipse-kiosk-watchdog.service) is MARKER-ONLY: it counts
+# `AllocateRingBuffer` lines in eclipse-dashboard's journal. That freeze
+# produced ZERO markers, so the watchdog reported healthy throughout -- exactly
+# per its own contract, and uselessly. A marker-only detector is structurally
+# blind to a freeze that emits no markers.
+#
+# The consequence reaches the whole F-139 feature: "display stability" CANNOT be
+# validated by the absence of a complaint. Every V0.29 punch-list item that ends
+# with a human looking at a card assumes the panel was alive when they looked,
+# and until this unit existed nothing established that.
+#
+# The signal
+# ----------
+# A PAIR, and neither half alone is it: chromium's CUMULATIVE CPU going FLAT
+# while the state files KEEP ADVANCING. This is the instrument that diagnosed
+# the 7h27m freeze by hand -- CPU 00:00:14 over 26,817 s elapsed while
+# /run/eclipse-obd/states/imu advanced every ~3 s.
+#   * CPU alone is not it -- a parked car with nothing flowing has a
+#     legitimately quiet page, and calling that dead is a false positive on a
+#     working display;
+#   * state advance alone is not it -- the emitters are a different process tree
+#     and say nothing about whether anything was drawn.
+# Grounding for every number is in src/pi/display/panel_liveness.py, and the
+# tests cite their own sources.
+#
+# THIS UNIT RESTARTS NOTHING, AND THAT IS A DECISION, NOT AN OMISSION.
+# Chromium restarts correlate with the class-B marker storm, so an automatic
+# remedy here could trade a DETECTED freeze for a CAUSED one. Scope is
+# OBSERVATION AND REPORTING; whether a remedy is warranted is a separate call
+# with a separate owner. A test parses this module's AST and fails if it ever
+# acquires a restart verb.
+#
+# DELIBERATELY SEPARATE FROM THE KIOSK WATCHDOG (Atlas, explicit). Widening the
+# marker watchdog to cover a class it structurally cannot see would produce a
+# detector CLAIMING a coverage it does not have. The two units observe different
+# signals, fail independently, and are read independently.
+#
+# Pairing / posture
+# -----------------
+# Driven by eclipse-panel-liveness.timer (every 60s). Type=oneshot: each fire is
+# a fresh interpreter that takes ONE observation and exits. The only state that
+# crosses fires is the baseline sample below.
+#
+# A VERDICT IS REACHED EVERY ~10 MINUTES, NOT EVERY TICK, and that is grounded
+# rather than lazy. The sprint's own bigDefinitionOfDone retracted an 8-second
+# CPU reading as unable to discriminate -- a healthy ~3% page also reads flat
+# over 8 s -- and the reading that DID discriminate spanned 600 s. Ticks inside
+# the window accumulate toward it and report no verdict; they must never be
+# read as health.
+#
+# Deliberately NO Requires=/Wants=/After= on eclipse-dashboard.service. A
+# dependency would START the kiosk, and the dashboard is started ONLY by
+# splash-boot's `OnSuccess=` hand-off after HEALTHY_YIELD (dashboard.service.x11
+# A-1: no [Install] section, dependency-started by design). This unit asks
+# systemd for the kiosk's MainPID and, finding none, does nothing.
+#
+# Privileges
+# ----------
+# NONE ARE ADDED, and that is worth stating because the sibling watchdog needs
+# two. This unit runs UNPRIVILEGED as the Pi user and only ever READS:
+#   * `systemctl show -p MainPID` -- an unprivileged query, no polkit grant;
+#   * /proc/<pid>/stat -- world-readable, and chromium runs as this same user;
+#   * /run/eclipse-obd/states/ -- 0755, owned by this user (tmpfiles.d).
+# It needs no SupplementaryGroups=systemd-journal: it reads no journal.
+#
+# RuntimeDirectory note (the same real foot-gun the watchdog carries): this unit
+# provisions its OWN /run/eclipse-panel-liveness and NOT /run/eclipse-obd.
+# Declaring RuntimeDirectory=eclipse-obd here would make systemd DELETE that
+# directory -- including the live states/ this unit READS AS ITS OWN SIGNAL --
+# when the oneshot exits. RuntimeDirectoryPreserve=yes keeps the baseline alive
+# between fires; tmpfs still clears it at boot, which is correct: a CPU counter
+# from a previous boot is not comparable to this one's.
+#
+# Verify:
+#   systemctl list-timers eclipse-panel-liveness.timer
+#   journalctl -u eclipse-panel-liveness -n 20
+#   cat /run/eclipse-panel-liveness/baseline.json   # the previous observation
+# ==============================================================================
+
+[Unit]
+Description=Eclipse OBD dashboard panel liveness probe (US-654)
+Documentation=file:///home/mcornelison/Projects/Eclipse-01/src/pi/display/panel_liveness.py
+
+[Service]
+# One observation per fire; no daemon to keep alive.
+Type=oneshot
+
+# systemd defaults TimeoutStartSec to INFINITY for Type=oneshot, so an unbounded
+# hang holds a start job forever and blocks every unit ordered After= this one.
+# Ceiling: one systemctl query plus two small file reads -- generous by 50x.
+# (2026-08-27: drain-forensics.service hung ~4h this way and hung the deploy.)
+TimeoutStartSec=60s
+User=mcornelison
+
+WorkingDirectory=/home/mcornelison/Projects/Eclipse-01
+
+# Dual PYTHONPATH (repo root + src) -- the `pi.` package import convention used
+# by eclipse-states-http.service / eclipse-kiosk-watchdog.service. Do NOT
+# "simplify" to repo-root only.
+Environment=PYTHONPATH=/home/mcornelison/Projects/Eclipse-01:/home/mcornelison/Projects/Eclipse-01/src
+Environment=PYTHONUNBUFFERED=1
+
+# Our own tmpfs dir for the baseline sample. NOT eclipse-obd (see header).
+RuntimeDirectory=eclipse-panel-liveness
+RuntimeDirectoryMode=0750
+RuntimeDirectoryPreserve=yes
+
+ExecStart=/home/mcornelison/obd2-venv/bin/python -m pi.display.panel_liveness \
+    --unit eclipse-dashboard.service \
+    --states-dir /run/eclipse-obd/states \
+    --state-path /run/eclipse-panel-liveness/baseline.json
+
+# Exit 2 = the panel is DEAD, or this probe cannot observe it. Left as a FAILURE
+# on purpose: the entire finding of US-654 is that a seven-hour freeze was
+# INVISIBLE, and a oneshot that always exits 0 is invisible by construction.
+# Only 0 counts as success.
+SuccessExitStatus=0
+
+# A liveness probe must never compete with the thing it is watching, and must
+# never itself become a reason the panel is slow.
+MemoryMax=64M
+CPUQuota=10%
+Nice=10
+IOSchedulingClass=idle
+
+[Install]
+# Invoked by the .timer; `systemctl enable eclipse-panel-liveness.timer` is the
+# install hook.
+WantedBy=multi-user.target

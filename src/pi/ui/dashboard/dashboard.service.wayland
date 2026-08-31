@@ -21,22 +21,27 @@
 # Type=simple [A-8] -- matches the splash unit; Exit/Close (US-403) ends it.
 # __PI_USER__ is substituted by install.sh at install time (V-1).
 #
-# US-522 (F-124) -- `--disable-gpu`: see the full rationale in the .x11 sibling
-#   (the two variants must not drift). In short: the bench freeze was chromium's
-#   GPU command-buffer context dying and HOT-LOOPING on the fatal
+# US-522 (F-124) -- `--disable-gpu`: WAS ARGUED FOR AND NEVER APPLIED, HERE
+#   EITHER. See the .x11 sibling for what was tried and why it is absent (the two
+#   variants must not drift). In short: this paragraph used to make the case for
+#   the flag as though it were on the ExecStart below, and it never was on either
+#   variant -- measured 2026-08-30, comment lines only. US-522 shipped its
+#   rationale and not its flag. US-536 disposition B then ruled the GPU STAYS ON,
+#   so it must not be added now; see the register below. Corrected under US-648.
+#
+#   The DIAGNOSIS still stands: the bench freeze was chromium's GPU
+#   command-buffer context dying and HOT-LOOPING on the fatal
 #   `AllocateRingBuffer()` failure (6M errors/boot, CPU-pegged, no crash, stale
 #   display) -- the Pi 5 v3d GPU on a 64 MiB CMA pool under the animated
 #   carousel. Atlas RCA:
 #   offices/architect/findings/2026-08-02-pi-ui-freeze-chromium-gpu-command-buffer-hotloop.md
 #
-#   The flag OVERRIDES an OS default rather than deleting a repo one:
-#   `--enable-gpu-rasterization` comes from /etc/chromium.d/default-flags via the
-#   /usr/bin/chromium wrapper, which runs `exec ... $CHROMIUM_FLAGS "$@"`, so the
-#   injected flags precede this unit's argv (verified live, not assumed).
-#   `--disable-gpu` (not the narrower --disable-gpu-rasterization) because the
-#   fault is in the command buffer that COMPOSITING also uses, and because
-#   nothing in the injected set can contradict --disable-gpu -- so the fix is
-#   independent of flag order.
+#   STILL TRUE -- the injection mechanism: `--enable-gpu-rasterization` comes
+#   from /etc/chromium.d/default-flags via the /usr/bin/chromium wrapper, which
+#   runs `exec ... $CHROMIUM_FLAGS "$@"`, so the injected flags precede this
+#   unit's argv (verified live, not assumed). NOTE that ordering settles REPEATS
+#   OF ONE SWITCH NAME and nothing more -- it does not decide a contest between
+#   two differently-named contradicting flags. See US-647 in the .x11 sibling.
 #
 # US-522 (reopen 2026-08-03) -- `--password-store=basic`: see the full rationale
 #   in the .x11 sibling (the two variants must not drift). In short: with no
@@ -62,6 +67,30 @@
 #   XDG_RUNTIME_DIR at all and is deliberately left that way -- X11 needs only
 #   DISPLAY, and adding a runtime dir there is not this issue's business.
 #   Do not "simplify" it back to %U -- it looks correct in the file and is not.
+#
+# NOT APPLIED -- the register (US-648). Every switch NAMED anywhere above that is
+#   deliberately NOT on the ExecStart below, and why. Reconciled against the
+#   ExecStart in BOTH directions by test_dashboardUnitsCommentedFlagCensus_us648.
+#   Where this header defers to the .x11 sibling, the reason is recorded in full
+#   there -- and a test fences that pointer, so the sibling cannot stop
+#   documenting a flag this file forwards the reader to.
+#
+#   NOT APPLIED: --disable-gpu -- US-522 argued for it and never applied it;
+#     US-536 disposition B ruled the GPU STAYS ON. Fenced by
+#     test_dashboardUnits_keepTheGpuOn_us536, which covers BOTH variants.
+#   NOT APPLIED: --disable-gpu-rasterization -- the US-647 stopgap is X11-ONLY
+#     and expires with X11. It is NOT inherited here. This is not a ruling that
+#     Wayland should keep GPU rasterization on; it is a refusal to inherit an
+#     X11 workaround into the stack meant to replace it. If Wayland needs it,
+#     that is a new decision with its own evidence
+#     (test_dashboardWayland_doesNotInheritTheX11Stopgap_us647).
+#   NOT APPLIED: --enable-gpu-rasterization -- OS-injected by
+#     /etc/chromium.d/default-flags, which this repo does not manage and must
+#     never duplicate (test_dashboardUnits_neverReinjectGpuRasterization_us522).
+#   NOT APPLIED: --remote-debugging-port -- an open DevTools port on a
+#     car-mounted kiosk is unauthenticated full-page control.
+#   NOT APPLIED: --assets-dir -- not a chromium switch at all. It belongs to
+#     eclipse-states-http and is named above for the A-2 assets contract.
 # ==============================================================================
 
 [Unit]

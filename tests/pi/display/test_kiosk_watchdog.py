@@ -44,6 +44,16 @@
 #               |              | readability probe, budget observability. Three
 #               |              | pins MOVED (not deleted) -- see the repointed
 #               |              | docstrings; each says what it used to assert.
+# 2026-08-31    | Rex          | US-644-a: the bounded readability probe, and
+#               |              | "timed out" as a fact distinct from
+#               |              | "unreadable" (each new flag has a
+#               |              | discriminating partner asserting it FALSE).
+# 2026-08-31    | Rex          | US-644-b: the boot fence and the capped count.
+#               |              | The boot cases go through the REAL query
+#               |              | builder against a journalctl fake that
+#               |              | HONOURS `-b` -- a canned JournalReading would
+#               |              | prove nothing about the argv, and an argv grep
+#               |              | alone cannot express the story's negative case.
 # ================================================================================
 ################################################################################
 
@@ -52,6 +62,8 @@
 from __future__ import annotations
 
 import json
+import os
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -89,9 +101,13 @@ class _FakeCommands:
         restartOk: bool = True,
         writeOk: bool = True,
         markerPresentSince: float | None = None,
+        journalTimedOut: bool = False,
+        capped: bool = False,
     ) -> None:
         self.active = active
         self.errorCount = errorCount
+        self.journalTimedOut = journalTimedOut
+        self.capped = capped
         self.restartOk = restartOk
         self.writeOk = writeOk
         self.trace: list[str] = []
@@ -105,10 +121,12 @@ class _FakeCommands:
         self.trace.append(f"is-active:{unitName}")
         return self.active
 
-    def errorCountFn(self, unitName: str, sinceEpoch: float) -> int | None:
+    def errorCountFn(self, unitName: str, sinceEpoch: float) -> kw.JournalReading:
         self.trace.append("count")
         self.sinceEpochs.append(sinceEpoch)
-        return self.errorCount
+        return kw.JournalReading(
+            count=self.errorCount, timedOut=self.journalTimedOut, capped=self.capped
+        )
 
     def restartFn(self, unitName: str) -> bool:
         self.trace.append(f"restart:{unitName}")
@@ -912,9 +930,7 @@ def test_countWedgeMarkers_countsMatchingLines():
     def runFn(argv, **kwargs):
         return _FakeCompleted(stdout="err\nerr\nerr\n")
 
-    assert (
-        kw.countWedgeMarkers("u", sinceEpoch=0.0, cap=10, runFn=runFn) == 3
-    )
+    assert kw.countWedgeMarkers("u", sinceEpoch=0.0, cap=10, runFn=runFn).count == 3
 
 
 def test_countWedgeMarkers_noMatches_isZeroNotNone():
@@ -927,10 +943,10 @@ def test_countWedgeMarkers_noMatches_isZeroNotNone():
     def runFn(argv, **kwargs):
         return _FakeCompleted(stdout="")
 
-    assert kw.countWedgeMarkers("u", sinceEpoch=0.0, cap=10, runFn=runFn) == 0
+    assert kw.countWedgeMarkers("u", sinceEpoch=0.0, cap=10, runFn=runFn).count == 0
 
 
-def test_countWedgeMarkers_grepExit1WithAReadableJournal_isACleanZero():
+def test_countWedgeMarkers_grepExit1WithAReadableJournal_isACleanZero(tmp_path: Path):
     """
     Given: `--grep` exits 1 (its documented ZERO-MATCHES code) and a probe shows
            the journal reads fine
@@ -945,107 +961,103 @@ def test_countWedgeMarkers_grepExit1WithAReadableJournal_isACleanZero():
     news, and a genuinely broken journal was indistinguishable from a clean one.
     The refusal-on-a-real-error half is MOVED to the next test, not dropped.
     """
+    pattern = _journalTree(tmp_path)
+
     def runFn(argv, **kwargs):
         if _isProbe(argv):
             return _FakeCompleted(returncode=0, stdout="some unrelated log line\n")
         return _FakeCompleted(returncode=1, stdout="")
 
-    assert kw.countWedgeMarkers("u", sinceEpoch=0.0, cap=10, runFn=runFn) == 0
+    reading = kw.countWedgeMarkers(
+        "u", sinceEpoch=0.0, cap=10, runFn=runFn, journalGlobs=(pattern,)
+    )
+    assert reading.count == 0
+    assert reading.timedOut is False
 
 
-def test_countWedgeMarkers_nonZeroExitWithAnUnreadableJournal_isStillUnreadable():
+def test_countWedgeMarkers_nonZeroExitWithAnUnreadableJournal_isStillUnreadable(
+    tmp_path: Path,
+):
     """
     Given: `--grep` exits non-zero AND the readability probe also fails
     When:  counted
-    Then:  None -- honest "I could not tell", which decideAction turns into a
-           no-op instead of a restart. The 3b fix must not swallow a REAL
+    Then:  no count -- honest "I could not tell", which decideAction turns into
+           a no-op instead of a restart. The 3b fix must not swallow a REAL
            journal failure into a comfortable zero.
+
+    US-644-a: ``timedOut`` is asserted FALSE here on purpose. This is the
+    partner of the timeout tests -- without it, a change that reported every
+    failure as a timeout would look just as green.
     """
+    pattern = _journalTree(tmp_path)
+
     def runFn(argv, **kwargs):
         return _FakeCompleted(returncode=1, stderr="Failed to open journal: Permission denied")
 
-    assert kw.countWedgeMarkers("u", sinceEpoch=0.0, cap=10, runFn=runFn) is None
+    reading = kw.countWedgeMarkers(
+        "u", sinceEpoch=0.0, cap=10, runFn=runFn, journalGlobs=(pattern,)
+    )
+    assert reading.count is None
+    assert reading.timedOut is False
 
 
-def test_countWedgeMarkers_nonZeroExitButOutputPresent_isUnreadable():
+def test_countWedgeMarkers_nonZeroExitButOutputPresent_isUnreadable(tmp_path: Path):
     """
     Given: journalctl exits non-zero yet printed something to stdout
     When:  counted
     Then:  None -- a partial/aborted read is not a measured zero, so the
            zero-matches shortcut is gated on EMPTY output as well as the probe
     """
+    pattern = _journalTree(tmp_path)
+
     def runFn(argv, **kwargs):
         if _isProbe(argv):
             return _FakeCompleted(returncode=0, stdout="ok\n")
         return _FakeCompleted(returncode=1, stdout="AllocateRingBuffer\n")
 
-    assert kw.countWedgeMarkers("u", sinceEpoch=0.0, cap=10, runFn=runFn) is None
+    reading = kw.countWedgeMarkers(
+        "u", sinceEpoch=0.0, cap=10, runFn=runFn, journalGlobs=(pattern,)
+    )
+    assert reading.count is None
 
 
-def test_countWedgeMarkers_doesNotProbeWhenTheGrepSucceeded():
+def test_countWedgeMarkers_doesNotProbeWhenTheGrepSucceeded(tmp_path: Path):
     """
     Given: a normal successful grep
     When:  counted
     Then:  the probe is NEVER run -- the extra command is a diagnostic for the
            failure path only, not a second journalctl on every 30s tick
     """
+    pattern = _journalTree(tmp_path)
     argvs: list[list[str]] = []
 
     def runFn(argv, **kwargs):
         argvs.append(argv)
         return _FakeCompleted(returncode=0, stdout="err\n")
 
-    kw.countWedgeMarkers("u", sinceEpoch=0.0, cap=10, runFn=runFn)
+    kw.countWedgeMarkers("u", sinceEpoch=0.0, cap=10, runFn=runFn, journalGlobs=(pattern,))
 
     assert len(argvs) == 1
     assert not _isProbe(argvs[0])
 
 
-def test_journalIsReadable_probeIsCheapAndUnfiltered():
-    """
-    Given: the readability probe
-    When:  it runs
-    Then:  it asks for ONE line with no unit filter -- it must answer "can I
-           read the journal at all", which a unit with zero entries would
-           otherwise answer wrongly
-    """
-    seen: list[list[str]] = []
-
-    def runFn(argv, **kwargs):
-        seen.append(argv)
-        return _FakeCompleted(returncode=0, stdout="x\n")
-
-    assert kw.journalIsReadable(runFn=runFn) is True
-
-    argv = seen[0]
-    assert argv[0] == "journalctl"
-    assert "--lines=1" in argv
-    assert "-u" not in argv
-    assert not any(a.startswith("--grep=") for a in argv)
-
-
-def test_journalIsReadable_subprocessRaises_isFalse():
-    """
-    Given: journalctl is missing entirely
-    When:  probed
-    Then:  False, no exception -- the caller then reports unreadable
-    """
-    def runFn(argv, **kwargs):
-        raise OSError("no journalctl")
-
-    assert kw.journalIsReadable(runFn=runFn) is False
-
-
 def test_countWedgeMarkers_subprocessRaises_isUnreadable():
     """
-    Given: journalctl is missing entirely (OSError) or times out
+    Given: journalctl is missing entirely (OSError)
     When:  counted
-    Then:  None, no exception escapes into the tick
+    Then:  no count, no exception escapes into the tick
+
+    REPOINTED (US-644-a). This test's docstring used to read "OSError OR TIMES
+    OUT" and treat the two as one case -- which is the defect in miniature: the
+    test itself recorded the collapse as intended behaviour. The timeout half
+    is MOVED to test_countWedgeMarkers_mainQueryTimesOut_theReadingCarriesTheTimeout,
+    where it now asserts the OPPOSITE outcome. Not dropped -- split, because
+    they were never the same fact.
     """
     def runFn(argv, **kwargs):
         raise OSError("no journalctl")
 
-    assert kw.countWedgeMarkers("u", sinceEpoch=0.0, cap=10, runFn=runFn) is None
+    assert kw.countWedgeMarkers("u", sinceEpoch=0.0, cap=10, runFn=runFn).count is None
 
 
 # ----------------------------------------------------------------------------
@@ -1264,20 +1276,27 @@ def test_main_flagsOverrideThePolicy():
     )
 
 
-@pytest.mark.parametrize(
-    "reason,expected",
-    [
-        (kw.REASON_HEALTHY, 0),
-        (kw.REASON_KIOSK_INACTIVE, 0),
-        (kw.REASON_JOURNAL_UNREADABLE, 0),
-        (kw.REASON_COOLDOWN, 0),
-        (kw.REASON_WEDGE_SUSPECTED, 0),
-        (kw.REASON_WEDGE_RESTARTED, 0),
-        (kw.REASON_BUDGET_EXHAUSTED, 2),
-        (kw.REASON_RESTART_FAILED, 2),
-        (kw.REASON_LEDGER_UNWRITABLE, 2),
-    ],
-)
+#: Every outcome the watchdog can report, paired with the exit code main owes
+#: it. Named rather than inlined so the census guard below can read it.
+_EXIT_CODE_TABLE = [
+    (kw.REASON_HEALTHY, 0),
+    (kw.REASON_KIOSK_INACTIVE, 0),
+    (kw.REASON_JOURNAL_UNREADABLE, 0),
+    (kw.REASON_COOLDOWN, 0),
+    (kw.REASON_WEDGE_SUSPECTED, 0),
+    (kw.REASON_WEDGE_RESTARTED, 0),
+    (kw.REASON_BUDGET_EXHAUSTED, 2),
+    (kw.REASON_RESTART_FAILED, 2),
+    (kw.REASON_LEDGER_UNWRITABLE, 2),
+    # US-644-a. 2, and it sits beside REASON_JOURNAL_UNREADABLE's 0 on purpose:
+    # same no-action, opposite exit code. A journal that will not READ leaves
+    # the watchdog uncertain; a journal read that will not FINISH leaves it
+    # BLIND, which is a broken recovery path and belongs with the other three.
+    (kw.REASON_JOURNAL_TIMEOUT, 2),
+]
+
+
+@pytest.mark.parametrize("reason,expected", _EXIT_CODE_TABLE)
 def test_main_exitCodeSurfacesABrokenRecoveryPath(reason: str, expected: int):
     """
     Given: each possible outcome
@@ -1294,3 +1313,854 @@ def test_main_exitCodeSurfacesABrokenRecoveryPath(reason: str, expected: int):
         )
 
     assert kw.main([], runOnceFn=fakeRunOnce) == expected
+
+
+# ----------------------------------------------------------------------------
+# US-644-a: the readability probe is BOUNDED, and "timed out" is its OWN fact
+#
+# MEASURED (Atlas, at a real freeze 2026-08-30): the probe ran
+# `journalctl --lines=1` with no file scoping across a 6M-entry journal, blew
+# the 20s command budget, raised TimeoutExpired -- and every failure path
+# collapsed into "unreadable -> take no action", logged at INFO as
+# "no action (journal_unreadable; markers=None)".  PM then saw the SAME probe
+# work ~90 minutes later on the same boot.  An INTERMITTENT detector is worse
+# than a dead one because its successes make it look trustworthy.
+#
+# Two independent properties are pinned below, and BOTH are load-bearing:
+#   1. the probe's work is scoped to ONE journal file whose size journald caps,
+#      so its runtime no longer scales with the journal;
+#   2. a timeout is reported as a FAULT and is distinguishable from both
+#      "unreadable" and "no markers found".
+# ----------------------------------------------------------------------------
+
+
+def _journalTree(root: Path, *, volatile: bool = False) -> str:
+    """Build a journald-shaped storage root and return its glob pattern."""
+    branch = "run" if volatile else "var"
+    machine = root / branch / "log" / "journal" / "0123456789abcdef0123456789abcdef"
+    machine.mkdir(parents=True)
+    (machine / "system.journal").write_bytes(b"LPKSHHRH")
+    return str(root / branch / "log" / "journal" / "*" / "system.journal")
+
+
+def test_activeJournalFile_findsTheActiveSystemJournal(tmp_path: Path):
+    """
+    Given: a journald storage root holding an active system.journal
+    When:  the probe resolves the file to scope itself to
+    Then:  that file is returned -- the scoping target is DISCOVERED, not
+           hardcoded to one machine-id
+    """
+    pattern = _journalTree(tmp_path)
+
+    found = kw.activeJournalFile(journalGlobs=(pattern,))
+
+    assert found is not None
+    assert found.endswith("system.journal")
+
+
+def test_activeJournalFile_prefersTheVolatileRootOverThePersistentOne(tmp_path: Path):
+    """
+    Given: BOTH journald storage roots exist
+    When:  the active file is resolved
+    Then:  /run wins -- journald writes to the volatile root when it is present,
+           so the persistent tree would be a STALE file and a stale file answers
+           "can I read the journal" about the wrong journal
+    """
+    volatile = _journalTree(tmp_path, volatile=True)
+    persistent = _journalTree(tmp_path)
+
+    found = kw.activeJournalFile(journalGlobs=(volatile, persistent))
+
+    assert found is not None
+    assert "run" in Path(found).parts
+
+
+def test_activeJournalFile_twoMachineIds_takesTheOneStillBeingWritten(tmp_path: Path):
+    """
+    Given: two machine-id directories under one storage root -- what a reimage
+           that regenerated /etc/machine-id while /var survived leaves behind
+    When:  the active file is resolved
+    Then:  the MOST RECENTLY WRITTEN one wins, not the alphabetically first.
+
+    This is the dangerous direction, which is why it gets its own test: a probe
+    pointed at an abandoned journal would answer "readable" on a box whose live
+    journal is broken, countWedgeMarkers would turn that into a clean ZERO, and
+    the tick would report a wedged panel as HEALTHY.
+    """
+    root = tmp_path / "var" / "log" / "journal"
+    stale = root / "00000000000000000000000000000000"
+    live = root / "ffffffffffffffffffffffffffffffff"
+    for machine in (stale, live):
+        machine.mkdir(parents=True)
+        (machine / "system.journal").write_bytes(b"LPKSHHRH")
+    os.utime(stale / "system.journal", (1_000_000, 1_000_000))
+    os.utime(live / "system.journal", (2_000_000, 2_000_000))
+
+    found = kw.activeJournalFile(journalGlobs=(str(root / "*" / "system.journal"),))
+
+    assert found is not None
+    assert Path(found).parent.name == live.name
+
+
+def test_activeJournalFile_nothingMatches_isNone(tmp_path: Path):
+    """
+    Given: neither storage root exists
+    When:  the active file is resolved
+    Then:  None -- an honest "I cannot scope", never a fabricated path
+    """
+    assert kw.activeJournalFile(journalGlobs=(str(tmp_path / "nope" / "*.journal"),)) is None
+
+
+def test_probeJournal_scopesTheReadToTheSingleActiveJournalFile(tmp_path: Path):
+    """
+    Given: an active system.journal exists
+    When:  the readability probe runs
+    Then:  the argv carries `--file=<that one file>` -- THE FIX.  An unscoped
+           journalctl opens and merges EVERY archived boot's file, so its
+           runtime grows with the journal; one active file is size-capped by
+           journald itself, so the probe's cost stops depending on how long the
+           Pi has been up.  It stays unit-unfiltered and one line long, because
+           the question is still "can I read the journal AT ALL".
+    """
+    pattern = _journalTree(tmp_path)
+    seen: list[list[str]] = []
+
+    def runFn(argv, **kwargs):
+        seen.append(argv)
+        return _FakeCompleted(returncode=0, stdout="x\n")
+
+    assert kw.probeJournal(runFn=runFn, journalGlobs=(pattern,)) == kw.PROBE_READABLE
+
+    argv = seen[0]
+    assert argv[0] == "journalctl"
+    assert any(a.startswith("--file=") and a.endswith("system.journal") for a in argv)
+    assert "--lines=1" in argv
+    assert "-u" not in argv
+    assert not any(a.startswith("--grep=") for a in argv)
+
+
+def test_probeJournal_runsUnderItsOwnShortTimeout(tmp_path: Path):
+    """
+    Given: the readability probe
+    When:  it shells out
+    Then:  it uses the SHORT probe budget, not the full command budget.  This
+           is a NARROWING, and it is not the fix -- the scoping above is.  It
+           exists so a probe that hangs anyway cannot eat the whole tick.
+    """
+    pattern = _journalTree(tmp_path)
+    seen: list[float] = []
+
+    def runFn(argv, **kwargs):
+        seen.append(kwargs["timeout"])
+        return _FakeCompleted(returncode=0, stdout="x\n")
+
+    kw.probeJournal(runFn=runFn, journalGlobs=(pattern,))
+
+    assert seen == [kw._PROBE_TIMEOUT_SECONDS]
+    assert kw._PROBE_TIMEOUT_SECONDS < kw._COMMAND_TIMEOUT_SECONDS
+
+
+def test_theWholeTickBudgetFitsInsideOneTimerInterval():
+    """
+    Given: a tick may spend the marker query AND the readability probe
+    When:  their budgets are added up
+    Then:  the total fits inside the declared timer cadence -- that is where
+           the probe budget's number COMES FROM.  Overrunning the cadence means
+           overlapping ticks, which is how a detector starts lying about time.
+    """
+    assert kw._COMMAND_TIMEOUT_SECONDS + kw._PROBE_TIMEOUT_SECONDS <= kw.TIMER_CADENCE_SECONDS
+
+
+def test_probeJournal_timesOut_isTimedOutAndNotUnreadable(tmp_path: Path):
+    """
+    Given: the probe exceeds its budget
+    When:  it is asked for a verdict
+    Then:  PROBE_TIMED_OUT -- a THIRD state.  Collapsing it into "unreadable"
+           is the defect: it made a broken instrument indistinguishable from a
+           quiet one, and the tick then logged a healthy-looking no-op.
+    """
+    pattern = _journalTree(tmp_path)
+
+    def runFn(argv, **kwargs):
+        raise subprocess.TimeoutExpired(cmd=argv, timeout=kw._PROBE_TIMEOUT_SECONDS)
+
+    assert kw.probeJournal(runFn=runFn, journalGlobs=(pattern,)) == kw.PROBE_TIMED_OUT
+
+
+def test_probeJournal_journalctlMissing_isUnreadableAndNotTimedOut(tmp_path: Path):
+    """
+    Given: journalctl cannot be executed at all
+    When:  probed
+    Then:  PROBE_UNREADABLE -- the DISCRIMINATING PARTNER of the test above.
+           Without this pair, "everything is a timeout" would pass just as well
+           as the real behaviour.
+    """
+    pattern = _journalTree(tmp_path)
+
+    def runFn(argv, **kwargs):
+        raise OSError("no journalctl")
+
+    assert kw.probeJournal(runFn=runFn, journalGlobs=(pattern,)) == kw.PROBE_UNREADABLE
+
+
+def test_probeJournal_noActiveJournalFile_isUnreadableWithoutAnUnscopedScan(tmp_path: Path):
+    """
+    Given: journald has no readable storage root at either location
+    When:  probed
+    Then:  PROBE_UNREADABLE, and journalctl is NEVER RUN.  Falling back to the
+           unscoped `--lines=1` here would reinstate exactly the unbounded scan
+           this story removes; and if neither storage root exists there is
+           genuinely nothing to read, so "unreadable" is the honest answer --
+           reached immediately instead of after a 20s hang.
+    """
+    calls: list[list[str]] = []
+
+    def runFn(argv, **kwargs):
+        calls.append(argv)
+        return _FakeCompleted(returncode=0, stdout="x\n")
+
+    verdict = kw.probeJournal(runFn=runFn, journalGlobs=(str(tmp_path / "none" / "*.j"),))
+
+    assert verdict == kw.PROBE_UNREADABLE
+    assert calls == []
+
+
+def test_probeJournal_smallJournalReadsFine_isReadable(tmp_path: Path):
+    """
+    Given: a small journal that answers immediately (VC-3, the no-regression case)
+    When:  probed
+    Then:  PROBE_READABLE -- unchanged behaviour for the case that always worked
+    """
+    pattern = _journalTree(tmp_path)
+
+    def runFn(argv, **kwargs):
+        return _FakeCompleted(returncode=0, stdout="a log line\n")
+
+    assert kw.probeJournal(runFn=runFn, journalGlobs=(pattern,)) == kw.PROBE_READABLE
+
+
+def test_countWedgeMarkers_probeTimesOut_theReadingCarriesTheTimeout(tmp_path: Path):
+    """
+    Given: the grep exits 1 with empty output and the readability probe TIMES OUT
+    When:  the journal is counted
+    Then:  no count, and the reading says it TIMED OUT -- so the tick can report
+           a fault instead of the routine "journal_unreadable" no-op that hid a
+           dead panel for 7h27m
+    """
+    pattern = _journalTree(tmp_path)
+
+    def runFn(argv, **kwargs):
+        if _isProbe(argv):
+            raise subprocess.TimeoutExpired(cmd=argv, timeout=kw._PROBE_TIMEOUT_SECONDS)
+        return _FakeCompleted(returncode=1, stdout="")
+
+    reading = kw.countWedgeMarkers(
+        "u", sinceEpoch=0.0, cap=10, runFn=runFn, journalGlobs=(pattern,)
+    )
+
+    assert reading.count is None
+    assert reading.timedOut is True
+
+
+def test_countWedgeMarkers_mainQueryTimesOut_theReadingCarriesTheTimeout():
+    """
+    Given: the MARKER QUERY itself times out (not the probe)
+    When:  counted
+    Then:  the same distinct timeout fact.  The collapse being removed is not
+           specific to the probe -- `except SubprocessError` swallowed
+           TimeoutExpired here too and logged it as a routine unreadable.
+    """
+    def runFn(argv, **kwargs):
+        raise subprocess.TimeoutExpired(cmd=argv, timeout=kw._COMMAND_TIMEOUT_SECONDS)
+
+    reading = kw.countWedgeMarkers("u", sinceEpoch=0.0, cap=10, runFn=runFn)
+
+    assert reading.count is None
+    assert reading.timedOut is True
+
+
+def test_countWedgeMarkers_mainQueryOsError_isUnreadableAndNotTimedOut():
+    """
+    Given: journalctl is missing entirely
+    When:  counted
+    Then:  unreadable, timedOut FALSE -- the discriminating partner again, so
+           the new flag cannot pass by being permanently true
+    """
+    def runFn(argv, **kwargs):
+        raise OSError("no journalctl")
+
+    reading = kw.countWedgeMarkers("u", sinceEpoch=0.0, cap=10, runFn=runFn)
+
+    assert reading.count is None
+    assert reading.timedOut is False
+
+
+def test_decideAction_journalTimedOut_isADistinctReasonFromUnreadable():
+    """
+    Given: two ticks with NO count -- one unreadable, one timed out
+    When:  each is decided
+    Then:  both refuse to act, but they carry DIFFERENT reasons.  Same action,
+           different fact: a watchdog that cannot read the journal is uncertain;
+           a watchdog whose probe keeps timing out is BROKEN.
+    """
+    unreadable = kw.decideAction(
+        unitActive=True, errorCount=None, now=NOW, restartHistory=[], policy=_policy()
+    )
+    timedOut = kw.decideAction(
+        unitActive=True,
+        errorCount=None,
+        now=NOW,
+        restartHistory=[],
+        policy=_policy(),
+        journalTimedOut=True,
+    )
+
+    assert unreadable.reason == kw.REASON_JOURNAL_UNREADABLE
+    assert timedOut.reason == kw.REASON_JOURNAL_TIMEOUT
+    assert unreadable.action == timedOut.action == kw.ACTION_NOOP
+
+
+def test_runOnce_journalReadTimesOut_isLoggedAsAFaultNotARoutineNoop(
+    caplog: pytest.LogCaptureFixture,
+):
+    """
+    Given: a tick whose journal read timed out
+    When:  it runs
+    Then:  the outcome reason is the timeout, and it is logged at ERROR.  The
+           shipped line was `INFO kiosk-watchdog: no action (journal_unreadable;
+           markers=None)` -- indistinguishable, to a human scanning the journal,
+           from a healthy tick.
+    """
+    fake = _FakeCommands(errorCount=None, journalTimedOut=True)
+
+    with caplog.at_level("INFO"):
+        outcome = _runOnce(fake)
+
+    assert outcome.reason == kw.REASON_JOURNAL_TIMEOUT
+    assert outcome.restarted is False
+    assert [r for r in caplog.records if r.levelname == "ERROR"]
+
+
+def test_runOnce_journalUnreadable_staysTheQuieterUncertainTick(
+    caplog: pytest.LogCaptureFixture,
+):
+    """
+    Given: a genuinely unreadable journal that did NOT time out
+    When:  the tick runs
+    Then:  the pre-existing reason and behaviour are unchanged -- the new fault
+           must not swallow the old state the way the old state swallowed it
+    """
+    fake = _FakeCommands(errorCount=None)
+
+    with caplog.at_level("INFO"):
+        outcome = _runOnce(fake)
+
+    assert outcome.reason == kw.REASON_JOURNAL_UNREADABLE
+    assert not [r for r in caplog.records if r.levelname == "ERROR"]
+
+
+def test_exitCodeTableCoversEveryReasonTheWatchdogCanReport():
+    """
+    Given: the exit-code parametrize table above
+    When:  it is compared against every REASON_* the module defines
+    Then:  none is missing -- the table is a CENSUS, and a census that has to
+           be remembered is one that drifts.  US-644-a added a reason and this
+           guard is what makes the next addition go red instead of quietly
+           inheriting whichever exit code its outcome happens to fall through
+           to.
+    """
+    declared = {
+        value
+        for name, value in vars(kw).items()
+        if name.startswith("REASON_") and isinstance(value, str)
+    }
+    covered = {reason for reason, _ in _EXIT_CODE_TABLE}
+
+    assert declared, "premise check: the module must declare REASON_* constants"
+    # ONE legitimate exclusion, and it is NAMED rather than the guard being
+    # widened to swallow it: WEDGE_DETECTED is a DECISION reason only. runOnce
+    # always converts it into WEDGE_RESTARTED, RESTART_FAILED or
+    # LEDGER_UNWRITABLE, so it can never reach main as an outcome. An unnamed
+    # exclusion is how the next genuinely-missing reason would slip through.
+    assert declared - covered == {kw.REASON_WEDGE_DETECTED}
+
+
+# ----------------------------------------------------------------------------
+# US-644-b: the marker query is BOOT-SCOPED, and a capped count says so
+#
+# MEASURED BY PM 2026-08-30 22:09, live: the query was built with
+# `--since=@{epoch}` and NO `-b`.  Previous boot 44,991 AllocateRingBuffer
+# markers; CURRENT boot 0.  The watchdog nonetheless reported "100 markers",
+# dwelled its full 60s and RESTARTED A KIOSK WHOSE OWN BOOT HAD ZERO MARKERS.
+# After the restart the window reset (Rule 3 clamps it to the restart instant,
+# which IS in current-boot time) and it correctly read 0.  That firing was a
+# FALSE POSITIVE.
+#
+# WHY `-b` AND NOT A NARROWER `--since` (Atlas, and this framing is
+# load-bearing): `--since` is a TIME filter, and on a box whose RTC starts at
+# 1970 and is then stepped by NTP, A TIME WINDOW DOES NOT ISOLATE A BOOT.  The
+# Pi restores the previous boot's shutdown time before NTP lands, so
+# `now - 60s` lands INSIDE the final seconds of the previous boot -- which is
+# exactly where the storm was densest.  SAME ROOT, THIRD SURFACE: the same
+# defect that mislabelled drives 45/46 as concurrent (A-23).
+#
+# SECOND DEFECT IN THE SAME QUERY: `--lines=cap` means a reported count at the
+# cap is a FLOOR, not a measurement.  With the shipped cap of 100 against a
+# wedge that emits ~30,000 per window, the number the watchdog printed was the
+# cap every single time.
+# ----------------------------------------------------------------------------
+
+
+class _BootAwareJournalctl:
+    """A journalctl fake that actually HONOURS `-b`.
+
+    The point of modelling the flag rather than merely asserting its presence
+    in argv: a test that only greps the argv goes green on a `-b` that journald
+    would reject, and cannot express the negative case the story states ("many
+    markers in the PREVIOUS boot, none in the current one -> NO action"). This
+    fake is the staged journal that case needs.
+
+    It also honours `--lines=`, because the cap is the second defect and the two
+    interact: the previous-boot storm is what USED to saturate it.
+    """
+
+    def __init__(self, *, previousBoot: int = 0, currentBoot: int = 0) -> None:
+        self.previousBoot = previousBoot
+        self.currentBoot = currentBoot
+        self.queries: list[list[str]] = []
+
+    def __call__(self, argv, **kwargs) -> _FakeCompleted:
+        if _isProbe(argv):
+            return _FakeCompleted(returncode=0, stdout="a log line\n")
+
+        self.queries.append(argv)
+        visible = self.currentBoot if "-b" in argv else self.previousBoot + self.currentBoot
+        cap = next(
+            (int(a.split("=", 1)[1]) for a in argv if a.startswith("--lines=")), visible
+        )
+        emitted = min(visible, cap)
+        if emitted == 0:
+            # journalctl --grep's documented ZERO-MATCHES exit code.
+            return _FakeCompleted(returncode=1, stdout="")
+        return _FakeCompleted(returncode=0, stdout="AllocateRingBuffer\n" * emitted)
+
+
+def _bootAwareCounter(journal: _BootAwareJournalctl, pattern: str, cap: int):
+    """An errorCountFn that goes through the REAL query builder.
+
+    Deliberately NOT a hand-made JournalReading: a runOnce test fed a canned
+    reading proves nothing about whether the query carries `-b`. The whole
+    value of the end-to-end cases below is that the flag has to survive the
+    real argv construction to reach the fake.
+    """
+
+    def errorCountFn(unitName: str, sinceEpoch: float) -> kw.JournalReading:
+        return kw.countWedgeMarkers(
+            unitName,
+            sinceEpoch=sinceEpoch,
+            cap=cap,
+            runFn=journal,
+            journalGlobs=(pattern,),
+        )
+
+    return errorCountFn
+
+
+# --- defect 1: boot scoping -------------------------------------------------
+
+
+def test_countWedgeMarkers_queryIsScopedToTheCurrentBoot():
+    """
+    Given: the marker query
+    When:  its argv is built
+    Then:  it carries `-b` -- THE FIX.  A boot fence is a fact about WHICH BOOT,
+           and it is the only filter that survives a clock the RTC starts at
+           1970 and NTP later steps by hours.
+    """
+    seen: list[list[str]] = []
+
+    def runFn(argv, **kwargs):
+        seen.append(argv)
+        return _FakeCompleted(stdout="")
+
+    kw.countWedgeMarkers("u", sinceEpoch=1_800_000_000.0, cap=10, runFn=runFn)
+
+    assert "-b" in seen[0], (
+        "the marker query must be scoped to the current boot; a time window is "
+        "not a boot fence on a box with a known-broken clock (A-23)"
+    )
+
+
+def test_countWedgeMarkers_bootScopeIsADDEDToTheRestartFenceNotSwappedForIt():
+    """
+    Given: the marker query
+    When:  its argv is built
+    Then:  `-b` AND `--since=@<epoch>` are BOTH present.
+
+    The discriminating partner of the test above, and it guards the opposite
+    mistake. `--since` is never-flap Rule 3 -- the window must not reach back
+    past the last restart, or the errors that justified that restart re-trigger
+    on the very next tick. Deleting it "because -b replaces it" would trade a
+    fixed false positive for a different one. They fence different axes: `-b`
+    fences the BOOT, `--since` fences within it.
+    """
+    seen: list[list[str]] = []
+
+    def runFn(argv, **kwargs):
+        seen.append(argv)
+        return _FakeCompleted(stdout="")
+
+    kw.countWedgeMarkers("u", sinceEpoch=1_800_000_000.0, cap=10, runFn=runFn)
+
+    assert "-b" in seen[0]
+    assert "--since=@1800000000" in seen[0]
+
+
+def test_countWedgeMarkers_previousBootStorm_isNotCounted(tmp_path: Path):
+    """
+    Given: a journal holding 44,991 markers in the PREVIOUS boot and none in the
+           current one -- the exact shape PM measured on 2026-08-30
+    When:  the markers are counted
+    Then:  ZERO.  validationCriteria #1.
+    """
+    pattern = _journalTree(tmp_path)
+    journal = _BootAwareJournalctl(previousBoot=44_991, currentBoot=0)
+
+    reading = kw.countWedgeMarkers(
+        "u", sinceEpoch=0.0, cap=100, runFn=journal, journalGlobs=(pattern,)
+    )
+
+    assert reading.count == 0
+    assert reading.timedOut is False
+
+
+def test_countWedgeMarkers_previousBootStormIsReallyThere_premiseCheck(tmp_path: Path):
+    """
+    Given: the same staged journal
+    When:  it is read WITHOUT a boot fence (the shipped-defect behaviour)
+    Then:  the storm IS visible, saturating the cap at 100.
+
+    The vacuity guard for the test above. "Counted zero" is not evidence of
+    boot scoping if the staged journal was empty all along -- this pins that the
+    fixture really does contain the previous boot's storm, and reproduces the
+    "100 markers" the watchdog actually printed.
+    """
+    pattern = _journalTree(tmp_path)
+    journal = _BootAwareJournalctl(previousBoot=44_991, currentBoot=0)
+
+    def unscoped(argv, **kwargs):
+        return journal([a for a in argv if a != "-b"], **kwargs)
+
+    reading = kw.countWedgeMarkers(
+        "u", sinceEpoch=0.0, cap=100, runFn=unscoped, journalGlobs=(pattern,)
+    )
+
+    assert reading.count == 100, "the defect reported the CAP, not a real magnitude"
+
+
+def test_countWedgeMarkers_currentBootMarkers_areStillCounted(tmp_path: Path):
+    """
+    Given: markers in the CURRENT boot
+    When:  counted
+    Then:  they are counted -- validationCriteria #2.  A boot fence that hid
+           everything would pass the negative case above while making the
+           detector useless, which is the failure this partner exists to catch.
+    """
+    pattern = _journalTree(tmp_path)
+    journal = _BootAwareJournalctl(previousBoot=44_991, currentBoot=7)
+
+    reading = kw.countWedgeMarkers(
+        "u", sinceEpoch=0.0, cap=100, runFn=journal, journalGlobs=(pattern,)
+    )
+
+    assert reading.count == 7, "only the current boot's markers, and ALL of them"
+
+
+def test_runOnce_previousBootStorm_neverRestartsAcrossAWholeDwell(tmp_path: Path):
+    """
+    Given: 44,991 markers in the previous boot, ZERO in the current one
+    When:  five consecutive ticks run -- long enough to clear the 60s dwell twice
+    Then:  not ONE restart, and every tick reads healthy.  THE NEGATIVE CASE, as
+           the story states it.
+
+    Five ticks, not one, on purpose: the shipped defect needed a DWELL to fire
+    (it reported 100 markers, waited its 60s, and only then restarted). A
+    single-tick test would have gone green against the defect too, because one
+    tick can never restart.
+    """
+    pattern = _journalTree(tmp_path)
+    journal = _BootAwareJournalctl(previousBoot=44_991, currentBoot=0)
+    fake = _FakeCommands(errorCount=0)
+    reasons = []
+
+    for tick in range(5):
+        outcome = kw.runOnce(
+            policy=_policy(),
+            unitName="eclipse-dashboard.service",
+            isActiveFn=fake.isActiveFn,
+            errorCountFn=_bootAwareCounter(journal, pattern, 100),
+            restartFn=fake.restartFn,
+            readLedgerFn=fake.readLedgerFn,
+            writeLedgerFn=fake.writeLedgerFn,
+            clockFn=lambda now=NOW + tick * 30.0: now,
+        )
+        reasons.append(outcome.reason)
+
+    assert reasons == [kw.REASON_HEALTHY] * 5
+    assert not [entry for entry in fake.trace if entry.startswith("restart:")]
+    assert fake.history == []
+
+
+def test_runOnce_currentBootStorm_stillRestarts(tmp_path: Path):
+    """
+    Given: the storm is in the CURRENT boot instead
+    When:  the same five ticks run
+    Then:  it detects and restarts as designed -- validationCriteria #2 end to
+           end, and the discriminating partner of the test above.  Without it,
+           a watchdog that had simply stopped counting anything would look just
+           as green.
+    """
+    pattern = _journalTree(tmp_path)
+    journal = _BootAwareJournalctl(previousBoot=0, currentBoot=44_991)
+    fake = _FakeCommands(errorCount=0)
+    reasons = []
+
+    for tick in range(5):
+        outcome = kw.runOnce(
+            policy=_policy(),
+            unitName="eclipse-dashboard.service",
+            isActiveFn=fake.isActiveFn,
+            errorCountFn=_bootAwareCounter(journal, pattern, 100),
+            restartFn=fake.restartFn,
+            readLedgerFn=fake.readLedgerFn,
+            writeLedgerFn=fake.writeLedgerFn,
+            clockFn=lambda now=NOW + tick * 30.0: now,
+        )
+        reasons.append(outcome.reason)
+
+    assert kw.REASON_HEALTHY not in reasons
+    assert kw.REASON_WEDGE_RESTARTED in reasons
+
+
+# --- defect 2: a capped count is a floor, not a measurement -----------------
+
+
+def test_countWedgeMarkers_countAtTheReadCap_isLabelledCapped():
+    """
+    Given: journalctl returns as many lines as the cap allows
+    When:  counted
+    Then:  the reading says so.  `--lines=N` returns the LAST N matches, so a
+           count that reaches N is a FLOOR -- the true number is unknown and
+           larger.
+    """
+    def runFn(argv, **kwargs):
+        return _FakeCompleted(stdout="AllocateRingBuffer\n" * 10)
+
+    reading = kw.countWedgeMarkers("u", sinceEpoch=0.0, cap=10, runFn=runFn)
+
+    assert reading.count == 10
+    assert reading.capped is True
+
+
+def test_countWedgeMarkers_countBelowTheReadCap_isNotLabelledCapped():
+    """
+    Given: fewer matches than the cap
+    When:  counted
+    Then:  NOT capped -- the discriminating partner.  A flag that is never
+           asserted false is a flag that can be hardcoded true, and "everything
+           is capped" would make the honest counts unreportable in exactly the
+           way the capped ones are now.
+    """
+    def runFn(argv, **kwargs):
+        return _FakeCompleted(stdout="AllocateRingBuffer\n" * 3)
+
+    reading = kw.countWedgeMarkers("u", sinceEpoch=0.0, cap=10, runFn=runFn)
+
+    assert reading.count == 3
+    assert reading.capped is False
+
+
+def test_countWedgeMarkers_measuredCleanZero_isNotLabelledCapped(tmp_path: Path):
+    """
+    Given: the zero-matches path (grep exits 1, the probe says the journal reads)
+    When:  counted
+    Then:  0 and NOT capped.  A measured zero is the watchdog's only positive
+           health fact (US-561 defect 3b) and labelling it a floor would destroy
+           it -- "at least 0" is true of every possible journal.
+    """
+    pattern = _journalTree(tmp_path)
+
+    def runFn(argv, **kwargs):
+        if _isProbe(argv):
+            return _FakeCompleted(returncode=0, stdout="a log line\n")
+        return _FakeCompleted(returncode=1, stdout="")
+
+    reading = kw.countWedgeMarkers(
+        "u", sinceEpoch=0.0, cap=10, runFn=runFn, journalGlobs=(pattern,)
+    )
+
+    assert reading.count == 0
+    assert reading.capped is False
+
+
+def test_countWedgeMarkers_unreadable_isNotLabelledCapped():
+    """
+    Given: no count at all
+    When:  the reading is built
+    Then:  capped is False -- there is no number, so there is nothing to label.
+           Pinned so the three failure constructors cannot drift into claiming a
+           property of a count they do not have.
+    """
+    assert kw.JournalReading.unreadable().capped is False
+    assert kw.JournalReading.timeout().capped is False
+
+
+def test_shippedCapMeansAWedgeCountIsALWAYSTheCap():
+    """
+    Given: the SHIPPED cap and Atlas's measured wedge rate
+    When:  they are compared
+    Then:  the cap is far below the rate, so a real wedge saturates it every
+           tick.  GROUNDING for why the label is not cosmetic: 100 is not "how
+           many markers there were", it is "we stopped reading at 100".  Atlas
+           measured ~500 markers/sec, i.e. ~30,000 in the 60s window.
+    """
+    markersPerSecond = 500  # Atlas, live at the freeze (see the module header)
+    perWindow = markersPerSecond * kw.DEFAULT_WINDOW_SECONDS
+
+    assert kw.DEFAULT_MARKER_READ_CAP < perWindow
+    assert kw.formatMarkerCount(kw.DEFAULT_MARKER_READ_CAP, capped=True) != str(
+        kw.DEFAULT_MARKER_READ_CAP
+    ), "a saturated count must not render as a bare number"
+
+
+def test_formatMarkerCount_cappedRendersAsAFloor():
+    """
+    Given: a capped count
+    When:  it is rendered for a log line
+    Then:  it names itself as a lower bound, not a magnitude
+    """
+    rendered = kw.formatMarkerCount(100, capped=True)
+
+    assert "100" in rendered
+    assert "at least" in rendered
+    assert rendered != "100"
+
+
+def test_formatMarkerCount_uncappedRendersAsThePlainNumber():
+    """
+    Given: an honest count, and no count at all
+    When:  each is rendered
+    Then:  unchanged -- the partner that stops the new label leaking onto
+           measurements that ARE measurements
+    """
+    assert kw.formatMarkerCount(7, capped=False) == "7"
+    assert kw.formatMarkerCount(0, capped=False) == "0"
+    assert kw.formatMarkerCount(None, capped=False) == "None"
+
+
+def test_runOnce_cappedCount_isLoggedAsAFloorNotAMeasurement(
+    caplog: pytest.LogCaptureFixture,
+):
+    """
+    Given: a sustained wedge whose count saturated the read cap
+    When:  the restart is logged
+    Then:  the line says "at least 100", never a bare "100".
+           validationCriteria #3.  The shipped line read
+           "WEDGED -- 100 'AllocateRingBuffer' errors sustained for 60s", which
+           states a magnitude the watchdog never measured.
+    """
+    fake = _FakeCommands(errorCount=100, capped=True, markerPresentSince=_SUSTAINED)
+
+    with caplog.at_level("INFO"):
+        _runOnce(fake)
+
+    wedgeLines = [
+        r.getMessage() for r in caplog.records if "WEDGED" in r.getMessage()
+    ]
+    assert wedgeLines, "premise check: a sustained wedge must log a WEDGED line"
+    assert all("at least 100" in m for m in wedgeLines)
+
+
+def test_runOnce_uncappedCount_isStillLoggedAsAPlainNumber(
+    caplog: pytest.LogCaptureFixture,
+):
+    """
+    Given: a sustained wedge whose count did NOT reach the cap
+    When:  the restart is logged
+    Then:  the plain number -- the discriminating partner, so the label cannot
+           be applied unconditionally and quietly turn every honest count into
+           a hedge
+    """
+    fake = _FakeCommands(errorCount=42, capped=False, markerPresentSince=_SUSTAINED)
+
+    with caplog.at_level("INFO"):
+        _runOnce(fake)
+
+    wedgeLines = [
+        r.getMessage() for r in caplog.records if "WEDGED" in r.getMessage()
+    ]
+    assert wedgeLines, "premise check: a sustained wedge must log a WEDGED line"
+    assert all("42 'AllocateRingBuffer'" in m for m in wedgeLines)
+    assert not any("at least" in m for m in wedgeLines)
+
+
+def test_logNoop_cappedCount_isAFloorOnTheNoActionPathsToo(
+    caplog: pytest.LogCaptureFixture,
+):
+    """
+    Given: a saturated count on a tick that does NOT restart (still inside the
+           dwell)
+    When:  the no-action line is logged
+    Then:  it is a floor there as well.  The no-action paths are the ones a
+           human actually scans -- a wedge logs many "not yet sustained" lines
+           for each restart line, so labelling only the restart would leave the
+           misleading magnitude on the majority of the output.
+    """
+    fake = _FakeCommands(errorCount=100, capped=True, markerPresentSince=None)
+
+    with caplog.at_level("INFO"):
+        outcome = _runOnce(fake)
+
+    assert outcome.reason == kw.REASON_WEDGE_SUSPECTED
+    messages = [r.getMessage() for r in caplog.records]
+    assert any("at least 100" in m for m in messages)
+
+
+def test_runOnce_outcomeCarriesWhetherTheCountWasCapped():
+    """
+    Given: a tick whose count saturated the cap
+    When:  the outcome is returned
+    Then:  the fact reaches the BOUNDARY, not only the log text.  A caller
+           handed `errorCount=100` with no way to ask whether that is a
+           measurement is in exactly the position this story is fixing.
+    """
+    capped = _runOnce(_FakeCommands(errorCount=100, capped=True))
+    honest = _runOnce(_FakeCommands(errorCount=42, capped=False))
+
+    assert capped.errorCount == 100
+    assert capped.errorCountCapped is True
+    assert honest.errorCountCapped is False
+
+
+def test_decideAction_theCapLabelDoesNotChangeTheVERDICT():
+    """
+    Given: the same count, once labelled capped and once not
+    When:  each is decided
+    Then:  identical decisions.  The cap is an I/O bound, NEVER a verdict
+           (US-561) -- this story makes the count HONEST, and honesty about a
+           number must not quietly become a new input to the decision table.
+    """
+    common = {
+        "unitActive": True,
+        "errorCount": 100,
+        "now": NOW,
+        "restartHistory": [],
+        "policy": _policy(),
+        "markerPresentSince": _SUSTAINED,
+    }
+
+    capped = kw.decideAction(**common, errorCountCapped=True)
+    honest = kw.decideAction(**common, errorCountCapped=False)
+
+    assert capped.action == honest.action == kw.ACTION_RESTART
+    assert capped.reason == honest.reason

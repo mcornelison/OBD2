@@ -16,33 +16,42 @@
 #
 # Type=simple [A-8]. __PI_USER__ substituted by install.sh at install time.
 #
-# US-522 (F-124) -- `--disable-gpu`: the bench UI froze because chromium's GPU
-#   command-buffer context died and then HOT-LOOPED on the fatal
-#   `AllocateRingBuffer()` failure (6M errors in one boot, renderer + GPU process
-#   CPU-pegged, no crash, display stale while X stayed live). Root: the Pi 5 v3d
-#   GPU on a 64 MiB CMA pool driving the animated carousel with GPU rasterization
-#   ON. Atlas RCA:
+# US-522 (F-124) -- `--disable-gpu`: WHAT WAS TRIED, AND WHY IT IS NOT HERE.
+#   This block used to be a 15-line case FOR `--disable-gpu`, written as though
+#   the flag were on the ExecStart below. IT NEVER WAS. Measured by Atlas and
+#   confirmed independently by PM 2026-08-30: zero executable occurrences,
+#   comment lines only. US-522 SHIPPED ITS RATIONALE AND NOT ITS FLAG, and the
+#   rationale was then read for weeks as evidence the freeze had been fixed. An
+#   argument sitting in a file is evidence about INTENT, NEVER ABOUT ENFORCEMENT
+#   -- corrected under US-648, which is why the register at the end of this
+#   header exists and is reconciled against the ExecStart by a test.
+#
+#   The DIAGNOSIS it rested on still stands, in full, in the RCA: the bench UI
+#   froze because chromium's GPU command-buffer context died and then HOT-LOOPED
+#   on the fatal `AllocateRingBuffer()` failure (6M errors in one boot, CPU-
+#   pegged, no crash, display stale while X stayed live) -- the Pi 5 v3d GPU on a
+#   64 MiB CMA pool driving the animated carousel with GPU rasterization ON.
 #   offices/architect/findings/2026-08-02-pi-ui-freeze-chromium-gpu-command-buffer-hotloop.md
 #
-#   THE FLAG IS AN OVERRIDE, NOT A DELETION. `--enable-gpu-rasterization` is not
-#   in this repo -- Debian/RPi-OS exports it from /etc/chromium.d/default-flags,
-#   which the /usr/bin/chromium WRAPPER sources. The wrapper then runs
-#   `exec $LIBDIR/$APPNAME $CHROMIUM_FLAGS "$@"` (/usr/bin/chromium:195), so the
-#   OS flags land FIRST and this ExecStart's argv lands LAST. Verified live on
-#   the Pi rather than assumed -- the composed cmdline read
-#   `... --enable-gpu-rasterization ... --use-angle=gles --disable-gpu <url>`.
+#   The REMEDY did not survive, and both halves of that are worth keeping.
+#   `--disable-gpu` was argued FOR over the narrower `--disable-gpu-rasterization`
+#   on the grounds that the fault is in the command buffer COMPOSITING also uses,
+#   so declining raster alone would reduce the pressure without removing the
+#   mechanism. US-536 disposition B then settled it the other way -- see the
+#   register below. And the evidence offered for it was a 12-SECOND live probe
+#   (chromium up, 0 AllocateRingBuffer): twelve seconds cannot speak to a fault
+#   that takes hours to accumulate, so do not re-argue from it. The CIO ruled
+#   2026-08-30 that WHY the flag is missing -- reverted under US-536, or never
+#   applied at all -- is MOOT: it is an X11-scoped parameter and X11 is retired
+#   by the Ozone migration (F-139).
 #
-#   WHY `--disable-gpu` AND NOT `--disable-gpu-rasterization`: the failure is in
-#   the GPU COMMAND BUFFER, which compositing uses as well as raster -- so
-#   turning raster off alone reduces the pressure without removing the
-#   mechanism. `--disable-gpu` takes hardware GL/v3d out of the path entirely,
-#   and it has NO counterpart in the injected set, so nothing in /etc/chromium.d
-#   can contradict it and the fix does not depend on flag ORDER. This is a 2D
-#   card UI on a 480x320 panel; the Pi 5 CPU renders it without difficulty. A
-#   live probe on this Pi ran the composed flag set against the real dashboard
-#   URL on :0 for 12s: chromium stayed up, 0 AllocateRingBuffer, no GL init
-#   failure. (A software-GL gpu-process may still be present -- the claim is
-#   that the v3d/CMA exhaustion mechanism is gone, not that no GPU process runs.)
+#   STILL TRUE, AND LOAD-BEARING FOR US-647 BELOW -- the injection mechanism.
+#   `--enable-gpu-rasterization` is not in this repo: Debian/RPi-OS exports it
+#   from /etc/chromium.d/default-flags, which the /usr/bin/chromium WRAPPER
+#   sources. The wrapper then runs `exec $LIBDIR/$APPNAME $CHROMIUM_FLAGS "$@"`
+#   (/usr/bin/chromium:195), so the OS flags land FIRST and this ExecStart's argv
+#   lands LAST. Verified live on the Pi rather than assumed. What that ordering
+#   does NOT settle is stated in US-647.
 #
 # US-522 (reopen 2026-08-03) -- `--password-store=basic`: a repeating
 #   "Authentication Required" keyring dialog was painting OVER the kiosk. With no
@@ -64,9 +73,75 @@
 #   `key_storage_linux.cc: Selected backend for OSCrypt: BASIC_TEXT`.
 #
 #   NOTE the live box's unit was hand-patched and ALSO carried
-#   `--enable-logging=stderr --remote-debugging-port=9222`. Those were test aids
-#   and are deliberately NOT adopted here -- an open DevTools port on a
-#   car-mounted kiosk is unauthenticated full-page control. A test fences it.
+#   `--enable-logging=stderr --remote-debugging-port=9222`, and the two were
+#   DECIDED DIFFERENTLY -- this paragraph used to disown both, which went stale
+#   the moment one of them shipped. `--remote-debugging-port` is still refused
+#   (see the register below). `--enable-logging=stderr` WAS adopted later, by
+#   ARCH-014, and is on the ExecStart below; US-647's verification now depends on
+#   it being there. Corrected under US-648.
+#
+# US-647 (F-139) -- `--disable-gpu-rasterization`: A STOPGAP, AND A NON-CLAIM.
+#   Raspberry Pi OS turns GPU rasterization ON for every chromium on this box
+#   (/etc/chromium.d/default-flags:7 exports `--enable-gpu-rasterization`) and
+#   nothing here ever turned it off. Measured independently by Atlas and PM on
+#   2026-08-30: the RUNNING process carried it. This is a static 2D card UI on a
+#   480x320 panel and it has no use for GPU raster; the previous boot logged
+#   44,991 AllocateRingBuffer markers.
+#
+#   THIS IS NOT `--disable-gpu` AND MUST NOT BECOME IT. It declines ONE JOB. It
+#   does not take hardware GL out of the path, and it does not touch the CIO's
+#   standing US-536 disposition-B ruling that the GPU stays ON. Anyone who
+#   "simplifies" it to `--disable-gpu` reintroduces the crash class US-536 was
+#   created to remove. The two are asserted together by
+#   test_dashboardX11_declinedRasterIsNotTheGpuKillSwitch_us647.
+#
+#   PRESENCE IS NOT PRECEDENCE -- THIS FLAG'S EFFECT IS UNVERIFIED. The OS flag
+#   and ours now BOTH sit in the composed argv and they CONTRADICT each other.
+#   Do not settle that from the ordering argument recorded above: "the OS flags
+#   land first and this ExecStart lands last" governs REPEATS OF ONE SWITCH
+#   NAME, and these are TWO DIFFERENT switch names -- last-one-wins does not
+#   reach the case at all. Which one prevails is decided inside chromium, and
+#   Atlas grepped the boot journal for GPU feature status: NOTHING IS LOGGED, so
+#   it is not observable on this box today. Confirming it (chrome://gpu, or an
+#   explicit startup log) is a bigDefinitionOfDone item owned by the CIO. Note
+#   the DevTools route is fenced by the paragraph above, so the stderr channel
+#   below is the one that is actually available.
+#
+#   AND IT DOES NOT CLAIM THE MARKER RATE DROPPED. That is settled only by the
+#   boot-to-boot comparison in the sprint's bigDefinitionOfDone -- Boot B (no
+#   flag, panel ALIVE) then Boot C (flag on) -- and NEVER by a kiosk restart,
+#   because restarting chromium is itself the variable under suspicion. If the
+#   comparison shows no material reduction, say so plainly: a stopgap that did
+#   not help is a finding, not a failure. Reporting it as a fix would repeat
+#   US-522 exactly.
+#
+#   EXPIRY: REMOVED when Ozone lands. A stopgap justified only by a pending
+#   migration becomes permanent the moment the migration slips. If Ozone has not
+#   landed, REVISIT this rather than inherit it.
+#
+# NOT APPLIED -- the register (US-648). Every switch NAMED anywhere above that
+#   is deliberately NOT on the ExecStart below, and why. This exists because the
+#   header argued in detail for a flag that appeared in no executable line, and
+#   nothing but a reader's attention was checking. It is reconciled against the
+#   ExecStart in BOTH directions by test_dashboardUnitsCommentedFlagCensus_us648:
+#   a flag named above and neither applied nor listed here fails, and so does a
+#   flag listed here that is actually applied. ADD TO IT when you name a new
+#   switch in this header -- that is the cost of the guard, and it is the point.
+#
+#   NOT APPLIED: --disable-gpu -- US-522 argued for it and never applied it;
+#     US-536 disposition B then ruled the GPU STAYS ON and the freeze is
+#     addressed by removing sustained compositing load instead. Adding it here
+#     reopens a settled architecture call and reintroduces the error:5 crash
+#     class. Fenced by test_dashboardUnits_keepTheGpuOn_us536.
+#   NOT APPLIED: --enable-gpu-rasterization -- OS-injected by
+#     /etc/chromium.d/default-flags, which this repo does not manage. Named here
+#     only because US-647 overrides it. The repo must never add a second copy
+#     (test_dashboardUnits_neverReinjectGpuRasterization_us522).
+#   NOT APPLIED: --remote-debugging-port -- an open DevTools port on a
+#     car-mounted kiosk is unauthenticated full-page control. Refused even though
+#     it would be the easiest route to US-647's effectiveness check.
+#   NOT APPLIED: --assets-dir -- not a chromium switch at all. It belongs to
+#     eclipse-states-http and is named above for the A-2 assets contract.
 # ==============================================================================
 
 [Unit]
@@ -81,6 +156,7 @@ Environment=DISPLAY=:0
 ExecStart=__CHROMIUM_BIN__ \
   --kiosk \
   --touch-events=enabled \
+  --disable-gpu-rasterization \
   --noerrdialogs --disable-infobars --hide-scrollbars \
   --autoplay-policy=no-user-gesture-required \
   --check-for-update-interval=31536000 \

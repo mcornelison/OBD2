@@ -75,9 +75,21 @@
 #                           restart` would START it, stealing the hand-off that
 #                           belongs to splash-boot's OnSuccess (A-1);
 #                        2. an unreadable journal is UNCERTAIN, never a wedge --
-#                           and never "healthy" either;
+#                           and never "healthy" either.  US-644-a adds the
+#                           distinction that was missing: a journal read that
+#                           TIMES OUT is not "uncertain", it is a FAULT in this
+#                           watchdog, reported at ERROR and exiting non-zero;
 #                        3. the journal window never reaches back past the last
-#                           restart, so pre-restart errors cannot re-trigger;
+#                           restart, so pre-restart errors cannot re-trigger --
+#                           and (US-644-b) it never reaches back past the last
+#                           BOOT either.  These are two fences on two axes and
+#                           the tick needs both: the restart fence is a TIME
+#                           bound, and a time bound cannot isolate a boot on a
+#                           box whose RTC starts at 1970 and is then stepped by
+#                           NTP.  Before that step the Pi is running on the
+#                           previous boot's restored shutdown time, so `now-60s`
+#                           lands inside the final seconds of THAT boot -- which
+#                           is exactly where the marker storm was densest;
 #                        4. a cooldown separates consecutive restarts;
 #                        5. an hourly restart budget caps the loop -- once spent
 #                           the watchdog stops restarting and starts shouting;
@@ -104,6 +116,33 @@
 #               |              | 3c documented above as an honest bound, not
 #               |              | fixed; 3d the restart budget is now stated on
 #               |              | every tick as "N of M (K left)".
+# 2026-08-31    | Rex          | US-644-a: the readability probe was an
+#               |              | UNSCOPED `journalctl --lines=1` whose cost grew
+#               |              | with the journal, so it succeeded on a young
+#               |              | one and TIMED OUT on a grown one -- an
+#               |              | INTERMITTENT detector, whose successes made it
+#               |              | look trustworthy.  Fix: scope the read to the
+#               |              | ONE active journal file (`--file=`), whose size
+#               |              | journald caps, so probe runtime no longer
+#               |              | depends on journal size.  And stop collapsing
+#               |              | "timed out" into "unreadable": a timeout is now
+#               |              | its own reason, logged at ERROR and exiting
+#               |              | non-zero, instead of an INFO no-op that read
+#               |              | like a healthy tick.
+# 2026-08-31    | Rex          | US-644-b: the marker query carried no `-b`, so
+#               |              | it judged the WRONG BOOT -- PM measured it
+#               |              | restarting a kiosk whose own boot had ZERO
+#               |              | markers while the PREVIOUS boot held 44,991.
+#               |              | `--since` is a TIME filter and this box's RTC
+#               |              | starts at 1970 before NTP steps it (A-23), so
+#               |              | no width of time window isolates a boot; `-b`
+#               |              | does, and is ADDED to `--since` rather than
+#               |              | replacing it (Rule 3 is a within-boot fence).
+#               |              | Second defect in the same query: `--lines=cap`
+#               |              | means a count AT the cap is a FLOOR, and with
+#               |              | cap=100 against ~30,000/window every count the
+#               |              | watchdog ever printed during a freeze WAS the
+#               |              | cap. Such counts now render "at least N".
 # ================================================================================
 ################################################################################
 
@@ -112,6 +151,7 @@
 from __future__ import annotations
 
 import argparse
+import glob
 import json
 import logging
 import os
@@ -145,6 +185,14 @@ DEFAULT_WINDOW_SECONDS = 60
 #: decision constant -- and US-561 removed it in that role (see the header).  It
 #: survives only as what it always genuinely was: a cap that stops an uncapped
 #: read pulling megabytes per tick off a Pi the wedge has already pegged.
+#:
+#: US-644-b: and because `--lines=` returns the LAST N matches, a count that
+#: REACHES this number is a FLOOR, not a measurement.  Against Atlas's measured
+#: ~500 markers/sec (~30,000 per 60s window) a live wedge saturates it on every
+#: single tick, so "100 markers" was never how many there were -- it was where
+#: we stopped reading.  The count is therefore only ever trustworthy as a
+#: BOOLEAN (any / none), which is exactly all `decideAction` uses it for, and
+#: every log line that prints a saturated count now says "at least N".
 DEFAULT_MARKER_READ_CAP = 100
 
 #: How long markers must be CONTINUOUSLY present before the tick calls it a
@@ -187,6 +235,7 @@ ACTION_NOOP = "noop"
 # Outcome / decision reasons -- one per branch so every tick is explainable.
 REASON_KIOSK_INACTIVE = "kiosk_inactive"
 REASON_JOURNAL_UNREADABLE = "journal_unreadable"
+REASON_JOURNAL_TIMEOUT = "journal_read_timed_out"
 REASON_HEALTHY = "healthy"
 REASON_WEDGE_SUSPECTED = "wedge_suspected"
 REASON_COOLDOWN = "cooldown"
@@ -198,8 +247,18 @@ REASON_LEDGER_UNWRITABLE = "ledger_unwritable"
 
 #: Outcomes that mean the RECOVERY PATH itself is broken or spent.  These exit
 #: non-zero so `systemctl status eclipse-kiosk-watchdog` shows a fault.
+#:
+#: US-644-a ADDS the journal-read timeout.  A watchdog whose journal read does
+#: not complete is not "uncertain", it is BROKEN -- it cannot observe the one
+#: signal it exists to observe -- so it belongs with the other three faults
+#: rather than with the routine no-ops.
 _FAULT_REASONS = frozenset(
-    {REASON_BUDGET_EXHAUSTED, REASON_RESTART_FAILED, REASON_LEDGER_UNWRITABLE}
+    {
+        REASON_BUDGET_EXHAUSTED,
+        REASON_RESTART_FAILED,
+        REASON_LEDGER_UNWRITABLE,
+        REASON_JOURNAL_TIMEOUT,
+    }
 )
 
 EXIT_OK = 0
@@ -208,6 +267,35 @@ EXIT_RUNTIME = 2
 #: Wall-clock ceiling on each external command, so a hung journalctl cannot
 #: pin a timer-driven oneshot open forever.
 _COMMAND_TIMEOUT_SECONDS = 20
+
+#: Wall-clock ceiling on the readability PROBE specifically (US-644-a).  The
+#: probe reads ONE line out of ONE size-capped file; it has no business
+#: spending the full command budget, and a tick that spends
+#: _COMMAND_TIMEOUT_SECONDS on the query and another 20s on the probe would
+#: overrun the 30s timer cadence and start overlapping its successor.  The
+#: number is DERIVED from that: 20 + 5 <= TIMER_CADENCE_SECONDS, pinned by a
+#: test.  This narrowing is NOT the fix -- the scoping below is.
+_PROBE_TIMEOUT_SECONDS = 5
+
+#: journald's two storage roots, in the order journald itself prefers them: it
+#: writes to the volatile /run tree when the persistent one is absent (or has
+#: not been created yet at early boot), so a /var file found alongside a /run
+#: one is the STALE one.  `system.journal` is journald's fixed name for the
+#: ACTIVE system journal -- every other file in those directories is an
+#: archived rotation, and it is the accumulated pile of those that made an
+#: unscoped read scale with uptime.
+_ACTIVE_JOURNAL_GLOBS: tuple[str, ...] = (
+    "/run/log/journal/*/system.journal",
+    "/var/log/journal/*/system.journal",
+)
+
+# Readability-probe verdicts.  THREE, not two: US-644-a's whole point is that
+# "it timed out" and "it cannot be read" are different facts about different
+# problems, and collapsing them made an intermittently-blind watchdog log
+# healthy-looking no-ops.
+PROBE_READABLE = "readable"
+PROBE_UNREADABLE = "unreadable"
+PROBE_TIMED_OUT = "timed_out"
 
 
 @dataclass(frozen=True)
@@ -240,6 +328,45 @@ class LedgerState:
 
 
 @dataclass(frozen=True)
+class JournalReading:
+    """One tick's attempt to read the journal -- the count AND how it went.
+
+    US-644-a. This used to be a bare ``int | None``, and that shape is the
+    defect: ``None`` had to mean "permission denied", "journalctl is missing"
+    AND "the read did not finish in time" all at once, so the tick could only
+    ever report the mildest of the three. A count of markers is a measurement;
+    a timeout is a statement about the INSTRUMENT, and the two cannot share a
+    channel.
+
+    ``timedOut`` covers a timeout in EITHER journalctl call -- the marker query
+    or the readability probe -- because the collapse being removed was never
+    specific to one of them.
+    """
+
+    count: int | None
+    timedOut: bool = False
+    capped: bool = False
+    """Whether ``count`` merely reached the read cap, i.e. is a LOWER BOUND.
+
+    US-644-b. ``--lines=N`` returns the LAST N matches, so a count of N means
+    "at least N" and says nothing about the true magnitude. With the shipped
+    cap of 100 against a wedge emitting ~30,000 per window, EVERY count the
+    watchdog reported during a real freeze was the cap. Carrying the fact
+    beside the number is what stops the number being read as a measurement.
+    """
+
+    @classmethod
+    def unreadable(cls) -> JournalReading:
+        """The journal could not be read, and we know that in bounded time."""
+        return cls(count=None, timedOut=False)
+
+    @classmethod
+    def timeout(cls) -> JournalReading:
+        """The read did not finish inside its budget -- a FAULT, not a verdict."""
+        return cls(count=None, timedOut=True)
+
+
+@dataclass(frozen=True)
 class WatchdogDecision:
     """What one tick decided, and why -- the `reason` is the log line's subject."""
 
@@ -249,6 +376,7 @@ class WatchdogDecision:
     restartsInWindow: int
     wedged: bool = False
     dwellSeconds: float | None = None
+    errorCountCapped: bool = False
 
 
 @dataclass(frozen=True)
@@ -262,11 +390,38 @@ class WatchdogOutcome:
     maxRestartsPerHour: int = 0
     wedged: bool = False
     dwellSeconds: float | None = None
+    errorCountCapped: bool = False
 
 
 # ----------------------------------------------------------------------------
 # Pure decision
 # ----------------------------------------------------------------------------
+
+
+def formatMarkerCount(count: int | None, *, capped: bool = False) -> str:
+    """Render a marker count as the fact it actually is (US-644-b).
+
+    A count that reached the read cap is a LOWER BOUND -- ``--lines=N`` returns
+    the last N matches, so the true number is unknown and larger. Printing it
+    as a bare integer states a magnitude nobody measured, and during a real
+    freeze that integer was ALWAYS the cap.
+
+    Deliberately leaves every other case byte-identical to what the watchdog
+    already logged: this story makes the capped number honest, and changing the
+    rendering of the honest ones too would be churn in the journal a human
+    greps.
+
+    Args:
+        count: Markers observed, or None when the journal could not be read.
+        capped: Whether the read stopped at its cap rather than at the data.
+
+    Returns:
+        A log-ready string: ``"at least 100 (read cap)"`` when capped, otherwise
+        the plain value.
+    """
+    if count is not None and capped:
+        return f"at least {count} (read cap)"
+    return str(count)
 
 
 def pruneRestartHistory(
@@ -296,6 +451,8 @@ def decideAction(
     restartHistory: Sequence[float],
     policy: WatchdogPolicy,
     markerPresentSince: float | None = None,
+    journalTimedOut: bool = False,
+    errorCountCapped: bool = False,
 ) -> WatchdogDecision:
     """Decide whether this tick should restart the kiosk.
 
@@ -309,6 +466,15 @@ def decideAction(
         now: Current epoch seconds.
         restartHistory: Prior restart-attempt epochs (unpruned is fine).
         policy: Thresholds in force.
+        markerPresentSince: Start of the current unbroken run of marker-present
+            ticks, or None.
+        journalTimedOut: Whether the journal read ran out of time rather than
+            failing outright. Same action, DIFFERENT reason (US-644-a).
+        errorCountCapped: Whether ``errorCount`` is a lower bound rather than a
+            magnitude (US-644-b). Carried for LOGGING only -- it must never
+            reach a comparison below, because the cap is an I/O bound and not a
+            verdict (US-561), and a test pins that this function still compares
+            the count against nothing but zero.
 
     Returns:
         The decision, carrying the reason + observed count for logging.
@@ -326,6 +492,7 @@ def decideAction(
             restartsInWindow=restartsInWindow,
             wedged=wedged,
             dwellSeconds=dwellSeconds,
+            errorCountCapped=errorCountCapped,
         )
 
     # Rule 1: never touch a kiosk that is not running. `systemctl restart` on
@@ -335,8 +502,15 @@ def decideAction(
         return noop(REASON_KIOSK_INACTIVE)
 
     # Rule 2: no evidence is not evidence of a wedge.
+    #
+    # US-644-a splits the ONE way this used to be reported into two. Both are
+    # no-ops -- absence of evidence still never justifies a restart -- but a
+    # journal that will not READ is an uncertain tick, while a journal read
+    # that will not FINISH is a broken detector, and only the second one is
+    # something a human has to go and fix. Reporting them identically is how a
+    # panel stayed frozen for 7h27m behind a stream of INFO no-ops.
     if errorCount is None:
-        return noop(REASON_JOURNAL_UNREADABLE)
+        return noop(REASON_JOURNAL_TIMEOUT if journalTimedOut else REASON_JOURNAL_UNREADABLE)
 
     # Rule 7 (US-561): MEASURED ZERO is the only healthy verdict.
     #
@@ -378,6 +552,7 @@ def decideAction(
         restartsInWindow=restartsInWindow,
         wedged=True,
         dwellSeconds=dwellSeconds,
+        errorCountCapped=errorCountCapped,
     )
 
 
@@ -445,13 +620,36 @@ def countWedgeMarkers(
     cap: int,
     marker: str = WEDGE_MARKER,
     runFn: Callable[..., subprocess.CompletedProcess] = subprocess.run,
-) -> int | None:
+    journalGlobs: Sequence[str] = _ACTIVE_JOURNAL_GLOBS,
+) -> JournalReading:
     """Count wedge markers in a unit's journal since an instant.
+
+    SCOPED TO THE CURRENT BOOT (``-b``), and that is US-644-b's fix. This query
+    used to carry ``--since=@<epoch>`` and nothing else, and PM measured the
+    consequence live on 2026-08-30 22:09: the previous boot held 44,991 markers,
+    the CURRENT boot held zero, and the watchdog reported "100 markers", dwelled
+    its full 60s and RESTARTED A KIOSK WHOSE OWN BOOT HAD NONE. That firing was
+    a false positive.
+
+    ``--since`` could not have prevented it at any width, which is why the fix
+    is not a narrower window. ``--since`` is a TIME filter, and this Pi's RTC
+    starts at 1970 and is then stepped by NTP (A-23) -- before the step the box
+    is running on the PREVIOUS BOOT'S restored shutdown time, so ``now - 60s``
+    lands inside the final seconds of that boot, which is precisely where the
+    storm was densest. A TIME WINDOW DOES NOT ISOLATE A BOOT; ``-b`` does. Same
+    root, third surface: this is the defect that also mislabelled drives 45/46
+    as concurrent.
+
+    ``--since`` STAYS, added to rather than replaced. It is never-flap Rule 3 --
+    the window must not reach back past the last restart ATTEMPT, which is a
+    within-boot fence and something ``-b`` cannot express. The two filter
+    different axes and the tick needs both.
 
     The count is CAPPED at ``cap`` lines: a live wedge emits ~500 markers a
     second, so an uncapped read would pull megabytes per tick off a Pi whose
     CPU is already pegged by the wedge. The caller only needs "at least the
-    threshold", so pass ``threshold + 1``.
+    threshold", so pass ``threshold + 1``. A count that REACHES the cap is
+    therefore a floor and the reading says so -- see ``JournalReading.capped``.
 
     Args:
         unitName: systemd unit whose journal to read.
@@ -459,15 +657,21 @@ def countWedgeMarkers(
         cap: Maximum lines to retrieve.
         marker: Substring journalctl greps for.
         runFn: Injection seam for subprocess.run.
+        journalGlobs: Where the readability probe looks for journald's active
+            journal file; injected only so tests need no real journal.
 
     Returns:
-        Marker count (0 == readable and clean), or None if the journal could
-        not be read at all -- an honest "unknown", never a silent 0.
+        A :class:`JournalReading`: a count (0 == readable and clean), an honest
+        "unreadable", or a "timed out" -- three states, never collapsed into
+        one, because the tick has to report them differently (US-644-a).
     """
     argv = [
         "journalctl",
         "-u",
         unitName,
+        # US-644-b. The boot fence, and it is FIRST among the filters because it
+        # is the only one that is true independently of what the clock says.
+        "-b",
         f"--since=@{int(sinceEpoch)}",
         f"--grep={marker}",
         f"--lines={cap}",
@@ -482,9 +686,21 @@ def countWedgeMarkers(
             timeout=_COMMAND_TIMEOUT_SECONDS,
             check=False,
         )
+    except subprocess.TimeoutExpired:
+        # US-644-a. NOT "unreadable". The journal may be perfectly readable and
+        # this query simply could not finish -- which is a fault in the
+        # detector, and the caller escalates it as one.
+        logger.error(
+            "kiosk-watchdog: the '%s' marker query did not finish within %ss -- the "
+            "DETECTOR is faulty, not the display. This tick observed NOTHING; do not "
+            "read it as a healthy kiosk.",
+            marker,
+            _COMMAND_TIMEOUT_SECONDS,
+        )
+        return JournalReading.timeout()
     except (OSError, subprocess.SubprocessError) as exc:
         logger.warning("kiosk-watchdog: journal unreadable (%s: %s)", type(exc).__name__, exc)
-        return None
+        return JournalReading.unreadable()
 
     stdout = completed.stdout or ""
 
@@ -497,16 +713,23 @@ def countWedgeMarkers(
         # working one. The fix MEASURES readability instead of inferring it
         # from an exit code: if the journal reads fine and the grep printed
         # nothing, the zero is real.
-        if not stdout.strip() and journalIsReadable(runFn=runFn):
-            return 0
+        if not stdout.strip():
+            verdict = probeJournal(runFn=runFn, journalGlobs=journalGlobs)
+            if verdict == PROBE_READABLE:
+                return JournalReading(count=0)
+            if verdict == PROBE_TIMED_OUT:
+                return JournalReading.timeout()
         logger.warning(
             "kiosk-watchdog: journalctl exited %s and the journal does not read -- "
             "treating the count as unreadable (not as a clean zero)",
             completed.returncode,
         )
-        return None
+        return JournalReading.unreadable()
 
-    return sum(1 for line in stdout.splitlines() if line.strip())
+    count = sum(1 for line in stdout.splitlines() if line.strip())
+    # US-644-b. `>=` rather than `==`: the flag's job is "this number is a
+    # FLOOR", and any read that met or exceeded its own ceiling is one.
+    return JournalReading(count=count, capped=count >= cap)
 
 
 def unitIsActive(
@@ -581,37 +804,132 @@ def restartUnit(
     return True
 
 
-def journalIsReadable(
-    runFn: Callable[..., subprocess.CompletedProcess] = subprocess.run,
-) -> bool:
-    """Probe whether this process can read the journal AT ALL.
+def activeJournalFile(journalGlobs: Sequence[str] = _ACTIVE_JOURNAL_GLOBS) -> str | None:
+    """Locate journald's ACTIVE system journal, or None if there is none.
 
-    Deliberately UNFILTERED -- no ``-u``, no ``--grep``. The question is "does
-    the journal read", and a unit-scoped probe would answer it wrongly for a
-    unit that simply has no entries yet. One line is enough to settle it.
+    The glob order IS the preference order (see ``_ACTIVE_JOURNAL_GLOBS``): the
+    volatile root wins, because when journald is writing there a ``/var`` file
+    is a leftover from a previous configuration and answering "can I read the
+    journal" against it would answer about the wrong journal.
+
+    Discovered rather than hardcoded: the directory in between is the
+    machine-id, which differs per Pi image.
+
+    WITHIN a root, the most recently written file wins. A reimage that
+    regenerates /etc/machine-id while /var survives leaves two machine-id
+    directories, and only one of them is still being appended to. Taking the
+    alphabetically first would point the probe at an ABANDONED journal, which
+    would answer "readable" on a box whose live journal is broken -- and
+    ``countWedgeMarkers`` turns a readable probe into a clean ZERO, i.e. it
+    would report a wedged panel as healthy. That is the one direction this
+    function must not fail in.
+
+    Args:
+        journalGlobs: Patterns to try, most-preferred first.
+
+    Returns:
+        Path to the active system journal, or None when nothing matches.
+    """
+    for pattern in journalGlobs:
+        stamped: list[tuple[float, str]] = []
+        for path in glob.glob(pattern):
+            try:
+                stamped.append((os.stat(path).st_mtime, path))
+            except OSError:
+                # Journald rotating underneath the glob. DEFENCE IN DEPTH, and
+                # stated as such rather than dressed up as a covered path: the
+                # race cannot be staged from outside this function, so no test
+                # exercises this line. It is here because a watchdog that
+                # crashes reports nothing at all.
+                continue
+        if stamped:
+            return max(stamped)[1]
+    return None
+
+
+def probeJournal(
+    *,
+    runFn: Callable[..., subprocess.CompletedProcess] = subprocess.run,
+    journalGlobs: Sequence[str] = _ACTIVE_JOURNAL_GLOBS,
+) -> str:
+    """Probe whether this process can read the journal AT ALL, in BOUNDED time.
+
+    US-644-a, and the scoping is the whole fix. This probe used to run a plain
+    ``journalctl --lines=1``, which opens and merges EVERY journal file on the
+    box -- every archived rotation of every previous boot. That cost grows with
+    uptime, so the probe SUCCEEDED on a young journal and TIMED OUT on a grown
+    one: an intermittent detector, which is worse than a dead one because its
+    successes make it look trustworthy. Atlas measured it blowing the 20s
+    budget against a 6M-entry journal on 2026-08-30, while PM watched the same
+    probe answer fine ~90 minutes earlier on the same boot.
+
+    ``--file=`` pins the read to the ONE active journal file, whose size
+    journald itself caps (``SystemMaxFileSize``). The probe's runtime therefore
+    stops depending on how much journal has accumulated. Widening the timeout
+    would have left the unbounded read in place and only moved the failure to a
+    larger journal.
+
+    ``--file=`` does not weaken the privilege question this probe exists to
+    answer: the journal files are ``root:systemd-journal``, and the unit's
+    ``SupplementaryGroups=systemd-journal`` is what grants the read either way.
+    A revoked grant still shows up here as UNREADABLE.
+
+    Still deliberately UNFILTERED by unit and by ``--grep``: the question is
+    "does the journal read", and a unit-scoped probe would answer it wrongly
+    for a unit that simply has no entries yet (US-561 defect 3b).
 
     Only ever called on ``countWedgeMarkers``' failure path, so a healthy tick
     still costs exactly one journalctl.
 
     Args:
         runFn: Injection seam for subprocess.run.
+        journalGlobs: Where to look for the active journal file.
 
     Returns:
-        Whether journalctl returned a line.
+        One of ``PROBE_READABLE``, ``PROBE_UNREADABLE``, ``PROBE_TIMED_OUT``.
     """
-    argv = ["journalctl", "--lines=1", "--no-pager", "--output=cat"]
+    journalFile = activeJournalFile(journalGlobs)
+    if journalFile is None:
+        # NO unscoped fallback. Reinstating `journalctl --lines=1` here would
+        # reinstate the unbounded scan on exactly the box most likely to need
+        # the bound. And if neither storage root holds an active journal there
+        # is nothing to read, so "unreadable" is the honest answer -- reached
+        # immediately instead of after a 20s hang.
+        logger.warning(
+            "kiosk-watchdog: no active journal file under %s -- reporting the journal "
+            "as unreadable rather than falling back to an unbounded read",
+            ", ".join(journalGlobs),
+        )
+        return PROBE_UNREADABLE
+
+    argv = [
+        "journalctl",
+        f"--file={journalFile}",
+        "--lines=1",
+        "--no-pager",
+        "--output=cat",
+    ]
     try:
         completed = runFn(
             argv,
             capture_output=True,
             text=True,
-            timeout=_COMMAND_TIMEOUT_SECONDS,
+            timeout=_PROBE_TIMEOUT_SECONDS,
             check=False,
         )
+    except subprocess.TimeoutExpired:
+        logger.error(
+            "kiosk-watchdog: the readability probe did not finish within %ss even scoped "
+            "to a single journal file (%s) -- that is a FAULT in the watchdog itself, not "
+            "a report about the display.",
+            _PROBE_TIMEOUT_SECONDS,
+            journalFile,
+        )
+        return PROBE_TIMED_OUT
     except (OSError, subprocess.SubprocessError) as exc:
         logger.warning("kiosk-watchdog: journal readability probe failed (%s)", exc)
-        return False
-    return completed.returncode == 0
+        return PROBE_UNREADABLE
+    return PROBE_READABLE if completed.returncode == 0 else PROBE_UNREADABLE
 
 
 def _asEpoch(value: object) -> float | None:
@@ -708,7 +1026,7 @@ def runOnce(
     policy: WatchdogPolicy,
     unitName: str,
     isActiveFn: Callable[[str], bool],
-    errorCountFn: Callable[[str, float], int | None],
+    errorCountFn: Callable[[str, float], JournalReading],
     restartFn: Callable[[str], bool],
     readLedgerFn: Callable[[], LedgerState],
     writeLedgerFn: Callable[[LedgerState], bool],
@@ -720,7 +1038,7 @@ def runOnce(
         policy: Thresholds in force.
         unitName: Kiosk unit to guard.
         isActiveFn: Unit-active probe.
-        errorCountFn: ``(unitName, sinceEpoch) -> count | None`` journal probe.
+        errorCountFn: ``(unitName, sinceEpoch) -> JournalReading`` journal probe.
         restartFn: Restart action.
         readHistoryFn: Restart-ledger reader.
         writeHistoryFn: Restart-ledger writer, returning success.
@@ -733,12 +1051,13 @@ def runOnce(
     active = isActiveFn(unitName)
 
     ledger = LedgerState.empty()
-    errorCount: int | None = None
+    reading = JournalReading(count=None)
     if active:
         ledger = readLedgerFn()
         sinceEpoch = journalWindowStart(now, ledger.restartAttempts, policy.windowSeconds)
-        errorCount = errorCountFn(unitName, sinceEpoch)
+        reading = errorCountFn(unitName, sinceEpoch)
 
+    errorCount = reading.count
     history = ledger.restartAttempts
     markerPresentSince = updatedPresenceClock(ledger.markerPresentSince, errorCount, now)
 
@@ -749,6 +1068,8 @@ def runOnce(
         restartHistory=history,
         markerPresentSince=markerPresentSince,
         policy=policy,
+        journalTimedOut=reading.timedOut,
+        errorCountCapped=reading.capped,
     )
 
     def outcomeOf(reason: str, *, restarted: bool, restartsInWindow: int) -> WatchdogOutcome:
@@ -760,7 +1081,12 @@ def runOnce(
             maxRestartsPerHour=policy.maxRestartsPerHour,
             wedged=decision.wedged,
             dwellSeconds=decision.dwellSeconds,
+            errorCountCapped=decision.errorCountCapped,
         )
+
+    # US-644-b: every line below that names a count renders it through this, so
+    # a saturated read can never print as a magnitude.
+    markers = formatMarkerCount(decision.errorCount, capped=decision.errorCountCapped)
 
     if decision.action != ACTION_RESTART:
         # The dwell lives in the ledger, so a clock change has to survive the
@@ -773,7 +1099,7 @@ def runOnce(
                 "kiosk-watchdog: %s reported %s '%s' markers but the ledger is unwritable -- "
                 "the wedge clock cannot advance, so this tick is UNCERTAIN, not healthy",
                 unitName,
-                decision.errorCount,
+                markers,
                 WEDGE_MARKER,
             )
             return outcomeOf(
@@ -800,7 +1126,7 @@ def runOnce(
             "restart ledger is unwritable -- refusing to restart, because an unrecorded "
             "restart cannot be rate-limited",
             unitName,
-            decision.errorCount,
+            markers,
             WEDGE_MARKER,
             decision.dwellSeconds or 0.0,
         )
@@ -816,7 +1142,7 @@ def runOnce(
         "(attempt %s of %s this hour, %s left). US-522 was supposed to remove this failure "
         "class: a restart here means it is still live.",
         unitName,
-        decision.errorCount,
+        markers,
         WEDGE_MARKER,
         decision.dwellSeconds or 0.0,
         restartsInWindow,
@@ -851,6 +1177,10 @@ def _budgetPhrase(decision: WatchdogDecision, policy: WatchdogPolicy) -> str:
 def _logNoop(decision: WatchdogDecision, unitName: str, policy: WatchdogPolicy) -> None:
     """Log a no-op tick at the level its reason deserves."""
     budget = _budgetPhrase(decision, policy)
+    # US-644-b. The no-action paths are the ones a human actually scans -- a
+    # wedge emits many "not yet sustained" lines per restart line -- so a
+    # saturated count must be honest HERE too, not only at the restart.
+    markers = formatMarkerCount(decision.errorCount, capped=decision.errorCountCapped)
 
     if decision.reason == REASON_BUDGET_EXHAUSTED:
         logger.error(
@@ -858,7 +1188,7 @@ def _logNoop(decision: WatchdogDecision, unitName: str, policy: WatchdogPolicy) 
             "budget is spent (%s) -- NOT restarting. The freeze class is live; this needs "
             "a human, not another restart.",
             unitName,
-            decision.errorCount,
+            markers,
             WEDGE_MARKER,
             decision.dwellSeconds or 0.0,
             budget,
@@ -869,10 +1199,23 @@ def _logNoop(decision: WatchdogDecision, unitName: str, policy: WatchdogPolicy) 
             "kiosk-watchdog: %s is WEDGED (%s '%s' sustained %.0fs) but the %ss cooldown "
             "from the last restart has not elapsed -- holding off; %s",
             unitName,
-            decision.errorCount,
+            markers,
             WEDGE_MARKER,
             decision.dwellSeconds or 0.0,
             policy.cooldownSeconds,
+            budget,
+        )
+        return
+    if decision.reason == REASON_JOURNAL_TIMEOUT:
+        # US-644-a. The shipped line for this tick was
+        # `INFO ... no action (journal_unreadable; markers=None)` -- routine,
+        # reassuring, and emitted while the watchdog was blind. Say what
+        # actually happened, at a level that is looked at.
+        logger.error(
+            "kiosk-watchdog: the journal read for %s did NOT COMPLETE in time -- this "
+            "tick observed nothing and is NOT a health report. The watchdog is blind "
+            "until this is fixed; a frozen panel would go unnoticed. %s",
+            unitName,
             budget,
         )
         return
@@ -883,7 +1226,7 @@ def _logNoop(decision: WatchdogDecision, unitName: str, policy: WatchdogPolicy) 
             "kiosk-watchdog: %s is NOT healthy -- %s '%s' markers present for %.0fs of the "
             "%ss needed to call it wedged. Healthy is measured ZERO; this is not zero. %s",
             unitName,
-            decision.errorCount,
+            markers,
             WEDGE_MARKER,
             decision.dwellSeconds or 0.0,
             policy.wedgeDwellSeconds,
@@ -899,14 +1242,14 @@ def _logNoop(decision: WatchdogDecision, unitName: str, policy: WatchdogPolicy) 
             "kiosk-watchdog: no action (%s; markers=%s) but the display has already "
             "self-healed this hour -- %s",
             decision.reason,
-            decision.errorCount,
+            markers,
             budget,
         )
         return
     logger.info(
         "kiosk-watchdog: no action (%s; markers=%s, %s)",
         decision.reason,
-        decision.errorCount,
+        markers,
         budget,
     )
 

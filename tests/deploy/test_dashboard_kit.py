@@ -1722,6 +1722,155 @@ def test_deployPi_documentsChromiumDDeployBlindSpot_us522():
 
 
 # ---------------------------------------------------------------------------
+# US-647 (F-139) -- the X11 kiosk DECLINES GPU RASTERIZATION. A STOPGAP.
+#
+# Raspberry Pi OS turns GPU rasterization ON for every chromium on the box
+# (`/etc/chromium.d/default-flags:7` exports `--enable-gpu-rasterization`) and
+# nothing in this repo turned it off. Measured independently by Atlas and PM on
+# 2026-08-30: the RUNNING process carried it. On a static 2D card UI at 480x320
+# that is pressure we have no use for, and the previous boot logged 44,991
+# `AllocateRingBuffer` markers.
+#
+# WHAT THESE GUARDS DO AND DO NOT CLAIM -- read this before extending them.
+# They pin ONE FLAG'S PRESENCE ON ONE UNIT. They do NOT claim the marker rate
+# dropped, and they do NOT claim the flag TOOK EFFECT:
+#
+#   PRESENCE IN ARGV IS NOT PRECEDENCE (Atlas design gate GAP 1, 2026-08-31).
+#   The OS injects `--enable-gpu-rasterization` and we add
+#   `--disable-gpu-rasterization`; BOTH are then present and they CONTRADICT
+#   each other. The familiar "the wrapper's flags land first and our argv lands
+#   last, so ours wins" argument DOES NOT REACH THIS CASE -- last-one-wins
+#   settles repeats of the SAME switch name, and these are two DIFFERENT switch
+#   names. Which one prevails is decided inside chromium, and Atlas grepped the
+#   boot journal for GPU feature status: NOTHING IS LOGGED, so it is not
+#   observable on this box today.
+#
+# Effectiveness is therefore a bigDefinitionOfDone item owned by the CIO, NOT
+# something this file can close. The failure mode that ordering prevents: the
+# flag lands, markers do not move, and we conclude "GPU raster was not the
+# cause" when the flag may never have taken effect -- a wrong conclusion that
+# would then justify the Ozone migration FOR THE WRONG REASON. US-522 is the
+# same shape and is why the whole sprint exists: it shipped its RATIONALE and
+# not its FLAG, and the rationale was read for weeks as evidence of a fix.
+#
+# EXPIRY: this flag is X11-scoped and X11 is retired by the Ozone migration
+# (F-139). It is REMOVED when Ozone lands. The variant census below is the
+# mechanical half of that -- a new unit variant cannot silently inherit the
+# stopgap, because adding one turns the census red and forces the decision.
+# ---------------------------------------------------------------------------
+
+_GPU_RASTER_DISABLE_FLAG = "--disable-gpu-rasterization"
+_X11_UNIT = "dashboard.service.x11"
+_WAYLAND_UNIT = "dashboard.service.wayland"
+
+
+def test_dashboardUnitVariantCensus_us647():
+    """The stopgap is scoped PER VARIANT, so the variant list must be a census.
+
+    Every US-647 guard below names one unit explicitly rather than looping. That
+    is correct -- the flag belongs on X11 and nowhere else -- but it is also the
+    shape that goes quietly stale: add a third variant (the Ozone unit this
+    stopgap expires against) and every guard below still passes while saying
+    nothing at all about it.
+
+    So the two names are reconciled against `_DASHBOARD_UNITS` here. A new
+    variant fails THIS test, which is the EXPIRY clause made mechanical: the
+    Ozone unit cannot inherit an X11 stopgap by default, somebody has to decide.
+    """
+    assert {_X11_UNIT, _WAYLAND_UNIT} == set(_DASHBOARD_UNITS), (
+        "a dashboard unit variant was added or renamed. The US-647 guards below "
+        "are per-variant and now cover an incomplete set -- decide explicitly "
+        "whether the X11 GPU-rasterization stopgap applies to the new variant "
+        "(it expires with X11; see the EXPIRY note above), then update this census"
+    )
+
+
+def test_dashboardX11_declinesGpuRasterization_us647():
+    """US-647 END STATE: `--disable-gpu-rasterization` is on the X11 ExecStart.
+
+    NOTE THE LIMIT OF THIS ASSERTION -- it is presence, not effect. It cannot
+    and must not be read as "the freeze is fixed"; see the section header.
+    """
+    flags = _execStartFlags(_read(KIT_DIR, _X11_UNIT))
+    assert _GPU_RASTER_DISABLE_FLAG in flags, (
+        f"{_X11_UNIT}: ExecStart must carry {_GPU_RASTER_DISABLE_FLAG} to override "
+        "the OS-injected --enable-gpu-rasterization (/etc/chromium.d/default-flags)"
+    )
+
+
+def test_dashboardX11_declinedRasterIsNotTheGpuKillSwitch_us647():
+    """The two flags asserted TOGETHER, on one pass -- the mutation that matters.
+
+    `--disable-gpu-rasterization` declines ONE JOB; `--disable-gpu` takes the
+    whole hardware-GL path out and is a settled architecture call the CIO ruled
+    AGAINST (US-536 disposition B). The realistic failure is not someone typing
+    the wrong flag from scratch -- it is someone chasing this same freeze later,
+    reading the US-522 rationale still sitting in the unit header, and
+    "strengthening" the narrow flag into the broad one. That reintroduces the
+    error:5 crash class US-536 was created to remove.
+
+    `test_dashboardUnits_keepTheGpuOn_us536` already forbids the broad flag on
+    both variants; this is not a duplicate of it. It couples the two facts so
+    the widening reads as ONE edit that breaks ONE test with the trade spelled
+    out, instead of a passing swap plus a separate absence test failing for
+    reasons the editor has to go and reconstruct.
+    """
+    flags = _execStartFlags(_read(KIT_DIR, _X11_UNIT))
+    assert _GPU_RASTER_DISABLE_FLAG in flags, f"{_X11_UNIT}: lost the US-647 override"
+    assert _GPU_DISABLE_FLAG not in flags, (
+        f"{_X11_UNIT}: {_GPU_RASTER_DISABLE_FLAG} must NOT be widened to "
+        f"{_GPU_DISABLE_FLAG}. Declining GPU rasterization is not disabling the "
+        "GPU -- the broad flag reopens the settled US-536 disposition-B call"
+    )
+
+
+def test_dashboardWayland_doesNotInheritTheX11Stopgap_us647():
+    """The discriminating partner: the flag is X11-ONLY, and that is deliberate.
+
+    Without this, an edit that pasted the flag onto BOTH units would pass every
+    other guard here. That edit is the specific way a stopgap becomes permanent:
+    US-647 is throwaway work against a stack the Ozone migration retires, and
+    copying it onto the WAYLAND unit carries it straight past its own expiry
+    into the stack meant to replace it -- inherited rather than revisited, which
+    is exactly how the dead US-522 comment block got where it is.
+
+    This is NOT a ruling that Wayland should keep GPU rasterization on. It is a
+    fence that makes the Ozone migration DECIDE instead of inherit.
+    """
+    flags = _execStartFlags(_read(KIT_DIR, _WAYLAND_UNIT))
+    assert _GPU_RASTER_DISABLE_FLAG not in flags, (
+        f"{_WAYLAND_UNIT}: the US-647 GPU-rasterization override is an X11 STOPGAP "
+        "and expires with X11. Do not inherit it onto the Ozone/Wayland stack -- "
+        "if Wayland needs it, that is a new decision with its own evidence"
+    )
+
+
+def test_dashboardX11_keepsTheStderrLogChannelOpen_us647():
+    """US-647's DoD is EFFECTIVENESS, and this is the only channel left for it.
+
+    Confirming the override actually took effect needs the browser's own GPU
+    feature status. The two routes named are chrome://gpu via the DevTools port,
+    or a startup log. THE DEVTOOLS ROUTE IS FENCED IN THIS VERY FILE
+    (`test_dashboardUnits_carryNoRemoteDebuggingPort_us522`) because an open
+    port on a car-mounted kiosk is unauthenticated full-page control. So the
+    stderr->journal channel is the only one available.
+
+    ARCH-014 put `--enable-logging=stderr --log-level=0` on this unit (commit
+    ec4c21f0) so UI exceptions reach the journal. It is pinned here as well
+    because US-647's verification now depends on it too: silence in the journal
+    has to mean "chromium said nothing", never "we were not listening". Those
+    are different facts and only one of them is evidence.
+    """
+    flags = _execStartFlags(_read(KIT_DIR, _X11_UNIT))
+    assert "--enable-logging=stderr" in flags, (
+        f"{_X11_UNIT}: lost the ARCH-014 stderr channel. Without it the journal "
+        "cannot distinguish 'chromium reported nothing about GPU rasterization' "
+        "from 'nothing was capturing chromium's output' -- and the DevTools "
+        "alternative is fenced as a kiosk security surface"
+    )
+
+
+# ---------------------------------------------------------------------------
 # US-522 (reopen 2026-08-03) -- kiosk keyring popup (Atlas live-tested).
 #
 # With no `--password-store`, chromium AUTO-DETECTS a Linux backend and picks the
@@ -1740,9 +1889,16 @@ def test_deployPi_documentsChromiumDDeployBlindSpot_us522():
 #   (and sufficient) place for the fix. The splash's latent exposure is filed as
 #   tech debt rather than silently fixed here -- it is a different unit template.
 #
-# The fix's EFFECT is also observable in the journal once applied (Atlas's live
-# run carried `--enable-logging=stderr`, which the repo deliberately does not):
+# The fix's EFFECT is also observable in the journal once applied:
 #   key_storage_linux.cc:116  Selected backend for OSCrypt: BASIC_TEXT
+# (This parenthetical used to read "which the repo deliberately does not" of
+# `--enable-logging=stderr`. That went stale: ARCH-014 (ec4c21f0) put
+# `--enable-logging=stderr --log-level=0` on the X11 unit so UI exceptions reach
+# the journal, so the channel IS open there -- corrected under US-647, which
+# depends on that same channel being the only route left to its own DoD. The
+# flag it is NOT safe to adopt from Atlas's live run remains
+# `--remote-debugging-port`; that distinction is the point of the paragraph and
+# is fenced by test_dashboardUnits_carryNoRemoteDebuggingPort_us522 below.)
 # `basic` keeps the safe-storage key in chromium's own profile -- and this kiosk's
 # profile is a WIPED `/tmp/dashboard-chromium` that stores no real password, so
 # there is no meaningful security downgrade.
@@ -1845,3 +2001,307 @@ def test_dashboardUnits_carryNoRemoteDebuggingPort_us522():
         flags = _execStartFlags(_read(KIT_DIR, variant))
         offenders = [f for f in flags if f.startswith("--remote-debugging-")]
         assert offenders == [], f"{variant}: kiosk must not expose DevTools ({offenders!r})"
+
+
+# ---------------------------------------------------------------------------
+# US-648 (F-139) -- THE UNIT HEADERS MUST NOT ASSERT FLAGS THEY DO NOT CARRY.
+#
+# MEASURED (Atlas, confirmed independently by PM 2026-08-30): `--disable-gpu`
+# appeared ONLY on comment lines of `dashboard.service.x11` (19, 33, 35, 38).
+# Zero executable occurrences. The block argued in detail for `--disable-gpu`
+# over the narrower `--disable-gpu-rasterization`, quoted a composed cmdline
+# that supposedly contained it, and cited a 12-SECOND live probe as evidence it
+# worked. US-522 SHIPPED ITS RATIONALE AND NOT ITS FLAG -- and the rationale was
+# then read for weeks as evidence the freeze had been fixed. THE PRESENCE OF A
+# RATIONALE IS EVIDENCE ABOUT INTENT, NEVER ABOUT ENFORCEMENT.
+#
+# WHY THE GUARD IS A CENSUS AND NOT A STRING SEARCH FOR `--disable-gpu`. Pinning
+# the one flag that was caught would close this instance and nothing else -- and
+# the same header held a SECOND, independently-introduced instance of the same
+# species: a parenthetical disowning `--enable-logging=stderr` as "deliberately
+# NOT adopted here" that went stale when ARCH-014 (ec4c21f0) put that very flag
+# on the X11 ExecStart. One defect drifted comment-toward-absent, the other
+# ExecStart-toward-present. A guard aimed at `--disable-gpu` sees neither shape
+# again. So the rule generalises: EVERY switch a unit's comments NAME must be
+# either ON that unit's ExecStart, or listed in that unit's own `NOT APPLIED:`
+# register with a reason.
+#
+# THE REGISTER LIVES IN THE UNIT FILE, NOT IN THIS TEST, AND THAT IS THE WHOLE
+# POINT. A register declared here would be a second copy of the truth, free to
+# drift from the file it describes -- which is the exact defect US-648 exists to
+# repair, rebuilt one layer up. The unit is the SSOT; this file only reconciles
+# it, in BOTH directions:
+#   comments -> ExecStart : a flag named above but neither applied nor declared
+#                           absent is an unbacked assertion (the US-648 defect).
+#   register -> ExecStart : a flag declared absent that is actually applied is
+#                           the INVERSE lie (the stale `--enable-logging` shape).
+#
+# EXPIRY NOTE: unlike the US-647 stopgap above, this guard does NOT expire with
+# X11. It is about what a unit header may claim, and the Ozone unit will have a
+# header too. It loops `_DASHBOARD_UNITS`, so a new variant is covered the day
+# it is added rather than needing to be remembered.
+# ---------------------------------------------------------------------------
+
+_NOT_APPLIED_MARKER = "NOT APPLIED:"
+_COMMENTED_FLAG_RE = re.compile(r"(?<![\w-])--([a-z][a-z0-9-]{2,})")
+_NOT_APPLIED_RE = re.compile(
+    rf"{_NOT_APPLIED_MARKER}\s*(--[a-z][a-z0-9-]{{2,}})\s+--\s+(\S.*)$"
+)
+
+
+def _commentedFlags(unit: str) -> set[str]:
+    """Every switch NAME named in a unit's COMMENT lines, values stripped.
+
+    The mirror image of `_execStartFlags`: that one reads ONLY executable lines,
+    this one reads ONLY comment lines, and US-648 is the discrepancy between
+    them. Names are returned WITHOUT `=value` because a comment discussing
+    `--password-store` and an ExecStart carrying `--password-store=basic` are
+    talking about the same switch; the VALUE is already guarded, by name, in
+    `test_dashboardUnits_neverSelectKeyringBackedPasswordStore_us522`.
+
+    The `(?<![\\w-])` lookbehind is load-bearing. These headers use ` -- ` as an
+    em-dash on almost every line, and a run of hyphens in a rule line would
+    otherwise read as a flag named `-...`. Requiring 3+ characters after `--`
+    and a non-word, non-hyphen character before it keeps prose out.
+    """
+    flags: set[str] = set()
+    for raw in unit.splitlines():
+        line = raw.strip()
+        if not line.startswith("#"):
+            continue
+        flags.update(f"--{m.group(1)}" for m in _COMMENTED_FLAG_RE.finditer(line))
+    return flags
+
+
+def _notAppliedRegister(unit: str) -> dict[str, str]:
+    """Flags the unit's OWN header declares as absent from its ExecStart.
+
+    Parsed out of the unit rather than declared in this file -- see the section
+    header. Returns flag -> the first line of its stated reason; a bare mention
+    of a flag is NOT a register entry, only a `NOT APPLIED: --flag -- reason`
+    line is. That distinction is what stops the register from being satisfied by
+    the same loose prose it exists to replace.
+    """
+    register: dict[str, str] = {}
+    for raw in unit.splitlines():
+        line = raw.strip()
+        if not line.startswith("#"):
+            continue
+        found = _NOT_APPLIED_RE.search(line)
+        if found:
+            register[found.group(1)] = found.group(2).strip()
+    return register
+
+
+def test_commentFlagParsersSelfTest_us648():
+    """Both US-648 parsers fed known-bad input, because BOTH fail silently.
+
+    This census asserts an ABSENCE of discrepancy, so every way a parser can
+    return nothing is a way it reports "clean" forever (US-513/US-548). Two
+    independent vacuity holes exist here and each needs its own control:
+    a `_commentedFlags` that stopped matching makes the forward direction
+    vacuous, and a `_notAppliedRegister` that stopped matching makes the reverse
+    direction vacuous while ALSO turning the forward direction into a guard that
+    is impossible to satisfy. They fail in opposite directions, so neither one
+    covers for the other.
+    """
+    # Comment lines are read; executable lines are NOT (the mirror of the
+    # US-522 parser's trap, inverted -- here an ExecStart flag must not be
+    # mistaken for a documented one, or the census would always reconcile).
+    assert _commentedFlags("# see --disable-gpu\nExecStart=/bin/x --kiosk http://h/\n") == {
+        "--disable-gpu"
+    }
+    # Values are stripped to the switch NAME.
+    assert _commentedFlags("#   --password-store=basic is pinned\n") == {"--password-store"}
+    # PROSE MUST NOT REGISTER AS FLAGS. This is the realistic false positive:
+    # these headers are written with ` -- ` em-dashes and rule lines throughout.
+    assert _commentedFlags("# US-522 -- the flag -- see below\n# ------------------\n") == set()
+    assert _commentedFlags("#\n# plain english, no switches at all\n") == set()
+    # A register entry is a MARKED line, not a mention.
+    assert _notAppliedRegister("#   NOT APPLIED: --disable-gpu -- US-536 ruled it out\n") == {
+        "--disable-gpu": "US-536 ruled it out"
+    }
+    assert _notAppliedRegister("#   we do not use --disable-gpu here\n") == {}, (
+        "a bare mention must not count as a declaration -- that would let the "
+        "loose prose US-648 removed satisfy the register that replaced it"
+    )
+    # A marker with no stated reason is not an entry either: "why" is the half
+    # of the record the story asks for, and an unexplained absence is how the
+    # next reader re-opens the settled question.
+    assert _notAppliedRegister("#   NOT APPLIED: --disable-gpu\n") == {}
+    assert _notAppliedRegister("ExecStart=/bin/x  # NOT APPLIED: --a-flag -- nope\n") == {}
+
+
+def test_dashboardUnitsCommentedFlagCensus_us648():
+    """US-648 END STATE: every flag a unit NAMES is applied or declared absent.
+
+    Both directions, per variant. Neither is redundant: the forward direction
+    catches the shipped defect (a header arguing for `--disable-gpu` that no
+    executable line carries), the reverse catches its inverse (a header disowning
+    a flag the ExecStart actually carries, which is how the `--enable-logging`
+    parenthetical went stale under ARCH-014).
+    """
+    for variant in _DASHBOARD_UNITS:
+        unit = _read(KIT_DIR, variant)
+        applied = {token.split("=", 1)[0] for token in _execStartFlags(unit)}
+        documented = _commentedFlags(unit)
+        register = _notAppliedRegister(unit)
+
+        # Anti-vacuity: a census over an empty set is green and worthless.
+        assert documented, f"{variant}: no flags found in comments -- parser rotted?"
+        assert register, (
+            f"{variant}: no NOT APPLIED entries at all. Both shipped variants "
+            "discuss flags they do not carry, so an empty register means the "
+            "marker convention was dropped, not that the file became honest"
+        )
+
+        unbacked = sorted(documented - applied - set(register))
+        assert unbacked == [], (
+            f"{variant}: the header NAMES {unbacked} but the ExecStart does not "
+            "carry them and the NOT APPLIED register does not declare them. This "
+            "is the US-522 defect US-648 exists to repair -- a file arguing for a "
+            "flag that appears in no executable line. Either apply the flag or add "
+            f"`# {_NOT_APPLIED_MARKER} <flag> -- <why>` to the header"
+        )
+
+        contradicted = sorted(set(register) & applied)
+        assert contradicted == [], (
+            f"{variant}: {contradicted} are declared NOT APPLIED but ARE on the "
+            "ExecStart. The register is the file's own claim about itself and it "
+            "is now false -- the same defect in the opposite direction"
+        )
+
+        for flag, reason in register.items():
+            assert len(reason) >= 10, (
+                f"{variant}: {flag} is declared absent without a usable reason "
+                f"({reason!r}). US-648's negative case is explicit -- deleting the "
+                "argument loses the reasoning; record WHAT WAS TRIED and WHY"
+            )
+
+
+def test_dashboardUnits_disableGpuIsDeclaredAbsentNotArguedFor_us648():
+    """The story's own validation criterion, made mechanical, on BOTH variants.
+
+    VC: "grep the unit for --disable-gpu -> every occurrence is consistent with
+    reality". Both units discuss it and NEITHER may carry it, so for both the
+    consistent state is the same one: named in the header, declared in the
+    register, absent from the ExecStart -- asserted here as one fact rather than
+    three that could each pass while the file as a whole still lied.
+
+    The wayland variant is included deliberately. Its header carried the SAME
+    unbacked argument, delegating to the .x11 sibling for the full version, and
+    install.sh promotes ONE of these two files to
+    `/etc/systemd/system/eclipse-dashboard.service` -- so on a Wayland box the
+    sibling IS the SSOT the story names. Repairing only .x11 would have left the
+    lie in the file the Ozone migration inherits.
+    """
+    for variant in _DASHBOARD_UNITS:
+        unit = _read(KIT_DIR, variant)
+        assert _GPU_DISABLE_FLAG in _commentedFlags(unit), (
+            f"{variant}: the header no longer records `{_GPU_DISABLE_FLAG}` at all. "
+            "US-648's negative case forbids silent deletion -- what was tried and "
+            "why it is absent must stay on the record. Neither silence nor a lie"
+        )
+        assert _GPU_DISABLE_FLAG in _notAppliedRegister(unit), (
+            f"{variant}: `{_GPU_DISABLE_FLAG}` is discussed but not declared absent"
+        )
+        assert _GPU_DISABLE_FLAG not in _execStartFlags(unit), (
+            f"{variant}: `{_GPU_DISABLE_FLAG}` must not be ADDED as the repair. "
+            "The CIO ruled 2026-08-30 for the honest fix, not the restorative one, "
+            "and US-536 disposition B keeps the GPU ON"
+        )
+
+
+def test_dashboardX11_keepsTheReasoningItsOwnBlocksCiteBack_us648():
+    """US-648's negative case: neither silence nor a lie -- and the register alone
+    is not enough to avoid the silence.
+
+    Found by a mutant that the other guards MISSED. Deleting the US-522 narrative
+    while KEEPING its `NOT APPLIED:` entry leaves every census green: the flag is
+    still named (the register line names it), still declared absent, still off
+    the ExecStart. But two things the rest of the header CITES BACK TO are gone,
+    and both are load-bearing rather than decorative:
+
+      * THE RCA PATH. The register entry compresses "why" to two lines on the
+        promise that the full diagnosis is one hop away. Without the pointer the
+        entry is an assertion with nothing behind it -- the very shape US-648 is
+        repairing, one level smaller.
+      * THE INJECTION MECHANISM. The US-647 block below says "Do not settle that
+        from the ordering argument recorded ABOVE" and then argues against it.
+        Delete the paragraph it argues against and US-647's reasoning becomes
+        unreadable -- a citation to a deleted paragraph reads as a citation to
+        nothing, which is how the US-522 block itself became untrustworthy.
+
+    This asserts the reasoning is still THERE, not that it is still correct.
+    Prose cannot be diffed; a dangling pointer can be detected.
+    """
+    unit = _read(KIT_DIR, _X11_UNIT)
+    assert "2026-08-02-pi-ui-freeze-chromium-gpu-command-buffer-hotloop.md" in unit, (
+        f"{_X11_UNIT}: lost the Atlas RCA pointer. The `{_GPU_DISABLE_FLAG}` register "
+        "entry defers the full diagnosis to it -- without the pointer the entry is "
+        "an unbacked claim, which is the defect US-648 exists to remove"
+    )
+    for cited in ("/etc/chromium.d/default-flags", "CHROMIUM_FLAGS"):
+        assert cited in unit, (
+            f"{_X11_UNIT}: lost the flag-injection mechanism ({cited}). The US-647 "
+            "block cites it explicitly ('the ordering argument recorded above') in "
+            "order to rule it OUT for its own case; deleting it strands that "
+            "argument and re-opens a question this header already answered"
+        )
+
+
+def test_dashboardX11_doesNotDisownTheStderrChannelItCarries_us648():
+    """The discriminating partner: a flag that IS carried, and must not be disowned.
+
+    Without this, a register listing EVERY flag in sight would satisfy the
+    census's forward direction and read as maximally cautious. It is the same
+    dishonesty pointing the other way, and it is not hypothetical -- this exact
+    header disowned `--enable-logging=stderr` as "deliberately NOT adopted here"
+    while ARCH-014 (ec4c21f0) had it on the ExecStart.
+
+    That flag is the one where the cost is concrete rather than tidiness:
+    US-647's DoD is EFFECTIVENESS, its DevTools route is fenced by
+    `test_dashboardUnits_carryNoRemoteDebuggingPort_us522`, and the journal is
+    silent on GPU feature status -- so stderr is the only channel left. A reader
+    who believed the disowning parenthetical would conclude the last route was
+    closed and stop looking.
+    """
+    unit = _read(KIT_DIR, _X11_UNIT)
+    assert "--enable-logging=stderr" in _execStartFlags(unit), (
+        f"{_X11_UNIT}: lost the ARCH-014 stderr channel (see the US-647 guard)"
+    )
+    assert "--enable-logging" not in _notAppliedRegister(unit), (
+        f"{_X11_UNIT}: the header declares `--enable-logging` NOT APPLIED while "
+        "the ExecStart carries it. That is the stale parenthetical US-648 found "
+        "beside the --disable-gpu block, restored"
+    )
+
+
+def test_dashboardWaylandDefersToASiblingThatStillDocumentsIt_us648():
+    """The dangling-pointer fence -- and the failure this very story could cause.
+
+    The wayland header does not restate the GPU rationale; it says "see the full
+    rationale in the .x11 sibling". That delegation is a real cross-file
+    dependency with no compiler behind it: deleting or trimming the x11 block
+    (which is precisely what US-648 does) leaves wayland pointing at a rationale
+    that no longer exists, and the reader who follows the pointer finds nothing
+    and concludes the flag was never considered.
+
+    So every flag wayland declares absent must still be NAMED in the sibling it
+    forwards to. This does not check that the two agree -- prose cannot be
+    diffed -- only that the target is still there to be read.
+    """
+    wayland = _read(KIT_DIR, _WAYLAND_UNIT)
+    assert ".x11" in wayland, (
+        f"{_WAYLAND_UNIT}: lost its delegation to the sibling. If it now states "
+        "its own rationale in full that is fine -- retire this guard deliberately "
+        "rather than letting it pass on a file that no longer defers"
+    )
+    x11Documented = _commentedFlags(_read(KIT_DIR, _X11_UNIT))
+    dangling = sorted(set(_notAppliedRegister(wayland)) - x11Documented)
+    assert dangling == [], (
+        f"{_WAYLAND_UNIT} declares {dangling} absent and forwards the reasoning to "
+        f"{_X11_UNIT}, which no longer mentions them. Restate the reason in the "
+        "wayland header or put it back in the sibling -- a pointer to a deleted "
+        "argument reads as 'nobody considered this'"
+    )
