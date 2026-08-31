@@ -1441,6 +1441,74 @@ step_install_kiosk_watchdog_unit() {
     "
 }
 
+step_install_panel_liveness_unit() {
+    # US-654 / F-139: idempotent sync-if-changed install of
+    # eclipse-panel-liveness.service + .timer.  Mirrors
+    # step_install_kiosk_watchdog_unit byte-for-byte in posture: cmp -s the
+    # rsynced source against the installed copy, daemon-reload only on real
+    # change, `enable --now` on every deploy so the timer recovers from an
+    # out-of-band `systemctl disable`.
+    #
+    # This probe REPORTS a panel that has stopped rendering; it restarts
+    # nothing.  It is NOT a second copy of the kiosk watchdog -- that one is
+    # marker-only and is structurally blind to the freeze class that produced no
+    # markers and went unreported for 7h27m on 2026-08-31.  The two observe
+    # different signals and fail independently, on purpose.
+    #
+    # No `install -d` here: the baseline dir is provisioned by the unit's own
+    # RuntimeDirectory= (deliberately its OWN dir, not /run/eclipse-obd, which a
+    # oneshot would delete on exit -- taking the live states/ this probe reads
+    # as half of its own signal).
+    #
+    # NO new privilege is added, and none is needed: the probe only reads
+    # `systemctl show -p MainPID`, world-readable /proc, and the 0755 states
+    # dir.  Unlike the watchdog it needs neither a polkit grant nor
+    # SupplementaryGroups=systemd-journal.
+    echo "--- Step: Installing panel-liveness systemd unit (US-654 / F-139, sync-if-changed) ---"
+    if $DRY_RUN; then
+        echo "DRY-RUN would: sudo cmp -s ${PI_PATH}/deploy/eclipse-panel-liveness.service /etc/systemd/system/eclipse-panel-liveness.service || (install + daemon-reload)"
+        echo "DRY-RUN would: sudo cmp -s ${PI_PATH}/deploy/eclipse-panel-liveness.timer /etc/systemd/system/eclipse-panel-liveness.timer || (install + daemon-reload)"
+        echo "DRY-RUN would: sudo systemctl enable --now eclipse-panel-liveness.timer"
+        return 0
+    fi
+    remote "
+        set -e
+        SRC_SVC='${PI_PATH}/deploy/eclipse-panel-liveness.service'
+        DST_SVC='/etc/systemd/system/eclipse-panel-liveness.service'
+        SRC_TIM='${PI_PATH}/deploy/eclipse-panel-liveness.timer'
+        DST_TIM='/etc/systemd/system/eclipse-panel-liveness.timer'
+
+        if [ ! -f \"\$SRC_SVC\" ] || [ ! -f \"\$SRC_TIM\" ]; then
+            echo 'WARN: eclipse-panel-liveness unit files not present in deploy/ on the Pi -- skipping install.' >&2
+            exit 0
+        fi
+
+        changed=false
+        if sudo test -f \"\$DST_SVC\" && sudo cmp -s \"\$SRC_SVC\" \"\$DST_SVC\"; then
+            echo 'eclipse-panel-liveness.service already up-to-date.'
+        else
+            sudo install -m 644 \"\$SRC_SVC\" \"\$DST_SVC\"
+            echo 'eclipse-panel-liveness.service installed.'
+            changed=true
+        fi
+        if sudo test -f \"\$DST_TIM\" && sudo cmp -s \"\$SRC_TIM\" \"\$DST_TIM\"; then
+            echo 'eclipse-panel-liveness.timer already up-to-date.'
+        else
+            sudo install -m 644 \"\$SRC_TIM\" \"\$DST_TIM\"
+            echo 'eclipse-panel-liveness.timer installed.'
+            changed=true
+        fi
+
+        if [ \"\$changed\" = true ]; then
+            sudo systemctl daemon-reload
+            echo 'systemd daemon-reload complete.'
+        fi
+
+        sudo systemctl enable --now eclipse-panel-liveness.timer
+        echo 'eclipse-panel-liveness.timer enabled + active.'
+    "
+}
+
 step_install_boot_progress_units() {
     # T11/T12: idempotent sync-if-changed install of boot-progress-finalize.service
     # + boot-progress-arm.service into /etc/systemd/system/.  Closes the ship gap
@@ -2383,6 +2451,12 @@ step_install_ui_kiosk_units
 # chromium's renderer wedges.  Installed AFTER the kiosk units it guards so the
 # unit it restarts already exists on the box when the timer's first tick lands.
 step_install_kiosk_watchdog_unit
+# US-654 (F-139): the panel LIVENESS probe -- reports (never restarts) a
+# dashboard that has stopped rendering.  Separate from the watchdog above on
+# purpose: that one is marker-only and was structurally blind to the freeze that
+# went unreported for 7h27m.  Installed after the kiosk units for the same
+# reason: the unit it observes must already exist when the first tick lands.
+step_install_panel_liveness_unit
 
 # ================================================================================
 # Post-deploy prune (2026-08-26) -- the Pi is an appliance, not a workshop
