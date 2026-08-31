@@ -44,6 +44,16 @@
 #               |              | readability probe, budget observability. Three
 #               |              | pins MOVED (not deleted) -- see the repointed
 #               |              | docstrings; each says what it used to assert.
+# 2026-08-31    | Rex          | US-644-a: the bounded readability probe, and
+#               |              | "timed out" as a fact distinct from
+#               |              | "unreadable" (each new flag has a
+#               |              | discriminating partner asserting it FALSE).
+# 2026-08-31    | Rex          | US-644-b: the boot fence and the capped count.
+#               |              | The boot cases go through the REAL query
+#               |              | builder against a journalctl fake that
+#               |              | HONOURS `-b` -- a canned JournalReading would
+#               |              | prove nothing about the argv, and an argv grep
+#               |              | alone cannot express the story's negative case.
 # ================================================================================
 ################################################################################
 
@@ -92,10 +102,12 @@ class _FakeCommands:
         writeOk: bool = True,
         markerPresentSince: float | None = None,
         journalTimedOut: bool = False,
+        capped: bool = False,
     ) -> None:
         self.active = active
         self.errorCount = errorCount
         self.journalTimedOut = journalTimedOut
+        self.capped = capped
         self.restartOk = restartOk
         self.writeOk = writeOk
         self.trace: list[str] = []
@@ -112,7 +124,9 @@ class _FakeCommands:
     def errorCountFn(self, unitName: str, sinceEpoch: float) -> kw.JournalReading:
         self.trace.append("count")
         self.sinceEpochs.append(sinceEpoch)
-        return kw.JournalReading(count=self.errorCount, timedOut=self.journalTimedOut)
+        return kw.JournalReading(
+            count=self.errorCount, timedOut=self.journalTimedOut, capped=self.capped
+        )
 
     def restartFn(self, unitName: str) -> bool:
         self.trace.append(f"restart:{unitName}")
@@ -1669,3 +1683,484 @@ def test_exitCodeTableCoversEveryReasonTheWatchdogCanReport():
     # LEDGER_UNWRITABLE, so it can never reach main as an outcome. An unnamed
     # exclusion is how the next genuinely-missing reason would slip through.
     assert declared - covered == {kw.REASON_WEDGE_DETECTED}
+
+
+# ----------------------------------------------------------------------------
+# US-644-b: the marker query is BOOT-SCOPED, and a capped count says so
+#
+# MEASURED BY PM 2026-08-30 22:09, live: the query was built with
+# `--since=@{epoch}` and NO `-b`.  Previous boot 44,991 AllocateRingBuffer
+# markers; CURRENT boot 0.  The watchdog nonetheless reported "100 markers",
+# dwelled its full 60s and RESTARTED A KIOSK WHOSE OWN BOOT HAD ZERO MARKERS.
+# After the restart the window reset (Rule 3 clamps it to the restart instant,
+# which IS in current-boot time) and it correctly read 0.  That firing was a
+# FALSE POSITIVE.
+#
+# WHY `-b` AND NOT A NARROWER `--since` (Atlas, and this framing is
+# load-bearing): `--since` is a TIME filter, and on a box whose RTC starts at
+# 1970 and is then stepped by NTP, A TIME WINDOW DOES NOT ISOLATE A BOOT.  The
+# Pi restores the previous boot's shutdown time before NTP lands, so
+# `now - 60s` lands INSIDE the final seconds of the previous boot -- which is
+# exactly where the storm was densest.  SAME ROOT, THIRD SURFACE: the same
+# defect that mislabelled drives 45/46 as concurrent (A-23).
+#
+# SECOND DEFECT IN THE SAME QUERY: `--lines=cap` means a reported count at the
+# cap is a FLOOR, not a measurement.  With the shipped cap of 100 against a
+# wedge that emits ~30,000 per window, the number the watchdog printed was the
+# cap every single time.
+# ----------------------------------------------------------------------------
+
+
+class _BootAwareJournalctl:
+    """A journalctl fake that actually HONOURS `-b`.
+
+    The point of modelling the flag rather than merely asserting its presence
+    in argv: a test that only greps the argv goes green on a `-b` that journald
+    would reject, and cannot express the negative case the story states ("many
+    markers in the PREVIOUS boot, none in the current one -> NO action"). This
+    fake is the staged journal that case needs.
+
+    It also honours `--lines=`, because the cap is the second defect and the two
+    interact: the previous-boot storm is what USED to saturate it.
+    """
+
+    def __init__(self, *, previousBoot: int = 0, currentBoot: int = 0) -> None:
+        self.previousBoot = previousBoot
+        self.currentBoot = currentBoot
+        self.queries: list[list[str]] = []
+
+    def __call__(self, argv, **kwargs) -> _FakeCompleted:
+        if _isProbe(argv):
+            return _FakeCompleted(returncode=0, stdout="a log line\n")
+
+        self.queries.append(argv)
+        visible = self.currentBoot if "-b" in argv else self.previousBoot + self.currentBoot
+        cap = next(
+            (int(a.split("=", 1)[1]) for a in argv if a.startswith("--lines=")), visible
+        )
+        emitted = min(visible, cap)
+        if emitted == 0:
+            # journalctl --grep's documented ZERO-MATCHES exit code.
+            return _FakeCompleted(returncode=1, stdout="")
+        return _FakeCompleted(returncode=0, stdout="AllocateRingBuffer\n" * emitted)
+
+
+def _bootAwareCounter(journal: _BootAwareJournalctl, pattern: str, cap: int):
+    """An errorCountFn that goes through the REAL query builder.
+
+    Deliberately NOT a hand-made JournalReading: a runOnce test fed a canned
+    reading proves nothing about whether the query carries `-b`. The whole
+    value of the end-to-end cases below is that the flag has to survive the
+    real argv construction to reach the fake.
+    """
+
+    def errorCountFn(unitName: str, sinceEpoch: float) -> kw.JournalReading:
+        return kw.countWedgeMarkers(
+            unitName,
+            sinceEpoch=sinceEpoch,
+            cap=cap,
+            runFn=journal,
+            journalGlobs=(pattern,),
+        )
+
+    return errorCountFn
+
+
+# --- defect 1: boot scoping -------------------------------------------------
+
+
+def test_countWedgeMarkers_queryIsScopedToTheCurrentBoot():
+    """
+    Given: the marker query
+    When:  its argv is built
+    Then:  it carries `-b` -- THE FIX.  A boot fence is a fact about WHICH BOOT,
+           and it is the only filter that survives a clock the RTC starts at
+           1970 and NTP later steps by hours.
+    """
+    seen: list[list[str]] = []
+
+    def runFn(argv, **kwargs):
+        seen.append(argv)
+        return _FakeCompleted(stdout="")
+
+    kw.countWedgeMarkers("u", sinceEpoch=1_800_000_000.0, cap=10, runFn=runFn)
+
+    assert "-b" in seen[0], (
+        "the marker query must be scoped to the current boot; a time window is "
+        "not a boot fence on a box with a known-broken clock (A-23)"
+    )
+
+
+def test_countWedgeMarkers_bootScopeIsADDEDToTheRestartFenceNotSwappedForIt():
+    """
+    Given: the marker query
+    When:  its argv is built
+    Then:  `-b` AND `--since=@<epoch>` are BOTH present.
+
+    The discriminating partner of the test above, and it guards the opposite
+    mistake. `--since` is never-flap Rule 3 -- the window must not reach back
+    past the last restart, or the errors that justified that restart re-trigger
+    on the very next tick. Deleting it "because -b replaces it" would trade a
+    fixed false positive for a different one. They fence different axes: `-b`
+    fences the BOOT, `--since` fences within it.
+    """
+    seen: list[list[str]] = []
+
+    def runFn(argv, **kwargs):
+        seen.append(argv)
+        return _FakeCompleted(stdout="")
+
+    kw.countWedgeMarkers("u", sinceEpoch=1_800_000_000.0, cap=10, runFn=runFn)
+
+    assert "-b" in seen[0]
+    assert "--since=@1800000000" in seen[0]
+
+
+def test_countWedgeMarkers_previousBootStorm_isNotCounted(tmp_path: Path):
+    """
+    Given: a journal holding 44,991 markers in the PREVIOUS boot and none in the
+           current one -- the exact shape PM measured on 2026-08-30
+    When:  the markers are counted
+    Then:  ZERO.  validationCriteria #1.
+    """
+    pattern = _journalTree(tmp_path)
+    journal = _BootAwareJournalctl(previousBoot=44_991, currentBoot=0)
+
+    reading = kw.countWedgeMarkers(
+        "u", sinceEpoch=0.0, cap=100, runFn=journal, journalGlobs=(pattern,)
+    )
+
+    assert reading.count == 0
+    assert reading.timedOut is False
+
+
+def test_countWedgeMarkers_previousBootStormIsReallyThere_premiseCheck(tmp_path: Path):
+    """
+    Given: the same staged journal
+    When:  it is read WITHOUT a boot fence (the shipped-defect behaviour)
+    Then:  the storm IS visible, saturating the cap at 100.
+
+    The vacuity guard for the test above. "Counted zero" is not evidence of
+    boot scoping if the staged journal was empty all along -- this pins that the
+    fixture really does contain the previous boot's storm, and reproduces the
+    "100 markers" the watchdog actually printed.
+    """
+    pattern = _journalTree(tmp_path)
+    journal = _BootAwareJournalctl(previousBoot=44_991, currentBoot=0)
+
+    def unscoped(argv, **kwargs):
+        return journal([a for a in argv if a != "-b"], **kwargs)
+
+    reading = kw.countWedgeMarkers(
+        "u", sinceEpoch=0.0, cap=100, runFn=unscoped, journalGlobs=(pattern,)
+    )
+
+    assert reading.count == 100, "the defect reported the CAP, not a real magnitude"
+
+
+def test_countWedgeMarkers_currentBootMarkers_areStillCounted(tmp_path: Path):
+    """
+    Given: markers in the CURRENT boot
+    When:  counted
+    Then:  they are counted -- validationCriteria #2.  A boot fence that hid
+           everything would pass the negative case above while making the
+           detector useless, which is the failure this partner exists to catch.
+    """
+    pattern = _journalTree(tmp_path)
+    journal = _BootAwareJournalctl(previousBoot=44_991, currentBoot=7)
+
+    reading = kw.countWedgeMarkers(
+        "u", sinceEpoch=0.0, cap=100, runFn=journal, journalGlobs=(pattern,)
+    )
+
+    assert reading.count == 7, "only the current boot's markers, and ALL of them"
+
+
+def test_runOnce_previousBootStorm_neverRestartsAcrossAWholeDwell(tmp_path: Path):
+    """
+    Given: 44,991 markers in the previous boot, ZERO in the current one
+    When:  five consecutive ticks run -- long enough to clear the 60s dwell twice
+    Then:  not ONE restart, and every tick reads healthy.  THE NEGATIVE CASE, as
+           the story states it.
+
+    Five ticks, not one, on purpose: the shipped defect needed a DWELL to fire
+    (it reported 100 markers, waited its 60s, and only then restarted). A
+    single-tick test would have gone green against the defect too, because one
+    tick can never restart.
+    """
+    pattern = _journalTree(tmp_path)
+    journal = _BootAwareJournalctl(previousBoot=44_991, currentBoot=0)
+    fake = _FakeCommands(errorCount=0)
+    reasons = []
+
+    for tick in range(5):
+        outcome = kw.runOnce(
+            policy=_policy(),
+            unitName="eclipse-dashboard.service",
+            isActiveFn=fake.isActiveFn,
+            errorCountFn=_bootAwareCounter(journal, pattern, 100),
+            restartFn=fake.restartFn,
+            readLedgerFn=fake.readLedgerFn,
+            writeLedgerFn=fake.writeLedgerFn,
+            clockFn=lambda now=NOW + tick * 30.0: now,
+        )
+        reasons.append(outcome.reason)
+
+    assert reasons == [kw.REASON_HEALTHY] * 5
+    assert not [entry for entry in fake.trace if entry.startswith("restart:")]
+    assert fake.history == []
+
+
+def test_runOnce_currentBootStorm_stillRestarts(tmp_path: Path):
+    """
+    Given: the storm is in the CURRENT boot instead
+    When:  the same five ticks run
+    Then:  it detects and restarts as designed -- validationCriteria #2 end to
+           end, and the discriminating partner of the test above.  Without it,
+           a watchdog that had simply stopped counting anything would look just
+           as green.
+    """
+    pattern = _journalTree(tmp_path)
+    journal = _BootAwareJournalctl(previousBoot=0, currentBoot=44_991)
+    fake = _FakeCommands(errorCount=0)
+    reasons = []
+
+    for tick in range(5):
+        outcome = kw.runOnce(
+            policy=_policy(),
+            unitName="eclipse-dashboard.service",
+            isActiveFn=fake.isActiveFn,
+            errorCountFn=_bootAwareCounter(journal, pattern, 100),
+            restartFn=fake.restartFn,
+            readLedgerFn=fake.readLedgerFn,
+            writeLedgerFn=fake.writeLedgerFn,
+            clockFn=lambda now=NOW + tick * 30.0: now,
+        )
+        reasons.append(outcome.reason)
+
+    assert kw.REASON_HEALTHY not in reasons
+    assert kw.REASON_WEDGE_RESTARTED in reasons
+
+
+# --- defect 2: a capped count is a floor, not a measurement -----------------
+
+
+def test_countWedgeMarkers_countAtTheReadCap_isLabelledCapped():
+    """
+    Given: journalctl returns as many lines as the cap allows
+    When:  counted
+    Then:  the reading says so.  `--lines=N` returns the LAST N matches, so a
+           count that reaches N is a FLOOR -- the true number is unknown and
+           larger.
+    """
+    def runFn(argv, **kwargs):
+        return _FakeCompleted(stdout="AllocateRingBuffer\n" * 10)
+
+    reading = kw.countWedgeMarkers("u", sinceEpoch=0.0, cap=10, runFn=runFn)
+
+    assert reading.count == 10
+    assert reading.capped is True
+
+
+def test_countWedgeMarkers_countBelowTheReadCap_isNotLabelledCapped():
+    """
+    Given: fewer matches than the cap
+    When:  counted
+    Then:  NOT capped -- the discriminating partner.  A flag that is never
+           asserted false is a flag that can be hardcoded true, and "everything
+           is capped" would make the honest counts unreportable in exactly the
+           way the capped ones are now.
+    """
+    def runFn(argv, **kwargs):
+        return _FakeCompleted(stdout="AllocateRingBuffer\n" * 3)
+
+    reading = kw.countWedgeMarkers("u", sinceEpoch=0.0, cap=10, runFn=runFn)
+
+    assert reading.count == 3
+    assert reading.capped is False
+
+
+def test_countWedgeMarkers_measuredCleanZero_isNotLabelledCapped(tmp_path: Path):
+    """
+    Given: the zero-matches path (grep exits 1, the probe says the journal reads)
+    When:  counted
+    Then:  0 and NOT capped.  A measured zero is the watchdog's only positive
+           health fact (US-561 defect 3b) and labelling it a floor would destroy
+           it -- "at least 0" is true of every possible journal.
+    """
+    pattern = _journalTree(tmp_path)
+
+    def runFn(argv, **kwargs):
+        if _isProbe(argv):
+            return _FakeCompleted(returncode=0, stdout="a log line\n")
+        return _FakeCompleted(returncode=1, stdout="")
+
+    reading = kw.countWedgeMarkers(
+        "u", sinceEpoch=0.0, cap=10, runFn=runFn, journalGlobs=(pattern,)
+    )
+
+    assert reading.count == 0
+    assert reading.capped is False
+
+
+def test_countWedgeMarkers_unreadable_isNotLabelledCapped():
+    """
+    Given: no count at all
+    When:  the reading is built
+    Then:  capped is False -- there is no number, so there is nothing to label.
+           Pinned so the three failure constructors cannot drift into claiming a
+           property of a count they do not have.
+    """
+    assert kw.JournalReading.unreadable().capped is False
+    assert kw.JournalReading.timeout().capped is False
+
+
+def test_shippedCapMeansAWedgeCountIsALWAYSTheCap():
+    """
+    Given: the SHIPPED cap and Atlas's measured wedge rate
+    When:  they are compared
+    Then:  the cap is far below the rate, so a real wedge saturates it every
+           tick.  GROUNDING for why the label is not cosmetic: 100 is not "how
+           many markers there were", it is "we stopped reading at 100".  Atlas
+           measured ~500 markers/sec, i.e. ~30,000 in the 60s window.
+    """
+    markersPerSecond = 500  # Atlas, live at the freeze (see the module header)
+    perWindow = markersPerSecond * kw.DEFAULT_WINDOW_SECONDS
+
+    assert kw.DEFAULT_MARKER_READ_CAP < perWindow
+    assert kw.formatMarkerCount(kw.DEFAULT_MARKER_READ_CAP, capped=True) != str(
+        kw.DEFAULT_MARKER_READ_CAP
+    ), "a saturated count must not render as a bare number"
+
+
+def test_formatMarkerCount_cappedRendersAsAFloor():
+    """
+    Given: a capped count
+    When:  it is rendered for a log line
+    Then:  it names itself as a lower bound, not a magnitude
+    """
+    rendered = kw.formatMarkerCount(100, capped=True)
+
+    assert "100" in rendered
+    assert "at least" in rendered
+    assert rendered != "100"
+
+
+def test_formatMarkerCount_uncappedRendersAsThePlainNumber():
+    """
+    Given: an honest count, and no count at all
+    When:  each is rendered
+    Then:  unchanged -- the partner that stops the new label leaking onto
+           measurements that ARE measurements
+    """
+    assert kw.formatMarkerCount(7, capped=False) == "7"
+    assert kw.formatMarkerCount(0, capped=False) == "0"
+    assert kw.formatMarkerCount(None, capped=False) == "None"
+
+
+def test_runOnce_cappedCount_isLoggedAsAFloorNotAMeasurement(
+    caplog: pytest.LogCaptureFixture,
+):
+    """
+    Given: a sustained wedge whose count saturated the read cap
+    When:  the restart is logged
+    Then:  the line says "at least 100", never a bare "100".
+           validationCriteria #3.  The shipped line read
+           "WEDGED -- 100 'AllocateRingBuffer' errors sustained for 60s", which
+           states a magnitude the watchdog never measured.
+    """
+    fake = _FakeCommands(errorCount=100, capped=True, markerPresentSince=_SUSTAINED)
+
+    with caplog.at_level("INFO"):
+        _runOnce(fake)
+
+    wedgeLines = [
+        r.getMessage() for r in caplog.records if "WEDGED" in r.getMessage()
+    ]
+    assert wedgeLines, "premise check: a sustained wedge must log a WEDGED line"
+    assert all("at least 100" in m for m in wedgeLines)
+
+
+def test_runOnce_uncappedCount_isStillLoggedAsAPlainNumber(
+    caplog: pytest.LogCaptureFixture,
+):
+    """
+    Given: a sustained wedge whose count did NOT reach the cap
+    When:  the restart is logged
+    Then:  the plain number -- the discriminating partner, so the label cannot
+           be applied unconditionally and quietly turn every honest count into
+           a hedge
+    """
+    fake = _FakeCommands(errorCount=42, capped=False, markerPresentSince=_SUSTAINED)
+
+    with caplog.at_level("INFO"):
+        _runOnce(fake)
+
+    wedgeLines = [
+        r.getMessage() for r in caplog.records if "WEDGED" in r.getMessage()
+    ]
+    assert wedgeLines, "premise check: a sustained wedge must log a WEDGED line"
+    assert all("42 'AllocateRingBuffer'" in m for m in wedgeLines)
+    assert not any("at least" in m for m in wedgeLines)
+
+
+def test_logNoop_cappedCount_isAFloorOnTheNoActionPathsToo(
+    caplog: pytest.LogCaptureFixture,
+):
+    """
+    Given: a saturated count on a tick that does NOT restart (still inside the
+           dwell)
+    When:  the no-action line is logged
+    Then:  it is a floor there as well.  The no-action paths are the ones a
+           human actually scans -- a wedge logs many "not yet sustained" lines
+           for each restart line, so labelling only the restart would leave the
+           misleading magnitude on the majority of the output.
+    """
+    fake = _FakeCommands(errorCount=100, capped=True, markerPresentSince=None)
+
+    with caplog.at_level("INFO"):
+        outcome = _runOnce(fake)
+
+    assert outcome.reason == kw.REASON_WEDGE_SUSPECTED
+    messages = [r.getMessage() for r in caplog.records]
+    assert any("at least 100" in m for m in messages)
+
+
+def test_runOnce_outcomeCarriesWhetherTheCountWasCapped():
+    """
+    Given: a tick whose count saturated the cap
+    When:  the outcome is returned
+    Then:  the fact reaches the BOUNDARY, not only the log text.  A caller
+           handed `errorCount=100` with no way to ask whether that is a
+           measurement is in exactly the position this story is fixing.
+    """
+    capped = _runOnce(_FakeCommands(errorCount=100, capped=True))
+    honest = _runOnce(_FakeCommands(errorCount=42, capped=False))
+
+    assert capped.errorCount == 100
+    assert capped.errorCountCapped is True
+    assert honest.errorCountCapped is False
+
+
+def test_decideAction_theCapLabelDoesNotChangeTheVERDICT():
+    """
+    Given: the same count, once labelled capped and once not
+    When:  each is decided
+    Then:  identical decisions.  The cap is an I/O bound, NEVER a verdict
+           (US-561) -- this story makes the count HONEST, and honesty about a
+           number must not quietly become a new input to the decision table.
+    """
+    common = {
+        "unitActive": True,
+        "errorCount": 100,
+        "now": NOW,
+        "restartHistory": [],
+        "policy": _policy(),
+        "markerPresentSince": _SUSTAINED,
+    }
+
+    capped = kw.decideAction(**common, errorCountCapped=True)
+    honest = kw.decideAction(**common, errorCountCapped=False)
+
+    assert capped.action == honest.action == kw.ACTION_RESTART
+    assert capped.reason == honest.reason

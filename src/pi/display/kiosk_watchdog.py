@@ -80,7 +80,16 @@
 #                           TIMES OUT is not "uncertain", it is a FAULT in this
 #                           watchdog, reported at ERROR and exiting non-zero;
 #                        3. the journal window never reaches back past the last
-#                           restart, so pre-restart errors cannot re-trigger;
+#                           restart, so pre-restart errors cannot re-trigger --
+#                           and (US-644-b) it never reaches back past the last
+#                           BOOT either.  These are two fences on two axes and
+#                           the tick needs both: the restart fence is a TIME
+#                           bound, and a time bound cannot isolate a boot on a
+#                           box whose RTC starts at 1970 and is then stepped by
+#                           NTP.  Before that step the Pi is running on the
+#                           previous boot's restored shutdown time, so `now-60s`
+#                           lands inside the final seconds of THAT boot -- which
+#                           is exactly where the marker storm was densest;
 #                        4. a cooldown separates consecutive restarts;
 #                        5. an hourly restart budget caps the loop -- once spent
 #                           the watchdog stops restarting and starts shouting;
@@ -120,6 +129,20 @@
 #               |              | its own reason, logged at ERROR and exiting
 #               |              | non-zero, instead of an INFO no-op that read
 #               |              | like a healthy tick.
+# 2026-08-31    | Rex          | US-644-b: the marker query carried no `-b`, so
+#               |              | it judged the WRONG BOOT -- PM measured it
+#               |              | restarting a kiosk whose own boot had ZERO
+#               |              | markers while the PREVIOUS boot held 44,991.
+#               |              | `--since` is a TIME filter and this box's RTC
+#               |              | starts at 1970 before NTP steps it (A-23), so
+#               |              | no width of time window isolates a boot; `-b`
+#               |              | does, and is ADDED to `--since` rather than
+#               |              | replacing it (Rule 3 is a within-boot fence).
+#               |              | Second defect in the same query: `--lines=cap`
+#               |              | means a count AT the cap is a FLOOR, and with
+#               |              | cap=100 against ~30,000/window every count the
+#               |              | watchdog ever printed during a freeze WAS the
+#               |              | cap. Such counts now render "at least N".
 # ================================================================================
 ################################################################################
 
@@ -162,6 +185,14 @@ DEFAULT_WINDOW_SECONDS = 60
 #: decision constant -- and US-561 removed it in that role (see the header).  It
 #: survives only as what it always genuinely was: a cap that stops an uncapped
 #: read pulling megabytes per tick off a Pi the wedge has already pegged.
+#:
+#: US-644-b: and because `--lines=` returns the LAST N matches, a count that
+#: REACHES this number is a FLOOR, not a measurement.  Against Atlas's measured
+#: ~500 markers/sec (~30,000 per 60s window) a live wedge saturates it on every
+#: single tick, so "100 markers" was never how many there were -- it was where
+#: we stopped reading.  The count is therefore only ever trustworthy as a
+#: BOOLEAN (any / none), which is exactly all `decideAction` uses it for, and
+#: every log line that prints a saturated count now says "at least N".
 DEFAULT_MARKER_READ_CAP = 100
 
 #: How long markers must be CONTINUOUSLY present before the tick calls it a
@@ -314,6 +345,15 @@ class JournalReading:
 
     count: int | None
     timedOut: bool = False
+    capped: bool = False
+    """Whether ``count`` merely reached the read cap, i.e. is a LOWER BOUND.
+
+    US-644-b. ``--lines=N`` returns the LAST N matches, so a count of N means
+    "at least N" and says nothing about the true magnitude. With the shipped
+    cap of 100 against a wedge emitting ~30,000 per window, EVERY count the
+    watchdog reported during a real freeze was the cap. Carrying the fact
+    beside the number is what stops the number being read as a measurement.
+    """
 
     @classmethod
     def unreadable(cls) -> JournalReading:
@@ -336,6 +376,7 @@ class WatchdogDecision:
     restartsInWindow: int
     wedged: bool = False
     dwellSeconds: float | None = None
+    errorCountCapped: bool = False
 
 
 @dataclass(frozen=True)
@@ -349,11 +390,38 @@ class WatchdogOutcome:
     maxRestartsPerHour: int = 0
     wedged: bool = False
     dwellSeconds: float | None = None
+    errorCountCapped: bool = False
 
 
 # ----------------------------------------------------------------------------
 # Pure decision
 # ----------------------------------------------------------------------------
+
+
+def formatMarkerCount(count: int | None, *, capped: bool = False) -> str:
+    """Render a marker count as the fact it actually is (US-644-b).
+
+    A count that reached the read cap is a LOWER BOUND -- ``--lines=N`` returns
+    the last N matches, so the true number is unknown and larger. Printing it
+    as a bare integer states a magnitude nobody measured, and during a real
+    freeze that integer was ALWAYS the cap.
+
+    Deliberately leaves every other case byte-identical to what the watchdog
+    already logged: this story makes the capped number honest, and changing the
+    rendering of the honest ones too would be churn in the journal a human
+    greps.
+
+    Args:
+        count: Markers observed, or None when the journal could not be read.
+        capped: Whether the read stopped at its cap rather than at the data.
+
+    Returns:
+        A log-ready string: ``"at least 100 (read cap)"`` when capped, otherwise
+        the plain value.
+    """
+    if count is not None and capped:
+        return f"at least {count} (read cap)"
+    return str(count)
 
 
 def pruneRestartHistory(
@@ -384,6 +452,7 @@ def decideAction(
     policy: WatchdogPolicy,
     markerPresentSince: float | None = None,
     journalTimedOut: bool = False,
+    errorCountCapped: bool = False,
 ) -> WatchdogDecision:
     """Decide whether this tick should restart the kiosk.
 
@@ -401,6 +470,11 @@ def decideAction(
             ticks, or None.
         journalTimedOut: Whether the journal read ran out of time rather than
             failing outright. Same action, DIFFERENT reason (US-644-a).
+        errorCountCapped: Whether ``errorCount`` is a lower bound rather than a
+            magnitude (US-644-b). Carried for LOGGING only -- it must never
+            reach a comparison below, because the cap is an I/O bound and not a
+            verdict (US-561), and a test pins that this function still compares
+            the count against nothing but zero.
 
     Returns:
         The decision, carrying the reason + observed count for logging.
@@ -418,6 +492,7 @@ def decideAction(
             restartsInWindow=restartsInWindow,
             wedged=wedged,
             dwellSeconds=dwellSeconds,
+            errorCountCapped=errorCountCapped,
         )
 
     # Rule 1: never touch a kiosk that is not running. `systemctl restart` on
@@ -477,6 +552,7 @@ def decideAction(
         restartsInWindow=restartsInWindow,
         wedged=True,
         dwellSeconds=dwellSeconds,
+        errorCountCapped=errorCountCapped,
     )
 
 
@@ -548,10 +624,32 @@ def countWedgeMarkers(
 ) -> JournalReading:
     """Count wedge markers in a unit's journal since an instant.
 
+    SCOPED TO THE CURRENT BOOT (``-b``), and that is US-644-b's fix. This query
+    used to carry ``--since=@<epoch>`` and nothing else, and PM measured the
+    consequence live on 2026-08-30 22:09: the previous boot held 44,991 markers,
+    the CURRENT boot held zero, and the watchdog reported "100 markers", dwelled
+    its full 60s and RESTARTED A KIOSK WHOSE OWN BOOT HAD NONE. That firing was
+    a false positive.
+
+    ``--since`` could not have prevented it at any width, which is why the fix
+    is not a narrower window. ``--since`` is a TIME filter, and this Pi's RTC
+    starts at 1970 and is then stepped by NTP (A-23) -- before the step the box
+    is running on the PREVIOUS BOOT'S restored shutdown time, so ``now - 60s``
+    lands inside the final seconds of that boot, which is precisely where the
+    storm was densest. A TIME WINDOW DOES NOT ISOLATE A BOOT; ``-b`` does. Same
+    root, third surface: this is the defect that also mislabelled drives 45/46
+    as concurrent.
+
+    ``--since`` STAYS, added to rather than replaced. It is never-flap Rule 3 --
+    the window must not reach back past the last restart ATTEMPT, which is a
+    within-boot fence and something ``-b`` cannot express. The two filter
+    different axes and the tick needs both.
+
     The count is CAPPED at ``cap`` lines: a live wedge emits ~500 markers a
     second, so an uncapped read would pull megabytes per tick off a Pi whose
     CPU is already pegged by the wedge. The caller only needs "at least the
-    threshold", so pass ``threshold + 1``.
+    threshold", so pass ``threshold + 1``. A count that REACHES the cap is
+    therefore a floor and the reading says so -- see ``JournalReading.capped``.
 
     Args:
         unitName: systemd unit whose journal to read.
@@ -571,6 +669,9 @@ def countWedgeMarkers(
         "journalctl",
         "-u",
         unitName,
+        # US-644-b. The boot fence, and it is FIRST among the filters because it
+        # is the only one that is true independently of what the clock says.
+        "-b",
         f"--since=@{int(sinceEpoch)}",
         f"--grep={marker}",
         f"--lines={cap}",
@@ -625,7 +726,10 @@ def countWedgeMarkers(
         )
         return JournalReading.unreadable()
 
-    return JournalReading(count=sum(1 for line in stdout.splitlines() if line.strip()))
+    count = sum(1 for line in stdout.splitlines() if line.strip())
+    # US-644-b. `>=` rather than `==`: the flag's job is "this number is a
+    # FLOOR", and any read that met or exceeded its own ceiling is one.
+    return JournalReading(count=count, capped=count >= cap)
 
 
 def unitIsActive(
@@ -965,6 +1069,7 @@ def runOnce(
         markerPresentSince=markerPresentSince,
         policy=policy,
         journalTimedOut=reading.timedOut,
+        errorCountCapped=reading.capped,
     )
 
     def outcomeOf(reason: str, *, restarted: bool, restartsInWindow: int) -> WatchdogOutcome:
@@ -976,7 +1081,12 @@ def runOnce(
             maxRestartsPerHour=policy.maxRestartsPerHour,
             wedged=decision.wedged,
             dwellSeconds=decision.dwellSeconds,
+            errorCountCapped=decision.errorCountCapped,
         )
+
+    # US-644-b: every line below that names a count renders it through this, so
+    # a saturated read can never print as a magnitude.
+    markers = formatMarkerCount(decision.errorCount, capped=decision.errorCountCapped)
 
     if decision.action != ACTION_RESTART:
         # The dwell lives in the ledger, so a clock change has to survive the
@@ -989,7 +1099,7 @@ def runOnce(
                 "kiosk-watchdog: %s reported %s '%s' markers but the ledger is unwritable -- "
                 "the wedge clock cannot advance, so this tick is UNCERTAIN, not healthy",
                 unitName,
-                decision.errorCount,
+                markers,
                 WEDGE_MARKER,
             )
             return outcomeOf(
@@ -1016,7 +1126,7 @@ def runOnce(
             "restart ledger is unwritable -- refusing to restart, because an unrecorded "
             "restart cannot be rate-limited",
             unitName,
-            decision.errorCount,
+            markers,
             WEDGE_MARKER,
             decision.dwellSeconds or 0.0,
         )
@@ -1032,7 +1142,7 @@ def runOnce(
         "(attempt %s of %s this hour, %s left). US-522 was supposed to remove this failure "
         "class: a restart here means it is still live.",
         unitName,
-        decision.errorCount,
+        markers,
         WEDGE_MARKER,
         decision.dwellSeconds or 0.0,
         restartsInWindow,
@@ -1067,6 +1177,10 @@ def _budgetPhrase(decision: WatchdogDecision, policy: WatchdogPolicy) -> str:
 def _logNoop(decision: WatchdogDecision, unitName: str, policy: WatchdogPolicy) -> None:
     """Log a no-op tick at the level its reason deserves."""
     budget = _budgetPhrase(decision, policy)
+    # US-644-b. The no-action paths are the ones a human actually scans -- a
+    # wedge emits many "not yet sustained" lines per restart line -- so a
+    # saturated count must be honest HERE too, not only at the restart.
+    markers = formatMarkerCount(decision.errorCount, capped=decision.errorCountCapped)
 
     if decision.reason == REASON_BUDGET_EXHAUSTED:
         logger.error(
@@ -1074,7 +1188,7 @@ def _logNoop(decision: WatchdogDecision, unitName: str, policy: WatchdogPolicy) 
             "budget is spent (%s) -- NOT restarting. The freeze class is live; this needs "
             "a human, not another restart.",
             unitName,
-            decision.errorCount,
+            markers,
             WEDGE_MARKER,
             decision.dwellSeconds or 0.0,
             budget,
@@ -1085,7 +1199,7 @@ def _logNoop(decision: WatchdogDecision, unitName: str, policy: WatchdogPolicy) 
             "kiosk-watchdog: %s is WEDGED (%s '%s' sustained %.0fs) but the %ss cooldown "
             "from the last restart has not elapsed -- holding off; %s",
             unitName,
-            decision.errorCount,
+            markers,
             WEDGE_MARKER,
             decision.dwellSeconds or 0.0,
             policy.cooldownSeconds,
@@ -1112,7 +1226,7 @@ def _logNoop(decision: WatchdogDecision, unitName: str, policy: WatchdogPolicy) 
             "kiosk-watchdog: %s is NOT healthy -- %s '%s' markers present for %.0fs of the "
             "%ss needed to call it wedged. Healthy is measured ZERO; this is not zero. %s",
             unitName,
-            decision.errorCount,
+            markers,
             WEDGE_MARKER,
             decision.dwellSeconds or 0.0,
             policy.wedgeDwellSeconds,
@@ -1128,14 +1242,14 @@ def _logNoop(decision: WatchdogDecision, unitName: str, policy: WatchdogPolicy) 
             "kiosk-watchdog: no action (%s; markers=%s) but the display has already "
             "self-healed this hour -- %s",
             decision.reason,
-            decision.errorCount,
+            markers,
             budget,
         )
         return
     logger.info(
         "kiosk-watchdog: no action (%s; markers=%s, %s)",
         decision.reason,
-        decision.errorCount,
+        markers,
         budget,
     )
 
