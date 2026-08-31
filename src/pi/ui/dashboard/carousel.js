@@ -30,6 +30,143 @@
   // nobody can see for every one they can.
   var IMU_POLL_MS = 100;
 
+  // -------------------------------------------------------------------------
+  // ARCH-014 -- loop resilience and error reporting.
+  //
+  // THE DEFECT. Both live loops rescheduled themselves on the LAST line of an
+  // async body:
+  //
+  //     async function imuTick() {
+  //       lastImu = await fetchState("imu");
+  //       renderHome(Date.now());
+  //       setTimeout(imuTick, IMU_POLL_MS);   // unreachable after a throw
+  //     }
+  //
+  // Nothing awaited the returned promise, so a rejection became an UNHANDLED
+  // PROMISE REJECTION -- silent by construction. ONE transient fetch failure,
+  // or one throw inside renderHome, ended the loop permanently. Measured live
+  // on the car 2026-08-30: reproducible ~38 s after data starts, renderer
+  // cumulative CPU flat at 00:00:12 in state `Sl` while every state file kept
+  // updating. The data tier was healthy; only the display was dead, it never
+  // recovered, and touch did nothing either -- because a deterministic throw
+  // in the render path kills the touch-driven redraw on the same code.
+  //
+  // THE RULE. A transient error costs ONE FRAME, never the session.
+  //
+  // Why not setInterval, which survives a throw for free? Because it STACKS --
+  // a read slower than the period queues another before the first finishes,
+  // which is exactly why US-508 chose setTimeout. This keeps the no-stack
+  // property AND adds the survival property, rather than trading one for the
+  // other.
+  // -------------------------------------------------------------------------
+
+  //: Message levels, mirroring the CIO's own `myPrint` utility (2026-08-30).
+  //: LOG_ERROR is deliberately 0 and is NEVER gated -- see shouldLog.
+  var LOG_ERROR = 0;
+  var LOG_WARN = 1;
+  var LOG_INFO = 2;
+  var LOG_DEBUG = 3;
+
+  //: Verbosity when nothing overrides it: errors only. Per-tick tracing is
+  //: temporary by design and must not ship on.
+  var DEFAULT_DEBUG_LEVEL = LOG_ERROR;
+
+  function currentDebugLevel() {
+    // Read at CALL time, not at load time, so the level can be raised on a
+    // running panel from the console without a reload.
+    var injected = global && global.DISPLAY_DEBUG_LEVEL;
+    return typeof injected === "number" ? injected : DEFAULT_DEBUG_LEVEL;
+  }
+
+  function shouldLog(level, configuredLevel) {
+    // An error is not a verbosity setting. The ABSENCE of error reporting is
+    // what hid the freeze for weeks, so level 0 ignores the gate entirely --
+    // including at configuredLevel 0. Making errors configurable would rebuild
+    // exactly the blindness this change exists to remove.
+    if (level === LOG_ERROR) return true;
+    var configured =
+      typeof configuredLevel === "number" ? configuredLevel : DEFAULT_DEBUG_LEVEL;
+    return configured >= level;
+  }
+
+  function uiLog(level, message) {
+    if (!shouldLog(level, currentDebugLevel())) return false;
+    if (typeof console === "undefined") return false;
+    // Marker prefixes follow the myPrint convention so a mixed log can be
+    // scanned by eye: [!] critical, [W] warning, [+] info, [D] debug.
+    var marker = ["[!]", "[W]", "[+]", "[D]"][level] || "[-]";
+    var sink = level === LOG_ERROR && console.error ? console.error : console.log;
+    sink.call(console, marker + " eclipse-ui " + message);
+    return true;
+  }
+
+  function reportLoopError(name, err) {
+    // The STACK is the whole point -- it names the file and the line, which is
+    // the one thing no amount of reading this file from the outside settles.
+    var detail = err && err.stack ? err.stack : String(err);
+    return uiLog(LOG_ERROR, name + " threw: " + detail);
+  }
+
+  function makeResilientLoop(opts) {
+    var name = opts.name;
+    var delayMs = opts.delayMs;
+    var body = opts.body;
+    var schedule = opts.schedule;
+    var report = opts.report;
+
+    function run() {
+      // EXACTLY-ONCE reschedule. Without this latch a body that throws
+      // synchronously AND leaves a rejected promise would book two timers, and
+      // the loop rate would double on every such tick -- turning a display bug
+      // into a CPU burn. Exactness is the contract, not "at least one".
+      var settled = false;
+      function reschedule() {
+        if (settled) return;
+        settled = true;
+        schedule(run, delayMs);
+      }
+      try {
+        var result = body();
+        if (result && typeof result.then === "function") {
+          return result.then(
+            function () {
+              reschedule();
+            },
+            function (err) {
+              report(name, err);
+              reschedule();
+            }
+          );
+        }
+        reschedule();
+      } catch (err) {
+        report(name, err);
+        reschedule();
+      }
+      return undefined;
+    }
+    return run;
+  }
+
+  function installGlobalErrorReporting(win, report) {
+    // Catches throws that happen OUTSIDE the two loops -- event handlers, the
+    // touch path, anything. Returns false under node (no addEventListener) so
+    // the unit tests can load this module unchanged.
+    if (!win || typeof win.addEventListener !== "function") return false;
+    win.addEventListener("error", function (ev) {
+      var err = ev && ev.error ? ev.error : new Error(String(ev && ev.message));
+      report("window.error", err);
+    });
+    win.addEventListener("unhandledrejection", function (ev) {
+      var reason = ev && ev.reason;
+      report(
+        "unhandledrejection",
+        reason instanceof Error ? reason : new Error(String(reason))
+      );
+    });
+    return true;
+  }
+
   // US-506 (F-124) carousel navigation model -- the GROUNDED DEFAULTS that
   // mirror config.json `pi.display.carousel.*` (the tuning SSOT). They are the
   // file:// preview / unconfigured fallback; the live values arrive at serve
@@ -2936,6 +3073,11 @@
   }
 
   var api = {
+    makeResilientLoop: makeResilientLoop,
+    shouldLog: shouldLog,
+    uiLog: uiLog,
+    reportLoopError: reportLoopError,
+    installGlobalErrorReporting: installGlobalErrorReporting,
     clampIndex: clampIndex,
     nextIndex: nextIndex,
     swipeDirection: swipeDirection,
@@ -5054,7 +5196,6 @@
             brightnessAlarmActive(dtcData)
           )
         );
-        setTimeout(tick, POLL_MS);
       }
 
       // US-508 / Atlas transport ruling: the live feed gets its OWN ~10 Hz loop
@@ -5066,11 +5207,27 @@
       async function imuTick() {
         lastImu = await fetchState("imu");
         renderHome(Date.now());
-        setTimeout(imuTick, IMU_POLL_MS);
       }
 
-      tick();
-      imuTick();
+      // ARCH-014: the loops are BUILT here rather than self-scheduling, so a
+      // throw anywhere in a body costs one frame instead of the session.
+      installGlobalErrorReporting(global, reportLoopError);
+      var tickLoop = makeResilientLoop({
+        name: "tick",
+        delayMs: POLL_MS,
+        body: tick,
+        schedule: setTimeout,
+        report: reportLoopError,
+      });
+      var imuTickLoop = makeResilientLoop({
+        name: "imuTick",
+        delayMs: IMU_POLL_MS,
+        body: imuTick,
+        schedule: setTimeout,
+        report: reportLoopError,
+      });
+      tickLoop();
+      imuTickLoop();
     }
 
     if (document.readyState === "loading") {
