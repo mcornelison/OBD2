@@ -352,6 +352,24 @@ DEFAULTS: dict[str, Any] = {
     'pi.sensors.light.enabled': False,
     'pi.sensors.light.sampleHz': 1,
     'pi.sensors.retentionDays': 7,
+    # US-630 (F-138, punch-list 1.4): the DERIVED gear.  This car exposes no
+    # gear PID, so gear is computed once from the realtime SPEED + RPM SSOT and
+    # published -- never recomputed per consumer.  Ships DARK
+    # (connect-when-wired, the pi.bus.enabled precedent): with enabled False
+    # createGearDeriverFromConfig builds nothing and the tile keeps its honest
+    # typed-NA.  `bands` is EMPTY on purpose and is the one thing that must be
+    # filled before this can resolve a gear -- it is the MEASURED
+    # engine-speed/road-speed table, and until it is recorded the derivation
+    # reports `not_calibrated` rather than guessing off a theoretical table.
+    # See offices/pm/blockers/BL-us630-measured-gear-bands-were-never-recorded.md
+    # and src/pi/obdii/gear_derivation.py.  The thresholds below are Spool's
+    # US-508 semantics; maxAgeSec is grounded to the ~4-5 PID/s OBD poll rate.
+    'pi.gear.enabled': False,
+    'pi.gear.bands': [],
+    'pi.gear.minSpeedKph': 5.0,
+    'pi.gear.minRpm': 900,
+    'pi.gear.debounceSec': 2.0,
+    'pi.gear.maxAgeSec': 2.0,
     # Pi-tier orchestrator engine-on escalation (US-242 / B-049).  When the
     # adapter-level BATTERY_V sample exceeds engineOnVoltageThreshold for
     # engineOnSampleCount consecutive samples, the orchestrator transitions
