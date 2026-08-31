@@ -1,6 +1,7 @@
 # ADR: migrate the Pi display stack from X11 to a chromium Ozone/DRM kiosk
 
 - **Status:** ACCEPTED (CIO, 2026-08-30) -- design accepted, migration not yet built
+- **Amended:** 2026-08-30 (ARCH-017) -- §1a/1b/1c correct a false corroboration and re-order the slices
 - **Author:** Atlas (Architect)
 - **Date:** 2026-08-30
 - **Supersedes:** the `--disable-gpu` remedy documented in `dashboard.service.x11` (US-522)
@@ -26,7 +27,7 @@ V0.29**, and treating it as future work stalls the release.
 | fact | measurement |
 |---|---|
 | `AllocateRingBuffer` markers, one boot | **44,994** |
-| Watchdog restarts caused by it | 1 (fired correctly at 22:09:36 after a 60 s dwell) |
+| Watchdog restarts caused by it | 1 -- and it was a **FALSE POSITIVE**, see §1a |
 | `--disable-gpu` in the running process | **ABSENT** |
 | `--disable-gpu` in the deployed unit's executable lines | **0 occurrences** |
 | What IS in the running process | `--enable-gpu-rasterization --use-angle=gles` |
@@ -41,6 +42,61 @@ is still live."*
 **`--enable-gpu-rasterization` is injected by Raspberry Pi OS** via `/etc/chromium.d`, not by
 us. So the OS turns GPU rasterization ON by default and nothing turns it off -- we are asking
 the GPU to rasterize a static 2D card UI on a 480x320 panel.
+
+### 1a. CORRECTION (2026-08-30, same evening) -- the watchdog firing was a FALSE POSITIVE, and the cause story has changed
+
+**I wrote "fired correctly" in the first draft of this ADR. That was wrong.** Marcus measured
+it afterwards and I verified it independently before accepting it.
+
+`kiosk_watchdog.py` builds its probe as
+`journalctl -u <unit> --since=@<epoch> --grep=<marker> --lines=<cap>` -- **with no `-b`**.
+
+⚠️ **`--since` is a TIME filter, and this machine has a known-broken clock (A-23).** The RTC
+starts every boot at 1970 and NTP steps it once a network is reachable, so **a time window
+does not isolate a boot on this hardware. `-b` does.** The watchdog therefore read the
+*previous* boot's markers and restarted a kiosk whose own boot was clean. Its reported "100"
+is also `DEFAULT_MARKER_READ_CAP` -- **the cap IS the number**, so its counts are usable as a
+boolean and never as a magnitude.
+
+Both defects are filed in US-644.
+
+### 1b. What the per-boot numbers actually say -- markers track RESTARTS, not runtime
+
+Measured after the CIO's power cycle, each count explicitly boot-scoped with `-b`:
+
+| | chromium starts | `AllocateRingBuffer` markers | uptime |
+|---|---|---|---|
+| previous boot | **3** | **44,994** | ~3 h |
+| current boot | **1** | **1** | 34 min, panel alive |
+
+Runtime differed about 5x. Markers differed about 45,000x. **That is not linear accumulation,
+and runtime does not explain it.** The variable that tracks is the number of chromium starts.
+
+⚠️ **The consequence is uncomfortable and it must not be lost: the watchdog's remedy is
+restarting chromium, which is the thing that correlates with the marker storm.** Paired with a
+cross-boot window that fires on stale evidence, that is a candidate **positive-feedback loop** --
+stale markers -> restart -> restart leaks GPU buffers -> real markers -> restart. The boot that
+melted had three starts; the boot that has been stable for 34 minutes has one.
+
+**This is a HYPOTHESIS with a strong signal, not a proven mechanism.** n=1 on each side, and
+the two boots differ in runtime as well as in starts. It is stated here because it is cheap to
+test and because it changes what should be fixed first.
+
+### 1c. What this correction does and does not change
+
+**Does NOT change: the destination.** Ozone/DRM remains right. If anything the restart
+correlation strengthens it -- repeated chromium starts against a long-lived X server are
+exactly the kind of buffer-lifetime problem that removing the X server eliminates.
+
+**DOES change: the ORDER.** If a false-positive restart loop is manufacturing the failure,
+then **US-644 (the watchdog's boot scoping) may be the highest-value fix in the whole feature,
+and it is a one-flag change.** A migration that lands while a watchdog is still restarting
+chromium on another boot's evidence inherits the loop into the new stack.
+
+**Recommended resequence: US-644 before S1, and re-measure before committing to S2-S5.**
+The current boot is the cleanest natural experiment we have -- one start, 34 minutes, one
+marker. **Let it run rather than restarting it**, and the marker curve answers this without
+anyone building anything.
 
 ### There are TWO freeze classes and they must not be conflated
 
