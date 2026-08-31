@@ -30,6 +30,20 @@
   // nobody can see for every one they can.
   var IMU_POLL_MS = 100;
 
+  // US-653 -- deadlines. ARCH-014 made a THROWN tick survivable; it did not make
+  // a HUNG one survivable, and the hang is what was actually on the panel:
+  // 7.4 h uptime, one chromium start, cumulative CPU flat at 35 s, panel frozen,
+  // ZERO markers and ZERO captured exceptions with the ARCH-014 build live.
+  //
+  // A browser `fetch()` has NO default timeout, so an accepted-but-never-completed
+  // request hangs its `await` forever -- and a HANG IS NOT AN ERROR, so `catch`
+  // never runs, the tick never returns, and nothing ever books the next one.
+  //
+  // Two layers on purpose: the request deadline stops the known cause, the tick
+  // deadline stops ANY non-settling body including causes we have not met yet.
+  var FETCH_DEADLINE_MS = 2000;   // localhost states server answers in <1 ms
+  var TICK_DEADLINE_MS = 10000;   // generous: a tick reads several state files
+
   // -------------------------------------------------------------------------
   // ARCH-014 -- loop resilience and error reporting.
   //
@@ -113,35 +127,59 @@
     var body = opts.body;
     var schedule = opts.schedule;
     var report = opts.report;
+    // Opt-in: omitting it preserves ARCH-014's exact behaviour for any caller
+    // that does not ask for a deadline, so this cannot silently alter a loop
+    // that was never at risk.
+    var deadlineMs = opts.deadlineMs || 0;
 
     function run() {
-      // EXACTLY-ONCE reschedule. Without this latch a body that throws
-      // synchronously AND leaves a rejected promise would book two timers, and
-      // the loop rate would double on every such tick -- turning a display bug
-      // into a CPU burn. Exactness is the contract, not "at least one".
+      // EXACTLY-ONCE, across FOUR outcomes -- resolve, reject, synchronous throw,
+      // and NEVER SETTLING. The fourth is the one that was on the panel (US-653)
+      // and the one ARCH-014 could not see, because it only ever reacted to an
+      // event and a hang produces none.
+      //
+      // The latch also keeps the rate honest: a body that throws synchronously
+      // AND leaves a rejected promise, or one that returns AFTER its deadline
+      // already fired, must still book exactly one tick. Two timers would double
+      // the loop rate and turn a display stall into a CPU burn.
       var settled = false;
-      function reschedule() {
+      function finish(err) {
         if (settled) return;
         settled = true;
+        if (err) report(name, err);
         schedule(run, delayMs);
       }
       try {
         var result = body();
         if (result && typeof result.then === "function") {
+          if (deadlineMs > 0) {
+            // A hang emits nothing to react to, so the only way to survive it is
+            // to stop waiting on our own schedule. Reported, never silently
+            // recovered -- a silent recovery would hide the failure this exists
+            // to surface, which is how the panel died unnoticed for seven hours.
+            schedule(function () {
+              finish(
+                new Error(
+                  name +
+                    " exceeded its " +
+                    deadlineMs +
+                    "ms deadline -- the body never settled"
+                )
+              );
+            }, deadlineMs);
+          }
           return result.then(
             function () {
-              reschedule();
+              finish(null);
             },
             function (err) {
-              report(name, err);
-              reschedule();
+              finish(err);
             }
           );
         }
-        reschedule();
+        finish(null);
       } catch (err) {
-        report(name, err);
-        reschedule();
+        finish(err);
       }
       return undefined;
     }
@@ -4491,10 +4529,18 @@
     function startAvailabilityPoll(cards, glyphEls, goTo, onVisibilityChange) {
       async function fetchState(name) {
         try {
-          var r = await fetch("/" + name, {
+          var init = {
             cache: "no-store",
             headers: token ? { "X-Splash-Token": token } : {},
-          });
+          };
+          // US-653: bound the request. An abort THROWS, which the catch below
+          // already turns into a null read -- so the tick completes honestly
+          // instead of hanging. Guarded for absence so the module still loads
+          // where AbortSignal.timeout is unavailable.
+          if (typeof AbortSignal !== "undefined" && AbortSignal.timeout) {
+            init.signal = AbortSignal.timeout(FETCH_DEADLINE_MS);
+          }
+          var r = await fetch("/" + name, init);
           if (!r.ok) return null;
           return await r.json();
         } catch (e) {
@@ -5215,6 +5261,7 @@
       var tickLoop = makeResilientLoop({
         name: "tick",
         delayMs: POLL_MS,
+        deadlineMs: TICK_DEADLINE_MS,
         body: tick,
         schedule: setTimeout,
         report: reportLoopError,
@@ -5222,6 +5269,7 @@
       var imuTickLoop = makeResilientLoop({
         name: "imuTick",
         delayMs: IMU_POLL_MS,
+        deadlineMs: TICK_DEADLINE_MS,
         body: imuTick,
         schedule: setTimeout,
         report: reportLoopError,
