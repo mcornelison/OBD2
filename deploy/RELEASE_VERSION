@@ -1,5 +1,5 @@
 {
-  "version": "V0.29.37",
-  "theme": "Sprint 78 -- display stability, batch 1",
-  "description": "5/5. US-644-a bounds the watchdog journal probe and stops collapsing 'timed out' into 'unreadable'. US-644-b scopes its marker query to the CURRENT boot and stops printing a capped count as a magnitude. US-647 declines GPU rasterization on the X11 kiosk -- effect UNVERIFIED by design. US-648 stops units asserting flags they do not carry. US-654 observes panel liveness. Reboot to take effect."
+  "version": "V0.29.39",
+  "theme": "Abort is not silent + 3s display smoothing",
+  "description": "US-655: an aborted fetch now REPORTS at LOG_ERROR naming the state that hung -- an absorbed hang and no hang are no longer the same journal. US-662: 3s display smoothing for heading/g/grade, CONSUMER-ONLY -- state files and the DB keep RAW values. Heading uses a CIRCULAR mean; a naive average of 358,359,1,2 is 180. THE REBOOT IS THE ARMING STEP: deploy-pi.sh does not restart the kiosk."
 }
