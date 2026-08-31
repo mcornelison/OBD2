@@ -417,3 +417,76 @@ def test_fetchState_carries_a_request_deadline():
         "fetchState has no request deadline -- an accepted-but-never-completed "
         "request hangs the tick forever, and a hang is not an error"
     )
+
+
+# ---------------------------------------------------------------------------
+# US-655 -- the silent layer. US-653 shipped TWO deadlines and instrumented only
+# ONE. The tick deadline reports; the FETCH deadline aborts into a catch that
+# returns null, which is indistinguishable from a 404, a parse failure, or a
+# missing state file.
+#
+# The consequence is not cosmetic. With the fetch deadline silent, a long soak
+# with zero log lines is consistent with TWO opposite stories -- the fix is
+# absorbing hangs, or no hang ever happened -- and nothing on the box can tell
+# them apart. Boot B ran 2h48m with zero reporter lines and settled nothing.
+#
+# One branch converts that ambiguity into a measurement.
+# ---------------------------------------------------------------------------
+
+
+def test_an_aborted_fetch_is_REPORTED_not_swallowed(tmp_path):
+    """A request deadline that fires must leave a trace.
+
+    This is the test that would have made Boot B interpretable.
+    """
+    result = runJs(
+        tmp_path,
+        """
+        var logged = [];
+        var err = new Error("The operation was aborted.");
+        err.name = "TimeoutError";
+        var handled = carousel.reportFetchAbort("imu", err,
+          function (level, msg) { logged.push({ level: level, msg: msg }); });
+        emit({ handled: handled, count: logged.length,
+               level: logged.length ? logged[0].level : null,
+               msg: logged.length ? logged[0].msg : "" });
+        """,
+    )
+    assert result["handled"] is True
+    assert result["count"] == 1, "the abort was swallowed -- exactly the US-653 gap"
+    assert result["level"] == 0, "must report at LOG_ERROR, which is never gated"
+    assert "imu" in result["msg"], "the report must name WHICH state read hung"
+
+
+def test_an_ordinary_fetch_failure_is_NOT_reported(tmp_path):
+    """A 404 or a parse error must stay quiet.
+
+    Otherwise every missing state file becomes an error line and the signal this
+    exists to surface is buried in noise -- the inverse failure.
+    """
+    result = runJs(
+        tmp_path,
+        """
+        var logged = [];
+        var out = [];
+        out.push(carousel.reportFetchAbort("light", new TypeError("bad json"),
+          function (l, m) { logged.push(m); }));
+        out.push(carousel.reportFetchAbort("light", null,
+          function (l, m) { logged.push(m); }));
+        emit({ results: out, count: logged.length });
+        """,
+    )
+    assert result["results"] == [False, False]
+    assert result["count"] == 0, "a non-timeout failure was reported as a hang"
+
+
+def test_fetchState_routes_its_catch_through_the_reporter():
+    """Pinned at the call site -- the helper is useless if nothing calls it."""
+    source = CAROUSEL_JS.read_text(encoding="utf-8")
+    code = "\n".join(
+        line for line in source.splitlines() if not line.lstrip().startswith(("//", "*", "/*"))
+    )
+    assert "reportFetchAbort(name, e" in code or "reportFetchAbort(name, err" in code, (
+        "fetchState's catch does not route through reportFetchAbort -- the request "
+        "deadline is still silent and a soak still cannot be interpreted"
+    )
