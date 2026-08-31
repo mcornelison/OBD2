@@ -1,5 +1,5 @@
 {
-  "version": "V0.29.39",
-  "theme": "Abort is not silent + 3s display smoothing",
-  "description": "US-655: an aborted fetch now REPORTS at LOG_ERROR naming the state that hung -- an absorbed hang and no hang are no longer the same journal. US-662: 3s display smoothing for heading/g/grade, CONSUMER-ONLY -- state files and the DB keep RAW values. Heading uses a CIRCULAR mean; a naive average of 358,359,1,2 is 180. THE REBOOT IS THE ARMING STEP: deploy-pi.sh does not restart the kiosk."
+  "version": "V0.29.40",
+  "theme": "ARCH-019 -- the arm line reports, not predicts",
+  "description": "A-22: the arm self-check proved the GPIO6 pin READS, never that it CHANGES -- so powerwatch reported ARMED through a hard cut it could not detect. It now says ARMED (UNPROVEN) or ARMED (PROVEN, last transition <utc>); only PROVEN keeps the old promise. pld_witness persists the first real transition; every failure mode resolves to NEVER. EXPECT UNPROVEN -- that is correct."
 }
