@@ -86,6 +86,7 @@ ExecStart=__CHROMIUM_BIN__ \
   --check-for-update-interval=31536000 \
   --password-store=basic \
   --user-data-dir=/tmp/dashboard-chromium \
+  --enable-logging=stderr --log-level=0 \
   http://127.0.0.1:9899/dashboard.html
 Restart=on-failure
 RestartSec=2

@@ -105,7 +105,7 @@ def test_dashboardHtml_hasBothCardSlots_s1():
     # merged source binds its own state file again. "Health is gone" is
     # trivially true if the three readouts left with it.
     assert "Health" not in labels
-    assert 'data-states=' not in html, "a multi-source card outlived the retirement"
+    assert "data-states=" not in html, "a multi-source card outlived the retirement"
     for state in ("battery-health", "ltft-trend", "light"):
         assert f'data-state="{state}"' in html, f"{state} lost its slot"
 
@@ -151,10 +151,47 @@ def test_carouselJs_honestInstrument_unavailableFallback():
     assert "try" in js and "catch" in js  # the fetch is guarded
 
 
+def _fnSource(js: str, name: str) -> str:
+    """Source text of one `function <name>(` up to the next declaration.
+
+    carousel.js declares these at two-space indent inside its IIFE, so the next
+    ``\n  function `` is the terminator.
+    """
+    start = js.index("function " + name + "(")
+    nxt = js.find("\n  function ", start + 1)
+    return js[start:nxt] if nxt != -1 else js[start:]
+
+
 def test_dashboardKitJs_hasNoAlwaysOnConsoleError():
-    """S-1 'no console errors': the shipped JS has no unconditional console.error."""
+    """S-1 'no console errors': no console.error reachable on a NON-ERROR path.
+
+    ARCH-014 narrowed this from ``assert "console.error" not in js`` -- a blanket
+    substring ban that this docstring never claimed. The blanket form forbade the
+    one legitimate use: a deliberate error REPORTER that fires only after an
+    exception has already occurred.
+
+    That mattered. A dashboard with no way to report an exception is exactly what
+    let the ~38 s freeze hide for weeks: the panel died silently, nothing was
+    logged anywhere, and one reason nothing was logged is that this test forbade
+    logging it. A guard that enforced blindness.
+
+    The violation is console.error reachable on a HEALTHY tick, not the string.
+    So the contract is now two-part and testable: the string may appear ONLY
+    inside the reporter, and the reporter must be LEVEL-GATED.
+
+    Narrowing ruled by the CIO 2026-08-30.
+    """
     js = _read(KIT_DIR, "carousel.js")
-    assert "console.error" not in js
+
+    reporter = _fnSource(js, "uiLog")
+    assert js.count("console.error") == reporter.count("console.error"), (
+        "console.error appears OUTSIDE the uiLog reporter -- an always-on error "
+        "path, which is what S-1 forbids"
+    )
+    assert "shouldLog(" in reporter, (
+        "the reporter is not level-gated -- console.error must be reachable only "
+        "through the level check"
+    )
 
 
 @pytest.mark.skipif(not _nodeAvailable(), reason="node not available on PATH")
@@ -316,7 +353,7 @@ def test_dashboardCss_carriesTileLevelColors_us400():
     """US-400: the card-tile level styles bind ok/amber/down to the palette so a
     degraded tile is visibly not-green (honest-instrument)."""
     css = _read(KIT_DIR, "dashboard.css")
-    assert '.tile' in css
+    assert ".tile" in css
     assert 'data-level="amber"' in css
     assert 'data-level="down"' in css
     assert 'data-level="ok"' in css
@@ -641,8 +678,11 @@ def test_installDryRun_failsLoudly_onUnknownSession():
 def test_installDryRun_failsLoudly_onIndeterminateUser():
     result = _runInstall(
         "--dry-run",
-        env_extra={"DASHBOARD_FORCE_USER": "", "DASHBOARD_FORCE_SESSION": "wayland",
-                   "DASHBOARD_USER_HOME_GLOB": "/nonexistent-home-root/*"},
+        env_extra={
+            "DASHBOARD_FORCE_USER": "",
+            "DASHBOARD_FORCE_SESSION": "wayland",
+            "DASHBOARD_USER_HOME_GLOB": "/nonexistent-home-root/*",
+        },
     )
     assert result.returncode != 0
     assert "user" in (result.stdout + result.stderr).lower()
@@ -688,11 +728,7 @@ def test_shippedConfig_retiresPygameStatusDisplay_f4():
     ABSENCE (not `enabled == false`) is the stronger invariant: there is no
     overlay flag left to re-enable."""
     config = json.loads(CONFIG_JSON.read_text(encoding="utf-8"))
-    statusDisplay = (
-        config.get("pi", {})
-        .get("hardware", {})
-        .get("statusDisplay")
-    )
+    statusDisplay = config.get("pi", {}).get("hardware", {}).get("statusDisplay")
     assert statusDisplay is None, (
         "pi.hardware.statusDisplay must be ABSENT -- the pygame status overlay is "
         "fully retired (US-485); the HTML carousel is the sole dashboard surface. "
@@ -1732,16 +1768,19 @@ def test_passwordStoreParser_selfTest_us522():
     """The keyring guard's own parser, fed known-bad input (US-513 lesson: an
     un-self-tested static guard reports 'clean' forever once its logic rots)."""
     # The trap this helper exists for: the WRONG backend must not read as a fix.
-    assert _passwordStoreValues("ExecStart=/usr/bin/chromium --password-store=gnome http://h/\n") == [
-        "gnome"
-    ], "a valued switch must be compared by VALUE, not by prefix presence"
-    # A comment discussing the flag can never satisfy the guard.
     assert _passwordStoreValues(
-        "# ExecStart=/bogus --password-store=basic\nExecStart=/usr/bin/chromium --kiosk http://h/\n"
-    ) == []
-    assert _passwordStoreValues(f"ExecStart=/usr/bin/chromium {_PASSWORD_STORE_FLAG} http://h/\n") == [
-        "basic"
-    ]
+        "ExecStart=/usr/bin/chromium --password-store=gnome http://h/\n"
+    ) == ["gnome"], "a valued switch must be compared by VALUE, not by prefix presence"
+    # A comment discussing the flag can never satisfy the guard.
+    assert (
+        _passwordStoreValues(
+            "# ExecStart=/bogus --password-store=basic\nExecStart=/usr/bin/chromium --kiosk http://h/\n"
+        )
+        == []
+    )
+    assert _passwordStoreValues(
+        f"ExecStart=/usr/bin/chromium {_PASSWORD_STORE_FLAG} http://h/\n"
+    ) == ["basic"]
 
 
 def test_dashboardUnits_carryPasswordStoreBasic_us522():
@@ -1767,7 +1806,9 @@ def test_dashboardUnits_neverSelectKeyringBackedPasswordStore_us522():
     while still 'having a --password-store flag'."""
     for variant in _DASHBOARD_UNITS:
         for value in _passwordStoreValues(_read(KIT_DIR, variant)):
-            assert value == "basic", f"{variant}: --password-store={value} re-opens the keyring popup"
+            assert value == "basic", (
+                f"{variant}: --password-store={value} re-opens the keyring popup"
+            )
 
 
 def test_dashboardUnits_keyringFixSurvivedTheGpuRevert_us536():
