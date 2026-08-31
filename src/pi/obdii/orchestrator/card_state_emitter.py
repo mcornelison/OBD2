@@ -60,6 +60,11 @@ _DEFAULT_SEVERITY_TABLE_PATH = str(
 # Default tmpfs states dir (matches boot_state_emitter + the states-http unit).
 _DEFAULT_STATES_DIR = "/run/eclipse-obd/states"
 
+# US-632: "no reason has been observed yet" -- distinct from an observed None
+# (which means the verdict RESOLVED). A plain None default would swallow the
+# first log line whenever the producer starts out resolved and later degrades.
+_REASON_UNSET: Any = object()
+
 
 class CardStateEmitterMixin:
     """Mixin: construct + orchestrator-invoke the carousel card-state emitters.
@@ -96,6 +101,10 @@ class CardStateEmitterMixin:
     # US-518: built lazily by _getAltitudeAnchor, never in __init__ -- declared
     # here for mypy only. Read through getattr so an absent attribute is fine.
     _altitudeAnchor: Any | None
+    # US-632: last battery-health unknown-reason logged, so the journal records
+    # transitions rather than one line per emit tick. A CLASS default (not an
+    # __init__ assignment) so every existing composer keeps working unchanged.
+    _lastBatteryHealthReason: Any = _REASON_UNSET
 
     # ------------------------------------------------------------------ setup
 
@@ -523,7 +532,9 @@ class CardStateEmitterMixin:
             )
         )
 
-    def _gatherBatteryHealthVerdict(self) -> tuple[str, str | None, int | None]:
+    def _gatherBatteryHealthVerdict(
+        self,
+    ) -> tuple[str, str | None, int | None, str | None]:
         """Read the US-504 verdict + last-health-check from battery_health_log.
 
         The database is resolved through ``getattr`` AT USE TIME, never captured
@@ -533,13 +544,21 @@ class CardStateEmitterMixin:
         tick so a drain recorded while the orchestrator runs reaches the card
         without a restart.
 
+        US-632 adds the fourth element, ``reason``. The verdict is recomputed on
+        EVERY emit tick -- there is no separate health-producer unit or timer --
+        so an `unknown` here means "we ran, just now, and cannot say", which is
+        a different fact from "nothing has run since May". The reason is what
+        carries that distinction.
+
         Returns:
-            ``(verdict, lastHealthCheckTs, medianRuntimeS)`` -- honest
-            ``("unknown", None, None)`` whenever the log is absent, unreadable,
-            too thin (< 3 qualifying drains) or stale (> 90 days).
+            ``(verdict, lastHealthCheckTs, medianRuntimeS, reason)`` -- honest
+            ``("unknown", None, None, <reason>)`` whenever the log is absent,
+            unreadable, too thin (< 3 qualifying drains) or stale (> 90 days).
+            ``reason`` is None only when the verdict actually resolved.
         """
         try:
             from pi.power.battery_health_verdict import (
+                REASON_LOG_UNREADABLE,
                 VERDICT_UNKNOWN,
                 readBatteryHealthVerdict,
             )
@@ -550,12 +569,45 @@ class CardStateEmitterMixin:
             )
         except Exception as e:  # noqa: BLE001 -- never block the emit loop
             logger.debug("battery-health verdict unavailable: %s", e)
-            return ("unknown", None, None)
+            # The import itself failed, or the reader raised out. Either way the
+            # producer could not read the log -- report that, not silence.
+            return ("unknown", None, None, "log_unreadable")
         return (
             result.verdict or VERDICT_UNKNOWN,
             result.lastHealthCheckTs,
             result.medianRuntimeS,
+            result.reason if result.verdict != VERDICT_UNKNOWN
+            else (result.reason or REASON_LOG_UNREADABLE),
         )
+
+    def _recordBatteryHealthReason(self, reason: str | None) -> None:
+        """Log WHY the battery-health verdict is unknown, on CHANGE only.
+
+        US-632's conditionalOutcome: "If the producer is scheduled but failing
+        silently, that silent failure IS the defect -- record it where it can
+        be seen." The reason cannot reach the state file from here (the
+        ``battery-health`` payload is assembled in ``src/pi/splash/``, outside
+        this bench's surface -- see BL-us632), so until that lands the journal
+        is where it can be seen.
+
+        On CHANGE only, deliberately: this runs on every emit tick, and an
+        unconditional log line would make the producer a continuous journal
+        writer. US-646 is an open story about exactly that cost, and US-644 is
+        about a journal probe that already times out because the journal is too
+        large. A steady state is not news; a transition is.
+        """
+        if reason == getattr(self, "_lastBatteryHealthReason", _REASON_UNSET):
+            return
+        self._lastBatteryHealthReason = reason
+        if reason is None:
+            logger.info("battery-health verdict resolved (reason cleared)")
+        else:
+            logger.warning(
+                "battery-health verdict is unknown: %s "
+                "(the verdict producer DID run -- it recomputes every emit "
+                "tick; this names what it could not conclude)",
+                reason,
+            )
 
     def _batteryHealthKwargs(
         self,
@@ -578,9 +630,13 @@ class CardStateEmitterMixin:
         MAX17048 has NO temperature register, so US-504 removed the TEMP tile
         rather than invent a source; the column survives for a future BMP390.
         """
-        health, lastHealthCheckTs, medianRuntimeS = (
+        health, lastHealthCheckTs, medianRuntimeS, reason = (
             self._gatherBatteryHealthVerdict()
         )
+        # US-632: the reason cannot be added to the payload from here -- the
+        # emit callable's signature lives in src/pi/splash/, outside this
+        # bench's surface (BL-us632). Record it where it CAN be seen instead.
+        self._recordBatteryHealthReason(reason)
         return {
             "vcellV": vcellV,
             "soc": soc,
