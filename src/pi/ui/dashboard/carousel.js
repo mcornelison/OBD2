@@ -114,6 +114,30 @@
     return true;
   }
 
+  function reportFetchAbort(name, err, log) {
+    // US-655: US-653 shipped TWO deadlines and instrumented only ONE. The tick
+    // deadline reports; the FETCH deadline aborted into a catch that returns
+    // null -- indistinguishable from a 404, a parse failure, or a missing file.
+    //
+    // That silence is not cosmetic. It made Boot B UNINTERPRETABLE: 2 h 48 m
+    // with zero log lines was equally consistent with "the fix is absorbing
+    // hangs" and "no hang ever happened", and nothing on the box could separate
+    // them. This branch is the difference between those two readings.
+    //
+    // ONLY a timeout is reported. An ordinary failure stays quiet, or every
+    // missing state file becomes an error line and buries the signal.
+    if (!err || err.name !== "TimeoutError") return false;
+    log(
+      LOG_ERROR,
+      "fetchState(" +
+        name +
+        ") aborted after " +
+        FETCH_DEADLINE_MS +
+        "ms -- the request never completed"
+    );
+    return true;
+  }
+
   function reportLoopError(name, err) {
     // The STACK is the whole point -- it names the file and the line, which is
     // the one thing no amount of reading this file from the outside settles.
@@ -3112,6 +3136,7 @@
 
   var api = {
     makeResilientLoop: makeResilientLoop,
+    reportFetchAbort: reportFetchAbort,
     shouldLog: shouldLog,
     uiLog: uiLog,
     reportLoopError: reportLoopError,
@@ -4544,6 +4569,9 @@
           if (!r.ok) return null;
           return await r.json();
         } catch (e) {
+          // US-655: an abort is a HANG we survived -- say so. Everything else
+          // stays a quiet null, exactly as before.
+          reportFetchAbort(name, e, uiLog);
           return null;
         }
       }
