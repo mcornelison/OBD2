@@ -752,6 +752,72 @@ the noise it sits in. Reading the guard tells you what its author *meant*.
 `specs/ssot-design-pattern.md` — an inert guard and a fabricated reading are the same disease
 (something that looks like information and is not) at two different layers.
 
+### The census as acceptance — a counted number in a DoD is a fact with a shelf life
+
+**Added 2026-08-30 (Atlas), after a count was wrong three times on one story.**
+
+A removal, rename or sweep story whose Definition of Done says *"remove it from all 3 sites"* has
+put a **measurement** where a **contract** belongs. The number was true when someone ran the search;
+it decays silently between filing and building, and nobody re-runs it because the DoD already
+states an answer.
+
+#### The worked example — US-595, `alarmFloorLevel`
+
+| stage | claimed | reality |
+|---|---|---|
+| Story DoD | **3 sites** | wrong |
+| Atlas design gate — *"corrected, verified against current code"* | **4 sites** | still wrong |
+| Rex, picking the story up | **9 sites** | the four were only the PRODUCTION sites; the tests pinning them were not counted |
+| Ralph shipped | **8 of 9** | site 9 was `specs/architecture.md`, inside his surface, and nothing stopped him |
+
+**A correction that was itself verified against current code still undercounted by five, and the
+corrected census still shipped one short.** Care is not the fix — care is what failed, three times,
+on one story.
+
+#### The rule
+
+> **A removal/sweep story's acceptance must be an EXECUTABLE PREDICATE, never a count.**
+> A number may appear as a sizing hint. It must never be the acceptance.
+
+```
+WRONG   DoD: remove alarmFloorLevel from all 3 sites
+
+RIGHT   DoD: this command reports no site that DEFINES, READS, or DOCUMENTS-AS-LIVE the key:
+             grep -rn 'alarmFloorLevel' -- src/ specs/ tests/ config.json
+             (the count is whatever it is on the day; the command is the contract)
+```
+
+Why it works where care did not: a predicate is **re-evaluated by whoever runs it, on the day,
+against the tree they actually have.** It cannot undercount — the "4" and the "9" both become
+irrelevant. And it is **falsifiable by anyone in one line**, so no reviewer has to trust anybody's
+verification.
+
+#### ⚠️ The refinement, found by applying the rule to the very story that produced it
+
+**A bare `returns zero` is too crude, and would have been wrong here.** Running the predicate over
+the finished work returned **27 lines** — and almost all of them were correct: deliberate
+retirement notes (*"alarmFloorLevel was HERE and is RETIRED"*) and the guard tests that exist
+precisely to assert its absence, including one that pins that an **old config still carrying the key
+resolves cleanly**.
+
+So the predicate must be **scoped to the violation, not to the string**:
+
+> the key must not be **defined**, **read**, or **documented as live**.
+> Naming it as *retired* is not a violation — it is the record of the retirement.
+
+A predicate that forbids the string outright would delete its own history and fail the moment
+someone documents the removal. **Precision in what counts as a violation is part of the contract,
+not a detail of running it.**
+
+#### Scope
+
+Removal, rename and sweep stories — anywhere a DoD says *"all N sites"*, *"every consumer"*, *"the 3
+places"*. **Not** feature stories, where a count is usually a scope statement rather than an
+acceptance.
+
+**Related:** *the inert guard*, above — both are cases of something that **looks like information
+and is not.** A census in a DoD looks like verification; it is a snapshot of someone else's morning.
+
 ## Adding New Anti-Patterns
 
 When you encounter a new anti-pattern:
