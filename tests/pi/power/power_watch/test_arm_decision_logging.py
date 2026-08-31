@@ -21,6 +21,7 @@
 # ================================================================================
 ################################################################################
 """US-566: the powerwatch arm decision must never be silent."""
+
 from __future__ import annotations
 
 import inspect
@@ -64,9 +65,7 @@ def test_emitArmDecision_isNeverSilentOnEitherBranch(caplog, armed):
     """
     caplog.set_level(logging.DEBUG, logger=LOGGER_NAME)
 
-    m.emitArmDecision(
-        armed=armed, pldGpioPin=6, pldAvailable=True, readsPowerPresent=armed
-    )
+    m.emitArmDecision(armed=armed, pldGpioPin=6, pldAvailable=True, readsPowerPresent=armed)
 
     assert len(_decisionRecords(caplog)) == 1
 
@@ -87,9 +86,7 @@ def test_emitArmDecision_clearsTheLastResortWarningFloor(caplog, armed):
     """
     caplog.set_level(logging.DEBUG, logger=LOGGER_NAME)
 
-    m.emitArmDecision(
-        armed=armed, pldGpioPin=6, pldAvailable=True, readsPowerPresent=armed
-    )
+    m.emitArmDecision(armed=armed, pldGpioPin=6, pldAvailable=True, readsPowerPresent=armed)
 
     record = _decisionRecords(caplog)[0]
     assert record.levelno >= logging.WARNING, (
@@ -110,12 +107,8 @@ def test_emitArmDecision_armedIsWarning_notArmedIsError(caplog):
     """
     caplog.set_level(logging.DEBUG, logger=LOGGER_NAME)
 
-    m.emitArmDecision(
-        armed=True, pldGpioPin=6, pldAvailable=True, readsPowerPresent=True
-    )
-    m.emitArmDecision(
-        armed=False, pldGpioPin=6, pldAvailable=False, readsPowerPresent=False
-    )
+    m.emitArmDecision(armed=True, pldGpioPin=6, pldAvailable=True, readsPowerPresent=True)
+    m.emitArmDecision(armed=False, pldGpioPin=6, pldAvailable=False, readsPowerPresent=False)
 
     armedRec, notArmedRec = _decisionRecords(caplog)
     assert armedRec.levelno == logging.WARNING
@@ -136,9 +129,7 @@ def test_emitArmDecision_bothBranchesShareOneGreppablePrefix(caplog, armed):
     """
     caplog.set_level(logging.DEBUG, logger=LOGGER_NAME)
 
-    m.emitArmDecision(
-        armed=armed, pldGpioPin=6, pldAvailable=True, readsPowerPresent=armed
-    )
+    m.emitArmDecision(armed=armed, pldGpioPin=6, pldAvailable=True, readsPowerPresent=armed)
 
     assert m.ARM_DECISION_PREFIX in _decisionRecords(caplog)[0].getMessage()
 
@@ -284,9 +275,7 @@ def test_runDisarmedHold_reStatesTheOriginalCauseVerbatim(caplog):
         armed=False, pldGpioPin=6, pldAvailable=False, readsPowerPresent=False
     )
 
-    m.runDisarmedHold(
-        message=original, waitFn=lambda _s: len(_decisionRecords(caplog)) >= 1
-    )
+    m.runDisarmedHold(message=original, waitFn=lambda _s: len(_decisionRecords(caplog)) >= 1)
 
     assert original in _decisionRecords(caplog)[0].getMessage()
 
@@ -303,9 +292,7 @@ def test_runDisarmedHold_usesTheDeclaredRestateInterval():
     """
     seen = []
 
-    m.runDisarmedHold(
-        message="x", waitFn=lambda s: (seen.append(s), True)[1]
-    )
+    m.runDisarmedHold(message="x", waitFn=lambda s: (seen.append(s), True)[1])
 
     assert seen == [m.DISARMED_RESTATE_SEC]
     assert m.DISARMED_RESTATE_SEC > 0
@@ -397,3 +384,100 @@ def test_armDecisionIsEmittedUnconditionally_notOnlyOnFailure():
 
     assert emitAt != -1 and branchAt != -1
     assert emitAt < branchAt
+
+
+# ---------------------------------------------------------------------------
+# ARCH-019 -- the armed line must state what it VERIFIED, not what it PREDICTS.
+#
+# The old line ended: "A sustained external-power loss WILL run the bounded
+# pre-shutdown pipeline and then poweroff." That is a claim about future
+# behaviour asserted from ONE instantaneous read. On 2026-08-31 the Pi died a
+# hard cut with that line in the journal and the pipeline never ran.
+# ---------------------------------------------------------------------------
+
+
+def test_armed_but_NEVER_witnessed_does_not_predict_what_it_will_do():
+    """The load-bearing test. No witness -> no promise.
+
+    A pin that reads but has never been seen to change is indistinguishable from
+    a wire that is not connected, and the line must not claim otherwise.
+    """
+    message = m.buildArmDecisionMessage(
+        armed=True,
+        pldGpioPin=6,
+        pldAvailable=True,
+        readsPowerPresent=True,
+        lastTransitionUtc=None,
+    )
+    assert "UNPROVEN" in message
+    assert "will run" not in message, (
+        "the line still PREDICTS the pipeline will run, on evidence that is one "
+        "instantaneous read -- this is the defect ARCH-019 exists to remove"
+    )
+    assert "READS" in message and "CHANGES" in message, (
+        "the line must say what the self-check actually established"
+    )
+    # It still arms, and still says so: the fix is not to stop arming.
+    assert "protection is ON" in message
+
+
+def test_armed_AND_witnessed_may_state_what_it_will_do():
+    """Once the pin has been SEEN to move, the promise is earned."""
+    message = m.buildArmDecisionMessage(
+        armed=True,
+        pldGpioPin=6,
+        pldAvailable=True,
+        readsPowerPresent=True,
+        lastTransitionUtc="2026-08-31T20:15:00Z",
+    )
+    assert "PROVEN" in message and "UNPROVEN" not in message
+    assert "will run" in message
+    assert "2026-08-31T20:15:00Z" in message, (
+        "the operator needs to know WHEN it was last proven, not merely that it was"
+    )
+
+
+def test_the_two_armed_lines_are_distinguishable_by_grep():
+    """An operator scanning the journal must be able to tell them apart."""
+    unproven = m.buildArmDecisionMessage(
+        armed=True,
+        pldGpioPin=6,
+        pldAvailable=True,
+        readsPowerPresent=True,
+        lastTransitionUtc=None,
+    )
+    proven = m.buildArmDecisionMessage(
+        armed=True,
+        pldGpioPin=6,
+        pldAvailable=True,
+        readsPowerPresent=True,
+        lastTransitionUtc="2026-08-31T20:15:00Z",
+    )
+    assert unproven != proven
+    assert m.ARM_DECISION_PREFIX in unproven and m.ARM_DECISION_PREFIX in proven
+
+
+def test_the_witness_is_actually_WIRED_at_both_ends():
+    """A helper nothing calls proves nothing.
+
+    ⚠️ This is the third time in two days a guard has been written whose target
+    was never invoked. The unit tests above pass whether or not powerwatch reads
+    the witness and whether or not the controller ever records one -- so the
+    call sites are pinned here explicitly, in the shipped source.
+    """
+    import inspect
+    from pathlib import Path as _P
+
+    main_src = _P(inspect.getfile(m)).read_text(encoding="utf-8")
+    assert "lastTransitionUtc=readWitness()" in main_src, (
+        "the arm decision does not READ the witness -- it would report UNPROVEN "
+        "forever, even after the pin has been seen to move"
+    )
+
+    from src.pi.power.power_watch import controller as _c
+
+    ctrl_src = _P(inspect.getfile(_c)).read_text(encoding="utf-8")
+    assert "recordTransitionWitnessed(atIso=" in ctrl_src, (
+        "nothing RECORDS a witnessed transition -- PROVEN would be unreachable "
+        "and the arm line would be permanently, if honestly, unproven"
+    )
