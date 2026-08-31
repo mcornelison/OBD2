@@ -1,5 +1,5 @@
 {
-  "version": "V0.29.35",
-  "theme": "Freeze root-caused: UI loop resilience + specs",
-  "description": "ARCH-014 ROOT-CAUSES THE V0.29 SCREEN FREEZE: both dashboard poll loops rescheduled on the LAST line of an async body, so any throw skipped the reschedule and killed the loop permanently and silently. This makes it SURVIVABLE and VISIBLE; it does NOT fix the trigger. The next reproduction prints the throwing stack -- THAT STACK IS THE DELIVERABLE. ARCH-013 lands the Rule-10 spec debt."
+  "version": "V0.29.36",
+  "theme": "US-653 -- a poll tick that never settles",
+  "description": "Closes the class-A2 HANG that ARCH-014 did not cover: makeResilientLoop now handles four outcomes (resolve, reject, sync throw, NEVER SETTLING) behind one finish() latch, plus AbortSignal.timeout(2000) on fetchState. NON-CLAIM: this makes the A2 hang survivable and VISIBLE; it does NOT prove a hang caused any observed freeze. The running page is deliberately untouched -- the next reboot is Boot B."
 }
