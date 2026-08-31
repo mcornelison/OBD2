@@ -67,6 +67,45 @@
 #   `--enable-logging=stderr --remote-debugging-port=9222`. Those were test aids
 #   and are deliberately NOT adopted here -- an open DevTools port on a
 #   car-mounted kiosk is unauthenticated full-page control. A test fences it.
+#
+# US-647 (F-139) -- `--disable-gpu-rasterization`: A STOPGAP, AND A NON-CLAIM.
+#   Raspberry Pi OS turns GPU rasterization ON for every chromium on this box
+#   (/etc/chromium.d/default-flags:7 exports `--enable-gpu-rasterization`) and
+#   nothing here ever turned it off. Measured independently by Atlas and PM on
+#   2026-08-30: the RUNNING process carried it. This is a static 2D card UI on a
+#   480x320 panel and it has no use for GPU raster; the previous boot logged
+#   44,991 AllocateRingBuffer markers.
+#
+#   THIS IS NOT `--disable-gpu` AND MUST NOT BECOME IT. It declines ONE JOB. It
+#   does not take hardware GL out of the path, and it does not touch the CIO's
+#   standing US-536 disposition-B ruling that the GPU stays ON. Anyone who
+#   "simplifies" it to `--disable-gpu` reintroduces the crash class US-536 was
+#   created to remove. The two are asserted together by
+#   test_dashboardX11_declinedRasterIsNotTheGpuKillSwitch_us647.
+#
+#   PRESENCE IS NOT PRECEDENCE -- THIS FLAG'S EFFECT IS UNVERIFIED. The OS flag
+#   and ours now BOTH sit in the composed argv and they CONTRADICT each other.
+#   Do not settle that from the ordering argument recorded above: "the OS flags
+#   land first and this ExecStart lands last" governs REPEATS OF ONE SWITCH
+#   NAME, and these are TWO DIFFERENT switch names -- last-one-wins does not
+#   reach the case at all. Which one prevails is decided inside chromium, and
+#   Atlas grepped the boot journal for GPU feature status: NOTHING IS LOGGED, so
+#   it is not observable on this box today. Confirming it (chrome://gpu, or an
+#   explicit startup log) is a bigDefinitionOfDone item owned by the CIO. Note
+#   the DevTools route is fenced by the paragraph above, so the stderr channel
+#   below is the one that is actually available.
+#
+#   AND IT DOES NOT CLAIM THE MARKER RATE DROPPED. That is settled only by the
+#   boot-to-boot comparison in the sprint's bigDefinitionOfDone -- Boot B (no
+#   flag, panel ALIVE) then Boot C (flag on) -- and NEVER by a kiosk restart,
+#   because restarting chromium is itself the variable under suspicion. If the
+#   comparison shows no material reduction, say so plainly: a stopgap that did
+#   not help is a finding, not a failure. Reporting it as a fix would repeat
+#   US-522 exactly.
+#
+#   EXPIRY: REMOVED when Ozone lands. A stopgap justified only by a pending
+#   migration becomes permanent the moment the migration slips. If Ozone has not
+#   landed, REVISIT this rather than inherit it.
 # ==============================================================================
 
 [Unit]
@@ -81,6 +120,7 @@ Environment=DISPLAY=:0
 ExecStart=__CHROMIUM_BIN__ \
   --kiosk \
   --touch-events=enabled \
+  --disable-gpu-rasterization \
   --noerrdialogs --disable-infobars --hide-scrollbars \
   --autoplay-policy=no-user-gesture-required \
   --check-for-update-interval=31536000 \

@@ -1722,6 +1722,155 @@ def test_deployPi_documentsChromiumDDeployBlindSpot_us522():
 
 
 # ---------------------------------------------------------------------------
+# US-647 (F-139) -- the X11 kiosk DECLINES GPU RASTERIZATION. A STOPGAP.
+#
+# Raspberry Pi OS turns GPU rasterization ON for every chromium on the box
+# (`/etc/chromium.d/default-flags:7` exports `--enable-gpu-rasterization`) and
+# nothing in this repo turned it off. Measured independently by Atlas and PM on
+# 2026-08-30: the RUNNING process carried it. On a static 2D card UI at 480x320
+# that is pressure we have no use for, and the previous boot logged 44,991
+# `AllocateRingBuffer` markers.
+#
+# WHAT THESE GUARDS DO AND DO NOT CLAIM -- read this before extending them.
+# They pin ONE FLAG'S PRESENCE ON ONE UNIT. They do NOT claim the marker rate
+# dropped, and they do NOT claim the flag TOOK EFFECT:
+#
+#   PRESENCE IN ARGV IS NOT PRECEDENCE (Atlas design gate GAP 1, 2026-08-31).
+#   The OS injects `--enable-gpu-rasterization` and we add
+#   `--disable-gpu-rasterization`; BOTH are then present and they CONTRADICT
+#   each other. The familiar "the wrapper's flags land first and our argv lands
+#   last, so ours wins" argument DOES NOT REACH THIS CASE -- last-one-wins
+#   settles repeats of the SAME switch name, and these are two DIFFERENT switch
+#   names. Which one prevails is decided inside chromium, and Atlas grepped the
+#   boot journal for GPU feature status: NOTHING IS LOGGED, so it is not
+#   observable on this box today.
+#
+# Effectiveness is therefore a bigDefinitionOfDone item owned by the CIO, NOT
+# something this file can close. The failure mode that ordering prevents: the
+# flag lands, markers do not move, and we conclude "GPU raster was not the
+# cause" when the flag may never have taken effect -- a wrong conclusion that
+# would then justify the Ozone migration FOR THE WRONG REASON. US-522 is the
+# same shape and is why the whole sprint exists: it shipped its RATIONALE and
+# not its FLAG, and the rationale was read for weeks as evidence of a fix.
+#
+# EXPIRY: this flag is X11-scoped and X11 is retired by the Ozone migration
+# (F-139). It is REMOVED when Ozone lands. The variant census below is the
+# mechanical half of that -- a new unit variant cannot silently inherit the
+# stopgap, because adding one turns the census red and forces the decision.
+# ---------------------------------------------------------------------------
+
+_GPU_RASTER_DISABLE_FLAG = "--disable-gpu-rasterization"
+_X11_UNIT = "dashboard.service.x11"
+_WAYLAND_UNIT = "dashboard.service.wayland"
+
+
+def test_dashboardUnitVariantCensus_us647():
+    """The stopgap is scoped PER VARIANT, so the variant list must be a census.
+
+    Every US-647 guard below names one unit explicitly rather than looping. That
+    is correct -- the flag belongs on X11 and nowhere else -- but it is also the
+    shape that goes quietly stale: add a third variant (the Ozone unit this
+    stopgap expires against) and every guard below still passes while saying
+    nothing at all about it.
+
+    So the two names are reconciled against `_DASHBOARD_UNITS` here. A new
+    variant fails THIS test, which is the EXPIRY clause made mechanical: the
+    Ozone unit cannot inherit an X11 stopgap by default, somebody has to decide.
+    """
+    assert {_X11_UNIT, _WAYLAND_UNIT} == set(_DASHBOARD_UNITS), (
+        "a dashboard unit variant was added or renamed. The US-647 guards below "
+        "are per-variant and now cover an incomplete set -- decide explicitly "
+        "whether the X11 GPU-rasterization stopgap applies to the new variant "
+        "(it expires with X11; see the EXPIRY note above), then update this census"
+    )
+
+
+def test_dashboardX11_declinesGpuRasterization_us647():
+    """US-647 END STATE: `--disable-gpu-rasterization` is on the X11 ExecStart.
+
+    NOTE THE LIMIT OF THIS ASSERTION -- it is presence, not effect. It cannot
+    and must not be read as "the freeze is fixed"; see the section header.
+    """
+    flags = _execStartFlags(_read(KIT_DIR, _X11_UNIT))
+    assert _GPU_RASTER_DISABLE_FLAG in flags, (
+        f"{_X11_UNIT}: ExecStart must carry {_GPU_RASTER_DISABLE_FLAG} to override "
+        "the OS-injected --enable-gpu-rasterization (/etc/chromium.d/default-flags)"
+    )
+
+
+def test_dashboardX11_declinedRasterIsNotTheGpuKillSwitch_us647():
+    """The two flags asserted TOGETHER, on one pass -- the mutation that matters.
+
+    `--disable-gpu-rasterization` declines ONE JOB; `--disable-gpu` takes the
+    whole hardware-GL path out and is a settled architecture call the CIO ruled
+    AGAINST (US-536 disposition B). The realistic failure is not someone typing
+    the wrong flag from scratch -- it is someone chasing this same freeze later,
+    reading the US-522 rationale still sitting in the unit header, and
+    "strengthening" the narrow flag into the broad one. That reintroduces the
+    error:5 crash class US-536 was created to remove.
+
+    `test_dashboardUnits_keepTheGpuOn_us536` already forbids the broad flag on
+    both variants; this is not a duplicate of it. It couples the two facts so
+    the widening reads as ONE edit that breaks ONE test with the trade spelled
+    out, instead of a passing swap plus a separate absence test failing for
+    reasons the editor has to go and reconstruct.
+    """
+    flags = _execStartFlags(_read(KIT_DIR, _X11_UNIT))
+    assert _GPU_RASTER_DISABLE_FLAG in flags, f"{_X11_UNIT}: lost the US-647 override"
+    assert _GPU_DISABLE_FLAG not in flags, (
+        f"{_X11_UNIT}: {_GPU_RASTER_DISABLE_FLAG} must NOT be widened to "
+        f"{_GPU_DISABLE_FLAG}. Declining GPU rasterization is not disabling the "
+        "GPU -- the broad flag reopens the settled US-536 disposition-B call"
+    )
+
+
+def test_dashboardWayland_doesNotInheritTheX11Stopgap_us647():
+    """The discriminating partner: the flag is X11-ONLY, and that is deliberate.
+
+    Without this, an edit that pasted the flag onto BOTH units would pass every
+    other guard here. That edit is the specific way a stopgap becomes permanent:
+    US-647 is throwaway work against a stack the Ozone migration retires, and
+    copying it onto the WAYLAND unit carries it straight past its own expiry
+    into the stack meant to replace it -- inherited rather than revisited, which
+    is exactly how the dead US-522 comment block got where it is.
+
+    This is NOT a ruling that Wayland should keep GPU rasterization on. It is a
+    fence that makes the Ozone migration DECIDE instead of inherit.
+    """
+    flags = _execStartFlags(_read(KIT_DIR, _WAYLAND_UNIT))
+    assert _GPU_RASTER_DISABLE_FLAG not in flags, (
+        f"{_WAYLAND_UNIT}: the US-647 GPU-rasterization override is an X11 STOPGAP "
+        "and expires with X11. Do not inherit it onto the Ozone/Wayland stack -- "
+        "if Wayland needs it, that is a new decision with its own evidence"
+    )
+
+
+def test_dashboardX11_keepsTheStderrLogChannelOpen_us647():
+    """US-647's DoD is EFFECTIVENESS, and this is the only channel left for it.
+
+    Confirming the override actually took effect needs the browser's own GPU
+    feature status. The two routes named are chrome://gpu via the DevTools port,
+    or a startup log. THE DEVTOOLS ROUTE IS FENCED IN THIS VERY FILE
+    (`test_dashboardUnits_carryNoRemoteDebuggingPort_us522`) because an open
+    port on a car-mounted kiosk is unauthenticated full-page control. So the
+    stderr->journal channel is the only one available.
+
+    ARCH-014 put `--enable-logging=stderr --log-level=0` on this unit (commit
+    ec4c21f0) so UI exceptions reach the journal. It is pinned here as well
+    because US-647's verification now depends on it too: silence in the journal
+    has to mean "chromium said nothing", never "we were not listening". Those
+    are different facts and only one of them is evidence.
+    """
+    flags = _execStartFlags(_read(KIT_DIR, _X11_UNIT))
+    assert "--enable-logging=stderr" in flags, (
+        f"{_X11_UNIT}: lost the ARCH-014 stderr channel. Without it the journal "
+        "cannot distinguish 'chromium reported nothing about GPU rasterization' "
+        "from 'nothing was capturing chromium's output' -- and the DevTools "
+        "alternative is fenced as a kiosk security surface"
+    )
+
+
+# ---------------------------------------------------------------------------
 # US-522 (reopen 2026-08-03) -- kiosk keyring popup (Atlas live-tested).
 #
 # With no `--password-store`, chromium AUTO-DETECTS a Linux backend and picks the
@@ -1740,9 +1889,16 @@ def test_deployPi_documentsChromiumDDeployBlindSpot_us522():
 #   (and sufficient) place for the fix. The splash's latent exposure is filed as
 #   tech debt rather than silently fixed here -- it is a different unit template.
 #
-# The fix's EFFECT is also observable in the journal once applied (Atlas's live
-# run carried `--enable-logging=stderr`, which the repo deliberately does not):
+# The fix's EFFECT is also observable in the journal once applied:
 #   key_storage_linux.cc:116  Selected backend for OSCrypt: BASIC_TEXT
+# (This parenthetical used to read "which the repo deliberately does not" of
+# `--enable-logging=stderr`. That went stale: ARCH-014 (ec4c21f0) put
+# `--enable-logging=stderr --log-level=0` on the X11 unit so UI exceptions reach
+# the journal, so the channel IS open there -- corrected under US-647, which
+# depends on that same channel being the only route left to its own DoD. The
+# flag it is NOT safe to adopt from Atlas's live run remains
+# `--remote-debugging-port`; that distinction is the point of the paragraph and
+# is fenced by test_dashboardUnits_carryNoRemoteDebuggingPort_us522 below.)
 # `basic` keeps the safe-storage key in chromium's own profile -- and this kiosk's
 # profile is a WIPED `/tmp/dashboard-chromium` that stores no real password, so
 # there is no meaningful security downgrade.
