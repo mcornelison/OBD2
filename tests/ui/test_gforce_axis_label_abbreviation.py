@@ -533,7 +533,7 @@ def test_theTileHeightIsConstantAcrossTheWholeRepresentableRange(column):
                         seen.setdefault(lines, text)
 
     assert len(seen) == 1, (
-        f"the tile changes height within its own value range: "
+        "the tile changes height within its own value range: "
         + "; ".join(f"{lines} lines at {text!r}" for lines, text in sorted(seen.items()))
         + f". Any two of those rendering in succession is a bounce -- in a "
         f"{column.width}px column with no `min-height`, a change of line count "
