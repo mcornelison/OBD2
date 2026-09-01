@@ -405,12 +405,23 @@ def test_theShippedVocabularyIsTheAbbreviatedOne():
     Keeps the two US-631 files from drifting apart: the measurement file sizes
     against a vocabulary, and this asserts the vocabulary it sized against is the
     one on the panel.
+
+    UPDATED 2026-09-01 (US-645): the lateral axis gained a NEUTRAL, `-`, for
+    readings inside the deadband. It is one character, exactly like `L` and `R`,
+    so US-631 (A)'s constant-length property is untouched -- which is the whole
+    reason US-645 was required to spell it that way. The pair is now a triple and
+    the width claim is asserted directly rather than implied by the membership.
     """
     shipped = _shippedAxisLabels()
     lateral = shipped - LONGITUDINAL_LABELS
-    assert lateral == {"L", "R"}, (
-        f"gAxisDetail ships lateral labels {sorted(lateral)}, not {{'L', 'R'}}. "
-        f"US-631's width measurement was taken against the abbreviated pair."
+    assert lateral == {"L", "R", "-"}, (
+        f"gAxisDetail ships lateral labels {sorted(lateral)}, not "
+        f"{{'L', 'R', '-'}}. US-631's width measurement was taken against the "
+        f"abbreviated pair plus US-645's one-character neutral."
+    )
+    assert {len(w) for w in lateral} == {1}, (
+        f"the lateral labels {sorted(lateral)} are no longer all one character, "
+        f"so a direction change can grow the tile again"
     )
     assert lateral <= LATERAL_LABELS, (
         f"{sorted(lateral)} is outside the measured vocabulary "

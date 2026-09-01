@@ -510,10 +510,17 @@ class TestImuCardWiring:
         moved to its own faster loop, so a second clock inside one paint could
         let `homeFace` say "live" while `liveCardView` says "stale" -- the slot
         would swap to the live face and then render nothing into it.
+
+        RE-AIMED AGAIN BY US-645, which appended a fourth argument (the OBD
+        vehicle speed) AFTER the clock. The previous pattern required `nowMs` to
+        be the LAST argument, which was incidental to the claim -- the claim is
+        that BOTH calls read the SAME clock, not where it sits in the list. Only
+        the position is relaxed; a call that dropped the clock, or reached for a
+        second one, still fails here.
         """
         home = _fnBody(_read(_JS), "renderHome")
-        assert re.search(r"homeFace\([^)]*nowMs\s*\)", home)
-        assert re.search(r"liveCardView\([^)]*nowMs\s*\)", home)
+        assert re.search(r"homeFace\([^)]*\bnowMs\b", home)
+        assert re.search(r"liveCardView\([^)]*\bnowMs\b", home)
 
     def test_theLiveLoopClearsTheTrailWhenTheFeedGoesIdle(self):
         """

@@ -135,21 +135,24 @@ ADVANCE_ROBUST_RANGE = (0.50, 0.65)
 # reservation must be sized for them: "Size for the widest string the label can
 # ever hold, not the widest one it holds today."
 #
-# `stopped` (7) is wider than `steady` (6), and US-631's acceptance text names
-# only `steady`. Both are taken from US-645's own acceptance -- "inside the
-# deadband the label reads steady, and is upgraded to stopped ONLY when OBD
-# SPEED IS TRULY ZERO" -- so sizing to `steady` alone would leave US-645 free to
-# reintroduce exactly the bounce this story measured.
-US645_LABELS = frozenset({"steady", "stopped"})
+# US-645 HAS NOW LANDED, and it did NOT land the words this file was sized
+# against. The conservative guess recorded here was `steady` (6) and `stopped`
+# (7) -- taken from US-645's prose -- and the guess was deliberately pessimistic
+# so that a wider vocabulary could not arrive unmeasured. What actually shipped
+# is NARROWER than both: US-645 carries a HARD CONSTRAINT, added after that
+# prose, requiring one character laterally and five longitudinally, so the
+# neutral is `-` and the stopped state is `still`. The measurement below is
+# therefore RE-RECORDED against the real vocabulary rather than left standing
+# against a worst case that can no longer occur -- a pessimistic figure in a
+# passing suite is as misleading as an optimistic one.
+US645_LABELS = frozenset({"-", "coast", "still"})
 
-# US-631 (A) shipped `L`/`R` in place of `left`/`right`. The US-645 words stay in
-# BOTH axis sets and are deliberately NOT abbreviated here: US-645 has not landed
-# and gets to choose its own spelling, so the conservative worst case is that it
-# lands the long form. Sizing to the abbreviation would quietly hand back the
-# margin this measurement exists to defend -- and the shipped-vocabulary tripwire
-# below goes red the moment that guess turns out wrong.
-LATERAL_LABELS = frozenset({"L", "R"}) | US645_LABELS
-LONGITUDINAL_LABELS = frozenset({"accel", "brake"}) | US645_LABELS
+# US-631 (A) shipped `L`/`R` in place of `left`/`right`; US-645 added the neutral
+# to each axis. Every one of these is now READ BACK from the shipped source by
+# `test_theShippedLabelsAreCoveredByTheMeasuredVocabulary`, so the two sets can
+# no longer drift from the panel without this file going red.
+LATERAL_LABELS = frozenset({"L", "R", "-"})
+LONGITUDINAL_LABELS = frozenset({"accel", "brake", "coast", "still"})
 
 # The widest number the detail line can carry. The story's stated negative case
 # is "a two-digit g reading under hard braking". `fmtG`/`gAxisDetail` apply NO
@@ -287,11 +290,17 @@ def _detailString(number: str, lateral: str, longitudinal: str) -> str:
 
 
 def _widestDetail(number: str = WIDEST_NUMBER) -> str:
-    """The widest string the detail line can ever hold, US-645 included."""
+    """The widest string the detail line can ever hold, US-645 included.
+
+    `sorted` before `max` so the recorded string is DETERMINISTIC. Since US-645
+    landed, every label on an axis ties on length -- and `max` over a set with
+    ties returns whichever the iteration order reached first, which would make
+    the recorded worst case change between runs.
+    """
     return _detailString(
         number,
-        max(LATERAL_LABELS, key=len),
-        max(LONGITUDINAL_LABELS, key=len),
+        max(sorted(LATERAL_LABELS), key=len),
+        max(sorted(LONGITUDINAL_LABELS), key=len),
     )
 
 
@@ -412,6 +421,16 @@ def test_recordTheMeasurement_theDetailLineDoesNotFitItsColumn(column):
     "record the measurement, pass or fail" line, so the number has to be pinned
     rather than narrated -- a stale measurement in a passing suite is worse than
     none, because it looks authoritative.
+
+    RE-RECORDED 2026-09-01 WHEN US-645 LANDED, and the direction of the change
+    is worth stating: the figure IMPROVED, from 3.01x to 2.12x. The 3.01x was
+    measured against a GUESS at US-645's vocabulary (`stopped`, 7 characters, on
+    both axes) made before that story chose its words. It chose one-character
+    and five-character words instead, so the worst case the tile can now hold is
+    19 characters rather than 27 -- and, for the first time, the worst case is
+    also the ORDINARY case, because every label on an axis is the same width.
+    The overrun is smaller and the escalation is unchanged: 2.12x is still no
+    fit at any tier.
     """
     widest = _widestDetail()
     needed = _textPx(widest, column.detailPx, ADVANCE_OBSERVED)
@@ -421,11 +440,11 @@ def test_recordTheMeasurement_theDetailLineDoesNotFitItsColumn(column):
         f"I-us631 rather than deleting this test."
     )
     # Recorded for Iris, in the failure text of the assertion that carries it.
-    assert needed / column.width > 2.5, (
+    assert needed / column.width > 2.0, (
         f"RECORDED (US-631): the detail line needs {needed:.1f}px for "
         f"{widest!r} ({len(widest)} chars at {column.detailPx}px) and has "
         f"{column.width}px -- {needed / column.width:.2f}x over. The overrun "
-        f"has shrunk below 2.5x, so the Iris escalation needs re-stating."
+        f"has shrunk below 2.0x, so the Iris escalation needs re-stating."
     )
 
 
@@ -488,7 +507,10 @@ def test_recordTheMeasurement_theColumnCannotEvenReserveTheWrappedHeight(column)
         f"in {available:.1f}px available) -- a min-height fix is back on the "
         f"table and US-631 can be closed in-surface. Re-open it."
     )
-    assert lines >= 4, (
+    # RE-RECORDED 2026-09-01 (US-645): four lines became THREE when the label
+    # vocabulary narrowed, and three still does not fit the two the column has
+    # room for. The finding is unchanged; only its size moved.
+    assert lines >= 3, (
         f"RECORDED (US-631): the worst-case detail wraps to {lines} lines "
         f"({needed:.1f}px) and the column has {available:.1f}px, room for "
         f"{int(available // (column.detailPx * LINE_HEIGHT_NORMAL))}. The wrap "
@@ -600,21 +622,33 @@ def test_theShippedLabelsAreCoveredByTheMeasuredVocabulary():
 
 
 def test_theMeasuredVocabularyIncludesTheUs645Labels():
-    """Given: US-645 introduces `steady` and upgrades it to `stopped`.
+    """Given: US-645 has landed its neutral states.
 
     When: the measured vocabulary is inspected.
-    Then: both are in it, and `stopped` is the widest.
+    Then: they are in it, and EVERY label on an axis is the width of its siblings.
 
-    US-631's own text names only `steady`. `stopped` is wider, comes from the
-    same US-645 acceptance line, and sizing to `steady` alone would leave US-645
-    free to reintroduce the bounce -- so the wider word is pinned here
-    deliberately rather than inherited by accident.
+    RE-STATED 2026-09-01. Until US-645 landed, this test's job was to keep the
+    measurement sized against the widest word that story might choose. It chose
+    words NARROWER than the guess, under its own hard constraint, so the claim
+    worth guarding is no longer "the widest is `stopped`" -- it is the constraint
+    itself: one character laterally, five longitudinally, no exceptions. That is
+    what makes the tile's height independent of its state, and it is the property
+    a future third story on this tile could break without changing a word here.
     """
     measured = LATERAL_LABELS | LONGITUDINAL_LABELS
     assert US645_LABELS <= measured, "US-645's labels are not in the measured set"
-    assert max(measured, key=len) == "stopped", (
-        f"the widest measured label is {max(measured, key=len)!r}; US-631 sized "
-        f"against 'stopped' and a wider one invalidates the recorded number"
+    assert {len(w) for w in LATERAL_LABELS} == {1}, (
+        f"the lateral labels {sorted(LATERAL_LABELS)} are no longer all one "
+        f"character -- the axis US-631 (A) abbreviated can bounce again"
+    )
+    assert {len(w) for w in LONGITUDINAL_LABELS} == {5}, (
+        f"the longitudinal labels {sorted(LONGITUDINAL_LABELS)} are no longer "
+        f"all five characters -- `accel` and `brake` are 5, and a term of any "
+        f"other width starts that axis bouncing where it never did before"
+    )
+    assert len(max(sorted(measured), key=len)) == 5, (
+        f"the widest measured label is {max(sorted(measured), key=len)!r}; the "
+        f"recorded overrun was taken against a 5-character worst case"
     )
 
 
@@ -627,12 +661,19 @@ def test_theWidestDetailUsesTheWidestLabelOnBothAxes():
     Guards the model against the exact reading error US-631 warns about --
     sizing for the label that changes today and forgetting the other axis has
     the identical defect.
+
+    RE-RECORDED 2026-09-01 (US-645). Since every label on an axis now ties on
+    length, "the widest label on both axes" no longer picks a distinguished
+    word -- so the assertion is on the STRING, which is the thing the recorded
+    px figures were actually taken against, plus the per-axis widths that make
+    any other choice of words equivalent.
     """
     widest = _widestDetail()
-    assert widest.count("stopped") == 2, (
-        f"the worst case {widest!r} does not put the widest label on BOTH axes"
+    lateral, longitudinal = widest.split(" · ")
+    assert len(lateral.split()[1]) == 1 and len(longitudinal.split()[1]) == 5, (
+        f"the worst case {widest!r} does not put a full-width label on BOTH axes"
     )
-    assert widest == "10.0 stopped · 10.0 stopped", (
+    assert widest == "10.0 - · 10.0 accel", (
         f"the recorded worst case has changed to {widest!r} -- every measurement "
         f"in this file was taken against the previous one"
     )

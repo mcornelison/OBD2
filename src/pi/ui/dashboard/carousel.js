@@ -2867,6 +2867,13 @@
   // the only way this value is ever read.
   var _G_DECIMALS = 1;
 
+  // US-645: the direction-label deadband, DERIVED from the decimals constant
+  // above and never written out as a literal. Half of the last displayed place
+  // is precisely the value at which `toFixed(_G_DECIMALS)` stops printing zero,
+  // so the label's neutral band and the number's rounding band are the SAME
+  // band by construction -- at one decimal, 0.05 g. See gAxisDetail.
+  var G_LABEL_DEADBAND_G = 0.5 * Math.pow(10, -_G_DECIMALS);
+
   function fmtG(g) {
     return g.toFixed(_G_DECIMALS) + " g";
   }
@@ -2897,15 +2904,70 @@
   // collapsing L/R to a shared token, would buy width by DELETING the sign
   // contract above; the direction stays distinguishable.
   //
-  // The four words are spelled INLINE, not hoisted to constants, because the
+  // The words are spelled INLINE, not hoisted to constants, because the
   // US-631 width guard reads this function's body to learn what vocabulary the
   // tile actually ships. Moving them out of it leaves that tripwire green and
   // blind, which is the failure mode it exists to prevent.
-  function gAxisDetail(gLat, gLon) {
+  //
+  // US-645 (F-138) -- THE DEADBAND. A bare sign test has no neutral, so at rest
+  // the label reports the sign of the NOISE: Atlas measured ELEVEN longitudinal
+  // sign flips in 17 seconds at idle, on noise of +/-0.015 g straddling zero.
+  // The lateral label has the identical defect and nobody had noticed. Both
+  // axes get the same mechanical fix -- one pattern applied twice, not two
+  // behaviours.
+  //
+  // THE DEADBAND IS THE DISPLAY'S OWN ROUNDING THRESHOLD, DERIVED. At one
+  // decimal anything under 0.05 g prints as `0.0`, so deriving the band from
+  // _G_DECIMALS makes the word go neutral EXACTLY when the number reads zero:
+  // the tile can never show a direction beside a 0.0, and a future change to
+  // the decimals constant moves both together. A hardcoded 0.05 would be the
+  // same number today and a silent lie the day that constant moves -- which is
+  // this defect over again, one layer up.
+  //
+  // WHAT THE DEADBAND DOES NOT TOUCH, stated because it would be the tempting
+  // over-reach: the NUMBER and the METER DOT are untouched. A deadband that
+  // zeroed the reading would fabricate a stillness the accelerometer never
+  // measured. Only the WORD goes neutral; 0.03 g still moves the dot.
+  //
+  // THE WIDTHS ARE THE CONSTRAINT, and they are stated here because US-631 (A)
+  // bought the tile's constant height with exactly this property:
+  //     lateral      `L` `R` `-`                     -- ALL 1 character
+  //     longitudinal `accel` `brake` `coast` `still` -- ALL 5 characters
+  // Every value a term can take is the same width as its siblings, so no state
+  // change on either axis can change the rendered length, the line count, or
+  // the tile's height. That is why the neutral is a dash and not `steady`, and
+  // why the stopped state is `still` and not `stopped`: US-645's own acceptance
+  // requires one character laterally and five longitudinally, and the six- and
+  // seven-character spellings would have re-opened the bounce US-631 just shut
+  // on the far axis. tests/ui/test_gforce_tile_width_budget.py sweeps it.
+  //
+  // `still` IS AN OBD CLAIM, NOT AN IMU ONE. gLon is ~0 at a 65 mph cruise just
+  // as it is in a parking space, so "stopped" inferred from this instrument
+  // alone would be a lie at speed. It is upgraded ONLY on a vehicle speed that
+  // is TRULY zero, and an absent/unreadable speed degrades to `coast` -- true at
+  // any speed, including zero. NO PRODUCER PUBLISHES SPEED TO THIS DASHBOARD
+  // TODAY (I-us645), so `null` is what the browser passes and `still` is
+  // currently unreachable on the panel. That is the honest state, not an
+  // oversight: the branch is here so wiring a producer is zero-rework, exactly
+  // the shape GEAR carried before US-630 landed its own.
+  // NO NON-LABEL STRING LITERAL MAY APPEAR IN THIS BODY. The US-631 tripwire
+  // reads every quoted word out of it and treats them all as tile vocabulary,
+  // so a stray `typeof x === "number"` here lands `number` in the measured
+  // width set and the guard starts sizing against a word that never renders.
+  // The speed test is a STRICT equality for exactly that reason as well as its
+  // own: `=== 0` alone refuses null, undefined, NaN and the string "0" (which
+  // `==` would accept), so it needs no typeof to be safe.
+  function gAxisDetail(gLat, gLon, speedKph) {
+    var band = G_LABEL_DEADBAND_G;
+    var stopped = speedKph === 0;
+    var lat = Math.abs(gLat) < band ? "-" : (gLat >= 0 ? "R" : "L");
+    var lon = Math.abs(gLon) < band
+      ? (stopped ? "still" : "coast")
+      : (gLon >= 0 ? "accel" : "brake");
     return (
-      Math.abs(gLat).toFixed(_G_DECIMALS) + " " + (gLat >= 0 ? "R" : "L") +
+      Math.abs(gLat).toFixed(_G_DECIMALS) + " " + lat +
       " · " +
-      Math.abs(gLon).toFixed(_G_DECIMALS) + " " + (gLon >= 0 ? "accel" : "brake")
+      Math.abs(gLon).toFixed(_G_DECIMALS) + " " + lon
     );
   }
 
@@ -2953,7 +3015,13 @@
     };
   }
 
-  function imuGTile(data) {
+  // `speedKph` is the OBD vehicle speed, and it is a PARAMETER rather than a
+  // field read off `data` on purpose: it is not an IMU fact, and letting this
+  // function reach into the states/imu payload for it would re-merge two
+  // producers into one contract -- the same SSOT violation Atlas named when he
+  // kept gear out of states/imu. Absent (the shipped case today) it is null and
+  // the tile simply never claims `still`.
+  function imuGTile(data, speedKph) {
     var dot = gDotPosition(data.gLat, data.gLon, G_FULL_SCALE);
     var mag = data.gMag;
     if (dot === null || typeof mag !== "number" || !isFinite(mag)) {
@@ -2967,7 +3035,7 @@
     return {
       label: "G-FORCE",
       value: fmtG(mag),
-      detail: gAxisDetail(data.gLat, data.gLon),
+      detail: gAxisDetail(data.gLat, data.gLon, speedKph),
       // US-508: amber from 0.6 g (Spool), which the built card did not do -- it
       // only coloured at the 1.0 g CLAMP, so a hard 0.8 g corner looked exactly
       // like a gentle one. The colour is a NUDGE beside the true magnitude,
@@ -2984,7 +3052,7 @@
   //   {idle:true, reason}      -- present but not renderable as a live
   //                               instrument (unwired / undated / stale)
   //   {idle:false, ...}        -- the live instrument
-  function imuView(data, nowMs) {
+  function imuView(data, nowMs, speedKph) {
     if (!isObj(data)) return null;
     // The bridge's EXPLICIT availability claim. An unwired sensor writes
     // available:false (and that write bypasses the bridge's own rate limit, so
@@ -3002,7 +3070,7 @@
       idle: false,
       ageSec: age,
       fullScale: G_FULL_SCALE,
-      g: imuGTile(data),
+      g: imuGTile(data, speedKph),
       heading: imuHeadingTile(data),
       grade: imuGradeTile(data),
       // ALWAYS typed-NA (AC-2). The ICM-20948 has no barometer and a zeroed
@@ -3017,8 +3085,8 @@
   // from the heading the bridge already resolved, not from a second fusion) and
   // the gear glyph, whose producer is separate by Atlas's ruling. Returns the
   // same three shapes imuView does, so the caller has ONE thing to branch on.
-  function liveCardView(imuData, gearData, nowMs) {
-    var view = imuView(imuData, nowMs);
+  function liveCardView(imuData, gearData, nowMs, speedKph) {
+    var view = imuView(imuData, nowMs, speedKph);
     if (view === null || view.idle) return view;
     view.tape = compassTape(
       view.heading.available ? view.heading.deg : null,
@@ -3149,6 +3217,11 @@
     luxBand: luxBand,
     lightView: lightView,
     gDotPosition: gDotPosition,
+    // US-645: exported so the deadband can be swept densely across its own
+    // boundary. gDotPosition and gLevel are already here for the same reason --
+    // the per-axis rules on this tile are the parts worth measuring at 0.001 g,
+    // and doing it through a whole card view would be 400 renders of furniture.
+    gAxisDetail: gAxisDetail,
     headingCardinal: headingCardinal,
     pushGTrail: pushGTrail,
     imuView: imuView,
@@ -5060,7 +5133,14 @@
         if (!homeCard) return;
         var face = homeFace(lastImu, nowMs);
         if (face.face === "live") {
-          var live = liveCardView(lastImu, lastGear, nowMs);
+          // US-645: the fourth argument is the OBD vehicle speed, and it is
+          // NULL because no producer publishes one to this dashboard -- the
+          // realtime SPEED reading lives in the orchestrator and reaches no
+          // state file the panel can fetch (I-us645). Null is the honest value,
+          // not a placeholder: it is what stops the G-FORCE tile claiming
+          // `still` at a 65 mph cruise, where gLon is ~0 too. The label
+          // degrades to `coast`, which is true at any speed.
+          var live = liveCardView(lastImu, lastGear, nowMs, null);
           if (live && !live.idle) {
             // Advance both accumulators every paint. Eviction runs even with no
             // new point, so a feed that degrades mid-drive decays its history
