@@ -31,6 +31,11 @@
 # 2026-08-02    | Ralph (Rex)  | US-518: re-anchor the derived altitude to the
 #               |              | home elevation from _recordSyncOutcome -- the
 #               |              | one seam both sync-success paths converge on.
+# 2026-08-31    | Ralph (Rex)  | US-663 (I-us637): _gatherObdLinkState returns the
+#               |              | typed-NA reason with the availability -- one word
+#               |              | per cause, so "OBD: off" (a claim about the CAR)
+#               |              | stops being published for two causes that are
+#               |              | claims about US.
 # ================================================================================
 ################################################################################
 
@@ -64,6 +69,22 @@ _DEFAULT_STATES_DIR = "/run/eclipse-obd/states"
 # (which means the verdict RESOLVED). A plain None default would swallow the
 # first log line whenever the producer starts out resolved and later degrades.
 _REASON_UNSET: Any = object()
+
+# US-663 (I-us637) -- the OBD-link ACQUISITION's own failure reasons.
+#
+# `_gatherObdLinkState` reaches `available: false` down three paths and used to
+# publish `REASON_OBD_OFF` for all three. "OBD: off" is a claim about the CAR;
+# two of the three are claims about US, and a driver in a running car whose
+# adapter handle died was being told the car was off. One cause, one word.
+#
+# They live HERE rather than in `pi.splash.source_availability` because that
+# module is the home of the reasons SHARED between emitters, and these two name
+# failures only this acquisition path can suffer (no other emitter holds an
+# ObdConnection). `buildSourceState` accepts any reason string by contract, and
+# keeping each word beside the branch that can actually produce it is what stops
+# a shared vocabulary drifting away from its causes.
+REASON_OBD_LINK_NOT_READ = "not read yet"  # nothing has looked at the link yet
+REASON_OBD_LINK_UNREADABLE = "link unreadable"  # we looked; getStatus() raised
 
 
 class CardStateEmitterMixin:
@@ -431,9 +452,8 @@ class CardStateEmitterMixin:
         emitter = self._systemStatusEmitter
         if emitter is None:
             return
-        from pi.splash.source_availability import REASON_OBD_OFF
 
-        obdLinkState, obdRetries, obdAvailable = self._gatherObdLinkState()
+        obdLinkState, obdRetries, obdAvailable, obdReason = self._gatherObdLinkState()
         powerMode, powerSource = self._gatherPowerState()
         driveState, driveId = self._gatherDriveState()
         emitter(
@@ -458,18 +478,32 @@ class CardStateEmitterMixin:
             driveId=driveId,
             lastDrive=self._gatherLastDriveSummary(),
             obdAvailable=obdAvailable,
-            obdUnavailableReason=None if obdAvailable else REASON_OBD_OFF,
+            obdUnavailableReason=obdReason,
         )
 
-    def _gatherObdLinkState(self) -> tuple[str, int, bool]:
-        """Map the ObdConnection state -> (linkState, retries, available).
+    def _gatherObdLinkState(self) -> tuple[str, int, bool, str | None]:
+        """Map the ObdConnection state -> (linkState, retries, available, reason).
 
         available is False (US-429 typed NA) only when the OBD source is ABSENT
         -- i.e. we have NEVER connected (totalConnections == 0): car off / no
         dongle / bench. A dropped-but-previously-seen link is `down` but still
         AVAILABLE (we are retrying a real car). Connected -> linked; connecting/
         reconnecting -> reconnecting. A missing connection is unavailable.
+
+        US-663: the fourth element is the typed-NA reason that TRAVELS WITH the
+        absence -- one word per cause, never one word for three. It is None on
+        every available branch, which the emitter needs: a reason sitting beside
+        a real link state would let `sourceUnavailable()` blank a working panel
+        (US-637's override makes the source block win outright).
+
+        The first element is still `OBD_DOWN` on both unknown branches and is
+        DISCARDED by the emitter, which blanks the whole block whenever the
+        source is unavailable. It is left alone rather than given a fourth token
+        because the link-state vocabulary is owned by `system_status_emitter`;
+        `down` is a MEASUREMENT ("we looked, there is no signal") and inventing
+        an unknown token here would be a second vocabulary for one fact.
         """
+        from pi.splash.source_availability import REASON_OBD_OFF
         from pi.splash.system_status_emitter import (
             OBD_DOWN,
             OBD_LINKED,
@@ -478,11 +512,16 @@ class CardStateEmitterMixin:
 
         conn = self._connection
         if conn is None:
-            return (OBD_DOWN, 0, False)
+            # Nothing has looked at the link yet -- the pre-first-read payload of
+            # a boot. Saying "OBD: off" here would be a claim about a car nobody
+            # has queried.
+            return (OBD_DOWN, 0, False, REASON_OBD_LINK_NOT_READ)
         try:
             status = conn.getStatus()
         except Exception:  # noqa: BLE001 -- unreadable status -> unavailable
-            return (OBD_DOWN, 0, False)
+            # We looked and could not read our own connection. A fault in the Pi,
+            # not in the car, and the two have different fixes.
+            return (OBD_DOWN, 0, False, REASON_OBD_LINK_UNREADABLE)
 
         connected = bool(getattr(status, "connected", False))
         retries = int(getattr(status, "retryCount", 0) or 0)
@@ -491,11 +530,13 @@ class CardStateEmitterMixin:
         stateStr = str(getattr(rawState, "value", rawState) or "").lower()
 
         if connected:
-            return (OBD_LINKED, retries, True)
+            return (OBD_LINKED, retries, True, None)
         if "reconnect" in stateStr or "connecting" in stateStr:
-            return (OBD_RECONNECTING, retries, True)
-        # disconnected / error: available iff we have EVER seen this car.
-        return (OBD_DOWN, retries, totalConns > 0)
+            return (OBD_RECONNECTING, retries, True, None)
+        # disconnected / error: available iff we have EVER seen this car. This is
+        # the ONE branch "OBD: off" is true of -- we looked, and there is no car.
+        available = totalConns > 0
+        return (OBD_DOWN, retries, available, None if available else REASON_OBD_OFF)
 
     def _gatherPowerState(self) -> tuple[str, str]:
         """Return (powerMode, powerSource) from the two SSOT providers.

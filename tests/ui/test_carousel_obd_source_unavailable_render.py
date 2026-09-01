@@ -50,6 +50,14 @@
 #   offices/pm/issues/I-us637-obd-off-is-a-constant-not-a-measurement.md and
 #   held by the characterisation tests at the foot of this file.
 #
+#   THAT FINDING IS NOW FIXED (US-663, 2026-08-31), which is exactly what the
+#   characterisation tests were left here to force. The three causes now publish
+#   three different reasons, so the three tests below that pinned the collapse
+#   have been RE-RECORDED against the new behaviour rather than deleted -- the
+#   cases stay, the expectations moved. `REASON_OBD_OFF` survives on the ONE
+#   branch it was ever true of (we looked, and there is no car), and the wider
+#   invariant is pinned in tests/ui/test_carousel_obd_link_typed_unknown.py.
+#
 #   Skipped when node is not on PATH (a node-less CI box).
 # Author: Ralph Agent (Rex)
 # Creation Date: 2026-08-31
@@ -88,7 +96,11 @@ sys.path.insert(
 
 import render_harness as rh  # noqa: E402
 
-from pi.obdii.orchestrator.card_state_emitter import CardStateEmitterMixin  # noqa: E402
+from pi.obdii.orchestrator.card_state_emitter import (  # noqa: E402
+    REASON_OBD_LINK_NOT_READ,
+    REASON_OBD_LINK_UNREADABLE,
+    CardStateEmitterMixin,
+)
 from pi.splash.source_availability import (  # noqa: E402
     REASON_OBD_OFF,
     buildSourceState,
@@ -638,14 +650,21 @@ def test_realOrchestratorWithNoConnection_paintsNaAndTheReasonOnThePanel(tmp_pat
           Acquisition -> producer -> state file -> renderer -> DOM, in one
           assertion. No hand-written JSON anywhere in it, so a rename or a
           re-shape at ANY link fails here.
+
+          RE-RECORDED 2026-08-31 (US-663). This originally expected "OBD: off".
+          It does not any more, and the change is the fix: with no connection
+          object, NOTHING HAS LOOKED at the link, and the car may well be
+          running. The story's pass -- a typed NA painted over the emitter's own
+          reason -- is unchanged and is still what this asserts; only the word
+          moved, and it moved from a guess to a fact.
     """
     state = _emitToStateFile(tmp_path)
     assert state["source"]["obd"]["available"] is False
-    assert state["source"]["obd"]["reason"] == REASON_OBD_OFF
+    assert state["source"]["obd"]["reason"] == REASON_OBD_LINK_NOT_READ
 
     tile = _obdTile(state)
     assert tile["value"] == "NA", tile
-    assert tile["detail"] == REASON_OBD_OFF, tile
+    assert tile["detail"] == REASON_OBD_LINK_NOT_READ, tile
     assert tile["level"] == "unavailable", tile
 
 
@@ -693,29 +712,32 @@ def test_realOrchestratorWithADroppedButSeenCar_paintsDown_notNa(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# CHARACTERISATION -- the finding (I-us637). These tests pin behaviour that is
-# WRONG, so that fixing it fails here ON PURPOSE and the number gets re-recorded
-# rather than quietly drifting. DO NOT relax them: re-record them.
+# WAS CHARACTERISATION, NOW VERIFICATION -- the finding (I-us637) was fixed by
+# US-663 on 2026-08-31. These two tests pinned behaviour that was WRONG so that
+# fixing it would fail here on purpose; it did, and they have been re-recorded
+# against the new behaviour. The CASES are unchanged -- the same two causes, the
+# same real acquisition path -- so the history stays legible and neither cause
+# can quietly regress into the other.
 # ---------------------------------------------------------------------------
 
 
-def test_characterisation_unreadableStatusPublishesObdOff_aClaimAboutTheCar(
+def test_unreadableStatusPublishesItsOwnReason_notAClaimAboutTheCar(
     tmp_path,
 ):
     """
     Given: `conn.getStatus()` RAISES -- the Pi cannot read its own connection
     When: the real orchestrator emits and the panel renders
-    Then: the driver is told "OBD: off".
+    Then: the driver is told the LINK is unreadable, not that the car is off.
 
-          MEASURED, NOT INFERRED, and it is the finding. "OBD: off" is a claim
-          about the CAR. The truth here is a claim about US: we could not look.
-          The producer has exactly one word for three different causes
-          (card_state_emitter.py:341 hard-codes REASON_OBD_OFF), which is the
-          same collapse US-632 recorded for the battery verdict's bare
-          `unknown`, and the same distinction carousel.js:873 protects for wifi.
-
-          WHEN THIS IS FIXED this test FAILS. That is intended -- re-record the
-          new reason here, do not delete the case.
+          RE-RECORDED 2026-08-31 (US-663). This test previously asserted the
+          defect: `card_state_emitter.py` hard-coded REASON_OBD_OFF for all three
+          unavailable causes, so a driver in a RUNNING car whose adapter handle
+          died was told the car was off -- the same collapse US-632 recorded for
+          the battery verdict's bare `unknown`, and the same distinction
+          carousel.js:873 protects for wifi. The producer now carries one word
+          per cause. The inequality below is kept as an assertion rather than
+          dropped: it is the half of the fix that a future refactor could undo
+          without touching the equality above it.
     """
 
     def _raise() -> Any:
@@ -723,23 +745,31 @@ def test_characterisation_unreadableStatusPublishesObdOff_aClaimAboutTheCar(
 
     conn = SimpleNamespace(getStatus=_raise)
     state = _emitToStateFile(tmp_path, connection=conn)
-    assert state["source"]["obd"]["reason"] == REASON_OBD_OFF
+    assert state["source"]["obd"]["reason"] == REASON_OBD_LINK_UNREADABLE
+    assert state["source"]["obd"]["reason"] != REASON_OBD_OFF
 
     tile = _obdTile(state)
-    assert tile["detail"] == REASON_OBD_OFF, tile
+    assert tile["detail"] == REASON_OBD_LINK_UNREADABLE, tile
 
 
-def test_characterisation_neverConnectedAndUnreadableAreIndistinguishable(tmp_path):
+def test_neverLookedAndUnreadableAreDistinguishableInTheStateFile(tmp_path):
     """
     Given: three different causes reach `available: false`
     When: two of them are emitted -- no connection object, and a status read
           that raised
-    Then: the state files are IDENTICAL in the source block.
+    Then: the source blocks DIFFER, and they differ in the reason.
 
-          So the panel, the state file and anyone reading either has no way to
-          tell "no car is plugged in" from "the Pi lost its own adapter handle".
-          Those are different faults with different fixes. Recorded as the
-          measurement behind I-us637.
+          RE-RECORDED 2026-08-31 (US-663). This test previously asserted the two
+          payloads were IDENTICAL, which was the measurement behind I-us637:
+          nobody reading the state file or the panel could tell "nothing has
+          looked yet" from "the Pi lost its own adapter handle". Two faults, two
+          fixes, one word.
+
+          `obdLink` is still identical between them and that is CORRECT, not a
+          leftover: both are absences, so both blank the block. The fact that
+          distinguishes them lives in `source.obd`, which is where US-429 puts
+          one availability truth per source. Asserted explicitly so a future
+          change that started differentiating the blanked block gets noticed.
     """
 
     def _raise() -> Any:
@@ -747,7 +777,9 @@ def test_characterisation_neverConnectedAndUnreadableAreIndistinguishable(tmp_pa
 
     noConn = _emitToStateFile(tmp_path / "a")
     unreadable = _emitToStateFile(tmp_path / "b", connection=SimpleNamespace(getStatus=_raise))
-    assert noConn["source"]["obd"] == unreadable["source"]["obd"]
+    assert noConn["source"]["obd"] != unreadable["source"]["obd"]
+    assert noConn["source"]["obd"]["reason"] == REASON_OBD_LINK_NOT_READ
+    assert unreadable["source"]["obd"]["reason"] == REASON_OBD_LINK_UNREADABLE
     assert noConn["obdLink"] == unreadable["obdLink"]
 
 
