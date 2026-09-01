@@ -82,6 +82,8 @@ Source: DSMTuners community consensus, compiled in `specs/obd2-research.md` Sect
 | **Engine Load** | **15–25% idle · 30–50% cruise · up to 100% at WOT** | ⚠ **Compound condition only** — high load **with** positive STFT under boost, or with knock | **ADDED 2026-08-27, REFRESHED 2026-08-28 (Spool, measured).** 🔴 **A ">90% sustained = danger" threshold was WITHDRAWN — this car has now reached 100% load on THREE WOT pulls with no thermal or knock distress** (drives 7 and 11 on the prior ECU; **drive 51 on the current ECU, 2026-08-28**). 35 samples exceed 90 % across the corpus. **Load alone is not a danger signal on a turbo engine**; it is the *expected* reading at full throttle. Only meaningful paired with a lean indication or knock. |
 | **MAF** | **2–4 g/s idle; scales with RPM/load** | ⚠ **~150 g/s = stock sensor SATURATION, not a fault** | **ADDED 2026-08-27, REFRESHED 2026-08-28 (Spool, measured).** All-time max **158.7 g/s** (Drive 7 WOT) — unchanged; this car **does** reach the stock MAF ceiling at full load. The current-ECU WOT pull (drive 51) peaked at **147.7 g/s — just *below* saturation**, which is why that sample is usable for the VE inference and Drive 7's is not. A MAF pinned ~150+ during a pull is **expected**; treat it as a *measurement limit*, not an engine problem. ✅ Also the basis for the **MAF→VE boost inference** (below) on a car where boost is unreadable. |
 | **RPM** | **700–800 idle; redline 7000 (97–99 2G)** | 🔴 >7000 (valve float on stock springs) | **ADDED 2026-08-27, REFRESHED 2026-08-28 (Spool).** ⚠ **Manufacturer spec — still NEVER exercised. All-time max is now 5,896 RPM** (drive 51, 2026-08-28 — the first WOT under the current ECU; supersedes 5,441 from Drive 11, which was the *prior* ECU). Everything above 5,896 remains unmeasured. |
+| **Fuel Trims (LTFT / STFT)** | **LTFT ±4 pp of the CURRENT EPOCH's baseline · STFT oscillates, judge only its mean** | 🟡 5-drive median ≥ **4.0 pp** from epoch baseline, sustained ≥3 qualifying drives · 🔴 \|LTFT\| ≥ **10 %** *(convention, NEVER fired here — untested)* | **ADDED 2026-08-31 (Spool, measured — 17,634 LTFT + 17,638 STFT samples, 56 drives).** 🔴 **Resolution is 0.78125 pp** (one raw ECU count, 100/128); the parameter has taken **18 distinct values in this engine's recorded lifetime** — any threshold finer than one count is below the instrument. 🔴 **Noise floor: drive means spread up to 3.72 pp BETWEEN DRIVES ON THE SAME DAY** on a healthy engine (drives 45–51); between-drive SD **1.43 pp**; worst healthy deviation from epoch mean **2.50 pp**. ⇒ **a single-drive delta carries no information and must trigger nothing.** ⚠ **Epoch-scoped, always** — see the trend contract below. |
+
 | **Battery Voltage** | see §Battery Voltage via ELM_VOLTAGE below | ⚠ **Engine-running only** — gate on `RPM > 0` and not within ~3 s of a crank | **QUALIFIER ADDED 2026-08-27 (Spool, measured — 14,221 samples).** The bands are correct but **unconditioned**: the <12.0 V floor **trips on cranking** (13 samples, all-time min 11.0 V), and 1,083 samples (7.6%) sit below the 13.5 V "normal" floor — key-on-engine-off, cranking, and immediate post-start. Without an engine-state gate the alert misgrades normal starting as a charging fault. Healthy reference: drives 42–44 cruised at **14.4 V**; drives 50/51 (2026-08-28) cruised at **13.8 V avg, 14.2 V max**, min 12.3 V (engine state at that sample not established — do not read a cause into it). |
 
 **Important**: Rows marked *(Spool, measured)* are derived from **this car's own capture corpus** (~16,150 samples per parameter through drive 51) and **override community consensus** where they disagree (PM Rule 7). The unmarked rows remain community baselines awaiting real data.
@@ -129,6 +131,99 @@ MAF 85.0 g/s @ 3,300 RPM, IAT 31 °C, throttle 28%, coolant 88 °C → **VE = 13
 => **Planning consequence: more WOT drives will NOT narrow the band.** It needs a **GM 3-bar MAP sensor + ECMLink** — a hardware answer, not an analysis one. Do not schedule drives against it.
 
 The drive-42 sample window was independently verified free of the duplicate-row artifact affecting other seconds in that drive. Full derivation: `$FLEET_SHARE/tuner/knowledge/knowledge.md` §Boost and Turbo.
+
+### LTFT trend contract (US-661) — ADDED 2026-08-31
+
+**Ralph builds against this section, not against the office advisory.** Derivation and the
+reproducible SQL: `$FLEET_SHARE/tuner/ltft-trend-card-semantics-advisory.md` and
+`$FLEET_SHARE/tuner/scripts/ltft_trend_analysis.sql` (7 sections, verified).
+
+**Verdict: the card is buildable — but NOT as a per-drive trend line.** A naive implementation (mean
+LTFT per drive, plot the points, join them) draws a chart that **wanders up to 3.72 pp between drives on
+the same day with nothing wrong**. Anyone reading that for drift finds drift, every time.
+
+#### The gate — all three ANDed. A sample failing any of them is not eligible.
+
+```
+COOLANT_TEMP        >= 85 °C
+FUEL_SYSTEM_STATUS  == 2        (closed loop)
+qualifying samples  >= 20       (~100 s of qualifying operation)
+```
+
+🔴 **`FUEL_SYSTEM_STATUS` alone is NOT a warm-up gate on this car, and gating on it is the mistake this
+section exists to prevent.** The O2 sensor is heated, so the ECU enters closed loop within seconds:
+**only 8 samples of "open loop, insufficient temperature" exist in 17,624**, and at 30–40 °C coolant
+**65 of 68 buckets already report closed loop**. Loop status is **necessary but not sufficient** —
+**coolant is the load-bearing condition.**
+
+⚠ **Encoding derived by correlation, not read off a spec sheet:** `1` = open loop / cold (mean coolant
+38.5 °C, n=2) · `2` = **closed loop** (88.9 °C, O2 switching) · `3` = open loop under **load or decel**
+(89.0 °C, mean RPM 2515 — a warm state, *not* a temperature state).
+
+#### While the gate is unmet
+
+Publish a **typed absence with a reason** — `"WARMING — NOT YET MEANINGFUL"` — following the `altitude`
+and `ambientTempC` pattern. **Never publish a number that failed the gate.**
+
+🔴 **This is the resting state for roughly one drive in four, permanently.** Measured: **5 of the 22
+drives since the adaptive reset never accumulate 20 qualifying samples** (drives 37, 42, 54, 55, 56).
+That is not a defect and not a temporary condition pending the producer — those drives are too short or
+too cold to say anything true.
+
+#### Window and epoch boundaries
+
+- **One point per drive**, from qualifying samples only.
+- **Display a rolling 5-drive MEDIAN**, never the raw per-drive line. At SD 1.43 pp a 5-drive median
+  resolves to roughly **±0.6 pp**; a single drive resolves to nothing.
+- **Never join a line across an epoch boundary.** Break the series and label the break.
+
+| Boundary | Detector | Confidence |
+|---|---|---|
+| ECU identity change | `(part_number, cal_rom)` changes — already tracked in `vehicle_info` | Certain |
+| Adaptive memory reset | LTFT **bit-identical to exactly `0.000`** for a whole drive | Measured |
+
+🔴 **The reset detector must test bit-identity TO ZERO, not zero variance.** Zero variance alone
+false-positives: **drive 33 has zero variance at −2.344** (a short drive parked in one load cell) and is
+**not** a reset, while drives 35/36 are bit-identical `0.000` and **are**. Bit-identity needs no tuned
+threshold and cannot false-positive — the same rule `specs/ssot-design-pattern.md` applies to latched
+channels, applied here.
+
+**Epoch baselines, measured** (warm closed-loop samples, hygiene applied):
+
+| Epoch | Drives | n | Grand mean | SD between drives |
+|---|---|---|---|---|
+| Prior ECU `MD346675` | 3–24 | 15 | **−2.311 %** | 2.161 |
+| New ECU `MD326328` | 25–34 | 7 | **+0.545 %** | 0.753 |
+| Adaptive reset (flat battery) | 35–36 | — | **0.000 %** | — |
+| Post-reset relearn | 37–58 | 17 | **+0.009 %** | **1.429** |
+
+The prior→new ECU step is **2.86 pp** and is a *different ECU*, not a fault. A trend spanning it
+compares two engines.
+
+#### Short-term trim
+
+**Do not trend STFT.** It oscillates around its mean by design — a trend line would picture the O2
+sensor switching, not the engine. Within-drive SD **0.6–3.2** against LTFT's 0.7–0.9.
+
+**Show instead: total trim = LTFT + STFT, as ONE current value, no trend.** That is what a tuner reads —
+the total correction being applied now. Healthy post-reset range: **−1.37 to +4.05**.
+
+⚠ **Filed, not alarmed:** STFT drive means are **positive on every qualifying drive** (+0.50 … +3.90,
+mean ≈ +1.3). Well inside safe range; a consistent one-sided bias worth watching once a baseline exists.
+
+#### What this card cannot do, and must not claim
+
+**Usable dynamic range is only ~6 pp** — noise floor ~4, conventional fault line 10. **Fine-grained
+drift detection is not available on this car and must not be promised.** What the card *can* do is catch
+a real fault: a vacuum leak, failing injector, clogged filter or MAF drift moves LTFT by **10–25 pp**,
+not 3.
+
+⚠ **Open caveat — a drive's mean is confounded by how the car was driven.** Within single drives LTFT
+varies across RPM bands by up to **3.4 pp** (drive 48) and **2.65 pp** (drive 52), but only **0.30 pp**
+(drive 51). Two mechanisms could produce this — **cell indexing** (the 4G63 stores trims per load/RPM
+cell and reports the active one) or **within-drive relearn** — and they **could not be separated** with
+this data. The implication is identical either way, so it does not block the build; it is a further
+argument for the 5-drive median. Resolving it needs **ECMLink** per-cell trim tables, not another drive.
 
 ### 🔴 Corpus hygiene — read before computing ANY statistic from `realtime_data` (ADDED 2026-08-28)
 
