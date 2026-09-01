@@ -65,7 +65,13 @@ _HEALTHY_KW = dict(
 def test_buildBatteryHealthState_a3Schema_hasExactShape():
     """Given the Atlas A-3 fields,
     When buildBatteryHealthState assembles the payload,
-    Then it emits exactly the A-3 shape (spec §7) with the supplied values."""
+    Then it emits exactly the A-3 shape (spec §7) with the supplied values.
+
+    US-632 added the ``reasons`` map (why an unresolved field is unresolved).
+    This fixture carries a RESOLVED `good` verdict, so the map is pinned EMPTY
+    here -- which makes this test strictly stronger than before: a builder that
+    attached a reason beside a real verdict now fails at the schema gate, not
+    only in the US-632 file."""
     state = buildBatteryHealthState(nowIso=_NOW, **_HEALTHY_KW)
     assert state == {
         "vcellV": 4.02,
@@ -83,6 +89,7 @@ def test_buildBatteryHealthState_a3Schema_hasExactShape():
         "ambientTempC": None,
         "lastHealthCheckTs": _LAST_CHECK,
         "ladder": None,
+        "reasons": {},
         "source": {"ups": {"available": True, "reason": None}},
         "ts": _NOW,
     }

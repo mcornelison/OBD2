@@ -3,12 +3,14 @@
 # Purpose/Description: US-632 -- the battery-health unknown-REASON reaches the
 #   journal from the orchestrator's card-emit path.
 #
-#   The reason cannot reach the `battery-health` state file from this bench:
-#   that payload is assembled in `src/pi/splash/battery_health_emitter.py`,
-#   whose signature is outside the declared surface (BL-us632).  Until that
-#   lands, the journal is where the fact "can be seen" -- which is US-632's own
-#   conditionalOutcome: "If the producer is scheduled but failing silently,
-#   that silent failure IS the defect -- record it where it can be seen."
+#   UPDATED 2026-09-01: the reason now ALSO reaches the `battery-health` state
+#   file (`reasons.health`) -- BL-us632 granted the src/pi/splash/ surface and
+#   tests/pi/splash/test_battery_health_reason_state_file.py pins that half.
+#   This file is NOT superseded by it.  The state file holds only NOW, so it can
+#   say the verdict is stale but never say SINCE WHEN; the journal is the only
+#   place the cause CHANGE is visible.  Two surfaces, two different questions,
+#   and US-632's conditionalOutcome ("record it where it can be seen") is
+#   answered by both.
 #
 #   These tests pin BOTH halves of that, and the second half has teeth:
 #     1. the reason is recorded, and names the actual cause; and
@@ -31,6 +33,8 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-08-31    | Ralph (Rex)  | Initial -- US-632 reason wiring + log-on-change.
+# 2026-09-01    | Ralph (Rex)  | US-632: header corrected -- the state-file half
+#               |              | landed; this file keeps the TRANSITION half.
 # ================================================================================
 ################################################################################
 

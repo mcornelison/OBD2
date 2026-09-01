@@ -36,6 +36,10 @@
 #               |              | per cause, so "OBD: off" (a claim about the CAR)
 #               |              | stops being published for two causes that are
 #               |              | claims about US.
+# 2026-09-01    | Ralph (Rex)  | US-632: hand the battery-health unknown-reason to
+#               |              | the emitter as well as the journal -- the state
+#               |              | file is the SSOT the card polls; the journal line
+#               |              | stays because it records the TRANSITION.
 # ================================================================================
 ################################################################################
 
@@ -819,10 +823,15 @@ class CardStateEmitterMixin:
 
         US-632's conditionalOutcome: "If the producer is scheduled but failing
         silently, that silent failure IS the defect -- record it where it can
-        be seen." The reason cannot reach the state file from here (the
-        ``battery-health`` payload is assembled in ``src/pi/splash/``, outside
-        this bench's surface -- see BL-us632), so until that lands the journal
-        is where it can be seen.
+        be seen."
+
+        The reason ALSO reaches the ``battery-health`` state file now, in
+        ``reasons.health`` (BL-us632 granted the splash surface). This line is
+        not redundant with it, and the distinction is the reason to keep both:
+        the state file holds only NOW, so it can say the verdict is stale but
+        never say SINCE WHEN it became stale. The journal is the only place a
+        reader can see the cause CHANGE -- which is exactly the question
+        punch-list 4.2 was really asking.
 
         On CHANGE only, deliberately: this runs on every emit tick, and an
         unconditional log line would make the producer a continuous journal
@@ -867,11 +876,13 @@ class CardStateEmitterMixin:
         health, lastHealthCheckTs, medianRuntimeS, reason = (
             self._gatherBatteryHealthVerdict()
         )
-        # US-632: the reason cannot be added to the payload from here -- the
-        # emit callable's signature lives in src/pi/splash/, outside this
-        # bench's surface (BL-us632). Record it where it CAN be seen instead.
+        # US-632: the reason travels BOTH ways. `reasons.health` in the payload
+        # is the SSOT the card polls (BL-us632, since granted); the journal line
+        # stays because it is a TRANSITION record -- it says WHEN the cause
+        # changed, which a state file that only ever holds "now" cannot.
         self._recordBatteryHealthReason(reason)
         return {
+            "healthReason": reason,
             "vcellV": vcellV,
             "soc": soc,
             "socCalibrated": False,
