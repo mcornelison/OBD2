@@ -132,29 +132,59 @@ The drive-42 sample window was independently verified free of the duplicate-row 
 
 ### 🔴 Corpus hygiene — read before computing ANY statistic from `realtime_data` (ADDED 2026-08-28)
 
-Two defects in the stored corpus will silently corrupt an aggregate. Both are invisible unless excluded explicitly, because every affected value sits *inside* the plausible range.
+**Four** defects in the stored corpus will silently corrupt an aggregate. All are invisible unless excluded explicitly, because every affected value sits *inside* the plausible range.
 
 **1. Always scope `WHERE drive_id IS NOT NULL`.** The unattributed pool contains bench-probe artefacts: `TIMING_ADVANCE` holds repeated **61.0°** samples from 2026-05-20/21, physically impossible on a 4G63 (raw byte `0xFA` through the `A/2 − 64` decode). An unscoped `MAX(TIMING_ADVANCE)` returns **61°** instead of the true **34.5°** — wrong by 27°.
 
-**2. EXCLUDE drives 45 and 46 between `2026-08-28 16:32:30` and `16:35:35` UTC** (2,643 rows). Two capture pollers ran concurrently: combined **14.3 rows/s** against an ISO 9141-2 K-line at 10,400 bps that physically delivers **~7 rows/s** across 16 PIDs. The same window logs the car at **0 km/h and 16 km/h at identical timestamps**. At least half those samples do not correspond to a real bus response.
+**2. EXCLUDE drives 45 and 46 between `2026-08-28 16:32:30` and `16:35:35` UTC** (2,643 rows). The window logs the car at **0 km/h and 16 km/h at identical timestamps**, and an apparent combined **14.3 rows/s** against an ISO 9141-2 K-line that physically delivers **~7 rows/s** across 16 PIDs.
 
-> **Proposed data-validity invariant: a recorded row-rate above ~8 rows/s is *prima facie* fabrication**, because the bus cannot deliver it. Like the bit-identity rule for latched channels, this is a **physical bound** — it needs no tuned threshold and cannot false-positive on legitimate data.
+> ### ⚠ CAUSE CORRECTED 2026-08-31 — the exclusion stands, the reason changed
+>
+> This item previously read *"two capture pollers ran concurrently."* **That explanation was WITHDRAWN by Spool on 2026-08-31**, and with it the claim that drives 45/46 were an **A-9 Root 1 regression**.
+>
+> Atlas named a falsifiable condition — concurrent writers sharing one SQLite autoincrement must **interleave** their `source_id` values — and Spool ran it:
+>
+> ```
+> drive 45  source_id 3708564–3709931
+> drive 46  source_id 3709998–3711272
+> 46-rows below max(45) = 0      45-rows above min(46) = 0
+> ```
+>
+> **Perfectly disjoint, a 66-row gap, zero crossings in either direction.** Two concurrent pollers cannot produce that.
+>
+> 🔴 **The real cause is A-23 — the Pi 5 RTC has no charged backup cell, so every boot starts at 1970 and NTP repairs it only where a network is reachable. In the car there is no network and nothing repairs it.** The timestamps are wrong; the rows are not duplicated. **A-9 Root 1 stays CLOSED — do not groom a refix.**
+>
+> ⚠ **This also retires the "three occurrences" framing below.** Drives **23/24** and **28/29** were counted as the same defect on the strength of the same rows/s reasoning, which is exactly the reasoning a bad clock defeats. Their true cause is **unestablished**; they are not evidence for a concurrency defect.
 
-This has occurred **three times in the entire corpus, and only three** — drives **23/24** (220 s, 13.3 rows/s), **28/29** (193 s, 12.2 rows/s) and **45/46** (185 s, 14.3 rows/s). Drives 28/29 are the pair A-9 Root 1 was declared to have fixed on 2026-08-20; that closure rested on drives 40/41 not reproducing it. Filed to Atlas 2026-08-28.
+> ### 🔴 The `>8 rows/s` tripwire must NOT ship unpaired
+>
+> A proposed invariant — *"a recorded row-rate above ~8 rows/s is prima facie fabrication, because the bus cannot deliver it"* — was attractive because it looked like a physical bound needing no tuned threshold.
+>
+> **It is not usable alone.** Row-rate is computed as `rows ÷ elapsed`, and **A-23 corrupts the denominator.** A wrong clock and a genuine double-read produce the same reading, so the tripwire **cannot discriminate between the two failures it exists to separate** — and the corpus's only three "occurrences" are now believed to be clock faults, meaning the tripwire would have fired on all of them for the wrong reason.
+>
+> ⇒ **Ship it only paired with a `clockSynced` flag on drive segments** (Atlas; independently caught by Marcus). Unpaired, it is a check that cannot do the job it is cited for.
 
 **Why a tuning spec carries a pipeline caveat:** every threshold in the table above is validated against this corpus. **Fabricated samples silently widen the apparent normal band of every parameter they touch**, and the corruption is undetectable from the values alone.
 
 **3. Cross-check row-rate against duration before trusting a drive.** Healthy is **~420–440 rows/min** across 16 PIDs. ⚠ `data_quality` is **not** a quality signal — it defaults to `full` pre-batch (US-563) *and* stays `full` post-batch with a gap already detected (the inert gap guard, filed 2026-08-27).
 
+**4. Establish that the capture is FINISHED before concluding anything from it.** Compare `MAX(synced_at)` against the server clock **and** against the drive's last timestamp. A drive whose sync trails the wall clock is **in flight**, and a partial capture reads exactly like a short one. This is not hypothetical: on 2026-08-30 a drive was graded mid-sync and a wrong conclusion published; it subsequently grew **6,998 → 11,054 rows** and the car had been travelling at 60 km/h throughout the window reported as stationary.
+
+**5. ⚠ Query trap — `timestamp` and `synced_at` are UTC, but MariaDB `NOW()` on `obd2db` returns CDT.** Any `WHERE timestamp > NOW() - INTERVAL ...` is off by five hours. Check `@@system_time_zone` before trusting a recency filter; this has already produced one phantom clock fault.
+
 ### Active DTC — P0443 (as of 2026-08-27)
 
 **P0443 — Evaporative Emission System Purge Control Valve Circuit. MIL is LIT.** Stored on every drive since at least 2026-08-20 (drive 41); `DTC_COUNT`=1, `MIL_ON`=1 across drives 42/43/44.
 
-**Verdict: no engine risk, and it does NOT distort tuning data — assessed, not assumed.** A purge valve stuck *open* dumps unmetered fuel vapor into the intake and drags LTFT **negative** on a MAF-based car. This car's LTFT is drifting **positive** ⇒ the solenoid is **not flowing** ⇒ open circuit / stuck closed ⇒ the benign failure direction.
+**Verdict: no engine risk, and it does NOT distort tuning data — assessed, not assumed.** A purge valve stuck *open* dumps unmetered fuel vapor into the intake and drags LTFT **negative** on a MAF-based car. **No negative excursion is present** ⇒ the valve is not dumping vapour ⇒ the benign failure direction.
+
+> ⚠ **INFERENCE WEAKENED 2026-08-31 (Spool, self-correction).** This read *"LTFT is drifting **positive** ⇒ the solenoid is **not flowing** ⇒ open circuit / stuck closed."* **Two defects.** (a) Trims can only rule the stuck-*open* case **out** — a non-flowing valve and a never-commanded valve are **identical** in trim data, so the electrical state does not follow. (b) *"Drifting positive"* was thin: across drives 37–58 the LTFT mean swings **−2.60 → +2.17 → −0.80**, and of the three drives it was read from, **two are negative**. **The conclusion survives on "no negative excursion"; the argument that supported it did not.**
+
+**Since corrected (2026-08-31):** the fault is **INTERMITTENT** (clean drive cycles before onset, and one clean cycle after a code clear), which points at a **connector or wiring** fault rather than the solenoid; and the **2026-05-22 ECU swap is EXONERATED**. 🔴 **Never let a shop replace the PCM** — `MD326328` is a 1997 board *because* 1998 boards cannot be ECMLink-flashed. Full diagnosis: `$FLEET_SHARE/tuner/cards/dtc-p0443-evap-purge-diagnosis.md`.
 
 Consequences are emissions-only: the charcoal canister does not purge, readiness monitors will not complete, and the car will fail an emissions test. **Do not treat a lit MIL from this code as a capture-validity or engine-health signal.** Repair timing is the CIO's call.
 
-**Pi-side power-management** (data-collection device, separate from vehicle engine ranges): Pi 5 UPS HAT (MAX17048-managed LiPo cell) — buck-converter dropout knee at VCELL ≈ 3.30 V; ~16-min runtime under typical load (Drain Test 7, 2026-05-02 empirical). Authoritative writeup with full empirical baseline + operational implications: `$FLEET_SHARE/tuner/knowledge/knowledge.md` § "UPS HAT Dropout Characteristics (Drain 7 baseline)".
+**Pi-side power-management** (data-collection device, separate from vehicle engine ranges): Pi 5 UPS HAT (MAX17048-managed LiPo cell) — buck-converter dropout knee at VCELL ≈ 3.30 V; ~16-min runtime under typical load (Drain Test 7, 2026-05-02 empirical). Authoritative writeup with full empirical baseline + operational implications: `$FLEET_SHARE/tuner/knowledge/ups-drain-characteristics.md` (split out of `knowledge.md` on 2026-09-01; the old section anchor no longer resolves).
 
 ---
 
