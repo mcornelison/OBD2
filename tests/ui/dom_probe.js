@@ -21,6 +21,7 @@
  *          Input:  {carouselPath, tree, routes, token, autoDim, nowMs, steps}
  *          Steps:  {flush} {click:<id>} {clickNth:{selector,index}}
  *                  {setRoutes} {key} {advanceMs}
+ *                  {pointer:{id,type,x,y}}
  *          Output: {tree, fetches} on stdout
  * Author:  Ralph Agent (Rex)
  * Created: 2026-07-29 -- Sprint 66 US-499 (S6 render-regression backstop)
@@ -152,6 +153,23 @@ async function main() {
         );
       }
       el.click();
+      await dom.drainMicrotasks();
+    }
+    // US-659: dispatch a POINTER event at an element. The 5s long-press is the
+    // only protection left on the setup menu once the visibility gate is gone,
+    // and until now it had never been exercised end-to-end -- only its pure
+    // arithmetic (longPressProgress/isLongPressComplete) and a source-absence
+    // grep. `click` cannot reach it: the hold is built from pointerdown +
+    // setInterval + Date.now(), so it needs the virtual WALL clock (input.nowMs
+    // + {advanceMs}) as well as the round clock. x/y default to 0 and carry
+    // through as clientX/clientY, which is what the move-cancel guard reads.
+    if (step.pointer) {
+      const el = doc.getElementById(step.pointer.id);
+      if (!el) throw new Error("no such element to point at: #" + step.pointer.id);
+      el.dispatch(step.pointer.type, {
+        clientX: step.pointer.x || 0,
+        clientY: step.pointer.y || 0,
+      });
       await dom.drainMicrotasks();
     }
     if (step.setRoutes) {

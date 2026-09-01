@@ -376,100 +376,68 @@ def test_configJson_carriesTheParkedThresholds():
 
 
 # ---------------------------------------------------------------------------
-# AC-2 -- the kebab policy consumes the DEBOUNCED signal, and can no longer
-# reach the raw one.
+# US-659 RETIRED THIS FILE'S CONSUMER, and the honest record of that is the
+# section you are reading rather than a quietly shorter file.
+#
+# Eight tests stood here. Four drove `menuAccess`, the kebab-visibility policy
+# this reducer fed; four pinned the WIRING (`updateMenuAccess` advancing the
+# reducer with the shared tick clock, and the closure placement of the state).
+# All eight named code that no longer exists -- the CIO's punch-list H6 ruling
+# removed the ⋮ visibility gate entirely, so the debounce has no consumer.
+#
+# RETIRED, by name, so the count is auditable:
+#   test_menuAccess_parked_offersTheTapAffordance
+#   test_menuAccess_notParked_hidesTheTapAffordance
+#   test_menuAccess_rawSystemStatusPayload_failsClosed
+#   test_menuAccess_longPressStaysUnconditional
+#   test_fnBodySlicerIsTightButNotEmpty
+#   test_menuAccess_noLongerReadsTheRawIdleFlag
+#   test_updateMenuAccess_advancesTheDebounceAndFeedsItToThePolicy
+#   test_debounceStateOutlivesTheTick
+#
+# ⚠️ WHAT THIS LEAVES BEHIND IS TECH DEBT, NOT A CLEAN DELETION. Everything
+# ABOVE this line still passes, because `parkedInit`/`parkedNext` are pure and
+# unchanged -- but nothing in the shipped panel calls them any more. US-659
+# deliberately did NOT delete the reducer: it is a tuned, config-driven
+# behaviour (pi.dashboard.parkedOnS / parkedOffS) whose removal would reach
+# config.json and the validator, which is well outside a story scoped to a
+# visibility gate. Filed as TD-us659 -- retire the reducer and its config keys,
+# or wire it to its next consumer. Until that is settled, this suite is testing
+# code nothing runs, and `test_theDebounceHasNoConsumer_soThisFileIsGuardingDeadCode`
+# below states that in the suite itself rather than only in a ticket.
 # ---------------------------------------------------------------------------
 
 
-def test_menuAccess_parked_offersTheTapAffordance():
-    assert _view("menuAccess", True)["tapVisible"] is True
-
-
-def test_menuAccess_notParked_hidesTheTapAffordance():
-    assert _view("menuAccess", False)["tapVisible"] is False
-
-
-def test_menuAccess_rawSystemStatusPayload_failsClosed():
-    """The footgun this signature change creates, closed. `menuAccess` used to
-    take the system-status OBJECT; a caller left un-migrated would now hand it a
-    truthy object, and a `!!parked` test would read that as PARKED FOREVER --
-    the ⋮ pinned on screen at 70 mph, which is the exact hazard US-490 exists to
-    prevent. Only a strict `true` counts."""
-    payload = {"idle": True, "drive": {"state": "recording"}, "ts": "2026-08-01T00:00:00Z"}
-    assert _view("menuAccess", payload)["tapVisible"] is False
-    assert _view("menuAccess", "true")["tapVisible"] is False
-    assert _view("menuAccess", 1)["tapVisible"] is False
-
-
-def test_menuAccess_longPressStaysUnconditional():
-    """US-490 AC-2, unchanged by this story and re-pinned because the debounce
-    now DELAYS the tap path: making the affordance slower to appear is only safe
-    while the deliberate ~5 s hold still opens the menu in every state."""
-    for parked in (True, False, None, {}):
-        assert _view("menuAccess", parked)["longPress"] is True, parked
-
-
-def test_fnBodySlicerIsTightButNotEmpty():
-    """The slicer above is load-bearing for the absence assertions, and
-    OVER-stripping is the dangerous direction: a slice that cuts to nothing
-    makes "identifier X is not in this body" pass VACUOUSLY, so the guard would
-    keep smiling while menuAccess went back to reading the raw flag. Pin both
-    edges -- the real body survives, the neighbours do not."""
-    js = _read(_JS)
-    body = _fnBody(js, "menuAccess")
-    assert "tapVisible" in body and "longPress" in body, "sliced away the body"
-    assert "parkedInit" not in body, "the slice ran on into the next function"
-    wiring = _fnBody(js, "updateMenuAccess")
-    assert "applyMenuAccess(" in wiring, "sliced away the body"
-    assert "setupMenu" not in wiring, "the slice ran on into the next function"
-
-
-def test_menuAccess_noLongerReadsTheRawIdleFlag():
-    """AC-2 structurally. While `menuAccess` acquires its own idle it can be
-    debounced only by convention -- and the next edit re-introduces the flicker
-    for free. Reading the flag must be OUT OF REACH, not merely discouraged."""
-    body = _fnBody(_read(_JS), "menuAccess")
-    assert "carouselIdle" not in body, "menuAccess still re-derives idle for itself"
-    assert "systemStatus" not in body, "menuAccess still takes the raw state payload"
-
-
-# ---------------------------------------------------------------------------
-# Wiring -- a reducer nothing advances is inert, and one re-initialised every
-# tick can never accumulate a hold.
-# ---------------------------------------------------------------------------
-
-
-def test_carouselJs_exportsTheParkedDebounce():
-    """The pure logic stays node-testable (the S-2 contract)."""
+def test_carouselJs_stillExportsTheParkedDebounce():
+    """The pure logic stays node-testable (the S-2 contract), so every test
+    above this line remains runnable while TD-us659 is open."""
     js = _read(_JS)
     for name in ("parkedInit:", "parkedNext:"):
         assert name in js, name
 
 
-def test_pollAdvancesTheDebounceWithTheTickClock():
-    """The reducer takes its clock as an argument, so the poll must hand it one
-    -- and it must be the SHARED tick clock (US-496), or the kebab resolves
-    against a different instant than everything else painted that tick."""
-    js = _read(_JS)
-    assert "updateMenuAccess(sysData, nowMs)" in js
+def test_theDebounceHasNoConsumer_soThisFileIsGuardingDeadCode():
+    """CHARACTERISATION, and it is meant to be uncomfortable.
 
+    US-659 removed `updateMenuAccess`, the reducer's only caller. A suite that
+    keeps passing after its subject stops being reachable is exactly how dead
+    code survives a refactor -- so the absence is asserted rather than left to
+    be noticed. Whoever closes TD-us659 fails this test ON PURPOSE: wire the
+    reducer up and it goes red, delete the reducer and the whole file goes with
+    it. Either outcome is a decision; silence is not.
+    """
+    # Asserted against the STRIPPED source: the deletion left a tombstone comment
+    # naming `updateMenuAccess` so the next reader knows what stood there, and a
+    # raw substring search cannot tell that record from a restored consumer.
+    from tests.ui.test_carousel_kebab_always_visible import _executableCode
 
-def test_updateMenuAccess_advancesTheDebounceAndFeedsItToThePolicy():
-    """The two halves that make this story real: the raw flag goes INTO the
-    reducer, and the reducer's output -- not the flag -- comes out into
-    menuAccess."""
-    body = _fnBody(_read(_JS), "updateMenuAccess")
-    assert "parkedNext(" in body, "the debounce is never advanced"
-    assert "carouselIdle(" in body, "the reducer is never fed the emitter's flag"
-    assert ".parked" in body, "the policy is not fed the debounced signal"
-
-
-def test_debounceStateOutlivesTheTick():
-    """The one mistake that makes every test above pass while the kebab NEVER
-    appears: initialising the state inside the per-tick function. A hold that
-    resets every 250 ms can never reach 8 s. The state must be created in the
-    enclosing scope."""
-    js = _read(_JS)
-    body = _fnBody(js, "updateMenuAccess")
-    assert "parkedInit(" not in body, "the debounce state is reset on every tick"
-    assert "parkedInit(" in js, "the debounce state is never initialised at all"
+    js = _executableCode(_read(_JS))
+    assert "updateMenuAccess" not in js, (
+        "the debounce has a consumer again -- TD-us659 was resolved by wiring it "
+        "up, so retire this characterisation and re-pin the wiring properly"
+    )
+    calls = js.count("parkedNext(")
+    assert calls == 1, (
+        f"parkedNext( appears {calls} times -- expected exactly 1 (its own "
+        "definition, no call sites). The reducer gained a consumer; re-pin it."
+    )

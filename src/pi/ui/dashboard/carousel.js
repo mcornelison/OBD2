@@ -1583,43 +1583,31 @@
     return Math.sqrt(dx * dx + dy * dy) > t;
   }
 
-  // US-490 context-aware menu access (Iris P-2, CIO-locked Option C). The two
-  // paths into the menu carry DIFFERENT intent, so they get different rules:
+  // US-659 (CIO ruling 2026-08-31, punch-list H6) -- THE `⋮` VISIBILITY GATE
+  // WAS REMOVED HERE. `menuAccess(parked)` used to live at this point and
+  // returned `{tapVisible: parked === true, longPress: true}`; US-490 hid the
+  // top-bar kebab whenever the vehicle did not read parked, US-511 debounced
+  // the signal behind it, and the click handler read the rendered `hidden` flag
+  // back as defence in depth.
   //
-  //   tapVisible -- the top-bar `⋮` is a SINGLE tap away from a service stop /
-  //     Exit UI, so it is offered only while the vehicle reads parked. Hidden
-  //     while driving, and hidden whenever "am I driving?" is UNREADABLE: the
-  //     acquisition chain fails closed at every link -- carouselIdle reads the
-  //     `idle` SSOT boolean strictly (never re-derived from the drive-state
-  //     string; Atlas idle-SSOT b), parkedNext treats anything but a real
-  //     `true` as not-idle, and this policy accepts only a real `true`. So an
-  //     absent, malformed or idle-less payload hides the affordance rather than
-  //     guessing a calm parked state. US-511: what arrives here is the
-  //     DEBOUNCED signal, so a brief OBD blip no longer flips the button.
-  //   longPress -- the ~5s hold is the DELIBERATE override and is state-blind
-  //     on purpose. It is what makes hiding the `⋮` safe: fail-closed can never
-  //     strand the operator, and driving is the state where they may most need
-  //     to stop a misbehaving service.
+  // THE RULING: always show the menu. The 5s long-press was ALWAYS state-blind,
+  // so the menu was reachable in every state the gate hid the glyph in -- the
+  // glyph was not protecting the affordance, it was misreporting it. The
+  // long-press is unchanged and is now the only gate on the menu.
   //
-  // US-511 CHANGES WHAT THIS FUNCTION IS HANDED. It used to take the
-  // system-status payload and call `carouselIdle` on it -- i.e. it did its own
-  // ACQUISITION -- which meant any debounce placed upstream could be bypassed
-  // by the next edit for free. It now takes the already-debounced `parked`
-  // boolean and applies POLICY only, so reading the raw flag is out of reach
-  // rather than merely discouraged (the standing SSOT directive: one
-  // authoritative provider per fact, consumers apply policy).
+  // WHAT IS STILL TRUE, so nobody rebuilds this from the wrong premise: a
+  // single tap now opens the MENU in every state, not an action. Every
+  // consequential item inside it keeps its own confirm (`requiresConfirm`), and
+  // Exit still routes through the confirming action.
   //
-  // `parked === true` is a strict test, and that strictness is load-bearing
-  // NOW: the old callers passed an OBJECT here. A `!!parked` test would read an
-  // un-migrated caller's payload as parked FOREVER -- the ⋮ pinned on screen at
-  // 70mph, the exact hazard US-490 exists to prevent. Anything that is not a
-  // real `true` is not-parked.
-  function menuAccess(parked) {
-    return {
-      tapVisible: parked === true,
-      longPress: true,
-    };
-  }
+  // DO NOT RESTORE THIS unless a ruling replaces H6.
+  // tests/ui/test_carousel_kebab_always_visible.py fails on the identifiers,
+  // on any write to the button's `hidden` flag, and on the rendered cascade.
+  //
+  // `carouselIdle`, `parkedInit` and `parkedNext` all survive below: carouselIdle
+  // still drives the idle home face, and the US-511 debounce is left intact but
+  // is now UNWIRED (TD-us659 -- retire it or find its next consumer; that is a
+  // design call, not a side effect of this deletion).
 
   // -------------------------------------------------------------------------
   // US-511 (F-124) -- the DEBOUNCED `parked` signal behind the ⋮ affordance.
@@ -3213,7 +3201,6 @@
     longPressProgress: longPressProgress,
     isLongPressComplete: isLongPressComplete,
     exceedsMoveCancel: exceedsMoveCancel,
-    menuAccess: menuAccess,
     parkedInit: parkedInit,
     parkedNext: parkedNext,
     alertableCodes: alertableCodes,
@@ -4265,26 +4252,10 @@
         });
     }
 
-    // --- US-490 context-aware `⋮` affordance (browser only) ----------------
-    // `hidden` (not a class) is deliberate: it is the property the tap handler
-    // reads back as the rendered truth, so the gate and the paint can never
-    // disagree. The button ships hidden in the markup, so the pre-first-poll
-    // window -- when "am I driving?" is genuinely unknown -- offers no tap path.
-    function applyMenuAccess(btn, access) {
-      if (!btn) return;
-      btn.hidden = !access.tapVisible;
-    }
-
-    // US-511: the debounce state lives HERE, in the enclosing scope, and that
-    // placement is the whole feature. Initialised inside updateMenuAccess it
-    // would reset on every 250 ms tick, no hold could ever reach 8 s, and the
-    // ⋮ would simply never appear -- with every pure test above still green.
-    var parkedSignal = parkedInit();
-
-    function updateMenuAccess(sysData, nowMs) {
-      parkedSignal = parkedNext(parkedSignal, carouselIdle(sysData), nowMs, carouselCfg);
-      applyMenuAccess(document.getElementById("menu-btn"), menuAccess(parkedSignal.parked));
-    }
+    // US-659: `applyMenuAccess` / `updateMenuAccess` / the `parkedSignal`
+    // debounce state stood here and painted the `⋮` per tick. All removed with
+    // the ruling -- the button now simply ships visible and stays visible. See
+    // the note at the retired `menuAccess` above.
 
     function setupMenu() {
       var menu = document.getElementById("setup-menu");
@@ -4485,13 +4456,11 @@
       }
 
       if (menuBtn) {
-        menuBtn.addEventListener("click", function () {
-          // Defence in depth (US-490 AC-4): the button is display:none while
-          // driving, but a CSS regression must not quietly re-open a one-tap
-          // path into a service stop. `hidden` is the rendered truth.
-          if (menuBtn.hidden) return;
-          openMenu();
-        });
+        // US-659: the `if (menuBtn.hidden) return;` guard was US-490's defence
+        // in depth for a gate that no longer exists. Kept, it would be a silent
+        // restore point -- re-add `hidden` in the markup and the tap dies with
+        // nothing else changing, which is the failure this ruling is about.
+        menuBtn.addEventListener("click", openMenu);
       }
       if (closeBtn) closeBtn.addEventListener("click", closeMenu);
       if (exitBtn) {
@@ -5258,13 +5227,9 @@
         lastGear = await stateOnce("gear");
         renderHome(nowMs);
         updateHomeNav(sysData);
-        // US-490: track the parked/live context every tick from the SAME fetched
-        // state (no extra fetch). An unavailable system-status leaves sysData
-        // null here, which fails closed to a hidden ⋮ -- long-press still opens.
-        // US-511: this now feeds a DEBOUNCE, so it is handed the shared tick
-        // clock (US-496) rather than reading one of its own -- the affordance
-        // resolves against the same instant as everything else painted here.
-        updateMenuAccess(sysData, nowMs);
+        // US-659: `updateMenuAccess(sysData, nowMs)` was called here to repaint
+        // the ⋮ per tick against the debounced parked signal. Removed with the
+        // gate -- the kebab's visibility is no longer a function of any state.
         // US-483-b: drive the display brightness from the states/light feed
         // (pure consumer -- never the sensor). A real STOP holds it >= the alarm
         // floor; an absent/stale feed holds the fixed default (honest fallback).

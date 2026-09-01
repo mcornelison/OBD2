@@ -339,18 +339,44 @@ html, body {
    clips it. That costs nothing REACHABLE -- the bezel backstops the finger, so a
    target on the screen edge cannot be overshot upward -- but it is a bound, not
    a non-issue. The lower half is on the glass and does overlay the top ~3px of
-   #carousel; #menu-btn is `display: none` while driving (US-490), so it can only
-   ever intercept a parked tap, never a swipe at speed. */
+   #carousel.
+
+   ⚠️ US-659 REMOVED THE PREMISE THIS BOUND WAS ACCEPTED UNDER. It used to read
+   "#menu-btn is `display: none` while driving (US-490), so it can only ever
+   intercept a parked tap, never a swipe at speed". The kebab now paints in
+   EVERY state, so that overlap is live at speed: a swipe begun in the top ~3px
+   of the carousel, within the kebab's column, lands on the button instead. The
+   overlap is UNCHANGED by US-659 and was not re-weighed by it -- narrowing the
+   target would breach the S-2 40px minimum, which is an Iris call. Recorded in
+   offices/pm/issues/I-us659-*.md and held by a characterisation test in
+   tests/ui/test_carousel_kebab_always_visible.py. */
 #menu-btn::after {
   content: ""; position: absolute;
   inset: calc((var(--bar-h) - var(--tap-min)) / 2);
 }
-/* US-490: the ⋮ is parked-only. Stated explicitly rather than leaning on the
-   UA [hidden] rule -- #menu-btn now declares `display: flex` above (US-556), so
-   an author `display` DOES outrank the UA sheet here; before US-556 that was a
-   hypothetical about future edits and it is now the shipped cascade. Without
-   this rule the button would hand back a clickable target while driving.
-   Removed from flow, not merely faded. */
+/* KEPT THROUGH US-659, and it is REDUNDANT -- stated plainly because the first
+   draft of this comment got it wrong and the wrong version is the plausible one.
+   US-490 needed this rule because it SET `hidden` to hide the ⋮ while driving;
+   that gate is gone and nothing writes the attribute any more.
+
+   MEASURED, not reasoned (US-659, via the render harness on the shipped
+   cascade, with `hidden` planted back on the button):
+     both rules present ......... display:none, decided by [hidden]   -> no box
+     drop THIS rule ............. display:none, decided by [hidden]   -> no box
+     drop the global guard ...... display:none, decided by #menu-btn[hidden]
+     drop BOTH .................. display:flex, decided by #menu-btn  -> PAINTS
+   The global US-495 guard `[hidden] { display: none !important }` (line 199)
+   carries `!important`, so it outranks #menu-btn's own `display: flex` on its
+   own. This rule does the same job unaided. Either one suffices; only removing
+   both lets a `hidden` button paint.
+
+   So it is belt-and-braces, not load-bearing, and it is left in place rather
+   than tidied away for one reason: it costs nothing and it keeps `hidden`
+   honest on this element even if the global guard is ever narrowed. What is
+   load-bearing for the US-659 deletion test is that AT LEAST ONE of the two
+   survives -- pinned together in
+   tests/ui/test_carousel_kebab_always_visible.py, which asserts the invariant
+   (a hidden ⋮ has no box) rather than either mechanism. */
 #menu-btn[hidden] { display: none; }
 
 /* --- swipe carousel --------------------------------------------------------- */

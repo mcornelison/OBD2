@@ -65,11 +65,14 @@
            The chip previously shipped that sentinel as a hard literal, so every
            build on the panel looked identical. -->
       <span id="version-chip">__DEPLOY_VERSION__</span>
-      <!-- US-490: ships HIDDEN. Parked/idle reveals it (carousel.js
-           updateMenuAccess); while driving -- or while the parked/live context
-           is unreadable -- it stays hidden and the 5s long-press is the only
-           way in. -->
-      <button id="menu-btn" class="tap-target" aria-label="System Setup" hidden>⋮</button>
+      <!-- US-659 (CIO ruling, punch-list H6): ships VISIBLE, in every state.
+           This used to carry `hidden`, and US-490's poll revealed it only while
+           the vehicle read parked -- so the glyph implied the menu was
+           unavailable while the 5s long-press was opening it the whole time.
+           The long-press is unchanged and is now the only gate. DO NOT re-add
+           `hidden` here: tests/ui/test_carousel_kebab_always_visible.py fails
+           on the attribute and on the rendered cascade. -->
+      <button id="menu-btn" class="tap-target" aria-label="System Setup">⋮</button>
     </div>
   </header>
 
