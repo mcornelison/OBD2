@@ -86,6 +86,52 @@ _REASON_UNSET: Any = object()
 REASON_OBD_LINK_NOT_READ = "not read yet"  # nothing has looked at the link yet
 REASON_OBD_LINK_UNREADABLE = "link unreadable"  # we looked; getStatus() raised
 
+# US-628 -- the POWER-SOURCE acquisition's own failure reasons.
+#
+# `_gatherPowerSource` reaches `unknown` down three paths and published the bare
+# string `unknown` for all three. Atlas read that on the live Pi (punch list
+# H3 / 3.3) and could not tell an unwired bench from a Pi whose GPIO line is
+# being held by another process -- two facts with completely different fixes.
+#
+# SHAPE: snake_case MACHINE words, following `reasons.altitude: no_source`
+# (imu_state_bridge) and the six-word vocabulary US-632 built for the battery
+# health verdict. Deliberately NOT the spaced human text used by the two OBD
+# constants above: those travel in the `source.*` block, which the card renders
+# VERBATIM, whereas these travel in a `reasons` map a consumer maps to display
+# text (carousel.js `IMU_REASON_TEXT` is the existing example). Two shapes doing
+# two different jobs -- keeping them apart is what stops one being rendered raw.
+#
+# They live HERE, beside the branch that produces them, for the reason the
+# US-663 block above states: a vocabulary kept away from its causes drifts.
+
+#: No power-source provider exists on this process at all -- the bench case, or
+#: hardware that never started. There is nothing here that COULD be read, which
+#: is a different fact (and a different fix) from a line we failed to read.
+REASON_POWER_SOURCE_PROVIDER_ABSENT = "provider_absent"
+
+#: The provider exists and reports that it cannot read the line. THIS IS THE
+#: LIVE PI'S STATE as measured 2026-08-31: eclipse-powerwatch.service and
+#: eclipse-obd.service both construct PldSensor on BCM GPIO6, a GPIO line is
+#: claimed exclusively per-process, and the loser's sensor sets `_dev = None`
+#: so `isAvailable` is False for the life of the process. See
+#: offices/pm/issues/I-us628-two-services-both-claim-gpio6-so-the-collector-is-
+#: blind.md -- this word makes that diagnosable from the state file, it does
+#: NOT fix it.
+REASON_POWER_SOURCE_UNREADABLE = "source_unreadable"
+
+#: We had a provider, we asked it, and the ask raised. An instrument fault
+#: rather than an absent or blocked instrument.
+REASON_POWER_SOURCE_READ_FAILED = "read_failed"
+
+#: Every reason an unresolved `power.source` may carry. A RESOLVED source
+#: carries None: a reason explains an absence and must never stand beside a
+#: real measurement.
+POWER_SOURCE_UNKNOWN_REASONS: tuple[str, ...] = (
+    REASON_POWER_SOURCE_PROVIDER_ABSENT,
+    REASON_POWER_SOURCE_UNREADABLE,
+    REASON_POWER_SOURCE_READ_FAILED,
+)
+
 
 class CardStateEmitterMixin:
     """Mixin: construct + orchestrator-invoke the carousel card-state emitters.
@@ -454,7 +500,7 @@ class CardStateEmitterMixin:
             return
 
         obdLinkState, obdRetries, obdAvailable, obdReason = self._gatherObdLinkState()
-        powerMode, powerSource = self._gatherPowerState()
+        powerMode, powerSource, powerSourceReason = self._gatherPowerState()
         driveState, driveId = self._gatherDriveState()
         emitter(
             obdLinkState=obdLinkState,
@@ -474,6 +520,11 @@ class CardStateEmitterMixin:
             syncPending=None,
             powerMode=powerMode,
             powerSource=powerSource,
+            # US-628: the typed reason travels WITH the unresolved source, so
+            # the state file distinguishes "no acquisition path" from "the line
+            # is held by another process" -- the live Pi is the second, and the
+            # bare `unknown` it published named neither.
+            powerSourceReason=powerSourceReason,
             driveState=driveState,
             driveId=driveId,
             lastDrive=self._gatherLastDriveSummary(),
@@ -538,13 +589,25 @@ class CardStateEmitterMixin:
         available = totalConns > 0
         return (OBD_DOWN, retries, available, None if available else REASON_OBD_OFF)
 
-    def _gatherPowerState(self) -> tuple[str, str]:
-        """Return (powerMode, powerSource) from the two SSOT providers.
+    def _gatherPowerState(self) -> tuple[str, str, str | None]:
+        """Return (powerMode, powerSource, powerSourceReason) from the SSOTs.
 
         Two different facts, two different providers (architecture.md §2):
         powerMode = deployment context (car/wall/unknown) from PowerModeProvider
         (static config); powerSource = AC-vs-battery from PowerSourceProvider
         (X1209 GPIO6 PLD). Neither is ever inferred from the other.
+
+        The third element is the US-628 typed reason for an UNRESOLVED source,
+        and it is returned from this ONE call rather than from a second
+        ``_gatherPowerSourceReason()`` on purpose: two reads of a GPIO line can
+        disagree, and a reason that describes a different read than the value
+        beside it is worse than no reason at all. One acquisition, one answer
+        (ssot-design-pattern rule B).
+
+        There is deliberately NO counterpart reason for an unknown ``mode``.
+        PowerModeProvider owns that vocabulary and collapses its causes inside
+        ``getPowerMode()``; inventing a second account of the same absence out
+        here is the rule-B violation this story's SSOT clause names by hand.
         """
         powerMode = "unknown"
         provider = self._cardPowerModeProvider
@@ -554,9 +617,10 @@ class CardStateEmitterMixin:
             except Exception:  # noqa: BLE001 -- honest unknown on read failure
                 powerMode = "unknown"
 
-        return (powerMode, self._gatherPowerSource())
+        source, reason = self._gatherPowerSource()
+        return (powerMode, source, reason)
 
-    def _gatherPowerSource(self) -> str:
+    def _gatherPowerSource(self) -> tuple[str, str | None]:
         """Return external/battery/unknown from the power-source SSOT (US-502).
 
         Reads ``PowerSourceProvider`` -- the ONE authoritative acquisition path
@@ -577,16 +641,25 @@ class CardStateEmitterMixin:
         UI uncertainty policy: an UNREADABLE line resolves to ``unknown``, not
         to the provider's non-bricking "treat as present" default -- a display
         must never show a confident source it cannot actually read.
+
+        Returns:
+            ``(source, reason)``. ``source`` is ``external`` / ``battery`` /
+            ``unknown``; ``reason`` is None on the two resolved branches and one
+            of :data:`POWER_SOURCE_UNKNOWN_REASONS` otherwise (US-628). All
+            three unknown branches used to publish the same bare word, so a
+            reader of the state file could not tell an unwired bench from a
+            GPIO line another process is holding.
         """
         source = getattr(self, "_powerSourceProvider", None)
         if source is None:
-            return "unknown"
+            return ("unknown", REASON_POWER_SOURCE_PROVIDER_ABSENT)
         try:
             if not source.isAvailable:
-                return "unknown"
-            return "external" if source.isExternalPowerPresent() else "battery"
+                return ("unknown", REASON_POWER_SOURCE_UNREADABLE)
+            present = source.isExternalPowerPresent()
         except Exception:  # noqa: BLE001 -- honest unknown on read failure
-            return "unknown"
+            return ("unknown", REASON_POWER_SOURCE_READ_FAILED)
+        return ("external" if present else "battery", None)
 
     def _gatherLastDriveSummary(self) -> dict[str, Any] | None:
         """Read the most recent COMPLETED drive from Pi-local ``drive_summary``.
@@ -675,7 +748,7 @@ class CardStateEmitterMixin:
             return
 
         crateF = float(crate) if crate is not None else None
-        _, powerSource = self._gatherPowerState()
+        _, powerSource, _ = self._gatherPowerState()
         onExternal = powerSource == "external"
         charging = crateF is not None and crateF > 0
         # draining = wall power lost AND the pack is actually discharging (A-6
