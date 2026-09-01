@@ -3,6 +3,7 @@
 # Purpose: Forensic drain logger (US-262) -- 14-column CSV every 5s on BATTERY
 # Author:  Rex (Ralph Agent)
 # Created: 2026-05-01 -- Sprint 22 US-262
+# Changed: 2026-09-01 -- Sprint 79 US-646: oneshot+timer -> resident daemon
 #
 # Why
 # ---
@@ -13,23 +14,40 @@
 # captures the data Drain Test 7 needs: pd_tick_count, pd_stage, throttled_hex,
 # CPU temp, core/sdram volts, /proc/loadavg, MAX17048 VCELL/SOC/CRATE.
 #
-# Pairing
-# -------
-# This unit is paired with drain-forensics.timer which fires every 5s.  The
-# unit is `Type=oneshot` -- each fire spins up a fresh Python interpreter,
-# writes one CSV row (or no-ops on AC), and exits.  Statelessness across fires
-# is intentional: the CSV file artifact is the only persistent state.
+# Run model (US-646 -- READ THIS BEFORE CHANGING Type=)
+# -----------------------------------------------------
+# ONE resident process that ticks internally every 5s.  There is no .timer.
+#
+# Until 2026-09-01 this was `Type=oneshot` paired with drain-forensics.timer
+# (`OnUnitActiveSec=5s`), so every tick was a FRESH PYTHON INTERPRETER --
+# forever, on a Pi that is on wall power essentially all of the time, where
+# every one of those ticks was a no-op.  Each fire also cost systemd's own
+# Starting/Finished journal pair on top of the script's own line, which made a
+# do-nothing logger a continuous journal writer (see US-644).
+#
+# The 5s CADENCE was NOT the defect and was NOT changed.  It is the US-262 CSV
+# row-rate, and it exists so a post-mortem can resolve the dropout knee; the
+# interval now lives in scripts/drain_forensics.py as DEFAULT_INTERVAL_SECONDS.
+# The SPAWN MODEL was the defect, and that is what US-646 removed.
+#
+# The script is still stateless across ticks -- rotation is decided from the
+# CSV artifact's mtime, never from memory -- so a restarted daemon resumes
+# exactly where a freshly-spawned process used to.  A hand-run drill still
+# works: `python scripts/drain_forensics.py` (no --daemon) writes one row and
+# exits, same as it always did.
 #
 # Installation: auto-wired into deploy/deploy-pi.sh as of US-277 via the
-# step_install_drain_forensics_unit() function (sync-if-changed install of
-# .service + .timer + idempotent runtime-dir provisioning + daemon-reload +
-# enable --now).  Manual install (parity reference for hand drills):
+# step_install_drain_forensics_unit() function.  That step also RETIRES the old
+# timer on any Pi deployed before US-646 (disable + rm + daemon-reload) --
+# deleting the file from the repo does not stop a unit already enabled on the
+# Pi.  Manual install (parity reference for hand drills):
+#   sudo systemctl disable --now drain-forensics.timer
+#   sudo rm -f /etc/systemd/system/drain-forensics.timer
 #   sudo cp deploy/drain-forensics.service /etc/systemd/system/
-#   sudo cp deploy/drain-forensics.timer   /etc/systemd/system/
 #   sudo install -d -o mcornelison -g mcornelison /var/log/eclipse-obd
 #   sudo install -d -o mcornelison -g mcornelison /var/run/eclipse-obd
 #   sudo systemctl daemon-reload
-#   sudo systemctl enable --now drain-forensics.timer
+#   sudo systemctl enable --now drain-forensics.service
 #
 # /var/run/eclipse-obd ownership note (US-276 + US-277 stitching): the
 # directory is owned by mcornelison so the PowerDownOrchestrator writer
@@ -40,8 +58,21 @@
 # preserves spec intent (deploy provisions the dir; orchestrator writes
 # atomically) while letting the writer actually function.
 #
+# The retired timer's OnBootSec=30s went with it, deliberately
+# -------------------------------------------------------------
+# The .timer held back the first fire for 30s so it did not compete with
+# rfcomm-bind, journald and the main service during the boot storm.  That
+# window was bought when a fire OPENED THE I2C BUS; ARCH-006 removed the
+# acquisition, so the first tick now reads a file powerwatch has not written
+# yet -- an absent or stale reading resolves to power source `unknown`, which
+# is not BATTERY, so the tick no-ops and writes nothing.  Pinned by
+# TestTheRetiredBootGraceWindow in tests/test_drain_forensics_daemon.py: if a
+# boot-time tick ever becomes a WRITE, the grace window has to come back as a
+# systemd `After=` or an in-loop startup delay.
+#
 # Verify:
-#   systemctl list-timers drain-forensics.timer
+#   systemctl status drain-forensics.service       # should be active (running)
+#   systemctl list-timers | grep drain             # should return NOTHING
 #   ls -la /var/log/eclipse-obd/
 # ==============================================================================
 
@@ -50,19 +81,21 @@ Description=Eclipse OBD-II drain forensics logger (US-262)
 Documentation=file:///home/mcornelison/Projects/Eclipse-01/scripts/drain_forensics.py
 After=network.target
 
+# A crash-loop must become a LOUD failed unit rather than quiet process churn.
+# Restart=always with systemd's 100ms default RestartSec would re-spawn ten
+# times a second if the script could not start at all -- fifty times worse than
+# the 5s spawn US-646 removed.  RestartSec below sets the floor; this bounds
+# the burst so a permanently-broken daemon stops and is visible in
+# `systemctl --failed` instead of retrying forever.
+StartLimitIntervalSec=300s
+StartLimitBurst=5
+
 [Service]
-# Type=oneshot: the script writes one row + exits.  No long-running daemon.
-Type=oneshot
-# TimeoutStartSec is MANDATORY here. systemd's default start timeout for
-# Type=oneshot is INFINITY, so a single hung invocation holds a `start` job
-# forever -- and anything ordered After=drain-forensics.service then waits
-# forever too. That is not theoretical: on 2026-08-27 this unit hung for ~4
-# hours after the UPS HAT's fuel gauge (0x36) stopped answering on wall power.
-# It blocked boot-progress-finalize.service, which blocked
-# `systemctl enable --now` in deploy-pi.sh, which hung the DEPLOY. The timer
-# fires every 5s, so a healthy run finishes in well under a second; 30s is a
-# generous ceiling that still converts a hang into a loud failed unit.
-TimeoutStartSec=30s
+# Type=simple: the process stays up and owns its own cadence.  Do NOT put this
+# back to oneshot -- that is half of the per-tick fresh-interpreter model, and
+# under Restart=always it would be the same spawn churn driven by systemd's
+# restart logic instead of a timer.
+Type=simple
 
 # Run as the same user as the main eclipse-obd service so file ownership of
 # /var/log/eclipse-obd/drain-forensics-*.csv is consistent with the rest of
@@ -76,27 +109,40 @@ Environment=PYTHONUNBUFFERED=1
 
 # US-277: PYTHONPATH must include the repo root so `import src.pi.power.*`
 # resolves when the script is launched from /home/mcornelison/Projects/Eclipse-01.
-# The drain_forensics.py script imports UpsMonitor + PowerDownOrchestrator from
-# src.pi.power; Python's automatic sys.path bootstrap only adds the script's
-# parent dir (scripts/), not the project root, so without this line the imports
-# fail silently and every fire is a no-op.  Spool patched this live on the Pi
-# mid-Drain-7 to keep the run going; US-277 wires the fix in the repo file so
-# the next deploy-pi.sh ships it automatically.  Path matches WorkingDirectory.
+# Python's automatic sys.path bootstrap only adds the script's parent dir
+# (scripts/), not the project root, so without this line the imports fail
+# silently.  Path matches WorkingDirectory.
 Environment=PYTHONPATH=/home/mcornelison/Projects/Eclipse-01
 
-ExecStart=/home/mcornelison/obd2-venv/bin/python scripts/drain_forensics.py
+# --daemon is load-bearing.  Without it the script writes one row and exits,
+# and Restart=always would answer that by starting it again -- reproducing the
+# 5s spawn this unit exists to have removed.
+ExecStart=/home/mcornelison/obd2-venv/bin/python scripts/drain_forensics.py --daemon
 
 # A fail in the forensics path MUST NOT page the operator -- forensics is a
-# diagnostic side-channel, not a production-critical service.  failure of
-# one fire is logged but the timer continues to drive subsequent fires.
-SuccessExitStatus=0
+# diagnostic side-channel, not a production-critical service.  A tick that
+# raises is contained inside the loop (see runForever); Restart covers the
+# case where the process itself dies.
+Restart=always
+RestartSec=5s
+
+# SIGTERM is handled cooperatively (StopSignal): the loop finishes the current
+# tick's fsync and exits at a safe point, so a stop cannot land between the CSV
+# write and the os.fsync US-262 made load-bearing.  The inter-tick wait is
+# interruptible, so a healthy stop returns immediately rather than sitting out
+# the remainder of a 5s sleep; the ceiling below only bounds a wedged process.
+KillSignal=SIGTERM
+TimeoutStopSec=15s
 
 # Tight CPU/memory caps so a runaway forensics process cannot starve the
 # main eclipse-obd service or the OBD poll loop running in a sibling cgroup.
+# Unchanged from the oneshot era: the resident process holds no more than one
+# tick's worth of data, and reads files rather than opening the I2C bus
+# (ARCH-006).
 MemoryMax=64M
 CPUQuota=20%
 
 [Install]
-# This unit is invoked by the .timer; no WantedBy multi-user.target on the
-# unit itself.  `systemctl enable drain-forensics.timer` is the install hook.
+# US-646: the service is now its own install hook.  It used to be started by
+# drain-forensics.timer, which no longer exists.
 WantedBy=multi-user.target

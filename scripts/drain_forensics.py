@@ -24,6 +24,10 @@
 #                                + os.fsync after every row + AC-transition
 #                                rotation by mtime gap.  Companion to
 #                                deploy/drain-forensics.service + .timer.
+# 2026-09-01    | Rex (US-646) | Daemon mode: runForever() ticks internally on
+#                                the SAME 5s cadence so the retired .timer no
+#                                longer spawns a fresh interpreter every 5s.
+#                                runOnce() deliberately unchanged.
 # ================================================================================
 ################################################################################
 
@@ -31,13 +35,22 @@
 
 Run-mode
 --------
-Driven by ``deploy/drain-forensics.timer`` which fires every 5s.  Each
-firing instantiates a fresh Python process, calls :func:`main`, exits.
-There is no daemon mode; the script is intentionally stateless across
-fires so a runtime crash inside the logger cannot corrupt persistent
-in-memory state.
+``deploy/drain-forensics.service`` runs this script ONCE, with ``--daemon``,
+and it ticks internally every :data:`DEFAULT_INTERVAL_SECONDS`.
 
-Lifecycle per fire
+Until US-646 it was driven by ``deploy/drain-forensics.timer``
+(``OnUnitActiveSec=5s`` over a ``Type=oneshot`` unit), so every tick was a
+fresh Python process -- forever, on a Pi that is on wall power essentially
+all of the time, each one narrating itself into the journal.  The 5s cadence
+is load-bearing (the US-262 CSV row-rate exists to resolve the LiPo dropout
+knee in a post-mortem), so US-646 kept the interval and removed the SPAWN.
+
+:func:`runOnce` is unchanged by that move and is still the whole tick.  In
+particular the script remains **stateless across ticks**: rotation is decided
+from the CSV artifact's mtime, never from memory, so a restarted daemon
+resumes exactly where a freshly-spawned process used to.
+
+Lifecycle per tick
 ------------------
 1. Read the current power source.  If not BATTERY, return immediately
    (logger is a no-op while wall power feeds the UPS).
@@ -95,8 +108,12 @@ Invariants
 * No raise-out-of-runOnce in the no-op or successful-write paths.  The
   logger is a forensic side-channel; failures of forensics MUST NOT
   affect the eclipse-obd capture loop running in a sibling process.
-* Stateless across timer fires -- rotation is mtime-based on the CSV
-  artifact, not a persistent state file.
+* Stateless across ticks -- rotation is mtime-based on the CSV
+  artifact, not a persistent state file and not an in-memory handle.
+* A tick that raises MUST NOT end the loop (US-646).  The timer model got
+  that for free from systemd; the daemon has to contain it, or one
+  transient becomes a process restart -- the churn this script no longer
+  has.
 """
 
 from __future__ import annotations
@@ -107,8 +124,10 @@ import json
 import logging
 import os
 import re
+import signal
 import subprocess
 import sys
+import threading
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -118,6 +137,7 @@ logger = logging.getLogger(__name__)
 
 __all__ = [
     'CSV_COLUMNS',
+    'DEFAULT_INTERVAL_SECONDS',
     'DEFAULT_LOG_DIR',
     'DEFAULT_ORCHESTRATOR_STATE_FILE',
     'DEFAULT_ROTATION_GAP_SECONDS',
@@ -125,9 +145,11 @@ __all__ = [
     'FILENAME_SUFFIX',
     'ForensicsContext',
     'RunResult',
+    'StopSignal',
     'buildProductionContext',
     'composeFilename',
     'main',
+    'runForever',
     'runOnce',
 ]
 
@@ -174,6 +196,13 @@ DEFAULT_BATTERY_HEALTH_STATE_FILE: Path = Path(
 # fires every 5s and powerwatch republishes far faster, so 30s is generous; past
 # it the reading is DROPPED rather than aged into the CSV as though it were now.
 DEFAULT_UPS_STATE_MAX_AGE_SECONDS: float = 30.0
+
+# US-646. The tick cadence, which used to live in drain-forensics.timer as
+# `OnUnitActiveSec=5s`. The number did NOT change when the timer was retired --
+# only the thing that owns it. The 5s row-rate is the US-262 spec and exists so
+# a post-mortem can resolve the LiPo dropout knee; slowing it down would trade
+# detection for tidiness, which the story forbids by name.
+DEFAULT_INTERVAL_SECONDS: float = 5.0
 
 # Rotation invariant: if newest CSV's mtime is older than this many
 # seconds, the next BATTERY tick treats this as a fresh AC->BATTERY
@@ -270,6 +299,137 @@ def runOnce(ctx: ForensicsContext) -> RunResult:
     _appendAndFsync(activePath, row, isNewFile=isNewFile)
 
     return RunResult(action='wrote_row', path=activePath, isNewFile=isNewFile)
+
+
+# ================================================================================
+# Daemon loop (US-646)
+# ================================================================================
+
+
+class StopSignal:
+    """Cooperative stop flag, set from SIGTERM/SIGINT.
+
+    Python's default SIGTERM disposition terminates the interpreter where it
+    stands, which is free to be between the CSV write and the ``os.fsync``
+    US-262 made load-bearing.  This turns ``systemctl stop`` into a flag the
+    loop checks at a safe point instead.
+
+    Backed by :class:`threading.Event` rather than a bare bool so the
+    inter-tick wait is INTERRUPTIBLE: a stop lands promptly instead of sitting
+    out the remainder of a 5s sleep.
+    """
+
+    def __init__(self) -> None:
+        self._event = threading.Event()
+
+    def request(self, signum: int | None = None, frame: object = None) -> None:
+        """Signal-handler entry point.  Sets the flag; does nothing else.
+
+        Deliberately does no I/O and takes no lock -- this runs in a signal
+        context, where logging can deadlock against a handler interrupted
+        mid-emit.
+        """
+        self._event.set()
+
+    def isSet(self) -> bool:
+        """True once a stop has been requested."""
+        return self._event.is_set()
+
+    def wait(self, seconds: float) -> bool:
+        """Wait up to ``seconds``.  Returns True if a stop was requested."""
+        return self._event.wait(seconds)
+
+    def installHandlers(self) -> None:
+        """Route SIGTERM (systemd stop) and SIGINT (operator ^C) here."""
+        for sig in (signal.SIGTERM, signal.SIGINT):
+            try:
+                signal.signal(sig, self.request)
+            except (OSError, ValueError) as e:
+                # Not the main thread, or a platform without the signal.
+                # Losing the clean stop is not worth losing the logger over.
+                logger.debug("Could not install handler for %s: %s", sig, e)
+
+
+def _describeResult(result: RunResult) -> str:
+    """One-line human description of a tick outcome, for the journal."""
+    return (
+        f'{result.action}'
+        f'{f" path={result.path}" if result.path else ""}'
+        f'{" (new_file)" if result.isNewFile else ""}'
+    )
+
+
+def runForever(
+    ctx: ForensicsContext,
+    *,
+    intervalSeconds: float = DEFAULT_INTERVAL_SECONDS,
+    stop: StopSignal | None = None,
+) -> int:
+    """Tick :func:`runOnce` every ``intervalSeconds`` until stopped.
+
+    This is the whole of US-646.  The work per tick, the cadence and the CSV
+    are all exactly what the retired ``drain-forensics.timer`` produced; the
+    only thing that changed is that it happens in ONE process instead of a
+    fresh interpreter per tick.
+
+    Journal volume
+    --------------
+    The old model emitted a line per fire, plus systemd's own
+    ``Starting``/``Finished`` pair -- indefinitely, on a Pi that is on wall
+    power almost always, where every one of those ticks was a no-op.  Here a
+    routine tick logs at DEBUG and only *noteworthy* ticks reach INFO:
+
+    * the action CHANGED (the Pi went onto battery, or came back off it), or
+    * a fresh CSV was opened (a new artifact deserves to be named), or
+    * the tick RAISED -- errors are never deduped into silence, because a
+      logger failing every 5s for an hour must be visible on every one.
+
+    Quieter, not blind: ``journalctl -p debug`` still shows every tick.
+
+    Args:
+        ctx: Provider container.  See :class:`ForensicsContext`.
+        intervalSeconds: Seconds between ticks.  Defaults to the cadence the
+            retired timer drove.
+        stop: Cooperative stop flag.  A fresh :class:`StopSignal` is used when
+            omitted, which means "run until the process is killed".
+
+    Returns:
+        The number of ticks executed.
+    """
+    if stop is None:
+        stop = StopSignal()
+
+    ticks = 0
+    lastAction: str | None = None
+
+    while not stop.isSet():
+        ticks += 1
+        try:
+            result = runOnce(ctx)
+        except Exception as e:  # noqa: BLE001
+            # Forensics is a side-channel: a failing tick must not take the
+            # loop down.  Under the timer, systemd handed the next fire a
+            # clean process for free -- there is no such backstop now, and a
+            # daemon exit here would be answered by Restart=always, i.e. the
+            # process churn this story exists to remove.
+            logger.exception("drain_forensics tick raised: %s", e)
+            # Reset the dedup so the recovery is announced.  Deduping against
+            # the last SUCCESSFUL action would hide "the logger came back"
+            # behind an action that had not changed.
+            lastAction = None
+        else:
+            noteworthy = result.isNewFile or result.action != lastAction
+            logger.log(
+                logging.INFO if noteworthy else logging.DEBUG,
+                "drain_forensics: %s",
+                _describeResult(result),
+            )
+            lastAction = result.action
+
+        if stop.wait(intervalSeconds):
+            break
+
+    return ticks
 
 
 # ================================================================================
@@ -495,9 +655,10 @@ def _readUpsTelemetryFromState(
     subscribe; never two acquisitions of one source.*
 
     This replaces :func:`_readUpsTelemetry`, which opened its own I2C client.
-    Because ``drain-forensics.timer`` runs ``OnUnitActiveSec=5s`` in a FRESH
-    process, and because both the telemetry provider and the power-source
-    provider called it, that was **two bus opens every five seconds, forever**,
+    Because ``drain-forensics.timer`` ran ``OnUnitActiveSec=5s`` in a FRESH
+    process (retired by US-646; the cadence survives, the spawn does not), and
+    because both the telemetry provider and the power-source provider called
+    it, that was **two bus opens every five seconds, forever**,
     alongside powerwatch and the sensor emitters on the same bus.
 
     ``states/battery-health`` already carries exactly the three registers this
@@ -752,13 +913,22 @@ def buildProductionContext(
 
 
 def main(argv: list[str] | None = None) -> int:
-    """CLI entry-point invoked once per systemd-timer fire."""
+    """CLI entry-point.
+
+    Two modes, and the distinction matters:
+
+    * ``--daemon`` -- what ``drain-forensics.service`` ships.  Ticks every
+      ``--interval-seconds`` until SIGTERM.
+    * bare (default) -- ONE tick, then exit.  Kept for operator drills and
+      diagnostics; every hand-run recipe in the unit header depends on it, and
+      making the daemon the default would turn each of those into a hang.
+    """
     parser = argparse.ArgumentParser(
         description=(
             "Drain forensics logger -- writes one CSV row to "
             f"{DEFAULT_LOG_DIR}/drain-forensics-<TS>.csv when the UPS is "
-            "on BATTERY.  Runs once per invocation; intended to be driven "
-            "by a 5s systemd timer."
+            "on BATTERY.  Runs one tick per invocation by default; "
+            "--daemon ticks internally on a fixed cadence (US-646)."
         ),
     )
     parser.add_argument(
@@ -783,6 +953,25 @@ def main(argv: list[str] | None = None) -> int:
         help='Path the production orchestratorStateProvider reads from.',
     )
     parser.add_argument(
+        '--daemon',
+        action='store_true',
+        help=(
+            'Stay resident and tick every --interval-seconds until SIGTERM. '
+            'This is how drain-forensics.service runs the script; it replaces '
+            'the retired drain-forensics.timer (US-646).'
+        ),
+    )
+    parser.add_argument(
+        '--interval-seconds',
+        type=float,
+        default=DEFAULT_INTERVAL_SECONDS,
+        help=(
+            'Seconds between ticks in --daemon mode. Defaults to the cadence '
+            'the retired timer drove; do not slow it down without re-reading '
+            "US-646's negative case."
+        ),
+    )
+    parser.add_argument(
         '--verbose',
         action='store_true',
         help='Enable debug logging to stderr.',
@@ -801,18 +990,26 @@ def main(argv: list[str] | None = None) -> int:
         orchestratorStateFile=args.orchestrator_state_file,
     )
 
+    if args.daemon:
+        stop = StopSignal()
+        stop.installHandlers()
+        logger.info(
+            "drain_forensics: daemon start (interval=%.1fs, log_dir=%s)",
+            args.interval_seconds, args.log_dir,
+        )
+        ticks = runForever(
+            ctx, intervalSeconds=args.interval_seconds, stop=stop,
+        )
+        logger.info("drain_forensics: daemon stop after %d tick(s)", ticks)
+        return 0
+
     try:
         result = runOnce(ctx)
     except Exception as e:  # noqa: BLE001
         logger.exception("drain_forensics runOnce raised: %s", e)
         return 1
 
-    logger.info(
-        "drain_forensics: %s%s%s",
-        result.action,
-        f' path={result.path}' if result.path else '',
-        ' (new_file)' if result.isNewFile else '',
-    )
+    logger.info("drain_forensics: %s", _describeResult(result))
     return 0
 
 
