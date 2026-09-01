@@ -17,6 +17,15 @@
 #   advance ("a card-layout call for Iris -- surface it rather than shrinking the
 #   font below the floor") and it is filed as I-us631.
 #
+#   WHAT CHANGED WHEN US-631 (A) LANDED, and what deliberately did NOT. The
+#   lateral label is now `L`/`R` (see tests/ui/test_gforce_axis_label_
+#   abbreviation.py), which kills the BOUNCE by making the line's length
+#   independent of direction. It does NOT make the line fit: every figure
+#   recorded below was measured against the US-645 worst case (`stopped` on both
+#   axes), which the abbreviation does not touch, so the escalation and its
+#   numbers stand exactly as recorded. The only thing that moves here is the
+#   tripwire's view of TODAY's shipped vocabulary.
+#
 #   FOUR things are guarded, and they fail for four different reasons:
 #     1. THE RECORD (the mandatory AC) -- the deficit is asserted, so it is a
 #        CHARACTERISATION test: whoever widens the column or restructures the
@@ -45,6 +54,11 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-08-31    | Ralph (Rex)  | Initial -- US-631 G-FORCE tile width budget.
+# 2026-08-31    | Ralph (Rex)  | US-631 (A): the shipped lateral vocabulary is
+#                                now `L`/`R`, so the tripwire's measured set
+#                                moves with it. Every RECORDED figure is
+#                                unchanged -- they were taken against the
+#                                US-645 worst case, not today's words.
 # ================================================================================
 ################################################################################
 
@@ -127,7 +141,14 @@ ADVANCE_ROBUST_RANGE = (0.50, 0.65)
 # SPEED IS TRULY ZERO" -- so sizing to `steady` alone would leave US-645 free to
 # reintroduce exactly the bounce this story measured.
 US645_LABELS = frozenset({"steady", "stopped"})
-LATERAL_LABELS = frozenset({"left", "right"}) | US645_LABELS
+
+# US-631 (A) shipped `L`/`R` in place of `left`/`right`. The US-645 words stay in
+# BOTH axis sets and are deliberately NOT abbreviated here: US-645 has not landed
+# and gets to choose its own spelling, so the conservative worst case is that it
+# lands the long form. Sizing to the abbreviation would quietly hand back the
+# margin this measurement exists to defend -- and the shipped-vocabulary tripwire
+# below goes red the moment that guess turns out wrong.
+LATERAL_LABELS = frozenset({"L", "R"}) | US645_LABELS
 LONGITUDINAL_LABELS = frozenset({"accel", "brake"}) | US645_LABELS
 
 # The widest number the detail line can carry. The story's stated negative case
@@ -332,6 +353,14 @@ def test_theModelReproducesTheObservedLeftToRightBounce(column):
     This is the test that makes every other number in this file credible. A
     width model that could not reproduce the one bounce somebody actually
     watched would be arithmetic, not a measurement.
+
+    `left`/`right` are written out here ON PURPOSE even though US-631 (A) has
+    since replaced them with `L`/`R`. This test is the CALIBRATION against a
+    historical observation, not a claim about what ships: reading the labels from
+    source would make it assert that the CURRENT vocabulary bounces, which is
+    exactly what (A) fixed, and the model would lose the only real-world
+    measurement licensing it. The pin that the shipped words no longer bounce
+    lives in tests/ui/test_gforce_axis_label_abbreviation.py.
     """
     left = _detailString("0.0", "left", "accel")
     right = _detailString("0.0", "right", "accel")

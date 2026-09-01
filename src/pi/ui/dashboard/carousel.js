@@ -2883,12 +2883,39 @@
     return g.toFixed(_G_DECIMALS) + " g";
   }
 
-  // Spell the two components out in words. This puts the SIGN CONTRACT on the
+  // Name the two components on the tile. This puts the SIGN CONTRACT on the
   // screen, where a mounted-backwards board becomes obvious to the operator
-  // ("0.30 brake" while accelerating) instead of a silently mirrored dot.
+  // ("0.3 brake" while accelerating) instead of a silently mirrored dot.
+  //
+  // US-631 (A) -- THE LATERAL LABEL IS ABBREVIATED TO ONE CHARACTER, and that is
+  // a defect fix, not a style preference. CIO 2026-08-31, from the driver's
+  // seat: "they do bounce as the word right will wrap around cuz it's too long
+  // to fit on the screen." Atlas photographed both states one minute apart --
+  // the tile rendered FOUR lines with `right` and THREE with `left`.
+  //
+  // The mechanism, and why one character is the whole fix: `.tile-detail`
+  // declares no `white-space: nowrap` and no `min-height`, and `.live-col` sets
+  // `justify-content: center`. So a string ONE CHARACTER wider re-wraps, grows
+  // the tile by a line box, and re-centres the entire column -- the bounce. The
+  // lateral word was the ONLY varying-length token on this line: `left` is 4 and
+  // `right` is 5, while `accel` and `brake` are both 5 and never moved anything.
+  // At `L`/`R` the rendered length depends ONLY on the two magnitudes, so no
+  // change of DIRECTION can change the line count.
+  //
+  // WHAT THIS DOES NOT FIX, stated so it is not mistaken for closed: the line
+  // still WRAPS in a 108px column -- it is merely stable now. That is the width
+  // reservation US-631 (B) asks for, it does not fit at any tier in the F-127
+  // scale, and it is escalated to Iris as I-us631. Abbreviating further, or
+  // collapsing L/R to a shared token, would buy width by DELETING the sign
+  // contract above; the direction stays distinguishable.
+  //
+  // The four words are spelled INLINE, not hoisted to constants, because the
+  // US-631 width guard reads this function's body to learn what vocabulary the
+  // tile actually ships. Moving them out of it leaves that tripwire green and
+  // blind, which is the failure mode it exists to prevent.
   function gAxisDetail(gLat, gLon) {
     return (
-      Math.abs(gLat).toFixed(_G_DECIMALS) + " " + (gLat >= 0 ? "right" : "left") +
+      Math.abs(gLat).toFixed(_G_DECIMALS) + " " + (gLat >= 0 ? "R" : "L") +
       " · " +
       Math.abs(gLon).toFixed(_G_DECIMALS) + " " + (gLon >= 0 ? "accel" : "brake")
     );
