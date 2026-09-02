@@ -216,8 +216,29 @@ def _ctx(schema: FakeSchema) -> RunnerContext:
 
 
 class TestRegistration:
-    def test_v0024IsRegisteredLast(self) -> None:
-        assert ALL_MIGRATIONS[-1].version == '0024'
+    def test_v0024IsRegisteredDirectlyAfterV0023(self) -> None:
+        """v0024 is registered, and sits in the right place in the chain.
+
+        ⚠️ RENAMED from ``test_v0024IsRegisteredLast`` by ARCH-020 (Atlas,
+        2026-09-01), which registered v0025 and turned the old assertion red.
+
+        "Is LAST" was never the invariant.  It is a property that every future
+        migration falsifies simply by existing, so the guard must be hand-edited
+        on each one or it goes red and stays red.  That is not hypothetical:
+        ``test_pi_state_sync.py::TestMigrationWiring::test_v0019IsLastInAscendingOrder``
+        is the SAME guard written for v0019, and it has been failing on ``dev``
+        ever since v0020 landed -- confirmed against a pristine trunk checkout,
+        not inferred.  A standing gate left red teaches the team to ignore a
+        failing test, which is how a guard goes inert.
+
+        What v0024 actually needs is to be present and to sit directly after
+        v0023, because its substeps assume v0023's inline-CHECK strip already
+        ran.  That stays true no matter how many migrations follow it.
+        """
+        versions = [m.version for m in ALL_MIGRATIONS]
+
+        assert '0024' in versions
+        assert versions[versions.index('0024') - 1] == '0023'
 
     def test_versionsAreUniqueAndAscending(self) -> None:
         versions = [m.version for m in ALL_MIGRATIONS]

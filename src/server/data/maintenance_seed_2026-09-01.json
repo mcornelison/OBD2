@@ -1,0 +1,409 @@
+{
+  "_comment": [
+    "ARCH-020 seed: the vehicle maintenance record as assembled by Spool on",
+    "2026-09-01 from FIVE independent sources -- Carfax export (58 records), two",
+    "Maas Automotive repair orders, two Peter's Highline invoices, photo EXIF, and",
+    "this project's own telemetry in obd2db.",
+    "",
+    "This file is the version-controlled copy. Before it existed the record lived",
+    "ONLY as Markdown on the fleet share, which was confirmed on 2026-09-01 to have",
+    "no snapshots and no undo of any kind (ext4 on RAID 5; Synology snapshots need",
+    "Btrfs). In S41 a script truncated a 22,588-byte file to 0 bytes and the only",
+    "surviving copy was the one that lived in the database.",
+    "",
+    "PROVENANCE IS PER FIELD, NOT PER ROW. The 2026-08-22 oil change carries a",
+    "CIO-declared odometer FACT, a recollected brand, and an ABSENT viscosity in one",
+    "row. A single row-level confidence would force downgrading the odometer or",
+    "upgrading the brand -- both are lies.",
+    "",
+    "DATE PRECISION IS STATED, NEVER IMPLIED. event_date is a sortable ANCHOR. Where",
+    "precision is 'month' or 'range' the anchor's day is an artefact of storage and",
+    "MUST NOT be quoted as the event date -- use formatEventDate()."
+  ],
+  "source_note": "offices/tuner/cards/maintenance-oil-change-log.md, MASTER MAINTENANCE RECORD",
+  "assembled_by": "Spool (Tuner SME)",
+  "assembled_on": "2026-09-01",
+  "landed_by": "Atlas (Architect), ARCH-020",
+  "events": [
+    {
+      "seq": 1, "event_date": "1998-04-21", "event_date_precision": "day",
+      "odometer_mi": 10, "odometer_source": "shop_record",
+      "work_performed": "Pre-delivery inspection",
+      "provenance": "date+odometer: Carfax, dealer record (exact tier)"
+    },
+    {
+      "seq": 2, "event_date": "1999-02-01", "event_date_precision": "range",
+      "event_date_end": "1999-06-30",
+      "odometer_mi": 465, "odometer_source": "shop_record",
+      "work_performed": "Serviced (first of three in this window)",
+      "provenance": "date: Carfax, window only -- three services collapsed in the source; odometer: start of the 465->4,202 span"
+    },
+    {
+      "seq": 3, "event_date": "1999-04-01", "event_date_precision": "range",
+      "event_date_end": "1999-06-30",
+      "work_performed": "Serviced (second of three)",
+      "provenance": "date: Carfax window; no discrete odometer attributable to this event"
+    },
+    {
+      "seq": 4, "event_date": "1999-06-01", "event_date_precision": "range",
+      "event_date_end": "1999-06-30",
+      "odometer_mi": 4202, "odometer_source": "shop_record",
+      "work_performed": "Serviced (third of three); seat tracks",
+      "provenance": "date: Carfax window; odometer: end of the 465->4,202 span"
+    },
+    {
+      "seq": 5, "event_date": "1999-10-25", "event_date_precision": "day",
+      "work_performed": "Pre-delivery inspection; oil + filter",
+      "provenance": "date: Carfax (exact); odometer: not recorded by the source"
+    },
+    {
+      "seq": 6, "event_date": "2000-01-28", "event_date_precision": "day",
+      "work_performed": "New owner reported",
+      "provenance": "date: Carfax ownership record"
+    },
+    {
+      "seq": 7, "event_date": "2000-04-22", "event_date_precision": "day",
+      "odometer_mi": 21549, "odometer_source": "shop_record",
+      "work_performed": "Serviced",
+      "venue": "Gregory Mitsubishi",
+      "provenance": "date+odometer+venue: Carfax dealer record (exact tier)"
+    },
+    {
+      "seq": 8, "event_date": "2000-06-01", "event_date_precision": "range",
+      "event_date_end": "2000-07-31",
+      "work_performed": "CLUTCH REPLACED",
+      "parts": "clutch",
+      "provenance": "date: Carfax window (2000-06 -> 2000-07); no odometer in source"
+    },
+    {
+      "seq": 9, "event_date": "2000-07-01", "event_date_precision": "range",
+      "event_date_end": "2000-07-31",
+      "work_performed": "Clutch disc + release bearing replaced",
+      "parts": "clutch disc; release bearing",
+      "provenance": "date: Carfax window; no odometer in source"
+    },
+    {
+      "seq": 10, "event_date": "2000-08-03", "event_date_precision": "day",
+      "work_performed": "Serviced",
+      "provenance": "date: Carfax (exact)"
+    },
+    {
+      "seq": 11, "event_date": "2001-02-15", "event_date_precision": "day",
+      "odometer_mi": 27054, "odometer_source": "shop_record",
+      "work_performed": "Title issued -- likely the CIO's purchase",
+      "provenance": "date+odometer: Carfax title record; the purchase attribution is OWNER-INFERRED and hedged in the source ('likely')"
+    },
+    {
+      "seq": 12, "event_date": "2001-05-11", "event_date_precision": "day",
+      "odometer_mi": 28760, "odometer_source": "shop_record",
+      "work_performed": "Title updated",
+      "provenance": "date+odometer: Carfax title record"
+    },
+    {
+      "seq": 13, "event_date": "2002-02-27", "event_date_precision": "day",
+      "odometer_mi": 31000, "odometer_source": "state_agency_rounded",
+      "work_performed": "Emissions PASS",
+      "provenance": "date: exact; odometer: Illinois emissions record, ROUNDED to nearest 1,000 -- not an exact reading"
+    },
+    {
+      "seq": 14, "event_date": "2003-10-09", "event_date_precision": "day",
+      "odometer_mi": 58082, "odometer_source": "shop_record",
+      "work_performed": "Inspection; brakes; rear suspension",
+      "provenance": "date+odometer: Carfax shop record (exact tier)"
+    },
+    {
+      "seq": 15, "event_date": "2004-01-01", "event_date_precision": "year",
+      "odometer_mi": 59000, "odometer_source": "state_agency_rounded",
+      "work_performed": "Emissions PASS",
+      "provenance": "date: YEAR only in the source -- the anchor's month/day are storage artefacts; odometer: state agency, ROUNDED"
+    },
+    {
+      "seq": 16, "event_date": "2006-01-01", "event_date_precision": "year",
+      "odometer_mi": 65000, "odometer_source": "state_agency_rounded",
+      "work_performed": "Emissions PASS",
+      "provenance": "date: YEAR only; odometer: state agency, ROUNDED"
+    },
+    {
+      "seq": 17, "event_date": "2008-05-08", "event_date_precision": "day",
+      "work_performed": "60,000 mile service; valve cover gaskets",
+      "source_verbatim": "60,000 MILE SERVICE",
+      "is_epoch_boundary": false,
+      "provenance": "date: Carfax (exact); odometer: NOT recorded. NOTE: this is the ONLY plausible timing-belt candidate in 28 years and it NAMES NO BELT. Treat as a candidate, never as a belt service record.",
+      "notes": "The timing-belt schedule row points here with last_done_confidence='inferred'. No source in any of four independent records names a belt."
+    },
+    {
+      "seq": 18, "event_date": "2008-08-08", "event_date_precision": "day",
+      "odometer_mi": 68878, "odometer_source": "shop_record",
+      "work_performed": "Serviced",
+      "provenance": "date+odometer: Carfax shop record (exact tier)"
+    },
+    {
+      "seq": 19, "event_date": "2009-09-18", "event_date_precision": "day",
+      "odometer_mi": 69000, "odometer_source": "state_agency_rounded",
+      "work_performed": "Emissions PASS",
+      "provenance": "date: exact; odometer: state agency, ROUNDED"
+    },
+    {
+      "seq": 20, "event_date": "2010-06-02", "event_date_precision": "day",
+      "odometer_mi": 71202, "odometer_source": "shop_record",
+      "work_performed": "Brakes; rotors; oil + filter; tyres; wipers",
+      "is_epoch_boundary": true,
+      "provenance": "date+odometer: Carfax shop record (exact tier)",
+      "notes": "Oil change -- epoch boundary for oil-interval analysis."
+    },
+    {
+      "seq": 21, "event_date": "2010-10-01", "event_date_precision": "range",
+      "event_date_end": "2010-11-30",
+      "odometer_mi": 72020, "odometer_source": "shop_record",
+      "work_performed": "Emissions PASS",
+      "provenance": "date: Carfax window (2010-10 -> 2010-11); odometer: exact tier"
+    },
+    {
+      "seq": 22, "event_date": "2010-11-01", "event_date_precision": "range",
+      "event_date_end": "2010-11-30",
+      "work_performed": "Serviced",
+      "provenance": "date: Carfax window; no discrete odometer attributable to this event"
+    },
+    {
+      "seq": 23, "event_date": "2012-12-08", "event_date_precision": "day",
+      "odometer_mi": 74000, "odometer_source": "state_agency_rounded",
+      "work_performed": "Emissions PASS",
+      "provenance": "date: exact; odometer: state agency, ROUNDED"
+    },
+    {
+      "seq": 24, "event_date": "2013-11-04", "event_date_precision": "day",
+      "odometer_mi": 74900, "odometer_source": "shop_record",
+      "work_performed": "Inspection; oil + filter; tyres rotated",
+      "is_epoch_boundary": true,
+      "provenance": "date+odometer: Carfax shop record (exact tier)"
+    },
+    {
+      "seq": 25, "event_date": "2014-10-15", "event_date_precision": "day",
+      "odometer_mi": 75000, "odometer_source": "state_agency_rounded",
+      "work_performed": "Emissions PASS",
+      "provenance": "date: exact; odometer: state agency, ROUNDED"
+    },
+    {
+      "seq": 26, "event_date": "2017-06-23", "event_date_precision": "day",
+      "odometer_mi": 75302, "odometer_source": "shop_record",
+      "work_performed": "Fuel pressure solenoid replaced",
+      "source_verbatim": "P1105 -- fuel pressure solenoid replaced",
+      "dtc_code": "P1105",
+      "venue": "Maas Automotive",
+      "parts": "K5T43988 fuel pressure solenoid",
+      "cost_usd": 258.96,
+      "provenance": "date+odometer+cost+part: Maas Automotive repair order (PRIMARY document, exact tier). Carfax normalised the DTC away entirely.",
+      "notes": "First of TWO solenoid-circuit faults nine years apart (the other is P0443, 2026-06-06). This is the K5T43988 at the firewall -- a 2017 part. It is a precedent that cuts AGAINST connector-first on P0443, recorded because it does."
+    },
+    {
+      "seq": 27, "event_date": "2017-08-08", "event_date_precision": "day",
+      "work_performed": "Emissions PASS",
+      "provenance": "date: Carfax (exact); no odometer in source"
+    },
+    {
+      "seq": 28, "event_date": "2018-10-16", "event_date_precision": "day",
+      "work_performed": "EMISSIONS FAIL",
+      "provenance": "date: Carfax (exact); no odometer in source",
+      "notes": "Resolved by the front O2 sensor replacement two months later (seq 29), then PASS (seq 30)."
+    },
+    {
+      "seq": 29, "event_date": "2018-12-09", "event_date_precision": "day",
+      "odometer_mi": 75931, "odometer_source": "shop_record",
+      "work_performed": "Front O2 sensor replaced; PCM memory reset",
+      "source_verbatim": "Reset PCM memory",
+      "dtc_code": "P0134",
+      "venue": "Maas Automotive",
+      "cost_usd": 209.20,
+      "is_epoch_boundary": true,
+      "provenance": "date+odometer+cost+DTC+wording: Maas Automotive repair order (PRIMARY document, exact tier)",
+      "notes": "LOAD-BEARING. Carfax normalised this verbatim 'Reset PCM memory' into 'Computer reprogrammed', which manufactured an apparent conflict with the prior ECU MD346675's never-flashed status. A code clear is NOT a reflash: drives <=24 remain valid stock baselines. The primary document settled in one line what the normalised summary left unresolvable."
+    },
+    {
+      "seq": 30, "event_date": "2018-12-15", "event_date_precision": "day",
+      "work_performed": "Emissions PASS",
+      "provenance": "date: Carfax (exact)"
+    },
+    {
+      "seq": 31, "event_date": "2022-04-12", "event_date_precision": "day",
+      "odometer_mi": 77000, "odometer_source": "state_agency_rounded",
+      "work_performed": "Emissions PASS",
+      "provenance": "date: exact; odometer: state agency, ROUNDED to nearest 1,000",
+      "notes": "Pairs with seq 32 to produce an APPARENT ODOMETER ROLLBACK -- 77,000 here, then 76,961 six months later. The car is fine; this reading is rounded and that one is exact. Resolvable only from the source tiers."
+    },
+    {
+      "seq": 32, "event_date": "2022-10-11", "event_date_precision": "day",
+      "odometer_mi": 76961, "odometer_source": "shop_record",
+      "work_performed": "Tyres rotated; oil + filter",
+      "is_epoch_boundary": true,
+      "provenance": "date+odometer: Carfax shop record (EXACT tier)",
+      "notes": "Reads lower than seq 31 six months earlier. Not a rollback -- see seq 31."
+    },
+    {
+      "seq": 33, "event_date": "2024-04-24", "event_date_precision": "day",
+      "odometer_mi": 77748, "odometer_source": "shop_record",
+      "work_performed": "Inspection; coolant flush; oil + filter",
+      "is_epoch_boundary": true,
+      "provenance": "date+odometer: Carfax shop record (exact tier)"
+    },
+    {
+      "seq": 34, "event_date": "2024-07-01", "event_date_precision": "day",
+      "odometer_mi": 77838, "odometer_source": "shop_record",
+      "work_performed": "CLUTCH REPLACED; master + slave cylinder; rear main seal",
+      "venue": "Ogden",
+      "parts": "clutch; clutch master cylinder; clutch slave cylinder; rear main seal",
+      "provenance": "date+odometer+venue: Carfax shop record (exact tier)"
+    },
+    {
+      "seq": 35, "event_date": "2024-07-15", "event_date_precision": "range",
+      "event_date_end": "2024-08-31",
+      "work_performed": "Starter replaced",
+      "parts": "starter",
+      "provenance": "date: Carfax window (2024-07 -> 2024-08); no odometer attributable"
+    },
+    {
+      "seq": 36, "event_date": "2024-08-01", "event_date_precision": "range",
+      "event_date_end": "2024-08-31",
+      "work_performed": "Oil pressure sender; brakes; A/C",
+      "parts": "oil pressure sender",
+      "provenance": "date: Carfax window (2024-07 -> 2024-08); no odometer attributable"
+    },
+    {
+      "seq": 37, "event_date": "2024-09-05", "event_date_precision": "day",
+      "work_performed": "Emissions PASS",
+      "provenance": "date: Carfax (exact)",
+      "notes": "The LAST emissions pass on record. Next test due ~Sept 2026 -- i.e. now. A lit MIL is an automatic fail, which puts P0443 on a clock."
+    },
+    {
+      "seq": 38, "event_date": "2025-05-01", "event_date_precision": "month",
+      "work_performed": "Cold air intake + recirculating BOV installed (DIY)",
+      "parts": "cold air intake; recirculating blow-off valve",
+      "part_customer_supplied": true,
+      "provenance": "date: OWNER-REPORTED as 'May 2025' -- MONTH precision only, the anchor day is a storage artefact and must not be quoted. Source hedged in the original record.",
+      "notes": "Carfax is structurally blind to owner/DIY and performance work -- none of this car's modifications appear in it."
+    },
+    {
+      "seq": 39, "event_date": "2025-06-19", "event_date_precision": "day",
+      "work_performed": "Coilovers installed, all four corners (DIY)",
+      "parts": "coilovers x4",
+      "part_customer_supplied": true,
+      "provenance": "date: PHOTO EXIF (strongest available evidence for DIY work); no odometer"
+    },
+    {
+      "seq": 40, "event_date": "2025-06-24", "event_date_precision": "day",
+      "work_performed": "AN-6 E85 fuel lines; vacuum-referenced FPR; catch can (DIY)",
+      "parts": "AN-6 lines; vacuum FPR; catch can",
+      "part_customer_supplied": true,
+      "provenance": "date: PHOTO EXIF, corroborated by CIO recollection; no odometer"
+    },
+    {
+      "seq": 41, "event_date": "2025-08-11", "event_date_precision": "day",
+      "odometer_mi": 78350, "odometer_source": "shop_record",
+      "work_performed": "Fuel filter; left-front wheel hub; sway-bar link",
+      "venue": "Peter's Highline Automotive",
+      "document_ref": "82127",
+      "parts": "fuel filter; LF wheel hub; sway-bar link",
+      "provenance": "date+odometer+parts: Highline invoice #82127 (PRIMARY document, exact tier). Carfax never saw this odometer."
+    },
+    {
+      "seq": 42, "event_date": "2025-10-09", "event_date_precision": "day",
+      "odometer_mi": 78487, "odometer_source": "shop_record",
+      "work_performed": "Engine + transmission mounts; tie rods; alignment",
+      "venue": "Peter's Highline Automotive",
+      "document_ref": "83476",
+      "parts": "engine mounts; transmission mounts; tie rods",
+      "provenance": "date+odometer: Highline invoice #83476 (PRIMARY document, exact tier). CORRECTION: the CIO recalled the tie rods as 'definitely the same week as the coilovers' (2025-06-19); the invoice puts them here, ~16 weeks later, and not DIY. The correction took two minutes BECAUSE the record said which claim rested on recollection.",
+      "notes": "Highline recommended REPLACE ALL 4 TYRES at this visit -- still open ~11 months later. At ~500 mi/yr that is an AGE question, the same failure mode as the belt."
+    },
+    {
+      "seq": 43, "event_date": "2026-05-22", "event_date_precision": "day",
+      "work_performed": "ECU swap MD346675 -> MD326328",
+      "is_epoch_boundary": true,
+      "provenance": "date: this project's telemetry (obd2db). ECU IDENTITY IS NOT DUPLICATED HERE -- vehicle_info holds the signatures and install/removal timestamps. This row records that the swap happened, and points at that table.",
+      "notes": "MD326328 is a 1997 board, deliberately, BECAUSE 1998 boards cannot be ECMLink-flashed. Never let anyone replace the PCM. Hard epoch boundary: drives <=24 are the prior ECU."
+    },
+    {
+      "seq": 44, "event_date": "2026-06-06", "event_date_precision": "day",
+      "work_performed": "P0443 EVAP purge solenoid circuit fault -- MIL ON, still lit",
+      "dtc_code": "P0443",
+      "provenance": "date: this project's telemetry (obd2db) -- first observation of the code",
+      "notes": "The only DTC this car has ever set. Electrical circuit fault, no engine risk, does not distort tuning data. ECU swap EXONERATED and the fault is INTERMITTENT (=> connector/wiring, not the part). On a clock: emissions due ~Sept 2026 and a lit MIL is an automatic fail."
+    },
+    {
+      "seq": 45, "event_date": "2026-07-31", "event_date_precision": "day",
+      "work_performed": "Car battery went flat from disuse; ECU adaptive memory reset",
+      "is_epoch_boundary": true,
+      "provenance": "date: CIO-confirmed, corroborated by this project's telemetry (drives 35/36 LTFT read exactly 0.0)",
+      "notes": "Hard epoch boundary for fuel-trim analysis: drives 35/36 must NOT be used as an LTFT baseline. New-ECU natural LTFT is approx -1..-3%. Battery charged 2026-08-18/19. OWED: parasitic-draw test (<50 mA expected); this project's own B-063 buck converter must be ruled OUT, not assumed."
+    },
+    {
+      "seq": 46, "event_date": "2026-08-22", "event_date_precision": "day",
+      "odometer_mi": 78907, "odometer_source": "owner_reported",
+      "work_performed": "Oil + filter",
+      "venue": "Fuller Car Wash",
+      "is_epoch_boundary": true,
+      "provenance": "PER-FIELD, and this row is why the rule exists. odometer 78,907 = CIO-DECLARED FACT (exact). Oil brand = RECOLLECTION ('I believe'). Viscosity = ABSENT, not recorded by anyone. One row-level confidence column would force downgrading the odometer or upgrading the brand; both would be false.",
+      "notes": "Odometer anchor for the whole record. A transposed 78,097 was filed once and corrected -- an anchor error is a permanent offset on every derived mileage forever, with no sensor able to catch it."
+    },
+    {
+      "seq": 47, "event_date": "2026-09-02", "event_date_precision": "day",
+      "work_performed": "SCHEDULED -- timing belt inspection/service and P0443 diagnosis",
+      "venue": "Peter's Highline Automotive",
+      "provenance": "date: CIO-declared appointment, forward-dated at time of landing (2026-09-01). NOT a completed event: this row records that the appointment exists. Update work_performed, odometer and odometer_source from the invoice afterwards.",
+      "notes": "Ask about SPARK PLUGS while there -- seq 48 is the only item in the record with no date at all, and its heat range and gap matter before any boost work."
+    },
+    {
+      "seq": 48, "event_date": "2022-01-01", "event_date_precision": "range",
+      "event_date_end": "2026-01-01",
+      "work_performed": "Spark plugs + cables replaced",
+      "provenance": "date: OWNER-REPORTED as 'within the last ~4 years' -- an OWNER-ESTIMATED four-year window, not a source-recorded date. This is what makes it different in kind from every other row: the Carfax windows (seq 2-4, 8-9, 21-22, 35-36) are recorded by a source; this one is a recollection. Brand, heat range and gap are ALL UNKNOWN.",
+      "notes": "NUMBERED 48 DELIBERATELY. Spool's canonical count is '47 DATED events' and this item is explicitly 'the only maintenance item with no date at all', so it sits outside that numbering rather than renumbering his record. It is still a real event that really happened, so it belongs in the log -- dropping it would lose the fact that the work was done. The only maintenance item whose SPECIFICATION (heat range, gap) matters before boost."
+    }
+  ],
+  "schedule": [
+    {
+      "item": "timing belt",
+      "interval_miles": 60000,
+      "interval_months": 60,
+      "last_done_seq": 17,
+      "last_done_confidence": "inferred",
+      "notes": "INFERRED, NOT CONFIRMED. The only candidate in 28 years is seq 17, a 2008 '60,000 MILE SERVICE' that names no belt; no timing-belt line item appears in ANY of four independent sources. Miles are fine (~10k since 2008); TIME is 3.7x over (18.3 years against a 5-year interval) on an INTERFERENCE engine. This row is the reason last_done_confidence exists: without it the belt reads as serviced in 2008. Resolve before the ECMLink base tune or any boost work."
+    },
+    {
+      "item": "engine oil + filter",
+      "interval_miles": 5000,
+      "interval_months": 12,
+      "last_done_seq": 46,
+      "last_done_confidence": "confirmed",
+      "notes": "Last done 2026-08-22 at 78,907 mi (Fuller Car Wash). At ~500 mi/yr the calendar interval is the only one that will ever fire."
+    },
+    {
+      "item": "tyres (age)",
+      "interval_months": 72,
+      "last_done_confidence": "unknown",
+      "notes": "OPEN RECOMMENDATION: Highline advised REPLACE ALL 4 TYRES on 2025-10-09 (invoice #83476), still open ~11 months later. No fitting date is recorded anywhere, so age cannot be computed -- hence 'unknown'. At ~500 mi/yr this is an age question, never a tread-depth one."
+    },
+    {
+      "item": "spark plugs",
+      "interval_miles": 30000,
+      "interval_months": 60,
+      "last_done_seq": 48,
+      "last_done_confidence": "unknown",
+      "notes": "The ONLY item in the record with no date at all -- owner-reported as 'within the last ~4 years', a four-year window. Brand, heat range and gap are all UNKNOWN, and the specification matters before boost. Confidence is 'unknown' rather than 'inferred' because a four-year window cannot date a service."
+    },
+    {
+      "item": "emissions test (Illinois)",
+      "interval_months": 24,
+      "last_done_seq": 37,
+      "last_done_confidence": "confirmed",
+      "notes": "Last PASS 2024-09-05; next due ~Sept 2026, i.e. now. A lit MIL is an automatic FAIL and P0443 is currently lit."
+    },
+    {
+      "item": "coolant flush",
+      "interval_miles": 30000,
+      "interval_months": 60,
+      "last_done_seq": 33,
+      "last_done_confidence": "confirmed",
+      "notes": "Last done 2024-04-24 at 77,748 mi."
+    }
+  ]
+}
