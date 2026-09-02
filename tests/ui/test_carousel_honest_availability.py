@@ -83,7 +83,10 @@ def test_systemStatusView_obdUnavailable_obdTileIsTypedNa():
     assert view["tiles"]["obdLink"]["detail"] == "OBD: off"
     assert view["tiles"]["obdLink"]["level"] == "unavailable"
     assert view["glyphs"]["bt"] == "neutral"
-    assert view["tiles"]["power"]["value"] == "WALL"  # other sources unaffected
+    # US-668: the power tile renders the SENSED source now, not the removed
+    # operator-declared mode. The point of the assertion is unchanged -- one
+    # source going unavailable must not disturb another.
+    assert view["tiles"]["power"]["value"] == "EXTERNAL"  # other sources unaffected
 
 
 def test_systemStatusView_obdAvailable_rendersRealLink():

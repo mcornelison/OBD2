@@ -140,7 +140,6 @@ def _systemStatus(
         syncRows=1204,
         syncPending=0,
         syncStale=False,
-        powerMode="car",
         powerSource="external",
         driveState=driveState,
         driveId=driveId,

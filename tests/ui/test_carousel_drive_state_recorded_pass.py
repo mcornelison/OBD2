@@ -171,7 +171,6 @@ def _systemStatus(**overrides: Any) -> dict:
         "syncRows": 1204,
         "syncPending": 0,
         "syncStale": False,
-        "powerMode": "wall",
         "powerSource": "external",
         "driveState": "idle",
         "driveId": None,

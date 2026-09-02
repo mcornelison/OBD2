@@ -9,7 +9,6 @@
 #     * autoRotateS       -> "reload"          (B1: per-request injection; the UI
 #                                               reloads itself, NO unit restart --
 #                                               the restart is polkit-denied)
-#     * pi.power.mode     -> "live"            (the emitter re-reads each cycle)
 #     * calibration.mode  -> "capture-restart" (read into a constructor at start)
 #     * triggerAfterDrive -> "capture-restart" (same)
 #
@@ -54,7 +53,6 @@ _DIST = os.path.join(
 _JS = os.path.join(_DIST, "carousel.js")
 
 _AUTO_ROTATE = "pi.display.carousel.autoRotateS"
-_POWER_MODE = "pi.power.mode"
 _CALIBRATION = "pi.calibration.mode"
 _TRIGGER_AFTER_DRIVE = "pi.analysis.triggerAfterDrive"
 _AUDIO_ALERTS = "pi.alerts.audioAlerts"
@@ -69,9 +67,6 @@ _EXPECTED_APPLY = {
     # itself. NOT "live": the running carousel keeps its current period until the
     # reload actually happens.
     _AUTO_ROTATE: "reload",
-    # OverlayConfigPowerModeSource re-reads the effective value on every
-    # acquire(), so the card-state emitter's next cycle carries the new mode.
-    _POWER_MODE: "live",
     # Read once into a constructor at orchestrator start (calibration/manager.py,
     # obdii/drive/detector.py) -- honest only as "restart the capture service".
     _CALIBRATION: "capture-restart",
@@ -126,7 +121,9 @@ def test_audioAlerts_isNoLongerOverridable():
 
 def test_theAllowListIsExactlyTheFourSlice1Settings():
     """Pinned as a SET, so this fails on an accidental re-add as loudly as on a
-    drop -- F-126 ships four settings."""
+    drop. US-668 removed pi.power.mode, so F-126 now ships THREE settings -- the
+    set comparison is what makes that removal have to be stated here rather than
+    slipping through."""
     assert set(overlay.OVERRIDABLE_KEYS) == set(_EXPECTED_APPLY)
 
 
@@ -180,11 +177,10 @@ def test_autoRotate_saysReload_notRestart_andNotLive():
     assert "restart" not in note
 
 
-@_NODE_TESTS
-def test_powerMode_saysLive_becauseTheEmitterReReads():
-    spec = _spec(_POWER_MODE)
-    assert spec["apply"] == "live"
-    assert "now" in spec["applyNote"].lower()
+# US-668 deleted test_powerMode_saysLive_becauseTheEmitterReReads. It asserted
+# the power-mode row is labelled "applies now" because the emitter re-reads it
+# each cycle. The row is gone with the setting, and NOTHING else claims live --
+# which test_noRowOverPromisesAnApplyItsConsumerCannotHonour now pins as empty.
 
 
 @_NODE_TESTS
@@ -246,7 +242,7 @@ def test_aFailedSaveDoesNotReloadAwayTheErrorMessage():
 
 
 @_NODE_TESTS
-@pytest.mark.parametrize("key", [_POWER_MODE, _CALIBRATION, _TRIGGER_AFTER_DRIVE])
+@pytest.mark.parametrize("key", [_CALIBRATION, _TRIGGER_AFTER_DRIVE])
 def test_nonReloadRowsDoNotReloadThePage(key):
     """A reload the operator did not ask for is disruptive -- it closes the menu
     and restarts every poll. Only the row that NEEDS one gets one."""
