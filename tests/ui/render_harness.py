@@ -38,6 +38,10 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-07-29    | Ralph (Rex)  | Initial -- US-499 S6 render-regression harness.
+# 2026-08-31    | Ralph (Rex)  | US-641: optional `nowMs` virtual wall clock +
+#                                {advanceMs} step, so a state file can AGE
+#                                without being rewritten (frozen-feed staleness).
+#                                Additive -- omitting nowMs leaves Date.now real.
 # ================================================================================
 ################################################################################
 
@@ -536,25 +540,33 @@ def runDashboard(
     token: str = "test-token",
     autoDim: Any = None,
     viewport: tuple[int, int] = (1920, 1080),
+    nowMs: int | None = None,
 ) -> dict[str, Any]:
     """Boot the SHIPPED carousel.js over the SHIPPED markup; return the DOM.
 
     ``routes`` maps a fetch path ('/system-status') to its JSON body; an unlisted
     route 404s, so a test states exactly which state files exist.
+
+    ``nowMs`` (US-641) pins the page's wall clock to a fixed instant that only a
+    ``{"advanceMs": n}`` step moves. Omit it and ``Date.now()`` is untouched
+    (real time), which is what every caller before US-641 gets. Supply it to age
+    a state file WITHOUT rewriting it -- the only honest way to render "the
+    producer stopped and the reading went stale under the operator", as opposed
+    to "the producer wrote an old reading", which is a different fault.
     """
     tree = parseMarkup(markupPath or os.path.join(DASHBOARD_DIR, "dashboard.html"))
-    return _runProbe(
-        "dom_probe.js",
-        {
-            "carouselPath": carouselPath or os.path.join(DASHBOARD_DIR, "carousel.js"),
-            "tree": bodyChildren(tree),
-            "routes": routes,
-            "token": token,
-            "autoDim": autoDim,
-            "viewport": list(viewport),
-            "steps": steps or [{"flush": 4}],
-        },
-    )
+    payload: dict[str, Any] = {
+        "carouselPath": carouselPath or os.path.join(DASHBOARD_DIR, "carousel.js"),
+        "tree": bodyChildren(tree),
+        "routes": routes,
+        "token": token,
+        "autoDim": autoDim,
+        "viewport": list(viewport),
+        "steps": steps or [{"flush": 4}],
+    }
+    if nowMs is not None:
+        payload["nowMs"] = nowMs
+    return _runProbe("dom_probe.js", payload)
 
 
 def runSplash(

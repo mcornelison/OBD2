@@ -1740,43 +1740,31 @@
     return Math.sqrt(dx * dx + dy * dy) > t;
   }
 
-  // US-490 context-aware menu access (Iris P-2, CIO-locked Option C). The two
-  // paths into the menu carry DIFFERENT intent, so they get different rules:
+  // US-659 (CIO ruling 2026-08-31, punch-list H6) -- THE `⋮` VISIBILITY GATE
+  // WAS REMOVED HERE. `menuAccess(parked)` used to live at this point and
+  // returned `{tapVisible: parked === true, longPress: true}`; US-490 hid the
+  // top-bar kebab whenever the vehicle did not read parked, US-511 debounced
+  // the signal behind it, and the click handler read the rendered `hidden` flag
+  // back as defence in depth.
   //
-  //   tapVisible -- the top-bar `⋮` is a SINGLE tap away from a service stop /
-  //     Exit UI, so it is offered only while the vehicle reads parked. Hidden
-  //     while driving, and hidden whenever "am I driving?" is UNREADABLE: the
-  //     acquisition chain fails closed at every link -- carouselIdle reads the
-  //     `idle` SSOT boolean strictly (never re-derived from the drive-state
-  //     string; Atlas idle-SSOT b), parkedNext treats anything but a real
-  //     `true` as not-idle, and this policy accepts only a real `true`. So an
-  //     absent, malformed or idle-less payload hides the affordance rather than
-  //     guessing a calm parked state. US-511: what arrives here is the
-  //     DEBOUNCED signal, so a brief OBD blip no longer flips the button.
-  //   longPress -- the ~5s hold is the DELIBERATE override and is state-blind
-  //     on purpose. It is what makes hiding the `⋮` safe: fail-closed can never
-  //     strand the operator, and driving is the state where they may most need
-  //     to stop a misbehaving service.
+  // THE RULING: always show the menu. The 5s long-press was ALWAYS state-blind,
+  // so the menu was reachable in every state the gate hid the glyph in -- the
+  // glyph was not protecting the affordance, it was misreporting it. The
+  // long-press is unchanged and is now the only gate on the menu.
   //
-  // US-511 CHANGES WHAT THIS FUNCTION IS HANDED. It used to take the
-  // system-status payload and call `carouselIdle` on it -- i.e. it did its own
-  // ACQUISITION -- which meant any debounce placed upstream could be bypassed
-  // by the next edit for free. It now takes the already-debounced `parked`
-  // boolean and applies POLICY only, so reading the raw flag is out of reach
-  // rather than merely discouraged (the standing SSOT directive: one
-  // authoritative provider per fact, consumers apply policy).
+  // WHAT IS STILL TRUE, so nobody rebuilds this from the wrong premise: a
+  // single tap now opens the MENU in every state, not an action. Every
+  // consequential item inside it keeps its own confirm (`requiresConfirm`), and
+  // Exit still routes through the confirming action.
   //
-  // `parked === true` is a strict test, and that strictness is load-bearing
-  // NOW: the old callers passed an OBJECT here. A `!!parked` test would read an
-  // un-migrated caller's payload as parked FOREVER -- the ⋮ pinned on screen at
-  // 70mph, the exact hazard US-490 exists to prevent. Anything that is not a
-  // real `true` is not-parked.
-  function menuAccess(parked) {
-    return {
-      tapVisible: parked === true,
-      longPress: true,
-    };
-  }
+  // DO NOT RESTORE THIS unless a ruling replaces H6.
+  // tests/ui/test_carousel_kebab_always_visible.py fails on the identifiers,
+  // on any write to the button's `hidden` flag, and on the rendered cascade.
+  //
+  // `carouselIdle`, `parkedInit` and `parkedNext` all survive below: carouselIdle
+  // still drives the idle home face, and the US-511 debounce is left intact but
+  // is now UNWIRED (TD-us659 -- retire it or find its next consumer; that is a
+  // design call, not a side effect of this deletion).
 
   // -------------------------------------------------------------------------
   // US-511 (F-124) -- the DEBOUNCED `parked` signal behind the ⋮ affordance.
@@ -3036,18 +3024,107 @@
   // the only way this value is ever read.
   var _G_DECIMALS = 1;
 
+  // US-645: the direction-label deadband, DERIVED from the decimals constant
+  // above and never written out as a literal. Half of the last displayed place
+  // is precisely the value at which `toFixed(_G_DECIMALS)` stops printing zero,
+  // so the label's neutral band and the number's rounding band are the SAME
+  // band by construction -- at one decimal, 0.05 g. See gAxisDetail.
+  var G_LABEL_DEADBAND_G = 0.5 * Math.pow(10, -_G_DECIMALS);
+
   function fmtG(g) {
     return g.toFixed(_G_DECIMALS) + " g";
   }
 
-  // Spell the two components out in words. This puts the SIGN CONTRACT on the
+  // Name the two components on the tile. This puts the SIGN CONTRACT on the
   // screen, where a mounted-backwards board becomes obvious to the operator
-  // ("0.30 brake" while accelerating) instead of a silently mirrored dot.
-  function gAxisDetail(gLat, gLon) {
+  // ("0.3 brake" while accelerating) instead of a silently mirrored dot.
+  //
+  // US-631 (A) -- THE LATERAL LABEL IS ABBREVIATED TO ONE CHARACTER, and that is
+  // a defect fix, not a style preference. CIO 2026-08-31, from the driver's
+  // seat: "they do bounce as the word right will wrap around cuz it's too long
+  // to fit on the screen." Atlas photographed both states one minute apart --
+  // the tile rendered FOUR lines with `right` and THREE with `left`.
+  //
+  // The mechanism, and why one character is the whole fix: `.tile-detail`
+  // declares no `white-space: nowrap` and no `min-height`, and `.live-col` sets
+  // `justify-content: center`. So a string ONE CHARACTER wider re-wraps, grows
+  // the tile by a line box, and re-centres the entire column -- the bounce. The
+  // lateral word was the ONLY varying-length token on this line: `left` is 4 and
+  // `right` is 5, while `accel` and `brake` are both 5 and never moved anything.
+  // At `L`/`R` the rendered length depends ONLY on the two magnitudes, so no
+  // change of DIRECTION can change the line count.
+  //
+  // WHAT THIS DOES NOT FIX, stated so it is not mistaken for closed: the line
+  // still WRAPS in a 108px column -- it is merely stable now. That is the width
+  // reservation US-631 (B) asks for, it does not fit at any tier in the F-127
+  // scale, and it is escalated to Iris as I-us631. Abbreviating further, or
+  // collapsing L/R to a shared token, would buy width by DELETING the sign
+  // contract above; the direction stays distinguishable.
+  //
+  // The words are spelled INLINE, not hoisted to constants, because the
+  // US-631 width guard reads this function's body to learn what vocabulary the
+  // tile actually ships. Moving them out of it leaves that tripwire green and
+  // blind, which is the failure mode it exists to prevent.
+  //
+  // US-645 (F-138) -- THE DEADBAND. A bare sign test has no neutral, so at rest
+  // the label reports the sign of the NOISE: Atlas measured ELEVEN longitudinal
+  // sign flips in 17 seconds at idle, on noise of +/-0.015 g straddling zero.
+  // The lateral label has the identical defect and nobody had noticed. Both
+  // axes get the same mechanical fix -- one pattern applied twice, not two
+  // behaviours.
+  //
+  // THE DEADBAND IS THE DISPLAY'S OWN ROUNDING THRESHOLD, DERIVED. At one
+  // decimal anything under 0.05 g prints as `0.0`, so deriving the band from
+  // _G_DECIMALS makes the word go neutral EXACTLY when the number reads zero:
+  // the tile can never show a direction beside a 0.0, and a future change to
+  // the decimals constant moves both together. A hardcoded 0.05 would be the
+  // same number today and a silent lie the day that constant moves -- which is
+  // this defect over again, one layer up.
+  //
+  // WHAT THE DEADBAND DOES NOT TOUCH, stated because it would be the tempting
+  // over-reach: the NUMBER and the METER DOT are untouched. A deadband that
+  // zeroed the reading would fabricate a stillness the accelerometer never
+  // measured. Only the WORD goes neutral; 0.03 g still moves the dot.
+  //
+  // THE WIDTHS ARE THE CONSTRAINT, and they are stated here because US-631 (A)
+  // bought the tile's constant height with exactly this property:
+  //     lateral      `L` `R` `-`                     -- ALL 1 character
+  //     longitudinal `accel` `brake` `coast` `still` -- ALL 5 characters
+  // Every value a term can take is the same width as its siblings, so no state
+  // change on either axis can change the rendered length, the line count, or
+  // the tile's height. That is why the neutral is a dash and not `steady`, and
+  // why the stopped state is `still` and not `stopped`: US-645's own acceptance
+  // requires one character laterally and five longitudinally, and the six- and
+  // seven-character spellings would have re-opened the bounce US-631 just shut
+  // on the far axis. tests/ui/test_gforce_tile_width_budget.py sweeps it.
+  //
+  // `still` IS AN OBD CLAIM, NOT AN IMU ONE. gLon is ~0 at a 65 mph cruise just
+  // as it is in a parking space, so "stopped" inferred from this instrument
+  // alone would be a lie at speed. It is upgraded ONLY on a vehicle speed that
+  // is TRULY zero, and an absent/unreadable speed degrades to `coast` -- true at
+  // any speed, including zero. NO PRODUCER PUBLISHES SPEED TO THIS DASHBOARD
+  // TODAY (I-us645), so `null` is what the browser passes and `still` is
+  // currently unreachable on the panel. That is the honest state, not an
+  // oversight: the branch is here so wiring a producer is zero-rework, exactly
+  // the shape GEAR carried before US-630 landed its own.
+  // NO NON-LABEL STRING LITERAL MAY APPEAR IN THIS BODY. The US-631 tripwire
+  // reads every quoted word out of it and treats them all as tile vocabulary,
+  // so a stray `typeof x === "number"` here lands `number` in the measured
+  // width set and the guard starts sizing against a word that never renders.
+  // The speed test is a STRICT equality for exactly that reason as well as its
+  // own: `=== 0` alone refuses null, undefined, NaN and the string "0" (which
+  // `==` would accept), so it needs no typeof to be safe.
+  function gAxisDetail(gLat, gLon, speedKph) {
+    var band = G_LABEL_DEADBAND_G;
+    var stopped = speedKph === 0;
+    var lat = Math.abs(gLat) < band ? "-" : (gLat >= 0 ? "R" : "L");
+    var lon = Math.abs(gLon) < band
+      ? (stopped ? "still" : "coast")
+      : (gLon >= 0 ? "accel" : "brake");
     return (
-      Math.abs(gLat).toFixed(_G_DECIMALS) + " " + (gLat >= 0 ? "right" : "left") +
+      Math.abs(gLat).toFixed(_G_DECIMALS) + " " + lat +
       " · " +
-      Math.abs(gLon).toFixed(_G_DECIMALS) + " " + (gLon >= 0 ? "accel" : "brake")
+      Math.abs(gLon).toFixed(_G_DECIMALS) + " " + lon
     );
   }
 
@@ -3095,7 +3172,13 @@
     };
   }
 
-  function imuGTile(data) {
+  // `speedKph` is the OBD vehicle speed, and it is a PARAMETER rather than a
+  // field read off `data` on purpose: it is not an IMU fact, and letting this
+  // function reach into the states/imu payload for it would re-merge two
+  // producers into one contract -- the same SSOT violation Atlas named when he
+  // kept gear out of states/imu. Absent (the shipped case today) it is null and
+  // the tile simply never claims `still`.
+  function imuGTile(data, speedKph) {
     var dot = gDotPosition(data.gLat, data.gLon, G_FULL_SCALE);
     var mag = data.gMag;
     if (dot === null || typeof mag !== "number" || !isFinite(mag)) {
@@ -3109,7 +3192,7 @@
     return {
       label: "G-FORCE",
       value: fmtG(mag),
-      detail: gAxisDetail(data.gLat, data.gLon),
+      detail: gAxisDetail(data.gLat, data.gLon, speedKph),
       // US-508: amber from 0.6 g (Spool), which the built card did not do -- it
       // only coloured at the 1.0 g CLAMP, so a hard 0.8 g corner looked exactly
       // like a gentle one. The colour is a NUDGE beside the true magnitude,
@@ -3126,7 +3209,7 @@
   //   {idle:true, reason}      -- present but not renderable as a live
   //                               instrument (unwired / undated / stale)
   //   {idle:false, ...}        -- the live instrument
-  function imuView(data, nowMs) {
+  function imuView(data, nowMs, speedKph) {
     if (!isObj(data)) return null;
     // The bridge's EXPLICIT availability claim. An unwired sensor writes
     // available:false (and that write bypasses the bridge's own rate limit, so
@@ -3144,7 +3227,7 @@
       idle: false,
       ageSec: age,
       fullScale: G_FULL_SCALE,
-      g: imuGTile(data),
+      g: imuGTile(data, speedKph),
       heading: imuHeadingTile(data),
       grade: imuGradeTile(data),
       // ALWAYS typed-NA (AC-2). The ICM-20948 has no barometer and a zeroed
@@ -3159,8 +3242,8 @@
   // from the heading the bridge already resolved, not from a second fusion) and
   // the gear glyph, whose producer is separate by Atlas's ruling. Returns the
   // same three shapes imuView does, so the caller has ONE thing to branch on.
-  function liveCardView(imuData, gearData, nowMs) {
-    var view = imuView(imuData, nowMs);
+  function liveCardView(imuData, gearData, nowMs, speedKph) {
+    var view = imuView(imuData, nowMs, speedKph);
     if (view === null || view.idle) return view;
     view.tape = compassTape(
       view.heading.available ? view.heading.deg : null,
@@ -3296,6 +3379,11 @@
     luxBand: luxBand,
     lightView: lightView,
     gDotPosition: gDotPosition,
+    // US-645: exported so the deadband can be swept densely across its own
+    // boundary. gDotPosition and gLevel are already here for the same reason --
+    // the per-axis rules on this tile are the parts worth measuring at 0.001 g,
+    // and doing it through a whole card view would be 400 renders of furniture.
+    gAxisDetail: gAxisDetail,
     headingCardinal: headingCardinal,
     pushGTrail: pushGTrail,
     imuView: imuView,
@@ -3348,7 +3436,6 @@
     longPressProgress: longPressProgress,
     isLongPressComplete: isLongPressComplete,
     exceedsMoveCancel: exceedsMoveCancel,
-    menuAccess: menuAccess,
     parkedInit: parkedInit,
     parkedNext: parkedNext,
     alertableCodes: alertableCodes,
@@ -4400,26 +4487,10 @@
         });
     }
 
-    // --- US-490 context-aware `⋮` affordance (browser only) ----------------
-    // `hidden` (not a class) is deliberate: it is the property the tap handler
-    // reads back as the rendered truth, so the gate and the paint can never
-    // disagree. The button ships hidden in the markup, so the pre-first-poll
-    // window -- when "am I driving?" is genuinely unknown -- offers no tap path.
-    function applyMenuAccess(btn, access) {
-      if (!btn) return;
-      btn.hidden = !access.tapVisible;
-    }
-
-    // US-511: the debounce state lives HERE, in the enclosing scope, and that
-    // placement is the whole feature. Initialised inside updateMenuAccess it
-    // would reset on every 250 ms tick, no hold could ever reach 8 s, and the
-    // ⋮ would simply never appear -- with every pure test above still green.
-    var parkedSignal = parkedInit();
-
-    function updateMenuAccess(sysData, nowMs) {
-      parkedSignal = parkedNext(parkedSignal, carouselIdle(sysData), nowMs, carouselCfg);
-      applyMenuAccess(document.getElementById("menu-btn"), menuAccess(parkedSignal.parked));
-    }
+    // US-659: `applyMenuAccess` / `updateMenuAccess` / the `parkedSignal`
+    // debounce state stood here and painted the `⋮` per tick. All removed with
+    // the ruling -- the button now simply ships visible and stays visible. See
+    // the note at the retired `menuAccess` above.
 
     function setupMenu() {
       var menu = document.getElementById("setup-menu");
@@ -4620,13 +4691,11 @@
       }
 
       if (menuBtn) {
-        menuBtn.addEventListener("click", function () {
-          // Defence in depth (US-490 AC-4): the button is display:none while
-          // driving, but a CSS regression must not quietly re-open a one-tap
-          // path into a service stop. `hidden` is the rendered truth.
-          if (menuBtn.hidden) return;
-          openMenu();
-        });
+        // US-659: the `if (menuBtn.hidden) return;` guard was US-490's defence
+        // in depth for a gate that no longer exists. Kept, it would be a silent
+        // restore point -- re-add `hidden` in the markup and the tap dies with
+        // nothing else changing, which is the failure this ruling is about.
+        menuBtn.addEventListener("click", openMenu);
       }
       if (closeBtn) closeBtn.addEventListener("click", closeMenu);
       if (exitBtn) {
@@ -4763,10 +4832,14 @@
       var gradeTrend = [];
       // US-508: the live feed is polled on its OWN faster loop, so its payload
       // and the slow tick's payloads meet here rather than in one function's
-      // arguments. `lastGear` is permanently null today and that is the honest
-      // state -- gear is Spool's OBD derivation from a producer that does not
-      // exist yet (Atlas ruled it out of states/imu), so the glyph reads "--"
-      // rather than polling a state file nobody writes.
+      // arguments.
+      // US-630: `lastGear` is no longer permanently null. Gear IS Spool's OBD
+      // derivation from a separate producer (Atlas ruled it out of states/imu),
+      // and that producer now exists: the orchestrator derives it from the
+      // realtime SPEED/RPM against the measured drives-50/51 bands and publishes
+      // states/gear. The slow tick assigns it below. With the producer dark
+      // (`pi.gear.enabled` false) no such file exists, the fetch 404s, and this
+      // stays null -- the pre-US-630 behaviour, unchanged.
       var lastImu = null;
       var lastSys = null;
       var lastBattery = null;
@@ -5227,7 +5300,21 @@
         var imuView = smoothedImuView(lastImu, nowMs);
         var face = homeFace(imuView, nowMs);
         if (face.face === "live") {
-          var live = liveCardView(imuView, lastGear, nowMs);
+          // US-645: the fourth argument is the OBD vehicle speed, and it is
+          // NULL because no producer publishes one to this dashboard -- the
+          // realtime SPEED reading lives in the orchestrator and reaches no
+          // state file the panel can fetch (I-us645). Null is the honest value,
+          // not a placeholder: it is what stops the G-FORCE tile claiming
+          // `still` at a 65 mph cruise, where gLon is ~0 too. The label
+          // degrades to `coast`, which is true at any speed.
+          // MERGE 2026-09-01 (US-671): the FIRST argument is US-662's SMOOTHED
+          // `imuView`, not `lastImu`. Both sides of this conflict were fixes the
+          // CIO had already accepted, and either one-sided resolution silently
+          // reverts one of them: `lastImu` kills the 3-second smoothing he
+          // confirmed by eye in the car, and dropping the 4th argument brings
+          // back `still` at a 65 mph cruise. The union is the only correct
+          // answer, which is why this call reads the way it does.
+          var live = liveCardView(imuView, lastGear, nowMs, null);
           if (live && !live.idle) {
             // Advance both accumulators every paint. Eviction runs even with no
             // new point, so a feed that degrades mid-drive decays its history
@@ -5384,15 +5471,19 @@
         // is already honest the instant the feed drops.
         lastSys = sysData;
         lastBattery = batteryData;
+        // US-630: the derived gear. Read on THIS tick rather than the ~10 Hz
+        // motion loop -- the producer debounces for >= 2 s before it will name a
+        // gear, so a gear cannot change faster than the 4 Hz card tick can see
+        // it, and polling it at 10 Hz would be 6 reads a second of a file that
+        // had not moved. A missing/404 state leaves this null, which gearView
+        // already renders as the honest "-- / no source": the tile falls back to
+        // exactly the state it held before this story, never to a stale gear.
+        lastGear = await stateOnce("gear");
         renderHome(nowMs);
         updateHomeNav(sysData);
-        // US-490: track the parked/live context every tick from the SAME fetched
-        // state (no extra fetch). An unavailable system-status leaves sysData
-        // null here, which fails closed to a hidden ⋮ -- long-press still opens.
-        // US-511: this now feeds a DEBOUNCE, so it is handed the shared tick
-        // clock (US-496) rather than reading one of its own -- the affordance
-        // resolves against the same instant as everything else painted here.
-        updateMenuAccess(sysData, nowMs);
+        // US-659: `updateMenuAccess(sysData, nowMs)` was called here to repaint
+        // the ⋮ per tick against the debounced parked signal. Removed with the
+        // gate -- the kebab's visibility is no longer a function of any state.
         // US-483-b: drive the display brightness from the states/light feed
         // (pure consumer -- never the sensor). A real STOP holds it >= the alarm
         // floor; an absent/stale feed holds the fixed default (honest fallback).

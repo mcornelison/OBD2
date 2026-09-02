@@ -1228,15 +1228,30 @@ step_install_eclipse_obd_unit() {
 }
 
 step_install_drain_forensics_unit() {
-    # US-277: idempotent sync-if-changed install of drain-forensics.service +
-    # drain-forensics.timer into /etc/systemd/system/.  Closes the Sprint 22
-    # ship gap that left systemd install as a manual operator post-deploy
-    # hook (Spool ran sudo cp + daemon-reload + enable mid-Drain-7).  Mirrors
-    # the step_install_journald_persistent + step_install_eclipse_obd_unit
-    # pattern: cmp -s on the rsynced source vs the installed copy, and only
-    # daemon-reload when something actually changed.  `enable --now` runs
-    # unconditionally because it is itself idempotent and ensures the timer
+    # US-277: idempotent sync-if-changed install of drain-forensics.service
+    # into /etc/systemd/system/.  Closes the Sprint 22 ship gap that left
+    # systemd install as a manual operator post-deploy hook (Spool ran sudo cp
+    # + daemon-reload + enable mid-Drain-7).  Mirrors the
+    # step_install_journald_persistent + step_install_eclipse_obd_unit pattern:
+    # cmp -s on the rsynced source vs the installed copy, and only
+    # daemon-reload when something actually changed.  `enable` runs
+    # unconditionally because it is itself idempotent and ensures the service
     # is on even if a prior deploy left it disabled.
+    #
+    # US-646 TIMER RETIREMENT.  drain-forensics used to be a Type=oneshot unit
+    # driven by drain-forensics.timer at OnUnitActiveSec=5s -- a fresh Python
+    # interpreter every 5 seconds, forever.  It is now a resident daemon that
+    # ticks internally on the same cadence, and the .timer is DELETED from the
+    # repo.
+    #
+    # Deleting the repo file does NOT stop a unit already enabled on the Pi:
+    # /etc/systemd/system/drain-forensics.timer survives an rsync (which only
+    # adds and updates) and keeps firing every 5s.  So the teardown below is
+    # explicit, and it runs UNCONDITIONALLY -- deliberately OUTSIDE the
+    # `$changed` guard.  A re-deploy of the same build leaves the .service
+    # byte-identical, and that is exactly the Pi that still has the old timer;
+    # gating the teardown on a changed file would leave it running forever.
+    # Both operations are no-ops once the retirement has happened.
     #
     # Runtime dirs (idempotent via install -d):
     #   /var/log/eclipse-obd  - drain_forensics.py CSV target (mcornelison)
@@ -1259,20 +1274,19 @@ step_install_drain_forensics_unit() {
     if $DRY_RUN; then
         echo "DRY-RUN would: sudo install -d -o mcornelison -g mcornelison /var/log/eclipse-obd"
         echo "DRY-RUN would: sudo install -d -o mcornelison -g mcornelison /var/run/eclipse-obd"
+        echo "DRY-RUN would: sudo systemctl disable --now drain-forensics.timer   # US-646 retirement"
+        echo "DRY-RUN would: sudo rm -f /etc/systemd/system/drain-forensics.timer # US-646 retirement"
         echo "DRY-RUN would: sudo cmp -s ${PI_PATH}/deploy/drain-forensics.service /etc/systemd/system/drain-forensics.service || (install + daemon-reload)"
-        echo "DRY-RUN would: sudo cmp -s ${PI_PATH}/deploy/drain-forensics.timer /etc/systemd/system/drain-forensics.timer || (install + daemon-reload)"
-        echo "DRY-RUN would: sudo systemctl enable --now drain-forensics.timer"
+        echo "DRY-RUN would: sudo systemctl enable drain-forensics.service"
         return 0
     fi
     remote "
         set -e
         SRC_SVC='${PI_PATH}/deploy/drain-forensics.service'
         DST_SVC='/etc/systemd/system/drain-forensics.service'
-        SRC_TIM='${PI_PATH}/deploy/drain-forensics.timer'
-        DST_TIM='/etc/systemd/system/drain-forensics.timer'
 
-        if [ ! -f \"\$SRC_SVC\" ] || [ ! -f \"\$SRC_TIM\" ]; then
-            echo 'WARN: drain-forensics unit files not present in deploy/ on the Pi -- skipping install.' >&2
+        if [ ! -f \"\$SRC_SVC\" ]; then
+            echo 'WARN: drain-forensics.service not present in deploy/ on the Pi -- skipping install.' >&2
             exit 0
         fi
 
@@ -1280,9 +1294,24 @@ step_install_drain_forensics_unit() {
         sudo install -d -o mcornelison -g mcornelison /var/log/eclipse-obd
         sudo install -d -o mcornelison -g mcornelison /var/run/eclipse-obd
 
-        # Sync-if-changed install of the unit pair.  daemon-reload happens
-        # only when at least one file actually changed to avoid pointless
-        # systemd churn on routine no-op deploys.
+        # --- US-646: retire the 5s timer ---------------------------------
+        # UNCONDITIONAL and BEFORE the changed-guard.  A Pi re-deployed with an
+        # unchanged .service is exactly the Pi that still has the old timer
+        # enabled and firing; gating this would leave it spawning forever.
+        # Both lines are no-ops once retirement has happened, so this is safe
+        # to re-run on every deploy.  '|| true' because 'disable' on a unit
+        # that no longer exists is an error under 'set -e'.
+        retired=false
+        if [ -f /etc/systemd/system/drain-forensics.timer ]; then
+            sudo systemctl disable --now drain-forensics.timer >/dev/null 2>&1 || true
+            sudo rm -f /etc/systemd/system/drain-forensics.timer
+            echo 'drain-forensics.timer retired (US-646: the 5s process spawn is gone).'
+            retired=true
+        fi
+
+        # Sync-if-changed install of the unit.  daemon-reload happens only
+        # when the file actually changed to avoid pointless systemd churn on
+        # routine no-op deploys.
         changed=false
         if sudo test -f \"\$DST_SVC\" && sudo cmp -s \"\$SRC_SVC\" \"\$DST_SVC\"; then
             echo 'drain-forensics.service already up-to-date.'
@@ -1291,24 +1320,27 @@ step_install_drain_forensics_unit() {
             echo 'drain-forensics.service installed.'
             changed=true
         fi
-        if sudo test -f \"\$DST_TIM\" && sudo cmp -s \"\$SRC_TIM\" \"\$DST_TIM\"; then
-            echo 'drain-forensics.timer already up-to-date.'
-        else
-            sudo install -m 644 \"\$SRC_TIM\" \"\$DST_TIM\"
-            echo 'drain-forensics.timer installed.'
-            changed=true
-        fi
 
-        if [ \"\$changed\" = true ]; then
+        if [ \"\$changed\" = true ] || [ \"\$retired\" = true ]; then
             sudo systemctl daemon-reload
             echo 'systemd daemon-reload complete.'
         fi
 
-        # enable --now is idempotent: turns the timer on if disabled,
-        # leaves it alone otherwise.  Re-asserting on every deploy is the
-        # easiest way to recover from an out-of-band 'systemctl disable'.
-        sudo systemctl enable --now drain-forensics.timer
-        echo 'drain-forensics.timer enabled + active.'
+        # enable is idempotent: turns the service on if disabled, leaves it
+        # alone otherwise.  Re-asserting on every deploy is the easiest way to
+        # recover from an out-of-band 'systemctl disable'.  US-646: the
+        # service is now its own install hook -- there is no timer to enable.
+        sudo systemctl enable drain-forensics.service
+        # A resident daemon must be RESTARTED when its unit definition changes;
+        # 'enable --now' would leave the old process running under the old
+        # definition (and, before US-646, under the old oneshot Type=).
+        if [ \"\$changed\" = true ] || [ \"\$retired\" = true ]; then
+            sudo systemctl restart drain-forensics.service
+            echo 'drain-forensics.service restarted on the new definition.'
+        else
+            sudo systemctl start drain-forensics.service
+        fi
+        echo 'drain-forensics.service enabled + active (resident daemon, 5s internal tick).'
     "
 }
 

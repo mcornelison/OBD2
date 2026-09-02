@@ -123,7 +123,10 @@ def test_gatherPowerState_modeAndSourceStayIndependentFacts(tmp_path):
         _config(tmp_path, mode="wall"), powerSourceProvider=_provider(present=False)
     )
     orch._initializeCardStateEmitters()
-    assert orch._gatherPowerState() == ("wall", "battery")
+    # US-628 added the typed reason as a third element. It is None here on
+    # purpose: this source RESOLVED, and pinning that keeps the reason from
+    # leaking onto a branch that measured something.
+    assert orch._gatherPowerState() == ("wall", "battery", None)
 
 
 # ---------------------------------------------------------------------------
@@ -216,7 +219,13 @@ def test_maybeEmit_onBattery_stateFileCarriesBatterySource(tmp_path):
         _config(tmp_path, mode="car"), powerSourceProvider=_provider(present=False)
     )
     orch._initializeCardStateEmitters()
-    assert _emittedPower(tmp_path, orch) == {"mode": "car", "source": "battery"}
+    # US-628: a resolved source publishes an EMPTY reasons map. Asserted as an
+    # exact shape so a reason quietly appearing beside a real reading fails.
+    assert _emittedPower(tmp_path, orch) == {
+        "mode": "car",
+        "source": "battery",
+        "reasons": {},
+    }
 
 
 def test_maybeEmit_onExternal_stateFileCarriesExternalSource(tmp_path):
@@ -224,4 +233,8 @@ def test_maybeEmit_onExternal_stateFileCarriesExternalSource(tmp_path):
         _config(tmp_path, mode="car"), powerSourceProvider=_provider(present=True)
     )
     orch._initializeCardStateEmitters()
-    assert _emittedPower(tmp_path, orch) == {"mode": "car", "source": "external"}
+    assert _emittedPower(tmp_path, orch) == {
+        "mode": "car",
+        "source": "external",
+        "reasons": {},
+    }

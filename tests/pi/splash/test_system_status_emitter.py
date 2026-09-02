@@ -64,7 +64,10 @@ def test_buildSystemStatusState_a3Schema_hasExactShape():
     assert state == {
         "obdLink": {"state": "reconnecting", "retries": 3, "lastSeenS": 14},
         "sync": {"lastOkTs": _SYNC_OK, "rows": 1204, "pending": 0, "stale": False},
-        "power": {"mode": "car", "source": "external"},
+        # US-628: `reasons` is ALWAYS a key and is EMPTY here -- this source is
+        # a real measurement, and a reason standing beside one would be a
+        # second, contradictory account of the same fact.
+        "power": {"mode": "car", "source": "external", "reasons": {}},
         # US-505 `lastDrive` is ALWAYS a key (null when unknown) -- see the
         # always-present catalog below for why absence is the dangerous shape.
         "drive": {"state": "recording", "driveId": 27, "lastDrive": None},

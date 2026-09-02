@@ -31,6 +31,15 @@
 # 2026-08-02    | Ralph (Rex)  | US-518: re-anchor the derived altitude to the
 #               |              | home elevation from _recordSyncOutcome -- the
 #               |              | one seam both sync-success paths converge on.
+# 2026-08-31    | Ralph (Rex)  | US-663 (I-us637): _gatherObdLinkState returns the
+#               |              | typed-NA reason with the availability -- one word
+#               |              | per cause, so "OBD: off" (a claim about the CAR)
+#               |              | stops being published for two causes that are
+#               |              | claims about US.
+# 2026-09-01    | Ralph (Rex)  | US-632: hand the battery-health unknown-reason to
+#               |              | the emitter as well as the journal -- the state
+#               |              | file is the SSOT the card polls; the journal line
+#               |              | stays because it records the TRANSITION.
 # ================================================================================
 ################################################################################
 
@@ -59,6 +68,73 @@ _DEFAULT_SEVERITY_TABLE_PATH = str(
 
 # Default tmpfs states dir (matches boot_state_emitter + the states-http unit).
 _DEFAULT_STATES_DIR = "/run/eclipse-obd/states"
+
+# US-632: "no reason has been observed yet" -- distinct from an observed None
+# (which means the verdict RESOLVED). A plain None default would swallow the
+# first log line whenever the producer starts out resolved and later degrades.
+_REASON_UNSET: Any = object()
+
+# US-663 (I-us637) -- the OBD-link ACQUISITION's own failure reasons.
+#
+# `_gatherObdLinkState` reaches `available: false` down three paths and used to
+# publish `REASON_OBD_OFF` for all three. "OBD: off" is a claim about the CAR;
+# two of the three are claims about US, and a driver in a running car whose
+# adapter handle died was being told the car was off. One cause, one word.
+#
+# They live HERE rather than in `pi.splash.source_availability` because that
+# module is the home of the reasons SHARED between emitters, and these two name
+# failures only this acquisition path can suffer (no other emitter holds an
+# ObdConnection). `buildSourceState` accepts any reason string by contract, and
+# keeping each word beside the branch that can actually produce it is what stops
+# a shared vocabulary drifting away from its causes.
+REASON_OBD_LINK_NOT_READ = "not read yet"  # nothing has looked at the link yet
+REASON_OBD_LINK_UNREADABLE = "link unreadable"  # we looked; getStatus() raised
+
+# US-628 -- the POWER-SOURCE acquisition's own failure reasons.
+#
+# `_gatherPowerSource` reaches `unknown` down three paths and published the bare
+# string `unknown` for all three. Atlas read that on the live Pi (punch list
+# H3 / 3.3) and could not tell an unwired bench from a Pi whose GPIO line is
+# being held by another process -- two facts with completely different fixes.
+#
+# SHAPE: snake_case MACHINE words, following `reasons.altitude: no_source`
+# (imu_state_bridge) and the six-word vocabulary US-632 built for the battery
+# health verdict. Deliberately NOT the spaced human text used by the two OBD
+# constants above: those travel in the `source.*` block, which the card renders
+# VERBATIM, whereas these travel in a `reasons` map a consumer maps to display
+# text (carousel.js `IMU_REASON_TEXT` is the existing example). Two shapes doing
+# two different jobs -- keeping them apart is what stops one being rendered raw.
+#
+# They live HERE, beside the branch that produces them, for the reason the
+# US-663 block above states: a vocabulary kept away from its causes drifts.
+
+#: No power-source provider exists on this process at all -- the bench case, or
+#: hardware that never started. There is nothing here that COULD be read, which
+#: is a different fact (and a different fix) from a line we failed to read.
+REASON_POWER_SOURCE_PROVIDER_ABSENT = "provider_absent"
+
+#: The provider exists and reports that it cannot read the line. THIS IS THE
+#: LIVE PI'S STATE as measured 2026-08-31: eclipse-powerwatch.service and
+#: eclipse-obd.service both construct PldSensor on BCM GPIO6, a GPIO line is
+#: claimed exclusively per-process, and the loser's sensor sets `_dev = None`
+#: so `isAvailable` is False for the life of the process. See
+#: offices/pm/issues/I-us628-two-services-both-claim-gpio6-so-the-collector-is-
+#: blind.md -- this word makes that diagnosable from the state file, it does
+#: NOT fix it.
+REASON_POWER_SOURCE_UNREADABLE = "source_unreadable"
+
+#: We had a provider, we asked it, and the ask raised. An instrument fault
+#: rather than an absent or blocked instrument.
+REASON_POWER_SOURCE_READ_FAILED = "read_failed"
+
+#: Every reason an unresolved `power.source` may carry. A RESOLVED source
+#: carries None: a reason explains an absence and must never stand beside a
+#: real measurement.
+POWER_SOURCE_UNKNOWN_REASONS: tuple[str, ...] = (
+    REASON_POWER_SOURCE_PROVIDER_ABSENT,
+    REASON_POWER_SOURCE_UNREADABLE,
+    REASON_POWER_SOURCE_READ_FAILED,
+)
 
 
 class CardStateEmitterMixin:
@@ -96,6 +172,22 @@ class CardStateEmitterMixin:
     # US-518: built lazily by _getAltitudeAnchor, never in __init__ -- declared
     # here for mypy only. Read through getattr so an absent attribute is fine.
     _altitudeAnchor: Any | None
+    # US-632: last battery-health unknown-reason logged, so the journal records
+    # transitions rather than one line per emit tick. A CLASS default (not an
+    # __init__ assignment) so every existing composer keeps working unchanged.
+    _lastBatteryHealthReason: Any = _REASON_UNSET
+    # US-630: the derived-gear producer. CLASS defaults (not __init__
+    # assignments) so every existing composer -- including the standalone ones
+    # in tests/ -- keeps working unchanged and simply never derives a gear.
+    _gearDeriver: Any = None
+    _gearStateEmitter: Any = None
+    _lastSpeedReading: Any = None
+    _lastRpmReading: Any = None
+    # Injectable monotonic clock for the gear freshness/debounce windows. A
+    # seam rather than an ambient time.monotonic() because those two windows are
+    # the whole substance of the derivation, and a test that had to sleep 2 s to
+    # exercise them would be a test nobody runs.
+    _gearClock: Any = None
 
     # ------------------------------------------------------------------ setup
 
@@ -119,6 +211,7 @@ class CardStateEmitterMixin:
                 "statesDir", _DEFAULT_STATES_DIR
             )
         )
+        self._initializeGearProducer(statesDir)
         severityTablePath = dtcConfig.get(
             "severityTablePath", _DEFAULT_SEVERITY_TABLE_PATH
         )
@@ -183,6 +276,105 @@ class CardStateEmitterMixin:
             self._batteryHealthEmitter = None
             self._dtcEmitter = None
             self._cardPowerModeProvider = None
+
+    # -------------------------------------------------------- derived gear
+    #
+    # US-630 (punch-list 1.4). This car exposes no gear PID, so the GEAR tile
+    # read `-- / no source` permanently. Gear is DERIVED here, once, from the
+    # realtime SPEED/RPM SSOT and published to states/gear -- never recomputed
+    # per consumer (ssot-design-pattern rule B).
+    #
+    # Constructed in its OWN try/except, deliberately outside the block that
+    # builds the three splash emitters: the two failure modes are unrelated, and
+    # a missing severity table must not also take the gear tile down (nor a bad
+    # band table the DTC card).
+
+    def _initializeGearProducer(self, statesDir: str) -> None:
+        """Build the gear deriver + its states/gear emitter, or stay dark."""
+        try:
+            from pi.obdii.gear_derivation import createGearDeriverFromConfig
+            from pi.obdii.gear_state_emitter import makeGearStateEmitter
+
+            deriver = createGearDeriverFromConfig(self._config)
+            if deriver is None:
+                # pi.gear.enabled false -> NO producer and NO file. An absent
+                # states/gear is what the carousel already renders as an honest
+                # "-- / no source"; a file saying available:false would be a
+                # producer claiming to have looked when it never ran.
+                logger.info("Gear derivation dark (pi.gear.enabled=false)")
+                return
+            self._gearDeriver = deriver
+            self._gearStateEmitter = makeGearStateEmitter(statesDir)
+            logger.info(
+                "Gear derivation wired (%d measured bands); states_dir=%s",
+                len(deriver._bands), statesDir,
+            )
+        except Exception as e:  # noqa: BLE001 -- dashboard wiring must not fail boot
+            logger.warning(
+                "Gear producer init skipped: %s (type=%s)", e, type(e).__name__
+            )
+            self._gearDeriver = None
+            self._gearStateEmitter = None
+
+    def _gearNowS(self) -> float:
+        """Monotonic seconds for the gear freshness + debounce windows."""
+        clock = self._gearClock
+        if clock is not None:
+            return float(clock())
+        import time
+
+        return time.monotonic()
+
+    def observeGearInput(self, paramName: str, value: Any) -> None:
+        """Route one realtime reading into the gear derivation.
+
+        Called from the orchestrator's reading callback for every parameter;
+        returns immediately for the ones gear does not consume.
+
+        WHY THE READING SEAM AND NOT THE 2 s CARD CADENCE: the freshness window
+        is 2 s, so derived on the card tick the newest sample would routinely be
+        as old as the window itself and a perfectly healthy cruise would flicker
+        to `stale`. The ratio is two floats and a table walk, so deriving it at
+        the ~4-5 PID/s poll rate is cheaper than the state-file write it feeds.
+
+        Args:
+            paramName: The realtime parameter's name (e.g. ``SPEED``).
+            value: Its latest value, in the units realtime_data stores.
+        """
+        if self._gearDeriver is None:
+            return
+        if paramName not in ("SPEED", "RPM"):
+            return
+        from pi.obdii.gear_derivation import Reading
+
+        reading = Reading(value=None if value is None else float(value),
+                          tsS=self._gearNowS())
+        if paramName == "SPEED":
+            self._lastSpeedReading = reading
+        else:
+            self._lastRpmReading = reading
+        self._emitGearState()
+
+    def _emitGearState(self) -> None:
+        """Derive the gear from the latest inputs and publish it.
+
+        Also invoked from the card-state tick, which is what makes a DEAD feed
+        honest: with no readings arriving nothing would rewrite the file, and
+        the panel would hold the last real gear indefinitely -- the one outcome
+        the story forbids. The tick re-derives against a moving clock, so the
+        stored readings age out and the tile drops to a typed `stale`.
+        """
+        deriver = self._gearDeriver
+        emitter = self._gearStateEmitter
+        if deriver is None or emitter is None:
+            return
+        emitter(
+            deriver.update(
+                speed=self._lastSpeedReading,
+                rpm=self._lastRpmReading,
+                nowS=self._gearNowS(),
+            )
+        )
 
     def _emitInitialDtcState(self) -> None:
         """Write the boot-time honest `dtc` state (dtcAvailable=False).
@@ -293,6 +485,14 @@ class CardStateEmitterMixin:
             self._emitBatteryHealthState()
         except Exception as e:  # noqa: BLE001 -- never crash the loop
             logger.debug("battery-health card emit failed: %s", e)
+        try:
+            # US-630: re-publish the gear against a MOVED clock even when no
+            # reading has arrived. This is the only thing that decays a stopped
+            # OBD feed to a typed `stale` -- without it the last real gear would
+            # sit on the panel for as long as the pipe stayed quiet.
+            self._emitGearState()
+        except Exception as e:  # noqa: BLE001 -- never crash the loop
+            logger.debug("gear card emit failed: %s", e)
         return True
 
     # -------------------------------------------------------- system-status
@@ -302,10 +502,9 @@ class CardStateEmitterMixin:
         emitter = self._systemStatusEmitter
         if emitter is None:
             return
-        from pi.splash.source_availability import REASON_OBD_OFF
 
-        obdLinkState, obdRetries, obdAvailable = self._gatherObdLinkState()
-        powerMode, powerSource = self._gatherPowerState()
+        obdLinkState, obdRetries, obdAvailable, obdReason = self._gatherObdLinkState()
+        powerMode, powerSource, powerSourceReason = self._gatherPowerState()
         driveState, driveId = self._gatherDriveState()
         emitter(
             obdLinkState=obdLinkState,
@@ -325,22 +524,41 @@ class CardStateEmitterMixin:
             syncPending=None,
             powerMode=powerMode,
             powerSource=powerSource,
+            # US-628: the typed reason travels WITH the unresolved source, so
+            # the state file distinguishes "no acquisition path" from "the line
+            # is held by another process" -- the live Pi is the second, and the
+            # bare `unknown` it published named neither.
+            powerSourceReason=powerSourceReason,
             driveState=driveState,
             driveId=driveId,
             lastDrive=self._gatherLastDriveSummary(),
             obdAvailable=obdAvailable,
-            obdUnavailableReason=None if obdAvailable else REASON_OBD_OFF,
+            obdUnavailableReason=obdReason,
         )
 
-    def _gatherObdLinkState(self) -> tuple[str, int, bool]:
-        """Map the ObdConnection state -> (linkState, retries, available).
+    def _gatherObdLinkState(self) -> tuple[str, int, bool, str | None]:
+        """Map the ObdConnection state -> (linkState, retries, available, reason).
 
         available is False (US-429 typed NA) only when the OBD source is ABSENT
         -- i.e. we have NEVER connected (totalConnections == 0): car off / no
         dongle / bench. A dropped-but-previously-seen link is `down` but still
         AVAILABLE (we are retrying a real car). Connected -> linked; connecting/
         reconnecting -> reconnecting. A missing connection is unavailable.
+
+        US-663: the fourth element is the typed-NA reason that TRAVELS WITH the
+        absence -- one word per cause, never one word for three. It is None on
+        every available branch, which the emitter needs: a reason sitting beside
+        a real link state would let `sourceUnavailable()` blank a working panel
+        (US-637's override makes the source block win outright).
+
+        The first element is still `OBD_DOWN` on both unknown branches and is
+        DISCARDED by the emitter, which blanks the whole block whenever the
+        source is unavailable. It is left alone rather than given a fourth token
+        because the link-state vocabulary is owned by `system_status_emitter`;
+        `down` is a MEASUREMENT ("we looked, there is no signal") and inventing
+        an unknown token here would be a second vocabulary for one fact.
         """
+        from pi.splash.source_availability import REASON_OBD_OFF
         from pi.splash.system_status_emitter import (
             OBD_DOWN,
             OBD_LINKED,
@@ -349,11 +567,16 @@ class CardStateEmitterMixin:
 
         conn = self._connection
         if conn is None:
-            return (OBD_DOWN, 0, False)
+            # Nothing has looked at the link yet -- the pre-first-read payload of
+            # a boot. Saying "OBD: off" here would be a claim about a car nobody
+            # has queried.
+            return (OBD_DOWN, 0, False, REASON_OBD_LINK_NOT_READ)
         try:
             status = conn.getStatus()
         except Exception:  # noqa: BLE001 -- unreadable status -> unavailable
-            return (OBD_DOWN, 0, False)
+            # We looked and could not read our own connection. A fault in the Pi,
+            # not in the car, and the two have different fixes.
+            return (OBD_DOWN, 0, False, REASON_OBD_LINK_UNREADABLE)
 
         connected = bool(getattr(status, "connected", False))
         retries = int(getattr(status, "retryCount", 0) or 0)
@@ -362,19 +585,33 @@ class CardStateEmitterMixin:
         stateStr = str(getattr(rawState, "value", rawState) or "").lower()
 
         if connected:
-            return (OBD_LINKED, retries, True)
+            return (OBD_LINKED, retries, True, None)
         if "reconnect" in stateStr or "connecting" in stateStr:
-            return (OBD_RECONNECTING, retries, True)
-        # disconnected / error: available iff we have EVER seen this car.
-        return (OBD_DOWN, retries, totalConns > 0)
+            return (OBD_RECONNECTING, retries, True, None)
+        # disconnected / error: available iff we have EVER seen this car. This is
+        # the ONE branch "OBD: off" is true of -- we looked, and there is no car.
+        available = totalConns > 0
+        return (OBD_DOWN, retries, available, None if available else REASON_OBD_OFF)
 
-    def _gatherPowerState(self) -> tuple[str, str]:
-        """Return (powerMode, powerSource) from the two SSOT providers.
+    def _gatherPowerState(self) -> tuple[str, str, str | None]:
+        """Return (powerMode, powerSource, powerSourceReason) from the SSOTs.
 
         Two different facts, two different providers (architecture.md §2):
         powerMode = deployment context (car/wall/unknown) from PowerModeProvider
         (static config); powerSource = AC-vs-battery from PowerSourceProvider
         (X1209 GPIO6 PLD). Neither is ever inferred from the other.
+
+        The third element is the US-628 typed reason for an UNRESOLVED source,
+        and it is returned from this ONE call rather than from a second
+        ``_gatherPowerSourceReason()`` on purpose: two reads of a GPIO line can
+        disagree, and a reason that describes a different read than the value
+        beside it is worse than no reason at all. One acquisition, one answer
+        (ssot-design-pattern rule B).
+
+        There is deliberately NO counterpart reason for an unknown ``mode``.
+        PowerModeProvider owns that vocabulary and collapses its causes inside
+        ``getPowerMode()``; inventing a second account of the same absence out
+        here is the rule-B violation this story's SSOT clause names by hand.
         """
         powerMode = "unknown"
         provider = self._cardPowerModeProvider
@@ -384,9 +621,10 @@ class CardStateEmitterMixin:
             except Exception:  # noqa: BLE001 -- honest unknown on read failure
                 powerMode = "unknown"
 
-        return (powerMode, self._gatherPowerSource())
+        source, reason = self._gatherPowerSource()
+        return (powerMode, source, reason)
 
-    def _gatherPowerSource(self) -> str:
+    def _gatherPowerSource(self) -> tuple[str, str | None]:
         """Return external/battery/unknown from the power-source SSOT (US-502).
 
         Reads ``PowerSourceProvider`` -- the ONE authoritative acquisition path
@@ -407,16 +645,25 @@ class CardStateEmitterMixin:
         UI uncertainty policy: an UNREADABLE line resolves to ``unknown``, not
         to the provider's non-bricking "treat as present" default -- a display
         must never show a confident source it cannot actually read.
+
+        Returns:
+            ``(source, reason)``. ``source`` is ``external`` / ``battery`` /
+            ``unknown``; ``reason`` is None on the two resolved branches and one
+            of :data:`POWER_SOURCE_UNKNOWN_REASONS` otherwise (US-628). All
+            three unknown branches used to publish the same bare word, so a
+            reader of the state file could not tell an unwired bench from a
+            GPIO line another process is holding.
         """
         source = getattr(self, "_powerSourceProvider", None)
         if source is None:
-            return "unknown"
+            return ("unknown", REASON_POWER_SOURCE_PROVIDER_ABSENT)
         try:
             if not source.isAvailable:
-                return "unknown"
-            return "external" if source.isExternalPowerPresent() else "battery"
+                return ("unknown", REASON_POWER_SOURCE_UNREADABLE)
+            present = source.isExternalPowerPresent()
         except Exception:  # noqa: BLE001 -- honest unknown on read failure
-            return "unknown"
+            return ("unknown", REASON_POWER_SOURCE_READ_FAILED)
+        return ("external" if present else "battery", None)
 
     def _gatherLastDriveSummary(self) -> dict[str, Any] | None:
         """Read the most recent COMPLETED drive from Pi-local ``drive_summary``.
@@ -505,7 +752,7 @@ class CardStateEmitterMixin:
             return
 
         crateF = float(crate) if crate is not None else None
-        _, powerSource = self._gatherPowerState()
+        _, powerSource, _ = self._gatherPowerState()
         onExternal = powerSource == "external"
         charging = crateF is not None and crateF > 0
         # draining = wall power lost AND the pack is actually discharging (A-6
@@ -523,7 +770,9 @@ class CardStateEmitterMixin:
             )
         )
 
-    def _gatherBatteryHealthVerdict(self) -> tuple[str, str | None, int | None]:
+    def _gatherBatteryHealthVerdict(
+        self,
+    ) -> tuple[str, str | None, int | None, str | None]:
         """Read the US-504 verdict + last-health-check from battery_health_log.
 
         The database is resolved through ``getattr`` AT USE TIME, never captured
@@ -533,13 +782,21 @@ class CardStateEmitterMixin:
         tick so a drain recorded while the orchestrator runs reaches the card
         without a restart.
 
+        US-632 adds the fourth element, ``reason``. The verdict is recomputed on
+        EVERY emit tick -- there is no separate health-producer unit or timer --
+        so an `unknown` here means "we ran, just now, and cannot say", which is
+        a different fact from "nothing has run since May". The reason is what
+        carries that distinction.
+
         Returns:
-            ``(verdict, lastHealthCheckTs, medianRuntimeS)`` -- honest
-            ``("unknown", None, None)`` whenever the log is absent, unreadable,
-            too thin (< 3 qualifying drains) or stale (> 90 days).
+            ``(verdict, lastHealthCheckTs, medianRuntimeS, reason)`` -- honest
+            ``("unknown", None, None, <reason>)`` whenever the log is absent,
+            unreadable, too thin (< 3 qualifying drains) or stale (> 90 days).
+            ``reason`` is None only when the verdict actually resolved.
         """
         try:
             from pi.power.battery_health_verdict import (
+                REASON_LOG_UNREADABLE,
                 VERDICT_UNKNOWN,
                 readBatteryHealthVerdict,
             )
@@ -550,12 +807,50 @@ class CardStateEmitterMixin:
             )
         except Exception as e:  # noqa: BLE001 -- never block the emit loop
             logger.debug("battery-health verdict unavailable: %s", e)
-            return ("unknown", None, None)
+            # The import itself failed, or the reader raised out. Either way the
+            # producer could not read the log -- report that, not silence.
+            return ("unknown", None, None, "log_unreadable")
         return (
             result.verdict or VERDICT_UNKNOWN,
             result.lastHealthCheckTs,
             result.medianRuntimeS,
+            result.reason if result.verdict != VERDICT_UNKNOWN
+            else (result.reason or REASON_LOG_UNREADABLE),
         )
+
+    def _recordBatteryHealthReason(self, reason: str | None) -> None:
+        """Log WHY the battery-health verdict is unknown, on CHANGE only.
+
+        US-632's conditionalOutcome: "If the producer is scheduled but failing
+        silently, that silent failure IS the defect -- record it where it can
+        be seen."
+
+        The reason ALSO reaches the ``battery-health`` state file now, in
+        ``reasons.health`` (BL-us632 granted the splash surface). This line is
+        not redundant with it, and the distinction is the reason to keep both:
+        the state file holds only NOW, so it can say the verdict is stale but
+        never say SINCE WHEN it became stale. The journal is the only place a
+        reader can see the cause CHANGE -- which is exactly the question
+        punch-list 4.2 was really asking.
+
+        On CHANGE only, deliberately: this runs on every emit tick, and an
+        unconditional log line would make the producer a continuous journal
+        writer. US-646 is an open story about exactly that cost, and US-644 is
+        about a journal probe that already times out because the journal is too
+        large. A steady state is not news; a transition is.
+        """
+        if reason == getattr(self, "_lastBatteryHealthReason", _REASON_UNSET):
+            return
+        self._lastBatteryHealthReason = reason
+        if reason is None:
+            logger.info("battery-health verdict resolved (reason cleared)")
+        else:
+            logger.warning(
+                "battery-health verdict is unknown: %s "
+                "(the verdict producer DID run -- it recomputes every emit "
+                "tick; this names what it could not conclude)",
+                reason,
+            )
 
     def _batteryHealthKwargs(
         self,
@@ -578,10 +873,16 @@ class CardStateEmitterMixin:
         MAX17048 has NO temperature register, so US-504 removed the TEMP tile
         rather than invent a source; the column survives for a future BMP390.
         """
-        health, lastHealthCheckTs, medianRuntimeS = (
+        health, lastHealthCheckTs, medianRuntimeS, reason = (
             self._gatherBatteryHealthVerdict()
         )
+        # US-632: the reason travels BOTH ways. `reasons.health` in the payload
+        # is the SSOT the card polls (BL-us632, since granted); the journal line
+        # stays because it is a TRANSITION record -- it says WHEN the cause
+        # changed, which a state file that only ever holds "now" cannot.
+        self._recordBatteryHealthReason(reason)
         return {
+            "healthReason": reason,
             "vcellV": vcellV,
             "soc": soc,
             "socCalibrated": False,

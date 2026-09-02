@@ -536,14 +536,24 @@ def test_theParkedSignalStillHasLiveConsumers():
     """
     Given: US-541 removed the home face as a consumer of `carouselIdle`
     When: the shipped file is read
-    Then: the OTHER consumers are still there.
+    Then: the surviving consumer is still there.
 
           Without this the suite would go green on a retirement that quietly
-          took the auto-rotate pause and the home-nav edge with it -- a
-          regression no absence pin above can see, because it looks like more
-          deletion of the same thing.
+          took the home-nav edge with it -- a regression no absence pin above
+          can see, because it looks like more deletion of the same thing.
+
+    US-659 REPOINTED THIS FROM A COUNT TO A NAME, and the count is why it had
+    to be. It asserted `>= 3` occurrences of `carouselIdle(` as a proxy for "the
+    consumers are still there". Two of those three were the DEFINITION and the
+    ⋮ visibility gate -- and when the CIO's punch-list H6 ruling removed the
+    gate, this test failed while the consumer it names in its own docstring
+    (the home-nav edge) was untouched. A count cannot witness WHICH call sites
+    survive, so it reports a deliberate deletion and a real regression
+    identically. Now asserted by name, which is both stricter and legible.
     """
     code = _codeOnly(_read(_JS))
-    assert len(re.findall(r"carouselIdle\(", code)) >= 3, (
-        "the parked SSOT lost its consumers along with the retired face"
+    start = code.index("function updateHomeNav(sysData)")
+    body = code[start : code.index("\n      }", start)]
+    assert "carouselIdle(sysData)" in body, (
+        "the home-nav edge lost its parked SSOT along with the retired face"
     )

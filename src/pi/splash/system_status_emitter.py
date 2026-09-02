@@ -81,6 +81,12 @@ DEFAULT_DOWN_RSSI_DBM: int = -90
 
 REASON_WIFI_UNKNOWN = "wifi: not read"
 
+# US-628 -- the two `power.source` readings that are MEASUREMENTS. Anything
+# else is an absence, and an absence is what may carry a reason. Stated as the
+# resolved set rather than as `== "unknown"` so a future source value cannot
+# quietly acquire a reason by not being spelled `unknown`.
+RESOLVED_POWER_SOURCES = frozenset({"external", "battery"})
+
 
 def deriveWifiState(
     *,
@@ -130,6 +136,7 @@ def buildSystemStatusState(
     driveState: str,
     driveId: int | None,
     nowIso: str,
+    powerSourceReason: str | None = None,
     obdAvailable: bool = True,
     obdUnavailableReason: str | None = None,
     lastDrive: dict | None = None,
@@ -156,7 +163,17 @@ def buildSystemStatusState(
         syncStale: Whether the last sync is stale-while-driving (caller policy;
             see ``isSyncStaleWhileDriving``). The display renders amber when True.
         powerMode: ``car`` (in-car) or ``wall`` (bench/debug).
-        powerSource: ``external`` (USB/car) or ``battery`` (running on the UPS).
+        powerSource: ``external`` (USB/car) or ``battery`` (running on the UPS),
+            or ``unknown`` when the line could not be resolved.
+        powerSourceReason: The US-628 typed reason for an UNRESOLVED source
+            (``provider_absent`` / ``source_unreadable`` / ``read_failed`` --
+            the vocabulary lives with the acquisition, in
+            ``pi.obdii.orchestrator.card_state_emitter``). Published in
+            ``power.reasons`` following the ``reasons.altitude: no_source``
+            idiom. IGNORED beside a resolved source: a reason explains an
+            absence, and one standing next to a real measurement would be a
+            second, contradictory account of the same fact. None -- no reason
+            offered -- publishes an empty map rather than a filled-in guess.
         driveState: ``recording`` or ``idle``.
         driveId: Active drive ID when recording; None when idle.
         nowIso: ISO-8601 emission timestamp (freshness marker).
@@ -197,6 +214,14 @@ def buildSystemStatusState(
     # the moment the OBD source wakes OR a drive records (US-481 / Iris AC-4
     # auto-advance-off-idle).
     idle = (not obdAvailable) and (driveState != "recording")
+    # US-628 honest absence. `reasons` is ALWAYS present -- empty when the
+    # source resolved -- for the reason stated below for `lastDrive`: a
+    # sometimes-missing key is the shape a consumer falls quietly through.
+    # Keyed by FIELD NAME so a second unresolvable power fact can be added
+    # without a second container (imu_state_bridge's `reasons` map, same idea).
+    powerReasons: dict[str, str] = {}
+    if powerSource not in RESOLVED_POWER_SOURCES and powerSourceReason:
+        powerReasons["source"] = powerSourceReason
     return {
         "obdLink": obdLink,
         "sync": {
@@ -205,7 +230,11 @@ def buildSystemStatusState(
             "pending": syncPending,
             "stale": syncStale,
         },
-        "power": {"mode": powerMode, "source": powerSource},
+        "power": {
+            "mode": powerMode,
+            "source": powerSource,
+            "reasons": powerReasons,
+        },
         # ARCH-007 (Atlas ruling 2026-08-20). Defaults to UNAVAILABLE, not to a
         # cheerful "up": a caller that has not wired the provider must not
         # publish a link it never observed. And when unavailable, ssid/rssi are
@@ -320,6 +349,7 @@ def makeSystemStatusEmitter(
         powerSource: str,
         driveState: str,
         driveId: int | None,
+        powerSourceReason: str | None = None,
         obdAvailable: bool = True,
         obdUnavailableReason: str | None = None,
         lastDrive: dict | None = None,
@@ -339,6 +369,7 @@ def makeSystemStatusEmitter(
                 syncStale=syncStale,
                 powerMode=powerMode,
                 powerSource=powerSource,
+                powerSourceReason=powerSourceReason,
                 driveState=driveState,
                 driveId=driveId,
                 nowIso=nowIso,

@@ -330,9 +330,14 @@ def test_thePreUs556Shape_stillDoesNotFitTodaysBar():
 
 def test_kebabTakesTheChromeTier_notTheDriverReadValueTier():
     """AC-3. F-127's 34px floor is for anything the driver must read TO ACT. A
-    menu affordance is not that, and it is `hidden` while driving anyway
-    (US-490), so binding it to `--fs-primary` tied chrome to a tier F-127 then
-    raised -- the tokenization was right, the tier was wrong."""
+    menu affordance is not that, so binding it to `--fs-primary` tied chrome to
+    a tier F-127 then raised -- the tokenization was right, the tier was wrong.
+
+    US-659 CORRECTION: this used to add "and it is `hidden` while driving anyway
+    (US-490)" as a second reason. That is no longer true -- the kebab now paints
+    in every state (CIO punch-list H6) -- and the conclusion is unchanged, since
+    it never rested on that clause. Corrected rather than left standing: a stale
+    rationale is how the next reader re-derives a retired gate."""
     token = _fontSizeToken(readCss(DASHBOARD_CSS), "#menu-btn")
     assert token == CHROME_TIER_TOKEN
     assert token != VALUE_TIER_TOKEN

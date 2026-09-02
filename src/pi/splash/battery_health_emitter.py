@@ -32,6 +32,10 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-06-30    | Ralph (Rex)  | Initial implementation (US-401 battery-health card)
+# 2026-09-01    | Ralph (Rex)  | US-632: `reasons.health` -- an unknown verdict
+#               |              | publishes WHY it could not be formed, so "we
+#               |              | checked and cannot say" is distinguishable from
+#               |              | "nothing has checked since May".
 # ================================================================================
 ################################################################################
 
@@ -108,6 +112,7 @@ def buildBatteryHealthState(
     nowIso: str,
     upsAvailable: bool = True,
     upsUnavailableReason: str | None = None,
+    healthReason: str | None = None,
 ) -> dict:
     """Assemble the battery-health payload (pure; spec §7 pinned A-3 schema).
 
@@ -152,10 +157,23 @@ def buildBatteryHealthState(
             reason travels in ``source.ups``. Defaults True (backward compatible).
         upsUnavailableReason: The typed-NA reason when ``upsAvailable`` is False
             (defaults to ``REASON_UPS_UNREADABLE``). Ignored when available.
+        healthReason: US-632. The typed reason an ``unknown`` verdict could not
+            be formed -- one of
+            :data:`pi.power.battery_health_verdict.UNKNOWN_REASONS`
+            (``no_database`` / ``log_unreadable`` / ``no_qualifying_drains`` /
+            ``too_few_drains`` / ``health_data_stale`` / ``clock_unreadable``).
+            The vocabulary lives with the PRODUCER; this module transports it
+            verbatim and never translates it. Published in ``reasons.health``
+            following the US-628 ``power.reasons`` precedent. IGNORED beside a
+            RESOLVED verdict: a reason explains an ABSENCE, and one standing
+            next to a real verdict would be a second, contradictory account of
+            the same fact. None -- no reason offered -- publishes an empty map
+            rather than a filled-in guess.
 
     Returns:
         The battery-health dict with exactly the spec §7 A-3 keys plus the US-429
-        ``source`` block (one availability truth per source).
+        ``source`` block (one availability truth per source) and the US-632
+        ``reasons`` map (why an unresolved field is unresolved).
     """
     # A-6 no-false-failsafe: the failsafe ladder may ONLY exist while draining.
     # Enforced here (the SSOT) so a buggy caller can never light a phantom drain.
@@ -173,6 +191,19 @@ def buildBatteryHealthState(
         draining = False
         charging = False
         safeLadder = None
+    # US-632 honest absence. `reasons` is ALWAYS present -- empty when the
+    # verdict resolved -- because a sometimes-missing key is the shape a
+    # consumer falls quietly through. Keyed by FIELD NAME (the US-628
+    # `power.reasons` / imu_state_bridge idiom) so a second unresolvable battery
+    # fact needs no second container.
+    #
+    # DELIBERATELY OUTSIDE the `upsAvailable` blanking above: the verdict's
+    # source is the drain LOG, the gauge is the MAX17048, and a dead gauge must
+    # not erase a health history that is still real -- the same reasoning the
+    # orchestrator's typed-NA branch states when it declines to blank `health`.
+    reasons: dict[str, str] = {}
+    if health == VERDICT_UNKNOWN and healthReason:
+        reasons["health"] = healthReason
     return {
         "vcellV": vcellV,
         "soc": soc,
@@ -189,6 +220,7 @@ def buildBatteryHealthState(
         "ambientTempC": ambientTempC,
         "lastHealthCheckTs": lastHealthCheckTs,
         "ladder": safeLadder,
+        "reasons": reasons,
         "source": {
             SOURCE_UPS: buildSourceState(
                 upsAvailable, upsUnavailableReason or REASON_UPS_UNREADABLE
@@ -240,6 +272,7 @@ def makeBatteryHealthEmitter(
         ladder: dict | None,
         upsAvailable: bool = True,
         upsUnavailableReason: str | None = None,
+        healthReason: str | None = None,
     ) -> None:
         try:
             payload = buildBatteryHealthState(
@@ -261,6 +294,7 @@ def makeBatteryHealthEmitter(
                 nowIso=nowFn(),
                 upsAvailable=upsAvailable,
                 upsUnavailableReason=upsUnavailableReason,
+                healthReason=healthReason,
             )
             ensureStatesDir(statesDir)
             writeStateAtomic(target, payload)

@@ -352,6 +352,28 @@ DEFAULTS: dict[str, Any] = {
     'pi.sensors.light.enabled': False,
     'pi.sensors.light.sampleHz': 1,
     'pi.sensors.retentionDays': 7,
+    # US-630 (F-138, punch-list 1.4): the DERIVED gear.  This car exposes no
+    # gear PID, so gear is computed once from the realtime SPEED + RPM SSOT and
+    # published -- never recomputed per consumer.  Ships DARK
+    # (connect-when-wired, the pi.bus.enabled precedent): with enabled False
+    # createGearDeriverFromConfig builds nothing and the tile keeps its honest
+    # typed-NA.
+    #
+    # `bands` STAYS EMPTY HERE and that is deliberate, even though the measured
+    # table now exists (Atlas, 2026-08-31, drives 50/51 -- BL-us630 closed).  The
+    # table is a property of THIS car's gearbox, final drive and tyres; a
+    # validator default carrying it would hand it to any deployment that forgot
+    # the key, which is a fabricated calibration.  The numbers live in
+    # config.json under `pi.gear.bands`, ONE place, and an unkeyed deployment
+    # reports `not_calibrated` rather than guessing.  See
+    # src/pi/obdii/gear_derivation.py.  The thresholds below are Spool's
+    # US-508 semantics; maxAgeSec is grounded to the ~4-5 PID/s OBD poll rate.
+    'pi.gear.enabled': False,
+    'pi.gear.bands': [],
+    'pi.gear.minSpeedKph': 5.0,
+    'pi.gear.minRpm': 900,
+    'pi.gear.debounceSec': 2.0,
+    'pi.gear.maxAgeSec': 2.0,
     # Pi-tier orchestrator engine-on escalation (US-242 / B-049).  When the
     # adapter-level BATTERY_V sample exceeds engineOnVoltageThreshold for
     # engineOnSampleCount consecutive samples, the orchestrator transitions

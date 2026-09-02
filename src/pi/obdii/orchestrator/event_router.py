@@ -98,6 +98,19 @@ class EventRouterMixin:
         self, batteryVoltage: float
     ) -> bool: ...
 
+    # US-630: provided by CardStateEmitterMixin -- declared here so
+    # type-checkers see the binding when _handleReading routes SPEED/RPM into
+    # the derived-gear producer.
+    #
+    # AN ANNOTATION, NOT A `def ... : ...` STUB, and the difference is
+    # load-bearing: a stub is a real method with a real (empty) body, and this
+    # mixin precedes CardStateEmitterMixin in the orchestrator's MRO -- so a
+    # stub would SHADOW the implementation and the gear would silently never be
+    # derived. Caught here by the wiring test in tests/pi/obdii/
+    # test_gear_state_emitter.py, which is why that test drives the real
+    # callback rather than calling observeGearInput directly.
+    observeGearInput: Callable[[str, Any], None]
+
     def registerCallbacks(
         self,
         onDriveStart: Callable[[Any], None] | None = None,
@@ -399,6 +412,19 @@ class EventRouterMixin:
                 self._displayManager.updateValue(paramName, value, unit)
             except Exception as e:
                 logger.debug(f"Display update failed: {e}")
+
+        # US-630: route SPEED/RPM into the derived-gear producer. This car has
+        # no gear PID, so the ratio of these two IS the gear signal, and this
+        # callback is where both arrive freshest -- the 2 s card-state cadence
+        # would hand the derivation samples as old as its own freshness window.
+        # observeGearInput ignores every other parameter and returns immediately
+        # when the derivation is dark, so the cost on the poll path is a name
+        # comparison.
+        if paramName is not None:
+            try:
+                self.observeGearInput(paramName, value)
+            except Exception as e:  # noqa: BLE001 -- must never crash the poll
+                logger.debug(f"Gear derivation failed: {e}")
 
         # Pass reading to drive detector for state machine processing
         if self._driveDetector is not None:

@@ -18,7 +18,10 @@
  *          test, and the half that shipped the bug.
  *
  *          Invoked as:  node dom_probe.js <inputJsonPath>
- *          Input:  {carouselPath, tree, routes, token, autoDim, steps}
+ *          Input:  {carouselPath, tree, routes, token, autoDim, nowMs, steps}
+ *          Steps:  {flush} {click:<id>} {clickNth:{selector,index}}
+ *                  {setRoutes} {key} {advanceMs}
+ *                  {pointer:{id,type,x,y}}
  *          Output: {tree, fetches} on stdout
  * Author:  Ralph Agent (Rex)
  * Created: 2026-07-29 -- Sprint 66 US-499 (S6 render-regression backstop)
@@ -44,6 +47,31 @@ async function main() {
 
   const clock = new dom.Clock();
   const fetches = [];
+
+  // US-641: an OPTIONAL virtual WALL clock, distinct from the `clock` above --
+  // that one owns "which timer callbacks are due", this one owns "what time does
+  // the page think it is". Absent (the default) nothing is patched and every
+  // pre-existing probe run is byte-for-byte unchanged.
+  //
+  // WHY IT EXISTS: a freshness window can only be crossed two ways -- move the
+  // reading's `ts` back, or move `now` forward. The first REWRITES the state
+  // file, which models "the producer wrote an old reading". The behaviour the
+  // panel actually has to survive is the other one: the producer STOPPED, so the
+  // file is frozen byte-identical and the clock walks past it. Only this makes
+  // that testable, and it is the difference between a cold boot that happens to
+  // read stale and a live reading going stale UNDER the operator.
+  //
+  // Only Date.now() is patched, not the `Date` constructor: every freshness
+  // verdict in carousel.js resolves from the tick's `nowMs = Date.now()`, so
+  // this covers the path under test exactly while leaving `new Date()` (the
+  // top-bar clock's boot paint) on real time.
+  let virtualNowMs = null;
+  if (typeof input.nowMs === "number" && isFinite(input.nowMs)) {
+    virtualNowMs = input.nowMs;
+    Date.now = function () {
+      return virtualNowMs;
+    };
+  }
 
   const win = {
     innerWidth: input.viewport ? input.viewport[0] : 1920,
@@ -80,6 +108,17 @@ async function main() {
   require(path.resolve(input.carouselPath));
 
   for (const step of input.steps || [{ flush: 4 }]) {
+    // US-641: walk the virtual wall clock forward. Handled BEFORE {flush} so a
+    // single {advanceMs, flush} step reads in the order it happens -- time
+    // passes, THEN the panel repaints. Refuses rather than silently no-ops when
+    // no virtual clock was installed: a staleness test whose clock never moved
+    // would still pass on a cold-boot reading and prove nothing.
+    if (typeof step.advanceMs === "number") {
+      if (virtualNowMs === null) {
+        throw new Error("advanceMs requires input.nowMs (no virtual clock installed)");
+      }
+      virtualNowMs += step.advanceMs;
+    }
     if (step.flush) {
       for (let i = 0; i < step.flush; i++) {
         await dom.drainMicrotasks();
@@ -91,6 +130,46 @@ async function main() {
       const el = doc.getElementById(step.click);
       if (!el) throw new Error("no such element to click: #" + step.click);
       el.click();
+      await dom.drainMicrotasks();
+    }
+    // US-635: click the Nth element matching a selector. The page dots are
+    // BUILT BY carousel.js and carry no id, so `step.click` (getElementById)
+    // cannot reach them -- and the dot->card mapping is precisely what the dot
+    // count alone cannot witness. Indexed over ALL matches, hidden included, so
+    // a test can also dispatch at a dot the gate has taken away and prove the
+    // navigation guard refuses it.
+    if (step.clickNth) {
+      const all = doc.querySelectorAll(step.clickNth.selector);
+      const el = all[step.clickNth.index];
+      if (!el) {
+        throw new Error(
+          "no " +
+            step.clickNth.selector +
+            "[" +
+            step.clickNth.index +
+            "] to click (" +
+            all.length +
+            " matched)"
+        );
+      }
+      el.click();
+      await dom.drainMicrotasks();
+    }
+    // US-659: dispatch a POINTER event at an element. The 5s long-press is the
+    // only protection left on the setup menu once the visibility gate is gone,
+    // and until now it had never been exercised end-to-end -- only its pure
+    // arithmetic (longPressProgress/isLongPressComplete) and a source-absence
+    // grep. `click` cannot reach it: the hold is built from pointerdown +
+    // setInterval + Date.now(), so it needs the virtual WALL clock (input.nowMs
+    // + {advanceMs}) as well as the round clock. x/y default to 0 and carry
+    // through as clientX/clientY, which is what the move-cancel guard reads.
+    if (step.pointer) {
+      const el = doc.getElementById(step.pointer.id);
+      if (!el) throw new Error("no such element to point at: #" + step.pointer.id);
+      el.dispatch(step.pointer.type, {
+        clientX: step.pointer.x || 0,
+        clientY: step.pointer.y || 0,
+      });
       await dom.drainMicrotasks();
     }
     if (step.setRoutes) {

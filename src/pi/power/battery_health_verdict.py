@@ -74,9 +74,16 @@ __all__ = [
     'QUALIFYING_LOAD_CLASS',
     'QUALIFYING_MAX_END_VCELL_V',
     'QUALIFYING_MIN_RUNTIME_S',
+    'REASON_CLOCK_UNREADABLE',
+    'REASON_HEALTH_DATA_STALE',
+    'REASON_LOG_UNREADABLE',
+    'REASON_NO_DATABASE',
+    'REASON_NO_QUALIFYING_DRAINS',
+    'REASON_TOO_FEW_DRAINS',
     'RUNTIME_BASELINE_S',
     'STALE_HEALTH_CHECK_DAYS',
     'TRAILING_WINDOW_DAYS',
+    'UNKNOWN_REASONS',
     'VERDICT_DEGRADED',
     'VERDICT_GOOD',
     'VERDICT_REPLACE',
@@ -100,6 +107,62 @@ VERDICT_UNKNOWN: str = 'unknown'
 #: Every value the ``health`` field of the battery-health state file may carry.
 VERDICT_VALUES: tuple[str, ...] = (
     VERDICT_GOOD, VERDICT_DEGRADED, VERDICT_REPLACE, VERDICT_UNKNOWN,
+)
+
+
+# ================================================================================
+# Unknown-reason vocabulary (US-632)
+# ================================================================================
+# `unknown` is one WORD covering six genuinely different operational facts, and
+# a card that renders only the word cannot tell them apart.  Punch-list 4.2 is
+# exactly that failure: the Pi showed `health="unknown"` with a May
+# `lastHealthCheckTs`, and the reasonable reading -- "the producer stopped
+# running" -- was WRONG.  The producer runs on every card-emit tick; what it
+# could not say was WHY it had no verdict.
+#
+# US-632, NEGATIVE CASE: "'we checked and cannot say' is distinguishable from
+# 'nothing has checked since May'.  Those are different facts and today they
+# look identical."
+#
+# Idiom: snake_case machine reasons, following `reasons.altitude: no_source`
+# and `gear_derivation`'s no_data/stale/ambiguous.  NOT a second vocabulary --
+# the story says to follow the one that exists.
+
+#: No database handle at all (bench, or wiring not yet built).  Distinct from
+#: an empty log: there is nothing here that COULD have been read.
+REASON_NO_DATABASE: str = 'no_database'
+
+#: The log exists but could not be read -- locked, pre-migration, corrupt.  An
+#: INSTRUMENT failure, and it must never masquerade as "never measured".
+REASON_LOG_UNREADABLE: str = 'log_unreadable'
+
+#: The log read fine and holds no drain that measured capacity.  "Nothing has
+#: ever checked this pack."
+REASON_NO_QUALIFYING_DRAINS: str = 'no_qualifying_drains'
+
+#: Between 1 and MEDIAN_SAMPLE_COUNT-1 qualifying drains inside the trailing
+#: window.  "We have measurements, just not enough of them to median."
+REASON_TOO_FEW_DRAINS: str = 'too_few_drains'
+
+#: The newest qualifying drain is older than STALE_HEALTH_CHECK_DAYS.  "We
+#: checked, and that check has aged out."  This is the LIVE PI's state as
+#: measured 2026-08-31 (newest drain 2026-05-16, 107 days back).
+REASON_HEALTH_DATA_STALE: str = 'health_data_stale'
+
+#: ``nowIso`` was unparseable, so nothing can be age-checked.  A clock failure,
+#: not a data failure.
+REASON_CLOCK_UNREADABLE: str = 'clock_unreadable'
+
+#: Every reason an ``unknown`` verdict may carry.  A resolved verdict carries
+#: None -- the reason explains an ABSENCE and has no business beside a real
+#: measurement.
+UNKNOWN_REASONS: tuple[str, ...] = (
+    REASON_NO_DATABASE,
+    REASON_LOG_UNREADABLE,
+    REASON_NO_QUALIFYING_DRAINS,
+    REASON_TOO_FEW_DRAINS,
+    REASON_HEALTH_DATA_STALE,
+    REASON_CLOCK_UNREADABLE,
 )
 
 
@@ -214,20 +277,36 @@ class BatteryHealthVerdict:
         medianRuntimeS: The median of the last :data:`MEDIAN_SAMPLE_COUNT`
             qualifying drains inside the trailing window, or None when the
             verdict is unknown.
+        reason: US-632.  One of :data:`UNKNOWN_REASONS` when the verdict is
+            ``unknown``, naming WHICH of the six causes produced it; None when
+            the verdict resolved.  Without this the card can render "unknown"
+            but cannot say whether anything ever checked -- the punch-list 4.2
+            defect.
     """
 
     verdict: str
     lastHealthCheckTs: str | None
     qualifyingCount: int
     medianRuntimeS: int | None
+    reason: str | None = None
 
 
-_UNKNOWN_NO_DATA = BatteryHealthVerdict(
-    verdict=VERDICT_UNKNOWN,
-    lastHealthCheckTs=None,
-    qualifyingCount=0,
-    medianRuntimeS=None,
-)
+def _unknown(reason: str) -> BatteryHealthVerdict:
+    """An unknown verdict with nothing measured, naming its cause.
+
+    US-632 split what was a single shared ``_UNKNOWN_NO_DATA`` sentinel.  That
+    sentinel was correct about the VERDICT and silent about the CAUSE, so
+    "there is no database", "the log would not open" and "the log is fine and
+    empty" left byte-identical payloads -- an instrument failure indistinguish-
+    able from a pack that has genuinely never been drained.
+    """
+    return BatteryHealthVerdict(
+        verdict=VERDICT_UNKNOWN,
+        lastHealthCheckTs=None,
+        qualifyingCount=0,
+        medianRuntimeS=None,
+        reason=reason,
+    )
 
 
 # ================================================================================
@@ -263,33 +342,46 @@ def computeBatteryHealthVerdict(
         if parsed is not None
     ]
     if not qualifying:
-        return _UNKNOWN_NO_DATA
+        return _unknown(REASON_NO_QUALIFYING_DRAINS)
 
     # Newest first.  Sorting here (not trusting the caller's order) is what
     # makes "the last 3 drains" mean the last 3 by CLOCK, not by row order.
     qualifying.sort(key=lambda item: item[0], reverse=True)
     lastCheckAt, _, lastCheckTs = qualifying[0]
 
-    unknown = BatteryHealthVerdict(
-        verdict=VERDICT_UNKNOWN,
-        lastHealthCheckTs=lastCheckTs,
-        qualifyingCount=len(qualifying),
-        medianRuntimeS=None,
-    )
+    def unknownFor(reason: str) -> BatteryHealthVerdict:
+        """Unknown, but with the measurement date KEPT.
+
+        ``lastHealthCheckTs`` survives every unknown branch below on purpose:
+        the date of the last real check is itself the signal, and the card's
+        F-9 stale-green guard renders it so an aged reading cannot pass for a
+        live one.  It is never advanced to "now" to make the card look fresh --
+        that would fabricate a health check that did not happen.
+        """
+        return BatteryHealthVerdict(
+            verdict=VERDICT_UNKNOWN,
+            lastHealthCheckTs=lastCheckTs,
+            qualifyingCount=len(qualifying),
+            medianRuntimeS=None,
+            reason=reason,
+        )
 
     now = _parseIso(nowIso)
     if now is None:
-        return unknown
+        return unknownFor(REASON_CLOCK_UNREADABLE)
 
     # Staleness override -- checked BEFORE the numbers so a stale reading can
-    # never paint a confident verdict of any colour.
+    # never paint a confident verdict of any colour.  Its reason therefore also
+    # WINS over too_few_drains when both apply, which is the honest ordering:
+    # "the data on file has aged out" is a stronger statement than "collect
+    # three more drains", and the latter would understate the problem.
     if (now - lastCheckAt) > timedelta(days=STALE_HEALTH_CHECK_DAYS):
-        return unknown
+        return unknownFor(REASON_HEALTH_DATA_STALE)
 
     windowStart = now - timedelta(days=TRAILING_WINDOW_DAYS)
     inWindow = [item for item in qualifying if item[0] >= windowStart]
     if len(inWindow) < MEDIAN_SAMPLE_COUNT:
-        return unknown
+        return unknownFor(REASON_TOO_FEW_DRAINS)
 
     sample = sorted(item[1] for item in inWindow[:MEDIAN_SAMPLE_COUNT])
     median = sample[MEDIAN_SAMPLE_COUNT // 2]
@@ -298,6 +390,7 @@ def computeBatteryHealthVerdict(
         lastHealthCheckTs=lastCheckTs,
         qualifyingCount=len(qualifying),
         medianRuntimeS=median,
+        reason=None,
     )
 
 
@@ -326,7 +419,7 @@ def readBatteryHealthVerdict(
         The :class:`BatteryHealthVerdict`; ``unknown`` on any read failure.
     """
     if database is None:
-        return _UNKNOWN_NO_DATA
+        return _unknown(REASON_NO_DATABASE)
     try:
         with database.connect() as conn:
             fetched = conn.execute(
@@ -339,7 +432,7 @@ def readBatteryHealthVerdict(
             ).fetchall()
     except Exception as exc:  # noqa: BLE001 -- unreadable log -> honest unknown
         logger.debug("battery-health verdict read failed (%s) -- unknown", exc)
-        return _UNKNOWN_NO_DATA
+        return _unknown(REASON_LOG_UNREADABLE)
 
     rows = [
         {

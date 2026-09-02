@@ -33,6 +33,14 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-05-03    | Rex          | Initial implementation (Sprint 23 US-277)
+# 2026-09-01    | Rex (US-646) | The .timer is RETIRED.  Every assertion that
+#                                required it to be installed + enabled is
+#                                INVERTED rather than deleted: the same
+#                                guarantees, pointed the other way, so the
+#                                retirement cannot silently regress.  The
+#                                install/idempotency/ownership assertions are
+#                                untouched -- US-646 changed the run model, not
+#                                the install posture.
 # ================================================================================
 ################################################################################
 
@@ -50,6 +58,8 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 DEPLOY_SCRIPT = REPO_ROOT / "deploy" / "deploy-pi.sh"
 DRAIN_SERVICE = REPO_ROOT / "deploy" / "drain-forensics.service"
+# US-646: retired.  The path is kept only so the absence can be asserted --
+# tests/test_drain_forensics_daemon.py owns that pin.
 DRAIN_TIMER = REPO_ROOT / "deploy" / "drain-forensics.timer"
 
 PI_PATH_LITERAL = "/home/mcornelison/Projects/Eclipse-01"
@@ -148,16 +158,32 @@ class TestDeployPiShDrainForensicsStep:
             "step_install_eclipse_obd_unit in the dispatch body."
         )
 
-    def test_functionInstallsBothUnitFiles(self, deployScriptText: str):
-        """Function body references both .service AND .timer source paths."""
+    def test_functionInstallsTheServiceUnit(self, deployScriptText: str):
+        """Function body references the .service source path.
+
+        US-646: it used to reference a .timer source path too.  The timer is
+        deleted; the step now only *tears it down*, which
+        test_functionRetiresTheOldTimer below asserts.
+        """
         # Slice the function body: from the declaration to the next top-level
         # function or section break.
         body = self._extractFunctionBody(deployScriptText)
         assert "drain-forensics.service" in body, (
             "Function does not reference drain-forensics.service"
         )
-        assert "drain-forensics.timer" in body, (
-            "Function does not reference drain-forensics.timer"
+
+    def test_functionInstallsNoTimerUnit(self, deployScriptText: str):
+        """US-646: the step must not install a .timer -- there is none to install.
+
+        Inverted from the original US-277 assertion.  An `install -m 644` of a
+        drain-forensics.timer would mean the 5s spawn is back.
+        """
+        body = self._extractFunctionBody(deployScriptText)
+        assert not re.search(
+            r"install -m 644[^\n]*drain-forensics\.timer", body,
+        ), (
+            "the deploy step installs a drain-forensics.timer again -- that "
+            "unit is the every-5s process spawn US-646 removed."
         )
 
     def test_functionProvisionsBothRuntimeDirs(self, deployScriptText: str):
@@ -199,15 +225,47 @@ class TestDeployPiShDrainForensicsStep:
         )
 
     def test_functionRunsDaemonReloadAndEnable(self, deployScriptText: str):
-        """daemon-reload + enable --now drain-forensics.timer present."""
-        body = self._extractFunctionBody(deployScriptText)
+        """daemon-reload + enable of the SERVICE present.
+
+        US-646 moved the install hook from the .timer onto the .service: the
+        logger is now a resident daemon and is its own boot unit.
+
+        Remote block, comments stripped -- see :meth:`_extractRemoteBlock`.
+        """
+        body = self._extractRemoteBlock(deployScriptText)
         assert "daemon-reload" in body, (
             "Function does not call systemctl daemon-reload"
         )
-        assert "enable --now drain-forensics.timer" in body, (
-            "Function does not call `systemctl enable --now drain-forensics.timer` "
-            "(without this the timer is installed but inactive)"
+        assert re.search(
+            r"systemctl enable[^\n]*drain-forensics\.service", body,
+        ), (
+            "Function does not enable drain-forensics.service (without this "
+            "the daemon is installed but does not start at boot)"
         )
+
+    def test_functionRetiresTheOldTimer(self, deployScriptText: str):
+        """US-646: the step must actively tear down the pre-US-646 timer.
+
+        Deleting deploy/drain-forensics.timer stops it SHIPPING; it does not
+        stop the copy already enabled in /etc/systemd/system on a Pi deployed
+        before this change, which keeps firing every 5s.  rsync only adds and
+        updates -- it never removes -- so the teardown has to be explicit.
+
+        Asserted against the REMOTE block with comments stripped, not the raw
+        function body.  The step also *narrates* the retirement twice -- in a
+        comment block and in a ``DRY-RUN would: ...`` echo -- and both read
+        exactly like doing it.  Measured: with the real ``systemctl disable``
+        and ``rm -f`` deleted, the raw-body version of this assertion stayed
+        green.  A deploy that announces a retirement it never performs leaves
+        the Pi spawning every 5s, which is the whole defect.
+        """
+        body = self._extractRemoteBlock(deployScriptText)
+        assert re.search(
+            r"systemctl disable[^\n]*drain-forensics\.timer", body,
+        ), "the deploy step never disables the old drain-forensics.timer"
+        assert re.search(
+            r"rm -f[^\n]*/etc/systemd/system/drain-forensics\.timer", body,
+        ), "the deploy step never removes the installed drain-forensics.timer"
 
     def test_runtimeDirsOwnedByMcornelison(self, deployScriptText: str):
         """Both runtime dirs are mcornelison-owned (US-276 writer requirement).
@@ -251,6 +309,28 @@ class TestDeployPiShDrainForensicsStep:
         if endMatch:
             body = body[:endMatch.start()]
         return body
+
+    @classmethod
+    def _extractRemoteBlock(cls, scriptText: str) -> str:
+        """The step body from ``remote "`` onwards, with comment lines dropped.
+
+        US-646.  Use this for any assertion about what the deploy DOES on the
+        Pi.  The raw function body also contains prose comments and
+        ``DRY-RUN would: <the same command>`` echoes, so a naive search
+        matches text that performs nothing -- measured, and it let a deleted
+        ``rm -f`` pass.  Use :meth:`_extractFunctionBody` for the install
+        posture and for ABSENCE claims, which are only stronger over more text.
+        """
+        body = cls._extractFunctionBody(scriptText)
+        remoteMatch = re.search(r"^\s*remote \"", body, re.MULTILINE)
+        assert remoteMatch, (
+            "step_install_drain_forensics_unit has no `remote \"` block"
+        )
+        return "\n".join(
+            line
+            for line in body[remoteMatch.end():].splitlines()
+            if not line.strip().startswith("#")
+        )
 
 
 # ----------------------------------------------------------------------------
@@ -300,15 +380,31 @@ class TestDeployPiShDryRunAnnouncesNewStep:
             "/etc/systemd/system/drain-forensics.service" in dryRunOutput
         ), "Dry-run does not announce drain-forensics.service install target"
 
-    def test_dryRunAnnouncesTimerInstall(self, dryRunOutput: str):
-        assert (
-            "/etc/systemd/system/drain-forensics.timer" in dryRunOutput
-        ), "Dry-run does not announce drain-forensics.timer install target"
+    def test_dryRunAnnouncesTimerRetirement(self, dryRunOutput: str):
+        """US-646, inverted from the old install announcement.
 
-    def test_dryRunAnnouncesTimerEnable(self, dryRunOutput: str):
+        The operator reading a --dry-run before a real deploy must be able to
+        see that the old 5s timer is about to be torn down -- that is the
+        migration step, and a silent one would be indistinguishable from a
+        deploy that forgot it.
+        """
         assert (
-            "systemctl enable --now drain-forensics.timer" in dryRunOutput
-        ), "Dry-run does not announce timer enable --now"
+            "rm -f /etc/systemd/system/drain-forensics.timer" in dryRunOutput
+        ), "Dry-run does not announce the drain-forensics.timer removal"
+        assert (
+            "systemctl disable --now drain-forensics.timer" in dryRunOutput
+        ), "Dry-run does not announce the drain-forensics.timer disable"
+
+    def test_dryRunAnnouncesServiceEnable(self, dryRunOutput: str):
+        assert (
+            "systemctl enable drain-forensics.service" in dryRunOutput
+        ), "Dry-run does not announce the drain-forensics.service enable"
+
+    def test_dryRunDoesNotAnnounceATimerEnable(self, dryRunOutput: str):
+        """The exact line US-277 shipped, asserted gone."""
+        assert (
+            "systemctl enable --now drain-forensics.timer" not in dryRunOutput
+        ), "Dry-run still enables the retired drain-forensics.timer"
 
     def test_dryRunDoesNotCallRealSsh(self, dryRunOutput: str):
         """No real SSH attempts during dry-run (offline-safe contract)."""
