@@ -39,7 +39,6 @@ _BASE: dict = {
     "syncRows": 0,
     "syncPending": 0,
     "syncStale": False,
-    "powerMode": "car",
     "powerSource": "external",
     "driveState": "idle",
     "driveId": None,

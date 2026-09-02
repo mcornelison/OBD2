@@ -275,7 +275,7 @@
     "pollingTiers": {
       "tier1": {
         "cycleInterval": 1,
-        "description": "Safety-critical â€” every cycle (~1 Hz)",
+        "description": "Safety-critical \u00e2\u20ac\u201d every cycle (~1 Hz)",
         "parameters": [
           {
             "name": "COOLANT_TEMP",
@@ -300,13 +300,13 @@
           {
             "name": "FUEL_SYSTEM_STATUS",
             "pid": "0x03",
-            "caveat": "US-199: Spool priority 1 â€” trims only valid when status='CL'"
+            "caveat": "US-199: Spool priority 1 \u00e2\u20ac\u201d trims only valid when status='CL'"
           }
         ]
       },
       "tier2": {
         "cycleInterval": 3,
-        "description": "Driving context â€” every 3 cycles (~0.3 Hz)",
+        "description": "Driving context \u00e2\u20ac\u201d every 3 cycles (~0.3 Hz)",
         "parameters": [
           {
             "name": "THROTTLE_POS",
@@ -319,12 +319,12 @@
           {
             "name": "MIL_ON",
             "pid": "0x01",
-            "caveat": "US-199: Mode 01 PID 0x01 bit 7 â€” malfunction indicator lamp"
+            "caveat": "US-199: Mode 01 PID 0x01 bit 7 \u00e2\u20ac\u201d malfunction indicator lamp"
           },
           {
             "name": "DTC_COUNT",
             "pid": "0x01",
-            "caveat": "US-199: Mode 01 PID 0x01 bits 0-6 â€” same PID as MIL_ON; K-line cost absorbed by python-obd response cache"
+            "caveat": "US-199: Mode 01 PID 0x01 bits 0-6 \u00e2\u20ac\u201d same PID as MIL_ON; K-line cost absorbed by python-obd response cache"
           },
           {
             "name": "O2_B1S2",
@@ -335,7 +335,7 @@
       },
       "tier3": {
         "cycleInterval": 10,
-        "description": "Trend analysis â€” every 10 cycles (~0.1 Hz)",
+        "description": "Trend analysis \u00e2\u20ac\u201d every 10 cycles (~0.1 Hz)",
         "parameters": [
           {
             "name": "LONG_FUEL_TRIM_1",
@@ -352,33 +352,33 @@
           {
             "name": "RUNTIME_SEC",
             "pid": "0x1F",
-            "caveat": "US-199: uint16 rollover at ~18hr (non-issue); Spool priority 4 â€” anchors rows to drive time"
+            "caveat": "US-199: uint16 rollover at ~18hr (non-issue); Spool priority 4 \u00e2\u20ac\u201d anchors rows to drive time"
           },
           {
             "name": "BATTERY_V",
             "pid": "ELM_VOLTAGE",
-            "caveat": "US-199: ADAPTER-LEVEL ATRV (NOT a Mode 01 PID). PID 0x42 confirmed unsupported on 2G Session 23 â€” this is the voltage path."
+            "caveat": "US-199: ADAPTER-LEVEL ATRV (NOT a Mode 01 PID). PID 0x42 confirmed unsupported on 2G Session 23 \u00e2\u20ac\u201d this is the voltage path."
           }
         ]
       },
       "tier4": {
         "cycleInterval": 30,
-        "description": "Background monitoring â€” every 30 cycles (~0.03 Hz)",
+        "description": "Background monitoring \u00e2\u20ac\u201d every 30 cycles (~0.03 Hz)",
         "parameters": [
           {
             "name": "CONTROL_MODULE_VOLTAGE",
             "pid": "0x42",
-            "caveat": "Session 23 confirmed UNSUPPORTED on 2G â€” kept for probe-matrix documentation; US-199 added BATTERY_V as the real voltage source via ELM_VOLTAGE"
+            "caveat": "Session 23 confirmed UNSUPPORTED on 2G \u00e2\u20ac\u201d kept for probe-matrix documentation; US-199 added BATTERY_V as the real voltage source via ELM_VOLTAGE"
           },
           {
             "name": "INTAKE_PRESSURE",
             "pid": "0x0B",
-            "caveat": "PID 0x0B is MDP (EGR only) on 2G Eclipse, NOT true manifold pressure â€” cannot be used for boost measurement"
+            "caveat": "PID 0x0B is MDP (EGR only) on 2G Eclipse, NOT true manifold pressure \u00e2\u20ac\u201d cannot be used for boost measurement"
           },
           {
             "name": "BAROMETRIC_KPA",
             "pid": "0x33",
-            "caveat": "US-199: Spool priority 5 â€” near-static during a drive; tier4 captures slow weather drift"
+            "caveat": "US-199: Spool priority 5 \u00e2\u20ac\u201d near-static during a drive; tier4 captures slow weather drift"
           }
         ]
       }
@@ -477,11 +477,31 @@
     "gear": {
       "enabled": true,
       "bands": [
-        { "gear": 5, "ratioMin": 0.0, "ratioMax": 29.5 },
-        { "gear": 4, "ratioMin": 29.5, "ratioMax": 37.8 },
-        { "gear": 3, "ratioMin": 37.8, "ratioMax": 54.3 },
-        { "gear": 2, "ratioMin": 54.3, "ratioMax": 86.7 },
-        { "gear": 1, "ratioMin": 86.7, "ratioMax": 999.0 }
+        {
+          "gear": 5,
+          "ratioMin": 0.0,
+          "ratioMax": 29.5
+        },
+        {
+          "gear": 4,
+          "ratioMin": 29.5,
+          "ratioMax": 37.8
+        },
+        {
+          "gear": 3,
+          "ratioMin": 37.8,
+          "ratioMax": 54.3
+        },
+        {
+          "gear": 2,
+          "ratioMin": 54.3,
+          "ratioMax": 86.7
+        },
+        {
+          "gear": 1,
+          "ratioMin": 86.7,
+          "ratioMax": 999.0
+        }
       ],
       "minSpeedKph": 5.0,
       "minRpm": 900,
@@ -613,7 +633,6 @@
       }
     },
     "power": {
-      "mode": "unknown",
       "power_monitor": {
         "enabled": true
       }

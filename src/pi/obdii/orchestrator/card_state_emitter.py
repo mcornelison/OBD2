@@ -157,7 +157,6 @@ class CardStateEmitterMixin:
     _systemStatusEmitter: Any | None
     _batteryHealthEmitter: Any | None
     _dtcEmitter: Any | None
-    _cardPowerModeProvider: Any | None
     # US-533: config.json's path, when the composer knows it. A CLASS default of
     # None (rather than a getattr) so every composer -- including the standalone
     # ones that never had a path -- keeps working while the orchestrator sets a
@@ -216,7 +215,6 @@ class CardStateEmitterMixin:
             "severityTablePath", _DEFAULT_SEVERITY_TABLE_PATH
         )
         try:
-            from pi.power.power_mode_provider import PowerModeProvider
             from pi.splash.battery_health_emitter import makeBatteryHealthEmitter
             from pi.splash.dtc_emitter import makeDtcEmitter
             from pi.splash.dtc_severity_table import loadP1xxxSeverityTable
@@ -243,21 +241,6 @@ class CardStateEmitterMixin:
             self._dtcEmitter = makeDtcEmitter(
                 statesDir, severityTable=severityTable
             )
-            # Deployment-context provider (car/wall/unknown) for the power tile.
-            #
-            # US-533: prefer the LIVE source when we know where config.json is.
-            # fromConfig() closes over the boot-time snapshot, so an operator
-            # switching the F-126 power-mode control saw nothing change until
-            # this service restarted -- and the band now labels that row
-            # "applies now", which is only true because of this branch.
-            # No path (standalone composers) -> the US-421 snapshot source:
-            # degrade to stale, never to no power tile at all.
-            if self._configPath:
-                self._cardPowerModeProvider = PowerModeProvider.fromConfigPath(
-                    self._configPath
-                )
-            else:
-                self._cardPowerModeProvider = PowerModeProvider.fromConfig(self._config)
             # AC5: write an HONEST initial `dtc` state at boot so a parked-from-
             # boot Pi (no KOEO read yet) renders "DTC not read since key-off"
             # instead of starving -- kills the phantom-Check-Engine backdrop.
@@ -275,7 +258,6 @@ class CardStateEmitterMixin:
             self._systemStatusEmitter = None
             self._batteryHealthEmitter = None
             self._dtcEmitter = None
-            self._cardPowerModeProvider = None
 
     # -------------------------------------------------------- derived gear
     #
@@ -504,7 +486,7 @@ class CardStateEmitterMixin:
             return
 
         obdLinkState, obdRetries, obdAvailable, obdReason = self._gatherObdLinkState()
-        powerMode, powerSource, powerSourceReason = self._gatherPowerState()
+        powerSource, powerSourceReason = self._gatherPowerState()
         driveState, driveId = self._gatherDriveState()
         emitter(
             obdLinkState=obdLinkState,
@@ -522,7 +504,6 @@ class CardStateEmitterMixin:
             # stale-while-driving amber flag the emitter derives from
             # syncLastOkTs. (TD: acquire a real pending count.)
             syncPending=None,
-            powerMode=powerMode,
             powerSource=powerSource,
             # US-628: the typed reason travels WITH the unresolved source, so
             # the state file distinguishes "no acquisition path" from "the line
@@ -593,36 +574,29 @@ class CardStateEmitterMixin:
         available = totalConns > 0
         return (OBD_DOWN, retries, available, None if available else REASON_OBD_OFF)
 
-    def _gatherPowerState(self) -> tuple[str, str, str | None]:
-        """Return (powerMode, powerSource, powerSourceReason) from the SSOTs.
+    def _gatherPowerState(self) -> tuple[str, str | None]:
+        """Return (powerSource, powerSourceReason) from the power-source SSOT.
 
-        Two different facts, two different providers (architecture.md §2):
-        powerMode = deployment context (car/wall/unknown) from PowerModeProvider
-        (static config); powerSource = AC-vs-battery from PowerSourceProvider
-        (X1209 GPIO6 PLD). Neither is ever inferred from the other.
+        US-668 (CIO 2026-09-02): the operator-declared ``powerMode``
+        (car/wall/unknown) is GONE, and with it PowerModeProvider. It was a fact
+        the operator typed into Settings so that this card could display it back
+        to them; verified before removal, ``card_state_emitter`` was its ONLY
+        consumer and no shutdown or lifecycle policy branched on it. The CIO's
+        argument is the shorter one: *if you can see the screen, the power is on*
+        -- car versus wall changed nothing anybody or anything acted on.
 
-        The third element is the US-628 typed reason for an UNRESOLVED source,
-        and it is returned from this ONE call rather than from a second
-        ``_gatherPowerSourceReason()`` on purpose: two reads of a GPIO line can
-        disagree, and a reason that describes a different read than the value
-        beside it is worse than no reason at all. One acquisition, one answer
-        (ssot-design-pattern rule B).
+        ``powerSource`` STAYS, and the distinction is the point of this story.
+        It is SENSED, not declared, and it answers the one power question the
+        display cannot answer by existing: am I on external power, or on the UPS
+        battery? During the 2026-08-31 UPS test the panel stayed lit for the
+        whole time the Pi ran on battery toward a graceful poweroff.
 
-        There is deliberately NO counterpart reason for an unknown ``mode``.
-        PowerModeProvider owns that vocabulary and collapses its causes inside
-        ``getPowerMode()``; inventing a second account of the same absence out
-        here is the rule-B violation this story's SSOT clause names by hand.
+        The reason is returned from this ONE call rather than from a second
+        ``_gatherPowerSourceReason()`` on purpose: two reads can disagree, and a
+        reason describing a different read than the value beside it is worse
+        than no reason at all. One acquisition, one answer (rule B).
         """
-        powerMode = "unknown"
-        provider = self._cardPowerModeProvider
-        if provider is not None:
-            try:
-                powerMode = str(provider.getPowerMode())
-            except Exception:  # noqa: BLE001 -- honest unknown on read failure
-                powerMode = "unknown"
-
-        source, reason = self._gatherPowerSource()
-        return (powerMode, source, reason)
+        return self._gatherPowerSource()
 
     def _gatherPowerSource(self) -> tuple[str, str | None]:
         """Return external/battery/unknown from the power-source SSOT (US-502).
@@ -752,7 +726,7 @@ class CardStateEmitterMixin:
             return
 
         crateF = float(crate) if crate is not None else None
-        _, powerSource, _ = self._gatherPowerState()
+        powerSource, _ = self._gatherPowerState()
         onExternal = powerSource == "external"
         charging = crateF is not None and crateF > 0
         # draining = wall power lost AND the pack is actually discharging (A-6

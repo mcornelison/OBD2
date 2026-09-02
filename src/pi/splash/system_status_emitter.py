@@ -131,7 +131,6 @@ def buildSystemStatusState(
     syncRows: int,
     syncPending: int | None,
     syncStale: bool,
-    powerMode: str,
     powerSource: str,
     driveState: str,
     driveId: int | None,
@@ -162,7 +161,6 @@ def buildSystemStatusState(
             all-clear is the exact defect class this project keeps finding.
         syncStale: Whether the last sync is stale-while-driving (caller policy;
             see ``isSyncStaleWhileDriving``). The display renders amber when True.
-        powerMode: ``car`` (in-car) or ``wall`` (bench/debug).
         powerSource: ``external`` (USB/car) or ``battery`` (running on the UPS),
             or ``unknown`` when the line could not be resolved.
         powerSourceReason: The US-628 typed reason for an UNRESOLVED source
@@ -230,8 +228,12 @@ def buildSystemStatusState(
             "pending": syncPending,
             "stale": syncStale,
         },
+        # US-668 (CIO 2026-09-02): the operator-declared `mode` (car/wall) is
+        # GONE. It was a fact the operator typed in so the screen could show it
+        # back to them, and nothing else read it. `source` stays because it is
+        # SENSED and answers the one power question the display cannot answer by
+        # existing: am I on external power, or on the UPS battery?
         "power": {
-            "mode": powerMode,
             "source": powerSource,
             "reasons": powerReasons,
         },
@@ -345,7 +347,6 @@ def makeSystemStatusEmitter(
         syncLastOkTs: str | None,
         syncRows: int,
         syncPending: int | None,
-        powerMode: str,
         powerSource: str,
         driveState: str,
         driveId: int | None,
@@ -367,7 +368,6 @@ def makeSystemStatusEmitter(
                 syncRows=syncRows,
                 syncPending=syncPending,
                 syncStale=syncStale,
-                powerMode=powerMode,
                 powerSource=powerSource,
                 powerSourceReason=powerSourceReason,
                 driveState=driveState,

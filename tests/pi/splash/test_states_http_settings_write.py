@@ -45,7 +45,9 @@ from pi.splash.states_http_server import StatesHttpServer
 _TOKEN = "test-token-abcdefghijklmnopqrstuvwxyz123456"
 _SETTINGS_PATH = "/settings"
 _AUTO_ROTATE_KEY = "pi.display.carousel.autoRotateS"
-_POWER_KEY = "pi.power.mode"
+# US-668: was the power-mode key. These tests are about the SETTINGS WRITE
+# GATE, not about power; re-pointed at a surviving allow-listed key.
+_CALIB_KEY = "pi.calibration.mode"
 
 # Shipped defaults chosen to DIFFER from every value the tests write, so no
 # assertion can pass by coincidentally matching the fallback (US-530 lesson).
@@ -53,7 +55,7 @@ _BASE_CONFIG = {
     "deviceId": "test-pi",
     "pi": {
         "display": {"carousel": {"autoRotateS": 8}},
-        "power": {"mode": "car"},
+        "calibration": {"mode": False},
         "alerts": {"audioAlerts": False},
         "calibration": {"mode": False},
         "analysis": {"triggerAfterDrive": False},
@@ -65,7 +67,7 @@ _BASE_CONFIG = {
 # here rather than silently leaving a new writable key untested.
 _VALID_VALUES = {
     _AUTO_ROTATE_KEY: 0,
-    _POWER_KEY: "wall",
+    _CALIB_KEY: True,
     "pi.calibration.mode": True,
     "pi.analysis.triggerAfterDrive": True,
 }
@@ -246,7 +248,7 @@ def test_settingsWrite_outOfAllowListKey_doesNotCorruptExistingOverlay(
     Then: the existing overlay is byte-identical -- a rejection must not
           rewrite the file as a side effect of loading it
     """
-    _postSetting(server, _POWER_KEY, "wall")
+    _postSetting(server, _CALIB_KEY, True)
     before = overlayFile.read_bytes()
 
     with pytest.raises(urllib.error.HTTPError):
@@ -289,7 +291,7 @@ def test_settingsWrite_invalidPowerMode_rejected_noWrite(server, overlayFile):
           than stored and quietly coerced later
     """
     with pytest.raises(urllib.error.HTTPError) as exc:
-        _postSetting(server, _POWER_KEY, "garage")
+        _postSetting(server, _CALIB_KEY, "garage")
 
     assert 400 <= exc.value.code < 500
     assert not overlayFile.exists()
@@ -363,7 +365,7 @@ def test_settingsWrite_nonObjectBody_400_noWrite(server, overlayFile):
     Then: 400 with no write
     """
     with pytest.raises(urllib.error.HTTPError) as exc:
-        _post(server, _SETTINGS_PATH, ["pi.power.mode", "wall"], token=_TOKEN)
+        _post(server, _SETTINGS_PATH, ["pi.calibration.mode", True], token=_TOKEN)
 
     assert exc.value.code == 400
     assert not overlayFile.exists()
@@ -428,11 +430,11 @@ def test_settingsWrite_storedButUnresolvable_reportsNullNotTheRequest(tmp_path):
           an echoing endpoint would pass every other test here
     """
     configPath = tmp_path / "config.json"
-    configPath.write_text(json.dumps({"pi": {"power": "car"}}), encoding="utf-8")
+    configPath.write_text(json.dumps({"pi": {"calibration": "car"}}), encoding="utf-8")
     srv = _makeServer(tmp_path, str(configPath))
     thread = _start(srv)
     try:
-        body = _bodyOf(_postSetting(srv, _POWER_KEY, "wall"))
+        body = _bodyOf(_postSetting(srv, _CALIB_KEY, True))
     finally:
         srv.shutdown()
         thread.join(timeout=5)
@@ -466,11 +468,11 @@ def test_settingsWrite_secondWrite_preservesTheFirst(server, overlayFile):
     Then: BOTH survive -- each save merges, so toggling one control cannot
           silently reset another
     """
-    _postSetting(server, _POWER_KEY, "wall")
+    _postSetting(server, _CALIB_KEY, True)
     _postSetting(server, _AUTO_ROTATE_KEY, 0)
 
     stored = json.loads(overlayFile.read_text(encoding="utf-8"))
-    assert stored[_POWER_KEY] == "wall"
+    assert stored[_CALIB_KEY] is True
     assert stored[_AUTO_ROTATE_KEY] == 0
 
 
@@ -494,7 +496,7 @@ def test_settingsWrite_neverWritesConfigJson(server, configFile):
     """
     before = configFile.read_bytes()
 
-    _postSetting(server, _POWER_KEY, "wall")
+    _postSetting(server, _CALIB_KEY, True)
 
     assert configFile.read_bytes() == before
 
@@ -507,7 +509,7 @@ def test_settingsWrite_writesOverlayBesideConfigJson(server, configFile, overlay
           else would put operator settings outside the rsync exclude and they
           would be destroyed by the next deploy
     """
-    _postSetting(server, _POWER_KEY, "wall")
+    _postSetting(server, _CALIB_KEY, True)
 
     assert overlayFile.parent == configFile.parent
     assert overlayFile.exists()

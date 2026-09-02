@@ -44,7 +44,7 @@ from src.pi.splash.system_status_emitter import buildSystemStatusState, deriveWi
 _BASE = dict(
     obdLinkState="down", obdRetries=0, obdLastSeenS=None,
     syncLastOkTs=None, syncRows=0, syncPending=None, syncStale=False,
-    powerMode="wall", powerSource="unknown",
+    powerSource="unknown",
     driveState="idle", driveId=None, nowIso="2026-08-28T00:00:00Z",
 )
 

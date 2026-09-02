@@ -1532,9 +1532,11 @@
   // (2026-08-08): the server resolves pi.display.carousel PER REQUEST, so the
   // new period lands on the next page load -- which this band triggers itself.
   //
-  // POWER MODE is "live": the card-state emitter's PowerModeProvider re-reads
-  // the effective key on every cycle (OverlayConfigPowerModeSource), so the
-  // power tile follows within one emit interval.
+  // POWER MODE was removed by US-668 (CIO, 2026-09-02): "if I can see the
+  // screen then the power is on, it doesn't matter if it is car or wall, it is
+  // on." It was an operator-declared fact whose only consumer was the card that
+  // displayed it back to the operator -- nothing branched on it. The SENSED
+  // power source stays; that one the display cannot tell you by existing.
   //
   // CALIBRATION / AUTO-ANALYZE are "capture-restart": both are read ONCE into a
   // constructor at orchestrator start, so "live" would be a lie -- and the bare
@@ -1544,17 +1546,11 @@
   var SETTINGS_SPECS = [
     { key: "pi.display.carousel.autoRotateS", label: "Auto-rotate",
       kind: "seconds", apply: "reload" },
-    { key: "pi.power.mode", label: "Power mode", kind: "mode", apply: "live" },
     { key: "pi.calibration.mode", label: "Calibration mode",
       kind: "bool", apply: "capture-restart" },
     { key: "pi.analysis.triggerAfterDrive", label: "Auto-analyze after drive",
       kind: "bool", apply: "capture-restart" },
   ];
-
-  // Mirrors common.config.overlay.POWER_MODES. `unknown` is a LEGAL stored value
-  // (the honest "no deployment context"), not an error state -- which is why the
-  // row view keeps it distinct from "we could not read a value at all".
-  var SETTINGS_POWER_MODES = ["car", "wall", "unknown"];
 
   var SETTINGS_PENDING_NOTE = "saving…";
 
@@ -1563,10 +1559,6 @@
   // the save was accepted, short enough that the reload reads as part of the
   // same tap rather than as the panel spontaneously restarting.
   var SETTINGS_RELOAD_DELAY_MS = 700;
-
-  function settingsModeChoices() {
-    return SETTINGS_POWER_MODES.slice();
-  }
 
   function settingsPendingNote() {
     return SETTINGS_PENDING_NOTE;
@@ -1655,13 +1647,6 @@
         on = value;
         display = on ? "On" : "Off";
       }
-    } else if (kind === "mode") {
-      known =
-        typeof value === "string" && SETTINGS_POWER_MODES.indexOf(value) !== -1;
-      if (known) {
-        mode = value;
-        display = value.toUpperCase();
-      }
     }
     return {
       key: spec ? spec.key : null,
@@ -1693,9 +1678,6 @@
     if (!spec) return null;
     if (spec.kind === "seconds") {
       return desired ? CAROUSEL_DEFAULTS.autoRotateS : 0;
-    }
-    if (spec.kind === "mode") {
-      return SETTINGS_POWER_MODES.indexOf(desired) !== -1 ? desired : "unknown";
     }
     return !!desired;
   }
@@ -3424,7 +3406,6 @@
     settingsSpecs: settingsSpecs,
     settingsApplyStates: settingsApplyStates,
     settingsReloadNeeded: settingsReloadNeeded,
-    settingsModeChoices: settingsModeChoices,
     settingsChoices: settingsChoices,
     settingsRowView: settingsRowView,
     settingsChoiceActive: settingsChoiceActive,

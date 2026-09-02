@@ -41,7 +41,6 @@ def _state(**overrides):
         "syncRows": 120,
         "syncPending": None,
         "syncStale": False,
-        "powerMode": "car",
         "powerSource": "external",
         "driveState": "idle",
         "driveId": None,

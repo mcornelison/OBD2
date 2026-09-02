@@ -309,10 +309,8 @@ class ApplicationOrchestrator(  # type: ignore[misc]
         )
         self._lastSyncOkTsIso: str | None = None
         self._lastSyncRows: int = 0
-        # Cached PowerModeProvider (deployment context car/wall/unknown SSOT)
         # for the system-status power tile; built once in
         # _initializeCardStateEmitters.  None on the bench / when disabled.
-        self._cardPowerModeProvider: Any | None = None
 
         # Backup scheduling state
         self._backupScheduleTimer: threading.Timer | None = None
