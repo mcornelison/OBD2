@@ -292,3 +292,74 @@ def test_migration_ddl_does_not_default_the_certainty_column() -> None:
     assert 'event_date_certainty VARCHAR(16) NOT NULL DEFAULT' not in (
         CREATE_MAINTENANCE_LOG_DDL
     )
+
+
+# ---- The emit-SQL path (ARCH-020, 2026-09-02) --------------------------------
+#
+# The loader's original only write path was create_engine(resolveSyncDatabaseUrl()),
+# and that URL is '...@localhost/obd2db' -- so it works ONLY when run ON the
+# server. From a dev box it connects to the wrong machine entirely. That made the
+# one-time load depend on the branch being merged AND deployed first, which is a
+# dependency the load does not actually have. Emitting SQL removes it: the rows
+# are validated locally and travel over the same ssh transport the migration
+# runner already uses.
+
+
+def test_emit_sql_produces_one_insert_per_seed_event() -> None:
+    from scripts.load_maintenance_seed import emitSeedSql
+    from src.server.data.maintenance_seed import loadSeedEvents
+
+    sql = emitSeedSql()
+
+    assert sql.count('INSERT INTO maintenance_log') == len(loadSeedEvents())
+
+
+def test_emit_sql_is_idempotent_by_construction() -> None:
+    """Re-running the emitted script must not duplicate the record.
+
+    The guard has to live in the SQL itself, because once the script leaves this
+    machine nothing here controls how often it is piped.
+    """
+    from scripts.load_maintenance_seed import emitSeedSql
+
+    sql = emitSeedSql()
+
+    assert 'WHERE NOT EXISTS' in sql
+
+
+def test_emit_sql_escapes_apostrophes_in_free_text() -> None:
+    """Real rows contain "Peter's Highline Automotive".
+
+    An unescaped apostrophe does not merely fail -- mid-script it can terminate a
+    string early and change what the REST of the statement means.
+    """
+    from scripts.load_maintenance_seed import emitSeedSql
+
+    sql = emitSeedSql()
+
+    assert "Peter''s Highline" in sql
+    assert "Peter's Highline" not in sql.replace("Peter''s Highline", '')
+
+
+def test_emit_sql_wraps_the_load_in_one_transaction() -> None:
+    """48 rows land together or not at all."""
+    from scripts.load_maintenance_seed import emitSeedSql
+
+    sql = emitSeedSql()
+
+    # Asserted as an ORDERING, not as the first byte of the file: the header
+    # comments explain what the script does and are worth keeping. The invariant
+    # is that no INSERT sits outside the transaction.
+    assert 'START TRANSACTION;' in sql
+    assert sql.index('START TRANSACTION;') < sql.index('INSERT INTO')
+    assert sql.rindex('INSERT INTO') < sql.rindex('COMMIT;')
+    assert sql.strip().endswith('COMMIT;')
+
+
+def test_emit_sql_carries_the_certainty_column() -> None:
+    from scripts.load_maintenance_seed import emitSeedSql
+
+    sql = emitSeedSql()
+
+    assert 'event_date_certainty' in sql
+    assert "'estimated'" in sql

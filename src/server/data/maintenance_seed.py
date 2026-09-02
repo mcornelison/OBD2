@@ -58,6 +58,7 @@ from src.server.db.models import (
 )
 
 __all__ = [
+    'RECORDED_BY',
     'SEED_PATH',
     'SeedError',
     'loadSeedDocument',
