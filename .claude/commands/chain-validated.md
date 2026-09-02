@@ -205,7 +205,7 @@ patch version (last patch sprint validated on dev).
 Update Current State to "V0.27 chain merged to main; new stable V0.27.X; next
 chain V0.28 grooming begins".
 
-### 6b -- projectManager.md
+### 6b -- offices/pm/CLAUDE.md (the PM record; `projectManager.md` was RENAMED here in the v2->v3 migration)
 
 Last Updated header + Current Phase + Session entry noting the chain merge.
 
@@ -226,8 +226,14 @@ Stage + commit + push the PM artifacts on main:
 
 > **Post-eviction:** the `offices/` artifacts below live on the fleet share and
 > are NOT version controlled -- they cannot be staged. Only repo files are
-> committed here; the share's durability comes from snapshots. Edits to
-> `$FLEET_SHARE/pm/*` need no git step at all.
+> committed here. Edits to `$FLEET_SHARE/pm/*` need no git step at all.
+>
+> 🔴 **CORRECTED 2026-09-02: the share's durability does NOT come from snapshots.
+> THERE ARE NO SNAPSHOTS AND THERE CANNOT BE** -- the volume is `ext4` on RAID 5 and
+> Synology Snapshot Replication requires Btrfs. No snapshot of this tree has ever been
+> taken. **Durability on the share = the backup you take yourself before the edit, plus
+> `obd2db` for anything that matters.** RAID 5 is redundancy, not backup: it mirrors a
+> bad edit faithfully and instantly.
 
 ```bash
 git add MEMORY.md

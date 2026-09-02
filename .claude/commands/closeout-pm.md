@@ -1,9 +1,20 @@
 ---
 name: closeout-pm
-description: "End-of-session ritual for Marcus (PM). Triages inbox, audits sprint contract, updates shared knowledge (MEMORY.md + projectManager.md), commits PM-side changes, pushes to sprint branch (NEVER merges mid-sprint while Ralph is working). Run at end of every PM session."
+description: "End-of-session ritual for Marcus (PM). Triages inbox, audits sprint contract, updates shared knowledge (MEMORY.md + offices/pm/CLAUDE.md), commits PM-side repo changes (NEVER merges to dev mid-sprint while Ralph is working). Run at end of every PM session."
 ---
 
 # PM Session Closeout
+
+> ## 🔴 NEVER CLEAR A SPRINT THAT HAS NOT RUN
+>
+> Two sibling commands (`/close-out-pm` in the PM office, and `/sprint-turnover`) both carried a gate
+> that read *"no story is `null`"* as **sprint complete** — which a **freshly generated sprint
+> satisfies**, because every story starts at `passes: false`. Both then truncated `sprint.json`.
+> Run at the end of Session 62, either would have destroyed the just-built Sprint 80.
+>
+> **The completeness test is `passes: true`, not "not null".** Archive with
+> `python -m tools.pm.archive_sprint_artifacts` — never by writing `{}` or an empty string. The
+> share has **no git and no snapshots**; there is no undo.
 
 End-of-session ritual for Marcus (PM). Captures the workflow refined Session 24 (2026-04-19) when CIO directed building reusable PM tooling. Replaces the older `closeout-session-pm.md` workflow.
 
@@ -70,7 +81,7 @@ Auto-loaded into every future session. **Cap: 200 lines** (truncated beyond).
 
 Update these sections:
 - **Current State** header date + session number
-- **Branch + commits** — current sprint branch, latest commit hash, count of stories complete vs pending
+- **Branch + commits** — current BENCH branch (`ralph/<TICKET>-<slug>`), latest commit hash, stories complete vs pending
 - **Mid-sprint adds** — any new stories filed this session
 - **Spool spec updates** — if any
 - **Sprint execution order** — refresh if changed
@@ -79,9 +90,13 @@ Update these sections:
 
 If new feedback memory was created this session, add a one-line entry to the "Shared Memory Index" section.
 
-If MEMORY.md grows past ~150 lines, condense closed-history sections (Sprint X details collapse to one line referencing `projectManager.md`).
+MEMORY.md is ~55 KB against a 24.4 KB single-read limit — read it with offsets, never one `cat`. When an entry outgrows one line, move the detail to a `[[linked]]` sibling in the same folder and leave the index line.
 
-### projectManager.md (`offices/pm/projectManager.md`)
+### The PM record (`offices/pm/CLAUDE.md`)
+
+🔴 **Corrected 2026-09-02: `projectManager.md` was RENAMED to `offices/pm/CLAUDE.md` in the v2 → v3 migration.** The charter IS the session record and is what a fresh PM reads at boot. Update three things: `Last Updated` (new summary first, demote the prior into `Prior: (...)`), `Current Phase`, and rewrite `Immediate Next Actions`.
+
+⚠️ The recurring bloat is the `Last Updated` HEADER, not the body — closeout prepends and it chains indefinitely. A 2026-06-05 pass cut it 11,672 → 733 chars.
 
 This is the PM-only deep-history file (1500+ lines is fine).
 
@@ -127,7 +142,7 @@ If Phase 1 added stories or reservations:
 - `$FLEET_SHARE/ralph/sprint.json` — sprint contract changes I made
 - `$FLEET_SHARE/pm/story_counter.json`
 - `$FLEET_SHARE/pm/backlog.json`
-- `$FLEET_SHARE/pm/projectManager.md`
+- `$FLEET_SHARE/pm/CLAUDE.md`
 - `tools/pm/*.py` + `README.md` — new tools / updates
 - `$FLEET_SHARE/pm/inbox/<date>-from-*-*.md` — inbox notes received this session
 - `$FLEET_SHARE/<recipient>/inbox/<date>-from-marcus-*.md` — inbox notes I sent
@@ -166,7 +181,7 @@ git -C /c/agents/OBD2v3/trunk push origin sprint/<current-sprint-branch>
 ```
 
 ### **NEVER MERGE TO MAIN MID-SPRINT**
-Ralph is working on the sprint branch. Merging to main would break his working tree. Sprint-close (separate ritual) is when merge happens.
+Ralph is working in his leased BENCH. Merging mid-sprint would break his working tree. `Invoke-FleetMerge.ps1` brings a finished bench to `dev`; `dev` → `main` is `/chain-validated` at chain end, never here.
 
 ### If any local-noise files were touched (e.g., `.claude/settings.local.json` got new auto-allows during the session)
 Leave them in working tree as-is. They've been "modified" in working tree for many sessions; they don't need to be reset.
@@ -195,7 +210,7 @@ Print a brief closeout summary:
 - <hardware tasks gating Sprint N+1>
 ```
 
-Keep it tight — CIO can read MEMORY.md / projectManager.md for detail.
+Keep it tight — the CIO can read MEMORY.md / `offices/pm/CLAUDE.md` for detail.
 
 ---
 
