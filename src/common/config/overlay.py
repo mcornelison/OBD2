@@ -40,7 +40,7 @@ Shape
 -----
 The overlay is a FLAT dot-path map::
 
-    {"pi.display.carousel.autoRotateS": 0, "pi.power.mode": "wall"}
+    {"pi.display.carousel.autoRotateS": 0, "pi.calibration.mode": true}
 
 Flat keys make the allow-list a literal key comparison, so the SAME gate runs at
 the read seam (:func:`resolveEffectiveConfig`) and at the US-531 write endpoint
@@ -52,7 +52,7 @@ Honest-instrument rules
 * Key outside the allow-list -> ignored and logged; it never writes anything,
   and it never invents a config branch that the shipped default lacks.
 * Wrong-typed value on an allow-listed key -> the shipped default stands.
-* ``pi.power.mode`` is the one COERCION: an invalid stored mode resolves to
+* (US-668 removed ``pi.power.mode``, which used to be the one COERCION here --
   ``unknown`` rather than to the shipped default, because a corrupt mode means
   we do not know the deployment context -- and a confident wrong mode (bench Pi
   reporting CAR) is worse than an honest unknown.
@@ -90,11 +90,8 @@ logger = logging.getLogger(__name__)
 # reader agree without a config key of their own -- same posture as `.env`.
 OVERLAY_FILENAME = "config.local.json"
 
-# The only deployment contexts pi.power.mode may express. `unknown` is the honest
+# (US-668: the pi.power.mode deployment-context vocabulary lived here and is gone.
 # default AND the fallback for anything unrecognised.
-POWER_MODES = ("car", "wall", "unknown")
-UNKNOWN_POWER_MODE = "unknown"
-POWER_MODE_KEY = "pi.power.mode"
 
 
 def _isNonNegativeNumber(value: Any) -> bool:
@@ -107,11 +104,6 @@ def _isNonNegativeNumber(value: Any) -> bool:
 def _isBool(value: Any) -> bool:
     """True only for a real bool -- 1 / "true" are not booleans."""
     return isinstance(value, bool)
-
-
-def _isPowerMode(value: Any) -> bool:
-    """True only for an exact member of :data:`POWER_MODES` (case-sensitive)."""
-    return isinstance(value, str) and value in POWER_MODES
 
 
 # Slice-1 overridable keys. Adding a key here is the ONLY way to make a setting
@@ -128,7 +120,6 @@ def _isPowerMode(value: Any) -> bool:
 # (US-538); re-adding the key here is step one of that story, not this one.
 _VALIDATORS = {
     "pi.display.carousel.autoRotateS": _isNonNegativeNumber,
-    POWER_MODE_KEY: _isPowerMode,
     "pi.calibration.mode": _isBool,
     "pi.analysis.triggerAfterDrive": _isBool,
 }
@@ -244,17 +235,6 @@ def resolveEffectiveConfig(
                 logger.warning("Overlay key blocked by a non-dict branch: %s", key)
             continue
 
-        if key == POWER_MODE_KEY:
-            # Honest-unknown: a corrupt mode means we do NOT know the deployment
-            # context, so report unknown rather than the shipped default.
-            logger.warning(
-                "Overlay power mode %r invalid, resolving to %s",
-                value,
-                UNKNOWN_POWER_MODE,
-            )
-            _setDotPath(effective, key, UNKNOWN_POWER_MODE)
-            continue
-
         logger.warning("Overlay value for %s is invalid, using default: %r", key, value)
 
     return effective
@@ -281,7 +261,7 @@ def getDotPath(config: dict[str, Any], key: str) -> tuple[bool, Any]:
 
     Args:
         config: Any config mapping (typically an effective config).
-        key: Dot-path key, e.g. ``pi.power.mode``.
+        key: Dot-path key, e.g. ``pi.calibration.mode``.
 
     Returns:
         ``(True, value)`` when every segment resolves, else ``(False, None)``.
@@ -302,7 +282,7 @@ def readEffectiveValue(configPath: str, key: str) -> tuple[bool, Any]:
     The honest read-back behind the US-531 settings endpoint: it reloads
     config.json AND the overlay and resolves them with
     :func:`resolveEffectiveConfig`, so what it reports is what every other
-    consumer will resolve -- including the ``pi.power.mode`` coercion. An
+    consumer will resolve. An
     endpoint that echoed its request instead would show the operator a setting
     that was never stored.
 

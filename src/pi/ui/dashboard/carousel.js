@@ -776,18 +776,27 @@
     if (!isObj(p)) {
       return { label: "POWER", value: "—", detail: "unavailable", level: "unavailable" };
     }
-    // Power-mode SSOT (US-421 / BL-014): honour car/wall exactly; anything
-    // else -- absent, stale, invalid -- is `unknown`, never a confident CAR
-    // (honest-instrument). `unknown` renders lowercase so a real known mode is
-    // visibly the confident one (CAR/WALL).
-    var mode = p.mode === "car" || p.mode === "wall" ? p.mode : "unknown";
-    var modeBadge = mode === "unknown" ? "unknown" : mode.toUpperCase();
+    // US-668: the tile now renders the SENSED SOURCE as its value.
+    //
+    // It used to render the operator-declared MODE (CAR/WALL) as the value, with
+    // the source only in the detail line. The CIO removed the mode on 2026-09-02
+    // -- "if I can see the screen then the power is on, it doesn't matter if it
+    // is car or wall, it is on" -- and he is right: the value slot was spending
+    // the tile's most prominent characters on a fact the viewer already knew by
+    // looking at the panel.
+    //
+    // What it says now is the fact the screen CANNOT tell you by being lit:
+    // external power, or running down the UPS battery. During the 2026-08-31 UPS
+    // test the panel stayed lit for the whole time the Pi ran on battery toward
+    // a graceful poweroff -- BATTERY is exactly the state a viewer cannot infer.
     if (p.source === "battery") {
-      return { label: "POWER", value: "BATTERY", detail: mode + " · on UPS", level: "amber" };
+      return { label: "POWER", value: "BATTERY", detail: "on UPS", level: "amber" };
     }
     if (p.source === "external") {
-      return { label: "POWER", value: modeBadge, detail: "external", level: "ok" };
+      return { label: "POWER", value: "EXTERNAL", detail: "wall/car power", level: "ok" };
     }
+    // Unresolved stays unavailable rather than guessing a source. US-628's typed
+    // reason travels in `reasons.source`, not here.
     return { label: "POWER", value: "—", detail: "unavailable", level: "unavailable" };
   }
 
@@ -1516,8 +1525,14 @@
   // ("applies on restart" on every row) is gone. Only states an actual consumer
   // earned appear here -- an unused entry is a label nobody has verified, and
   // the next story will reach for it as if someone had.
+  // US-668 removed `live: "applies now"`. pi.power.mode was the ONLY row that
+  // claimed it, and the claim rested on PowerModeProvider re-reading the effective
+  // value every cycle. With that setting deleted, no consumer re-reads anything
+  // per-cycle -- so keeping the label would leave a note with no row behind it,
+  // which is exactly what test_noDeadApplyStatesAreLeftInTheMapping forbids: a
+  // label nobody has checked against a consumer, waiting for the next story to
+  // reach for it as though it had been.
   var SETTINGS_APPLY_NOTES = {
-    live: "applies now",
     reload: "applies on reload",
     "capture-restart": "applies on capture restart",
   };
@@ -1532,9 +1547,11 @@
   // (2026-08-08): the server resolves pi.display.carousel PER REQUEST, so the
   // new period lands on the next page load -- which this band triggers itself.
   //
-  // POWER MODE is "live": the card-state emitter's PowerModeProvider re-reads
-  // the effective key on every cycle (OverlayConfigPowerModeSource), so the
-  // power tile follows within one emit interval.
+  // POWER MODE was removed by US-668 (CIO, 2026-09-02): "if I can see the
+  // screen then the power is on, it doesn't matter if it is car or wall, it is
+  // on." It was an operator-declared fact whose only consumer was the card that
+  // displayed it back to the operator -- nothing branched on it. The SENSED
+  // power source stays; that one the display cannot tell you by existing.
   //
   // CALIBRATION / AUTO-ANALYZE are "capture-restart": both are read ONCE into a
   // constructor at orchestrator start, so "live" would be a lie -- and the bare
@@ -1544,17 +1561,11 @@
   var SETTINGS_SPECS = [
     { key: "pi.display.carousel.autoRotateS", label: "Auto-rotate",
       kind: "seconds", apply: "reload" },
-    { key: "pi.power.mode", label: "Power mode", kind: "mode", apply: "live" },
     { key: "pi.calibration.mode", label: "Calibration mode",
       kind: "bool", apply: "capture-restart" },
     { key: "pi.analysis.triggerAfterDrive", label: "Auto-analyze after drive",
       kind: "bool", apply: "capture-restart" },
   ];
-
-  // Mirrors common.config.overlay.POWER_MODES. `unknown` is a LEGAL stored value
-  // (the honest "no deployment context"), not an error state -- which is why the
-  // row view keeps it distinct from "we could not read a value at all".
-  var SETTINGS_POWER_MODES = ["car", "wall", "unknown"];
 
   var SETTINGS_PENDING_NOTE = "saving…";
 
@@ -1563,10 +1574,6 @@
   // the save was accepted, short enough that the reload reads as part of the
   // same tap rather than as the panel spontaneously restarting.
   var SETTINGS_RELOAD_DELAY_MS = 700;
-
-  function settingsModeChoices() {
-    return SETTINGS_POWER_MODES.slice();
-  }
 
   function settingsPendingNote() {
     return SETTINGS_PENDING_NOTE;
@@ -1655,13 +1662,6 @@
         on = value;
         display = on ? "On" : "Off";
       }
-    } else if (kind === "mode") {
-      known =
-        typeof value === "string" && SETTINGS_POWER_MODES.indexOf(value) !== -1;
-      if (known) {
-        mode = value;
-        display = value.toUpperCase();
-      }
     }
     return {
       key: spec ? spec.key : null,
@@ -1693,9 +1693,6 @@
     if (!spec) return null;
     if (spec.kind === "seconds") {
       return desired ? CAROUSEL_DEFAULTS.autoRotateS : 0;
-    }
-    if (spec.kind === "mode") {
-      return SETTINGS_POWER_MODES.indexOf(desired) !== -1 ? desired : "unknown";
     }
     return !!desired;
   }
@@ -3424,7 +3421,6 @@
     settingsSpecs: settingsSpecs,
     settingsApplyStates: settingsApplyStates,
     settingsReloadNeeded: settingsReloadNeeded,
-    settingsModeChoices: settingsModeChoices,
     settingsChoices: settingsChoices,
     settingsRowView: settingsRowView,
     settingsChoiceActive: settingsChoiceActive,

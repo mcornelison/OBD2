@@ -30,13 +30,13 @@
 
 Overlay contract under test:
 
-* The overlay is a FLAT dot-path map (``{"pi.power.mode": "wall"}``) stored
+* The overlay is a FLAT dot-path map (``{"pi.calibration.mode": true}``) stored
   beside config.json. Flat keys make the allow-list a literal key comparison at
   BOTH the read gate (here) and the US-531 write gate -- defense in depth.
 * Effective value = allow-listed overlay override ELSE the config.json default.
 * Honest-instrument: a malformed/absent overlay, an out-of-allow-list key, or a
   wrong-typed value resolves to the shipped default -- never a guessed value.
-  ``pi.power.mode`` is the one coercion: an invalid mode resolves to ``unknown``
+  (US-668 removed ``pi.power.mode``, which was the one coercion here.)
   (never a confident wrong mode).
 """
 
@@ -70,7 +70,7 @@ def _writeConfig(tmp: Path, **overrides) -> Path:
         "protocolVersion": "1.0.0",
         "pi": {
             "display": {"carousel": {"autoRotateS": 8, "resumeIdleS": 45}},
-            "power": {"mode": "unknown"},
+            "calibration": {"mode": False},
             "alerts": {"audioAlerts": False},
             "calibration": {"mode": False},
             "analysis": {"triggerAfterDrive": True},
@@ -112,11 +112,11 @@ class TestResolveEffectiveConfig:
         When: resolveEffectiveConfig() merges them
         Then: every value is the config.json default
         """
-        base = {"pi": {"power": {"mode": "unknown"}, "alerts": {"audioAlerts": False}}}
+        base = {"pi": {"calibration": {"mode": False}, "alerts": {"audioAlerts": False}}}
 
         effective = resolveEffectiveConfig(base, {})
 
-        assert effective["pi"]["power"]["mode"] == "unknown"
+        assert effective["pi"]["calibration"]["mode"] is False
         assert effective["pi"]["alerts"]["audioAlerts"] is False
 
     def test_resolveEffectiveConfig_doesNotMutateBase(self):
@@ -125,12 +125,12 @@ class TestResolveEffectiveConfig:
         When: resolveEffectiveConfig() applies an override
         Then: the base dict is untouched (deep copy, not in-place mutation)
         """
-        base = {"pi": {"power": {"mode": "unknown"}}}
+        base = {"pi": {"calibration": {"mode": False}}}
 
-        effective = resolveEffectiveConfig(base, {"pi.power.mode": "wall"})
+        effective = resolveEffectiveConfig(base, {"pi.calibration.mode": True})
 
-        assert effective["pi"]["power"]["mode"] == "wall"
-        assert base["pi"]["power"]["mode"] == "unknown"
+        assert effective["pi"]["calibration"]["mode"] is True
+        assert base["pi"]["calibration"]["mode"] is False
 
     def test_resolveEffectiveConfig_keyOutsideAllowList_ignoredAndLogged(
         self, caplog: pytest.LogCaptureFixture
@@ -154,7 +154,7 @@ class TestResolveEffectiveConfig:
         When: resolveEffectiveConfig() merges it
         Then: no new config branch is invented (a rejected key writes nothing)
         """
-        base = {"pi": {"power": {"mode": "unknown"}}}
+        base = {"pi": {"calibration": {"mode": False}}}
 
         effective = resolveEffectiveConfig(base, {"pi.sync.serverUrl": "http://evil"})
 
@@ -177,31 +177,13 @@ class TestResolveEffectiveConfig:
 
         assert effective["pi"]["display"]["carousel"]["autoRotateS"] == override
 
-    @pytest.mark.parametrize("mode", ["car", "wall", "unknown"])
-    def test_resolveEffectiveConfig_validPowerMode_applied(self, mode: str):
-        """
-        Given: an overlay power mode inside {car, wall, unknown}
-        When: resolveEffectiveConfig() merges it
-        Then: the mode is applied verbatim
-        """
-        base = {"pi": {"power": {"mode": "unknown"}}}
-
-        effective = resolveEffectiveConfig(base, {"pi.power.mode": mode})
-
-        assert effective["pi"]["power"]["mode"] == mode
-
-    @pytest.mark.parametrize("bogus", ["CAR", "bench", "", 3, None, True])
-    def test_resolveEffectiveConfig_invalidPowerMode_resolvesToUnknown(self, bogus):
-        """
-        Given: an overlay power mode outside {car, wall, unknown}
-        When: resolveEffectiveConfig() merges it
-        Then: the mode is `unknown` -- honest-unknown, NEVER a confident wrong mode
-        """
-        base = {"pi": {"power": {"mode": "car"}}}
-
-        effective = resolveEffectiveConfig(base, {"pi.power.mode": bogus})
-
-        assert effective["pi"]["power"]["mode"] == "unknown"
+    # US-668 deleted test_resolveEffectiveConfig_validPowerMode_applied and
+    # ..._invalidPowerMode_resolvesToUnknown. pi.power.mode was the only key with
+    # a value VOCABULARY and the only COERCION in the overlay; both tests were
+    # about that vocabulary. With the key gone there is no surviving key they
+    # could be re-pointed at, so they are deleted rather than re-aimed at a code
+    # path that no longer exists. The generic invalid-value path is still covered
+    # by the key,bogus parametrisation directly below.
 
     @pytest.mark.parametrize(
         "key,bogus",
@@ -246,18 +228,18 @@ class TestResolveEffectiveConfig:
         """
         base = {
             "pi": {
-                "power": {"mode": "unknown"},
+                "calibration": {"mode": False},
                 "alerts": {"audioAlerts": False},
             }
         }
 
         effective = resolveEffectiveConfig(
             base,
-            {"pi.power.mode": "wall", "pi.alerts.audioAlerts": True},
-            allowlist=("pi.power.mode",),
+            {"pi.calibration.mode": True, "pi.alerts.audioAlerts": True},
+            allowlist=("pi.calibration.mode",),
         )
 
-        assert effective["pi"]["power"]["mode"] == "wall"
+        assert effective["pi"]["calibration"]["mode"] is True
         assert effective["pi"]["alerts"]["audioAlerts"] is False
 
 
@@ -277,7 +259,6 @@ class TestSliceOneAllowList:
         """
         assert set(OVERRIDABLE_KEYS) == {
             "pi.display.carousel.autoRotateS",
-            "pi.power.mode",
             "pi.calibration.mode",
             "pi.analysis.triggerAfterDrive",
         }
@@ -322,7 +303,7 @@ class TestLoadOverlay:
         Then: an empty overlay is returned -- never a partial guess
         """
         path = tmp_path / "config.local.json"
-        path.write_text('{"pi.power.mode": "wa', encoding="utf-8")
+        path.write_text('{"pi.calibration.mode": tr', encoding="utf-8")
 
         assert loadOverlay(str(path)) == {}
 
@@ -361,13 +342,13 @@ class TestBothReadPathsUseTheSharedResolver:
         configPath = _writeConfig(tmp_path)
         _writeOverlay(
             configPath,
-            {"pi.display.carousel.autoRotateS": 0, "pi.power.mode": "wall"},
+            {"pi.display.carousel.autoRotateS": 0, "pi.calibration.mode": True},
         )
 
         config = loadConfigWithSecrets(str(configPath))
 
         assert config["pi"]["display"]["carousel"]["autoRotateS"] == 0
-        assert config["pi"]["power"]["mode"] == "wall"
+        assert config["pi"]["calibration"]["mode"] is True
 
     def test_loadDisplayCarouselConfig_appliesOverlay(self, tmp_path: Path):
         """
@@ -445,15 +426,15 @@ class TestBothReadPathsUseTheSharedResolver:
         Then: it produces the same effective config the readers return
         """
         configPath = _writeConfig(tmp_path)
-        _writeOverlay(configPath, {"pi.power.mode": "car"})
+        _writeOverlay(configPath, {"pi.calibration.mode": True})
         raw = json.loads(configPath.read_text(encoding="utf-8"))
 
         effective = applyConfigOverlay(raw, str(configPath))
 
-        assert effective["pi"]["power"]["mode"] == "car"
+        assert effective["pi"]["calibration"]["mode"] is True
         assert (
-            loadConfigWithSecrets(str(configPath))["pi"]["power"]["mode"]
-            == effective["pi"]["power"]["mode"]
+            loadConfigWithSecrets(str(configPath))["pi"]["calibration"]["mode"]
+            == effective["pi"]["calibration"]["mode"]
         )
 
 

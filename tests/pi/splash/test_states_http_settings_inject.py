@@ -52,7 +52,7 @@ _INDEX = (
 _BASE_CONFIG = {
     "pi": {
         "display": {"carousel": {"autoRotateS": 8}},
-        "power": {"mode": "car"},
+        "calibration": {"mode": False},
         "alerts": {"audioAlerts": True},
         "calibration": {"mode": False},
         "analysis": {"triggerAfterDrive": True},
@@ -125,7 +125,7 @@ def test_loadEffectiveSettings_readsEveryOverridableKey(tmp_path):
 def test_loadEffectiveSettings_returnsShippedDefaultsWhenNoOverlay(tmp_path):
     settings = loadEffectiveSettings(_writeConfig(tmp_path))
     assert settings["pi.display.carousel.autoRotateS"] == 8
-    assert settings["pi.power.mode"] == "car"
+    assert settings["pi.calibration.mode"] is False
     assert settings["pi.calibration.mode"] is False
     assert settings["pi.analysis.triggerAfterDrive"] is True
 
@@ -139,14 +139,14 @@ def test_loadEffectiveSettings_overlayOverrideWins(tmp_path):
         configPath,
         {
             "pi.display.carousel.autoRotateS": 0,
-            "pi.power.mode": "wall",
+            "pi.calibration.mode": True,
             "pi.calibration.mode": True,
             "pi.analysis.triggerAfterDrive": False,
         },
     )
     settings = loadEffectiveSettings(configPath)
     assert settings["pi.display.carousel.autoRotateS"] == 0
-    assert settings["pi.power.mode"] == "wall"
+    assert settings["pi.calibration.mode"] is True
     assert settings["pi.calibration.mode"] is True
     assert settings["pi.analysis.triggerAfterDrive"] is False
 
@@ -172,7 +172,7 @@ def test_loadEffectiveSettings_unresolvableKey_isNoneNotADefault(tmp_path):
     is unknown -- the same case US-531 used to prove its response is a re-read."""
     configPath = _writeConfig(tmp_path, {"pi": {"power": "not-a-dict"}})
     settings = loadEffectiveSettings(configPath)
-    assert settings["pi.power.mode"] is None
+    assert settings["pi.calibration.mode"] is None
 
 
 def test_loadEffectiveSettings_invalidOverlayValue_fallsBackNotForward(tmp_path):
@@ -183,12 +183,10 @@ def test_loadEffectiveSettings_invalidOverlayValue_fallsBackNotForward(tmp_path)
     assert loadEffectiveSettings(configPath)["pi.calibration.mode"] is False
 
 
-def test_loadEffectiveSettings_invalidPowerMode_coercesToUnknown(tmp_path):
-    """Honest-unknown contract: a corrupt mode means the deployment context is
-    unknown. It must NOT fall back to the base config's confident 'car'."""
-    configPath = _writeConfig(tmp_path)
-    _writeOverlay(configPath, {"pi.power.mode": "moon-base"})
-    assert loadEffectiveSettings(configPath)["pi.power.mode"] == "unknown"
+# US-668 deleted test_loadEffectiveSettings_invalidPowerMode_coercesToUnknown.
+# pi.power.mode was the ONLY coerced key in the overlay; with it gone there is no
+# surviving key that exercises the branch, so the test is deleted rather than
+# re-aimed at a code path that no longer exists.
 
 
 # ---------------------------------------------------------------------------
@@ -202,7 +200,7 @@ def test_index_injectsSettingsObject(tmp_path):
         body = _getIndex(server)
         assert '"__DISPLAY_SETTINGS__"' not in body  # placeholder gone
         assert "window.DISPLAY_SETTINGS = {" in body  # a JS object, not a string
-        assert _injectedSettings(body)["pi.power.mode"] == "car"
+        assert _injectedSettings(body)["pi.calibration.mode"] is False
     finally:
         server.shutdown()
         thread.join(timeout=5)
@@ -238,10 +236,10 @@ def test_index_settingsAreResolvedPerRequest_notCachedAtConstruction(tmp_path):
     configPath = _writeConfig(tmp_path)
     server, thread = _serve(tmp_path, configPath)
     try:
-        assert _injectedSettings(_getIndex(server))["pi.power.mode"] == "car"
+        assert _injectedSettings(_getIndex(server))["pi.calibration.mode"] is False
         # Simulate the US-531 write landing AFTER the server was constructed.
-        _writeOverlay(configPath, {"pi.power.mode": "wall"})
-        assert _injectedSettings(_getIndex(server))["pi.power.mode"] == "wall"
+        _writeOverlay(configPath, {"pi.calibration.mode": True})
+        assert _injectedSettings(_getIndex(server))["pi.calibration.mode"] is True
     finally:
         server.shutdown()
         thread.join(timeout=5)

@@ -34,7 +34,6 @@ import pytest
 from common.config import overlay as overlayModule
 from common.config.overlay import (
     OVERLAY_FILENAME,
-    UNKNOWN_POWER_MODE,
     getDotPath,
     loadOverlay,
     overlayPathFor,
@@ -43,7 +42,11 @@ from common.config.overlay import (
 )
 
 _AUTO_ROTATE_KEY = "pi.display.carousel.autoRotateS"
-_POWER_KEY = "pi.power.mode"
+# US-668: this was the power-mode key. These tests are about OVERLAY behaviour
+# -- write-gate rejection, verbatim storage, merge-not-clobber, atomic rollback,
+# dot-path traversal -- and power was only ever the example. Re-pointed at a
+# surviving allow-listed key so the coverage outlives the removal.
+_CALIB_KEY = "pi.calibration.mode"
 
 # A base config.json whose defaults DIFFER from every value the tests write, so
 # no assertion can pass by accidentally matching the fallback (US-530 lesson:
@@ -127,14 +130,14 @@ def test_writeOverlayValue_boolRejectedForNumericKey(tmp_path):
 
 def test_writeOverlayValue_invalidPowerMode_refusedAndNotCoercedOnDisk(tmp_path):
     """
-    Given: a power mode outside {car, wall, unknown}
+    Given: a value that fails the key's validator
     When: a write is attempted
     Then: it is refused and nothing is stored -- the write gate rejects rather
           than silently persisting the read seam's 'unknown' coercion
     """
     overlayPath = str(tmp_path / OVERLAY_FILENAME)
 
-    assert writeOverlayValue(overlayPath, _POWER_KEY, "banana") is False
+    assert writeOverlayValue(overlayPath, _CALIB_KEY, "banana") is False
 
     assert not Path(overlayPath).exists()
 
@@ -147,9 +150,9 @@ def test_writeOverlayValue_validPowerMode_persists(tmp_path):
     """
     overlayPath = str(tmp_path / OVERLAY_FILENAME)
 
-    assert writeOverlayValue(overlayPath, _POWER_KEY, "wall") is True
+    assert writeOverlayValue(overlayPath, _CALIB_KEY, True) is True
 
-    assert loadOverlay(overlayPath)[_POWER_KEY] == "wall"
+    assert loadOverlay(overlayPath)[_CALIB_KEY] is True
 
 
 # ---------------------------------------------------------------------------
@@ -164,12 +167,12 @@ def test_writeOverlayValue_preservesUnrelatedExistingKeys(tmp_path):
     Then: BOTH entries survive -- a write merges, it never clobbers the file
     """
     overlayPath = str(tmp_path / OVERLAY_FILENAME)
-    writeOverlayValue(overlayPath, _POWER_KEY, "wall")
+    writeOverlayValue(overlayPath, _CALIB_KEY, True)
 
     writeOverlayValue(overlayPath, _AUTO_ROTATE_KEY, 0)
 
     stored = loadOverlay(overlayPath)
-    assert stored[_POWER_KEY] == "wall"
+    assert stored[_CALIB_KEY] is True
     assert stored[_AUTO_ROTATE_KEY] == 0
 
 
@@ -195,7 +198,7 @@ def test_writeOverlayValue_replaceFailure_leavesPriorOverlayIntact(tmp_path, mon
           what temp+rename buys; a partial write must never corrupt settings
     """
     overlayPath = str(tmp_path / OVERLAY_FILENAME)
-    writeOverlayValue(overlayPath, _POWER_KEY, "wall")
+    writeOverlayValue(overlayPath, _CALIB_KEY, True)
     before = Path(overlayPath).read_bytes()
 
     def boom(src, dst):
@@ -294,7 +297,7 @@ def test_getDotPath_nonDictBranch_returnsNotFound():
     When: the dot-path is read
     Then: (False, None) rather than a TypeError escaping to the caller
     """
-    assert getDotPath({"pi": {"power": "car"}}, _POWER_KEY) == (False, None)
+    assert getDotPath({"pi": {"calibration": "car"}}, _CALIB_KEY) == (False, None)
 
 
 def test_readEffectiveValue_noOverlay_returnsConfigDefault(configPath):
@@ -318,22 +321,12 @@ def test_readEffectiveValue_afterWrite_returnsOverriddenValue(configPath):
     assert readEffectiveValue(configPath, _AUTO_ROTATE_KEY) == (True, 0)
 
 
-def test_readEffectiveValue_resolvesThroughSharedSeam_coercingInvalidPowerMode(
-    configPath,
-):
-    """
-    Given: an overlay hand-planted with an invalid power mode (bypassing the
-           write gate, as a corrupted file would)
-    When: the effective value is read
-    Then: 'unknown' is returned, NOT the config.json 'car' default -- proving
-          the read-back goes through resolveEffectiveConfig rather than doing
-          its own merge (a confident wrong mode is the failure to avoid)
-    """
-    Path(overlayPathFor(configPath)).write_text(
-        json.dumps({_POWER_KEY: "banana"}), encoding="utf-8"
-    )
-
-    assert readEffectiveValue(configPath, _POWER_KEY) == (True, UNKNOWN_POWER_MODE)
+# US-668 deleted test_readEffectiveValue_..._coercingInvalidPowerMode.
+# pi.power.mode was the ONLY coercion in the overlay -- the read seam resolved a
+# corrupt mode to "unknown" rather than to the shipped default. With the key gone
+# that branch is gone, so the test is deleted rather than re-pointed: no surviving
+# key exercises it, and a test aimed at a code path that no longer exists is worse
+# than no test.
 
 
 def test_readEffectiveValue_unreadableConfig_returnsNotFound(tmp_path):

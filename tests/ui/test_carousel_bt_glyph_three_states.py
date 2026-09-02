@@ -250,7 +250,6 @@ def _handBuilt(**overrides: Any) -> dict:
         "syncRows": 1204,
         "syncPending": 0,
         "syncStale": False,
-        "powerMode": "car",
         "powerSource": "external",
         "driveState": "idle",
         "driveId": None,

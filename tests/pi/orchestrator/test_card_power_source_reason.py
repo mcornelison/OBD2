@@ -37,8 +37,6 @@
 import json
 import re
 
-import pytest
-
 from pi.obdii.orchestrator.card_state_emitter import (
     POWER_SOURCE_UNKNOWN_REASONS,
     REASON_POWER_SOURCE_PROVIDER_ABSENT,
@@ -258,15 +256,14 @@ def test_stateFile_unreadableLine_carriesTheTypedReason(tmp_path):
     power = _emitPowerBlock(
         tmp_path,
         provider=_provider(_FakePld(present=False, available=False)),
-        mode="wall",
     )
     assert power["source"] == "unknown"
     assert power["reasons"]["source"] == REASON_POWER_SOURCE_UNREADABLE
     # NOT a fabricated resolved value: the story's "SCOPE IS BOTH FIELDS"
     # warning, still in force. Legibility must not become confidence.
     assert power["source"] not in ("external", "battery")
-    # The mode is a separate SSOT and the reason must not disturb it.
-    assert power["mode"] == "wall"
+    # US-668: the operator-declared mode is gone; the reason must still not
+    # disturb the SENSED source beside it.
 
 
 def test_stateFile_noProvider_carriesADifferentReasonThanAnUnreadableLine(tmp_path):
@@ -330,7 +327,6 @@ def test_buildSystemStatusState_refusesAReasonBesideAResolvedSource():
         syncRows=0,
         syncPending=None,
         syncStale=False,
-        powerMode="car",
         powerSource="external",
         powerSourceReason=REASON_POWER_SOURCE_UNREADABLE,
         driveState="idle",
@@ -355,25 +351,16 @@ def test_buildSystemStatusState_unknownWithNoReasonStaysSilentRatherThanGuessing
         syncRows=0,
         syncPending=None,
         syncStale=False,
-        powerMode="car",
         powerSource="unknown",
         driveState="idle",
         driveId=None,
         nowIso="2026-09-01T00:00:00Z",
     )
-    assert state["power"] == {"mode": "car", "source": "unknown", "reasons": {}}
+    assert state["power"] == {"source": "unknown", "reasons": {}}
 
 
-@pytest.mark.parametrize("mode", ["car", "wall"])
-def test_stateFile_theReasonDoesNotDisturbEitherModeBranch(mode, tmp_path):
-    """US-628's first validationCriterion stays closed. The two facts come from
-    two SSOTs and adding a reason to one must not perturb the other -- pinned on
-    BOTH modes, because pinning one is the error this story was corrected for.
-    """
-    power = _emitPowerBlock(
-        tmp_path,
-        provider=_provider(_FakePld(present=False, available=False)),
-        mode=mode,
-    )
-    assert power["mode"] == mode
-    assert power["reasons"]["source"] == REASON_POWER_SOURCE_UNREADABLE
+# US-668 deleted test_stateFile_theReasonDoesNotDisturbEitherModeBranch.
+# It pinned that a source REASON does not perturb the MODE beside it, on both
+# mode branches. The operator-declared mode is gone, so there is no second fact
+# left to perturb. What the reason must not disturb is now the SENSED source,
+# which test_stateFile_unreadableLine_carriesTheTypedReason already covers.

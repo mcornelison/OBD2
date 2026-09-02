@@ -277,6 +277,7 @@ making it harder to audit that every component has matching setup/teardown.
 """
 
 import logging
+import os
 import threading
 import time
 from collections.abc import Callable
@@ -2373,18 +2374,48 @@ class LifecycleMixin:
         pldPowerPresentHigh = bool(pwCfg.get('pldPowerPresentHigh', True))
         uiPollSec = float(pwCfg.get('uiPollSec', 2))
 
+        # ---- US-668: SUBSCRIBE. Do NOT open GPIO6. ---------------------------
+        # eclipse-powerwatch OWNS BCM GPIO6. This process used to construct its
+        # own PldSensor on the same line; a GPIO line is claimed exclusively
+        # per-process, so one of the two always lost with EBUSY and went
+        # PERMANENTLY blind -- PldSensor latches `_dev = None` at construction
+        # and has no re-open path. Three separately-filed punch-list items came
+        # from that one cause: power.source reading unknown, the battery-health
+        # verdict reading stale, and battery_health_log frozen since 2026-05-16.
+        #
+        # ⚠️ Neither unit orders against the other, so the loser was not stable
+        # between boots. Retrying the acquisition "more carefully" would only
+        # make the race rarer, which is strictly worse than impossible: a defect
+        # that fires one boot in twenty is one nobody can reproduce.
+        #
+        # The provider below is UNCHANGED -- only its backing source is. It
+        # consumes a duck type, so a subscription substitutes for the GPIO line
+        # and nothing downstream needed to know.
         try:
-            from pi.hardware.pld_sensor import PldSensor
             from pi.power.power_source_provider import PowerSourceProvider
+            from pi.power.power_source_pubsub import (
+                POWER_SOURCE_FILENAME,
+                SubscribedPld,
+            )
         except ImportError as e:
             logger.warning(
-                "PowerSourceProvider wiring skipped (PldSensor import failed "
-                "on non-Pi or due to %s); UI power-source path stays inert.",
+                "PowerSourceProvider wiring skipped (import failed due to %s); "
+                "UI power-source path stays inert.",
                 e,
             )
             return
 
-        pld = PldSensor(pin=pldGpioPin, powerPresentHigh=pldPowerPresentHigh)
+        statesDir = (
+            self._config.get('pi', {}).get('splash', {}).get('statesDir')
+            or '/run/eclipse-obd/states'
+        )
+        powerSourcePath = os.path.join(statesDir, POWER_SOURCE_FILENAME)
+        logger.info(
+            "PowerSource: SUBSCRIBING to %s (GPIO%d is owned by "
+            "eclipse-powerwatch; this process never opens it -- US-668)",
+            powerSourcePath, pldGpioPin,
+        )
+        pld = SubscribedPld(path=powerSourcePath)
         self._powerSourceProvider = PowerSourceProvider(pld=pld)
 
         powerMonitor = self._powerMonitor

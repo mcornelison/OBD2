@@ -136,6 +136,10 @@ from src.pi.power.drain_event_writer import (  # noqa: E402
     makeDrainEventWriterForPath,
 )
 from src.pi.power.power_source_provider import PowerSourceProvider  # noqa: E402
+from src.pi.power.power_source_pubsub import (  # noqa: E402
+    POWER_SOURCE_FILENAME,
+    publishPowerSource,
+)
 from src.pi.power.power_watch.controller import ShutdownSequencer  # noqa: E402
 from src.pi.power.power_watch.outcome import writeOutcomeRecord  # noqa: E402
 from src.pi.power.power_watch.pipeline import runPipeline  # noqa: E402
@@ -864,6 +868,39 @@ def main(argv: list[str] | None = None) -> int:
 
     th = threading.Thread(target=_pldWatchLoop, name="pw-pld", daemon=True)
     th.start()
+
+    # ---- US-668: publish the power source for the collector -----------------
+    # powerwatch OWNS BCM GPIO6. eclipse-obd used to open the same line, one of
+    # them lost the race with EBUSY and went permanently blind (no re-open path
+    # in PldSensor), and three punch-list items followed from that single cause.
+    # Neither unit orders against the other, so the loser was not even stable
+    # between boots -- which is why ownership is declared, not discovered.
+    #
+    # ⚠️ This runs on its OWN thread, deliberately. The watch loop above is the
+    # safety-critical path that triggers the graceful poweroff; a slow or failing
+    # filesystem write must never be able to delay it. Status I/O stays out of
+    # the interlock.
+    statesDir = (
+        config.get("pi", {}).get("splash", {}).get("statesDir")
+        or "/run/eclipse-obd/states"
+    )
+    powerSourcePath = os.path.join(statesDir, POWER_SOURCE_FILENAME)
+
+    def _publishLoop() -> None:
+        while not stop.is_set():
+            try:
+                publishPowerSource(
+                    powerSourcePath,
+                    externalPowerPresent=provider.isExternalPowerPresent(),
+                    available=provider.isAvailable,
+                    reason=getattr(pld, "unavailableReason", None),
+                )
+            except Exception as exc:  # noqa: BLE001 -- never break the publisher
+                logger.warning("power-source publish loop error: %s", exc)
+            stop.wait(pldPollSec)
+
+    pubTh = threading.Thread(target=_publishLoop, name="pw-pub", daemon=True)
+    pubTh.start()
 
     # Block forever -- the watch + UpsMonitor threads are daemons.
     threading.Event().wait()

@@ -55,7 +55,6 @@ def test_buildSystemStatusState_a3Schema_hasExactShape():
         syncRows=1204,
         syncPending=0,
         syncStale=False,
-        powerMode="car",
         powerSource="external",
         driveState="recording",
         driveId=27,
@@ -67,7 +66,7 @@ def test_buildSystemStatusState_a3Schema_hasExactShape():
         # US-628: `reasons` is ALWAYS a key and is EMPTY here -- this source is
         # a real measurement, and a reason standing beside one would be a
         # second, contradictory account of the same fact.
-        "power": {"mode": "car", "source": "external", "reasons": {}},
+        "power": {"source": "external", "reasons": {}},
         # US-505 `lastDrive` is ALWAYS a key (null when unknown) -- see the
         # always-present catalog below for why absence is the dangerous shape.
         "drive": {"state": "recording", "driveId": 27, "lastDrive": None},
@@ -96,7 +95,6 @@ def test_buildSystemStatusState_honestInstrument_downLinkIsVerbatim():
         syncRows=0,
         syncPending=12,
         syncStale=True,
-        powerMode="car",
         powerSource="battery",
         driveState="idle",
         driveId=None,
@@ -140,7 +138,6 @@ def test_buildSystemStatusState_lastDriveKey_isPresentInEveryShape():
         "syncRows": 1,
         "syncPending": 0,
         "syncStale": False,
-        "powerMode": "car",
         "powerSource": "external",
         "nowIso": _NOW,
     }
@@ -186,7 +183,6 @@ def test_buildSystemStatusState_lastDrive_isVerbatimAndDistinctFromDriveId():
         syncRows=0,
         syncPending=0,
         syncStale=False,
-        powerMode="car",
         powerSource="battery",
         driveState="idle",
         driveId=None,
@@ -216,7 +212,6 @@ def test_buildSystemStatusState_obdUnavailable_typedNaNotStaleLink():
         syncRows=10,
         syncPending=0,
         syncStale=False,
-        powerMode="wall",
         powerSource="external",
         driveState="idle",
         driveId=None,
@@ -228,7 +223,11 @@ def test_buildSystemStatusState_obdUnavailable_typedNaNotStaleLink():
     assert state["source"]["obd"] == {"available": False, "reason": "OBD: off"}
     # Other sources are unaffected (one truth per SOURCE).
     assert state["sync"]["rows"] == 10
-    assert state["power"]["mode"] == "wall"
+    # US-668: was assert state["power"]["mode"] == "wall". The
+    # operator-declared mode is gone; the SENSED source is the
+    # surviving power fact and the one worth asserting here.
+    assert "mode" not in state["power"]
+    assert "source" in state["power"]
     # US-480-a idle-SSOT (b): OBD source ABSENT + not recording -> this IS the
     # calm parked/asleep state -> idle True (US-481 renders the idle home card).
     assert state["idle"] is True
@@ -250,7 +249,6 @@ def test_buildSystemStatusState_idle_trueOnlyWhenObdAbsentAndNotRecording():
         syncRows=0,
         syncPending=0,
         syncStale=False,
-        powerMode="wall",
         powerSource="external",
         driveState="idle",
         driveId=None,
@@ -271,7 +269,6 @@ def test_buildSystemStatusState_idle_falseWhenObdAvailable():
         syncRows=0,
         syncPending=0,
         syncStale=False,
-        powerMode="car",
         powerSource="external",
         driveState="idle",
         driveId=None,
@@ -293,7 +290,6 @@ def test_buildSystemStatusState_idle_falseWhileRecording():
         syncRows=5,
         syncPending=0,
         syncStale=False,
-        powerMode="car",
         powerSource="external",
         driveState="recording",
         driveId=42,
@@ -376,7 +372,6 @@ def test_emitter_writesSystemStatusFile_andComputesStale(tmp_path):
         syncLastOkTs=_SYNC_OK,
         syncRows=10,
         syncPending=4,
-        powerMode="car",
         powerSource="external",
         driveState="recording",
         driveId=27,
@@ -421,7 +416,6 @@ def test_emitter_forwardsLastDrive_verbatimThroughTheJsonRoundTrip(tmp_path):
         syncLastOkTs=_SYNC_OK,
         syncRows=10,
         syncPending=0,
-        powerMode="car",
         powerSource="external",
         driveState="idle",
         driveId=None,
@@ -453,7 +447,6 @@ def test_emitter_neverRaises_onWriteFailure(tmp_path):
         syncLastOkTs=_SYNC_OK,
         syncRows=1,
         syncPending=0,
-        powerMode="car",
         powerSource="external",
         driveState="idle",
         driveId=None,

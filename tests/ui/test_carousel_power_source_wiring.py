@@ -114,8 +114,10 @@ def test_onExternalPower_tileIsRealAndBoltIsLit(tmp_path):
     power = _emitPower(tmp_path, _pld(present=True))
 
     tile = _view("powerTile", power)
-    assert tile["value"] == "CAR"
-    assert tile["detail"] == "external"
+    # US-668: the tile renders the SENSED source as its value now, not the
+    # operator-declared mode. EXTERNAL is the fact a lit screen cannot give you.
+    assert tile["value"] == "EXTERNAL"
+    assert tile["detail"] == "wall/car power"
     assert tile["level"] == "ok"
     assert _view("powerGlyphState", power) == "ok"
 
@@ -129,7 +131,7 @@ def test_onBatteryPower_tileSaysBatteryAndBoltIsAmber(tmp_path):
     assert tile["value"] == "BATTERY"
     # Escapes, not literals: this file stays pure ASCII so the pin cannot be
     # softened by whatever encoding a given box reads the source with.
-    assert tile["detail"] == "car \u00b7 on UPS"
+    assert tile["detail"] == "on UPS"
     assert tile["level"] == "amber"
     assert _view("powerGlyphState", power) == "amber"
 

@@ -243,6 +243,46 @@ Prior: 2026-05-19 (SS-T9 — design-gate reconciliation:
 | Power | Geekworm X1209 UPS HAT | 18650 battery backup |
 | Monitoring | I2C | Battery voltage/SOC/charge-rate via MAX17048 fuel gauge at 0x36 |
 
+**⚠️ GPIO6 OWNERSHIP (US-668, 2026-09-02) -- read this before touching the PLD.**
+`eclipse-powerwatch.service` **OWNS BCM GPIO6 exclusively.** No other process may
+open it. `eclipse-obd.service` **SUBSCRIBES** to a published state
+(`states/power-source.json`, `src/pi/power/power_source_pubsub.py`) and never
+touches the line.
+
+*The defect this replaced:* both units constructed `PldSensor` on GPIO6. A GPIO
+line is claimed exclusively per-process, so the loser got `EBUSY`, `_dev` latched
+to `None`, and `isAvailable` went **permanently** False -- `PldSensor` has no
+re-open path. Three separately-filed punch-list items had that single cause:
+`power.source` reading unknown, the battery-health verdict reading stale, and
+`battery_health_log` frozen since 2026-05-16.
+
+*Why ownership is DECLARED, not discovered:* neither unit orders against the
+other (`eclipse-powerwatch` has `After=local-fs.target`; `eclipse-obd` has
+`After=network.target bluetooth.target`), so the loser of that race is **not
+stable between boots**. powerwatch owns it because it carries the graceful
+poweroff and sync custody -- a safety interlock whose hardware access depends on
+another service's start order is not an interlock.
+
+🔴 *The safety property:* a **missing, stale or corrupt** publication resolves to
+**unavailable**, never to "external power present". Silence is not good news: if
+absence read as power-present, a dead publisher would be indistinguishable from a
+healthy car and the graceful shutdown would never fire. The publisher runs on its
+**own thread** so a slow filesystem write can never delay the interlock.
+
+*`PldSensor` now discriminates* `contended` (EBUSY -- someone else has it) from
+`absent` (ENODEV -- it is not there). Those demand opposite fixes, and a sensor
+that cannot tell them apart sends every operator down the wrong one.
+
+⚠️ **`pi.power.mode` WAS REMOVED by US-668** (CIO 2026-09-02: *"if I can see the
+screen then the power is on, it doesn't matter if it is car or wall, it is on"*).
+It was operator-declared, `card_state_emitter` was its only consumer, and no
+shutdown or lifecycle policy branched on it. `PowerModeProvider` is deleted.
+**`power.source` is unaffected and must not be conflated with it** -- source is
+SENSED, and it answers the one power question the display cannot answer by
+existing: external power, or UPS battery? During the 2026-08-31 UPS test the
+panel stayed lit for the whole time the Pi ran on battery toward a graceful
+poweroff.
+
 **Power-source detection (SSOT).** The power-source fact ("is external/USB-C
 power present?") has exactly one authoritative provider: `PowerSourceProvider`
 (`src/pi/power/power_source_provider.py`), which wraps the X1209 PLD line on

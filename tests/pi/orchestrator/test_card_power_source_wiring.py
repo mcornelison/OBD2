@@ -93,7 +93,10 @@ def _config(tmp_path, *, mode=None):
 
 
 def _source(orch) -> str:
-    return orch._gatherPowerState()[1]
+    # US-668: _gatherPowerState returns (source, reason). It used to return
+    # (mode, source, reason); the operator-declared mode is gone, so the source
+    # moved from index 1 to index 0.
+    return orch._gatherPowerState()[0]
 
 
 # ---------------------------------------------------------------------------
@@ -115,23 +118,10 @@ def test_gatherPowerState_powerLost_sourceIsBattery(tmp_path):
     assert _source(orch) == "battery"
 
 
-def test_gatherPowerState_modeAndSourceStayIndependentFacts(tmp_path):
-    """`mode` (deployment context, PowerModeProvider/config) and `source`
-    (AC-vs-battery, PowerSourceProvider/GPIO6) are two different facts from
-    two different SSOTs -- wiring the second must not disturb the first."""
-    orch = _FakeOrch(
-        _config(tmp_path, mode="wall"), powerSourceProvider=_provider(present=False)
-    )
-    orch._initializeCardStateEmitters()
-    # US-628 added the typed reason as a third element. It is None here on
-    # purpose: this source RESOLVED, and pinning that keeps the reason from
-    # leaking onto a branch that measured something.
-    assert orch._gatherPowerState() == ("wall", "battery", None)
-
-
-# ---------------------------------------------------------------------------
-# Honest-instrument: uncertainty renders unknown, never a confident source.
-# ---------------------------------------------------------------------------
+# US-668 deleted test_gatherPowerState_modeAndSourceStayIndependentFacts.
+# Its whole subject was that `mode` and `source` are two independent facts. The
+# operator-declared mode is gone (CIO 2026-09-02: "if I can see the screen then
+# the power is on"), so there is no second fact to stay independent of.
 
 
 def test_gatherPowerState_unreadableLine_isUnknown_notAConfidentExternal(tmp_path):
@@ -222,7 +212,6 @@ def test_maybeEmit_onBattery_stateFileCarriesBatterySource(tmp_path):
     # US-628: a resolved source publishes an EMPTY reasons map. Asserted as an
     # exact shape so a reason quietly appearing beside a real reading fails.
     assert _emittedPower(tmp_path, orch) == {
-        "mode": "car",
         "source": "battery",
         "reasons": {},
     }
@@ -234,7 +223,6 @@ def test_maybeEmit_onExternal_stateFileCarriesExternalSource(tmp_path):
     )
     orch._initializeCardStateEmitters()
     assert _emittedPower(tmp_path, orch) == {
-        "mode": "car",
         "source": "external",
         "reasons": {},
     }

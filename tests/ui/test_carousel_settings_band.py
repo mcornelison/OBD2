@@ -48,7 +48,10 @@ _JS = os.path.join(_DIST, "carousel.js")
 _HTML = os.path.join(_DIST, "dashboard.html")
 
 _AUTO_ROTATE = "pi.display.carousel.autoRotateS"
-_POWER_MODE = "pi.power.mode"
+# US-668: was the power-mode key. The save-result tests below are about the
+# SAVE PROTOCOL (honest repaint from res.value), not about power -- re-pointed
+# at a surviving control so the coverage survives.
+_CALIB = "pi.calibration.mode"
 
 _NODE_TESTS = pytest.mark.skipif(
     _NODE is None,
@@ -160,40 +163,13 @@ def test_noSeparateAutoRotateBoolWasMinted():
 
 
 # ---------------------------------------------------------------------------
-# Power mode -- a 3-state selector, and `unknown` is a legal STORED value that
-# must stay distinguishable from "we could not read one".
+# US-668 deleted the four power-mode selector tests. `pi.power.mode` was the
+# band's only "mode"-kind control and its only value VOCABULARY; the CIO removed
+# the setting on 2026-09-02 ("if I can see the screen then the power is on"), so
+# there is no surviving control of that kind to re-point them at. The generic
+# unknown-vs-unreadable property they also covered is still pinned by the boolean
+# and seconds rows below.
 # ---------------------------------------------------------------------------
-
-
-@_NODE_TESTS
-def test_powerMode_isAThreeStateSelector():
-    assert _spec(_POWER_MODE)["kind"] == "mode"
-    assert _view("settingsModeChoices") == list(overlay.POWER_MODES)
-
-
-@_NODE_TESTS
-@pytest.mark.parametrize("mode", overlay.POWER_MODES)
-def test_powerMode_rendersEveryLegalMode(mode):
-    row = _row(_POWER_MODE, mode)
-    assert row["known"] is True
-    assert row["mode"] == mode
-
-
-@_NODE_TESTS
-def test_powerMode_storedUnknownIsNotTheSameAsUnreadable():
-    """`unknown` stored = the system honestly has no deployment context; a null
-    from the server = we could not read the setting at all. Both display as
-    UNKNOWN, but only the first is a value the operator can be told is SET --
-    collapsing them would make an unreadable config look like a deliberate
-    choice."""
-    assert _row(_POWER_MODE, "unknown")["known"] is True
-    assert _row(_POWER_MODE, None)["known"] is False
-
-
-@_NODE_TESTS
-def test_powerMode_illegalValueIsUnknown_neverAConfidentWrongMode():
-    for junk in ("moon-base", "CAR", 1, True, {}):
-        assert _row(_POWER_MODE, junk)["known"] is False, junk
 
 
 # ---------------------------------------------------------------------------
@@ -244,9 +220,9 @@ def test_saveResult_takesTheServersValue_notTheRequestedOne():
     Unknown. A success fixture where res.value == the request cannot tell the two
     implementations apart, which is exactly how US-531 nearly shipped the bug.
     """
-    result = _view("settingsSaveResult", {"ok": True, "key": _POWER_MODE, "value": None})
+    result = _view("settingsSaveResult", {"ok": True, "key": _CALIB, "value": None})
     assert result["value"] is None
-    assert _row(_POWER_MODE, result["value"])["known"] is False
+    assert _row(_CALIB, result["value"])["known"] is False
 
 
 @_NODE_TESTS
@@ -254,10 +230,10 @@ def test_saveResult_failedWrite_snapsBackToTheRealStoredValue():
     """Iris §3: a rejected write snaps back to the REAL value + 'couldn't save'.
     Operator asked for `wall`; the server reports the write failed and `car` is
     what is actually stored -- so the row must read CAR, not WALL."""
-    result = _view("settingsSaveResult", {"ok": False, "key": _POWER_MODE, "value": "car"})
+    result = _view("settingsSaveResult", {"ok": False, "key": _CALIB, "value": False})
     assert result["ok"] is False
-    assert result["value"] == "car"
-    assert _row(_POWER_MODE, result["value"])["mode"] == "car"
+    assert result["value"] is False
+    assert _row(_CALIB, result["value"])["known"] is True
 
 
 @_NODE_TESTS
@@ -272,8 +248,8 @@ def test_saveResult_unauthorizedOrCrashed_isNotASuccess():
 
 @_NODE_TESTS
 def test_saveResult_noteDistinguishesSavedFromFailed():
-    saved = _view("settingsSaveResult", {"ok": True, "key": _POWER_MODE, "value": "wall"})
-    failed = _view("settingsSaveResult", {"ok": False, "key": _POWER_MODE, "value": "car"})
+    saved = _view("settingsSaveResult", {"ok": True, "key": _CALIB, "value": True})
+    failed = _view("settingsSaveResult", {"ok": False, "key": _CALIB, "value": False})
     assert saved["note"] != failed["note"]
     assert "sav" in saved["note"].lower()
 
@@ -313,7 +289,12 @@ def test_noRowOverPromisesAnApplyItsConsumerCannotHonour():
     for spec in specs:
         assert spec["apply"] in declared, spec["key"]
     live = [s["key"] for s in specs if s["apply"] == "live"]
-    assert live == ["pi.power.mode"], (
+    # US-668: pi.power.mode was the ONLY row claiming "applies now" and it is
+    # gone, along with the `live` label itself. The invariant is unchanged and is
+    # what is asserted: a row may claim live ONLY if a consumer really re-reads
+    # every cycle. Nothing does today, so the honest expectation is EMPTY -- and
+    # this still fails loudly the moment a row claims live without being wired.
+    assert live == [], (
         "a row claims 'applies now' -- that is a claim about a consumer that "
         "re-reads on every cycle; wire and prove it, or label it honestly"
     )

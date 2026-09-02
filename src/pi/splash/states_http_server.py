@@ -468,7 +468,7 @@ def makeStatesHandler(
             )
             # Re-READ from disk through the shared seam rather than echoing the
             # request. If the write failed, or the resolver coerces the stored
-            # value (pi.power.mode), this is the value the carousel and the
+            # value, this is the value the carousel and the
             # orchestrator will actually see -- so the UI cannot show a setting
             # that is not really stored.
             found, effective = overlay.readEffectiveValue(configPath, key)

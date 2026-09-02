@@ -189,10 +189,8 @@ DEFAULTS: dict[str, Any] = {
     # US-421 / BL-014: static config-key SSOT for the power-MODE fact (in-car
     # vs bench/wall deployment) -- distinct from the AC-vs-battery power SOURCE.
     # Default 'unknown' so an absent key renders an honest badge, never a
-    # confident wrong car/wall. Consumed by src.pi.power.PowerModeProvider
     # (the single acquisition path); operator sets car/wall on a bench<->car
     # deploy. Future: swap acquisition to a GPIO sense line behind the same SSOT.
-    'pi.power.mode': 'unknown',
     # Honest boot-progress instrument (spec 2026-05-15). filePath is
     # relative to the Pi project root (systemd WorkingDirectory);
     # maxTrailBytes bounds the file against a restart loop.
@@ -432,7 +430,7 @@ DEFAULTS: dict[str, Any] = {
     # typo'd optional altitude anchor would trade a dead OBD capture for a
     # cosmetic fault.  src.pi.location.HomeLocationProvider is the single read
     # path and reports the honest unknown instead -- same policy as
-    # pi.power.mode (US-421).
+    # (pi.power.mode was removed by US-668.)
     'pi.location.home.lat': None,
     'pi.location.home.lon': None,
     'pi.location.home.elevationM': None,
