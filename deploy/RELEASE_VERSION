@@ -1,5 +1,5 @@
 {
-  "version": "V0.29.40",
-  "theme": "ARCH-019 -- the arm line reports, not predicts",
-  "description": "A-22: the arm self-check proved the GPIO6 pin READS, never that it CHANGES -- so powerwatch reported ARMED through a hard cut it could not detect. It now says ARMED (UNPROVEN) or ARMED (PROVEN, last transition <utc>); only PROVEN keeps the old promise. pld_witness persists the first real transition; every failure mode resolves to NEVER. EXPECT UNPROVEN -- that is correct."
+  "version": "V0.29.41",
+  "theme": "Sprint 79 -- the punch-list card sweep, 24/24",
+  "description": "The card column of the V0.29 completeness sweep, from Atlas's punch list: measured gear bands, DTC/alert honesty, typed absences WITH reasons (power, battery-health, OBD-link, heading, SOC), kebab gate deleted, Fuel Trim un-gated, direction-label deadband, drain-forensics now a resident daemon. US-628/632 ship LEGIBILITY not repair; shared cause is GPIO6 contention (US-668)."
 }
