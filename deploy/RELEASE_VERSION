@@ -1,5 +1,5 @@
 {
-  "version": "V0.29.37",
-  "theme": "Sprint 78 -- display stability, batch 1",
-  "description": "5/5. US-644-a bounds the watchdog journal probe and stops collapsing 'timed out' into 'unreadable'. US-644-b scopes its marker query to the CURRENT boot and stops printing a capped count as a magnitude. US-647 declines GPU rasterization on the X11 kiosk -- effect UNVERIFIED by design. US-648 stops units asserting flags they do not carry. US-654 observes panel liveness. Reboot to take effect."
+  "version": "V0.29.40",
+  "theme": "ARCH-019 -- the arm line reports, not predicts",
+  "description": "A-22: the arm self-check proved the GPIO6 pin READS, never that it CHANGES -- so powerwatch reported ARMED through a hard cut it could not detect. It now says ARMED (UNPROVEN) or ARMED (PROVEN, last transition <utc>); only PROVEN keeps the old promise. pld_witness persists the first real transition; every failure mode resolves to NEVER. EXPECT UNPROVEN -- that is correct."
 }

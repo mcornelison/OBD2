@@ -74,6 +74,8 @@ import time
 from collections.abc import Callable
 from datetime import UTC, datetime
 
+from src.pi.power.power_watch.pld_witness import recordTransitionWitnessed
+
 logger = logging.getLogger(__name__)
 __all__ = [
     "PHASE_CANCELLED",
@@ -127,59 +129,59 @@ class ShutdownSequencer:
         prePowerOffFn: Callable[[], None] | None = None,
     ):
         """Args:
-            isOnBattery: Zero-arg predicate, True while power is LOST (DI'd to
-                ``PowerSourceProvider.isPowerLost`` in the service -- the SSOT
-                over the X1209 GPIO6 PLD line, ground truth, not a heuristic).
-                Smoothing below still applies: a transient electrical blip or
-                boot-settling jitter can briefly read lost-then-present even
-                on a healthy line, and shutdown must NEVER fire on such a blip.
-            vcell: Zero-arg, returns battery VCELL in VOLTS (not mV).
-            runPipelineFn: Already-bound zero-arg bounded pre-shutdown pipeline.
-            powerOffFn: Already-bound zero-arg graceful OS poweroff.
-            vcellFloor: Safety-floor in VOLTS. A SUCCESSFUL read <= this, AFTER
-                sustained power-lost is confirmed, short-circuits to poweroff.
-                A FAILED read never triggers poweroff.
-            totalCapSec: Hard total-window cap (SECONDS) on the pipeline.
-            smoothingSec: ``isOnBattery()`` must stay True continuously for at
-                least this long (SECONDS) before any poweroff -- the in-V1
-                safety property (spec sec 3) that rejects transient/boot blips.
-                0 = no smoothing (test only).
-            smoothingPollSec: Re-sample cadence (SECONDS) during the smoothing
-                interval.
-            sleepFn: DI sleep (default time.sleep); tests pass a no-op.
-            monotonicFn: DI monotonic clock (default time.monotonic).
-            phaseEmitFn: OPTIONAL F-103 shutdown-splash phase-emit hook. Called
-                as ``phaseEmitFn(phase, *, tGraceStartedAtIso, tGraceTotalS,
-                tRemainingS, reason)`` at each transition (a ``PHASE_*`` string).
-                Best-effort: the call site guards it so an emit that raises NEVER
-                blocks shutdown (Atlas A-2 constraint c). ``None`` (the default)
-                disables the hook and the sequencer runs the exact legacy path
-                (no extra ``isOnBattery()`` reads), so existing behavior + tests
-                are unchanged.
-            nowIsoFn: DI clock returning the ISO-8601 grace-start stamp for the
-                shutdown-state payload (default UTC now). Only consulted when
-                ``phaseEmitFn`` is wired.
-            shutdownReason: The ``reason`` field for the shutdown-state payload
-                (v1 always ``ignition_off``; the splash never branches on it).
-            prePowerOffFn: OPTIONAL zero-arg hook run immediately BEFORE
-                ``powerOffFn`` on EVERY path that actually powers off -- both
-                the bounded-pipeline path and the VCELL-floor fast path.
-                US-526 wires it to the production drain-event close, which
-                Atlas ruled the PRIMARY close (Option C, 2026-08-02): under
-                Spool's depth gate the run-to-cutoff drain is the only
-                qualifying drain and it ends exactly here, so the close must be
-                guaranteed on this path. It is deliberately NOT a pipeline
-                ShutdownTask -- the floor fast-path SKIPS the pipeline, which
-                is precisely how a run-to-cutoff drain ends, so a task-based
-                close would miss every row the verdict needs.
-                Runs LAST before poweroff so a depth read is as deep as the
-                drain actually got. Best-effort and guarded exactly like
-                ``phaseEmitFn``: a hook that raises NEVER blocks poweroff
-                (bookkeeping is never worth leaving the Pi up on a dying
-                battery). NOT called on an abort (transient blip, or power
-                returning mid-window) -- an aborted shutdown is not a drain
-                end, and the collector's BATTERY->AC transition owns that
-                close. ``None`` (the default) runs the exact legacy path.
+        isOnBattery: Zero-arg predicate, True while power is LOST (DI'd to
+            ``PowerSourceProvider.isPowerLost`` in the service -- the SSOT
+            over the X1209 GPIO6 PLD line, ground truth, not a heuristic).
+            Smoothing below still applies: a transient electrical blip or
+            boot-settling jitter can briefly read lost-then-present even
+            on a healthy line, and shutdown must NEVER fire on such a blip.
+        vcell: Zero-arg, returns battery VCELL in VOLTS (not mV).
+        runPipelineFn: Already-bound zero-arg bounded pre-shutdown pipeline.
+        powerOffFn: Already-bound zero-arg graceful OS poweroff.
+        vcellFloor: Safety-floor in VOLTS. A SUCCESSFUL read <= this, AFTER
+            sustained power-lost is confirmed, short-circuits to poweroff.
+            A FAILED read never triggers poweroff.
+        totalCapSec: Hard total-window cap (SECONDS) on the pipeline.
+        smoothingSec: ``isOnBattery()`` must stay True continuously for at
+            least this long (SECONDS) before any poweroff -- the in-V1
+            safety property (spec sec 3) that rejects transient/boot blips.
+            0 = no smoothing (test only).
+        smoothingPollSec: Re-sample cadence (SECONDS) during the smoothing
+            interval.
+        sleepFn: DI sleep (default time.sleep); tests pass a no-op.
+        monotonicFn: DI monotonic clock (default time.monotonic).
+        phaseEmitFn: OPTIONAL F-103 shutdown-splash phase-emit hook. Called
+            as ``phaseEmitFn(phase, *, tGraceStartedAtIso, tGraceTotalS,
+            tRemainingS, reason)`` at each transition (a ``PHASE_*`` string).
+            Best-effort: the call site guards it so an emit that raises NEVER
+            blocks shutdown (Atlas A-2 constraint c). ``None`` (the default)
+            disables the hook and the sequencer runs the exact legacy path
+            (no extra ``isOnBattery()`` reads), so existing behavior + tests
+            are unchanged.
+        nowIsoFn: DI clock returning the ISO-8601 grace-start stamp for the
+            shutdown-state payload (default UTC now). Only consulted when
+            ``phaseEmitFn`` is wired.
+        shutdownReason: The ``reason`` field for the shutdown-state payload
+            (v1 always ``ignition_off``; the splash never branches on it).
+        prePowerOffFn: OPTIONAL zero-arg hook run immediately BEFORE
+            ``powerOffFn`` on EVERY path that actually powers off -- both
+            the bounded-pipeline path and the VCELL-floor fast path.
+            US-526 wires it to the production drain-event close, which
+            Atlas ruled the PRIMARY close (Option C, 2026-08-02): under
+            Spool's depth gate the run-to-cutoff drain is the only
+            qualifying drain and it ends exactly here, so the close must be
+            guaranteed on this path. It is deliberately NOT a pipeline
+            ShutdownTask -- the floor fast-path SKIPS the pipeline, which
+            is precisely how a run-to-cutoff drain ends, so a task-based
+            close would miss every row the verdict needs.
+            Runs LAST before poweroff so a depth read is as deep as the
+            drain actually got. Best-effort and guarded exactly like
+            ``phaseEmitFn``: a hook that raises NEVER blocks poweroff
+            (bookkeeping is never worth leaving the Pi up on a dying
+            battery). NOT called on an abort (transient blip, or power
+            returning mid-window) -- an aborted shutdown is not a drain
+            end, and the collector's BATTERY->AC transition owns that
+            close. ``None`` (the default) runs the exact legacy path.
         """
         self._isOnBattery = isOnBattery
         self._vcell = vcell
@@ -226,6 +228,23 @@ class ShutdownSequencer:
         battery, so we proceed via the normal bounded pipeline (no floor
         fast-path this cycle).
         """
+        # ARCH-019: the PLD pin JUST MOVED. Record it durably.
+        #
+        # The startup arm check can otherwise only prove the pin is READABLE,
+        # and a signal that reads but has never been seen to CHANGE is
+        # indistinguishable from a wire that is not connected. On 2026-08-31 the
+        # Pi died a hard cut with the arm line reporting ARMED and this pipeline
+        # never running.
+        #
+        # Recorded at ENTRY, BEFORE smoothing, deliberately: even a transient
+        # blip proves the pin transitions, which is the only question this
+        # witness answers. Whether the loss was REAL is a different question,
+        # and the smoothing below is what answers that one.
+        #
+        # Best-effort by contract -- this runs on a machine that may be losing
+        # power and must never abort the pipeline it is observing.
+        recordTransitionWitnessed(atIso=datetime.now(UTC).isoformat())
+
         # F-103 [A-2]: emit `grace` at T=0 (BEFORE smoothing resolves) so the
         # splash triggers immediately -- the animation IS the grace countdown.
         # Guarded on the hook being wired so the legacy path adds NO extra
@@ -261,7 +280,9 @@ class ShutdownSequencer:
         if v is not None and v <= self._vcellFloor:
             logger.warning(
                 "shutdown-sequencer: VCELL %.3f <= floor %.3f (power-lost "
-                "confirmed) -- skip pipeline, poweroff now", v, self._vcellFloor,
+                "confirmed) -- skip pipeline, poweroff now",
+                v,
+                self._vcellFloor,
             )
             # Floor backstop skips the pipeline -> no `flushing` phase happened;
             # emit `powering_off` directly (honest instrument).
@@ -289,16 +310,13 @@ class ShutdownSequencer:
         done.wait(timeout=self._totalCapSec)  # total cap; a hung pipeline cannot block poweroff
         if not self._isOnBattery():
             logger.info(
-                "shutdown-sequencer: power returned during window -- abort, "
-                "resume normal op"
+                "shutdown-sequencer: power returned during window -- abort, resume normal op"
             )
             # Power came back mid-window: tell the splash to abort too so it does
             # not sit in BLACK_TAIL waiting for a poweroff that will not come.
             self._emitPhase(PHASE_CANCELLED)
             return
-        logger.warning(
-            "shutdown-sequencer: pre-shutdown window resolved -- graceful poweroff"
-        )
+        logger.warning("shutdown-sequencer: pre-shutdown window resolved -- graceful poweroff")
         self._emitPhase(PHASE_POWERING_OFF)
         self._runPrePowerOff()
         self._powerOff()

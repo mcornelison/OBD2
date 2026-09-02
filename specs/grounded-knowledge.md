@@ -82,6 +82,8 @@ Source: DSMTuners community consensus, compiled in `specs/obd2-research.md` Sect
 | **Engine Load** | **15–25% idle · 30–50% cruise · up to 100% at WOT** | ⚠ **Compound condition only** — high load **with** positive STFT under boost, or with knock | **ADDED 2026-08-27, REFRESHED 2026-08-28 (Spool, measured).** 🔴 **A ">90% sustained = danger" threshold was WITHDRAWN — this car has now reached 100% load on THREE WOT pulls with no thermal or knock distress** (drives 7 and 11 on the prior ECU; **drive 51 on the current ECU, 2026-08-28**). 35 samples exceed 90 % across the corpus. **Load alone is not a danger signal on a turbo engine**; it is the *expected* reading at full throttle. Only meaningful paired with a lean indication or knock. |
 | **MAF** | **2–4 g/s idle; scales with RPM/load** | ⚠ **~150 g/s = stock sensor SATURATION, not a fault** | **ADDED 2026-08-27, REFRESHED 2026-08-28 (Spool, measured).** All-time max **158.7 g/s** (Drive 7 WOT) — unchanged; this car **does** reach the stock MAF ceiling at full load. The current-ECU WOT pull (drive 51) peaked at **147.7 g/s — just *below* saturation**, which is why that sample is usable for the VE inference and Drive 7's is not. A MAF pinned ~150+ during a pull is **expected**; treat it as a *measurement limit*, not an engine problem. ✅ Also the basis for the **MAF→VE boost inference** (below) on a car where boost is unreadable. |
 | **RPM** | **700–800 idle; redline 7000 (97–99 2G)** | 🔴 >7000 (valve float on stock springs) | **ADDED 2026-08-27, REFRESHED 2026-08-28 (Spool).** ⚠ **Manufacturer spec — still NEVER exercised. All-time max is now 5,896 RPM** (drive 51, 2026-08-28 — the first WOT under the current ECU; supersedes 5,441 from Drive 11, which was the *prior* ECU). Everything above 5,896 remains unmeasured. |
+| **Fuel Trims (LTFT / STFT)** | **LTFT ±4 pp of the CURRENT EPOCH's baseline · STFT oscillates, judge only its mean** | 🟡 5-drive median ≥ **4.0 pp** from epoch baseline, sustained ≥3 qualifying drives · 🔴 \|LTFT\| ≥ **10 %** *(convention, NEVER fired here — untested)* | **ADDED 2026-08-31 (Spool, measured — 17,634 LTFT + 17,638 STFT samples, 56 drives).** 🔴 **Resolution is 0.78125 pp** (one raw ECU count, 100/128); the parameter has taken **18 distinct values in this engine's recorded lifetime** — any threshold finer than one count is below the instrument. 🔴 **Noise floor: drive means spread up to 3.72 pp BETWEEN DRIVES ON THE SAME DAY** on a healthy engine (drives 45–51); between-drive SD **1.43 pp**; worst healthy deviation from epoch mean **2.50 pp**. ⇒ **a single-drive delta carries no information and must trigger nothing.** ⚠ **Epoch-scoped, always** — see the trend contract below. |
+
 | **Battery Voltage** | see §Battery Voltage via ELM_VOLTAGE below | ⚠ **Engine-running only** — gate on `RPM > 0` and not within ~3 s of a crank | **QUALIFIER ADDED 2026-08-27 (Spool, measured — 14,221 samples).** The bands are correct but **unconditioned**: the <12.0 V floor **trips on cranking** (13 samples, all-time min 11.0 V), and 1,083 samples (7.6%) sit below the 13.5 V "normal" floor — key-on-engine-off, cranking, and immediate post-start. Without an engine-state gate the alert misgrades normal starting as a charging fault. Healthy reference: drives 42–44 cruised at **14.4 V**; drives 50/51 (2026-08-28) cruised at **13.8 V avg, 14.2 V max**, min 12.3 V (engine state at that sample not established — do not read a cause into it). |
 
 **Important**: Rows marked *(Spool, measured)* are derived from **this car's own capture corpus** (~16,150 samples per parameter through drive 51) and **override community consensus** where they disagree (PM Rule 7). The unmarked rows remain community baselines awaiting real data.
@@ -130,31 +132,154 @@ MAF 85.0 g/s @ 3,300 RPM, IAT 31 °C, throttle 28%, coolant 88 °C → **VE = 13
 
 The drive-42 sample window was independently verified free of the duplicate-row artifact affecting other seconds in that drive. Full derivation: `$FLEET_SHARE/tuner/knowledge/knowledge.md` §Boost and Turbo.
 
+### LTFT trend contract (US-661) — ADDED 2026-08-31
+
+**Ralph builds against this section, not against the office advisory.** Derivation and the
+reproducible SQL: `$FLEET_SHARE/tuner/ltft-trend-card-semantics-advisory.md` and
+`$FLEET_SHARE/tuner/scripts/ltft_trend_analysis.sql` (7 sections, verified).
+
+**Verdict: the card is buildable — but NOT as a per-drive trend line.** A naive implementation (mean
+LTFT per drive, plot the points, join them) draws a chart that **wanders up to 3.72 pp between drives on
+the same day with nothing wrong**. Anyone reading that for drift finds drift, every time.
+
+#### The gate — all three ANDed. A sample failing any of them is not eligible.
+
+```
+COOLANT_TEMP        >= 85 °C
+FUEL_SYSTEM_STATUS  == 2        (closed loop)
+qualifying samples  >= 20       (~100 s of qualifying operation)
+```
+
+🔴 **`FUEL_SYSTEM_STATUS` alone is NOT a warm-up gate on this car, and gating on it is the mistake this
+section exists to prevent.** The O2 sensor is heated, so the ECU enters closed loop within seconds:
+**only 8 samples of "open loop, insufficient temperature" exist in 17,624**, and at 30–40 °C coolant
+**65 of 68 buckets already report closed loop**. Loop status is **necessary but not sufficient** —
+**coolant is the load-bearing condition.**
+
+⚠ **Encoding derived by correlation, not read off a spec sheet:** `1` = open loop / cold (mean coolant
+38.5 °C, n=2) · `2` = **closed loop** (88.9 °C, O2 switching) · `3` = open loop under **load or decel**
+(89.0 °C, mean RPM 2515 — a warm state, *not* a temperature state).
+
+#### While the gate is unmet
+
+Publish a **typed absence with a reason** — `"WARMING — NOT YET MEANINGFUL"` — following the `altitude`
+and `ambientTempC` pattern. **Never publish a number that failed the gate.**
+
+🔴 **This is the resting state for roughly one drive in four, permanently.** Measured: **5 of the 22
+drives since the adaptive reset never accumulate 20 qualifying samples** (drives 37, 42, 54, 55, 56).
+That is not a defect and not a temporary condition pending the producer — those drives are too short or
+too cold to say anything true.
+
+#### Window and epoch boundaries
+
+- **One point per drive**, from qualifying samples only.
+- **Display a rolling 5-drive MEDIAN**, never the raw per-drive line. At SD 1.43 pp a 5-drive median
+  resolves to roughly **±0.6 pp**; a single drive resolves to nothing.
+- **Never join a line across an epoch boundary.** Break the series and label the break.
+
+| Boundary | Detector | Confidence |
+|---|---|---|
+| ECU identity change | `(part_number, cal_rom)` changes — already tracked in `vehicle_info` | Certain |
+| Adaptive memory reset | LTFT **bit-identical to exactly `0.000`** for a whole drive | Measured |
+
+🔴 **The reset detector must test bit-identity TO ZERO, not zero variance.** Zero variance alone
+false-positives: **drive 33 has zero variance at −2.344** (a short drive parked in one load cell) and is
+**not** a reset, while drives 35/36 are bit-identical `0.000` and **are**. Bit-identity needs no tuned
+threshold and cannot false-positive — the same rule `specs/ssot-design-pattern.md` applies to latched
+channels, applied here.
+
+**Epoch baselines, measured** (warm closed-loop samples, hygiene applied):
+
+| Epoch | Drives | n | Grand mean | SD between drives |
+|---|---|---|---|---|
+| Prior ECU `MD346675` | 3–24 | 15 | **−2.311 %** | 2.161 |
+| New ECU `MD326328` | 25–34 | 7 | **+0.545 %** | 0.753 |
+| Adaptive reset (flat battery) | 35–36 | — | **0.000 %** | — |
+| Post-reset relearn | 37–58 | 17 | **+0.009 %** | **1.429** |
+
+The prior→new ECU step is **2.86 pp** and is a *different ECU*, not a fault. A trend spanning it
+compares two engines.
+
+#### Short-term trim
+
+**Do not trend STFT.** It oscillates around its mean by design — a trend line would picture the O2
+sensor switching, not the engine. Within-drive SD **0.6–3.2** against LTFT's 0.7–0.9.
+
+**Show instead: total trim = LTFT + STFT, as ONE current value, no trend.** That is what a tuner reads —
+the total correction being applied now. Healthy post-reset range: **−1.37 to +4.05**.
+
+⚠ **Filed, not alarmed:** STFT drive means are **positive on every qualifying drive** (+0.50 … +3.90,
+mean ≈ +1.3). Well inside safe range; a consistent one-sided bias worth watching once a baseline exists.
+
+#### What this card cannot do, and must not claim
+
+**Usable dynamic range is only ~6 pp** — noise floor ~4, conventional fault line 10. **Fine-grained
+drift detection is not available on this car and must not be promised.** What the card *can* do is catch
+a real fault: a vacuum leak, failing injector, clogged filter or MAF drift moves LTFT by **10–25 pp**,
+not 3.
+
+⚠ **Open caveat — a drive's mean is confounded by how the car was driven.** Within single drives LTFT
+varies across RPM bands by up to **3.4 pp** (drive 48) and **2.65 pp** (drive 52), but only **0.30 pp**
+(drive 51). Two mechanisms could produce this — **cell indexing** (the 4G63 stores trims per load/RPM
+cell and reports the active one) or **within-drive relearn** — and they **could not be separated** with
+this data. The implication is identical either way, so it does not block the build; it is a further
+argument for the 5-drive median. Resolving it needs **ECMLink** per-cell trim tables, not another drive.
+
 ### 🔴 Corpus hygiene — read before computing ANY statistic from `realtime_data` (ADDED 2026-08-28)
 
-Two defects in the stored corpus will silently corrupt an aggregate. Both are invisible unless excluded explicitly, because every affected value sits *inside* the plausible range.
+**Four** defects in the stored corpus will silently corrupt an aggregate. All are invisible unless excluded explicitly, because every affected value sits *inside* the plausible range.
 
 **1. Always scope `WHERE drive_id IS NOT NULL`.** The unattributed pool contains bench-probe artefacts: `TIMING_ADVANCE` holds repeated **61.0°** samples from 2026-05-20/21, physically impossible on a 4G63 (raw byte `0xFA` through the `A/2 − 64` decode). An unscoped `MAX(TIMING_ADVANCE)` returns **61°** instead of the true **34.5°** — wrong by 27°.
 
-**2. EXCLUDE drives 45 and 46 between `2026-08-28 16:32:30` and `16:35:35` UTC** (2,643 rows). Two capture pollers ran concurrently: combined **14.3 rows/s** against an ISO 9141-2 K-line at 10,400 bps that physically delivers **~7 rows/s** across 16 PIDs. The same window logs the car at **0 km/h and 16 km/h at identical timestamps**. At least half those samples do not correspond to a real bus response.
+**2. EXCLUDE drives 45 and 46 between `2026-08-28 16:32:30` and `16:35:35` UTC** (2,643 rows). The window logs the car at **0 km/h and 16 km/h at identical timestamps**, and an apparent combined **14.3 rows/s** against an ISO 9141-2 K-line that physically delivers **~7 rows/s** across 16 PIDs.
 
-> **Proposed data-validity invariant: a recorded row-rate above ~8 rows/s is *prima facie* fabrication**, because the bus cannot deliver it. Like the bit-identity rule for latched channels, this is a **physical bound** — it needs no tuned threshold and cannot false-positive on legitimate data.
+> ### ⚠ CAUSE CORRECTED 2026-08-31 — the exclusion stands, the reason changed
+>
+> This item previously read *"two capture pollers ran concurrently."* **That explanation was WITHDRAWN by Spool on 2026-08-31**, and with it the claim that drives 45/46 were an **A-9 Root 1 regression**.
+>
+> Atlas named a falsifiable condition — concurrent writers sharing one SQLite autoincrement must **interleave** their `source_id` values — and Spool ran it:
+>
+> ```
+> drive 45  source_id 3708564–3709931
+> drive 46  source_id 3709998–3711272
+> 46-rows below max(45) = 0      45-rows above min(46) = 0
+> ```
+>
+> **Perfectly disjoint, a 66-row gap, zero crossings in either direction.** Two concurrent pollers cannot produce that.
+>
+> 🔴 **The real cause is A-23 — the Pi 5 RTC has no charged backup cell, so every boot starts at 1970 and NTP repairs it only where a network is reachable. In the car there is no network and nothing repairs it.** The timestamps are wrong; the rows are not duplicated. **A-9 Root 1 stays CLOSED — do not groom a refix.**
+>
+> ⚠ **This also retires the "three occurrences" framing below.** Drives **23/24** and **28/29** were counted as the same defect on the strength of the same rows/s reasoning, which is exactly the reasoning a bad clock defeats. Their true cause is **unestablished**; they are not evidence for a concurrency defect.
 
-This has occurred **three times in the entire corpus, and only three** — drives **23/24** (220 s, 13.3 rows/s), **28/29** (193 s, 12.2 rows/s) and **45/46** (185 s, 14.3 rows/s). Drives 28/29 are the pair A-9 Root 1 was declared to have fixed on 2026-08-20; that closure rested on drives 40/41 not reproducing it. Filed to Atlas 2026-08-28.
+> ### 🔴 The `>8 rows/s` tripwire must NOT ship unpaired
+>
+> A proposed invariant — *"a recorded row-rate above ~8 rows/s is prima facie fabrication, because the bus cannot deliver it"* — was attractive because it looked like a physical bound needing no tuned threshold.
+>
+> **It is not usable alone.** Row-rate is computed as `rows ÷ elapsed`, and **A-23 corrupts the denominator.** A wrong clock and a genuine double-read produce the same reading, so the tripwire **cannot discriminate between the two failures it exists to separate** — and the corpus's only three "occurrences" are now believed to be clock faults, meaning the tripwire would have fired on all of them for the wrong reason.
+>
+> ⇒ **Ship it only paired with a `clockSynced` flag on drive segments** (Atlas; independently caught by Marcus). Unpaired, it is a check that cannot do the job it is cited for.
 
 **Why a tuning spec carries a pipeline caveat:** every threshold in the table above is validated against this corpus. **Fabricated samples silently widen the apparent normal band of every parameter they touch**, and the corruption is undetectable from the values alone.
 
 **3. Cross-check row-rate against duration before trusting a drive.** Healthy is **~420–440 rows/min** across 16 PIDs. ⚠ `data_quality` is **not** a quality signal — it defaults to `full` pre-batch (US-563) *and* stays `full` post-batch with a gap already detected (the inert gap guard, filed 2026-08-27).
 
+**4. Establish that the capture is FINISHED before concluding anything from it.** Compare `MAX(synced_at)` against the server clock **and** against the drive's last timestamp. A drive whose sync trails the wall clock is **in flight**, and a partial capture reads exactly like a short one. This is not hypothetical: on 2026-08-30 a drive was graded mid-sync and a wrong conclusion published; it subsequently grew **6,998 → 11,054 rows** and the car had been travelling at 60 km/h throughout the window reported as stationary.
+
+**5. ⚠ Query trap — `timestamp` and `synced_at` are UTC, but MariaDB `NOW()` on `obd2db` returns CDT.** Any `WHERE timestamp > NOW() - INTERVAL ...` is off by five hours. Check `@@system_time_zone` before trusting a recency filter; this has already produced one phantom clock fault.
+
 ### Active DTC — P0443 (as of 2026-08-27)
 
 **P0443 — Evaporative Emission System Purge Control Valve Circuit. MIL is LIT.** Stored on every drive since at least 2026-08-20 (drive 41); `DTC_COUNT`=1, `MIL_ON`=1 across drives 42/43/44.
 
-**Verdict: no engine risk, and it does NOT distort tuning data — assessed, not assumed.** A purge valve stuck *open* dumps unmetered fuel vapor into the intake and drags LTFT **negative** on a MAF-based car. This car's LTFT is drifting **positive** ⇒ the solenoid is **not flowing** ⇒ open circuit / stuck closed ⇒ the benign failure direction.
+**Verdict: no engine risk, and it does NOT distort tuning data — assessed, not assumed.** A purge valve stuck *open* dumps unmetered fuel vapor into the intake and drags LTFT **negative** on a MAF-based car. **No negative excursion is present** ⇒ the valve is not dumping vapour ⇒ the benign failure direction.
+
+> ⚠ **INFERENCE WEAKENED 2026-08-31 (Spool, self-correction).** This read *"LTFT is drifting **positive** ⇒ the solenoid is **not flowing** ⇒ open circuit / stuck closed."* **Two defects.** (a) Trims can only rule the stuck-*open* case **out** — a non-flowing valve and a never-commanded valve are **identical** in trim data, so the electrical state does not follow. (b) *"Drifting positive"* was thin: across drives 37–58 the LTFT mean swings **−2.60 → +2.17 → −0.80**, and of the three drives it was read from, **two are negative**. **The conclusion survives on "no negative excursion"; the argument that supported it did not.**
+
+**Since corrected (2026-08-31):** the fault is **INTERMITTENT** (clean drive cycles before onset, and one clean cycle after a code clear), which points at a **connector or wiring** fault rather than the solenoid; and the **2026-05-22 ECU swap is EXONERATED**. 🔴 **Never let a shop replace the PCM** — `MD326328` is a 1997 board *because* 1998 boards cannot be ECMLink-flashed. Full diagnosis: `$FLEET_SHARE/tuner/cards/dtc-p0443-evap-purge-diagnosis.md`.
 
 Consequences are emissions-only: the charcoal canister does not purge, readiness monitors will not complete, and the car will fail an emissions test. **Do not treat a lit MIL from this code as a capture-validity or engine-health signal.** Repair timing is the CIO's call.
 
-**Pi-side power-management** (data-collection device, separate from vehicle engine ranges): Pi 5 UPS HAT (MAX17048-managed LiPo cell) — buck-converter dropout knee at VCELL ≈ 3.30 V; ~16-min runtime under typical load (Drain Test 7, 2026-05-02 empirical). Authoritative writeup with full empirical baseline + operational implications: `$FLEET_SHARE/tuner/knowledge/knowledge.md` § "UPS HAT Dropout Characteristics (Drain 7 baseline)".
+**Pi-side power-management** (data-collection device, separate from vehicle engine ranges): Pi 5 UPS HAT (MAX17048-managed LiPo cell) — buck-converter dropout knee at VCELL ≈ 3.30 V; ~16-min runtime under typical load (Drain Test 7, 2026-05-02 empirical). Authoritative writeup with full empirical baseline + operational implications: `$FLEET_SHARE/tuner/knowledge/ups-drain-characteristics.md` (split out of `knowledge.md` on 2026-09-01; the old section anchor no longer resolves).
 
 ---
 

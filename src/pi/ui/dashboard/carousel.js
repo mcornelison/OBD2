@@ -41,6 +41,139 @@
   //
   // Two layers on purpose: the request deadline stops the known cause, the tick
   // deadline stops ANY non-settling body including causes we have not met yet.
+  //: US-662 -- DISPLAY smoothing. The CIO, 2026-08-31, after reading the panel:
+  //: "the heading is flickering plus or minus two or three degrees ... we need to
+  //: add a 3-second smoothing function to some of these readings FOR DISPLAY
+  //: PURPOSES ONLY."
+  //:
+  //: THE ARCHITECTURE IS IN HIS LAST FOUR WORDS. Smoothing is a VIEW concern.
+  //: `lastImu` stays RAW, the state files stay RAW, the database stays RAW.
+  //: Landing a smoothed number would write something no sensor ever reported --
+  //: the ambient-temperature defect rebuilt.
+  //:
+  //: The window is in MILLISECONDS, not samples, so it behaves identically on
+  //: the 4 Hz card tick and the 10 Hz live tick. A count-based window would
+  //: smooth over 3 s on one loop and 0.4 s on the other.
+  var SMOOTH_WINDOW_MS = 3000;
+
+  //: Smoothed for display. Deliberately explicit and deliberately SHORT.
+  //: ⚠️ Nothing alert-bearing, and never speed or rpm: smoothing buys steadiness
+  //: with LATENCY -- a 3 s window shows a real event about 1.5 s late, which is
+  //: correct for a glance instrument and disqualifying for anything that warns.
+  var SMOOTHED_FIELDS = ["headingDeg", "gLat", "gLon", "gradePct"];
+
+  //: Only a BEARING wraps. Grade and g are linear, and a circular mean applied
+  //: to them would be cargo-culting the fix onto values it cannot help.
+  var ANGULAR_FIELDS = ["headingDeg"];
+
+  function makeSmoothWindow(windowMs) {
+    var samples = [];
+    return {
+      push: function (value, atMs) {
+        // A non-finite reading is not a sample. Pushing it would let an absent
+        // value pull the mean, which is how a smoothed display invents data.
+        if (typeof value !== "number" || !isFinite(value)) return false;
+        samples.push({ v: value, t: atMs });
+        return true;
+      },
+      values: function (nowMs) {
+        var cutoff = nowMs - windowMs;
+        var out = [];
+        for (var i = 0; i < samples.length; i++) {
+          if (samples[i].t > cutoff) out.push(samples[i].v);
+        }
+        return out;
+      },
+      prune: function (nowMs) {
+        var cutoff = nowMs - windowMs;
+        var kept = [];
+        for (var i = 0; i < samples.length; i++) {
+          if (samples[i].t > cutoff) kept.push(samples[i]);
+        }
+        samples = kept;
+      },
+    };
+  }
+
+  function linearMean(values) {
+    if (!values || !values.length) return null;
+    var sum = 0;
+    var n = 0;
+    for (var i = 0; i < values.length; i++) {
+      if (typeof values[i] === "number" && isFinite(values[i])) {
+        sum += values[i];
+        n += 1;
+      }
+    }
+    return n ? sum / n : null;
+  }
+
+  function circularMeanDeg(values) {
+    // 🔴 A BEARING CANNOT BE AVERAGED ARITHMETICALLY. The mean of
+    // 358, 359, 1, 2 is 180 -- the display would point SOUTH while the car
+    // drives NORTH. Average unit vectors instead.
+    //
+    // This is the failure that passes every test which does not cross north,
+    // which is most of them, so the wrap case is pinned explicitly in the tests.
+    if (!values || !values.length) return null;
+    var sumSin = 0;
+    var sumCos = 0;
+    var n = 0;
+    for (var i = 0; i < values.length; i++) {
+      var v = values[i];
+      if (typeof v !== "number" || !isFinite(v)) continue;
+      var rad = (v * Math.PI) / 180;
+      sumSin += Math.sin(rad);
+      sumCos += Math.cos(rad);
+      n += 1;
+    }
+    if (!n) return null;
+    var mean = (Math.atan2(sumSin / n, sumCos / n) * 180) / Math.PI;
+    return (mean + 360) % 360;
+  }
+
+  var smoothWindows = {};
+
+  function pushImuSamples(data, nowMs) {
+    // Called where the READING ARRIVES, never at render -- so the window tracks
+    // the sensor's cadence rather than the paint rate.
+    if (!isObj(data)) return;
+    for (var i = 0; i < SMOOTHED_FIELDS.length; i++) {
+      var f = SMOOTHED_FIELDS[i];
+      if (!smoothWindows[f]) smoothWindows[f] = makeSmoothWindow(SMOOTH_WINDOW_MS);
+      smoothWindows[f].push(data[f], nowMs);
+      smoothWindows[f].prune(nowMs);
+    }
+  }
+
+  function smoothedImuView(data, nowMs) {
+    // Returns a COPY. The caller's object is never mutated, so `lastImu` -- the
+    // thing every other consumer reads -- stays raw.
+    if (!isObj(data)) return data;
+    var view = {};
+    for (var k in data) {
+      if (Object.prototype.hasOwnProperty.call(data, k)) view[k] = data[k];
+    }
+    for (var i = 0; i < SMOOTHED_FIELDS.length; i++) {
+      var f = SMOOTHED_FIELDS[i];
+      var raw = data[f];
+      // ⚠️ An absent reading STAYS absent. Smoothing must never resurrect a
+      // value from history when the live one is unavailable -- that would turn
+      // an honest NA into a stale number, which is worse than the jitter.
+      if (typeof raw !== "number" || !isFinite(raw)) {
+        view[f] = raw;
+        continue;
+      }
+      var w = smoothWindows[f];
+      if (!w) continue;
+      var vals = w.values(nowMs);
+      var mean =
+        ANGULAR_FIELDS.indexOf(f) >= 0 ? circularMeanDeg(vals) : linearMean(vals);
+      if (mean !== null) view[f] = mean;
+    }
+    return view;
+  }
+
   var FETCH_DEADLINE_MS = 2000;   // localhost states server answers in <1 ms
   var TICK_DEADLINE_MS = 10000;   // generous: a tick reads several state files
 
@@ -111,6 +244,30 @@
     var marker = ["[!]", "[W]", "[+]", "[D]"][level] || "[-]";
     var sink = level === LOG_ERROR && console.error ? console.error : console.log;
     sink.call(console, marker + " eclipse-ui " + message);
+    return true;
+  }
+
+  function reportFetchAbort(name, err, log) {
+    // US-655: US-653 shipped TWO deadlines and instrumented only ONE. The tick
+    // deadline reports; the FETCH deadline aborted into a catch that returns
+    // null -- indistinguishable from a 404, a parse failure, or a missing file.
+    //
+    // That silence is not cosmetic. It made Boot B UNINTERPRETABLE: 2 h 48 m
+    // with zero log lines was equally consistent with "the fix is absorbing
+    // hangs" and "no hang ever happened", and nothing on the box could separate
+    // them. This branch is the difference between those two readings.
+    //
+    // ONLY a timeout is reported. An ordinary failure stays quiet, or every
+    // missing state file becomes an error line and buries the signal.
+    if (!err || err.name !== "TimeoutError") return false;
+    log(
+      LOG_ERROR,
+      "fetchState(" +
+        name +
+        ") aborted after " +
+        FETCH_DEADLINE_MS +
+        "ms -- the request never completed"
+    );
     return true;
   }
 
@@ -3195,6 +3352,11 @@
 
   var api = {
     makeResilientLoop: makeResilientLoop,
+    makeSmoothWindow: makeSmoothWindow,
+    circularMeanDeg: circularMeanDeg,
+    linearMean: linearMean,
+    smoothedImuView: smoothedImuView,
+    reportFetchAbort: reportFetchAbort,
     shouldLog: shouldLog,
     uiLog: uiLog,
     reportLoopError: reportLoopError,
@@ -4613,6 +4775,9 @@
           if (!r.ok) return null;
           return await r.json();
         } catch (e) {
+          // US-655: an abort is a HANG we survived -- say so. Everything else
+          // stays a quiet null, exactly as before.
+          reportFetchAbort(name, e, uiLog);
           return null;
         }
       }
@@ -5131,7 +5296,9 @@
       // card invites, and the reason `homeFace` is the only arbiter.
       function renderHome(nowMs) {
         if (!homeCard) return;
-        var face = homeFace(lastImu, nowMs);
+        // US-662: smooth for DISPLAY only. lastImu itself is untouched.
+        var imuView = smoothedImuView(lastImu, nowMs);
+        var face = homeFace(imuView, nowMs);
         if (face.face === "live") {
           // US-645: the fourth argument is the OBD vehicle speed, and it is
           // NULL because no producer publishes one to this dashboard -- the
@@ -5140,7 +5307,14 @@
           // not a placeholder: it is what stops the G-FORCE tile claiming
           // `still` at a 65 mph cruise, where gLon is ~0 too. The label
           // degrades to `coast`, which is true at any speed.
-          var live = liveCardView(lastImu, lastGear, nowMs, null);
+          // MERGE 2026-09-01 (US-671): the FIRST argument is US-662's SMOOTHED
+          // `imuView`, not `lastImu`. Both sides of this conflict were fixes the
+          // CIO had already accepted, and either one-sided resolution silently
+          // reverts one of them: `lastImu` kills the 3-second smoothing he
+          // confirmed by eye in the car, and dropping the 4th argument brings
+          // back `still` at a 65 mph cruise. The union is the only correct
+          // answer, which is why this call reads the way it does.
+          var live = liveCardView(imuView, lastGear, nowMs, null);
           if (live && !live.idle) {
             // Advance both accumulators every paint. Eviction runs even with no
             // new point, so a feed that degrades mid-drive decays its history
@@ -5336,6 +5510,7 @@
       // newest. setTimeout (not setInterval) so a slow read cannot stack.
       async function imuTick() {
         lastImu = await fetchState("imu");
+        pushImuSamples(lastImu, Date.now());
         renderHome(Date.now());
       }
 
